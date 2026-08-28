@@ -802,3 +802,150 @@ test('compact density renders NO graph on a v2 card (Running-page lock); detaile
   np.onState(r, { status: 'running', stepper: MANIFEST, active: [], steps: [] });
   assert.ok(host.querySelector('.gv-stage'), 'detailed: the graph mounts on the next paint');
 });
+
+// ── banner / progress / gate copy / History header + Overview ────────────────
+test('progress reads numerically everywhere and the quiescence banner appears once', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'done' });
+  np.onState(r, { status: 'done', stepper: MANIFEST, active: [], endReached: false, warnings: [],
+    wireDeliveries: { w1: 2 }, gate: null,
+    steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'done', activeMs: 1000, costUsd: 0.1 }] });
+  assert.deepEqual((({ n, m }) => [n, m])(np.runStepLabel(r)), [1, 1]);
+  const banners = window.document.createElement('div');
+  np.paintQuiescenceBanner(banners, np.runDecorFor(r, 'monitor'));
+  np.paintQuiescenceBanner(banners, np.runDecorFor(r, 'monitor'));
+  assert.equal(banners.querySelectorAll('.run-warn').length, 1, 'idempotent');
+  assert.equal(banners.querySelector('.run-warn').textContent, 'finished at quiescence — End not reached');
+  assert.equal(banners.querySelector('.run-warn').hidden, false);
+  np.paintQuiescenceBanner(banners, { quiescent: false });
+  assert.equal(banners.querySelector('.run-warn').hidden, true);
+  assert.equal(np.progressText(r), '1/1 done');
+  assert.equal(np.histCountsLine({ ...r, stepper: MANIFEST }), '1 execution · 2 loop deliveries');
+  const v1 = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'running' });
+  assert.equal(np.progressText(v1), '', 'v1 runs have no numeric progress');
+});
+
+test('the gate intro names the wire it holds on; v1 keeps the two literals byte-identical', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
+  np.onState(r, { status: 'running', stepper: MANIFEST, active: [], steps: [] });
+  assert.equal(np.gateWireCopy(r, 'w1'), ' on Planner → End (w1)');
+  assert.equal(np.gateWireCopy(r, 'nope'), '', 'an unknown wire adds nothing');
+  const intro = (run, pq) => { const p = window.document.createElement('div'); np.renderGateBody(run, p, pq); return p.querySelector('.gate-intro').textContent; };
+  assert.equal(intro(r, { id: 'g', kind: 'gate', wireId: 'w1', issues: [] }),
+    'This cycle reached its limit on Planner → End (w1). Approve another cycle to keep iterating, or continue with what you have.');
+  assert.equal(intro(r, { id: 'g', kind: 'gate', wireId: 'w1', issues: [{ severity: 'major', title: 'x' }] }),
+    'This cycle reached its limit on Planner → End (w1) with open issues. Approve another cycle to keep iterating, or continue with what you have.');
+  const v1 = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'running' });
+  assert.equal(intro(v1, { id: 'g', kind: 'gate', issues: [] }),
+    'This cycle reached its limit. Approve another cycle to keep iterating, or continue with what you have.');
+  assert.equal(intro(v1, { id: 'g', kind: 'gate', issues: [{ severity: 'major', title: 'x' }] }),
+    'This cycle reached its limit with open issues. Approve another cycle to keep iterating, or continue with what you have.');
+});
+
+test('the card meta shows `n/m` and the compact chip `n/m done` on a v2 run; a v1 card is untouched', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const done = [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'done', activeMs: 1000, costUsd: 0.1 }];
+  const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
+  const node = np.buildRunCard(r);
+  window.document.body.appendChild(node);
+  r.el = node;
+  assert.equal(node.querySelector('.rc-prog').hidden, true, 'hidden until a v2 manifest arrives');
+  np.onState(r, { status: 'running', stepper: MANIFEST, active: [], steps: done });
+  assert.equal(node.querySelector('.rc-prog').hidden, false);
+  assert.equal(node.querySelector('.rc-prog-text').textContent, '1/1');
+  // The segment is painted ABOVE renderRunMeta's `.rc-branch` early return.
+  const bare = window.document.createElement('div');
+  bare.innerHTML = '<span class="rm-text"></span><span class="rc-seg rc-prog" hidden><span class="rc-prog-text"></span></span>';
+  np.renderRunMeta(r, bare);
+  assert.equal(bare.querySelector('.rc-prog').hidden, false, 'a branch-less root still gets the progress segment');
+  np.setRunDensity('compact');
+  np.onState(r, { status: 'running', stepper: MANIFEST, active: [], steps: done });
+  assert.equal(node.querySelector('.rc-step-chip').textContent, '1/1 done', 'D15: a number, never a bar');
+  np.setRunDensity('detailed');
+  const v1 = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'running' });
+  const c1 = np.buildRunCard(v1);
+  window.document.body.appendChild(c1);
+  v1.el = c1;
+  np.onState(v1, { status: 'running', stepper: V1_STEPPER });
+  assert.equal(c1.querySelector('.rc-prog').hidden, true, 'v1: no progress segment');
+  np.setRunDensity('compact');
+  np.onState(v1, { status: 'running', stepper: V1_STEPPER });
+  assert.match(c1.querySelector('.rc-step-chip').textContent, /^STEP \d+\/\d+$/, 'v1 keeps STEP n/m');
+  np.setRunDensity('detailed');
+});
+
+test('the detail header .rd-step reads `n/m done · <who>` on a v2 run (C16: only the meta list changes)', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const screen = window.document.querySelector('#run-detail-tpl').content.firstElementChild.cloneNode(true);
+  window.document.body.appendChild(screen);
+  const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
+  np.onState(r, { status: 'running', stepper: MANIFEST, active: [{ nodeId: 'n_a', executionId: 'x:n_a:1' }], steps: [] });
+  np.paintRdHeader(screen, r);
+  assert.equal(screen.querySelector('.rd-meta .rd-step').textContent, '0/1 done · Planner');
+  assert.ok(screen.querySelector('.rd-pause'), 'the single toggling control stays');
+  assert.equal(screen.querySelector('.rd-resume'), null, 'C6: there is no .rd-resume');
+  const v1 = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'running' });
+  np.onState(v1, { status: 'running', stepper: V1_STEPPER });
+  np.paintRdHeader(screen, v1);
+  assert.match(screen.querySelector('.rd-meta .rd-step').textContent, /^step \d+\/\d+ · /, 'v1 keeps `step n/m · name`');
+});
+
+test('paintRunDetail shows the quiescence banner on a v2 run that drained without End', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const r = np.upsertRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'done', kind: 'run', startedAt: '10:00:00', pendingQuestion: null });
+  np.onState(r, { status: 'done', stepper: MANIFEST, active: [], steps: [], endReached: false, warnings: [] });
+  window.location.hash = 'running/r1';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((res) => setTimeout(res, 0));
+  const screen = window.document.querySelector('#run-detail').firstElementChild;
+  const warn = screen.querySelector('.rd-banners .run-warn');
+  assert.ok(warn, 'the banner lives in .rd-banners');
+  assert.equal(warn.hidden, false);
+  assert.equal(warn.textContent, 'finished at quiescence — End not reached');
+  window.location.hash = '';
+});
+
+test('History: the header meta carries the End chip and the Overview the counts + quiescence note (v2 only; D5 untouched)', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const doc = window.document;
+  const urls = [];
+  globalThis.fetch = window.fetch = (u) => { urls.push(String(u)); return Promise.resolve({ ok: true, status: 200, json: async () => ({ rel: 'plan.md', text: '# plan' }) }); };
+  const screen = doc.querySelector('#hist-detail-tpl').content.firstElementChild.cloneNode(true);
+  doc.body.appendChild(screen);
+  const record = { id: 'p1', projectKey: 'proj-alpha-00000001', title: 't' };
+  const base = { id: 'p1', status: 'done', startedAt: '2026-08-26T10:00:00Z', totalActiveMs: 1000, totalCostUsd: 0.1,
+    stepper: MANIFEST, steps: [], active: [], warnings: [], wireDeliveries: {}, gate: null };
+  np.paintHdHeaderMeta(screen, record, { state: { ...base, endReached: true, result: { type: 'md', path: '/tmp/p/plan.md' } } });
+  const link = screen.querySelector('.hd-meta .hd-result a');
+  assert.equal(link.textContent, 'plan.md');
+  assert.equal(link.title, '/tmp/p/plan.md');
+  link.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await new Promise((res) => setTimeout(res, 0));
+  assert.deepEqual(urls, ['/api/history/proj-alpha-00000001/p1/artifact?rel=%2Ftmp%2Fp%2Fplan.md'], 'the keyed route, through historyRunUrl');
+  np.paintHdHeaderMeta(screen, record, { state: { ...base, endReached: true, result: { type: 'void' } } });
+  assert.equal(screen.querySelector('.hd-meta .hd-result').textContent, '— completed');
+  np.paintHdHeaderMeta(screen, record, { state: { ...base, endReached: false, result: { type: 'md', path: '/tmp/p/plan.md' } } });
+  assert.equal(screen.querySelector('.hd-meta .hd-result'), null, 'no chip until End binds — a recorded result on a quiescent run is not one');
+  assert.equal(screen.querySelector('.hd-meta .hd-model'), null, 'D5: History never shows model/effort');
+  // Overview: the DURATION sub-line counts executions/deliveries; the note appears once, v2 only.
+  const sec = doc.createElement('div');
+  const done = [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, cycle: 1, status: 'done', activeMs: 1000 }];
+  np.buildHdOverview(sec, record, { state: { ...base, endReached: false, wireDeliveries: { w1: 2 }, steps: done }, results: null });
+  assert.equal(sec.querySelector('.hd-ov-card-duration .hd-ov-sub').textContent, '1 execution · 2 loop deliveries');
+  const note = sec.querySelector('.hd-ov-note.run-warn');
+  assert.ok(note, 'the one-line note under the stat grid');
+  assert.equal(note.getAttribute('role'), 'status');
+  assert.equal(note.textContent, 'finished at quiescence — End not reached');
+  np.buildHdOverview(sec, record, { state: { ...base, endReached: true, result: { type: 'void' }, steps: done }, results: null });
+  assert.equal(sec.querySelector('.hd-ov-note'), null, 'a run that bound End carries no note');
+  np.buildHdOverview(sec, record, { state: { ...base, stepper: V1_STEPPER, steps: [{ key: 'plan', nodeId: 's0_0', cycle: 1, status: 'done' }] }, results: null });
+  assert.match(sec.querySelector('.hd-ov-card-duration .hd-ov-sub').textContent, /^\d+ steps? · \d+ cycles?$/, 'v1 keeps its steps · cycles line');
+  assert.equal(sec.querySelector('.hd-ov-note'), null);
+});

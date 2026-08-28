@@ -2647,6 +2647,14 @@ if (typeof window !== 'undefined') {
     applyRunLogFilter,
     focusLogExecution,
     openRunArtifact,
+    paintQuiescenceBanner,
+    progressText,
+    histCountsLine,
+    gateWireCopy,
+    paintHdHeaderMeta,
+    buildHdOverview,
+    paintRdHeader,
+    renderGateBody,
     runStatusMeta,
     paintRunStatusIcon,
     renderRunMeta,
@@ -4173,9 +4181,7 @@ function renderGateBody(r, panel, pq) {
 
   const intro = document.createElement('div');
   intro.className = 'gate-intro';
-  intro.textContent = issues.length
-    ? 'This cycle reached its limit with open issues. Approve another cycle to keep iterating, or continue with what you have.'
-    : 'This cycle reached its limit. Approve another cycle to keep iterating, or continue with what you have.';
+  intro.textContent = `This cycle reached its limit${gateWireCopy(r, pq.wireId)}${issues.length ? ' with open issues' : ''}. Approve another cycle to keep iterating, or continue with what you have.`;
   panel.appendChild(intro);
 
   if (issues.length) {
@@ -10630,6 +10636,7 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
     if (flow) buildRunGraph(flow, st.stepper); // null stepper -> legacy default
     paintHistStepper(screen, st);
   });
+  if (isGraphManifest(st.stepper)) paintQuiescenceBanner(screen.querySelector('.hd-banners'), decorFromState(st, { live: false, now: 0 }));
 
   paintHdHeaderMeta(screen, rec, data);
   setupHdActions(screen, rec, data);
@@ -10898,6 +10905,27 @@ function paintHdHeaderMeta(screen, record, data) {
     seg.className = cls + (strong ? ' strong' : '');
     seg.textContent = text;
     if (cls === 'hd-cost') seg.title = estTitle(st.totalCostUsd);
+    meta.appendChild(seg);
+  }
+  // spec §8: the End card's result chip, repeated in the header meta (History D5
+  // untouched — no model/effort). A path links through the keyed artifact route.
+  if (st.endReached === true && st.result) {
+    meta.appendChild(hdDot());
+    const seg = document.createElement('span');
+    seg.className = 'hd-result';
+    if (st.result.path) {
+      const a = document.createElement('a');
+      a.href = '#';
+      a.textContent = String(st.result.path).split('/').filter(Boolean).pop();
+      a.title = st.result.path;
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        openRunArtifact({ run: st, runId: st.id || record.id, record }, st.result.path);
+      });
+      seg.appendChild(a);
+    } else {
+      seg.textContent = '— completed';
+    }
     meta.appendChild(seg);
   }
   // +A −R: persisted results first (done runs), else the live list counts.
@@ -12546,7 +12574,9 @@ function buildHdOverview(sec, record, data) {
   const maxCycle = steps.reduce((m, s) => Math.max(m, Number(s && s.cycle) || 0), 0) || 1;
   grid.appendChild(hdStatCard('duration', 'DURATION',
     typeof st.totalActiveMs === 'number' ? fmtDuration(st.totalActiveMs) : '—',
-    `${steps.length} step${steps.length === 1 ? '' : 's'} · ${maxCycle} cycle${maxCycle === 1 ? '' : 's'}`));
+    isGraphManifest(st.stepper)
+      ? histCountsLine(st)
+      : `${steps.length} step${steps.length === 1 ? '' : 's'} · ${maxCycle} cycle${maxCycle === 1 ? '' : 's'}`));
   const costCard = hdStatCard('cost', 'COST',
     typeof st.totalCostUsd === 'number' ? fmtUsd(st.totalCostUsd) : '—',
     `across ${steps.length} step${steps.length === 1 ? '' : 's'}`);
@@ -12573,6 +12603,14 @@ function buildHdOverview(sec, record, data) {
   // not, so without it the card would read `released` for the life of the screen.)
   grid.appendChild(hdStatCard('worktree', 'WORKTREE', retained ? 'retained' : 'released', wt.worktreeDir || ''));
   wrap.appendChild(grid);
+  // spec §8: the one-line quiescence note, under the stat grid, v2 runs only.
+  if (isGraphManifest(st.stepper) && decorFromState(st, { live: false, now: 0 }).quiescent) {
+    const note = document.createElement('div');
+    note.className = 'hd-ov-note run-warn';
+    note.setAttribute('role', 'status');
+    note.textContent = 'finished at quiescence — End not reached';
+    wrap.appendChild(note);
+  }
 
   // 3) Task card.
   const task = document.createElement('div');
@@ -13747,6 +13785,47 @@ function runDecorFor(r, mode = 'monitor') {
   return bag;
 }
 
+/** The amber quiescence banner (spec §8), in .rd-banners / .hd-banners. Idempotent:
+ *  one element per host, shown/hidden from the bag's `quiescent`. */
+function paintQuiescenceBanner(host, decor) {
+  if (!host) return;
+  const show = !!(decor && decor.quiescent);
+  let el = host.querySelector(':scope > .run-warn');
+  if (!el) {
+    if (!show) return;
+    el = document.createElement('div');
+    el.className = 'run-warn';
+    el.setAttribute('role', 'status');
+    host.appendChild(el);
+  }
+  el.textContent = 'finished at quiescence — End not reached';
+  el.hidden = !show;
+}
+
+/** `3/6 done` — D15 forbids a bar, not a number. '' on a v1 run. */
+function progressText(r) {
+  if (!isGraphRun(r)) return '';
+  const { done, total } = runDecorFor(r).progress;
+  return `${done}/${total} done`;
+}
+
+/** History Overview DURATION sub-line: `9 executions · 2 loop deliveries`. */
+function histCountsLine(st) {
+  const d = decorFromState(st, { live: false, now: 0 });
+  const e = d.executions, l = d.loopDeliveries;
+  return `${e} execution${e === 1 ? '' : 's'} · ${l} loop deliver${l === 1 ? 'y' : 'ies'}`;
+}
+
+/** ` on Reviewer → Implementer (w9)` for the gate panel's intro. '' when unknown. */
+function gateWireCopy(r, wireId) {
+  if (!isGraphRun(r) || !wireId) return '';
+  const g = r.stepper.graph || {};
+  const w = (g.wires || []).find((x) => x && x.id === wireId);
+  if (!w) return '';
+  const lbl = (id) => { const n = (g.nodes || []).find((x) => x && x.id === id); return (n && (n.label || n.id)) || id; };
+  return ` on ${lbl(w.from.node)} → ${lbl(w.to.node)} (${wireId})`;
+}
+
 // Status dot family for a child row (left edge). Reuses existing color tokens.
 // For a LIVE run the dot matches the color of the current agent/phase (same
 // mapping as the status pill), so the dot reads as "who's running now". The
@@ -13868,6 +13947,15 @@ function renderRunMeta(r, root = r.el) {
   if (!root) return;
   const metaEl = root.querySelector('.rm-text');
   if (metaEl) metaEl.textContent = `started ${startedLabel(r.startedAt)}`;
+
+  // D15: progress is a NUMBER, never a bar. Hidden on every v1 run. This sits
+  // ABOVE the `if (!branchEl) return` exit, or a branch-less card never gets it.
+  const prog = root.querySelector('.rc-prog');
+  if (prog) {
+    const d = isGraphRun(r) ? runDecorFor(r).progress : null;
+    prog.hidden = !d;
+    if (d) prog.querySelector('.rc-prog-text').textContent = `${d.done}/${d.total}`;
+  }
 
   const branchEl = root.querySelector('.rc-branch');
   if (!branchEl) return;
@@ -14339,7 +14427,7 @@ function paintRunCard(r) {
   if (compact) {
     const { n, m, name, model } = runStepLabel(r);
     const chip = compact.querySelector('.rc-step-chip');
-    chip.textContent = `STEP ${n}/${m}`;
+    chip.textContent = isGraphRun(r) ? `${n}/${m} done` : `STEP ${n}/${m}`;
     chip.className = `rc-step-chip mono st-${runStatusMeta(r).family}`;
     compact.querySelector('.rc-step-name').textContent = name;
     const modelEl = compact.querySelector('.rc-step-model');
@@ -14691,6 +14779,7 @@ function paintRunDetail(r) {
   ensureRdTabs(screen, r);   // builds the pill row + lazy panels exactly once
   paintRdHeader(screen, r);
   paintRdBanners(screen, r);
+  if (isGraphRun(r)) paintQuiescenceBanner(screen.querySelector('.rd-banners'), runDecorFor(r, 'monitor'));
   paintRdGraph(screen, r);
   paintRdQuestions(screen, r);
 }
@@ -14910,7 +14999,9 @@ function paintRdHeader(screen, r) {
   // Guard on `name`, not on `n`: runStepLabel always returns n >= 1, so `step.n`
   // can never be falsy and an unresolvable node would render `step 1/7 · ` with a
   // dangling separator.
-  const stepText = step && step.name ? `step ${step.n}/${step.m} · ${step.name}` : '';
+  const stepText = isGraphRun(r) && step
+    ? `${step.n}/${step.m} done${step.name ? ` · ${step.name}` : ''}`
+    : (step && step.name ? `step ${step.n}/${step.m} · ${step.name}` : '');
   const segs = [
     ['rd-project', projectName(r.projectDir), false],
     ['rd-clock', r.startedAt ? `started ${startedLabel(r.startedAt)}` : '', false],
