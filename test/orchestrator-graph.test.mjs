@@ -16,6 +16,7 @@ import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { readPipelineForResume } from '../src/core/artifacts.mjs';
 import { setPipelineCostLimitUsd } from '../src/core/settings.mjs';
 import { QUIESCENCE_WARNING } from '../src/core/graph/scheduler.mjs';
+import { BOOKEND_EXECUTION_IDS } from '../src/shared/graph/constants.mjs';
 
 // settings sandbox: settingsFile() resolves under HOME, not WORCA_HOME (the
 // same isolation test/cost-enforcement.test.mjs:18-36 uses).
@@ -69,8 +70,9 @@ test('the graph default runs end to end under mock and reaches the End card', { 
   assert.equal(st.endReached, true, 'the End card was bound');
   assert.ok(st.result, 'state.result carries the End payload');
   assert.deepEqual(st.warnings, []);
-  // Every ledger row is keyed by its executionId (bookends aside).
-  const rows = st.steps.filter((x) => String(x.key).startsWith('x:'));
+  // Every ledger row is keyed by its executionId. `x:` is NOT a bookend filter —
+  // every v2 executionId starts with it — so the bookends are named explicitly.
+  const rows = st.steps.filter((x) => String(x.key).startsWith('x:') && !BOOKEND_EXECUTION_IDS.includes(x.key));
   assert.ok(rows.length > 0);
   for (const s of rows) {
     assert.equal(s.key, s.executionId);
@@ -254,5 +256,46 @@ test('the pipeline cost cap is enforced at EVERY agent launch, not per step', { 
     assert.ok(orch.getState().steps.some((s) => s.status === 'paused'), 'the gated execution is a paused row');
   } finally {
     await setPipelineCostLimitUsd('');
+  }
+});
+
+test('bookends are exec rows carrying an executionId, and no phase event is emitted', { timeout: 120000 }, async () => {
+  const dir = gitDir('gbook');
+  const events = [];
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo task',
+    claude: { mock: true }, auto: true,
+  });
+  for (const name of ['exec', 'phase']) orch.on(name, (p) => events.push({ name, ...p }));
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+
+  assert.equal(events.some((e) => e.name === 'phase'), false, 'the shim is gone');
+  const pre = events.find((e) => e.executionId === 'x:preflight:1');
+  const done = events.find((e) => e.executionId === 'x:done:1');
+  assert.ok(pre && done, 'both bookends arrive as exec events');
+  assert.deepEqual([pre.nodeId, pre.kind, pre.ordinal, pre.agentKey], ['preflight', 'cycle', 1, null]);
+  assert.deepEqual(pre.trigger, { wireIds: [], freshPorts: [] });
+
+  // The LEDGER keeps the bookend rows, keyed BY the executionId, and each row
+  // carries `executionId` — without it artifacts.mjs persists execution_id NULL,
+  // stepRowToStep never restores it, and both readers (run-decor's ledgerRows,
+  // render.mjs's summary) stop filtering the bookends on a REHYDRATED run.
+  const live = orch.getState();
+  for (const id of BOOKEND_EXECUTION_IDS) {
+    const row = live.steps.find((s) => s.key === id);
+    assert.ok(row, `the ledger keeps ${id}`);
+    assert.equal(row.executionId, id, `${id} carries its executionId`);
+    assert.equal(row.kind, 'cycle');
+    assert.equal(row.agentKey, null);
+  }
+  // …and they survive the DB round-trip with execution_id intact (the rehydrated
+  // path the two readers actually run on in History).
+  const rehydrated = readPipelineForResume(live.id).steps
+    ?? (await import('../src/core/artifacts.mjs')).readPipeline(live.id).steps;
+  for (const id of BOOKEND_EXECUTION_IDS) {
+    const row = (rehydrated || []).find((s) => s.key === id);
+    assert.ok(row, `${id} round-tripped`);
+    assert.equal(row.executionId, id, `${id} kept execution_id through the DB`);
   }
 });

@@ -12126,7 +12126,7 @@ function initHdTabs(screen, record, data) {
 
 // Legacy manifests (CLIENT_DEFAULT_STEPPER — a run that predates state.stepper)
 // name their nodes by uiPhase, but the lines those runs logged carry the agent
-// ROLE. This is UI_PHASE (workflows.mjs:387-392) read backwards. The candidate
+// ROLE. This is UI_PHASE (shared/graph/manifest.mjs) read backwards. The candidate
 // list keeps BOTH spellings and the log's own dropdown picks the winner, so
 // neither vintage has to be detected — and the phase spelling can never win by
 // accident, because no log line has ever carried a phase string as its source

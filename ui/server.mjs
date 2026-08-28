@@ -251,7 +251,7 @@ function liveRunIds() {
 // persisted column) and never live. It rides the same pass-through as `stepskills`.
 // `exec` and `token` are the graph engine's (§5.7). `phase` stays for the v1
 // engine AND for the v2 shim until the graph cut-over retires it.
-const EVENT_NAMES = ['phase', 'exec', 'token', 'log', 'question', 'artifact', 'state', 'done', 'error', 'subagent', 'stepskills', 'stepgraphify', 'title'];
+const EVENT_NAMES = ['exec', 'token', 'log', 'question', 'artifact', 'state', 'done', 'error', 'subagent', 'stepskills', 'stepgraphify', 'title'];
 // The scan-* WS family (Workspaces M5, §5.4). A NEW family in the SAME runs Map;
 // the 7-event run plumbing above is untouched. createWorkspaceScan emits many
 // scan-progress then exactly one terminal scan-done OR scan-error.
@@ -558,7 +558,7 @@ function wireRun(entry) {
         entry.status = 'error';
         resolvePending(entry, { reason: 'error' });
       }
-      if (name === 'phase' || name === 'exec') {
+      if (name === 'exec') {
         entry.status = 'running';
       }
       if (name === 'state' && payload && typeof payload === 'object') {

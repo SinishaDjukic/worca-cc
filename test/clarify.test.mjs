@@ -58,7 +58,7 @@ test('orchestrator no longer exposes a clarify round cap', () => {
   assert.equal(orch.maxClarifyCycles, undefined, 'maxClarifyCycles field should be gone');
 });
 
-test('clarify runs exactly one round (no clarify phase past cycle 1)', async () => {
+test('clarify runs exactly one round (no clarify execution past ordinal 1)', async () => {
   const projectDir = await makeTmpDir();
   const orch = createOrchestrator({
     projectDir,
@@ -68,8 +68,8 @@ test('clarify runs exactly one round (no clarify phase past cycle 1)', async () 
   });
   const clarifyCycles = [];
   let clarifyQuestions = 0;
-  orch.on('phase', ({ phase, cycle }) => {
-    if (phase === 'clarify') clarifyCycles.push(cycle);
+  orch.on('exec', ({ agentKey, ordinal }) => {
+    if (agentKey === 'clarify') clarifyCycles.push(ordinal);
   });
   // In mock mode the planner always returns questions on the first call
   // (MOCK_PRIOR === 0), so a single clarify round must fire this exactly once.
@@ -78,7 +78,7 @@ test('clarify runs exactly one round (no clarify phase past cycle 1)', async () 
   });
   const res = await orch.run();
   assert.equal(res.status, 'done', 'mock pipeline should finish');
-  assert.ok(clarifyCycles.length > 0, 'clarify phase should run');
+  assert.ok(clarifyCycles.length > 0, 'the clarify node should run');
   assert.ok(
     clarifyCycles.every((c) => c === 1),
     `clarify must stay on cycle 1, saw cycles ${clarifyCycles.join(',')}`,

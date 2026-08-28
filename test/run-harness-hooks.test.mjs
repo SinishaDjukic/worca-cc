@@ -83,16 +83,20 @@ test('base hooks throw a named "engine hook not implemented" error', () => {
 
 test('the base implements _bookend and _initRunners (no engine needed)', () => {
   const h = new RunHarness({ projectDir: process.cwd() });
-  const phases = [];
-  h.on('phase', (p) => phases.push(p));
+  const execs = [];
+  h.on('exec', (p) => execs.push(p));
+  h.on('phase', () => assert.fail('the phase event died with the v1 engine'));
   h._bookend('preflight', 'start');
   h._bookend('preflight', 'done');
-  assert.deepEqual(phases, [
-    { phase: 'preflight', cycle: 0, status: 'start' },
-    { phase: 'preflight', cycle: 0, status: 'done' },
+  // A bookend is an EXECUTION row now: keyed x:<name>:1, agentKey null, kind
+  // 'cycle' — the two readers filter it by executionId, not by name.
+  assert.deepEqual(execs, [
+    { nodeId: 'preflight', executionId: 'x:preflight:1', kind: 'cycle', ordinal: 1, status: 'start', agentKey: null, trigger: { wireIds: [], freshPorts: [] } },
+    { nodeId: 'preflight', executionId: 'x:preflight:1', kind: 'cycle', ordinal: 1, status: 'done', agentKey: null, trigger: { wireIds: [], freshPorts: [] } },
   ]);
   assert.equal(h.state.steps.length, 1);
-  assert.equal(h.state.steps[0].key, 'preflight');
+  assert.equal(h.state.steps[0].key, 'x:preflight:1');
+  assert.equal(h.state.steps[0].executionId, 'x:preflight:1', 'persisted as execution_id');
   assert.equal(h.state.steps[0].status, 'done');
   assert.equal(h._runners, undefined, 'the base installs no runner registry');
 });
@@ -112,16 +116,16 @@ test('run(): the topology hook stamps state.stepper, feeds the preflight gate an
   const orch = new StubEngine({ projectDir: dir, prompt: 'demo task', claude: { mock: true }, auto: true });
   const seen = { stepperAt: -1, phases: [] };
   orch.on('state', (s) => { if (seen.stepperAt < 0 && s.stepper) seen.stepperAt = seen.phases.length; });
-  orch.on('phase', (p) => seen.phases.push(`${p.phase}:${p.status}`));
+  orch.on('exec', (p) => seen.phases.push(`${p.nodeId}:${p.status}`));
   const res = await orch.run();
   assert.equal(res.status, 'done');
   assert.equal(orch.calls.topology, 1);
   assert.ok(orch.calls.registryKeys > 0, 'the base loads the registry and hands it to the hook');
   assert.deepEqual(orch.state.stepper, { version: 99, steps: [{ kind: 'stub' }], feedbacks: [] });
-  assert.equal(seen.stepperAt, 0, 'stepper is stamped before the first phase event');
+  assert.equal(seen.stepperAt, 0, 'stepper is stamped before the first exec event');
   assert.deepEqual(seen.phases, ['preflight:start', 'preflight:done', 'done:done']);
   assert.deepEqual(orch.calls.engineRun, [{ resume: null }]);
-  assert.equal(orch.state.steps.at(-1).key, 'done');
+  assert.equal(orch.state.steps.at(-1).key, 'x:done:1');
   // The workflow field of the topology bag is what the audit line renders (P1-c).
   assert.match(auditOf(orch.pipeline.id), /Workflow: \*\*Stub\*\* \(wf_stub\)\./, 'the audit line comes from topology.workflow');
 });
@@ -152,7 +156,7 @@ test('run(): a topology bag missing `workflow` fails AT THE SEAM, before the eng
 test('run(): a pause requested during preflight lands on _enginePrePausePoint and is what resume() will read back', async () => {
   const dir = await makeRepo();
   const orch = new StubEngine({ projectDir: dir, prompt: 'demo', claude: { mock: true }, auto: true });
-  orch.on('phase', (p) => { if (p.phase === 'preflight' && p.status === 'done') assert.equal(orch.pause(), true); });
+  orch.on('exec', (p) => { if (p.nodeId === 'preflight' && p.status === 'done') assert.equal(orch.pause(), true); });
   const res = await orch.run();
   assert.equal(res.status, 'paused');
   assert.equal(orch.calls.prePause, 1, 'the engine decided the pre-engine resume point');

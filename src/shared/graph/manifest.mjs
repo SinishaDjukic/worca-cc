@@ -4,16 +4,23 @@
 // here may be re-resolved later. Built once per run (and by resume()), NEVER
 // rewritten mid-run — fan-out lives in the execution ledger, not the manifest.
 //
-// It also carries the coexistence SHIM: `steps` cells and `feedbacks` in the v1
-// buildStepperManifest shape, so every unported v1 consumer keeps working until
-// P8 deletes them. UI_PHASE is COPIED here (shared code may not import
-// workflows.mjs); P8 deletes both copies together.
+// It also carries DERIVED `steps` cells and `feedbacks` in the shape the v1
+// buildStepperManifest used to produce. P1's handoff said P8 would delete them;
+// it does NOT, and deliberately: they have LIVE v2 readers (findManifestNode,
+// cycleAwareLabel, nodeLabelLookup, manifestStepsForWires, loopCounts), so they
+// are a real part of the v2 manifest now, not a shim. What made them safe is
+// manifestFor() returning an EMPTY manifest instead of the v1 default seven.
+// UI_PHASE survives for the same reason: `:116` stamps `uiPhase` on every v2
+// agent cell, and the sub_agents.ui_phase attribution column still needs it. The
+// workflows.mjs copy is gone (the v1 topology helpers went with the v1 engine),
+// so THIS is the only copy — shared code may not import workflows.mjs.
 import { TEMPLATE_VERSION, AWAIT_PORT, DEFAULT_MAX_CYCLES } from './constants.mjs';
 import { portsFnFor, portsOf, resolveOrOutType } from './ports.mjs';
 import { classifyLoops } from './loops.mjs';
 import { rankNodes } from './layout.mjs';
 
-/** Agent key -> the v1 UI stepper bucket (workflows.mjs:385-390). */
+/** Agent key -> the UI stepper bucket. The only copy: the v1 original left
+ *  workflows.mjs with the topology helpers. */
 export const UI_PHASE = Object.freeze({
   clarify: 'clarify',
   planner: 'plan', refiner: 'refine', decomposer: 'decompose', implementer: 'implement', reviewer: 'review',

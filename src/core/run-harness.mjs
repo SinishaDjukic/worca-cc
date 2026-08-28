@@ -2767,7 +2767,10 @@ export class RunHarness extends EventEmitter {
     this.state.cycle = cycle;
     this._recordStep(phase, cycle, status, nodeId);
     this.state.updatedAt = new Date().toISOString();
-    this._emit('phase', { phase, cycle, status });
+    // No `phase` event: the v1 event vocabulary died with the v1 engine. The
+    // state.phase/state.cycle SCALARS stay — they are harness-local (state
+    // initialises phase:'idle', _recordCost falls back to them, and
+    // test/run-harness-hooks pins the contract).
     this._emit('state', this.getState());
     // Persist on phase boundaries so history/audit stay fresh.
     this._persist().catch(() => {});
@@ -3387,11 +3390,30 @@ export class RunHarness extends EventEmitter {
    *  writes it verbatim as the resume audit line. */
   _engineRehydrate(_rp) { throw new Error('engine hook not implemented: _engineRehydrate'); }
 
-  /** Framework bookend markers ('preflight' | 'done'). Emitted by the base for
-   *  EVERY engine, so both engines bracket their runs identically. P8 turns
-   *  these into `exec` rows. */
+  /** Preflight/Done are ledger rows like any other execution: keyed
+   *  `x:<name>:1`, agentKey null, excluded from progress and execution counts by
+   *  the readers (run-decor's ledgerRows, cli/render's summary). */
   _bookend(name, status) {
-    this._phase(name, 0, status);
+    const executionId = `x:${name}:1`;
+    // _recordStep keys on `cycle ? phase#cycle : phase`, so pass cycle 0 to get
+    // the executionId VERBATIM as the ledger key, then stamp the exec columns.
+    // `executionId` is NOT optional: artifacts.mjs persists execution_id from it,
+    // and without it a REHYDRATED run stops filtering the bookends.
+    this._recordStep(executionId, 0, status, name);
+    const row = this.state.steps.find((s) => s.key === executionId);
+    if (row) {
+      Object.assign(row, {
+        executionId, nodeId: name, phase: null, cycle: 1, kind: 'cycle', ordinal: 1,
+        agentKey: null, stepIndex: null, trigger: { wireIds: [], freshPorts: [] },
+      });
+    }
+    this.state.updatedAt = new Date().toISOString();
+    this._emit('exec', {
+      nodeId: name, executionId, kind: 'cycle', ordinal: 1, status,
+      agentKey: null, trigger: { wireIds: [], freshPorts: [] },
+    });
+    this._emit('state', this.getState());
+    this._persist().catch(() => {});
   }
 
   /** Constructor seam for the v1 runner registry (v1 only; the graph engine
