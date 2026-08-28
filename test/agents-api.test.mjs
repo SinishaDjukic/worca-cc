@@ -103,7 +103,18 @@ test('built-in guardrails: PUT/DELETE planner -> 409, duplicate POST -> 409, bad
 
 test('DELETE a workflow-referenced agent -> 409; POST /api/workflows accepts a user-agent key', async () => {
   await post('/api/agents', { meta: META, markdown: MD });
-  const wf = await post('/api/workflows', { name: 'Uses Docs', steps: [[{ id: 's0_0', key: 'docsWriter' }]], feedbacks: [] });
+  // POST /api/workflows takes ONLY a v2 graph now. docsWriter consumes `plan`
+  // and produces `review`, so the graph needs a planner upstream of it.
+  const wf = await post('/api/workflows', {
+    version: 2, name: 'Uses Docs', domain: 'coding',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
+      { id: 'n_docs', kind: 'agent', key: 'docsWriter', x: 600, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 900, y: 0, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+      { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_docs', port: 'plan' } },
+      { id: 'w3', from: { node: 'n_docs', port: 'review' }, to: { node: 'n_end', port: 'result' } }],
+  });
   assert.equal(wf.status, 201, 'user agent validates in a workflow');
   const r = await del('/api/agents/docsWriter');
   assert.equal(r.status, 409);

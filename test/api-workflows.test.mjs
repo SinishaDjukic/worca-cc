@@ -17,6 +17,17 @@ useTempHome(after);
 let homeDir, srv, base, prevHome;
 const JSONH = { 'Content-Type': 'application/json' };
 
+/** A minimal VALID v2 graph body — the only shape POST /api/workflows takes
+ *  after the v2 break (the v1 steps/feedbacks body is refused with 400). */
+const graphBody = (name) => ({
+  version: 2, name, domain: 'coding',
+  nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+    { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
+    { id: 'n_end', kind: 'end', x: 600, y: 0, config: {} }],
+  wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+    { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_end', port: 'result' } }],
+});
+
 before(async () => {
   // Redirect the global ~/.worca-cc (workflow store) into a sandbox.
   homeDir = await mkdtemp(join(tmpdir(), 'worca-cc-wfapi-'));
@@ -63,41 +74,10 @@ test('GET /api/workflows/:id is 404 for an unknown id', async () => {
   assert.ok((await r.json()).error);
 });
 
-test('POST /api/workflows validates and rejects an empty-steps template -> 400', async () => {
-  const r = await fetch(`${base}/api/workflows`, {
-    method: 'POST', headers: JSONH,
-    body: JSON.stringify({ name: 'Bad', steps: [], feedbacks: [] }),
-  });
-  assert.equal(r.status, 400);
-  const j = await r.json();
-  assert.ok(Array.isArray(j.errors) && j.errors.length >= 1, 'returns validator errors');
-});
-
-test('POST /api/workflows rejects a node with an unknown agent key -> 400', async () => {
-  const r = await fetch(`${base}/api/workflows`, {
-    method: 'POST', headers: JSONH,
-    body: JSON.stringify({
-      name: 'Bogus',
-      steps: [[{ id: 's0_0', key: 'notAnAgent' }]],
-      feedbacks: [],
-    }),
-  });
-  assert.equal(r.status, 400);
-  assert.ok((await r.json()).errors.length >= 1);
-});
-
 test('POST /api/workflows creates a valid template -> 201, then it lists', async () => {
   const r = await fetch(`${base}/api/workflows`, {
     method: 'POST', headers: JSONH,
-    body: JSON.stringify({
-      name: 'Quick Fix',
-      steps: [
-        [{ id: 's0_0', key: 'planner' }],
-        [{ id: 's1_0', key: 'implementer' }],
-        [{ id: 's2_0', key: 'reviewer' }],
-      ],
-      feedbacks: [{ id: 'fb_0', from: 's2_0', to: 's1_0' }],
-    }),
+    body: JSON.stringify(graphBody('Quick Fix')),
   });
   assert.equal(r.status, 201);
   const { workflow } = await r.json();
@@ -134,11 +114,7 @@ test('DELETE /api/workflows/:id removes a created template', async () => {
   // Create one to delete.
   const created = await (await fetch(`${base}/api/workflows`, {
     method: 'POST', headers: JSONH,
-    body: JSON.stringify({
-      name: 'Disposable',
-      steps: [[{ id: 's0_0', key: 'planner' }], [{ id: 's1_0', key: 'reviewer' }]],
-      feedbacks: [],
-    }),
+    body: JSON.stringify(graphBody('Disposable')),
   })).json();
   const id = created.workflow.id;
 
@@ -187,11 +163,7 @@ test('POST /api/run accepts an explicit workflowId', async () => {
   // Create a custom workflow, then run it.
   const wf = await (await fetch(`${base}/api/workflows`, {
     method: 'POST', headers: JSONH,
-    body: JSON.stringify({
-      name: 'Run Me',
-      steps: [[{ id: 's0_0', key: 'planner' }], [{ id: 's1_0', key: 'reviewer' }]],
-      feedbacks: [],
-    }),
+    body: JSON.stringify(graphBody('Run Me')),
   })).json();
 
   const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-run-'));
@@ -267,4 +239,15 @@ test('PATCH /api/config without projectDir -> 400', async () => {
     body: JSON.stringify({ workflowId: 'wf_default', nodes: {} }),
   });
   assert.equal(r.status, 400);
+});
+
+test('POST /api/workflows rejects a v1 body with 400 and never writes a row', async () => {
+  const res = await fetch(`${base}/api/workflows`, {
+    method: 'POST', headers: JSONH,
+    body: JSON.stringify({ name: 'Legacy', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] }),
+  });
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).error, 'v1 pipeline templates are no longer accepted — save a graph (version 2)');
+  const list = await (await fetch(`${base}/api/workflows`)).json();
+  assert.equal(list.workflows.some((w) => w.name === 'Legacy'), false);
 });

@@ -92,13 +92,12 @@ import {
   writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
 } from '../src/core/guardrail-store.mjs';
 import {
-  GRAPH_DEFAULT_WORKFLOW, listWorkflows, writeWorkflow, deleteWorkflow,
+  GRAPH_DEFAULT_WORKFLOW, listWorkflows, deleteWorkflow,
   setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow,
 } from '../src/core/workflows.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
 import { validateGraph } from '../src/shared/graph/validate.mjs';
-import { validateWorkflow } from '../src/core/workflow-validator.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
@@ -3226,72 +3225,47 @@ app.get('/api/workflows/:id', async (req, res) => {
 
 app.post('/api/workflows', async (req, res) => {
   const body = req.body || {};
+  // The v1 pipeline format is RETIRED: only graphs are accepted (spec §10.2).
+  // The whole v1 arm (its steps-borne node defaults, validateWorkflow and
+  // writeWorkflow) died with it — nothing reaches the v1 store through the API.
+  if (body.version !== 2) {
+    return badRequest(res, 'v1 pipeline templates are no longer accepted — save a graph (version 2)');
+  }
   // ── v2 graph save ──────────────────────────────────────────────────────────
   // The 422 body is the SHARED validator's issue list, by construction: the
   // composer renders exactly what it would have computed locally, so the server
   // and the client can never disagree about why a graph is illegal.
-  if (body.version === 2) {
-    const graph = {
-      id: typeof body.id === 'string' ? body.id : undefined,
-      name: typeof body.name === 'string' ? body.name.trim() : '',
-      domain: typeof body.domain === 'string' ? body.domain : undefined,
-      nodes: Array.isArray(body.nodes) ? body.nodes : [],
-      wires: Array.isArray(body.wires) ? body.wires : [],
-      ...(body.canvas && typeof body.canvas === 'object' ? { canvas: body.canvas } : {}),
-    };
-    if (!graph.name) return badRequest(res, 'name is required');
-    try {
-      // Catalog validation FIRST, exactly like the v1 branch below: a v2 node's
-      // `config` IS its defaults block (§4), so a model/effort the per-project
-      // override could not name must not ride in through a template save.
-      // nodeDefaultsError reads only `model`/`effort`, so only the tunables are
-      // handed to it — topology keys (awaitAll, arity, planStoreSeed) never are.
-      const models = await listModels('');
-      const TUNABLES = ['model', 'effort', 'fanOut', 'askQuestions'];
-      for (const n of graph.nodes) {
-        if (!n || n.kind !== 'agent' || !n.config || typeof n.config !== 'object') continue;
-        const picked = Object.fromEntries(
-          TUNABLES.filter((k) => k in n.config).map((k) => [k, n.config[k]]));
-        const bad = nodeDefaultsError(picked, models, `node "${n.id}"`);
-        if (bad) return badRequest(res, bad);
-      }
-      const portsFn = registryPortsFn(loadAgentRegistry(AGENTS_DIR));
-      const { errors, warnings } = validateGraph({ ...graph, version: 2 }, portsFn);
-      if (errors.length) return res.status(422).json({ error: 'invalid graph', errors, warnings });
-      const workflow = await writeGraphWorkflow(graph);
-      return res.status(201).json({ workflow, warnings });
-    } catch (err) {
-      return res.status(500).json({ error: err && err.message ? err.message : String(err) });
-    }
-  }
-  // Build the candidate template from the editor payload (topology only).
-  const tpl = {
+  const graph = {
+    id: typeof body.id === 'string' ? body.id : undefined,
     name: typeof body.name === 'string' ? body.name.trim() : '',
-    domain: typeof body.domain === 'string' ? body.domain : undefined, // writeWorkflow normDomain → 'general' if absent/blank/malformed
-    steps: Array.isArray(body.steps) ? body.steps : [],
-    feedbacks: Array.isArray(body.feedbacks) ? body.feedbacks : [],
+    domain: typeof body.domain === 'string' ? body.domain : undefined,
+    nodes: Array.isArray(body.nodes) ? body.nodes : [],
+    wires: Array.isArray(body.wires) ? body.wires : [],
+    ...(body.canvas && typeof body.canvas === 'object' ? { canvas: body.canvas } : {}),
   };
-  if (!tpl.name) return badRequest(res, 'name is required');
+  if (!graph.name) return badRequest(res, 'name is required');
   try {
-    // Per-node defaults ride along in steps (§4.4); hold them to the same catalog
-    // rules as PATCH .../defaults so an imported template cannot smuggle in a
-    // model id that no per-project override would be allowed to name.
+    // Catalog validation FIRST: a v2 node's `config` IS its defaults block (§4),
+    // so a model/effort the per-project override could not name must not ride in
+    // through a template save. nodeDefaultsError reads only `model`/`effort`, so
+    // only the tunables are handed to it — topology keys (awaitAll, arity,
+    // planStoreSeed) never are.
     const models = await listModels('');
-    for (const group of tpl.steps) {
-      for (const node of Array.isArray(group) ? group : []) {
-        if (!node || typeof node !== 'object' || node.defaults === undefined) continue;
-        const err = nodeDefaultsError(node.defaults, models, `node "${node.id}"`);
-        if (err) return badRequest(res, err);
-      }
+    const TUNABLES = ['model', 'effort', 'fanOut', 'askQuestions'];
+    for (const n of graph.nodes) {
+      if (!n || n.kind !== 'agent' || !n.config || typeof n.config !== 'object') continue;
+      const picked = Object.fromEntries(
+        TUNABLES.filter((k) => k in n.config).map((k) => [k, n.config[k]]));
+      const bad = nodeDefaultsError(picked, models, `node "${n.id}"`);
+      if (bad) return badRequest(res, bad);
     }
-    const registry = loadAgentRegistry(AGENTS_DIR);
-    const { ok, errors, warnings } = validateWorkflow(tpl, registry);
-    if (!ok) return res.status(400).json({ error: 'invalid workflow', errors, warnings });
-    // writeWorkflow stamps id/createdAt/updatedAt and writes atomically (temp+rename).
-    const workflow = await writeWorkflow(tpl); // CONV-1: await
-    res.status(201).json({ workflow, warnings });
+    const portsFn = registryPortsFn(loadAgentRegistry(AGENTS_DIR));
+    const { errors, warnings } = validateGraph({ ...graph, version: 2 }, portsFn);
+    if (errors.length) return res.status(422).json({ error: 'invalid graph', errors, warnings });
+    const workflow = await writeGraphWorkflow(graph);
+    return res.status(201).json({ workflow, warnings });
   } catch (err) {
-    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+    return res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
 

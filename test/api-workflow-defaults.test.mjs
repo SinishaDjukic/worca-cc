@@ -40,40 +40,51 @@ after(async () => {
 const post = (path, body) => fetch(`${base}${path}`, { method: 'POST', headers: JSONH, body: JSON.stringify(body) });
 const patch = (path, body) => fetch(`${base}${path}`, { method: 'PATCH', headers: JSONH, body: JSON.stringify(body) });
 
+// POST /api/workflows takes ONLY a v2 graph after the break. V2 pins node ids to
+// /^n_[a-z0-9]{1,32}$/, so the old n0/n1 become n_a/n_b, and a node's per-node
+// defaults ARE its `config` block (§4) rather than a `defaults` key inside steps.
 async function makeWorkflow(name) {
   const r = await post('/api/workflows', {
-    name,
-    steps: [[{ id: 'n0', key: 'planner' }], [{ id: 'n1', key: 'reviewer' }]],
-    feedbacks: [],
+    version: 2, name, domain: 'coding',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_a', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
+      { id: 'n_b', kind: 'agent', key: 'reviewer', x: 600, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 900, y: 0, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_a', port: 'task' } },
+      { id: 'w2', from: { node: 'n_a', port: 'plan' }, to: { node: 'n_b', port: 'plan' } },
+      { id: 'w3', from: { node: 'n_b', port: 'review' }, to: { node: 'n_end', port: 'result' } }],
   });
   assert.equal(r.status, 201, `create ${name}`);
   return (await r.json()).workflow.id;
 }
+
+/** A saved graph's per-node block, as GET /api/workflows/:id serves it. */
+const nodeConfig = (tpl, id) => tpl.nodes.find((n) => n.id === id).config;
 
 // ── PATCH /api/workflows/:id/defaults ───────────────────────────────────────
 
 test('PATCH .../defaults stores per-node defaults and echoes the flattened map', async () => {
   const id = await makeWorkflow('Defaults Happy');
   const r = await patch(`/api/workflows/${id}/defaults`, {
-    defaults: { n0: { model: 'claude-opus-4-8', effort: 'high', fanOut: true }, n1: { fanOut: false } },
+    defaults: { n_a: { model: 'claude-opus-4-8', effort: 'high', fanOut: true }, n_b: { fanOut: false } },
   });
   assert.equal(r.status, 200);
   const j = await r.json();
   assert.deepEqual(j.defaults, {
-    n0: { model: 'claude-opus-4-8', effort: 'high', fanOut: true },
-    n1: { fanOut: false },
+    n_a: { model: 'claude-opus-4-8', effort: 'high', fanOut: true },
+    n_b: { fanOut: false },
   });
   // GET reflects it, so a reload paints the same rows.
   const got = await (await fetch(`${base}/api/workflows/${id}`)).json();
-  assert.deepEqual(got.steps[0][0].defaults, { model: 'claude-opus-4-8', effort: 'high', fanOut: true });
+  assert.deepEqual(nodeConfig(got, 'n_a'), { model: 'claude-opus-4-8', effort: 'high', fanOut: true });
 });
 
 test('PATCH .../defaults rejects an unknown model, a bad effort, and an effort with no model', async () => {
   const id = await makeWorkflow('Defaults Validation');
   for (const [defaults, re] of [
-    [{ n0: { model: 'no-such-model' } }, /unknown model/],
-    [{ n0: { model: 'claude-opus-4-8', effort: 'ludicrous' } }, /unknown effort/],
-    [{ n0: { effort: 'high' } }, /select a model/],
+    [{ n_a: { model: 'no-such-model' } }, /unknown model/],
+    [{ n_a: { model: 'claude-opus-4-8', effort: 'ludicrous' } }, /unknown effort/],
+    [{ n_a: { effort: 'high' } }, /select a model/],
   ]) {
     const r = await patch(`/api/workflows/${id}/defaults`, { defaults });
     assert.equal(r.status, 400, JSON.stringify(defaults));
@@ -81,7 +92,7 @@ test('PATCH .../defaults rejects an unknown model, a bad effort, and an effort w
   }
   // Nothing partial was written.
   const got = await (await fetch(`${base}/api/workflows/${id}`)).json();
-  assert.equal(got.steps[0][0].defaults, undefined);
+  assert.deepEqual(nodeConfig(got, 'n_a'), {}, 'an untouched node keeps an EMPTY config, never a defaults key');
 });
 
 test('PATCH .../defaults: 400 on a non-object body, 404 unknown id, 400 on the built-in default', async () => {
@@ -93,11 +104,14 @@ test('PATCH .../defaults: 400 on a non-object body, 404 unknown id, 400 on the b
   assert.match((await frozen.json()).error, /cannot store defaults/);
 });
 
-test('POST /api/workflows validates defaults that ride along inside steps', async () => {
+test('POST /api/workflows validates defaults that ride along inside node config', async () => {
   const r = await post('/api/workflows', {
-    name: 'Smuggled',
-    steps: [[{ id: 'n0', key: 'planner', defaults: { model: 'no-such-model' } }]],
-    feedbacks: [],
+    version: 2, name: 'Smuggled', domain: 'coding',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_a', kind: 'agent', key: 'planner', x: 300, y: 0, config: { model: 'no-such-model' } },
+      { id: 'n_end', kind: 'end', x: 600, y: 0, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_a', port: 'task' } },
+      { id: 'w2', from: { node: 'n_a', port: 'plan' }, to: { node: 'n_end', port: 'result' } }],
   });
   assert.equal(r.status, 400);
   assert.match((await r.json()).error, /unknown model/);
@@ -114,7 +128,7 @@ test('DELETE /api/config/workflow drops that workflow\'s node + feedback overrid
   for (const id of [keep, drop]) {
     await patch('/api/config', {
       projectDir, workflowId: id,
-      nodes: { n0: { model: 'claude-opus-4-8', effort: 'high' } },
+      nodes: { n_a: { model: 'claude-opus-4-8', effort: 'high' } },
       feedbacks: { fb: { maxCycles: 9 } },
     });
   }
@@ -125,7 +139,7 @@ test('DELETE /api/config/workflow drops that workflow\'s node + feedback overrid
   assert.equal(r.status, 200);
   const cfg = (await r.json()).config;
   assert.equal(cfg.workflows[drop], undefined, 'reset workflow has no overrides left');
-  assert.deepEqual(cfg.workflows[keep].nodes.n0, { model: 'claude-opus-4-8', effort: 'high' }, 'other workflow untouched');
+  assert.deepEqual(cfg.workflows[keep].nodes.n_a, { model: 'claude-opus-4-8', effort: 'high' }, 'other workflow untouched');
   assert.equal(cfg.workflows[keep].feedbacks.fb.maxCycles, 9);
 });
 
