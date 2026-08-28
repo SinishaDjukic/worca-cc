@@ -7,18 +7,12 @@ import { join } from 'node:path';
 
 import {
   GRAPH_DEFAULT_WORKFLOW,
-  LEGACY_DEFAULT_ID,
-  resolveGraph,
   workflowsDir,
   listWorkflows,
   readWorkflow,
   writeWorkflow,
   deleteWorkflow,
-  resolveWorkflow,
-  buildStepperManifest,
 } from '../src/core/workflows.mjs';
-import { setNodeModel, setFeedbackCycles, setStep } from '../src/core/config.mjs';
-import { loadAgentRegistry } from '../src/core/agent-registry.mjs'; // ▲ v3: add (not yet imported)
 import { getDb, _resetForTests } from '../src/core/db.mjs';
 
 // Each test gets its own ~/.worca-cc via WORCA_HOME so the global store is
@@ -112,15 +106,7 @@ test('listWorkflows returns user templates sorted newest-first; excludes wf_defa
   const b = await writeWorkflow({ id: 'wf_b', name: 'B', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [], createdAt: '2026-02-01T00:00:00.000Z' });
   const list = await listWorkflows();
   assert.deepEqual(list.map((w) => w.id), ['wf_b', 'wf_a']); // newest createdAt first
-  assert.ok(!list.some((w) => w.id === 'wf_default'), 'DEFAULT_WORKFLOW is not in the user store');
-});
-
-test('readWorkflow returns GRAPH_DEFAULT_WORKFLOW for "wf_default"', async () => {
-  await freshHome();
-  const got = await readWorkflow('wf_default');
-  assert.equal(got.id, 'wf_default');
-  assert.equal(got.version, 2, 'the built-in default is the GRAPH after the v2 break');
-  assert.equal(got.nodes.length, 7);
+  assert.ok(!list.some((w) => w.id === 'wf_default'), 'LEGACY_DEFAULT_WORKFLOW is not in the user store');
 });
 
 test('readWorkflow returns null for a missing id; listWorkflows is [] on an empty store', async () => {
@@ -147,7 +133,7 @@ test('deleteWorkflow refuses to delete the built-in default (returns false, leav
   await freshHome();
   assert.equal(await deleteWorkflow('wf_default'), false);
   const still = await readWorkflow('wf_default');
-  assert.equal(still.id, 'wf_default'); // DEFAULT_WORKFLOW is always present
+  assert.equal(still.id, 'wf_default'); // LEGACY_DEFAULT_WORKFLOW is always present
 });
 
 // --- Security: unsafe-id guard on workflow ids -----------------------------
@@ -186,319 +172,8 @@ const REGISTRY = {
   reviewer: { key: 'reviewer', runnerType: 'verifier', agentFile: 'worca-cc-code-reviewer.md', loopSource: true },
 };
 
-test('resolveWorkflow(default) yields a 5-step ExecutablePlan with prompts and default cycles', async () => {
-  await freshHome();
-  const p = await freshProject();
-  const plan = await resolveWorkflow(p, LEGACY_DEFAULT_ID, REGISTRY);
-  assert.equal(plan.id, 'wf_default');
-  assert.equal(plan.steps.length, 5);
-  const flat = plan.steps.flat();
-  assert.deepEqual(flat.map((n) => n.key), ['clarify', 'planner', 'refiner', 'implementer', 'reviewer']);
-  // Each node carries the resolved runner + a non-empty agentPrompt from its file.
-  for (const n of flat) {
-    assert.ok(['producer', 'verifier', 'clarifier'].includes(n.runnerType), `runnerType for ${n.key}`);
-    assert.ok(typeof n.agentPrompt === 'string' && n.agentPrompt.length > 0, `prompt for ${n.key}`);
-    assert.ok('model' in n && 'effort' in n, 'model/effort fields present');
-    assert.ok(Array.isArray(n.tools), 'tools array present');
-  }
-  // loopSource flows through from the registry.
-  assert.equal(flat.find((n) => n.key === 'reviewer').loopSource, true);
-  assert.equal(flat.find((n) => n.key === 'planner').loopSource, false);
-  // Feedbacks carry the gate + a default maxCycles of 3 (matches the UI default).
-  assert.equal(plan.feedbacks.length, 2);
-  for (const f of plan.feedbacks) {
-    assert.equal(f.gate, 'hasBlocking');
-    assert.equal(f.maxCycles, 3);
-  }
-});
 
-test('resolveWorkflow overlays per-project model/effort and feedback cycles', async () => {
-  await freshHome();
-  const p = await freshProject();
-  await setNodeModel(p, LEGACY_DEFAULT_ID, 's2_0', { model: 'claude-opus-4-8', effort: 'high' });
-  await setFeedbackCycles(p, LEGACY_DEFAULT_ID, 'fb_review', 2);
-  const plan = await resolveWorkflow(p, LEGACY_DEFAULT_ID, REGISTRY);
-  const impl = plan.steps.flat().find((n) => n.nodeId === 's2_0');
-  assert.equal(impl.model, 'claude-opus-4-8');
-  assert.equal(impl.effort, 'high');
-  const reviewFb = plan.feedbacks.find((f) => f.id === 'fb_review');
-  assert.equal(reviewFb.maxCycles, 2);
-});
-
-// ── M4: workspace substitution (opts.isWorkspace) + the off-pipeline scanner guard ──
-test('resolveWorkflow({isWorkspace:true}) substitutes the review node reviewer -> workspaceReviewer', async () => {
-  await freshHome();
-  const p = await freshProject();
-  const reg = loadAgentRegistry(); // real registry has both reviewer + workspaceReviewer
-  const plan = await resolveWorkflow(p, LEGACY_DEFAULT_ID, reg, undefined, { isWorkspace: true });
-  const keys = plan.steps.flat().map((n) => n.key);
-  assert.deepEqual(keys, ['clarify', 'planner', 'refiner', 'implementer', 'workspaceReviewer'],
-    'the review node key becomes workspaceReviewer on a workspace run');
-  const wsR = plan.steps.flat().find((n) => n.key === 'workspaceReviewer');
-  assert.equal(wsR.runnerType, 'verifier', 'resolved from the workspaceReviewer meta');
-  assert.equal(wsR.loopSource, true, 'workspaceReviewer is a loop source');
-  assert.equal(wsR.uiPhase, 'review', 'shares the single-project review stepper bucket');
-  assert.ok(typeof wsR.agentPrompt === 'string' && wsR.agentPrompt.length > 0, 'its body loads (the contract)');
-  // The feedback edge (s3_0 -> s2_0) is preserved — the nodeId is unchanged by substitution.
-  assert.ok(plan.feedbacks.some((f) => f.from === 's3_0' && f.to === 's2_0'), 'review->implement loop intact');
-});
-
-test('resolveWorkflow substitution is GATED: no opts === {isWorkspace:false}, single-project byte-identical', async () => {
-  await freshHome();
-  const p = await freshProject();
-  const reg = loadAgentRegistry();
-  const noOpts = await resolveWorkflow(p, LEGACY_DEFAULT_ID, reg);
-  const falseWs = await resolveWorkflow(p, LEGACY_DEFAULT_ID, reg, undefined, { isWorkspace: false });
-  assert.deepEqual(noOpts, falseWs, 'no opts is byte-identical to {isWorkspace:false}');
-  // Both keep the single-project reviewer; neither substitutes.
-  assert.deepEqual(noOpts.steps.flat().map((n) => n.key), ['clarify', 'planner', 'refiner', 'implementer', 'reviewer']);
-  assert.ok(!noOpts.steps.flat().some((n) => n.key === 'workspaceReviewer'), 'no workspaceReviewer when not a workspace run');
-});
-
-test('resolveWorkflow throws if a workflow hand-authors a workspaceScanner node (off-pipeline guard)', async () => {
-  await freshHome();
-  const p = await freshProject();
-  const reg = loadAgentRegistry();
-  await writeWorkflow({
-    id: 'wf_badscan',
-    name: 'Bad Scan',
-    steps: [[{ id: 'n_scan', key: 'workspaceScanner' }], [{ id: 'n_impl', key: 'implementer' }]],
-    feedbacks: [],
-  });
-  await assert.rejects(
-    () => resolveWorkflow(p, 'wf_badscan', reg),
-    /workspaceScanner is an off-pipeline producer and cannot be a workflow node/,
-    'the off-pipeline scanner must never resolve as a node',
-  );
-  // The guard fires regardless of isWorkspace (the scanner is never a node either way).
-  await assert.rejects(() => resolveWorkflow(p, 'wf_badscan', reg, undefined, { isWorkspace: true }),
-    /workspaceScanner is an off-pipeline producer/);
-});
-
-test('resolveWorkflow resolves a saved template (incl. a parallel step)', async () => {
-  await freshHome();
-  const p = await freshProject();
-  await writeWorkflow({
-    id: 'wf_par',
-    name: 'Parallel',
-    steps: [
-      [{ id: 'n_plan', key: 'planner' }],
-      [{ id: 'n_impl', key: 'implementer' }, { id: 'n_refine', key: 'refiner' }], // parallel group
-      [{ id: 'n_rev', key: 'reviewer' }],
-    ],
-    feedbacks: [{ id: 'fb_r', from: 'n_rev', to: 'n_impl' }],
-  });
-  const plan = await resolveWorkflow(p, 'wf_par', REGISTRY);
-  assert.equal(plan.steps.length, 3);
-  assert.equal(plan.steps[1].length, 2); // the parallel group survives
-  assert.deepEqual(plan.steps[1].map((n) => n.nodeId).sort(), ['n_impl', 'n_refine']);
-  assert.equal(plan.feedbacks[0].from, 'n_rev');
-  assert.equal(plan.feedbacks[0].to, 'n_impl');
-});
-
-test('resolveWorkflow throws for an unknown workflow id', async () => {
-  await freshHome();
-  const p = await freshProject();
-  await assert.rejects(() => resolveWorkflow(p, 'wf_missing', REGISTRY), /wf_missing|not found|unknown/i);
-});
-
-const REG = {
-  planner:     { displayName: 'Plan',                 color: 'violet', description: 'architecture & breakdown' },
-  refiner:     { displayName: 'Refine Plan',          color: 'green',  description: 'tighten the plan' },
-  implementer: { displayName: 'Implementation',       color: 'amber',  description: 'write the code' },
-  reviewer:    { displayName: 'Review Implementation',color: 'blue',   description: 'verify & report' },
-  manualTestsChecklist: { displayName: 'Manual Tests Checklist', color: 'blue',   description: 'draft manual test cases' },
-  manualWebUiTesting:   { displayName: 'Manual web UI testing',  color: 'violet', description: 'drive the browser' },
-};
-
-test('buildStepperManifest: brackets nodes with preflight + done', () => {
-  const plan = {
-    id: 'wf_default', name: 'Default',
-    steps: [
-      [{ nodeId: 's0_0', key: 'planner',     uiPhase: 'plan' }],
-      [{ nodeId: 's1_0', key: 'refiner',     uiPhase: 'refine' }],
-      [{ nodeId: 's2_0', key: 'implementer', uiPhase: 'implement' }],
-      [{ nodeId: 's3_0', key: 'reviewer',    uiPhase: 'review' }],
-    ],
-    feedbacks: [
-      { id: 'fb_refine', from: 's1_0', to: 's1_0' },
-      { id: 'fb_review', from: 's3_0', to: 's2_0' },
-    ],
-  };
-  const m = buildStepperManifest(plan, REG);
-  assert.equal(m.version, 1);
-  assert.equal(m.steps.length, 6); // preflight + 4 + done
-  assert.deepEqual(m.steps[0], { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] });
-  assert.deepEqual(m.steps[5], { kind: 'done',      nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] });
-  assert.deepEqual(m.steps[1].nodes[0], {
-    id: 's0_0', key: 'planner', uiPhase: 'plan', label: 'Plan',
-    color: 'violet', sub: 'architecture & breakdown', cycles: false,
-    model: '', effort: '',
-  });
-  // fb_review targets s2_0 (implementer); fb_refine self-loops s1_0 (refiner).
-  assert.equal(m.steps[2].nodes[0].cycles, true);  // s1_0 refiner — self-loop target
-  assert.equal(m.steps[3].nodes[0].cycles, true);  // s2_0 implementer — review→implement target
-  assert.equal(m.steps[4].nodes[0].cycles, false); // s3_0 reviewer — not a target
-});
-
-test('buildStepperManifest: carries the feedback edges (self-cycle + cross-loop) on the manifest', () => {
-  const plan = {
-    id: 'wf_default', name: 'Default',
-    steps: [
-      [{ nodeId: 's0_0', key: 'planner',     uiPhase: 'plan' }],
-      [{ nodeId: 's1_0', key: 'refiner',     uiPhase: 'refine' }],
-      [{ nodeId: 's2_0', key: 'implementer', uiPhase: 'implement' }],
-      [{ nodeId: 's3_0', key: 'reviewer',    uiPhase: 'review' }],
-    ],
-    feedbacks: [
-      { id: 'fb_refine', from: 's1_0', to: 's1_0', maxCycles: 3, gate: 'hasBlocking' },
-      { id: 'fb_review', from: 's3_0', to: 's2_0', maxCycles: 2, gate: 'hasBlocking' },
-    ],
-  };
-  const m = buildStepperManifest(plan, REG);
-  // The manifest now carries the loop edges, projected to {id,from,to,maxCycles}
-  // (the `gate` field is dropped — the UI never needs it).
-  assert.deepEqual(m.feedbacks, [
-    { id: 'fb_refine', from: 's1_0', to: 's1_0', maxCycles: 3 },
-    { id: 'fb_review', from: 's3_0', to: 's2_0', maxCycles: 2 },
-  ]);
-  // Self-cycle vs cross-loop are distinguishable by from===to (the codebase convention).
-  const self = m.feedbacks.find((f) => f.id === 'fb_refine');
-  const cross = m.feedbacks.find((f) => f.id === 'fb_review');
-  assert.equal(self.from, self.to, 'fb_refine is a self-cycle');
-  assert.notEqual(cross.from, cross.to, 'fb_review is a cross-loop');
-  // The per-node cycles:boolean flag is unchanged (additive change, not a replacement).
-  // Manifest cells: [0]=preflight, [1..4]=agents, [5]=done. cycles is set when the
-  // node is a feedback TARGET (fb.to === nodeId): s1_0 (refine self), s2_0 (review->implement).
-  assert.equal(m.steps[2].nodes[0].cycles, true);  // s1_0 refiner — self-loop target
-  assert.equal(m.steps[3].nodes[0].cycles, true);  // s2_0 implementer — review→implement target
-  assert.equal(m.steps[4].nodes[0].cycles, false); // s3_0 reviewer — not a target
-});
-
-test('buildStepperManifest: missing/empty plan.feedbacks yields feedbacks:[] (no crash)', () => {
-  const noFb = { id: 'w', name: 'w', steps: [[{ nodeId: 'n', key: 'planner', uiPhase: 'plan' }]], feedbacks: [] };
-  assert.deepEqual(buildStepperManifest(noFb, REG).feedbacks, []);
-  // plan.feedbacks entirely absent must also be tolerated (fbs guard: Array.isArray(plan?.feedbacks)?…:[]).
-  const absent = { id: 'w', name: 'w', steps: [[{ nodeId: 'n', key: 'planner', uiPhase: 'plan' }]] };
-  assert.deepEqual(buildStepperManifest(absent, REG).feedbacks, []);
-});
-
-test('buildStepperManifest(resolveWorkflow): feedbacks carry resolved maxCycles incl. per-project override', async () => {
-  await freshHome();
-  const p = await freshProject();
-  await setFeedbackCycles(p, LEGACY_DEFAULT_ID, 'fb_review', 2); // override the cross-loop
-  const plan = await resolveWorkflow(p, LEGACY_DEFAULT_ID, REGISTRY);
-  const m = buildStepperManifest(plan, REGISTRY);
-  const refine = m.feedbacks.find((f) => f.id === 'fb_refine');
-  const review = m.feedbacks.find((f) => f.id === 'fb_review');
-  assert.deepEqual(refine, { id: 'fb_refine', from: 's1_0', to: 's1_0', maxCycles: 3 }); // default
-  assert.deepEqual(review, { id: 'fb_review', from: 's3_0', to: 's2_0', maxCycles: 2 }); // overridden
-});
-
-test('buildStepperManifest: carries per-node model + effort from the plan', () => {
-  const plan = {
-    id: 'wf_x', name: 'X',
-    steps: [
-      [{ nodeId: 's0_0', key: 'planner', uiPhase: 'plan', model: 'opus', effort: 'high' }],
-      [{ nodeId: 's1_0', key: 'refiner', uiPhase: 'refine' }], // unset -> empty strings
-    ],
-    feedbacks: [],
-  };
-  const m = buildStepperManifest(plan, REG);
-  assert.equal(m.steps[1].nodes[0].model, 'opus');   // step[0] is preflight; agent cell is [1]
-  assert.equal(m.steps[1].nodes[0].effort, 'high');
-  assert.equal(m.steps[2].nodes[0].model, '');
-  assert.equal(m.steps[2].nodes[0].effort, '');
-});
-
-test('buildStepperManifest: groups parallel nodes into one cell', () => {
-  const plan = {
-    id: 'wf_x', name: 'X',
-    steps: [
-      [{ nodeId: 's0_0', key: 'planner', uiPhase: 'plan' }],
-      [{ nodeId: 's1_0', key: 'implementer', uiPhase: 'implement' },
-       { nodeId: 's1_1', key: 'manualTestsChecklist', uiPhase: 'manual-checklist' }],
-    ],
-    feedbacks: [],
-  };
-  const m = buildStepperManifest(plan, REG);
-  assert.equal(m.steps.length, 4); // preflight + 2 agent cells (1 single + 1 parallel) + done
-  assert.equal(m.steps[1].nodes.length, 1);
-  assert.equal(m.steps[2].nodes.length, 2); // parallel cell
-  assert.deepEqual(m.steps[2].nodes.map((n) => n.id), ['s1_0', 's1_1']);
-  assert.equal(m.steps[2].nodes[1].label, 'Manual Tests Checklist');
-});
-
-test('buildStepperManifest: falls back to key when registry lacks the agent', () => {
-  const plan = { id: 'w', name: 'w', steps: [[{ nodeId: 'n', key: 'ghost', uiPhase: 'ghost' }]], feedbacks: [] };
-  const m = buildStepperManifest(plan, {});
-  assert.equal(m.steps[1].nodes[0].label, 'ghost'); // key as last-resort label
-  assert.equal(m.steps[1].nodes[0].color, '');
-  assert.equal(m.steps[1].nodes[0].sub, '');
-});
-
-test('resolveWorkflow carries channel spec onto nodes (guards _bindNodeIo)', async () => {
-  await freshHome();
-  const p = await freshProject();
-  const plan = await resolveWorkflow(p, LEGACY_DEFAULT_ID, loadAgentRegistry());
-  const flat = plan.steps.flat();
-  const planner = flat.find((n) => n.key === 'planner');
-  const implementer = flat.find((n) => n.key === 'implementer');
-  assert.deepEqual(planner.produces, ['plan']);
-  assert.deepEqual(planner.consumes, ['userPrompt', 'clarify', 'review']);
-  assert.deepEqual(implementer.produces, ['code']);
-  assert.deepEqual(implementer.optionalConsumes, ['review']);
-});
-
-test('resolveWorkflow stamps fanOut from the sidecar default for wf_default', async () => {
-  await freshHome();
-  const p = await freshProject();
-  const reg = loadAgentRegistry();
-  const plan = await resolveWorkflow(p, LEGACY_DEFAULT_ID, reg);
-  const byKey = (k) => plan.steps.flat().find((n) => n.key === k);
-  assert.equal(byKey('planner').fanOut, true, 'planner default ON');
-  assert.equal(byKey('implementer').fanOut, true, 'implementer default ON');
-});
-
-test('a per-node fanOut override beats the sidecar default (wf_default)', async () => {
-  await freshHome();
-  const p = await freshProject();
-  const reg = loadAgentRegistry();
-  await setNodeModel(p, LEGACY_DEFAULT_ID, 's0_0', { fanOut: false }); // force planner OFF
-  await setNodeModel(p, LEGACY_DEFAULT_ID, 's2_0', { fanOut: true });  // force implementer ON
-  const plan = await resolveWorkflow(p, LEGACY_DEFAULT_ID, reg);
-  const byKey = (k) => plan.steps.flat().find((n) => n.key === k);
-  assert.equal(byKey('planner').fanOut, false);
-  assert.equal(byKey('implementer').fanOut, true);
-});
-
-test('legacy steps[role] reaches wf_default main-run nodes (model/effort + fanOut)', async () => {
-  await freshHome();
-  const p = await freshProject();
-  const reg = loadAgentRegistry();
-  await setStep(p, 'implementer', { model: 'claude-opus-4-8', effort: 'high' });
-  await setStep(p, 'reviewer', { fanOut: true });
-  // The legacy per-role layer travels with the DEFAULT workflow id, which is the
-  // GRAPH now — resolveGraph is where it has to keep landing.
-  const resolved = await resolveGraph(p, 'wf_default', reg);
-  const byKey = (k) => Object.values(resolved.nodes).find((n) => n.key === k);
-  assert.equal(byKey('implementer').model, 'claude-opus-4-8', 'default-workflow model now reaches the node');
-  assert.equal(byKey('implementer').effort, 'high');
-  assert.equal(byKey('reviewer').fanOut, true);
-});
-
-test('legacy steps are NOT applied to a saved (non-default) workflow', async () => {
-  await freshHome();
-  const p = await freshProject();
-  const reg = loadAgentRegistry();
-  await writeWorkflow({ id: 'wf_saved', name: 'Saved', steps: [[{ id: 'n0', key: 'implementer' }]], feedbacks: [] });
-  await setStep(p, 'implementer', { model: 'claude-opus-4-8' });
-  const plan = await resolveWorkflow(p, 'wf_saved', reg);
-  const impl = plan.steps.flat().find((n) => n.key === 'implementer');
-  assert.equal(impl.model, undefined, 'saved-workflow node ignores legacy steps');
-});
-
-test('wf_default IS the graph default; the v1 alias is gone', async () => {
+test('wf_default IS the graph default; the v1 topology and its alias are gone', async () => {
   await freshHome();
   const tpl = await readWorkflow('wf_default');
   assert.equal(tpl.version, 2);
@@ -507,27 +182,20 @@ test('wf_default IS the graph default; the v1 alias is gone', async () => {
   assert.equal(tpl.nodes.length, 7);
   assert.equal(tpl.wires.length, 10);
   assert.equal(tpl.steps, undefined, 'no v1 topology on the default any more');
-  assert.equal(await readWorkflow('wf_default_v2'), null, 'the coexistence alias is retired');
   assert.equal(GRAPH_DEFAULT_WORKFLOW.id, 'wf_default');
-  // The retired v1 topology survives ONLY under its reserved id, and nothing may mint it.
-  assert.equal((await readWorkflow(LEGACY_DEFAULT_ID)).version, 1);
-  assert.equal((await listWorkflows()).some((w) => w.id === LEGACY_DEFAULT_ID), false, 'never listed');
+  // Both retired ids are ordinary unknown ids now: the coexistence alias went in
+  // P8a, the v1 engine's private default went with the engine.
+  assert.equal(await readWorkflow('wf_default_v2'), null, 'the coexistence alias is retired');
+  assert.equal(await readWorkflow('wf_default_v1'), null, 'the v1 engine default died with the engine');
 });
 
-test('the built-in ids can never be minted or shadowed by a stored row', async () => {
+test('the reserved default id can never be minted by a save', async () => {
   await freshHome();
-  // A row that squats the default id (a hand-edited DB, a bad import) must never
-  // be LISTED — readWorkflow always answers with the built-in constant, so a
-  // listed shadow would be a second, unreachable "Default" in every picker.
-  getDb().exec("INSERT INTO workflows (id,name,version,steps,feedbacks,created_at,updated_at) "
-    + "VALUES ('wf_default','Shadow',1,'[]','[]','1970-01-01T00:00:00.000Z','1970-01-01T00:00:00.000Z')");
-  assert.equal((await listWorkflows()).some((w) => w.id === 'wf_default'), false, 'a shadow row is filtered out');
-  assert.equal((await readWorkflow('wf_default')).name, 'Default', 'the built-in still wins');
-  // ...and a save may not claim any reserved id: it falls back to the name slug.
+  // A save may not claim the built-in id: it falls back to the name slug, so the
+  // picker can never show two "Default"s. (The rogue-ROW half — a hand-edited
+  // store — is pinned in workflows-db.test.mjs.)
   const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
-  for (const reserved of ['wf_default', 'wf_default_v2', LEGACY_DEFAULT_ID]) {
-    const saved = await writeGraphWorkflow({ id: reserved, name: 'Claimed', nodes: [], wires: [] });
-    assert.notEqual(saved.id, reserved, `${reserved} is reserved and unmintable`);
-    assert.equal(saved.id, 'wf_claimed');
-  }
+  const saved = await writeGraphWorkflow({ id: 'wf_default', name: 'Claimed', nodes: [], wires: [] });
+  assert.notEqual(saved.id, 'wf_default', 'wf_default is reserved and unmintable');
+  assert.equal(saved.id, 'wf_claimed');
 });

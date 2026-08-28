@@ -629,8 +629,8 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     const saveAs = dialog.dataset.saveAs === '1';
     const body = { ...serializeTemplate(tpl), version: 2, name, domain };
     // Save on a LOADED row sends its id; Save-as omits it so the server mints
-    // wf_${slugify(name)}. wf_default / wf_default_v2 are never targets.
-    if (!saveAs && tpl.id && tpl.id !== 'wf_default' && tpl.id !== 'wf_default_v2') body.id = tpl.id;
+    // wf_${slugify(name)}. The one reserved id, wf_default, is never a target.
+    if (!saveAs && tpl.id && tpl.id !== 'wf_default') body.id = tpl.id;
     else delete body.id;
     try {
       const res = await api.saveWorkflow(body);

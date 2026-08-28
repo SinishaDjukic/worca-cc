@@ -4,7 +4,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { getDb, prepare } from '../src/core/db.mjs';
 import {
   writeWorkflow, writeGraphWorkflow, readWorkflow, listWorkflows,
-  assertRunnableWorkflow, resolveWorkflow, GRAPH_DEFAULT_WORKFLOW,
+  assertRunnableWorkflow, GRAPH_DEFAULT_WORKFLOW,
 } from '../src/core/workflows.mjs';
 
 useTempHome(after);
@@ -87,8 +87,3 @@ test('assertRunnableWorkflow: NOT_FOUND, ARCHIVED (verbatim), and the happy path
   });
 });
 
-test('resolveWorkflow refuses a graph row', async () => {
-  await writeGraphWorkflow({ ...GRAPH, id: 'wf_resolve' });
-  await assert.rejects(() => resolveWorkflow(process.cwd(), 'wf_resolve', {}),
-    /^Error: template is a graph — runs on the graph engine$/);
-});
