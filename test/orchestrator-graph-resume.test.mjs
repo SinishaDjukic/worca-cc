@@ -44,7 +44,7 @@ test('a v2 run pauses mid-execution and resumes from the frozen snapshot', { tim
   const seen = { resumed: [] };
   let orch;
   orch = createGraphOrchestrator({
-    projectDir: dir, workflowId: 'wf_default_v2', prompt: 'demo', auto: true, claude: { mock: true },
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, claude: { mock: true },
     runners: { producer: pausingOnce(() => orch, seen), verifier: okVerifier, clarifier: okClarifier },
   });
   const first = await orch.run();
@@ -55,7 +55,7 @@ test('a v2 run pauses mid-execution and resumes from the frozen snapshot', { tim
   assert.equal(rp.version, 2);
   assert.ok(rp.manifest && rp.manifest.version === 2, 'the manifest is frozen into the point');
   assert.ok(rp.snapshot, 'a CLEAN scheduler snapshot was kept');
-  assert.equal(rp.workflowId, 'wf_default_v2');
+  assert.equal(rp.workflowId, 'wf_default');
   // The snapshot is the last CLEAN one (taken at a completion): the execution the
   // pause killed is either absent from it (it started after that completion) or
   // NON-TERMINAL in it — never `done`. Its session id rides the point from the

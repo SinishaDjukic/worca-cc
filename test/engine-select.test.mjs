@@ -28,11 +28,11 @@ test('selectEngine: the resume point wins over the template row', () => {
 
 test('createOrchestratorFor: async, and builds the v1 orchestrator from a workflow id', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-engine-select-'));
-  const p = createOrchestratorFor({ projectDir: dir, workflowId: 'wf_default', prompt: 'x' });
+  const p = createOrchestratorFor({ projectDir: dir, workflowId: 'wf_default_v1', prompt: 'x' });
   assert.ok(p instanceof Promise, 'createOrchestratorFor is async — every call site awaits it');
   const orch = await p;
   assert.equal(typeof orch._dispatch, 'function', 'v1 orchestrator (the v1-only dispatcher is present)');
-  assert.equal(orch.workflowId, 'wf_default');
+  assert.equal(orch.workflowId, 'wf_default_v1');
   assert.equal(orch.engine, 'v1', 'the factory records the selector\'s answer for the row it read');
 });
 

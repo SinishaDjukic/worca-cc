@@ -6,7 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  DEFAULT_WORKFLOW,
+  GRAPH_DEFAULT_WORKFLOW,
+  LEGACY_DEFAULT_ID,
+  resolveGraph,
   workflowsDir,
   listWorkflows,
   readWorkflow,
@@ -41,26 +43,6 @@ after(async () => {
   await Promise.all([...homes, ...projects].map((d) => rm(d, { recursive: true, force: true })));
 });
 
-test('DEFAULT_WORKFLOW is the Plan->Refine->Implement->Review topology', () => {
-  assert.equal(DEFAULT_WORKFLOW.id, 'wf_default');
-  assert.equal(DEFAULT_WORKFLOW.name, 'Default');
-  assert.equal(DEFAULT_WORKFLOW.version, 1);
-  // 5 sequential steps, one node each.
-  assert.equal(DEFAULT_WORKFLOW.steps.length, 5);
-  assert.deepEqual(DEFAULT_WORKFLOW.steps.map((s) => s.length), [1, 1, 1, 1, 1]);
-  assert.deepEqual(
-    DEFAULT_WORKFLOW.steps.map((s) => s[0].key),
-    ['clarify', 'planner', 'refiner', 'implementer', 'reviewer'],
-  );
-  // Node ids are unique instance ids.
-  const ids = DEFAULT_WORKFLOW.steps.flat().map((n) => n.id);
-  assert.deepEqual(ids, ['s_clarify', 's0_0', 's1_0', 's2_0', 's3_0']);
-});
-
-test('DEFAULT_WORKFLOW.domain === "coding"', () => {
-  assert.equal(DEFAULT_WORKFLOW.domain, 'coding');
-});
-
 test('writeWorkflow persists domain; readWorkflow round-trips; malformed/blank → general', async () => {
   await freshHome();
   await writeWorkflow({ id: 'wf_mk', name: 'Campaign', steps: [], feedbacks: [], domain: 'marketing' });
@@ -82,20 +64,6 @@ test('pre-migration row reads back as general (COALESCE) via list + read', async
   const list = await listWorkflows();
   assert.equal(list.find((w) => w.id === 'wf_old').domain, 'general');   // list path
   assert.equal((await readWorkflow('wf_old')).domain, 'general');        // readRaw path
-});
-
-test('DEFAULT_WORKFLOW feedbacks reproduce the refine self-loop and review->implement loop', () => {
-  // Two loops: refiner self-loop (s1_0 -> s1_0) and review -> implement (s3_0 -> s2_0).
-  const fbs = DEFAULT_WORKFLOW.feedbacks;
-  assert.equal(fbs.length, 2);
-  const refine = fbs.find((f) => f.from === 's1_0');
-  const review = fbs.find((f) => f.from === 's3_0');
-  assert.ok(refine, 'refine loop present');
-  assert.equal(refine.to, 's1_0'); // self-loop, mirrors _refineLoop re-running refine
-  assert.ok(review, 'review loop present');
-  assert.equal(review.to, 's2_0'); // review -> implement (fix pass), mirrors _reviewLoop
-  // Feedback ids are unique.
-  assert.equal(new Set(fbs.map((f) => f.id)).size, fbs.length);
 });
 
 test('workflowsDir is <WORCA_HOME>/.worca-cc/workflows', async () => {
@@ -147,11 +115,12 @@ test('listWorkflows returns user templates sorted newest-first; excludes wf_defa
   assert.ok(!list.some((w) => w.id === 'wf_default'), 'DEFAULT_WORKFLOW is not in the user store');
 });
 
-test('readWorkflow returns DEFAULT_WORKFLOW for "wf_default"', async () => {
+test('readWorkflow returns GRAPH_DEFAULT_WORKFLOW for "wf_default"', async () => {
   await freshHome();
   const got = await readWorkflow('wf_default');
   assert.equal(got.id, 'wf_default');
-  assert.equal(got.steps.length, 5);
+  assert.equal(got.version, 2, 'the built-in default is the GRAPH after the v2 break');
+  assert.equal(got.nodes.length, 7);
 });
 
 test('readWorkflow returns null for a missing id; listWorkflows is [] on an empty store', async () => {
@@ -220,7 +189,7 @@ const REGISTRY = {
 test('resolveWorkflow(default) yields a 5-step ExecutablePlan with prompts and default cycles', async () => {
   await freshHome();
   const p = await freshProject();
-  const plan = await resolveWorkflow(p, 'wf_default', REGISTRY);
+  const plan = await resolveWorkflow(p, LEGACY_DEFAULT_ID, REGISTRY);
   assert.equal(plan.id, 'wf_default');
   assert.equal(plan.steps.length, 5);
   const flat = plan.steps.flat();
@@ -246,9 +215,9 @@ test('resolveWorkflow(default) yields a 5-step ExecutablePlan with prompts and d
 test('resolveWorkflow overlays per-project model/effort and feedback cycles', async () => {
   await freshHome();
   const p = await freshProject();
-  await setNodeModel(p, 'wf_default', 's2_0', { model: 'claude-opus-4-8', effort: 'high' });
-  await setFeedbackCycles(p, 'wf_default', 'fb_review', 2);
-  const plan = await resolveWorkflow(p, 'wf_default', REGISTRY);
+  await setNodeModel(p, LEGACY_DEFAULT_ID, 's2_0', { model: 'claude-opus-4-8', effort: 'high' });
+  await setFeedbackCycles(p, LEGACY_DEFAULT_ID, 'fb_review', 2);
+  const plan = await resolveWorkflow(p, LEGACY_DEFAULT_ID, REGISTRY);
   const impl = plan.steps.flat().find((n) => n.nodeId === 's2_0');
   assert.equal(impl.model, 'claude-opus-4-8');
   assert.equal(impl.effort, 'high');
@@ -261,7 +230,7 @@ test('resolveWorkflow({isWorkspace:true}) substitutes the review node reviewer -
   await freshHome();
   const p = await freshProject();
   const reg = loadAgentRegistry(); // real registry has both reviewer + workspaceReviewer
-  const plan = await resolveWorkflow(p, 'wf_default', reg, undefined, { isWorkspace: true });
+  const plan = await resolveWorkflow(p, LEGACY_DEFAULT_ID, reg, undefined, { isWorkspace: true });
   const keys = plan.steps.flat().map((n) => n.key);
   assert.deepEqual(keys, ['clarify', 'planner', 'refiner', 'implementer', 'workspaceReviewer'],
     'the review node key becomes workspaceReviewer on a workspace run');
@@ -278,8 +247,8 @@ test('resolveWorkflow substitution is GATED: no opts === {isWorkspace:false}, si
   await freshHome();
   const p = await freshProject();
   const reg = loadAgentRegistry();
-  const noOpts = await resolveWorkflow(p, 'wf_default', reg);
-  const falseWs = await resolveWorkflow(p, 'wf_default', reg, undefined, { isWorkspace: false });
+  const noOpts = await resolveWorkflow(p, LEGACY_DEFAULT_ID, reg);
+  const falseWs = await resolveWorkflow(p, LEGACY_DEFAULT_ID, reg, undefined, { isWorkspace: false });
   assert.deepEqual(noOpts, falseWs, 'no opts is byte-identical to {isWorkspace:false}');
   // Both keep the single-project reviewer; neither substitutes.
   assert.deepEqual(noOpts.steps.flat().map((n) => n.key), ['clarify', 'planner', 'refiner', 'implementer', 'reviewer']);
@@ -417,8 +386,8 @@ test('buildStepperManifest: missing/empty plan.feedbacks yields feedbacks:[] (no
 test('buildStepperManifest(resolveWorkflow): feedbacks carry resolved maxCycles incl. per-project override', async () => {
   await freshHome();
   const p = await freshProject();
-  await setFeedbackCycles(p, 'wf_default', 'fb_review', 2); // override the cross-loop
-  const plan = await resolveWorkflow(p, 'wf_default', REGISTRY);
+  await setFeedbackCycles(p, LEGACY_DEFAULT_ID, 'fb_review', 2); // override the cross-loop
+  const plan = await resolveWorkflow(p, LEGACY_DEFAULT_ID, REGISTRY);
   const m = buildStepperManifest(plan, REGISTRY);
   const refine = m.feedbacks.find((f) => f.id === 'fb_refine');
   const review = m.feedbacks.find((f) => f.id === 'fb_review');
@@ -471,7 +440,7 @@ test('buildStepperManifest: falls back to key when registry lacks the agent', ()
 test('resolveWorkflow carries channel spec onto nodes (guards _bindNodeIo)', async () => {
   await freshHome();
   const p = await freshProject();
-  const plan = await resolveWorkflow(p, 'wf_default', loadAgentRegistry());
+  const plan = await resolveWorkflow(p, LEGACY_DEFAULT_ID, loadAgentRegistry());
   const flat = plan.steps.flat();
   const planner = flat.find((n) => n.key === 'planner');
   const implementer = flat.find((n) => n.key === 'implementer');
@@ -485,7 +454,7 @@ test('resolveWorkflow stamps fanOut from the sidecar default for wf_default', as
   await freshHome();
   const p = await freshProject();
   const reg = loadAgentRegistry();
-  const plan = await resolveWorkflow(p, 'wf_default', reg);
+  const plan = await resolveWorkflow(p, LEGACY_DEFAULT_ID, reg);
   const byKey = (k) => plan.steps.flat().find((n) => n.key === k);
   assert.equal(byKey('planner').fanOut, true, 'planner default ON');
   assert.equal(byKey('implementer').fanOut, true, 'implementer default ON');
@@ -495,9 +464,9 @@ test('a per-node fanOut override beats the sidecar default (wf_default)', async 
   await freshHome();
   const p = await freshProject();
   const reg = loadAgentRegistry();
-  await setNodeModel(p, 'wf_default', 's0_0', { fanOut: false }); // force planner OFF
-  await setNodeModel(p, 'wf_default', 's2_0', { fanOut: true });  // force implementer ON
-  const plan = await resolveWorkflow(p, 'wf_default', reg);
+  await setNodeModel(p, LEGACY_DEFAULT_ID, 's0_0', { fanOut: false }); // force planner OFF
+  await setNodeModel(p, LEGACY_DEFAULT_ID, 's2_0', { fanOut: true });  // force implementer ON
+  const plan = await resolveWorkflow(p, LEGACY_DEFAULT_ID, reg);
   const byKey = (k) => plan.steps.flat().find((n) => n.key === k);
   assert.equal(byKey('planner').fanOut, false);
   assert.equal(byKey('implementer').fanOut, true);
@@ -509,8 +478,10 @@ test('legacy steps[role] reaches wf_default main-run nodes (model/effort + fanOu
   const reg = loadAgentRegistry();
   await setStep(p, 'implementer', { model: 'claude-opus-4-8', effort: 'high' });
   await setStep(p, 'reviewer', { fanOut: true });
-  const plan = await resolveWorkflow(p, 'wf_default', reg);
-  const byKey = (k) => plan.steps.flat().find((n) => n.key === k);
+  // The legacy per-role layer travels with the DEFAULT workflow id, which is the
+  // GRAPH now — resolveGraph is where it has to keep landing.
+  const resolved = await resolveGraph(p, 'wf_default', reg);
+  const byKey = (k) => Object.values(resolved.nodes).find((n) => n.key === k);
   assert.equal(byKey('implementer').model, 'claude-opus-4-8', 'default-workflow model now reaches the node');
   assert.equal(byKey('implementer').effort, 'high');
   assert.equal(byKey('reviewer').fanOut, true);
@@ -525,4 +496,38 @@ test('legacy steps are NOT applied to a saved (non-default) workflow', async () 
   const plan = await resolveWorkflow(p, 'wf_saved', reg);
   const impl = plan.steps.flat().find((n) => n.key === 'implementer');
   assert.equal(impl.model, undefined, 'saved-workflow node ignores legacy steps');
+});
+
+test('wf_default IS the graph default; the v1 alias is gone', async () => {
+  await freshHome();
+  const tpl = await readWorkflow('wf_default');
+  assert.equal(tpl.version, 2);
+  assert.equal(tpl.id, 'wf_default');
+  assert.equal(tpl.name, 'Default');
+  assert.equal(tpl.nodes.length, 7);
+  assert.equal(tpl.wires.length, 10);
+  assert.equal(tpl.steps, undefined, 'no v1 topology on the default any more');
+  assert.equal(await readWorkflow('wf_default_v2'), null, 'the coexistence alias is retired');
+  assert.equal(GRAPH_DEFAULT_WORKFLOW.id, 'wf_default');
+  // The retired v1 topology survives ONLY under its reserved id, and nothing may mint it.
+  assert.equal((await readWorkflow(LEGACY_DEFAULT_ID)).version, 1);
+  assert.equal((await listWorkflows()).some((w) => w.id === LEGACY_DEFAULT_ID), false, 'never listed');
+});
+
+test('the built-in ids can never be minted or shadowed by a stored row', async () => {
+  await freshHome();
+  // A row that squats the default id (a hand-edited DB, a bad import) must never
+  // be LISTED — readWorkflow always answers with the built-in constant, so a
+  // listed shadow would be a second, unreachable "Default" in every picker.
+  getDb().exec("INSERT INTO workflows (id,name,version,steps,feedbacks,created_at,updated_at) "
+    + "VALUES ('wf_default','Shadow',1,'[]','[]','1970-01-01T00:00:00.000Z','1970-01-01T00:00:00.000Z')");
+  assert.equal((await listWorkflows()).some((w) => w.id === 'wf_default'), false, 'a shadow row is filtered out');
+  assert.equal((await readWorkflow('wf_default')).name, 'Default', 'the built-in still wins');
+  // ...and a save may not claim any reserved id: it falls back to the name slug.
+  const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+  for (const reserved of ['wf_default', 'wf_default_v2', LEGACY_DEFAULT_ID]) {
+    const saved = await writeGraphWorkflow({ id: reserved, name: 'Claimed', nodes: [], wires: [] });
+    assert.notEqual(saved.id, reserved, `${reserved} is reserved and unmintable`);
+    assert.equal(saved.id, 'wf_claimed');
+  }
 });

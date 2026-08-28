@@ -12,7 +12,7 @@ process.env.WORCA_HOME = mkdtempSync(join(tmpdir(), 'worca-wfdef-'));
 
 const {
   writeWorkflow, readWorkflow, resolveWorkflow, setWorkflowNodeDefaults,
-  sanitizeNodeDefaults, sanitizeWorkflowSteps, workflowNodeDefaults, DEFAULT_WORKFLOW,
+  sanitizeNodeDefaults, sanitizeWorkflowSteps, workflowNodeDefaults, GRAPH_DEFAULT_WORKFLOW,
 } = await import('../src/core/workflows.mjs');
 const { setStep, setNodeModel } = await import('../src/core/config.mjs');
 
@@ -99,7 +99,7 @@ test('setWorkflowNodeDefaults sets, clears, and ignores unknown node ids without
 });
 
 test('setWorkflowNodeDefaults refuses the built-in default workflow and unknown ids', async () => {
-  await assert.rejects(() => setWorkflowNodeDefaults(DEFAULT_WORKFLOW.id, { s0_0: { fanOut: true } }),
+  await assert.rejects(() => setWorkflowNodeDefaults(GRAPH_DEFAULT_WORKFLOW.id, { s0_0: { fanOut: true } }),
     /cannot store defaults/);
   await assert.rejects(() => setWorkflowNodeDefaults('wf_nope', {}), /not found/);
 });
@@ -172,9 +172,13 @@ test('a workflow with no defaults resolves exactly as before (no migration neede
 
 test('the legacy per-role config still outranks a workflow default on wf_default', async () => {
   // wf_default carries no defaults by design (D6) — this pins that the legacy
-  // path the CLI writes keeps winning wherever both could apply.
+  // path the CLI writes keeps winning wherever both could apply. The default id
+  // is the GRAPH after the v2 break, so the layer now lands in resolveGraph.
+  const { resolveGraph } = await import('../src/core/workflows.mjs');
   await setStep(PROJECT, 'planner', { model: 'claude-haiku-4-5' });
-  const plan = await resolve(DEFAULT_WORKFLOW.id);
-  const planner = plan.steps.flat().find((n) => n.key === 'planner');
+  // the graph default names 7 nodes, so this one needs the REAL registry
+  const { loadAgentRegistry } = await import('../src/core/agent-registry.mjs');
+  const resolved = await resolveGraph(PROJECT, GRAPH_DEFAULT_WORKFLOW.id, loadAgentRegistry());
+  const planner = Object.values(resolved.nodes).find((n) => n.key === 'planner');
   assert.equal(planner.model, 'claude-haiku-4-5');
 });

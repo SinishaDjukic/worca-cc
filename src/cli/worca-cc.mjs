@@ -211,7 +211,7 @@ Options:
   --model <m>              Claude model id
   --permission-mode <m>    Claude permission mode: default | acceptEdits | plan |
                            bypassPermissions (default acceptEdits)
-  --workflow <id>          Saved pipeline template to run (default: wf_default)
+  --workflow <id>          Saved pipeline template to run (default: wf_default — the built-in graph)
   --source-branch <name>   Branch to fork the per-run worktree from (default: current HEAD)
   --branch <name>          Feature branch name (default: claude proposes one)
   --mock                   Offline mock mode (no claude, no tokens)

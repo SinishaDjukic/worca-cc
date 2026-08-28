@@ -25,7 +25,7 @@ after(async () => { await Promise.all(tmpDirs.map((d) => rm(d, { recursive: true
 test('clarify runs as its own node (s_clarify) and the planner is a separate row', async () => {
   const orch = createOrchestrator({
     projectDir: await makeTmpDir(),
-    workflowId: 'wf_default',
+    workflowId: 'wf_default_v1',
     prompt: 'demo task',
     auto: true,             // auto-answers the clarify gate (orch _ask kind:'clarify')
     claude: { mock: true },
@@ -51,7 +51,7 @@ test('clarify runs as its own node (s_clarify) and the planner is a separate row
 
 test('the default run writes clarify.json (scratch) AND a DB answers row', async () => {
   const projectDir = await makeTmpDir();
-  const orch = createOrchestrator({ projectDir, workflowId: 'wf_default', prompt: 'demo task', auto: true, claude: { mock: true } });
+  const orch = createOrchestrator({ projectDir, workflowId: 'wf_default_v1', prompt: 'demo task', auto: true, claude: { mock: true } });
   const res = await orch.run();
   assert.equal(res.status, 'done');
 

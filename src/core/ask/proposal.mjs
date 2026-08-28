@@ -107,7 +107,6 @@ export function createProposalValidator({
     let wf = null;
     try { wf = await assertRunnableWorkflow(workflowId); }
     catch (err) { errors.push(err && err.message ? err.message : PROPOSAL_ERRORS.unknownWorkflow(workflowId)); }
-    if (wf && wf.version === 2) errors.push('template is a graph — runs on the graph engine (not available yet)');
 
     // ── guardrails: default normal, permissive refused (D3) ────────────────
     let guardrailsId = 'normal';

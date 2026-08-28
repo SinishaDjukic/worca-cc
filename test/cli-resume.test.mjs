@@ -53,11 +53,11 @@ async function v2ResumePoint(pipelineDir) {
   const { loadAgentRegistry } = await import('../src/core/agent-registry.mjs');
   const { resolveGraph } = await import('../src/core/workflows.mjs');
   const { buildGraphManifest } = await import('../src/shared/graph/manifest.mjs');
-  const resolved = await resolveGraph(pipelineDir, 'wf_default_v2', loadAgentRegistry());
+  const resolved = await resolveGraph(pipelineDir, 'wf_default', loadAgentRegistry());
   const manifest = buildGraphManifest(resolved.template, resolved.agentsByKey,
     { overlays: { nodes: resolved.nodes, wires: resolved.wires } });
   return { version: 2, snapshot: null, manifest, nodes: [], planVersion: 0,
-    stepModels: null, workflowId: 'wf_default_v2', guardrailsId: null, checkpointRef: null,
+    stepModels: null, workflowId: 'wf_default', guardrailsId: null, checkpointRef: null,
     checkpointRefs: {}, workspace: null, pauseReason: null, toolInstruction: '',
     pipelineDir, pausedAt: '2026-06-09T00:00:00Z' };
 }

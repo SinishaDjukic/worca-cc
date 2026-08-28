@@ -196,7 +196,7 @@ test('crash -> reconcile -> resume continues from saved boundary to done', async
   // synthetic boundary point at step 0 (re-run from step 0 is safe for a mock runner).
   const point = {
     version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
-    bus: null, stepModels: null, workflowId: 'wf_default', plan: null,
+    bus: null, stepModels: null, workflowId: 'wf_default_v1', plan: null,
     nodes: [], gate: null, toolInstruction: '', pipelineDir: pDir,
     pausedAt: new Date().toISOString(),
   };

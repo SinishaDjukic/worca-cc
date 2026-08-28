@@ -124,7 +124,9 @@ test('isSyntacticRef: git ref-format rules, no shell-outs', () => {
   }
 });
 
-test('propose_run refuses a graph template', async () => {
+// After the v2 break the graph IS the engine: a v2 template is the normal case,
+// so proposing one must produce NO error (only an unknown/archived id refuses).
+test('propose_run ACCEPTS a graph template', async () => {
   const { validateProposal: v } = createProposalValidator({
     ...deps,
     readWorkflow: async (id) => (id === 'wf_g' ? { id, name: 'G', version: 2, nodes: [], wires: [] } : null),
@@ -132,6 +134,7 @@ test('propose_run refuses a graph template', async () => {
       ? { id, name: 'G', version: 2, nodes: [], wires: [] }
       : (() => { throw Object.assign(new Error(`unknown workflowId "${id}"`), { code: 'NOT_FOUND' }); })()),
   });
-  const errors = errs(await v({ projectKey: 'demo-00000001', brief: 'x', workflowId: 'wf_g' }));
-  assert.ok(errors.includes('template is a graph — runs on the graph engine (not available yet)'));
+  const r = await v({ projectKey: 'demo-00000001', brief: 'x', workflowId: 'wf_g' });
+  assert.equal(r.ok, true, `a graph template is runnable now: ${JSON.stringify(r)}`);
+  assert.equal(r.card.workflowId, 'wf_g');
 });

@@ -1,5 +1,5 @@
 // test/workflows-db.test.mjs
-// workflows.mjs stores user templates in SQLite (table: workflows); DEFAULT_WORKFLOW
+// workflows.mjs stores user templates in SQLite (table: workflows); GRAPH_DEFAULT_WORKFLOW
 // stays built-in. Signatures unchanged (all async, same shapes). Per-test throwaway
 // WORCA_HOME + DB reset.
 import { test, after, beforeEach } from 'node:test';
@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  DEFAULT_WORKFLOW, listWorkflows, readWorkflow, writeWorkflow, deleteWorkflow,
+  GRAPH_DEFAULT_WORKFLOW, listWorkflows, readWorkflow, writeWorkflow, deleteWorkflow,
 } from '../src/core/workflows.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
 
@@ -28,10 +28,12 @@ after(async () => {
   await Promise.all(homes.map((d) => rm(d, { recursive: true, force: true })));
 });
 
-test('readWorkflow returns the built-in DEFAULT_WORKFLOW for "wf_default" (not a row)', async () => {
+test('readWorkflow returns the built-in GRAPH_DEFAULT_WORKFLOW for "wf_default" (not a row)', async () => {
   const got = await readWorkflow('wf_default');
   assert.equal(got.id, 'wf_default');
-  assert.equal(got.steps.length, 5);
+  assert.equal(got.version, 2, 'the built-in default is the GRAPH after the v2 break');
+  assert.equal(got.nodes.length, 7);
+  assert.equal(got.steps, undefined, 'no v1 topology on the default any more');
   // It is NOT stored in the table.
   const row = getDb().prepare('SELECT 1 FROM workflows WHERE id = ?').get('wf_default');
   assert.equal(row, undefined, 'default workflow is never a DB row');
@@ -52,7 +54,7 @@ test('listWorkflows reads rows newest-first by created_at and parses steps/feedb
   const list = await listWorkflows();
   assert.deepEqual(list.map((w) => w.id), ['wf_b', 'wf_a'], 'newest created_at first');
   assert.ok(Array.isArray(list[0].steps), 'steps parsed from JSON');
-  assert.ok(!list.some((w) => w.id === 'wf_default'), 'DEFAULT_WORKFLOW never in the user store');
+  assert.ok(!list.some((w) => w.id === 'wf_default'), 'GRAPH_DEFAULT_WORKFLOW never in the user store');
 });
 
 test('readWorkflow parses a stored row into the template shape', async () => {

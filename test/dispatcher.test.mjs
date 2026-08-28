@@ -5,7 +5,7 @@ import { mkdtemp, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOrchestrator, createOrchestrator as makeOrch } from '../src/core/orchestrator.mjs';
-import { DEFAULT_WORKFLOW, writeWorkflow } from '../src/core/workflows.mjs';
+import { LEGACY_DEFAULT_WORKFLOW, writeWorkflow } from '../src/core/workflows.mjs';
 import { artifactPaths } from '../src/core/artifacts.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 
@@ -150,7 +150,7 @@ test('feedback loop does NOT fire when verifier passes', async () => {
   assert.equal(implRuns, 1, 'no loop -> implementer runs once');
 });
 
-test('DEFAULT_WORKFLOW dispatch reproduces the legacy phase order + loop gating (mock)', async () => {
+test('LEGACY_DEFAULT_WORKFLOW dispatch reproduces the legacy phase order + loop gating (mock)', async () => {
   const dir = await makeTmpDir();
   const orch = makeOrch({
     projectDir: dir,
@@ -231,13 +231,13 @@ test('DEFAULT_WORKFLOW dispatch reproduces the legacy phase order + loop gating 
   assert.deepEqual(idxs, [...idxs].sort((a, b) => a - b), 'UI phases first appear in plan->refine->implement->review order');
 });
 
-test('DEFAULT_WORKFLOW is the wf_default 5-step Plan->Refine->Implement->Review topology', () => {
-  assert.equal(DEFAULT_WORKFLOW.id, 'wf_default');
-  const keys = DEFAULT_WORKFLOW.steps.map((g) => g.map((n) => n.key));
+test('LEGACY_DEFAULT_WORKFLOW is the wf_default 5-step Plan->Refine->Implement->Review topology', () => {
+  assert.equal(LEGACY_DEFAULT_WORKFLOW.id, 'wf_default');
+  const keys = LEGACY_DEFAULT_WORKFLOW.steps.map((g) => g.map((n) => n.key));
   assert.deepEqual(keys, [['clarify'], ['planner'], ['refiner'], ['implementer'], ['reviewer']]);
   // CONV-3/CONV-7: the two feedbacks are the refiner self-loop + the review->implement loop.
   assert.deepEqual(
-    DEFAULT_WORKFLOW.feedbacks.map((f) => ({ id: f.id, from: f.from, to: f.to })),
+    LEGACY_DEFAULT_WORKFLOW.feedbacks.map((f) => ({ id: f.id, from: f.from, to: f.to })),
     [{ id: 'fb_refine', from: 's1_0', to: 's1_0' }, { id: 'fb_review', from: 's3_0', to: 's2_0' }],
   );
 });

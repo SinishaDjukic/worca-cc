@@ -14,7 +14,7 @@ const isBookend = (p) => p.cycle === 0 && (p.phase === 'preflight' || p.phase ==
 test('every exec is followed by a derived phase, and the manifest carries v1 shim cells', { timeout: 120000 }, async () => {
   const dir = gitDir('shim');
   const orch = createGraphOrchestrator({
-    projectDir: dir, workflowId: 'wf_default_v2', prompt: 'demo', claude: { mock: true }, auto: true,
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo', claude: { mock: true }, auto: true,
   });
   const seq = [];
   const scalars = [];   // state.phase/cycle as seen on every state event after an exec start

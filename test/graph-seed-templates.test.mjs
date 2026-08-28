@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from '../src/core/graph/seed-templates.mjs';
 import { GRAPH_DEFAULT_WORKFLOW, deepFreeze } from '../src/core/graph/builtin-workflows.mjs';
 import { NODE_ID_RE, WIRE_ID_RE, PORT_ID_RE, TEMPLATE_VERSION } from '../src/shared/graph/constants.mjs';
-import { DEFAULT_WORKFLOW } from '../src/core/workflows.mjs';
+import { LEGACY_DEFAULT_WORKFLOW } from '../src/core/workflows.mjs';
 import { validateGraph } from '../src/shared/graph/validate.mjs';
 import { classifyLoops } from '../src/shared/graph/loops.mjs';
 import { realPortsFn } from './helpers/graph-ports.mjs';
@@ -231,8 +231,8 @@ test('FB_WIRE_MAP pins the fb_N ↔ wire PAIRING: wf_default off the REAL v1 row
   }
 
   // wf_default is no convention at all: both maps are derivable from the REAL v1
-  // DEFAULT_WORKFLOW row (workflows.mjs) — node ids, agent keys and feedbacks.
-  const v1 = DEFAULT_WORKFLOW;
+  // LEGACY_DEFAULT_WORKFLOW row (workflows.mjs) — node ids, agent keys and feedbacks.
+  const v1 = LEGACY_DEFAULT_WORKFLOW;
   const nodeMap = NODE_ID_MAP.wf_default;
   assert.deepEqual(Object.keys(nodeMap).sort(), v1.steps.flat().map((n) => n.id).sort());
   for (const n of v1.steps.flat()) {

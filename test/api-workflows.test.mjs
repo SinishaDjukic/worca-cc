@@ -43,8 +43,10 @@ test('GET /api/workflows lists the built-in default first', async () => {
   assert.ok(Array.isArray(j.workflows));
   assert.equal(j.workflows[0].id, 'wf_default');
   assert.equal(j.workflows[0].name, 'Default');
-  // The default template carries a real 5-step topology.
-  assert.ok(Array.isArray(j.workflows[0].steps) && j.workflows[0].steps.length === 5);
+  // After the v2 break the built-in default IS the graph: nodes + wires, no steps.
+  assert.equal(j.workflows[0].version, 2);
+  assert.equal(j.workflows[0].nodes.length, 7);
+  assert.equal(j.workflows[0].steps, undefined, 'no v1 topology on the default');
 });
 
 test('GET /api/workflows/:id returns the default template', async () => {
@@ -52,7 +54,7 @@ test('GET /api/workflows/:id returns the default template', async () => {
   assert.equal(r.status, 200);
   const j = await r.json();
   assert.equal(j.id, 'wf_default');
-  assert.ok(Array.isArray(j.feedbacks));
+  assert.ok(Array.isArray(j.wires), 'a graph template carries wires, not feedbacks');
 });
 
 test('GET /api/workflows/:id is 404 for an unknown id', async () => {

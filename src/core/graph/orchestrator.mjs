@@ -17,7 +17,7 @@ import {
   RunHarness, isAbort, isPause, pauseErr, firstLine, jsonClone,
   clipMiddle, sumStepActive, normalizeClarifyAnswer,
 } from '../run-harness.mjs';
-import { resolveGraph, loadAgentFile, GRAPH_DEFAULT_ALIAS_ID } from '../workflows.mjs';
+import { resolveGraph, loadAgentFile, GRAPH_DEFAULT_WORKFLOW } from '../workflows.mjs';
 import { classifyLoops } from '../../shared/graph/loops.mjs';
 import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../../shared/graph/manifest.mjs';
 import { DEFAULT_MAX_CYCLES } from '../../shared/graph/constants.mjs';
@@ -48,9 +48,8 @@ export function createGraphOrchestrator(opts = {}) {
 export class GraphOrchestrator extends RunHarness {
   constructor(opts) {
     super(opts);
-    // Coexistence default: a bare construction targets the graph default under
-    // its alias. createOrchestratorFor always passes an explicit id.
-    if (!this.opts.workflowId) this.workflowId = GRAPH_DEFAULT_ALIAS_ID;
+    // The graph default. createOrchestratorFor always passes an explicit id.
+    if (!this.opts.workflowId) this.workflowId = GRAPH_DEFAULT_WORKFLOW.id;
     // (this._runners is assigned by the _initRunners hook the base constructor calls.)
     this.resolved = null;        // resolveGraph's { template, ports, loops, nodes→nodeCtx, wires, agentsByKey, agentKeys }
     this._scheduler = null;

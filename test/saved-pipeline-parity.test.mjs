@@ -209,7 +209,7 @@ async function withParityHome(fn) {
 
 const PARITY_CASES = [
   ...SEED_TEMPLATES.map((t) => ({ id: t.id, graph: t })),
-  { id: 'wf_default', graph: null },   // rides the coexistence alias on v2
+  { id: 'wf_default', graph: null },   // v1 leg rides the retired default's reserved id
 ];
 
 for (const c of PARITY_CASES) {
@@ -218,7 +218,7 @@ for (const c of PARITY_CASES) {
       // ── v1 leg ──
       const v1Tpl = c.graph
         ? JSON.parse(await readFile(new URL(`./fixtures/workflows-v1/${c.id}.json`, import.meta.url), 'utf8'))
-        : { id: 'wf_default' };
+        : { id: 'wf_default_v1' };
       if (c.graph) await writeWorkflow(v1Tpl);
       const a = await drive(makeOrch({
         projectDir: parityGitDir(`${c.id}-v1`), workflowId: v1Tpl.id, prompt: 'parity probe',
@@ -228,7 +228,7 @@ for (const c of PARITY_CASES) {
       // ── v2 leg ──
       if (c.graph) await writeGraphWorkflow({ id: `${c.id}__g`, name: c.graph.name, domain: c.graph.domain, nodes: c.graph.nodes, wires: c.graph.wires });
       const b = await drive(createGraphOrchestrator({
-        projectDir: parityGitDir(`${c.id}-v2`), workflowId: c.graph ? `${c.id}__g` : 'wf_default_v2',
+        projectDir: parityGitDir(`${c.id}-v2`), workflowId: c.graph ? `${c.id}__g` : 'wf_default',
         prompt: 'parity probe', claude: { mock: true }, auto: false,
       }), { v2: true });
 

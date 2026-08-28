@@ -16,14 +16,14 @@ test('selectEngine prefers the resume point, then the template version', () => {
 });
 
 test('createOrchestratorFor dispatches a v2 workflow id to the graph engine', async () => {
-  const graph = await createOrchestratorFor({ projectDir: process.cwd(), workflowId: 'wf_default_v2', claude: { mock: true } });
-  assert.ok(graph instanceof GraphOrchestrator, 'wf_default_v2 => GraphOrchestrator');
+  const graph = await createOrchestratorFor({ projectDir: process.cwd(), workflowId: 'wf_default', claude: { mock: true } });
+  assert.ok(graph instanceof GraphOrchestrator, 'wf_default => GraphOrchestrator');
   assert.equal(graph.getState().engine, 2);
   assert.equal(graph.engine, 'graph');
-  assert.equal(graph.workflowId, 'wf_default_v2');
+  assert.equal(graph.workflowId, 'wf_default');
 
-  const v1 = await createOrchestratorFor({ projectDir: process.cwd(), workflowId: 'wf_default', claude: { mock: true } });
-  assert.ok(!(v1 instanceof GraphOrchestrator), 'wf_default => the v1 Orchestrator');
+  const v1 = await createOrchestratorFor({ projectDir: process.cwd(), workflowId: 'wf_default_v1', claude: { mock: true } });
+  assert.ok(!(v1 instanceof GraphOrchestrator), 'wf_default_v1 => the retired v1 Orchestrator');
   assert.equal(v1.getState().engine, undefined);
   assert.equal(v1.engine, 'v1');
 });

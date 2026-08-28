@@ -5,7 +5,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { createCatalog, shapeWorkflow, buildCatalog } from '../src/core/ask/catalog.mjs';
-import { DEFAULT_WORKFLOW } from '../src/core/workflows.mjs';
+import { GRAPH_DEFAULT_WORKFLOW } from '../src/core/workflows.mjs';
 
 useTempHome(after);
 
@@ -30,7 +30,7 @@ test('shapeWorkflow: groups preserved, registry names, unknown key falls back to
     ],
     feedbacks: [{ id: 'fb1', from: 'n2', to: 'n1' }],
   });
-  assert.equal(shapeWorkflow(DEFAULT_WORKFLOW, {}).origin, null, 'wf_default has no origin key');
+  assert.equal(shapeWorkflow(GRAPH_DEFAULT_WORKFLOW, {}).origin, null, 'wf_default has no origin key');
   assert.equal(shapeWorkflow({ id: 'x', name: 'x', steps: null, feedbacks: undefined }, {}).steps.length, 0);
   assert.equal(shapeWorkflow({ id: 'x', name: 'x' }, {}).domain, 'general');
   assert.equal(shapeWorkflow({ id: 'x', name: 'x', origin: '' }, {}).origin, '', 'only null/undefined become null');
@@ -41,14 +41,14 @@ test('buildCatalog: injected readers, wf_default first and never duplicated, sha
   const { buildCatalog: build } = createCatalog({
     listProjects: async () => [{ key: 'demo-00000001', name: 'Demo', path: '/p/demo', exists: true }, { key: 'gone-00000002', name: 'Gone', path: '/p/gone', exists: false }],
     listWorkspaces: async () => [{ id: 'wks-team-0000abcd', name: 'Team', description: '', projectPaths: ['/p/a', '/p/b'], projectKeys: srcKeys, exists: [true, true] }],
-    listWorkflows: async () => [TPL, { ...DEFAULT_WORKFLOW, name: 'Shadow' }],
+    listWorkflows: async () => [TPL, { ...GRAPH_DEFAULT_WORKFLOW, name: 'Shadow' }],
     loadAgentRegistry: () => REGISTRY,
   });
   const cat = await build();
   assert.deepEqual(cat.projects, [{ key: 'demo-00000001', name: 'Demo', path: '/p/demo' }, { key: 'gone-00000002', name: 'Gone', path: '/p/gone' }]);
   assert.deepEqual(cat.workspaces, [{ id: 'wks-team-0000abcd', name: 'Team', projectKeys: ['a-00000001', 'b-00000002'] }]);
   assert.notEqual(cat.workspaces[0].projectKeys, srcKeys, 'projectKeys is copied, never aliased to the reader\'s array');
-  assert.deepEqual(cat.workflows.map((w) => w.id), ['wf_default', 'wf_default_v2', 'wf_review'], 'default first, a stored twin of its id is dropped');
+  assert.deepEqual(cat.workflows.map((w) => w.id), ['wf_default', 'wf_review'], 'default first, a stored twin of its id is dropped');
   assert.equal(cat.workflows[0].name, 'Default');
   assert.equal(cat.workflows[0].steps.length, 5);
   assert.equal(cat.workflows[0].steps[1][0].key, 'planner');

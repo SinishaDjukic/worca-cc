@@ -69,7 +69,7 @@ test('node config wins for unlocked agents; is IGNORED for locked/unsupported', 
 test('legacy per-role config applies on wf_default only, below node config', async () => {
   const p = await tmp();
   await setStep(p, 'planner', { askQuestions: true });
-  const plan = await resolveWorkflow(p, 'wf_default', REG, await tmp());
+  const plan = await resolveWorkflow(p, 'wf_default_v1', REG, await tmp());
   const planner = plan.steps.flat().find((n) => n.key === 'planner');
   assert.equal(planner.askQuestions, true);
 });

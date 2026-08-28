@@ -1,6 +1,6 @@
 // src/core/workflows.mjs
 // node:sqlite migration: now persisted in the `workflows` table; path helpers vestigial.
-// Global workflow-template store + the built-in DEFAULT_WORKFLOW + resolveWorkflow.
+// Global workflow-template store + the built-in GRAPH_DEFAULT_WORKFLOW + resolveWorkflow.
 //
 // Templates are TOPOLOGY + PER-NODE DEFAULTS (steps + feedbacks by node-instance
 // id; each node may carry an optional `defaults` block — newpipeline-ux-design.md
@@ -19,6 +19,7 @@ import { slugify } from './artifacts.mjs';
 import { DEFAULT_AGENTS_DIR } from './agent-registry.mjs'; // fileURLToPath-based (Windows-safe)
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { GRAPH_DEFAULT_WORKFLOW } from './graph/builtin-workflows.mjs';
+export { GRAPH_DEFAULT_WORKFLOW };
 import { registryPortsFn } from './graph/registry-ports.mjs';
 
 /**
@@ -91,7 +92,11 @@ function parseFrontmatterTools(text) {
  * returns it.
  * @type {{id:string,name:string,version:number,steps:Array<Array<{id:string,key:string}>>,feedbacks:Array<{id:string,from:string,to:string}>,createdAt:string,updatedAt:string}}
  */
-export const DEFAULT_WORKFLOW = Object.freeze({
+/** The RETIRED v1 default topology. Nothing in production reads it after the v2
+ *  break; it survives as the v1 engine's own default (under LEGACY_DEFAULT_ID)
+ *  and as the input fixture of the v1 suites P8b retires with the engine.
+ *  `readWorkflow('wf_default')` never serves it. */
+export const LEGACY_DEFAULT_WORKFLOW = Object.freeze({
   id: 'wf_default',
   name: 'Default',
   version: 1,
@@ -305,7 +310,8 @@ export async function writeGraphWorkflow(tpl) {
   // The reserved ids belong to the built-in default and its coexistence alias;
   // a save may never claim either, so it falls back to the slug.
   const asked = tpl && typeof tpl.id === 'string' ? tpl.id.trim() : '';
-  const id = asked && isSafeWorkflowId(asked) && asked !== 'wf_default' && asked !== 'wf_default_v2'
+  const id = asked && isSafeWorkflowId(asked)
+    && asked !== 'wf_default' && asked !== 'wf_default_v2' && asked !== LEGACY_DEFAULT_ID
     ? asked
     : `wf_${slugify(name)}`;
   const domain = normDomain(tpl && tpl.domain);
@@ -338,40 +344,25 @@ export async function writeGraphWorkflow(tpl) {
 }
 
 /**
- * Read a template by id. Returns the built-in DEFAULT_WORKFLOW for "wf_default";
+ * Read a template by id. Returns the built-in GRAPH_DEFAULT_WORKFLOW for "wf_default";
  * otherwise the stored row, or null when absent/corrupt/unsafe-id/archived.
  * @param {string} id
  * @returns {Promise<object|null>}
  */
-/**
- * Coexistence alias (§5.2). GRAPH_DEFAULT_WORKFLOW carries its FINAL id
- * `wf_default` so the V24 seed/overlay maps never rename; until the break it is
- * served under this alias, and the v1 DEFAULT_WORKFLOW keeps `wf_default`.
- * Overlays key on the REQUESTED id, so per-node config on the graph default
- * lands under `wf_default_v2` and V24 remaps it. writeGraphWorkflow already
- * refuses to persist a row under either id. Removed in P8.
- */
-export const GRAPH_DEFAULT_ALIAS_ID = 'wf_default_v2';
-
-/** A fresh shallow clone under the alias identity — GRAPH_DEFAULT_WORKFLOW is
- *  deep-frozen and resolveGraph structuredClones the result, so nobody mutates it. */
-export function graphDefaultAliasTemplate() {
-  // Same epoch stamps DEFAULT_WORKFLOW carries (:109-110): every listed template
-  // has createdAt/updatedAt. P8 moves them into the constant.
-  return {
-    ...GRAPH_DEFAULT_WORKFLOW, id: GRAPH_DEFAULT_ALIAS_ID, name: 'Default (graph)',
-    createdAt: '1970-01-01T00:00:00.000Z', updatedAt: '1970-01-01T00:00:00.000Z',
-  };
-}
+/** The RETIRED v1 default, reachable ONLY under this reserved id. `wf_default`
+ *  IS the graph after the break, so the v1 engine has no default template left;
+ *  this id keeps the v1 engine and its suites runnable until P8b deletes the
+ *  engine, the constant and this arm together. Never listed, never mintable. */
+export const LEGACY_DEFAULT_ID = 'wf_default_v1';
 
 export async function readWorkflow(id, opts = {}) {
-  if (id === DEFAULT_WORKFLOW.id) return DEFAULT_WORKFLOW;
-  if (id === GRAPH_DEFAULT_ALIAS_ID) return graphDefaultAliasTemplate();
+  if (id === GRAPH_DEFAULT_WORKFLOW.id) return GRAPH_DEFAULT_WORKFLOW;
+  if (id === LEGACY_DEFAULT_ID) return LEGACY_DEFAULT_WORKFLOW;
   return readRaw(id, opts);
 }
 
 /**
- * List user templates (NOT DEFAULT_WORKFLOW — callers prepend it), newest first by
+ * List user templates (NOT GRAPH_DEFAULT_WORKFLOW — callers prepend it), newest first by
  * createdAt. Archived rows are hidden unless asked for. Empty store => [].
  * @returns {Promise<object[]>}
  */
@@ -379,14 +370,14 @@ export async function listWorkflows({ includeArchived = false } = {}) {
   getDb();
   const where = includeArchived ? '' : 'WHERE archived_at IS NULL';
   const rows = prepare(`SELECT ${ROW_COLS} FROM workflows ${where} ORDER BY created_at DESC, id`).all();
-  return rows.filter((r) => r.id !== DEFAULT_WORKFLOW.id).map(rowToTpl);
+  return rows.filter((r) => r.id !== GRAPH_DEFAULT_WORKFLOW.id).map(rowToTpl);
 }
 
 /** The ONE gate every run path goes through (POST /api/run, the CLI's
  *  --workflow, Ask's proposal validation). Throws with a `code` the callers map
  *  to HTTP/exit codes; the ARCHIVED text is user-facing and verbatim. */
 export async function assertRunnableWorkflow(id) {
-  const wanted = typeof id === 'string' && id.trim() ? id.trim() : DEFAULT_WORKFLOW.id;
+  const wanted = typeof id === 'string' && id.trim() ? id.trim() : GRAPH_DEFAULT_WORKFLOW.id;
   const live = await readWorkflow(wanted);
   if (live) return live;
   const archived = await readWorkflow(wanted, { includeArchived: true });
@@ -414,7 +405,7 @@ export async function assertRunnableWorkflow(id) {
  * @throws {Error} unknown/unsafe id, or the built-in default
  */
 export async function setWorkflowNodeDefaults(id, map) {
-  if (id === DEFAULT_WORKFLOW.id) {
+  if (id === GRAPH_DEFAULT_WORKFLOW.id) {
     throw new Error('the built-in Default workflow cannot store defaults — save a copy in Composer first');
   }
   const tpl = readRaw(id);
@@ -455,13 +446,13 @@ export async function setWorkflowNodeDefaults(id, map) {
 }
 
 /**
- * Delete a saved template by id. Refuses the built-in DEFAULT_WORKFLOW (false) and
+ * Delete a saved template by id. Refuses the built-in GRAPH_DEFAULT_WORKFLOW (false) and
  * unsafe ids (false). Returns false when no row exists; true on removal.
  * @param {string} id
  * @returns {Promise<boolean>}
  */
 export async function deleteWorkflow(id) {
-  if (id === DEFAULT_WORKFLOW.id) return false; // built-in default is undeletable
+  if (id === GRAPH_DEFAULT_WORKFLOW.id) return false; // built-in default is undeletable
   if (!isSafeWorkflowId(id)) return false;      // SECURITY: reject unsafe ids
   getDb();
   let changed = 0;
@@ -542,7 +533,7 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   const { nodes: nodeCfg, wires: wireCfg } = await resolveRunConfig(projectDir, workflowId);
   // The legacy per-role layer is the Default workflow's storage only (saved rows
   // use nodeCfg); it is addressed by agent KEY, never by node id.
-  const stepsCfg = workflowId === DEFAULT_WORKFLOW.id ? (await readConfig(projectDir)).steps : {};
+  const stepsCfg = workflowId === GRAPH_DEFAULT_WORKFLOW.id ? (await readConfig(projectDir)).steps : {};
   const firstDefined = (...vals) => vals.find((v) => v !== undefined);
 
   const nodes = {};
@@ -634,7 +625,7 @@ export async function resolveWorkflow(projectDir, workflowId, registry, agentsDi
   // Legacy per-role config (what the Default-workflow UI writes) applies ONLY to
   // the default workflow's nodes — this is what makes its per-agent model/effort/
   // fanOut actually reach the main runs (saved workflows use nodeCfg only).
-  const stepsCfg = workflowId === DEFAULT_WORKFLOW.id ? (await readConfig(projectDir)).steps : {};
+  const stepsCfg = workflowId === LEGACY_DEFAULT_ID ? (await readConfig(projectDir)).steps : {};
   const firstDefined = (...vals) => vals.find((v) => v !== undefined);
   // CONV-4: map each agent key to the UI stepper bucket the live view understands,
   // so the dispatcher can emit a real `'phase'` per node (every node gets its own

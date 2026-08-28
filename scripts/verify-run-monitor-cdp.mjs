@@ -235,7 +235,7 @@ async function until(expr, tag, tries = 100) {
 try {
   // ---- drive a REAL v2 mock pipeline; hold it at the clarify question --------
   const started = await api('/api/run', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ projectDir: proj, prompt: 'add a flag', workflowId: 'wf_default_v2', mock: true }) });
+    body: JSON.stringify({ projectDir: proj, prompt: 'add a flag', workflowId: 'wf_default', mock: true }) });
   if (started.status !== 200) throw new Error(`POST /api/run -> ${started.status} ${JSON.stringify(started.body)}`);
   const runId = started.body.runId;
   const entry = runs.get(runId);

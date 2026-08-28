@@ -20,7 +20,7 @@ test('stepper manifest is emitted before the first phase event (i.e. before pref
   const dir = await makeTmpDir();
   const orch = createOrchestrator({
     projectDir: dir,
-    workflowId: 'wf_default',
+    workflowId: 'wf_default_v1',
     prompt: 'demo task',
     claude: { mock: true }, // NOTE: option is `claude`, not `claudeOpts`
     auto: true,             // non-interactive: clarify auto-answers, gates auto-continue

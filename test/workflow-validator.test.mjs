@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { validateWorkflow } from '../src/core/workflow-validator.mjs';
-import { DEFAULT_WORKFLOW } from '../src/core/workflows.mjs';
+import { LEGACY_DEFAULT_WORKFLOW } from '../src/core/workflows.mjs';
 import { PRESEEDED_CHANNELS } from '../src/core/channels.mjs';
 
 // Inline fake registry (matches Phase 1's AgentMeta shape) so this phase tests
@@ -36,8 +36,8 @@ test('a well-formed workflow passes', () => {
   assert.deepEqual(errors, []);
 });
 
-test('DEFAULT_WORKFLOW passes against a registry of its 5 keys', () => {
-  const { ok, errors } = validateWorkflow(DEFAULT_WORKFLOW, REGISTRY);
+test('LEGACY_DEFAULT_WORKFLOW passes against a registry of its 5 keys', () => {
+  const { ok, errors } = validateWorkflow(LEGACY_DEFAULT_WORKFLOW, REGISTRY);
   assert.equal(ok, true, errors.join('; '));
 });
 

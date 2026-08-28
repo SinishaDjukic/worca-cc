@@ -42,7 +42,7 @@ async function seedGraphs() {
   }
 }
 /** Every runnable graph id: the 7 saved seeds + the graph default's alias. */
-const GRAPH_IDS = [...SEED_TEMPLATES.map((t) => t.id), 'wf_default_v2'];
+const GRAPH_IDS = [...SEED_TEMPLATES.map((t) => t.id), 'wf_default'];
 /** Seeds that cannot reach End under the mock BY DESIGN (P3's mock-graph audit). */
 const QUIESCENT = new Set(['wf_no-clarify']);
 /** The v2 executor ABI for injected runners: one entry per declared output port. */
@@ -55,7 +55,7 @@ function outsOf(ctx) {
 test('the graph default runs end to end under mock and reaches the End card', { timeout: 120000 }, async () => {
   const dir = gitDir();
   const orch = createGraphOrchestrator({
-    projectDir: dir, workflowId: 'wf_default_v2', prompt: 'demo task',
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo task',
     claude: { mock: true }, auto: true,
   });
   const execs = [];
@@ -179,7 +179,7 @@ test('stop mid-run keeps the partial diff and leaves no resume point', { timeout
   const dir = gitDir('gstop');
   let orch;
   orch = createGraphOrchestrator({
-    projectDir: dir, workflowId: 'wf_default_v2', prompt: 'demo', auto: true, claude: { mock: true },
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, claude: { mock: true },
     runners: {
       producer: async (ctx) => {
         // Write a real file so the staged partial diff is non-empty, then stop.
@@ -210,7 +210,7 @@ test('the End-bound result is recorded as an artifact', { timeout: 120000 }, asy
   await seedGraphs();
   const dir = gitDir('gend');
   const orch = createGraphOrchestrator({
-    projectDir: dir, workflowId: 'wf_default_v2', prompt: 'demo', claude: { mock: true }, auto: true,
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo', claude: { mock: true }, auto: true,
   });
   const arts = [];
   orch.on('artifact', (a) => arts.push(a));
@@ -237,7 +237,7 @@ test('the pipeline cost cap is enforced at EVERY agent launch, not per step', { 
     let launches = 0;
     const spend = (ctx) => ctx.onEvent({ type: 'result', costUsd: 0.04, raw: { type: 'result', total_cost_usd: 0.04 } });
     const orch = createGraphOrchestrator({
-      projectDir: dir, workflowId: 'wf_default_v2', prompt: 'demo', auto: true, claude: { mock: true },
+      projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, claude: { mock: true },
       runners: {
         producer: async (ctx) => { launches += 1; spend(ctx); return { outputs: outsOf(ctx), verdict: null }; },
         verifier: async (ctx) => { launches += 1; spend(ctx); return { outputs: outsOf(ctx), verdict: { issues: [], summary: '' } }; },

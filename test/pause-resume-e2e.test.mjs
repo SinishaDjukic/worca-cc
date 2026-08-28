@@ -41,7 +41,7 @@ test('mock pipeline pauses at a boundary and resumes to done', async () => {
 
   const saved = readPipelineForResume(id);
   assert.ok(['node', 'boundary'].includes(saved.resumePoint.kind), `kind is node|boundary (got ${saved.resumePoint.kind})`);
-  assert.equal(saved.resumePoint.workflowId, 'wf_default');
+  assert.equal(saved.resumePoint.workflowId, 'wf_default_v1');
 
   const orch2 = createOrchestrator({ projectDir: dir, claude: { mock: true }, auto: true, resume: saved });
   const r2 = await orch2.resume();

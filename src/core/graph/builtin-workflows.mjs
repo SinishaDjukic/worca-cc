@@ -25,6 +25,8 @@ export const GRAPH_DEFAULT_WORKFLOW = deepFreeze({
   name: 'Default',
   version: 2,
   domain: 'coding',
+  createdAt: '1970-01-01T00:00:00.000Z',
+  updatedAt: '1970-01-01T00:00:00.000Z',
   nodes: [
     { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
     { id: 'n_clarify', kind: 'agent', key: 'clarify', x: 320, y: 200, config: {} },

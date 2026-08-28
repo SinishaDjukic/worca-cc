@@ -4,7 +4,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { getDb, prepare } from '../src/core/db.mjs';
 import {
   writeWorkflow, writeGraphWorkflow, readWorkflow, listWorkflows,
-  assertRunnableWorkflow, resolveWorkflow, DEFAULT_WORKFLOW,
+  assertRunnableWorkflow, resolveWorkflow, GRAPH_DEFAULT_WORKFLOW,
 } from '../src/core/workflows.mjs';
 
 useTempHome(after);
@@ -33,7 +33,7 @@ test('writeGraphWorkflow stores version 2 with graph JSON and empty v1 columns',
 test('the id rule: an explicit safe id wins, the reserved ids never do', async () => {
   assert.equal((await writeGraphWorkflow({ ...GRAPH, id: 'wf_custom' })).id, 'wf_custom');
   assert.equal((await writeGraphWorkflow({ ...GRAPH, id: 'wf_default' })).id, 'wf_graph-one');
-  assert.equal((await writeGraphWorkflow({ ...GRAPH, id: 'wf_default_v2' })).id, 'wf_graph-one');
+  assert.equal((await writeGraphWorkflow({ ...GRAPH, id: 'wf_default' })).id, 'wf_graph-one');
   assert.equal((await writeGraphWorkflow({ ...GRAPH, id: '../escape' })).id, 'wf_graph-one');
 });
 
@@ -72,7 +72,7 @@ test('archiving hides a row from readWorkflow and listWorkflows', async () => {
 test('assertRunnableWorkflow: NOT_FOUND, ARCHIVED (verbatim), and the happy path', async () => {
   const saved = await writeGraphWorkflow({ ...GRAPH, id: 'wf_run' });
   assert.equal((await assertRunnableWorkflow(saved.id)).id, 'wf_run');
-  assert.equal((await assertRunnableWorkflow(DEFAULT_WORKFLOW.id)).id, DEFAULT_WORKFLOW.id);
+  assert.equal((await assertRunnableWorkflow(GRAPH_DEFAULT_WORKFLOW.id)).id, GRAPH_DEFAULT_WORKFLOW.id);
   await assert.rejects(() => assertRunnableWorkflow('wf_ghost'), (e) => {
     assert.equal(e.code, 'NOT_FOUND');
     assert.equal(e.message, 'unknown workflowId "wf_ghost"');

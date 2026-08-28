@@ -38,7 +38,9 @@ export function adaptRunner(fn) {
 export const ENGINES = [
   {
     id: 'v1',
-    workflowId: 'wf_default',
+    // `wf_default` IS the graph after the v2 break; the retired v1 topology is
+    // reachable only under its reserved id (workflows.mjs#LEGACY_DEFAULT_ID).
+    workflowId: 'wf_default_v1',
     create: (opts) => createOrchestrator(opts),
     /** Spy on the per-node ctx builder: v1's _nodeCtx(node, pos). */
     spyCtx: (orch, seen) => {
@@ -56,10 +58,10 @@ export const ENGINES = [
   },
   {
     id: 'graph',
-    workflowId: 'wf_default_v2',
+    workflowId: 'wf_default',
     create: (opts) => createGraphOrchestrator({
       ...opts,
-      workflowId: opts.workflowId && opts.workflowId !== 'wf_default' ? opts.workflowId : 'wf_default_v2',
+      workflowId: opts.workflowId || 'wf_default',
       runners: Object.fromEntries(Object.entries(opts.runners || {}).map(([k, fn]) => [k, adaptRunner(fn)])),
     }),
     /** Spy on the per-execution ctx builder: the graph engine's _execCtx(node, nc, args). */

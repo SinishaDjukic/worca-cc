@@ -6,7 +6,7 @@
 // Readers are injected so unit tests run without a DB.
 import { listProjects as realListProjects } from '../projects.mjs';
 import { listWorkspaces as realListWorkspaces } from '../workspaces.mjs';
-import { listWorkflows as realListWorkflows, DEFAULT_WORKFLOW, GRAPH_DEFAULT_ALIAS_ID, graphDefaultAliasTemplate } from '../workflows.mjs';
+import { listWorkflows as realListWorkflows, GRAPH_DEFAULT_WORKFLOW } from '../workflows.mjs';
 import { classifyLoops } from '../../shared/graph/loops.mjs';
 import { rankNodes } from '../../shared/graph/layout.mjs';
 import { registryPortsFn } from '../graph/registry-ports.mjs';
@@ -84,20 +84,19 @@ export function createCatalog({
   listProjects = realListProjects,
   listWorkspaces = realListWorkspaces,
   listWorkflows = realListWorkflows,
-  defaultWorkflow = DEFAULT_WORKFLOW,
+  defaultWorkflow = GRAPH_DEFAULT_WORKFLOW,
   loadAgentRegistry = realLoadAgentRegistry,
 } = {}) {
   async function buildCatalog() {
     const [projects, workspaces, workflows] = await Promise.all([listProjects(), listWorkspaces(), listWorkflows()]);
     let registry = {};
     try { registry = loadAgentRegistry() || {}; } catch { registry = {}; }
-    // Same order as GET /api/workflows: v1 default, the graph default alias, saved
-    // rows. shapeWorkflow already derives `steps` (condensation-topo ranks) +
+    // Same order as GET /api/workflows: the graph default, then saved rows.
+    // shapeWorkflow already derives `steps` (condensation-topo ranks) +
     // `feedbacks` (loop wires) for a v2 template, so the LLM-facing shape is unchanged.
     const templates = [
       defaultWorkflow,
-      graphDefaultAliasTemplate(),
-      ...workflows.filter((t) => t && t.id !== defaultWorkflow.id && t.id !== GRAPH_DEFAULT_ALIAS_ID),
+      ...workflows.filter((t) => t && t.id !== defaultWorkflow.id),
     ];
     return {
       projects: projects.map((p) => ({ key: p.key, name: p.name, path: p.path })),

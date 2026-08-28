@@ -92,9 +92,8 @@ import {
   writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
 } from '../src/core/guardrail-store.mjs';
 import {
-  DEFAULT_WORKFLOW, listWorkflows, writeWorkflow, deleteWorkflow,
+  GRAPH_DEFAULT_WORKFLOW, listWorkflows, writeWorkflow, deleteWorkflow,
   setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow,
-  graphDefaultAliasTemplate,
 } from '../src/core/workflows.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
@@ -3204,10 +3203,9 @@ app.get('/api/workflows', async (req, res) => {
       const all = await listWorkflows({ includeArchived: true });
       return res.json({ workflows: all.filter((w) => w.archivedAt) });
     }
-    // CONTRACT: [ v1 DEFAULT_WORKFLOW, the graph default under its coexistence
-    // alias, ...listWorkflows() ]. The alias row is never persisted, so it can
-    // never appear twice. P8 collapses this to [GRAPH_DEFAULT_WORKFLOW, ...].
-    res.json({ workflows: [DEFAULT_WORKFLOW, graphDefaultAliasTemplate(), ...(await listWorkflows())] });
+    // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, ...listWorkflows() ]. The built-in is
+    // never a persisted row (listWorkflows filters its id), so it cannot appear twice.
+    res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, ...(await listWorkflows())] });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

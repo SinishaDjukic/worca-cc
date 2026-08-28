@@ -26,7 +26,7 @@ import { hasBlocking, blockingIssues, readQuestionsFile } from './protocol.mjs';
 import { runClarify } from './phases.mjs';
 import { runners as defaultRunners } from './runners.mjs';
 import { classifyError } from './recoverable-error.mjs';
-import { resolveWorkflow, buildStepperManifest, rewriteStepperForDecomposition } from './workflows.mjs';
+import { resolveWorkflow, buildStepperManifest, rewriteStepperForDecomposition, LEGACY_DEFAULT_ID } from './workflows.mjs';
 import { allocate, bindInputs, publish, legacyFields, entrySeedChannels, renderPromptArtifact } from './channels.mjs';
 import { collectChannelDefs } from './agent-registry.mjs';
 import { validateWorkflow } from './workflow-validator.mjs';
@@ -115,6 +115,14 @@ export function createOrchestrator(opts = {}) {
 }
 
 class Orchestrator extends RunHarness {
+  // The v1 engine's default template. `wf_default` is the GRAPH after the v2
+  // break, so the retired v1 topology is reachable only under its reserved id
+  // (the graph orchestrator carries the mirror of this line).
+  constructor(opts = {}) {
+    super(opts);
+    if (!opts.workflowId) this.workflowId = LEGACY_DEFAULT_ID;
+  }
+
   // ── public control ─────────────────────────────────────────────────────────
 
   // ── main run ─────────────────────────────────────────────────────────────────

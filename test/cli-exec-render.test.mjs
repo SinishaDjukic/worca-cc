@@ -158,7 +158,7 @@ test('the CLI renders exec lines, lets bookends through by nodeId, drops stop no
   assert.ok(/askGate\(rl, issues \|\| \[\],\s*graphRun\(\) \? formatGateHeader\(payload, /.test(src), 'the gate header is built from the WHOLE question payload (wireId)');
   assert.ok(/formatRunSummary\(orch\.state\)/.test(src), 'the summary is the pure helper');
   assert.ok(/worca — node-graph multi-agent pipelines/.test(src), 'the HELP headline is updated');
-  assert.ok(/--workflow <id>\s+Saved pipeline template to run \(default: wf_default\)/.test(src), 'the --workflow HELP line names a pipeline template');
+  assert.ok(/--workflow <id>\s+Saved pipeline template to run \(default: wf_default — the built-in graph\)/.test(src), 'the --workflow HELP line names the built-in graph');
   assert.ok(/assertRunnableWorkflow/.test(src), 'the CLI validates --workflow through the shared guard');
 });
 
