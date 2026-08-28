@@ -1148,6 +1148,11 @@ export function reconcileV1Workflows(db, { seed = false } = {}) {
   for (const need of ['version', 'steps', 'feedbacks', 'created_at', 'updated_at', 'graph', 'archived_at']) {
     if (!cols.has(need)) return report;      // minimal hand-seeded test schema: nothing to do
   }
+  // Hand-seeded upgrade fixtures (subagent-migration*.test.mjs seed a faithful
+  // v1 schema) carry `workflows` + `config_workflow_nodes` but NOT
+  // config_workflow_feedbacks / config_workflow_wires / project_config: the base
+  // DDL that creates them only runs for current < 1. Probe before every pass.
+  const hasTable = (t) => hasSqliteTable(db, t);
   const now = new Date().toISOString();
 
   // 1) Archive — the WHERE makes it idempotent and keeps an already-archived row's stamp.
@@ -1178,7 +1183,102 @@ export function reconcileV1Workflows(db, { seed = false } = {}) {
       report.seeded.push(t.id);
     }
   }
-  return report;                             // passes 3–6 land in Task 4
+  // 3) The coexistence alias dies FIRST, and it WINS: an overlay the user set on
+  //    the graph default under its alias is NEWER than any v1-era row on the same
+  //    workflow id. INSERT OR REPLACE (not UPDATE OR IGNORE) so the alias row
+  //    overwrites a colliding target instead of being silently dropped, then the
+  //    alias rows are removed. Every displaced row is audited.
+  //    Running this BEFORE the NODE_ID_MAP remap is the whole point: the other
+  //    order mints wf_default/n_plan from the LEGACY s0_0 row first, and the
+  //    fold then hits the PK and is skipped — the user's newer value lost,
+  //    aliasRemapped 0, no audit line, the alias rows still there.
+  //    The column list is read from the LIVE schema, never hardcoded: a fixed
+  //    list would silently blank config_workflow_nodes.ask_questions (an
+  //    INCREMENTAL_COLUMNS column) on every folded row.
+  const ALIAS = 'wf_default_v2';
+  const DEFAULT_ID = 'wf_default';
+  for (const [table, keyCol] of [
+    ['config_workflow_nodes', 'node_id'],
+    ['config_workflow_wires', 'wire_id'],
+  ]) {
+    if (!hasTable(table)) continue;
+    const colNames = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    const colList = colNames.join(', ');
+    const sel = colNames.map((c) => (c === 'workflow_id' ? `'${DEFAULT_ID}' AS workflow_id` : c)).join(', ');
+    const displaced = db.prepare(
+      `SELECT count(*) AS n FROM ${table} a WHERE a.workflow_id = ?
+         AND EXISTS (SELECT 1 FROM ${table} b WHERE b.project_key = a.project_key
+           AND b.workflow_id = ? AND b.${keyCol} = a.${keyCol})`).get(ALIAS, DEFAULT_ID).n;
+    if (displaced) auditV24(`${table}: ${displaced} wf_default overlay row(s) replaced by the newer wf_default_v2 value`);
+    report.aliasRemapped += db.prepare(
+      `INSERT OR REPLACE INTO ${table} (${colList}) SELECT ${sel} FROM ${table} WHERE workflow_id = ?`).run(ALIAS).changes;
+    db.prepare(`DELETE FROM ${table} WHERE workflow_id = ?`).run(ALIAS);
+  }
+  if (hasTable('project_config')) {
+    report.aliasRemapped += db.prepare('UPDATE project_config SET active_workflow_id = ? WHERE active_workflow_id = ?')
+      .run(DEFAULT_ID, ALIAS).changes;
+  }
+  const pipeCols = new Set(db.prepare('PRAGMA table_info(pipelines)').all().map((c) => c.name));
+  if (pipeCols.has('resume_point')) {
+    // Only a v2 point can name the alias meaningfully; a v1 point that names it
+    // is swept by sweepV1Runs, so the `version = 2` filter is load-bearing.
+    report.aliasRemapped += db.prepare(`UPDATE pipelines
+        SET resume_point = json_set(resume_point, '$.workflowId', ?)
+      WHERE resume_point IS NOT NULL AND json_valid(resume_point)
+        AND json_extract(resume_point, '$.version') = 2
+        AND json_extract(resume_point, '$.workflowId') = ?`).run(DEFAULT_ID, ALIAS).changes;
+  }
+  if (report.aliasRemapped) {
+    auditV24(`remapped ${report.aliasRemapped} row(s) from the wf_default_v2 alias to wf_default`);
+  }
+
+  // 4) Static overlay maps, AFTER the fold (idempotent). A rename that would
+  //    collide with a row the fold just installed is DROPPED — the v2 value wins
+  //    — and the stale v1-keyed row is deleted so no v1 node id survives.
+  if (hasTable('config_workflow_nodes')) {
+    const remapNode = db.prepare(
+      'UPDATE OR IGNORE config_workflow_nodes SET node_id = ? WHERE workflow_id = ? AND node_id = ?');
+    const dropStale = db.prepare('DELETE FROM config_workflow_nodes WHERE workflow_id = ? AND node_id = ?');
+    for (const [wfId, map] of Object.entries(NODE_ID_MAP)) {
+      for (const [oldId, newId] of Object.entries(map)) {
+        report.overlayNodes += remapNode.run(newId, wfId, oldId).changes;
+        const left = dropStale.run(wfId, oldId).changes;   // 0 unless the rename was ignored
+        if (left) {
+          report.overlaysDisplaced += left;
+          auditV24(`${wfId}: dropped ${left} stale "${oldId}" overlay row(s) — "${newId}" already carries a newer value`);
+        }
+      }
+    }
+  }
+
+  // 5) config_workflow_feedbacks rows are COPIED (never moved) onto their wire
+  //    ids: the table stays vestigial but readable, so the migration is reversible.
+  if (hasTable('config_workflow_feedbacks') && hasTable('config_workflow_wires')) {
+    const copyWire = db.prepare(`INSERT OR IGNORE INTO config_workflow_wires
+        (project_key, workflow_id, wire_id, max_cycles)
+      SELECT project_key, workflow_id, ?, max_cycles
+        FROM config_workflow_feedbacks WHERE workflow_id = ? AND fb_id = ?`);
+    for (const [wfId, map] of Object.entries(FB_WIRE_MAP)) {
+      for (const [fbId, wireId] of Object.entries(map)) {
+        report.overlayWires += copyWire.run(wireId, wfId, fbId).changes;
+      }
+    }
+  }
+
+  // 6) An active workflow that just got archived is not runnable — fall back.
+  //    The WHERE is scoped to ARCHIVED rows: a project pointing at a live seed
+  //    keeps its choice.
+  const stranded = hasTable('project_config') ? db.prepare(`SELECT project_key, active_workflow_id FROM project_config
+    WHERE active_workflow_id IN (SELECT id FROM workflows WHERE archived_at IS NOT NULL)`).all() : [];
+  if (stranded.length) {
+    const reset = db.prepare('UPDATE project_config SET active_workflow_id = ? WHERE project_key = ?');
+    for (const r of stranded) {
+      reset.run(DEFAULT_ID, r.project_key);
+      report.activeReset.push(r.project_key);
+      auditV24(`project ${r.project_key}: active pipeline ${r.active_workflow_id} was archived — reset to wf_default`);
+    }
+  }
+  return report;
 }
 
 /**
