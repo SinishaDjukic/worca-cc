@@ -11,7 +11,9 @@ import { join, basename } from 'node:path';
 import { getDb, prepare, tx } from './db.mjs';
 import { slugify } from './artifacts.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
-import { validateWorkflow } from './workflow-validator.mjs';
+import { registryPortsFn } from './graph/registry-ports.mjs';
+import { validateGraph } from '../shared/graph/validate.mjs';
+import { NOT_GRAPH_V2 } from './plugin-manifest.mjs';
 import { pluginCurrentDir } from './plugins-lock.mjs';
 
 /** Uninstall guard error: plugin workflows are still referenced by project state. */
@@ -33,8 +35,8 @@ const normDomain = (raw) => {
 /**
  * Upsert every <versionDir>/workflows/*.json into the workflows table.
  * id = wfp_<plugin>_<slug(filename)>, origin = 'plugin:<plugin>'. Each template
- * is validated (workflow-validator) against the MERGED registry — importing runs
- * AFTER the symlink swap + lock write, so the plugin's own agents resolve. An
+ * is validated by the SHARED `validateGraph` over `registryPortsFn(loadAgentRegistry())`
+ * — importing runs AFTER the symlink swap + lock write, so the plugin's own agents resolve. An
  * invalid/unreadable template is skipped with a warning, never thrown (spec §9.3).
  * No workflows/ dir => { imported: [], skipped: [] } (feature-off no-op).
  * @param {string} name       plugin name (kebab-case; id stays SAFE_WORKFLOW_ID-legal)
@@ -49,9 +51,17 @@ export async function importPluginWorkflows(name, versionDir) {
   const imported = [];
   const skipped = [];
   if (!files.length) return { imported, skipped };
-  getDb(); // open + migrate: workflows.origin exists (SCHEMA_V13, Task 10)
-  const registry = loadAgentRegistry(); // merged builtin+user+plugin (Task 6)
+  getDb(); // open + migrate: workflows.origin/graph/archived_at exist (V13/V23)
   const now = new Date().toISOString();
+  // ONE registry load for the whole import, and the SHARED port synthesis over
+  // it: agent meta ports plus the universal `await` gate and the flow-card
+  // table. The templates are not in the DB yet, so resolveGraph is unavailable —
+  // registryPortsFn exists for exactly this caller and the server's save route.
+  const portsFn = registryPortsFn(loadAgentRegistry());
+  const skip = (f, errors) => {
+    skipped.push({ file: f, errors });
+    console.warn(`[plugin-workflows] ${name}/${f}: invalid template — skipped (${errors.join('; ')})`);
+  };
   for (const f of files) {
     let raw;
     try {
@@ -61,28 +71,39 @@ export async function importPluginWorkflows(name, versionDir) {
       console.warn(`[plugin-workflows] ${name}/${f}: unreadable JSON — skipped`);
       continue;
     }
-    const tpl = {
-      steps: Array.isArray(raw?.steps) ? raw.steps : [],
-      feedbacks: Array.isArray(raw?.feedbacks) ? raw.feedbacks : [],
-    };
-    const v = validateWorkflow(tpl, registry);
-    if (!v.ok) {
-      skipped.push({ file: f, errors: v.errors });
-      console.warn(`[plugin-workflows] ${name}/${f}: invalid template — skipped (${v.errors.join('; ')})`);
-      continue;
-    }
+    // A v1 `steps` template is called out by name rather than left to V1's
+    // generic "version must be 2": the plugin author needs to know their
+    // template needs porting, not that a field is off by one. Same clause the
+    // validator prints, imported so the two can never drift.
+    if (Number(raw?.version) !== 2) { skip(f, [NOT_GRAPH_V2]); continue; }
     const id = `wfp_${name}_${slugify(basename(f, '.json'))}`;
     const rowName = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : basename(f, '.json');
+    const domain = normDomain(raw.domain);
+    const nodes = Array.isArray(raw.nodes) ? raw.nodes : [];
+    const wires = Array.isArray(raw.wires) ? raw.wires : [];
+    // The FULL kind set {agent, task, and, or, combine, end} and every rule
+    // V1-V21 — including V20/V21's mandatory Task + End cards and V7's
+    // one-wire-per-input — apply to a plugin template exactly as they do to a
+    // hand-composed one. Warnings never block an import (they do not block a
+    // save either); they are logged so a template that will misbehave at run
+    // time says so at install.
+    const { errors, warnings } = validateGraph({ id, name: rowName, version: 2, domain, nodes, wires }, portsFn);
+    if (errors.length) { skip(f, errors.map((e) => `${e.code}: ${e.message}`)); continue; }
+    for (const w of warnings) console.warn(`[plugin-workflows] ${name}/${f}: ${w.code}: ${w.message}`);
+    // graph holds {nodes, wires, canvas?} ONLY — id/name/domain/origin are row
+    // columns, so a rename can never drift between the two.
+    const graph = { nodes, wires };
+    if (raw.canvas && typeof raw.canvas === 'object') graph.canvas = raw.canvas; // accepted, engine-ignored
     tx(() => {
       prepare(`
-        INSERT INTO workflows (id, name, version, domain, steps, feedbacks, origin, created_at, updated_at)
-        VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
+        INSERT INTO workflows (id, name, version, domain, graph, steps, feedbacks, origin, created_at, updated_at, archived_at)
+        VALUES (?, ?, 2, ?, ?, '[]', '[]', ?, ?, ?, NULL)
         ON CONFLICT(id) DO UPDATE SET
-          name = excluded.name, version = 1, domain = excluded.domain,
-          steps = excluded.steps, feedbacks = excluded.feedbacks,
-          origin = excluded.origin, updated_at = excluded.updated_at
-      `).run(id, rowName, normDomain(raw.domain), JSON.stringify(tpl.steps),
-             JSON.stringify(tpl.feedbacks), origin, now, now);
+          name = excluded.name, version = 2, domain = excluded.domain,
+          graph = excluded.graph, steps = '[]', feedbacks = '[]',
+          origin = excluded.origin, updated_at = excluded.updated_at,
+          archived_at = NULL
+      `).run(id, rowName, domain, JSON.stringify(graph), origin, now, now);
     });
     imported.push(id);
   }
@@ -173,8 +194,10 @@ export function referencedPluginAgents(name) {
     }
     let graph;
     try { graph = JSON.parse(row.graph || 'null'); } catch { graph = null; }
+    // v2 rows: only kind 'agent' nodes carry a key (a task/end/and/or/combine
+    // card never does), so the walk is narrowed rather than key-only.
     for (const node of Array.isArray(graph?.nodes) ? graph.nodes : []) {
-      if (node && keys.has(node.key)) found.add(node.key);
+      if (node && node.kind === 'agent' && keys.has(node.key)) found.add(node.key);
     }
     if (found.size) out.push({ workflowId: row.id, name: row.name, keys: [...found].sort() });
   }
