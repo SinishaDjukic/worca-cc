@@ -8,6 +8,7 @@ import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadAgentRegistry, normalizeMeta, userAgentsDir } from './agent-registry.mjs';
 import { listWorkflows } from './workflows.mjs';
+import { validateMetaV2 } from '../shared/graph/agent-meta.mjs';
 
 export { userAgentsDir }; // single source: the Phase 1 layer resolver
 
@@ -15,6 +16,15 @@ export { userAgentsDir }; // single source: the Phase 1 layer resolver
 export const AGENT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
 function err(message, code) { return Object.assign(new Error(message), { code }); }
+
+/** The v2 capabilities whose ABSENCE is their off state in a sidecar. A complete
+ *  v2 PUT is a REPLACE of this surface — otherwise `{...existing, ...raw}` turns
+ *  every one of them into a one-way switch and `placeable:false` /
+ *  `scope:'workspace-only'` can never be undone from the editor. Everything else
+ *  (including the v1 wiring the registry still derives, which P8 owns) MERGES. */
+const V2_CLEARABLE = ['verdict', 'sideEffect', 'mockRole', 'wantsRequest', 'workspaceFanOut',
+  'workspaceStrategy', 'workspaceVariantOf', 'placeable', 'scope', 'domain', 'icon',
+  'promptHints', 'requiresSkills'];
 
 /** The writable user layer dir. userAgentsDir() returns null only when the home
  *  cannot be resolved (no WORCA_HOME under node:test) — surface that as a 400. */
@@ -59,6 +69,12 @@ export async function createAgent({ meta: rawMeta, markdown } = {}) {
   raw.key = key;
   raw.agentFile = `${key}.md`;                              // store-owned sibling file
   if (!Number.isFinite(Number(raw.order))) raw.order = 99;  // sort after built-ins by default
+  // The v2 gate runs BEFORE normalizeMeta: normalizeMeta is lossy by design
+  // (fixed key set, silent coercions, and it returns null rather than a reason),
+  // so a broken sidecar would otherwise be "fixed" into something the user never
+  // wrote — or rejected with "invalid agent metadata". Every failed rule is named.
+  const issues = validateMetaV2(raw).errors;
+  if (issues.length) throw err(issues.join('; '), 'BAD_REQUEST');
   const meta = normalizeMeta(raw);
   if (!meta) throw err('invalid agent metadata', 'BAD_REQUEST');
   const existing = loadAgentRegistry()[key];
@@ -96,10 +112,14 @@ export async function updateAgent(key, { meta: rawMeta, markdown } = {}) {
   // field) freezes the fallback into the sidecar and it stops tracking the .md.
   const base = { ...existing };
   if (base.descriptionDerived) base.description = '';
+  if (Number(rawMeta?.metaVersion) === 2) for (const k of V2_CLEARABLE) delete base[k];
   const raw = { ...base, ...(rawMeta && typeof rawMeta === 'object' ? rawMeta : {}) };
   raw.key = key;                                            // key immutable on update
   raw.agentFile = `${key}.md`;
   if (!Number.isFinite(Number(raw.order))) raw.order = existing.order;
+  // The same gate the create path applies: every failed rule named, nothing written.
+  const updIssues = validateMetaV2(raw).errors;
+  if (updIssues.length) throw err(updIssues.join('; '), 'BAD_REQUEST');
   const meta = normalizeMeta(raw);
   if (!meta) throw err('invalid agent metadata', 'BAD_REQUEST');
   const dir = requireUserDir();
@@ -131,12 +151,24 @@ export async function deleteAgent(key) {
   }
   if (!existing) throw err(`agent not found: ${key}`, 'NOT_FOUND');
   const refs = (await listWorkflows({ includeArchived: true }))
+    // v1 rows are still live until the engine cut-over; v2 rows carry a key only
+    // on kind:'agent' nodes (a task/end/and/or/combine card never does).
     .filter((wf) => (wf.steps || []).some((col) => (col || []).some((n) => n && n.key === key))
-      || (wf.nodes || []).some((n) => n && n.key === key))
+      || (wf.nodes || []).some((n) => n && n.kind === 'agent' && n.key === key))
     .map((wf) => wf.name || wf.id);
   if (refs.length) {
     throw err(`agent "${key}" is used by saved workflow(s): ${refs.join(', ')} `
       + '— delete or edit those first (archived rows count)', 'REFERENCED');
+  }
+  // A workspace variant substitutes for its target agent by KEY: deleting the
+  // target would leave the variant pointing at nothing, and the substitution
+  // would silently stop happening on workspace runs.
+  const variants = Object.values(loadAgentRegistry())
+    .filter((m) => m && m.workspaceVariantOf === key)
+    .map((m) => m.key);
+  if (variants.length) {
+    throw err(`agent "${key}" is the workspace variant target of: ${variants.join(', ')} `
+      + '— delete or re-point those first', 'REFERENCED');
   }
   const dir = requireUserDir();
   await rm(join(dir, `${key}.meta.json`), { force: true });

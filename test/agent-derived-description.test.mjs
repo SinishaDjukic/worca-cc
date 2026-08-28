@@ -22,7 +22,10 @@ function seed(key, { description = '' } = {}) {
   const dir = userAgentsDir();
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${key}.meta.json`), JSON.stringify({
+    metaVersion: 2,
     key, displayName: key, description, color: 'blue', runnerType: 'producer',
+    inputs: [{ id: 'task', type: 'md' }],
+    outputs: [{ id: 'notes', type: 'md', filename: 'notes.md' }],
     order: 120, agentFile: `${key}.md`,
   }, null, 2) + '\n', 'utf8');
   writeFileSync(join(dir, `${key}.md`), `---\nname: ${key}\ndescription: ${FM_DESC}\n---\n\n# ${key}\n`, 'utf8');

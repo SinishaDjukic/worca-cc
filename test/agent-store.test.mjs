@@ -8,14 +8,16 @@ import {
   listAgents, readAgent, createAgent, updateAgent, deleteAgent,
   keyFromName, userAgentsDir, AGENT_KEY_RE,
 } from '../src/core/agent-store.mjs';
-import { writeWorkflow } from '../src/core/workflows.mjs';
+import { writeWorkflow, writeGraphWorkflow } from '../src/core/workflows.mjs';
 
 useTempHome(after);
 
 const MD = '# Agent: Docs Writer\n\nYou write docs.\n';
 const META = {
-  displayName: 'Docs Writer', description: 'writes docs', color: 'green',
-  runnerType: 'producer', consumes: ['plan'], produces: ['review'], order: 42,
+  metaVersion: 2, displayName: 'Docs Writer', description: 'writes docs', color: 'green',
+  runnerType: 'producer', order: 42,
+  inputs: [{ id: 'plan', type: 'md' }],
+  outputs: [{ id: 'review', type: 'md', filename: 'docs-review.md' }],
 };
 
 test('keyFromName: lower-camel slug', () => {
@@ -87,4 +89,139 @@ test('AGENT_KEY_RE forecloses path traversal', () => {
   assert.equal(AGENT_KEY_RE.test('../etc'), false);
   assert.equal(AGENT_KEY_RE.test('a/b'), false);
   assert.equal(AGENT_KEY_RE.test('docsWriter'), true);
+});
+
+// NOTE: this file is SEQUENTIAL and stateful — the deleteAgent test above
+// removed docsWriter, so the gate tests re-create what they need.
+
+test('createAgent 400s with the meta v2 rule text, one rule per broken field', async () => {
+  const cases = [
+    [{ ...META, metaVersion: undefined, displayName: 'No Version' }, /sidecar requires metaVersion 2/],
+    [{ ...META, displayName: 'No Out', outputs: [] }, /at least one output port is required/],
+    [{ ...META, displayName: 'Await In', inputs: [{ id: 'await', type: 'md' }] },
+      /port id "await" is reserved \u2014 the engine synthesizes the await gate port on every agent node/],
+    [{ ...META, displayName: 'Bad Id', inputs: [{ id: 'Plan Two', type: 'md' }] }, /bad port id "Plan Two"/],
+    [{ ...META, displayName: 'Dup Id', inputs: [{ id: 'plan', type: 'md' }, { id: 'plan', type: 'json' }] },
+      /duplicate port id "plan"/],
+    [{ ...META, displayName: 'Too Many', inputs: Array.from({ length: 9 }, (_, i) => ({ id: `p${i}`, type: 'md' })) },
+      /at most 8 ports per side \(got 9\)/],
+    [{ ...META, displayName: 'No Name', outputs: [{ id: 'review', type: 'md' }] },
+      /md outputs require a filename template/],
+    [{ ...META, displayName: 'Pathy', outputs: [{ id: 'review', type: 'md', filename: 'sub/review.md' }] },
+      /must be a plain basename/],
+    [{ ...META, displayName: 'Bad Token', outputs: [{ id: 'review', type: 'md', filename: 'r-{nope}.md' }] },
+      /uses unknown token\(s\) \{nope\}/],
+    [{ ...META, displayName: 'Void Store', outputs: [{ id: 'pass', type: 'void', store: 'run' }] },
+      /void ports carry no filename or store/],
+    [{ ...META, displayName: 'Verifier', runnerType: 'verifier' }, /runnerType "verifier" requires verdict: \{ filename \}/],
+    [{ ...META, displayName: 'Clarifier', runnerType: 'clarifier' }, /runnerType "clarifier" requires at least one json output port/],
+    [{ ...META, displayName: 'Blocking', outputs: [{ id: 'review', type: 'md', when: 'blocking', filename: 'r.md' }] },
+      /when "blocking" requires the agent to declare verdict: \{ filename \}/],
+    [{ ...META, displayName: 'Expands', inputs: [{ id: 'plan', type: 'md', expands: true }] },
+      /expands is only legal on json inputs/],
+    [{ ...META, displayName: 'As Void', inputs: [{ id: 'plan', type: 'void', as: 'file' }] },
+      /as "file" requires a non-void port \(got void\)/],
+    [{ ...META, displayName: 'Side', sideEffect: 'yes' }, /sideEffect must be "code" when present/],
+    [{ ...META, displayName: 'Strategy', workspaceStrategy: 'wander' }, /workspaceStrategy must be one of explore, task, review/],
+    [{ ...META, displayName: 'Variant', workspaceVariantOf: 'reviewer' }, /workspaceVariantOf requires scope "workspace-only"/],
+  ];
+  for (const [meta, re] of cases) {
+    await assert.rejects(() => createAgent({ meta, markdown: MD }), (e) => {
+      assert.equal(e.code, 'BAD_REQUEST', `${meta.displayName}: wrong code ${e.code}`);
+      assert.match(e.message, re);
+      return true;
+    }, `${meta.displayName} must be rejected`);
+    assert.equal(await readAgent(keyFromName(meta.displayName)), null, 'nothing is written on a rejection');
+  }
+});
+
+test('updateAgent applies the same gate, and a clean v2 meta still round-trips', async () => {
+  await createAgent({ meta: META, markdown: MD });   // re-create docsWriter
+  await assert.rejects(
+    () => updateAgent('docsWriter', { meta: { ...META, outputs: [] } }),
+    (e) => e.code === 'BAD_REQUEST' && /at least one output port is required/.test(e.message));
+  const kept = await readAgent('docsWriter');
+  assert.deepEqual(kept.meta.outputs.map((p) => p.id), ['review'], 'the rejected save changed nothing');
+  const upd = await updateAgent('docsWriter', {
+    meta: { ...META, outputs: [{ id: 'review', type: 'md', filename: 'docs-review-v2.md' }] },
+  });
+  assert.equal(upd.meta.outputs[0].filename, 'docs-review-v2.md');
+  assert.equal(upd.meta.metaVersion, 2);
+});
+
+test('a complete v2 PUT CLEARS the optional capability surface', async () => {
+  // agent-store merges {...existing, ...raw}, so without the V2_CLEARABLE delete
+  // every one of these is a ONE-WAY switch: the editor omits a capability when
+  // it is off, and the omitted key would keep its stored value forever.
+  await updateAgent('docsWriter', { meta: { ...META,
+    sideEffect: 'code', placeable: false, scope: 'workspace-only',
+    promptHints: 'be terse', requiresSkills: ['mock-skill'], domain: 'coding' } });
+  const on = await readAgent('docsWriter');
+  assert.equal(on.meta.sideEffect, 'code');
+  assert.equal(on.meta.placeable, false);
+  assert.equal(on.meta.scope, 'workspace-only');
+  // Now save the SAME agent with all of them off (i.e. absent) — exactly what
+  // agentFormRead emits when the boxes are cleared.
+  const off = await updateAgent('docsWriter', { meta: { ...META } });
+  assert.equal(off.meta.sideEffect, undefined, 'sideEffect can be turned OFF');
+  assert.equal(off.meta.placeable, undefined, 'placeable:false can be undone');
+  assert.equal(off.meta.scope, 'project', 'scope falls back to its default');
+  assert.equal(off.meta.promptHints, '');
+  assert.deepEqual(off.meta.requiresSkills, []);
+  assert.equal(off.meta.domain, 'general');
+  // …and a markdown-only PUT still MERGES: it must not clear anything.
+  await updateAgent('docsWriter', { meta: { ...META, sideEffect: 'code' } });
+  const md = await updateAgent('docsWriter', { markdown: `${MD}\nmore\n` });
+  assert.equal(md.meta.sideEffect, 'code', 'a body-only save never touches the capabilities');
+  // …and so does a PARTIAL meta PUT — one that does NOT declare metaVersion 2.
+  // This is what separates the `metaVersion === 2` gate from a bare `if (rawMeta)`:
+  // with the latter, any partial edit would silently wipe every capability.
+  const partial = await updateAgent('docsWriter', { meta: { description: 'partial edit' } });
+  assert.equal(partial.meta.sideEffect, 'code', 'a partial meta save never clears the capabilities');
+  assert.equal(partial.meta.description, 'partial edit');
+});
+
+test('an unknown mockRole is a warning, not a 400', async () => {
+  const { meta } = await createAgent({
+    meta: { ...META, displayName: 'Mocky', mockRole: 'no-such-role' }, markdown: MD,
+  });
+  assert.equal(meta.mockRole, undefined, 'dropped by the registry');
+  await deleteAgent('mocky');
+});
+
+test('deleteAgent refuses while a v2 GRAPH or a workspace variant points at the key', async () => {
+  await createAgent({ meta: { ...META, displayName: 'Used Agent' }, markdown: MD });
+  await writeGraphWorkflow({
+    id: 'wf_uses', name: 'Uses It', domain: 'general',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_a', kind: 'agent', key: 'usedAgent', x: 200, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 400, y: 0, config: {} },
+    ],
+    wires: [
+      { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_a', port: 'plan' } },
+      { id: 'w2', from: { node: 'n_a', port: 'review' }, to: { node: 'n_end', port: 'result' } },
+    ],
+  });
+  await assert.rejects(() => deleteAgent('usedAgent'), (e) => e.code === 'REFERENCED' && /Uses It/.test(e.message));
+
+  // Only kind:'agent' nodes count. A flow card carrying a stray `key` names no
+  // agent, so a key-only walk would make an unused agent permanently undeletable.
+  await createAgent({ meta: { ...META, displayName: 'Free Agent' }, markdown: MD });
+  await writeGraphWorkflow({
+    id: 'wf_flowonly', name: 'Flow Only', domain: 'general',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0, config: {}, key: 'freeAgent' },
+      { id: 'n_end', kind: 'end', x: 400, y: 0, config: {}, key: 'freeAgent' },
+    ],
+    wires: [],
+  });
+  assert.deepEqual(await deleteAgent('freeAgent'), { ok: true }, 'a flow-card key is not a reference');
+
+  await createAgent({
+    meta: { ...META, displayName: 'Variant Agent', scope: 'workspace-only', workspaceVariantOf: 'docsWriter' },
+    markdown: MD,
+  });
+  await assert.rejects(() => deleteAgent('docsWriter'),
+    (e) => e.code === 'REFERENCED' && /variantAgent/.test(e.message));
 });
