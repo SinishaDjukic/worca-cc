@@ -145,32 +145,7 @@ test('both bodies ship on every card; CSS is what selects one per density', asyn
   assert.match(css, /\.run-card\[data-density="detailed"\] \.rc-compact\{[^}]*display:\s*none/);
 });
 
-test('runStepLabel + the compact row: STEP n/m chip, step name, model — and no progress bar', async () => {
-  const ctx = await boot();
-  const { upsertRun, buildRunCard, paintRunCard, onState, runStepLabel } = ctx.window.__np;
-  const r = upsertRun({ runId: 'c1', title: 't', projectDir: PROJECT, status: 'running' });
-  r.el = buildRunCard(r);
-  onState(r, { status: 'running', phase: 'plan', stepper: STEPPER, steps: [{ key: 'planner', nodeId: 's1_0', cycle: 1, status: 'start' }] });
-  paintRunCard(r);
 
-  assert.deepEqual(runStepLabel(r), { n: 2, m: 4, name: 'Plan', model: 'sonnet · high' });
-  const row = r.el.querySelector('.rc-compact');
-  assert.equal(row.querySelector('.rc-step-chip').textContent, 'STEP 2/4');
-  assert.ok(row.querySelector('.rc-step-chip').classList.contains('st-blue'), 'chip tints with the status family');
-  assert.equal(row.querySelector('.rc-step-name').textContent, 'Plan');
-  assert.equal(row.querySelector('.rc-step-model').textContent, 'sonnet · high');
-  assert.equal(row.querySelector('progress, .rc-progress, .progress'), null, 'D15: no progress bar');
-});
-
-test('runStepLabel on a run with no manifest and no advance falls back to the first node', async () => {
-  const ctx = await boot();
-  const { upsertRun, runStepLabel } = ctx.window.__np;
-  const r = upsertRun({ runId: 'c2', title: 't', projectDir: PROJECT, status: 'starting' });
-  const out = runStepLabel(r);
-  assert.equal(out.n, 1);
-  assert.equal(out.m, 7, 'CLIENT_DEFAULT_STEPPER has seven nodes');
-  assert.equal(out.name, 'Preflight');
-});
 
 test('switching density preserves the log scroll position and the graph scroll offset', async () => {
   const ctx = await boot();

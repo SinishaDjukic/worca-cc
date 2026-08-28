@@ -47,16 +47,6 @@ test('(a) the header action cluster right-aligns via margin-left:auto', () => {
 });
 
 // (c) A paused run's frontier node must read as paused, not "running…".
-test('(c) nodeKindFor maps paused/pausing run status to the paused node kind', async () => {
-  const { window } = await bootLive();
-  const { nodeKindFor } = window.__np;
-  assert.equal(nodeKindFor({ status: 'paused', pendingQuestion: null }, 'running'), 'pause');
-  assert.equal(nodeKindFor({ status: 'pausing', pendingQuestion: null }, 'running'), 'pause');
-  // a live run is unaffected
-  assert.equal(nodeKindFor({ status: 'running', pendingQuestion: null }, 'running'), 'now');
-  // done status still wins for a live run
-  assert.equal(nodeKindFor({ status: 'running', pendingQuestion: null }, 'done'), 'done');
-});
 
 // (d) Branch name shows on the run card and survives a later state event.
 test('(d) run-card meta renders branch feature and refreshes when branch arrives via onState', async () => {

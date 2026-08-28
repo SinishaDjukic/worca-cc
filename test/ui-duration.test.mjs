@@ -117,13 +117,13 @@ const panelHead = (ctx, runId) =>
 
 
 
-test('durByNode buckets per nodeId, falling back to uiPhase for legacy steps', async () => {
+test('durByNode buckets per nodeId; a row with no nodeId has nothing to bucket onto', async () => {
   const { window } = await boot();
   const fn = window.__np.durByNode;
   const a = fn([{ nodeId: 's1_0', phase: 'refiner', activeMs: 1500, runningSince: null }], 0, false);
   assert.equal(a['s1_0'], 1500);
-  const b = fn([{ phase: 'refine', activeMs: 800, runningSince: null }], 0, false);
-  assert.equal(b['refine'], 800); // legacy: node id == uiPhase
+  // The v1 phase->node fallback died with the v1 manifest.
+  assert.deepEqual(fn([{ phase: 'refine', activeMs: 800, runningSince: null }], 0, false), {});
 });
 
 

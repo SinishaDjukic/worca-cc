@@ -68,11 +68,13 @@ test('the history total is tooltip-labelled as an estimate with the exact value'
 
 
 
-test('costByNode buckets per nodeId and by uiPhase fallback', async () => {
+test('costByNode buckets per nodeId; a row with no nodeId has nothing to bucket onto', async () => {
   const { window } = await boot();
   const fn = window.__np.costByNode;
   assert.equal(fn([{ nodeId: 's0_0', phase: 'planner', costUsd: 0.12 }])['s0_0'], 0.12);
-  assert.equal(fn([{ phase: 'plan', costUsd: 0.05 }])['plan'], 0.05);
+  // The v1 phase->node fallback died with the v1 manifest: stepBucketKey is the
+  // nodeId or nothing.
+  assert.deepEqual(fn([{ phase: 'plan', costUsd: 0.05 }]), {});
 });
 
 test('costByNode folds a nodeId-tagged clarify step onto the plan node', async () => {

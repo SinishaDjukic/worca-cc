@@ -60,8 +60,15 @@ test('cycleAwareLabel adds "· cycle N" only for multi-cycle nodes', async () =>
 test('cycleAwareLabel falls back to uiPhase when the stepper lacks the nodeId', async () => {
   const { window } = await boot();
   const subs = [{ id: 'x', nodeId: 's1_0', uiPhase: 'refine', cycle: 1, status: 'running' }];
-  const label = window.__np.cycleAwareLabel(null, subs); // null → legacy default manifest
-  assert.equal(label(`s1_0${SEP}1`), 'Refine', 'resolved via uiPhase against the legacy default label');
+  // A FROZEN v1 manifest (the only kind that still carries uiPhase). There is no
+  // built-in legacy default any more: manifestFor(null) is an EMPTY manifest.
+  const v1 = { version: 1, feedbacks: [], steps: [
+    { kind: 'agents', nodes: [{ id: 'refine', uiPhase: 'refine', label: 'Refine' }] },
+  ] };
+  const label = window.__np.cycleAwareLabel(v1, subs);
+  assert.equal(label(`s1_0${SEP}1`), 'Refine', 'resolved via uiPhase against the frozen manifest');
+  assert.equal(window.__np.cycleAwareLabel(null, subs)(`s1_0${SEP}1`), 's1_0',
+    'with no manifest at all there is nothing to resolve against');
 });
 
 

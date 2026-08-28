@@ -682,9 +682,6 @@ function handleServerMessage(msg) {
   const r = upsertRun({ runId: msg.runId });
 
   switch (msg.type) {
-    case 'phase':
-      onPhase(r, msg);
-      break;
     case 'log':
       onLog(r, msg);
       break;
@@ -772,13 +769,9 @@ function onHello(msg) {
       projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
     });
     // Seed the run's stepper from the hello summary so the live card resolves
-    // sub-agents to their real (s0_0-keyed) nodes BEFORE any subagent delta paints
-    // — closing the window where r.stepper is null and the graph falls back to the
-    // legacy default (mismatched ids → no squares + a raw "s0_0" dropdown group).
-    if (r0.stepper && rr.stepper == null) {
-      rr.stepper = r0.stepper;
-      if (rr.el) rebuildStepperDom(rr);
-    }
+    // sub-agents to their real nodes BEFORE any subagent delta paints — closing
+    // the window where r.stepper is null and nothing can be resolved.
+    if (r0.stepper && rr.stepper == null) rr.stepper = r0.stepper;
 
     const nonTerminal =
       r0.status === 'starting' || r0.status === 'running' || r0.status === 'pausing' ||
@@ -837,126 +830,9 @@ function currentView() {
 // Steps tracker
 // ---------------------------------------------------------------------------
 
-// Normalize a core phase name to one of our tracker step keys.
-// Order matters: more specific phases ("refine", "review", "implement") are
-// matched before the generic "plan"/"clarify" fallback, because names like
-// "plan-refine" contain the substring "plan".
-function normalizePhase(phase) {
-  if (!phase) return null;
-  const p = String(phase).toLowerCase();
-  if (p.includes('preflight')) return 'preflight';
-  if (p.includes('manual-web')) return 'manual-web';
-  if (p.includes('manual-checklist') || p.includes('manual-test')) return 'manual-checklist';
-  if (p.includes('refine')) return 'refine';
-  if (p.includes('review')) return 'review';
-  if (p.includes('implement')) return 'implement';
-  if (p.includes('done') || p.includes('complete') || p.includes('finish')) return 'done';
-  if (p.includes('clarify')) return 'clarify';
-  if (p.includes('plan')) return 'plan';
-  return null;
-}
-
-// Legacy default stepper, used when a run predates state.stepper (old history)
-// or before the first 'state' event arrives. Node ids = uiPhase keys so old
-// per-step costs/durations (bucketed by phase) still attribute correctly.
-const CLIENT_DEFAULT_STEPPER = {
-  version: 1,
-  steps: [
-    { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
-    { kind: 'agents', nodes: [{ id: 'clarify',   uiPhase: 'clarify',   label: 'Clarify',   color: 'red',    cycles: false }] },
-    { kind: 'agents', nodes: [{ id: 'plan',      uiPhase: 'plan',      label: 'Plan',      color: 'violet', cycles: false }] },
-    { kind: 'agents', nodes: [{ id: 'refine',    uiPhase: 'refine',    label: 'Refine',    color: 'green',  cycles: true  }] },
-    { kind: 'agents', nodes: [{ id: 'implement', uiPhase: 'implement', label: 'Implement', color: 'amber',  cycles: false }] },
-    { kind: 'agents', nodes: [{ id: 'review',    uiPhase: 'review',    label: 'Review',    color: 'blue',   cycles: true  }] },
-    { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
-  ],
-  feedbacks: [],
-};
-
-// Pick the manifest to render: prefer a persisted/emitted one, else the legacy
-// default. Defensive against malformed shapes.
-function manifestFor(stepper) {
-  if (stepper && Array.isArray(stepper.steps) && stepper.steps.length) return stepper;
-  return CLIENT_DEFAULT_STEPPER;
-}
-
-// Stable node-id signature of a manifest. Used to detect a manifest REPLACEMENT
-// (e.g. a decomposed run rewrites the implementer node into per-phase/per-task
-// nodes) so the live view can re-swap + rebuild mid-run.
-function manifestSig(stepper) {
-  const m = manifestFor(stepper);
-  return (Array.isArray(m.steps) ? m.steps : [])
-    .map((cell) => (Array.isArray(cell.nodes) ? cell.nodes.map((n) => n.id).join(',') : ''))
-    .join('|');
-}
-
-// Resolve an incoming phase/state event to a cell index + node id within a run's
-// manifest. nodeId (node phase events) pins the exact node; bookend/legacy events
-// match by phase: preflight/done by kind, everything else by uiPhase.
-function locateInManifest(manifest, msg) {
-  const m = manifestFor(manifest);
-  if (msg.nodeId) {
-    for (let i = 0; i < m.steps.length; i++) {
-      if (m.steps[i].nodes.some((n) => n.id === msg.nodeId)) return { cellIdx: i, nodeId: msg.nodeId };
-    }
-  }
-  const key = normalizePhase(msg.phase);
-  if (key === 'preflight') return { cellIdx: 0, nodeId: 'preflight' };
-  if (key === 'done') return { cellIdx: m.steps.length - 1, nodeId: 'done' };
-  for (let i = 0; i < m.steps.length; i++) {
-    const hit = m.steps[i].nodes.find((n) => n.uiPhase === key);
-    if (hit) return { cellIdx: i, nodeId: hit.id };
-  }
-  return { cellIdx: -1, nodeId: null };
-}
-
-// Map a phase status string + run status to a stepper node kind.
-function nodeKindFor(r, status) {
-  if (r.pendingQuestion != null) return 'pause';
-  if (r.status === 'stopped') return 'stop';
-  if (['done', 'complete', 'passed', 'finish'].includes(status)) return 'done';
-  // A gracefully paused/pausing run leaves its frontier node mid-flight: mark it
-  // paused so the stepper shows WHERE it stopped instead of a phantom "running…".
-  if (r.status === 'paused' || r.status === 'pausing') return 'pause';
-  return 'now';
-}
-
-// Apply one phase/state transition to the run's live node-status map.
-// The scalar trackers (phaseKey/cycle/phaseStatus) drive the foot chip + status
-// pill and are kept in sync even when the phase isn't locatable in this run's
-// manifest (e.g. a manual-web phase on the legacy default manifest) — only the
-// cell-level node-status map needs a resolved cell + node id.
-function advanceRun(r, msg) {
-  r.phaseKey = normalizePhase(msg.phase) || r.phaseKey;
-  if (msg.cycle) r.cycle = msg.cycle;
-  r.phaseStatus = msg.status || '';
-  const { cellIdx, nodeId } = locateInManifest(r.stepper, msg);
-  if (cellIdx < 0 || !nodeId) return;
-  if (cellIdx > r.maxCellIdx) r.maxCellIdx = cellIdx;
-  if (msg.cycle) r.nodeCycle[nodeId] = Math.max(r.nodeCycle[nodeId] || 0, Number(msg.cycle) || 0);
-  r.nodeStatus[nodeId] = nodeKindFor(r, msg.status || '');
-}
-
-// Replace a live card's stepper DOM when the manifest first arrives/changes.
-function rebuildStepperDom(r) {
-  const host = r.el && r.el.querySelector('.run-flow');
-  if (host) buildRunGraph(host, r.stepper);
-}
-
-// ---------------------------------------------------------------------------
-// Run/history node-graph (composer-style). buildRunGraph builds the static
-// .run-flow skeleton; paintRunGraph tints it + repaints wires via the shared
-// composerPaintWires. Walks the stepper manifest and emits composer .node markup.
-// ---------------------------------------------------------------------------
-
-// Resolve a manifest node to its agent meta (icon/displayName/description/color).
-// Manifest nodes carry .key (set by buildStepperManifest); bookends (preflight/
-// done) have no key -> a neutral cog so they still render an icon.
-//
-// The run graph paints agent icons/labels from the live registry. The cache is
-// filled on demand (buildRunGraph) and by every agent mutation, so a run opened
-// without ever visiting the Composer still shows real icons.
-const RUN_BOOKEND_ICON = '<circle cx="12" cy="12" r="3.2"/><path d="M12 4.5v2M12 17.5v2M4.5 12h2M17.5 12h2M6.6 6.6l1.4 1.4M16 16l1.4 1.4M17.4 6.6L16 8M8 16l-1.4 1.4" stroke-linecap="round"/>';
+// The agent-meta cache the Agents view and the composer palette read. Filled on
+// demand from GET /api/agents and cleared by every agent mutation, so a view
+// opened without ever visiting the Composer still shows real icons.
 const agentMetaCache = new Map();     // key -> normalized meta from GET /api/agents
 let _agentMetaPending = null;
 async function ensureAgentMeta(onReady) {
@@ -968,350 +844,28 @@ async function ensureAgentMeta(onReady) {
   for (const a of list) if (a && a.key) agentMetaCache.set(a.key, a);
   if (list.length && typeof onReady === 'function') onReady();
 }
-function runNodeAgent(node) {
-  const key = node && node.key;
-  const meta = (key && agentMetaCache.get(key)) || {};
-  return {
-    icon: safeAgentIcon(meta) || RUN_BOOKEND_ICON,
-    color: node.color || meta.color || 'blue',
-    label: node.label || meta.displayName || node.id,
-    sub: node.sub || meta.description || '',
-  };
-}
 
-// ---- v1 run-graph wire renderer (dies with the v1 engine in P8) ----
+// The palette the graph cards and the frozen-v1 chip strip read for --c.
 const COMPOSER_COLORS = { green: '#5BAE5B', peach: '#EFA63C', red: '#E76A5A', blue: '#5BA6CC', violet: '#8C7FD6', amber: '#E6962A' };
-const COMPOSER_TINTS = { green: '#E2F3DF', peach: '#FCEEDA', red: '#FBE3E0', blue: '#DEEFF7', violet: '#EAE6F8', amber: '#FCE8C8' };
-const COMPOSER_SEQ = '#B7B7BC';
 
-/* ---- wires (shared renderer; ns-namespaced markers) ---- */
-function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
-  opts = opts || {};
-  const ns = opts.ns || 'main';
-  if (flowEl.offsetParent === null) return; // view hidden — skip
-  // Canonical loop-count rule (Phase D applies this when BUILDING opts.cycles;
-  // the renderer itself reads the finished count from opts.cycles[fb.from]).
-  const loopCount = (fb, nodeCycle) => Math.max(0, (nodeCycle[fb.from] || 1) - 1);
-  const loopBadge = (cx, cy, color, n) =>
-    `<g class="loop-badge"><title>${n} cycle${n === 1 ? '' : 's'}</title>` +
-    `<circle cx="${cx}" cy="${cy}" r="11.5" fill="${color}" stroke="${color}" stroke-width="1.6"/>` +
-    `<text x="${cx}" y="${cy + 0.5}" text-anchor="middle" dominant-baseline="central" ` +
-    `font-size="11.5" font-weight="700" fill="#fff">${n}×</text></g>`;
-  const rect = (id) => {
-    const el = flowEl.querySelector(`.node[data-id="${id}"]`); if (!el) return null;
-    const fr = flowEl.getBoundingClientRect(), r = el.getBoundingClientRect();
-    return { x: r.left - fr.left, y: r.top - fr.top, w: r.width, h: r.height };
-  };
-  const W = flowEl.scrollWidth, H = flowEl.scrollHeight;
-  wiresEl.setAttribute('width', W); wiresEl.setAttribute('height', H);
-  wiresEl.style.width = W + 'px'; wiresEl.style.height = H + 'px';
-  let s = `<defs>` +
-    `<marker id="arrSeq-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_SEQ}"/></marker>` +
-    `<marker id="arrSeqDone-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.green}"/></marker>` +
-    `<marker id="arrFb-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.amber}"/></marker>` +
-    `<marker id="arrSelf-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.violet}"/></marker></defs>`;
-  for (let i = 0; i < steps.length - 1; i++) {
-    steps[i].forEach((a) => {
-      steps[i + 1].forEach((b) => {
-        const ra = rect(a.id), rb = rect(b.id); if (!ra || !rb) return;
-        const x1 = ra.x + ra.w, y1 = ra.y + ra.h / 2, x2 = rb.x, y2 = rb.y + rb.h / 2;
-        const dx = Math.max(36, (x2 - x1) * 0.5);
-        const bothDone = opts.doneSet && opts.doneSet.has(a.id) && opts.doneSet.has(b.id);
-        const seqStroke = bothDone ? COMPOSER_COLORS.green : COMPOSER_SEQ;
-        const seqMk = bothDone ? `arrSeqDone-${ns}` : `arrSeq-${ns}`;
-        s += `<path d="M${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}" fill="none" stroke="${seqStroke}" stroke-width="2" stroke-dasharray="6 7" marker-end="url(#${seqMk})"/>`;
-      });
-    });
-  }
-  const posOf = (id) => { for (const st of steps) { const i = st.findIndex((a) => a.id === id); if (i >= 0) return { len: st.length, i }; } return { len: 1, i: 0 }; };
-  let maxBottom = 0;
-  steps.flat().forEach((a) => { const r = rect(a.id); if (r) maxBottom = Math.max(maxBottom, r.y + r.h); });
-  feedbacks.forEach((fb, idx) => {
-    const ra = rect(fb.from), rb = rect(fb.to); if (!ra || !rb) return;
-    if (fb.from === fb.to) {
-      // same-node self-cycle: a BIG violet lobe hanging beneath the node so the
-      // cycle badge reads clearly. No delete-X — the node's top-left self-cycle
-      // toggle owns add/remove (composer); run/history pass cycles for the badge.
-      const cx = ra.x + ra.w / 2, by = ra.y + ra.h, b = 40;
-      const fbCls = opts.runMode ? (fb.from === opts.activeId ? ' class="wire-live"' : ' class="wire-dim"') : '';
-      s += `<path d="M${cx - 26} ${by} C ${cx - 40} ${by + b}, ${cx + 40} ${by + b}, ${cx + 26} ${by}"${fbCls} fill="none" stroke="${COMPOSER_COLORS.violet}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrSelf-${ns})"/>`;
-      if (opts.cycles && !opts.del) {
-        const n = opts.cycles[fb.from] || 0;
-        if (n >= 1) s += loopBadge(cx, by + b * 0.82, COMPOSER_COLORS.violet, n);
-      }
-      return;
-    }
-    const p = posOf(fb.from);
-    const below = p.len > 1 && p.i === p.len - 1;
-    let sx, sy, tx, ty, rail, mx, my;
-    if (below) {
-      sx = ra.x + ra.w / 2; sy = ra.y + ra.h; tx = rb.x + rb.w / 2; ty = rb.y + rb.h;
-      rail = maxBottom + Math.max(46, Math.abs(sx - tx) * 0.12);
-      my = rail - (rail - Math.max(sy, ty)) * 0.18;
-    } else {
-      sx = ra.x + ra.w / 2; sy = ra.y; tx = rb.x + rb.w / 2; ty = rb.y;
-      rail = Math.min(sy, ty) - Math.max(46, Math.abs(sx - tx) * 0.16);
-      my = rail + (Math.min(sy, ty) - rail) * 0.18;
-    }
-    mx = (sx + tx) / 2;
-    const fbCls = opts.runMode ? (fb.from === opts.activeId ? ' class="wire-live"' : ' class="wire-dim"') : '';
-    s += `<path d="M${sx} ${sy} C ${sx} ${rail}, ${tx} ${rail}, ${tx} ${ty}"${fbCls} fill="none" stroke="${COMPOSER_COLORS.amber}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrFb-${ns})"/>`;
-    if (opts.del) {
-      s += `<g class="fb-del" data-fb="${idx}" style="cursor:pointer;pointer-events:auto">` +
-        `<circle cx="${mx}" cy="${my}" r="9.5" fill="#fff" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.5"/>` +
-        `<path d="M${mx - 3.2} ${my - 3.2}L${mx + 3.2} ${my + 3.2}M${mx + 3.2} ${my - 3.2}L${mx - 3.2} ${my + 3.2}" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.7" stroke-linecap="round"/></g>`;
-    } else if (opts.cycles) {
-      const n = opts.cycles[fb.from] || 0;
-      if (n >= 1) s += loopBadge(mx, my, COMPOSER_COLORS.amber, n);
-    }
-  });
-  wiresEl.innerHTML = s;
+// Pick the manifest to render. A v2 run always carries one; a run with no
+// manifest at all (pre-stepper history) renders NOTHING rather than the v1
+// default seven, which died with the v1 engine.
+const EMPTY_MANIFEST = { steps: [], feedbacks: [] };
+function manifestFor(stepper) {
+  if (stepper && Array.isArray(stepper.steps) && stepper.steps.length) return stepper;
+  return EMPTY_MANIFEST;
 }
 
-// Visible status caption under the node label. pending -> the node's description.
-const STAT_TEXT = { done: 'completed', active: 'running…', paused: 'awaiting input', stopped: 'stopped here', pending: '' };
-
-// Settled-status badge markup (check / two-bar / X). active+pending have none.
-const STAT_BADGE = {
-  done: '<div class="nstat done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>',
-  paused: '<div class="nstat paused"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="7" y="5" width="3.4" height="14" rx="1"/><rect x="13.6" y="5" width="3.4" height="14" rx="1"/></svg></div>',
-  stopped: '<div class="nstat stopped"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg></div>',
-};
-
-// Visible "model · effort" sub-line for a run-graph node, mirroring the New-
-// pipeline config caption (.step-current): friendly model label + raw effort.
-// Bookend cells (Preflight/Done) have no uiPhase and run no model -> no line.
-// A step with neither model nor effort inherits the global default -> "default"
-// (per-field "default" when only one is set). The "·" is U+00B7, matching the
-// composer separator. NOTE: the blank wording is "default" (clarification Q1),
-// which intentionally differs from the composer's "default model"/"default effort".
-function nodeModelLine(node) {
-  if (!node || !node.uiPhase) return '';
-  const model = node.model || '';
-  const effort = node.effort || '';
-  if (!model && !effort) return 'default';
-  const m = modelById(model);
-  // ⚠ = the model has an OBSERVED cost-unreliable flag (§4.6): its endpoint
-  // reported no cost while consuming tokens, so this node's cost readout may
-  // under-report.
-  const modelLabel = model ? (m ? m.label : model) + (m && m.costUnreliable ? ' ⚠' : '') : 'default';
-  return `${modelLabel} · ${effort || 'default'}`;
+// Stable node-id signature of a manifest. Used to detect a manifest REPLACEMENT
+// so the live view can re-swap mid-run.
+function manifestSig(stepper) {
+  const m = manifestFor(stepper);
+  return (Array.isArray(m.steps) ? m.steps : [])
+    .map((cell) => (Array.isArray(cell.nodes) ? cell.nodes.map((n) => n.id).join(',') : ''))
+    .join('|');
 }
 
-// Sub-agent square strip for a run-graph node. One <span.sq> per sub-agent
-// (.on iff that sub is still `running`), plus an exact ×N count. Squares are
-// render-capped (the count text stays exact); no subs -> empty string so a
-// node without sub-agents gets no border row. Pulse is CSS-only (.sq.on).
-const SUB_SQUARE_CAP = 24;
-function subFanHtml(subs) {
-  const list = Array.isArray(subs) ? subs : [];
-  if (list.length === 0) return '';
-  const squares = list
-    .slice(0, SUB_SQUARE_CAP)
-    .map((s) => `<span class="sq${s && s.status === 'running' ? ' on' : ''}"></span>`)
-    .join('');
-  return `<div class="fan">${squares}<span class="fl">×${list.length}</span></div>`;
-}
-
-// Build one run-graph node element. status ∈ done|active|paused|stopped|pending.
-// isSelf => the node is its own self-cycle target (gets the .iterates ring).
-function runNode(node, status, isSelf) {
-  const ag = runNodeAgent(node);
-  const d = document.createElement('div');
-  d.className = `node run-node is-${status}` + (isSelf ? ' iterates' : '');
-  d.dataset.id = node.id;
-  // The History detail wires a click on these nodes to the Logs tab's `source`
-  // filter (wireHdGraphLogLinks). The source a node's lines carry is its AGENT
-  // KEY on a server-built manifest (orchestrator.mjs:2953 logs under node.key)
-  // but its uiPhase on CLIENT_DEFAULT_STEPPER, whose nodes carry no key at all;
-  // `preflight` is a real log source that is neither (orchestrator.mjs:518-524).
-  // The Done bookend emits nothing, so it deliberately gets NO attribute and
-  // stays inert. Data-only on purpose: the live Running card renders this same
-  // markup and binds no handler to it.
-  const logSource = node.id === 'preflight' ? 'preflight' : (node.key || node.uiPhase || '');
-  if (logSource) d.dataset.logSource = logSource;
-  d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
-  const statusText = STAT_TEXT[status] != null ? STAT_TEXT[status] : '';
-  // model · effort is now a VISIBLE sub-line under cost/time (was a hover tooltip).
-  // A node with NO configured model carries data-nomodel (+ its effort), so
-  // paintRunGraph can resolve the opaque "default" to the session's ACTUAL
-  // model once the CLI's init event reports it (design §4.7). Display-only.
-  const meLine = nodeModelLine(node);
-  d.innerHTML =
-    `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${ag.icon}</svg></div>` +
-    `<div class="nmeta"><b>${escapeHtml(ag.label)}</b>` +
-      `<small class="nstatus">${escapeHtml(statusText || (status === 'pending' ? (node.sub || ag.sub || '') : ''))}</small>` +
-      `<div class="nrun"><span class="dur"></span><span class="cost"></span></div>` +
-      (meLine ? `<small class="nmodel">${escapeHtml(meLine)}</small>` : '') +
-    `</div>` +
-    (STAT_BADGE[status] || '');
-  if (meLine && !node.model) {
-    // dataset assignment, not attribute interpolation — node.effort is
-    // enum-validated server-side, but never trust it into an HTML string.
-    const modelEl = d.querySelector('.nmodel');
-    modelEl.dataset.nomodel = '1';
-    modelEl.dataset.effort = node.effort || '';
-  }
-  return d;
-}
-
-// The set of node ids in a manifest, in column order, as a stable signature.
-function runGraphNodeIds(manifest) {
-  const ids = [];
-  manifest.steps.forEach((cell) => cell.nodes.forEach((n) => ids.push(n.id)));
-  return ids;
-}
-
-// Build (or rebuild) the .run-flow skeleton into `host`. Idempotent: if the
-// host already holds a graph for the SAME ordered node-id set, leave the DOM
-// (and its running CSS animations) intact. Trailing <svg class="wires"> is the
-// shared renderer's target.
-function buildRunGraph(host, manifest) {
-  ensureAgentMeta(() => buildRunGraph(host, manifest));
-  const m = manifestFor(manifest);
-  const ids = runGraphNodeIds(m);
-  if (host.dataset.graphSig === ids.join('|') && host.querySelector('svg.wires')) return;
-
-  // Preserve horizontal scroll across a structural rebuild: emptying .run-flow
-  // collapses it to 0 width, which clamps the .run-flow-wrap scroller back to the
-  // far left. Capture before the wipe, restore after the columns are re-appended,
-  // so a new stage/node never yanks the pipeline back to the start. No-op off-DOM
-  // (a freshly-cloned card has scrollLeft 0 and nothing to keep). Works for both
-  // the live card and the history-detail card (both nest .run-flow in .run-flow-wrap).
-  const scroller = host.closest('.run-flow-wrap');
-  const savedLeft = scroller ? scroller.scrollLeft : 0;
-
-  host.dataset.graphSig = ids.join('|');
-  host.dataset.wiresSig = ''; // force a wire repaint after a structural rebuild
-  host.innerHTML = '';
-
-  const selfTargets = new Set(
-    (Array.isArray(m.feedbacks) ? m.feedbacks : [])
-      .filter((fb) => fb && fb.from === fb.to)
-      .map((fb) => fb.from),
-  );
-
-  host.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
-  m.steps.forEach((cell, i) => {
-    const col = document.createElement('div');
-    col.className = 'col';
-    col.dataset.cellIdx = String(i);
-    const tag = document.createElement('div');
-    tag.className = 'col-tag';
-    tag.innerHTML = (cell.label ? escapeHtml(cell.label) : `Step ${i + 1}`) + (cell.nodes.length > 1 ? ' · <em>parallel</em>' : '');
-    col.appendChild(tag);
-    for (const node of cell.nodes) col.appendChild(runNode(node, 'pending', selfTargets.has(node.id)));
-    host.appendChild(col);
-  });
-  host.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
-
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('class', 'wires');
-  host.appendChild(svg);
-
-  // Restore the pre-rebuild horizontal scroll (the browser clamps automatically if
-  // the graph is now narrower). Only when there was a position to keep.
-  if (scroller && savedLeft) scroller.scrollLeft = savedLeft;
-}
-
-// Final per-node loop count the renderer consumes directly: a node that ran k
-// cycles fired its loop k-1 times. nodeCycle[id] = max cycle observed (default 1).
-function loopCounts(manifest, nodeCycle) {
-  const nc = nodeCycle || {};
-  const out = {};
-  runGraphNodeIds(manifestFor(manifest)).forEach((id) => {
-    out[id] = Math.max(0, (nc[id] || 1) - 1);
-  });
-  return out;
-}
-
-// manifest.steps (cells with .nodes) -> the [[{id}…]…] shape composerPaintWires
-// walks for sequential + feedback wires.
-function manifestStepsForWires(manifest) {
-  return manifestFor(manifest).steps.map((cell) => cell.nodes.map((n) => ({ id: n.id })));
-}
-
-// Tint the run-graph from a view-adapter and (signature-gated) repaint wires.
-// view = { statusOf(id)->status, activeId|null, cycles:{id:count(FINAL)},
-//          live:boolean, durText(id)->str, costText(id)->str,
-//          subsOf?(id)->Array<{status}> (optional; sub-agent squares) }.
-const RUN_STATUSES = ['is-pending', 'is-done', 'is-active', 'is-paused', 'is-stopped'];
-function paintRunGraph(host, manifest, view) {
-  const m = manifestFor(manifest);
-  const doneSet = new Set();
-  runGraphNodeIds(m).forEach((id) => {
-    const status = view.statusOf(id) || 'pending';
-    if (status === 'done') doneSet.add(id);
-    const el = host.querySelector(`.run-node[data-id="${id}"]`);
-    if (!el) return;
-
-    el.classList.remove(...RUN_STATUSES);
-    el.classList.add('is-' + status);
-
-    const statusEl = el.querySelector('.nstatus');
-    if (statusEl) {
-      const txt = STAT_TEXT[status];
-      statusEl.textContent = (txt != null && txt !== '') ? txt : (status === 'pending' ? (statusEl.dataset.sub || statusEl.textContent || '') : '');
-    }
-
-    // Swap the settled-status badge (.nstat). Remove any existing, then re-add.
-    const old = el.querySelector('.nstat');
-    if (old) old.remove();
-    if (STAT_BADGE[status]) el.insertAdjacentHTML('beforeend', STAT_BADGE[status]);
-
-    const durEl = el.querySelector('.dur');
-    if (durEl) durEl.textContent = view.durText(id) || '';
-    const costEl = el.querySelector('.cost');
-    if (costEl) costEl.textContent = view.costText(id) || '';
-
-    // Resolve the "default" model caption to the session's actual model once
-    // the init event reported it (design §4.7). Only nodes with NO configured
-    // model carry data-nomodel; explicit selections never change.
-    const modelEl = el.querySelector('.nmodel[data-nomodel]');
-    if (modelEl && view.modelUsedOf) {
-      const used = view.modelUsedOf(id);
-      if (used) {
-        const eff = modelEl.dataset.effort || '';
-        modelEl.textContent = `default (${used})` + (eff ? ` · ${eff}` : '');
-      }
-    }
-
-    // Sub-agent square strip (graph view only; optional adapter). Idempotent:
-    // drop the old strip, inject the current one. Empty -> no strip / no row.
-    const oldFan = el.querySelector('.fan');
-    if (oldFan) oldFan.remove();
-    const fanHtml = view.subsOf ? subFanHtml(view.subsOf(id)) : '';
-    if (fanHtml) el.insertAdjacentHTML('beforeend', fanHtml);
-  });
-
-  // Signature-gated wire repaint: avoid restarting CSS glow / marching-ants
-  // every tick. Repaint only when activeId, the done-set, the loop counts, or
-  // the topology change since the last paint.
-  const cycles = view.cycles || {};
-  const sig = JSON.stringify([
-    view.live ? (view.activeId || null) : null,
-    [...doneSet].sort(),
-    Object.keys(cycles).sort().map((k) => `${k}:${cycles[k]}`),
-    host.dataset.graphSig || '',
-  ]);
-  if (host.dataset.wiresSig === sig) return;
-  host.dataset.wiresSig = sig;
-
-  const svg = host.querySelector('svg.wires');
-  if (!svg) return;
-  const steps = manifestStepsForWires(m);
-  const feedbacks = Array.isArray(m.feedbacks) ? m.feedbacks : [];
-  const paint = (window.__np && window.__np.composerPaintWires) || composerPaintWires;
-  const ns = (host.dataset.ns ||= 'rg-' + Math.random().toString(36).slice(2, 8));
-  paint(host, svg, steps, feedbacks, {
-    ns,
-    runMode: true,
-    activeId: view.live ? (view.activeId || null) : null,
-    doneSet,
-    cycles,
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Multi-run engine: per-run model + Map. Each run renders into one card in the
@@ -1364,7 +918,6 @@ function makeRun({
     nodeStatus: {},       // { nodeId|bookendId: 'done'|'now'|'pause'|'stop' } live cell state
     nodeCycle: {},        // { nodeId: max cycle observed } -> drives loop badges
     maxCellIdx: -1,       // highest reached cell index (drives "earlier cells = done")
-    phaseKey: 'preflight',
     cycle: 0,
     phaseStatus: '',
     costByNode: {},       // { nodeId|uiPhase: usd } for the live stepper
@@ -1406,19 +959,6 @@ function upsertRun(partial) {
 // ---------------------------------------------------------------------------
 // Per-run event handlers
 // ---------------------------------------------------------------------------
-function onPhase(r, msg) {
-  advanceRun(r, msg);
-  if (normalizePhase(msg.phase) === 'done') {
-    r.maxCellIdx = manifestFor(r.stepper).steps.length - 1;
-    r.phaseKey = 'done';
-  }
-  const cyc = msg.cycle ? ` #${msg.cycle}` : '';
-  const st = msg.status ? ` (${msg.status})` : '';
-  onLog(r, { source: 'phase', level: 'phase', text: `${msg.phase}${cyc}${st}`, ts: Date.now() });
-  maybeResume(r);
-  paintRunCard(r);
-}
-
 // A submitted answer is only confirmed resumed when the next phase/state event
 // for this run arrives (the server returns 200 even for a stale id, so HTTP
 // success is not proof). Clear the pending question + panel here.
@@ -1428,7 +968,7 @@ function maybeResume(r) {
 }
 
 // Clear a run's pending question and un-freeze any frontier node left at 'pause'
-// solely because of it: nodeKindFor marks 'pause' iff pendingQuestion != null, so
+// solely because of it: the paused state marks 'pause' iff pendingQuestion != null, so
 // once the question is gone every such mark is stale and would otherwise hold the
 // stepper on a false "awaiting input" until the next phase event. Shared by the
 // local post-answer resume (maybeResume) and the server-broadcast resolution
@@ -1524,10 +1064,10 @@ function liveTotalMs(steps, now = Date.now()) {
   return sum;
 }
 
-// A step's stepper bucket key: its node id when present (new runs), else the
-// normalized phase (legacy runs, whose default-manifest node ids ARE uiPhases).
+// A step's stepper bucket key: its node id. A v1 row that carries only a phase
+// has no node to bucket onto now that the v1 manifest is gone.
 function stepBucketKey(s) {
-  return (s && typeof s.nodeId === 'string' && s.nodeId) ? s.nodeId : normalizePhase(s && s.phase);
+  return (s && typeof s.nodeId === 'string' && s.nodeId) ? s.nodeId : null;
 }
 
 // Per-node active-ms bucket, keyed by stepBucketKey.
@@ -1662,7 +1202,7 @@ function subsByNodeCycleArrays(subAgents) {
 
 // Set of manifest node ids that are real agents (cell kind 'agents') — EXCLUDES the
 // preflight/done bookends so they never appear as Agents-dropdown groups. Driven by
-// the run's stepper (manifestFor falls back to CLIENT_DEFAULT_STEPPER when absent).
+// the run's stepper (manifestFor answers an EMPTY manifest when absent).
 function agentNodeIdSet(stepper) {
   // v2: agent nodes only — flow nodes (task/or/end…) DO write ledger rows but
   // are never Agents-dropdown groups.
@@ -1847,9 +1387,8 @@ function onState(r, msg) {
   // mid-run). Rebuild the stepper DOM so subsequent paints address the right nodes.
   if (msg.stepper && (r.stepper == null || manifestSig(msg.stepper) !== manifestSig(r.stepper))) {
     r.stepper = msg.stepper;
-    // A v2 manifest never takes the v1 column painter: paintGraphFor mounts the
-    // graph renderer into the same host on the next paint.
-    if (r.el && !isGraphManifest(r.stepper)) rebuildStepperDom(r);
+    // paintGraphFor mounts the graph renderer into the same host on the next
+    // paint; there is no separate structural rebuild any more.
   }
   if (Array.isArray(msg.steps)) {
     r.steps = msg.steps;
@@ -1869,7 +1408,6 @@ function onState(r, msg) {
   // Every state event is a new decor generation (runDecorFor memoises on it).
   r._decorSeq = (r._decorSeq || 0) + 1;
   if (msg.title && msg.title !== r.title) r.title = msg.title;
-  if (msg.phase) advanceRun(r, msg);
   maybeResume(r);
   paintRunCard(r);
 }
@@ -1908,7 +1446,7 @@ function patchHistoryTitle(pipelineId, title) {
 
 // Per-run sub-agent lifecycle delta. Upsert into r.subAgents by `id`: a spawn
 // inserts/updates the record; a finish updates status + finishedAt + telemetry.
-// Then repaint via the same path onState/onPhase use (paintRunCard -> paintStepper),
+// Then repaint via the same path onState/onExec use (paintRunCard -> paintStepper),
 // so the graph card the render layer builds reflects the change immediately. The
 // authoritative full set still arrives on the `state` snapshot (see onState).
 function onSubagent(r, msg) {
@@ -2598,10 +2136,6 @@ function defaultEffortFor(modelId) {
 // Phase key -> display label. Declared HERE, above the __np export literal, only
 // because that literal names it: a `const` declared 8 000 lines below is in its
 // temporal dead zone when the object is built and would throw
-// `ReferenceError: Cannot access 'PHASE_LABEL' before initialization` at module
-// load, blanking the whole UI. It is a bare literal with no dependencies, and its
-// readers (renderQpanel; the run-card painters) all run later.
-const PHASE_LABEL = { preflight: 'Preflight', clarify: 'Clarify', plan: 'Plan', refine: 'Refine', implement: 'Implement', review: 'Review', 'manual-checklist': 'Manual tests', 'manual-web': 'Manual web UI', done: 'Done' };
 
 // Test hook: expose the pure helpers (and a couple of collaborators the tests
 // reuse) without leaking them into the app's runtime contract.
@@ -2625,6 +2159,7 @@ if (typeof window !== 'undefined') {
     _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
     manifestFor,
     manifestSig,
+    stepStatusByKey,
     makeRun,
     onLog,
     maybeAutoscrollLog,
@@ -2641,20 +2176,11 @@ if (typeof window !== 'undefined') {
     execKey,
     subsGroupsForRender,
     agentNodeIdSet,
-    stepStatusByKey,
     cyclesPerNode,
     cycleAwareLabel,
     subAgentsOf,
     findManifestNode,
     subAgentsForNode,
-    composerPaintWires,
-    buildRunGraph,
-    runNode,
-    nodeModelLine,
-    loopCounts,
-    paintRunGraph,
-    histNodeCycle,
-    subFanHtml,
     subGroupStatus,
     readRunDensity,
     setRunDensity,
@@ -2700,12 +2226,10 @@ if (typeof window !== 'undefined') {
     runStatusMeta,
     paintRunStatusIcon,
     renderRunMeta,
-    PHASE_LABEL,
     buildHistCard,
     histStatusMeta,
     histPrEligible,
     pauseRun,
-    nodeKindFor,
     upsertRun,
     buildRunCard,
     paintRunCard,
@@ -3810,7 +3334,7 @@ function onLog(r, msg) {
 
   // §5.9: mirror the same record into the OPEN detail's pane. Hooked on the
   // writer, not on the `log` frame type, so the six producers that call onLog
-  // directly (onPhase, onArtifact, the answer/stop/pause/resume failure paths)
+  // directly (onExec, onArtifact, the answer/stop/pause/resume failure paths)
   // reach the detail too. rdAppendLogFrame re-reads r.logLines' tail, which the
   // push above just wrote, and no-ops unless this run's detail is open.
   if (rdOpenRun() === r) rdAppendLogFrame(r);
@@ -4116,8 +3640,9 @@ function renderQpanel(r, root = r.el) {
   } else if (pq.kind === 'questions') {
     title.textContent = `${pq.agent || 'Agent'} has questions`;
   } else {
-    const phaseLabel = PHASE_LABEL[r.phaseKey] || 'Pipeline';
-    title.textContent = `${phaseLabel} needs your input`;
+    // The ACTIVE agent names the panel (the v1 phase vocabulary is gone).
+    const label = (activeNodes(r)[0] || {}).label || 'Pipeline';
+    title.textContent = `${label} needs your input`;
   }
   head.appendChild(title);
   if (!isGate && !isRecovery) {
@@ -11025,68 +10550,6 @@ async function loadLiveLogs(panel, logUrl, st = null) {
   }
 }
 
-// Per-node max cycle from a saved run's steps[] (history's loop-count source).
-function histNodeCycle(st) {
-  const out = {};
-  for (const s of Array.isArray(st && st.steps) ? st.steps : []) {
-    if (!s) continue;
-    const key = stepBucketKey(s);
-    const c = Number(s.cycle);
-    if (key && Number.isFinite(c)) out[key] = Math.max(out[key] || 0, c);
-  }
-  return out;
-}
-
-// Tint a history card's graph from saved state. Reached cell drives coloring
-// (no live events). activeId=null, live=false -> no glow/marching-ants.
-function paintHistStepper(detail, st) {
-  const host = detail.querySelector('.run-flow');
-  if (!host) return;
-  const manifest = manifestFor(st.stepper);
-  const status = String(st.status || '').toLowerCase();
-  const halted = status === 'stopped' || status === 'error' || status === 'aborted' || status === 'failed' || status === 'interrupted';
-  const isDone = status === 'done' || status === 'complete' || status === 'completed';
-  const reached = histReachedCell(manifest, st);
-  const durs = durByNode(st.steps, 0, false);
-  const costs = costByNode(st.steps);
-  const modelsUsed = modelUsedByNode(st.steps);
-
-  const cellOf = {};
-  manifest.steps.forEach((cell, i) => cell.nodes.forEach((n) => { cellOf[n.id] = i; }));
-
-  paintRunGraph(host, manifest, {
-    statusOf: (id) => {
-      const cellIdx = cellOf[id] != null ? cellOf[id] : -1;
-      if (isDone) return 'done';
-      if (cellIdx < reached) return 'done';
-      if (cellIdx === reached) return halted ? 'stopped' : 'done';
-      return 'pending';
-    },
-    activeId: null,
-    cycles: loopCounts(manifest, histNodeCycle(st)),
-    live: false,
-    durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
-    costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
-    subsOf: (id) => subAgentsForNode(st, id),
-    modelUsedOf: (id) => modelsUsed[id],
-  });
-}
-
-// Highest cell index the saved run reached. Uses steps[].nodeId when present
-// (new runs), else the scalar phase mapped through the manifest (old runs).
-function histReachedCell(manifest, st) {
-  let reached = -1;
-  const steps = Array.isArray(st.steps) ? st.steps : [];
-  for (const s of steps) {
-    const loc = locateInManifest(manifest, { nodeId: s.nodeId, phase: s.phase });
-    if (loc.cellIdx > reached) reached = loc.cellIdx;
-  }
-  if (reached < 0 && st.phase) {
-    reached = locateInManifest(manifest, { phase: st.phase }).cellIdx;
-  }
-  return reached;
-}
-
 function renderHistoryError(message) {
   el.history.innerHTML = '';
   el.history.appendChild(histEmpty(`Could not load history: ${message}`));
@@ -12123,8 +11586,8 @@ function initHdTabs(screen, record, data) {
   });
 }
 
-// Legacy manifests (CLIENT_DEFAULT_STEPPER — a run that predates state.stepper)
-// name their nodes by uiPhase, but the lines those runs logged carry the agent
+// Legacy (v1) manifests name their nodes by uiPhase, but the lines those runs
+// logged carry the agent
 // ROLE. This is UI_PHASE (shared/graph/manifest.mjs) read backwards. The candidate
 // list keeps BOTH spellings and the log's own dropdown picks the winner, so
 // neither vintage has to be detected — and the phase spelling can never win by
@@ -12133,7 +11596,7 @@ function initHdTabs(screen, record, data) {
 // The STAMP'S OWN spelling stays first, so a workflow that legitimately keys an
 // agent `review` or `plan` still resolves to itself whenever the run logged
 // under it; the legacy role is strictly a fallback.
-// Only the phases CLIENT_DEFAULT_STEPPER can actually render are listed;
+// Only the phases a frozen v1 manifest can actually name are listed;
 // `clarify` is absent because its key and its phase are the same string
 // (workflows.mjs:388), so the single-candidate path already resolves it.
 const LEGACY_PHASE_SOURCE = {
@@ -12155,7 +11618,7 @@ function logSourceCandidates(src) {
 // No-op when the run has no live-log artifact: initHdTabs then renders no Logs
 // tab at all, so the graph stays unlinked, unstyled and inert — nothing invites
 // a click that could not do anything. MUST run after initHdTabs (it reads the
-// screen's tab cells) and after buildRunGraph (it reads the built nodes);
+// screen's tab cells) and after the graph is painted (it reads the built nodes);
 // both hold at the single call site, with no await between them.
 function wireHdGraphLogLinks(screen) {
   const graph = screen.querySelector('.hd-graph');
@@ -12174,7 +11637,7 @@ function wireHdGraphLogLinks(screen) {
   // repaint a History detail ever does is paintRunGraph, which mutates nodes in
   // place and writes no attribute on a NODE's root element (its only data-*
   // writes are host.dataset.wiresSig/ns on .run-flow itself, app.js:1025/1032) —
-  // and nothing here re-runs buildRunGraph's structural rebuild. If that ever
+  // and nothing here re-runs the renderer's structural rebuild. If that ever
   // changes, this pass has to move with it; the listeners would not.
   // v1 cards carry data-log-source and title in `.nmeta b`; v2 (graph) cards carry
   // data-node-id and title in `.nhead .tt` (the shared renderer's head).
@@ -12211,8 +11674,8 @@ function wireHdGraphLogLinks(screen) {
 
   // Delegated, so the real event target — always a descendant (.nmeta b, .nic
   // svg, .nstat), never the node div — still resolves, and so a STRUCTURAL
-  // rebuild (buildRunGraph wiping host.innerHTML when the node-id signature
-  // changes, app.js:913) could not orphan the handler. The Done bookend carries
+  // rebuild (the renderer wiping host.innerHTML when the node-id signature
+  // changes) could not orphan the handler. The Done bookend carries
   // no data-log-source, so the selector skips it.
   graph.addEventListener('click', (e) => {
     const node = e.target.closest && e.target.closest('.run-node[data-log-source], .node[data-node-id]');
@@ -13785,9 +13248,8 @@ function rdStateCopy(r, stepName) {
       : '';
     return `${runStatusMeta(r).word}.${at}`;
   }
-  if (isGraphRun(r)) return `${activeCopy(r).text}.`;
-  const cyc = Number(r.cycle) || 0;
-  return `${step} is running${cyc > 1 ? ` · cycle ${cyc}` : ''}.`;
+  // The ACTIVE agent names the line (the v1 phase/cycle scalars are gone).
+  return `${activeCopy(r).text}.`;
 }
 
 function rdOvStateBanner(host, r) {
@@ -14057,7 +13519,7 @@ function rdUpdateSections(r) {
 // It reads the record off `r.logLines`, so it must be called AFTER onLog pushed
 // it — which is exactly where it is hooked (onLog's tail), NOT from
 // handleServerMessage's `log` branch. Six other producers write through onLog and
-// never emit a `log` frame: onPhase, onArtifact, the answer-failure paths and the
+// never emit a `log` frame: onExec, onArtifact, the answer-failure paths and the
 // stop/pause/resume failure paths. Hooking the frame type instead of the writer
 // would show those lines on the card and silently drop them from the open detail —
 // the card/detail drift D9's shared bar exists to prevent.
@@ -14527,17 +13989,10 @@ function runDotClass(r) {
   // because a paused run is _finished.
   if (r.status === 'paused') return 'paused';
   if (r._finished || isTerminalStatus(r.status)) return r.status === 'done' ? 'green' : 'red';
-  // v2: the newest active agent's family, PULSING families only (F-24).
+  // The newest active agent's family, PULSING families only (F-24). A run whose
+  // manifest has not arrived yet has no active agent: neutral peach.
   if (isGraphRun(r)) { const f = activeCopy(r).family; return DOT_FAMILIES.has(f) ? f : 'grey-pulse'; }
-  // running → color by current phase/agent (mirrors statusPill families)
-  switch (r.phaseKey) {
-    case 'plan': return 'violet';
-    case 'refine': return 'peach';
-    case 'implement': return 'blue';
-    case 'review': return 'peach';
-    case 'clarify': return 'red';
-    default: return 'peach';
-  }
+  return 'peach';
 }
 
 // Project basename for display (e.g. "/a/b/proj" -> "proj").
@@ -14568,24 +14023,17 @@ function statusPill(r) {
     return { family: 'amber', text: 'Paused' };
   }
   // Same family as `paused`: an interrupted run is parked and resumable, and
-  // PAUSED_STATUSES (app.js:8726) already treats it that way. Without this it fell
-  // to the phaseKey switch and read "Running" beside a Resume button.
+  // PAUSED_STATUSES (app.js:8726) already treats it that way.
   if (r.status === 'interrupted') return { family: 'amber', text: 'Interrupted' };
   if (r.pendingQuestion != null) return { family: 'amber', text: 'Paused · awaiting answers' };
   if (r.status === 'starting') return { family: 'peach', text: 'Starting' };
   if (r.status === 'done') return { family: 'green', text: 'Done' };
   if (r.status === 'stopped') return { family: 'red', text: 'Stopped' };
   if (r.status === 'error') return { family: 'red', text: 'Error' };
+  // Running: the newest active agent names the pill. A run whose manifest has
+  // not arrived yet has no active agent, so it reads plainly "Running".
   if (isGraphRun(r)) return activeCopy(r);
-  // running
-  switch (r.phaseKey) {
-    case 'plan': return { family: 'violet', text: 'Planning' };
-    case 'refine': return { family: 'peach', text: 'Refining' };
-    case 'implement': return { family: 'blue', text: 'Implementing' };
-    case 'review': return { family: 'peach', text: 'Reviewing' };
-    case 'plan-review': return { family: 'violet', text: 'Plan Review' };
-    default: return { family: 'peach', text: 'Running' };
-  }
+  return { family: 'peach', text: 'Running' };
 }
 
 // Status AVATAR family + glyph for a live run. Mirrors histStatusMeta /
@@ -14663,10 +14111,6 @@ function buildRunCard(r) {
   node.dataset.runId = r.runId;
   node.dataset.density = runDensity;
 
-  // Build the graph from the run's manifest. r.stepper may be null -> legacy default.
-  const stepHost = node.querySelector('.run-flow');
-  if (stepHost && !isGraphManifest(r.stepper)) buildRunGraph(stepHost, r.stepper);
-
   const titleEl = node.querySelector('.run-title');
   if (titleEl) {
     titleEl.textContent = r.title;
@@ -14743,25 +14187,6 @@ function buildRunCard(r) {
   return node;
 }
 
-// Running -> graph status per node. done if its cell is behind the frontier or
-// nodeStatus says done; at the frontier: stop->stopped, pause->paused, now->active;
-// else pending. terminalDone (run status 'done') forces all-done.
-function runStatusOf(r, nodeId, cellIdx, terminalDone, halted) {
-  if (terminalDone) return 'done';
-  if (cellIdx < r.maxCellIdx) return 'done';
-  if (cellIdx > r.maxCellIdx) return 'pending';
-  // Frontier cell.
-  const k = r.nodeStatus[nodeId];
-  if (k === 'done') return 'done';
-  // A halted run (stopped/error/aborted/failed) shows its frontier node as
-  // stopped even if the last live phase left it 'now' — the halt arrives as a
-  // bare state event with no node-level phase to mark the cell.
-  if (halted) return 'stopped';
-  if (k === 'stop') return 'stopped';
-  if (k === 'pause') return 'paused';
-  if (k === 'now') return 'active';
-  return 'pending';
-}
 
 // Group rollup for a step's sub-agents: anyStop (stop|error) -> 'stop',
 // else anyRun -> 'run', else 'done'. Drives the .subs-stat / .dot colour.
@@ -14856,49 +14281,6 @@ function nodeLabelLookup(stepper) {
   return (id) => map[id] || id;
 }
 
-// The live view-adapter paintRunGraph consumes for a RUNNING run: a real frontier
-// activeId, live:true, and durations with the running tail included. Extracted so
-// the detail screen can paint the SAME live graph into its own host (spec §5.3).
-// Deliberately NOT paintHistStepper's adapter — that one hardcodes
-// activeId:null / live:false against a SAVED run, which would kill the current
-// node's glow and the marching-ants wires on a pipeline that is still running.
-function runStepperView(r) {
-  const manifest = manifestFor(r.stepper);
-  const terminalDone = r.status === 'done';
-  const halted = ['stopped', 'error', 'aborted', 'failed'].includes(r.status);
-  const now = Date.now();
-  const durs = durByNode(r.steps, now, true);
-  const costs = r.costByNode || {};
-  const modelsUsed = modelUsedByNode(r.steps);
-
-  // cellIdx per node id (for the frontier comparison).
-  const cellOf = {};
-  manifest.steps.forEach((cell, i) => cell.nodes.forEach((n) => { cellOf[n.id] = i; }));
-
-  // The active node = the frontier node currently now/pause (drives the live loop).
-  let activeId = null;
-  const frontier = manifest.steps[r.maxCellIdx];
-  if (frontier && !terminalDone) {
-    for (const n of frontier.nodes) {
-      const k = r.nodeStatus[n.id];
-      if (k === 'now' || k === 'pause') { activeId = n.id; break; }
-    }
-  }
-
-  return {
-    manifest,
-    view: {
-      statusOf: (id) => runStatusOf(r, id, cellOf[id] != null ? cellOf[id] : -1, terminalDone, halted),
-      activeId,
-      cycles: loopCounts(manifest, r.nodeCycle),
-      live: true,
-      durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
-      costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
-      subsOf: (id) => subAgentsForNode(r, id),
-      modelUsedOf: (id) => modelsUsed[id],
-    },
-  };
-}
 
 // ── The legacy (v1) renderer ────────────────────────────────────────────────
 // Frozen v1 runs only. This is the ONE place in the client allowed to read the
@@ -15076,57 +14458,16 @@ function paintStepper(r) {
   paintGraphFor(host, r.stepper, isGraphRun(r) ? runDecorFor(r, 'static') : null, r.steps);
 }
 
-// Does the run's current frontier cell contain a cycling node?
-function currentNodeCycles(r) {
-  const m = manifestFor(r.stepper);
-  const cell = m.steps[r.maxCellIdx];
-  return !!(cell && cell.nodes.some((n) => n.cycles));
-}
 
-// Frontier step for the compact card row (design §4.3): 1-based node index,
-// total node count, node label, and the node's `model · effort` caption.
-//
-// Reads the run's OWN advance state (maxCellIdx + nodeStatus, maintained by
-// advanceRun -> locateInManifest) rather than re-locating a phase, so the row
-// can never disagree with the graph paintStepper draws.
-// A settled or not-yet-started cell falls back to its first node, so the row
-// still names WHERE the run is instead of blanking.
+
+// Frontier step for the compact card row (design §4.3): DONE agent nodes over
+// agent nodes (D15: a number, never a bar), the active-node copy, and the active
+// node's `model · effort` caption. Every run is a graph run now.
 function runStepLabel(r) {
-  if (isGraphRun(r)) {
-    // n/m = DONE agent nodes over agent nodes (D15: a number, never a bar).
-    const d = runDecorFor(r);
-    const a = activeNodes(r)[0] || null;
-    return { n: d.progress.done, m: d.progress.total, name: activeCopy(r).text,
-      model: a && (a.model || a.effort) ? `${a.model || 'default'}${a.effort ? ` · ${a.effort}` : ''}` : '' };
-  }
-  const manifest = manifestFor(r && r.stepper);
-  const ids = runGraphNodeIds(manifest);
-  const maxIdx = r && Number.isInteger(r.maxCellIdx) ? r.maxCellIdx : -1;
-  const cellIdx = maxIdx >= 0 && maxIdx < manifest.steps.length ? maxIdx : 0;
-  const nodes = (manifest.steps[cellIdx] && manifest.steps[cellIdx].nodes) || [];
-  const nodeStatus = (r && r.nodeStatus) || {};
-  const node = nodes.find((nd) => nodeStatus[nd.id] === 'now' || nodeStatus[nd.id] === 'pause')
-    || nodes[0] || null;
-  const idx = node ? ids.indexOf(node.id) : -1;
-  return {
-    n: idx >= 0 ? idx + 1 : 1,
-    m: ids.length,
-    name: node ? (node.label || node.id) : '',
-    model: node ? runStepModelLine(node, r) : '',
-  };
-}
-
-// `model · effort` for the compact row. nodeModelLine returns '' for a node with
-// no `uiPhase` (the preflight/done bookends) and 'default' when the node names
-// neither a model nor an effort. A node with NO configured model resolves
-// "default" to the session's ACTUAL model exactly as paintRunGraph does for the
-// graph caption, so the two captions read identically.
-function runStepModelLine(node, r) {
-  const line = nodeModelLine(node);
-  if (!line || node.model) return line;
-  const used = modelUsedByNode((r && r.steps) || [])[node.id];
-  if (!used) return line;
-  return `default (${used})` + (node.effort ? ` · ${node.effort}` : '');
+  const d = runDecorFor(r);
+  const a = activeNodes(r)[0] || null;
+  return { n: d.progress.done, m: d.progress.total, name: activeCopy(r).text,
+    model: a && (a.model || a.effort) ? `${a.model || 'default'}${a.effort ? ` · ${a.effort}` : ''}` : '' };
 }
 
 // The run-card template's stock Resume tooltip. Read from the template rather
@@ -15282,8 +14623,8 @@ function renderRunningView({ skipDetail = false } = {}) {
 // Attach/move one card without losing user scroll state. Re-inserting an
 // attached node is spec'd as remove+insert, which zeroes every scrollable
 // descendant (.log scrollTop, .run-flow-wrap scrollLeft). Save → insert →
-// write back synchronously (before paint), same technique as buildRunGraph's
-// scrollLeft preservation across its structural rebuild.
+// write back synchronously (before paint), same technique as the graph
+// renderer's scrollLeft preservation across its structural rebuild.
 function insertCardPreservingScroll(list, el, before) {
   const logEl = el.querySelector('.log');
   const flowWrap = el.querySelector('.run-flow-wrap');

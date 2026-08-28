@@ -82,8 +82,9 @@ const STEPPER = {
 test('subAgentsForNode: exact nodeId match wins; uiPhase is the fallback', async () => {
   const ctx = await boot();
   const r = ctx.window.__np.makeRun({ runId: 'p1' });
-  r.stepper = null; // legacy default manifest: node id 'plan' has uiPhase 'plan'
+  // A FROZEN v1 manifest — the only kind that still carries uiPhase on a node.
+  r.stepper = { version: 1, feedbacks: [], steps: [{ kind: 'agents', nodes: [{ id: 'plan', uiPhase: 'plan', label: 'Plan' }] }] };
   r.subAgents = [{ id: 'a', nodeId: 's0_0', uiPhase: 'plan', status: 'running' }];
-  assert.deepEqual(ctx.window.__np.subAgentsForNode(r, 'plan').map((s) => s.id), ['a'], 'matched by uiPhase against legacy node');
+  assert.deepEqual(ctx.window.__np.subAgentsForNode(r, 'plan').map((s) => s.id), ['a'], 'matched by uiPhase against the frozen node');
   assert.deepEqual(ctx.window.__np.subAgentsForNode(r, 's0_0').map((s) => s.id), ['a'], 'exact nodeId still matches when present');
 });

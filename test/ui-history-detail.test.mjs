@@ -1858,13 +1858,18 @@ test('rapid selection does not stack two bodies in the pane', async () => {
 // Everything the roster has to survive at once: a row whose duration exists only
 // as finishedAt − startedAt, a row whose cost is null, a halted row, one typed
 // row, one graphify user and one skill user. `stepper: null` on purpose —
-// agentNodeIdSet falls back to CLIENT_DEFAULT_STEPPER, where 'refine' IS an
-// 'agents' node, so the step row really does open the group.
+// A FROZEN v1 manifest whose 'refine' node IS an 'agents' node, so the step row
+// really does open the group. (There is no built-in legacy default any more:
+// manifestFor(null) is an EMPTY manifest.)
+const AG_STEPPER = {
+  version: 1, feedbacks: [],
+  steps: [{ kind: 'agents', nodes: [{ id: 'refine', uiPhase: 'refine', label: 'Refine', color: 'green' }] }],
+};
 const AG_DETAIL = {
   ...DETAIL,
   state: {
     ...DETAIL.state,
-    stepper: null,
+    stepper: AG_STEPPER,
     steps: [{ nodeId: 'refine', cycle: 1, status: 'done', skills: [], graphifyCount: 0 }],
     subAgents: [
       {
@@ -1986,6 +1991,7 @@ test('a main agent that spawned nothing still gets a group, coloured by its step
       ...DETAIL,
       state: {
         ...DETAIL.state,
+        stepper: { version: 1, feedbacks: [], steps: [{ kind: 'agents', nodes: [{ id: 'plan', uiPhase: 'plan', label: 'Plan', color: 'violet' }] }] },
         steps: [{ nodeId: 'plan', cycle: 1, status: 'error', skills: [], graphifyCount: 3 }],
         subAgents: [],
       },

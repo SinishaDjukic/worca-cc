@@ -1038,40 +1038,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .pl-remove:disabled{opacity:.6;cursor:default;}
 .pl-remove svg{display:block;}
 
-/* v1 run-graph node look (was the shared composer .node; dies in P8).
-   Scoped on .run-flow-wrap, NOT .run-flow: the run-flow block below owns the
-   `.run-flow .node` selector (width/padding/cursor overrides), and a second
-   rule with that exact selector would shadow it for any text-matching reader. */
-.run-flow-wrap .node{position:relative;width:230px;background:#fff;border:1.5px solid var(--line-2);border-radius:16px;box-shadow:var(--shadow-soft);padding:13px 14px 13px 18px;display:flex;align-items:center;gap:12px;z-index:2;transition:box-shadow .12s,transform .12s;}
-.run-flow-wrap .node:hover{box-shadow:var(--shadow);}
-.run-flow-wrap .node::before{content:"";position:absolute;left:0;top:11px;bottom:11px;width:5px;border-radius:0 5px 5px 0;background:var(--c,#ccc);}
-.run-flow-wrap .node .nic{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;flex:0 0 auto;}
-.run-flow-wrap .node .nic svg{width:19px;height:19px;stroke-width:1.85;}
-.run-flow-wrap .node .nmeta{min-width:0;flex:1;}
-.run-flow-wrap .node .nmeta b{display:block;font-weight:600;font-size:13.5px;line-height:1.2;letter-spacing:-.01em;}
-.run-flow-wrap .node .nmeta small{display:block;color:var(--ink-3);font-size:11px;margin-top:1px;}
-.run-flow-wrap .node .nmeta small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
-.run-flow-wrap .node .nx,.run-flow-wrap .node .loop,.run-flow-wrap .node .selfloop{position:absolute;border-radius:50%;background:#fff;border:1.5px solid var(--line-2);display:grid;place-items:center;cursor:pointer;opacity:0;transition:.12s;box-shadow:var(--shadow-soft);z-index:3;}
-.run-flow-wrap .node .nx{top:-9px;right:-9px;width:22px;height:22px;color:var(--ink-3);font-size:12px;}
-.run-flow-wrap .node .loop{right:-10px;bottom:-10px;width:25px;height:25px;}
-.run-flow-wrap .node .selfloop{top:-10px;left:-10px;width:25px;height:25px;}
-.run-flow-wrap .node:hover .nx,.run-flow-wrap .node:hover .loop,.run-flow-wrap .node:hover .selfloop{opacity:1;}
-.run-flow-wrap .node .nx:hover{color:var(--red-ink);border-color:var(--red);}
-.run-flow-wrap .node .loop svg{width:13px;height:13px;stroke:var(--ink-2);stroke-width:2;}
-.run-flow-wrap .node .loop:hover{border-color:var(--amber);}
-.run-flow-wrap .node .loop:hover svg{stroke:var(--amber-ink);}
-.run-flow-wrap .node .selfloop svg{width:14px;height:14px;stroke:var(--ink-2);stroke-width:2;}
-.run-flow-wrap .node .selfloop:hover{border-color:var(--violet);}
-.run-flow-wrap .node .selfloop:hover svg{stroke:var(--violet-ink);}
-/* active self-cycle: always visible, violet ring (mirrors the lit toggle in the mockup) */
-.run-flow-wrap .node .selfloop.on{opacity:1;background:var(--violet-bg);border-color:var(--violet);box-shadow:0 0 0 3px var(--violet-bg);}
-.run-flow-wrap .node .selfloop.on svg{stroke:var(--violet-ink);}
-.run-flow-wrap .node.linking{outline:2px solid var(--amber);outline-offset:3px;}
-.run-flow-wrap .node.linking .loop{opacity:1;border-color:var(--amber);background:var(--amber-bg);}
-.run-flow-wrap .node.link-target{outline:2px dashed var(--amber);outline-offset:3px;cursor:pointer;}
-.run-flow-wrap .node.link-target:hover{background:var(--amber-bg);}
-
-
 /* Per-agent fan-out toggle in the New Pipeline rows. */
 .fanout-toggle {
   display: inline-flex;
@@ -1162,33 +1128,14 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hist-pill.ws.active::before{background:rgba(255,255,255,.22);color:#fff;}
 
 /* ========================================================================== */
-/* Run-flow — composer-style node graph for Running + History cards            */
-/* (ported from the mockup; reuses :root tokens. Node base look — accent bar,  */
-/*  border, radius, shadow — is inherited from the unscoped `.node` rule.       */
-/*  --c is set per-node inline by runNode(); these rules read it via var(--c).) */
+/* Run-flow — the SHARED decor the v2 graph renderer sits inside. The .run-flow */
+/* SCOPE STAYS: the v2 graph is hosted inside .run-flow on every page, and      */
+/* de-scoping drops `.run-flow .node.is-active` from (0,3,0) to (0,2,0), which  */
+/* ties `.gv-world .node` and loses on source order — silently killing the v2   */
+/* status border colours.                                                      */
 /* ========================================================================== */
 .run-flow-wrap{position:relative;margin:0 0 18px;border-radius:18px;border:1px solid var(--line);overflow-x:auto;overflow-y:hidden;background-color:#FBFBF9;background-image:radial-gradient(circle, var(--line-2) 1.1px, transparent 1.1px);background-size:22px 22px;}
 .run-flow{position:relative;display:flex;align-items:center;gap:44px;padding:66px 30px 52px;width:max-content;min-width:100%;}
-.run-flow .strip{flex:0 0 44px;align-self:stretch;margin:40px 0;background:none;outline:none;}
-.run-flow .col{padding:14px 8px;}
-.run-flow .col .col-tag{color:var(--ink-3);}
-
-/* Node sizing overrides — base look (accent bar ::before, border, radius,
-   soft shadow, flex layout) is inherited from the unscoped `.node` rule. */
-.run-flow .node{width:198px;padding:11px 13px 11px 16px;cursor:default;transition:opacity .25s, box-shadow .25s, border-color .25s, transform .25s;}
-.run-flow .node .nic{width:33px;height:33px;border-radius:10px;}
-.run-flow .node .nic svg{width:17px;height:17px;}
-.run-flow .node .nmeta b{font-size:12.5px;}
-.run-flow .node .nmeta small{font-size:10px;}
-.run-flow .node:hover{box-shadow:var(--shadow-soft);transform:none;}
-
-/* Always-visible per-node duration · cost (our decision; not in the mockup). */
-.run-flow .node .nrun{display:flex;align-items:center;gap:5px;margin-top:3px;font-family:var(--mono);font-size:10px;font-weight:600;color:var(--ink-3);}
-.run-flow .node .nrun .dur,.run-flow .node .nrun .cost{font-family:var(--mono);color:var(--ink-3);}
-.run-flow .node .nrun .dur:empty,.run-flow .node .nrun .cost:empty{display:none;}
-/* Separator rendered only when cost is present, so a lone duration (e.g. "0s") has no dangling "·". */
-.run-flow .node .nrun .cost:not(:empty)::before{content:"·";margin-right:4px;}
-
 /* Status badge (top-right pip). */
 .run-flow .nstat{position:absolute;top:-8px;right:-8px;width:21px;height:21px;border-radius:50%;display:grid;place-items:center;box-shadow:var(--shadow-soft);z-index:3;}
 .run-flow .nstat svg{width:12px;height:12px;}
@@ -1196,19 +1143,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .run-flow .nstat.paused{background:var(--amber);} .run-flow .nstat.paused svg{fill:#fff;}
 .run-flow .nstat.stopped{background:var(--red);} .run-flow .nstat.stopped svg{stroke:#fff;stroke-width:3;}
 
-/* Per-status node states. */
-.run-flow .node.is-pending{opacity:.5;}
-.run-flow .node.is-pending .nmeta small{color:var(--ink-3);}
-.run-flow .node.is-done .nmeta small{color:var(--green-ink);font-weight:600;}
 .run-flow .node.is-active{border-color:color-mix(in srgb, var(--c) 55%, var(--line-2));animation:nodeGlow 2.2s ease-in-out infinite;}
-.run-flow .node.is-active .nmeta small{color:var(--c);font-weight:600;}
 .run-flow .node.is-paused{border-color:color-mix(in srgb, var(--amber) 55%, var(--line-2));animation:nodeGlowAmber 2.2s ease-in-out infinite;}
-.run-flow .node.is-paused .nmeta small{color:var(--amber-ink);font-weight:600;}
 .run-flow .node.is-stopped{border-color:color-mix(in srgb, var(--red) 50%, var(--line-2));box-shadow:0 0 0 3px color-mix(in srgb, var(--red) 13%, transparent),var(--shadow-soft);}
-.run-flow .node.is-stopped .nmeta small{color:var(--red-ink);font-weight:600;}
-/* Per-node model · effort sub-line: stays neutral grey across all statuses
-   (matches the New-pipeline .step-current caption) and truncates with ellipsis. */
-.run-flow .node .nmeta small.nmodel{color:var(--ink-3);font-weight:600;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 @keyframes nodeGlow{0%,100%{box-shadow:var(--shadow-soft);}50%{box-shadow:0 0 0 4px color-mix(in srgb, var(--c) 13%, transparent),0 8px 26px color-mix(in srgb, var(--c) 24%, transparent);}}
 @keyframes nodeGlowAmber{0%,100%{box-shadow:var(--shadow-soft);}50%{box-shadow:0 0 0 4px color-mix(in srgb, var(--amber) 16%, transparent),0 8px 26px color-mix(in srgb, var(--amber) 26%, transparent);}}
 
@@ -1217,7 +1154,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    AND NOWHERE ELSE: sqPulse attaches only to .run-flow .node .fan .sq.on, so
    the tree/legend squares (.led/.sq) never animate and history (terminal
    statuses -> no .on) never pulses. */
-.run-flow .node.run-node{flex-wrap:wrap;}
 .run-flow .node .fan{flex:0 0 100%;display:flex;align-items:center;flex-wrap:wrap;gap:3px;margin-top:9px;padding-top:8px;border-top:1px solid var(--line);}
 .run-flow .node .fan .sq{width:7px;height:7px;border-radius:2px;background:var(--ink-3);opacity:.5;}
 .run-flow .node .fan .sq.on{background:var(--blue);opacity:1;animation:sqPulse 1.5s ease-in-out infinite;}
@@ -1270,18 +1206,11 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    it to its text; amber keeps it distinct from skill (blue) / MCP (green) / type (violet). */
 .graphify-pill{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:2px 9px;border-radius:999px;white-space:nowrap;background:var(--amber-bg);color:var(--amber-ink);}
 
-/* Loop-badge cycle-count text (renderer sizes font-size inline). */
-.run-flow .loop-badge text{font-family:var(--sans);font-weight:700;}
-
-/* Wires — dimmed by default; the live (originating) loop marches. */
-.run-flow .wires path.wire-dim{opacity:.26;}
-.run-flow .wires path.wire-live{opacity:1;stroke-width:2.4;animation:wireFlow .9s linear infinite;}
 @keyframes wireFlow{to{stroke-dashoffset:-18;}}
 
 @media (prefers-reduced-motion: reduce){
   .run-flow .node.is-active,.run-flow .node.is-paused{animation:none;box-shadow:0 0 0 3px color-mix(in srgb, var(--c) 16%, transparent),var(--shadow-soft);}
   .run-flow .node.is-paused{box-shadow:0 0 0 3px color-mix(in srgb, var(--amber) 18%, transparent),var(--shadow-soft);}
-  .run-flow .wires path.wire-live{animation:none;}
   .run-flow .node .fan .sq.on{animation:none;}
 }
 
@@ -3306,8 +3235,9 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 /* properties injectGeometry() writes on .gv-stage at mount, so the CSS box    */
 /* model cannot drift from nodeSize()/portAnchor(). Never hard-code a px       */
 /* geometry value here (test/ui-graph-css.test.mjs enforces it).               */
-/* Scoped under .gv-world because style.css declares an UNSCOPED `.node`       */
-/* for the v1 run graph; the resets below neutralise every property it leaks.  */
+/* Scoped under .gv-world because style.css still declares `.run-flow .node`   */
+/* status rules the v2 graph is hosted inside; the resets below neutralise     */
+/* every property they leak. (The UNSCOPED v1 `.node` rules are gone.)         */
 /* ========================================================================== */
 .gv-canvas{position:relative;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;
   background:#FBFBF9 radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;}
@@ -3675,9 +3605,11 @@ input.gv-name:focus-visible{outline:none;}
 /* "after the v1 run-flow block" (A32): the v1 run-flow rules are 3–4-class    */
 /* selectors that TIE P5's `.gv-world` block on specificity, so only source   */
 /* order can decide; here every rule wins its tie, and the block survives      */
-/* P8's deletion of the v1 block. P5's `.xfoot/.xtoggle/.xrow/.xresult/.ngate/  */
-/* .nrun/.fan/.wfired` STRUCTURE rules are the base and are NOT re-declared —  */
-/* only the states, neutralisers and ornaments P5 lacks live here.            */
+/* P8's deletion of the v1 block (now done). P5's `.xfoot/.xtoggle/.xrow/      */
+/* .xresult/.ngate/.nrun/.fan/.wfired` STRUCTURE rules are the base and are    */
+/* NOT re-declared — only the states and ornaments P5 lacks live here. The     */
+/* three neutralisers below are inert since P8 deleted the v1 rules they       */
+/* cancelled; they are kept so the v2 box model is stated in ONE place.        */
 /* ========================================================================== */
 /* Host: the v1 flex column becomes an absolute box the .gv-stage (inset:0)
    fills, so the stage rect === the wrap's padding box. A static host may be

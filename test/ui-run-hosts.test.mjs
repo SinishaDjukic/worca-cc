@@ -524,7 +524,7 @@ const WITH_SHIM = { ...MANIFEST, steps: [
   { kind: 'agents', nodes: [{ id: 'n_end', key: null, uiPhase: 'end', label: 'End' }] },
   { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] }], feedbacks: [] };
 
-test('v2 runs take the graph arm of every label helper; v1 runs are untouched', async () => {
+test('every label helper reads the graph; a run with no manifest reads plainly "Running"', async () => {
   const window = await bootApp();
   const np = window.__np;
   const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
@@ -545,12 +545,12 @@ test('v2 runs take the graph arm of every label helper; v1 runs are untouched', 
     steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'start', activeMs: 10, startedAt: '2026-08-26T10:00:00Z' }] });
   assert.equal(np.statusPill(r).text, '2 agents running');
   assert.equal(np.rdStateCopy(r, 'Planner'), '2 agents running.');
-  // v1 run: the phaseKey switch still rules.
-  const v1 = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'running' });
-  v1.phaseKey = 'implement';
-  assert.equal(np.isGraphRun(v1), false);
-  assert.equal(np.statusPill(v1).text, 'Implementing');
-  assert.equal(np.runDotClass(v1), 'blue');
+  // A run whose manifest has not arrived yet: no active agent to name, and the
+  // v1 phaseKey switch that used to name a phase is gone.
+  const bare = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'running' });
+  assert.equal(np.isGraphRun(bare), false);
+  assert.equal(np.statusPill(bare).text, 'Running');
+  assert.equal(np.runDotClass(bare), 'peach');
 });
 
 test('isGraphRun is false for a REAL v1 stepper object, not just for a null one', async () => {
@@ -562,8 +562,7 @@ test('isGraphRun is false for a REAL v1 stepper object, not just for a null one'
   np.onState(v1, { status: 'running', stepper: { version: 1, steps: [{ kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan' }] }], feedbacks: [] } });
   assert.ok(v1.stepper, 'the v1 manifest was adopted');
   assert.equal(np.isGraphRun(v1), false, 'stepper.version 1 is NOT a graph run');
-  v1.phaseKey = 'implement';
-  assert.equal(np.statusPill(v1).text, 'Implementing', 'and it keeps the v1 phaseKey switch');
+  assert.equal(np.statusPill(v1).text, 'Running', 'and a frozen v1 run names no agent');
 });
 
 test('activeNodes orders in-flight executions newest-first, by executionId-only rows, a composite parent by its slices', async () => {
@@ -699,21 +698,21 @@ test('destroyGraphMounts tears down every mount under a root; the next paint mou
   assert.notEqual(host.querySelector('.gv-world'), world);
 });
 
-test('a v2 CARD: the graph replaces the legacy columns, survives a shim-signature change, and its wrap click opens the detail (v2 only)', async () => {
+test('a v2 CARD: the graph mounts into an empty host, survives a shim-signature change, and its wrap click opens the detail (v2 only)', async () => {
   const window = await bootApp();
   const np = window.__np;
   const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
-  const node = np.buildRunCard(r);              // stepper null → the legacy default columns
+  const node = np.buildRunCard(r);              // stepper null → nothing painted
   window.document.body.appendChild(node);
   r.el = node;
   const host = node.querySelector('.rc-detailed .run-flow');
-  assert.ok(host.querySelector('.col, .run-node'), 'a stepper-less card paints the legacy columns');
+  assert.equal(host.children.length, 0, 'a stepper-less card paints nothing (the v1 columns are gone)');
   np.onState(r, { status: 'running', stepper: WITH_SHIM, active: [], steps: [] });
   const stage = host.querySelector('.gv-stage');
   assert.ok(stage, 'the v2 renderer replaced the columns');
   assert.equal(host.querySelector('.col'), null);
-  // A later manifest whose v1 SHIM signature differs must NOT run the v1 rebuild
-  // (buildRunGraph wipes the host on a node-id change) over the mounted graph.
+  // A later manifest whose v1 SHIM signature differs must not disturb the mount
+  // (the v1 structural rebuild that used to wipe the host is gone).
   const shim2 = { ...WITH_SHIM, steps: [...WITH_SHIM.steps.slice(0, 2),
     { kind: 'agents', nodes: [{ id: 'n_x', key: 'reviewer', uiPhase: 'review', label: 'Reviewer' }] }, ...WITH_SHIM.steps.slice(2)] };
   np.onState(r, { status: 'running', stepper: shim2, active: [], steps: [] });
