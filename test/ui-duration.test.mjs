@@ -64,91 +64,8 @@ test('a pipeline with no timing data renders a blank time chip', async () => {
   assert.equal(ctx.window.document.querySelector('#history .hist-card .hist-time').textContent, '');
 });
 
-test('the detail screen paints per-phase duration from saved steps (refine cycles summed; never-run blank; 0ms -> 0s)', async () => {
-  const state = {
-    phase: 'done', status: 'done', cycle: 2, totalActiveMs: 8500,
-    steps: [
-      { key: 'preflight', phase: 'preflight', activeMs: 500, runningSince: null },
-      { key: 'plan', phase: 'plan', activeMs: 4000, runningSince: null },
-      { key: 'refine#1', phase: 'refine', activeMs: 1500, runningSince: null },
-      { key: 'refine#2', phase: 'refine', activeMs: 1000, runningSince: null }, // two cycles -> 2500
-      { key: 'implement', phase: 'implement', activeMs: 0, runningSince: null }, // ran sub-ms -> 0s
-      // no review step recorded -> review stays blank
-    ],
-  };
-  const ctx = await boot({
-    fetchHandler: (url) => {
-      if (url.endsWith('/api/history')) return runsList([{ id: 'p1', projectKey: 'k1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 8500 }]);
-      if (url.endsWith('/api/history/k1/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
-      return null;
-    },
-  });
-  ctx.showHistory();
-  await new Promise((r) => setTimeout(r, 0));
-  ctx.showDetail('k1', 'p1');
-  await ctx.settle();
-  const byStep = {};
-  for (const s of ctx.window.document.querySelectorAll('#hist-detail .hd .run-node[data-id]')) byStep[s.dataset.id] = s;
-  assert.equal(byStep.plan.querySelector('.dur').textContent, '4s');
-  assert.equal(byStep.refine.querySelector('.dur').textContent, '3s', 'refine cycles summed (2500ms -> 3s)');
-  assert.equal(byStep.implement.querySelector('.dur').textContent, '0s', 'executed sub-ms phase shows 0s');
-  assert.equal(byStep.review.querySelector('.dur').textContent, '', 'never-run review stays blank');
-  assert.equal(byStep.preflight.querySelector('.dur').textContent, '1s', 'preflight has its own dur chip');
-});
 
-test('clarify active time shows in its own Clarify stage chip (no longer folds into Plan)', async () => {
-  // normalizePhase now maps clarify -> 'clarify' (its own UI phase), so a clarify
-  // step's activeMs shows in a separate Clarify chip and no longer sums into Plan.
-  const state = {
-    phase: 'done', status: 'done', cycle: 0, totalActiveMs: 3000,
-    steps: [
-      { key: 'clarify#1', phase: 'clarify', activeMs: 1000, runningSince: null },
-      { key: 'plan', phase: 'plan', activeMs: 2000, runningSince: null },
-    ],
-  };
-  const ctx = await boot({
-    fetchHandler: (url) => {
-      if (url.endsWith('/api/history')) return runsList([{ id: 'p1', projectKey: 'k1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 3000 }]);
-      if (url.endsWith('/api/history/k1/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
-      return null;
-    },
-  });
-  ctx.showHistory();
-  await new Promise((r) => setTimeout(r, 0));
-  ctx.showDetail('k1', 'p1');
-  await ctx.settle();
-  const planStage = ctx.window.document.querySelector('#hist-detail .hd .run-node[data-id="plan"]');
-  assert.equal(planStage.querySelector('.dur').textContent, '2s', 'plan(2000) -> 2s in the Plan chip (clarify no longer folded in)');
-  const clarifyStage = ctx.window.document.querySelector('#hist-detail .hd .run-node[data-id="clarify"]');
-  assert.equal(clarifyStage.querySelector('.dur').textContent, '1s', 'clarify(1000) -> 1s in its own Clarify chip');
-});
 
-test('history ignores a dangling runningSince (saved data is treated as final)', async () => {
-  // A run killed mid-phase can persist a step with runningSince set while status
-  // is still 'running'. History must show the finalized activeMs only — never
-  // now - runningSince (which, with a stale epoch, would be a runaway value).
-  const state = {
-    phase: 'implement', status: 'running', cycle: 0, totalActiveMs: 2000,
-    steps: [
-      { key: 'plan', phase: 'plan', activeMs: 2000, runningSince: null },
-      { key: 'implement', phase: 'implement', activeMs: 0, runningSince: 1 }, // stale -> huge if added live
-    ],
-  };
-  const ctx = await boot({
-    fetchHandler: (url) => {
-      if (url.endsWith('/api/history')) return runsList([{ id: 'p1', projectKey: 'k1', title: 'Run', status: 'running', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 2000 }]);
-      if (url.endsWith('/api/history/k1/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
-      return null;
-    },
-  });
-  ctx.showHistory();
-  await new Promise((r) => setTimeout(r, 0));
-  ctx.showDetail('k1', 'p1');
-  await ctx.settle();
-  const byStep = {};
-  for (const s of ctx.window.document.querySelectorAll('#hist-detail .hd .run-node[data-id]')) byStep[s.dataset.id] = s;
-  assert.equal(byStep.implement.querySelector('.dur').textContent, '0s', 'finalized 0ms; dangling clock ignored');
-});
 
 // Phase-label harness (CONV-4): identical jsdom/WS/fetch stubs to boot() above,
 // but the WebSocket stub records its instances + can fire a `message`, so a
@@ -198,33 +115,7 @@ const askFrame = (runId) => ({
 const panelHead = (ctx, runId) =>
   ctx.window.document.querySelector(`#run-list .run-card[data-run-id="${runId}"] .qpanel-head b`);
 
-test('a manual-web phase heads its question panel "Manual web UI" (not the Preflight default)', async () => {
-  const ctx = await bootLive();
-  ctx.selectProject();
-  await new Promise((r) => setTimeout(r, 0));
-  ctx.emit({ type: 'phase', runId: 'r_mw', phase: 'manual-web', status: 'running' });
-  ctx.showRunning();
-  await new Promise((r) => setTimeout(r, 0));
-  assert.equal(ctx.window.__np.getRun('r_mw').phaseKey, 'manual-web', 'manual-web normalizes to its own key');
-  ctx.emit(askFrame('r_mw'));
-  await new Promise((r) => setTimeout(r, 0));
-  assert.equal(panelHead(ctx, 'r_mw').textContent, 'Manual web UI needs your input',
-    'and the label reaches the panel, not the Preflight default');
-});
 
-test('a manual-checklist phase heads its question panel "Manual tests" (not swallowed by review/implement)', async () => {
-  const ctx = await bootLive();
-  ctx.selectProject();
-  await new Promise((r) => setTimeout(r, 0));
-  ctx.emit({ type: 'phase', runId: 'r_mc', phase: 'manual-checklist', status: 'running' });
-  ctx.showRunning();
-  await new Promise((r) => setTimeout(r, 0));
-  assert.equal(ctx.window.__np.getRun('r_mc').phaseKey, 'manual-checklist', 'manual-checklist normalizes to its own key');
-  ctx.emit(askFrame('r_mc'));
-  await new Promise((r) => setTimeout(r, 0));
-  assert.equal(panelHead(ctx, 'r_mc').textContent, 'Manual tests needs your input',
-    'and the label reaches the panel, not the Preflight default');
-});
 
 test('durByNode buckets per nodeId, falling back to uiPhase for legacy steps', async () => {
   const { window } = await boot();
@@ -235,70 +126,4 @@ test('durByNode buckets per nodeId, falling back to uiPhase for legacy steps', a
   assert.equal(b['refine'], 800); // legacy: node id == uiPhase
 });
 
-test('clarify folds into the Plan cell on a per-node manifest (nodeId-tagged)', async () => {
-  // New runs persist a per-node stepper (plan node id 's0_0') AND tag the clarify
-  // step with that id. normalizePhase can't help here (it maps clarify -> 'plan',
-  // which is NOT the node id 's0_0'); the explicit nodeId is what folds it.
-  const stepper = {
-    version: 1,
-    steps: [
-      { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight' }] },
-      { kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan', cycles: false }] },
-      { kind: 'done', nodes: [{ id: 'done', label: 'Done' }] },
-    ],
-  };
-  const state = {
-    phase: 'done', status: 'done', cycle: 1, totalActiveMs: 3000, stepper,
-    steps: [
-      { key: 'clarify#1', phase: 'clarify', nodeId: 's0_0', activeMs: 1000, runningSince: null },
-      { key: '0:s0_0', phase: 'planner', nodeId: 's0_0', activeMs: 2000, runningSince: null },
-    ],
-  };
-  const ctx = await boot({
-    fetchHandler: (url) => {
-      if (url.endsWith('/api/history')) return runsList([{ id: 'p1', projectKey: 'k1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 3000 }]);
-      if (url.endsWith('/api/history/k1/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
-      return null;
-    },
-  });
-  ctx.showHistory();
-  await new Promise((r) => setTimeout(r, 0));
-  ctx.showDetail('k1', 'p1');
-  await ctx.settle();
-  const planStage = ctx.window.document.querySelector('#hist-detail .hd .run-node[data-id="s0_0"]');
-  assert.equal(planStage.querySelector('.dur').textContent, '3s', 'clarify(1000)+plan(2000) -> 3s on the s0_0 cell');
-});
 
-test('an untagged clarify step (old run) does NOT fold on a per-node manifest', async () => {
-  // Backward-compat: pre-fix saved runs have clarify#1 with no nodeId. On a
-  // per-node stepper its FIGURE buckets to 'plan' (via normalizePhase), which is not
-  // the node id 's0_0' -> paints on nothing. Exactly today's behavior; must not crash.
-  const stepper = {
-    version: 1,
-    steps: [
-      { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight' }] },
-      { kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan', cycles: false }] },
-      { kind: 'done', nodes: [{ id: 'done', label: 'Done' }] },
-    ],
-  };
-  const state = {
-    phase: 'done', status: 'done', cycle: 1, totalActiveMs: 3000, stepper,
-    steps: [
-      { key: 'clarify#1', phase: 'clarify', activeMs: 1000, runningSince: null }, // no nodeId (legacy)
-      { key: '0:s0_0', phase: 'planner', nodeId: 's0_0', activeMs: 2000, runningSince: null },
-    ],
-  };
-  const ctx = await boot({
-    fetchHandler: (url) => {
-      if (url.endsWith('/api/history')) return runsList([{ id: 'p1', projectKey: 'k1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalActiveMs: 3000 }]);
-      if (url.endsWith('/api/history/k1/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
-      return null;
-    },
-  });
-  ctx.showHistory();
-  await new Promise((r) => setTimeout(r, 0));
-  ctx.showDetail('k1', 'p1');
-  await ctx.settle();
-  const planStage = ctx.window.document.querySelector('#hist-detail .hd .run-node[data-id="s0_0"]');
-  assert.equal(planStage.querySelector('.dur').textContent, '2s', 'only the plan step (2000) shows; clarify not folded');
-});

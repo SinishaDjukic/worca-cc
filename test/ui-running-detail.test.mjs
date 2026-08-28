@@ -193,49 +193,7 @@ const click = (window, node) => node.dispatchEvent(new window.Event('click', { b
 
 // ---------- graph ----------
 
-test('the detail screen paints a LIVE pipeline graph', async () => {
-  const { window, recv } = await openDetail();
-  recv({
-    type: 'state', runId: ID, status: 'running', stepper: STEPPER2,
-    steps: [{ nodeId: 'a', activeMs: 4000, cycle: 1 }, { nodeId: 'b', activeMs: 1000, runningSince: Date.now() - 2000, cycle: 1 }],
-  });
-  recv({ type: 'phase', runId: ID, phase: 'implement', nodeId: 'b', cycle: 1 });
-  await settle(window);
 
-  const host = window.document.querySelector('#run-detail .rd-graph .run-flow');
-  assert.ok(host, '.rd-graph > .run-flow-wrap > .run-flow is built');
-  assert.ok(host.closest('.run-flow-wrap'), 'the graph sits inside the shared scroll wrap');
-  assert.equal(host.querySelectorAll('.run-node[data-id]').length, 2, 'one node per manifest node');
-
-  const b = host.querySelector('.run-node[data-id="b"]');
-  assert.ok(b.classList.contains('is-active'),
-    'the frontier node is ACTIVE — paintStepper\'s adapter, not paintHistStepper\'s activeId:null');
-  assert.notEqual(b.querySelector('.dur').textContent, '',
-    'durations come from durByNode(..., live=true), not History\'s live=false');
-  assert.ok(host.querySelector('svg.wires'), 'the shared wire renderer ran');
-});
-
-test('the detail graph preserves horizontal scroll across a manifest rebuild', async () => {
-  // jsdom has no layout, so a final-value assert on scrollLeft is false-green
-  // (nothing ever clamps it back to 0). Record the WRITES instead — the same
-  // technique as test/ui-scroll.test.mjs's structural-rebuild case.
-  const { window, recv } = await openDetail();
-  recv({ type: 'state', runId: ID, status: 'running', stepper: STEPPER2, steps: [] });
-  await settle(window);
-
-  const wrap = window.document.querySelector('#run-detail .rd-graph .run-flow-wrap');
-  let left = 0; const writes = [];
-  Object.defineProperty(wrap, 'scrollLeft', {
-    configurable: true, get: () => left, set: (v) => { left = v; writes.push(v); },
-  });
-  wrap.scrollLeft = 800;
-  writes.length = 0;                       // watch only the rebuild
-
-  recv({ type: 'state', runId: ID, status: 'running', stepper: STEPPER3, steps: [] });
-  await settle(window);
-  assert.deepEqual(writes, [800], 'buildRunGraph wrote the saved scrollLeft back after the wipe');
-  assert.equal(window.document.querySelectorAll('#run-detail .rd-graph .run-node[data-id]').length, 3);
-});
 
 // ---------- banners ----------
 

@@ -2677,6 +2677,8 @@ if (typeof window !== 'undefined') {
     runDecorFor,
     finishRun,
     paintGraphFor,
+    paintLegacyStrip,
+    legacyChipRows,
     destroyGraphMounts,
     applyRunLogFilter,
     focusLogExecution,
@@ -11301,10 +11303,7 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
   // column painter, as a thunk.
   paintGraphFor(flow, st.stepper, isGraphManifest(st.stepper) ? Object.assign(
     decorFromState(st, { live: false, now: 0, subsOf: (id) => subAgentsForNode(st, id) }),
-    { run: st, runId: parsed.id, mode: 'monitor', record: rec }) : null, () => {
-    if (flow) buildRunGraph(flow, st.stepper); // null stepper -> legacy default
-    paintHistStepper(screen, st);
-  });
+    { run: st, runId: parsed.id, mode: 'monitor', record: rec }) : null, st.steps);
   if (isGraphManifest(st.stepper)) paintQuiescenceBanner(screen.querySelector('.hd-banners'), decorFromState(st, { live: false, now: 0 }));
 
   paintHdHeaderMeta(screen, rec, data);
@@ -14901,14 +14900,71 @@ function runStepperView(r) {
   };
 }
 
-// The ONE branch point between the v1 column painters and the v2 graph renderer.
-// `decor` is runDecorFor(r, mode) — `run`/`runId`/`mode` shallow-added (History
-// passes `record` too) — and `paintV1` is the CALLER's own untouched v1 painter,
-// passed as a thunk: paintGraphFor owns no v1 code, so every v1 surface stays
-// byte-identical (the three v1 painters are host-specific).
+// ── The legacy (v1) renderer ────────────────────────────────────────────────
+// Frozen v1 runs only. This is the ONE place in the client allowed to read the
+// v1 phase vocabulary: `pipeline_steps.node_id` is nullable, so the oldest rows
+// identify a step by `phase` alone — and the node ids of a v1 manifest ARE its
+// phases (or its nodes carry `uiPhase`). No v2 run can reach it: paintGraphFor
+// forks on isGraphManifest(stepper), and a v2 manifest is version 2.
+// The strip is INERT: no wires, no click handlers, no executions footer — a v1
+// run can never be resumed, so there is nothing to drive.
+function legacyChipRows(manifest, steps) {
+  const nodes = [];
+  for (const cell of Array.isArray(manifest?.steps) ? manifest.steps : []) {
+    for (const n of Array.isArray(cell?.nodes) ? cell.nodes : []) nodes.push(n);
+  }
+  const byPhase = new Map();
+  for (const n of nodes) {
+    for (const p of [n.uiPhase, n.id]) if (p != null && !byPhase.has(p)) byPhase.set(p, n.id);
+  }
+  const acc = new Map();
+  for (const s of Array.isArray(steps) ? steps : []) {
+    if (!s) continue;
+    const nodeId = s.nodeId != null ? s.nodeId : byPhase.get(s.phase);
+    if (nodeId == null) continue;
+    const cur = acc.get(nodeId) || { ms: 0, cost: 0, status: 'pending' };
+    cur.ms += Number(s.activeMs) || 0;
+    cur.cost += Number(s.costUsd) || 0;
+    cur.status = s.status === 'start' ? 'active' : (s.status || 'pending');
+    acc.set(nodeId, cur);
+  }
+  return nodes.map((n) => {
+    const hit = acc.get(n.id);
+    const label = n.label || n.id;
+    const parts = hit ? [label, fmtDuration(hit.ms), hit.cost > 0 ? fmtUsd(hit.cost) : null] : [label];
+    return { id: n.id, color: n.color || '', status: hit ? hit.status : 'pending',
+      text: parts.filter(Boolean).join(' \u00b7 ') };
+  });
+}
+
+/** @param {Element} host @param {object} manifest the PERSISTED v1 manifest
+ *  @param {Array} steps the run's ledger rows (paintGraphFor's 4th argument) */
+function paintLegacyStrip(host, manifest, steps) {
+  const strip = document.createElement('div');
+  strip.className = 'run-strip';
+  for (const chip of legacyChipRows(manifest, steps)) {
+    const el = document.createElement('span');
+    el.className = `rchip is-${chip.status}`;
+    el.dataset.id = chip.id;
+    if (chip.color) el.style.setProperty('--c', COMPOSER_COLORS[chip.color] || '#ccc');
+    el.textContent = chip.text;
+    strip.appendChild(el);
+  }
+  host.replaceChildren(strip);
+}
+
+// The ONE branch point between the frozen-v1 chip strip and the v2 graph
+// renderer. `decor` is runDecorFor(r, mode) — `run`/`runId`/`mode` shallow-added
+// (History passes `record` too) — and `legacySteps` is the run's ledger, which
+// the v1 arm needs and `decor` cannot carry: every caller passes decor = null on
+// the v1 path, so the strip takes its rows explicitly.
 const GRAPH_MOUNTS = new WeakMap();   // .run-flow element -> { m, ctx }
-function paintGraphFor(host, stepper, decor, paintV1) {
-  if (!isGraphManifest(stepper)) { if (typeof paintV1 === 'function') paintV1(); return; }
+function paintGraphFor(host, stepper, decor, legacySteps) {
+  if (!isGraphManifest(stepper)) {
+    if (host && stepper) paintLegacyStrip(host, stepper, legacySteps);
+    else if (host) host.replaceChildren();
+    return;
+  }
   if (!host || !decor) return;
   let slot = GRAPH_MOUNTS.get(host);
   if (!slot) {
@@ -15017,10 +15073,7 @@ function paintStepper(r) {
   const host = r.el.querySelector('.run-flow');
   if (!host) return;
   if (isGraphRun(r) && r.el.dataset.density === 'compact') return;   // locked: compact density renders NO graph
-  paintGraphFor(host, r.stepper, isGraphRun(r) ? runDecorFor(r, 'static') : null, () => {
-    const { manifest, view } = runStepperView(r);
-    paintRunGraph(host, manifest, view);
-  });
+  paintGraphFor(host, r.stepper, isGraphRun(r) ? runDecorFor(r, 'static') : null, r.steps);
 }
 
 // Does the run's current frontier cell contain a cycling node?
@@ -15648,16 +15701,7 @@ el.runDetail?.addEventListener('click', (e) => {
 function paintRdGraph(screen, r) {
   const host = screen.querySelector('.rd-graph .run-flow');
   if (!host) return;
-  paintGraphFor(host, r.stepper, isGraphRun(r) ? runDecorFor(r, 'monitor') : null, () => {
-    // buildRunGraph is idempotent (it returns early on an unchanged node-id
-    // signature) and restores .run-flow-wrap scrollLeft across the one destructive
-    // path (it saves before the wipe and writes it back after the columns are
-    // re-appended), so calling it on every paint is both cheap and correct — no
-    // rebuildStepperDom twin is needed.
-    buildRunGraph(host, r.stepper);
-    const { manifest, view } = runStepperView(r);
-    paintRunGraph(host, manifest, view);
-  });
+  paintGraphFor(host, r.stepper, isGraphRun(r) ? runDecorFor(r, 'monitor') : null, r.steps);
 }
 
 // A bold-mono '·' separator, the twin of hdDot().

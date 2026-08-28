@@ -651,33 +651,35 @@ function hostPair(doc) {
 }
 const V1_STEPPER = { version: 1, steps: [{ kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan' }] }], feedbacks: [] };
 
-test('paintGraphFor routes by stepper.version, mounts the v2 renderer once per host, and its v1 arm IS the caller\'s thunk', async () => {
+test('paintGraphFor routes by stepper.version, mounts the v2 renderer once per host, and its v1 arm is the frozen chip strip', async () => {
   const window = await bootApp();
   const np = window.__np;
   const doc = window.document;
   const host = hostPair(doc);
   const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
   np.onState(r, { status: 'running', stepper: MANIFEST, active: [], steps: [], endReached: false, warnings: [], wireDeliveries: {}, gate: null });
-  let v1Calls = 0;
-  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'), () => { v1Calls += 1; });
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'), []);
   assert.ok(host.querySelector('.gv-world'), 'v2 manifest → the graph renderer');
-  assert.equal(v1Calls, 0, 'the v1 thunk never runs for a v2 manifest');
+  assert.equal(host.querySelector('.run-strip'), null, 'the frozen strip never paints for a v2 manifest');
   const world = host.querySelector('.gv-world');
   np.onState(r, { status: 'running', stepper: MANIFEST, active: [{ nodeId: 'n_a', executionId: 'x:n_a:1' }], steps: [] });
-  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'), () => { v1Calls += 1; });
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'), []);
   assert.equal(host.querySelector('.gv-world'), world, 'a repaint reuses the mount');
   assert.ok(host.querySelector('[data-node-id="n_a"]').classList.contains('is-active'), 'and applies the new bag');
-  // A v1 manifest in a FRESH host: the thunk (today's column painter) runs untouched.
+  // A v1 manifest in a FRESH host: the INERT frozen chip strip, never the graph.
+  // `decor` is null on every v1 call site, so the strip takes the ledger rows as
+  // paintGraphFor's 4th argument instead.
   const host2 = hostPair(doc);
   const v1 = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'running' });
   np.onState(v1, { status: 'running', stepper: V1_STEPPER });
-  np.paintGraphFor(host2, v1.stepper, null, () => { np.buildRunGraph(host2, v1.stepper); v1Calls += 1; });
+  np.paintGraphFor(host2, v1.stepper, null, [{ key: 'plan', phase: 'plan', status: 'done', activeMs: 1000 }]);
   assert.equal(host2.querySelector('.gv-world'), null, 'v1 never reaches the graph renderer');
-  assert.ok(host2.querySelector('.run-node, .col'), 'the v1 column painter ran');
-  assert.equal(v1Calls, 1);
-  // paintGraphFor owns NO v1 code: without a thunk a v1 manifest paints nothing.
+  const strip = host2.querySelector('.run-strip');
+  assert.ok(strip, 'the frozen chip strip painted');
+  assert.equal(strip.querySelector('.rchip[data-id="s0_0"]').textContent, 'Plan \u00b7 1s');
+  // No stepper at all: the host is emptied, never left holding a stale paint.
   const host3 = hostPair(doc);
-  np.paintGraphFor(host3, v1.stepper, null);
+  np.paintGraphFor(host3, null, null, []);
   assert.equal(host3.children.length, 0);
 });
 

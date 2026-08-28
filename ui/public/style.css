@@ -3732,3 +3732,14 @@ input.gv-name:focus-visible{outline:none;}
   .run-flow.gv-host .gv-wires path.wire-live,.run-flow.gv-host .gv-world .ngate,
   .run-flow.gv-host .gv-world .xfoot .xq.is-active,.run-flow.gv-host .gv-world .xfoot .xrow.is-active .led{animation:none;}
 }
+
+/* Legacy (v1) run strip — frozen runs only; no wires, no executions footer. */
+.run-strip{display:flex;flex-wrap:wrap;gap:8px;padding:14px 16px;}
+.run-strip .rchip{--c:var(--line-2);font-size:11.5px;font-weight:600;color:var(--ink-2);
+  background:var(--field);border:1px solid var(--line);border-left:3px solid var(--c);
+  border-radius:8px;padding:5px 10px;white-space:nowrap;}
+.run-strip .rchip.is-pending{opacity:.5;}
+.run-strip .rchip.is-done{color:var(--green-ink);}
+.run-strip .rchip.is-active{color:var(--c);}
+.run-strip .rchip.is-paused{color:var(--amber-ink);}
+.run-strip .rchip.is-error,.run-strip .rchip.is-stopped{color:var(--red-ink);}

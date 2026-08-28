@@ -2316,3 +2316,43 @@ test('Resume is still offered when a resume point survives', async () => {
   await openDetail(ctx);
   assert.equal(ctx.window.document.querySelector('#hist-detail .hd-resume').hidden, false);
 });
+
+// ── frozen v1 runs: the legacy chip strip ────────────────────────────────────
+// Every v1 run in History is frozen (its resume point was retired by the v2
+// upgrade). The v1 column painters die with the v1 engine, so a v1 manifest
+// renders an INERT chip strip instead: one chip per manifest node, label +
+// duration + cost, tinted by the ledger row's status. No wires, no per-node
+// click handlers, no executions footer.
+const V1_STEPPER = {
+  version: 1,
+  steps: [
+    { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
+    { kind: 'agents', nodes: [{ id: 's0_0', key: 'planner', uiPhase: 'plan', label: 'Planner', color: 'violet', sub: '', cycles: false, model: '', effort: '' }] },
+    { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
+  ],
+  feedbacks: [],
+};
+
+test('a frozen v1 run renders a legacy chip strip, never the v2 graph', async () => {
+  const ctx = await bootDetail({
+    detail: { ...DETAIL, state: { ...DETAIL.state, stepper: V1_STEPPER,
+      steps: [{ key: 'plan', phase: 'plan', cycle: 1, status: 'done', activeMs: 120000, costUsd: 0.4 }] } },
+  });
+  await openDetail(ctx);
+  const strip = ctx.window.document.querySelector('#hist-detail .run-strip');
+  assert.ok(strip, 'the v1 strip painted');
+  assert.equal(ctx.window.document.querySelector('#hist-detail .gv-world'), null, 'no v2 graph for a v1 manifest');
+  // The FIRST chip is Preflight — the planner chip is addressed by its node id.
+  const chip = strip.querySelector('.rchip[data-id="s0_0"]');
+  assert.ok(chip, 'the planner chip exists');
+  assert.ok(chip.classList.contains('is-done'), 'status tint from the step row');
+  // fmtDuration(120000) === '2m 0s' (app.js:1500) — NOT '2m'.
+  assert.equal(chip.textContent, 'Planner · 2m 0s · $0.40');
+  // A node with no ledger row is label-only and pending.
+  const pre = strip.querySelector('.rchip[data-id="preflight"]');
+  assert.equal(pre.textContent, 'Preflight');
+  assert.ok(pre.classList.contains('is-pending'));
+  // Inert: no wires, no per-chip click handlers, no executions footer.
+  assert.equal(strip.querySelector('svg, .gv-wires'), null, 'no wires');
+  assert.equal(ctx.window.document.querySelector('#hist-detail .rg-execs'), null, 'no executions footer');
+});
