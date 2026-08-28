@@ -70,9 +70,35 @@ function makeExec({ npmFails = false } = {}) {
   return { calls, exec };
 }
 
+/** API-3 data (meta v2 sidecar + v2 graph template) — validatePluginDir gates
+ *  both, and the install precheck refuses a plugin whose declared range admits
+ *  API 3 while its data does not. */
+const V2_SIDECAR = {
+  metaVersion: 2, key: 'demoAgent', agentFile: 'demoAgent.md', displayName: 'Demo Agent',
+  runnerType: 'producer', order: 90,
+  inputs: [{ id: 'task', type: 'md' }],
+  outputs: [{ id: 'plan', type: 'md', filename: 'plan.md' }],
+};
+const V2_TEMPLATE = {
+  name: 'Demo Flow', version: 2, domain: 'general',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+    { id: 'n_a', kind: 'agent', key: 'demoAgent', x: 320, y: 200, config: {} },
+    { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_a', port: 'task' } },
+    { id: 'w2', from: { node: 'n_a', port: 'plan' }, to: { node: 'n_end', port: 'result' } },
+  ],
+};
+/** The API-1 data this plugin used to ship — kept as an explicit override so the
+ *  apiMismatch tests state exactly what is outdated. */
+const V1_SIDECAR = { key: 'demoAgent', order: 90 };
+const V1_TEMPLATE = { name: 'Demo Flow', steps: [[{ id: 's0', key: 'demoAgent' }]], feedbacks: [] };
+
 const PLUGIN_FILES = (name) => ({
   'worca-cc-plugin.json': JSON.stringify({
-    name, version: '0.1.0', engines: { 'worca-cc-api': '>=1 <2' },
+    name, version: '0.1.0', engines: { 'worca-cc-api': '>=3 <4' },
     taskSources: [{
       id: 'demo', displayName: 'Demo', module: './connector/index.mjs',
       configSchema: [{ key: 'token', type: 'text', secret: true, required: true, label: 'Token' }],
@@ -86,13 +112,20 @@ const PLUGIN_FILES = (name) => ({
     name, lockfileVersion: 3,
     packages: { '': { name }, 'node_modules/left-pad': { version: '1.3.0' } },
   }),
-  'agents/demoAgent.meta.json': JSON.stringify({ key: 'demoAgent', order: 90 }),
+  'agents/demoAgent.meta.json': JSON.stringify(V2_SIDECAR),
   'agents/demoAgent.md': '---\nname: demo-agent\ntools: Read, Bash\n---\nYou are demo.\n',
   'skills/demo-skill/SKILL.md': '# demo skill\n',
-  'workflows/demo-flow.json': JSON.stringify({
-    name: 'Demo Flow', steps: [[{ id: 's0', key: 'demoAgent' }]], feedbacks: [],
-  }),
+  'workflows/demo-flow.json': JSON.stringify(V2_TEMPLATE),
 });
+
+/** The file's real install path: lay a plugin tree down and dev-LINK it, which
+ *  writes `current` + the lock entry. */
+function installLocal(name, files = {}) {
+  const dir = join(scratch, `local-${name}`);
+  writeTree(dir, { ...PLUGIN_FILES(name), ...files });
+  linkPlugin(name, dir);
+  return dir;
+}
 
 async function makeOriginRepo(dirName, name) {
   const root = join(scratch, dirName);
@@ -423,4 +456,87 @@ test('doctorPlugin: a multiProfile source with an EMPTY roster is unhealthy, not
   assert.ok(!withProfile.checks.some((c) => c.id === 'config:src'), 'no default-bucket check for a rostered source');
 
   await uninstallPlugin('profiled-plugin', { purge: true });
+});
+
+test('listInstalledPlugins reports apiMismatch for v1-shaped data, and null when clean', async () => {
+  // An API-1 plugin still shipping v1 data: it INSTALLS (warn path — its
+  // connector works); worca just ignores the agent and the template.
+  installLocal('legacy-data', {
+    'worca-cc-plugin.json': JSON.stringify({
+      name: 'legacy-data', version: '0.1.0', engines: { 'worca-cc-api': '>=1 <2' },
+    }),
+    'agents/demoAgent.meta.json': JSON.stringify(V1_SIDECAR),
+    'workflows/demo-flow.json': JSON.stringify(V1_TEMPLATE),
+  });
+  const p = listInstalledPlugins().find((x) => x.name === 'legacy-data');
+  assert.deepEqual(p.apiMismatch, {
+    builtFor: 1, host: 3, agents: 1, workflows: 1,
+    message: 'built for plugin API 1; this version of worca requires plugin API 3 for agents and pipeline templates \u2014 update or reinstall the plugin (1 agent(s), 1 template(s) ignored)',
+  });
+  assert.equal(p.broken, false, 'an outdated data contract is not a broken install');
+
+  installLocal('clean-data');   // PLUGIN_FILES is API 3 with v2 data
+  const clean = listInstalledPlugins().find((x) => x.name === 'clean-data');
+  assert.equal(clean.apiMismatch, null, 'an API-3 plugin with clean data has no mismatch');
+});
+
+test('doctor reports an agents-api check, and it is NOT an install gate', async () => {
+  installLocal('legacy-doctor', {
+    'worca-cc-plugin.json': JSON.stringify({
+      name: 'legacy-doctor', version: '0.1.0', engines: { 'worca-cc-api': '>=1 <2' },
+    }),
+    'agents/demoAgent.meta.json': JSON.stringify(V1_SIDECAR),
+    'workflows/demo-flow.json': JSON.stringify(V1_TEMPLATE),
+  });
+  const report = await doctorPlugin('legacy-doctor');
+  const check = report.checks.find((c) => c.id === 'agents-api');
+  assert.ok(check, 'the doctor names the data contract');
+  assert.equal(check.ok, false);
+  assert.match(check.detail, /update or reinstall the plugin/);
+  // …and a clean API-3 plugin reports it GREEN (the check is not always-red).
+  installLocal('clean-doctor');
+  const good = (await doctorPlugin('clean-doctor')).checks.find((c) => c.id === 'agents-api');
+  assert.equal(good.ok, true);
+  assert.match(good.detail, /plugin API 3/);
+});
+
+test('an outdated data contract does NOT block installPlugin (agents-api is advisory)', async () => {
+  // The regression this pins: moving the agents-api check into dirChecks routes
+  // it through precheck(), which THROWS on any failing check — and an API-1
+  // plugin whose connector still works must keep installing (spec §9, P7.2).
+  const root = join(scratch, 'origin-legacy-install');
+  mkdirSync(root, { recursive: true });
+  await git(root, 'init', '-q', '-b', 'main');
+  writeTree(root, {
+    ...PLUGIN_FILES('legacy-install'),
+    'worca-cc-plugin.json': JSON.stringify({
+      name: 'legacy-install', version: '0.1.0', engines: { 'worca-cc-api': '>=1 <2' },
+      taskSources: [{
+        id: 'demo', displayName: 'Demo', module: './connector/index.mjs',
+        inputs: [{ key: 'task', type: 'task-browser', label: 'Task' }],
+      }],
+    }),
+    'agents/demoAgent.meta.json': JSON.stringify(V1_SIDECAR),
+    'workflows/demo-flow.json': JSON.stringify(V1_TEMPLATE),
+  });
+  await git(root, 'add', '-A');
+  await git(root, 'commit', '-qm', 'c1');
+  const { exec } = makeExec();
+  await installPlugin({ repoUrl: root, name: 'legacy-install' }, { exec });
+  assert.ok(readPluginsLock()['legacy-install'], 'the install completed despite the outdated data');
+  const report = await doctorPlugin('legacy-install');
+  assert.equal(report.checks.find((c) => c.id === 'agents-api').ok, false,
+    'the doctor still reports it — advisory, not a gate');
+});
+
+test('`broken` outranks the data contract: a plugin with an unparseable manifest reports apiMismatch null', () => {
+  const dir = installLocal('broken-manifest');           // links with clean API-3 data
+  writeTree(dir, {                                        // …then rots on disk
+    'worca-cc-plugin.json': '{ not json',
+    'agents/demoAgent.meta.json': JSON.stringify(V1_SIDECAR),
+    'workflows/demo-flow.json': JSON.stringify(V1_TEMPLATE),
+  });
+  const p = listInstalledPlugins().find((x) => x.name === 'broken-manifest');
+  assert.equal(p.broken, true);
+  assert.equal(p.apiMismatch, null, 'a broken install never also carries a needs-update note');
 });

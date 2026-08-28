@@ -155,3 +155,38 @@ test('unknown verb exits 2; bare `worca plugin` prints help at 0', async () => {
   assert.equal(help.code, 0);
   assert.match(help.stdout, /worca plugin add <repo-url>/);
 });
+
+test('plugin list prints the API-3 data-contract line for an outdated plugin', async () => {
+  const home = await freshDir('worca-cc-cli-plugin-');
+  const dir = join(await freshDir('worca-cc-plugin-init-'), 'stale-plugin');
+  // No `workflows` part: this test is about the SIDECAR contract, and a v2
+  // example flow wired to a downgraded agent would fail the graph rules too.
+  await run(['plugin', 'init', 'stale-plugin', '--dir', dir, '--with', 'task-source,agents'], { home });
+  // An honest old plugin: an API-1 range shipping API-1 data. It still LINKS
+  // (warn path — its connector works); worca just ignores the agent it ships.
+  // `plugin link` REFUSES a `>=3 <4` manifest shipping a v1 sidecar (the hard
+  // gate), so an "outdated plugin" fixture must declare an OLD range.
+  const mPath = join(dir, 'worca-cc-plugin.json');
+  const m = JSON.parse(await readFile(mPath, 'utf8'));
+  m.engines['worca-cc-api'] = '>=1 <2';
+  await writeFile(mPath, JSON.stringify(m, null, 2));
+  const metaPath = join(dir, 'agents', 'stalePluginHelper.meta.json');
+  const meta = JSON.parse(await readFile(metaPath, 'utf8'));
+  delete meta.metaVersion; delete meta.inputs; delete meta.outputs;
+  meta.consumes = ['userPrompt']; meta.produces = ['code'];
+  await writeFile(metaPath, JSON.stringify(meta, null, 2));
+  const linked = await run(['plugin', 'link', dir], { home });
+  assert.equal(linked.code, 0, linked.stdout + linked.stderr);
+  const list = await run(['plugin', 'list'], { home });
+  assert.equal(list.code, 0, list.stderr);
+  assert.match(list.stdout,
+    /built for plugin API 1; this version of worca requires plugin API 3 for agents and pipeline templates \u2014 update or reinstall the plugin \(1 agent\(s\), 0 template\(s\) ignored\)/);
+
+  const clean = join(await freshDir('worca-cc-plugin-init-'), 'fresh-plugin');
+  await run(['plugin', 'init', 'fresh-plugin', '--dir', clean, '--with', 'task-source,agents'], { home });
+  await run(['plugin', 'link', clean], { home });
+  const both = await run(['plugin', 'list'], { home });
+  assert.match(both.stdout, /fresh-plugin/);
+  assert.equal((both.stdout.match(/update or reinstall the plugin/g) || []).length, 1,
+    'only the outdated plugin carries the line');
+});

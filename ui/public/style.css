@@ -847,6 +847,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .badge.running{background:var(--peach-bg);color:var(--peach-ink);}
 .badge.red,.badge.error,.badge.stopped{background:var(--red-bg);color:var(--red-ink);}
 .badge.waiting{background:var(--amber-bg);color:var(--amber-ink);}
+.badge.amber{background:var(--amber-bg);color:var(--amber-ink);}
 .badge.paused{background:var(--amber-bg);color:var(--amber-ink);}
 .badge.hist-retained-badge{background:var(--amber-bg);color:var(--amber-ink);}
 .badge.hist-retained-badge[hidden]{display:none;}

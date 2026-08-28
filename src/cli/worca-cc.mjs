@@ -1237,6 +1237,7 @@ async function cmdPlugin(argv) {
           const version = p.linked ? 'linked' : p.version || (p.pinnedSha || '').slice(0, 7);
           const flags = [p.enabled ? 'enabled' : 'disabled', ...(p.linked ? ['linked'] : [])].join(', ');
           out(`${p.name}\t${version}\t${flags}\t${contribSummary(p.contributions)}`);
+          if (p.apiMismatch) out(c('yellow', `  ${p.apiMismatch.message}`));
         }
         return 0;
       }

@@ -15,7 +15,7 @@ import {
 } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { WORCA_PLUGIN_APIS } from './plugin-api.mjs';
-import { normalizeManifest, validatePluginDir, apiSatisfies } from './plugin-manifest.mjs';
+import { normalizeManifest, validatePluginDir, apiSatisfies, dataContractIssues, apiMismatch } from './plugin-manifest.mjs';
 import {
   pluginsRoot, pluginDir, pluginCurrentDir, pluginDataDir, readPluginsLock, writePluginsLock,
   DIR_NAME_RE,
@@ -431,6 +431,12 @@ export function listInstalledPlugins() {
     const cur = pluginCurrentDir(name);
     const manifest = existsSync(cur) ? readManifestAt(cur) : null; // existsSync follows the symlink
     const inv = manifest ? buildInstallInventory(cur) : null;
+    // Read from the raw dir, not the manifest: the mismatch is about the DATA
+    // the plugin ships, not about whether its manifest normalized. A plugin
+    // whose manifest did not normalize is `broken`, which outranks this.
+    const mismatch = manifest
+      ? apiMismatch(manifest.engines?.worcaApi ?? '', dataContractIssues(cur))
+      : null;
     return {
       name,
       version: e.version ?? null,
@@ -441,6 +447,7 @@ export function listInstalledPlugins() {
       enabled: e.enabled !== false,
       linked: e.linked === true,
       broken: !manifest,
+      apiMismatch: mismatch,
       contributions: inv
         ? { agents: inv.agents.length, taskSources: inv.taskSources.length, chatChannels: inv.chatChannels.length, models: inv.models.length, skills: inv.skills.length, workflows: inv.workflows.length }
         : { agents: 0, taskSources: 0, chatChannels: 0, models: 0, skills: 0, workflows: 0 },
@@ -467,6 +474,16 @@ export async function doctorPlugin(name) {
   if (!resolves) return { ok: false, checks };
   const manifest = readManifestAt(cur);
   checks.push(...dirChecks(cur, manifest));
+  // The DATA contract check is ADVISORY, so it lives HERE and never in
+  // dirChecks: dirChecks also feeds the install precheck, which THROWS on any
+  // failing check, and an outdated data contract must never block an install —
+  // the plugin's connector/chat channel still works untouched, worca simply
+  // ignores the agents and pipeline templates it ships (spec §9, P7.2).
+  if (manifest) {
+    const mismatch = apiMismatch(manifest.engines?.worcaApi ?? '', dataContractIssues(cur));
+    checks.push({ id: 'agents-api', ok: !mismatch,
+      detail: mismatch ? mismatch.message : 'agents and pipeline templates are plugin API 3 (meta v2 + graph templates)' });
+  }
   if (manifest?.setup?.node && !entry.linked) {
     const h = sha256File(join(cur, 'package-lock.json'));
     c('lock-hash', !entry.lockfileHash || h === entry.lockfileHash,
