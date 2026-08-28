@@ -23,7 +23,7 @@ import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState,
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
-  listArtifacts, lookupPipelineRow, findPipelineRowById,
+  listArtifacts, lookupPipelineRow, findPipelineRowById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
 } from '../src/core/artifacts.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
 import { protectedSectionKeys } from '../src/core/diff-anchor.mjs';
@@ -1740,6 +1740,22 @@ app.get('/api/runs/:id', async (req, res) => {
   }
 });
 
+// GET /api/runs/:id/artifact?rel= -> the same payload, resolved by the pipeline
+// id ALONE (findPipelineRowById): the Running page knows the run's pipelineId
+// but no store key until History has been visited. Placed beside /api/runs/:id
+// (`:id` matches one path segment, so the two never shadow each other).
+app.get('/api/runs/:id/artifact', async (req, res) => {
+  try {
+    const row = findPipelineRowById(req.params.id);
+    if (!row) return res.status(404).json({ error: 'pipeline not found' });
+    const hit = await resolveIndexedArtifactForRow(row, req.query.rel);
+    if (!hit) return res.status(404).json({ error: 'artifact not found' });
+    res.json(hit);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 // Shared query-scope resolver for the retained-work routes (recovery-patch GET +
 // discard POST). Returns null after writing the error response itself. The older
 // DELETE /api/runs/:id route keeps its inline copy DELIBERATELY (it shadows the
@@ -2100,6 +2116,23 @@ app.get('/api/history/:key/:id/diff', async (req, res) => {
     const text = await readRunArtifactText(req.params.key, req.params.id, DIFF_PATCH_FILE);
     if (text == null) return res.status(404).json({ error: 'no diff' });
     res.type('text/x-diff').send(text);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// GET /api/history/:key/:id/artifact?rel= -> { rel, text } for ONE artifact the
+// run indexed (the End card's result chip). `rel` never reaches the FS: it only
+// selects among the pipeline's own artifacts rows (exact rel_path, else a path
+// suffix). Same key regex as /diff.
+app.get('/api/history/:key/:id/artifact', async (req, res) => {
+  if (!/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(req.params.key)) {
+    return res.status(404).json({ error: 'pipeline not found' });
+  }
+  try {
+    const hit = await resolveIndexedArtifact(req.params.key, req.params.id, req.query.rel);
+    if (!hit) return res.status(404).json({ error: 'artifact not found' });
+    res.json(hit);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -2616,6 +2649,18 @@ app.get('/api/workspaces/:id/runs/:runId/diff', async (req, res) => {
     const text = await readRunArtifactText(`workspaces/${req.params.id}`, req.params.runId, DIFF_PATCH_FILE);
     if (text == null) return res.status(404).json({ error: 'no diff' });
     res.type('text/x-diff').send(text);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// The End-card result chip's workspace twin (see the project route above).
+app.get('/api/workspaces/:id/runs/:runId/artifact', async (req, res) => {
+  if (!WORKSPACE_KEY_RE.test(req.params.id)) return res.status(404).json({ error: 'pipeline not found' });
+  try {
+    const hit = await resolveIndexedArtifact(`workspaces/${req.params.id}`, req.params.runId, req.query.rel);
+    if (!hit) return res.status(404).json({ error: 'artifact not found' });
+    res.json(hit);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

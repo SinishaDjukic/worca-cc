@@ -2055,6 +2055,45 @@ export async function findRunDir(pipelinesDir, id) {
   return null;
 }
 
+/**
+ * Read one INDEXED artifact of a pipelines ROW. `rel` never reaches the
+ * filesystem: it only SELECTS among the rows the artifacts table already holds —
+ * the exact rel_path first, else the LONGEST rel_path that is a path SUFFIX of it
+ * (`…/<rel_path>`; the engine records absolute paths and the client sends
+ * `result.path` verbatim). Basenames CAN collide across dirs, so a bare basename
+ * never matches a nested row. The path that is read is ALWAYS the stored one,
+ * run dir first, store root second (plan/review markdown is store-root-relative);
+ * a stored path with a `..` segment is refused outright. Null when the row, the
+ * index row or the file is missing.
+ */
+export async function resolveIndexedArtifactForRow(row, rel) {
+  const norm = (p) => String(p || '').replace(/\\/g, '/');
+  const want = norm(rel);
+  if (!row || !want) return null;
+  const arts = (await listArtifacts(row.id))
+    .filter((a) => a && typeof a.relPath === 'string' && a.relPath && !a.relPath.split('/').includes('..'));
+  // Exact first, then the LONGEST suffix — with rows `plan.md` and `a/plan.md`
+  // a request for `/x/a/plan.md` ends with BOTH `/plan.md` and `/a/plan.md`, and a
+  // first-match `find` would serve whichever row the table happens to list first.
+  const hit = arts.find((a) => a.relPath === want)
+    || arts.filter((a) => want.endsWith(`/${a.relPath}`))
+      .sort((x, y) => y.relPath.length - x.relPath.length)[0];
+  if (!hit) return null;
+  const isWs = row.target === 'workspace' || !!row.workspace_key;
+  const storeRoot = isWs ? workspaceStorePath(row.workspace_key) : projectStorePath(row.project_key);
+  const runDir = await runDirForRow(row);
+  for (const base of [runDir, storeRoot]) {
+    try { return { rel: hit.relPath, text: await readFile(join(base, hit.relPath), 'utf8') }; } catch { /* try the next base */ }
+  }
+  return null;
+}
+
+/** The keyed form (`/api/history/:key/:id`, workspace twin) over lookupPipelineRow. */
+export async function resolveIndexedArtifact(key, id, rel) {
+  const row = lookupPipelineRow(key, id);
+  return row ? resolveIndexedArtifactForRow(row, rel) : null;
+}
+
 /** Read a pipeline-local artifact file as text, or null if absent. */
 export async function readRunArtifactText(key, id, relPath) {
   const row = lookupPipelineRow(key, id);
