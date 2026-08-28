@@ -48,6 +48,7 @@
     "smoke:plugin": "WORCA_MOCK=1 WORCA_HOME=.worca-cc-smoke node --disable-warning=ExperimentalWarning scripts/smoke-plugin.mjs",
     "ask:fixtures": "node --disable-warning=ExperimentalWarning scripts/ask-capture-fixtures.mjs",
     "verify:composer": "node --disable-warning=ExperimentalWarning scripts/verify-composer-cdp.mjs",
+    "verify:run-monitor": "node --disable-warning=ExperimentalWarning scripts/verify-run-monitor-cdp.mjs",
     "test": "rm -rf .worca-cc-test && WORCA_HOME=.worca-cc-test node --disable-warning=ExperimentalWarning --test test/*.mjs"
   },
   "dependencies": {
