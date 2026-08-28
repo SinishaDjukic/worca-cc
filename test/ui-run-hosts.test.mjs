@@ -641,3 +641,164 @@ test('nodeLabelLookup and agentNodeIdSet read a v2 manifest\'s graph.nodes (labe
   assert.equal(np.nodeLabelLookup(v1)('s0_0'), 'Plan');
   assert.deepEqual([...np.agentNodeIdSet(v1)], ['s0_0']);
 });
+
+// ── paintGraphFor + the three hosts ─────────────────────────────────────────
+function hostPair(doc) {
+  const host = doc.createElement('div'); host.className = 'run-flow';
+  const wrap = doc.createElement('div'); wrap.className = 'run-flow-wrap'; wrap.appendChild(host);
+  doc.body.appendChild(wrap);
+  return host;
+}
+const V1_STEPPER = { version: 1, steps: [{ kind: 'agents', nodes: [{ id: 's0_0', uiPhase: 'plan', label: 'Plan' }] }], feedbacks: [] };
+
+test('paintGraphFor routes by stepper.version, mounts the v2 renderer once per host, and its v1 arm IS the caller\'s thunk', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const doc = window.document;
+  const host = hostPair(doc);
+  const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
+  np.onState(r, { status: 'running', stepper: MANIFEST, active: [], steps: [], endReached: false, warnings: [], wireDeliveries: {}, gate: null });
+  let v1Calls = 0;
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'), () => { v1Calls += 1; });
+  assert.ok(host.querySelector('.gv-world'), 'v2 manifest → the graph renderer');
+  assert.equal(v1Calls, 0, 'the v1 thunk never runs for a v2 manifest');
+  const world = host.querySelector('.gv-world');
+  np.onState(r, { status: 'running', stepper: MANIFEST, active: [{ nodeId: 'n_a', executionId: 'x:n_a:1' }], steps: [] });
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'), () => { v1Calls += 1; });
+  assert.equal(host.querySelector('.gv-world'), world, 'a repaint reuses the mount');
+  assert.ok(host.querySelector('[data-node-id="n_a"]').classList.contains('is-active'), 'and applies the new bag');
+  // A v1 manifest in a FRESH host: the thunk (today's column painter) runs untouched.
+  const host2 = hostPair(doc);
+  const v1 = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'running' });
+  np.onState(v1, { status: 'running', stepper: V1_STEPPER });
+  np.paintGraphFor(host2, v1.stepper, null, () => { np.buildRunGraph(host2, v1.stepper); v1Calls += 1; });
+  assert.equal(host2.querySelector('.gv-world'), null, 'v1 never reaches the graph renderer');
+  assert.ok(host2.querySelector('.run-node, .col'), 'the v1 column painter ran');
+  assert.equal(v1Calls, 1);
+  // paintGraphFor owns NO v1 code: without a thunk a v1 manifest paints nothing.
+  const host3 = hostPair(doc);
+  np.paintGraphFor(host3, v1.stepper, null);
+  assert.equal(host3.children.length, 0);
+});
+
+test('destroyGraphMounts tears down every mount under a root; the next paint mounts afresh', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const host = hostPair(window.document);
+  const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
+  np.onState(r, { status: 'running', stepper: MANIFEST, active: [], steps: [] });
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  const world = host.querySelector('.gv-world');
+  np.destroyGraphMounts(window.document.body);
+  assert.equal(host.querySelector('.gv-world'), null, 'the view is gone');
+  assert.equal(host.classList.contains('gv-host'), false, 'the host class is released');
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  assert.ok(host.querySelector('.gv-world'), 'a fresh mount');
+  assert.notEqual(host.querySelector('.gv-world'), world);
+});
+
+test('a v2 CARD: the graph replaces the legacy columns, survives a shim-signature change, and its wrap click opens the detail (v2 only)', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
+  const node = np.buildRunCard(r);              // stepper null → the legacy default columns
+  window.document.body.appendChild(node);
+  r.el = node;
+  const host = node.querySelector('.rc-detailed .run-flow');
+  assert.ok(host.querySelector('.col, .run-node'), 'a stepper-less card paints the legacy columns');
+  np.onState(r, { status: 'running', stepper: WITH_SHIM, active: [], steps: [] });
+  const stage = host.querySelector('.gv-stage');
+  assert.ok(stage, 'the v2 renderer replaced the columns');
+  assert.equal(host.querySelector('.col'), null);
+  // A later manifest whose v1 SHIM signature differs must NOT run the v1 rebuild
+  // (buildRunGraph wipes the host on a node-id change) over the mounted graph.
+  const shim2 = { ...WITH_SHIM, steps: [...WITH_SHIM.steps.slice(0, 2),
+    { kind: 'agents', nodes: [{ id: 'n_x', key: 'reviewer', uiPhase: 'review', label: 'Reviewer' }] }, ...WITH_SHIM.steps.slice(2)] };
+  np.onState(r, { status: 'running', stepper: shim2, active: [], steps: [] });
+  assert.equal(host.querySelector('.gv-stage'), stage, 'the mount is untouched by the v1 rebuild path');
+  // D5: the card's graph is scenery (pointer-events:none world); the WRAP takes
+  // the click and opens the detail — decided at click time, v2 only.
+  window.location.hash = '';
+  node.querySelector('.rc-detailed .run-flow-wrap').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.equal(window.location.hash, '#running/r1');
+  window.location.hash = '';
+  const v1 = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'running' });
+  const card1 = np.buildRunCard(v1);
+  window.document.body.appendChild(card1);
+  card1.querySelector('.rc-detailed .run-flow-wrap').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.equal(window.location.hash, '', 'a v1 card\'s graph stays inert');
+  // A card built AFTER the manifest arrived never paints the v1 columns at all.
+  const pre = np.makeRun({ runId: 'r3', title: 't', projectDir: '/p', status: 'running' });
+  pre.stepper = MANIFEST;
+  assert.equal(np.buildRunCard(pre).querySelector('.rc-detailed .run-flow').children.length, 0, 'no v1 columns for a v2 manifest');
+});
+
+test('openRunArtifact reads the End chip through the by-id route on Running and the keyed routes on History', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const urls = [];
+  globalThis.fetch = window.fetch = (u) => { urls.push(String(u)); return Promise.resolve({ ok: true, status: 200, json: async () => ({ rel: 'plan.md', text: '# plan' }) }); };
+  const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
+  r.pipelineId = 'abcd1234';
+  await np.openRunArtifact({ run: r, runId: 'r1' }, '/tmp/p/plan.md');
+  await np.openRunArtifact({ run: { id: 'p1' }, runId: 'p1', record: { projectKey: 'proj-alpha-00000001' } }, '/tmp/p/plan.md');
+  await np.openRunArtifact({ run: { id: 'p1' }, runId: 'p1', record: { projectKey: 'workspaces/wks-a-00000001', target: 'workspace' } }, '/tmp/p/plan.md');
+  assert.deepEqual(urls, [
+    '/api/runs/abcd1234/artifact?rel=%2Ftmp%2Fp%2Fplan.md',
+    '/api/history/proj-alpha-00000001/p1/artifact?rel=%2Ftmp%2Fp%2Fplan.md',
+    '/api/workspaces/wks-a-00000001/runs/p1/artifact?rel=%2Ftmp%2Fp%2Fplan.md',
+  ]);
+  assert.equal(window.document.querySelector('#viewer-title').textContent, 'Saved: plan.md', 'the payload lands in the saved-artifact viewer');
+  assert.equal(window.document.querySelector('#viewer-card').classList.contains('hidden'), false);
+});
+
+test('applyRunLogFilter assigns onto r.logFilter and repaints; focusLogExecution narrows the Running log and activates the detail\'s Logs tab', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const r = np.upsertRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running', kind: 'run', startedAt: '10:00:00', pendingQuestion: null });
+  const node = np.buildRunCard(r);
+  window.document.body.appendChild(node);
+  r.el = node;
+  np.onState(r, { status: 'running', stepper: MANIFEST, active: [], steps: [] });
+  np.applyRunLogFilter(r, { execution: 'x:n_a:1', node: 'n_a' });
+  assert.equal(r.logFilter.execution, 'x:n_a:1');
+  assert.equal(r.logFilter.node, 'n_a');
+  assert.equal(r.logFilter.source, '', 'the other axes are untouched');
+  np.focusLogExecution({ run: r, runId: 'r1' }, 'x:n_a:2', 'n_a');
+  assert.equal(r.logFilter.execution, 'x:n_a:2');
+  // The History arm never dereferences a null histDetailState (nothing is open).
+  np.focusLogExecution({ run: { id: 'p1' }, runId: 'p1', record: { projectKey: 'k' } }, 'x:n_a:1', 'n_a');
+  // Open this run's detail: a footer-row click must land on a VISIBLE Logs tab.
+  window.location.hash = 'running/r1';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((res) => setTimeout(res, 0));
+  const screen = window.document.querySelector('#run-detail').firstElementChild;   // the cloned #run-detail-tpl screen
+  assert.ok(screen.querySelector('.rd-graph .run-flow .gv-world'), 'the detail host mounted the graph');
+  // The Live log is the detail's FIRST tab (C1): park the screen on Overview so
+  // the activation is observable.
+  np.detailTabsOf(screen).activate('overview');
+  const sec = screen.querySelector('.rd-sec-logs');
+  assert.equal(sec.hidden, true, 'the Logs tab is hidden behind Overview');
+  np.focusLogExecution({ run: r, runId: 'r1' }, 'x:n_a:1', 'n_a');
+  assert.equal(sec.hidden, false, 'a footer-row click activates the Logs tab');
+  assert.equal(screen.querySelector('.rd-tab[data-sec="logs"]').classList.contains('active'), true);
+  assert.equal(r.logFilter.execution, 'x:n_a:1');
+  window.location.hash = '';
+});
+
+test('compact density renders NO graph on a v2 card (Running-page lock); detailed mounts it', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  np.setRunDensity('compact');
+  const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
+  const node = np.buildRunCard(r);
+  window.document.body.appendChild(node);
+  r.el = node;
+  np.onState(r, { status: 'running', stepper: MANIFEST, active: [], steps: [] });
+  const host = node.querySelector('.rc-detailed .run-flow');
+  assert.equal(node.dataset.density, 'compact');
+  assert.equal(host.querySelector('.gv-stage'), null, 'compact: nothing is mounted into the hidden body');
+  np.setRunDensity('detailed');
+  np.onState(r, { status: 'running', stepper: MANIFEST, active: [], steps: [] });
+  assert.ok(host.querySelector('.gv-stage'), 'detailed: the graph mounts on the next paint');
+});

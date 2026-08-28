@@ -2642,6 +2642,11 @@ if (typeof window !== 'undefined') {
     activeCopy,
     runDecorFor,
     finishRun,
+    paintGraphFor,
+    destroyGraphMounts,
+    applyRunLogFilter,
+    focusLogExecution,
+    openRunArtifact,
     runStatusMeta,
     paintRunStatusIcon,
     renderRunMeta,
@@ -10162,6 +10167,18 @@ function historyLogUrl(id, record) {
   return `/api/history/${encodeURIComponent(key)}/${encodeURIComponent(id)}/log`;
 }
 
+// Keyed twin of historyLogUrl for any `<kind>` route under a History record
+// (`artifact` today): workspace records split on `record.target`, whose
+// projectKey is `workspaces/<id>` — a form the project route's key regex rejects.
+function historyRunUrl(id, record, kind) {
+  if (record && record.target === 'workspace' && typeof record.projectKey === 'string') {
+    const wksId = record.projectKey.replace(/^workspaces\//, '');
+    return `/api/workspaces/${encodeURIComponent(wksId)}/runs/${encodeURIComponent(id)}/${kind}`;
+  }
+  const key = record && record.projectKey ? record.projectKey : '';
+  return `/api/history/${encodeURIComponent(key)}/${encodeURIComponent(id)}/${kind}`;
+}
+
 // Twin of historyLogUrl with /diff instead of /log. There is deliberately NO
 // /api/runs/:id?projectDir= fallback — parity with logs (spec §7).
 function historyDiffUrl(id, record) {
@@ -10467,6 +10484,7 @@ function openHistDetail(parsed, { instant = false } = {}) {
   const record = histRecordFor(parsed);
   histDetailState = { key: parsed.projectKey, id: parsed.id, record, data: null, screen: null };
 
+  destroyGraphMounts(host);                 // a detail->detail hop never passes closeHistDetail
   host.innerHTML = '';
   host.scrollTop = 0;                       // a prior visit's scroll must not carry over
   const screen = $('#hist-detail-tpl').content.firstElementChild.cloneNode(true);
@@ -10543,6 +10561,7 @@ function closeHistDetail({ instant = false } = {}) {
   if (instant) {
     shell.classList.add('no-anim');
     shell.classList.remove('detail-open');
+    destroyGraphMounts(host);
     host.innerHTML = '';
     rafSafe(() => shell.classList.remove('no-anim'));
     return;
@@ -10552,7 +10571,7 @@ function closeHistDetail({ instant = false } = {}) {
   // jsdom, where transitionend never fires natively). transitionend BUBBLES, so
   // a descendant's hover transition would otherwise clear the DOM mid-slide —
   // hence the target + propertyName guard.
-  const clear = () => { if (!histDetailState) host.innerHTML = ''; };
+  const clear = () => { if (!histDetailState) { destroyGraphMounts(host); host.innerHTML = ''; } };
   const onEnd = (e) => {
     if (e.target !== host || e.propertyName !== 'transform') return;
     host.removeEventListener('transitionend', onEnd);
@@ -10601,8 +10620,16 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
   paintHistStatusIcon(screen.querySelector('.hd-sic'), { ...rec, status: data.state.status });
 
   const flow = screen.querySelector('.run-flow');
-  if (flow) buildRunGraph(flow, data.state.stepper); // null stepper -> legacy default
-  paintHistStepper(screen, data.state);
+  const st = data.state;
+  // v2: the frozen state renders through the same reducer as the live one (History
+  // carries `record` in the bag for the keyed artifact route); v1: the untouched
+  // column painter, as a thunk.
+  paintGraphFor(flow, st.stepper, isGraphManifest(st.stepper) ? Object.assign(
+    decorFromState(st, { live: false, now: 0, subsOf: (id) => subAgentsForNode(st, id) }),
+    { run: st, runId: parsed.id, mode: 'monitor', record: rec }) : null, () => {
+    if (flow) buildRunGraph(flow, st.stepper); // null stepper -> legacy default
+    paintHistStepper(screen, st);
+  });
 
   paintHdHeaderMeta(screen, rec, data);
   setupHdActions(screen, rec, data);
@@ -13861,7 +13888,7 @@ function buildRunCard(r) {
 
   // Build the graph from the run's manifest. r.stepper may be null -> legacy default.
   const stepHost = node.querySelector('.run-flow');
-  if (stepHost) buildRunGraph(stepHost, r.stepper);
+  if (stepHost && !isGraphManifest(r.stepper)) buildRunGraph(stepHost, r.stepper);
 
   const titleEl = node.querySelector('.run-title');
   if (titleEl) {
@@ -13887,6 +13914,11 @@ function buildRunCard(r) {
     }
   });
   node.querySelector('.rc-open').addEventListener('click', (e) => { e.stopPropagation(); go(); });
+  // D5: on a v2 run the card's graph is scenery (the world is pointer-events:none),
+  // so the WRAP takes the click and opens the detail. Decided at CLICK time — the
+  // manifest may arrive after the card is built; a v1 card's graph stays inert.
+  const graphWrap = node.querySelector('.rc-detailed .run-flow-wrap');
+  if (graphWrap) graphWrap.addEventListener('click', () => { if (isGraphRun(r)) go(); });
   // NB: .btn-pause/.btn-resume/.btn-stop deliberately do NOT stopPropagation —
   // they are driven by the DELEGATED #run-list listener and would go dead. The
   // closest('button') bail-out above is what keeps them from navigating.
@@ -14086,12 +14118,126 @@ function runStepperView(r) {
   };
 }
 
+// The ONE branch point between the v1 column painters and the v2 graph renderer.
+// `decor` is runDecorFor(r, mode) — `run`/`runId`/`mode` shallow-added (History
+// passes `record` too) — and `paintV1` is the CALLER's own untouched v1 painter,
+// passed as a thunk: paintGraphFor owns no v1 code, so every v1 surface stays
+// byte-identical (the three v1 painters are host-specific).
+const GRAPH_MOUNTS = new WeakMap();   // .run-flow element -> { m, ctx }
+function paintGraphFor(host, stepper, decor, paintV1) {
+  if (!isGraphManifest(stepper)) { if (typeof paintV1 === 'function') paintV1(); return; }
+  if (!host || !decor) return;
+  let slot = GRAPH_MOUNTS.get(host);
+  if (!slot) {
+    host.innerHTML = '';                      // drop any v1 columns this host held
+    slot = { m: null, ctx: decor };
+    slot.m = mountRunGraph(host, {
+      mode: decor.mode || 'monitor',
+      onRowClick: (executionId, nodeId) => focusLogExecution(slot.ctx, executionId, nodeId),
+      onGateClick: () => focusQuestionPanel(slot.ctx),
+      onResultClick: (path) => openRunArtifact(slot.ctx, path),
+    });
+    GRAPH_MOUNTS.set(host, slot);
+  }
+  slot.ctx = decor;                            // callbacks always read the CURRENT bag
+  slot.m.update(decor.runId, stepper, decor);
+}
+
+/** Tear down every graph mount under `root` (a detail screen about to be
+ *  dropped): a monitor mount owns two document-level listeners and a
+ *  ResizeObserver, which `host.innerHTML = ''` alone would leak. */
+function destroyGraphMounts(root) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+  for (const host of root.querySelectorAll('.run-flow.gv-host')) {
+    const slot = GRAPH_MOUNTS.get(host);
+    if (slot) { slot.m.destroy(); GRAPH_MOUNTS.delete(host); }
+  }
+}
+
+/** The ONE writer of a run's log filter from outside its own bar (footer rows;
+ *  P6b's node/execution axes). Assign, then repaint every pane that shows it:
+ *  the card, and — when THIS run's detail is open with its Logs tab built — the
+ *  detail through rdPaintLogFilters + rdRepaintLog (NOT repaintFilteredLog: that
+ *  helper parks the cycle cursor on r._lastRenderedCycle and pins r.el's pane). */
+function applyRunLogFilter(r, patch) {
+  if (!r || !r.logFilter) return;
+  Object.assign(r.logFilter, patch || {});
+  // paintLogFilters returns true when its reconcile branch already repainted the pane.
+  if (r.el && !paintLogFilters(r, r.el)) repaintFilteredLog(r);
+  const screen = runDetailState.runId === r.runId ? runDetailState.screen : null;
+  const sec = screen && screen.querySelector('.rd-sec-logs');
+  if (sec) { rdPaintLogFilters(sec, r); rdRepaintLog(sec, r); }
+}
+
+/** Footer row -> narrow the log to that execution and bring the log into view.
+ *  P6b lands the node/execution axes in log-filter.mjs and the History panel's
+ *  `__setLogFilter`; until then the keys are carried, not applied. */
+function focusLogExecution(ctx, executionId, nodeId) {
+  const r = ctx && ctx.run;
+  if (!r) return;
+  const patch = { execution: executionId, node: nodeId };
+  if (ctx.record) {
+    // History: the Logs tab is lazily built — hand the patch to the panel when it
+    // exists, else park it for the panel's first paint (mirrors __pendingLogSource).
+    const tabs = histDetailState && histDetailState.screen ? detailTabsOf(histDetailState.screen) : null;
+    const cell = tabs && tabs.cells.get('logs');
+    if (!cell) return;
+    if (typeof cell.sec.__setLogFilter === 'function') cell.sec.__setLogFilter(patch);
+    else cell.sec.__pendingLogFilter = patch;
+    tabs.activate('logs');
+    cell.sec.scrollIntoView({ block: 'nearest' });   // AFTER activate: the panel is no longer hidden
+    return;
+  }
+  applyRunLogFilter(r, patch);
+  const screen = runDetailState.runId === r.runId ? runDetailState.screen : null;
+  const tabs = screen ? detailTabsOf(screen) : null;
+  if (!tabs || !tabs.cells.has('logs')) return;
+  tabs.activate('logs');                            // the builder reads r.logFilter
+  const sec = screen.querySelector('.rd-sec-logs');
+  if (sec) sec.scrollIntoView({ block: 'nearest' });
+}
+
+/** Gate pip -> the question panel that owns the answer buttons. */
+function focusQuestionPanel(ctx) {
+  const r = ctx && ctx.run;
+  const screen = runDetailState.screen;
+  const panel = (screen && screen.querySelector('.rd-questions'))
+    || (r && r.el && r.el.querySelector('.qpanel'));
+  if (!panel) return;
+  panel.scrollIntoView({ block: 'nearest' });
+  const focusable = panel.querySelector('button, [tabindex]');
+  if (focusable && typeof focusable.focus === 'function') focusable.focus();
+}
+
+/** End result chip -> the saved-artifact viewer, through the indexed routes:
+ *  Running knows only the run's pipeline id (`/api/runs/:id/artifact`); History
+ *  carries its record and takes the keyed project/workspace route. */
+async function openRunArtifact(ctx, path) {
+  const r = ctx && ctx.run;
+  if (!r || !path) return;
+  const name = String(path).split('/').filter(Boolean).pop();
+  const rel = encodeURIComponent(String(path));
+  const pid = r.pipelineId || r.id || ctx.runId;
+  const url = ctx.record
+    ? `${historyRunUrl(pid, ctx.record, 'artifact')}?rel=${rel}`
+    : `/api/runs/${encodeURIComponent(pid)}/artifact?rel=${rel}`;
+  try {
+    const res = await fetch(url);
+    const data = await safeJson(res);
+    if (!res.ok) { showViewer(name, `Error: ${data.error || res.status}`); return; }
+    showViewer(data.rel || name, data.text || '');
+  } catch (e) { showViewer(name, `Error: ${e.message}`); }
+}
+
 function paintStepper(r) {
   if (!r.el) return;
   const host = r.el.querySelector('.run-flow');
   if (!host) return;
-  const { manifest, view } = runStepperView(r);
-  paintRunGraph(host, manifest, view);
+  if (isGraphRun(r) && r.el.dataset.density === 'compact') return;   // locked: compact density renders NO graph
+  paintGraphFor(host, r.stepper, isGraphRun(r) ? runDecorFor(r, 'static') : null, () => {
+    const { manifest, view } = runStepperView(r);
+    paintRunGraph(host, manifest, view);
+  });
 }
 
 // Does the run's current frontier cell contain a cycling node?
@@ -14429,6 +14575,7 @@ function openRunDetail(runId, { instant = false } = {}) {
   const shell = el.runShell;
   if (!host || !shell) return;
 
+  destroyGraphMounts(host);                 // a detail->detail hop never passes closeRunDetail
   host.innerHTML = '';
   host.scrollTop = 0;                       // a prior visit's scroll must not carry over
   const screen = $('#run-detail-tpl').content.firstElementChild.cloneNode(true);
@@ -14516,6 +14663,7 @@ function closeRunDetail({ instant = false } = {}) {
   if (instant) {
     shell.classList.add('no-anim');
     shell.classList.remove('detail-open');
+    destroyGraphMounts(host);
     host.innerHTML = '';
     rafSafe(() => shell.classList.remove('no-anim'));
     return;
@@ -14525,7 +14673,7 @@ function closeRunDetail({ instant = false } = {}) {
   // jsdom, where transitionend never fires natively). transitionend BUBBLES, so a
   // descendant's transition would otherwise clear the DOM mid-slide — hence the
   // target + propertyName guard.
-  const clear = () => { if (!runDetailState.screen) host.innerHTML = ''; };
+  const clear = () => { if (!runDetailState.screen) { destroyGraphMounts(host); host.innerHTML = ''; } };
   const onEnd = (e) => {
     if (e.target !== host || e.propertyName !== 'transform') return;
     host.removeEventListener('transitionend', onEnd);
@@ -14716,14 +14864,16 @@ el.runDetail?.addEventListener('click', (e) => {
 function paintRdGraph(screen, r) {
   const host = screen.querySelector('.rd-graph .run-flow');
   if (!host) return;
-  // buildRunGraph is idempotent (it returns early on an unchanged node-id
-  // signature) and restores .run-flow-wrap scrollLeft across the one destructive
-  // path (it saves before the wipe and writes it back after the columns are
-  // re-appended), so calling it on every paint is both cheap and correct — no
-  // rebuildStepperDom twin is needed.
-  buildRunGraph(host, r.stepper);
-  const { manifest, view } = runStepperView(r);
-  paintRunGraph(host, manifest, view);
+  paintGraphFor(host, r.stepper, isGraphRun(r) ? runDecorFor(r, 'monitor') : null, () => {
+    // buildRunGraph is idempotent (it returns early on an unchanged node-id
+    // signature) and restores .run-flow-wrap scrollLeft across the one destructive
+    // path (it saves before the wipe and writes it back after the columns are
+    // re-appended), so calling it on every paint is both cheap and correct — no
+    // rebuildStepperDom twin is needed.
+    buildRunGraph(host, r.stepper);
+    const { manifest, view } = runStepperView(r);
+    paintRunGraph(host, manifest, view);
+  });
 }
 
 // A bold-mono '·' separator, the twin of hdDot().
