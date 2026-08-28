@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { CHANNEL_IDS as CHANNEL_ID_LIST } from './channels.mjs'; // single source (m2)
 import { worcaHome } from './projects.mjs'; // user agent layer root (read fresh per call)
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // plugin layer roots (Task 2)
+import { declaredApi, NOT_META_V2 } from './plugin-manifest.mjs'; // plugin API declared by a layer's manifest
 import { normalizeAgentMeta } from '../shared/graph/agent-meta.mjs'; // meta v2 (one source: registry + store + UI)
 import { MOCK_WRITER_ROLES } from './claude-runner.mjs';             // mockRole vocabulary (no cycle: claude-runner imports no registry)
 
@@ -297,7 +298,7 @@ export function userAgentsDir() {
  * agents/ — drops out). Wrapped in try/catch like userAgentsDir(): with no
  * resolvable worca-cc home (bare node:test runner) or an unreadable lock this
  * returns [] and registry loads never throw.
- * @returns {Array<{plugin: string, dir: string}>}
+ * @returns {Array<{plugin: string, dir: string, builtFor: number|null}>}
  */
 export function pluginAgentLayers() {
   try {
@@ -305,7 +306,18 @@ export function pluginAgentLayers() {
     return Object.keys(lock)
       .sort()
       .filter((name) => lock[name] && lock[name].enabled !== false)
-      .map((name) => ({ plugin: name, dir: join(pluginCurrentDir(name), 'agents') }))
+      .map((name) => {
+        const dir = pluginCurrentDir(name);
+        let builtFor = null;
+        try {
+          const raw = JSON.parse(readFileSync(join(dir, 'worca-cc-plugin.json'), 'utf8'));
+          // `|| null`: declaredApi('') is 0 (an unconstrained range accepts
+          // everything), and "built for plugin API 0" is not English. apiMismatch
+          // guards the same case the same way.
+          builtFor = declaredApi(raw?.engines?.['worca-cc-api'] ?? '') || null;
+        } catch { builtFor = null; } // unreadable manifest: the message degrades, the skip does not
+        return { plugin: name, dir: join(dir, 'agents'), builtFor };
+      })
       .filter(({ dir }) => existsSync(dir));
   } catch {
     return []; // no home / unreadable lock => no plugin layer (fails safe)
@@ -341,7 +353,7 @@ function frontmatterDescription(mdPath) {
 /** Scan one layer dir for *.meta.json; stamps the COMPUTED origin/agentPath/
  *  descriptionDerived fields (none of which normalizeMeta returns, so none can
  *  be persisted back into a sidecar). */
-function scanLayer(dir, origin) {
+function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null } = {}) {
   let files;
   try {
     files = readdirSync(dir);
@@ -356,6 +368,16 @@ function scanLayer(dir, origin) {
       parsed = JSON.parse(readFileSync(join(dir, f), 'utf8'));
     } catch {
       continue; // skip unreadable / malformed sidecars
+    }
+    // API 3 (plugin layers only): a sidecar that is not meta v2 has no typed
+    // ports, so it can be neither placed on a canvas nor resolved by the graph
+    // engine. Ignore it with a line that names the fix — reusing the SAME
+    // clause validate-time prints, so the two can never drift. Builtin/user
+    // layers keep the v1 path until the engine cut-over.
+    if (requireMetaV2 && Number(parsed?.metaVersion) !== 2) {
+      const builtForText = builtFor == null ? 'an older plugin API' : `plugin API ${builtFor}`;
+      console.warn(`[agent-registry] ${origin}/${f}: built for ${builtForText} — ${NOT_META_V2} — ignored`);
+      continue;
     }
     const meta = normalizeMeta(parsed);
     if (!meta) continue;
@@ -411,8 +433,8 @@ export function loadAgentRegistry(agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
   const plugins = [];
   if (opts.includePlugins !== false) {
     const taken = new Set([...builtinKeys, ...users.map((m) => m.key)]);
-    for (const { plugin, dir } of pluginAgentLayers()) {
-      for (const m of scanLayer(dir, `plugin:${plugin}`)) {
+    for (const { plugin, dir, builtFor } of pluginAgentLayers()) {
+      for (const m of scanLayer(dir, `plugin:${plugin}`, { requireMetaV2: true, builtFor })) {
         if (taken.has(m.key)) {
           console.warn(
             `[agent-registry] plugin agent "${m.key}" (plugin "${plugin}") collides with an existing agent and was skipped`,

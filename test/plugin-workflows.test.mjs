@@ -42,8 +42,11 @@ function installFakePlugin(name, workflows = {}) {
   mkdirSync(join(versionDir, 'agents'), { recursive: true });
   writeFileSync(join(versionDir, 'agents', 'demoAgent.md'), '# demoAgent\n');
   writeFileSync(join(versionDir, 'agents', 'demoAgent.meta.json'), JSON.stringify({
+    metaVersion: 2,
     key: 'demoAgent', displayName: 'Demo Agent', agentFile: 'demoAgent.md',
-    runnerType: 'producer', order: 50, consumes: ['userPrompt'], produces: ['plan'],
+    runnerType: 'producer', order: 50,
+    inputs: [{ id: 'task', type: 'md' }],
+    outputs: [{ id: 'plan', type: 'md', filename: '{base}.md' }],
   }));
   mkdirSync(join(versionDir, 'workflows'), { recursive: true });
   for (const [file, tpl] of Object.entries(workflows)) {

@@ -50,6 +50,7 @@ function installFakePlugin(name, agents, { enabled = true, broken = false } = {}
       installedAt: '2026-07-12T00:00:00.000Z',
     },
   });
+  return versionDir; // callers that write extra files (a manifest, a v1 sidecar) need it
 }
 
 test('a plugin agent joins the registry with origin plugin:<name> and agentPath through current/', () => {
@@ -57,7 +58,7 @@ test('a plugin agent joins the registry with origin plugin:<name> and agentPath 
   writeAgent(builtin, 'alpha', { order: 1 });
   installFakePlugin('demo-source', [['demoAgent', { order: 40 }]]);
   const layers = pluginAgentLayers().filter((l) => l.plugin === 'demo-source');
-  assert.deepEqual(layers, [{ plugin: 'demo-source', dir: join(pluginCurrentDir('demo-source'), 'agents') }]);
+  assert.deepEqual(layers, [{ plugin: 'demo-source', dir: join(pluginCurrentDir('demo-source'), 'agents'), builtFor: null }]);
   const reg = loadAgentRegistry(builtin, { userAgentsDir: null });
   assert.equal(reg.demoAgent.origin, 'plugin:demo-source');
   assert.equal(reg.demoAgent.agentPath, join(pluginCurrentDir('demo-source'), 'agents', 'demoAgent.md'),
@@ -132,4 +133,55 @@ test('agent-store refuses Update/Delete on plugin-origin agents (code PLUGIN)', 
     (e) => e.code === 'PLUGIN' && /plugin "guarded"/.test(e.message));
   await assert.rejects(async () => deleteAgent('guardedAgent'),
     (e) => e.code === 'PLUGIN');
+});
+
+test('a plugin sidecar that is not meta v2 is ignored, with a line naming the API', () => {
+  const versionDir = installFakePlugin('legacy-source', []);
+  writeFileSync(join(versionDir, 'worca-cc-plugin.json'),
+    JSON.stringify({ name: 'legacy-source', engines: { 'worca-cc-api': '>=2 <3' } }));
+  const agentsDir = join(versionDir, 'agents');
+  writeFileSync(join(agentsDir, 'oldHelper.md'), '# oldHelper\n');
+  writeFileSync(join(agentsDir, 'oldHelper.meta.json'), JSON.stringify({
+    key: 'oldHelper', displayName: 'Old Helper', agentFile: 'oldHelper.md',
+    runnerType: 'producer', consumes: ['userPrompt'], produces: ['plan'], order: 900,
+  }));
+  const builtin = tmp('worca-cc-pbuiltin-');
+  writeAgent(builtin, 'alpha', { order: 1 });
+  const warnings = [];
+  const realWarn = console.warn;
+  console.warn = (m) => warnings.push(String(m));
+  try {
+    const reg = loadAgentRegistry(builtin, { userAgentsDir: null });
+    assert.equal(reg.oldHelper, undefined, 'the v1 plugin sidecar never reaches the registry');
+    assert.ok(reg.alpha, 'the builtin layer is unaffected');
+  } finally { console.warn = realWarn; }
+  assert.ok(warnings.some((m) => m.includes('plugin:legacy-source/oldHelper.meta.json')
+    && m.includes('built for plugin API 2')
+    && m.includes('metaVersion') && m.endsWith('ignored')), warnings.join('\n'));
+
+  // A parseable manifest with NO `engines` accepts everything, so declaredApi
+  // answers 0 — report that as "an older plugin API", never "plugin API 0".
+  writeFileSync(join(versionDir, 'worca-cc-plugin.json'), JSON.stringify({ name: 'legacy-source' }));
+  warnings.length = 0;
+  console.warn = (m) => warnings.push(String(m));
+  try { loadAgentRegistry(builtin, { userAgentsDir: null }); } finally { console.warn = realWarn; }
+  assert.ok(warnings.some((m) => m.includes('built for an older plugin API')), warnings.join('\n'));
+});
+
+// NOTE: this one is GREEN before the implementation — nothing gates user
+// sidecars today. It is a REGRESSION GUARD on the scope rule (plugin layers
+// only), not a red-to-green test. Keep it; do not "fix" it into failing.
+test('the v2 gate is PLUGIN-only: a v1 USER sidecar still loads (v1 engine is live)', () => {
+  const builtin = tmp('worca-cc-pbuiltin-');
+  writeAgent(builtin, 'alpha', { order: 1 });
+  const userDir = tmp('worca-cc-userlayer-');
+  mkdirSync(userDir, { recursive: true });
+  writeFileSync(join(userDir, 'oldUser.md'), '# oldUser\n');
+  writeFileSync(join(userDir, 'oldUser.meta.json'), JSON.stringify({
+    key: 'oldUser', displayName: 'Old User', agentFile: 'oldUser.md',
+    runnerType: 'producer', consumes: ['plan'], produces: ['review'], order: 98,
+  }));
+  const reg = loadAgentRegistry(builtin, { userAgentsDir: userDir, includePlugins: false });
+  assert.ok(reg.oldUser, 'a v1 user sidecar is untouched by the plugin API gate');
+  assert.equal(reg.oldUser.metaVersion, undefined);
 });
