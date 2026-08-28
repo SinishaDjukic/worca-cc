@@ -30,3 +30,24 @@ test('V24 archives every live v1 template row and stamps the version', () => {
   assert.deepEqual([...report.archived].sort(), [...fx.v1Ids].sort());
   assert.equal(report.seeded.length, SEED_TEMPLATES.length);
 });
+
+test('the 7 seed graphs are inserted on an EXISTING DB, as v2 rows with graph JSON', () => {
+  buildResidueDb();
+  const db = getDb();
+  for (const t of SEED_TEMPLATES) {
+    const row = db.prepare('SELECT name, version, domain, origin, steps, feedbacks, graph, created_at, archived_at FROM workflows WHERE id = ?').get(t.id);
+    assert.ok(row, `${t.id} inserted`);
+    assert.equal(row.version, 2);
+    assert.equal(row.name, t.name);
+    assert.equal(row.domain, t.domain);
+    assert.equal(row.origin, null);
+    assert.equal(row.steps, '[]');
+    assert.equal(row.feedbacks, '[]');
+    assert.equal(row.created_at, t.createdAt, 'the seed keeps its authored createdAt');
+    assert.equal(row.archived_at, null);
+    const graph = JSON.parse(row.graph);
+    assert.deepEqual(Object.keys(graph).sort(), ['nodes', 'wires']);
+    assert.equal(graph.nodes.length, t.nodes.length);
+    assert.equal(graph.wires.length, t.wires.length);
+  }
+});
