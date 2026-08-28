@@ -1,11 +1,11 @@
 ---
 name: worca
-description: Run the deterministic multi-agent orchestrator (Plan -> Refine -> Implement -> Review) over a software task in the current project. Triggers on "/worca", "/worca <prompt>", "/worca --ui", and on requests to orchestrate, run the orchestration pipeline, or drive Claude Code through plan/refine/implement/review for a task.
+description: Run the node-graph multi-agent orchestrator over a software task in the current project. Triggers on "/worca", "/worca <prompt>", "/worca --ui", and on requests to orchestrate, run the orchestration pipeline, or drive plan/refine/implement/review for a task.
 ---
 
 # Orchestrate
 
-Drive the current project through the orchestrator pipeline: **Preflight -> Plan -> Refine (loop) -> Implement -> Review (loop) -> Done**. Orchestration is performed by a deterministic Node.js script; this skill just launches it. Artifacts (plans, reviews, pipeline audit logs) are written under `ai-artifacts/` in the project.
+Drive the current project through the selected pipeline template (default `wf_default`: Plan → Refine ↺ → Implement → Review ↺ → End). Orchestration is performed by a deterministic Node.js script; this skill just launches it. Artifacts (plans, reviews, pipeline audit logs) are written under `ai-artifacts/` in the project.
 
 The orchestrator repo lives wherever it was installed. `<WORCA_REPO>` below is the absolute path of that repo (the directory containing `src/cli/worca-cc.mjs`). If you installed via `scripts/install.mjs`, the installer rewrites `<WORCA_REPO>` in this file to the real path automatically; otherwise substitute it yourself (or set an `WORCA_REPO` environment variable and use `"$WORCA_REPO"`).
 
@@ -19,13 +19,13 @@ node <WORCA_REPO>/src/cli/worca-cc.mjs --project "$PWD" --prompt "<args>"
 
 - `--project "$PWD"` — operate inside the user's current project (the orchestrator does all file writes here).
 - `--prompt "<args>"` — everything the user typed after `/worca`. Quote it.
-- The CLI streams phase changes and live agent logs to the terminal. When the clarify step needs a decision it shows each question's 2–4 options plus a free-text field; when a refine/review loop hits its cap it shows the open critical/major issues and asks whether to continue or approve another cycle. Answer interactively.
+- The CLI streams every agent execution (start/done, cycle, cost) and live agent logs to the terminal. When the clarify step needs a decision it shows each question's 2–4 options plus a free-text field; when a refine/review loop hits its cap it shows the open critical/major issues and asks whether to continue or approve another cycle. Answer interactively.
 - On completion it prints the pipeline directory under `ai-artifacts/pipelines/`.
 
 Useful flags (pass through when the user asks):
 - `--file <path.md>` — use a markdown file as the prompt instead of `--prompt`.
 - `--title "<name>"` — label the pipeline.
-- `--max-refine <N>` / `--max-review <N>` — change loop caps (default 5 each).
+- `--workflow <id>` — run a saved pipeline template instead of the built-in default (`wf_default`).
 - `--model <m>` / `--permission-mode <m>` — Claude model / permission mode (default `acceptEdits`).
 - `--mock` — run the full pipeline offline with canned agents (no Claude spawn, no tokens); great for a dry run. Equivalent to setting `WORCA_MOCK=1`.
 - `--yes` / `--non-interactive` — auto-answer (clarify picks the first option; gates choose "continue"). Use for unattended runs.
@@ -39,7 +39,7 @@ node <WORCA_REPO>/src/cli/worca-cc.mjs \
 
 ## /worca --ui — launch the web UI
 
-To start the web app (new-pipeline form, step tracker, live log window, question + loop-gate panels, Stop button, run history):
+To start the web app (new-pipeline form, live pipeline graph, live log window, question + loop-gate panels, Stop button, run history):
 
 ```bash
 node <WORCA_REPO>/src/cli/worca-cc.mjs --ui

@@ -1831,6 +1831,20 @@ function option(value, text) {
 // paint. Exposed on window.__np so jsdom unit tests can exercise them directly.
 // ---------------------------------------------------------------------------
 
+// The New-Pipeline panel's OWN ports source. classifyLoops needs each agent's
+// v2 ports, and /api/agents already carries them, so the row builders resolve
+// from the registry they were handed instead of borrowing gvPortsFn — the
+// Composer's index, which exists only once THAT view has been opened, so a cold
+// page load rendered no cycle inputs at all. gvPortsFn stays as the fallback: it
+// is built from ?all=1 and so also covers an agent the palette list omits.
+function panelPortsFn(registry) {
+  const own = portsFnFor(registry || {});
+  return (node) => {
+    const p = own(node);
+    return p && p.ported !== false ? p : (gvPortsFn(node) || p);
+  };
+}
+
 // Flatten workflow.steps[][] into an ordered list of node rows, joining each
 // node's role `key` to its registry metadata (label/color) and resolving every
 // setting through the four layers (newpipeline-ux-design.md §4.3):
@@ -1846,7 +1860,7 @@ function option(value, text) {
 // so the renderer can mark deviation and the writer can prune a redundant save
 // back to "inherit". `override` is layer 1 verbatim.
 function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
-  if (workflow && workflow.version === 2) return buildGraphNodeRows(workflow, registry, runConfig);
+  if (workflow && workflow.version === 2) return buildGraphNodeRows(workflow, registry, runConfig, opts);
   const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
   const reg = registry || {};
   const nodes = (runConfig && runConfig.nodes) || {};
@@ -1994,17 +2008,21 @@ function pruneNodeSelection(row, next = {}) {
 // from the ranking, exactly as the scheduler orders launches). The four config
 // layers are the same as v1: run-config nodes[nodeId] -> template node.config ->
 // sidecar -> hard default.
-function buildGraphNodeRows(tpl, registry, runConfig) {
+function buildGraphNodeRows(tpl, registry, runConfig, opts = {}) {
   const reg = registry || {};
   const nodes = (runConfig && runConfig.nodes) || {};
-  const order = classifyLoops(tpl, gvPortsFn).launchOrder;
+  // wf_default only: the legacy per-ROLE storage, layered under the per-node one
+  // exactly as resolveGraph does (sel -> legacy -> node config).
+  const legacySteps = opts.legacySteps || null;
+  const order = classifyLoops(tpl, panelPortsFn(reg)).launchOrder;
   const byId = new Map(tpl.nodes.map((n) => [n.id, n]));
   const rank = new Map(order.map((id, i) => [id, i]));
   const agentNodes = order.map((id) => byId.get(id)).filter((n) => n && n.kind === 'agent');
   const rows = [];
   for (const node of agentNodes) {
     const meta = reg[node.key] || null;
-    const saved = { ...nodes[node.id] };
+    const role = legacySteps ? node.key : null;
+    const saved = { ...(role ? legacySteps[role] : null), ...nodes[node.id] };
     const wfDef = (node.config && typeof node.config === 'object') ? node.config : {};
     const metaFan = meta && typeof meta.fanOut === 'boolean' ? meta.fanOut : false;
     const metaAsks = !!(meta && meta.asksQuestions);
@@ -2026,7 +2044,7 @@ function buildGraphNodeRows(tpl, registry, runConfig) {
     const fanOut = override.fanOut !== undefined ? override.fanOut : def.fanOut;
     const askQuestions = override.askQuestions !== undefined ? override.askQuestions : def.askQuestions;
     rows.push({
-      nodeId: node.id, key: node.key, role: null,
+      nodeId: node.id, key: node.key, role, // non-null => persist via saveStep (wf_default)
       label: (meta && meta.displayName) || node.key || node.id,
       color: (meta && meta.color) || '', description: (meta && meta.description) || '',
       stepIndex: rank.get(node.id) || 0,
@@ -2047,7 +2065,7 @@ function buildGraphNodeRows(tpl, registry, runConfig) {
 function buildGraphWireRows(tpl, registry, runConfig) {
   const reg = registry || {};
   const saved = (runConfig && runConfig.wires) || {};
-  const { loopWireIds, launchOrder } = classifyLoops(tpl, gvPortsFn);
+  const { loopWireIds, launchOrder } = classifyLoops(tpl, panelPortsFn(reg));
   const byId = new Map(tpl.nodes.map((n) => [n.id, n]));
   const rank = new Map(launchOrder.map((id, i) => [id, i]));
   const nameCount = new Map();
@@ -2380,7 +2398,10 @@ async function getWorkflowApi(id) {
   try {
     const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`);
     const data = await safeJson(res);
-    if (!res.ok || !data || !Array.isArray(data.steps)) return null;
+    // Shape gate, both engines: a v2 graph carries `nodes`, a v1 template
+    // `steps`. Demanding `steps` (the pre-P8 guard) rejected every stored row
+    // once they all became graphs, which painted "Could not load this workflow."
+    if (!res.ok || !data || !(Array.isArray(data.nodes) || Array.isArray(data.steps))) return null;
     state.workflowCache[id] = data;
     return data;
   } catch { return null; }

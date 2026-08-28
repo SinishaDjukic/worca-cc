@@ -3281,6 +3281,15 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .gv-world .prow .pt{font:10px/1.3 var(--mono);color:var(--ink-3);}
 .gv-world .prow .pt.cond{color:var(--amber-ink);}
 .gv-world .prow .mla{margin-left:auto;}
+/* The global .chip (:692) is a 7px/13px page pill — ~28px tall inside a 24px
+   --gv-row-h port row, so it spilled over the neighbouring rows of every card
+   with a loop / fan-out input (the "loop" / "⤫N" pills seen on running cards).
+   Same override the palette needs (.ap .chip); metrics mirror the loop wire's
+   .wbadge so "loop" on the port and "2×" on the wire read as one family. */
+.gv-world .prow .chip{flex:0 0 auto;font:700 10px/1.4 var(--mono);padding:1px 7px;border-radius:999px;
+  white-space:nowrap;background:var(--field);color:var(--ink-3);}
+.gv-world .prow .chip.am{background:var(--amber-bg);color:var(--amber-ink);}
+.gv-world .prow .chip.fan{background:var(--blue-bg);color:var(--blue-ink);}
 .gv-world .psep{height:var(--gv-sep-h);position:relative;}
 .gv-world .psep::after{content:"";position:absolute;left:13px;right:13px;top:4px;height:1px;background:var(--line);}
 /* dot centre = row centre: top = (ROW_H − DOT)/2; x overhang = DOT/2 + BORDER,

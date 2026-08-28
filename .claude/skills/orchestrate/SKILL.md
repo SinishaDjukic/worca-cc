@@ -3,6 +3,8 @@ name: orchestrate
 description: Drive the current project through a deterministic multi-agent pipeline — Plan -> Refine -> Implement -> Review — using only Claude Code (no Node, no CLI, no web UI). Triggers on "/orchestrate", "/orchestrate <prompt>", and on requests to orchestrate, run the pipeline, or drive plan/refine/implement/review for a software task.
 ---
 
+> **Frozen (2026-08-26).** This skill is a prose clone of the v1 fixed pipeline (Plan → Refine → Implement → Review). worca now runs node-graph pipelines (typed ports, wires, loop budgets, AND/OR/Combine/End cards); this document is deliberately NOT updated and may drift from the engine. For the real engine use /worca. Follow-up: rewrite or retire.
+
 # Orchestrate (native)
 
 You are the **conductor** of a deterministic multi-agent pipeline:

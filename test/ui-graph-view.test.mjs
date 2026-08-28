@@ -317,3 +317,34 @@ test('destroy() removes the stage and leaves no listener that can mutate anythin
   doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.deepEqual(view.getTransform(), { x: 0, y: 0, z: 1 }, 'no listener survived destroy()');
 });
+
+test('a loop / fan-out input row carries a compact port chip that fits the 24px row', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { doc, host } = boot();
+  const { createGraphView } = await import(viewPath);
+  const view = createGraphView(host, { doc, mode: 'edit', portsFn, agents: AGENTS });
+  view.render(loopFixture(), {});
+  const chip = host.querySelector('.prow.in[data-port="fix"] .chip');
+  assert.ok(chip, 'the loop input row renders a chip');
+  assert.equal(chip.textContent, 'loop');
+  assert.ok(chip.classList.contains('am') && chip.classList.contains('mla'), 'amber, pushed right');
+
+  // jsdom applies no stylesheet, so the sizing claim is asserted on style.css as
+  // text (house pattern). Without a scoped rule the global `.chip` (12px text,
+  // 7px/13px padding ≈ 28px tall) paints inside a 24px `--gv-row-h` row and
+  // spills over the neighbouring port rows — the "loop"/"⤫N" pills seen on
+  // every running card.
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const rule = (sel) => {
+    const esc = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const m = css.match(new RegExp('(?:^|[\\s,}])' + esc + '\\s*\\{([^}]*)\\}'));
+    return m ? m[1] : null;
+  };
+  const base = rule('.gv-world .prow .chip');
+  assert.ok(base, '.gv-world .prow .chip rule must exist to override the page pill');
+  assert.match(base, /font:\s*(?:700\s+)?10px\/1\.4 var\(--mono\)/, '10px/1.4 mono like .wbadge');
+  assert.match(base, /padding:\s*1px 7px/, '1px vertical padding keeps it inside the row');
+  assert.match(base, /white-space:\s*nowrap/);
+  assert.match(rule('.gv-world .prow .chip.am') || '', /var\(--amber-bg\)/, 'loop chip is amber (spec legend)');
+  assert.match(rule('.gv-world .prow .chip.fan') || '', /var\(--blue-bg\)/, 'fan-out chip is blue');
+});

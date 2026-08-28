@@ -55,9 +55,11 @@ running against seeded demo data, so they can be reproduced after UI changes.
 | `clarify.png` | Clarify question panel | real run |
 | `run-detail.png` | History detail, Diff tab | real run |
 | `history.png` | History list, grouped by project | mock + real |
-| `composer.png` | Workflow Composer, default workflow | — |
+| `composer.png` | Pipeline Composer, default graph | — |
 | `stats.png` | Statistics, "This week" | seeded ledger |
 | `new-pipeline.png` | New Pipeline form | demo projects |
 | `agents.png` | Agents list | — |
 | `guardrails.png` | Guardrails sets | — |
 | `plugins.png` | Plugins & marketplace | bundled marketplace |
+
+> `composer.png` predates the node-graph composer — re-shoot it before the next release.

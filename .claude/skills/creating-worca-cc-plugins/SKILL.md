@@ -11,9 +11,9 @@ It contributes up to four things to the host, and ships **no UI code**.
 | Dir | Contributes | Executed? |
 |---|---|---|
 | `connector/*.mjs` (via `taskSources[].module`) | task-source connector | **Yes** — in an ephemeral child process |
-| `agents/<key>.md` + `<key>.meta.json` | pipeline agents | No — prompt text fed to `claude -p` |
+| `agents/<key>.md` + `<key>.meta.json` | pipeline agents (meta v2 sidecar: typed input/output ports) | No — prompt text fed to `claude -p` |
 | `skills/<name>/SKILL.md` | agent skills | No — copied into the run worktree |
-| `workflows/*.json` | pipeline templates | No — validated into DB rows |
+| `workflows/*.json` | pipeline templates (v2 graph JSON — one Task node, one End node) | No — validated into DB rows |
 
 **The connector is the only executable seam.** Everything else is data. Internalize this before designing anything.
 
@@ -48,7 +48,7 @@ Only `name` is required. Unknown fields are warnings (errors under `--strict`).
 |---|---|
 | `name` | kebab-case, ≤64 chars, machine-unique, used as a dir name |
 | `version` | optional — absent means the pinned SHA **is** the version |
-| `engines.worca-cc-api` | `">=1 <2"`. Integer host API. Unparseable → fails closed, won't install |
+| `engines.worca-cc-api` | `">=3 <4"`. Integer host API. Unparseable → fails closed, won't install. Host APIs are a SET ([1, 2, 3]); the highest version your range admits is negotiated. API 3 adds meta v2 sidecars and v2 graph templates |
 | `setup.node` | `true` → `npm ci --ignore-scripts --omit=dev` at install. **Lockfile mandatory** |
 | `setup.python` | only `"pyproject"` → `uv sync`. Worca CC never *runs* python; your JS spawns it |
 | `taskSources[].id` | kebab-case |
@@ -88,7 +88,7 @@ never sent back to the browser (arrives redacted as `{set: true}`).
 allowlists it for the browser — undeclared ops are rejected with 400 at `/api/sources/call`.
 The data, filtering, and pagination semantics behind every widget are entirely yours.
 
-## Connector contract (plugin API v1)
+## Connector contract (unchanged through API 3)
 
 Default-export a **factory**, not a class:
 
@@ -107,7 +107,7 @@ export default function createTaskSource(ctx) {
 | `capabilities` | `({inputs})` — optional | `{writeBack, incrementalSync}`; missing → `writeBack: true` |
 | custom | `(args)` | whatever the widget needs |
 
-`ctx` = `{ apiVersion, profile, config, state: {get, set}, log }`.
+`ctx` = `{ apiVersion, profile, config, state: {get, set}, log }` — `apiVersion` is the negotiated highest version your range admits.
 
 - `ctx.config` — `configSchema` values, defaults applied, `{"$env":"VAR"}` already resolved
 - `ctx.state.get/set` — a KV bag; `set` only *records*, the **host** persists it after a successful frame
@@ -121,6 +121,47 @@ Throw `Object.assign(new Error(msg), { kind })` to pick the error kind:
 
 One `node` child process **per op**. No daemon, no reuse. Env is scrubbed to `{PATH, HOME}` only.
 Payload arrives on stdin, one JSON frame leaves on stdout, process exits. 30s timeout → SIGKILL.
+
+## Agents & templates (API 3)
+
+An agent sidecar is meta v2: typed PORTS replace the v1 channel vocabulary.
+
+```json
+{
+  "metaVersion": 2,
+  "displayName": "My Helper",
+  "runnerType": "producer",
+  "inputs":  [{ "id": "task", "type": "md", "required": true }],
+  "outputs": [{ "id": "plan", "type": "md", "filename": "plan.md" }],
+  "placeable": true
+}
+```
+
+- `inputs[]`: `{ id, type, required?, loop?, expands?, as?, directive? }`
+- `outputs[]`: `{ id, type, when?, filename?, store?, artifactKind? }`
+- `runnerType`: `producer` | `verifier` | `clarifier`; a `verifier` also declares `verdict`.
+- `placeable: false` keeps an agent off the composer canvas (off-pipeline scanners).
+
+A workflow template is a v2 graph, and `worca plugin init` scaffolds this shape:
+
+```json
+{
+  "version": 2,
+  "name": "My Pipeline",
+  "domain": "coding",
+  "nodes": [
+    { "id": "n_task",   "kind": "task", "x": 40,  "y": 200, "config": {} },
+    { "id": "n_helper", "kind": "agent", "key": "myHelper", "x": 320, "y": 200, "config": {} },
+    { "id": "n_end",    "kind": "end",  "x": 600, "y": 200, "config": {} }
+  ],
+  "wires": [
+    { "id": "w1", "from": { "node": "n_task",   "port": "task" }, "to": { "node": "n_helper", "port": "task" } },
+    { "id": "w2", "from": { "node": "n_helper", "port": "plan" }, "to": { "node": "n_end",    "port": "result" } }
+  ]
+}
+```
+
+Node ids must match `/^n_[a-z0-9]{1,32}$/`; exactly one `task` node and one `end` node are required.
 
 ## Common mistakes
 
@@ -139,6 +180,8 @@ Payload arrives on stdin, one JSON frame leaves on stdout, process exits. 30s ti
 | Self-managed storage not keyed by `ctx.profile` | Two profiles share one cache/cookie jar/CLI config dir → one instance silently answers with the other's data. Hang every path you own off the profile id |
 | `getTask().body` not markdown | It becomes the pipeline prompt verbatim |
 | Symlinks pointing outside the plugin dir | Deleted during export, reported as a warning |
+| A v1 sidecar (`consumes`/`produces`/`connectsTo`) | Ignored at load with a Plugins-view note — port it to `metaVersion: 2` |
+| A v1 `steps` workflow template | Ignored at load with a Plugins-view note — rewrite it as a graph (`version: 2`) |
 
 ## The example worth reading
 
