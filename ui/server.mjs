@@ -4064,9 +4064,6 @@ function agentErrorStatus(code) {
 function startAgentGen(input) {
   const orch = createAgentGen({
     ...input,
-    // Same open vocabulary as GET /api/agents (callers pass the registry union);
-    // built-ins-only fallback keeps direct/_testing callers working.
-    channels: Array.isArray(input.channels) && input.channels.length ? input.channels : CHANNEL_IDS,
     claude: { permissionMode: 'acceptEdits', mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) },
   });
   // The engine mints its own genId (agen_<uuid>) and tags every emitted event
@@ -4117,7 +4114,7 @@ app.post('/api/agents/generate', async (req, res) => {
     const genId = startAgentGen({
       name, purpose: String(body.purpose || ''), details: String(body.details || ''),
       expectedBefore: pick(body.expectedBefore), expectedAfter: pick(body.expectedAfter),
-      userMarkdown, channels: collectChannelIds(allAgents),
+      userMarkdown,
     });
     res.json({ genId });
   } catch (err) {

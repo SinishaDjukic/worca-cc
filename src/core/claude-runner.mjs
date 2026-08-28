@@ -1574,13 +1574,15 @@ async function mockAgentGen(m, onEvent) {
     ? words[0] + words.slice(1).map((w) => w[0].toUpperCase() + w.slice(1)).join('')
     : 'customAgent';
   const meta = {
-    key, displayName: name, description: `mock-generated agent for ${name}`,
-    color: 'amber', runnerType: 'producer', loopSource: false, fanOut: false,
-    asksQuestions: true, questionsLocked: false, questionsDefault: false,
-    consumes: ['plan'], optionalConsumes: [], produces: ['review'], connectsTo: '*', order: 99,
+    metaVersion: 2, key, displayName: name, description: `mock-generated agent for ${name}`,
+    color: 'amber', runnerType: 'producer', domain: 'general', fanOut: false,
+    asksQuestions: true, questionsLocked: false, questionsDefault: false, order: 99,
+    inputs: [{ id: 'plan', type: 'md', label: 'Plan' }],
+    outputs: [{ id: 'review', type: 'md', filename: 'review-{cycle}.md' }],
   };
   if (m.MOCK_OUT) {
-    const md = `# Agent: ${name}\n\nYou are ${name} (deterministic mock body).\n\n## Inputs\n- the plan\n\n## Outputs\n- a review markdown\n`;
+    const md = `# Agent: ${name}\n\nYou are ${name} (deterministic mock body).\n\n`
+      + '## Ports\n\n- `plan` (in, md) — the plan to review.\n- `review` (out, md) — the review this agent writes.\n';
     await ensureDir(m.MOCK_OUT);
     await writeFile(m.MOCK_OUT, md, 'utf8');
     safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_OUT}`, raw: { mock: true, file: m.MOCK_OUT } });

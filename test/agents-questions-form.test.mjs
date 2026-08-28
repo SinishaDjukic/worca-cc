@@ -11,7 +11,9 @@ useTempHome(after);
 
 test('agent-store roundtrips the questions fields', async () => {
   await createAgent({
-    meta: { key: 'qDemo', displayName: 'Q Demo', order: 99, asksQuestions: true, questionsLocked: false, questionsDefault: true },
+    meta: { key: 'qDemo', displayName: 'Q Demo', order: 99, metaVersion: 2, runnerType: 'producer',
+      inputs: [{ id: 'task', type: 'md' }], outputs: [{ id: 'notes', type: 'md', filename: 'notes.md' }],
+      asksQuestions: true, questionsLocked: false, questionsDefault: true },
     markdown: '# Q Demo\nbody\n',
   });
   const { meta } = await readAgent('qDemo');
@@ -32,10 +34,9 @@ test('mock agent-gen drafts carry the questions fields (normalized)', async () =
 
 test('builder prompt schema names the questions fields with guidance', () => {
   const src = readFileSync(fileURLToPath(new URL('../src/core/agent-gen.mjs', import.meta.url)), 'utf8');
-  assert.match(src, /"asksQuestions": bool/);
-  assert.match(src, /"questionsLocked": bool/);
-  assert.match(src, /"questionsDefault": bool/);
+  assert.match(src, /"asksQuestions"\/"questionsLocked"\/"questionsDefault"/);
   assert.match(src, /questionsLocked=true ONLY if/);
+  assert.match(src, /questionsDefault=true only for locked-on agents/);
 });
 
 test('both agent forms in index.html carry the three questions checkboxes', () => {
