@@ -476,3 +476,18 @@ test('readPipelineByKey surfaces the artifacts index (so History can show the Li
   assert.ok(Array.isArray(data.artifacts), 'artifacts array present');
   assert.ok(data.artifacts.some((a) => a.kind === 'live-log'), 'live-log artifact listed');
 });
+
+// P8a: History decides whether to OFFER Resume from this flag, and the v2 upgrade
+// NULLs every retired v1 resume point — so it must be read from the row, never
+// inferred from the status (an interrupted run may or may not still carry one).
+test('rowToState reports `resumable` from the row\'s resume_point, not its status', async () => {
+  seedPipelineRow({ id: 'rsm00001', projectKey: 'proj-00000001', status: 'paused' });
+  const key = 'proj-00000001';
+  const noPoint = await readPipelineByKey(key, 'rsm00001');
+  assert.equal(noPoint.state.resumable, false, 'a NULLed (retired) point is not resumable');
+
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?')
+    .run(JSON.stringify({ version: 2, snapshot: null }), 'rsm00001');
+  const withPoint = await readPipelineByKey(key, 'rsm00001');
+  assert.equal(withPoint.state.resumable, true, 'a live point is resumable');
+});

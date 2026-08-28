@@ -1723,6 +1723,9 @@ function rowToState(row) {
     stepper: j(row.stepper, null),
     tools: j(row.tools, null),
     guardrailsId: row.guardrails_id ?? null,
+    // A retired v1 resume point was NULLed by the v2 upgrade: the run stays in
+    // History with an honest status, but it can never be resumed again.
+    resumable: row.resume_point != null,
     steps: getDb().prepare(`
       SELECT key, node_id, phase, step_index, cycle, status, started_at, updated_at,
              active_ms, running_since, cost_usd, session_id, skills, graphify_count,

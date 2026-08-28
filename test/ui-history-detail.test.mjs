@@ -2296,3 +2296,23 @@ test('copy on a filtered-empty Logs pane flashes "nothing to copy" and leaves th
   await new Promise((r) => setTimeout(r, 1300));
   assert.equal(copyBtn.textContent, 'copy', 'label restored after the flash');
 });
+
+// P8a: V24 NULLs a retired v1 resume point, so a run can be paused/interrupted
+// and still not resumable. Offering Resume would 409 (ENGINE_RETIRED).
+test('Resume is hidden for a paused run whose resume point was retired', async () => {
+  const ctx = await bootDetail({
+    rows: [{ ...ROW, status: 'paused' }],
+    detail: { ...DETAIL, state: { ...DETAIL.state, status: 'interrupted', resumable: false } },
+  });
+  await openDetail(ctx);
+  assert.equal(ctx.window.document.querySelector('#hist-detail .hd-resume').hidden, true);
+});
+
+test('Resume is still offered when a resume point survives', async () => {
+  const ctx = await bootDetail({
+    rows: [{ ...ROW, status: 'paused' }],
+    detail: { ...DETAIL, state: { ...DETAIL.state, status: 'paused', resumable: true } },
+  });
+  await openDetail(ctx);
+  assert.equal(ctx.window.document.querySelector('#hist-detail .hd-resume').hidden, false);
+});

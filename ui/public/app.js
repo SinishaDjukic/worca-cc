@@ -11878,9 +11878,11 @@ function setupHdActions(screen, record, data) {
   const status = String(st.status || '').toLowerCase();
   const retained = paintHdBanners(screen, record, data);
 
-  // Resume: paused + interrupted only (D3).
+  // Resume: paused + interrupted only (D3), and only while a resume point exists
+  // (v1 points were retired by the v2 upgrade). A LIVE snapshot has no
+  // `resumable` field, so `!== false` keeps the live path untouched.
   const resumeBtn = screen.querySelector('.hd-resume');
-  if (HD_RESUMABLE.has(status)) {
+  if (HD_RESUMABLE.has(status) && st.resumable !== false) {
     resumeBtn.hidden = false;
     applyHistResumeGate(resumeBtn, screen.dataset.pauseReason || '', budgetState.budget);
     resumeBtn.addEventListener('click', () => {
