@@ -63,9 +63,11 @@ const CONNECTOR = `export default function createTaskSource(ctx) {
 }
 `;
 const AGENT_META = {
-  key: 'localHelper', agentFile: 'localHelper.md',
+  metaVersion: 2, key: 'localHelper', agentFile: 'localHelper.md',
   displayName: 'Local Helper', description: 'fixture agent', color: 'blue',
-  runnerType: 'producer', consumes: [], produces: ['plan'], order: 90,
+  runnerType: 'producer', order: 90,
+  inputs: [{ id: 'task', type: 'md' }],
+  outputs: [{ id: 'plan', type: 'md', filename: '{base}.md' }],
 };
 
 async function makeFixtureRepo() {

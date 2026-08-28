@@ -1009,8 +1009,8 @@ async function pluginInit(rest) {
   const manifestObj = {
     name,
     version: '0.1.0',
-    description: 'Scaffolded worca-cc plugin — edit me',
-    engines: { 'worca-cc-api': '>=1 <2' },
+    description: 'Scaffolded worca plugin — edit me',
+    engines: { 'worca-cc-api': '>=3 <4' },
   };
   if (withParts.includes('task-source')) {
     manifestObj.taskSources = [{
@@ -1061,14 +1061,15 @@ async function pluginInit(rest) {
   }
   if (withParts.includes('agents')) {
     files.set(`agents/${agentKey}.meta.json`, JSON.stringify({
+      metaVersion: 2,
       key: agentKey,
       displayName: 'Example Helper',
       description: `Example agent installed by the ${name} plugin`,
       color: 'amber',
       agentFile: `${agentKey}.md`,
       runnerType: 'producer',
-      consumes: ['userPrompt'],
-      produces: ['code'],
+      inputs: [{ id: 'task', type: 'md', required: true }],
+      outputs: [{ id: 'notes', type: 'md', filename: 'notes.md', store: 'run' }],
       ...(withParts.includes('skills') ? { requiresSkills: ['example-skill'] } : {}),
       order: 900,
     }, null, 2) + '\n');
@@ -1080,7 +1081,7 @@ async function pluginInit(rest) {
       'model: inherit',
       '---',
       '',
-      `You are an example agent shipped by the "${name}" worca-cc plugin.`,
+      `You are an example agent shipped by the "${name}" worca plugin.`,
       'Acknowledge the task you were given and describe what a real agent would do here.',
       '',
     ].join('\n'));
@@ -1100,12 +1101,21 @@ async function pluginInit(rest) {
     files.set('skills/example-skill/helper.sh', '#!/bin/sh\necho "example-skill helper ok"\n');
   }
   if (withParts.includes('workflows')) {
+    // A v2 graph: the Task and End cards are mandatory (V20/V21) and every input
+    // takes exactly one wire (V7). Ports come from the sidecar above.
     files.set('workflows/example-flow.json', JSON.stringify({
       name: `${name} example flow`,
-      version: 1,
+      version: 2,
       domain: 'general',
-      steps: [[{ id: 's0_0', key: agentKey }]],
-      feedbacks: [],
+      nodes: [
+        { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+        { id: 'n_helper', kind: 'agent', key: agentKey, x: 320, y: 200, config: {} },
+        { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
+      ],
+      wires: [
+        { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_helper', port: 'task' } },
+        { id: 'w2', from: { node: 'n_helper', port: 'notes' }, to: { node: 'n_end', port: 'result' } },
+      ],
     }, null, 2) + '\n');
   }
   files.set('worca-cc-plugin.json', JSON.stringify(manifestObj, null, 2) + '\n');

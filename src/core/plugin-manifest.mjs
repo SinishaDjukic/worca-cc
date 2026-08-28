@@ -7,6 +7,9 @@ import { readFileSync, readdirSync, readlinkSync, existsSync } from 'node:fs';
 import { join, resolve, dirname, sep, isAbsolute } from 'node:path';
 import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS } from './plugin-api.mjs';
 import { EFFORTS, isReservedModelEnvKey } from './model-env.mjs';
+import { validateMetaV2, normalizeAgentMeta, indexByKey } from '../shared/graph/agent-meta.mjs';
+import { portsFnFor } from '../shared/graph/ports.mjs';
+import { validateGraph } from '../shared/graph/validate.mjs';
 
 /** Plugin names are kebab-case, machine-unique, dir-name safe (spec §4.1). */
 export const PLUGIN_NAME_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -479,8 +482,21 @@ export function validatePluginDir(absDir, { strict = false } = {}) {
     }
   }
 
-  // agents/: <key>.md + <key>.meta.json pairs, existing dual-file format (§4.2)
+  // agents/: <key>.md + <key>.meta.json pairs, existing dual-file format (§4.2).
+  // API 3: the sidecar must pass the SAME meta v2 gate the agent-store save path
+  // applies, every failed rule named. ALL capability fields are open to plugins
+  // (verdict, sideEffect, mockRole, workspace*, placeable, …) — the gate is the
+  // schema, not an allow-list.
   const agentKeys = new Set();
+  const ownMetas = [];
+  // A range that admits the CURRENT API (or no engines at all) claims to be an
+  // API-3 plugin, so v1-shaped data is a hard error; --strict promotes it for
+  // everyone else, because that flag is the plugin AUTHOR's gate. A manifest
+  // that did not PARSE fails SOFT: its declared API is unknowable, and the JSON
+  // error above is already the only actionable line.
+  const hardData = raw !== null
+    && (strict || negotiatedApi(raw && raw.engines ? raw.engines['worca-cc-api'] : '') === WORCA_PLUGIN_API);
+  const dataLevel = hardData ? 'error' : 'warn';
   const agentsDir = join(absDir, 'agents');
   if (existsSync(agentsDir)) {
     const files = readdirSync(agentsDir);
@@ -494,6 +510,10 @@ export function validatePluginDir(absDir, { strict = false } = {}) {
       if (key !== stem) push('error', `agents/${f}: key "${key}" must match the filename stem "${stem}"`);
       if (!files.includes(`${stem}.md`)) push('error', `agents/${f}: missing sibling ${stem}.md`);
       agentKeys.add(key);
+      if (Number(meta.metaVersion) !== 2) { push(dataLevel, `agents/${f}: ${NOT_META_V2}`); continue; }
+      const { errors } = validateMetaV2(meta);
+      for (const e of errors) push('error', `agents/${f}: ${e}`);
+      if (!errors.length) ownMetas.push(normalizeAgentMeta(meta).meta);
     }
     for (const f of files.filter((x) => x.endsWith('.md'))) {
       const stem = f.slice(0, -3);
@@ -513,18 +533,36 @@ export function validatePluginDir(absDir, { strict = false } = {}) {
     }
   }
 
-  // workflows/*.json may reference ONLY the plugin's own agent keys (§9.3)
+  // workflows/*.json are v2 GRAPHS (API 3), validated by the SAME shared
+  // validator the composer and POST /api/workflows use, over a ports function
+  // built from this plugin's OWN sidecars plus the engine's flow-card ports.
+  // The isolation rule stays: a template may reference only keys this plugin
+  // ships, so a host rename or a deleted user agent can never break it.
   const wfDir = join(absDir, 'workflows');
   if (existsSync(wfDir)) {
+    const portsFn = portsFnFor(indexByKey(ownMetas));
     for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.json'))) {
       let tpl = null;
       try { tpl = JSON.parse(readFileSync(join(wfDir, f), 'utf8')); }
       catch { push('error', `workflows/${f}: invalid JSON`); continue; }
-      if (!Array.isArray(tpl?.steps)) { push('error', `workflows/${f}: "steps" must be an array`); continue; }
-      const keys = tpl.steps.flat().map((n) => n?.key).filter(Boolean);
+      if (Number(tpl?.version) !== 2) { push(dataLevel, `workflows/${f}: ${NOT_GRAPH_V2}`); continue; }
+      const nodes = Array.isArray(tpl.nodes) ? tpl.nodes : [];
+      const keys = nodes.filter((n) => n && n.kind === 'agent').map((n) => n.key).filter(Boolean);
+      let foreign = false;
       for (const k of new Set(keys)) {
-        if (!agentKeys.has(k)) push('error', `workflows/${f}: references agent key "${k}" which this plugin does not ship`);
+        if (!agentKeys.has(k)) {
+          push('error', `workflows/${f}: references agent key "${k}" which this plugin does not ship`);
+          foreign = true;
+        }
       }
+      // A foreign key resolves to no ports, so every wire touching it would
+      // also fire V4/V5 — one clear cause beats five derived ones.
+      if (foreign) continue;
+      const { errors, warnings } = validateGraph(
+        { ...tpl, nodes, wires: Array.isArray(tpl.wires) ? tpl.wires : [] }, portsFn,
+      );
+      for (const e of errors) push('error', `workflows/${f}: ${e.code}: ${e.message}`);
+      for (const w of warnings) push('warn', `workflows/${f}: ${w.code}: ${w.message}`);
     }
   }
 
