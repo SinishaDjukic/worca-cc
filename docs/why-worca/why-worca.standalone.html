@@ -421,6 +421,12 @@
   .fdot.p{background:var(--peach-bg); color:var(--peach-ink);}   .fdot.b{background:var(--blue-bg); color:var(--blue-ink);}
   .fdot.r{background:var(--red-bg); color:var(--red-ink);}       .fdot.a{background:var(--amber-bg); color:var(--amber-ink);}
 
+  /* ── ?autoplay start gate (shown only when the browser blocks sound before a tap) ── */
+  #autostart{position:fixed; inset:0; z-index:9998; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; background:rgba(20,20,25,.42); backdrop-filter:blur(2px); cursor:pointer; font-family:var(--sans);}
+  #autostart button{display:inline-flex; align-items:center; gap:12px; border:0; border-radius:999px; padding:18px 34px; font:600 20px var(--sans); background:var(--ink); color:#fff; cursor:pointer; box-shadow:0 18px 50px -18px rgba(0,0,0,.6);}
+  #autostart button svg{width:20px; height:20px; fill:currentColor;}
+  #autostart small{color:#fff; opacity:.8; font-size:14px;}
+
   /* ── REQUIRED animation styles (deck-animation.css, brand-tokened) ───── */
   deck-stage [data-step]{opacity:0; transform:translateY(14px); transition:opacity 600ms var(--ease), transform 600ms var(--ease); pointer-events:none;}
   [data-step].step-visible{opacity:1; transform:translateY(0); pointer-events:auto;}
@@ -4954,6 +4960,39 @@ window.__NARRATION_AUDIO = {"0:0":"data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAA
   } catch (e) {}
 })();
 
+</script>
+
+<!-- ?autoplay — start narrated auto-play on open. Browsers only allow sound after
+     an interaction with the site; Chrome/Edge count the click that brought the
+     visitor here, Safari/Firefox don't. So: probe once, start if allowed, else show
+     a single "Play" gate. Any key/click dismisses the gate (manual stepping). -->
+<script>
+(function () {
+  var q = location.search + location.hash;
+  if (!/[?&#]autoplay\b/.test(q)) return;
+  function start() { try { window.deckNarration && window.deckNarration.play(); } catch (e) {} }
+  function gate() {
+    var g = document.createElement("div"); g.id = "autostart";
+    g.innerHTML = '<button type="button"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>Play with narration</button><small>or press → to step through on your own</small>';
+    g.querySelector("button").addEventListener("click", function (e) { e.stopPropagation(); g.remove(); start(); });
+    g.addEventListener("click", function () { g.remove(); });
+    window.addEventListener("keydown", function () { if (g.parentNode) g.remove(); }, { once: true });
+    document.body.appendChild(g);
+  }
+  function probe() {
+    var map = window.__NARRATION_AUDIO; var key = map && Object.keys(map)[0];
+    if (!key) { start(); return; }                       // no baked audio → silent auto-advance works without a gesture
+    var a = new Audio(map[key]); a.volume = 0.01;
+    var p = a.play();
+    if (!p || !p.then) { gate(); return; }
+    p.then(function () { a.pause(); start(); }, gate);
+  }
+  var tries = 0;
+  (function wait() {                                     // deckNarration is defined once the stage has upgraded
+    if (window.deckNarration && document.querySelector("deck-stage section.is-active")) { probe(); return; }
+    if (++tries < 100) setTimeout(wait, 50);
+  })();
+})();
 </script>
 
 <!-- Engine-load watchdog — keep as-is (see the OpenDeck kit). -->
