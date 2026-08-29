@@ -283,3 +283,21 @@ test('MAJ-17: the archived chip surfaces its refusal too', async () => {
   assert.equal(doc.getElementById('gv-saved-msg').textContent, 'workflow not found');
   assert.equal(doc.querySelectorAll('#gv-archived .pl-chip').length, 1, 'the chip is still there');
 });
+
+// --------------------------------------------------------------------- MAJ-4
+// A plugin-owned row is replaced wholesale by the next `worca plugin update`,
+// so the saved list has to SAY so before the user starts editing it.
+const PLUGIN_WF = { id: 'wfp_demo-plug_flow', name: 'demo-plug example flow', version: 2, domain: 'coding',
+  origin: 'plugin:demo-plug',
+  nodes: [{ id: 'n_task', kind: 'task', x: 60, y: 200, config: {} }, { id: 'n_end', kind: 'end', x: 960, y: 200, config: {} }], wires: [] };
+
+test('MAJ-4: a plugin-origin row carries a plugin:<name> badge; a user row does not', async () => {
+  const win = await boot({ workflows: [PLUGIN_WF, V2_ROW] });
+  const doc = win.document;
+  const badge = doc.querySelector('#gv-saved-list .pl-item[data-id="wfp_demo-plug_flow"] .pl-origin');
+  assert.ok(badge, 'the plugin row is badged');
+  assert.equal(badge.textContent, 'plugin:demo-plug');
+  assert.equal(badge.title, 'Provided by plugin "demo-plug" — replaced on plugin update');
+  assert.equal(doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-origin'), null,
+    'a user-created row is not badged');
+});

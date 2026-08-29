@@ -34,6 +34,11 @@ export const INSET_OPEN = 340;
 export const INSET_COLLAPSED = 28;
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+/** 'plugin:demo-plug' -> 'demo-plug'; anything else -> ''. `origin` is a row
+ *  column the server's rowToTpl projects and normalizeTemplate drops, so the
+ *  composer keeps it beside the template. */
+export const pluginOriginName = (origin) => (typeof origin === 'string' && origin.startsWith('plugin:')
+  ? origin.slice('plugin:'.length) : '');
 const isTyping = (t) => !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
 
 export function createComposer(hostEls, { doc = globalThis.document, api, raf = null, viewport = null, storage = null, portsFn } = {}) {
@@ -42,6 +47,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   const stats = { rectReads: 0, frames: 0, pointerMoves: 0, validations: 0 };
 
   let tpl = emptyCanvas();
+  let tplOrigin = '';             // 'plugin:<name>' of the LOADED row ('' = user-created)
   let sel = null;                 // {kind:'node'|'wire', id}
   let dirty = false;
   let savedHash = '';
@@ -634,15 +640,31 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   let dialog = null;
   let savedDomains = [];
 
+  /** Two loaded rows may never be saved IN PLACE, so Save on them IS Save-a-copy:
+   *   · the built-in Default — its id is reserved and its name re-mints it, so an
+   *     in-place save writes a row nothing can list, read or delete (C-3);
+   *   · a plugin-owned row — `worca plugin update` overwrites name/domain/graph
+   *     unconditionally, so the edits are erased with no prompt (MAJ-4).
+   *  @returns {{copy: boolean, plugin: string}} */
+  function saveMode(saveAs) {
+    const plugin = pluginOriginName(tplOrigin);
+    return { copy: Boolean(saveAs) || tpl.id === RESERVED_WORKFLOW_ID || Boolean(plugin), plugin };
+  }
+
   function openSaveDialog({ saveAs = false } = {}) {
     if (!hostEls.dialogHost) return null;
     if (dialog) dialog.remove();
+    const mode = saveMode(saveAs);
     dialog = renderSaveDialog({
-      name: saveAs ? `${tpl.name || 'Untitled'} copy` : (tpl.name || ''),
+      name: mode.copy ? `${tpl.name || 'Untitled'} copy` : (tpl.name || ''),
       domain: tpl.domain || '', domains: savedDomains,
-      title: saveAs ? 'Save a copy' : 'Save pipeline', doc,
+      title: mode.copy ? 'Save a copy' : 'Save pipeline',
+      note: mode.plugin
+        ? `This pipeline belongs to plugin "${mode.plugin}" and is replaced on plugin update — saving creates your own copy.`
+        : '',
+      doc,
     });
-    dialog.dataset.saveAs = saveAs ? '1' : '';
+    dialog.dataset.saveAs = mode.copy ? '1' : '';
     hostEls.dialogHost.replaceChildren(dialog);
     dialog.querySelector('.sd-cancel').addEventListener('click', () => closeDialog(dialog));
     dialog.querySelector('.sd-confirm').addEventListener('click', () => { confirmSave(); });
@@ -659,9 +681,10 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     const domain = dialog.querySelector('.sd-domain').value.trim();
     const saveAs = dialog.dataset.saveAs === '1';
     const body = { ...serializeTemplate(tpl), version: 2, name, domain };
-    // Save on a LOADED row sends its id; Save-as omits it so the server mints
-    // wf_${slugify(name)}. The one reserved id, wf_default, is never a target.
-    if (!saveAs && tpl.id && tpl.id !== 'wf_default') body.id = tpl.id;
+    // Save on a LOADED row sends its id; a copy omits it so the server mints
+    // wf_${slugify(name)}. `dataset.saveAs` already carries saveMode()'s verdict,
+    // so the reserved built-in and every plugin-owned row land here as copies.
+    if (!saveAs && tpl.id && tpl.id !== RESERVED_WORKFLOW_ID) body.id = tpl.id;
     else delete body.id;
     try {
       const res = await api.saveWorkflow(body);
@@ -799,6 +822,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
    *  click goes through newCanvas()/openTemplate(), which ask first. */
   function loadTemplate(next) {
     tpl = next ? normalizeTemplate(next) : emptyCanvas();
+    tplOrigin = (next && typeof next.origin === 'string') ? next.origin : '';
     sel = null;
     undoStack.length = 0; redoStack.length = 0;
     savedHash = snapshot();
@@ -834,9 +858,15 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     setAgents(map) { agents = map || {}; view.setAgents(agents); },
     /** Rename: an unsaved edit, so it sets `dirty` — it never clears it. */
     setName(name) { tpl.name = String(name || ''); metaDirty = true; dirty = true; paintChrome(); },
+    /** 'plugin:<name>' of the loaded row, '' when user-created. */
+    origin: () => tplOrigin,
     markSaved(id, name, domain) {
+      // What was just written is a row of the USER's, whatever the source row
+      // was: a copy of a plugin template is not itself plugin-owned.
+      if (id && id !== tpl.id) tplOrigin = '';
       if (id) tpl.id = id;
       if (name != null) tpl.name = name;
+      if (name != null && hostEls.name) hostEls.name.value = name;   // the header follows the saved name (a forced copy renames)
       if (domain != null) tpl.domain = domain;
       savedHash = snapshot();
       metaDirty = false;

@@ -87,7 +87,7 @@ import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
 import { renderStatsBody, renderBudgetIndicator, renderBudgetRing, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
-import { createComposer, RESERVED_WORKFLOW_ID } from './graph/composer.mjs';
+import { createComposer, RESERVED_WORKFLOW_ID, pluginOriginName } from './graph/composer.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
 // bare <select> with no preview host on this branch (the v1 read-only mini-graph
 // lived in the composer's saved list, retired in P5 Task 8). P6's Running list is
@@ -1777,6 +1777,17 @@ async function gvRefreshSaved() {
     meta.textContent = wf.domain || 'general';
     main.append(name, meta);
     row.appendChild(main);
+    // A plugin-owned row is replaced wholesale by the next `worca plugin update`
+    // (src/core/plugin-workflows.mjs upserts ON CONFLICT), so say so BEFORE the
+    // user starts editing it — the save dialog repeats it and defaults to a copy.
+    const plugin = pluginOriginName(wf.origin);
+    if (plugin) {
+      const tag = document.createElement('span');
+      tag.className = 'pl-origin';
+      tag.textContent = `plugin:${plugin}`;
+      tag.title = `Provided by plugin "${plugin}" — replaced on plugin update`;
+      row.appendChild(tag);
+    }
     if (wf.version === 2) {
       const open = document.createElement('button');
       open.type = 'button'; open.className = 'btn-ghost pl-open'; open.textContent = 'Open';

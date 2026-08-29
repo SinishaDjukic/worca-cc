@@ -3,11 +3,15 @@
 // renderer: it returns a DETACHED dialog; composer.mjs mounts it and owns the POST.
 function h(doc, tag, cls, text) { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
 
-export function renderSaveDialog({ name = '', domain = '', domains = [], title = 'Save pipeline', doc = globalThis.document } = {}) {
+export function renderSaveDialog({ name = '', domain = '', domains = [], title = 'Save pipeline', note = '', doc = globalThis.document } = {}) {
   const dlg = doc.createElement('dialog');
   dlg.className = 'save-dialog';
   const form = h(doc, 'div', 'sd-body');
   form.appendChild(h(doc, 'h2', 'sd-title', title));
+  // `note` is standing provenance ("this row belongs to a plugin"), NOT an
+  // error: it sits above the fields and never shares the .sd-msg line, which
+  // the server's 422/409 refusals own.
+  if (note) form.appendChild(h(doc, 'p', 'sd-note', note));
 
   const nameWrap = h(doc, 'div', 'sd-field');
   nameWrap.appendChild(h(doc, 'label', null, 'Name'));

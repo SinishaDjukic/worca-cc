@@ -3571,8 +3571,9 @@ input.gv-name:focus-visible{outline:none;}
 .gv-saved .pl-meta{margin-top:4px;font-size:10.5px;font-weight:700;letter-spacing:.05em;
   text-transform:uppercase;color:var(--ink-3);}
 .gv-saved .pl-open{flex:0 0 auto;padding:7px 15px;font-size:12.5px;}
-.gv-saved .pl-legacy{flex:0 0 auto;background:var(--field);border:1px solid var(--line);color:var(--ink-3);
+.gv-saved .pl-legacy,.gv-saved .pl-origin{flex:0 0 auto;background:var(--field);border:1px solid var(--line);color:var(--ink-3);
   border-radius:999px;padding:3px 10px;font-size:11px;font-weight:600;}
+.gv-saved .pl-origin{font-family:var(--mono);letter-spacing:-.01em;}
 .gv-saved .pl-del{flex:0 0 auto;width:34px;height:34px;border-radius:10px;border:1.5px solid var(--line-2);
   background:#fff;display:grid;place-items:center;cursor:pointer;color:var(--ink-3);
   font-family:inherit;font-size:15px;line-height:1;transition:.12s;}
@@ -3596,6 +3597,8 @@ input.gv-name:focus-visible{outline:none;}
 .save-dialog .sd-field input{width:100%;border:1.5px solid transparent;background:var(--field);
   border-radius:11px;padding:10px 12px;font:13px var(--sans);color:var(--ink);}
 .save-dialog .sd-field input:focus{outline:none;background:#fff;border-color:var(--ink);}
+.save-dialog .sd-note{margin:0;font-size:12px;line-height:1.5;color:var(--ink-2);
+  background:var(--field);border-radius:11px;padding:9px 12px;}
 .save-dialog .sd-msg{margin:0;font-size:12px;line-height:1.5;color:var(--ink-3);white-space:pre-line;}
 .save-dialog .sd-msg:empty{display:none;}
 .save-dialog .sd-msg.err{color:var(--red-ink);}

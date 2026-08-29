@@ -708,3 +708,85 @@ test('MAJ-6: loadTemplate stays SYNCHRONOUS and unguarded (the programmatic mode
   assert.equal(t.id, 'wf_p', 'returns the template, not a promise');
   assert.equal(s.c.template().id, 'wf_p');
 });
+
+// ------------------------------------------------------------- MAJ-4 · C-3
+// Two rows the composer must never save IN PLACE: the built-in Default (whose
+// name re-mints the reserved id `wf_default`, C-3) and a plugin-owned row (whose
+// edits `worca plugin update` erases, MAJ-4). Both fall back to Save-a-copy.
+const PLUGIN_ROW = () => ({
+  id: 'wfp_demo-plug_flow', name: 'demo-plug example flow', version: 2, domain: 'coding',
+  origin: 'plugin:demo-plug', nodes: fixture().nodes, wires: fixture().wires,
+});
+const DEFAULT_TPL = () => ({
+  id: 'wf_default', name: 'Default', version: 2, domain: 'coding',
+  nodes: fixture().nodes, wires: fixture().wires,
+});
+
+test('C-3: opening the built-in Default and saving prefills "<name> copy" and never sends the id', async () => {
+  const posts = [];
+  const s = await open({ api: { saveWorkflow: async (b) => { posts.push(b); return { ok: true, workflow: { id: 'wf_default-copy' } }; } } });
+  s.c.loadTemplate(DEFAULT_TPL());
+  const dlg = s.c.openSaveDialog();
+  assert.equal(dlg.querySelector('.sd-title').textContent, 'Save a copy');
+  assert.equal(dlg.querySelector('.sd-name').value, 'Default copy');
+  assert.equal(dlg.querySelector('.sd-note'), null, 'no plugin note on the built-in');
+  dlg.querySelector('.sd-confirm').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(posts[0].id, undefined, 'the reserved id is never re-sent');
+  assert.equal(posts[0].name, 'Default copy');
+  assert.equal(s.c.template().id, 'wf_default-copy', 'the composer now edits the copy — the next Save is in place');
+  assert.equal(s.hostEls.name.value, 'Default copy', 'the header name follows the copy');
+});
+
+test('MAJ-4: a plugin-owned row defaults to Save-a-copy and says why, verbatim', async () => {
+  const posts = [];
+  const s = await open({ api: { saveWorkflow: async (b) => { posts.push(b); return { ok: true, workflow: { id: 'wf_demo-plug-example-flow-copy' } }; } } });
+  s.c.loadTemplate(PLUGIN_ROW());
+  assert.equal(s.c.origin(), 'plugin:demo-plug', 'the composer keeps the row provenance');
+  const dlg = s.c.openSaveDialog();
+  assert.equal(dlg.querySelector('.sd-title').textContent, 'Save a copy');
+  assert.equal(dlg.querySelector('.sd-name').value, 'demo-plug example flow copy');
+  assert.equal(dlg.querySelector('.sd-note').textContent,
+    'This pipeline belongs to plugin "demo-plug" and is replaced on plugin update — saving creates your own copy.');
+  dlg.querySelector('.sd-confirm').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(posts[0].id, undefined, 'the plugin row id is never overwritten');
+  assert.equal(posts[0].name, 'demo-plug example flow copy');
+  // …and the copy, once saved, is an ordinary user row again.
+  assert.equal(s.c.origin(), '', 'markSaved clears the plugin provenance');
+});
+
+test('MAJ-4: an ordinary user row still saves IN PLACE, with no note', async () => {
+  const posts = [];
+  const s = await open({ api: { saveWorkflow: async (b) => { posts.push(b); return { ok: true, workflow: { id: b.id } }; } } });
+  s.c.loadTemplate({ id: 'wf_mine', name: 'Mine', version: 2, domain: 'coding', origin: null,
+    nodes: fixture().nodes, wires: fixture().wires });
+  const dlg = s.c.openSaveDialog();
+  assert.equal(dlg.querySelector('.sd-title').textContent, 'Save pipeline');
+  assert.equal(dlg.querySelector('.sd-name').value, 'Mine');
+  assert.equal(dlg.querySelector('.sd-note'), null);
+  dlg.querySelector('.sd-confirm').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(posts[0].id, 'wf_mine');
+});
+
+test('MAJ-4 · C-3: the dialog renders the server 422/409 refusals verbatim', async () => {
+  const s = await open({ api: { saveWorkflow: async () => ({ ok: false, status: 422, error: 'the name "Default" is reserved — choose another name' }) } });
+  s.c.setName('Default');
+  s.el.save.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  const dlg = s.el.dialogHost.querySelector('dialog.save-dialog');
+  dlg.querySelector('.sd-name').value = 'Default';
+  dlg.querySelector('.sd-confirm').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(dlg.querySelector('.sd-msg').textContent, 'the name "Default" is reserved — choose another name');
+  assert.equal(dlg.querySelector('.sd-msg').className, 'sd-msg err');
+  assert.ok(dlg.hasAttribute('open') || dlg.open, 'the dialog stays open so the name can be fixed');
+
+  const s2 = await open({ api: { saveWorkflow: async () => ({ ok: false, status: 409, error: 'a pipeline with the id "wf_full" already exists — choose another name', id: 'wf_full' }) } });
+  s2.el.save.dispatchEvent(new s2.win.MouseEvent('click', { bubbles: true }));
+  const dlg2 = s2.el.dialogHost.querySelector('dialog.save-dialog');
+  dlg2.querySelector('.sd-name').value = 'Full';
+  dlg2.querySelector('.sd-confirm').dispatchEvent(new s2.win.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(dlg2.querySelector('.sd-msg').textContent, 'a pipeline with the id "wf_full" already exists — choose another name');
+});
