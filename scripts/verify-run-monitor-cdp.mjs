@@ -7,12 +7,45 @@
 // log-filter node axis. NOT part of `npm test`: it needs Chrome and a live
 // server, and it drives a REAL mock pipeline end to end.
 // Run: node scripts/verify-run-monitor-cdp.mjs   (or: npm run verify:run-monitor)
+//
+// -- CI COVERAGE (MAJ-30) ----------------------------------------------------
+// .github/workflows/ci.yml job `cdp` runs this script on every push and every
+// pull request. What remains CDP-only is every measurement and computed style
+// jsdom cannot produce:
+//   STILL CDP-ONLY
+//     (1a)(1b)(1c) .gv-stage === the .run-flow-wrap padding box on all 3 hosts
+//     (2)       the 300px band, node-box containment, 0.3 <= z <= 1
+//     (3)       the 26/22px footer bands and offsetHeight === nodeSize()
+//     (4a)(4b)  computed animationName on a live wire, live and under .settled
+//     (5)       the COMPUTED font-size that hides the composer's <=N pill
+//     (6)       stage-box stability across the wheel sequence
+//     (7)       the measured .nrun / .ngate clearance of the title's em box
+//     (console) the no-page-error gate
+//   NOW ALSO IN test/
+//     (4b) `.rd-graph.settled` live AND terminal -> test/ui-running-detail.test.mjs
+//     (5) the <=N / Nx DOM split + the suppression RULES,
+//     (6) the wheel preventDefault policy + the pan delta,
+//     (7) both ornaments outside .nhead + their negative absolute offsets
+//                                               -> test/ui-graph-interactions.test.mjs
+//     (6) engage / disengage, (8)(8b) the End chip and the quiescence copy,
+//     (9b) the .xrow log narrowing, and the (1*)(2)(3)(4a) CSS text and
+//          band-count math                      -> test/ui-run-hosts.test.mjs
+//     (9a) the node axis on the card bar        -> test/ui-log-filter-node-axis.test.mjs
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-const CHROME = process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+// Chrome is overridable so this proof also runs on a Linux CI runner: CHROME_BIN
+// picks the binary, and headless Chrome refuses to start as root (containers)
+// without --no-sandbox, which CHROME_NO_SANDBOX=1 forces.
+const CHROME_PATHS = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser', '/usr/bin/chromium'];
+const CHROME = process.env.CHROME_BIN || CHROME_PATHS.find((p) => existsSync(p)) || CHROME_PATHS[0];
+const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 0
+  ? ['--no-sandbox', '--disable-dev-shm-usage'] : [];
+if (!existsSync(CHROME)) { console.error(`no Chrome at ${CHROME} - set CHROME_BIN`); process.exit(1); }
 const PORT = Number(process.env.CDP_PORT || 9334);
 const FOOT_H = 26, EXEC_ROW_H = 22;   // geometry.mjs — re-asserted against the page's own import
 const STATIC_HOST_H = 300;            // run-hosts.mjs STATIC_HOST_H (D5), the wrap's BORDER box
@@ -59,7 +92,7 @@ const api = async (p, opt) => {
 
 // ---- chrome + cdp
 profile = await mkdtemp(path.join(tmpdir(), 'worca-rm-profile-'));
-chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
+chrome = spawn(CHROME, ['--headless=new', ...SANDBOX, `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
   '--window-size=1280,900', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
   '--disable-background-timer-throttling', '--disable-renderer-backgrounding', 'about:blank'],
 { stdio: ['ignore', 'pipe', 'pipe'] });

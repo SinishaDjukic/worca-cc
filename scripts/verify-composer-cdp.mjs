@@ -2,14 +2,52 @@
 // scripts/verify-composer-cdp.mjs — headless-Chrome proof of the composer's
 // pointer pipeline (spec §7.11 (1)-(9)). NOT part of `npm test`: it needs Chrome
 // and a live server. Run: node scripts/verify-composer-cdp.mjs
+//
+// -- CI COVERAGE (MAJ-30) ----------------------------------------------------
+// .github/workflows/ci.yml job `cdp` runs this script on every push and every
+// pull request, so these 15 checks now gate a merge. What still has NO test/
+// equivalent -- and therefore dies with the runner's Chrome -- is every
+// assertion that is a MEASUREMENT or a COMPUTED style: jsdom has no layout
+// engine (every getBoundingClientRect there is 0x0) and no style cascade.
+//   STILL CDP-ONLY
+//     (2)       the real getBoundingClientRect count during the move burst
+//     (3a)(3b)  getComputedStyle(ghost).fill, at rest and mid-drag
+//     (4)       real pointer-capture RETARGETING (the port below MODELS it; it
+//               cannot reproduce it)
+//     (6)       stage-box stability across the wheel sequence
+//     (7)       measured post-fit containment of every node box
+//     (10)      the 340px rail, its flush right edge, the pinned filter head and
+//               the single-column pill run
+//     (11)      the legend footer spanning canvas AND rail
+//     (12)      the 22px editor-to-saved-list card gap
+//     (console) the no-page-error gate
+//   NOW ALSO IN test/ (green with no browser at all)
+//     (1), (2) counters, (5), (6) zoom/pan math, (7) fit math, (8) undo + the
+//               blur revert, (11) tab swap   -> test/ui-composer-editor.test.mjs
+//     (4) set/release pairing + a modelled retarget
+//                                            -> test/ui-composer-pointer-capture.test.mjs
+//     (6) wheel preventDefault, (9) middle-button and space+drag pan
+//                                            -> test/ui-graph-interactions.test.mjs
+//     (8) incident-wires-only repaint        -> test/ui-graph-view.test.mjs
+//     (3a)(10)(12) as CSS TEXT only          -> test/ui-graph-css.test.mjs,
+//                                               test/ui-composer-shell.test.mjs
 import { spawn } from 'node:child_process';
 import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const INSET_OPEN = 340;        // composer.mjs INSET_OPEN — the open rail's width
-const CHROME = process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+// Chrome is overridable so this proof also runs on a Linux CI runner: CHROME_BIN
+// picks the binary, and headless Chrome refuses to start as root (containers)
+// without --no-sandbox, which CHROME_NO_SANDBOX=1 forces.
+const CHROME_PATHS = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium-browser', '/usr/bin/chromium'];
+const CHROME = process.env.CHROME_BIN || CHROME_PATHS.find((p) => existsSync(p)) || CHROME_PATHS[0];
+const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 0
+  ? ['--no-sandbox', '--disable-dev-shm-usage'] : [];
+if (!existsSync(CHROME)) { console.error(`no Chrome at ${CHROME} - set CHROME_BIN`); process.exit(1); }
 const PORT = Number(process.env.CDP_PORT || 9333);
 const T0 = Date.now();
 const log = (m) => process.stderr.write(`[${((Date.now() - T0) / 1000).toFixed(1)}s] ${m}\n`);
@@ -38,7 +76,7 @@ log(`server ${base}`);
 
 // ---- chrome + cdp
 profile = await mkdtemp(path.join(tmpdir(), 'worca-cdp-profile-'));
-chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
+chrome = spawn(CHROME, ['--headless=new', ...SANDBOX, `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
   '--window-size=1280,900', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
   '--disable-background-timer-throttling', '--disable-renderer-backgrounding', 'about:blank'],
 { stdio: ['ignore', 'pipe', 'pipe'] });

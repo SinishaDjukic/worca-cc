@@ -893,6 +893,12 @@ test('a run that finishes while its detail is open keeps the page and goes termi
   frame(ctx, { type: 'log', runId: 'r1', source: 'planner', level: 'info', text: 'one', ts: 0, stepIndex: 0, cycle: 1 });
   await settle(window);
   assert.equal(rdBox(window).querySelectorAll('.log-line').length, 1);
+  // MAJ-30: the LIVE half of `.rd-graph.settled`. Only the terminal half was
+  // pinned, so a paintRdTerminal that stamped `settled` unconditionally killed
+  // the marching ants on every running graph with the suite still green — the
+  // ants themselves are asserted only by verify-run-monitor-cdp.mjs check(4a/4b).
+  assert.equal(window.document.querySelector('#run-detail .rd-graph').classList.contains('settled'), false,
+    'a live run never carries .settled');
 
   frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
   await settle(window, 6);

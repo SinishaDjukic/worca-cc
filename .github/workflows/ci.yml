@@ -1,0 +1,82 @@
+name: CI
+
+# Until this file existed the repository had NO branch or pull-request CI at all:
+# the only workflow (release-npm-app.yml) triggers on `push: tags` — so `npm test`
+# gated a publish, never a merge. Tags are left to that workflow; this one gates
+# every branch push and every pull request.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A branch push and its open PR both fire: keep only the newest run per ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: npm test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          # package.json engines: node >=22.13.0 — CI proves the floor.
+          node-version: 22
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # No build step: plain Node ESM plus a vanilla HTML/CSS/JS frontend.
+      # The script points WORCA_HOME at ./.worca-cc-test, so nothing touches a
+      # real home directory, and no test may spawn a live `claude`.
+      # ONE retry, for the known ENOTEMPTY teardown race (test/api-sources and
+      # test/orchestrator-graph occasionally lose a rmdir to a still-open handle;
+      # see the notes beside `test` in package.json). A second failure is real.
+      - name: Run tests
+        run: npm test || (echo "::warning::npm test failed once — retrying for the known ENOTEMPTY teardown flake (see package.json test notes)" && npm test)
+
+  cdp:
+    name: headless-Chrome UI proofs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ubuntu-latest ships Google Chrome preinstalled at /usr/bin/google-chrome,
+      # which is on the scripts' own candidate list. Fail here with a legible
+      # message rather than inside a CDP timeout if that ever stops being true.
+      - name: Locate Chrome
+        run: |
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable || true)"
+          if [ -z "$CHROME" ]; then
+            echo "::error::no Google Chrome on the runner — set CHROME_BIN"
+            exit 1
+          fi
+          echo "chrome: $CHROME ($("$CHROME" --version 2>/dev/null || echo 'version unavailable'))"
+
+      # Each script mints its own WORCA_HOME, its own git project and its own
+      # server on an ephemeral port, and runs the pipeline under WORCA_MOCK=1 —
+      # nothing else has to be provisioned. --no-sandbox is required whenever
+      # headless Chrome runs as root.
+      - name: Composer and run-monitor CDP proofs
+        env:
+          CHROME_NO_SANDBOX: "1"
+        run: npm run verify:composer && npm run verify:run-monitor
