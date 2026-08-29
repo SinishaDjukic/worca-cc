@@ -87,3 +87,27 @@ test('assertRunnableWorkflow: NOT_FOUND, ARCHIVED (verbatim), and the happy path
   });
 });
 
+
+// C-3: writeGraphWorkflow guarded the ASKED id against wf_default but not the
+// MINTED one, so any name slugging to "default" wrote a row listWorkflows()
+// filters out, readWorkflow() short-circuits past and DELETE refuses — the
+// user's pipeline vanished behind a 201.
+test('a name that slugs onto the reserved default id is refused, not silently re-minted', async () => {
+  const count = () => prepare('SELECT COUNT(*) AS n FROM workflows').get().n;
+  const before = count();
+  for (const name of ['Default', '  dEfAuLt  ', 'default!!', 'DEFAULT', '--default--', 'Défault']) {
+    await assert.rejects(
+      () => writeGraphWorkflow({ ...GRAPH, name }),
+      (err) => {
+        assert.equal(err.code, 'RESERVED_NAME', `code for ${JSON.stringify(name)}`);
+        assert.equal(err.message, 'the name "Default" is reserved — choose another name');
+        return true;
+      },
+      `name ${JSON.stringify(name)} must be refused`);
+  }
+  assert.equal(count(), before, 'no row was written for any of them');
+  assert.equal(prepare('SELECT COUNT(*) AS n FROM workflows WHERE id = ?').get('wf_default').n, 0);
+  assert.equal((await listWorkflows()).some((w) => w.id === 'wf_default'), false);
+  // A name that merely CONTAINS "default" is untouched.
+  assert.equal((await writeGraphWorkflow({ ...GRAPH, name: 'de fault' })).id, 'wf_de-fault');
+});

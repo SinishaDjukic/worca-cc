@@ -286,9 +286,18 @@ export async function writeGraphWorkflow(tpl) {
   // The ONE reserved id is the built-in default's; a save may never claim it,
   // so it falls back to the slug.
   const asked = tpl && typeof tpl.id === 'string' ? tpl.id.trim() : '';
-  const id = asked && isSafeWorkflowId(asked) && asked !== GRAPH_DEFAULT_WORKFLOW.id
-    ? asked
-    : `wf_${slugify(name)}`;
+  const minted = !(asked && isSafeWorkflowId(asked) && asked !== GRAPH_DEFAULT_WORKFLOW.id);
+  const id = minted ? `wf_${slugify(name)}` : asked;
+  // C-3: the fallback re-mints the reserved id for ANY name slugging to
+  // "default" ('Default', ' dEfAuLt ', 'default!!', 'Défault'…). That row is
+  // filtered out of listWorkflows(), short-circuited past by readWorkflow() and
+  // refused by DELETE — the user's pipeline would vanish behind a 201. Refuse
+  // the WRITE instead; only the name is wrong, so the caller can rename.
+  if (id === GRAPH_DEFAULT_WORKFLOW.id) {
+    throw Object.assign(
+      new Error(`the name "${GRAPH_DEFAULT_WORKFLOW.name}" is reserved — choose another name`),
+      { code: 'RESERVED_NAME' });
+  }
   const domain = normDomain(tpl && tpl.domain);
   const origin = typeof tpl?.origin === 'string' && tpl.origin ? tpl.origin : null;
   const graph = { nodes: Array.isArray(tpl?.nodes) ? tpl.nodes : [], wires: Array.isArray(tpl?.wires) ? tpl.wires : [] };

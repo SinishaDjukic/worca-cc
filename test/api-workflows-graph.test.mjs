@@ -198,3 +198,23 @@ test('PATCH /api/config still accepts a safe workflowId', async () => {
   assert.equal(r.status, 200);
   assert.deepEqual(r.body.config.workflows['wf_safe-id'].wires, { w1: { maxCycles: 2 } });
 });
+
+// C-3: a save named "Default" used to answer 201 with an invisible, unreadable,
+// undeletable wf_default row. 422 is the same code the shared validator's
+// refusal uses, and the body carries NO issues array so app.js's saveWorkflow
+// hands `error` straight to the save dialog's .sd-msg.
+test('POST /api/workflows refuses a name that slugs onto wf_default with a 422', async () => {
+  const before = prepare('SELECT COUNT(*) AS n FROM workflows').get().n;
+  for (const name of ['Default', '  dEfAuLt  ', 'default!!']) {
+    const r = await api('POST', '/api/workflows', { ...GOOD, name });
+    assert.equal(r.status, 422, `name ${JSON.stringify(name)}`);
+    assert.deepEqual(r.body, { error: 'the name "Default" is reserved — choose another name' });
+    assert.equal(r.body.errors, undefined, 'no issues array: the dialog must render `error` verbatim');
+  }
+  assert.equal(prepare('SELECT COUNT(*) AS n FROM workflows').get().n, before, 'no row was written');
+  assert.equal(prepare('SELECT COUNT(*) AS n FROM workflows WHERE id = ?').get('wf_default').n, 0);
+  const list = await api('GET', '/api/workflows');
+  assert.equal(list.body.workflows.filter((w) => w.id === 'wf_default').length, 1,
+    'only the built-in, still with its own 7 nodes');
+  assert.equal(list.body.workflows.find((w) => w.id === 'wf_default').nodes.length, 7);
+});

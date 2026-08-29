@@ -3282,6 +3282,11 @@ app.post('/api/workflows', async (req, res) => {
     const workflow = await writeGraphWorkflow(graph);
     return res.status(201).json({ workflow, warnings });
   } catch (err) {
+    // C-3: a name that slugs onto the reserved wf_default is a caller error, not
+    // a server fault — 422, the same code the validator's refusal uses. The body
+    // carries NO issues/errors array on purpose: app.js's saveWorkflow maps
+    // `error` straight into the save dialog's message line, verbatim.
+    if (err && err.code === 'RESERVED_NAME') return res.status(422).json({ error: err.message });
     return res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
