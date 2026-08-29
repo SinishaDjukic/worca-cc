@@ -1619,6 +1619,11 @@ let gvComposer = null;
 let gvAgents = [];          // palette list  (GET /api/agents)
 let gvAgentsAll = [];       // ports source  (GET /api/agents?all=1)
 let gvPortsFn = portsFnFor({});
+// These three are written ONLY by gvLoadAgents(), which initComposer() skips on
+// re-entry — so without this flag an agent created or re-ported in the Agents
+// view stayed missing (palette) or stale (portsFn, which then calls a wire the
+// server 422s "clean") for the rest of the page session (MAJ-16).
+let gvAgentsDirty = false;
 
 const gvApi = {
   agents: async () => { const r = await fetchAgents(); return Array.isArray(r) ? r : (r && r.agents) || []; },
@@ -1688,6 +1693,7 @@ async function gvLoadAgents() {
   gvComposer.setReady(false);
   try {
     const [pal, all, cfg] = await Promise.all([gvApi.agents(), gvApi.agentsAll(), gvApi.config()]);
+    gvAgentsDirty = false;                       // cleared only on a SUCCESSFUL load
     gvAgents = pal; gvAgentsAll = all;
     gvPortsFn = portsFnFor(indexByKey(all));
     gvComposer.setModels(cfg);
@@ -1709,7 +1715,14 @@ async function gvLoadAgents() {
 }
 
 async function initComposer() {
-  if (gvComposer) { gvComposer.resume(); await gvRefreshSaved(); gvComposer.fit(); return; }
+  if (gvComposer) {
+    gvComposer.resume();
+    // setAgents()/paintPalette() replace wholesale, so a reload is all it takes.
+    if (gvAgentsDirty) await gvLoadAgents();
+    await gvRefreshSaved();
+    gvComposer.fit();
+    return;
+  }
   gvComposer = createComposer(gvEls(), {
     doc: document, api: gvApi, storage: (() => { try { return window.localStorage; } catch { return null; } })(),
     portsFn: (node) => gvPortsFn(node),
@@ -6040,6 +6053,7 @@ if (typeof window !== 'undefined') {
 function invalidateAgentCaches() {
   state.agents = {};
   agentMetaCache.clear();
+  gvAgentsDirty = true;           // the composer re-reads /api/agents on re-entry
 }
 
 async function loadAgentsList() {

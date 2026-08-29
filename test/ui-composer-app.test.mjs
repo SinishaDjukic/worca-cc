@@ -31,6 +31,9 @@ const DEFAULT_ROW = { id: 'wf_default', name: 'Default', version: 2, domain: 'co
 async function boot({ agentsFail = false, archived = [], workflows = null, del = null } = {}) {
   const rows = workflows || [V2_ROW, V1_ROW];
   const deletes = [];
+  let agentList = AGENTS;
+  let agentsDown = agentsFail;
+  let agentFetches = 0;
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -49,7 +52,10 @@ async function boot({ agentsFail = false, archived = [], workflows = null, del =
       if (at >= 0) rows.splice(at, 1);
       return json({ ok: true });
     }
-    if (url.includes('/api/agents')) return agentsFail ? Promise.reject(new Error('down')) : json({ agents: AGENTS });
+    if (url.includes('/api/agents')) {
+      agentFetches += 1;
+      return agentsDown ? Promise.reject(new Error('down')) : json({ agents: agentList });
+    }
     if (url.includes('/api/workflows?archived=1')) return json({ workflows: archived });
     // GET /api/workflows/<id> — the saved list's Open path reads the full row.
     const one = url.match(/\/api\/workflows\/([^?]+)/);
@@ -67,6 +73,10 @@ async function boot({ agentsFail = false, archived = [], workflows = null, del =
   window.dispatchEvent(new window.Event('hashchange'));
   for (let i = 0; i < 6; i += 1) await new Promise((r) => setTimeout(r, 0));
   window.__deletes = deletes;
+  window.__setAgents = (list) => { agentList = list; };
+  window.__failAgents = (v) => { agentsDown = v; };
+  window.__agentFetches = () => agentFetches;
+  window.__resetAgentFetches = () => { agentFetches = 0; };
   return window;
 }
 
@@ -300,4 +310,102 @@ test('MAJ-4: a plugin-origin row carries a plugin:<name> badge; a user row does 
   assert.equal(badge.title, 'Provided by plugin "demo-plug" — replaced on plugin update');
   assert.equal(doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-origin'), null,
     'a user-created row is not badged');
+});
+
+// -------------------------------------------------------------------- MAJ-16
+// gvAgents/gvAgentsAll/gvPortsFn are written ONLY by gvLoadAgents(), which
+// initComposer() skips on re-entry — so an agent created or re-ported in the
+// Agents view stayed missing/stale in the Composer for the whole page session
+// (dev had `_composerPaletteDirty`; the rebuild dropped it).
+const TESTER = { key: 'tester', displayName: 'Test', domain: 'coding', color: 'green', order: 9, metaVersion: 2,
+  inputs: [{ id: 'done', type: 'md', required: true }],
+  outputs: [{ id: 'report', type: 'md', when: 'always' }] };
+const reenterComposer = async (win) => {
+  win.location.hash = 'running'; win.dispatchEvent(new win.Event('hashchange'));
+  await tick();
+  win.location.hash = 'composer'; win.dispatchEvent(new win.Event('hashchange'));
+  await tick(8);
+};
+
+test('MAJ-16: an agent mutation refreshes the composer palette and portsFn on re-entry', async () => {
+  const win = await boot();
+  const doc = win.document;
+  assert.ok(doc.querySelector('#gv-palette .ap[data-key="planner"]'), 'precondition: planner in the palette');
+  assert.equal(doc.querySelector('#gv-palette .ap[data-key="tester"]'), null, 'precondition: no tester yet');
+  assert.ok(win.__gv().v.ports({ id: 'n1', kind: 'agent', key: 'planner' }).inputs.some((p) => p.id === 'revise'),
+    'precondition: planner has a revise input');
+
+  // The registry gains an agent AND planner loses a port…
+  const planner2 = { ...AGENTS[0], inputs: [{ id: 'task', type: 'md', required: true }] };
+  win.__setAgents([planner2, AGENTS[1], TESTER]);
+  // …and a real agent mutation runs, which is what invalidates the caches.
+  const p = win.__agents.deleteAgentCard(null, { key: 'gone', displayName: 'Gone' });
+  await tick();
+  doc.getElementById('confirm-ok').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  await p;
+
+  // Nothing changes until the composer is re-entered (it is not the live view).
+  await reenterComposer(win);
+  assert.ok(doc.querySelector('#gv-palette .ap[data-key="tester"]'), 'the new agent is in the palette');
+  assert.equal(win.__gv().v.ports({ id: 'n1', kind: 'agent', key: 'planner' }).inputs.some((p2) => p2.id === 'revise'),
+    false, 'portsFn no longer reports the deleted port');
+  assert.equal(doc.querySelectorAll('#gv-canvas .gv-stage').length, 1, 'still mounted exactly once');
+});
+
+test('MAJ-16: a re-entry with no agent mutation does NOT refetch the registry', async () => {
+  const win = await boot();
+  win.__resetAgentFetches();
+  await reenterComposer(win);
+  assert.equal(win.__agentFetches(), 0, 'the palette is only refetched when something invalidated it');
+  // …and one mutation costs exactly one reload, not one per re-entry.
+  const p = win.__agents.deleteAgentCard(null, { key: 'gone', displayName: 'Gone' });
+  await tick();
+  win.document.getElementById('confirm-ok').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  await p;
+  win.__resetAgentFetches();
+  await reenterComposer(win);
+  const afterFirst = win.__agentFetches();
+  assert.ok(afterFirst > 0, 'the invalidated composer reloads once');
+  win.__resetAgentFetches();
+  await reenterComposer(win);
+  assert.equal(win.__agentFetches(), 0, 'and not again on the next re-entry');
+});
+
+test('MAJ-16: a FAILED reload leaves the composer dirty so the next re-entry retries', async () => {
+  const win = await boot();
+  const doc = win.document;
+  win.__setAgents([...AGENTS, TESTER]);
+  const p = win.__agents.deleteAgentCard(null, { key: 'gone', displayName: 'Gone' });
+  await tick();
+  doc.getElementById('confirm-ok').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  await p;
+  win.__failAgents(true);
+  await reenterComposer(win);
+  assert.match(doc.querySelector('#gv-palette').textContent, /Couldn.t load agents/, 'the reload failed');
+  win.__failAgents(false);
+  await reenterComposer(win);
+  assert.ok(doc.querySelector('#gv-palette .ap[data-key="tester"]'), 'the retry lands on the next re-entry');
+});
+
+test('MAJ-16: after a registry reload the OPEN canvas is re-validated against the new ports', async () => {
+  const win = await boot();
+  const doc = win.document;
+  win.__gv().c.loadTemplate({ id: 'wf_loop', name: 'Loop', version: 2, domain: 'coding',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
+      { id: 'n_rev', kind: 'agent', key: 'reviewer', x: 600, y: 0, config: {} }, { id: 'n_end', kind: 'end', x: 900, y: 0, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+      { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_rev', port: 'plan' } },
+      { id: 'w3', from: { node: 'n_rev', port: 'review' }, to: { node: 'n_plan', port: 'revise' } },
+      { id: 'w4', from: { node: 'n_rev', port: 'pass' }, to: { node: 'n_end', port: 'result' } }] });
+  await tick();
+  assert.equal(doc.getElementById('gv-errors').hidden, true, 'precondition: the loop graph is clean');
+  const planner2 = { ...AGENTS[0], inputs: [{ id: 'task', type: 'md', required: true }] };   // `revise` deleted in the Agents view
+  win.__setAgents([planner2, AGENTS[1]]);
+  const p = win.__agents.deleteAgentCard(null, { key: 'gone', displayName: 'Gone' });
+  await tick();
+  doc.getElementById('confirm-ok').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  await p;
+  await reenterComposer(win);
+  assert.equal(doc.getElementById('gv-errors').hidden, false, 'the wire into the deleted port is flagged after the reload');
+  assert.equal(doc.getElementById('gv-save').disabled, true, 'Save is disabled instead of 422ing later');
 });

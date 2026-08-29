@@ -855,7 +855,9 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     gesture: () => gesture,
     isDirty: () => dirty,
     setReady(v) { ready = v; paintChrome(); },
-    setAgents(map) { agents = map || {}; view.setAgents(agents); },
+    // A registry reload (MAJ-16) must re-validate the OPEN canvas: a wire into a
+    // port the Agents view just deleted is an error now, not at the next edit.
+    setAgents(map) { agents = map || {}; view.setAgents(agents); if (tpl.nodes.length) scheduleValidate(); },
     /** Rename: an unsaved edit, so it sets `dirty` — it never clears it. */
     setName(name) { tpl.name = String(name || ''); metaDirty = true; dirty = true; paintChrome(); },
     /** 'plugin:<name>' of the loaded row, '' when user-created. */
