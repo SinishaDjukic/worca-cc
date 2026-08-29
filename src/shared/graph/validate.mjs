@@ -37,6 +37,15 @@ const isObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
  */
 export function validateGraph(tpl, portsFn, opts = {}) {
   const limits = { ...LIMITS, ...(isObject(opts?.limits) ? opts.limits : {}) };
+  // The ceilings are enforced HERE, before anything walks the graph. buildContext
+  // resolves every node's ports and runs classifyLoops -> condensationTopo, which
+  // is O(n^2): on the raw uncapped input a multi-megabyte body blocked the single
+  // event loop for tens of seconds and then answered with an N+3-entry error
+  // array — more bytes out than in. Returning the V1 issue ALONE keeps both the
+  // work and the 422 body O(1). Rule V1 still owns the message (one source), so
+  // the in-limit path is byte-for-byte what it always was.
+  const over = limitIssue(tpl, limits);
+  if (over) return { ok: false, errors: [over], warnings: [] };
   const ctx = buildContext(tpl, portsFn, limits);
   const errors = [];
   const warnings = [];
@@ -51,6 +60,19 @@ export function validateGraph(tpl, portsFn, opts = {}) {
 export function formatIssue(issue) {
   const where = issue?.wireId ? ` (wire ${issue.wireId})` : issue?.nodeId ? ` (node ${issue.nodeId})` : '';
   return `${issue?.code || '?'}: ${issue?.message || ''}${where}`;
+}
+
+/** The ONE structural-ceiling check, shared by validateGraph's pre-pass and rule
+ *  V1. Counts only — it must never touch a node's contents, or it would be the
+ *  very O(n) walk the pre-pass exists to avoid. Returns the V1 issue, or null
+ *  when the template is inside both ceilings. At most ONE issue by design: the
+ *  caller's job is to say "too big", not to enumerate. */
+function limitIssue(template, limits) {
+  const n = Array.isArray(template?.nodes) ? template.nodes.length : 0;
+  const w = Array.isArray(template?.wires) ? template.wires.length : 0;
+  if (n > limits.maxNodes) return { code: 'V1', message: `template has ${n} nodes — the limit is ${limits.maxNodes}` };
+  if (w > limits.maxWires) return { code: 'V1', message: `template has ${w} wires — the limit is ${limits.maxWires}` };
+  return null;
 }
 
 /** Resolve every node's ports ONCE and derive the views the rules read. */
@@ -131,10 +153,11 @@ export const RULES = [
     (Array.isArray(template.wires) ? template.wires : []).forEach((entry, i) => {
       if (!isObject(entry)) add(`wires[${i}] must be an object (got ${JSON.stringify(entry)})`);
     });
-    const n = Array.isArray(template.nodes) ? template.nodes.length : 0;
-    const w = Array.isArray(template.wires) ? template.wires.length : 0;
-    if (n > limits.maxNodes) add(`template has ${n} nodes — the limit is ${limits.maxNodes}`);
-    if (w > limits.maxWires) add(`template has ${w} wires — the limit is ${limits.maxWires}`);
+    // Unreachable through validateGraph (its pre-pass short-circuits an overflow
+    // before any context exists), but the rule keeps OWNING the ceiling so a
+    // caller walking RULES directly still gets it, and so the message has one home.
+    const over = limitIssue(template, limits);
+    if (over) add(over.message);
   } },
 
   { code: 'V2', level: 'E', check({ nodes }, add) {

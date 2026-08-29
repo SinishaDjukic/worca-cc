@@ -254,3 +254,19 @@ test('POST /api/workflows answers 409 when the MINTED id is already taken', asyn
   assert.equal(resave.body.workflow.nodes.length, 4);
   assert.equal(resave.body.workflow.createdAt, first.body.workflow.createdAt, 'createdAt is preserved in place');
 });
+
+// MAJ-2: an oversized POST used to run the O(n^2) loop analysis on the raw body
+// and then answer with an N+3-entry error array (>2x amplification). The 422
+// body is now O(1) whatever the input size.
+test('POST /api/workflows answers ONE V1 issue for an over-limit graph', async () => {
+  const nodes = [...GOOD.nodes];
+  for (let i = 0; i < 500; i++) nodes.push({ id: `n_x${i}`, kind: 'agent', key: 'planner', x: i, y: 0, config: {} });
+  const r = await api('POST', '/api/workflows', { ...GOOD, name: 'Too Big', nodes });
+  assert.equal(r.status, 422);
+  assert.equal(r.body.error, 'invalid graph');
+  assert.equal(r.body.errors.length, 1, `one issue, got ${r.body.errors.length}`);
+  assert.equal(r.body.errors[0].code, 'V1');
+  assert.equal(r.body.errors[0].message, 'template has 503 nodes — the limit is 80');
+  assert.deepEqual(r.body.warnings, []);
+  assert.equal(prepare('SELECT COUNT(*) AS n FROM workflows WHERE id = ?').get('wf_too-big').n, 0);
+});

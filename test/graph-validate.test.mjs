@@ -387,3 +387,48 @@ test('formatIssue names the offending node or wire', () => {
   assert.equal(formatIssue({ code: 'V4', message: 'x', nodeId: 'n1' }), 'V4: x (node n1)');
   assert.equal(formatIssue(null), '?: ');
 });
+
+// MAJ-2: buildContext (port resolution + classifyLoops -> condensationTopo,
+// O(n^2)) used to run on the RAW input and the ceilings were only consulted
+// afterwards inside V1, so an oversized POST blocked the event loop for seconds
+// and then answered with an N+3-entry error array. The ceilings now short-circuit
+// BEFORE any context is built, and the issue list is capped at that one V1.
+test('MAJ-2: an over-limit graph short-circuits to a single V1 error', () => {
+  const over = { ...ok(), nodes: [...ok().nodes, ...Array.from({ length: 3 }, (_, i) => A(`x${i}`, 'clarify'))] };
+  const r = V(over, { limits: { maxNodes: 4, maxWires: 99 } });
+  assert.equal(r.ok, false);
+  assert.equal(r.errors.length, 1, `exactly one issue, got ${JSON.stringify(codes(r.errors))}`);
+  assert.equal(r.errors[0].code, 'V1');
+  assert.equal(r.errors[0].message, 'template has 8 nodes — the limit is 4');
+  assert.deepEqual(r.warnings, [], 'and no warnings ride along');
+
+  const rw = V(ok(), { limits: { maxNodes: 99, maxWires: 2 } });
+  assert.equal(rw.ok, false);
+  assert.equal(rw.errors.length, 1, `exactly one issue, got ${JSON.stringify(codes(rw.errors))}`);
+  assert.equal(rw.errors[0].code, 'V1');
+  assert.equal(rw.errors[0].message, 'template has 6 wires — the limit is 2');
+  assert.deepEqual(rw.warnings, []);
+});
+
+test('MAJ-2: the issue list stays O(1) no matter how big the input is', () => {
+  const nodes = Array.from({ length: 500 }, (_, i) => A(`x${i}`, 'clarify'));
+  const r = V({ ...ok(), nodes }, { limits: { maxNodes: 80, maxWires: 200 } });
+  assert.equal(r.errors.length, 1, 'not 500+, not N+3');
+  assert.equal(r.errors[0].message, 'template has 500 nodes — the limit is 80');
+  const wires = Array.from({ length: 500 }, (_, i) => W(`x${i}`, 'n_task', 'task', 'n_plan', 'task'));
+  const rw = V({ ...ok(), wires }, { limits: { maxNodes: 80, maxWires: 200 } });
+  assert.equal(rw.errors.length, 1);
+  assert.equal(rw.errors[0].message, 'template has 500 wires — the limit is 200');
+});
+
+test('MAJ-2: a graph exactly AT the ceilings still runs the whole rule table', () => {
+  // 5 nodes / 6 wires — the ceilings are met, not exceeded, so nothing is skipped.
+  assert.equal(V(ok(), { limits: { maxNodes: 5, maxWires: 6 } }).ok, true);
+  // ...and the other rules still fire on a same-size graph that is illegal for a
+  // NON-limit reason: a dangling wire endpoint is V5, which only the full pass finds.
+  const dangling = { ...ok(), wires: [...ok().wires.slice(0, 5), W('w6', 'n_rev', 'pass', 'n_missing', 'result')] };
+  const r = V(dangling, { limits: { maxNodes: 5, maxWires: 6 } });
+  assert.equal(r.ok, false);
+  assert.equal(codes(r.errors).includes('V1'), false, 'no bogus V1');
+  assert.ok(r.errors.length > 1, `the full table ran: ${JSON.stringify(codes(r.errors))}`);
+});
