@@ -263,3 +263,71 @@ test('updateAgent reports the saved pipelines a port change strands, and still s
     'saved pipelines reference a removed port: Portee Flow (n_p.plan), Portee Flow (n_p.review)',
   ]);
 });
+
+// ── MIN-19: a base-agent port edit must not strand its workspace variant ───────
+// resolveGraph refuses a workspace run whose variant's port SIGNATURE drifted from
+// its base (workflows.mjs portSignature), and the drift happened in the Agents
+// view minutes earlier: a run-start failure disconnected from its cause. A variant
+// is BY DEFINITION the same ports with a different workspace strategy, so the edit
+// propagates. The variant keeps every field the signature deliberately excludes
+// (`as`, filename, store) — that is what a variant is allowed to differ in.
+const VBASE = {
+  metaVersion: 2, displayName: 'Base Guy', runnerType: 'producer', order: 42,
+  inputs: [{ id: 'plan', type: 'md' }],
+  outputs: [{ id: 'review', type: 'md', filename: 'r.md' }],
+};
+
+test('updateAgent propagates a base port change into its workspace variants', async () => {
+  const { resolveGraph, writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+  const { loadAgentRegistry } = await import('../src/core/agent-registry.mjs');
+  await createAgent({ meta: { ...VBASE, key: 'baseGuy' }, markdown: '# b\n\ntext\n' });
+  // The variant's own description is EMPTY and its .md carries one, so the registry
+  // resolves a DERIVED blurb (descriptionDerived) that no write path may persist.
+  await createAgent({
+    meta: {
+      ...VBASE, key: 'baseGuyWs', displayName: 'Base Guy WS', description: '',
+      scope: 'workspace-only', workspaceVariantOf: 'baseGuy',
+      outputs: [{ id: 'review', type: 'md', filename: 'ws-r.md', store: 'project' }],
+    },
+    markdown: '---\ndescription: from md\n---\n# b\n',
+  });
+  await writeGraphWorkflow({
+    id: 'wf_variant', name: 'V', domain: 'general',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_a', kind: 'agent', key: 'baseGuy', x: 200, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 400, y: 0, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_a', port: 'plan' } },
+      { id: 'w2', from: { node: 'n_a', port: 'review' }, to: { node: 'n_end', port: 'result' } }],
+  });
+  const wsResolve = async () => (await resolveGraph(process.cwd(), 'wf_variant', loadAgentRegistry(), undefined,
+    { isWorkspace: true })).nodes.n_a.key;
+  assert.equal(await wsResolve(), 'baseGuyWs', 'baseline: the variant substitutes');
+
+  const out = await updateAgent('baseGuy', {
+    meta: {
+      ...VBASE, key: 'baseGuy',
+      inputs: [{ id: 'plan', type: 'md' }, { id: 'extra', type: 'json', required: false }],
+    },
+  });
+  assert.deepEqual(out.updatedVariants, ['baseGuyWs']);
+  assert.deepEqual(out.warnings, []);
+  const reg = loadAgentRegistry();
+  assert.deepEqual(reg.baseGuyWs.inputs.map((p) => p.id), ['plan', 'extra'], 'the new port reached the variant');
+  assert.equal(reg.baseGuyWs.outputs[0].filename, 'ws-r.md', 'the variant keeps its OWN filename');
+  assert.equal(reg.baseGuyWs.outputs[0].store, 'project', 'and its own store');
+  assert.equal(reg.baseGuyWs.scope, 'workspace-only');
+  assert.equal(reg.baseGuyWs.workspaceVariantOf, 'baseGuy');
+  assert.equal(reg.baseGuyWs.displayName, 'Base Guy WS', 'identity fields are the variant’s own');
+  assert.equal(reg.baseGuyWs.description, 'from md', 'the registry still RESOLVES the .md blurb');
+  assert.equal(JSON.parse(await readFile(join(userAgentsDir(), 'baseGuyWs.meta.json'), 'utf8')).description, '',
+    'a derived blurb is never baked into the rewritten sidecar');
+  assert.equal(await wsResolve(), 'baseGuyWs', 'the workspace run resolves again');
+});
+
+test('a base with no variants reports an empty updatedVariants list', async () => {
+  await createAgent({ meta: { ...VBASE, key: 'lonelyBase' }, markdown: '# b\n\ntext\n' });
+  const out = await updateAgent('lonelyBase', {
+    meta: { ...VBASE, key: 'lonelyBase', outputs: [{ id: 'other', type: 'md', filename: 'o.md' }] },
+  });
+  assert.deepEqual(out.updatedVariants, []);
+});

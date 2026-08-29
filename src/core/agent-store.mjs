@@ -90,6 +90,78 @@ export async function createAgent({ meta: rawMeta, markdown } = {}) {
   return { meta: { ...meta, origin: 'user' }, markdown };
 }
 
+/** Per-port fields the workspace-variant signature deliberately EXCLUDES
+ *  (workflows.mjs portSignature): a variant may render and store differently, it
+ *  may not fire differently. These survive a propagation; everything else on the
+ *  port comes from the base. */
+const VARIANT_OWN_PORT_FIELDS = ['label', 'description', 'as', 'directive', 'filename', 'store', 'artifactKind'];
+
+/** One side of a variant's ports, rebuilt from the base's: the base decides the
+ *  set, the order and every scheduling field; the variant keeps its own rendering.
+ *  @param {object[]} basePorts @param {object[]} variantPorts */
+function mergeVariantPorts(basePorts, variantPorts) {
+  const mine = new Map((Array.isArray(variantPorts) ? variantPorts : []).map((p) => [p.id, p]));
+  return (Array.isArray(basePorts) ? basePorts : []).map((bp) => {
+    const own = mine.get(bp.id);
+    const out = { ...bp };
+    if (!own) return out;
+    for (const f of VARIANT_OWN_PORT_FIELDS) if (own[f] !== undefined) out[f] = own[f];
+    // A void port carries neither, whatever the variant used to say.
+    if (out.type === 'void') { delete out.filename; delete out.store; delete out.artifactKind; }
+    return out;
+  });
+}
+
+/**
+ * Re-point every USER workspace variant of `key` at the base's new port signature.
+ * A variant is BY DEFINITION the same ports with a different workspace strategy, so
+ * a base port edit that is not propagated makes resolveGraph refuse every workspace
+ * run ("workspace variant X does not match the port signature of Y") at a moment
+ * disconnected from the edit. Non-user variants (builtin/plugin) cannot be written
+ * — they are reported instead. Never throws: a variant that will not validate after
+ * the merge is left untouched and reported.
+ * @param {string} key the edited base key
+ * @param {object} baseMeta the base's NEW normalized meta
+ * @param {string} dir the writable user layer
+ * @returns {Promise<{updated:string[], warnings:string[]}>}
+ */
+async function propagateToVariants(key, baseMeta, dir) {
+  const updated = [];
+  const warnings = [];
+  for (const variant of Object.values(loadAgentRegistry())) {
+    if (!variant || variant.workspaceVariantOf !== key) continue;
+    if (variant.origin !== 'user') {
+      warnings.push(`workspace variant "${variant.key}" (${variant.origin}) still declares the old ports `
+        + '— workspace runs using it will be refused until it is updated');
+      continue;
+    }
+    const raw = {
+      ...variant,
+      inputs: mergeVariantPorts(baseMeta.inputs, variant.inputs),
+      outputs: mergeVariantPorts(baseMeta.outputs, variant.outputs),
+    };
+    // Boolean(verdict) IS part of the signature; its filename is not. Copying the
+    // base's verdict into a variant that had none also copies the base's filename
+    // TEMPLATE, so the variant writes its verdict there — correct for the
+    // `{base}`-tokenised names every shipped verifier uses; a hardcoded one would
+    // need re-pointing by hand.
+    if (baseMeta.verdict && !variant.verdict) raw.verdict = { ...baseMeta.verdict };
+    if (!baseMeta.verdict) delete raw.verdict;
+    if (variant.descriptionDerived) raw.description = '';   // never persist a derived blurb (agent-store.mjs:114)
+    delete raw.origin; delete raw.agentPath; delete raw.descriptionDerived;
+    const issues = validateMetaV2(raw).errors;
+    const merged = issues.length ? null : normalizeMeta(raw);
+    if (!merged) {
+      warnings.push(`workspace variant "${variant.key}" could not adopt the new ports `
+        + `(${issues.join('; ') || 'invalid agent metadata'}) — re-point it by hand`);
+      continue;
+    }
+    await writeFile(join(dir, `${variant.key}.meta.json`), JSON.stringify(merged, null, 2) + '\n', 'utf8');
+    updated.push(variant.key);
+  }
+  return { updated: updated.sort(), warnings };
+}
+
 /**
  * Saved-template wires that the NEW port set of `key` no longer satisfies:
  * `["<workflow name> (<nodeId>.<portId>)", …]`. A port rename/removal is NOT
@@ -161,10 +233,12 @@ export async function updateAgent(key, { meta: rawMeta, markdown } = {}) {
   const body = typeof markdown === 'string'
     ? markdown
     : await readFile(join(dir, `${key}.md`), 'utf8').catch(() => '');
-  // Always present, possibly empty: the Agents view reads `warnings` unconditionally.
+  // Always present, possibly empty: the Agents view reads both unconditionally.
   const stale = stalePortRefs(await listWorkflows({ includeArchived: true }), key, meta);
   const warnings = stale.length ? [`saved pipelines reference a removed port: ${stale.join(', ')}`] : [];
-  return { meta: { ...meta, origin: 'user' }, markdown: body, warnings };
+  const variants = await propagateToVariants(key, meta, dir);
+  warnings.push(...variants.warnings);
+  return { meta: { ...meta, origin: 'user' }, markdown: body, warnings, updatedVariants: variants.updated };
 }
 
 /** Delete a USER agent; REFERENCED (409) while a saved workflow uses the key. */

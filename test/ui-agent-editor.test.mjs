@@ -212,3 +212,25 @@ test('a PUT that returns warnings surfaces them beside the save confirmation', a
     'Agent saved. saved pipelines reference a removed port: Docs Flow (n_d.review)');
   assert.equal(msg.className, 'form-msg warn', 'a saved-with-caveats banner is not an error');
 });
+
+// MIN-19 (UI half): propagating a port change to a workspace variant is a SUCCESS,
+// not a caveat — the banner names the variants and stays green.
+test('a PUT that updated workspace variants names them and stays an ok banner', async () => {
+  const { window } = await boot({ fetchHandler: (u, opts) => {
+    if (u.includes('/api/agents/docsWriter') && opts && opts.method === 'PUT') {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({
+        meta: { key: 'docsWriter' }, markdown: '# b\n', warnings: [], updatedVariants: ['docsWriterWs'],
+      }) });
+    }
+    return null;
+  } });
+  await goAgents(window);
+  const card = window.document.querySelector('.agent-card[data-agent-key="docsWriter"]');
+  click(window, card.querySelector('.agent-edit'));
+  await new Promise((r) => setTimeout(r, 0));
+  click(window, card.querySelector('.agent-edit-save'));
+  await new Promise((r) => setTimeout(r, 0));
+  const msg = window.document.querySelector('#agents-msg');
+  assert.equal(msg.textContent, 'Agent saved. Workspace variants updated: docsWriterWs.');
+  assert.equal(msg.className, 'form-msg ok');
+});

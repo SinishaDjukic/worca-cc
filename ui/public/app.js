@@ -6824,10 +6824,15 @@ async function saveAgentEdit(card, a, pane) {
     if (!res.ok) { msg.textContent = data.error || `HTTP ${res.status}`; msg.className = 'agent-edit-msg form-msg err'; return; }
     pane.hidden = true;
     invalidateAgentCaches();
-    // The save SUCCEEDED; `warnings` names the saved pipelines this port change
-    // stranded (the run gate refuses them until they are re-wired). Not an error.
+    // The save SUCCEEDED. `updatedVariants` is the workspace variants this port
+    // change was propagated into (a success); `warnings` names the saved pipelines
+    // it stranded — the run gate refuses those until they are re-wired.
     const warns = Array.isArray(data.warnings) ? data.warnings : [];
-    setAgentsMsg(warns.length ? `Agent saved. ${warns.join(' ')}` : 'Agent saved.', warns.length ? 'warn' : 'ok');
+    const variants = Array.isArray(data.updatedVariants) ? data.updatedVariants : [];
+    const parts = ['Agent saved.'];
+    if (variants.length) parts.push(`Workspace variants updated: ${variants.join(', ')}.`);
+    parts.push(...warns);
+    setAgentsMsg(parts.join(' '), warns.length ? 'warn' : 'ok');
     await loadAgentsView();
   } catch (err) { msg.textContent = err.message; msg.className = 'agent-edit-msg form-msg err'; }
 }
