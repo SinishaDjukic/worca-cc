@@ -950,3 +950,78 @@ test('History: the header meta carries the End chip and the Overview the counts 
   assert.match(sec.querySelector('.hd-ov-card-duration .hd-ov-sub').textContent, /^\d+ steps? · \d+ cycles?$/, 'v1 keeps its steps · cycles line');
   assert.equal(sec.querySelector('.hd-ov-note'), null);
 });
+
+// -------------------------------------------------------------------- MAJ-20
+// setFooter used to `.remove()` every .xfoot and rebuild it, so the run
+// monitor's ONE interactive footer control was destroyed on every decor
+// generation (r._decorSeq bumps on each `state`/`subagent` event). A keyboard
+// user's focus landed on <body>, and a pointerdown→pointerup straddling a
+// repaint produced no click. A dataset.sig diff cannot fix the EXPANDED node —
+// its exec rows carry a live `dur` — so the fix is element reuse.
+test('MAJ-20: a repaint with an equal-but-new decor bag reuses the footer elements and keeps focus', () => {
+  const { view, host, window } = mountView();
+  const st = RUN({
+    steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, kind: 'cycle', status: 'done', activeMs: 63000, costUsd: 0.12 }],
+    wireDeliveries: { w1: 1 },
+  });
+  applyDecor(view, decorFromState(st, { live: true, now: 0 }));
+  const card = host.querySelector('[data-node-id="n_a"]');
+  const foot1 = card.querySelector('.xfoot');
+  const toggle1 = card.querySelector('.xtoggle');
+  toggle1.focus();
+  assert.equal(window.document.activeElement, toggle1, 'precondition: the toggle has focus');
+  applyDecor(view, decorFromState(st, { live: true, now: 0 }));          // a NEW bag, equal contents
+  assert.equal(card.querySelector('.xfoot'), foot1, '.xfoot identity preserved');
+  assert.equal(card.querySelector('.xtoggle'), toggle1, '.xtoggle identity preserved');
+  assert.equal(window.document.activeElement, toggle1, 'focus stayed on the toggle');
+});
+
+test('MAJ-20: an expanded node keeps its rows across a repaint and still updates their text', () => {
+  const { view, host, window } = mountView();
+  const base = {
+    steps: [
+      { key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, kind: 'cycle', status: 'done', activeMs: 63000, costUsd: 0.12 },
+      { key: 'x:n_a:2', executionId: 'x:n_a:2', nodeId: 'n_a', ordinal: 2, kind: 'cycle', status: 'start', activeMs: 4000, costUsd: 0 },
+    ],
+    active: [{ nodeId: 'n_a', executionId: 'x:n_a:2' }],
+  };
+  applyDecor(view, { ...decorFromState(RUN(base), { live: false }), expanded: 'n_a' });
+  const card = host.querySelector('[data-node-id="n_a"]');
+  const rows1 = [...card.querySelectorAll('.xrow')];
+  assert.equal(rows1.length, 2, 'precondition: expanded');
+  const toggle1 = card.querySelector('.xtoggle');
+  toggle1.focus();
+  const right0 = rows1[1].querySelector('.xr').textContent;
+  // the SAME executions, one second later: only the live duration moved
+  const later = { ...base, steps: [base.steps[0], { ...base.steps[1], activeMs: 9000 }] };
+  applyDecor(view, { ...decorFromState(RUN(later), { live: false }), expanded: 'n_a' });
+  const rows2 = [...card.querySelectorAll('.xrow')];
+  assert.deepEqual(rows2, rows1, 'every .xrow element is the SAME node, keyed by executionId');
+  assert.equal(card.querySelector('.xtoggle'), toggle1);
+  assert.equal(window.document.activeElement, toggle1, 'focus survives an expanded repaint');
+  assert.equal(card.querySelector('.xtoggle').getAttribute('aria-expanded'), 'true', 'still expanded');
+  assert.notEqual(rows2[1].querySelector('.xr').textContent, right0, 'the live duration DID update in place');
+  assert.match(rows2[1].querySelector('.xr').textContent, /9s/);
+});
+
+test('MAJ-20: rows that vanish are removed, new ones are appended in order, and a collapse drops them', () => {
+  const { view, host } = mountView();
+  const one = { steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, kind: 'cycle', status: 'done', activeMs: 1000, costUsd: 0.1 }] };
+  applyDecor(view, { ...decorFromState(RUN(one), { live: false }), expanded: 'n_a' });
+  const card = host.querySelector('[data-node-id="n_a"]');
+  const row1 = card.querySelector('.xrow');
+  const two = { steps: [one.steps[0], { key: 'x:n_a:2', executionId: 'x:n_a:2', nodeId: 'n_a', ordinal: 2, kind: 'cycle', status: 'start', activeMs: 2000, costUsd: 0 }],
+    active: [{ nodeId: 'n_a', executionId: 'x:n_a:2' }] };
+  applyDecor(view, { ...decorFromState(RUN(two), { live: false }), expanded: 'n_a' });
+  const rows = [...card.querySelectorAll('.xrow')];
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0], row1, 'the first row was reused, not rebuilt');
+  assert.deepEqual(rows.map((r) => r.dataset.executionId), ['x:n_a:1', 'x:n_a:2'], 'appended in order');
+  assert.deepEqual([...card.querySelectorAll('.xfoot > *')].map((n) => n.className.split(' ')[0]), ['xtoggle', 'xrow', 'xrow']);
+  // collapse: the rows go, the toggle stays the same element
+  const toggle = card.querySelector('.xtoggle');
+  applyDecor(view, { ...decorFromState(RUN(two), { live: false }), expanded: null });
+  assert.equal(card.querySelectorAll('.xrow').length, 0);
+  assert.equal(card.querySelector('.xtoggle'), toggle, 'the toggle is never rebuilt by a collapse');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+});

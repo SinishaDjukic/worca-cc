@@ -256,6 +256,60 @@ export function createGraphView(host, {
     return res;
   }
 
+  /** The identity of a band ACROSS repaints. `exec` is keyed by its execution,
+   *  the three singletons by their kind — so the strip's <button> survives every
+   *  decor generation (MAJ-20). */
+  const bandKey = (band) => (band.kind === 'exec' ? `exec|${band.executionId || ''}` : band.kind);
+
+  /** Update an EXISTING band element in place. Returns false when the element's
+   *  shape cannot express the new band (a different led count on a fan, a result
+   *  gaining or losing its link) and the caller must rebuild it. Nothing here is
+   *  focusable except the strip's own <button>, which is only ever written to —
+   *  never replaced. */
+  function syncBand(el, band) {
+    if (band.kind === 'fan') {
+      const leds = band.leds || [];
+      const cur = el.querySelectorAll(':scope > .sq');
+      if (cur.length !== leds.length) return false;
+      leds.forEach((led, i) => { const c = `sq${led === 'run' ? ' on' : ''}`; if (cur[i].className !== c) cur[i].className = c; });
+      const fl = el.querySelector(':scope > .fl');
+      const txt = `×${band.count}`;
+      if (fl && fl.textContent !== txt) fl.textContent = txt;
+      return true;
+    }
+    if (band.kind === 'strip') {
+      const exp = band.expanded ? 'true' : 'false';
+      if (el.getAttribute('aria-expanded') !== exp) el.setAttribute('aria-expanded', exp);
+      const sq = el.querySelector(':scope > .xsq');
+      const leds = band.leds || [];
+      const cur = sq.querySelectorAll(':scope > .xq');
+      if (cur.length !== leds.length) sq.replaceChildren(...leds.map((led) => h('i', `xq is-${led}`)));
+      else leds.forEach((led, i) => { const c = `xq is-${led}`; if (cur[i].className !== c) cur[i].className = c; });
+      const sum = el.querySelector(':scope > .xsum');
+      const t = band.summary || '';
+      if (sum && sum.textContent !== t) sum.textContent = t;
+      return true;
+    }
+    if (band.kind === 'exec') {
+      const cls = `xrow is-${band.led || 'pending'}`;
+      if (el.className !== cls) el.className = cls;
+      const l = el.querySelector(':scope > .xl');
+      const r = el.querySelector(':scope > .xr');
+      const lt = band.label || '';
+      const rt = band.right || '';
+      if (l && l.textContent !== lt) l.textContent = lt;
+      if (r && r.textContent !== rt) r.textContent = rt;
+      return true;
+    }
+    const a = el.querySelector(':scope > a');            // kind: 'result'
+    if (Boolean(band.path) !== Boolean(a)) return false;
+    const txt = band.text || '';
+    if (!a) { if (el.textContent !== txt) el.textContent = txt; return true; }
+    if (a.textContent !== txt) a.textContent = txt;
+    if (a.dataset.path !== band.path) { a.dataset.path = band.path; a.title = band.path; }
+    return true;
+  }
+
   function paintCard(el, node) {
     const p = portsAt(node);
     const orType = node.kind === 'or' ? resolveOrOutType(current, portsFn, node.id, new Set()) : null;
@@ -474,23 +528,68 @@ export function createGraphView(host, {
       }
       if (status) el.dataset.status = status; else delete el.dataset.status;
     },
-    /** Replace the executions footer with `bands` (the run monitor's vocabulary,
+    /** Reconcile the executions footer to `bands` (the run monitor's vocabulary,
      *  see the Interfaces block) and RE-SIZE the card from the band count. Anchors
      *  are top-relative, so no wire re-routes (D8) — only height, hit box and fit
-     *  bounds change. The ONE place a run-mode card height is written. */
+     *  bounds change. The ONE place a run-mode card height is written.
+     *
+     *  REUSE, never rebuild (MAJ-20): applyDecor calls this for every node on
+     *  every decor generation, and the strip is a real <button> — the run
+     *  monitor's only interactive footer control. Rebuilding it moved a keyboard
+     *  user's focus to <body> (so the strip could not be expanded by keyboard at
+     *  all on a live run) and swallowed any click whose down/up straddled a
+     *  repaint. A dataset.sig diff is not enough: an expanded node's exec rows
+     *  carry a live duration, so its footer changes on every tick and would
+     *  rebuild anyway. Elements are therefore keyed by bandKey() and written in
+     *  place; only a band that vanished is removed. */
     setFooter(nodeId, bands) {
       const node = ctx && ctx.byId.get(nodeId);
       const el = nodeEls.get(nodeId);
       if (!node || !el) return;
       const list = Array.isArray(bands) ? bands.filter(Boolean) : [];
-      for (const stale of el.querySelectorAll(':scope > .xfoot')) stale.remove();
-      if (list.length) {
-        const foot = h('div', 'xfoot');
+      const feet = el.querySelectorAll(':scope > .xfoot');
+      let foot = feet[0] || null;
+      for (const stale of feet) if (stale !== foot) stale.remove();   // a card owns ONE footer
+      if (!list.length) {
+        if (foot) foot.remove();
+        footers.delete(nodeId);
+        el.style.height = `${sizeOf(node).h}px`;
+        return;
+      }
+      if (!foot) {
+        foot = h('div', 'xfoot');
         foot.dataset.nodeId = nodeId;
-        for (const band of list) foot.appendChild(bandEl(nodeId, band));
         el.appendChild(foot);
       }
-      if (list.length) footers.set(nodeId, list.length); else footers.delete(nodeId);
+      // Index what is already there; a duplicate key cannot be reused twice.
+      const have = new Map();
+      for (const kid of [...foot.children]) {
+        const k = kid.dataset.bandKey;
+        if (k && !have.has(k)) have.set(k, kid); else kid.remove();
+      }
+      let i = 0;
+      for (const band of list) {
+        const key = bandKey(band);
+        let kid = have.get(key) || null;
+        if (kid) {
+          have.delete(key);
+          if (!syncBand(kid, band)) {
+            const next = bandEl(nodeId, band);
+            next.dataset.bandKey = key;
+            kid.replaceWith(next);
+            kid = next;
+          }
+        } else {
+          kid = bandEl(nodeId, band);
+          kid.dataset.bandKey = key;
+        }
+        // Only ever moves when the band ORDER changed; the steady state (and an
+        // expand, which appends) leaves every element exactly where it is.
+        if (foot.children[i] !== kid) foot.insertBefore(kid, foot.children[i] || null);
+        i += 1;
+      }
+      for (const gone of have.values()) gone.remove();
+      footers.set(nodeId, list.length);
       el.style.height = `${sizeOf(node).h}px`;
     },
     /** Per-card ornaments: agent colour, gate pip, header duration · cost. */
