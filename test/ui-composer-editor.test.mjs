@@ -638,3 +638,73 @@ test('MAJ-19: the modal guard is not over-broad — closed overlays leave the ke
   keyOn(s, s.doc, 'Backspace');
   assert.equal(s.c.template().nodes.some((n) => n.id === 'n_task'), false, 'an open non-modal Ask sheet leaves the keyboard live');
 });
+
+// --------------------------------------------------------------------- MAJ-6
+// "New canvas" and a saved row's "Open" replace the canvas AND wipe the undo
+// ring, so unsaved work is unrecoverable. Both now ask through the injected
+// `hooks.confirmDiscard` seam; an ABSENT hook proceeds, which is what keeps
+// every headless caller (unit tests, the CDP probe) behaving as before.
+test('MAJ-6: a refused confirmDiscard leaves the canvas, the undo ring and the dirty flag untouched', async () => {
+  const s = await open();
+  let asked = 0;
+  s.c.hooks.confirmDiscard = async () => { asked += 1; return false; };
+  s.c.spawn({ key: 'planner' });
+  const nodes = s.c.template().nodes.length;
+  const depth = s.c.undoDepth();
+  assert.equal(s.c.isDirty(), true, 'precondition: dirty');
+  assert.ok(depth > 0, 'precondition: undo has the spawn');
+  s.hostEls.newBtn.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(asked, 1, 'New canvas asked');
+  assert.equal(s.c.template().nodes.length, nodes, 'canvas untouched');
+  assert.equal(s.c.undoDepth(), depth, 'undo ring untouched');
+  assert.equal(s.c.isDirty(), true, 'still dirty');
+  assert.equal(await s.c.openTemplate({ id: 'wf_x', name: 'X', version: 2, nodes: [], wires: [] }), null,
+    'Open refused returns null');
+  assert.equal(asked, 2, 'Open asked too');
+  assert.equal(s.c.template().nodes.length, nodes, 'canvas still untouched');
+  assert.equal(s.c.undoDepth(), depth);
+});
+
+test('MAJ-6: an accepted confirmDiscard proceeds; a clean canvas never asks; no hook proceeds', async () => {
+  const s = await open();
+  let asked = 0;
+  s.c.hooks.confirmDiscard = async () => { asked += 1; return true; };
+  s.hostEls.newBtn.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(asked, 0, 'a CLEAN canvas is never guarded');
+  s.c.spawn({ key: 'planner' });
+  assert.equal(s.c.isDirty(), true);
+  s.hostEls.newBtn.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(asked, 1);
+  assert.equal(s.c.template().nodes.length, 2, 'back to the bare Task/End canvas');
+  assert.equal(s.c.undoDepth(), 0);
+  assert.equal(s.c.isDirty(), false);
+  // no hook at all => proceed (the headless default)
+  const s2 = await open();
+  s2.c.spawn({ key: 'planner' });
+  assert.equal(s2.c.isDirty(), true);
+  s2.hostEls.newBtn.dispatchEvent(new s2.win.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(s2.c.template().nodes.length, 2, 'no hook installed => New canvas proceeds');
+});
+
+test('MAJ-6: a confirmDiscard that throws is treated as "no" — the work survives', async () => {
+  const s = await open();
+  s.c.hooks.confirmDiscard = async () => { throw new Error('modal blew up'); };
+  s.c.spawn({ key: 'planner' });
+  const nodes = s.c.template().nodes.length;
+  s.hostEls.newBtn.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(s.c.template().nodes.length, nodes, 'a broken hook never costs the user the canvas');
+});
+
+test('MAJ-6: loadTemplate stays SYNCHRONOUS and unguarded (the programmatic model API)', async () => {
+  const s = await open();
+  s.c.hooks.confirmDiscard = async () => false;
+  s.c.spawn({ key: 'planner' });
+  const t = s.c.loadTemplate({ id: 'wf_p', name: 'P', version: 2, domain: '', nodes: [], wires: [] });
+  assert.equal(t.id, 'wf_p', 'returns the template, not a promise');
+  assert.equal(s.c.template().id, 'wf_p');
+});

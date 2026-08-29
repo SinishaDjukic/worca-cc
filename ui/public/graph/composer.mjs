@@ -774,7 +774,24 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     if (validateTimer) { clearTimeout(validateTimer); validateTimer = null; }
   }
 
-  /** Load a saved template (or `null` for a fresh canvas). Resets undo + dirty. */
+  /** The unsaved-work gate for the two entry points that REPLACE the canvas and
+   *  wipe the undo ring, so the work is unrecoverable (MAJ-6). `confirmDiscard`
+   *  is an injected hook — app.js installs its confirmModal — and an ABSENT hook
+   *  PROCEEDS, which is what keeps every headless caller (unit tests, the CDP
+   *  probe) behaving exactly as it did. A hook that throws counts as "no":
+   *  losing the answer must never lose the graph.
+   *  @returns {Promise<boolean>} true to go ahead. */
+  async function guardDiscard() {
+    if (!dirty) return true;
+    const ask = hooks.confirmDiscard;
+    if (typeof ask !== 'function') return true;
+    try { return Boolean(await ask()); } catch { return false; }
+  }
+
+  /** Load a saved template (or `null` for a fresh canvas). Resets undo + dirty.
+   *  SYNCHRONOUS and UNGUARDED on purpose: this is the programmatic model API
+   *  (tests, the CDP probe, initComposer's first paint). Every path a USER can
+   *  click goes through newCanvas()/openTemplate(), which ask first. */
   function loadTemplate(next) {
     tpl = next ? normalizeTemplate(next) : emptyCanvas();
     sel = null;
@@ -795,7 +812,12 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     spawn, paintPalette, paintInspector,
     openSaveDialog, setSavedDomains(list) { savedDomains = list || []; },
     setModels(cfg) { modelsSet = true; applyModels(cfg || {}); },
-    newCanvas: () => loadTemplate(null),
+    /** The header's New-canvas button. Asks before discarding (MAJ-6).
+     *  @returns {Promise<object|null>} the new template, or null when refused. */
+    newCanvas: async () => ((await guardDiscard()) ? loadTemplate(null) : null),
+    /** The saved list's Open. Asks before discarding (MAJ-6).
+     *  @returns {Promise<object|null>} the loaded template, or null when refused. */
+    openTemplate: async (next) => ((await guardDiscard()) ? loadTemplate(next) : null),
     template: () => tpl,
     serialize: () => serializeTemplate(tpl),
     report: () => lastReport,

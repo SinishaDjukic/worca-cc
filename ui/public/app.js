@@ -1703,6 +1703,16 @@ async function initComposer() {
   gvComposer.mount();
   gvComposer.newCanvas();
   gvComposer.hooks.onSaved = () => { gvRefreshSaved(); };
+  // MAJ-6: New canvas and a saved row's Open replace the canvas AND clear the
+  // undo ring, so the work cannot be brought back with ⌘Z. The composer owns
+  // the "is it dirty" half; the app owns the ASKING, through the same
+  // confirmModal every other destructive action in this file uses.
+  gvComposer.hooks.confirmDiscard = () => confirmModal({
+    title: 'Discard unsaved changes?',
+    message: 'This pipeline has edits you have not saved.\n\nReplacing the canvas discards them and clears the undo history.',
+    confirmLabel: 'Discard',
+    danger: true,
+  });
   // Renaming marks the canvas DIRTY (it is an unsaved edit) — never markSaved().
   gvEls().name.addEventListener('change', (e) => gvComposer.setName(e.target.value));
   await gvLoadAgents();
@@ -1758,7 +1768,10 @@ async function gvRefreshSaved() {
       open.type = 'button'; open.className = 'btn-ghost pl-open'; open.textContent = 'Open';
       open.addEventListener('click', async () => {
         const full = await gvApi.readWorkflow(wf.id);
-        if (full) { gvComposer.loadTemplate(full); gvComposer.fit(); }
+        if (!full) return;
+        // openTemplate resolves null when the discard guard was refused — the
+        // canvas (and the undo ring) must then be left exactly as they were.
+        if (await gvComposer.openTemplate(full)) gvComposer.fit();
       });
       const del = document.createElement('button');
       del.type = 'button'; del.className = 'pl-del'; del.textContent = '×';

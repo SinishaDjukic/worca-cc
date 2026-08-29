@@ -36,6 +36,9 @@ async function boot({ agentsFail = false, archived = [] } = {}) {
     const url = String(u);
     if (url.includes('/api/agents')) return agentsFail ? Promise.reject(new Error('down')) : json({ agents: AGENTS });
     if (url.includes('/api/workflows?archived=1')) return json({ workflows: archived });
+    // GET /api/workflows/<id> — the saved list's Open path reads the full row.
+    const one = url.match(/\/api\/workflows\/([^?]+)/);
+    if (one) return json([V2_ROW, V1_ROW].find((w) => w.id === decodeURIComponent(one[1])) || null, one ? 200 : 404);
     if (url.includes('/api/workflows')) return json({ workflows: [V2_ROW, V1_ROW] });
     if (url.includes('/api/config')) return json({ config: { steps: {}, customModels: [] }, models: [], efforts: [] });
     return json({ projects: [], runs: [] });
@@ -156,4 +159,56 @@ test('the loop caption names an OR flow card "OR", never its raw n_or id', async
     'OR \u2190 Manual web UI testing',
   ]);
   assert.equal(rows.some((r) => /n_/.test(r.label)), false, 'no raw node id reaches the caption');
+});
+
+// --------------------------------------------------------------------- MAJ-6
+// The two user paths that replace the canvas and wipe the undo ring must ask
+// first. app.js installs composer.hooks.confirmDiscard from its own
+// confirmModal, so the assertion is on the REAL #confirm-modal overlay.
+const modalUp = (doc) => !doc.getElementById('confirm-modal').classList.contains('hidden');
+
+test('MAJ-6: the saved list\'s Open asks before discarding unsaved edits', async () => {
+  const win = await boot();
+  const doc = win.document;
+  const c = win.__gv().c;
+  c.spawn({ key: 'planner' });
+  const nodes = c.template().nodes.length;
+  const depth = c.undoDepth();
+  assert.equal(c.isDirty(), true, 'precondition: dirty');
+  doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-open')
+    .dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
+  assert.equal(modalUp(doc), true, 'the confirm modal is up');
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Discard unsaved changes?');
+  assert.equal(doc.getElementById('confirm-ok').textContent, 'Discard');
+  doc.getElementById('confirm-cancel').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
+  assert.equal(c.template().nodes.length, nodes, 'Cancel keeps the canvas');
+  assert.equal(c.undoDepth(), depth, 'Cancel keeps the undo ring');
+  assert.equal(c.isDirty(), true);
+  // …and Confirm goes through.
+  doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-open')
+    .dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
+  doc.getElementById('confirm-ok').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
+  assert.equal(c.template().id, 'wf_g', 'Discard loads the row');
+  assert.equal(c.undoDepth(), 0);
+});
+
+test('MAJ-6: the New-canvas header button asks too, and a clean canvas never does', async () => {
+  const win = await boot();
+  const doc = win.document;
+  const c = win.__gv().c;
+  doc.getElementById('gv-new').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
+  assert.equal(modalUp(doc), false, 'a clean canvas is never guarded');
+  c.spawn({ key: 'planner' });
+  const nodes = c.template().nodes.length;
+  doc.getElementById('gv-new').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
+  assert.equal(modalUp(doc), true, 'a dirty canvas asks');
+  doc.getElementById('confirm-cancel').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
+  assert.equal(c.template().nodes.length, nodes, 'Cancel keeps the work');
 });
