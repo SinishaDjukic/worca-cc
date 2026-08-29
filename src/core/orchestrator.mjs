@@ -348,7 +348,7 @@ export class GraphOrchestrator extends RunHarness {
 
   /**
    * The scheduler's ask channel (P3 `onAsk`). A gate ask arrives as
-   * `{ id:'gate-<wireId>-<deliveryNo>', kind:'gate', wireId, nodeId, executionId, issues }`
+   * `{ id:'gate-<wireId>-<deliveryNo>[-h<holdNo>]', kind:'gate', wireId, nodeId, executionId, issues, deliveryNo, holdNo }`
    * and is answered 'another' | 'continue'. It rides the SAME serialized ask
    * queue as recovery prompts and step questions, so only ONE prompt is ever
    * open, and answers arrive through the unchanged POST /api/answer {id} path

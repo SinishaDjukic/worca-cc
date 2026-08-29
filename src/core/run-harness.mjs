@@ -2339,7 +2339,7 @@ export class RunHarness extends EventEmitter {
    * Freezes the active-time clock while blocked on the user (active-time-only).
    * @returns {Promise<any>} the answer payload
    */
-  async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId }) {
+  async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo }) {
     this._checkAbort();
     // No interactive prompt may OPEN on a pausing run. pause() rejects only the
     // prompt that is currently open; a queued ask (a parallel sibling's questions
@@ -2365,6 +2365,11 @@ export class RunHarness extends EventEmitter {
       id, kind, questions, issues, recovery, agent, nodeId,
       ...(wireId != null ? { wireId } : {}),           // v2 gates name their wire
       ...(executionId != null ? { executionId } : {}), // v2 asks name their execution
+      // A gate's CYCLE and hold ordinal. The id is opaque (a re-hold suffixes
+      // `-h<holdNo>`), so every consumer — the CLI header, the monitor, the audit
+      // trail — reads these fields instead of parsing the id (MAJ-11).
+      ...(deliveryNo != null ? { deliveryNo } : {}),
+      ...(holdNo != null ? { holdNo } : {}),
     });
 
     try {

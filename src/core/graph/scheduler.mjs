@@ -671,6 +671,12 @@ export function createScheduler(opts) {
       nodeId: entry.nodeId,
       executionId: entry.executionId,
       issues: entry.issues,
+      // The CYCLE this hold stands in for, and WHICH hold it is. Both ride the
+      // payload because the id is opaque: a re-held wire suffixes `-h<holdNo>`,
+      // so anything parsing a trailing number off the id reads the hold ordinal
+      // as the cycle (src/cli/render.mjs formatGateHeader).
+      deliveryNo: entry.deliveryNo,
+      holdNo: entry.holdNo,
     })).then(
       (answer) => resolveGate(entry.wireId, answer),
       () => resolveGate(entry.wireId, 'continue'),
@@ -681,17 +687,30 @@ export function createScheduler(opts) {
    *  critical/major findings that caused the block; they ride the ask and, on
    *  continue, the forced token's meta. A wire that is ALREADY held keeps its first
    *  hold — a later over-budget token on the same wire is dropped, so one ask never
-   *  answers for a token it was not raised about. */
+   *  answers for a token it was not raised about.
+   *
+   *  The ask id is UNIQUE PER HOLD. resolveGate('continue') advances neither
+   *  counter, so the next blocking token on the same spent wire holds again with the
+   *  same deliveryNo; minting the same id twice let a retried/duplicated answer
+   *  resolve a hold the user never saw (run-harness.answer matches by id), and made
+   *  the two holds indistinguishable in the audit trail. `st.holds` is monotonic per
+   *  wire and rides the snapshot with the rest of the wire state, so a resume keeps
+   *  counting. The first hold keeps the original `gate-<wireId>-<deliveryNo>`. */
   function holdAt(wire, token, verdict, node, executionId) {
     if (held.has(wire.id)) return;
     const st = wireState.get(wire.id);
     const deliveryNo = st.deliveries + 1;           // the delivery this hold stands in for
+    const holdNo = (st.holds = (st.holds || 0) + 1); // which hold on THIS wire (1-based)
     const issues = blockingIssues(verdict);
-    const askId = `gate-${wire.id}-${deliveryNo}`;
-    const entry = { wireId: wire.id, nodeId: node.id, executionId, token, issues, askId };
+    const askId = holdNo > 1
+      ? `gate-${wire.id}-${deliveryNo}-h${holdNo}`
+      : `gate-${wire.id}-${deliveryNo}`;
+    const entry = { wireId: wire.id, nodeId: node.id, executionId, token, issues, askId, deliveryNo, holdNo };
     held.set(wire.id, entry);
     outstanding.add(wire.id);
-    onEvent('gate', { wireId: wire.id, nodeId: node.id, executionId, issues, askId, status: 'held' });
+    onEvent('gate', {
+      wireId: wire.id, nodeId: node.id, executionId, issues, askId, deliveryNo, holdNo, status: 'held',
+    });
     syncGate();
     askGate(entry);
   }
@@ -707,7 +726,8 @@ export function createScheduler(opts) {
     const decision = answer === 'another' ? 'another' : 'continue';
     onEvent('gate', {
       wireId, nodeId: entry.nodeId, executionId: entry.executionId,
-      issues: entry.issues, askId: entry.askId, status: decision,
+      issues: entry.issues, askId: entry.askId,
+      deliveryNo: entry.deliveryNo, holdNo: entry.holdNo, status: decision,
     });
     if (decision === 'another') {
       const st = wireState.get(wireId);
@@ -767,10 +787,12 @@ export function createScheduler(opts) {
     const gates = [...held.values()].map((g) => ({
       wireId: g.wireId, nodeId: g.nodeId, executionId: g.executionId,
       token: g.token, issues: g.issues, askId: g.askId,
+      deliveryNo: g.deliveryNo, holdNo: g.holdNo,
     }));
     const asks = gates.map((g) => ({
       id: g.askId, kind: 'gate', wireId: g.wireId, nodeId: g.nodeId,
       executionId: g.executionId, issues: g.issues,
+      deliveryNo: g.deliveryNo, holdNo: g.holdNo,
     }));
     return {
       version: 2,

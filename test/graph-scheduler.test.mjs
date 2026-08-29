@@ -554,8 +554,12 @@ test('18 A1: maxCycles caps TOTAL source firings; the gate fires at the would-be
   assert.equal(h.callsFor('n_check').length, 3, 'maxCycles 3 ⇒ three source firings, then the gate');
   assert.equal(h.callsFor('n_work').length, 3);
   assert.equal(h.asks.length, 1, 'exactly one gate ask');
-  assert.equal(h.asks[0].id, 'gate-w5-3', 'ask id is gate-<wireId>-<deliveryNo>');
-  assert.deepEqual(Object.keys(h.asks[0]).sort(), ['executionId', 'id', 'issues', 'kind', 'nodeId', 'wireId']);
+  assert.equal(h.asks[0].id, 'gate-w5-3', 'the FIRST hold keeps the plain gate-<wireId>-<deliveryNo> id');
+  assert.deepEqual(Object.keys(h.asks[0]).sort(),
+    ['deliveryNo', 'executionId', 'holdNo', 'id', 'issues', 'kind', 'nodeId', 'wireId']);
+  // MAJ-11: the cycle rides the PAYLOAD; the id is opaque (a re-hold suffixes -h<n>).
+  assert.equal(h.asks[0].deliveryNo, 3);
+  assert.equal(h.asks[0].holdNo, 1);
   assert.equal(h.asks[0].kind, 'gate');
   assert.equal(h.asks[0].nodeId, 'n_check', 'the gate names the SOURCE node');
   assert.equal(h.asks[0].executionId, 'x:n_check:3');

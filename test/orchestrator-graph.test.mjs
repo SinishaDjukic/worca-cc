@@ -17,6 +17,7 @@ import { readPipelineForResume, artifactPaths } from '../src/core/artifacts.mjs'
 import { setPipelineCostLimitUsd } from '../src/core/settings.mjs';
 import { QUIESCENCE_WARNING } from '../src/core/graph/scheduler.mjs';
 import { BOOKEND_EXECUTION_IDS } from '../src/shared/graph/constants.mjs';
+import { formatGateHeader } from '../src/cli/render.mjs';
 
 // settings sandbox: settingsFile() resolves under HOME, not WORCA_HOME (the
 // same isolation test/cost-enforcement.test.mjs:18-36 uses).
@@ -361,4 +362,75 @@ test('a SINGLE card keeps the unprefixed v1 project-store path', { timeout: 1200
     assert.match(f, /^\d\d-\d\d-\d\d-[a-z0-9-]+-impl-review\.md$/,
       `a single-card graph's persisted path must stay byte-identical: ${f}`);
   }
+});
+
+// ── MAJ-11: one ask id per HOLD, and the delivery number rides the payload ─────
+// resolveGate('continue') advances neither counter, so the next blocking token on
+// the same spent wire held again and minted the SAME `gate-<wireId>-<deliveryNo>`.
+// RunHarness.answer() matches by id alone, so a retried POST /api/answer resolved a
+// hold the user never saw — and it force-cleaned a set of critical issues.
+/** wf_full with w12 (reviewer.review → OR) forced to one cycle: the FIRST blocking
+ *  review delivery already holds, and the reviewer keeps blocking after that. */
+async function seedStubbornFull(id) {
+  const full = SEED_TEMPLATES.find((t) => t.id === 'wf_full');
+  const wires = full.wires.map((w) => (w.id === 'w12' ? { ...w, config: { ...(w.config || {}), maxCycles: 1 } } : w));
+  await writeGraphWorkflow({ id, name: 'Full stubborn', domain: full.domain, nodes: full.nodes, wires });
+}
+let blockerNo = 0;
+const STUBBORN_RUNNERS = {
+  producer: async (ctx) => ({ summary: `${ctx.node.id} ok`, outputs: outsOf(ctx), verdict: null }),
+  clarifier: async (ctx) => ({ summary: 'clarified', outputs: outsOf(ctx), questions: [], answers: [] }),
+  verifier: async (ctx) => ({
+    summary: `${ctx.node.id} blocked`,
+    outputs: outsOf(ctx),
+    verdict: { issues: [{ severity: 'critical', title: `blocker #${++blockerNo} from ${ctx.node.id}` }], summary: '' },
+  }),
+};
+
+test('every hold on one wire mints its OWN ask id; the delivery number rides the payload', { timeout: 120000 }, async () => {
+  await seedStubbornFull('wf_stubborn_ids');
+  const orch = createOrchestrator({
+    projectDir: gitDir('gateids'), workflowId: 'wf_stubborn_ids', prompt: 'demo', auto: true,
+    runners: STUBBORN_RUNNERS,
+  });
+  const asks = [];
+  orch.on('question', (q) => { if (q.kind === 'gate') asks.push(q); });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  const w12 = asks.filter((a) => a.wireId === 'w12');
+  assert.equal(w12.length, 3, 'the spent wire held three times');
+  assert.equal(new Set(w12.map((a) => a.id)).size, 3, `three holds, three ids: ${w12.map((a) => a.id).join(' ')}`);
+  assert.deepEqual(w12.map((a) => a.id), ['gate-w12-1', 'gate-w12-1-h2', 'gate-w12-1-h3']);
+  assert.deepEqual(w12.map((a) => a.holdNo), [1, 2, 3]);
+  assert.deepEqual(w12.map((a) => a.deliveryNo), [1, 1, 1], 'the CYCLE number is the same for all three');
+  assert.equal(new Set(w12.map((a) => a.executionId)).size, 3, 'three distinct source executions');
+  // The CLI header is unchanged: it reads deliveryNo off the PAYLOAD, so the `-h2`
+  // suffix cannot masquerade as a cycle count.
+  const man = orch.getState().stepper;
+  for (const a of w12) {
+    assert.equal(formatGateHeader(a, man), '? Loop gate · Review Implementation → OR  1/1 cycles used');
+  }
+});
+
+test('a replayed previous-hold id no longer resolves the CURRENT hold', { timeout: 120000 }, async () => {
+  await seedStubbornFull('wf_stubborn_stale');
+  const orch = createOrchestrator({
+    projectDir: gitDir('gatestale'), workflowId: 'wf_stubborn_stale', prompt: 'demo', auto: false,
+    runners: STUBBORN_RUNNERS,
+  });
+  const replays = [];
+  let prev = null;
+  orch.on('question', (q) => {
+    setImmediate(() => {
+      if (prev) replays.push({ at: q.id, stale: prev.id, accepted: orch.answer(prev.id, prev.payload) });
+      prev = { id: q.id, payload: q.kind === 'gate' ? { decision: 'continue' } : { answers: [] } };
+      orch.answer(q.id, prev.payload);
+    });
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  const gateReplays = replays.filter((r) => /^gate-w12-/.test(r.at) && /^gate-w12-/.test(r.stale));
+  assert.ok(gateReplays.length >= 2, `two later holds on w12: ${JSON.stringify(replays)}`);
+  assert.deepEqual(gateReplays.map((r) => r.accepted), gateReplays.map(() => false),
+    'a stale id must never resolve a hold the user has not seen');
 });

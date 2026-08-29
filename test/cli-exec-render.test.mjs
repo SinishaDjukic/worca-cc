@@ -100,9 +100,14 @@ test('End renders exactly one line, on done: the bound wire and the basename', (
 });
 
 test('gate header, result line, totals and fmtDur', () => {
-  assert.equal(formatGateHeader({ id: 'gate-w9-3', kind: 'gate', wireId: 'w9' }, M), '? Loop gate · Reviewer → Implementer  3/3 cycles used');
-  assert.equal(formatGateHeader({ id: 'gate-w9-1', kind: 'gate', wireId: 'w9' }, M), '? Loop gate · Reviewer → Implementer  1/3 cycles used');
-  assert.equal(formatGateHeader({ id: 'gate-wx-1', kind: 'gate', wireId: 'wx' }, M), '? Loop gate', 'an unknown wire → the bare header');
+  // MAJ-11: the cycle number comes from the PAYLOAD (`deliveryNo`), never from the
+  // id. A wire that holds more than once mints `gate-<wireId>-<deliveryNo>-h<holdNo>`,
+  // so parsing the id's trailing number would print the HOLD ordinal as the cycle.
+  assert.equal(formatGateHeader({ id: 'gate-w9-3', kind: 'gate', wireId: 'w9', deliveryNo: 3, holdNo: 1 }, M), '? Loop gate · Reviewer → Implementer  3/3 cycles used');
+  assert.equal(formatGateHeader({ id: 'gate-w9-1', kind: 'gate', wireId: 'w9', deliveryNo: 1, holdNo: 1 }, M), '? Loop gate · Reviewer → Implementer  1/3 cycles used');
+  assert.equal(formatGateHeader({ id: 'gate-w9-1-h2', kind: 'gate', wireId: 'w9', deliveryNo: 1, holdNo: 2 }, M), '? Loop gate · Reviewer → Implementer  1/3 cycles used', 'a re-hold is the SAME cycle');
+  assert.equal(formatGateHeader({ id: 'gate-w9-1-h4', kind: 'gate', wireId: 'w9' }, M), '? Loop gate · Reviewer → Implementer  3/3 cycles used', 'no deliveryNo → the budget, never the id');
+  assert.equal(formatGateHeader({ id: 'gate-wx-1', kind: 'gate', wireId: 'wx', deliveryNo: 1 }, M), '? Loop gate', 'an unknown wire → the bare header');
   assert.equal(formatResultLine({ type: 'md', path: '/tmp/p/plan.md' }), 'Result: /tmp/p/plan.md');
   assert.equal(formatResultLine({ type: 'void' }), 'Result: completed');
   assert.equal(formatResultLine(null), 'Result: completed');
@@ -167,6 +172,10 @@ test('the CLI renders exec lines ONLY, drops stop noise, prints the pure summary
   assert.ok(/ev\.status === 'error' && orch\.state && orch\.state\.status === 'stopped'/.test(src), "a user stop's `aborted` exec error is not rendered");
   assert.ok(/s\.executionId === ev\.executionId \|\| s\.parentExecutionId === ev\.executionId/.test(src), 'a terminal exec is enriched from its own ledger row (by executionId, never by key), a composite parent from its slices');
   assert.ok(/formatGateHeader\(payload, /.test(src), 'the gate header is built from the WHOLE question payload (wireId)');
+  // MAJ-11 tripwire: render.mjs must never go back to reading the cycle out of the
+  // ask id — the id now carries a hold suffix that is NOT a delivery number.
+  const renderSrc = readFileSync(fileURLToPath(new URL('../src/cli/render.mjs', import.meta.url)), 'utf8');
+  assert.equal(/\/-\(\\d\+\)\$\//.test(renderSrc), false, 'no trailing-number parse of the ask id survives');
   assert.ok(/formatRunSummary\(orch\.state\)/.test(src), 'the summary is the pure helper');
   assert.ok(/worca — node-graph multi-agent pipelines/.test(src), 'the HELP headline is updated');
   assert.ok(/--workflow <id>\s+Saved pipeline template to run \(default: wf_default — the built-in graph\)/.test(src), 'the --workflow HELP line names the built-in graph');

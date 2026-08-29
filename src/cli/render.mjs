@@ -97,10 +97,13 @@ export function formatGateHeader(payload, manifest) {
   const wire = wiresOf(m).find((w) => w.id === (payload && payload.wireId)) || null;
   const where = wire ? ` · ${labelOf(m, wire.from.node)} → ${labelOf(m, wire.to.node)}` : '';
   const max = wire && wire.maxCycles ? Number(wire.maxCycles) : null;
-  // P3 gate ask ids are `gate-<wireId>-<deliveryNo>` (spec §5.3); no deliveryNo field rides the payload.
-  const m2 = /-(\d+)$/.exec(String((payload && payload.id) || ''));
-  const n = m2 ? Number(m2[1]) : max;
-  const budget = max ? `  ${n || max}/${max} cycles used` : '';
+  // The cycle comes from the PAYLOAD's `deliveryNo`, never from the id: a wire that
+  // holds more than once mints `gate-<wireId>-<deliveryNo>-h<holdNo>`, so the id's
+  // trailing number is the HOLD ordinal, not the delivery (MAJ-11). No deliveryNo
+  // (an older resume point, a hand-built payload) falls back to the budget.
+  const n = Number(payload && payload.deliveryNo);
+  const used = Number.isFinite(n) && n > 0 ? n : max;
+  const budget = max ? `  ${used || max}/${max} cycles used` : '';
   return `? Loop gate${where}${budget}`;
 }
 
