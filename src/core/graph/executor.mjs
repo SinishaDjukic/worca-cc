@@ -70,8 +70,11 @@ export const VERDICT_CONTRACT =
  * execution ordinal, `{base}` -> the run base name, `{vsuffix}` -> the run-global
  * plan-version suffix ('' for version 1, '-vN' after). `{vsuffix}` CONSUMES one tick
  * of `runCtx.planVersion()`, and only when the template actually carries it.
- * Project-store paths carry no dup/slice prefix (the plans/reviews store is one file
- * per base name — v1 parity).
+ * The duplicate-key/slice `prefix` applies to EVERY store: the plans/reviews store is
+ * one file per base name (v1 parity), so without it two cards on one agent key —
+ * trivial to place in the composer — resolve to ONE persisted path and the later
+ * writer clobbers the earlier. The prefix is EMPTY for a single card, so every
+ * single-card graph keeps its v1 path byte-for-byte.
  */
 function resolveTemplate(port, { ordinal, runCtx, prefix }) {
   const tpl = String(port.filename);
@@ -90,17 +93,20 @@ function resolveTemplate(port, { ordinal, runCtx, prefix }) {
 
   if (store !== 'project') return { path: join(runCtx.pipelineDir, prefix + name), store };
 
+  // The prefix rides the discriminating half of each store's name so the -vN
+  // linkage still hangs off the node's OWN plan family: plans get it on the base
+  // (`<date>-<prefix><base>[-vN].md`), reviews on the kind (`<date>-<base>-<prefix><kind>.md`).
   if ((port.artifactKind || port.id) === 'plan') {
     const v = tpl.includes('{vsuffix}') ? nextVersion() : 1;
     return {
-      path: planPath(runCtx.projectDir, runCtx.baseName, v, runCtx.datePrefix, runCtx.workspaceKey),
+      path: planPath(runCtx.projectDir, prefix + String(runCtx.baseName || ''), v, runCtx.datePrefix, runCtx.workspaceKey),
       store,
     };
   }
   const m = /^\{base\}-(.+)\.md$/.exec(tpl);
   const kind = m ? m[1] : (port.artifactKind || port.id);
   return {
-    path: reviewPath(runCtx.projectDir, runCtx.baseName, runCtx.datePrefix, kind, runCtx.workspaceKey),
+    path: reviewPath(runCtx.projectDir, runCtx.baseName, runCtx.datePrefix, prefix + kind, runCtx.workspaceKey),
     store,
   };
 }

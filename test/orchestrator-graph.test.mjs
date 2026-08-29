@@ -7,13 +7,13 @@ import { createOrchestrator } from '../src/core/orchestrator.mjs';
 
 useTempHome(after);
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { before } from 'node:test';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
-import { readPipelineForResume } from '../src/core/artifacts.mjs';
+import { readPipelineForResume, artifactPaths } from '../src/core/artifacts.mjs';
 import { setPipelineCostLimitUsd } from '../src/core/settings.mjs';
 import { QUIESCENCE_WARNING } from '../src/core/graph/scheduler.mjs';
 import { BOOKEND_EXECUTION_IDS } from '../src/shared/graph/constants.mjs';
@@ -297,5 +297,68 @@ test('bookends are exec rows carrying an executionId, and no phase event is emit
     const row = (rehydrated || []).find((s) => s.key === id);
     assert.ok(row, `${id} round-tripped`);
     assert.equal(row.executionId, id, `${id} kept execution_id through the DB`);
+  }
+});
+
+// ── MAJ-3: two cards on ONE agent key must not clobber one persisted artifact ──
+// The composer accepts duplicate agent keys (dupPrefix exists for them), so this
+// is a supported graph, not a malformed one. The run-store verdicts were already
+// node-prefixed; the PROJECT store (plans/reviews) was not, so the later writer
+// silently destroyed the earlier reviewer's persisted file.
+const TWO_REVIEWERS = {
+  id: 'wf_tworev', name: 'Two reviewers', domain: 'coding',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+    { id: 'n_plan', kind: 'agent', key: 'planner', x: 340, y: 200, config: {} },
+    { id: 'n_impl', kind: 'agent', key: 'implementer', x: 640, y: 200, config: {} },
+    { id: 'n_rev1', kind: 'agent', key: 'reviewer', x: 940, y: 100, config: {} },
+    { id: 'n_rev2', kind: 'agent', key: 'reviewer', x: 940, y: 320, config: {} },
+    { id: 'n_end', kind: 'end', x: 1240, y: 200, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+    { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
+    { id: 'w3', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_rev1', port: 'plan' } },
+    { id: 'w4', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_rev2', port: 'plan' } },
+    { id: 'w5', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_rev1', port: 'done' } },
+    { id: 'w6', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_rev2', port: 'done' } },
+    { id: 'w7', from: { node: 'n_rev1', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
+  ],
+};
+
+test('two cards on one agent key keep their project-store reviews apart', { timeout: 120000 }, async () => {
+  await writeGraphWorkflow(TWO_REVIEWERS);
+  const dir = gitDir('tworev');
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_tworev', prompt: 'demo', claude: { mock: true }, auto: true,
+  });
+  const arts = [];
+  orch.on('artifact', (a) => arts.push(a));
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  // Both reviewers ran in the SAME drain (parallel) off one implementer.
+  const stepIds = orch.getState().steps.filter((s) => s.agentKey === 'reviewer').map((s) => s.nodeId).sort();
+  assert.deepEqual(stepIds, ['n_rev1', 'n_rev2']);
+  const reviewed = arts.filter((a) => a.kind === 'review').map((a) => a.path);
+  assert.equal(reviewed.length, 2, 'two review artifacts were published');
+  assert.equal(new Set(reviewed).size, 2, `the two tokens must name different files: ${JSON.stringify(reviewed)}`);
+  const files = (await readdir(artifactPaths(dir).reviews)).sort();
+  assert.equal(files.length, 2, `both persisted reviews must survive; got ${JSON.stringify(files)}`);
+  assert.ok(files.some((f) => f.endsWith('-n_rev1-impl-review.md')), JSON.stringify(files));
+  assert.ok(files.some((f) => f.endsWith('-n_rev2-impl-review.md')), JSON.stringify(files));
+});
+
+test('a SINGLE card keeps the unprefixed v1 project-store path', { timeout: 120000 }, async () => {
+  const dir = gitDir('onerev');
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_quick-fix', prompt: 'demo', claude: { mock: true }, auto: true,
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  const files = (await readdir(artifactPaths(dir).reviews)).sort();
+  assert.ok(files.length >= 1, JSON.stringify(files));
+  for (const f of files) {
+    assert.match(f, /^\d\d-\d\d-\d\d-[a-z0-9-]+-impl-review\.md$/,
+      `a single-card graph's persisted path must stay byte-identical: ${f}`);
   }
 });
