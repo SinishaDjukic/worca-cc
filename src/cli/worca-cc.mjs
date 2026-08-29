@@ -10,6 +10,7 @@
 
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
+import { fstatSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, basename } from 'node:path';
 import process from 'node:process';
@@ -354,13 +355,82 @@ async function askRecovery(rl, recovery) {
 // ── shared drive loop ────────────────────────────────────────────────────────────
 
 /**
+ * Whether stdin could ever deliver an interactive answer.
+ *
+ * A TTY always can. A pipe, socket or file redirect MAY — a wrapper script that
+ * feeds answers is legitimate — so those pass. `/dev/null` never can: it EOFs on
+ * the first read, so the run would start, spend a real agent call, and then be
+ * abandoned mid-question. Measured on darwin (and matching linux): `< /dev/null`,
+ * a closed fd 0 (Node reopens it on /dev/null) and `spawn(…, {stdio:['ignore',…]})`
+ * are all non-TTY CHARACTER devices, while a pipe is a fifo/socket and a redirect
+ * is a regular file. An fstat that throws answers "yes" — never refuse a run on a
+ * guess.
+ */
+function stdinCanAnswer() {
+  if (process.stdin.isTTY) return true;
+  try {
+    return !fstatSync(0).isCharacterDevice();
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Wire readline Q&A, log/phase rendering, and SIGINT pause/stop onto an
  * orchestrator, then drive it. `start` launches run() or resume(). Returns the
  * process exit code (0 for done/paused, 1 otherwise).
  */
 async function attachAndDrive(orch, flags, start) {
+  // Refuse an unanswerable interactive run BEFORE start(). The orchestrator
+  // constructor is pure (createPipeline runs inside run()), so nothing exists yet:
+  // no pipelines row, no run root, no worktree, no spend. Without this, a
+  // `worca --prompt … < /dev/null` reached the first clarify question, printed
+  // `Failed to read answer: readline was closed` and exited 0 with the row left
+  // `running` — a CI job read success on an abandoned run.
+  if (!flags.auto && !stdinCanAnswer()) {
+    fail('stdin cannot answer prompts (it is /dev/null or closed) — pass --yes for a non-interactive run.');
+  }
   const rl = flags.auto ? null : makeRl();
   let answering = false; // serialize interactive prompts vs. log rendering
+  let answerFailure = null; // a question we could not answer -> non-zero exit
+
+  /**
+   * Abandon a prompt we cannot answer: stop the run and force a non-zero exit, so
+   * the row never stays `running` and no caller reads success off an abandoned run.
+   * A pause/stop already in flight owns the outcome — Ctrl+C must still end
+   * `paused`, never `stopped`.
+   */
+  const abandonAnswer = (err) => {
+    if (orch.pauseRequested || !orch.state || orch.state.status !== 'running') return;
+    answerFailure = err;
+    process.stderr.write('worca: cannot continue without an answer — stopping the run. '
+      + 'Use --yes for a non-interactive run.\n');
+    // Deferred by ONE microtask, for the same reason answers are: _ask emits
+    // `question` BEFORE it parks pendingQuestion, so a SYNCHRONOUS throw in the
+    // handler below would reach stop() with nothing parked to reject — and the ask
+    // parked a moment later would then hang the run forever, which is the very
+    // outcome this guard exists to prevent.
+    queueMicrotask(() => {
+      if (orch.pauseRequested || !orch.state || orch.state.status !== 'running') return;
+      orch.stop();
+    });
+  };
+
+  // stdin reaching EOF *while a question is open* does not throw: readline simply
+  // closes and never invokes the question callback, so the awaited answer never
+  // settles, the event loop drains and node exits 0 with the run abandoned. Treat
+  // it as a failed answer — but ONLY while the run is still running: our own
+  // rl.close() in the finally below also fires with `answering` still true when a
+  // prompt was interrupted by Ctrl+C (the pause settles start() first, and the
+  // parked rl.question never resolves), and that is not a lost answer.
+  if (rl) {
+    rl.on('close', () => {
+      if (!answering) return;
+      if (orch.pauseRequested || !orch.state || orch.state.status !== 'running') return;
+      process.stderr.write('Failed to read answer: stdin closed\n');
+      abandonAnswer(new Error('stdin closed'));
+    });
+  }
 
   // ── event wiring ──────────────────────────────────────────────────────────────
   // The run renders its `exec` stream and nothing else: the v1 `phase` event and
@@ -431,6 +501,13 @@ async function attachAndDrive(orch, flags, start) {
       }
     } catch (err) {
       process.stderr.write(`Failed to read answer: ${err?.message || err}\n`);
+      // Never swallow: orch.answer() was not called, so the ask stays open and the
+      // run would hang on it (or be abandoned at EOF with its row left `running`
+      // while node exits 0). This is also the arm any THROW inside askClarify /
+      // askGate / askRecovery lands in — the shape the P6 graphRun() ReferenceError
+      // took — so failing loudly here is what turns that class of bug into a
+      // visible failure instead of a silent hang.
+      abandonAnswer(err);
     } finally {
       answering = false;
     }
@@ -488,6 +565,8 @@ async function attachAndDrive(orch, flags, start) {
   if (result?.pipelineDir) {
     out(`Pipeline directory: ${c('bold', result.pipelineDir)}`);
   }
+  // An unanswered question is a failure even if the run somehow settled `done`.
+  if (answerFailure) return 1;
   return result?.status === 'done' || result?.status === 'paused' ? 0 : 1;
 }
 

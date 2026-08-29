@@ -34,6 +34,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { GRAPH_DEFAULT_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { readStepQuestions } from '../src/core/artifacts.mjs';
+import { getDb } from '../src/core/db.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(__dirname, '..', 'src', 'cli', 'worca-cc.mjs');
@@ -74,18 +75,26 @@ function freshRepo(prefix = 'worca-cc-cliix-repo-') {
  * @param {Record<string,string>} [opts.env] extra env for the child
  * @param {boolean}  [opts.mock=true]      true -> WORCA_MOCK=1; false -> DELETE it
  *                                         (real runner; pair with WORCA_CLAUDE_BIN)
+ * @param {'pipe'|'ignore'} [opts.stdin='pipe']
+ *        'ignore' gives the child /dev/null on fd 0 — exactly `worca … < /dev/null`.
+ * @param {RegExp} [opts.closeStdinAfter] end() the child's stdin the first time this
+ *        matches stdout (models a wrapper whose input dies mid-run).
+ * @param {RegExp} [opts.sigintAfter] send SIGINT the first time this matches stdout.
  * @param {number}   [opts.timeoutMs=30000]
  * @returns {Promise<{code:number|null, signal:string|null, stdout:string,
  *                    stderr:string, sent:number, timedOut:boolean, ms:number}>}
  */
-function driveCli(args, { script = [], env = {}, mock = true, timeoutMs = 30000 } = {}) {
+function driveCli(args, {
+  script = [], env = {}, mock = true, stdin = 'pipe',
+  closeStdinAfter = null, sigintAfter = null, timeoutMs = 30000,
+} = {}) {
   return new Promise((res) => {
     const childEnv = { ...process.env, WORCA_HOME: home, ...env };
     if (mock) childEnv.WORCA_MOCK = '1';
     else delete childEnv.WORCA_MOCK;
     const child = spawn(process.execPath, [CLI, ...args], {
       env: childEnv,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: [stdin, 'pipe', 'pipe'],
     });
     const t0 = Date.now();
     let stdout = '';
@@ -93,8 +102,10 @@ function driveCli(args, { script = [], env = {}, mock = true, timeoutMs = 30000 
     let pos = 0;   // stdout index just past the last consumed cue
     let sent = 0;
     let timedOut = false;
+    let closed = false;
+    let signalled = false;
     const pump = () => {
-      while (sent < script.length) {
+      while (sent < script.length && child.stdin) {
         const { cue, send } = script[sent];
         const re = cue instanceof RegExp ? new RegExp(cue.source, cue.flags.replace(/[gy]/g, '')) : new RegExp(cue);
         const m = re.exec(stdout.slice(pos));
@@ -102,6 +113,14 @@ function driveCli(args, { script = [], env = {}, mock = true, timeoutMs = 30000 
         pos += m.index + m[0].length;
         sent += 1;
         child.stdin.write(send);
+      }
+      if (closeStdinAfter && !closed && child.stdin && closeStdinAfter.test(stdout)) {
+        closed = true;
+        child.stdin.end();
+      }
+      if (sigintAfter && !signalled && sigintAfter.test(stdout)) {
+        signalled = true;
+        child.kill('SIGINT');
       }
     };
     child.stdout.on('data', (b) => { stdout += b.toString(); pump(); });
@@ -112,6 +131,11 @@ function driveCli(args, { script = [], env = {}, mock = true, timeoutMs = 30000 
       res({ code, signal, stdout, stderr, sent, timedOut, ms: Date.now() - t0 });
     });
   });
+}
+
+/** Every pipelines row id -> status in this file's temp home. */
+function pipelineStatuses() {
+  return getDb().prepare('SELECT id, status FROM pipelines').all();
 }
 
 /** The 8-hex pipeline id off the CLI's closing `Pipeline directory: …-<id>` line. */
@@ -328,4 +352,94 @@ test('questions arm: the agent banner renders and the answer resumes the same se
   const round = readStepQuestions(id).find((q) => q.nodeId === 'n_impl');
   assert.ok(round, `no n_impl round for ${id}`);
   assert.deepEqual(round.answers.map((a) => [a.id, a.choice]), [['q1', 'Option B']]);
+});
+
+// ── MAJ-7: an unanswerable stdin must never look like a successful run ─────────
+// Before the fix, `worca --prompt … < /dev/null` (no --yes) ran until the first
+// clarify question, printed `Failed to read answer: readline was closed`, and
+// EXITED 0 with the pipelines row still `running` and its run root on disk — so a
+// CI job or wrapper read success on an abandoned run.
+
+test('MAJ-7: /dev/null stdin without --yes refuses before anything is created', async () => {
+  const repo = freshRepo();
+  const before = pipelineStatuses().length;
+  const r = await driveCli(['--project', repo, '--prompt', 'eof guard e2e'], { stdin: 'ignore' });
+  assert.equal(r.timedOut, false, r.stdout);
+  assert.equal(r.code, 2, `expected the fail() exit code\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+  assert.equal(
+    r.stderr.trim(),
+    'worca: stdin cannot answer prompts (it is /dev/null or closed) — pass --yes for a non-interactive run.',
+  );
+  // Refused BEFORE start(): the orchestrator constructor is pure, so no pipeline
+  // row, no run root, no worktree and no agent spend. (The one-line
+  // `orchestrator — project: …` banner main() prints before attachAndDrive is not
+  // a side effect; the run itself never begins.)
+  assert.equal(pipelineStatuses().length, before);
+  assert.equal(/\[preflight\]/.test(r.stdout), false, r.stdout);
+  assert.equal(/↳ pipeline:/.test(r.stdout), false, r.stdout);
+});
+
+test('MAJ-7: --yes over the same /dev/null stdin still runs to completion', async () => {
+  const repo = freshRepo();
+  const r = await driveCli(['--project', repo, '--prompt', 'eof guard auto e2e', '--yes'], { stdin: 'ignore' });
+  assert.equal(r.timedOut, false, r.stdout);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /Pipeline complete\./);
+});
+
+test('MAJ-7: stdin closed mid-run stops the run and exits non-zero', async () => {
+  const repo = freshRepo();
+  const r = await driveCli(['--project', repo, '--prompt', 'eof midrun e2e'], {
+    closeStdinAfter: /Choose \[number or text\]/,   // the run has already started
+  });
+  assert.equal(r.timedOut, false, r.stdout);
+  assert.notEqual(r.code, 0, `expected a non-zero exit\nstdout:\n${r.stdout}`);
+  assert.match(r.stderr, /Failed to read answer: /);
+  assert.match(r.stderr, /worca: cannot continue without an answer — stopping the run\. Use --yes for a non-interactive run\./);
+  // The row must not be left `running` for a later doctor sweep to reap.
+  const rows = pipelineStatuses();
+  assert.equal(rows.filter((p) => p.status === 'running').length, 0, JSON.stringify(rows));
+});
+
+test('MAJ-7 pitfall: Ctrl+C at an open question still PAUSES (never errors)', async () => {
+  const repo = freshRepo();
+  const r = await driveCli(['--project', repo, '--prompt', 'sigint pause e2e'], {
+    sigintAfter: /Choose \[number or text\]/,
+  });
+  assert.equal(r.timedOut, false, r.stdout);
+  assert.equal(r.code, 0, `an interrupted run pauses (exit 0)\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+  assert.doesNotMatch(r.stderr, /Failed to read answer/, 'a pause is not a lost answer');
+  assert.doesNotMatch(r.stderr, /cannot continue without an answer/);
+  assert.match(r.stdout, /Pausing…/);
+  assert.match(r.stdout, /Pipeline paused\./);
+  const id = pipelineIdFrom(r.stdout);
+  assert.ok(id, `no pipeline id in:\n${r.stdout}`);
+  assert.equal(pipelineStatuses().find((p) => p.id === id)?.status, 'paused');
+});
+
+test('MAJ-7: a question that cannot be READ (rl already closed) stops the run too', async () => {
+  // stdin dies AFTER clarify is answered, so the later gate prompt calls
+  // rl.question() on a closed interface and throws ERR_USE_AFTER_CLOSE. That is
+  // the catch arm — the same arm any throw inside askClarify/askGate/askRecovery
+  // lands in (the shape the P6 graphRun() ReferenceError took).
+  await seedWorkflow('wf_cliix_gate', 'Gate arm', ({ nodes, wires }) => ({
+    nodes,
+    wires: wires.map((w) => (w.id === 'w9' ? { ...w, config: { ...w.config, maxCycles: 1 } } : w)),
+  }));
+  const repo = freshRepo();
+  const r = await driveCli(['--project', repo, '--prompt', 'eof between prompts e2e', '--workflow', 'wf_cliix_gate'], {
+    script: [
+      { cue: /Choose \[number or text\]/, send: '1\n' },
+      { cue: /Choose \[number or text\]/, send: '1\n' },
+    ],
+    closeStdinAfter: /✓ Clarify #1/,   // clarify already answered; the gate is still ahead
+  });
+  assert.equal(r.timedOut, false, `the run hung instead of failing\n${r.stdout}`);
+  assert.equal(r.sent, 2, r.stdout);
+  assert.notEqual(r.code, 0, `expected a non-zero exit\nstdout:\n${r.stdout}`);
+  assert.match(r.stderr, /Failed to read answer: readline was closed/);
+  assert.match(r.stderr, /worca: cannot continue without an answer — stopping the run\. Use --yes for a non-interactive run\./);
+  assert.match(r.stdout, /Pipeline stopped\./);
+  const rows = pipelineStatuses();
+  assert.equal(rows.filter((p) => p.status === 'running').length, 0, JSON.stringify(rows));
 });
