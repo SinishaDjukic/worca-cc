@@ -791,7 +791,8 @@ export class GraphOrchestrator extends RunHarness {
    * `nodeIdSafe` = the node id with every character outside [A-Za-z0-9_-]
    * replaced by `_`, so a hand-authored template id can never escape the dir.
    * (v1's name is questions-<stepIndex>-<nodeIdSafe>-c<cycle>-r<round>.json;
-   * test/orchestrator-questions reads the path off ctx.questionsFile, never a literal.)
+   * test/orchestrator-questions.test.mjs reads the path off ctx.questionsFile
+   * and pins the basename this builds.)
    */
   _questionsPath(nodeId, ordinal, round) {
     const nodeIdSafe = String(nodeId).replace(/[^A-Za-z0-9_-]/g, '_');
