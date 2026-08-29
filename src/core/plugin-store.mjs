@@ -13,7 +13,7 @@ import {
   existsSync, readdirSync, readFileSync, readlinkSync,
   mkdirSync, rmSync, symlinkSync, renameSync, unlinkSync,
 } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, isAbsolute, sep } from 'node:path';
 import { WORCA_PLUGIN_APIS } from './plugin-api.mjs';
 import { normalizeManifest, validatePluginDir, apiSatisfies, dataContractIssues, apiMismatch } from './plugin-manifest.mjs';
 import {
@@ -45,6 +45,13 @@ function sha256File(file) {
   try { return createHash('sha256').update(readFileSync(file)).digest('hex'); } catch { return null; }
 }
 
+/** True when the relative path `rel` still resolves INSIDE `dir`. */
+function insideDir(dir, rel) {
+  if (isAbsolute(rel) || /\\/.test(rel)) return false;
+  const root = resolve(dir);
+  return resolve(root, rel).startsWith(root + sep);
+}
+
 /** Private copy of workflows.mjs:66-77 parseFrontmatterTools (module-private there). */
 function frontmatterTools(text) {
   const m = /^---\s*\n([\s\S]*?)\n---/.exec(text);
@@ -67,8 +74,19 @@ export function buildInstallInventory(versionDir) {
   if (existsSync(aDir)) {
     for (const f of readdirSync(aDir).filter((x) => x.endsWith('.meta.json')).sort()) {
       const key = f.slice(0, -'.meta.json'.length);
+      // Consent must describe the bytes the RUNTIME will read: agent-registry
+      // stamps agentPath = join(<layer>/agents, meta.agentFile), so reading
+      // `${key}.md` here showed a DECOY for any sidecar naming another file
+      // (C-1). Containment is re-checked because this also runs on an
+      // unvalidated dir (the pre-install preview); an escaping agentFile falls
+      // back to the sibling and validatePluginDir refuses the install anyway.
+      let mdFile = `${key}.md`;
+      try {
+        const af = JSON.parse(readFileSync(join(aDir, f), 'utf8'))?.agentFile;
+        if (typeof af === 'string' && af.trim() && insideDir(aDir, af.trim())) mdFile = af.trim();
+      } catch { /* unreadable sidecar: fall back to the sibling */ }
       let tools = [];
-      try { tools = frontmatterTools(readFileSync(join(aDir, `${key}.md`), 'utf8')); } catch { /* md missing */ }
+      try { tools = frontmatterTools(readFileSync(join(aDir, mdFile), 'utf8')); } catch { /* md missing */ }
       agents.push({ key, tools });
     }
   }

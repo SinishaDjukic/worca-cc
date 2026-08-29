@@ -79,6 +79,15 @@ export function normalizeAgentMeta(raw, opts = {}) {
   const order = raw.order === undefined ? DEFAULT_ORDER : Number(raw.order);
   if (!Number.isFinite(order)) err('order must be a number');
 
+  // agentFile is a PATH: the registry joins it onto the layer's agents dir and
+  // reads it as the agent's system prompt AND for its `tools:` frontmatter, so
+  // it takes the SAME basename rule as verdict.filename / outputs[].filename.
+  // A non-<key>.md basename stays legal — every built-in uses worca-cc-<role>.md.
+  const agentFile = typeof raw.agentFile === 'string' && raw.agentFile.trim() ? raw.agentFile.trim() : null;
+  if (agentFile && (/[\\/]/.test(agentFile) || agentFile.includes('..'))) {
+    err(`agentFile "${agentFile}" must be a plain basename`);
+  }
+
   const verdict = readVerdict(raw.verdict, err);
   if (runnerType === 'verifier' && !verdict) err('runnerType "verifier" requires verdict: { filename }');
 
@@ -130,7 +139,7 @@ export function normalizeAgentMeta(raw, opts = {}) {
     description: typeof raw.description === 'string' ? raw.description : '',
     color: COLORS.has(raw.color) ? raw.color : 'amber',
     icon: typeof raw.icon === 'string' ? raw.icon : '',
-    agentFile: typeof raw.agentFile === 'string' && raw.agentFile.trim() ? raw.agentFile.trim() : null,
+    agentFile,
     runnerType,
     scope,
     domain: typeof raw.domain === 'string' && DOMAIN_RE.test(raw.domain) ? raw.domain : 'general',

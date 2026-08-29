@@ -201,6 +201,31 @@ function badModulePath(mod) {
 }
 
 /**
+ * `agentFile` is a PATH, not a label: agent-registry.mjs stamps
+ * `agentPath = join(<layer>/agents, meta.agentFile)` and workflows.mjs reads
+ * THAT file as the agent's system prompt AND for its `tools:` frontmatter. So
+ * it is gated exactly like `module` — relative, no "..", and it must still
+ * resolve inside the agents dir. Absent/empty is legal (the agent then has no
+ * prompt file). Returns a reason clause or null, like badModulePath.
+ */
+function badAgentFile(agentFile, agentsDir) {
+  if (agentFile === undefined || agentFile === null || agentFile === '') return null;
+  if (typeof agentFile !== 'string') return 'must be a string';
+  const af = agentFile.trim();                       // the normalizer trims: judge the string the runtime will use
+  if (!af) return null;
+  if (isAbsolute(af) || /\\/.test(af)) return 'must be a relative path inside agents/';
+  if (af.split('/').includes('..')) return 'must not contain ".."';
+  const root = resolve(agentsDir);
+  if (!resolve(root, af).startsWith(root + sep)) return 'must be a relative path inside agents/';
+  // A contained agentFile must also EXIST: consent and the runtime both read it,
+  // so a name with no file behind it says one thing at consent time ("none
+  // declared") and another at run time (workflows.loadAgentFile used to fall
+  // back into the BUILT-IN agents dir for the same basename).
+  if (!existsSync(join(root, af))) return `${af} not found in agents/`;
+  return null;
+}
+
+/**
  * Normalize a parsed worca-cc-plugin.json (spec §4.1). Only `name` is required.
  * Unknown fields are ignored and collected as warnings (validatePluginDir
  * promotes them to errors under --strict).
@@ -510,6 +535,11 @@ export function validatePluginDir(absDir, { strict = false } = {}) {
       if (key !== stem) push('error', `agents/${f}: key "${key}" must match the filename stem "${stem}"`);
       if (!files.includes(`${stem}.md`)) push('error', `agents/${f}: missing sibling ${stem}.md`);
       agentKeys.add(key);
+      // Path traversal is never softened by dataLevel: an escaping agentFile is
+      // a security defect in a v1 sidecar exactly as in a v2 one, and it is
+      // checked BEFORE the meta gate so exactly one cause is reported.
+      const afErr = badAgentFile(meta.agentFile, agentsDir);
+      if (afErr) { push('error', `agents/${f}: "agentFile" ${afErr}`); continue; }
       if (Number(meta.metaVersion) !== 2) { push(dataLevel, `agents/${f}: ${NOT_META_V2}`); continue; }
       const { errors } = validateMetaV2(meta);
       for (const e of errors) push('error', `agents/${f}: ${e}`);

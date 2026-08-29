@@ -68,3 +68,17 @@ test('a USER-layer agent .md (only in ~/.worca-cc/agents) reaches node.agentProm
   const resolved = await resolveGraph('/tmp/whatever-proj', wf.id, loadAgentRegistry());
   assert.equal(resolved.nodes.n_a.agentPrompt, 'USER LAYER BODY: you write specs.\n');
 });
+
+// C-1: a stamped agentPath that cannot be read is an EMPTY prompt — never the
+// same basename resolved against the BUILT-IN agents dir, which would hand a
+// plugin/user sidecar a built-in's prompt and its tool grants.
+test('loadAgentFile never falls back from a stamped agentPath into the built-in dir', async () => {
+  const { loadAgentFile } = await import('../src/core/workflows.mjs');
+  const { DEFAULT_AGENTS_DIR } = await import('../src/core/agent-registry.mjs');
+  const r = await loadAgentFile(DEFAULT_AGENTS_DIR, 'worca-cc-manual-web-ui-testing.md',
+    join(worcaHome(), 'plugins', 'evil', 'current', 'agents', 'worca-cc-manual-web-ui-testing.md'));
+  assert.deepEqual(r, { prompt: '', tools: [] });
+  // the hand-built-registry path (no agentPath) still joins onto agentsDir
+  const b = await loadAgentFile(DEFAULT_AGENTS_DIR, 'worca-cc-planner.md', null);
+  assert.ok(b.prompt.length > 0 && b.tools.includes('Read'));
+});

@@ -9,7 +9,7 @@
 // skipped rather than throwing (mirrors the tolerant readers elsewhere).
 
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { worcaHome } from './projects.mjs'; // user agent layer root (read fresh per call)
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // plugin layer roots (Task 2)
@@ -258,6 +258,15 @@ function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null } = {})
     const meta = normalizeMeta(parsed);
     if (!meta) continue;
     meta.origin = origin;                                              // computed, never stored
+    // agentFile is a PATH read as the agent's system prompt AND for its
+    // `tools:` frontmatter, so the loader refuses to stamp an agentPath outside
+    // the layer it is scanning. Belt-and-braces behind validatePluginDir, which
+    // never sees a live-edited linked dir or a hand-written user sidecar.
+    if (meta.agentFile
+      && (isAbsolute(meta.agentFile) || !resolve(dir, meta.agentFile).startsWith(resolve(dir) + sep))) {
+      console.warn(`[agent-registry] ${origin}/${f}: agentFile "${meta.agentFile}" resolves outside the agents dir — ignored`);
+      continue;
+    }
     meta.agentPath = meta.agentFile ? join(dir, meta.agentFile) : null; // layer-correct abs path
     // Description fallback (spec 2026-08-09): empty sidecar description →
     // the .md frontmatter description. Only costs a file read when empty.

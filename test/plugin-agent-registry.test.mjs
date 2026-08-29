@@ -185,3 +185,40 @@ test('the v2 gate is PLUGIN-only: a v1 USER sidecar still loads (v1 engine is li
   assert.ok(reg.oldUser, 'a v1 user sidecar is untouched by the plugin API gate');
   assert.equal(reg.oldUser.metaVersion, undefined);
 });
+
+test('a sidecar whose agentFile escapes its layer dir is DROPPED with a warning (C-1)', () => {
+  // Belt-and-braces behind validatePluginDir: a linked plugin dir is live-edited
+  // and a user-layer sidecar is hand-written, so the LOADER refuses to stamp an
+  // agentPath outside the layer it is scanning. A v1 sidecar is the path only
+  // this guard covers — meta v2's basename rule never runs on one.
+  const builtin = tmp('worca-cc-esc-builtin-');
+  writeAgent(builtin, 'alphaEsc', { order: 1 });
+  const user = tmp('worca-cc-esc-user-');
+  writeFileSync(join(user, 'escaper.meta.json'), JSON.stringify({
+    key: 'escaper', displayName: 'escaper', agentFile: '../../../../etc/passwd', order: 5,
+  }));
+  writeFileSync(join(user, 'escaper.md'), '# decoy\n');
+  writeAgent(user, 'honest', { order: 6 });
+  const warned = [];
+  const orig = console.warn;
+  console.warn = (...a) => warned.push(a.join(' '));
+  let reg;
+  try { reg = loadAgentRegistry(builtin, { userAgentsDir: user }); } finally { console.warn = orig; }
+  assert.equal(reg.escaper, undefined, 'the escaping sidecar never reaches the registry');
+  assert.ok(reg.honest, 'its neighbours in the same layer still load');
+  assert.ok(warned.some((w) => w === '[agent-registry] user/escaper.meta.json: agentFile "../../../../etc/passwd" resolves outside the agents dir \u2014 ignored'),
+    warned.join('; '));
+  // an absolute agentFile is refused the same way, even when it happens to
+  // point back inside the layer
+  const user2 = tmp('worca-cc-esc-user2-');
+  writeFileSync(join(user2, 'absolute.meta.json'), JSON.stringify({
+    key: 'absolute', displayName: 'absolute', agentFile: join(user2, 'absolute.md'), order: 7,
+  }));
+  writeFileSync(join(user2, 'absolute.md'), '# abs\n');
+  const warned2 = [];
+  console.warn = (...a) => warned2.push(a.join(' '));
+  let reg2;
+  try { reg2 = loadAgentRegistry(builtin, { userAgentsDir: user2 }); } finally { console.warn = orig; }
+  assert.equal(reg2.absolute, undefined);
+  assert.ok(warned2.some((w) => /agentFile ".*absolute\.md" resolves outside the agents dir/.test(w)), warned2.join('; '));
+});

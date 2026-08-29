@@ -153,3 +153,21 @@ test('derivePortSummary and indexByKey', () => {
   assert.deepEqual(indexByKey([{ key: 'a' }, { key: 'b' }, null, { key: '' }]), { a: { key: 'a' }, b: { key: 'b' } });
   assert.deepEqual(indexByKey(null), {});
 });
+
+test('agentFile is a path field: plain basename only (C-1)', () => {
+  // Same rule as verdict.filename / outputs[].filename — the registry joins
+  // agentFile onto the layer dir and reads it as the agent's system prompt.
+  assert.ok(errs(base({ agentFile: '../../../etc/passwd' }))
+    .includes('agentFile "../../../etc/passwd" must be a plain basename'));
+  assert.ok(errs(base({ agentFile: '/etc/passwd' }))
+    .includes('agentFile "/etc/passwd" must be a plain basename'));
+  assert.ok(errs(base({ agentFile: 'sub/docs.md' }))
+    .includes('agentFile "sub/docs.md" must be a plain basename'));
+  assert.ok(errs(base({ agentFile: 'sub\\docs.md' }))
+    .includes('agentFile "sub\\docs.md" must be a plain basename'));
+  // a plain basename that is NOT <key>.md stays legal (the built-ins use
+  // worca-cc-<role>.md), and an absent agentFile is legal too.
+  assert.deepEqual(errs(base({ agentFile: 'worca-cc-docs.md' })), []);
+  assert.deepEqual(errs(base({ agentFile: undefined })), []);
+  assert.equal(normalizeAgentMeta(base({ agentFile: 'worca-cc-docs.md' })).meta.agentFile, 'worca-cc-docs.md');
+});

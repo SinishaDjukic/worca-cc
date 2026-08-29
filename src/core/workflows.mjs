@@ -52,16 +52,16 @@ export async function loadAgentFile(agentsDir, agentFile, agentPath = null) {
   if (!agentFile && !agentPath) return { prompt: '', tools: [] };
   let text = '';
   try {
-    // Layered registry: the meta's stamped absolute agentPath (built-in OR user
-    // layer) wins; the classic agentsDir+agentFile join is the fallback for
-    // hand-built registries (tests) and a vanished user .md.
+    // Layered registry: the meta's stamped absolute agentPath (built-in, user OR
+    // plugin layer) wins; the agentsDir+agentFile join serves hand-built
+    // registries (tests) that carry no agentPath. A stamped path that cannot be
+    // read is an EMPTY prompt, never a fallback into the built-in dir: that
+    // fallback let a plugin sidecar naming an absent built-in file (e.g.
+    // worca-cc-manual-web-ui-testing.md) run the built-in's prompt and tool
+    // grants while its consent card said "none declared" (C-1).
     text = await readFile(agentPath || join(agentsDir, agentFile), 'utf8');
   } catch {
-    if (agentPath && agentFile) {
-      try { text = await readFile(join(agentsDir, agentFile), 'utf8'); } catch { return { prompt: '', tools: [] }; }
-    } else {
-      return { prompt: '', tools: [] };
-    }
+    return { prompt: '', tools: [] };
   }
   return { prompt: text, tools: parseFrontmatterTools(text) };
 }

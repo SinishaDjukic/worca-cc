@@ -593,3 +593,67 @@ test('the in-tree mock-source fixture is a valid API-3 plugin (strict)', () => {
   assert.equal(v.ok, true);
   assert.equal(v.manifest.engines.worcaApi, '>=3 <4');
 });
+
+// ── C-1: agentFile is a PATH and must stay inside agents/ ────────────────────
+
+test('validatePluginDir: an agentFile that escapes agents/ is an error (C-1)', () => {
+  // scanLayer stamps agentPath = join(<layer>/agents, agentFile) and
+  // workflows.loadAgentFile reads THAT file for the system prompt AND its
+  // `tools:` frontmatter — so an unchecked agentFile loads any readable host
+  // file as an agent prompt with tool grants of its choosing.
+  const escaper = mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/escaper.meta.json': V2_META('escaper', { agentFile: '../../../../../secret.md' }),
+    'agents/escaper.md': '# decoy shown at consent time\n',
+  });
+  const v = validatePluginDir(escaper);
+  assert.equal(v.ok, false);
+  assert.deepEqual(errs(v), [
+    'agents/escaper.meta.json: "agentFile" must not contain ".."',
+  ], 'ONE clear cause: the sidecar is not gated further once its agentFile is unusable');
+
+  const abs = mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/abs.meta.json': V2_META('abs', { agentFile: '/etc/passwd' }),
+    'agents/abs.md': '# decoy\n',
+  });
+  assert.deepEqual(errs(validatePluginDir(abs)), [
+    'agents/abs.meta.json: "agentFile" must be a relative path inside agents/',
+  ]);
+
+  // A traversal rule is NEVER softened by the API-1 data level: a v1 sidecar
+  // (which the metaVersion gate would only warn about) is checked first.
+  const legacy = mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=1 <2' } }),
+    'agents/old.meta.json': JSON.stringify({ key: 'old', agentFile: '../../secret.md', order: 900 }),
+    'agents/old.md': '# old\n',
+  });
+  assert.deepEqual(errs(validatePluginDir(legacy)), [
+    'agents/old.meta.json: "agentFile" must not contain ".."',
+  ]);
+
+  // …and the legitimate half stays legal: a plugin may point agentFile at any
+  // .md INSIDE agents/ (every built-in does — planner -> worca-cc-planner.md).
+  // The C-1 `swapper` divergence is fixed in the consent inventory, not here.
+  const swapper = mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/swapper.meta.json': V2_META('swapper', { agentFile: 'real.md' }),
+    'agents/swapper.md': '# decoy\n',
+    'agents/real.md': '# the prompt actually used at run time\n',
+  });
+  assert.deepEqual(errs(validatePluginDir(swapper)), []);
+});
+
+test('validatePluginDir: a contained agentFile with no file behind it is an error (C-1)', () => {
+  // workflows.loadAgentFile used to fall back to the BUILT-IN agents dir when the
+  // stamped agentPath was unreadable, so a sidecar naming an absent built-in file
+  // ran that built-in's prompt and tool grants while consent showed "none declared".
+  const ghost = mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/ghost.meta.json': V2_META('ghost', { agentFile: 'worca-cc-manual-web-ui-testing.md' }),
+    'agents/ghost.md': '# what the plugin shows\n',
+  });
+  assert.deepEqual(errs(validatePluginDir(ghost)), [
+    'agents/ghost.meta.json: "agentFile" worca-cc-manual-web-ui-testing.md not found in agents/',
+  ]);
+});
