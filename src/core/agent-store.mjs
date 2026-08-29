@@ -105,8 +105,18 @@ function mergeVariantPorts(basePorts, variantPorts) {
     const own = mine.get(bp.id);
     const out = { ...bp };
     if (!own) return out;
-    for (const f of VARIANT_OWN_PORT_FIELDS) if (own[f] !== undefined) out[f] = own[f];
-    // A void port carries neither, whatever the variant used to say.
+    // `as` is TYPE-COUPLED (agent-meta.mjs AS_REQUIRES_TYPE: worktree=>void,
+    // answers=>json, fix-review=>md; a bare 'file' demands a NON-void port and
+    // readInputs materializes it on every non-void input). The TYPE is the
+    // base's — the signature owns it — so the variant's stored `as` only
+    // survives a type it was written for; on a type change the base's own `as`
+    // stands. Without this, a base input that BECOMES void (the shipped
+    // reviewer/workspaceReviewer `done` worktree port) leaves the variant
+    // carrying `as:'file'` on a void port and the WHOLE merge is refused.
+    const keep = own.type === bp.type
+      ? VARIANT_OWN_PORT_FIELDS : VARIANT_OWN_PORT_FIELDS.filter((f) => f !== 'as');
+    for (const f of keep) if (own[f] !== undefined) out[f] = own[f];
+    // A void port carries none of these, whatever the variant used to say.
     if (out.type === 'void') { delete out.filename; delete out.store; delete out.artifactKind; }
     return out;
   });
@@ -118,8 +128,9 @@ function mergeVariantPorts(basePorts, variantPorts) {
  * a base port edit that is not propagated makes resolveGraph refuse every workspace
  * run ("workspace variant X does not match the port signature of Y") at a moment
  * disconnected from the edit. Non-user variants (builtin/plugin) cannot be written
- * — they are reported instead. Never throws: a variant that will not validate after
- * the merge is left untouched and reported.
+ * — they are reported instead. Never throws: a variant that will not validate
+ * after the merge, or whose sidecar cannot be written, is left untouched and
+ * reported — the base's own save has already succeeded and must stand.
  * @param {string} key the edited base key
  * @param {object} baseMeta the base's NEW normalized meta
  * @param {string} dir the writable user layer
@@ -156,7 +167,15 @@ async function propagateToVariants(key, baseMeta, dir) {
         + `(${issues.join('; ') || 'invalid agent metadata'}) — re-point it by hand`);
       continue;
     }
-    await writeFile(join(dir, `${variant.key}.meta.json`), JSON.stringify(merged, null, 2) + '\n', 'utf8');
+    try {
+      await writeFile(join(dir, `${variant.key}.meta.json`), JSON.stringify(merged, null, 2) + '\n', 'utf8');
+    } catch (e) {
+      // Only the fs CODE: the message carries the absolute home path, which no
+      // banner may surface. `updatedVariants` lists what was actually written.
+      warnings.push(`workspace variant "${variant.key}" could not adopt the new ports `
+        + `(write failed: ${e?.code || 'unknown error'}) — re-point it by hand`);
+      continue;
+    }
     updated.push(variant.key);
   }
   return { updated: updated.sort(), warnings };

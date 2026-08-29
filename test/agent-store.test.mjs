@@ -2,6 +2,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import {
@@ -330,4 +331,72 @@ test('a base with no variants reports an empty updatedVariants list', async () =
     meta: { ...VBASE, key: 'lonelyBase', outputs: [{ id: 'other', type: 'md', filename: 'o.md' }] },
   });
   assert.deepEqual(out.updatedVariants, []);
+});
+
+// ── MIN-19 review: the two ways propagation used to give up ───────────────────
+
+// `as` is TYPE-COUPLED and readInputs materializes `as:'file'` on every non-void
+// input, so a base port that BECOMES void/worktree (exactly the shipped
+// reviewer + workspaceReviewer `done` port) used to leave the variant carrying
+// `as:'file'` on a void port: validateMetaV2 refused the merge and NOTHING
+// propagated. The base's routing must reach the variant instead.
+test('a base input that turns into a void/worktree port still propagates', async () => {
+  const { loadAgentRegistry } = await import('../src/core/agent-registry.mjs');
+  const WT = { ...VBASE, inputs: [{ id: 'plan', type: 'md' }, { id: 'done', type: 'md' }] };
+  await createAgent({ meta: { ...WT, key: 'wtBase' }, markdown: '# b\n\ntext\n' });
+  await createAgent({
+    meta: {
+      ...WT, key: 'wtBaseWs', displayName: 'WT WS', scope: 'workspace-only', workspaceVariantOf: 'wtBase',
+      outputs: [{ id: 'review', type: 'md', filename: 'ws-r.md' }],
+    },
+    markdown: '# b\n\ntext\n',
+  });
+  assert.equal(loadAgentRegistry().wtBaseWs.inputs[1].as, 'file', 'the variant stored the materialized as:file');
+
+  const out = await updateAgent('wtBase', {
+    meta: {
+      ...WT, key: 'wtBase',
+      inputs: [{ id: 'plan', type: 'md' }, { id: 'done', type: 'void', required: false, as: 'worktree' }],
+    },
+  });
+  assert.deepEqual(out.warnings, [], 'the merge is not refused');
+  assert.deepEqual(out.updatedVariants, ['wtBaseWs']);
+  const port = loadAgentRegistry().wtBaseWs.inputs[1];
+  assert.equal(port.type, 'void');
+  assert.equal(port.as, 'worktree', 'the base’s worktree routing reached the variant, not a stripped `as`');
+});
+
+// The base's OWN sidecar is already written when propagation runs, so a variant
+// that cannot be written must degrade to a warning: throwing reported a failed
+// save that had in fact succeeded, and abandoned the tree half-propagated.
+test('a variant whose sidecar cannot be written is warned about, not thrown', {
+  skip: process.getuid?.() === 0 ? 'root writes through a read-only sidecar' : false,
+}, async () => {
+  await createAgent({ meta: { ...VBASE, key: 'lockBase' }, markdown: '# b\n\ntext\n' });
+  for (const key of ['lockAws', 'lockZws']) {
+    await createAgent({
+      meta: {
+        ...VBASE, key, displayName: key, scope: 'workspace-only', workspaceVariantOf: 'lockBase',
+        outputs: [{ id: 'review', type: 'md', filename: `${key}.md` }],
+      },
+      markdown: '# b\n\ntext\n',
+    });
+  }
+  const locked = join(userAgentsDir(), 'lockZws.meta.json');
+  chmodSync(locked, 0o444);
+  let out;
+  try {
+    out = await updateAgent('lockBase', {
+      meta: {
+        ...VBASE, key: 'lockBase',
+        inputs: [{ id: 'plan', type: 'md' }, { id: 'extra', type: 'json', required: false }],
+      },
+    });
+  } finally { chmodSync(locked, 0o644); }
+  assert.deepEqual(out.updatedVariants, ['lockAws'], 'only a variant actually written is listed');
+  assert.deepEqual(out.warnings, [
+    'workspace variant "lockZws" could not adopt the new ports (write failed: EACCES) — re-point it by hand',
+  ], 'the fs CODE only — never the message, which carries the absolute home path');
+  assert.equal(JSON.parse(await readFile(join(userAgentsDir(), 'lockBase.meta.json'), 'utf8')).inputs.length, 2,
+    'the base save STANDS: a variant write failure never rolls it back');
 });
