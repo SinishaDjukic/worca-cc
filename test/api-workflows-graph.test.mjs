@@ -218,3 +218,39 @@ test('POST /api/workflows refuses a name that slugs onto wf_default with a 422',
     'only the built-in, still with its own 7 nodes');
   assert.equal(list.body.workflows.find((w) => w.id === 'wf_default').nodes.length, 7);
 });
+
+// MAJ-5: two "Save a copy" clicks both mint wf_full-copy; the second used to
+// answer 201 while silently replacing the first and inheriting its createdAt.
+test('POST /api/workflows answers 409 when the MINTED id is already taken', async () => {
+  const first = await api('POST', '/api/workflows', { ...GOOD, name: 'Full copy' });
+  assert.equal(first.status, 201);
+  assert.equal(first.body.workflow.id, 'wf_full-copy');
+
+  // A DIFFERENT but equally legal graph (task -> planner -> refiner -> end):
+  // exactly one end node, every input wired, so the 422 arm cannot mask the 409.
+  const bigger = { ...GOOD, name: 'Full copy',
+    nodes: [GOOD.nodes[0], GOOD.nodes[1],
+      { id: 'n_ref', kind: 'agent', key: 'refiner', x: 450, y: 0, config: {} }, GOOD.nodes[2]],
+    wires: [GOOD.wires[0],
+      { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_ref', port: 'plan' } },
+      { id: 'w3', from: { node: 'n_ref', port: 'plan' }, to: { node: 'n_end', port: 'result' } }] };
+  const clash = await api('POST', '/api/workflows', bigger);
+  assert.equal(clash.status, 409);
+  assert.deepEqual(clash.body, {
+    error: 'a pipeline with the id "wf_full-copy" already exists — choose another name',
+    id: 'wf_full-copy',
+  });
+  assert.equal(clash.body.errors, undefined, 'no issues array: the dialog renders `error` verbatim');
+
+  const still = await api('GET', '/api/workflows/wf_full-copy');
+  assert.equal(still.body.nodes.length, 3, 'the first copy is intact');
+  assert.equal(still.body.nodes.some((n) => n.id === 'n_ref'), false, 'the clashing graph was NOT written');
+  assert.equal(still.body.createdAt, first.body.workflow.createdAt);
+
+  // The in-place re-save (body.id present) must still succeed — this is the
+  // ordinary Save on a loaded row and it may not be broken by the 409.
+  const resave = await api('POST', '/api/workflows', { ...bigger, id: 'wf_full-copy' });
+  assert.equal(resave.status, 201);
+  assert.equal(resave.body.workflow.nodes.length, 4);
+  assert.equal(resave.body.workflow.createdAt, first.body.workflow.createdAt, 'createdAt is preserved in place');
+});

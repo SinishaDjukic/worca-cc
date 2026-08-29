@@ -1647,7 +1647,7 @@ const gvApi = {
     const res = await fetch('/api/workflows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const d = await safeJson(res);
     // 422 = the shared validator's issues, rendered verbatim by the dialog.
-    if (!res.ok) return { ok: false, status: res.status, issues: d && (d.issues || d.errors), error: d && d.error };
+    if (!res.ok) return { ok: false, status: res.status, issues: d && (d.issues || d.errors), error: d && d.error, id: d && d.id };
     return { ok: true, workflow: (d && d.workflow) || d };
   },
   deleteWorkflow: async (id) => {

@@ -278,9 +278,18 @@ export async function writeWorkflow(tpl) {
  * Persist a v2 graph template. Saving over an archived id UN-archives it (the
  * user rebuilt it on purpose). v1 columns are written empty so a v1 reader can
  * never mistake a graph row for a step plan.
+ *
+ * `rejectCollision` (MAJ-5) makes a save whose id was MINTED from the name throw
+ * ID_TAKEN instead of upserting over a LIVE row it never asked for. It is opt-in
+ * because the importers/seeders that re-write a row by design must keep the
+ * upsert; the API's save path is the one caller that turns it on.
+ *
  * @param {{id?:string, name:string, domain?:string, origin?:string, nodes:Array, wires:Array, canvas?:object}} tpl
+ * @param {{rejectCollision?:boolean}} [opts]
+ * @throws {Error} code 'RESERVED_NAME' (the name slugs onto wf_default) or,
+ *   with rejectCollision, code 'ID_TAKEN' + `.id` (the minted id is in use)
  */
-export async function writeGraphWorkflow(tpl) {
+export async function writeGraphWorkflow(tpl, opts = {}) {
   const now = new Date().toISOString();
   const name = (tpl && typeof tpl.name === 'string' && tpl.name.trim()) || 'Untitled';
   // The ONE reserved id is the built-in default's; a save may never claim it,
@@ -304,7 +313,17 @@ export async function writeGraphWorkflow(tpl) {
   if (tpl?.canvas && typeof tpl.canvas === 'object') graph.canvas = tpl.canvas;
 
   getDb();
-  const existing = prepare('SELECT created_at FROM workflows WHERE id = ?').get(id);
+  const existing = prepare('SELECT created_at, archived_at FROM workflows WHERE id = ?').get(id);
+  // MAJ-5: the caller asked for NO id, so wf_<slug(name)> is a GUESS — landing it
+  // on a row that already exists replaced someone else's pipeline and kept the
+  // victim's created_at, leaving no trace. Only LIVE rows collide: an archived
+  // row is invisible in the saved list, so a 409 naming it would be a dead end,
+  // and re-saving an archived name is the documented way to rebuild it.
+  if (opts?.rejectCollision && minted && existing && !existing.archived_at) {
+    throw Object.assign(
+      new Error(`a pipeline with the id "${id}" already exists — choose another name`),
+      { code: 'ID_TAKEN', id });
+  }
   const createdAt = (typeof tpl?.createdAt === 'string' && tpl.createdAt) || existing?.created_at || now;
   tx(() => {
     prepare(`

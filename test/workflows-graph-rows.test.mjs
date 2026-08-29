@@ -111,3 +111,34 @@ test('a name that slugs onto the reserved default id is refused, not silently re
   // A name that merely CONTAINS "default" is untouched.
   assert.equal((await writeGraphWorkflow({ ...GRAPH, name: 'de fault' })).id, 'wf_de-fault');
 });
+
+// MAJ-5: an id MINTED from the name (what Save-a-copy sends — no body.id) used
+// to UPSERT over whatever already sat on wf_<slug>, keeping the victim's
+// created_at so the clobber left no trace. `rejectCollision` is opt-in so the
+// importers/seeders that legitimately re-write a row keep their upsert.
+test('rejectCollision refuses a MINTED id that already exists; an in-place save is unaffected', async () => {
+  const first = await writeGraphWorkflow({ ...GRAPH, name: 'Full copy' }, { rejectCollision: true });
+  assert.equal(first.id, 'wf_full-copy');
+  assert.equal(first.nodes.length, 2);
+  const bigger = { ...GRAPH, name: 'Full copy', nodes: [...GRAPH.nodes, { id: 'n_extra', kind: 'end', x: 600, y: 0, config: {} }] };
+  await assert.rejects(
+    () => writeGraphWorkflow(bigger, { rejectCollision: true }),
+    (err) => {
+      assert.equal(err.code, 'ID_TAKEN');
+      assert.equal(err.id, 'wf_full-copy');
+      assert.equal(err.message, 'a pipeline with the id "wf_full-copy" already exists — choose another name');
+      return true;
+    });
+  const victim = await readWorkflow('wf_full-copy');
+  assert.equal(victim.nodes.length, 2, 'the victim graph is untouched');
+  assert.equal(victim.createdAt, first.createdAt);
+  assert.equal(victim.updatedAt, first.updatedAt, 'not even updated_at moved');
+
+  // An IN-PLACE save carries body.id — that is a deliberate overwrite, never a collision.
+  const inPlace = await writeGraphWorkflow({ ...bigger, id: 'wf_full-copy' }, { rejectCollision: true });
+  assert.equal(inPlace.id, 'wf_full-copy');
+  assert.equal(inPlace.nodes.length, 3);
+  // And WITHOUT the option the old upsert stands (importers, seeds, tests).
+  assert.equal((await writeGraphWorkflow({ ...GRAPH, name: 'Full copy' })).id, 'wf_full-copy');
+  assert.equal((await readWorkflow('wf_full-copy')).nodes.length, 2);
+});

@@ -3279,14 +3279,19 @@ app.post('/api/workflows', async (req, res) => {
     const portsFn = registryPortsFn(loadAgentRegistry(AGENTS_DIR));
     const { errors, warnings } = validateGraph({ ...graph, version: 2 }, portsFn);
     if (errors.length) return res.status(422).json({ error: 'invalid graph', errors, warnings });
-    const workflow = await writeGraphWorkflow(graph);
+    // rejectCollision (MAJ-5): the body carried no id, so wf_<slug(name)> is a
+    // GUESS — it must never silently replace a pipeline the user can see.
+    const workflow = await writeGraphWorkflow(graph, { rejectCollision: true });
     return res.status(201).json({ workflow, warnings });
   } catch (err) {
     // C-3: a name that slugs onto the reserved wf_default is a caller error, not
-    // a server fault — 422, the same code the validator's refusal uses. The body
-    // carries NO issues/errors array on purpose: app.js's saveWorkflow maps
-    // `error` straight into the save dialog's message line, verbatim.
+    // a server fault — 422, the same code the validator's refusal uses. MAJ-5: a
+    // minted id already in use is a 409 carrying that id, so the dialog can offer
+    // rename/overwrite. Both bodies carry NO issues/errors array on purpose:
+    // app.js's saveWorkflow maps `error` straight into the save dialog's message
+    // line, verbatim.
     if (err && err.code === 'RESERVED_NAME') return res.status(422).json({ error: err.message });
+    if (err && err.code === 'ID_TAKEN') return res.status(409).json({ error: err.message, id: err.id });
     return res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
