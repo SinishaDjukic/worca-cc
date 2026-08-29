@@ -36,12 +36,11 @@ export function logLineText(rec) {
  *  needs the dashes. */
 export function serializeLog(recs) {
   const out = [];
-  let prevCycle = null;
+  const state = newCycleState();
   for (const rec of recs || []) {
     if (!rec) continue;
-    const sep = cycleSeparatorBefore(prevCycle, rec);
+    const sep = cycleSeparatorBefore(state, rec);
     if (sep) out.push(`── ${sep} ──`);
-    if (rec.cycle != null) prevCycle = rec.cycle;
     out.push(logLineText(rec));
   }
   return out.join('\n');
@@ -66,24 +65,48 @@ export function projectLogRecord(rec) {
   };
 }
 
+/** The separator cursor: nodeId -> the HIGHEST ordinal rendered for that node
+ *  so far ('' buckets a record with no nodeId — orchestrator notices, and every
+ *  v1-shaped log). One per pane, carried across a filter repaint so a live
+ *  append after one agrees with it. */
+export function newCycleState() {
+  return new Map();
+}
+
 /**
- * The separator label to draw BEFORE `rec`, or null for none.
+ * The separator label to draw BEFORE `rec`, or null for none — and the ONE
+ * place `state` advances.
  *
- * `cycle` is the feedback-loop rewind counter: when a reviewer returns blocking
- * issues the pipeline rewinds and re-runs the same steps with cycle+1, so a
- * re-run is otherwise indistinguishable from its first pass. A rule drawn at the
- * boundary makes that legible without the reader having to filter for it.
+ * In v2 `cycle` is the PER-NODE ordinal (`orchestrator.mjs` stamps
+ * `cycle: ctx.ordinal` beside `nodeId`), NOT v1's pipeline-wide rewind counter.
+ * Two nodes stream concurrently at unrelated ordinals, so comparing `rec.cycle`
+ * to "the last cycle rendered by ANY node" drew a rule on nearly every
+ * alternation (MIN-37). The rule belongs where a NODE re-runs: `rec.cycle`
+ * strictly exceeds the highest ordinal that node has already rendered.
  *
- * `prevCycle` is the cycle of the last RENDERED record that HAD one — the
- * caller carries it past cycle-less notices (artifact events, git/orchestrator
- * lines), which land exactly at rewind boundaries and must not mask them. It
- * must come from rendered records, not the model, so a filter that hides an
- * entire cycle cannot orphan a separator. null (no cycled record rendered yet)
- * yields null: no leading "Cycle 1" header.
+ * Consequences that are deliberate:
+ *   · a node's FIRST line never gets a header, whatever its ordinal — so a node
+ *     that starts late at ordinal 1 draws nothing;
+ *   · alternation between nodes draws nothing;
+ *   · a cycle-less notice (artifact event, git line) landing exactly at a
+ *     boundary neither draws nor masks a rule — it does not touch the state.
+ *
+ * The state must be advanced from RENDERED records only, never from the model,
+ * so a filter that hides an entire cycle cannot orphan a separator.
+ *
+ * @param {Map<string, number>} state from newCycleState(); mutated in place
+ * @param {object|null} rec
+ * @returns {string|null}
  */
-export function cycleSeparatorBefore(prevCycle, rec) {
+export function cycleSeparatorBefore(state, rec) {
   if (!rec || rec.cycle == null) return null;
-  if (prevCycle == null) return null;
-  if (String(prevCycle) === String(rec.cycle)) return null;
+  const seen = state instanceof Map ? state : null;
+  if (!seen) return null;
+  const key = rec.nodeId == null ? '' : String(rec.nodeId);
+  const n = Number(rec.cycle);
+  if (!Number.isFinite(n)) return null;
+  const last = seen.get(key);
+  seen.set(key, last == null ? n : Math.max(last, n));
+  if (last == null || n <= last) return null;
   return `Cycle ${rec.cycle}`;
 }

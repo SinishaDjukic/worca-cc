@@ -49,7 +49,7 @@ const state = {
   activePluginProfile: null,
 };
 
-import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, projectLogRecord } from './log-line.mjs';
+import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
 import { decorFromState, applyDecor, isGraphManifest } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
@@ -3340,14 +3340,16 @@ function trimLogDom(logEl) {
   }
 }
 
-// Append `rec` to a log pane, preceded by a cycle separator when it opens a new
-// cycle. `prevCycle` is the last RENDERED cycle value (see cycleSeparatorBefore);
-// returns the value the NEXT append must pass.
-function appendLogRec(logEl, rec, prevCycle) {
-  const sep = cycleSeparatorBefore(prevCycle, rec);
+// Append `rec` to a log pane, preceded by a cycle separator when its NODE opens
+// a higher ordinal (see cycleSeparatorBefore). `state` is the per-node cursor
+// from newCycleState(); anything else (a first call passing null) starts a fresh
+// one. Returns the state the NEXT append must pass.
+function appendLogRec(logEl, rec, state) {
+  const cursor = state instanceof Map ? state : newCycleState();
+  const sep = cycleSeparatorBefore(cursor, rec);
   if (sep) logEl.appendChild(buildLogSeparator(sep));
   logEl.appendChild(buildLogLine(rec));
-  return rec.cycle != null ? rec.cycle : prevCycle;
+  return cursor;
 }
 
 // Pin a card's log to the bottom when its auto-scroll is on. Source of truth is
@@ -3407,7 +3409,7 @@ function onLog(r, msg) {
     const logEl = r.el.querySelector('.log');
     if (logEl && !repainted && logLineVisible(rec, r.logFilter)) {
       clearLogPlaceholder(logEl);
-      r._lastRenderedCycle = appendLogRec(logEl, rec, r._lastRenderedCycle ?? null);
+      r._cycleState = appendLogRec(logEl, rec, r._cycleState ?? null);
       trimLogDom(logEl);
       maybeAutoscrollLog(r);
     }
@@ -3597,16 +3599,16 @@ function repaintFilteredLog(r, root = r.el) {
   // per debounce tick is where search jank came from.
   const frag = document.createDocumentFragment();
   let shown = 0;
-  let prevCycle = null;
+  let cycleState = newCycleState();
   for (const rec of r.logLines) {
     if (!visible(rec)) continue;
-    prevCycle = appendLogRec(frag, rec, prevCycle);
+    cycleState = appendLogRec(frag, rec, cycleState);
     shown++;
   }
   logEl.appendChild(frag);
-  // Hand the streaming path in onLog the cycle the next separator must compare
-  // against, so a live append after a repaint agrees with the repaint.
-  r._lastRenderedCycle = prevCycle;
+  // Hand the streaming path in onLog the per-node cursor the next separator must
+  // compare against, so a live append after a repaint agrees with the repaint.
+  r._cycleState = cycleState;
   trimLogDom(logEl);
   if (shown === 0 && r.logLines.length) {
     logEl.textContent = '(no lines match the filter)';
@@ -10518,8 +10520,8 @@ async function loadLiveLogs(panel, logUrl, st = null) {
         note.textContent = `(showing the last ${shown.length} of ${matches.length} matching lines — copy takes all ${matches.length})`;
         frag.appendChild(note);
       }
-      let prevCycle = null;
-      for (const rec of shown) prevCycle = appendLogRec(frag, rec, prevCycle);
+      let cycleState = newCycleState();
+      for (const rec of shown) cycleState = appendLogRec(frag, rec, cycleState);
       box.appendChild(frag);
       if (matches.length === 0) box.textContent = recs.length ? '(no lines match the filter)' : '(no log lines)';
     };
@@ -13135,7 +13137,7 @@ function rdAutoscrollLog(sec, r) {
 // of repaintFilteredLog — same fragment, same DOM cap, same placeholder, same
 // frozen-viewport rule when auto-scroll is off.
 //
-// The render cursor lives on the SECTION, not on r._lastRenderedCycle: onLog
+// The render cursor lives on the SECTION, not on r._cycleState: onLog
 // advances the run-level cursor for the CARD first, so a detail append reading it
 // would find rec.cycle already "rendered" and silently drop the cycle separator.
 function rdRepaintLog(sec, r) {
@@ -13147,14 +13149,14 @@ function rdRepaintLog(sec, r) {
   const visible = compileLogFilter(r.logFilter);
   const frag = document.createDocumentFragment();
   let shown = 0;
-  let prevCycle = null;
+  let cycleState = newCycleState();
   for (const rec of r.logLines) {
     if (!visible(rec)) continue;
-    prevCycle = appendLogRec(frag, rec, prevCycle);
+    cycleState = appendLogRec(frag, rec, cycleState);
     shown++;
   }
   box.appendChild(frag);
-  sec._lastCycle = prevCycle;
+  sec._cycleState = cycleState;
   trimLogDom(box);
   if (shown === 0 && r.logLines.length) {
     box.textContent = '(no lines match the filter)';
@@ -13176,7 +13178,7 @@ function rdPaintLogFilters(sec, r) {
   // paintLogFilters' reconcile branch calls repaintFilteredLog(r, sec), which has
   // TWO cross-pane side effects, because that helper honours `root` for the
   // wipe/rebuild but not for anything else:
-  //   1. it parks its cycle cursor on the RUN (`r._lastRenderedCycle`) — which is
+  //   1. it parks its cycle cursor on the RUN (`r._cycleState`) — which is
   //      the CARD's cursor. Re-seat the section's own from it, then re-seat the
   //      card's by repainting the card, or the card's next incremental append
   //      compares against the DETAIL's value and drops or duplicates a
@@ -13186,7 +13188,7 @@ function rdPaintLogFilters(sec, r) {
   //      card jumps to the bottom.
   // Both are cheap to undo here, and only on the (rare) reconcile path.
   if (repainted) {
-    sec._lastCycle = r._lastRenderedCycle ?? null;
+    sec._cycleState = r._cycleState ?? null;
     if (r.el) repaintFilteredLog(r);   // re-render the CARD and re-seat its cursor
     rdAutoscrollLog(sec, r);           // …then pin the pane that actually changed
   }
@@ -13632,7 +13634,7 @@ function rdAppendLogFrame(r) {
   const box = rdLogBox(sec);
   if (!box || repainted || !logLineVisible(rec, r.logFilter)) return;
   clearLogPlaceholder(box);
-  sec._lastCycle = appendLogRec(box, rec, sec._lastCycle ?? null);
+  sec._cycleState = appendLogRec(box, rec, sec._cycleState ?? null);
   trimLogDom(box);
   rdAutoscrollLog(sec, r);
 }
@@ -14469,7 +14471,7 @@ function destroyGraphMounts(root) {
  *  P6b's node/execution axes). Assign, then repaint every pane that shows it:
  *  the card, and — when THIS run's detail is open with its Logs tab built — the
  *  detail through rdPaintLogFilters + rdRepaintLog (NOT repaintFilteredLog: that
- *  helper parks the cycle cursor on r._lastRenderedCycle and pins r.el's pane). */
+ *  helper parks the cycle cursor on r._cycleState and pins r.el's pane). */
 function applyRunLogFilter(r, patch) {
   if (!r || !r.logFilter) return;
   Object.assign(r.logFilter, patch || {});
