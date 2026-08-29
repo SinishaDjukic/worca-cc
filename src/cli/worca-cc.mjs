@@ -187,6 +187,7 @@ Usage:
   worca <subcommand> [args]
   worca --prompt "<task>" [--project <dir>] [options]
   worca --file <task.md> [--project <dir>] [options]
+  worca "<task>" [--project <dir>] [options]   (bare prompt; quote it)
   worca --ui
   worca --install <targetDir> [--force]
 
@@ -201,6 +202,7 @@ Subcommands:
                               disable|doctor|link|reimport|init|validate|exec. See: worca plugin help
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
   config [get|set|unset]      Budget & cost-limit settings
+  help                        Print this help (same as --help).
 
 Options:
   --project <dir>          Target project directory (default: cwd)
@@ -1623,8 +1625,48 @@ async function cmdMarketplace(argv) {
 
 const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config']);
 
+/** Levenshtein distance, two-row. Only ever called on short argv tokens. */
+function editDistance(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+/**
+ * The subcommand a lone positional was probably meant to be, or null.
+ *
+ * A bare positional is a legal prompt (`worca "do the thing"`), so only a SINGLE
+ * whitespace-free token that near-misses a real subcommand counts as a typo: edit
+ * distance <= 2, or a strict prefix of at least 3 characters (`plug` -> `plugin`).
+ * Refusing costs one retry with --prompt; running `worca reusme run-abc123` cuts a
+ * worktree + feature branch and spends real tokens on a task named "reusme".
+ */
+function nearestSubcommand(token) {
+  if (!token || /\s/.test(token)) return null;
+  for (const name of SUBCOMMANDS) {
+    if (token.length >= 3 && name.length > token.length && name.startsWith(token)) return name;
+  }
+  let best = null;
+  let bestD = 3;   // strictly less than 3 == distance <= 2
+  for (const name of SUBCOMMANDS) {
+    const d = editDistance(token, name);
+    if (d < bestD) { bestD = d; best = name; }
+  }
+  return best;
+}
+
 async function main() {
   const sub = process.argv[2];
+  // `worca help` is what every CLI user types first; it is not a subcommand and
+  // not a near-miss of one, so without this line it became a PROMPT and ran a
+  // pipeline named "help" (MIN-51).
+  if (sub === 'help') { process.stdout.write(HELP); return 0; }
   if (SUBCOMMANDS.has(sub)) {
     const rest = process.argv.slice(3);
     if (sub === 'add') return cmdAdd(rest);
@@ -1666,8 +1708,15 @@ async function main() {
   }
 
   if (!flags.prompt && !flags.file) {
-    // Allow a bare positional prompt: `worca "do the thing"`.
+    // Allow a bare positional prompt: `worca "do the thing"`. A lone token that
+    // near-misses a subcommand is a typo, not a task — refuse it here, before a
+    // pipeline row, a worktree or a feature branch exists.
     if (flags._.length) {
+      const meant = nearestSubcommand(flags._[0]);
+      if (meant) {
+        if (meant === flags._[0]) fail(`"${meant}" is a subcommand and must come first: worca ${meant} [args] (to run a prompt with that word, use --prompt "\u2026")`);
+        fail(`unknown subcommand "${flags._[0]}" — did you mean "${meant}"? (to run a prompt, use --prompt "\u2026")`);
+      }
       flags.prompt = flags._.join(' ');
     } else {
       fail('Provide a task with --prompt "<text>" or --file <markdown>. See --help.');

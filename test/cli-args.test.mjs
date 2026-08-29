@@ -81,3 +81,76 @@ test('MAJ-9: a readable --file still runs the pipeline from its contents', () =>
   const row = getDb().prepare('SELECT prompt FROM pipelines ORDER BY rowid DESC LIMIT 1').get();
   assert.equal(row.prompt, '# real brief\n\nDo the thing.\n');
 });
+
+// ── MIN-51: a mistyped subcommand must not start a real pipeline ───────────────
+// `worca reusme <id>` used to fall through to the bare-positional prompt form and
+// run a full pipeline in the cwd, cutting a worktree + feature branch for a task
+// literally named "reusme run-abc123".
+
+test('MIN-51: a near-miss subcommand is refused with a suggestion, and starts nothing', () => {
+  const repo = freshRepo();
+  const before = pipelineCount();
+  const r = runCli(['reusme', 'run-abc123'], repo);
+  assert.equal(r.status, 2, `expected the fail() exit code\n${r.stdout}\n${r.stderr}`);
+  assert.equal(
+    r.stderr.trim(),
+    'worca: unknown subcommand "reusme" — did you mean "resume"? (to run a prompt, use --prompt "…")',
+  );
+  assert.equal(pipelineCount(), before, 'no pipeline row');
+  // No worktree, no feature branch: the whole point of refusing before the run.
+  assert.equal(branchesOf(repo).trim(), 'main');
+  const worktrees = spawnSync('git', ['-C', repo, 'worktree', 'list'], { encoding: 'utf8' }).stdout.trim().split('\n');
+  assert.equal(worktrees.length, 1, worktrees.join(' | '));
+});
+
+test('MIN-51: a strict prefix of a subcommand is refused too', () => {
+  const repo = freshRepo();
+  const r = runCli(['plug'], repo);
+  assert.equal(r.status, 2, r.stdout);
+  assert.equal(
+    r.stderr.trim(),
+    'worca: unknown subcommand "plug" — did you mean "plugin"? (to run a prompt, use --prompt "…")',
+  );
+});
+
+test('MIN-51: a multi-word bare positional is still a prompt', () => {
+  const repo = freshRepo();
+  const r = runCli(['fix the login bug', '--yes'], repo);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /Pipeline complete\./);
+  const row = getDb().prepare('SELECT prompt FROM pipelines ORDER BY rowid DESC LIMIT 1').get();
+  assert.equal(row.prompt, 'fix the login bug');
+});
+
+test('MIN-51: a single-token prompt that is NOT a near-miss still runs', () => {
+  const repo = freshRepo();
+  const r = runCli(['refactor', '--yes'], repo);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /Pipeline complete\./);
+});
+
+test('MIN-51: --prompt resume is a prompt, never a subcommand', () => {
+  const repo = freshRepo();
+  const r = runCli(['--project', repo, '--prompt', 'resume', '--yes']);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /Pipeline complete\./);
+  const row = getDb().prepare('SELECT prompt FROM pipelines ORDER BY rowid DESC LIMIT 1').get();
+  assert.equal(row.prompt, 'resume');
+});
+
+test('MIN-51: HELP documents the bare-positional prompt form', () => {
+  const r = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /worca "<task>"/);
+});
+
+test('MIN-51: bare `worca help` prints the help and starts nothing', () => {
+  const repo = freshRepo();
+  const before = pipelineCount();
+  const r = runCli(['help'], repo);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /^worca — node-graph multi-agent pipelines/);
+  assert.match(r.stdout, /Usage:/);
+  assert.equal(pipelineCount(), before, 'no pipeline row');
+  assert.equal(branchesOf(repo).trim(), 'main', 'no feature branch');
+});
