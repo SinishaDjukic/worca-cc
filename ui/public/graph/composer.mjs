@@ -500,7 +500,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     const btn = ev.target.closest && ev.target.closest('.ap');
     if (!btn || btn.disabled || ev.button !== 0) return;
     drag = { entry: btn.dataset.kind ? { kind: btn.dataset.kind } : { key: btn.dataset.key },
-      sx: ev.clientX, sy: ev.clientY, id: ev.pointerId, label: btn.querySelector('.n').textContent, ghost: null };
+      sx: ev.clientX, sy: ev.clientY, id: ev.pointerId, label: btn.querySelector('.n').textContent, ghost: null, btn };
     try { btn.setPointerCapture?.(ev.pointerId); } catch { /* synthetic */ }
     doc.addEventListener('pointermove', onPalMove);
     doc.addEventListener('pointerup', onPalUp);
@@ -534,6 +534,10 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   const onPalCancel = () => endPalDrag();
   function endPalDrag() {
     if (drag && drag.ghost) drag.ghost.remove();
+    // The stage releases its capture in finish(); the pill releases here, on every
+    // exit (up, cancel, destroy) — browsers release implicitly after pointerup,
+    // so this is a no-op there and matters only for destroy() mid-drag.
+    try { if (drag && drag.btn.hasPointerCapture?.(drag.id)) drag.btn.releasePointerCapture(drag.id); } catch { /* already gone */ }
     drag = null;
     doc.removeEventListener('pointermove', onPalMove);
     doc.removeEventListener('pointerup', onPalUp);
