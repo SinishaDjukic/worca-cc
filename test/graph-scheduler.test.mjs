@@ -1026,3 +1026,61 @@ test('31 pause mid-composite: the shell stays non-terminal, publishes nothing, a
   assert.equal(second.tokenEvents().filter((e) => e.from.node === 'n_work').length, 1, 'ONE publish, after finish');
   assert.equal(second.scheduler.getState().endReached, true);
 });
+
+// ── MIN-25: the End drain cuts a composite short — that is `skipped`, not `done` ──
+// runComposite's bail() answered `{ outputs: {} }` for End/abort/failure, which
+// completeExecution treats as a SUCCESSFUL completion: the ledger row read `done`
+// although finish() never ran, and an empty token latched into the snapshot. Base
+// spec §"Completion": "anything cut off by the End drain" reports `skipped`.
+test('34 a composite cut short by the End drain is `skipped` and publishes nothing', { timeout: 5000 }, async () => {
+  const TPL34 = TPL(
+    [N('n_task', 'task'), N('n_make', 'agent', 'maker'), N('n_split', 'agent', 'splitter'),
+      N('n_work', 'agent', 'worker'), N('n_fast', 'agent', 'maker'), N('n_end', 'end')],
+    [W('w1', 'n_task.task', 'n_make.task'), W('w2', 'n_make.out', 'n_split.plan'),
+      W('w3', 'n_split.tasks', 'n_work.task'), W('w4', 'n_make.out', 'n_work.plan'),
+      W('w5', 'n_task.task', 'n_fast.task'), W('w6', 'n_fast.out', 'n_end.result')],
+  );
+  let h = null;
+  const sliceStarted = deferred();
+  const endDone = () => !!h && h.events.some((e) => e.name === 'exec' && e.nodeId === 'n_end' && e.status === 'done');
+  const waitUntil = async (fn) => { for (let i = 0; i < 500 && !fn(); i += 1) await tick(); };
+  h = harness({
+    template: TPL34,
+    script: {
+      n_task: () => ({ outputs: { task: { path: '/p/task.md' } } }),
+      n_make: () => ({ outputs: { out: { path: '/p/plan.md' } } }),
+      n_split: () => ({ outputs: { tasks: { path: '/p/tasks.json' } } }),
+      // The fast branch waits for the composite's FIRST slice, then races to End.
+      n_fast: async () => { await sliceStarted.promise; return { outputs: { out: { path: '/p/fast.md' } } }; },
+      n_work: async (a) => {
+        if (a.composite === 'expand') {
+          return { phases: [
+            { ordinal: 1, tasks: [{ id: 'p1t1', title: 'A', path: '/p/a.md' }] },
+            { ordinal: 2, tasks: [{ id: 'p2t1', title: 'B', path: '/p/b.md' }] },
+          ] };
+        }
+        if (a.composite === 'finish') return { outputs: { done: {} } };
+        if (a.composite) return {};
+        if (a.kind === 'task' && a.slice?.phase === 1) {
+          sliceStarted.resolve();
+          await waitUntil(endDone);          // End binds while phase 1 is still open
+          return { outputs: {} };
+        }
+        return { outputs: {} };
+      },
+    },
+  });
+  assert.equal(await h.scheduler.run(), 'done');
+  const st = h.scheduler.getState();
+  assert.equal(st.endReached, true, 'the fast branch reached End');
+  const shell = st.executions.find((e) => e.executionId === 'x:n_work:1');
+  assert.equal(shell.status, 'skipped', 'the shell never finished — it must not read `done`');
+  assert.equal(h.callsFor('n_work').some((c) => c.slice?.phase === 2), false, 'phase 2 never ran');
+  assert.equal(h.callsFor('n_work').some((c) => c.composite === 'finish'), false, 'finish() never ran');
+  assert.equal('n_work.done' in st.tokens, false, 'no empty token is latched for a node that never published');
+  assert.equal(h.tokenEvents().some((e) => e.from?.node === 'n_work'), false, 'and none was emitted');
+  const markers = h.execEvents().filter((e) => e.nodeId === 'n_work' && e.kind === 'cycle').map((e) => e.status);
+  assert.deepEqual(markers, ['start', 'skipped']);
+  // `skipped` is TERMINAL, so a resume must not re-invoke the abandoned shell.
+  assert.equal(h.last().execs.find((e) => e.executionId === 'x:n_work:1').status, 'skipped');
+});

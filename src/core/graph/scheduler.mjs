@@ -387,8 +387,12 @@ export function createScheduler(opts) {
     // A halted run returns WITHOUT `finish`: nothing is staged and no phase is falsely
     // marked done. A PAUSE answers `{ paused: true }` so the shell row stays
     // non-terminal and the resume re-runs the whole fan-out; any other halt (End,
-    // abort, failure) answers the empty publish.
-    const bail = (paused) => (paused || pauseRequested ? { paused: true } : { outputs: {} });
+    // abort, failure) answers `{ skipped: true }` — the base spec's Completion
+    // paragraph puts "anything cut off by the End drain" in `skipped`. The old
+    // `{ outputs: {} }` was read as a SUCCESSFUL completion: the ledger row said
+    // `done` although finish() never ran, and an empty (path:null) token latched
+    // into the snapshot and animated in the monitor.
+    const bail = (paused) => (paused || pauseRequested ? { paused: true } : { skipped: true });
     for (const ph of phases) {
       if (halted()) return bail(false);
       const { paused } = await runPhase(h, portId, ph);
@@ -536,7 +540,21 @@ export function createScheduler(opts) {
     if (!isFlow(h.node) && !h.composite) freeSlot();
     if (err || res?.error) failExecution(h, err || res.error);
     else if (res?.paused === true) pausedExecution(h);
+    else if (res?.skipped === true) skippedExecution(h);
     else completeExecution(h, res || {});
+  }
+
+  /**
+   * The execution was CUT SHORT by a terminal run condition (the End drain, an abort,
+   * a sibling's failure) rather than completing. TERMINAL, so a resume never re-invokes
+   * it, but it publishes NOTHING — no token event, no latched payload, and no `done`
+   * in the ledger for work that did not happen.
+   */
+  function skippedExecution(h) {
+    const { node, entry } = h;
+    entry.status = 'skipped';
+    emitExec(node, entry, 'skipped');
+    snap();
   }
 
   function completeExecution(h, res) {
