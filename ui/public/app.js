@@ -6824,7 +6824,10 @@ async function saveAgentEdit(card, a, pane) {
     if (!res.ok) { msg.textContent = data.error || `HTTP ${res.status}`; msg.className = 'agent-edit-msg form-msg err'; return; }
     pane.hidden = true;
     invalidateAgentCaches();
-    setAgentsMsg('Agent saved.', 'ok');
+    // The save SUCCEEDED; `warnings` names the saved pipelines this port change
+    // stranded (the run gate refuses them until they are re-wired). Not an error.
+    const warns = Array.isArray(data.warnings) ? data.warnings : [];
+    setAgentsMsg(warns.length ? `Agent saved. ${warns.join(' ')}` : 'Agent saved.', warns.length ? 'warn' : 'ok');
     await loadAgentsView();
   } catch (err) { msg.textContent = err.message; msg.className = 'agent-edit-msg form-msg err'; }
 }

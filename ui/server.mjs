@@ -1536,6 +1536,11 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false } = {
   if (saved.row.archived_at) {
     throw new ResumeError(409, { error: 'pipeline is archived' });
   }
+  // No graph re-validation on RESUME, on purpose: _restoreFromResumePoint never
+  // reads the workflow row — the frozen manifest supplies topology and port
+  // identity (resolvedFromManifest: snapshot wins), so a template that drifted
+  // while the run sat paused cannot strand it. A vanished agent KEY is the one
+  // resume-time hazard, and _preflightAgentKeys already refuses it (§9.4).
   const budget = budgetStatus();
   if (budget.blocked) {
     throw new ResumeError(403, { error: 'total cost limit reached', budget });
@@ -3230,8 +3235,11 @@ app.get('/api/workflows', async (req, res) => {
 app.get('/api/workflows/:id', async (req, res) => {
   try {
     // ONE gate, ONE message: an archived id explains itself instead of reading
-    // as a plain 404 (assertRunnableWorkflow owns both texts).
-    res.json(await assertRunnableWorkflow(req.params.id));
+    // as a plain 404 (assertRunnableWorkflow owns both texts). checkGraph:false —
+    // this is a READ (the Composer's Open): a template stranded by an agent-port
+    // edit must still load, or the user could never repair it. The RUN path keeps
+    // the graph check.
+    res.json(await assertRunnableWorkflow(req.params.id, { checkGraph: false }));
   } catch (err) {
     if (err && (err.code === 'NOT_FOUND' || err.code === 'ARCHIVED')) {
       return res.status(404).json({ error: err.message });

@@ -361,11 +361,11 @@ test('rejected proposal (no valid target in context) → notice, no card', async
   assert.match(notice.text, /^Proposal rejected: /);
 });
 
-test('preflight failure after 200 {runId}: "Run failed: unknown agent" notice + card failed (B-8)', async () => {
-  // POST /api/workflows VALIDATES agent keys against the registry, so the ghost
-  // graph is written through the STORE; key resolution happens at run time
-  // (resolveGraph, workflows.mjs:547 — the graph engine rejects the key before
-  // the harness's _preflightAgentKeys gate can add its "removed plugin?" hint).
+test('the run gate refuses a template whose agent is gone BEFORE any run is created (B-8a)', async () => {
+  // MAJ-15: POST /api/workflows validates agent keys, so the ghost graph is
+  // written through the STORE. assertRunnableWorkflow now re-validates it against
+  // the LIVE registry, so the refusal lands on the 400 — no run row, no link, and
+  // the card keeps its state instead of being marked failed after the fact.
   const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
   const ghost = await writeGraphWorkflow({
     id: 'wf_ghost-card', name: 'Ghost',
@@ -377,21 +377,45 @@ test('preflight failure after 200 {runId}: "Run failed: unknown agent" notice + 
     wires: [],
   });
   const { thread, card } = await proposeCard({ projectKey }, 'propose a doomed run');
-  const w = openWs();
-  await w.opened;
+  const before = mod.runs.size;
   const start = await post('/api/run', {
     projectDir, prompt: card.card.brief, workflowId: ghost.id,
     guardrailsId: 'normal', title: card.card.title,
     askThreadId: thread.id, askCardId: card.id,
   });
-  assert.equal(start.status, 200, 'preflight runs AFTER the 200 — the link must already exist');
+  assert.equal(start.status, 400, 'refused before anything is spawned');
+  assert.match((await start.json()).error, /unknown agent "ghost-agent-zz"/);
+  assert.equal(mod.runs.size, before, 'no run entry was created');
+  const snap = await snapshot(thread.id);
+  assert.deepEqual(snap.runLinks, [], 'no run link for a refused launch');
+  const block = snap.messages.flatMap((m) => m.blocks || []).find((b) => b.kind === 'card' && b.id === card.id);
+  assert.equal(block.state, 'proposed', 'the card is still launchable once the pipeline is repaired');
+});
+
+test('a failure AFTER the 200 {runId}: "Run failed" notice + card failed (B-8b)', async () => {
+  // The late-failure path the run gate cannot pre-empt: a v1 row is NOT a graph,
+  // so assertRunnableWorkflow deliberately leaves it to the engine (the retired-
+  // engine message is better than a validator dump). The 200 lands first and the
+  // follower turns resolveGraph's throw into the card's `failed` state — the same
+  // machinery the ghost-agent fixture used before the gate started refusing it.
+  const { writeWorkflow } = await import('../src/core/workflows.mjs');
+  const legacy = await writeWorkflow({ name: 'Legacy Card', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] });
+  const { thread, card } = await proposeCard({ projectKey }, 'propose a doomed source');
+  const w = openWs();
+  await w.opened;
+  const start = await post('/api/run', {
+    projectDir, prompt: card.card.brief, workflowId: legacy.id,
+    guardrailsId: 'normal', title: card.card.title,
+    askThreadId: thread.id, askCardId: card.id,
+  });
+  assert.equal(start.status, 200, 'the failure happens AFTER the 200 — the link must already exist');
   const failed = await waitFor(() => frames(w.msgs, thread.id, 'ask-message')
-    .find((m) => /^Run failed: unknown agent "ghost-agent-zz"/.test(m.message.text)));
+    .find((m) => /^Run failed: /.test(m.message.text)));
   assert.ok(failed, 'the follower attached before orch.run() was scheduled');
   const snap = await snapshot(thread.id);
   const block = snap.messages.flatMap((m) => m.blocks || []).find((b) => b.kind === 'card' && b.id === card.id);
   assert.equal(block.state, 'failed');
-  assert.match(block.error, /unknown agent "ghost-agent-zz"/);
+  assert.match(block.error, /not a graph/);
   assert.equal(snap.runLinks[0].status, 'error');
   w.ws.close();
 });

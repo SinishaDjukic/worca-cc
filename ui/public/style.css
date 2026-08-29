@@ -508,6 +508,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .form-msg{margin:12px 0 0;font-size:12.5px;min-height:16px;}
 .form-msg.ok{color:var(--green-ink);}
 .form-msg.err{color:var(--red-ink);}
+/* saved, but with a caveat the user must act on (agent-port edit stranding a
+   saved pipeline — app.js saveAgentEdit reads PUT /api/agents/:key `warnings`). */
+.form-msg.warn{color:var(--amber-ink);}
 
 /* ---------- Pipeline config ---------- */
 /* The always-open .stage-cfg card is gone: every per-agent control now lives in

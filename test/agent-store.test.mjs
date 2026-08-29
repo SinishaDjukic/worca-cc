@@ -225,3 +225,41 @@ test('deleteAgent refuses while a v2 GRAPH or a workspace variant points at the 
   await assert.rejects(() => deleteAgent('docsWriter'),
     (e) => e.code === 'REFERENCED' && /variantAgent/.test(e.message));
 });
+
+// ── MAJ-15 (store half): a port change that strands a saved wire WARNS, never 409s.
+// A 409 would make renaming a port impossible — no saved template can reference the
+// new port before it exists — so the refusal lives on the run path
+// (assertRunnableWorkflow, INVALID_GRAPH) and the editor gets a heads-up here.
+test('updateAgent reports the saved pipelines a port change strands, and still saves', async () => {
+  await createAgent({
+    meta: { ...META, key: 'portee', displayName: 'Portee' },
+    markdown: '# Portee\n\nbody\n',
+  });
+  const clean = await updateAgent('portee', { meta: { ...META, key: 'portee', displayName: 'Portee 2' } });
+  assert.deepEqual(clean.warnings, [], 'nothing saved references it yet');
+  await writeGraphWorkflow({
+    id: 'wf_portee', name: 'Portee Flow', domain: 'general',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_p', kind: 'agent', key: 'portee', x: 200, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 400, y: 0, config: {} },
+    ],
+    wires: [
+      { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_p', port: 'plan' } },
+      { id: 'w2', from: { node: 'n_p', port: 'review' }, to: { node: 'n_end', port: 'result' } },
+    ],
+  });
+  const still = await updateAgent('portee', { meta: { ...META, key: 'portee', description: 'same ports' } });
+  assert.deepEqual(still.warnings, [], 'an edit that keeps the ports strands nothing');
+  const renamed = await updateAgent('portee', {
+    meta: {
+      ...META, key: 'portee',
+      inputs: [{ id: 'brief', type: 'md' }],
+      outputs: [{ id: 'verdictOut', type: 'md', filename: 'docs-review.md' }],
+    },
+  });
+  assert.equal(renamed.meta.outputs[0].id, 'verdictOut', 'the rename is SAVED, not refused');
+  assert.deepEqual(renamed.warnings, [
+    'saved pipelines reference a removed port: Portee Flow (n_p.plan), Portee Flow (n_p.review)',
+  ]);
+});

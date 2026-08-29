@@ -37,6 +37,17 @@ after(async () => {
   await rm(homeDir, { recursive: true, force: true });
 });
 
+// The MINIMAL RUNNABLE graph. `nodes: [], wires: []` used to be enough here, but
+// assertRunnableWorkflow now re-validates the template against the live registry
+// (MAJ-15) and an empty graph fails V1/V20/V21 — it could never have run anyway
+// (no task card, no End card). This file's subject is the id gate, so the fixtures
+// carry the smallest graph that passes the shape rules.
+const MINIMAL = {
+  nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+    { id: 'n_end', kind: 'end', x: 300, y: 0, config: {} }],
+  wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_end', port: 'result' } }],
+};
+
 const api = async (method, path, body) => {
   const res = await fetch(`${base}${path}`, {
     method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
@@ -56,7 +67,7 @@ const runDir = async () => {
 after(() => Promise.all(projects.map((d) => rm(d, { recursive: true, force: true }))));
 
 test('POST /api/run accepts a graph row: it dispatches to the graph engine', async () => {
-  await writeGraphWorkflow({ id: 'wf_graph', name: 'G', nodes: [], wires: [] });
+  await writeGraphWorkflow({ id: 'wf_graph', name: 'G', ...MINIMAL });
   const r = await api('POST', '/api/run',
     { projectDir: await runDir(), prompt: 'hi', workflowId: 'wf_graph', mock: true });
   assert.equal(r.status, 200);
@@ -68,7 +79,7 @@ test('POST /api/run: unknown id 400, archived id 400 with the archive message', 
     { projectDir: await runDir(), prompt: 'hi', workflowId: 'wf_nope', mock: true });
   assert.equal(unknown.status, 400);
   assert.equal(unknown.body.error, 'unknown workflowId "wf_nope"');
-  await writeGraphWorkflow({ id: 'wf_arch2', name: 'A', nodes: [], wires: [] });
+  await writeGraphWorkflow({ id: 'wf_arch2', name: 'A', ...MINIMAL });
   getDb();
   prepare('UPDATE workflows SET archived_at = ? WHERE id = ?').run('2026-08-27T00:00:00Z', 'wf_arch2');
   const arch = await api('POST', '/api/run',
@@ -88,8 +99,8 @@ test('a v1 row still runs (the gate is not a wall)', async () => {
 // deleted and every other suite stays green (measured). The child inherits
 // process.env, so useTempHome's WORCA_HOME reaches it and it sees the same rows.
 test('the CLI --workflow gate: an archived row exits 2, a graph row RUNS', async () => {
-  await writeGraphWorkflow({ id: 'wf_cligraph', name: 'CG', nodes: [], wires: [] });
-  await writeGraphWorkflow({ id: 'wf_cliarch', name: 'CA', nodes: [], wires: [] });
+  await writeGraphWorkflow({ id: 'wf_cligraph', name: 'CG', ...MINIMAL });
+  await writeGraphWorkflow({ id: 'wf_cliarch', name: 'CA', ...MINIMAL });
   getDb();
   prepare('UPDATE workflows SET archived_at = ? WHERE id = ?').run('2026-08-27T00:00:00Z', 'wf_cliarch');
   // NOTE: there is NO `run` SUBCOMMAND — `SUBCOMMANDS` (`worca-cc.mjs:1459`) is

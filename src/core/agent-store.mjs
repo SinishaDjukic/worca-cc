@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { loadAgentRegistry, normalizeMeta, userAgentsDir } from './agent-registry.mjs';
 import { listWorkflows } from './workflows.mjs';
 import { validateMetaV2 } from '../shared/graph/agent-meta.mjs';
+import { AWAIT_PORT } from '../shared/graph/constants.mjs';   // the synthesized gate port is wirable
 
 export { userAgentsDir }; // single source: the Phase 1 layer resolver
 
@@ -89,6 +90,35 @@ export async function createAgent({ meta: rawMeta, markdown } = {}) {
   return { meta: { ...meta, origin: 'user' }, markdown };
 }
 
+/**
+ * Saved-template wires that the NEW port set of `key` no longer satisfies:
+ * `["<workflow name> (<nodeId>.<portId>)", …]`. A port rename/removal is NOT
+ * refused here — no saved template can reference the new port before it exists,
+ * so a 409 would make renaming impossible. The RUN refuses instead
+ * (assertRunnableWorkflow -> INVALID_GRAPH); this list is the editor's heads-up.
+ * `await` is the engine-synthesized gate input and is always wirable.
+ * @param {object[]} workflows every saved template (archived included)
+ * @param {string} key the edited agent key
+ * @param {object} meta the NEW normalized meta
+ * @returns {string[]}
+ */
+function stalePortRefs(workflows, key, meta) {
+  const outs = new Set((meta.outputs || []).map((p) => p.id));
+  const ins = new Set([...(meta.inputs || []).map((p) => p.id), AWAIT_PORT.id]);
+  const hits = [];
+  for (const wf of workflows) {
+    const mine = new Set((wf.nodes || [])
+      .filter((n) => n && n.kind === 'agent' && n.key === key).map((n) => n.id));
+    if (!mine.size) continue;
+    const label = wf.name || wf.id;
+    for (const w of wf.wires || []) {
+      if (mine.has(w?.from?.node) && !outs.has(w.from.port)) hits.push(`${label} (${w.from.node}.${w.from.port})`);
+      if (mine.has(w?.to?.node) && !ins.has(w.to.port)) hits.push(`${label} (${w.to.node}.${w.to.port})`);
+    }
+  }
+  return hits;
+}
+
 /** Update a USER agent (meta and/or markdown). Built-ins -> BUILTIN (409). */
 export async function updateAgent(key, { meta: rawMeta, markdown } = {}) {
   if (!AGENT_KEY_RE.test(String(key || ''))) throw err(`agent not found: ${key}`, 'NOT_FOUND');
@@ -131,7 +161,10 @@ export async function updateAgent(key, { meta: rawMeta, markdown } = {}) {
   const body = typeof markdown === 'string'
     ? markdown
     : await readFile(join(dir, `${key}.md`), 'utf8').catch(() => '');
-  return { meta: { ...meta, origin: 'user' }, markdown: body };
+  // Always present, possibly empty: the Agents view reads `warnings` unconditionally.
+  const stale = stalePortRefs(await listWorkflows({ includeArchived: true }), key, meta);
+  const warnings = stale.length ? [`saved pipelines reference a removed port: ${stale.join(', ')}`] : [];
+  return { meta: { ...meta, origin: 'user' }, markdown: body, warnings };
 }
 
 /** Delete a USER agent; REFERENCED (409) while a saved workflow uses the key. */

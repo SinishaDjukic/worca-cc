@@ -187,3 +187,28 @@ test('a 400 on save keeps the pane open and surfaces the store rule VERBATIM', a
   assert.equal(pane.querySelector('.agent-edit-msg').textContent, rule, 'verbatim — never re-worded');
   assert.ok(pane.querySelector('.agent-edit-msg').className.includes('err'));
 });
+
+// MAJ-15 (UI half): a port change that strands a saved wire is reported by
+// PUT /api/agents/:key as `warnings: [...]`. The save SUCCEEDED, so the banner
+// must not read as an error — it names the pipelines the run gate will now refuse.
+test('a PUT that returns warnings surfaces them beside the save confirmation', async () => {
+  const { window } = await boot({ fetchHandler: (u, opts) => {
+    if (u.includes('/api/agents/docsWriter') && opts && opts.method === 'PUT') {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({
+        meta: { key: 'docsWriter' }, markdown: '# b\n',
+        warnings: ['saved pipelines reference a removed port: Docs Flow (n_d.review)'],
+      }) });
+    }
+    return null;
+  } });
+  await goAgents(window);
+  const card = window.document.querySelector('.agent-card[data-agent-key="docsWriter"]');
+  click(window, card.querySelector('.agent-edit'));
+  await new Promise((r) => setTimeout(r, 0));
+  click(window, card.querySelector('.agent-edit-save'));
+  await new Promise((r) => setTimeout(r, 0));
+  const msg = window.document.querySelector('#agents-msg');
+  assert.equal(msg.textContent,
+    'Agent saved. saved pipelines reference a removed port: Docs Flow (n_d.review)');
+  assert.equal(msg.className, 'form-msg warn', 'a saved-with-caveats banner is not an error');
+});

@@ -16,7 +16,8 @@ import { getDb, prepare, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
 import { resolveRunConfig, readConfig, EFFORTS } from './config.mjs';
 import { slugify } from './artifacts.mjs';
-import { DEFAULT_AGENTS_DIR } from './agent-registry.mjs'; // fileURLToPath-based (Windows-safe)
+import { DEFAULT_AGENTS_DIR, loadAgentRegistry } from './agent-registry.mjs'; // fileURLToPath-based (Windows-safe)
+import { validateGraph, formatIssue } from '../shared/graph/validate.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { GRAPH_DEFAULT_WORKFLOW } from './graph/builtin-workflows.mjs';
 export { GRAPH_DEFAULT_WORKFLOW };
@@ -370,13 +371,44 @@ export async function listWorkflows({ includeArchived = false } = {}) {
   return rows.filter((r) => r.id !== GRAPH_DEFAULT_WORKFLOW.id).map(rowToTpl);
 }
 
+/**
+ * The RUN-TIME graph check. A template is validated against the sidecars of the
+ * moment it was SAVED; editing an agent's ports afterwards leaves every saved
+ * pipeline wired to a port that no longer exists, and nothing re-checked it —
+ * the run started and quiesced "done" (lost output) or bound an empty input
+ * (lost input, silent). ERRORS only: warnings (V15 unreachable, …) are advisory
+ * and must never refuse a run.
+ * @param {object} tpl a version-2 template
+ * @param {Record<string,object>} [registry] injected registry; the live one otherwise
+ * @throws {Error} code 'INVALID_GRAPH', `issues` = the validator's error list
+ */
+function assertValidGraph(tpl, registry) {
+  const reg = registry && typeof registry === 'object' ? registry : loadAgentRegistry();
+  const { ok, errors } = validateGraph(tpl, registryPortsFn(reg));
+  if (ok) return;
+  throw Object.assign(
+    new Error(`workflow "${tpl.id}" no longer matches the agents it uses: `
+      + `${errors.map(formatIssue).join('; ')} — open it in the Composer and re-wire it`),
+    { code: 'INVALID_GRAPH', issues: errors },
+  );
+}
+
 /** The ONE gate every run path goes through (POST /api/run, the CLI's
  *  --workflow, Ask's proposal validation). Throws with a `code` the callers map
- *  to HTTP/exit codes; the ARCHIVED text is user-facing and verbatim. */
-export async function assertRunnableWorkflow(id) {
+ *  to HTTP/exit codes; the ARCHIVED text is user-facing and verbatim.
+ *  `checkGraph:false` is the READ escape hatch (GET /api/workflows/:id): a
+ *  stale template must still open in the Composer, or it can never be repaired.
+ *  @param {string} id
+ *  @param {{registry?:Record<string,object>, checkGraph?:boolean}} [opts]
+ */
+export async function assertRunnableWorkflow(id, { registry, checkGraph = true } = {}) {
   const wanted = typeof id === 'string' && id.trim() ? id.trim() : GRAPH_DEFAULT_WORKFLOW.id;
   const live = await readWorkflow(wanted);
-  if (live) return live;
+  if (live) {
+    // A v1 row is not a graph: engine-select owns its refusal (V1_RUN_RETIRED).
+    if (checkGraph && live.version === 2) assertValidGraph(live, registry);
+    return live;
+  }
   const archived = await readWorkflow(wanted, { includeArchived: true });
   if (archived) {
     throw Object.assign(new Error(`workflow "${wanted}" was archived by the v2 upgrade `
