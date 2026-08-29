@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   TEMPLATE_VERSION, KINDS, FLOW_KINDS, PORT_TYPES, AWAIT_PORT, TASK_PORTS, END_PORTS,
   gatePorts, NODE_ID_RE, WIRE_ID_RE, PORT_ID_RE, DEFAULT_MAX_CYCLES, MAX_PORTS_PER_SIDE, LIMITS,
-  BOOKEND_EXECUTION_IDS,
+  BOOKEND_EXECUTION_IDS, FLOW_LABEL,
 } from '../src/shared/graph/constants.mjs';
 
 test('scalars and kind sets', () => {
@@ -82,4 +82,12 @@ test('LIMITS carries the ceilings the validator reads', () => {
   assert.deepEqual(LIMITS, {
     maxNodes: 80, maxWires: 200, maxPortsPerSide: 8, minArity: 2, maxArity: 8, maxCycles: 20, maxNameLen: 80,
   });
+});
+
+// MAJ-21: the flow cards' display names live HERE, next to FLOW_KINDS, so the
+// manifest, the run monitor and the New-pipeline caption all read one table.
+test('FLOW_LABEL names every flow kind and is frozen', () => {
+  assert.deepEqual(FLOW_LABEL, { task: 'Task', end: 'End', and: 'AND', or: 'OR', combine: 'Combine' });
+  assert.deepEqual(Object.keys(FLOW_LABEL).sort(), [...FLOW_KINDS].sort(), 'one label per flow kind');
+  assert.ok(Object.isFrozen(FLOW_LABEL));
 });

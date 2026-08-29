@@ -74,7 +74,7 @@ import {
   renderOrphanList, channelBadge, renderAvailableList, renderMarketplaceList,
 } from './plugins-view.mjs';
 import { renderChatSettings, collectChatSettings } from './chat-settings-view.mjs';
-import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES } from '../../src/shared/graph/constants.mjs';
+import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL } from '../../src/shared/graph/constants.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409,
@@ -2065,7 +2065,10 @@ function buildGraphWireRows(tpl, registry, runConfig) {
   const nameOf = (id) => {
     const n = byId.get(id);
     if (!n) return id;
-    const meta = n.kind === 'agent' ? reg[n.key] : null;
+    // A flow card has no registry meta and no key: name it from the SHARED
+    // FLOW_LABEL table the manifest uses, never from its raw n_* id (MAJ-21).
+    if (n.kind !== 'agent') return FLOW_LABEL[n.kind] || n.kind;
+    const meta = reg[n.key];
     return (meta && meta.displayName) || n.key || n.id;
   };
   for (const n of tpl.nodes) nameCount.set(nameOf(n.id), (nameCount.get(nameOf(n.id)) || 0) + 1);

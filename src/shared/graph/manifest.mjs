@@ -14,7 +14,7 @@
 // agent cell, and the sub_agents.ui_phase attribution column still needs it. The
 // workflows.mjs copy is gone (the v1 topology helpers went with the v1 engine),
 // so THIS is the only copy — shared code may not import workflows.mjs.
-import { TEMPLATE_VERSION, AWAIT_PORT, DEFAULT_MAX_CYCLES } from './constants.mjs';
+import { TEMPLATE_VERSION, AWAIT_PORT, DEFAULT_MAX_CYCLES, FLOW_LABEL } from './constants.mjs';
 import { portsFnFor, portsOf, resolveOrOutType } from './ports.mjs';
 import { classifyLoops } from './loops.mjs';
 import { rankNodes } from './layout.mjs';
@@ -28,7 +28,6 @@ export const UI_PHASE = Object.freeze({
   workspaceReviewer: 'review',
 });
 
-const FLOW_LABEL = { task: 'Task', end: 'End', and: 'AND', or: 'OR', combine: 'Combine' };
 const ICON_MAX = 2048;
 /** The icon is an ALLOWLIST, not a denylist: a sidecar can be user- or
  *  plugin-authored (exactly what v1's UI refuses to inline — `safeAgentIcon`),

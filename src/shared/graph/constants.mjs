@@ -14,6 +14,12 @@ export const KINDS = Object.freeze(['agent', 'task', 'end', 'and', 'or', 'combin
  *  executions — instant, $0, no spawn. */
 export const FLOW_KINDS = Object.freeze(['task', 'end', 'and', 'or', 'combine']);
 
+/** The flow cards' DISPLAY names — one label per FLOW_KIND. The single copy:
+ *  the run manifest (`manifest.mjs` cell labels), the run monitor and the
+ *  New-pipeline loop caption all read this table, so a flow card can never be
+ *  called 'OR' on one surface and 'n_or' on another. */
+export const FLOW_LABEL = Object.freeze({ task: 'Task', end: 'End', and: 'AND', or: 'OR', combine: 'Combine' });
+
 /** Port payload types. 'any' is engine-internal: it lives only on AND inputs,
  *  OR ports before resolution, End's `result` and the synthesized `await` gate —
  *  never declarable in agent meta. */

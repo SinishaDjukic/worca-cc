@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
+import { realRegistryIndex } from './helpers/graph-ports.mjs';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
@@ -140,4 +142,18 @@ test('a v1 workflow still produces v1 rows (no regression)', async () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].nodeId, 's0_0');
   assert.deepEqual(np.buildFeedbackRows(V1_ROW, {}, { feedbacks: {} }), []);
+});
+
+// MAJ-21: a flow card inside a loop must be named by the SHARED FLOW_LABEL table
+// (the same one the run monitor's manifest uses), never by its raw node id.
+test('the loop caption names an OR flow card "OR", never its raw n_or id', async () => {
+  const win = await boot();
+  const full = SEED_TEMPLATES.find((t) => t.id === 'wf_full');
+  const rows = win.__np.buildFeedbackRows(full, realRegistryIndex(), {});
+  assert.deepEqual(rows.map((r) => r.label), [
+    'Refine Plan \u21ba (self loop)',
+    'OR \u2190 Review Implementation',
+    'OR \u2190 Manual web UI testing',
+  ]);
+  assert.equal(rows.some((r) => /n_/.test(r.label)), false, 'no raw node id reaches the caption');
 });
