@@ -11,3 +11,6 @@ graphify-out/
 /*.png
 
 .superpowers/
+
+# planning artifacts are working files, never committed (rule since 2026-08-07)
+docs/superpowers/
