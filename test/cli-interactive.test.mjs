@@ -96,6 +96,11 @@ function driveCli(args, {
       env: childEnv,
       stdio: [stdin, 'pipe', 'pipe'],
     });
+    // A cue that matches stdout the child emitted just before it exited fires a
+    // write into a dead pipe; with no 'error' listener that EPIPE / 'write after
+    // end' is an UNCAUGHT exception and takes the whole file down. Registered
+    // before any write below. (`child.stdin` is null under stdin: 'ignore'.)
+    child.stdin?.on('error', () => {});
     const t0 = Date.now();
     let stdout = '';
     let stderr = '';

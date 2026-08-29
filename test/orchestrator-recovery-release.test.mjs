@@ -31,13 +31,18 @@ useTempHome(after);
 let sandboxHome;
 const prevEnv = {};
 before(async () => {
+  // This test needs BOTH slices of the phase in flight at once; at
+  // WORCA_MAX_PARALLEL=1 the second never launches and the run dies on the 60 s
+  // tripwire. Pin the scheduler's default (scheduler.mjs#defaultMaxParallel).
+  prevEnv.WORCA_MAX_PARALLEL = process.env.WORCA_MAX_PARALLEL;
+  process.env.WORCA_MAX_PARALLEL = '4';
   sandboxHome = await mkdtemp(join(tmpdir(), 'worca-recrel-home-'));
   for (const k of ['HOME', 'USERPROFILE']) prevEnv[k] = process.env[k];
   process.env.HOME = sandboxHome;
   process.env.USERPROFILE = sandboxHome;
 });
 after(async () => {
-  for (const k of ['HOME', 'USERPROFILE']) {
+  for (const k of ['HOME', 'USERPROFILE', 'WORCA_MAX_PARALLEL']) {
     if (prevEnv[k] === undefined) delete process.env[k]; else process.env[k] = prevEnv[k];
   }
   await rm(sandboxHome, { recursive: true, force: true });

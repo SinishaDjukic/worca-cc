@@ -50,6 +50,11 @@ useTempHome(after);
 let sandboxHome;
 const prevEnv = {};
 before(async () => {
+  // The goldens record a launch ORDER, which the scheduler bounds by
+  // WORCA_MAX_PARALLEL (src/core/graph/scheduler.mjs#defaultMaxParallel, default
+  // 4). Pin it so an inherited value cannot reorder a trace.
+  prevEnv.WORCA_MAX_PARALLEL = process.env.WORCA_MAX_PARALLEL;
+  process.env.WORCA_MAX_PARALLEL = '4';
   sandboxHome = await mkdtemp(join(tmpdir(), 'worca-seedtrace-home-'));
   for (const k of ['HOME', 'USERPROFILE']) prevEnv[k] = process.env[k];
   process.env.HOME = sandboxHome;
@@ -68,7 +73,7 @@ before(async () => {
   }
 });
 after(async () => {
-  for (const k of ['HOME', 'USERPROFILE']) {
+  for (const k of ['HOME', 'USERPROFILE', 'WORCA_MAX_PARALLEL']) {
     if (prevEnv[k] === undefined) delete process.env[k]; else process.env[k] = prevEnv[k];
   }
   await rm(sandboxHome, { recursive: true, force: true });
