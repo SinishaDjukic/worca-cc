@@ -703,7 +703,6 @@ app.post('/api/ingress/teams/:plugin/:channelId/:token',
 // ---------------------------------------------------------------------------
 // Express middleware + static
 // ---------------------------------------------------------------------------
-app.use(express.json({ limit: '8mb' }));
 
 // S1: worca-cc's UI/API has no auth and runs agents with permissionMode
 // 'acceptEdits' — it is a single-user *localhost* tool. The server binds to
@@ -711,12 +710,20 @@ app.use(express.json({ limit: '8mb' }));
 // suspenders: reject any request whose Host (or browser Origin) is not a
 // loopback name, so a malicious page resolving a name to 127.0.0.1 still can't
 // drive the API. Override WORCA_HOST only if you understand the exposure.
+//
+// FIRST, ahead of the body parser (MIN-108): a refused request must be refused
+// before a single byte of its body is parsed or buffered, and a malformed body
+// from a non-loopback Host used to answer 400 (with a stack) where a valid one
+// answered 403. The ingress webhook above is deliberately mounted EARLIER and
+// stays exempt — it carries its own token check and 256 KB cap.
 app.use((req, res, next) => {
   if (!isLocalRequest(req)) {
-    return res.status(403).json({ error: 'forbidden: worca-cc is a localhost-only tool' });
+    return res.status(403).json({ error: 'forbidden: worca is a localhost-only tool' });
   }
   next();
 });
+
+app.use(express.json({ limit: '8mb' }));
 
 if (HLJS_ASSETS) {
   const sendHljsModule = (file) => (_req, res, next) => {
@@ -4916,6 +4923,26 @@ app.use((req, res, next) => {
   res.sendFile(path.join(PUBLIC_DIR, 'index.html'), (err) => {
     if (err) next();
   });
+});
+
+// ---------------------------------------------------------------------------
+// The LAST middleware, and the only GLOBAL error handler (`/vendor` keeps its
+// own path-scoped one): every failure answers { error } as JSON (MIN-108).
+// Without it express's default handler renders an HTML page carrying the thrown
+// stack — absolute node_modules paths included — for the two failures that happen
+// BEFORE any route runs: a malformed JSON body and a body past the cap. The
+// four-argument signature is what makes express treat this as an error handler,
+// so `next` stays even though only the headers-sent path uses it.
+// ---------------------------------------------------------------------------
+app.use((err, _req, res, next) => {
+  if (res.headersSent) return next(err);            // let express abort the stream
+  if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'malformed JSON body' });
+  if (err && err.type === 'entity.too.large') return res.status(413).json({ error: 'request body too large' });
+  // Anything else: honour a body-parser 4xx (charset.unsupported / encoding.unsupported
+  // are 415, request.aborted is 400) — a client error logged as a 500 misleads. Ours or
+  // not, it is one line, no stack, never HTML.
+  const status = Number.isInteger(err?.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
+  return res.status(status).json({ error: err && err.message ? err.message : 'internal error' });
 });
 
 /**
