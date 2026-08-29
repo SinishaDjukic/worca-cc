@@ -87,7 +87,7 @@ import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
 import { renderStatsBody, renderBudgetIndicator, renderBudgetRing, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
-import { createComposer } from './graph/composer.mjs';
+import { createComposer, RESERVED_WORKFLOW_ID } from './graph/composer.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
 // bare <select> with no preview host on this branch (the v1 read-only mini-graph
 // lived in the composer's saved list, retired in P5 Task 8). P6's Running list is
@@ -1650,9 +1650,14 @@ const gvApi = {
     if (!res.ok) return { ok: false, status: res.status, issues: d && (d.issues || d.errors), error: d && d.error, id: d && d.id };
     return { ok: true, workflow: (d && d.workflow) || d };
   },
+  // {ok, error} — the refusal string comes from the JSON body, because every
+  // delete this API can refuse (the built-in, a 404, a 409) says WHY there and
+  // the user has to read it (MAJ-17).
   deleteWorkflow: async (id) => {
     const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    return { ok: res.ok };
+    if (res.ok) return { ok: true };
+    const d = await safeJson(res);
+    return { ok: false, status: res.status, error: (d && d.error) || `delete failed (${res.status})` };
   },
 };
 
@@ -1664,8 +1669,17 @@ function gvEls() {
     insRail: g('gv-ins-rail'), insBody: g('gv-ins-body'), insToggle: g('gv-ins-toggle'),
     insTabs: g('gv-ins-tabs'), palette: g('gv-palette'), filter: g('gv-agent-filter'),
     savedList: g('gv-saved-list'), savedCount: g('gv-saved-count'), archived: g('gv-archived'),
-    dialogHost: g('gv-dialog-host'),
+    savedMsg: g('gv-saved-msg'), dialogHost: g('gv-dialog-host'),
   };
+}
+
+// The composer's saved-list message line — the same (text, kind) shape as
+// setAgentsMsg/setPluginsMsg/... elsewhere in this file.
+function setGvSavedMsg(text, kind) {
+  const n = gvEls().savedMsg;
+  if (!n) return;
+  n.textContent = text || '';
+  n.className = 'form-msg' + (kind ? ` ${kind}` : '');
 }
 
 async function gvLoadAgents() {
@@ -1773,20 +1787,28 @@ async function gvRefreshSaved() {
         // canvas (and the undo ring) must then be left exactly as they were.
         if (await gvComposer.openTemplate(full)) gvComposer.fit();
       });
-      const del = document.createElement('button');
-      del.type = 'button'; del.className = 'pl-del'; del.textContent = '×';
-      // A delete is destructive and unrecoverable: it asks first, in red — the
-      // guard the v1 composer's saved list owned before it was retired.
-      del.addEventListener('click', async () => {
-        const ok = await confirmModal({
-          title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
-          message: `Delete "${wf.name || wf.id}"?\n\nThis cannot be undone.`,
+      row.appendChild(open);
+      // No × on the built-in: DELETE /api/workflows/wf_default always answers
+      // 400 (ui/server.mjs), so the button could only ever fail. Open stays —
+      // the built-in is meant to be opened and saved as a copy.
+      if (wf.id !== RESERVED_WORKFLOW_ID) {
+        const del = document.createElement('button');
+        del.type = 'button'; del.className = 'pl-del'; del.textContent = '×';
+        // A delete is destructive and unrecoverable: it asks first, in red — the
+        // guard the v1 composer's saved list owned before it was retired.
+        del.addEventListener('click', async () => {
+          const ok = await confirmModal({
+            title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
+            message: `Delete "${wf.name || wf.id}"?\n\nThis cannot be undone.`,
+          });
+          if (!ok) return;
+          const r = await gvApi.deleteWorkflow(wf.id);
+          if (!r.ok) { setGvSavedMsg(r.error, 'err'); return; }   // the row stays; say why
+          setGvSavedMsg('');
+          gvRefreshSaved();
         });
-        if (!ok) return;
-        await gvApi.deleteWorkflow(wf.id);
-        gvRefreshSaved();
-      });
-      row.append(open, del);
+        row.appendChild(del);
+      }
     } else {
       const tag = document.createElement('span');
       tag.className = 'pl-legacy';
@@ -1815,7 +1837,12 @@ async function gvRefreshArchived() {
     const chip = document.createElement('button');
     chip.type = 'button'; chip.className = 'pl-chip'; chip.textContent = `${wf.name || wf.id} ×`;
     chip.title = 'Delete permanently';
-    chip.addEventListener('click', async () => { await gvApi.deleteWorkflow(wf.id); gvRefreshArchived(); });
+    chip.addEventListener('click', async () => {
+      const r = await gvApi.deleteWorkflow(wf.id);
+      if (!r.ok) { setGvSavedMsg(r.error, 'err'); return; }
+      setGvSavedMsg('');
+      gvRefreshArchived();
+    });
     els.archived.appendChild(chip);
   }
 }

@@ -25,21 +25,36 @@ const V2_ROW = { id: 'wf_g', name: 'Graph one', version: 2, domain: 'coding',
   nodes: [{ id: 'n_task', kind: 'task', x: 60, y: 200, config: {} }, { id: 'n_end', kind: 'end', x: 960, y: 200, config: {} }], wires: [] };
 const V1_ROW = { id: 'wf_old', name: 'Legacy one', version: 1, domain: 'coding', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] };
 
-async function boot({ agentsFail = false, archived = [] } = {}) {
+const DEFAULT_ROW = { id: 'wf_default', name: 'Default', version: 2, domain: 'coding',
+  nodes: [{ id: 'n_task', kind: 'task', x: 60, y: 200, config: {} }, { id: 'n_end', kind: 'end', x: 960, y: 200, config: {} }], wires: [] };
+
+async function boot({ agentsFail = false, archived = [], workflows = null, del = null } = {}) {
+  const rows = workflows || [V2_ROW, V1_ROW];
+  const deletes = [];
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
   const json = (v, status = 200) => Promise.resolve({ ok: status < 400, status, json: async () => v });
-  window.fetch = (u) => {
+  window.fetch = (u, init) => {
     const url = String(u);
+    if (init && init.method === 'DELETE') {
+      deletes.push(url);
+      if (del) return json(del.body, del.status);
+      // A successful DELETE removes the row, so the list refresh is OBSERVABLE:
+      // a fix that forgets gvRefreshSaved() leaves the deleted row on screen.
+      const id = decodeURIComponent(url.replace(/^.*\/api\/workflows\//, ''));
+      const at = rows.findIndex((w) => w.id === id);
+      if (at >= 0) rows.splice(at, 1);
+      return json({ ok: true });
+    }
     if (url.includes('/api/agents')) return agentsFail ? Promise.reject(new Error('down')) : json({ agents: AGENTS });
     if (url.includes('/api/workflows?archived=1')) return json({ workflows: archived });
     // GET /api/workflows/<id> — the saved list's Open path reads the full row.
     const one = url.match(/\/api\/workflows\/([^?]+)/);
-    if (one) return json([V2_ROW, V1_ROW].find((w) => w.id === decodeURIComponent(one[1])) || null, one ? 200 : 404);
-    if (url.includes('/api/workflows')) return json({ workflows: [V2_ROW, V1_ROW] });
+    if (one) return json(rows.find((w) => w.id === decodeURIComponent(one[1])) || null, one ? 200 : 404);
+    if (url.includes('/api/workflows')) return json({ workflows: rows });
     if (url.includes('/api/config')) return json({ config: { steps: {}, customModels: [] }, models: [], efforts: [] });
     return json({ projects: [], runs: [] });
   };
@@ -51,6 +66,7 @@ async function boot({ agentsFail = false, archived = [] } = {}) {
   window.location.hash = 'composer';
   window.dispatchEvent(new window.Event('hashchange'));
   for (let i = 0; i < 6; i += 1) await new Promise((r) => setTimeout(r, 0));
+  window.__deletes = deletes;
   return window;
 }
 
@@ -211,4 +227,59 @@ test('MAJ-6: the New-canvas header button asks too, and a clean canvas never doe
   doc.getElementById('confirm-cancel').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
   for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
   assert.equal(c.template().nodes.length, nodes, 'Cancel keeps the work');
+});
+
+// -------------------------------------------------------------------- MAJ-17
+// gvApi.deleteWorkflow used to return {ok} only, and both call sites threw it
+// away: a 400/404/500 left the row in place with NO message. The built-in
+// Default additionally rendered an × whose DELETE always answers 400.
+const tick = async (n = 4) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setTimeout(r, 0)); };
+
+test('MAJ-17: a refused delete surfaces the server error and leaves the list alone', async () => {
+  const win = await boot({ del: { status: 400, body: { error: 'the default workflow cannot be deleted' } } });
+  const doc = win.document;
+  const before = doc.querySelectorAll('#gv-saved-list .pl-item').length;
+  doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-del')
+    .dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  await tick();
+  doc.getElementById('confirm-ok').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  await tick();
+  const msg = doc.getElementById('gv-saved-msg');
+  assert.equal(msg.textContent, 'the default workflow cannot be deleted', 'the server string, verbatim');
+  assert.equal(msg.className, 'form-msg err');
+  assert.equal(doc.querySelectorAll('#gv-saved-list .pl-item').length, before, 'the row is still there');
+});
+
+test('MAJ-17: a successful delete clears the message and refreshes', async () => {
+  const win = await boot();
+  const doc = win.document;
+  doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-del')
+    .dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  await tick();
+  doc.getElementById('confirm-ok').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.equal(doc.getElementById('gv-saved-msg').textContent, '');
+  assert.equal(win.__deletes.length, 1);
+  assert.equal(doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"]'), null,
+    'the list is refreshed: the deleted row is gone');
+});
+
+test('MAJ-17: the built-in Default row offers Open but no ×', async () => {
+  const win = await boot({ workflows: [DEFAULT_ROW, V2_ROW, V1_ROW] });
+  const doc = win.document;
+  const def = doc.querySelector('#gv-saved-list .pl-item[data-id="wf_default"]');
+  assert.ok(def, 'the built-in is listed');
+  assert.ok(def.querySelector('.pl-open'), 'Open stays — the built-in is editable as a copy');
+  assert.equal(def.querySelector('.pl-del'), null, 'no × on a row DELETE can never accept');
+  assert.ok(doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-del'), 'every other v2 row keeps its ×');
+});
+
+test('MAJ-17: the archived chip surfaces its refusal too', async () => {
+  const win = await boot({ archived: [{ id: 'wf_dead', name: 'Old', version: 1, archivedAt: '2026-08-26' }],
+    del: { status: 404, body: { error: 'workflow not found' } } });
+  const doc = win.document;
+  doc.querySelector('#gv-archived .pl-chip').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.equal(doc.getElementById('gv-saved-msg').textContent, 'workflow not found');
+  assert.equal(doc.querySelectorAll('#gv-archived .pl-chip').length, 1, 'the chip is still there');
 });

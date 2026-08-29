@@ -21,6 +21,11 @@ import { validateGraph } from '../../../src/shared/graph/validate.mjs';
 import { autoLayout } from '../../../src/shared/graph/layout.mjs';
 
 export const UNDO_LIMIT = 50;
+/** The ONE reserved workflow id: the server prepends this built-in to
+ *  GET /api/workflows and refuses DELETE on it (ui/server.mjs). Exported HERE so
+ *  the composer and app.js share one literal (the saved list hides the ×, the
+ *  Save dialog prefills a copy name). */
+export const RESERVED_WORKFLOW_ID = 'wf_default';
 export const INSPECTOR_KEY = 'worca.composer.inspector';
 export const TAB_KEY = 'worca.composer.tab';
 export const TABS = Object.freeze(['agents', 'info']);

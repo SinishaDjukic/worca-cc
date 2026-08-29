@@ -1058,6 +1058,9 @@
             </div>
             <div class="saved-list" id="gv-saved-list"></div>
             <div class="gv-archived" id="gv-archived" hidden></div>
+            <!-- A refused DELETE (the built-in, a 404, a 500) has to land
+                 SOMEWHERE: same .form-msg line every other list view uses. -->
+            <p id="gv-saved-msg" class="form-msg" aria-live="polite"></p>
           </section>
           <div id="gv-dialog-host"></div>
         </section>
