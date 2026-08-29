@@ -630,8 +630,17 @@ export async function doctorPlugin(name) {
   return { ok: checks.every((x) => x.ok), checks };
 }
 
-/** Dev mode (spec §6.6): current -> absolute working dir; lock { linked: true }. */
-export function linkPlugin(name, absDir) {
+/**
+ * Dev mode (spec §6.6): current -> absolute working dir; lock { linked: true }.
+ * ASYNC because linking, like installing, ends with the workflow-template
+ * import: `plugin link` is the documented author loop (SKILL.md) and
+ * `updatePlugin` refuses a linked plugin, so without this a linked plugin's
+ * templates could reach the store by NO path at all. A linked dir is
+ * live-edited, so the refresh path afterwards is `worca plugin reimport <name>`.
+ * @returns {Promise<{ok:true, name:string, dir:string,
+ *   workflows:{imported:string[], skipped:Array<{file:string, errors:string[]}>}}>}
+ */
+export async function linkPlugin(name, absDir) {
   const dir = resolve(absDir);
   const v = validatePluginDir(dir);
   if (!v.ok) throw new Error(`cannot link: ${refusalLines(v.problems, '').join('; ')}`);
@@ -646,5 +655,38 @@ export function linkPlugin(name, absDir) {
     installedAt: new Date().toISOString(), linked: true,
   };
   writePluginsLock(lock);
-  return { ok: true, name, dir };
+  // Same isolation as installPlugin: an import failure must not undo a link
+  // that already landed — the lock and the symlink are correct either way.
+  let workflows = { imported: [], skipped: [] };
+  try {
+    workflows = await importPluginWorkflows(name, dir);
+    for (const s of workflows.skipped) {
+      console.warn(`[plugin-store] ${name}: workflow ${s.file} not imported (${s.errors.join('; ')})`);
+    }
+  } catch (err) {
+    console.warn(`[plugin-store] ${name}: workflow import failed (${err?.message || err}) — plugin linked; re-import with \`worca plugin reimport ${name}\``);
+  }
+  return { ok: true, name, dir, workflows };
+}
+
+/**
+ * Re-run the workflow-template import for an INSTALLED OR LINKED plugin
+ * (spec §6.6). A linked dir is live-edited and `updatePlugin` refuses linked
+ * plugins, so this is the only refresh path a plugin author has; for an
+ * installed plugin it is the cheap way to retry an import that failed.
+ * Upsert-only: a template file the author DELETED keeps its row until the
+ * plugin is removed.
+ * @returns {Promise<{ok:true, name:string,
+ *   workflows:{imported:string[], skipped:Array<{file:string, errors:string[]}>},
+ *   ignored:Array<{file:string, reason:string}>}>}
+ */
+export async function reimportPlugin(name) {
+  if (!readPluginsLock()[name]) throw new Error(`plugin "${name}" is not installed`);
+  const cur = pluginCurrentDir(name);
+  if (!existsSync(cur)) throw new Error(`plugin "${name}": current symlink missing or dangling`);
+  const workflows = await importPluginWorkflows(name, cur);
+  for (const s of workflows.skipped) {
+    console.warn(`[plugin-store] ${name}: workflow ${s.file} not imported (${s.errors.join('; ')})`);
+  }
+  return { ok: true, name, workflows, ignored: ignoredContributions(name, cur, { workflowSkips: workflows.skipped }) };
 }

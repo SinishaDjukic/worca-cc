@@ -197,7 +197,7 @@ Subcommands:
     [--ignore-cost-cap]       Resume past this pipeline's cost cap (persists on the run).
   doctor                      Reconcile crashed runs and sweep leftover run roots.
   plugin <cmd> [...]          Manage plugins: add|install|list|update|remove|purge|enable|
-                              disable|doctor|link|init|validate|exec. See: worca plugin help
+                              disable|doctor|link|reimport|init|validate|exec. See: worca plugin help
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
   config [get|set|unset]      Budget & cost-limit settings
 
@@ -881,6 +881,7 @@ Usage:
   worca plugin enable <name> | disable <name>     Toggle without removing files
   worca plugin doctor [name] [--fix]              Health checks (--fix re-runs deterministic setup on failure)
   worca plugin link <dir>                         Dev mode: use a local dir as "current"
+  worca plugin reimport <name>                    Re-read the plugin's pipeline templates (a linked dir is live-edited)
   worca plugin init <name> [--dir <D>] [--with task-source,agents,skills,workflows]
   worca plugin validate <dir> [--strict]          Lint a plugin dir (--strict: unknown fields error)
   worca plugin exec <name> <sourceId> <op> [--args '<json>'] [--profile <id>] [--inspect]   Debug one connector op
@@ -1359,8 +1360,22 @@ async function cmdPlugin(argv) {
         // API-1 plugin keeps linking, and now says why its agent is ignored.
         for (const p of v.problems) process.stderr.write(`${p.level}: ${p.message}\n`);
         if (!v.ok) return 2;
-        store.linkPlugin(v.manifest.name, abs);
+        const linked = await store.linkPlugin(v.manifest.name, abs);
         out(`linked ${v.manifest.name} -> ${abs} (dev mode; doctor will warn)`);
+        const n = linked.workflows.imported.length;
+        if (n) out(`  imported ${n} pipeline template${n === 1 ? '' : 's'} — edits to them need: worca plugin reimport ${v.manifest.name}`);
+        printIgnored(store.ignoredContributions(v.manifest.name, abs, { workflowSkips: linked.workflows.skipped }));
+        return 0;
+      }
+
+      case 'reimport': {
+        const a = pluginArgs(rest);
+        const name = a._[0];
+        if (!name) fail('Usage: worca plugin reimport <name>');
+        const r = await store.reimportPlugin(name);
+        const n = r.workflows.imported.length;
+        out(`reimported ${name}: ${n} pipeline template${n === 1 ? '' : 's'}`);
+        printIgnored(r.ignored);
         return 0;
       }
 

@@ -125,7 +125,7 @@ test('GET /api/sources lists ONLY prompt+markdown with zero plugins (feature-off
 });
 
 test('a linked, enabled plugin source appears in GET /api/sources with its inputs', async () => {
-  linkPlugin('local-src', pluginDir); // dev-mode current -> pluginDir, lock { linked: true }
+  await linkPlugin('local-src', pluginDir); // dev-mode current -> pluginDir, lock { linked: true }
   const { sources } = await (await get('/api/sources')).json();
   const plug = sources.find((s) => s.type === 'plugin');
   assert.ok(plug, 'plugin source listed');

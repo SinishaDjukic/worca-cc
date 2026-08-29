@@ -29,16 +29,24 @@ Drop parts you don't need with `--with` (note: `workflows` requires `agents`).
 ## Dev loop
 
 ```bash
-worca plugin link ./my-plugin                                  # current/ -> your working dir
+worca plugin link ./my-plugin                                  # current/ -> your working dir (imports workflows/)
 WORCA_MOCK=1 worca plugin exec my-plugin main listTasks        # offline, canned frames
 worca plugin exec my-plugin main getTask --args '{"id":"X-1"}' # real call
 worca plugin exec my-plugin main listTasks --inspect           # --inspect-brk on the child
+worca plugin reimport my-plugin                                # re-read workflows/*.json after an edit
 worca plugin validate ./my-plugin --strict
 worca plugin doctor my-plugin
 ```
 
 `link` takes a **dir**, not a name — the name comes from the manifest. Linked plugins refuse `update`.
-Edits to a linked dir are live: no reinstall, the next op spawns a fresh child.
+Edits to a linked dir are live for the connector, agents and skills: no reinstall, the next op spawns
+a fresh child. **Pipeline templates are the exception** — they are DB rows, imported once at `link`
+(and at `install`/`update`), so after editing `workflows/*.json` run `worca plugin reimport <name>`.
+Reimport upserts: a template file you DELETE keeps its row until the plugin is removed.
+
+`plugin list`, `plugin doctor` and the Plugins card name every contribution worca **ignored** —
+an agent key that collides with an existing agent, a sidecar that fails the meta v2 gate, a template
+that fails graph validation. If your agent or flow is missing, that line says why.
 
 ## Manifest quick reference
 
@@ -141,6 +149,9 @@ An agent sidecar is meta v2: typed PORTS replace the v1 channel vocabulary.
 - `outputs[]`: `{ id, type, when?, filename?, store?, artifactKind? }`
 - `runnerType`: `producer` | `verifier` | `clarifier`; a `verifier` also declares `verdict`.
 - `placeable: false` keeps an agent off the composer canvas (off-pipeline scanners).
+- `agentFile`: optional; the prompt file for this agent. It is a **plain basename inside
+  `agents/`** — no `/`, no `..`, never absolute. Defaults to nothing (the scaffold writes
+  `"<key>.md"`). The install consent card reads the tools of exactly this file.
 
 A workflow template is a v2 graph, and `worca plugin init` scaffolds this shape:
 
@@ -182,6 +193,10 @@ Node ids must match `/^n_[a-z0-9]{1,32}$/`; exactly one `task` node and one `end
 | Symlinks pointing outside the plugin dir | Deleted during export, reported as a warning |
 | A v1 sidecar (`consumes`/`produces`/`connectsTo`) | Ignored at load with a Plugins-view note — port it to `metaVersion: 2` |
 | A v1 `steps` workflow template | Ignored at load with a Plugins-view note — rewrite it as a graph (`version: 2`) |
+| `agentFile` pointing outside `agents/` (`../`, absolute) | Install-blocking validation error; the loader also refuses to read it |
+| A template referencing a key whose sidecar was rejected | ONE line naming the sidecar — the template is not re-reported rule by rule |
+| An agent key that collides with a built-in or user agent | Yours is dropped; `plugin list`/`doctor`/the Plugins card name it under "contributions ignored" |
+| Editing `workflows/*.json` in a linked dir | The DB row is stale until `worca plugin reimport <name>` |
 
 ## The example worth reading
 

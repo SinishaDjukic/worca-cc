@@ -20,7 +20,7 @@ import { writePluginConfig, createProfile } from '../src/core/plugin-config.mjs'
 import { setBinding, listBindingsForScope } from '../src/core/source-bindings.mjs';
 import {
   installPlugin, buildInstallInventory, runSetup, updatePlugin, uninstallPlugin,
-  setPluginEnabled, listInstalledPlugins, doctorPlugin, linkPlugin,
+  setPluginEnabled, listInstalledPlugins, doctorPlugin, linkPlugin, reimportPlugin,
   listOrphanPluginData, purgePluginData,
 } from '../src/core/plugin-store.mjs';
 
@@ -120,10 +120,10 @@ const PLUGIN_FILES = (name) => ({
 
 /** The file's real install path: lay a plugin tree down and dev-LINK it, which
  *  writes `current` + the lock entry. */
-function installLocal(name, files = {}) {
+async function installLocal(name, files = {}) {
   const dir = join(scratch, `local-${name}`);
   writeTree(dir, { ...PLUGIN_FILES(name), ...files });
-  linkPlugin(name, dir);
+  await linkPlugin(name, dir);   // link is async: it ends with the template import
   return dir;
 }
 
@@ -282,7 +282,7 @@ test('runSetup: setup.node without package-lock.json is rejected before running 
 test('linkPlugin: dev-mode absolute symlink + linked lock entry', async () => {
   const dev = join(scratch, 'dev-linked');
   writeTree(dev, PLUGIN_FILES('linked-plugin'));
-  const r = linkPlugin('linked-plugin', dev);
+  const r = await linkPlugin('linked-plugin', dev);
   assert.equal(r.ok, true);
   const cur = pluginCurrentDir('linked-plugin');
   assert.ok(lstatSync(cur).isSymbolicLink());
@@ -291,7 +291,7 @@ test('linkPlugin: dev-mode absolute symlink + linked lock entry', async () => {
   const row = listInstalledPlugins().find((p) => p.name === 'linked-plugin');
   assert.equal(row.linked, true);
   assert.equal(row.contributions.agents, 1);
-  assert.throws(() => linkPlugin('wrong-name', dev), /does not match/);
+  await assert.rejects(() => linkPlugin('wrong-name', dev), /does not match/);
 });
 
 test('buildInstallInventory works directly against any version dir', () => {
@@ -393,7 +393,7 @@ test('buildInstallInventory: models section — base URL verbatim, env keys, mod
 test('doctor + uninstall guard for plugin models: block-with-list, clear, then uninstall', async () => {
   const dev = join(scratch, 'dev-modelful');
   writeTree(dev, MODELFUL_FILES('modelful-plugin'));
-  linkPlugin('modelful-plugin', dev);
+  await linkPlugin('modelful-plugin', dev);
   const row = listInstalledPlugins().find((p) => p.name === 'modelful-plugin');
   assert.equal(row.contributions.models, 2);
 
@@ -441,7 +441,7 @@ test('doctorPlugin: a multiProfile source with an EMPTY roster is unhealthy, not
     }),
     'connector/index.mjs': 'export default () => ({});\n',
   });
-  linkPlugin('profiled-plugin', dir);
+  await linkPlugin('profiled-plugin', dir);
 
   const empty = await doctorPlugin('profiled-plugin');
   assert.equal(empty.ok, false);
@@ -461,7 +461,7 @@ test('doctorPlugin: a multiProfile source with an EMPTY roster is unhealthy, not
 test('listInstalledPlugins reports apiMismatch for v1-shaped data, and null when clean', async () => {
   // An API-1 plugin still shipping v1 data: it INSTALLS (warn path — its
   // connector works); worca just ignores the agent and the template.
-  installLocal('legacy-data', {
+  await installLocal('legacy-data', {
     'worca-cc-plugin.json': JSON.stringify({
       name: 'legacy-data', version: '0.1.0', engines: { 'worca-cc-api': '>=1 <2' },
     }),
@@ -475,13 +475,13 @@ test('listInstalledPlugins reports apiMismatch for v1-shaped data, and null when
   });
   assert.equal(p.broken, false, 'an outdated data contract is not a broken install');
 
-  installLocal('clean-data');   // PLUGIN_FILES is API 3 with v2 data
+  await installLocal('clean-data');   // PLUGIN_FILES is API 3 with v2 data
   const clean = listInstalledPlugins().find((x) => x.name === 'clean-data');
   assert.equal(clean.apiMismatch, null, 'an API-3 plugin with clean data has no mismatch');
 });
 
 test('doctor reports an agents-api check, and it is NOT an install gate', async () => {
-  installLocal('legacy-doctor', {
+  await installLocal('legacy-doctor', {
     'worca-cc-plugin.json': JSON.stringify({
       name: 'legacy-doctor', version: '0.1.0', engines: { 'worca-cc-api': '>=1 <2' },
     }),
@@ -494,7 +494,7 @@ test('doctor reports an agents-api check, and it is NOT an install gate', async 
   assert.equal(check.ok, false);
   assert.match(check.detail, /update or reinstall the plugin/);
   // …and a clean API-3 plugin reports it GREEN (the check is not always-red).
-  installLocal('clean-doctor');
+  await installLocal('clean-doctor');
   const good = (await doctorPlugin('clean-doctor')).checks.find((c) => c.id === 'agents-api');
   assert.equal(good.ok, true);
   assert.match(good.detail, /plugin API 3/);
@@ -529,8 +529,8 @@ test('an outdated data contract does NOT block installPlugin (agents-api is advi
     'the doctor still reports it — advisory, not a gate');
 });
 
-test('`broken` outranks the data contract: a plugin with an unparseable manifest reports apiMismatch null', () => {
-  const dir = installLocal('broken-manifest');           // links with clean API-3 data
+test('`broken` outranks the data contract: a plugin with an unparseable manifest reports apiMismatch null', async () => {
+  const dir = await installLocal('broken-manifest');     // links with clean API-3 data
   writeTree(dir, {                                        // …then rots on disk
     'worca-cc-plugin.json': '{ not json',
     'agents/demoAgent.meta.json': JSON.stringify(V1_SIDECAR),
@@ -569,14 +569,14 @@ test('buildInstallInventory reads the tools of the file agentFile names (C-1)', 
 
 // ── MAJ-12: the refusal message names the real cause ────────────────────────
 
-test('link refuses a mixed-version plugin with the REAL cause, not derived template errors (MAJ-12)', () => {
+test('link refuses a mixed-version plugin with the REAL cause, not derived template errors (MAJ-12)', async () => {
   const mixed = join(scratch, 'mixed-api3');
   writeTree(mixed, {
     ...PLUGIN_FILES('mixed-api3'),
     'agents/demoAgent.meta.json': JSON.stringify(V1_SIDECAR),   // v1 sidecar…
     // …while workflows/demo-flow.json is already the v2 graph
   });
-  assert.throws(() => linkPlugin('mixed-api3', mixed), (err) => {
+  await assert.rejects(() => linkPlugin('mixed-api3', mixed), (err) => {
     assert.match(err.message, /not a meta v2 sidecar/, 'the accurate cause reaches the message');
     assert.match(err.message, /references agent key "demoAgent" whose sidecar is not a valid meta v2 sidecar/);
     assert.doesNotMatch(err.message, /V4:|V20:|V21:/, 'no derived template errors');
@@ -593,7 +593,7 @@ test('link refuses a mixed-version plugin with the REAL cause, not derived templ
     }),
     'agents/demoAgent.meta.json': JSON.stringify(V1_SIDECAR),
   });
-  assert.equal(linkPlugin('mixed-api1', legacy).ok, true);
+  assert.equal((await linkPlugin('mixed-api1', legacy)).ok, true);
 });
 
 // ── MAJ-13: contributions dropped at load are REPORTED, not console-only ────
@@ -634,7 +634,7 @@ const COLLIDING_FILES = (name, cleanKey) => ({
 test('dropped contributions reach the card and the doctor, clean ones do not (MAJ-13)', async () => {
   const dir = join(scratch, 'local-coll-plug');
   writeTree(dir, COLLIDING_FILES('coll-plug', 'collCleanA'));
-  linkPlugin('coll-plug', dir);
+  await linkPlugin('coll-plug', dir);
   // A LINKED dir is read live, so it can hold a sidecar validatePluginDir would
   // never have let through (agent-registry.mjs:96 says exactly this). Add one the
   // REGISTRY drops on its own — normalizeMeta's non-numeric-order arm — so the
@@ -663,7 +663,7 @@ test('dropped contributions reach the card and the doctor, clean ones do not (MA
   assert.equal(report.ok, false, 'a plugin whose contributions were dropped is not healthy');
 
   // …and a plugin with nothing dropped reports an empty list + a green check.
-  installLocal('clean-contrib');
+  await installLocal('clean-contrib');
   const clean = listInstalledPlugins().find((p) => p.name === 'clean-contrib');
   assert.deepEqual(clean.ignored, []);
   const cleanCheck = (await doctorPlugin('clean-contrib')).checks.find((c) => c.id === 'contributions');
@@ -696,4 +696,85 @@ test('installPlugin echoes the ignored contributions in its receipt (MAJ-13)', a
     ['agents/planner.meta.json', 'workflows/coll-flow.json']);
   assert.equal(res.ignored[0].reason, 'collides with an existing agent');
   assert.match(res.ignored[1].reason, /^invalid template \(V5: /);
+});
+
+// ── MAJ-14: link is the documented author loop — it must import templates ───
+
+/** PLUGIN_FILES with a UNIQUELY-keyed agent + matching template, so a fixture
+ *  never rides on (or collides with) another plugin's demoAgent in this file's
+ *  one shared home. */
+const OWN_KEY_FILES = (name, key) => {
+  const files = { ...PLUGIN_FILES(name) };
+  delete files['agents/demoAgent.meta.json'];
+  delete files['agents/demoAgent.md'];
+  files[`agents/${key}.meta.json`] = JSON.stringify({ ...V2_SIDECAR, key, agentFile: `${key}.md` });
+  files[`agents/${key}.md`] = '---\ntools: Read\n---\nunique\n';
+  files['workflows/demo-flow.json'] = JSON.stringify({
+    ...V2_TEMPLATE,
+    nodes: V2_TEMPLATE.nodes.map((n) => (n.kind === 'agent' ? { ...n, key } : n)),
+  });
+  return files;
+};
+
+test('linkPlugin imports the plugin\'s workflow templates and returns what landed (MAJ-14)', async () => {
+  const dev = join(scratch, 'dev-link-wf');
+  writeTree(dev, OWN_KEY_FILES('linkwf-plugin', 'linkwfAgent'));
+  const r = await linkPlugin('linkwf-plugin', dev);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.workflows.imported, ['wfp_linkwf-plugin_demo-flow'],
+    'link is the documented dev loop — its templates must reach the store');
+  assert.deepEqual(r.workflows.skipped, []);
+  const { listWorkflows } = await import('../src/core/workflows.mjs');
+  assert.ok((await listWorkflows()).some((w) => w.id === 'wfp_linkwf-plugin_demo-flow'));
+
+  // A skipped template is REPORTED, never thrown: the link itself succeeded.
+  const bad = join(scratch, 'dev-link-badwf');
+  writeTree(bad, {
+    ...OWN_KEY_FILES('linkbad-plugin', 'linkbadAgent'),
+    'agents/planner.meta.json': JSON.stringify({
+      metaVersion: 2, key: 'planner', displayName: 'My Planner', agentFile: 'planner.md',
+      runnerType: 'producer', order: 981,
+      inputs: [{ id: 'brief', type: 'md' }],
+      outputs: [{ id: 'sketch', type: 'md', filename: 's.md' }],
+    }),
+    'agents/planner.md': '---\ntools: Read\n---\nmy planner\n',
+    'workflows/coll-flow.json': JSON.stringify({
+      name: 'Coll Flow', version: 2, domain: 'general',
+      nodes: [
+        { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+        { id: 'n_p', kind: 'agent', key: 'planner', x: 320, y: 200, config: {} },
+        { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
+      ],
+      wires: [
+        { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_p', port: 'brief' } },
+        { id: 'w2', from: { node: 'n_p', port: 'sketch' }, to: { node: 'n_end', port: 'result' } },
+      ],
+    }),
+  });
+  const r2 = await linkPlugin('linkbad-plugin', bad);
+  assert.equal(r2.ok, true, 'a template that cannot import never fails the link');
+  assert.deepEqual(r2.workflows.imported, ['wfp_linkbad-plugin_demo-flow']);
+  assert.deepEqual(r2.workflows.skipped.map((x) => x.file), ['coll-flow.json']);
+});
+
+test('reimportPlugin re-runs the importer for a LINKED plugin whose dir was edited (MAJ-14)', async () => {
+  const dev = join(scratch, 'dev-reimport');
+  writeTree(dev, OWN_KEY_FILES('reimport-plugin', 'reimportAgent'));
+  await linkPlugin('reimport-plugin', dev);
+  // A linked dir is live-edited; `updatePlugin` refuses linked plugins, so this
+  // is the ONLY refresh path the author has.
+  writeTree(dev, {
+    'workflows/demo-flow.json': JSON.stringify({
+      ...V2_TEMPLATE, name: 'Renamed Demo Flow',
+      nodes: V2_TEMPLATE.nodes.map((n) => (n.kind === 'agent' ? { ...n, key: 'reimportAgent' } : n)),
+    }),
+  });
+  const r = await reimportPlugin('reimport-plugin');
+  assert.deepEqual(r.workflows.imported, ['wfp_reimport-plugin_demo-flow']);
+  assert.deepEqual(r.ignored.filter((x) => x.file.startsWith('workflows/')), [],
+    'nothing was dropped on the way back in');
+  const { listWorkflows } = await import('../src/core/workflows.mjs');
+  const row = (await listWorkflows()).find((w) => w.id === 'wfp_reimport-plugin_demo-flow');
+  assert.equal(row.name, 'Renamed Demo Flow', 'the live edit reached the row');
+  await assert.rejects(() => reimportPlugin('no-such-plugin'), /is not installed/);
 });
