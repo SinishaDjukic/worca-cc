@@ -1649,12 +1649,15 @@ function editDistance(a, b) {
  */
 function nearestSubcommand(token) {
   if (!token || /\s/.test(token)) return null;
-  for (const name of SUBCOMMANDS) {
+  // 'help' is spliced into both loops: it is a real CLI arm (the head of main())
+  // but deliberately absent from the dispatch table, so without it a typo of help
+  // itself (`worca hlep`) is distance >= 4 from everything and runs as a PROMPT.
+  for (const name of [...SUBCOMMANDS, 'help']) {
     if (token.length >= 3 && name.length > token.length && name.startsWith(token)) return name;
   }
   let best = null;
   let bestD = 3;   // strictly less than 3 == distance <= 2
-  for (const name of SUBCOMMANDS) {
+  for (const name of [...SUBCOMMANDS, 'help']) {
     const d = editDistance(token, name);
     if (d < bestD) { bestD = d; best = name; }
   }

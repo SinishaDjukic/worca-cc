@@ -154,3 +154,16 @@ test('MIN-51: bare `worca help` prints the help and starts nothing', () => {
   assert.equal(pipelineCount(), before, 'no pipeline row');
   assert.equal(branchesOf(repo).trim(), 'main', 'no feature branch');
 });
+
+test('MIN-51: a typo of `help` itself is refused, not run as a prompt', () => {
+  const repo = freshRepo();
+  const before = pipelineCount();
+  const r = runCli(['hlep', '--yes'], repo);
+  assert.equal(r.status, 2, `expected the fail() exit code\n${r.stdout}\n${r.stderr}`);
+  assert.equal(
+    r.stderr.trim(),
+    'worca: unknown subcommand "hlep" — did you mean "help"? (to run a prompt, use --prompt "…")',
+  );
+  assert.equal(pipelineCount(), before, 'no pipeline row');
+  assert.equal(branchesOf(repo).trim(), 'main', 'no feature branch');
+});
