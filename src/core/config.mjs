@@ -549,7 +549,12 @@ function cleanNodeSel(selection) {
  */
 function readWorkflowsMap(key) {
   getDb();
-  const workflows = {};
+  // NULL-prototype accumulator, deliberately: a stored workflow_id of
+  // '__proto__' would resolve truthy to Object.prototype on a plain `{}` and the
+  // next `.wires[id] =` would throw FOREVER for that project (MAJ-1). With no
+  // prototype, `workflows['__proto__'] = ...` is an ordinary own property, so a
+  // poisoned row degrades to a visible junk entry instead of a permanent 500.
+  const workflows = Object.create(null);
   const ensure = (wf) => {
     if (!workflows[wf]) workflows[wf] = { nodes: {}, feedbacks: {}, wires: {} };
     return workflows[wf];
@@ -576,7 +581,11 @@ function readWorkflowsMap(key) {
   ).all(key)) {
     ensure(r.workflow_id).wires[r.wire_id] = { maxCycles: r.max_cycles };
   }
-  return workflows;
+  // Hand callers an ORDINARY object: spread copies with CreateDataProperty, so a
+  // '__proto__' key stays an own enumerable property (a plain assignment would
+  // have hit the setter and silently vanished) while the public shape — what
+  // JSON.stringify and every deepEqual in the suite see — is unchanged.
+  return { ...workflows };
 }
 
 /**

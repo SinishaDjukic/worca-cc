@@ -166,3 +166,35 @@ test('DELETE /api/config/workflow clears nodes AND wires', async () => {
   assert.equal(res.status, 200);
   assert.equal(body.config.workflows.wf_g, undefined);
 });
+
+// MAJ-1: the three run-config arms wrote `workflowId` into the normalized tables
+// with no shape check, so '__proto__' poisoned readWorkflowsMap for the whole
+// project. isSafeWorkflowId (workflows.mjs) is now the ONE gate; the recovery
+// route (DELETE /api/config/workflow) deliberately stays ungated so an
+// already-poisoned row can still be cleared.
+test('PATCH /api/config refuses an unsafe workflowId on every arm', async () => {
+  const arms = [
+    ['nodes', { nodes: { n_plan: { model: 'claude-sonnet-5' } } }],
+    ['feedbacks', { feedbacks: { fb_0: { maxCycles: 2 } } }],
+    ['wires', { wires: { w5: { maxCycles: 2 } } }],
+  ];
+  for (const [what, arm] of arms) {
+    const r = await api('PATCH', '/api/config', { projectDir: homeDir, workflowId: '__proto__', ...arm });
+    assert.equal(r.status, 400, `${what} arm must be a client error`);
+    assert.match(r.body.error, /invalid workflowId/, `${what} arm message`);
+  }
+  const act = await api('PATCH', '/api/config', { projectDir: homeDir, activeWorkflowId: 'hasOwnProperty' });
+  assert.equal(act.status, 400, 'activeWorkflowId arm must be a client error');
+  assert.match(act.body.error, /invalid workflowId/);
+  const get = await api('GET', `/api/config?projectDir=${encodeURIComponent(homeDir)}`);
+  assert.equal(get.status, 200, 'GET /api/config is not poisoned');
+  assert.equal(Object.prototype.hasOwnProperty.call(get.body.config.workflows, '__proto__'), false,
+    'no row was written for the refused id');
+});
+
+test('PATCH /api/config still accepts a safe workflowId', async () => {
+  const r = await api('PATCH', '/api/config',
+    { projectDir: homeDir, workflowId: 'wf_safe-id', wires: { w1: { maxCycles: 2 } } });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.config.workflows['wf_safe-id'].wires, { w1: { maxCycles: 2 } });
+});

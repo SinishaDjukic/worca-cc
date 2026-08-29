@@ -171,9 +171,22 @@ export function workflowsDir() {
 }
 
 /** A workflow id is a stem; reject anything that could escape a path-built store
- *  (path separators, "..", dots, spaces). Valid ids are wf_<slug> / wf_default. */
+ *  (path separators, "..", dots, spaces). Valid ids are wf_<slug> / wf_default.
+ *  EXPORTED because it is also the API's gate: PATCH /api/config keys three
+ *  normalized tables by workflowId, and a workflow id is used as an OBJECT KEY
+ *  (config.mjs readWorkflowsMap, app.js state.config.workflows[id]) — so every
+ *  own property name of Object.prototype is refused too. The bare regex accepts
+ *  "__proto__" (it is only letters and underscores), which is exactly how MAJ-1
+ *  slipped through. Minted ids are always wf_/wfp_-prefixed, so nothing
+ *  legitimate can collide with that rule. One rule, one source of truth. */
 const SAFE_WORKFLOW_ID = /^[A-Za-z0-9_-]+$/;
-function isSafeWorkflowId(id) { return typeof id === 'string' && SAFE_WORKFLOW_ID.test(id); }
+/** A workflow id is also an OBJECT KEY (config.mjs readWorkflowsMap, app.js state.config.workflows[id]),
+ *  so any own property name of Object.prototype ('__proto__', 'constructor', 'hasOwnProperty',
+ *  'toString', …) is refused: on a plain object those resolve truthy and the next `.wires[id] =` throws. */
+const isInheritedName = (id) => Object.prototype.hasOwnProperty.call(Object.prototype, id);
+export function isSafeWorkflowId(id) {
+  return typeof id === 'string' && SAFE_WORKFLOW_ID.test(id) && !isInheritedName(id);
+}
 
 /** Fail-safe JSON.parse to an array; returns [] on any error. */
 function parseArr(text) {

@@ -92,7 +92,7 @@ import {
   writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
 } from '../src/core/guardrail-store.mjs';
 import {
-  GRAPH_DEFAULT_WORKFLOW, listWorkflows, deleteWorkflow,
+  GRAPH_DEFAULT_WORKFLOW, listWorkflows, deleteWorkflow, isSafeWorkflowId,
   setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow,
 } from '../src/core/workflows.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
@@ -2830,9 +2830,22 @@ app.patch('/api/config', async (req, res) => {
   const projectDir = resolveProjectDir(body.projectDir);
   if (!projectDir) return badRequest(res, 'projectDir is required');
   const workflowId = typeof body.workflowId === 'string' ? body.workflowId.trim() : '';
+  // MAJ-1: every arm below keys a normalized table by workflowId, and
+  // readWorkflowsMap rebuilds a map from those keys — an id like '__proto__'
+  // used to be persisted unchecked and then broke readRunConfig for the whole
+  // project. isSafeWorkflowId is the store's own id rule, so the API can never
+  // write an id the store would refuse. (The recovery route DELETE
+  // /api/config/workflow stays deliberately ungated: an already-poisoned row
+  // must still be clearable.)
+  const workflowIdError = (what) => {
+    if (!workflowId) return `workflowId is required to set ${what} config`;
+    if (!isSafeWorkflowId(workflowId)) return 'invalid workflowId';
+    return null;
+  };
   try {
     if (body.nodes && typeof body.nodes === 'object') {
-      if (!workflowId) return badRequest(res, 'workflowId is required to set node config');
+      const bad = workflowIdError('node');
+      if (bad) return badRequest(res, bad);
       for (const [nodeId, sel] of Object.entries(body.nodes)) {
         await setNodeModel(projectDir, workflowId, nodeId, {
           model: sel && sel.model, effort: sel && sel.effort,
@@ -2841,19 +2854,23 @@ app.patch('/api/config', async (req, res) => {
       }
     }
     if (body.feedbacks && typeof body.feedbacks === 'object') {
-      if (!workflowId) return badRequest(res, 'workflowId is required to set feedback config');
+      const bad = workflowIdError('feedback');
+      if (bad) return badRequest(res, bad);
       for (const [fbId, sel] of Object.entries(body.feedbacks)) {
         await setFeedbackCycles(projectDir, workflowId, fbId, sel && sel.maxCycles);
       }
     }
     if (body.wires && typeof body.wires === 'object') {
-      if (!workflowId) return badRequest(res, 'workflowId is required to set wire config');
+      const bad = workflowIdError('wire');
+      if (bad) return badRequest(res, bad);
       for (const [wireId, sel] of Object.entries(body.wires)) {
         await setWireCycles(projectDir, workflowId, wireId, sel && sel.maxCycles);
       }
     }
     if (typeof body.activeWorkflowId === 'string' && body.activeWorkflowId.trim()) {
-      await setActiveWorkflow(projectDir, body.activeWorkflowId.trim());
+      const active = body.activeWorkflowId.trim();
+      if (!isSafeWorkflowId(active)) return badRequest(res, 'invalid workflowId');
+      await setActiveWorkflow(projectDir, active);
     }
     const config = await readRunConfig(projectDir);
     res.json({ config });
