@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { before } from 'node:test';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
-import { readPipelineForResume, artifactPaths } from '../src/core/artifacts.mjs';
+import { readPipelineForResume, artifactPaths, readPipelineExtras } from '../src/core/artifacts.mjs';
 import { setPipelineCostLimitUsd } from '../src/core/settings.mjs';
 import { QUIESCENCE_WARNING } from '../src/core/graph/scheduler.mjs';
 import { BOOKEND_EXECUTION_IDS } from '../src/shared/graph/constants.mjs';
@@ -433,4 +433,32 @@ test('a replayed previous-hold id no longer resolves the CURRENT hold', { timeou
   assert.ok(gateReplays.length >= 2, `two later holds on w12: ${JSON.stringify(replays)}`);
   assert.deepEqual(gateReplays.map((r) => r.accepted), gateReplays.map(() => false),
     'a stale id must never resolve a hold the user has not seen');
+});
+
+// ── MAJ-10 (History half): no phantom clean review for a verdict nobody wrote ──
+test('a verdict that was never written leaves NO reviews row', { timeout: 120000 }, async () => {
+  const mkRunners = (missing) => ({
+    producer: async (ctx) => ({ summary: `${ctx.node.id} ok`, outputs: outsOf(ctx), verdict: null }),
+    clarifier: async (ctx) => ({ summary: 'clarified', outputs: outsOf(ctx), questions: [], answers: [] }),
+    // What runAgentExecution returns when readVerdict found no file (`missing`) vs.
+    // when the verifier really approved the work (a genuine zero-issue verdict).
+    verifier: async (ctx) => ({
+      summary: `${ctx.node.id} looked`,
+      outputs: outsOf(ctx),
+      verdict: missing ? { issues: [], summary: '', missing: true } : { issues: [], summary: 'all good' },
+    }),
+  });
+  const run = async (missing, tag) => {
+    const orch = createOrchestrator({
+      projectDir: gitDir(tag), workflowId: 'wf_quick-fix', prompt: 'demo',
+      auto: true, runners: mkRunners(missing),
+    });
+    const res = await orch.run();
+    assert.equal(res.status, 'done', res.error);
+    return readPipelineExtras(orch.pipeline.id).reviews;
+  };
+  const written = await run(false, 'revrow');
+  assert.ok(written.length >= 1, `a real verdict IS persisted: ${JSON.stringify(written)}`);
+  const phantom = await run(true, 'revnorow');
+  assert.deepEqual(phantom, [], 'a verdict nobody wrote must not render as a clean review');
 });

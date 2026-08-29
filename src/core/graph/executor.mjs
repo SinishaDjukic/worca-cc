@@ -32,15 +32,15 @@
 // input left UNBOUND. The composite DRIVER is scheduler.mjs; this module owns the
 // document — including the prompt block that tells a producer where to write the
 // task files and what the manifest looks like.
-import { join, dirname } from 'node:path';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join, dirname, relative, basename } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 
 import {
   runClaude, MOCK_WRITER_ROLES, MOCK_ROLE_CLARIFY, MOCK_ROLE_DECOMPOSER,
 } from '../claude-runner.mjs';
 import { planPath, reviewPath, writeStepQuestions, writeClarify } from '../artifacts.mjs';
-import { readReview, normalizeClarify } from '../protocol.mjs';
+import { readReview, normalizeClarify, normalizeReview, safeParseJson } from '../protocol.mjs';
 import {
   taskHeader, buildSystemPrompt, resolveAgentBody, mockMarkers, runOpts,
   fanOutDirective, ctxFanOut, workspaceFanOutDirective, workspaceDiffInstruction,
@@ -381,12 +381,48 @@ export function resolveMockRole({ meta, expandsPort = null }) {
 
 // ── verdicts ──────────────────────────────────────────────────────────────────
 
-/** Read a node's verdict JSON back through the protocol normalizer. Never throws: a
- *  missing or malformed file reads as "no issues", which is what makes an unwritten
- *  verdict a clean pass rather than a run failure. */
-export function readVerdict(verdictPath) {
-  if (!verdictPath) return Promise.resolve({ issues: [], summary: '' });
-  return readReview(verdictPath);
+/** The text every unparseable verdict file fails with. */
+const BAD_VERDICT_TAIL = 'expected { "issues": [ \u2026 ] }';
+
+/**
+ * Read a node's verdict JSON back through the protocol normalizer.
+ *
+ * Two degenerate cases, deliberately split (they are NOT the same failure):
+ *  - the file was NEVER WRITTEN -> `{issues: [], summary: '', missing: true}`: a clean
+ *    pass, v1 parity, because an agent that declares a verdict and writes none must not
+ *    fail a run. `missing` is the flag the caller turns into a warning (and the reason
+ *    the reviews table skips the row) instead of a phantom zero-issue review.
+ *  - the file EXISTS but does not parse, or carries no `issues` array -> THROW. The
+ *    verifier wrote garbage, and on every shipped seed the clean side is wired straight
+ *    to End, so "no issues" there is indistinguishable from an approval. Fail-fast owns
+ *    the rest.
+ *
+ * `readReview` is untouched for its other callers (it is v1 code with its own tolerant
+ * contract); the existsSync + parse-failure branch lives here.
+ */
+export async function readVerdict(verdictPath) {
+  if (!verdictPath) return { issues: [], summary: '' };
+  if (!existsSync(verdictPath)) return { issues: [], summary: '', missing: true };
+  let text;
+  try {
+    text = await readFile(verdictPath, 'utf8');
+  } catch (err) {
+    throw Object.assign(new Error(`verdict file unreadable: ${verdictPath} — ${err?.message || err}`),
+      { code: 'BAD_VERDICT' });
+  }
+  const data = safeParseJson(text);
+  if (!data || typeof data !== 'object' || !Array.isArray(data.issues)) {
+    throw Object.assign(new Error(`verdict file is not a review JSON: ${verdictPath} — ${BAD_VERDICT_TAIL}`),
+      { code: 'BAD_VERDICT' });
+  }
+  return normalizeReview(data);
+}
+
+/** The warning line a missing verdict raises, relative to the pipeline dir so the
+ *  run log stays readable. */
+function missingVerdictWarning(ctx, verdictPath) {
+  const rel = ctx?.pipelineDir ? relative(ctx.pipelineDir, verdictPath) : basename(verdictPath);
+  return `verdict file missing: ${ctx?.nodeId || ctx?.node?.id || '?'} ${rel} — treated as clean`;
 }
 
 // ── prompt assembly ───────────────────────────────────────────────────────────
@@ -616,6 +652,8 @@ export async function runAgentExecution(ctx) {
     summary: (text || '').trim() || `${meta.displayName || ctx.node?.key || 'Agent'} completed.`,
     outputs: publishable(ports, outputs),
     verdict: review,
+    // Non-fatal problems the scheduler folds into state.warnings + the run log.
+    warnings: review?.missing ? [missingVerdictWarning(ctx, verdict.path)] : [],
     sessionId,
     prompt,
   };

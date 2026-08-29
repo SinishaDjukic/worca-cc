@@ -241,12 +241,67 @@ test('7 the MOCK role chain is graph-derived, never keyed on an agent name', () 
   assert.equal(resolveMockRole({ meta: { runnerType: 'producer' } }), 'generic-producer', '5. the fallback');
 });
 
-test('8 readVerdict never throws: a missing or malformed file is "no issues"', async () => {
+test('8 readVerdict: a MISSING file is a clean pass (flagged); a PRESENT broken one throws', async () => {
+  // v1 parity: a verifier that declares a verdict and writes none is not a run
+  // failure — but the caller has to be able to SAY so, hence `missing: true`.
   assert.deepEqual(await readVerdict(null), { issues: [], summary: '' });
-  assert.deepEqual((await readVerdict(join(pipelineDir, 'gone.json'))).issues, []);
+  const gone = await readVerdict(join(pipelineDir, 'gone.json'));
+  assert.deepEqual(gone.issues, []);
+  assert.equal(gone.missing, true, 'the caller can distinguish "never written" from "approved"');
   const v = join(pipelineDir, 'v.json');
   writeFileSync(v, JSON.stringify({ issues: [{ severity: 'critical', title: 'x' }], summary: 's' }), 'utf8');
-  assert.equal((await readVerdict(v)).issues.length, 1);
+  const good = await readVerdict(v);
+  assert.equal(good.issues.length, 1);
+  assert.equal(good.missing, undefined, 'a real verdict carries no flag');
+  const clean = join(pipelineDir, 'clean.json');
+  writeFileSync(clean, JSON.stringify({ issues: [], summary: 'ok' }), 'utf8');
+  assert.deepEqual(await readVerdict(clean), { issues: [], summary: 'ok' });
+  // A file that EXISTS but is not a review is the verifier writing garbage — it is
+  // indistinguishable from an approval on every shipped seed (the clean side is
+  // wired straight to End), so it must fail the execution instead.
+  const bad = join(pipelineDir, 'bad.json');
+  writeFileSync(bad, 'not json at all', 'utf8');
+  await assert.rejects(() => readVerdict(bad), (e) => {
+    assert.equal(e.message, `verdict file is not a review JSON: ${bad} — expected { "issues": [ … ] }`);
+    assert.equal(e.code, 'BAD_VERDICT');
+    return true;
+  });
+  const shapeless = join(pipelineDir, 'shapeless.json');
+  writeFileSync(shapeless, '{}', 'utf8');
+  await assert.rejects(() => readVerdict(shapeless), /verdict file is not a review JSON/);
+  const notArray = join(pipelineDir, 'notarray.json');
+  writeFileSync(notArray, JSON.stringify({ issues: 'boom' }), 'utf8');
+  await assert.rejects(() => readVerdict(notArray), /verdict file is not a review JSON/);
+});
+
+test('8b a verifier that never wrote its verdict warns, naming the node and the file', async () => {
+  // A verifier that exits 0 without writing its JSON (truncated context, wrong path,
+  // a denied tool) is indistinguishable from an approval — and on every shipped seed
+  // the clean side is wired straight to End. Parity keeps it a pass, but it is now a
+  // LOUD one: the warning rides the result and the scheduler logs it.
+  const nodeObj = { id: 'n_c', kind: 'agent', key: 'custom', config: {}, agentPrompt: 'You are custom.', tools: [] };
+  // A declared mockRole of 'generic-producer' makes the offline writer skip the
+  // verdict JSON while the PORTS still declare one: the file never appears.
+  const meta = { ...CUSTOM, mockRole: 'generic-producer' };
+  const c = ctx8({ node: nodeObj, meta, ports: meta });
+  const r = await runAgentExecution(c);
+  assert.deepEqual(r.verdict.issues, [], 'a missing verdict still routes the CLEAN side (v1 parity)');
+  assert.deepEqual(r.warnings, ['verdict file missing: n_c custom-review-cycle2.json — treated as clean']);
+  // And the happy path carries no warning at all.
+  const ok = await runAgentExecution(ctx8());
+  assert.deepEqual(ok.warnings, []);
+});
+
+test('8c a verdict file that EXISTS but is garbage fails the execution', async () => {
+  const nodeObj = { id: 'n_c', kind: 'agent', key: 'custom', config: {}, agentPrompt: 'You are custom.', tools: [] };
+  const meta = { ...CUSTOM, mockRole: 'generic-producer' };   // the mock writes no verdict…
+  const c = ctx8({ node: nodeObj, meta, ports: meta });
+  writeFileSync(c.verdict.path, '{"issues": [ truncated', 'utf8');   // …the agent wrote a truncated one
+  await assert.rejects(() => runAgentExecution(c), (e) => {
+    assert.equal(e.code, 'BAD_VERDICT');
+    assert.equal(e.message, `verdict file is not a review JSON: ${c.verdict.path} — expected { "issues": [ … ] }`);
+    return true;
+  });
 });
 
 // ── flow executors ───────────────────────────────────────────────────────────

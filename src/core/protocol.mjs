@@ -197,7 +197,7 @@ export async function readQuestionsFile(absPath) {
  *   { issues: [ { severity, title, detail, location } ], summary }
  * Always returns { issues: [], summary: '' } on bad input.
  */
-function normalizeReview(data) {
+export function normalizeReview(data) {
   if (!data || typeof data !== 'object') return { issues: [], summary: '' };
   const list = Array.isArray(data.issues) ? data.issues : [];
   const issues = [];

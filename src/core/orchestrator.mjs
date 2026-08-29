@@ -741,7 +741,10 @@ export class GraphOrchestrator extends RunHarness {
    *    after the last phase (_finishComposite).
    */
   async _afterExecution(nc, ctx, result) {
-    if (this.pipeline && ctx.verdict?.path && result?.verdict) {
+    // `missing` = the verifier never wrote its verdict (MAJ-10). Persisting that as
+    // a zero-issue row makes History render a genuine-looking clean review of work
+    // nobody reviewed, so the row is SKIPPED; the run log + state.warnings carry it.
+    if (this.pipeline && ctx.verdict?.path && result?.verdict && !result.verdict.missing) {
       await writeReview(this.pipeline.id, this._verdictKind(nc, ctx), ctx.ordinal, result.verdict);
     }
     const seen = new Set();

@@ -214,3 +214,56 @@ test('an ALL-CUSTOM graph completes offline through the generic chain alone', { 
   assert.ok(r.calls.some((c) => c.nodeId === 'n_work' && c.composite === 'finish'), 'and finished once');
   assert.ok(r.execSeq.some((s) => s.startsWith('n_end')), 'End executed');
 });
+
+// ── 3. the verdict half of the chain: what a mock that writes NO verdict costs ──
+// A verifier that exits 0 without writing its JSON is indistinguishable from an
+// approval, and on every shipped seed the clean side is wired straight to End.
+// Parity keeps it a pass; MAJ-10 makes it a LOUD one — the warning rides the
+// execution result and the scheduler folds it into state.warnings + the run log.
+test('a verifier whose mock writes no verdict passes, but the run warns and names it', { timeout: 60000 }, async () => {
+  const SILENT = {
+    maker: {
+      displayName: 'Maker', runnerType: 'producer', promptHints: '',
+      inputs: [{ id: 'task', type: 'md', required: true }],
+      outputs: [{ id: 'plan', type: 'md', when: 'always', filename: 'maker-plan.md', store: 'run' }],
+    },
+    // Declares a verdict, but its mock role is a PRODUCER: the offline writer emits
+    // the md and never the JSON — the exact shape of a verifier that ran out of
+    // context before writing its review file.
+    silent: {
+      displayName: 'Silent', runnerType: 'verifier', promptHints: '', mockRole: 'generic-producer',
+      inputs: [{ id: 'plan', type: 'md', required: true }],
+      outputs: [{ id: 'review', type: 'md', when: 'blocking', filename: 'silent-c{cycle}.md', store: 'run' },
+        { id: 'pass', type: 'void', when: 'clean' }],
+      verdict: { filename: 'silent-verdict-c{cycle}.json' },
+    },
+  };
+  const silentPorts = (n) => (n.kind === 'agent'
+    ? {
+      ...SILENT[n.key],
+      inputs: [...(SILENT[n.key]?.inputs || []).map((p) => ({ ...p })), { ...AWAIT_PORT }],
+      outputs: (SILENT[n.key]?.outputs || []).map((p) => ({ ...p })),
+    }
+    : flowPorts(n));
+  const tpl = {
+    id: 'wf_silent', name: 'Silent verifier', version: 2, domain: 'coding',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_make', kind: 'agent', key: 'maker', x: 0, y: 0, config: {} },
+      { id: 'n_sil', kind: 'agent', key: 'silent', x: 0, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 0, y: 0, config: {} },
+    ],
+    wires: [
+      { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_make', port: 'task' } },
+      { id: 'w2', from: { node: 'n_make', port: 'plan' }, to: { node: 'n_sil', port: 'plan' } },
+      { id: 'w3', from: { node: 'n_sil', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
+    ],
+  };
+  const r = await runGraphOffline({
+    template: tpl, portsFn: silentPorts, registry: SILENT,
+    projectDir: tmp('worca-silent-proj-'), pipelineDir: tmp('worca-silent-pipe-'),
+  });
+  assert.equal(r.result, 'done');
+  assert.equal(r.state.endReached, true, 'the CLEAN side still fires — v1 parity');
+  assert.deepEqual(r.state.warnings, ['verdict file missing: n_sil silent-verdict-c1.json — treated as clean']);
+});

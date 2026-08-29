@@ -542,10 +542,19 @@ export function createScheduler(opts) {
   function completeExecution(h, res) {
     const { node, entry } = h;
     entry.status = 'done';
+    // An execution may report NON-FATAL problems (a verifier that never wrote its
+    // verdict, MAJ-10). The scheduler owns `warnings` and the injected `log`, so
+    // they ride the execution result rather than a second channel.
+    for (const w of Array.isArray(res?.warnings) ? res.warnings : []) {
+      const text = String(w || '');
+      if (!text) continue;
+      warnings.push(text);
+      log(text);
+    }
     if (res?.sessionId) entry.sessionId = res.sessionId;
     emitExec(node, entry, 'done', {
       ...(node.kind === 'end' ? { result: boundResult(entry) } : null),
-      ...(res?.verdict ? { verdict: { hasBlocking: hasBlocking(res.verdict) } } : null),
+      ...(res?.verdict ? { verdict: { hasBlocking: hasBlocking(res.verdict), ...(res.verdict.missing ? { missing: true } : {}) } } : null),
     });
     publish(node, entry, res);
     snap();

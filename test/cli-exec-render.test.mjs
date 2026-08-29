@@ -55,6 +55,9 @@ test('agent done lines carry duration · cost and the verdict word', () => {
     costUsd: 0.02, durationMs: 12000, verdict: { hasBlocking: true } }), '✓ Reviewer #1  12s · $0.02 — blocking');
   assert.equal(line({ nodeId: 'n_rev', agentKey: 'reviewer', executionId: 'x:n_rev:2', ordinal: 2, status: 'done',
     costUsd: 0.02, durationMs: 12000, verdict: { hasBlocking: false } }), '✓ Reviewer #2  12s · $0.02 — clean');
+  // MAJ-10: a verdict file nobody wrote is treated as clean, but it must not READ as an approval.
+  assert.match(line({ nodeId: 'n_rev', agentKey: 'reviewer', executionId: 'x:n_rev:1', ordinal: 1, status: 'done', verdict: { hasBlocking: false, missing: true } }),
+    / — no verdict written \(treated as clean\)$/);
   assert.equal(line({ nodeId: 'n_impl', executionId: 'x:n_impl:1', ordinal: 1, status: 'done', costUsd: 0 }),
     '✓ Implementer #1 · $0.00', 'no durationMs (an un-enriched event) → no duration segment');
 });

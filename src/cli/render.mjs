@@ -87,7 +87,7 @@ export function formatExecLine(ev, manifest, { color = (n, s) => s } = {}) {
   if (ev.status === 'error') return `${color('red', '✗')} ${label}${ord}${dur} — ${ev.error || 'failed'}`;
   if (ev.status !== 'done') return '';   // `skipped` (and anything unknown) renders nothing
   const cost = ev.costUsd != null ? ` · ${usd(ev.costUsd)}` : '';
-  const verdict = ev.verdict ? (ev.verdict.hasBlocking ? ' — blocking' : ' — clean') : '';
+  const verdict = ev.verdict ? (ev.verdict.missing ? ' — no verdict written (treated as clean)' : ev.verdict.hasBlocking ? ' — blocking' : ' — clean') : '';
   return `${color('green', '✓')} ${label}${ord}${dur}${cost}${verdict}`;
 }
 
