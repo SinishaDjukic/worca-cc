@@ -1,0 +1,52 @@
+{
+  "workflowId": "wf_clarify-quick-fix",
+  "status": "done",
+  "endReached": true,
+  "warnings": [],
+  "launches": [
+    "clarify",
+    "planner",
+    "implementer",
+    "reviewer",
+    "implementer",
+    "reviewer"
+  ],
+  "perKey": {
+    "clarify": 1,
+    "planner": 1,
+    "implementer": 2,
+    "reviewer": 2
+  },
+  "artifacts": [
+    "diff-patch:diff-patch.patch",
+    "live-log:live-log.ndjson",
+    "plan:plans/<DATE>-seed-trace-probe.md",
+    "prompt:prompt.md",
+    "results:results.json",
+    "review:reviews/<DATE>-seed-trace-probe-impl-review.md"
+  ],
+  "wireDeliveries": {
+    "w7": 1
+  },
+  "gates": [],
+  "budget1": {
+    "launches": [
+      "clarify",
+      "planner",
+      "implementer",
+      "reviewer"
+    ],
+    "perKey": {
+      "clarify": 1,
+      "planner": 1,
+      "implementer": 1,
+      "reviewer": 1
+    },
+    "gates": [
+      "w7#1"
+    ],
+    "wireDeliveries": {
+      "w7": 0
+    }
+  }
+}

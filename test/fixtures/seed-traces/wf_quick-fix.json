@@ -1,0 +1,48 @@
+{
+  "workflowId": "wf_quick-fix",
+  "status": "done",
+  "endReached": true,
+  "warnings": [],
+  "launches": [
+    "planner",
+    "implementer",
+    "reviewer",
+    "implementer",
+    "reviewer"
+  ],
+  "perKey": {
+    "planner": 1,
+    "implementer": 2,
+    "reviewer": 2
+  },
+  "artifacts": [
+    "diff-patch:diff-patch.patch",
+    "live-log:live-log.ndjson",
+    "plan:plans/<DATE>-seed-trace-probe.md",
+    "prompt:prompt.md",
+    "results:results.json",
+    "review:reviews/<DATE>-seed-trace-probe-impl-review.md"
+  ],
+  "wireDeliveries": {
+    "w5": 1
+  },
+  "gates": [],
+  "budget1": {
+    "launches": [
+      "planner",
+      "implementer",
+      "reviewer"
+    ],
+    "perKey": {
+      "planner": 1,
+      "implementer": 1,
+      "reviewer": 1
+    },
+    "gates": [
+      "w5#1"
+    ],
+    "wireDeliveries": {
+      "w5": 0
+    }
+  }
+}
