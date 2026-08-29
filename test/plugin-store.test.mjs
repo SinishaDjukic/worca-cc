@@ -566,3 +566,32 @@ test('buildInstallInventory reads the tools of the file agentFile names (C-1)', 
   assert.deepEqual(buildInstallInventory(plain).agents,
     [{ key: 'demoAgent', tools: ['Read', 'Bash'] }]);
 });
+
+// ── MAJ-12: the refusal message names the real cause ────────────────────────
+
+test('link refuses a mixed-version plugin with the REAL cause, not derived template errors (MAJ-12)', () => {
+  const mixed = join(scratch, 'mixed-api3');
+  writeTree(mixed, {
+    ...PLUGIN_FILES('mixed-api3'),
+    'agents/demoAgent.meta.json': JSON.stringify(V1_SIDECAR),   // v1 sidecar…
+    // …while workflows/demo-flow.json is already the v2 graph
+  });
+  assert.throws(() => linkPlugin('mixed-api3', mixed), (err) => {
+    assert.match(err.message, /not a meta v2 sidecar/, 'the accurate cause reaches the message');
+    assert.match(err.message, /references agent key "demoAgent" whose sidecar is not a valid meta v2 sidecar/);
+    assert.doesNotMatch(err.message, /V4:|V20:|V21:/, 'no derived template errors');
+    return true;
+  });
+
+  // The SAME data under an API-1 range links fine — the data problems are
+  // warnings there and a connector-only plugin must keep working (spec §9).
+  const legacy = join(scratch, 'mixed-api1');
+  writeTree(legacy, {
+    ...PLUGIN_FILES('mixed-api1'),
+    'worca-cc-plugin.json': JSON.stringify({
+      name: 'mixed-api1', version: '0.1.0', engines: { 'worca-cc-api': '>=1 <2' },
+    }),
+    'agents/demoAgent.meta.json': JSON.stringify(V1_SIDECAR),
+  });
+  assert.equal(linkPlugin('mixed-api1', legacy).ok, true);
+});

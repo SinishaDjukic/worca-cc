@@ -1343,10 +1343,11 @@ async function cmdPlugin(argv) {
         if (!dir) fail('Usage: worca plugin link <dir>');
         const abs = resolve(process.cwd(), dir);
         const v = manifestMod.validatePluginDir(abs);
-        if (!v.ok) {
-          for (const p of v.problems) process.stderr.write(`${p.level}: ${p.message}\n`);
-          return 2;
-        }
+        // Print EVERY level, pass or fail: a link that SUCCEEDS with warnings is
+        // the mid-migration case the author most needs to read (MAJ-12) — an
+        // API-1 plugin keeps linking, and now says why its agent is ignored.
+        for (const p of v.problems) process.stderr.write(`${p.level}: ${p.message}\n`);
+        if (!v.ok) return 2;
         store.linkPlugin(v.manifest.name, abs);
         out(`linked ${v.manifest.name} -> ${abs} (dev mode; doctor will warn)`);
         return 0;

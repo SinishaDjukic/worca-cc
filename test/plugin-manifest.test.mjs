@@ -657,3 +657,62 @@ test('validatePluginDir: a contained agentFile with no file behind it is an erro
     'agents/ghost.meta.json: "agentFile" worca-cc-manual-web-ui-testing.md not found in agents/',
   ]);
 });
+
+// ── MAJ-12: a gated-out sidecar must not cascade into its template ──────────
+
+const V1_MIXED = (api) => ({
+  'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': api } }),
+  'agents/helper.meta.json': JSON.stringify({ key: 'helper', agentFile: 'helper.md', consumes: [], produces: [], order: 900 }),
+  'agents/helper.md': '# helper\n',
+  'workflows/flow.json': V2_GRAPH('helper'),
+});
+
+test('a template referencing a GATED-OUT sidecar reports ONE cause at the data level (MAJ-12)', () => {
+  // The mid-migration plugin: the template is ported to a v2 graph, the sidecar
+  // is still v1. The key is NOT shipped, so it must never reach the graph
+  // validator with no ports — that is what fabricated V4/V20/V21.
+  const soft = validatePluginDir(mkPluginDir(V1_MIXED('>=1 <2')));
+  assert.deepEqual(errs(soft), [], 'an API-1 plugin still installs — its connector is unaffected');
+  assert.ok(warns(soft).includes(
+    'workflows/flow.json: references agent key "helper" whose sidecar is not a valid meta v2 sidecar'));
+  assert.equal(soft.ok, true);
+
+  const hard = validatePluginDir(mkPluginDir(V1_MIXED('>=3 <4')));
+  assert.deepEqual(errs(hard), [
+    'agents/helper.meta.json: not a meta v2 sidecar (declare "metaVersion": 2 with typed inputs/outputs) — plugin API 3 no longer reads channel sidecars',
+    'workflows/flow.json: references agent key "helper" whose sidecar is not a valid meta v2 sidecar',
+  ], 'the real cause plus its consequence — no derived V4/V20/V21');
+  assert.equal(hard.ok, false);
+
+  // Same short-circuit for a v2 sidecar that FAILS validateMetaV2.
+  const broken = validatePluginDir(mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/helper.meta.json': V2_META('helper', { runnerType: 'verifier' }),
+    'agents/helper.md': '# helper\n',
+    'workflows/flow.json': V2_GRAPH('helper'),
+  }));
+  assert.deepEqual(errs(broken), [
+    'agents/helper.meta.json: runnerType "verifier" requires verdict: { filename }',
+    'workflows/flow.json: references agent key "helper" whose sidecar is not a valid meta v2 sidecar',
+  ]);
+
+  // …and a sidecar rejected for an escaping agentFile (C-1) is ungated too.
+  const escaping = validatePluginDir(mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/helper.meta.json': V2_META('helper', { agentFile: '../../x.md' }),
+    'agents/helper.md': '# helper\n',
+    'workflows/flow.json': V2_GRAPH('helper'),
+  }));
+  assert.deepEqual(errs(escaping), [
+    'agents/helper.meta.json: "agentFile" must not contain ".."',
+    'workflows/flow.json: references agent key "helper" whose sidecar is not a valid meta v2 sidecar',
+  ]);
+
+  // A key the plugin does not ship AT ALL keeps its own, different line.
+  const alien = validatePluginDir(mkPluginDir({
+    ...V1_MIXED('>=3 <4'),
+    'workflows/flow.json': V2_GRAPH('notMine'),
+  }));
+  assert.ok(errs(alien).includes(
+    'workflows/flow.json: references agent key "notMine" which this plugin does not ship'));
+});

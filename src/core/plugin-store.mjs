@@ -224,11 +224,19 @@ function cleanupFailedVersion(name, versionDir, prevCurrent) {
   }
 }
 
+/** Problem lines for a refusal message. `level` is a REPORTING axis, not a
+ *  cause axis — a plugin whose declared API makes its data problems WARNINGS
+ *  must never be refused with an empty body, so fall back to every problem when
+ *  no error line exists. */
+function refusalLines(problems, prefix = '  - ') {
+  const errorsOnly = problems.filter((p) => p.level === 'error');
+  return (errorsOnly.length ? errorsOnly : problems).map((p) => `${prefix}${p.message}`);
+}
+
 function validated(name, versionDir) {
   const v = validatePluginDir(versionDir);
   if (!v.ok) {
-    const lines = v.problems.filter((p) => p.level === 'error').map((p) => `  - ${p.message}`);
-    throw new Error(`plugin "${name}" failed validation:\n${lines.join('\n')}`);
+    throw new Error(`plugin "${name}" failed validation:\n${refusalLines(v.problems).join('\n')}`);
   }
   return v.manifest;
 }
@@ -555,10 +563,7 @@ export async function doctorPlugin(name) {
 export function linkPlugin(name, absDir) {
   const dir = resolve(absDir);
   const v = validatePluginDir(dir);
-  if (!v.ok) {
-    const lines = v.problems.filter((p) => p.level === 'error').map((p) => p.message);
-    throw new Error(`cannot link: ${lines.join('; ')}`);
-  }
+  if (!v.ok) throw new Error(`cannot link: ${refusalLines(v.problems, '').join('; ')}`);
   if (v.manifest.name !== name) {
     throw new Error(`manifest name "${v.manifest.name}" does not match "${name}"`);
   }

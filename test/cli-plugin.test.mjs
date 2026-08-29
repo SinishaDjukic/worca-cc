@@ -190,3 +190,37 @@ test('plugin list prints the API-3 data-contract line for an outdated plugin', a
   assert.equal((both.stdout.match(/update or reinstall the plugin/g) || []).length, 1,
     'only the outdated plugin carries the line');
 });
+
+test('plugin link surfaces the mid-migration cause at every level, with no derived template errors (MAJ-12)', async () => {
+  const home = await freshDir('worca-cc-cli-plugin-');
+  const dir = join(await freshDir('worca-cc-plugin-init-'), 'midmig-plugin');
+  await run(['plugin', 'init', 'midmig-plugin', '--dir', dir,
+    '--with', 'task-source,agents,skills,workflows'], { home });
+  // The plugin author ports the HARDER half first: the template is already a v2
+  // graph while the sidecar is still v1.
+  const metaPath = join(dir, 'agents', 'midmigPluginHelper.meta.json');
+  const meta = JSON.parse(await readFile(metaPath, 'utf8'));
+  delete meta.metaVersion; delete meta.inputs; delete meta.outputs;
+  meta.consumes = ['userPrompt']; meta.produces = ['code'];
+  await writeFile(metaPath, JSON.stringify(meta, null, 2));
+
+  const hard = await run(['plugin', 'link', dir], { home });
+  const hardOut = hard.stdout + hard.stderr;
+  assert.equal(hard.code, 2, hardOut);
+  assert.match(hardOut, /error: agents\/midmigPluginHelper\.meta\.json: not a meta v2 sidecar/);
+  assert.match(hardOut, /error: workflows\/example-flow\.json: references agent key "midmigPluginHelper" whose sidecar is not a valid meta v2 sidecar/);
+  assert.doesNotMatch(hardOut, /V4:|V5:|V20:|V21:/, 'no derived template errors');
+
+  // The SAME tree under an API-1 range links — and the author still reads the
+  // accurate cause, as a warning.
+  const mPath = join(dir, 'worca-cc-plugin.json');
+  const m = JSON.parse(await readFile(mPath, 'utf8'));
+  m.engines['worca-cc-api'] = '>=1 <2';
+  await writeFile(mPath, JSON.stringify(m, null, 2));
+  const soft = await run(['plugin', 'link', dir], { home });
+  const softOut = soft.stdout + soft.stderr;
+  assert.equal(soft.code, 0, softOut);
+  assert.match(softOut, /warn: agents\/midmigPluginHelper\.meta\.json: not a meta v2 sidecar/);
+  assert.match(softOut, /warn: workflows\/example-flow\.json: references agent key "midmigPluginHelper" whose sidecar is not a valid meta v2 sidecar/);
+  assert.match(softOut, /linked midmig-plugin ->/);
+});

@@ -513,6 +513,11 @@ export function validatePluginDir(absDir, { strict = false } = {}) {
   // (verdict, sideEffect, mockRole, workspace*, placeable, …) — the gate is the
   // schema, not an allow-list.
   const agentKeys = new Set();
+  // Keys whose sidecar EXISTS but was rejected by a gate below. They are not
+  // shipped (no ports), yet they are not foreign either — the workflows block
+  // owes a template that references one a single accurate cause rather than
+  // "this plugin does not ship it" or the derived V4/V5/V20/V21 cascade.
+  const ungatedKeys = new Set();
   const ownMetas = [];
   // A range that admits the CURRENT API (or no engines at all) claims to be an
   // API-3 plugin, so v1-shaped data is a hard error; --strict promotes it for
@@ -534,16 +539,19 @@ export function validatePluginDir(absDir, { strict = false } = {}) {
       if (!KEY_RE.test(key)) { push('error', `agents/${f}: "${key}" must be a valid agent key (letters/digits/_-)`); continue; }
       if (key !== stem) push('error', `agents/${f}: key "${key}" must match the filename stem "${stem}"`);
       if (!files.includes(`${stem}.md`)) push('error', `agents/${f}: missing sibling ${stem}.md`);
-      agentKeys.add(key);
       // Path traversal is never softened by dataLevel: an escaping agentFile is
       // a security defect in a v1 sidecar exactly as in a v2 one, and it is
       // checked BEFORE the meta gate so exactly one cause is reported.
       const afErr = badAgentFile(meta.agentFile, agentsDir);
-      if (afErr) { push('error', `agents/${f}: "agentFile" ${afErr}`); continue; }
-      if (Number(meta.metaVersion) !== 2) { push(dataLevel, `agents/${f}: ${NOT_META_V2}`); continue; }
+      if (afErr) { push('error', `agents/${f}: "agentFile" ${afErr}`); ungatedKeys.add(key); continue; }
+      if (Number(meta.metaVersion) !== 2) { push(dataLevel, `agents/${f}: ${NOT_META_V2}`); ungatedKeys.add(key); continue; }
       const { errors } = validateMetaV2(meta);
       for (const e of errors) push('error', `agents/${f}: ${e}`);
-      if (!errors.length) ownMetas.push(normalizeAgentMeta(meta).meta);
+      if (errors.length) { ungatedKeys.add(key); continue; }
+      // BELOW every gate: a rejected sidecar ships no ports, so counting its key
+      // as shipped is what let a ports-less node reach validateGraph.
+      agentKeys.add(key);
+      ownMetas.push(normalizeAgentMeta(meta).meta);
     }
     for (const f of files.filter((x) => x.endsWith('.md'))) {
       const stem = f.slice(0, -3);
@@ -578,16 +586,22 @@ export function validatePluginDir(absDir, { strict = false } = {}) {
       if (Number(tpl?.version) !== 2) { push(dataLevel, `workflows/${f}: ${NOT_GRAPH_V2}`); continue; }
       const nodes = Array.isArray(tpl.nodes) ? tpl.nodes : [];
       const keys = nodes.filter((n) => n && n.kind === 'agent').map((n) => n.key).filter(Boolean);
-      let foreign = false;
+      let unresolved = false;
       for (const k of new Set(keys)) {
-        if (!agentKeys.has(k)) {
+        if (agentKeys.has(k)) continue;
+        if (ungatedKeys.has(k)) {
+          // The sidecar is this plugin's, it just did not pass. Report at the
+          // DATA level so an API-1 plugin keeps installing (spec §9) instead of
+          // being refused for a template that is fine.
+          push(dataLevel, `workflows/${f}: references agent key "${k}" whose sidecar is not a valid meta v2 sidecar`);
+        } else {
           push('error', `workflows/${f}: references agent key "${k}" which this plugin does not ship`);
-          foreign = true;
         }
+        unresolved = true;
       }
-      // A foreign key resolves to no ports, so every wire touching it would
-      // also fire V4/V5 — one clear cause beats five derived ones.
-      if (foreign) continue;
+      // An unresolved key has no ports, so every wire touching it would also
+      // fire V4/V5 — one clear cause beats five derived ones.
+      if (unresolved) continue;
       const { errors, warnings } = validateGraph(
         { ...tpl, nodes, wires: Array.isArray(tpl.wires) ? tpl.wires : [] }, portsFn,
       );
