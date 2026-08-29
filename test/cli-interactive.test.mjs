@@ -251,7 +251,10 @@ test('recovery arm: Abort ends the run with a non-zero exit', async () => {
   const repo = freshRepo();
   const r = await driveCli(['--project', repo, '--prompt', 'recovery abort e2e'], {
     mock: false,
-    env: { WORCA_CLAUDE_BIN: stub.bin, WORCA_RECOVERY_BACKOFF_MS: '0' },
+    // PATH prefix: run-harness passes claude.bin = undefined to the capabilities probe, which
+    // then bare-PATH-looks-up `claude` — WORCA_CLAUDE_BIN alone would let the REAL one spawn.
+    env: { WORCA_CLAUDE_BIN: stub.bin, WORCA_RECOVERY_BACKOFF_MS: '0',
+           PATH: `${dirname(stub.bin)}:${process.env.PATH}` },
     script: [{ cue: /Choose \[1-2\]/, send: '2\n' }],   // "Abort the run"
   });
   assert.equal(r.timedOut, false, r.stdout);
@@ -274,7 +277,10 @@ test('recovery arm: Retry re-runs the failing node before the next prompt', asyn
   const repo = freshRepo();
   const r = await driveCli(['--project', repo, '--prompt', 'recovery retry e2e'], {
     mock: false,
-    env: { WORCA_CLAUDE_BIN: stub.bin, WORCA_RECOVERY_BACKOFF_MS: '0' },
+    // PATH prefix: run-harness passes claude.bin = undefined to the capabilities probe, which
+    // then bare-PATH-looks-up `claude` — WORCA_CLAUDE_BIN alone would let the REAL one spawn.
+    env: { WORCA_CLAUDE_BIN: stub.bin, WORCA_RECOVERY_BACKOFF_MS: '0',
+           PATH: `${dirname(stub.bin)}:${process.env.PATH}` },
     script: [
       { cue: /Choose \[1-2\]/, send: '1\n' },   // Retry -> the node runs again
       { cue: /Choose \[1-2\]/, send: '2\n' },   // ...fails again; Abort out
