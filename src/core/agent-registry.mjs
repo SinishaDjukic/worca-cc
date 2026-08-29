@@ -5,8 +5,9 @@
 // agent is now "drop agents/<key>.md + agents/<key>.meta.json", no core edit.
 //
 // Read synchronously so it can back a synchronous AGENT_STEPS constant in
-// config.mjs. Tolerant: a malformed sidecar, or one missing `key`/`order`, is
-// skipped rather than throwing (mirrors the tolerant readers elsewhere).
+// config.mjs. Tolerant: a malformed sidecar, or one missing `key`, is skipped
+// rather than throwing (mirrors the tolerant readers elsewhere); an ABSENT
+// `order` is backfilled to DEFAULT_ORDER, matching normalizeAgentMeta.
 
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join, resolve, isAbsolute, sep } from 'node:path';
@@ -14,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { worcaHome } from './projects.mjs'; // user agent layer root (read fresh per call)
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // plugin layer roots (Task 2)
 import { declaredApi, NOT_META_V2 } from './plugin-manifest.mjs'; // plugin API declared by a layer's manifest
-import { normalizeAgentMeta } from '../shared/graph/agent-meta.mjs'; // meta v2 (one source: registry + store + UI)
+import { normalizeAgentMeta, DEFAULT_ORDER } from '../shared/graph/agent-meta.mjs'; // meta v2 (one source: registry + store + UI)
 import { MOCK_WRITER_ROLES } from './claude-runner.mjs';             // mockRole vocabulary (no cycle: claude-runner imports no registry)
 
 /**
@@ -87,8 +88,17 @@ export function normalizeMeta(raw) {
     console.warn(`[agent-registry] sidecar key "${key}" is not a valid agent key; skipped`);
     return null;
   }
-  const order = Number(raw.order);
-  if (!Number.isFinite(order)) return null;
+  // `order` is OPTIONAL: agent-meta.mjs's normalizer backfills DEFAULT_ORDER and
+  // validateMetaV2 reports zero errors for a sidecar that omits it, so dropping
+  // it here made the plugin validator certify an agent this loader then silently
+  // discarded — every node referencing it failed V4 with `unknown agent "<key>"`.
+  // The two normalizers must agree. A PRESENT but non-numeric order is still a
+  // skip (normalizeAgentMeta errors on it), but a loud one, like the key branch.
+  const order = raw.order === undefined ? DEFAULT_ORDER : Number(raw.order);
+  if (!Number.isFinite(order)) {
+    console.warn(`[agent-registry] sidecar "${key}" has a non-numeric order ${JSON.stringify(raw.order)}; skipped`);
+    return null;
+  }
   const color = COLORS.has(raw.color) ? raw.color : 'amber';
   const runnerType = RUNNER_TYPES.has(raw.runnerType) ? raw.runnerType : 'producer';
   // §6.6 scope coercion (fail-safe, mirrors color): anything but the explicit

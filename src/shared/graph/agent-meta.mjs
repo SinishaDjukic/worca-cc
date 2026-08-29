@@ -25,7 +25,10 @@ const OUTPUT_WHEN = new Set(['always', 'blocking', 'clean']);
 const OUTPUT_STORES = new Set(['run', 'project']);
 const WORKSPACE_STRATEGIES = new Set(['explore', 'task', 'review']);
 const FILENAME_TOKENS = new Set(['cycle', 'vsuffix', 'base']);
-const DEFAULT_ORDER = 999;
+/** Sort key a sidecar that omits `order` gets. Exported so the registry loader
+ *  (agent-registry.mjs normalizeMeta) backfills the SAME value this normalizer
+ *  does — a sidecar validateMetaV2 certifies must never vanish from the registry. */
+export const DEFAULT_ORDER = 999;
 const TYPES = [...PORT_TYPES].filter((t) => t !== 'any');   // `any` is engine-only, never declarable
 
 /** `{key: meta}` from a registry LIST (the /api/agents payload shape). */

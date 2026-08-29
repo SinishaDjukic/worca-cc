@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
-import { validateMetaV2 } from '../src/shared/graph/agent-meta.mjs';
+import { validateMetaV2, DEFAULT_ORDER } from '../src/shared/graph/agent-meta.mjs';
 import { MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
 
 const AGENTS_DIR = fileURLToPath(new URL('../agents/', import.meta.url));
@@ -99,4 +99,41 @@ test('normalizeMeta: a v2 sidecar merges, an invalid one is skipped, an un-porte
   assert.equal('consumes' in reg.ported, false, 'the v1 fields are no longer derived');
   assert.equal(reg.broken, undefined, 'an invalid v2 sidecar is skipped whole');
   assert.ok(warned.some((w) => /broken/.test(w) && /reserved/.test(w)), warned.join('\n'));
+});
+
+test('a v2 sidecar with no `order` is backfilled to DEFAULT_ORDER, not silently dropped', () => {
+  const dir = tmp();
+  writeMeta(dir, 'noOrder', {
+    metaVersion: 2, order: undefined, mockRole: 'generic-producer',
+    inputs: [{ id: 'task', type: 'md' }],
+    outputs: [{ id: 'out', type: 'md', filename: '{base}.md', store: 'project' }],
+  });
+  // The plugin validator certifies this exact sidecar (zero errors) …
+  const raw = JSON.parse(readFileSync(join(dir, 'noOrder.meta.json'), 'utf8'));
+  assert.equal('order' in raw, false, 'the fixture really omits order');
+  assert.deepEqual(validateMetaV2(raw, { mockWriterRoles: MOCK_WRITER_ROLES }).errors, []);
+  const warned = [];
+  const orig = console.warn;
+  console.warn = (...a) => warned.push(a.join(' '));
+  let reg;
+  try { reg = load(dir); } finally { console.warn = orig; }
+  // … so the loader must agree with it instead of dropping the agent, which made
+  // every node referencing it fail V4 with "unknown agent".
+  assert.ok(reg.noOrder, `the agent must reach the registry; warnings: ${warned.join('\n')}`);
+  assert.equal(reg.noOrder.order, DEFAULT_ORDER);
+  assert.equal(DEFAULT_ORDER, 999, 'the two normalizers share one default');
+  assert.equal(reg.noOrder.metaVersion, 2);
+});
+
+test('a sidecar whose `order` is present but non-numeric is still skipped — and says so', () => {
+  const dir = tmp();
+  writeMeta(dir, 'badOrder', { order: 'soon' });
+  const warned = [];
+  const orig = console.warn;
+  console.warn = (...a) => warned.push(a.join(' '));
+  let reg;
+  try { reg = load(dir); } finally { console.warn = orig; }
+  assert.equal(reg.badOrder, undefined, 'a malformed order still fails safe to a skip');
+  assert.ok(warned.some((w) => /badOrder/.test(w) && /order/.test(w)),
+    `the skip must be loud like the key branch; got: ${JSON.stringify(warned)}`);
 });
