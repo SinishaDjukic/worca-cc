@@ -28,6 +28,10 @@ test('ui/public/graph/model.mjs re-exports the SHARED functions — same identit
   assert.equal(uiModel.thumbnailSvg, thumbnail.thumbnailSvg);
   assert.equal(uiModel.indexByKey, agentMeta.indexByKey);
   assert.equal(uiModel.manifestPortsFn, manifest.manifestPortsFn);
+  // C-2: the icon allowlist is shared by the run monitor (manifest cells) and the
+  // composer canvas (view.mjs safeAgentIcon) — one function, never a second copy.
+  assert.equal(typeof manifest.sanitizeIcon, 'function', 'manifest exports sanitizeIcon');
+  assert.equal(uiModel.sanitizeIcon, manifest.sanitizeIcon);
 });
 
 test('model.mjs imports ONLY by relative path and carries the depth note', () => {

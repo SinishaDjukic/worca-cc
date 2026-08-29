@@ -26,7 +26,7 @@ export {
 export { rankNodes, autoLayout } from '../../../src/shared/graph/layout.mjs';
 export { thumbnailSvg } from '../../../src/shared/graph/thumbnail.mjs';
 export { normalizeAgentMeta, validateMetaV2, indexByKey, derivePortSummary } from '../../../src/shared/graph/agent-meta.mjs';
-export { buildGraphManifest, manifestPortsFn, manifestTemplate, UI_PHASE } from '../../../src/shared/graph/manifest.mjs';
+export { buildGraphManifest, manifestPortsFn, manifestTemplate, sanitizeIcon, UI_PHASE } from '../../../src/shared/graph/manifest.mjs';
 export {
   TEMPLATE_VERSION, KINDS, FLOW_KINDS, PORT_TYPES, AWAIT_PORT, TASK_PORTS, END_PORTS,
   gatePorts, DEFAULT_MAX_CYCLES, MAX_PORTS_PER_SIDE, LIMITS, NODE_ID_RE, WIRE_ID_RE, PORT_ID_RE,

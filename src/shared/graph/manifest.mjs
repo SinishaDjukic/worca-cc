@@ -47,8 +47,13 @@ const ICON_TAG_RE = /<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9-]*)((?:[^<>"']|"[^"]*"|'[^'
 const ICON_ATTR_RE = /([a-zA-Z][a-zA-Z0-9:-]*)\s*=\s*("[^"]*"|'[^']*')/g;
 
 /** Inline SVG markup rides the manifest into innerHTML, so anything outside the
- *  allowlist is dropped WHOLE (never truncated — a half tag is worse). */
-function sanitizeIcon(raw) {
+ *  allowlist is dropped WHOLE (never truncated — a half tag is worse).
+ *  EXPORTED (C-2): the composer's canvas reaches the SAME untrusted field through
+ *  GET /api/agents rather than through a manifest, and it had only an
+ *  `origin === 'user'` denylist — so a plugin sidecar's icon went to innerHTML
+ *  verbatim. One allowlist, both paths. Idempotent: a string that passes is
+ *  returned unchanged, so sanitizing an already-sanitized icon is a no-op. */
+export function sanitizeIcon(raw) {
   const s = typeof raw === 'string' ? raw.trim() : '';
   if (!s || s.length > ICON_MAX) return '';
   let cursor = 0;

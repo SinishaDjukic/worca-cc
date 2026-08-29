@@ -23,6 +23,7 @@ import {
 import { portsOf, resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
 import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
 import { thumbnailSvg } from '../../../src/shared/graph/thumbnail.mjs';
+import { sanitizeIcon } from '../../../src/shared/graph/manifest.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -51,13 +52,23 @@ const FLOW_META = {
 const FLOW_VIEWBOX = '0 0 20 20';
 const AGENT_VIEWBOX = '0 0 24 24';
 
-// Builtin icons are repo-shipped SVG fragments (trusted, injected raw). A USER
-// agent's metadata is user-writable (POST /api/agents), so its icon could carry
-// arbitrary markup — those get a fixed glyph instead. This is app.js's
-// origin-trust gate, ported verbatim: do not relax it.
+// Builtin icons are repo-shipped SVG fragments (trusted, injected raw). EVERY
+// other origin is DATA someone else wrote: a user agent's meta is writable
+// through POST /api/agents, and a plugin agent's rides in on a sidecar a
+// marketplace plugin ships (no code-execution consent, SHA-only updates). Both
+// land in an SVG innerHTML below, in an origin with no CSP and no auth on the
+// API — so both go through the SHARED allowlist, and an icon the allowlist
+// rejects whole is replaced by this neutral glyph.
+//
+// The gate used to be `origin === 'user'` — a one-value DENYLIST that let every
+// plugin icon through raw (C-2). Sanitizing rather than blanking is not a
+// relaxation: the run monitor already renders these same icons through
+// sanitizeIcon (manifest.mjs), so this is what makes the two canvases agree.
 export const USER_AGENT_ICON = '<circle cx="12" cy="12" r="3.4"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"></path>';
 export function safeAgentIcon(meta) {
-  return meta && meta.origin === 'user' ? USER_AGENT_ICON : String((meta && meta.icon) || '');
+  const raw = String((meta && meta.icon) || '');
+  if (!raw || (meta && meta.origin === 'builtin')) return raw;
+  return sanitizeIcon(raw) || USER_AGENT_ICON;
 }
 
 const dotClass = (t) => `dot ${t === 'md' || t === 'json' || t === 'void' || t === 'any' ? t : 'md'}`;

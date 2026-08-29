@@ -348,3 +348,44 @@ test('a loop / fan-out input row carries a compact port chip that fits the 24px 
   assert.match(rule('.gv-world .prow .chip.am') || '', /var\(--amber-bg\)/, 'loop chip is amber (spec legend)');
   assert.match(rule('.gv-world .prow .chip.fan') || '', /var\(--blue-bg\)/, 'fan-out chip is blue');
 });
+
+// C-2: safeAgentIcon's gate was a one-value DENYLIST (origin === 'user'), so a
+// plugin sidecar's icon — data a marketplace plugin ships, with no code-execution
+// consent and SHA-only updates — reached the header SVG's innerHTML verbatim.
+// There is no CSP and no auth on the local API, so that is script in worca's own
+// origin. The sibling manifest path already allowlist-sanitizes the SAME field;
+// this routes the composer through it too.
+test('C-2: every non-builtin agent icon is allowlist-sanitized before innerHTML', async () => {
+  const { createGraphView, safeAgentIcon, USER_AGENT_ICON } = await import(viewPath);
+  const XSS = '<image href=x onerror="globalThis.__pwned=1">';
+  const LEGAL = '<path d="M4 4h8"></path>';
+
+  assert.equal(safeAgentIcon({ origin: 'plugin:evil-plugin', icon: XSS }), USER_AGENT_ICON);
+  assert.equal(safeAgentIcon({ origin: 'user', icon: XSS }), USER_AGENT_ICON);
+  assert.equal(safeAgentIcon({ icon: XSS }), USER_AGENT_ICON, 'no origin at all is untrusted too');
+  assert.equal(safeAgentIcon({ origin: 'plugin:evil-plugin', icon: '<path d="M0 0" onload="x()"/>' }),
+    USER_AGENT_ICON, 'an allowlisted TAG with a non-allowlisted attribute is dropped whole');
+  assert.equal(safeAgentIcon({ origin: 'builtin', icon: XSS }), XSS,
+    'builtin icons are repo-shipped fragments and stay untouched');
+  assert.equal(safeAgentIcon({ origin: 'plugin:nice', icon: LEGAL }), LEGAL,
+    'a plugin icon that passes the allowlist still renders');
+  assert.equal(safeAgentIcon(null), '');
+  assert.equal(safeAgentIcon({ origin: 'plugin:nice' }), '', 'no icon stays no icon');
+
+  const boom = boot();
+  const evil = { key: 'planner', displayName: 'Evil', color: 'red', origin: 'plugin:evil-plugin', icon: XSS };
+  const view = createGraphView(boom.host, { doc: boom.doc, portsFn, agents: { planner: evil } });
+  view.render(fixture(), {});
+  const svg = view.nodeEl('n_agent').querySelector('.nhead svg');
+  assert.equal(svg.querySelector('image'), null, `no <image> reached the DOM: ${svg.innerHTML}`);
+  assert.equal(svg.innerHTML.includes('onerror'), false, `no onerror attribute: ${svg.innerHTML}`);
+  assert.ok(svg.querySelector('circle'), 'the neutral glyph took its place');
+
+  const good = boot();
+  const nice = { key: 'planner', displayName: 'Nice', color: 'green', origin: 'plugin:nice', icon: LEGAL };
+  const v2 = createGraphView(good.host, { doc: good.doc, portsFn, agents: { planner: nice } });
+  v2.render(fixture(), {});
+  const svg2 = v2.nodeEl('n_agent').querySelector('.nhead svg');
+  assert.ok(svg2.querySelector('path'), 'the legal plugin icon rendered');
+  assert.equal(svg2.querySelector('path').getAttribute('d'), 'M4 4h8');
+});

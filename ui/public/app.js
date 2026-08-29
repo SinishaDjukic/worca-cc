@@ -1000,13 +1000,6 @@ function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
-// Built-in icons are repo-shipped SVG fragments (trusted, injected raw). User
-// agents' metadata is user-writable (POST /api/agents, wizard Mode B), so their
-// icon could carry arbitrary markup — they get a fixed glyph instead.
-const USER_AGENT_ICON = '<circle cx="12" cy="12" r="3.4"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"></path>';
-function safeAgentIcon(meta) {
-  return meta && meta.origin === 'user' ? USER_AGENT_ICON : String((meta && meta.icon) || '');
-}
 
 // Format a USD amount. null/NaN -> '' (caller decides the default). A positive
 // sub-cent value -> '<$0.01' so genuine spend is never hidden as a flat $0.00.
