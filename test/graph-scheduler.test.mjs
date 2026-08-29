@@ -385,7 +385,40 @@ test('10 quiescence without an End token resolves done with the warning', async 
   const st = h.scheduler.getState();
   assert.equal(st.endReached, false);
   assert.equal(st.result, null);
-  assert.deepEqual(st.warnings, ['finished at quiescence — End not reached']);
+  // MIN-58: "finished at quiescence" alone never says WHY. The second line names the
+  // output whose token had nowhere to go — here the checker's CLEAN arm, which this
+  // fixture leaves unwired on purpose.
+  assert.deepEqual(st.warnings, [
+    'finished at quiescence — End not reached',
+    'dead-ended output: n_check.pass — fired with no wire',
+  ]);
+});
+
+test('10b the dead-end set rides the snapshot: a resumed run still names it', async () => {
+  // MIN-58 resume twin. `deadEnds` is scheduler-local state exactly like `wires`: a
+  // run that paused AFTER an output fired into nothing and only quiesces after the
+  // resume would otherwise report the base line alone and lose the reason.
+  const tpl = TPL(
+    [N('n_task', 'task'), N('n_make', 'agent', 'maker'), N('n_check', 'agent', 'checker'),
+      N('n_hold', 'agent', 'worker'), N('n_end', 'end')],
+    [W('w1', 'n_task.task', 'n_make.task'), W('w2', 'n_make.out', 'n_check.plan'),
+      W('w3', 'n_check.review', 'n_end.result'), W('w4', 'n_make.out', 'n_hold.plan')],
+  );
+  const script = { n_make: () => md('/p/p.md'), n_check: () => ({ verdict: CLEAN }) };
+  const first = harness({ template: tpl, script: { ...script, n_hold: () => ({ paused: true }) } });
+  assert.equal(await first.scheduler.run(), 'paused');
+  const snap = first.last();
+  assert.deepEqual(snap.deadEnds, ['n_check.pass'], 'the pre-pause dead end is serialized');
+
+  const second = harness({ template: tpl, script: { ...script, n_hold: () => ({}) } });
+  second.scheduler.reattach(snap);
+  assert.equal(await second.scheduler.run(), 'done');
+  const st = second.scheduler.getState();
+  assert.equal(st.endReached, false);
+  assert.deepEqual(st.warnings, [
+    'finished at quiescence — End not reached',
+    'dead-ended outputs: n_check.pass, n_hold.done — fired with no wire',
+  ], 'the restored dead end is named beside the one the resumed leg found');
 });
 
 // ── 3. scheduling policy ─────────────────────────────────────────────────────
@@ -871,7 +904,7 @@ test('27 the snapshot carries the full resume state, including outputs and recor
   await h.scheduler.run();
   const s = h.last();
   assert.deepEqual(Object.keys(s).sort(), [
-    'ask', 'asks', 'consumed', 'ended', 'execs', 'gate', 'gates', 'graph',
+    'ask', 'asks', 'consumed', 'deadEnds', 'ended', 'execs', 'gate', 'gates', 'graph',
     'ordinals', 'outputs', 'seq', 'tokens', 'version', 'wires',
   ]);
   assert.equal(s.version, 2);

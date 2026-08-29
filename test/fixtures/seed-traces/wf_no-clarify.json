@@ -3,7 +3,8 @@
   "status": "done",
   "endReached": false,
   "warnings": [
-    "finished at quiescence — End not reached"
+    "finished at quiescence — End not reached",
+    "dead-ended output: n_webui.review — fired with no wire"
   ],
   "launches": [
     "planner",

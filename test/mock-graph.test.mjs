@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { runGraphOffline } from './helpers/graph-run.mjs';
 import { MOCK_WRITER_ROLES, MOCK_ROLE_CLARIFY, MOCK_ROLE_DECOMPOSER } from '../src/core/claude-runner.mjs';
-import { QUIESCENCE_WARNING } from '../src/core/graph/scheduler.mjs';
+import { QUIESCENCE_WARNING, quiescenceDeadEnd } from '../src/core/graph/scheduler.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
@@ -113,7 +113,11 @@ for (const tpl of GRAPHS) {
     if (QUIESCENT.has(tpl.id)) {
       assert.equal(r.state.endReached, false, `${tpl.id}: webui blocks once and has no loop wire`);
       assert.equal(r.state.result, null);
-      assert.deepEqual(r.state.warnings, [QUIESCENCE_WARNING]);
+      // wf_no-clarify's n_webui.review is deliberately unwired (v1 parity, user
+      // decision — the seed stays single-loop). MIN-58: the run now SAYS so instead
+      // of leaving "End not reached" unexplained.
+      assert.deepEqual(r.state.warnings,
+        [QUIESCENCE_WARNING, quiescenceDeadEnd(['n_webui.review'])]);
     } else {
       assert.equal(r.state.endReached, true, `${tpl.id}: a token reached End`);
       assert.ok(r.state.result, `${tpl.id}: the End card carries a result`);

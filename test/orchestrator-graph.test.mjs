@@ -15,7 +15,7 @@ import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { readPipelineForResume, artifactPaths, readPipelineExtras } from '../src/core/artifacts.mjs';
 import { setPipelineCostLimitUsd } from '../src/core/settings.mjs';
-import { QUIESCENCE_WARNING } from '../src/core/graph/scheduler.mjs';
+import { QUIESCENCE_WARNING, quiescenceDeadEnd } from '../src/core/graph/scheduler.mjs';
 import { BOOKEND_EXECUTION_IDS } from '../src/shared/graph/constants.mjs';
 import { formatGateHeader } from '../src/cli/render.mjs';
 
@@ -100,7 +100,8 @@ test('every seed graph completes offline under mock; all but the quiescent one b
     assert.equal(res.status, 'done', `${workflowId} finished: ${res.error || ''}`);
     if (QUIESCENT.has(workflowId)) {
       assert.equal(st.endReached, false, `${workflowId} quiesces by design`);
-      assert.deepEqual(st.warnings, [QUIESCENCE_WARNING]);
+      // MIN-58: the second line names wf_no-clarify's deliberately unwired output.
+      assert.deepEqual(st.warnings, [QUIESCENCE_WARNING, quiescenceDeadEnd(['n_webui.review'])]);
     } else {
       assert.equal(st.endReached, true, `${workflowId} reached End`);
       assert.ok(st.result, `${workflowId} bound a result`);

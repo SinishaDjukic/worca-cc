@@ -31,6 +31,17 @@ const AWAIT_ID = AWAIT_PORT.id;
 /** The §3 completion warning for a run that quiesced without reaching End (A8: ONE literal). */
 export const QUIESCENCE_WARNING = 'finished at quiescence — End not reached';
 
+/**
+ * The SECOND warning line a quiesced run gets when an output fired into nothing —
+ * "finished at quiescence" alone never says WHY. A separate entry, never a longer
+ * QUIESCENCE_WARNING: `ui/public/graph/run-decor.mjs` re-derives the base string
+ * client-side (`warnings.includes(QUIESCENCE_WARNING)`), so widening it would paint
+ * the banner twice.
+ * @param {string[]} ids sorted '<nodeId>.<portId>' list
+ */
+export const quiescenceDeadEnd = (ids) =>
+  `dead-ended output${ids.length === 1 ? '' : 's'}: ${ids.join(', ')} — fired with no wire`;
+
 function defaultMaxParallel() {
   const n = Number(process.env.WORCA_MAX_PARALLEL);
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 4;
@@ -130,6 +141,7 @@ export function createScheduler(opts) {
   const consumed = new Map();     // nodeId -> Map(port -> seq), recorded at bind
   const ordinals = new Map();     // nodeId -> executions started
   const wireState = new Map();    // loop wireId -> { deliveries, allowance }
+  const deadEnds = new Set();     // '<nodeId>.<portId>' outputs that fired with no wire
   const execs = new Map();        // executionId -> ledger entry
   const held = new Map();         // wireId -> { wireId, nodeId, executionId, token, issues, askId }
   const outstanding = new Set();  // wireIds with an un-withdrawn ask in flight
@@ -666,7 +678,13 @@ export function createScheduler(opts) {
    */
   function route(node, port, token, verdict, executionId) {
     if (ended) return;
-    for (const w of outWires.get(`${node.id}.${port.id}`) || []) {
+    const outs = outWires.get(`${node.id}.${port.id}`) || [];
+    // An output that fires with no wire is a DEAD END: its token has nowhere to go.
+    // Legal (a conditional branch may be deliberately unwired — wf_no-clarify's
+    // n_webui.review is v1 parity), but it is the one structural fact that explains
+    // a run finishing at quiescence, so the warning names it.
+    if (!outs.length) deadEnds.add(`${node.id}.${port.id}`);
+    for (const w of outs) {
       const st = wireState.get(w.id);
       if (st) {
         if (st.deliveries >= st.allowance) { holdAt(w, token, verdict, node, executionId); continue; }
@@ -830,6 +848,9 @@ export function createScheduler(opts) {
       consumed: Object.fromEntries([...consumed].map(([id, m]) => [id, Object.fromEntries(m)])),
       ordinals: Object.fromEntries(ordinals),
       wires: Object.fromEntries([...wireState].map(([id, st]) => [id, { ...st }])),
+      // Scheduler-local like `wires`: a run that paused AFTER an output dead-ended
+      // and quiesces only after the resume must still be able to say WHY.
+      deadEnds: [...deadEnds].sort(),
       ended: ended ? { ...ended, result: { ...ended.result } } : null,
       // The FULL ledger entry is serialized (bindings + trigger included): reattach
       // re-invokes `execute` with the RECORDED args, and recomputing them from
@@ -852,6 +873,7 @@ export function createScheduler(opts) {
     for (const [id, m] of Object.entries(s.consumed || {})) consumed.set(id, new Map(Object.entries(m)));
     for (const [id, n] of Object.entries(s.ordinals || {})) ordinals.set(id, n);
     for (const [id, st] of Object.entries(s.wires || {})) wireState.set(id, { ...st });
+    for (const id of s.deadEnds || []) deadEnds.add(id);
     for (const e of s.execs || []) execs.set(e.executionId, { ...e });
     ended = s.ended ? { ...s.ended, result: { ...s.ended.result } } : null;
     // Every hold comes back (reattach re-asks all of them). A pre-plural resume point
@@ -983,6 +1005,11 @@ export function createScheduler(opts) {
     if (result === 'done' && !ended) {
       warnings.push(QUIESCENCE_WARNING);
       log(QUIESCENCE_WARNING);
+      if (deadEnds.size) {
+        const detail = quiescenceDeadEnd([...deadEnds].sort());
+        warnings.push(detail);
+        log(detail);
+      }
     }
     snap();                                   // one final snapshot at run resolution
     return result;
