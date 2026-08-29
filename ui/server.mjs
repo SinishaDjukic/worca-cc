@@ -24,6 +24,7 @@ import {
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState,
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
   listArtifacts, lookupPipelineRow, findPipelineRowById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
+  readPromptFile,
 } from '../src/core/artifacts.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
 import { protectedSectionKeys } from '../src/core/diff-anchor.mjs';
@@ -916,6 +917,25 @@ function normalizeRunSource(raw) {
   return { ok: false, error: `unknown source.type "${type}"` };
 }
 
+/**
+ * A markdown source that NAMES a promptFile must name one we can read. Resolution
+ * happens inside the orchestrator, which this route launches fire-and-forget AFTER
+ * it has already answered — so without this submit-time check a bad path surfaces
+ * as an anonymous mid-run error event on a pipeline the client was told started.
+ * Resolved against the same base the orchestrator uses (the project, or a
+ * workspace's primary member).
+ * @returns {Promise<string|null>} the error message, or null when there is nothing wrong
+ */
+async function promptFileProblem(source, projectDir) {
+  if (!source || source.type !== 'markdown' || !source.promptFile) return null;
+  try {
+    await readPromptFile(projectDir, source.promptFile);
+    return null;
+  } catch (err) {
+    return err && err.message ? err.message : String(err);
+  }
+}
+
 // Fallback run title when the client sends none. The legacy path is unchanged
 // (first 80 chars of the prompt — effectivePrompt is guaranteed set there); a
 // plugin source starts as "<plugin>: <taskId>" until the orchestrator resolves
@@ -1181,6 +1201,9 @@ app.post('/api/run', async (req, res) => {
         return badRequest(res, `unknown or invalid sourceBranch: ${badOverride}`);
       }
 
+      const wsFileProblem = await promptFileProblem(effectiveSource, projects[0].projectDir);
+      if (wsFileProblem) return badRequest(res, wsFileProblem);
+
       orch = await createOrchestratorFor({
         workspace: {
           id: ws.id,
@@ -1234,6 +1257,9 @@ app.post('/api/run', async (req, res) => {
       if (branch.source && !(await isValidSourceRef(projectDir, branch.source))) {
         return badRequest(res, `unknown or invalid sourceBranch: ${branch.source}`);
       }
+
+      const fileProblem = await promptFileProblem(effectiveSource, projectDir);
+      if (fileProblem) return badRequest(res, fileProblem);
 
       orch = await createOrchestratorFor({
         projectDir,

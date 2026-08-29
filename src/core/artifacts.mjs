@@ -729,6 +729,42 @@ function resolveAgainst(base, p) {
 }
 
 /**
+ * The ONE typed error every prompt-file reader throws. Carried by `code` so the
+ * CLI can fail() on it and ui/server.mjs can answer 400 instead of letting it
+ * surface as an anonymous mid-run error event.
+ * @param {string} absPath  the resolved path the caller named
+ * @param {unknown} cause
+ */
+export function promptFileError(absPath, cause) {
+  const err = new Error(`cannot read prompt file ${absPath}: ${cause?.message || cause}`);
+  err.code = 'PROMPT_FILE_UNREADABLE';
+  err.promptFile = absPath;
+  err.cause = cause;
+  return err;
+}
+
+/**
+ * Read a NAMED prompt file, resolved against `projectDir` exactly as createPipeline
+ * does. Never degrades: a file the caller named but we cannot read is an ERROR, not
+ * an empty prompt. The old bare `catch { promptText = '' }` ran a whole pipeline on
+ * an empty task and exited 0 — in real mode spending tokens and cutting a worktree
+ * + feature branch for nothing. The empty-string fallback is only meaningful when
+ * NO file was named.
+ * @param {string} projectDir
+ * @param {string} promptFile  absolute, or relative to projectDir
+ * @returns {Promise<string>}
+ * @throws {Error & {code:'PROMPT_FILE_UNREADABLE'}}
+ */
+export async function readPromptFile(projectDir, promptFile) {
+  const abs = resolveAgainst(projectDir, promptFile);
+  try {
+    return await readFile(abs, 'utf8');
+  } catch (cause) {
+    throw promptFileError(abs, cause);
+  }
+}
+
+/**
  * Create a new pipeline directory and seed it with the prompt, extras and an audit
  * header (pipeline.md). The structured run state is INSERTed as a pipelines row
  * (Task 3.3/3.5) — there is no state.json. The prompt (and workspace-description /
@@ -785,12 +821,14 @@ export async function createPipeline(projectDir, opts = {}) {
   // verbatim copy below is unchanged).
   let promptText = typeof prompt === 'string' ? prompt : '';
   if (!promptText && typeof precomputedPromptText === 'string') promptText = precomputedPromptText;
-  if (!promptText && promptFile) {
-    try {
-      promptText = await readFile(resolveAgainst(projectDir, promptFile), 'utf8');
-    } catch {
-      promptText = '';
-    }
+  // A NAMED prompt file must be readable, and it is checked BEFORE anything is
+  // created (no dir, no row). It is checked even when an inline prompt or a
+  // precomputed body already won the text, because the file is still copied
+  // verbatim into prompt.md below — the old bare catch there silently substituted
+  // the inline text for the file the caller named.
+  if (promptFile) {
+    const fileText = await readPromptFile(projectDir, promptFile);
+    if (!promptText) promptText = fileText;
   }
 
   const resolvedTitle =
@@ -810,8 +848,11 @@ export async function createPipeline(projectDir, opts = {}) {
   if (promptFile) {
     try {
       await copyFile(resolveAgainst(projectDir, promptFile), promptDest);
-    } catch {
-      await writeFile(promptDest, promptText, 'utf8');
+    } catch (cause) {
+      // The read above already proved this path readable, so a failure here is a
+      // TOCTOU (the file vanished) or a destination problem — either way the run
+      // must not proceed on a substituted prompt.
+      throw promptFileError(resolveAgainst(projectDir, promptFile), cause);
     }
   } else {
     await writeFile(promptDest, promptText, 'utf8');

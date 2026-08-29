@@ -2,13 +2,13 @@
 // for prompt | markdown | plugin, plus source_type/source_ref persistence.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { createPipeline } from '../src/core/artifacts.mjs';
+import { artifactPaths, createPipeline } from '../src/core/artifacts.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { writePluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { setMockSourceResponses } from '../src/core/plugin-shim.mjs';
@@ -38,9 +38,17 @@ test('markdown source: promptFile read with resolveAgainst semantics; promptText
   // pasted markdown (no file)
   const viaText = await resolveTaskInput({ type: 'markdown', promptText: '# pasted' }, { projectDir });
   assert.deepEqual(viaText, { promptText: '# pasted', promptFile: null, sourceMeta: null });
-  // unreadable file degrades to '' exactly like the legacy catch{} path
-  const missing = await resolveTaskInput({ type: 'markdown', promptFile: 'notes/absent.md' }, { projectDir });
-  assert.equal(missing.promptText, '');
+  // MAJ-9: a NAMED file that cannot be read is an error, never an empty prompt —
+  // the empty-string fallback is only meaningful when no file was named.
+  await assert.rejects(
+    () => resolveTaskInput({ type: 'markdown', promptFile: 'notes/absent.md' }, { projectDir }),
+    (err) => {
+      assert.equal(err.code, 'PROMPT_FILE_UNREADABLE');
+      assert.match(err.message, /^cannot read prompt file /);
+      assert.ok(err.message.includes(join(projectDir, 'notes', 'absent.md')), err.message);
+      return true;
+    },
+  );
 });
 
 test('plugin source: getTask -> "# title\\n\\nbody" + fenced json meta + sourceMeta', async () => {
@@ -173,4 +181,52 @@ test('listTaskSources lists enabled plugin sources with inputs; skips disabled +
   assert.equal(plug[0].sourceId, 'issues');
   assert.equal(plug[0].displayName, 'Alpha Issues');
   assert.ok(plug[0].inputs.some((i) => i.type === 'task-browser'), 'inputs schema passed through');
+});
+
+// ── MAJ-9: a named-but-unreadable prompt file must never run an empty prompt ────
+
+test('MAJ-9: createPipeline throws PROMPT_FILE_UNREADABLE instead of seeding a 0-byte prompt.md', async () => {
+  const projectDir = tmp();
+  const before = getDb().prepare('SELECT COUNT(*) n FROM pipelines').get().n;
+  await assert.rejects(
+    () => createPipeline(projectDir, { promptFile: 'nope/missing.md', sourceType: 'markdown' }),
+    (err) => {
+      assert.equal(err.code, 'PROMPT_FILE_UNREADABLE');
+      assert.ok(err.message.includes(join(projectDir, 'nope', 'missing.md')), err.message);
+      return true;
+    },
+  );
+  assert.equal(getDb().prepare('SELECT COUNT(*) n FROM pipelines').get().n, before, 'no row was inserted');
+  // The refusal happens BEFORE anything is created — not half-way through, with a
+  // pipeline directory already mkdir'd and only the prompt.md copy failing.
+  assert.equal(
+    existsSync(artifactPaths(projectDir).pipelines)
+      ? readdirSync(artifactPaths(projectDir).pipelines).length : 0,
+    0,
+    'no pipeline directory was created',
+  );
+});
+
+test('MAJ-9: the copyFile fallback no longer masks a vanished file (inline prompt + bad promptFile)', async () => {
+  // run-harness passes `promptFile: input.promptFile ?? this.opts.promptFile`, so a
+  // caller with BOTH an inline prompt and a promptFile reaches createPipeline's
+  // copyFile with a path resolveTaskInput never read. Before the fix that catch
+  // silently substituted the inline text for the file the user named.
+  const projectDir = tmp();
+  await assert.rejects(
+    () => createPipeline(projectDir, { prompt: 'inline wins the text', promptFile: 'gone.md' }),
+    (err) => {
+      assert.equal(err.code, 'PROMPT_FILE_UNREADABLE');
+      assert.ok(err.message.includes(join(projectDir, 'gone.md')), err.message);
+      return true;
+    },
+  );
+});
+
+test('MAJ-9: an unnamed file still degrades to the empty prompt (no file, no error)', async () => {
+  const projectDir = tmp();
+  const input = await resolveTaskInput({ type: 'markdown' }, { projectDir });
+  assert.deepEqual(input, { promptText: '', promptFile: null, sourceMeta: null });
+  const p = await createPipeline(projectDir, { promptText: '', sourceType: 'markdown' });
+  assert.equal(await readFile(join(p.dir, 'prompt.md'), 'utf8'), '');
 });

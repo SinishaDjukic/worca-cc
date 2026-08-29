@@ -1675,6 +1675,19 @@ async function main() {
   }
 
   const projectDir = resolve(flags.project);
+  // A NAMED --file must be readable BEFORE anything starts. The readers used to
+  // swallow the failure and run the whole pipeline on an empty prompt with exit 0
+  // — in real mode that spends tokens and cuts a worktree + feature branch for
+  // nothing. Relative paths resolve against the PROJECT dir, exactly as the
+  // orchestrator's own read does.
+  if (flags.file) {
+    const { readPromptFile } = await import('../core/artifacts.mjs');
+    try {
+      await readPromptFile(projectDir, flags.file);
+    } catch (err) {
+      fail(err && err.message ? err.message : String(err));
+    }
+  }
   // Resolve extras against the shell cwd so relative paths are unambiguous.
   const extras = (flags.extras || []).map((p) => resolve(process.cwd(), p));
 

@@ -253,6 +253,36 @@ test('legacy POST /api/run { prompt } is byte-identical: 200 + runId, default so
   assert.equal((await bad.json()).error, 'prompt or promptMarkdown is required');
 });
 
+test('MAJ-9: a markdown source naming an unreadable promptFile 400s instead of running empty', async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-badfile-'));
+  const before = getDb().prepare('SELECT COUNT(*) n FROM pipelines').get().n;
+  const r = await post('/api/run', {
+    projectDir, mock: true, source: { type: 'markdown', promptFile: 'nope/missing.md' },
+  });
+  assert.equal(r.status, 400);
+  const { error } = await r.json();
+  assert.match(error, /^cannot read prompt file /);
+  assert.ok(error.includes(join(projectDir, 'nope', 'missing.md')), error);
+  // Rejected at submit: nothing was launched.
+  assert.equal(getDb().prepare('SELECT COUNT(*) n FROM pipelines').get().n, before);
+  await rmWithRetry(projectDir);
+});
+
+test('MAJ-9: a markdown source whose promptFile IS readable still runs', async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-goodfile-'));
+  await writeFile(join(projectDir, 'brief.md'), '# file-sourced task\n');
+  const r = await post('/api/run', {
+    projectDir, mock: true, source: { type: 'markdown', promptFile: 'brief.md' },
+  });
+  assert.equal(r.status, 200, JSON.stringify(await r.clone().json()));
+  const row = await waitFor(
+    () => getDb().prepare('SELECT source_type FROM pipelines WHERE prompt = ?').get('# file-sourced task\n'),
+    'file-sourced pipelines row',
+  );
+  assert.equal(row.source_type, 'markdown');
+  await rmWithRetry(projectDir);
+});
+
 test('profiles: "default" is reserved, and a save never mints a profile the roster does not know', async () => {
   const put = (p, b) => fetch(`${base}${p}`, { method: 'PUT', headers: JSONH, body: JSON.stringify(b) });
   const del = (p) => fetch(`${base}${p}`, { method: 'DELETE' });
