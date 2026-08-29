@@ -790,3 +790,78 @@ test('MAJ-4 · C-3: the dialog renders the server 422/409 refusals verbatim', as
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(dlg2.querySelector('.sd-msg').textContent, 'a pipeline with the id "wf_full" already exists — choose another name');
 });
+
+// -------------------------------------------------------------------- MAJ-18
+// hitWireAt used to regex-scrape the painted `d` and test the click against 49
+// SAMPLE POINTS, so wherever the curve is longer than ~500 px the sample gap
+// exceeds the 6px tolerance and points exactly ON the drawn line are not hits
+// (up to 37.7% of the curve on the shipped wf_full). The shared hitWire measures
+// point-to-SEGMENT and has no gap. Both wires below are seed-sized.
+const { bezierPoint: BP } = await import(new URL('../src/shared/graph/geometry.mjs', import.meta.url).href);
+
+/** fixture() stretched so task→agent spans ~780px, plus a 700px-span loop wire. */
+function longFixture() {
+  const tpl = fixture();
+  tpl.nodes[1].x = 1060;                       // n_agent
+  tpl.nodes[2].x = 2400;                       // n_end
+  // n_rev sits to the RIGHT of n_agent, so its review loop runs backwards over
+  // a 720px span — the shape wf_full's w15 (670px) has.
+  tpl.nodes.push({ id: 'n_rev', kind: 'agent', key: 'planner', x: 1560, y: 620, config: {} });
+  tpl.wires.push({ id: 'w3', from: { node: 'n_agent', port: 'plan' }, to: { node: 'n_rev', port: 'task' } });
+  // the amber review loop: n_rev.review -> n_agent.fix, drawn bowed
+  tpl.wires.push({ id: 'w4', from: { node: 'n_rev', port: 'review' }, to: { node: 'n_agent', port: 'fix' }, config: { maxCycles: 2 } });
+  return tpl;
+}
+
+/** The two endpoints and the loop flag the PAINTER used for `wireId`. */
+function drawn(c, wireId) {
+  const tpl = c.template();
+  const w = tpl.wires.find((x) => x.id === wireId);
+  const node = (id) => tpl.nodes.find((n) => n.id === id);
+  return {
+    a: c.view.anchor(node(w.from.node), w.from.port, 'out'),
+    b: c.view.anchor(node(w.to.node), w.to.port, 'in'),
+    loop: c.view.isLoopWire(wireId),
+  };
+}
+
+test('MAJ-18: every point ON the drawn curve of a long wire and of a loop wire is a hit', async () => {
+  const s = await open({ template: longFixture() });
+  // `expect` is the set of wires a first-match scan may legitimately return for
+  // points on this curve: itself, plus any wire that genuinely CROSSES it (w3
+  // crosses the review loop here exactly as it does on the shipped wf_full).
+  for (const [id, expect] of [['w1', ['w1']], ['w4', ['w3', 'w4']]]) {
+    const { a, b, loop } = drawn(s.c, id);
+    assert.ok(Math.abs(b.x - a.x) >= 700, `${id}: seed-sized span (${Math.abs(b.x - a.x).toFixed(0)}px)`);
+    let dead = 0;
+    const seen = new Set();
+    for (let i = 0; i <= 400; i += 1) {
+      const hit = s.c._internal.hitWireAt(BP(a, b, i / 400, { loop }));
+      if (!hit) dead += 1; else seen.add(hit.id);
+    }
+    assert.equal(dead, 0, `${id}${loop ? ' (loop)' : ''}: 401 points ON the drawn line, none dead`);
+    assert.deepEqual([...seen].sort(), expect, `${id}: only itself or a crossing wire ever wins`);
+  }
+  assert.equal(s.c.view.isLoopWire('w4'), true, 'w4 really is drawn as a loop');
+});
+
+test('MAJ-18: a click on a point the 49-sample comb used to miss selects the wire', async () => {
+  const s = await open({ template: longFixture() });
+  s.c.view.setTransform({ x: 0, y: 0, z: 1 });
+  // t = 0.115 is the FIRST point on this 780px-span curve that the old
+  // point-to-sample test declared a miss (measured: 24.4% of 401 on-curve
+  // points were dead on this wire alone).
+  const { a, b, loop } = drawn(s.c, 'w1');
+  const p = BP(a, b, 0.115, { loop });
+  down(s, p.x, p.y);
+  assert.deepEqual(s.c.selection(), { kind: 'wire', id: 'w1' });
+  up(s, p.x, p.y);
+});
+
+test('MAJ-18: a point well off the curve still selects nothing', async () => {
+  const s = await open({ template: longFixture() });
+  const { a, b, loop } = drawn(s.c, 'w1');
+  const p = BP(a, b, 0.5, { loop });
+  assert.equal(s.c._internal.hitWireAt({ x: p.x, y: p.y - 40 }), null, 'the tolerance did not grow');
+  assert.ok(s.c._internal.hitWireAt({ x: p.x, y: p.y - 4 }), 'but 4px off is still within the 6px tolerance');
+});

@@ -13,7 +13,7 @@ import { createGraphView } from './view.mjs';
 import { renderPalette, applyFilter, FLOW_GROUP } from './palette.mjs';
 import { renderNodeInspector, renderWireInspector, renderEmptyInspector } from './inspector.mjs';
 import { renderSaveDialog, openDialog, closeDialog } from './save-dialog.mjs';
-import { WIRE_HIT_TOL, PORT_HIT_R, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, NODE_W, snap, bezierPath }
+import { PORT_HIT_R, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, NODE_W, snap, bezierPath, hitWire }
   from '../../../src/shared/graph/geometry.mjs';
 import { canWire, newNode, newWire, normalizeTemplate, serializeTemplate }
   from '../../../src/shared/graph/template.mjs';
@@ -124,20 +124,22 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     }
     return null;
   }
-  /** Sample the wire's OWN cached `d` (the single bezier definition) 48×. */
+  /** The SHARED hit test, over the same endpoints and the same `loop` flag the
+   *  painter used (view.paintWire draws `bezierPath(a, b, { loop })` with
+   *  `loop = ctx.loopWireIds.has(id)`; `mirror` is ghost-only and never set on a
+   *  committed wire). geometry.hitWire measures point-to-SEGMENT, so there is no
+   *  gap between samples — the private copy this replaces compared the click to
+   *  49 POINTS, which left up to 37.7% of a shipped wire's drawn line dead
+   *  (MAJ-18). Two bezier implementations to keep in sync is the other half. */
   function hitWireAt(pt) {
     for (const w of tpl.wires) {
-      const el = view.wireEl(w.id);
-      const nums = ((el && el.getAttribute('d')) || '').match(/-?\d+(?:\.\d+)?/g);
-      if (!nums || nums.length < 8) continue;
-      const [ax, ay, c1x, c1y, c2x, c2y, bx, by] = nums.map(Number);
-      for (let i = 0; i <= 48; i += 1) {
-        const t = i / 48;
-        const u = 1 - t;
-        const x = u * u * u * ax + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * bx;
-        const y = u * u * u * ay + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * by;
-        if (Math.hypot(pt.x - x, pt.y - y) <= WIRE_HIT_TOL) return w;
-      }
+      const from = nodeById(w.from.node);
+      const to = nodeById(w.to.node);
+      if (!from || !to) continue;
+      const a = view.anchor(from, w.from.port, 'out');
+      const b = view.anchor(to, w.to.port, 'in');
+      if (!a || !b) continue;                       // dangling endpoint is never a target
+      if (hitWire(a, b, pt, { loop: view.isLoopWire(w.id) })) return w;
     }
     return null;
   }
