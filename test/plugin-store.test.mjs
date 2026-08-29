@@ -595,3 +595,105 @@ test('link refuses a mixed-version plugin with the REAL cause, not derived templ
   });
   assert.equal(linkPlugin('mixed-api1', legacy).ok, true);
 });
+
+// ── MAJ-13: contributions dropped at load are REPORTED, not console-only ────
+
+/** A plugin whose own `planner` collides with the built-in one (validate is
+ *  happy — the key IS the plugin's), plus a template wired to the plugin's
+ *  ports, which then fails to import against the built-in planner. `cleanKey`
+ *  is a uniquely-named contribution that must never be reported. */
+const COLLIDING_FILES = (name, cleanKey) => ({
+  'worca-cc-plugin.json': JSON.stringify({ name, version: '0.1.0', engines: { 'worca-cc-api': '>=3 <4' } }),
+  [`agents/${cleanKey}.meta.json`]: JSON.stringify({ ...V2_SIDECAR, key: cleanKey, agentFile: `${cleanKey}.md` }),
+  [`agents/${cleanKey}.md`]: '---\ntools: Read\n---\nclean\n',
+  [`workflows/${cleanKey}-flow.json`]: JSON.stringify({
+    ...V2_TEMPLATE,
+    nodes: V2_TEMPLATE.nodes.map((n) => (n.kind === 'agent' ? { ...n, key: cleanKey } : n)),
+  }),
+  'agents/planner.meta.json': JSON.stringify({
+    metaVersion: 2, key: 'planner', displayName: 'My Planner', agentFile: 'planner.md',
+    runnerType: 'producer', order: 980,
+    inputs: [{ id: 'brief', type: 'md' }],
+    outputs: [{ id: 'sketch', type: 'md', filename: 's.md' }],
+  }),
+  'agents/planner.md': '---\ntools: Read\n---\nmy planner\n',
+  'workflows/coll-flow.json': JSON.stringify({
+    name: 'Coll Flow', version: 2, domain: 'general',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+      { id: 'n_p', kind: 'agent', key: 'planner', x: 320, y: 200, config: {} },
+      { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
+    ],
+    wires: [
+      { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_p', port: 'brief' } },
+      { id: 'w2', from: { node: 'n_p', port: 'sketch' }, to: { node: 'n_end', port: 'result' } },
+    ],
+  }),
+});
+
+test('dropped contributions reach the card and the doctor, clean ones do not (MAJ-13)', async () => {
+  const dir = join(scratch, 'local-coll-plug');
+  writeTree(dir, COLLIDING_FILES('coll-plug', 'collCleanA'));
+  linkPlugin('coll-plug', dir);
+  // A LINKED dir is read live, so it can hold a sidecar validatePluginDir would
+  // never have let through (agent-registry.mjs:96 says exactly this). Add one the
+  // REGISTRY drops on its own — normalizeMeta's non-numeric-order arm — so the
+  // channel is proven to carry normalizeMeta's OWN reason, not a re-derived one.
+  writeTree(dir, {
+    'agents/badOrder.meta.json': JSON.stringify({ ...V2_SIDECAR, key: 'badOrder', agentFile: 'badOrder.md', order: 'soon' }),
+    'agents/badOrder.md': '---\ntools: Read\n---\nbad order\n',
+  });
+
+  const row = listInstalledPlugins().find((p) => p.name === 'coll-plug');
+  assert.deepEqual(row.ignored.map((i) => i.file),
+    ['agents/badOrder.meta.json', 'agents/planner.meta.json', 'workflows/coll-flow.json'],
+    'every drop is named, and the clean agent/template are not');
+  assert.equal(row.ignored.find((i) => i.file === 'agents/planner.meta.json').reason, 'collides with an existing agent');
+  assert.match(row.ignored.find((i) => i.file === 'workflows/coll-flow.json').reason, /^invalid template \(V5: /);
+  assert.equal(row.contributions.agents, 3, 'the file-derived count still counts what the plugin SHIPS');
+  assert.ok(row.ignored.some((i) => i.file === 'agents/badOrder.meta.json'
+    && i.reason === 'sidecar "badOrder" has a non-numeric order "soon"; skipped'),
+    `a malformed order is reported with normalizeMeta's own reason: ${JSON.stringify(row.ignored)}`);
+
+  const report = await doctorPlugin('coll-plug');
+  const check = report.checks.find((c) => c.id === 'contributions');
+  assert.ok(check, 'the doctor names dropped contributions');
+  assert.equal(check.ok, false);
+  assert.match(check.detail, /^3 ignored: agents\/badOrder\.meta\.json — sidecar "badOrder" has a non-numeric order "soon"; skipped; agents\/planner\.meta\.json — collides with an existing agent; workflows\/coll-flow\.json — invalid template \(V5: /);
+  assert.equal(report.ok, false, 'a plugin whose contributions were dropped is not healthy');
+
+  // …and a plugin with nothing dropped reports an empty list + a green check.
+  installLocal('clean-contrib');
+  const clean = listInstalledPlugins().find((p) => p.name === 'clean-contrib');
+  assert.deepEqual(clean.ignored, []);
+  const cleanCheck = (await doctorPlugin('clean-contrib')).checks.find((c) => c.id === 'contributions');
+  assert.equal(cleanCheck.ok, true);
+  assert.equal(cleanCheck.detail, 'every shipped contribution loaded');
+
+  // …and a DISABLED plugin contributes nothing BY CHOICE. Its agents are out of the
+  // registry (agent-registry.mjs pluginAgentLayers skips enabled === false), so its
+  // own templates would fail V4 and every surface would diagnose a template that is
+  // perfectly fine. Both surfaces stay silent until it is switched back on.
+  setPluginEnabled('coll-plug', false);
+  assert.deepEqual(listInstalledPlugins().find((p) => p.name === 'coll-plug').ignored, [],
+    'a disabled plugin reports no drops');
+  assert.equal((await doctorPlugin('coll-plug')).checks.find((c) => c.id === 'contributions'), undefined,
+    'and the doctor runs no contributions check on it');
+  setPluginEnabled('coll-plug', true);
+});
+
+test('installPlugin echoes the ignored contributions in its receipt (MAJ-13)', async () => {
+  const root = join(scratch, 'origin-coll');
+  mkdirSync(root, { recursive: true });
+  await git(root, 'init', '-q', '-b', 'main');
+  writeTree(root, COLLIDING_FILES('coll-install', 'collCleanB'));
+  await git(root, 'add', '-A');
+  await git(root, 'commit', '-qm', 'c1');
+  const { exec } = makeExec();
+  const res = await installPlugin({ repoUrl: root, name: 'coll-install' }, { exec });
+  assert.equal(res.ok, true, 'a dropped contribution is not an install failure');
+  assert.deepEqual(res.ignored.map((i) => i.file),
+    ['agents/planner.meta.json', 'workflows/coll-flow.json']);
+  assert.equal(res.ignored[0].reason, 'collides with an existing agent');
+  assert.match(res.ignored[1].reason, /^invalid template \(V5: /);
+});

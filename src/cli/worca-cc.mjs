@@ -980,6 +980,15 @@ function printInventory(inv) {
   for (const cmd of i.setupCommands || []) out(`  setup: ${cmd}`);
 }
 
+/** Contributions worca refused to load (spec §9.3): one yellow line each, so a
+ *  receipt or a list never claims an agent/template that exists nowhere. */
+function printIgnored(ignored) {
+  const list = Array.isArray(ignored) ? ignored : [];
+  if (!list.length) return;
+  out(c('yellow', `  ${list.length} contribution${list.length > 1 ? 's' : ''} ignored:`));
+  for (const i of list) out(c('yellow', `    ${i.file} — ${i.reason}`));
+}
+
 /** kebab plugin name -> camelCase stem for the scaffolded example agent key. */
 function camelizePluginName(name) {
   return name.replace(/-([a-z0-9])/g, (_, ch) => ch.toUpperCase());
@@ -1230,6 +1239,7 @@ async function cmdPlugin(argv) {
         const res = await store.installPlugin({ repoUrl, subdir: entry.subdir, name, sha, ...(marketplace ? { marketplace } : {}) });
         out('installed:');
         printInventory(res.inventory);
+        printIgnored(res.ignored);
         return 0;
       }
 
@@ -1244,6 +1254,7 @@ async function cmdPlugin(argv) {
           const flags = [p.enabled ? 'enabled' : 'disabled', ...(p.linked ? ['linked'] : [])].join(', ');
           out(`${p.name}\t${version}\t${flags}\t${contribSummary(p.contributions)}`);
           if (p.apiMismatch) out(c('yellow', `  ${p.apiMismatch.message}`));
+          printIgnored(p.ignored);
         }
         return 0;
       }

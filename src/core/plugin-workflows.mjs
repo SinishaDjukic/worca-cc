@@ -33,34 +33,34 @@ const normDomain = (raw) => {
 };
 
 /**
- * Upsert every <versionDir>/workflows/*.json into the workflows table.
- * id = wfp_<plugin>_<slug(filename)>, origin = 'plugin:<plugin>'. Each template
- * is validated by the SHARED `validateGraph` over `registryPortsFn(loadAgentRegistry())`
- * — importing runs AFTER the symlink swap + lock write, so the plugin's own agents resolve. An
- * invalid/unreadable template is skipped with a warning, never thrown (spec §9.3).
- * No workflows/ dir => { imported: [], skipped: [] } (feature-off no-op).
- * @param {string} name       plugin name (kebab-case; id stays SAFE_WORKFLOW_ID-legal)
- * @param {string} versionDir the exported version dir (or current/ — same tree)
- * @returns {Promise<{imported: string[], skipped: Array<{file:string, errors:string[]}>}>}
+ * READ + VALIDATE every <versionDir>/workflows/*.json WITHOUT touching the DB.
+ * Split out of importPluginWorkflows so the Plugins card, the doctor and the
+ * install receipt can name a skipped template with the SAME reason the importer
+ * logged — a second, re-derived reader would be free to disagree with it.
+ * @param {string} name
+ * @param {string} versionDir
+ * @param {{registry?: object, quiet?: boolean}} [opts] registry: reuse ONE
+ *        loadAgentRegistry() across plugins; quiet: no console.warn (read-only
+ *        callers must not re-log what the importer already logged).
+ * @returns {{ready: Array<object>, skipped: Array<{file:string, errors:string[]}>}}
  */
-export async function importPluginWorkflows(name, versionDir) {
+export function readPluginWorkflows(name, versionDir, { registry = null, quiet = false } = {}) {
   const origin = `plugin:${name}`;
   const dir = join(versionDir, 'workflows');
   let files = [];
   try { files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort(); } catch { /* no workflows/ */ }
-  const imported = [];
+  const ready = [];
   const skipped = [];
-  if (!files.length) return { imported, skipped };
-  getDb(); // open + migrate: workflows.origin/graph/archived_at exist (V13/V23)
-  const now = new Date().toISOString();
-  // ONE registry load for the whole import, and the SHARED port synthesis over
+  if (!files.length) return { ready, skipped };
+  // ONE registry load for the whole read, and the SHARED port synthesis over
   // it: agent meta ports plus the universal `await` gate and the flow-card
   // table. The templates are not in the DB yet, so resolveGraph is unavailable —
   // registryPortsFn exists for exactly this caller and the server's save route.
-  const portsFn = registryPortsFn(loadAgentRegistry());
+  const portsFn = registryPortsFn(registry || loadAgentRegistry());
+  const warn = (msg) => { if (!quiet) console.warn(msg); };
   const skip = (f, errors) => {
     skipped.push({ file: f, errors });
-    console.warn(`[plugin-workflows] ${name}/${f}: invalid template — skipped (${errors.join('; ')})`);
+    warn(`[plugin-workflows] ${name}/${f}: invalid template — skipped (${errors.join('; ')})`);
   };
   for (const f of files) {
     let raw;
@@ -68,7 +68,7 @@ export async function importPluginWorkflows(name, versionDir) {
       raw = JSON.parse(readFileSync(join(dir, f), 'utf8'));
     } catch (err) {
       skipped.push({ file: f, errors: [`unreadable JSON: ${err.message}`] });
-      console.warn(`[plugin-workflows] ${name}/${f}: unreadable JSON — skipped`);
+      warn(`[plugin-workflows] ${name}/${f}: unreadable JSON — skipped`);
       continue;
     }
     // A v1 `steps` template is called out by name rather than left to V1's
@@ -89,11 +89,34 @@ export async function importPluginWorkflows(name, versionDir) {
     // time says so at install.
     const { errors, warnings } = validateGraph({ id, name: rowName, version: 2, domain, nodes, wires }, portsFn);
     if (errors.length) { skip(f, errors.map((e) => `${e.code}: ${e.message}`)); continue; }
-    for (const w of warnings) console.warn(`[plugin-workflows] ${name}/${f}: ${w.code}: ${w.message}`);
+    for (const w of warnings) warn(`[plugin-workflows] ${name}/${f}: ${w.code}: ${w.message}`);
     // graph holds {nodes, wires, canvas?} ONLY — id/name/domain/origin are row
     // columns, so a rename can never drift between the two.
     const graph = { nodes, wires };
     if (raw.canvas && typeof raw.canvas === 'object') graph.canvas = raw.canvas; // accepted, engine-ignored
+    ready.push({ file: f, id, rowName, domain, graph, origin });
+  }
+  return { ready, skipped };
+}
+
+/**
+ * Upsert every <versionDir>/workflows/*.json into the workflows table.
+ * id = wfp_<plugin>_<slug(filename)>, origin = 'plugin:<plugin>'. Each template
+ * is validated by the SHARED `validateGraph` over `registryPortsFn(loadAgentRegistry())`
+ * — importing runs AFTER the symlink swap + lock write, so the plugin's own agents resolve. An
+ * invalid/unreadable template is skipped with a warning, never thrown (spec §9.3).
+ * No workflows/ dir => { imported: [], skipped: [] } (feature-off no-op).
+ * @param {string} name       plugin name (kebab-case; id stays SAFE_WORKFLOW_ID-legal)
+ * @param {string} versionDir the exported version dir (or current/ — same tree)
+ * @returns {Promise<{imported: string[], skipped: Array<{file:string, errors:string[]}>}>}
+ */
+export async function importPluginWorkflows(name, versionDir) {
+  const { ready, skipped } = readPluginWorkflows(name, versionDir);
+  const imported = [];
+  if (!ready.length && !skipped.length) return { imported, skipped };
+  getDb(); // open + migrate: workflows.origin/graph/archived_at exist (V13/V23)
+  const now = new Date().toISOString();
+  for (const r of ready) {
     tx(() => {
       prepare(`
         INSERT INTO workflows (id, name, version, domain, graph, steps, feedbacks, origin, created_at, updated_at, archived_at)
@@ -103,9 +126,9 @@ export async function importPluginWorkflows(name, versionDir) {
           graph = excluded.graph, steps = '[]', feedbacks = '[]',
           origin = excluded.origin, updated_at = excluded.updated_at,
           archived_at = NULL
-      `).run(id, rowName, domain, JSON.stringify(graph), origin, now, now);
+      `).run(r.id, r.rowName, r.domain, JSON.stringify(r.graph), r.origin, now, now);
     });
-    imported.push(id);
+    imported.push(r.id);
   }
   return { imported, skipped };
 }

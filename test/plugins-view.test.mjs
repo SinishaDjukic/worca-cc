@@ -434,3 +434,27 @@ test('renderPluginList: provenance falls back to the raw repo when marketplaceNa
   assert.match(prov.textContent, /\/tmp\/gone-repo @ deadbee/);
   assert.doesNotMatch(prov.textContent, /·/); // no marketplace name -> no separator
 });
+
+test('a card renders the ignored contributions as an amber note (MAJ-13)', () => {
+  const el = renderPluginList([
+    { name: 'coll-plug', version: '0.1.0', enabled: true, contributions: { agents: 2, workflows: 2 },
+      ignored: [
+        { file: 'agents/planner.meta.json', reason: 'collides with an existing agent' },
+        { file: 'workflows/coll-flow.json', reason: 'invalid template (V5: wire \'w1\': \'n_p.brief\' is not a declared input)' },
+      ] },
+    { name: 'fine-plugin', version: '1.0.0', enabled: true, contributions: {}, ignored: [] },
+  ], { doc });
+  const cards = el.querySelectorAll('.plugin-card');
+  const note = cards[0].querySelector('.pl-ignored-note');
+  assert.ok(note, 'the ignored note renders');
+  assert.equal(note.className, 'pl-ignored-note hint err');
+  assert.equal(note.textContent,
+    '2 contributions ignored: agents/planner.meta.json — collides with an existing agent; '
+    + "workflows/coll-flow.json — invalid template (V5: wire 'w1': 'n_p.brief' is not a declared input)");
+  assert.equal(cards[1].querySelector('.pl-ignored-note'), null, 'a clean plugin gets no note');
+  // singular
+  const one = renderPluginList([{ name: 'p', version: '1', enabled: true, contributions: {},
+    ignored: [{ file: 'agents/x.meta.json', reason: 'unreadable JSON' }] }], { doc });
+  assert.equal(one.querySelector('.pl-ignored-note').textContent,
+    '1 contribution ignored: agents/x.meta.json — unreadable JSON');
+});

@@ -75,6 +75,15 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
     card.appendChild(head);
     card.appendChild(h(doc, 'small', 'pl-contrib hint', contribSummary(p.contributions)));
     if (p.apiMismatch) card.appendChild(h(doc, 'small', 'pl-api-note hint err', p.apiMismatch.message || ''));
+    // Contributions worca refused to load. Same note treatment as the API note:
+    // the contributions line above counts what the plugin SHIPS, so without this
+    // the card claims an agent or a template that exists nowhere.
+    if (p.ignored && p.ignored.length) {
+      const n = p.ignored.length;
+      card.appendChild(h(doc, 'small', 'pl-ignored-note hint err',
+        `${n} contribution${n > 1 ? 's' : ''} ignored: `
+        + p.ignored.map((i) => `${i.file} — ${i.reason}`).join('; ')));
+    }
     if (p.repo || p.marketplaceName) {
       const prov = [p.marketplaceName, p.repo].filter(Boolean).join(' · ');
       card.appendChild(h(doc, 'small', 'pl-provenance hint mono',

@@ -79,13 +79,16 @@ export function collectDomains(registry) {
  *  identifier-shaped so a key can never escape a directory. */
 const AGENT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
-/** Coerce one parsed sidecar into a normalized AgentMeta, or null if unusable. */
-export function normalizeMeta(raw) {
+/** Coerce one parsed sidecar into a normalized AgentMeta, or null if unusable.
+ *  `warn` is INJECTABLE (defaults to console.warn) so scanLayer can capture the
+ *  reason a sidecar was dropped and hand it to a diagnostics sink — the reason
+ *  is authored here and must never be re-derived by a second reader. */
+export function normalizeMeta(raw, { warn = console.warn } = {}) {
   if (!raw || typeof raw !== 'object') return null;
   const key = typeof raw.key === 'string' ? raw.key.trim() : '';
   if (!key) return null;
   if (!AGENT_KEY_RE.test(key)) {
-    console.warn(`[agent-registry] sidecar key "${key}" is not a valid agent key; skipped`);
+    warn(`[agent-registry] sidecar key "${key}" is not a valid agent key; skipped`);
     return null;
   }
   // `order` is OPTIONAL: agent-meta.mjs's normalizer backfills DEFAULT_ORDER and
@@ -96,7 +99,7 @@ export function normalizeMeta(raw) {
   // skip (normalizeAgentMeta errors on it), but a loud one, like the key branch.
   const order = raw.order === undefined ? DEFAULT_ORDER : Number(raw.order);
   if (!Number.isFinite(order)) {
-    console.warn(`[agent-registry] sidecar "${key}" has a non-numeric order ${JSON.stringify(raw.order)}; skipped`);
+    warn(`[agent-registry] sidecar "${key}" has a non-numeric order ${JSON.stringify(raw.order)}; skipped`);
     return null;
   }
   const color = COLORS.has(raw.color) ? raw.color : 'amber';
@@ -144,10 +147,10 @@ export function normalizeMeta(raw) {
   if (raw.metaVersion !== 2) return base;
   const { meta, errors } = normalizeAgentMeta(raw, {
     mockWriterRoles: MOCK_WRITER_ROLES,
-    warn: (msg) => console.warn(msg),
+    warn: (msg) => warn(msg),
   });
   if (errors.length) {
-    console.warn(`[agent-registry] sidecar "${key}" declares metaVersion 2 but is invalid; skipped: ${errors.join('; ')}`);
+    warn(`[agent-registry] sidecar "${key}" declares metaVersion 2 but is invalid; skipped: ${errors.join('; ')}`);
     return null;
   }
   const merged = {
@@ -239,7 +242,12 @@ function frontmatterDescription(mdPath) {
 /** Scan one layer dir for *.meta.json; stamps the COMPUTED origin/agentPath/
  *  descriptionDerived fields (none of which normalizeMeta returns, so none can
  *  be persisted back into a sidecar). */
-function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null } = {}) {
+function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null, onDrop = null } = {}) {
+  // Every skip below is a CONTRIBUTION THE USER CANNOT SEE unless someone
+  // reports it: console.warn reaches a server log, not the Plugins card, the
+  // install receipt or the doctor. onDrop is that reporting channel — optional,
+  // so the hot registry path pays nothing when nobody is listening.
+  const drop = (file, reason) => { if (onDrop) onDrop({ origin, file, reason }); };
   let files;
   try {
     files = readdirSync(dir);
@@ -253,6 +261,7 @@ function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null } = {})
     try {
       parsed = JSON.parse(readFileSync(join(dir, f), 'utf8'));
     } catch {
+      drop(f, 'unreadable JSON');
       continue; // skip unreadable / malformed sidecars
     }
     // API 3 (plugin layers only): a sidecar that is not meta v2 has no typed
@@ -263,10 +272,16 @@ function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null } = {})
     if (requireMetaV2 && Number(parsed?.metaVersion) !== 2) {
       const builtForText = builtFor == null ? 'an older plugin API' : `plugin API ${builtFor}`;
       console.warn(`[agent-registry] ${origin}/${f}: built for ${builtForText} — ${NOT_META_V2} — ignored`);
+      drop(f, `built for ${builtForText} — ${NOT_META_V2}`);
       continue;
     }
-    const meta = normalizeMeta(parsed);
-    if (!meta) continue;
+    // Capture normalizeMeta's own reason rather than re-deriving one: the LAST
+    // warning it emits is the fatal one (non-fatal coercion warnings precede it).
+    let why = '';
+    const meta = normalizeMeta(parsed, {
+      warn: (m) => { why = String(m).replace(/^\[agent-registry\] /, ''); console.warn(m); },
+    });
+    if (!meta) { drop(f, why || 'invalid sidecar'); continue; }
     meta.origin = origin;                                              // computed, never stored
     // agentFile is a PATH read as the agent's system prompt AND for its
     // `tools:` frontmatter, so the loader refuses to stamp an agentPath outside
@@ -275,6 +290,7 @@ function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null } = {})
     if (meta.agentFile
       && (isAbsolute(meta.agentFile) || !resolve(dir, meta.agentFile).startsWith(resolve(dir) + sep))) {
       console.warn(`[agent-registry] ${origin}/${f}: agentFile "${meta.agentFile}" resolves outside the agents dir — ignored`);
+      drop(f, `agentFile "${meta.agentFile}" resolves outside the agents dir`);
       continue;
     }
     meta.agentPath = meta.agentFile ? join(dir, meta.agentFile) : null; // layer-correct abs path
@@ -303,16 +319,22 @@ function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null } = {})
  * @returns {Record<string, object>} agent key -> AgentMeta, sorted by `.order`
  */
 export function loadAgentRegistry(agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
-  const builtins = scanLayer(agentsDir, 'builtin');
+  // opts.onDrop({origin, file, reason}) — every sidecar this load IGNORED, so a
+  // caller (plugin-store's card/receipt/doctor) can show what did not load.
+  const onDrop = typeof opts.onDrop === 'function' ? opts.onDrop : null;
+  const builtins = scanLayer(agentsDir, 'builtin', { onDrop });
   const builtinKeys = new Set(builtins.map((m) => m.key));
   const userDir = opts.userAgentsDir === undefined ? userAgentsDir() : opts.userAgentsDir;
   const users = [];
   if (userDir) {
-    for (const m of scanLayer(userDir, 'user')) {
+    for (const m of scanLayer(userDir, 'user', { onDrop })) {
       if (builtinKeys.has(m.key)) {
         console.warn(
           `[agent-registry] user agent "${m.key}" shadows a built-in and was skipped (built-ins are immutable)`,
         );
+        // The sidecar filename is `<key>.meta.json` on every write path (the
+        // agent store writes it, and validatePluginDir requires key === stem).
+        if (onDrop) onDrop({ origin: 'user', file: `${m.key}.meta.json`, reason: 'shadows a built-in agent' });
         continue;
       }
       users.push(m);
@@ -329,11 +351,12 @@ export function loadAgentRegistry(agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
   if (opts.includePlugins !== false) {
     const taken = new Set([...builtinKeys, ...users.map((m) => m.key)]);
     for (const { plugin, dir, builtFor } of pluginAgentLayers()) {
-      for (const m of scanLayer(dir, `plugin:${plugin}`, { requireMetaV2: true, builtFor })) {
+      for (const m of scanLayer(dir, `plugin:${plugin}`, { requireMetaV2: true, builtFor, onDrop })) {
         if (taken.has(m.key)) {
           console.warn(
             `[agent-registry] plugin agent "${m.key}" (plugin "${plugin}") collides with an existing agent and was skipped`,
           );
+          if (onDrop) onDrop({ origin: `plugin:${plugin}`, file: `${m.key}.meta.json`, reason: 'collides with an existing agent' });
           continue;
         }
         taken.add(m.key);

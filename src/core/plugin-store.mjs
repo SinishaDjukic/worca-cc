@@ -21,7 +21,10 @@ import {
   DIR_NAME_RE,
 } from './plugins-lock.mjs';
 import { addPluginRepo, fetchCandidate, exportVersion, repoCacheDir } from './plugin-repo.mjs';
-import { importPluginWorkflows, removePluginWorkflows, referencedPluginAgents } from './plugin-workflows.mjs';
+import {
+  importPluginWorkflows, readPluginWorkflows, removePluginWorkflows, referencedPluginAgents,
+} from './plugin-workflows.mjs';
+import { loadAgentRegistry } from './agent-registry.mjs';
 import { pluginModelSecretStatus } from './plugin-models.mjs';
 import { referencedPluginModels } from './config.mjs';
 import { clearBindingsForPlugin } from './source-bindings.mjs';
@@ -132,6 +135,45 @@ export function buildInstallInventory(versionDir) {
   if (manifest.setup?.node) setupCommands.push(`npm ci --prefix ${versionDir} --ignore-scripts --omit=dev`);
   if (manifest.setup?.python === 'pyproject') setupCommands.push(`uv sync --project ${versionDir}`);
   return { agents, taskSources, chatChannels, models, modelSecrets, skills: skills.sort(), workflows, depCount, setupCommands };
+}
+
+/**
+ * Contributions a plugin SHIPS but worca IGNORED, as `[{ file, reason }]` sorted
+ * by file (`agents/<sidecar>.meta.json`, `workflows/<template>.json`). The two
+ * drop sites — the agent registry and the workflow importer — reach only
+ * console.warn on their own, so every reporting surface (install receipt,
+ * Plugins card, doctor) was free to claim a contribution that does not exist.
+ *
+ * Generic by construction: nothing here is keyed on an agent key or a plugin
+ * name — the drop reasons are authored at the drop sites and carried verbatim.
+ *
+ * @param {string} name
+ * @param {string} dir  the plugin's current/ (or version) dir
+ * @param {{registry?: object, drops?: Array<{origin:string,file:string,reason:string}>,
+ *          workflowSkips?: Array<{file:string, errors:string[]}>}} [opts]
+ *        registry/drops: reuse ONE registry load across plugins; workflowSkips:
+ *        the importer's OWN result, when the caller just ran it.
+ * @returns {Array<{file: string, reason: string}>}
+ */
+export function ignoredContributions(name, dir, opts = {}) {
+  const out = [];
+  let drops = opts.drops;
+  let registry = opts.registry;
+  if (!drops) {
+    drops = [];
+    try { registry = loadAgentRegistry(undefined, { onDrop: (d) => drops.push(d) }); }
+    catch { /* no resolvable home: report what the files alone can say */ }
+  }
+  for (const d of drops) {
+    if (d.origin === `plugin:${name}`) out.push({ file: `agents/${d.file}`, reason: d.reason });
+  }
+  const skips = opts.workflowSkips
+    ?? (() => {
+      try { return readPluginWorkflows(name, dir, { registry, quiet: true }).skipped; }
+      catch { return []; }
+    })();
+  for (const s of skips) out.push({ file: `workflows/${s.file}`, reason: `invalid template (${s.errors.join('; ')})` });
+  return out.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
 }
 
 /** Declared setup FACTS only (spec §4.1): setup.node -> npm ci (lockfile
@@ -280,15 +322,20 @@ export async function installPlugin({ repoUrl, subdir = '', name, sha, marketpla
     // reach installPlugin's catch — cleanupFailedVersion would delete the version
     // dir a just-written lock entry points at. The install itself already
     // succeeded; warn and continue (re-import happens on the next update).
+    let workflowSkips = null;
     try {
       const wf = await importPluginWorkflows(name, versionDir);
+      workflowSkips = wf.skipped;
       for (const s of wf.skipped) {
         console.warn(`[plugin-store] ${name}: workflow ${s.file} not imported (${s.errors.join('; ')})`);
       }
     } catch (err) {
       console.warn(`[plugin-store] ${name}: workflow import failed (${err?.message || err}) — plugin installed; re-import via update`);
     }
-    return { ok: true, inventory, warnings };
+    // The receipt says what actually landed: `inventory` is what the plugin
+    // SHIPS, `ignored` is the subset worca refused to load (spec §9.3 drops).
+    const ignored = ignoredContributions(name, versionDir, workflowSkips ? { workflowSkips } : {});
+    return { ok: true, inventory, warnings, ignored };
   } catch (err) {
     cleanupFailedVersion(name, versionDir, prevCurrent);
     throw err;
@@ -328,15 +375,18 @@ export async function updatePlugin(name, { exec = defaultExec } = {}) {
     // §6.2(3): workflow re-import (upsert) after swap + lock update — same
     // isolation rationale as installPlugin: an import failure must not reach
     // this catch (cleanupFailedVersion would tear down the now-live version).
+    let workflowSkips = null;
     try {
       const wf = await importPluginWorkflows(name, versionDir);
+      workflowSkips = wf.skipped;
       for (const s of wf.skipped) {
         console.warn(`[plugin-store] ${name}: workflow ${s.file} not imported (${s.errors.join('; ')})`);
       }
     } catch (err) {
       console.warn(`[plugin-store] ${name}: workflow import failed (${err?.message || err}) — plugin updated; re-import via update`);
     }
-    return { ok: true, updated: true, inventory, warnings, ...cand };
+    const ignored = ignoredContributions(name, versionDir, workflowSkips ? { workflowSkips } : {});
+    return { ok: true, updated: true, inventory, warnings, ignored, ...cand };
   } catch (err) {
     cleanupFailedVersion(name, versionDir, prevCurrent);
     throw err;
@@ -452,6 +502,12 @@ export function setPluginEnabled(name, enabled) {
 /** Lock + current-manifest merge for the Plugins view / CLI list. */
 export function listInstalledPlugins() {
   const lock = readPluginsLock();
+  // ONE registry load for the whole list: it is the only place that knows which
+  // sidecars were dropped, and re-scanning per plugin would be N full scans.
+  const drops = [];
+  let registry = null;
+  try { registry = loadAgentRegistry(undefined, { onDrop: (d) => drops.push(d) }); }
+  catch { /* no resolvable home: fall back to the file-derived view */ }
   return Object.keys(lock).sort().map((name) => {
     const e = lock[name] || {};
     const cur = pluginCurrentDir(name);
@@ -477,6 +533,11 @@ export function listInstalledPlugins() {
       contributions: inv
         ? { agents: inv.agents.length, taskSources: inv.taskSources.length, chatChannels: inv.chatChannels.length, models: inv.models.length, skills: inv.skills.length, workflows: inv.workflows.length }
         : { agents: 0, taskSources: 0, chatChannels: 0, models: 0, skills: 0, workflows: 0 },
+      // `contributions` counts what the plugin SHIPS (files on disk); `ignored`
+      // names the ones worca refused to load, so the card can stop claiming them.
+      // A disabled plugin contributes nothing BY CHOICE — its agents are not in the
+      // registry, so its templates would misreport V4.
+      ignored: manifest && e.enabled !== false ? ignoredContributions(name, cur, { registry, drops }) : [],
     };
   });
 }
@@ -509,6 +570,16 @@ export async function doctorPlugin(name) {
     const mismatch = apiMismatch(manifest.engines?.worcaApi ?? '', dataContractIssues(cur));
     checks.push({ id: 'agents-api', ok: !mismatch,
       detail: mismatch ? mismatch.message : 'agents and pipeline templates are plugin API 3 (meta v2 + graph templates)' });
+  }
+  // Same gate as the card: a disabled plugin contributes nothing BY CHOICE — its
+  // agents are not in the registry, so its templates would misreport V4 and this
+  // check would fail a plugin that is merely switched off.
+  if (manifest && entry.enabled !== false) {
+    const ignored = ignoredContributions(name, cur);
+    c('contributions', ignored.length === 0,
+      ignored.length
+        ? `${ignored.length} ignored: ${ignored.map((i) => `${i.file} — ${i.reason}`).join('; ')}`
+        : 'every shipped contribution loaded');
   }
   if (manifest?.setup?.node && !entry.linked) {
     const h = sha256File(join(cur, 'package-lock.json'));

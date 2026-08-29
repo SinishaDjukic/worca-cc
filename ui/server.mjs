@@ -4334,7 +4334,7 @@ app.post('/api/plugins/install', async (req, res) => {
       repoUrl: body.repoUrl.trim(), subdir, name: body.name.trim(), sha: body.sha.trim(), marketplace,
     });
     reloadChatWorkers(body.name.trim());
-    res.json(out); // { ok: true, inventory }
+    res.json(out); // { ok: true, inventory, warnings, ignored }
   } catch (err) {
     sendPluginError(res, err);
   }
