@@ -560,3 +560,81 @@ test('selecting a node repaints Info but never switches the tab', async () => {
   assert.equal(s.el.insRail.dataset.tab, 'agents', 'no auto-switch');
   assert.equal(s.el.insBody.querySelector('.ins-panel').dataset.nodeId, 'n_agent', 'Info is painted anyway');
 });
+
+// -------------------------------------------------------------------- MAJ-19
+// The composer's keydown listener lives on `doc`, so it is still live while a
+// modal is up. Two modal shapes reach it: the composer's own <dialog> (whose
+// Cancel/Save buttons are focusable non-inputs `isTyping` does not cover) and
+// the app's overlays — plain <div role="dialog"> that only toggle the `hidden`
+// CLASS, which `dialog[open]` alone misses (index.html:1247, app.js:6973
+// auto-focuses their <button>).
+const keyOn = (s, target, k, o = {}) => target.dispatchEvent(
+  new s.win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...o }));
+
+/** The app's #confirm-modal, reduced to the two facts the guard reads: a
+ *  role="dialog" host that carries `hidden` as a CLASS, and a focusable button. */
+function appConfirmModal(s, { open: isOpen = true } = {}) {
+  const host = s.doc.createElement('div');
+  host.id = 'confirm-modal';
+  host.className = `viewer-modal confirm-modal${isOpen ? '' : ' hidden'}`;
+  host.setAttribute('role', 'dialog');
+  host.setAttribute('aria-modal', 'true');
+  const ok = s.doc.createElement('button');
+  ok.type = 'button'; ok.id = 'confirm-ok'; ok.textContent = 'Confirm';
+  host.appendChild(ok);
+  s.doc.body.appendChild(host);
+  return { host, ok };
+}
+
+test('MAJ-19: Backspace aimed at the save dialog never edits the graph behind it', async () => {
+  const s = await open();
+  s.c.select({ kind: 'node', id: 'n_agent' });
+  const dlg = s.c.openSaveDialog();
+  assert.ok(dlg, 'dialog mounted');
+  const x0 = s.c.template().nodes.find((n) => n.id === 'n_agent').x;
+  keyOn(s, dlg.querySelector('.sd-confirm'), 'Backspace');
+  assert.equal(s.c.template().nodes.some((n) => n.id === 'n_agent'), true, 'the node survives the modal keystroke');
+  keyOn(s, dlg.querySelector('.sd-cancel'), 'ArrowRight');
+  assert.equal(s.c.template().nodes.find((n) => n.id === 'n_agent').x, x0, 'arrows never nudge behind the modal');
+  // Focus outside the dialog (jsdom's showModal fallback focuses nothing): the
+  // `dialog[open]` arm has to catch it too.
+  keyOn(s, s.doc, 'Backspace');
+  assert.equal(s.c.template().nodes.some((n) => n.id === 'n_agent'), true, 'a document-targeted key is guarded too');
+  // typing in the NAME field stays ignored by the pre-existing isTyping guard
+  keyOn(s, dlg.querySelector('.sd-name'), 'Backspace');
+  assert.equal(s.c.template().nodes.some((n) => n.id === 'n_agent'), true);
+});
+
+test("MAJ-19: Backspace aimed at the app's confirm modal never edits the graph", async () => {
+  const s = await open();
+  s.c.select({ kind: 'node', id: 'n_agent' });
+  const m = appConfirmModal(s);
+  keyOn(s, m.ok, 'Backspace');
+  assert.equal(s.c.template().nodes.some((n) => n.id === 'n_agent'), true, 'the × confirm cannot delete a node');
+  keyOn(s, s.doc, 'Backspace');
+  assert.equal(s.c.template().nodes.some((n) => n.id === 'n_agent'), true, 'nor can a stray key while it is up');
+});
+
+test('MAJ-19: the modal guard is not over-broad — closed overlays leave the keyboard live', async () => {
+  const s = await open();
+  appConfirmModal(s, { open: false });                 // .hidden CLASS = closed
+  const sheet = s.doc.createElement('section');        // Ask Worca sheet: hidden ATTRIBUTE
+  sheet.setAttribute('role', 'dialog'); sheet.hidden = true;
+  s.doc.body.appendChild(sheet);
+  s.c.openSaveDialog();
+  const dlg = s.el.dialogHost.querySelector('dialog.save-dialog');
+  dlg.querySelector('.sd-cancel').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  assert.equal(dlg.hasAttribute('open') || dlg.open, false, 'precondition: the save dialog is closed');
+  s.c.select({ kind: 'node', id: 'n_agent' });
+  keyOn(s, s.doc, 'Backspace');
+  assert.equal(s.c.template().nodes.some((n) => n.id === 'n_agent'), false, 'Backspace still deletes with no modal up');
+  // The Ask Worca sheet is role="dialog" WITHOUT aria-modal and stays open while
+  // the canvas is used (ask-panel.mjs:202-207, :522) — it never owns the keyboard.
+  const ask = s.doc.createElement('section');
+  ask.className = 'ask-sheet'; ask.setAttribute('role', 'dialog'); ask.setAttribute('aria-label', 'Ask Worca');
+  ask.hidden = false;
+  s.doc.body.appendChild(ask);
+  s.c.select({ kind: 'node', id: 'n_task' });
+  keyOn(s, s.doc, 'Backspace');
+  assert.equal(s.c.template().nodes.some((n) => n.id === 'n_task'), false, 'an open non-modal Ask sheet leaves the keyboard live');
+});

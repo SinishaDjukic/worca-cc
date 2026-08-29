@@ -400,7 +400,33 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); }
   function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); }
 
+  /** True while ANY modal owns the keyboard (MAJ-19). Two selectors, because no
+   *  single one covers the two modal shapes this document carries:
+   *   · the composer's own <dialog> — `open` is set by showModal() (spec: the
+   *     attribute is reflected) AND by save-dialog.mjs's jsdom fallback. Its
+   *     Cancel/Save buttons are focusable NON-inputs, which `isTyping`
+   *     deliberately does not cover, and showModal's inertness does not stop the
+   *     dialog's own keydown from bubbling to this document listener;
+   *   · the app's overlays — plain <div role="dialog" aria-modal="true"> that only
+   *     toggle the `hidden` CLASS (index.html:1247 #confirm-modal and four
+   *     siblings), which `dialog[open]` misses entirely; confirmModal auto-focuses
+   *     their <button> (app.js:6973), so a Backspace aimed at a Delete-pipeline
+   *     confirm would otherwise delete the selected NODE behind it. The Ask Worca
+   *     sheet carries role="dialog" WITHOUT aria-modal and is deliberately NOT
+   *     matched: it is a docked, non-modal panel the canvas is used alongside.
+   *  The `:not(.hidden):not([hidden])` pair is load-bearing: without it the arm
+   *  is permanently true (every overlay is in the DOM from page load) and the
+   *  canvas keyboard dies for good. */
+  function modalUp() {
+    if (doc.querySelector('dialog[open]')) return true;
+    // `aria-modal`, not `role="dialog"`: the Ask Worca sheet (ask-panel.mjs:206) is a
+    // role="dialog" DOCKED panel that stays open while the canvas is used — it must
+    // never own the canvas keyboard. Every app overlay declares aria-modal="true".
+    return Boolean(doc.querySelector('[aria-modal="true"]:not(.hidden):not([hidden])'));
+  }
+
   function onKeyDown(ev) {
+    if (modalUp()) return;                        // a modal owns the keyboard — never the canvas
     if (isTyping(ev.target)) return;              // guard FIRST — before space, before anything
     if (ev.key === ' ') { if (!space) { space = true; stage.classList.add('space'); } ev.preventDefault(); return; }
     if (ev.key === 'Escape') {
