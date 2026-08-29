@@ -1,23 +1,36 @@
 // test/graph-prompt-parity.test.mjs
-// THE prompt snapshot pin. For each of the 11 shipped builtins this assembles the v2
-// task prompt through the SAME builder runAgentExecution ships (buildAgentPrompt,
-// driven by the REAL agents/*.meta.json sidecars — never a fixture) and asserts it
-// still CONTAINS every load-bearing line of today's bespoke phases.mjs prompts.
+// THE prompt snapshot pin, in two layers. For each of the 11 shipped builtins this
+// assembles the v2 task prompt through the SAME builder runAgentExecution ships
+// (buildAgentPrompt, driven by the REAL agents/*.meta.json sidecars — never a
+// fixture) and then:
+//   1. FRAGMENTS — asserts it still CONTAINS every load-bearing line of today's
+//      bespoke phases.mjs prompts, each named so a failure says WHAT was lost;
+//   2. WHOLE PROMPT — asserts byte equality against test/fixtures/prompt-snapshots/
+//      <key>.md. Fragments alone cannot see a DELETION of an unpinned line or a
+//      REORDER of the blocks; the snapshot can, and the fragment names are the
+//      readable index into it.
+// Regenerating the snapshots (after a DELIBERATE prompt change — always review the
+// diff, it is the contract with every shipped agent):
+//   UPDATE_PROMPT_SNAPSHOTS=1 WORCA_HOME=$(mktemp -d) \
+//     node --test test/graph-prompt-parity.test.mjs
 // Anchors as of dev e6968e15 (P1/P2 do not touch phases.mjs): taskHeader :449-496 ·
-// fanOutDirective :122-146 · RESUME_HEADER :331-335 · questions block :349-375 ·
-// verdict contract :879-881 · implementer arms :788-812 + :836 · siblings :762-777 ·
-// reviewer diff :859-866 · planner instruction :651-653, revise :641-647, inline
-// answers :658-660 · refiner :681-682 · decomposer :721-731 · planReviewer :908-909 ·
-// workspace reviewer :953-954 + :961-962 · checklist :1076-1084 · web UI :1120-1127 ·
-// clarify :581-587 · attachments channels.mjs:279-286.
+// fanOutDirective :122-146 · verdict contract :879-881 · implementer arms :788-812
+// + :836 · siblings :762-777 · reviewer diff :859-866 · planner instruction
+// :651-653, revise :641-647, inline answers :658-660 · refiner :681-682 ·
+// decomposer :721-731 · planReviewer :908-909 · workspace reviewer :953-954 +
+// :961-962 · checklist :1076-1084 · web UI :1120-1127 · clarify :581-587 ·
+// base instruction :1206-1207 / :1245-1246 · RESUME_HEADER :331-335 ·
+// attachments channels.mjs:279-286.
 // If a number has drifted, locate by content — the strings are the contract.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { worcaHome } from '../src/core/projects.mjs';
+import { projectKey } from '../src/core/store.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { runOpts, RESUME_HEADER, READ_WRITE_TOOLS, IMPLEMENTER_TOOLS } from '../src/core/phases.mjs';
@@ -132,6 +145,33 @@ const V1_CHECKLIST_SINGLE =
   'app. Each case: a `- [ ]` line with steps and the expected result.';
 const V1_CHECKLIST_DETACHED = 'your cwd is the worca-cc run root, not a repository, so inspect each member on its own';
 /** The generalized input renderers that replace v1's bespoke arms (v2 bytes, by design). */
+/** executor.mjs#baseInstruction, the PRODUCER arm — v1's generic producer
+ *  (phases.mjs:1206-1207). The first line of every non-verifier agent prompt, and
+ *  the only sentence that tells an agent to write its declared outputs at all. */
+const V2_BASE_PRODUCER =
+  'You are a pipeline agent. Read every input below, do your job exactly as your role ' +
+  'instructions describe, and write EVERY declared output to its exact path.';
+/** …the VERIFIER arm — v1's generic verifier (phases.mjs:1245-1246). */
+const V2_BASE_VERIFIER =
+  'You are a verifier. Inspect the inputs below exactly as your role instructions describe, ' +
+  'then write a human-readable review markdown AND a machine-readable review JSON.';
+/** …the CLARIFIER arm — v1's buildClarifyPrompt (:581-587) minus its parenthetical
+ *  aside naming two builtin agents a generic graph need not have. */
+const V2_BASE_CLARIFIER =
+  'Identify the decisions you cannot safely resolve from the task text or the real ' +
+  'codebase — including things a downstream agent would otherwise silently assume. For ' +
+  'each, produce one conceptual question with 2 to 4 options and a free-text fallback. Ask ' +
+  'only what materially changes the plan (up to 8 questions); never pad, and never split one ' +
+  'decision. For low-impact details, pick a sensible default rather than asking. If you have ' +
+  'no material open questions, write { "questions": [] } to that same path.';
+/** phases.mjs#RESUME_HEADER (:288-292), verbatim — the import alone only pins the
+ *  POSITION, so the bytes are restated here. */
+const V1_RESUME_HEADER =
+  '## Resumed session\n\n' +
+  'You were interrupted mid-task and this session has been resumed. First verify the\n' +
+  'state of your previous work (files/artifacts you already wrote), then continue the\n' +
+  'ORIGINAL task below to completion. Do not redo work that is already done.\n\n';
+
 const V2_FIX_REVIEW_ARM = '(the review to address — fix EVERY critical and major issue)';
 const V2_ANSWERS_ARM = '(the clarifying questions and the answers already given)';
 
@@ -236,6 +276,35 @@ test('every builtin keeps the v1 task header: title, cwd line, pipeline dir, ski
     assert.ok(p.includes(`Project directory (your cwd): ${projectDir}\n`), `${key}: cwd line`);
     assert.ok(p.includes(`Pipeline directory (shared artifacts): ${pipelineDir}\n\n`), `${key}: pipeline dir`);
     assert.ok(p.includes(V1_SKILLS_HINT), `${key}: skills hint`);
+  }
+});
+
+const BASE_BY_RUNNER = {
+  producer: V2_BASE_PRODUCER, verifier: V2_BASE_VERIFIER, clarifier: V2_BASE_CLARIFIER,
+};
+
+test('every builtin opens "## What to do" with the base instruction for its runnerType — and only that one', () => {
+  const arms = Object.values(BASE_BY_RUNNER);
+  for (const key of BUILTIN_KEYS) {
+    const runnerType = REGISTRY[key].runnerType || 'producer';
+    const mine = BASE_BY_RUNNER[runnerType];
+    assert.ok(mine, `${key}: unknown runnerType ${runnerType}`);
+    const p = promptFor(key);
+    // Position, not just presence: the base instruction is the FIRST thing under
+    // the heading, ahead of the sidecar hints and every block after them.
+    assert.ok(p.includes(`\n## What to do\n\n${mine}\n\n`),
+      `${key}: "## What to do" must open with the ${runnerType} base instruction`);
+    for (const other of arms) {
+      if (other !== mine) assert.equal(p.includes(other), false, `${key}: carries a foreign base instruction`);
+    }
+  }
+  // The clause that makes an agent write its files at all is keyed by runnerType,
+  // never by an agent key — every non-verifier builtin carries it.
+  assert.ok(V2_BASE_PRODUCER.includes('write EVERY declared output to its exact path'));
+  const producers = BUILTIN_KEYS.filter((k) => (REGISTRY[k].runnerType || 'producer') === 'producer');
+  assert.ok(producers.length >= 5, `expected several producers, got ${producers.length}`);
+  for (const key of producers) {
+    assert.ok(promptFor(key).includes('write EVERY declared output to its exact path'), key);
   }
 });
 
@@ -454,7 +523,8 @@ test('frontmatter tools reach allowedTools — the Playwright grants are not los
 test('a resumed execution keeps the v1 resume header, ahead of the task prompt', () => {
   const ctx = { ...ctxFor('reviewer'), resumeSessionId: 'sess-9' };
   const opts = runOpts(ctx, { role: 'r', prompt: buildAgentPrompt(ctx), systemPrompt: 'S', allowedTools: READ_WRITE_TOOLS });
-  assert.ok(opts.prompt.startsWith(RESUME_HEADER));
+  assert.equal(RESUME_HEADER, V1_RESUME_HEADER, 'the resume header keeps its v1 bytes');
+  assert.ok(opts.prompt.startsWith(V1_RESUME_HEADER));
   assert.ok(opts.prompt.includes(`# Task: ${REGISTRY.reviewer.displayName}`));
 });
 
@@ -465,4 +535,43 @@ test('runAgentExecution ships exactly the prompt buildAgentPrompt produced', asy
   assert.ok(r.outputs.review.path.endsWith('-impl-review.md'));
   assert.ok(Array.isArray(r.verdict.issues));
   assert.match(r.sessionId, /^mock-session-/);
+});
+
+// ── the whole-prompt snapshots ───────────────────────────────────────────────
+
+const SNAPSHOT_DIR = fileURLToPath(new URL('./fixtures/prompt-snapshots/', import.meta.url));
+
+/**
+ * The only four things in a prompt that are not stable across machines and runs:
+ * the two mkdtemp scratch dirs, the temp WORCA_HOME behind `store:'project'`
+ * allocations, and the store key those allocations embed (store.mjs#projectKey =
+ * `<basename>-<sha1(path)[:8]>`, so it changes with the mkdtemp suffix). Everything
+ * else in ctxFor is fixed by construction (datePrefix '01-01-26', checkpointRef
+ * 'abc1234', ORDINAL 2, `/abs/<port>.<ext>` bindings), so no date or id
+ * normalisation is needed. Longest path first: the dirs are siblings under
+ * tmpdir(), and a prefix replacement must not eat a longer match.
+ */
+function normalizePrompt(text) {
+  const subs = [
+    [worcaHome(), '<WORCA_HOME>'],
+    [pipelineDir, '<PIPELINE_DIR>'],
+    [projectDir, '<PROJECT_DIR>'],
+    [projectKey(projectDir), '<STORE_KEY>'],
+  ].sort((a, b) => b[0].length - a[0].length);
+  return subs.reduce((acc, [from, to]) => acc.split(from).join(to), text);
+}
+
+test('every builtin prompt matches its committed whole-prompt snapshot', () => {
+  const update = process.env.UPDATE_PROMPT_SNAPSHOTS === '1';
+  if (update) mkdirSync(SNAPSHOT_DIR, { recursive: true });
+  for (const key of BUILTIN_KEYS) {
+    const file = join(SNAPSHOT_DIR, `${key}.md`);
+    const actual = normalizePrompt(promptFor(key));
+    assert.equal(actual.includes(tmpdir()), false, `${key}: an un-normalised temp path leaked into the snapshot`);
+    if (update) { writeFileSync(file, `${actual}\n`, 'utf8'); continue; }   // newline-terminated: a POSIX text file, byte-exact in a listing
+    assert.equal(`${actual}\n`, readFileSync(file, 'utf8'),
+      `${key}: the assembled prompt no longer matches test/fixtures/prompt-snapshots/${key}.md. `
+      + 'If the change is deliberate, review the diff and regenerate with '
+      + 'UPDATE_PROMPT_SNAPSHOTS=1 (see this file\'s header).');
+  }
 });
