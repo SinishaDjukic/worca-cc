@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { buildSystemPrompt } from '../src/core/phases.mjs';
 
@@ -33,7 +34,7 @@ const WS = {
 
 // Load the two workspace agent bodies so the system-prompt assertions exercise the
 // REAL shipped bodies (the contract per C10).
-const AGENTS_DIR = new URL('../agents/', import.meta.url).pathname;
+const AGENTS_DIR = fileURLToPath(new URL('../agents/', import.meta.url));
 const reviewerBody = await readFile(join(AGENTS_DIR, 'worca-cc-workspace-reviewer.md'), 'utf8');
 const scannerBody = await readFile(join(AGENTS_DIR, 'worca-cc-workspace-scanner.md'), 'utf8');
 

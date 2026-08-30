@@ -29,7 +29,7 @@ before(async () => {
 
   const projB = await mkdtemp(join(tmpdir(), 'worca-cc-pauseapi-projB-'));
   const goneWt = await mkdtemp(join(tmpdir(), 'worca-cc-pauseapi-wt-'));
-  await rm(goneWt, { recursive: true, force: true }); // worktree no longer exists
+  await rm(goneWt, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); // worktree no longer exists
   ({ id: pausedNoWtId } = await seedPipeline(projB, {
     title: 'paused run', status: 'paused',
     branch: { source: 'main', feature: 'f', worktreeDir: goneWt, reusedExisting: false },
@@ -61,8 +61,8 @@ after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
   _resetForTests();
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
-  await rm(homeDir, { recursive: true, force: true });
-  if (liveWt) await rm(liveWt, { recursive: true, force: true });
+  await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  if (liveWt) await rm(liveWt, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 function post(path, body) {
@@ -178,7 +178,7 @@ test('resumeRun re-attaches the Ask follower of a linked paused run: link moves 
   const final = listRunLinks(t.id)[0];
   assert.match(final.status, /^(done|error|stopped)$/, `follower reported a terminal status, got ${final.status}`);
   assert.ok(listMessages(t.id).some((m) => /Run finished|Run failed/.test(m.text)), 'terminal notice posted by the re-attached follower');
-  await rm(wtD, { recursive: true, force: true });
+  await rm(wtD, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 // P8a: the v1 engine is retired. V24 NULLs the resume points it reaches, but a

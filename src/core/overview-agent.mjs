@@ -6,7 +6,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runClaude } from './claude-runner.mjs';
-import { resolveModelEnv } from './config.mjs';
+import { resolveModelEnv, resolveModelCost } from './config.mjs';
 import { safeParseJson } from './protocol.mjs';
 import {
   lookupPipelineRow, runDirForRow, upsertSubAgent, readPipelineExtras,
@@ -94,6 +94,7 @@ export async function generateOverview(key, id, { model, signal, force = false, 
 
   const prompt = buildOverviewPrompt({ patch, results, reviews });
   let costUsd = null;
+  let usage = null;
   const startedAt = new Date().toISOString();
   const { text } = await runClaudeImpl({
     cwd: dir,
@@ -103,13 +104,24 @@ export async function generateOverview(key, id, { model, signal, force = false, 
     model,
     modelEnv: resolveModelEnv(model), // catalog routing env travels with the id (design §4.8)
     signal,
-    onEvent: (e) => { if (e.costUsd != null) costUsd = e.costUsd; },
+    onEvent: (e) => {
+      if (e.costUsd == null) return;
+      costUsd = e.costUsd;
+      usage = e.raw && typeof e.raw === 'object' ? e.raw.usage ?? null : null;
+    },
   });
 
   const overview = normalizeOverview(safeParseJson(text));
   await writeFile(join(dir, OVERVIEW_FILE), JSON.stringify(overview, null, 2));
 
-  // Record as a sub-agent for cost telemetry parity with pipeline nodes.
+  // Record as a sub-agent for cost telemetry parity with pipeline nodes — which
+  // includes the per-model cost override, so an overview run on a free/priced
+  // endpoint doesn't display the CLI's by-name figure. Unpriceable ({perMtok}
+  // with no usage) → NaN → leave it null rather than show a made-up number.
+  if (costUsd != null) {
+    const resolved = resolveModelCost(model, Number(costUsd), usage);
+    costUsd = Number.isFinite(resolved) ? resolved : null;
+  }
   upsertSubAgent(row.id, {
     id: `overview-${id}`,
     label: 'overview',

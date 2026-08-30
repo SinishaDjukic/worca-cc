@@ -14,3 +14,5 @@ graphify-out/
 
 # planning artifacts are working files, never committed (rule since 2026-08-07)
 docs/superpowers/
+# OpenDeck baked narration (generated locally by the Audio Studio)
+docs/why-worca/narration-audio.js

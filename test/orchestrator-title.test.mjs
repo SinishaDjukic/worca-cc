@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { posix } from './helpers/posix-path.mjs';
 
 useTempHome(after);
 
@@ -84,7 +85,7 @@ test('generateTitle is called with the RUN CWD, never the live projectDir (detac
     assert.equal(cwdAtKickoff, workDirAtKickoff, 'cwd is the run-root worktree');
     // The realpath'd run root differs from the deterministic one only by macOS's
     // /var -> /private/var symlink, so match on the stable tail.
-    assert.match(cwdAtKickoff, new RegExp(`/runs/${orch.getState().id}/repos/${key}$`),
+    assert.match(posix(cwdAtKickoff), new RegExp(`/runs/${orch.getState().id}/repos/${key}$`),
       `cwd sits under the run root: ${cwdAtKickoff}`);
   } finally {
     delete process.env.WORCA_MOCK;

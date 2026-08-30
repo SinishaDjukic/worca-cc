@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { loadAgentRegistry, registryToSteps, normalizeMeta, collectDomains } from '../src/core/agent-registry.mjs';
 import { AGENT_STEPS } from '../src/core/config.mjs';
@@ -118,7 +119,7 @@ test('registryToSteps appends the new agents with their display names', () => {
 
 test('every agentFile points at an existing prompt under agents/', () => {
   const reg = loadAgentRegistry();
-  const agentsDir = new URL('../agents/', import.meta.url).pathname;
+  const agentsDir = fileURLToPath(new URL('../agents/', import.meta.url));
   for (const m of Object.values(reg)) {
     assert.ok(m.agentFile, `${m.key} has no agentFile`);
     assert.ok(

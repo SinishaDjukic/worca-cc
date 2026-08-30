@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
@@ -41,7 +41,7 @@ async function boot() {
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
   }
   globalThis.window = window; globalThis.document = window.document;
-  await import(appPath + `?b=${Date.now()}_${Math.random()}`);  // cache-bust: fresh module each test
+  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);  // cache-bust: fresh module each test
   await new Promise((r) => setTimeout(r, 0));                    // let loadProjects/loadConfig settle
   const np = window.__np;
   // WS is created at import time (connectWS()) → lastWs is set now.

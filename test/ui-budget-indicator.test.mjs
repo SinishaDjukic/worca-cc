@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { renderBudgetRing } from '../ui/public/stats-view.mjs';
 
@@ -89,7 +89,7 @@ async function boot({ budget = okBudget(), tickMs } = {}) {
   // The tick seam is read ONCE inside startBudgetTick() at boot, so it has to
   // be on `window` between JSDOM creation and the cache-busted app.js import.
   if (tickMs != null) window.__budgetTickMs = tickMs;
-  await import(appPath + `?b=${Date.now()}_${Math.random()}`);
+  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   const tick = () => new Promise((r) => setTimeout(r, 0));
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));

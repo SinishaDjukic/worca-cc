@@ -16,6 +16,8 @@ import {
 } from '../src/core/plugin-repo.mjs';
 import { writePluginsLock, pluginDir } from '../src/core/plugins-lock.mjs';
 
+const WIN_SYMLINK = { skip: process.platform === 'win32' ? 'creating symlinks needs a privilege (Developer Mode / admin) on Windows' : false };
+
 useTempHome(after);
 const execFileP = promisify(execFile);
 const scratch = mkdtempSync(join(tmpdir(), 'worca-cc-repo-'));
@@ -41,6 +43,7 @@ async function makeRepo(dirName, files) {
   const root = join(scratch, dirName);
   mkdirSync(root, { recursive: true });
   await git(root, 'init', '-q', '-b', 'main');
+  await git(root, 'config', 'core.autocrlf', 'false'); // Windows git would CRLF the checkout
   writeTree(root, files);
   await git(root, 'add', '-A');
   await git(root, 'commit', '-qm', 'c1');
@@ -155,10 +158,11 @@ test('exportVersion: subdir layout is extracted at the version root (strip-compo
   assert.ok(!existsSync(join(versionDir, 'README.md')), 'sibling repo files not exported');
 });
 
-test('exportVersion: escaping symlink deleted with warning; internal symlink kept', async () => {
+test('exportVersion: escaping symlink deleted with warning; internal symlink kept', WIN_SYMLINK, async () => {
   const root = join(scratch, 'exp-link');
   mkdirSync(root, { recursive: true });
   await git(root, 'init', '-q', '-b', 'main');
+  await git(root, 'config', 'core.autocrlf', 'false'); // Windows git would CRLF the checkout
   writeTree(root, {
     'worca-cc-plugin.json': MANIFEST('exp-link-plugin'),
     'index.mjs': 'export default () => ({});\n',

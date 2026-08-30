@@ -9,6 +9,8 @@ import { join } from 'node:path';
 import { explainUnspawnableClaude } from '../src/core/preflight.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 
+const POSIX_ONLY = { skip: process.platform === 'win32' ? 'exercises the POSIX branch of a platform switch' : false };
+
 const has = (...paths) => (p) => paths.includes(p);
 const WIN = { platform: 'win32', pathEnv: 'C:\\Windows;C:\\Users\\u\\AppData\\Roaming\\npm' };
 const SHIM = join('C:\\Users\\u\\AppData\\Roaming\\npm', 'claude.cmd');
@@ -77,7 +79,7 @@ test('runClaude: ENOENT on a bare name whose only PATH hit is a .cmd shim → er
   );
 });
 
-test('runClaude: the same ENOENT on POSIX stays the plain OS error', async () => {
+test('runClaude: the same ENOENT on POSIX stays the plain OS error', POSIX_ONLY, async () => {
   const bin = 'worca-fake-claude-shim';
   writeFileSync(join(dir, `${bin}.cmd`), '@echo off\n');
   process.env.PATH = dir;

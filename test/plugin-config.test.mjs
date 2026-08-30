@@ -7,6 +7,7 @@ import { statSync, readFileSync, readdirSync, existsSync, mkdirSync, writeFileSy
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { pluginDataDir } from '../src/core/plugins-lock.mjs';
+
 import {
   readPluginConfig, writePluginConfig, redactedConfig, readPluginState, writePluginState,
   listProfiles, listProfileIds, createProfile, deleteProfile, isValidProfileId, DEFAULT_PROFILE,
@@ -30,7 +31,7 @@ test('writePluginConfig routes secret fields to secrets.json with mode 0600', ()
   // legacy flat file — no shape heuristic can (state keys are arbitrary).
   assert.deepEqual(secrets, { $format: 'profiles/1', profiles: { default: { token: 'ghp_abc123' } } });
   assert.deepEqual(config, { $format: 'profiles/1', profiles: { default: { repo: 'acme/api' } } });
-  assert.equal(statSync(join(dir, 'secrets.json')).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(statSync(join(dir, 'secrets.json')).mode & 0o777, 0o600); // NTFS has no POSIX mode bits
   assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith('.tmp')), [], 'atomic: no temp litter');
 });
 
@@ -105,7 +106,7 @@ test('profile roster: create is idempotent, delete removes the data too', () => 
   assert.equal(readPluginConfig(P, SCHEMA, 'client').token, null, 'secret purged with the profile');
   const secrets = JSON.parse(readFileSync(join(pluginDataDir(P), 'secrets.json'), 'utf8'));
   assert.equal('client' in secrets.profiles, false, 'bucket removed, not just emptied');
-  assert.equal(statSync(join(pluginDataDir(P), 'secrets.json')).mode & 0o777, 0o600, 'delete keeps 0600');
+  if (process.platform !== 'win32') assert.equal(statSync(join(pluginDataDir(P), 'secrets.json')).mode & 0o777, 0o600, 'delete keeps 0600'); // NTFS has no POSIX mode bits
 });
 
 test('the roster reserves "default": the shared bucket is never creatable or deletable', () => {

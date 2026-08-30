@@ -11,6 +11,8 @@ import { join } from 'node:path';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { classifyError } from '../src/core/recoverable-error.mjs';
 
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
+
 const tmpDirs = [];
 async function makeTmpDir() {
   const dir = await mkdtemp(join(tmpdir(), 'worca-cc-runner-err-'));
@@ -48,7 +50,7 @@ async function fakeBin(dir, { stdout = '', stderr = '', code = 0 } = {}) {
   return path;
 }
 
-test('non-zero exit + empty stderr: surfaces the stdout is_error result text', async () => {
+test('non-zero exit + empty stderr: surfaces the stdout is_error result text', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const bin = await fakeBin(dir, {
     code: 1,
@@ -68,7 +70,7 @@ test('non-zero exit + empty stderr: surfaces the stdout is_error result text', a
   );
 });
 
-test('real stderr still takes precedence when present', async () => {
+test('real stderr still takes precedence when present', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const bin = await fakeBin(dir, {
     code: 1,
@@ -95,7 +97,7 @@ async function fakeShell(dir, body) {
 
 const stderrEvents = (events) => events.filter((e) => e.type === 'stderr');
 
-test('stderr lines are emitted as stream:"err" events on a SUCCESSFUL run', async () => {
+test('stderr lines are emitted as stream:"err" events on a SUCCESSFUL run', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const bin = await fakeShell(dir, [
     `printf '%s\\n' 'Overloaded, retrying in 4s' 1>&2`,
@@ -110,7 +112,7 @@ test('stderr lines are emitted as stream:"err" events on a SUCCESSFUL run', asyn
   ]);
 });
 
-test('each stderr line is its own event, blank lines dropped', async () => {
+test('each stderr line is its own event, blank lines dropped', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const bin = await fakeShell(dir, [
     `printf '%s\\n\\n%s\\n' 'first' 'second' 1>&2`,
@@ -121,7 +123,7 @@ test('each stderr line is its own event, blank lines dropped', async () => {
   assert.deepEqual(stderrEvents(events).map((e) => e.text), ['first', 'second']);
 });
 
-test('a final stderr line with NO trailing newline is still emitted', async () => {
+test('a final stderr line with NO trailing newline is still emitted', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   // printf without \n: the line only exists in the carry buffer until close.
   const bin = await fakeShell(dir, [`printf '%s' 'no trailing newline' 1>&2`, 'exit 0']);
@@ -130,7 +132,7 @@ test('a final stderr line with NO trailing newline is still emitted', async () =
   assert.deepEqual(stderrEvents(events).map((e) => e.text), ['no trailing newline']);
 });
 
-test('a line split across write boundaries is reassembled, not torn in two', async () => {
+test('a line split across write boundaries is reassembled, not torn in two', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   // Two writes, one logical line: the carry buffer must hold "one half " until
   // the newline arrives with the second write.
@@ -145,7 +147,7 @@ test('a line split across write boundaries is reassembled, not torn in two', asy
   assert.deepEqual(stderrEvents(events).map((e) => e.text), ['one half and the rest']);
 });
 
-test('a multi-byte UTF-8 character split across write boundaries is not torn into U+FFFD', async () => {
+test('a multi-byte UTF-8 character split across write boundaries is not torn into U+FFFD', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   // '…' is E2 80 A6: write E2 80, then A6 + newline in a second write.
   const bin = await fakeShell(dir, [
@@ -159,7 +161,7 @@ test('a multi-byte UTF-8 character split across write boundaries is not torn int
   assert.deepEqual(stderrEvents(events).map((e) => e.text), ['…']);
 });
 
-test('CR-rewriting progress output is framed live, one event per update', async () => {
+test('CR-rewriting progress output is framed live, one event per update', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const bin = await fakeShell(dir, [`printf '10%%\\r20%%\\r30%%\\n' 1>&2`, 'exit 0']);
   const events = [];
@@ -167,7 +169,7 @@ test('CR-rewriting progress output is framed live, one event per update', async 
   assert.deepEqual(stderrEvents(events).map((e) => e.text), ['10%', '20%', '30%']);
 });
 
-test('the exit-code stderr detail also survives chunk-split multi-byte characters', async () => {
+test('the exit-code stderr detail also survives chunk-split multi-byte characters', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const bin = await fakeShell(dir, [
     `printf '\\342\\200' 1>&2`, 'sleep 0.2', `printf '\\246\\n' 1>&2`, 'exit 1',
@@ -179,7 +181,7 @@ test('the exit-code stderr detail also survives chunk-split multi-byte character
   });
 });
 
-test('the non-zero-exit error is marked stream:"err" only when stderr fed it', async () => {
+test('the non-zero-exit error is marked stream:"err" only when stderr fed it', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const fromStderr = await fakeBin(dir, { code: 1, stderr: 'boom from stderr' });
   await assert.rejects(
@@ -201,7 +203,7 @@ test('the non-zero-exit error is marked stream:"err" only when stderr fed it', a
   );
 });
 
-test('stderr chatter after an abort is not logged into a paused run', async () => {
+test('stderr chatter after an abort is not logged into a paused run', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   // `exec` replaces the shell with sleep, so the runner's SIGTERM hits the
   // process actually holding the stderr pipe — without it an orphaned sleep
@@ -218,7 +220,7 @@ test('stderr chatter after an abort is not logged into a paused run', async () =
   assert.deepEqual(stderrEvents(events), [], 'the torn fragment must not surface as a warn line');
 });
 
-test('the non-zero-exit detail is tail-capped so err.message stays bounded', async () => {
+test('the non-zero-exit detail is tail-capped so err.message stays bounded', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const bin = await fakeShell(dir, [
     `i=0; while [ $i -lt 300 ]; do printf 'chatter line %s padded padded padded padded\\n' $i 1>&2; i=$((i+1)); done`,
@@ -239,7 +241,7 @@ test('the non-zero-exit detail is tail-capped so err.message stays bounded', asy
 // therefore classifies line-by-line as stderr streams (surviving the rolling
 // buffer trim) and stamps err.errorClass; classifyError() returns the stamp.
 
-test('a usage-limit marker that scrolled past the tail cap still classifies', async () => {
+test('a usage-limit marker that scrolled past the tail cap still classifies', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const bin = await fakeShell(dir, [
     `printf '%s\\n' "You've hit your session limit · resets 6pm (Europe/Sofia)" 1>&2`,
@@ -255,7 +257,7 @@ test('a usage-limit marker that scrolled past the tail cap still classifies', as
   });
 });
 
-test('an early auth error is not misrouted to network by connection chatter in the tail', async () => {
+test('an early auth error is not misrouted to network by connection chatter in the tail', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const bin = await fakeShell(dir, [
     `printf '%s\\n' 'API Error: 401 Invalid authentication credentials' 1>&2`,
@@ -269,7 +271,7 @@ test('an early auth error is not misrouted to network by connection chatter in t
   });
 });
 
-test('a long stdout is_error detail keeps its class when the marker is capped away', async () => {
+test('a long stdout is_error detail keeps its class when the marker is capped away', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const detail = 'Not logged in · Please run /login. ' + 'chatter '.repeat(400); // marker at HEAD, > cap
   const bin = await fakeBin(dir, {

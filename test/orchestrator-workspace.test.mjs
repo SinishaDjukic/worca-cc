@@ -12,7 +12,7 @@ import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { existsSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { projectKey } from '../src/core/store.mjs';
@@ -20,6 +20,7 @@ import { worcaHome } from '../src/core/projects.mjs';
 import { listAllPipelines, readPipelineForResume } from '../src/core/artifacts.mjs';
 import { readRunManifest } from '../src/core/run-manifest.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { posix } from './helpers/posix-path.mjs';
 
 useTempHome(after); // workspace store writes -> isolated temp home, not real ~/.worca-cc
 
@@ -246,7 +247,7 @@ test('artifacts route to the workspace store (store/workspaces/<key>/pipelines)'
   const orch = createOrchestrator({ ...ws, prompt: 'x', auto: true, claude: { mock: true } });
   await orch.run();
   const state = orch.getState();
-  assert.match(state.pipelineDir, new RegExp(`/store/workspaces/${ws.workspace.key}/pipelines/`),
+  assert.match(posix(state.pipelineDir), new RegExp(`/store/workspaces/${ws.workspace.key}/pipelines/`),
     `pipeline dir under the workspace store: ${state.pipelineDir}`);
 });
 
@@ -401,7 +402,7 @@ test('back-compat: a single-project run (no workspace opts) is unchanged', async
   assert.match(state.branch.feature, /^worca-cc\//);
   // Pipeline routes to the PROJECT store, never workspaces/.
   assert.doesNotMatch(state.pipelineDir, /\/store\/workspaces\//);
-  assert.match(state.pipelineDir, new RegExp(`/store/${projectKey(repo)}/pipelines/`));
+  assert.match(posix(state.pipelineDir), new RegExp(`/store/${projectKey(repo)}/pipelines/`));
 });
 
 // ── Phase 1 detached siblings (pinned `detached`) ─────────────────────────────
@@ -428,7 +429,7 @@ test('detached: every member worktree lives under <worcaHome>/runs/<id>/repos/<p
   assert.ok(live, 'both member worktrees were registered');
   for (const dir of [a, b]) {
     const k = projectKey(dir);
-    assert.match(live[k], new RegExp(`/runs/${live.id}/repos/${k}$`),
+    assert.match(posix(live[k]), new RegExp(`/runs/${live.id}/repos/${k}$`),
       `member ${k} worktree sits under the run root: ${live[k]}`);
     assert.ok(!existsSync(join(dir, '.worca-cc')), `nothing was created inside member ${k}'s repo`);
   }
@@ -539,7 +540,7 @@ test('detached single project: every node runs with cwd = its own detached workt
   assert.ok(seen.length >= 3);
   for (const s of seen) {
     assert.equal(s.cwd, liveWorktree, `node ${s.key} cwd is its OWN worktree`);
-    assert.match(s.cwd, new RegExp(`/runs/${id}/repos/${projectKey(repo)}$`), 'under the run root');
+    assert.match(posix(s.cwd), new RegExp(`/runs/${id}/repos/${projectKey(repo)}$`), 'under the run root');
     assert.notEqual(s.cwd, s.runRoot, 'single mode never starts at the run root itself');
     assert.equal(s.workspace, false, 'no workspace channel on a single-project run');
   }
@@ -851,5 +852,5 @@ test('detached: state.branches is a LIVE object on a SINGLE-project run (constru
   // The synthesized member is the one-element array every unified path iterates.
   assert.equal(orch.members.length, 1);
   assert.equal(orch.members[0].projectKey, k);
-  assert.equal(orch.members[0].projectName, repo.split('/').filter(Boolean).pop());
+  assert.equal(orch.members[0].projectName, basename(repo));
 });

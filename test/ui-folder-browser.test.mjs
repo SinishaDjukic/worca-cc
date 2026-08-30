@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
@@ -41,7 +41,7 @@ async function boot({ fetchHandler } = {}) {
   }
   globalThis.window = window;
   globalThis.document = window.document;
-  await import(appPath + `?b=${Date.now()}_${Math.random()}`);
+  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await tick();
   if (WSStub.last) WSStub.last._open();
   return { window };

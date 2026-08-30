@@ -207,7 +207,9 @@ export async function worktreePathForBranch(projectDir, branch) {
   if (!r.ok) return null;
   let curPath = null;
   for (const line of r.stdout.split(/\r?\n/)) {
-    if (line.startsWith('worktree ')) curPath = line.slice('worktree '.length).trim();
+    // git prints '/'-separated paths even on Windows; resolve() gives callers the
+    // native form they compare against (createWorktree's own worktreeDir).
+    if (line.startsWith('worktree ')) curPath = resolve(line.slice('worktree '.length).trim());
     else if (line.startsWith('branch ')) {
       const ref = line.slice('branch '.length).trim().replace(/^refs\/heads\//, '');
       if (ref === branch) return curPath;
@@ -324,8 +326,16 @@ export async function removeWorktree({ projectDir, worktreeDir, branch, force = 
       : ['worktree', 'remove', worktreeDir];
     const r = await git(projectDir, args, { timeout: SLOW_GIT_TIMEOUT_MS });
     steps.push({ step: 'worktree-remove', ok: r.ok, stderr: r.stderr.trim() });
-    if (force) {
-      const fsRes = await rm(worktreeDir, { recursive: true, force: true })
+    // fs backstop whenever the checkout survives the git remove — not only on
+    // force. Git for Windows routinely leaves the directory behind (a read-only
+    // packed object, or a file a scanner/just-exited git still holds → EBUSY),
+    // which left detached run roots and worktrees on disk. Retry to ride out the
+    // transient lock; a no-op on POSIX where git already emptied the dir.
+    // ...but only when git REPORTED success and still left the dir behind (the
+    // Windows leftover). A non-force refusal on a dirty worktree (r.ok === false)
+    // must keep the checkout — deleting it would discard uncommitted agent work.
+    if (force || (r.ok && existsSync(worktreeDir))) {
+      const fsRes = await rm(worktreeDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
         .then(() => null)
         .catch((e) => e.message);
       if (fsRes) steps.push({ step: 'rm-dir', ok: false, stderr: fsRes });

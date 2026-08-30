@@ -49,6 +49,7 @@ export function allPluginModels() {
       out.push({
         plugin: name, id: m.id, label: m.label, efforts: [...m.efforts],
         ...(m.env ? { env: m.env } : {}),
+        ...(m.cost ? { cost: m.cost } : {}),   // manifest-pinned pricing (config.mjs modelCostConfig)
         secrets: [...new Set(secrets)],
       });
     }

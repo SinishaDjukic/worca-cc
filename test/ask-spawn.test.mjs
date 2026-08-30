@@ -12,6 +12,8 @@ import {
 } from '../src/core/ask/spawn.mjs';
 import { buildClaudeArgs, runClaude } from '../src/core/claude-runner.mjs';
 
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
+
 const FAKE_HOME = '/Users/zed/.worca-cc';
 const base = () => ({
   thread: { id: 'ask_00000001', sessionId: null },
@@ -162,7 +164,7 @@ test('buildClaudeArgs over the recipe carries every flag and never --add-dir', (
   assert.ok(!noCap.includes('--max-budget-usd'));
 });
 
-test('fake bin: the whole recipe reaches the spawned argv through runClaude (five gates)', async () => {
+test('fake bin: the whole recipe reaches the spawned argv through runClaude (five gates)', POSIX_SHIM, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-ask-spawn-'));
   const out = join(dir, 'argv.txt');
   const bin = join(dir, 'fake-claude.sh');
@@ -198,7 +200,7 @@ test('buildMcpConfig: resolved base, argv twins of the env, execPath default', (
   assert.throws(() => buildAskSpawnOptions({ ...base(), mcpConfigPath: undefined }), /mcpConfigPath/);
 });
 
-test('fake bin env dump: the sandbox var reaches the SPAWNED env and every WORCA_* var is scrubbed (probe F1)', async () => {
+test('fake bin env dump: the sandbox var reaches the SPAWNED env and every WORCA_* var is scrubbed (probe F1)', POSIX_SHIM, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-ask-spawn-env-'));
   const out = join(dir, 'env.txt');
   const bin = join(dir, 'fake-claude.sh');

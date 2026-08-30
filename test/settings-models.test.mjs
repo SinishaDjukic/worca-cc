@@ -157,3 +157,84 @@ test('read-modify-write: catalog writes never disturb other/unknown settings key
     assert.deepEqual(raw.futureKey, { a: 1 });
   });
 });
+
+// ── per-model cost override ────────────────────────────────────────────────────
+
+test('cost: {free:true} round-trips and is stored verbatim', async () => {
+  await withSandbox(async () => {
+    const added = await addGlobalModel({
+      id: 'onprem', env: { ANTHROPIC_BASE_URL: 'https://p' }, cost: { free: true },
+    });
+    assert.deepEqual(added, {
+      id: 'onprem', label: 'onprem', efforts: [...EFFORTS],
+      env: { ANTHROPIC_BASE_URL: 'https://p' }, cost: { free: true },
+    });
+    assert.deepEqual((await readRawSettings()).models, [
+      { id: 'onprem', env: { ANTHROPIC_BASE_URL: 'https://p' }, cost: { free: true } },
+    ]);
+  });
+});
+
+test('cost: {perMtok} keeps only known numeric rates', async () => {
+  await withSandbox(async () => {
+    const added = await addGlobalModel({
+      id: 'priced', cost: { perMtok: { input: 0.5, output: 1.5, cacheRead: 0.05, cacheWrite: 0.6 } },
+    });
+    assert.deepEqual(added.cost, { perMtok: { input: 0.5, output: 1.5, cacheRead: 0.05, cacheWrite: 0.6 } });
+  });
+});
+
+test('cost: free wins over perMtok; {free:false}/{} are no override', async () => {
+  await withSandbox(async () => {
+    const a = await addGlobalModel({ id: 'a', cost: { free: true, perMtok: { input: 9 } } });
+    assert.deepEqual(a.cost, { free: true });
+    const b = await addGlobalModel({ id: 'b', cost: { free: false } });
+    assert.equal(b.cost, undefined);
+    const c = await addGlobalModel({ id: 'c', cost: {} });
+    assert.equal(c.cost, undefined);
+    assert.deepEqual((await readRawSettings()).models.map((m) => m.id), ['a', 'b', 'c']);
+  });
+});
+
+test('cost: write-path rejections leak nothing', async () => {
+  await withSandbox(async () => {
+    await assert.rejects(addGlobalModel({ id: 'x', cost: 'nope' }), /cost must be an object/);
+    await assert.rejects(addGlobalModel({ id: 'x', cost: { free: 'yes' } }), /cost\.free must be a boolean/);
+    await assert.rejects(addGlobalModel({ id: 'x', cost: { perMtok: 5 } }), /cost\.perMtok must be an object/);
+    await assert.rejects(addGlobalModel({ id: 'x', cost: { perMtok: { bogus: 1 } } }), /unknown cost\.perMtok rate "bogus"/);
+    await assert.rejects(addGlobalModel({ id: 'x', cost: { perMtok: { input: -1 } } }), /must be a finite number >= 0/);
+    await assert.rejects(addGlobalModel({ id: 'x', cost: { perMtok: {} } }), /must define at least one rate/);
+    assert.deepEqual(listGlobalModels(), []);
+  });
+});
+
+test('cost: update adds, replaces wholesale, and clears with null', async () => {
+  await withSandbox(async () => {
+    await addGlobalModel({ id: 'm1', label: 'One' });
+    let m = await updateGlobalModel('m1', { cost: { free: true } });
+    assert.deepEqual(m.cost, { free: true });
+    // Object replaces wholesale (not a per-key merge).
+    m = await updateGlobalModel('m1', { cost: { perMtok: { input: 1, output: 2 } } });
+    assert.deepEqual(m.cost, { perMtok: { input: 1, output: 2 } });
+    // Untouched when omitted.
+    m = await updateGlobalModel('m1', { label: 'Two' });
+    assert.deepEqual(m.cost, { perMtok: { input: 1, output: 2 } });
+    // null removes the override; entry stores minimally again.
+    m = await updateGlobalModel('m1', { cost: null });
+    assert.equal(m.cost, undefined);
+    assert.deepEqual((await readRawSettings()).models, [{ id: 'm1', label: 'Two' }]);
+  });
+});
+
+test('cost reader: an invalid cost is dropped loudly, the rest of the entry survives', async () => {
+  await withSandbox(async (home) => {
+    await mkdir(join(home, '.worca-cc'), { recursive: true });
+    await writeFile(settingsFile(), JSON.stringify({
+      models: [{ id: 'bent', cost: { perMtok: { bogus: 1 } } }, { id: 'ok', cost: { free: true } }],
+    }));
+    assert.deepEqual(listGlobalModels(), [
+      { id: 'bent', label: 'bent', efforts: [...EFFORTS] },              // cost dropped, entry kept
+      { id: 'ok', label: 'ok', efforts: [...EFFORTS], cost: { free: true } },
+    ]);
+  });
+});

@@ -31,7 +31,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 useTempHome(after);
 
 const created = [];
-after(() => Promise.all(created.map((d) => rm(d, { recursive: true, force: true }))));
+after(() => Promise.all(created.map((d) => rm(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))));
 
 async function tmp(prefix = 'worca-cc-rrt-') {
   const dir = await mkdtemp(join(tmpdir(), prefix));

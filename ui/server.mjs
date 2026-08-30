@@ -273,6 +273,20 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 /** All currently connected sockets. */
 const sockets = new Set();
 
+// server.close() only calls back once every connection is gone, and Node's
+// closeAllConnections() skips UPGRADED sockets — a WebSocket whose close
+// handshake has not completed (a client that vanished, or a test tearing down
+// right after ws.close()) keeps the callback from ever firing; under load that
+// is a hang. Terminate the lingering clients first so close() is deterministic
+// on every OS; the per-socket 'close' handlers below drop them from `sockets`.
+{
+  const httpClose = server.close.bind(server);
+  server.close = (cb) => {
+    for (const ws of sockets) { try { ws.terminate(); } catch { /* already gone */ } }
+    return httpClose(cb);
+  };
+}
+
 wss.on('connection', (ws, req) => {
   // S1: WS upgrades bypass the express middleware chain, so re-apply the
   // loopback guard here (same DNS-rebinding protection as the HTTP routes).
@@ -2995,6 +3009,7 @@ const pluginModelsPayload = () => {
         k, typeof v === 'string' ? maskEnvValue(v) : `(secret: ${v.secret})`,
       ])),
       secrets: status.filter((s) => m.secrets.includes(s.key)),
+      ...(m.cost ? { cost: m.cost } : {}),   // manifest-pinned pricing — config, never a credential
       ...(flagged.has(m.id.toLowerCase()) ? { costUnreliable: true } : {}),
     };
   });
@@ -3007,7 +3022,7 @@ app.get('/api/models', (req, res) => {
 app.post('/api/models', async (req, res) => {
   const b = req.body || {};
   try {
-    const model = await addGlobalModel({ id: b.id, label: b.label, efforts: b.efforts, env: b.env });
+    const model = await addGlobalModel({ id: b.id, label: b.label, efforts: b.efforts, env: b.env, cost: b.cost });
     res.json({ model: maskedGlobalModel(model), models: maskedGlobalModels() });
   } catch (err) {
     // addGlobalModel throws only on validation (empty/dup id, unknown effort,
@@ -3090,6 +3105,10 @@ app.post('/api/models/export-plugin', async (req, res) => {
       ...(entry.label !== entry.id ? { label: entry.label } : {}),
       ...(entry.efforts.length && entry.efforts.length !== EFFORTS.length ? { efforts: entry.efforts } : {}),
       ...(Object.keys(env).length ? { env } : {}),
+      // Pricing travels with the model. It is configuration, not a credential —
+      // and a shared on-prem model is precisely one the CLI would otherwise
+      // price by NAME on every machine that installs the plugin.
+      ...(entry.cost ? { cost: entry.cost } : {}),
     });
   }
 
@@ -3160,7 +3179,7 @@ app.patch('/api/models/:id', async (req, res) => {
     env = Object.fromEntries(Object.entries(env).filter(([, v]) => !isMaskedEcho(v)));
   }
   try {
-    const model = await updateGlobalModel(req.params.id, { label: b.label, efforts: b.efforts, env });
+    const model = await updateGlobalModel(req.params.id, { label: b.label, efforts: b.efforts, env, cost: b.cost });
     res.json({ model: maskedGlobalModel(model), models: maskedGlobalModels() });
   } catch (err) {
     // updateGlobalModel throws only on validation (unknown id, unknown effort,
@@ -4646,7 +4665,12 @@ app.get('/api/plugins/:name/model-env', (req, res) => {
     if (typeof v === 'string') env[k] = v;
     else secretKeys.push(k);
   }
-  res.json({ id: model.id, label: model.label, efforts: model.efforts, env, secretKeys });
+  // `cost` rides along so "Edit a copy" starts from the plugin's pricing — a
+  // copy that silently dropped it would repay the CLI's by-name figure.
+  res.json({
+    id: model.id, label: model.label, efforts: model.efforts, env, secretKeys,
+    ...(model.cost ? { cost: model.cost } : {}),
+  });
 });
 
 // ---------------------------------------------------------------------------

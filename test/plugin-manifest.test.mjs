@@ -11,6 +11,8 @@ import {
   declaredApi, dataContractIssues, apiMismatch, NOT_META_V2, NOT_GRAPH_V2,
 } from '../src/core/plugin-manifest.mjs';
 
+const WIN_SYMLINK = { skip: process.platform === 'win32' ? 'creating symlinks needs a privilege (Developer Mode / admin) on Windows' : false };
+
 const scratch = mkdtempSync(join(tmpdir(), 'worca-cc-manifest-'));
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
@@ -297,7 +299,7 @@ test('validatePluginDir: skill without SKILL.md, missing module file, strict pro
   );
 });
 
-test('validatePluginDir: escaping symlink rejected; internal symlink fine', () => {
+test('validatePluginDir: escaping symlink rejected; internal symlink fine', WIN_SYMLINK, () => {
   const dir = mkPluginDir(VALID_FILES);
   symlinkSync('../..', join(dir, 'escape'));
   symlinkSync('./connector', join(dir, 'alias'));
@@ -715,4 +717,38 @@ test('a template referencing a GATED-OUT sidecar reports ONE cause at the data l
   }));
   assert.ok(errs(alien).includes(
     'workflows/flow.json: references agent key "notMine" which this plugin does not ship'));
+});
+
+test('models: `cost` is validated and normalized exactly like a global catalog entry', () => {
+  const r = normalizeManifest({
+    name: 'p',
+    models: [
+      { id: 'free-one', cost: { free: true } },
+      { id: 'rated', cost: { perMtok: { output: '3', input: 0.5 } } },   // numeric strings coerced
+      { id: 'free-wins', cost: { free: true, perMtok: { input: 9 } } },
+      { id: 'no-override', cost: { free: false } },
+      { id: 'plain' },
+    ],
+  });
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+  const byId = Object.fromEntries(r.manifest.models.map((m) => [m.id, m]));
+  assert.deepEqual(byId['free-one'].cost, { free: true });
+  assert.deepEqual(byId.rated.cost, { perMtok: { output: 3, input: 0.5 } });
+  assert.deepEqual(byId['free-wins'].cost, { free: true }, 'free wins over perMtok');
+  assert.equal(byId['no-override'].cost, undefined, '{free:false} is no override');
+  assert.equal(byId.plain.cost, undefined, 'no cost key when the manifest pins none');
+});
+
+test('models: a malformed `cost` is a manifest ERROR, named by model and rule', () => {
+  const fail = (cost, re) => {
+    const r = normalizeManifest({ name: 'p', models: [{ id: 'm', cost }] });
+    assert.equal(r.ok, false, `expected failure for ${JSON.stringify(cost)}`);
+    assert.ok(r.errors.some((e) => re.test(e)), `${re} not in ${JSON.stringify(r.errors)}`);
+  };
+  fail('nope', /models\[0\] \("m"\): cost must be an object/);
+  fail({ free: 'yes' }, /cost\.free must be a boolean/);
+  fail({ perMtok: 5 }, /cost\.perMtok must be an object/);
+  fail({ perMtok: { bogus: 1 } }, /unknown cost\.perMtok rate "bogus"/);
+  fail({ perMtok: { input: -1 } }, /cost\.perMtok\.input must be a finite number >= 0/);
+  fail({ perMtok: {} }, /must define at least one rate/);
 });

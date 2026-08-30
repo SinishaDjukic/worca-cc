@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -38,7 +38,7 @@ async function boot({ local } = {}) {
   window.localStorage.clear();
   // Pre-seed localStorage BEFORE app.js boots so restore-on-load is exercised.
   if (local) for (const [k, v] of Object.entries(local)) window.localStorage.setItem(k, v);
-  await import(appPath + `?b=${Date.now()}_${Math.random()}`);
+  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   const open = () => lastWs._l.open?.forEach((fn) => fn());
   const recv = (obj) => lastWs._l.message.forEach((fn) => fn({ data: JSON.stringify(obj) }));

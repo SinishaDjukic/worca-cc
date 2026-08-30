@@ -18,6 +18,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildClaudeArgs, runClaude } from '../src/core/claude-runner.mjs';
 
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
+
 const dirs = [];
 const tmp = async () => {
   const d = await mkdtemp(join(tmpdir(), 'worca-cc-argv-'));
@@ -92,7 +94,7 @@ async function fakeBin(dir, outFile) {
   return bin;
 }
 
-test('runClaude FORWARDS mcpConfigPath + mcpServerGrants to runReal (not just buildClaudeArgs)', async () => {
+test('runClaude FORWARDS mcpConfigPath + mcpServerGrants to runReal (not just buildClaudeArgs)', POSIX_SHIM, async () => {
   const dir = await tmp();
   const out = join(dir, 'argv.txt');
   const bin = await fakeBin(dir, out);
@@ -151,7 +153,7 @@ test('runClaude with empty/absent workspaceWriteTargets falls back to the cwd (b
   }
 });
 
-test('runReal IGNORES workspaceWriteTargets — argv is byte-identical (never a spawn flag)', async () => {
+test('runReal IGNORES workspaceWriteTargets — argv is byte-identical (never a spawn flag)', POSIX_SHIM, async () => {
   const dir = await tmp();
   const out = join(dir, 'argv.txt');
   const bin = await fakeBin(dir, out);
@@ -173,7 +175,7 @@ test('runReal IGNORES workspaceWriteTargets — argv is byte-identical (never a 
   ]);
 });
 
-test('runClaude without the two new fields spawns the SAME argv as before (legacy parity)', async () => {
+test('runClaude without the two new fields spawns the SAME argv as before (legacy parity)', POSIX_SHIM, async () => {
   const dir = await tmp();
   const out = join(dir, 'argv.txt');
   const bin = await fakeBin(dir, out);
@@ -260,7 +262,7 @@ test('buildSettingsArgs: malformed rules warn once and fall through; empty stays
   }
 });
 
-test('runClaude FORWARDS permissionRules to runReal (drop-at-gate guard)', async () => {
+test('runClaude FORWARDS permissionRules to runReal (drop-at-gate guard)', POSIX_SHIM, async () => {
   const dir = await tmp();
   const out = join(dir, 'argv.txt');
   const bin = await fakeBin(dir, out);
@@ -307,7 +309,7 @@ test('buildSpawnEnv: scrub off -> undefined (spawn inherits, byte-identical to t
   assert.equal(buildSpawnEnv(undefined, undefined), undefined);
 });
 
-test('buildSpawnEnv: scrub on -> base + ANTHROPIC_*/CLAUDE_* + allowlist only', () => {
+test('buildSpawnEnv: scrub on -> base + ANTHROPIC_*/CLAUDE_* + allowlist only', POSIX_SHIM, () => {
   const prev = { AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY, NPM_TOKEN: process.env.NPM_TOKEN, ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY };
   process.env.AWS_SECRET_ACCESS_KEY = 'leak-me';
   process.env.NPM_TOKEN = 'npm-secret';
@@ -325,7 +327,7 @@ test('buildSpawnEnv: scrub on -> base + ANTHROPIC_*/CLAUDE_* + allowlist only', 
   }
 });
 
-test('runClaude FORWARDS envScrub/envAllowlist to the spawn env (drop-at-gate guard)', async () => {
+test('runClaude FORWARDS envScrub/envAllowlist to the spawn env (drop-at-gate guard)', POSIX_SHIM, async () => {
   const dir = await tmp();
   const out = join(dir, 'env.txt');
   const bin = await fakeEnvBin(dir, out);
@@ -344,7 +346,7 @@ test('runClaude FORWARDS envScrub/envAllowlist to the spawn env (drop-at-gate gu
   assert.ok(envDump.includes('PATH='), 'the child still got a usable base env');
 });
 
-test('runClaude with envScrub off inherits the parent env (legacy parity)', async () => {
+test('runClaude with envScrub off inherits the parent env (legacy parity)', POSIX_SHIM, async () => {
   const dir = await tmp();
   const out = join(dir, 'env.txt');
   const bin = await fakeEnvBin(dir, out);
@@ -386,7 +388,7 @@ async function runWithEnvDump(extraOpts, { leak } = {}) {
   return readFile(out, 'utf8');
 }
 
-test('runClaude FORWARDS modelEnv into the spawn env; parent env still inherited (scrub off)', async () => {
+test('runClaude FORWARDS modelEnv into the spawn env; parent env still inherited (scrub off)', POSIX_SHIM, async () => {
   const dump = await runWithEnvDump(
     { modelEnv: { ANTHROPIC_BASE_URL: 'https://proxy.test/v1' } },
     { leak: 'inherited' },
@@ -395,7 +397,7 @@ test('runClaude FORWARDS modelEnv into the spawn env; parent env still inherited
   assert.ok(dump.includes('WORCA_TEST_LEAK=inherited'), 'still inherits process.env around it');
 });
 
-test('modelEnv SURVIVES env scrub and WINS collisions with the ambient env', async () => {
+test('modelEnv SURVIVES env scrub and WINS collisions with the ambient env', POSIX_SHIM, async () => {
   const prevUrl = process.env.ANTHROPIC_BASE_URL;
   process.env.ANTHROPIC_BASE_URL = 'https://ambient.example';
   let dump;
@@ -414,7 +416,7 @@ test('modelEnv SURVIVES env scrub and WINS collisions with the ambient env', asy
   assert.ok(dump.includes('PATH='), 'scrub base env intact');
 });
 
-test('reserved modelEnv keys are re-dropped at the spawn (defense-in-depth, with a warning)', async () => {
+test('reserved modelEnv keys are re-dropped at the spawn (defense-in-depth, with a warning)', POSIX_SHIM, async () => {
   const realWarn = console.warn;
   const warnings = [];
   console.warn = (...a) => warnings.push(a.join(' '));
@@ -433,7 +435,7 @@ test('reserved modelEnv keys are re-dropped at the spawn (defense-in-depth, with
   assert.equal(warnings.filter((w) => w.includes('modelEnv')).length, 2, `one warn per dropped key: ${JSON.stringify(warnings)}`);
 });
 
-test('absent/empty modelEnv keeps the spawn env byte-identical (inherit path)', async () => {
+test('absent/empty modelEnv keeps the spawn env byte-identical (inherit path)', POSIX_SHIM, async () => {
   for (const extra of [{}, { modelEnv: {} }, { modelEnv: undefined }]) {
     const dump = await runWithEnvDump(extra, { leak: 'inherited' });
     assert.ok(dump.includes('WORCA_TEST_LEAK=inherited'), `inherits for ${JSON.stringify(extra)}`);
@@ -471,7 +473,7 @@ async function runWithArgvDump(extraOpts) {
   return (await readFile(out, 'utf8')).split('\0').filter(Boolean);
 }
 
-test('modelEnv.ANTHROPIC_MODEL replaces the catalog id in --model (wire id), with one warning', async () => {
+test('modelEnv.ANTHROPIC_MODEL replaces the catalog id in --model (wire id), with one warning', POSIX_SHIM, async () => {
   const realWarn = console.warn;
   const warnings = [];
   console.warn = (...a) => warnings.push(a.join(' '));
@@ -492,7 +494,7 @@ test('modelEnv.ANTHROPIC_MODEL replaces the catalog id in --model (wire id), wit
   );
 });
 
-test('modelEnv without ANTHROPIC_MODEL keeps --model = catalog id (regression guard)', async () => {
+test('modelEnv without ANTHROPIC_MODEL keeps --model = catalog id (regression guard)', POSIX_SHIM, async () => {
   const argv = await runWithArgvDump({
     model: 'claude-opus-4-8',
     modelEnv: { ANTHROPIC_BASE_URL: 'https://proxy.test/v1' },
@@ -500,7 +502,7 @@ test('modelEnv without ANTHROPIC_MODEL keeps --model = catalog id (regression gu
   assert.equal(argv[argv.indexOf('--model') + 1], 'claude-opus-4-8');
 });
 
-test('ANTHROPIC_MODEL as ${VAR}: set -> expanded wire id; unset -> falls back to catalog id', async () => {
+test('ANTHROPIC_MODEL as ${VAR}: set -> expanded wire id; unset -> falls back to catalog id', POSIX_SHIM, async () => {
   const prev = process.env.WORCA_TEST_WIRE_MODEL;
   process.env.WORCA_TEST_WIRE_MODEL = 'claude-opus-4-8';
   let argv;
@@ -539,7 +541,7 @@ test('ANTHROPIC_MODEL as ${VAR}: set -> expanded wire id; unset -> falls back to
   );
 });
 
-test('whitespace-only ANTHROPIC_MODEL is dropped -> catalog id, with the dropped-wire-model warning', async () => {
+test('whitespace-only ANTHROPIC_MODEL is dropped -> catalog id, with the dropped-wire-model warning', POSIX_SHIM, async () => {
   const realWarn = console.warn;
   const warnings = [];
   console.warn = (...a) => warnings.push(a.join(' '));
@@ -559,7 +561,7 @@ test('whitespace-only ANTHROPIC_MODEL is dropped -> catalog id, with the dropped
   );
 });
 
-test('a pasted-with-spaces ANTHROPIC_MODEL is trimmed before reaching --model', async () => {
+test('a pasted-with-spaces ANTHROPIC_MODEL is trimmed before reaching --model', POSIX_SHIM, async () => {
   const realWarn = console.warn;
   console.warn = () => {};
   let argv;
@@ -574,7 +576,7 @@ test('a pasted-with-spaces ANTHROPIC_MODEL is trimmed before reaching --model', 
   assert.equal(argv[argv.indexOf('--model') + 1], 'claude-opus-4-8', 'trimmed wire id in argv');
 });
 
-test('wire id also lands in the spawn env (harmless: the explicit flag wins in the CLI)', async () => {
+test('wire id also lands in the spawn env (harmless: the explicit flag wins in the CLI)', POSIX_SHIM, async () => {
   const realWarn = console.warn;
   console.warn = () => {};
   let dump;

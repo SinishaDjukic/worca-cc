@@ -5,7 +5,7 @@ import { mkdtemp, rm, realpath, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -75,7 +75,7 @@ test('add uses cwd basename as default name', async () => {
   const proj = await freshProj();
   const r = await run(['add'], { home, cwd: proj });
   assert.equal(r.code, 0, r.stderr);
-  const expectedName = proj.split('/').pop();
+  const expectedName = basename(proj);
   assert.match(r.stdout, new RegExp(`Added project "${reEsc(expectedName)}" -> ${reEsc(proj)}`));
   const list = await run(['list'], { home });
   assert.equal(list.code, 0);
@@ -86,14 +86,14 @@ test('add accepts explicit name and --path', async () => {
   const home = await freshHome();
   const r = await run(['add', 'demo', '--path', '/tmp/nope-explicit'], { home });
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /Added project "demo" -> \/tmp\/nope-explicit/);
+  assert.match(r.stdout, new RegExp(`Added project "demo" -> ${reEsc(resolve('/tmp/nope-explicit'))}`));
 });
 
 test('add supports --path=<dir> form', async () => {
   const home = await freshHome();
   const r = await run(['add', 'demo', '--path=/tmp/nope-inline'], { home });
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /-> \/tmp\/nope-inline/);
+  assert.match(r.stdout, new RegExp(`-> ${reEsc(resolve('/tmp/nope-inline'))}`));
 });
 
 test('add expands a leading ~ in --path using HOME', async () => {
@@ -102,7 +102,7 @@ test('add expands a leading ~ in --path using HOME', async () => {
   const fakeHome = '/tmp/worca-cc-fake-home';
   const r = await run(['add', 'demo', '--path=~/sub/dir'], { home, extraEnv: { HOME: fakeHome } });
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, new RegExp(`-> ${reEsc(fakeHome)}/sub/dir`));
+  assert.match(r.stdout, new RegExp(`-> ${reEsc(resolve(fakeHome, 'sub', 'dir'))}`));
 });
 
 test('add rejects --path without a value (exit 2)', async () => {
@@ -140,7 +140,7 @@ test('list shows entries, marks missing ones', async () => {
   const r = await run(['list'], { home });
   assert.equal(r.code, 0);
   // stdout is from a non-TTY pipe, so [missing] is uncolored.
-  assert.match(r.stdout, /ghost\t\/no\/such\/dir\/x\t\[missing\]/);
+  assert.match(r.stdout, new RegExp(`ghost\\t${reEsc(resolve('/no/such/dir/x'))}\\t\\[missing\\]`));
 });
 
 test('remove without name exits 2 (usage)', async () => {

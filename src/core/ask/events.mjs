@@ -129,6 +129,11 @@ const resultText = (content) => {
  * @param {(p:{toolUseId:string, input:object, childOk:boolean|null})=>void} [o.onProposal]
  * @param {(p:{runId:string})=>void} [o.onCommentMutation]  a successful MCP-side comment write
  * @param {Record<string,string>} [o.attachmentNames]  id → display name (labels only)
+ * @param {(cliCostUsd:number, usage:object)=>number} [o.resolveCost]  re-price the
+ *   turn: given what the CLI reported and this turn's usage, return the
+ *   AUTHORITATIVE cost. Injected (rather than imported) to keep this reducer free
+ *   of config/DB dependencies. Default: trust the CLI. A non-finite return, or a
+ *   throw, falls back to the CLI figure.
  * @param {object} [o.limits]
  */
 export function createTurnReducer({
@@ -140,6 +145,7 @@ export function createTurnReducer({
   onProposal = null,
   onCommentMutation = null,
   attachmentNames = {},
+  resolveCost = null,
   limits = ASK_LIMITS,
 } = {}) {
   const startedAt = now();
@@ -194,7 +200,32 @@ export function createTurnReducer({
   // usage never feeds it — a result would report the whole turn, not one call.
   const ctxNow = () => { const e = lastMainUsageMsg ? usageByMsg.get(lastMainUsageMsg) : null; return e ? ctxOf(e.usage) : null; };
   const currentUsage = () => ({ ...(lastResult && lastResult.usage ? normalizeUsage(lastResult.usage) : usageSum()), ctx: ctxNow() });
-  const currentCost = () => (lastResult && typeof lastResult.total_cost_usd === 'number' && Number.isFinite(lastResult.total_cost_usd) ? lastResult.total_cost_usd : null);
+  /** What the CLI itself reported for this turn — null until the `result` frame lands. */
+  const cliCost = () => (lastResult && typeof lastResult.total_cost_usd === 'number' && Number.isFinite(lastResult.total_cost_usd) ? lastResult.total_cost_usd : null);
+  // The AUTHORITATIVE turn cost: cliCost() re-priced by the injected override, if
+  // any. Memoized on lastResult — resolveCost reads the model catalog off disk, and
+  // this is read by every ask-usage frame as well as finish()/snapshot(). null
+  // (no `result` frame seen) is NOT a price and is never re-priced: ask spec §6.2.8
+  // makes null mean "no cost observed", which the ledger writer no-ops on.
+  let costMemo = null;
+  const currentCost = () => {
+    const raw = cliCost();
+    if (raw === null || !resolveCost) return raw;
+    if (!costMemo || costMemo.src !== lastResult) {
+      let v = raw;
+      try { const r = resolveCost(raw, currentUsage()); if (Number.isFinite(r)) v = r; }
+      catch { /* a pricing override must never break a turn */ }
+      costMemo = { src: lastResult, value: v };
+    }
+    return costMemo.value;
+  };
+  /** authoritative ÷ CLI — the factor the per-agent cost split must ride (1 when no override applies). */
+  const costScale = () => {
+    const raw = cliCost();
+    if (raw === null || !(raw > 0)) return 1;
+    const resolved = currentCost();
+    return resolved === null ? 1 : resolved / raw;
+  };
   const emitUsage = () => emit('ask-usage', { usage: currentUsage(), costUsd: currentCost() });
   const flushDeltas = () => {
     if (timer !== null) { clearT(timer); timer = null; }
@@ -455,7 +486,14 @@ export function createTurnReducer({
       const agents = blocks.filter((b) => b.kind === 'agent');
       if (agents.length && lastResult) {
         const est = estimateAgentCosts(agents, lastResult);
-        agents.forEach((a, i) => { a.costUsd = est[i].costUsd; });
+        // §6.6 splits the CLI's OWN modelUsage costUSD across agents. When an
+        // override re-prices the turn, the shares must ride the same scale or the
+        // agent rows out-total the turn they belong to (a free endpoint would show
+        // $0.00 overall next to agents billing real dollars).
+        const scale = costScale();
+        agents.forEach((a, i) => {
+          a.costUsd = est[i].costUsd == null ? null : Math.round(est[i].costUsd * scale * 1e6) / 1e6;
+        });
       }
       const text = mainText() || (lastResult && typeof lastResult.result === 'string' ? lastResult.result : '');
       summary = {

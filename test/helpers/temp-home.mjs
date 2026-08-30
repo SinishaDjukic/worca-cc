@@ -50,7 +50,9 @@ export function useTempHome(after, prefix = 'worca-cc-home-') {
     process.env.WORCA_HOME =
       prev === undefined ? join(tmpdir(), 'worca-cc-test-quarantine') : prev;
     _resetForTests(); // next getDb() reopens against the restored home
-    rmSync(home, { recursive: true, force: true });
+    // Throwaway tmp: on Windows a lingering handle (Defender, a just-closed
+    // sqlite file) EPERMs the delete — retry, and never fail the file over it.
+    try { rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); } catch { /* best effort */ }
   });
   return home;
 }

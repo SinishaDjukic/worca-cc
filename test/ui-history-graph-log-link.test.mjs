@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 
 // Behavior tests for the History DETAIL run-graph -> Logs tab link: clicking a
@@ -70,7 +70,7 @@ async function boot({ fetchHandler } = {}) {
   globalThis.window = window;
   globalThis.document = window.document;
 
-  await import(appPath + `?b=${Date.now()}_${Math.random()}`);
+  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0)); // let loadProjects/loadConfig settle
 
   return { window, wsBox };

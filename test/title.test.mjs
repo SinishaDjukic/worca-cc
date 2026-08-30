@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sanitizeTitle, generateTitle, isRefusalTitle } from '../src/core/title.mjs';
 
+const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
+
 test('sanitizeTitle strips quotes, collapses whitespace, caps length', () => {
   assert.equal(sanitizeTitle('  "Add user auth"\n'), 'Add user auth');
   // sanitizeTitle takes the FIRST non-empty line, then strips a leading "Title:" label.
@@ -89,7 +91,7 @@ test('generateTitle returns "" when the prompt is empty', async () => {
   assert.equal(await generateTitle('', { cwd: process.cwd() }), '');
 });
 
-test('generateTitle forwards envScrub/envAllowlist to the spawn (no leak during runs)', async () => {
+test('generateTitle forwards envScrub/envAllowlist to the spawn (no leak during runs)', POSIX_SHIM, async () => {
   const { mkdtemp, writeFile, readFile, chmod, rm } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');

@@ -23,6 +23,7 @@ import { readPipelineForResume } from '../src/core/artifacts.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { getDb } from '../src/core/db.mjs';
+import { posix } from './helpers/posix-path.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(__dirname, '..', 'src', 'cli', 'worca-cc.mjs');
@@ -89,7 +90,7 @@ async function freshRepo(prefix = 'worca-cc-cliresume-repo-') {
   return dir;
 }
 const repos = [];
-after(() => Promise.all(repos.map((d) => rm(d, { recursive: true, force: true }))));
+after(() => Promise.all(repos.map((d) => rm(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }))));
 
 /**
  * Runners for the pause/resume pin tests. With `pause:true` the first producer node
@@ -150,7 +151,7 @@ test('a LEGACY-recorded run resumed while the live flag says `detached` stays le
   assert.equal((await withEnvMode('legacy', () => orch1.run())).status, 'paused');
   const id = orch1.state.id;
   const legacyWorktree = orch1.getState().branch.worktreeDir;
-  assert.match(legacyWorktree, /\.worca-cc\/worktrees\//, 'precondition: a legacy checkout');
+  assert.match(posix(legacyWorktree), /\.worca-cc\/worktrees\//, 'precondition: a legacy checkout');
   assert.equal(orch1.getState().branch.runRootMode, 'legacy', 'the pin was recorded on the row');
 
   // Resume with the live flag flipped to `detached` — the record must win.
@@ -187,7 +188,7 @@ test('a DETACHED-recorded run resumed while the live flag says `legacy` keeps it
   const runRoot = join(worcaHome(), 'runs', id);
   assert.ok(existsSync(runRoot), 'precondition: a paused detached run keeps its run root');
   const detachedWorktree = orch1.getState().branch.worktreeDir;
-  assert.match(detachedWorktree, new RegExp(`/runs/${id}/repos/`), 'precondition: a run-root checkout');
+  assert.match(posix(detachedWorktree), new RegExp(`/runs/${id}/repos/`), 'precondition: a run-root checkout');
 
   // Resume with the live flag rolled BACK to `legacy` — the record must still win.
   const saved = readPipelineForResume(id);
