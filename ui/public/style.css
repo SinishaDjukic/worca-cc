@@ -1263,8 +1263,17 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .chip-select label { display:inline-flex; gap:6px; align-items:center; font-size:12.5px; border:1px solid var(--line); border-radius:999px; padding:4px 10px; cursor:pointer; }
 
 /* ===== Projects management view ===== */
-/* Static rows (no expand) — neutralize the pipeline row's pointer cursor. */
-#projects-list .pl-row{cursor:default;}
+/* The card reuses the saved-pipelines class names (.saved-card/.pl-item/.pl-row/
+   .pl-main/.pl-name), but the composer's copies of those rules are scoped under
+   .gv-saved, so this view owns its own layout: card padding 0 so the head and the
+   rows share one left edge; flex rows so the bin button sits on the right.
+   Static rows (no expand) — default cursor, no hover tint. */
+#projects-list .saved-card{padding:0;overflow:hidden;}
+#projects-list .pl-item{border-bottom:1px solid var(--line);}
+#projects-list .pl-item:last-child{border-bottom:none;}
+#projects-list .pl-row{display:flex;align-items:center;gap:15px;padding:16px 20px;cursor:default;}
+#projects-list .pl-main{flex:1 1 auto;min-width:0;}
+#projects-list .pl-name{font-weight:600;font-size:14px;letter-spacing:-.01em;color:var(--ink);}
 .proj-path{
   font-family:var(--mono);font-size:12px;color:var(--ink-2);
   margin-top:4px;word-break:break-all;
