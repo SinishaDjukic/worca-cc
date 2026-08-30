@@ -49,7 +49,7 @@
     "ask:fixtures": "node --disable-warning=ExperimentalWarning scripts/ask-capture-fixtures.mjs",
     "verify:composer": "node --disable-warning=ExperimentalWarning scripts/verify-composer-cdp.mjs",
     "verify:run-monitor": "node --disable-warning=ExperimentalWarning scripts/verify-run-monitor-cdp.mjs",
-    "test": "rm -rf .worca-cc-test && WORCA_HOME=.worca-cc-test node --disable-warning=ExperimentalWarning --test test/*.mjs"
+    "test": "rm -rf .worca-cc-test && PATH=\"$PWD/test/helpers/no-real-claude:$PATH\" WORCA_HOME=.worca-cc-test node --disable-warning=ExperimentalWarning --test test/*.mjs; s=$?; node test/helpers/no-real-claude/assert-none.mjs || s=1; exit $s"
   },
   "dependencies": {
     "@highlightjs/cdn-assets": "11.12.0",
