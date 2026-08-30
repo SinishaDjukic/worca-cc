@@ -10,61 +10,75 @@
 //    `result` frames); CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 restores the
 //    foreground shape. It rides modelEnv: merged last over the scrubbed env,
 //    CLAUDE_-prefixed (survives scrub), not a reserved key.
-//  - `--tools Task` removes every built-in (no Bash/Read/Write/Edit exist);
-//    MCP tools survive; `--allowedTools Task,mcp__worca` under dontAsk runs them.
+//  - `--tools <list>` keeps ONLY the named built-ins (Task,Read,Grep,Glob — no
+//    Bash/Write/Edit exist); MCP tools survive; `--allowedTools <list>,mcp__worca`
+//    under dontAsk runs them without prompting; a deny rule wins over everything.
 import { resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Absolute path of the worca MCP server script — the `serverPath` of buildMcpConfig (P2 never guesses it). */
 export const ASK_MCP_SERVER_PATH = fileURLToPath(new URL('./mcp-stdio.mjs', import.meta.url));
 export const ASK_PERMISSION_MODE = 'dontAsk';
-export const ASK_BUILTIN_TOOLS = Object.freeze(['Task']);
+// 2026-08-30 (user decision): the chat holds the native READ-ONLY file tools —
+// Read, Grep, Glob — instead of a worca-side reader. Known, ACCEPTED limits of
+// the permission engine (gate E1, probed on claude 2.1.241, see
+// askWorktreeAllowRules): a path in neither list is readable (`unmatched ⇒
+// allow`), so the grant is effectively disk-wide minus ASK_DENY_RULES, and Grep
+// was seen to ignore path denies (re-probed on 2.1.251: `unmatched ⇒ allow`
+// persists; Grep DID honour a Read path deny that time). Never Bash/Write/Edit:
+// a read cannot mutate.
+export const ASK_BUILTIN_TOOLS = Object.freeze(['Task', 'Read', 'Grep', 'Glob']);
 export const ASK_MCP_GRANTS = Object.freeze(['mcp__worca']);
+// Deny beats allow, and the chat's worktrees live INSIDE the home
+// (<home>/ask/<thread>/wt/…), so the home cannot be denied as a whole: worca's
+// own state is enumerated instead — everything under the home except ask/.
+// Path rules are `//` (filesystem root) or `~/` anchored; worcaHome() is never
+// interpolated (its characters would be read as glob). `.worca-cc` is the home's
+// conventional basename (a differently named WORCA_HOME simply does not match
+// the home-relative denies — exactly as the old blanket deny did not).
 export const ASK_DENY_RULES = Object.freeze([
   'Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Skill',
-  'Read(//**/.worca-cc/**)',          // every worca home: DB, store/, runs/**/repos, plugins/*/data/secrets.json
-  'Read(//**/worca-cc.db*)',
-  'Read(//**/secrets.json)',
+  'Read(//**/worca-cc.db*)',           // the DB (+ -wal/-shm/backups), wherever the home is
+  'Read(//**/worca.db*)',              // the pre-rename DB file, still present on older homes
+  'Read(//**/secrets.json)',           // plugins/*/data/secrets.json and any other
   'Read(//**/.env*)',
+  'Read(//**/.worca-cc/settings.json)',
+  'Read(//**/.worca-cc/store/**)',     // run store: transcripts, logs, artifacts
+  'Read(//**/.worca-cc/runs/**)',      // pipeline checkouts + per-run logs (run diffs come through get_run_diff, filtered)
+  'Read(//**/.worca-cc/plugins/**)',
+  'Read(//**/.worca-cc/tmp/**)',       // the chat's own scratch cwd (per-turn mcp-*.json)
   'Read(~/.ssh/**)',
   'Read(~/.aws/**)',
+  'Read(~/.gnupg/**)',
+  'Read(~/.kube/**)',
+  'Read(~/.docker/**)',
+  'Read(~/.claude/**)',                // Claude Code's own credentials + session transcripts
+  'Read(~/.netrc)',
+  'Read(~/.npmrc)',
+  'Read(~/.config/gh/**)',
 ]);
 export const ASK_SPAWN_ENV = Object.freeze({ CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' });
 
 /**
- * The per-thread Read allow rules of the chat's worktrees (P4 §6) — EMPTY under
- * the measured permission semantics, and deliberately kept as the seam.
- *
- * GATE E1, probed on claude 2.1.241, measured two disqualifying behaviours:
- *   (1) `unmatched ⇒ ALLOW` — a path in neither the allow nor the deny list is
- *       read (verified with a file OUTSIDE the probe's cwd, so it is not the
- *       default cwd-workspace grant). Granting `Read` scoped to
- *       `.worca-cc/ask/<thread>/wt/**` would therefore ALSO expose the rest of
- *       the filesystem, and the blanket `Read(//**\/.worca-cc/**)` deny below
- *       cannot be dissolved into enumerated denies without a net regression.
- *   (2) `Grep` returned the CONTENTS of a file under a denied path, ignoring
- *       both the `Read(<path>)` deny and a `Grep(<path>)` deny (the CLI reports
- *       that only `Read(path)` rules are matched by file permission checks —
- *       and Grep escaped even those).
- * So the built-ins stay `['Task']` and a worktree is reachable ONLY through the
- * hardened `git` MCP tool, which is cwd-confined and enforces the protected-path
- * + redaction floor itself. If the engine ever gains `unmatched ⇒ deny`, this
- * function is the single place that flips (return the `Read(...)` rule for the
- * shape-checked id below); the thread id is validated here already so it can
- * never reach a permission rule un-checked.
+ * The per-thread Read allow rule of the chat's worktrees (P4 §6). Explicit
+ * intent more than enforcement: under the engine's measured `unmatched ⇒ allow`
+ * (gate E1, claude 2.1.241 — a path in neither list is read, verified OUTSIDE
+ * the process cwd; and Grep ignored both `Read(<path>)` and `Grep(<path>)`
+ * denies) the rule changes nothing today, and a deny always wins over it. It
+ * exists so that if the engine ever gains `unmatched ⇒ deny`, the chat keeps
+ * reading its own worktrees without another change here. The thread id is
+ * shape-checked so an unminted id can never reach a permission rule un-checked;
+ * the resolved home is never interpolated.
  */
 export function askWorktreeAllowRules(threadId) {
   if (typeof threadId !== 'string' || !/^ask_[0-9a-f]{8}$/.test(threadId)) return [];
-  // Both branches are empty ON PURPOSE. Under `unmatched ⇒ allow` there is no safe
-  // Read grant to make, so a minted id yields no rule either; the rule this WOULD
-  // emit is `Read(//**/.worca-cc/ask/${threadId}/wt/**)`.
-  return [];
+  return [`Read(//**/.worca-cc/ask/${threadId}/wt/**)`];
 }
 
 export const SANDBOX_NOTE =
-  "You are a sub-agent of Worca's assistant and run in the same sandbox: the only tools available are Task and " +
-  'the worca MCP tools (mcp__worca__*). You cannot read files, run commands or use the network — do not try. ' +
-  "The only view into a repository is the worca `git` tool over this chat's read-only detached worktrees. " +
+  "You are a sub-agent of Worca's assistant and run in the same sandbox: the only tools available are Task, Read, Grep, Glob and " +
+  'the worca MCP tools (mcp__worca__*). You cannot run commands, edit files or use the network — do not try. ' +
+  "The only view into a repository is this chat's read-only detached worktrees: list_worktrees/open_worktree give the path; Read, Grep and Glob work under that path (never elsewhere on disk), and the worca `git` tool serves history and diffs. " +
   'Answer from tool results only; never invent run data; return a short report.';
 
 /** System-prompt-only mock markers (the runner parses the ask role from the SYSTEM prompt, Task 16). */

@@ -30,7 +30,7 @@ afterEach(() => {
   if (prevOrch === undefined) delete process.env.ORCH_MOCK; else process.env.ORCH_MOCK = prevOrch;
 });
 
-test('the recipe: cwd, dontAsk, Task-only built-ins, worca grant, scrub, foreground sub-agents, limits, sandbox note', () => {
+test('the recipe: cwd, dontAsk, Task + Read/Grep/Glob built-ins, worca grant, scrub, foreground sub-agents, limits, sandbox note', () => {
   const o = buildAskSpawnOptions(base());
   assert.equal(o.cwd, join(FAKE_HOME, 'tmp', 'ask'));
   assert.ok(o.cwd.endsWith(join('tmp', 'ask')) && o.cwd !== FAKE_HOME, 'never the home itself');
@@ -40,8 +40,8 @@ test('the recipe: cwd, dontAsk, Task-only built-ins, worca grant, scrub, foregro
   assert.equal(o.effort, 'high');
   assert.equal(o.permissionMode, 'dontAsk');
   assert.equal(ASK_PERMISSION_MODE, 'dontAsk');
-  assert.deepEqual(o.allowedTools, ['Task']);
-  assert.deepEqual(o.tools, ['Task']);
+  assert.deepEqual(o.allowedTools, ['Task', 'Read', 'Grep', 'Glob']);
+  assert.deepEqual(o.tools, ['Task', 'Read', 'Grep', 'Glob']);
   assert.deepEqual(o.mcpServerGrants, ['mcp__worca']);
   assert.equal(o.mcpConfigPath, join(FAKE_HOME, 'tmp', 'ask', 'mcp-askm_00000001.json'));
   assert.equal(o.envScrub, true);
@@ -57,7 +57,7 @@ test('the recipe: cwd, dontAsk, Task-only built-ins, worca grant, scrub, foregro
   assert.equal(o.appendSubagentSystemPrompt, SANDBOX_NOTE);
   assert.ok(SANDBOX_NOTE.includes('mcp__worca__') && SANDBOX_NOTE.includes('Task'));
   assert.equal(o.resumeSessionId, undefined, 'no session yet ⇒ no --resume');
-  for (const t of ['Bash', 'Read', 'Write', 'Edit']) assert.ok(!o.allowedTools.includes(t) && !o.tools.includes(t), `${t} never allowed`);
+  for (const t of ['Bash', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'WebSearch']) assert.ok(!o.allowedTools.includes(t) && !o.tools.includes(t), `${t} never allowed`);
   assert.equal(buildAskSpawnOptions({ ...base(), thread: { id: 'ask_00000001', sessionId: 'sess-1' } }).resumeSessionId, 'sess-1');
   assert.equal(buildAskSpawnOptions({ ...base(), limits: { maxTurns: 7, maxBudgetUsd: null } }).maxBudgetUsd, null, 'null cap passes through (runner omits the flag)');
 });
@@ -67,8 +67,11 @@ test('deny rules: spec list, every path rule // or ~/ anchored, the resolved hom
   assert.deepEqual(o.permissionRules, { allow: askWorktreeAllowRules('ask_00000001'), deny: [...ASK_DENY_RULES] });
   assert.deepEqual(ASK_DENY_RULES, [
     'Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Skill',
-    'Read(//**/.worca-cc/**)', 'Read(//**/worca-cc.db*)', 'Read(//**/secrets.json)', 'Read(//**/.env*)',
-    'Read(~/.ssh/**)', 'Read(~/.aws/**)',
+    'Read(//**/worca-cc.db*)', 'Read(//**/worca.db*)', 'Read(//**/secrets.json)', 'Read(//**/.env*)',
+    'Read(//**/.worca-cc/settings.json)', 'Read(//**/.worca-cc/store/**)', 'Read(//**/.worca-cc/runs/**)',
+    'Read(//**/.worca-cc/plugins/**)', 'Read(//**/.worca-cc/tmp/**)',
+    'Read(~/.ssh/**)', 'Read(~/.aws/**)', 'Read(~/.gnupg/**)', 'Read(~/.kube/**)', 'Read(~/.docker/**)',
+    'Read(~/.claude/**)', 'Read(~/.netrc)', 'Read(~/.npmrc)', 'Read(~/.config/gh/**)',
   ]);
   for (const rule of o.permissionRules.deny) {
     const m = /^\w+\((.*)\)$/.exec(rule);
@@ -81,35 +84,28 @@ test('deny rules: spec list, every path rule // or ~/ anchored, the resolved hom
 });
 
 // ── P4: worktrees under GATE E1 = READ-ONLY-STRICT ───────────────────────────
-// The Task-0 probe (claude 2.1.241) measured TWO disqualifying behaviours:
-//   (a) a path in NEITHER the allow nor the deny list is READ — `unmatched ⇒ allow`
-//       (proven with a neutral file OUTSIDE the probe's cwd, so it is not the
-//       default cwd-workspace grant). Granting Read would expose the whole disk
-//       minus the enumerated denies, and no deny list can enumerate a disk.
-//   (b) `Grep` returned the CONTENTS of a file under a denied path, ignoring both
-//       `Read(<path>)` and `Grep(<path>)` denies (the CLI itself reports that only
-//       Read(path) rules are matched by file permission checks, and Grep escapes
-//       even those).
-// So the built-ins stay Task-only, the blanket home deny STAYS, and the worktrees
-// are reachable ONLY through the hardened `git` MCP tool (which is cwd-confined and
-// applies the protected-path + redaction floor itself). askWorktreeAllowRules is the
-// seam that flips if the permission engine ever gains `unmatched ⇒ deny`.
-test('P4/E1: no native file tools are granted and the blanket home deny is intact', () => {
+// 2026-08-30: the user chose native Read/Grep/Glob for the chat over a worca-side
+// read tool, ACCEPTING the engine's measured limits (gate E1, claude 2.1.241):
+// `unmatched ⇒ allow` makes the grant effectively disk-wide minus the deny list,
+// and Grep was seen to ignore path denies. The blanket home deny is therefore
+// replaced by ENUMERATED denies (db, store, runs, plugins, tmp, settings.json) so
+// the chat's own worktrees under <home>/ask/<thread>/wt/ become readable, and the
+// common credential stores are denied by name.
+test('native file tools: Read/Grep/Glob are granted; the home deny is enumerated, never blanket', () => {
   const o = buildAskSpawnOptions(base());
-  assert.deepEqual(ASK_BUILTIN_TOOLS, ['Task'], 'E1 READ-ONLY-STRICT: no Read/Grep/Glob');
-  assert.deepEqual(o.tools, ['Task']);
-  assert.deepEqual(o.allowedTools, ['Task']);
-  for (const t of ['Read', 'Grep', 'Glob']) {
-    assert.ok(!o.tools.includes(t) && !o.allowedTools.includes(t), `${t} is not granted (gate E1)`);
-  }
-  assert.ok(ASK_DENY_RULES.includes('Read(//**/.worca-cc/**)'),
-    'the blanket home deny is NOT dissolved — dissolving it is only safe under unmatched ⇒ deny');
+  assert.deepEqual(ASK_BUILTIN_TOOLS, ['Task', 'Read', 'Grep', 'Glob']);
+  assert.deepEqual(o.tools, ['Task', 'Read', 'Grep', 'Glob']);
+  assert.deepEqual(o.allowedTools, ['Task', 'Read', 'Grep', 'Glob']);
+  assert.ok(!ASK_DENY_RULES.includes('Read(//**/.worca-cc/**)'), 'no blanket home deny — it would cover the chat worktrees too');
+  assert.ok(!ASK_DENY_RULES.some((r) => /^Read\(\/\/\*\*\/\.worca-cc\/ask\b/.test(r)), 'nothing denies <home>/ask/**');
+  for (const dir of ['store', 'runs', 'plugins', 'tmp']) assert.ok(ASK_DENY_RULES.includes(`Read(//**/.worca-cc/${dir}/**)`), `${dir}/ denied`);
+  for (const f of ['Read(//**/worca-cc.db*)', 'Read(//**/worca.db*)', 'Read(//**/.worca-cc/settings.json)', 'Read(//**/secrets.json)', 'Read(//**/.env*)']) assert.ok(ASK_DENY_RULES.includes(f), f);
 });
 
-test('P4: askWorktreeAllowRules is empty under E1, shape-checks the thread id, never interpolates the home', () => {
+test('askWorktreeAllowRules names the thread\'s worktree subtree, shape-checks the thread id, never interpolates the home', () => {
   const o = buildAskSpawnOptions(base());
   assert.deepEqual(o.permissionRules.allow, askWorktreeAllowRules('ask_00000001'));
-  assert.deepEqual(askWorktreeAllowRules('ask_00000001'), [], 'E1 READ-ONLY-STRICT: no Read grant to scope');
+  assert.deepEqual(askWorktreeAllowRules('ask_00000001'), ['Read(//**/.worca-cc/ask/ask_00000001/wt/**)'], 'the chat may read its own worktrees');
   assert.deepEqual(askWorktreeAllowRules('../etc'), [], 'unminted id ⇒ NO allow rule (never interpolated)');
   assert.deepEqual(askWorktreeAllowRules(undefined), []);
   for (const rule of o.permissionRules.allow) {
@@ -118,13 +114,13 @@ test('P4: askWorktreeAllowRules is empty under E1, shape-checks the thread id, n
   }
 });
 
-test('P4: the settings payload carries the deny list (and the empty allow) through buildClaudeArgs', () => {
+test('P4: the settings payload carries the deny list (and the worktree allow) through buildClaudeArgs', () => {
   const args = buildClaudeArgs(buildAskSpawnOptions(base()));
   const settings = JSON.parse(args[args.indexOf('--settings') + 1]);
   assert.deepEqual(settings.permissions.deny, [...ASK_DENY_RULES]);
-  assert.deepEqual(settings.permissions.allow, []);
-  assert.equal(args[args.indexOf('--tools') + 1], 'Task');
-  assert.equal(args[args.indexOf('--allowedTools') + 1], 'Task,mcp__worca');
+  assert.deepEqual(settings.permissions.allow, ['Read(//**/.worca-cc/ask/ask_00000001/wt/**)']);
+  assert.equal(args[args.indexOf('--tools') + 1], 'Task,Read,Grep,Glob');
+  assert.equal(args[args.indexOf('--allowedTools') + 1], 'Task,Read,Grep,Glob,mcp__worca');
 });
 
 test('model env: caller routing env merges under the sandbox var, which always wins', () => {
@@ -145,8 +141,8 @@ test('buildClaudeArgs over the recipe carries every flag and never --add-dir', (
   const args = buildClaudeArgs(buildAskSpawnOptions(base()));
   const has = (flag, value) => { const i = args.indexOf(flag); assert.ok(i > -1, `${flag} present`); if (value !== undefined) assert.equal(args[i + 1], value, `${flag} value`); };
   has('--permission-mode', 'dontAsk');
-  has('--allowedTools', 'Task,mcp__worca');
-  has('--tools', 'Task');
+  has('--allowedTools', 'Task,Read,Grep,Glob,mcp__worca');
+  has('--tools', 'Task,Read,Grep,Glob');
   has('--strict-mcp-config');
   has('--setting-sources', 'project');
   has('--disable-slash-commands');
@@ -174,13 +170,13 @@ test('fake bin: the whole recipe reaches the spawned argv through runClaude (fiv
   await runClaude({ ...o, bin });
   const argv = (await readFile(out, 'utf8')).split('\0'); argv.pop();
   for (const flag of ['--strict-mcp-config', '--disable-slash-commands', '--include-partial-messages']) assert.ok(argv.includes(flag), flag);
-  assert.equal(argv[argv.indexOf('--tools') + 1], 'Task');
+  assert.equal(argv[argv.indexOf('--tools') + 1], 'Task,Read,Grep,Glob');
   assert.equal(argv[argv.indexOf('--setting-sources') + 1], 'project');
   assert.equal(argv[argv.indexOf('--max-turns') + 1], '40');
   assert.equal(argv[argv.indexOf('--max-budget-usd') + 1], '2');
   assert.equal(argv[argv.indexOf('--append-subagent-system-prompt') + 1], SANDBOX_NOTE);
   assert.equal(argv[argv.indexOf('--permission-mode') + 1], 'dontAsk');
-  assert.equal(argv[argv.indexOf('--allowedTools') + 1], 'Task,mcp__worca');
+  assert.equal(argv[argv.indexOf('--allowedTools') + 1], 'Task,Read,Grep,Glob,mcp__worca');
 });
 
 test('buildMcpConfig: resolved base, argv twins of the env, execPath default', () => {
