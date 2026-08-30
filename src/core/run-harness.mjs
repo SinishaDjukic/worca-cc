@@ -3340,6 +3340,31 @@ export class RunHarness extends EventEmitter {
   }
 
   /**
+   * Options for the title-generation spawn. The title call is the one claude
+   * process a RUN starts outside runOpts, so it must mirror the run's claude
+   * policy (bin, mock, env scrub) rather than inherit runClaude's PATH/env
+   * defaults — a run built with claude:{mock:true} spawned the developer's REAL
+   * binary 157x per `npm test` until 2026-08-30. Exposed as a method so the
+   * plumbing is unit-testable (ESM imports cannot be spied).
+   */
+  _titleGenOpts() {
+    return {
+      // §2.1 row 3: fire-and-forget title generation was the one remaining worca-cc
+      // process started inside the user's LIVE checkout. Once a run root exists
+      // there is no reason for it. The kickoff site moved to just after
+      // _setupRunRoot() so runCwd is populated here.
+      cwd: this.runCwd ?? this.projectDir,
+      signal: this.abort.signal,
+      bin: this.claude.bin,
+      mock: this.claude.mock,
+      // Same env policy as the pipeline nodes. Both undefined on an unconfigured
+      // project ⇒ byte-identical spawn env (legacy parity).
+      envScrub: this.guardrails?.envScrub || undefined,
+      envAllowlist: this.guardrails?.envScrub ? this.guardrails.envAllowlist : undefined,
+    };
+  }
+
+  /**
    * Fire-and-forget: generate a concise LLM title and, when ready, persist + broadcast it.
    * The promise is stored on this._titlePromise for test determinism but is NEVER awaited
    * by run() (must not delay the run). Aborts with the run via this.abort.signal.
@@ -3349,19 +3374,7 @@ export class RunHarness extends EventEmitter {
     const id = this.pipeline?.id;
     if (!prompt || !id) { this._titlePromise = Promise.resolve(); return; }
     this._titlePromise = Promise.resolve()
-      .then(() => generateTitle(prompt, {
-        // §2.1 row 3: fire-and-forget title generation was the one remaining worca-cc
-        // process started inside the user's LIVE checkout. Once a run root exists
-        // there is no reason for it. The kickoff site moved to just after
-        // _setupRunRoot() so runCwd is populated here.
-        cwd: this.runCwd ?? this.projectDir,
-        signal: this.abort.signal,
-        // Title generation is the one claude process a RUN spawns outside runOpts,
-        // so it honors the same env policy as the pipeline nodes. Both undefined
-        // on an unconfigured project ⇒ byte-identical spawn env (legacy parity).
-        envScrub: this.guardrails?.envScrub || undefined,
-        envAllowlist: this.guardrails?.envScrub ? this.guardrails.envAllowlist : undefined,
-      }))
+      .then(() => generateTitle(prompt, this._titleGenOpts()))
       .then((real) => {
         if (!real || real === this.state.title) return;     // empty / unchanged → keep provisional
         if (this.abort.signal.aborted) return;
