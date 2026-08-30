@@ -44,6 +44,17 @@ import { tmpdir } from 'node:os';
 
 const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
+// Grace between the abort SIGTERM and the SIGKILL escalation. Claude Code shuts
+// down synchronously (fsync'd ~/.claude.json saves); a SIGKILL that lands inside
+// such a write strands ~/.claude.json.tmp.<pid>.<hex> (2026-08-30: 2099 files,
+// 4.4 GB, all from test runs under IO load). 5 s is generous on an idle disk
+// (SIGTERM exits in ~0.5 s) and only delays a stop when the child is wedged.
+export const DEFAULT_SIGKILL_GRACE_MS = 5000;
+export function sigkillGraceMs() {
+  const n = Number(process.env.WORCA_SIGKILL_GRACE_MS);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_SIGKILL_GRACE_MS;
+}
+
 /** What `--settings` carries, or null when there is nothing to carry (no hook
  *  telemetry, no permission rules) — then the flag is omitted entirely. */
 export function buildSettingsPayload(permissionRules) {
@@ -626,7 +637,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         } catch {
           /* ignore */
         }
-      }, 1500).unref?.();
+      }, sigkillGraceMs()).unref?.();
     };
     if (signal) {
       if (signal.aborted) onAbort();
