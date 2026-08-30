@@ -391,7 +391,7 @@ const STUBBORN_RUNNERS = {
 test('every hold on one wire mints its OWN ask id; the delivery number rides the payload', { timeout: 120000 }, async () => {
   await seedStubbornFull('wf_stubborn_ids');
   const orch = createOrchestrator({
-    projectDir: gitDir('gateids'), workflowId: 'wf_stubborn_ids', prompt: 'demo', auto: true,
+    projectDir: gitDir('gateids'), workflowId: 'wf_stubborn_ids', prompt: 'demo', claude: { mock: true }, auto: true,
     runners: STUBBORN_RUNNERS,
   });
   const asks = [];
@@ -416,7 +416,7 @@ test('every hold on one wire mints its OWN ask id; the delivery number rides the
 test('a replayed previous-hold id no longer resolves the CURRENT hold', { timeout: 120000 }, async () => {
   await seedStubbornFull('wf_stubborn_stale');
   const orch = createOrchestrator({
-    projectDir: gitDir('gatestale'), workflowId: 'wf_stubborn_stale', prompt: 'demo', auto: false,
+    projectDir: gitDir('gatestale'), workflowId: 'wf_stubborn_stale', prompt: 'demo', claude: { mock: true }, auto: false,
     runners: STUBBORN_RUNNERS,
   });
   const replays = [];
@@ -451,7 +451,7 @@ test('a verdict that was never written leaves NO reviews row', { timeout: 120000
   });
   const run = async (missing, tag) => {
     const orch = createOrchestrator({
-      projectDir: gitDir(tag), workflowId: 'wf_quick-fix', prompt: 'demo',
+      projectDir: gitDir(tag), workflowId: 'wf_quick-fix', prompt: 'demo', claude: { mock: true },
       auto: true, runners: mkRunners(missing),
     });
     const res = await orch.run();
