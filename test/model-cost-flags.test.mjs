@@ -83,3 +83,24 @@ test('observe: routed + zero/absent cost + tokens -> flagged; positive cost auto
   assert.equal((await listModels('')).find((m) => m.id === 'routed').costUnreliable, undefined);
   assert.equal(observeModelCost('routed', 0.5, USAGE), null, 'clearing an unflagged model is a no-op');
 });
+
+test('catalog: every entry carries routed = ANTHROPIC_BASE_URL key presence', async () => {
+  await addGlobalModel({ id: 'ds-stable', env: { ANTHROPIC_BASE_URL: 'https://gw' } });
+  await addGlobalModel({ id: 'ds-ref', env: { ANTHROPIC_BASE_URL: '${MY_GW}' } });
+  await addGlobalModel({ id: 'token-only', env: { ANTHROPIC_AUTH_TOKEN: 'sk-x' } });
+  await addGlobalModel({ id: 'plain' });
+  const models = await listModels('');
+  const byId = new Map(models.map((m) => [m.id, m]));
+  assert.equal(byId.get('ds-stable').routed, true);
+  assert.equal(byId.get('ds-ref').routed, true, 'a ${VAR} ref still routes — key presence is the signal');
+  assert.equal(byId.get('token-only').routed, false, 'hasEnv true, routed false — the flags are not the same');
+  assert.equal(byId.get('plain').routed, false);
+  for (const m of models) assert.equal(typeof m.routed, 'boolean', `${m.id} carries the flag`);
+  assert.equal(byId.get('claude-opus-5').routed, false, 'unshadowed predefined never routes');
+});
+
+test('catalog: a global shadow of a predefined id carries the shadow env routing', async () => {
+  await addGlobalModel({ id: 'claude-opus-5', env: { ANTHROPIC_BASE_URL: 'https://gw' } });
+  const models = await listModels('');
+  assert.equal(models.find((m) => m.id === 'claude-opus-5').routed, true);
+});

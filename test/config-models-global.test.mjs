@@ -57,9 +57,9 @@ test('catalog: global entries appear for every project; legacy project entries r
 
   const models = await listModels(p);
   const glm = models.find((m) => m.id === 'glm-4.7');
-  assert.deepEqual(glm, { id: 'glm-4.7', label: 'GLM', efforts: ['medium'], custom: 'global', hasEnv: true });
+  assert.deepEqual(glm, { id: 'glm-4.7', label: 'GLM', efforts: ['medium'], custom: 'global', hasEnv: true, routed: true });
   const proj = models.find((m) => m.id === 'proj-model');
-  assert.deepEqual(proj, { id: 'proj-model', label: 'proj-model', efforts: [...EFFORTS], custom: 'project', hasEnv: false });
+  assert.deepEqual(proj, { id: 'proj-model', label: 'proj-model', efforts: [...EFFORTS], custom: 'project', hasEnv: false, routed: false });
   // Env VALUES never leak into the catalog shape.
   assert.equal(Object.keys(glm).includes('env'), false);
   // Another project sees the global entry but not this project's legacy one.
@@ -78,14 +78,14 @@ test('catalog: a global entry SHADOWS its predefined twin (id casing kept); lega
   const models = await listModels(p);
   // Predefined shadow: same slot, predefined id casing, overridden metadata.
   const sonnet = models.find((m) => m.id === 'claude-sonnet-4-6');
-  assert.deepEqual(sonnet, { id: 'claude-sonnet-4-6', label: 'Sonnet via proxy', efforts: ['medium', 'high'], custom: 'global', hasEnv: true });
+  assert.deepEqual(sonnet, { id: 'claude-sonnet-4-6', label: 'Sonnet via proxy', efforts: ['medium', 'high'], custom: 'global', hasEnv: true, routed: true });
   assert.equal(models.filter((m) => m.id.toLowerCase() === 'claude-sonnet-4-6').length, 1);
   // Legacy dup of a global id is dropped from the composed view.
   assert.equal(models.filter((m) => m.id.toLowerCase() === 'glm-4.7').length, 1);
   assert.equal(models.find((m) => m.id.toLowerCase() === 'glm-4.7').custom, 'global');
   // Un-shadowed predefined entries are unchanged.
   const opus = models.find((m) => m.id === 'claude-opus-5');
-  assert.deepEqual(opus, { ...PREDEFINED_MODELS[0], custom: false, hasEnv: false });
+  assert.deepEqual(opus, { ...PREDEFINED_MODELS[0], custom: false, hasEnv: false, routed: false });
 });
 
 test('addCustomModel rejects an id that already exists globally', async () => {
@@ -177,7 +177,7 @@ test('removing a predefined SHADOW reverts the override and purges nothing', asy
   // The ref survives — it now points at the built-in entry again.
   assert.deepEqual((await resolveRunConfig(p, 'wf_x')).nodes.s0_0, { model: 'claude-sonnet-4-6', effort: 'high' });
   const entry = (await listModels(p)).find((m) => m.id === 'claude-sonnet-4-6');
-  assert.deepEqual(entry, { ...PREDEFINED_MODELS.find((m) => m.id === 'claude-sonnet-4-6'), custom: false, hasEnv: false });
+  assert.deepEqual(entry, { ...PREDEFINED_MODELS.find((m) => m.id === 'claude-sonnet-4-6'), custom: false, hasEnv: false, routed: false });
 });
 
 test('removeGlobalModelAndRefs on an unknown id throws WITHOUT purging same-string legacy refs', async () => {

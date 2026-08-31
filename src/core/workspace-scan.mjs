@@ -33,6 +33,7 @@ import {
 } from './worktree.mjs';
 import { runWorkspaceScan } from './phases.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
+import { modelHasBaseUrlRouting } from './config.mjs';
 
 // The scanning agent's name in the prompt-role/registry sense (drives the .md body
 // it loads; the MOCK_ROLE marker differs — workspace-scan — and is set inside
@@ -298,6 +299,9 @@ class WorkspaceScan extends EventEmitter {
       // ctxFanOut(ctx) -> ctx.fanOut (no node) -> grants Task/Agent so the agent
       // can dispatch investigators (scan-fanout).
       fanOut: true,
+      // No node on this ctx: ctxEndpointRouted reads the ctx-level flag, so the
+      // scanner's fan-out block degrades the same way a routed node's does.
+      endpointRouted: modelHasBaseUrlRouting(this.claude.model),
       claudeOpts: {
         permissionMode: this.claude.permissionMode || 'acceptEdits',
         model: this.claude.model,

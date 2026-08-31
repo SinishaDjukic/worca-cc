@@ -329,3 +329,19 @@ test('genericIoBlock: the worktree handle hint is unchanged (single-project byte
   const block = genericIoBlock({ code: { kind: 'worktree' } }, {});
   assert.match(block, /- code: \(the working tree — inspect with `git diff` \/ `git status` in your cwd\)/);
 });
+
+test('workspaceFanOutDirective: endpointRouted swaps the explore arm off Explore; default keeps today\'s bytes', () => {
+  const ws = { projects: [{ projectKey: 'a' }] };
+  const plain = workspaceFanOutDirective('explore', ws);
+  assert.equal(workspaceFanOutDirective('explore', ws, { endpointRouted: false }), plain, 'default off changes nothing');
+  assert.match(plain, /Explore sub-agent/);
+  const routed = workspaceFanOutDirective('explore', ws, { endpointRouted: true });
+  assert.doesNotMatch(routed, /Explore sub-agent/, 'a routed node is never steered into Explore');
+  assert.match(routed, /`general-purpose` investigator/);
+  assert.equal(workspaceFanOutDirective('explore', ws, { relative: true, endpointRouted: true }).includes('Explore sub-agent'), false,
+    'relative + routed compose');
+  for (const s of ['task', 'review']) {
+    assert.equal(workspaceFanOutDirective(s, ws, { endpointRouted: true }), workspaceFanOutDirective(s, ws),
+      `${s}: routed changes nothing (already general-purpose / names no type)`);
+  }
+});

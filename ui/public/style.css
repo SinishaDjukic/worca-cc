@@ -3511,6 +3511,7 @@ input.gv-name:focus-visible{outline:none;}
 .ins-tog input[type="checkbox"]{width:15px;height:15px;flex:0 0 auto;margin:1px 0 0;accent-color:var(--ink);cursor:pointer;}
 .ins-tog input:disabled{cursor:not-allowed;}
 .ins-tog:has(input:disabled){opacity:.55;}
+.ins-panel .ins-f:has(.ins-select:disabled){opacity:.55;}
 .ins-tog-b{display:flex;flex-direction:column;gap:2px;min-width:0;}
 .ins-tog-t{font-weight:600;font-size:12.5px;color:var(--ink);}
 .ins-tog-h{font-size:11px;line-height:1.4;color:var(--ink-3);}
