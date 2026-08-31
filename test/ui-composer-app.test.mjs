@@ -173,6 +173,31 @@ test('a v1 workflow still produces v1 rows (no regression)', async () => {
   assert.deepEqual(np.buildFeedbackRows(V1_ROW, {}, { feedbacks: {} }), []);
 });
 
+// Export-to-Claude-Code: every v2 saved row (incl. the built-in) carries an export
+// button that opens the modal; a v1 row does not. Clicking it opens + populates the
+// modal, and Cancel closes it. (The plan/apply fetch is covered by the API suite.)
+test('the export button opens the export modal for a v2 row, not a v1 row', async () => {
+  const win = await boot({ workflows: [DEFAULT_ROW, V2_ROW, V1_ROW] });
+  const doc = win.document;
+  const rowById = (id) => [...doc.querySelectorAll('#gv-saved-list .pl-item')].find((r) => r.dataset.id === id);
+
+  // v2 rows (built-in + user) get an export button; the v1 row does not.
+  assert.ok(rowById('wf_default').querySelector('.pl-export'), 'built-in default is exportable');
+  assert.ok(rowById('wf_g').querySelector('.pl-export'), 'a v2 workflow is exportable');
+  assert.equal(rowById('wf_old').querySelector('.pl-export'), null, 'a v1 workflow is not exportable');
+
+  const modal = doc.getElementById('export-modal');
+  assert.ok(modal.classList.contains('hidden'), 'modal starts hidden');
+
+  rowById('wf_g').querySelector('.pl-export').dispatchEvent(new win.Event('click'));
+  assert.equal(modal.classList.contains('hidden'), false, 'clicking export opens the modal');
+  assert.match(doc.getElementById('export-subtitle').textContent, /Graph one/);
+  assert.equal(doc.getElementById('export-slug-preview').textContent, 'Command: /graph-one', 'slug preview from the name');
+
+  doc.getElementById('export-cancel').dispatchEvent(new win.Event('click'));
+  assert.equal(modal.classList.contains('hidden'), true, 'Cancel closes the modal');
+});
+
 // MAJ-21: a flow card inside a loop must be named by the SHARED FLOW_LABEL table
 // (the same one the run monitor's manifest uses), never by its raw node id.
 test('the loop caption names an OR flow card "OR", never its raw n_or id', async () => {
