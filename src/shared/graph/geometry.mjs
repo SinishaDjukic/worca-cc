@@ -15,6 +15,10 @@ export const BORDER = 1.5;
 export const DOT = 10;
 export const FOOT_H = 26;
 export const EXEC_ROW_H = 22;
+/** Sub-agent fan squares per wrapped line. The squares are 7px + 3px gap, so a
+ *  full line is 16·10 − 3 = 157px (--gv-fan-w), leaving the ×N tail its column. */
+export const FAN_PER_ROW = 16;
+export const FAN_ROW_W = FAN_PER_ROW * 10 - 3;
 export const SNAP = 11;
 export const PORT_HIT_R = 14;
 export const WIRE_HIT_TOL = 6;
@@ -29,7 +33,7 @@ export const GEOMETRY_CSS_VARS = Object.freeze({
   '--gv-node-w': `${NODE_W}px`, '--gv-head-h': `${HEAD_H}px`, '--gv-row-h': `${ROW_H}px`,
   '--gv-sep-h': `${SEP_H}px`, '--gv-pad-t': `${PAD_T}px`, '--gv-pad-b': `${PAD_B}px`,
   '--gv-border': `${BORDER}px`, '--gv-dot': `${DOT}px`, '--gv-foot-h': `${FOOT_H}px`,
-  '--gv-exec-row-h': `${EXEC_ROW_H}px`,
+  '--gv-exec-row-h': `${EXEC_ROW_H}px`, '--gv-fan-w': `${FAN_ROW_W}px`,
 });
 
 /** Write the variables onto a host element at mount. Guarded: jsdom hosts and a
@@ -68,10 +72,17 @@ function zoneTop(node, ports, kind) {
   return null;
 }
 
+/** Wrapped lines a fan of `n` squares occupies (the leds are pre-capped upstream). */
+export function fanLines(n) {
+  return Math.max(1, Math.ceil((Number(n) || 0) / FAN_PER_ROW));
+}
+
 /**
  * @param {{kind:string}} node
  * @param {{inputs:Array, outputs:Array}} ports  RESOLVED ports (await included for agents)
- * @param {{footerRows?:number}} [opts]  0 none · 1 collapsed executions strip · >1 strip + rows
+ * @param {{footerRows?:number}} [opts]  footer LINES: 0 none · 1 collapsed executions
+ *   strip · more for extra lines (a wrapped fan line, a stacked exec row's extra
+ *   lines). The first line is FOOT_H tall, every further one EXEC_ROW_H.
  */
 export function nodeSize(node, ports, { footerRows = 0 } = {}) {
   const zs = zones(node, ports);

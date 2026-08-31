@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   NODE_W, ROW0, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, GEOMETRY_CSS_VARS, injectGeometry,
   nodeSize, portAnchor, bezierPath, bezierPoint, bezierMid, snap,
-  hitNode, hitPort, hitWire, graphBounds, fitBounds,
+  hitNode, hitPort, hitWire, graphBounds, fitBounds, fanLines, FAN_PER_ROW, FAN_ROW_W,
 } from '../src/shared/graph/geometry.mjs';
 import { portsFnFor } from '../src/shared/graph/ports.mjs';
 
@@ -56,6 +56,17 @@ test('the executions footer grows the card and never moves an anchor', () => {
   assert.equal(nodeSize(N_AGENT, P(N_AGENT), { footerRows: 3 }).h, 191.5 + 26 + 2 * 22);
   assert.deepEqual(portAnchor(N_AGENT, P(N_AGENT), 'plan', 'out'),
     portAnchor(N_AGENT, P(N_AGENT), 'plan', 'out'));
+});
+
+test('the fan wraps at FAN_PER_ROW and its row width is the CSS var', () => {
+  assert.equal(FAN_PER_ROW, 16);
+  assert.equal(FAN_ROW_W, 157);                            // 16·(7+3) − 3
+  assert.equal(GEOMETRY_CSS_VARS['--gv-fan-w'], '157px');
+  assert.equal(fanLines(0), 1);
+  assert.equal(fanLines(1), 1);
+  assert.equal(fanLines(16), 1);
+  assert.equal(fanLines(17), 2);
+  assert.equal(fanLines(24), 2);                           // SUB_SQUARE_CAP → two lines max
 });
 
 test('port anchors match the measured prototype', () => {
@@ -127,12 +138,12 @@ test('graphBounds + fitBounds reproduce the measured auto-fit', () => {
 
 test('GEOMETRY_CSS_VARS covers every CSS-visible number and injectGeometry writes px', () => {
   assert.deepEqual(Object.keys(GEOMETRY_CSS_VARS).sort(), ['--gv-border', '--gv-dot', '--gv-exec-row-h',
-    '--gv-foot-h', '--gv-head-h', '--gv-node-w', '--gv-pad-b', '--gv-pad-t', '--gv-row-h', '--gv-sep-h']);
+    '--gv-fan-w', '--gv-foot-h', '--gv-head-h', '--gv-node-w', '--gv-pad-b', '--gv-pad-t', '--gv-row-h', '--gv-sep-h']);
   assert.equal(GEOMETRY_CSS_VARS['--gv-node-w'], '220px');
   assert.equal(GEOMETRY_CSS_VARS['--gv-pad-t'], '8.5px');
   const written = [];
   injectGeometry({ style: { setProperty: (k, v) => written.push([k, v]) } });
-  assert.equal(written.length, 10);
+  assert.equal(written.length, 11);
   assert.deepEqual(written.find(([k]) => k === '--gv-row-h'), ['--gv-row-h', '24px']);
   injectGeometry(null);                                    // never throws on a missing host
 });

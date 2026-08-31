@@ -3347,23 +3347,42 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
   color:var(--amber-ink);border:1px solid var(--amber);border-radius:999px;padding:1px 7px;
   font:10px/1.4 var(--mono);pointer-events:none;}
 /* Run-mode executions footer (P6 fills it through view.setFooter, which is the
-   ONE writer of a run card's height). These two heights MUST stay var(--gv-foot-h)
-   / var(--gv-exec-row-h): nodeSize adds FOOT_H for the first band and EXEC_ROW_H
-   for each extra one, and test/ui-graph-css.test.mjs asserts style.css uses the
-   FULL --gv-* set injectGeometry writes — dropping them fails that assertion. */
+   ONE writer of a run card's height). Heights MUST stay var(--gv-foot-h) /
+   var(--gv-exec-row-h): nodeSize bills FOOT_H for the first footer LINE and
+   EXEC_ROW_H for each extra one (a wrapped fan line, a stacked exec row's extra
+   lines), and test/ui-graph-css.test.mjs asserts style.css uses the FULL --gv-*
+   set injectGeometry writes — dropping them fails that assertion. */
 .gv-world .xfoot{position:absolute;left:0;right:0;bottom:0;border-top:1px solid var(--line);
   border-radius:0 0 14.5px 14.5px;overflow:hidden;background:var(--panel);}
-.gv-world .xfoot>.fan,.gv-world .xfoot>.xtoggle,.gv-world .xfoot>.xresult{height:var(--gv-foot-h);
+.gv-world .xfoot>.fan,.gv-world .xfoot>.xtoggle,.gv-world .xfoot>.xresult{height:var(--gv-exec-row-h);
   display:flex;align-items:center;gap:7px;padding:0 11px;width:100%;box-sizing:border-box;}
+.gv-world .xfoot>:first-child{height:var(--gv-foot-h);}   /* the first line is the tall one nodeSize bills */
+.gv-world .xfoot>.fan.f2{height:calc(var(--gv-foot-h) + var(--gv-exec-row-h));}   /* two wrapped square lines */
 .gv-world .xfoot>.xtoggle{border:none;background:none;font:inherit;color:inherit;cursor:pointer;text-align:left;}
 .gv-world .xfoot>.xrow{height:var(--gv-exec-row-h);display:flex;align-items:center;gap:7px;padding:0 11px;}
-.gv-world .xfoot .xsq{display:flex;gap:3px;}
-.gv-world .xfoot .xq,.gv-world .xfoot .sq{width:7px;height:7px;border-radius:2px;background:var(--line-2);}
+/* stacked exec rows: dur · cost on its own right-aligned line (.stack), the
+   label on up to two clamped lines above it (.l2) — run-decor execBandLayout
+   bills exactly these line counts, so the grid rows must stay --gv-exec-row-h */
+.gv-world .xfoot>.xrow.stack{height:calc(2*var(--gv-exec-row-h));display:grid;
+  grid-template-columns:auto minmax(0,1fr);grid-auto-rows:var(--gv-exec-row-h);column-gap:7px;row-gap:0;}
+.gv-world .xfoot>.xrow.stack.l2{height:calc(3*var(--gv-exec-row-h));}
+.gv-world .xfoot>.xrow.stack .led{grid-row:1;grid-column:1;}
+.gv-world .xfoot>.xrow.stack .xl{grid-row:1;grid-column:2;}
+.gv-world .xfoot>.xrow.stack .xr{grid-row:2;grid-column:2;}
+.gv-world .xfoot>.xrow.stack.l2 .xl{grid-row:1 / span 2;white-space:normal;display:-webkit-box;
+  -webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:var(--gv-exec-row-h);}
+.gv-world .xfoot>.xrow.stack.l2 .xr{grid-row:3;}
+/* fan squares wrap inside a fixed --gv-fan-w column (FAN_PER_ROW per line) so
+   they keep their 7px and the ×N tail keeps its right-hand column */
+.gv-world .xfoot .fsq{display:flex;flex-wrap:wrap;flex:0 0 var(--gv-fan-w);max-width:var(--gv-fan-w);
+  column-gap:3px;row-gap:7px;}
+.gv-world .xfoot .xsq{display:flex;gap:3px;flex:0 0 auto;}
+.gv-world .xfoot .xq,.gv-world .xfoot .sq{width:7px;height:7px;border-radius:2px;background:var(--line-2);flex:0 0 auto;}
 .gv-world .xfoot .xq.is-active,.gv-world .xfoot .sq.on{background:var(--blue);}
 .gv-world .xfoot .xq.is-done{background:var(--green);}
 .gv-world .xfoot .xq.is-error{background:var(--red);}
-.gv-world .xfoot .xsum,.gv-world .xfoot .xl{font-size:11.5px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.gv-world .xfoot .xr,.gv-world .xfoot .fl{margin-left:auto;font:10px/1.4 var(--mono);color:var(--ink-3);}
+.gv-world .xfoot .xsum,.gv-world .xfoot .xl{font-size:11.5px;color:var(--ink-2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.gv-world .xfoot .xr,.gv-world .xfoot .fl{margin-left:auto;font:10px/1.4 var(--mono);color:var(--ink-3);white-space:nowrap;flex:0 0 auto;}
 .gv-world .xfoot .chev{width:13px;height:13px;margin-left:auto;flex:0 0 auto;}
 .gv-world .xfoot .led{width:8px;height:8px;border-radius:50%;background:var(--line-2);flex:0 0 auto;}
 .gv-world .xfoot .xrow.is-active .led{background:var(--blue);}

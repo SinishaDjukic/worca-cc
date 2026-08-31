@@ -63,6 +63,36 @@ test('setFooter builds one band per row and sizes the card from the band count',
   assert.equal(parseFloat(card().style.height), h0, 'and restores the card height');
 });
 
+test('setFooter bills LINES, not bands: wrapped fan squares and stacked exec rows grow the card', () => {
+  const { view, host } = mountView();
+  const card = () => host.querySelector('[data-node-id="n_a"]');
+  const h0 = parseFloat(card().style.height);
+  // 17 squares wrap onto two 16-per-line rows (.f2): FOOT_H + one extra line.
+  view.setFooter('n_a', [{ kind: 'fan', leds: Array(17).fill('done'), count: 32, lines: 2 }]);
+  assert.equal(card().querySelector('.xfoot > .fan').className, 'fan f2');
+  assert.equal(card().querySelectorAll('.xfoot .fsq > .sq').length, 17, 'squares live in the wrapping .fsq column');
+  assert.equal(card().querySelector('.fan .fl').textContent, '×32');
+  assert.equal(parseFloat(card().style.height), h0 + 26 + 22);
+  // A stacked exec row bills 2 lines, a two-line-label row 3 — and the classes drive the CSS grid.
+  view.setFooter('n_a', [
+    { kind: 'strip', leds: ['done'], summary: '2 runs · $33.43', expanded: true },
+    { kind: 'exec', executionId: 'x:n_a:1', led: 'done', label: 'cycle 2 · revise', right: '20m 42s · $31.98', units: 2, stack: true, l2: false },
+    { kind: 'exec', executionId: 'x:n_a:2', led: 'done', label: 'Link FirebaseAI, plist setup + smoke tes…', right: '12m 28s · $1.45', units: 3, stack: true, l2: true },
+  ]);
+  assert.equal(parseFloat(card().style.height), h0 + 26 + 2 * 22 + 3 * 22, 'strip 1 + stacked 2 + l2 3 lines');
+  const rows = [...card().querySelectorAll('.xrow')];
+  assert.equal(rows[0].className, 'xrow is-done stack');
+  assert.equal(rows[1].className, 'xrow is-done stack l2');
+  // The in-place sync path (same executionId, layout changed) must converge too.
+  view.setFooter('n_a', [
+    { kind: 'strip', leds: ['done'], summary: '2 runs · $33.43', expanded: true },
+    { kind: 'exec', executionId: 'x:n_a:1', led: 'done', label: 'cycle 2', right: '20m 42s · $31.98', units: 1, stack: false, l2: false },
+    { kind: 'exec', executionId: 'x:n_a:2', led: 'done', label: 'Link FirebaseAI, plist setup + smoke tes…', right: '12m 28s · $1.45', units: 3, stack: true, l2: true },
+  ]);
+  assert.equal([...card().querySelectorAll('.xrow')][0].className, 'xrow is-done');
+  assert.equal(parseFloat(card().style.height), h0 + 26 + 22 + 3 * 22);
+});
+
 test('setNodeChrome paints --c, the gate pip and the header totals; nulls clear them', () => {
   const { view, host } = mountView();
   const card = host.querySelector('[data-node-id="n_a"]');
@@ -204,6 +234,42 @@ test('applyDecor: band ORDER is fan → strip → exec → result; the pip and t
   assert.equal(e.querySelector('.ngate'), null, 'the gate pip is FROM-node-only');
   assert.equal(a.querySelector('.ngate').dataset.wireId, 'w1');
   assert.equal(e.querySelector('.nrun'), null, 'a flow card has no header dur · cost');
+});
+
+test('applyDecor wires the layout through: capped strip leds, wrapped fan, stacked slice rows', () => {
+  const { view, host } = mountView();
+  const steps = Array.from({ length: 7 }, (_, i) => ({ key: `x:n_a:${i + 1}`, executionId: `x:n_a:${i + 1}`,
+    nodeId: 'n_a', ordinal: i + 1, kind: 'cycle', status: 'done', activeMs: 63000, costUsd: 0.12 }));
+  steps.push({ key: 'x:n_a:8:t', executionId: 'x:n_a:8:t', nodeId: 'n_a', ordinal: 8, kind: 'task',
+    title: 'Link FirebaseAI, plist setup and smoke test wiring', parentExecutionId: 'x:n_a:8',
+    status: 'done', activeMs: 748000, costUsd: 1.45 });
+  const decor = decorFromState(RUN({ status: 'done', steps }),
+    { subsOf: (id) => (id === 'n_a' ? Array.from({ length: 32 }, () => ({ status: 'finished' })) : []) });
+  applyDecor(view, { ...decor, expanded: 'n_a' });
+  const a = host.querySelector('[data-node-id="n_a"]');
+  assert.equal(a.querySelectorAll('.xsq .xq').length, 6, '8 runs → 6 strip leds, the summary text carries the tail');
+  assert.equal(a.querySelector('.xsum').textContent, '8 runs · $2.29');
+  assert.equal(a.querySelector('.xfoot > .fan').className, 'fan f2', '24 capped squares wrap onto two lines');
+  assert.equal(a.querySelectorAll('.fsq > .sq').length, 24);
+  assert.equal(a.querySelector('.fl').textContent, '×32');
+  const rows = [...a.querySelectorAll('.xrow')];
+  assert.equal(rows[0].className, 'xrow is-done', 'a short cycle row keeps its one compact line');
+  assert.equal(rows[7].className, 'xrow is-done stack l2', 'the truncated 40-char slice title takes two clamped lines');
+  assert.equal(rows[7].querySelector('.xr').textContent, '12m 28s · $1.45');
+});
+
+test('the stacked-row / wrapped-fan CSS exists and keeps every height on the --gv-* rhythm', () => {
+  for (const sel of ['.gv-world .xfoot>:first-child{height:var(--gv-foot-h);}',
+    '.gv-world .xfoot>.fan.f2{height:calc(var(--gv-foot-h) + var(--gv-exec-row-h));}',
+    '.gv-world .xfoot>.xrow.stack{height:calc(2*var(--gv-exec-row-h));',
+    '.gv-world .xfoot>.xrow.stack.l2{height:calc(3*var(--gv-exec-row-h));}',
+    '-webkit-line-clamp:2', '.gv-world .xfoot .fsq{']) {
+    assert.ok(css.includes(sel), `${sel} must be written`);
+  }
+  // The squares must never shrink again, and dur · cost must never wrap mid-text.
+  assert.match(css, /\.gv-world \.xfoot \.xq,\.gv-world \.xfoot \.sq\{[^}]*flex:0 0 auto[^}]*\}/);
+  assert.match(css, /\.gv-world \.xfoot \.xr,\.gv-world \.xfoot \.fl\{[^}]*white-space:nowrap[^}]*\}/);
+  assert.ok(css.includes('flex:0 0 var(--gv-fan-w)'), 'the fan column is the shared FAN_ROW_W');
 });
 
 // ── the host adapters ─────────────────────────────────────────────────────────

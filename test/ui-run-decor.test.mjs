@@ -2,7 +2,7 @@
 // P6a — the pure run-decor reducer: state tables in, one decor bag out. No DOM.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decorFromState, statusOf, fmtDur, fmtUsd, manifestAgents, QUIESCENCE_WARNING } from '../ui/public/graph/run-decor.mjs';
+import { decorFromState, statusOf, fmtDur, fmtUsd, manifestAgents, execBandLayout, QUIESCENCE_WARNING } from '../ui/public/graph/run-decor.mjs';
 
 // ── fixture builders ────────────────────────────────────────────────────────
 const agent = (id, key, over = {}) => ({
@@ -308,4 +308,15 @@ test("a row's led maps the wire word 'start' onto 'active'", () => {
   const f = decorFromState(st).footers.n_impl;
   assert.equal(f.rows[0].led, 'active');
   assert.deepEqual(f.leds, ['active']);
+});
+
+test('execBandLayout bills 1 line for a compact row, 2 with dur · cost stacked, 3 with a two-line label', () => {
+  // The short-cycle common case shares one line.
+  assert.deepEqual(execBandLayout('cycle 1', '43m 11s · $142.62'), { units: 1, stack: false, l2: false });
+  // A loop re-fire label pushes dur · cost onto its own line.
+  assert.deepEqual(execBandLayout('cycle 2 · revise', '20m 42s · $31.98'), { units: 2, stack: true, l2: false });
+  // A fan-out slice title takes two clamped lines above the dur · cost line.
+  assert.deepEqual(execBandLayout('Link FirebaseAI, plist setup + smoke tes…', '12m 28s · $1.45'), { units: 3, stack: true, l2: true });
+  // A flow row has no dur · cost and always fits its one line.
+  assert.deepEqual(execBandLayout('cycle 1', ''), { units: 1, stack: false, l2: false });
 });

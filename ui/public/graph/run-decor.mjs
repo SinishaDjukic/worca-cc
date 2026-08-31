@@ -9,14 +9,20 @@
 // colours read the manifest node. History renders with the registry absent.
 import { manifestPortsFn, manifestTemplate } from '../../../src/shared/graph/manifest.mjs';
 import { BOOKEND_EXECUTION_IDS, DEFAULT_MAX_CYCLES } from '../../../src/shared/graph/constants.mjs';
+import { fanLines } from '../../../src/shared/graph/geometry.mjs';
 
 /** The run-level warning a run that drained without binding End carries. */
 export const QUIESCENCE_WARNING = 'finished at quiescence — End not reached';
 
 /** Composite (kind:'task') rows label from the task title; keep the card readable. */
 const TITLE_MAX = 40;
-/** Squares in a sub-agent fan strip before the count alone carries the tail. */
+/** Squares in a sub-agent fan strip before the count alone carries the tail.
+ *  Wraps at FAN_PER_ROW (16), so the cap must stay ≤ 32 — style.css spells the
+ *  two-line fan height (`.fan.f2`) and no taller. */
 const SUB_SQUARE_CAP = 24;
+/** Leds on the collapsed strip before the `N runs · $…` text alone carries the
+ *  tail — 6 squares + the summary + the chevron is what the 220px card fits. */
+const STRIP_LED_CAP = 6;
 /** Run statuses that mean "nothing is running any more". */
 const TERMINAL_RUN = new Set(['done', 'stopped', 'error', 'paused']);
 /** Row statuses that mean "this execution is over". */
@@ -264,6 +270,24 @@ export function stripText(rows) {
 /** The status the 7px leds / row classes use ('start' is the wire's word for active). */
 const ledOf = (status) => (status === 'start' ? 'active' : (status || 'pending'));
 
+/**
+ * How many 22px lines an exec row takes, decided from its texts so the model
+ * bills the exact height style.css renders (the card height is model-driven;
+ * CSS can never measure for it). Conservative per-glyph estimates — a wide
+ * outlier degrades to the ellipsis, never to a taller row:
+ *   1 = label + `dur · cost` share one line (the short-cycle common case);
+ *   2 = `dur · cost` moves to its own right-aligned line (`.stack`);
+ *   3 = the label itself takes two clamped lines above it (`.stack.l2`).
+ */
+export function execBandLayout(label, right) {
+  const l = String(label || '');
+  const r = String(right || '');
+  if (!r) return { units: 1, stack: false, l2: false };            // flow rows: label alone
+  if (l.length * 5.8 + r.length * 6.1 <= 168) return { units: 1, stack: false, l2: false };
+  const l2 = l.length * 5.8 > 180;                                 // past one 180px label line
+  return { units: l2 ? 3 : 2, stack: true, l2 };
+}
+
 function decorateExecutions(decor, ctx) {
   const { nodes, wires, grouped, activeList, rowFor, state, now, live, subsOf } = ctx;
 
@@ -363,13 +387,16 @@ export function applyDecor(view, decor) {
     });
     const foot = decor.footers[nodeId] || null;
     const bands = [];
-    if (foot && foot.fan) bands.push({ kind: 'fan', leds: foot.fan.leds, count: foot.fan.count });
+    if (foot && foot.fan) {
+      bands.push({ kind: 'fan', leds: foot.fan.leds, count: foot.fan.count, lines: fanLines(foot.fan.leds.length) });
+    }
     if (foot && foot.rows.length) {
-      bands.push({ kind: 'strip', leds: foot.leds, summary: foot.summary, expanded: expanded === nodeId });
+      bands.push({ kind: 'strip', leds: foot.leds.slice(0, STRIP_LED_CAP), summary: foot.summary, expanded: expanded === nodeId });
       if (expanded === nodeId) {
         for (const r of foot.rows) {
+          const right = [r.dur, r.cost].filter(Boolean).join(' · ');
           bands.push({ kind: 'exec', executionId: r.executionId, led: r.led, label: r.label,
-            right: [r.dur, r.cost].filter(Boolean).join(' · ') });
+            right, ...execBandLayout(r.label, right) });
         }
       }
     }

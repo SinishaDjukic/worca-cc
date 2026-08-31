@@ -118,7 +118,7 @@ export function createGraphView(host, {
   const badgeEls = new Map();     // wireId  -> .wbadge element
   const incident = new Map();     // nodeId  -> Set(wireId)
   const dCache = new Map();       // wireId  -> last written `d`
-  const footers = new Map();      // nodeId  -> footerRows (int)
+  const footers = new Map();      // nodeId  -> footer LINES (Σ bandUnits, what nodeSize bills)
   const navs = [];                // nav controllers created by createNav()
   let T = { x: 0, y: 0, z: 1 };
   let current = null;             // last rendered template
@@ -227,9 +227,12 @@ export function createGraphView(host, {
   /** One footer band -> one element (the run monitor's vocabulary; see Interfaces). */
   function bandEl(nodeId, band) {
     if (band.kind === 'fan') {
-      const fan = h('div', 'fan');
-      for (const led of band.leds || []) fan.appendChild(h('i', `sq${led === 'run' ? ' on' : ''}`));
-      fan.appendChild(h('span', 'fl', `×${band.count}`));
+      // Squares wrap inside .fsq (a fixed --gv-fan-w column, FAN_PER_ROW per
+      // line) so they never shrink; `.f2` is the two-line height the model bills.
+      const fan = h('div', `fan${(band.lines || 1) > 1 ? ' f2' : ''}`);
+      const sq = h('span', 'fsq');
+      for (const led of band.leds || []) sq.appendChild(h('i', `sq${led === 'run' ? ' on' : ''}`));
+      fan.append(sq, h('span', 'fl', `×${band.count}`));
       return fan;
     }
     if (band.kind === 'strip') {
@@ -242,7 +245,7 @@ export function createGraphView(host, {
       return btn;
     }
     if (band.kind === 'exec') {
-      const row = h('div', `xrow is-${band.led || 'pending'}`);
+      const row = h('div', execRowClass(band));
       row.dataset.executionId = band.executionId || '';
       row.dataset.nodeId = nodeId;
       row.append(h('i', 'led'), h('span', 'xl', band.label || ''), h('span', 'xr', band.right || ''));
@@ -261,6 +264,13 @@ export function createGraphView(host, {
    *  decor generation (MAJ-20). */
   const bandKey = (band) => (band.kind === 'exec' ? `exec|${band.executionId || ''}` : band.kind);
 
+  /** `.stack` = dur · cost on its own line, `.l2` = two clamped label lines —
+   *  the layout the band's own `units` billed (run-decor execBandLayout). */
+  const execRowClass = (band) => `xrow is-${band.led || 'pending'}${band.stack ? ' stack' : ''}${band.l2 ? ' l2' : ''}`;
+
+  /** Footer LINES a band occupies — what nodeSize bills as footerRows. */
+  const bandUnits = (band) => (band.kind === 'fan' ? (band.lines || 1) : band.kind === 'exec' ? (band.units || 1) : 1);
+
   /** Update an EXISTING band element in place. Returns false when the element's
    *  shape cannot express the new band (a different led count on a fan, a result
    *  gaining or losing its link) and the caller must rebuild it. Nothing here is
@@ -269,9 +279,11 @@ export function createGraphView(host, {
   function syncBand(el, band) {
     if (band.kind === 'fan') {
       const leds = band.leds || [];
-      const cur = el.querySelectorAll(':scope > .sq');
+      const cur = el.querySelectorAll(':scope > .fsq > .sq');
       if (cur.length !== leds.length) return false;
       leds.forEach((led, i) => { const c = `sq${led === 'run' ? ' on' : ''}`; if (cur[i].className !== c) cur[i].className = c; });
+      const cls = `fan${(band.lines || 1) > 1 ? ' f2' : ''}`;
+      if (el.className !== cls) el.className = cls;
       const fl = el.querySelector(':scope > .fl');
       const txt = `×${band.count}`;
       if (fl && fl.textContent !== txt) fl.textContent = txt;
@@ -291,7 +303,7 @@ export function createGraphView(host, {
       return true;
     }
     if (band.kind === 'exec') {
-      const cls = `xrow is-${band.led || 'pending'}`;
+      const cls = execRowClass(band);
       if (el.className !== cls) el.className = cls;
       const l = el.querySelector(':scope > .xl');
       const r = el.querySelector(':scope > .xr');
@@ -529,7 +541,8 @@ export function createGraphView(host, {
       if (status) el.dataset.status = status; else delete el.dataset.status;
     },
     /** Reconcile the executions footer to `bands` (the run monitor's vocabulary,
-     *  see the Interfaces block) and RE-SIZE the card from the band count. Anchors
+     *  see the Interfaces block) and RE-SIZE the card from the footer LINE count
+     *  (Σ bandUnits — a wrapped fan or stacked exec row bills every line). Anchors
      *  are top-relative, so no wire re-routes (D8) — only height, hit box and fit
      *  bounds change. The ONE place a run-mode card height is written.
      *
@@ -589,7 +602,7 @@ export function createGraphView(host, {
         i += 1;
       }
       for (const gone of have.values()) gone.remove();
-      footers.set(nodeId, list.length);
+      footers.set(nodeId, list.reduce((a, band) => a + bandUnits(band), 0));
       el.style.height = `${sizeOf(node).h}px`;
     },
     /** Per-card ornaments: agent colour, gate pip, header duration · cost. */
