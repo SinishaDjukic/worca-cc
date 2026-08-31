@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { planExport, applyExport } from '../src/core/workflow-export.mjs';
-import { writeWorkflow } from '../src/core/workflows.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { writeKeyGraph } from './helpers/export-fixtures.mjs';
 
 useTempHome(after);
 
@@ -52,16 +52,8 @@ test('dry-run/Plan writes nothing', async () => {
 
 test('same key diverging across two workflows → conflict; per-path namespace yields <slug>-<stem>.md matching SKILL dispatch', async () => {
   const dest = await tmp();
-  const wfA = await writeWorkflow({
-    name: 'Alpha', domain: 'coding',
-    steps: [[{ id: 'a0', key: 'planner', defaults: { model: 'opus' } }], [{ id: 'a1', key: 'implementer' }], [{ id: 'a2', key: 'reviewer' }]],
-    feedbacks: [],
-  });
-  const wfB = await writeWorkflow({
-    name: 'Beta', domain: 'coding',
-    steps: [[{ id: 'b0', key: 'planner', defaults: { model: 'sonnet' } }], [{ id: 'b1', key: 'implementer' }], [{ id: 'b2', key: 'reviewer' }]],
-    feedbacks: [],
-  });
+  const wfA = await writeKeyGraph({ name: 'Alpha', keys: [{ key: 'planner', config: { model: 'opus' } }, 'implementer', 'reviewer'] });
+  const wfB = await writeKeyGraph({ name: 'Beta', keys: [{ key: 'planner', config: { model: 'sonnet' } }, 'implementer', 'reviewer'] });
   await applyExport({ workflowId: wfA.id, destination: 'project', projectDir: dest, onConflict: 'overwrite' });
 
   const plannerDefault = join(dest, '.claude/agents/worca-cc-planner.md');
@@ -86,16 +78,8 @@ test('same key diverging across two workflows → conflict; per-path namespace y
 // REGRESSION GUARD for the blanket-namespace fix.
 test('blanket --on-conflict=namespace writes <slug>-<stem>.md for the conflicted key and keeps the original', async () => {
   const dest = await tmp();
-  const wfA = await writeWorkflow({
-    name: 'Alpha2', domain: 'coding',
-    steps: [[{ id: 'a0', key: 'planner', defaults: { model: 'opus' } }], [{ id: 'a1', key: 'implementer' }], [{ id: 'a2', key: 'reviewer' }]],
-    feedbacks: [],
-  });
-  const wfB = await writeWorkflow({
-    name: 'Beta2', domain: 'coding',
-    steps: [[{ id: 'b0', key: 'planner', defaults: { model: 'sonnet' } }], [{ id: 'b1', key: 'implementer' }], [{ id: 'b2', key: 'reviewer' }]],
-    feedbacks: [],
-  });
+  const wfA = await writeKeyGraph({ name: 'Alpha2', keys: [{ key: 'planner', config: { model: 'opus' } }, 'implementer', 'reviewer'] });
+  const wfB = await writeKeyGraph({ name: 'Beta2', keys: [{ key: 'planner', config: { model: 'sonnet' } }, 'implementer', 'reviewer'] });
   await applyExport({ workflowId: wfA.id, destination: 'project', projectDir: dest, onConflict: 'overwrite' });
   const applied = await applyExport({ workflowId: wfB.id, destination: 'project', projectDir: dest, onConflict: 'namespace' });
 
@@ -142,14 +126,8 @@ test('an unrecognized per-path resolution is skipped, never overwritten (fail cl
 // It must REFUSE before writing, not keep a stale SKILL.md while emitting orphan agents.
 test('blanket namespace refuses a slug/skill collision instead of a broken export', async () => {
   const dest = await tmp();
-  const wfA = await writeWorkflow({
-    name: 'AlphaNS', domain: 'coding',
-    steps: [[{ id: 'a0', key: 'planner' }], [{ id: 'a1', key: 'implementer' }], [{ id: 'a2', key: 'reviewer' }]], feedbacks: [],
-  });
-  const wfB = await writeWorkflow({
-    name: 'BetaNS', domain: 'coding',
-    steps: [[{ id: 'b0', key: 'planner' }], [{ id: 'b1', key: 'implementer' }], [{ id: 'b2', key: 'reviewer' }]], feedbacks: [],
-  });
+  const wfA = await writeKeyGraph({ name: 'AlphaNS', keys: ['planner', 'implementer', 'reviewer'] });
+  const wfB = await writeKeyGraph({ name: 'BetaNS', keys: ['planner', 'implementer', 'reviewer'] });
   await applyExport({ workflowId: wfA.id, destination: 'project', projectDir: dest, slug: 'shared', onConflict: 'overwrite' });
   await assert.rejects(
     applyExport({ workflowId: wfB.id, destination: 'project', projectDir: dest, slug: 'shared', onConflict: 'namespace' }),
@@ -165,14 +143,8 @@ test('blanket namespace refuses a slug/skill collision instead of a broken expor
 // before writing anything.
 test('per-path namespace + kept SKILL.md conflict is refused (no broken export)', async () => {
   const dest = await tmp();
-  const wfA = await writeWorkflow({
-    name: 'Alpha3', domain: 'coding',
-    steps: [[{ id: 'a0', key: 'planner' }], [{ id: 'a1', key: 'implementer' }], [{ id: 'a2', key: 'reviewer' }]], feedbacks: [],
-  });
-  const wfB = await writeWorkflow({
-    name: 'Beta3', domain: 'coding',
-    steps: [[{ id: 'b0', key: 'planner' }], [{ id: 'b1', key: 'implementer' }], [{ id: 'b2', key: 'reviewer' }]], feedbacks: [],
-  });
+  const wfA = await writeKeyGraph({ name: 'Alpha3', keys: ['planner', 'implementer', 'reviewer'] });
+  const wfB = await writeKeyGraph({ name: 'Beta3', keys: ['planner', 'implementer', 'reviewer'] });
   // Same slug → SKILL.md AND planner both conflict when B is exported over A.
   await applyExport({ workflowId: wfA.id, destination: 'project', projectDir: dest, slug: 'shared', onConflict: 'overwrite' });
   const skillPath = join(dest, '.claude/skills/shared/SKILL.md');
@@ -224,10 +196,7 @@ test("a 'namespace' resolution on the non-namespaceable SKILL.md is refused", as
 // default path is reported as an orphan (matching on the emitted filename, not the bare stem).
 test('a stale plain agent left after namespacing is reported as an orphan', async () => {
   const dest = await tmp();
-  const wf = await writeWorkflow({
-    name: 'Orphan8', domain: 'coding',
-    steps: [[{ id: 'o0', key: 'planner' }], [{ id: 'o1', key: 'implementer' }], [{ id: 'o2', key: 'reviewer' }]], feedbacks: [],
-  });
+  const wf = await writeKeyGraph({ name: 'Orphan8', keys: ['planner', 'implementer', 'reviewer'] });
   await applyExport({ workflowId: wf.id, destination: 'project', projectDir: dest, slug: 'orphan8', onConflict: 'overwrite' });
   const plannerPath = join(dest, '.claude/agents/worca-cc-planner.md');
   // Locally edit the planner so the next export classifies it as a conflict we can resolve.
@@ -266,10 +235,7 @@ test('wf_default re-exports cleanly after a generator change (update, not confli
 test('$-sequences in a workflow name are inserted literally (no $-injection)', async () => {
   const dest = await tmp();
   const evil = "Pay $& then $' now";
-  const wf = await writeWorkflow({
-    name: evil, domain: 'coding',
-    steps: [[{ id: 'p0', key: 'planner' }], [{ id: 'p1', key: 'implementer' }], [{ id: 'p2', key: 'reviewer' }]], feedbacks: [],
-  });
+  const wf = await writeKeyGraph({ name: evil, keys: ['planner', 'implementer', 'reviewer'] });
   const skillPath = join(dest, '.claude/skills/dollar-test/SKILL.md');
   await applyExport({ workflowId: wf.id, destination: 'project', projectDir: dest, slug: 'dollar-test', onConflict: 'overwrite' });
   assert.ok((await readFile(skillPath, 'utf8')).includes(evil), 'name with $&/$\' appears verbatim');
@@ -279,23 +245,16 @@ test('$-sequences in a workflow name are inserted literally (no $-injection)', a
   assert.ok(plan.noop.includes(skillPath));
 });
 
-// Version is immutable at the store layer (writeWorkflow hardcodes version=1), so the
+// Version is immutable at the store layer (v2 rows are always version=2), so the
 // "auto-update stamped files" path is exercised via the updatedAt secondary tiebreak that
 // classify also implements (see DEVIATIONS.md).
 test('content change + advanced updatedAt auto-updates stamped files (STORED workflow fixture)', async () => {
   const dest = await tmp();
-  const wf = await writeWorkflow({
-    name: 'Bumpable', domain: 'coding',
-    steps: [[{ id: 'v0', key: 'planner', defaults: { model: 'opus' } }], [{ id: 'v1', key: 'implementer' }], [{ id: 'v2', key: 'reviewer' }]],
-    feedbacks: [],
-  });
+  const wf = await writeKeyGraph({ name: 'Bumpable', keys: [{ key: 'planner', config: { model: 'opus' } }, 'implementer', 'reviewer'] });
   await applyExport({ workflowId: wf.id, destination: 'project', projectDir: dest, onConflict: 'overwrite' });
   await sleep(10); // guarantee a strictly-greater updatedAt on re-save
-  await writeWorkflow({
-    id: wf.id, name: 'Bumpable', domain: 'coding', createdAt: wf.createdAt,
-    steps: [[{ id: 'v0', key: 'planner', defaults: { model: 'sonnet' } }], [{ id: 'v1', key: 'implementer' }], [{ id: 'v2', key: 'reviewer' }]],
-    feedbacks: [],
-  });
+  await writeKeyGraph({ id: wf.id, name: 'Bumpable', createdAt: wf.createdAt,
+    keys: [{ key: 'planner', config: { model: 'sonnet' } }, 'implementer', 'reviewer'] });
   const plan = await planExport({ workflowId: wf.id, destination: 'project', projectDir: dest });
   assert.ok(plan.updated.some((p) => p.endsWith('agents/worca-cc-planner.md')), 'planner md auto-updates');
   assert.equal(plan.conflicts.length, 0);

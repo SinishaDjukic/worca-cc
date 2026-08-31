@@ -4,26 +4,25 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyExport, planExport, distinctAgents } from '../src/core/workflow-export.mjs';
-import { distinctAgents as distinctAgentsUi } from '../ui/public/composer-core.mjs';
-import { writeWorkflow } from '../src/core/workflows.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { writeKeyGraph, writeLevelsGraph } from './helpers/export-fixtures.mjs';
 
 useTempHome(after);
 
-// The browser composer-core.mjs cannot import from src/core (no build step) and core avoids a
-// ui import, so distinctAgents is copied into workflow-export.mjs. Guard against the two drifting
-// (a divergent exported agent set vs the composer chip row) the same way exportSlugPreview is
-// guarded in composer-ui.test.mjs.
-test('core distinctAgents agrees with the composer-core copy (no drift)', () => {
-  const cases = [
-    [],
-    [[{ key: 'planner' }]],
-    [[{ key: 'planner' }], [{ key: 'implementer' }, { key: 'implementer' }], [{ key: 'reviewer' }], [{ key: 'planner' }]],
-    [[{ key: 'a' }, { key: 'b' }], [{ key: 'b' }, { key: 'a' }, { key: 'c' }]],
-  ];
-  for (const steps of cases) {
-    assert.deepEqual(distinctAgents(steps), distinctAgentsUi(steps), `drift for ${JSON.stringify(steps)}`);
-  }
+// distinctAgents returns the ordered unique node keys across the topological steps.
+// (The v1 composer-core twin this used to be drift-guarded against was retired with the
+// v1 composer; the exporter now owns the only copy.)
+test('distinctAgents returns ordered unique node keys across steps', () => {
+  assert.deepEqual(distinctAgents([]), []);
+  assert.deepEqual(distinctAgents([[{ key: 'planner' }]]), ['planner']);
+  assert.deepEqual(
+    distinctAgents([[{ key: 'planner' }], [{ key: 'implementer' }, { key: 'implementer' }], [{ key: 'reviewer' }], [{ key: 'planner' }]]),
+    ['planner', 'implementer', 'reviewer'],
+  );
+  assert.deepEqual(
+    distinctAgents([[{ key: 'a' }, { key: 'b' }], [{ key: 'b' }, { key: 'a' }, { key: 'c' }]]),
+    ['a', 'b', 'c'],
+  );
 });
 
 const dirs = [];
@@ -58,15 +57,9 @@ test('askQuestions node emits the emit-questions + body-asks pattern; fanOut add
 test('parallel group in one step is marked "dispatch all nodes in parallel"', async () => {
   const dest = await tmp();
   // Two nodes in one step (a parallel group): planner + reviewer.
-  const tpl = await writeWorkflow({
+  const tpl = await writeLevelsGraph({
     name: 'Parallel Fixture',
-    domain: 'coding',
-    steps: [
-      [{ id: 'p0_0', key: 'clarify' }],
-      [{ id: 'p1_0', key: 'planner' }, { id: 'p1_1', key: 'reviewer' }],
-      [{ id: 'p2_0', key: 'implementer' }],
-    ],
-    feedbacks: [],
+    levels: [['clarify'], ['planner', 'reviewer'], ['implementer']],
   });
   await applyExport({ workflowId: tpl.id, destination: 'project', projectDir: dest, onConflict: 'overwrite' });
   const skill = await readFile(join(dest, `.claude/skills/parallel-fixture/SKILL.md`), 'utf8');
@@ -116,31 +109,15 @@ test('clarify consumer reads clarify-answers.json; producer writes clarify.json'
   assert.match(skill, /\$RUN_DIR\/clarify\.json/);
 });
 
-// REGRESSION GUARD (#5): a 'review' consumer with no unambiguous connected producer falls back
-// to 'reviewer' AND emits a warning (the docstring promises one). A node that consumes 'review'
-// with NO reviewer in the plan also flags that the gate file may never be written.
-test('ambiguous review producer emits a warning', async () => {
-  const dest = await tmp();
-  const tpl = await writeWorkflow({
-    name: 'Ambiguous Review', domain: 'coding',
-    steps: [[{ id: 'p0', key: 'planner' }], [{ id: 'p1', key: 'implementer' }]],  // both consume 'review'; no reviewer
-    feedbacks: [],
-  });
-  const plan = await planExport({ workflowId: tpl.id, destination: 'project', projectDir: dest });
-  assert.ok(
-    plan.warnings.some((w) => /ambiguous 'review' producer/.test(w) && /defaulting to 'reviewer'/.test(w)),
-    'a warning is surfaced for the ambiguous review producer',
-  );
-});
+// (The v1 "ambiguous 'review' producer" warning was removed with the v1 connectsTo
+// heuristic: v2 data flow is explicit wires, so a consumed review resolves to exactly
+// the wired producer — there is no ambiguity to warn about.)
 
 // REGRESSION GUARD: a workflow name containing a newline must not break the SKILL.md YAML
 // frontmatter — the description is collapsed to a single line (as makeAgentMd already does).
 test('a newline in the workflow name yields a single-line YAML description', async () => {
   const dest = await tmp();
-  const wf = await writeWorkflow({
-    name: 'My Flow\nv2', domain: 'coding',
-    steps: [[{ id: 'n0', key: 'planner' }], [{ id: 'n1', key: 'implementer' }], [{ id: 'n2', key: 'reviewer' }]], feedbacks: [],
-  });
+  const wf = await writeKeyGraph({ name: 'My Flow\nv2', keys: ['planner', 'implementer', 'reviewer'] });
   await applyExport({ workflowId: wf.id, destination: 'project', projectDir: dest, slug: 'nl-test', onConflict: 'overwrite' });
   const skill = await readFile(join(dest, '.claude/skills/nl-test/SKILL.md'), 'utf8');
   assert.match(skill, /description: 'Run the "My Flow v2" workflow/);   // newline collapsed; YAML single-quoted
@@ -154,10 +131,7 @@ test('a newline in the workflow name yields a single-line YAML description', asy
 test('a workflow name with YAML metacharacters yields a valid quoted description', async () => {
   const dest = await tmp();
   const name = 'Fix: login bug #123';
-  const wf = await writeWorkflow({
-    name, domain: 'coding',
-    steps: [[{ id: 'y0', key: 'planner' }], [{ id: 'y1', key: 'implementer' }], [{ id: 'y2', key: 'reviewer' }]], feedbacks: [],
-  });
+  const wf = await writeKeyGraph({ name, keys: ['planner', 'implementer', 'reviewer'] });
   await applyExport({ workflowId: wf.id, destination: 'project', projectDir: dest, slug: 'yaml-test', onConflict: 'overwrite' });
   const skill = await readFile(join(dest, '.claude/skills/yaml-test/SKILL.md'), 'utf8');
   const fm = skill.slice(3, skill.indexOf('\n---', 4));                 // between the opening --- and its close
@@ -186,44 +160,8 @@ test('includeAgents=false warns that dispatched agents are not exported', async 
   assert.equal([...plan.created, ...plan.updated].some((p) => p.includes('/agents/')), false);
 });
 
-// REGRESSION GUARD: two feedback loops targeting the SAME consumer must warn (its consumed
-// 'review' gate can only point at one file); the earlier code silently kept only the last loop.
-test('two feedback loops targeting one consumer emit a warning', async () => {
-  const dest = await tmp();
-  const tpl = await writeWorkflow({
-    name: 'Double Loop', domain: 'coding',
-    steps: [
-      [{ id: 'd0', key: 'planner' }],
-      [{ id: 'd1', key: 'reviewer' }],
-      [{ id: 'd2', key: 'refiner' }],
-      [{ id: 'd3', key: 'implementer' }],
-    ],
-    feedbacks: [{ id: 'fb1', from: 'd1', to: 'd3' }, { id: 'fb2', from: 'd2', to: 'd3' }],
-  });
-  const plan = await planExport({ workflowId: tpl.id, destination: 'project', projectDir: dest });
-  assert.ok(
-    plan.warnings.some((w) => /2 feedback loops target it/.test(w) && /implementer/.test(w)),
-    'a warning is surfaced when two loops feed one consumer',
-  );
-});
-
-test('producer-aware consume: a consumer of a refiner review reads refine-review, not impl-review', async () => {
-  const dest = await tmp();
-  // implementer consumes review; a feedback loops refiner -> implementer, so the implementer's
-  // consumed 'review' should resolve to the refiner's basename (refine-review).
-  const tpl = await writeWorkflow({
-    name: 'Producer Aware',
-    domain: 'coding',
-    steps: [
-      [{ id: 'q0_0', key: 'planner' }],
-      [{ id: 'q1_0', key: 'refiner' }],
-      [{ id: 'q2_0', key: 'implementer' }],
-    ],
-    feedbacks: [{ id: 'fb_r', from: 'q1_0', to: 'q2_0' }],
-  });
-  await applyExport({ workflowId: tpl.id, destination: 'project', projectDir: dest, onConflict: 'overwrite' });
-  const skill = await readFile(join(dest, `.claude/skills/producer-aware/SKILL.md`), 'utf8');
-  const implBlock = skill.slice(skill.indexOf('Dispatch `worca-cc-implementer`'));
-  assert.match(implBlock.slice(0, 400), /Consumes:.*refine-review-cycle1\.json/);
-  assert.doesNotMatch(implBlock.slice(0, 400), /Consumes:.*impl-review/);
-});
+// (Removed with the v1 engine: the "two feedback loops target one consumer" warning and
+// the connectsTo-based "producer-aware review basename" heuristic. In v2 a consumer's
+// review gate is whatever OUTPUT PORT its input is wired from — see the default-workflow
+// test above, which proves reviewer→implementer resolves to impl-review and the refiner
+// self-loop to refine-review straight from the ports/wires, no heuristic needed.)

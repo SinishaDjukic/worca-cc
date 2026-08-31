@@ -5,10 +5,9 @@ import { mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyExport } from '../src/core/workflow-export.mjs';
-import { writeWorkflow } from '../src/core/workflows.mjs';
-import { createAgent } from '../src/core/agent-store.mjs';
 import { readPluginsLock, writePluginsLock, pluginDir } from '../src/core/plugins-lock.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { writeKeyGraph, createV2Agent } from './helpers/export-fixtures.mjs';
 
 useTempHome(after);
 
@@ -21,19 +20,12 @@ const MOCK_SKILL_MD = '---\nname: mock-skill\ndescription: a mock dependency ski
 // Register a fixture agent that declares requiresSkills (no built-in does) and a
 // workflow that references it, then return the workflow id.
 async function fixtureWorkflow(name) {
-  try {
-    await createAgent({
-      meta: {
-        displayName: 'Dep Node', key: 'depNode', description: 'needs a skill',
-        runnerType: 'producer', consumes: [], produces: [], order: 50,
-        requiresSkills: ['mock-skill'],
-      },
-      markdown: '# Dep Node\n\nDoes work that needs mock-skill.\n',
-    });
-  } catch (e) {
-    if (e.code !== 'DUPLICATE') throw e; // idempotent across tests sharing the temp home
-  }
-  const tpl = await writeWorkflow({ name, domain: 'coding', steps: [[{ id: 'd0', key: 'depNode' }]], feedbacks: [] });
+  await createV2Agent({
+    key: 'depNode', displayName: 'Dep Node', description: 'needs a skill',
+    runnerType: 'producer', order: 50, requiresSkills: ['mock-skill'],
+    markdown: '---\nname: depNode\n---\n# Dep Node\n\nDoes work that needs mock-skill.\n',
+  });
+  const tpl = await writeKeyGraph({ name, keys: ['depNode'] });
   return tpl.id;
 }
 
@@ -96,8 +88,9 @@ function installPluginWithSkill(name) {
   mkdirSync(join(versionDir, 'agents'), { recursive: true });
   writeFileSync(join(versionDir, 'agents', 'pDep.md'), '---\nname: p-dep\n---\n# pDep\nNeeds plugin-skill.\n');
   writeFileSync(join(versionDir, 'agents', 'pDep.meta.json'), JSON.stringify({
-    key: 'pDep', displayName: 'Plugin Dep', agentFile: 'pDep.md', runnerType: 'producer',
-    order: 50, consumes: ['userPrompt'], produces: ['plan'], requiresSkills: ['plugin-skill'],
+    metaVersion: 2, key: 'pDep', displayName: 'Plugin Dep', agentFile: 'pDep.md', runnerType: 'producer',
+    order: 50, inputs: [{ id: 'task', type: 'md' }], outputs: [{ id: 'out', type: 'md', filename: 'pdep.md' }],
+    requiresSkills: ['plugin-skill'],
   }));
   mkdirSync(join(versionDir, 'skills', 'plugin-skill'), { recursive: true });
   writeFileSync(join(versionDir, 'skills', 'plugin-skill', 'SKILL.md'),
@@ -111,7 +104,7 @@ function installPluginWithSkill(name) {
 
 test('a plugin-bundled dep skill resolves and is filled at export', async () => {
   installPluginWithSkill('depplug');
-  const tpl = await writeWorkflow({ name: 'Plugin Dep Flow', domain: 'coding', steps: [[{ id: 'g0', key: 'pDep' }]], feedbacks: [] });
+  const tpl = await writeKeyGraph({ name: 'Plugin Dep Flow', keys: ['pDep'] });
   const dest = await tmp();
   const applied = await applyExport({ workflowId: tpl.id, destination: 'project', projectDir: dest, onConflict: 'overwrite' });
   assert.ok(applied.written.some((p) => p.endsWith('skills/plugin-skill/SKILL.md')), 'plugin dep skill filled');

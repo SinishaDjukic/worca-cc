@@ -16,13 +16,15 @@ import { existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir, cp, readdir, rename } from 'node:fs/promises';
 import { join, resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readWorkflow } from './workflows.mjs';
+import { readWorkflow, resolveGraph } from './workflows.mjs';
 import { EFFORTS as EFFORT_LIST } from './model-env.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
 import { slugify } from './artifacts.mjs';
 import { isValidSkillName, collectRequiredSkills, resolveSkill, pluginSkillDirs } from './skills.mjs';
 import { normalizeProjectPath } from './projects.mjs';
 import { defaultRoot } from './settings.mjs';
+import { buildGraphManifest } from '../shared/graph/manifest.mjs';
+import { portsOf, findPort } from '../shared/graph/ports.mjs';
 
 // ── v1-compat shim (Node-graph v2 rebase) ────────────────────────────────────
 // The v2 refactor deleted src/core/channels.mjs (named-channel bus) and stopped
@@ -271,110 +273,101 @@ function applyCapabilityLayer(node) {
   };
 }
 
-// ── Step 2: console channel → filename map, producer-aware ────────────────────
+// ── Step 2: v2 ports/wires → console filenames ───────────────────────────────
+// The exported skill keeps its own simplified `$RUN_DIR`-relative filenames (the
+// "faithful simulation, not determinism" contract). v2 gives us the authoritative
+// wiring via typed ports + wires; we translate each port to the SAME console name a
+// v1 export used, so the exported-skill layout is unchanged. Producer/consumer paths
+// are derived from the wires (no more `connectsTo` review-source guessing).
+
+/** The artifact kind a port names — explicit `artifactKind`, else the `{base}-<kind>.md`
+ *  capture (impl-review/plan-review/ws-review), else the port id (mirrors executor.mjs). */
+function portArtifactKind(port) {
+  if (port?.artifactKind) return port.artifactKind;
+  const m = /^\{base\}-(.+)\.md$/.exec(port?.filename || '');
+  return m ? m[1] : (port?.id || '');
+}
 
 /**
- * Run-dir-local filename for a channel. `$RUN_DIR/<this>`. Returns null for non-file channels.
- * `producerKey` is REQUIRED for the 'review' channel (its basename is producer-dependent);
- * ignored for every other channel (which is a pure function of the channel name).
- * `side` ('produce'|'consume') matters for 'clarify': the producing node writes its QUESTIONS
- * to `clarify.json`, but the runner hoists AskUserQuestion and writes the ANSWERS to
- * `clarify-answers.json` — so a consumer must be pointed at the answers, not the questions.
+ * Console `$RUN_DIR`-relative filename an OUTPUT port writes, or:
+ *   undefined → a pure control signal (void port; nothing on disk),
+ *   null      → the working tree (a code side-effect, no artifact file).
+ * A `when:'blocking'` output is a loop GATE — the runner reads the producer's verdict
+ * JSON (`<reviewJsonBasename(key)>-cycleN.json`), exactly as a real run writes it.
  */
-function consoleChannelFile(channel, { producerKey, cycle = 1, side = 'produce', channelDefs } = {}) {
-  switch (channel) {
-    case 'review':        return `${reviewJsonBasename(producerKey)}-cycle${cycle}.json`;   // the gate — exact
+function outputConsoleFile(nodeKey, port, cycle = 1, channelDefs) {
+  if (!port || port.type === 'void') return undefined;   // done/pass: control-flow only
+  if (port.when === 'blocking') return `${reviewJsonBasename(nodeKey)}-cycle${cycle}.json`;
+  switch (portArtifactKind(port)) {
+    case 'clarify':       return CHANNEL_FILE_BASENAMES.clarify;          // clarify.json
     case 'plan':          return cycle > 1 ? `plan-cycle${cycle}.md` : 'plan.md';
-    case 'checklist':     return CHANNEL_FILE_BASENAMES.checklist;
     case 'decomposition': return CHANNEL_FILE_BASENAMES.decomposition;
-    // consume side reads the hoisted ANSWERS (a console-only file; the orchestrator handles
-    // answers differently, so it has no allocate() counterpart); produce side writes questions.
-    case 'clarify':       return side === 'consume' ? 'clarify-answers.json' : CHANNEL_FILE_BASENAMES.clarify;
-    case 'userPrompt':    return 'prompt.md';
-    case 'code':          return null;                   // the working tree
+    case 'checklist':     return CHANNEL_FILE_BASENAMES.checklist;
     default:
-      // Open vocabulary: reuse channels.mjs's shared basename builder so exported producer/
-      // consumer paths match what a run would mint (was a hand-copied duplicate of allocate()).
-      return customChannelBasename(channel, { cycle, channelDefs });
+      // Open vocabulary (custom agent output). Prefer the port's own filename; else the
+      // shared basename builder — so an exported custom path matches what a run mints.
+      return port.filename
+        ? String(port.filename).replace(/\{base\}-?|\{vsuffix\}/g, '').replace(/\{cycle\}/g, String(cycle))
+        : customChannelBasename(portArtifactKind(port), { cycle, channelDefs });
   }
 }
 
 /**
- * For each channel, the node key(s) that produce it, and — per consumer — the specific
- * producer of a consumed 'review'. A consumer reads the review that gates a loop back to it
- * (feedback `to`→`from` key); if none, the unique producer of 'review' that `connectsTo` the
- * consumer; if still ambiguous, default to 'reviewer' and warn.
+ * The console file a consumer reads for a given INPUT port, tracing its inbound wire
+ * back to the producing OUTPUT port. Returns undefined (skip: unwired optional / signal),
+ * null (the working tree), or a `$RUN_DIR`-relative filename.
  */
-function buildProducerIndex(resolved, warnings = []) {
-  const byChannel = new Map();                           // channel -> [producerKey,...]
-  const nodeById = new Map();
-  for (const g of resolved.steps) for (const n of g) {
-    nodeById.set(n.nodeId, n);
-    for (const c of (n.produces || [])) {
-      if (!byChannel.has(c)) byChannel.set(c, []);
-      if (!byChannel.get(c).includes(n.key)) byChannel.get(c).push(n.key);
-    }
-  }
-  // Map each node instance -> the producer key of its consumed 'review'.
-  const reviewSourceFor = new Map();                     // consumerNodeId -> producerKey
-  // consumer INSTANCE (nodeId) -> distinct producer keys that loop back to it (via feedback
-  // `to`). Keyed by nodeId, NOT node.key: two instances of the same agent key can have
-  // different feedback wiring (only one may be a loop target), so keying by key would
-  // cross-wire the non-looped instance onto the looped producer's gate. A Map of ARRAYS (not a
-  // single value): two loops targeting the same instance must not silently clobber each other —
-  // we detect the multiplicity below and warn instead.
-  const feedbackToKeys = new Map();
-  for (const fb of resolved.feedbacks) {
-    const from = nodeById.get(fb.from), to = nodeById.get(fb.to);
-    if (!from || !to) continue;
-    if (!feedbackToKeys.has(to.nodeId)) feedbackToKeys.set(to.nodeId, []);
-    const producers = feedbackToKeys.get(to.nodeId);
-    if (!producers.includes(from.key)) producers.push(from.key);
-  }
-  // connectsTo is '*' (wildcard: connects to everything) OR a string[] of node keys.
-  // Guard the '*' case explicitly — `'*'.includes(key)` is a string substring test that
-  // silently never matches a real key.
-  const connectsTo = (p, key) => p.connectsTo === '*' || (Array.isArray(p.connectsTo) && p.connectsTo.includes(key));
-  for (const g of resolved.steps) for (const n of g) {
-    if (!(n.consumes || []).includes('review')) continue;
-    const fbProducers = feedbackToKeys.get(n.nodeId) || [];
-    let src = fbProducers[0];
-    if (fbProducers.length > 1) {
-      // Multiple loops feed this consumer a 'review'. We can only point it at ONE gate file, so
-      // take the first deterministically and warn — the alternative (last-write-wins) is silent
-      // and non-deterministic in feedback order.
-      warnings.push(`node "${n.key}": ${fbProducers.length} feedback loops target it ` +
-        `(${fbProducers.join(', ')}); its consumed 'review' gate resolves to '${src}' (first). ` +
-        `If each loop needs a distinct gate, split the node.`);
-    }
-    if (!src) {
-      const candidates = (byChannel.get('review') || [])
-        .filter((pk) => resolved.steps.flat().some((p) => p.key === pk && connectsTo(p, n.key)));
-      if (candidates.length === 1) {
-        src = candidates[0];
-      } else {
-        // Ambiguous (0 or >1 connected producers): fall back to 'reviewer' AND warn, as the
-        // docstring promises. If no node actually produces a 'reviewer' review, the consumed
-        // gate path names a file no node writes — say so loudly instead of failing silently.
-        src = 'reviewer';
-        const reason = candidates.length
-          ? `${candidates.length} review producers connect to it (${candidates.join(', ')})`
-          : 'no review producer connects to it';
-        const dangling = (byChannel.get('review') || []).includes('reviewer')
-          ? ''
-          : ` — no node produces a 'reviewer' review, so its consumed gate file may never be written`;
-        warnings.push(`node "${n.key}": ambiguous 'review' producer (${reason}); defaulting to 'reviewer'${dangling}`);
-      }
-    }
-    reviewSourceFor.set(n.nodeId, src);
-  }
-  return { byChannel, reviewSourceFor };
+function consumedConsoleFile(graph, node, inPort, cycle, channelDefs) {
+  if (!inPort || inPort.synthetic) return undefined;     // the synthetic `await` port
+  if (inPort.type === 'void' || inPort.as === 'worktree') return null;   // the working tree / a signal
+  // The runner hoists AskUserQuestion: a clarify `answers` consumer reads the ANSWERS file.
+  if (inPort.id === 'answers' || inPort.as === 'answers') return 'clarify-answers.json';
+  const wire = (graph.template.wires || []).find((w) => w?.to?.node === node.id && w?.to?.port === inPort.id);
+  if (!wire) return undefined;                           // unwired optional input
+  return producerFileFor(graph, wire.from.node, wire.from.port, cycle, channelDefs, new Set());
 }
 
-/** Resolve the producer key to use when emitting a consumer's consumed channel. */
-function producerKeyForConsumed(channel, consumerNode, producers) {
-  if (channel !== 'review') return undefined;            // only 'review' is producer-dependent
-  return producers.reviewSourceFor.get(consumerNode.nodeId) || 'reviewer';
+/** Console file the producer at (srcNodeId, srcPortId) writes. Follows flow cards
+ *  (task→prompt.md; and/or/combine→their first resolvable inbound) up to the source agent. */
+function producerFileFor(graph, srcNodeId, srcPortId, cycle, channelDefs, seen) {
+  if (seen.has(srcNodeId)) return undefined;             // cycle guard (loop wires)
+  seen.add(srcNodeId);
+  const tnode = (graph.template.nodes || []).find((n) => n.id === srcNodeId);
+  if (!tnode) return undefined;
+  if (tnode.kind === 'task') return 'prompt.md';         // the user prompt
+  if (tnode.kind === 'end') return undefined;
+  if (tnode.kind === 'agent') {
+    const key = graph.nodes[srcNodeId]?.key || tnode.key;
+    return outputConsoleFile(key, findPort(portsOf(graph.ports, tnode), srcPortId, 'out'), cycle, channelDefs);
+  }
+  // and/or/combine: a pass-through merge — resolve to the first inbound producer file.
+  for (const w of (graph.template.wires || []).filter((x) => x?.to?.node === srcNodeId)) {
+    const f = producerFileFor(graph, w.from.node, w.from.port, cycle, channelDefs, seen);
+    if (f !== undefined) return f;
+  }
+  return undefined;
+}
+
+/** Derive an agent node's input/output console files as ordered, de-duped lists (each
+ *  entry is a `$RUN_DIR`-relative filename, or null for "the working tree"). Named
+ *  `reads`/`writes` — the v1 `consumes`/`produces` vocabulary is retired and banned. */
+function deriveNodeIo(graph, tnode, nodeKey, { cycle = 1, channelDefs } = {}) {
+  const ports = portsOf(graph.ports, tnode);
+  const uniq = (arr) => {
+    const seen = new Set(); const out = [];
+    for (const f of arr) { const k = f === null ? '\0worktree' : f; if (!seen.has(k)) { seen.add(k); out.push(f); } }
+    return out;
+  };
+  const reads = uniq(ports.inputs
+    .map((p) => consumedConsoleFile(graph, tnode, p, cycle, channelDefs))
+    .filter((f) => f !== undefined));
+  let writes = uniq(ports.outputs
+    .map((p) => outputConsoleFile(nodeKey, p, cycle, channelDefs))
+    .filter((f) => f !== undefined));
+  // A code side-effect node (implementer) has only a void `done` output but writes the
+  // working tree — preserve the v1 rendering rather than showing "(none)".
+  if (!writes.length && graph.nodes[tnode.id]?.meta?.sideEffect === 'code') writes = [null];
+  return { reads, writes };
 }
 
 // ── Step 2: buildExportSet (shared deterministic core) ───────────────────────
@@ -390,23 +383,32 @@ async function buildExportSet({ workflowId, destination, projectDir, slug, inclu
   const channelDefs = collectChannelDefs(registry);     // custom channel kind/filename map (mirrors allocate())
   // Global export = defaults-only (projectDir null, enabled by the §4.2 guard); project export bakes config.
 
-  // ── v2 PORT PENDING ────────────────────────────────────────────────────────
-  // The Node-graph v2 rebase removed the v1 topology resolver. Its successor,
-  // `resolveGraph`, returns a node/wire graph ({ template, ports, loops, nodes, wires,
-  // agentsByKey, agentKeys }) — NOT the { steps:[[Node]], feedbacks } shape the rest of
-  // this function walks (resolved.steps / resolved.feedbacks below). Re-porting
-  // buildExportSet to consume resolveGraph is a tracked follow-up to this rebase.
-  // Until that lands, the exporter fails LOUD instead of silently emitting a skill from
-  // an undefined plan. The v1 plan-walk is retained below as the porting reference.
-  throw err(
-    'Workflow export is not yet ported to the Node-graph v2 engine. The exporter still ' +
-    'reads the removed v1 topology resolver\'s { steps, feedbacks } plan shape; porting ' +
-    'it to the v2 resolveGraph node/wire graph is a follow-up to the v2 rebase.',
-    'NOT_IMPLEMENTED',
-  );
-
-  // eslint-disable-next-line no-unreachable
-  let resolved = null;                                   // v2 PORT: assign from resolveGraph(...)
+  // ── Resolve the v2 node/wire graph, then rebuild the v1-shaped { steps, feedbacks }
+  //    plan the generator below reads. buildGraphManifest gives the topological rank
+  //    LEVELS (its `{kind:'agents'}` cells) and the feedback loops; each cell is joined
+  //    with resolveGraph's full node (tools/fanOut/askQuestions/model/effort/meta) and
+  //    its consumes/produces (derived from ports + wires, §2). Flow cards (task/end/
+  //    and/or/combine) are NOT dispatched — only agent nodes become steps.
+  const graph = await resolveGraph(destination === 'project' ? projectDir : null, workflowId, registry);
+  const manifest = buildGraphManifest(graph.template, graph.agentsByKey,
+    { overlays: { nodes: graph.nodes, wires: graph.wires } });
+  const tnodeById = new Map((graph.template.nodes || []).map((n) => [n.id, n]));
+  const enrich = (cell) => {
+    const rn = graph.nodes[cell.id] || {};
+    const io = deriveNodeIo(graph, tnodeById.get(cell.id), rn.key, { channelDefs });
+    return {
+      nodeId: cell.id, key: rn.key, uiPhase: cell.uiPhase,
+      tools: Array.isArray(rn.tools) ? rn.tools : [],
+      model: rn.model || null, effort: rn.effort || null,
+      fanOut: !!rn.fanOut, askQuestions: !!rn.askQuestions,
+      reads: io.reads, writes: io.writes,
+    };
+  };
+  const steps = manifest.steps
+    .filter((c) => c.kind === 'agents')
+    .map((c) => c.nodes.filter((cell) => cell.key).map(enrich))   // agent cells only (key !== null)
+    .filter((group) => group.length);                             // drop levels that were all flow cards
+  const resolved = { id: tpl.id, name: tpl.name, steps, feedbacks: manifest.feedbacks };
 
   const warnings = [];
 
@@ -428,9 +430,6 @@ async function buildExportSet({ workflowId, destination, projectDir, slug, inclu
 
   // ── Per-node capability layer (deterministic; produces console tools + body clauses) ──
   const nodes = resolved.steps.map((group) => group.map((node) => applyCapabilityLayer(node)));
-
-  // ── Producer index (§5.5): which node key produces each channel, and per-consumer 'review' source ──
-  const producers = buildProducerIndex(resolved, warnings);
 
   // ── Feedback loops: resolve each `from`/`to` instance-id to node keys -> gate basename ──
   const nodeById = new Map();
@@ -456,7 +455,7 @@ async function buildExportSet({ workflowId, destination, projectDir, slug, inclu
   });
 
   // ── Resolve skill deps (resolve-and-fill; loud fail on unresolvable) ──
-  const depSkills = includeAgents ? resolveDepSkills(registry, resolved, dest, destination, projectDir, repoRoot) : [];
+  const depSkills = includeAgents ? resolveDepSkills(registry, graph.agentKeys, dest, destination, projectDir, repoRoot) : [];
 
   // The SKILL.md always dispatches the pipeline's agents by subagent_type. With includeAgents
   // off, none of those .md files are written — the skill only runs if the agents already exist at
@@ -472,7 +471,7 @@ async function buildExportSet({ workflowId, destination, projectDir, slug, inclu
   // ── Stamp lineage identity shared by every emitted file ──
   const ident = { workflow: tpl.id, version: tpl.version || 1, updatedAt: tpl.updatedAt || '' };
 
-  return { tpl, dest, slug: finalSlug, resolved, nodes, loops, agents, depSkills, producers, ident, warnings, includeAgents, channelDefs, agentSrcCache: new Map() };
+  return { tpl, template: graph.template, dest, slug: finalSlug, resolved, nodes, loops, agents, depSkills, ident, warnings, includeAgents, agentSrcCache: new Map() };
 }
 
 // ── Step 3: SKILL.md generation ──────────────────────────────────────────────
@@ -484,7 +483,7 @@ function instanceKey(resolved, instanceId) {
 }
 
 function makeSkillMd(set, nameFor) {
-  const { tpl, slug, resolved, nodes, loops, producers, channelDefs } = set;
+  const { tpl, slug, resolved, nodes, loops } = set;
   const desc = (
     `Run the "${tpl.name}" workflow (exported from Worca Composer) end-to-end in this repo: ` +
     `${resolved.steps.map((g) => g.map((n) => n.uiPhase).join('+')).join(' → ')}. ` +
@@ -540,25 +539,22 @@ function makeSkillMd(set, nameFor) {
     L.push(`## Step ${i + 1}${flat.length > 1 ? ' (dispatch all nodes in parallel)' : ''}`, '');
     flat.forEach((n) => {
       const dispatch = nameFor(n.key);
-      const consumes = (n.consumes || []).map((c) => {
-        const f = consoleChannelFile(c, { producerKey: producerKeyForConsumed(c, n, producers), side: 'consume', channelDefs });
-        return f ? `\`$RUN_DIR/${f}\`` : 'the working tree';
-      }).join(', ') || '(the user prompt)';
-      const produces = (n.produces || []).map((c) => {
-        const f = consoleChannelFile(c, { producerKey: n.key, side: 'produce', channelDefs });   // producer side: this node's key
-        return f ? `\`$RUN_DIR/${f}\`` : 'the working tree';
-      }).join(', ') || '(none)';
+      // n.reads / n.writes are pre-derived console files (a `$RUN_DIR`-relative name,
+      // or null for "the working tree"), computed from v2 ports+wires in deriveNodeIo.
+      const render = (f) => (f ? `\`$RUN_DIR/${f}\`` : 'the working tree');
+      const readsLine = (n.reads || []).map(render).join(', ') || '(the user prompt)';
+      const writesLine = (n.writes || []).map(render).join(', ') || '(none)';
       L.push(`### Dispatch \`${dispatch}\``);
-      L.push(`- Consumes: ${consumes}`);
-      L.push(`- Produces: ${produces} (review/plan filenames shown at cycle 1; use the current cycle N at runtime)`);
+      L.push(`- Consumes: ${readsLine}`);
+      L.push(`- Produces: ${writesLine} (review/plan filenames shown at cycle 1; use the current cycle N at runtime)`);
       if (n.model) L.push(`- Model: dispatch with \`model: ${n.model}\`.`);
       if (n.effort) L.push(`- Effort: instruct the subagent to work at **${n.effort}** effort.`);
       if (n.fanOut) L.push('- Fan-out: this subagent MAY dispatch parallel READ-ONLY research subagents (it has `Agent`). Skip for trivial single-file work.');
       if (n.askQuestions) {
         L.push('- Ask-user (hoisted): this subagent CANNOT ask you directly. It writes its questions as JSON',
-          `  to \`$RUN_DIR/${consoleChannelFile('clarify', { side: 'produce' })}\` in AskUserQuestion's schema`,
+          `  to \`$RUN_DIR/${CHANNEL_FILE_BASENAMES.clarify}\` in AskUserQuestion's schema`,
           '  `{"questions":[{"question","header","options","multiSelect"}]}`. After it returns, **YOU** call',
-          `  \`AskUserQuestion\` with those questions, then write the answers to \`$RUN_DIR/${consoleChannelFile('clarify', { side: 'consume' })}\``,
+          '  `AskUserQuestion` with those questions, then write the answers to `$RUN_DIR/clarify-answers.json`',
           '  and pass that path into every later node that consumes `clarify`.');
       }
       L.push('');
@@ -657,8 +653,14 @@ async function makeAgentMd(agent, node, finalName, srcCache) {
 // ── Step 5: workflow.json snapshot ───────────────────────────────────────────
 
 function makeWorkflowJson(set) {
-  const { tpl, slug, ident } = set;
-  const payload = { name: tpl.name, domain: tpl.domain || 'general', steps: tpl.steps, feedbacks: tpl.feedbacks };
+  const { tpl, template, slug, ident } = set;
+  // v2 lineage snapshot: the node/wire graph (was v1 steps/feedbacks). `template` is
+  // resolveGraph's resolved clone (agent keys post workspace-substitution); fall back
+  // to the stored tpl fields defensively.
+  const payload = {
+    name: tpl.name, domain: tpl.domain || 'general', version: 2,
+    nodes: template?.nodes ?? tpl.nodes ?? [], wires: template?.wires ?? tpl.wires ?? [],
+  };
   return stampJson(payload, {                            // key marks skill lineage; carry version/updatedAt from ident
     key: `skill:${slug}`, workflow: ident.workflow, version: ident.version, updatedAt: ident.updatedAt,
   });
@@ -666,8 +668,8 @@ function makeWorkflowJson(set) {
 
 // ── Step 6: skill-dependency resolution — resolve-and-fill ───────────────────
 
-function resolveDepSkills(registry, resolved, dest, destination, projectDir, repoRootOverride) {
-  const required = collectRequiredSkills(registry, resolved);   // [{skill, requiredBy, origin?}]
+function resolveDepSkills(registry, agentKeys, dest, destination, projectDir, repoRootOverride) {
+  const required = collectRequiredSkills(registry, agentKeys);   // [{skill, requiredBy, origin?}]
   // fileURLToPath (not URL.pathname) — correct on Windows and for paths with spaces.
   const repoRoot = repoRootOverride || resolve(fileURLToPath(new URL('../../', import.meta.url)));
   const ctx = {

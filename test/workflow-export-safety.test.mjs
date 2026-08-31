@@ -4,8 +4,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyExport } from '../src/core/workflow-export.mjs';
-import { writeWorkflow } from '../src/core/workflows.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { writeKeyGraph } from './helpers/export-fixtures.mjs';
 
 useTempHome(after);
 
@@ -31,11 +31,7 @@ test('every written path is under <dest>/.claude', async () => {
 });
 
 test('workspaceReviewer node refuses with a specific message', async () => {
-  const tpl = await writeWorkflow({
-    name: 'WS Fixture', domain: 'coding',
-    steps: [[{ id: 'w0', key: 'planner' }], [{ id: 'w1', key: 'workspaceReviewer' }]],
-    feedbacks: [],
-  });
+  const tpl = await writeKeyGraph({ name: 'WS Fixture', keys: ['planner', 'workspaceReviewer'] });
   await assert.rejects(
     applyExport({ workflowId: tpl.id, destination: 'project', projectDir: await tmp(), onConflict: 'overwrite' }),
     (e) => e.code === 'UNSUPPORTED' && /workspaceReviewer/.test(e.message),
@@ -44,11 +40,7 @@ test('workspaceReviewer node refuses with a specific message', async () => {
 
 test('decomposer node gets the fan-out workaround (Agent tool + clause)', async () => {
   const dest = await tmp();
-  const tpl = await writeWorkflow({
-    name: 'Decomp Fixture', domain: 'coding',
-    steps: [[{ id: 'x0', key: 'planner' }], [{ id: 'x1', key: 'decomposer' }], [{ id: 'x2', key: 'implementer' }]],
-    feedbacks: [],
-  });
+  const tpl = await writeKeyGraph({ name: 'Decomp Fixture', keys: ['planner', 'decomposer', 'implementer'] });
   await applyExport({ workflowId: tpl.id, destination: 'project', projectDir: dest, onConflict: 'overwrite' });
   const skill = await readFile(join(dest, '.claude/skills/decomp-fixture/SKILL.md'), 'utf8');
   const dispatch = skill.match(/Dispatch `([^`]*decomposer[^`]*)`/);

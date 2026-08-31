@@ -1648,7 +1648,9 @@ async function cmdWorkflow(argv) {
   try {
     switch (verb) {
       case 'list': {
-        const items = [wf.DEFAULT_WORKFLOW, ...(await wf.listWorkflows())];
+        // GRAPH_DEFAULT_WORKFLOW (the built-in default) is not in the user store, so
+        // prepend it — mirrors the server/UI, which always show it first.
+        const items = [wf.GRAPH_DEFAULT_WORKFLOW, ...(await wf.listWorkflows())];
         for (const w of items) out(`${w.id}\t${w.name}\t${(w.domain || 'general')}`);
         return 0;
       }

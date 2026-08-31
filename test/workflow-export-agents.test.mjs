@@ -4,9 +4,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyExport } from '../src/core/workflow-export.mjs';
-import { writeWorkflow } from '../src/core/workflows.mjs';
-import { createAgent } from '../src/core/agent-store.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { writeKeyGraph, createV2Agent } from './helpers/export-fixtures.mjs';
 
 useTempHome(after);
 
@@ -39,19 +38,11 @@ test('agent body carries the console-adaptation preamble', async () => {
 // so it must be excluded from the "all tools stripped" refusal — the agent inherits all tools.
 test('an ask-only node (declares only AskUserQuestion) exports and inherits tools', async () => {
   const dest = await tmp();
-  try {
-    await createAgent({
-      meta: {
-        displayName: 'Ask Only', key: 'askOnlyExp', description: 'asks only', runnerType: 'clarifier',
-        consumes: ['userPrompt'], produces: ['clarify'], connectsTo: [], asksQuestions: true, order: 0,
-      },
-      markdown: '---\nname: ask-only-exp\ntools: AskUserQuestion\n---\n# Ask Only\nBody.\n',
-    });
-  } catch (e) { if (e.code !== 'DUPLICATE') throw e; }
-  const tpl = await writeWorkflow({
-    name: 'Ask Only Flow', domain: 'coding',
-    steps: [[{ id: 'k0', key: 'askOnlyExp' }], [{ id: 'k1', key: 'planner' }]], feedbacks: [],
+  await createV2Agent({
+    key: 'askOnlyExp', displayName: 'Ask Only', description: 'asks only',
+    runnerType: 'clarifier', asksQuestions: true, order: 0, tools: 'AskUserQuestion',
   });
+  const tpl = await writeKeyGraph({ name: 'Ask Only Flow', keys: ['askOnlyExp', 'planner'] });
   await applyExport({ workflowId: tpl.id, destination: 'project', projectDir: dest, onConflict: 'overwrite' });
   const md = await readFile(join(dest, '.claude/agents/askOnlyExp.md'), 'utf8');   // stem = key (store-owned)
   assert.doesNotMatch(md, /^tools:/m, 'no tools: line → inherits all tools (declared none but the hoisted ask tool)');
@@ -62,19 +53,11 @@ test('an ask-only node (declares only AskUserQuestion) exports and inherits tool
 // hoist, so the export must not abort. The other stripped tool is warned about, not fatal.
 test('a node declaring AskUserQuestion + another stripped tool exports (does not abort)', async () => {
   const dest = await tmp();
-  try {
-    await createAgent({
-      meta: {
-        displayName: 'Ask Plus', key: 'askPlusExp', description: 'asks + workflow', runnerType: 'clarifier',
-        consumes: ['userPrompt'], produces: ['clarify'], connectsTo: [], asksQuestions: true, order: 0,
-      },
-      markdown: '---\nname: ask-plus-exp\ntools: AskUserQuestion, Workflow\n---\n# Ask Plus\nBody.\n',
-    });
-  } catch (e) { if (e.code !== 'DUPLICATE') throw e; }
-  const tpl = await writeWorkflow({
-    name: 'Ask Plus Flow', domain: 'coding',
-    steps: [[{ id: 'k0', key: 'askPlusExp' }], [{ id: 'k1', key: 'planner' }]], feedbacks: [],
+  await createV2Agent({
+    key: 'askPlusExp', displayName: 'Ask Plus', description: 'asks + workflow',
+    runnerType: 'clarifier', asksQuestions: true, order: 0, tools: 'AskUserQuestion, Workflow',
   });
+  const tpl = await writeKeyGraph({ name: 'Ask Plus Flow', keys: ['askPlusExp', 'planner'] });
   const applied = await applyExport({ workflowId: tpl.id, destination: 'project', projectDir: dest, onConflict: 'overwrite' });
   const md = await readFile(join(dest, '.claude/agents/askPlusExp.md'), 'utf8');
   assert.doesNotMatch(md, /^tools:/m, 'all declared tools stripped → no tools: line → inherits all');
@@ -83,15 +66,13 @@ test('a node declaring AskUserQuestion + another stripped tool exports (does not
 
 test('model baked to frontmatter; effort as prose and never without a model', async () => {
   const dest = await tmp();
-  const tpl = await writeWorkflow({
+  const tpl = await writeKeyGraph({
     name: 'Model Effort',
-    domain: 'coding',
-    steps: [
-      [{ id: 'm0_0', key: 'planner', defaults: { model: 'opus', effort: 'high' } }],
-      [{ id: 'm1_0', key: 'implementer', defaults: { effort: 'high' } }],
-      [{ id: 'm2_0', key: 'reviewer' }],
+    keys: [
+      { key: 'planner', config: { model: 'opus', effort: 'high' } },
+      { key: 'implementer', config: { effort: 'high' } },
+      'reviewer',
     ],
-    feedbacks: [],
   });
   await applyExport({ workflowId: tpl.id, destination: 'project', projectDir: dest, onConflict: 'overwrite' });
 
