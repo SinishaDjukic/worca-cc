@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { ENGINES } from './helpers/engines.mjs';
 import { readPipelineForResume } from '../src/core/artifacts.mjs';
 
 useTempHome(after);
@@ -19,7 +19,8 @@ function gitDir() {
   return dir;
 }
 
-test('pause -> rehydrate fresh instance -> resume -> done, with session re-attach', async () => {
+for (const engine of ENGINES) {
+test(`[${engine.id}] pause -> rehydrate fresh instance -> resume -> done, with session re-attach`, async () => {
   const dir = gitDir();
   const seen = [];
   let hangOnce = true;
@@ -44,7 +45,7 @@ test('pause -> rehydrate fresh instance -> resume -> done, with session re-attac
     },
   });
 
-  const orch1 = createOrchestrator({ projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true }, runners: mkRunners() });
+  const orch1 = engine.create({ projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true }, runners: mkRunners() });
   orchRef = orch1;
   const r1 = await orch1.run();
   assert.equal(r1.status, 'paused');
@@ -58,7 +59,7 @@ test('pause -> rehydrate fresh instance -> resume -> done, with session re-attac
   assert.ok(saved.steps.some((s) => s.sessionId === 'sess-' + saved.resumePoint.nodes[0]?.nodeId
     || s.sessionId), 'reader surfaces per-step session ids');
 
-  const orch2 = createOrchestrator({
+  const orch2 = engine.create({
     projectDir: dir, claude: { mock: true }, auto: true, runners: mkRunners(),
     resume: saved,
   });
@@ -78,11 +79,12 @@ test('pause -> rehydrate fresh instance -> resume -> done, with session re-attac
   assert.equal(afterRun.row.resume_point, null, 'resume point cleared on completion');
 });
 
-test('resume() refuses a non-paused pipeline', async () => {
+test(`[${engine.id}] resume() refuses a non-paused pipeline`, async () => {
   const dir = gitDir();
-  const orch = createOrchestrator({
+  const orch = engine.create({
     projectDir: dir, claude: { mock: true }, auto: true,
     resume: { row: { id: 'x', status: 'done' }, resumePoint: { version: 1 }, steps: [] },
   });
   await assert.rejects(() => orch.resume(), /not resumable/);
 });
+}

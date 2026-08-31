@@ -316,22 +316,24 @@ test('buildRestoredPrompt: newest messages first within the cap, chronological o
   assert.ok(buildRestoredPrompt([], 'N').endsWith('\n\nN'));
 });
 
-// P4/T6: nothing else pins the rule TEXT (`:37` is a startsWith, `:94` counts the
-// delimiters), so rules 7-8, the rule-1 tool list and the reworded SANDBOX_NOTE all
-// survived deletion in the dry-run. Substring pins so a future edit cannot drop them.
-test('P4: the prompt advertises the worktree tools and the sandbox note names the git-only file access', () => {
+// P4/T6 → 2026-08-30: the chat now holds native Read/Grep/Glob (user decision — see
+// spawn.mjs). Nothing else pins the rule TEXT (`:37` is a startsWith, `:94` counts
+// the delimiters), so rules 7-8, the rule-1 tool list and the reworded SANDBOX_NOTE
+// are pinned by substring here so a future edit cannot drop them.
+test('the prompt advertises the worktree tools and the native file tools, and the sandbox note names both', () => {
   for (const t of ['open_worktree', 'list_worktrees', 'remove_worktree', 'propose_run',
     'list_diff_comments', 'add_diff_comment', 'resolve_diff_comment', 'delete_diff_comment']) {
     assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 1 enumerates ${t}`);
   }
-  assert.ok(ASK_SYSTEM_RULES.includes('cat-file'), 'the "no raw file read" guidance survives');
+  assert.ok(ASK_SYSTEM_RULES.includes('cat-file'), 'the "no raw git read" guidance survives');
   assert.ok(ASK_SYSTEM_RULES.includes('DETACHED'), 'rule 7 states the checkout is detached');
-  // GATE E1 = READ-ONLY-STRICT: the prompt must NOT promise native file tools.
-  for (const t of ['Read/Grep/Glob', 'use Read', 'Grep']) {
-    assert.ok(!ASK_SYSTEM_RULES.includes(t), `the rules never advertise ${t} (gate E1)`);
-  }
-  assert.ok(SANDBOX_NOTE.includes('worktree'), 'sub-agents are told where the git tool points');
-  assert.ok(SANDBOX_NOTE.includes('cannot read files'), 'and that there is no file tool');
+  for (const t of ['Read', 'Grep', 'Glob']) assert.ok(ASK_SYSTEM_RULES.includes(t), `the rules advertise ${t}`);
+  assert.ok(ASK_SYSTEM_RULES.includes('never elsewhere on disk'), 'rule 7 confines the file tools to the worktree path');
+  assert.ok(!ASK_SYSTEM_RULES.includes('no file-reading tools'), 'the git-only wording is gone');
+  assert.ok(SANDBOX_NOTE.includes('worktree'), 'sub-agents are told where the tools point');
+  for (const t of ['Read', 'Grep', 'Glob', '`git`']) assert.ok(SANDBOX_NOTE.includes(t), `the sandbox note names ${t}`);
+  assert.ok(SANDBOX_NOTE.includes('cannot run commands'), 'commands/network stay off');
+  assert.ok(!SANDBOX_NOTE.includes('cannot read files'), 'the git-only wording is gone');
 });
 
 // The workflow pick is the assistant's one real decision before propose_run, and the

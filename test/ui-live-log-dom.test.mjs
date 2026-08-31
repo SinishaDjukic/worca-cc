@@ -112,3 +112,58 @@ test('card rebuild keeps the search term when a dropdown selection vanishes', as
   assert.equal(lines.length, 1, 'pane still narrowed by the term');
   assert.match(lines[0].textContent, /an error appeared/);
 });
+
+// -------------------------------------------------------------------- MIN-37
+// v2 `cycle` is the PER-NODE ordinal (orchestrator.mjs stamps `cycle: ordinal`
+// alongside `nodeId`), so alternating between two concurrently-streaming nodes
+// used to draw a rule on almost every line. The live pane and the clipboard
+// must agree, and both must count per node.
+test('MIN-37: interleaved nodes at different ordinals draw no separator in the live pane', async () => {
+  const { window } = await bootLive();
+  const { upsertRun, buildRunCard, onLog } = window.__np;
+  const r = upsertRun({ runId: 'r-min37', title: 't', projectDir: '/tmp/proj', status: 'running' });
+  r.el = buildRunCard(r);
+  const lines = [
+    { source: 'implementer', text: 'patching a.js', nodeId: 'n_impl', executionId: 'x:n_impl:2', cycle: 2 },
+    { source: 'tester', text: 'running suite', nodeId: 'n_test', executionId: 'x:n_test:1', cycle: 1 },
+    { source: 'implementer', text: 'patching b.js', nodeId: 'n_impl', executionId: 'x:n_impl:2', cycle: 2 },
+    { source: 'tester', text: '12 passed', nodeId: 'n_test', executionId: 'x:n_test:1', cycle: 1 },
+    { source: 'implementer', text: 'done', nodeId: 'n_impl', executionId: 'x:n_impl:2', cycle: 2 },
+  ];
+  for (const l of lines) onLog(r, { level: 'info', ts: Date.now(), ...l });
+  const pane = r.el.querySelector('.log');
+  assert.equal(pane.querySelectorAll('.log-line').length, 5);
+  assert.equal(pane.querySelectorAll('.log-sep').length, 0, 'no rewind happened — no rule');
+});
+
+test('MIN-37: a node re-running draws exactly one rule, before ITS higher-ordinal line', async () => {
+  const { window } = await bootLive();
+  const { upsertRun, buildRunCard, onLog } = window.__np;
+  const r = upsertRun({ runId: 'r-min37b', title: 't', projectDir: '/tmp/proj', status: 'running' });
+  r.el = buildRunCard(r);
+  onLog(r, { source: 'refiner', level: 'info', text: 'refining', ts: Date.now(), nodeId: 'n_refine', cycle: 1 });
+  onLog(r, { source: 'refiner', level: 'info', text: 'refining again', ts: Date.now(), nodeId: 'n_refine', cycle: 2 });
+  onLog(r, { source: 'implementer', level: 'info', text: 'implementing', ts: Date.now(), nodeId: 'n_impl', cycle: 1 });
+  const pane = r.el.querySelector('.log');
+  const seps = pane.querySelectorAll('.log-sep');
+  assert.equal(seps.length, 1);
+  assert.equal(seps[0].textContent, 'Cycle 2');
+  assert.equal(seps[0].nextElementSibling.textContent.includes('refining again'), true,
+    'the rule sits directly above the refiner\'s ordinal-2 line');
+});
+
+test('MIN-37: a filter repaint and the live stream agree on the per-node cursor', async () => {
+  const { window } = await bootLive();
+  const { upsertRun, buildRunCard, onLog, paintLogFilters } = window.__np;
+  const r = upsertRun({ runId: 'r-min37c', title: 't', projectDir: '/tmp/proj', status: 'running' });
+  r.el = buildRunCard(r);
+  onLog(r, { source: 'refiner', level: 'info', text: 'a', ts: Date.now(), nodeId: 'n_refine', cycle: 1 });
+  onLog(r, { source: 'tester', level: 'info', text: 'b', ts: Date.now(), nodeId: 'n_test', cycle: 1 });
+  paintLogFilters(r);                                  // full wipe + rebuild from the model
+  onLog(r, { source: 'tester', level: 'info', text: 'c', ts: Date.now(), nodeId: 'n_test', cycle: 1 });
+  onLog(r, { source: 'refiner', level: 'info', text: 'd', ts: Date.now(), nodeId: 'n_refine', cycle: 2 });
+  const pane = r.el.querySelector('.log');
+  const seps = pane.querySelectorAll('.log-sep');
+  assert.equal(seps.length, 1, 'exactly one rule survives the repaint boundary');
+  assert.equal(seps[0].textContent, 'Cycle 2');
+});

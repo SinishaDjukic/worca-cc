@@ -57,7 +57,8 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
     head.appendChild(h(doc, 'b', 'pl-name', p.name));
     head.appendChild(h(doc, 'span', 'pl-version mono', p.version || sha7(p.pinnedSha)));
     if (p.linked) head.appendChild(h(doc, 'span', 'badge waiting pl-linked', 'linked'));
-    if (p.broken) head.appendChild(h(doc, 'span', 'badge red pl-broken', 'broken'));
+    if (p.apiMismatch) head.appendChild(h(doc, 'span', 'badge amber pl-api-mismatch', 'needs update'));
+    else if (p.broken) head.appendChild(h(doc, 'span', 'badge red pl-broken', 'broken'));
     // Enabling a plugin acts on a live system the moment it flips, so it reads
     // as a switch. `.switch` MUST be the input's immediate next sibling — the
     // `.sw-input:checked + .switch` rule is what paints the on state.
@@ -73,6 +74,16 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
     head.appendChild(toggle);
     card.appendChild(head);
     card.appendChild(h(doc, 'small', 'pl-contrib hint', contribSummary(p.contributions)));
+    if (p.apiMismatch) card.appendChild(h(doc, 'small', 'pl-api-note hint err', p.apiMismatch.message || ''));
+    // Contributions worca refused to load. Same note treatment as the API note:
+    // the contributions line above counts what the plugin SHIPS, so without this
+    // the card claims an agent or a template that exists nowhere.
+    if (p.ignored && p.ignored.length) {
+      const n = p.ignored.length;
+      card.appendChild(h(doc, 'small', 'pl-ignored-note hint err',
+        `${n} contribution${n > 1 ? 's' : ''} ignored: `
+        + p.ignored.map((i) => `${i.file} — ${i.reason}`).join('; ')));
+    }
     if (p.repo || p.marketplaceName) {
       const prov = [p.marketplaceName, p.repo].filter(Boolean).join(' · ');
       card.appendChild(h(doc, 'small', 'pl-provenance hint mono',

@@ -187,3 +187,17 @@ test('removeGlobalModelAndRefs on an unknown id throws WITHOUT purging same-stri
   await assert.rejects(removeGlobalModelAndRefs('only-legacy'), /unknown model id/);
   assert.deepEqual((await resolveRunConfig(p, 'wf_x')).nodes.s0_0, { model: 'only-legacy' });
 });
+
+test('removing a global model keeps the row/step\'s OTHER tunables (only model+effort clear)', async () => {
+  const p = await freshProject();
+  await addGlobalModel({ id: 'glm-4.7' });
+  await setStep(p, 'implementer', { model: 'glm-4.7', subagentModel: 'opus', fanOut: true });
+  await setNodeModel(p, 'wf_x', 's2_0', { model: 'glm-4.7', effort: 'high', subagentModel: 'fable', askQuestions: true });
+
+  const result = await removeGlobalModelAndRefs('glm-4.7');
+  assert.deepEqual(result, { clearedSteps: 1, clearedNodes: 1, predefinedShadow: false });
+  assert.deepEqual((await readConfig(p)).steps.implementer, { subagentModel: 'opus', fanOut: true },
+    'the sub-agent policy and fan-out survive; only the dangling model ref clears');
+  assert.deepEqual((await resolveRunConfig(p, 'wf_x')).nodes.s2_0, { subagentModel: 'fable', askQuestions: true },
+    'the node row is UPDATED, not deleted — the effort goes with its model, the rest stays');
+});

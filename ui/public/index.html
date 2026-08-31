@@ -395,6 +395,7 @@
                   <div class="rc-meta">
                     <span class="rc-status-word"></span>
                     <span class="rc-seg"><span class="rc-dot">·</span><span class="rm-text"></span></span>
+                    <span class="rc-seg rc-prog" hidden><span class="rc-dot">·</span><span class="rc-prog-text"></span></span>
                     <span class="rc-seg"><span class="rc-dot">·</span><span class="run-time mono"></span></span>
                     <span class="rc-seg"><span class="rc-dot">·</span><span class="run-cost mono"></span></span>
                   </div>
@@ -429,7 +430,7 @@
               <div class="rc-detailed">
                 <div class="run-flow-wrap"><div class="run-flow"></div></div>
                 <div class="run-log">
-                  <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" title="Filter by cycle" aria-label="Filter by cycle"></select><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
+                  <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" title="Filter by cycle" aria-label="Filter by cycle"></select><button type="button" class="log-f log-f-exec" hidden title="Showing one execution — click to clear"><span class="lfe-text"></span><span class="lfe-x" aria-hidden="true">×</span></button><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
                   <div class="log"></div>
                 </div>
               </div><!-- /.rc-detailed -->
@@ -801,7 +802,7 @@
           <div class="topbar">
             <div>
               <h1>Agents</h1>
-              <div class="sub">Built-in and custom agents — what each consumes and produces drives the Composer</div>
+              <div class="sub">Built-in and custom agents — the typed ports each one reads and writes drive the Composer</div>
             </div>
             <button type="button" id="agent-create-btn" class="btn-go" style="padding:11px 20px">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
@@ -817,6 +818,7 @@
                 <div class="agent-h-meta">
                   <b class="agent-name"></b>
                   <span class="agent-origin badge"></span>
+                  <span class="agent-not-placeable badge" hidden>not placeable</span>
                   <small class="agent-sub"></small>
                   <div class="agent-io">
                     <div class="agent-io-row agent-io-in">
@@ -839,41 +841,7 @@
               <div class="agent-detail" hidden>
                 <pre class="agent-md-view viewer"></pre>
                 <div class="agent-edit-pane" hidden>
-                  <div class="field"><label>Display name</label><input class="agent-f-name input" type="text" spellcheck="false" /></div>
-                  <div class="field"><label>Description</label><input class="agent-f-desc input" type="text" spellcheck="false" /></div>
-                  <div class="row-2">
-                    <div class="field"><label>Color</label>
-                      <div class="select-wrap"><select class="agent-f-color select">
-                        <option>green</option><option>peach</option><option>red</option>
-                        <option>blue</option><option>violet</option><option>amber</option>
-                      </select></div>
-                    </div>
-                    <div class="field"><label>Runner type</label>
-                      <div class="select-wrap"><select class="agent-f-runner select">
-                        <option>producer</option><option>verifier</option>
-                      </select></div>
-                    </div>
-                  </div>
-                  <div class="field"><label>Consumes</label><div class="agent-f-consumes chip-select"></div></div>
-                  <div class="field"><label>Optional consumes</label><div class="agent-f-optional chip-select"></div></div>
-                  <div class="field"><label>Produces</label><div class="agent-f-produces chip-select"></div></div>
-                  <div class="field"><label>Connects to</label>
-                    <label class="fanout-toggle"><input type="checkbox" class="agent-f-connect-any" /><span>any agent (*)</span></label>
-                    <div class="agent-f-connects chip-select"></div>
-                  </div>
-                  <div class="row-2">
-                    <div class="field"><label>Order</label><input class="agent-f-order input" type="number" step="0.1" /></div>
-                    <div class="field"><label>Flags</label>
-                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-fanout" /><span>Fan-out</span></label>
-                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-loopsource" /><span>Loop source</span></label>
-                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions" /><span>Asks questions</span></label>
-                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-locked" /><span>Questions locked</span></label>
-                      <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-default" /><span>Questions on by default</span></label>
-                    </div>
-                  </div>
-                  <div class="field"><label>System prompt (markdown)</label>
-                    <textarea class="agent-f-md textarea" rows="16" spellcheck="false"></textarea>
-                  </div>
+                  <div class="agent-form"></div>
                   <p class="agent-edit-msg form-msg" aria-live="polite"></p>
                   <div class="actions" style="justify-content:flex-end">
                     <button type="button" class="agent-edit-cancel btn btn-ghost btn-mini">Cancel</button>
@@ -1022,29 +990,7 @@
 
             <!-- Step 3: review/edit draft (shared agent-f-* form classes) -->
             <div class="wiz-step hidden" id="agw-step-3">
-              <div class="field"><label>Display name</label><input class="agent-f-name input" type="text" spellcheck="false" /></div>
-              <div class="field"><label>Description</label><input class="agent-f-desc input" type="text" spellcheck="false" /></div>
-              <div class="row-2">
-                <div class="field"><label>Color</label><div class="select-wrap"><select class="agent-f-color select"><option>green</option><option>peach</option><option>red</option><option>blue</option><option>violet</option><option>amber</option></select></div></div>
-                <div class="field"><label>Runner type</label><div class="select-wrap"><select class="agent-f-runner select"><option>producer</option><option>verifier</option></select></div></div>
-              </div>
-              <div class="field"><label>Consumes</label><div class="agent-f-consumes chip-select"></div></div>
-              <div class="field"><label>Optional consumes</label><div class="agent-f-optional chip-select"></div></div>
-              <div class="field"><label>Produces</label><div class="agent-f-produces chip-select"></div></div>
-              <div class="field"><label>Connects to</label>
-                <label class="fanout-toggle"><input type="checkbox" class="agent-f-connect-any" /><span>any agent (*)</span></label>
-                <div class="agent-f-connects chip-select"></div></div>
-              <div class="row-2">
-                <div class="field"><label>Order</label><input class="agent-f-order input" type="number" step="0.1" /></div>
-                <div class="field"><label>Flags</label>
-                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-fanout" /><span>Fan-out</span></label>
-                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-loopsource" /><span>Loop source</span></label>
-                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions" /><span>Asks questions</span></label>
-                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-locked" /><span>Questions locked</span></label>
-                  <label class="fanout-toggle"><input type="checkbox" class="agent-f-questions-default" /><span>Questions on by default</span></label></div>
-              </div>
-              <div class="field"><label>System prompt (markdown)</label>
-                <textarea class="agent-f-md textarea" rows="16" spellcheck="false"></textarea></div>
+              <div class="agent-form"></div>
               <p id="agw-msg" class="form-msg" aria-live="polite"></p>
               <div class="actions" style="justify-content:space-between">
                 <button type="button" id="agw-regen" class="btn btn-ghost btn-mini">Regenerate</button>
@@ -1058,60 +1004,65 @@
         </section>
         <!-- /view agent-create -->
 
-        <!-- ===== VIEW: WORKFLOW COMPOSER ===== -->
+        <!-- ===== VIEW: WORKFLOW COMPOSER (v2 node graph) ===== -->
         <section class="view hidden" data-view="composer">
           <div class="topbar">
             <div>
               <h1>Workflow Composer</h1>
-              <div class="sub">Compose how your agents collaborate — drag, stack, and loop them into a workflow</div>
             </div>
-            <button type="button" class="btn-ghost" id="composer-reset" style="padding:11px 20px">Reset to default</button>
           </div>
 
-          <section class="card builder-card">
-            <div class="palette">
-              <span class="p-label">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2"></circle><circle cx="6" cy="18" r="2"></circle><circle cx="18" cy="6" r="2"></circle><circle cx="18" cy="18" r="2"></circle></svg>
-                Agents · drag onto the canvas to build your workflow
-                <input id="composer-agent-filter" class="pal-filter" type="search" placeholder="Filter agents…" aria-label="Filter agents by name or description">
-              </span>
-              <div id="composer-palette" style="display:contents"></div>
-            </div>
-
-            <div class="canvas-wrap" id="composer-canvas-wrap">
-              <div id="composer-decomposer-hint" class="composer-hint" hidden>
-                When a Decompose step is present, 1 implementer is started per task it produces — the count varies per run.
-              </div>
-              <div class="flow" id="composer-flow">
-                <svg class="wires" id="composer-wires"></svg>
-              </div>
-            </div>
-
-            <div class="builder-foot">
-              <div class="legend">
-                <span class="lg"><span class="ll"></span> sequential — runs in order</span>
-                <span class="lg"><span class="ll fb"></span> feedback loop</span>
-                <span class="lg"><span class="ll sl"></span> self loop</span>
-              </div>
-              <span class="link-banner" id="composer-link-banner" hidden>
-                <span id="composer-link-text">Click a target agent to draw a feedback loop</span>
-                <button type="button" id="composer-link-cancel">Cancel</button>
-              </span>
+          <section class="card gv-editor">
+            <div class="gv-head" id="gv-head">
+              <input id="gv-name" class="gv-name" type="text" spellcheck="false" placeholder="Untitled pipeline" aria-label="Pipeline name">
+              <button type="button" class="gv-errchip" id="gv-errors" hidden></button>
               <span class="sp"></span>
-              <button type="button" class="btn-ghost" id="composer-clear" style="padding:10px 18px">Clear canvas</button>
-              <button type="button" class="btn-go" id="composer-save">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-                Save workflow
-              </button>
+              <button type="button" class="btn-ghost" id="gv-new">New canvas</button>
+              <button type="button" class="btn-ghost" id="gv-autolayout">Auto-layout</button>
+              <button type="button" class="btn-go" id="gv-save">Save</button>
+            </div>
+            <!-- The stage is created INSIDE #gv-canvas by createGraphView. The chip
+                 and the inspector rail are its SIBLINGS: a pointerdown on them can
+                 never reach the stage, so capture can never retarget their click.
+                 The rail carries BOTH panes — the agent palette and the inspector —
+                 switched by `data-tab`; `data-open` still collapses the whole rail. -->
+            <div class="gv-canvas" id="gv-canvas">
+              <div class="gv-chip" id="gv-chip" hidden></div>
+              <div class="gv-ins-rail" id="gv-ins-rail" data-open="open" data-tab="agents">
+                <div class="gv-ins-bar">
+                  <button type="button" class="gv-ins-toggle" id="gv-ins-toggle" aria-expanded="true" aria-label="Collapse inspector"><svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
+                  <div class="gv-tabs" id="gv-ins-tabs" role="tablist" aria-label="Rail panes">
+                    <button type="button" class="gv-tab" role="tab" data-tab="agents" aria-selected="true">Agents</button>
+                    <button type="button" class="gv-tab" role="tab" data-tab="info" aria-selected="false" tabindex="-1">Info</button>
+                  </div>
+                </div>
+                <div class="gv-ins-pane gv-agents-pane" id="gv-agents-pane">
+                  <div class="gv-pal-head">
+                    <input id="gv-agent-filter" class="pal-filter" type="search" placeholder="Filter agents…" aria-label="Filter agents by name or ports">
+                  </div>
+                  <div class="gv-palette" id="gv-palette"></div>
+                </div>
+                <div class="gv-ins-pane gv-ins-body" id="gv-ins-body"></div>
+              </div>
+            </div>
+            <!-- The key belongs to the whole editor, canvas AND rail — not to a
+                 palette card that no longer exists. -->
+            <div class="gv-foot">
+              <span class="gv-legend" id="gv-legend">grey = data · amber = loop · ◆ = conditional · ○ = gate · ⤫N = fan-out</span>
             </div>
           </section>
 
-          <section class="card saved-card">
+          <section class="card gv-saved">
             <div class="saved-head">
-              <div><b>Saved workflows</b><span class="cnt" id="composer-saved-count"></span></div>
+              <div><b>Saved pipelines</b><span class="cnt" id="gv-saved-count"></span></div>
             </div>
-            <div class="saved-list" id="composer-saved-list"></div>
+            <div class="saved-list" id="gv-saved-list"></div>
+            <div class="gv-archived" id="gv-archived" hidden></div>
+            <!-- A refused DELETE (the built-in, a 404, a 500) has to land
+                 SOMEWHERE: same .form-msg line every other list view uses. -->
+            <p id="gv-saved-msg" class="form-msg" aria-live="polite"></p>
           </section>
+          <div id="gv-dialog-host"></div>
         </section>
         <!-- /view composer -->
 

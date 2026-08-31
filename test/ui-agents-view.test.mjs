@@ -11,10 +11,18 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const cssPath = fileURLToPath(new URL('../ui/public/style.css', import.meta.url));
 
 const AGENTS = [
-  { key: 'planner', displayName: 'Plan', description: 'architecture', color: 'violet', runnerType: 'producer', consumes: ['userPrompt'], produces: ['plan'], order: 1, origin: 'builtin', connectsTo: '*' },
-  { key: 'docsWriter', displayName: 'Docs Writer', description: 'writes docs', color: 'green', runnerType: 'producer', consumes: ['plan'], produces: ['review'], order: 42, origin: 'user', connectsTo: '*' },
+  { key: 'planner', displayName: 'Plan', description: 'architecture', color: 'violet', runnerType: 'producer',
+    metaVersion: 2, order: 1, origin: 'builtin', portSummary: 'Reads task; produces plan.',
+    inputs: [{ id: 'task', type: 'md' }, { id: 'revise', type: 'md', loop: true, required: false }],
+    outputs: [{ id: 'plan', type: 'md', filename: '{base}.md', store: 'project' }] },
+  { key: 'docsWriter', displayName: 'Docs Writer', description: '', color: 'green', runnerType: 'verifier',
+    metaVersion: 2, order: 42, origin: 'user', placeable: false, portSummary: 'Reads plan; produces review.',
+    verdict: { filename: 'docs-review.json' },
+    inputs: [{ id: 'plan', type: 'md' }],
+    outputs: [{ id: 'review', type: 'md', when: 'blocking', filename: 'docs-review.md' },
+              { id: 'pass', type: 'void', when: 'clean' }] },
 ];
-const CHANNELS = ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
+const MOCK_ROLES = ['clarify', 'planner-plan', 'generic-producer', 'generic-verifier'];
 
 class WSStub {
   constructor() { this.readyState = 1; this.sent = []; this._listeners = {}; WSStub.last = this; }
@@ -34,7 +42,7 @@ async function boot({ fetchHandler } = {}) {
   window.fetch = (url, opts) => {
     const u = String(url);
     if (fetchHandler) { const r = fetchHandler(u, opts || {}); if (r) return r; }
-    if (u.includes('/api/agents')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ agents: AGENTS, channels: CHANNELS }) });
+    if (u.includes('/api/agents')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ agents: AGENTS, mockWriterRoles: MOCK_ROLES }) });
     if (u.includes('/api/projects')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [] }) });
     if (u.includes('/api/workspaces')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ workspaces: [] }) });
     return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [] }) });
@@ -56,24 +64,22 @@ const goAgents = async (window) => {
   await new Promise((r) => setTimeout(r, 0));
 };
 
-test('agents view renders grouped cards with origin badges + produces/consumes chips', async () => {
+test('agents view renders grouped cards with origin badges + typed port pills', async () => {
   const { window } = await boot();
   await goAgents(window);
-  const doc = window.document;
-  assert.equal(doc.querySelector('.view[data-view="agents"]').classList.contains('hidden'), false);
-  const cards = [...doc.querySelectorAll('#agents-list .agent-card')];
+  const cards = window.document.querySelectorAll('.agent-card');
   assert.equal(cards.length, 2);
-  const user = cards.find((c) => c.dataset.agentKey === 'docsWriter');
-  assert.equal(user.querySelector('.agent-origin').textContent, 'user');
-  assert.ok([...user.querySelectorAll('.agent-chip.prod')].some((n) => n.textContent === 'review'));
-  assert.ok([...user.querySelectorAll('.agent-chip.cons')].some((n) => n.textContent === 'plan'));
-  const builtin = cards.find((c) => c.dataset.agentKey === 'planner');
-  assert.equal(builtin.querySelector('.agent-delete').hidden, true, 'no delete for builtin');
-  assert.equal(builtin.querySelector('.agent-edit').hidden, true, 'no edit for builtin');
-  assert.equal(builtin.querySelector('.agent-duplicate').hidden, false);
-  assert.equal(user.querySelector('.agent-duplicate').hidden, true);
-  const labels = [...doc.querySelectorAll('#agents-list .agents-group-label')].map((n) => n.textContent);
-  assert.deepEqual(labels, ['Built-in agents', 'Your agents']);
+  const planner = cards[0];
+  assert.equal(planner.querySelector('.agent-origin').textContent, 'builtin');
+  assert.equal(planner.querySelector('.agent-sub').textContent, 'planner \u00b7 producer \u2014 architecture');
+  const inPills = [...planner.querySelectorAll('.agent-chips-in .agent-chip')].map((p) => p.textContent);
+  assert.deepEqual(inPills, ['task \u00b7 md', '\u21ba revise \u00b7 md']);
+  assert.deepEqual([...planner.querySelectorAll('.agent-chips-out .agent-chip')].map((p) => p.textContent), ['plan \u00b7 md']);
+  // The io block stays in the always-visible header, one labelled row per side.
+  // (Rescued from the deleted channel-pill test — nothing else pins this.)
+  assert.ok(planner.querySelector('.agent-head .agent-io'), 'io block is inside .agent-head');
+  assert.equal(planner.querySelector('.agent-io-in .agent-io-label').textContent, 'Input');
+  assert.equal(planner.querySelector('.agent-io-out .agent-io-label').textContent, 'Output');
 });
 
 test('Delete issues DELETE /api/agents/:key; a 409 keeps the card + surfaces the error', async () => {
@@ -128,79 +134,35 @@ test('Duplicate on a builtin GETs the full agent then POSTs a copy with a fresh 
   assert.equal(posts[0].markdown, '# planner body');
 });
 
-test('composer save surfaces server warnings via the link-banner toast', async () => {
-  const { window } = await boot({
-    fetchHandler: (u, opts) => {
-      if (u.endsWith('/api/workflows') && opts.method === 'POST') {
-        return Promise.resolve({ ok: true, status: 201, json: async () => ({
-          workflow: { id: 'wf_warny', name: 'Warny', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] },
-          warnings: ['node "s1_0" consumes "checklist" but no upstream step produces it'],
-        }) });
-      }
-      if (u.endsWith('/api/workflows') && (!opts.method || opts.method === 'GET')) {
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: [] }) });
-      }
-      if (u.includes('/api/workflows/')) {
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({ id: 'wf_default', name: 'Default', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] }) });
-      }
-      return null;
-    },
-  });
-  window.location.hash = 'composer';
-  window.dispatchEvent(new window.Event('hashchange'));
-  await new Promise((r) => setTimeout(r, 0));
-  await new Promise((r) => setTimeout(r, 0));
-  const doc = window.document;
-  assert.ok(window.__composer.steps.length >= 1, 'canvas seeded from default');
-  click(window, doc.querySelector('#composer-save'));
-  await confirmDialog(window, { name: 'Warny' });
-  assert.match(doc.querySelector('#composer-link-text').textContent, /consumes "checklist"/, 'warning toasted');
-  assert.equal(doc.querySelector('#composer-link-banner').hidden, false);
-});
-
-test('agents view splits channel pills into labeled Input and Output rows', async () => {
+test('a description-less agent falls back to its port summary, and void pills are marked', async () => {
   const { window } = await boot();
   await goAgents(window);
-  const planner = [...window.document.querySelectorAll('#agents-list .agent-card')]
-    .find((c) => c.dataset.agentKey === 'planner');
-  assert.ok(planner, 'planner card rendered');
-
-  const inRow = planner.querySelector('.agent-io-in');
-  const outRow = planner.querySelector('.agent-io-out');
-  assert.ok(inRow && outRow, 'both Input and Output rows render in the header');
-  assert.equal(inRow.querySelector('.agent-io-label').textContent, 'Input');
-  assert.equal(outRow.querySelector('.agent-io-label').textContent, 'Output');
-
-  // input pills under the Input row, output pills under the Output row
-  assert.deepEqual([...inRow.querySelectorAll('.agent-chip')].map((n) => n.textContent), ['userPrompt']);
-  assert.deepEqual([...outRow.querySelectorAll('.agent-chip')].map((n) => n.textContent), ['plan']);
-
-  // no consume pill leaks into the Output row (and vice-versa)
-  assert.equal(outRow.querySelector('.agent-chip.cons'), null, 'Output row has no consume pills');
-  assert.equal(inRow.querySelector('.agent-chip.prod'), null, 'Input row has no produce pills');
-
-  // rows live in the always-visible header, not the collapsible detail
-  assert.ok(planner.querySelector('.agent-head .agent-io'), 'io block is inside .agent-head');
+  const docs = window.document.querySelectorAll('.agent-card')[1];
+  assert.equal(docs.querySelector('.agent-sub').textContent, 'docsWriter \u00b7 verifier \u2014 Reads plan; produces review.');
+  const out = docs.querySelectorAll('.agent-chips-out .agent-chip');
+  assert.equal(out[1].textContent, 'pass \u00b7 void');
+  assert.ok(out[1].classList.contains('void'), 'a void port pill is visually distinct');
+  assert.ok(!out[0].classList.contains('void'));
 });
 
-test('agents view shows a placeholder when a channel side is empty', async () => {
-  const agents = [{
-    key: 'sink', displayName: 'Sink', description: 'consumes only', color: 'amber',
-    runnerType: 'verifier', consumes: ['code'], produces: [], order: 1, origin: 'user', connectsTo: '*',
-  }];
-  const { window } = await boot({
-    fetchHandler: (u) => u.includes('/api/agents')
-      ? Promise.resolve({ ok: true, status: 200, json: async () => ({ agents, channels: CHANNELS }) })
-      : null,
-  });
+test('placeable:false raises the amber "not placeable" badge, and only there', async () => {
+  const { window } = await boot();
   await goAgents(window);
-  const card = window.document.querySelector('#agents-list .agent-card');
-  const outRow = card.querySelector('.agent-io-out');
-  assert.equal(outRow.querySelector('.agent-chip'), null, 'no output pills for empty produces');
-  assert.equal(outRow.querySelector('.agent-io-none').textContent, '—', 'empty Output row shows muted placeholder');
-  // input side still renders its pill
-  assert.deepEqual(
-    [...card.querySelectorAll('.agent-io-in .agent-chip')].map((n) => n.textContent), ['code']);
+  const [planner, docs] = window.document.querySelectorAll('.agent-card');
+  assert.equal(planner.querySelector('.agent-not-placeable').hidden, true);
+  const badge = docs.querySelector('.agent-not-placeable');
+  assert.equal(badge.hidden, false);
+  assert.equal(badge.textContent, 'not placeable');
+});
+
+test('an agent with no ports on a side keeps the \u2014 placeholder', async () => {
+  const { window } = await boot({ fetchHandler: (u) => (u.includes('/api/agents')
+    ? Promise.resolve({ ok: true, status: 200, json: async () => ({
+      agents: [{ key: 'lonely', displayName: 'Lonely', runnerType: 'producer', metaVersion: 2, order: 5,
+        origin: 'user', inputs: [], outputs: [], portSummary: '' }], mockWriterRoles: MOCK_ROLES }) })
+    : null) });
+  await goAgents(window);
+  assert.equal(window.document.querySelector('.agent-chips-in .agent-io-none').textContent, '\u2014');
 });
 
 test('agent detail body is spaced below the channel pills', () => {

@@ -1,7 +1,14 @@
 {
   "name": "Mock Flow",
-  "version": 1,
+  "version": 2,
   "domain": "general",
-  "steps": [[{ "id": "s0_0", "key": "mockHelper" }]],
-  "feedbacks": []
+  "nodes": [
+    { "id": "n_task", "kind": "task", "x": 40, "y": 200, "config": {} },
+    { "id": "n_helper", "kind": "agent", "key": "mockHelper", "x": 320, "y": 200, "config": {} },
+    { "id": "n_end", "kind": "end", "x": 600, "y": 200, "config": {} }
+  ],
+  "wires": [
+    { "id": "w1", "from": { "node": "n_task", "port": "task" }, "to": { "node": "n_helper", "port": "task" } },
+    { "id": "w2", "from": { "node": "n_helper", "port": "notes" }, "to": { "node": "n_end", "port": "result" } }
+  ]
 }

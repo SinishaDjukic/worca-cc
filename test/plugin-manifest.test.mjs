@@ -4,9 +4,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS } from '../src/core/plugin-api.mjs';
 import {
   normalizeManifest, validatePluginDir, apiSatisfies, negotiatedApi, PLUGIN_NAME_RE,
+  declaredApi, dataContractIssues, apiMismatch, NOT_META_V2, NOT_GRAPH_V2,
 } from '../src/core/plugin-manifest.mjs';
 
 const WIN_SYMLINK = { skip: process.platform === 'win32' ? 'creating symlinks needs a privilege (Developer Mode / admin) on Windows' : false };
@@ -30,9 +32,48 @@ const SRC = (over = {}) => ({
   ...over,
 });
 
-test('WORCA_PLUGIN_API is the integer 2; host still speaks API 1', () => {
-  assert.equal(WORCA_PLUGIN_API, 2);
-  assert.deepEqual(WORCA_PLUGIN_APIS, [1, 2]);
+test('WORCA_PLUGIN_API is the integer 3; host still speaks APIs 1 and 2', () => {
+  assert.equal(WORCA_PLUGIN_API, 3);
+  assert.deepEqual(WORCA_PLUGIN_APIS, [1, 2, 3]);
+  // Set semantics: a connector-only API-1 plugin must keep negotiating 1.
+  assert.equal(negotiatedApi('>=1 <2'), 1);
+  assert.equal(negotiatedApi('>=2 <3'), 2);
+  assert.equal(negotiatedApi('>=3 <4'), 3);
+});
+
+test('declaredApi: the LOWEST integer a range accepts (null when unparseable)', () => {
+  assert.equal(declaredApi('>=1 <2'), 1);
+  assert.equal(declaredApi('1'), 1);
+  assert.equal(declaredApi('>=2 <3'), 2);
+  assert.equal(declaredApi('>=3 <4'), 3);
+  assert.equal(declaredApi(''), 0, 'an unconstrained range accepts everything, starting at 0');
+  assert.equal(declaredApi('not-a-range'), null);
+});
+
+test('dataContractIssues names the v1-shaped files, and apiMismatch counts them', () => {
+  const dir = mkPluginDir({
+    'agents/oldOne.meta.json': JSON.stringify({ key: 'oldOne', consumes: ['plan'], produces: ['review'] }),
+    'agents/oldOne.md': '# oldOne\n',
+    'agents/newOne.meta.json': JSON.stringify({ metaVersion: 2, key: 'newOne', inputs: [], outputs: [] }),
+    'agents/newOne.md': '# newOne\n',
+    'workflows/legacy.json': JSON.stringify({ version: 1, steps: [[{ id: 's0', key: 'oldOne' }]] }),
+    'workflows/graph.json': JSON.stringify({ version: 2, nodes: [], wires: [] }),
+  });
+  const issues = dataContractIssues(dir);
+  assert.deepEqual(issues.agentsV1, ['oldOne.meta.json']);
+  assert.deepEqual(issues.workflowsV1, ['legacy.json']);
+  const m = apiMismatch('>=1 <2', issues);
+  assert.equal(m.message, 'built for plugin API 1; this version of worca requires plugin API 3 for agents and pipeline templates \u2014 update or reinstall the plugin (1 agent(s), 1 template(s) ignored)');
+  assert.match(apiMismatch('', issues).message, /^built for plugin API an older version; /);
+  // `message` is part of the payload (one canonical text, stamped by apiMismatch),
+  // so the shape pin compares the counts WITHOUT it.
+  const { message, ...counts } = m;
+  assert.equal(typeof message, 'string');
+  assert.deepEqual(counts, { builtFor: 1, host: 3, agents: 1, workflows: 1 });
+  assert.equal(apiMismatch('>=3 <4', { agentsV1: [], workflowsV1: [] }), null,
+    'an API-3 plugin with clean data has no mismatch');
+  assert.equal(apiMismatch('>=1 <2', { agentsV1: [], workflowsV1: [] }), null,
+    'a connector-only API-1 plugin is NOT a mismatch \u2014 the bump is data-gated, not range-gated');
 });
 
 test('minimal { name } manifest normalizes with full defaults', () => {
@@ -63,8 +104,10 @@ test('engines.worca-cc-api: range checked against the host API SET (no npm semve
   assert.equal(apiSatisfies('>=2'), true);       // satisfied by member 2
   assert.equal(apiSatisfies('>=2 <3'), true);
   assert.equal(apiSatisfies('2'), true);
+  assert.equal(apiSatisfies('>=3 <4'), true);    // API-3 plugins install on this host
+  assert.equal(apiSatisfies('3'), true);
   assert.equal(apiSatisfies('<1'), false);
-  assert.equal(apiSatisfies('>=3'), false);
+  assert.equal(apiSatisfies('>=4'), false);      // beyond the host API set
   assert.equal(apiSatisfies(''), true);          // unset -> unconstrained
   assert.equal(apiSatisfies('^1.0.0'), false);   // unsupported syntax fails CLOSED
   assert.equal(apiSatisfies('>=1.2.3'), true);   // minor/patch tolerated; integer compared
@@ -72,18 +115,19 @@ test('engines.worca-cc-api: range checked against the host API SET (no npm semve
   const ok = normalizeManifest({ name: 'p', engines: { 'worca-cc-api': '>=1 <2' } });
   assert.equal(ok.ok, true);
   assert.equal(ok.manifest.engines.worcaApi, '>=1 <2');
-  const bad = normalizeManifest({ name: 'p', engines: { 'worca-cc-api': '>=3' } });
+  const bad = normalizeManifest({ name: 'p', engines: { 'worca-cc-api': '>=4' } });
   assert.equal(bad.ok, false);
-  assert.match(bad.errors[0], /not satisfied by host plugin APIs \[1, 2\]/);
+  assert.match(bad.errors[0], /not satisfied by host plugin APIs \[1, 2, 3\]/);
 });
 
 test('negotiatedApi: highest satisfying host API drives the child apiVersion', () => {
   assert.equal(negotiatedApi('>=1 <2'), 1);      // API-1 connector keeps receiving 1
   assert.equal(negotiatedApi('>=2 <3'), 2);
-  assert.equal(negotiatedApi('>=1'), 2);         // open range -> newest
-  assert.equal(negotiatedApi(''), 2);            // unconstrained -> newest
-  assert.equal(negotiatedApi(null), 2);
-  assert.equal(negotiatedApi('>=3'), null);      // unsatisfiable
+  assert.equal(negotiatedApi('>=3 <4'), 3);
+  assert.equal(negotiatedApi('>=1'), 3);         // open range -> newest
+  assert.equal(negotiatedApi(''), 3);            // unconstrained -> newest
+  assert.equal(negotiatedApi(null), 3);
+  assert.equal(negotiatedApi('>=4'), null);      // unsatisfiable
   assert.equal(negotiatedApi('garbage'), null);  // fail closed
 });
 
@@ -169,15 +213,36 @@ test('unknown fields are ignored + collected as warnings', () => {
   assert.equal('hooks' in r.manifest, false);
 });
 
+const V2_META = (key, over = {}) => JSON.stringify({
+  metaVersion: 2, key, displayName: key, agentFile: `${key}.md`, runnerType: 'producer',
+  inputs: [{ id: 'task', type: 'md' }],
+  outputs: [{ id: 'notes', type: 'md', filename: 'notes.md' }],
+  order: 900, ...over,
+});
+const V2_GRAPH = (key) => JSON.stringify({
+  name: 'Flow', version: 2, domain: 'general',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+    { id: 'n_a', kind: 'agent', key, x: 320, y: 200, config: {} },
+    { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_a', port: 'task' } },
+    { id: 'w2', from: { node: 'n_a', port: 'notes' }, to: { node: 'n_end', port: 'result' } },
+  ],
+});
+const errs = (v) => v.problems.filter((p) => p.level === 'error').map((p) => p.message);
+const warns = (v) => v.problems.filter((p) => p.level === 'warn').map((p) => p.message);
+
 // ── validatePluginDir ──────────────────────────────────────────────────────
 
 const VALID_FILES = {
-  'worca-cc-plugin.json': JSON.stringify({ name: 'demo-plugin', taskSources: [SRC()] }),
+  'worca-cc-plugin.json': JSON.stringify({ name: 'demo-plugin', engines: { 'worca-cc-api': '>=3 <4' }, taskSources: [SRC()] }),
   'connector/index.mjs': 'export default () => ({});\n',
-  'agents/demoAgent.meta.json': JSON.stringify({ key: 'demoAgent', order: 90 }),
+  'agents/demoAgent.meta.json': V2_META('demoAgent', { order: 90 }),
   'agents/demoAgent.md': '---\ntools: Read, Bash\n---\nbody\n',
   'skills/demo-skill/SKILL.md': '# skill\n',
-  'workflows/demo-flow.json': JSON.stringify({ name: 'Demo', steps: [[{ id: 's0', key: 'demoAgent' }]], feedbacks: [] }),
+  'workflows/demo-flow.json': V2_GRAPH('demoAgent'),
 };
 
 test('validatePluginDir: fully valid dir -> ok, no error problems', () => {
@@ -206,7 +271,7 @@ test('validatePluginDir: agents md/meta pairing + key checks', () => {
 test('validatePluginDir: workflow referencing an unshipped agent key = error', () => {
   const dir = mkPluginDir({
     ...VALID_FILES,
-    'workflows/alien.json': JSON.stringify({ name: 'Alien', steps: [[{ id: 's0', key: 'notMine' }]], feedbacks: [] }),
+    'workflows/alien.json': V2_GRAPH('notMine'),
   });
   const v = validatePluginDir(dir);
   assert.equal(v.ok, false);
@@ -391,14 +456,28 @@ test('models: normalization — defaults, canonical effort order, secret refs ke
   assert.equal(bare.env, undefined, 'no env key when empty');
 });
 
-test('models: rejections — reserved env key, dup id, unknown effort, dangling secret, bad value', () => {
+test('models: reserved env keys are dropped with a warning, not a rejection (back-compat)', () => {
+  const r = normalizeManifest({
+    name: 'p', modelSecrets: SECRETS,
+    models: [MODEL({ env: { ...MODEL().env, CLAUDE_CODE_SUBAGENT_MODEL: 'discretestack-stable', WORCA_MOCK: '1' } })],
+  });
+  assert.equal(r.ok, true, r.ok ? '' : r.errors.join('\n'));
+  const [m] = r.manifest.models;
+  assert.equal(m.env.CLAUDE_CODE_SUBAGENT_MODEL, undefined, 'reserved key stripped');
+  assert.equal(m.env.WORCA_MOCK, undefined, 'reserved-prefix key stripped');
+  assert.equal(m.env.ANTHROPIC_BASE_URL, 'https://api.ds.example', 'legal keys kept');
+  assert.deepEqual(m.env.ANTHROPIC_AUTH_TOKEN, { secret: 'ds-token' }, 'secret refs kept');
+  const w = r.warnings.join('\n');
+  assert.match(w, /models\[0\] \("discretestack-stable"\): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored/);
+  assert.match(w, /env key "WORCA_MOCK" is reserved — ignored/);
+});
+
+test('models: rejections — dup id, unknown effort, dangling secret, bad value', () => {
   const fail = (models, modelSecrets, re) => {
     const r = normalizeManifest({ name: 'p', models, ...(modelSecrets ? { modelSecrets } : {}) });
     assert.equal(r.ok, false);
     assert.match(r.errors.join('\n'), re);
   };
-  fail([MODEL({ env: { WORCA_MOCK: '1' } })], SECRETS, /env key "WORCA_MOCK" is reserved/);
-  fail([MODEL({ env: { PATH: '/evil' } })], SECRETS, /env key "PATH" is reserved/);
   fail([MODEL({}), MODEL({ label: 'Twin', id: 'Discretestack-Stable' })], SECRETS, /duplicate models id/);
   fail([MODEL({ efforts: ['low'] })], SECRETS, /unknown effort "low"/);
   fail([MODEL()], undefined, /undeclared modelSecrets key "ds-token"/);
@@ -428,6 +507,230 @@ test('models: unknown fields warn (strict promotes via validatePluginDir)', () =
   assert.equal(r.ok, true);
   assert.match(r.warnings.join('\n'), /models\[0\]: unknown field "pricing" ignored/);
   assert.match(r.warnings.join('\n'), /modelSecrets\[0\]: unknown field "magic" ignored/);
+});
+
+
+test('a v2 sidecar + v2 template validate clean through the SHARED gates', () => {
+  const dir = mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/helper.meta.json': V2_META('helper'),
+    'agents/helper.md': '# helper\n',
+    'workflows/flow.json': V2_GRAPH('helper'),
+  });
+  const v = validatePluginDir(dir);
+  assert.deepEqual(errs(v), []);
+  assert.equal(v.ok, true);
+});
+
+test('a broken v2 sidecar reports EVERY failed meta rule, verbatim, per file', () => {
+  const dir = mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/helper.meta.json': V2_META('helper', { runnerType: 'verifier', outputs: [{ id: 'review', type: 'md', when: 'blocking', filename: 'r.md' }] }),
+    'agents/helper.md': '# helper\n',
+  });
+  const v = validatePluginDir(dir);
+  assert.ok(errs(v).includes('agents/helper.meta.json: runnerType "verifier" requires verdict: { filename }'));
+  assert.ok(errs(v).includes('agents/helper.meta.json: outputs.review: when "blocking" requires the agent to declare verdict: { filename }'),
+    'every failed rule is reported, not just the first');
+  assert.equal(v.ok, false);
+});
+
+test('v1-shaped data: ERROR when the range admits API 3 or --strict, WARN otherwise', () => {
+  const files = {
+    'agents/old.meta.json': JSON.stringify({ key: 'old', agentFile: 'old.md', consumes: ['plan'], produces: ['review'], order: 900 }),
+    'agents/old.md': '# old\n',
+    'workflows/legacy.json': JSON.stringify({ version: 1, steps: [[{ id: 's0', key: 'old' }]], feedbacks: [] }),
+  };
+  const strictDir = mkPluginDir({ ...files, 'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }) });
+  const hard = validatePluginDir(strictDir);
+  assert.ok(errs(hard).includes('agents/old.meta.json: not a meta v2 sidecar (declare "metaVersion": 2 with typed inputs/outputs) \u2014 plugin API 3 no longer reads channel sidecars'));
+  assert.ok(errs(hard).includes('workflows/legacy.json: not a version-2 graph template (nodes/wires) \u2014 port the "steps" pipeline'));
+  assert.equal(hard.ok, false);
+
+  const legacyDir = mkPluginDir({ ...files, 'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=1 <2' } }) });
+  const soft = validatePluginDir(legacyDir);
+  assert.deepEqual(errs(soft), [], 'an API-1 plugin still installs \u2014 its connector is unaffected');
+  assert.ok(warns(soft).some((m) => m.startsWith('agents/old.meta.json: not a meta v2 sidecar')));
+  assert.ok(warns(soft).some((m) => m.startsWith('workflows/legacy.json: not a version-2 graph template')));
+  assert.equal(soft.ok, true);
+  // --strict is the plugin AUTHOR's gate: it promotes the data-contract warning
+  // exactly as it already promotes every manifest warning.
+  assert.equal(validatePluginDir(legacyDir, { strict: true }).ok, false);
+
+  const noEngines = mkPluginDir({ ...files, 'worca-cc-plugin.json': JSON.stringify({ name: 'p' }) });
+  assert.equal(validatePluginDir(noEngines).ok, false, 'no engines constraint means "current API" -> hard error');
+
+  // An unparseable manifest fails SOFT on data: its declared API is unknowable,
+  // and the JSON error is already the only actionable line.
+  const brokenManifest = mkPluginDir({ ...files, 'worca-cc-plugin.json': '{ not json' });
+  const bm = validatePluginDir(brokenManifest);
+  assert.equal(errs(bm).length, 1);
+  assert.match(errs(bm)[0], /^worca-cc-plugin\.json: invalid JSON/);
+});
+
+test('a v2 template is validated V1-V21 against the PLUGIN\'S OWN ports', () => {
+  const noEnd = JSON.parse(V2_GRAPH('helper'));
+  noEnd.nodes = noEnd.nodes.filter((n) => n.kind !== 'end');
+  noEnd.wires = noEnd.wires.filter((w) => w.to.node !== 'n_end');
+  const dir = mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/helper.meta.json': V2_META('helper'),
+    'agents/helper.md': '# helper\n',
+    'workflows/no-end.json': JSON.stringify(noEnd),
+  });
+  const v = validatePluginDir(dir);
+  assert.ok(errs(v).some((m) => /^workflows\/no-end\.json: V21: /.test(m)), 'the End rule fires with its code');
+  assert.equal(v.ok, false);
+});
+
+test('a v2 template may reference ONLY the plugin\'s own agent keys', () => {
+  const dir = mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/helper.meta.json': V2_META('helper'),
+    'agents/helper.md': '# helper\n',
+    'workflows/foreign.json': V2_GRAPH('planner'),
+  });
+  // deepEqual, not includes: a foreign key SHORT-CIRCUITS the template (the
+  // `continue`), so exactly ONE clear cause is reported. Without the
+  // short-circuit the same template also fires V4/V5 for every wire touching
+  // the unknown node, and `.includes` would never notice.
+  assert.deepEqual(errs(validatePluginDir(dir)), [
+    'workflows/foreign.json: references agent key "planner" which this plugin does not ship',
+  ]);
+});
+
+test('the in-tree mock-source fixture is a valid API-3 plugin (strict)', () => {
+  // scripts/smoke-plugin.mjs links this fixture but is NOT part of `npm test`,
+  // so without this pin the fixture could silently rot back to the v1 contract
+  // and nothing in the suite would notice.
+  const fixture = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'plugins', 'mock-source');
+  const v = validatePluginDir(fixture, { strict: true });
+  assert.deepEqual(v.problems, [], 'the shipped fixture must validate clean');
+  assert.equal(v.ok, true);
+  assert.equal(v.manifest.engines.worcaApi, '>=3 <4');
+});
+
+// ── C-1: agentFile is a PATH and must stay inside agents/ ────────────────────
+
+test('validatePluginDir: an agentFile that escapes agents/ is an error (C-1)', () => {
+  // scanLayer stamps agentPath = join(<layer>/agents, agentFile) and
+  // workflows.loadAgentFile reads THAT file for the system prompt AND its
+  // `tools:` frontmatter — so an unchecked agentFile loads any readable host
+  // file as an agent prompt with tool grants of its choosing.
+  const escaper = mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/escaper.meta.json': V2_META('escaper', { agentFile: '../../../../../secret.md' }),
+    'agents/escaper.md': '# decoy shown at consent time\n',
+  });
+  const v = validatePluginDir(escaper);
+  assert.equal(v.ok, false);
+  assert.deepEqual(errs(v), [
+    'agents/escaper.meta.json: "agentFile" must not contain ".."',
+  ], 'ONE clear cause: the sidecar is not gated further once its agentFile is unusable');
+
+  const abs = mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/abs.meta.json': V2_META('abs', { agentFile: '/etc/passwd' }),
+    'agents/abs.md': '# decoy\n',
+  });
+  assert.deepEqual(errs(validatePluginDir(abs)), [
+    'agents/abs.meta.json: "agentFile" must be a relative path inside agents/',
+  ]);
+
+  // A traversal rule is NEVER softened by the API-1 data level: a v1 sidecar
+  // (which the metaVersion gate would only warn about) is checked first.
+  const legacy = mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=1 <2' } }),
+    'agents/old.meta.json': JSON.stringify({ key: 'old', agentFile: '../../secret.md', order: 900 }),
+    'agents/old.md': '# old\n',
+  });
+  assert.deepEqual(errs(validatePluginDir(legacy)), [
+    'agents/old.meta.json: "agentFile" must not contain ".."',
+  ]);
+
+  // …and the legitimate half stays legal: a plugin may point agentFile at any
+  // .md INSIDE agents/ (every built-in does — planner -> worca-cc-planner.md).
+  // The C-1 `swapper` divergence is fixed in the consent inventory, not here.
+  const swapper = mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/swapper.meta.json': V2_META('swapper', { agentFile: 'real.md' }),
+    'agents/swapper.md': '# decoy\n',
+    'agents/real.md': '# the prompt actually used at run time\n',
+  });
+  assert.deepEqual(errs(validatePluginDir(swapper)), []);
+});
+
+test('validatePluginDir: a contained agentFile with no file behind it is an error (C-1)', () => {
+  // workflows.loadAgentFile used to fall back to the BUILT-IN agents dir when the
+  // stamped agentPath was unreadable, so a sidecar naming an absent built-in file
+  // ran that built-in's prompt and tool grants while consent showed "none declared".
+  const ghost = mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/ghost.meta.json': V2_META('ghost', { agentFile: 'worca-cc-manual-web-ui-testing.md' }),
+    'agents/ghost.md': '# what the plugin shows\n',
+  });
+  assert.deepEqual(errs(validatePluginDir(ghost)), [
+    'agents/ghost.meta.json: "agentFile" worca-cc-manual-web-ui-testing.md not found in agents/',
+  ]);
+});
+
+// ── MAJ-12: a gated-out sidecar must not cascade into its template ──────────
+
+const V1_MIXED = (api) => ({
+  'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': api } }),
+  'agents/helper.meta.json': JSON.stringify({ key: 'helper', agentFile: 'helper.md', consumes: [], produces: [], order: 900 }),
+  'agents/helper.md': '# helper\n',
+  'workflows/flow.json': V2_GRAPH('helper'),
+});
+
+test('a template referencing a GATED-OUT sidecar reports ONE cause at the data level (MAJ-12)', () => {
+  // The mid-migration plugin: the template is ported to a v2 graph, the sidecar
+  // is still v1. The key is NOT shipped, so it must never reach the graph
+  // validator with no ports — that is what fabricated V4/V20/V21.
+  const soft = validatePluginDir(mkPluginDir(V1_MIXED('>=1 <2')));
+  assert.deepEqual(errs(soft), [], 'an API-1 plugin still installs — its connector is unaffected');
+  assert.ok(warns(soft).includes(
+    'workflows/flow.json: references agent key "helper" whose sidecar is not a valid meta v2 sidecar'));
+  assert.equal(soft.ok, true);
+
+  const hard = validatePluginDir(mkPluginDir(V1_MIXED('>=3 <4')));
+  assert.deepEqual(errs(hard), [
+    'agents/helper.meta.json: not a meta v2 sidecar (declare "metaVersion": 2 with typed inputs/outputs) — plugin API 3 no longer reads channel sidecars',
+    'workflows/flow.json: references agent key "helper" whose sidecar is not a valid meta v2 sidecar',
+  ], 'the real cause plus its consequence — no derived V4/V20/V21');
+  assert.equal(hard.ok, false);
+
+  // Same short-circuit for a v2 sidecar that FAILS validateMetaV2.
+  const broken = validatePluginDir(mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/helper.meta.json': V2_META('helper', { runnerType: 'verifier' }),
+    'agents/helper.md': '# helper\n',
+    'workflows/flow.json': V2_GRAPH('helper'),
+  }));
+  assert.deepEqual(errs(broken), [
+    'agents/helper.meta.json: runnerType "verifier" requires verdict: { filename }',
+    'workflows/flow.json: references agent key "helper" whose sidecar is not a valid meta v2 sidecar',
+  ]);
+
+  // …and a sidecar rejected for an escaping agentFile (C-1) is ungated too.
+  const escaping = validatePluginDir(mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/helper.meta.json': V2_META('helper', { agentFile: '../../x.md' }),
+    'agents/helper.md': '# helper\n',
+    'workflows/flow.json': V2_GRAPH('helper'),
+  }));
+  assert.deepEqual(errs(escaping), [
+    'agents/helper.meta.json: "agentFile" must not contain ".."',
+    'workflows/flow.json: references agent key "helper" whose sidecar is not a valid meta v2 sidecar',
+  ]);
+
+  // A key the plugin does not ship AT ALL keeps its own, different line.
+  const alien = validatePluginDir(mkPluginDir({
+    ...V1_MIXED('>=3 <4'),
+    'workflows/flow.json': V2_GRAPH('notMine'),
+  }));
+  assert.ok(errs(alien).includes(
+    'workflows/flow.json: references agent key "notMine" which this plugin does not ship'));
 });
 
 test('models: `cost` is validated and normalized exactly like a global catalog entry', () => {

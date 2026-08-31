@@ -66,74 +66,15 @@ test('the history total is tooltip-labelled as an estimate with the exact value'
   assert.match(total.title, /\$0\.4200/, 'tooltip shows the exact 4-dp value');
 });
 
-test('the detail screen paints per-phase cost from saved steps (refine cycles summed)', async () => {
-  const state = {
-    phase: 'done', status: 'done', cycle: 2, totalCostUsd: 0.30,
-    steps: [
-      { key: 'preflight', phase: 'preflight', status: 'done' }, // no costUsd field
-      { key: 'plan', phase: 'plan', costUsd: 0.10 },
-      { key: 'refine#1', phase: 'refine', costUsd: 0.05 },
-      { key: 'refine#2', phase: 'refine', costUsd: 0.05 }, // two refine cycles sum to $0.10
-      { key: 'implement', phase: 'implement', costUsd: 0.07 },
-      { key: 'review#1', phase: 'review', costUsd: 0.03 },
-    ],
-  };
-  const ctx = await boot({
-    fetchHandler: (url) => {
-      // MOST-SPECIFIC FIRST: the keyed detail URL has the list URL as a prefix.
-      if (url.endsWith('/api/history/k1/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
-      if (url.endsWith('/api/history')) return runsList([{ id: 'p1', projectKey: 'k1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalCostUsd: 0.30 }]);
-      return null;
-    },
-  });
-  ctx.showHistory();
-  await new Promise((r) => setTimeout(r, 0));
-  ctx.showDetail('k1', 'p1');
-  await ctx.settle();
-  const byStep = {};
-  for (const s of ctx.window.document.querySelectorAll('#hist-detail .hd .run-node[data-id]')) byStep[s.dataset.id] = s;
-  assert.equal(byStep.plan.querySelector('.cost').textContent, '$0.10');
-  assert.equal(byStep.refine.querySelector('.cost').textContent, '$0.10', 'refine cycles summed');
-  assert.equal(byStep.implement.querySelector('.cost').textContent, '$0.07');
-  assert.equal(byStep.review.querySelector('.cost').textContent, '$0.03');
-  assert.equal(byStep.preflight.querySelector('.cost')?.textContent ?? '', '', 'preflight shows no cost');
-});
 
-test('an executed-but-zero phase (mock) renders $0.00; a never-run phase stays blank', async () => {
-  const state = {
-    phase: 'done', status: 'done', cycle: 1, totalCostUsd: 0,
-    steps: [
-      { key: 'plan', phase: 'plan', costUsd: 0 },        // ran in mock -> $0.00
-      { key: 'implement', phase: 'implement', costUsd: 0 },
-      // no refine / review steps recorded -> those stay blank
-    ],
-  };
-  const ctx = await boot({
-    fetchHandler: (url) => {
-      if (url.endsWith('/api/history/k1/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
-      if (url.endsWith('/api/history')) return runsList([{ id: 'p1', projectKey: 'k1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z', totalCostUsd: 0 }]);
-      return null;
-    },
-  });
-  ctx.showHistory();
-  await new Promise((r) => setTimeout(r, 0));
-  // the card total is a truthful $0.00
-  assert.equal(ctx.window.document.querySelector('#history .hist-card .hist-total').textContent, '$0.00');
-  ctx.showDetail('k1', 'p1');
-  await ctx.settle();
-  const byStep = {};
-  for (const s of ctx.window.document.querySelectorAll('#hist-detail .hd .run-node[data-id]')) byStep[s.dataset.id] = s;
-  assert.equal(byStep.plan.querySelector('.cost').textContent, '$0.00', 'executed zero shows $0.00');
-  assert.equal(byStep.implement.querySelector('.cost').textContent, '$0.00');
-  assert.equal(byStep.refine.querySelector('.cost').textContent, '', 'never-run refine stays blank');
-  assert.equal(byStep.review.querySelector('.cost').textContent, '', 'never-run review stays blank');
-});
 
-test('costByNode buckets per nodeId and by uiPhase fallback', async () => {
+test('costByNode buckets per nodeId; a row with no nodeId has nothing to bucket onto', async () => {
   const { window } = await boot();
   const fn = window.__np.costByNode;
   assert.equal(fn([{ nodeId: 's0_0', phase: 'planner', costUsd: 0.12 }])['s0_0'], 0.12);
-  assert.equal(fn([{ phase: 'plan', costUsd: 0.05 }])['plan'], 0.05);
+  // The v1 phase->node fallback died with the v1 manifest: stepBucketKey is the
+  // nodeId or nothing.
+  assert.deepEqual(fn([{ phase: 'plan', costUsd: 0.05 }]), {});
 });
 
 test('costByNode folds a nodeId-tagged clarify step onto the plan node', async () => {

@@ -55,3 +55,47 @@ test('PATCH /api/config persists a node fanOut', async () => {
   const j = await g.json();
   assert.equal(j.config.workflows.wf_default.nodes.s2_0.fanOut, true);
 });
+
+// ── the sub-agent model policy rides the same two endpoints ──────────────────
+
+test('GET /api/config ships the sub-agent model vocabulary', async () => {
+  const g = await fetch(`${base}/api/config?${q({ projectDir: proj })}`);
+  const j = await g.json();
+  assert.deepEqual(j.subagentModels, ['sonnet', 'opus', 'fable', 'auto', 'inherit'],
+    'a fixed alias enum plus the two modes — the CLI Task tool refuses catalog ids, and haiku is off the menu');
+});
+
+test('POST /api/config persists a step subagentModel', async () => {
+  const r = await fetch(`${base}/api/config`, {
+    method: 'POST', headers: JSONH,
+    body: JSON.stringify({ projectDir: proj, step: 'planner', subagentModel: 'auto' }),
+  });
+  assert.equal(r.status, 200);
+  const j = await (await fetch(`${base}/api/config?${q({ projectDir: proj })}`)).json();
+  assert.equal(j.config.steps.planner.subagentModel, 'auto');
+});
+
+test('PATCH /api/config persists a node subagentModel', async () => {
+  const r = await fetch(`${base}/api/config`, {
+    method: 'PATCH', headers: JSONH,
+    body: JSON.stringify({ projectDir: proj, workflowId: 'wf_default', nodes: { s2_0: { subagentModel: 'opus' } } }),
+  });
+  assert.equal(r.status, 200);
+  const j = await (await fetch(`${base}/api/config?${q({ projectDir: proj })}`)).json();
+  assert.equal(j.config.workflows.wf_default.nodes.s2_0.subagentModel, 'opus');
+});
+
+test('an off-vocabulary sub-agent model is a 400 on both writers', async () => {
+  const post = await fetch(`${base}/api/config`, {
+    method: 'POST', headers: JSONH,
+    body: JSON.stringify({ projectDir: proj, step: 'planner', subagentModel: 'haiku' }),
+  });
+  assert.equal(post.status, 400);
+  assert.match((await post.json()).error, /unknown sub-agent model "haiku"/);
+
+  const patch = await fetch(`${base}/api/config`, {
+    method: 'PATCH', headers: JSONH,
+    body: JSON.stringify({ projectDir: proj, workflowId: 'wf_default', nodes: { s2_0: { subagentModel: 'haiku' } } }),
+  });
+  assert.equal(patch.status, 400);
+});

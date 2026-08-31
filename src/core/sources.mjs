@@ -7,20 +7,15 @@
 
 import { readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
-import { isAbsolute, join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { callSource } from './plugin-shim.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs';
 import { listProfiles, DEFAULT_PROFILE } from './plugin-config.mjs';
 import { normalizeManifest } from './plugin-manifest.mjs';
 import { getDb } from './db.mjs';
-import { runDirForRow, readStoreMeta } from './artifacts.mjs';
+import { runDirForRow, readStoreMeta, readPromptFile } from './artifacts.mjs';
 import { RESULTS_FILE } from './results.mjs';
 import { hasGh, findPrForBranch } from './git-info.mjs';
-
-/** Same resolve-against-projectDir semantics as artifacts.mjs#resolveAgainst. */
-function resolveAgainst(base, p) {
-  return isAbsolute(p) ? p : resolve(base, p);
-}
 
 /** Profile roster for a plugin; never throws — the pane must render even when a
  *  plugin's data dir is unreadable (it degrades to "no profiles yet"). */
@@ -109,12 +104,11 @@ export async function resolveTaskInput(source, { projectDir } = {}) {
 
   if (type === 'markdown') {
     if (src.promptFile) {
-      let promptText = '';
-      try {
-        promptText = await readFile(resolveAgainst(projectDir, src.promptFile), 'utf8');
-      } catch {
-        promptText = ''; // exactly the legacy createPipeline catch{} degradation
-      }
+      // A NAMED file that cannot be read is an ERROR, never an empty prompt: the
+      // old catch{} degradation here (and the identical one in createPipeline) ran
+      // a whole pipeline on "" and exited 0. Throws PROMPT_FILE_UNREADABLE — the
+      // CLI fail()s on it and ui/server.mjs answers 400.
+      const promptText = await readPromptFile(projectDir, src.promptFile);
       return { promptText, promptFile: src.promptFile, sourceMeta: null };
     }
     return { promptText: typeof src.promptText === 'string' ? src.promptText : '', promptFile: null, sourceMeta: null };

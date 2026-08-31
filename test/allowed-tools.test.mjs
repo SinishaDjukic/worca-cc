@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { effectiveAllowedTools } from '../src/core/phases.mjs';
-import { resolveWorkflow, writeWorkflow } from '../src/core/workflows.mjs';
+import { resolveGraph, writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 
 // Declared ONCE for the whole module — both the unit and integration tests reuse it.
@@ -65,31 +65,42 @@ test('fanOut de-dupes Task/Agent already present', () => {
   assert.ok(out.includes('Agent'));
 });
 
-// ── integration: frontmatter → resolveWorkflow node.tools → effectiveAllowedTools ──
+// ── integration: frontmatter → resolveGraph node.tools → effectiveAllowedTools ──
 
 test('resolved manualWebUiTesting node + base union grants browser tools AND keeps Write', async () => {
   const home = await mkdtemp(join(tmpdir(), 'worca-cc-home-'));
   const proj = await mkdtemp(join(tmpdir(), 'worca-cc-proj-'));
   const prevHome = process.env.WORCA_HOME;
-  process.env.WORCA_HOME = home;            // writeWorkflow/resolveWorkflow store lives under WORCA_HOME (lazy read)
-  _resetForTests();                           // writeWorkflow/resolveWorkflow hit the DB workflows table; reopen at THIS home
+  process.env.WORCA_HOME = home;            // the template store lives under WORCA_HOME (lazy read)
+  _resetForTests();                           // the store hits the DB workflows table; reopen at THIS home
   try {
     // Minimal registry; agentFile names resolve against the REAL repo agents/ dir
-    // because resolveWorkflow's 4th arg defaults to DEFAULT_AGENTS_DIR (workflows.mjs:225).
+    // because resolveGraph's 4th arg defaults to DEFAULT_AGENTS_DIR.
     const REGISTRY = {
-      planner: { key: 'planner', runnerType: 'producer', agentFile: 'worca-cc-planner.md', loopSource: false },
+      planner: {
+        key: 'planner', runnerType: 'producer', agentFile: 'worca-cc-planner.md',
+        metaVersion: 2, inputs: [{ id: 'task', type: 'md' }],
+        outputs: [{ id: 'plan', type: 'md', filename: '{base}.md' }],
+      },
       manualWebUiTesting: {
         key: 'manualWebUiTesting', runnerType: 'verifier',
-        agentFile: 'worca-cc-manual-web-ui-testing.md', loopSource: true,
+        agentFile: 'worca-cc-manual-web-ui-testing.md',
+        metaVersion: 2, inputs: [{ id: 'plan', type: 'md' }],
+        outputs: [{ id: 'review', type: 'md', when: 'blocking', filename: '{base}.md' }, { id: 'pass', type: 'void', when: 'clean' }],
       },
     };
-    await writeWorkflow({
+    await writeGraphWorkflow({
       id: 'wf_webui', name: 'WebUI',
-      steps: [[{ id: 'n_plan', key: 'planner' }], [{ id: 'n_web', key: 'manualWebUiTesting' }]],
-      feedbacks: [],
+      nodes: [
+        { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+        { id: 'n_plan', kind: 'agent', key: 'planner', x: 240, y: 0, config: {} },
+        { id: 'n_web', kind: 'agent', key: 'manualWebUiTesting', x: 480, y: 0, config: {} },
+        { id: 'n_end', kind: 'end', x: 720, y: 0, config: {} },
+      ],
+      wires: [],
     });
-    const plan = await resolveWorkflow(proj, 'wf_webui', REGISTRY);   // agentsDir defaults to repo agents/
-    const web = plan.steps.flat().find((n) => n.key === 'manualWebUiTesting');
+    const resolved = await resolveGraph(proj, 'wf_webui', REGISTRY);   // agentsDir defaults to repo agents/
+    const web = resolved.nodes.n_web;
     assert.ok(web.tools.includes(WEBUI_BROWSER_TOOL), 'frontmatter browser tool reached the node');
     // Guard against frontmatter drift: the agent declares 14 browser_* tools.
     const browserTools = web.tools.filter((t) => t.startsWith('mcp__plugin_playwright_playwright__browser_'));

@@ -1,0 +1,26 @@
+#!/bin/sh
+# PATH guard for `npm test` (see package.json "test"). It sits FIRST on PATH so any
+# code path that falls back to a bare `claude` lookup hits this file instead of the
+# developer's real Claude Code binary. Background (2026-08-30): the pipeline title
+# kickoff forwarded neither bin nor mock and spawned the real binary 157x per suite
+# run — live haiku calls, ~/.claude.json bloat, stranded ~/.claude.json.tmp.* files.
+#
+#   --version / --help   answered like a capable modern build: preflight's
+#                        probeClaudeCapabilities reads exactly these, and neither
+#                        writes ~/.claude.json on the real binary either
+#   anything else        logged, refused with exit 97; assert-none.mjs turns a
+#                        non-empty log into a red suite
+case "$1" in
+  --version) echo "99.0.0 (Claude Code) [worca test guard]"; exit 0 ;;
+  --help)
+    echo "Usage: claude [options] [command] [prompt]   [worca test guard]"
+    echo "  --mcp-config <configs...>  Load MCP servers from JSON files or strings"
+    exit 0 ;;
+esac
+root=$(cd "$(dirname "$0")/../../.." && pwd)
+log=${WORCA_NO_REAL_CLAUDE_LOG:-"$root/.worca-cc-test/real-claude-spawns.log"}
+mkdir -p "$(dirname "$log")"
+printf '%s\tpid=%s\tppid=%s\tcwd=%s\targs=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" "$PPID" "$PWD" "$*" >> "$log"
+echo "worca test guard: a test tried to spawn the REAL claude binary (args: $*)." >&2
+echo "  Pass claude:{mock:true} or claude:{bin} to the orchestrator, or WORCA_MOCK=1 / WORCA_CLAUDE_BIN to the process." >&2
+exit 97

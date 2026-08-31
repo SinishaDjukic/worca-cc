@@ -8,6 +8,8 @@ import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadAgentRegistry, normalizeMeta, userAgentsDir } from './agent-registry.mjs';
 import { listWorkflows } from './workflows.mjs';
+import { validateMetaV2 } from '../shared/graph/agent-meta.mjs';
+import { AWAIT_PORT } from '../shared/graph/constants.mjs';   // the synthesized gate port is wirable
 
 export { userAgentsDir }; // single source: the Phase 1 layer resolver
 
@@ -15,6 +17,15 @@ export { userAgentsDir }; // single source: the Phase 1 layer resolver
 export const AGENT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
 function err(message, code) { return Object.assign(new Error(message), { code }); }
+
+/** The v2 capabilities whose ABSENCE is their off state in a sidecar. A complete
+ *  v2 PUT is a REPLACE of this surface — otherwise `{...existing, ...raw}` turns
+ *  every one of them into a one-way switch and `placeable:false` /
+ *  `scope:'workspace-only'` can never be undone from the editor. Everything else
+ *  (including the v1 wiring the registry still derives, which P8 owns) MERGES. */
+const V2_CLEARABLE = ['verdict', 'sideEffect', 'mockRole', 'wantsRequest', 'workspaceFanOut',
+  'workspaceStrategy', 'workspaceVariantOf', 'placeable', 'scope', 'domain', 'icon',
+  'promptHints', 'requiresSkills'];
 
 /** The writable user layer dir. userAgentsDir() returns null only when the home
  *  cannot be resolved (no WORCA_HOME under node:test) — surface that as a 400. */
@@ -59,6 +70,12 @@ export async function createAgent({ meta: rawMeta, markdown } = {}) {
   raw.key = key;
   raw.agentFile = `${key}.md`;                              // store-owned sibling file
   if (!Number.isFinite(Number(raw.order))) raw.order = 99;  // sort after built-ins by default
+  // The v2 gate runs BEFORE normalizeMeta: normalizeMeta is lossy by design
+  // (fixed key set, silent coercions, and it returns null rather than a reason),
+  // so a broken sidecar would otherwise be "fixed" into something the user never
+  // wrote — or rejected with "invalid agent metadata". Every failed rule is named.
+  const issues = validateMetaV2(raw).errors;
+  if (issues.length) throw err(issues.join('; '), 'BAD_REQUEST');
   const meta = normalizeMeta(raw);
   if (!meta) throw err('invalid agent metadata', 'BAD_REQUEST');
   const existing = loadAgentRegistry()[key];
@@ -71,6 +88,126 @@ export async function createAgent({ meta: rawMeta, markdown } = {}) {
   await writeFile(join(dir, `${key}.md`), markdown, 'utf8');
   await writeFile(join(dir, `${key}.meta.json`), JSON.stringify(meta, null, 2) + '\n', 'utf8');
   return { meta: { ...meta, origin: 'user' }, markdown };
+}
+
+/** Per-port fields the workspace-variant signature deliberately EXCLUDES
+ *  (workflows.mjs portSignature): a variant may render and store differently, it
+ *  may not fire differently. These survive a propagation; everything else on the
+ *  port comes from the base. */
+const VARIANT_OWN_PORT_FIELDS = ['label', 'description', 'as', 'directive', 'filename', 'store', 'artifactKind'];
+
+/** One side of a variant's ports, rebuilt from the base's: the base decides the
+ *  set, the order and every scheduling field; the variant keeps its own rendering.
+ *  @param {object[]} basePorts @param {object[]} variantPorts */
+function mergeVariantPorts(basePorts, variantPorts) {
+  const mine = new Map((Array.isArray(variantPorts) ? variantPorts : []).map((p) => [p.id, p]));
+  return (Array.isArray(basePorts) ? basePorts : []).map((bp) => {
+    const own = mine.get(bp.id);
+    const out = { ...bp };
+    if (!own) return out;
+    // `as` is TYPE-COUPLED (agent-meta.mjs AS_REQUIRES_TYPE: worktree=>void,
+    // answers=>json, fix-review=>md; a bare 'file' demands a NON-void port and
+    // readInputs materializes it on every non-void input). The TYPE is the
+    // base's — the signature owns it — so the variant's stored `as` only
+    // survives a type it was written for; on a type change the base's own `as`
+    // stands. Without this, a base input that BECOMES void (the shipped
+    // reviewer/workspaceReviewer `done` worktree port) leaves the variant
+    // carrying `as:'file'` on a void port and the WHOLE merge is refused.
+    const keep = own.type === bp.type
+      ? VARIANT_OWN_PORT_FIELDS : VARIANT_OWN_PORT_FIELDS.filter((f) => f !== 'as');
+    for (const f of keep) if (own[f] !== undefined) out[f] = own[f];
+    // A void port carries none of these, whatever the variant used to say.
+    if (out.type === 'void') { delete out.filename; delete out.store; delete out.artifactKind; }
+    return out;
+  });
+}
+
+/**
+ * Re-point every USER workspace variant of `key` at the base's new port signature.
+ * A variant is BY DEFINITION the same ports with a different workspace strategy, so
+ * a base port edit that is not propagated makes resolveGraph refuse every workspace
+ * run ("workspace variant X does not match the port signature of Y") at a moment
+ * disconnected from the edit. Non-user variants (builtin/plugin) cannot be written
+ * — they are reported instead. Never throws: a variant that will not validate
+ * after the merge, or whose sidecar cannot be written, is left untouched and
+ * reported — the base's own save has already succeeded and must stand.
+ * @param {string} key the edited base key
+ * @param {object} baseMeta the base's NEW normalized meta
+ * @param {string} dir the writable user layer
+ * @returns {Promise<{updated:string[], warnings:string[]}>}
+ */
+async function propagateToVariants(key, baseMeta, dir) {
+  const updated = [];
+  const warnings = [];
+  for (const variant of Object.values(loadAgentRegistry())) {
+    if (!variant || variant.workspaceVariantOf !== key) continue;
+    if (variant.origin !== 'user') {
+      warnings.push(`workspace variant "${variant.key}" (${variant.origin}) still declares the old ports `
+        + '— workspace runs using it will be refused until it is updated');
+      continue;
+    }
+    const raw = {
+      ...variant,
+      inputs: mergeVariantPorts(baseMeta.inputs, variant.inputs),
+      outputs: mergeVariantPorts(baseMeta.outputs, variant.outputs),
+    };
+    // Boolean(verdict) IS part of the signature; its filename is not. Copying the
+    // base's verdict into a variant that had none also copies the base's filename
+    // TEMPLATE, so the variant writes its verdict there — correct for the
+    // `{base}`-tokenised names every shipped verifier uses; a hardcoded one would
+    // need re-pointing by hand.
+    if (baseMeta.verdict && !variant.verdict) raw.verdict = { ...baseMeta.verdict };
+    if (!baseMeta.verdict) delete raw.verdict;
+    if (variant.descriptionDerived) raw.description = '';   // never persist a derived blurb (agent-store.mjs:114)
+    delete raw.origin; delete raw.agentPath; delete raw.descriptionDerived;
+    const issues = validateMetaV2(raw).errors;
+    const merged = issues.length ? null : normalizeMeta(raw);
+    if (!merged) {
+      warnings.push(`workspace variant "${variant.key}" could not adopt the new ports `
+        + `(${issues.join('; ') || 'invalid agent metadata'}) — re-point it by hand`);
+      continue;
+    }
+    try {
+      await writeFile(join(dir, `${variant.key}.meta.json`), JSON.stringify(merged, null, 2) + '\n', 'utf8');
+    } catch (e) {
+      // Only the fs CODE: the message carries the absolute home path, which no
+      // banner may surface. `updatedVariants` lists what was actually written.
+      warnings.push(`workspace variant "${variant.key}" could not adopt the new ports `
+        + `(write failed: ${e?.code || 'unknown error'}) — re-point it by hand`);
+      continue;
+    }
+    updated.push(variant.key);
+  }
+  return { updated: updated.sort(), warnings };
+}
+
+/**
+ * Saved-template wires that the NEW port set of `key` no longer satisfies:
+ * `["<workflow name> (<nodeId>.<portId>)", …]`. A port rename/removal is NOT
+ * refused here — no saved template can reference the new port before it exists,
+ * so a 409 would make renaming impossible. The RUN refuses instead
+ * (assertRunnableWorkflow -> INVALID_GRAPH); this list is the editor's heads-up.
+ * `await` is the engine-synthesized gate input and is always wirable.
+ * @param {object[]} workflows every saved template (archived included)
+ * @param {string} key the edited agent key
+ * @param {object} meta the NEW normalized meta
+ * @returns {string[]}
+ */
+function stalePortRefs(workflows, key, meta) {
+  const outs = new Set((meta.outputs || []).map((p) => p.id));
+  const ins = new Set([...(meta.inputs || []).map((p) => p.id), AWAIT_PORT.id]);
+  const hits = [];
+  for (const wf of workflows) {
+    const mine = new Set((wf.nodes || [])
+      .filter((n) => n && n.kind === 'agent' && n.key === key).map((n) => n.id));
+    if (!mine.size) continue;
+    const label = wf.name || wf.id;
+    for (const w of wf.wires || []) {
+      if (mine.has(w?.from?.node) && !outs.has(w.from.port)) hits.push(`${label} (${w.from.node}.${w.from.port})`);
+      if (mine.has(w?.to?.node) && !ins.has(w.to.port)) hits.push(`${label} (${w.to.node}.${w.to.port})`);
+    }
+  }
+  return hits;
 }
 
 /** Update a USER agent (meta and/or markdown). Built-ins -> BUILTIN (409). */
@@ -96,10 +233,14 @@ export async function updateAgent(key, { meta: rawMeta, markdown } = {}) {
   // field) freezes the fallback into the sidecar and it stops tracking the .md.
   const base = { ...existing };
   if (base.descriptionDerived) base.description = '';
+  if (Number(rawMeta?.metaVersion) === 2) for (const k of V2_CLEARABLE) delete base[k];
   const raw = { ...base, ...(rawMeta && typeof rawMeta === 'object' ? rawMeta : {}) };
   raw.key = key;                                            // key immutable on update
   raw.agentFile = `${key}.md`;
   if (!Number.isFinite(Number(raw.order))) raw.order = existing.order;
+  // The same gate the create path applies: every failed rule named, nothing written.
+  const updIssues = validateMetaV2(raw).errors;
+  if (updIssues.length) throw err(updIssues.join('; '), 'BAD_REQUEST');
   const meta = normalizeMeta(raw);
   if (!meta) throw err('invalid agent metadata', 'BAD_REQUEST');
   const dir = requireUserDir();
@@ -111,7 +252,12 @@ export async function updateAgent(key, { meta: rawMeta, markdown } = {}) {
   const body = typeof markdown === 'string'
     ? markdown
     : await readFile(join(dir, `${key}.md`), 'utf8').catch(() => '');
-  return { meta: { ...meta, origin: 'user' }, markdown: body };
+  // Always present, possibly empty: the Agents view reads both unconditionally.
+  const stale = stalePortRefs(await listWorkflows({ includeArchived: true }), key, meta);
+  const warnings = stale.length ? [`saved pipelines reference a removed port: ${stale.join(', ')}`] : [];
+  const variants = await propagateToVariants(key, meta, dir);
+  warnings.push(...variants.warnings);
+  return { meta: { ...meta, origin: 'user' }, markdown: body, warnings, updatedVariants: variants.updated };
 }
 
 /** Delete a USER agent; REFERENCED (409) while a saved workflow uses the key. */
@@ -130,11 +276,25 @@ export async function deleteAgent(key) {
     );
   }
   if (!existing) throw err(`agent not found: ${key}`, 'NOT_FOUND');
-  const refs = (await listWorkflows())
-    .filter((wf) => (wf.steps || []).some((col) => (col || []).some((n) => n && n.key === key)))
+  const refs = (await listWorkflows({ includeArchived: true }))
+    // v1 rows are still live until the engine cut-over; v2 rows carry a key only
+    // on kind:'agent' nodes (a task/end/and/or/combine card never does).
+    .filter((wf) => (wf.steps || []).some((col) => (col || []).some((n) => n && n.key === key))
+      || (wf.nodes || []).some((n) => n && n.kind === 'agent' && n.key === key))
     .map((wf) => wf.name || wf.id);
   if (refs.length) {
-    throw err(`agent "${key}" is used by saved workflow(s): ${refs.join(', ')} — delete or edit those first`, 'REFERENCED');
+    throw err(`agent "${key}" is used by saved workflow(s): ${refs.join(', ')} `
+      + '— delete or edit those first (archived rows count)', 'REFERENCED');
+  }
+  // A workspace variant substitutes for its target agent by KEY: deleting the
+  // target would leave the variant pointing at nothing, and the substitution
+  // would silently stop happening on workspace runs.
+  const variants = Object.values(loadAgentRegistry())
+    .filter((m) => m && m.workspaceVariantOf === key)
+    .map((m) => m.key);
+  if (variants.length) {
+    throw err(`agent "${key}" is the workspace variant target of: ${variants.join(', ')} `
+      + '— delete or re-point those first', 'REFERENCED');
   }
   const dir = requireUserDir();
   await rm(join(dir, `${key}.meta.json`), { force: true });

@@ -38,11 +38,17 @@ test('state: pipeline id captured on first truthy sight only; status mirrored', 
   assert.equal(patches[2].pipelineId, undefined, 'only the FIRST sight patches the id');
 });
 
-test('phase: updateStatus only, status forced running, no message', () => {
+test('exec: updateStatus only on a START, named by the agent, no message', () => {
   const { orch, posts, patches } = harness();
-  orch.emit('phase', { phase: 'implement', cycle: 1, status: 'start' });
+  orch.emit('exec', { nodeId: 'n_impl', executionId: 'x:n_impl:1', agentKey: 'implementer', ordinal: 1, status: 'start' });
   assert.equal(posts.length, 0);
-  assert.deepEqual(patches, [{ phase: 'implement', status: 'running' }]);
+  assert.deepEqual(patches, [{ phase: 'implementer', status: 'running' }]);
+  // A terminal exec is not a status change — only a START names the live agent.
+  orch.emit('exec', { nodeId: 'n_impl', executionId: 'x:n_impl:1', agentKey: 'implementer', ordinal: 1, status: 'done' });
+  assert.equal(patches.length, 1, 'only the start patched');
+  // A flow card has no agentKey: the nodeId names it.
+  orch.emit('exec', { nodeId: 'n_or', executionId: 'x:n_or:1', agentKey: null, ordinal: 1, status: 'start' });
+  assert.deepEqual(patches[1], { phase: 'n_or', status: 'running' });
 });
 
 test('question: one notice per question id, capped at 3, wording + href', () => {

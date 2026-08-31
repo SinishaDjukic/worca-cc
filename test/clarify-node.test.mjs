@@ -1,7 +1,8 @@
 // test/clarify-node.test.mjs
-// Clarify is its own graph node (s_clarify) that runs BEFORE the planner. It records
-// its own state.steps row, writes clarify.json (scratch) + the DB answers row, and a
-// workflow WITHOUT a clarify node still plans (the planner's clarify consume is optional).
+// Clarify is its own graph node (n_clarify on the built-in default) that runs
+// BEFORE the planner. It records its own execution row, writes clarify.json
+// (scratch) + the DB answers row, and a graph WITHOUT a clarify node still plans
+// (the planner's `answers` input is optional).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
@@ -9,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { readClarifyRow } from '../src/core/artifacts.mjs';
-import { writeWorkflow } from '../src/core/workflows.mjs';
+import { writeSeedGraph } from './helpers/graph-templates.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 
 useTempHome(after); // store writes -> isolated temp home
@@ -22,7 +23,7 @@ async function makeTmpDir() {
 }
 after(async () => { await Promise.all(tmpDirs.map((d) => rm(d, { recursive: true, force: true }))); });
 
-test('clarify runs as its own node (s_clarify) and the planner is a separate row', async () => {
+test('clarify runs as its own node (n_clarify) and the planner is a separate row', async () => {
   const orch = createOrchestrator({
     projectDir: await makeTmpDir(),
     workflowId: 'wf_default',
@@ -34,14 +35,13 @@ test('clarify runs as its own node (s_clarify) and the planner is a separate row
   assert.equal(res.status, 'done', 'mock pipeline finishes');
 
   const st = orch.getState();
-  const clarify = st.steps.find((s) => s.nodeId === 's_clarify');
-  assert.ok(clarify, 'a clarify node step exists');
-  assert.equal(clarify.phase, 'clarify');
-  assert.equal(clarify.key, '0:s_clarify', 'clarify is step 0');
+  const clarify = st.steps.find((s) => s.nodeId === 'n_clarify');
+  assert.ok(clarify, 'a clarify execution row exists');
+  assert.equal(clarify.key, 'x:n_clarify:1', 'the ledger key IS the executionId');
 
-  const plan = st.steps.find((s) => s.nodeId === 's0_0');
-  assert.ok(plan, 'the planner node step exists');
-  assert.equal(plan.key, '1:s0_0', 'planner shifted to step 1 (nodeId unchanged)');
+  const plan = st.steps.find((s) => s.nodeId === 'n_plan');
+  assert.ok(plan, 'the planner execution row exists');
+  assert.equal(plan.key, 'x:n_plan:1');
   assert.notEqual(plan.nodeId, clarify.nodeId);
 
   // Totals stay Σ steps (no double-count, no drop) — the structural invariant.
@@ -64,15 +64,12 @@ test('the default run writes clarify.json (scratch) AND a DB answers row', async
 });
 
 test('a workflow WITHOUT a clarify node records no clarify step and still plans', async () => {
-  const tpl = await writeWorkflow({
-    name: 'NoClarify',
-    steps: [[{ id: 's0_0', key: 'planner' }], [{ id: 's1_0', key: 'implementer' }]],
-    feedbacks: [],
-  });
+  // wf_quick-fix: planner -> implementer -> reviewer, no clarify node.
+  const tpl = await writeSeedGraph('wf_quick-fix', 'wf_no-clarify-node');
   const orch = createOrchestrator({ projectDir: await makeTmpDir(), workflowId: tpl.id, prompt: 'demo', auto: true, claude: { mock: true } });
   const res = await orch.run();
   assert.equal(res.status, 'done');
   const st = orch.getState();
-  assert.equal(st.steps.find((s) => s.phase === 'clarify'), undefined, 'no clarify step');
-  assert.ok(st.steps.find((s) => s.nodeId === 's0_0'), 'planner still ran');
+  assert.equal(st.steps.find((s) => s.nodeId === 'n_clarify'), undefined, 'no clarify execution');
+  assert.ok(st.steps.find((s) => s.nodeId === 'n_plan'), 'planner still ran');
 });

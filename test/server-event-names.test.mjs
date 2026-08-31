@@ -74,3 +74,35 @@ test('§7.1/§7.3 stepskills carries three-part MCP labels and the overflow sent
     runs.delete(entry.id);
   }
 });
+
+// wireRun's status arm is SHARED, not v1: P8 rewrote `name === 'phase' || name
+// === 'exec'` down to `name === 'exec'`, and DELETING it instead would leave
+// every run stuck at the status it was created with until the first `state`
+// frame. Nothing pinned it before, so a mutation that removed it stayed green.
+test("wireRun: an 'exec' event flips a queued run to running", () => {
+  const entry = makeEntry({ id: 'uuid-EX1', status: 'queued' });
+  runs.set(entry.id, entry);
+  try {
+    _testing.wireRun(entry);
+    entry.orch.emit('exec', { nodeId: 'n_plan', executionId: 'x:n_plan:1', status: 'start' });
+    assert.equal(entry.status, 'running', 'the exec arm is what marks the run live');
+    const buffered = entry.events.filter((e) => e.type === 'exec');
+    assert.equal(buffered.length, 1, 'and the event itself is forwarded');
+    assert.equal(buffered[0].runId, 'uuid-EX1');
+  } finally {
+    runs.delete(entry.id);
+  }
+});
+
+test("wireRun: a 'phase' event is NOT forwarded — the v1 event vocabulary is gone", () => {
+  const entry = makeEntry({ id: 'uuid-PH1', status: 'queued' });
+  runs.set(entry.id, entry);
+  try {
+    _testing.wireRun(entry);
+    entry.orch.emit('phase', { phase: 'plan', cycle: 1, status: 'start' });
+    assert.equal(entry.events.filter((e) => e.type === 'phase').length, 0, 'phase left EVENT_NAMES');
+    assert.equal(entry.status, 'queued', 'and it moves nothing');
+  } finally {
+    runs.delete(entry.id);
+  }
+});

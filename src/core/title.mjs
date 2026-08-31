@@ -61,7 +61,7 @@ export function isRefusalTitle(t) {
  * `permissionMode` (default 'acceptEdits') exists for Ask Worca: its title call
  * passes 'dontAsk' so the mock dispatcher can never reach a file-writing role.
  * @param {string} prompt
- * @param {{cwd:string, signal?:AbortSignal, model?:string, bin?:string, envScrub?:boolean, envAllowlist?:string[], tools?:string[], strictMcpConfig?:boolean, settingSources?:string[], disableSlashCommands?:boolean, mcpConfigPath?:string, permissionMode?:string}} opts
+ * @param {{cwd:string, signal?:AbortSignal, model?:string, bin?:string, mock?:boolean, envScrub?:boolean, envAllowlist?:string[], tools?:string[], strictMcpConfig?:boolean, settingSources?:string[], disableSlashCommands?:boolean, mcpConfigPath?:string, permissionMode?:string}} opts
  * @returns {Promise<string>}
  */
 export async function generateTitle(prompt, opts = {}) {
@@ -85,6 +85,11 @@ export async function generateTitle(prompt, opts = {}) {
       // guardrails as the run itself. All three are undefined when absent, and
       // runClaude treats undefined as "not passed" — existing callers are unchanged.
       bin: opts.bin,
+      // A run configured with claude:{mock:true} (tests, `--mock`) must title
+      // through runMock too: runClaude decides mock-vs-real from THIS field or
+      // WORCA_MOCK, and the 29 test files that only pass the option spawned the
+      // developer's real binary 157x per `npm test` (2026-08-30).
+      mock: opts.mock,
       envScrub: opts.envScrub,
       envAllowlist: opts.envAllowlist,
       // Ask Worca (ask-worca-design.md §6.8): sandbox hardening pass-through for the

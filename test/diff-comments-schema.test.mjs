@@ -69,7 +69,7 @@ test('v22: deleting a comment cascades its ask_card_comments rows (foreign_keys=
 test('ladder: a v21 DB gets the v22 tables and column and is stamped current', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(MINIMAL_SEED);
-  db.exec('PRAGMA user_version = 17');   // 17 -> 22 first, so ask_run_links exists
+  db.exec('PRAGMA user_version = 17');   // 17 -> current first, so ask_run_links exists
   migrate(db);
   db.exec('PRAGMA user_version = 21');   // rewind the stamp only: a real v21 DB
   db.exec('DROP TABLE ask_card_comments');

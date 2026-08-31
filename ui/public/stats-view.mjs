@@ -247,7 +247,7 @@ export function renderBudgetIndicator(budget, { doc = globalThis.document, fmt =
 }
 
 /** Compact centre label for the ring: $4 · $317 · $3k · $12k. Four glyphs is
- *  what fits inside a 28px disc at 9.5px mono, so thousands are WHOLE — "$8.8k"
+ *  what fits inside a 29px disc at 9.5px mono, so thousands are WHOLE — "$8.8k"
  *  is five glyphs and overflows the disc.
  *  NAME: `ringAmount`, not `compactUsd` — this module ALREADY declares
  *  `compactUsd(fmt, v)` at :410 (the spend-chart y-axis formatter), and a second

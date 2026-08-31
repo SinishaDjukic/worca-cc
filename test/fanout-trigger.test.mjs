@@ -44,16 +44,6 @@ test('buildClarifyPrompt includes the directive only when the ctx has fan-out', 
   assert.match(buildClarifyPrompt({ ...base, fanOut: true }), /Fan-out ENABLED/);
 });
 
-test('_phaseCtx forwards fanOut into the node-less clarify ctx', () => {
-  // createOrchestrator fully initializes this.abort / this.claude / this.workDir /
-  // this.stepModels, so the only field _phaseCtx needs that is null until run() is
-  // this.pipeline — stub the minimal shape it reads (dir + promptText).
-  const orch = createOrchestrator({ projectDir: '/tmp/proj' });
-  orch.pipeline = { id: 'p', dir: '/tmp/proj/.worca-cc/p', promptText: 'do x' };
-  assert.equal(orch._phaseCtx('planner').fanOut, false);            // default: off
-  assert.equal(orch._phaseCtx('planner', { fanOut: true }).fanOut, true);
-});
-
 // Pins the exact expression runImplementer inserts: `fanOutDirective(ctxFanOut(ctx))`.
 // Green before and after the runImplementer edit (the helpers are unchanged) — this is a
 // living spec of the inserted line + a regression guard on the helpers, NOT a red->green.

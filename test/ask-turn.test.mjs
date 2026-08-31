@@ -233,13 +233,13 @@ test('R-C user stop: ask-done stopped/user, costUsd null without a result, parti
   assert.equal(getThread(s.thread.id).totals.turns, 1, 'a null-cost turn still counts');
 });
 
-test('R-C timeout: the timer sets timedOut BEFORE aborting → ask-error "timed out after 15 min"', async () => {
+test('R-C timeout: the timer sets timedOut BEFORE aborting → ask-error "timed out after 30 min"', async () => {
   const s = seed();
   let fireTimer = null;
   const { turn, frames } = makeTurn(s, {}, {
     // The reducer shares this injected timer for its ≤50 ms delta batching —
-    // fire those inline and capture ONLY the 15-minute wall clock.
-    setTimeout: (fn, ms) => { if (ms === 900000) { fireTimer = fn; return 1; } fn(); return 2; },
+    // fire those inline and capture ONLY the 30-minute wall clock.
+    setTimeout: (fn, ms) => { if (ms === 1800000) { fireTimer = fn; return 1; } fn(); return 2; },
     clearTimeout: () => {},
     runClaudeImpl: async (opts) => {
       await waitAbort(opts.signal);
@@ -254,7 +254,7 @@ test('R-C timeout: the timer sets timedOut BEFORE aborting → ask-error "timed 
   await p;
   const last = frames.at(-1);
   assert.equal(last.type, 'ask-error');
-  assert.equal(last.message, 'timed out after 15 min');
+  assert.equal(last.message, 'timed out after 30 min');
   assert.equal(getMessage(s.asst.id).status, 'error');
   assert.equal(turn.timedOut, true);
 });

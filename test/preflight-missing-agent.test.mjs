@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import { _resetForTests } from '../src/core/db.mjs';
-import { writeWorkflow } from '../src/core/workflows.mjs';
+import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { readPluginsLock, writePluginsLock, pluginDir } from '../src/core/plugins-lock.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 
@@ -36,20 +36,28 @@ afterEach(async () => {
 });
 
 test('an unknown agent key errors the run BEFORE any pipeline/node work (was: empty-prompt degradation)', async () => {
-  const wf = await writeWorkflow({
-    name: 'Ghost',
-    steps: [[{ id: 's0', key: 'planner' }], [{ id: 's1', key: 'ghostAgent' }]],
-    feedbacks: [],
+  const wf = await writeGraphWorkflow({
+    id: 'wf_ghost', name: 'Ghost',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_plan', kind: 'agent', key: 'planner', x: 200, y: 0, config: {} },
+      { id: 'n_ghost', kind: 'agent', key: 'ghostAgent', x: 400, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 600, y: 0, config: {} },
+    ],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } }],
   });
-  const phases = [];
+  const execs = [];
   const orch = createOrchestrator({ projectDir: proj, prompt: 'demo', workflowId: wf.id, auto: true, claude: { mock: true } });
-  orch.on('phase', (p) => phases.push(p));
+  orch.on('exec', (p) => execs.push(p));
   orch.on('error', () => {}); // consume the mirrored error event
   const res = await orch.run();
   assert.equal(res.status, 'error');
-  assert.match(res.error, /agent "ghostAgent" is not installed \(removed plugin\?\)/);
+  // On the graph engine resolveGraph (workflows.mjs:547) rejects the unknown key
+  // BEFORE the harness's _preflightAgentKeys gate can run, so the message is the
+  // resolver's. The gate's own two messages are pinned directly below.
+  assert.match(res.error, /unknown agent "ghostAgent" — no such key in the registry/);
   assert.equal(res.pipelineDir, null, 'failed BEFORE createPipeline — no pipeline dir, no node ran');
-  assert.equal(phases.length, 0, 'not even the preflight phase started');
+  assert.equal(execs.length, 0, 'not one execution — not even the preflight bookend');
 });
 
 test('a key shipped by a DISABLED plugin gets the "enable it" message naming the plugin', async () => {
@@ -66,12 +74,35 @@ test('a key shipped by a DISABLED plugin gets the "enable it" message naming the
     version: '0.1.0', enabled: false, installedAt: '2026-07-12T00:00:00.000Z',
   } });
 
-  const wf = await writeWorkflow({ name: 'Sleepy', steps: [[{ id: 's0', key: 'ghostAgent' }]], feedbacks: [] });
+  const wf = await writeGraphWorkflow({
+    id: 'wf_sleepy', name: 'Sleepy',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_ghost', kind: 'agent', key: 'ghostAgent', x: 200, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 400, y: 0, config: {} },
+    ],
+    wires: [],
+  });
   const orch = createOrchestrator({ projectDir: proj, prompt: 'demo', workflowId: wf.id, auto: true, claude: { mock: true } });
   orch.on('error', () => {});
   const res = await orch.run();
   assert.equal(res.status, 'error');
-  assert.match(res.error, /agent "ghostAgent" comes from disabled plugin "sleepy-source" — enable it/);
+  assert.match(res.error, /unknown agent "ghostAgent" — no such key in the registry/);
+
+  // The gate's actionable hint still exists and still names the disabled plugin.
+  // FINDING (P8): a saved graph can no longer REACH it — resolveGraph throws
+  // first — so the hint now only fires for keys a resolver cannot see.
+  const gate = createOrchestrator({ projectDir: proj, prompt: 'demo', claude: { mock: true } });
+  gate.registry = {};
+  assert.throws(() => gate._preflightAgentKeys(['ghostAgent']),
+    /agent "ghostAgent" comes from disabled plugin "sleepy-source" — enable it/);
+});
+
+test('_preflightAgentKeys: an unknown key with no plugin gets the "not installed" hint', () => {
+  const gate = createOrchestrator({ projectDir: proj, prompt: 'demo', claude: { mock: true } });
+  gate.registry = { planner: {} };
+  assert.throws(() => gate._preflightAgentKeys(['planner', 'nobodyAgent']),
+    /agent "nobodyAgent" is not installed \(removed plugin\?\)/);
 });
 
 test('happy path unaffected: the default workflow still runs to done in mock mode', async () => {

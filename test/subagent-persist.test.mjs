@@ -43,7 +43,7 @@ test('upsertSubAgent inserts a running record; listSubAgents returns the camelCa
     cycle: 1, stepKey: '2:s2_0#1', status: 'running',
     startedAt: '2026-06-07T00:00:01Z', finishedAt: null,
     durationMs: null, tokens: null, costUsd: null, uiPhase: null, skills: [],
-    subagentType: null, graphifyCount: null,
+    subagentType: null, graphifyCount: null, runModel: null,
   }, 'row maps back to the shared camelCase record shape');
 });
 

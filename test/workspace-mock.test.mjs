@@ -10,8 +10,21 @@ import { mkdtemp, rm, readFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { runOpts, workspaceWriteTargetsFor, mockMarkers, IMPLEMENTER_TOOLS } from '../src/core/phases.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
-import { runImplementer, workspaceWriteTargetsFor } from '../src/core/phases.mjs';
+
+/** The v1 `runImplementer` builder died with the v1 engine, but the mock WRITE
+ *  path it exercised is `runOpts(ctx, …) -> runClaude`, which the v2 executor
+ *  drives verbatim (graph/executor.mjs). Drive that seam directly: the mock
+ *  keys on MOCK_ROLE in the prompt, exactly as the builder's prompt did. */
+async function mockImplementer(ctx, { planPath }) {
+  return runClaude(runOpts(ctx, {
+    role: 'implementer',
+    systemPrompt: '',
+    prompt: mockMarkers({ MOCK_ROLE: 'implementer', MOCK_IN: planPath, MOCK_OUT: undefined }),
+    allowedTools: IMPLEMENTER_TOOLS,
+  }));
+}
 import { hasBlocking } from '../src/core/protocol.mjs';
 
 const tmpDirs = [];
@@ -151,11 +164,11 @@ test('workspaceWriteTargetsFor: populated ONLY when ctx.runRoot is set', () => {
   assert.deepEqual(workspaceWriteTargetsFor(undefined), [], 'never throws');
 });
 
-// ── end to end through runOpts (runImplementer is the only mock write path) ──
+// ── end to end through runOpts (the mock write path the v2 executor drives) ──
 test('detached workspace: the mock implementer writes into EVERY member repos/<key>, not the cwd', async () => {
   const { runRoot, wtA, wtB, workspace } = await twoMemberWorkspace();
   const pipelineDir = await makeTmpDir();
-  const res = await runImplementer({
+  const res = await mockImplementer({
     projectDir: runRoot,               // cwd = the run root (orchestrator.runCwd)
     runRoot,                           // the detached gate
     workspace,
@@ -163,8 +176,8 @@ test('detached workspace: the mock implementer writes into EVERY member repos/<k
     taskPrompt: 'add a feature',
     node: { key: 'implementer' },
     claudeOpts: { mock: true },
-  }, { planPath: join(pipelineDir, 'plan.md'), mode: 'implement' });
-  assert.match(res.summary, /\[mock\]/);
+  }, { planPath: join(pipelineDir, 'plan.md') });
+  assert.match(res.text, /\[mock\]/);
   assert.ok(wroteFeature(wtA), `member a got the mock edits: ${wtA}`);
   assert.ok(wroteFeature(wtB), `member b got the mock edits: ${wtB}`);
   assert.ok(!existsSync(join(runRoot, 'src')), 'nothing was written at the run root (no §8.11 stray)');
@@ -173,14 +186,14 @@ test('detached workspace: the mock implementer writes into EVERY member repos/<k
 test('LEGACY workspace: the mock implementer writes ONLY to its cwd (no ctx.runRoot => no targets)', async () => {
   const { wtA, wtB, workspace } = await twoMemberWorkspace();
   const pipelineDir = await makeTmpDir();
-  await runImplementer({
+  await mockImplementer({
     projectDir: wtA,                   // legacy cwd = the PRIMARY member's worktree
     workspace,                         // …with the workspace channel present
     pipelineDir,
     taskPrompt: 'add a feature',
     node: { key: 'implementer' },
     claudeOpts: { mock: true },
-  }, { planPath: join(pipelineDir, 'plan.md'), mode: 'implement' });
+  }, { planPath: join(pipelineDir, 'plan.md') });
   assert.ok(wroteFeature(wtA), 'the cwd (primary worktree) got the edits, exactly as today');
   assert.ok(!existsSync(join(wtB, 'src')), 'the OTHER member stays untouched under legacy');
 });
@@ -188,9 +201,9 @@ test('LEGACY workspace: the mock implementer writes ONLY to its cwd (no ctx.runR
 test('detached SINGLE project: no workspace => the mock falls back to the cwd', async () => {
   const cwd = await makeTmpDir();
   const pipelineDir = await makeTmpDir();
-  await runImplementer({
+  await mockImplementer({
     projectDir: cwd, runRoot: '/mh/runs/pipe-2', pipelineDir,
     taskPrompt: 'x', node: { key: 'implementer' }, claudeOpts: { mock: true },
-  }, { planPath: join(pipelineDir, 'plan.md'), mode: 'implement' });
+  }, { planPath: join(pipelineDir, 'plan.md') });
   assert.ok(wroteFeature(cwd), 'single mode is byte-identical: writes at cwd');
 });

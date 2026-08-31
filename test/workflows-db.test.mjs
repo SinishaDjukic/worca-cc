@@ -1,5 +1,5 @@
 // test/workflows-db.test.mjs
-// workflows.mjs stores user templates in SQLite (table: workflows); DEFAULT_WORKFLOW
+// workflows.mjs stores user templates in SQLite (table: workflows); GRAPH_DEFAULT_WORKFLOW
 // stays built-in. Signatures unchanged (all async, same shapes). Per-test throwaway
 // WORCA_HOME + DB reset.
 import { test, after, beforeEach } from 'node:test';
@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  DEFAULT_WORKFLOW, listWorkflows, readWorkflow, writeWorkflow, deleteWorkflow,
+  GRAPH_DEFAULT_WORKFLOW, listWorkflows, readWorkflow, writeWorkflow, deleteWorkflow,
 } from '../src/core/workflows.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
 
@@ -28,10 +28,11 @@ after(async () => {
   await Promise.all(homes.map((d) => rm(d, { recursive: true, force: true })));
 });
 
-test('readWorkflow returns the built-in DEFAULT_WORKFLOW for "wf_default" (not a row)', async () => {
+test('readWorkflow returns the built-in GRAPH_DEFAULT_WORKFLOW for "wf_default" (not a row)', async () => {
   const got = await readWorkflow('wf_default');
   assert.equal(got.id, 'wf_default');
-  assert.equal(got.steps.length, 5);
+  assert.equal(got, GRAPH_DEFAULT_WORKFLOW, 'the frozen constant itself');
+  assert.equal(got.version, 2);
   // It is NOT stored in the table.
   const row = getDb().prepare('SELECT 1 FROM workflows WHERE id = ?').get('wf_default');
   assert.equal(row, undefined, 'default workflow is never a DB row');
@@ -52,7 +53,7 @@ test('listWorkflows reads rows newest-first by created_at and parses steps/feedb
   const list = await listWorkflows();
   assert.deepEqual(list.map((w) => w.id), ['wf_b', 'wf_a'], 'newest created_at first');
   assert.ok(Array.isArray(list[0].steps), 'steps parsed from JSON');
-  assert.ok(!list.some((w) => w.id === 'wf_default'), 'DEFAULT_WORKFLOW never in the user store');
+  assert.ok(!list.some((w) => w.id === 'wf_default'), 'the built-in default is never in the user store');
 });
 
 test('readWorkflow parses a stored row into the template shape', async () => {
@@ -123,4 +124,22 @@ test('deleteWorkflow refuses the built-in default and unsafe ids (returns false)
   assert.equal((await readWorkflow('wf_default')).id, 'wf_default', 'default still readable');
   assert.equal(await deleteWorkflow('../SENTINEL'), false);
   assert.equal(await deleteWorkflow('a/b'), false);
+});
+
+// The two reserved-id guards are defence-in-depth: writeGraphWorkflow refuses to
+// mint `wf_default`, so no legitimate path can create the row this pins. Force it
+// in with raw SQL (a hand-edited or corrupted store) — listWorkflows must still
+// hide it and deleteWorkflow must still refuse it, or the built-in default would
+// appear twice in the picker and become deletable.
+test('a rogue wf_default ROW is hidden by listWorkflows and undeletable', async () => {
+  await freshHome();
+  getDb().prepare(
+    `INSERT INTO workflows (id, name, domain, version, steps, feedbacks, graph, created_at, updated_at)
+     VALUES ('wf_default', 'Rogue', 'coding', 2, '[]', '[]', ?, '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z')`,
+  ).run(JSON.stringify({ nodes: [], wires: [] }));
+  assert.equal(await deleteWorkflow('wf_default'), false, 'the reserved id is undeletable');
+  assert.ok(getDb().prepare('SELECT 1 FROM workflows WHERE id = ?').get('wf_default'), 'the rogue row survived');
+  const list = await listWorkflows();
+  assert.ok(!list.some((w) => w.id === 'wf_default'), 'the rogue row is never listed');
+  assert.equal((await readWorkflow('wf_default')).name, GRAPH_DEFAULT_WORKFLOW.name, 'the CONSTANT still wins');
 });

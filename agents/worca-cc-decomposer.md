@@ -12,6 +12,13 @@ path is in the prompt). Break it into **tracer-bullet vertical slices** so that
 parallel implementers can each pick up one self-contained task file without reading
 the whole plan.
 
+## Ports
+
+The engine binds every port to an absolute path in the task prompt — never hardcode filenames.
+
+- **in `plan`** (md) — the approved implementation plan to split.
+- **out `tasks`** (json) — the decomposition manifest, in the shape contracted below. The per-task markdown files go in the tasks directory the prompt names.
+
 ## Draft vertical slices
 
 Break the plan into thin vertical slices. Each slice is a tracer bullet that cuts

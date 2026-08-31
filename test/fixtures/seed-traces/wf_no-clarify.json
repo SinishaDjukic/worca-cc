@@ -1,0 +1,80 @@
+{
+  "workflowId": "wf_no-clarify",
+  "status": "done",
+  "endReached": false,
+  "warnings": [
+    "finished at quiescence — End not reached",
+    "dead-ended output: n_webui.review — fired with no wire"
+  ],
+  "launches": [
+    "planner",
+    "refiner",
+    "refiner",
+    "decomposer",
+    "implementer",
+    "implementer",
+    "implementer",
+    "reviewer",
+    "implementer",
+    "reviewer",
+    "manualTestsChecklist",
+    "manualWebUiTesting"
+  ],
+  "perKey": {
+    "planner": 1,
+    "refiner": 2,
+    "decomposer": 1,
+    "implementer": 4,
+    "reviewer": 2,
+    "manualTestsChecklist": 1,
+    "manualWebUiTesting": 1
+  },
+  "artifacts": [
+    "checklist:manual-tests-checklist.md",
+    "decomposition:decomposition.json",
+    "diff-patch:diff-patch.patch",
+    "live-log:live-log.ndjson",
+    "plan:plans/<DATE>-seed-trace-probe-v2.md",
+    "plan:plans/<DATE>-seed-trace-probe-v3.md",
+    "plan:plans/<DATE>-seed-trace-probe.md",
+    "prompt:prompt.md",
+    "results:results.json",
+    "review:reviews/<DATE>-seed-trace-probe-impl-review.md",
+    "webui:webui-review-cycle1.md"
+  ],
+  "wireDeliveries": {
+    "w3": 1,
+    "w10": 1
+  },
+  "gates": [],
+  "budget1": {
+    "launches": [
+      "planner",
+      "refiner",
+      "decomposer",
+      "implementer",
+      "implementer",
+      "implementer",
+      "reviewer",
+      "manualTestsChecklist",
+      "manualWebUiTesting"
+    ],
+    "perKey": {
+      "planner": 1,
+      "refiner": 1,
+      "decomposer": 1,
+      "implementer": 3,
+      "reviewer": 1,
+      "manualTestsChecklist": 1,
+      "manualWebUiTesting": 1
+    },
+    "gates": [
+      "w3#1",
+      "w10#1"
+    ],
+    "wireDeliveries": {
+      "w3": 0,
+      "w10": 0
+    }
+  }
+}

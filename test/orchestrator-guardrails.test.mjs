@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { ENGINES } from './helpers/engines.mjs';
 import { readPipelineForResume } from '../src/core/artifacts.mjs';
 import { writeGuardrailSet } from '../src/core/guardrail-store.mjs';
 
@@ -33,20 +33,18 @@ const SET_SETTINGS = {
   protectedPaths: ['.env*'], deny: [],
 };
 
-/** Capture every dispatched node's claudeOpts — the spyNodeCtxs seam
- *  (test/orchestrator-workspace.test.mjs:486-495), widened to the fields under test. */
-function spyClaudeOpts(orch) {
+/** Capture every dispatched execution's claudeOpts — the spyNodeCtxs seam
+ *  (test/orchestrator-workspace.test.mjs:486-495), widened to the fields under
+ *  test. The per-engine ctx builder is the engine's own (v1 _nodeCtx, graph
+ *  _execCtx), so the body lives in test/helpers/engines.mjs. */
+function spyClaudeOpts(orch, engine) {
   const seen = [];
-  const orig = orch._nodeCtx.bind(orch);
-  orch._nodeCtx = (node, pos) => {
-    const ctx = orig(node, pos);
-    seen.push({ key: node.key, claudeOpts: ctx.claudeOpts || {} });
-    return ctx;
-  };
+  engine.spyCtx(orch, seen);
   return seen;
 }
 
-test('runOpts maps claudeOpts guardrail fields into runClaude options', async () => {
+for (const engine of ENGINES) {
+test(`[${engine.id}] runOpts maps claudeOpts guardrail fields into runClaude options`, async () => {
   const { _runOptsForTests } = await import('../src/core/phases.mjs');
   const ctx = {
     projectDir: tmpdir(),
@@ -63,7 +61,7 @@ test('runOpts maps claudeOpts guardrail fields into runClaude options', async ()
   assert.deepEqual(o.envAllowlist, ['NPM_TOKEN']);
 });
 
-test('runOpts with no guardrails in claudeOpts leaves the options absent (legacy parity)', async () => {
+test(`[${engine.id}] runOpts with no guardrails in claudeOpts leaves the options absent (legacy parity)`, async () => {
   const { _runOptsForTests } = await import('../src/core/phases.mjs');
   const o = _runOptsForTests({ projectDir: tmpdir(), claudeOpts: {} },
     { role: 'planner', prompt: 'p', systemPrompt: '', allowedTools: ['Read'] });
@@ -72,17 +70,17 @@ test('runOpts with no guardrails in claudeOpts leaves the options absent (legacy
   assert.equal(o.envAllowlist, undefined);
 });
 
-test('the SELECTED set is the run policy: guardrailsId resolves into claudeOpts on every node + audits run.json', async () => {
+test(`[${engine.id}] the SELECTED set is the run policy: guardrailsId resolves into claudeOpts on every node + audits run.json`, async () => {
   const prevMode = process.env.WORCA_RUN_ROOT;
   process.env.WORCA_RUN_ROOT = 'detached'; // needed for the run.json half; the claudeOpts threading is mode-independent
   try {
     const dir = gitDir(); // NOTE: no per-project guardrails exist in this model — only the selection matters
     const set = await writeGuardrailSet({ name: 'Run Policy', settings: { ...SET_SETTINGS } });
-    const orch = createOrchestrator({
+    const orch = engine.create({
       projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
       guardrailsId: set.id,
     });
-    const seen = spyClaudeOpts(orch);
+    const seen = spyClaudeOpts(orch, engine);
     const res = await orch.run();
     assert.equal(res.status, 'done', JSON.stringify(res));
     assert.ok(seen.length >= 3, `several nodes ran: ${seen.map((s) => s.key).join(',')}`);
@@ -109,10 +107,10 @@ test('the SELECTED set is the run policy: guardrailsId resolves into claudeOpts 
   }
 });
 
-test('honorByKey is UNIFORM from the run set: honorProjectSettings=false gates every member', async () => {
+test(`[${engine.id}] honorByKey is UNIFORM from the run set: honorProjectSettings=false gates every member`, async () => {
   const dir = gitDir();
   const set = await writeGuardrailSet({ name: 'No Lift', settings: { ...SET_SETTINGS, honorProjectSettings: false } });
-  const orch = createOrchestrator({
+  const orch = engine.create({
     projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
     guardrailsId: set.id,
   });
@@ -121,14 +119,14 @@ test('honorByKey is UNIFORM from the run set: honorProjectSettings=false gates e
     'every member maps to the set value — there is no per-member saved preference');
 });
 
-test('OMITTED guardrailsId and explicit "permissive" both spawn with NO guardrail fields (legacy parity)', async () => {
+test(`[${engine.id}] OMITTED guardrailsId and explicit "permissive" both spawn with NO guardrail fields (legacy parity)`, async () => {
   for (const extra of [{}, { guardrailsId: 'permissive' }]) {
     const dir = gitDir();
-    const orch = createOrchestrator({
+    const orch = engine.create({
       projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
       ...extra,
     });
-    const seen = spyClaudeOpts(orch);
+    const seen = spyClaudeOpts(orch, engine);
     assert.equal((await orch.run()).status, 'done');
     assert.ok(seen.length >= 3, 'several nodes ran');
     for (const { key, claudeOpts: c } of seen) {
@@ -139,13 +137,13 @@ test('OMITTED guardrailsId and explicit "permissive" both spawn with NO guardrai
   }
 });
 
-test('built-in ids resolve from the code table: guardrailsId "secure" enforces the Strict preset', async () => {
+test(`[${engine.id}] built-in ids resolve from the code table: guardrailsId "secure" enforces the Strict preset`, async () => {
   const dir = gitDir();
-  const orch = createOrchestrator({
+  const orch = engine.create({
     projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
     guardrailsId: 'secure',
   });
-  const seen = spyClaudeOpts(orch);
+  const seen = spyClaudeOpts(orch, engine);
   assert.equal((await orch.run()).status, 'done');
   assert.ok(seen.length >= 3, 'several nodes ran');
   for (const { key, claudeOpts: c } of seen) {
@@ -155,7 +153,7 @@ test('built-in ids resolve from the code table: guardrailsId "secure" enforces t
   }
 });
 
-test('a LEGACY per-project guardrails blob in project_config is INERT: the run enforces only the selection', async () => {
+test(`[${engine.id}] a LEGACY per-project guardrails blob in project_config is INERT: the run enforces only the selection`, async () => {
   const { getDb } = await import('../src/core/db.mjs');
   const { projectKey } = await import('../src/core/store.mjs');
   const dir = gitDir();
@@ -166,10 +164,10 @@ test('a LEGACY per-project guardrails blob in project_config is INERT: the run e
     VALUES (?, '{}', '[]', NULL, ?)
     ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
   `).run(projectKey(dir), JSON.stringify({ guardrails: { level: 'secure' } }));
-  const orch = createOrchestrator({
+  const orch = engine.create({
     projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
   });
-  const seen = spyClaudeOpts(orch);
+  const seen = spyClaudeOpts(orch, engine);
   assert.equal((await orch.run()).status, 'done');
   assert.ok(seen.length >= 3, 'several nodes ran');
   for (const { key, claudeOpts: c } of seen) {
@@ -178,17 +176,17 @@ test('a LEGACY per-project guardrails blob in project_config is INERT: the run e
   }
 });
 
-test('unknown guardrailsId at run time fails OPEN to Permissive with a loud warn (never an abort)', async () => {
+test(`[${engine.id}] unknown guardrailsId at run time fails OPEN to Permissive with a loud warn (never an abort)`, async () => {
   const dir = gitDir();
   // Programmatic callers can bypass the route's 400 — the orchestrator must
   // warn + proceed unguarded, not crash the run (house fail-open family).
-  const orch = createOrchestrator({
+  const orch = engine.create({
     projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
     guardrailsId: 'gr_ghost',
   });
   const logs = [];
   orch.on('log', (l) => logs.push(l));
-  const seen = spyClaudeOpts(orch);
+  const seen = spyClaudeOpts(orch, engine);
   assert.equal((await orch.run()).status, 'done', 'fail-open: the run still completes');
   assert.ok(
     logs.some((l) => l.source === 'guardrails' && l.level === 'warn' && l.text.includes('gr_ghost')),
@@ -199,7 +197,7 @@ test('unknown guardrailsId at run time fails OPEN to Permissive with a loud warn
   }
 });
 
-test('RESUME re-reads the selected set BY ID (latest definition), rehydrated from resume_point', async () => {
+test(`[${engine.id}] RESUME re-reads the selected set BY ID (latest definition), rehydrated from resume_point`, async () => {
   const dir = gitDir();
   const set = await writeGuardrailSet({
     name: 'Overlay',
@@ -230,7 +228,7 @@ test('RESUME re-reads the selected set BY ID (latest definition), rehydrated fro
   });
 
   const run1 = [];
-  const orch1 = createOrchestrator({
+  const orch1 = engine.create({
     projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true }, runners: mkRunners(run1),
     guardrailsId: set.id,
   });
@@ -247,7 +245,7 @@ test('RESUME re-reads the selected set BY ID (latest definition), rehydrated fro
   await writeGuardrailSet({ id: set.id, name: 'Overlay', settings: { ...set.settings, deny: ['Bash(nc:*)'] } });
 
   const run2 = [];
-  const orch2 = createOrchestrator({
+  const orch2 = engine.create({
     projectDir: dir, auto: true, claude: { mock: true }, runners: mkRunners(run2), resume: saved,
   });
   orchRef = orch2;
@@ -258,7 +256,7 @@ test('RESUME re-reads the selected set BY ID (latest definition), rehydrated fro
   assert.ok(first.permissionRules?.deny?.includes('Bash(nc:*)'), 'post-pause nodes carry the EDITED set');
 });
 
-test('a set deleted while paused: RESUME warns and proceeds Permissive (fail-open, loud)', async () => {
+test(`[${engine.id}] a set deleted while paused: RESUME warns and proceeds Permissive (fail-open, loud)`, async () => {
   const { prepare, tx } = await import('../src/core/db.mjs');
   const dir = gitDir();
   const set = await writeGuardrailSet({ name: 'Doomed', settings: { ...SET_SETTINGS } });
@@ -285,7 +283,7 @@ test('a set deleted while paused: RESUME warns and proceeds Permissive (fail-ope
   });
 
   const run1 = [];
-  const orch1 = createOrchestrator({
+  const orch1 = engine.create({
     projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true }, runners: mkRunners(run1),
     guardrailsId: set.id,
   });
@@ -298,7 +296,7 @@ test('a set deleted while paused: RESUME warns and proceeds Permissive (fail-ope
   tx(() => { prepare('DELETE FROM guardrail_sets WHERE id = ?').run(set.id); });
 
   const run2 = [];
-  const orch2 = createOrchestrator({
+  const orch2 = engine.create({
     projectDir: dir, auto: true, claude: { mock: true }, runners: mkRunners(run2), resume: saved,
   });
   orchRef = orch2;
@@ -316,7 +314,7 @@ test('a set deleted while paused: RESUME warns and proceeds Permissive (fail-ope
   }
 });
 
-test('guardrailsId surfaces on every persistence read: column, History list entry, detail state; default runs record "permissive"', async () => {
+test(`[${engine.id}] guardrailsId surfaces on every persistence read: column, History list entry, detail state; default runs record "permissive"`, async () => {
   const { listAllPipelines, readPipelineByKey } = await import('../src/core/artifacts.mjs');
   const { projectKey } = await import('../src/core/store.mjs');
   const dir = gitDir();
@@ -324,7 +322,7 @@ test('guardrailsId surfaces on every persistence read: column, History list entr
     name: 'Persist Me',
     settings: { honorProjectSettings: true, envScrub: false, envAllowlist: [], protectedPaths: [], deny: ['Bash(wget:*)'] },
   });
-  const orch = createOrchestrator({
+  const orch = engine.create({
     projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
     guardrailsId: set.id,
   });
@@ -338,9 +336,10 @@ test('guardrailsId surfaces on every persistence read: column, History list entr
 
   // A run with NO selection records the concrete default — an honest
   // "this run ran unguarded (Permissive)" record, not NULL.
-  const orch2 = createOrchestrator({
+  const orch2 = engine.create({
     projectDir: dir, prompt: 'y', auto: true, claude: { mock: true }, branch: { source: 'main' },
   });
   assert.equal((await orch2.run()).status, 'done');
   assert.equal(readPipelineForResume(orch2.state.id).row.guardrails_id, 'permissive');
 });
+}

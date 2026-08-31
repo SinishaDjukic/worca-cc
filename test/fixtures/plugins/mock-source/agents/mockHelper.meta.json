@@ -1,12 +1,17 @@
 {
+  "metaVersion": 2,
   "key": "mockHelper",
   "displayName": "Mock Helper",
   "description": "Minimal plugin producer used by plugin tests",
   "color": "amber",
   "agentFile": "mockHelper.md",
   "runnerType": "producer",
-  "consumes": ["userPrompt"],
-  "produces": ["code"],
+  "inputs": [
+    { "id": "task", "type": "md" }
+  ],
+  "outputs": [
+    { "id": "notes", "type": "md", "filename": "notes.md" }
+  ],
   "requiresSkills": ["mock-skill"],
   "order": 900
 }

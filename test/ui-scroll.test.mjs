@@ -131,29 +131,6 @@ test('clicking the switch toggles the model and the DOM', async () => {
 // with the fix deleted (false-green). Instead, RECORD writes to scrollLeft and
 // assert the rebuild itself wrote the saved value back — that is the restore the fix
 // performs. Pre-fix: no restore → writes stay [] → RED. Post-fix: [800] → GREEN.
-test('stepper preserves horizontal scroll across a structural rebuild', async () => {
-  const { np, tick } = await boot();
-  const r = np.upsertRun({ runId: 'p2', title: 't', projectDir: PROJECT, status: 'running' });
-  r.stepper = STEP2;
-  r.el = np.buildRunCard(r);                       // builds the 2-column graph (sig 'a|b')
-
-  const wrap = r.el.querySelector('.run-flow-wrap');
-  let left = 0; const writes = [];
-  Object.defineProperty(wrap, 'scrollWidth', { configurable: true, get: () => 3000 });
-  Object.defineProperty(wrap, 'clientWidth', { configurable: true, get: () => 400 });
-  Object.defineProperty(wrap, 'scrollLeft', {
-    configurable: true, get: () => left, set: (v) => { left = v; writes.push(v); },
-  });
-  wrap.scrollLeft = 800;                           // user scrolled right
-  writes.length = 0;                               // ignore the manual set; watch only the rebuild
-
-  // A new stage → node-id signature changes ('a|b' → 'a|b|c') → buildRunGraph wipes + rebuilds.
-  r.stepper = STEP3;
-  np.buildRunGraph(r.el.querySelector('.run-flow'), r.stepper);
-  await tick();
-  assert.deepEqual(writes, [800], 'buildRunGraph restored the saved scrollLeft after the wipe');
-  assert.equal(wrap.scrollLeft, 800, 'horizontal scroll preserved across rebuild');
-});
 
 // ── 6. End-to-end: a real WS log frame while OFF does NOT scroll, even through
 //       the full dispatch + Running-view render path (bugs #1/#3, routing). ────

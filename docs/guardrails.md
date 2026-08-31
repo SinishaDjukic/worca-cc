@@ -119,14 +119,16 @@ enforces the set's latest definition.
   `claude` spawned by Worca itself, never inside a project folder: its cwd is
   `<worcaHome>/tmp/ask`, its built-in tools are reduced to `Task` (`--tools
   Task` — no Bash/Read/Write/Edit exist in the process), only Worca's own MCP
-  server is loaded (`--strict-mcp-config`, `--allowedTools Task,mcp__worca`
+  server is loaded (`--strict-mcp-config`, `--allowedTools Task,Read,Grep,Glob,mcp__worca`
   under `--permission-mode dontAsk`), user hooks/plugins/skills are dropped
   (`--setting-sources project`, `--disable-slash-commands`), the env is
   scrubbed like a Strict run, and Task sub-agents run in the foreground of the
   same process with the same pool (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`).
-  Belt-and-braces deny rules cover `Bash`/`Edit`/`Write`/`WebFetch`/… and the
-  worca home (`Read(//**/.worca-cc/**)`, `Read(//**/secrets.json)`,
-  `Read(//**/.env*)`, `~/.ssh`, `~/.aws`). **Anchoring matters:** a permission
+  Belt-and-braces deny rules cover `Bash`/`Edit`/`Write`/`WebFetch`/… and
+  worca's own state (`Read(//**/worca-cc.db*)`, the home's `store/`, `runs/`,
+  `plugins/`, `tmp/` subtrees and `settings.json`, `Read(//**/secrets.json)`,
+  `Read(//**/.env*)`) plus `~/.ssh`, `~/.aws` and the other credential stores in
+  `ASK_DENY_RULES`. **Anchoring matters:** a permission
   path that starts with `//` is absolute from the filesystem root; a bare
   `**/x` pattern is relative to the *current directory* and, from
   `<worcaHome>/tmp/ask`, protects nothing — verified both ways on claude
@@ -152,19 +154,32 @@ enforces the set's latest definition.
   registered in `ask_worktrees`, removed with the thread and reconciled by the boot
   and `worca doctor` sweeps. No branch is ever created, locked or deleted, so a
   chat checkout can never block a pipeline run. They are the assistant's only view
-  into a repository, and it reaches them through exactly one tool: `git`.
-  **Why the `git` tool is the whole file surface.** The built-ins stay `--tools
-  Task` and the blanket `Read(//**/.worca-cc/**)` deny stays, because granting
-  native `Read`/`Grep`/`Glob` scoped to the worktree subtree was probed and
-  rejected (gate E1, claude 2.1.241): a path matched by NO rule is *read* —
-  `unmatched ⇒ allow`, verified outside the process cwd — so a scoped grant would
-  also expose the rest of the disk; and `Grep` returned the CONTENTS of a file
-  under a denied path, ignoring both a `Read(<path>)` and a `Grep(<path>)` deny
-  (the CLI reports that only `Read(path)` rules are matched by file permission
-  checks; Grep escaped even those). Symlink and `..` escapes out of the allowed
-  subtree WERE blocked correctly — the two findings above are what disqualified
-  the grant. `askWorktreeAllowRules()` therefore returns `[]` and is the single
-  seam that flips if the engine ever gains `unmatched ⇒ deny`.
+  into a repository: the native `Read`/`Grep`/`Glob` tools see the checkout as
+  files, and the `git` tool serves history, diffs and search.
+  **What the native file tools can reach — an accepted trade-off.** The chat runs
+  `--tools Task,Read,Grep,Glob` under `dontAsk` (never Bash/Write/Edit, so nothing
+  it reads can be turned into a write). Granting `Read` scoped to the worktree
+  subtree was probed on claude 2.1.241 (gate E1) and found NOT to scope: a path
+  matched by no rule is *read* — `unmatched ⇒ allow`, verified outside the process
+  cwd — so the grant is effectively read access to the whole disk minus the deny
+  list; and `Grep` returned the contents of a file under a denied path, ignoring
+  both a `Read(<path>)` and a `Grep(<path>)` deny (the CLI reports that only
+  `Read(path)` rules are matched by file permission checks). Symlink and `..`
+  escapes out of the allowed subtree were blocked correctly. Re-probed on
+  2.1.251 (2026-08-30) with the shipped recipe: a file under `ask/<thread>/wt/`
+  reads, Globs and Greps; `store/`, the DB and `.env` are refused; a file outside
+  every rule is still read (`unmatched ⇒ allow` persists); and `Grep` under a
+  denied directory was refused this time. On 2026-08-30 the user chose this
+  grant over a hardened worca-side reader, accepting those limits. Because a deny beats an allow and the chat's worktrees live inside the
+  home, the home is no longer denied as a whole: `ASK_DENY_RULES` enumerates
+  worca's own state instead (`worca-cc.db*`, `worca.db*`, `settings.json`,
+  `store/`, `runs/`, `plugins/`, `tmp/`, every `secrets.json` and `.env*`) plus the
+  common credential stores (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.docker`,
+  `~/.claude`, `~/.netrc`, `~/.npmrc`, `~/.config/gh`). `askWorktreeAllowRules()`
+  names the thread's own `ask/<threadId>/wt/**` subtree — explicit intent that
+  also keeps the worktrees readable should the engine ever gain `unmatched ⇒
+  deny`. Rule 7 of the system prompt confines the model to the worktree path;
+  that is guidance, not enforcement.
   **How the `git` tool defends itself** (it is the one file-access surface that
   permission rules do not govern): (1) `src/core/ask/git-allowlist.mjs` allows a
   fixed read set (`diff`, `log`, `show`, `status`, `blame`, `rev-parse`,

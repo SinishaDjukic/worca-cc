@@ -11,7 +11,7 @@ import { mkdtempSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { validatePluginDir } from '../src/core/plugin-manifest.mjs';
@@ -61,6 +61,23 @@ test('plugin init scaffolds a plugin that validates cleanly (strict)', async () 
   const manifest = JSON.parse(await readFile(join(dir, 'worca-cc-plugin.json'), 'utf8'));
   assert.equal(manifest.name, 'demo-plugin');
   assert.equal(manifest.taskSources[0].id, 'main');
+  assert.equal(manifest.engines['worca-cc-api'], '>=3 <4', 'scaffolds the current plugin API');
+  const sidecar = JSON.parse(await readFile(join(dir, 'agents', 'demoPluginHelper.meta.json'), 'utf8'));
+  assert.equal(sidecar.metaVersion, 2);
+  assert.deepEqual(sidecar.inputs, [{ id: 'task', type: 'md', required: true }]);
+  assert.deepEqual(sidecar.outputs, [{ id: 'notes', type: 'md', filename: 'notes.md', store: 'run' }]);
+  assert.equal(sidecar.consumes, undefined, 'no channel vocabulary in an API-3 scaffold');
+  const flow = JSON.parse(await readFile(join(dir, 'workflows', 'example-flow.json'), 'utf8'));
+  assert.equal(flow.version, 2);
+  assert.deepEqual(flow.nodes.map((n) => n.kind), ['task', 'agent', 'end']);
+  assert.equal(flow.nodes[1].key, 'demoPluginHelper');
+  assert.equal(flow.wires.length, 2);
+  // Product-name rule: user-facing scaffold prose says "worca", never "worca-cc"
+  // (the worca-cc-plugin.json filename and the worca-cc-api key are identifiers).
+  const agentMd = await readFile(join(dir, 'agents', 'demoPluginHelper.md'), 'utf8');
+  assert.match(agentMd, /worca plugin\./);
+  assert.doesNotMatch(agentMd, /worca-cc/);
+  assert.doesNotMatch(manifest.description, /worca-cc/);
   assert.equal(manifest.taskSources[0].inputs.filter((i) => i.type === 'task-browser').length, 1);
   const cliValidate = await run(['plugin', 'validate', dir, '--strict'], { home });
   assert.equal(cliValidate.code, 0, cliValidate.stderr);
@@ -137,4 +154,118 @@ test('unknown verb exits 2; bare `worca plugin` prints help at 0', async () => {
   const help = await run(['plugin'], { home });
   assert.equal(help.code, 0);
   assert.match(help.stdout, /worca plugin add <repo-url>/);
+});
+
+test('plugin list prints the API-3 data-contract line for an outdated plugin', async () => {
+  const home = await freshDir('worca-cc-cli-plugin-');
+  const dir = join(await freshDir('worca-cc-plugin-init-'), 'stale-plugin');
+  // No `workflows` part: this test is about the SIDECAR contract, and a v2
+  // example flow wired to a downgraded agent would fail the graph rules too.
+  await run(['plugin', 'init', 'stale-plugin', '--dir', dir, '--with', 'task-source,agents'], { home });
+  // An honest old plugin: an API-1 range shipping API-1 data. It still LINKS
+  // (warn path — its connector works); worca just ignores the agent it ships.
+  // `plugin link` REFUSES a `>=3 <4` manifest shipping a v1 sidecar (the hard
+  // gate), so an "outdated plugin" fixture must declare an OLD range.
+  const mPath = join(dir, 'worca-cc-plugin.json');
+  const m = JSON.parse(await readFile(mPath, 'utf8'));
+  m.engines['worca-cc-api'] = '>=1 <2';
+  await writeFile(mPath, JSON.stringify(m, null, 2));
+  const metaPath = join(dir, 'agents', 'stalePluginHelper.meta.json');
+  const meta = JSON.parse(await readFile(metaPath, 'utf8'));
+  delete meta.metaVersion; delete meta.inputs; delete meta.outputs;
+  meta.consumes = ['userPrompt']; meta.produces = ['code'];
+  await writeFile(metaPath, JSON.stringify(meta, null, 2));
+  const linked = await run(['plugin', 'link', dir], { home });
+  assert.equal(linked.code, 0, linked.stdout + linked.stderr);
+  const list = await run(['plugin', 'list'], { home });
+  assert.equal(list.code, 0, list.stderr);
+  assert.match(list.stdout,
+    /built for plugin API 1; this version of worca requires plugin API 3 for agents and pipeline templates \u2014 update or reinstall the plugin \(1 agent\(s\), 0 template\(s\) ignored\)/);
+
+  const clean = join(await freshDir('worca-cc-plugin-init-'), 'fresh-plugin');
+  await run(['plugin', 'init', 'fresh-plugin', '--dir', clean, '--with', 'task-source,agents'], { home });
+  await run(['plugin', 'link', clean], { home });
+  const both = await run(['plugin', 'list'], { home });
+  assert.match(both.stdout, /fresh-plugin/);
+  assert.equal((both.stdout.match(/update or reinstall the plugin/g) || []).length, 1,
+    'only the outdated plugin carries the line');
+});
+
+test('plugin link surfaces the mid-migration cause at every level, with no derived template errors (MAJ-12)', async () => {
+  const home = await freshDir('worca-cc-cli-plugin-');
+  const dir = join(await freshDir('worca-cc-plugin-init-'), 'midmig-plugin');
+  await run(['plugin', 'init', 'midmig-plugin', '--dir', dir,
+    '--with', 'task-source,agents,skills,workflows'], { home });
+  // The plugin author ports the HARDER half first: the template is already a v2
+  // graph while the sidecar is still v1.
+  const metaPath = join(dir, 'agents', 'midmigPluginHelper.meta.json');
+  const meta = JSON.parse(await readFile(metaPath, 'utf8'));
+  delete meta.metaVersion; delete meta.inputs; delete meta.outputs;
+  meta.consumes = ['userPrompt']; meta.produces = ['code'];
+  await writeFile(metaPath, JSON.stringify(meta, null, 2));
+
+  const hard = await run(['plugin', 'link', dir], { home });
+  const hardOut = hard.stdout + hard.stderr;
+  assert.equal(hard.code, 2, hardOut);
+  assert.match(hardOut, /error: agents\/midmigPluginHelper\.meta\.json: not a meta v2 sidecar/);
+  assert.match(hardOut, /error: workflows\/example-flow\.json: references agent key "midmigPluginHelper" whose sidecar is not a valid meta v2 sidecar/);
+  assert.doesNotMatch(hardOut, /V4:|V5:|V20:|V21:/, 'no derived template errors');
+
+  // The SAME tree under an API-1 range links — and the author still reads the
+  // accurate cause, as a warning.
+  const mPath = join(dir, 'worca-cc-plugin.json');
+  const m = JSON.parse(await readFile(mPath, 'utf8'));
+  m.engines['worca-cc-api'] = '>=1 <2';
+  await writeFile(mPath, JSON.stringify(m, null, 2));
+  const soft = await run(['plugin', 'link', dir], { home });
+  const softOut = soft.stdout + soft.stderr;
+  assert.equal(soft.code, 0, softOut);
+  assert.match(softOut, /warn: agents\/midmigPluginHelper\.meta\.json: not a meta v2 sidecar/);
+  assert.match(softOut, /warn: workflows\/example-flow\.json: references agent key "midmigPluginHelper" whose sidecar is not a valid meta v2 sidecar/);
+  assert.match(softOut, /linked midmig-plugin ->/);
+});
+
+/** Workflow rows of a spawned CLI's HOME, read in a SEPARATE process so this
+ *  test file's own DB handle (a different WORCA_HOME) is never involved. */
+function workflowRows(home) {
+  const mod = pathToFileURL(resolve(__dirname, '..', 'src', 'core', 'workflows.mjs')).href;
+  const src = `const m = await import(${JSON.stringify(mod)});`
+    + 'const ws = await m.listWorkflows();'
+    + 'process.stdout.write(JSON.stringify(ws.map((w) => ({ id: w.id, name: w.name }))));';
+  const r = spawnSync(process.execPath,
+    ['--input-type=module', '--disable-warning=ExperimentalWarning', '-e', src],
+    { encoding: 'utf8', env: { ...process.env, WORCA_HOME: home, WORCA_MOCK: '1' } });
+  assert.equal(r.status, 0, r.stderr);
+  return JSON.parse(r.stdout);
+}
+
+test('link imports the scaffolded pipeline template; reimport refreshes a live edit (MAJ-14)', async () => {
+  const home = await freshDir('worca-cc-cli-plugin-');
+  const dir = join(await freshDir('worca-cc-plugin-init-'), 'authorloop-plugin');
+  await run(['plugin', 'init', 'authorloop-plugin', '--dir', dir,
+    '--with', 'task-source,agents,skills,workflows'], { home });
+  assert.deepEqual(workflowRows(home), [], 'nothing in the store before the link');
+
+  const link = await run(['plugin', 'link', dir], { home });
+  assert.equal(link.code, 0, link.stdout + link.stderr);
+  const after = workflowRows(home);
+  assert.deepEqual(after.map((w) => w.id), ['wfp_authorloop-plugin_example-flow'],
+    'the documented author loop lands exactly one wfp_* row');
+  assert.equal(after[0].name, 'authorloop-plugin example flow');
+  const list = await run(['plugin', 'list'], { home });
+  assert.match(list.stdout, /1 workflow/, 'and `plugin list` still counts it');
+
+  // A linked dir is LIVE-EDITED, so the one-shot import at link time goes stale.
+  const flowPath = join(dir, 'workflows', 'example-flow.json');
+  const flow = JSON.parse(await readFile(flowPath, 'utf8'));
+  flow.name = 'Renamed Flow';
+  await writeFile(flowPath, JSON.stringify(flow, null, 2));
+  assert.equal(workflowRows(home)[0].name, 'authorloop-plugin example flow',
+    'the row is stale until the author asks for a refresh');
+
+  const re = await run(['plugin', 'reimport', 'authorloop-plugin'], { home });
+  assert.equal(re.code, 0, re.stdout + re.stderr);
+  assert.match(re.stdout, /^reimported authorloop-plugin: 1 pipeline template$/m);
+  assert.equal(workflowRows(home)[0].name, 'Renamed Flow');
+  assert.equal(workflowRows(home).length, 1, 'an upsert, not a second row');
 });

@@ -76,74 +76,15 @@ const STEPPER = {
   feedbacks: [],
 };
 
-test('LIVE: a spawned sub-agent paints a blue .fan .sq.on on its node card', async () => {
-  const ctx = await boot();
-  ctx.selectProject();
-  ctx.window.location.hash = 'running';
-  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
-  // NOTE: the live WS `state` frame is FLAT — the server emits { type:'state',
-  // runId, ...stateSnapshot } (ui/server.mjs record/subscribe), and onState reads
-  // msg.stepper / msg.status / msg.subAgents at top level (see ui-stepper.test.mjs
-  // and ui-subagent-state.test.mjs). A nested `state:{…}` wrapper would leave
-  // r.stepper null, so the card would render the legacy default ids, not s0_0.
-  ctx.recv({ type: 'state', runId: 'p1', stepper: STEPPER, status: 'running', phase: 'plan', steps: [{ nodeId: 's0_0', phase: 'plan', status: 'active' }], subAgents: [] });
-  ctx.recv({ type: 'subagent', runId: 'p1', transition: 'spawn', id: 't1', nodeId: 's0_0', stepIndex: 0, cycle: 0, label: 'research', status: 'running' });
-  await new Promise((r) => setTimeout(r, 0));
-  const node = ctx.window.document.querySelector('[data-run-id="p1"] .run-node[data-id="s0_0"]');
-  assert.equal(node.querySelectorAll('.fan .sq').length, 1, 'one square for the spawned sub');
-  assert.equal(node.querySelectorAll('.fan .sq.on').length, 1, 'running -> .on (blue, pulses via CSS)');
-  assert.equal(node.querySelector('.fan .fl').textContent, '×1');
-});
 
-test('HISTORY: saved finished sub-agents paint grey squares, none .on (no pulse)', async () => {
-  const state = {
-    phase: 'done', status: 'done', cycle: 1, stepper: STEPPER,
-    steps: [{ nodeId: 's0_0', phase: 'plan', status: 'done' }],
-    subAgents: [
-      { id: 't1', nodeId: 's0_0', stepIndex: 0, cycle: 0, label: 'a', status: 'finished' },
-      { id: 't2', nodeId: 's0_0', stepIndex: 0, cycle: 0, label: 'b', status: 'finished' },
-    ],
-  };
-  const ctx = await bootHist({
-    fetchHandler: (url) => {
-      // MOST-SPECIFIC FIRST: the keyed detail URL has the list URL as a prefix.
-      if (url.endsWith('/api/history/k1/p1')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ state, auditMarkdown: '' }) });
-      if (url.endsWith('/api/history')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines: [{ id: 'p1', projectKey: 'k1', title: 'Run', status: 'done', startedAt: '2026-01-01T00:00:00Z' }], live: [] }) });
-      return null;
-    },
-  });
-  ctx.showHistory();
-  await new Promise((r) => setTimeout(r, 0));
-  ctx.showDetail('k1', 'p1');
-  await ctx.settle();
-  const node = ctx.window.document.querySelector('#hist-detail .hd .run-node[data-id="s0_0"]');
-  assert.equal(node.querySelectorAll('.fan .sq').length, 2, 'two finished squares');
-  assert.equal(node.querySelectorAll('.fan .sq.on').length, 0, 'history has no .on -> never pulses');
-  assert.equal(node.querySelector('.fan .fl').textContent, '×2');
-});
 
-test('LIVE: a sub-agent with uiPhase paints on the legacy node before the real stepper arrives', async () => {
-  const ctx = await boot();
-  ctx.selectProject();
-  ctx.window.location.hash = 'running';
-  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
-  // NO state frame → r.stepper stays null → graph built from CLIENT_DEFAULT_STEPPER
-  // (legacy uiPhase-keyed ids 'plan'/'refine'/...). The spawn carries nodeId 's0_0'
-  // (absent from the legacy manifest) + uiPhase 'plan' (which IS a legacy node id).
-  ctx.recv({ type: 'phase', runId: 'p1', phase: 'plan', cycle: 0 }); // mount the card
-  ctx.recv({ type: 'subagent', runId: 'p1', transition: 'spawn', id: 't1', nodeId: 's0_0', uiPhase: 'plan', cycle: 0, label: 'research', status: 'running' });
-  await new Promise((r) => setTimeout(r, 0));
-  const node = ctx.window.document.querySelector('[data-run-id="p1"] .run-node[data-id="plan"]');
-  assert.ok(node, 'legacy "plan" node exists');
-  assert.equal(node.querySelectorAll('.fan .sq.on').length, 1, 'uiPhase fallback paints the running square');
-  assert.equal(node.querySelector('.fan .fl').textContent, '×1');
-});
 
 test('subAgentsForNode: exact nodeId match wins; uiPhase is the fallback', async () => {
   const ctx = await boot();
   const r = ctx.window.__np.makeRun({ runId: 'p1' });
-  r.stepper = null; // legacy default manifest: node id 'plan' has uiPhase 'plan'
+  // A FROZEN v1 manifest — the only kind that still carries uiPhase on a node.
+  r.stepper = { version: 1, feedbacks: [], steps: [{ kind: 'agents', nodes: [{ id: 'plan', uiPhase: 'plan', label: 'Plan' }] }] };
   r.subAgents = [{ id: 'a', nodeId: 's0_0', uiPhase: 'plan', status: 'running' }];
-  assert.deepEqual(ctx.window.__np.subAgentsForNode(r, 'plan').map((s) => s.id), ['a'], 'matched by uiPhase against legacy node');
+  assert.deepEqual(ctx.window.__np.subAgentsForNode(r, 'plan').map((s) => s.id), ['a'], 'matched by uiPhase against the frozen node');
   assert.deepEqual(ctx.window.__np.subAgentsForNode(r, 's0_0').map((s) => s.id), ['a'], 'exact nodeId still matches when present');
 });

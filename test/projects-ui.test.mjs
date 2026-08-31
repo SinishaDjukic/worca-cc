@@ -73,3 +73,24 @@ test('the projects delete button uses a bin icon and no red token', () => {
   const proj = css.split('.proj-del').slice(1).join('.proj-del');
   assert.ok(!/--red/.test(proj.slice(0, 400)), '.proj-del must not use any --red* token');
 });
+
+// Regression: P5 (13275b47) retired the v1 composer and took the shared, unscoped
+// .saved-card/.pl-item/.pl-row/.pl-main/.pl-name rules with it (re-scoped under
+// .gv-saved). The Projects card reuses those class names, so it silently lost its
+// layout: the bin button dropped under the path and the head no longer shared the
+// rows' left edge. The view must own these rules under its own scope.
+test('the projects card owns its row layout (bin button on the right, head aligned with rows)', () => {
+  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  // Every declaration block whose selector list is exactly `#projects-list <cls>`,
+  // joined — a rule scoped elsewhere (.gv-saved .pl-row) must not satisfy this.
+  const rules = (cls) => {
+    const sel = `#projects-list ${cls}`.replace(/[.#]/g, '\\$&').replace(/\s+/g, '\\s+');
+    return [...css.matchAll(new RegExp(`(?:^|[}\\n])\\s*${sel}\\s*\\{([^}]*)\\}`, 'g'))].map((m) => m[1]).join(';');
+  };
+  assert.match(rules('.saved-card'), /padding:\s*0\b/, 'card padding must be 0 so the head and rows share one left edge');
+  assert.match(rules('.pl-row'), /display:\s*flex/, 'row must be a flex row so the bin button sits on the right');
+  assert.match(rules('.pl-row'), /align-items:\s*center/, 'bin button centred on the row');
+  assert.match(rules('.pl-main'), /flex:\s*1/, '.pl-main must grow to push the bin button to the right edge');
+  assert.match(rules('.pl-item'), /border-bottom/, 'rows must be separated by a rule');
+  assert.match(rules('.pl-name'), /font-weight:\s*600/, 'project name keeps its weight');
+});

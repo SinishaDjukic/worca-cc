@@ -183,3 +183,16 @@ test('boot: ask-worktree sweep removes an orphan dir, drops a stale row, and rep
   assert.ok(!String(spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repo }).stdout).includes('/wt/'),
     'both registrations were git-pruned in the source repo');
 });
+
+// P8a: a DB stamped past 24 by a divergent ladder can still hold v1 resume
+// points, so boot sweeps them once, idempotently.
+test('bootMaintenance retires runs left paused on the v1 engine', async () => {
+  seedPipelineRow({ id: 'v1sweep1', status: 'paused' });
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?')
+    .run(JSON.stringify({ version: 1, kind: 'boundary' }), 'v1sweep1');
+  const summary = await withMode('legacy', () => bootMaintenance({ log: () => {} }));
+  assert.equal(summary.sweptV1, 1);
+  const row = getDb().prepare('SELECT status, resume_point FROM pipelines WHERE id = ?').get('v1sweep1');
+  assert.equal(row.status, 'interrupted');
+  assert.equal(row.resume_point, null);
+});

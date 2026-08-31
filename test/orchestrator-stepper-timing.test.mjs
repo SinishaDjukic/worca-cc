@@ -16,7 +16,7 @@ async function makeTmpDir() {
   return dir;
 }
 
-test('stepper manifest is emitted before the first phase event (i.e. before preflight/clarify)', async () => {
+test('stepper manifest is emitted before the first exec event (i.e. before preflight/clarify)', async () => {
   const dir = await makeTmpDir();
   const orch = createOrchestrator({
     projectDir: dir,
@@ -26,19 +26,19 @@ test('stepper manifest is emitted before the first phase event (i.e. before pref
     auto: true,             // non-interactive: clarify auto-answers, gates auto-continue
   });
 
-  const events = []; // ordered { event, hasStepper?, phase? }
+  const events = []; // ordered { event, hasStepper?, nodeId? }
   let firstStepperAt = -1;
-  let firstPhaseAt = -1;
-  let firstClarifyPhaseAt = -1;
+  let firstExecAt = -1;
+  let firstClarifyExecAt = -1;
 
   orch.on('state', (s) => {
     const i = events.push({ event: 'state', hasStepper: !!(s && s.stepper) }) - 1;
     if (firstStepperAt < 0 && s && s.stepper) firstStepperAt = i;
   });
-  orch.on('phase', (p) => {
-    const i = events.push({ event: 'phase', phase: p && p.phase }) - 1;
-    if (firstPhaseAt < 0) firstPhaseAt = i;
-    if (firstClarifyPhaseAt < 0 && p && String(p.phase).includes('clarify')) firstClarifyPhaseAt = i;
+  orch.on('exec', (p) => {
+    const i = events.push({ event: 'exec', nodeId: p && p.nodeId }) - 1;
+    if (firstExecAt < 0) firstExecAt = i;
+    if (firstClarifyExecAt < 0 && p && String(p.nodeId).includes('clarify')) firstClarifyExecAt = i;
   });
 
   // In case clarify emits a question (non-auto path), answer it immediately.
@@ -47,14 +47,14 @@ test('stepper manifest is emitted before the first phase event (i.e. before pref
   await orch.run();
 
   assert.ok(firstStepperAt >= 0, 'a state event with a stepper was emitted');
-  assert.ok(firstPhaseAt >= 0, 'at least one phase event was emitted');
+  assert.ok(firstExecAt >= 0, 'at least one exec event was emitted');
   assert.ok(
-    firstStepperAt < firstPhaseAt,
-    `stepper (idx ${firstStepperAt}) must precede the first phase event (idx ${firstPhaseAt})`,
+    firstStepperAt < firstExecAt,
+    `stepper (idx ${firstStepperAt}) must precede the first exec event (idx ${firstExecAt})`,
   );
-  // Secondary, for readability: the blocking clarify phase comes strictly later.
-  if (firstClarifyPhaseAt >= 0) {
-    assert.ok(firstStepperAt < firstClarifyPhaseAt, 'stepper precedes the clarify phase');
+  // Secondary, for readability: the blocking clarify execution comes strictly later.
+  if (firstClarifyExecAt >= 0) {
+    assert.ok(firstStepperAt < firstClarifyExecAt, 'stepper precedes the clarify execution');
   }
 });
 

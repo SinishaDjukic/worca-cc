@@ -113,6 +113,8 @@ function apiFetch({ config = {}, workflow = WF_TUNED, sink } = {}) {
           if (sel.effort) entry.effort = sel.effort; else delete entry.effort;
           applyToggle(entry, 'fanOut', sel.fanOut);
           applyToggle(entry, 'askQuestions', sel.askQuestions);
+          if (sel.subagentModel) entry.subagentModel = sel.subagentModel;
+          else if (sel.subagentModel === '' || sel.subagentModel === null) delete entry.subagentModel;
           if (Object.keys(entry).length) wf.nodes[nodeId] = entry; else delete wf.nodes[nodeId];
         }
       }
@@ -122,10 +124,13 @@ function apiFetch({ config = {}, workflow = WF_TUNED, sink } = {}) {
         if (body.effort) entry.effort = body.effort; else delete entry.effort;
         applyToggle(entry, 'fanOut', body.fanOut);
         applyToggle(entry, 'askQuestions', body.askQuestions);
+        if (body.subagentModel) entry.subagentModel = body.subagentModel;
+        else if (body.subagentModel === '' || body.subagentModel === null) delete entry.subagentModel;
         if (Object.keys(entry).length) cfg.steps[body.step] = entry; else delete cfg.steps[body.step];
       }
       return Promise.resolve({ ok: true, status: 200, json: async () => ({
         config: cfg, models: MODELS, efforts: ['medium', 'high', 'max'],
+        subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'],
       }) });
     }
     return null;
@@ -171,11 +176,11 @@ test('buildNodeConfigRows resolves the four layers and reports def/override sepa
   const rows = window.__np.buildNodeConfigRows(WF_TUNED, reg, { nodes: { n1: { fanOut: true } }, feedbacks: {} });
   const [n0, n1] = rows;
   // n0: workflow default, untouched by the project.
-  assert.deepEqual(n0.def, { model: 'claude-opus-4-8', effort: 'high', fanOut: true, askQuestions: false });
+  assert.deepEqual(n0.def, { model: 'claude-opus-4-8', effort: 'high', fanOut: true, askQuestions: false, subagentModel: '' });
   assert.deepEqual(n0.override, {});
   assert.equal(n0.modified, false);
   // n1: no workflow default, so the registry supplies fanOut:false — overridden.
-  assert.deepEqual(n1.def, { model: '', effort: '', fanOut: false, askQuestions: false });
+  assert.deepEqual(n1.def, { model: '', effort: '', fanOut: false, askQuestions: false, subagentModel: '' });
   assert.deepEqual(n1.override, { fanOut: true });
   assert.equal(n1.modified, true);
 });
@@ -202,21 +207,21 @@ test('pruneNodeSelection stores a deviation and clears anything equal to the def
   const row = {
     model: 'claude-opus-4-8', effort: 'high', fanOut: true, askQuestions: false,
     questionsLocked: false,
-    def: { model: 'claude-opus-4-8', effort: 'high', fanOut: true, askQuestions: false },
+    def: { model: 'claude-opus-4-8', effort: 'high', fanOut: true, askQuestions: false, subagentModel: '' },
   };
   // Nothing changed -> everything inherits.
   assert.deepEqual(pruneNodeSelection(row, {}),
-    { model: '', effort: '', fanOut: null, askQuestions: null });
+    { model: '', effort: '', fanOut: null, askQuestions: null, subagentModel: '' });
   // A different model is stored; so is its (default-matching) effort, because an
   // effort is only interpretable next to the model that advertises it.
   assert.deepEqual(pruneNodeSelection(row, { model: 'claude-haiku-4-5' }),
-    { model: 'claude-haiku-4-5', effort: 'high', fanOut: null, askQuestions: null });
+    { model: 'claude-haiku-4-5', effort: 'high', fanOut: null, askQuestions: null, subagentModel: '' });
   // Changing only the effort still pins the model alongside it.
   assert.deepEqual(pruneNodeSelection(row, { effort: 'max' }),
-    { model: 'claude-opus-4-8', effort: 'max', fanOut: null, askQuestions: null });
+    { model: 'claude-opus-4-8', effort: 'max', fanOut: null, askQuestions: null, subagentModel: '' });
   // A toggle that deviates is stored as a boolean.
   assert.deepEqual(pruneNodeSelection(row, { fanOut: false }),
-    { model: '', effort: '', fanOut: false, askQuestions: null });
+    { model: '', effort: '', fanOut: false, askQuestions: null, subagentModel: '' });
 });
 
 test('pruneNodeSelection never persists a value for an absent or locked questions toggle', async () => {
@@ -657,4 +662,113 @@ test('the Advanced header carries no summary line, and the section never opens i
   doc.querySelector('#mock-switch').dispatchEvent(new window.Event('click', { bubbles: true }));
   assert.equal(doc.querySelector('#mock').checked, true, 'the switch still works');
   assert.equal(details.open, false, 'collapsed by default means collapsed, always');
+});
+
+
+// ── the sub-agent model policy control ──────────────────────────────────────
+
+test('every agent row offers a sub-agent model; unset shows as the auto default', async () => {
+  const { window } = await boot({ fetchHandler: apiFetch() });
+  await openTuned(window);
+  const sel = window.document.querySelector('.step-subagent[data-node-id="n0"]');
+  assert.ok(sel, 'the control is rendered beside Fan-out, whose children it governs');
+  assert.equal(sel.value, '', "nothing configured -> unset (the run resolves 'auto': agents pick)");
+  assert.deepEqual([...sel.options].map((o) => o.value), ['', 'sonnet', 'opus', 'fable', 'auto', 'inherit']);
+  assert.match([...sel.options][0].textContent, /agent picks/,
+    'the blank option is honest about the auto default, never labelled as a value');
+  assert.equal([...sel.options].some((o) => o.value === 'haiku'), false, 'haiku is off the menu');
+});
+
+test('a workflow default pre-fills the control and does not count as modified', async () => {
+  const wf = { ...WF_TUNED, steps: [
+    [{ id: 'n0', key: 'planner', defaults: { model: 'claude-opus-4-8', effort: 'high', fanOut: true, subagentModel: 'auto' } }],
+    [{ id: 'n1', key: 'reviewer' }],
+  ] };
+  const { window } = await boot({ fetchHandler: apiFetch({ workflow: wf }) });
+  await openTuned(window);
+  const doc = window.document;
+  assert.equal(doc.querySelector('.step-subagent[data-node-id="n0"]').value, 'auto');
+  assert.match(doc.querySelector('.agent-sum[data-node-id="n0"]').textContent, /subs: agent picks/);
+  assert.equal(doc.querySelector('.agent-row[data-node-id="n0"] .agent-mod'), null);
+});
+
+test('picking a sub-agent model saves it, marks the row, and shows in the caption', async () => {
+  const sink = [];
+  const { window } = await boot({ fetchHandler: apiFetch({ sink }) });
+  await openTuned(window);
+  const doc = window.document;
+  const sel = doc.querySelector('.step-subagent[data-node-id="n0"]');
+  sel.value = 'opus';
+  sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await tick(); await tick();
+
+  const write = sink.find((w) => w.method === 'PATCH' && w.body && w.body.nodes && w.body.nodes.n0);
+  assert.equal(write.body.nodes.n0.subagentModel, 'opus', 'the value reaches the node writer');
+  assert.match(doc.querySelector('.agent-sum[data-node-id="n0"]').textContent, /subs: opus/);
+  assert.ok(doc.querySelector('.agent-row[data-node-id="n0"] .agent-mod'), 'it deviates from the default');
+});
+
+test('the caption admits a stored policy even when fan-out is off (stored state is never hidden)', async () => {
+  const wf = { ...WF_TUNED, steps: [
+    [{ id: 'n0', key: 'planner', defaults: { model: 'claude-opus-4-8', effort: 'high', subagentModel: 'opus' } }],
+    [{ id: 'n1', key: 'reviewer' }],
+  ] };
+  const { window } = await boot({ fetchHandler: apiFetch({ workflow: wf }) });
+  await openTuned(window);
+  const sum = window.document.querySelector('.agent-sum[data-node-id="n0"]').textContent;
+  assert.match(sum, /subs: opus/,
+    'the value is stored and survives a fan-out toggle; hiding it while the modified dot shows was a contradiction');
+});
+
+test('choosing the default back prunes the override to unset', async () => {
+  const config = { workflows: { wf_t: { nodes: { n0: { subagentModel: 'fable' } }, feedbacks: {} } } };
+  const sink = [];
+  const { window } = await boot({ fetchHandler: apiFetch({ config, sink }) });
+  await openTuned(window);
+  const doc = window.document;
+  assert.equal(doc.querySelector('.step-subagent[data-node-id="n0"]').value, 'fable');
+
+  const sel = doc.querySelector('.step-subagent[data-node-id="n0"]');
+  sel.value = '';
+  sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await tick(); await tick();
+  const write = sink.find((w) => w.method === 'PATCH' && w.body && w.body.nodes && w.body.nodes.n0);
+  assert.equal(write.body.nodes.n0.subagentModel, '', "'' is the clear (unset != the stored 'inherit' value)");
+  assert.equal(doc.querySelector('.agent-row[data-node-id="n0"] .agent-mod'), null, 'back to a clean row');
+});
+
+test('an explicit inherit is stored as a value, marked modified, and captioned', async () => {
+  const sink = [];
+  const { window } = await boot({ fetchHandler: apiFetch({ sink }) });
+  await openTuned(window);
+  const doc = window.document;
+  const sel = doc.querySelector('.step-subagent[data-node-id="n0"]');
+  sel.value = 'inherit';
+  sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await tick(); await tick();
+
+  const write = sink.find((w) => w.method === 'PATCH' && w.body && w.body.nodes && w.body.nodes.n0);
+  assert.equal(write.body.nodes.n0.subagentModel, 'inherit',
+    'inherit reaches the writer as a VALUE — it must survive, unlike the empty clear');
+  assert.match(doc.querySelector('.agent-sum[data-node-id="n0"]').textContent, /subs: inherit/);
+  assert.ok(doc.querySelector('.agent-row[data-node-id="n0"] .agent-mod'), 'deviates from the auto default');
+});
+
+test('resolveNodeTunables is the ONE resolution rule shared by the v1 and v2 row builders', async () => {
+  const { window } = await boot({ fetchHandler: apiFetch() });
+  const r = window.__np.resolveNodeTunables(
+    { subagentModel: 'fable', fanOut: true },
+    { model: 'claude-opus-4-8', effort: 'high', subagentModel: 'auto' },
+    { fanOut: false, asksQuestions: false, questionsLocked: false, questionsDefault: false });
+  assert.deepEqual(r.override, { subagentModel: 'fable', fanOut: true });
+  assert.equal(r.def.subagentModel, 'auto');
+  assert.equal(r.subagentModel, 'fable', 'the project override wins');
+  assert.equal(r.fanOut, true);
+  assert.equal(r.model, 'claude-opus-4-8', 'the workflow-default model flows through');
+
+  const bare = window.__np.resolveNodeTunables({}, {}, {
+    fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: true });
+  assert.equal(bare.subagentModel, '', 'unset stays raw — the RUNTIME resolves auto');
+  assert.equal(bare.fanOut, true, 'meta fanOut is the last layer');
+  assert.equal(bare.askQuestions, true, 'meta questionsDefault is the last layer');
 });

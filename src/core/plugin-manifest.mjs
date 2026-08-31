@@ -5,8 +5,11 @@
 
 import { readFileSync, readdirSync, readlinkSync, existsSync } from 'node:fs';
 import { join, resolve, dirname, sep, isAbsolute } from 'node:path';
-import { WORCA_PLUGIN_APIS } from './plugin-api.mjs';
+import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS } from './plugin-api.mjs';
 import { EFFORTS, isReservedModelEnvKey, assertModelCost } from './model-env.mjs';
+import { validateMetaV2, normalizeAgentMeta, indexByKey } from '../shared/graph/agent-meta.mjs';
+import { portsFnFor } from '../shared/graph/ports.mjs';
+import { validateGraph } from '../shared/graph/validate.mjs';
 
 /** Plugin names are kebab-case, machine-unique, dir-name safe (spec §4.1). */
 export const PLUGIN_NAME_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -68,6 +71,86 @@ export function negotiatedApi(range, apis = WORCA_PLUGIN_APIS) {
   return best;
 }
 
+/** The ONE per-file sentence for each half of the data contract. `validatePluginDir`
+ *  prefixes `agents/<f>: ` / `workflows/<f>: `; `agent-registry.scanLayer` prefixes the
+ *  layer and appends ` — ignored`; `plugin-workflows` uses NOT_GRAPH_V2 verbatim as a
+ *  skip reason. Exported so those three sites can never drift apart — never re-word
+ *  either string in a second place. */
+export const NOT_META_V2 = 'not a meta v2 sidecar (declare "metaVersion": 2 with typed inputs/outputs) — plugin API 3 no longer reads channel sidecars';
+export const NOT_GRAPH_V2 = 'not a version-2 graph template (nodes/wires) — port the "steps" pipeline';
+
+/** The host API a range was BUILT FOR: the lowest integer it accepts. ">=1 <2"
+ *  and "1" both answer 1; an unconstrained range answers 0; null when nothing
+ *  satisfies it (an unparseable range fails closed in apiSatisfies too).
+ *  @param {string} range  @returns {number|null} */
+export function declaredApi(range) {
+  for (let n = 0; n <= 99; n += 1) if (apiSatisfies(range, n)) return n;
+  return null;
+}
+
+/** Which files in a plugin dir are still on the API-2 data contract: sidecars
+ *  without metaVersion 2, templates without version 2. Pure fs read; an absent
+ *  or unreadable dir/file contributes nothing (validatePluginDir reports those
+ *  separately as parse errors). Basenames only — the caller prefixes them.
+ *  @param {string} absDir
+ *  @returns {{agentsV1: string[], workflowsV1: string[]}} */
+export function dataContractIssues(absDir) {
+  const agentsV1 = [];
+  const workflowsV1 = [];
+  const read = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
+  const agentsDir = join(absDir, 'agents');
+  if (existsSync(agentsDir)) {
+    for (const f of readdirSync(agentsDir).filter((x) => x.endsWith('.meta.json')).sort()) {
+      const raw = read(join(agentsDir, f));
+      if (raw && Number(raw.metaVersion) !== 2) agentsV1.push(f);
+    }
+  }
+  const wfDir = join(absDir, 'workflows');
+  if (existsSync(wfDir)) {
+    for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.json')).sort()) {
+      const raw = read(join(wfDir, f));
+      if (raw && Number(raw.version) !== 2) workflowsV1.push(f);
+    }
+  }
+  return { agentsV1, workflowsV1 };
+}
+
+/**
+ * The Plugins-view / doctor payload for a plugin whose DATA is still on the old
+ * contract, or null when it has nothing the host would ignore. The bump is
+ * gated by CONTENT, not by the range: a connector-only plugin declaring
+ * ">=1 <2" ships no agents and no templates, so it is never "incompatible" —
+ * it simply keeps negotiating API 1.
+ * @param {string} range   engines['worca-cc-api']
+ * @param {{agentsV1: string[], workflowsV1: string[]}} issues
+ * @returns {{builtFor: number|null, host: number, agents: number, workflows: number, message: string}|null}
+ */
+export function apiMismatch(range, issues) {
+  const agents = (issues && issues.agentsV1 ? issues.agentsV1 : []).length;
+  const workflows = (issues && issues.workflowsV1 ? issues.workflowsV1 : []).length;
+  if (!agents && !workflows) return null;
+  // declaredApi('') is 0 (an unconstrained range accepts everything); report that
+  // as null so the message reads "built for an older version", never "API 0".
+  const mismatch = { builtFor: declaredApi(range) || null, host: WORCA_PLUGIN_API, agents, workflows };
+  mismatch.message = apiMismatchMessage(mismatch);
+  return mismatch;
+}
+
+/**
+ * THE per-plugin sentence (spec §9 wording, "worca" is the product name) —
+ * rendered verbatim by the Plugins view (`p.apiMismatch.message`), the doctor's
+ * `agents-api` check and `worca plugin list`. An API-outdated plugin is NOT
+ * corrupt: it installed fine and its connector or chat channel still works —
+ * worca simply ignores the agents and pipeline templates it ships.
+ */
+export function apiMismatchMessage(mismatch) {
+  if (!mismatch) return '';
+  const { builtFor, agents, workflows } = mismatch;
+  return `built for plugin API ${builtFor ?? 'an older version'}; this version of worca requires `
+    + `plugin API ${WORCA_PLUGIN_API} for agents and pipeline templates — update or reinstall the plugin `
+    + `(${agents} agent(s), ${workflows} template(s) ignored)`;
+}
+
 const str = (v, d = '') => (typeof v === 'string' ? v.trim() : d);
 
 function normOptions(raw) {
@@ -114,6 +197,31 @@ function badModulePath(mod) {
   if (isAbsolute(mod) || /\\/.test(mod)) return 'must be a relative ./ path';
   if (!mod.startsWith('./')) return 'must start with "./"';
   if (mod.split('/').includes('..')) return 'must not contain ".."';
+  return null;
+}
+
+/**
+ * `agentFile` is a PATH, not a label: agent-registry.mjs stamps
+ * `agentPath = join(<layer>/agents, meta.agentFile)` and workflows.mjs reads
+ * THAT file as the agent's system prompt AND for its `tools:` frontmatter. So
+ * it is gated exactly like `module` — relative, no "..", and it must still
+ * resolve inside the agents dir. Absent/empty is legal (the agent then has no
+ * prompt file). Returns a reason clause or null, like badModulePath.
+ */
+function badAgentFile(agentFile, agentsDir) {
+  if (agentFile === undefined || agentFile === null || agentFile === '') return null;
+  if (typeof agentFile !== 'string') return 'must be a string';
+  const af = agentFile.trim();                       // the normalizer trims: judge the string the runtime will use
+  if (!af) return null;
+  if (isAbsolute(af) || /\\/.test(af)) return 'must be a relative path inside agents/';
+  if (af.split('/').includes('..')) return 'must not contain ".."';
+  const root = resolve(agentsDir);
+  if (!resolve(root, af).startsWith(root + sep)) return 'must be a relative path inside agents/';
+  // A contained agentFile must also EXIST: consent and the runtime both read it,
+  // so a name with no file behind it says one thing at consent time ("none
+  // declared") and another at run time (workflows.loadAgentFile used to fall
+  // back into the BUILT-IN agents dir for the same basename).
+  if (!existsSync(join(root, af))) return `${af} not found in agents/`;
   return null;
 }
 
@@ -300,7 +408,13 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
         return;
       }
       for (const [k, v] of Object.entries(envRaw)) {
-        if (isReservedModelEnvKey(k)) { errors.push(`${at} ("${id}"): env key ${JSON.stringify(k)} is reserved and cannot be set on a model`); continue; }
+        // Reserved keys degrade, never reject: a published manifest is a
+        // third-party artifact its user cannot edit, and the spawn-time filter
+        // (model-env.mjs prepareModelEnv) drops these defensively anyway — so a
+        // host that grows the reserved list (e.g. CLAUDE_CODE_SUBAGENT_MODEL)
+        // must not retroactively brick installed/marketplace plugins. The
+        // user's own catalog (settings.mjs) still hard-rejects: that author CAN fix it.
+        if (isReservedModelEnvKey(k)) { warnings.push(`${at} ("${id}"): env key ${JSON.stringify(k)} is reserved — ignored`); continue; }
         if (isSecretRef(v)) {
           if (!secretKeys.has(v.secret)) { errors.push(`${at} ("${id}"): env ${k} references undeclared modelSecrets key ${JSON.stringify(v.secret)}`); continue; }
           env[k] = { secret: v.secret };
@@ -412,8 +526,26 @@ export function validatePluginDir(absDir, { strict = false } = {}) {
     }
   }
 
-  // agents/: <key>.md + <key>.meta.json pairs, existing dual-file format (§4.2)
+  // agents/: <key>.md + <key>.meta.json pairs, existing dual-file format (§4.2).
+  // API 3: the sidecar must pass the SAME meta v2 gate the agent-store save path
+  // applies, every failed rule named. ALL capability fields are open to plugins
+  // (verdict, sideEffect, mockRole, workspace*, placeable, …) — the gate is the
+  // schema, not an allow-list.
   const agentKeys = new Set();
+  // Keys whose sidecar EXISTS but was rejected by a gate below. They are not
+  // shipped (no ports), yet they are not foreign either — the workflows block
+  // owes a template that references one a single accurate cause rather than
+  // "this plugin does not ship it" or the derived V4/V5/V20/V21 cascade.
+  const ungatedKeys = new Set();
+  const ownMetas = [];
+  // A range that admits the CURRENT API (or no engines at all) claims to be an
+  // API-3 plugin, so v1-shaped data is a hard error; --strict promotes it for
+  // everyone else, because that flag is the plugin AUTHOR's gate. A manifest
+  // that did not PARSE fails SOFT: its declared API is unknowable, and the JSON
+  // error above is already the only actionable line.
+  const hardData = raw !== null
+    && (strict || negotiatedApi(raw && raw.engines ? raw.engines['worca-cc-api'] : '') === WORCA_PLUGIN_API);
+  const dataLevel = hardData ? 'error' : 'warn';
   const agentsDir = join(absDir, 'agents');
   if (existsSync(agentsDir)) {
     const files = readdirSync(agentsDir);
@@ -426,7 +558,19 @@ export function validatePluginDir(absDir, { strict = false } = {}) {
       if (!KEY_RE.test(key)) { push('error', `agents/${f}: "${key}" must be a valid agent key (letters/digits/_-)`); continue; }
       if (key !== stem) push('error', `agents/${f}: key "${key}" must match the filename stem "${stem}"`);
       if (!files.includes(`${stem}.md`)) push('error', `agents/${f}: missing sibling ${stem}.md`);
+      // Path traversal is never softened by dataLevel: an escaping agentFile is
+      // a security defect in a v1 sidecar exactly as in a v2 one, and it is
+      // checked BEFORE the meta gate so exactly one cause is reported.
+      const afErr = badAgentFile(meta.agentFile, agentsDir);
+      if (afErr) { push('error', `agents/${f}: "agentFile" ${afErr}`); ungatedKeys.add(key); continue; }
+      if (Number(meta.metaVersion) !== 2) { push(dataLevel, `agents/${f}: ${NOT_META_V2}`); ungatedKeys.add(key); continue; }
+      const { errors } = validateMetaV2(meta);
+      for (const e of errors) push('error', `agents/${f}: ${e}`);
+      if (errors.length) { ungatedKeys.add(key); continue; }
+      // BELOW every gate: a rejected sidecar ships no ports, so counting its key
+      // as shipped is what let a ports-less node reach validateGraph.
       agentKeys.add(key);
+      ownMetas.push(normalizeAgentMeta(meta).meta);
     }
     for (const f of files.filter((x) => x.endsWith('.md'))) {
       const stem = f.slice(0, -3);
@@ -446,18 +590,42 @@ export function validatePluginDir(absDir, { strict = false } = {}) {
     }
   }
 
-  // workflows/*.json may reference ONLY the plugin's own agent keys (§9.3)
+  // workflows/*.json are v2 GRAPHS (API 3), validated by the SAME shared
+  // validator the composer and POST /api/workflows use, over a ports function
+  // built from this plugin's OWN sidecars plus the engine's flow-card ports.
+  // The isolation rule stays: a template may reference only keys this plugin
+  // ships, so a host rename or a deleted user agent can never break it.
   const wfDir = join(absDir, 'workflows');
   if (existsSync(wfDir)) {
+    const portsFn = portsFnFor(indexByKey(ownMetas));
     for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.json'))) {
       let tpl = null;
       try { tpl = JSON.parse(readFileSync(join(wfDir, f), 'utf8')); }
       catch { push('error', `workflows/${f}: invalid JSON`); continue; }
-      if (!Array.isArray(tpl?.steps)) { push('error', `workflows/${f}: "steps" must be an array`); continue; }
-      const keys = tpl.steps.flat().map((n) => n?.key).filter(Boolean);
+      if (Number(tpl?.version) !== 2) { push(dataLevel, `workflows/${f}: ${NOT_GRAPH_V2}`); continue; }
+      const nodes = Array.isArray(tpl.nodes) ? tpl.nodes : [];
+      const keys = nodes.filter((n) => n && n.kind === 'agent').map((n) => n.key).filter(Boolean);
+      let unresolved = false;
       for (const k of new Set(keys)) {
-        if (!agentKeys.has(k)) push('error', `workflows/${f}: references agent key "${k}" which this plugin does not ship`);
+        if (agentKeys.has(k)) continue;
+        if (ungatedKeys.has(k)) {
+          // The sidecar is this plugin's, it just did not pass. Report at the
+          // DATA level so an API-1 plugin keeps installing (spec §9) instead of
+          // being refused for a template that is fine.
+          push(dataLevel, `workflows/${f}: references agent key "${k}" whose sidecar is not a valid meta v2 sidecar`);
+        } else {
+          push('error', `workflows/${f}: references agent key "${k}" which this plugin does not ship`);
+        }
+        unresolved = true;
       }
+      // An unresolved key has no ports, so every wire touching it would also
+      // fire V4/V5 — one clear cause beats five derived ones.
+      if (unresolved) continue;
+      const { errors, warnings } = validateGraph(
+        { ...tpl, nodes, wires: Array.isArray(tpl.wires) ? tpl.wires : [] }, portsFn,
+      );
+      for (const e of errors) push('error', `workflows/${f}: ${e.code}: ${e.message}`);
+      for (const w of warnings) push('warn', `workflows/${f}: ${w.code}: ${w.message}`);
     }
   }
 

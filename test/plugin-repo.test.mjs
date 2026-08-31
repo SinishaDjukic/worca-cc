@@ -80,6 +80,20 @@ test('addPluginRepo: root-level single plugin -> subdir ""', async () => {
     [{ name: 'solo-plugin', subdir: '' }]);
 });
 
+test('addPluginRepo: reserved model-env key -> plugin still discovered, warning surfaced', async () => {
+  const { root } = await makeRepo('reserved-env', {
+    'ds/worca-cc-plugin.json': JSON.stringify({
+      name: 'ds-models', version: '0.4.0',
+      models: [{ id: 'ds-stable', env: { ANTHROPIC_MODEL: 'ds-stable', CLAUDE_CODE_SUBAGENT_MODEL: 'ds-stable' } }],
+    }),
+  });
+  const r = await addPluginRepo(root);
+  assert.deepEqual(r.discovered.map((d) => d.name), ['ds-models'], 'not bricked by the reserved key');
+  assert.equal(r.discovered[0].manifest.models[0].env.CLAUDE_CODE_SUBAGENT_MODEL, undefined, 'key stripped');
+  assert.equal(r.discovered[0].manifest.models[0].env.ANTHROPIC_MODEL, 'ds-stable', 'legal key kept');
+  assert.match(r.warnings.join('\n'), /env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored/);
+});
+
 test('addPluginRepo: no manifest anywhere -> empty discovery; invalid manifest skipped with warning', async () => {
   const none = await makeRepo('bare', { 'README.md': 'x\n' });
   assert.deepEqual((await addPluginRepo(none.root)).discovered, []);

@@ -140,7 +140,7 @@ test('POST /api/run refuses with 403 + budget payload when total-blocked', async
 test('POST /api/resume: 409 archived; 403 total; 403 needsOverride; ignoreCostCap proceeds', async () => {
   // archived
   const { id: archivedId } = await seedPipeline(seededProjectDir, { status: 'paused',
-    resumePoint: { version: 1, kind: 'boundary' } });
+    resumePoint: { version: 2, kind: 'boundary' } });
   getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?')
     .run(new Date().toISOString(), archivedId);
   let res = await postJson('/api/resume', { pipelineId: archivedId });
@@ -149,7 +149,7 @@ test('POST /api/resume: 409 archived; 403 total; 403 needsOverride; ignoreCostCa
   // pipeline-cap: paused pipeline whose spend exceeds the cap
   await postSettings({ pipelineCostLimitUsd: 1 });
   const { id: cappedId } = await seedPipeline(seededProjectDir, { status: 'paused', totalCostUsd: 2,
-    resumePoint: { version: 1, kind: 'boundary', pauseReason: 'cost_pipeline' } });
+    resumePoint: { version: 2, kind: 'boundary', pauseReason: 'cost_pipeline' } });
   res = await postJson('/api/resume', { pipelineId: cappedId });
   assert.equal(res.status, 403);
   assert.equal((await res.json()).needsOverride, true);
@@ -171,7 +171,7 @@ test('POST /api/resume: 409 archived; 403 total; 403 needsOverride; ignoreCostCa
   // cannot tell us when the override is armed. Repeat against a FRESH pipeline
   // — the total gate must 403 before ignoreCostCap ever touches the column.
   const { id: freshId } = await seedPipeline(seededProjectDir, { status: 'paused', totalCostUsd: 2,
-    resumePoint: { version: 1, kind: 'boundary', pauseReason: 'cost_total' } });
+    resumePoint: { version: 2, kind: 'boundary', pauseReason: 'cost_total' } });
   res = await postJson('/api/resume', { pipelineId: freshId, ignoreCostCap: true });
   assert.equal(res.status, 403);
   assert.match((await res.json()).error, /total cost limit/);

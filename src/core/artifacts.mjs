@@ -322,7 +322,8 @@ export function readPipelineExtras(pipelineId) {
  * @param {string} pipelineId
  * @param {{id:string, label?:string, nodeId?:string, stepIndex?:number, cycle?:number,
  *          stepKey?:string, status?:string, startedAt?:string, finishedAt?:string,
- *          durationMs?:number, tokens?:number, costUsd?:number, subagentType?:string}} rec
+ *          durationMs?:number, tokens?:number, costUsd?:number, subagentType?:string,
+ *          runModel?:string}} rec
  */
 export function upsertSubAgent(pipelineId, rec) {
   if (!pipelineId || !rec || !rec.id) return;
@@ -330,9 +331,11 @@ export function upsertSubAgent(pipelineId, rec) {
     tx(() => {
       getDb().prepare(`
         INSERT INTO sub_agents (pipeline_id, id, step_key, node_id, step_index, cycle,
-          label, status, started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase, skills, subagent_type, graphify_count)
+          label, status, started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase, skills, subagent_type, graphify_count,
+          run_model)
         VALUES (@pipeline_id,@id,@step_key,@node_id,@step_index,@cycle,@label,@status,
-          @started_at,@finished_at,@duration_ms,@tokens,@cost_usd,@ui_phase,@skills,@subagent_type,@graphify_count)
+          @started_at,@finished_at,@duration_ms,@tokens,@cost_usd,@ui_phase,@skills,@subagent_type,@graphify_count,
+          @run_model)
         ON CONFLICT(pipeline_id, id) DO UPDATE SET
           status      = excluded.status,
           step_key    = COALESCE(excluded.step_key, step_key),
@@ -348,7 +351,8 @@ export function upsertSubAgent(pipelineId, rec) {
           ui_phase    = COALESCE(excluded.ui_phase, ui_phase),
           skills      = COALESCE(excluded.skills, skills),
           subagent_type = COALESCE(excluded.subagent_type, subagent_type),
-          graphify_count = COALESCE(excluded.graphify_count, graphify_count)
+          graphify_count = COALESCE(excluded.graphify_count, graphify_count),
+          run_model      = COALESCE(excluded.run_model, run_model)
       `).run({
         pipeline_id: pipelineId,
         id: rec.id,
@@ -367,6 +371,10 @@ export function upsertSubAgent(pipelineId, rec) {
         skills: s(rec.skills),   // s() = JSON.stringify or null; growing supersets overwrite via COALESCE
         subagent_type: rec.subagentType ?? null,   // scalar TEXT: bound directly (no s() JSON wrap)
         graphify_count: Number.isFinite(rec.graphifyCount) ? rec.graphifyCount : null,  // scalar INTEGER
+        // The model this child actually ran on: the alias its Task call asked for,
+        // else the parent node's model (what it inherits). Written at spawn and
+        // COALESCE-guarded, so a later finish/telemetry update never nulls it.
+        run_model: rec.runModel ?? null,
       });
     });
   } catch { /* best-effort: live state.subAgents is the reconcile source of truth; a swallowed write is caught by tests, not a crashed run. */ }
@@ -382,13 +390,14 @@ export function upsertSubAgent(pipelineId, rec) {
  * @returns {Array<{id:string, label:string|null, nodeId:string|null, stepIndex:number|null,
  *   cycle:number|null, stepKey:string|null, status:string, startedAt:string|null,
  *   finishedAt:string|null, durationMs:number|null, tokens:number|null, costUsd:number|null,
- *   subagentType:string|null}>}
+ *   subagentType:string|null, runModel:string|null}>}
  */
 export function listSubAgents(pipelineId) {
   if (!pipelineId) return [];
   return getDb().prepare(`
     SELECT id, label, node_id, step_index, cycle, step_key, status,
-           started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase, skills, subagent_type, graphify_count
+           started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase, skills, subagent_type, graphify_count,
+           run_model
     FROM sub_agents WHERE pipeline_id = ? ORDER BY started_at, id
   `).all(pipelineId).map((r) => ({
     id: r.id,
@@ -407,6 +416,7 @@ export function listSubAgents(pipelineId) {
     skills: j(r.skills, []),     // NULL -> [] so the UI always has an array (no pills)
     subagentType: r.subagent_type ?? null,   // scalar TEXT: mapped directly (no j() parse)
     graphifyCount: r.graphify_count ?? null,   // scalar INTEGER: NULL -> null (no badge)
+    runModel: r.run_model ?? null,   // scalar TEXT: NULL -> null (no pill on pre-v25 rows)
   }));
 }
 
@@ -729,6 +739,42 @@ function resolveAgainst(base, p) {
 }
 
 /**
+ * The ONE typed error every prompt-file reader throws. Carried by `code` so the
+ * CLI can fail() on it and ui/server.mjs can answer 400 instead of letting it
+ * surface as an anonymous mid-run error event.
+ * @param {string} absPath  the resolved path the caller named
+ * @param {unknown} cause
+ */
+export function promptFileError(absPath, cause) {
+  const err = new Error(`cannot read prompt file ${absPath}: ${cause?.message || cause}`);
+  err.code = 'PROMPT_FILE_UNREADABLE';
+  err.promptFile = absPath;
+  err.cause = cause;
+  return err;
+}
+
+/**
+ * Read a NAMED prompt file, resolved against `projectDir` exactly as createPipeline
+ * does. Never degrades: a file the caller named but we cannot read is an ERROR, not
+ * an empty prompt. The old bare `catch { promptText = '' }` ran a whole pipeline on
+ * an empty task and exited 0 — in real mode spending tokens and cutting a worktree
+ * + feature branch for nothing. The empty-string fallback is only meaningful when
+ * NO file was named.
+ * @param {string} projectDir
+ * @param {string} promptFile  absolute, or relative to projectDir
+ * @returns {Promise<string>}
+ * @throws {Error & {code:'PROMPT_FILE_UNREADABLE'}}
+ */
+export async function readPromptFile(projectDir, promptFile) {
+  const abs = resolveAgainst(projectDir, promptFile);
+  try {
+    return await readFile(abs, 'utf8');
+  } catch (cause) {
+    throw promptFileError(abs, cause);
+  }
+}
+
+/**
  * Create a new pipeline directory and seed it with the prompt, extras and an audit
  * header (pipeline.md). The structured run state is INSERTed as a pipelines row
  * (Task 3.3/3.5) — there is no state.json. The prompt (and workspace-description /
@@ -785,12 +831,14 @@ export async function createPipeline(projectDir, opts = {}) {
   // verbatim copy below is unchanged).
   let promptText = typeof prompt === 'string' ? prompt : '';
   if (!promptText && typeof precomputedPromptText === 'string') promptText = precomputedPromptText;
-  if (!promptText && promptFile) {
-    try {
-      promptText = await readFile(resolveAgainst(projectDir, promptFile), 'utf8');
-    } catch {
-      promptText = '';
-    }
+  // A NAMED prompt file must be readable, and it is checked BEFORE anything is
+  // created (no dir, no row). It is checked even when an inline prompt or a
+  // precomputed body already won the text, because the file is still copied
+  // verbatim into prompt.md below — the old bare catch there silently substituted
+  // the inline text for the file the caller named.
+  if (promptFile) {
+    const fileText = await readPromptFile(projectDir, promptFile);
+    if (!promptText) promptText = fileText;
   }
 
   const resolvedTitle =
@@ -810,8 +858,11 @@ export async function createPipeline(projectDir, opts = {}) {
   if (promptFile) {
     try {
       await copyFile(resolveAgainst(projectDir, promptFile), promptDest);
-    } catch {
-      await writeFile(promptDest, promptText, 'utf8');
+    } catch (cause) {
+      // The read above already proved this path readable, so a failure here is a
+      // TOCTOU (the file vanished) or a destination problem — either way the run
+      // must not proceed on a substituted prompt.
+      throw promptFileError(resolveAgainst(projectDir, promptFile), cause);
     }
   } else {
     await writeFile(promptDest, promptText, 'utf8');
@@ -992,11 +1043,11 @@ export async function writeState(pipelineDir, stateObj) {
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id)
+        source_type, source_ref, guardrails_id, outcome)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id)
+        @source_type,@source_ref,@guardrails_id,@outcome)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1004,6 +1055,7 @@ export async function writeState(pipelineDir, stateObj) {
         workspace_meta=excluded.workspace_meta, stepper=excluded.stepper,
         tools=excluded.tools,
         resume_point=excluded.resume_point,
+        outcome=excluded.outcome,
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
     `).run(toPipelineRow(obj));
@@ -1011,10 +1063,19 @@ export async function writeState(pipelineDir, stateObj) {
     getDb().prepare('DELETE FROM pipeline_steps WHERE pipeline_id = ?').run(id);
     const ins = getDb().prepare(`
       INSERT INTO pipeline_steps (pipeline_id, key, node_id, phase, step_index, cycle,
-        status, started_at, updated_at, active_ms, running_since, cost_usd, session_id, skills, graphify_count)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        status, started_at, updated_at, active_ms, running_since, cost_usd, session_id,
+        skills, graphify_count,
+        execution_id, exec_kind, agent_key, ended_at, exec_trigger, exec_result, exec_meta)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `);
     for (const st of Array.isArray(obj.steps) ? obj.steps : []) {
+      // v2 rows: execution_id === key. v1 rows leave every exec_* column NULL, so
+      // the readers below reproduce today's exact shape for a v1 pipeline.
+      const meta = (st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null)
+        ? s({ taskId: st.taskId ?? null, parentExecutionId: st.parentExecutionId ?? null,
+              title: st.title ?? null, phaseOrdinal: st.phaseOrdinal ?? null,
+              taskIndex: st.taskIndex ?? null, taskTotal: st.taskTotal ?? null })
+        : null;
       ins.run(
         id, st.key, st.nodeId ?? null, st.phase ?? null,
         st.stepIndex ?? null, st.cycle ?? null, st.status ?? null,
@@ -1025,6 +1086,13 @@ export async function writeState(pipelineDir, stateObj) {
         st.sessionId ?? null,
         s(st.skills),
         Number.isFinite(st.graphifyCount) ? st.graphifyCount : null,
+        st.executionId ?? null,
+        st.kind ?? null,
+        st.agentKey ?? null,
+        st.endedAt ?? null,
+        st.trigger === undefined ? null : s(st.trigger),
+        st.result === undefined ? null : s(st.result),
+        meta,
       );
     }
   });
@@ -1334,6 +1402,17 @@ function toPipelineRow(o) {
     source_type: o.sourceType ?? 'prompt',
     source_ref: s(o.sourceMeta),
     guardrails_id: o.guardrailsId ?? null,
+    // §5.9 outcome: the derived run-level v2 facts, so a rehydrated state matches
+    // a live one. NULL for a v1 run (nothing to say), so v1 rows are unchanged.
+    outcome: (o.engine === 2 || o.endReached !== undefined)
+      ? s({
+          endReached: !!o.endReached,
+          result: o.result ?? null,
+          warnings: Array.isArray(o.warnings) ? o.warnings : [],
+          wireDeliveries: o.wireDeliveries ?? {},
+          tokens: o.tokens ?? {},
+        })
+      : null,
   };
 }
 
@@ -1647,6 +1726,22 @@ function stepRowToStep(r) {
   };
   if (r.node_id != null) step.nodeId = r.node_id;
   if (r.step_index != null) step.stepIndex = r.step_index;
+  if (r.execution_id != null) step.executionId = r.execution_id;
+  if (r.exec_kind != null) step.kind = r.exec_kind;
+  if (r.agent_key != null) step.agentKey = r.agent_key;
+  if (r.ended_at != null) step.endedAt = r.ended_at;
+  if (r.execution_id != null && r.cycle != null) step.ordinal = r.cycle;  // `ordinal` is the v2 name; `cycle` is its alias
+  if (r.exec_trigger != null) step.trigger = j(r.exec_trigger, { wireIds: [], freshPorts: [] });
+  if (r.exec_result != null) step.result = j(r.exec_result, null);
+  const em = r.exec_meta != null ? j(r.exec_meta, null) : null;
+  if (em) {
+    if (em.taskId != null) step.taskId = em.taskId;
+    if (em.parentExecutionId != null) step.parentExecutionId = em.parentExecutionId;
+    if (em.title != null) step.title = em.title;
+    if (em.phaseOrdinal != null) step.phaseOrdinal = em.phaseOrdinal;
+    if (em.taskIndex != null) step.taskIndex = em.taskIndex;
+    if (em.taskTotal != null) step.taskTotal = em.taskTotal;
+  }
   return step;
 }
 
@@ -1679,13 +1774,28 @@ function rowToState(row) {
     stepper: j(row.stepper, null),
     tools: j(row.tools, null),
     guardrailsId: row.guardrails_id ?? null,
+    // A retired v1 resume point was NULLed by the v2 upgrade: the run stays in
+    // History with an honest status, but it can never be resumed again.
+    resumable: row.resume_point != null,
     steps: getDb().prepare(`
       SELECT key, node_id, phase, step_index, cycle, status, started_at, updated_at,
-             active_ms, running_since, cost_usd, session_id, skills, graphify_count
+             active_ms, running_since, cost_usd, session_id, skills, graphify_count,
+             execution_id, exec_kind, agent_key, ended_at, exec_trigger, exec_result, exec_meta
       FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid
     `).all(row.id).map(stepRowToStep),
     subAgents: listSubAgents(row.id),
   };
+  const outcome = j(row.outcome, null);
+  if (outcome) {
+    state.engine = 2;
+    state.endReached = !!outcome.endReached;
+    state.result = outcome.result ?? null;
+    state.warnings = Array.isArray(outcome.warnings) ? outcome.warnings : [];
+    state.wireDeliveries = outcome.wireDeliveries ?? {};
+    state.tokens = outcome.tokens ?? {};
+    state.active = [];        // nothing is in flight in a rehydrated snapshot
+    state.gate = null;
+  }
   const meta = readStoreMeta(row.project_key);
   state.projectDir = meta?.path ?? null;
   // Workspace superset: spread workspace_meta back onto the top level + target.
@@ -1997,6 +2107,45 @@ export async function findRunDir(pipelinesDir, id) {
   for (const e of entries) if (e.isDirectory() && new RegExp(`-${esc}$`, 'i').test(e.name)) return join(pipelinesDir, e.name);
   for (const e of entries) if (e.isDirectory() && e.name === id) return join(pipelinesDir, e.name);
   return null;
+}
+
+/**
+ * Read one INDEXED artifact of a pipelines ROW. `rel` never reaches the
+ * filesystem: it only SELECTS among the rows the artifacts table already holds —
+ * the exact rel_path first, else the LONGEST rel_path that is a path SUFFIX of it
+ * (`…/<rel_path>`; the engine records absolute paths and the client sends
+ * `result.path` verbatim). Basenames CAN collide across dirs, so a bare basename
+ * never matches a nested row. The path that is read is ALWAYS the stored one,
+ * run dir first, store root second (plan/review markdown is store-root-relative);
+ * a stored path with a `..` segment is refused outright. Null when the row, the
+ * index row or the file is missing.
+ */
+export async function resolveIndexedArtifactForRow(row, rel) {
+  const norm = (p) => String(p || '').replace(/\\/g, '/');
+  const want = norm(rel);
+  if (!row || !want) return null;
+  const arts = (await listArtifacts(row.id))
+    .filter((a) => a && typeof a.relPath === 'string' && a.relPath && !a.relPath.split('/').includes('..'));
+  // Exact first, then the LONGEST suffix — with rows `plan.md` and `a/plan.md`
+  // a request for `/x/a/plan.md` ends with BOTH `/plan.md` and `/a/plan.md`, and a
+  // first-match `find` would serve whichever row the table happens to list first.
+  const hit = arts.find((a) => a.relPath === want)
+    || arts.filter((a) => want.endsWith(`/${a.relPath}`))
+      .sort((x, y) => y.relPath.length - x.relPath.length)[0];
+  if (!hit) return null;
+  const isWs = row.target === 'workspace' || !!row.workspace_key;
+  const storeRoot = isWs ? workspaceStorePath(row.workspace_key) : projectStorePath(row.project_key);
+  const runDir = await runDirForRow(row);
+  for (const base of [runDir, storeRoot]) {
+    try { return { rel: hit.relPath, text: await readFile(join(base, hit.relPath), 'utf8') }; } catch { /* try the next base */ }
+  }
+  return null;
+}
+
+/** The keyed form (`/api/history/:key/:id`, workspace twin) over lookupPipelineRow. */
+export async function resolveIndexedArtifact(key, id, rel) {
+  const row = lookupPipelineRow(key, id);
+  return row ? resolveIndexedArtifactForRow(row, rel) : null;
 }
 
 /** Read a pipeline-local artifact file as text, or null if absent. */

@@ -57,7 +57,7 @@ async function main() {
     const { prepare } = await import('../src/core/db.mjs');
 
     // 1) INSTALL the fixture (dev-mode link — the local-path mechanism, Task 5).
-    linkPlugin('mock-source', FIXTURE);
+    await linkPlugin('mock-source', FIXTURE);
     const installed = listInstalledPlugins().find((p) => p.name === 'mock-source');
     if (!installed) return die('linkPlugin did not produce a lock entry for mock-source');
     if (!installed.enabled) return die('linked plugin is not enabled');

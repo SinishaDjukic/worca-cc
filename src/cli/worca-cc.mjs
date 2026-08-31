@@ -10,12 +10,13 @@
 
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
+import { fstatSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, basename } from 'node:path';
 import process from 'node:process';
 
 import { preflightNode } from '../core/preflight-node.mjs';
-import { createOrchestrator } from '../core/orchestrator.mjs';
+import { createOrchestratorFor } from '../core/engine-select.mjs';
 import {
   addProject,
   listProjects,
@@ -23,6 +24,7 @@ import {
   normalizeProjectPath,
 } from '../core/projects.mjs';
 import { projectKey } from '../core/store.mjs';
+import { formatExecLine, formatGateHeader, formatRunSummary } from './render.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -179,12 +181,13 @@ function budgetRefusalDetail(b) {
     + `resets ${when} (in ${days}d ${hours}h)`;
 }
 
-const HELP = `worca — deterministic multi-agent pipeline (Plan -> Refine -> Implement -> Review)
+const HELP = `worca — node-graph multi-agent pipelines
 
 Usage:
   worca <subcommand> [args]
   worca --prompt "<task>" [--project <dir>] [options]
   worca --file <task.md> [--project <dir>] [options]
+  worca "<task>" [--project <dir>] [options]   (bare prompt; quote it)
   worca --ui
   worca --install <targetDir> [--force]
 
@@ -196,9 +199,10 @@ Subcommands:
     [--ignore-cost-cap]       Resume past this pipeline's cost cap (persists on the run).
   doctor                      Reconcile crashed runs and sweep leftover run roots.
   plugin <cmd> [...]          Manage plugins: add|install|list|update|remove|purge|enable|
-                              disable|doctor|link|init|validate|exec. See: worca plugin help
+                              disable|doctor|link|reimport|init|validate|exec. See: worca plugin help
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
   config [get|set|unset]      Budget & cost-limit settings
+  help                        Print this help (same as --help).
 
 Options:
   --project <dir>          Target project directory (default: cwd)
@@ -210,7 +214,7 @@ Options:
   --model <m>              Claude model id
   --permission-mode <m>    Claude permission mode: default | acceptEdits | plan |
                            bypassPermissions (default acceptEdits)
-  --workflow <id>          Saved workflow id to run (default: wf_default)
+  --workflow <id>          Saved pipeline template to run (default: wf_default — the built-in graph)
   --source-branch <name>   Branch to fork the per-run worktree from (default: current HEAD)
   --branch <name>          Feature branch name (default: claude proposes one)
   --mock                   Offline mock mode (no claude, no tokens)
@@ -242,18 +246,7 @@ function out(s) {
   process.stdout.write(s + '\n');
 }
 
-function phaseLabel(phase, cycle) {
-  if (cycle && (phase === 'refine' || phase === 'review' || phase === 'implement' || phase === 'clarify')) {
-    return `${phase} #${cycle}`;
-  }
-  return phase;
-}
 
-function statusMark(status) {
-  if (status === 'done') return c('green', '✓');
-  if (status === 'start') return c('cyan', '▶');
-  return c('gray', '•');
-}
 
 const LEVEL_COLOR = { info: 'reset', debug: 'gray', warn: 'yellow', error: 'red' };
 
@@ -315,9 +308,10 @@ async function askClarify(rl, questions) {
  * Ask a loop gate interactively. Shows the open blocking issues and the two choices.
  * Returns { decision: "continue" | "another" }.
  */
-async function askGate(rl, issues) {
+async function askGate(rl, issues, header) {
   out('');
-  out(c('yellow', c('bold', 'Loop gate — maximum cycles reached.')));
+  // A graph run names the wire and its budget (`? Loop gate · Reviewer → Implementer  3/3 cycles used`).
+  out(c('yellow', c('bold', header || 'Loop gate — maximum cycles reached.')));
   out(c('yellow', 'Open critical/major issues:'));
   if (!issues || issues.length === 0) {
     out('  (none reported)');
@@ -363,17 +357,108 @@ async function askRecovery(rl, recovery) {
 // ── shared drive loop ────────────────────────────────────────────────────────────
 
 /**
+ * Whether stdin could ever deliver an interactive answer.
+ *
+ * A TTY always can. A pipe, socket or file redirect MAY — a wrapper script that
+ * feeds answers is legitimate — so those pass. `/dev/null` never can: it EOFs on
+ * the first read, so the run would start, spend a real agent call, and then be
+ * abandoned mid-question. Measured on darwin (and matching linux): `< /dev/null`,
+ * a closed fd 0 (Node reopens it on /dev/null) and `spawn(…, {stdio:['ignore',…]})`
+ * are all non-TTY CHARACTER devices, while a pipe is a fifo/socket and a redirect
+ * is a regular file. An fstat that throws answers "yes" — never refuse a run on a
+ * guess.
+ */
+function stdinCanAnswer() {
+  if (process.stdin.isTTY) return true;
+  try {
+    return !fstatSync(0).isCharacterDevice();
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Wire readline Q&A, log/phase rendering, and SIGINT pause/stop onto an
  * orchestrator, then drive it. `start` launches run() or resume(). Returns the
  * process exit code (0 for done/paused, 1 otherwise).
  */
 async function attachAndDrive(orch, flags, start) {
+  // Refuse an unanswerable interactive run BEFORE start(). The orchestrator
+  // constructor is pure (createPipeline runs inside run()), so nothing exists yet:
+  // no pipelines row, no run root, no worktree, no spend. Without this, a
+  // `worca --prompt … < /dev/null` reached the first clarify question, printed
+  // `Failed to read answer: readline was closed` and exited 0 with the row left
+  // `running` — a CI job read success on an abandoned run.
+  if (!flags.auto && !stdinCanAnswer()) {
+    fail('stdin cannot answer prompts (it is /dev/null or closed) — pass --yes for a non-interactive run.');
+  }
   const rl = flags.auto ? null : makeRl();
   let answering = false; // serialize interactive prompts vs. log rendering
+  let answerFailure = null; // a question we could not answer -> non-zero exit
+
+  /**
+   * Abandon a prompt we cannot answer: stop the run and force a non-zero exit, so
+   * the row never stays `running` and no caller reads success off an abandoned run.
+   * A pause/stop already in flight owns the outcome — Ctrl+C must still end
+   * `paused`, never `stopped`.
+   */
+  const abandonAnswer = (err) => {
+    if (orch.pauseRequested || !orch.state || orch.state.status !== 'running') return;
+    answerFailure = err;
+    process.stderr.write('worca: cannot continue without an answer — stopping the run. '
+      + 'Use --yes for a non-interactive run.\n');
+    // Deferred by ONE microtask, for the same reason answers are: _ask emits
+    // `question` BEFORE it parks pendingQuestion, so a SYNCHRONOUS throw in the
+    // handler below would reach stop() with nothing parked to reject — and the ask
+    // parked a moment later would then hang the run forever, which is the very
+    // outcome this guard exists to prevent.
+    queueMicrotask(() => {
+      if (orch.pauseRequested || !orch.state || orch.state.status !== 'running') return;
+      orch.stop();
+    });
+  };
+
+  // stdin reaching EOF *while a question is open* does not throw: readline simply
+  // closes and never invokes the question callback, so the awaited answer never
+  // settles, the event loop drains and node exits 0 with the run abandoned. Treat
+  // it as a failed answer — but ONLY while the run is still running: our own
+  // rl.close() in the finally below also fires with `answering` still true when a
+  // prompt was interrupted by Ctrl+C (the pause settles start() first, and the
+  // parked rl.question never resolves), and that is not a lost answer.
+  if (rl) {
+    rl.on('close', () => {
+      if (!answering) return;
+      if (orch.pauseRequested || !orch.state || orch.state.status !== 'running') return;
+      process.stderr.write('Failed to read answer: stdin closed\n');
+      abandonAnswer(new Error('stdin closed'));
+    });
+  }
 
   // ── event wiring ──────────────────────────────────────────────────────────────
-  orch.on('phase', ({ phase, cycle, status }) => {
-    out(`${statusMark(status)} ${c('bold', phaseLabel(phase, cycle))} ${c('gray', status)}`);
+  // The run renders its `exec` stream and nothing else: the v1 `phase` event and
+  // its renderer died with the v1 engine, and the preflight/done BOOKENDS are
+  // exec rows now (x:preflight:1 / x:done:1) that render nothing.
+  orch.on('exec', (ev) => {
+    // A user STOP surfaces as `exec error 'aborted'` on the in-flight execution
+    // while its ledger row is 'stopped'; the harness prints the stop line itself.
+    if (ev.status === 'error' && orch.state && orch.state.status === 'stopped') return;
+    // The exec payload carries no durationMs (spec §5.7) — the ledger rows do,
+    // and they are final by the time a terminal exec arrives. A composite
+    // parent has no row of its own: its slices (parentExecutionId) are summed,
+    // time and spend alike; a slice's own event keeps its own cost.
+    let e = ev;
+    if (ev.status !== 'start') {
+      const rows = Array.isArray(orch.state && orch.state.steps) ? orch.state.steps : [];
+      // By `executionId`, never by `key` — Task 14's rule for step rows: today's
+      // bookends are key-only, and a v1 row's key is a phase name.
+      const mine = rows.filter((s) => s && (s.executionId === ev.executionId || s.parentExecutionId === ev.executionId));
+      if (mine.length) {
+        e = { ...ev, durationMs: mine.reduce((a, s) => a + (s.activeMs || 0), 0) };
+        if (ev.kind !== 'task') e.costUsd = mine.reduce((a, s) => a + (s.costUsd || 0), 0);
+      }
+    }
+    const line = formatExecLine(e, orch.state && orch.state.stepper, { color: c });
+    if (line) out(line);
   });
 
   orch.on('log', ({ source, level, text }) => {
@@ -390,16 +475,24 @@ async function attachAndDrive(orch, flags, start) {
     process.stderr.write(c('red', `Error: ${message}`) + '\n');
   });
 
-  orch.on('question', async ({ id, kind, questions, issues, recovery, agent }) => {
+  // The WHOLE payload is kept: a graph run's gate question carries `wireId`,
+  // which the header formatter resolves against the manifest.
+  orch.on('question', async (payload) => {
+    const { id, kind, questions, issues, recovery, agent } = payload;
     if (flags.auto || !rl) return; // auto mode resolves internally
     answering = true;
     try {
       if (kind === 'clarify') {
-        const payload = await askClarify(rl, questions || []);
-        orch.answer(id, payload);
+        const answer = await askClarify(rl, questions || []);
+        orch.answer(id, answer);
       } else if (kind === 'gate') {
-        const payload = await askGate(rl, issues || []);
-        orch.answer(id, payload);
+        // One engine: every gate question is a graph question, so the header is
+        // built unconditionally. (The `graphRun()` gate that used to guard this
+        // died with the phase listener — leaving the call was a ReferenceError
+        // waiting for the first interactive gate.)
+        const answer = await askGate(rl, issues || [],
+          formatGateHeader(payload, orch.state && orch.state.stepper));
+        orch.answer(id, answer);
       } else if (kind === 'recovery') {
         const payload = await askRecovery(rl, recovery);
         orch.answer(id, payload);
@@ -410,6 +503,13 @@ async function attachAndDrive(orch, flags, start) {
       }
     } catch (err) {
       process.stderr.write(`Failed to read answer: ${err?.message || err}\n`);
+      // Never swallow: orch.answer() was not called, so the ask stays open and the
+      // run would hang on it (or be abandoned at EOF with its row left `running`
+      // while node exits 0). This is also the arm any THROW inside askClarify /
+      // askGate / askRecovery lands in — the shape the P6 graphRun() ReferenceError
+      // took — so failing loudly here is what turns that class of bug into a
+      // visible failure instead of a silent hang.
+      abandonAnswer(err);
     } finally {
       answering = false;
     }
@@ -449,6 +549,13 @@ async function attachAndDrive(orch, flags, start) {
   out('');
   if (result?.status === 'done') {
     out(c('green', c('bold', 'Pipeline complete.')));
+    // v2 runs: `Result: <path|value>` (or the amber quiescence line), then
+    // `N executions · <active> active · $<cost>`; [] on a v1 run.
+    const summary = formatRunSummary(orch.state);
+    if (summary.length) {
+      out(summary[0].startsWith('Finished at quiescence') ? c('yellow', summary[0]) : summary[0]);
+      for (const line of summary.slice(1)) out(line);
+    }
   } else if (result?.status === 'paused') {
     out(c('yellow', result?.reason ? `Pipeline paused: ${result.reason}` : 'Pipeline paused.'));
     out(`Resume with: ${c('bold', `worca resume ${orch.state.id}`)}`);
@@ -460,6 +567,8 @@ async function attachAndDrive(orch, flags, start) {
   if (result?.pipelineDir) {
     out(`Pipeline directory: ${c('bold', result.pipelineDir)}`);
   }
+  // An unanswered question is a failure even if the run somehow settled `done`.
+  if (answerFailure) return 1;
   return result?.status === 'done' || result?.status === 'paused' ? 0 : 1;
 }
 
@@ -584,6 +693,13 @@ async function cmdDoctor() {
     out(`reconciled ${reconciled} stale running record(s) -> interrupted`);
   } catch (err) {
     process.stderr.write(`worca doctor: reconcile failed: ${err?.message || err}\n`);
+  }
+  try {
+    const { sweepV1Runs } = await import('../core/db.mjs');
+    const swept = sweepV1Runs();
+    if (swept.length) out(`retired ${swept.length} run(s) paused on the v1 engine`);
+  } catch (err) {
+    process.stderr.write(`worca doctor: v1-run sweep failed: ${err?.message || err}\n`);
   }
   try {
     // The injected callbacks THROW on a DB failure instead of reporting "no row"
@@ -750,6 +866,19 @@ async function cmdResume(argv) {
     process.stderr.write(`pipeline ${id} has no resume point\n`);
     return 1;
   }
+  if (saved.resumePoint.version !== 2) {
+    const { V1_RUN_RETIRED } = await import('../core/db.mjs');
+    process.stderr.write(`worca resume: ${V1_RUN_RETIRED}\n`);
+    return 2;
+  }
+  // The v1 sweep runs AFTER this run's own guards: sweeping FIRST would NULL the
+  // point under test, so the caller would read "has no resume point" instead of
+  // the honest retirement message above.
+  try {
+    const { sweepV1Runs } = await import('../core/db.mjs');
+    const swept = sweepV1Runs();
+    if (swept.length) out(`retired ${swept.length} run(s) paused on the v1 engine`);
+  } catch { /* best-effort: resume still works if the sweep fails */ }
   if (saved.row.archived_at) {
     process.stderr.write('worca resume: pipeline is archived\n');
     return 1;
@@ -806,7 +935,7 @@ async function cmdResume(argv) {
     return 1;
   }
 
-  const orch = createOrchestrator({
+  const orch = await createOrchestratorFor({
     projectDir,
     ...(workspace ? { workspace } : {}),
     claude: { mock },
@@ -833,6 +962,7 @@ Usage:
   worca plugin enable <name> | disable <name>     Toggle without removing files
   worca plugin doctor [name] [--fix]              Health checks (--fix re-runs deterministic setup on failure)
   worca plugin link <dir>                         Dev mode: use a local dir as "current"
+  worca plugin reimport <name>                    Re-read the plugin's pipeline templates (a linked dir is live-edited)
   worca plugin init <name> [--dir <D>] [--with task-source,agents,skills,workflows]
   worca plugin validate <dir> [--strict]          Lint a plugin dir (--strict: unknown fields error)
   worca plugin exec <name> <sourceId> <op> [--args '<json>'] [--profile <id>] [--inspect]   Debug one connector op
@@ -932,6 +1062,15 @@ function printInventory(inv) {
   for (const cmd of i.setupCommands || []) out(`  setup: ${cmd}`);
 }
 
+/** Contributions worca refused to load (spec §9.3): one yellow line each, so a
+ *  receipt or a list never claims an agent/template that exists nowhere. */
+function printIgnored(ignored) {
+  const list = Array.isArray(ignored) ? ignored : [];
+  if (!list.length) return;
+  out(c('yellow', `  ${list.length} contribution${list.length > 1 ? 's' : ''} ignored:`));
+  for (const i of list) out(c('yellow', `    ${i.file} — ${i.reason}`));
+}
+
 /** kebab plugin name -> camelCase stem for the scaffolded example agent key. */
 function camelizePluginName(name) {
   return name.replace(/-([a-z0-9])/g, (_, ch) => ch.toUpperCase());
@@ -967,8 +1106,8 @@ async function pluginInit(rest) {
   const manifestObj = {
     name,
     version: '0.1.0',
-    description: 'Scaffolded worca-cc plugin — edit me',
-    engines: { 'worca-cc-api': '>=1 <2' },
+    description: 'Scaffolded worca plugin — edit me',
+    engines: { 'worca-cc-api': '>=3 <4' },
   };
   if (withParts.includes('task-source')) {
     manifestObj.taskSources = [{
@@ -1019,14 +1158,15 @@ async function pluginInit(rest) {
   }
   if (withParts.includes('agents')) {
     files.set(`agents/${agentKey}.meta.json`, JSON.stringify({
+      metaVersion: 2,
       key: agentKey,
       displayName: 'Example Helper',
       description: `Example agent installed by the ${name} plugin`,
       color: 'amber',
       agentFile: `${agentKey}.md`,
       runnerType: 'producer',
-      consumes: ['userPrompt'],
-      produces: ['code'],
+      inputs: [{ id: 'task', type: 'md', required: true }],
+      outputs: [{ id: 'notes', type: 'md', filename: 'notes.md', store: 'run' }],
       ...(withParts.includes('skills') ? { requiresSkills: ['example-skill'] } : {}),
       order: 900,
     }, null, 2) + '\n');
@@ -1038,7 +1178,7 @@ async function pluginInit(rest) {
       'model: inherit',
       '---',
       '',
-      `You are an example agent shipped by the "${name}" worca-cc plugin.`,
+      `You are an example agent shipped by the "${name}" worca plugin.`,
       'Acknowledge the task you were given and describe what a real agent would do here.',
       '',
     ].join('\n'));
@@ -1058,12 +1198,21 @@ async function pluginInit(rest) {
     files.set('skills/example-skill/helper.sh', '#!/bin/sh\necho "example-skill helper ok"\n');
   }
   if (withParts.includes('workflows')) {
+    // A v2 graph: the Task and End cards are mandatory (V20/V21) and every input
+    // takes exactly one wire (V7). Ports come from the sidecar above.
     files.set('workflows/example-flow.json', JSON.stringify({
       name: `${name} example flow`,
-      version: 1,
+      version: 2,
       domain: 'general',
-      steps: [[{ id: 's0_0', key: agentKey }]],
-      feedbacks: [],
+      nodes: [
+        { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+        { id: 'n_helper', kind: 'agent', key: agentKey, x: 320, y: 200, config: {} },
+        { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
+      ],
+      wires: [
+        { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_helper', port: 'task' } },
+        { id: 'w2', from: { node: 'n_helper', port: 'notes' }, to: { node: 'n_end', port: 'result' } },
+      ],
     }, null, 2) + '\n');
   }
   files.set('worca-cc-plugin.json', JSON.stringify(manifestObj, null, 2) + '\n');
@@ -1172,6 +1321,7 @@ async function cmdPlugin(argv) {
         const res = await store.installPlugin({ repoUrl, subdir: entry.subdir, name, sha, ...(marketplace ? { marketplace } : {}) });
         out('installed:');
         printInventory(res.inventory);
+        printIgnored(res.ignored);
         return 0;
       }
 
@@ -1185,6 +1335,8 @@ async function cmdPlugin(argv) {
           const version = p.linked ? 'linked' : p.version || (p.pinnedSha || '').slice(0, 7);
           const flags = [p.enabled ? 'enabled' : 'disabled', ...(p.linked ? ['linked'] : [])].join(', ');
           out(`${p.name}\t${version}\t${flags}\t${contribSummary(p.contributions)}`);
+          if (p.apiMismatch) out(c('yellow', `  ${p.apiMismatch.message}`));
+          printIgnored(p.ignored);
         }
         return 0;
       }
@@ -1284,12 +1436,27 @@ async function cmdPlugin(argv) {
         if (!dir) fail('Usage: worca plugin link <dir>');
         const abs = resolve(process.cwd(), dir);
         const v = manifestMod.validatePluginDir(abs);
-        if (!v.ok) {
-          for (const p of v.problems) process.stderr.write(`${p.level}: ${p.message}\n`);
-          return 2;
-        }
-        store.linkPlugin(v.manifest.name, abs);
+        // Print EVERY level, pass or fail: a link that SUCCEEDS with warnings is
+        // the mid-migration case the author most needs to read (MAJ-12) — an
+        // API-1 plugin keeps linking, and now says why its agent is ignored.
+        for (const p of v.problems) process.stderr.write(`${p.level}: ${p.message}\n`);
+        if (!v.ok) return 2;
+        const linked = await store.linkPlugin(v.manifest.name, abs);
         out(`linked ${v.manifest.name} -> ${abs} (dev mode; doctor will warn)`);
+        const n = linked.workflows.imported.length;
+        if (n) out(`  imported ${n} pipeline template${n === 1 ? '' : 's'} — edits to them need: worca plugin reimport ${v.manifest.name}`);
+        printIgnored(store.ignoredContributions(v.manifest.name, abs, { workflowSkips: linked.workflows.skipped }));
+        return 0;
+      }
+
+      case 'reimport': {
+        const a = pluginArgs(rest);
+        const name = a._[0];
+        if (!name) fail('Usage: worca plugin reimport <name>');
+        const r = await store.reimportPlugin(name);
+        const n = r.workflows.imported.length;
+        out(`reimported ${name}: ${n} pipeline template${n === 1 ? '' : 's'}`);
+        printIgnored(r.ignored);
         return 0;
       }
 
@@ -1458,8 +1625,51 @@ async function cmdMarketplace(argv) {
 
 const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config']);
 
+/** Levenshtein distance, two-row. Only ever called on short argv tokens. */
+function editDistance(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+/**
+ * The subcommand a lone positional was probably meant to be, or null.
+ *
+ * A bare positional is a legal prompt (`worca "do the thing"`), so only a SINGLE
+ * whitespace-free token that near-misses a real subcommand counts as a typo: edit
+ * distance <= 2, or a strict prefix of at least 3 characters (`plug` -> `plugin`).
+ * Refusing costs one retry with --prompt; running `worca reusme run-abc123` cuts a
+ * worktree + feature branch and spends real tokens on a task named "reusme".
+ */
+function nearestSubcommand(token) {
+  if (!token || /\s/.test(token)) return null;
+  // 'help' is spliced into both loops: it is a real CLI arm (the head of main())
+  // but deliberately absent from the dispatch table, so without it a typo of help
+  // itself (`worca hlep`) is distance >= 4 from everything and runs as a PROMPT.
+  for (const name of [...SUBCOMMANDS, 'help']) {
+    if (token.length >= 3 && name.length > token.length && name.startsWith(token)) return name;
+  }
+  let best = null;
+  let bestD = 3;   // strictly less than 3 == distance <= 2
+  for (const name of [...SUBCOMMANDS, 'help']) {
+    const d = editDistance(token, name);
+    if (d < bestD) { bestD = d; best = name; }
+  }
+  return best;
+}
+
 async function main() {
   const sub = process.argv[2];
+  // `worca help` is what every CLI user types first; it is not a subcommand and
+  // not a near-miss of one, so without this line it became a PROMPT and ran a
+  // pipeline named "help" (MIN-51).
+  if (sub === 'help') { process.stdout.write(HELP); return 0; }
   if (SUBCOMMANDS.has(sub)) {
     const rest = process.argv.slice(3);
     if (sub === 'add') return cmdAdd(rest);
@@ -1501,8 +1711,15 @@ async function main() {
   }
 
   if (!flags.prompt && !flags.file) {
-    // Allow a bare positional prompt: `worca "do the thing"`.
+    // Allow a bare positional prompt: `worca "do the thing"`. A lone token that
+    // near-misses a subcommand is a typo, not a task — refuse it here, before a
+    // pipeline row, a worktree or a feature branch exists.
     if (flags._.length) {
+      const meant = nearestSubcommand(flags._[0]);
+      if (meant) {
+        if (meant === flags._[0]) fail(`"${meant}" is a subcommand and must come first: worca ${meant} [args] (to run a prompt with that word, use --prompt "\u2026")`);
+        fail(`unknown subcommand "${flags._[0]}" — did you mean "${meant}"? (to run a prompt, use --prompt "\u2026")`);
+      }
       flags.prompt = flags._.join(' ');
     } else {
       fail('Provide a task with --prompt "<text>" or --file <markdown>. See --help.');
@@ -1510,6 +1727,19 @@ async function main() {
   }
 
   const projectDir = resolve(flags.project);
+  // A NAMED --file must be readable BEFORE anything starts. The readers used to
+  // swallow the failure and run the whole pipeline on an empty prompt with exit 0
+  // — in real mode that spends tokens and cuts a worktree + feature branch for
+  // nothing. Relative paths resolve against the PROJECT dir, exactly as the
+  // orchestrator's own read does.
+  if (flags.file) {
+    const { readPromptFile } = await import('../core/artifacts.mjs');
+    try {
+      await readPromptFile(projectDir, flags.file);
+    } catch (err) {
+      fail(err && err.message ? err.message : String(err));
+    }
+  }
   // Resolve extras against the shell cwd so relative paths are unambiguous.
   const extras = (flags.extras || []).map((p) => resolve(process.cwd(), p));
 
@@ -1523,13 +1753,24 @@ async function main() {
     return 1;
   }
 
-  const orch = createOrchestrator({
+  // Validate --workflow before spawning anything: an unknown or archived template
+  // must fail with one line, not a stack trace half-way through a run. The read row
+  // doubles as createOrchestratorFor's routing hint (it skips a second row read).
+  let row;
+  if (flags.workflow) {
+    const { assertRunnableWorkflow } = await import('../core/workflows.mjs');
+    try { row = await assertRunnableWorkflow(flags.workflow); }
+    catch (err) { fail(`${err && err.message ? err.message : String(err)}`); }
+  }
+
+  const orch = await createOrchestratorFor({
     projectDir,
     prompt: flags.prompt || undefined,
     promptFile: flags.file || undefined,
     title: flags.title || undefined,
     extras,
     workflowId: flags.workflow || undefined,
+    template: row,
     branch: { source: flags.sourceBranch, feature: flags.featureBranch },
     claude: {
       permissionMode: flags.permissionMode,

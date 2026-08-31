@@ -13,15 +13,18 @@ import {
   existsSync, readdirSync, readFileSync, readlinkSync,
   mkdirSync, rmSync, symlinkSync, renameSync, unlinkSync,
 } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, isAbsolute, sep } from 'node:path';
 import { WORCA_PLUGIN_APIS } from './plugin-api.mjs';
-import { normalizeManifest, validatePluginDir, apiSatisfies } from './plugin-manifest.mjs';
+import { normalizeManifest, validatePluginDir, apiSatisfies, dataContractIssues, apiMismatch } from './plugin-manifest.mjs';
 import {
   pluginsRoot, pluginDir, pluginCurrentDir, pluginDataDir, readPluginsLock, writePluginsLock,
   DIR_NAME_RE,
 } from './plugins-lock.mjs';
 import { addPluginRepo, fetchCandidate, exportVersion, repoCacheDir } from './plugin-repo.mjs';
-import { importPluginWorkflows, removePluginWorkflows, referencedPluginAgents } from './plugin-workflows.mjs';
+import {
+  importPluginWorkflows, readPluginWorkflows, removePluginWorkflows, referencedPluginAgents,
+} from './plugin-workflows.mjs';
+import { loadAgentRegistry } from './agent-registry.mjs';
 import { pluginModelSecretStatus } from './plugin-models.mjs';
 import { referencedPluginModels } from './config.mjs';
 import { clearBindingsForPlugin } from './source-bindings.mjs';
@@ -43,6 +46,13 @@ function readManifestAt(dir) {
 
 function sha256File(file) {
   try { return createHash('sha256').update(readFileSync(file)).digest('hex'); } catch { return null; }
+}
+
+/** True when the relative path `rel` still resolves INSIDE `dir`. */
+function insideDir(dir, rel) {
+  if (isAbsolute(rel) || /\\/.test(rel)) return false;
+  const root = resolve(dir);
+  return resolve(root, rel).startsWith(root + sep);
 }
 
 /** Private copy of workflows.mjs:66-77 parseFrontmatterTools (module-private there). */
@@ -67,8 +77,19 @@ export function buildInstallInventory(versionDir) {
   if (existsSync(aDir)) {
     for (const f of readdirSync(aDir).filter((x) => x.endsWith('.meta.json')).sort()) {
       const key = f.slice(0, -'.meta.json'.length);
+      // Consent must describe the bytes the RUNTIME will read: agent-registry
+      // stamps agentPath = join(<layer>/agents, meta.agentFile), so reading
+      // `${key}.md` here showed a DECOY for any sidecar naming another file
+      // (C-1). Containment is re-checked because this also runs on an
+      // unvalidated dir (the pre-install preview); an escaping agentFile falls
+      // back to the sibling and validatePluginDir refuses the install anyway.
+      let mdFile = `${key}.md`;
+      try {
+        const af = JSON.parse(readFileSync(join(aDir, f), 'utf8'))?.agentFile;
+        if (typeof af === 'string' && af.trim() && insideDir(aDir, af.trim())) mdFile = af.trim();
+      } catch { /* unreadable sidecar: fall back to the sibling */ }
       let tools = [];
-      try { tools = frontmatterTools(readFileSync(join(aDir, `${key}.md`), 'utf8')); } catch { /* md missing */ }
+      try { tools = frontmatterTools(readFileSync(join(aDir, mdFile), 'utf8')); } catch { /* md missing */ }
       agents.push({ key, tools });
     }
   }
@@ -114,6 +135,45 @@ export function buildInstallInventory(versionDir) {
   if (manifest.setup?.node) setupCommands.push(`npm ci --prefix ${versionDir} --ignore-scripts --omit=dev`);
   if (manifest.setup?.python === 'pyproject') setupCommands.push(`uv sync --project ${versionDir}`);
   return { agents, taskSources, chatChannels, models, modelSecrets, skills: skills.sort(), workflows, depCount, setupCommands };
+}
+
+/**
+ * Contributions a plugin SHIPS but worca IGNORED, as `[{ file, reason }]` sorted
+ * by file (`agents/<sidecar>.meta.json`, `workflows/<template>.json`). The two
+ * drop sites — the agent registry and the workflow importer — reach only
+ * console.warn on their own, so every reporting surface (install receipt,
+ * Plugins card, doctor) was free to claim a contribution that does not exist.
+ *
+ * Generic by construction: nothing here is keyed on an agent key or a plugin
+ * name — the drop reasons are authored at the drop sites and carried verbatim.
+ *
+ * @param {string} name
+ * @param {string} dir  the plugin's current/ (or version) dir
+ * @param {{registry?: object, drops?: Array<{origin:string,file:string,reason:string}>,
+ *          workflowSkips?: Array<{file:string, errors:string[]}>}} [opts]
+ *        registry/drops: reuse ONE registry load across plugins; workflowSkips:
+ *        the importer's OWN result, when the caller just ran it.
+ * @returns {Array<{file: string, reason: string}>}
+ */
+export function ignoredContributions(name, dir, opts = {}) {
+  const out = [];
+  let drops = opts.drops;
+  let registry = opts.registry;
+  if (!drops) {
+    drops = [];
+    try { registry = loadAgentRegistry(undefined, { onDrop: (d) => drops.push(d) }); }
+    catch { /* no resolvable home: report what the files alone can say */ }
+  }
+  for (const d of drops) {
+    if (d.origin === `plugin:${name}`) out.push({ file: `agents/${d.file}`, reason: d.reason });
+  }
+  const skips = opts.workflowSkips
+    ?? (() => {
+      try { return readPluginWorkflows(name, dir, { registry, quiet: true }).skipped; }
+      catch { return []; }
+    })();
+  for (const s of skips) out.push({ file: `workflows/${s.file}`, reason: `invalid template (${s.errors.join('; ')})` });
+  return out.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
 }
 
 /** Declared setup FACTS only (spec §4.1): setup.node -> npm ci (lockfile
@@ -206,11 +266,19 @@ function cleanupFailedVersion(name, versionDir, prevCurrent) {
   }
 }
 
+/** Problem lines for a refusal message. `level` is a REPORTING axis, not a
+ *  cause axis — a plugin whose declared API makes its data problems WARNINGS
+ *  must never be refused with an empty body, so fall back to every problem when
+ *  no error line exists. */
+function refusalLines(problems, prefix = '  - ') {
+  const errorsOnly = problems.filter((p) => p.level === 'error');
+  return (errorsOnly.length ? errorsOnly : problems).map((p) => `${prefix}${p.message}`);
+}
+
 function validated(name, versionDir) {
   const v = validatePluginDir(versionDir);
   if (!v.ok) {
-    const lines = v.problems.filter((p) => p.level === 'error').map((p) => `  - ${p.message}`);
-    throw new Error(`plugin "${name}" failed validation:\n${lines.join('\n')}`);
+    throw new Error(`plugin "${name}" failed validation:\n${refusalLines(v.problems).join('\n')}`);
   }
   return v.manifest;
 }
@@ -254,15 +322,20 @@ export async function installPlugin({ repoUrl, subdir = '', name, sha, marketpla
     // reach installPlugin's catch — cleanupFailedVersion would delete the version
     // dir a just-written lock entry points at. The install itself already
     // succeeded; warn and continue (re-import happens on the next update).
+    let workflowSkips = null;
     try {
       const wf = await importPluginWorkflows(name, versionDir);
+      workflowSkips = wf.skipped;
       for (const s of wf.skipped) {
         console.warn(`[plugin-store] ${name}: workflow ${s.file} not imported (${s.errors.join('; ')})`);
       }
     } catch (err) {
       console.warn(`[plugin-store] ${name}: workflow import failed (${err?.message || err}) — plugin installed; re-import via update`);
     }
-    return { ok: true, inventory, warnings };
+    // The receipt says what actually landed: `inventory` is what the plugin
+    // SHIPS, `ignored` is the subset worca refused to load (spec §9.3 drops).
+    const ignored = ignoredContributions(name, versionDir, workflowSkips ? { workflowSkips } : {});
+    return { ok: true, inventory, warnings, ignored };
   } catch (err) {
     cleanupFailedVersion(name, versionDir, prevCurrent);
     throw err;
@@ -302,15 +375,18 @@ export async function updatePlugin(name, { exec = defaultExec } = {}) {
     // §6.2(3): workflow re-import (upsert) after swap + lock update — same
     // isolation rationale as installPlugin: an import failure must not reach
     // this catch (cleanupFailedVersion would tear down the now-live version).
+    let workflowSkips = null;
     try {
       const wf = await importPluginWorkflows(name, versionDir);
+      workflowSkips = wf.skipped;
       for (const s of wf.skipped) {
         console.warn(`[plugin-store] ${name}: workflow ${s.file} not imported (${s.errors.join('; ')})`);
       }
     } catch (err) {
       console.warn(`[plugin-store] ${name}: workflow import failed (${err?.message || err}) — plugin updated; re-import via update`);
     }
-    return { ok: true, updated: true, inventory, warnings, ...cand };
+    const ignored = ignoredContributions(name, versionDir, workflowSkips ? { workflowSkips } : {});
+    return { ok: true, updated: true, inventory, warnings, ignored, ...cand };
   } catch (err) {
     cleanupFailedVersion(name, versionDir, prevCurrent);
     throw err;
@@ -426,11 +502,23 @@ export function setPluginEnabled(name, enabled) {
 /** Lock + current-manifest merge for the Plugins view / CLI list. */
 export function listInstalledPlugins() {
   const lock = readPluginsLock();
+  // ONE registry load for the whole list: it is the only place that knows which
+  // sidecars were dropped, and re-scanning per plugin would be N full scans.
+  const drops = [];
+  let registry = null;
+  try { registry = loadAgentRegistry(undefined, { onDrop: (d) => drops.push(d) }); }
+  catch { /* no resolvable home: fall back to the file-derived view */ }
   return Object.keys(lock).sort().map((name) => {
     const e = lock[name] || {};
     const cur = pluginCurrentDir(name);
     const manifest = existsSync(cur) ? readManifestAt(cur) : null; // existsSync follows the symlink
     const inv = manifest ? buildInstallInventory(cur) : null;
+    // Read from the raw dir, not the manifest: the mismatch is about the DATA
+    // the plugin ships, not about whether its manifest normalized. A plugin
+    // whose manifest did not normalize is `broken`, which outranks this.
+    const mismatch = manifest
+      ? apiMismatch(manifest.engines?.worcaApi ?? '', dataContractIssues(cur))
+      : null;
     return {
       name,
       version: e.version ?? null,
@@ -441,9 +529,15 @@ export function listInstalledPlugins() {
       enabled: e.enabled !== false,
       linked: e.linked === true,
       broken: !manifest,
+      apiMismatch: mismatch,
       contributions: inv
         ? { agents: inv.agents.length, taskSources: inv.taskSources.length, chatChannels: inv.chatChannels.length, models: inv.models.length, skills: inv.skills.length, workflows: inv.workflows.length }
         : { agents: 0, taskSources: 0, chatChannels: 0, models: 0, skills: 0, workflows: 0 },
+      // `contributions` counts what the plugin SHIPS (files on disk); `ignored`
+      // names the ones worca refused to load, so the card can stop claiming them.
+      // A disabled plugin contributes nothing BY CHOICE — its agents are not in the
+      // registry, so its templates would misreport V4.
+      ignored: manifest && e.enabled !== false ? ignoredContributions(name, cur, { registry, drops }) : [],
     };
   });
 }
@@ -467,6 +561,26 @@ export async function doctorPlugin(name) {
   if (!resolves) return { ok: false, checks };
   const manifest = readManifestAt(cur);
   checks.push(...dirChecks(cur, manifest));
+  // The DATA contract check is ADVISORY, so it lives HERE and never in
+  // dirChecks: dirChecks also feeds the install precheck, which THROWS on any
+  // failing check, and an outdated data contract must never block an install —
+  // the plugin's connector/chat channel still works untouched, worca simply
+  // ignores the agents and pipeline templates it ships (spec §9, P7.2).
+  if (manifest) {
+    const mismatch = apiMismatch(manifest.engines?.worcaApi ?? '', dataContractIssues(cur));
+    checks.push({ id: 'agents-api', ok: !mismatch,
+      detail: mismatch ? mismatch.message : 'agents and pipeline templates are plugin API 3 (meta v2 + graph templates)' });
+  }
+  // Same gate as the card: a disabled plugin contributes nothing BY CHOICE — its
+  // agents are not in the registry, so its templates would misreport V4 and this
+  // check would fail a plugin that is merely switched off.
+  if (manifest && entry.enabled !== false) {
+    const ignored = ignoredContributions(name, cur);
+    c('contributions', ignored.length === 0,
+      ignored.length
+        ? `${ignored.length} ignored: ${ignored.map((i) => `${i.file} — ${i.reason}`).join('; ')}`
+        : 'every shipped contribution loaded');
+  }
   if (manifest?.setup?.node && !entry.linked) {
     const h = sha256File(join(cur, 'package-lock.json'));
     c('lock-hash', !entry.lockfileHash || h === entry.lockfileHash,
@@ -516,14 +630,20 @@ export async function doctorPlugin(name) {
   return { ok: checks.every((x) => x.ok), checks };
 }
 
-/** Dev mode (spec §6.6): current -> absolute working dir; lock { linked: true }. */
-export function linkPlugin(name, absDir) {
+/**
+ * Dev mode (spec §6.6): current -> absolute working dir; lock { linked: true }.
+ * ASYNC because linking, like installing, ends with the workflow-template
+ * import: `plugin link` is the documented author loop (SKILL.md) and
+ * `updatePlugin` refuses a linked plugin, so without this a linked plugin's
+ * templates could reach the store by NO path at all. A linked dir is
+ * live-edited, so the refresh path afterwards is `worca plugin reimport <name>`.
+ * @returns {Promise<{ok:true, name:string, dir:string,
+ *   workflows:{imported:string[], skipped:Array<{file:string, errors:string[]}>}}>}
+ */
+export async function linkPlugin(name, absDir) {
   const dir = resolve(absDir);
   const v = validatePluginDir(dir);
-  if (!v.ok) {
-    const lines = v.problems.filter((p) => p.level === 'error').map((p) => p.message);
-    throw new Error(`cannot link: ${lines.join('; ')}`);
-  }
+  if (!v.ok) throw new Error(`cannot link: ${refusalLines(v.problems, '').join('; ')}`);
   if (v.manifest.name !== name) {
     throw new Error(`manifest name "${v.manifest.name}" does not match "${name}"`);
   }
@@ -535,5 +655,38 @@ export function linkPlugin(name, absDir) {
     installedAt: new Date().toISOString(), linked: true,
   };
   writePluginsLock(lock);
-  return { ok: true, name, dir };
+  // Same isolation as installPlugin: an import failure must not undo a link
+  // that already landed — the lock and the symlink are correct either way.
+  let workflows = { imported: [], skipped: [] };
+  try {
+    workflows = await importPluginWorkflows(name, dir);
+    for (const s of workflows.skipped) {
+      console.warn(`[plugin-store] ${name}: workflow ${s.file} not imported (${s.errors.join('; ')})`);
+    }
+  } catch (err) {
+    console.warn(`[plugin-store] ${name}: workflow import failed (${err?.message || err}) — plugin linked; re-import with \`worca plugin reimport ${name}\``);
+  }
+  return { ok: true, name, dir, workflows };
+}
+
+/**
+ * Re-run the workflow-template import for an INSTALLED OR LINKED plugin
+ * (spec §6.6). A linked dir is live-edited and `updatePlugin` refuses linked
+ * plugins, so this is the only refresh path a plugin author has; for an
+ * installed plugin it is the cheap way to retry an import that failed.
+ * Upsert-only: a template file the author DELETED keeps its row until the
+ * plugin is removed.
+ * @returns {Promise<{ok:true, name:string,
+ *   workflows:{imported:string[], skipped:Array<{file:string, errors:string[]}>},
+ *   ignored:Array<{file:string, reason:string}>}>}
+ */
+export async function reimportPlugin(name) {
+  if (!readPluginsLock()[name]) throw new Error(`plugin "${name}" is not installed`);
+  const cur = pluginCurrentDir(name);
+  if (!existsSync(cur)) throw new Error(`plugin "${name}": current symlink missing or dangling`);
+  const workflows = await importPluginWorkflows(name, cur);
+  for (const s of workflows.skipped) {
+    console.warn(`[plugin-store] ${name}: workflow ${s.file} not imported (${s.errors.join('; ')})`);
+  }
+  return { ok: true, name, workflows, ignored: ignoredContributions(name, cur, { workflowSkips: workflows.skipped }) };
 }

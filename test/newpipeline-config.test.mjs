@@ -838,3 +838,112 @@ test('branch select: a slower, older /api/branches response cannot overwrite a n
   for (let i = 0; i < 5; i++) await tick();
   assert.ok(values().includes('b-only') && !values().includes('a-only'), `the stale A response lost: ${values()}`);
 });
+
+// ── v2 graph workflows in the New-Pipeline panel ─────────────────────────────
+// Every stored template is a version-2 graph now (P8 retired v1), so the panel's
+// fetch wrapper, its node rows and its cycle inputs must all speak `nodes`/`wires`.
+
+const V2_AGENTS = [
+  { key: 'planner', displayName: 'Plan', color: 'violet', order: 1,
+    inputs: [{ id: 'task', type: 'md', required: true }],
+    outputs: [{ id: 'plan', type: 'md', when: 'always' }] },
+  { key: 'implementer', displayName: 'Implement', color: 'peach', order: 3,
+    inputs: [{ id: 'fix', type: 'md', required: false, loop: true },
+      { id: 'plan', type: 'md', required: true }],
+    outputs: [{ id: 'done', type: 'void', when: 'always' }] },
+  { key: 'reviewer', displayName: 'Review', color: 'blue', order: 4,
+    inputs: [{ id: 'plan', type: 'md', required: true }, { id: 'done', type: 'void', required: false }],
+    outputs: [{ id: 'review', type: 'md', when: 'blocking' }, { id: 'pass', type: 'void', when: 'clean' }] },
+];
+
+const graphOf = (id, name) => ({
+  id, name, version: 2, domain: 'coding',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+    { id: 'n_plan', kind: 'agent', key: 'planner', x: 280, y: 0, config: {} },
+    { id: 'n_impl', kind: 'agent', key: 'implementer', x: 560, y: 0, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 840, y: 0, config: {} },
+    { id: 'n_end', kind: 'end', x: 1120, y: 0, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+    { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
+    { id: 'w3', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_review', port: 'plan' } },
+    { id: 'w4', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_review', port: 'done' } },
+    { id: 'w5', from: { node: 'n_review', port: 'review' }, to: { node: 'n_impl', port: 'fix' }, config: { maxCycles: 3 } },
+    { id: 'w6', from: { node: 'n_review', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
+  ],
+});
+const SAVED_V2 = graphOf('wf_g', 'Graph');
+const DEFAULT_V2 = graphOf('wf_default', 'Default');
+
+function v2Fetch(extraConfig = {}) {
+  return (url) => {
+    if (url.includes('/api/projects')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: PROJECT, exists: true }] }) });
+    }
+    if (url.includes('/api/workflows/wf_g')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => SAVED_V2 });
+    }
+    if (url.includes('/api/workflows/wf_default')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => DEFAULT_V2 });
+    }
+    if (url.includes('/api/workflows')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: [DEFAULT_V2, SAVED_V2] }) });
+    }
+    if (url.includes('/api/agents')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ agents: V2_AGENTS }) });
+    }
+    if (url.includes('/api/config')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [], ...extraConfig }, models: MODELS, efforts: ['medium', 'high', 'max'] }) });
+    }
+    return null;
+  };
+}
+
+// The bug: getWorkflowApi kept the v1 shape guard (`Array.isArray(data.steps)`),
+// so every saved graph — which carries nodes/wires and no steps — resolved to
+// null and painted "Could not load this workflow."
+test('selecting a saved v2 graph renders one row per agent node, not the could-not-load hint', async () => {
+  const { window } = await boot({ fetchHandler: v2Fetch() });
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
+  pickWorkflow(window, 'wf_g');
+  for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
+  const host = window.document.querySelector('#agents-rows');
+  assert.doesNotMatch(host.textContent, /Could not load this workflow/, 'no hint');
+  const ids = [...host.querySelectorAll('.agent-row')].map((r) => r.dataset.nodeId);
+  assert.deepEqual(ids, ['n_plan', 'n_impl', 'n_review'], 'agent nodes only, in launch order');
+});
+
+// The cycle inputs are driven by classifyLoops, which needs the agents' PORTS.
+// The panel must source them itself: the Composer's registry is only populated
+// when that view has been opened.
+test('a v2 loop wire gets its cycle input without the Composer ever loading', async () => {
+  const { window } = await boot({ fetchHandler: v2Fetch() });
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
+  pickWorkflow(window, 'wf_g');
+  for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
+  const fb = window.document.querySelector('#wf-feedback-config');
+  const inputs = [...fb.querySelectorAll('input[data-fb-id]')];
+  assert.deepEqual(inputs.map((i) => i.dataset.fbId), ['w5'], 'the review -> fix loop wire');
+  assert.equal(fb.dataset.graph, '1', 'stamped as a graph row set (writes go to wires:{})');
+});
+
+// wf_default is a v2 graph too, and resolveGraph still layers the legacy
+// per-ROLE config under the per-node one. The rows must read the same layers,
+// or the panel shows "inherit" for a model the run actually uses.
+test('the built-in Default paints its real graph nodes and layers the legacy per-role config', async () => {
+  const { window } = await boot({ fetchHandler: v2Fetch({ steps: { planner: { model: 'claude-opus-4-8', effort: 'high' } } }) });
+  selectProjectAnd(window);
+  for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
+  const host = window.document.querySelector('#agents-rows');
+  const ids = [...host.querySelectorAll('.agent-row')].map((r) => r.dataset.nodeId);
+  assert.deepEqual(ids, ['n_plan', 'n_impl', 'n_review'], 'the served graph, not the v1 fallback');
+  const rows = window.__np.buildNodeConfigRows(DEFAULT_V2, Object.fromEntries(V2_AGENTS.map((a) => [a.key, a])),
+    { nodes: {}, wires: {} }, { legacySteps: { planner: { model: 'claude-opus-4-8', effort: 'high' } } });
+  const plan = rows.find((r) => r.nodeId === 'n_plan');
+  assert.equal(plan.model, 'claude-opus-4-8', 'legacy per-role model is the effective value');
+  assert.equal(plan.effort, 'high');
+});

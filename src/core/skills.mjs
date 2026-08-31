@@ -105,12 +105,19 @@ export function resolveSkill(name, { repoRoot, projectDir, homeDir = homedir(), 
  * `registry` is the plain object returned by loadAgentRegistry (keyed by agent
  * key); `plan.steps` is Array<Array<node>> and each node has `.key`.
  * @param {Record<string, {requiresSkills?: string[]}>} registry
- * @param {{steps?: Array<Array<{key:string}>>}} plan
+ * @param {{steps?: Array<Array<{key:string}>>}|Iterable<string>} planOrKeys  v1 plan, or agent keys
  * @returns {Array<{skill:string, requiredBy:string[]}>}
  */
-export function collectRequiredSkills(registry, plan) {
+export function collectRequiredSkills(registry, planOrKeys) {
+  // Two entry shapes: the v1 ExecutablePlan ({steps:[[{key}]]}) and a plain
+  // iterable of agent keys (what the engine-agnostic run harness has — it never
+  // sees a v1 plan). A plan object is not iterable, so the test is unambiguous.
   const nodeKeys = new Set();
-  for (const group of plan?.steps || []) for (const node of group) nodeKeys.add(node.key);
+  if (planOrKeys && typeof planOrKeys !== 'string' && typeof planOrKeys[Symbol.iterator] === 'function') {
+    for (const key of planOrKeys) nodeKeys.add(key);
+  } else {
+    for (const group of planOrKeys?.steps || []) for (const node of group) nodeKeys.add(node.key);
+  }
   /** @type {Map<string, Set<string>>} */
   const bySkill = new Map();
   for (const key of nodeKeys) {

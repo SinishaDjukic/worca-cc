@@ -7,7 +7,7 @@ import { askMaxTurns as readAskMaxTurns, askMaxBudgetUsd as readAskMaxBudgetUsd 
 export const ASK_LIMITS = Object.freeze({
   turnsPerThread: 1,                       // one running turn per thread (409)
   turnsGlobal: 3,                          // running turns across all threads (429)
-  turnTimeoutMs: 15 * 60 * 1000,           // wall clock per turn (the runner has none)
+  turnTimeoutMs: 30 * 60 * 1000,           // wall clock per turn (the runner has none)
   jobGraceMs: 30_000,                      // finished job kept for WS replay
   emptyThreadSweepMs: 24 * 60 * 60 * 1000, // empty threads older than this are swept at boot
   attachment: Object.freeze({

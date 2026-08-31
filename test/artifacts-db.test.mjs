@@ -17,7 +17,7 @@ import { readRunLogText } from '../src/core/artifacts.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
-import { writeWorkflow } from '../src/core/workflows.mjs';
+import { writeSeedGraph } from './helpers/graph-templates.mjs';
 
 const homes = [];
 beforeEach(async () => {
@@ -374,10 +374,10 @@ test('a mock run indexes plan + checklist + review markdown in the artifacts tab
   // produces plan (planner/refiner), code (implementer), review md (reviewer:
   // impl-review), and checklist (manualTestsChecklist). prompt is indexed by
   // createPipeline.
-  const steps = [['planner'], ['refiner'], ['implementer'], ['reviewer'], ['manualTestsChecklist']]
-    .map((g, i) => g.map((key, j) => ({ id: `s${i}_${j}`, key })));
-  const feedbacks = [['s1_0', 's1_0'], ['s3_0', 's2_0']].map(([from, to], k) => ({ id: `fb_${k}`, from, to }));
-  const tpl = await writeWorkflow({ name: 'art-index', steps, feedbacks });
+  // wf_full-no-decompose: planner -> refiner -> implementer -> reviewer ->
+  // manualTestsChecklist -> manualWebUiTesting, so the run produces plan, code,
+  // a review md and a checklist md — the four kinds this test indexes.
+  const tpl = await writeSeedGraph('wf_full-no-decompose', 'wf_art-index');
   const orch = createOrchestrator({ projectDir, prompt: 'demo', auto: true, claude: { mock: true }, workflowId: tpl.id });
   const res = await orch.run();
   assert.equal(res.status, 'done', 'pipeline converges');
@@ -475,4 +475,19 @@ test('readPipelineByKey surfaces the artifacts index (so History can show the Li
   const data = await readPipelineByKey(projectKey(projectDir), id);
   assert.ok(Array.isArray(data.artifacts), 'artifacts array present');
   assert.ok(data.artifacts.some((a) => a.kind === 'live-log'), 'live-log artifact listed');
+});
+
+// P8a: History decides whether to OFFER Resume from this flag, and the v2 upgrade
+// NULLs every retired v1 resume point — so it must be read from the row, never
+// inferred from the status (an interrupted run may or may not still carry one).
+test('rowToState reports `resumable` from the row\'s resume_point, not its status', async () => {
+  seedPipelineRow({ id: 'rsm00001', projectKey: 'proj-00000001', status: 'paused' });
+  const key = 'proj-00000001';
+  const noPoint = await readPipelineByKey(key, 'rsm00001');
+  assert.equal(noPoint.state.resumable, false, 'a NULLed (retired) point is not resumable');
+
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?')
+    .run(JSON.stringify({ version: 2, snapshot: null }), 'rsm00001');
+  const withPoint = await readPipelineByKey(key, 'rsm00001');
+  assert.equal(withPoint.state.resumable, true, 'a live point is resumable');
 });

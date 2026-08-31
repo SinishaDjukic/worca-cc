@@ -1,5 +1,14 @@
 {
   "key": "manualWebUiTesting",
+  "metaVersion": 2,
+  "mockRole": "manual-web-ui-testing",
+  "promptHints": "Execute the manual test checklist against the running web UI using the Playwright tools. Severity calibration: a failing manual case is at least major.",
+  "verdict": { "filename": "webui-review-cycle{cycle}.json" },
+  "inputs": [{ "id": "checklist", "type": "md" }],
+  "outputs": [
+    { "id": "review", "type": "md", "when": "blocking", "filename": "webui-review-cycle{cycle}.md", "artifactKind": "webui" },
+    { "id": "pass", "type": "void", "when": "clean" }
+  ],
   "domain": "coding",
   "displayName": "Manual web UI testing",
   "description": "Runs the manual checklist in the live web UI via Playwright. Reports what passed, failed, or blocked.",
@@ -7,10 +16,6 @@
   "icon": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M10 8.5l5 3.5-5 3.5V8.5Z\" fill=\"currentColor\" stroke=\"none\"/>",
   "agentFile": "worca-cc-manual-web-ui-testing.md",
   "runnerType": "verifier",
-  "loopSource": true,
-  "produces": ["review"],
-  "consumes": ["checklist","code"],
-  "connectsTo": ["implementer"],
   "asksQuestions": true,
   "questionsLocked": false,
   "questionsDefault": false,

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  logLineClass, logLineTime, logLineText, serializeLog, cycleSeparatorBefore,
+  logLineClass, logLineTime, logLineText, serializeLog, cycleSeparatorBefore, newCycleState,
   projectLogRecord,
 } from '../ui/public/log-line.mjs';
 
@@ -76,49 +76,95 @@ test('serializeLog emits no separator for a single-cycle or cycle-less sequence'
 });
 
 // ── cycle separators ────────────────────────────────────────────────────────
-// `prevCycle` is the cycle of the last RENDERED record that HAD one — callers
-// carry it past cycle-less notices (artifact events, git/orchestrator lines)
-// that land exactly at rewind boundaries and must not mask them.
+// v2 `cycle` is the PER-NODE ordinal, so the cursor is a per-node map, not one
+// scalar: a rule is drawn only when a node's own ordinal EXCEEDS the highest it
+// has already rendered. The map also carries the reader past cycle-less notices
+// (artifact events, git/orchestrator lines) that land exactly at a boundary.
+const seps = (recs) => { const st = newCycleState(); return recs.map((r) => cycleSeparatorBefore(st, r)); };
 
-test('cycleSeparatorBefore labels a cycle boundary', () => {
-  assert.equal(cycleSeparatorBefore(1, { cycle: 2 }), 'Cycle 2');
+test('cycleSeparatorBefore labels a node re-running at a higher ordinal', () => {
+  assert.deepEqual(seps([{ cycle: 1 }, { cycle: 2 }]), [null, 'Cycle 2']);
 });
 test('cycleSeparatorBefore returns null within one cycle', () => {
-  assert.equal(cycleSeparatorBefore(2, { cycle: 2 }), null);
+  assert.deepEqual(seps([{ cycle: 2 }, { cycle: 2 }]), [null, null]);
 });
-test('no leading header: null prevCycle (nothing cycled rendered yet) yields null', () => {
-  assert.equal(cycleSeparatorBefore(null, { cycle: 1 }), null);
-  assert.equal(cycleSeparatorBefore(null, { cycle: 2 }), null);
+test('no leading header: the first cycled record of a node yields null', () => {
+  assert.deepEqual(seps([{ cycle: 1 }]), [null]);
+  assert.deepEqual(seps([{ cycle: 2 }]), [null]);
 });
 test('a cycle-less record never triggers a separator', () => {
-  assert.equal(cycleSeparatorBefore(1, { text: 'artifact: review.md' }), null);
-  assert.equal(cycleSeparatorBefore(1, null), null);
+  const st = newCycleState();
+  assert.equal(cycleSeparatorBefore(st, { text: 'artifact: review.md' }), null);
+  assert.equal(cycleSeparatorBefore(st, null), null);
 });
 test('a cycle-less notice AT the boundary does not mask the separator', () => {
-  let prev = null;
-  const seq = [{ cycle: 1, text: 'work' }, { text: 'artifact: review.md' }, { cycle: 2, text: 're-run' }];
-  const seps = seq.map((rec) => {
-    const s = cycleSeparatorBefore(prev, rec);
-    if (rec.cycle != null) prev = rec.cycle;
-    return s;
-  });
-  assert.deepEqual(seps, [null, null, 'Cycle 2']);
+  assert.deepEqual(
+    seps([{ cycle: 1, text: 'work' }, { text: 'artifact: review.md' }, { cycle: 2, text: 're-run' }]),
+    [null, null, 'Cycle 2'],
+  );
 });
-test('cycleSeparatorBefore compares as strings so 2 and "2" agree', () => {
-  assert.equal(cycleSeparatorBefore(2, { cycle: '2' }), null);
-  assert.equal(cycleSeparatorBefore('1', { cycle: 2 }), 'Cycle 2');
+test('cycleSeparatorBefore coerces so 2 and "2" agree', () => {
+  assert.deepEqual(seps([{ cycle: 2 }, { cycle: '2' }]), [null, null]);
+  assert.deepEqual(seps([{ cycle: '1' }, { cycle: 2 }]), [null, 'Cycle 2']);
+});
+
+// ── MIN-37: the ordinal is per NODE ─────────────────────────────────────────
+test('MIN-37: interleaved concurrent nodes at different ordinals draw NO separator', () => {
+  // R-P6b's case: a loop re-fired n_impl (ordinal 2) while the parallel n_test
+  // is still on its first execution. Zero rewinds happened between these lines.
+  const lines = [
+    { source: 'implementer', text: 'patching a.js', nodeId: 'n_impl', executionId: 'x:n_impl:2', cycle: 2 },
+    { source: 'tester', text: 'running suite', nodeId: 'n_test', executionId: 'x:n_test:1', cycle: 1 },
+    { source: 'implementer', text: 'patching b.js', nodeId: 'n_impl', executionId: 'x:n_impl:2', cycle: 2 },
+    { source: 'tester', text: '12 passed', nodeId: 'n_test', executionId: 'x:n_test:1', cycle: 1 },
+    { source: 'implementer', text: 'done', nodeId: 'n_impl', executionId: 'x:n_impl:2', cycle: 2 },
+  ];
+  assert.deepEqual(seps(lines), [null, null, null, null, null]);
+  assert.doesNotMatch(serializeLog(lines), /Cycle/, 'the clipboard copy agrees');
+});
+
+test('MIN-37: a node re-running gets exactly one rule, and a later node at ordinal 1 gets none', () => {
+  // The shipped seed shape: the refiner self-loop re-fires, then the
+  // implementer starts its FIRST execution.
+  const lines = [
+    { ts: TS, source: 'refiner', text: 'refining', nodeId: 'n_refine', cycle: 1 },
+    { ts: TS, source: 'refiner', text: 'refining again', nodeId: 'n_refine', cycle: 2 },
+    { ts: TS, source: 'implementer', text: 'implementing', nodeId: 'n_impl', cycle: 1 },
+  ];
+  assert.deepEqual(seps(lines), [null, 'Cycle 2', null]);
+  assert.deepEqual(serializeLog(lines).split('\n'), [
+    '14:05:09 [refiner] refining',
+    '── Cycle 2 ──',
+    '14:05:09 [refiner] refining again',
+    '14:05:09 [implementer] implementing',
+  ]);
+});
+
+test('MIN-37: a LOWER ordinal for the same node never draws a rule', () => {
+  // A rewind only ever moves forward. An out-of-order record (a History replay
+  // seeding a pane the live socket is already feeding) must not invent one.
+  assert.deepEqual(seps([{ nodeId: 'a', cycle: 1 }, { nodeId: 'a', cycle: 3 }, { nodeId: 'a', cycle: 2 }, { nodeId: 'a', cycle: 4 }]),
+    [null, 'Cycle 3', null, 'Cycle 4']);
+});
+
+test('MIN-37: one node\'s ordinals are independent of another\'s', () => {
+  assert.deepEqual(seps([
+    { nodeId: 'a', cycle: 1 }, { nodeId: 'b', cycle: 1 },
+    { nodeId: 'a', cycle: 2 }, { nodeId: 'b', cycle: 2 },
+    { nodeId: 'a', cycle: 2 }, { nodeId: 'b', cycle: 3 },
+  ]), [null, null, 'Cycle 2', 'Cycle 2', null, 'Cycle 3']);
 });
 
 // ── NDJSON projection ───────────────────────────────────────────────────────
 
-test('projectLogRecord keeps cycle and stream — the axes the pickers/separators need', () => {
+test('projectLogRecord keeps cycle, stream, nodeId and executionId — the axes the pickers/separators need', () => {
   const rec = projectLogRecord({
     source: 'implementer', level: 'warn', text: '429, retrying', ts: TS,
-    sub: false, stepIndex: 3, cycle: 2, stream: 'err', nodeId: 'n1',
+    sub: false, stepIndex: 3, cycle: 2, stream: 'err', nodeId: 'n1', executionId: 'x:n1:2', extra: 'dropped',
   });
   assert.deepEqual(rec, {
     source: 'implementer', level: 'warn', text: '429, retrying', ts: TS,
-    sub: false, stepIndex: 3, cycle: 2, stream: 'err',
+    sub: false, stepIndex: 3, cycle: 2, stream: 'err', nodeId: 'n1', executionId: 'x:n1:2',
   });
 });
 

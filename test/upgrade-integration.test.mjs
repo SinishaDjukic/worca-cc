@@ -187,13 +187,15 @@ test('readConfig() returns the migrated legacy {steps, customModels} view', asyn
   assert.ok(cfg.customModels.some((m) => m.id === 'my-fork-4-9'), 'custom model preserved');
 });
 
-test('listWorkflows() returns the migrated user workflow template', async () => {
-  const list = await listWorkflows();
+test('listWorkflows() returns the migrated user workflow template, archived by the v2 upgrade', async () => {
+  assert.equal((await listWorkflows()).some((w) => w.id === 'wf_quickfix'), false, 'archived rows are not listed');
+  const list = await listWorkflows({ includeArchived: true });
   const wf = list.find((w) => w.id === 'wf_quickfix');
   assert.ok(wf, 'wf_quickfix imported');
   assert.equal(wf.name, 'Quick Fix');
   assert.equal(wf.steps.length, 2, 'two-stage topology preserved');
   assert.equal(wf.feedbacks.length, 1, 'feedback edge preserved');
+  assert.ok(wf.archivedAt, 'kept, hidden, never deleted');
 });
 
 test('listWorkspaces() + readWorkspace() return the migrated workspace + ordered members', async () => {
@@ -220,7 +222,9 @@ test('readRunConfig() returns the migrated per-project config incl. extra (webUi
   assert.ok(rc.customModels.some((m) => m.id === 'my-fork-4-9'));
   assert.equal(rc.workflows.wf_quickfix.nodes.s0_0.model, 'claude-sonnet-4-6');
   assert.equal(rc.workflows.wf_quickfix.feedbacks.fb_0.maxCycles, 3);
-  assert.equal(rc.activeWorkflowId, 'wf_quickfix');
+  // V24 archived the imported v1 template, so the remembered active workflow —
+  // no longer runnable — falls back to the graph default.
+  assert.equal(rc.activeWorkflowId, 'wf_default');
   assert.equal(rc.webUiTesting.startCommand, 'npm run dev', 'unknown key preserved via project_config.extra');
 });
 

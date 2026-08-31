@@ -4,7 +4,7 @@
 // real stderr must carry it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { errStreamAttr } from '../src/core/orchestrator.mjs';
+import { errStreamAttr } from '../src/core/run-harness.mjs';
 
 test('non-empty stderr yields the stream tag', () => {
   assert.deepEqual(errStreamAttr('boom'), { stream: 'err' });

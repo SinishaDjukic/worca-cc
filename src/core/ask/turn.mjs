@@ -3,7 +3,7 @@
 // ask-* frames through deps.onFrame (the SERVER stamps {threadId, messageId,
 // seq} — spec §17 contract). run() NEVER throws; stop() aborts. One instance
 // owns one turn INCLUDING the §6.2.7 resume retry (fresh reducer per attempt,
-// one AbortController + one 15-minute wall clock spanning both attempts).
+// one AbortController + one 30-minute wall clock spanning both attempts).
 // Shape: agent-gen.mjs (EventEmitter, terminal latch, finally cleanup).
 // Binding rules enforced here: R-A (settle-before-finish, persist card/notice
 // mid-turn), R-C (rejection classification, abort branch FIRST — the runner
@@ -76,7 +76,7 @@ class AskTurn extends EventEmitter {
       setPendingCardComments: deps.setPendingCardComments ?? setPendingCardComments,
       recordAskCost: deps.recordAskCost ?? recordAskCostDelta,
       now: deps.now ?? Date.now,
-      // Default timers unref so a 15-minute clock never holds the process open
+      // Default timers unref so a 30-minute clock never holds the process open
       // (orchestrator.mjs:2627 _backoff precedent). Tests inject both.
       setTimeout: deps.setTimeout ?? ((fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; }),
       clearTimeout: deps.clearTimeout ?? ((t) => clearTimeout(t)),
@@ -284,7 +284,7 @@ class AskTurn extends EventEmitter {
         JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath }), null, 2),
         'utf8',
       );
-      // One 15-minute budget for the whole turn, retry included. The timedOut
+      // One 30-minute budget for the whole turn, retry included. The timedOut
       // flag and abort() run in ONE synchronous callback, so R-C always reads
       // the flag set (the awaiting continuation resumes a microtask later);
       // flag-first is kept as defensive style (plugin-shim.mjs:164 precedent).
@@ -356,7 +356,7 @@ class AskTurn extends EventEmitter {
           // is null (spec §6.2.8); a result that DID land before the abort keeps
           // its real cost.
           if (this.timedOut) {
-            return await this._complete({ kind: 'error', message: 'timed out after 15 min' });
+            return await this._complete({ kind: 'error', message: 'timed out after 30 min' });
           }
           return await this._complete({ kind: 'done', status: 'stopped', reason: 'user' });
         }

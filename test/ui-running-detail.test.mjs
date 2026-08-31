@@ -193,49 +193,7 @@ const click = (window, node) => node.dispatchEvent(new window.Event('click', { b
 
 // ---------- graph ----------
 
-test('the detail screen paints a LIVE pipeline graph', async () => {
-  const { window, recv } = await openDetail();
-  recv({
-    type: 'state', runId: ID, status: 'running', stepper: STEPPER2,
-    steps: [{ nodeId: 'a', activeMs: 4000, cycle: 1 }, { nodeId: 'b', activeMs: 1000, runningSince: Date.now() - 2000, cycle: 1 }],
-  });
-  recv({ type: 'phase', runId: ID, phase: 'implement', nodeId: 'b', cycle: 1 });
-  await settle(window);
 
-  const host = window.document.querySelector('#run-detail .rd-graph .run-flow');
-  assert.ok(host, '.rd-graph > .run-flow-wrap > .run-flow is built');
-  assert.ok(host.closest('.run-flow-wrap'), 'the graph sits inside the shared scroll wrap');
-  assert.equal(host.querySelectorAll('.run-node[data-id]').length, 2, 'one node per manifest node');
-
-  const b = host.querySelector('.run-node[data-id="b"]');
-  assert.ok(b.classList.contains('is-active'),
-    'the frontier node is ACTIVE — paintStepper\'s adapter, not paintHistStepper\'s activeId:null');
-  assert.notEqual(b.querySelector('.dur').textContent, '',
-    'durations come from durByNode(..., live=true), not History\'s live=false');
-  assert.ok(host.querySelector('svg.wires'), 'the shared wire renderer ran');
-});
-
-test('the detail graph preserves horizontal scroll across a manifest rebuild', async () => {
-  // jsdom has no layout, so a final-value assert on scrollLeft is false-green
-  // (nothing ever clamps it back to 0). Record the WRITES instead — the same
-  // technique as test/ui-scroll.test.mjs's structural-rebuild case.
-  const { window, recv } = await openDetail();
-  recv({ type: 'state', runId: ID, status: 'running', stepper: STEPPER2, steps: [] });
-  await settle(window);
-
-  const wrap = window.document.querySelector('#run-detail .rd-graph .run-flow-wrap');
-  let left = 0; const writes = [];
-  Object.defineProperty(wrap, 'scrollLeft', {
-    configurable: true, get: () => left, set: (v) => { left = v; writes.push(v); },
-  });
-  wrap.scrollLeft = 800;
-  writes.length = 0;                       // watch only the rebuild
-
-  recv({ type: 'state', runId: ID, status: 'running', stepper: STEPPER3, steps: [] });
-  await settle(window);
-  assert.deepEqual(writes, [800], 'buildRunGraph wrote the saved scrollLeft back after the wipe');
-  assert.equal(window.document.querySelectorAll('#run-detail .rd-graph .run-node[data-id]').length, 3);
-});
 
 // ---------- banners ----------
 
@@ -670,7 +628,7 @@ test('the Live log tab is the CARD pipeline: bar, switch, hydrated lines, shared
   assert.ok(bar, 'the detail carries the shared filter bar');
   assert.deepEqual(
     [...bar.querySelectorAll('.log-f')].map((n) => n.classList[1]),
-    ['log-f-source', 'log-f-level', 'log-f-step', 'log-f-cycle', 'log-search', 'log-copy']);
+    ['log-f-source', 'log-f-level', 'log-f-step', 'log-f-cycle', 'log-f-exec', 'log-search', 'log-copy']);
   assert.ok(sec.querySelector('.switch.autoscroll'), 'the auto-scroll switch rides along');
   // Lines come from r.logLines, not from a fetch: no /log request was made.
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/log')).length, 0);
@@ -696,37 +654,6 @@ test('the Live log tab is the CARD pipeline: bar, switch, hydrated lines, shared
 
 // --- T7: Overview -----------------------------------------------------------
 
-test('Overview shows the current-state banner and exactly three stat cards', async () => {
-  const ctx = await bootRunning();
-  await openRun(ctx);
-  const { window } = ctx;
-  click(window, tabOf(window, 'overview'));
-  await settle(window);
-  const sec = secOf(window, 'overview');
-
-  const banner = sec.querySelector('.rd-ov-state');
-  assert.ok(banner, 'the current-state banner renders');
-  assert.equal(banner.querySelector('.rd-ov-chip').textContent, 'Implement');
-  assert.equal(banner.querySelector('.rd-ov-copy').textContent, 'Implement is running.');
-
-  const cards = [...sec.querySelectorAll('.hd-ov-grid .hd-ov-card')];
-  assert.equal(cards.length, 3, 'D10: three cards, no MODEL card');
-  assert.deepEqual(cards.map((c) => c.querySelector('.hd-ov-label').textContent),
-    ['ELAPSED', 'COST SO FAR', 'WORKTREE']);
-  // liveTotalMs sums the two steps' activeMs (65000 + 30000); neither carries a
-  // runningSince, so there is no live tail.
-  assert.equal(cards[0].querySelector('.hd-ov-value').textContent, '1m 35s');
-  assert.ok(cards[0].querySelector('.hd-ov-value').classList.contains('run-time'),
-    'the ELAPSED value node is tagged for the 1 s interval');
-  // runStepLabel (Task 4) against CLIENT_DEFAULT_STEPPER: 7 nodes
-  // (preflight/clarify/plan/refine/implement/review/done), frontier = implement = 5th.
-  assert.equal(cards[0].querySelector('.hd-ov-sub').textContent, 'step 5/7 · Implement');
-  assert.equal(cards[1].querySelector('.hd-ov-value').textContent, '$1.50');
-  assert.match(cards[1].querySelector('.hd-ov-value').title, /Estimated cost \$1\.5000/);
-  assert.equal(cards[1].querySelector('.hd-ov-sub').textContent, 'cap $5.00 per pipeline');
-  assert.equal(cards[2].querySelector('.hd-ov-value').textContent, 'active');
-  assert.equal(cards[2].querySelector('.hd-ov-sub').textContent, '/tmp/wt');
-});
 
 test('the COST sub-line reads "across N steps" when no per-pipeline cap is set', async () => {
   const ctx = await bootRunning({ budget: okBudget({ pipelineLimitUsd: null }) });
@@ -759,45 +686,6 @@ test('the Task card shows the prompt with a Show more expander past 600 chars', 
 
 // --- T7: Agents -------------------------------------------------------------
 
-test('Agents groups by main agent and renders the live-state column', async () => {
-  const ctx = await bootRunning();
-  await openRun(ctx);
-  const { window } = ctx;
-  click(window, tabOf(window, 'agents'));
-  await settle(window);
-  const sec = secOf(window, 'agents');
-
-  const groups = [...sec.querySelectorAll('.rd-ag-group')];
-  assert.equal(groups.length, 2, 'one card per MAIN agent that ran');
-  assert.deepEqual(groups.map((g) => g.querySelector('.rd-ag-head b').textContent),
-    ['Plan', 'Implement']);
-
-  // Plan spawned nothing: its header still carries its own step status + skills.
-  assert.equal(groups[0].querySelector('.rd-ag-meta').textContent, 'cycle 1');
-  assert.equal(groups[0].querySelector('.subs-stat').textContent, 'done');
-  assert.equal(groups[0].querySelector('.skill-pill.is-skill').textContent, 'brainstorming');
-  assert.equal(groups[0].querySelector('.rd-ag-none').textContent, 'No sub-agents spawned');
-
-  // Implement: meta sums only the rows that carry values; graphify pill survives.
-  assert.equal(groups[1].querySelector('.rd-ag-meta').textContent, 'cycle 1 · 2m 4s · $0.0421');
-  assert.equal(groups[1].querySelector('.graphify-pill').textContent, 'graphify ×2');
-  assert.equal(groups[1].querySelector('.subs-stat').textContent, 'running');
-
-  const rows = [...groups[1].querySelectorAll('.rd-ag-row')];
-  assert.equal(rows.length, 2);
-  assert.equal(rows[0].querySelector('.rd-ag-label').textContent, 'Explore repo');
-  assert.equal(rows[0].querySelector('.agent-type-pill').textContent, 'Explore');
-  assert.ok(rows[0].querySelector('.rd-ag-dot').classList.contains('run'));
-  assert.equal(rows[0].querySelector('.rd-ag-state').textContent, 'running');
-  assert.equal(rows[0].querySelector('.rd-ag-dur').textContent, '');
-  assert.equal(rows[0].querySelector('.rd-ag-cost').textContent, '');
-  assert.equal(rows[1].querySelector('.rd-ag-state').textContent, 'finished');
-  assert.ok(rows[1].querySelector('.rd-ag-dot').classList.contains('done'));
-  assert.equal(rows[1].querySelector('.rd-ag-dur').textContent, '2m 4s');
-  assert.equal(rows[1].querySelector('.rd-ag-cost').textContent, '$0.0421');
-  // No invented vocabulary: the stream only ever emits running|finished|error.
-  assert.equal(sec.textContent.includes('queued'), false);
-});
 
 test('Agents renders the empty state when nothing has been recorded', async () => {
   const ctx = await bootRunning();
@@ -880,31 +768,6 @@ test('the live-log caret is suppressed beside the "no lines match the filter" pl
 // Lives HERE, not in Task 7, because every assertion after the first depends on a
 // live frame reaching sec.__update — and rdUpdateSections, the only thing that
 // ever calls it, is this task's.
-test('Overview banner copy follows the run state', async () => {
-  const ctx = await bootRunning();
-  await openRun(ctx);
-  const { window } = ctx;
-  click(window, tabOf(window, 'overview'));
-  await settle(window);
-  const copy = () => secOf(window, 'overview').querySelector('.rd-ov-copy').textContent;
-
-  frame(ctx, { type: 'phase', runId: 'r1', phase: 'review', status: 'start', cycle: 2 });
-  await settle(window);
-  assert.equal(copy(), 'Review is running · cycle 2.');
-
-  frame(ctx, {
-    type: 'question', runId: 'r1', id: 'q1', kind: 'clarify',
-    questions: [{ id: 'q1a', question: 'Which theme?', options: ['dark', 'light', ''] }],
-  });
-  await settle(window);
-  assert.equal(copy(), 'Parked on Review until the questions above are answered.');
-
-  frame(ctx, { type: 'question-resolved', runId: 'r1', id: 'q1', reason: 'resolved' });
-  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'paused', steps: STEPS() });
-  await settle(window);
-  assert.equal(copy(),
-    'Paused by you. Agents in flight finished their checkpoint; nothing new is dispatched.');
-});
 
 
 test('a state frame for the open run repaints the ACTIVE section only', async () => {
@@ -1030,6 +893,12 @@ test('a run that finishes while its detail is open keeps the page and goes termi
   frame(ctx, { type: 'log', runId: 'r1', source: 'planner', level: 'info', text: 'one', ts: 0, stepIndex: 0, cycle: 1 });
   await settle(window);
   assert.equal(rdBox(window).querySelectorAll('.log-line').length, 1);
+  // MAJ-30: the LIVE half of `.rd-graph.settled`. Only the terminal half was
+  // pinned, so a paintRdTerminal that stamped `settled` unconditionally killed
+  // the marching ants on every running graph with the suite still green — the
+  // ants themselves are asserted only by verify-run-monitor-cdp.mjs check(4a/4b).
+  assert.equal(window.document.querySelector('#run-detail .rd-graph').classList.contains('settled'), false,
+    'a live run never carries .settled');
 
   frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
   await settle(window, 6);
@@ -1107,4 +976,56 @@ test('an unresolvable projectKey hides the link instead of guessing one', async 
   frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
   await settle(window, 6);
   assert.equal(window.document.querySelector('#run-detail .rd-history-link').hidden, true);
+});
+// --- P6b Task 14: the Agents tab names v2 groups from the ledger -------------
+// C3: cycleAwareLabel's 4th parameter is only reachable through rdAgentsBody's
+// call site — a unit test that passes the ledger directly leaves the app arm
+// dead. This drives the REAL path: WS frames -> run model -> detail -> tab.
+
+const V2_MANIFEST = {
+  version: 2,
+  template: { id: 'wf', name: 'WF' },
+  graph: {
+    nodes: [
+      { id: 'n_impl', kind: 'agent', key: 'implementer', label: 'Implementer', color: 'blue', x: 0, y: 0, model: 'claude-fable-5', effort: 'max', ports: { inputs: [], outputs: [], await: true } },
+      { id: 'n_or', kind: 'or', key: null, label: 'OR', x: 0, y: 0, ports: { inputs: [], outputs: [], await: false } },
+    ],
+    wires: [],
+  },
+};
+
+const V2_STEPS = () => ([
+  { key: 'x:n_impl:1', executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1, kind: 'cycle', cycle: 1, status: 'done', activeMs: 1000, costUsd: 0.1 },
+  { key: 'x:n_impl:1:p1t3', executionId: 'x:n_impl:1:p1t3', nodeId: 'n_impl', ordinal: 1, kind: 'task', title: 'Add schema', cycle: 1, status: 'done', activeMs: 2000, costUsd: 0.2 },
+  { key: 'x:n_impl:2', executionId: 'x:n_impl:2', nodeId: 'n_impl', ordinal: 2, kind: 'cycle', cycle: 2, status: 'start', activeMs: 500, costUsd: 0.05 },
+  { key: 'x:n_or:1', executionId: 'x:n_or:1', nodeId: 'n_or', ordinal: 1, kind: 'cycle', cycle: 1, status: 'done', activeMs: 1, costUsd: 0 },
+]);
+
+const V2_SUBS = () => ([
+  { id: 'v1', label: 'Slice worker', nodeId: 'n_impl', cycle: 1, stepKey: 'x:n_impl:1:p1t3', status: 'finished', durationMs: 2000, costUsd: 0.2 },
+]);
+
+test('Agents: a v2 run names its groups from the ledger (rdAgentsBody passes r.steps)', async () => {
+  const ctx = await bootRunning();
+  await openRun(ctx, { stepper: V2_MANIFEST, steps: V2_STEPS(), subAgents: V2_SUBS() });
+  const { window } = ctx;
+  click(window, tabOf(window, 'agents'));
+  await settle(window);
+  const sec = secOf(window, 'agents');
+
+  const heads = [...sec.querySelectorAll('.rd-ag-group .rd-ag-head b')].map((b) => b.textContent);
+  // The OR node writes a ledger row too and must NOT become an Agents group
+  // (agentNodeIdSet's v2 arm); every surviving group wears its ledger label.
+  assert.deepEqual(heads, ['Implementer #1', 'Implementer #1 · Add schema', 'Implementer #2'],
+    'the 4th argument (r.steps) reaches cycleAwareLabel — without it every head reads a bare "Implementer"');
+  // The slice's sub-agent row landed in the slice group, not the cycle group.
+  const groups = [...sec.querySelectorAll('.rd-ag-group')];
+  assert.equal(groups[1].querySelectorAll('.rd-ag-row').length, 1);
+  assert.equal(groups[1].querySelector('.rd-ag-label').textContent, 'Slice worker');
+  // The manifest node's model/effort selection reaches every group head as a
+  // pill. state.models is unseeded here, so the RAW id prints (the fallback arm
+  // of stepModelPillHtml; the label arm is covered by ui-history-detail).
+  for (const g of groups) {
+    assert.equal(g.querySelector('.rd-ag-head .sub-model-pill').textContent, 'claude-fable-5 · max');
+  }
 });

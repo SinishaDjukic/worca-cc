@@ -159,10 +159,12 @@ test('meta line: status-word family follows statusPill, started-at renders, elap
   const { upsertRun, buildRunCard, paintRunCard, onState } = ctx.window.__np;
   const r = upsertRun({ runId: 'm1', title: 't', projectDir: '/tmp/p', status: 'running', startedAt: '2026-01-01T09:30:15Z' });
   r.el = buildRunCard(r);
-  onState(r, { status: 'running', phase: 'implement', totalCostUsd: 1.25 });
+  // A run with no manifest yet has no active agent, so the pill reads plainly
+  // "Running" (the v1 phaseKey switch that used to name the phase is gone).
+  onState(r, { status: 'running', totalCostUsd: 1.25 });
   const word = r.el.querySelector('.rc-status-word');
-  assert.equal(word.textContent, 'Implementing');
-  assert.ok(word.classList.contains('st-blue'), "statusPill's blue family lands on the word");
+  assert.equal(word.textContent, 'Running');
+  assert.ok(word.classList.contains('st-peach'), "statusPill's family lands on the word");
   assert.match(r.el.querySelector('.rm-text').textContent, /^started \d\d:\d\d:\d\d$/,
     'the meta segment is the started-at clock only (project moved to the sidebar/detail)');
   assert.equal(r.el.querySelector('.run-cost').textContent, '$1.25');

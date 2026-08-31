@@ -128,3 +128,20 @@ test('isRefusalTitle: legitimate titles starting with What/Which/Unable/Please a
     assert.equal(isRefusalTitle(t), true, t);
   }
 });
+
+test('generateTitle honors opts.mock without WORCA_MOCK — no spawn even with a bogus bin', async () => {
+  const prevMock = process.env.WORCA_MOCK;
+  delete process.env.WORCA_MOCK;
+  try {
+    const t = await generateTitle('Add a settings page with dark mode', {
+      cwd: process.cwd(),
+      mock: true,
+      bin: '/nonexistent/claude-must-not-spawn',
+    });
+    // runMock's unknown-role body. Without the passthrough the bogus bin is
+    // spawned, ENOENTs, and generateTitle swallows that into ''.
+    assert.equal(t, '[mock] role unknown complete');
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
+  }
+});

@@ -1,0 +1,465 @@
+// test/orchestrator-graph.test.mjs
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { useTempHome } from './helpers/temp-home.mjs';
+import { gitDir } from './helpers/git-dir.mjs';
+import { createOrchestrator } from '../src/core/orchestrator.mjs';
+
+useTempHome(after);
+
+import { mkdtemp, rm, writeFile, readdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { before } from 'node:test';
+import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
+import { writeGraphWorkflow } from '../src/core/workflows.mjs';
+import { readPipelineForResume, artifactPaths, readPipelineExtras } from '../src/core/artifacts.mjs';
+import { setPipelineCostLimitUsd } from '../src/core/settings.mjs';
+import { QUIESCENCE_WARNING, quiescenceDeadEnd } from '../src/core/graph/scheduler.mjs';
+import { BOOKEND_EXECUTION_IDS } from '../src/shared/graph/constants.mjs';
+import { formatGateHeader } from '../src/cli/render.mjs';
+
+// settings sandbox: settingsFile() resolves under HOME, not WORCA_HOME (the
+// same isolation test/cost-enforcement.test.mjs:18-36 uses).
+let sandboxHome;
+const prevEnv = {};
+before(async () => {
+  sandboxHome = await mkdtemp(join(tmpdir(), 'worca-graph-home-'));
+  for (const k of ['HOME', 'USERPROFILE']) prevEnv[k] = process.env[k];
+  process.env.HOME = sandboxHome;
+  process.env.USERPROFILE = sandboxHome;
+});
+after(async () => {
+  for (const k of ['HOME', 'USERPROFILE']) {
+    if (prevEnv[k] === undefined) delete process.env[k]; else process.env[k] = prevEnv[k];
+  }
+  await rm(sandboxHome, { recursive: true, force: true });
+});
+
+/** Persist the 7 seeds so readWorkflow can serve them (V24 does this for real
+ *  in P8). wf_default rides its coexistence alias and is NOT written. */
+async function seedGraphs() {
+  for (const t of SEED_TEMPLATES) {
+    await writeGraphWorkflow({ id: t.id, name: t.name, domain: t.domain, nodes: t.nodes, wires: t.wires });
+  }
+}
+/** Every runnable graph id: the 7 saved seeds + the graph default's alias. */
+const GRAPH_IDS = [...SEED_TEMPLATES.map((t) => t.id), 'wf_default'];
+/** Seeds that cannot reach End under the mock BY DESIGN (P3's mock-graph audit). */
+const QUIESCENT = new Set(['wf_no-clarify']);
+/** The v2 executor ABI for injected runners: one entry per declared output port. */
+function outsOf(ctx) {
+  const o = {};
+  for (const p of ctx.ports.outputs || []) o[p.id] = { path: ctx.outputs?.[p.id]?.path ?? null, type: p.type };
+  return o;
+}
+
+test('the graph default runs end to end under mock and reaches the End card', { timeout: 120000 }, async () => {
+  const dir = gitDir();
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo task',
+    claude: { mock: true }, auto: true,
+  });
+  const execs = [];
+  orch.on('exec', (e) => execs.push(e));
+
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+
+  const st = orch.getState();
+  assert.equal(st.engine, 2);
+  assert.equal(st.endReached, true, 'the End card was bound');
+  assert.ok(st.result, 'state.result carries the End payload');
+  assert.deepEqual(st.warnings, []);
+  // Every ledger row is keyed by its executionId. `x:` is NOT a bookend filter —
+  // every v2 executionId starts with it — so the bookends are named explicitly.
+  const rows = st.steps.filter((x) => String(x.key).startsWith('x:') && !BOOKEND_EXECUTION_IDS.includes(x.key));
+  assert.ok(rows.length > 0);
+  for (const s of rows) {
+    assert.equal(s.key, s.executionId);
+    assert.ok(/^x:[A-Za-z0-9_-]+:\d+(:[A-Za-z0-9_-]+)?$/.test(s.key), `bad executionId ${s.key}`);
+    assert.equal(s.stepIndex, null);
+    assert.ok(['done', 'error', 'paused', 'stopped'].includes(s.status), `${s.key} ended ${s.status}`);
+  }
+  // The agent nodes all ran (clarify, planner, refiner x2, implementer x2, reviewer x2).
+  const started = execs.filter((e) => e.status === 'start' && e.agentKey);
+  assert.ok(started.length >= 8, `expected >= 8 agent executions, got ${started.length}`);
+  assert.equal(orch.getState().status, 'done');
+});
+
+test('every seed graph completes offline under mock; all but the quiescent one bind End', { timeout: 300000 }, async () => {
+  await seedGraphs();
+  assert.equal(GRAPH_IDS.length, 8, 'seven seeds + the graph default alias');
+  for (const workflowId of GRAPH_IDS) {
+    const dir = gitDir('seed');
+    const orch = createOrchestrator({
+      projectDir: dir, workflowId, prompt: 'demo task', claude: { mock: true }, auto: true,
+    });
+    const res = await orch.run();
+    const st = orch.getState();
+    assert.equal(res.status, 'done', `${workflowId} finished: ${res.error || ''}`);
+    if (QUIESCENT.has(workflowId)) {
+      assert.equal(st.endReached, false, `${workflowId} quiesces by design`);
+      // MIN-58: the second line names wf_no-clarify's deliberately unwired output.
+      assert.deepEqual(st.warnings, [QUIESCENCE_WARNING, quiescenceDeadEnd(['n_webui.review'])]);
+    } else {
+      assert.equal(st.endReached, true, `${workflowId} reached End`);
+      assert.ok(st.result, `${workflowId} bound a result`);
+      assert.deepEqual(st.warnings, [], `${workflowId} produced no quiescence warning`);
+    }
+    assert.ok(st.steps.every((s) => s.status !== 'error'), `${workflowId}: no error rows`);
+  }
+});
+
+test('the ledger is one row per execution, and every loop closes at ordinal 2', { timeout: 120000 }, async () => {
+  await seedGraphs();
+  const dir = gitDir('ledger');
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_full', prompt: 'demo', claude: { mock: true }, auto: true,
+  });
+  await orch.run();
+  const st = orch.getState();
+  const keys = st.steps.map((s) => s.key);
+  assert.equal(new Set(keys).size, keys.length, 'no duplicate ledger keys');
+  // The mock verifier is blocking at ordinal 1 and clean at ordinal 2, so every
+  // looped node runs at MOST ordinal 3 (wf_full has TWO loops into the implementer:
+  // review->fix and webui->fix, each closing at its own second delivery).
+  const byNode = new Map();
+  for (const s of st.steps.filter((x) => x.kind === 'cycle' && x.agentKey)) {
+    byNode.set(s.nodeId, Math.max(byNode.get(s.nodeId) || 0, s.ordinal));
+  }
+  assert.ok([...byNode.values()].some((n) => n >= 2), 'at least one node re-fired');
+  assert.ok([...byNode.values()].every((n) => n <= 3), `a loop overran: ${JSON.stringify([...byNode])}`);
+  // Composite slices ride their parent's ordinal and carry the task fields.
+  const slices = st.steps.filter((x) => x.kind === 'task');
+  assert.ok(slices.length >= 2, 'the decomposer fanned the implementer out');
+  for (const s of slices) {
+    assert.ok(s.parentExecutionId && s.taskId && s.key === `${s.parentExecutionId}:${s.taskId}`);
+    assert.ok(Number.isInteger(s.taskIndex) && Number.isInteger(s.taskTotal));
+  }
+  // wireDeliveries never exceeds the wire's budget (and under mock never exceeds 1).
+  const wires = new Map((st.stepper.graph.wires || []).map((w) => [w.id, w]));
+  for (const [wireId, n] of Object.entries(st.wireDeliveries)) {
+    const max = wires.get(wireId)?.maxCycles;
+    if (max != null) assert.ok(n <= max, `${wireId} delivered ${n} > ${max}`);
+    assert.ok(n <= 1, `${wireId} delivered ${n} times (loops close at ordinal 2)`);
+  }
+});
+
+test('a loop gate asks with the POST /api/answer shape and "another" buys one more cycle', { timeout: 120000 }, async () => {
+  await seedGraphs();
+  const dir = gitDir('gate');
+  // Budget 1 => allowance 0 => the FIRST blocking delivery is held behind a gate.
+  const tpl = SEED_TEMPLATES.find((t) => t.id === 'wf_quick-fix');
+  const wires = tpl.wires.map((w) => (w.config?.maxCycles ? { ...w, config: { ...w.config, maxCycles: 1 } } : w));
+  await writeGraphWorkflow({ id: 'wf_gate_probe', name: 'Gate probe', domain: tpl.domain, nodes: tpl.nodes, wires });
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_gate_probe', prompt: 'demo', claude: { mock: true }, auto: false,
+  });
+  const gates = [];
+  orch.on('question', (q) => {
+    // `question` is emitted BEFORE pendingQuestion is installed: answer on the next tick.
+    if (q.kind !== 'gate') return setImmediate(() => orch.answer(q.id, { answers: [] }));
+    gates.push(q);
+    setImmediate(() => orch.answer(q.id, { decision: gates.length === 1 ? 'another' : 'continue' }));
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  assert.equal(orch.getState().endReached, true);
+  assert.equal(gates.length, 1, 'the gate fired once; the second cycle was clean');
+  const g = gates[0];
+  assert.match(g.id, /^gate-[A-Za-z0-9_-]+-\d+$/, 'ask id is gate-<wireId>-<deliveryNo>');
+  assert.equal(g.kind, 'gate');
+  assert.equal(g.wireId, 'w5', 'the gate names its wire');
+  assert.ok(g.nodeId, 'the gate names the SOURCE node');
+  assert.ok(g.executionId, 'and the execution that produced the verdict');
+  assert.ok(Array.isArray(g.issues) && g.issues.length > 0, 'the gate carries the blocking issues');
+  const impl = orch.getState().steps.filter((s) => s.agentKey === 'implementer').map((s) => s.ordinal);
+  assert.deepEqual(impl, [1, 2], '"another" bought exactly one more implementer cycle');
+});
+
+test('stop mid-run keeps the partial diff and leaves no resume point', { timeout: 120000 }, async () => {
+  await seedGraphs();
+  const dir = gitDir('gstop');
+  let orch;
+  orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, claude: { mock: true },
+    runners: {
+      producer: async (ctx) => {
+        // Write a real file so the staged partial diff is non-empty, then stop.
+        await writeFile(join(ctx.projectDir, 'touched.txt'), 'x');
+        queueMicrotask(() => orch.stop());
+        return new Promise((_r, rej) => {
+          const onAbort = () => { const e = new Error('aborted'); e.name = 'AbortError'; rej(e); };
+          if (ctx.signal.aborted) onAbort(); else ctx.signal.addEventListener('abort', onAbort, { once: true });
+        });
+      },
+      verifier: async (ctx) => ({ outputs: outsOf(ctx), verdict: { issues: [], summary: '' } }),
+      clarifier: async (ctx) => ({ outputs: outsOf(ctx), verdict: null }),
+    },
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'stopped');
+  assert.equal(orch.getState().resumePoint, null, 'a stopped run is not resumable');
+  const saved = readPipelineForResume(orch.getState().id);
+  assert.equal(saved.row.status, 'stopped');
+  assert.equal(saved.resumePoint, null);
+  // The in-flight row was closed by _execStep with the engine's marker (`stopped`
+  // when the harness's abort signal fired). Keyed by executionId, which the row
+  // carries even before Task 4 persists the exec columns.
+  assert.ok(saved.steps.some((s) => String(s.key).startsWith('x:') && (s.status === 'stopped' || s.status === 'error')));
+});
+
+test('the End-bound result is recorded as an artifact', { timeout: 120000 }, async () => {
+  await seedGraphs();
+  const dir = gitDir('gend');
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo', claude: { mock: true }, auto: true,
+  });
+  const arts = [];
+  orch.on('artifact', (a) => arts.push(a));
+  await orch.run();
+  const st = orch.getState();
+  if (st.result?.path) {
+    const hit = arts.find((a) => a.kind === 'result' && a.path === st.result.path);
+    assert.ok(hit, 'the End-bound path was recorded');
+    assert.ok(hit.nodeId && hit.executionId, 'the artifact event carries its node + execution attribution');
+  } else {
+    assert.equal(st.result.type, 'void', 'a void End binds no path (the graph default ends on reviewer.pass)');
+  }
+  // Every agent output was recorded once, with attribution.
+  const plans = arts.filter((a) => a.kind === 'plan');
+  assert.ok(plans.length >= 2, 'planner + refiner plans');
+  assert.ok(plans.every((a) => a.nodeId && a.executionId && a.port));
+});
+
+test('the pipeline cost cap is enforced at EVERY agent launch, not per step', { timeout: 120000 }, async () => {
+  await seedGraphs();
+  const dir = gitDir('gcost');
+  await setPipelineCostLimitUsd(0.05);
+  try {
+    let launches = 0;
+    const spend = (ctx) => ctx.onEvent({ type: 'result', costUsd: 0.04, raw: { type: 'result', total_cost_usd: 0.04 } });
+    const orch = createOrchestrator({
+      projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, claude: { mock: true },
+      runners: {
+        producer: async (ctx) => { launches += 1; spend(ctx); return { outputs: outsOf(ctx), verdict: null }; },
+        verifier: async (ctx) => { launches += 1; spend(ctx); return { outputs: outsOf(ctx), verdict: { issues: [], summary: '' } }; },
+        clarifier: async (ctx) => { launches += 1; return { outputs: outsOf(ctx), verdict: null }; },
+      },
+    });
+    const res = await orch.run();
+    assert.equal(res.status, 'paused');
+    assert.equal(orch.pauseReason, 'cost_pipeline');
+    // clarifier ($0) + planner ($0.04, under the cap) + refiner ($0.04 -> $0.08): the
+    // NEXT launch trips the gate. No more than one extra launch can slip through
+    // (agent nodes on the default graph are sequential under the scheduler).
+    assert.ok(launches >= 3 && launches <= 4, `capped after the spend crossed 0.05, saw ${launches} launches`);
+    assert.ok(orch.getState().steps.some((s) => s.status === 'paused'), 'the gated execution is a paused row');
+  } finally {
+    await setPipelineCostLimitUsd('');
+  }
+});
+
+test('bookends are exec rows carrying an executionId, and no phase event is emitted', { timeout: 120000 }, async () => {
+  const dir = gitDir('gbook');
+  const events = [];
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo task',
+    claude: { mock: true }, auto: true,
+  });
+  for (const name of ['exec', 'phase']) orch.on(name, (p) => events.push({ name, ...p }));
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+
+  assert.equal(events.some((e) => e.name === 'phase'), false, 'the shim is gone');
+  const pre = events.find((e) => e.executionId === 'x:preflight:1');
+  const done = events.find((e) => e.executionId === 'x:done:1');
+  assert.ok(pre && done, 'both bookends arrive as exec events');
+  assert.deepEqual([pre.nodeId, pre.kind, pre.ordinal, pre.agentKey], ['preflight', 'cycle', 1, null]);
+  assert.deepEqual(pre.trigger, { wireIds: [], freshPorts: [] });
+
+  // The LEDGER keeps the bookend rows, keyed BY the executionId, and each row
+  // carries `executionId` — without it artifacts.mjs persists execution_id NULL,
+  // stepRowToStep never restores it, and both readers (run-decor's ledgerRows,
+  // render.mjs's summary) stop filtering the bookends on a REHYDRATED run.
+  const live = orch.getState();
+  for (const id of BOOKEND_EXECUTION_IDS) {
+    const row = live.steps.find((s) => s.key === id);
+    assert.ok(row, `the ledger keeps ${id}`);
+    assert.equal(row.executionId, id, `${id} carries its executionId`);
+    assert.equal(row.kind, 'cycle');
+    assert.equal(row.agentKey, null);
+  }
+  // …and they survive the DB round-trip with execution_id intact (the rehydrated
+  // path the two readers actually run on in History).
+  const rehydrated = readPipelineForResume(live.id).steps
+    ?? (await import('../src/core/artifacts.mjs')).readPipeline(live.id).steps;
+  for (const id of BOOKEND_EXECUTION_IDS) {
+    const row = (rehydrated || []).find((s) => s.key === id);
+    assert.ok(row, `${id} round-tripped`);
+    assert.equal(row.executionId, id, `${id} kept execution_id through the DB`);
+  }
+});
+
+// ── MAJ-3: two cards on ONE agent key must not clobber one persisted artifact ──
+// The composer accepts duplicate agent keys (dupPrefix exists for them), so this
+// is a supported graph, not a malformed one. The run-store verdicts were already
+// node-prefixed; the PROJECT store (plans/reviews) was not, so the later writer
+// silently destroyed the earlier reviewer's persisted file.
+const TWO_REVIEWERS = {
+  id: 'wf_tworev', name: 'Two reviewers', domain: 'coding',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+    { id: 'n_plan', kind: 'agent', key: 'planner', x: 340, y: 200, config: {} },
+    { id: 'n_impl', kind: 'agent', key: 'implementer', x: 640, y: 200, config: {} },
+    { id: 'n_rev1', kind: 'agent', key: 'reviewer', x: 940, y: 100, config: {} },
+    { id: 'n_rev2', kind: 'agent', key: 'reviewer', x: 940, y: 320, config: {} },
+    { id: 'n_end', kind: 'end', x: 1240, y: 200, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+    { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
+    { id: 'w3', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_rev1', port: 'plan' } },
+    { id: 'w4', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_rev2', port: 'plan' } },
+    { id: 'w5', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_rev1', port: 'done' } },
+    { id: 'w6', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_rev2', port: 'done' } },
+    { id: 'w7', from: { node: 'n_rev1', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
+  ],
+};
+
+test('two cards on one agent key keep their project-store reviews apart', { timeout: 120000 }, async () => {
+  await writeGraphWorkflow(TWO_REVIEWERS);
+  const dir = gitDir('tworev');
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_tworev', prompt: 'demo', claude: { mock: true }, auto: true,
+  });
+  const arts = [];
+  orch.on('artifact', (a) => arts.push(a));
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  // Both reviewers ran in the SAME drain (parallel) off one implementer.
+  const stepIds = orch.getState().steps.filter((s) => s.agentKey === 'reviewer').map((s) => s.nodeId).sort();
+  assert.deepEqual(stepIds, ['n_rev1', 'n_rev2']);
+  const reviewed = arts.filter((a) => a.kind === 'review').map((a) => a.path);
+  assert.equal(reviewed.length, 2, 'two review artifacts were published');
+  assert.equal(new Set(reviewed).size, 2, `the two tokens must name different files: ${JSON.stringify(reviewed)}`);
+  const files = (await readdir(artifactPaths(dir).reviews)).sort();
+  assert.equal(files.length, 2, `both persisted reviews must survive; got ${JSON.stringify(files)}`);
+  assert.ok(files.some((f) => f.endsWith('-n_rev1-impl-review.md')), JSON.stringify(files));
+  assert.ok(files.some((f) => f.endsWith('-n_rev2-impl-review.md')), JSON.stringify(files));
+});
+
+test('a SINGLE card keeps the unprefixed v1 project-store path', { timeout: 120000 }, async () => {
+  const dir = gitDir('onerev');
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_quick-fix', prompt: 'demo', claude: { mock: true }, auto: true,
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  const files = (await readdir(artifactPaths(dir).reviews)).sort();
+  assert.ok(files.length >= 1, JSON.stringify(files));
+  for (const f of files) {
+    assert.match(f, /^\d\d-\d\d-\d\d-[a-z0-9-]+-impl-review\.md$/,
+      `a single-card graph's persisted path must stay byte-identical: ${f}`);
+  }
+});
+
+// ── MAJ-11: one ask id per HOLD, and the delivery number rides the payload ─────
+// resolveGate('continue') advances neither counter, so the next blocking token on
+// the same spent wire held again and minted the SAME `gate-<wireId>-<deliveryNo>`.
+// RunHarness.answer() matches by id alone, so a retried POST /api/answer resolved a
+// hold the user never saw — and it force-cleaned a set of critical issues.
+/** wf_full with w12 (reviewer.review → OR) forced to one cycle: the FIRST blocking
+ *  review delivery already holds, and the reviewer keeps blocking after that. */
+async function seedStubbornFull(id) {
+  const full = SEED_TEMPLATES.find((t) => t.id === 'wf_full');
+  const wires = full.wires.map((w) => (w.id === 'w12' ? { ...w, config: { ...(w.config || {}), maxCycles: 1 } } : w));
+  await writeGraphWorkflow({ id, name: 'Full stubborn', domain: full.domain, nodes: full.nodes, wires });
+}
+let blockerNo = 0;
+const STUBBORN_RUNNERS = {
+  producer: async (ctx) => ({ summary: `${ctx.node.id} ok`, outputs: outsOf(ctx), verdict: null }),
+  clarifier: async (ctx) => ({ summary: 'clarified', outputs: outsOf(ctx), questions: [], answers: [] }),
+  verifier: async (ctx) => ({
+    summary: `${ctx.node.id} blocked`,
+    outputs: outsOf(ctx),
+    verdict: { issues: [{ severity: 'critical', title: `blocker #${++blockerNo} from ${ctx.node.id}` }], summary: '' },
+  }),
+};
+
+test('every hold on one wire mints its OWN ask id; the delivery number rides the payload', { timeout: 120000 }, async () => {
+  await seedStubbornFull('wf_stubborn_ids');
+  const orch = createOrchestrator({
+    projectDir: gitDir('gateids'), workflowId: 'wf_stubborn_ids', prompt: 'demo', claude: { mock: true }, auto: true,
+    runners: STUBBORN_RUNNERS,
+  });
+  const asks = [];
+  orch.on('question', (q) => { if (q.kind === 'gate') asks.push(q); });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  const w12 = asks.filter((a) => a.wireId === 'w12');
+  assert.equal(w12.length, 3, 'the spent wire held three times');
+  assert.equal(new Set(w12.map((a) => a.id)).size, 3, `three holds, three ids: ${w12.map((a) => a.id).join(' ')}`);
+  assert.deepEqual(w12.map((a) => a.id), ['gate-w12-1', 'gate-w12-1-h2', 'gate-w12-1-h3']);
+  assert.deepEqual(w12.map((a) => a.holdNo), [1, 2, 3]);
+  assert.deepEqual(w12.map((a) => a.deliveryNo), [1, 1, 1], 'the CYCLE number is the same for all three');
+  assert.equal(new Set(w12.map((a) => a.executionId)).size, 3, 'three distinct source executions');
+  // The CLI header is unchanged: it reads deliveryNo off the PAYLOAD, so the `-h2`
+  // suffix cannot masquerade as a cycle count.
+  const man = orch.getState().stepper;
+  for (const a of w12) {
+    assert.equal(formatGateHeader(a, man), '? Loop gate · Review Implementation → OR  1/1 cycles used');
+  }
+});
+
+test('a replayed previous-hold id no longer resolves the CURRENT hold', { timeout: 120000 }, async () => {
+  await seedStubbornFull('wf_stubborn_stale');
+  const orch = createOrchestrator({
+    projectDir: gitDir('gatestale'), workflowId: 'wf_stubborn_stale', prompt: 'demo', claude: { mock: true }, auto: false,
+    runners: STUBBORN_RUNNERS,
+  });
+  const replays = [];
+  let prev = null;
+  orch.on('question', (q) => {
+    setImmediate(() => {
+      if (prev) replays.push({ at: q.id, stale: prev.id, accepted: orch.answer(prev.id, prev.payload) });
+      prev = { id: q.id, payload: q.kind === 'gate' ? { decision: 'continue' } : { answers: [] } };
+      orch.answer(q.id, prev.payload);
+    });
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  const gateReplays = replays.filter((r) => /^gate-w12-/.test(r.at) && /^gate-w12-/.test(r.stale));
+  assert.ok(gateReplays.length >= 2, `two later holds on w12: ${JSON.stringify(replays)}`);
+  assert.deepEqual(gateReplays.map((r) => r.accepted), gateReplays.map(() => false),
+    'a stale id must never resolve a hold the user has not seen');
+});
+
+// ── MAJ-10 (History half): no phantom clean review for a verdict nobody wrote ──
+test('a verdict that was never written leaves NO reviews row', { timeout: 120000 }, async () => {
+  const mkRunners = (missing) => ({
+    producer: async (ctx) => ({ summary: `${ctx.node.id} ok`, outputs: outsOf(ctx), verdict: null }),
+    clarifier: async (ctx) => ({ summary: 'clarified', outputs: outsOf(ctx), questions: [], answers: [] }),
+    // What runAgentExecution returns when readVerdict found no file (`missing`) vs.
+    // when the verifier really approved the work (a genuine zero-issue verdict).
+    verifier: async (ctx) => ({
+      summary: `${ctx.node.id} looked`,
+      outputs: outsOf(ctx),
+      verdict: missing ? { issues: [], summary: '', missing: true } : { issues: [], summary: 'all good' },
+    }),
+  });
+  const run = async (missing, tag) => {
+    const orch = createOrchestrator({
+      projectDir: gitDir(tag), workflowId: 'wf_quick-fix', prompt: 'demo', claude: { mock: true },
+      auto: true, runners: mkRunners(missing),
+    });
+    const res = await orch.run();
+    assert.equal(res.status, 'done', res.error);
+    return readPipelineExtras(orch.pipeline.id).reviews;
+  };
+  const written = await run(false, 'revrow');
+  assert.ok(written.length >= 1, `a real verdict IS persisted: ${JSON.stringify(written)}`);
+  const phantom = await run(true, 'revnorow');
+  assert.deepEqual(phantom, [], 'a verdict nobody wrote must not render as a clean review');
+});

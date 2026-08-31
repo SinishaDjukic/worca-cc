@@ -79,6 +79,7 @@ const EXPECTED_TABLES = [
   'project_config',
   'config_workflow_nodes',
   'config_workflow_feedbacks',
+  'config_workflow_wires',
   'pipelines',
   'pipeline_steps',
   'pipeline_events',
@@ -117,13 +118,13 @@ function indexNames(db) {
     .map((r) => r.name);
 }
 
-test('migrate creates all 18 spec tables', () => {
+test('migrate creates all 19 spec tables', () => {
   const db = getDb();
   const present = new Set(tableNames(db));
   for (const t of EXPECTED_TABLES) {
     assert.ok(present.has(t), `table "${t}" is present`);
   }
-  assert.equal(EXPECTED_TABLES.length, 18, 'the spec defines exactly 18 tables (v11: +step_questions)');
+  assert.equal(EXPECTED_TABLES.length, 19, 'the spec defines exactly 19 tables (v23: +config_workflow_wires)');
 });
 
 test('migrate creates every required index', () => {

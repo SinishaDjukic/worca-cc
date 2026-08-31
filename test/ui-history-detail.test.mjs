@@ -1866,13 +1866,18 @@ test('rapid selection does not stack two bodies in the pane', async () => {
 // Everything the roster has to survive at once: a row whose duration exists only
 // as finishedAt − startedAt, a row whose cost is null, a halted row, one typed
 // row, one graphify user and one skill user. `stepper: null` on purpose —
-// agentNodeIdSet falls back to CLIENT_DEFAULT_STEPPER, where 'refine' IS an
-// 'agents' node, so the step row really does open the group.
+// A FROZEN v1 manifest whose 'refine' node IS an 'agents' node, so the step row
+// really does open the group. (There is no built-in legacy default any more:
+// manifestFor(null) is an EMPTY manifest.)
+const AG_STEPPER = {
+  version: 1, feedbacks: [],
+  steps: [{ kind: 'agents', nodes: [{ id: 'refine', uiPhase: 'refine', label: 'Refine', color: 'green' }] }],
+};
 const AG_DETAIL = {
   ...DETAIL,
   state: {
     ...DETAIL.state,
-    stepper: null,
+    stepper: AG_STEPPER,
     steps: [{ nodeId: 'refine', cycle: 1, status: 'done', skills: [], graphifyCount: 0 }],
     subAgents: [
       {
@@ -1939,6 +1944,54 @@ test('Agents group header carries the rolled-up status and meta', async () => {
   assert.match(heads[0].textContent, /\$1\.5/);
 });
 
+// P6b Task 14 (C3): the History Agents tab's own call site passes st.steps, so a
+// v2 group is named from the ledger row its key's tail points at. Without the 4th
+// argument every head here reads a bare "Implementer".
+const AG_V2_DETAIL = {
+  ...DETAIL,
+  state: {
+    ...DETAIL.state,
+    stepper: {
+      version: 2,
+      template: { id: 'wf', name: 'WF' },
+      graph: {
+        nodes: [
+          { id: 'n_impl', kind: 'agent', key: 'implementer', label: 'Implementer', color: 'blue', x: 0, y: 0, model: 'claude-fable-5', effort: 'max', ports: { inputs: [], outputs: [], await: true } },
+          { id: 'n_or', kind: 'or', key: null, label: 'OR', x: 0, y: 0, ports: { inputs: [], outputs: [], await: false } },
+        ],
+        wires: [],
+      },
+    },
+    steps: [
+      { key: 'x:n_impl:1', executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1, kind: 'cycle', cycle: 1, status: 'done', skills: [], graphifyCount: 0 },
+      { key: 'x:n_impl:1:p1t3', executionId: 'x:n_impl:1:p1t3', nodeId: 'n_impl', ordinal: 1, kind: 'task', title: 'Add schema', cycle: 1, status: 'done', skills: [], graphifyCount: 0 },
+      { key: 'x:n_or:1', executionId: 'x:n_or:1', nodeId: 'n_or', ordinal: 1, kind: 'cycle', cycle: 1, status: 'done', skills: [], graphifyCount: 0 },
+    ],
+    subAgents: [
+      { id: 't1', label: 'Slice worker', nodeId: 'n_impl', cycle: 1, stepKey: 'x:n_impl:1:p1t3',
+        status: 'finished', durationMs: 2000, costUsd: 0.5, skills: [], subagentType: null, graphifyCount: null },
+    ],
+  },
+};
+
+test('Agents tab names a v2 group from the ledger (buildHdAgents passes st.steps)', async () => {
+  const ctx = await bootDetail({ detail: AG_V2_DETAIL });
+  // Seed the catalog so the head's model pill exercises the LABEL arm of
+  // stepModelPillHtml (the raw-id fallback arm is ui-running-detail's).
+  ctx.window.__np._setModels([{ id: 'claude-fable-5', label: 'Fable 5 (1M)', efforts: ['max'] }]);
+  const sec = await openTab(ctx, 'agents');
+  const heads = [...sec.querySelectorAll('.hd-ag-group .hd-ag-head b')].map((b) => b.textContent);
+  // The OR node wrote a ledger row too and must not become an Agents group.
+  assert.deepEqual(heads, ['Implementer #1', 'Implementer #1 · Add schema'],
+    'the 4th argument (st.steps) reaches cycleAwareLabel');
+  const groups = [...sec.querySelectorAll('.hd-ag-group')];
+  assert.equal(groups[1].querySelector('.hd-ag-row .hd-ag-name').textContent, 'Slice worker',
+    'the sub-agent row landed in the SLICE group, keyed by its v2 stepKey');
+  // The manifest node's configured model · effort shows on the step title line.
+  assert.equal(groups[0].querySelector('.hd-ag-head .sub-model-pill').textContent, 'Fable 5 (1M) · max');
+  assert.equal(groups[1].querySelector('.hd-ag-head .sub-model-pill').textContent, 'Fable 5 (1M) · max');
+});
+
 test('Agents tab empty state', async () => {
   const ctx = await bootDetail();                    // DETAIL: subAgents [] + steps []
   const sec = await openTab(ctx, 'agents');
@@ -1952,6 +2005,7 @@ test('a main agent that spawned nothing still gets a group, coloured by its step
       ...DETAIL,
       state: {
         ...DETAIL.state,
+        stepper: { version: 1, feedbacks: [], steps: [{ kind: 'agents', nodes: [{ id: 'plan', uiPhase: 'plan', label: 'Plan', color: 'violet' }] }] },
         steps: [{ nodeId: 'plan', cycle: 1, status: 'error', skills: [], graphifyCount: 3 }],
         subAgents: [],
       },
@@ -1961,6 +2015,8 @@ test('a main agent that spawned nothing still gets a group, coloured by its step
   const head = sec.querySelector('.hd-ag-head');
   // No rows to roll up, so the colour comes from stepStatusByKey, not subGroupStatus.
   assert.ok(head.querySelector('.subs-stat.stop'));
+  assert.equal(head.querySelector('.sub-model-pill'), null,
+    'a v1 stepper recorded no per-node model — no pill, never a guess');
   assert.match(head.textContent, /0 sub-agents/);
   assert.equal(head.querySelector('.graphify-pill').textContent, 'graphify ×3');
   assert.match(sec.querySelector('.hd-ag-none').textContent, /No sub-agents spawned/);
@@ -2261,4 +2317,64 @@ test('copy on a filtered-empty Logs pane flashes "nothing to copy" and leaves th
   assert.deepEqual(writes, [], 'clipboard untouched');
   await new Promise((r) => setTimeout(r, 1300));
   assert.equal(copyBtn.textContent, 'copy', 'label restored after the flash');
+});
+
+// P8a: V24 NULLs a retired v1 resume point, so a run can be paused/interrupted
+// and still not resumable. Offering Resume would 409 (ENGINE_RETIRED).
+test('Resume is hidden for a paused run whose resume point was retired', async () => {
+  const ctx = await bootDetail({
+    rows: [{ ...ROW, status: 'paused' }],
+    detail: { ...DETAIL, state: { ...DETAIL.state, status: 'interrupted', resumable: false } },
+  });
+  await openDetail(ctx);
+  assert.equal(ctx.window.document.querySelector('#hist-detail .hd-resume').hidden, true);
+});
+
+test('Resume is still offered when a resume point survives', async () => {
+  const ctx = await bootDetail({
+    rows: [{ ...ROW, status: 'paused' }],
+    detail: { ...DETAIL, state: { ...DETAIL.state, status: 'paused', resumable: true } },
+  });
+  await openDetail(ctx);
+  assert.equal(ctx.window.document.querySelector('#hist-detail .hd-resume').hidden, false);
+});
+
+// ── frozen v1 runs: the legacy chip strip ────────────────────────────────────
+// Every v1 run in History is frozen (its resume point was retired by the v2
+// upgrade). The v1 column painters die with the v1 engine, so a v1 manifest
+// renders an INERT chip strip instead: one chip per manifest node, label +
+// duration + cost, tinted by the ledger row's status. No wires, no per-node
+// click handlers, no executions footer.
+const V1_STEPPER = {
+  version: 1,
+  steps: [
+    { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
+    { kind: 'agents', nodes: [{ id: 's0_0', key: 'planner', uiPhase: 'plan', label: 'Planner', color: 'violet', sub: '', cycles: false, model: '', effort: '' }] },
+    { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
+  ],
+  feedbacks: [],
+};
+
+test('a frozen v1 run renders a legacy chip strip, never the v2 graph', async () => {
+  const ctx = await bootDetail({
+    detail: { ...DETAIL, state: { ...DETAIL.state, stepper: V1_STEPPER,
+      steps: [{ key: 'plan', phase: 'plan', cycle: 1, status: 'done', activeMs: 120000, costUsd: 0.4 }] } },
+  });
+  await openDetail(ctx);
+  const strip = ctx.window.document.querySelector('#hist-detail .run-strip');
+  assert.ok(strip, 'the v1 strip painted');
+  assert.equal(ctx.window.document.querySelector('#hist-detail .gv-world'), null, 'no v2 graph for a v1 manifest');
+  // The FIRST chip is Preflight — the planner chip is addressed by its node id.
+  const chip = strip.querySelector('.rchip[data-id="s0_0"]');
+  assert.ok(chip, 'the planner chip exists');
+  assert.ok(chip.classList.contains('is-done'), 'status tint from the step row');
+  // fmtDuration(120000) === '2m 0s' (app.js:1500) — NOT '2m'.
+  assert.equal(chip.textContent, 'Planner · 2m 0s · $0.40');
+  // A node with no ledger row is label-only and pending.
+  const pre = strip.querySelector('.rchip[data-id="preflight"]');
+  assert.equal(pre.textContent, 'Preflight');
+  assert.ok(pre.classList.contains('is-pending'));
+  // Inert: no wires, no per-chip click handlers, no executions footer.
+  assert.equal(strip.querySelector('svg, .gv-wires'), null, 'no wires');
+  assert.equal(ctx.window.document.querySelector('#hist-detail .rg-execs'), null, 'no executions footer');
 });

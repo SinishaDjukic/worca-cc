@@ -64,7 +64,7 @@ test('VIEW_NAMES is the 14-entry array with composer preserved + projects + plug
   assert.match(js, /const VIEW_NAMES = \['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'models', 'settings'\];/);
 });
 
-test('composer-core is imported INSIDE app.js via ES6 import (C7), not a separate script tag', () => {
-  assert.match(js, /import \{[\s\S]*?\} from '\.\/composer-core\.mjs';/);
+test('the v1 composer is gone: no composer-core module, no composer-core script tag', () => {
+  assert.ok(!js.includes('composer-core.mjs'), 'app.js no longer imports composer-core.mjs');
   assert.ok(!html.includes('composer-core.mjs'), 'composer-core.mjs must not be a <script> in index.html');
 });

@@ -139,3 +139,41 @@ test('a subagent delta does NOT carry its own runId (the server stamps the run U
   assert.ok(!('runId' in evts[0]),
     'subagent payloads must not self-tag runId; wireRun owns the authoritative tag');
 });
+
+// ── the model each child ran on (sub_agents.run_model) ──────────────────────
+
+const spawnWithModel = (id, model) => ({
+  type: 'assistant',
+  raw: { type: 'assistant', message: { content: [
+    { type: 'tool_use', id, name: 'Task', input: { description: 'research auth', ...(model ? { model } : {}) } },
+  ] } },
+});
+
+test('a child that names a model records THAT model, not the parent\'s', () => {
+  const orch = fresh();
+  orch._onAgentEvent('planner', spawnWithModel('toolu_M', 'sonnet'), { ...ATTR, model: 'claude-fable-5' });
+  assert.equal(orch.state.subAgents[0].runModel, 'sonnet',
+    'the alias the Task call asked for — this is what proves a policy fired');
+});
+
+test('a child that names no model records the parent model it inherits', () => {
+  const orch = fresh();
+  orch._onAgentEvent('planner', spawnWithModel('toolu_N', null), { ...ATTR, model: 'claude-fable-5' });
+  assert.equal(orch.state.subAgents[0].runModel, 'claude-fable-5');
+});
+
+test('with no parent model either, the child records nothing rather than a guess', () => {
+  const orch = fresh();
+  orch._onAgentEvent('planner', spawnWithModel('toolu_O', null), ATTR);
+  assert.equal(orch.state.subAgents[0].runModel, null);
+});
+
+test('the spawn delta carries runModel, so the live view can paint the pill immediately', () => {
+  const orch = fresh();
+  const evts = [];
+  orch.on('subagent', (m) => evts.push(m));
+  orch._onAgentEvent('planner', spawnWithModel('toolu_P', 'sonnet'), { ...ATTR, model: 'claude-fable-5' });
+  assert.equal(evts.length, 1);
+  assert.equal(evts[0].runModel, 'sonnet',
+    'without this the Running view shows no model pill until the next full state snapshot');
+});

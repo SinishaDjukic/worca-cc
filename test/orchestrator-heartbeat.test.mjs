@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { ENGINES } from './helpers/engines.mjs';
 import { getDb } from '../src/core/db.mjs';
 
 useTempHome(after);
@@ -23,9 +23,10 @@ const okVerifier = async () => ({ status: 'ok', issues: [], review: { issues: []
 const ownerCols = (id) =>
   getDb().prepare('SELECT owner_pid, owner_host, heartbeat_at FROM pipelines WHERE id = ?').get(id);
 
-test('a finished run has NULL owner columns (cleared by finally)', async () => {
+for (const engine of ENGINES) {
+test(`[${engine.id}] a finished run has NULL owner columns (cleared by finally)`, async () => {
   const dir = gitDir();
-  const orch = createOrchestrator({
+  const orch = engine.create({
     projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
     runners: { producer: okRunner, verifier: okVerifier },
   });
@@ -37,10 +38,10 @@ test('a finished run has NULL owner columns (cleared by finally)', async () => {
   assert.equal(cols.heartbeat_at, null);
 });
 
-test('a stopped run also has NULL owner columns', async () => {
+test(`[${engine.id}] a stopped run also has NULL owner columns`, async () => {
   const dir = gitDir();
   let orch;
-  orch = createOrchestrator({
+  orch = engine.create({
     projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
     runners: {
       producer: async () => { orch.stop(); return { status: 'ok', summary: 'done' }; },
@@ -54,3 +55,4 @@ test('a stopped run also has NULL owner columns', async () => {
   assert.equal(cols.owner_host, null);
   assert.equal(cols.heartbeat_at, null);
 });
+}

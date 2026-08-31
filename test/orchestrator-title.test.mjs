@@ -113,3 +113,36 @@ test('the title kickoff is still SKIPPED on a resumed run (the gate is preserved
     delete process.env.WORCA_MOCK;
   }
 });
+
+test('_titleGenOpts mirrors the run\'s claude policy: bin + mock travel with the title spawn', async () => {
+  const projectDir = await makeTmpDir();
+  const orch = createOrchestrator({
+    projectDir, prompt: 'Add a settings page', auto: true,
+    claude: { mock: true, bin: '/nonexistent/claude-must-not-spawn' },
+  });
+  const o = orch._titleGenOpts();
+  assert.equal(o.bin, '/nonexistent/claude-must-not-spawn');
+  assert.equal(o.mock, true);
+  assert.equal(o.signal, orch.abort.signal);
+  assert.equal(o.cwd, orch.projectDir, 'before _setupRunRoot the cwd falls back to projectDir');
+});
+
+test('title kickoff inherits claude.mock — no WORCA_MOCK env, no real claude spawn', async () => {
+  const prevMock = process.env.WORCA_MOCK;
+  delete process.env.WORCA_MOCK;
+  const projectDir = await makeTmpDir();
+  try {
+    const orch = createOrchestrator({
+      projectDir, prompt: 'Add a settings page with dark mode', auto: true,
+      claude: { mock: true, bin: '/nonexistent/claude-must-not-spawn' },
+    });
+    const seen = [];
+    orch.on('title', (p) => seen.push(p));
+    await orch.run();
+    await orch._titlePromise;
+    assert.equal(seen.length, 1, 'exactly one title event');
+    assert.equal(seen[0].title, '[mock] role unknown complete');
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
+  }
+});

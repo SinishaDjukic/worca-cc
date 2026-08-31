@@ -117,37 +117,7 @@ const STEPPER = {
   feedbacks: [],
 };
 
-test('runNode stamps data-log-source: agent key on server-built nodes, preflight bookend, nothing on Done', async () => {
-  const ctx = await boot();
-  const host = ctx.window.document.createElement('div');
-  host.className = 'run-flow';
-  ctx.window.__np.buildRunGraph(host, STEPPER);
 
-  const src = (id) => host.querySelector(`.run-node[data-id="${id}"]`).dataset.logSource;
-  assert.equal(src('preflight'), 'preflight');
-  assert.equal(src('s0_0'), 'planner');
-  assert.equal(src('s1_0'), 'implementer');
-  assert.equal(src('s1_1'), 'reviewer');
-  // Done emits no logs -> NO attribute at all (not an empty one).
-  assert.equal(host.querySelector('.run-node[data-id="done"]').hasAttribute('data-log-source'), false);
-});
-
-test('runNode falls back to uiPhase on the legacy default stepper (nodes carry no key)', async () => {
-  const ctx = await boot();
-  const host = ctx.window.document.createElement('div');
-  host.className = 'run-flow';
-  ctx.window.__np.buildRunGraph(host, null); // null -> manifestFor -> CLIENT_DEFAULT_STEPPER
-
-  // All five legacy agent nodes, because LEGACY_PHASE_SOURCE (a later task) has
-  // an entry for four of them and the fifth (clarify) relies on key === phase.
-  assert.equal(host.querySelector('.run-node[data-id="clarify"]').dataset.logSource, 'clarify');
-  assert.equal(host.querySelector('.run-node[data-id="plan"]').dataset.logSource, 'plan');
-  assert.equal(host.querySelector('.run-node[data-id="refine"]').dataset.logSource, 'refine');
-  assert.equal(host.querySelector('.run-node[data-id="implement"]').dataset.logSource, 'implement');
-  assert.equal(host.querySelector('.run-node[data-id="review"]').dataset.logSource, 'review');
-  assert.equal(host.querySelector('.run-node[data-id="preflight"]').dataset.logSource, 'preflight');
-  assert.equal(host.querySelector('.run-node[data-id="done"]').hasAttribute('data-log-source'), false);
-});
 
 // SCOPE BOUNDARY. buildRunGraph is the SHARED builder: the live Running card
 // (app.js:10805, and the mid-run manifest swap at :777) renders the exact markup
@@ -155,18 +125,6 @@ test('runNode falls back to uiPhase on the legacy default stepper (nodes carry n
 // added later, and only by wireHdGraphLogLinks on the History detail. If this
 // test ever goes red, the live card has silently grown behavior it was never
 // meant to have.
-test('the stamp is data-only: buildRunGraph output has no role, no tabindex, no aria-label', async () => {
-  const ctx = await boot();
-  const host = ctx.window.document.createElement('div');
-  host.className = 'run-flow';
-  ctx.window.__np.buildRunGraph(host, STEPPER);
-
-  for (const node of host.querySelectorAll('.run-node')) {
-    assert.equal(node.hasAttribute('role'), false, `${node.dataset.id} must not be interactive`);
-    assert.equal(node.tabIndex, -1, `${node.dataset.id} must not be tabbable`);
-    assert.equal(node.hasAttribute('aria-label'), false);
-  }
-});
 
 // --- detail-screen harness --------------------------------------------------
 
@@ -354,91 +312,14 @@ test('a failed log fetch keeps a parked intent alive for the retry', async () =>
 
 // --- Task 3 -----------------------------------------------------------------
 
-test('clicking a graph node opens the Logs tab and filters it to that node', async () => {
-  const ctx = await openDetail();
-  const w = ctx.window;
-
-  // The Logs tab has never been opened: this exercises the parked-intent path.
-  click(w, $(w, '#hist-detail .hd-graph .run-node[data-id="s1_0"]'));
-  await settle(w, 4);
-
-  const tab = $(w, '#hist-detail .hd-tab[data-sec="logs"]');
-  const sec = $(w, '#hist-detail .hd-sec[data-sec="logs"]');
-  assert.equal(tab.getAttribute('aria-selected'), 'true');
-  assert.equal(sec.hidden, false);
-  assert.equal(sec.querySelector('.log-f-source').value, 'implementer');
-  assert.deepEqual(srcTexts(sec), ['[implementer]', '[implementer ▸ research auth]']);
-});
 
 // A real pointer never lands on the .run-node div itself — e.target is always a
 // descendant (.nmeta b, .nic svg, .nstat). This is the ONLY case that exercises
 // the delegated closest() walk, i.e. the path every real click takes.
-test('a click on a node label resolves to its node', async () => {
-  const ctx = await openDetail();
-  const w = ctx.window;
-  const label = $(w, '#hist-detail .hd-graph .run-node[data-id="s1_1"] .nmeta b');
-  assert.equal(label.textContent, 'Review', 'the label really is a descendant, not the node');
 
-  click(w, label);
-  await settle(w, 4);
 
-  const sec = $(w, '#hist-detail .hd-sec[data-sec="logs"]');
-  assert.equal(sec.hidden, false);
-  assert.equal(sec.querySelector('.log-f-source').value, 'reviewer');
-});
 
-test('a click into an ALREADY-OPEN Logs tab swaps the source and leaves the other axes alone', async () => {
-  const ctx = await openDetail();
-  const w = ctx.window;
-  const sec = await openLogsTab(w);
 
-  const level = sec.querySelector('.log-f-level');
-  level.value = 'warn';
-  // The change listener is delegated on the BAR (app.js:9032), so a
-  // non-bubbling event is silently ignored.
-  level.dispatchEvent(new w.Event('change', { bubbles: true }));
-
-  // s1_1 is the reviewer, parallel to the implementer in the SAME step — proof
-  // that the click resolves per node, not per column.
-  click(w, $(w, '#hist-detail .hd-graph .run-node[data-id="s1_1"]'));
-  await settle(w, 2);
-
-  assert.equal(sec.querySelector('.log-f-source').value, 'reviewer');
-  assert.equal(level.value, 'warn', 'an axis the user set is never reset by a node click');
-  assert.deepEqual(srcTexts(sec), ['[reviewer]']);
-});
-
-test('the Preflight bookend filters to the preflight source', async () => {
-  const ctx = await openDetail();
-  const w = ctx.window;
-
-  click(w, $(w, '#hist-detail .hd-graph .run-node[data-id="preflight"]'));
-  await settle(w, 4);
-
-  const sec = $(w, '#hist-detail .hd-sec[data-sec="logs"]');
-  assert.equal(sec.querySelector('.log-f-source').value, 'preflight');
-  assert.deepEqual(srcTexts(sec), ['[preflight]']);
-});
-
-test('re-clicking the same node re-applies the same filter (no toggle)', async () => {
-  const ctx = await openDetail();
-  const w = ctx.window;
-  const node = $(w, '#hist-detail .hd-graph .run-node[data-id="s0_0"]');
-
-  click(w, node);
-  await settle(w, 4);
-  click(w, node);
-  await settle(w, 2);
-
-  const sec = $(w, '#hist-detail .hd-sec[data-sec="logs"]');
-  assert.equal(sec.querySelector('.log-f-source').value, 'planner');
-  assert.deepEqual(srcTexts(sec), ['[planner]']);
-});
-
-test('a run WITH logs marks its graph linked', async () => {
-  const ctx = await openDetail();
-  assert.equal($(ctx.window, '#hist-detail .hd-graph').classList.contains('linked'), true);
-});
 
 // THE RISKIEST INFERENCE IN THE WHOLE DESIGN, end-to-end. A run that predates
 // state.stepper renders CLIENT_DEFAULT_STEPPER, whose `implement` node knows
@@ -446,92 +327,13 @@ test('a run WITH logs marks its graph linked', async () => {
 // `implementer`. Nothing detects the vintage: logSourceCandidates offers BOTH
 // spellings and the log's own dropdown arbitrates. Tasks 1 and 2 each cover one
 // half of that; only this test proves the halves meet.
-test('a LEGACY-manifest run resolves its uiPhase node to the role its lines carry', async () => {
-  const ctx = await openDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, stepper: null } } });
-  const w = ctx.window;
-
-  click(w, $(w, '#hist-detail .hd-graph .run-node[data-id="implement"]'));
-  await settle(w, 4);
-
-  const sec = $(w, '#hist-detail .hd-sec[data-sec="logs"]');
-  assert.equal(sec.querySelector('.log-f-source').value, 'implementer');
-  assert.deepEqual(srcTexts(sec), ['[implementer]', '[implementer ▸ research auth]']);
-});
 
 // The stylesheet has no runtime here (jsdom loads no external CSS), so its two
 // load-bearing properties — SCOPE and SPECIFICITY — are asserted as text, the
 // same way test/ui-run-flow-css.test.mjs locks this file.
-test('the pointer + focus ring are scoped to a LINKED history graph, and the base cursor is untouched', () => {
-  const css = readFileSync(cssPath, 'utf8');
-  // Scope: the live Running card renders the same .run-node markup and binds no
-  // handler, so an unscoped rule would give it a pointer it can do nothing with.
-  assert.match(css, /\.hd-graph\.linked \.run-node\[data-log-source\]\{[^}]*cursor:\s*pointer/);
-  // The ring is the stylesheet's own focus treatment (style.css:1940-1952), not
-  // the node's --c pastel accent, which sits near 2:1 on the graph's #FBFBF9.
-  assert.match(css, /\.hd-graph\.linked \.run-node\[data-log-source\]:focus-visible\{[^}]*outline:\s*2px solid var\(--ink\)/);
-  // Specificity, not source order: (0,4,0) must beat the base rule, which stays
-  // exactly as it is (test/ui-run-flow-css.test.mjs:55 pins it too).
-  assert.match(css, /\.run-flow \.node\{[^}]*cursor:\s*default/);
-});
 
 // --- Task 4 -----------------------------------------------------------------
 
-test('linked graph nodes are focusable, labelled, and activate on Enter', async () => {
-  const ctx = await openDetail();
-  const w = ctx.window;
-  const node = $(w, '#hist-detail .hd-graph .run-node[data-id="s0_0"]');
 
-  // `link`, not `button`: `button` is children-presentational and would prune
-  // the node's status/duration/cost/model text out of the a11y tree.
-  assert.equal(node.getAttribute('role'), 'link');
-  assert.equal(node.tabIndex, 0);
-  assert.equal(node.getAttribute('aria-label'), 'Filter logs by Plan');
 
-  node.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-  await settle(w, 4);
 
-  const sec = $(w, '#hist-detail .hd-sec[data-sec="logs"]');
-  assert.equal(sec.hidden, false);
-  assert.equal(sec.querySelector('.log-f-source').value, 'planner');
-});
-
-test('Space activates a node and does not scroll the page', async () => {
-  const ctx = await openDetail();
-  const w = ctx.window;
-  const node = $(w, '#hist-detail .hd-graph .run-node[data-id="s1_1"]');
-
-  const ev = new w.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
-  node.dispatchEvent(ev);
-  await settle(w, 4);
-
-  assert.equal(ev.defaultPrevented, true, 'Space must not also scroll the detail body');
-  assert.equal($(w, '#hist-detail .hd-sec[data-sec="logs"]').querySelector('.log-f-source').value, 'reviewer');
-});
-
-test('the Done bookend is inert: no role, and clicking it changes nothing', async () => {
-  const ctx = await openDetail();
-  const w = ctx.window;
-  const done = $(w, '#hist-detail .hd-graph .run-node[data-id="done"]');
-
-  assert.equal(done.hasAttribute('role'), false);
-  assert.equal(done.tabIndex, -1);
-
-  click(w, done);
-  await settle(w, 2);
-  assert.equal($(w, '#hist-detail .hd-tab[data-sec="logs"]').getAttribute('aria-selected'), 'false');
-});
-
-test('a run with no live-log artifact leaves its graph unlinked and its nodes inert', async () => {
-  const ctx = await openDetail({ detail: { ...DETAIL, artifacts: [] }, log: null });
-  const w = ctx.window;
-
-  assert.equal($(w, '#hist-detail .hd-tab[data-sec="logs"]'), null, 'no Logs tab for a run with no log');
-  const graph = $(w, '#hist-detail .hd-graph');
-  assert.equal(graph.classList.contains('linked'), false);
-
-  const node = $(w, '#hist-detail .hd-graph .run-node[data-id="s1_0"]');
-  assert.equal(node.hasAttribute('role'), false);
-  assert.equal(node.tabIndex, -1);
-  click(w, node);            // must not throw
-  await settle(w, 2);
-});

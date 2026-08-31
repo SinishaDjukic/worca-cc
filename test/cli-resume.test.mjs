@@ -9,7 +9,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, rm, realpath, readFile } from 'node:fs/promises';
 import { existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, dirname, join } from 'node:path';
@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline, seedPipelineRow } from './helpers/db-seed.mjs';
+import { graphResumePoint } from './helpers/graph-templates.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { readPipelineForResume } from '../src/core/artifacts.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
@@ -45,6 +46,8 @@ function run(args, { cwd } = {}) {
     child.on('exit', (code) => res({ code: code ?? 0, stdout, stderr }));
   });
 }
+
+
 
 test('resume with no id -> exit 1 + usage', async () => {
   const r = await run(['resume']);
@@ -280,14 +283,44 @@ test('resume an unregistered cwd project -> resolves past "not onboarded"', asyn
     const { id } = await seedPipeline(projDir, {
       title: 'paused cwd run', status: 'paused',
       branch: { source: 'main', feature: 'f', worktreeDir: goneWt, reusedExisting: false },
-      resumePoint: { version: 1, kind: 'boundary', stepIndex: 0, stepCycle: [], loopState: {},
-        bus: null, stepModels: null, workflowId: 'wf_default', plan: null, nodes: [], gate: null,
-        pipelineDir: projDir, pausedAt: '2026-06-09T00:00:00Z' },
+      resumePoint: graphResumePoint({ pipelineDir: projDir }),
     });
     const r = await run(['resume', id, '--mock', '--yes'], { cwd: projDir });
     assert.equal(r.code, 1, r.stderr);
     assert.doesNotMatch(r.stderr, /not onboarded/i, `stderr: ${r.stderr}`);
     assert.match(r.stderr, /worktree missing/i, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
+  } finally {
+    await rm(projDir, { recursive: true, force: true });
+  }
+});
+
+test('cmdResume routes every resume through createOrchestratorFor, which refuses a v1 point', async () => {
+  const { createOrchestratorFor, EngineRetiredError } = await import('../src/core/engine-select.mjs');
+  await assert.rejects(
+    () => createOrchestratorFor({ projectDir: process.cwd(), resume: { row: {}, resumePoint: { version: 1 }, steps: [] } }),
+    EngineRetiredError,
+  );
+  // and the CLI still goes through the factory, never constructing an engine itself
+  const src = await readFile(new URL('../src/cli/worca-cc.mjs', import.meta.url), 'utf8');
+  assert.ok(/createOrchestratorFor/.test(src), 'CLI uses the refusing factory');
+  assert.ok(!/\bcreateOrchestrator\(/.test(src), 'CLI has no direct engine construction left');
+});
+
+// P8a: `worca resume` refuses a v1 point with exit 2 and the honest message.
+// The guard sits ABOVE the sweep on purpose — sweeping first would NULL the
+// point under test and the caller would read "has no resume point" (exit 1).
+// (Without this test the CLI refusal is dead code — it was, measured.)
+test('resume refuses a v1 resume point: exit 2 and the retirement message', async () => {
+  const projDir = await realpath(await mkdtemp(join(tmpdir(), 'worca-cc-cliresume-v1-')));
+  try {
+    const { id } = await seedPipeline(projDir, {
+      title: 'v1 point run', status: 'paused',
+      resumePoint: { version: 1, kind: 'boundary', pipelineDir: projDir },
+    });
+    const r = await run(['resume', id, '--mock', '--yes'], { cwd: projDir });
+    assert.equal(r.code, 2, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
+    assert.match(r.stderr, /^worca resume: paused on the v1 engine before the graph rework — not resumable$/m,
+      `stderr: ${r.stderr}`);
   } finally {
     await rm(projDir, { recursive: true, force: true });
   }

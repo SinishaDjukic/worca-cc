@@ -171,6 +171,35 @@ test('plugin list shows enabled toggle, disabled state, broken badge, contributi
   assert.equal(cards[1].querySelector('.pl-remove').dataset.name, 'jira-source'); // delegation hook
 });
 
+test('an API-mismatched plugin gets an amber "needs update" badge and the note', () => {
+  const el = renderPluginList([
+    { name: 'old-plugin', version: '0.2.0', enabled: true, broken: true, contributions: { agents: 1, workflows: 1 },
+      apiMismatch: { builtFor: 2, host: 3, agents: 1, workflows: 1,
+        message: 'built for plugin API 2; this version of worca requires plugin API 3 for agents and pipeline templates \u2014 update or reinstall the plugin (1 agent(s), 1 template(s) ignored)' } },
+    { name: 'fine-plugin', version: '1.0.0', enabled: true, contributions: {} },
+  ], { doc });
+  const cards = el.querySelectorAll('.plugin-card');
+  const badge = cards[0].querySelector('.pl-api-mismatch');
+  assert.ok(badge, 'needs-update badge renders');
+  assert.equal(badge.textContent, 'needs update');
+  assert.ok(badge.classList.contains('amber'));
+  assert.equal(cards[0].querySelector('.pl-broken'), null,
+    'needs-update WINS: an outdated plugin never also shows the red "broken" badge');
+  assert.equal(cards[0].querySelectorAll('.badge').length, 1, 'exactly one badge on the card');
+  const note = cards[0].querySelector('.pl-api-note');
+  assert.equal(note.textContent,
+    'built for plugin API 2; this version of worca requires plugin API 3 for agents and pipeline '
+    + 'templates \u2014 update or reinstall the plugin (1 agent(s), 1 template(s) ignored)');
+  assert.equal(note.previousElementSibling.className, 'pl-contrib hint', 'the note follows the contributions line');
+  assert.equal(cards[1].querySelector('.pl-api-mismatch'), null);
+  assert.equal(cards[1].querySelector('.pl-api-note'), null);
+});
+
+test('a card without apiMismatch renders no note (the browser has no formatter of its own)', () => {
+  const el = renderPluginList([{ name: 'fine', version: '1.0.0', enabled: true, contributions: {} }], { doc });
+  assert.equal(el.querySelector('.pl-api-note'), null);
+});
+
 test('connect result: connected / waiting / field errors, and a bare transport error', () => {
   const okEl = renderConnectResult(
     { ok: true, identity: 'Jane Doe', instance: { baseUrl: 'https://tracker.example.com/jira', project: 'PROJ' } },
@@ -404,4 +433,28 @@ test('renderPluginList: provenance falls back to the raw repo when marketplaceNa
   assert.ok(prov);
   assert.match(prov.textContent, /\/tmp\/gone-repo @ deadbee/);
   assert.doesNotMatch(prov.textContent, /·/); // no marketplace name -> no separator
+});
+
+test('a card renders the ignored contributions as an amber note (MAJ-13)', () => {
+  const el = renderPluginList([
+    { name: 'coll-plug', version: '0.1.0', enabled: true, contributions: { agents: 2, workflows: 2 },
+      ignored: [
+        { file: 'agents/planner.meta.json', reason: 'collides with an existing agent' },
+        { file: 'workflows/coll-flow.json', reason: 'invalid template (V5: wire \'w1\': \'n_p.brief\' is not a declared input)' },
+      ] },
+    { name: 'fine-plugin', version: '1.0.0', enabled: true, contributions: {}, ignored: [] },
+  ], { doc });
+  const cards = el.querySelectorAll('.plugin-card');
+  const note = cards[0].querySelector('.pl-ignored-note');
+  assert.ok(note, 'the ignored note renders');
+  assert.equal(note.className, 'pl-ignored-note hint err');
+  assert.equal(note.textContent,
+    '2 contributions ignored: agents/planner.meta.json — collides with an existing agent; '
+    + "workflows/coll-flow.json — invalid template (V5: wire 'w1': 'n_p.brief' is not a declared input)");
+  assert.equal(cards[1].querySelector('.pl-ignored-note'), null, 'a clean plugin gets no note');
+  // singular
+  const one = renderPluginList([{ name: 'p', version: '1', enabled: true, contributions: {},
+    ignored: [{ file: 'agents/x.meta.json', reason: 'unreadable JSON' }] }], { doc });
+  assert.equal(one.querySelector('.pl-ignored-note').textContent,
+    '1 contribution ignored: agents/x.meta.json — unreadable JSON');
 });

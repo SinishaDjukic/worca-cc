@@ -98,18 +98,24 @@ async function main() {
       workspace, prompt: 'add a small feature', auto: true, claude: { mock: true }, branch: { source: 'main' },
     });
 
-    // Capture the resolved plan to prove the review node became `workspaceReviewer`.
-    const origDispatch = orch._dispatch.bind(orch);
-    let seenPlan = null;
-    orch._dispatch = async (plan, runArgs) => { seenPlan = plan; return origDispatch(plan, runArgs); };
+    // Capture the resolved graph to prove the review node became `workspaceReviewer`.
+    // The v1 `_dispatch(plan)` seam died with the v1 engine; resolveGraph stamps
+    // every nodeCtx up front, so the resolved bag IS the plan's replacement.
+    let seenNodes = null;
+    const origResolve = orch._resolveTopology.bind(orch);
+    orch._resolveTopology = async (...a) => {
+      const r = await origResolve(...a);
+      seenNodes = Object.values(orch.resolved.nodeCtx);
+      return r;
+    };
 
     // §9.2 per-node cwd: `ctx.projectDir` is what phases.mjs passes to runClaude as
-    // `cwd`, so recording every node ctx records every spawn's cwd.
+    // `cwd`, so recording every execution ctx records every spawn's cwd.
     const nodeCwds = [];
-    const origNodeCtx = orch._nodeCtx.bind(orch);
-    orch._nodeCtx = (node, pos) => {
-      const ctx = origNodeCtx(node, pos);
-      nodeCwds.push({ key: node.key, cwd: ctx.projectDir });
+    const origExecCtx = orch._execCtx.bind(orch);
+    orch._execCtx = (node, nc, args) => {
+      const ctx = origExecCtx(node, nc, args);
+      nodeCwds.push({ key: nc.key, cwd: ctx.projectDir });
       return ctx;
     };
 
@@ -137,7 +143,7 @@ async function main() {
     const res = await orch.run();
     if (res.status !== 'done') return die(`workspace run did not complete: status=${res.status} (${JSON.stringify(res).slice(0, 300)})`);
 
-    const keys = (seenPlan?.steps || []).flat().map((n) => n.key);
+    const keys = (seenNodes || []).filter((n) => n.kind === 'agent').map((n) => n.key);
     if (!keys.includes('workspaceReviewer')) return die(`review node was not substituted to workspaceReviewer (keys: ${keys.join(',')})`);
     if (keys.includes('reviewer')) return die('single-project reviewer node leaked into a workspace run');
 

@@ -31,20 +31,42 @@ const post = (p, b) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, bo
 const put = (p, b) => fetch(`${base}${p}`, { method: 'PUT', headers: JSONH, body: JSON.stringify(b) });
 const del = (p) => fetch(`${base}${p}`, { method: 'DELETE' });
 
-const META = { displayName: 'Docs Writer', description: 'writes docs', color: 'green', runnerType: 'producer', consumes: ['plan'], produces: ['review'], order: 42 };
+const META = {
+  metaVersion: 2, displayName: 'Docs Writer', description: 'writes docs', color: 'green',
+  runnerType: 'producer', order: 42,
+  inputs: [{ id: 'plan', type: 'md' }],
+  outputs: [{ id: 'review', type: 'md', filename: 'docs-review.md' }],
+};
 const MD = '# Agent: Docs Writer\n\nYou write docs.\n';
 
-test('GET /api/agents carries origin + channels and EXCLUDES markdown', async () => {
+test('GET /api/agents carries origin + mockWriterRoles and EXCLUDES markdown', async () => {
   const r = await get('/api/agents');
   assert.equal(r.status, 200);
   const data = await r.json();
   assert.ok(Array.isArray(data.agents) && data.agents.length >= 9);
   assert.ok(data.agents.every((a) => a.origin === 'builtin' || a.origin === 'user'));
   assert.ok(data.agents.every((a) => !('markdown' in a)));
-  assert.ok(Array.isArray(data.channels) && data.channels.includes('plan'));
+  // mockWriterRoles is a CLOSED list (the mock switch in claude-runner.mjs),
+  // unlike the open channel vocabulary it will replace in Task 12.
+  assert.equal(data.channels, undefined, 'the channel vocabulary is gone from this payload');
+  assert.ok(Array.isArray(data.mockWriterRoles));
+  assert.ok(data.mockWriterRoles.includes('generic-verifier') && data.mockWriterRoles.includes('clarify'));
   assert.ok(!data.agents.some((a) => a.key === 'workspaceScanner'), 'workspace-only excluded by default');
   const all = await (await get('/api/agents?all=1')).json();
   assert.ok(all.agents.some((a) => a.key === 'workspaceScanner'), '?all=1 includes workspace-only');
+});
+
+// NOTE: this one is GREEN before the change — the 11 builtin sidecars already
+// carry v2 ports (P1 seeded them). It is a REGRESSION PIN on that seed data, not
+// a red-to-green test for this task. Keep it; do not "fix" it into failing.
+test('GET /api/agents carries the v2 port fields the composer and the editor need', async () => {
+  const { agents } = await (await get('/api/agents')).json();
+  const planner = agents.find((a) => a.key === 'planner');
+  assert.equal(planner.metaVersion, 2);
+  assert.ok(Array.isArray(planner.inputs) && planner.inputs.some((p) => p.id === 'task'));
+  assert.ok(Array.isArray(planner.outputs) && planner.outputs.some((p) => p.id === 'plan'));
+  assert.equal(typeof planner.portSummary, 'string');
+  assert.ok(planner.portSummary.length > 0);
 });
 
 test('POST -> 201, GET :key (full incl. markdown), PUT, DELETE round-trip', async () => {
@@ -81,25 +103,21 @@ test('built-in guardrails: PUT/DELETE planner -> 409, duplicate POST -> 409, bad
 
 test('DELETE a workflow-referenced agent -> 409; POST /api/workflows accepts a user-agent key', async () => {
   await post('/api/agents', { meta: META, markdown: MD });
-  const wf = await post('/api/workflows', { name: 'Uses Docs', steps: [[{ id: 's0_0', key: 'docsWriter' }]], feedbacks: [] });
+  // POST /api/workflows takes ONLY a v2 graph now. docsWriter consumes `plan`
+  // and produces `review`, so the graph needs a planner upstream of it.
+  const wf = await post('/api/workflows', {
+    version: 2, name: 'Uses Docs', domain: 'coding',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
+      { id: 'n_docs', kind: 'agent', key: 'docsWriter', x: 600, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 900, y: 0, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+      { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_docs', port: 'plan' } },
+      { id: 'w3', from: { node: 'n_docs', port: 'review' }, to: { node: 'n_end', port: 'result' } }],
+  });
   assert.equal(wf.status, 201, 'user agent validates in a workflow');
   const r = await del('/api/agents/docsWriter');
   assert.equal(r.status, 409);
   assert.match((await r.json()).error, /Uses Docs/);
 });
 
-test('GET /api/agents channels is the open-vocabulary union: built-ins + custom ids from agents', async () => {
-  const meta = {
-    displayName: 'Spec Maker', description: 'emits a spec', color: 'blue', runnerType: 'producer',
-    consumes: ['plan'], produces: ['spec'], order: 50,
-    channelDefs: [{ id: 'spec', kind: 'json', filename: 'api-spec.json' }],
-  };
-  const c = await post('/api/agents', { meta, markdown: '# Agent: Spec Maker\n\nYou emit specs.\n' });
-  assert.equal(c.status, 201);
-  const data = await (await get('/api/agents')).json();
-  assert.ok(data.channels.includes('plan'), 'built-ins still present');
-  assert.ok(data.channels.includes('spec'), 'custom channel id surfaced');
-  assert.ok(data.channels.indexOf('spec') > data.channels.indexOf('decomposition'), 'customs appended after built-ins');
-  assert.equal(new Set(data.channels).size, data.channels.length, 'deduped');
-  await del('/api/agents/specMaker');
-});

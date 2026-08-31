@@ -20,13 +20,17 @@ export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
 // Env keys a model entry may NOT set (§4.4): process fundamentals and worca's
 // own runtime knobs, any of which injection could otherwise subvert (mock
 // mode, the claude binary path, the effort flag name). Everything else —
-// including all ANTHROPIC_* / CLAUDE_* — is allowed: routing them is the
+// including all other ANTHROPIC_* / CLAUDE_* — is allowed: routing them is the
 // point. CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is the CLI-2.1.220 permission-mode
 // landmine documented at claude-runner.mjs#buildSpawnEnv.
+// CLAUDE_CODE_SUBAGENT_MODEL is reserved too: the per-node `subagentModel`
+// prompt policy is the only sanctioned wire for a child's model, and a catalog
+// entry silently flooring every fan-out child would contradict the per-node
+// control the UI shows.
 export const RESERVED_MODEL_ENV_KEYS = [
   'PATH', 'HOME', 'TMPDIR', 'SHELL', 'USER', 'LOGNAME', 'TERM',
   'NODE_OPTIONS', 'NODE_EXTRA_CA_CERTS',
-  'CLAUDECODE', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB',
+  'CLAUDECODE', 'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB', 'CLAUDE_CODE_SUBAGENT_MODEL',
 ];
 export const RESERVED_MODEL_ENV_PREFIXES = ['WORCA_'];
 
@@ -52,9 +56,9 @@ export function modelEnvRef(value) {
  * `sourceEnv` (an unset or empty var drops the key). Values are trimmed and a
  * value that is empty after trimming drops the key — an ANTHROPIC_MODEL wire id
  * (#374) reaches `--model` verbatim, so a stray-whitespace or empty value must
- * not survive. Write-time validation already rejects reserved keys, so a drop
- * here means a hand-edited settings file — the caller owns warning about
- * `dropped`.
+ * not survive. The user catalog rejects reserved keys at write time and plugin
+ * manifests strip them at normalize time, so a drop here means a hand-edited
+ * settings file — the caller owns warning about `dropped`.
  * @param {Record<string,*>|undefined} modelEnv
  * @param {Record<string,string|undefined>} [sourceEnv]
  * @returns {{env: Record<string,string>, dropped: string[]}}
@@ -123,4 +127,52 @@ export function assertModelCost(cost) {
     return { perMtok: rates };
   }
   return undefined; // { free: false } or {} — no override
+}
+
+// ── sub-agent model policy (per-node `subagentModel`) ─────────────────────────
+// What a fan-out node's Task/Agent children run on. ONE wire — a prompt block
+// (phases.mjs#subagentModelDirective) that tells the agent to pass `model` on
+// every Task call — because the CLI resolves a child's model as Task-call
+// `model` > the agent definition's own `model:` frontmatter > env default >
+// parent: only the explicit Task-level value reliably binds every child. (The
+// earlier CLAUDE_CODE_SUBAGENT_MODEL env floor was removed for exactly that
+// reason — it bound only agents with no model key — and the key is reserved
+// above so a catalog entry cannot resurrect it.)
+//
+// The vocabulary is deliberately NOT the worca catalog: the CLI's Task tool
+// accepts an ALIAS enum, so a catalog id (or an ANTHROPIC_MODEL wire id) would
+// be rejected at spawn time. Haiku is excluded by product decision.
+export const SUBAGENT_MODELS = ['sonnet', 'opus', 'fable'];
+
+/** "the agent picks per Task call" — a choice rubric in the prompt. */
+export const SUBAGENT_AUTO = 'auto';
+
+/** "children ride the CLI's own resolution" (an agent definition's frontmatter,
+ *  else the parent's model) — the pre-feature prompt. Stored explicitly,
+ *  because the DEFAULT for an unset node is `auto`, not this. */
+export const SUBAGENT_INHERIT = 'inherit';
+
+/** Every storable `subagentModel`. '' / absent are NOT storable — they mean
+ *  "unset", which the runtime resolves to SUBAGENT_DEFAULT. */
+export const SUBAGENT_MODEL_VALUES = [...SUBAGENT_MODELS, SUBAGENT_AUTO, SUBAGENT_INHERIT];
+
+/** What an unset node resolves to at run time: agents choose BY DEFAULT. */
+export const SUBAGENT_DEFAULT = SUBAGENT_AUTO;
+
+/** Whether `v` is a storable subagentModel. */
+export function isSubagentModelValue(v) {
+  return typeof v === 'string' && SUBAGENT_MODEL_VALUES.includes(v);
+}
+
+/** The policy a raw stored value puts in force: a legal value is itself; '' /
+ *  absent / anything that escaped validation is the auto default. */
+export function effectiveSubagentModel(v) {
+  return isSubagentModelValue(v) ? v : SUBAGENT_DEFAULT;
+}
+
+/** The one validation message every writer shares, '' when `v` is acceptable
+ *  ('' and null/undefined mean clear/absent and are always fine). */
+export function subagentModelIssue(v) {
+  if (v == null || v === '' || isSubagentModelValue(v)) return '';
+  return `unknown sub-agent model ${JSON.stringify(String(v))}`;
 }

@@ -11,6 +11,7 @@
 // this module never imports Express or the orchestrator.
 
 import { parseCommand } from './parser.mjs';
+import { BOOKEND_EXECUTION_IDS } from '../../shared/graph/constants.mjs';
 import { createAllowlistGuard, parseIdList } from './allowlist.mjs';
 import { runRef, fmtUsd, fmtMs } from './renderers.mjs';
 
@@ -180,8 +181,16 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
       const lines = [runLine(r)];
       const state = actions.runState(r.runId);
       if (state) {
-        const doneSteps = (state.steps || []).filter((s) => s.status === 'done').length;
-        lines.push(`   **Steps:** ${doneSteps}/${(state.steps || []).length} done · **Phase:** ${state.phase || '—'}`);
+        // `x:` is NOT a bookend filter — every v2 executionId starts with it —
+        // so the two BOOKEND rows are named explicitly.
+        const ledger = (state.steps || []).filter((s) => !BOOKEND_EXECUTION_IDS.includes(String(s.key || '')));
+        const doneSteps = ledger.filter((s) => s.status === 'done').length;
+        const nodes = state.stepper?.graph?.nodes || [];
+        const active = (state.active || [])
+          .map((a) => nodes.find((n) => n.id === a.nodeId)?.label || a.nodeId);
+        const activeLabel = active.length === 0 ? '—'
+          : (active.length === 1 ? active[0] : `${active.length} agents running`);
+        lines.push(`   **Executions:** ${doneSteps}/${ledger.length} done · **Active:** ${activeLabel}`);
         const cost = fmtUsd(state.totalCostUsd);
         if (cost) lines.push(`   **Cost:** ${cost}`);
       }

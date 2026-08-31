@@ -44,6 +44,17 @@ import { tmpdir } from 'node:os';
 
 const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
+// Grace between the abort SIGTERM and the SIGKILL escalation. Claude Code shuts
+// down synchronously (fsync'd ~/.claude.json saves); a SIGKILL that lands inside
+// such a write strands ~/.claude.json.tmp.<pid>.<hex> (2026-08-30: 2099 files,
+// 4.4 GB, all from test runs under IO load). 5 s is generous on an idle disk
+// (SIGTERM exits in ~0.5 s) and only delays a stop when the child is wedged.
+export const DEFAULT_SIGKILL_GRACE_MS = 5000;
+export function sigkillGraceMs() {
+  const n = Number(process.env.WORCA_SIGKILL_GRACE_MS);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_SIGKILL_GRACE_MS;
+}
+
 /** What `--settings` carries, or null when there is nothing to carry (no hook
  *  telemetry, no permission rules) — then the flag is omitted entirely. */
 export function buildSettingsPayload(permissionRules) {
@@ -626,7 +637,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         } catch {
           /* ignore */
         }
-      }, 1500).unref?.();
+      }, sigkillGraceMs()).unref?.();
     };
     if (signal) {
       if (signal.aborted) onAbort();
@@ -841,6 +852,24 @@ async function emitLog(onEvent, text) {
   // Let consumers process the event; keeps mock async-realistic.
   await new Promise((r) => setTimeout(r, 0));
 }
+
+/**
+ * The roles the offline mock runner can SERVE — one per arm of the role switch
+ * below (the `ask` arm is the Ask-Worca assistant, not a writer role). Exported
+ * because three consumers need the vocabulary and none of them may hard-code it:
+ * meta v2 validation (an unknown `mockRole` is a warning + drop), GET /api/agents
+ * (the Agents view's role picker) and the graph executor's mock-role chain.
+ * test/mock-writer-roles.test.mjs parses the switch and pins the lockstep.
+ */
+export const MOCK_WRITER_ROLES = new Set([
+  'clarify', 'planner-plan', 'refiner', 'decomposer', 'implementer', 'reviewer', 'plan-review',
+  'workspace-scan', 'agent-gen', 'workspace-reviewer', 'manual-tests-checklist', 'manual-web-ui-testing',
+  'generic-producer', 'generic-verifier',
+]);
+
+/** Named so the executor's mock-role chain and the switch cannot drift apart. */
+export const MOCK_ROLE_CLARIFY = 'clarify';
+export const MOCK_ROLE_DECOMPOSER = 'decomposer';
 
 /**
  * The mock-fan-out roles (mirror the orchestrator's FANOUT_ELIGIBLE intent): the
@@ -1063,7 +1092,7 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessi
 
   let text = `[mock] role ${role} complete`;
   switch (role) {
-    case 'clarify':
+    case MOCK_ROLE_CLARIFY:
       text = await mockClarify(m, cycle, onEvent);
       break;
     case 'planner-plan':
@@ -1072,7 +1101,7 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessi
     case 'refiner':
       text = await mockRefiner(m, cycle, onEvent);
       break;
-    case 'decomposer':
+    case MOCK_ROLE_DECOMPOSER:
       text = await mockDecomposer(m, onEvent);
       break;
     case 'implementer':
@@ -1556,13 +1585,15 @@ async function mockAgentGen(m, onEvent) {
     ? words[0] + words.slice(1).map((w) => w[0].toUpperCase() + w.slice(1)).join('')
     : 'customAgent';
   const meta = {
-    key, displayName: name, description: `mock-generated agent for ${name}`,
-    color: 'amber', runnerType: 'producer', loopSource: false, fanOut: false,
-    asksQuestions: true, questionsLocked: false, questionsDefault: false,
-    consumes: ['plan'], optionalConsumes: [], produces: ['review'], connectsTo: '*', order: 99,
+    metaVersion: 2, key, displayName: name, description: `mock-generated agent for ${name}`,
+    color: 'amber', runnerType: 'producer', domain: 'general', fanOut: false,
+    asksQuestions: true, questionsLocked: false, questionsDefault: false, order: 99,
+    inputs: [{ id: 'plan', type: 'md', label: 'Plan' }],
+    outputs: [{ id: 'review', type: 'md', filename: 'review-{cycle}.md' }],
   };
   if (m.MOCK_OUT) {
-    const md = `# Agent: ${name}\n\nYou are ${name} (deterministic mock body).\n\n## Inputs\n- the plan\n\n## Outputs\n- a review markdown\n`;
+    const md = `# Agent: ${name}\n\nYou are ${name} (deterministic mock body).\n\n`
+      + '## Ports\n\n- `plan` (in, md) — the plan to review.\n- `review` (out, md) — the review this agent writes.\n';
     await ensureDir(m.MOCK_OUT);
     await writeFile(m.MOCK_OUT, md, 'utf8');
     safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_OUT}`, raw: { mock: true, file: m.MOCK_OUT } });

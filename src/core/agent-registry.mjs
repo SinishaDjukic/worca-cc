@@ -5,15 +5,18 @@
 // agent is now "drop agents/<key>.md + agents/<key>.meta.json", no core edit.
 //
 // Read synchronously so it can back a synchronous AGENT_STEPS constant in
-// config.mjs. Tolerant: a malformed sidecar, or one missing `key`/`order`, is
-// skipped rather than throwing (mirrors the tolerant readers elsewhere).
+// config.mjs. Tolerant: a malformed sidecar, or one missing `key`, is skipped
+// rather than throwing (mirrors the tolerant readers elsewhere); an ABSENT
+// `order` is backfilled to DEFAULT_ORDER, matching normalizeAgentMeta.
 
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CHANNEL_IDS as CHANNEL_ID_LIST } from './channels.mjs'; // single source (m2)
 import { worcaHome } from './projects.mjs'; // user agent layer root (read fresh per call)
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // plugin layer roots (Task 2)
+import { declaredApi, NOT_META_V2 } from './plugin-manifest.mjs'; // plugin API declared by a layer's manifest
+import { normalizeAgentMeta, DEFAULT_ORDER } from '../shared/graph/agent-meta.mjs'; // meta v2 (one source: registry + store + UI)
+import { MOCK_WRITER_ROLES } from './claude-runner.mjs';             // mockRole vocabulary (no cycle: claude-runner imports no registry)
 
 /**
  * Default location of the agent metadata sidecars, relative to this module.
@@ -29,7 +32,6 @@ export const DEFAULT_AGENTS_DIR = fileURLToPath(new URL('../../agents/', import.
 
 const COLORS = new Set(['green', 'peach', 'red', 'blue', 'violet', 'amber']);
 const RUNNER_TYPES = new Set(['producer', 'verifier', 'clarifier']);
-const CHANNEL_IDS = new Set(CHANNEL_ID_LIST);
 
 /** Organizational-only domain tag (coding, marketing, financing, …): lowercase
  *  kebab, ≤32 chars. 'shared' is a recognized sentinel that passes this regex and
@@ -43,57 +45,6 @@ function normalizeDomain(raw) {
 }
 
 /**
- * Built-in channel/governance spec per agent key. Used when a sidecar omits the
- * fields, so the six shipped agents behave byte-identically to today's _nodeIo
- * switch and every saved pipeline stays connectsTo-legal.
- */
-const DEFAULT_SPEC = {
-  clarify:              { consumes: ['userPrompt'],                       produces: ['clarify'],         connectsTo: ['planner'] },
-  planner:              { consumes: ['userPrompt', 'clarify', 'review'],  optionalConsumes: ['clarify', 'review'], produces: ['plan'], connectsTo: ['refiner', 'implementer', 'planReviewer', 'decomposer'] },
-  refiner:              { consumes: ['plan'],              produces: ['plan', 'review'],  connectsTo: ['implementer', 'refiner', 'decomposer'] },
-  decomposer:           { consumes: ['plan'],              produces: ['decomposition'],   connectsTo: ['implementer'] },
-  implementer:          { consumes: ['plan', 'review'],    optionalConsumes: ['review'],  produces: ['code'], connectsTo: ['reviewer', 'manualTestsChecklist'] },
-  reviewer:             { consumes: ['plan', 'code'],      produces: ['review'],          connectsTo: ['implementer', 'manualTestsChecklist'] },
-  manualTestsChecklist: { consumes: ['plan', 'code'],      produces: ['checklist'],       connectsTo: ['manualWebUiTesting'] },
-  manualWebUiTesting:   { consumes: ['checklist', 'code'], produces: ['review'],          connectsTo: ['implementer'] },
-  planReviewer:         { consumes: ['plan'],              produces: ['review'],          connectsTo: ['planner', 'implementer', 'decomposer'] },
-  // Workspace agents (scope:'workspace-only', §6.2). The scanner is off-pipeline
-  // (connectsTo:[] -> non-composable); the reviewer slots into the code->review->
-  // implementer loop exactly like `reviewer`.
-  workspaceScanner:     { consumes: ['userPrompt'],        produces: ['workspace'],       connectsTo: [] },
-  workspaceReviewer:    { consumes: ['plan', 'code'],      produces: ['review'],          connectsTo: ['implementer'] },
-};
-
-/** Channel ids: built-ins or any well-formed CUSTOM id (open vocabulary, m1-v2).
- *  Only a malformed id is warned on and dropped — a typo of a built-in becomes a
- *  custom channel. Consumed ids are surfaced by the validator's reachability
- *  warning; a typo'd pre-seeded id in `produces` has no warning net — the
- *  artifact simply lands on the typo'd channel. */
-const CUSTOM_CHANNEL_ID_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
-function channelList(raw, key, field) {
-  if (!Array.isArray(raw)) return undefined;
-  const out = [];
-  for (const s of raw) {
-    const id = String(s || '').trim();
-    if (!id) continue;
-    if (CHANNEL_IDS.has(id) || CUSTOM_CHANNEL_ID_RE.test(id)) out.push(id);
-    else console.warn(`[agent-registry] ${key}.${field}: malformed channel id "${id}" ignored`);
-  }
-  return out;
-}
-
-/** Normalize connectsTo: '*' | string[] of agent keys. Anything else => fallback.
- * A raw value of '*' is treated as "unset" so DEFAULT_SPEC can override it. */
-function normalizeConnectsTo(raw, fallback) {
-  if (Array.isArray(raw)) {
-    const out = raw.map((s) => String(s || '').trim()).filter(Boolean);
-    return out.length ? out : (fallback ?? '*');
-  }
-  // raw === '*' or anything else: use the fallback (spec array or '*')
-  return fallback ?? '*';
-}
-
-/**
  * Legacy short labels for the original four roles, so the derived AGENT_STEPS is
  * byte-identical to the hardcoded one the UI/orchestrator have always used. New
  * agents fall back to their `displayName`.
@@ -104,63 +55,6 @@ const LEGACY_LABELS = {
   implementer: 'Implement',
   reviewer: 'Review',
 };
-
-const CHANNEL_DEF_KINDS = new Set(['md', 'json']);
-
-/** Normalize a sidecar's channelDefs: well-formed custom ids only, kind md|json
- *  (default md), filename a plain basename (default <id>.<ext>); built-in channel
- *  ids cannot be redefined. */
-function normalizeChannelDefs(raw, key) {
-  if (!Array.isArray(raw)) return [];
-  const out = [];
-  const seen = new Set();
-  for (const d of raw) {
-    if (!d || typeof d !== 'object') continue;
-    const id = typeof d.id === 'string' ? d.id.trim() : '';
-    if (!CUSTOM_CHANNEL_ID_RE.test(id)) {
-      if (id) console.warn(`[agent-registry] ${key}.channelDefs: bad channel id "${id}" ignored`);
-      continue;
-    }
-    if (CHANNEL_IDS.has(id)) {
-      console.warn(`[agent-registry] ${key}.channelDefs: "${id}" is a built-in channel and cannot be redefined`);
-      continue;
-    }
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const kind = CHANNEL_DEF_KINDS.has(d.kind) ? d.kind : 'md';
-    const fnRaw = typeof d.filename === 'string' ? d.filename.trim() : '';
-    // basename only: a def must never escape the pipeline dir
-    const pathSafe = fnRaw && !/[\\/]/.test(fnRaw) && !fnRaw.includes('..');
-    if (fnRaw && !pathSafe) {
-      console.warn(`[agent-registry] ${key}.channelDefs: filename "${fnRaw}" is not a plain basename; using "${id}.${kind}"`);
-    }
-    const filename = pathSafe ? fnRaw : `${id}.${kind}`;
-    out.push({ id, kind, filename });
-  }
-  return out;
-}
-
-/**
- * Registry-level channel definition collection: merge every agent's channelDefs
- * into { [channelId]: {id, kind, filename} }. Registry order (sorted by .order)
- * makes "first definition wins" deterministic; conflicts warn.
- * @param {Record<string, object>} registry
- */
-export function collectChannelDefs(registry) {
-  const defs = {};
-  for (const m of Object.values(registry || {})) {
-    for (const d of m.channelDefs || []) {
-      if (Object.hasOwn(defs, d.id)) {
-        if (defs[d.id].kind !== d.kind || defs[d.id].filename !== d.filename) {
-          console.warn(`[agent-registry] channel "${d.id}" redefined by "${m.key}"; first definition wins`);
-        }
-        continue;
-      }
-      defs[d.id] = { ...d };
-    }
-  }
-  return defs;
-}
 
 /**
  * Ordered unique domain list for UI section headers. Registry is already sorted
@@ -185,17 +79,29 @@ export function collectDomains(registry) {
  *  identifier-shaped so a key can never escape a directory. */
 const AGENT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
-/** Coerce one parsed sidecar into a normalized AgentMeta, or null if unusable. */
-export function normalizeMeta(raw) {
+/** Coerce one parsed sidecar into a normalized AgentMeta, or null if unusable.
+ *  `warn` is INJECTABLE (defaults to console.warn) so scanLayer can capture the
+ *  reason a sidecar was dropped and hand it to a diagnostics sink — the reason
+ *  is authored here and must never be re-derived by a second reader. */
+export function normalizeMeta(raw, { warn = console.warn } = {}) {
   if (!raw || typeof raw !== 'object') return null;
   const key = typeof raw.key === 'string' ? raw.key.trim() : '';
   if (!key) return null;
   if (!AGENT_KEY_RE.test(key)) {
-    console.warn(`[agent-registry] sidecar key "${key}" is not a valid agent key; skipped`);
+    warn(`[agent-registry] sidecar key "${key}" is not a valid agent key; skipped`);
     return null;
   }
-  const order = Number(raw.order);
-  if (!Number.isFinite(order)) return null;
+  // `order` is OPTIONAL: agent-meta.mjs's normalizer backfills DEFAULT_ORDER and
+  // validateMetaV2 reports zero errors for a sidecar that omits it, so dropping
+  // it here made the plugin validator certify an agent this loader then silently
+  // discarded — every node referencing it failed V4 with `unknown agent "<key>"`.
+  // The two normalizers must agree. A PRESENT but non-numeric order is still a
+  // skip (normalizeAgentMeta errors on it), but a loud one, like the key branch.
+  const order = raw.order === undefined ? DEFAULT_ORDER : Number(raw.order);
+  if (!Number.isFinite(order)) {
+    warn(`[agent-registry] sidecar "${key}" has a non-numeric order ${JSON.stringify(raw.order)}; skipped`);
+    return null;
+  }
   const color = COLORS.has(raw.color) ? raw.color : 'amber';
   const runnerType = RUNNER_TYPES.has(raw.runnerType) ? raw.runnerType : 'producer';
   // §6.6 scope coercion (fail-safe, mirrors color): anything but the explicit
@@ -207,13 +113,7 @@ export function normalizeMeta(raw) {
   // Coherence is forced HERE (single source of truth): an agent that cannot ask
   // can be neither locked nor default-on, so UI/agent-gen never validate this.
   const asksQuestions = !!raw.asksQuestions;
-  const spec = DEFAULT_SPEC[key] || {};
-  const rtFallbackConsumes = runnerType === 'verifier' ? ['code'] : ['userPrompt'];
-  const consumes = channelList(raw.consumes, key, 'consumes') || spec.consumes || rtFallbackConsumes;
-  const produces = channelList(raw.produces, key, 'produces') || spec.produces || (runnerType === 'verifier' ? ['review'] : []);
-  const optionalConsumes = channelList(raw.optionalConsumes, key, 'optionalConsumes') || spec.optionalConsumes || [];
-  const connectsTo = normalizeConnectsTo(raw.connectsTo, spec.connectsTo || '*');
-  return {
+  const base = {
     key,
     displayName: typeof raw.displayName === 'string' && raw.displayName.trim()
       ? raw.displayName.trim()
@@ -225,26 +125,46 @@ export function normalizeMeta(raw) {
     runnerType,
     scope,
     domain: normalizeDomain(raw.domain),   // always set; fail-safe VISIBLE default 'general'
-    loopSource: !!raw.loopSource,
     fanOut: !!raw.fanOut,
     asksQuestions,
     questionsLocked: asksQuestions && !!raw.questionsLocked,
     questionsDefault: asksQuestions && !!raw.questionsDefault,
-    consumes,
-    optionalConsumes,
-    produces,
-    connectsTo,
     order,
     // ── schema v2 (all optional; absent => safe defaults; origin/agentPath are
     //    stamped by scanLayer as COMPUTED fields, never read from the sidecar) ──
-    uiPhase: typeof raw.uiPhase === 'string' && raw.uiPhase.trim() ? raw.uiPhase.trim() : null,
     promptHints: typeof raw.promptHints === 'string' ? raw.promptHints : '',
-    version: typeof raw.version === 'string' || typeof raw.version === 'number' ? String(raw.version) : '1',
-    channelDefs: normalizeChannelDefs(raw.channelDefs, key),
     requiresSkills: Array.isArray(raw.requiresSkills)
       ? raw.requiresSkills.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim())
       : [],
   };
+  // ── meta v2 merge (dual shape, P2a..P8) ────────────────────────────────────
+  // A v2 sidecar KEEPS every v1 field and GAINS typed ports + capabilities, so
+  // both engines read the same file during coexistence. normalizeMeta returns a
+  // FIXED key set and agent-store round-trips {...existing, ...raw} through it,
+  // so a v2 sidecar that only "passed unknown keys through" would lose its ports
+  // on the next save. Invalid v2 => warn and SKIP THE WHOLE SIDECAR: half-loading
+  // an agent whose ports are wrong is worse than not loading it.
+  if (raw.metaVersion !== 2) return base;
+  const { meta, errors } = normalizeAgentMeta(raw, {
+    mockWriterRoles: MOCK_WRITER_ROLES,
+    warn: (msg) => warn(msg),
+  });
+  if (errors.length) {
+    warn(`[agent-registry] sidecar "${key}" declares metaVersion 2 but is invalid; skipped: ${errors.join('; ')}`);
+    return null;
+  }
+  const merged = {
+    ...base,
+    metaVersion: 2,
+    inputs: meta.inputs,
+    outputs: meta.outputs,
+    portSummary: meta.portSummary,
+  };
+  for (const field of ['verdict', 'sideEffect', 'mockRole', 'wantsRequest', 'workspaceFanOut',
+    'workspaceStrategy', 'workspaceVariantOf', 'placeable']) {
+    if (field in meta) merged[field] = meta[field];
+  }
+  return merged;
 }
 
 /**
@@ -267,7 +187,7 @@ export function userAgentsDir() {
  * agents/ — drops out). Wrapped in try/catch like userAgentsDir(): with no
  * resolvable worca-cc home (bare node:test runner) or an unreadable lock this
  * returns [] and registry loads never throw.
- * @returns {Array<{plugin: string, dir: string}>}
+ * @returns {Array<{plugin: string, dir: string, builtFor: number|null}>}
  */
 export function pluginAgentLayers() {
   try {
@@ -275,7 +195,18 @@ export function pluginAgentLayers() {
     return Object.keys(lock)
       .sort()
       .filter((name) => lock[name] && lock[name].enabled !== false)
-      .map((name) => ({ plugin: name, dir: join(pluginCurrentDir(name), 'agents') }))
+      .map((name) => {
+        const dir = pluginCurrentDir(name);
+        let builtFor = null;
+        try {
+          const raw = JSON.parse(readFileSync(join(dir, 'worca-cc-plugin.json'), 'utf8'));
+          // `|| null`: declaredApi('') is 0 (an unconstrained range accepts
+          // everything), and "built for plugin API 0" is not English. apiMismatch
+          // guards the same case the same way.
+          builtFor = declaredApi(raw?.engines?.['worca-cc-api'] ?? '') || null;
+        } catch { builtFor = null; } // unreadable manifest: the message degrades, the skip does not
+        return { plugin: name, dir: join(dir, 'agents'), builtFor };
+      })
       .filter(({ dir }) => existsSync(dir));
   } catch {
     return []; // no home / unreadable lock => no plugin layer (fails safe)
@@ -311,7 +242,12 @@ function frontmatterDescription(mdPath) {
 /** Scan one layer dir for *.meta.json; stamps the COMPUTED origin/agentPath/
  *  descriptionDerived fields (none of which normalizeMeta returns, so none can
  *  be persisted back into a sidecar). */
-function scanLayer(dir, origin) {
+function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null, onDrop = null } = {}) {
+  // Every skip below is a CONTRIBUTION THE USER CANNOT SEE unless someone
+  // reports it: console.warn reaches a server log, not the Plugins card, the
+  // install receipt or the doctor. onDrop is that reporting channel — optional,
+  // so the hot registry path pays nothing when nobody is listening.
+  const drop = (file, reason) => { if (onDrop) onDrop({ origin, file, reason }); };
   let files;
   try {
     files = readdirSync(dir);
@@ -325,11 +261,38 @@ function scanLayer(dir, origin) {
     try {
       parsed = JSON.parse(readFileSync(join(dir, f), 'utf8'));
     } catch {
+      drop(f, 'unreadable JSON');
       continue; // skip unreadable / malformed sidecars
     }
-    const meta = normalizeMeta(parsed);
-    if (!meta) continue;
+    // API 3 (plugin layers only): a sidecar that is not meta v2 has no typed
+    // ports, so it can be neither placed on a canvas nor resolved by the graph
+    // engine. Ignore it with a line that names the fix — reusing the SAME
+    // clause validate-time prints, so the two can never drift. Builtin/user
+    // layers keep the v1 path until the engine cut-over.
+    if (requireMetaV2 && Number(parsed?.metaVersion) !== 2) {
+      const builtForText = builtFor == null ? 'an older plugin API' : `plugin API ${builtFor}`;
+      console.warn(`[agent-registry] ${origin}/${f}: built for ${builtForText} — ${NOT_META_V2} — ignored`);
+      drop(f, `built for ${builtForText} — ${NOT_META_V2}`);
+      continue;
+    }
+    // Capture normalizeMeta's own reason rather than re-deriving one: the LAST
+    // warning it emits is the fatal one (non-fatal coercion warnings precede it).
+    let why = '';
+    const meta = normalizeMeta(parsed, {
+      warn: (m) => { why = String(m).replace(/^\[agent-registry\] /, ''); console.warn(m); },
+    });
+    if (!meta) { drop(f, why || 'invalid sidecar'); continue; }
     meta.origin = origin;                                              // computed, never stored
+    // agentFile is a PATH read as the agent's system prompt AND for its
+    // `tools:` frontmatter, so the loader refuses to stamp an agentPath outside
+    // the layer it is scanning. Belt-and-braces behind validatePluginDir, which
+    // never sees a live-edited linked dir or a hand-written user sidecar.
+    if (meta.agentFile
+      && (isAbsolute(meta.agentFile) || !resolve(dir, meta.agentFile).startsWith(resolve(dir) + sep))) {
+      console.warn(`[agent-registry] ${origin}/${f}: agentFile "${meta.agentFile}" resolves outside the agents dir — ignored`);
+      drop(f, `agentFile "${meta.agentFile}" resolves outside the agents dir`);
+      continue;
+    }
     meta.agentPath = meta.agentFile ? join(dir, meta.agentFile) : null; // layer-correct abs path
     // Description fallback (spec 2026-08-09): empty sidecar description →
     // the .md frontmatter description. Only costs a file read when empty.
@@ -356,16 +319,22 @@ function scanLayer(dir, origin) {
  * @returns {Record<string, object>} agent key -> AgentMeta, sorted by `.order`
  */
 export function loadAgentRegistry(agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
-  const builtins = scanLayer(agentsDir, 'builtin');
+  // opts.onDrop({origin, file, reason}) — every sidecar this load IGNORED, so a
+  // caller (plugin-store's card/receipt/doctor) can show what did not load.
+  const onDrop = typeof opts.onDrop === 'function' ? opts.onDrop : null;
+  const builtins = scanLayer(agentsDir, 'builtin', { onDrop });
   const builtinKeys = new Set(builtins.map((m) => m.key));
   const userDir = opts.userAgentsDir === undefined ? userAgentsDir() : opts.userAgentsDir;
   const users = [];
   if (userDir) {
-    for (const m of scanLayer(userDir, 'user')) {
+    for (const m of scanLayer(userDir, 'user', { onDrop })) {
       if (builtinKeys.has(m.key)) {
         console.warn(
           `[agent-registry] user agent "${m.key}" shadows a built-in and was skipped (built-ins are immutable)`,
         );
+        // The sidecar filename is `<key>.meta.json` on every write path (the
+        // agent store writes it, and validatePluginDir requires key === stem).
+        if (onDrop) onDrop({ origin: 'user', file: `${m.key}.meta.json`, reason: 'shadows a built-in agent' });
         continue;
       }
       users.push(m);
@@ -381,12 +350,13 @@ export function loadAgentRegistry(agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
   const plugins = [];
   if (opts.includePlugins !== false) {
     const taken = new Set([...builtinKeys, ...users.map((m) => m.key)]);
-    for (const { plugin, dir } of pluginAgentLayers()) {
-      for (const m of scanLayer(dir, `plugin:${plugin}`)) {
+    for (const { plugin, dir, builtFor } of pluginAgentLayers()) {
+      for (const m of scanLayer(dir, `plugin:${plugin}`, { requireMetaV2: true, builtFor, onDrop })) {
         if (taken.has(m.key)) {
           console.warn(
             `[agent-registry] plugin agent "${m.key}" (plugin "${plugin}") collides with an existing agent and was skipped`,
           );
+          if (onDrop) onDrop({ origin: `plugin:${plugin}`, file: `${m.key}.meta.json`, reason: 'collides with an existing agent' });
           continue;
         }
         taken.add(m.key);

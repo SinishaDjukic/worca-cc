@@ -94,7 +94,7 @@ test('ASK_LIMITS is frozen and carries the spec figures', () => {
   assert.ok(Object.isFrozen(ASK_LIMITS) && Object.isFrozen(ASK_LIMITS.attachment));
   assert.equal(ASK_LIMITS.turnsPerThread, 1);
   assert.equal(ASK_LIMITS.turnsGlobal, 3);
-  assert.equal(ASK_LIMITS.turnTimeoutMs, 15 * 60 * 1000);
+  assert.equal(ASK_LIMITS.turnTimeoutMs, 30 * 60 * 1000);
   assert.equal(ASK_LIMITS.jobGraceMs, 30_000);
   assert.equal(ASK_LIMITS.emptyThreadSweepMs, 24 * 60 * 60 * 1000);
   assert.deepEqual(ASK_LIMITS.attachment, {

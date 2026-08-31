@@ -17,10 +17,11 @@
 // would make getDb() async and break the synchronous data layer.
 
 import { createRequire } from 'node:module';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { worcaHome } from './projects.mjs';
 import { maybeMigrateFromFs } from './migrate-fs-to-db.mjs';
+import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from './graph/seed-templates.mjs';
 
 const _require = createRequire(import.meta.url);
 let _DatabaseSync; // cached node:sqlite DatabaseSync ctor (lazy-loaded once)
@@ -53,7 +54,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 22;
+export const SCHEMA_VERSION = 25;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -72,6 +73,7 @@ export function getDb() {
   mkdirSync(home, { recursive: true }); // chicken/egg: ensure the dir before open
   const db = _openConfiguredMigrated();  // open + pragmas + migrate, retried on BUSY
   maybeMigrateFromFs(db);    // one-shot fs→db import (other phase; self-guarded)
+  reconcileAfterFsImport(db);  // V24: archive v1 templates that import just created
   _db = db;                  // publish only after the DB is fully ready
   return _db;
 }
@@ -198,14 +200,14 @@ CREATE TABLE workflows (
 -- preserving unknown top-level keys (e.g. webUiTesting).
 CREATE TABLE project_config (
   project_key        TEXT PRIMARY KEY,
-  steps              TEXT NOT NULL DEFAULT '{}',  -- JSON: { role: {model?,effort?,fanOut?} }
+  steps              TEXT NOT NULL DEFAULT '{}',  -- JSON: { role: {model?,effort?,subagentModel?,fanOut?} }
   custom_models      TEXT NOT NULL DEFAULT '[]',  -- JSON: [ {id,label} ]
   active_workflow_id TEXT,
   extra              TEXT NOT NULL DEFAULT '{}'   -- JSON: unknown top-level keys
 );
 
 -- config_workflow_nodes: normalized per-node overrides (was config.json
--- workflows[wf].nodes[nodeId] = {model?,effort?,fanOut?}). One row per node.
+-- workflows[wf].nodes[nodeId] = {model?,effort?,subagentModel?,fanOut?}). One row per node.
 CREATE TABLE config_workflow_nodes (
   project_key TEXT NOT NULL,
   workflow_id TEXT NOT NULL,
@@ -733,13 +735,32 @@ const INCREMENTAL_COLUMNS = {
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
-                            pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT' },
-  pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER' },
-  sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER' },
-  workflows:              { domain: 'TEXT', origin: 'TEXT' },
-  config_workflow_nodes:  { ask_questions: 'INTEGER' },
+                            pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT',
+                            outcome: 'TEXT' },
+  pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
+                            execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
+                            exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT' },
+  sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER',
+                            run_model: 'TEXT' },   // v25: the model the child actually ran on
+  workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT', archived_at: 'TEXT' },
+  config_workflow_nodes:  { ask_questions: 'INTEGER', subagent_model: 'TEXT' },  // v25: sub-agent model policy
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
 };
+
+/** v23: per-loop-wire cycle budgets, the graph-engine twin of
+ *  config_workflow_feedbacks (which becomes vestigial at the v1 kill list, never
+ *  dropped). IF NOT EXISTS + an INCREMENTAL_TABLES entry: some DBs already carry
+ *  this table from an earlier branch, with the PK columns in a different ORDER —
+ *  harmless, because every statement names its columns. */
+const CONFIG_WORKFLOW_WIRES_DDL = `
+CREATE TABLE IF NOT EXISTS config_workflow_wires (
+  project_key  TEXT NOT NULL,
+  workflow_id  TEXT NOT NULL,
+  wire_id      TEXT NOT NULL,
+  max_cycles   INTEGER NOT NULL,
+  PRIMARY KEY (project_key, workflow_id, wire_id)
+);
+`;
 
 /**
  * Tables added after v1, keyed by name -> their IF-NOT-EXISTS DDL. Same hazard
@@ -750,6 +771,7 @@ const INCREMENTAL_COLUMNS = {
  * DB missing only one is healed; repairSchemaGaps de-duplicates at exec time.
  */
 const INCREMENTAL_TABLES = {
+  config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
   guardrail_sets:    GUARDRAIL_SETS_DDL,
   cost_ledger:       COST_LEDGER_DDL,
@@ -863,6 +885,29 @@ function reconcileSchema(db) {
   } catch (err) {
     db.exec('ROLLBACK');
     throw err;
+  }
+}
+
+/**
+ * The fs→db import runs after migrate(), so v1 templates it brings in miss the
+ * V24 archive pass. Cheap probe first (hand-seeded upgrade fixtures reach getDb()
+ * with a partial `workflows` table — without the column probe this throws
+ * "no such column: version" and takes the whole open down), then one idempotent
+ * reconcile in its own transaction. No seeding on this path — the seeds, if any,
+ * landed during the ladder. Its own report key keeps the break's account intact.
+ */
+function reconcileAfterFsImport(db) {
+  const cols = new Set(db.prepare('PRAGMA table_info(workflows)').all().map((c) => c.name));
+  if (!cols.has('version') || !cols.has('archived_at')) return;
+  const hit = db.prepare('SELECT 1 AS n FROM workflows WHERE version = 1 AND archived_at IS NULL LIMIT 1').get();
+  if (!hit) return;
+  db.exec('BEGIN IMMEDIATE');
+  let report;
+  try { report = reconcileV1Workflows(db, { seed: false }); db.exec('COMMIT'); }
+  catch (err) { db.exec('ROLLBACK'); throw err; }
+  if (hasSqliteTable(db, 'store_meta')) {
+    db.prepare('INSERT OR REPLACE INTO store_meta (key, kind, data) VALUES (?, ?, ?)')
+      .run('migration:v24:fs-import', 'migration', JSON.stringify(report));
   }
 }
 
@@ -1014,6 +1059,302 @@ function applySchemaV22(db) {
   repairSchemaGaps(db, schemaGaps(db));
 }
 
+/** v23 (node-graph v2): workflows.graph/archived_at, the pipeline_steps execution
+ *  ledger columns, pipelines.outcome and config_workflow_wires. Every piece lives
+ *  in INCREMENTAL_COLUMNS/INCREMENTAL_TABLES, so the whole step IS the reconcile —
+ *  the applySchemaV22 shape, with nothing to backfill. Purely additive: no row is
+ *  read, rewritten or archived here (that is the v24 break). */
+function applySchemaV23(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/** v25 (sub-agent model policy): config_workflow_nodes.subagent_model holds the
+ *  per-node setting, sub_agents.run_model records the model a spawned child
+ *  actually ran on. Both are plain additive columns declared in
+ *  INCREMENTAL_COLUMNS — and this repairSchemaGaps call is what CREATES them on
+ *  the one real upgrade path: a DB stamped exactly 24 takes the LADDER, where
+ *  this is the only repair before the version stamp (reconcileSchema runs only
+ *  on the fast path, user_version >= SCHEMA_VERSION). Do NOT delete this step
+ *  as redundant; test/db-migrate-v25.test.mjs pins the stamped-24 path. */
+function applySchemaV25(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/** Audit channel for V24 (dev convention: one console.warn per decision). */
+const auditV24 = (msg) => console.warn(`[worca] V24: ${msg}`);
+
+/** The pipeline_events line + stderr audit a swept v1 run gets. VERBATIM. */
+export const V1_RUN_RETIRED = 'paused on the v1 engine before the graph rework — not resumable';
+
+/** Absolute path of the OPEN handle's main database file ('' for :memory:). */
+function mainDbFile(db) {
+  try {
+    const row = db.prepare('PRAGMA database_list').all().find((r) => r.name === 'main');
+    return row && typeof row.file === 'string' ? row.file : '';
+  } catch { return ''; }
+}
+
+/** A .pre-v24.bak we would actually restore from: opens as SQLite and is stamped
+ *  BEFORE the break (a partial file fails to open, a 0-byte file reads 0).
+ *  databaseSyncCtor() is db.mjs's own lazy accessor — node:sqlite is deliberately
+ *  NOT imported at module-link time (see the file header), so never write
+ *  `new DatabaseSync(...)` here. */
+function usableBackup(bak) {
+  if (!existsSync(bak)) return false;
+  let probe = null;
+  try {
+    probe = new (databaseSyncCtor())(bak, { readOnly: true });
+    const v = probe.prepare('PRAGMA user_version').get().user_version;
+    return v > 0 && v < 24;
+  } catch { return false; }
+  finally { try { if (probe) probe.close(); } catch { /* ignore */ } }
+}
+
+/**
+ * V24 is the ONLY ladder step that rewrites user data, so an existing DB is
+ * snapshotted BEFORE the transaction opens (`VACUUM INTO` cannot run inside one
+ * — measured: "cannot VACUUM from within a transaction"). Skipped for a fresh
+ * file (nothing to lose) and for `:memory:` (PRAGMA database_list gives file '').
+ * A throw here is FATAL on purpose: no backup, no break.
+ *
+ * Two hazards the naive `existsSync` guard misses, both measured on node 25:
+ *  - a CONCURRENT migrator (CLI + UI first launch) can win the race and leave us
+ *    with `output file already exists` (errcode 1) — NOT a busy-shaped error, so
+ *    getDb()'s retry loop would rethrow and kill this process. A backup someone
+ *    else just took is a SUCCESS, so re-check and return.
+ *  - a 0-byte / half-written .bak from a crashed attempt would be read as "done".
+ *    VACUUM INTO overwrites an empty file happily, so re-take unless the file is
+ *    a readable SQLite DB carrying the pre-break user_version.
+ */
+function backupBeforeV24(db) {
+  const current = db.prepare('PRAGMA user_version').get().user_version;
+  if (current <= 0 || current >= 24) return;
+  const file = mainDbFile(db);
+  if (!file) return;                       // :memory:
+  const bak = `${file}.pre-v24.bak`;
+  if (usableBackup(bak)) return;
+  try {
+    db.exec(`VACUUM INTO '${bak.replace(/'/g, "''")}'`);
+  } catch (err) {
+    // Someone else took it while we were deciding — that is the point of the file.
+    if (usableBackup(bak)) return;
+    throw new Error(`worca cannot take the pre-v24 database backup at ${bak}: `
+      + `${err && err.message ? err.message : err}. The v2 upgrade rewrites saved `
+      + 'pipelines, so it refuses to run without one — free disk space or make '
+      + `${file.replace(/\/[^/]*$/, '')} writable and start worca again.`, { cause: err });
+  }
+}
+
+/** v24: the break. Runs INSIDE the ladder transaction. */
+function applySchemaV24(db, { existing }) {
+  repairSchemaGaps(db, schemaGaps(db));       // heal a divergent stamp first
+  const report = reconcileV1Workflows(db, { seed: existing });
+  report.sweptRuns = sweepV1Runs(db);
+  // Minimal hand-seeded ladders (migrate-v20, db-migrate-v23) have no store_meta
+  // table: there is nothing to audit and the INSERT would abort the ladder tx.
+  if (!hasSqliteTable(db, 'store_meta')) return;
+  // INSERT OR IGNORE, deliberately: this row records THE BREAK. A later
+  // reconcile pass (fs-import, a divergent re-stamp) must not overwrite the
+  // account of what the upgrade actually did — it writes its own key instead.
+  db.prepare('INSERT OR IGNORE INTO store_meta (key, kind, data) VALUES (?, ?, ?)')
+    .run('migration:v24', 'migration', JSON.stringify(report));
+}
+
+/** Does this handle carry a table with that name? (Hand-seeded ladder fixtures build a
+ *  two-column `pipelines` and nothing else, so every V24 pass probes first.) */
+function hasSqliteTable(db, name) {
+  return !!db.prepare("SELECT 1 AS n FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
+}
+
+/**
+ * Archive every LIVE v1 template row (D7: kept, hidden, never converted, never
+ * deleted), insert the 7 seed graphs on an EXISTING DB, fold the coexistence
+ * alias, re-attach the static overlay maps and reset an archived active
+ * workflow. Fully idempotent: a second run changes nothing.
+ * @param {DatabaseSync} db
+ * @param {{seed?:boolean}} [opts] seed=true only for a DB that existed before V24
+ * @returns {{at:string, archived:string[], seeded:string[], seedsSkipped:string[],
+ *            overlayNodes:number, overlayWires:number, aliasRemapped:number,
+ *            overlaysDisplaced:number, activeReset:string[], sweptRuns:string[]}}
+ */
+export function reconcileV1Workflows(db, { seed = false } = {}) {
+  const report = { at: new Date().toISOString(), archived: [], seeded: [], seedsSkipped: [],
+    overlayNodes: 0, overlayWires: 0, aliasRemapped: 0, overlaysDisplaced: 0,
+    activeReset: [], sweptRuns: [] };
+  const cols = new Set(db.prepare('PRAGMA table_info(workflows)').all().map((c) => c.name));
+  for (const need of ['version', 'steps', 'feedbacks', 'created_at', 'updated_at', 'graph', 'archived_at']) {
+    if (!cols.has(need)) return report;      // minimal hand-seeded test schema: nothing to do
+  }
+  // Hand-seeded upgrade fixtures (subagent-migration*.test.mjs seed a faithful
+  // v1 schema) carry `workflows` + `config_workflow_nodes` but NOT
+  // config_workflow_feedbacks / config_workflow_wires / project_config: the base
+  // DDL that creates them only runs for current < 1. Probe before every pass.
+  const hasTable = (t) => hasSqliteTable(db, t);
+  const now = new Date().toISOString();
+
+  // 1) Archive — the WHERE makes it idempotent and keeps an already-archived row's stamp.
+  const live = db.prepare('SELECT id, name FROM workflows WHERE version = 1 AND archived_at IS NULL').all();
+  const archive = db.prepare('UPDATE workflows SET archived_at = ? WHERE id = ? AND version = 1 AND archived_at IS NULL');
+  for (const row of live) {
+    archive.run(now, row.id);
+    report.archived.push(row.id);
+    auditV24(`archived v1 workflow ${row.id} (${row.name}) — v1 templates are not runnable on the graph engine`);
+  }
+
+  // 2) Seeds — EXISTING DBs only (fresh installs keep Default only, decision D7).
+  if (seed) {
+    const find = db.prepare('SELECT id, archived_at FROM workflows WHERE id = ?');
+    const insert = db.prepare(`INSERT OR IGNORE INTO workflows
+      (id, name, version, domain, origin, steps, feedbacks, graph, created_at, updated_at, archived_at)
+      VALUES (?, ?, 2, ?, NULL, '[]', '[]', ?, ?, ?, NULL)`);
+    for (const t of SEED_TEMPLATES) {
+      const row = find.get(t.id);
+      if (row) {
+        if (row.archived_at) {
+          report.seedsSkipped.push(t.id);
+          auditV24(`seed ${t.id} skipped — id held by an archived template`);
+        }
+        continue;                            // a LIVE v2 row with that id is the user's own
+      }
+      insert.run(t.id, t.name, t.domain, JSON.stringify({ nodes: t.nodes, wires: t.wires }), t.createdAt, now);
+      report.seeded.push(t.id);
+    }
+  }
+  // 3) The coexistence alias dies FIRST, and it WINS: an overlay the user set on
+  //    the graph default under its alias is NEWER than any v1-era row on the same
+  //    workflow id. INSERT OR REPLACE (not UPDATE OR IGNORE) so the alias row
+  //    overwrites a colliding target instead of being silently dropped, then the
+  //    alias rows are removed. Every displaced row is audited.
+  //    Running this BEFORE the NODE_ID_MAP remap is the whole point: the other
+  //    order mints wf_default/n_plan from the LEGACY s0_0 row first, and the
+  //    fold then hits the PK and is skipped — the user's newer value lost,
+  //    aliasRemapped 0, no audit line, the alias rows still there.
+  //    The column list is read from the LIVE schema, never hardcoded: a fixed
+  //    list would silently blank config_workflow_nodes.ask_questions (an
+  //    INCREMENTAL_COLUMNS column) on every folded row.
+  const ALIAS = 'wf_default_v2';
+  const DEFAULT_ID = 'wf_default';
+  for (const [table, keyCol] of [
+    ['config_workflow_nodes', 'node_id'],
+    ['config_workflow_wires', 'wire_id'],
+  ]) {
+    if (!hasTable(table)) continue;
+    const colNames = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    const colList = colNames.join(', ');
+    const sel = colNames.map((c) => (c === 'workflow_id' ? `'${DEFAULT_ID}' AS workflow_id` : c)).join(', ');
+    const displaced = db.prepare(
+      `SELECT count(*) AS n FROM ${table} a WHERE a.workflow_id = ?
+         AND EXISTS (SELECT 1 FROM ${table} b WHERE b.project_key = a.project_key
+           AND b.workflow_id = ? AND b.${keyCol} = a.${keyCol})`).get(ALIAS, DEFAULT_ID).n;
+    if (displaced) auditV24(`${table}: ${displaced} wf_default overlay row(s) replaced by the newer wf_default_v2 value`);
+    report.aliasRemapped += db.prepare(
+      `INSERT OR REPLACE INTO ${table} (${colList}) SELECT ${sel} FROM ${table} WHERE workflow_id = ?`).run(ALIAS).changes;
+    db.prepare(`DELETE FROM ${table} WHERE workflow_id = ?`).run(ALIAS);
+  }
+  if (hasTable('project_config')) {
+    report.aliasRemapped += db.prepare('UPDATE project_config SET active_workflow_id = ? WHERE active_workflow_id = ?')
+      .run(DEFAULT_ID, ALIAS).changes;
+  }
+  const pipeCols = new Set(db.prepare('PRAGMA table_info(pipelines)').all().map((c) => c.name));
+  if (pipeCols.has('resume_point')) {
+    // Only a v2 point can name the alias meaningfully; a v1 point that names it
+    // is swept by sweepV1Runs, so the `version = 2` filter is load-bearing.
+    report.aliasRemapped += db.prepare(`UPDATE pipelines
+        SET resume_point = json_set(resume_point, '$.workflowId', ?)
+      WHERE resume_point IS NOT NULL AND json_valid(resume_point)
+        AND json_extract(resume_point, '$.version') = 2
+        AND json_extract(resume_point, '$.workflowId') = ?`).run(DEFAULT_ID, ALIAS).changes;
+  }
+  if (report.aliasRemapped) {
+    auditV24(`remapped ${report.aliasRemapped} row(s) from the wf_default_v2 alias to wf_default`);
+  }
+
+  // 4) Static overlay maps, AFTER the fold (idempotent). A rename that would
+  //    collide with a row the fold just installed is DROPPED — the v2 value wins
+  //    — and the stale v1-keyed row is deleted so no v1 node id survives.
+  if (hasTable('config_workflow_nodes')) {
+    const remapNode = db.prepare(
+      'UPDATE OR IGNORE config_workflow_nodes SET node_id = ? WHERE workflow_id = ? AND node_id = ?');
+    const dropStale = db.prepare('DELETE FROM config_workflow_nodes WHERE workflow_id = ? AND node_id = ?');
+    for (const [wfId, map] of Object.entries(NODE_ID_MAP)) {
+      for (const [oldId, newId] of Object.entries(map)) {
+        report.overlayNodes += remapNode.run(newId, wfId, oldId).changes;
+        const left = dropStale.run(wfId, oldId).changes;   // 0 unless the rename was ignored
+        if (left) {
+          report.overlaysDisplaced += left;
+          auditV24(`${wfId}: dropped ${left} stale "${oldId}" overlay row(s) — "${newId}" already carries a newer value`);
+        }
+      }
+    }
+  }
+
+  // 5) config_workflow_feedbacks rows are COPIED (never moved) onto their wire
+  //    ids: the table stays vestigial but readable, so the migration is reversible.
+  if (hasTable('config_workflow_feedbacks') && hasTable('config_workflow_wires')) {
+    const copyWire = db.prepare(`INSERT OR IGNORE INTO config_workflow_wires
+        (project_key, workflow_id, wire_id, max_cycles)
+      SELECT project_key, workflow_id, ?, max_cycles
+        FROM config_workflow_feedbacks WHERE workflow_id = ? AND fb_id = ?`);
+    for (const [wfId, map] of Object.entries(FB_WIRE_MAP)) {
+      for (const [fbId, wireId] of Object.entries(map)) {
+        report.overlayWires += copyWire.run(wireId, wfId, fbId).changes;
+      }
+    }
+  }
+
+  // 6) An active workflow that just got archived is not runnable — fall back.
+  //    The WHERE is scoped to ARCHIVED rows: a project pointing at a live seed
+  //    keeps its choice.
+  const stranded = hasTable('project_config') ? db.prepare(`SELECT project_key, active_workflow_id FROM project_config
+    WHERE active_workflow_id IN (SELECT id FROM workflows WHERE archived_at IS NOT NULL)`).all() : [];
+  if (stranded.length) {
+    const reset = db.prepare('UPDATE project_config SET active_workflow_id = ? WHERE project_key = ?');
+    for (const r of stranded) {
+      reset.run(DEFAULT_ID, r.project_key);
+      report.activeReset.push(r.project_key);
+      auditV24(`project ${r.project_key}: active pipeline ${r.active_workflow_id} was archived — reset to wf_default`);
+    }
+  }
+  return report;
+}
+
+/**
+ * Retire every run that can only be resumed by the v1 engine: paused OR
+ * interrupted with a resume point that is not `version: 2`. The row keeps its
+ * honest status trail — status becomes 'interrupted', the resume point is
+ * NULLed (so History hides Resume and removePluginWorkflows can never be
+ * stranded on it) and a pipeline_events line records why. `json_valid` guards a
+ * corrupt blob: it is swept too, and json_extract never throws on it (the spec's
+ * predicate is `!= 2` alone; the guard is this plan's addition so a corrupt blob
+ * cannot abort the migration transaction).
+ * Exported and callable without an argument so boot/reconcile paths can run it
+ * on a DB that a divergent ladder stamped past 24.
+ * @param {DatabaseSync} [db]
+ * @returns {string[]} the ids swept
+ */
+export function sweepV1Runs(db = getDb()) {
+  // Minimal hand-seeded test schemas (migrate-v20, db-migrate-v23 build a
+  // `pipelines (id TEXT PRIMARY KEY)` table and run the whole ladder on it) have
+  // neither the columns nor pipeline_events: nothing to sweep, and the SELECT
+  // below would throw "no such column: status" INSIDE the ladder transaction.
+  const cols = new Set(db.prepare('PRAGMA table_info(pipelines)').all().map((c) => c.name));
+  if (!cols.has('status') || !cols.has('resume_point')) return [];
+  if (!hasSqliteTable(db, 'pipeline_events')) return [];
+  const rows = db.prepare(`SELECT id FROM pipelines
+    WHERE status IN ('paused', 'interrupted') AND resume_point IS NOT NULL
+      AND (json_valid(resume_point) = 0 OR json_extract(resume_point, '$.version') != 2)`).all();
+  if (!rows.length) return [];
+  const clear = db.prepare("UPDATE pipelines SET status = 'interrupted', resume_point = NULL WHERE id = ?");
+  const event = db.prepare('INSERT INTO pipeline_events (pipeline_id, ts, text) VALUES (?, ?, ?)');
+  const now = new Date().toISOString();
+  for (const r of rows) {
+    clear.run(r.id);
+    event.run(r.id, now, V1_RUN_RETIRED);
+    auditV24(`run ${r.id}: ${V1_RUN_RETIRED}`);
+  }
+  return rows.map((r) => r.id);
+}
+
 /**
  * Idempotent, versioned, CONCURRENCY-SAFE schema migration. Fast-path no-op when
  * PRAGMA user_version already == SCHEMA_VERSION. Otherwise it takes the write lock
@@ -1042,6 +1383,9 @@ export function migrate(db) {
   // up front (a deferred BEGIN would not lock until the first write, letting two
   // migrators both pass the gate and double-apply SCHEMA_V1 → "table projects already
   // exists"). Under the lock we re-read user_version and no-op if the winner stamped it.
+  // V24 rewrites data (archive + seed + sweep): snapshot the file first. Outside
+  // the tx by necessity — VACUUM cannot run inside one — and fatal on throw.
+  backupBeforeV24(db);
   db.exec('BEGIN IMMEDIATE');
   try {
     const current = db.prepare('PRAGMA user_version').get().user_version; // re-check under lock
@@ -1070,6 +1414,9 @@ export function migrate(db) {
     if (current < 20) applySchemaV20(db);            // ask_cost_ledger + backfill
     if (current < 21) db.exec(ASK_WORKTREES_DDL);    // IF NOT EXISTS — reconcile-safe
     if (current < 22) applySchemaV22(db);            // tables + the ask_run_links column
+    if (current < 23) applySchemaV23(db);            // graph columns + config_workflow_wires
+    if (current < 24) applySchemaV24(db, { existing: current >= 1 });  // the v2 break
+    if (current < 25) applySchemaV25(db);            // sub-agent model policy + recorded child model
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

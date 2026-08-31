@@ -23,9 +23,11 @@ function writeAgent(dir, key, extra = {}) {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${key}.md`), `# ${key}\n\nYou are the ${key} agent.\n`);
   writeFileSync(join(dir, `${key}.meta.json`), JSON.stringify({
+    metaVersion: 2,
     key, displayName: key, description: 'd', color: 'amber', icon: '<path d="M0 0"/>',
-    agentFile: `${key}.md`, runnerType: 'producer', loopSource: false,
-    produces: ['plan'], consumes: ['userPrompt'], optionalConsumes: [], connectsTo: '*',
+    agentFile: `${key}.md`, runnerType: 'producer',
+    inputs: [{ id: 'task', type: 'md' }],
+    outputs: [{ id: 'plan', type: 'md', filename: '{base}.md' }],
     order: 99, ...extra,
   }, null, 2));
 }
@@ -48,6 +50,7 @@ function installFakePlugin(name, agents, { enabled = true, broken = false } = {}
       installedAt: '2026-07-12T00:00:00.000Z',
     },
   });
+  return versionDir; // callers that write extra files (a manifest, a v1 sidecar) need it
 }
 
 test('a plugin agent joins the registry with origin plugin:<name> and agentPath through current/', () => {
@@ -55,7 +58,7 @@ test('a plugin agent joins the registry with origin plugin:<name> and agentPath 
   writeAgent(builtin, 'alpha', { order: 1 });
   installFakePlugin('demo-source', [['demoAgent', { order: 40 }]]);
   const layers = pluginAgentLayers().filter((l) => l.plugin === 'demo-source');
-  assert.deepEqual(layers, [{ plugin: 'demo-source', dir: join(pluginCurrentDir('demo-source'), 'agents') }]);
+  assert.deepEqual(layers, [{ plugin: 'demo-source', dir: join(pluginCurrentDir('demo-source'), 'agents'), builtFor: null }]);
   const reg = loadAgentRegistry(builtin, { userAgentsDir: null });
   assert.equal(reg.demoAgent.origin, 'plugin:demo-source');
   assert.equal(reg.demoAgent.agentPath, join(pluginCurrentDir('demo-source'), 'agents', 'demoAgent.md'),
@@ -130,4 +133,92 @@ test('agent-store refuses Update/Delete on plugin-origin agents (code PLUGIN)', 
     (e) => e.code === 'PLUGIN' && /plugin "guarded"/.test(e.message));
   await assert.rejects(async () => deleteAgent('guardedAgent'),
     (e) => e.code === 'PLUGIN');
+});
+
+test('a plugin sidecar that is not meta v2 is ignored, with a line naming the API', () => {
+  const versionDir = installFakePlugin('legacy-source', []);
+  writeFileSync(join(versionDir, 'worca-cc-plugin.json'),
+    JSON.stringify({ name: 'legacy-source', engines: { 'worca-cc-api': '>=2 <3' } }));
+  const agentsDir = join(versionDir, 'agents');
+  writeFileSync(join(agentsDir, 'oldHelper.md'), '# oldHelper\n');
+  writeFileSync(join(agentsDir, 'oldHelper.meta.json'), JSON.stringify({
+    key: 'oldHelper', displayName: 'Old Helper', agentFile: 'oldHelper.md',
+    runnerType: 'producer', consumes: ['userPrompt'], produces: ['plan'], order: 900,
+  }));
+  const builtin = tmp('worca-cc-pbuiltin-');
+  writeAgent(builtin, 'alpha', { order: 1 });
+  const warnings = [];
+  const realWarn = console.warn;
+  console.warn = (m) => warnings.push(String(m));
+  try {
+    const reg = loadAgentRegistry(builtin, { userAgentsDir: null });
+    assert.equal(reg.oldHelper, undefined, 'the v1 plugin sidecar never reaches the registry');
+    assert.ok(reg.alpha, 'the builtin layer is unaffected');
+  } finally { console.warn = realWarn; }
+  assert.ok(warnings.some((m) => m.includes('plugin:legacy-source/oldHelper.meta.json')
+    && m.includes('built for plugin API 2')
+    && m.includes('metaVersion') && m.endsWith('ignored')), warnings.join('\n'));
+
+  // A parseable manifest with NO `engines` accepts everything, so declaredApi
+  // answers 0 — report that as "an older plugin API", never "plugin API 0".
+  writeFileSync(join(versionDir, 'worca-cc-plugin.json'), JSON.stringify({ name: 'legacy-source' }));
+  warnings.length = 0;
+  console.warn = (m) => warnings.push(String(m));
+  try { loadAgentRegistry(builtin, { userAgentsDir: null }); } finally { console.warn = realWarn; }
+  assert.ok(warnings.some((m) => m.includes('built for an older plugin API')), warnings.join('\n'));
+});
+
+// NOTE: this one is GREEN before the implementation — nothing gates user
+// sidecars today. It is a REGRESSION GUARD on the scope rule (plugin layers
+// only), not a red-to-green test. Keep it; do not "fix" it into failing.
+test('the v2 gate is PLUGIN-only: a v1 USER sidecar still loads (v1 engine is live)', () => {
+  const builtin = tmp('worca-cc-pbuiltin-');
+  writeAgent(builtin, 'alpha', { order: 1 });
+  const userDir = tmp('worca-cc-userlayer-');
+  mkdirSync(userDir, { recursive: true });
+  writeFileSync(join(userDir, 'oldUser.md'), '# oldUser\n');
+  writeFileSync(join(userDir, 'oldUser.meta.json'), JSON.stringify({
+    key: 'oldUser', displayName: 'Old User', agentFile: 'oldUser.md',
+    runnerType: 'producer', consumes: ['plan'], produces: ['review'], order: 98,
+  }));
+  const reg = loadAgentRegistry(builtin, { userAgentsDir: userDir, includePlugins: false });
+  assert.ok(reg.oldUser, 'a v1 user sidecar is untouched by the plugin API gate');
+  assert.equal(reg.oldUser.metaVersion, undefined);
+});
+
+test('a sidecar whose agentFile escapes its layer dir is DROPPED with a warning (C-1)', () => {
+  // Belt-and-braces behind validatePluginDir: a linked plugin dir is live-edited
+  // and a user-layer sidecar is hand-written, so the LOADER refuses to stamp an
+  // agentPath outside the layer it is scanning. A v1 sidecar is the path only
+  // this guard covers — meta v2's basename rule never runs on one.
+  const builtin = tmp('worca-cc-esc-builtin-');
+  writeAgent(builtin, 'alphaEsc', { order: 1 });
+  const user = tmp('worca-cc-esc-user-');
+  writeFileSync(join(user, 'escaper.meta.json'), JSON.stringify({
+    key: 'escaper', displayName: 'escaper', agentFile: '../../../../etc/passwd', order: 5,
+  }));
+  writeFileSync(join(user, 'escaper.md'), '# decoy\n');
+  writeAgent(user, 'honest', { order: 6 });
+  const warned = [];
+  const orig = console.warn;
+  console.warn = (...a) => warned.push(a.join(' '));
+  let reg;
+  try { reg = loadAgentRegistry(builtin, { userAgentsDir: user }); } finally { console.warn = orig; }
+  assert.equal(reg.escaper, undefined, 'the escaping sidecar never reaches the registry');
+  assert.ok(reg.honest, 'its neighbours in the same layer still load');
+  assert.ok(warned.some((w) => w === '[agent-registry] user/escaper.meta.json: agentFile "../../../../etc/passwd" resolves outside the agents dir \u2014 ignored'),
+    warned.join('; '));
+  // an absolute agentFile is refused the same way, even when it happens to
+  // point back inside the layer
+  const user2 = tmp('worca-cc-esc-user2-');
+  writeFileSync(join(user2, 'absolute.meta.json'), JSON.stringify({
+    key: 'absolute', displayName: 'absolute', agentFile: join(user2, 'absolute.md'), order: 7,
+  }));
+  writeFileSync(join(user2, 'absolute.md'), '# abs\n');
+  const warned2 = [];
+  console.warn = (...a) => warned2.push(a.join(' '));
+  let reg2;
+  try { reg2 = loadAgentRegistry(builtin, { userAgentsDir: user2 }); } finally { console.warn = orig; }
+  assert.equal(reg2.absolute, undefined);
+  assert.ok(warned2.some((w) => /agentFile ".*absolute\.md" resolves outside the agents dir/.test(w)), warned2.join('; '));
 });

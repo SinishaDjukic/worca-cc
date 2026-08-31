@@ -16,6 +16,9 @@ const state = {
   config: { steps: {}, customModels: [] }, // per-project model/effort selections
   models: [], // predefined + custom, from /api/config
   efforts: [], // effort levels, from /api/config
+  // Sub-agent model policy vocabulary, from /api/config. A FIXED alias enum (the
+  // CLI's Task tool refuses catalog ids), not a slice of `models`.
+  subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'],
   workflowId: 'wf_default', // currently selected workflow in New Pipeline
   guardrailsId: 'permissive', // the guardrail set the next run applies ('permissive' = unrestricted default)
   guardrailSets: [], // GET /api/guardrails cache for the picker + hint
@@ -23,7 +26,7 @@ const state = {
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
   stepDefaults: {}, // { [key]: { fanOut } } sidecar defaults from /api/config steps
   agentsList: [], // GET /api/agents?all=1 list for the Agents management view
-  channelIds: [], // known channel ids from /api/agents (drives the agent editor)
+  mockWriterRoles: [], // closed mock-role list from /api/agents (drives the agent form)
   historyAll: [],    // full /api/history dataset; client-side filter cache
   commentCounts: {}, // "<storeKey>/<pipelineId>" -> unresolved diff-comment count
   historyFilter: '', // active projectKey filter for History; '' === All Projects
@@ -49,18 +52,10 @@ const state = {
   activePluginProfile: null,
 };
 
-import {
-  topology,
-  metaLine,
-  distinctAgents,
-  defaultTopologyFromTemplate,
-  mergePalette,
-  canConnect,
-  EMBEDDED_AGENTS,
-  groupPaletteByDomain,
-} from './composer-core.mjs';
-import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, projectLogRecord } from './log-line.mjs';
+import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
+import { decorFromState, applyDecor, isGraphManifest } from './graph/run-decor.mjs';
+import { mountRunGraph } from './graph/run-hosts.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion. They stay EXPORTED
 // from results-view.mjs (test/results-view-helpers.test.mjs imports four of them).
@@ -82,6 +77,7 @@ import {
   renderOrphanList, channelBadge, renderAvailableList, renderMarketplaceList,
 } from './plugins-view.mjs';
 import { renderChatSettings, collectChatSettings } from './chat-settings-view.mjs';
+import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL } from '../../src/shared/graph/constants.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409,
@@ -95,6 +91,15 @@ import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
 import { renderStatsBody, renderBudgetIndicator, renderBudgetRing, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
+import { createComposer, RESERVED_WORKFLOW_ID, pluginOriginName } from './graph/composer.mjs';
+// mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
+// bare <select> with no preview host on this branch (the v1 read-only mini-graph
+// lived in the composer's saved list, retired in P5 Task 8). P6's Running list is
+// its first caller.
+import { thumbnailFor } from './graph/view.mjs';
+import { portsFnFor } from '../../src/shared/graph/ports.mjs';
+import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
+import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
 
@@ -681,9 +686,6 @@ function handleServerMessage(msg) {
   const r = upsertRun({ runId: msg.runId });
 
   switch (msg.type) {
-    case 'phase':
-      onPhase(r, msg);
-      break;
     case 'log':
       onLog(r, msg);
       break;
@@ -771,13 +773,9 @@ function onHello(msg) {
       projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
     });
     // Seed the run's stepper from the hello summary so the live card resolves
-    // sub-agents to their real (s0_0-keyed) nodes BEFORE any subagent delta paints
-    // — closing the window where r.stepper is null and the graph falls back to the
-    // legacy default (mismatched ids → no squares + a raw "s0_0" dropdown group).
-    if (r0.stepper && rr.stepper == null) {
-      rr.stepper = r0.stepper;
-      if (rr.el) rebuildStepperDom(rr);
-    }
+    // sub-agents to their real nodes BEFORE any subagent delta paints — closing
+    // the window where r.stepper is null and nothing can be resolved.
+    if (r0.stepper && rr.stepper == null) rr.stepper = r0.stepper;
 
     const nonTerminal =
       r0.status === 'starting' || r0.status === 'running' || r0.status === 'pausing' ||
@@ -836,52 +834,35 @@ function currentView() {
 // Steps tracker
 // ---------------------------------------------------------------------------
 
-// Normalize a core phase name to one of our tracker step keys.
-// Order matters: more specific phases ("refine", "review", "implement") are
-// matched before the generic "plan"/"clarify" fallback, because names like
-// "plan-refine" contain the substring "plan".
-function normalizePhase(phase) {
-  if (!phase) return null;
-  const p = String(phase).toLowerCase();
-  if (p.includes('preflight')) return 'preflight';
-  if (p.includes('manual-web')) return 'manual-web';
-  if (p.includes('manual-checklist') || p.includes('manual-test')) return 'manual-checklist';
-  if (p.includes('refine')) return 'refine';
-  if (p.includes('review')) return 'review';
-  if (p.includes('implement')) return 'implement';
-  if (p.includes('done') || p.includes('complete') || p.includes('finish')) return 'done';
-  if (p.includes('clarify')) return 'clarify';
-  if (p.includes('plan')) return 'plan';
-  return null;
+// The agent-meta cache the Agents view and the composer palette read. Filled on
+// demand from GET /api/agents and cleared by every agent mutation, so a view
+// opened without ever visiting the Composer still shows real icons.
+const agentMetaCache = new Map();     // key -> normalized meta from GET /api/agents
+let _agentMetaPending = null;
+async function ensureAgentMeta(onReady) {
+  if (agentMetaCache.size) return;
+  if (!_agentMetaPending) _agentMetaPending = fetchAgents();
+  const res = await _agentMetaPending;
+  _agentMetaPending = null;
+  const list = Array.isArray(res) ? res : (res && Array.isArray(res.agents) ? res.agents : []);
+  for (const a of list) if (a && a.key) agentMetaCache.set(a.key, a);
+  if (list.length && typeof onReady === 'function') onReady();
 }
 
-// Legacy default stepper, used when a run predates state.stepper (old history)
-// or before the first 'state' event arrives. Node ids = uiPhase keys so old
-// per-step costs/durations (bucketed by phase) still attribute correctly.
-const CLIENT_DEFAULT_STEPPER = {
-  version: 1,
-  steps: [
-    { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
-    { kind: 'agents', nodes: [{ id: 'clarify',   uiPhase: 'clarify',   label: 'Clarify',   color: 'red',    cycles: false }] },
-    { kind: 'agents', nodes: [{ id: 'plan',      uiPhase: 'plan',      label: 'Plan',      color: 'violet', cycles: false }] },
-    { kind: 'agents', nodes: [{ id: 'refine',    uiPhase: 'refine',    label: 'Refine',    color: 'green',  cycles: true  }] },
-    { kind: 'agents', nodes: [{ id: 'implement', uiPhase: 'implement', label: 'Implement', color: 'amber',  cycles: false }] },
-    { kind: 'agents', nodes: [{ id: 'review',    uiPhase: 'review',    label: 'Review',    color: 'blue',   cycles: true  }] },
-    { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] },
-  ],
-  feedbacks: [],
-};
+// The palette the graph cards and the frozen-v1 chip strip read for --c.
+const COMPOSER_COLORS = { green: '#5BAE5B', peach: '#EFA63C', red: '#E76A5A', blue: '#5BA6CC', violet: '#8C7FD6', amber: '#E6962A' };
 
-// Pick the manifest to render: prefer a persisted/emitted one, else the legacy
-// default. Defensive against malformed shapes.
+// Pick the manifest to render. A v2 run always carries one; a run with no
+// manifest at all (pre-stepper history) renders NOTHING rather than the v1
+// default seven, which died with the v1 engine.
+const EMPTY_MANIFEST = { steps: [], feedbacks: [] };
 function manifestFor(stepper) {
   if (stepper && Array.isArray(stepper.steps) && stepper.steps.length) return stepper;
-  return CLIENT_DEFAULT_STEPPER;
+  return EMPTY_MANIFEST;
 }
 
 // Stable node-id signature of a manifest. Used to detect a manifest REPLACEMENT
-// (e.g. a decomposed run rewrites the implementer node into per-phase/per-task
-// nodes) so the live view can re-swap + rebuild mid-run.
+// so the live view can re-swap mid-run.
 function manifestSig(stepper) {
   const m = manifestFor(stepper);
   return (Array.isArray(m.steps) ? m.steps : [])
@@ -889,330 +870,6 @@ function manifestSig(stepper) {
     .join('|');
 }
 
-// Resolve an incoming phase/state event to a cell index + node id within a run's
-// manifest. nodeId (node phase events) pins the exact node; bookend/legacy events
-// match by phase: preflight/done by kind, everything else by uiPhase.
-function locateInManifest(manifest, msg) {
-  const m = manifestFor(manifest);
-  if (msg.nodeId) {
-    for (let i = 0; i < m.steps.length; i++) {
-      if (m.steps[i].nodes.some((n) => n.id === msg.nodeId)) return { cellIdx: i, nodeId: msg.nodeId };
-    }
-  }
-  const key = normalizePhase(msg.phase);
-  if (key === 'preflight') return { cellIdx: 0, nodeId: 'preflight' };
-  if (key === 'done') return { cellIdx: m.steps.length - 1, nodeId: 'done' };
-  for (let i = 0; i < m.steps.length; i++) {
-    const hit = m.steps[i].nodes.find((n) => n.uiPhase === key);
-    if (hit) return { cellIdx: i, nodeId: hit.id };
-  }
-  return { cellIdx: -1, nodeId: null };
-}
-
-// Map a phase status string + run status to a stepper node kind.
-function nodeKindFor(r, status) {
-  if (r.pendingQuestion != null) return 'pause';
-  if (r.status === 'stopped') return 'stop';
-  if (['done', 'complete', 'passed', 'finish'].includes(status)) return 'done';
-  // A gracefully paused/pausing run leaves its frontier node mid-flight: mark it
-  // paused so the stepper shows WHERE it stopped instead of a phantom "running…".
-  if (r.status === 'paused' || r.status === 'pausing') return 'pause';
-  return 'now';
-}
-
-// Apply one phase/state transition to the run's live node-status map.
-// The scalar trackers (phaseKey/cycle/phaseStatus) drive the foot chip + status
-// pill and are kept in sync even when the phase isn't locatable in this run's
-// manifest (e.g. a manual-web phase on the legacy default manifest) — only the
-// cell-level node-status map needs a resolved cell + node id.
-function advanceRun(r, msg) {
-  r.phaseKey = normalizePhase(msg.phase) || r.phaseKey;
-  if (msg.cycle) r.cycle = msg.cycle;
-  r.phaseStatus = msg.status || '';
-  const { cellIdx, nodeId } = locateInManifest(r.stepper, msg);
-  if (cellIdx < 0 || !nodeId) return;
-  if (cellIdx > r.maxCellIdx) r.maxCellIdx = cellIdx;
-  if (msg.cycle) r.nodeCycle[nodeId] = Math.max(r.nodeCycle[nodeId] || 0, Number(msg.cycle) || 0);
-  r.nodeStatus[nodeId] = nodeKindFor(r, msg.status || '');
-}
-
-// Replace a live card's stepper DOM when the manifest first arrives/changes.
-function rebuildStepperDom(r) {
-  const host = r.el && r.el.querySelector('.run-flow');
-  if (host) buildRunGraph(host, r.stepper);
-}
-
-// ---------------------------------------------------------------------------
-// Run/history node-graph (composer-style). buildRunGraph builds the static
-// .run-flow skeleton; paintRunGraph tints it + repaints wires via the shared
-// composerPaintWires. Walks the stepper manifest and emits composer .node markup.
-// ---------------------------------------------------------------------------
-
-// Resolve a manifest node to its agent meta (icon/displayName/description/color).
-// Manifest nodes carry .key (set by buildStepperManifest); bookends (preflight/
-// done) have no key -> a neutral cog so they still render an icon.
-//
-// IMPORTANT: read composer.agents[key] RAW (not composerAgent(key)). composerAgent
-// returns a non-undefined default {displayName:key,...} that would shadow the
-// EMBEDDED_AGENTS fallback. Raw access yields undefined when the live registry
-// isn't loaded yet, so the `|| EMBEDDED_AGENTS[key]` fallback fires. Do not simplify.
-const RUN_BOOKEND_ICON = '<circle cx="12" cy="12" r="3.2"/><path d="M12 4.5v2M12 17.5v2M4.5 12h2M17.5 12h2M6.6 6.6l1.4 1.4M16 16l1.4 1.4M17.4 6.6L16 8M8 16l-1.4 1.4" stroke-linecap="round"/>';
-function runNodeAgent(node) {
-  const key = node && node.key;
-  const live = key && composer.agents && composer.agents[key];
-  const embedded = key && EMBEDDED_AGENTS[key];
-  const meta = live || embedded || {};
-  return {
-    icon: safeAgentIcon(meta) || RUN_BOOKEND_ICON,
-    color: node.color || meta.color || 'blue',
-    label: node.label || meta.displayName || node.id,
-    sub: node.sub || meta.description || '',
-  };
-}
-
-// Visible status caption under the node label. pending -> the node's description.
-const STAT_TEXT = { done: 'completed', active: 'running…', paused: 'awaiting input', stopped: 'stopped here', pending: '' };
-
-// Settled-status badge markup (check / two-bar / X). active+pending have none.
-const STAT_BADGE = {
-  done: '<div class="nstat done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>',
-  paused: '<div class="nstat paused"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="7" y="5" width="3.4" height="14" rx="1"/><rect x="13.6" y="5" width="3.4" height="14" rx="1"/></svg></div>',
-  stopped: '<div class="nstat stopped"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M6 6l12 12M18 6L6 18" stroke-linecap="round"/></svg></div>',
-};
-
-// Visible "model · effort" sub-line for a run-graph node, mirroring the New-
-// pipeline config caption (.step-current): friendly model label + raw effort.
-// Bookend cells (Preflight/Done) have no uiPhase and run no model -> no line.
-// A step with neither model nor effort inherits the global default -> "default"
-// (per-field "default" when only one is set). The "·" is U+00B7, matching the
-// composer separator. NOTE: the blank wording is "default" (clarification Q1),
-// which intentionally differs from the composer's "default model"/"default effort".
-function nodeModelLine(node) {
-  if (!node || !node.uiPhase) return '';
-  const model = node.model || '';
-  const effort = node.effort || '';
-  if (!model && !effort) return 'default';
-  const m = modelById(model);
-  // ⚠ = the model has an OBSERVED cost-unreliable flag (§4.6): its endpoint
-  // reported no cost while consuming tokens, so this node's cost readout may
-  // under-report.
-  const modelLabel = model ? (m ? m.label : model) + (m && m.costUnreliable ? ' ⚠' : '') : 'default';
-  return `${modelLabel} · ${effort || 'default'}`;
-}
-
-// Sub-agent square strip for a run-graph node. One <span.sq> per sub-agent
-// (.on iff that sub is still `running`), plus an exact ×N count. Squares are
-// render-capped (the count text stays exact); no subs -> empty string so a
-// node without sub-agents gets no border row. Pulse is CSS-only (.sq.on).
-const SUB_SQUARE_CAP = 24;
-function subFanHtml(subs) {
-  const list = Array.isArray(subs) ? subs : [];
-  if (list.length === 0) return '';
-  const squares = list
-    .slice(0, SUB_SQUARE_CAP)
-    .map((s) => `<span class="sq${s && s.status === 'running' ? ' on' : ''}"></span>`)
-    .join('');
-  return `<div class="fan">${squares}<span class="fl">×${list.length}</span></div>`;
-}
-
-// Build one run-graph node element. status ∈ done|active|paused|stopped|pending.
-// isSelf => the node is its own self-cycle target (gets the .iterates ring).
-function runNode(node, status, isSelf) {
-  const ag = runNodeAgent(node);
-  const d = document.createElement('div');
-  d.className = `node run-node is-${status}` + (isSelf ? ' iterates' : '');
-  d.dataset.id = node.id;
-  // The History detail wires a click on these nodes to the Logs tab's `source`
-  // filter (wireHdGraphLogLinks). The source a node's lines carry is its AGENT
-  // KEY on a server-built manifest (orchestrator.mjs:2953 logs under node.key)
-  // but its uiPhase on CLIENT_DEFAULT_STEPPER, whose nodes carry no key at all;
-  // `preflight` is a real log source that is neither (orchestrator.mjs:518-524).
-  // The Done bookend emits nothing, so it deliberately gets NO attribute and
-  // stays inert. Data-only on purpose: the live Running card renders this same
-  // markup and binds no handler to it.
-  const logSource = node.id === 'preflight' ? 'preflight' : (node.key || node.uiPhase || '');
-  if (logSource) d.dataset.logSource = logSource;
-  d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
-  const statusText = STAT_TEXT[status] != null ? STAT_TEXT[status] : '';
-  // model · effort is now a VISIBLE sub-line under cost/time (was a hover tooltip).
-  // A node with NO configured model carries data-nomodel (+ its effort), so
-  // paintRunGraph can resolve the opaque "default" to the session's ACTUAL
-  // model once the CLI's init event reports it (design §4.7). Display-only.
-  const meLine = nodeModelLine(node);
-  d.innerHTML =
-    `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${ag.icon}</svg></div>` +
-    `<div class="nmeta"><b>${escapeHtml(ag.label)}</b>` +
-      `<small class="nstatus">${escapeHtml(statusText || (status === 'pending' ? (node.sub || ag.sub || '') : ''))}</small>` +
-      `<div class="nrun"><span class="dur"></span><span class="cost"></span></div>` +
-      (meLine ? `<small class="nmodel">${escapeHtml(meLine)}</small>` : '') +
-    `</div>` +
-    (STAT_BADGE[status] || '');
-  if (meLine && !node.model) {
-    // dataset assignment, not attribute interpolation — node.effort is
-    // enum-validated server-side, but never trust it into an HTML string.
-    const modelEl = d.querySelector('.nmodel');
-    modelEl.dataset.nomodel = '1';
-    modelEl.dataset.effort = node.effort || '';
-  }
-  return d;
-}
-
-// The set of node ids in a manifest, in column order, as a stable signature.
-function runGraphNodeIds(manifest) {
-  const ids = [];
-  manifest.steps.forEach((cell) => cell.nodes.forEach((n) => ids.push(n.id)));
-  return ids;
-}
-
-// Build (or rebuild) the .run-flow skeleton into `host`. Idempotent: if the
-// host already holds a graph for the SAME ordered node-id set, leave the DOM
-// (and its running CSS animations) intact. Trailing <svg class="wires"> is the
-// shared renderer's target.
-function buildRunGraph(host, manifest) {
-  const m = manifestFor(manifest);
-  const ids = runGraphNodeIds(m);
-  if (host.dataset.graphSig === ids.join('|') && host.querySelector('svg.wires')) return;
-
-  // Preserve horizontal scroll across a structural rebuild: emptying .run-flow
-  // collapses it to 0 width, which clamps the .run-flow-wrap scroller back to the
-  // far left. Capture before the wipe, restore after the columns are re-appended,
-  // so a new stage/node never yanks the pipeline back to the start. No-op off-DOM
-  // (a freshly-cloned card has scrollLeft 0 and nothing to keep). Works for both
-  // the live card and the history-detail card (both nest .run-flow in .run-flow-wrap).
-  const scroller = host.closest('.run-flow-wrap');
-  const savedLeft = scroller ? scroller.scrollLeft : 0;
-
-  host.dataset.graphSig = ids.join('|');
-  host.dataset.wiresSig = ''; // force a wire repaint after a structural rebuild
-  host.innerHTML = '';
-
-  const selfTargets = new Set(
-    (Array.isArray(m.feedbacks) ? m.feedbacks : [])
-      .filter((fb) => fb && fb.from === fb.to)
-      .map((fb) => fb.from),
-  );
-
-  host.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
-  m.steps.forEach((cell, i) => {
-    const col = document.createElement('div');
-    col.className = 'col';
-    col.dataset.cellIdx = String(i);
-    const tag = document.createElement('div');
-    tag.className = 'col-tag';
-    tag.innerHTML = (cell.label ? escapeHtml(cell.label) : `Step ${i + 1}`) + (cell.nodes.length > 1 ? ' · <em>parallel</em>' : '');
-    col.appendChild(tag);
-    for (const node of cell.nodes) col.appendChild(runNode(node, 'pending', selfTargets.has(node.id)));
-    host.appendChild(col);
-  });
-  host.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
-
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('class', 'wires');
-  host.appendChild(svg);
-
-  // Restore the pre-rebuild horizontal scroll (the browser clamps automatically if
-  // the graph is now narrower). Only when there was a position to keep.
-  if (scroller && savedLeft) scroller.scrollLeft = savedLeft;
-}
-
-// Final per-node loop count the renderer consumes directly: a node that ran k
-// cycles fired its loop k-1 times. nodeCycle[id] = max cycle observed (default 1).
-function loopCounts(manifest, nodeCycle) {
-  const nc = nodeCycle || {};
-  const out = {};
-  runGraphNodeIds(manifestFor(manifest)).forEach((id) => {
-    out[id] = Math.max(0, (nc[id] || 1) - 1);
-  });
-  return out;
-}
-
-// manifest.steps (cells with .nodes) -> the [[{id}…]…] shape composerPaintWires
-// walks for sequential + feedback wires.
-function manifestStepsForWires(manifest) {
-  return manifestFor(manifest).steps.map((cell) => cell.nodes.map((n) => ({ id: n.id })));
-}
-
-// Tint the run-graph from a view-adapter and (signature-gated) repaint wires.
-// view = { statusOf(id)->status, activeId|null, cycles:{id:count(FINAL)},
-//          live:boolean, durText(id)->str, costText(id)->str,
-//          subsOf?(id)->Array<{status}> (optional; sub-agent squares) }.
-const RUN_STATUSES = ['is-pending', 'is-done', 'is-active', 'is-paused', 'is-stopped'];
-function paintRunGraph(host, manifest, view) {
-  const m = manifestFor(manifest);
-  const doneSet = new Set();
-  runGraphNodeIds(m).forEach((id) => {
-    const status = view.statusOf(id) || 'pending';
-    if (status === 'done') doneSet.add(id);
-    const el = host.querySelector(`.run-node[data-id="${id}"]`);
-    if (!el) return;
-
-    el.classList.remove(...RUN_STATUSES);
-    el.classList.add('is-' + status);
-
-    const statusEl = el.querySelector('.nstatus');
-    if (statusEl) {
-      const txt = STAT_TEXT[status];
-      statusEl.textContent = (txt != null && txt !== '') ? txt : (status === 'pending' ? (statusEl.dataset.sub || statusEl.textContent || '') : '');
-    }
-
-    // Swap the settled-status badge (.nstat). Remove any existing, then re-add.
-    const old = el.querySelector('.nstat');
-    if (old) old.remove();
-    if (STAT_BADGE[status]) el.insertAdjacentHTML('beforeend', STAT_BADGE[status]);
-
-    const durEl = el.querySelector('.dur');
-    if (durEl) durEl.textContent = view.durText(id) || '';
-    const costEl = el.querySelector('.cost');
-    if (costEl) costEl.textContent = view.costText(id) || '';
-
-    // Resolve the "default" model caption to the session's actual model once
-    // the init event reported it (design §4.7). Only nodes with NO configured
-    // model carry data-nomodel; explicit selections never change.
-    const modelEl = el.querySelector('.nmodel[data-nomodel]');
-    if (modelEl && view.modelUsedOf) {
-      const used = view.modelUsedOf(id);
-      if (used) {
-        const eff = modelEl.dataset.effort || '';
-        modelEl.textContent = `default (${used})` + (eff ? ` · ${eff}` : '');
-      }
-    }
-
-    // Sub-agent square strip (graph view only; optional adapter). Idempotent:
-    // drop the old strip, inject the current one. Empty -> no strip / no row.
-    const oldFan = el.querySelector('.fan');
-    if (oldFan) oldFan.remove();
-    const fanHtml = view.subsOf ? subFanHtml(view.subsOf(id)) : '';
-    if (fanHtml) el.insertAdjacentHTML('beforeend', fanHtml);
-  });
-
-  // Signature-gated wire repaint: avoid restarting CSS glow / marching-ants
-  // every tick. Repaint only when activeId, the done-set, the loop counts, or
-  // the topology change since the last paint.
-  const cycles = view.cycles || {};
-  const sig = JSON.stringify([
-    view.live ? (view.activeId || null) : null,
-    [...doneSet].sort(),
-    Object.keys(cycles).sort().map((k) => `${k}:${cycles[k]}`),
-    host.dataset.graphSig || '',
-  ]);
-  if (host.dataset.wiresSig === sig) return;
-  host.dataset.wiresSig = sig;
-
-  const svg = host.querySelector('svg.wires');
-  if (!svg) return;
-  const steps = manifestStepsForWires(m);
-  const feedbacks = Array.isArray(m.feedbacks) ? m.feedbacks : [];
-  const paint = (window.__np && window.__np.composerPaintWires) || composerPaintWires;
-  const ns = (host.dataset.ns ||= 'rg-' + Math.random().toString(36).slice(2, 8));
-  paint(host, svg, steps, feedbacks, {
-    ns,
-    runMode: true,
-    activeId: view.live ? (view.activeId || null) : null,
-    doneSet,
-    cycles,
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Multi-run engine: per-run model + Map. Each run renders into one card in the
@@ -1265,7 +922,6 @@ function makeRun({
     nodeStatus: {},       // { nodeId|bookendId: 'done'|'now'|'pause'|'stop' } live cell state
     nodeCycle: {},        // { nodeId: max cycle observed } -> drives loop badges
     maxCellIdx: -1,       // highest reached cell index (drives "earlier cells = done")
-    phaseKey: 'preflight',
     cycle: 0,
     phaseStatus: '',
     costByNode: {},       // { nodeId|uiPhase: usd } for the live stepper
@@ -1273,7 +929,7 @@ function makeRun({
     steps: [],         // raw steps[] from the latest state snapshot (for live timers)
     pendingQuestion,
     logLines: [],
-    logFilter: { source: '', level: '', step: '', cycle: '', search: '' }, // '' === all; render-time only (logLines keeps everything)
+    logFilter: { source: '', level: '', step: '', node: '', execution: '', cycle: '', search: '' }, // '' === all; render-time only (logLines keeps everything)
     autoscroll: true,   // Auto-scroll toggle state (source of truth; template default is ON)
     subAgents: [],     // Array<record> — sub-agent lifecycle for this run (see onSubagent/onState)
     artifacts: [],     // Array<{kind, path}> — what the run has written so far.
@@ -1281,6 +937,8 @@ function makeRun({
                        // recovery-patch link (addRecoveryPatchLink).
     stepSkills: {},   // {`${nodeId}|${cycle}`: string[]} — MAIN-agent skills per dropdown group
     stepGraphify: {}, // {`${nodeId}|${cycle}`: number} — MAIN-agent graphify-use count per group
+    // v2 (graph-engine) run-level outcome fields; a v1 run never sends them.
+    active: [], endReached: undefined, result: null, warnings: [], wireDeliveries: {}, tokens: {}, gate: null,
     el: null,
     _finished: false,
   };
@@ -1305,19 +963,6 @@ function upsertRun(partial) {
 // ---------------------------------------------------------------------------
 // Per-run event handlers
 // ---------------------------------------------------------------------------
-function onPhase(r, msg) {
-  advanceRun(r, msg);
-  if (normalizePhase(msg.phase) === 'done') {
-    r.maxCellIdx = manifestFor(r.stepper).steps.length - 1;
-    r.phaseKey = 'done';
-  }
-  const cyc = msg.cycle ? ` #${msg.cycle}` : '';
-  const st = msg.status ? ` (${msg.status})` : '';
-  onLog(r, { source: 'phase', level: 'phase', text: `${msg.phase}${cyc}${st}`, ts: Date.now() });
-  maybeResume(r);
-  paintRunCard(r);
-}
-
 // A submitted answer is only confirmed resumed when the next phase/state event
 // for this run arrives (the server returns 200 even for a stale id, so HTTP
 // success is not proof). Clear the pending question + panel here.
@@ -1327,7 +972,7 @@ function maybeResume(r) {
 }
 
 // Clear a run's pending question and un-freeze any frontier node left at 'pause'
-// solely because of it: nodeKindFor marks 'pause' iff pendingQuestion != null, so
+// solely because of it: the paused state marks 'pause' iff pendingQuestion != null, so
 // once the question is gone every such mark is stale and would otherwise hold the
 // stepper on a false "awaiting input" until the next phase event. Shared by the
 // local post-answer resume (maybeResume) and the server-broadcast resolution
@@ -1350,6 +995,7 @@ function onQuestionResolved(r, msg) {
   if (!r.pendingQuestion) return;
   if (msg && msg.id && r.pendingQuestion.id !== msg.id) return;
   dropPendingQuestion(r);
+  r._decorSeq = (r._decorSeq || 0) + 1;   // isLive(r) reads pendingQuestion
   paintRunCard(r);
 }
 
@@ -1358,13 +1004,6 @@ function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
-// Built-in icons are repo-shipped SVG fragments (trusted, injected raw). User
-// agents' metadata is user-writable (POST /api/agents, wizard Mode B), so their
-// icon could carry arbitrary markup — they get a fixed glyph instead.
-const USER_AGENT_ICON = '<circle cx="12" cy="12" r="3.4"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"></path>';
-function safeAgentIcon(meta) {
-  return meta && meta.origin === 'user' ? USER_AGENT_ICON : String((meta && meta.icon) || '');
-}
 
 // Format a USD amount. null/NaN -> '' (caller decides the default). A positive
 // sub-cent value -> '<$0.01' so genuine spend is never hidden as a flat $0.00.
@@ -1422,10 +1061,10 @@ function liveTotalMs(steps, now = Date.now()) {
   return sum;
 }
 
-// A step's stepper bucket key: its node id when present (new runs), else the
-// normalized phase (legacy runs, whose default-manifest node ids ARE uiPhases).
+// A step's stepper bucket key: its node id. A v1 row that carries only a phase
+// has no node to bucket onto now that the v1 manifest is gone.
 function stepBucketKey(s) {
-  return (s && typeof s.nodeId === 'string' && s.nodeId) ? s.nodeId : normalizePhase(s && s.phase);
+  return (s && typeof s.nodeId === 'string' && s.nodeId) ? s.nodeId : null;
 }
 
 // Per-node active-ms bucket, keyed by stepBucketKey.
@@ -1523,6 +1162,27 @@ function subsByNodeArrays(subAgents) {
 // in a nodeId (alphanumerics + underscore) or an integer, so split is unambiguous.
 const CYCLE_KEY_SEP = '|';
 
+/** v2 execution ids are `x:<nodeId>:<ordinal>[:<taskId>]` (spec §5.3). v1 step
+ *  keys (`plan#2`, `1:n_plan`) and v1 sub-agent stepKeys never start with `x:`,
+ *  so the prefix is the ONE discriminator between the two engines' records. */
+const EXEC_ID_RE = /^x:/;
+
+/** The execution a record is attributed to: an explicit executionId, else a v2
+ *  stepKey (the harness stamps stepKey = executionId on v2 rows — `subagent`,
+ *  `stepskills` and `stepgraphify` payloads carry stepKey, never executionId),
+ *  else null (a v1 record). */
+function execIdOf(rec) {
+  if (rec && rec.executionId) return rec.executionId;
+  const k = rec && rec.stepKey;
+  return typeof k === 'string' && EXEC_ID_RE.test(k) ? k : null;
+}
+
+/** The ONE group key for a node's execution: `nodeId|executionId` on v2 rows,
+ *  `nodeId|cycle` on v1 rows. `|` occurs in neither half, so split() is exact. */
+function execKey(nodeId, executionId, cycle) {
+  return `${nodeId}${CYCLE_KEY_SEP}${executionId || (cycle ?? 0)}`;
+}
+
 // {`${nodeId}|${cycle}`: Array<sub>} — like subsByNodeArrays but split per
 // cycle so refine/review loops show one dropdown group per cycle (records carry
 // `cycle`). Insertion order = encounter order (already (started_at,id)-sorted from
@@ -1531,7 +1191,7 @@ function subsByNodeCycleArrays(subAgents) {
   const out = {};
   for (const s of Array.isArray(subAgents) ? subAgents : []) {
     if (!s || s.nodeId == null) continue;
-    const key = `${s.nodeId}${CYCLE_KEY_SEP}${s.cycle ?? 0}`;
+    const key = execKey(s.nodeId, execIdOf(s), s.cycle);
     (out[key] ||= []).push(s);
   }
   return out;
@@ -1539,8 +1199,11 @@ function subsByNodeCycleArrays(subAgents) {
 
 // Set of manifest node ids that are real agents (cell kind 'agents') — EXCLUDES the
 // preflight/done bookends so they never appear as Agents-dropdown groups. Driven by
-// the run's stepper (manifestFor falls back to CLIENT_DEFAULT_STEPPER when absent).
+// the run's stepper (manifestFor answers an EMPTY manifest when absent).
 function agentNodeIdSet(stepper) {
+  // v2: agent nodes only — flow nodes (task/or/end…) DO write ledger rows but
+  // are never Agents-dropdown groups.
+  if (isGraphManifest(stepper)) return new Set(stepper.graph.nodes.filter((n) => n && n.kind === 'agent').map((n) => n.id));
   const m = manifestFor(stepper);
   const set = new Set();
   m.steps.forEach((cell) => {
@@ -1561,7 +1224,7 @@ function subsGroupsForRender(subAgents, steps, stepper) {
   const out = {};
   for (const st of Array.isArray(steps) ? steps : []) {
     if (!st || st.nodeId == null || !agentIds.has(st.nodeId)) continue;
-    const key = `${st.nodeId}${CYCLE_KEY_SEP}${st.cycle ?? 0}`;
+    const key = execKey(st.nodeId, st.executionId, st.cycle);
     if (!(key in out)) out[key] = subsByKey[key] || [];
   }
   for (const key of Object.keys(subsByKey)) {
@@ -1588,7 +1251,7 @@ function stepStatusByKey(steps, stepper) {
   const out = {};
   for (const st of Array.isArray(steps) ? steps : []) {
     if (!st || st.nodeId == null || !agentIds.has(st.nodeId)) continue;
-    out[`${st.nodeId}${CYCLE_KEY_SEP}${st.cycle ?? 0}`] = stepGroupStatus(st.status);
+    out[execKey(st.nodeId, st.executionId, st.cycle)] = stepGroupStatus(st.status);
   }
   return out;
 }
@@ -1603,7 +1266,7 @@ function stepSkillsFromSteps(steps) {
   const out = {};
   for (const st of Array.isArray(steps) ? steps : []) {
     if (!st || st.nodeId == null || !Array.isArray(st.skills) || !st.skills.length) continue;
-    out[`${st.nodeId}${CYCLE_KEY_SEP}${st.cycle ?? 0}`] = st.skills;
+    out[execKey(st.nodeId, st.executionId, st.cycle)] = st.skills;
   }
   return out;
 }
@@ -1616,7 +1279,7 @@ function stepGraphifyFromSteps(steps) {
   const out = {};
   for (const st of Array.isArray(steps) ? steps : []) {
     if (!st || st.nodeId == null || !(st.graphifyCount > 0)) continue;
-    out[`${st.nodeId}${CYCLE_KEY_SEP}${st.cycle ?? 0}`] = st.graphifyCount;
+    out[execKey(st.nodeId, st.executionId, st.cycle)] = st.graphifyCount;
   }
   return out;
 }
@@ -1654,7 +1317,12 @@ function cyclesFromKeys(keys) {
   return m;
 }
 
-function cycleAwareLabel(stepper, subAgents, groupKeys) {
+function cycleAwareLabel(stepper, subAgents, groupKeys, steps = []) {
+  // v2 groups are named from the ledger row the key's tail (an executionId)
+  // points at: `<label> #<ordinal>`, plus ` · <title>` for a task slice. Rows
+  // are matched by executionId ONLY (a v1 row's key is a phase name).
+  const byExec = new Map((Array.isArray(steps) ? steps : []).filter((s) => s && s.executionId)
+    .map((s) => [s.executionId, s]));
   const byId = nodeLabelLookup(stepper);              // nodeId -> label (raw id fallback)
   const m = manifestFor(stepper);
   const phaseToLabel = {};                            // uiPhase -> label
@@ -1673,6 +1341,11 @@ function cycleAwareLabel(stepper, subAgents, groupKeys) {
     const i = String(key).indexOf(CYCLE_KEY_SEP);
     const nodeId = i >= 0 ? String(key).slice(0, i) : String(key);
     const cycle = i >= 0 ? (Number(String(key).slice(i + 1)) || 0) : 0;
+    const row = i >= 0 ? byExec.get(String(key).slice(i + 1)) : undefined;
+    if (row) {
+      const head = `${byId(nodeId)} #${row.ordinal ?? row.cycle ?? 1}`;
+      return row.kind === 'task' ? `${head} · ${row.title || 'task'}` : head;
+    }
     let label = byId(nodeId);
     if (label === nodeId && idToPhase[nodeId] && phaseToLabel[idToPhase[nodeId]]) {
       label = phaseToLabel[idToPhase[nodeId]];
@@ -1711,7 +1384,8 @@ function onState(r, msg) {
   // mid-run). Rebuild the stepper DOM so subsequent paints address the right nodes.
   if (msg.stepper && (r.stepper == null || manifestSig(msg.stepper) !== manifestSig(r.stepper))) {
     r.stepper = msg.stepper;
-    if (r.el) rebuildStepperDom(r);
+    // paintGraphFor mounts the graph renderer into the same host on the next
+    // paint; there is no separate structural rebuild any more.
   }
   if (Array.isArray(msg.steps)) {
     r.steps = msg.steps;
@@ -1724,8 +1398,13 @@ function onState(r, msg) {
   // any missed `subagent` delta). Replace wholesale when present; a snapshot that
   // omits the field (older runs / partial snapshots) leaves the delta-built array.
   r.subAgents = msg.subAgents || r.subAgents;
+  // v2 run-level outcome fields (ignored by v1 runs, which never send them).
+  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate']) {
+    if (msg[k] !== undefined) r[k] = msg[k];
+  }
+  // Every state event is a new decor generation (runDecorFor memoises on it).
+  r._decorSeq = (r._decorSeq || 0) + 1;
   if (msg.title && msg.title !== r.title) r.title = msg.title;
-  if (msg.phase) advanceRun(r, msg);
   maybeResume(r);
   paintRunCard(r);
 }
@@ -1764,7 +1443,7 @@ function patchHistoryTitle(pipelineId, title) {
 
 // Per-run sub-agent lifecycle delta. Upsert into r.subAgents by `id`: a spawn
 // inserts/updates the record; a finish updates status + finishedAt + telemetry.
-// Then repaint via the same path onState/onPhase use (paintRunCard -> paintStepper),
+// Then repaint via the same path onState/onExec use (paintRunCard -> paintStepper),
 // so the graph card the render layer builds reflects the change immediately. The
 // authoritative full set still arrives on the `state` snapshot (see onState).
 function onSubagent(r, msg) {
@@ -1776,7 +1455,7 @@ function onSubagent(r, msg) {
   }
   // Merge only DEFINED fields (a finish frame may omit spawn-time fields like
   // label/nodeId/stepKey; never overwrite a known value with undefined).
-  for (const k of ['label', 'nodeId', 'uiPhase', 'stepIndex', 'cycle', 'stepKey', 'status', 'startedAt', 'durationMs', 'tokens', 'costUsd', 'skills', 'subagentType', 'graphifyCount']) {
+  for (const k of ['label', 'nodeId', 'uiPhase', 'stepIndex', 'cycle', 'stepKey', 'status', 'startedAt', 'durationMs', 'tokens', 'costUsd', 'skills', 'subagentType', 'graphifyCount', 'runModel']) {
     if (msg[k] !== undefined) rec[k] = msg[k];
   }
   if (msg.transition === 'finish') {
@@ -1784,6 +1463,7 @@ function onSubagent(r, msg) {
     rec.finishedAt = msg.finishedAt !== undefined ? msg.finishedAt
       : (msg.ts != null ? new Date(msg.ts).toISOString() : new Date().toISOString());
   }
+  r._decorSeq = (r._decorSeq || 0) + 1;   // the footer fan strip reads sub-agents
   paintRunCard(r);
 }
 
@@ -1793,7 +1473,7 @@ function onSubagent(r, msg) {
 function onStepSkills(r, msg) {
   if (!msg || msg.nodeId == null) return;
   if (!r.stepSkills) r.stepSkills = {};
-  r.stepSkills[`${msg.nodeId}${CYCLE_KEY_SEP}${msg.cycle ?? 0}`] = Array.isArray(msg.skills) ? msg.skills : [];
+  r.stepSkills[execKey(msg.nodeId, execIdOf(msg), msg.cycle)] = Array.isArray(msg.skills) ? msg.skills : [];
   paintRunCard(r);
 }
 
@@ -1803,7 +1483,7 @@ function onStepSkills(r, msg) {
 function onStepGraphify(r, msg) {
   if (!msg || msg.nodeId == null) return;
   if (!r.stepGraphify) r.stepGraphify = {};
-  r.stepGraphify[`${msg.nodeId}${CYCLE_KEY_SEP}${msg.cycle ?? 0}`] = Number(msg.graphifyCount) || 0;
+  r.stepGraphify[execKey(msg.nodeId, execIdOf(msg), msg.cycle)] = Number(msg.graphifyCount) || 0;
   paintRunCard(r);
 }
 
@@ -1844,6 +1524,9 @@ async function loadConfig(projectDir) {
       state.config = data.config || { steps: {}, customModels: [] };
       state.models = Array.isArray(data.models) ? data.models : [];
       state.efforts = Array.isArray(data.efforts) ? data.efforts : [];
+      if (Array.isArray(data.subagentModels) && data.subagentModels.length) {
+        state.subagentModels = data.subagentModels;
+      }
       state.stepDefaults = {};
       if (Array.isArray(data.steps)) {
         for (const s of data.steps) if (s && s.key) state.stepDefaults[s.key] = {
@@ -1933,707 +1616,266 @@ async function deleteWorkflow(id) {
   return true;
 }
 
-// ---------------------------------------------------------------------------
-// Pipeline Composer module (ported from docs/pipeline-composer/mockups).
-// Pure serialization lives in composer-core.mjs; this is DOM wiring only.
-// Manual-only behaviors (no jsdom layout / no HTML5 DnD): paintWires geometry,
-// drag pills onto strips/cols, hover-loop link mode, read-only preview paint.
-// SELF-LOOP NOTE: a SAME-NODE self-loop (fb.from===fb.to, e.g. the default's
-// fb_refine s1_0->s1_0) is created/removed via the node's top-left self-cycle
-// toggle (.selfloop), NOT the bottom-right link button — that one only draws edges
-// to DISTINCT nodes (composerAddFeedback still rejects from===to). paintWires
-// special-cases from===to to draw a small violet lobe beneath the node with NO
-// delete-X (the toggle owns removal; cross-node amber loops keep their X). Manual
-// checklist: Reset shows the Refine node with its self-cycle toggle lit (violet ring)
-// and a violet self-loop arc beneath it; clicking the toggle removes both, clicking
-// again restores them.
-// ---------------------------------------------------------------------------
-const COMPOSER_COLORS = { green: '#5BAE5B', peach: '#EFA63C', red: '#E76A5A', blue: '#5BA6CC', violet: '#8C7FD6', amber: '#E6962A' };
-const COMPOSER_TINTS = { green: '#E2F3DF', peach: '#FCEEDA', red: '#FBE3E0', blue: '#DEEFF7', violet: '#EAE6F8', amber: '#FCE8C8' };
-const COMPOSER_SEQ = '#B7B7BC';
 
-let _composerReady = false;
-const composer = {
-  agents: {},          // key -> {key,displayName,description,color,icon,origin}
-  steps: [],           // Array<Array<{id,key}>> (local ids)
-  feedbacks: [],       // Array<{from,to}> (local ids)
-  saved: [],           // WorkflowTemplate[] from the server
-  linkFrom: null,
-  dragKey: null,
-  uid: 1,
-  els: {},
+// ---------------------------------------------------------------------------
+// Workflow Composer v2 (node graph). initComposer() mounts ONCE and re-fits on
+// every re-entry; composerExit() (called by showView's leave-guard) unbinds the
+// keyboard and cancels any live gesture.
+// ---------------------------------------------------------------------------
+let gvComposer = null;
+let gvAgents = [];          // palette list  (GET /api/agents)
+let gvAgentsAll = [];       // ports source  (GET /api/agents?all=1)
+let gvPortsFn = portsFnFor({});
+// These three are written ONLY by gvLoadAgents(), which initComposer() skips on
+// re-entry — so without this flag an agent created or re-ported in the Agents
+// view stayed missing (palette) or stale (portsFn, which then calls a wire the
+// server 422s "clean") for the rest of the page session (MAJ-16).
+let gvAgentsDirty = false;
+
+const gvApi = {
+  agents: async () => { const r = await fetchAgents(); return Array.isArray(r) ? r : (r && r.agents) || []; },
+  agentsAll: async () => {
+    const res = await fetch('/api/agents?all=1');
+    if (!res.ok) throw new Error(`agents ${res.status}`);
+    const d = await safeJson(res);
+    return Array.isArray(d) ? d : (d && d.agents) || [];
+  },
+  config: async () => { const res = await fetch('/api/config'); const d = await safeJson(res); return { models: d.models || [], efforts: d.efforts || [], subagentModels: d.subagentModels || [] }; },
+  listWorkflows: async () => listWorkflows(),
+  listArchived: async () => {
+    try {
+      const res = await fetch('/api/workflows?archived=1');
+      if (!res.ok) return [];
+      const d = await safeJson(res);
+      return Array.isArray(d && d.workflows) ? d.workflows : [];
+    } catch { return []; }
+  },
+  readWorkflow: async (id) => {
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`);
+    if (!res.ok) return null;
+    return safeJson(res);
+  },
+  saveWorkflow: async (body) => {
+    const res = await fetch('/api/workflows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await safeJson(res);
+    // 422 = the shared validator's issues, rendered verbatim by the dialog.
+    if (!res.ok) return { ok: false, status: res.status, issues: d && (d.issues || d.errors), error: d && d.error, id: d && d.id };
+    return { ok: true, workflow: (d && d.workflow) || d };
+  },
+  // {ok, error} — the refusal string comes from the JSON body, because every
+  // delete this API can refuse (the built-in, a 404, a 409) says WHY there and
+  // the user has to read it (MAJ-17).
+  deleteWorkflow: async (id) => {
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (res.ok) return { ok: true };
+    const d = await safeJson(res);
+    return { ok: false, status: res.status, error: (d && d.error) || `delete failed (${res.status})` };
+  },
 };
-const composerMk = (key) => ({ id: 'n' + composer.uid++, key });
-const composerAgent = (key) => composer.agents[key] || { displayName: key, description: '', color: 'blue', icon: '' };
 
-// Test hook: expose the composer state + the mutators the jsdom tests drive
-// directly (mirrors the window.__np convention). composerRefresh/composerAddFeedback
-// are hoisted function declarations, so they are bound by reference here.
-if (typeof window !== 'undefined') {
-  window.__composer = composer;
-  window.__composerRefresh = composerRefresh;
-  window.__composerAddFeedback = composerAddFeedback;
+function gvEls() {
+  const g = (id) => document.getElementById(id);
+  return {
+    canvas: g('gv-canvas'), chip: g('gv-chip'), head: g('gv-head'), name: g('gv-name'),
+    errors: g('gv-errors'), newBtn: g('gv-new'), autoBtn: g('gv-autolayout'), saveBtn: g('gv-save'),
+    insRail: g('gv-ins-rail'), insBody: g('gv-ins-body'), insToggle: g('gv-ins-toggle'),
+    insTabs: g('gv-ins-tabs'), palette: g('gv-palette'), filter: g('gv-agent-filter'),
+    savedList: g('gv-saved-list'), savedCount: g('gv-saved-count'), archived: g('gv-archived'),
+    savedMsg: g('gv-saved-msg'), dialogHost: g('gv-dialog-host'),
+  };
 }
 
-// Set by agent CRUD (create/edit/duplicate/delete); the palette is refetched on
-// the next composer entry so in-session agent mutations show without a reload.
-let _composerPaletteDirty = false;
+// The composer's saved-list message line — the same (text, kind) shape as
+// setAgentsMsg/setPluginsMsg/... elsewhere in this file.
+function setGvSavedMsg(text, kind) {
+  const n = gvEls().savedMsg;
+  if (!n) return;
+  n.textContent = text || '';
+  n.className = 'form-msg' + (kind ? ` ${kind}` : '');
+}
 
-/** Refetch the registry and rebuild the composer palette in place. */
-async function refreshComposerPalette() {
-  _composerPaletteDirty = false;
-  const agentsRes = await fetchAgents();
-  const pal = mergePalette(agentsRes);
-  composer.agents = {};
-  pal.forEach((a) => { composer.agents[a.key] = a; });
-  composerBuildPalette(pal);
+async function gvLoadAgents() {
+  const els = gvEls();
+  els.palette.textContent = 'Loading agents…';
+  gvComposer.setReady(false);
+  try {
+    const [pal, all, cfg] = await Promise.all([gvApi.agents(), gvApi.agentsAll(), gvApi.config()]);
+    gvAgentsDirty = false;                       // cleared only on a SUCCESSFUL load
+    gvAgents = pal; gvAgentsAll = all;
+    gvPortsFn = portsFnFor(indexByKey(all));
+    gvComposer.setModels(cfg);
+    gvComposer.setAgents(indexByKey(pal));
+    gvComposer.setReady(true);
+    gvComposer.paintPalette();
+  } catch {
+    els.palette.replaceChildren();
+    const row = document.createElement('div');
+    row.className = 'gv-pal-err';
+    row.textContent = 'Couldn’t load agents — ';
+    const retry = document.createElement('button');
+    retry.type = 'button'; retry.className = 'gv-retry'; retry.textContent = 'Retry';
+    retry.addEventListener('click', () => { gvLoadAgents(); });
+    row.appendChild(retry);
+    els.palette.appendChild(row);
+    gvComposer.setReady(false);          // Save stays disabled without a registry
+  }
 }
 
 async function initComposer() {
-  if (_composerReady) {
-    if (_composerPaletteDirty) await refreshComposerPalette();
-    composerDrawWires();
+  if (gvComposer) {
+    gvComposer.resume();
+    // setAgents()/paintPalette() replace wholesale, so a reload is all it takes.
+    if (gvAgentsDirty) await gvLoadAgents();
+    await gvRefreshSaved();
+    gvComposer.fit();
     return;
   }
-  _composerReady = true;
-  composer.els = {
-    flow: document.getElementById('composer-flow'),
-    wires: document.getElementById('composer-wires'),
-    palette: document.getElementById('composer-palette'),
-    banner: document.getElementById('composer-link-banner'),
-    linkText: document.getElementById('composer-link-text'),
-    list: document.getElementById('composer-saved-list'),
-    count: document.getElementById('composer-saved-count'),
-  };
-  if (!composer.els.flow) return;
-
-  // toolbar + global listeners (bound once)
-  document.getElementById('composer-reset').addEventListener('click', () => { composerExitLink(); composerReset(); });
-  document.getElementById('composer-clear').addEventListener('click', () => { composerExitLink(); composer.steps = []; composer.feedbacks = []; composerRefresh(); });
-  document.getElementById('composer-save').addEventListener('click', composerSave);
-  document.getElementById('composer-link-cancel').addEventListener('click', composerExitLink);
-  const agentFilter = document.getElementById('composer-agent-filter');
-  if (agentFilter) agentFilter.addEventListener('input', composerApplyFilter);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') composerExitLink(); });
-  composer.els.wires.addEventListener('click', (e) => {
-    const g = e.target.closest('.fb-del'); if (!g) return;
-    composer.feedbacks.splice(+g.dataset.fb, 1); composerRefresh();
+  gvComposer = createComposer(gvEls(), {
+    doc: document, api: gvApi, storage: (() => { try { return window.localStorage; } catch { return null; } })(),
+    portsFn: (node) => gvPortsFn(node),
   });
-  let rt;
-  window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(composerDrawWires, 80); });
-  // Debounced like the window-resize path one line above (and deliberately
-  // sharing its `rt`): the sidebar's 200ms collapse transition resizes .main
-  // every frame, and an undebounced observer rebuilds every wire ~12 times per
-  // toggle.
-  if (window.ResizeObserver) new window.ResizeObserver(() => {
-    clearTimeout(rt); rt = setTimeout(composerDrawWires, 80);
-  }).observe(composer.els.flow);
-
-  // palette from the registry (or embedded fallback)
-  await refreshComposerPalette();
-
-  // initial canvas = the saved default workflow (4-step)
-  await composerReset();
-  await composerLoadSaved();
-}
-
-/* ---- palette ---- */
-// Ordered header list derived from the already-order-sorted palette, mirroring
-// collectDomains (general last, shared excluded) — no extra API round-trip.
-function paletteDomains(pal) {
-  const seen = [];
-  pal.forEach((a) => { if (a.domain && a.domain !== 'shared' && a.domain !== 'general' && !seen.includes(a.domain)) seen.push(a.domain); });
-  seen.push('general');
-  return seen;
-}
-
-const composerCollapsed = new Set();   // domains the user has collapsed via chips
-
-function composerBuildPalette(pal) {
-  const palette = composer.els.palette;
-  const ro = pillNameRO();
-  if (ro) ro.disconnect();   // old pills are about to be thrown away
-  palette.innerHTML = '';
-  const domains = paletteDomains(pal);
-  const groups = groupPaletteByDomain(pal, domains);
-
-  // Filter chips: one per domain, toggles section visibility.
-  const chips = document.createElement('div');
-  chips.className = 'pal-chips';
-  domains.forEach((d) => {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'pal-chip' + (composerCollapsed.has(d) ? ' off' : '');
-    chip.textContent = d;
-    chip.addEventListener('click', () => {
-      if (composerCollapsed.has(d)) composerCollapsed.delete(d); else composerCollapsed.add(d);
-      composerBuildPalette(pal);                 // cheap re-render
-    });
-    chips.appendChild(chip);
+  gvComposer.mount();
+  gvComposer.newCanvas();
+  gvComposer.hooks.onSaved = () => { gvRefreshSaved(); };
+  // MAJ-6: New canvas and a saved row's Open replace the canvas AND clear the
+  // undo ring, so the work cannot be brought back with ⌘Z. The composer owns
+  // the "is it dirty" half; the app owns the ASKING, through the same
+  // confirmModal every other destructive action in this file uses.
+  gvComposer.hooks.confirmDiscard = () => confirmModal({
+    title: 'Discard unsaved changes?',
+    message: 'This pipeline has edits you have not saved.\n\nReplacing the canvas discards them and clears the undo history.',
+    confirmLabel: 'Discard',
+    danger: true,
   });
-  palette.appendChild(chips);
-
-  groups.forEach((g) => {
-    const sec = document.createElement('div');
-    sec.className = 'pal-section';
-    if (composerCollapsed.has(g.domain)) sec.classList.add('collapsed');
-    const head = document.createElement('div');
-    head.className = 'pal-head';
-    head.textContent = g.domain;
-    sec.appendChild(head);
-    g.agents.forEach((ag) => sec.appendChild(composerPalettedPill(ag)));
-    palette.appendChild(sec);
-  });
-  composerApplyFilter();
+  // Renaming marks the canvas DIRTY (it is an unsaved edit) — never markSaved().
+  gvEls().name.addEventListener('change', (e) => gvComposer.setName(e.target.value));
+  await gvLoadAgents();
+  await gvRefreshSaved();
+  gvComposer.fit();
 }
 
-// Live palette filter (spec 2026-08-09 §Decisions 7): toggles .hidden only —
-// cards stay in the DOM so drag handlers and collapse state survive filtering.
-// The haystack covers everything the card itself can show: key, name and
-// description always; channel names ONLY when the card's visible blurb IS the
-// derived "in: … · out: …" line. A card that paints a real description never
-// shows its channels, so matching them there is a hit with no visible reason.
-function composerApplyFilter() {
-  const input = document.getElementById('composer-agent-filter');
-  const q = ((input && input.value) || '').trim().toLowerCase();
-  document.querySelectorAll('#composer-palette .pal-section').forEach((sec) => {
-    let visible = 0;
-    sec.querySelectorAll('.agent-pill').forEach((p) => {
-      const ag = composer.agents[p.dataset.key] || {};
-      const chans = paletteDesc(ag).derived
-        ? ` ${(ag.consumes || []).join(' ')} ${(ag.produces || []).join(' ')}`
-        : '';
-      const hay = `${p.dataset.key} ${ag.displayName || ''} ${ag.description || ''}${chans}`.toLowerCase();
-      const hit = !q || hay.includes(q);
-      p.classList.toggle('hidden', !hit);
-      if (hit) visible += 1;
-    });
-    sec.classList.toggle('hidden', !!q && visible === 0);
-  });
+// The headless-Chrome probe seam (scripts/verify-composer-cdp.mjs). It exposes
+// no mutator the UI does not already own — just the live editor and its view.
+if (typeof window !== 'undefined') window.__gv = () => (gvComposer ? { c: gvComposer, v: gvComposer.view } : null);
+
+// Leave-guard: the composer stays MOUNTED (its DOM and undo ring survive), but
+// every document-level listener is unbound and any live gesture is cancelled, so
+// Delete/arrows/⌘Z can never edit the graph from another view (a PR #359 bug).
+function composerExit() {
+  if (gvComposer) gvComposer.suspend();
 }
 
-// Palette blurb: the resolved sidecar/frontmatter description when present,
-// else a derived in/out line from the agent's channels (derived:true renders
-// italic and reads as a fallback, never as authored copy).
-function paletteDesc(ag) {
-  const d = typeof ag.description === 'string' ? ag.description.trim() : '';
-  if (d) return { text: d, derived: false };
-  const io = [];
-  if (Array.isArray(ag.consumes) && ag.consumes.length) io.push('in: ' + ag.consumes.join(', '));
-  if (Array.isArray(ag.produces) && ag.produces.length) io.push('out: ' + ag.produces.join(', '));
-  return { text: io.length ? io.join(' · ') : 'No description yet', derived: true };
-}
-
-// Name-aware description clamp: the palette card budgets 3 text lines — a name
-// that wraps to 2 lines (.name-2l) leaves 1 for the description, a 1-line name
-// leaves 2. Measured with a ResizeObserver, not guessed: wrapping depends on
-// the rendered width, and a palette built while hidden reports height 0 until
-// the composer first shows — the observer fires again on that resize.
-let pillNameROInst;
-function pillNameRO() {
-  if (pillNameROInst === undefined) {
-    pillNameROInst = window.ResizeObserver
-      ? new window.ResizeObserver((entries) => { entries.forEach((en) => pillApplyNameClamp(en.target)); })
-      : null;
-  }
-  return pillNameROInst;
-}
-function pillApplyNameClamp(pname) {
-  const pill = pname.closest('.agent-pill');
-  const h = pname.getBoundingClientRect().height;
-  if (!pill || !h) return;   // h=0 → not laid out yet; keep the current class
-  const lh = parseFloat(window.getComputedStyle(pname).lineHeight) || 16;
-  pill.classList.toggle('name-2l', h > lh * 1.5);
-}
-
-// Extracted from the old composerBuildPalette loop body so the pill markup + drag
-// handlers live in one place.
-function composerPalettedPill(ag) {
-  const p = document.createElement('div');
-  p.className = 'agent-pill';
-  p.draggable = true;
-  p.tabIndex = 0;
-  p.dataset.key = ag.key;
-  const desc = paletteDesc(ag);
-  const consumesList = Array.isArray(ag.consumes) ? ag.consumes : [];
-  const producesList = Array.isArray(ag.produces) ? ag.produces : [];
-  // Bubble content (three states): tip-desc is the real description or the bare
-  // fallback — never the derived in/out text (the IO line below already shows
-  // the channels; stating them twice in two formats reads as a bug). The IO
-  // line renders only when at least one side has channels ('—' fills the other).
-  const tipDesc = (typeof ag.description === 'string' && ag.description.trim())
-    ? ag.description.trim()
-    : 'No description yet';
-  const tipIo = (consumesList.length || producesList.length)
-    ? `<span class="tip-line">${escapeHtml(consumesList.join(', ') || '—')} → ${escapeHtml(producesList.join(', ') || '—')}</span>`
-    : '';
-  p.innerHTML =
-    `<span class="phead"><span class="pdotc" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span><span class="pname">${escapeHtml(ag.displayName)}</span></span>` +
-    `<small class="pdesc${desc.derived ? ' derived' : ''}">${escapeHtml(desc.text)}</small>` +
-    `<span class="tip-content hidden">` +
-      `<span class="tip-desc">${escapeHtml(tipDesc)}</span>` +
-      `<span class="tip-line">${escapeHtml(ag.domain || 'general')} · ${escapeHtml(ag.origin || 'builtin')}</span>` +
-      tipIo +
-    `</span>`;
-  p.addEventListener('dragstart', (e) => {
-    composer.dragKey = ag.key; p.classList.add('dragging');
-    clearTimeout(pillTipTimer); hideInfoTip();   // never tooltip mid-drag
-    if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', ag.key); }
-  });
-  p.addEventListener('dragend', () => {
-    composer.dragKey = null; p.classList.remove('dragging');
-    document.querySelectorAll('.over').forEach((x) => x.classList.remove('over'));
-  });
-  const ro = pillNameRO();
-  if (ro) ro.observe(p.querySelector('.pname'));
-  return p;
-}
-
-/* ---- node ---- */
-function composerNodeEl(a) {
-  const ag = composerAgent(a.key);
-  const selfOn = composer.feedbacks.some((f) => f.from === a.id && f.to === a.id);
-  const d = document.createElement('div');
-  d.className = 'node'; d.dataset.id = a.id; d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
-  d.innerHTML =
-    `<div class="selfloop${selfOn ? ' on' : ''}" title="${selfOn ? 'Remove self-cycle' : 'Self-cycle — re-run this step on blocking issues'}" aria-pressed="${selfOn}">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 21v-5h-5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>` +
-    `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${safeAgentIcon(ag)}</svg></div>` +
-    `<div class="nmeta"><b>${escapeHtml(ag.displayName)}</b><small>${escapeHtml(ag.description)}</small></div>` +
-    `<div class="nx" title="Remove agent">✕</div>` +
-    `<div class="loop" title="Draw a feedback loop from this agent">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9a5 5 0 0 1 5-5h9" stroke-linecap="round"/><path d="M14 1l3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 15a5 5 0 0 1-5 5H7" stroke-linecap="round"/><path d="M10 23l-3-3 3-3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`;
-  d.querySelector('.selfloop').addEventListener('click', (e) => { e.stopPropagation(); composerToggleSelf(a.id); });
-  d.querySelector('.nx').addEventListener('click', (e) => { e.stopPropagation(); composerRemoveNode(a.id); });
-  d.querySelector('.loop').addEventListener('click', (e) => { e.stopPropagation(); composerToggleLink(a.id); });
-  // Exit link mode BEFORE adding the edge: composerExitLink hides the banner and
-  // would swallow the toast composerAddFeedback raises for a block reason or warn.
-  d.addEventListener('click', () => { if (composer.linkFrom && composer.linkFrom !== a.id) { const from = composer.linkFrom; composerExitLink(); composerAddFeedback(from, a.id); } });
-  return d;
-}
-
-/* ---- drop helpers ---- */
-function composerAllow(e) { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; }
-// Transient governance message: reuse the link-banner els (link mode is mutually
-// exclusive with dragging). Falls back to console when no banner is mounted (jsdom).
-function composerToast(msg) {
-  const banner = composer.els.banner, text = composer.els.linkText;
-  if (banner && text) { text.textContent = msg; banner.hidden = false; setTimeout(() => { banner.hidden = true; }, 2200); }
-  else if (typeof console !== 'undefined') console.warn('[composer]', msg); // jsdom/no-banner fallback
-}
-function composerMakeStrip(index, full) {
-  const s = document.createElement('div');
-  s.className = 'strip' + (full ? ' full' : '');
-  s.addEventListener('dragover', (e) => { composerAllow(e); s.classList.add('over'); });
-  s.addEventListener('dragleave', () => s.classList.remove('over'));
-  s.addEventListener('drop', (e) => {
-    e.preventDefault(); s.classList.remove('over');
-    if (!composer.dragKey) return;
-    const key = composer.dragKey;
-    const prev = composer.steps[index - 1] || [];
-    const next = composer.steps[index] || [];
-    const badPrev = prev.find((n) => !canConnect(n.key, key, composer.agents).ok);
-    const badNext = next.find((n) => !canConnect(key, n.key, composer.agents).ok);
-    if (badPrev) { composerToast(canConnect(badPrev.key, key, composer.agents).reason); composer.dragKey = null; return; }
-    if (badNext) { composerToast(canConnect(key, badNext.key, composer.agents).reason); composer.dragKey = null; return; }
-    const wp = prev.map((n) => canConnect(n.key, key, composer.agents).warn).find(Boolean)
-      || next.map((n) => canConnect(key, n.key, composer.agents).warn).find(Boolean);
-    if (wp) composerToast(wp);
-    composer.steps.splice(index, 0, [composerMk(key)]); composer.dragKey = null; composerRefresh();
-  });
-  return s;
-}
-function composerMakeCol(stepIdx) {
-  const col = document.createElement('div');
-  col.className = 'col';
-  const tag = document.createElement('div'); tag.className = 'col-tag';
-  tag.innerHTML = `Step ${stepIdx + 1}` + (composer.steps[stepIdx].length > 1 ? ' · <em>parallel</em>' : '');
-  col.appendChild(tag);
-  composer.steps[stepIdx].forEach((a) => col.appendChild(composerNodeEl(a)));
-  const hint = document.createElement('div'); hint.className = 'par-hint'; hint.textContent = '+ run in parallel';
-  col.appendChild(hint);
-  col.addEventListener('dragover', (e) => { composerAllow(e); col.classList.add('over'); });
-  col.addEventListener('dragleave', (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('over'); });
-  col.addEventListener('drop', (e) => {
-    e.preventDefault(); e.stopPropagation(); col.classList.remove('over');
-    if (!composer.dragKey) return;
-    const key = composer.dragKey;
-    const prev = composer.steps[stepIdx - 1] || [];
-    const next = composer.steps[stepIdx + 1] || [];
-    const badPrev = prev.find((n) => !canConnect(n.key, key, composer.agents).ok);
-    const badNext = next.find((n) => !canConnect(key, n.key, composer.agents).ok);
-    if (badPrev || badNext) {
-      const v = badPrev ? canConnect(badPrev.key, key, composer.agents) : canConnect(key, badNext.key, composer.agents);
-      composerToast(v.reason); composer.dragKey = null; return;
+async function gvRefreshSaved() {
+  const els = gvEls();
+  const list = await gvApi.listWorkflows();
+  els.savedCount.textContent = list.length ? `· ${list.length}` : '';
+  gvComposer.setSavedDomains([...new Set(list.map((w) => w.domain).filter(Boolean))]);
+  els.savedList.replaceChildren();
+  for (const wf of list) {
+    const item = document.createElement('div');
+    item.className = 'pl-item';
+    item.dataset.id = wf.id;
+    const row = document.createElement('div');
+    row.className = 'pl-row';
+    // The preview leads the row, so every entry lines up on one left rail; a v1
+    // row has no graph to draw, so it gets the same tile with a `v1` stamp and
+    // the list keeps its column. The SVG carries its own width/height, which is
+    // why the tile is fixed-size — a percentage box strands it in dead space.
+    const thumb = document.createElement('div');
+    thumb.className = 'pl-thumb';
+    // thumbnailFor is numbers-only markup built from the SAME geometry module.
+    if (wf.version === 2) thumb.innerHTML = thumbnailFor(wf, gvPortsFn, { width: 140, height: 54 });
+    else { thumb.classList.add('is-empty'); thumb.textContent = 'v1'; }
+    row.appendChild(thumb);
+    const main = document.createElement('div');
+    main.className = 'pl-main';
+    const name = document.createElement('div');
+    name.className = 'pl-name';
+    name.textContent = wf.name || wf.id;
+    const meta = document.createElement('div');
+    meta.className = 'pl-meta';
+    meta.textContent = wf.domain || 'general';
+    main.append(name, meta);
+    row.appendChild(main);
+    // A plugin-owned row is replaced wholesale by the next `worca plugin update`
+    // (src/core/plugin-workflows.mjs upserts ON CONFLICT), so say so BEFORE the
+    // user starts editing it — the save dialog repeats it and defaults to a copy.
+    const plugin = pluginOriginName(wf.origin);
+    if (plugin) {
+      const tag = document.createElement('span');
+      tag.className = 'pl-origin';
+      tag.textContent = `plugin:${plugin}`;
+      tag.title = `Provided by plugin "${plugin}" — replaced on plugin update`;
+      row.appendChild(tag);
     }
-    const wp = prev.map((n) => canConnect(n.key, key, composer.agents).warn).find(Boolean)
-      || next.map((n) => canConnect(key, n.key, composer.agents).warn).find(Boolean);
-    if (wp) composerToast(wp);
-    composer.steps[stepIdx].push(composerMk(key)); composer.dragKey = null; composerRefresh();
-  });
-  return col;
-}
-
-/* ---- render ---- */
-function composerRefresh() {
-  const flow = composer.els.flow;
-  [...flow.querySelectorAll(':scope > .strip, :scope > .col, :scope > .empty-flow')].forEach((e) => e.remove());
-  if (composer.steps.length === 0) {
-    flow.appendChild(composerMakeStrip(0, true));
-    const empty = document.createElement('div'); empty.className = 'empty-flow';
-    empty.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h14M12 5v14" stroke-linecap="round"/></svg>' +
-      'Drag an agent here to begin<small>Place agents left-to-right for sequence · stack them for parallel steps</small>';
-    flow.appendChild(empty);
-  } else {
-    for (let i = 0; i < composer.steps.length; i++) { flow.appendChild(composerMakeStrip(i)); flow.appendChild(composerMakeCol(i)); }
-    flow.appendChild(composerMakeStrip(composer.steps.length));
-  }
-  const hint = document.getElementById('composer-decomposer-hint');
-  if (hint) {
-    const hasDecomposer = composer.steps.some((col) => col.some((n) => n.key === 'decomposer'));
-    hint.hidden = !hasDecomposer;
-  }
-  requestAnimationFrame(composerDrawWires);
-}
-
-/* ---- mutations ---- */
-function composerRemoveNode(id) {
-  for (let i = 0; i < composer.steps.length; i++) {
-    const j = composer.steps[i].findIndex((a) => a.id === id);
-    if (j >= 0) { composer.steps[i].splice(j, 1); if (composer.steps[i].length === 0) composer.steps.splice(i, 1); break; }
-  }
-  composer.feedbacks = composer.feedbacks.filter((f) => f.from !== id && f.to !== id);
-  if (composer.linkFrom === id) composerExitLink();
-  composerRefresh();
-}
-function composerAddFeedback(from, to) {
-  if (from === to) return;
-  const flat = composer.steps.flat();
-  const fromKey = flat.find((n) => n.id === from)?.key;
-  const toKey = flat.find((n) => n.id === to)?.key;
-  const verdict = canConnect(fromKey, toKey, composer.agents);
-  if (!verdict.ok) { composerToast(verdict.reason); return; }
-  if (verdict.warn) composerToast(verdict.warn);
-  if (!composer.feedbacks.some((f) => f.from === from && f.to === to)) composer.feedbacks.push({ from, to });
-  composerRefresh();
-}
-// Self-cycle toggle: add/remove a SAME-NODE feedback (from===to). The composer's
-// link button rejects from===to, so this is the only way to set a self-loop. It
-// re-runs the step on its own blocking issues (the default's fb_refine).
-function composerToggleSelf(id) {
-  const node = composer.steps.flat().find((n) => n.id === id);
-  const key = node?.key;
-  const verdict = canConnect(key, key, composer.agents);
-  if (!verdict.ok) { composerToast(`${(composer.agents[key]?.displayName) || key} can’t loop to itself`); return; }
-  const i = composer.feedbacks.findIndex((f) => f.from === id && f.to === id);
-  if (i >= 0) composer.feedbacks.splice(i, 1);
-  else composer.feedbacks.push({ from: id, to: id });
-  composerRefresh();
-}
-
-/* ---- feedback linking mode ---- */
-function composerToggleLink(id) { if (composer.linkFrom === id) composerExitLink(); else composerEnterLink(id); }
-function composerEnterLink(id) {
-  composer.linkFrom = id;
-  composer.els.banner.hidden = false;
-  const a = composer.steps.flat().find((n) => n.id === id);
-  composer.els.linkText.textContent = `Loop from "${composerAgent(a.key).displayName}" → click a target agent`;
-  composer.els.flow.querySelectorAll('.node').forEach((n) => {
-    n.classList.toggle('linking', n.dataset.id === id);
-    n.classList.toggle('link-target', n.dataset.id !== id);
-  });
-}
-function composerExitLink() {
-  composer.linkFrom = null;
-  if (composer.els.banner) composer.els.banner.hidden = true;
-  if (composer.els.flow) composer.els.flow.querySelectorAll('.node').forEach((n) => n.classList.remove('linking', 'link-target'));
-}
-
-/* ---- wires (shared renderer; ns-namespaced markers) ---- */
-function composerPaintWires(flowEl, wiresEl, steps, feedbacks, opts) {
-  opts = opts || {};
-  const ns = opts.ns || 'main';
-  if (flowEl.offsetParent === null) return; // view hidden — skip
-  // Canonical loop-count rule (Phase D applies this when BUILDING opts.cycles;
-  // the renderer itself reads the finished count from opts.cycles[fb.from]).
-  const loopCount = (fb, nodeCycle) => Math.max(0, (nodeCycle[fb.from] || 1) - 1);
-  const loopBadge = (cx, cy, color, n) =>
-    `<g class="loop-badge"><title>${n} cycle${n === 1 ? '' : 's'}</title>` +
-    `<circle cx="${cx}" cy="${cy}" r="11.5" fill="${color}" stroke="${color}" stroke-width="1.6"/>` +
-    `<text x="${cx}" y="${cy + 0.5}" text-anchor="middle" dominant-baseline="central" ` +
-    `font-size="11.5" font-weight="700" fill="#fff">${n}×</text></g>`;
-  const rect = (id) => {
-    const el = flowEl.querySelector(`.node[data-id="${id}"]`); if (!el) return null;
-    const fr = flowEl.getBoundingClientRect(), r = el.getBoundingClientRect();
-    return { x: r.left - fr.left, y: r.top - fr.top, w: r.width, h: r.height };
-  };
-  const W = flowEl.scrollWidth, H = flowEl.scrollHeight;
-  wiresEl.setAttribute('width', W); wiresEl.setAttribute('height', H);
-  wiresEl.style.width = W + 'px'; wiresEl.style.height = H + 'px';
-  let s = `<defs>` +
-    `<marker id="arrSeq-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_SEQ}"/></marker>` +
-    `<marker id="arrSeqDone-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.green}"/></marker>` +
-    `<marker id="arrFb-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.amber}"/></marker>` +
-    `<marker id="arrSelf-${ns}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="${COMPOSER_COLORS.violet}"/></marker></defs>`;
-  for (let i = 0; i < steps.length - 1; i++) {
-    steps[i].forEach((a) => {
-      steps[i + 1].forEach((b) => {
-        const ra = rect(a.id), rb = rect(b.id); if (!ra || !rb) return;
-        const x1 = ra.x + ra.w, y1 = ra.y + ra.h / 2, x2 = rb.x, y2 = rb.y + rb.h / 2;
-        const dx = Math.max(36, (x2 - x1) * 0.5);
-        const bothDone = opts.doneSet && opts.doneSet.has(a.id) && opts.doneSet.has(b.id);
-        const seqStroke = bothDone ? COMPOSER_COLORS.green : COMPOSER_SEQ;
-        const seqMk = bothDone ? `arrSeqDone-${ns}` : `arrSeq-${ns}`;
-        s += `<path d="M${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}" fill="none" stroke="${seqStroke}" stroke-width="2" stroke-dasharray="6 7" marker-end="url(#${seqMk})"/>`;
+    if (wf.version === 2) {
+      const open = document.createElement('button');
+      open.type = 'button'; open.className = 'btn-ghost pl-open'; open.textContent = 'Open';
+      open.addEventListener('click', async () => {
+        const full = await gvApi.readWorkflow(wf.id);
+        if (!full) return;
+        // openTemplate resolves null when the discard guard was refused — the
+        // canvas (and the undo ring) must then be left exactly as they were.
+        if (await gvComposer.openTemplate(full)) gvComposer.fit();
       });
-    });
-  }
-  const posOf = (id) => { for (const st of steps) { const i = st.findIndex((a) => a.id === id); if (i >= 0) return { len: st.length, i }; } return { len: 1, i: 0 }; };
-  let maxBottom = 0;
-  steps.flat().forEach((a) => { const r = rect(a.id); if (r) maxBottom = Math.max(maxBottom, r.y + r.h); });
-  feedbacks.forEach((fb, idx) => {
-    const ra = rect(fb.from), rb = rect(fb.to); if (!ra || !rb) return;
-    if (fb.from === fb.to) {
-      // same-node self-cycle: a BIG violet lobe hanging beneath the node so the
-      // cycle badge reads clearly. No delete-X — the node's top-left self-cycle
-      // toggle owns add/remove (composer); run/history pass cycles for the badge.
-      const cx = ra.x + ra.w / 2, by = ra.y + ra.h, b = 40;
-      const fbCls = opts.runMode ? (fb.from === opts.activeId ? ' class="wire-live"' : ' class="wire-dim"') : '';
-      s += `<path d="M${cx - 26} ${by} C ${cx - 40} ${by + b}, ${cx + 40} ${by + b}, ${cx + 26} ${by}"${fbCls} fill="none" stroke="${COMPOSER_COLORS.violet}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrSelf-${ns})"/>`;
-      if (opts.cycles && !opts.del) {
-        const n = opts.cycles[fb.from] || 0;
-        if (n >= 1) s += loopBadge(cx, by + b * 0.82, COMPOSER_COLORS.violet, n);
+      row.appendChild(open);
+      // No × on the built-in: DELETE /api/workflows/wf_default always answers
+      // 400 (ui/server.mjs), so the button could only ever fail. Open stays —
+      // the built-in is meant to be opened and saved as a copy.
+      if (wf.id !== RESERVED_WORKFLOW_ID) {
+        const del = document.createElement('button');
+        del.type = 'button'; del.className = 'pl-del'; del.textContent = '×';
+        // A delete is destructive and unrecoverable: it asks first, in red — the
+        // guard the v1 composer's saved list owned before it was retired.
+        del.addEventListener('click', async () => {
+          const ok = await confirmModal({
+            title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
+            message: `Delete "${wf.name || wf.id}"?\n\nThis cannot be undone.`,
+          });
+          if (!ok) return;
+          const r = await gvApi.deleteWorkflow(wf.id);
+          if (!r.ok) { setGvSavedMsg(r.error, 'err'); return; }   // the row stays; say why
+          setGvSavedMsg('');
+          gvRefreshSaved();
+        });
+        row.appendChild(del);
       }
-      return;
-    }
-    const p = posOf(fb.from);
-    const below = p.len > 1 && p.i === p.len - 1;
-    let sx, sy, tx, ty, rail, mx, my;
-    if (below) {
-      sx = ra.x + ra.w / 2; sy = ra.y + ra.h; tx = rb.x + rb.w / 2; ty = rb.y + rb.h;
-      rail = maxBottom + Math.max(46, Math.abs(sx - tx) * 0.12);
-      my = rail - (rail - Math.max(sy, ty)) * 0.18;
     } else {
-      sx = ra.x + ra.w / 2; sy = ra.y; tx = rb.x + rb.w / 2; ty = rb.y;
-      rail = Math.min(sy, ty) - Math.max(46, Math.abs(sx - tx) * 0.16);
-      my = rail + (Math.min(sy, ty) - rail) * 0.18;
+      const tag = document.createElement('span');
+      tag.className = 'pl-legacy';
+      tag.textContent = 'legacy · runnable until the graph cut-over';
+      row.appendChild(tag);
     }
-    mx = (sx + tx) / 2;
-    const fbCls = opts.runMode ? (fb.from === opts.activeId ? ' class="wire-live"' : ' class="wire-dim"') : '';
-    s += `<path d="M${sx} ${sy} C ${sx} ${rail}, ${tx} ${rail}, ${tx} ${ty}"${fbCls} fill="none" stroke="${COMPOSER_COLORS.amber}" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" marker-end="url(#arrFb-${ns})"/>`;
-    if (opts.del) {
-      s += `<g class="fb-del" data-fb="${idx}" style="cursor:pointer;pointer-events:auto">` +
-        `<circle cx="${mx}" cy="${my}" r="9.5" fill="#fff" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.5"/>` +
-        `<path d="M${mx - 3.2} ${my - 3.2}L${mx + 3.2} ${my + 3.2}M${mx + 3.2} ${my - 3.2}L${mx - 3.2} ${my + 3.2}" stroke="${COMPOSER_COLORS.amber}" stroke-width="1.7" stroke-linecap="round"/></g>`;
-    } else if (opts.cycles) {
-      const n = opts.cycles[fb.from] || 0;
-      if (n >= 1) s += loopBadge(mx, my, COMPOSER_COLORS.amber, n);
-    }
-  });
-  wiresEl.innerHTML = s;
-}
-function composerDrawWires() {
-  if (!composer.els.flow) return;
-  composerPaintWires(composer.els.flow, composer.els.wires, composer.steps, composer.feedbacks, { ns: 'main', del: true });
-}
-
-/* ---- toolbar actions (server-wired) ---- */
-async function composerReset() {
-  const tpl = await getWorkflow('wf_default');
-  const model = defaultTopologyFromTemplate(tpl, composerMk);
-  composer.steps = model.steps;
-  composer.feedbacks = model.feedbacks;
-  composerRefresh();
-}
-// Auto-suggest the workflow domain = the dominant non-`shared` domain among member
-// agents, else 'general'. The user can override in the second save prompt.
-function suggestWorkflowDomain(steps) {
-  const counts = new Map();
-  distinctAgents(steps).forEach((k) => {
-    const d = (composerAgent(k)?.domain) || 'general';   // composerAgent fallback lacks domain → 'general'
-    if (d === 'shared') return;               // shared never dominates
-    counts.set(d, (counts.get(d) || 0) + 1);
-  });
-  let best = 'general', bestN = 0;
-  for (const [d, n] of counts) if (n > bestN) { best = d; bestN = n; }
-  return best;                                 // 'general' when only shared / none
-}
-
-async function composerSave() {
-  if (!composer.steps.length) return;
-  composerExitLink();
-  const suggested = suggestWorkflowDomain(composer.steps);
-  const answers = await promptModal({
-    title: 'Save pipeline',
-    message: 'Give it a name, and a domain so the picker can group it.',
-    confirmLabel: 'Save',
-    fields: [
-      { id: 'name', label: 'Name', placeholder: 'e.g. nightly refactor', required: true },
-      { id: 'domain', label: 'Domain', value: suggested,
-        hint: 'Organizes the picker — e.g. coding, marketing.' },
-    ],
-  });
-  if (!answers) return;
-  const name = answers.name;
-  const domain = answers.domain || suggested;
-  const body = topology(composer.steps, composer.feedbacks); // {steps,feedbacks} with contract ids
-  const saveBtn = document.getElementById('composer-save');
-  let saved, warnings;
-  try {
-    ({ workflow: saved, warnings } = await saveWorkflow({ name, domain, steps: body.steps, feedbacks: body.feedbacks }));
-  } catch (e) {
-    appendLog({ source: 'ui', level: 'error', text: `save pipeline: ${e.message}`, ts: Date.now() });
-    return;
+    item.appendChild(row);
+    els.savedList.appendChild(item);
   }
-  // Soft validator warnings (reachability/governance): the save succeeded, but
-  // tell the user the topology is questionable. Toast the first, count the rest.
-  if (warnings && warnings.length) {
-    composerToast(warnings[0] + (warnings.length > 1 ? ` (+${warnings.length - 1} more)` : ''));
-  }
-  await composerLoadSaved();
-  // The server list is [Default, ...saved] — Default is ALWAYS first, so do NOT blindly
-  // expand the first .pl-item (v1 bug: it auto-expanded Default, not the new pipeline).
-  // Expand the row we just saved — match by returned id, then by name; if neither
-  // matches, expand nothing rather than the wrong Default preview.
-  const items = [...composer.els.list.querySelectorAll('.pl-item')];
-  const row = (saved && saved.id && items.find((el) => el.dataset.id === saved.id))
-    || items.find((el) => (el.querySelector('.pl-name')?.textContent || '').trim() === name);
-  if (row) row.querySelector('.pl-row').click();
-  const html = saveBtn.innerHTML;
-  saveBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"/></svg> Saved';
-  saveBtn.style.background = 'var(--green-ink)';
-  setTimeout(() => { saveBtn.innerHTML = html; saveBtn.style.background = ''; }, 1400);
+  await gvRefreshArchived();
 }
 
-async function composerLoadSaved() {
-  await loadEnabledPluginNames();
-  composer.saved = await listWorkflows();
-  composerRenderList();
-}
-
-function composerRoNode(a) {
-  const ag = composerAgent(a.key);
-  const d = document.createElement('div');
-  d.className = 'node'; d.dataset.id = a.id; d.style.setProperty('--c', COMPOSER_COLORS[ag.color] || '#ccc');
-  d.innerHTML =
-    `<div class="nic" style="background:${COMPOSER_TINTS[ag.color] || '#eee'};color:${COMPOSER_COLORS[ag.color] || '#888'}">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor">${safeAgentIcon(ag)}</svg></div>` +
-    `<div class="nmeta"><b>${escapeHtml(ag.displayName)}</b><small>${escapeHtml(ag.description)}</small></div>`;
-  return d;
-}
-
-function composerRenderRO(host, item) {
-  const tag = document.createElement('div'); tag.className = 'pl-readonly-tag';
-  tag.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" stroke-linecap="round"/></svg> Read-only preview';
-  host.appendChild(tag);
-  const scroll = document.createElement('div'); scroll.className = 'ro-scroll';
-  const f = document.createElement('div'); f.className = 'flow ro-flow';
-  const w = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); w.setAttribute('class', 'wires');
-  f.appendChild(w);
-  for (let i = 0; i < item.steps.length; i++) {
-    f.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
-    const col = document.createElement('div'); col.className = 'col';
-    const ct = document.createElement('div'); ct.className = 'col-tag';
-    ct.innerHTML = `Step ${i + 1}` + (item.steps[i].length > 1 ? ' · <em>parallel</em>' : '');
-    col.appendChild(ct);
-    item.steps[i].forEach((a) => col.appendChild(composerRoNode(a)));
-    f.appendChild(col);
-  }
-  f.appendChild(Object.assign(document.createElement('div'), { className: 'strip' }));
-  scroll.appendChild(f); host.appendChild(scroll);
-  const paint = () => composerPaintWires(f, w, item.steps, item.feedbacks, { ns: item.id });
-  requestAnimationFrame(() => requestAnimationFrame(paint));
-  setTimeout(paint, 60);
-}
-
-let composerWfDomain = 'all';   // current filter
-
-// Dynamic filter set (clarify Q4): distinct domains present among saved workflows,
-// plus 'general', led by an 'all' option. wf_default (coding) participates like any row.
-function composerWfDomains() {
-  const seen = [];
-  composer.saved.forEach((w) => { const d = w.domain || 'general';
-    if (d !== 'general' && !seen.includes(d)) seen.push(d); });
-  seen.push('general');
-  return ['all', ...seen];
-}
-
-function composerRenderList() {
-  const listEl = composer.els.list, cntEl = composer.els.count;
-  listEl.innerHTML = '';
-  cntEl.textContent = composer.saved.length + (composer.saved.length === 1 ? ' workflow' : ' workflows');
-  // The first-run empty state keys off the UNFILTERED list, so a filtered-to-empty
-  // domain shows an empty list under the chips, not the "no pipelines yet" copy.
-  if (!composer.saved.length) {
-    listEl.innerHTML = '<div class="pl-empty">No saved workflows yet — build one above and hit "Save workflow".</div>';
-    return;
-  }
-  // Domain filter chip row, inserted just before the list (reused across renders).
-  const filterDomains = composerWfDomains();
-  const filterEl = listEl.previousElementSibling?.classList?.contains('wf-filter')
-    ? listEl.previousElementSibling
-    : (() => { const el = document.createElement('div'); el.className = 'wf-filter';
-               listEl.parentNode.insertBefore(el, listEl); return el; })();
-  filterEl.innerHTML = '';
-  filterDomains.forEach((d) => {
-    const c = document.createElement('button'); c.type = 'button';
-    c.className = 'pal-chip' + (composerWfDomain === d ? '' : ' off');
-    c.textContent = d; c.addEventListener('click', () => { composerWfDomain = d; composerRenderList(); });
-    filterEl.appendChild(c);
-  });
-  const rows = composerWfDomain === 'all'
-    ? composer.saved
-    : composer.saved.filter((w) => (w.domain || 'general') === composerWfDomain);
-  rows.forEach((item) => {
-    const used = distinctAgents(item.steps);
-    const chips = used.map((k) => {
-      const ag = composerAgent(k);
-      return `<span class="pl-chip"><span class="d" style="background:${COMPOSER_COLORS[ag.color] || '#ccc'}"></span>${escapeHtml(ag.displayName)}</span>`;
-    }).join('');
-    const meta = metaLine(item.steps, item.feedbacks).replace(
-      / · (\d+ feedback loops?)$/, ' · <em>$1</em>',
-    );
-    const wrap = document.createElement('div'); wrap.className = 'pl-item'; wrap.dataset.id = item.id;
-    const isDefault = item.id === 'wf_default';
-    wrap.innerHTML =
-      `<div class="pl-row">` +
-        `<svg class="pl-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>` +
-        `<div class="pl-main">` +
-          `<div class="pl-name">${escapeHtml(workflowPickerLabel(item, enabledPluginNames) || item.name)} <span class="pl-domain">${escapeHtml(item.domain || 'general')}</span></div>` +
-          `<div class="pl-meta">${meta}</div>` +
-          `<div class="pl-chips">${chips}</div>` +
-        `</div>` +
-        (isDefault ? '' : `<button type="button" class="pl-del" title="Delete workflow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`) +
-      `</div>` +
-      `<div class="pl-body"></div>`;
-    listEl.appendChild(wrap);
-    const row = wrap.querySelector('.pl-row');
-    const del = wrap.querySelector('.pl-del');
-    const body = wrap.querySelector('.pl-body');
-    if (del) del.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const ok = await confirmModal({
-        title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
-        message: `Delete "${item.name}"?\n\nThis cannot be undone.`,
-      });
-      if (!ok) return;
-      try { await deleteWorkflow(item.id); } catch (err) {
-        appendLog({ source: 'ui', level: 'error', text: `delete pipeline: ${err.message}`, ts: Date.now() }); return;
-      }
-      await composerLoadSaved();
+// The Archived footer only exists once V24 (P8) archives rows: it is rendered
+// when — and only when — GET /api/workflows?archived=1 returns at least one row,
+// so it is invisible today and lights up after the break with no further work.
+async function gvRefreshArchived() {
+  const els = gvEls();
+  const rows = await gvApi.listArchived();
+  els.archived.replaceChildren();
+  els.archived.hidden = rows.length === 0;
+  if (!rows.length) return;
+  const head = document.createElement('span');
+  head.textContent = `Archived (${rows.length}) — v1 templates kept but not runnable. `;
+  els.archived.appendChild(head);
+  for (const wf of rows) {
+    const chip = document.createElement('button');
+    chip.type = 'button'; chip.className = 'pl-chip'; chip.textContent = `${wf.name || wf.id} ×`;
+    chip.title = 'Delete permanently';
+    chip.addEventListener('click', async () => {
+      const r = await gvApi.deleteWorkflow(wf.id);
+      if (!r.ok) { setGvSavedMsg(r.error, 'err'); return; }
+      setGvSavedMsg('');
+      gvRefreshArchived();
     });
-    row.addEventListener('click', () => {
-      const open = wrap.classList.toggle('open');
-      if (open) {
-        if (!body.dataset.rendered) { composerRenderRO(body, item); body.dataset.rendered = '1'; }
-        else {
-          const f = body.querySelector('.ro-flow'), w = body.querySelector('.wires');
-          if (f && w) requestAnimationFrame(() => composerPaintWires(f, w, item.steps, item.feedbacks, { ns: item.id }));
-        }
-      }
-    });
-  });
+    els.archived.appendChild(chip);
+  }
 }
 
 function modelById(id) {
@@ -2653,6 +1895,20 @@ function option(value, text) {
 // paint. Exposed on window.__np so jsdom unit tests can exercise them directly.
 // ---------------------------------------------------------------------------
 
+// The New-Pipeline panel's OWN ports source. classifyLoops needs each agent's
+// v2 ports, and /api/agents already carries them, so the row builders resolve
+// from the registry they were handed instead of borrowing gvPortsFn — the
+// Composer's index, which exists only once THAT view has been opened, so a cold
+// page load rendered no cycle inputs at all. gvPortsFn stays as the fallback: it
+// is built from ?all=1 and so also covers an agent the palette list omits.
+function panelPortsFn(registry) {
+  const own = portsFnFor(registry || {});
+  return (node) => {
+    const p = own(node);
+    return p && p.ported !== false ? p : (gvPortsFn(node) || p);
+  };
+}
+
 // Flatten workflow.steps[][] into an ordered list of node rows, joining each
 // node's role `key` to its registry metadata (label/color) and resolving every
 // setting through the four layers (newpipeline-ux-design.md §4.3):
@@ -2668,6 +1924,7 @@ function option(value, text) {
 // so the renderer can mark deviation and the writer can prune a redundant save
 // back to "inherit". `override` is layer 1 verbatim.
 function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
+  if (workflow && workflow.version === 2) return buildGraphNodeRows(workflow, registry, runConfig, opts);
   const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
   const reg = registry || {};
   const nodes = (runConfig && runConfig.nodes) || {};
@@ -2689,28 +1946,7 @@ function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
       const metaLocked = !!(meta && meta.questionsLocked);
       const metaQDefault = !!(meta && meta.questionsDefault);
 
-      const override = {};
-      if (typeof saved.model === 'string' && saved.model) override.model = saved.model;
-      if (typeof saved.effort === 'string' && saved.effort) override.effort = saved.effort;
-      if (typeof saved.fanOut === 'boolean') override.fanOut = saved.fanOut;
-      if (typeof saved.askQuestions === 'boolean') override.askQuestions = saved.askQuestions;
-
-      // Layers 2-4 alone: what this row falls back to once its override is gone.
-      const def = {
-        model: typeof wfDef.model === 'string' ? wfDef.model : '',
-        effort: typeof wfDef.model === 'string' && typeof wfDef.effort === 'string' ? wfDef.effort : '',
-        fanOut: typeof wfDef.fanOut === 'boolean' ? wfDef.fanOut : metaFan,
-        askQuestions: typeof wfDef.askQuestions === 'boolean' ? wfDef.askQuestions : metaQDefault,
-      };
-
-      // An effort is only meaningful for the model that advertises it, so an
-      // override naming its own model does not inherit the default's effort.
-      const model = override.model !== undefined ? override.model : def.model;
-      const effort = override.effort !== undefined
-        ? override.effort
-        : (override.model !== undefined ? '' : def.effort);
-      const fanOut = override.fanOut !== undefined ? override.fanOut : def.fanOut;
-      const askQuestions = override.askQuestions !== undefined ? override.askQuestions : def.askQuestions;
+      const t = resolveNodeTunables(saved, wfDef, { fanOut: metaFan, questionsDefault: metaQDefault });
 
       rows.push({
         nodeId: node.id,
@@ -2721,17 +1957,18 @@ function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
         description: (meta && meta.description) || '',
         stepIndex,
         parallel: members.length > 1,
-        model,
-        effort,
-        fanOut,
+        model: t.model,
+        effort: t.effort,
+        fanOut: t.fanOut,
+        subagentModel: t.subagentModel,
         // null => the agent has no questions capability (no checkbox rendered).
-        askQuestions: !metaAsks ? null : (metaLocked ? metaQDefault : askQuestions),
+        askQuestions: !metaAsks ? null : (metaLocked ? metaQDefault : t.askQuestions),
         questionsLocked: metaAsks && metaLocked,
-        def,
-        override,
+        def: t.def,
+        override: t.override,
         // A locked questions toggle is never the user's doing, so it never counts
         // as a modification (it cannot be reset either).
-        modified: modifiedFieldsOf({ model, effort, fanOut, askQuestions }, def,
+        modified: modifiedFieldsOf(t, t.def,
           { asksQuestions: metaAsks, questionsLocked: metaLocked }).length > 0,
       });
     });
@@ -2739,13 +1976,51 @@ function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
   return rows;
 }
 
-// Which of the four settings deviate from the row's resolved default. Pure; the
+// ONE resolution rule for a node's five tunables, shared verbatim by the v1
+// (buildNodeConfigRows) and v2 (buildGraphNodeRows) row builders — the two
+// panels must never drift (the v2 path is the one every live workflow uses).
+// `saved` = the per-project override entry (role + node merged), `wfDef` = the
+// workflow's own defaults block (node.defaults in v1, node.config in v2),
+// `caps` = the registry meta's capability booleans.
+function resolveNodeTunables(saved, wfDef, caps = {}) {
+  const override = {};
+  if (typeof saved.model === 'string' && saved.model) override.model = saved.model;
+  if (typeof saved.effort === 'string' && saved.effort) override.effort = saved.effort;
+  if (typeof saved.fanOut === 'boolean') override.fanOut = saved.fanOut;
+  if (typeof saved.askQuestions === 'boolean') override.askQuestions = saved.askQuestions;
+  if (typeof saved.subagentModel === 'string' && saved.subagentModel) override.subagentModel = saved.subagentModel;
+
+  // Layers 2-4 alone: what this row falls back to once its override is gone.
+  const def = {
+    model: typeof wfDef.model === 'string' ? wfDef.model : '',
+    effort: typeof wfDef.model === 'string' && typeof wfDef.effort === 'string' ? wfDef.effort : '',
+    fanOut: typeof wfDef.fanOut === 'boolean' ? wfDef.fanOut : !!caps.fanOut,
+    askQuestions: typeof wfDef.askQuestions === 'boolean' ? wfDef.askQuestions : !!caps.questionsDefault,
+    // No sidecar layer: an agent manifest declares whether a node CAN fan out,
+    // never what its children run on. '' = unset (the run resolves auto).
+    subagentModel: typeof wfDef.subagentModel === 'string' ? wfDef.subagentModel : '',
+  };
+
+  // An effort is only meaningful for the model that advertises it, so an
+  // override naming its own model does not inherit the default's effort.
+  const model = override.model !== undefined ? override.model : def.model;
+  const effort = override.effort !== undefined
+    ? override.effort
+    : (override.model !== undefined ? '' : def.effort);
+  const fanOut = override.fanOut !== undefined ? override.fanOut : def.fanOut;
+  const askQuestions = override.askQuestions !== undefined ? override.askQuestions : def.askQuestions;
+  const subagentModel = override.subagentModel !== undefined ? override.subagentModel : def.subagentModel;
+  return { override, def, model, effort, fanOut, askQuestions, subagentModel };
+}
+
+// Which of the five settings deviate from the row's resolved default. Pure; the
 // single definition of "modified" for both the row dot and the header count.
 function modifiedFieldsOf(effective, def, caps = {}) {
   const out = [];
   if ((effective.model || '') !== (def.model || '')) out.push('model');
   if ((effective.effort || '') !== (def.effort || '')) out.push('effort');
   if (!!effective.fanOut !== !!def.fanOut) out.push('fanOut');
+  if ((effective.subagentModel || '') !== (def.subagentModel || '')) out.push('subagentModel');
   if (caps.asksQuestions && !caps.questionsLocked && !!effective.askQuestions !== !!def.askQuestions) {
     out.push('askQuestions');
   }
@@ -2763,6 +2038,13 @@ function agentSummaryText(row) {
     parts.push(m ? m.label : row.model, row.effort || 'default effort');
   }
   if (row.fanOut) parts.push('fan-out');
+  // A stored policy shows whether or not fan-out is currently on: the value
+  // persists across a fan-out toggle, and hiding it while the modified dot
+  // counted it read as a contradiction. '' (unset -> auto at run time) shows
+  // nothing, like every other unset tunable.
+  if (row.subagentModel) {
+    parts.push(row.subagentModel === 'auto' ? 'subs: agent picks' : `subs: ${row.subagentModel}`);
+  }
   if (row.askQuestions) parts.push('questions');
   if (!parts.length) return 'default';
   if (!row.model) parts.unshift('default');
@@ -2787,6 +2069,7 @@ function pruneNodeSelection(row, next = {}) {
     effort: next.effort !== undefined ? next.effort : row.effort,
     fanOut: next.fanOut !== undefined ? next.fanOut : row.fanOut,
     askQuestions: next.askQuestions !== undefined ? next.askQuestions : row.askQuestions,
+    subagentModel: next.subagentModel !== undefined ? next.subagentModel : row.subagentModel,
   };
   // model+effort prune as a PAIR: an effort is only interpretable against the
   // model that advertises it, so storing one without the other is rejected by
@@ -2800,6 +2083,9 @@ function pruneNodeSelection(row, next = {}) {
     askQuestions: row.askQuestions === null || row.questionsLocked
       ? undefined // no capability / locked: never persist a value for it
       : (!!eff.askQuestions === !!row.def.askQuestions ? null : !!eff.askQuestions),
+    // '' IS the clear for a string tunable (config.mjs#inheritOrSubagentModel), so
+    // a value equal to the default prunes to inherit exactly like model/effort.
+    subagentModel: (eff.subagentModel || '') === (row.def.subagentModel || '') ? '' : (eff.subagentModel || ''),
   };
 }
 
@@ -2811,7 +2097,88 @@ function pruneNodeSelection(row, next = {}) {
 //   - self loop:    "<name> ↺ (self loop)"    (from === to)
 // A "(step N)" suffix (1-based) disambiguates an endpoint whose display name is shared
 // by more than one node in the workflow. Unknown ids fall back to the raw id.
+// v2: agent nodes only, in condensation-topo launch order (loop wires excluded
+// from the ranking, exactly as the scheduler orders launches). The four config
+// layers are the same as v1: run-config nodes[nodeId] -> template node.config ->
+// sidecar -> hard default.
+function buildGraphNodeRows(tpl, registry, runConfig, opts = {}) {
+  const reg = registry || {};
+  const nodes = (runConfig && runConfig.nodes) || {};
+  // wf_default only: the legacy per-ROLE storage, layered under the per-node one
+  // exactly as resolveGraph does (sel -> legacy -> node config).
+  const legacySteps = opts.legacySteps || null;
+  const order = classifyLoops(tpl, panelPortsFn(reg)).launchOrder;
+  const byId = new Map(tpl.nodes.map((n) => [n.id, n]));
+  const rank = new Map(order.map((id, i) => [id, i]));
+  const agentNodes = order.map((id) => byId.get(id)).filter((n) => n && n.kind === 'agent');
+  const rows = [];
+  for (const node of agentNodes) {
+    const meta = reg[node.key] || null;
+    const role = legacySteps ? node.key : null;
+    const saved = { ...(role ? legacySteps[role] : null), ...nodes[node.id] };
+    const wfDef = (node.config && typeof node.config === 'object') ? node.config : {};
+    const metaFan = meta && typeof meta.fanOut === 'boolean' ? meta.fanOut : false;
+    const metaAsks = !!(meta && meta.asksQuestions);
+    const metaLocked = !!(meta && meta.questionsLocked);
+    const metaQDefault = !!(meta && meta.questionsDefault);
+    const t = resolveNodeTunables(saved, wfDef, { fanOut: metaFan, questionsDefault: metaQDefault });
+    rows.push({
+      nodeId: node.id, key: node.key, role, // non-null => persist via saveStep (wf_default)
+      label: (meta && meta.displayName) || node.key || node.id,
+      color: (meta && meta.color) || '', description: (meta && meta.description) || '',
+      stepIndex: rank.get(node.id) || 0,
+      parallel: false,
+      model: t.model, effort: t.effort, fanOut: t.fanOut, subagentModel: t.subagentModel,
+      askQuestions: !metaAsks ? null : (metaLocked ? metaQDefault : t.askQuestions),
+      questionsLocked: metaAsks && metaLocked,
+      def: t.def, override: t.override,
+      modified: modifiedFieldsOf(t, t.def,
+        { asksQuestions: metaAsks, questionsLocked: metaLocked }).length > 0,
+    });
+  }
+  return rows;
+}
+
+// v2: one row per LOOP wire (a plain wire has no budget — V13). Labels reuse the
+// v1 vocabulary: "<toName> ← <fromName>", "(step N)" only when a name repeats.
+function buildGraphWireRows(tpl, registry, runConfig) {
+  const reg = registry || {};
+  const saved = (runConfig && runConfig.wires) || {};
+  const { loopWireIds, launchOrder } = classifyLoops(tpl, panelPortsFn(reg));
+  const byId = new Map(tpl.nodes.map((n) => [n.id, n]));
+  const rank = new Map(launchOrder.map((id, i) => [id, i]));
+  const nameCount = new Map();
+  const nameOf = (id) => {
+    const n = byId.get(id);
+    if (!n) return id;
+    // A flow card has no registry meta and no key: name it from the SHARED
+    // FLOW_LABEL table the manifest uses, never from its raw n_* id (MAJ-21).
+    if (n.kind !== 'agent') return FLOW_LABEL[n.kind] || n.kind;
+    const meta = reg[n.key];
+    return (meta && meta.displayName) || n.key || n.id;
+  };
+  for (const n of tpl.nodes) nameCount.set(nameOf(n.id), (nameCount.get(nameOf(n.id)) || 0) + 1);
+  const labelFor = (id) => {
+    const nm = nameOf(id);
+    return (nameCount.get(nm) || 0) > 1 ? `${nm} (step ${(rank.get(id) || 0) + 1})` : nm;
+  };
+  return tpl.wires.filter((w) => loopWireIds.has(w.id)).map((w) => {
+    const rc = saved[w.id] || {};
+    const n = Number(rc.maxCycles);
+    const cfg = Number(w.config && w.config.maxCycles);
+    const fromLabel = labelFor(w.from.node);
+    const toLabel = labelFor(w.to.node);
+    const selfLoop = w.from.node === w.to.node;
+    return {
+      fbId: w.id, from: w.from.node, to: w.to.node, fromLabel, toLabel, selfLoop,
+      label: selfLoop ? `${toLabel} ↺ (self loop)` : `${toLabel} ← ${fromLabel}`,
+      maxCycles: Number.isFinite(n) && n >= 1 ? n : (Number.isFinite(cfg) && cfg >= 1 ? cfg : 3),
+    };
+  });
+}
+
 function buildFeedbackRows(workflow, registry, runConfig) {
+  if (workflow && workflow.version === 2) return buildGraphWireRows(workflow, registry, runConfig);
   const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
   const fbs = Array.isArray(workflow && workflow.feedbacks) ? workflow.feedbacks : [];
   const reg = registry || {};
@@ -2869,17 +2236,13 @@ function defaultEffortFor(modelId) {
 // Phase key -> display label. Declared HERE, above the __np export literal, only
 // because that literal names it: a `const` declared 8 000 lines below is in its
 // temporal dead zone when the object is built and would throw
-// `ReferenceError: Cannot access 'PHASE_LABEL' before initialization` at module
-// load, blanking the whole UI. It is a bare literal with no dependencies, and its
-// readers (renderQpanel; the run-card painters) all run later.
-const PHASE_LABEL = { preflight: 'Preflight', clarify: 'Clarify', plan: 'Plan', refine: 'Refine', implement: 'Implement', review: 'Review', 'manual-checklist': 'Manual tests', 'manual-web': 'Manual web UI', done: 'Done' };
 
 // Test hook: expose the pure helpers (and a couple of collaborators the tests
 // reuse) without leaking them into the app's runtime contract.
 if (typeof window !== 'undefined') {
   window.__np = Object.assign(window.__np || {}, {
-    composer, composerRefresh,
     buildNodeConfigRows,
+    resolveNodeTunables,
     buildFeedbackRows,
     defaultEffortFor,
     renderModelEffortPair,
@@ -2897,6 +2260,7 @@ if (typeof window !== 'undefined') {
     _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
     manifestFor,
     manifestSig,
+    stepStatusByKey,
     makeRun,
     onLog,
     maybeAutoscrollLog,
@@ -2909,22 +2273,15 @@ if (typeof window !== 'undefined') {
     subsByNode,
     subsByNodeArrays,
     subsByNodeCycleArrays,
+    execIdOf,
+    execKey,
     subsGroupsForRender,
     agentNodeIdSet,
-    stepStatusByKey,
     cyclesPerNode,
     cycleAwareLabel,
     subAgentsOf,
     findManifestNode,
     subAgentsForNode,
-    composerPaintWires,
-    buildRunGraph,
-    runNode,
-    nodeModelLine,
-    loopCounts,
-    paintRunGraph,
-    histNodeCycle,
-    subFanHtml,
     subGroupStatus,
     readRunDensity,
     setRunDensity,
@@ -2933,21 +2290,49 @@ if (typeof window !== 'undefined') {
     skillPillsHtml,
     agentTypePillHtml,
     graphifyCountPillHtml,
+    stepModelByNode,
+    stepModelPillHtml,
     onStepSkills,
     onStepGraphify,
     stepSkillsFromSteps,
     stepGraphifyFromSteps,
     nodeLabelLookup,
     statusPill,
+    runDotClass,
+    rdStateCopy,
+    isGraphRun,
+    activeNodes,
+    activeCopy,
+    runDecorFor,
+    finishRun,
+    paintGraphFor,
+    paintLegacyStrip,
+    legacyChipRows,
+    destroyGraphMounts,
+    applyRunLogFilter,
+    focusLogExecution,
+    paintLogFilters,
+    readLogFilterFrom,
+    repaintFilteredLog,
+    executionChipText,
+    paintExecChip,
+    wireExecChip,
+    openRunArtifact,
+    paintQuiescenceBanner,
+    progressText,
+    histCountsLine,
+    gateWireCopy,
+    paintHdHeaderMeta,
+    buildHdOverview,
+    paintRdHeader,
+    renderGateBody,
     runStatusMeta,
     paintRunStatusIcon,
     renderRunMeta,
-    PHASE_LABEL,
     buildHistCard,
     histStatusMeta,
     histPrEligible,
     pauseRun,
-    nodeKindFor,
     upsertRun,
     buildRunCard,
     paintRunCard,
@@ -3098,7 +2483,10 @@ async function getWorkflowApi(id) {
   try {
     const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`);
     const data = await safeJson(res);
-    if (!res.ok || !data || !Array.isArray(data.steps)) return null;
+    // Shape gate, both engines: a v2 graph carries `nodes`, a v1 template
+    // `steps`. Demanding `steps` (the pre-P8 guard) rejected every stored row
+    // once they all became graphs, which painted "Could not load this workflow."
+    if (!res.ok || !data || !(Array.isArray(data.nodes) || Array.isArray(data.steps))) return null;
     state.workflowCache[id] = data;
     return data;
   } catch { return null; }
@@ -3249,6 +2637,9 @@ async function renderWorkflowConfig(workflowId) {
     isDefault ? { legacySteps: state.config.steps || {} } : {});
   renderAgentRows(rows);
   renderFeedbackRows(buildFeedbackRows(wf, registry, runConfig));
+  // The cycle inputs write through a different endpoint shape per engine
+  // (v1 `feedbacks:{…}` vs v2 `wires:{…}`); stamp which one this row set is.
+  if (el.wfFeedbackConfig) el.wfFeedbackConfig.dataset.graph = wf.version === 2 ? '1' : '';
   setAgentsHeader(rows, wf.name || workflowId);
   setAgentRowsEnabled(agentsEditable());
 }
@@ -3266,7 +2657,7 @@ function agentsEditable() {
 function setAgentRowsEnabled(enabled) {
   const host = el.agentRows;
   if (!host) return;
-  for (const c of host.querySelectorAll('.step-model,.step-fanout,.step-questions')) {
+  for (const c of host.querySelectorAll('.step-model,.step-fanout,.step-questions,.step-subagent')) {
     c.disabled = !enabled || (c.classList.contains('step-questions') && c.dataset.locked === '1');
   }
   for (const e of host.querySelectorAll('.step-effort')) {
@@ -3406,7 +2797,20 @@ function renderAgentRows(rows) {
     const fanTxt = document.createElement('span');
     fanTxt.textContent = 'Fan-out';
     fanWrap.append(fanCb, fanTxt);
-    picks.append(mWrap, eWrap, fanWrap);
+    // Sub-agent model: what this node's Task children run on. Rendered beside
+    // Fan-out (whose children it governs) and, like it, offered on every agent —
+    // the row's own fan-out toggle is what decides whether it bites.
+    const sWrap = document.createElement('div');
+    sWrap.className = 'select-wrap';
+    const subSel = document.createElement('select');
+    subSel.className = 'step-subagent select';
+    subSel.dataset.nodeId = row.nodeId;
+    if (row.role) subSel.dataset.role = row.role;
+    subSel.setAttribute('aria-label', `${row.label} sub-agent model`);
+    subSel.title = 'Model for the sub-agents this node spawns (needs fan-out)';
+    renderSubagentModelSelect(subSel, row.subagentModel);
+    sWrap.appendChild(subSel);
+    picks.append(mWrap, eWrap, fanWrap, sWrap);
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
       const qWrap = document.createElement('label');
       qWrap.className = 'fanout-toggle questions-toggle';
@@ -3445,6 +2849,19 @@ function renderAgentRows(rows) {
     renderModelEffortPair(modelSel, effortSel, null, { model: row.model, effort: row.effort });
     host.appendChild(card);
   });
+}
+
+// Fill a sub-agent model dropdown. '' is "unset" — the run resolves it to the
+// auto default (the agent picks per spawn), so the blank option says exactly
+// that instead of masquerading as a value. 'inherit' is the stored opt-out
+// (children ride the CLI's own resolution: agent frontmatter, else this node's
+// model); 'auto' is the stored form of the default.
+function renderSubagentModelSelect(sel, value) {
+  const label = (v) => (v === 'auto' ? 'subs: agent picks' : `subs: ${v}`);
+  sel.innerHTML = '';
+  sel.appendChild(option('', 'subs: default (agent picks)'));
+  for (const v of state.subagentModels) sel.appendChild(option(v, label(v)));
+  sel.value = state.subagentModels.includes(value) ? value : '';
 }
 
 // Repaint one row's collapsed caption from what its controls currently show, so
@@ -3554,14 +2971,14 @@ if (el.guardrailsSelect) {
   });
 }
 
-async function saveStep(role, model, effort, fanOut, askQuestions) {
+async function saveStep(role, model, effort, fanOut, askQuestions, subagentModel) {
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
     const res = await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, step: role, model, effort, fanOut, askQuestions }),
+      body: JSON.stringify({ projectDir, step: role, model, effort, fanOut, askQuestions, subagentModel }),
     });
     const data = await safeJson(res);
     if (!res.ok) {
@@ -3588,10 +3005,12 @@ function liveRowValues(row, body) {
   const e = host.querySelector('.step-effort');
   const f = host.querySelector('.step-fanout');
   const q = host.querySelector('.step-questions');
+  const sa = host.querySelector('.step-subagent');
   if (m) out.model = m.value === '__add__' ? row.model : m.value;
   if (e) out.effort = e.value;
   if (f) out.fanOut = f.checked;
   if (q && !q.disabled) out.askQuestions = q.checked;
+  if (sa) out.subagentModel = sa.value;
   return out;
 }
 
@@ -3613,23 +3032,24 @@ async function saveAgentRow(row, next, body) {
   }
   const patch = pruneNodeSelection(row, { ...liveRowValues(row, body), ...next });
   if (row.role) {
-    await saveStep(row.role, patch.model, patch.effort, patch.fanOut, patch.askQuestions);
+    await saveStep(row.role, patch.model, patch.effort, patch.fanOut, patch.askQuestions, patch.subagentModel);
   } else {
-    await saveNode(state.workflowId, row.nodeId, patch.model, patch.effort, patch.fanOut, patch.askQuestions);
+    await saveNode(state.workflowId, row.nodeId, patch.model, patch.effort, patch.fanOut, patch.askQuestions,
+      patch.subagentModel);
   }
   await renderWorkflowConfig(state.workflowId); // repaint captions, dots + header
 }
 
 // Persist one node's model/effort to the per-project run-config for the active
 // workflow (CONV-2): PATCH /api/config { projectDir, workflowId, nodes:{ [nodeId]:{model,effort} } }.
-async function saveNode(workflowId, nodeId, model, effort, fanOut, askQuestions) {
+async function saveNode(workflowId, nodeId, model, effort, fanOut, askQuestions, subagentModel) {
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
     const res = await fetch('/api/config', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, workflowId, nodes: { [nodeId]: { model, effort, fanOut, askQuestions } } }),
+      body: JSON.stringify({ projectDir, workflowId, nodes: { [nodeId]: { model, effort, fanOut, askQuestions, subagentModel } } }),
     });
     const data = await safeJson(res);
     if (!res.ok) {
@@ -3658,6 +3078,25 @@ async function saveFeedback(workflowId, fbId, maxCycles) {
       appendLog({ source: 'ui', level: 'error', text: `config: ${data.error || res.status}`, ts: Date.now() });
       return;
     }
+    if (data.config) state.config = data.config;
+  } catch (e) {
+    appendLog({ source: 'ui', level: 'error', text: `config error: ${e.message}`, ts: Date.now() });
+  }
+}
+
+// Persist one loop wire's cycle budget: PATCH /api/config
+// { projectDir, workflowId, wires:{ [wireId]:{maxCycles} } }. The v1 twin above
+// posts `feedbacks:{…}` and stays until the v1 engine dies in P8.
+async function saveWire(workflowId, wireId, maxCycles) {
+  const projectDir = selectedProjectPath();
+  if (!projectDir) return;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectDir, workflowId, wires: { [wireId]: { maxCycles } } }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { appendLog({ source: 'ui', level: 'error', text: `config: ${data.error || res.status}`, ts: Date.now() }); return; }
     if (data.config) state.config = data.config;
   } catch (e) {
     appendLog({ source: 'ui', level: 'error', text: `config error: ${e.message}`, ts: Date.now() });
@@ -3706,7 +3145,8 @@ el.pipelineConfig.addEventListener('change', (e) => {
   if (t instanceof HTMLInputElement && t.dataset.fbId) {
     const n = Math.max(1, Math.round(Number(t.value) || 1));
     t.value = String(n); // normalize the field
-    saveFeedback(state.workflowId, t.dataset.fbId, n).then(() => renderWorkflowConfig(state.workflowId));
+    const write = el.wfFeedbackConfig && el.wfFeedbackConfig.dataset.graph === '1' ? saveWire : saveFeedback;
+    write(state.workflowId, t.dataset.fbId, n).then(() => renderWorkflowConfig(state.workflowId));
     return;
   }
 
@@ -3736,6 +3176,9 @@ el.pipelineConfig.addEventListener('change', (e) => {
     paintRowSummary(row, body);
   } else if (t.classList.contains('step-effort')) {
     saveAgentRow(row, { effort: t.value }, body);
+    paintRowSummary(row, body);
+  } else if (t.classList.contains('step-subagent')) {
+    saveAgentRow(row, { subagentModel: t.value }, body);
     paintRowSummary(row, body);
   }
 });
@@ -3827,6 +3270,9 @@ function effectiveDefaultsOf(row) {
   }
   out.fanOut = !!row.fanOut;
   if (row.askQuestions !== null && !row.questionsLocked) out.askQuestions = !!row.askQuestions;
+  // Omitted when unset: sanitizeNodeDefaults drops an empty value anyway, and
+  // sending '' would make "promote" look like it stores an inherit.
+  if (row.subagentModel) out.subagentModel = row.subagentModel;
   return out;
 }
 
@@ -3954,14 +3400,16 @@ function trimLogDom(logEl) {
   }
 }
 
-// Append `rec` to a log pane, preceded by a cycle separator when it opens a new
-// cycle. `prevCycle` is the last RENDERED cycle value (see cycleSeparatorBefore);
-// returns the value the NEXT append must pass.
-function appendLogRec(logEl, rec, prevCycle) {
-  const sep = cycleSeparatorBefore(prevCycle, rec);
+// Append `rec` to a log pane, preceded by a cycle separator when its NODE opens
+// a higher ordinal (see cycleSeparatorBefore). `state` is the per-node cursor
+// from newCycleState(); anything else (a first call passing null) starts a fresh
+// one. Returns the state the NEXT append must pass.
+function appendLogRec(logEl, rec, state) {
+  const cursor = state instanceof Map ? state : newCycleState();
+  const sep = cycleSeparatorBefore(cursor, rec);
   if (sep) logEl.appendChild(buildLogSeparator(sep));
   logEl.appendChild(buildLogLine(rec));
-  return rec.cycle != null ? rec.cycle : prevCycle;
+  return cursor;
 }
 
 // Pin a card's log to the bottom when its auto-scroll is on. Source of truth is
@@ -4006,6 +3454,7 @@ function onLog(r, msg) {
   const rec = {
     ts: msg.ts != null ? msg.ts : Date.now(), source: msg.source, level: msg.level, text, sub: !!msg.sub,
     ...(msg.nodeId != null ? { nodeId: msg.nodeId } : {}),
+    ...(msg.executionId != null ? { executionId: msg.executionId } : {}),
     ...(msg.stepIndex != null ? { stepIndex: msg.stepIndex } : {}),
     ...(msg.cycle != null ? { cycle: msg.cycle } : {}),
     ...(msg.stream ? { stream: msg.stream } : {}),
@@ -4020,7 +3469,7 @@ function onLog(r, msg) {
     const logEl = r.el.querySelector('.log');
     if (logEl && !repainted && logLineVisible(rec, r.logFilter)) {
       clearLogPlaceholder(logEl);
-      r._lastRenderedCycle = appendLogRec(logEl, rec, r._lastRenderedCycle ?? null);
+      r._cycleState = appendLogRec(logEl, rec, r._cycleState ?? null);
       trimLogDom(logEl);
       maybeAutoscrollLog(r);
     }
@@ -4028,7 +3477,7 @@ function onLog(r, msg) {
 
   // §5.9: mirror the same record into the OPEN detail's pane. Hooked on the
   // writer, not on the `log` frame type, so the six producers that call onLog
-  // directly (onPhase, onArtifact, the answer/stop/pause/resume failure paths)
+  // directly (onExec, onArtifact, the answer/stop/pause/resume failure paths)
   // reach the detail too. rdAppendLogFrame re-reads r.logLines' tail, which the
   // push above just wrote, and no-ops unless this run's detail is open.
   if (rdOpenRun() === r) rdAppendLogFrame(r);
@@ -4066,7 +3515,31 @@ function paintLogFilters(r, root = r.el) {
   const selCycle = root.querySelector('.log-f-cycle');
   fillFilterSelect(selSource, 'all sources', facets.sources, r.logFilter.source);
   fillFilterSelect(selLevel, 'all levels', facets.levels, r.logFilter.level);
-  fillFilterSelect(selStep, 'all steps', facets.steps, r.logFilter.step, (i) => `step ${i + 1}`);
+  // The step select is RE-PURPOSED as the node select once the run logged node
+  // ids (v2 graph runs): data-axis tells readLogFilterFrom which axis it holds.
+  // v1 records (stepIndex, no nodeId) keep today's `step N` options.
+  const labelOf = nodeLabelLookup(r.stepper);
+  // P6a seam: a footer-row click (applyRunLogFilter / focusLogExecution) can name
+  // a node BEFORE that node has logged a line — the graph host is painted from the
+  // ledger, the facets only from `r.logLines`. Keep the node axis live for such a
+  // pick and offer the node as its own option, so the model's value is
+  // representable in the DOM; otherwise the reconcile below reads `node: ''` back
+  // out of a step-axis select and silently wipes the pick on the very next paint.
+  // This is exactly the honesty loadLiveLogs' __setLogFilter gives the History bar.
+  const wantNode = String(r.logFilter.node || '');
+  const nodeFacets = facets.nodes || [];
+  if (nodeFacets.length || wantNode) {
+    selStep.dataset.axis = 'node';
+    selStep.title = 'Filter by node'; selStep.setAttribute('aria-label', 'Filter by node');
+    const nodeValues = wantNode && !nodeFacets.some((n) => String(n) === wantNode)
+      ? [...nodeFacets, wantNode] : nodeFacets;
+    fillFilterSelect(selStep, 'all nodes', nodeValues, wantNode, (id) => labelOf(id));
+  } else {
+    selStep.dataset.axis = 'step';
+    selStep.title = 'Filter by step'; selStep.setAttribute('aria-label', 'Filter by step');
+    fillFilterSelect(selStep, 'all steps', facets.steps, r.logFilter.step, (i) => `step ${i + 1}`);
+  }
+  paintExecChip(r, root);
   // Cycles are the loop's own 1-based counter, so unlike steps they are NOT
   // shifted for display.
   fillFilterSelect(selCycle, 'all cycles', facets.cycles, r.logFilter.cycle, (c) => `cycle ${c}`);
@@ -4081,12 +3554,61 @@ function paintLogFilters(r, root = r.el) {
   if (effective.source !== r.logFilter.source
     || effective.level !== r.logFilter.level
     || String(effective.step) !== String(r.logFilter.step)
+    // `|| ''` on BOTH sides: a filter object built before the node key existed
+    // (undefined) must read as "all", not force a repaint on every paint. The
+    // EXECUTION axis is deliberately not compared: paintExecChip above writes the
+    // chip's dataset from r.logFilter.execution, so readLogFilterFrom can only
+    // read that same value back — and a chip has no facets to fall out of.
+    || String(effective.node || '') !== String(r.logFilter.node || '')
     || String(effective.cycle) !== String(r.logFilter.cycle)) {
     r.logFilter = effective;
     repaintFilteredLog(r, root);
     return true;
   }
   return false;
+}
+
+/** `Planner #2` / `Implementer #2 · Add schema` for the execution chip. The row
+ *  is matched by executionId ONLY (never `|| s.key`): today's bookend rows are
+ *  key-only, and a v1 row's key is a phase name. Unknown -> the raw id. */
+function executionChipText(r, executionId) {
+  const row = (Array.isArray(r.steps) ? r.steps : []).find((s) => s && s.executionId === executionId);
+  if (!row) return String(executionId || '');
+  const head = `${nodeLabelLookup(r.stepper)(row.nodeId)} #${row.ordinal ?? row.cycle ?? 1}`;
+  return row.kind === 'task' ? `${head} · ${row.title || 'task'}` : head;
+}
+
+/** Mirror r.logFilter.execution into the chip on one bar (`r` is any holder of
+ *  {logFilter, steps, stepper} — the History panel passes a saved state). */
+function paintExecChip(r, root) {
+  const chip = root && root.querySelector('.log-f-exec');
+  if (!chip) return;
+  const id = r.logFilter.execution || '';
+  chip.hidden = !id;
+  chip.dataset.executionId = id;
+  if (id) chip.querySelector('.lfe-text').textContent = executionChipText(r, id);
+}
+
+/** The execution chip's two rules, bound ONCE per bar (the card's, the Running
+ *  detail's, History's). `read()` returns the owner's filter object; `write(patch)`
+ *  applies a patch to it and repaints every bar that shows it.
+ *  - a click on the chip clears the execution axis;
+ *  - a MANUAL node/step or cycle pick clears it too (adj-d §4): the chip narrows
+ *    to one execution and a broader pick must not stay hidden behind it. The
+ *    patch carries the bar's fresh DOM values because the owner's own change
+ *    handler may run AFTER this one (the card's is delegated on #run-list) and
+ *    would otherwise find its select re-filled from the stale model. */
+function wireExecChip(bar, { read, write }) {
+  bar.addEventListener('click', (e) => {
+    if (!(e.target.closest && e.target.closest('.log-f-exec'))) return;
+    e.stopPropagation();
+    write({ execution: '' });
+  });
+  bar.addEventListener('change', (e) => {
+    if (!(e.target.closest && e.target.closest('.log-f-step, .log-f-cycle'))) return;
+    if (!read().execution) return;
+    write({ ...readLogFilterFrom(bar, read().search), execution: '' });
+  });
 }
 
 // Cheap incremental check for onLog: only rebuild the dropdowns when `rec`
@@ -4097,6 +3619,7 @@ function facetKeys(facets) {
     ...facets.levels.map((l) => `l:${l}`),
     ...facets.steps.map((i) => `t:${i}`),
     ...facets.cycles.map((c) => `c:${c}`),
+    ...(facets.nodes || []).map((n) => `n:${n}`),
   ]);
 }
 // Returns paintLogFilters' repaint flag (true when the pane was fully
@@ -4136,16 +3659,16 @@ function repaintFilteredLog(r, root = r.el) {
   // per debounce tick is where search jank came from.
   const frag = document.createDocumentFragment();
   let shown = 0;
-  let prevCycle = null;
+  let cycleState = newCycleState();
   for (const rec of r.logLines) {
     if (!visible(rec)) continue;
-    prevCycle = appendLogRec(frag, rec, prevCycle);
+    cycleState = appendLogRec(frag, rec, cycleState);
     shown++;
   }
   logEl.appendChild(frag);
-  // Hand the streaming path in onLog the cycle the next separator must compare
-  // against, so a live append after a repaint agrees with the repaint.
-  r._lastRenderedCycle = prevCycle;
+  // Hand the streaming path in onLog the per-node cursor the next separator must
+  // compare against, so a live append after a repaint agrees with the repaint.
+  r._cycleState = cycleState;
   trimLogDom(logEl);
   if (shown === 0 && r.logLines.length) {
     logEl.textContent = '(no lines match the filter)';
@@ -4190,6 +3713,7 @@ function appendLog({ source, level, text }) {
 // ---------------------------------------------------------------------------
 function onQuestion(r, msg) {
   r.pendingQuestion = msg;
+  r._decorSeq = (r._decorSeq || 0) + 1;   // isLive(r) reads pendingQuestion
   // A new question supersedes any half-finished answer attempt.
   r._answering = false;
   if (r.el) renderQpanel(r);
@@ -4259,8 +3783,9 @@ function renderQpanel(r, root = r.el) {
   } else if (pq.kind === 'questions') {
     title.textContent = `${pq.agent || 'Agent'} has questions`;
   } else {
-    const phaseLabel = PHASE_LABEL[r.phaseKey] || 'Pipeline';
-    title.textContent = `${phaseLabel} needs your input`;
+    // The ACTIVE agent names the panel (the v1 phase vocabulary is gone).
+    const label = (activeNodes(r)[0] || {}).label || 'Pipeline';
+    title.textContent = `${label} needs your input`;
   }
   head.appendChild(title);
   if (!isGate && !isRecovery) {
@@ -4441,9 +3966,7 @@ function renderGateBody(r, panel, pq) {
 
   const intro = document.createElement('div');
   intro.className = 'gate-intro';
-  intro.textContent = issues.length
-    ? 'This cycle reached its limit with open issues. Approve another cycle to keep iterating, or continue with what you have.'
-    : 'This cycle reached its limit. Approve another cycle to keep iterating, or continue with what you have.';
+  intro.textContent = `This cycle reached its limit${gateWireCopy(r, pq.wireId)}${issues.length ? ' with open issues' : ''}. Approve another cycle to keep iterating, or continue with what you have.`;
   panel.appendChild(intro);
 
   if (issues.length) {
@@ -4653,6 +4176,7 @@ function clearQpanel(r) {
 function finishRun(r, status) {
   if (r._finished) return;
   r._finished = true;
+  r._decorSeq = (r._decorSeq || 0) + 1;   // isLive(r) reads _finished/status/pendingQuestion
   r.status = status;
   r.pendingQuestion = null;
   r._answering = false;
@@ -6587,10 +6111,11 @@ if (typeof window !== 'undefined') {
 // ---- Agents management view -------------------------------------------------
 
 // After any agent mutation: drop the new-pipeline config registry memo
-// (getAgentsApi) and mark the composer palette for a refetch on next entry.
+// (getAgentsApi) and the run-graph agent-meta cache, so both refetch on demand.
 function invalidateAgentCaches() {
   state.agents = {};
-  _composerPaletteDirty = true;
+  agentMetaCache.clear();
+  gvAgentsDirty = true;           // the composer re-reads /api/agents on re-entry
 }
 
 async function loadAgentsList() {
@@ -6598,7 +6123,7 @@ async function loadAgentsList() {
     const res = await fetch('/api/agents?all=1');
     const data = await safeJson(res);
     state.agentsList = res.ok && Array.isArray(data.agents) ? data.agents : [];
-    if (res.ok && Array.isArray(data.channels)) state.channelIds = data.channels;
+    if (res.ok && Array.isArray(data.mockWriterRoles)) state.mockWriterRoles = data.mockWriterRoles;
   } catch { state.agentsList = []; }
   return state.agentsList;
 }
@@ -6621,8 +6146,10 @@ function agentChip(text, cls) {
   return s;
 }
 
-function fillChannelRow(container, ids, cls) {
-  const list = Array.isArray(ids) ? ids : [];
+// One pill per typed port: `id · type`, void ports dashed, loop inputs marked
+// with ↺ (a loop input is optional and re-fires the agent on a fresh token).
+function fillPortRow(container, ports, cls) {
+  const list = Array.isArray(ports) ? ports : [];
   if (list.length === 0) {
     const none = document.createElement('span');
     none.className = 'agent-io-none';
@@ -6630,7 +6157,11 @@ function fillChannelRow(container, ids, cls) {
     container.appendChild(none);
     return;
   }
-  list.forEach((c) => container.appendChild(agentChip(c, cls)));
+  for (const p of list) {
+    if (!p || p.synthetic || p.id === 'await') continue; // the await gate is engine surface
+    const text = `${p.loop ? '↺ ' : ''}${p.id} · ${p.type}`;
+    container.appendChild(agentChip(text, `${cls}${p.type === 'void' ? ' void' : ''}`));
+  }
 }
 
 function buildAgentCard(a) {
@@ -6640,9 +6171,14 @@ function buildAgentCard(a) {
   node.querySelector('.agent-name').textContent = a.displayName || a.key;
   node.querySelector('.agent-origin').textContent = a.origin || 'builtin';
   node.querySelector('.agent-origin').classList.add(a.origin === 'user' ? 'origin-user' : 'origin-builtin');
-  node.querySelector('.agent-sub').textContent = `${a.key} · ${a.runnerType || 'producer'} — ${a.description || ''}`;
-  fillChannelRow(node.querySelector('.agent-chips-in'), a.consumes, 'cons');   // INPUT row
-  fillChannelRow(node.querySelector('.agent-chips-out'), a.produces, 'prod');  // OUTPUT row
+  // placeable defaults TRUE; the badge says the agent runs off-pipeline (the
+  // workspace scanner) and can never be dropped on a canvas.
+  node.querySelector('.agent-not-placeable').hidden = a.placeable !== false;
+  // The blurb the user authored wins; a port summary stands in when it is empty.
+  node.querySelector('.agent-sub').textContent =
+    `${a.key} · ${a.runnerType || 'producer'} — ${a.description || a.portSummary || ''}`;
+  fillPortRow(node.querySelector('.agent-chips-in'), a.inputs, 'cons');   // INPUT row
+  fillPortRow(node.querySelector('.agent-chips-out'), a.outputs, 'prod'); // OUTPUT row
   const isUser = a.origin === 'user';
   node.querySelector('.agent-edit').hidden = !isUser;
   node.querySelector('.agent-delete').hidden = !isUser;
@@ -6755,82 +6291,567 @@ function buildChipChecks(host, options, selected) {
 }
 const chipValues = (host) => [...host.querySelectorAll('input:checked')].map((c) => c.value);
 
-// The two questions sub-flags are meaningless (and normalizeMeta force-clears
-// them) when the agent cannot ask; mirror that in the form.
-function syncQuestionFlags(root) {
-  const asks = root.querySelector('.agent-f-questions');
-  const locked = root.querySelector('.agent-f-questions-locked');
-  const def = root.querySelector('.agent-f-questions-default');
-  if (!asks || !locked || !def) return;
-  locked.disabled = !asks.checked;
-  def.disabled = !asks.checked;
-  if (!asks.checked) { locked.checked = false; def.checked = false; }
+// ---- Shared agent metadata form (card editor AND wizard Step 3) --------------
+// The form emits a meta v2 SIDECAR and nothing else. It never blocks a save:
+// every rule below is a live .pf-hint mirroring the store's 400 text, and the
+// PUT/POST always goes out — the server owns the verdict (spec §9).
+// PORT_ID_RE, MAX_PORTS_PER_SIDE and PORT_TYPES are IMPORTED, never re-typed:
+// a second copy of PORT_ID_RE is exactly how the editor's hint and the store's
+// 400 start disagreeing. (They are imported at the top of this file.)
+const PORT_TYPE_OPTIONS = PORT_TYPES.filter((t) => t !== 'any'); // `any` is engine-only
+const OUTPUT_WHENS = ['always', 'blocking', 'clean'];
+const PORT_STORES = ['run', 'project'];
+const RUNNER_TYPES = ['producer', 'verifier', 'clarifier'];
+const AGENT_COLORS = ['green', 'peach', 'red', 'blue', 'violet', 'amber'];
+const AGENT_SCOPES = ['project', 'workspace-only'];
+const WORKSPACE_STRATEGIES = ['explore', 'task', 'review'];
+const PORT_OWN_KEYS = ['id', 'type', 'required', 'loop', 'expands', 'as', 'directive', 'when', 'filename', 'store'];
+/**
+ * Keys the form OWNS: it either surfaces them or deliberately drops them.
+ * Anything NOT listed here rides through dataset.extra untouched, so a newer
+ * worca's field survives an edit by an older one.
+ */
+const AGENT_OWN_KEYS = [
+  'key', 'displayName', 'description', 'color', 'runnerType', 'order', 'domain', 'scope', 'icon',
+  'fanOut', 'asksQuestions', 'questionsLocked', 'questionsDefault', 'inputs', 'outputs', 'verdict',
+  'sideEffect', 'mockRole', 'wantsRequest', 'workspaceFanOut', 'workspaceStrategy',
+  'workspaceVariantOf', 'placeable', 'requiresSkills', 'promptHints', 'metaVersion',
+  // Computed by the registry, never authored back into a sidecar.
+  'origin', 'agentPath', 'agentFile', 'descriptionDerived', 'portSummary',
+];
+/**
+ * The port type each non-default `as` renderer requires — a byte-for-byte copy
+ * of AS_REQUIRES_TYPE in src/shared/graph/agent-meta.mjs. `file` is deliberately
+ * ABSENT: it is the default, is materialized on non-void inputs only, and its
+ * rule is therefore "non-void", not "md".
+ */
+const AS_REQUIRES_TYPE = { answers: 'json', 'fix-review': 'md', worktree: 'void' };
+const PORT_AS = ['file', 'answers', 'fix-review', 'worktree'];
+const FILENAME_TOKENS = ['cycle', 'vsuffix', 'base'];
+/** readVerdict/readOutputs reject a path or a `..` in any filename template. */
+const BASENAME_BAD = (f) => /[\\/]/.test(f) || f.includes('..');
+// AS_REQUIRES_TYPE and the ~10 rule strings in refreshAgentForm are the only
+// things this file still duplicates from src/shared/graph/agent-meta.mjs (that
+// module exports neither). The hint test pins every string against the wording
+// the store actually emits; P8 should export both and delete these copies.
+
+/** The `.agent-form` host inside a pane (or the pane itself when it IS one). */
+const formHost = (root) => root.querySelector('.agent-form') || root;
+/** dataset JSON never throws the form down: a hand-mangled attribute degrades to {}. */
+const readExtra = (el) => { try { return el.dataset.extra ? JSON.parse(el.dataset.extra) : {}; } catch { return {}; } };
+
+function fmField(labelText, control, cls) {
+  const wrap = document.createElement('div');
+  wrap.className = `field${cls ? ` ${cls}` : ''}`;
+  const label = document.createElement('label');
+  label.textContent = labelText;
+  wrap.append(label, control);
+  return wrap;
+}
+function fmInput(cls, value, { type = 'text', placeholder = '' } = {}) {
+  const input = document.createElement('input');
+  input.type = type;
+  input.className = `${cls} input`;
+  input.spellcheck = false;
+  input.value = value == null ? '' : String(value);
+  if (placeholder) input.placeholder = placeholder;
+  return input;
+}
+function fmSelect(cls, options, value) {
+  const sel = document.createElement('select');
+  sel.className = `${cls} select`;
+  for (const opt of options) {
+    const o = document.createElement('option');
+    o.value = typeof opt === 'string' ? opt : opt.value;
+    o.textContent = typeof opt === 'string' ? opt : opt.text;
+    sel.appendChild(o);
+  }
+  sel.value = value == null ? '' : String(value);
+  return sel;
+}
+function fmCheck(cls, labelText, checked) {
+  const label = document.createElement('label');
+  label.className = 'fanout-toggle';
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.className = cls;
+  cb.checked = Boolean(checked);
+  const txt = document.createElement('span');
+  txt.textContent = labelText;
+  label.append(cb, txt);
+  return label;
+}
+/** A RULE the store would 400 on — red. */
+function fmHint(cls) {
+  const el = document.createElement('small');
+  el.className = `pf-hint hint err ${cls}`.trim();
+  el.hidden = true;
+  return el;
+}
+/** An explanation, not a rule — same slot, neutral colour (never `err`). */
+function fmNote(cls) {
+  const el = document.createElement('small');
+  el.className = `pf-note hint ${cls}`.trim();
+  el.hidden = true;
+  return el;
+}
+function fmMini(cls, text, title) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = `${cls} btn-ghost btn-mini`;
+  b.textContent = text;
+  if (title) b.title = title;
+  return b;
 }
 
-// Fill every .agent-f-* field under `root` from meta (+ optional markdown).
-function agentFormFill(root, meta, markdown) {
-  const known = state.channelIds.length ? state.channelIds : ['userPrompt', 'plan', 'review', 'checklist', 'code', 'workspace', 'clarify', 'decomposition'];
-  // Channels are an open vocabulary: union the server list with the meta's own
-  // ids (known first, then its extra customs) so a stale/closed list can never
-  // drop a custom channel on the edit round-trip.
-  const channels = [...known];
-  const own = [meta.consumes, meta.optionalConsumes, meta.produces];
-  for (const list of own) {
-    for (const id of Array.isArray(list) ? list : []) {
-      if (typeof id === 'string' && id && !channels.includes(id)) channels.push(id);
+/** One port row. `side` is 'in' | 'out'; the two sides carry different fields. */
+function buildPortRow(side, port) {
+  const p = port || {};
+  const row = document.createElement('div');
+  row.className = `port-row port-row-${side}`;
+  // Unsurfaced sidecar keys (label, description, artifactKind, anything a newer
+  // worca ships) ride ALONG so a save can never silently drop them.
+  const extra = {};
+  for (const [k, v] of Object.entries(p)) if (!PORT_OWN_KEYS.includes(k)) extra[k] = v;
+  if (Object.keys(extra).length) row.dataset.extra = JSON.stringify(extra);
+
+  const top = document.createElement('div');
+  top.className = 'port-row-top';
+  top.append(
+    fmField('id', fmInput('pf-id', p.id, { placeholder: 'portId' }), 'pf-f-id'),
+    fmField('type', fmSelect('pf-type', PORT_TYPE_OPTIONS, p.type || 'md'), 'pf-f-type'),
+  );
+  if (side === 'in') {
+    // The blank option is "the store's default" (file on a non-void input,
+    // nothing on a void one) — NOT the empty string. Without it a void input is
+    // unauthorable: the form would always emit as:'file', which the store 400s.
+    top.append(fmField('as', fmSelect('pf-as', [{ value: '', text: '— default' }, ...PORT_AS], p.as || ''), 'pf-f-as'));
+  } else {
+    top.append(
+      fmField('when', fmSelect('pf-when', OUTPUT_WHENS, p.when || 'always'), 'pf-f-when'),
+      fmField('filename', fmInput('pf-filename', p.filename, { placeholder: '{base}.md' }), 'pf-f-filename'),
+      fmField('store', fmSelect('pf-store', PORT_STORES, p.store || 'run'), 'pf-f-store'),
+    );
+  }
+  top.append(
+    fmMini('pf-up', '▲', 'Move this port up'),
+    fmMini('pf-down', '▼', 'Move this port down'),
+    fmMini('pf-remove', '×', 'Remove this port'),
+  );
+  row.appendChild(top);
+
+  if (side === 'in') {
+    const flags = document.createElement('div');
+    flags.className = 'port-row-flags';
+    // loop coerces required:false in the registry — mirror it so the form never
+    // shows a state the store would rewrite under the user.
+    flags.append(
+      fmCheck('pf-required', 'required', p.required !== false && !p.loop),
+      fmCheck('pf-loop', 'loop', p.loop === true),
+      fmCheck('pf-expands', 'expands', p.expands === true),
+      fmMini('pf-directive-toggle', p.directive ? 'directive ✓' : 'directive', 'Prompt text injected when this port fires'),
+    );
+    row.appendChild(flags);
+    const dirWrap = document.createElement('div');
+    dirWrap.className = 'pf-directive-wrap';
+    dirWrap.hidden = true;
+    const dir = document.createElement('textarea');
+    dir.className = 'pf-directive textarea';
+    dir.rows = 4;
+    dir.spellcheck = false;
+    dir.placeholder = 'Markdown appended to the task prompt when this port fires ({path} substituted)';
+    dir.value = p.directive || '';
+    dirWrap.appendChild(dir);
+    row.appendChild(dirWrap);
+  }
+  row.append(fmHint('pf-hint-row'), fmNote('pf-note-row'));
+  syncPortRow(row);
+  return row;
+}
+
+/** Per-row mirroring of the coercions the registry applies anyway. */
+function syncPortRow(row) {
+  const loop = row.querySelector('.pf-loop');
+  const required = row.querySelector('.pf-required');
+  if (loop && required) {
+    required.disabled = loop.checked;
+    if (loop.checked) required.checked = false;
+  }
+  const type = row.querySelector('.pf-type').value;
+  // A void port carries no payload: hide the two fields the store would 400 on.
+  for (const cls of ['.pf-f-filename', '.pf-f-store']) {
+    const f = row.querySelector(cls);
+    if (f) f.hidden = type === 'void';
+  }
+}
+
+/** One ports section (head + list + the section-level hint). */
+function buildPortsSection(side, ports) {
+  const sec = document.createElement('div');
+  sec.className = `agent-ports agent-ports-${side}`;
+  const head = document.createElement('div');
+  head.className = 'agent-ports-head';
+  const title = document.createElement('b');
+  title.textContent = side === 'in' ? 'INPUTS' : 'OUTPUTS';
+  const count = document.createElement('span');
+  count.className = 'pf-count hint';
+  const add = fmMini(`pf-add-${side}`, side === 'in' ? '+ input' : '+ output');
+  head.append(title, add, count);
+  sec.appendChild(head);
+  const list = document.createElement('div');
+  list.className = 'agent-ports-list';
+  for (const p of Array.isArray(ports) ? ports : []) {
+    // The synthesized `await` gate is engine surface, never editable — and the
+    // registry never ships it on a sidecar, so this filter is belt-and-braces.
+    if (p && (p.synthetic || p.id === 'await')) continue;
+    list.appendChild(buildPortRow(side, p));
+  }
+  sec.append(list, fmHint('pf-hint-side'));
+  return sec;
+}
+
+/**
+ * Rebuild every hint + the two counters from the form's CURRENT state.
+ * Wholesale is the point: a rule can be invalidated by an edit three rows away
+ * (a cleared verdict filename invalidates every `when:'blocking'` output), and
+ * recomputing the lot is the only formulation that cannot drift. Cost is bounded
+ * by 2 × MAX_PORTS_PER_SIDE rows. It may mutate AUTHORED state only through the
+ * two coercions the registry applies anyway (loop ⇒ required:false,
+ * !asksQuestions ⇒ locked/default:false) and through `hidden`.
+ */
+function refreshAgentForm(host) {
+  const setText = (el, text) => { el.textContent = text; el.hidden = !text; };
+  const runner = host.querySelector('.agent-f-runner').value;
+  const verdict = host.querySelector('.agent-f-verdict').value.trim();
+  const agentMsgs = [];
+  if (runner === 'verifier' && !verdict) agentMsgs.push('runnerType "verifier" requires verdict: { filename }');
+  if (verdict && BASENAME_BAD(verdict)) agentMsgs.push(`verdict filename "${verdict}" must be a plain basename`);
+  // The form ships BOTH controls side by side, so this 400 is one keystroke away.
+  const variantOf = host.querySelector('.agent-f-ws-variantof').value.trim();
+  if (variantOf && host.querySelector('.agent-f-scope').value !== 'workspace-only') {
+    agentMsgs.push('workspaceVariantOf requires scope "workspace-only"');
+  }
+  for (const side of ['in', 'out']) {
+    const sec = host.querySelector(`.agent-ports-${side}`);
+    const rows = [...sec.querySelectorAll('.port-row')];
+    const label = side === 'in' ? 'inputs' : 'outputs';
+    sec.querySelector('.pf-count').textContent = `(${rows.length}/${MAX_PORTS_PER_SIDE})`;
+    sec.querySelector(`.pf-add-${side}`).disabled = rows.length >= MAX_PORTS_PER_SIDE;
+    const seen = new Set();
+    const sideMsgs = [];
+    for (const row of rows) {
+      syncPortRow(row);
+      const id = row.querySelector('.pf-id').value.trim();
+      const type = row.querySelector('.pf-type').value;
+      const msgs = [];   // rules the store would 400 on
+      const notes = [];  // explanations
+      if (id === 'await') {
+        msgs.push(`${label}: port id "await" is reserved — the engine synthesizes the await gate port on every agent node`);
+      } else if (id && !PORT_ID_RE.test(id)) {
+        msgs.push(`${label}: bad port id "${id}"`);
+      }
+      if (id) {
+        if (seen.has(id)) sideMsgs.push(`${label}: duplicate port id "${id}"`);
+        seen.add(id);
+      }
+      if (side === 'in') {
+        if (row.querySelector('.pf-expands').checked && type !== 'json') {
+          msgs.push(`${label}.${id}: expands is only legal on json inputs`);
+        }
+        // Mirrors readInputs exactly: `file` has no entry in AS_REQUIRES_TYPE,
+        // so its rule is "non-void"; every other renderer names a type.
+        const as = row.querySelector('.pf-as').value;
+        if (as) {
+          const need = Object.hasOwn(AS_REQUIRES_TYPE, as) ? AS_REQUIRES_TYPE[as] : null;
+          if (need ? type !== need : type === 'void') {
+            msgs.push(`${label}.${id}: as "${as}" requires a ${need || 'non-void'} port (got ${type})`);
+          }
+        }
+        if (row.querySelector('.pf-loop').checked) {
+          notes.push('loop inputs are optional; a fresh token on this port re-fires the agent');
+        }
+      } else {
+        const when = row.querySelector('.pf-when').value;
+        if (when !== 'always' && !verdict) {
+          msgs.push(`${label}.${id}: when "${when}" requires the agent to declare verdict: { filename }`);
+        } else if (when !== 'always') {
+          notes.push('"blocking"/"clean" branch on the verdict file above');
+        }
+        const fn = row.querySelector('.pf-filename').value.trim();
+        if (type !== 'void' && !fn) {
+          msgs.push(`${label}.${id}: ${type} outputs require a filename template`);
+        } else if (fn) {
+          if (BASENAME_BAD(fn)) msgs.push(`${label}.${id}: filename "${fn}" must be a plain basename`);
+          const bad = [...fn.matchAll(/\{([^}]*)\}/g)].map((m) => m[1]).filter((t) => !FILENAME_TOKENS.includes(t));
+          if (bad.length) msgs.push(`${label}.${id}: filename "${fn}" uses unknown token(s) ${bad.map((t) => `{${t}}`).join(', ')}`);
+        }
+      }
+      setText(row.querySelector('.pf-hint-row'), msgs.join(' · '));
+      setText(row.querySelector('.pf-note-row'), notes.join(' · '));
+    }
+    if (side === 'out') {
+      if (!rows.length) sideMsgs.push('at least one output port is required');
+      if (runner === 'clarifier' && !rows.some((r) => r.querySelector('.pf-type').value === 'json')) {
+        agentMsgs.push('runnerType "clarifier" requires at least one json output port');
+      }
+    }
+    setText(sec.querySelector('.pf-hint-side'), sideMsgs.join(' · '));
+  }
+  setText(host.querySelector('.pf-hint-agent'), agentMsgs.join(' · '));
+  // The two questions sub-flags are meaningless (and normalizeMeta force-clears
+  // them) when the agent cannot ask; mirror that.
+  const asks = host.querySelector('.agent-f-questions');
+  for (const cls of ['.agent-f-questions-locked', '.agent-f-questions-default']) {
+    const cb = host.querySelector(cls);
+    cb.disabled = !asks.checked;
+    if (!asks.checked) cb.checked = false;
+  }
+}
+
+/**
+ * Build the whole v2 form under `host` from `meta`.
+ * @param {HTMLElement} host  a .agent-form element (or a container holding one)
+ * @param {object} meta       a v2 sidecar (registry-normalized or a gen draft)
+ * @param {{markdown?: string, mockWriterRoles?: string[], registryKeys?: string[]}} [opts]
+ */
+function agentFormRender(host, meta, opts = {}) {
+  const root = formHost(host);
+  const m = meta || {};
+  const roles = Array.isArray(opts.mockWriterRoles) ? opts.mockWriterRoles : state.mockWriterRoles;
+  const keys = Array.isArray(opts.registryKeys) ? opts.registryKeys : state.agentsList.map((a) => a.key);
+  root.dataset.agentKey = m.key || '';
+  const extra = {};
+  for (const [k, v] of Object.entries(m)) if (!AGENT_OWN_KEYS.includes(k)) extra[k] = v;
+  root.dataset.extra = JSON.stringify(extra);
+
+  const frag = document.createDocumentFragment();
+  frag.appendChild(fmField('Display name', fmInput('agent-f-name', m.displayName)));
+  // A description resolved from the .md frontmatter is computed, not authored:
+  // show it as a placeholder, never as a value — pre-filling it would PUT it
+  // straight back and freeze the fallback into the sidecar.
+  const desc = fmInput('agent-f-desc', m.descriptionDerived ? '' : (m.description || ''));
+  if (m.descriptionDerived) desc.placeholder = m.description || '';
+  frag.appendChild(fmField('Description', desc));
+
+  const row1 = document.createElement('div');
+  row1.className = 'row-2';
+  row1.append(
+    fmField('Color', fmSelect('agent-f-color', AGENT_COLORS, m.color || 'amber')),
+    fmField('Runner type', fmSelect('agent-f-runner', RUNNER_TYPES, m.runnerType || 'producer')),
+  );
+  const row2 = document.createElement('div');
+  row2.className = 'row-2';
+  row2.append(
+    fmField('Order', fmInput('agent-f-order', m.order != null ? m.order : 99, { type: 'number' })),
+    fmField('Verdict filename', fmInput('agent-f-verdict', (m.verdict && m.verdict.filename) || '', {
+      placeholder: 'required for verifiers, e.g. review-cycle{cycle}.json',
+    })),
+  );
+  const row3 = document.createElement('div');
+  row3.className = 'row-3';
+  row3.append(
+    fmField('Domain', fmInput('agent-f-domain', m.domain || '', { placeholder: 'general' })),
+    fmField('Scope', fmSelect('agent-f-scope', AGENT_SCOPES, m.scope || 'project')),
+    fmField('Icon (SVG path)', fmInput('agent-f-icon', m.icon || '', { placeholder: '<path d="…"/>' })),
+  );
+  frag.append(row1, row2, row3, fmHint('pf-hint-agent'));
+  frag.append(buildPortsSection('in', m.inputs), buildPortsSection('out', m.outputs));
+
+  const caps = document.createElement('div');
+  caps.className = 'field agent-caps';
+  const capsLabel = document.createElement('label');
+  capsLabel.textContent = 'Capabilities';
+  caps.append(
+    capsLabel,
+    fmCheck('agent-f-fanout', 'Research fan-out', m.fanOut),
+    fmCheck('agent-f-questions', 'Asks questions', m.asksQuestions),
+    fmCheck('agent-f-questions-locked', 'Questions locked', m.questionsLocked),
+    fmCheck('agent-f-questions-default', 'Questions on by default', m.questionsDefault),
+    fmCheck('agent-f-sideeffect', 'Writes code (sideEffect)', m.sideEffect === 'code'),
+    fmCheck('agent-f-wantsrequest', 'Carries the original request', m.wantsRequest === true),
+    fmCheck('agent-f-placeable', 'Placeable on a canvas', m.placeable !== false),
+  );
+  frag.appendChild(caps);
+
+  const row4 = document.createElement('div');
+  row4.className = 'row-2';
+  row4.append(
+    fmField('Mock role', fmSelect('agent-f-mockrole', [{ value: '', text: 'auto' }, ...roles.map((r) => ({ value: r, text: r }))], m.mockRole || '')),
+    fmField('Requires skills', fmInput('agent-f-skills', (m.requiresSkills || []).join(', '), { placeholder: 'skill-one, skill-two' })),
+  );
+  const hints = document.createElement('textarea');
+  hints.className = 'agent-f-hints textarea';
+  hints.rows = 3;
+  hints.spellcheck = false;
+  hints.value = m.promptHints || '';
+  frag.append(row4, fmField('Prompt hints', hints));
+
+  const ws = document.createElement('div');
+  ws.className = 'field agent-workspace';
+  // NB: the heading local is `wsHeadLabel` ON PURPOSE. Do NOT shorten it to the
+  // ws + Label form: test/ui-install-removed.test.mjs guards the removed
+  // WS-status indicator with a naive substring check over app.js as PLAIN TEXT,
+  // so even a comment mentioning that token reds it. Do not weaken the guard.
+  const wsHeadLabel = document.createElement('label');
+  wsHeadLabel.textContent = 'Workspace runs';
+  const variant = fmInput('agent-f-ws-variantof', m.workspaceVariantOf || '', { placeholder: 'agent key' });
+  variant.setAttribute('list', 'agent-f-ws-keys');
+  const datalist = document.createElement('datalist');
+  datalist.id = 'agent-f-ws-keys';
+  for (const k of keys) {
+    const o = document.createElement('option');
+    o.value = k;
+    datalist.appendChild(o);
+  }
+  const wsRow = document.createElement('div');
+  wsRow.className = 'row-2';
+  wsRow.append(
+    fmField('Strategy', fmSelect('agent-f-ws-strategy', ['', ...WORKSPACE_STRATEGIES], m.workspaceStrategy || '')),
+    fmField('Variant of', variant),
+  );
+  ws.append(wsHeadLabel, fmCheck('agent-f-ws-fanout', 'Force fan-out on workspace runs', m.workspaceFanOut === true), wsRow, datalist);
+  frag.appendChild(ws);
+
+  const md = document.createElement('textarea');
+  md.className = 'agent-f-md textarea';
+  md.rows = 16;
+  md.spellcheck = false;
+  md.value = typeof opts.markdown === 'string' ? opts.markdown : '';
+  frag.appendChild(fmField('System prompt (markdown)', md));
+
+  root.replaceChildren(frag);
+  refreshAgentForm(root);
+  bindAgentForm(root);
+}
+
+/** ONE delegated click + one change + one input listener per host — rows come and go. */
+function bindAgentForm(host) {
+  if (host.dataset.bound === '1') return;
+  host.dataset.bound = '1';
+  host.addEventListener('click', (ev) => {
+    const t = ev.target;
+    if (!t || !t.closest) return;
+    const add = t.closest('.pf-add-in, .pf-add-out');
+    if (add) {
+      if (add.disabled) return;
+      const side = add.classList.contains('pf-add-in') ? 'in' : 'out';
+      host.querySelector(`.agent-ports-${side} .agent-ports-list`).appendChild(buildPortRow(side, null));
+      refreshAgentForm(host);
+      return;
+    }
+    const row = t.closest('.port-row');
+    if (!row) return;
+    if (t.closest('.pf-remove')) { row.remove(); refreshAgentForm(host); return; }
+    if (t.closest('.pf-up')) {
+      if (row.previousElementSibling) row.parentNode.insertBefore(row, row.previousElementSibling);
+      refreshAgentForm(host);
+      return;
+    }
+    if (t.closest('.pf-down')) {
+      if (row.nextElementSibling) row.parentNode.insertBefore(row.nextElementSibling, row);
+      refreshAgentForm(host);
+      return;
+    }
+    if (t.closest('.pf-directive-toggle')) {
+      const wrap = row.querySelector('.pf-directive-wrap');
+      wrap.hidden = !wrap.hidden;
+    }
+  });
+  // One handler for every field: the hint set is a pure function of the form.
+  host.addEventListener('change', () => refreshAgentForm(host));
+  // `change` on a text input only fires on blur; the id/filename/verdict hints
+  // must track typing, so mirror it on input.
+  host.addEventListener('input', (ev) => {
+    if (ev.target && ev.target.matches && ev.target.matches('.pf-id, .pf-filename, .agent-f-verdict')) {
+      refreshAgentForm(host);
+    }
+  });
+}
+
+function readPortRow(row, side) {
+  const extra = readExtra(row);
+  const type = row.querySelector('.pf-type').value;
+  const port = { ...extra, id: row.querySelector('.pf-id').value.trim(), type };
+  if (side === 'in') {
+    const loop = row.querySelector('.pf-loop').checked;
+    port.required = loop ? false : row.querySelector('.pf-required').checked; // loop implies optional
+    if (loop) port.loop = true;
+    if (row.querySelector('.pf-expands').checked) port.expands = true;
+    // Blank means "let the store default it" — which is how a void input is
+    // authored. An explicitly chosen value is emitted as chosen, even when the
+    // hint says the store will reject it: the client never pre-empts the store.
+    const as = row.querySelector('.pf-as').value;
+    if (as) port.as = as;
+    const directive = row.querySelector('.pf-directive').value;
+    if (directive.trim()) port.directive = directive;
+  } else {
+    port.when = row.querySelector('.pf-when').value;
+    // A void port carries no payload — the store 400s on either field.
+    if (type !== 'void') {
+      const filename = row.querySelector('.pf-filename').value.trim();
+      if (filename) port.filename = filename;
+      port.store = row.querySelector('.pf-store').value;
     }
   }
-  const agentKeys = state.agentsList.map((a) => a.key).filter((k) => k !== meta.key);
-  root.querySelector('.agent-f-name').value = meta.displayName || '';
-  // A description resolved from the .md frontmatter is computed, not authored:
-  // show it as a placeholder so the user knows where the blurb comes from, but
-  // never as a value — pre-filling it would PUT it straight back and freeze the
-  // fallback into the sidecar (and make an empty description unreachable).
-  const descInput = root.querySelector('.agent-f-desc');
-  descInput.value = meta.descriptionDerived ? '' : (meta.description || '');
-  descInput.placeholder = meta.descriptionDerived ? meta.description : '';
-  root.querySelector('.agent-f-color').value = meta.color || 'amber';
-  root.querySelector('.agent-f-runner').value = meta.runnerType || 'producer';
-  buildChipChecks(root.querySelector('.agent-f-consumes'), channels, meta.consumes);
-  buildChipChecks(root.querySelector('.agent-f-optional'), channels, meta.optionalConsumes);
-  buildChipChecks(root.querySelector('.agent-f-produces'), channels, meta.produces);
-  const any = meta.connectsTo === '*' || meta.connectsTo === undefined;
-  root.querySelector('.agent-f-connect-any').checked = any;
-  buildChipChecks(root.querySelector('.agent-f-connects'), agentKeys, any ? [] : meta.connectsTo);
-  root.querySelector('.agent-f-connects').hidden = any;
-  root.querySelector('.agent-f-order').value = meta.order != null ? String(meta.order) : '99';
-  root.querySelector('.agent-f-fanout').checked = !!meta.fanOut;
-  root.querySelector('.agent-f-loopsource').checked = !!meta.loopSource;
-  root.querySelector('.agent-f-questions').checked = !!meta.asksQuestions;
-  root.querySelector('.agent-f-questions-locked').checked = !!meta.questionsLocked;
-  root.querySelector('.agent-f-questions-default').checked = !!meta.questionsDefault;
-  syncQuestionFlags(root);
-  root.querySelector('.agent-f-questions').onchange = () => syncQuestionFlags(root);
-  if (typeof markdown === 'string') root.querySelector('.agent-f-md').value = markdown; // .value only — never innerHTML
+  return port;
 }
 
-// Read the form back into { meta, markdown }.
-function agentFormRead(root) {
-  const any = root.querySelector('.agent-f-connect-any').checked;
-  return {
-    meta: {
-      displayName: root.querySelector('.agent-f-name').value.trim(),
-      description: root.querySelector('.agent-f-desc').value.trim(),
-      color: root.querySelector('.agent-f-color').value,
-      runnerType: root.querySelector('.agent-f-runner').value,
-      consumes: chipValues(root.querySelector('.agent-f-consumes')),
-      optionalConsumes: chipValues(root.querySelector('.agent-f-optional')),
-      produces: chipValues(root.querySelector('.agent-f-produces')),
-      connectsTo: any ? '*' : chipValues(root.querySelector('.agent-f-connects')),
-      order: Number(root.querySelector('.agent-f-order').value),
-      fanOut: root.querySelector('.agent-f-fanout').checked,
-      loopSource: root.querySelector('.agent-f-loopsource').checked,
-      asksQuestions: root.querySelector('.agent-f-questions').checked,
-      questionsLocked: root.querySelector('.agent-f-questions-locked').checked,
-      questionsDefault: root.querySelector('.agent-f-questions-default').checked,
-    },
-    markdown: root.querySelector('.agent-f-md').value,
+/** Read the form back into { meta, markdown } — a v2 sidecar, nothing else. */
+function agentFormRead(host) {
+  const root = formHost(host);
+  const extra = readExtra(root);
+  const val = (cls) => root.querySelector(`.${cls}`).value;
+  const on = (cls) => root.querySelector(`.${cls}`).checked;
+  // These five are written on EVERY save. agent-store merges {...existing, ...raw},
+  // so a field the form omits keeps its stored value — an omitted `fanOut: false`
+  // could never turn fan-out off, and an omitted `description` would freeze a
+  // derived blurb into the sidecar.
+  const meta = {
+    ...extra,
+    metaVersion: 2,
+    displayName: val('agent-f-name').trim(),
+    description: val('agent-f-desc').trim(),
+    color: val('agent-f-color'),
+    runnerType: val('agent-f-runner'),
+    fanOut: on('agent-f-fanout'),
+    asksQuestions: on('agent-f-questions'),
+    questionsLocked: on('agent-f-questions-locked'),
+    questionsDefault: on('agent-f-questions-default'),
+    inputs: [...root.querySelectorAll('.agent-ports-in .port-row')].map((r) => readPortRow(r, 'in')),
+    outputs: [...root.querySelectorAll('.agent-ports-out .port-row')].map((r) => readPortRow(r, 'out')),
   };
+  // A blank Order reads back as NaN, not 0: `Number('')` is 0, which
+  // agent-store's Number.isFinite check accepts and which silently sorts the
+  // agent ahead of every builtin.
+  const order = Number(val('agent-f-order').trim() === '' ? NaN : val('agent-f-order'));
+  if (Number.isFinite(order)) meta.order = order;
+  if (root.dataset.agentKey) meta.key = root.dataset.agentKey;
+  // Everything below is OPTIONAL: absent when off, never `false`/`''`. The
+  // schema reads presence, and an explicit falsy value is a different (invalid)
+  // thing — `placeable: false` is the one value worth writing. Task 13 makes
+  // this set CLEARABLE by having the store replace it on a metaVersion-2 PUT.
+  const verdict = val('agent-f-verdict').trim();
+  if (verdict) meta.verdict = { filename: verdict };
+  const domain = val('agent-f-domain').trim();
+  if (domain) meta.domain = domain;
+  if (val('agent-f-scope') === 'workspace-only') meta.scope = 'workspace-only';
+  const icon = val('agent-f-icon').trim();
+  if (icon) meta.icon = icon;
+  if (on('agent-f-sideeffect')) meta.sideEffect = 'code';
+  const mockRole = val('agent-f-mockrole');
+  if (mockRole) meta.mockRole = mockRole;
+  if (on('agent-f-wantsrequest')) meta.wantsRequest = true;
+  if (on('agent-f-ws-fanout')) meta.workspaceFanOut = true;
+  const strategy = val('agent-f-ws-strategy');
+  if (strategy) meta.workspaceStrategy = strategy;
+  const variantOf = val('agent-f-ws-variantof').trim();
+  if (variantOf) meta.workspaceVariantOf = variantOf;
+  const skills = val('agent-f-skills').split(',').map((s) => s.trim()).filter(Boolean);
+  if (skills.length) meta.requiresSkills = skills;
+  const promptHints = val('agent-f-hints');
+  if (promptHints.trim()) meta.promptHints = promptHints;
+  if (!on('agent-f-placeable')) meta.placeable = false;
+  return { meta, markdown: root.querySelector('.agent-f-md').value };
 }
 
 async function openAgentEdit(card, a) {
@@ -6840,10 +6861,12 @@ async function openAgentEdit(card, a) {
   const full = await fetchAgentFull(a.key);
   if (!full) { setAgentsMsg('Could not load the agent.', 'err'); return; }
   const pane = card.querySelector('.agent-edit-pane');
-  agentFormFill(pane, full.meta, full.markdown);
+  agentFormRender(pane, full.meta, {
+    markdown: full.markdown,
+    mockWriterRoles: state.mockWriterRoles,
+    registryKeys: state.agentsList.map((x) => x.key).filter((k) => k !== a.key),
+  });
   pane.hidden = false;
-  const anyCb = pane.querySelector('.agent-f-connect-any');
-  anyCb.onchange = () => { pane.querySelector('.agent-f-connects').hidden = anyCb.checked; };
   pane.querySelector('.agent-edit-cancel').onclick = () => { pane.hidden = true; };
   pane.querySelector('.agent-edit-save').onclick = () => saveAgentEdit(card, a, pane);
 }
@@ -6863,7 +6886,15 @@ async function saveAgentEdit(card, a, pane) {
     if (!res.ok) { msg.textContent = data.error || `HTTP ${res.status}`; msg.className = 'agent-edit-msg form-msg err'; return; }
     pane.hidden = true;
     invalidateAgentCaches();
-    setAgentsMsg('Agent saved.', 'ok');
+    // The save SUCCEEDED. `updatedVariants` is the workspace variants this port
+    // change was propagated into (a success); `warnings` names the saved pipelines
+    // it stranded — the run gate refuses those until they are re-wired.
+    const warns = Array.isArray(data.warnings) ? data.warnings : [];
+    const variants = Array.isArray(data.updatedVariants) ? data.updatedVariants : [];
+    const parts = ['Agent saved.'];
+    if (variants.length) parts.push(`Workspace variants updated: ${variants.join(', ')}.`);
+    parts.push(...warns);
+    setAgentsMsg(parts.join(' '), warns.length ? 'warn' : 'ok');
     await loadAgentsView();
   } catch (err) { msg.textContent = err.message; msg.className = 'agent-edit-msg form-msg err'; }
 }
@@ -6891,7 +6922,8 @@ if (el.agentCreateBtn) el.agentCreateBtn.addEventListener('click', () => { locat
 
 // Test hook (mirrors window.__ws).
 if (typeof window !== 'undefined') {
-  window.__agents = { loadAgentsList, loadAgentsView, renderAgentsList, buildAgentCard, deleteAgentCard, duplicateAgentCard, agentFormFill, agentFormRead, openAgentEdit };
+  window.__agents = { loadAgentsList, loadAgentsView, renderAgentsList, buildAgentCard, deleteAgentCard,
+    duplicateAgentCard, agentFormRender, agentFormRead, bindAgentForm, openAgentEdit };
 }
 
 // ---------------------------------------------------------------------------
@@ -7319,9 +7351,13 @@ function onAgentGenEvent(msg) {
     state.agentWizard.abort = null;
     state.agentWizard.draft = msg.draft || null;
     const root = document.getElementById('agw-step-3');
-    if (root && msg.draft) agentFormFill(root, msg.draft.meta || {}, msg.draft.markdown || '');
-    const anyCb = root && root.querySelector('.agent-f-connect-any');
-    if (anyCb) anyCb.onchange = () => { root.querySelector('.agent-f-connects').hidden = anyCb.checked; };
+    if (root && msg.draft) {
+      agentFormRender(root, msg.draft.meta || {}, {
+        markdown: msg.draft.markdown || '',
+        mockWriterRoles: state.mockWriterRoles,
+        registryKeys: state.agentsList.map((a) => a.key),
+      });
+    }
     showAgentWizardStep(3);
     return;
   }
@@ -7336,6 +7372,10 @@ function onAgentGenEvent(msg) {
 async function saveGeneratedAgent() {
   const root = document.getElementById('agw-step-3');
   const { meta, markdown } = agentFormRead(root);
+  // The wizard derives the key from the FINAL display name (agent-store.mjs:56):
+  // the user may rename the draft on Step 3, and the key must follow. Only the
+  // card editor PUTs an existing key.
+  delete meta.key;
   if (el.agwMsg) { el.agwMsg.textContent = ''; el.agwMsg.className = 'form-msg'; }
   if (el.agwSave) el.agwSave.disabled = true;
   try {
@@ -7778,7 +7818,7 @@ const hideInfoTip = () => {
 // .pdesc), so a cursor move BETWEEN children of the same trigger must be a no-op
 // — without the guard the bubble hides and re-arms on every crossing (strobe).
 // contains(null/undefined) is false, so events with no relatedTarget still work.
-const TIP_SELECTOR = '.info-tip, #composer-palette .agent-pill';
+const TIP_SELECTOR = '.info-tip, #gv-palette .ap';
 let pillTipTimer = null;
 document.addEventListener('mouseover', (e) => {
   const t = e.target.closest?.(TIP_SELECTOR);
@@ -9531,10 +9571,18 @@ function buildLogFilterBar() {
 // the stored value; `prevSearch` only applies when the box is absent.
 function readLogFilterFrom(root, prevSearch = '') {
   const searchEl = root.querySelector('.log-search');
+  // ONE select carries either the step axis (v1 records) or the node axis (v2
+  // records); data-axis says which, so the other axis reads as "all".
+  const stepSel = root.querySelector('.log-f-step');
+  const nodeAxis = stepSel && stepSel.dataset.axis === 'node';
+  const stepVal = stepSel ? stepSel.value : '';
+  const chip = root.querySelector('.log-f-exec');
   return {
     source: root.querySelector('.log-f-source')?.value || '',
     level: root.querySelector('.log-f-level')?.value || '',
-    step: root.querySelector('.log-f-step')?.value || '',
+    step: nodeAxis ? '' : stepVal,
+    node: nodeAxis ? stepVal : '',
+    execution: chip ? (chip.dataset.executionId || '') : '',
     cycle: root.querySelector('.log-f-cycle')?.value || '',
     search: searchEl ? searchEl.value : prevSearch,
   };
@@ -10495,6 +10543,18 @@ function historyLogUrl(id, record) {
   return `/api/history/${encodeURIComponent(key)}/${encodeURIComponent(id)}/log`;
 }
 
+// Keyed twin of historyLogUrl for any `<kind>` route under a History record
+// (`artifact` today): workspace records split on `record.target`, whose
+// projectKey is `workspaces/<id>` — a form the project route's key regex rejects.
+function historyRunUrl(id, record, kind) {
+  if (record && record.target === 'workspace' && typeof record.projectKey === 'string') {
+    const wksId = record.projectKey.replace(/^workspaces\//, '');
+    return `/api/workspaces/${encodeURIComponent(wksId)}/runs/${encodeURIComponent(id)}/${kind}`;
+  }
+  const key = record && record.projectKey ? record.projectKey : '';
+  return `/api/history/${encodeURIComponent(key)}/${encodeURIComponent(id)}/${kind}`;
+}
+
 // Twin of historyLogUrl with /diff instead of /log. There is deliberately NO
 // /api/runs/:id?projectDir= fallback — parity with logs (spec §7).
 function historyDiffUrl(id, record) {
@@ -10548,7 +10608,7 @@ function issueList(rows) {
 // Fetch the persisted NDJSON and render each line with the SAME buildLogLine() the
 // live panel uses, so persisted logs look identical to live ones — including the
 // same source/level/step filter bar as the live card.
-async function loadLiveLogs(panel, logUrl) {
+async function loadLiveLogs(panel, logUrl, st = null) {
   const bar = buildLogFilterBar();
   const box = document.createElement('div');
   box.className = 'log';
@@ -10566,7 +10626,7 @@ async function loadLiveLogs(panel, logUrl) {
       try { rec = JSON.parse(t); } catch { continue; } // skip a torn final line
       recs.push(projectLogRecord(rec));
     }
-    const filter = { source: '', level: '', step: '', cycle: '', search: '' };
+    const filter = { source: '', level: '', step: '', node: '', execution: '', cycle: '', search: '' };
     const paint = () => {
       box.innerHTML = '';
       const visible = compileLogFilter(filter);
@@ -10581,15 +10641,26 @@ async function loadLiveLogs(panel, logUrl) {
         note.textContent = `(showing the last ${shown.length} of ${matches.length} matching lines — copy takes all ${matches.length})`;
         frag.appendChild(note);
       }
-      let prevCycle = null;
-      for (const rec of shown) prevCycle = appendLogRec(frag, rec, prevCycle);
+      let cycleState = newCycleState();
+      for (const rec of shown) cycleState = appendLogRec(frag, rec, cycleState);
       box.appendChild(frag);
       if (matches.length === 0) box.textContent = recs.length ? '(no lines match the filter)' : '(no log lines)';
     };
     const facets = logFacets(recs);
     fillFilterSelect(bar.querySelector('.log-f-source'), 'all sources', facets.sources, '');
     fillFilterSelect(bar.querySelector('.log-f-level'), 'all levels', facets.levels, '');
-    fillFilterSelect(bar.querySelector('.log-f-step'), 'all steps', facets.steps, '', (i) => `step ${i + 1}`);
+    // Same node/step re-purposing as paintLogFilters (the card): labels come
+    // from the saved manifest (`st` = the detail's state; null on a legacy row).
+    const hStepSel = bar.querySelector('.log-f-step');
+    const hLabelOf = nodeLabelLookup(st && st.stepper);
+    if (facets.nodes && facets.nodes.length) {
+      hStepSel.dataset.axis = 'node';
+      hStepSel.title = 'Filter by node'; hStepSel.setAttribute('aria-label', 'Filter by node');
+      fillFilterSelect(hStepSel, 'all nodes', facets.nodes, '', (id) => hLabelOf(id));
+    } else {
+      hStepSel.dataset.axis = 'step';
+      fillFilterSelect(hStepSel, 'all steps', facets.steps, '', (i) => `step ${i + 1}`);
+    }
     fillFilterSelect(bar.querySelector('.log-f-cycle'), 'all cycles', facets.cycles, '', (c) => `cycle ${c}`);
     // The search box also carries `log-f`, so the guard is select-only: a
     // keystroke must not take the change path's undebounced repaint.
@@ -10644,6 +10715,29 @@ async function loadLiveLogs(panel, logUrl) {
       filter.source = pick;
       paint();
     };
+    // The node and execution axes' twin of __setLogSource: a v2 graph-card click
+    // (node) and a footer-row click (execution + node) land here, and so does the
+    // chip's own clear. A patch may carry ANY filter key (wireExecChip sends the
+    // bar's fresh values with the execution cleared). A node the run never logged
+    // under is injected as an option — idempotently — for the same honesty as
+    // __setLogSource: the dropdown names the pick and the pane says no line matched.
+    const hist = { logFilter: filter, steps: (st && Array.isArray(st.steps)) ? st.steps : [], stepper: st && st.stepper };
+    panel.__setLogFilter = (patch) => {
+      Object.assign(filter, patch || {});
+      if (patch && patch.node !== undefined && hStepSel.dataset.axis === 'node') {
+        const want = String(patch.node || '');
+        if (want && ![...hStepSel.options].some((o) => o.value === want)) {
+          const opt = document.createElement('option');
+          opt.value = want;
+          opt.textContent = hLabelOf(want);
+          hStepSel.appendChild(opt);
+        }
+        hStepSel.value = want;
+      }
+      paintExecChip(hist, bar);
+      paint();
+    };
+    wireExecChip(bar, { read: () => filter, write: (patch) => panel.__setLogFilter(patch) });
 
     paint();
 
@@ -10658,72 +10752,15 @@ async function loadLiveLogs(panel, logUrl) {
       panel.__pendingLogSource = null;
       panel.__setLogSource(pending);
     }
+    const pendingFilter = panel.__pendingLogFilter;
+    if (pendingFilter) {
+      panel.__pendingLogFilter = null;
+      panel.__setLogFilter(pendingFilter);
+    }
   } catch (e) {
     box.textContent = `Could not load logs: ${e.message}`;
     panel.dataset.loaded = ''; // allow a retry on the next open
   }
-}
-
-// Per-node max cycle from a saved run's steps[] (history's loop-count source).
-function histNodeCycle(st) {
-  const out = {};
-  for (const s of Array.isArray(st && st.steps) ? st.steps : []) {
-    if (!s) continue;
-    const key = stepBucketKey(s);
-    const c = Number(s.cycle);
-    if (key && Number.isFinite(c)) out[key] = Math.max(out[key] || 0, c);
-  }
-  return out;
-}
-
-// Tint a history card's graph from saved state. Reached cell drives coloring
-// (no live events). activeId=null, live=false -> no glow/marching-ants.
-function paintHistStepper(detail, st) {
-  const host = detail.querySelector('.run-flow');
-  if (!host) return;
-  const manifest = manifestFor(st.stepper);
-  const status = String(st.status || '').toLowerCase();
-  const halted = status === 'stopped' || status === 'error' || status === 'aborted' || status === 'failed' || status === 'interrupted';
-  const isDone = status === 'done' || status === 'complete' || status === 'completed';
-  const reached = histReachedCell(manifest, st);
-  const durs = durByNode(st.steps, 0, false);
-  const costs = costByNode(st.steps);
-  const modelsUsed = modelUsedByNode(st.steps);
-
-  const cellOf = {};
-  manifest.steps.forEach((cell, i) => cell.nodes.forEach((n) => { cellOf[n.id] = i; }));
-
-  paintRunGraph(host, manifest, {
-    statusOf: (id) => {
-      const cellIdx = cellOf[id] != null ? cellOf[id] : -1;
-      if (isDone) return 'done';
-      if (cellIdx < reached) return 'done';
-      if (cellIdx === reached) return halted ? 'stopped' : 'done';
-      return 'pending';
-    },
-    activeId: null,
-    cycles: loopCounts(manifest, histNodeCycle(st)),
-    live: false,
-    durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
-    costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
-    subsOf: (id) => subAgentsForNode(st, id),
-    modelUsedOf: (id) => modelsUsed[id],
-  });
-}
-
-// Highest cell index the saved run reached. Uses steps[].nodeId when present
-// (new runs), else the scalar phase mapped through the manifest (old runs).
-function histReachedCell(manifest, st) {
-  let reached = -1;
-  const steps = Array.isArray(st.steps) ? st.steps : [];
-  for (const s of steps) {
-    const loc = locateInManifest(manifest, { nodeId: s.nodeId, phase: s.phase });
-    if (loc.cellIdx > reached) reached = loc.cellIdx;
-  }
-  if (reached < 0 && st.phase) {
-    reached = locateInManifest(manifest, { phase: st.phase }).cellIdx;
-  }
-  return reached;
 }
 
 function renderHistoryError(message) {
@@ -10800,6 +10837,7 @@ function openHistDetail(parsed, { instant = false } = {}) {
   const record = histRecordFor(parsed);
   histDetailState = { key: parsed.projectKey, id: parsed.id, record, data: null, screen: null };
 
+  destroyGraphMounts(host);                 // a detail->detail hop never passes closeHistDetail
   host.innerHTML = '';
   host.scrollTop = 0;                       // a prior visit's scroll must not carry over
   const screen = $('#hist-detail-tpl').content.firstElementChild.cloneNode(true);
@@ -10876,6 +10914,7 @@ function closeHistDetail({ instant = false } = {}) {
   if (instant) {
     shell.classList.add('no-anim');
     shell.classList.remove('detail-open');
+    destroyGraphMounts(host);
     host.innerHTML = '';
     rafSafe(() => shell.classList.remove('no-anim'));
     return;
@@ -10885,7 +10924,7 @@ function closeHistDetail({ instant = false } = {}) {
   // jsdom, where transitionend never fires natively). transitionend BUBBLES, so
   // a descendant's hover transition would otherwise clear the DOM mid-slide —
   // hence the target + propertyName guard.
-  const clear = () => { if (!histDetailState) host.innerHTML = ''; };
+  const clear = () => { if (!histDetailState) { destroyGraphMounts(host); host.innerHTML = ''; } };
   const onEnd = (e) => {
     if (e.target !== host || e.propertyName !== 'transform') return;
     host.removeEventListener('transitionend', onEnd);
@@ -10934,8 +10973,14 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
   paintHistStatusIcon(screen.querySelector('.hd-sic'), { ...rec, status: data.state.status });
 
   const flow = screen.querySelector('.run-flow');
-  if (flow) buildRunGraph(flow, data.state.stepper); // null stepper -> legacy default
-  paintHistStepper(screen, data.state);
+  const st = data.state;
+  // v2: the frozen state renders through the same reducer as the live one (History
+  // carries `record` in the bag for the keyed artifact route); v1: the untouched
+  // column painter, as a thunk.
+  paintGraphFor(flow, st.stepper, isGraphManifest(st.stepper) ? Object.assign(
+    decorFromState(st, { live: false, now: 0, subsOf: (id) => subAgentsForNode(st, id) }),
+    { run: st, runId: parsed.id, mode: 'monitor', record: rec }) : null, st.steps);
+  if (isGraphManifest(st.stepper)) paintQuiescenceBanner(screen.querySelector('.hd-banners'), decorFromState(st, { live: false, now: 0 }));
 
   paintHdHeaderMeta(screen, rec, data);
   setupHdActions(screen, rec, data);
@@ -11204,6 +11249,27 @@ function paintHdHeaderMeta(screen, record, data) {
     seg.className = cls + (strong ? ' strong' : '');
     seg.textContent = text;
     if (cls === 'hd-cost') seg.title = estTitle(st.totalCostUsd);
+    meta.appendChild(seg);
+  }
+  // spec §8: the End card's result chip, repeated in the header meta (History D5
+  // untouched — no model/effort). A path links through the keyed artifact route.
+  if (st.endReached === true && st.result) {
+    meta.appendChild(hdDot());
+    const seg = document.createElement('span');
+    seg.className = 'hd-result';
+    if (st.result.path) {
+      const a = document.createElement('a');
+      a.href = '#';
+      a.textContent = String(st.result.path).split('/').filter(Boolean).pop();
+      a.title = st.result.path;
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        openRunArtifact({ run: st, runId: st.id || record.id, record }, st.result.path);
+      });
+      seg.appendChild(a);
+    } else {
+      seg.textContent = '— completed';
+    }
     meta.appendChild(seg);
   }
   // +A −R: persisted results first (done runs), else the live list counts.
@@ -11479,9 +11545,11 @@ function setupHdActions(screen, record, data) {
   const status = String(st.status || '').toLowerCase();
   const retained = paintHdBanners(screen, record, data);
 
-  // Resume: paused + interrupted only (D3).
+  // Resume: paused + interrupted only (D3), and only while a resume point exists
+  // (v1 points were retired by the v2 upgrade). A LIVE snapshot has no
+  // `resumable` field, so `!== false` keeps the live path untouched.
   const resumeBtn = screen.querySelector('.hd-resume');
-  if (HD_RESUMABLE.has(status)) {
+  if (HD_RESUMABLE.has(status) && st.resumable !== false) {
     resumeBtn.hidden = false;
     applyHistResumeGate(resumeBtn, screen.dataset.pauseReason || '', budgetState.budget);
     resumeBtn.addEventListener('click', () => {
@@ -11731,9 +11799,9 @@ function initHdTabs(screen, record, data) {
   });
 }
 
-// Legacy manifests (CLIENT_DEFAULT_STEPPER — a run that predates state.stepper)
-// name their nodes by uiPhase, but the lines those runs logged carry the agent
-// ROLE. This is UI_PHASE (workflows.mjs:387-392) read backwards. The candidate
+// Legacy (v1) manifests name their nodes by uiPhase, but the lines those runs
+// logged carry the agent
+// ROLE. This is UI_PHASE (shared/graph/manifest.mjs) read backwards. The candidate
 // list keeps BOTH spellings and the log's own dropdown picks the winner, so
 // neither vintage has to be detected — and the phase spelling can never win by
 // accident, because no log line has ever carried a phase string as its source
@@ -11741,7 +11809,7 @@ function initHdTabs(screen, record, data) {
 // The STAMP'S OWN spelling stays first, so a workflow that legitimately keys an
 // agent `review` or `plan` still resolves to itself whenever the run logged
 // under it; the legacy role is strictly a fallback.
-// Only the phases CLIENT_DEFAULT_STEPPER can actually render are listed;
+// Only the phases a frozen v1 manifest can actually name are listed;
 // `clarify` is absent because its key and its phase are the same string
 // (workflows.mjs:388), so the single-candidate path already resolves it.
 const LEGACY_PHASE_SOURCE = {
@@ -11763,7 +11831,7 @@ function logSourceCandidates(src) {
 // No-op when the run has no live-log artifact: initHdTabs then renders no Logs
 // tab at all, so the graph stays unlinked, unstyled and inert — nothing invites
 // a click that could not do anything. MUST run after initHdTabs (it reads the
-// screen's tab cells) and after buildRunGraph (it reads the built nodes);
+// screen's tab cells) and after the graph is painted (it reads the built nodes);
 // both hold at the single call site, with no await between them.
 function wireHdGraphLogLinks(screen) {
   const graph = screen.querySelector('.hd-graph');
@@ -11782,18 +11850,31 @@ function wireHdGraphLogLinks(screen) {
   // repaint a History detail ever does is paintRunGraph, which mutates nodes in
   // place and writes no attribute on a NODE's root element (its only data-*
   // writes are host.dataset.wiresSig/ns on .run-flow itself, app.js:1025/1032) —
-  // and nothing here re-runs buildRunGraph's structural rebuild. If that ever
+  // and nothing here re-runs the renderer's structural rebuild. If that ever
   // changes, this pass has to move with it; the listeners would not.
-  for (const el of graph.querySelectorAll('.run-node[data-log-source]')) {
+  // v1 cards carry data-log-source and title in `.nmeta b`; v2 (graph) cards carry
+  // data-node-id and title in `.nhead .tt` (the shared renderer's head).
+  for (const el of graph.querySelectorAll('.run-node[data-log-source], .node[data-node-id]')) {
     el.setAttribute('role', 'link');
     el.tabIndex = 0;
-    const label = el.querySelector('.nmeta b');
-    el.setAttribute('aria-label', `Filter logs by ${label ? label.textContent : el.dataset.logSource}`);
+    const label = el.querySelector('.nmeta b, .nhead .tt');
+    el.setAttribute('aria-label', `Filter logs by ${label ? label.textContent : (el.dataset.nodeId || el.dataset.logSource)}`);
   }
 
   const open = (node) => {
     const cell = tabs.cells.get('logs');
     if (!cell) return;
+    if (node.dataset.nodeId) {
+      // A v2 graph card drives the NODE axis (v2 lines carry nodeId, and one
+      // agent key may back several nodes). Same park-or-apply contract as the
+      // source path below; the drain lives beside __pendingLogSource's.
+      const patch = { node: node.dataset.nodeId };
+      if (typeof cell.sec.__setLogFilter === 'function') cell.sec.__setLogFilter(patch);
+      else cell.sec.__pendingLogFilter = patch;
+      tabs.activate('logs');
+      cell.sec.scrollIntoView({ block: 'nearest' });
+      return;
+    }
     const list = logSourceCandidates(node.dataset.logSource);
     // Park the intent when the panel has not fetched yet (loadLiveLogs drains it
     // after its first paint); apply it directly when it has. Setting it BEFORE
@@ -11806,17 +11887,17 @@ function wireHdGraphLogLinks(screen) {
 
   // Delegated, so the real event target — always a descendant (.nmeta b, .nic
   // svg, .nstat), never the node div — still resolves, and so a STRUCTURAL
-  // rebuild (buildRunGraph wiping host.innerHTML when the node-id signature
-  // changes, app.js:913) could not orphan the handler. The Done bookend carries
+  // rebuild (the renderer wiping host.innerHTML when the node-id signature
+  // changes) could not orphan the handler. The Done bookend carries
   // no data-log-source, so the selector skips it.
   graph.addEventListener('click', (e) => {
-    const node = e.target.closest && e.target.closest('.run-node[data-log-source]');
+    const node = e.target.closest && e.target.closest('.run-node[data-log-source], .node[data-node-id]');
     if (node && graph.contains(node)) open(node);
   });
 
   graph.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
-    const node = e.target.closest && e.target.closest('.run-node[data-log-source]');
+    const node = e.target.closest && e.target.closest('.run-node[data-log-source], .node[data-node-id]');
     if (!node || !graph.contains(node)) return;
     e.preventDefault();   // Space would otherwise scroll the detail body too
     open(node);
@@ -12852,7 +12933,9 @@ function buildHdOverview(sec, record, data) {
   const maxCycle = steps.reduce((m, s) => Math.max(m, Number(s && s.cycle) || 0), 0) || 1;
   grid.appendChild(hdStatCard('duration', 'DURATION',
     typeof st.totalActiveMs === 'number' ? fmtDuration(st.totalActiveMs) : '—',
-    `${steps.length} step${steps.length === 1 ? '' : 's'} · ${maxCycle} cycle${maxCycle === 1 ? '' : 's'}`));
+    isGraphManifest(st.stepper)
+      ? histCountsLine(st)
+      : `${steps.length} step${steps.length === 1 ? '' : 's'} · ${maxCycle} cycle${maxCycle === 1 ? '' : 's'}`));
   const costCard = hdStatCard('cost', 'COST',
     typeof st.totalCostUsd === 'number' ? fmtUsd(st.totalCostUsd) : '—',
     `across ${steps.length} step${steps.length === 1 ? '' : 's'}`);
@@ -12879,6 +12962,14 @@ function buildHdOverview(sec, record, data) {
   // not, so without it the card would read `released` for the life of the screen.)
   grid.appendChild(hdStatCard('worktree', 'WORKTREE', retained ? 'retained' : 'released', wt.worktreeDir || ''));
   wrap.appendChild(grid);
+  // spec §8: the one-line quiescence note, under the stat grid, v2 runs only.
+  if (isGraphManifest(st.stepper) && decorFromState(st, { live: false, now: 0 }).quiescent) {
+    const note = document.createElement('div');
+    note.className = 'hd-ov-note run-warn';
+    note.setAttribute('role', 'status');
+    note.textContent = 'finished at quiescence — End not reached';
+    wrap.appendChild(note);
+  }
 
   // 3) Task card.
   const task = document.createElement('div');
@@ -12945,10 +13036,11 @@ function buildHdAgents(sec, record, data) {
     sec.appendChild(empty);
     return;
   }
-  const labelOf = cycleAwareLabel(st.stepper, st.subAgents, keys);
+  const labelOf = cycleAwareLabel(st.stepper, st.subAgents, keys, st.steps);
   const skillsByGroup = stepSkillsFromSteps(st.steps);
   const graphifyByGroup = stepGraphifyFromSteps(st.steps);
   const statusOf = stepStatusByKey(st.steps, st.stepper);
+  const modelByNode = stepModelByNode(st.stepper);
 
   for (const key of keys) {
     const list = Array.isArray(groups[key]) ? groups[key] : [];
@@ -12964,11 +13056,13 @@ function buildHdAgents(sec, record, data) {
       durSum ? fmtDuration(durSum) : '',
       costSum ? fmtUsd4(costSum) : '',
     ].filter(Boolean).join(' · ');
+    const sep = String(key).indexOf(CYCLE_KEY_SEP);
     const head = document.createElement('div');
     head.className = 'hd-ag-head';
     head.innerHTML =
       `<b>${escapeHtml(labelOf(key))}</b>` +
       `<span class="subs-stat ${gstat}">${SUBS_STAT_TEXT[gstat] || gstat}</span>` +
+      stepModelPillHtml(modelByNode[sep >= 0 ? String(key).slice(0, sep) : String(key)]) +
       graphifyCountPillHtml(graphifyByGroup[key]) +
       `<span class="hd-ag-meta mono">${escapeHtml(metaBits)}</span>` +
       skillPillsHtml(skillsByGroup[key]);
@@ -12994,6 +13088,7 @@ function buildHdAgents(sec, record, data) {
       row.innerHTML =
         `<span class="hd-ag-name">${escapeHtml((s && s.label) || (s && s.id) || '')}</span>` +
         agentTypePillHtml(s && s.subagentType) +
+        subModelPillHtml(s && s.runModel) +
         graphifyCountPillHtml(s && s.graphifyCount) +
         `<span class="st ${rstat}">${SUBS_STAT_TEXT[rstat] || rstat}</span>` +
         `<span class="hd-ag-dur mono">${dur != null ? escapeHtml(fmtDuration(dur)) : ''}</span>` +
@@ -13057,7 +13152,7 @@ function buildHdClarify(sec, record, data) {
 // Logs tab: no fork of the log stack. loadLiveLogs owns the markup (the filter bar
 // cloned from #run-card-tpl + the .log box), the fetch, the facets, the filter and
 // the cycle separators, so the detail gets exactly the Running view's behavior.
-function buildHdLogs(sec, record, _data) {
+function buildHdLogs(sec, record, data) {
   sec.classList.add('hd-sec-logs');
   // Safe to call on a section initHdTabs has already stamped: loadLiveLogs has no
   // dataset.loaded guard of its own (its callers own that), and its error
@@ -13068,7 +13163,9 @@ function buildHdLogs(sec, record, _data) {
   // and its first statements (buildLogFilterBar(), panel.innerHTML = '') sit OUTSIDE
   // its own try. An unhandled rejection fails the entire node --test file and
   // misattributes it to another test.
-  loadLiveLogs(sec, historyLogUrl(record.id, record)).catch(() => {});
+  // `data.state` feeds the node select's labels (manifest) and the execution
+  // chip's text (ledger) — a legacy row without a saved state degrades to ids.
+  loadLiveLogs(sec, historyLogUrl(record.id, record), (data && data.state) || null).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -13165,7 +13262,7 @@ function rdAutoscrollLog(sec, r) {
 // of repaintFilteredLog — same fragment, same DOM cap, same placeholder, same
 // frozen-viewport rule when auto-scroll is off.
 //
-// The render cursor lives on the SECTION, not on r._lastRenderedCycle: onLog
+// The render cursor lives on the SECTION, not on r._cycleState: onLog
 // advances the run-level cursor for the CARD first, so a detail append reading it
 // would find rec.cycle already "rendered" and silently drop the cycle separator.
 function rdRepaintLog(sec, r) {
@@ -13177,14 +13274,14 @@ function rdRepaintLog(sec, r) {
   const visible = compileLogFilter(r.logFilter);
   const frag = document.createDocumentFragment();
   let shown = 0;
-  let prevCycle = null;
+  let cycleState = newCycleState();
   for (const rec of r.logLines) {
     if (!visible(rec)) continue;
-    prevCycle = appendLogRec(frag, rec, prevCycle);
+    cycleState = appendLogRec(frag, rec, cycleState);
     shown++;
   }
   box.appendChild(frag);
-  sec._lastCycle = prevCycle;
+  sec._cycleState = cycleState;
   trimLogDom(box);
   if (shown === 0 && r.logLines.length) {
     box.textContent = '(no lines match the filter)';
@@ -13206,7 +13303,7 @@ function rdPaintLogFilters(sec, r) {
   // paintLogFilters' reconcile branch calls repaintFilteredLog(r, sec), which has
   // TWO cross-pane side effects, because that helper honours `root` for the
   // wipe/rebuild but not for anything else:
-  //   1. it parks its cycle cursor on the RUN (`r._lastRenderedCycle`) — which is
+  //   1. it parks its cycle cursor on the RUN (`r._cycleState`) — which is
   //      the CARD's cursor. Re-seat the section's own from it, then re-seat the
   //      card's by repainting the card, or the card's next incremental append
   //      compares against the DETAIL's value and drops or duplicates a
@@ -13216,7 +13313,7 @@ function rdPaintLogFilters(sec, r) {
   //      card jumps to the bottom.
   // Both are cheap to undo here, and only on the (rare) reconcile path.
   if (repainted) {
-    sec._lastCycle = r._lastRenderedCycle ?? null;
+    sec._cycleState = r._cycleState ?? null;
     if (r.el) repaintFilteredLog(r);   // re-render the CARD and re-seat its cursor
     rdAutoscrollLog(sec, r);           // …then pin the pane that actually changed
   }
@@ -13237,6 +13334,10 @@ function rdMaybePaintLogFilters(sec, r, rec) {
 
 // The four control listeners, bound once per section element (see buildRdLogs).
 function rdWireLogControls(sec, r) {
+  // The execution chip on THIS bar: same two rules as the card's, same setter
+  // (applyRunLogFilter repaints both bars), bound on the bar so it fires before
+  // the section-level change handler below re-reads the (then consistent) DOM.
+  wireExecChip(sec.querySelector('.log-filters'), { read: () => r.logFilter, write: (patch) => applyRunLogFilter(r, patch) });
   // The filter OBJECT is shared (it is `r.logFilter`), but the two DOMs are not:
   // the card's four selects and its own pane still show the pre-change state until
   // something repaints them. Mirror the change onto the card so hopping back to
@@ -13364,8 +13465,8 @@ function rdStateCopy(r, stepName) {
       : '';
     return `${runStatusMeta(r).word}.${at}`;
   }
-  const cyc = Number(r.cycle) || 0;
-  return `${step} is running${cyc > 1 ? ` · cycle ${cyc}` : ''}.`;
+  // The ACTIVE agent names the line (the v1 phase/cycle scalars are gone).
+  return `${activeCopy(r).text}.`;
 }
 
 function rdOvStateBanner(host, r) {
@@ -13500,10 +13601,11 @@ function rdAgentsBody(sec, r) {
     sec.appendChild(empty);
     return;
   }
-  const labelOf = cycleAwareLabel(r.stepper, r.subAgents, keys);
+  const labelOf = cycleAwareLabel(r.stepper, r.subAgents, keys, r.steps);
   const skillsByGroup = stepSkillsFromSteps(r.steps);
   const graphifyByGroup = stepGraphifyFromSteps(r.steps);
   const statusOf = stepStatusByKey(r.steps, r.stepper);
+  const modelByNode = stepModelByNode(r.stepper);
 
   for (const key of keys) {
     const list = Array.isArray(groups[key]) ? groups[key] : [];
@@ -13515,7 +13617,8 @@ function rdAgentsBody(sec, r) {
     const gstat = list.length ? subGroupStatus(list) : (statusOf[key] || 'run');
     const durSum = list.reduce((n, s) => n + (hdSubDuration(s) || 0), 0);
     const costSum = list.reduce((n, s) => n + (Number(s && s.costUsd) || 0), 0);
-    const cycle = Number(String(key).slice(String(key).indexOf(CYCLE_KEY_SEP) + 1)) || 0;
+    const sep = String(key).indexOf(CYCLE_KEY_SEP);
+    const cycle = Number(String(key).slice(sep + 1)) || 0;
     const metaBits = [
       `cycle ${cycle}`,
       durSum ? fmtDuration(durSum) : '',
@@ -13530,6 +13633,7 @@ function rdAgentsBody(sec, r) {
     head.innerHTML =
       `<b>${escapeHtml(labelOf(key))}</b>` +
       `<span class="subs-stat ${gstat}">${SUBS_STAT_TEXT[gstat] || gstat}</span>` +
+      stepModelPillHtml(modelByNode[sep >= 0 ? String(key).slice(0, sep) : String(key)]) +
       graphifyCountPillHtml(graphifyByGroup[key]) +
       `<span class="rd-ag-meta mono">${escapeHtml(metaBits)}</span>` +
       skillPillsHtml(skillsByGroup[key]);
@@ -13550,6 +13654,7 @@ function rdAgentsBody(sec, r) {
           `<span class="rd-ag-dot ${st.family}"></span>` +
           `<span class="rd-ag-label">${escapeHtml((s && s.label) || (s && s.id) || '')}</span>` +
           agentTypePillHtml(s && s.subagentType) +
+          subModelPillHtml(s && s.runModel) +
           graphifyCountPillHtml(s && s.graphifyCount) +
         `</span>` +
         `<span class="rd-ag-state ${st.family}">${escapeHtml(st.word)}</span>` +
@@ -13635,7 +13740,7 @@ function rdUpdateSections(r) {
 // It reads the record off `r.logLines`, so it must be called AFTER onLog pushed
 // it — which is exactly where it is hooked (onLog's tail), NOT from
 // handleServerMessage's `log` branch. Six other producers write through onLog and
-// never emit a `log` frame: onPhase, onArtifact, the answer-failure paths and the
+// never emit a `log` frame: onExec, onArtifact, the answer-failure paths and the
 // stop/pause/resume failure paths. Hooking the frame type instead of the writer
 // would show those lines on the card and silently drop them from the open detail —
 // the card/detail drift D9's shared bar exists to prevent.
@@ -13658,7 +13763,7 @@ function rdAppendLogFrame(r) {
   const box = rdLogBox(sec);
   if (!box || repainted || !logLineVisible(rec, r.logFilter)) return;
   clearLogPlaceholder(box);
-  sec._lastCycle = appendLogRec(box, rec, sec._lastCycle ?? null);
+  sec._cycleState = appendLogRec(box, rec, sec._cycleState ?? null);
   trimLogDom(box);
   rdAutoscrollLog(sec, r);
 }
@@ -13999,6 +14104,100 @@ function cmpTabRuns(a, b) {
   return (b.orderKey || 0) - (a.orderKey || 0);
 }
 
+// ── v2 (graph-engine) runs: the version arms the v1 label helpers branch on ────
+/** A v2 (graph-engine) run — the ONE predicate every branch below reads. */
+function isGraphRun(r) { return isGraphManifest(r && r.stepper); }
+
+/** In-flight nodes, most recently started FIRST. [] on a v1 run. The stale-active
+ *  filter, the executionId-only row lookup, the composite-parent fallback (a
+ *  parent has no row of its own, so its `parentExecutionId` slices stand in for
+ *  its start time) and the newest-first order all live in the ONE reducer
+ *  (`decorFromState` → `decor.activeNodes`) — this adds only the two fields the
+ *  RUNNING surfaces show and History never may (D5): model + effort. */
+function activeNodes(r) {
+  if (!isGraphRun(r)) return [];
+  const byId = new Map(r.stepper.graph.nodes.filter(Boolean).map((n) => [n.id, n]));
+  return runDecorFor(r).activeNodes.map((a) => {
+    const n = byId.get(a.nodeId);
+    return { ...a, model: (n && n.model) || '', effort: (n && n.effort) || '' };
+  });
+}
+
+const PILL_FAMILIES = new Set(['violet', 'blue', 'peach', 'green', 'red', 'amber']);
+/** `.child-dot` families that PULSE (style.css); green/red are the static
+ *  done/failed dots and `paused` is static amber — a live run never wears them. */
+const DOT_FAMILIES = new Set(['peach', 'blue', 'violet', 'amber']);
+/** The pill family + word for a LIVE v2 run: the newest agent, or the count. */
+function activeCopy(r) {
+  const list = activeNodes(r);
+  if (list.length >= 2) return { family: 'peach', text: `${list.length} agents running` };
+  if (list.length === 1) return { family: PILL_FAMILIES.has(list[0].color) ? list[0].color : 'peach', text: list[0].label };
+  return { family: 'peach', text: 'Running' };
+}
+
+/** The decor bag for a run, memoised per state generation: onState / onSubagent /
+ *  onQuestion / onQuestionResolved / finishRun bump `r._decorSeq`, and every caller
+ *  in between (the card, the detail, the pill, the progress chip) shares ONE
+ *  reducer pass. `decorFromState` is pure, and the cached bag is treated as
+ *  IMMUTABLE: each MODE gets its own shallow copy carrying `run` / `runId` /
+ *  `mode`. Stamping the shared object instead would let the detail's paint flip
+ *  the card's bag to `mode: 'monitor'` — and a mode-less caller (progressText,
+ *  runStepLabel) would write `mode: undefined` onto the object every mounted host
+ *  is holding. The per-mode copy is memoised too, so run-hosts' `nextDecor ===
+ *  decor` skip still recognises an unchanged generation and no repaint is added. */
+function runDecorFor(r, mode = 'monitor') {
+  const seq = r._decorSeq || 0;
+  if (!r._decorCache || r._decorCache.seq !== seq) {
+    r._decorCache = { seq, views: new Map(),
+      decor: decorFromState(r, { live: isLive(r), now: Date.now(), subsOf: (id) => subAgentsForNode(r, id) }) };
+  }
+  const cache = r._decorCache;
+  let bag = cache.views.get(mode);
+  if (!bag) { bag = { ...cache.decor, run: r, runId: r.runId, mode }; cache.views.set(mode, bag); }
+  return bag;
+}
+
+/** The amber quiescence banner (spec §8), in .rd-banners / .hd-banners. Idempotent:
+ *  one element per host, shown/hidden from the bag's `quiescent`. */
+function paintQuiescenceBanner(host, decor) {
+  if (!host) return;
+  const show = !!(decor && decor.quiescent);
+  let el = host.querySelector(':scope > .run-warn');
+  if (!el) {
+    if (!show) return;
+    el = document.createElement('div');
+    el.className = 'run-warn';
+    el.setAttribute('role', 'status');
+    host.appendChild(el);
+  }
+  el.textContent = 'finished at quiescence — End not reached';
+  el.hidden = !show;
+}
+
+/** `3/6 done` — D15 forbids a bar, not a number. '' on a v1 run. */
+function progressText(r) {
+  if (!isGraphRun(r)) return '';
+  const { done, total } = runDecorFor(r).progress;
+  return `${done}/${total} done`;
+}
+
+/** History Overview DURATION sub-line: `9 executions · 2 loop deliveries`. */
+function histCountsLine(st) {
+  const d = decorFromState(st, { live: false, now: 0 });
+  const e = d.executions, l = d.loopDeliveries;
+  return `${e} execution${e === 1 ? '' : 's'} · ${l} loop deliver${l === 1 ? 'y' : 'ies'}`;
+}
+
+/** ` on Reviewer → Implementer (w9)` for the gate panel's intro. '' when unknown. */
+function gateWireCopy(r, wireId) {
+  if (!isGraphRun(r) || !wireId) return '';
+  const g = r.stepper.graph || {};
+  const w = (g.wires || []).find((x) => x && x.id === wireId);
+  if (!w) return '';
+  const lbl = (id) => { const n = (g.nodes || []).find((x) => x && x.id === id); return (n && (n.label || n.id)) || id; };
+  return ` on ${lbl(w.from.node)} → ${lbl(w.to.node)} (${wireId})`;
+}
+
 // Status dot family for a child row (left edge). Reuses existing color tokens.
 // For a LIVE run the dot matches the color of the current agent/phase (same
 // mapping as the status pill), so the dot reads as "who's running now". The
@@ -14011,15 +14210,10 @@ function runDotClass(r) {
   // because a paused run is _finished.
   if (r.status === 'paused') return 'paused';
   if (r._finished || isTerminalStatus(r.status)) return r.status === 'done' ? 'green' : 'red';
-  // running → color by current phase/agent (mirrors statusPill families)
-  switch (r.phaseKey) {
-    case 'plan': return 'violet';
-    case 'refine': return 'peach';
-    case 'implement': return 'blue';
-    case 'review': return 'peach';
-    case 'clarify': return 'red';
-    default: return 'peach';
-  }
+  // The newest active agent's family, PULSING families only (F-24). A run whose
+  // manifest has not arrived yet has no active agent: neutral peach.
+  if (isGraphRun(r)) { const f = activeCopy(r).family; return DOT_FAMILIES.has(f) ? f : 'grey-pulse'; }
+  return 'peach';
 }
 
 // Project basename for display (e.g. "/a/b/proj" -> "proj").
@@ -14050,23 +14244,17 @@ function statusPill(r) {
     return { family: 'amber', text: 'Paused' };
   }
   // Same family as `paused`: an interrupted run is parked and resumable, and
-  // PAUSED_STATUSES (app.js:8726) already treats it that way. Without this it fell
-  // to the phaseKey switch and read "Running" beside a Resume button.
+  // PAUSED_STATUSES (app.js:8726) already treats it that way.
   if (r.status === 'interrupted') return { family: 'amber', text: 'Interrupted' };
   if (r.pendingQuestion != null) return { family: 'amber', text: 'Paused · awaiting answers' };
   if (r.status === 'starting') return { family: 'peach', text: 'Starting' };
   if (r.status === 'done') return { family: 'green', text: 'Done' };
   if (r.status === 'stopped') return { family: 'red', text: 'Stopped' };
   if (r.status === 'error') return { family: 'red', text: 'Error' };
-  // running
-  switch (r.phaseKey) {
-    case 'plan': return { family: 'violet', text: 'Planning' };
-    case 'refine': return { family: 'peach', text: 'Refining' };
-    case 'implement': return { family: 'blue', text: 'Implementing' };
-    case 'review': return { family: 'peach', text: 'Reviewing' };
-    case 'plan-review': return { family: 'violet', text: 'Plan Review' };
-    default: return { family: 'peach', text: 'Running' };
-  }
+  // Running: the newest active agent names the pill. A run whose manifest has
+  // not arrived yet has no active agent, so it reads plainly "Running".
+  if (isGraphRun(r)) return activeCopy(r);
+  return { family: 'peach', text: 'Running' };
 }
 
 // Status AVATAR family + glyph for a live run. Mirrors histStatusMeta /
@@ -14118,6 +14306,15 @@ function renderRunMeta(r, root = r.el) {
   const metaEl = root.querySelector('.rm-text');
   if (metaEl) metaEl.textContent = `started ${startedLabel(r.startedAt)}`;
 
+  // D15: progress is a NUMBER, never a bar. Hidden on every v1 run. This sits
+  // ABOVE the `if (!branchEl) return` exit, or a branch-less card never gets it.
+  const prog = root.querySelector('.rc-prog');
+  if (prog) {
+    const d = isGraphRun(r) ? runDecorFor(r).progress : null;
+    prog.hidden = !d;
+    if (d) prog.querySelector('.rc-prog-text').textContent = `${d.done}/${d.total}`;
+  }
+
   const branchEl = root.querySelector('.rc-branch');
   if (!branchEl) return;
   const feature = r.branchFeature || '';
@@ -14134,10 +14331,6 @@ function buildRunCard(r) {
   const node = tpl.content.firstElementChild.cloneNode(true);
   node.dataset.runId = r.runId;
   node.dataset.density = runDensity;
-
-  // Build the graph from the run's manifest. r.stepper may be null -> legacy default.
-  const stepHost = node.querySelector('.run-flow');
-  if (stepHost) buildRunGraph(stepHost, r.stepper);
 
   const titleEl = node.querySelector('.run-title');
   if (titleEl) {
@@ -14163,6 +14356,11 @@ function buildRunCard(r) {
     }
   });
   node.querySelector('.rc-open').addEventListener('click', (e) => { e.stopPropagation(); go(); });
+  // D5: on a v2 run the card's graph is scenery (the world is pointer-events:none),
+  // so the WRAP takes the click and opens the detail. Decided at CLICK time — the
+  // manifest may arrive after the card is built; a v1 card's graph stays inert.
+  const graphWrap = node.querySelector('.rc-detailed .run-flow-wrap');
+  if (graphWrap) graphWrap.addEventListener('click', () => { if (isGraphRun(r)) go(); });
   // NB: .btn-pause/.btn-resume/.btn-stop deliberately do NOT stopPropagation —
   // they are driven by the DELEGATED #run-list listener and would go dead. The
   // closest('button') bail-out above is what keeps them from navigating.
@@ -14186,6 +14384,11 @@ function buildRunCard(r) {
   if (searchBox) searchBox.value = r.logFilter.search || '';
   repaintFilteredLog(r, node);
   paintLogFilters(r, node);
+  // The execution chip's rules are bound on the CARD's bar, not on the delegated
+  // #run-list listeners: the chip is card-local markup, and the card exists (and
+  // is exercised) before it is ever appended to the list. applyRunLogFilter
+  // repaints this bar AND the open Running-detail bar (shared filter object).
+  wireExecChip(node.querySelector('.log-filters'), { read: () => r.logFilter, write: (patch) => applyRunLogFilter(r, patch) });
 
   // The switch is cloned ON from the template; mirror the run's persisted choice so
   // a rebuild (finish/resume/reconcile) never silently re-enables auto-scroll.
@@ -14205,25 +14408,6 @@ function buildRunCard(r) {
   return node;
 }
 
-// Running -> graph status per node. done if its cell is behind the frontier or
-// nodeStatus says done; at the frontier: stop->stopped, pause->paused, now->active;
-// else pending. terminalDone (run status 'done') forces all-done.
-function runStatusOf(r, nodeId, cellIdx, terminalDone, halted) {
-  if (terminalDone) return 'done';
-  if (cellIdx < r.maxCellIdx) return 'done';
-  if (cellIdx > r.maxCellIdx) return 'pending';
-  // Frontier cell.
-  const k = r.nodeStatus[nodeId];
-  if (k === 'done') return 'done';
-  // A halted run (stopped/error/aborted/failed) shows its frontier node as
-  // stopped even if the last live phase left it 'now' — the halt arrives as a
-  // bare state event with no node-level phase to mark the cell.
-  if (halted) return 'stopped';
-  if (k === 'stop') return 'stopped';
-  if (k === 'pause') return 'paused';
-  if (k === 'now') return 'active';
-  return 'pending';
-}
 
 // Group rollup for a step's sub-agents: anyStop (stop|error) -> 'stop',
 // else anyRun -> 'run', else 'done'. Drives the .subs-stat / .dot colour.
@@ -14291,6 +14475,41 @@ function agentTypePillHtml(type) {
   return `<span class="agent-type-pill">${escapeHtml(t)}</span>`;
 }
 
+// The model a sub-agent actually ran on (sub_agents.run_model): the alias its Task
+// call asked for, else the model it inherited from its parent node. '' for a
+// pre-v25 row, which recorded nothing — an old run must not paint a guess.
+function subModelPillHtml(model) {
+  const m = model == null ? '' : String(model).trim();
+  if (!m) return '';
+  return `<span class="sub-model-pill">${escapeHtml(m)}</span>`;
+}
+
+// {nodeId: {model, effort}} a MAIN agent was configured to run with, from the
+// run's stepper manifest — manifest.mjs folds the run-config overlay in at build
+// time, so a node's model/effort there IS its effective selection. '' = inherit
+// the CLI/global default, which the client cannot resolve: no entry, no pill,
+// never a guess. v2 graph manifests only (frozen v1 snapshots recorded none).
+function stepModelByNode(stepper) {
+  const out = {};
+  if (!isGraphManifest(stepper)) return out;
+  for (const n of stepper.graph.nodes) {
+    if (!n || n.kind !== 'agent' || !n.id || typeof n.model !== 'string' || !n.model) continue;
+    out[n.id] = { model: n.model, effort: typeof n.effort === 'string' ? n.effort : '' };
+  }
+  return out;
+}
+
+// The Agents-tab group header's model pill: the catalog label when the id is
+// known (state.models loads at boot; an unknown/custom id prints raw), plus
+// "· effort" only when one was set. Same quiet outline as the sub-agent rows'
+// run-model pill — it is configuration, not status.
+function stepModelPillHtml(sel) {
+  if (!sel || !sel.model) return '';
+  const m = modelById(sel.model);
+  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '');
+  return `<span class="sub-model-pill">${escapeHtml(text)}</span>`;
+}
+
 // Neutral count badge for how many times an agent / sub-agent invoked the graphify
 // CLI; '' when the count is absent or 0 so only real users render a badge. The count
 // is a number (not user text), so no escaping is needed.
@@ -14305,108 +14524,206 @@ function graphifyCountPillHtml(n) {
 // not a pre-normalized manifest — avoids a redundant double manifestFor). Falls
 // back to the raw id for unknown nodes.
 function nodeLabelLookup(stepper) {
+  // v2 (graph) manifests carry their labels on graph.nodes; the v1 shim cells a
+  // v2 manifest also exposes do NOT survive P8 — read the graph.
+  if (isGraphManifest(stepper)) {
+    const g = {};
+    for (const n of stepper.graph.nodes) { if (n && n.id) g[n.id] = n.label || n.id; }
+    return (id) => g[id] || id;
+  }
   const m = manifestFor(stepper);
   const map = {};
   m.steps.forEach((cell) => cell.nodes.forEach((n) => { map[n.id] = n.label || n.id; }));
   return (id) => map[id] || id;
 }
 
-// The live view-adapter paintRunGraph consumes for a RUNNING run: a real frontier
-// activeId, live:true, and durations with the running tail included. Extracted so
-// the detail screen can paint the SAME live graph into its own host (spec §5.3).
-// Deliberately NOT paintHistStepper's adapter — that one hardcodes
-// activeId:null / live:false against a SAVED run, which would kill the current
-// node's glow and the marching-ants wires on a pipeline that is still running.
-function runStepperView(r) {
-  const manifest = manifestFor(r.stepper);
-  const terminalDone = r.status === 'done';
-  const halted = ['stopped', 'error', 'aborted', 'failed'].includes(r.status);
-  const now = Date.now();
-  const durs = durByNode(r.steps, now, true);
-  const costs = r.costByNode || {};
-  const modelsUsed = modelUsedByNode(r.steps);
 
-  // cellIdx per node id (for the frontier comparison).
-  const cellOf = {};
-  manifest.steps.forEach((cell, i) => cell.nodes.forEach((n) => { cellOf[n.id] = i; }));
-
-  // The active node = the frontier node currently now/pause (drives the live loop).
-  let activeId = null;
-  const frontier = manifest.steps[r.maxCellIdx];
-  if (frontier && !terminalDone) {
-    for (const n of frontier.nodes) {
-      const k = r.nodeStatus[n.id];
-      if (k === 'now' || k === 'pause') { activeId = n.id; break; }
-    }
+// ── The legacy (v1) renderer ────────────────────────────────────────────────
+// Frozen v1 runs only. This is the ONE place in the client allowed to read the
+// v1 phase vocabulary: `pipeline_steps.node_id` is nullable, so the oldest rows
+// identify a step by `phase` alone — and the node ids of a v1 manifest ARE its
+// phases (or its nodes carry `uiPhase`). No v2 run can reach it: paintGraphFor
+// forks on isGraphManifest(stepper), and a v2 manifest is version 2.
+// The strip is INERT: no wires, no click handlers, no executions footer — a v1
+// run can never be resumed, so there is nothing to drive.
+function legacyChipRows(manifest, steps) {
+  const nodes = [];
+  for (const cell of Array.isArray(manifest?.steps) ? manifest.steps : []) {
+    for (const n of Array.isArray(cell?.nodes) ? cell.nodes : []) nodes.push(n);
   }
+  const byPhase = new Map();
+  for (const n of nodes) {
+    for (const p of [n.uiPhase, n.id]) if (p != null && !byPhase.has(p)) byPhase.set(p, n.id);
+  }
+  const acc = new Map();
+  for (const s of Array.isArray(steps) ? steps : []) {
+    if (!s) continue;
+    const nodeId = s.nodeId != null ? s.nodeId : byPhase.get(s.phase);
+    if (nodeId == null) continue;
+    const cur = acc.get(nodeId) || { ms: 0, cost: 0, status: 'pending' };
+    cur.ms += Number(s.activeMs) || 0;
+    cur.cost += Number(s.costUsd) || 0;
+    cur.status = s.status === 'start' ? 'active' : (s.status || 'pending');
+    acc.set(nodeId, cur);
+  }
+  return nodes.map((n) => {
+    const hit = acc.get(n.id);
+    const label = n.label || n.id;
+    const parts = hit ? [label, fmtDuration(hit.ms), hit.cost > 0 ? fmtUsd(hit.cost) : null] : [label];
+    return { id: n.id, color: n.color || '', status: hit ? hit.status : 'pending',
+      text: parts.filter(Boolean).join(' \u00b7 ') };
+  });
+}
 
-  return {
-    manifest,
-    view: {
-      statusOf: (id) => runStatusOf(r, id, cellOf[id] != null ? cellOf[id] : -1, terminalDone, halted),
-      activeId,
-      cycles: loopCounts(manifest, r.nodeCycle),
-      live: true,
-      durText: (id) => { const d = durs[id]; return d != null ? fmtDuration(d) : ''; },
-      costText: (id) => { const c = costs[id]; return c != null ? fmtUsd(c) : ''; },
-      subsOf: (id) => subAgentsForNode(r, id),
-      modelUsedOf: (id) => modelsUsed[id],
-    },
-  };
+/** @param {Element} host @param {object} manifest the PERSISTED v1 manifest
+ *  @param {Array} steps the run's ledger rows (paintGraphFor's 4th argument) */
+function paintLegacyStrip(host, manifest, steps) {
+  const strip = document.createElement('div');
+  strip.className = 'run-strip';
+  for (const chip of legacyChipRows(manifest, steps)) {
+    const el = document.createElement('span');
+    el.className = `rchip is-${chip.status}`;
+    el.dataset.id = chip.id;
+    if (chip.color) el.style.setProperty('--c', COMPOSER_COLORS[chip.color] || '#ccc');
+    el.textContent = chip.text;
+    strip.appendChild(el);
+  }
+  host.replaceChildren(strip);
+}
+
+// The ONE branch point between the frozen-v1 chip strip and the v2 graph
+// renderer. `decor` is runDecorFor(r, mode) — `run`/`runId`/`mode` shallow-added
+// (History passes `record` too) — and `legacySteps` is the run's ledger, which
+// the v1 arm needs and `decor` cannot carry: every caller passes decor = null on
+// the v1 path, so the strip takes its rows explicitly.
+const GRAPH_MOUNTS = new WeakMap();   // .run-flow element -> { m, ctx }
+function paintGraphFor(host, stepper, decor, legacySteps) {
+  if (!isGraphManifest(stepper)) {
+    if (host && stepper) paintLegacyStrip(host, stepper, legacySteps);
+    else if (host) host.replaceChildren();
+    return;
+  }
+  if (!host || !decor) return;
+  let slot = GRAPH_MOUNTS.get(host);
+  if (!slot) {
+    host.innerHTML = '';                      // drop any v1 columns this host held
+    slot = { m: null, ctx: decor };
+    slot.m = mountRunGraph(host, {
+      mode: decor.mode || 'monitor',
+      onRowClick: (executionId, nodeId) => focusLogExecution(slot.ctx, executionId, nodeId),
+      onGateClick: () => focusQuestionPanel(slot.ctx),
+      onResultClick: (path) => openRunArtifact(slot.ctx, path),
+    });
+    GRAPH_MOUNTS.set(host, slot);
+  }
+  slot.ctx = decor;                            // callbacks always read the CURRENT bag
+  slot.m.update(decor.runId, stepper, decor);
+}
+
+/** Tear down every graph mount under `root` (a detail screen about to be
+ *  dropped): a monitor mount owns two document-level listeners and a
+ *  ResizeObserver, which `host.innerHTML = ''` alone would leak. */
+function destroyGraphMounts(root) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+  for (const host of root.querySelectorAll('.run-flow.gv-host')) {
+    const slot = GRAPH_MOUNTS.get(host);
+    if (slot) { slot.m.destroy(); GRAPH_MOUNTS.delete(host); }
+  }
+}
+
+/** The ONE writer of a run's log filter from outside its own bar (footer rows;
+ *  P6b's node/execution axes). Assign, then repaint every pane that shows it:
+ *  the card, and — when THIS run's detail is open with its Logs tab built — the
+ *  detail through rdPaintLogFilters + rdRepaintLog (NOT repaintFilteredLog: that
+ *  helper parks the cycle cursor on r._cycleState and pins r.el's pane). */
+function applyRunLogFilter(r, patch) {
+  if (!r || !r.logFilter) return;
+  Object.assign(r.logFilter, patch || {});
+  // paintLogFilters returns true when its reconcile branch already repainted the pane.
+  if (r.el && !paintLogFilters(r, r.el)) repaintFilteredLog(r);
+  const screen = runDetailState.runId === r.runId ? runDetailState.screen : null;
+  const sec = screen && screen.querySelector('.rd-sec-logs');
+  if (sec) { rdPaintLogFilters(sec, r); rdRepaintLog(sec, r); }
+}
+
+/** Footer row -> narrow the log to that execution and bring the log into view.
+ *  P6b lands the node/execution axes in log-filter.mjs and the History panel's
+ *  `__setLogFilter`; until then the keys are carried, not applied. */
+function focusLogExecution(ctx, executionId, nodeId) {
+  const r = ctx && ctx.run;
+  if (!r) return;
+  const patch = { execution: executionId, node: nodeId };
+  if (ctx.record) {
+    // History: the Logs tab is lazily built — hand the patch to the panel when it
+    // exists, else park it for the panel's first paint (mirrors __pendingLogSource).
+    const tabs = histDetailState && histDetailState.screen ? detailTabsOf(histDetailState.screen) : null;
+    const cell = tabs && tabs.cells.get('logs');
+    if (!cell) return;
+    if (typeof cell.sec.__setLogFilter === 'function') cell.sec.__setLogFilter(patch);
+    else cell.sec.__pendingLogFilter = patch;
+    tabs.activate('logs');
+    cell.sec.scrollIntoView({ block: 'nearest' });   // AFTER activate: the panel is no longer hidden
+    return;
+  }
+  applyRunLogFilter(r, patch);
+  const screen = runDetailState.runId === r.runId ? runDetailState.screen : null;
+  const tabs = screen ? detailTabsOf(screen) : null;
+  if (!tabs || !tabs.cells.has('logs')) return;
+  tabs.activate('logs');                            // the builder reads r.logFilter
+  const sec = screen.querySelector('.rd-sec-logs');
+  if (sec) sec.scrollIntoView({ block: 'nearest' });
+}
+
+/** Gate pip -> the question panel that owns the answer buttons. */
+function focusQuestionPanel(ctx) {
+  const r = ctx && ctx.run;
+  const screen = runDetailState.screen;
+  const panel = (screen && screen.querySelector('.rd-questions'))
+    || (r && r.el && r.el.querySelector('.qpanel'));
+  if (!panel) return;
+  panel.scrollIntoView({ block: 'nearest' });
+  const focusable = panel.querySelector('button, [tabindex]');
+  if (focusable && typeof focusable.focus === 'function') focusable.focus();
+}
+
+/** End result chip -> the saved-artifact viewer, through the indexed routes:
+ *  Running knows only the run's pipeline id (`/api/runs/:id/artifact`); History
+ *  carries its record and takes the keyed project/workspace route. */
+async function openRunArtifact(ctx, path) {
+  const r = ctx && ctx.run;
+  if (!r || !path) return;
+  const name = String(path).split('/').filter(Boolean).pop();
+  const rel = encodeURIComponent(String(path));
+  const pid = r.pipelineId || r.id || ctx.runId;
+  const url = ctx.record
+    ? `${historyRunUrl(pid, ctx.record, 'artifact')}?rel=${rel}`
+    : `/api/runs/${encodeURIComponent(pid)}/artifact?rel=${rel}`;
+  try {
+    const res = await fetch(url);
+    const data = await safeJson(res);
+    if (!res.ok) { showViewer(name, `Error: ${data.error || res.status}`); return; }
+    showViewer(data.rel || name, data.text || '');
+  } catch (e) { showViewer(name, `Error: ${e.message}`); }
 }
 
 function paintStepper(r) {
   if (!r.el) return;
   const host = r.el.querySelector('.run-flow');
   if (!host) return;
-  const { manifest, view } = runStepperView(r);
-  paintRunGraph(host, manifest, view);
+  if (isGraphRun(r) && r.el.dataset.density === 'compact') return;   // locked: compact density renders NO graph
+  paintGraphFor(host, r.stepper, isGraphRun(r) ? runDecorFor(r, 'static') : null, r.steps);
 }
 
-// Does the run's current frontier cell contain a cycling node?
-function currentNodeCycles(r) {
-  const m = manifestFor(r.stepper);
-  const cell = m.steps[r.maxCellIdx];
-  return !!(cell && cell.nodes.some((n) => n.cycles));
-}
 
-// Frontier step for the compact card row (design §4.3): 1-based node index,
-// total node count, node label, and the node's `model · effort` caption.
-//
-// Reads the run's OWN advance state (maxCellIdx + nodeStatus, maintained by
-// advanceRun -> locateInManifest) rather than re-locating a phase, so the row
-// can never disagree with the graph paintStepper draws.
-// A settled or not-yet-started cell falls back to its first node, so the row
-// still names WHERE the run is instead of blanking.
+
+// Frontier step for the compact card row (design §4.3): DONE agent nodes over
+// agent nodes (D15: a number, never a bar), the active-node copy, and the active
+// node's `model · effort` caption. Every run is a graph run now.
 function runStepLabel(r) {
-  const manifest = manifestFor(r && r.stepper);
-  const ids = runGraphNodeIds(manifest);
-  const maxIdx = r && Number.isInteger(r.maxCellIdx) ? r.maxCellIdx : -1;
-  const cellIdx = maxIdx >= 0 && maxIdx < manifest.steps.length ? maxIdx : 0;
-  const nodes = (manifest.steps[cellIdx] && manifest.steps[cellIdx].nodes) || [];
-  const nodeStatus = (r && r.nodeStatus) || {};
-  const node = nodes.find((nd) => nodeStatus[nd.id] === 'now' || nodeStatus[nd.id] === 'pause')
-    || nodes[0] || null;
-  const idx = node ? ids.indexOf(node.id) : -1;
-  return {
-    n: idx >= 0 ? idx + 1 : 1,
-    m: ids.length,
-    name: node ? (node.label || node.id) : '',
-    model: node ? runStepModelLine(node, r) : '',
-  };
-}
-
-// `model · effort` for the compact row. nodeModelLine returns '' for a node with
-// no `uiPhase` (the preflight/done bookends) and 'default' when the node names
-// neither a model nor an effort. A node with NO configured model resolves
-// "default" to the session's ACTUAL model exactly as paintRunGraph does for the
-// graph caption, so the two captions read identically.
-function runStepModelLine(node, r) {
-  const line = nodeModelLine(node);
-  if (!line || node.model) return line;
-  const used = modelUsedByNode((r && r.steps) || [])[node.id];
-  if (!used) return line;
-  return `default (${used})` + (node.effort ? ` · ${node.effort}` : '');
+  const d = runDecorFor(r);
+  const a = activeNodes(r)[0] || null;
+  return { n: d.progress.done, m: d.progress.total, name: activeCopy(r).text,
+    model: a && (a.model || a.effort) ? `${a.model || 'default'}${a.effort ? ` · ${a.effort}` : ''}` : '' };
 }
 
 // The run-card template's stock Resume tooltip. Read from the template rather
@@ -14455,7 +14772,7 @@ function paintRunCard(r) {
   if (compact) {
     const { n, m, name, model } = runStepLabel(r);
     const chip = compact.querySelector('.rc-step-chip');
-    chip.textContent = `STEP ${n}/${m}`;
+    chip.textContent = isGraphRun(r) ? `${n}/${m} done` : `STEP ${n}/${m}`;
     chip.className = `rc-step-chip mono st-${runStatusMeta(r).family}`;
     compact.querySelector('.rc-step-name').textContent = name;
     const modelEl = compact.querySelector('.rc-step-model');
@@ -14562,8 +14879,8 @@ function renderRunningView({ skipDetail = false } = {}) {
 // Attach/move one card without losing user scroll state. Re-inserting an
 // attached node is spec'd as remove+insert, which zeroes every scrollable
 // descendant (.log scrollTop, .run-flow-wrap scrollLeft). Save → insert →
-// write back synchronously (before paint), same technique as buildRunGraph's
-// scrollLeft preservation across its structural rebuild.
+// write back synchronously (before paint), same technique as the graph
+// renderer's scrollLeft preservation across its structural rebuild.
 function insertCardPreservingScroll(list, el, before) {
   const logEl = el.querySelector('.log');
   const flowWrap = el.querySelector('.run-flow-wrap');
@@ -14691,6 +15008,7 @@ function openRunDetail(runId, { instant = false } = {}) {
   const shell = el.runShell;
   if (!host || !shell) return;
 
+  destroyGraphMounts(host);                 // a detail->detail hop never passes closeRunDetail
   host.innerHTML = '';
   host.scrollTop = 0;                       // a prior visit's scroll must not carry over
   const screen = $('#run-detail-tpl').content.firstElementChild.cloneNode(true);
@@ -14778,6 +15096,7 @@ function closeRunDetail({ instant = false } = {}) {
   if (instant) {
     shell.classList.add('no-anim');
     shell.classList.remove('detail-open');
+    destroyGraphMounts(host);
     host.innerHTML = '';
     rafSafe(() => shell.classList.remove('no-anim'));
     return;
@@ -14787,7 +15106,7 @@ function closeRunDetail({ instant = false } = {}) {
   // jsdom, where transitionend never fires natively). transitionend BUBBLES, so a
   // descendant's transition would otherwise clear the DOM mid-slide — hence the
   // target + propertyName guard.
-  const clear = () => { if (!runDetailState.screen) host.innerHTML = ''; };
+  const clear = () => { if (!runDetailState.screen) { destroyGraphMounts(host); host.innerHTML = ''; } };
   const onEnd = (e) => {
     if (e.target !== host || e.propertyName !== 'transform') return;
     host.removeEventListener('transitionend', onEnd);
@@ -14805,6 +15124,7 @@ function paintRunDetail(r) {
   ensureRdTabs(screen, r);   // builds the pill row + lazy panels exactly once
   paintRdHeader(screen, r);
   paintRdBanners(screen, r);
+  if (isGraphRun(r)) paintQuiescenceBanner(screen.querySelector('.rd-banners'), runDecorFor(r, 'monitor'));
   paintRdGraph(screen, r);
   paintRdQuestions(screen, r);
 }
@@ -14978,14 +15298,7 @@ el.runDetail?.addEventListener('click', (e) => {
 function paintRdGraph(screen, r) {
   const host = screen.querySelector('.rd-graph .run-flow');
   if (!host) return;
-  // buildRunGraph is idempotent (it returns early on an unchanged node-id
-  // signature) and restores .run-flow-wrap scrollLeft across the one destructive
-  // path (it saves before the wipe and writes it back after the columns are
-  // re-appended), so calling it on every paint is both cheap and correct — no
-  // rebuildStepperDom twin is needed.
-  buildRunGraph(host, r.stepper);
-  const { manifest, view } = runStepperView(r);
-  paintRunGraph(host, manifest, view);
+  paintGraphFor(host, r.stepper, isGraphRun(r) ? runDecorFor(r, 'monitor') : null, r.steps);
 }
 
 // A bold-mono '·' separator, the twin of hdDot().
@@ -15022,7 +15335,9 @@ function paintRdHeader(screen, r) {
   // Guard on `name`, not on `n`: runStepLabel always returns n >= 1, so `step.n`
   // can never be falsy and an unresolvable node would render `step 1/7 · ` with a
   // dangling separator.
-  const stepText = step && step.name ? `step ${step.n}/${step.m} · ${step.name}` : '';
+  const stepText = isGraphRun(r) && step
+    ? `${step.n}/${step.m} done${step.name ? ` · ${step.name}` : ''}`
+    : (step && step.name ? `step ${step.n}/${step.m} · ${step.name}` : '');
   const segs = [
     ['rd-project', projectName(r.projectDir), false],
     ['rd-clock', r.startedAt ? `started ${startedLabel(r.startedAt)}` : '', false],
@@ -15377,6 +15692,9 @@ const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 const VIEW_NAMES = ['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'models', 'settings'];
 
 function showView(name, param = '') {
+  // Same guard for the composer: unbind its keyboard and cancel any live gesture
+  // so Delete/arrows/⌘Z can never edit the graph from another view.
+  if (currentShownView === 'composer' && name !== 'composer') composerExit();
   // Leave-guard: navigating away from the wizard while a scan is live aborts the
   // scan + resets wizard state (addresses orphaned-background-request risk).
   if (currentShownView === 'workspace-create' && name !== 'workspace-create') {

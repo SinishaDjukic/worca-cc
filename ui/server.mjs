@@ -18,12 +18,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 
 import { preflightNode } from '../src/core/preflight-node.mjs';
-import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { createOrchestratorFor } from '../src/core/engine-select.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState,
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
-  listArtifacts, lookupPipelineRow, findPipelineRowById,
+  listArtifacts, lookupPipelineRow, findPipelineRowById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
+  readPromptFile,
 } from '../src/core/artifacts.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
 import { protectedSectionKeys } from '../src/core/diff-anchor.mjs';
@@ -71,7 +72,7 @@ import {
 } from '../src/core/ask/worktrees.mjs';
 import { createAskTurn } from '../src/core/ask/turn.mjs';
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
-import { mockEnabled } from '../src/core/claude-runner.mjs';
+import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
 import { getStats } from '../src/core/stats.mjs';
 import { pickFolderNative } from '../src/core/folder-dialog.mjs';
@@ -79,11 +80,11 @@ import { listFolders } from '../src/core/fs-browse.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, agentSteps, EFFORTS,
-  readRunConfig, setNodeModel, setFeedbackCycles, setActiveWorkflow, resetWorkflowConfig,
+  readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, resetWorkflowConfig,
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef } from '../src/core/model-env.mjs';
+import { modelEnvRef, SUBAGENT_MODEL_VALUES, subagentModelIssue } from '../src/core/model-env.mjs';
 import { listPluginModels, modelSecretsSchema, pluginModelSecretStatus } from '../src/core/plugin-models.mjs';
 import { testModel } from '../src/core/model-test.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
@@ -92,10 +93,12 @@ import {
   writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
 } from '../src/core/guardrail-store.mjs';
 import {
-  DEFAULT_WORKFLOW, listWorkflows, readWorkflow, writeWorkflow, deleteWorkflow,
-  setWorkflowNodeDefaults, workflowNodeDefaults,
+  GRAPH_DEFAULT_WORKFLOW, listWorkflows, deleteWorkflow, isSafeWorkflowId,
+  setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow,
 } from '../src/core/workflows.mjs';
-import { validateWorkflow } from '../src/core/workflow-validator.mjs';
+import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
+import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
+import { validateGraph, AGENT_TUNABLES } from '../src/shared/graph/validate.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
@@ -112,7 +115,6 @@ import { projectKey } from '../src/core/store.mjs';
 import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
 import { createAgentGen } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
-import { CHANNEL_IDS } from '../src/core/channels.mjs';
 import {
   listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin,
   setPluginEnabled, doctorPlugin,
@@ -248,7 +250,9 @@ function liveRunIds() {
 // `stepgraphify` (§7.3) was emitted by the orchestrator and handled by the client
 // but missing here, so the graphify badge only appeared after a reload (via the
 // persisted column) and never live. It rides the same pass-through as `stepskills`.
-const EVENT_NAMES = ['phase', 'log', 'question', 'artifact', 'state', 'done', 'error', 'subagent', 'stepskills', 'stepgraphify', 'title'];
+// `exec` and `token` are the graph engine's (§5.7). `phase` stays for the v1
+// engine AND for the v2 shim until the graph cut-over retires it.
+const EVENT_NAMES = ['exec', 'token', 'log', 'question', 'artifact', 'state', 'done', 'error', 'subagent', 'stepskills', 'stepgraphify', 'title'];
 // The scan-* WS family (Workspaces M5, §5.4). A NEW family in the SAME runs Map;
 // the 7-event run plumbing above is untouched. createWorkspaceScan emits many
 // scan-progress then exactly one terminal scan-done OR scan-error.
@@ -569,7 +573,7 @@ function wireRun(entry) {
         entry.status = 'error';
         resolvePending(entry, { reason: 'error' });
       }
-      if (name === 'phase') {
+      if (name === 'exec') {
         entry.status = 'running';
       }
       if (name === 'state' && payload && typeof payload === 'object') {
@@ -714,7 +718,6 @@ app.post('/api/ingress/teams/:plugin/:channelId/:token',
 // ---------------------------------------------------------------------------
 // Express middleware + static
 // ---------------------------------------------------------------------------
-app.use(express.json({ limit: '8mb' }));
 
 // S1: worca-cc's UI/API has no auth and runs agents with permissionMode
 // 'acceptEdits' — it is a single-user *localhost* tool. The server binds to
@@ -722,12 +725,20 @@ app.use(express.json({ limit: '8mb' }));
 // suspenders: reject any request whose Host (or browser Origin) is not a
 // loopback name, so a malicious page resolving a name to 127.0.0.1 still can't
 // drive the API. Override WORCA_HOST only if you understand the exposure.
+//
+// FIRST, ahead of the body parser (MIN-108): a refused request must be refused
+// before a single byte of its body is parsed or buffered, and a malformed body
+// from a non-loopback Host used to answer 400 (with a stack) where a valid one
+// answered 403. The ingress webhook above is deliberately mounted EARLIER and
+// stays exempt — it carries its own token check and 256 KB cap.
 app.use((req, res, next) => {
   if (!isLocalRequest(req)) {
-    return res.status(403).json({ error: 'forbidden: worca-cc is a localhost-only tool' });
+    return res.status(403).json({ error: 'forbidden: worca is a localhost-only tool' });
   }
   next();
 });
+
+app.use(express.json({ limit: '8mb' }));
 
 if (HLJS_ASSETS) {
   const sendHljsModule = (file) => (_req, res, next) => {
@@ -778,6 +789,21 @@ app.use('/vendor', (err, _req, res, next) => {
   res.status(status).type('text/plain').send(status === 400 ? 'Bad request' : 'Not found');
 });
 app.use('/vendor', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.status(404).type('text/plain').send('Not found');
+});
+
+// src/shared/** is the ONE source of the graph model for server + browser
+// (no build step). ui modules import it by relative path that walks above
+// ui/public; the browser clamps that URL at '/', so it must be served here at
+// exactly the repo-relative path. The 404 tail keeps a typo'd path from
+// falling through to the SPA index.html (which Chrome reports as a MIME error).
+const SHARED_DIR = path.join(PROJECT_ROOT, 'src', 'shared');
+app.use('/src/shared', express.static(SHARED_DIR, {
+  index: false,
+  setHeaders: (res) => res.set('X-Content-Type-Options', 'nosniff'),
+}));
+app.use('/src/shared', (_req, res) => {
   res.set('Cache-Control', 'no-store');
   res.status(404).type('text/plain').send('Not found');
 });
@@ -903,6 +929,25 @@ function normalizeRunSource(raw) {
     };
   }
   return { ok: false, error: `unknown source.type "${type}"` };
+}
+
+/**
+ * A markdown source that NAMES a promptFile must name one we can read. Resolution
+ * happens inside the orchestrator, which this route launches fire-and-forget AFTER
+ * it has already answered — so without this submit-time check a bad path surfaces
+ * as an anonymous mid-run error event on a pipeline the client was told started.
+ * Resolved against the same base the orchestrator uses (the project, or a
+ * workspace's primary member).
+ * @returns {Promise<string|null>} the error message, or null when there is nothing wrong
+ */
+async function promptFileProblem(source, projectDir) {
+  if (!source || source.type !== 'markdown' || !source.promptFile) return null;
+  try {
+    await readPromptFile(projectDir, source.promptFile);
+    return null;
+  } catch (err) {
+    return err && err.message ? err.message : String(err);
+  }
 }
 
 // Fallback run title when the client sends none. The legacy path is unchanged
@@ -1073,7 +1118,16 @@ app.post('/api/run', async (req, res) => {
     // so the client gets a clean 400 instead of a mid-run error event.
     const workflowId =
       typeof body.workflowId === 'string' && body.workflowId.trim() ? body.workflowId.trim() : 'wf_default';
-    if (!(await readWorkflow(workflowId))) return badRequest(res, `unknown workflowId "${workflowId}"`);
+    // ONE gate for every run entry point, ONE status: unknown (today's text) and
+    // archived (the upgrade explanation the UI shows verbatim) answer 400 through
+    // badRequest. A graph row runs on the graph engine — createOrchestratorFor
+    // routes it off the row's version.
+    let workflowRow;
+    try {
+      workflowRow = await assertRunnableWorkflow(workflowId);
+    } catch (err) {
+      return badRequest(res, err && err.message ? err.message : String(err));
+    }
 
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
@@ -1161,7 +1215,10 @@ app.post('/api/run', async (req, res) => {
         return badRequest(res, `unknown or invalid sourceBranch: ${badOverride}`);
       }
 
-      orch = createOrchestrator({
+      const wsFileProblem = await promptFileProblem(effectiveSource, projects[0].projectDir);
+      if (wsFileProblem) return badRequest(res, wsFileProblem);
+
+      orch = await createOrchestratorFor({
         workspace: {
           id: ws.id,
           key: ws.id, // ws.id === workspaceKey(ws); routes artifacts to its store
@@ -1175,6 +1232,7 @@ app.post('/api/run', async (req, res) => {
         extras,
         agentsDir: AGENTS_DIR,
         workflowId,
+        template: workflowRow,
         guardrailsId,
         branch,
         claude: { permissionMode: 'acceptEdits', mock },
@@ -1214,7 +1272,10 @@ app.post('/api/run', async (req, res) => {
         return badRequest(res, `unknown or invalid sourceBranch: ${branch.source}`);
       }
 
-      orch = createOrchestrator({
+      const fileProblem = await promptFileProblem(effectiveSource, projectDir);
+      if (fileProblem) return badRequest(res, fileProblem);
+
+      orch = await createOrchestratorFor({
         projectDir,
         prompt: effectivePrompt,
         ...(effectiveSource ? { source: effectiveSource } : {}),
@@ -1222,6 +1283,7 @@ app.post('/api/run', async (req, res) => {
         extras,
         agentsDir: AGENTS_DIR,
         workflowId,
+        template: workflowRow,
         guardrailsId,
         branch,
         claude: { permissionMode: 'acceptEdits', mock },
@@ -1514,10 +1576,18 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false } = {
   if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
   if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') throw new ResumeError(400, { error: `pipeline is "${saved.row.status}", not resumable` });
   if (!saved.resumePoint) throw new ResumeError(400, { error: 'pipeline has no resume point' });
+  if (saved.resumePoint.version !== 2) {
+    throw new ResumeError(409, { code: 'ENGINE_RETIRED', error: V1_RUN_RETIRED });
+  }
 
   if (saved.row.archived_at) {
     throw new ResumeError(409, { error: 'pipeline is archived' });
   }
+  // No graph re-validation on RESUME, on purpose: _restoreFromResumePoint never
+  // reads the workflow row — the frozen manifest supplies topology and port
+  // identity (resolvedFromManifest: snapshot wins), so a template that drifted
+  // while the run sat paused cannot strand it. A vanished agent KEY is the one
+  // resume-time hazard, and _preflightAgentKeys already refuses it (§9.4).
   const budget = budgetStatus();
   if (budget.blocked) {
     throw new ResumeError(403, { error: 'total cost limit reached', budget });
@@ -1571,7 +1641,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false } = {
 
   const effMock = mock || isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK);
   const runId = randomUUID();
-  const orch = createOrchestrator({
+  const orch = await createOrchestratorFor({
     projectDir,
     ...(workspace ? { workspace } : {}),
     agentsDir: AGENTS_DIR,
@@ -1718,6 +1788,22 @@ app.get('/api/runs/:id', async (req, res) => {
     const data = await Promise.resolve(readPipeline(projectDir, id));
     if (!data) return res.status(404).json({ error: 'pipeline not found' });
     res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// GET /api/runs/:id/artifact?rel= -> the same payload, resolved by the pipeline
+// id ALONE (findPipelineRowById): the Running page knows the run's pipelineId
+// but no store key until History has been visited. Placed beside /api/runs/:id
+// (`:id` matches one path segment, so the two never shadow each other).
+app.get('/api/runs/:id/artifact', async (req, res) => {
+  try {
+    const row = findPipelineRowById(req.params.id);
+    if (!row) return res.status(404).json({ error: 'pipeline not found' });
+    const hit = await resolveIndexedArtifactForRow(row, req.query.rel);
+    if (!hit) return res.status(404).json({ error: 'artifact not found' });
+    res.json(hit);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -2083,6 +2169,23 @@ app.get('/api/history/:key/:id/diff', async (req, res) => {
     const text = await readRunArtifactText(req.params.key, req.params.id, DIFF_PATCH_FILE);
     if (text == null) return res.status(404).json({ error: 'no diff' });
     res.type('text/x-diff').send(text);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// GET /api/history/:key/:id/artifact?rel= -> { rel, text } for ONE artifact the
+// run indexed (the End card's result chip). `rel` never reaches the FS: it only
+// selects among the pipeline's own artifacts rows (exact rel_path, else a path
+// suffix). Same key regex as /diff.
+app.get('/api/history/:key/:id/artifact', async (req, res) => {
+  if (!/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(req.params.key)) {
+    return res.status(404).json({ error: 'pipeline not found' });
+  }
+  try {
+    const hit = await resolveIndexedArtifact(req.params.key, req.params.id, req.query.rel);
+    if (!hit) return res.status(404).json({ error: 'artifact not found' });
+    res.json(hit);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -2604,6 +2707,18 @@ app.get('/api/workspaces/:id/runs/:runId/diff', async (req, res) => {
   }
 });
 
+// The End-card result chip's workspace twin (see the project route above).
+app.get('/api/workspaces/:id/runs/:runId/artifact', async (req, res) => {
+  if (!WORKSPACE_KEY_RE.test(req.params.id)) return res.status(404).json({ error: 'pipeline not found' });
+  try {
+    const hit = await resolveIndexedArtifact(`workspaces/${req.params.id}`, req.params.runId, req.query.rel);
+    if (!hit) return res.status(404).json({ error: 'artifact not found' });
+    res.json(hit);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // GET /api/settings  -> { root, projectsRoot, projectsRootDefault, default }
 //   root                : the configured Worca CC data-root base, '' when unset
@@ -2708,6 +2823,7 @@ app.get('/api/config', async (req, res) => {
     return res.json({
       config: { steps: {}, customModels: [] },
       models: await listModels(''), steps: agentSteps(), efforts: EFFORTS,
+      subagentModels: SUBAGENT_MODEL_VALUES,
     });
   }
   const projectDir = resolveProjectDir(raw);
@@ -2726,6 +2842,10 @@ app.get('/api/config', async (req, res) => {
     ]);
     res.json({
       config, models, steps: agentSteps(), efforts: EFFORTS,
+      // The sub-agent model policy vocabulary is a FIXED alias enum (the CLI's Task
+      // tool refuses catalog ids), so it ships beside `efforts` rather than being
+      // derived from `models`.
+      subagentModels: SUBAGENT_MODEL_VALUES,
     });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -2739,6 +2859,7 @@ app.post('/api/config', async (req, res) => {
   try {
     await setStep(projectDir, body.step, {
       model: body.model, effort: body.effort, fanOut: body.fanOut, askQuestions: body.askQuestions,
+      subagentModel: body.subagentModel,
     });
     // Respond with the FULL run-config (mirrors PATCH): setStep's return value is
     // the legacy {steps, customModels} view only, and clients assign the response
@@ -2760,31 +2881,55 @@ app.post('/api/config', async (req, res) => {
 // validates model/effort against the effective catalog exactly like setStep
 // (configurable-models-design.md §4.5) -> 400; setFeedbackCycles still COERCES
 // maxCycles to >= 1 (it never throws).
-// body: { projectDir, workflowId, nodes?:{[id]:{model,effort}}, feedbacks?:{[id]:{maxCycles}}, activeWorkflowId? }
+// body: { projectDir, workflowId, nodes?:{[id]:{model,effort}}, feedbacks?:{[id]:{maxCycles}}, wires?:{[wireId]:{maxCycles}}, activeWorkflowId? }
 // ---------------------------------------------------------------------------
 app.patch('/api/config', async (req, res) => {
   const body = req.body || {};
   const projectDir = resolveProjectDir(body.projectDir);
   if (!projectDir) return badRequest(res, 'projectDir is required');
   const workflowId = typeof body.workflowId === 'string' ? body.workflowId.trim() : '';
+  // MAJ-1: every arm below keys a normalized table by workflowId, and
+  // readWorkflowsMap rebuilds a map from those keys — an id like '__proto__'
+  // used to be persisted unchecked and then broke readRunConfig for the whole
+  // project. isSafeWorkflowId is the store's own id rule, so the API can never
+  // write an id the store would refuse. (The recovery route DELETE
+  // /api/config/workflow stays deliberately ungated: an already-poisoned row
+  // must still be clearable.)
+  const workflowIdError = (what) => {
+    if (!workflowId) return `workflowId is required to set ${what} config`;
+    if (!isSafeWorkflowId(workflowId)) return 'invalid workflowId';
+    return null;
+  };
   try {
     if (body.nodes && typeof body.nodes === 'object') {
-      if (!workflowId) return badRequest(res, 'workflowId is required to set node config');
+      const bad = workflowIdError('node');
+      if (bad) return badRequest(res, bad);
       for (const [nodeId, sel] of Object.entries(body.nodes)) {
         await setNodeModel(projectDir, workflowId, nodeId, {
           model: sel && sel.model, effort: sel && sel.effort,
           fanOut: sel && sel.fanOut, askQuestions: sel && sel.askQuestions,
+          subagentModel: sel && sel.subagentModel,
         });
       }
     }
     if (body.feedbacks && typeof body.feedbacks === 'object') {
-      if (!workflowId) return badRequest(res, 'workflowId is required to set feedback config');
+      const bad = workflowIdError('feedback');
+      if (bad) return badRequest(res, bad);
       for (const [fbId, sel] of Object.entries(body.feedbacks)) {
         await setFeedbackCycles(projectDir, workflowId, fbId, sel && sel.maxCycles);
       }
     }
+    if (body.wires && typeof body.wires === 'object') {
+      const bad = workflowIdError('wire');
+      if (bad) return badRequest(res, bad);
+      for (const [wireId, sel] of Object.entries(body.wires)) {
+        await setWireCycles(projectDir, workflowId, wireId, sel && sel.maxCycles);
+      }
+    }
     if (typeof body.activeWorkflowId === 'string' && body.activeWorkflowId.trim()) {
-      await setActiveWorkflow(projectDir, body.activeWorkflowId.trim());
+      const active = body.activeWorkflowId.trim();
+      if (!isSafeWorkflowId(active)) return badRequest(res, 'invalid workflowId');
+      await setActiveWorkflow(projectDir, active);
     }
     const config = await readRunConfig(projectDir);
     res.json({ config });
@@ -3125,6 +3270,10 @@ function nodeDefaultsError(raw, models, where) {
   const effort = typeof raw.effort === 'string' ? raw.effort.trim() : '';
   const entry = model ? models.find((m) => m.id === model) : null;
   if (model && !entry) return `unknown model "${model}"`;
+  // subagentModel is a fixed alias enum, NOT a catalog id: validated via the
+  // shared helper so a typo is a 400 with the same message every writer uses.
+  const subIssue = subagentModelIssue(raw.subagentModel);
+  if (subIssue) return subIssue;
   if (!effort) return '';
   if (!EFFORTS.includes(effort)) return `unknown effort "${effort}"`;
   if (!entry) return 'select a model before choosing an effort';
@@ -3132,11 +3281,15 @@ function nodeDefaultsError(raw, models, where) {
   return '';
 }
 
-app.get('/api/workflows', async (_req, res) => {
+app.get('/api/workflows', async (req, res) => {
   try {
-    // The built-in default is never persisted to the user store; callers
-    // prepend it (CONTRACT: GET -> { workflows: [DEFAULT_WORKFLOW, ...listWorkflows()] }).
-    res.json({ workflows: [DEFAULT_WORKFLOW, ...(await listWorkflows())] }); // CONV-1: await
+    if (isTruthy(req.query.archived)) {
+      const all = await listWorkflows({ includeArchived: true });
+      return res.json({ workflows: all.filter((w) => w.archivedAt) });
+    }
+    // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, ...listWorkflows() ]. The built-in is
+    // never a persisted row (listWorkflows filters its id), so it cannot appear twice.
+    res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, ...(await listWorkflows())] });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -3144,51 +3297,80 @@ app.get('/api/workflows', async (_req, res) => {
 
 app.get('/api/workflows/:id', async (req, res) => {
   try {
-    const tpl = await readWorkflow(req.params.id); // CONV-1: await; returns DEFAULT_WORKFLOW for "wf_default"
-    if (!tpl) return res.status(404).json({ error: 'workflow not found' });
-    res.json(tpl);
+    // ONE gate, ONE message: an archived id explains itself instead of reading
+    // as a plain 404 (assertRunnableWorkflow owns both texts). checkGraph:false —
+    // this is a READ (the Composer's Open): a template stranded by an agent-port
+    // edit must still load, or the user could never repair it. The RUN path keeps
+    // the graph check.
+    res.json(await assertRunnableWorkflow(req.params.id, { checkGraph: false }));
   } catch (err) {
+    if (err && (err.code === 'NOT_FOUND' || err.code === 'ARCHIVED')) {
+      return res.status(404).json({ error: err.message });
+    }
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
 
 app.post('/api/workflows', async (req, res) => {
   const body = req.body || {};
-  // Build the candidate template from the editor payload (topology only).
-  const tpl = {
+  // The v1 pipeline format is RETIRED: only graphs are accepted (spec §10.2).
+  // The whole v1 arm (its steps-borne node defaults, validateWorkflow and
+  // writeWorkflow) died with it — nothing reaches the v1 store through the API.
+  if (body.version !== 2) {
+    return badRequest(res, 'v1 pipeline templates are no longer accepted — save a graph (version 2)');
+  }
+  // ── v2 graph save ──────────────────────────────────────────────────────────
+  // The 422 body is the SHARED validator's issue list, by construction: the
+  // composer renders exactly what it would have computed locally, so the server
+  // and the client can never disagree about why a graph is illegal.
+  const graph = {
+    id: typeof body.id === 'string' ? body.id : undefined,
     name: typeof body.name === 'string' ? body.name.trim() : '',
-    domain: typeof body.domain === 'string' ? body.domain : undefined, // writeWorkflow normDomain → 'general' if absent/blank/malformed
-    steps: Array.isArray(body.steps) ? body.steps : [],
-    feedbacks: Array.isArray(body.feedbacks) ? body.feedbacks : [],
+    domain: typeof body.domain === 'string' ? body.domain : undefined,
+    nodes: Array.isArray(body.nodes) ? body.nodes : [],
+    wires: Array.isArray(body.wires) ? body.wires : [],
+    ...(body.canvas && typeof body.canvas === 'object' ? { canvas: body.canvas } : {}),
   };
-  if (!tpl.name) return badRequest(res, 'name is required');
+  if (!graph.name) return badRequest(res, 'name is required');
   try {
-    // Per-node defaults ride along in steps (§4.4); hold them to the same catalog
-    // rules as PATCH .../defaults so an imported template cannot smuggle in a
-    // model id that no per-project override would be allowed to name.
+    // Catalog validation FIRST: a v2 node's `config` IS its defaults block (§4),
+    // so a value the per-project override could not name must not ride in
+    // through a template save. nodeDefaultsError checks the tunables (model +
+    // effort against the catalog, subagentModel against the alias enum), so
+    // only AGENT_TUNABLES are handed to it — topology keys (awaitAll, arity,
+    // planStoreSeed) never are.
     const models = await listModels('');
-    for (const group of tpl.steps) {
-      for (const node of Array.isArray(group) ? group : []) {
-        if (!node || typeof node !== 'object' || node.defaults === undefined) continue;
-        const err = nodeDefaultsError(node.defaults, models, `node "${node.id}"`);
-        if (err) return badRequest(res, err);
-      }
+    for (const n of graph.nodes) {
+      if (!n || n.kind !== 'agent' || !n.config || typeof n.config !== 'object') continue;
+      const picked = Object.fromEntries(
+        AGENT_TUNABLES.filter((k) => k in n.config).map((k) => [k, n.config[k]]));
+      const bad = nodeDefaultsError(picked, models, `node "${n.id}"`);
+      if (bad) return badRequest(res, bad);
     }
-    const registry = loadAgentRegistry(AGENTS_DIR);
-    const { ok, errors, warnings } = validateWorkflow(tpl, registry);
-    if (!ok) return res.status(400).json({ error: 'invalid workflow', errors, warnings });
-    // writeWorkflow stamps id/createdAt/updatedAt and writes atomically (temp+rename).
-    const workflow = await writeWorkflow(tpl); // CONV-1: await
-    res.status(201).json({ workflow, warnings });
+    const portsFn = registryPortsFn(loadAgentRegistry(AGENTS_DIR));
+    const { errors, warnings } = validateGraph({ ...graph, version: 2 }, portsFn);
+    if (errors.length) return res.status(422).json({ error: 'invalid graph', errors, warnings });
+    // rejectCollision (MAJ-5): the body carried no id, so wf_<slug(name)> is a
+    // GUESS — it must never silently replace a pipeline the user can see.
+    const workflow = await writeGraphWorkflow(graph, { rejectCollision: true });
+    return res.status(201).json({ workflow, warnings });
   } catch (err) {
-    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+    // C-3: a name that slugs onto the reserved wf_default is a caller error, not
+    // a server fault — 422, the same code the validator's refusal uses. MAJ-5: a
+    // minted id already in use is a 409 carrying that id, so the dialog can offer
+    // rename/overwrite. Both bodies carry NO issues/errors array on purpose:
+    // app.js's saveWorkflow maps `error` straight into the save dialog's message
+    // line, verbatim.
+    if (err && err.code === 'RESERVED_NAME') return res.status(422).json({ error: err.message });
+    if (err && err.code === 'ID_TAKEN') return res.status(409).json({ error: err.message, id: err.id });
+    return res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
 
 // ---------------------------------------------------------------------------
 // PATCH /api/workflows/:id/defaults -> set the template's per-node defaults
 // (newpipeline-ux-design.md §4.4). body: { defaults: { [nodeId]: {model?, effort?,
-// fanOut?, askQuestions?} | null } }; null (or an empty block) clears a node, an
+// fanOut?, askQuestions?, subagentModel?} | null } }; null (or an empty block) clears a node, an
 // absent node keeps what it has. Model/effort validate against the PROJECT-LESS
 // catalog (predefined ⊕ global ⊕ plugin) — defaults are global, so a legacy
 // per-project custom model is deliberately not a valid default.
@@ -3902,26 +4084,6 @@ app.post('/api/ask/threads/:id/cards/:cardId', (req, res) => {
 // GET returns palette render order (.order ascending) with origin stamped; the
 // client builds draggable pills (colored dot + displayName + icon) from this.
 // ---------------------------------------------------------------------------
-// Channel vocabulary for the UI editor/wizard: built-in CHANNEL_IDS first, then
-// every CUSTOM id any registry agent references (produces/consumes/
-// optionalConsumes/channelDefs[].id), appended sorted + deduped. Channels are an
-// open vocabulary — a closed list would silently strip custom ids on edit.
-function collectChannelIds(agents) {
-  const customs = new Set();
-  for (const a of Array.isArray(agents) ? agents : []) {
-    if (!a) continue;
-    const ids = [
-      ...(Array.isArray(a.produces) ? a.produces : []),
-      ...(Array.isArray(a.consumes) ? a.consumes : []),
-      ...(Array.isArray(a.optionalConsumes) ? a.optionalConsumes : []),
-      ...(Array.isArray(a.channelDefs) ? a.channelDefs.map((d) => d && d.id) : []),
-    ];
-    for (const id of ids) {
-      if (typeof id === 'string' && id && !CHANNEL_IDS.includes(id)) customs.add(id);
-    }
-  }
-  return [...CHANNEL_IDS, ...[...customs].sort()];
-}
 
 app.get('/api/agents', async (req, res) => {
   try {
@@ -3929,7 +4091,11 @@ app.get('/api/agents', async (req, res) => {
     // §6.6: workspace-only agents stay out of the Composer palette by default;
     // the Agents management view passes ?all=1 to see them too.
     const agents = isTruthy(req.query.all) ? all : all.filter((m) => m.scope !== 'workspace-only');
-    res.json({ agents, channels: collectChannelIds(all) });
+    // mockWriterRoles drives ONE select in the agent form. It is a CLOSED list
+    // (the mock switch in claude-runner.mjs), unlike the open channel vocabulary
+    // it replaces in Task 12: an unknown mockRole is dropped by the registry
+    // with a warning, never rejected.
+    res.json({ agents, mockWriterRoles: [...MOCK_WRITER_ROLES] });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -3955,9 +4121,6 @@ function agentErrorStatus(code) {
 function startAgentGen(input) {
   const orch = createAgentGen({
     ...input,
-    // Same open vocabulary as GET /api/agents (callers pass the registry union);
-    // built-ins-only fallback keeps direct/_testing callers working.
-    channels: Array.isArray(input.channels) && input.channels.length ? input.channels : CHANNEL_IDS,
     claude: { permissionMode: 'acceptEdits', mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) },
   });
   // The engine mints its own genId (agen_<uuid>) and tags every emitted event
@@ -4008,7 +4171,7 @@ app.post('/api/agents/generate', async (req, res) => {
     const genId = startAgentGen({
       name, purpose: String(body.purpose || ''), details: String(body.details || ''),
       expectedBefore: pick(body.expectedBefore), expectedAfter: pick(body.expectedAfter),
-      userMarkdown, channels: collectChannelIds(allAgents),
+      userMarkdown,
     });
     res.json({ genId });
   } catch (err) {
@@ -4227,7 +4390,7 @@ app.post('/api/plugins/install', async (req, res) => {
       repoUrl: body.repoUrl.trim(), subdir, name: body.name.trim(), sha: body.sha.trim(), marketplace,
     });
     reloadChatWorkers(body.name.trim());
-    res.json(out); // { ok: true, inventory }
+    res.json(out); // { ok: true, inventory, warnings, ignored }
   } catch (err) {
     sendPluginError(res, err);
   }
@@ -4823,6 +4986,26 @@ app.use((req, res, next) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// The LAST middleware, and the only GLOBAL error handler (`/vendor` keeps its
+// own path-scoped one): every failure answers { error } as JSON (MIN-108).
+// Without it express's default handler renders an HTML page carrying the thrown
+// stack — absolute node_modules paths included — for the two failures that happen
+// BEFORE any route runs: a malformed JSON body and a body past the cap. The
+// four-argument signature is what makes express treat this as an error handler,
+// so `next` stays even though only the headers-sent path uses it.
+// ---------------------------------------------------------------------------
+app.use((err, _req, res, next) => {
+  if (res.headersSent) return next(err);            // let express abort the stream
+  if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'malformed JSON body' });
+  if (err && err.type === 'entity.too.large') return res.status(413).json({ error: 'request body too large' });
+  // Anything else: honour a body-parser 4xx (charset.unsupported / encoding.unsupported
+  // are 415, request.aborted is 400) — a client error logged as a 500 misleads. Ours or
+  // not, it is one line, no stack, never HTML.
+  const status = Number.isInteger(err?.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
+  return res.status(status).json({ error: err && err.message ? err.message : 'internal error' });
+});
+
 /**
  * Boot maintenance, in the PINNED order (§8.12):
  *   1. reconcileStaleRunning — stamps every stale `running` row -> `interrupted`,
@@ -4851,7 +5034,7 @@ app.use((req, res, next) => {
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null };
+  const summary = { reconciled: 0, sweptV1: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -4862,6 +5045,16 @@ export async function bootMaintenance({ log } = {}) {
     if (reconciled) console.log(`[worca-ui] reconciled ${reconciled} stale running record(s) -> interrupted`);
   } catch (err) {
     console.error(`[worca-ui] stale-run reconcile failed: ${err && err.message ? err.message : err}`);
+  }
+
+  // A DB stamped past 24 by a divergent ladder can still hold v1 resume points
+  // (crash-reconciled runs keep theirs). One idempotent sweep per boot.
+  try {
+    const swept = sweepV1Runs();
+    summary.sweptV1 = swept.length;
+    if (swept.length) console.log(`[worca-ui] retired ${swept.length} run(s) paused on the v1 engine`);
+  } catch (err) {
+    console.error(`[worca-ui] v1-run sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   try {

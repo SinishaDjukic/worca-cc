@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { ENGINES } from './helpers/engines.mjs';
 import { getDb } from '../src/core/db.mjs';
 
 useTempHome(after);
@@ -36,10 +36,11 @@ function pausingProducer(getOrch) {
 
 const okVerifier = async () => ({ status: 'ok', issues: [], review: { issues: [] }, summary: '' });
 
-test('pause mid-node -> paused status, resume_point persisted, worktree kept', async () => {
+for (const engine of ENGINES) {
+test(`[${engine.id}] pause mid-node -> paused status, resume_point persisted, worktree kept`, async () => {
   const dir = gitDir();
   let orch;
-  orch = createOrchestrator({
+  orch = engine.create({
     projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
     runners: { producer: pausingProducer(() => orch), verifier: okVerifier },
   });
@@ -50,12 +51,8 @@ test('pause mid-node -> paused status, resume_point persisted, worktree kept', a
   const row = getDb().prepare('SELECT status, resume_point, branch FROM pipelines WHERE id = ?').get(orch.state.id);
   assert.equal(row.status, 'paused');
   const rp = JSON.parse(row.resume_point);
-  assert.equal(rp.version, 1);
-  assert.equal(rp.kind, 'node');
-  assert.equal(rp.workflowId, 'wf_default');
-  assert.ok(Array.isArray(rp.plan?.steps) && rp.plan.steps.length > 0, 'frozen plan stored');
-  assert.ok(rp.bus && typeof rp.bus === 'object', 'bus snapshot stored');
-  assert.ok(rp.nodes.some((n) => n.sessionId === 'sess-hang'), 'interrupted node session recorded');
+  engine.expectResumePoint(rp, { sessionId: 'sess-hang' });
+  assert.equal(rp.workflowId, engine.workflowId);
   // The EFFECTIVE tool instruction (post graph-build, possibly '' when the build was
   // skipped/failed) must ride the resume point — resume() must not fall back to the
   // detect-time tools.instruction and tell agents a graph exists that was never built.
@@ -73,16 +70,16 @@ test('pause mid-node -> paused status, resume_point persisted, worktree kept', a
   assert.equal(saRow?.status, 'stopped', 'sub_agents row closed as stopped on pause');
 });
 
-test('pause is a no-op unless running; double pause safe', () => {
+test(`[${engine.id}] pause is a no-op unless running; double pause safe`, () => {
   const dir = gitDir();
-  const orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true } });
+  const orch = engine.create({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true } });
   assert.equal(orch.pause(), false); // idle
   orch.state.status = 'running';
   assert.equal(orch.pause(), true);  // -> pausing
   assert.equal(orch.pause(), false); // already pausing
 });
 
-test('stop still wins: stopped run is not paused', async () => {
+test(`[${engine.id}] stop still wins: stopped run is not paused`, async () => {
   const dir = gitDir();
   const hangingProducer = async (ctx) => new Promise((_res, rej) => {
     const onAbort = () => { const e = new Error('aborted'); e.name = 'AbortError'; rej(e); };
@@ -90,7 +87,7 @@ test('stop still wins: stopped run is not paused', async () => {
     else ctx.signal.addEventListener('abort', onAbort, { once: true });
   });
   let orch;
-  orch = createOrchestrator({
+  orch = engine.create({
     projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
     runners: {
       producer: async (ctx) => { queueMicrotask(() => orch.stop()); return hangingProducer(ctx); },
@@ -101,11 +98,11 @@ test('stop still wins: stopped run is not paused', async () => {
   assert.equal(res.status, 'stopped');
 });
 
-test('stop while pausing: stop wins and no resume_point is persisted', async () => {
+test(`[${engine.id}] stop while pausing: stop wins and no resume_point is persisted`, async () => {
   const dir = gitDir();
   let orch;
   let pausedFirst = false;
-  orch = createOrchestrator({
+  orch = engine.create({
     projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
     runners: {
       producer: async (ctx) => {
@@ -135,3 +132,4 @@ test('stop while pausing: stop wins and no resume_point is persisted', async () 
   assert.equal(row.status, 'stopped');
   assert.equal(row.resume_point, null, 'stopped row carries no resume point');
 });
+}

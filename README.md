@@ -72,7 +72,8 @@ and durations, the clarify Q&A, agent transcripts, and logs:
   vertical-slice tasks, one implementer each), manual-tests checklist, manual
   web-UI testing (drives a browser via Playwright), workspace scanner, and
   workspace reviewer. Each agent is a markdown prompt plus a metadata sidecar
-  — new agents drop in without engine changes.
+  declaring its typed input/output ports — new agents drop in without engine
+  changes.
 - **AI-assisted agent creation** — describe a new agent in the UI and Worca
   generates both its system prompt and metadata (or paste your own prompt and
   let it infer just the wiring); edit, regenerate, and save.
@@ -82,11 +83,13 @@ and durations, the clarify Q&A, agent transcripts, and logs:
 
 ### Workflow Composer
 
-- **Compose your own pipeline** — drag agents onto a canvas to build
-  sequential steps, parallel groups, and feedback loops (an agent that emits
-  a verdict can loop back to an earlier step until it passes or hits its
-  cycle cap). Saved workflows appear in the New Pipeline picker; **Reset to
-  default** redraws the standard Plan → Refine → Implement → Review.
+- **Compose your own pipeline** — drag agents onto a canvas and wire their typed
+  ports: each card declares what it consumes and produces, a wire only connects
+  compatible ports, and a wire that closes a cycle becomes a loop with its own
+  cycle cap (a reviewer keeps sending work back until it passes or the budget
+  runs out). Flow cards — **Task** (the run's request), **End** (the result),
+  **AND**, **OR**, **Combine** — express joins, choices and merges without any
+  code. Saved pipelines appear in the New Pipeline picker.
 
 ![Workflow Composer — drag agents into steps, groups, and feedback loops](docs/screenshots/composer.png)
 

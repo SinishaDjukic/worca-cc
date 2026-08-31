@@ -63,9 +63,11 @@ const CONNECTOR = `export default function createTaskSource(ctx) {
 }
 `;
 const AGENT_META = {
-  key: 'localHelper', agentFile: 'localHelper.md',
+  metaVersion: 2, key: 'localHelper', agentFile: 'localHelper.md',
   displayName: 'Local Helper', description: 'fixture agent', color: 'blue',
-  runnerType: 'producer', consumes: [], produces: ['plan'], order: 90,
+  runnerType: 'producer', order: 90,
+  inputs: [{ id: 'task', type: 'md' }],
+  outputs: [{ id: 'plan', type: 'md', filename: '{base}.md' }],
 };
 
 async function makeFixtureRepo() {
@@ -228,10 +230,15 @@ test('DELETE /api/plugins/:name is guarded when a user workflow references a plu
   // Registry layer 3 (Task 6) serves localHelper while the plugin is enabled,
   // so POST /api/workflows (the production writer) accepts it — the simplest
   // way to seed a REAL referencing row.
+  // POST /api/workflows takes ONLY a v2 graph now. localHelper consumes `task`
+  // and produces `plan`, so it stands between the Task card and End on its own.
   const wf = await post('/api/workflows', {
-    name: 'Uses Local Helper',
-    steps: [[{ id: 's0_0', key: 'planner' }], [{ id: 's1_0', key: 'localHelper' }]],
-    feedbacks: [],
+    version: 2, name: 'Uses Local Helper', domain: 'coding',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_help', kind: 'agent', key: 'localHelper', x: 300, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 600, y: 0, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_help', port: 'task' } },
+      { id: 'w2', from: { node: 'n_help', port: 'plan' }, to: { node: 'n_end', port: 'result' } }],
   });
   assert.equal(wf.status, 201, 'plugin agent key validates in a user workflow');
   const wfId = (await wf.json()).workflow.id;

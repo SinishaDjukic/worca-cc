@@ -185,8 +185,9 @@ test('selecting an option marks it + submit posts {runId,id,payload:{answers}} w
   assert.equal(card.classList.contains('attention'), true, 'panel kept until a resume event confirms');
   assert.equal(card.querySelector('.qpanel').classList.contains('hidden'), false, 'panel still visible after 200');
 
-  // A following `phase` event confirms resume -> panel clears, attention drops.
-  ctx.dispatch({ type: 'phase', runId: RUN_ID, phase: 'plan', status: 'start' });
+  // A following `state` event confirms resume -> panel clears, attention drops.
+  // (The v1 `phase` frame is gone; onState is the client's single resume seam.)
+  ctx.dispatch({ type: 'state', runId: RUN_ID, status: 'running' });
   assert.equal(card.classList.contains('attention'), false, 'attention dropped on resume');
   assert.equal(card.querySelector('.qpanel').classList.contains('hidden'), true, 'panel hidden on resume');
   assert.equal(card.querySelector('.qpanel').innerHTML, '', 'panel emptied on resume');
