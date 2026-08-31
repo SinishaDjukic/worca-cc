@@ -20,9 +20,13 @@ export {
 export {
   NODE_W, HEAD_H, ROW_H, SEP_H, PAD_T, PAD_B, BORDER, DOT, FOOT_H, EXEC_ROW_H, SNAP,
   PORT_HIT_R, WIRE_HIT_TOL, ZOOM_MIN, ZOOM_MAX, ZOOM_K, ROW0, GEOMETRY_CSS_VARS,
-  injectGeometry, nodeSize, portAnchor, bezierPath, bezierPoint, bezierMid, snap,
-  hitNode, hitPort, hitWire, graphBounds, fitBounds,
+  injectGeometry, nodeSize, portAnchor, snap,
+  hitNode, hitPort, graphBounds, fitBounds,
 } from '../../../src/shared/graph/geometry.mjs';
+export {
+  routeWire, routeAll, separateRoutes, routePathD, routeMid, hitRoute,
+  ROUTE_CLEARANCE, ROUTE_STUB, ROUTE_RADIUS, ROUTE_LANE_GAP,
+} from '../../../src/shared/graph/route.mjs'; // depth 3: ui/public/graph -> repo root
 export { rankNodes, autoLayout } from '../../../src/shared/graph/layout.mjs';
 export { thumbnailSvg } from '../../../src/shared/graph/thumbnail.mjs';
 export { normalizeAgentMeta, validateMetaV2, indexByKey, derivePortSummary } from '../../../src/shared/graph/agent-meta.mjs';

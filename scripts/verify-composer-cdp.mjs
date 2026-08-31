@@ -5,7 +5,7 @@
 //
 // -- CI COVERAGE (MAJ-30) ----------------------------------------------------
 // .github/workflows/ci.yml job `cdp` runs this script on every push and every
-// pull request, so these 15 checks now gate a merge. What still has NO test/
+// pull request, so every check below gates a merge. What still has NO test/
 // equivalent -- and therefore dies with the runner's Chrome -- is every
 // assertion that is a MEASUREMENT or a COMPUTED style: jsdom has no layout
 // engine (every getBoundingClientRect there is 0x0) and no style cascade.
@@ -20,6 +20,8 @@
 //               the single-column pill run
 //     (11)      the legend footer spanning canvas AND rail
 //     (12)      the 22px editor-to-saved-list card gap
+//     (13)      the PAINTED wire routes vs the real card boxes: a card dragged
+//               into a corridor pushes a wire it is not wired to, mid-drag
 //     (console) the no-page-error gate
 //   NOW ALSO IN test/ (green with no browser at all)
 //     (1), (2) counters, (5), (6) zoom/pan math, (7) fit math, (8) undo + the
@@ -237,7 +239,11 @@ try {
   await mmove(fix.x - 120, fix.y); await settle('move-left');
   const mir = await ev(`(()=>{const {v}=window.__gv();const d=v.ghostEl.getAttribute('d');const n=(d.match(/-?\\d+(?:\\.\\d+)?/g)||[]).map(Number);
     return {d,ax:n[0],c1x:n[2]};})()`);
-  check(5, 'a drag from an input mirrors the tangent (first control x < anchor x)', mir.c1x < mir.ax, mir);
+  // The routed ghost emits `M ax ay L x2 y2 …`, so n[2] is the first emitted x —
+  // left of the anchor whether the route runs straight, stops at the stub tip or
+  // rounds a corner at ax−20+r. Do NOT pin x2 === ax − 20: a bend at the stub tip
+  // moves it.
+  check(5, 'a drag from an input leaves LEFT of the anchor (mirrored exit)', mir.c1x < mir.ax, mir);
   await keyEv('rawKeyDown', 'Escape', 'Escape', 27); await keyEv('keyUp', 'Escape', 'Escape', 27); await settle('esc');
 
   // (6) zoom about the cursor + plain-wheel pan
@@ -374,6 +380,54 @@ try {
     Math.abs((a.saved.t - a.editor.b) - 22) < 0.6, { editorBottom: a.editor.b, savedTop: a.saved.t });
   // leave the persisted tab as we found it — the next run must start on Agents
   await ev(`(()=>{try{localStorage.removeItem('worca.composer.tab');}catch{}return 1;})()`);
+
+  // ---- (13) obstacle avoidance in a REAL browser ---------------------------
+  // A card dragged into the corridor of a wire it is NOT incident to must push
+  // that wire out of the way, live, mid-drag. jsdom proves the model; only a
+  // real browser proves the painted `d` the user sees.
+  await load();
+  await ev(`(()=>{const {c}=window.__gv();c.loadTemplate({id:'',name:'avoid',version:2,domain:'coding',
+    nodes:[{id:'n_task',kind:'task',x:60,y:143,config:{}},{id:'n_end',kind:'end',x:860,y:143,config:{}},
+      {id:'n_blk',kind:'task',x:400,y:480,config:{}}],
+    wires:[{id:'w1',from:{node:'n_task',port:'task'},to:{node:'n_end',port:'result'}}]});c.fit();return 1;})()`);
+  await settle('avoid-load');
+  const grab = await ev(`(()=>{const {v}=window.__gv();const r=v.rect();const s=v.toScreen(500,495);return {x:s.x+r.left,y:s.y+r.top};})()`);
+  const dropY = await ev(`(()=>{const {v}=window.__gv();const r=v.rect();return v.toScreen(500,165).y+r.top;})()`);
+  const dBefore = await ev(`(()=>{const o={};for(const p of document.querySelectorAll('#gv-canvas .gv-wires path[data-wire-id]'))o[p.dataset.wireId]=p.getAttribute('d');return o;})()`);
+  await press(grab.x, grab.y); await settle('a1');
+  await mmove(grab.x, dropY); await settle('a2');
+  // Mid-drag: the polyline vertices (a Q's CONTROL point is the true corner) of
+  // every wire, against every card's world rect read from its own transform.
+  const avoid = await ev(`(()=>{
+    const d={};const legs=[];
+    for(const p of document.querySelectorAll('#gv-canvas .gv-wires path[data-wire-id]')){
+      const s=p.getAttribute('d')||'';d[p.dataset.wireId]=s;const pts=[];
+      for(const t of (s.match(/[MLQ][^MLQ]*/g)||[])){
+        const n=(t.match(/-?\\d+(?:\\.\\d+)?/g)||[]).map(Number);
+        if(n.length>=2)pts.push({x:n[0],y:n[1]});
+      }
+      legs.push({id:p.dataset.wireId,pts});
+    }
+    const rects=[...document.querySelectorAll('#gv-canvas .gv-world .node')].map((el)=>{
+      const n=(el.style.transform.match(/-?\\d+(?:\\.\\d+)?/g)||[]).map(Number);
+      return {id:el.dataset.nodeId,x:n[0],y:n[1],w:el.offsetWidth,h:el.offsetHeight};
+    });
+    const pierced=[];
+    for(const L of legs)for(let i=1;i<L.pts.length;i+=1){
+      const a=L.pts[i-1];const b=L.pts[i];
+      const steps=Math.max(1,Math.round(Math.abs(b.x-a.x)+Math.abs(b.y-a.y)));
+      for(let k=1;k<steps;k+=1){
+        const px=a.x+(b.x-a.x)*k/steps;const py=a.y+(b.y-a.y)*k/steps;
+        for(const r of rects){
+          if(px>r.x+0.5&&px<r.x+r.w-0.5&&py>r.y+0.5&&py<r.y+r.h-0.5)pierced.push({wire:L.id,node:r.id,px,py});
+        }
+      }
+    }
+    return {d,rects,pierced:pierced.slice(0,5),count:pierced.length};})()`);
+  await mup(grab.x, dropY); await settle('a3');
+  check(13, 'a card dragged into a corridor re-routes the wire it blocks, live, and no wire crosses a card',
+    avoid.d.w1 !== dBefore.w1 && avoid.count === 0,
+    { before: dBefore.w1, during: avoid.d.w1, pierced: avoid.pierced, rects: avoid.rects });
 
   check('console', 'no page errors or exceptions', errors.length === 0, errors.slice(0, 5));
 } catch (e) {

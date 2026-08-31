@@ -1,6 +1,8 @@
 // src/shared/graph/geometry.mjs
-// THE geometry: card sizing, port anchors, one bezier and model-driven hit
-// tests. Framework-free and DOM-free so the whole render path derives from the
+// THE geometry: card sizing, port anchors and model-driven card/port hit tests.
+// Wire SHAPE lives in route.mjs (the orthogonal router), which imports
+// WIRE_HIT_TOL from here. Framework-free and DOM-free so the whole render path
+// derives from the
 // model's x/y — zero getBoundingClientRect on the pointer path, and every claim
 // is unit-testable without jsdom. style.css consumes these numbers ONLY through
 // the --gv-* custom properties injectGeometry writes, so the CSS box model can
@@ -110,36 +112,6 @@ export function portAnchor(node, ports, portId, dir) {
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
-/** ONE cubic for the view, the ghost and the thumbnail.
- *  mirror = the drag STARTED on an input, so the cord leaves leftward.
- *  loop   = a committed loop wire, bowing underneath. */
-export function bezierPath(a, b, opts = {}) {
-  const [p0, p1, p2, p3] = bezierPoints(a, b, opts);
-  return `M ${p0.x} ${p0.y} C ${p1.x} ${p1.y}, ${p2.x} ${p2.y}, ${p3.x} ${p3.y}`;
-}
-
-function bezierPoints(a, b, { mirror = false, loop = false } = {}) {
-  const dx = clamp(Math.abs(b.x - a.x) * 0.45, 48, 160);
-  const s = mirror ? -1 : 1;
-  const bow = loop ? 56 + Math.abs(a.y - b.y) * 0.2 : 0;
-  return [a, { x: a.x + s * dx, y: a.y + bow }, { x: b.x - s * dx, y: b.y + bow }, b];
-}
-
-/** The point at parameter t on the SAME curve bezierPath draws. */
-export function bezierPoint(a, b, t, opts = {}) {
-  const [p0, p1, p2, p3] = bezierPoints(a, b, opts);
-  const u = 1 - t;
-  return {
-    x: u * u * u * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * p3.x,
-    y: u * u * u * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * p3.y,
-  };
-}
-
-/** The cubic midpoint (p0 + 3p1 + 3p2 + p3)/8 — where a loop badge sits. */
-export function bezierMid(a, b, opts = {}) {
-  return bezierPoint(a, b, 0.5, opts);
-}
-
 /** Snap to the 11px half-grid (the 22px dot grid's half step). DRAG only —
  *  loaded templates render at their authored positions, unsnapped. */
 export function snap(value, grid = SNAP) {
@@ -152,26 +124,6 @@ export function hitNode(node, size, pt) {
 
 export function hitPort(anchor, pt, r = PORT_HIT_R) {
   return Math.hypot(pt.x - anchor.x, pt.y - anchor.y) <= r;
-}
-
-/** Within `tol` of the drawn curve. Sampled, not solved: the curves are short,
- *  the tolerance is 6px, and a closed-form cubic distance buys nothing. */
-export function hitWire(a, b, pt, { loop = false, mirror = false, tol = WIRE_HIT_TOL, samples = 48 } = {}) {
-  let prev = a;
-  for (let i = 1; i <= samples; i += 1) {
-    const next = bezierPoint(a, b, i / samples, { loop, mirror });
-    if (distanceToSegment(pt, prev, next) <= tol) return true;
-    prev = next;
-  }
-  return false;
-}
-
-function distanceToSegment(p, a, b) {
-  const vx = b.x - a.x;
-  const vy = b.y - a.y;
-  const len2 = vx * vx + vy * vy;
-  const t = len2 === 0 ? 0 : clamp(((p.x - a.x) * vx + (p.y - a.y) * vy) / len2, 0, 1);
-  return Math.hypot(p.x - (a.x + t * vx), p.y - (a.y + t * vy));
 }
 
 /** The union of the card boxes, optionally padded. `footerRowsOf(node)` lets the

@@ -18,8 +18,9 @@
 // this is the file's one geometry import and Task 3 appends code, not imports.
 import {
   NODE_W, ZOOM_MIN, ZOOM_MAX,
-  injectGeometry, nodeSize, portAnchor, bezierPath, bezierMid, graphBounds, fitBounds,
+  injectGeometry, nodeSize, portAnchor, graphBounds, fitBounds,
 } from '../../../src/shared/graph/geometry.mjs';
+import { routeAll, routeWire, routePathD, routeMid } from '../../../src/shared/graph/route.mjs';
 import { portsOf, resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
 import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
 import { thumbnailSvg } from '../../../src/shared/graph/thumbnail.mjs';
@@ -123,6 +124,8 @@ export function createGraphView(host, {
   let T = { x: 0, y: 0, z: 1 };
   let current = null;             // last rendered template
   let ctx = null;                 // last render context (ports, loops, wired inputs)
+  let routesBag = { raw: new Map(), routes: new Map() };
+  const lastRect = new Map();     // nodeId -> the card rect as of the last reroute()
   const stats = { wireDUpdates: 0, ghostUpdates: 0, rectReads: 0 };
 
   const h = (tag, cls, text) => {
@@ -138,6 +141,40 @@ export function createGraphView(host, {
   };
   const portsAt = (node) => portsOf(portsFn, node) || { inputs: [], outputs: [] };
   const sizeOf = (node) => nodeSize(node, portsAt(node), { footerRows: footers.get(node.id) || 0 });
+
+  // ------------------------------------------------------------ wire routing
+  // Cards are the router's OBSTACLES, so every repaint derives the wire shapes
+  // from the same model x/y the cards are placed by — still zero measurement.
+  const isNodeObj = (n) => Boolean(n) && typeof n === 'object' && !Array.isArray(n);
+  const rectOf = (node) => ({ x: Number(node.x) || 0, y: Number(node.y) || 0, ...sizeOf(node) });
+  const obstacleRects = () => (current ? current.nodes.filter(isNodeObj).map(rectOf) : []);
+  const unionRect = (a, b) => {
+    if (!a) return b;
+    const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
+    return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+  };
+
+  /** Re-route the template's wires. `dirty` (world rect) is the drag fast path:
+   *  wires far from the change reuse their cached raw route. `dirty = null` is
+   *  the canonical full pass (D15). Also refreshes lastRect for every node. */
+  function reroute(dirty = null) {
+    if (!ctx || !current) return;
+    const list = [];
+    for (const w of current.wires) {
+      if (!w || !w.from || !w.to) continue;
+      const a = anchorOf(w.from, 'out');
+      const b = anchorOf(w.to, 'in');
+      if (a && b) list.push({ id: w.id, a, b });
+    }
+    routesBag = routeAll(list, obstacleRects(), { prev: routesBag.raw, dirty });
+    for (const n of current.nodes) if (isNodeObj(n)) lastRect.set(n.id, rectOf(n));
+  }
+
+  /** D15: canonical full re-route + repaint (drag cancel, footer line change). */
+  function rerouteAll() {
+    reroute(null);
+    for (const id of wireEls.keys()) paintWire(id);
+  }
 
   function headerOf(node) {
     if (node.kind === 'agent') {
@@ -368,14 +405,11 @@ export function createGraphView(host, {
 
   /** Writes `d` only when the cached string differs — the whole point of the cache. */
   function paintWire(wireId) {
-    const w = ctx.wireById.get(wireId);
     const path = wireEls.get(wireId);
-    if (!w || !path) return;
-    const a = anchorOf(w.from, 'out');
-    const b = anchorOf(w.to, 'in');
-    if (!a || !b) return;                       // dangling endpoint paints nothing, never NaN
-    const loop = ctx.loopWireIds.has(wireId);
-    const d = bezierPath(a, b, { loop });
+    if (!path) return;
+    const pts = routesBag.routes.get(wireId);
+    if (!pts) return;                           // dangling endpoint paints nothing, never NaN
+    const d = routePathD(pts);
     if (dCache.get(wireId) !== d) {
       dCache.set(wireId, d);
       path.setAttribute('d', d);
@@ -383,7 +417,7 @@ export function createGraphView(host, {
     }
     const badge = badgeEls.get(wireId);
     if (badge) {
-      const mid = bezierMid(a, b, { loop });
+      const mid = routeMid(pts);
       badge.style.left = `${mid.x}px`;
       badge.style.top = `${mid.y}px`;
     }
@@ -406,6 +440,7 @@ export function createGraphView(host, {
   function renderWires() {
     const seenW = new Set();
     const seenB = new Set();
+    reroute();                                  // canonical full pass (D15): every render routes from scratch
     incident.clear();
     for (const w of current.wires) {
       if (!w || !w.from || !w.to) continue;
@@ -481,10 +516,18 @@ export function createGraphView(host, {
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
   /** MODEL bounds (no DOM measure): the shared `graphBounds` over the rendered
-   *  template, with this view's footer rows (only the view knows them). */
+   *  template, with this view's footer rows (only the view knows them), UNIONED
+   *  with the routed wire vertices — a backward detour or a lane offset leaves
+   *  the card union, and a fit must never clip it (D9). */
   function bounds(pad = 0) {
     if (!current || !current.nodes.length) return null;
-    return graphBounds(current, portsAt, { pad, footerRowsOf: (n) => footers.get(n.id) || 0 });
+    const base = graphBounds(current, portsAt, { pad: 0, footerRowsOf: (n) => footers.get(n.id) || 0 });
+    if (!base) return null;
+    let x0 = base.x; let y0 = base.y; let x1 = base.x + base.w; let y1 = base.y + base.h;
+    for (const pts of routesBag.routes.values()) {
+      for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+    }
+    return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad };
   }
   /** `fitBounds` → `{z, tx, ty}` mapped onto this view's `{x, y, z}` transform. */
   const applyFit = (b, width, height, zoomMax) => {
@@ -559,6 +602,7 @@ export function createGraphView(host, {
       const node = ctx && ctx.byId.get(nodeId);
       const el = nodeEls.get(nodeId);
       if (!node || !el) return;
+      const prevLines = footers.get(nodeId) || 0;
       const list = Array.isArray(bands) ? bands.filter(Boolean) : [];
       const feet = el.querySelectorAll(':scope > .xfoot');
       let foot = feet[0] || null;
@@ -567,6 +611,7 @@ export function createGraphView(host, {
         if (foot) foot.remove();
         footers.delete(nodeId);
         el.style.height = `${sizeOf(node).h}px`;
+        if ((footers.get(nodeId) || 0) !== prevLines) rerouteAll();   // a changed obstacle box re-routes (D16)
         return;
       }
       if (!foot) {
@@ -604,6 +649,7 @@ export function createGraphView(host, {
       for (const gone of have.values()) gone.remove();
       footers.set(nodeId, list.reduce((a, band) => a + bandUnits(band), 0));
       el.style.height = `${sizeOf(node).h}px`;
+      if ((footers.get(nodeId) || 0) !== prevLines) rerouteAll();     // a changed obstacle box re-routes (D16)
     },
     /** Per-card ornaments: agent colour, gate pip, header duration · cost. */
     setNodeChrome(nodeId, { color = '', gate = null, totals = null } = {}) {
@@ -640,12 +686,27 @@ export function createGraphView(host, {
       const live = new Set(ids || []);
       for (const [id, el] of wireEls) el.classList.toggle('wire-live', live.has(id));
     },
-    /** One transform write per dragged node + its incident wires only. */
+    /** One transform write per dragged node, then a dirty-filtered re-route: a
+     *  card is an OBSTACLE, so moving it changes the wires it starts and stops
+     *  blocking, not just its own (D7). The dCache gate keeps the DOM writes to
+     *  the wires whose route actually moved. */
     moveNode(nodeId) {
       const node = ctx && ctx.byId.get(nodeId);
       if (!node) return;
+      const before = lastRect.get(nodeId) || null;
       placeCard(node);
-      for (const wid of incident.get(nodeId) || []) paintWire(wid);
+      reroute(unionRect(before, rectOf(node)));
+      for (const id of wireEls.keys()) paintWire(id);
+    },
+    /** D15: the canonical `dirty = null` pass every gesture must END in. */
+    rerouteAll,
+    /** The EXACT painted polyline for a wire (null while dangling) — the hit test
+     *  and the tests consume this, so paint and hit can never diverge. */
+    wireRoute(wireId) { return routesBag.routes.get(wireId) || null; },
+    /** Routed ghost `d` for the composer's wiring drag. looseEnd: the cursor may
+     *  sit inside a card while hovering its port. */
+    routeGhost(anchor, end, { mirror = false } = {}) {
+      return routePathD(routeWire(anchor, end, obstacleRects(), { mirror, looseEnd: true }));
     },
     paintWire,
     /** `d = null` hides the ghost. Identical `d` never re-writes the attribute. */

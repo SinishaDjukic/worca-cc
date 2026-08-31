@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   NODE_W, ROW0, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, GEOMETRY_CSS_VARS, injectGeometry,
-  nodeSize, portAnchor, bezierPath, bezierPoint, bezierMid, snap,
-  hitNode, hitPort, hitWire, graphBounds, fitBounds, fanLines, FAN_PER_ROW, FAN_ROW_W,
+  nodeSize, portAnchor, snap,
+  hitNode, hitPort, graphBounds, fitBounds, fanLines, FAN_PER_ROW, FAN_ROW_W,
 } from '../src/shared/graph/geometry.mjs';
 import { portsFnFor } from '../src/shared/graph/ports.mjs';
 
@@ -80,25 +80,6 @@ test('port anchors match the measured prototype', () => {
   assert.equal(portAnchor(N_AGENT, P(N_AGENT), 'ghost', 'in'), null);
 });
 
-test('bezierPath: forward, mirrored, loop', () => {
-  assert.equal(bezierPath({ x: 280, y: 199 }, { x: 400, y: 136 }),
-    'M 280 199 C 334 199, 346 136, 400 136');
-  assert.equal(bezierPath({ x: 400, y: 160 }, { x: 280, y: 160 }, { mirror: true }),
-    'M 400 160 C 346 160, 334 160, 280 160');
-  assert.equal(bezierPath({ x: 0, y: 0 }, { x: 0, y: 0 }, { loop: true }), 'M 0 0 C 48 56, -48 56, 0 0');
-  assert.equal(bezierPath({ x: 0, y: 0 }, { x: 1000, y: 0 }), 'M 0 0 C 160 0, 840 0, 1000 0', 'dx clamps at 160');
-});
-
-test('bezierPoint / bezierMid sample the SAME curve', () => {
-  const a = { x: 0, y: 0 };
-  const b = { x: 200, y: 100 };
-  assert.deepEqual(bezierPoint(a, b, 0), { x: 0, y: 0 });
-  assert.deepEqual(bezierPoint(a, b, 1), { x: 200, y: 100 });
-  const mid = bezierMid(a, b);
-  assert.deepEqual(mid, bezierPoint(a, b, 0.5));
-  assert.equal(mid.y, 50);
-});
-
 test('hit tests', () => {
   const size = nodeSize(N_AGENT, P(N_AGENT));
   assert.equal(hitNode(N_AGENT, size, { x: 410, y: 90 }), true);
@@ -106,11 +87,7 @@ test('hit tests', () => {
   assert.equal(hitNode(N_AGENT, size, { x: 410, y: 400 }), false);
   assert.equal(hitPort({ x: 400, y: 136 }, { x: 410, y: 141 }), true);
   assert.equal(hitPort({ x: 400, y: 136 }, { x: 420, y: 136 }), false);
-  const a = { x: 0, y: 0 };
-  const b = { x: 200, y: 0 };
-  assert.equal(hitWire(a, b, { x: 100, y: 2 }), true);
-  assert.equal(hitWire(a, b, { x: 100, y: 40 }), false);
-  assert.equal(hitWire(a, b, { x: 100, y: 40 }, { loop: true }), true, 'the loop curve bows down to it');
+  // wire hit testing lives in route.mjs now (hitRoute) — see test/graph-route.test.mjs
 });
 
 test('snap rounds to the 11px half-grid', () => {

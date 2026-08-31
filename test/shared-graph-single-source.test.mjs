@@ -7,6 +7,7 @@ import * as validate from '../src/shared/graph/validate.mjs';
 import * as ports from '../src/shared/graph/ports.mjs';
 import * as template from '../src/shared/graph/template.mjs';
 import * as geometry from '../src/shared/graph/geometry.mjs';
+import * as route from '../src/shared/graph/route.mjs';
 import * as loops from '../src/shared/graph/loops.mjs';
 import * as layout from '../src/shared/graph/layout.mjs';
 import * as thumbnail from '../src/shared/graph/thumbnail.mjs';
@@ -21,8 +22,14 @@ test('ui/public/graph/model.mjs re-exports the SHARED functions — same identit
   assert.equal(uiModel.canWire, template.canWire);
   assert.equal(uiModel.normalizeTemplate, template.normalizeTemplate);
   assert.equal(uiModel.newNode, template.newNode);
-  assert.equal(uiModel.bezierPath, geometry.bezierPath);
   assert.equal(uiModel.nodeSize, geometry.nodeSize);
+  // The router is the ONE wire-shape generator (view, ghost, thumbnail, hit test).
+  assert.equal(uiModel.routeWire, route.routeWire);
+  assert.equal(uiModel.routeAll, route.routeAll);
+  assert.equal(uiModel.separateRoutes, route.separateRoutes);
+  assert.equal(uiModel.routePathD, route.routePathD);
+  assert.equal(uiModel.routeMid, route.routeMid);
+  assert.equal(uiModel.hitRoute, route.hitRoute);
   assert.equal(uiModel.classifyLoops, loops.classifyLoops);
   assert.equal(uiModel.autoLayout, layout.autoLayout);
   assert.equal(uiModel.thumbnailSvg, thumbnail.thumbnailSvg);

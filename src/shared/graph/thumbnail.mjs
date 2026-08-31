@@ -3,8 +3,9 @@
 // deterministic, and the markup carries NUMBERS ONLY (no ids, no names, no
 // author text), so the result is safe to hand to innerHTML without escaping.
 // The whole scene is drawn in WORLD space inside one <g transform>, which is
-// what lets it reuse the real bezierPath instead of a second curve constant.
-import { bezierPath, graphBounds, fitBounds, nodeSize, portAnchor } from './geometry.mjs';
+// what lets it reuse the real router instead of a second wire geometry.
+import { graphBounds, fitBounds, nodeSize, portAnchor } from './geometry.mjs';
+import { routeAll, routePathD } from './route.mjs';
 import { portsOf, findPort } from './ports.mjs';
 
 const DEFAULTS = { width: 120, height: 64, pad: 8, radius: 3 };
@@ -21,26 +22,39 @@ export function thumbnailSvg(tpl, portsFn, opts = {}) {
     + `viewBox="0 0 ${width} ${height}" role="img" aria-hidden="true">`;
   if (!nodes.length) return `${open}</svg>`;
 
-  // Measured over the DRAWN set, never the raw one: a junk entry the loop below
-  // skips must not stretch the fit that positions the cards it does draw.
-  const bounds = graphBounds({ ...tpl, nodes }, portsFn, { pad });
-  const { z, tx, ty } = fitBounds(bounds, { width, height }, { zoomMin: 0, zoomMax: 1 });
-  const stroke = round(1 / (z || 1));
   const byId = new Map(nodes.map((n) => [n.id, n]));
-
-  // Wires first so the cards sit on top, exactly like the live canvas.
-  const paths = (Array.isArray(tpl?.wires) ? tpl.wires : []).map((w) => {
+  // The cards are the router's obstacles, so the tile shows the same shapes the
+  // live canvas does — one wire, one <path>, no arrow markers, no split legs.
+  const obstacles = nodes.map((n) => ({ x: Number(n.x) || 0, y: Number(n.y) || 0, ...nodeSize(n, portsOf(portsFn, n)) }));
+  const wireList = [];
+  for (const w of (Array.isArray(tpl?.wires) ? tpl.wires : [])) {
     const from = byId.get(w?.from?.node);
     const to = byId.get(w?.to?.node);
-    if (!from || !to) return '';                                   // dangling (V5) — never draw NaN
+    if (!from || !to) continue;                                    // dangling (V5) — never draw NaN
     const fromPorts = portsOf(portsFn, from);
     const toPorts = portsOf(portsFn, to);
-    if (!findPort(fromPorts, w.from.port, 'out') || !findPort(toPorts, w.to.port, 'in')) return '';
+    if (!findPort(fromPorts, w.from.port, 'out') || !findPort(toPorts, w.to.port, 'in')) continue;
     const a = portAnchor(from, fromPorts, w.from.port, 'out');
     const b = portAnchor(to, toPorts, w.to.port, 'in');
-    if (!a || !b) return '';
-    return `<path d="${bezierPath(a, b)}" fill="none" stroke="#B7B7BC" stroke-width="${stroke}"/>`;
-  }).filter(Boolean).join('');
+    if (a && b) wireList.push({ id: String(w.id), a, b });          // ids stay INTERNAL: route keys only
+  }
+  const { routes } = routeAll(wireList, obstacles);
+
+  // Measured over the DRAWN set, never the raw one: a junk entry the loop above
+  // skips must not stretch the fit that positions the cards it does draw. The
+  // routed vertices join the union so a detour is never clipped out of the tile.
+  const base = graphBounds({ ...tpl, nodes }, portsFn, { pad: 0 });
+  let x0 = base.x; let y0 = base.y; let x1 = base.x + base.w; let y1 = base.y + base.h;
+  for (const pts of routes.values()) {
+    for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+  }
+  const bounds = { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad };
+  const { z, tx, ty } = fitBounds(bounds, { width, height }, { zoomMin: 0, zoomMax: 1 });
+  const stroke = round(1 / (z || 1));
+
+  // Wires first so the cards sit on top, exactly like the live canvas.
+  const paths = [...routes.values()].map((pts) =>
+    `<path d="${routePathD(pts)}" fill="none" stroke="#B7B7BC" stroke-width="${stroke}" stroke-linejoin="round"/>`).join('');
 
   const rects = nodes.map((node) => {
     const size = nodeSize(node, portsOf(portsFn, node));

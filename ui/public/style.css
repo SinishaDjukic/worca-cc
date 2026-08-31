@@ -3278,7 +3278,7 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .gv-world{position:absolute;left:0;top:0;width:0;height:0;transform-origin:0 0;will-change:transform;}
 .gv-wires{position:absolute;left:0;top:0;overflow:visible;pointer-events:none;z-index:1;}
 /* THE rule that makes a filled ghost blob structurally impossible. */
-.gv-wires path{fill:none;stroke:var(--seq);stroke-width:2;stroke-linecap:round;}
+.gv-wires path{fill:none;stroke:var(--seq);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
 .gv-wires path.loop{stroke:var(--amber);}
 .gv-wires path.sel{stroke:var(--ink);stroke-width:2.5;}
 .gv-wires path.bad{stroke:var(--red);}

@@ -5,7 +5,8 @@
 // The four PR #359 defects are structurally excluded here:
 //  · listeners live on the STAGE with pointer capture, never on `document`
 //  · onMove stores a point and schedules ONE rAF — no DOM, no hit-test, no validate
-//  · a node drag repaints only view.incidentOf(id), through the view's d-cache
+//  · a node drag re-routes the dirty region only and writes `d` for the wires
+//    whose route actually moved, through the view's d-cache
 //  · pointercancel / lostpointercapture / window blur / Escape all cancel, and
 //    finish() releases capture
 // Depth 3 ⇒ the shared core is three `..` up.
@@ -13,8 +14,9 @@ import { createGraphView } from './view.mjs';
 import { renderPalette, applyFilter, FLOW_GROUP } from './palette.mjs';
 import { renderNodeInspector, renderWireInspector, renderEmptyInspector } from './inspector.mjs';
 import { renderSaveDialog, openDialog, closeDialog } from './save-dialog.mjs';
-import { PORT_HIT_R, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, NODE_W, snap, bezierPath, hitWire }
+import { PORT_HIT_R, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, NODE_W, snap }
   from '../../../src/shared/graph/geometry.mjs';
+import { hitRoute } from '../../../src/shared/graph/route.mjs';
 import { canWire, newNode, newWire, normalizeTemplate, serializeTemplate }
   from '../../../src/shared/graph/template.mjs';
 import { validateGraph } from '../../../src/shared/graph/validate.mjs';
@@ -124,22 +126,17 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     }
     return null;
   }
-  /** The SHARED hit test, over the same endpoints and the same `loop` flag the
-   *  painter used (view.paintWire draws `bezierPath(a, b, { loop })` with
-   *  `loop = ctx.loopWireIds.has(id)`; `mirror` is ghost-only and never set on a
-   *  committed wire). geometry.hitWire measures point-to-SEGMENT, so there is no
-   *  gap between samples — the private copy this replaces compared the click to
-   *  49 POINTS, which left up to 37.7% of a shipped wire's drawn line dead
-   *  (MAJ-18). Two bezier implementations to keep in sync is the other half. */
+  /** The hit test reads the EXACT painted polyline (view.wireRoute) and measures
+   *  point-to-SEGMENT per leg, so there is nothing to re-derive and no second
+   *  geometry to keep in sync: hit and paint cannot diverge. The private copy
+   *  this replaced compared the click to 49 SAMPLED POINTS, which left up to
+   *  37.7% of a shipped wire's drawn line dead (MAJ-18). The painted corners are
+   *  rounded by ≤2.35px relative to the sharp polyline — well inside the 6px
+   *  tolerance. */
   function hitWireAt(pt) {
     for (const w of tpl.wires) {
-      const from = nodeById(w.from.node);
-      const to = nodeById(w.to.node);
-      if (!from || !to) continue;
-      const a = view.anchor(from, w.from.port, 'out');
-      const b = view.anchor(to, w.to.port, 'in');
-      if (!a || !b) continue;                       // dangling endpoint is never a target
-      if (hitWire(a, b, pt, { loop: view.isLoopWire(w.id) })) return w;
+      const pts = view.wireRoute(w.id);
+      if (pts && hitRoute(pts, pt)) return w;       // dangling endpoint is never a target
     }
     return null;
   }
@@ -233,7 +230,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       const node = port ? null : hitNodeAt(pt);
       if (port) {
         g = { type: 'wire', origin: port, anchor: port.anchor, mirror: port.dir === 'in' };
-        view.setGhost(bezierPath(g.anchor, pt, { mirror: g.mirror }), '');
+        view.setGhost(view.routeGhost(g.anchor, pt, { mirror: g.mirror }), '');
       } else if (node) {
         g = { type: 'node', id: node.id, grab: { dx: pt.x - node.x, dy: pt.y - node.y }, start: { x: node.x, y: node.y }, moved: false };
         select({ kind: 'node', id: node.id });
@@ -278,13 +275,13 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       const ny = snap(pt.y - g.grab.dy);
       if (!n || (nx === n.x && ny === n.y)) return;
       n.x = nx; n.y = ny; g.moved = true;
-      view.moveNode(n.id);                                // incident wires ONLY
+      view.moveNode(n.id);                                // dirty-filtered re-route, d-cache gated
       return;
     }
     const target = hitPortAt(pt, g.origin);
     const v = legality(g.origin, target);
     const end = v && v.ok ? target.anchor : pt;           // snap to the legal anchor
-    view.setGhost(bezierPath(g.anchor, end, { mirror: g.mirror }), v ? (v.ok ? 'legal' : 'illegal') : '');
+    view.setGhost(view.routeGhost(g.anchor, end, { mirror: g.mirror }), v ? (v.ok ? 'legal' : 'illegal') : '');
     markDropRow(target, Boolean(v && v.ok));
     if (v && !v.ok) showChip(v.reason || v.code, pt); else hideChip();
   }
@@ -327,7 +324,10 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     if (!g) return;
     if (g.type === 'node' && g.moved) {
       const n = nodeById(g.id);
-      if (n) { n.x = g.start.x; n.y = g.start.y; view.moveNode(n.id); }
+      // rerouteAll is the D15 canonical pass: cancel never renders, so without it
+      // the drag's dirty-filtered routes could outlive the gesture. Paint only —
+      // no commit, no undo entry, no capture op.
+      if (n) { n.x = g.start.x; n.y = g.start.y; view.moveNode(n.id); view.rerouteAll(); }
     }
     finish(g);
   }

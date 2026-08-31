@@ -4,8 +4,30 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { boot, fixture, loopFixture, portsFn, AGENTS } from './helpers/graph-view-fixture.mjs';
+import { routeAll, routePathD } from '../src/shared/graph/route.mjs';
+import { nodeSize, portAnchor } from '../src/shared/graph/geometry.mjs';
+import { portsOf } from '../src/shared/graph/ports.mjs';
 
 const viewPath = new URL('../ui/public/graph/view.mjs', import.meta.url).href;
+
+/** The router's expectation for a template, built exactly the way the view
+ *  builds it (card rects incl. footer rows, port anchors, one routeAll pass). */
+function routesOf(tpl, footerRows = {}) {
+  const byId = new Map(tpl.nodes.map((n) => [n.id, n]));
+  const rects = tpl.nodes.map((n) => ({
+    x: n.x, y: n.y, ...nodeSize(n, portsOf(portsFn, n), { footerRows: footerRows[n.id] || 0 }),
+  }));
+  const list = [];
+  for (const w of tpl.wires) {
+    const from = byId.get(w.from.node); const to = byId.get(w.to.node);
+    if (!from || !to) continue;
+    const a = portAnchor(from, portsOf(portsFn, from), w.from.port, 'out');
+    const b = portAnchor(to, portsOf(portsFn, to), w.to.port, 'in');
+    if (a && b) list.push({ id: w.id, a, b });
+  }
+  return routeAll(list, rects).routes;
+}
+const routedD = (tpl, wireId, footerRows) => routePathD(routesOf(tpl, footerRows).get(wireId));
 
 test('createGraphView builds stage/world/wire-layer and one card per node', async () => {
   const { doc, host } = boot();
@@ -44,29 +66,37 @@ test('cards carry transform + explicit px height from nodeSize', async () => {
   assert.equal(review.querySelector('.pt').textContent, 'on blocking');
 });
 
-test('wires paint exact bezier d strings; ghost is the LAST child of the layer', async () => {
+test('wires paint the router\'s orthogonal d strings; ghost is the LAST child of the layer', async () => {
   const { doc, host } = boot();
   const { createGraphView } = await import(viewPath);
   const view = createGraphView(host, { doc, portsFn, agents: AGENTS });
-  view.render(fixture(), {});
-  // w1: n_task.task (280,199) -> n_agent.task (400,136); dx = clamp(48,160,0.45*120) = 54
-  assert.equal(view.wireEl('w1').getAttribute('d'), 'M 280 199 C 334 199, 346 136, 400 136');
-  // w2: n_agent.plan (620,193) -> n_end.result (760,199); dx = 0.45*140 = 63
-  assert.equal(view.wireEl('w2').getAttribute('d'), 'M 620 193 C 683 193, 697 199, 760 199');
+  const tpl = fixture();
+  view.render(tpl, {});
+  // w1: n_task.task (280,199) -> n_agent.task (400,136)
+  const w1 = routedD(tpl, 'w1');
+  assert.equal(view.wireEl('w1').getAttribute('d'), w1);
+  assert.match(w1, /^M 280 199 L /, 'leaves the output horizontally');
+  // w2: n_agent.plan (620,193) -> n_end.result (760,199)
+  const w2 = routedD(tpl, 'w2');
+  assert.equal(view.wireEl('w2').getAttribute('d'), w2);
+  assert.match(w2, /^M 620 193 L /);
   const layer = host.querySelector('svg.gv-wires');
   assert.equal(layer.lastElementChild.getAttribute('class'), 'wire ghost');
   assert.equal(layer.querySelectorAll('path[data-wire-id]').length, 2);
 });
 
-test('loop wires bow below and carry a ≤N badge at the cubic midpoint', async () => {
+test('loop wires route as ordinary backward wires and carry a ≤N badge', async () => {
   const { doc, host } = boot();
   const { createGraphView } = await import(viewPath);
   const view = createGraphView(host, { doc, portsFn, agents: AGENTS });
-  view.render(loopFixture(), {});
+  const tpl = loopFixture();
+  view.render(tpl, {});
   const d = view.wireEl('w4').getAttribute('d');
   assert.ok(view.wireEl('w4').getAttribute('class').includes('loop'), 'classified as a loop wire');
-  // a = n_rev.review (620,537), b = n_agent.fix (400,160); bow = 56 + 0.2*377 = 131.4
-  assert.equal(d, 'M 620 537 C 719 668.4, 301 291.4, 400 160');
+  // a = n_rev.review (620,537), b = n_agent.fix (400,160): `loop` is colour only
+  // now (D3) — the router treats w4 as a plain backward wire.
+  assert.equal(d, routedD(tpl, 'w4'));
+  assert.match(d, /^M 620 537 L /);
   const badge = host.querySelector('.wbadge[data-wire-id="w4"]');
   assert.equal(badge.textContent, '≤2');
 });
@@ -98,7 +128,7 @@ test('re-render does NOT rebuild rows whose port signature is unchanged', async 
   assert.notEqual(andRows2[0], andRows[0], 'signature change rebuilds the body');
 });
 
-test('moveNode repaints ONLY the incident wires; setGhost writes d once', async () => {
+test('moveNode writes ONLY the wires whose route changed; setGhost writes d once', async () => {
   const { doc, host } = boot();
   const { createGraphView } = await import(viewPath);
   const view = createGraphView(host, { doc, portsFn, agents: AGENTS });
@@ -106,9 +136,9 @@ test('moveNode repaints ONLY the incident wires; setGhost writes d once', async 
   view.render(tpl, {});
   const w2Before = view.wireEl('w2').getAttribute('d');
   const n0 = view.stats.wireDUpdates;
-  tpl.nodes[0].x = 71;                                   // n_task: incident = w1 only
+  tpl.nodes[0].x = 71;                                   // an 11px hop that blocks no other corridor
   view.moveNode('n_task');
-  assert.equal(view.stats.wireDUpdates - n0, 1, 'exactly one wire repainted');
+  assert.equal(view.stats.wireDUpdates - n0, 1, 'only the one wire whose route moved wrote d');
   assert.equal(view.wireEl('w2').getAttribute('d'), w2Before, 'w2 untouched');
   assert.equal(view.nodeEl('n_task').style.transform, 'translate(71px, 143px)');
   const g0 = view.stats.ghostUpdates;
@@ -118,6 +148,24 @@ test('moveNode repaints ONLY the incident wires; setGhost writes d once', async 
   assert.equal(view.ghostEl.getAttribute('class'), 'wire ghost on legal');
   view.setGhost(null);
   assert.equal(view.ghostEl.getAttribute('class'), 'wire ghost');
+});
+
+test('moveNode re-routes wires the moved card BLOCKS, even when it is wired to nothing', async () => {
+  const { doc, host } = boot();
+  const { createGraphView } = await import(viewPath);
+  const view = createGraphView(host, { doc, portsFn, agents: AGENTS });
+  const tpl = fixture();
+  const blk = { id: 'n_blk', kind: 'task', x: 330, y: 400, config: {} };   // parked clear of every corridor
+  tpl.nodes.push(blk);
+  view.render(tpl, {});
+  const before = view.wireEl('w1').getAttribute('d');
+  assert.equal(before, routedD(tpl, 'w1'));
+  blk.y = 154;                                          // astride w1's corridor; both anchors stay outside it
+  view.moveNode('n_blk');
+  const after = view.wireEl('w1').getAttribute('d');
+  assert.notEqual(after, before, 'a wire that merely PASSES the moved card re-routes (D7)');
+  assert.equal(after, routedD(tpl, 'w1'), 'and it re-routes to the canonical route');
+  assert.equal(view.incidentOf('n_blk').size, 0, 'the moved card is incident to no wire at all');
 });
 
 test('setNodeChrome paints --c, the gate pip and the header totals; nulls clear them', async () => {
@@ -189,8 +237,32 @@ test('setStatus / setWireLive / setFooter are classList + height only', async ()
   assert.equal(card.style.height, '191.5px');
   assert.equal(card.querySelector(':scope > .xfoot'), null, 'clearing removes the footer');
   assert.deepEqual([...card.querySelectorAll('.nbody > *')], rows, 'no row was rebuilt');
-  // anchors are top-relative: the footer never re-routes a wire (D8)
-  assert.equal(view.wireEl('w2').getAttribute('d'), 'M 620 193 C 683 193, 697 199, 760 199');
+});
+
+test('setFooter re-routes when the billed line count changes — growth AND removal (D16)', async () => {
+  const { doc, host } = boot();
+  const { createGraphView } = await import(viewPath);
+  const view = createGraphView(host, { doc, mode: 'monitor', portsFn, agents: AGENTS });
+  const tpl = fixture();
+  const blk = { id: 'n_blk', kind: 'task', x: 330, y: 0, config: {} };
+  tpl.nodes.push(blk);
+  view.render(tpl, {});
+  // Footers grow DOWNWARD (nodeSize bills them into h), so a card can only start
+  // blocking from ABOVE: park it so the un-footed card's inflated bottom (132)
+  // clears w1's entry channel at y = 136 by 4px.
+  blk.y = 120 - view.size(blk).h;
+  view.render(tpl, {});
+  const base = view.wireEl('w1').getAttribute('d');
+  assert.equal(base, routedD(tpl, 'w1'), 'the un-footed card forces no detour');
+  const bands = [{ kind: 'strip', leds: ['done'], summary: '1 run · $0.10', expanded: false }];
+  view.setFooter('n_blk', bands);                       // +FOOT_H: the box now reaches the channel
+  assert.notEqual(view.wireEl('w1').getAttribute('d'), base, 'a grown obstacle box re-routes w1');
+  assert.equal(view.wireEl('w1').getAttribute('d'), routedD(tpl, 'w1', { n_blk: 1 }));
+  const n0 = view.stats.wireDUpdates;
+  view.setFooter('n_blk', bands);                       // same line count: the guard never fires
+  assert.equal(view.stats.wireDUpdates, n0, 'an unchanged footer generation writes zero wire d');
+  view.setFooter('n_blk', []);                          // removal fires too (the empty-bands exit)
+  assert.equal(view.wireEl('w1').getAttribute('d'), base, 'removal restores the route byte-for-byte');
 });
 
 test('centerOn puts the node box centre at the viewport centre', async () => {

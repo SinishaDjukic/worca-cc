@@ -9,8 +9,16 @@ import { JSDOM } from 'jsdom';
 // process — every "# pass N" below would be wrong and the suite total would
 // double-count them.
 import { fixture, portsFn, AGENTS } from './helpers/graph-view-fixture.mjs';
+import { routeWire, routePathD, routeMid, hitRoute } from '../src/shared/graph/route.mjs';
 
 const composerPath = new URL('../ui/public/graph/composer.mjs', import.meta.url).href;
+
+/** The routed ghost the composer must paint: the same anchor, cursor and card
+ *  rects, through the shared router (looseEnd — the cursor is a free point). */
+function ghostD(c, anchor, pt, mirror) {
+  const rects = c.template().nodes.map((n) => ({ x: n.x, y: n.y, ...c.view.size(n) }));
+  return routePathD(routeWire(anchor, pt, rects, { mirror, looseEnd: true }));
+}
 const RECT = { left: 0, top: 0, width: 1280, height: 560 };
 
 const IDS = ['gv-canvas', 'gv-chip', 'gv-head', 'gv-name', 'gv-errors', 'gv-new', 'gv-autolayout',
@@ -107,8 +115,8 @@ test('a drag from an INPUT port mirrors the tangent, snaps to a legal anchor and
   move(s, 280, 160); s.flush();
   const d = s.c.view.ghostEl.getAttribute('d');
   const n = d.match(/-?\d+(?:\.\d+)?/g).map(Number);
-  assert.equal(d, 'M 400 160 C 346 160, 334 160, 280 160');
-  assert.ok(n[2] < n[0], 'first control x is LEFT of the anchor (mirrored)');
+  assert.equal(d, ghostD(s.c, { x: 400, y: 160 }, { x: 280, y: 160 }, true));
+  assert.ok(n[2] < n[0], 'the first emitted x is LEFT of the anchor (mirrored exit)');
   move(s, 280, 199); s.flush();                          // onto n_task.task (output)
   assert.equal(s.c.view.ghostEl.getAttribute('class'), 'wire ghost on legal');
   assert.match(s.c.view.ghostEl.getAttribute('d'), /280 199$/, 'ghost end snapped to the anchor');
@@ -795,9 +803,21 @@ test('MAJ-4 · C-3: the dialog renders the server 422/409 refusals verbatim', as
 // hitWireAt used to regex-scrape the painted `d` and test the click against 49
 // SAMPLE POINTS, so wherever the curve is longer than ~500 px the sample gap
 // exceeds the 6px tolerance and points exactly ON the drawn line are not hits
-// (up to 37.7% of the curve on the shipped wf_full). The shared hitWire measures
-// point-to-SEGMENT and has no gap. Both wires below are seed-sized.
-const { bezierPoint: BP } = await import(new URL('../src/shared/graph/geometry.mjs', import.meta.url).href);
+// (up to 37.7% of the curve on the shipped wf_full). The hit test now reads the
+// EXACT painted polyline (view.wireRoute) and measures point-to-SEGMENT per leg,
+// so there is no sampling and no second curve to keep in sync. Both wires below
+// are seed-sized.
+
+/** Every point on a routed polyline, walked at 1px steps. */
+function walk(pts) {
+  const out = [];
+  for (let i = 1; i < pts.length; i += 1) {
+    const a = pts[i - 1]; const b = pts[i];
+    const n = Math.max(1, Math.round(Math.abs(b.x - a.x) + Math.abs(b.y - a.y)));
+    for (let k = 0; k <= n; k += 1) out.push({ x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n });
+  }
+  return out;
+}
 
 /** fixture() stretched so task→agent spans ~780px, plus a 700px-span loop wire. */
 function longFixture() {
@@ -813,7 +833,7 @@ function longFixture() {
   return tpl;
 }
 
-/** The two endpoints and the loop flag the PAINTER used for `wireId`. */
+/** The two endpoints the PAINTER used for `wireId`. */
 function drawn(c, wireId) {
   const tpl = c.template();
   const w = tpl.wires.find((x) => x.id === wireId);
@@ -825,43 +845,40 @@ function drawn(c, wireId) {
   };
 }
 
-test('MAJ-18: every point ON the drawn curve of a long wire and of a loop wire is a hit', async () => {
+test('MAJ-18: every point ON the drawn route of a long wire and of a loop wire is a hit', async () => {
   const s = await open({ template: longFixture() });
-  // `expect` is the set of wires a first-match scan may legitimately return for
-  // points on this curve: itself, plus any wire that genuinely CROSSES it (w3
-  // crosses the review loop here exactly as it does on the shipped wf_full).
-  for (const [id, expect] of [['w1', ['w1']], ['w4', ['w3', 'w4']]]) {
+  for (const id of ['w1', 'w4']) {
     const { a, b, loop } = drawn(s.c, id);
     assert.ok(Math.abs(b.x - a.x) >= 700, `${id}: seed-sized span (${Math.abs(b.x - a.x).toFixed(0)}px)`);
+    const pts = s.c.view.wireRoute(id);
+    assert.ok(pts && pts.length >= 2, `${id} has a painted route`);
     let dead = 0;
-    const seen = new Set();
-    for (let i = 0; i <= 400; i += 1) {
-      const hit = s.c._internal.hitWireAt(BP(a, b, i / 400, { loop }));
-      if (!hit) dead += 1; else seen.add(hit.id);
+    for (const p of walk(pts)) {
+      const hit = s.c._internal.hitWireAt(p);
+      if (!hit) { dead += 1; continue; }
+      // A first-match scan may legitimately return another wire — but only one
+      // that genuinely runs through this point too (wires still cross).
+      if (hit.id !== id) {
+        assert.ok(hitRoute(s.c.view.wireRoute(hit.id), p), `${id}: ${hit.id} won a point it does not touch`);
+      }
     }
-    assert.equal(dead, 0, `${id}${loop ? ' (loop)' : ''}: 401 points ON the drawn line, none dead`);
-    assert.deepEqual([...seen].sort(), expect, `${id}: only itself or a crossing wire ever wins`);
+    assert.equal(dead, 0, `${id}${loop ? ' (loop)' : ''}: every point ON the drawn line is a hit, none dead`);
   }
   assert.equal(s.c.view.isLoopWire('w4'), true, 'w4 really is drawn as a loop');
 });
 
-test('MAJ-18: a click on a point the 49-sample comb used to miss selects the wire', async () => {
+test('MAJ-18: a click on the middle of the drawn route selects the wire', async () => {
   const s = await open({ template: longFixture() });
   s.c.view.setTransform({ x: 0, y: 0, z: 1 });
-  // t = 0.115 is the FIRST point on this 780px-span curve that the old
-  // point-to-sample test declared a miss (measured: 24.4% of 401 on-curve
-  // points were dead on this wire alone).
-  const { a, b, loop } = drawn(s.c, 'w1');
-  const p = BP(a, b, 0.115, { loop });
+  const p = routeMid(s.c.view.wireRoute('w1'));
   down(s, p.x, p.y);
   assert.deepEqual(s.c.selection(), { kind: 'wire', id: 'w1' });
   up(s, p.x, p.y);
 });
 
-test('MAJ-18: a point well off the curve still selects nothing', async () => {
+test('MAJ-18: a point well off the route still selects nothing', async () => {
   const s = await open({ template: longFixture() });
-  const { a, b, loop } = drawn(s.c, 'w1');
-  const p = BP(a, b, 0.5, { loop });
+  const p = routeMid(s.c.view.wireRoute('w1'));
   assert.equal(s.c._internal.hitWireAt({ x: p.x, y: p.y - 40 }), null, 'the tolerance did not grow');
   assert.ok(s.c._internal.hitWireAt({ x: p.x, y: p.y - 4 }), 'but 4px off is still within the 6px tolerance');
 });
