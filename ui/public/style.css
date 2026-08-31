@@ -1214,8 +1214,6 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    it to its text; amber keeps it distinct from skill (blue) / MCP (green) / type (violet). */
 .graphify-pill{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:2px 9px;border-radius:999px;white-space:nowrap;background:var(--amber-bg);color:var(--amber-ink);}
 
-@keyframes wireFlow{to{stroke-dashoffset:-18;}}
-
 @media (prefers-reduced-motion: reduce){
   .run-flow .node.is-active,.run-flow .node.is-paused{animation:none;box-shadow:0 0 0 3px color-mix(in srgb, var(--c) 16%, transparent),var(--shadow-soft);}
   .run-flow .node.is-paused{box-shadow:0 0 0 3px color-mix(in srgb, var(--amber) 18%, transparent),var(--shadow-soft);}
@@ -2525,7 +2523,7 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
    wire rule is `.run-flow .wires path.wire-live` and the fan rule is
    `.run-flow .node .fan .sq.on`. Each override below is one class deeper than the
    rule it beats, so it wins on specificity, not source order. */
-.rd-graph.settled .run-flow .wires path.wire-live{animation:none;}
+.rd-graph.settled .run-flow .wires path.wire-live{animation:none;stroke-dashoffset:0;}
 /* Belt-and-braces: `runStatusOf` already returns 'stopped'/'done' for every node
    once the run is halted, so a terminal graph carries no `.is-active` — these two
    are no-ops today and exist only so a future adapter change cannot resurrect the
@@ -3706,9 +3704,18 @@ input.gv-name:focus-visible{outline:none;}
 .run-flow.gv-host .gv-world .xrow:hover,.run-flow.gv-host .gv-world .xtoggle:hover{background:var(--field);}
 .run-flow.gv-host .gv-world .xresult a{color:var(--blue-ink);text-decoration:none;}
 .run-flow.gv-host .gv-world .xresult a:hover{text-decoration:underline;}
-/* ants on v2 wires (the v1 rule targets svg.wires; a dashoffset animation needs a dash) */
-.run-flow.gv-host .gv-wires path.wire-live{stroke-dasharray:6 6;stroke-width:2.4;animation:wireFlow .9s linear infinite;}
-.rd-graph.settled .run-flow.gv-host .gv-wires path.wire-live{animation:none;}
+/* ants on v2 wires (the v1 rule targets svg.wires; a dashoffset animation needs a dash).
+   The dash phase comes from ONE shared clock — a registered <length> animated on
+   :root — not from an animation on the path, so toggling `wire-live` (snapshot
+   repaints, graph remounts) never resets the phase and every live wire marches in
+   step. One iteration travels exactly one 6+6 dash period (-12px), so the loop
+   boundary is seamless; the old per-path keyframe travelled -18px — 1.5 periods —
+   and the phase visibly snapped every iteration. -12px per .6s keeps 20px/s. */
+@property --wire-dash{syntax:'<length>';inherits:true;initial-value:0px;}
+@keyframes wireDash{to{--wire-dash:-12px;}}
+:root{animation:wireDash .6s linear infinite;}
+.run-flow.gv-host .gv-wires path.wire-live{stroke-dasharray:6 6;stroke-width:2.4;stroke-dashoffset:var(--wire-dash);}
+.rd-graph.settled .run-flow.gv-host .gv-wires path.wire-live{animation:none;stroke-dashoffset:0;}
 /* the composer's ≤N budget pill is REPLACED by the N× delivery count in run mode (§8) */
 .run-flow.gv-host .wbadge{font-size:0;line-height:0;padding:0;border:0;background:none;}
 .run-flow.gv-host .wbadge:not(:has(> .wfired)){display:none;}
@@ -3725,6 +3732,9 @@ input.gv-name:focus-visible{outline:none;}
 @media (prefers-reduced-motion:reduce){
   .run-flow.gv-host .gv-wires path.wire-live,.run-flow.gv-host .gv-world .ngate,
   .run-flow.gv-host .gv-world .xfoot .xq.is-active,.run-flow.gv-host .gv-world .xfoot .xrow.is-active .led{animation:none;}
+  /* the ants own no animation — stop the shared clock and pin the phase instead */
+  :root{animation:none;}
+  .run-flow.gv-host .gv-wires path.wire-live{stroke-dashoffset:0;}
 }
 
 /* Legacy (v1) run strip — frozen runs only; no wires, no executions footer. */

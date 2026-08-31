@@ -320,14 +320,21 @@ try {
     && Math.abs(g2.stage.l - g2.pad.l) < 0.6 && Math.abs(g2.stage.w - g2.pad.w) < 0.6
     && g2.hostPos === 'absolute' && g2.hostPad === '0px' && g2.hostDisplay === 'block', g2);
 
-  // (4a) ants: the in-flight execution's trigger wire marches
-  const ants = await ev(`(()=>{const p=document.querySelector('${RD} .gv-wires path.wire-live');
+  // (4a) ants: the in-flight execution's trigger wire marches. The dash phase comes
+  // from the shared :root clock (--wire-dash / wireDash), NOT a per-path animation —
+  // the path's own animationName is 'none' while its offset still moves between samples.
+  const antsAt = () => ev(`(()=>{const p=document.querySelector('${RD} .gv-wires path.wire-live');
     if(!p)return {none:true};const cs=getComputedStyle(p);
-    return {wireId:p.dataset.wireId,animationName:cs.animationName,animationDuration:cs.animationDuration,
-      strokeDasharray:cs.strokeDasharray,
+    return {wireId:p.dataset.wireId,animationName:cs.animationName,
+      strokeDasharray:cs.strokeDasharray,strokeDashoffset:cs.strokeDashoffset,
+      clock:getComputedStyle(document.documentElement).animationName,
       settled:document.querySelector('#run-detail .rd-graph').classList.contains('settled')};})()`);
-  check('4a', 'a live run marches its trigger wire: animationName === "wireFlow"',
-    ants.animationName === 'wireFlow' && ants.settled === false, ants);
+  const ants = await antsAt();
+  await sleep(250);
+  const ants2 = await antsAt();
+  check('4a', 'a live run marches its trigger wire off the shared :root clock (path animationName "none", phase moving)',
+    !ants.none && !ants2.none && ants.animationName === 'none' && ants.clock === 'wireDash'
+    && ants.strokeDashoffset !== ants2.strokeDashoffset && ants.settled === false, { ants, ants2 });
 
   // (6) the engaged wheel (D8). FIRST on this screen, while nothing has scrolled
   // or clicked: `createNav` zooms about `view`'s ONE cached rect, which is
@@ -428,10 +435,11 @@ try {
     p.classList.add('wire-live');
     const cs=getComputedStyle(p);
     const out={settled:g.classList.contains('settled'),liveBefore,animationName:cs.animationName,
-      strokeDasharray:cs.strokeDasharray};
+      strokeDasharray:cs.strokeDasharray,strokeDashoffset:cs.strokeDashoffset};
     p.classList.remove('wire-live');return out;})()`);
-  check('4b', 'under .rd-graph.settled a live wire animates nothing (animationName === "none")',
-    settledAnts.settled === true && settledAnts.liveBefore === 0 && settledAnts.animationName === 'none', settledAnts);
+  check('4b', 'under .rd-graph.settled a live wire is pinned still (animationName "none", offset 0px)',
+    settledAnts.settled === true && settledAnts.liveBefore === 0 && settledAnts.animationName === 'none'
+    && settledAnts.strokeDashoffset === '0px', settledAnts);
 
   // ---- the History detail --------------------------------------------------
   const hist = await api('/api/history');

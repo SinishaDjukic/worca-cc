@@ -121,11 +121,11 @@ test('setWireBadge writes an amber cycle badge and clears it', () => {
 test('the run-monitor CSS block styles the hosts and states it ACTUALLY writes, at the end of the file, and re-declares no shared keyframe', () => {
   for (const sel of ['.run-flow.gv-host{', '.run-flow-wrap.gv-wrap-monitor{', '.rc-detailed .run-flow-wrap.gv-wrap-static{height:300px',
     '.run-flow.gv-host .gv-world .node.is-error', '.run-flow.gv-host .gv-world .node.is-skipped',
-    '.run-flow.gv-host .gv-wires path.wire-live', '.rd-graph.settled .run-flow.gv-host .gv-wires path.wire-live{animation:none;}',
+    '.run-flow.gv-host .gv-wires path.wire-live', '.rd-graph.settled .run-flow.gv-host .gv-wires path.wire-live{animation:none;stroke-dashoffset:0;}',
     '.run-flow.gv-host .wbadge:not(:has(> .wfired))', '.run-flow.gv-host .gv-world .xfoot>.fan{', '--run-host-h', '.run-warn{', '.rg-hint{']) {
     assert.ok(css.includes(sel), `${sel} must be written`);
   }
-  for (const kf of ['@keyframes wireFlow', '@keyframes sqPulse', '@keyframes nodeGlow{', '@keyframes xqPulse']) {
+  for (const kf of ['@keyframes wireDash', '@keyframes sqPulse', '@keyframes nodeGlow{', '@keyframes xqPulse']) {
     assert.equal(css.split(kf).length - 1, 1, `${kf} must be declared exactly once`);
   }
   assert.equal(css.includes('--gv-host'), false, 'the --gv-* namespace belongs to injectGeometry (test/ui-graph-css.test.mjs)');
@@ -137,8 +137,8 @@ test('the run-monitor CSS block styles the hosts and states it ACTUALLY writes, 
   // twin and the reduced-motion arm for the ants; the two `::after` pip rules for
   // is-error; `> .rg-hint{opacity:...}` for the hint chip), so a bare substring pin
   // survives DELETING the rule it is meant to protect. Pin those three by BODY.
-  assert.match(css, /\.run-flow\.gv-host \.gv-wires path\.wire-live\{[^}]*stroke-dasharray[^}]*animation:\s*wireFlow[^}]*\}/,
-    'the ants rule itself must dash the wire and run wireFlow (the settled/reduced-motion arms are not it)');
+  assert.match(css, /\.run-flow\.gv-host \.gv-wires path\.wire-live\{[^}]*stroke-dasharray[^}]*stroke-dashoffset:var\(--wire-dash\)[^}]*\}/,
+    'the ants rule itself must dash the wire and read the shared clock (the settled/reduced-motion arms are not it)');
   assert.match(css, /\.run-flow\.gv-host \.gv-world \.node\.is-error\{[^}]*border-color[^}]*\}/,
     'the is-error card must get its own border colour (the ::after pip rules are not it)');
   assert.match(css, /(^|\n)\.rg-hint\{[^}]*position:absolute[^}]*opacity:0[^}]*\}/,
@@ -150,6 +150,36 @@ test('the run-monitor CSS block styles the hosts and states it ACTUALLY writes, 
   assert.ok(css.indexOf('.run-flow.gv-host{') > css.indexOf('/* v2 composer shell'), 'the P6 block follows the composer block');
   // Spelled WITHOUT the space, so the ask-dock arm stays the LAST with-space block (test/ui-ask-style.test.mjs).
   assert.ok(css.lastIndexOf('@media (prefers-reduced-motion:reduce)') > css.lastIndexOf('@media (prefers-reduced-motion: reduce)'));
+});
+
+test('the ants march on ONE shared :root clock — a seamless 12px loop no wire-live toggle can reset', () => {
+  // The clock: a registered <length> animated on :root. One iteration travels exactly
+  // one 6+6 dash period (12px), so the loop boundary is invisible; the retired
+  // wireFlow travelled -18px per iteration — 1.5 periods — and snapped every 0.9s.
+  // jsdom evaluates neither @property nor animations, so pin the stylesheet TEXT.
+  assert.equal(css.split("@property --wire-dash{syntax:'<length>';inherits:true;initial-value:0px;}").length - 1, 1,
+    'the clock property is registered exactly once');
+  assert.equal(css.split('@keyframes wireDash{to{--wire-dash:-12px;}}').length - 1, 1,
+    'one iteration travels exactly one dash period');
+  assert.equal(css.split(':root{animation:wireDash .6s linear infinite;}').length - 1, 1,
+    '-12px per .6s keeps wireFlow\'s 20px/s');
+  assert.equal(css.includes('wireFlow'), false, 'the snapping keyframe is fully retired');
+  // The path only READS the clock — it owns no animation, so wire-live toggles
+  // (state repaints, remounts) never reset the phase and all live wires march in step.
+  const ants = (css.match(/\.run-flow\.gv-host \.gv-wires path\.wire-live\{[^}]*\}/) || [''])[0];
+  assert.ok(ants.includes('stroke-dashoffset:var(--wire-dash)'), 'the ants rule reads the shared clock');
+  assert.ok(!ants.includes('animation'), 'the path owns NO animation of its own');
+  // The kill-switches pin the offset (the path has no animation left to stop): both
+  // settled shapes (see "A finished run stops moving") and reduced motion, which
+  // also stops the :root clock itself.
+  assert.ok(css.includes('.rd-graph.settled .run-flow .wires path.wire-live{animation:none;stroke-dashoffset:0;}'),
+    'the v1-shaped settled arm pins the phase too');
+  assert.ok(css.includes('.rd-graph.settled .run-flow.gv-host .gv-wires path.wire-live{animation:none;stroke-dashoffset:0;}'),
+    'the v2 settled arm pins the phase too');
+  const reduced = css.slice(css.lastIndexOf('@media (prefers-reduced-motion:reduce)'));
+  assert.ok(reduced.includes(':root{animation:none;}'), 'reduced motion stops the clock');
+  assert.ok(reduced.includes('.run-flow.gv-host .gv-wires path.wire-live{stroke-dashoffset:0;}'),
+    'reduced motion pins the phase on the path');
 });
 
 // ── applyDecor: the ONE DOM pass ─────────────────────────────────────────────
