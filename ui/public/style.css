@@ -1206,8 +1206,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* Sub-agent run model (neutral outline) — the model a spawned child actually ran on.
    Deliberately the QUIETEST pill on the row: it is present on every sub-agent once a
    run records one, so a filled colour would out-shout the type + graphify badges that
-   only some rows carry. Sits right after the violet type pill. */
-.rd-ag-name .sub-model-pill,.hd-ag-row .sub-model-pill{display:inline-block;font-size:10.5px;font-weight:600;letter-spacing:.01em;padding:1px 8px;border-radius:999px;white-space:nowrap;background:transparent;color:var(--ink-3);border:1px solid var(--line-2);}
+   only some rows carry. Sits right after the violet type pill. The head scopes carry
+   the SAME pill for the main agent's configured model · effort (stepModelPillHtml). */
+.rd-ag-name .sub-model-pill,.hd-ag-row .sub-model-pill,.rd-ag-head .sub-model-pill,.hd-ag-head .sub-model-pill{display:inline-block;font-size:10.5px;font-weight:600;letter-spacing:.01em;padding:1px 8px;border-radius:999px;white-space:nowrap;background:transparent;color:var(--ink-3);border:1px solid var(--line-2);}
 /* graphify-use count badge (amber) — how many times an agent / sub-agent invoked the
    graphify CLI. Rendered INLINE: in the phase/node header next to the status, and on a
    sub-agent row right after the violet type pill. inline-block + parent flex `gap` size
@@ -2763,11 +2764,11 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
 .spend-ring.over{--ring-fill:var(--red-ink);--ring-track:var(--red-bg);}
 /* No total limit means no denominator: a flat neutral ring, and the centre shows
    the amount instead of a percentage nothing backs. var(--ink-3), not
-   var(--line) — var(--line) on var(--panel) is ~1.1:1 across a 5px annulus, i.e.
+   var(--line) — var(--line) on var(--panel) is ~1.1:1 across a 4.5px annulus, i.e.
    an absent ring, which is not the same thing as a neutral one. */
 .spend-ring.no-limit{--ring-fill:var(--ink-3);--ring-track:var(--ink-3);}
 .spend-ring-val{display:flex;align-items:center;justify-content:center;
-  width:28px;height:28px;border-radius:50%;background:var(--panel);
+  width:29px;height:29px;border-radius:50%;background:var(--panel);
   font-family:var(--mono);font-size:9.5px;color:var(--ink-2);}
 
 /* ---------- Ask Worca (spec §10.3-§10.6; tokens only, no hex) ---------- */

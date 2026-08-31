@@ -270,7 +270,7 @@ test('compact amounts stay within four glyphs', () => {
   // 999.5 rounds to 1000 — five glyphs unless the branch tests the ROUNDED value.
   assert.equal(val(999.5), '$1k');
   assert.equal(val(3168.85), '$3k');
-  // Thousands are WHOLE: "$8.8k" is too wide for the 28px disc.
+  // Thousands are WHOLE: "$8.8k" is too wide for the 29px disc.
   assert.equal(val(8800), '$9k');
   assert.equal(val(9949), '$10k');
   assert.equal(val(12400), '$12k');

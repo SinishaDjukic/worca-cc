@@ -2290,6 +2290,8 @@ if (typeof window !== 'undefined') {
     skillPillsHtml,
     agentTypePillHtml,
     graphifyCountPillHtml,
+    stepModelByNode,
+    stepModelPillHtml,
     onStepSkills,
     onStepGraphify,
     stepSkillsFromSteps,
@@ -13038,6 +13040,7 @@ function buildHdAgents(sec, record, data) {
   const skillsByGroup = stepSkillsFromSteps(st.steps);
   const graphifyByGroup = stepGraphifyFromSteps(st.steps);
   const statusOf = stepStatusByKey(st.steps, st.stepper);
+  const modelByNode = stepModelByNode(st.stepper);
 
   for (const key of keys) {
     const list = Array.isArray(groups[key]) ? groups[key] : [];
@@ -13053,11 +13056,13 @@ function buildHdAgents(sec, record, data) {
       durSum ? fmtDuration(durSum) : '',
       costSum ? fmtUsd4(costSum) : '',
     ].filter(Boolean).join(' · ');
+    const sep = String(key).indexOf(CYCLE_KEY_SEP);
     const head = document.createElement('div');
     head.className = 'hd-ag-head';
     head.innerHTML =
       `<b>${escapeHtml(labelOf(key))}</b>` +
       `<span class="subs-stat ${gstat}">${SUBS_STAT_TEXT[gstat] || gstat}</span>` +
+      stepModelPillHtml(modelByNode[sep >= 0 ? String(key).slice(0, sep) : String(key)]) +
       graphifyCountPillHtml(graphifyByGroup[key]) +
       `<span class="hd-ag-meta mono">${escapeHtml(metaBits)}</span>` +
       skillPillsHtml(skillsByGroup[key]);
@@ -13600,6 +13605,7 @@ function rdAgentsBody(sec, r) {
   const skillsByGroup = stepSkillsFromSteps(r.steps);
   const graphifyByGroup = stepGraphifyFromSteps(r.steps);
   const statusOf = stepStatusByKey(r.steps, r.stepper);
+  const modelByNode = stepModelByNode(r.stepper);
 
   for (const key of keys) {
     const list = Array.isArray(groups[key]) ? groups[key] : [];
@@ -13611,7 +13617,8 @@ function rdAgentsBody(sec, r) {
     const gstat = list.length ? subGroupStatus(list) : (statusOf[key] || 'run');
     const durSum = list.reduce((n, s) => n + (hdSubDuration(s) || 0), 0);
     const costSum = list.reduce((n, s) => n + (Number(s && s.costUsd) || 0), 0);
-    const cycle = Number(String(key).slice(String(key).indexOf(CYCLE_KEY_SEP) + 1)) || 0;
+    const sep = String(key).indexOf(CYCLE_KEY_SEP);
+    const cycle = Number(String(key).slice(sep + 1)) || 0;
     const metaBits = [
       `cycle ${cycle}`,
       durSum ? fmtDuration(durSum) : '',
@@ -13626,6 +13633,7 @@ function rdAgentsBody(sec, r) {
     head.innerHTML =
       `<b>${escapeHtml(labelOf(key))}</b>` +
       `<span class="subs-stat ${gstat}">${SUBS_STAT_TEXT[gstat] || gstat}</span>` +
+      stepModelPillHtml(modelByNode[sep >= 0 ? String(key).slice(0, sep) : String(key)]) +
       graphifyCountPillHtml(graphifyByGroup[key]) +
       `<span class="rd-ag-meta mono">${escapeHtml(metaBits)}</span>` +
       skillPillsHtml(skillsByGroup[key]);
@@ -14474,6 +14482,32 @@ function subModelPillHtml(model) {
   const m = model == null ? '' : String(model).trim();
   if (!m) return '';
   return `<span class="sub-model-pill">${escapeHtml(m)}</span>`;
+}
+
+// {nodeId: {model, effort}} a MAIN agent was configured to run with, from the
+// run's stepper manifest — manifest.mjs folds the run-config overlay in at build
+// time, so a node's model/effort there IS its effective selection. '' = inherit
+// the CLI/global default, which the client cannot resolve: no entry, no pill,
+// never a guess. v2 graph manifests only (frozen v1 snapshots recorded none).
+function stepModelByNode(stepper) {
+  const out = {};
+  if (!isGraphManifest(stepper)) return out;
+  for (const n of stepper.graph.nodes) {
+    if (!n || n.kind !== 'agent' || !n.id || typeof n.model !== 'string' || !n.model) continue;
+    out[n.id] = { model: n.model, effort: typeof n.effort === 'string' ? n.effort : '' };
+  }
+  return out;
+}
+
+// The Agents-tab group header's model pill: the catalog label when the id is
+// known (state.models loads at boot; an unknown/custom id prints raw), plus
+// "· effort" only when one was set. Same quiet outline as the sub-agent rows'
+// run-model pill — it is configuration, not status.
+function stepModelPillHtml(sel) {
+  if (!sel || !sel.model) return '';
+  const m = modelById(sel.model);
+  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '');
+  return `<span class="sub-model-pill">${escapeHtml(text)}</span>`;
 }
 
 // Neutral count badge for how many times an agent / sub-agent invoked the graphify

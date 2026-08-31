@@ -858,6 +858,6 @@ test('every remaining new rule carries the declarations it exists for', () => {
   mark('.nav .rail-tile:focus-visible', /outline:\s*2px solid var\(--ink\)/);
   // The ring's inner disc: without the --panel fill the conic-gradient covers
   // the whole 38px circle and there is no annulus.
-  mark('.spend-ring-val', /width:\s*28px/, /border-radius:\s*50%/,
+  mark('.spend-ring-val', /width:\s*29px/, /border-radius:\s*50%/,
     /background:\s*var\(--panel\)/);
 });

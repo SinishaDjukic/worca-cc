@@ -987,7 +987,7 @@ const V2_MANIFEST = {
   template: { id: 'wf', name: 'WF' },
   graph: {
     nodes: [
-      { id: 'n_impl', kind: 'agent', key: 'implementer', label: 'Implementer', color: 'blue', x: 0, y: 0, ports: { inputs: [], outputs: [], await: true } },
+      { id: 'n_impl', kind: 'agent', key: 'implementer', label: 'Implementer', color: 'blue', x: 0, y: 0, model: 'claude-fable-5', effort: 'max', ports: { inputs: [], outputs: [], await: true } },
       { id: 'n_or', kind: 'or', key: null, label: 'OR', x: 0, y: 0, ports: { inputs: [], outputs: [], await: false } },
     ],
     wires: [],
@@ -1022,4 +1022,10 @@ test('Agents: a v2 run names its groups from the ledger (rdAgentsBody passes r.s
   const groups = [...sec.querySelectorAll('.rd-ag-group')];
   assert.equal(groups[1].querySelectorAll('.rd-ag-row').length, 1);
   assert.equal(groups[1].querySelector('.rd-ag-label').textContent, 'Slice worker');
+  // The manifest node's model/effort selection reaches every group head as a
+  // pill. state.models is unseeded here, so the RAW id prints (the fallback arm
+  // of stepModelPillHtml; the label arm is covered by ui-history-detail).
+  for (const g of groups) {
+    assert.equal(g.querySelector('.rd-ag-head .sub-model-pill').textContent, 'claude-fable-5 · max');
+  }
 });
