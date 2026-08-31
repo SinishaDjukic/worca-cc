@@ -408,7 +408,13 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
         return;
       }
       for (const [k, v] of Object.entries(envRaw)) {
-        if (isReservedModelEnvKey(k)) { errors.push(`${at} ("${id}"): env key ${JSON.stringify(k)} is reserved and cannot be set on a model`); continue; }
+        // Reserved keys degrade, never reject: a published manifest is a
+        // third-party artifact its user cannot edit, and the spawn-time filter
+        // (model-env.mjs prepareModelEnv) drops these defensively anyway — so a
+        // host that grows the reserved list (e.g. CLAUDE_CODE_SUBAGENT_MODEL)
+        // must not retroactively brick installed/marketplace plugins. The
+        // user's own catalog (settings.mjs) still hard-rejects: that author CAN fix it.
+        if (isReservedModelEnvKey(k)) { warnings.push(`${at} ("${id}"): env key ${JSON.stringify(k)} is reserved — ignored`); continue; }
         if (isSecretRef(v)) {
           if (!secretKeys.has(v.secret)) { errors.push(`${at} ("${id}"): env ${k} references undeclared modelSecrets key ${JSON.stringify(v.secret)}`); continue; }
           env[k] = { secret: v.secret };

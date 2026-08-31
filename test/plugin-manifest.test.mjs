@@ -456,14 +456,28 @@ test('models: normalization — defaults, canonical effort order, secret refs ke
   assert.equal(bare.env, undefined, 'no env key when empty');
 });
 
-test('models: rejections — reserved env key, dup id, unknown effort, dangling secret, bad value', () => {
+test('models: reserved env keys are dropped with a warning, not a rejection (back-compat)', () => {
+  const r = normalizeManifest({
+    name: 'p', modelSecrets: SECRETS,
+    models: [MODEL({ env: { ...MODEL().env, CLAUDE_CODE_SUBAGENT_MODEL: 'discretestack-stable', WORCA_MOCK: '1' } })],
+  });
+  assert.equal(r.ok, true, r.ok ? '' : r.errors.join('\n'));
+  const [m] = r.manifest.models;
+  assert.equal(m.env.CLAUDE_CODE_SUBAGENT_MODEL, undefined, 'reserved key stripped');
+  assert.equal(m.env.WORCA_MOCK, undefined, 'reserved-prefix key stripped');
+  assert.equal(m.env.ANTHROPIC_BASE_URL, 'https://api.ds.example', 'legal keys kept');
+  assert.deepEqual(m.env.ANTHROPIC_AUTH_TOKEN, { secret: 'ds-token' }, 'secret refs kept');
+  const w = r.warnings.join('\n');
+  assert.match(w, /models\[0\] \("discretestack-stable"\): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored/);
+  assert.match(w, /env key "WORCA_MOCK" is reserved — ignored/);
+});
+
+test('models: rejections — dup id, unknown effort, dangling secret, bad value', () => {
   const fail = (models, modelSecrets, re) => {
     const r = normalizeManifest({ name: 'p', models, ...(modelSecrets ? { modelSecrets } : {}) });
     assert.equal(r.ok, false);
     assert.match(r.errors.join('\n'), re);
   };
-  fail([MODEL({ env: { WORCA_MOCK: '1' } })], SECRETS, /env key "WORCA_MOCK" is reserved/);
-  fail([MODEL({ env: { PATH: '/evil' } })], SECRETS, /env key "PATH" is reserved/);
   fail([MODEL({}), MODEL({ label: 'Twin', id: 'Discretestack-Stable' })], SECRETS, /duplicate models id/);
   fail([MODEL({ efforts: ['low'] })], SECRETS, /unknown effort "low"/);
   fail([MODEL()], undefined, /undeclared modelSecrets key "ds-token"/);

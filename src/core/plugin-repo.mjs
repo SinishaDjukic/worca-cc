@@ -160,6 +160,9 @@ export async function addPluginRepo(repoUrl, { exec = defaultExec } = {}) {
     }
     const res = normalizeManifest(raw, { dir: subdir || '.' });
     if (!res.ok) { warnings.push(...res.errors); continue; }
+    // Degraded-but-usable manifests (e.g. a reserved model-env key stripped)
+    // stay discoverable; the notice still reaches the marketplace panel.
+    warnings.push(...res.warnings);
     if (seenNames.has(res.manifest.name)) {
       warnings.push(`${p}: duplicate plugin name "${res.manifest.name}" — first entry wins, skipped`);
       continue;

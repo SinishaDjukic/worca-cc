@@ -56,9 +56,9 @@ export function modelEnvRef(value) {
  * `sourceEnv` (an unset or empty var drops the key). Values are trimmed and a
  * value that is empty after trimming drops the key — an ANTHROPIC_MODEL wire id
  * (#374) reaches `--model` verbatim, so a stray-whitespace or empty value must
- * not survive. Write-time validation already rejects reserved keys, so a drop
- * here means a hand-edited settings file — the caller owns warning about
- * `dropped`.
+ * not survive. The user catalog rejects reserved keys at write time and plugin
+ * manifests strip them at normalize time, so a drop here means a hand-edited
+ * settings file — the caller owns warning about `dropped`.
  * @param {Record<string,*>|undefined} modelEnv
  * @param {Record<string,string|undefined>} [sourceEnv]
  * @returns {{env: Record<string,string>, dropped: string[]}}
