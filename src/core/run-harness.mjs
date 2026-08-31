@@ -3134,6 +3134,17 @@ export class RunHarness extends EventEmitter {
         // A bare alias ('haiku') with no catalog entry is not one, so it keeps
         // the parent's rather than silently reverting to the CLI's figure.
         model: subAgentCostModel(c.input?.model, attr.model),
+        // PERSISTED (sub_agents.run_model): the model this child actually ran on —
+        // the alias its Task call named (the sub-agent model directive asks for an
+        // explicit one on every call), else the parent node's model, which is what
+        // a child with no `model` inherits. KNOWN GAP: an agent definition's own
+        // `model:` frontmatter outranks an omitted param and is invisible in the
+        // stream, so such a child records the parent's model. Deliberately NOT
+        // `model` above: that one is the PRICING model, which can differ for an
+        // explicit alias carrying its own catalog cost entry.
+        runModel: (typeof c.input?.model === 'string' && c.input.model.trim())
+          ? c.input.model.trim()
+          : (attr.model ?? null),
       };
       this.state.subAgents.push(rec);
       this._upsertSubAgent(rec);
@@ -3260,6 +3271,9 @@ export class RunHarness extends EventEmitter {
       ...(Array.isArray(rec.skills) ? { skills: rec.skills } : {}),
       ...(rec.subagentType != null ? { subagentType: rec.subagentType } : {}),
       ...(rec.graphifyCount != null ? { graphifyCount: rec.graphifyCount } : {}),
+      // The model pill's live feed: without this the Running view paints no pill
+      // until the next full state snapshot replaces r.subAgents.
+      ...(rec.runModel != null ? { runModel: rec.runModel } : {}),
       ts: new Date().toISOString(),
     });
   }

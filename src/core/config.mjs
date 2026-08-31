@@ -15,7 +15,7 @@
 import { getDb, prepare, tx } from './db.mjs';
 import { projectKey } from './store.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
-import { EFFORTS, prepareModelEnv } from './model-env.mjs';
+import { EFFORTS, prepareModelEnv, isSubagentModelValue, subagentModelIssue } from './model-env.mjs';
 import { listGlobalModels, addGlobalModel, removeGlobalModel } from './settings.mjs';
 import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plugin-models.mjs';
 
@@ -86,24 +86,17 @@ function defaultConfig() {
   return { steps: {}, customModels: [] };
 }
 
-/** Keep only known step keys carrying a non-empty model/effort and/or a fanOut/askQuestions boolean. */
+/** Keep only known step keys whose entry survives cleanNodeSel — ONE coercion
+ *  rule for both scopes (a per-step entry IS a node selection; a second
+ *  line-for-line copy here is how the two silently diverge). An unknown
+ *  subagentModel is dropped, never stored. */
 function sanitizeSteps(steps) {
   const out = {};
   const keys = stepKeys();
   for (const [k, v] of Object.entries(steps || {})) {
     if (!keys.has(k) || !v || typeof v !== 'object') continue;
-    const model = typeof v.model === 'string' ? v.model.trim() : '';
-    const effort = typeof v.effort === 'string' ? v.effort.trim() : '';
-    const fanOut = typeof v.fanOut === 'boolean' ? v.fanOut : undefined;
-    const askQuestions = typeof v.askQuestions === 'boolean' ? v.askQuestions : undefined;
-    if (model || effort || fanOut !== undefined || askQuestions !== undefined) {
-      out[k] = {
-        ...(model && { model }),
-        ...(effort && { effort }),
-        ...(fanOut !== undefined && { fanOut }),
-        ...(askQuestions !== undefined && { askQuestions }),
-      };
-    }
+    const sel = cleanNodeSel(v);   // hoisted declaration (defined below)
+    if (sel) out[k] = sel;
   }
   return out;
 }
@@ -521,6 +514,27 @@ function inheritOr(next, prev) {
 }
 
 /**
+ * Tri-state resolution for the STRING tunable (subagentModel), shared by setStep
+ * and setNodeModel. It is preserve-on-absent rather than replace-like model/effort
+ * on purpose: the field arrived after the write APIs shipped, so an older client
+ * (or any caller that only means to change the model) POSTs without it and must
+ * not silently wipe a configured sub-agent policy.
+ *   a valid value -> that value
+ *   '' or null    -> undefined = cleared (an explicit "inherit again")
+ *   absent        -> the previous value
+ * An unknown non-empty string is treated as absent: the enum is validated at the
+ * API boundary, and a typo must not clear a working setting.
+ * @param {unknown} next
+ * @param {unknown} prev
+ * @returns {string|undefined}
+ */
+function inheritOrSubagentModel(next, prev) {
+  if (isSubagentModelValue(next)) return next;
+  if (next === null || next === '') return undefined;
+  return isSubagentModelValue(prev) ? prev : undefined;
+}
+
+/**
  * Set (or clear) the model + effort for one agent step. An empty model => inherit
  * the global/CLI default; an empty effort => model default. Effort must be supported
  * by the chosen model. fanOut is preserved when the caller omits it (only the toggle
@@ -543,6 +557,11 @@ export async function setStep(projectDir, step, selection = {}) {
     }
   }
 
+  {
+    const issue = subagentModelIssue(selection.subagentModel);
+    if (issue) throw new Error(issue);
+  }
+
   const key = projectKey(projectDir);
   const cfg = readRaw(projectDir);
   const prev = cfg.steps[step] || {};
@@ -554,12 +573,16 @@ export async function setStep(projectDir, step, selection = {}) {
   // askQuestions mirrors fanOut: preserved when omitted (only the toggle sends
   // it), set when a boolean (spec 2026-07-11 §4), cleared on null.
   const askQuestions = inheritOr(selection.askQuestions, prev.askQuestions);
+  // subagentModel: the sub-agent model policy for a fan-out node. Preserved when
+  // omitted (see inheritOrSubagentModel), cleared on '' / null.
+  const subagentModel = inheritOrSubagentModel(selection.subagentModel, prev.subagentModel);
 
   const steps = { ...cfg.steps };
-  if (!model && !effort && fanOut === undefined && askQuestions === undefined) delete steps[step];
+  if (!model && !effort && !subagentModel && fanOut === undefined && askQuestions === undefined) delete steps[step];
   else steps[step] = {
     ...(model && { model }),
     ...(effort && { effort }),
+    ...(subagentModel && { subagentModel }),
     ...(fanOut !== undefined && { fanOut }),
     ...(askQuestions !== undefined && { askQuestions }),
   };
@@ -655,16 +678,19 @@ export async function promoteCustomModel(projectDir, id) {
 // nested shape from those rows. activeWorkflowId is project_config.active_workflow_id;
 // unknown top-level keys (e.g. webUiTesting) round-trip via project_config.extra.
 
-/** Coerce a per-node selection to a clean {model?,effort?,fanOut?,askQuestions?} or null (all empty). */
+/** Coerce a per-node selection to a clean {model?,effort?,subagentModel?,fanOut?,askQuestions?}
+ *  or null (all empty). */
 function cleanNodeSel(selection) {
   const model = typeof selection?.model === 'string' ? selection.model.trim() : '';
   const effort = typeof selection?.effort === 'string' ? selection.effort.trim() : '';
+  const subagentModel = isSubagentModelValue(selection?.subagentModel) ? selection.subagentModel : '';
   const fanOut = typeof selection?.fanOut === 'boolean' ? selection.fanOut : undefined;
   const askQuestions = typeof selection?.askQuestions === 'boolean' ? selection.askQuestions : undefined;
-  if (!model && !effort && fanOut === undefined && askQuestions === undefined) return null;
+  if (!model && !effort && !subagentModel && fanOut === undefined && askQuestions === undefined) return null;
   return {
     ...(model && { model }),
     ...(effort && { effort }),
+    ...(subagentModel && { subagentModel }),
     ...(fanOut !== undefined && { fanOut }),
     ...(askQuestions !== undefined && { askQuestions }),
   };
@@ -690,11 +716,12 @@ function readWorkflowsMap(key) {
     return workflows[wf];
   };
   for (const r of prepare(
-    'SELECT workflow_id, node_id, model, effort, fan_out, ask_questions FROM config_workflow_nodes WHERE project_key = ?'
+    'SELECT workflow_id, node_id, model, effort, fan_out, ask_questions, subagent_model FROM config_workflow_nodes WHERE project_key = ?'
   ).all(key)) {
     const sel = {};
     if (r.model) sel.model = r.model;
     if (r.effort) sel.effort = r.effort;
+    if (isSubagentModelValue(r.subagent_model)) sel.subagentModel = r.subagent_model;
     if (r.fan_out !== null && r.fan_out !== undefined) sel.fanOut = !!r.fan_out;
     if (r.ask_questions !== null && r.ask_questions !== undefined) sel.askQuestions = !!r.ask_questions;
     // Only attach a node entry that carries something (matches cleanNodeSel output).
@@ -745,8 +772,8 @@ export async function readRunConfig(projectDir) {
 }
 
 /**
- * Set (or clear) the model+effort+fanOut+askQuestions for one node instance of a
- * workflow. A cleaned selection of null (all blank) deletes the row. fanOut and
+ * Set (or clear) the model+effort+subagentModel+fanOut+askQuestions for one node
+ * instance of a workflow. A cleaned selection of null (all blank) deletes the row. fanOut and
  * askQuestions are preserved when the caller omits them (read from the existing
  * row), set when a boolean, and cleared on an explicit null. Writes only the config_workflow_nodes table
  * (legacy view + extra untouched). Model/effort validate against the effective
@@ -756,7 +783,7 @@ export async function readRunConfig(projectDir) {
  * @param {string} projectDir
  * @param {string} workflowId
  * @param {string} nodeId
- * @param {{model?:string,effort?:string,fanOut?:boolean,askQuestions?:boolean}} selection
+ * @param {{model?:string,effort?:string,subagentModel?:string,fanOut?:boolean,askQuestions?:boolean}} selection
  * @returns {Promise<void>}
  */
 export async function setNodeModel(projectDir, workflowId, nodeId, selection = {}) {
@@ -773,16 +800,22 @@ export async function setNodeModel(projectDir, workflowId, nodeId, selection = {
     }
   }
 
+  {
+    const issue = subagentModelIssue(selection.subagentModel);
+    if (issue) throw new Error(issue);
+  }
+
   const key = projectKey(projectDir);
   getDb();
   const prev = prepare(
-    'SELECT fan_out, ask_questions FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
+    'SELECT fan_out, ask_questions, subagent_model FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
   ).get(key, workflowId, nodeId);
   const prevFanOut = prev && prev.fan_out !== null && prev.fan_out !== undefined ? !!prev.fan_out : undefined;
   const fanOut = inheritOr(selection.fanOut, prevFanOut);
   const prevAsk = prev && prev.ask_questions !== null && prev.ask_questions !== undefined ? !!prev.ask_questions : undefined;
   const askQuestions = inheritOr(selection.askQuestions, prevAsk);
-  const sel = cleanNodeSel({ model: selection.model, effort: selection.effort, fanOut, askQuestions });
+  const subagentModel = inheritOrSubagentModel(selection.subagentModel, prev && prev.subagent_model);
+  const sel = cleanNodeSel({ model: selection.model, effort: selection.effort, subagentModel, fanOut, askQuestions });
 
   tx(() => {
     if (!sel) {
@@ -792,17 +825,19 @@ export async function setNodeModel(projectDir, workflowId, nodeId, selection = {
       return;
     }
     prepare(`
-      INSERT INTO config_workflow_nodes (project_key, workflow_id, node_id, model, effort, fan_out, ask_questions)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO config_workflow_nodes (project_key, workflow_id, node_id, model, effort, fan_out, ask_questions, subagent_model)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(project_key, workflow_id, node_id)
       DO UPDATE SET model = excluded.model, effort = excluded.effort,
-                    fan_out = excluded.fan_out, ask_questions = excluded.ask_questions
+                    fan_out = excluded.fan_out, ask_questions = excluded.ask_questions,
+                    subagent_model = excluded.subagent_model
     `).run(
       key, workflowId, nodeId,
       sel.model ?? null,
       sel.effort ?? null,
       sel.fanOut === undefined ? null : (sel.fanOut ? 1 : 0),
       sel.askQuestions === undefined ? null : (sel.askQuestions ? 1 : 0),
+      sel.subagentModel ?? null,
     );
   });
 }
@@ -1030,16 +1065,34 @@ export async function removeGlobalModelAndRefs(id) {
         if (!stepKeysByProject.has(r.projectKey)) continue;
         const filtered = {};
         for (const [k, v] of Object.entries(r.steps)) {
-          if (v?.model && v.model.toLowerCase() === lc) { clearedSteps += 1; continue; }
+          if (v?.model && v.model.toLowerCase() === lc) {
+            // Clear ONLY the dangling ref (and the effort that travels with its
+            // model); fanOut/askQuestions/subagentModel are not the removed
+            // model's business and must survive — mirroring cleanNodeSel's
+            // emptiness rule, the entry itself goes only when nothing is left.
+            clearedSteps += 1;
+            const { model: _m, effort: _e, ...rest } = v;
+            if (Object.keys(rest).length) filtered[k] = rest;
+            continue;
+          }
           filtered[k] = v;
         }
         prepare('UPDATE project_config SET steps = ? WHERE project_key = ?')
           .run(JSON.stringify(filtered), r.projectKey);
       }
       for (const n of refs.nodes) {
-        clearedNodes += prepare(
-          'DELETE FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
-        ).run(n.projectKey, n.workflowId, n.nodeId).changes;
+        // Same rule for node rows: NULL the model+effort, keep the other
+        // tunables, and drop the row only once every column is NULL (matching
+        // readWorkflowsMap, which would not surface an all-NULL row anyway).
+        clearedNodes += prepare(`
+          UPDATE config_workflow_nodes SET model = NULL, effort = NULL
+          WHERE project_key = ? AND workflow_id = ? AND node_id = ?
+        `).run(n.projectKey, n.workflowId, n.nodeId).changes;
+        prepare(`
+          DELETE FROM config_workflow_nodes
+          WHERE project_key = ? AND workflow_id = ? AND node_id = ?
+            AND fan_out IS NULL AND ask_questions IS NULL AND subagent_model IS NULL
+        `).run(n.projectKey, n.workflowId, n.nodeId);
       }
     });
   }

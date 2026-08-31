@@ -538,6 +538,7 @@ export class GraphOrchestrator extends RunHarness {
         ...node,
         key: nc.key,
         fanOut: !!nc.fanOut,
+        subagentModel: nc.subagentModel || '',
         agentPrompt: nc.agentPrompt,
         tools: nc.tools,               // frontmatter grants MUST be stamped
         promptHints: nc.promptHints || '',
@@ -1003,7 +1004,7 @@ export class GraphOrchestrator extends RunHarness {
 /**
  * Rebuild a resolveGraph-shaped result from a PERSISTED manifest + the live
  * registry. The manifest is authoritative for topology, port identity (ids/
- * types/loop/expands/when), per-node model/effort/askQuestions/awaitAll/fanOut/
+ * types/loop/expands/when), per-node model/effort/askQuestions/awaitAll/fanOut/subagentModel/
  * config and per-wire maxCycles; the registry supplies only what a manifest
  * deliberately omits (runnerType, prompt body, frontmatter tools, per-port
  * as/directive/filename/store/artifactKind, the verdict filename, sideEffect,
@@ -1052,6 +1053,7 @@ export function resolvedFromManifest(manifest, registry) {
       model: mn.model || undefined,
       effort: mn.effort || undefined,
       fanOut: !!mn.fanOut,
+      subagentModel: mn.subagentModel || '',
       askQuestions: !!mn.askQuestions,
       awaitAll: !!mn.awaitAll,
       duplicateKey: false,

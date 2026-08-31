@@ -556,13 +556,15 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
 
   let models = [];
   let efforts = [];
+  let subagentModels = [];
   let modelsSet = false;          // an explicit setModels() wins over the mount fetch
   const readKey = (k) => { try { return storage ? storage.getItem(k) : null; } catch { return null; } };
   const writeKey = (k, v) => { try { if (storage) storage.setItem(k, v); } catch { /* private mode */ } };
 
-  function applyModels({ models: m = [], efforts: e = [] } = {}) {
+  function applyModels({ models: m = [], efforts: e = [], subagentModels: sm = [] } = {}) {
     models = Array.isArray(m) ? m : [];
     efforts = Array.isArray(e) ? e : [];
+    subagentModels = Array.isArray(sm) ? sm : [];
     paintInspector();
   }
 
@@ -574,7 +576,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       const node = nodeById(sel.id);
       if (!node) return void hostBody.replaceChildren(renderEmptyInspector({ doc }));
       const meta = node.kind === 'agent' ? (agents[node.key] || null) : null;
-      return void hostBody.replaceChildren(renderNodeInspector(node, { template: tpl, portsFn, meta, models, efforts, doc }));
+      return void hostBody.replaceChildren(renderNodeInspector(node, { template: tpl, portsFn, meta, models, efforts, subagentModels, doc }));
     }
     const wire = wireById(sel.id);
     if (!wire) return void hostBody.replaceChildren(renderEmptyInspector({ doc }));

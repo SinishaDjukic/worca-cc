@@ -322,7 +322,8 @@ export function readPipelineExtras(pipelineId) {
  * @param {string} pipelineId
  * @param {{id:string, label?:string, nodeId?:string, stepIndex?:number, cycle?:number,
  *          stepKey?:string, status?:string, startedAt?:string, finishedAt?:string,
- *          durationMs?:number, tokens?:number, costUsd?:number, subagentType?:string}} rec
+ *          durationMs?:number, tokens?:number, costUsd?:number, subagentType?:string,
+ *          runModel?:string}} rec
  */
 export function upsertSubAgent(pipelineId, rec) {
   if (!pipelineId || !rec || !rec.id) return;
@@ -330,9 +331,11 @@ export function upsertSubAgent(pipelineId, rec) {
     tx(() => {
       getDb().prepare(`
         INSERT INTO sub_agents (pipeline_id, id, step_key, node_id, step_index, cycle,
-          label, status, started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase, skills, subagent_type, graphify_count)
+          label, status, started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase, skills, subagent_type, graphify_count,
+          run_model)
         VALUES (@pipeline_id,@id,@step_key,@node_id,@step_index,@cycle,@label,@status,
-          @started_at,@finished_at,@duration_ms,@tokens,@cost_usd,@ui_phase,@skills,@subagent_type,@graphify_count)
+          @started_at,@finished_at,@duration_ms,@tokens,@cost_usd,@ui_phase,@skills,@subagent_type,@graphify_count,
+          @run_model)
         ON CONFLICT(pipeline_id, id) DO UPDATE SET
           status      = excluded.status,
           step_key    = COALESCE(excluded.step_key, step_key),
@@ -348,7 +351,8 @@ export function upsertSubAgent(pipelineId, rec) {
           ui_phase    = COALESCE(excluded.ui_phase, ui_phase),
           skills      = COALESCE(excluded.skills, skills),
           subagent_type = COALESCE(excluded.subagent_type, subagent_type),
-          graphify_count = COALESCE(excluded.graphify_count, graphify_count)
+          graphify_count = COALESCE(excluded.graphify_count, graphify_count),
+          run_model      = COALESCE(excluded.run_model, run_model)
       `).run({
         pipeline_id: pipelineId,
         id: rec.id,
@@ -367,6 +371,10 @@ export function upsertSubAgent(pipelineId, rec) {
         skills: s(rec.skills),   // s() = JSON.stringify or null; growing supersets overwrite via COALESCE
         subagent_type: rec.subagentType ?? null,   // scalar TEXT: bound directly (no s() JSON wrap)
         graphify_count: Number.isFinite(rec.graphifyCount) ? rec.graphifyCount : null,  // scalar INTEGER
+        // The model this child actually ran on: the alias its Task call asked for,
+        // else the parent node's model (what it inherits). Written at spawn and
+        // COALESCE-guarded, so a later finish/telemetry update never nulls it.
+        run_model: rec.runModel ?? null,
       });
     });
   } catch { /* best-effort: live state.subAgents is the reconcile source of truth; a swallowed write is caught by tests, not a crashed run. */ }
@@ -382,13 +390,14 @@ export function upsertSubAgent(pipelineId, rec) {
  * @returns {Array<{id:string, label:string|null, nodeId:string|null, stepIndex:number|null,
  *   cycle:number|null, stepKey:string|null, status:string, startedAt:string|null,
  *   finishedAt:string|null, durationMs:number|null, tokens:number|null, costUsd:number|null,
- *   subagentType:string|null}>}
+ *   subagentType:string|null, runModel:string|null}>}
  */
 export function listSubAgents(pipelineId) {
   if (!pipelineId) return [];
   return getDb().prepare(`
     SELECT id, label, node_id, step_index, cycle, step_key, status,
-           started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase, skills, subagent_type, graphify_count
+           started_at, finished_at, duration_ms, tokens, cost_usd, ui_phase, skills, subagent_type, graphify_count,
+           run_model
     FROM sub_agents WHERE pipeline_id = ? ORDER BY started_at, id
   `).all(pipelineId).map((r) => ({
     id: r.id,
@@ -407,6 +416,7 @@ export function listSubAgents(pipelineId) {
     skills: j(r.skills, []),     // NULL -> [] so the UI always has an array (no pills)
     subagentType: r.subagent_type ?? null,   // scalar TEXT: mapped directly (no j() parse)
     graphifyCount: r.graphify_count ?? null,   // scalar INTEGER: NULL -> null (no badge)
+    runModel: r.run_model ?? null,   // scalar TEXT: NULL -> null (no pill on pre-v25 rows)
   }));
 }
 

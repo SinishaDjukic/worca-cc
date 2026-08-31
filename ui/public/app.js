@@ -16,6 +16,9 @@ const state = {
   config: { steps: {}, customModels: [] }, // per-project model/effort selections
   models: [], // predefined + custom, from /api/config
   efforts: [], // effort levels, from /api/config
+  // Sub-agent model policy vocabulary, from /api/config. A FIXED alias enum (the
+  // CLI's Task tool refuses catalog ids), not a slice of `models`.
+  subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'],
   workflowId: 'wf_default', // currently selected workflow in New Pipeline
   guardrailsId: 'permissive', // the guardrail set the next run applies ('permissive' = unrestricted default)
   guardrailSets: [], // GET /api/guardrails cache for the picker + hint
@@ -1452,7 +1455,7 @@ function onSubagent(r, msg) {
   }
   // Merge only DEFINED fields (a finish frame may omit spawn-time fields like
   // label/nodeId/stepKey; never overwrite a known value with undefined).
-  for (const k of ['label', 'nodeId', 'uiPhase', 'stepIndex', 'cycle', 'stepKey', 'status', 'startedAt', 'durationMs', 'tokens', 'costUsd', 'skills', 'subagentType', 'graphifyCount']) {
+  for (const k of ['label', 'nodeId', 'uiPhase', 'stepIndex', 'cycle', 'stepKey', 'status', 'startedAt', 'durationMs', 'tokens', 'costUsd', 'skills', 'subagentType', 'graphifyCount', 'runModel']) {
     if (msg[k] !== undefined) rec[k] = msg[k];
   }
   if (msg.transition === 'finish') {
@@ -1521,6 +1524,9 @@ async function loadConfig(projectDir) {
       state.config = data.config || { steps: {}, customModels: [] };
       state.models = Array.isArray(data.models) ? data.models : [];
       state.efforts = Array.isArray(data.efforts) ? data.efforts : [];
+      if (Array.isArray(data.subagentModels) && data.subagentModels.length) {
+        state.subagentModels = data.subagentModels;
+      }
       state.stepDefaults = {};
       if (Array.isArray(data.steps)) {
         for (const s of data.steps) if (s && s.key) state.stepDefaults[s.key] = {
@@ -1634,7 +1640,7 @@ const gvApi = {
     const d = await safeJson(res);
     return Array.isArray(d) ? d : (d && d.agents) || [];
   },
-  config: async () => { const res = await fetch('/api/config'); const d = await safeJson(res); return { models: d.models || [], efforts: d.efforts || [] }; },
+  config: async () => { const res = await fetch('/api/config'); const d = await safeJson(res); return { models: d.models || [], efforts: d.efforts || [], subagentModels: d.subagentModels || [] }; },
   listWorkflows: async () => listWorkflows(),
   listArchived: async () => {
     try {
@@ -1940,28 +1946,7 @@ function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
       const metaLocked = !!(meta && meta.questionsLocked);
       const metaQDefault = !!(meta && meta.questionsDefault);
 
-      const override = {};
-      if (typeof saved.model === 'string' && saved.model) override.model = saved.model;
-      if (typeof saved.effort === 'string' && saved.effort) override.effort = saved.effort;
-      if (typeof saved.fanOut === 'boolean') override.fanOut = saved.fanOut;
-      if (typeof saved.askQuestions === 'boolean') override.askQuestions = saved.askQuestions;
-
-      // Layers 2-4 alone: what this row falls back to once its override is gone.
-      const def = {
-        model: typeof wfDef.model === 'string' ? wfDef.model : '',
-        effort: typeof wfDef.model === 'string' && typeof wfDef.effort === 'string' ? wfDef.effort : '',
-        fanOut: typeof wfDef.fanOut === 'boolean' ? wfDef.fanOut : metaFan,
-        askQuestions: typeof wfDef.askQuestions === 'boolean' ? wfDef.askQuestions : metaQDefault,
-      };
-
-      // An effort is only meaningful for the model that advertises it, so an
-      // override naming its own model does not inherit the default's effort.
-      const model = override.model !== undefined ? override.model : def.model;
-      const effort = override.effort !== undefined
-        ? override.effort
-        : (override.model !== undefined ? '' : def.effort);
-      const fanOut = override.fanOut !== undefined ? override.fanOut : def.fanOut;
-      const askQuestions = override.askQuestions !== undefined ? override.askQuestions : def.askQuestions;
+      const t = resolveNodeTunables(saved, wfDef, { fanOut: metaFan, questionsDefault: metaQDefault });
 
       rows.push({
         nodeId: node.id,
@@ -1972,17 +1957,18 @@ function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
         description: (meta && meta.description) || '',
         stepIndex,
         parallel: members.length > 1,
-        model,
-        effort,
-        fanOut,
+        model: t.model,
+        effort: t.effort,
+        fanOut: t.fanOut,
+        subagentModel: t.subagentModel,
         // null => the agent has no questions capability (no checkbox rendered).
-        askQuestions: !metaAsks ? null : (metaLocked ? metaQDefault : askQuestions),
+        askQuestions: !metaAsks ? null : (metaLocked ? metaQDefault : t.askQuestions),
         questionsLocked: metaAsks && metaLocked,
-        def,
-        override,
+        def: t.def,
+        override: t.override,
         // A locked questions toggle is never the user's doing, so it never counts
         // as a modification (it cannot be reset either).
-        modified: modifiedFieldsOf({ model, effort, fanOut, askQuestions }, def,
+        modified: modifiedFieldsOf(t, t.def,
           { asksQuestions: metaAsks, questionsLocked: metaLocked }).length > 0,
       });
     });
@@ -1990,13 +1976,51 @@ function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
   return rows;
 }
 
-// Which of the four settings deviate from the row's resolved default. Pure; the
+// ONE resolution rule for a node's five tunables, shared verbatim by the v1
+// (buildNodeConfigRows) and v2 (buildGraphNodeRows) row builders — the two
+// panels must never drift (the v2 path is the one every live workflow uses).
+// `saved` = the per-project override entry (role + node merged), `wfDef` = the
+// workflow's own defaults block (node.defaults in v1, node.config in v2),
+// `caps` = the registry meta's capability booleans.
+function resolveNodeTunables(saved, wfDef, caps = {}) {
+  const override = {};
+  if (typeof saved.model === 'string' && saved.model) override.model = saved.model;
+  if (typeof saved.effort === 'string' && saved.effort) override.effort = saved.effort;
+  if (typeof saved.fanOut === 'boolean') override.fanOut = saved.fanOut;
+  if (typeof saved.askQuestions === 'boolean') override.askQuestions = saved.askQuestions;
+  if (typeof saved.subagentModel === 'string' && saved.subagentModel) override.subagentModel = saved.subagentModel;
+
+  // Layers 2-4 alone: what this row falls back to once its override is gone.
+  const def = {
+    model: typeof wfDef.model === 'string' ? wfDef.model : '',
+    effort: typeof wfDef.model === 'string' && typeof wfDef.effort === 'string' ? wfDef.effort : '',
+    fanOut: typeof wfDef.fanOut === 'boolean' ? wfDef.fanOut : !!caps.fanOut,
+    askQuestions: typeof wfDef.askQuestions === 'boolean' ? wfDef.askQuestions : !!caps.questionsDefault,
+    // No sidecar layer: an agent manifest declares whether a node CAN fan out,
+    // never what its children run on. '' = unset (the run resolves auto).
+    subagentModel: typeof wfDef.subagentModel === 'string' ? wfDef.subagentModel : '',
+  };
+
+  // An effort is only meaningful for the model that advertises it, so an
+  // override naming its own model does not inherit the default's effort.
+  const model = override.model !== undefined ? override.model : def.model;
+  const effort = override.effort !== undefined
+    ? override.effort
+    : (override.model !== undefined ? '' : def.effort);
+  const fanOut = override.fanOut !== undefined ? override.fanOut : def.fanOut;
+  const askQuestions = override.askQuestions !== undefined ? override.askQuestions : def.askQuestions;
+  const subagentModel = override.subagentModel !== undefined ? override.subagentModel : def.subagentModel;
+  return { override, def, model, effort, fanOut, askQuestions, subagentModel };
+}
+
+// Which of the five settings deviate from the row's resolved default. Pure; the
 // single definition of "modified" for both the row dot and the header count.
 function modifiedFieldsOf(effective, def, caps = {}) {
   const out = [];
   if ((effective.model || '') !== (def.model || '')) out.push('model');
   if ((effective.effort || '') !== (def.effort || '')) out.push('effort');
   if (!!effective.fanOut !== !!def.fanOut) out.push('fanOut');
+  if ((effective.subagentModel || '') !== (def.subagentModel || '')) out.push('subagentModel');
   if (caps.asksQuestions && !caps.questionsLocked && !!effective.askQuestions !== !!def.askQuestions) {
     out.push('askQuestions');
   }
@@ -2014,6 +2038,13 @@ function agentSummaryText(row) {
     parts.push(m ? m.label : row.model, row.effort || 'default effort');
   }
   if (row.fanOut) parts.push('fan-out');
+  // A stored policy shows whether or not fan-out is currently on: the value
+  // persists across a fan-out toggle, and hiding it while the modified dot
+  // counted it read as a contradiction. '' (unset -> auto at run time) shows
+  // nothing, like every other unset tunable.
+  if (row.subagentModel) {
+    parts.push(row.subagentModel === 'auto' ? 'subs: agent picks' : `subs: ${row.subagentModel}`);
+  }
   if (row.askQuestions) parts.push('questions');
   if (!parts.length) return 'default';
   if (!row.model) parts.unshift('default');
@@ -2038,6 +2069,7 @@ function pruneNodeSelection(row, next = {}) {
     effort: next.effort !== undefined ? next.effort : row.effort,
     fanOut: next.fanOut !== undefined ? next.fanOut : row.fanOut,
     askQuestions: next.askQuestions !== undefined ? next.askQuestions : row.askQuestions,
+    subagentModel: next.subagentModel !== undefined ? next.subagentModel : row.subagentModel,
   };
   // model+effort prune as a PAIR: an effort is only interpretable against the
   // model that advertises it, so storing one without the other is rejected by
@@ -2051,6 +2083,9 @@ function pruneNodeSelection(row, next = {}) {
     askQuestions: row.askQuestions === null || row.questionsLocked
       ? undefined // no capability / locked: never persist a value for it
       : (!!eff.askQuestions === !!row.def.askQuestions ? null : !!eff.askQuestions),
+    // '' IS the clear for a string tunable (config.mjs#inheritOrSubagentModel), so
+    // a value equal to the default prunes to inherit exactly like model/effort.
+    subagentModel: (eff.subagentModel || '') === (row.def.subagentModel || '') ? '' : (eff.subagentModel || ''),
   };
 }
 
@@ -2086,32 +2121,18 @@ function buildGraphNodeRows(tpl, registry, runConfig, opts = {}) {
     const metaAsks = !!(meta && meta.asksQuestions);
     const metaLocked = !!(meta && meta.questionsLocked);
     const metaQDefault = !!(meta && meta.questionsDefault);
-    const override = {};
-    if (typeof saved.model === 'string' && saved.model) override.model = saved.model;
-    if (typeof saved.effort === 'string' && saved.effort) override.effort = saved.effort;
-    if (typeof saved.fanOut === 'boolean') override.fanOut = saved.fanOut;
-    if (typeof saved.askQuestions === 'boolean') override.askQuestions = saved.askQuestions;
-    const def = {
-      model: typeof wfDef.model === 'string' ? wfDef.model : '',
-      effort: typeof wfDef.model === 'string' && typeof wfDef.effort === 'string' ? wfDef.effort : '',
-      fanOut: typeof wfDef.fanOut === 'boolean' ? wfDef.fanOut : metaFan,
-      askQuestions: typeof wfDef.askQuestions === 'boolean' ? wfDef.askQuestions : metaQDefault,
-    };
-    const model = override.model !== undefined ? override.model : def.model;
-    const effort = override.effort !== undefined ? override.effort : (override.model !== undefined ? '' : def.effort);
-    const fanOut = override.fanOut !== undefined ? override.fanOut : def.fanOut;
-    const askQuestions = override.askQuestions !== undefined ? override.askQuestions : def.askQuestions;
+    const t = resolveNodeTunables(saved, wfDef, { fanOut: metaFan, questionsDefault: metaQDefault });
     rows.push({
       nodeId: node.id, key: node.key, role, // non-null => persist via saveStep (wf_default)
       label: (meta && meta.displayName) || node.key || node.id,
       color: (meta && meta.color) || '', description: (meta && meta.description) || '',
       stepIndex: rank.get(node.id) || 0,
       parallel: false,
-      model, effort, fanOut,
-      askQuestions: !metaAsks ? null : (metaLocked ? metaQDefault : askQuestions),
+      model: t.model, effort: t.effort, fanOut: t.fanOut, subagentModel: t.subagentModel,
+      askQuestions: !metaAsks ? null : (metaLocked ? metaQDefault : t.askQuestions),
       questionsLocked: metaAsks && metaLocked,
-      def, override,
-      modified: modifiedFieldsOf({ model, effort, fanOut, askQuestions }, def,
+      def: t.def, override: t.override,
+      modified: modifiedFieldsOf(t, t.def,
         { asksQuestions: metaAsks, questionsLocked: metaLocked }).length > 0,
     });
   }
@@ -2221,6 +2242,7 @@ function defaultEffortFor(modelId) {
 if (typeof window !== 'undefined') {
   window.__np = Object.assign(window.__np || {}, {
     buildNodeConfigRows,
+    resolveNodeTunables,
     buildFeedbackRows,
     defaultEffortFor,
     renderModelEffortPair,
@@ -2633,7 +2655,7 @@ function agentsEditable() {
 function setAgentRowsEnabled(enabled) {
   const host = el.agentRows;
   if (!host) return;
-  for (const c of host.querySelectorAll('.step-model,.step-fanout,.step-questions')) {
+  for (const c of host.querySelectorAll('.step-model,.step-fanout,.step-questions,.step-subagent')) {
     c.disabled = !enabled || (c.classList.contains('step-questions') && c.dataset.locked === '1');
   }
   for (const e of host.querySelectorAll('.step-effort')) {
@@ -2773,7 +2795,20 @@ function renderAgentRows(rows) {
     const fanTxt = document.createElement('span');
     fanTxt.textContent = 'Fan-out';
     fanWrap.append(fanCb, fanTxt);
-    picks.append(mWrap, eWrap, fanWrap);
+    // Sub-agent model: what this node's Task children run on. Rendered beside
+    // Fan-out (whose children it governs) and, like it, offered on every agent —
+    // the row's own fan-out toggle is what decides whether it bites.
+    const sWrap = document.createElement('div');
+    sWrap.className = 'select-wrap';
+    const subSel = document.createElement('select');
+    subSel.className = 'step-subagent select';
+    subSel.dataset.nodeId = row.nodeId;
+    if (row.role) subSel.dataset.role = row.role;
+    subSel.setAttribute('aria-label', `${row.label} sub-agent model`);
+    subSel.title = 'Model for the sub-agents this node spawns (needs fan-out)';
+    renderSubagentModelSelect(subSel, row.subagentModel);
+    sWrap.appendChild(subSel);
+    picks.append(mWrap, eWrap, fanWrap, sWrap);
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
       const qWrap = document.createElement('label');
       qWrap.className = 'fanout-toggle questions-toggle';
@@ -2812,6 +2847,19 @@ function renderAgentRows(rows) {
     renderModelEffortPair(modelSel, effortSel, null, { model: row.model, effort: row.effort });
     host.appendChild(card);
   });
+}
+
+// Fill a sub-agent model dropdown. '' is "unset" — the run resolves it to the
+// auto default (the agent picks per spawn), so the blank option says exactly
+// that instead of masquerading as a value. 'inherit' is the stored opt-out
+// (children ride the CLI's own resolution: agent frontmatter, else this node's
+// model); 'auto' is the stored form of the default.
+function renderSubagentModelSelect(sel, value) {
+  const label = (v) => (v === 'auto' ? 'subs: agent picks' : `subs: ${v}`);
+  sel.innerHTML = '';
+  sel.appendChild(option('', 'subs: default (agent picks)'));
+  for (const v of state.subagentModels) sel.appendChild(option(v, label(v)));
+  sel.value = state.subagentModels.includes(value) ? value : '';
 }
 
 // Repaint one row's collapsed caption from what its controls currently show, so
@@ -2921,14 +2969,14 @@ if (el.guardrailsSelect) {
   });
 }
 
-async function saveStep(role, model, effort, fanOut, askQuestions) {
+async function saveStep(role, model, effort, fanOut, askQuestions, subagentModel) {
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
     const res = await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, step: role, model, effort, fanOut, askQuestions }),
+      body: JSON.stringify({ projectDir, step: role, model, effort, fanOut, askQuestions, subagentModel }),
     });
     const data = await safeJson(res);
     if (!res.ok) {
@@ -2955,10 +3003,12 @@ function liveRowValues(row, body) {
   const e = host.querySelector('.step-effort');
   const f = host.querySelector('.step-fanout');
   const q = host.querySelector('.step-questions');
+  const sa = host.querySelector('.step-subagent');
   if (m) out.model = m.value === '__add__' ? row.model : m.value;
   if (e) out.effort = e.value;
   if (f) out.fanOut = f.checked;
   if (q && !q.disabled) out.askQuestions = q.checked;
+  if (sa) out.subagentModel = sa.value;
   return out;
 }
 
@@ -2980,23 +3030,24 @@ async function saveAgentRow(row, next, body) {
   }
   const patch = pruneNodeSelection(row, { ...liveRowValues(row, body), ...next });
   if (row.role) {
-    await saveStep(row.role, patch.model, patch.effort, patch.fanOut, patch.askQuestions);
+    await saveStep(row.role, patch.model, patch.effort, patch.fanOut, patch.askQuestions, patch.subagentModel);
   } else {
-    await saveNode(state.workflowId, row.nodeId, patch.model, patch.effort, patch.fanOut, patch.askQuestions);
+    await saveNode(state.workflowId, row.nodeId, patch.model, patch.effort, patch.fanOut, patch.askQuestions,
+      patch.subagentModel);
   }
   await renderWorkflowConfig(state.workflowId); // repaint captions, dots + header
 }
 
 // Persist one node's model/effort to the per-project run-config for the active
 // workflow (CONV-2): PATCH /api/config { projectDir, workflowId, nodes:{ [nodeId]:{model,effort} } }.
-async function saveNode(workflowId, nodeId, model, effort, fanOut, askQuestions) {
+async function saveNode(workflowId, nodeId, model, effort, fanOut, askQuestions, subagentModel) {
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
     const res = await fetch('/api/config', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectDir, workflowId, nodes: { [nodeId]: { model, effort, fanOut, askQuestions } } }),
+      body: JSON.stringify({ projectDir, workflowId, nodes: { [nodeId]: { model, effort, fanOut, askQuestions, subagentModel } } }),
     });
     const data = await safeJson(res);
     if (!res.ok) {
@@ -3124,6 +3175,9 @@ el.pipelineConfig.addEventListener('change', (e) => {
   } else if (t.classList.contains('step-effort')) {
     saveAgentRow(row, { effort: t.value }, body);
     paintRowSummary(row, body);
+  } else if (t.classList.contains('step-subagent')) {
+    saveAgentRow(row, { subagentModel: t.value }, body);
+    paintRowSummary(row, body);
   }
 });
 
@@ -3214,6 +3268,9 @@ function effectiveDefaultsOf(row) {
   }
   out.fanOut = !!row.fanOut;
   if (row.askQuestions !== null && !row.questionsLocked) out.askQuestions = !!row.askQuestions;
+  // Omitted when unset: sanitizeNodeDefaults drops an empty value anyway, and
+  // sending '' would make "promote" look like it stores an inherit.
+  if (row.subagentModel) out.subagentModel = row.subagentModel;
   return out;
 }
 
@@ -13026,6 +13083,7 @@ function buildHdAgents(sec, record, data) {
       row.innerHTML =
         `<span class="hd-ag-name">${escapeHtml((s && s.label) || (s && s.id) || '')}</span>` +
         agentTypePillHtml(s && s.subagentType) +
+        subModelPillHtml(s && s.runModel) +
         graphifyCountPillHtml(s && s.graphifyCount) +
         `<span class="st ${rstat}">${SUBS_STAT_TEXT[rstat] || rstat}</span>` +
         `<span class="hd-ag-dur mono">${dur != null ? escapeHtml(fmtDuration(dur)) : ''}</span>` +
@@ -13588,6 +13646,7 @@ function rdAgentsBody(sec, r) {
           `<span class="rd-ag-dot ${st.family}"></span>` +
           `<span class="rd-ag-label">${escapeHtml((s && s.label) || (s && s.id) || '')}</span>` +
           agentTypePillHtml(s && s.subagentType) +
+          subModelPillHtml(s && s.runModel) +
           graphifyCountPillHtml(s && s.graphifyCount) +
         `</span>` +
         `<span class="rd-ag-state ${st.family}">${escapeHtml(st.word)}</span>` +
@@ -14406,6 +14465,15 @@ function agentTypePillHtml(type) {
   const t = type == null ? '' : String(type).trim();
   if (!t) return '';
   return `<span class="agent-type-pill">${escapeHtml(t)}</span>`;
+}
+
+// The model a sub-agent actually ran on (sub_agents.run_model): the alias its Task
+// call asked for, else the model it inherited from its parent node. '' for a
+// pre-v25 row, which recorded nothing — an old run must not paint a guess.
+function subModelPillHtml(model) {
+  const m = model == null ? '' : String(model).trim();
+  if (!m) return '';
+  return `<span class="sub-model-pill">${escapeHtml(m)}</span>`;
 }
 
 // Neutral count badge for how many times an agent / sub-agent invoked the graphify

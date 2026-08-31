@@ -54,7 +54,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 24;
+export const SCHEMA_VERSION = 25;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -200,14 +200,14 @@ CREATE TABLE workflows (
 -- preserving unknown top-level keys (e.g. webUiTesting).
 CREATE TABLE project_config (
   project_key        TEXT PRIMARY KEY,
-  steps              TEXT NOT NULL DEFAULT '{}',  -- JSON: { role: {model?,effort?,fanOut?} }
+  steps              TEXT NOT NULL DEFAULT '{}',  -- JSON: { role: {model?,effort?,subagentModel?,fanOut?} }
   custom_models      TEXT NOT NULL DEFAULT '[]',  -- JSON: [ {id,label} ]
   active_workflow_id TEXT,
   extra              TEXT NOT NULL DEFAULT '{}'   -- JSON: unknown top-level keys
 );
 
 -- config_workflow_nodes: normalized per-node overrides (was config.json
--- workflows[wf].nodes[nodeId] = {model?,effort?,fanOut?}). One row per node.
+-- workflows[wf].nodes[nodeId] = {model?,effort?,subagentModel?,fanOut?}). One row per node.
 CREATE TABLE config_workflow_nodes (
   project_key TEXT NOT NULL,
   workflow_id TEXT NOT NULL,
@@ -740,9 +740,10 @@ const INCREMENTAL_COLUMNS = {
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT' },
-  sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER' },
+  sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER',
+                            run_model: 'TEXT' },   // v25: the model the child actually ran on
   workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT', archived_at: 'TEXT' },
-  config_workflow_nodes:  { ask_questions: 'INTEGER' },
+  config_workflow_nodes:  { ask_questions: 'INTEGER', subagent_model: 'TEXT' },  // v25: sub-agent model policy
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
 };
 
@@ -1064,6 +1065,18 @@ function applySchemaV22(db) {
  *  the applySchemaV22 shape, with nothing to backfill. Purely additive: no row is
  *  read, rewritten or archived here (that is the v24 break). */
 function applySchemaV23(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/** v25 (sub-agent model policy): config_workflow_nodes.subagent_model holds the
+ *  per-node setting, sub_agents.run_model records the model a spawned child
+ *  actually ran on. Both are plain additive columns declared in
+ *  INCREMENTAL_COLUMNS — and this repairSchemaGaps call is what CREATES them on
+ *  the one real upgrade path: a DB stamped exactly 24 takes the LADDER, where
+ *  this is the only repair before the version stamp (reconcileSchema runs only
+ *  on the fast path, user_version >= SCHEMA_VERSION). Do NOT delete this step
+ *  as redundant; test/db-migrate-v25.test.mjs pins the stamped-24 path. */
+function applySchemaV25(db) {
   repairSchemaGaps(db, schemaGaps(db));
 }
 
@@ -1403,6 +1416,7 @@ export function migrate(db) {
     if (current < 22) applySchemaV22(db);            // tables + the ask_run_links column
     if (current < 23) applySchemaV23(db);            // graph columns + config_workflow_wires
     if (current < 24) applySchemaV24(db, { existing: current >= 1 });  // the v2 break
+    if (current < 25) applySchemaV25(db);            // sub-agent model policy + recorded child model
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

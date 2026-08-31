@@ -16,7 +16,7 @@ test('V24 archives every live v1 template row and stamps the version', () => {
   const fx = buildResidueDb();
   const db = getDb();                                   // triggers migrate() 23 → 24
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
-  assert.equal(SCHEMA_VERSION, 24);
+  assert.ok(SCHEMA_VERSION >= 24, 'the v24 break is on the ladder');
   const live = db.prepare('SELECT id FROM workflows WHERE version = 1 AND archived_at IS NULL').all();
   assert.deepEqual(live, [], 'no live v1 row survives the break');
   for (const id of fx.v1Ids) {

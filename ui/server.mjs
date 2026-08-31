@@ -84,7 +84,7 @@ import {
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef } from '../src/core/model-env.mjs';
+import { modelEnvRef, SUBAGENT_MODEL_VALUES, subagentModelIssue } from '../src/core/model-env.mjs';
 import { listPluginModels, modelSecretsSchema, pluginModelSecretStatus } from '../src/core/plugin-models.mjs';
 import { testModel } from '../src/core/model-test.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
@@ -98,7 +98,7 @@ import {
 } from '../src/core/workflows.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
-import { validateGraph } from '../src/shared/graph/validate.mjs';
+import { validateGraph, AGENT_TUNABLES } from '../src/shared/graph/validate.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
@@ -2823,6 +2823,7 @@ app.get('/api/config', async (req, res) => {
     return res.json({
       config: { steps: {}, customModels: [] },
       models: await listModels(''), steps: agentSteps(), efforts: EFFORTS,
+      subagentModels: SUBAGENT_MODEL_VALUES,
     });
   }
   const projectDir = resolveProjectDir(raw);
@@ -2841,6 +2842,10 @@ app.get('/api/config', async (req, res) => {
     ]);
     res.json({
       config, models, steps: agentSteps(), efforts: EFFORTS,
+      // The sub-agent model policy vocabulary is a FIXED alias enum (the CLI's Task
+      // tool refuses catalog ids), so it ships beside `efforts` rather than being
+      // derived from `models`.
+      subagentModels: SUBAGENT_MODEL_VALUES,
     });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -2854,6 +2859,7 @@ app.post('/api/config', async (req, res) => {
   try {
     await setStep(projectDir, body.step, {
       model: body.model, effort: body.effort, fanOut: body.fanOut, askQuestions: body.askQuestions,
+      subagentModel: body.subagentModel,
     });
     // Respond with the FULL run-config (mirrors PATCH): setStep's return value is
     // the legacy {steps, customModels} view only, and clients assign the response
@@ -2902,6 +2908,7 @@ app.patch('/api/config', async (req, res) => {
         await setNodeModel(projectDir, workflowId, nodeId, {
           model: sel && sel.model, effort: sel && sel.effort,
           fanOut: sel && sel.fanOut, askQuestions: sel && sel.askQuestions,
+          subagentModel: sel && sel.subagentModel,
         });
       }
     }
@@ -3263,6 +3270,10 @@ function nodeDefaultsError(raw, models, where) {
   const effort = typeof raw.effort === 'string' ? raw.effort.trim() : '';
   const entry = model ? models.find((m) => m.id === model) : null;
   if (model && !entry) return `unknown model "${model}"`;
+  // subagentModel is a fixed alias enum, NOT a catalog id: validated via the
+  // shared helper so a typo is a 400 with the same message every writer uses.
+  const subIssue = subagentModelIssue(raw.subagentModel);
+  if (subIssue) return subIssue;
   if (!effort) return '';
   if (!EFFORTS.includes(effort)) return `unknown effort "${effort}"`;
   if (!entry) return 'select a model before choosing an effort';
@@ -3323,16 +3334,16 @@ app.post('/api/workflows', async (req, res) => {
   if (!graph.name) return badRequest(res, 'name is required');
   try {
     // Catalog validation FIRST: a v2 node's `config` IS its defaults block (§4),
-    // so a model/effort the per-project override could not name must not ride in
-    // through a template save. nodeDefaultsError reads only `model`/`effort`, so
-    // only the tunables are handed to it — topology keys (awaitAll, arity,
+    // so a value the per-project override could not name must not ride in
+    // through a template save. nodeDefaultsError checks the tunables (model +
+    // effort against the catalog, subagentModel against the alias enum), so
+    // only AGENT_TUNABLES are handed to it — topology keys (awaitAll, arity,
     // planStoreSeed) never are.
     const models = await listModels('');
-    const TUNABLES = ['model', 'effort', 'fanOut', 'askQuestions'];
     for (const n of graph.nodes) {
       if (!n || n.kind !== 'agent' || !n.config || typeof n.config !== 'object') continue;
       const picked = Object.fromEntries(
-        TUNABLES.filter((k) => k in n.config).map((k) => [k, n.config[k]]));
+        AGENT_TUNABLES.filter((k) => k in n.config).map((k) => [k, n.config[k]]));
       const bad = nodeDefaultsError(picked, models, `node "${n.id}"`);
       if (bad) return badRequest(res, bad);
     }
@@ -3359,7 +3370,7 @@ app.post('/api/workflows', async (req, res) => {
 // ---------------------------------------------------------------------------
 // PATCH /api/workflows/:id/defaults -> set the template's per-node defaults
 // (newpipeline-ux-design.md §4.4). body: { defaults: { [nodeId]: {model?, effort?,
-// fanOut?, askQuestions?} | null } }; null (or an empty block) clears a node, an
+// fanOut?, askQuestions?, subagentModel?} | null } }; null (or an empty block) clears a node, an
 // absent node keeps what it has. Model/effort validate against the PROJECT-LESS
 // catalog (predefined ⊕ global ⊕ plugin) — defaults are global, so a legacy
 // per-project custom model is deliberately not a valid default.

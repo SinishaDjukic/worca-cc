@@ -146,6 +146,10 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       cell.askQuestions = !!(over.askQuestions ?? cfg.askQuestions ?? meta?.questionsDefault ?? false);
       cell.awaitAll = !!(over.awaitAll ?? cfg.awaitAll ?? false);
       cell.fanOut = !!(over.fanOut ?? cfg.fanOut ?? meta?.fanOut ?? false);
+      // Sub-agent model policy ('' = inherit). Recorded like model/effort so a
+      // RESUMED run rebuilds the same child-model behavior from the manifest
+      // alone — the workflow row is never re-read after the run starts.
+      cell.subagentModel = over.subagentModel ?? cfg.subagentModel ?? '';
     }
     if (node.kind === 'and' || node.kind === 'or' || node.kind === 'combine') {
       cell.arity = Number.isInteger(cfg.arity) ? cfg.arity : 2;

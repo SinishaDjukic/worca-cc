@@ -15,6 +15,7 @@
 
 import { runClaude } from './claude-runner.mjs';
 import { resolveModelEnv } from './config.mjs';
+import { SUBAGENT_AUTO, SUBAGENT_INHERIT, SUBAGENT_MODELS, effectiveSubagentModel } from './model-env.mjs';
 import { readClarify, readReview } from './protocol.mjs';
 import { writeClarify, readClarifyRow } from './artifacts.mjs';
 import { join } from 'node:path';
@@ -72,6 +73,72 @@ export function ctxFanOut(ctx) {
   return !!(ctx.node ? ctx.node.fanOut : ctx.fanOut);
 }
 
+/**
+ * The sub-agent model policy in force for this run: one of SUBAGENT_MODEL_VALUES.
+ * Read from the NODE only — nothing else carries the setting (the v1 clarify
+ * pre-step ctx fallback is gone with its caller). An unset or off-vocabulary
+ * value resolves to the auto default: agents choose their children's models BY
+ * DEFAULT, and 'inherit' is the stored opt-out.
+ *
+ * GATED ON FAN-OUT: a node that cannot spawn children has no children to place,
+ * so a stale setting on a node whose fan-out was turned off resolves to
+ * 'inherit' and emits no prompt block — every non-fan-out prompt keeps today's
+ * bytes. Pure + exported for testing.
+ */
+export function ctxSubagentModel(ctx) {
+  if (!ctxFanOut(ctx)) return SUBAGENT_INHERIT;
+  return effectiveSubagentModel(ctx && ctx.node ? ctx.node.subagentModel : undefined);
+}
+
+/**
+ * The prompt wire of the sub-agent model policy — the ONLY wire. The CLI
+ * resolves a child's model as Task-call `model` > the agent definition's own
+ * `model:` frontmatter > env default > parent, so an omitted parameter lands
+ * wherever the chosen agent definition says: both modes therefore instruct an
+ * EXPLICIT `model` on every call, attributed to the operator (the Task tool's
+ * own schema tells the model to set `model` only when a user asked for it, so
+ * an unattributed hint would correctly be ignored).
+ *
+ * 'inherit' — and any value that escaped validation — contributes NOTHING, so
+ * that prompt keeps the pre-feature bytes. The auto rubric keys on WHO CHECKS
+ * THE OUTPUT rather than on apparent difficulty (the agent is sizing a sub-task
+ * before anything has been read, and that estimate runs optimistic), and its
+ * tiers describe READ-ONLY investigation — the enclosing fan-out block forbids
+ * writing children. Pure + exported for testing.
+ */
+export function subagentModelDirective(subagentModel) {
+  if (subagentModel === SUBAGENT_AUTO) {
+    return (
+      '### Sub-agent model — YOUR call, per spawn\n\n' +
+      'The operator has asked you to choose each sub-agent\'s model deliberately: pass `model` on ' +
+      'EVERY Task/Agent call — this instruction is that request (the tool\'s usual "only when ' +
+      'explicitly asked" caveat is satisfied here). Never omit the parameter: an agent definition ' +
+      'may pin its own default, so an omitted `model` lands wherever that definition says, not ' +
+      'where you intend. Legal values: `sonnet`, `opus`, `fable`.\n\n' +
+      'Choose on WHO CHECKS THE OUTPUT, never on how small or cheap the sub-task looks:\n' +
+      '- `sonnet`: mechanical, bounded investigation whose findings the report itself lets you ' +
+      'verify — grep-and-summarize a known pattern, enumerate usages or call sites, extract or ' +
+      'reformat existing content, confirm what a file plainly states.\n' +
+      '- `opus`: investigation needing real codebase judgment you will build on — trace why ' +
+      'something fails, map how a subsystem hangs together, weigh where a change belongs.\n' +
+      '- `fable`: analysis whose VERDICT the run depends on and nothing downstream re-checks — a ' +
+      'severity call, a design or plan judgement, an accept/reject recommendation.\n\n' +
+      'When unsure between two tiers, take the lower one only if you will verify the result ' +
+      'yourself.\n\n'
+    );
+  }
+  if (!SUBAGENT_MODELS.includes(subagentModel)) return '';
+  return (
+    `### Sub-agent model — \`${subagentModel}\`\n\n` +
+    `The operator pinned this node's sub-agents to \`${subagentModel}\`: pass ` +
+    `\`model: "${subagentModel}"\` on EVERY Task/Agent call — this instruction is that request ` +
+    '(the tool\'s usual "only when explicitly asked" caveat is satisfied here). Never omit the ' +
+    'parameter: an agent definition may pin its own default, and an omitted `model` would land ' +
+    'there instead of on the pin. Do not pick any other value; split the work so it suits that ' +
+    'tier.\n\n'
+  );
+}
+
 // ── run-root mode gates for the §5.8 prompt variants ───────────────────────────
 // EVERY Phase-4 prompt variant is gated on `runRootMode === 'detached'`; the
 // workspace-specific ones are ADDITIONALLY gated on `isWorkspace` (§6 Phase 4).
@@ -119,7 +186,7 @@ function relRepo(p) {
  * promised — it is inherited env and remains true. Single mode (both run-root modes)
  * and legacy workspace runs keep today's byte-identical sentence.
  */
-export function fanOutDirective(fanOut, { omitProjectAgents = false } = {}) {
+export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentModel = '' } = {}) {
   if (!fanOut) return '';
   const subagentSentence = omitProjectAgents
     ? 'Pick the BEST-FIT `subagent_type`: your personal agents (`~/.claude/agents`) are available by ' +
@@ -141,7 +208,8 @@ export function fanOutDirective(fanOut, { omitProjectAgents = false } = {}) {
     '`~/.claude/skills`) can be invoked via the Skill tool — by you AND by the sub-agents you spawn — ' +
     'use any that fit (e.g. design, framework-pattern, knowledge-graph) instead of guessing conventions.\n\n' +
     'Sub-agents are strictly READ-ONLY investigators: YOU write every artifact. Skip fan-out only for a ' +
-    'trivial, single-file change.\n\n'
+    'trivial, single-file change.\n\n' +
+    subagentModelDirective(subagentModel)
   );
 }
 
@@ -383,7 +451,9 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // dispatched node/role passes through — so _phaseCtx/_nodeCtx and the
     // workspace-scan path all inherit it without per-caller edits. undefined
     // when the model carries no env (or no model is set), keeping the spawn
-    // env byte-identical.
+    // env byte-identical. The sub-agent model policy deliberately does NOT
+    // touch this env: its only wire is the prompt block (subagentModelDirective),
+    // and CLAUDE_CODE_SUBAGENT_MODEL is a reserved model-env key.
     modelEnv: resolveModelEnv(c.model),
     // Guardrails: worca policy + lifted repo deny rules as {deny,...} rules ->
     // ONE --settings payload; envScrub/envAllowlist -> spawn env. All undefined
@@ -543,7 +613,7 @@ export function buildClarifyPrompt(ctx, opts = {}) {
     'pad, and never split one decision. For low-impact details, pick a sensible default rather ' +
     'than asking. If you have no material open questions, write { "questions": [] } to that ' +
     'same path.\n\n' +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx) }) +
+    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx), subagentModel: ctxSubagentModel(ctx) }) +
     `Write the clarify JSON to: ${outPath}\n\n` +
     answered +
     mockMarkers({

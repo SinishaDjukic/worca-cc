@@ -15,9 +15,14 @@ import { join } from 'node:path';
 import { getDb, prepare, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
 import { resolveRunConfig, readConfig, EFFORTS } from './config.mjs';
+import { isSubagentModelValue } from './model-env.mjs';
+
+/** Enum guard for one resolveGraph layer: a legal value passes, anything else
+ *  is `undefined` so firstDefined falls through to the next layer. */
+const validSubagentModel = (v) => (isSubagentModelValue(v) ? v : undefined);
 import { slugify } from './artifacts.mjs';
 import { DEFAULT_AGENTS_DIR, loadAgentRegistry } from './agent-registry.mjs'; // fileURLToPath-based (Windows-safe)
-import { validateGraph, formatIssue } from '../shared/graph/validate.mjs';
+import { validateGraph, formatIssue, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { GRAPH_DEFAULT_WORKFLOW } from './graph/builtin-workflows.mjs';
 export { GRAPH_DEFAULT_WORKFLOW };
@@ -90,7 +95,7 @@ function parseFrontmatterTools(text) {
  * setStep/setNodeModel.
  * @param {unknown} raw
  * @param {string} [nodeId] for the warning message
- * @returns {{model?:string,effort?:string,fanOut?:boolean,askQuestions?:boolean}|undefined}
+ * @returns {{model?:string,effort?:string,fanOut?:boolean,askQuestions?:boolean,subagentModel?:string}|undefined}
  */
 export function sanitizeNodeDefaults(raw, nodeId = '?') {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
@@ -118,6 +123,14 @@ export function sanitizeNodeDefaults(raw, nodeId = '?') {
     if (raw[field] === undefined) continue;
     if (typeof raw[field] === 'boolean') out[field] = raw[field];
     else warn(field, 'not a boolean');
+  }
+  // subagentModel is an ALIAS enum, not a catalog id (the CLI's Task tool refuses
+  // anything else), so unlike `model` it is validated structurally right here.
+  if (raw.subagentModel !== undefined) {
+    if (isSubagentModelValue(raw.subagentModel)) out.subagentModel = raw.subagentModel;
+    else if (raw.subagentModel !== '' && raw.subagentModel !== null) {
+      warn('subagentModel', `unknown sub-agent model "${raw.subagentModel}"`);
+    }
   }
   return Object.keys(out).length ? out : undefined;
 }
@@ -442,13 +455,12 @@ export async function setWorkflowNodeDefaults(id, map) {
   const patch = map && typeof map === 'object' ? map : {};
 
   if (tpl.version === 2) {
-    const TUNABLES = ['model', 'effort', 'fanOut', 'askQuestions'];
     const nodes = tpl.nodes.map((node) => {
       if (!Object.prototype.hasOwnProperty.call(patch, node.id)) return node;
       const clean = sanitizeNodeDefaults(patch[node.id], node.id) || {};
-      // Only the 4 tunables are defaults; awaitAll/arity/planStoreSeed are
+      // Only the AGENT_TUNABLES are defaults; awaitAll/arity/planStoreSeed are
       // TOPOLOGY and must survive a defaults patch untouched.
-      const kept = Object.fromEntries(Object.entries(node.config || {}).filter(([k]) => !TUNABLES.includes(k)));
+      const kept = Object.fromEntries(Object.entries(node.config || {}).filter(([k]) => !AGENT_TUNABLES.includes(k)));
       return { ...node, config: { ...kept, ...clean } };
     });
     const now = new Date().toISOString();
@@ -612,6 +624,17 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       fanOut: isWorkspace && meta.workspaceFanOut
         ? true
         : !!firstDefined(sel.fanOut, legacy.fanOut, cfg.fanOut, meta.fanOut, false),
+      // Sub-agent model policy. Raw tri-state: '' = unset (the RUNTIME resolves
+      // that to the auto default — phases.mjs#ctxSubagentModel), a stored value
+      // otherwise. Meaningful only WITH fanOut, but resolved unconditionally so
+      // the value survives a fan-out toggle without a second write. Each layer
+      // is enum-guarded HERE because the TEMPLATE layer has no write-time
+      // validation (validateGraph whitelists the key; a plugin import checks
+      // nothing): an off-vocabulary value must fall through to the next layer,
+      // never freeze verbatim into the run manifest.
+      subagentModel: firstDefined(
+        validSubagentModel(sel.subagentModel), validSubagentModel(legacy.subagentModel),
+        validSubagentModel(cfg.subagentModel), '') || '',
       askQuestions: !meta.asksQuestions
         ? false
         : (meta.questionsLocked

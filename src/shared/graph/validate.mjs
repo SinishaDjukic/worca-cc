@@ -18,7 +18,7 @@ const AWAIT_PORT_ID = 'await';
  *  would warn on the task node and an agent-only `awaitAll` would pass silently
  *  on a flow card. Unknown keys are PRESERVED and ignored, never stripped. */
 const KNOWN_CONFIG = {
-  agent: new Set(['model', 'effort', 'fanOut', 'askQuestions', 'awaitAll']),
+  agent: new Set(['model', 'effort', 'fanOut', 'askQuestions', 'awaitAll', 'subagentModel']),
   task: new Set(['planStoreSeed']),
   and: new Set(['arity']),
   or: new Set(['arity']),
@@ -26,6 +26,12 @@ const KNOWN_CONFIG = {
   end: new Set(),
 };
 const KNOWN_WIRE_CONFIG = new Set(['maxCycles']);
+
+/** The per-node AGENT tunables (the defaults/overrides vocabulary) — the single
+ *  source for every writer that splits tunables from topology keys
+ *  (workflows.mjs#setWorkflowNodeDefaults, ui/server.mjs template save). A
+ *  strict subset of KNOWN_CONFIG.agent: awaitAll is TOPOLOGY, not a tunable. */
+export const AGENT_TUNABLES = ['model', 'effort', 'fanOut', 'askQuestions', 'subagentModel'];
 
 const isObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 

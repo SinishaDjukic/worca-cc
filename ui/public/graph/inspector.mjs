@@ -83,7 +83,7 @@ function portList(doc, ports) {
   return wrap;
 }
 
-export function renderNodeInspector(node, { template, portsFn, meta = null, models = [], efforts = [], doc = globalThis.document } = {}) {
+export function renderNodeInspector(node, { template, portsFn, meta = null, models = [], efforts = [], subagentModels = [], doc = globalThis.document } = {}) {
   const ports = portsFn(node) || { inputs: [], outputs: [] };
   const root = h(doc, 'div', `ins-panel ins-${node.kind === 'agent' ? 'agent' : `flow ins-${node.kind}`}`);
   root.dataset.nodeId = node.id;
@@ -98,6 +98,15 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
     if (meta && meta.fanOut) {
       body.appendChild(toggle(doc, 'ins-fanout', 'fanOut', 'Research fan-out', 'parallel research sub-agents',
         { checked: node.config.fanOut === true }));
+      // What this node's sub-agents run on. Gated by the SAME meta flag as the
+      // toggle above: an agent that cannot fan out has no children to place.
+      // '' = unset — the run resolves the auto default (a per-spawn choice
+      // rubric in the agent's prompt), so the blank option says so; 'inherit'
+      // is the stored opt-out (children ride the CLI's own resolution).
+      body.appendChild(select(doc, 'ins-subagent', 'subagentModel', 'Sub-agent model',
+        [{ value: '', text: 'default (agent picks)' },
+          ...subagentModels.map((m) => ({ value: m, text: m === 'auto' ? 'agent picks' : m }))],
+        node.config.subagentModel));
     }
     if (meta && meta.asksQuestions) {
       const locked = Boolean(meta.questionsLocked);

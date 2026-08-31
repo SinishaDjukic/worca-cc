@@ -1203,6 +1203,11 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    name (cf. skill pills). Uses the shared violet token (defined :root, l.24) so it
    reads as agent metadata, distinct from the skill (blue) / MCP (green) pills. */
 .rd-ag-name .agent-type-pill,.hd-ag-row .agent-type-pill{font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:2px 9px;border-radius:999px;white-space:nowrap;background:var(--violet-bg);color:var(--violet-ink);}
+/* Sub-agent run model (neutral outline) — the model a spawned child actually ran on.
+   Deliberately the QUIETEST pill on the row: it is present on every sub-agent once a
+   run records one, so a filled colour would out-shout the type + graphify badges that
+   only some rows carry. Sits right after the violet type pill. */
+.rd-ag-name .sub-model-pill,.hd-ag-row .sub-model-pill{display:inline-block;font-size:10.5px;font-weight:600;letter-spacing:.01em;padding:1px 8px;border-radius:999px;white-space:nowrap;background:transparent;color:var(--ink-3);border:1px solid var(--line-2);}
 /* graphify-use count badge (amber) — how many times an agent / sub-agent invoked the
    graphify CLI. Rendered INLINE: in the phase/node header next to the status, and on a
    sub-agent row right after the violet type pill. inline-block + parent flex `gap` size

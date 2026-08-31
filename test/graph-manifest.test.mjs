@@ -99,6 +99,13 @@ test('node overlays win over template config', () => {
   assert.equal(plan.askQuestions, true);
 });
 
+test('a node carries its sub-agent model policy so a resumed run keeps it', () => {
+  const plain = build().graph.nodes.find((n) => n.id === 'n_plan');
+  assert.equal(plain.subagentModel, '', 'no policy configured -> unset (the runtime resolves auto)');
+  const over = build({ overlays: { nodes: { n_plan: { subagentModel: 'auto' } } } });
+  assert.equal(over.graph.nodes.find((n) => n.id === 'n_plan').subagentModel, 'auto');
+});
+
 test('the icon is sanitized and dropped when oversized or script-ish', () => {
   const iconOf = (icon) => buildGraphManifest(TPL, { ...AGENTS, planner: { ...AGENTS.planner, icon } })
     .graph.nodes.find((n) => n.id === 'n_plan').icon;
