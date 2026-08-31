@@ -449,13 +449,14 @@ export function questionsPromptBlock(ctx) {
   return (
     '\n\n' + answered +
     '## Asking the user (enabled)\n\n' +
-    'If a decision genuinely blocks correct work and cannot be resolved from the task, the ' +
-    'inputs, or the codebase:\n' +
+    'If a decision materially shapes the outcome and you cannot resolve it from the task, ' +
+    'the inputs, or the codebase — including anything material you are about to silently ' +
+    'assume:\n' +
     '1. Write {"questions":[{"id","question","options":[2-4 strings],"allowFreeText":true}]} ' +
     `(max 8 questions) to: ${ctx.questionsFile}\n` +
     '2. STOP immediately — do no further work. You will be resumed with the answers.\n' +
-    'Prefer reasonable assumptions for minor choices; never pad, and never re-ask an ' +
-    'answered question.\n\n' +
+    'Assume freely on minor choices; on material ones, ask instead of assuming. Never pad, ' +
+    'and never re-ask an answered question.\n\n' +
     mock
   );
 }
