@@ -1,6 +1,6 @@
 // src/shared/graph/layout.mjs
 // Auto-layout for the composer's header button: longest-path ranks with LOOP
-// WIRES EXCLUDED, columns at x = 60 + rank*300, barycenter ordering inside each
+// WIRES EXCLUDED, columns at x = 60 + rank*320, barycenter ordering inside each
 // column, y stacked so no two cards touch and snapped to the 11px grid.
 // Deterministic by construction — same template in, same positions out, and
 // re-running over an already laid-out template reproduces it exactly.
@@ -8,9 +8,9 @@ import { classifyLoops } from './loops.mjs';
 import { nodeSize, snap } from './geometry.mjs';
 
 export const RANK_X0 = 60;
-export const RANK_DX = 300;
+export const RANK_DX = 320;                // 100px column gap: two 24px clearance bands + laned verticals
 export const RANK_Y0 = 60;
-export const ROW_GAP = 40;
+export const ROW_GAP = 64;                 // > 2×ROUTE_CLEARANCE so a wire corridor survives between stacked cards
 const SWEEPS = 2;
 
 /** A layoutable node: an object with a string id. `filter(Boolean)` let a truthy

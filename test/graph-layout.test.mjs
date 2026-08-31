@@ -38,19 +38,19 @@ test('rankNodes without loop exclusion would NOT rank the implementer past the r
   assert.equal(r.n_impl <= r.n_rev, true, 'a residual cycle still terminates and ranks bounded');
 });
 
-test('autoLayout: x = 60 + rank*300, y snapped to 11, deterministic and idempotent', () => {
+test('autoLayout: x = 60 + rank*320, y snapped to 11, deterministic and idempotent', () => {
   const a = autoLayout(TPL, portsFn);
   assert.deepEqual(Object.keys(a).sort(), ['n_end', 'n_impl', 'n_plan', 'n_rev', 'n_task']);
   assert.equal(a.n_task.x, 60);
-  assert.equal(a.n_plan.x, 360);
-  assert.equal(a.n_end.x, 1260);
+  assert.equal(a.n_plan.x, 380);
+  assert.equal(a.n_end.x, 1340);
   for (const p of Object.values(a)) assert.equal(p.y % 11, 0, 'every row snaps to the 11px grid');
   const applied = { ...TPL, nodes: TPL.nodes.map((n) => ({ ...n, ...a[n.id] })) };
   assert.deepEqual(autoLayout(applied, portsFn), a, 'idempotent');
   assert.deepEqual(autoLayout(TPL, portsFn), a, 'deterministic');
 });
 
-test('autoLayout stacks a column with a 40px gap below the previous card', () => {
+test('autoLayout stacks a column with a 64px gap below the previous card', () => {
   const tpl = { version: 2,
     nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
       { id: 'a', kind: 'agent', key: 'planner', x: 0, y: 0, config: {} },
@@ -59,9 +59,9 @@ test('autoLayout stacks a column with a 40px gap below the previous card', () =>
       { id: 'w2', from: { node: 'n_task', port: 'task' }, to: { node: 'b', port: 'task' } }] };
   const p = autoLayout(tpl, portsFn);
   assert.equal(p.a.x, p.b.x);
-  // y0 60 snaps to 55; planner card = 95.5 + 24*2 = 143.5, so 55 + 143.5 + 40 = 238.5 -> 242
+  // y0 60 snaps to 55; planner card = 95.5 + 24*2 = 143.5, so 55 + 143.5 + 64 = 262.5 -> 264
   assert.equal(p.a.y, 55);
-  assert.equal(p.b.y, 242);
+  assert.equal(p.b.y, 264);
 });
 
 test('malformed nodes/wires entries never throw and are never laid out', () => {

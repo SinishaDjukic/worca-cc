@@ -250,7 +250,7 @@ test('setFooter re-routes when the billed line count changes — growth AND remo
   // Footers grow DOWNWARD (nodeSize bills them into h), so a card can only start
   // blocking from ABOVE: park it so the un-footed card's inflated bottom (132)
   // clears w1's entry channel at y = 136 by 4px.
-  blk.y = 120 - view.size(blk).h;
+  blk.y = 108 - view.size(blk).h;
   view.render(tpl, {});
   const base = view.wireEl('w1').getAttribute('d');
   assert.equal(base, routedD(tpl, 'w1'), 'the un-footed card forces no detour');

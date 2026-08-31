@@ -11,14 +11,17 @@
 // model, so hit testing reads the same vertices the painter drew.
 import { WIRE_HIT_TOL } from './geometry.mjs';
 
-/** obstacle inflation: the minimum gap between a wire and a card edge. */
-export const ROUTE_CLEARANCE = 12;
+/** obstacle inflation: the minimum gap between a wire and a card edge. 24 keeps
+ *  the mid-wire `N×` pill (18px tall, centred on the line → ±9px) clear of the
+ *  ornaments overhanging a card's top edge (.nrun at top:-9px, .npip/.ngate at
+ *  -7px) with 6px of air. */
+export const ROUTE_CLEARANCE = 24;
 /** straight exit/entry length at a port (> CLEARANCE, so stub tips clear their own card's inflated rect). */
-export const ROUTE_STUB = 20;
+export const ROUTE_STUB = 28;
 /** corner rounding radius (clamped to half of the adjacent segments). */
 export const ROUTE_RADIUS = 8;
 /** separation between parallel wires sharing a channel. */
-export const ROUTE_LANE_GAP = 5;
+export const ROUTE_LANE_GAP = 7;
 /** A* bend penalty, in px-equivalent. */
 const TURN_COST = 40;
 const EPS = 0.01;

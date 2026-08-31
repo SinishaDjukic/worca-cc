@@ -33,6 +33,14 @@ function crossesObstacle(pts, rects) {
   return false;
 }
 
+test('clearance headroom: stubs outrank the inflation; the inflation clears the card-top ornaments', () => {
+  // A wire hugging the clearance line carries the mid-arc `N×` pill (18px tall,
+  // centred on the line → ±9px) past ornaments overhanging the card top: .nrun
+  // at top:-9px, .npip/.ngate at -7px. 9 + 9 + 6px air = 24.
+  assert.ok(ROUTE_CLEARANCE >= 24, 'the badge (±9px) must clear .nrun (-9px) with air');
+  assert.ok(ROUTE_STUB > ROUTE_CLEARANCE, 'stub tips must clear their own card\'s inflated rect');
+});
+
 test('same-row, clear channel: a dead-straight wire, zero bends', () => {
   const a = { x: 280, y: 116 }; const b = { x: 400, y: 116 };
   const pts = routeWire(a, b, [CARD(60, 60), CARD(400, 60)]);
@@ -52,9 +60,9 @@ test('offset rows, clear channel: orthogonal, starts and ends at the anchors, ho
 });
 
 test('a card square in the corridor: the route detours around it, never inside the clearance band', () => {
-  const blocker = CARD(320, 40, 300);                // sits between source (right edge 280) and target (left edge 620)
-  const a = { x: 280, y: 190 }; const b = { x: 620, y: 190 };
-  const obstacles = [CARD(60, 100, 200), blocker, CARD(620, 100, 200)];
+  const blocker = CARD(360, 40, 300);                // sits between source (right edge 280) and target (left edge 680)
+  const a = { x: 280, y: 190 }; const b = { x: 680, y: 190 };
+  const obstacles = [CARD(60, 100, 200), blocker, CARD(680, 100, 200)];
   const pts = routeWire(a, b, obstacles);
   assert.ok(orthogonal(pts));
   assert.ok(!crossesObstacle(pts, obstacles), 'route stays out of every card + interior legs out of every clearance band');
@@ -85,8 +93,8 @@ test('looseEnd ghost: a straight leftward mirror drag stays a dead-straight two-
 });
 
 test('deterministic: same inputs, same route, and obstacle ARRAY ORDER does not matter', () => {
-  const a = { x: 280, y: 190 }; const b = { x: 620, y: 190 };
-  const obs = [CARD(60, 100), CARD(320, 40, 300), CARD(620, 100)];
+  const a = { x: 280, y: 190 }; const b = { x: 680, y: 190 };
+  const obs = [CARD(60, 100), CARD(360, 40, 300), CARD(680, 100)];
   const r1 = routeWire(a, b, obs);
   const r2 = routeWire(a, b, [...obs].reverse());
   assert.deepEqual(r1, r2);
@@ -119,10 +127,10 @@ test('fan-out from ONE output anchor: siblings peel apart at distinct, id-ordere
 
 /** The shared-channel fixture: both anchors sit BELOW the blocker's midline, so
  *  both wires genuinely take the same below channel. */
-const CHANNEL_OBSTACLES = [CARD(60, 100, 260), CARD(320, 40, 300), CARD(620, 100, 260)];
+const CHANNEL_OBSTACLES = [CARD(60, 100, 260), CARD(360, 40, 300), CARD(680, 100, 260)];
 const CHANNEL_WIRES = [
-  { id: 'wa', a: { x: 280, y: 260 }, b: { x: 620, y: 260 } },
-  { id: 'wb', a: { x: 280, y: 300 }, b: { x: 620, y: 300 } },
+  { id: 'wa', a: { x: 280, y: 260 }, b: { x: 680, y: 260 } },
+  { id: 'wb', a: { x: 280, y: 300 }, b: { x: 680, y: 300 } },
 ];
 
 test('two wires sharing a below-channel separate by a lane gap; the spread never exceeds the clearance budget', () => {
