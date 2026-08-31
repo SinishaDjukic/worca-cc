@@ -3034,6 +3034,9 @@ export class RunHarness extends EventEmitter {
       // Finish: a tool_result on the MAIN stream whose tool_use_id is a tracked
       // sub-agent → finished/error. These `user` envelopes were previously dropped.
       this._recordSubAgentFinishes(e.raw);
+      // Background-agent completion: the system/task_notification frame arrives
+      // on the main stream long after the launch-ack tool_result.
+      this._recordAsyncTaskClose(e.raw);
     }
 
     // Capture named-skill / MCP-tool usage for the Sub-agents dropdown pills
@@ -3160,19 +3163,85 @@ export class RunHarness extends EventEmitter {
    * terminal record back or re-emit). Mirrors to the table + emits a `finish`
    * delta. The finish envelope is `{type:'user', message:{content:[{type:
    * 'tool_result', tool_use_id, is_error?:true}]}}` — previously dropped.
+   * A background launch ack (frame-level `tool_use_result.isAsync`/
+   * `status:'async_launched'`) is NOT a finish; `_recordAsyncTaskClose` owns
+   * that close.
    */
   _recordSubAgentFinishes(raw) {
     const content = raw?.message?.content;
     if (!Array.isArray(content)) return;
+    // Probed (claude 2.1.251, 2026-08-31; ask/events.mjs saw the same shape on
+    // 2.1.239): the user tool_result frame carries a TOP-LEVEL `tool_use_result`
+    // object. Background mode marks it {isAsync:true, status:'async_launched'} —
+    // that tool_result is only a LAUNCH ACK; the real completion arrives later
+    // as a system/task_notification frame (_recordAsyncTaskClose). One frame per
+    // tool_result in practice, so applying the frame's object to each block is
+    // safe (ask/events.mjs makes the same assumption).
+    const tur = raw?.tool_use_result;
+    const obj = tur && typeof tur === 'object' && !Array.isArray(tur) ? tur : null;
+    const isAck = !!obj && (obj.isAsync === true || obj.status === 'async_launched');
     for (const b of content) {
       if (b?.type !== 'tool_result' || !b.tool_use_id) continue;
       const rec = this.state.subAgents.find((s) => s.id === b.tool_use_id);
       if (!rec || rec.status !== 'running') continue; // unknown id or already terminal
+      if (isAck) {
+        // Launch ack — still running in the background; task_notification (or
+        // the execution backstop) closes it. resolvedModel closes a spawn-time
+        // gap: an agent definition's `model:` frontmatter is invisible in the
+        // Task input, so a record with no runModel learns it here. Never
+        // overwrites a spawn-set alias (the UI pill renders the value verbatim).
+        if (rec.runModel == null && typeof obj.resolvedModel === 'string' && obj.resolvedModel) {
+          rec.runModel = obj.resolvedModel;
+          this._upsertSubAgent(rec);
+          this._subAgentTransition('update', rec);
+        }
+        continue;
+      }
+      if (obj) {
+        // Foreground completion telemetry — the same durationMs/tokens fields the
+        // gated PostToolUse hook fills; tool_use_result carries no cost. With
+        // WORCA_SUBAGENT_HOOKS on, _recordSubAgentTelemetry may re-write these
+        // after the finish (it does not gate on status): last writer wins, and
+        // both sources quote the same CLI figures — deliberate, not a race to fix.
+        if (Number.isFinite(Number(obj.totalDurationMs))) rec.durationMs = Number(obj.totalDurationMs);
+        if (Number.isFinite(Number(obj.totalTokens))) rec.tokens = Number(obj.totalTokens);
+        if (rec.runModel == null && typeof obj.resolvedModel === 'string' && obj.resolvedModel) rec.runModel = obj.resolvedModel;
+      }
       rec.status = b.is_error ? 'error' : 'finished';
       rec.finishedAt = new Date().toISOString();
       this._upsertSubAgent(rec);
       this._subAgentTransition('finish', rec);
     }
+  }
+
+  /**
+   * Background sub-agent completion. Probed (claude 2.1.251, 2026-08-31): when a
+   * backgrounded Task/Agent stops, the MAIN stream emits
+   *   {type:'system', subtype:'task_notification', task_id, tool_use_id,
+   *    status:'completed'|…, output_file, summary, usage?}
+   * — the one stop marker keyed by tool_use_id (task_started / task_updated /
+   * background_tasks_changed frames surround it and are ignored). A resumable
+   * agent may notify more than once for the same task; the status!=='running'
+   * guard makes repeats no-ops. Anything but status==='completed' closes as
+   * 'error'. finishedAt = arrival time (observed ≤30ms after the agent stops).
+   * usage.{duration_ms,total_tokens} rode along on the 2.1.239 capture
+   * (test/fixtures/ask/task-subagent.jsonl:41) but is OPTIONAL — without it,
+   * durationMs stays null and the UI's timestamp fallback is real wall time
+   * for an async agent. No cost figure exists here; costUsd stays hook-gated.
+   */
+  _recordAsyncTaskClose(raw) {
+    if (raw?.type !== 'system' || raw?.subtype !== 'task_notification' || !raw.tool_use_id) return;
+    const rec = this.state.subAgents.find((s) => s.id === raw.tool_use_id);
+    if (!rec || rec.status !== 'running') return;
+    const u = raw.usage;
+    if (u && typeof u === 'object' && !Array.isArray(u)) {
+      if (Number.isFinite(Number(u.duration_ms))) rec.durationMs = Number(u.duration_ms);
+      if (Number.isFinite(Number(u.total_tokens))) rec.tokens = Number(u.total_tokens);
+    }
+    rec.status = raw.status === 'completed' ? 'finished' : 'error';
+    rec.finishedAt = new Date().toISOString();
+    this._upsertSubAgent(rec);
+    this._subAgentTransition('finish', rec);
   }
 
   /**
