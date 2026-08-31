@@ -58,18 +58,6 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>
             <span>Agents</span>
           </button>
-          <button type="button" data-nav="guardrails">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"></path></svg>
-            <span>Guardrails</span>
-          </button>
-          <button type="button" data-nav="models">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="2"></rect><path d="M12 2v3M12 19v3M2 12h3M19 12h3M6 2.5v2M18 2.5v2M6 19.5v2M18 19.5v2"></path></svg>
-            <span>Models</span>
-          </button>
-          <button type="button" data-nav="plugins">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5M15 3v5M7 8h10v4a5 5 0 0 1-10 0V8Z"></path><path d="M12 17v4"></path></svg>
-            <span>Plugins</span>
-          </button>
 
           <div class="nav-sect">Manage</div>
           <button type="button" data-nav="projects">
@@ -107,9 +95,6 @@
           <span class="topnav-sep" aria-hidden="true"></span>
           <button type="button" data-nav="composer">Composer</button>
           <button type="button" data-nav="agents">Agents</button>
-          <button type="button" data-nav="guardrails">Guardrails</button>
-          <button type="button" data-nav="models">Models</button>
-          <button type="button" data-nav="plugins">Plugins</button>
           <span class="topnav-sep" aria-hidden="true"></span>
           <button type="button" data-nav="projects">Projects</button>
           <button type="button" data-nav="workspaces">Workspaces</button>
@@ -854,71 +839,6 @@
         </section>
         <!-- /view agents -->
 
-        <!-- ===== VIEW: PLUGINS ===== -->
-        <section class="view hidden" data-view="plugins">
-          <div class="topbar">
-            <div>
-              <h1>Plugins</h1>
-              <div class="sub">Task sources, agents, skills and workflow packs from your plugin marketplaces</div>
-            </div>
-            <button type="button" id="plugin-add-btn" class="btn-go" style="padding:11px 20px">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-              Add marketplace
-            </button>
-          </div>
-          <p id="plugins-msg" class="form-msg" aria-live="polite"></p>
-          <div class="card hidden" id="marketplace-add-row" style="padding:16px 20px;margin-bottom:14px">
-            <div class="path-row">
-              <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo" spellcheck="false" />
-              <button type="button" id="marketplace-add" class="btn btn-primary btn-mini">Add</button>
-            </div>
-          </div>
-          <h3 class="pl-sec-title">Installed</h3>
-          <div class="run-list" id="plugins-list"></div>
-          <h3 class="pl-sec-title">Available</h3>
-          <div class="run-list" id="plugins-available"></div>
-          <h3 class="pl-sec-title">Marketplaces</h3>
-          <div class="run-list" id="marketplaces-list"></div>
-        </section>
-        <!-- /view plugins -->
-
-        <!-- ===== VIEW: GUARDRAILS ===== -->
-        <section class="view hidden" data-view="guardrails">
-          <div class="topbar">
-            <div>
-              <h1>Guardrails</h1>
-              <div class="sub">Named guardrail policies — built-ins plus your own sets, selected per pipeline run</div>
-            </div>
-            <button type="button" id="guardrail-create-btn" class="btn-go" style="padding:11px 20px">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-              Create guardrails
-            </button>
-          </div>
-          <p id="guardrails-msg" class="form-msg" aria-live="polite"></p>
-          <div class="run-list" id="guardrails-list"></div>
-        </section>
-        <!-- /view guardrails -->
-
-        <!-- ===== VIEW: MODELS ===== -->
-        <section class="view hidden" data-view="models">
-          <div class="topbar">
-            <div>
-              <h1>Models</h1>
-              <div class="sub">Global model catalog — available in every project; entries can override built-ins and carry per-model routing env</div>
-            </div>
-            <div style="display:flex;gap:8px">
-              <button type="button" id="model-share-btn" class="btn-ghost" style="padding:11px 20px">Share as plugin…</button>
-              <button type="button" id="model-create-btn" class="btn-go" style="padding:11px 20px">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-                Add model
-              </button>
-            </div>
-          </div>
-          <p id="models-msg" class="form-msg" aria-live="polite"></p>
-          <div class="run-list" id="models-list"></div>
-        </section>
-        <!-- /view models -->
-
         <!-- ===== VIEW: PROJECTS ===== -->
         <section class="view hidden" data-view="projects">
           <div class="topbar">
@@ -1066,150 +986,233 @@
         </section>
         <!-- /view composer -->
 
-        <!-- ===== VIEW: SETTINGS ===== -->
+        <!-- ===== VIEW: SETTINGS (tabbed) =====
+             Guardrails / Models / Plugins used to be top-level views; they are
+             now panes here. A pane deliberately carries NEITHER class="view" nor
+             the routing attribute: showView()'s views.forEach() would force
+             .hidden back on it at every navigation. The tab rides in the hash
+             param (#settings/<tab>, #settings/guardrails/<id>) — parseHash splits
+             on the FIRST '/' only, so the view stays 'settings'.
+             NOTE: the routed-view census in test/ui-shell.test.mjs counts the
+             literal routing attribute name, so never spell it out in a comment. -->
         <section class="view hidden" data-view="settings">
-          <div class="topbar">
-            <div>
-              <h1>Settings</h1>
-              <div class="sub">Machine-wide Worca CC preferences</div>
-            </div>
+          <div class="seg settings-tabs" id="settings-tabs" role="group" aria-label="Settings section">
+            <button type="button" class="on" data-tab="general" aria-pressed="true">General</button>
+            <button type="button" data-tab="guardrails" aria-pressed="false">Guardrails</button>
+            <button type="button" data-tab="models" aria-pressed="false">Models</button>
+            <button type="button" data-tab="plugins" aria-pressed="false">Plugins</button>
           </div>
 
-          <section class="card settings-card">
-            <div class="field">
-              <div class="label-row">
-                <label for="settingsRoot">Worca CC root folder</label>
-                <button type="button" class="info-tip" aria-label="About Worca CC root folder">i<span class="tip-content hidden">
-                  The folder under which Worca CC keeps its data &mdash; a <code>.worca-cc/</code> directory holding the
-                  history store, the project list, and saved workflows. Leave empty to use the default.
-                  Changes apply to new runs immediately. Changing the root does <b>not</b> move existing
-                  data: Worca CC starts a fresh <code>.worca-cc/</code> under the new folder; history under
-                  the old root is left in place.
-                </span></button>
+          <section class="settings-pane" data-tab="general">
+            <div class="topbar">
+              <div>
+                <h1>Settings</h1>
+                <div class="sub">Machine-wide Worca CC preferences</div>
               </div>
-              <input id="settingsRoot" class="input" type="text" placeholder="" spellcheck="false" autocomplete="off" />
             </div>
-            <div class="field">
-              <div class="label-row">
-                <label for="settingsProjectsRoot">Projects root folder</label>
-                <button type="button" class="info-tip" aria-label="About Projects root folder">i<span class="tip-content hidden">
-                  The top-level folder under which your projects live. Its CLAUDE.md, .claude/skills, and
-                  .mcp.json are made available to every pipeline agent. Leave empty to use your home folder.
-                </span></button>
+
+            <section class="card settings-card">
+              <div class="field">
+                <div class="label-row">
+                  <label for="settingsRoot">Worca CC root folder</label>
+                  <button type="button" class="info-tip" aria-label="About Worca CC root folder">i<span class="tip-content hidden">
+                    The folder under which Worca CC keeps its data &mdash; a <code>.worca-cc/</code> directory holding the
+                    history store, the project list, and saved workflows. Leave empty to use the default.
+                    Changes apply to new runs immediately. Changing the root does <b>not</b> move existing
+                    data: Worca CC starts a fresh <code>.worca-cc/</code> under the new folder; history under
+                    the old root is left in place.
+                  </span></button>
+                </div>
+                <input id="settingsRoot" class="input" type="text" placeholder="" spellcheck="false" autocomplete="off" />
               </div>
+              <div class="field">
+                <div class="label-row">
+                  <label for="settingsProjectsRoot">Projects root folder</label>
+                  <button type="button" class="info-tip" aria-label="About Projects root folder">i<span class="tip-content hidden">
+                    The top-level folder under which your projects live. Its CLAUDE.md, .claude/skills, and
+                    .mcp.json are made available to every pipeline agent. Leave empty to use your home folder.
+                  </span></button>
+                </div>
+                <div class="path-row">
+                  <input id="settingsProjectsRoot" class="input" type="text" placeholder="" spellcheck="false" autocomplete="off" />
+                  <button type="button" id="settingsProjectsRootBrowse" class="btn btn-ghost btn-mini" title="Pick the projects root folder">Browse&hellip;</button>
+                </div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="settingsReset" class="btn btn-ghost btn-mini">Reset to default</button>
+                <button type="button" id="settingsSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="settingsMsg"></small>
+            </section>
+
+            <section class="card settings-card">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Budget &amp; cost limits</h2>
+                  <button type="button" class="info-tip" aria-label="About budget costs">i<span class="tip-content hidden">
+                    Costs are Claude Code's client-side estimate (total_cost_usd), not authoritative billing.
+                  </span></button>
+                </div>
+              </div>
+              <div id="budgetReadout"></div>
+              <div class="field">
+                <div class="label-row">
+                  <label for="budgetPerPipeline">Per-pipeline cost limit (USD)</label>
+                  <button type="button" class="info-tip" aria-label="About Per-pipeline cost limit">i<span class="tip-content hidden">
+                    Pause a pipeline when its estimated cost reaches this amount. Leave empty for no limit.
+                  </span></button>
+                </div>
+                <input id="budgetPerPipeline" class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="No limit" autocomplete="off" />
+              </div>
+              <div class="field">
+                <div class="label-row">
+                  <label for="budgetTotal">Total cost limit (USD)</label>
+                  <button type="button" class="info-tip" aria-label="About Total cost limit">i<span class="tip-content hidden">
+                    Pause all pipelines and block new ones when total spend in the period reaches this amount.
+                    Leave empty for no limit.
+                  </span></button>
+                </div>
+                <input id="budgetTotal" class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="No limit" autocomplete="off" />
+              </div>
+              <div class="field">
+                <div class="label-row">
+                  <label for="budgetResetPeriod">Reset period</label>
+                  <button type="button" class="info-tip" aria-label="About Reset period">i<span class="tip-content hidden">
+                    Spend counts within the current period and returns to $0.00 at the reset. Times are local.
+                  </span></button>
+                </div>
+                <div class="select-wrap">
+                  <select id="budgetResetPeriod" class="select">
+                    <option value="weekly">Weekly &mdash; resets Monday 00:00</option>
+                    <option value="monthly">Monthly &mdash; resets on the 1st, 00:00</option>
+                  </select>
+                </div>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="budgetReset" class="btn btn-ghost btn-mini">Clear limits</button>
+                <button type="button" id="budgetSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="budgetMsg"></small>
+            </section>
+
+            <!-- Ask Worca (ask-worca-design §6.9): per-turn guards for the
+                 assistant chat. Read fresh on every turn (D12); a stored null
+                 budget means "no cap". Posted ALONE — never with root/budget keys. -->
+            <section class="card settings-card">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Ask Worca</h2>
+                  <button type="button" class="info-tip" aria-label="About Ask Worca limits">i<span class="tip-content hidden">
+                    Per-turn guards for the Ask Worca assistant chat. A chat turn stops when it reaches the turn limit or the per-turn cost cap; both are read fresh on every turn.
+                  </span></button>
+                </div>
+              </div>
+              <div class="field">
+                <div class="label-row">
+                  <label for="askMaxTurns">Turn limit</label>
+                  <button type="button" class="info-tip" aria-label="About Turn limit">i<span class="tip-content hidden">
+                    Maximum assistant/tool turns one chat message may use (1&ndash;500). Leave empty to restore the default of 40.
+                  </span></button>
+                </div>
+                <input id="askMaxTurns" class="input" type="number" min="1" max="500" step="1" inputmode="numeric" placeholder="40" autocomplete="off" />
+              </div>
+              <div class="field">
+                <div class="label-row">
+                  <label for="askMaxBudgetUsd">Per-turn cost cap (USD)</label>
+                  <button type="button" class="info-tip" aria-label="About Per-turn cost cap">i<span class="tip-content hidden">
+                    Stop a chat turn when its estimated cost reaches this amount (0.1&ndash;100). Leave empty to restore the default of $2, or tick No cap to disable the guard.
+                  </span></button>
+                </div>
+                <input id="askMaxBudgetUsd" class="input" type="number" min="0.1" max="100" step="0.1" inputmode="decimal" placeholder="2" autocomplete="off" />
+                <label class="check-row" for="askNoCap"><input id="askNoCap" type="checkbox" /> No cap</label>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="askLimitsReset" class="btn btn-ghost btn-mini">Use defaults</button>
+                <button type="button" id="askLimitsSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="askLimitsMsg"></small>
+            </section>
+
+            <!-- Chat notifications (chat-connectivity-design.md §4.8): which run
+                 events ping which chat channels. Body rendered by
+                 chat-settings-view.mjs; app.js owns fetch/save/Test wiring. -->
+            <section class="card settings-card" id="chat-settings-card">
+              <div class="label-row">
+                <h2>Chat notifications</h2>
+              </div>
+              <div id="chat-settings-host"></div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button id="chatSettingsSave" class="btn btn-primary btn-mini" type="button">Save</button>
+              </div>
+              <small class="hint" id="chatSettingsMsg"></small>
+            </section>
+          </section>
+          <!-- /pane general -->
+
+          <!-- ===== TAB: GUARDRAILS (was the top-level Guardrails view) ===== -->
+          <section class="settings-pane hidden" data-tab="guardrails">
+            <div class="topbar">
+              <div>
+                <h1>Guardrails</h1>
+                <div class="sub">Named guardrail policies — built-ins plus your own sets, selected per pipeline run</div>
+              </div>
+              <button type="button" id="guardrail-create-btn" class="btn-go" style="padding:11px 20px">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                Create guardrails
+              </button>
+            </div>
+            <p id="guardrails-msg" class="form-msg" aria-live="polite"></p>
+            <div class="run-list" id="guardrails-list"></div>
+          </section>
+          <!-- /pane guardrails -->
+
+          <!-- ===== TAB: MODELS (was the top-level Models view) ===== -->
+          <section class="settings-pane hidden" data-tab="models">
+            <div class="topbar">
+              <div>
+                <h1>Models</h1>
+                <div class="sub">Global model catalog — available in every project; entries can override built-ins and carry per-model routing env</div>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button type="button" id="model-share-btn" class="btn-ghost" style="padding:11px 20px">Share as plugin…</button>
+                <button type="button" id="model-create-btn" class="btn-go" style="padding:11px 20px">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                  Add model
+                </button>
+              </div>
+            </div>
+            <p id="models-msg" class="form-msg" aria-live="polite"></p>
+            <div class="run-list" id="models-list"></div>
+          </section>
+          <!-- /pane models -->
+
+          <!-- ===== TAB: PLUGINS (was the top-level Plugins view) ===== -->
+          <section class="settings-pane hidden" data-tab="plugins">
+            <div class="topbar">
+              <div>
+                <h1>Plugins</h1>
+                <div class="sub">Task sources, agents, skills and workflow packs from your plugin marketplaces</div>
+              </div>
+              <button type="button" id="plugin-add-btn" class="btn-go" style="padding:11px 20px">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                Add marketplace
+              </button>
+            </div>
+            <p id="plugins-msg" class="form-msg" aria-live="polite"></p>
+            <div class="card hidden" id="marketplace-add-row" style="padding:16px 20px;margin-bottom:14px">
               <div class="path-row">
-                <input id="settingsProjectsRoot" class="input" type="text" placeholder="" spellcheck="false" autocomplete="off" />
-                <button type="button" id="settingsProjectsRootBrowse" class="btn btn-ghost btn-mini" title="Pick the projects root folder">Browse&hellip;</button>
+                <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo" spellcheck="false" />
+                <button type="button" id="marketplace-add" class="btn btn-primary btn-mini">Add</button>
               </div>
             </div>
-            <div class="add-project-actions" style="margin-top:14px">
-              <button type="button" id="settingsReset" class="btn btn-ghost btn-mini">Reset to default</button>
-              <button type="button" id="settingsSave" class="btn btn-primary btn-mini">Save</button>
-            </div>
-            <small class="hint" id="settingsMsg"></small>
+            <h3 class="pl-sec-title">Installed</h3>
+            <div class="run-list" id="plugins-list"></div>
+            <h3 class="pl-sec-title">Available</h3>
+            <div class="run-list" id="plugins-available"></div>
+            <h3 class="pl-sec-title">Marketplaces</h3>
+            <div class="run-list" id="marketplaces-list"></div>
           </section>
-
-          <section class="card settings-card">
-            <div class="card-head">
-              <div class="label-row">
-                <h2>Budget &amp; cost limits</h2>
-                <button type="button" class="info-tip" aria-label="About budget costs">i<span class="tip-content hidden">
-                  Costs are Claude Code's client-side estimate (total_cost_usd), not authoritative billing.
-                </span></button>
-              </div>
-            </div>
-            <div id="budgetReadout"></div>
-            <div class="field">
-              <div class="label-row">
-                <label for="budgetPerPipeline">Per-pipeline cost limit (USD)</label>
-                <button type="button" class="info-tip" aria-label="About Per-pipeline cost limit">i<span class="tip-content hidden">
-                  Pause a pipeline when its estimated cost reaches this amount. Leave empty for no limit.
-                </span></button>
-              </div>
-              <input id="budgetPerPipeline" class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="No limit" autocomplete="off" />
-            </div>
-            <div class="field">
-              <div class="label-row">
-                <label for="budgetTotal">Total cost limit (USD)</label>
-                <button type="button" class="info-tip" aria-label="About Total cost limit">i<span class="tip-content hidden">
-                  Pause all pipelines and block new ones when total spend in the period reaches this amount.
-                  Leave empty for no limit.
-                </span></button>
-              </div>
-              <input id="budgetTotal" class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="No limit" autocomplete="off" />
-            </div>
-            <div class="field">
-              <div class="label-row">
-                <label for="budgetResetPeriod">Reset period</label>
-                <button type="button" class="info-tip" aria-label="About Reset period">i<span class="tip-content hidden">
-                  Spend counts within the current period and returns to $0.00 at the reset. Times are local.
-                </span></button>
-              </div>
-              <div class="select-wrap">
-                <select id="budgetResetPeriod" class="select">
-                  <option value="weekly">Weekly &mdash; resets Monday 00:00</option>
-                  <option value="monthly">Monthly &mdash; resets on the 1st, 00:00</option>
-                </select>
-              </div>
-            </div>
-            <div class="add-project-actions" style="margin-top:14px">
-              <button type="button" id="budgetReset" class="btn btn-ghost btn-mini">Clear limits</button>
-              <button type="button" id="budgetSave" class="btn btn-primary btn-mini">Save</button>
-            </div>
-            <small class="hint" id="budgetMsg"></small>
-          </section>
-
-          <!-- Ask Worca (ask-worca-design §6.9): per-turn guards for the
-               assistant chat. Read fresh on every turn (D12); a stored null
-               budget means "no cap". Posted ALONE — never with root/budget keys. -->
-          <section class="card settings-card">
-            <div class="card-head">
-              <div class="label-row">
-                <h2>Ask Worca</h2>
-                <button type="button" class="info-tip" aria-label="About Ask Worca limits">i<span class="tip-content hidden">
-                  Per-turn guards for the Ask Worca assistant chat. A chat turn stops when it reaches the turn limit or the per-turn cost cap; both are read fresh on every turn.
-                </span></button>
-              </div>
-            </div>
-            <div class="field">
-              <div class="label-row">
-                <label for="askMaxTurns">Turn limit</label>
-                <button type="button" class="info-tip" aria-label="About Turn limit">i<span class="tip-content hidden">
-                  Maximum assistant/tool turns one chat message may use (1&ndash;500). Leave empty to restore the default of 40.
-                </span></button>
-              </div>
-              <input id="askMaxTurns" class="input" type="number" min="1" max="500" step="1" inputmode="numeric" placeholder="40" autocomplete="off" />
-            </div>
-            <div class="field">
-              <div class="label-row">
-                <label for="askMaxBudgetUsd">Per-turn cost cap (USD)</label>
-                <button type="button" class="info-tip" aria-label="About Per-turn cost cap">i<span class="tip-content hidden">
-                  Stop a chat turn when its estimated cost reaches this amount (0.1&ndash;100). Leave empty to restore the default of $2, or tick No cap to disable the guard.
-                </span></button>
-              </div>
-              <input id="askMaxBudgetUsd" class="input" type="number" min="0.1" max="100" step="0.1" inputmode="decimal" placeholder="2" autocomplete="off" />
-              <label class="check-row" for="askNoCap"><input id="askNoCap" type="checkbox" /> No cap</label>
-            </div>
-            <div class="add-project-actions" style="margin-top:14px">
-              <button type="button" id="askLimitsReset" class="btn btn-ghost btn-mini">Use defaults</button>
-              <button type="button" id="askLimitsSave" class="btn btn-primary btn-mini">Save</button>
-            </div>
-            <small class="hint" id="askLimitsMsg"></small>
-          </section>
-
-          <!-- Chat notifications (chat-connectivity-design.md §4.8): which run
-               events ping which chat channels. Body rendered by
-               chat-settings-view.mjs; app.js owns fetch/save/Test wiring. -->
-          <section class="card settings-card" id="chat-settings-card">
-            <div class="label-row">
-              <h2>Chat notifications</h2>
-            </div>
-            <div id="chat-settings-host"></div>
-            <div class="add-project-actions" style="margin-top:14px">
-              <button id="chatSettingsSave" class="btn btn-primary btn-mini" type="button">Save</button>
-            </div>
-            <small class="hint" id="chatSettingsMsg"></small>
-          </section>
+          <!-- /pane plugins -->
         </section>
         <!-- /view settings -->
       </main>

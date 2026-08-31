@@ -307,7 +307,7 @@ export function renderProfileGate(info, { doc = globalThis.document, onPick } = 
   if (!profiles.length) {
     root.appendChild(h(doc, 'p', 'hint', `${name} has no profiles configured yet.`));
     const link = h(doc, 'a', 'sp-profile-settings', 'Add one in Plugins settings');
-    link.href = '#plugins';
+    link.href = '#settings/plugins';
     root.appendChild(link);
     return root;
   }

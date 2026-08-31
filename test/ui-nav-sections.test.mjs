@@ -29,14 +29,15 @@ test('sidebar reads: CTA, Activity, Build, Manage, divider, Settings — in orde
   assert.deepEqual(tokens, [
     'new',
     'Activity', 'running', 'history', 'stats',
-    'Build', 'composer', 'agents', 'guardrails', 'models', 'plugins',
+    'Build', 'composer', 'agents',
     'Manage', 'projects', 'workspaces',
     'nav-sep', 'settings',
   ]);
 });
 
-test('grouping adds no buttons and no anchors (12-button invariant holds)', () => {
-  assert.equal((sidebar().match(/<button type="button"/g) || []).length, 12);
+// guardrails/models/plugins moved into Settings as tabs, so 12 -> 9.
+test('grouping adds no buttons and no anchors (9-button invariant holds)', () => {
+  assert.equal((sidebar().match(/<button type="button"/g) || []).length, 9);
   assert.ok(!/<a[\s>]/.test(sidebar()));
   assert.match(sidebar(), /<div class="nav-sect">Activity<\/div>/);
   assert.match(sidebar(), /<div class="nav-sect">Build<\/div>/);
@@ -156,14 +157,14 @@ test('topnav order mirrors the sidebar, with a separator per group boundary', ()
   assert.deepEqual(tokens, [
     'new', 'topnav-sep',
     'running', 'history', 'stats', 'topnav-sep',
-    'composer', 'agents', 'guardrails', 'models', 'plugins', 'topnav-sep',
+    'composer', 'agents', 'topnav-sep',
     'projects', 'workspaces', 'topnav-sep',
     'settings',
   ]);
 });
 
 test('separators are spans (button count and settings-text invariants hold)', () => {
-  assert.equal((topnav().match(/<button type="button"/g) || []).length, 12);
+  assert.equal((topnav().match(/<button type="button"/g) || []).length, 9);
   assert.equal((topnav().match(/<span class="topnav-sep" aria-hidden="true"><\/span>/g) || []).length, 4);
   assert.match(topnav(), /data-nav="settings">Settings<\/button>/);
 });
@@ -192,5 +193,5 @@ test('compact topnav wraps instead of spilling past its rounded box', () => {
   const topnavBlock = media.find((b) => /\.topnav\{[^}]*display:flex/.test(b));
   assert.ok(topnavBlock, 'media block that shows .topnav must exist');
   assert.match(topnavBlock, /\.topnav\{[^}]*flex-wrap:\s*wrap/,
-    '12 buttons cannot shrink below min-content; without wrap they overflow the pill below ~965px');
+    '9 buttons cannot shrink below min-content; without wrap they overflow the pill below ~965px');
 });

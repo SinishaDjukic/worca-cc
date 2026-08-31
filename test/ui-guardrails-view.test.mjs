@@ -55,16 +55,19 @@ async function boot({ fetchHandler } = {}) {
 const click = (window, node) => node.dispatchEvent(new window.Event('click', { bubbles: true }));
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
+// Guardrails is a Settings tab now; the legacy bare hash still redirects here
+// (ui-settings-tabs covers that), but the suite drives the canonical route so it
+// tests the tab, not the redirect.
 async function openGuardrails(window, param = '') {
-  window.location.hash = param ? `guardrails/${param}` : 'guardrails';
+  window.location.hash = param ? `settings/guardrails/${param}` : 'settings/guardrails';
   window.dispatchEvent(new window.Event('hashchange'));
   await tick(); await tick();
 }
 
-test('index.html registers the view: section + both nav buttons + list/msg/create ids', () => {
+test('index.html registers the tab: pane + seg button + list/msg/create ids', () => {
   const html = readFileSync(htmlPath, 'utf8');
-  assert.ok(html.includes('data-view="guardrails"'), 'view section exists');
-  assert.equal(html.split('data-nav="guardrails"').length - 1, 2, 'sidebar + topnav buttons');
+  assert.ok(html.includes('data-tab="guardrails"'), 'guardrails pane + tab button exist');
+  assert.equal(html.split('data-nav="guardrails"').length - 1, 0, 'no top-level nav entry any more');
   for (const id of ['guardrails-list', 'guardrails-msg', 'guardrail-create-btn']) {
     assert.ok(html.includes(`id="${id}"`), `#${id} present`);
   }
@@ -73,7 +76,7 @@ test('index.html registers the view: section + both nav buttons + list/msg/creat
 test('navigating to #guardrails renders the list from GET /api/guardrails (built-ins first, Strict label)', async () => {
   const { window } = await boot();
   await openGuardrails(window);
-  const view = window.document.querySelector('[data-view="guardrails"]');
+  const view = window.document.querySelector('.settings-pane[data-tab="guardrails"]');
   assert.ok(!view.classList.contains('hidden'), 'view shown');
   const cards = window.document.querySelectorAll('#guardrails-list .grv-card');
   assert.equal(cards.length, 4);
@@ -148,7 +151,7 @@ test('delete flow: confirm -> DELETE; a 409 renders the pinning-run list in the 
   assert.match(modal.querySelector('.grv-refs409 .mono').textContent, /pipeline p1/);
 });
 
-test('deep link #guardrails/gr_org opens edit wizard prefilled; toggling scrub + Save PUTs, closes, normalizes hash', async () => {
+test('deep link #settings/guardrails/gr_org opens edit wizard prefilled; toggling scrub + Save PUTs, closes, normalizes hash', async () => {
   const puts = [];
   const { window } = await boot({
     fetchHandler: (u, opts) => {
@@ -176,7 +179,7 @@ test('deep link #guardrails/gr_org opens edit wizard prefilled; toggling scrub +
   assert.equal(puts.length, 1);
   assert.equal(puts[0].settings.envScrub, false, 'collected from live DOM');
   assert.ok(modal.classList.contains('hidden'), 'closes on save');
-  assert.equal(window.location.hash, '#guardrails', 'deep-link hash normalized back to bare on exit');
+  assert.equal(window.location.hash, '#settings/guardrails', 'deep-link hash normalized back to the bare tab');
 });
 
 test('editor add/remove rows mutate and repaint; Discard reverts to the saved snapshot', async () => {
@@ -369,12 +372,12 @@ test('navigating to another view closes an open wizard (showView leave-guard)', 
   assert.ok(window.document.querySelector('#plugin-modal').classList.contains('hidden'), 'wizard closed on nav away');
 });
 
-test('browser Back to bare #guardrails closes an open edit wizard (loadGuardrailsView reset)', async () => {
+test('browser Back to the bare Guardrails tab closes an open edit wizard (loadGuardrailsView reset)', async () => {
   const { window } = await boot();
   await openGuardrails(window, 'gr_org');
   const modal = window.document.querySelector('#plugin-modal');
   assert.ok(!modal.classList.contains('hidden'));
-  window.location.hash = 'guardrails';
+  window.location.hash = 'settings/guardrails';
   window.dispatchEvent(new window.Event('hashchange'));
   await tick(); await tick();
   assert.ok(modal.classList.contains('hidden'), 'wizard closed on bare-hash reload');
@@ -430,4 +433,12 @@ test('clean close: Escape on a pristine editor closes with no confirm', async ()
   await tick(); await tick();
   assert.ok(window.document.querySelector('#confirm-modal').classList.contains('hidden'), 'no confirm for a clean editor');
   assert.ok(modal.classList.contains('hidden'), 'closed directly');
+});
+
+test('editing from the list deep-links into the Settings tab, and exit normalises back', async () => {
+  const { window } = await boot();
+  await openGuardrails(window);
+  click(window, window.document.querySelector('#guardrails-list .grv-card[data-id="gr_org"] .grv-edit'));
+  await tick(); await tick();
+  assert.equal(window.location.hash, '#settings/guardrails/gr_org');
 });

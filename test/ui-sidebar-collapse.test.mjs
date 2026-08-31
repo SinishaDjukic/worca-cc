@@ -217,11 +217,11 @@ test('one panel glyph whose box never moves — only the chevron turns round', (
   assert.doesNotMatch(ruleBody('.sidebar.collapsed .side-toggle svg'), /transform:/);
 });
 
-test('the toggle stays OUT of <nav>, which keeps exactly 12 buttons', () => {
+test('the toggle stays OUT of <nav>, which keeps exactly 9 buttons', () => {
   // ui-nav-sections.test.mjs:39 asserts this count, :40 forbids <a>, and :26-35
   // pins the token stream. A toggle inside <nav class="nav"> reds all three.
   const nav = html.match(/<nav class="nav"[\s\S]*?<\/nav>/)[0];
-  assert.equal((nav.match(/<button type="button"/g) || []).length, 12);
+  assert.equal((nav.match(/<button type="button"/g) || []).length, 9);
   assert.equal(nav.includes('side-toggle'), false);
   assert.match(html, /<aside class="sidebar" id="side-rail">/,
     'aria-controls targets the whole aside — brand, nav AND the spend foot reshape');
