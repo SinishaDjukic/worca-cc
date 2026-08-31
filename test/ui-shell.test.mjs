@@ -4,12 +4,15 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
 
-test('exactly fourteen routed views', () => {
-  assert.equal((html.match(/data-view/g) || []).length, 14);
+test('exactly eleven routed views', () => {
+  assert.equal((html.match(/data-view/g) || []).length, 11);
 });
-test('fourteen views include composer + the two workspace views + the two agent views + projects + plugins + guardrails + models + stats', () => {
-  for (const v of ['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'models', 'settings'])
+test('eleven views include composer + the two workspace views + the two agent views + projects + stats (plugins/guardrails/models are Settings tabs now)', () => {
+  for (const v of ['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'])
     assert.ok(html.includes(`data-view="${v}"`), `missing data-view=${v}`);
+  // Folded into Settings: a pane, not a routed view (see .settings-pane below).
+  for (const v of ['plugins', 'guardrails', 'models'])
+    assert.ok(!html.includes(`data-view="${v}"`), `${v} should no longer be a routed view`);
 });
 test('nav targets: the base set + workspaces + projects + stats (workspace-create is NOT a nav target)', () => {
   for (const v of ['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'projects', 'settings'])

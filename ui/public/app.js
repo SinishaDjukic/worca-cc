@@ -293,6 +293,7 @@ const el = {
   chatSettingsHost: $('#chat-settings-host'),
   chatSettingsSave: $('#chatSettingsSave'),
   chatSettingsMsg: $('#chatSettingsMsg'),
+  settingsTabs: $('#settings-tabs'),
 
   // Guardrails view
   guardrailsList: $('#guardrails-list'),
@@ -3130,7 +3131,7 @@ function goAddModel(restore) {
   mvState.openCreate = true;
   mvState.openShare = false;
   mvState.prefill = null;
-  showView('models'); // loadModelsView renders the open editor
+  showView('settings', 'models'); // loadModelsView renders the open editor
 }
 
 // Delegated change handler for every config control inside #pipeline-config.
@@ -4497,9 +4498,9 @@ async function mountPluginSourcePane(src) {
     msg.className = 'hint err';
     msg.textContent = message;
     const link = document.createElement('a');
-    link.href = '#plugins';
+    link.href = '#settings/plugins';
     link.textContent = 'Open Plugins settings';
-    link.addEventListener('click', (e) => { e.preventDefault(); location.hash = 'plugins'; });
+    link.addEventListener('click', (e) => { e.preventDefault(); location.hash = 'settings/plugins'; });
     const retry = document.createElement('button');
     retry.type = 'button';
     retry.className = 'btn btn-ghost btn-mini';
@@ -8496,13 +8497,13 @@ function openGuardrailWizard(mode, set) {
   }
 }
 
-// Close the wizard + refresh the list. Normalizes a deep-link hash back to bare
-// #guardrails (router reloads); a bare hash refreshes in place.
+// Close the wizard + refresh the list. Normalizes a deep-link hash back to the bare
+// Guardrails tab (router reloads); a bare hash refreshes in place.
 function grvExitWizard() {
   grvState.wizard = null;
   grvState.editing = null;
   closePluginModal();
-  if (location.hash.slice(1).startsWith('guardrails/')) location.hash = 'guardrails';
+  if (location.hash.slice(1).startsWith('settings/guardrails/')) location.hash = 'settings/guardrails';
   else loadGuardrailsView();
 }
 
@@ -9072,7 +9073,7 @@ if (el.guardrailsList) {
   el.guardrailsList.addEventListener('click', (e) => {
     const t = e.target;
     const edit = t.closest && t.closest('.grv-edit');
-    if (edit) { location.hash = `guardrails/${edit.dataset.id}`; return; }
+    if (edit) { location.hash = `settings/guardrails/${edit.dataset.id}`; return; }
     const del = t.closest && t.closest('.grv-delete');
     if (del) { deleteGuardrailSetFlow(del.dataset.id); return; }
   });
@@ -15689,7 +15690,41 @@ const views = $$('.view');
 const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 // [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
-const VIEW_NAMES = ['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'plugins', 'guardrails', 'models', 'settings'];
+// plugins/guardrails/models LEFT this array: they are Settings tabs now, reached
+// as #settings/<tab> (legacy bare hashes redirect — see LEGACY_TAB_VIEWS).
+const VIEW_NAMES = ['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
+
+// ── Settings tabs ───────────────────────────────────────────────────────────
+// The tab is the Settings view's hash param; a guardrail deep link nests its id
+// behind it (#settings/guardrails/<id>). parseHash splits on the FIRST '/' only,
+// so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
+const SETTINGS_TABS = ['general', 'guardrails', 'models', 'plugins'];
+const settingsPanes = $$('[data-view="settings"] .settings-pane');
+// Old top-level hashes keep working. The hashchange listener DROPS any view it
+// does not know, so without this map a bookmark or an old in-app link would
+// silently do nothing at all.
+const LEGACY_TAB_VIEWS = { plugins: 'plugins', guardrails: 'guardrails', models: 'models' };
+
+// '' | 'bogus' | 'general' -> ['general', ''];  'guardrails/gr_x' -> ['guardrails', 'gr_x']
+function parseSettingsParam(param = '') {
+  const i = param.indexOf('/');
+  const tab = i === -1 ? param : param.slice(0, i);
+  const sub = i === -1 ? '' : param.slice(i + 1);
+  return SETTINGS_TABS.includes(tab) ? [tab, sub] : ['general', ''];
+}
+// The canonical param for a tab: General is plain '#settings', never '#settings/general'.
+function settingsParamFor(tab, sub = '') {
+  if (tab === 'general') return '';
+  return sub ? `${tab}/${sub}` : tab;
+}
+// null for a real view; otherwise the [view, param] the legacy hash maps to.
+function legacyTabRoute(view, param = '') {
+  const tab = LEGACY_TAB_VIEWS[view];
+  return tab ? ['settings', settingsParamFor(tab, param)] : null;
+}
+// The Settings tab currently painted, so the leave-guards below can fire on a
+// TAB transition and not only on a view transition.
+let currentSettingsTab = null;
 
 function showView(name, param = '') {
   // Same guard for the composer: unbind its keyboard and cancel any live gesture
@@ -15706,16 +15741,19 @@ function showView(name, param = '') {
     if (state.agentWizard.genId || state.agentWizard.abort) abortAgentGen();
     resetAgentWizard();
   }
-  // Close the guardrail wizard when leaving Guardrails (its modal is a top-level
-  // overlay, not a [data-view], so it isn't auto-hidden; a stale wizard would also
-  // capture other #plugin-modal consumers' Esc/backdrop/Close).
-  if (currentShownView === 'guardrails' && name !== 'guardrails' && grvState.wizard) {
-    grvState.wizard = null; grvState.editing = null; closePluginModal();
+  // Settings is tabbed, so its two body-level overlays must be torn down on a TAB
+  // switch as well as on a view switch: neither the guardrail wizard (#plugin-modal)
+  // nor the info-tip bubble lives inside a [data-view] or a .settings-pane, so
+  // nothing auto-hides them and a stale one would float over the next tab.
+  // nextSettingsTab is null when we are leaving the view entirely, which never
+  // equals currentSettingsTab — so the view exit is covered by the same test.
+  const nextSettingsTab = name === 'settings' ? parseSettingsParam(param)[0] : null;
+  if (currentShownView === 'settings' && nextSettingsTab !== currentSettingsTab) {
+    hideInfoTip();
+    if (currentSettingsTab === 'guardrails' && grvState.wizard) {
+      grvState.wizard = null; grvState.editing = null; closePluginModal();
+    }
   }
-  // Same idea for the settings info-tip bubble: it also lives on document.body,
-  // not inside the [data-view] section, so leaving Settings with the pointer or
-  // focus parked on an icon would otherwise leave it floating over the next view.
-  if (currentShownView === 'settings' && name !== 'settings') hideInfoTip();
   // Leaving History resets the two-screen track, so the next visit lands on the
   // list instead of a stale detail screen sliding in behind the new view.
   if (currentShownView === 'history' && name !== 'history') closeHistDetail({ instant: true });
@@ -15733,6 +15771,13 @@ function showView(name, param = '') {
   if (currentShownView === 'running' && name !== 'running') {
     closeStopModal();
     closeRunDetail({ instant: true });
+  }
+  // Canonicalise the Settings param before the hash sync below: General is always
+  // plain '#settings', and an unknown tab (#settings/bogus) falls back to it
+  // rather than sticking a dead segment in the URL.
+  if (name === 'settings') {
+    const [tab, sub] = parseSettingsParam(param);
+    param = settingsParamFor(tab, sub);
   }
   const prevView = currentShownView;
   currentShownView = name;
@@ -15788,13 +15833,10 @@ function showView(name, param = '') {
   if (name === 'workspaces') loadWorkspacesView();
   if (name === 'workspace-create') enterWizard();
   if (name === 'agents') loadAgentsView();
-  if (name === 'plugins') loadPluginsView({ refresh: true });
-  if (name === 'guardrails') loadGuardrailsView(param);
-  if (name === 'models') loadModelsView();
   if (name === 'agent-create') enterAgentWizard();
   if (name === 'projects') loadProjectsView();
   if (name === 'composer') initComposer();
-  if (name === 'settings') loadSettings();
+  if (name === 'settings') showSettingsTab(param);
   if (name === 'new') {
     loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights();
     // Drop the per-id workflow memo on every (re-)entry so a workflow re-saved
@@ -15813,6 +15855,30 @@ function showView(name, param = '') {
     }
   }
 }
+// Paint one Settings tab and run its loader. Called from showView ONLY, so every
+// entry point (tab click, hash, deep link, legacy redirect, boot, a direct
+// showView call such as goAddModel) goes through exactly one render.
+// `param` is already canonical: '' | '<tab>' | 'guardrails/<id>'.
+function showSettingsTab(param = '') {
+  const [tab, sub] = parseSettingsParam(param);
+  currentSettingsTab = tab;
+  settingsPanes.forEach((p) => p.classList.toggle('hidden', p.dataset.tab !== tab));
+  if (el.settingsTabs) {
+    for (const b of el.settingsTabs.querySelectorAll('button[data-tab]')) {
+      const on = b.dataset.tab === tab;
+      b.classList.toggle('on', on);                      // .seg's selected class
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+  }
+  // Same contract the per-view loaders had: a tab that is never opened costs no
+  // request, and re-entry refetches (which is what lets grvExitWizard's
+  // '#settings/guardrails/<id>' -> '#settings/guardrails' hop reset the wizard).
+  if (tab === 'general') loadSettings();
+  if (tab === 'guardrails') loadGuardrailsView(sub);
+  if (tab === 'models') loadModelsView();
+  if (tab === 'plugins') loadPluginsView({ refresh: true });
+}
+
 // Tracks the currently shown view so the leave-guard can fire on transition.
 let currentShownView = null;
 // True only while showView() is writing location.hash itself, to prevent re-entry.
@@ -15829,11 +15895,27 @@ navLinks.forEach((b) =>
   })
 );
 
+// Settings tabs are hash-first, exactly like the nav buttons: the single
+// hashchange listener drives showView, so a click renders once.
+el.settingsTabs?.addEventListener('click', (e) => {
+  const btn = e.target.closest && e.target.closest('button[data-tab]');
+  if (!btn) return;
+  const param = settingsParamFor(btn.dataset.tab);
+  const target = param ? `settings/${param}` : 'settings';
+  // Hash already equal (e.g. re-clicking the active tab) fires no hashchange.
+  if (location.hash.slice(1) === target) showView('settings', param);
+  else location.hash = target;
+});
+
 window.addEventListener('hashchange', () => {
   // Swallow the hashchange that showView() itself produced (syncingHash) to keep
   // the single-render guarantee; genuine user-driven hash changes still route normally.
   if (syncingHash) { syncingHash = false; return; }
   const [view, param] = parseHash();
+  // A legacy top-level hash (#plugins, #guardrails/<id>, …) routes to its
+  // Settings tab; showView rewrites the hash to the canonical #settings/<tab>.
+  const legacy = legacyTabRoute(view, param);
+  if (legacy) { showView(legacy[0], legacy[1]); return; }
   if (VIEW_NAMES.includes(view)) showView(view, param);
 });
 
@@ -16032,13 +16114,15 @@ if (bootTarget === 'workspace') setRunTarget('workspace');
 // Boot: parse view + optional param so a reload on a deep link (#running/<id>)
 // restores the Running view instead of silently resetting to New.
 const [bootView, bootParam] = parseHash();
-showView(VIEW_NAMES.includes(bootView) ? bootView : 'new', VIEW_NAMES.includes(bootView) ? bootParam : '');
+const bootLegacy = legacyTabRoute(bootView, bootParam);
+if (bootLegacy) showView(bootLegacy[0], bootLegacy[1]);
+else showView(VIEW_NAMES.includes(bootView) ? bootView : 'new', VIEW_NAMES.includes(bootView) ? bootParam : '');
 refreshAllCounts();
 refreshBudget();
 startBudgetTick();
 
 // Ask Worca mount (§10.2 seam 1): a JS-built body-level overlay — index.html is
-// untouched so ui-shell's data-view census stays at 14. No network happens here;
+// untouched so ui-shell's routed-view census stays at 11. No network happens here;
 // the panel fetches only on first open / hello.
 askPanel = createAskPanel({
   doc: document,

@@ -246,7 +246,7 @@ body.view-history .main{display:flex;flex-direction:column;overflow:hidden;paddi
 /* .main's 32px gutter goes with padding:0, so the compact top-nav (<1080px, a
    SIBLING of the views inside .main) must re-apply it or it lands 20px left of
    the list content, which keeps its own 32px on .hist-screen. flex:0 0 auto
-   stops the wrapped 12-button nav from being squeezed once .main is a column. */
+   stops the wrapped 9-button nav from being squeezed once .main is a column. */
 body.view-history .topnav{margin:12px 32px 0;flex:0 0 auto;}
 .topbar{display:flex;align-items:flex-start;justify-content:space-between;
   gap:24px;margin-bottom:22px;}
@@ -378,6 +378,12 @@ input[type="file"]{font-size:12.5px;color:var(--ink-3);background:transparent;bo
   background:transparent;border:none;padding:8px 20px;border-radius:9px;cursor:pointer;transition:.15s;}
 .seg button.on{background:#fff;color:var(--ink);box-shadow:var(--shadow-soft);}
 .seg button:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* Settings tab strip. .seg gives the pill chrome; this only spaces it from the
+   first pane's .topbar, which brings its own 22px bottom margin. */
+.settings-tabs{margin-bottom:18px;}
+/* A pane is a plain block — it is deliberately NOT .view (see index.html). */
+.settings-pane{display:block;}
 
 /* task-source fieldset (old markup) */
 fieldset.source{border:1.5px solid var(--line);border-radius:var(--r-ctrl);padding:16px;margin:0 0 18px;}
