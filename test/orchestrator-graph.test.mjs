@@ -14,7 +14,7 @@ import { before } from 'node:test';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { readPipelineForResume, artifactPaths, readPipelineExtras } from '../src/core/artifacts.mjs';
-import { setPipelineCostLimitUsd } from '../src/core/settings.mjs';
+import { setPipelineCostLimitUsd, addGlobalModel } from '../src/core/settings.mjs';
 import { QUIESCENCE_WARNING, quiescenceDeadEnd } from '../src/core/graph/scheduler.mjs';
 import { BOOKEND_EXECUTION_IDS } from '../src/shared/graph/constants.mjs';
 import { formatGateHeader } from '../src/cli/render.mjs';
@@ -25,12 +25,13 @@ let sandboxHome;
 const prevEnv = {};
 before(async () => {
   sandboxHome = await mkdtemp(join(tmpdir(), 'worca-graph-home-'));
-  for (const k of ['HOME', 'USERPROFILE']) prevEnv[k] = process.env[k];
+  for (const k of ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK']) prevEnv[k] = process.env[k];
   process.env.HOME = sandboxHome;
   process.env.USERPROFILE = sandboxHome;
+  process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1'; // catalog guard: HOME is sandboxed above
 });
 after(async () => {
-  for (const k of ['HOME', 'USERPROFILE']) {
+  for (const k of ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK']) {
     if (prevEnv[k] === undefined) delete process.env[k]; else process.env[k] = prevEnv[k];
   }
   await rm(sandboxHome, { recursive: true, force: true });
@@ -462,4 +463,32 @@ test('a verdict that was never written leaves NO reviews row', { timeout: 120000
   assert.ok(written.length >= 1, `a real verdict IS persisted: ${JSON.stringify(written)}`);
   const phantom = await run(true, 'revnorow');
   assert.deepEqual(phantom, [], 'a verdict nobody wrote must not render as a clean review');
+});
+
+test('dispatch stamps endpointRouted from the effective model (global fallback included)', { timeout: 120000 }, async () => {
+  await seedGraphs();
+  await addGlobalModel({ id: 'ds-stable', env: { ANTHROPIC_BASE_URL: 'https://gw.example' } });
+  const seen = [];
+  const grab = (ctx) => { seen.push([ctx.node.key, ctx.node.endpointRouted]); };
+  const runners = {
+    producer: async (ctx) => { grab(ctx); return { outputs: outsOf(ctx), verdict: null }; },
+    verifier: async (ctx) => { grab(ctx); return { outputs: outsOf(ctx), verdict: { issues: [], summary: '' } }; },
+    clarifier: async (ctx) => { grab(ctx); return { outputs: outsOf(ctx), verdict: null }; },
+  };
+  const routed = createOrchestrator({
+    projectDir: gitDir('grouted'), workflowId: 'wf_default', prompt: 'demo', auto: true,
+    claude: { mock: true, model: 'ds-stable' }, runners,
+  });
+  const res = await routed.run();
+  assert.equal(res.status, 'done', res.error);
+  assert.ok(seen.length > 0, 'agents ran');
+  assert.ok(seen.every(([, r]) => r === true), `every node routed: ${JSON.stringify(seen)}`);
+
+  seen.length = 0;
+  const plain = createOrchestrator({
+    projectDir: gitDir('gplain'), workflowId: 'wf_default', prompt: 'demo', auto: true,
+    claude: { mock: true }, runners,
+  });
+  assert.equal((await plain.run()).status, 'done');
+  assert.ok(seen.length > 0 && seen.every(([, r]) => r === false), 'no model configured -> not routed');
 });

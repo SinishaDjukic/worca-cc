@@ -25,6 +25,7 @@ import { registryPortsFn } from './graph/registry-ports.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition } from './graph/executor.mjs';
 import { renderPromptArtifact } from './phases.mjs';
+import { modelHasBaseUrlRouting } from './config.mjs';
 import {
   appendAudit, writeReview, reviewKindOf, writeDecomposition, updateTaskStatus,
   updatePhaseStatus, writeStepQuestions, readStepQuestions,
@@ -539,6 +540,11 @@ export class GraphOrchestrator extends RunHarness {
         key: nc.key,
         fanOut: !!nc.fanOut,
         subagentModel: nc.subagentModel || '',
+        // Same fallback as claudeOpts.model below: the flag must describe the
+        // model the spawn will actually use, global default included. Live
+        // catalog on purpose — a resume re-resolves the env the same way. One
+        // settings + plugins-lock read per dispatch; never call this per entry.
+        endpointRouted: modelHasBaseUrlRouting(nc.model || this.claude.model),
         agentPrompt: nc.agentPrompt,
         tools: nc.tools,               // frontmatter grants MUST be stamped
         promptHints: nc.promptHints || '',

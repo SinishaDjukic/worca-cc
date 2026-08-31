@@ -74,6 +74,18 @@ export function ctxFanOut(ctx) {
 }
 
 /**
+ * Whether this run's EFFECTIVE model routes to a custom endpoint (an
+ * ANTHROPIC_BASE_URL-overriding catalog/plugin entry). Stamped at dispatch
+ * time — orchestrator._execCtx on ctx.node, workspace-scan on the node-less
+ * ctx — from modelHasBaseUrlRouting(effective model), so this stays pure.
+ * A present node wins, mirroring ctxFanOut. Pure + exported for testing.
+ */
+export function ctxEndpointRouted(ctx) {
+  if (!ctx || typeof ctx !== 'object') return false;
+  return !!(ctx.node ? ctx.node.endpointRouted : ctx.endpointRouted);
+}
+
+/**
  * The sub-agent model policy in force for this run: one of SUBAGENT_MODEL_VALUES.
  * Read from the NODE only — nothing else carries the setting (the v1 clarify
  * pre-step ctx fallback is gone with its caller). An unset or off-vocabulary
@@ -139,6 +151,31 @@ export function subagentModelDirective(subagentModel) {
   );
 }
 
+/**
+ * The sub-agent block for an endpoint-routed node — it REPLACES
+ * subagentModelDirective for every stored value (auto, a pin, inherit): the
+ * CLI's Task `model` parameter takes only the alias enum, every alias expands
+ * to an Anthropic id the custom endpoint does not serve, and the omitted
+ * parameter inherits the parent's wire model ONLY through an agent definition
+ * that pins no `model:` frontmatter. So the one working policy is: no `model`
+ * parameter, unpinned agent types. Pure + exported for testing.
+ */
+export function sameEndpointSubagentDirective() {
+  return (
+    '### Sub-agent model — same endpoint as this node (locked)\n\n' +
+    'This node runs on an operator-configured custom endpoint that serves ONLY this node\'s own ' +
+    'model. Alias models (`sonnet`, `opus`, `fable`, `haiku`) are NOT served there:\n' +
+    '- NEVER pass a `model` parameter on any Task/Agent call. An omitted `model` lets the child ' +
+    'run where you run — the only model this endpoint serves. Any alias you pass would fail the ' +
+    'child at spawn.\n' +
+    '- Spawn ONLY `subagent_type` values whose definition pins no `model:` frontmatter: ' +
+    '`"general-purpose"` is always safe. AVOID `"Explore"` and any project/personal agent whose ' +
+    'definition file sets `model:` — such a child would request the pinned model from this ' +
+    'endpoint and die. When unsure what an agent pins, use `"general-purpose"` with a ' +
+    'task-specific prompt.\n\n'
+  );
+}
+
 // ── run-root mode gates for the §5.8 prompt variants ───────────────────────────
 // EVERY Phase-4 prompt variant is gated on `runRootMode === 'detached'`; the
 // workspace-specific ones are ADDITIONALLY gated on `isWorkspace` (§6 Phase 4).
@@ -186,16 +223,31 @@ function relRepo(p) {
  * promised — it is inherited env and remains true. Single mode (both run-root modes)
  * and legacy workspace runs keep today's byte-identical sentence.
  */
-export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentModel = '' } = {}) {
+export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentModel = '', endpointRouted = false } = {}) {
   if (!fanOut) return '';
-  const subagentSentence = omitProjectAgents
-    ? 'Pick the BEST-FIT `subagent_type`: your personal agents (`~/.claude/agents`) are available by ' +
-      'name — prefer a purpose-built one when it fits the sub-task, else fall back to ' +
-      '`"general-purpose"` (or `"Explore"` for pure code search). This run starts at the worca-cc run ' +
-      'root, so no member project\'s own agents are discoverable by name.'
-    : 'Pick the BEST-FIT `subagent_type`: this project\'s own agents (`.claude/agents`) and your personal ' +
-      'agents (`~/.claude/agents`) are available by name — prefer a purpose-built one when it fits the ' +
-      'sub-task, else fall back to `"general-purpose"` (or `"Explore"` for pure code search).';
+  // Endpoint-routed: the usual "prefer a purpose-built agent" steering would
+  // walk the agent straight into frontmatter-pinned definitions whose model the
+  // custom endpoint cannot serve — swap the sentence AND the model block.
+  const subagentSentence = endpointRouted
+    ? 'Use `subagent_type: "general-purpose"` for EVERY spawn unless you have verified (by reading ' +
+      'its definition file) that a purpose-built agent pins no `model:` in its frontmatter — this ' +
+      'node runs on a custom endpoint that serves only its own model (details in the sub-agent ' +
+      'model block below).' +
+      // A detached-workspace run keeps its run-root caveat: the routed steer
+      // sends the agent checking definition files, and a run-root cwd cannot
+      // discover member projects' agents by name in the first place.
+      (omitProjectAgents
+        ? ' This run starts at the worca-cc run root, so no member project\'s own agents are ' +
+          'discoverable by name.'
+        : '')
+    : omitProjectAgents
+      ? 'Pick the BEST-FIT `subagent_type`: your personal agents (`~/.claude/agents`) are available by ' +
+        'name — prefer a purpose-built one when it fits the sub-task, else fall back to ' +
+        '`"general-purpose"` (or `"Explore"` for pure code search). This run starts at the worca-cc run ' +
+        'root, so no member project\'s own agents are discoverable by name.'
+      : 'Pick the BEST-FIT `subagent_type`: this project\'s own agents (`.claude/agents`) and your personal ' +
+        'agents (`~/.claude/agents`) are available by name — prefer a purpose-built one when it fits the ' +
+        'sub-task, else fall back to `"general-purpose"` (or `"Explore"` for pure code search).';
   return (
     '## Fan-out ENABLED — parallelize your research\n\n' +
     'The Task/Agent tool is in your tool list this run. For any non-trivial task that spans more ' +
@@ -209,7 +261,7 @@ export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentMod
     'use any that fit (e.g. design, framework-pattern, knowledge-graph) instead of guessing conventions.\n\n' +
     'Sub-agents are strictly READ-ONLY investigators: YOU write every artifact. Skip fan-out only for a ' +
     'trivial, single-file change.\n\n' +
-    subagentModelDirective(subagentModel)
+    (endpointRouted ? sameEndpointSubagentDirective() : subagentModelDirective(subagentModel))
   );
 }
 
@@ -243,12 +295,16 @@ export function workspaceContextBlock(ws) {
  * every member checkout is INSIDE the shared cwd (`<runRoot>`), so a sub-agent must
  * not chdir anywhere. Merge order and the anti-recursion clause are identical in
  * both variants, and the legacy text is byte-identical to today.
+ * `endpointRouted` (the same dispatch stamp `fanOutDirective` reads) swaps the
+ * explore arm's `Explore` steering for a `general-purpose` investigator, so a
+ * routed node is never ordered into a model-pinned agent one paragraph after
+ * the same-endpoint block forbade it; legacy/default bytes are unchanged.
  * @param {'explore'|'task'|'review'} strategy
  * @param {{projects?:Array<{projectName?:string,projectKey?:string}>}|null|undefined} ws
- * @param {{relative?:boolean}} [opts]
+ * @param {{relative?:boolean, endpointRouted?:boolean}} [opts]
  * @returns {string}
  */
-export function workspaceFanOutDirective(strategy, ws, { relative = false } = {}) {
+export function workspaceFanOutDirective(strategy, ws, { relative = false, endpointRouted = false } = {}) {
   if (!ws) return '';
   const ANTI_RECURSION =
     'Sub-agents are strictly single-level: a sub-agent MUST NOT re-fan-out ' +
@@ -257,7 +313,11 @@ export function workspaceFanOutDirective(strategy, ws, { relative = false } = {}
   if (strategy === 'explore') {
     return (
       '## Workspace fan-out — explore across member projects\n\n' +
-      'Dispatch ONE read-only Explore sub-agent per member project (cap 8) to survey ' +
+      // Endpoint-routed: `Explore` pins a model the custom endpoint cannot serve —
+      // the same swap the generic fan-out block makes (sameEndpointSubagentDirective).
+      (endpointRouted
+        ? 'Dispatch ONE read-only `general-purpose` investigator per member project (cap 8) to survey '
+        : 'Dispatch ONE read-only Explore sub-agent per member project (cap 8) to survey ') +
       (relative
         ? 'its checkout at `./repos/<projectKey>` inside the shared cwd (modules, public ' +
           'API, deps) — read files there directly and use `git -C repos/<projectKey> …` ' +
@@ -389,13 +449,14 @@ export function questionsPromptBlock(ctx) {
   return (
     '\n\n' + answered +
     '## Asking the user (enabled)\n\n' +
-    'If a decision genuinely blocks correct work and cannot be resolved from the task, the ' +
-    'inputs, or the codebase:\n' +
+    'If a decision materially shapes the outcome and you cannot resolve it from the task, ' +
+    'the inputs, or the codebase — including anything material you are about to silently ' +
+    'assume:\n' +
     '1. Write {"questions":[{"id","question","options":[2-4 strings],"allowFreeText":true}]} ' +
     `(max 8 questions) to: ${ctx.questionsFile}\n` +
     '2. STOP immediately — do no further work. You will be resumed with the answers.\n' +
-    'Prefer reasonable assumptions for minor choices; never pad, and never re-ask an ' +
-    'answered question.\n\n' +
+    'Assume freely on minor choices; on material ones, ask instead of assuming. Never pad, ' +
+    'and never re-ask an answered question.\n\n' +
     mock
   );
 }
@@ -613,7 +674,7 @@ export function buildClarifyPrompt(ctx, opts = {}) {
     'pad, and never split one decision. For low-impact details, pick a sensible default rather ' +
     'than asking. If you have no material open questions, write { "questions": [] } to that ' +
     'same path.\n\n' +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx), subagentModel: ctxSubagentModel(ctx) }) +
+    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx), subagentModel: ctxSubagentModel(ctx), endpointRouted: ctxEndpointRouted(ctx) }) +
     `Write the clarify JSON to: ${outPath}\n\n` +
     answered +
     mockMarkers({
@@ -748,7 +809,7 @@ export async function runWorkspaceScan(ctx, opts = {}) {
     // the scanner is OFF-pipeline (it runs before any run root exists, with cwd inside a
     // member's real dir), so its project `.claude/agents` really are discoverable (§8.21
     // covers run-root cwds only).
-    fanOutDirective(true) +
+    fanOutDirective(true, { endpointRouted: ctxEndpointRouted(ctx) }) +
     'Dispatch ONE read-only investigator per member project (cap 8); merge their reports in sorted ' +
     '`projectKey` order and synthesize the single description yourself. Investigators MUST NOT ' +
     're-fan-out.\n\n' +

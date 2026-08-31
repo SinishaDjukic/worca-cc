@@ -43,9 +43,10 @@ import { planPath, reviewPath, writeStepQuestions, writeClarify } from '../artif
 import { readReview, normalizeClarify, normalizeReview, safeParseJson } from '../protocol.mjs';
 import {
   taskHeader, buildSystemPrompt, resolveAgentBody, mockMarkers, runOpts,
-  fanOutDirective, ctxFanOut, ctxSubagentModel, workspaceFanOutDirective, workspaceDiffInstruction,
+  fanOutDirective, ctxFanOut, ctxSubagentModel, ctxEndpointRouted, workspaceFanOutDirective, workspaceDiffInstruction,
   renderAnswers, siblingsBlock, diffInstruction, READ_WRITE_TOOLS, IMPLEMENTER_TOOLS,
 } from '../phases.mjs';
+import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
 
 /** The reserved synthesized gate input. Scheduler-only: it never reaches `bindings`,
@@ -532,6 +533,7 @@ export function buildAgentPrompt(ctx) {
   };
 
   const relative = detachedWorkspace(ctx);
+  const routed = ctxEndpointRouted(ctx);
   const hints = substituteHints(meta.promptHints, ctx);
   const title = meta.displayName || node?.key || node?.id || 'agent';
   const siblings = ctx.slice ? siblingsBlock(ctx.slice.siblings) : '';
@@ -545,8 +547,8 @@ export function buildAgentPrompt(ctx) {
     baseInstruction(meta.runnerType) + '\n\n' +
     (hints ? hints + '\n\n' : '') +
     modeBlock(selectMode({ ports, bindings, freshPorts: trigger.freshPorts })) +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx) }) +
-    workspaceFanOutDirective(meta.workspaceStrategy, ctx.workspace, { relative }) +
+    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed }) +
+    workspaceFanOutDirective(meta.workspaceStrategy, ctx.workspace, { relative, endpointRouted: routed }) +
     (siblings ? siblings + '\n' : '') +
     portIoBlock({ node, ports, bindings, outputs, verdict, ctx }) +
     decompositionContractBlock(expandsPort, runCtx) +
@@ -607,7 +609,16 @@ async function prepare(ctx) {
   const full = { ...ctx, ports, meta, outputs, verdict, expandsPort, mockRole, priorAnswers };
   const prompt = buildAgentPrompt(full);
   const allowedTools = meta.sideEffect === 'code' ? IMPLEMENTER_TOOLS : READ_WRITE_TOOLS;
-  return { full, ports, meta, outputs, verdict, role, systemPrompt, prompt, allowedTools };
+  // D3: an EXPLICIT alias pin on an endpoint-routed node is a stored promise the
+  // run cannot keep — degrade it (the prompt already carries the same-endpoint
+  // block) and say so on the result, which the scheduler folds into
+  // state.warnings + the run log. auto/inherit promised no alias: silent.
+  const storedPin = ctxSubagentModel(ctx);
+  const pinIgnoredWarning = ctxFanOut(ctx) && ctxEndpointRouted(ctx) && SUBAGENT_MODELS.includes(storedPin)
+    ? `sub-agent model pin "${storedPin}" ignored: ${node?.key || node?.id || 'agent'} runs on an ` +
+      `endpoint-routed model (${JSON.stringify(ctx.claudeOpts?.model ?? '')}) — children run without an explicit model`
+    : null;
+  return { full, ports, meta, outputs, verdict, role, systemPrompt, prompt, allowedTools, pinIgnoredWarning };
 }
 
 /**
@@ -645,7 +656,7 @@ export function publishable(ports, outputs) {
  * `kind:'agent'` with any `runnerType` other than clarifier.
  */
 export async function runAgentExecution(ctx) {
-  const { full, ports, meta, outputs, verdict, role, systemPrompt, prompt, allowedTools } = await prepare(ctx);
+  const { full, ports, meta, outputs, verdict, role, systemPrompt, prompt, allowedTools, pinIgnoredWarning } = await prepare(ctx);
   const { text, sessionId } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools });
   const review = verdict?.path ? await readVerdict(verdict.path) : null;
   return {
@@ -653,7 +664,10 @@ export async function runAgentExecution(ctx) {
     outputs: publishable(ports, outputs),
     verdict: review,
     // Non-fatal problems the scheduler folds into state.warnings + the run log.
-    warnings: review?.missing ? [missingVerdictWarning(ctx, verdict.path)] : [],
+    warnings: [
+      ...(review?.missing ? [missingVerdictWarning(ctx, verdict.path)] : []),
+      ...(pinIgnoredWarning ? [pinIgnoredWarning] : []),
+    ],
     sessionId,
     prompt,
   };
@@ -689,7 +703,7 @@ function normalizeAnswers(payload, questions) {
  */
 export async function runClarifierExecution(ctx) {
   const { node, ordinal = 1 } = ctx;
-  const { full, ports, meta, outputs, role, systemPrompt, prompt, allowedTools } = await prepare(ctx);
+  const { full, ports, meta, outputs, role, systemPrompt, prompt, allowedTools, pinIgnoredWarning } = await prepare(ctx);
   const answersPort = answersPortOf(ports);
   const answersPath = outputs[answersPort?.id]?.path;
   if (!answersPath) throw new Error(`clarifier node "${node?.id}": no json output port to write the questions to`);
@@ -726,7 +740,8 @@ export async function runClarifierExecution(ctx) {
 
   await mkdir(dirname(answersPath), { recursive: true }).catch(() => {});
   await writeFile(answersPath, JSON.stringify({ questions, answers }, null, 2) + '\n', 'utf8');
-  return { outputs: publishable(ports, outputs), questions, answers, sessionId, prompt };
+  return { outputs: publishable(ports, outputs), questions, answers, sessionId, prompt,
+    warnings: pinIgnoredWarning ? [pinIgnoredWarning] : [] };
 }
 
 // ── flow executors (pure engine: instant, $0, no process spawn) ───────────────

@@ -25,6 +25,7 @@ import {
 } from '../src/core/model-env.mjs';
 import {
   ctxSubagentModel, subagentModelDirective, fanOutDirective,
+  ctxEndpointRouted, sameEndpointSubagentDirective,
   _runOptsForTests as runOpts,
 } from '../src/core/phases.mjs';
 import { setStep, setNodeModel, readConfig, readRunConfig } from '../src/core/config.mjs';
@@ -292,4 +293,45 @@ test('a child with no recorded model reads back as null (pre-v25 rows paint no p
   const { id: pid } = await seedPipeline(proj, { title: 'Run', status: 'running' });
   upsertSubAgent(pid, { id: 'toolu_b', status: 'running', startedAt: '2026-08-30T00:00:01Z' });
   assert.equal(listSubAgents(pid)[0].runModel, null);
+});
+
+// ── endpoint-routed nodes: the same-endpoint directive ───────────────────────
+
+test('ctxEndpointRouted mirrors ctxFanOut: node field wins, ctx-level covers the node-less scanner', () => {
+  assert.equal(ctxEndpointRouted(null), false);
+  assert.equal(ctxEndpointRouted({}), false);
+  assert.equal(ctxEndpointRouted({ endpointRouted: true }), true, 'ctx-level (workspace scanner)');
+  assert.equal(ctxEndpointRouted({ node: { endpointRouted: true } }), true);
+  assert.equal(ctxEndpointRouted({ node: {}, endpointRouted: true }), false, 'a present node wins');
+});
+
+test('routed fan-out: ONE same-endpoint block replaces auto, pins and inherit alike', () => {
+  for (const stored of ['', 'auto', 'sonnet', 'opus', 'fable', 'inherit']) {
+    const p = fanOutDirective(true, { subagentModel: stored, endpointRouted: true });
+    assert.ok(p.includes('### Sub-agent model — same endpoint as this node (locked)'), `${stored || '(unset)'}: same-endpoint block`);
+    assert.ok(p.includes('NEVER pass a `model` parameter'), `${stored}: forbids the alias enum`);
+    assert.ok(p.includes('"general-purpose"'), `${stored}: names the safe subagent_type`);
+    assert.ok(!p.includes('YOUR call, per spawn'), `${stored}: no auto rubric`);
+    assert.ok(!p.includes('pinned this node’s sub-agents') && !p.includes("pinned this node's sub-agents"),
+      `${stored}: no pin block`);
+    assert.ok(!p.includes('prefer a purpose-built one'), `${stored}: the purpose-built steering sentence is swapped out`);
+  }
+  assert.equal(fanOutDirective(false, { endpointRouted: true }), '', 'no fan-out, no block — routed or not');
+  assert.ok(fanOutDirective(true, { endpointRouted: true }).endsWith(sameEndpointSubagentDirective()),
+    'the routed block renders verbatim from the helper');
+  const omit = fanOutDirective(true, { subagentModel: 'auto', endpointRouted: true, omitProjectAgents: true });
+  assert.ok(omit.includes("no member project's own agents are discoverable by name"),
+    'a routed detached-workspace prompt keeps the run-root caveat');
+  assert.ok(!fanOutDirective(true, { endpointRouted: true }).includes('no member project'),
+    'the caveat stays scoped to omitProjectAgents');
+});
+
+test('routed fan-out defaults OFF: the non-routed prompt is untouched', () => {
+  // Self-referential on purpose (both sides run the NEW code): the real
+  // byte-identity guards are graph-prompt-parity's committed goldens and
+  // phases-workspace's structural pins — this only pins default === explicit-false.
+  const before = fanOutDirective(true, { subagentModel: 'auto' });
+  assert.equal(fanOutDirective(true, { subagentModel: 'auto', endpointRouted: false }), before);
+  assert.ok(before.includes('YOUR call, per spawn'), 'the auto rubric survives unrouted');
+  assert.ok(before.includes('prefer a purpose-built one'), 'the steering sentence survives unrouted');
 });

@@ -882,3 +882,42 @@ test('MAJ-18: a point well off the route still selects nothing', async () => {
   assert.equal(s.c._internal.hitWireAt({ x: p.x, y: p.y - 40 }), null, 'the tolerance did not grow');
   assert.ok(s.c._internal.hitWireAt({ x: p.x, y: p.y - 4 }), 'but 4px off is still within the 6px tolerance');
 });
+
+test('a routed model locks the sub-agent select; a plain model keeps it editable', async () => {
+  const meta = { key: 'planner', displayName: 'Plan', fanOut: true, asksQuestions: false, inputs: [], outputs: [] };
+  const s = await open({ api: { agents: async () => [meta], agentsAll: async () => [meta] } });
+  s.c.setAgents({ planner: meta });
+  s.c.setModels({
+    models: [{ id: 'ds-stable', label: 'DS Stable', routed: true }, { id: 'claude-opus-5', label: 'Opus', routed: false }],
+    efforts: ['max'], subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'],
+  });
+  s.c.select({ kind: 'node', id: 'n_agent' });
+  // Seed a stored pin FIRST so the lock's preservation promise is observable
+  // (the change repaints synchronously — re-query every element afterwards).
+  const seed = s.el.insBody.querySelector('[data-field="subagentModel"]');
+  seed.value = 'sonnet';
+  seed.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+  const model = s.el.insBody.querySelector('[data-field="model"]');
+  model.value = 'ds-stable';
+  // Guard against the silent-miss path: with no matching <option>, jsdom yields
+  // '' and the change handler would DELETE config.model instead of setting it.
+  assert.equal(model.value, 'ds-stable', 'the ds-stable option came from setModels');
+  model.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+  s.c.select(null); s.c.select({ kind: 'node', id: 'n_agent' });
+  const locked = s.el.insBody.querySelector('[data-field="subagentModel"]');
+  assert.equal(locked.disabled, true, 'routed model -> locked');
+  assert.equal(locked.options.length, 1);
+  assert.equal(locked.options[0].textContent, 'same endpoint (locked)');
+  assert.equal(locked.options[0].value, 'sonnet', 'the locked option carries the stored value');
+  assert.equal(s.c.template().nodes.find((n) => n.id === 'n_agent').config.subagentModel, 'sonnet',
+    'the stored pin survives the lock untouched');
+  // Switching back to a plain model restores the full control, pin intact.
+  const model2 = s.el.insBody.querySelector('[data-field="model"]');
+  model2.value = 'claude-opus-5';
+  model2.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+  s.c.select(null); s.c.select({ kind: 'node', id: 'n_agent' });
+  const free = s.el.insBody.querySelector('[data-field="subagentModel"]');
+  assert.equal(free.disabled, false);
+  assert.ok(free.options.length > 1, 'the alias/auto/inherit options are back');
+  assert.equal(free.value, 'sonnet', 'the preserved pin is re-selected after unlocking');
+});

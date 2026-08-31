@@ -19,10 +19,12 @@ const FLOW_BLURB = {
 const h = (doc, tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const field = (doc, cls, label) => { const w = h(doc, 'div', `ins-f ${cls}`); w.appendChild(h(doc, 'label', 'ins-label', label)); return w; };
 
-function select(doc, cls, name, label, items, value) {
+function select(doc, cls, name, label, items, value, { disabled = false, title = '' } = {}) {
   const wrap = field(doc, cls, label);
+  if (title) wrap.title = title;
   const sel = h(doc, 'select', 'ins-select');
   sel.dataset.field = name;
+  sel.disabled = Boolean(disabled);
   for (const opt of items) {
     const o = doc.createElement('option');
     o.value = opt.value; o.textContent = opt.text;
@@ -103,10 +105,22 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
       // '' = unset — the run resolves the auto default (a per-spawn choice
       // rubric in the agent's prompt), so the blank option says so; 'inherit'
       // is the stored opt-out (children ride the CLI's own resolution).
-      body.appendChild(select(doc, 'ins-subagent', 'subagentModel', 'Sub-agent model',
-        [{ value: '', text: 'default (agent picks)' },
-          ...subagentModels.map((m) => ({ value: m, text: m === 'auto' ? 'agent picks' : m }))],
-        node.config.subagentModel));
+      // A ROUTED model (custom-endpoint catalog entry) locks the control: the
+      // run degrades every stored value to the same-endpoint policy, so
+      // offering aliases here would be a lie. The stored value is kept — the
+      // per-field change handler writes only the field the user edited, and
+      // the locked option carries the stored value — and the full control
+      // returns when the node moves back to a plain model.
+      const chosen = node.config.model ? models.find((m) => m && m.id === node.config.model) : null;
+      body.appendChild(chosen && chosen.routed
+        ? select(doc, 'ins-subagent', 'subagentModel', 'Sub-agent model',
+          [{ value: node.config.subagentModel || '', text: 'same endpoint (locked)' }],
+          node.config.subagentModel || '',
+          { disabled: true, title: 'This model routes to a custom endpoint; its sub-agents run the same model. Pick a non-routed model to edit.' })
+        : select(doc, 'ins-subagent', 'subagentModel', 'Sub-agent model',
+          [{ value: '', text: 'default (agent picks)' },
+            ...subagentModels.map((m) => ({ value: m, text: m === 'auto' ? 'agent picks' : m }))],
+          node.config.subagentModel));
     }
     if (meta && meta.asksQuestions) {
       const locked = Boolean(meta.questionsLocked);

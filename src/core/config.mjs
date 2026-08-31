@@ -167,7 +167,10 @@ export async function readConfig(projectDir) {
  * `custom` is false | 'global' | 'plugin' | 'project' (strings truthy, so
  * existing `m.custom` checks keep working); plugin entries also carry
  * `plugin: '<name>'`; `hasEnv` advertises routing env WITHOUT the values
- * (this shape feeds UI dropdowns).
+ * (this shape feeds UI dropdowns). `routed` advertises an ANTHROPIC_BASE_URL
+ * override the same way (key presence, values never leaked) — computed from the
+ * env objects already in scope here, NEVER by calling modelHasBaseUrlRouting per
+ * entry (that re-reads settings + the plugins lock from disk on every row).
  */
 function composeCatalog(projectCustom = []) {
   const globals = listGlobalModels();
@@ -178,26 +181,27 @@ function composeCatalog(projectCustom = []) {
   const out = [];
   const seen = new Set();
   const unreliable = (lc) => (flagged.has(lc) ? { costUnreliable: true } : {});
+  const routedOf = (env) => !!(env && 'ANTHROPIC_BASE_URL' in env);
   const pluginShape = (id, m, lc) => ({
     id, label: m.label, efforts: [...m.efforts], custom: 'plugin', plugin: m.plugin,
-    hasEnv: !!m.env, ...unreliable(lc),
+    hasEnv: !!m.env, routed: routedOf(m.env), ...unreliable(lc),
   });
   for (const m of PREDEFINED_MODELS) {
     const lc = m.id.toLowerCase();
     const shadow = globalByIdLc.get(lc);
     const pshadow = pluginByIdLc.get(lc);
     out.push(shadow
-      ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], custom: 'global', hasEnv: !!shadow.env, ...unreliable(lc) }
+      ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], custom: 'global', hasEnv: !!shadow.env, routed: routedOf(shadow.env), ...unreliable(lc) }
       : pshadow
         ? pluginShape(m.id, pshadow, lc)
-        : { ...m, custom: false, hasEnv: false });
+        : { ...m, custom: false, hasEnv: false, routed: false });
     seen.add(lc);
   }
   for (const m of globals) {
     const lc = m.id.toLowerCase();
     if (seen.has(lc)) continue; // predefined shadow, already emitted
     seen.add(lc);
-    out.push({ id: m.id, label: m.label, efforts: [...m.efforts], custom: 'global', hasEnv: !!m.env, ...unreliable(lc) });
+    out.push({ id: m.id, label: m.label, efforts: [...m.efforts], custom: 'global', hasEnv: !!m.env, routed: routedOf(m.env), ...unreliable(lc) });
   }
   for (const m of plugins) {
     const lc = m.id.toLowerCase();
@@ -208,7 +212,7 @@ function composeCatalog(projectCustom = []) {
   for (const m of projectCustom) {
     if (seen.has(m.id.toLowerCase())) continue; // predefined/global/plugin wins
     seen.add(m.id.toLowerCase());
-    out.push({ id: m.id, label: m.label, efforts: [...EFFORTS], custom: 'project', hasEnv: false });
+    out.push({ id: m.id, label: m.label, efforts: [...EFFORTS], custom: 'project', hasEnv: false, routed: false });
   }
   return out;
 }

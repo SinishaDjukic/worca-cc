@@ -526,3 +526,44 @@ test('18 runClarifierExecution gates the human and rewrites the file as {questio
   assert.ok(r2.questions.length >= 1 && r2.answers.every((a) => a.choice.length > 0), 'first-option fallback');
   assert.deepEqual(Object.keys(JSON.parse(readFileSync(join(pipelineDir, 'clarify.json'), 'utf8'))).sort(), ['answers', 'questions']);
 });
+
+// ── endpoint-routed nodes ────────────────────────────────────────────────────
+
+const routedNode = (over = {}) => ({
+  id: 'n_c', kind: 'agent', key: 'custom', config: {}, fanOut: true, endpointRouted: true,
+  subagentModel: '', agentPrompt: 'You are custom.', tools: [], ...over,
+});
+
+test('19 a routed fan-out prompt carries the same-endpoint block, never the alias directives', () => {
+  const p = buildAgentPrompt(ctx8({ node: routedNode() }));
+  assert.ok(p.includes('### Sub-agent model — same endpoint as this node (locked)'));
+  assert.ok(p.includes('NEVER pass a `model` parameter'));
+  assert.ok(!p.includes('YOUR call, per spawn'), 'no auto rubric on a routed node');
+  const pinned = buildAgentPrompt(ctx8({ node: routedNode({ subagentModel: 'sonnet' }) }));
+  assert.ok(pinned.includes('### Sub-agent model — same endpoint as this node (locked)'), 'a pin degrades to the same block');
+  assert.ok(!pinned.includes('pass `model: "sonnet"`'), 'the pin text never renders');
+  const unrouted = buildAgentPrompt(ctx8({ node: routedNode({ endpointRouted: false }) }));
+  assert.ok(unrouted.includes('YOUR call, per spawn'), 'unrouted keeps the auto default');
+  // D9: a routed workspace-explore node loses the strategy block's Explore steering too.
+  const wsExplore = buildAgentPrompt(ctx8({
+    node: routedNode(), meta: { ...CUSTOM, workspaceStrategy: 'explore' },
+    workspace: { projects: [{ projectKey: 'a' }] },
+  }));
+  assert.ok(!wsExplore.includes('Explore sub-agent'), 'no Explore order beside the same-endpoint block');
+  assert.ok(wsExplore.includes('`general-purpose` investigator'), 'the explore arm degrades, not disappears');
+});
+
+test('20 an alias pin on a routed node warns on the execution result; auto/inherit stay silent', async () => {
+  const meta = { ...CUSTOM, mockRole: 'generic-verifier' };
+  const mk = (over) => ctx8({ node: routedNode(over), meta, ports: meta, claudeOpts: { mock: true, model: 'ds-stable' } });
+  const pinned = await runAgentExecution(mk({ subagentModel: 'sonnet' }));
+  assert.deepEqual(pinned.warnings, [
+    'sub-agent model pin "sonnet" ignored: custom runs on an endpoint-routed model ("ds-stable") — children run without an explicit model',
+  ]);
+  const auto = await runAgentExecution(mk({ subagentModel: '' }));
+  assert.deepEqual(auto.warnings, [], 'the auto default degrades silently');
+  const inherit = await runAgentExecution(mk({ subagentModel: 'inherit' }));
+  assert.deepEqual(inherit.warnings, [], 'inherit degrades silently');
+  const unroutedPin = await runAgentExecution(mk({ subagentModel: 'sonnet', endpointRouted: false }));
+  assert.deepEqual(unroutedPin.warnings, [], 'a pin on a normal model is honored, not warned');
+});
