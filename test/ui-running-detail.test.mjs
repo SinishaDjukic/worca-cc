@@ -1029,3 +1029,38 @@ test('Agents: a v2 run names its groups from the ledger (rdAgentsBody passes r.s
     assert.equal(g.querySelector('.rd-ag-head .sub-model-pill').textContent, 'claude-fable-5 · max');
   }
 });
+
+// Copied VERBATIM from test/ui-scroll.test.mjs:45-53.
+// jsdom has no layout: make scroll geometry observable. scrollTop/scrollLeft become
+// plain stored values; the *Height/*Width readbacks are fixed to the passed values.
+function instrumentScroll(el, { scrollHeight = 1000, clientHeight = 200, scrollWidth = 1000, clientWidth = 200 } = {}) {
+  let top = 0, left = 0;
+  Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => scrollHeight });
+  Object.defineProperty(el, 'clientHeight', { configurable: true, get: () => clientHeight });
+  Object.defineProperty(el, 'scrollWidth',  { configurable: true, get: () => scrollWidth });
+  Object.defineProperty(el, 'clientWidth',  { configurable: true, get: () => clientWidth });
+  Object.defineProperty(el, 'scrollTop',  { configurable: true, get: () => top,  set: (v) => { top  = v; } });
+  Object.defineProperty(el, 'scrollLeft', { configurable: true, get: () => left, set: (v) => { left = v; } });
+}
+
+test('detail-pane autoscroll pins once per burst too, and the card pane pins once beside it', async () => {
+  const ctx = await bootRunning();
+  await openRun(ctx);
+  const { window } = ctx;
+  const box = rdBox(window);
+  const r = window.__np.getRun('r1');
+  assert.ok(r.el, 'the list card stays mounted behind the open detail');
+  const cardLog = r.el.querySelector('.log');
+  instrumentScroll(box, { scrollHeight: 900, clientHeight: 200 });
+  instrumentScroll(cardLog, { scrollHeight: 700, clientHeight: 200 });
+  let rdPins = 0, cardPins = 0;
+  const wrap = (el, bump) => { const d = Object.getOwnPropertyDescriptor(el, 'scrollTop');
+    Object.defineProperty(el, 'scrollTop', { configurable: true, get: d.get, set: (v) => { bump(); d.set(v); } }); };
+  wrap(box, () => { rdPins += 1; }); wrap(cardLog, () => { cardPins += 1; });
+  for (let i = 0; i < 20; i += 1) frame(ctx, { type: 'log', runId: 'r1', source: 'planner', level: 'info', text: `b${i}`, ts: 0, stepIndex: 0, cycle: 1 });
+  assert.equal(rdPins, 0, 'no synchronous per-line pin in the detail pane');
+  await new Promise((res) => setTimeout(res, 30));
+  assert.equal(rdPins, 1, 'ONE pin for the burst in the detail pane');
+  assert.equal(box.scrollTop, 900);
+  assert.equal(cardPins, 1, 'the card pane behind the detail also pinned exactly once — the ×2 cost is now 2 writes, one layout');
+});

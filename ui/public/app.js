@@ -3413,6 +3413,40 @@ function appendLogRec(logEl, rec, state) {
   return cursor;
 }
 
+// One scroll pin per pane per FRAME — at most ONE forced layout per frame
+// total, not one per line. The pin's scrollHeight read forces a synchronous
+// layout of the pane's document (~2ms at the 4k-line cap, ~90% of the measured
+// per-line cost, and it fired TWICE per line: card pane + detail pane; the
+// FIRST read in a flush pays the layout, later reads in the same flush are
+// clean). Claude's stdout arrives in bursts, so per-line pins made a burst
+// cost per-LINE what it should cost per-FRAME. Appends stay synchronous —
+// only the geometry read/write coalesces. Panes dedupe through the Map key;
+// the run rides along as the value so the flush can RE-CHECK r.autoscroll:
+// the switch can flip OFF in the ≤1 frame between a line arriving and the
+// flush, and a stale pin must not yank a just-frozen viewport to the bottom.
+// A pane rebuilt before the flush re-schedules through its own repaint's
+// autoscroll call, and pinning a detached node is a harmless no-op. Where rAF
+// is absent (jsdom under node:test, which is not pretendToBeVisual), the 16ms
+// timer stands in.
+const pendingScrollPins = new Map();   // logEl -> its run (flush re-checks r.autoscroll)
+let scrollPinScheduled = false;
+function schedulePinToBottom(logEl, r) {
+  if (!logEl) return;
+  pendingScrollPins.set(logEl, r);
+  if (scrollPinScheduled) return;
+  scrollPinScheduled = true;
+  const flush = () => {
+    scrollPinScheduled = false;
+    const entries = [...pendingScrollPins];
+    pendingScrollPins.clear();
+    for (const [el, run] of entries) {
+      if (el && (!run || run.autoscroll !== false)) el.scrollTop = el.scrollHeight;
+    }
+  };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush);
+  else setTimeout(flush, 16);
+}
+
 // Pin a card's log to the bottom when its auto-scroll is on. Source of truth is
 // r.autoscroll (the DOM switch only mirrors it); undefined counts as ON so a run
 // that predates the field still follows. Called by the live stream (onLog) AND on
@@ -3420,8 +3454,7 @@ function appendLogRec(logEl, rec, state) {
 // set on build/stream is re-applied once the node is in the document.
 function maybeAutoscrollLog(r) {
   if (!r || !r.el || r.autoscroll === false) return;
-  const logEl = r.el.querySelector('.log');
-  if (logEl) logEl.scrollTop = logEl.scrollHeight;
+  schedulePinToBottom(r.el.querySelector('.log'), r);
 }
 
 // Mirror r.autoscroll onto a card's switch (class + aria). One-way: model → DOM.
@@ -13255,8 +13288,7 @@ function rdLogBox(sec) { return sec ? sec.querySelector('.log') : null; }
 // Pin to the bottom when auto-scroll is on. Twin of maybeAutoscrollLog.
 function rdAutoscrollLog(sec, r) {
   if (!r || r.autoscroll === false) return;
-  const box = rdLogBox(sec);
-  if (box) box.scrollTop = box.scrollHeight;
+  schedulePinToBottom(rdLogBox(sec), r);
 }
 
 // Full re-render of the detail's pane from r.logLines through r.logFilter. Twin
@@ -14051,10 +14083,10 @@ function applyCardScroll(cardEl, r) {
   const top = Number(cardEl.dataset.logTop || 0);
   const left = Number(cardEl.dataset.flowLeft || 0);
   // Restore the LOG only when auto-scroll is OFF. `renderRunningView` above ran
-  // `paintRunList` -> `maybeAutoscrollLog(r)`, which pins an auto-scrolling pane
-  // to the bottom; writing a stale offset back on top of that would yank the user
-  // off the live tail on every density flip. The graph's horizontal offset has no
-  // such owner, so it is always restored.
+  // `paintRunList` -> `maybeAutoscrollLog(r)`, which schedules a pin to the bottom
+  // for an auto-scrolling pane; writing a stale offset back on top of that would
+  // yank the user off the live tail on every density flip. The graph's horizontal
+  // offset has no such owner, so it is always restored.
   if (logEl && top && r && r.autoscroll === false) logEl.scrollTop = top;
   if (flowEl && left) flowEl.scrollLeft = left;
   delete cardEl.dataset.logTop;      // one-shot: a later flip must not re-apply

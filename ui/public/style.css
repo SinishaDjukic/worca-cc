@@ -3713,16 +3713,18 @@ input.gv-name:focus-visible{outline:none;}
 .run-flow.gv-host .gv-world .xresult a{color:var(--blue-ink);text-decoration:none;}
 .run-flow.gv-host .gv-world .xresult a:hover{text-decoration:underline;}
 /* ants on v2 wires (the v1 rule targets svg.wires; a dashoffset animation needs a dash).
-   The dash phase comes from ONE shared clock — a registered <length> animated on
-   :root — not from an animation on the path, so toggling `wire-live` (snapshot
-   repaints, graph remounts) never resets the phase and every live wire marches in
-   step. One iteration travels exactly one 6+6 dash period (-12px), so the loop
-   boundary is seamless; the old per-path keyframe travelled -18px — 1.5 periods —
-   and the phase visibly snapped every iteration. -12px per .6s keeps 20px/s. */
-@property --wire-dash{syntax:'<length>';inherits:true;initial-value:0px;}
-@keyframes wireDash{to{--wire-dash:-12px;}}
-:root{animation:wireDash .6s linear infinite;}
-.run-flow.gv-host .gv-wires path.wire-live{stroke-dasharray:6 6;stroke-width:2.4;stroke-dashoffset:var(--wire-dash);}
+   The animation lives ON THE PATH — never on :root. The old design animated a
+   registered inherited <length> on :root as a shared clock, which forced a
+   whole-document style recalc every frame on every view (GB-scale renderer
+   memory churn; the 2026-08-31 run-detail freeze). Phase parity across wires —
+   the one thing the :root clock bought — now comes from setWireLive (view.mjs)
+   stamping a negative animation-delay from the shared document timeline. One
+   iteration travels exactly one 6+6 dash period (-12px), so the loop boundary
+   AND any restart when wire-live flips on are seamless; the retired snapping
+   keyframe travelled -18px — 1.5 periods — and visibly jumped every iteration.
+   -12px per .6s keeps 20px/s. */
+@keyframes wireDash{to{stroke-dashoffset:-12px;}}
+.run-flow.gv-host .gv-wires path.wire-live{stroke-dasharray:6 6;stroke-width:2.4;animation:wireDash .6s linear infinite;}
 .rd-graph.settled .run-flow.gv-host .gv-wires path.wire-live{animation:none;stroke-dashoffset:0;}
 /* the composer's ≤N budget pill is REPLACED by the N× delivery count in run mode (§8) */
 .run-flow.gv-host .wbadge{font-size:0;line-height:0;padding:0;border:0;background:none;}
@@ -3740,8 +3742,7 @@ input.gv-name:focus-visible{outline:none;}
 @media (prefers-reduced-motion:reduce){
   .run-flow.gv-host .gv-wires path.wire-live,.run-flow.gv-host .gv-world .ngate,
   .run-flow.gv-host .gv-world .xfoot .xq.is-active,.run-flow.gv-host .gv-world .xfoot .xrow.is-active .led{animation:none;}
-  /* the ants own no animation — stop the shared clock and pin the phase instead */
-  :root{animation:none;}
+  /* the first selector above already stops the path's own dash animation; pin the phase */
   .run-flow.gv-host .gv-wires path.wire-live{stroke-dashoffset:0;}
 }
 

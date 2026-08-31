@@ -320,9 +320,11 @@ try {
     && Math.abs(g2.stage.l - g2.pad.l) < 0.6 && Math.abs(g2.stage.w - g2.pad.w) < 0.6
     && g2.hostPos === 'absolute' && g2.hostPad === '0px' && g2.hostDisplay === 'block', g2);
 
-  // (4a) ants: the in-flight execution's trigger wire marches. The dash phase comes
-  // from the shared :root clock (--wire-dash / wireDash), NOT a per-path animation —
-  // the path's own animationName is 'none' while its offset still moves between samples.
+  // (4a) ants: the in-flight execution's trigger wire marches. The animation lives
+  // ON THE PATH (the :root clock is retired — it forced a whole-document style
+  // recalc per frame); phase parity comes from setWireLive's negative
+  // animation-delay stamp, so the path's own animationName is the dash keyframe
+  // and :root animates nothing.
   const antsAt = () => ev(`(()=>{const p=document.querySelector('${RD} .gv-wires path.wire-live');
     if(!p)return {none:true};const cs=getComputedStyle(p);
     return {wireId:p.dataset.wireId,animationName:cs.animationName,
@@ -332,8 +334,8 @@ try {
   const ants = await antsAt();
   await sleep(250);
   const ants2 = await antsAt();
-  check('4a', 'a live run marches its trigger wire off the shared :root clock (path animationName "none", phase moving)',
-    !ants.none && !ants2.none && ants.animationName === 'none' && ants.clock === 'wireDash'
+  check('4a', 'a live run marches its trigger wire per path (animationName "wireDash", :root clock gone, phase moving)',
+    !ants.none && !ants2.none && ants.animationName === 'wireDash' && ants.clock === 'none'
     && ants.strokeDashoffset !== ants2.strokeDashoffset && ants.settled === false, { ants, ants2 });
 
   // (6) the engaged wheel (D8). FIRST on this screen, while nothing has scrolled

@@ -37,7 +37,11 @@ async function boot() {
     s.dispatchEvent(new window.Event('change', { bubbles: true }));
   };
   const tick = () => new Promise((r) => setTimeout(r, 0));
-  return { window, np, recv, selectProject, tick };
+  // The bottom-pin is coalesced to one flush per pane per frame (app.js
+  // schedulePinToBottom); with no rAF under this jsdom boot the 16ms timer
+  // fallback runs it, so a pin assertion must outwait that timer.
+  const tickPin = () => new Promise((r) => setTimeout(r, 30));
+  return { window, np, recv, selectProject, tick, tickPin };
 }
 
 // jsdom has no layout: make scroll geometry observable. scrollTop/scrollLeft become
@@ -57,14 +61,14 @@ const STEP3 = { steps: [ { label: 'A', nodes: [{ id: 'a' }] }, { label: 'B', nod
 
 // ── 1. ON pins every new line to the bottom (Q1) ──────────────────────────────
 test('log pins to bottom on a new line while Auto-scroll is ON', async () => {
-  const { np, tick } = await boot();
+  const { np, tickPin } = await boot();
   const r = np.upsertRun({ runId: 'p1', title: 't', projectDir: PROJECT, status: 'running' });
   r.el = np.buildRunCard(r);
   const logEl = r.el.querySelector('.log');
   instrumentScroll(logEl, { scrollHeight: 5000, clientHeight: 300 });
   assert.equal(r.autoscroll, true, 'default ON on the model (seeded by makeRun via upsertRun)');
   np.onLog(r, { source: 'planner', level: 'info', text: 'line 1', ts: 1 });
-  await tick();
+  await tickPin();
   assert.equal(logEl.scrollTop, 5000, 'pinned to bottom while ON');
 });
 
@@ -94,7 +98,7 @@ test('OFF freezes the log and persists across a card rebuild', async () => {
 
 // ── 3. Re-enabling does not jump; the NEXT line follows (Q2) ──────────────────
 test('re-enabling holds position; only subsequent lines follow', async () => {
-  const { np, tick } = await boot();
+  const { np, tickPin } = await boot();
   const r = np.upsertRun({ runId: 'p1', title: 't', projectDir: PROJECT, status: 'running' });
   r.el = np.buildRunCard(r);
   const logEl = r.el.querySelector('.log');
@@ -106,7 +110,7 @@ test('re-enabling holds position; only subsequent lines follow', async () => {
   assert.equal(logEl.scrollTop, 100, 'enabling did NOT jump to bottom');
 
   np.onLog(r, { source: 'planner', level: 'info', text: 'after', ts: 3 });
-  await tick();
+  await tickPin();
   assert.equal(logEl.scrollTop, 5000, 'the next line follows to bottom');
 });
 
@@ -180,7 +184,7 @@ test('log frame causes zero #run-list moves when order is unchanged', async () =
 //       .run-flow-wrap scrollLeft. Record writes: the restore must WRITE the
 //       saved values back after the insert (final-value asserts false-green). ──
 test('a regroup move restores log scrollTop and stepper scrollLeft', async () => {
-  const { window, np, recv, selectProject, tick } = await boot();
+  const { window, np, recv, selectProject, tick, tickPin } = await boot();
   selectProject();
   window.location.hash = 'running';
   window.dispatchEvent(new window.Event('hashchange'));
@@ -200,6 +204,10 @@ test('a regroup move restores log scrollTop and stepper scrollLeft', async () =>
   Object.defineProperty(logEl, 'scrollHeight', { configurable: true, get: () => 5000 });
   Object.defineProperty(wrap,  'scrollLeft', { configurable: true, get: () => left, set: (v) => { left = v; leftWrites.push(v); } });
   logEl.scrollTop = 130; wrap.scrollLeft = 800;
+  // Both cards were painted with auto-scroll still ON, so a coalesced bottom-pin
+  // is queued against this pane. Let it land BEFORE the watch window opens, or it
+  // fires mid-move and reads as a spurious write (app.js schedulePinToBottom).
+  await tickPin();
   topWrites.length = 0; leftWrites.length = 0;     // watch only the move
 
   recv({ type: 'question', runId: bottomId, id: 'q1', kind: 'clarify', questions: [] });

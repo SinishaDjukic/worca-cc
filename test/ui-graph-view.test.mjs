@@ -461,3 +461,28 @@ test('C-2: every non-builtin agent icon is allowlist-sanitized before innerHTML'
   assert.ok(svg2.querySelector('path'), 'the legal plugin icon rendered');
   assert.equal(svg2.querySelector('path').getAttribute('d'), 'M4 4h8');
 });
+
+test('setWireLive seats a newly-live wire at the shared timeline phase', async () => {
+  // The :root clock is retired; phase parity now comes from stamping a negative
+  // animation-delay read off document.timeline when a wire goes live. jsdom has
+  // no timeline, so install one — without it t is always 0 and the sign, the
+  // 600ms period and the no-restamp rule are all unobservable (jsdom also
+  // serialises `-0ms` to `0ms`, so zero-stamp literals are a trap).
+  const { doc, host } = boot();
+  let now = 1234;
+  Object.defineProperty(doc, 'timeline', { configurable: true, get: () => ({ currentTime: now }) });
+  const { createGraphView } = await import(viewPath);
+  const view = createGraphView(host, { doc, mode: 'monitor', portsFn, agents: AGENTS });
+  view.render(fixture(), {});
+  view.setWireLive(['w1']);
+  assert.equal(view.wireEl('w1').style.animationDelay, '-34ms', 'seated at -(currentTime % 600)ms');
+  assert.equal(view.wireEl('w2').style.animationDelay, '', 'a dark wire carries no stamp');
+  now = 5000;                                  // the clock moved on…
+  view.setWireLive(['w1']);                    // …steady state must NOT restamp
+  assert.equal(view.wireEl('w1').style.animationDelay, '-34ms',
+    'a steady-state call never rewrites the stamp (re-stamping a RUNNING animation re-maps its time against the original start and desyncs the phase)');
+  view.setWireLive([]);
+  assert.equal(view.wireEl('w1').style.animationDelay, '', 'the stamp leaves with the class');
+  view.setWireLive(['w1']);                    // re-lit: a FRESH seat
+  assert.equal(view.wireEl('w1').style.animationDelay, '-200ms', '5000 % 600 = 200');
+});
