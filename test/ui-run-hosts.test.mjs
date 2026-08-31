@@ -137,8 +137,8 @@ test('the run-monitor CSS block styles the hosts and states it ACTUALLY writes, 
   // twin and the reduced-motion arm for the ants; the two `::after` pip rules for
   // is-error; `> .rg-hint{opacity:...}` for the hint chip), so a bare substring pin
   // survives DELETING the rule it is meant to protect. Pin those three by BODY.
-  assert.match(css, /\.run-flow\.gv-host \.gv-wires path\.wire-live\{[^}]*stroke-dasharray[^}]*stroke-dashoffset:var\(--wire-dash\)[^}]*\}/,
-    'the ants rule itself must dash the wire and read the shared clock (the settled/reduced-motion arms are not it)');
+  assert.match(css, /\.run-flow\.gv-host \.gv-wires path\.wire-live\{[^}]*stroke-dasharray[^}]*animation:wireDash \.6s linear infinite[^}]*\}/,
+    'the ants rule itself must dash the wire and own the marching animation (the settled/reduced-motion arms are not it)');
   assert.match(css, /\.run-flow\.gv-host \.gv-world \.node\.is-error\{[^}]*border-color[^}]*\}/,
     'the is-error card must get its own border colour (the ::after pip rules are not it)');
   assert.match(css, /(^|\n)\.rg-hint\{[^}]*position:absolute[^}]*opacity:0[^}]*\}/,
@@ -152,32 +152,33 @@ test('the run-monitor CSS block styles the hosts and states it ACTUALLY writes, 
   assert.ok(css.lastIndexOf('@media (prefers-reduced-motion:reduce)') > css.lastIndexOf('@media (prefers-reduced-motion: reduce)'));
 });
 
-test('the ants march on ONE shared :root clock — a seamless 12px loop no wire-live toggle can reset', () => {
-  // The clock: a registered <length> animated on :root. One iteration travels exactly
-  // one 6+6 dash period (12px), so the loop boundary is invisible; the retired
-  // wireFlow travelled -18px per iteration — 1.5 periods — and snapped every 0.9s.
-  // jsdom evaluates neither @property nor animations, so pin the stylesheet TEXT.
-  assert.equal(css.split("@property --wire-dash{syntax:'<length>';inherits:true;initial-value:0px;}").length - 1, 1,
-    'the clock property is registered exactly once');
-  assert.equal(css.split('@keyframes wireDash{to{--wire-dash:-12px;}}').length - 1, 1,
-    'one iteration travels exactly one dash period');
-  assert.equal(css.split(':root{animation:wireDash .6s linear infinite;}').length - 1, 1,
-    '-12px per .6s keeps wireFlow\'s 20px/s');
+test('the ants march per path — a seamless 12px loop, no :root clock', () => {
+  // One iteration travels exactly one 6+6 dash period (12px), so the loop
+  // boundary — and any restart when wire-live flips on — is invisible; phase
+  // parity across wires comes from setWireLive's negative animation-delay
+  // (test/ui-graph-view.test.mjs), not from a shared :root clock. Animating an
+  // inherited registered custom property on :root forced a whole-document
+  // style recalc per frame (the 2026-08-31 run-detail freeze) and must never
+  // come back. jsdom evaluates neither @property nor animations, so pin the
+  // stylesheet TEXT.
+  assert.equal(css.includes('@property --wire-dash'), false, 'the :root clock property is fully retired');
+  assert.equal(css.includes('--wire-dash'), false, 'nothing reads the retired clock variable');
+  assert.equal(css.includes(':root{animation'), false, 'nothing may ever animate :root');
+  assert.equal(css.split('@keyframes wireDash{to{stroke-dashoffset:-12px;}}').length - 1, 1,
+    'one iteration travels exactly one dash period, on the path property itself');
   assert.equal(css.includes('wireFlow'), false, 'the snapping keyframe is fully retired');
-  // The path only READS the clock — it owns no animation, so wire-live toggles
-  // (state repaints, remounts) never reset the phase and all live wires march in step.
   const ants = (css.match(/\.run-flow\.gv-host \.gv-wires path\.wire-live\{[^}]*\}/) || [''])[0];
-  assert.ok(ants.includes('stroke-dashoffset:var(--wire-dash)'), 'the ants rule reads the shared clock');
-  assert.ok(!ants.includes('animation'), 'the path owns NO animation of its own');
-  // The kill-switches pin the offset (the path has no animation left to stop): both
-  // settled shapes (see "A finished run stops moving") and reduced motion, which
-  // also stops the :root clock itself.
+  assert.ok(ants.includes('animation:wireDash .6s linear infinite'), 'the path owns the marching animation (-12px per .6s keeps 20px/s)');
+  assert.ok(ants.includes('stroke-dasharray:6 6'), 'the 6+6 dash IS the 12px period the keyframe travels');
+  assert.ok(!ants.includes('stroke-dashoffset'), 'the base rule sets no offset — the keyframe animates from the initial 0');
+  // The kill-switches: both settled shapes and reduced motion stop the path's
+  // animation and pin the phase at 0.
   assert.ok(css.includes('.rd-graph.settled .run-flow .wires path.wire-live{animation:none;stroke-dashoffset:0;}'),
     'the v1-shaped settled arm pins the phase too');
   assert.ok(css.includes('.rd-graph.settled .run-flow.gv-host .gv-wires path.wire-live{animation:none;stroke-dashoffset:0;}'),
     'the v2 settled arm pins the phase too');
   const reduced = css.slice(css.lastIndexOf('@media (prefers-reduced-motion:reduce)'));
-  assert.ok(reduced.includes(':root{animation:none;}'), 'reduced motion stops the clock');
+  assert.equal(reduced.includes(':root{animation:none;}'), false, 'no :root clock left for reduced motion to stop');
   assert.ok(reduced.includes('.run-flow.gv-host .gv-wires path.wire-live{stroke-dashoffset:0;}'),
     'reduced motion pins the phase on the path');
 });
