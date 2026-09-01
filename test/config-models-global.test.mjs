@@ -201,3 +201,10 @@ test('removing a global model keeps the row/step\'s OTHER tunables (only model+e
   assert.deepEqual((await resolveRunConfig(p, 'wf_x')).nodes.s2_0, { subagentModel: 'fable', askQuestions: true },
     'the node row is UPDATED, not deleted — the effort goes with its model, the rest stays');
 });
+
+test('the built-in catalog offers Fable 5.1 and no longer Fable 5', () => {
+  const fable = PREDEFINED_MODELS.find((m) => m.id === 'claude-fable-5-1');
+  assert.deepEqual(fable, { id: 'claude-fable-5-1', label: 'Fable 5.1 (1M)', efforts: ['medium', 'high', 'xhigh', 'max'] });
+  assert.equal(PREDEFINED_MODELS.some((m) => m.id === 'claude-fable-5'), false,
+    'the retired id is gone from the catalog (db.mjs V26 moves the stored pins)');
+});

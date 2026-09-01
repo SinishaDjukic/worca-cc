@@ -57,14 +57,16 @@ export { EFFORTS };
  * The `[1m]` suffix selects the 1M-token long-context variant. Opus 4.6–4.8 and
  * Sonnet 4.6 1M ids were verified to resolve via `claude --model`; Haiku 4.5 1M
  * is intentionally omitted — the CLI rejects it ("long context beta is not yet
- * available for this subscription"). Fable 5 needs no `[1m]` suffix: its context
- * window is 1M by default (verified to resolve via `claude --model`). Opus 5
+ * available for this subscription"). Fable 5.1 needs no `[1m]` suffix: its context
+ * window is 1M by default (verified to resolve via `claude --model`, CLI 2.1.257).
+ * It replaced Fable 5 (`claude-fable-5`) on 2026-09-01; db.mjs V26 moves every
+ * stored pin on the retired id to the successor, so nothing keeps it here. Opus 5
  * (`claude-opus-5`) and Sonnet 5 (`claude-sonnet-5`) are likewise 1M-only and
  * carry no `[1m]` twin.
  */
 export const PREDEFINED_MODELS = [
   { id: 'claude-opus-5',          label: 'Opus 5',          efforts: ['medium', 'high', 'xhigh', 'max'] },
-  { id: 'claude-fable-5',         label: 'Fable 5 (1M)',    efforts: ['medium', 'high', 'xhigh', 'max'] },
+  { id: 'claude-fable-5-1',       label: 'Fable 5.1 (1M)',  efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-8',        label: 'Opus 4.8',        efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-8[1m]',    label: 'Opus 4.8 (1M)',   efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-7',        label: 'Opus 4.7',        efforts: ['medium', 'high', 'xhigh', 'max'] },

@@ -54,7 +54,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 25;
+export const SCHEMA_VERSION = 26;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1080,6 +1080,68 @@ function applySchemaV25(db) {
   repairSchemaGaps(db, schemaGaps(db));
 }
 
+/** v26 (Fable 5.1 replaces Fable 5 in PREDEFINED_MODELS): a pin left on the
+ *  retired id would render as "(default model)" in every picker — its option is
+ *  gone — and be rejected on the next write (config.mjs `unknown model
+ *  "claude-fable-5"`), while the run itself kept passing the old id to
+ *  `claude --model`. So every stored pin moves to the successor: the
+ *  config_workflow_nodes.model column, the per-role project_config.steps JSON,
+ *  and node defaults inside workflows.graph (nodes[].config.model is the shape
+ *  workflows.mjs validates; a bare nodes[].model is covered too). Ids match
+ *  case-insensitively, as config.mjs compares them. History (pipelines,
+ *  sub_agents.run_model, ask_*) records what actually ran and is left alone.
+ *  A one-word rename is reversible, so unlike V24 it takes no backup. JSON
+ *  that does not parse is left exactly as found — a broken row must not take
+ *  the ladder down. */
+const V26_MODEL_RENAMES = [['claude-fable-5', 'claude-fable-5-1']];
+
+function applySchemaV26(db) {
+  for (const [from, to] of V26_MODEL_RENAMES) renameStoredModelPins(db, from, to);
+}
+
+/** Move every stored pin on model id `from` (lower-case) to `to`. Each table
+ *  is guarded like V24's: hand-seeded upgrade fixtures (and a DB from before the
+ *  fs->db import) reach this step without some of them. */
+function renameStoredModelPins(db, from, to) {
+  const hasTable = (t) => hasSqliteTable(db, t);
+  const isFrom = (v) => typeof v === 'string' && v.trim().toLowerCase() === from;
+  const renameIn = (sel) => {
+    if (!sel || typeof sel !== 'object' || !isFrom(sel.model)) return false;
+    sel.model = to;
+    return true;
+  };
+  if (hasTable('config_workflow_nodes')) {
+    db.prepare('UPDATE config_workflow_nodes SET model = ? WHERE lower(trim(model)) = ?').run(to, from);
+  }
+
+  const like = `%${from}%`;   // cheap pre-filter; the JSON walk below decides
+  const setSteps = hasTable('project_config') && db.prepare('UPDATE project_config SET steps = ? WHERE project_key = ?');
+  for (const row of setSteps ? db.prepare('SELECT project_key, steps FROM project_config WHERE steps LIKE ?').all(like) : []) {
+    let steps;
+    try { steps = JSON.parse(row.steps); } catch { continue; }
+    if (!steps || typeof steps !== 'object' || Array.isArray(steps)) continue;
+    let changed = false;
+    for (const sel of Object.values(steps)) changed = renameIn(sel) || changed;
+    if (changed) setSteps.run(JSON.stringify(steps), row.project_key);
+  }
+
+  const hasGraphColumn = () => db.prepare('PRAGMA table_info(workflows)').all().some((c) => c.name === 'graph');
+  const setGraph = hasTable('workflows') && hasGraphColumn()
+    && db.prepare('UPDATE workflows SET graph = ? WHERE id = ?');
+  for (const row of setGraph ? db.prepare('SELECT id, graph FROM workflows WHERE graph LIKE ?').all(like) : []) {
+    let graph;
+    try { graph = JSON.parse(row.graph); } catch { continue; }
+    if (!graph || typeof graph !== 'object' || !Array.isArray(graph.nodes)) continue;
+    let changed = false;
+    for (const node of graph.nodes) {
+      if (!node || typeof node !== 'object') continue;
+      changed = renameIn(node.config) || changed;
+      changed = renameIn(node) || changed;
+    }
+    if (changed) setGraph.run(JSON.stringify(graph), row.id);
+  }
+}
+
 /** Audit channel for V24 (dev convention: one console.warn per decision). */
 const auditV24 = (msg) => console.warn(`[worca] V24: ${msg}`);
 
@@ -1111,7 +1173,8 @@ function usableBackup(bak) {
 }
 
 /**
- * V24 is the ONLY ladder step that rewrites user data, so an existing DB is
+ * V24 is the only ladder step that rewrites user data destructively (V26 renames
+ * one model id, reversibly), so an existing DB is
  * snapshotted BEFORE the transaction opens (`VACUUM INTO` cannot run inside one
  * — measured: "cannot VACUUM from within a transaction"). Skipped for a fresh
  * file (nothing to lose) and for `:memory:` (PRAGMA database_list gives file '').
@@ -1417,6 +1480,7 @@ export function migrate(db) {
     if (current < 23) applySchemaV23(db);            // graph columns + config_workflow_wires
     if (current < 24) applySchemaV24(db, { existing: current >= 1 });  // the v2 break
     if (current < 25) applySchemaV25(db);            // sub-agent model policy + recorded child model
+    if (current < 26) applySchemaV26(db);            // Fable 5 pins -> Fable 5.1 (catalog swap)
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

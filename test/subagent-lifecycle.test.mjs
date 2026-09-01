@@ -151,15 +151,15 @@ const spawnWithModel = (id, model) => ({
 
 test('a child that names a model records THAT model, not the parent\'s', () => {
   const orch = fresh();
-  orch._onAgentEvent('planner', spawnWithModel('toolu_M', 'sonnet'), { ...ATTR, model: 'claude-fable-5' });
+  orch._onAgentEvent('planner', spawnWithModel('toolu_M', 'sonnet'), { ...ATTR, model: 'claude-fable-5-1' });
   assert.equal(orch.state.subAgents[0].runModel, 'sonnet',
     'the alias the Task call asked for — this is what proves a policy fired');
 });
 
 test('a child that names no model records the parent model it inherits', () => {
   const orch = fresh();
-  orch._onAgentEvent('planner', spawnWithModel('toolu_N', null), { ...ATTR, model: 'claude-fable-5' });
-  assert.equal(orch.state.subAgents[0].runModel, 'claude-fable-5');
+  orch._onAgentEvent('planner', spawnWithModel('toolu_N', null), { ...ATTR, model: 'claude-fable-5-1' });
+  assert.equal(orch.state.subAgents[0].runModel, 'claude-fable-5-1');
 });
 
 test('with no parent model either, the child records nothing rather than a guess', () => {
@@ -172,7 +172,7 @@ test('the spawn delta carries runModel, so the live view can paint the pill imme
   const orch = fresh();
   const evts = [];
   orch.on('subagent', (m) => evts.push(m));
-  orch._onAgentEvent('planner', spawnWithModel('toolu_P', 'sonnet'), { ...ATTR, model: 'claude-fable-5' });
+  orch._onAgentEvent('planner', spawnWithModel('toolu_P', 'sonnet'), { ...ATTR, model: 'claude-fable-5-1' });
   assert.equal(evts.length, 1);
   assert.equal(evts[0].runModel, 'sonnet',
     'without this the Running view shows no model pill until the next full state snapshot');

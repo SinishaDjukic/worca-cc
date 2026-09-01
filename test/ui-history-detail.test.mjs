@@ -1956,7 +1956,7 @@ const AG_V2_DETAIL = {
       template: { id: 'wf', name: 'WF' },
       graph: {
         nodes: [
-          { id: 'n_impl', kind: 'agent', key: 'implementer', label: 'Implementer', color: 'blue', x: 0, y: 0, model: 'claude-fable-5', effort: 'max', ports: { inputs: [], outputs: [], await: true } },
+          { id: 'n_impl', kind: 'agent', key: 'implementer', label: 'Implementer', color: 'blue', x: 0, y: 0, model: 'claude-fable-5-1', effort: 'max', ports: { inputs: [], outputs: [], await: true } },
           { id: 'n_or', kind: 'or', key: null, label: 'OR', x: 0, y: 0, ports: { inputs: [], outputs: [], await: false } },
         ],
         wires: [],
@@ -1978,7 +1978,7 @@ test('Agents tab names a v2 group from the ledger (buildHdAgents passes st.steps
   const ctx = await bootDetail({ detail: AG_V2_DETAIL });
   // Seed the catalog so the head's model pill exercises the LABEL arm of
   // stepModelPillHtml (the raw-id fallback arm is ui-running-detail's).
-  ctx.window.__np._setModels([{ id: 'claude-fable-5', label: 'Fable 5 (1M)', efforts: ['max'] }]);
+  ctx.window.__np._setModels([{ id: 'claude-fable-5-1', label: 'Fable 5.1 (1M)', efforts: ['max'] }]);
   const sec = await openTab(ctx, 'agents');
   const heads = [...sec.querySelectorAll('.hd-ag-group .hd-ag-head b')].map((b) => b.textContent);
   // The OR node wrote a ledger row too and must not become an Agents group.
@@ -1988,8 +1988,8 @@ test('Agents tab names a v2 group from the ledger (buildHdAgents passes st.steps
   assert.equal(groups[1].querySelector('.hd-ag-row .hd-ag-name').textContent, 'Slice worker',
     'the sub-agent row landed in the SLICE group, keyed by its v2 stepKey');
   // The manifest node's configured model · effort shows on the step title line.
-  assert.equal(groups[0].querySelector('.hd-ag-head .sub-model-pill').textContent, 'Fable 5 (1M) · max');
-  assert.equal(groups[1].querySelector('.hd-ag-head .sub-model-pill').textContent, 'Fable 5 (1M) · max');
+  assert.equal(groups[0].querySelector('.hd-ag-head .sub-model-pill').textContent, 'Fable 5.1 (1M) · max');
+  assert.equal(groups[1].querySelector('.hd-ag-head .sub-model-pill').textContent, 'Fable 5.1 (1M) · max');
 });
 
 test('Agents tab empty state', async () => {
