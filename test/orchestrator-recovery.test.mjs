@@ -151,7 +151,13 @@ test('serialized gate: two DISTINCT classes never open two prompts at once', asy
   // Stubbed _ask holds the "prompt" open briefly; record the peak concurrency.
   orch._ask = async () => {
     asks++; open++; maxOpen = Math.max(maxOpen, open);
-    await new Promise((r) => { const t = setTimeout(r, 5); t.unref?.(); });
+    // NOTE: the timer must stay REF'd. Every runtime timer in the harness is
+    // unref'd ("never hold the CLI open"), so during this 5ms hold the stub's
+    // timer is the only thing keeping the event loop alive; an unref'd timer
+    // here lets the loop drain mid-test and node:test cancels the run
+    // ("Promise resolution is still pending but the event loop has already
+    // resolved"), taking every later test in this file down with it.
+    await new Promise((r) => { setTimeout(r, 5); });
     open--;
     return { decision: 'retry' };
   };
