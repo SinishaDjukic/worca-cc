@@ -20,6 +20,11 @@ import { buildClaudeArgs, runClaude } from '../src/core/claude-runner.mjs';
 
 const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
 
+// The host guard (see host-guard-wiring.test.mjs for its own coverage) adds
+// --settings / --append-system-prompt / WORCA_HOST_PID to every real spawn;
+// the parity assertions here isolate THIS file's feature, so pin it off.
+process.env.WORCA_HOST_GUARD = '0';
+
 const dirs = [];
 const tmp = async () => {
   const d = await mkdtemp(join(tmpdir(), 'worca-cc-argv-'));
