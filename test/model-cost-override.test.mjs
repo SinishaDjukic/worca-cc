@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import {
   modelCostConfig, estimateCost, isPriceableUsage, resolveModelCost,
   observeModelCost, costUnreliableModelIds,
+  liveCostRates, PREDEFINED_LIST_PRICES, PREDEFINED_MODELS,
 } from '../src/core/config.mjs';
 import { addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
@@ -182,4 +183,28 @@ test('orchestrator: a {perMtok} model records the recomputed cost, not the CLI f
     { type: 'result', costUsd: 999, raw: { type: 'result', usage: USAGE } },
     { model: 'priced', stepKey: 'plan' });
   assert.equal(orch.getState().totalCostUsd, 4, '1M input@1 + 1M output@3');
+});
+
+test('liveCostRates: built-ins price from the list table; [1m]/dated ids share the base row; unknown → null', () => {
+  assert.deepEqual(liveCostRates('claude-opus-5'), PREDEFINED_LIST_PRICES['claude-opus-5']);
+  assert.equal(liveCostRates('claude-opus-5').input, 5);
+  assert.equal(liveCostRates('claude-fable-5-1').cacheRead, 0.25, 'Fable 5.1 cache reads are 0.025× input');
+  assert.deepEqual(liveCostRates('claude-opus-4-8[1m]'), PREDEFINED_LIST_PRICES['claude-opus-4-8'], '[1m] twin → base row');
+  assert.deepEqual(liveCostRates('claude-haiku-4-5-20251001'), PREDEFINED_LIST_PRICES['claude-haiku-4-5'], 'dated id → base row');
+  assert.deepEqual(liveCostRates('CLAUDE-SONNET-5'), PREDEFINED_LIST_PRICES['claude-sonnet-5'], 'case-insensitive');
+  assert.equal(liveCostRates('onprem-llama'), null, 'unknown id: no estimate (today\'s behaviour)');
+  assert.equal(liveCostRates(''), null);
+  assert.equal(liveCostRates(undefined), null);
+  // every id the picker offers has a row — or the footer silently shows nothing for it
+  for (const m of PREDEFINED_MODELS) assert.ok(liveCostRates(m.id), `${m.id} has list prices`);
+  assert.equal(modelCostConfig('claude-opus-5'), null, 'the display table never leaks into the authoritative override');
+  assert.equal(estimateCost({ input: 1_000_000, output: 1_000_000 }, liveCostRates('claude-opus-5')), 30, '$5 + $25');
+});
+
+test('liveCostRates: an operator override wins — {free} prices at $0, {perMtok} uses the pinned rates', async () => {
+  await addGlobalModel({ id: 'claude-opus-5', cost: { free: true } });   // a global entry may shadow a predefined id
+  assert.deepEqual(liveCostRates('claude-opus-5'), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0 });
+  await addGlobalModel({ id: 'onprem', cost: { perMtok: { input: 0.5, output: 1.5 } } });
+  assert.deepEqual(liveCostRates('onprem'), { input: 0.5, output: 1.5 });
+  assert.equal(estimateCost({ input: 1_000_000, output: 1_000_000 }, liveCostRates('onprem')), 2);
 });
