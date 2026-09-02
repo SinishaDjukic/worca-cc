@@ -179,6 +179,16 @@ const mup = (x, y, button = 'left') => pumped(cdp('Input.dispatchMouseEvent', { 
 // check (6) fails while reporting delivery as trusted. The run-monitor proof
 // gates on `cancelable` for the same reason; this one now matches it.
 let wheelTrusted = null;        // null = not probed yet
+// Two probe wheels, not one: Chrome latches a wheel SEQUENCE — when the first
+// wheel of a sequence is not cancelled, every later wheel in it is dispatched
+// non-cancelable (preventDefault() becomes a no-op and `defaultPrevented` never
+// reads true), and a sequence outlives the settle() between two of our
+// dispatches. Linux CI Chrome 152 reports the FIRST wheel cancelable, so a
+// one-wheel probe picked the trusted path and then watched every real wheel
+// arrive non-cancelable (the run-monitor proof split on it).
+// Only a runner whose SECOND consecutive wheel is still cancelable can measure
+// `defaultPrevented` through trusted events; everything else runs the same
+// listener over the same layout through the synthetic path.
 async function probeWheel(x, y) {   // x,y come from the caller and are already inside the stage
   await ev('window.__wp=[];window.__wpH=(e)=>{window.__wp.push(e.cancelable);};window.addEventListener("wheel",window.__wpH,{passive:true});0');
   await mmove(x, y, 0);
@@ -187,9 +197,11 @@ async function probeWheel(x, y) {   // x,y come from the caller and are already 
   // very next invariance measurement read as broken.
   await wheelRaw(x, y, 0, 0, 0);
   await settle('wheel-probe');
+  await wheelRaw(x, y, 0, 0, 0);        // the second wheel of the sequence is the one that tells
+  await settle('wheel-probe');
   const seen = await ev('(()=>{const n=window.__wp;window.removeEventListener("wheel",window.__wpH);return n;})()');
-  wheelTrusted = seen.length > 0 && seen[seen.length - 1] === true;
-  log(`wheel delivery: ${wheelTrusted ? 'trusted CDP events' : 'SYNTHETIC'} (CDP wheels seen: ${seen.length}, cancelable: ${seen.length ? seen[seen.length - 1] : 'n/a'})`);
+  wheelTrusted = seen.length >= 2 && seen.every((c) => c === true);
+  log(`wheel delivery: ${wheelTrusted ? 'trusted CDP events' : 'SYNTHETIC'} (CDP wheels seen: ${seen.length}, cancelable: ${seen.join(',') || 'n/a'})`);
 }
 async function wheel(x, y, dx, dy, modifiers = 0) {
   if (wheelTrusted === null) await probeWheel(x, y);

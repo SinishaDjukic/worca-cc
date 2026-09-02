@@ -188,6 +188,16 @@ const wheelRaw = (x, y, dx, dy, modifiers = 0) => pumped(cdp('Input.dispatchMous
 // whenever the trusted event is not cancelable. `defaultPrevented` is what "the
 // page scrolls / the canvas takes the wheel" reduces to, and only the synthetic
 // path can report it.
+// Two probe wheels, not one: Chrome latches a wheel SEQUENCE — when the first
+// wheel of a sequence is not cancelled, every later wheel in it is dispatched
+// non-cancelable (preventDefault() becomes a no-op and `defaultPrevented` never
+// reads true), and a sequence outlives the settle() between two of our
+// dispatches. Linux CI Chrome 152 reports the FIRST wheel cancelable, so a
+// one-wheel probe picked the trusted path and then watched every real wheel
+// arrive non-cancelable (the pull_request/push runs of one commit split on it).
+// Only a runner whose SECOND consecutive wheel is still cancelable can measure
+// `defaultPrevented` through trusted events; everything else runs the same
+// listener over the same layout through the synthetic path.
 let wheelMode = null;                   // 'trusted' | 'synthetic'
 async function probeWheel(stageSel, x, y) {
   await ev(`window.__wheels=[];window.addEventListener('wheel',(e)=>{window.__wheels.push(
@@ -195,9 +205,11 @@ async function probeWheel(stageSel, x, y) {
   await mmove(x, y);
   await wheelRaw(x, y, 0, 0, 0);        // ZERO delta: the probe must not move anything
   await settle('wheel-probe');
+  await wheelRaw(x, y, 0, 0, 0);        // the second wheel of the sequence is the one that tells
+  await settle('wheel-probe');
   const seen = await ev('window.__wheels');
-  wheelMode = seen.length && seen[seen.length - 1].cancelable ? 'trusted' : 'synthetic';
-  log(`wheel delivery: ${wheelMode} (CDP wheels seen: ${seen.length}, cancelable: ${seen.length ? seen[seen.length - 1].cancelable : 'n/a'})`);
+  wheelMode = seen.length >= 2 && seen.every((w) => w.cancelable) ? 'trusted' : 'synthetic';
+  log(`wheel delivery: ${wheelMode} (CDP wheels seen: ${seen.length}, cancelable: ${seen.map((w) => w.cancelable).join(',') || 'n/a'})`);
   await ev('window.__wheels=[];0');
 }
 /** One wheel over `stageSel` at client (x,y). Returns the event's
