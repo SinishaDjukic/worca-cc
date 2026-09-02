@@ -14,6 +14,7 @@ import { parseCommand } from './parser.mjs';
 import { BOOKEND_EXECUTION_IDS } from '../../shared/graph/constants.mjs';
 import { createAllowlistGuard, parseIdList } from './allowlist.mjs';
 import { runRef, fmtUsd, fmtMs } from './renderers.mjs';
+import { giveUpOption, describePauseReason, pauseConsequences } from '../failure-policy.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
 const reply = (text, severity = 'info') => ({ title: null, body: [md(text)], severity });
@@ -44,7 +45,7 @@ const HELP_TEXT = [
   '`/status [*ref]` — run detail · `/cost [*ref]` — run cost',
   '`/pause [*ref]` · `/stop [*ref]` · `/resume [*ref]`',
   '`/approve [*ref]` — continue past a gate · `/retry [*ref]` — another cycle',
-  '`/abort [*ref]` — abort a recovery prompt',
+  '`/abort [*ref]` — give up on a recovery prompt (pauses the run; nothing is discarded)',
   '`/answer [*ref] <n|text> [| …]` — answer clarify questions (option number, or text for free-text)',
   '`/projects` · `/use <name>` — scope commands to one project',
   '`/mute 30m|2h|1d` · `/unmute` — silence notifications for this chat',
@@ -174,7 +175,8 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
         const r = t.row;
         return reply([runLine({ ...r, runId: r.id }),
           ...(fmtUsd(r.totalCostUsd) ? [`   **Cost:** ${fmtUsd(r.totalCostUsd)}`] : []),
-          ...(r.pauseReason ? [`   **Pause reason:** ${r.pauseReason}`] : []),
+          ...(r.pauseReason ? [`   **Pause reason:** ${describePauseReason(r.pauseReason) || r.pauseReason}`] : []),
+          ...(r.pauseDetail ? [`   **${pauseConsequences(r.pauseReason).severity === 'error' ? 'Error' : 'Cause'}:** ${r.pauseDetail}`] : []),
         ].join('\n'));
       }
       const r = t.run;
@@ -322,14 +324,16 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
       if (verb === 'abort') return reply(`Gates have no abort — \`/approve ${ref}\`, \`/retry ${ref}\`, or \`/stop ${ref}\`.`, 'warning');
       payload = { decision: verb === 'approve' ? 'continue' : 'another' };
     } else if (pq.kind === 'recovery') {
-      payload = { decision: verb === 'abort' ? 'abort' : 'retry' };
+      // /abort is the give-up choice; what it does (pause or abort) is the row's
+      // option (failure-policy.mjs) — the option id is the wire decision.
+      payload = { decision: verb === 'abort' ? giveUpOption(pq.recovery?.options).id : 'retry' };
     } else {
       return reply(`\`${ref}\` is waiting on ${pq.kind} — use \`/answer ${ref} <n>\`.`, 'warning');
     }
     await actions.answer(t.run.runId, pq.id, payload);
     const what = pq.kind === 'gate'
       ? (payload.decision === 'continue' ? 'approved — continuing' : 'sent back for another cycle')
-      : (payload.decision === 'retry' ? 'retrying' : 'aborting');
+      : (payload.decision === 'retry' ? 'retrying' : payload.decision === 'abort' ? 'aborting the run' : 'pausing the run');
     return reply(`✅ \`${ref}\` ${what}.`, 'success');
   }
 

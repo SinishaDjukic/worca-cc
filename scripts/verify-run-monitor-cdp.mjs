@@ -96,16 +96,31 @@ chrome = spawn(CHROME, ['--headless=new', ...SANDBOX, `--remote-debugging-port=$
   '--window-size=1280,900', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
   '--disable-background-timer-throttling', '--disable-renderer-backgrounding', 'about:blank'],
 { stdio: ['ignore', 'pipe', 'pipe'] });
-chrome.stderr.on('data', () => {});
+// Keep Chrome's last stderr lines: when no DevTools target ever appears, its own
+// words (a sandbox refusal, a profile lock, a crash) are the diagnosis.
+const chromeErr = [];
+chrome.stderr.on('data', (d) => { chromeErr.push(String(d)); if (chromeErr.length > 40) chromeErr.shift(); });
+let chromeExit = null;
+chrome.on('exit', (code, signal) => { chromeExit = { code, signal }; });
 let wsUrl = null;
-for (let i = 0; i < 60 && !wsUrl; i += 1) {
+// Deadline-based, not iteration-based: a cold CI runner can take well over the
+// old ~15s (60 × 250ms) to bring the first page target up, and that budget was
+// the difference between a green and a red proofs job on the same commit.
+const targetDeadline = Date.now() + 60_000;
+while (!wsUrl && Date.now() < targetDeadline && !chromeExit) {
   try {
     const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
     const page = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl);
     if (page) wsUrl = page.webSocketDebuggerUrl; else await sleep(200);
   } catch { await sleep(250); }
 }
-if (!wsUrl) { console.error('no devtools target'); await shutdown(1); }
+if (!wsUrl) {
+  console.error(chromeExit
+    ? `no devtools target: chrome exited (code ${chromeExit.code}, signal ${chromeExit.signal})`
+    : 'no devtools target after 60s');
+  if (chromeErr.length) console.error(chromeErr.join('').trim().split('\n').slice(-15).join('\n'));
+  await shutdown(1);
+}
 const ws = new WebSocket(wsUrl);
 await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
 let msgId = 0; const pending = new Map(); const listeners = [];
@@ -173,6 +188,16 @@ const wheelRaw = (x, y, dx, dy, modifiers = 0) => pumped(cdp('Input.dispatchMous
 // whenever the trusted event is not cancelable. `defaultPrevented` is what "the
 // page scrolls / the canvas takes the wheel" reduces to, and only the synthetic
 // path can report it.
+// Two probe wheels, not one: Chrome latches a wheel SEQUENCE — when the first
+// wheel of a sequence is not cancelled, every later wheel in it is dispatched
+// non-cancelable (preventDefault() becomes a no-op and `defaultPrevented` never
+// reads true), and a sequence outlives the settle() between two of our
+// dispatches. Linux CI Chrome 152 reports the FIRST wheel cancelable, so a
+// one-wheel probe picked the trusted path and then watched every real wheel
+// arrive non-cancelable (the pull_request/push runs of one commit split on it).
+// Only a runner whose SECOND consecutive wheel is still cancelable can measure
+// `defaultPrevented` through trusted events; everything else runs the same
+// listener over the same layout through the synthetic path.
 let wheelMode = null;                   // 'trusted' | 'synthetic'
 async function probeWheel(stageSel, x, y) {
   await ev(`window.__wheels=[];window.addEventListener('wheel',(e)=>{window.__wheels.push(
@@ -180,9 +205,11 @@ async function probeWheel(stageSel, x, y) {
   await mmove(x, y);
   await wheelRaw(x, y, 0, 0, 0);        // ZERO delta: the probe must not move anything
   await settle('wheel-probe');
+  await wheelRaw(x, y, 0, 0, 0);        // the second wheel of the sequence is the one that tells
+  await settle('wheel-probe');
   const seen = await ev('window.__wheels');
-  wheelMode = seen.length && seen[seen.length - 1].cancelable ? 'trusted' : 'synthetic';
-  log(`wheel delivery: ${wheelMode} (CDP wheels seen: ${seen.length}, cancelable: ${seen.length ? seen[seen.length - 1].cancelable : 'n/a'})`);
+  wheelMode = seen.length >= 2 && seen.every((w) => w.cancelable) ? 'trusted' : 'synthetic';
+  log(`wheel delivery: ${wheelMode} (CDP wheels seen: ${seen.length}, cancelable: ${seen.map((w) => w.cancelable).join(',') || 'n/a'})`);
   await ev('window.__wheels=[];0');
 }
 /** One wheel over `stageSel` at client (x,y). Returns the event's

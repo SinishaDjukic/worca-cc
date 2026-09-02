@@ -487,6 +487,9 @@ function summarizeRuns() {
     // 'cost_pipeline'/'cost_total') instead of showing a plain "Paused" card
     // until the next event.
     pauseReason: r.pauseReason || null,
+    // The clipped failure message behind reason 'error', or null — so a
+    // reload/reconnect restores the "Paused · error" detail, not a bare card.
+    pauseDetail: r.pauseDetail || null,
     startedAt: r.startedAt,
     pendingQuestion: r.pendingQuestion || null,
     // kind discriminator so the client routes runs vs scans vs agent generations
@@ -567,14 +570,21 @@ function wireRun(entry) {
         // Remember the pause reason for summarizeRuns (hello). Reset on every
         // done so a later reasonless finish cannot leave a stale cost banner.
         entry.pauseReason = (payload && payload.reason) || null;
+        // ...and WHAT went wrong for an error-pause, reset alongside it.
+        entry.pauseDetail = (payload && payload.detail) || null;
         resolvePending(entry, { reason: entry.status });
         if (payload?.reason === 'cost_pipeline' || payload?.reason === 'cost_total') {
           emitChanged('budget-changed');
         }
       }
       if (name === 'error') {
-        entry.status = 'error';
-        resolvePending(entry, { reason: 'error' });
+        // The launch-error channel (a failure BEFORE the pipeline row exists). A
+        // converted in-run failure pauses and emits no 'error'; never let a stray
+        // one demote a parked run.
+        if (entry.status !== 'paused' && entry.status !== 'pausing') {
+          entry.status = 'error';
+          resolvePending(entry, { reason: 'error' });
+        }
       }
       if (name === 'exec') {
         entry.status = 'running';

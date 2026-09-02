@@ -27,6 +27,7 @@ import {
 } from '../core/projects.mjs';
 import { projectKey } from '../core/store.mjs';
 import { formatExecLine, formatGateHeader, formatRunSummary } from './render.mjs';
+import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -351,22 +352,27 @@ async function askGate(rl, issues, header) {
 
 /**
  * Ask the user how to handle a recoverable error (auth / rate-limit / quota /
- * network). Shows the cause and waits for retry / abort. Returns { decision }.
+ * network). Shows the cause and the row's options (failure-policy.mjs: Retry, plus
+ * what giving up does — pause or abort). Returns { decision } with the chosen
+ * option's id as the wire value.
  */
 async function askRecovery(rl, recovery) {
   const rec = recovery || {};
+  const options = Array.isArray(rec.options) && rec.options.length ? rec.options : promptOptions({ outcome: 'pause' });
   out('');
   out(c('yellow', c('bold', `Recoverable ${String(rec.cls || 'error').replace('_', ' ')} error — the pipeline could not reach the model.`)));
   if (rec.message) out(c('gray', `  ${rec.message}`));
   if (rec.cls === 'auth') out(c('gray', '  Fix: re-authenticate (claude setup-token or /login) in another terminal, then retry.'));
   else out(c('gray', '  Fix: wait out the limit / restore connectivity / top up credit, then retry.'));
-  out('  1) Retry');
-  out('  2) Abort the run');
+  options.forEach((o, i) => out(`  ${i + 1}) ${o.label}`));
   let decision = '';
   while (!decision) {
-    const raw = (await question(rl, c('cyan', 'Choose [1-2]: '))).trim();
-    if (raw === '1' || /^retry/i.test(raw)) decision = 'retry';
-    else if (raw === '2' || /^abort/i.test(raw)) decision = 'abort';
+    const raw = (await question(rl, c('cyan', `Choose [1-${options.length}]: `))).trim();
+    const byNumber = options[Number(raw) - 1];
+    if (byNumber) decision = byNumber.id;
+    else if (/^retry/i.test(raw)) decision = 'retry';
+    // 'pause' and 'abort' both mean give up; the option offered names the verdict.
+    else if (/^(pause|abort)/i.test(raw)) decision = options.find((o) => o.id !== 'retry')?.id || 'pause';
   }
   return { decision };
 }
@@ -397,10 +403,16 @@ function stdinCanAnswer() {
 /**
  * Wire readline Q&A, log/phase rendering, and SIGINT pause/stop onto an
  * orchestrator, then drive it. `start` launches run() or resume(). Returns the
- * process exit code: 0 for done — and for a pause in an INTERACTIVE run (the
- * user chose or witnessed it and can resume); 3 for a pause under --yes (the
- * run parked itself on auth/quota/usage-limit/exhausted retries with nobody
- * attached to resume it, so a wrapper must not read success); 1 otherwise.
+ * process exit code (pauseExitCode, failure-policy.mjs):
+ *   0  done — and an INTERACTIVE pause the user chose or a limit/cap forced (they
+ *      witnessed it and can resume);
+ *   1  a terminal error (a launch failure, an unrecoverable resume, a stop) and an
+ *      INTERACTIVE pause an error forced;
+ *   2  a usage error (fail());
+ *   3  any pause under --yes — the run parked itself (auth/quota/usage limit,
+ *      exhausted retries, an error) with nobody attached to resume it, so a
+ *      wrapper must not read success. Under --yes a parked run's cause prints
+ *      on STDOUT with the pause block; only a terminal error reaches stderr.
  */
 async function attachAndDrive(orch, flags, start) {
   // Refuse an unanswerable interactive run BEFORE start(). The orchestrator
@@ -577,7 +589,22 @@ async function attachAndDrive(orch, flags, start) {
       for (const line of summary.slice(1)) out(line);
     }
   } else if (result?.status === 'paused') {
-    out(c('yellow', result?.reason ? `Pipeline paused: ${result.reason}` : 'Pipeline paused.'));
+    // An error-pause reads as a failure the user can pick up again: the cause on
+    // its own line, then the reassurance that nothing was thrown away.
+    if (result.reason === REASON.ERROR) {
+      out(c('red', c('bold', 'Pipeline paused after an error.')));
+      if (result.detail) out(c('red', `  ${result.detail}`));
+      out(c('yellow', 'Nothing was discarded: the worktree and the run position are kept.'));
+    } else if (result.reason === REASON.RECOVERABLE) {
+      out(c('yellow', c('bold', 'Pipeline paused on a recoverable error — resume once it clears.')));
+      if (result.detail) out(c('yellow', `  ${result.detail}`));
+      out(c('yellow', 'Nothing was discarded: the worktree and the run position are kept.'));
+    } else if (result?.reason) {
+      const label = describePauseReason(result.reason) || result.reason;
+      out(c('yellow', `Pipeline paused: ${label}${result.detail ? ` — ${result.detail}` : ''}`));
+    } else {
+      out(c('yellow', 'Pipeline paused.'));
+    }
     out(`Resume with: ${c('bold', `worca resume ${orch.state.id}`)}`);
   } else if (result?.status === 'stopped') {
     out(c('yellow', 'Pipeline stopped.'));
@@ -590,13 +617,13 @@ async function attachAndDrive(orch, flags, start) {
   // An unanswered question is a failure even if the run somehow settled `done`.
   if (answerFailure) return 1;
   if (result?.status === 'done') return 0;
-  // A pause exits 0 only when someone is attached to resume it (interactive —
-  // pinned by the MAJ-7 Ctrl+C pitfall test). Under --yes every pause is the run
-  // parking ITSELF (auth/quota/usage limit/exhausted recoverable retries) with
-  // nobody left to resume: exit 0 here would let a CI job go green on a run that
-  // did no work. 3, not 1, so wrappers can tell "resumable pause" from a hard
-  // error (2 is fail()'s usage-error code).
-  if (result?.status === 'paused') return flags.auto ? 3 : 0;
+  // The exit code for a pause is a consequence of its reason (failure-policy.mjs):
+  // 0 only when someone is attached to resume it (interactive — pinned by the
+  // MAJ-7 Ctrl+C pitfall test) and no error forced it; 1 for an interactive
+  // error-pause; 3 under --yes, where every pause is the run parking ITSELF with
+  // nobody left to resume (0 would let a CI job go green on a run that did no
+  // work; 2 is fail()'s usage-error code).
+  if (result?.status === 'paused') return pauseExitCode(result.reason, flags.auto);
   return 1;
 }
 

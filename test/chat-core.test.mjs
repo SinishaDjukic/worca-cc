@@ -151,6 +151,24 @@ test('renderDone: done/stopped/paused(+reason) — valid messages, right severit
   assert.match(paused.body[0].value, /\/resume \*2951/);
   const pausedFree = renderDone(META, { status: 'paused', reason: null });
   assert.doesNotMatch(pausedFree.body[0].value, / — /);
+
+  const errored = renderDone(META, { status: 'paused', reason: 'error', detail: 'claude exited with code 1: disk full' });
+  assert.equal(errored.severity, 'error');
+  assert.match(errored.body[0].value, /\*\*Status:\*\* paused — a step failed/);
+  assert.match(errored.body[0].value, /\*\*Error:\*\* claude exited with code 1: disk full/);
+  assert.match(errored.body[0].value, /\/resume \*2951/);
+
+  // A self-parked recoverable pause is a WARNING with a cause, not a failure.
+  const recoverable = renderDone(META, { status: 'paused', reason: 'recoverable', detail: 'auth: API Error: 401' });
+  assert.equal(recoverable.severity, 'warning');
+  assert.match(recoverable.body[0].value, /\*\*Status:\*\* paused — recoverable error/);
+  assert.match(recoverable.body[0].value, /\*\*Cause:\*\* auth: API Error: 401/);
+
+  // The detail is already bounded and MIDDLE-clipped upstream so the runner's
+  // trailing cause survives; the message must not head-clip it away again.
+  const long = `${'x'.repeat(133)}…${'y'.repeat(260)} THE CAUSE`;
+  const tail = renderDone(META, { status: 'paused', reason: 'error', detail: long });
+  assert.match(tail.body[0].value, /THE CAUSE/);
 });
 
 test('renderError truncates long messages', () => {
@@ -198,7 +216,7 @@ test('renderQuestion instructs the pipe form when a question is free-text', () =
   assert.match(msg.body[0].value, /\/answer \*ab12 <your answer>/);
 });
 
-test('renderQuestion recovery: cause + approve/retry; renderTest is valid', () => {
+test('renderQuestion recovery: cause + retry/pause reply line; renderTest is valid', () => {
   const msg = renderQuestion(META, {
     id: 'rec-1', kind: 'recovery',
     recovery: { message: 'claude exited 1: context canceled' },
@@ -207,4 +225,7 @@ test('renderQuestion recovery: cause + approve/retry; renderTest is valid', () =
   assert.match(msg.body[0].value, /recovery decision/);
   assert.match(msg.body[0].value, /\*\*Cause:\*\* claude exited 1/);
   assert.equal(isValidMessage(renderTest()), true);
+
+  const q = renderQuestion(META, { id: 'r1', kind: 'recovery', recovery: { cls: 'auth', message: 'x' } });
+  assert.match(q.body[0].value, /\/abort \*2951 to pause the run/);
 });

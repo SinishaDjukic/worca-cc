@@ -81,3 +81,33 @@ test('end to end: wireRun done -> summarizeRuns is what a reloading client sees'
     runs.delete(entry.id);
   }
 });
+
+test('wireRun: an error-pause stores reason AND detail; a later stray error event never demotes it', () => {
+  const entry = makeEntry({ id: 'uuid-PR6' });
+  runs.set(entry.id, entry);
+  try {
+    _testing.wireRun(entry);
+    entry.orch.emit('done', { status: 'paused', reason: 'error', detail: 'claude exited with code 1: disk full' });
+    assert.equal(entry.status, 'paused');
+    assert.equal(entry.pauseReason, 'error');
+    assert.equal(entry.pauseDetail, 'claude exited with code 1: disk full');
+    entry.orch.emit('error', { message: 'late' });
+    assert.equal(entry.status, 'paused', "an 'error' event must not override a parked run");
+    const sum = _testing.summarizeRuns().find((r) => r.runId === 'uuid-PR6');
+    assert.equal(sum.pauseDetail, 'claude exited with code 1: disk full');
+  } finally {
+    runs.delete(entry.id);
+  }
+});
+
+test("wireRun: 'error' still marks a RUNNING entry error (the launch-error channel)", () => {
+  const entry = makeEntry({ id: 'uuid-PR7' });
+  runs.set(entry.id, entry);
+  try {
+    _testing.wireRun(entry);
+    entry.orch.emit('error', { message: 'agent "ghost" is not installed' });
+    assert.equal(entry.status, 'error');
+  } finally {
+    runs.delete(entry.id);
+  }
+});

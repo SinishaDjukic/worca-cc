@@ -1519,6 +1519,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     sourceBranch: source,
     guardrailsId: row.guardrails_id ?? null,
     pauseReason: row.pause_reason ?? null,
+    pauseDetail: row.pause_detail ?? null,
     retainedWork: retainedWorkFor(row),
     survived,
     added,
@@ -1574,7 +1575,8 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   const rows = getDb().prepare(`
     SELECT id, project_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
            branch, workspace_meta, guardrails_id,
-           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail
     FROM pipelines
     WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL
     ORDER BY started_at DESC
@@ -1602,7 +1604,8 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
            total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id,
-           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail
     FROM pipelines
     WHERE archived_at IS NULL
     ORDER BY COALESCE(updated_at, started_at) DESC, project_key, id
@@ -1785,6 +1788,11 @@ function rowToState(row) {
     `).all(row.id).map(stepRowToStep),
     subAgents: listSubAgents(row.id),
   };
+  // The pause cause rides resume_point (no column): expose it on the DETAIL payload
+  // too, so a deep-linked History detail no longer waits for the LIST row.
+  const rp = j(row.resume_point, null);
+  state.pauseReason = typeof rp?.pauseReason === 'string' ? rp.pauseReason : null;
+  state.pauseDetail = typeof rp?.pauseDetail === 'string' ? rp.pauseDetail : null;
   const outcome = j(row.outcome, null);
   if (outcome) {
     state.engine = 2;
