@@ -34,7 +34,7 @@
 
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { prepareModelEnv } from './model-env.mjs';
+import { prepareModelEnv, envFlag, describeModelEnv } from './model-env.mjs';
 import { classifyError, strongestClass } from './recoverable-error.mjs';
 import { explainUnspawnableClaude, resolveClaudeBin } from './preflight.mjs';
 import { writeFile, mkdir, appendFile, readFile, access } from 'node:fs/promises';
@@ -100,6 +100,21 @@ export function argvLength(bin, args) {
   return String(bin || '').length + args.reduce((n, a) => n + String(a).length + 3, 0);
 }
 
+const ARGV_VALUE_PREVIEW = 64;
+
+/** A copy of `args` safe to log: EVERY token longer than ARGV_VALUE_PREVIEW is
+ *  shortened to a 64-char prefix + "…(<N> chars)". Token-level, not flag-aware, on
+ *  purpose: an inline prompt, the `--settings` JSON (uncapped for a custom rule
+ *  set), `--allowedTools`, `--mcp-config` — any free-text value buildClaudeArgs
+ *  adds later — is capped without this list having to track it. Flags and short
+ *  values pass through verbatim, so argv order is always preserved. Pure. */
+export function redactArgvForLog(args) {
+  return args.map((a) => {
+    const v = String(a);
+    return v.length > ARGV_VALUE_PREVIEW ? `${v.slice(0, ARGV_VALUE_PREVIEW)}…(${v.length} chars)` : v;
+  });
+}
+
 /** Log each npm-shim resolution once per process, not once per spawn. */
 const _resolveNoted = new Set();
 
@@ -156,9 +171,25 @@ export function buildEffortArgs(effort) {
  * and the baseline sub-agent lifecycle (tool_use/tool_result) is unaffected.
  */
 export function subagentHooksEnabled() {
-  const v = process.env.WORCA_SUBAGENT_HOOKS;
-  return !!v && v !== '0' && v.toLowerCase() !== 'false';
+  return envFlag('WORCA_SUBAGENT_HOOKS');
 }
+
+/**
+ * Opt-in spawn diagnostics (WORCA_DEBUG_SPAWN), DEFAULT OFF (envFlag rule: any
+ * value but "", "0", "false" turns it on). OFF ⇒ runReal emits NO spawn-debug
+ * event and does not touch argv/env, so the spawn path is byte-identical to
+ * today. (The once-per-process "routing env applied" confirmation below is a
+ * separate, always-on line: it fires only for a model env that carries an
+ * ANTHROPIC_* routing key, once per distinct model + env, never per spawn.)
+ * Read directly in runReal (not a runClaude option) so it bypasses the
+ * runClaude→runReal gate by construction.
+ */
+export function debugSpawnEnabled() {
+  return envFlag('WORCA_DEBUG_SPAWN');
+}
+
+/** Once per process per distinct (model, described env): see runReal. */
+const _routingNoted = new Set();
 
 // ── Sub-agent telemetry + the --settings seam ────────────────────────────────
 // Telemetry is GATED (subagentHooksEnabled) and OFF by default. When on it adds
@@ -251,8 +282,7 @@ export function buildSpawnEnv(envScrub, envAllowlist) {
  */
 export function mockEnabled(opts) {
   if (opts && opts.mock) return true;
-  const v = process.env.WORCA_MOCK ?? process.env.ORCH_MOCK;
-  return !!v && v !== '0' && v.toLowerCase() !== 'false';
+  return envFlag('WORCA_MOCK', 'ORCH_MOCK');
 }
 
 /**
@@ -553,6 +583,23 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     } else if (wireModel !== model) {
       console.warn(`[worca] model ${JSON.stringify(model ?? '')}: wire model ${JSON.stringify(wireModel)}`);
     }
+    // Confirm a resolved card's routing env actually reached a spawn — even when
+    // the wire id equals the catalog id, the case the wire-model line above stays
+    // silent for (that silence is exactly what hid a gateway card whose
+    // ANTHROPIC_MODEL matched its catalog id). Fires only for an env that carries
+    // an ANTHROPIC_* routing key (Ask Worca merges a CLAUDE_CODE_* knob into
+    // EVERY turn's env, which is not routing) and once per process per distinct
+    // line, like _resolveNoted — never per spawn. describeModelEnv prints the
+    // routing keys readable (endpoint, wire id — the diagnostic) and every other
+    // key as `<set, N chars>`: ANTHROPIC_AUTH_TOKEN and plugin {secret} values live
+    // in this map and no part of them may reach a log. Worded WITHOUT the
+    // substrings "wire model"/"modelEnv" — test/spawn-args.test.mjs counts by those.
+    const routingApplied = safeModelEnv && Object.keys(safeModelEnv).some((k) => k.startsWith('ANTHROPIC_'))
+      ? describeModelEnv(safeModelEnv) : null;
+    if (routingApplied) {
+      const line = `[worca] model ${JSON.stringify(model ?? '')}: routing env applied: ${routingApplied}`;
+      if (!_routingNoted.has(line)) { _routingNoted.add(line); console.warn(line); }
+    }
 
     // Windows + npm-installed Claude Code: the bare name is a .cmd shim Node
     // cannot spawn; resolveClaudeBin swaps in the package's native claude.exe.
@@ -599,6 +646,25 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     // pre-feature behavior, including the undefined -> inherit-process.env case.
     let spawnEnv = guardrailEnv;
     if (safeModelEnv) spawnEnv = { ...(guardrailEnv ?? process.env), ...safeModelEnv };
+
+    // Opt-in spawn diagnostics (WORCA_DEBUG_SPAWN, default off — byte-identical spawn
+    // path when unset). Everything here is derived from values already computed above
+    // (safeModelEnv is null or non-empty, so the routing field is either the described
+    // env — secrets as `<set, N chars>` — or "(none)"). Emitted right before spawn so
+    // it reflects the exact bin/argv/env handed to the child, ONCE, as the same
+    // `stderr` event the child's own stderr rides (run-harness logs it at `warn`
+    // into the run stream and live-log.ndjson; nothing here also console.warns, so
+    // a run never prints the line twice). Field is `routingEnv`, not `modelEnv`:
+    // test/spawn-args.test.mjs counts "modelEnv" warnings for the dropped-key path.
+    if (debugSpawnEnabled()) {
+      const summary =
+        `[worca] spawn-debug: bin=${JSON.stringify(resolved.bin)} `
+        + `argv=${JSON.stringify(redactArgvForLog(args))} `
+        + `promptViaStdin=${plan.stdin != null} staged=${plan.staged} `
+        + `envScrub=${guardrailEnv ? 'on' : 'off'} childEnvKeys=${Object.keys(spawnEnv ?? process.env).length} `
+        + `routingEnv=[${safeModelEnv ? describeModelEnv(safeModelEnv) : '(none)'}]`;
+      safeEmit(onEvent, { type: 'stderr', stream: 'err', text: summary });
+    }
 
     let child;
     try {
