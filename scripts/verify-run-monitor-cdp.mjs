@@ -96,16 +96,31 @@ chrome = spawn(CHROME, ['--headless=new', ...SANDBOX, `--remote-debugging-port=$
   '--window-size=1280,900', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
   '--disable-background-timer-throttling', '--disable-renderer-backgrounding', 'about:blank'],
 { stdio: ['ignore', 'pipe', 'pipe'] });
-chrome.stderr.on('data', () => {});
+// Keep Chrome's last stderr lines: when no DevTools target ever appears, its own
+// words (a sandbox refusal, a profile lock, a crash) are the diagnosis.
+const chromeErr = [];
+chrome.stderr.on('data', (d) => { chromeErr.push(String(d)); if (chromeErr.length > 40) chromeErr.shift(); });
+let chromeExit = null;
+chrome.on('exit', (code, signal) => { chromeExit = { code, signal }; });
 let wsUrl = null;
-for (let i = 0; i < 60 && !wsUrl; i += 1) {
+// Deadline-based, not iteration-based: a cold CI runner can take well over the
+// old ~15s (60 × 250ms) to bring the first page target up, and that budget was
+// the difference between a green and a red proofs job on the same commit.
+const targetDeadline = Date.now() + 60_000;
+while (!wsUrl && Date.now() < targetDeadline && !chromeExit) {
   try {
     const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
     const page = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl);
     if (page) wsUrl = page.webSocketDebuggerUrl; else await sleep(200);
   } catch { await sleep(250); }
 }
-if (!wsUrl) { console.error('no devtools target'); await shutdown(1); }
+if (!wsUrl) {
+  console.error(chromeExit
+    ? `no devtools target: chrome exited (code ${chromeExit.code}, signal ${chromeExit.signal})`
+    : 'no devtools target after 60s');
+  if (chromeErr.length) console.error(chromeErr.join('').trim().split('\n').slice(-15).join('\n'));
+  await shutdown(1);
+}
 const ws = new WebSocket(wsUrl);
 await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
 let msgId = 0; const pending = new Map(); const listeners = [];
