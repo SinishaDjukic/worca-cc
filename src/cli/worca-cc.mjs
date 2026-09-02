@@ -334,7 +334,7 @@ async function askGate(rl, issues, header) {
 
 /**
  * Ask the user how to handle a recoverable error (auth / rate-limit / quota /
- * network). Shows the cause and waits for retry / abort. Returns { decision }.
+ * network). Shows the cause and waits for retry / pause. Returns { decision }.
  */
 async function askRecovery(rl, recovery) {
   const rec = recovery || {};
@@ -344,12 +344,12 @@ async function askRecovery(rl, recovery) {
   if (rec.cls === 'auth') out(c('gray', '  Fix: re-authenticate (claude setup-token or /login) in another terminal, then retry.'));
   else out(c('gray', '  Fix: wait out the limit / restore connectivity / top up credit, then retry.'));
   out('  1) Retry');
-  out('  2) Abort the run');
+  out('  2) Pause the run (nothing is discarded — resume later)');
   let decision = '';
   while (!decision) {
     const raw = (await question(rl, c('cyan', 'Choose [1-2]: '))).trim();
     if (raw === '1' || /^retry/i.test(raw)) decision = 'retry';
-    else if (raw === '2' || /^abort/i.test(raw)) decision = 'abort';
+    else if (raw === '2' || /^(pause|abort)/i.test(raw)) decision = 'pause';
   }
   return { decision };
 }
@@ -557,7 +557,15 @@ async function attachAndDrive(orch, flags, start) {
       for (const line of summary.slice(1)) out(line);
     }
   } else if (result?.status === 'paused') {
-    out(c('yellow', result?.reason ? `Pipeline paused: ${result.reason}` : 'Pipeline paused.'));
+    // An error-pause reads as a failure the user can pick up again: the cause on
+    // its own line, then the reassurance that nothing was thrown away.
+    if (result.reason === 'error') {
+      out(c('red', c('bold', 'Pipeline paused after an error.')));
+      if (result.detail) out(c('red', `  ${result.detail}`));
+      out(c('yellow', 'Nothing was discarded: the worktree and the run position are kept.'));
+    } else {
+      out(c('yellow', result?.reason ? `Pipeline paused: ${result.reason}` : 'Pipeline paused.'));
+    }
     out(`Resume with: ${c('bold', `worca resume ${orch.state.id}`)}`);
   } else if (result?.status === 'stopped') {
     out(c('yellow', 'Pipeline stopped.'));
@@ -569,7 +577,11 @@ async function attachAndDrive(orch, flags, start) {
   }
   // An unanswered question is a failure even if the run somehow settled `done`.
   if (answerFailure) return 1;
-  return result?.status === 'done' || result?.status === 'paused' ? 0 : 1;
+  if (result?.status === 'done') return 0;
+  // D10: a pause the user asked for is a success (Ctrl+C, a budget hold); a pause
+  // an ERROR forced is a failure a script must be able to read off the exit code.
+  if (result?.status === 'paused') return result.reason === 'error' ? 1 : 0;
+  return 1;
 }
 
 // ── subcommands ──────────────────────────────────────────────────────────────────

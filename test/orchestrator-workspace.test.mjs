@@ -299,8 +299,8 @@ test('_stageWorkingTree stages EVERY member worktree (not just primary)', async 
   }
 });
 
-// ── partial worktree-setup failure is fully torn down (no leak; §5.10 edge 4) ──
-test('a member whose branch is already checked out errors the run and leaks no worktree', async () => {
+// ── partial worktree-setup failure PAUSES, keeping the sibling checkout (§5.10 edge 4) ──
+test('a member whose branch is already checked out PAUSES the run; the sibling\'s checkout is kept and the resume replays the setup', async () => {
   const a = await freshRepo();
   const b = await freshRepo();
   const ws = workspaceOpts([a, b], { branch: { source: 'main', feature: 'collide' } });
@@ -316,13 +316,23 @@ test('a member whose branch is already checked out errors the run and leaks no w
 
   const orch = createOrchestrator({ ...ws, prompt: 'x', auto: true, claude: { mock: true } });
   const res = await orch.run();
-  // The run errors (one member could not get its worktree); whichever member DID
-  // get a worktree must be torn down (no orphan checkout dir), branch kept.
-  assert.equal(res.status, 'error', JSON.stringify(res));
-  const wtBaseA = join(a, '.worca-cc', 'worktrees');
-  // a's pipeline-id worktree (if it was created before b threw) must be gone.
-  const orphan = existsSync(join(wtBaseA, orch.getState().id || ''));
-  assert.ok(!orphan, 'partial worktree for member a must be torn down on setup failure');
+  assert.equal(res.status, 'paused', JSON.stringify(res));
+  assert.equal(res.reason, 'error');
+  assert.match(res.detail, /already checked out/);
+  // _setupRunRoot settles EVERY member before throwing, so whichever member DID get a
+  // worktree is recorded AND kept — the paused run resumes into it.
+  const wtA = orch.getState().branches[projectKey(a)]?.worktreeDir;
+  assert.ok(wtA && existsSync(wtA), "member a's checkout is retained for the resume");
+  const saved = readPipelineForResume(orch.getState().id);
+  assert.equal(saved.resumePoint.setupIncomplete, true);
+  assert.equal(saved.resumePoint.workspace.projects.find((p) => p.projectKey === projectKey(a))?.worktreeDir, wtA, 'the point records the kept checkout');
+  // Free b's branch, then resume: the replay re-attaches a and creates b.
+  assert.equal(spawnSync('git', ['-C', b, 'worktree', 'remove', '--force', squatDir]).status, 0);
+  const orch2 = createOrchestrator({ ...ws, auto: true, claude: { mock: true }, resume: saved });
+  const res2 = await orch2.resume();
+  assert.equal(res2.status, 'done', JSON.stringify(res2));
+  assert.ok(orch2.getState().branches[bKey]?.worktreeDir, 'the replay created member b');
+  assert.ok(!existsSync(wtA), 'done tears every member checkout down');
 });
 
 // ── fan-out node forcing ──────────────────────────────────────────────────────

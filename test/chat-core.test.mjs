@@ -151,6 +151,12 @@ test('renderDone: done/stopped/paused(+reason) — valid messages, right severit
   assert.match(paused.body[0].value, /\/resume \*2951/);
   const pausedFree = renderDone(META, { status: 'paused', reason: null });
   assert.doesNotMatch(pausedFree.body[0].value, / — /);
+
+  const errored = renderDone(META, { status: 'paused', reason: 'error', detail: 'claude exited with code 1: disk full' });
+  assert.equal(errored.severity, 'error');
+  assert.match(errored.body[0].value, /\*\*Status:\*\* paused — a step failed/);
+  assert.match(errored.body[0].value, /\*\*Error:\*\* claude exited with code 1: disk full/);
+  assert.match(errored.body[0].value, /\/resume \*2951/);
 });
 
 test('renderError truncates long messages', () => {
@@ -198,7 +204,7 @@ test('renderQuestion instructs the pipe form when a question is free-text', () =
   assert.match(msg.body[0].value, /\/answer \*ab12 <your answer>/);
 });
 
-test('renderQuestion recovery: cause + approve/retry; renderTest is valid', () => {
+test('renderQuestion recovery: cause + retry/pause reply line; renderTest is valid', () => {
   const msg = renderQuestion(META, {
     id: 'rec-1', kind: 'recovery',
     recovery: { message: 'claude exited 1: context canceled' },
@@ -207,4 +213,7 @@ test('renderQuestion recovery: cause + approve/retry; renderTest is valid', () =
   assert.match(msg.body[0].value, /recovery decision/);
   assert.match(msg.body[0].value, /\*\*Cause:\*\* claude exited 1/);
   assert.equal(isValidMessage(renderTest()), true);
+
+  const q = renderQuestion(META, { id: 'r1', kind: 'recovery', recovery: { cls: 'auth', message: 'x' } });
+  assert.match(q.body[0].value, /\/abort \*2951 to pause the run/);
 });

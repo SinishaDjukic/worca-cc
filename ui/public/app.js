@@ -770,6 +770,7 @@ function onHello(msg) {
       kind: r0.kind || 'run',
       pipelineId: r0.pipelineId || null,
       pauseReason: r0.pauseReason || null,
+      pauseDetail: r0.pauseDetail || null,
       workspaceId: r0.workspaceId || undefined,
       projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
     });
@@ -898,6 +899,7 @@ function nowHMS() {
 function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
+  pauseDetail = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null,
 }) {
   return {
@@ -912,6 +914,7 @@ function makeRun({
     pipelineId,           // matches a History row id once persisted; used to hide lingerers from History
     pauseReason,          // why it paused, or null — ANY orchestrator pause code rides here
                           // (e.g. 'usage_limit'); only the cost pair renders a cost banner
+    pauseDetail,          // the human-readable cause behind an 'error' pause, or null
     workspaceId,
     workspaceName,
     // Stable ordering key: assigned once per runId, never bumped by activity
@@ -4054,7 +4057,8 @@ function renderGateBody(r, panel, pq) {
 }
 
 // Recovery prompt: a node hit a recoverable error (auth / rate-limit / quota /
-// network). Show the cause and let the user fix it then Retry, or Abort the run.
+// network). Show the cause and let the user fix it then Retry, or park the run
+// with Pause run — nothing here ends a run, only Stop does.
 function renderRecoveryBody(r, panel, pq) {
   const rec = pq.recovery || {};
   const intro = document.createElement('div');
@@ -4062,7 +4066,7 @@ function renderRecoveryBody(r, panel, pq) {
   const hint = rec.cls === 'auth'
     ? 'Re-authenticate (e.g. run `claude setup-token` or `/login`), then Retry.'
     : 'Fix the problem (wait out a limit, restore connectivity, top up credit), then Retry.';
-  intro.textContent = `This step could not reach the model. ${hint}`;
+  intro.textContent = `This step could not reach the model. ${hint} Or pause the run and come back later — only Stop ends it.`;
   panel.appendChild(intro);
 
   if (rec.message) {
@@ -4074,15 +4078,16 @@ function renderRecoveryBody(r, panel, pq) {
 
   const foot = document.createElement('div');
   foot.className = 'qpanel-foot gate-actions';
-  const abort = document.createElement('button');
-  abort.type = 'button';
-  abort.className = 'btn recovery-abort';
-  abort.textContent = 'Abort run';
+  const pause = document.createElement('button');
+  pause.type = 'button';
+  pause.className = 'btn recovery-pause';
+  pause.textContent = 'Pause run';
+  pause.title = 'Park the run here with this error as the reason. Nothing is discarded — Resume retries the step later.';
   const retry = document.createElement('button');
   retry.type = 'button';
   retry.className = 'btn btn-primary recovery-retry';
   retry.textContent = 'Retry';
-  foot.append(abort, retry);
+  foot.append(pause, retry);
   panel.appendChild(foot);
 }
 
@@ -4269,6 +4274,9 @@ function onDone(r, msg) {
   // unconditionally so a later reasonless done clears it, matching the server's
   // own entry.pauseReason reset in wireRun.
   r.pauseReason = msg.reason || null;
+  // An 'error' pause also carries the cause it parked on; assigned unconditionally
+  // for the same reason as the code above — a later reasonless done must clear it.
+  r.pauseDetail = msg.detail || null;
   finishRun(r, msg.status || 'done');
   // Nothing else picks up the FINAL spend delta: a non-cost `done` broadcasts no
   // budget-changed, and startBudgetTick refetches only while runs are live. Without
@@ -9435,7 +9443,7 @@ if (runListEl) {
 
     // qpanel actions. Resolve the run per-card via the enclosing .run-card so
     // delegation works for any dynamically-built card.
-    const qbtn = e.target.closest && e.target.closest('.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-abort');
+    const qbtn = e.target.closest && e.target.closest('.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause');
     if (qbtn) {
       const card = qbtn.closest('.run-card');
       const runId = card && card.dataset.runId;
@@ -9444,7 +9452,7 @@ if (runListEl) {
       if (qbtn.classList.contains('gate-continue')) postAnswer(r, { decision: 'continue' });
       else if (qbtn.classList.contains('gate-another')) postAnswer(r, { decision: 'another' });
       else if (qbtn.classList.contains('recovery-retry')) postAnswer(r, { decision: 'retry' });
-      else if (qbtn.classList.contains('recovery-abort')) postAnswer(r, { decision: 'abort' });
+      else if (qbtn.classList.contains('recovery-pause')) postAnswer(r, { decision: 'pause' });
       else submitAnswer(r, qbtn.closest('.qpanel'));
     }
   });
@@ -10288,12 +10296,17 @@ const PAUSED_STATUSES = ['paused', 'pausing', 'interrupted'];
 // Disable a history Resume button while a total-budget pause is still blocked by
 // the current window. Shared by setupHdActions (first paint) and
 // refreshHistResumeGating (every later budget change).
-function applyHistResumeGate(btn, pauseReason, budget) {
+function applyHistResumeGate(btn, pauseReason, budget, pauseDetail = '') {
   const totalBlocked = pauseReason === 'cost_total' && !!(budget && budget.blocked);
   btn.disabled = totalBlocked;
-  btn.title = totalBlocked
-    ? `Total budget reached — blocked until ${fmtResetAtLocal(budget.windowEndMs)} or a higher total limit`
-    : '';
+  if (totalBlocked) {
+    btn.title = `Total budget reached — blocked until ${fmtResetAtLocal(budget.windowEndMs)} or a higher total limit`;
+  } else if (pauseReason === 'error') {
+    // An error pause is never gated — the tooltip carries the cause instead.
+    btn.title = `Paused after an error${pauseDetail ? `: ${pauseDetail}` : ''} — fix the cause, then resume`;
+  } else {
+    btn.title = '';
+  }
 }
 
 // Re-gate the mounted history Resume button from the dataset.pauseReason stamp
@@ -10312,7 +10325,7 @@ function refreshHistResumeGating() {
     // otherwise a `cost_total` block that lands later leaves the button enabled and
     // the user clicks into a guaranteed 403. Re-gate, then restore the D3 error
     // title when gating did not take the button away.
-    applyHistResumeGate(btn, root.dataset.pauseReason || '', budgetState.budget);
+    applyHistResumeGate(btn, root.dataset.pauseReason || '', budgetState.budget, root.dataset.pauseDetail || '');
     if (btn.dataset.resumeState === 'error' && btn.dataset.resumeError && !btn.disabled) {
       btn.title = btn.dataset.resumeError;
     }
@@ -10434,14 +10447,21 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   // Pause note. Resume + its budget gating live on the detail page now; the
   // dataset stamp survives for parity/debugging.
   const pauseReason = typeof p.pauseReason === 'string' ? p.pauseReason : '';
+  const pauseDetail = typeof p.pauseDetail === 'string' ? p.pauseDetail : '';
   if (pauseReason) node.dataset.pauseReason = pauseReason;
+  if (pauseDetail) node.dataset.pauseDetail = pauseDetail;
   const noteEl = node.querySelector('.hist-pausenote');
-  const costPaused = PAUSED_STATUSES.includes(String(p.status || '').toLowerCase())
-    && pauseReason.startsWith('cost_');
-  noteEl.hidden = !costPaused;
+  const parked = PAUSED_STATUSES.includes(String(p.status || '').toLowerCase());
+  const costPaused = parked && pauseReason.startsWith('cost_');
+  const errorPaused = parked && pauseReason === 'error';
+  noteEl.hidden = !(costPaused || errorPaused);
   noteEl.textContent = costPaused
-    ? (pauseReason === 'cost_total' ? 'paused · total budget' : 'paused · cost limit') : '';
+    ? (pauseReason === 'cost_total' ? 'paused · total budget' : 'paused · cost limit')
+    : (errorPaused ? 'paused · error' : '');
+  // The cause is too long for the caption line — it rides as the tooltip.
+  noteEl.title = errorPaused ? pauseDetail : '';
   noteEl.classList.toggle('total', costPaused && pauseReason === 'cost_total');
+  noteEl.classList.toggle('error', errorPaused);
 
   renderRetainedWork(node, p);           // badge only — the card has no banner node
   setupPrButton(node, projectDir, p, ghAvailable);
@@ -11466,14 +11486,44 @@ function hdRetainedFor(record, st) {
   return { retained: derived, provisional: true };
 }
 
+// Error-pause banner (D11): the cause, and the promise that nothing was discarded.
+function renderErrorPauseBanner(detail) {
+  const el = document.createElement('div');
+  el.className = 'pause-error-banner';
+  const b = document.createElement('b');
+  b.textContent = 'Paused after an error';
+  const text = document.createElement('div');
+  text.className = 'peb-text';
+  text.textContent = detail || 'The run hit an error it could not recover from.';
+  const hint = document.createElement('div');
+  hint.className = 'peb-hint';
+  hint.textContent = 'Nothing was discarded: the worktree and the run position are kept. Fix the cause, then Resume.';
+  el.append(b, text, hint);
+  return el;
+}
+
 function paintHdBanners(screen, record, data) {
   const st = data.state;
   const banners = screen.querySelector('.hd-banners');
 
-  // Cost-pause banner. pauseReason lives on LIST rows only (rowToState has none),
-  // so a deep link gets it late — rebuild idempotently instead of once.
-  const pauseReason = typeof record.pauseReason === 'string' ? record.pauseReason : '';
+  // Pause banners. The LIST row is authoritative, but a deep link has only the
+  // stub until the row lands — so fall back to the DETAIL payload, which now
+  // carries both keys too. Rebuild idempotently instead of once.
+  const pauseReason = typeof record.pauseReason === 'string' ? record.pauseReason
+    : (typeof st.pauseReason === 'string' ? st.pauseReason : '');
   if (pauseReason) screen.dataset.pauseReason = pauseReason; else delete screen.dataset.pauseReason;
+  const pauseDetail = typeof record.pauseDetail === 'string' ? record.pauseDetail
+    : (typeof st.pauseDetail === 'string' ? st.pauseDetail : '');
+  if (pauseDetail) screen.dataset.pauseDetail = pauseDetail; else delete screen.dataset.pauseDetail;
+  // Keyed on the detail so a corrected cause replaces the banner instead of stacking.
+  const wantErr = pauseReason === 'error' && HD_RESUMABLE.has(String(st.status || '').toLowerCase());
+  const oldErr = banners.querySelector('.pause-error-banner');
+  if (oldErr && (!wantErr || oldErr.dataset.detail !== pauseDetail)) oldErr.remove();
+  if (wantErr && !banners.querySelector('.pause-error-banner')) {
+    const errBanner = renderErrorPauseBanner(pauseDetail);
+    errBanner.dataset.detail = pauseDetail;
+    banners.prepend(errBanner);
+  }
   // Rebuild the cost banner ONLY when the reason actually changed. An
   // unconditional remove+rebuild detaches the `.cb-override` button mid-flight:
   // that click awaits confirmModal then resumePipeline, and ANY paintHistory()
@@ -11585,7 +11635,7 @@ function setupHdActions(screen, record, data) {
   const resumeBtn = screen.querySelector('.hd-resume');
   if (HD_RESUMABLE.has(status) && st.resumable !== false) {
     resumeBtn.hidden = false;
-    applyHistResumeGate(resumeBtn, screen.dataset.pauseReason || '', budgetState.budget);
+    applyHistResumeGate(resumeBtn, screen.dataset.pauseReason || '', budgetState.budget, screen.dataset.pauseDetail || '');
     resumeBtn.addEventListener('click', () => {
       const r = hdCurrentRecord(record);              // never the load-time object
       resumePipeline(r, r.projectDir || null, resumeBtn);
@@ -13486,6 +13536,14 @@ function rdStateCopy(r, stepName) {
   // line and the banner above the graph never disagree.
   if (r.pauseReason === 'cost_pipeline') return 'Paused — pipeline cost limit reached.';
   if (r.pauseReason === 'cost_total') return 'Paused — total budget reached.';
+  if (r.pauseReason === 'error') {
+    const why = r.pauseDetail ? `: ${r.pauseDetail}` : '';
+    return `Paused after an error${why}. Fix the cause, then Resume — the worktree and progress are kept.`;
+  }
+  if (r.pauseReason && (r.status === 'paused' || r.status === 'pausing' || r.status === 'interrupted')) {
+    // Any other reason is the orchestrator's own text (a session/usage-limit line).
+    return `Paused — ${r.pauseReason}. Resume once it clears.`;
+  }
   if (r.status === 'paused' || r.status === 'pausing' || r.status === 'interrupted') {
     return 'Paused by you. Agents in flight finished their checkpoint; nothing new is dispatched.';
   }
@@ -14274,10 +14332,12 @@ function statusPill(r) {
     // A cost pause names its cause so the pill alone explains why the run parked.
     if (r.pauseReason === 'cost_pipeline') return { family: 'amber', text: 'Paused · cost limit' };
     if (r.pauseReason === 'cost_total') return { family: 'amber', text: 'Paused · total budget' };
+    // An error pause is parked and resumable (never dead), so it stays in the amber family.
+    if (r.pauseReason === 'error') return { family: 'amber', text: 'Paused · error' };
     return { family: 'amber', text: 'Paused' };
   }
   // Same family as `paused`: an interrupted run is parked and resumable, and
-  // PAUSED_STATUSES (app.js:8726) already treats it that way.
+  // PAUSED_STATUSES (app.js:10286) already treats it that way.
   if (r.status === 'interrupted') return { family: 'amber', text: 'Interrupted' };
   if (r.pendingQuestion != null) return { family: 'amber', text: 'Paused · awaiting answers' };
   if (r.status === 'starting') return { family: 'peach', text: 'Starting' };
@@ -14857,9 +14917,14 @@ function paintRunCard(r) {
   const totalBlocked = r.pauseReason === 'cost_total' && budgetState.budget?.blocked;
   if (resumeBtn) {
     resumeBtn.disabled = !!totalBlocked;
-    resumeBtn.title = totalBlocked
-      ? `Total budget reached — blocked until ${fmtResetAtLocal(budgetState.budget.windowEndMs)} or a higher total limit`
-      : stockResumeTitle();
+    if (totalBlocked) {
+      resumeBtn.title = `Total budget reached — blocked until ${fmtResetAtLocal(budgetState.budget.windowEndMs)} or a higher total limit`;
+    } else if (r.pauseReason === 'error') {
+      // The cause the run parked on, so the card alone explains what to fix.
+      resumeBtn.title = `Paused after an error${r.pauseDetail ? `: ${r.pauseDetail}` : ''} — fix the cause, then resume`;
+    } else {
+      resumeBtn.title = stockResumeTitle();
+    }
   }
 }
 
@@ -15273,6 +15338,19 @@ function paintRdBanners(screen, r) {
     banners.prepend(fresh);                      // above the retained-work banner
   }
 
+  // ---- error-pause banner (D11) ----
+  // Same conditional-rebuild shape as paintHdBanners': keyed on the detail so a
+  // repaint neither stacks a second banner nor freezes a corrected cause.
+  const errPaused = isPaused(r) && r.pauseReason === 'error';
+  const errDetail = r.pauseDetail || '';
+  const oldErr = banners.querySelector('.pause-error-banner');
+  if (oldErr && (!errPaused || oldErr.dataset.detail !== errDetail)) oldErr.remove();
+  if (errPaused && !banners.querySelector('.pause-error-banner')) {
+    const errBanner = renderErrorPauseBanner(errDetail);
+    errBanner.dataset.detail = errDetail;
+    banners.prepend(errBanner);
+  }
+
   // ---- retained work (D11) ----
   // renderRetainedWork only READS `p.retainedWork`, so a derived carrier is fine
   // for the paint; every MUTATING helper below gets the same carrier so the
@@ -15319,12 +15397,12 @@ el.runDetail?.addEventListener('click', (e) => {
   if (override) { confirmCostOverride(r.runId, override); return; }   // async, fire-and-forget
   if (e.target.closest && e.target.closest('.cb-settings')) { location.hash = 'settings'; return; }
   const qbtn = e.target.closest && e.target.closest(
-    '.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-abort');
+    '.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause');
   if (!qbtn) return;
   if (qbtn.classList.contains('gate-continue')) postAnswer(r, { decision: 'continue' });
   else if (qbtn.classList.contains('gate-another')) postAnswer(r, { decision: 'another' });
   else if (qbtn.classList.contains('recovery-retry')) postAnswer(r, { decision: 'retry' });
-  else if (qbtn.classList.contains('recovery-abort')) postAnswer(r, { decision: 'abort' });
+  else if (qbtn.classList.contains('recovery-pause')) postAnswer(r, { decision: 'pause' });
   else submitAnswer(r, qbtn.closest('.qpanel'));
 });
 

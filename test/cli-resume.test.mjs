@@ -288,7 +288,9 @@ test('resume an unregistered cwd project -> resolves past "not onboarded"', asyn
     const r = await run(['resume', id, '--mock', '--yes'], { cwd: projDir });
     assert.equal(r.code, 1, r.stderr);
     assert.doesNotMatch(r.stderr, /not onboarded/i, `stderr: ${r.stderr}`);
-    assert.match(r.stderr, /worktree missing/i, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
+    // The re-attach failure no longer emits an `error` event: it pauses the run,
+    // so the cause prints with the pause block on stdout (exit still 1, D10).
+    assert.match(r.stdout, /worktree missing/i, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
   } finally {
     await rm(projDir, { recursive: true, force: true });
   }

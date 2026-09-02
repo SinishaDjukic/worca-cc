@@ -89,7 +89,10 @@ export function createNotifier({ channelHost, getPrefs, chatContext, logger = ()
         const status = payload?.status || 'done';
         if (status === 'error') return; // the richer 'error' event already went out
         const prefs = getPrefsSafe().notify;
-        if (status === 'paused' ? prefs.paused === false : prefs.done === false) return;
+        // An error-pause IS the failure notification (no 'error' event
+        // precedes it): notify.error gates it, not notify.paused.
+        const gate = status === 'paused' ? (payload?.reason === 'error' ? prefs.error : prefs.paused) : prefs.done;
+        if (gate === false) return;
         deliver(renderDone(meta(), payload || {}));
       }));
 

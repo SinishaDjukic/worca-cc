@@ -275,30 +275,37 @@ test('gate arm: "continue" spends no cycle — the loop body never re-runs', asy
 // Real runner + a stub bin that always fails with a 401, so every attempt is a
 // recoverable `auth` error and the interactive gate re-opens after each Retry.
 
-test('recovery arm: Abort ends the run with a non-zero exit', async () => {
+test('recovery arm: Pause parks the run (paused · error) and exits non-zero', async () => {
   const stub = failingClaudeBin('API Error: 401 Invalid authentication credentials');
   const repo = freshRepo();
-  const r = await driveCli(['--project', repo, '--prompt', 'recovery abort e2e'], {
+  const r = await driveCli(['--project', repo, '--prompt', 'recovery pause e2e'], {
     mock: false,
     // PATH prefix: run-harness passes claude.bin = undefined to the capabilities probe, which
     // then bare-PATH-looks-up `claude` — WORCA_CLAUDE_BIN alone would let the REAL one spawn.
     env: { WORCA_CLAUDE_BIN: stub.bin, WORCA_RECOVERY_BACKOFF_MS: '0',
            PATH: `${dirname(stub.bin)}:${process.env.PATH}` },
-    script: [{ cue: /Choose \[1-2\]/, send: '2\n' }],   // "Abort the run"
+    script: [{ cue: /Choose \[1-2\]/, send: '2\n' }],   // "Pause the run"
   });
   assert.equal(r.timedOut, false, r.stdout);
   assert.equal(r.sent, 1, `no recovery prompt rendered:\n${r.stdout}`);
-  assert.equal(r.code, 1, `expected a non-zero exit\n${r.stdout}`);
+  assert.equal(r.code, 1, `an error-pause exits non-zero\n${r.stdout}`);
 
   // Rendered by askRecovery.
   assert.match(r.stdout, /Recoverable auth error — the pipeline could not reach the model\./);
   assert.match(r.stdout, /Fix: re-authenticate \(claude setup-token or \/login\) in another terminal, then retry\./);
   assert.match(r.stdout, /^ {2}1\) Retry$/m);
-  assert.match(r.stdout, /^ {2}2\) Abort the run$/m);
-  assert.match(r.stdout, /Pipeline ended with status: error/);
+  assert.match(r.stdout, /^ {2}2\) Pause the run/m);
+  // Errors pause the run: the error text is kept, nothing is discarded, and the
+  // run is resumable — never the old `Pipeline ended with status: error`.
+  assert.match(r.stdout, /Pipeline paused after an error\./);
+  assert.match(r.stdout, /401 Invalid authentication credentials/);
+  assert.match(r.stdout, /Resume with: .*worca resume /);
+  assert.doesNotMatch(r.stdout, /Pipeline ended with status: error/);
 
-  // Behavioural consequence: aborting spawned the failing node exactly once.
+  // Behavioural consequence: pausing spawned the failing node exactly once.
   assert.equal(stub.spawnsMatching('# Task: Clarify'), 1);
+  const id = /worca resume ([A-Za-z0-9_-]+)/.exec(r.stdout)?.[1];
+  assert.equal(pipelineStatuses().find((p) => p.id === id)?.status, 'paused', 'the row is parked, resumable');
 });
 
 test('recovery arm: Retry re-runs the failing node before the next prompt', async () => {
@@ -312,13 +319,15 @@ test('recovery arm: Retry re-runs the failing node before the next prompt', asyn
            PATH: `${dirname(stub.bin)}:${process.env.PATH}` },
     script: [
       { cue: /Choose \[1-2\]/, send: '1\n' },   // Retry -> the node runs again
-      { cue: /Choose \[1-2\]/, send: '2\n' },   // ...fails again; Abort out
+      { cue: /Choose \[1-2\]/, send: '2\n' },   // ...fails again; Pause out
     ],
   });
   assert.equal(r.timedOut, false, r.stdout);
   assert.equal(r.sent, 2, `only ${r.sent} recovery prompt(s) rendered:\n${r.stdout}`);
   assert.equal(r.code, 1, `expected a non-zero exit\n${r.stdout}`);
-  // The decisive contrast with the Abort-first test: two spawns, not one.
+  assert.match(r.stdout, /Pipeline paused after an error\./);
+  assert.doesNotMatch(r.stdout, /Pipeline ended with status: error/);
+  // The decisive contrast with the Pause-first test: two spawns, not one.
   assert.equal(stub.spawnsMatching('# Task: Clarify'), 2);
 });
 

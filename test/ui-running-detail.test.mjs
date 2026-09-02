@@ -412,6 +412,10 @@ test('the gate and recovery bodies render on the detail page too (D6)', async ()
   const rpanel = rec.window.document.querySelector('#run-detail .rd-questions .qpanel');
   assert.ok(rpanel.querySelector('.recovery-retry'), 'the recovery body renders');
   assert.match(rpanel.textContent, /token expired/);
+  const pauseBtn = rpanel.querySelector('.recovery-pause');
+  assert.ok(pauseBtn, 'the give-up button is "Pause run"');
+  assert.equal(pauseBtn.textContent, 'Pause run');
+  assert.equal(rpanel.querySelector('.recovery-abort'), null, 'no Abort control remains');
 });
 
 test('answers posted from the DETAIL panel carry the detail panel\'s choices', async () => {

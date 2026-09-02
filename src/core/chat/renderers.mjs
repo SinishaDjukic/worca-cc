@@ -44,6 +44,7 @@ function head(icon, meta) {
 const PAUSE_REASONS = {
   cost_pipeline: 'pipeline cost limit reached',
   cost_total: 'total cost limit reached',
+  error: 'a step failed',
 };
 
 /**
@@ -53,11 +54,18 @@ const PAUSE_REASONS = {
 export function renderDone(meta, payload = {}) {
   const status = payload.status || 'done';
   if (status === 'paused') {
+    // An error-pause IS the failure notification (no 'error' event precedes
+    // it), so it takes the failure icon/severity and carries the message.
+    const isError = payload.reason === 'error';
     const reason = payload.reason ? (PAUSE_REASONS[payload.reason] || payload.reason) : null;
-    const parts = head('⏸', meta);
+    const parts = head(isError ? '\u{1F534}' : '⏸', meta);
     parts.push(`   **Status:** paused${reason ? ` — ${reason}` : ''}`);
+    if (isError && payload.detail) {
+      const d = String(payload.detail);
+      parts.push(`   **Error:** ${d.length > 300 ? `${d.slice(0, 300)}…` : d}`);
+    }
     parts.push(`   Resume from the worca-cc UI, or reply: /resume ${runRef(meta.runId)}`);
-    return mdMsg(parts.join('\n'), 'warning');
+    return mdMsg(parts.join('\n'), isError ? 'error' : 'warning');
   }
   if (status === 'stopped') {
     const parts = head('⏹', meta);
@@ -109,7 +117,7 @@ export function renderQuestion(meta, payload = {}) {
     }
     parts.push(kind === 'gate'
       ? `   Reply: /approve ${ref} to continue · /retry ${ref} for another cycle`
-      : `   Reply: /approve ${ref} to retry · /abort ${ref} to abort`);
+      : `   Reply: /approve ${ref} to retry · /abort ${ref} to pause the run`);
     return mdMsg(parts.join('\n'), 'warning');
   }
 

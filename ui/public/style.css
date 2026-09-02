@@ -1551,6 +1551,12 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    In the v2 card it is a direct child of .h-meta on its own line. */
 .hist-pausenote{font-size:11.5px;font-weight:600;color:var(--amber-ink);}
 .hist-pausenote.total{color:var(--red-ink);}
+.hist-pausenote.error{color:var(--red-ink);}
+.pause-error-banner{border-radius:var(--r-ctrl);padding:12px 14px;margin-top:12px;font-size:13px;background:var(--red-bg);color:var(--red-ink);}
+.pause-error-banner b{display:block;margin-bottom:4px;}
+.pause-error-banner .peb-text{color:var(--ink);font-family:var(--mono);font-size:12px;word-break:break-word;}
+.pause-error-banner .peb-hint{color:var(--ink-2);margin-top:6px;}
+.hd-banners .pause-error-banner,.rd-banners .pause-error-banner{align-self:stretch;margin:0;}
 
 @media (max-width:1080px){
   .stat-row{grid-template-columns:repeat(2,1fr);}

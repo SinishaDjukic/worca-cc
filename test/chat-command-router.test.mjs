@@ -164,7 +164,16 @@ test('approvals: gate continue/another, recovery retry/abort, guardrails between
   await send('/approve');
   assert.deepEqual(calls.at(-1), ['answer', 'run-aaaa1111', 'rec-1', { decision: 'retry' }]);
   await send('/abort');
-  assert.deepEqual(calls.at(-1), ['answer', 'run-aaaa1111', 'rec-1', { decision: 'abort' }]);
+  assert.deepEqual(calls.at(-1), ['answer', 'run-aaaa1111', 'rec-1', { decision: 'pause' }]);
+});
+
+test('/status on an error-paused history row prints the error detail', async () => {
+  const { send, state } = fixture();
+  state.rows.push({ id: 'pipe-dddd4444', title: 'Blew up', status: 'paused', totalCostUsd: 0.5,
+    pauseReason: 'error', pauseDetail: 'claude exited with code 1: disk full' });
+  const out = text(await send('/status *4444'));
+  assert.match(out, /Pause reason:.*error/);
+  assert.match(out, /\*\*Error:\*\* claude exited with code 1: disk full/);
 });
 
 test('/answer: ordinal validation and clarify payload mapping', async () => {
