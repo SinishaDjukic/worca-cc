@@ -478,7 +478,7 @@ try {
       const bands=[...el.querySelectorAll(':scope > .xfoot > *')];
       const want=geo.nodeSize(node,ports.portsOf(pf,node),{footerRows:bands.length}).h;
       out.push({id:node.id,offsetHeight:el.offsetHeight,styleHeight:el.style.height,want,bands:bands.length,
-        bandH:bands.map((b)=>({cls:b.className,h:+getComputedStyle(b).height.replace('px','')}))});
+        bandH:bands.map((b,i)=>({cls:b.className,first:i===0,h:+getComputedStyle(b).height.replace('px','')}))});
     }
     return {FOOT_H:geo.FOOT_H,EXEC_ROW_H:geo.EXEC_ROW_H,cards:out};})()`;
   const s1 = await ev(SIZES);
@@ -489,10 +489,14 @@ try {
   const bands = [...s1.cards, ...s2.cards].flatMap((c) => c.bandH);
   const strips = bands.filter((b) => /(^|\s)(xtoggle|fan|xresult)(\s|$)/.test(b.cls));
   const rows = bands.filter((b) => /(^|\s)xrow(\s|$)/.test(b.cls));
-  check(3, `footer bands: .xtoggle/.fan/.xresult are ${FOOT_H}px and .xrow ${EXEC_ROW_H}px; every card's offsetHeight === nodeSize() before AND after expanding a strip`,
+  // style.css bills the footer the way nodeSize does (since f332d12c): the FIRST
+  // band is the tall --gv-foot-h line, every later .fan/.xtoggle/.xresult is one
+  // --gv-exec-row-h line, and a wrapped fan (.f2) adds one more exec line.
+  const stripWant = (b) => (b.first ? FOOT_H : EXEC_ROW_H) + (/(^|\s)f2(\s|$)/.test(b.cls) ? EXEC_ROW_H : 0);
+  check(3, `footer bands: the first .xtoggle/.fan/.xresult is ${FOOT_H}px, later strips and .xrow ${EXEC_ROW_H}px; every card's offsetHeight === nodeSize() before AND after expanding a strip`,
     s1.FOOT_H === FOOT_H && s1.EXEC_ROW_H === EXEC_ROW_H
     && bands.some((b) => /(^|\s)fan(\s|$)/.test(b.cls)) && bands.some((b) => /xtoggle/.test(b.cls))
-    && strips.every((b) => Math.abs(b.h - FOOT_H) < 0.01)
+    && strips.every((b) => Math.abs(b.h - stripWant(b)) < 0.01)
     && rows.length >= 2 && rows.every((b) => Math.abs(b.h - EXEC_ROW_H) < 0.01)
     // `offsetHeight` is an INTEGER, and nodeSize() lands on a .5 (PAD_T 8.5 +
     // 2×BORDER 1.5) — so the exact equality is on the height the renderer WRITES
