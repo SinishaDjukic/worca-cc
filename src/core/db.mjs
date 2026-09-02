@@ -18,7 +18,7 @@
 
 import { createRequire } from 'node:module';
 import { mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { worcaHome } from './projects.mjs';
 import { maybeMigrateFromFs } from './migrate-fs-to-db.mjs';
 import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from './graph/seed-templates.mjs';
@@ -1215,7 +1215,7 @@ function backupBeforeV24(db) {
     throw new Error(`worca cannot take the pre-v24 database backup at ${bak}: `
       + `${err && err.message ? err.message : err}. The v2 upgrade rewrites saved `
       + 'pipelines, so it refuses to run without one — free disk space or make '
-      + `${file.replace(/\/[^/]*$/, '')} writable and start worca again.`, { cause: err });
+      + `${dirname(file)} writable and start worca again.`, { cause: err });
   }
 }
 

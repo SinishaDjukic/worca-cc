@@ -155,6 +155,15 @@ function pipelineIdFrom(stdout) {
  * many times a given agent was spawned.
  * @returns {{bin:string, calls:string, spawnsMatching:(needle:string)=>number}}
  */
+// The failing-claude stub below is a POSIX shell script: Node cannot spawn it on
+// Windows (ENOENT), so the run classifies a NETWORK error instead of the 401 the
+// stub prints and the recovery arm is never the one under test. Same reason
+// test/spawn-args.test.mjs skips its fake shim there.
+const POSIX_STUB = { skip: process.platform === 'win32' ? 'the failing-claude stub is a POSIX shell script (no .exe stand-in on Windows)' : false };
+// child.kill('SIGINT') is TerminateProcess on Windows — the child never sees a
+// signal, so there is no Ctrl+C-pauses path to exercise (exit code null).
+const POSIX_SIGINT = { skip: process.platform === 'win32' ? 'SIGINT is not deliverable to a child on Windows (kill = TerminateProcess)' : false };
+
 function failingClaudeBin(message) {
   const dir = mkdtempSync(join(tmpdir(), 'worca-cc-cliix-bin-'));
   scratch.push(dir);
@@ -275,7 +284,7 @@ test('gate arm: "continue" spends no cycle — the loop body never re-runs', asy
 // Real runner + a stub bin that always fails with a 401, so every attempt is a
 // recoverable `auth` error and the interactive gate re-opens after each Retry.
 
-test('recovery arm: Abort ends the run with a non-zero exit', async () => {
+test('recovery arm: Abort ends the run with a non-zero exit', POSIX_STUB, async () => {
   const stub = failingClaudeBin('API Error: 401 Invalid authentication credentials');
   const repo = freshRepo();
   const r = await driveCli(['--project', repo, '--prompt', 'recovery abort e2e'], {
@@ -301,7 +310,7 @@ test('recovery arm: Abort ends the run with a non-zero exit', async () => {
   assert.equal(stub.spawnsMatching('# Task: Clarify'), 1);
 });
 
-test('recovery arm: Retry re-runs the failing node before the next prompt', async () => {
+test('recovery arm: Retry re-runs the failing node before the next prompt', POSIX_STUB, async () => {
   const stub = failingClaudeBin('API Error: 401 Invalid authentication credentials');
   const repo = freshRepo();
   const r = await driveCli(['--project', repo, '--prompt', 'recovery retry e2e'], {
@@ -322,7 +331,7 @@ test('recovery arm: Retry re-runs the failing node before the next prompt', asyn
   assert.equal(stub.spawnsMatching('# Task: Clarify'), 2);
 });
 
-test('recovery arm: a --yes run that pauses itself exits 3 — a wrapper must not read success', async () => {
+test('recovery arm: a --yes run that pauses itself exits 3 — a wrapper must not read success', POSIX_STUB, async () => {
   // Same failing-auth stub, but headless: auto mode pauses on the first auth hit
   // (no recovery prompt exists). Before the fix this exited 0 — a CI job went
   // green on a run that parked with zero work done and nobody left to resume it.
@@ -429,7 +438,7 @@ test('MAJ-7: stdin closed mid-run stops the run and exits non-zero', async () =>
   assert.equal(rows.filter((p) => p.status === 'running').length, 0, JSON.stringify(rows));
 });
 
-test('MAJ-7 pitfall: Ctrl+C at an open question still PAUSES (never errors)', async () => {
+test('MAJ-7 pitfall: Ctrl+C at an open question still PAUSES (never errors)', POSIX_SIGINT, async () => {
   const repo = freshRepo();
   const r = await driveCli(['--project', repo, '--prompt', 'sigint pause e2e'], {
     sigintAfter: /Choose \[number or text\]/,

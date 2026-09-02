@@ -161,8 +161,15 @@ test('mid-turn reconnect: ?threadId= replay and {type:subscribe,threadId} both d
   const c = openWs();
   await c.opened;
   c.ws.send(JSON.stringify({ type: 'subscribe', threadId: t.id }));
-  await waitFor(() => framesFor(c.msgs, t.id).length >= 3);
-  assert.equal(framesFor(c.msgs, t.id)[0].seq, 1, 'in-band subscribe replays from the start');
+  // Live frames are broadcast to EVERY socket, so a frame the turn emits between
+  // c opening and its subscribe being handled can land BEFORE the replay (seen on
+  // a loaded Windows VM: first frame seq 4). The contract is that the replay
+  // delivers the whole stamped prefix — the client dedupes by seq (§6.6) — not
+  // that it precedes every live frame. So wait for seq 1 itself, then check the
+  // prefix is complete and contiguous.
+  await waitFor(() => framesFor(c.msgs, t.id).some((f) => f.seq === 1));
+  const cSeqs = [...new Set(framesFor(c.msgs, t.id).map((f) => f.seq))].sort((x, y) => x - y);
+  assert.deepEqual(cSeqs.slice(0, 3), [1, 2, 3], 'in-band subscribe replays from the start');
   await waitFor(() => framesFor(a.msgs, t.id).some((f) => f.type === 'ask-done'));
   a.ws.close(); b.ws.close(); c.ws.close();
 });

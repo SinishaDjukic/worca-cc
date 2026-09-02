@@ -11,6 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { posix } from './helpers/posix-path.mjs';
 
 const ROOTS = ['src', 'ui'];
 const SKIP_DIRS = new Set(['node_modules', '.git', 'vendor']);
@@ -22,7 +23,7 @@ function files() {
       if (SKIP_DIRS.has(e)) continue;
       const p = join(dir, e);
       if (statSync(p).isDirectory()) walk(p);
-      else if (/\.(mjs|js|json|css|html)$/.test(e)) out.push(p);
+      else if (/\.(mjs|js|json|css|html)$/.test(e)) out.push(posix(p));   // allowlists are POSIX-shaped
     }
   };
   for (const r of ROOTS) walk(r);
