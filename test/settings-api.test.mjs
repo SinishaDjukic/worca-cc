@@ -51,3 +51,37 @@ test('POST rejects a file path -> 400', async () => {
   const filePath = fileURLToPath(import.meta.url); // this test file: a file, not a dir
   assert.equal((await post(filePath)).status, 400);
 });
+
+const postJson = (body) => fetch(`${base}/api/settings`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+});
+
+test('GET /api/settings: debugSpawnEnabled defaults to false', async () => {
+  const j = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(j.debugSpawnEnabled, false);
+});
+
+test('POST sets debugSpawnEnabled; GET reflects it; does not touch root', async () => {
+  const target = await mkdtemp(join(tmpdir(), 'worca-cc-setapi-dbgroot-'));
+  try {
+    const before = await (await post(target)).json();
+    assert.equal(before.root, target); // sanity: root is genuinely non-empty going in
+    const after = await (await postJson({ debugSpawnEnabled: true })).json();
+    assert.equal(after.debugSpawnEnabled, true);
+    assert.equal(after.root, target, 'a debug-spawn-only POST must not clear root');
+    const refetched = await (await fetch(`${base}/api/settings`)).json();
+    assert.equal(refetched.debugSpawnEnabled, true);
+    assert.equal(refetched.root, target);
+  } finally {
+    await postJson({ debugSpawnEnabled: false }); // leave it clean for other tests
+    await post(''); // reset root
+    await rm(target, { recursive: true, force: true });
+  }
+});
+
+test('POST rejects a non-boolean debugSpawnEnabled -> 400', async () => {
+  const r = await postJson({ debugSpawnEnabled: 'on' });
+  assert.equal(r.status, 400);
+  const j = await r.json();
+  assert.match(j.error, /must be true or false/);
+});

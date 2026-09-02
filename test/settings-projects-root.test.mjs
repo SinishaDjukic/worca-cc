@@ -310,7 +310,7 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
   await withEnv(undefined, async () => {
     const j = await getApi();
     assert.deepEqual(Object.keys(j).sort(), ['askMaxBudgetUsd', 'askMaxTurns', 'chat', 'costLimitResetPeriod',
-      'default', 'pipelineCostLimitUsd', 'projectsRoot', 'projectsRootDefault', 'root', 'totalCostLimitUsd']);
+      'debugSpawnEnabled', 'default', 'pipelineCostLimitUsd', 'projectsRoot', 'projectsRootDefault', 'root', 'totalCostLimitUsd']);
     assert.equal(j.root, '', 'nothing set yet');
     assert.equal(j.projectsRoot, '', 'the RAW setting — "" when unset, exactly like root');
     assert.equal(j.projectsRootDefault, defaultRoot(), 'what applies while it is blank');

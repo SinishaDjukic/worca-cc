@@ -11,6 +11,14 @@
 //   contextMaxBytesPerFile — §5.4 per-source-file inlining cap.
 //   contextMaxBytesTotal   — §5.4 total memory budget.
 //   skillMount             — §5.6 'copy' (default) | 'symlink' (opt-in).
+//   debugSpawnEnabled      — mirrors WORCA_DEBUG_SPAWN into a UI checkbox. Setting it
+//                            writes process.env.WORCA_DEBUG_SPAWN directly so
+//                            claude-runner.mjs's live env read picks it up on the very
+//                            next spawn — no restart, no import of this module by
+//                            claude-runner.mjs. An env var already set at worca launch
+//                            wins over the stored value at boot (see
+//                            applyDebugSpawnEnvFromSettings below); an explicit UI save
+//                            always overwrites process.env regardless.
 //   pipelineCostLimitUsd   — per-pipeline lifetime USD spend cap; unset = no limit.
 //   totalCostLimitUsd      — windowed all-pipelines USD spend cap; unset = no limit.
 //   costLimitResetPeriod   — total-budget window, 'weekly' | 'monthly' (default).
@@ -524,6 +532,55 @@ export async function setCostLimitResetPeriod(input) {
   else settings.costLimitResetPeriod = input;
   await persistSettings(settings);
   return { costLimitResetPeriod: costLimitResetPeriod() };
+}
+
+// ── Spawn-debug diagnostics toggle (UI-settable mirror of WORCA_DEBUG_SPAWN) ─
+// claude-runner.mjs's debugSpawnEnabled() reads process.env.WORCA_DEBUG_SPAWN fresh on
+// every spawn (not memoized), so this module does not need to be imported by
+// claude-runner.mjs at all — it only needs to WRITE that one env var. Reading it back
+// here (this debugSpawnEnabled()) is for the settings/UI layer only: "what's stored",
+// not "what's effective right now" (an env var exported before worca started can
+// diverge from the stored value — see applyDebugSpawnEnvFromSettings).
+export const DEFAULT_DEBUG_SPAWN_ENABLED = false;
+
+const isBool = (v) => typeof v === 'boolean';
+
+/** Stored spawn-debug preference: boolean, default OFF. Invalid stored value ⇒ OFF (loudly). */
+export function debugSpawnEnabled() {
+  const v = readSettings().debugSpawnEnabled;
+  if (v === undefined) return DEFAULT_DEBUG_SPAWN_ENABLED;
+  if (isBool(v)) return v;
+  console.warn(`[worca] invalid debugSpawnEnabled ${JSON.stringify(v)} — using the default (${DEFAULT_DEBUG_SPAWN_ENABLED})`);
+  return DEFAULT_DEBUG_SPAWN_ENABLED;
+}
+
+/**
+ * Persist the preference AND flip process.env.WORCA_DEBUG_SPAWN to match, in this
+ * process, right now — that's what makes the change take effect on the very next
+ * spawn with no restart. Always overwrites process.env, even if a launch-time env var
+ * was already present: an explicit UI save is a later, more specific instruction than
+ * whatever was exported before worca started.
+ * @throws {Error} unless `input` is a boolean.
+ */
+export async function setDebugSpawnEnabled(input) {
+  if (!isBool(input)) throw new Error('debugSpawnEnabled must be true or false');
+  const settings = readSettings();
+  if (input === DEFAULT_DEBUG_SPAWN_ENABLED) delete settings.debugSpawnEnabled;
+  else settings.debugSpawnEnabled = input;
+  await persistSettings(settings);
+  process.env.WORCA_DEBUG_SPAWN = input ? '1' : '0';
+  return { debugSpawnEnabled: debugSpawnEnabled() };
+}
+
+/**
+ * Boot-time only: apply the stored preference to process.env.WORCA_DEBUG_SPAWN UNLESS
+ * an explicit value is already present in the environment (power-user override at
+ * launch wins — the stored setting must not clobber it). Call once, before the server
+ * starts accepting spawns.
+ */
+export function applyDebugSpawnEnvFromSettings() {
+  if (process.env.WORCA_DEBUG_SPAWN !== undefined) return;
+  process.env.WORCA_DEBUG_SPAWN = debugSpawnEnabled() ? '1' : '0';
 }
 
 // ---------------------------------------------------------------------------

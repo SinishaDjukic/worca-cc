@@ -7682,6 +7682,7 @@ async function loadSettings() {
     paintSettings(data);
     paintBudgetSettings(data);
     paintAskSettings(data);
+    paintDebugSpawnSettings(data);
     paintBudgetReadout();
     refreshBudget();
     paintChatSettings(data.chat);
@@ -8013,6 +8014,35 @@ document.getElementById('askNoCap')?.addEventListener('change', () => {
   const budget = document.getElementById('askMaxBudgetUsd');
   if (budget) budget.disabled = document.getElementById('askNoCap').checked;
 });
+
+// ---- Spawn-debug diagnostics card (Ask Worca card pattern above) -----------
+function setDebugSpawnMsg(text, kind) {
+  const n = document.getElementById('debugSpawnMsg');
+  if (n) { n.textContent = text || ''; n.className = `hint${kind ? ` ${kind}` : ''}`; }
+}
+function paintDebugSpawnSettings(data) {
+  const cb = document.getElementById('debugSpawnEnabled');
+  if (!cb) return;
+  cb.checked = !!data.debugSpawnEnabled;
+}
+async function postDebugSpawn(body) {
+  setDebugSpawnMsg('');
+  let res = null;
+  try {
+    res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch { setDebugSpawnMsg('network error', 'err'); return; }
+  let data = null;
+  try { data = await res.json(); } catch { data = null; }
+  if (!res.ok) { setDebugSpawnMsg((data && data.error) || `save failed (${res.status})`, 'err'); return; }
+  paintDebugSpawnSettings(data || {});
+  setDebugSpawnMsg('Saved. Applies to the next spawn — no restart needed.');
+}
+function saveDebugSpawn() {
+  const checked = document.getElementById('debugSpawnEnabled').checked;
+  postDebugSpawn({ debugSpawnEnabled: checked });
+}
+document.getElementById('debugSpawnSave')?.addEventListener('click', saveDebugSpawn);
+document.getElementById('debugSpawnReset')?.addEventListener('click', () => postDebugSpawn({ debugSpawnEnabled: false }));
 
 // Browse… for the projects root: native OS dialog, in-app modal fallback —
 // the same two endpoints the add-project Browse button uses (app.js:3793).

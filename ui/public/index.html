@@ -1133,6 +1133,30 @@
               <small class="hint" id="askLimitsMsg"></small>
             </section>
 
+            <!-- Spawn-debug diagnostics: UI mirror of WORCA_DEBUG_SPAWN
+                 (worca: Add Opt-in Debug Spawn Logging). Values are masked at spawn
+                 time by claude-runner.mjs; this card only flips the gate. -->
+            <section class="card settings-card" id="debug-spawn-settings-card">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Spawn diagnostics</h2>
+                  <button type="button" class="info-tip" aria-label="About spawn diagnostics">i<span class="tip-content hidden">
+                    Values are masked; output appears in the run log and the console. Applies to all runs.
+                    If <code>WORCA_DEBUG_SPAWN</code> is set in the environment when Worca CC starts, that
+                    value overrides this checkbox.
+                  </span></button>
+                </div>
+              </div>
+              <div class="field">
+                <label class="check-row" for="debugSpawnEnabled"><input id="debugSpawnEnabled" type="checkbox" /> Log claude spawn details (argv + env key names)</label>
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="debugSpawnReset" class="btn btn-ghost btn-mini">Reset to default</button>
+                <button type="button" id="debugSpawnSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="debugSpawnMsg"></small>
+            </section>
+
             <!-- Chat notifications (chat-connectivity-design.md §4.8): which run
                  events ping which chat channels. Body rendered by
                  chat-settings-view.mjs; app.js owns fetch/save/Test wiring. -->

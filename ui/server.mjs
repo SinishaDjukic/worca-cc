@@ -41,6 +41,7 @@ import {
   setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod, assertCostLimitInputs,
   askMaxTurns, askMaxBudgetUsd, setAskMaxTurns, setAskMaxBudgetUsd, assertAskLimitInputs,
   chatPrefs, setChatPrefs,
+  debugSpawnEnabled as storedDebugSpawnEnabled, setDebugSpawnEnabled, applyDebugSpawnEnvFromSettings,
 } from '../src/core/settings.mjs';
 import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
@@ -2752,6 +2753,7 @@ const settingsState = () => ({
   costLimitResetPeriod: costLimitResetPeriod(),
   askMaxTurns: askMaxTurns(),
   askMaxBudgetUsd: askMaxBudgetUsd(),
+  debugSpawnEnabled: storedDebugSpawnEnabled(),
 });
 
 app.get('/api/settings', (_req, res) => {
@@ -2767,6 +2769,7 @@ app.post('/api/settings', async (req, res) => {
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
   const hasBudgetKey = has('pipelineCostLimitUsd') || has('totalCostLimitUsd') || has('costLimitResetPeriod');
   const hasAskKey = has('askMaxTurns') || has('askMaxBudgetUsd');
+  const hasDebugSpawnKey = has('debugSpawnEnabled');
   // Normalize the budget keys first, then validate them as a SET before ANY write.
   // Each setter persists on its own, so a two-key POST whose second key is invalid
   // used to answer 400 with the first key already on disk, no budget-changed
@@ -2787,6 +2790,9 @@ app.post('/api/settings', async (req, res) => {
   try {
     assertCostLimitInputs(budget);
     assertAskLimitInputs(ask);
+    if (hasDebugSpawnKey && typeof body.debugSpawnEnabled !== 'boolean') {
+      throw new Error('debugSpawnEnabled must be true or false');
+    }
     if (has('chat')) await setChatPrefs(body.chat);
     if (has('projectsRoot')) {
       await setProjectsRoot(typeof body.projectsRoot === 'string' ? body.projectsRoot : '');
@@ -2796,9 +2802,10 @@ app.post('/api/settings', async (req, res) => {
     if (has('costLimitResetPeriod')) await setCostLimitResetPeriod(budget.costLimitResetPeriod);
     if (has('askMaxTurns')) await setAskMaxTurns(ask.askMaxTurns);
     if (has('askMaxBudgetUsd')) await setAskMaxBudgetUsd(ask.askMaxBudgetUsd);
-    // Legacy contract: a POST that names no known key clears root. Budget and ask
-    // keys must not trip it — a budget-only or ask-only save would otherwise wipe the root.
-    if (has('root') || !(has('projectsRoot') || hasBudgetKey || hasAskKey || has('chat'))) {
+    if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
+    // Legacy contract: a POST that names no known key clears root. Budget, ask, and
+    // debug-spawn keys must not trip it — a debug-spawn-only save would otherwise wipe root.
+    if (has('root') || !(has('projectsRoot') || hasBudgetKey || hasAskKey || has('chat') || hasDebugSpawnKey)) {
       await setWorcaRoot(typeof body.root === 'string' ? body.root : '');
     }
     if (hasBudgetKey) emitChanged('budget-changed');
@@ -5138,6 +5145,11 @@ if (isMain) {
   } catch (err) {
     console.error(`[worca-ui] builtin marketplace seed skipped: ${err && err.message ? err.message : err}`);
   }
+
+  // Apply the stored spawn-debug preference to this process's env, unless an operator
+  // already exported WORCA_DEBUG_SPAWN before launching worca (that wins — see
+  // applyDebugSpawnEnvFromSettings's doc comment in settings.mjs).
+  applyDebugSpawnEnvFromSettings();
 
   bootMaintenance().catch((err) => {
     console.error(`[worca-ui] boot maintenance failed: ${err && err.message ? err.message : err}`);
