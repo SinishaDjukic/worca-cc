@@ -244,6 +244,33 @@ test('selectInlineAttachments: upload order, running total ≤ maxBytes, the res
   assert.deepEqual(selectInlineAttachments([], {}), { inline: [], listed: [] });
 });
 
+test('selectInlineAttachments (#398): binary kinds are always listed and consume no inline budget', () => {
+  const list = [
+    { id: 'att_1', name: 'shot.png', bytes: 2_000_000, kind: 'image', mime: 'image/png' },
+    { id: 'att_2', name: 'a.md', bytes: 10_000, kind: 'text', text: 'a' },
+    { id: 'att_3', name: 'spec.pdf', bytes: 40, kind: 'binary', mime: 'application/pdf' },
+    { id: 'att_4', name: 'b.md', bytes: 14_000, kind: 'text', text: 'b' },
+  ];
+  const r = selectInlineAttachments(list, { maxBytes: 24_576 });
+  assert.deepEqual(r.inline.map((a) => a.id), ['att_2', 'att_4'], 'both text files fit: the image did not eat the budget');
+  assert.deepEqual(r.listed.map((a) => a.id), ['att_1', 'att_3'], 'binary kinds listed even when tiny');
+});
+
+test('context header (#398): a binary attachment line carries its mime, text lines are unchanged', () => {
+  const out = buildContextHeader({
+    view: 'history',
+    attachments: [
+      { id: 'att_00000001', name: 'notes.md', bytes: 41 * 1024, kind: 'text' },
+      { id: 'att_00000002', name: 'shot.png', bytes: 2 * 1024 * 1024, kind: 'image', mime: 'image/png' },
+      { id: 'att_00000003', name: 'spec.pdf', bytes: 1024, kind: 'binary', mime: 'application/pdf' },
+    ],
+    now: '2026-08-22T08:00:00.000Z',
+  });
+  assert.ok(out.includes('att_00000001 notes.md (41 KB, use read_attachment)'), 'text line byte-identical to pre-#398');
+  assert.ok(out.includes('att_00000002 shot.png (image/png, 2048 KB, use read_attachment)'));
+  assert.ok(out.includes('att_00000003 spec.pdf (application/pdf, 1 KB, use read_attachment)'));
+});
+
 test('buildTurnPrompt: header, text, fenced attachments with a fence longer than any backtick run', () => {
   const p = buildTurnPrompt('[worca context]\nview: x\n[/worca context]', 'What changed?', [
     { id: 'att_1', name: 'notes.md', text: 'plain' },

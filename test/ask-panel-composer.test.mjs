@@ -99,6 +99,30 @@ test('ask-panel-composer: bad extension and oversize rejected inline; the × rem
   assert.equal(ctx.doc.querySelector('.ask-chip'), null);
 });
 
+test('ask-panel-composer (#398): png accepted with a thumbnail chip, pdf accepted, binary cap is 5 MB', async () => {
+  const ctx = makePanel({ fetchHandler: apiHandler() });
+  ctx.panel.open();
+  const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+  injectFiles(ctx, [new ctx.window.File([pngBytes], 'shot.png', { type: 'image/png' })]);
+  await ctx.tick(); await ctx.tick();
+  const chip = ctx.doc.querySelector('.ask-chip');
+  assert.ok(chip, 'a png is accepted by the composer');
+  assert.match(chip.textContent, /shot\.png/);
+  const thumb = chip.querySelector('img.ask-chip-thumb');
+  assert.ok(thumb, 'image chips carry a thumbnail');
+  assert.ok(thumb.src.startsWith('data:image/png;base64,'), 'thumbnail is a data URI of the bytes just read');
+  injectFiles(ctx, [new ctx.window.File(['%PDF-1.7 fake'], 'spec.pdf', { type: 'application/pdf' })]);
+  await ctx.tick(); await ctx.tick();
+  assert.equal(ctx.doc.querySelectorAll('.ask-chip').length, 2, 'pdf accepted too');
+  assert.equal(ctx.doc.querySelectorAll('.ask-chip img.ask-chip-thumb').length, 1, 'no thumbnail on a pdf chip');
+  injectFiles(ctx, [new ctx.window.File([new Uint8Array(5 * 1024 * 1024 + 1)], 'big.png', { type: 'image/png' })]);
+  await ctx.tick(); await ctx.tick();
+  assert.match(ctx.doc.querySelector('.ask-composer-msg').textContent, /attachment over 5242880 bytes: big\.png/);
+  // the file input advertises the binary types
+  const accept = ctx.doc.querySelector('.ask-composer input[type="file"]').accept;
+  for (const e of ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf']) assert.ok(accept.includes(e), `accept carries ${e}`);
+});
+
 test('ask-panel-composer: at most 8 attachments', async () => {
   const ctx = makePanel({ fetchHandler: apiHandler() });
   ctx.panel.open();

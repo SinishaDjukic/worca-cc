@@ -247,6 +247,58 @@ test('attachments: stored + block on the user message; caps enforced', async () 
   ws.close();
 });
 
+test('binary attachments (#398): png + pdf stored with kind/mime, served with their real type; spoofed or oversized bodies refused', async () => {
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from([0, 1, 2, 0xfe, 0xff])]);
+  const pdf = Buffer.from('%PDF-1.7\nfake body\n%%EOF\n', 'latin1');
+  const t = await newThread();
+  const { ws, msgs, opened } = openWs(`?threadId=${t.id}`);
+  await opened;
+  const ok = await post(`/api/ask/threads/${t.id}/messages`, {
+    text: 'see the screenshot and the spec', ...MODEL,
+    attachments: [
+      { name: 'shot.png', dataBase64: png.toString('base64') },
+      { name: 'spec.pdf', dataBase64: pdf.toString('base64') },
+    ],
+  });
+  assert.equal(ok.status, 202);
+  await waitFor(() => framesFor(msgs, t.id).some((f) => f.type === 'ask-done'));
+  const snap = await snapshot(t.id);
+  const rows = Object.fromEntries(snap.attachments.map((a) => [a.name, a]));
+  assert.equal(rows['shot.png'].kind, 'image');
+  assert.equal(rows['shot.png'].mime, 'image/png');
+  assert.equal(rows['shot.png'].bytes, png.length);
+  assert.equal(rows['spec.pdf'].kind, 'binary');
+  assert.equal(rows['spec.pdf'].mime, 'application/pdf');
+  const user = snap.messages.find((m) => m.role === 'user');
+  assert.ok(user.blocks.some((b) => b.kind === 'attachment' && b.name === 'shot.png' && b.attKind === 'image' && b.mime === 'image/png'),
+    'the message block carries attKind/mime for the UI thumbnail');
+  // body on disk under the row id with the mime extension, never the user name
+  // (worcaHome() is <WORCA_HOME>/.worca-cc)
+  assert.ok(existsSync(join(homeDir, '.worca-cc', 'ask', t.id, 'att', `${rows['shot.png'].id}.png`)));
+  assert.ok(existsSync(join(homeDir, '.worca-cc', 'ask', t.id, 'att', `${rows['spec.pdf'].id}.pdf`)));
+  // the download route serves the REAL mime and the exact bytes
+  const dl = await fetch(`${base}/api/ask/threads/${t.id}/attachments/${rows['shot.png'].id}`);
+  assert.equal(dl.status, 200);
+  assert.match(dl.headers.get('content-type'), /^image\/png/);
+  assert.equal(dl.headers.get('x-content-type-options'), 'nosniff');
+  assert.deepEqual(Buffer.from(await dl.arrayBuffer()), png, 'bytes round-trip unmangled');
+  const dlPdf = await fetch(`${base}/api/ask/threads/${t.id}/attachments/${rows['spec.pdf'].id}`);
+  assert.match(dlPdf.headers.get('content-type'), /^application\/pdf/);
+
+  // refusals, all before any write (the all-or-nothing shape of the text test)
+  const t2 = await newThread();
+  const send = (atts) => post(`/api/ask/threads/${t2.id}/messages`, { text: 'x', ...MODEL, attachments: atts });
+  const spoof = await send([{ name: 'spoof.png', dataBase64: Buffer.from('plain text, not a png').toString('base64') }]);
+  assert.equal(spoof.status, 400);
+  assert.match((await spoof.json()).error, /does not match its extension/);
+  assert.equal((await send([{ name: 'big.png', dataBase64: Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64') }])).status, 413);
+  assert.equal((await send([{ name: 'vector.svg', dataBase64: Buffer.from('<svg/>').toString('base64') }])).status, 400, 'svg stays off the allowlist');
+  const after2 = await snapshot(t2.id);
+  assert.deepEqual(after2.messages, [], 'no message rows written');
+  assert.deepEqual(after2.attachments, [], 'no attachment rows written');
+  ws.close();
+});
+
 test('M1: a title given at thread creation is NEVER replaced by the background title (D13 guard)', async () => {
   const r = await post('/api/ask/threads', { title: 'Named By Hand' });
   const t = (await r.json()).thread;

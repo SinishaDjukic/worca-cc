@@ -3,13 +3,16 @@
 // SYNCHRONOUS (node:sqlite) and goes through getDb()/prepare()/tx() — never
 // node:sqlite directly. tx() is NOT re-entrant (db.mjs:897): the server must never
 // call a writer from inside its own tx(). Attachment bodies live on disk under
-// <worcaHome>/ask/<threadId>/att/<attachmentId>.txt — the path is built from the
-// ROW ID only, never from the user-supplied name.
+// <worcaHome>/ask/<threadId>/att/<attachmentId><ext> — the path is built from the
+// ROW ID plus the row's kind/mime (attachment-kind.mjs), never from the
+// user-supplied name. Text kinds stay `.txt`/utf8; binary kinds (#398) keep the
+// extension of their SNIFFED mime and raw bytes.
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { getDb, prepare, tx } from '../db.mjs';
 import { worcaHome } from '../projects.mjs';
+import { extensionForAttachment } from './attachment-kind.mjs';
 
 export const ASK_ID_RE = /^[a-z]+_[0-9a-f]{8}$/;
 const ROLES = new Set(['user', 'assistant', 'system']);
@@ -53,7 +56,11 @@ function rowToMessage(r) {
   };
 }
 function rowToAttachment(r) {
-  return { id: r.id, threadId: r.thread_id, messageId: r.message_id ?? null, name: r.name, bytes: r.bytes, createdAt: r.created_at };
+  return {
+    id: r.id, threadId: r.thread_id, messageId: r.message_id ?? null, name: r.name, bytes: r.bytes,
+    kind: r.kind ?? 'text', mime: r.mime ?? null, // pre-v27 rows carry neither column value: they are text
+    createdAt: r.created_at,
+  };
 }
 function rowToRunLink(r) {
   return {
@@ -260,20 +267,36 @@ export function sweepStreamingMessages({ text = 'interrupted by restart' } = {})
 
 // ── attachments ─────────────────────────────────────────────────────────────
 
-export function addAttachment(threadId, messageId, { name, text } = {}) {
+/**
+ * Text kinds pass `{name, text}` (the pre-#398 signature, kind defaults 'text');
+ * binary kinds pass `{name, kind, mime, data}` with a Buffer that has already
+ * been sniffed by the route (attachment-kind.mjs) — the store trusts kind/mime
+ * only to pick the on-disk extension, never to build a path from `name`.
+ * NOTE (#398, issue point 8): binary bodies are raw pixel/PDF bytes — the
+ * redactAskText guard that runs over text attachment content structurally
+ * cannot apply to them; the model reads them via its Read tool as-is.
+ */
+export function addAttachment(threadId, messageId, { name, text, kind = 'text', mime = null, data = null } = {}) {
   getDb();
   if (!prepare('SELECT 1 FROM ask_threads WHERE id = ?').get(threadId)) {
     throw new Error(`addAttachment: unknown thread ${threadId}`);
   }
   const id = newAskId('att');
   const safeName = (basename(String(name ?? '')).slice(0, 255)) || 'attachment.txt';
-  const body = String(text ?? '');
-  const bytes = Buffer.byteLength(body, 'utf8');
   const dir = attachmentsDir(threadId);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, `${id}.txt`), body, 'utf8'); // file FIRST: a row without a file would 404 on read
-  prepare('INSERT INTO ask_attachments (id, thread_id, message_id, name, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(id, threadId, messageId ?? null, safeName, bytes, now());
+  let bytes;
+  if (kind === 'text') {
+    const body = String(text ?? '');
+    bytes = Buffer.byteLength(body, 'utf8');
+    writeFileSync(join(dir, `${id}.txt`), body, 'utf8'); // file FIRST: a row without a file would 404 on read
+  } else {
+    if (!Buffer.isBuffer(data)) throw new Error('addAttachment: a non-text attachment needs a Buffer body');
+    bytes = data.length;
+    writeFileSync(join(dir, `${id}${extensionForAttachment(kind, mime)}`), data); // no encoding: raw bytes
+  }
+  prepare('INSERT INTO ask_attachments (id, thread_id, message_id, name, bytes, kind, mime, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, threadId, messageId ?? null, safeName, bytes, kind, mime, now());
   return getAttachment(threadId, id);
 }
 
@@ -298,9 +321,33 @@ export function getAttachment(threadId, id) {
  */
 export function readAttachmentText(threadId, id) {
   const a = getAttachment(threadId, id);
-  if (!a || !ASK_ID_RE.test(a.id)) return null;
+  if (!a || !ASK_ID_RE.test(a.id) || a.kind !== 'text') return null; // a binary body is not utf8-readable
   try {
     return { ...a, text: readFileSync(join(attachmentsDir(threadId), `${a.id}.txt`), 'utf8') };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Absolute on-disk path of an attachment's body — the pointer the read_attachment
+ * tool hands the model for binary kinds (its Read tool renders images and PDFs
+ * natively; the ask/ subtree is deliberately outside spawn.mjs ASK_DENY_RULES).
+ * Same guards as readAttachmentText: row must exist, id must be store-minted.
+ */
+export function attachmentPath(threadId, id) {
+  const a = getAttachment(threadId, id);
+  if (!a || !ASK_ID_RE.test(a.id)) return null;
+  return join(attachmentsDir(threadId), `${a.id}${extensionForAttachment(a.kind, a.mime)}`);
+}
+
+/** Raw thread-scoped read for the download route: any kind, body as a Buffer. */
+export function readAttachmentRaw(threadId, id) {
+  const a = getAttachment(threadId, id);
+  const path = attachmentPath(threadId, id);
+  if (!a || !path) return null;
+  try {
+    return { ...a, buffer: readFileSync(path) };
   } catch {
     return null;
   }

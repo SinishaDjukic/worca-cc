@@ -50,7 +50,7 @@ import {
   listMessages as askListMessages, setMessageBlocks as askSetMessageBlocks,
   findCard as askFindCard, updateCardBlock as askUpdateCardBlock,
   addAttachment as askAddAttachment, listAttachments as askListAttachments,
-  readAttachmentText as askReadAttachmentText, threadAttachmentBytes as askThreadAttachmentBytes,
+  readAttachmentRaw as askReadAttachmentRaw, threadAttachmentBytes as askThreadAttachmentBytes,
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
   findRunLinksByPipeline as askFindRunLinksByPipeline,
   setThreadTitle as askSetThreadTitle, finishMessage as askFinishMessage,
@@ -64,6 +64,9 @@ import {
   buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
   selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
 } from '../src/core/ask/prompt.mjs';
+import {
+  classifyExtension as askClassifyExtension, sniffMime as askSniffMime,
+} from '../src/core/ask/attachment-kind.mjs';
 import {
   listAskWorktrees as askListWorktrees,
   removeAskWorktree as askRemoveWorktree,
@@ -738,6 +741,14 @@ app.use((req, res, next) => {
   next();
 });
 
+// Ask attachments ride base64 inside the message JSON (§7.3), and a binary
+// attachment (#398) may legitimately be 5 MB — several of them blow the app-wide
+// 8mb cap below. Mounted BEFORE the global parser: a body parsed here is skipped
+// there, so only the ask thread routes get the larger window (64mb covers
+// maxFiles × maxBytesPerBinaryFile at base64's 4/3 inflation, so every
+// over-budget upload still reaches the route's OWN clear 400/413, not a raw
+// parser error).
+app.use('/api/ask/threads', express.json({ limit: '64mb' }));
 app.use(express.json({ limit: '8mb' }));
 
 if (HLJS_ASSETS) {
@@ -3711,11 +3722,19 @@ app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
   if (!attId) return;
   try {
     if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
-    const att = askReadAttachmentText(id, attId);
+    const att = askReadAttachmentRaw(id, attId);
     if (!att) return res.status(404).json({ error: 'attachment not found' });
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Content-Disposition', 'inline');
-    res.type('text/plain; charset=utf-8').send(att.text);
+    if (att.kind === 'text') {
+      // pre-#398 behavior byte-for-byte: text bodies serve as utf-8 text/plain
+      res.type('text/plain; charset=utf-8').send(att.buffer.toString('utf8'));
+    } else {
+      // Only sniff-verified allowlisted mimes are ever stored (never scriptable
+      // markup like SVG/HTML), so serving the real mime inline is safe — and it
+      // is what lets the transcript render <img> thumbnails (#398).
+      res.type(att.mime || 'application/octet-stream').send(att.buffer);
+    }
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -3831,8 +3850,8 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
       .filter((a) => !currentMessageId || a.messageId !== currentMessageId)
       .slice(-ASK_LIMITS.headerAttachments)
       .reverse()
-      .map((a) => ({ id: a.id, name: a.name, bytes: a.bytes }));
-    const atts = [...listedAttachments.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes })), ...earlier];
+      .map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime }));
+    const atts = [...listedAttachments.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime })), ...earlier];
     if (atts.length) out.attachments = atts.slice(0, ASK_LIMITS.headerAttachments);
   } catch { /* absent lines */ }
   return out;
@@ -3885,19 +3904,30 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         const name = a && typeof a.name === 'string' ? a.name : '';
         const dot = name.lastIndexOf('.');
         const ext = dot === -1 ? '' : name.slice(dot).toLowerCase();
-        if (!ASK_LIMITS.attachment.extensions.includes(ext)) {
-          return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
-        }
+        // #398: the extension CLAIMS a type; text kinds are then proven by UTF-8
+        // decoding (as before), binary kinds by their magic number — a body that
+        // does not match its claim is refused here, before any write.
+        const cls = askClassifyExtension(ext);
+        if (!cls) return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
         const raw = typeof a.dataBase64 === 'string' ? a.dataBase64 : '';
         const buf = raw ? Buffer.from(raw, 'base64') : Buffer.alloc(0);
         if (!buf.length) return badRequest(res, `attachment is empty or not valid base64: ${name}`);
-        if (buf.length > ASK_LIMITS.attachment.maxBytesPerFile) {
-          return res.status(413).json({ error: `attachment over ${ASK_LIMITS.attachment.maxBytesPerFile} bytes: ${name}` });
+        const cap = cls.kind === 'text' ? ASK_LIMITS.attachment.maxBytesPerFile : ASK_LIMITS.attachment.maxBytesPerBinaryFile;
+        if (buf.length > cap) {
+          return res.status(413).json({ error: `attachment over ${cap} bytes: ${name}` });
+        }
+        if (cls.kind !== 'text') {
+          const sniffed = askSniffMime(buf);
+          if (sniffed !== cls.mime) {
+            return badRequest(res, `attachment content does not match its extension: ${name}`);
+          }
+          files.push({ name, kind: cls.kind, mime: cls.mime, data: buf, bytes: buf.length });
+          continue;
         }
         let bodyText;
         try { bodyText = dec.decode(buf); } catch { return badRequest(res, `attachment is not valid UTF-8: ${name}`); }
         if (bodyText.includes('\u0000')) return badRequest(res, `attachment contains NUL bytes: ${name}`);
-        files.push({ name, text: bodyText, bytes: buf.length });
+        files.push({ name, kind: 'text', mime: cls.mime, text: bodyText, bytes: buf.length });
       }
       const total = askThreadAttachmentBytes(id) + files.reduce((s, f) => s + f.bytes, 0);
       if (total > ASK_LIMITS.attachment.maxBytesPerThread) {
@@ -3944,9 +3974,11 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       }
       const userMsg = askAppendMessage(id, { role: 'user', text });
       job.userMessageId = userMsg.id;
-      const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, text: f.text }));
+      const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, kind: f.kind, mime: f.mime, text: f.text, data: f.data }));
       if (attRows.length) {
-        askSetMessageBlocks(userMsg.id, attRows.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes })));
+        // `kind` is the BLOCK kind, so the attachment's own kind rides as attKind
+        // (the UI keys image thumbnails off it, #398).
+        askSetMessageBlocks(userMsg.id, attRows.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind, mime: a.mime })));
       }
       broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); // echo for other tabs
       asstMsg = askAppendMessage(id, { role: 'assistant', text: '', status: 'streaming', model: mv.model, effort: mv.effort });
@@ -3955,7 +3987,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       // Prompt assembly (§6.5) — the route owns it; the turn only spawns.
       const catalog = await askBuildCatalog();
       const systemPrompt = askBuildSystemPrompt(catalog);
-      const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, text: files[i].text }));
+      const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime, text: files[i].text }));
       const { inline, listed } = askSelectInlineAttachments(withText);
       const headerCtx = await resolveAskContext(id, cv.context, listed, userMsg.id);
       const header = askBuildContextHeader(headerCtx);

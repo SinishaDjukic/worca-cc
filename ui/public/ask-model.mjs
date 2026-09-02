@@ -255,7 +255,7 @@ export function createThreadModel({ threadId }) {
     noteLocalUserMessage({ id, text, attachments: atts }) {
       upsertRow({
         id, threadId, seq: undefined, role: 'user', text: String(text ?? ''),
-        blocks: (Array.isArray(atts) ? atts : []).map((a) => ({ kind: 'attachment', id: a.id ?? null, name: a.name, bytes: a.bytes })),
+        blocks: (Array.isArray(atts) ? atts : []).map((a) => ({ kind: 'attachment', id: a.id ?? null, name: a.name, bytes: a.bytes, attKind: a.attKind ?? 'text', mime: a.mime ?? null })),
         status: null, reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: null,
       });
       dirty.messages.add(id);

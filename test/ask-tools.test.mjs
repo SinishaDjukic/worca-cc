@@ -352,7 +352,11 @@ const fake = {
   readStoreMeta: (key) => (key === 'demo-00000001' ? { name: 'Demo' } : null),
   readDiffPatch: async (row) => diffs.get(row.id) ?? null,
   hasDiffPatch: async (row) => diffs.has(row.id),
-  readAttachment: (id) => (id === 'att_00000001' ? { name: 'notes.md', text: 'token ghp_abcdefghijklmnopqrstuvwxyz0123456789 here\nsecond line\n' } : null),
+  readAttachment: (id) => (id === 'att_00000001'
+    ? { name: 'notes.md', text: 'token ghp_abcdefghijklmnopqrstuvwxyz0123456789 here\nsecond line\n' }
+    : id === 'att_00000002'
+      ? { name: 'shot.png', kind: 'image', mime: 'image/png', bytes: 2048, path: '/home/ask/ask_00000001/att/att_00000002.png' }
+      : null),
   validateProposal: async (input) => ({ ok: true, card: { echoed: input } }),
   protectedPaths: GUARDRAIL_PRESETS.normal.protectedPaths,
   redact: redactAskText,
@@ -599,6 +603,16 @@ test('read_attachment: thread-scoped reader, redaction, paging, not found', asyn
   await assert.rejects(() => tools.call('read_attachment', {}), { message: 'read_attachment: id is required' });
 });
 
+test('read_attachment (#398): a binary attachment returns metadata + path, never a text slice', async () => {
+  const r = await tools.call('read_attachment', { id: 'att_00000002' });
+  assert.deepEqual(r, {
+    name: 'shot.png', kind: 'image', mime: 'image/png', totalBytes: 2048,
+    path: '/home/ask/ask_00000001/att/att_00000002.png',
+    note: 'binary attachment: pass `path` to your Read tool to view the content',
+  });
+  assert.ok(!('text' in r) && !('truncated' in r) && !('nextOffset' in r), 'no sliceBytes fields on a binary read');
+});
+
 test('propose_run passes through validateProposal; unknown tools and bad input are AskToolErrors', async () => {
   assert.deepEqual(await tools.call('propose_run', { projectKey: 'demo-00000001', brief: 'b' }), { ok: true, card: { echoed: { projectKey: 'demo-00000001', brief: 'b' } } });
   await assert.rejects(() => tools.call('nope', {}), { name: 'AskToolError', message: 'unknown tool: nope' });
@@ -670,8 +684,17 @@ test('temp home: a seeded project run and a seeded workspace run round-trip thro
   const wsDiff = await real.call('get_run_diff', { id: wsSeed.id });
   assert.equal(wsDiff.files[0].projectKey, 'team-00000001');
   assert.equal((await real.call('read_attachment', { id: att.id })).text, 'hello');
+  // #398: a real binary row through the real tool-deps — metadata + the on-disk path
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+  const bin = addAttachment(thread.id, msg.id, { name: 'shot.png', kind: 'image', mime: 'image/png', data: png });
+  const binRead = await real.call('read_attachment', { id: bin.id });
+  assert.equal(binRead.kind, 'image');
+  assert.equal(binRead.totalBytes, png.length);
+  assert.ok(binRead.path.endsWith(`${bin.id}.png`), 'path points at the stored body');
+  assert.ok(!('text' in binRead));
   const other = createAskTools(defaultToolDeps({ threadId: otherThread.id }));
   await assert.rejects(() => other.call('read_attachment', { id: att.id }), { message: 'read_attachment: attachment not found' }, "another thread's attachment is invisible");
+  await assert.rejects(() => other.call('read_attachment', { id: bin.id }), { message: 'read_attachment: attachment not found' }, "another thread's binary attachment is invisible");
   const proposal = await real.call('propose_run', { projectKey: project.key, brief: 'Add a badge' });
   assert.equal(proposal.ok, true);
   assert.equal(proposal.card.projectKey, project.key);

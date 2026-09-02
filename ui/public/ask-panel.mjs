@@ -258,7 +258,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return dock;
   }
 
+  // Mirrors src/core/ask/attachment-kind.mjs + limits.mjs (#398): text kinds are
+  // UTF-8 capped at 512 KB, binary kinds (images + PDF) at 5 MB; the server
+  // re-validates everything, these are just early clear messages.
   const ASK_ATTACH_EXT = ['.md', '.markdown', '.txt', '.json', '.csv', '.log'];
+  const ASK_ATTACH_BINARY = {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf',
+  };
+  const ASK_MAX_TEXT_BYTES = 524_288;
+  const ASK_MAX_BINARY_BYTES = 5 * 1024 * 1024;
+  const ASK_MAX_THREAD_BYTES = 25 * 1024 * 1024;
 
   function bytesToBase64(bytes) {
     let bin = '';
@@ -276,6 +286,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.chips.hidden = !st.pendingFiles.length;
     for (const f of st.pendingFiles) {
       const chip = make('span', 'ask-chip');
+      if (f.attKind === 'image' && f.dataBase64) {
+        // #398: composer thumbnail straight from the bytes just read — no
+        // object-URL lifecycle to manage, the chip owns its data URI.
+        const img = doc.createElement('img');
+        img.className = 'ask-chip-thumb';
+        img.alt = f.name;
+        img.src = `data:${f.mime};base64,${f.dataBase64}`;
+        chip.appendChild(img);
+      }
       chip.appendChild(make('span', 'ask-chip-name', f.name));
       const x = make('button', 'ask-chip-x', '×');
       x.type = 'button';
@@ -294,18 +313,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const name = String(f.name || '');
       const dot = name.lastIndexOf('.');
       const ext = dot >= 0 ? name.slice(dot).toLowerCase() : '';
-      if (!ASK_ATTACH_EXT.includes(ext)) { setComposerMsg(`attachment type not allowed: ${name}`); continue; }
-      if (f.size > 524_288) { setComposerMsg(`attachment over 524288 bytes: ${name}`); continue; }
+      const binMime = ASK_ATTACH_BINARY[ext];
+      if (!ASK_ATTACH_EXT.includes(ext) && !binMime) { setComposerMsg(`attachment type not allowed: ${name}`); continue; }
+      const cap = binMime ? ASK_MAX_BINARY_BYTES : ASK_MAX_TEXT_BYTES;
+      if (f.size > cap) { setComposerMsg(`attachment over ${cap} bytes: ${name}`); continue; }
       const others = st.pendingFiles.filter((p) => p.name !== name); // dedupe by name, newest wins
       if (others.length >= 8) { setComposerMsg('at most 8 attachments per message'); continue; }
       const serverBytes = st.model ? st.model.attachmentsBytes() : 0;
       const pendingBytes = others.reduce((n, p) => n + p.bytes, 0);
-      if (serverBytes + pendingBytes + f.size > 4 * 1024 * 1024) { setComposerMsg('attachment budget for this thread exceeded'); continue; }
+      if (serverBytes + pendingBytes + f.size > ASK_MAX_THREAD_BYTES) { setComposerMsg('attachment budget for this thread exceeded'); continue; }
       let dataBase64 = '';
       try {
         dataBase64 = bytesToBase64(new Uint8Array(await f.arrayBuffer()));
       } catch { setComposerMsg(`could not read ${name}`); continue; }
-      st.pendingFiles = [...others, { name, bytes: f.size, dataBase64 }];
+      const attKind = binMime ? (binMime.startsWith('image/') ? 'image' : 'binary') : 'text';
+      st.pendingFiles = [...others, { name, bytes: f.size, dataBase64, attKind, mime: binMime || null }];
     }
     renderChips();
   }
@@ -385,7 +407,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         return;
       }
       const { userMessageId } = await res.json();
-      st.model.noteLocalUserMessage({ id: userMessageId, text, attachments: st.pendingFiles.map((f) => ({ name: f.name, bytes: f.bytes })) });
+      st.model.noteLocalUserMessage({ id: userMessageId, text, attachments: st.pendingFiles.map((f) => ({ name: f.name, bytes: f.bytes, attKind: f.attKind, mime: f.mime })) });
       if (!st.model.thread().title) {
         // The deterministic first title has NO frame — record it in the MODEL
         // as well as the header: model.load() left `title` dirty and the very
@@ -434,7 +456,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.fileInput = doc.createElement('input');
     el.fileInput.type = 'file';
     el.fileInput.multiple = true;
-    el.fileInput.accept = `${ASK_ATTACH_EXT.join(',')},text/*`;
+    el.fileInput.accept = `${ASK_ATTACH_EXT.join(',')},${Object.keys(ASK_ATTACH_BINARY).join(',')},text/*`;
     el.fileInput.hidden = true;
     el.fileInput.addEventListener('change', () => { addFiles(el.fileInput.files); el.fileInput.value = ''; });
     row.appendChild(el.fileInput);
@@ -1049,6 +1071,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // ---- stubs the later tasks replace wholesale ------------------------------
   // ---- transcript (spec §10.5) ---------------------------------------------
   function buildAttachmentPill(b) {
+    // #398: an image attachment renders as a thumbnail served by the download
+    // route (sniff-verified mime, inline disposition); everything else keeps the
+    // name pill. A local echo has no row id yet — it pills until the snapshot.
+    if (b.attKind === 'image' && b.id && st.threadId) {
+      const link = make('a', 'ask-attachment-thumb-link');
+      link.href = `/api/ask/threads/${st.threadId}/attachments/${b.id}`;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      const img = doc.createElement('img');
+      img.className = 'ask-attachment-thumb';
+      img.alt = b.name || '(image)';
+      img.loading = 'lazy';
+      img.src = link.href;
+      link.appendChild(img);
+      return link;
+    }
     const pill = make('span', 'extra-pill ask-attachment-pill');
     pill.appendChild(make('span', 'extra-pill-name', b.name || '(attachment)'));
     return pill;
