@@ -80,13 +80,20 @@ function freshRepo(prefix = 'worca-cc-cliix-repo-') {
  * @param {RegExp} [opts.closeStdinAfter] end() the child's stdin the first time this
  *        matches stdout (models a wrapper whose input dies mid-run).
  * @param {RegExp} [opts.sigintAfter] send SIGINT the first time this matches stdout.
- * @param {number}   [opts.timeoutMs=30000]
+ * @param {number}   [opts.timeoutMs=DRIVE_TIMEOUT_MS] 30 s on POSIX, 120 s on win32
  * @returns {Promise<{code:number|null, signal:string|null, stdout:string,
  *                    stderr:string, sent:number, timedOut:boolean, ms:number}>}
  */
+// The deadline is a hang detector, not a performance budget. Each e2e run is a
+// real CLI process doing git + worktree work; on the Windows 11 VM that is ~5x
+// macOS alone and worse under full-suite load, where a 30 s kill turned the
+// questions-arm run into a timeout whose hard-killed `running` row then failed
+// the two stdin tests after it. Give win32 the headroom the same hang detector
+// still catches on POSIX.
+const DRIVE_TIMEOUT_MS = process.platform === 'win32' ? 120000 : 30000;
 function driveCli(args, {
   script = [], env = {}, mock = true, stdin = 'pipe',
-  closeStdinAfter = null, sigintAfter = null, timeoutMs = 30000,
+  closeStdinAfter = null, sigintAfter = null, timeoutMs = DRIVE_TIMEOUT_MS,
 } = {}) {
   return new Promise((res) => {
     const childEnv = { ...process.env, WORCA_HOME: home, ...env };
