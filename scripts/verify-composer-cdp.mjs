@@ -156,9 +156,16 @@ const mup = (x, y, button = 'left') => pumped(cdp('Input.dispatchMouseEvent', { 
 // WheelEvent on the stage otherwise. The synthetic path still exercises the real
 // handler with real layout, and check (6) additionally asserts defaultPrevented,
 // which is what "the page never scrolls under the canvas" reduces to.
+// A delivered wheel counts as trusted ONLY when it is cancelable. Measured
+// 2026-09-02 on Chrome 151 / Linux (the GitHub runner): a CDP wheel reaches the
+// page as a NON-cancelable event, and only while some wheel listener other than
+// the composer's own is registered — the probe's. Once the probe's listener is
+// gone every later wheel is dropped outright, so the transform never moves and
+// check (6) fails while reporting delivery as trusted. The run-monitor proof
+// gates on `cancelable` for the same reason; this one now matches it.
 let wheelTrusted = null;        // null = not probed yet
 async function probeWheel(x, y) {   // x,y come from the caller and are already inside the stage
-  await ev('window.__wp=0;window.__wpH=(e)=>{window.__wp++;};window.addEventListener("wheel",window.__wpH,{passive:true});0');
+  await ev('window.__wp=[];window.__wpH=(e)=>{window.__wp.push(e.cancelable);};window.addEventListener("wheel",window.__wpH,{passive:true});0');
   await mmove(x, y, 0);
   // A ZERO delta: the probe must not move the canvas. A real delta pans the view
   // (t -= delta), which shifts the world point under the cursor and makes the
@@ -166,8 +173,8 @@ async function probeWheel(x, y) {   // x,y come from the caller and are already 
   await wheelRaw(x, y, 0, 0, 0);
   await settle('wheel-probe');
   const seen = await ev('(()=>{const n=window.__wp;window.removeEventListener("wheel",window.__wpH);return n;})()');
-  wheelTrusted = seen > 0;
-  log(`wheel delivery: ${wheelTrusted ? 'trusted CDP events' : 'SYNTHETIC (this browser drops CDP wheels)'}`);
+  wheelTrusted = seen.length > 0 && seen[seen.length - 1] === true;
+  log(`wheel delivery: ${wheelTrusted ? 'trusted CDP events' : 'SYNTHETIC'} (CDP wheels seen: ${seen.length}, cancelable: ${seen.length ? seen[seen.length - 1] : 'n/a'})`);
 }
 async function wheel(x, y, dx, dy, modifiers = 0) {
   if (wheelTrusted === null) await probeWheel(x, y);
