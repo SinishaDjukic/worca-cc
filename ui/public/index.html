@@ -1146,6 +1146,35 @@
               </div>
             </section>
 
+            <!-- Spawn-debug diagnostics: the stored side of WORCA_DEBUG_SPAWN.
+                 claude-runner.mjs reads the setting per spawn (UI server AND CLI);
+                 a non-empty env var overrides it. This card only flips the gate —
+                 the runner decides what is printable (routing keys readable,
+                 credentials as "<set, N chars>"). -->
+            <section class="card settings-card" id="debug-spawn-settings-card">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Spawn diagnostics</h2>
+                  <button type="button" class="info-tip" aria-label="About spawn diagnostics">i<span class="tip-content hidden">
+                    Logs the exact claude binary, argv and routing env handed to every spawn, in the run
+                    log. Credentials never appear: routing keys (endpoint, wire model) print readable,
+                    every other value as <code>&lt;set, N chars&gt;</code>. Applies to runs started here
+                    and from the CLI, with no restart. A non-empty <code>WORCA_DEBUG_SPAWN</code> in the
+                    environment overrides this setting.
+                  </span></button>
+                </div>
+              </div>
+              <div class="field">
+                <label class="check-row" for="debugSpawnEnabled"><input id="debugSpawnEnabled" type="checkbox" /> Log claude spawn details (binary, argv, routing env)</label>
+              </div>
+              <small class="hint" id="debugSpawnEnvNote"></small>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="debugSpawnReset" class="btn btn-ghost btn-mini">Reset to default</button>
+                <button type="button" id="debugSpawnSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="debugSpawnMsg"></small>
+            </section>
+
             <!-- Chat notifications (chat-connectivity-design.md §4.8): which run
                  events ping which chat channels. Body rendered by
                  chat-settings-view.mjs; app.js owns fetch/save/Test wiring. -->

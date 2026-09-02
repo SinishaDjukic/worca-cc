@@ -51,3 +51,96 @@ test('POST rejects a file path -> 400', async () => {
   const filePath = fileURLToPath(import.meta.url); // this test file: a file, not a dir
   assert.equal((await post(filePath)).status, 400);
 });
+
+const postJson = (body) => fetch(`${base}/api/settings`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+});
+
+test('GET /api/settings: debugSpawnEnabled defaults to false, with the effective state and its source', async () => {
+  const j = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(j.debugSpawnEnabled, false);
+  assert.deepEqual(j.debugSpawnEffective, { enabled: false, source: 'settings' });
+});
+
+test('GET /api/settings: a non-empty WORCA_DEBUG_SPAWN reports source "env" while the stored value stays false', async () => {
+  const prev = process.env.WORCA_DEBUG_SPAWN;
+  process.env.WORCA_DEBUG_SPAWN = '1';
+  try {
+    const j = await (await fetch(`${base}/api/settings`)).json();
+    assert.equal(j.debugSpawnEnabled, false, 'stored');
+    assert.deepEqual(j.debugSpawnEffective, { enabled: true, source: 'env' });
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_DEBUG_SPAWN; else process.env.WORCA_DEBUG_SPAWN = prev;
+  }
+});
+
+test('POST sets debugSpawnEnabled; GET reflects it; does not touch root', async () => {
+  const target = await mkdtemp(join(tmpdir(), 'worca-cc-setapi-dbgroot-'));
+  try {
+    const before = await (await post(target)).json();
+    assert.equal(before.root, target); // sanity: root is genuinely non-empty going in
+    const after = await (await postJson({ debugSpawnEnabled: true })).json();
+    assert.equal(after.debugSpawnEnabled, true);
+    assert.equal(after.root, target, 'a debug-spawn-only POST must not clear root');
+    const refetched = await (await fetch(`${base}/api/settings`)).json();
+    assert.equal(refetched.debugSpawnEnabled, true);
+    assert.equal(refetched.root, target);
+  } finally {
+    await postJson({ debugSpawnEnabled: false }); // leave it clean for other tests
+    await post(''); // reset root
+    await rm(target, { recursive: true, force: true });
+  }
+});
+
+test('POST rejects a non-boolean debugSpawnEnabled -> 400', async () => {
+  const r = await postJson({ debugSpawnEnabled: 'on' });
+  assert.equal(r.status, 400);
+  const j = await r.json();
+  assert.match(j.error, /must be true or false/);
+});
+
+test('POST does not write process.env (the runner reads the setting itself)', async () => {
+  const prev = process.env.WORCA_DEBUG_SPAWN;
+  delete process.env.WORCA_DEBUG_SPAWN;
+  try {
+    await postJson({ debugSpawnEnabled: true });
+    assert.equal(process.env.WORCA_DEBUG_SPAWN, undefined);
+    await postJson({ debugSpawnEnabled: false });
+    assert.equal(process.env.WORCA_DEBUG_SPAWN, undefined);
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_DEBUG_SPAWN; else process.env.WORCA_DEBUG_SPAWN = prev;
+  }
+});
+
+test('a mixed POST whose root is unusable answers 400 with the debug toggle NOT applied', async () => {
+  const filePath = fileURLToPath(import.meta.url); // a file, not a dir → setWorcaRoot throws
+  const r = await postJson({ debugSpawnEnabled: true, root: filePath });
+  assert.equal(r.status, 400);
+  const j = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(j.debugSpawnEnabled, false, 'nothing half-applied');
+});
+
+test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clears root" fallback', async () => {
+  const { SETTINGS_POST_KEYS } = await import('../src/core/settings.mjs');
+  assert.ok(SETTINGS_POST_KEYS.includes('debugSpawnEnabled'), 'the new key is registered beside its setter');
+  const target = await mkdtemp(join(tmpdir(), 'worca-cc-setapi-keys-'));
+  try {
+    assert.equal((await (await post(target)).json()).root, target);
+    // A body carrying only a non-root known key must not clear root — one probe per
+    // key, each with a value its setter accepts as "no change / default".
+    const probes = {
+      projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '',
+      askMaxTurns: '', askMaxBudgetUsd: '', debugSpawnEnabled: false,
+    };
+    for (const k of SETTINGS_POST_KEYS) {
+      if (k === 'root') continue;
+      assert.ok(k in probes, `test probe missing for new key ${k}`);
+      const j = await (await postJson({ [k]: probes[k] })).json();
+      assert.equal(j.root, target, `a ${k}-only POST must not clear root`);
+    }
+    assert.equal((await (await postJson({})).json()).root, '', 'the legacy contract itself still holds');
+  } finally {
+    await post('');
+    await rm(target, { recursive: true, force: true });
+  }
+});

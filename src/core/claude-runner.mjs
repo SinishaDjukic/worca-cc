@@ -35,6 +35,7 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { prepareModelEnv, envFlag, describeModelEnv } from './model-env.mjs';
+import { effectiveDebugSpawn } from './settings.mjs';
 import { classifyError, strongestClass } from './recoverable-error.mjs';
 import { explainUnspawnableClaude, resolveClaudeBin } from './preflight.mjs';
 import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from './host-guard.mjs';
@@ -185,17 +186,21 @@ export function subagentHooksEnabled() {
 }
 
 /**
- * Opt-in spawn diagnostics (WORCA_DEBUG_SPAWN), DEFAULT OFF (envFlag rule: any
- * value but "", "0", "false" turns it on). OFF ⇒ runReal emits NO spawn-debug
- * event and does not touch argv/env, so the spawn path is byte-identical to
- * today. (The once-per-process "routing env applied" confirmation below is a
- * separate, always-on line: it fires only for a model env that carries an
- * ANTHROPIC_* routing key, once per distinct model + env, never per spawn.)
- * Read directly in runReal (not a runClaude option) so it bypasses the
- * runClaude→runReal gate by construction.
+ * Opt-in spawn diagnostics, DEFAULT OFF. A NON-EMPTY WORCA_DEBUG_SPAWN in the
+ * environment wins (envFlag rule: any value but "0"/"false" turns it on, so an
+ * exported "0" is an explicit OFF); otherwise the stored `debugSpawnEnabled`
+ * setting applies — read fresh per spawn (settings.mjs#effectiveDebugSpawn, the
+ * one precedence rule the settings API also reports), so the UI checkbox reaches
+ * the next spawn in this process AND in a CLI run with no restart and no env
+ * mutation. OFF ⇒ runReal emits NO spawn-debug event and does not touch
+ * argv/env, so the spawn path is byte-identical to today. (The once-per-process
+ * "routing env applied" confirmation below is a separate, always-on line: it
+ * fires only for a model env that carries an ANTHROPIC_* routing key, once per
+ * distinct model + env, never per spawn.) Read directly in runReal (not a
+ * runClaude option) so it bypasses the runClaude→runReal gate by construction.
  */
 export function debugSpawnEnabled() {
-  return envFlag('WORCA_DEBUG_SPAWN');
+  return effectiveDebugSpawn().enabled;
 }
 
 /** Once per process per distinct (model, described env): see runReal. */

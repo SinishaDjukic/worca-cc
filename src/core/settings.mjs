@@ -11,6 +11,12 @@
 //   contextMaxBytesPerFile — §5.4 per-source-file inlining cap.
 //   contextMaxBytesTotal   — §5.4 total memory budget.
 //   skillMount             — §5.6 'copy' (default) | 'symlink' (opt-in).
+//   debugSpawnEnabled      — the stored spawn-diagnostics preference (a UI checkbox).
+//                            claude-runner.mjs reads it fresh on every spawn through
+//                            effectiveDebugSpawn(), so it applies to the UI server AND
+//                            to CLI runs with no restart. A NON-EMPTY WORCA_DEBUG_SPAWN
+//                            in the process environment overrides it (power-user
+//                            override); this module never writes process.env.
 //   pipelineCostLimitUsd   — per-pipeline lifetime USD spend cap; unset = no limit.
 //   totalCostLimitUsd      — windowed all-pipelines USD spend cap; unset = no limit.
 //   costLimitResetPeriod   — total-budget window, 'weekly' | 'monthly' (default).
@@ -42,7 +48,7 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { EFFORTS, isReservedModelEnvKey, assertModelCost } from './model-env.mjs';
+import { EFFORTS, isReservedModelEnvKey, assertModelCost, envFlag } from './model-env.mjs';
 
 /**
  * The real OS home base, honoring HOME/USERPROFILE so tests can sandbox it.
@@ -524,6 +530,75 @@ export async function setCostLimitResetPeriod(input) {
   else settings.costLimitResetPeriod = input;
   await persistSettings(settings);
   return { costLimitResetPeriod: costLimitResetPeriod() };
+}
+
+// ── The keys POST /api/settings understands ──────────────────────────────────
+// The route keeps a legacy contract: a body naming NONE of these clears root
+// (test/settings-projects-root.test.mjs "a bodyless POST resets root"). Every
+// setter's key is listed HERE, beside the setters, so a new key cannot forget
+// to join a hand-maintained exclusion list in the route and wipe the root on
+// its first save.
+export const SETTINGS_POST_KEYS = Object.freeze([
+  'root', 'projectsRoot', 'chat',
+  'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod',
+  'askMaxTurns', 'askMaxBudgetUsd',
+  'debugSpawnEnabled',
+]);
+
+// ── Spawn-debug diagnostics toggle (the stored side of WORCA_DEBUG_SPAWN) ────
+// Like every other stored setting (skillMount, the cost caps, the ask caps) this
+// is READ AT USE TIME: claude-runner.mjs#debugSpawnEnabled calls
+// effectiveDebugSpawn() on every spawn, so a UI save reaches the very next spawn
+// in this process and in any CLI process with no restart, and nothing here ever
+// mutates process.env (a runtime env write would leak an explicit
+// WORCA_DEBUG_SPAWN=0 into every inherited child env and break the runner's
+// "OFF ⇒ byte-identical spawn env" invariant).
+export const DEFAULT_DEBUG_SPAWN_ENABLED = false;
+
+const isBool = (v) => typeof v === 'boolean';
+
+/** @throws {Error} unless `input` is a boolean (the route and the setter share this). */
+export function assertDebugSpawnInput(input) {
+  if (!isBool(input)) throw new Error('debugSpawnEnabled must be true or false');
+}
+
+/** STORED spawn-debug preference: boolean, default OFF. Invalid stored value ⇒ OFF (loudly). */
+export function debugSpawnEnabled() {
+  const v = readSettings().debugSpawnEnabled;
+  if (v === undefined) return DEFAULT_DEBUG_SPAWN_ENABLED;
+  if (isBool(v)) return v;
+  console.warn(`[worca] invalid debugSpawnEnabled ${JSON.stringify(v)} — using the default (${DEFAULT_DEBUG_SPAWN_ENABLED})`);
+  return DEFAULT_DEBUG_SPAWN_ENABLED;
+}
+
+/**
+ * What the runner will actually do on the next spawn, and why. ONE precedence
+ * rule, shared by the runner gate and the settings API: a NON-EMPTY
+ * WORCA_DEBUG_SPAWN in the environment wins (parsed with the envFlag rule, so an
+ * exported "0"/"false" is an explicit OFF override), otherwise the stored
+ * preference applies. An empty export (`export WORCA_DEBUG_SPAWN=` in a profile
+ * or a dotenv template) is NOT an override — the runner would read it as OFF
+ * while the UI showed the stored value checked, with nothing explaining why.
+ * @returns {{enabled: boolean, source: 'env'|'settings'}}
+ */
+export function effectiveDebugSpawn() {
+  const v = process.env.WORCA_DEBUG_SPAWN;
+  if (v !== undefined && v !== '') return { enabled: envFlag('WORCA_DEBUG_SPAWN'), source: 'env' };
+  return { enabled: debugSpawnEnabled(), source: 'settings' };
+}
+
+/**
+ * Persist the preference. Nothing else: the runner reads it back per spawn, so
+ * the change is live everywhere without touching this process's environment.
+ * @throws {Error} unless `input` is a boolean.
+ */
+export async function setDebugSpawnEnabled(input) {
+  assertDebugSpawnInput(input);
+  const settings = readSettings();
+  if (input === DEFAULT_DEBUG_SPAWN_ENABLED) delete settings.debugSpawnEnabled;
+  else settings.debugSpawnEnabled = input;
+  await persistSettings(settings);
+  return { debugSpawnEnabled: debugSpawnEnabled() };
 }
 
 // ---------------------------------------------------------------------------

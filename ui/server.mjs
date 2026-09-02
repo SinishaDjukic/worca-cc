@@ -41,6 +41,7 @@ import {
   setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod, assertCostLimitInputs,
   askMaxTurns, askMaxBudgetUsd, setAskMaxTurns, setAskMaxBudgetUsd, assertAskLimitInputs,
   chatPrefs, setChatPrefs,
+  debugSpawnEnabled as storedDebugSpawnEnabled, effectiveDebugSpawn, setDebugSpawnEnabled, assertDebugSpawnInput, SETTINGS_POST_KEYS,
 } from '../src/core/settings.mjs';
 import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
@@ -2776,6 +2777,8 @@ const settingsState = () => ({
   costLimitResetPeriod: costLimitResetPeriod(),
   askMaxTurns: askMaxTurns(),
   askMaxBudgetUsd: askMaxBudgetUsd(),
+  debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
+  debugSpawnEffective: effectiveDebugSpawn(),             // what the next spawn will DO, and why
 });
 
 app.get('/api/settings', (_req, res) => {
@@ -2791,6 +2794,7 @@ app.post('/api/settings', async (req, res) => {
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
   const hasBudgetKey = has('pipelineCostLimitUsd') || has('totalCostLimitUsd') || has('costLimitResetPeriod');
   const hasAskKey = has('askMaxTurns') || has('askMaxBudgetUsd');
+  const hasDebugSpawnKey = has('debugSpawnEnabled');
   // Normalize the budget keys first, then validate them as a SET before ANY write.
   // Each setter persists on its own, so a two-key POST whose second key is invalid
   // used to answer 400 with the first key already on disk, no budget-changed
@@ -2811,6 +2815,15 @@ app.post('/api/settings', async (req, res) => {
   try {
     assertCostLimitInputs(budget);
     assertAskLimitInputs(ask);
+    if (hasDebugSpawnKey) assertDebugSpawnInput(body.debugSpawnEnabled);
+    // Root first: it is the one key whose setter can still fail AFTER the asserts
+    // above (an unusable path), so every other key's write must come after it or
+    // a mixed POST would answer 400 with those keys already applied on disk.
+    // Legacy contract: a POST that names NO known key clears root; the known
+    // keys live beside their setters (SETTINGS_POST_KEYS), not in a list here.
+    if (has('root') || !SETTINGS_POST_KEYS.some(has)) {
+      await setWorcaRoot(typeof body.root === 'string' ? body.root : '');
+    }
     if (has('chat')) await setChatPrefs(body.chat);
     if (has('projectsRoot')) {
       await setProjectsRoot(typeof body.projectsRoot === 'string' ? body.projectsRoot : '');
@@ -2820,12 +2833,11 @@ app.post('/api/settings', async (req, res) => {
     if (has('costLimitResetPeriod')) await setCostLimitResetPeriod(budget.costLimitResetPeriod);
     if (has('askMaxTurns')) await setAskMaxTurns(ask.askMaxTurns);
     if (has('askMaxBudgetUsd')) await setAskMaxBudgetUsd(ask.askMaxBudgetUsd);
-    // Legacy contract: a POST that names no known key clears root. Budget and ask
-    // keys must not trip it — a budget-only or ask-only save would otherwise wipe the root.
-    if (has('root') || !(has('projectsRoot') || hasBudgetKey || hasAskKey || has('chat'))) {
-      await setWorcaRoot(typeof body.root === 'string' ? body.root : '');
-    }
+    if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
     if (hasBudgetKey) emitChanged('budget-changed');
+    // Other open tabs repaint their Settings cards (a stale tab could otherwise
+    // "save" its old checkbox state over this one with no feedback to either).
+    if (hasAskKey || hasDebugSpawnKey) emitChanged('settings-changed');
     res.json({ ...settingsState(), chat: chatPrefs() });
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).
