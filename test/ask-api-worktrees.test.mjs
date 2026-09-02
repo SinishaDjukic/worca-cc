@@ -171,3 +171,29 @@ test('a message POST racing DELETE never starts a turn; nothing survives the del
   assert.equal((await fetch(`${base}/api/ask/threads/${thread.id}`)).status, 404);
   assert.ok(!existsSync(join(homeDir, 'ask', thread.id)), 'thread dir gone');
 });
+
+test('bulk DELETE /api/ask/threads removes every chat\'s worktrees git-properly and counts them', async () => {
+  const JSONH = { 'Content-Type': 'application/json' };
+  const { openAskWorktree } = await import('../src/core/ask/worktrees.mjs');
+  const store = await import('../src/core/ask/store.mjs');
+  const t1 = (await (await fetch(`${base}/api/ask/threads`, { method: 'POST', headers: JSONH, body: '{}' })).json()).thread;
+  const t2 = (await (await fetch(`${base}/api/ask/threads`, { method: 'POST', headers: JSONH, body: '{}' })).json()).thread;
+  const w1 = await openAskWorktree({ threadId: t1.id, projectKey, ref: 'main' });
+  const w2 = await openAskWorktree({ threadId: t2.id, projectKey, ref: 'main' });
+  const w3 = await openAskWorktree({ threadId: t2.id, projectKey, ref: 'main' });
+  const hist = await (await fetch(`${base}/api/ask/history`)).json();
+  assert.equal(hist.threads, store.countThreads());
+  assert.equal(hist.worktrees, 3);
+  const r = await fetch(`${base}/api/ask/threads`, { method: 'DELETE' });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.ok, true);
+  assert.equal(j.removed.threads, hist.threads);
+  assert.equal(j.removed.worktrees, 3);
+  assert.deepEqual(j.failed, []);
+  for (const w of [w1, w2, w3]) assert.ok(!existsSync(w.path), `${w.path} gone`);
+  const porcelain = String(spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoDir }).stdout);
+  assert.ok(!porcelain.includes('/wt/'), 'no stale registration in the source repo');
+  assert.equal(store.countThreads(), 0);
+  assert.equal(store.countWorktrees(), 0);
+});

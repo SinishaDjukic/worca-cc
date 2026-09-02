@@ -230,7 +230,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // "+" attach button (see buildComposer). A long haiku title still ellipsizes.
     header.appendChild(el.title);
     header.appendChild(make('span', 'ask-header-spacer'));
-    const threadsBtn = iconButton('ask-icon-btn', 'Recent chats', ICONS.threads, () => toggleThreadsPopover(threadsBtn));
+    const threadsBtn = iconButton('ask-icon-btn', 'History', ICONS.threads, () => toggleThreadsPopover(threadsBtn));
     threadsBtn.setAttribute('data-ask-threads-btn', '');
     header.appendChild(threadsBtn);
     const newBtn = iconButton('ask-icon-btn', 'New chat', ICONS.plus, () => newThread());
@@ -726,16 +726,38 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return meter;
   }
 
+  /** History meter: "12 chats" / "1 chat" / '' at 0 (same empty-string convention as the agents meter). */
+  function fmtChats(n) {
+    return Number.isFinite(n) && n > 0 ? `${n} chat${n === 1 ? '' : 's'}` : '';
+  }
+
   function toggleThreadsPopover(trigger) {
-    const panel = openPopover({ panelClass: 'ask-pop-threads', trigger, build: (p) => { p.appendChild(make('div', 'ask-pop-caption', 'Recent chats')); } });
+    let meter = null;
+    const panel = openPopover({
+      panelClass: 'ask-pop-threads',
+      trigger,
+      build: (p) => {
+        // Same caption-row pattern as the agents popover: the row paints at once,
+        // the meter fills once the list lands (the popover opens synchronously).
+        const head = make('div', 'ask-pop-caption-row');
+        head.appendChild(make('span', 'ask-pop-caption', 'History'));
+        meter = make('span', 'ask-pop-caption-meter', '');
+        head.appendChild(meter);
+        p.appendChild(head);
+      },
+    });
     if (!panel) return;
     Promise.resolve()
       .then(() => fetch('/api/ask/threads?limit=50'))
       .then((r) => (r && r.ok ? r.json() : { threads: [] }))
       .catch(() => ({ threads: [] }))
-      .then(({ threads }) => {
+      .then(({ threads, total }) => {
         if (st.popover === null || st.popover.panel !== panel) return; // closed meanwhile
-        renderThreadRows(panel, Array.isArray(threads) ? threads : []);
+        const rows = Array.isArray(threads) ? threads : [];
+        // `total` is EVERY saved chat (the route caps rows at limit); an older
+        // server without it degrades to the page size.
+        if (meter) meter.textContent = fmtChats(Number.isInteger(total) && total >= 0 ? total : rows.length);
+        renderThreadRows(panel, rows);
       });
   }
 
@@ -1950,9 +1972,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       && /is waiting for your answer/.test(frame.message.text)) announce('run needs an answer');
   }
 
+  // Settings → "Delete all chat history" broadcast (seq-less, threadId-less): every
+  // row is gone server-side, so a tab still holding st.threadId would keep a dead
+  // chat in memory until its next fetch 404s. Reset exactly like the "+" button.
+  function onHistoryCleared() {
+    closePopover({ focusTrigger: false });
+    if (st.threadId) newThread();
+  }
+
   function pushServerFrame(frame) {
+    if (st.destroyed || !frame) return;
+    if (frame.type === 'ask-history-cleared') { onHistoryCleared(); return; }
     // Defence-in-depth: the model's own threadId filter is the real router — this early return only saves an apply() call and cannot be observed from tests (the model would drop the frame identically).
-    if (st.destroyed || !frame || !st.model || frame.threadId !== st.threadId) return;
+    if (!st.model || frame.threadId !== st.threadId) return;
     const r = st.model.apply(frame);
     if (r && r.gap) { resync(); return; }
     if (!r || !r.ok) return;

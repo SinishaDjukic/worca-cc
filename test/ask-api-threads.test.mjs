@@ -173,6 +173,93 @@ test('?limit clamps the list', async () => {
   assert.equal(j.threads.length, 2);
 });
 
+test('the list carries total = every saved chat, not the capped page', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const j = await (await fetch(`${base}/api/ask/threads?limit=1`)).json();
+  assert.equal(j.threads.length, 1);
+  assert.equal(j.total, store.countThreads());
+  assert.ok(j.total > 1, 'earlier tests left more than one thread behind');
+});
+
+test('GET /api/ask/history counts threads, worktrees, attachments and in-flight jobs', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const thread = store.createThread();
+  const msg = store.appendMessage(thread.id, { role: 'user', text: 'x' });
+  store.addAttachment(thread.id, msg.id, { name: 'n.md', text: 'hello' });
+  // An earlier test's mock turn may still be settling — wait for the table to go quiet
+  // so the fake job below is the ONLY running one.
+  await new Promise((res, rej) => {
+    const t0 = Date.now();
+    (function tick() {
+      if ([...mod._testing.askJobs.values()].every((j) => j.status !== 'running')) return res();
+      if (Date.now() - t0 > 4000) return rej(new Error('a mock turn never settled'));
+      setTimeout(tick, 15);
+    })();
+  });
+  mod._testing.askJobs.set(thread.id, { turn: { stop: () => {} }, status: 'running', graceTimer: null });
+  try {
+    const r = await fetch(`${base}/api/ask/history`);
+    assert.equal(r.status, 200);
+    const j = await r.json();
+    assert.deepEqual(Object.keys(j).sort(), ['attachments', 'inFlight', 'threads', 'worktrees']);
+    assert.equal(j.threads, store.countThreads());
+    assert.equal(j.worktrees, store.countWorktrees());
+    assert.equal(j.attachments, store.countAttachments());
+    assert.ok(j.attachments >= 1);
+    assert.equal(j.inFlight, 1, 'the fake running job is the only one in flight');
+  } finally {
+    mod._testing.askJobs.delete(thread.id);
+  }
+});
+
+test('DELETE /api/ask/threads (bulk) removes every chat, stops jobs, clears askDeleting and broadcasts ask-history-cleared', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const msgs = [];
+  const ws = new WebSocket(wsBase, { headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' } });
+  ws.on('message', (d) => { try { msgs.push(JSON.parse(String(d))); } catch { /* ignore */ } });
+  await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
+  const a = store.createThread();
+  const b = store.createThread();
+  const m = store.appendMessage(a.id, { role: 'user', text: 'x' });
+  store.addAttachment(a.id, m.id, { name: 'n.md', text: 'hello' });
+  const dir = store.attachmentsDir(a.id);
+  assert.ok(existsSync(dir));
+  const stops = [];
+  const graceTimer = setTimeout(() => {}, 60_000);
+  mod._testing.askJobs.set(b.id, { turn: { stop: () => stops.push(b.id) }, status: 'running', graceTimer });
+  const total = store.countThreads();
+  assert.ok(total >= 2);
+  const r = await del('/api/ask/threads');
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.ok, true);
+  assert.deepEqual(j.failed, []);
+  assert.equal(j.removed.threads, total);
+  assert.equal(j.removed.worktrees, 0);
+  assert.equal(store.countThreads(), 0);
+  assert.equal(store.countAttachments(), 0);
+  assert.ok(!existsSync(dir), 'attachment dir gone');
+  assert.ok(stops.length >= 1, 'the running job was stopped');
+  assert.equal(mod._testing.askJobs.has(b.id), false, 'the job entry was dropped');
+  assert.equal(mod._testing.askDeleting.size, 0, 'askDeleting is empty again');
+  await new Promise((res, rej) => {
+    const t0 = Date.now();
+    (function tick() {
+      if (msgs.some((x) => x.type === 'ask-history-cleared')) return res();
+      if (Date.now() - t0 > 4000) return rej(new Error('no ask-history-cleared frame'));
+      setTimeout(tick, 15);
+    })();
+  });
+  const frame = msgs.find((x) => x.type === 'ask-history-cleared');
+  assert.deepEqual(frame, { type: 'ask-history-cleared' }, 'seq-less, threadId-less out-of-turn frame');
+  ws.close();
+  // An empty history is still a 200 with zero counts.
+  const again = await (await del('/api/ask/threads')).json();
+  assert.deepEqual(again, { ok: true, removed: { threads: 0, worktrees: 0 }, failed: [] });
+  const hist = await (await fetch(`${base}/api/ask/history`)).json();
+  assert.deepEqual(hist, { threads: 0, worktrees: 0, attachments: 0, inFlight: 0 });
+});
+
 test('attachment download: text/plain + nosniff + inline; wrong thread 404; bad shape 400', async () => {
   const store = await import('../src/core/ask/store.mjs');
   const thread = store.createThread();

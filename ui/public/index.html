@@ -1131,6 +1131,19 @@
                 <button type="button" id="askLimitsSave" class="btn btn-primary btn-mini">Save</button>
               </div>
               <small class="hint" id="askLimitsMsg"></small>
+              <!-- Chat history: the counts paint with the view; the button opens a
+                   danger confirm quoting FRESH counts, then DELETE /api/ask/threads. -->
+              <div class="field" style="margin-top:14px">
+                <div class="label-row">
+                  <label for="askHistoryDelete">Chat history</label>
+                  <button type="button" class="info-tip" aria-label="About Chat history">i<span class="tip-content hidden">
+                    Every saved Ask Worca chat: transcripts, attachments and the git worktrees checked out for them. Runs started from a chat are not affected.
+                  </span></button>
+                </div>
+                <button type="button" id="askHistoryDelete" class="ask-history-delete" disabled>Delete all chat history</button>
+                <small class="hint" id="askHistoryCounts"></small>
+                <small class="hint" id="askHistoryMsg"></small>
+              </div>
             </section>
 
             <!-- Chat notifications (chat-connectivity-design.md §4.8): which run

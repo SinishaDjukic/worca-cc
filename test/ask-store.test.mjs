@@ -11,6 +11,7 @@ import { worcaHome } from '../src/core/projects.mjs';
 import {
   ASK_ID_RE, newAskId, askRoot, attachmentsDir,
   createThread, getThread, listThreads, updateThread, setThreadTitle, addThreadTotals, deleteThread, sweepEmptyThreads,
+  countThreads, listThreadIds, countWorktrees, countAttachments,
   appendMessage, getMessage, listMessages, finishMessage, setMessageBlocks, findCard, updateCardBlock, sweepStreamingMessages,
   addAttachment, listAttachments, getAttachment, readAttachmentText, readAttachmentRaw,
   attachmentPath, threadAttachmentBytes,
@@ -78,6 +79,32 @@ test('listThreads: newest updated first, runLinks count, limit', () => {
   assert.equal(list.find((x) => x.id === b.id).runLinks, 2);
   assert.equal(list.find((x) => x.id === a.id).runLinks, 0);
   assert.equal(listThreads({ limit: 1 }).length, 1);
+});
+
+// The History popover shows the TOTAL, not the capped page; the bulk delete
+// walks EVERY id. Neither may go through listThreads (LIMIT 50/200).
+test('countThreads / listThreadIds ignore the list cap; countWorktrees / countAttachments are global', () => {
+  const before = countThreads();
+  const made = [];
+  for (let i = 0; i < 3; i += 1) made.push(createThread().id);
+  assert.equal(countThreads(), before + 3);
+  const ids = listThreadIds();
+  assert.equal(ids.length, before + 3);
+  for (const id of made) assert.ok(ids.includes(id));
+  assert.ok(ids.every((id) => ASK_ID_RE.test(id)));
+  const wtBefore = countWorktrees();
+  getDb().prepare(`INSERT INTO ask_worktrees (id, thread_id, project_key, project_dir, ref, resolved_commit, worktree_dir, created_at, updated_at)
+                   VALUES ('wt_00000001', ?, 'p', '/p', 'main', 'abc', '/tmp/wt', 't', 't')`).run(made[0]);
+  assert.equal(countWorktrees(), wtBefore + 1);
+  const attBefore = countAttachments();
+  const m = appendMessage(made[1], { role: 'user', text: 'x' });
+  addAttachment(made[1], m.id, { name: 'a.md', text: 'a' });
+  addAttachment(made[1], m.id, { name: 'b.md', text: 'b' });
+  assert.equal(countAttachments(), attBefore + 2);
+  for (const id of made) deleteThread(id);
+  assert.equal(countThreads(), before);
+  assert.equal(countWorktrees(), wtBefore, 'the worktree row cascaded with its thread');
+  assert.equal(countAttachments(), attBefore);
 });
 
 // db.mjs:44 designs for a second writing process (the CLI running a pipeline, a

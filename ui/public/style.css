@@ -367,6 +367,14 @@ input[type="file"]{font-size:12.5px;color:var(--ink-3);background:transparent;bo
 .add-project{margin-top:10px;display:flex;flex-direction:column;gap:9px;padding:14px;
   border:1.5px solid var(--line-2);border-radius:var(--r-ctrl);background:var(--field);}
 .add-project-actions{display:flex;gap:9px;justify-content:flex-end;}
+/* Settings → Chat history: a text-style destructive action so its label sits on
+   the same left edge as the "Chat history" heading and the counts line under it
+   (a pill's inner padding indented the text). Same shape as .hd-cmt-btn. */
+.ask-history-delete{border:none;background:none;padding:0;color:var(--red-ink);
+  font:600 12.5px var(--sans);cursor:pointer;line-height:1.45;}
+.ask-history-delete:hover:not(:disabled){text-decoration:underline;}
+.ask-history-delete:disabled{opacity:.45;cursor:not-allowed;}
+.ask-history-delete:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:3px;}
 /* path row (input + trailing button) — shared by add-project, project modal, plugin add */
 .path-row{display:flex;gap:9px;align-items:center;}
 .path-row input{flex:1 1 auto;min-width:0;}

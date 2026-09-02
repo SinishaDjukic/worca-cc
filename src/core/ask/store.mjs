@@ -99,6 +99,33 @@ export function listThreads({ limit = 50 } = {}) {
   return rows.map((r) => ({ ...rowToThread(r), runLinks: r.run_links, worktrees: r.worktrees }));
 }
 
+/** Total saved chats — the History popover shows this, not the capped page listThreads returns. */
+export function countThreads() {
+  getDb();
+  const row = prepare('SELECT count(*) AS n FROM ask_threads').get();
+  return row ? Number(row.n) : 0;
+}
+
+/** Every thread id, oldest-updated first, NO limit — the bulk delete walks all of them. */
+export function listThreadIds() {
+  getDb();
+  return prepare('SELECT id FROM ask_threads ORDER BY updated_at, id').all().map((r) => r.id);
+}
+
+/** Global ask_worktrees row count (the per-thread count rides listThreads rows). */
+export function countWorktrees() {
+  getDb();
+  const row = prepare('SELECT count(*) AS n FROM ask_worktrees').get();
+  return row ? Number(row.n) : 0;
+}
+
+/** Global ask_attachments row count. */
+export function countAttachments() {
+  getDb();
+  const row = prepare('SELECT count(*) AS n FROM ask_attachments').get();
+  return row ? Number(row.n) : 0;
+}
+
 const THREAD_PATCH_COLS = { title: 'title', model: 'model', effort: 'effort', sessionId: 'session_id', context: 'context' };
 
 /** Patch ⊆ {title, model, effort, sessionId, context}; unknown keys ignored; always bumps updated_at. */

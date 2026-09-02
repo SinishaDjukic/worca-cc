@@ -46,6 +46,8 @@ import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
   listThreads as askListThreads, updateThread as askUpdateThread,
   deleteThread as askDeleteThread, sweepEmptyThreads, sweepStreamingMessages,
+  countThreads as askCountThreads, listThreadIds as askListThreadIds,
+  countWorktrees as askCountWorktrees, countAttachments as askCountAttachments,
   appendMessage as askAppendMessage, getMessage as askGetMessage,
   listMessages as askListMessages, setMessageBlocks as askSetMessageBlocks,
   findCard as askFindCard, updateCardBlock as askUpdateCardBlock,
@@ -3612,7 +3614,51 @@ app.get('/api/ask/threads', (req, res) => {
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
     const threads = askListThreads({ limit }).map((t) => ({ ...t, inFlight: !!askInFlight(t.id) }));
-    res.json({ threads });
+    // total = EVERY saved chat (the History popover's meter), not the capped page above.
+    res.json({ threads, total: askCountThreads() });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// Settings → "Delete all chat history": the counts the confirm dialog quotes,
+// read fresh right before it opens.
+app.get('/api/ask/history', (req, res) => {
+  try {
+    res.json({
+      threads: askCountThreads(),
+      worktrees: askCountWorktrees(),
+      attachments: askCountAttachments(),
+      inFlight: askRunningCount(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// Bulk delete: every thread through deleteAskThreadFully, SEQUENTIALLY (each
+// worktree removal spawns git — never in parallel), best-effort per thread. The
+// ids come from listThreadIds (no cap), never from the LIMIT-ed listThreads.
+// One JSON at the end; then a seq-less out-of-turn frame so every open tab
+// drops its now-dead st.threadId (the panel would otherwise keep it until the
+// next 404).
+app.delete('/api/ask/threads', async (req, res) => {
+  const removed = { threads: 0, worktrees: 0 };
+  const failed = [];
+  try {
+    for (const id of askListThreadIds()) {
+      try {
+        const r = await deleteAskThreadFully(id);
+        if (r.deleted) {
+          removed.threads += 1;
+          removed.worktrees += r.worktrees;
+        } else failed.push(id);
+      } catch {
+        failed.push(id);
+      }
+    }
+    res.json({ ok: true, removed, failed });
+    broadcast({ type: 'ask-history-cleared' });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -3697,13 +3743,13 @@ app.patch('/api/ask/threads/:id', (req, res) => {
 
 // §7.5 order: abort the in-flight turn -> detach followers -> remove the chat's
 // worktrees git-properly -> delete the row (tx + cascades) + rm -rf inside
-// deleteThread -> drop the job entry.
-app.delete('/api/ask/threads/:id', async (req, res) => {
-  const id = askIdParam(res, req.params.id, 'thread');
-  if (!id) return;
+// deleteThread -> drop the job entry. Shared by the per-thread DELETE and the
+// bulk DELETE; askDeleting brackets the whole thing per id (POST /messages
+// refuses the thread while its delete is past the first await).
+// Returns { deleted, worktrees } — worktrees = rows removeThreadWorktrees removed.
+async function deleteAskThreadFully(id) {
+  askDeleting.add(id);
   try {
-    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
-    askDeleting.add(id);
     const stopJob = () => {
       const job = askJobs.get(id);
       if (job && job.turn && typeof job.turn.stop === 'function') {
@@ -3722,20 +3768,30 @@ app.delete('/api/ask/threads/:id', async (req, res) => {
     // P4 §5: git-proper removal of every worktree BEFORE the row cascade — the
     // rmSync inside askDeleteThread alone would leave stale `git worktree`
     // registrations in the source repos. Never throws (best-effort per row).
-    await askRemoveThreadWorktrees(id);
+    const { removed } = await askRemoveThreadWorktrees(id);
     // Re-read the job AFTER the await: askDeleting blocks new turns, but a turn
     // that was already mid-start is stopped here rather than left running.
     const job = stopJob();
-    askDeleteThread(id);
+    const deleted = askDeleteThread(id);
     if (job) {
       if (job.graceTimer) clearTimeout(job.graceTimer);
       askJobs.delete(id);
     }
+    return { deleted, worktrees: removed };
+  } finally {
+    askDeleting.delete(id);
+  }
+}
+
+app.delete('/api/ask/threads/:id', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  try {
+    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    await deleteAskThreadFully(id);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
-  } finally {
-    askDeleting.delete(id);
   }
 });
 
@@ -5316,6 +5372,6 @@ export { app, server, runs };
 export const _testing = {
   wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork,
-  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, resolveAskContext, flipCard,
-  emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope,
+  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard,
+  emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
 };

@@ -7685,6 +7685,7 @@ async function loadSettings() {
     paintBudgetReadout();
     refreshBudget();
     paintChatSettings(data.chat);
+    loadAskHistory();
     setSettingsMsg('');
   } catch (e) { setSettingsMsg(e.message, 'err'); }
 }
@@ -8013,6 +8014,81 @@ document.getElementById('askNoCap')?.addEventListener('change', () => {
   const budget = document.getElementById('askMaxBudgetUsd');
   if (budget) budget.disabled = document.getElementById('askNoCap').checked;
 });
+
+// ---- Ask Worca chat history (same card, same hint pattern) -----------------
+// The counts line paints with the settings view; the destructive button refetches
+// GET /api/ask/history so the dialog quotes what is about to go, then one bulk
+// DELETE /api/ask/threads. The server broadcasts ask-history-cleared afterwards
+// — the ask panel resets itself off that frame, nothing to do here.
+function setAskHistoryMsg(text, kind) {
+  const n = document.getElementById('askHistoryMsg');
+  if (n) { n.textContent = text || ''; n.className = `hint${kind ? ` ${kind}` : ''}`; }
+}
+function askHistoryCount(n, one, many = `${one}s`) {
+  return `${n} ${n === 1 ? one : many}`;
+}
+function normalizeAskHistory(data) {
+  const num = (v) => (Number.isInteger(v) && v > 0 ? v : 0);
+  return { threads: num(data?.threads), worktrees: num(data?.worktrees), attachments: num(data?.attachments), inFlight: num(data?.inFlight) };
+}
+function paintAskHistory(counts) {
+  const line = document.getElementById('askHistoryCounts');
+  const btn = document.getElementById('askHistoryDelete');
+  if (!line || !btn) return;
+  line.textContent = counts.threads
+    ? `${askHistoryCount(counts.threads, 'chat')} · ${askHistoryCount(counts.worktrees, 'worktree')}`
+    : 'No saved chats.';
+  btn.disabled = counts.threads === 0;
+}
+async function fetchAskHistory() {
+  const res = await fetch('/api/ask/history');
+  const data = await safeJson(res);
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return normalizeAskHistory(data);
+}
+async function loadAskHistory() {
+  if (!document.getElementById('askHistoryCounts')) return;
+  try { paintAskHistory(await fetchAskHistory()); } catch (e) { setAskHistoryMsg(e.message, 'err'); }
+}
+// One bullet per non-zero count; the in-progress line only when a turn is live.
+function askHistoryConfirmMessage(c) {
+  const lines = ['This permanently deletes all Ask Worca chat history:'];
+  if (c.threads) lines.push(`• ${askHistoryCount(c.threads, 'chat thread')} and ${c.threads === 1 ? 'its transcript' : 'their transcripts'}`);
+  if (c.worktrees) {
+    lines.push(`• ${askHistoryCount(c.worktrees, 'git worktree')} checked out for ${c.threads === 1 ? 'that chat' : 'those chats'} (removed from ${c.worktrees === 1 ? 'its source repo' : 'their source repos'})`);
+  }
+  if (c.attachments) lines.push(`• ${askHistoryCount(c.attachments, 'attachment')}`);
+  if (c.inFlight) lines.push(`• ${askHistoryCount(c.inFlight, 'chat')} currently in progress will be stopped`);
+  lines.push('Runs started from these chats are not affected. This cannot be undone.');
+  return lines.join('\n');
+}
+async function deleteAskHistory() {
+  setAskHistoryMsg('');
+  let counts;
+  try { counts = await fetchAskHistory(); } catch (e) { setAskHistoryMsg(e.message, 'err'); return; }
+  paintAskHistory(counts);
+  if (!counts.threads) return;   // emptied meanwhile — nothing to confirm
+  const ok = await confirmModal({
+    title: 'Delete all chat history?',
+    message: askHistoryConfirmMessage(counts),
+    confirmLabel: 'Delete everything',
+    danger: true,
+  });
+  if (!ok) return;
+  let res = null;
+  try {
+    res = await fetch('/api/ask/threads', { method: 'DELETE' });
+  } catch { setAskHistoryMsg('network error', 'err'); return; }
+  const data = await safeJson(res);
+  if (!res.ok) { setAskHistoryMsg(data.error || `HTTP ${res.status}`, 'err'); await loadAskHistory(); return; }
+  const removed = normalizeAskHistory(data.removed);
+  const failed = Array.isArray(data.failed) ? data.failed.length : 0;
+  const summary = `Deleted ${askHistoryCount(removed.threads, 'chat')} and ${askHistoryCount(removed.worktrees, 'worktree')}.`;
+  if (failed) setAskHistoryMsg(`${summary} ${askHistoryCount(failed, 'chat')} could not be removed.`, 'err');
+  else setAskHistoryMsg(summary);
+  await loadAskHistory();
+}
+document.getElementById('askHistoryDelete')?.addEventListener('click', deleteAskHistory);
 
 // Browse… for the projects root: native OS dialog, in-app modal fallback —
 // the same two endpoints the add-project Browse button uses (app.js:3793).
