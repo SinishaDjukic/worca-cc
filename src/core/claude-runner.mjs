@@ -107,9 +107,15 @@ const _resolveNoted = new Set();
  *  explanation when that is what actually went wrong (ENOENT on a bare name
  *  whose only PATH hit is claude.cmd; EINVAL on an explicit .cmd). */
 function spawnFailure(bin, err, prefix) {
-  const hint = /ENOENT|EINVAL/.test(String(err && err.code || err && err.message || ''))
-    ? explainUnspawnableClaude(bin) : null;
-  return new Error(`${prefix}: ${err.message}${hint ? ` — ${hint}` : ''}`);
+  const unspawnable = /ENOENT|EINVAL/.test(String(err && err.code || err && err.message || ''));
+  const hint = unspawnable ? explainUnspawnableClaude(bin) : null;
+  const out = new Error(`${prefix}: ${err.message}${hint ? ` — ${hint}` : ''}`);
+  // An unspawnable CLI (not installed / not on PATH) is user-fixable, not a
+  // pipeline bug: stamp the recovery class so the orchestrator's gate pauses
+  // the run for manual resume instead of hard-failing it (ENOENT matches no
+  // message-sniff pattern, so without the stamp it would classify null).
+  if (unspawnable) out.errorClass = 'network';
+  return out;
 }
 
 // Cap for the stderr detail embedded in a non-zero-exit Error message. The

@@ -96,7 +96,7 @@ function findDisabledPluginFor(key) {
   return null;
 }
 
-/** Max auto-mode retries for a recoverable error before falling back to status error. */
+/** Max auto-mode retries for a recoverable error before pausing for manual resume. */
 const RECOVERY_MAX_AUTO_ATTEMPTS = (() => {
   const n = Number(process.env.WORCA_RECOVERY_MAX_ATTEMPTS);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 3;
@@ -2238,18 +2238,23 @@ export class RunHarness extends EventEmitter {
     throw pauseErr();
   }
 
-  /** Decide how to recover from a classified error. Auto mode: bounded backoff
-   *  then give up (and abort immediately if a pause fired during backoff, so a
-   *  pause is never followed by a wasted retry). Interactive: ONE shared prompt
-   *  per error class (same-class siblings await the same answer), and distinct
-   *  classes are serialized so only one recovery prompt is open at a time (the
-   *  gate holds a single pendingQuestion). Returns 'retry' | 'abort'. */
+  /** Decide how to recover from a classified error. Auto mode: bounded backoff,
+   *  then 'pause' — the cause is outside the pipeline (an outage that outlasts
+   *  the budget) and may clear by the time the user resumes, so a terminal
+   *  error would throw the run away for nothing. A pause fired DURING backoff
+   *  still aborts, so a user pause is never followed by a wasted retry (the
+   *  outer catch reclassifies that abort under pauseRequested and unwinds as a
+   *  pause anyway). Interactive: ONE shared prompt per error class (same-class
+   *  siblings await the same answer), and distinct classes are serialized so
+   *  only one recovery prompt is open at a time (the gate holds a single
+   *  pendingQuestion); an explicit Abort stays a terminal error.
+   *  Returns 'retry' | 'abort' | 'pause'. */
   async _recover({ node, cls, err, attempt }) {
     this._log(node.key, 'warn', `recoverable ${cls} error: ${err.message}`, err?.stream ? ERR_STREAM : null);
     await appendAudit(this.pipeline.dir, `Recoverable **${cls}** error on ${node.key}: ${firstLine(err.message)}`).catch(() => {});
 
     if (this.auto) {
-      if (attempt > RECOVERY_MAX_AUTO_ATTEMPTS) return 'abort';
+      if (attempt > RECOVERY_MAX_AUTO_ATTEMPTS) return 'pause';
       await this._backoff(attempt, this.pauseAbort.signal);
       // A pause during backoff must win: abort instead of retrying. The loop's
       // outer catch then re-classifies the thrown error under pauseRequested and
