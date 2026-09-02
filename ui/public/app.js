@@ -10307,9 +10307,11 @@ function applyHistResumeGate(btn, pauseReason, budget, pauseDetail = '') {
   btn.disabled = totalBlocked;
   if (totalBlocked) {
     btn.title = `Total budget reached — blocked until ${fmtResetAtLocal(budget.windowEndMs)} or a higher total limit`;
-  } else if (pauseReason === 'error') {
+  } else if (pauseReason === 'error' || pauseReason === 'recoverable') {
     // An error pause is never gated — the tooltip carries the cause instead.
-    btn.title = `Paused after an error${pauseDetail ? `: ${pauseDetail}` : ''} — fix the cause, then resume`;
+    btn.title = pauseReason === 'recoverable'
+      ? `Paused on a recoverable error${pauseDetail ? `: ${pauseDetail}` : ''} — resume once it clears`
+      : `Paused after an error${pauseDetail ? `: ${pauseDetail}` : ''} — fix the cause, then resume`;
   } else {
     btn.title = '';
   }
@@ -10459,11 +10461,11 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   const noteEl = node.querySelector('.hist-pausenote');
   const parked = PAUSED_STATUSES.includes(String(p.status || '').toLowerCase());
   const costPaused = parked && pauseReason.startsWith('cost_');
-  const errorPaused = parked && pauseReason === 'error';
+  const errorPaused = parked && (pauseReason === 'error' || pauseReason === 'recoverable');
   noteEl.hidden = !(costPaused || errorPaused);
   noteEl.textContent = costPaused
     ? (pauseReason === 'cost_total' ? 'paused · total budget' : 'paused · cost limit')
-    : (errorPaused ? 'paused · error' : '');
+    : (errorPaused ? (pauseReason === 'recoverable' ? 'paused · recoverable' : 'paused · error') : '');
   // The cause is too long for the caption line — it rides as the tooltip.
   noteEl.title = errorPaused ? pauseDetail : '';
   noteEl.classList.toggle('total', costPaused && pauseReason === 'cost_total');
@@ -11493,17 +11495,21 @@ function hdRetainedFor(record, st) {
 }
 
 // Error-pause banner (D11): the cause, and the promise that nothing was discarded.
-function renderErrorPauseBanner(detail) {
+function renderErrorPauseBanner(detail, reason = 'error') {
+  const recoverable = reason === 'recoverable';
   const el = document.createElement('div');
   el.className = 'pause-error-banner';
+  el.dataset.reason = reason;
   const b = document.createElement('b');
-  b.textContent = 'Paused after an error';
+  b.textContent = recoverable ? 'Paused on a recoverable error' : 'Paused after an error';
   const text = document.createElement('div');
   text.className = 'peb-text';
   text.textContent = detail || 'The run hit an error it could not recover from.';
   const hint = document.createElement('div');
   hint.className = 'peb-hint';
-  hint.textContent = 'Nothing was discarded: the worktree and the run position are kept. Fix the cause, then Resume.';
+  hint.textContent = recoverable
+    ? 'The run could not reach the model and parked itself. Nothing was discarded — once the cause clears (re-login, connectivity, credit, a rate limit), Resume retries the step.'
+    : 'Nothing was discarded: the worktree and the run position are kept. Fix the cause, then Resume.';
   el.append(b, text, hint);
   return el;
 }
@@ -11522,11 +11528,11 @@ function paintHdBanners(screen, record, data) {
     : (typeof st.pauseDetail === 'string' ? st.pauseDetail : '');
   if (pauseDetail) screen.dataset.pauseDetail = pauseDetail; else delete screen.dataset.pauseDetail;
   // Keyed on the detail so a corrected cause replaces the banner instead of stacking.
-  const wantErr = pauseReason === 'error' && HD_RESUMABLE.has(String(st.status || '').toLowerCase());
+  const wantErr = (pauseReason === 'error' || pauseReason === 'recoverable') && HD_RESUMABLE.has(String(st.status || '').toLowerCase());
   const oldErr = banners.querySelector('.pause-error-banner');
-  if (oldErr && (!wantErr || oldErr.dataset.detail !== pauseDetail)) oldErr.remove();
+  if (oldErr && (!wantErr || oldErr.dataset.detail !== pauseDetail || oldErr.dataset.reason !== pauseReason)) oldErr.remove();
   if (wantErr && !banners.querySelector('.pause-error-banner')) {
-    const errBanner = renderErrorPauseBanner(pauseDetail);
+    const errBanner = renderErrorPauseBanner(pauseDetail, pauseReason);
     errBanner.dataset.detail = pauseDetail;
     banners.prepend(errBanner);
   }
@@ -13546,6 +13552,10 @@ function rdStateCopy(r, stepName) {
     const why = r.pauseDetail ? `: ${r.pauseDetail}` : '';
     return `Paused after an error${why}. Fix the cause, then Resume — the worktree and progress are kept.`;
   }
+  if (r.pauseReason === 'recoverable') {
+    const why = r.pauseDetail ? ` (${r.pauseDetail})` : '';
+    return `Paused on a recoverable error${why}. Once it clears, Resume retries the step — the worktree and progress are kept.`;
+  }
   if (r.pauseReason === 'usage_limit') {
     return `Paused — session/usage limit reached${r.pauseDetail ? ` (${r.pauseDetail})` : ''}. Resume after the reset.`;
   }
@@ -14343,6 +14353,7 @@ function statusPill(r) {
     if (r.pauseReason === 'cost_total') return { family: 'amber', text: 'Paused · total budget' };
     // An error pause is parked and resumable (never dead), so it stays in the amber family.
     if (r.pauseReason === 'error') return { family: 'amber', text: 'Paused · error' };
+    if (r.pauseReason === 'recoverable') return { family: 'amber', text: 'Paused · recoverable' };
     if (r.pauseReason === 'usage_limit') return { family: 'amber', text: 'Paused · usage limit' };
     return { family: 'amber', text: 'Paused' };
   }
@@ -14929,9 +14940,11 @@ function paintRunCard(r) {
     resumeBtn.disabled = !!totalBlocked;
     if (totalBlocked) {
       resumeBtn.title = `Total budget reached — blocked until ${fmtResetAtLocal(budgetState.budget.windowEndMs)} or a higher total limit`;
-    } else if (r.pauseReason === 'error') {
+    } else if (r.pauseReason === 'error' || r.pauseReason === 'recoverable') {
       // The cause the run parked on, so the card alone explains what to fix.
-      resumeBtn.title = `Paused after an error${r.pauseDetail ? `: ${r.pauseDetail}` : ''} — fix the cause, then resume`;
+      resumeBtn.title = r.pauseReason === 'recoverable'
+        ? `Paused on a recoverable error${r.pauseDetail ? `: ${r.pauseDetail}` : ''} — resume once it clears`
+        : `Paused after an error${r.pauseDetail ? `: ${r.pauseDetail}` : ''} — fix the cause, then resume`;
     } else {
       resumeBtn.title = stockResumeTitle();
     }
@@ -15351,7 +15364,7 @@ function paintRdBanners(screen, r) {
   // ---- error-pause banner (D11) ----
   // Same conditional-rebuild shape as paintHdBanners': keyed on the detail so a
   // repaint neither stacks a second banner nor freezes a corrected cause.
-  const errPaused = isPaused(r) && r.pauseReason === 'error';
+  const errPaused = isPaused(r) && (r.pauseReason === 'error' || r.pauseReason === 'recoverable');
   const errDetail = r.pauseDetail || '';
   const oldErr = banners.querySelector('.pause-error-banner');
   if (oldErr && (!errPaused || oldErr.dataset.detail !== errDetail)) oldErr.remove();

@@ -403,10 +403,16 @@ function stdinCanAnswer() {
 /**
  * Wire readline Q&A, log/phase rendering, and SIGINT pause/stop onto an
  * orchestrator, then drive it. `start` launches run() or resume(). Returns the
- * process exit code: 0 for done — and for a pause in an INTERACTIVE run (the
- * user chose or witnessed it and can resume); 3 for a pause under --yes (the
- * run parked itself on auth/quota/usage-limit/exhausted retries with nobody
- * attached to resume it, so a wrapper must not read success); 1 otherwise.
+ * process exit code (pauseExitCode, failure-policy.mjs):
+ *   0  done — and an INTERACTIVE pause the user chose or a limit/cap forced (they
+ *      witnessed it and can resume);
+ *   1  a terminal error (a launch failure, an unrecoverable resume, a stop) and an
+ *      INTERACTIVE pause an error forced;
+ *   2  a usage error (fail());
+ *   3  any pause under --yes — the run parked itself (auth/quota/usage limit,
+ *      exhausted retries, an error) with nobody attached to resume it, so a
+ *      wrapper must not read success. Under --yes a parked run's cause prints
+ *      on STDOUT with the pause block; only a terminal error reaches stderr.
  */
 async function attachAndDrive(orch, flags, start) {
   // Refuse an unanswerable interactive run BEFORE start(). The orchestrator
@@ -588,6 +594,10 @@ async function attachAndDrive(orch, flags, start) {
     if (result.reason === REASON.ERROR) {
       out(c('red', c('bold', 'Pipeline paused after an error.')));
       if (result.detail) out(c('red', `  ${result.detail}`));
+      out(c('yellow', 'Nothing was discarded: the worktree and the run position are kept.'));
+    } else if (result.reason === REASON.RECOVERABLE) {
+      out(c('yellow', c('bold', 'Pipeline paused on a recoverable error — resume once it clears.')));
+      if (result.detail) out(c('yellow', `  ${result.detail}`));
       out(c('yellow', 'Nothing was discarded: the worktree and the run position are kept.'));
     } else if (result?.reason) {
       const label = describePauseReason(result.reason) || result.reason;

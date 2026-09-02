@@ -14,7 +14,7 @@ import { parseCommand } from './parser.mjs';
 import { BOOKEND_EXECUTION_IDS } from '../../shared/graph/constants.mjs';
 import { createAllowlistGuard, parseIdList } from './allowlist.mjs';
 import { runRef, fmtUsd, fmtMs } from './renderers.mjs';
-import { giveUpOption } from '../failure-policy.mjs';
+import { giveUpOption, describePauseReason, pauseConsequences } from '../failure-policy.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
 const reply = (text, severity = 'info') => ({ title: null, body: [md(text)], severity });
@@ -175,8 +175,8 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
         const r = t.row;
         return reply([runLine({ ...r, runId: r.id }),
           ...(fmtUsd(r.totalCostUsd) ? [`   **Cost:** ${fmtUsd(r.totalCostUsd)}`] : []),
-          ...(r.pauseReason ? [`   **Pause reason:** ${r.pauseReason}`] : []),
-          ...(r.pauseDetail ? [`   **Error:** ${r.pauseDetail}`] : []),
+          ...(r.pauseReason ? [`   **Pause reason:** ${describePauseReason(r.pauseReason) || r.pauseReason}`] : []),
+          ...(r.pauseDetail ? [`   **${pauseConsequences(r.pauseReason).severity === 'error' ? 'Error' : 'Cause'}:** ${r.pauseDetail}`] : []),
         ].join('\n'));
       }
       const r = t.run;

@@ -663,6 +663,7 @@ export class RunHarness extends EventEmitter {
     this.pauseReason = null;                 // WHY the run paused: 'cost_pipeline'|'cost_total'|'error'|<usage-limit line>|null
     this.pauseDetail = null;                 // the human detail behind pauseReason ('error': the clipped message)
     this._setupDone = false;                 // run()/resume() flip this right before _engineRun (setup replay)
+    this._rehydrated = true;                 // resume() clears this until the paused run is rehydrated (the 'resume' site)
     this._modeRecorded = false;              // resume(): the row recorded a run-root mode (a setup-incomplete point may not)
     this._pauseGate = null;                  // gate context snapshot when paused at a gate
     this._resumeNodeSessions = null;         // nodeId -> sessionId map, set by resume() (Task 5)
@@ -828,14 +829,16 @@ export class RunHarness extends EventEmitter {
    * seeing the stop). The caller throws pauseErr() itself where a throw is due.
    * @param {string} reason a REASON code
    * @param {Error|null} err the failure; null for a cap (`detail` carries the text)
-   * @param {{nc?:object|null, ctx?:object|null, label?:string, detail?:string|null}} [o]
-   *   nc/ctx: the execution (orchestrator sites); label: the log source otherwise
+   * @param {{nc?:object|null, ctx?:object|null, label?:string, detail?:string|null, cls?:string|null}} [o]
+   *   nc/ctx: the execution (orchestrator sites); label: the log source otherwise;
+   *   cls: the error class behind a RECOVERABLE pause (kept in the log, audit and detail)
    */
-  _pauseFor(reason, err, { nc = null, ctx = null, label = null, detail = null } = {}) {
+  _pauseFor(reason, err, { nc = null, ctx = null, label = null, detail = null, cls = null } = {}) {
     const where = label || nc?.key || ctx?.nodeId || 'orchestrator';
     const meta = ctx ? { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal } : {};
     const line = firstLine(err?.message || (err == null ? '' : String(err))) || 'unknown error';
-    const text = detail ?? (reason === REASON.ERROR ? errorDetail(err) : line);
+    const text = detail ?? (reason === REASON.ERROR ? errorDetail(err)
+      : reason === REASON.RECOVERABLE ? `${cls || 'recoverable'}: ${line}` : line);
     if (reason === REASON.ERROR) {
       // The ONE error-level line, written BEFORE the pause sentinel the caller
       // throws next (a pause/abort is never logged as a failure).
@@ -852,6 +855,10 @@ export class RunHarness extends EventEmitter {
     } else if (reason === REASON.USAGE_LIMIT) {
       this._log(where, 'warn', `${describePauseReason(reason)} — pausing for manual resume: ${text}`, meta);
       audit = `Pipeline **paused**: session/usage limit on ${where} — ${text}. Resume after the reset.`;
+    } else if (reason === REASON.RECOVERABLE) {
+      this._log(where, 'warn', `recoverable ${cls || 'error'} error — pausing for manual resume: ${line}`,
+        { ...meta, ...(err?.stream ? { stream: err.stream } : {}) });
+      audit = `Pipeline **paused**: recoverable ${cls || 'error'} error on ${where} — ${line}. Resume to retry.`;
     } else {
       this._log(where, 'warn', `${text} — pausing for manual resume`, meta);
       audit = `Pipeline **paused**: ${text}.`;
@@ -1231,6 +1238,10 @@ export class RunHarness extends EventEmitter {
     // D7: the point tells us whether run() ever finished its setup. Until the replay
     // below re-runs it, a pause here must re-stamp the flag (_completePaused reads it).
     this._setupDone = rp.setupIncomplete !== true;
+    // The 'resume' site (failure-policy.mjs): until the paused run is rehydrated —
+    // identity, worktrees, guardrails, prompts — a failure cannot be parked again
+    // (the point on disk is all there is) and ends the run.
+    this._rehydrated = false;
     try {
       // ── rehydrate identity + state ──
       this.state.id = row.id;
@@ -1365,6 +1376,7 @@ export class RunHarness extends EventEmitter {
       this._startHeartbeat();
       await appendAudit(this.pipeline.dir, rehydrated.audit);
       this._emit('state', this.getState());
+      this._rehydrated = true;
 
       // ── setup replay (D7): a converted setup failure paused this run before its
       //    checkout / graph / skills gate existed. Re-run exactly what run() never
@@ -1372,6 +1384,7 @@ export class RunHarness extends EventEmitter {
       //    read 'running' (above), never the constructor's 'idle'.
       let replayedSkills = null;
       if (rp.setupIncomplete === true) {
+        this.state.titleProvisional = rp.titleProvisional === true;
         replayedSkills = await this._replaySetup();
         // The replay (re)wrote the run manifest; the re-assembly below reads it.
         if (this.runRootMode === 'detached') resumeManifest = await readRunManifest(this.runRoot);
@@ -3699,8 +3712,14 @@ export class RunHarness extends EventEmitter {
     // stale stamp behind (resume() re-arms the consumed point, which may carry one).
     const rp = this.state.resumePoint;
     if (rp && typeof rp === 'object') {
-      if (this._setupDone) delete rp.setupIncomplete;
-      else rp.setupIncomplete = true;
+      if (this._setupDone) { delete rp.setupIncomplete; delete rp.titleProvisional; }
+      else {
+        rp.setupIncomplete = true;
+        // Whether run() ever kicked the LLM title off (it does so right after the run
+        // root exists): the replay reads this to finish the job, since the flag is
+        // not a row column.
+        rp.titleProvisional = this.state.titleProvisional === true;
+      }
     }
     this._setStatus('paused');
     await this._persist();
@@ -3738,9 +3757,11 @@ export class RunHarness extends EventEmitter {
   _engineAgentKeys() { return new Set(); }
 
   /**
-   * The SETUP / SHELL site (failure-policy.mjs): a failure the shell sees once the
-   * pipeline row exists — before run()'s setup finished ('setup') or after it
-   * ('shell'). A verdict already issued downstream (a terminal error from the node
+   * The SETUP / SHELL / RESUME site (failure-policy.mjs): a failure the shell sees
+   * once the pipeline row exists — before run()'s setup finished ('setup'), after it
+   * ('shell'), or before resume() rehydrated the paused run ('resume', where the
+   * only verdict that can be enacted is to end the run: the point on disk is
+   * already the best the run can offer). A verdict already issued downstream (a terminal error from the node
    * or flow site) is enacted, never re-decided. Returns null when the verdict is a
    * terminal error — the caller then falls through to the error path — else records
    * the cause; kills anything still in flight (pause() is a no-op unless the run is
@@ -3755,7 +3776,7 @@ export class RunHarness extends EventEmitter {
    * reason + detail, the run log the line.
    */
   async _pauseForFailure(err, fallbackPoint = null) {
-    const site = this._setupDone ? 'shell' : 'setup';
+    const site = !this._rehydrated ? 'resume' : this._setupDone ? 'shell' : 'setup';
     const verdict = isTerminal(err) ? { outcome: 'error' }
       : resolveFailure({ site, cls: classifyError(err), auto: this.auto });
     if (verdict.outcome !== 'pause') { markTerminal(err); return null; }
@@ -3799,11 +3820,19 @@ export class RunHarness extends EventEmitter {
         this.state.checkpointRefs = { ...this.checkpointRefs };
       }
     }
+    // run() closes the preflight bookend right after the checkpoint; the paused
+    // run's ledger still holds it at 'start' (the rehydrated steps), so close it
+    // here or a finished run keeps an open preflight row forever.
+    this._bookend('preflight', 'done');
     this._checkAbort();
     // 3b) run root + worktrees — keyed on the per-member map, NEVER on this.workDir
     //     (it defaults to projectDir and is never falsy).
     const missing = this.members.some((m) => !this.workDirs.get(m.projectKey));
     if (missing) await this._setupRunRoot({ replay: true });
+    // run() kicks the LLM title off once runCwd exists; a run that paused before
+    // that point still carries its provisional title, so kick it off now. A run
+    // that got past it already holds the generated row.title (loaded by resume()).
+    if (this.state.titleProvisional) this._kickoffTitleGeneration();
     this._checkAbort();
     // 3c) graph build (fail-safe, idempotent)
     if (this.isWorkspace) await this._buildWorktreeGraphAll(); else await this._buildWorktreeGraph();

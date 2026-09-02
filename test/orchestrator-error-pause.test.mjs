@@ -3,7 +3,7 @@
 // point, and resume() replays whatever setup the paused run never finished.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, existsSync } from 'node:fs';
+import { mkdtempSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -145,4 +145,49 @@ test('a failure BEFORE createPipeline is still a launch error (nothing to resume
   assert.match(res.error, /ghost/);
   assert.equal(errors.length, 1, "the launch-error channel still emits 'error'");
   assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM pipelines').get().n, rowsBefore, 'no row was created');
+});
+
+// ── the RESUME site: a paused run that cannot be rehydrated ENDS ──────────────
+// Re-parking it would re-persist the same dead point and re-notify the task source
+// on every attempt, forever (failure-policy.mjs: resume/* -> error).
+test('resume: a paused run whose checkout was deleted ENDS as an error — it is never re-parked', async () => {
+  const dir = gitDir();
+  const orch1 = createOrchestrator({ projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true }, runners: runners() });
+  orch1._buildWorktreeGraph = async () => { throw new Error('graphify exploded'); };
+  const r1 = await orch1.run();
+  assert.equal(r1.status, 'paused', JSON.stringify(r1));
+  const wt = orch1.getState().branch.worktreeDir;
+  assert.ok(wt && existsSync(wt));
+  rmSync(wt, { recursive: true, force: true });            // the checkout is gone
+  const saved = readPipelineForResume(orch1.state.id);
+  assert.equal(saved.row.status, 'paused');
+
+  const orch2 = createOrchestrator({ projectDir: dir, auto: true, claude: { mock: true }, runners: runners(), resume: saved });
+  const r2 = await orch2.resume();
+  assert.equal(r2.status, 'error', JSON.stringify(r2));
+  assert.match(r2.error, /worktree missing/);
+  const row = getDb().prepare('SELECT status FROM pipelines WHERE id = ?').get(orch1.state.id);
+  assert.equal(row.status, 'error', 'the row is terminal — a second resume is refused, not repeated');
+});
+
+test('setup replay closes the preflight bookend and kicks the title off — a finished run keeps no open preflight row', async () => {
+  const dir = gitDir();
+  const orch1 = createOrchestrator({ projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true }, runners: runners() });
+  // Throw INSIDE the checkpoint step — before run() closes the preflight bookend
+  // and before the title kickoff — so the paused run carries an open preflight
+  // row and its provisional title.
+  orch1._ensureGitCheckpoint = async () => { throw new Error('git checkpoint failed: index.lock held'); };
+  const r1 = await orch1.run();
+  assert.equal(r1.status, 'paused', JSON.stringify(r1));
+  assert.equal(orch1.getState().steps.find((s) => s.key === 'x:preflight:1')?.status, 'start', 'the pause left preflight open');
+  const saved = readPipelineForResume(orch1.state.id);
+
+  const orch2 = createOrchestrator({ projectDir: dir, auto: true, claude: { mock: true }, runners: runners(), resume: saved });
+  let kicked = 0;
+  const realKick = orch2._kickoffTitleGeneration.bind(orch2);
+  orch2._kickoffTitleGeneration = () => { kicked++; return realKick(); };
+  const r2 = await orch2.resume();
+  assert.equal(r2.status, 'done', JSON.stringify(r2));
+  assert.equal(orch2.getState().steps.find((s) => s.key === 'x:preflight:1')?.status, 'done', 'the replay closed the bookend');
+  assert.equal(kicked, 1, 'the replay kicked the title generation off (the original run never reached it)');
 });

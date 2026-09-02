@@ -31,11 +31,12 @@
 // shell — enacts that same verdict instead of re-deciding at its own site.
 
 /** Where a failure can surface. */
-export const SITES = Object.freeze(['node', 'flow', 'budget', 'setup', 'launch', 'shell']);
+export const SITES = Object.freeze(['node', 'flow', 'budget', 'setup', 'launch', 'shell', 'resume']);
 
 /** Machine-readable pause reasons. The human text rides `pauseDetail`. */
 export const REASON = Object.freeze({
   USAGE_LIMIT: 'usage_limit',     // a session/usage cap that clears after a multi-hour reset
+  RECOVERABLE: 'recoverable',     // a classified (auth/quota/rate_limit/network) error the run could not outwait
   ERROR: 'error',                 // a failure that would otherwise have ended the run
   COST_PIPELINE: 'cost_pipeline', // the per-pipeline cost cap
   COST_TOTAL: 'cost_total',       // the total (weekly/monthly) cost cap
@@ -76,10 +77,12 @@ export const FAILURE_POLICY = Object.freeze({
     usage_limit: both(pause(REASON.USAGE_LIMIT)),
     // auth/quota are user-fixable but never time-fixable — a 1s/2s/4s backoff
     // cannot re-login or top up a balance — so auto mode pauses on the first hit.
-    auth:        cell(pause(REASON.ERROR), prompt(pause(REASON.ERROR))),
-    quota:       cell(pause(REASON.ERROR), prompt(pause(REASON.ERROR))),
-    rate_limit:  cell(retry(RECOVERY_MAX_AUTO_ATTEMPTS, pause(REASON.ERROR)), prompt(pause(REASON.ERROR))),
-    network:     cell(retry(RECOVERY_MAX_AUTO_ATTEMPTS, pause(REASON.ERROR)), prompt(pause(REASON.ERROR))),
+    // A self-parked auto run pauses as RECOVERABLE (the class is kept: "resume when
+    // it clears"); a user who gives up on the prompt pauses as ERROR (a verdict).
+    auth:        cell(pause(REASON.RECOVERABLE), prompt(pause(REASON.ERROR))),
+    quota:       cell(pause(REASON.RECOVERABLE), prompt(pause(REASON.ERROR))),
+    rate_limit:  cell(retry(RECOVERY_MAX_AUTO_ATTEMPTS, pause(REASON.RECOVERABLE)), prompt(pause(REASON.ERROR))),
+    network:     cell(retry(RECOVERY_MAX_AUTO_ATTEMPTS, pause(REASON.RECOVERABLE)), prompt(pause(REASON.ERROR))),
     '*':         both(pause(REASON.ERROR)),
   }),
   // A flow card, the questions loop, _afterExecution, a composite shell mode, an
@@ -99,6 +102,12 @@ export const FAILURE_POLICY = Object.freeze({
   // Anything that escaped the engine after setup (a scheduler throw, a persist
   // failure, a bookkeeping bug).
   shell: Object.freeze({ '*': both(pause(REASON.ERROR)) }),
+  // resume() could not REHYDRATE the paused run — the checkout is gone, run.json
+  // is corrupt, a guardrail set or agent prompt no longer loads. The point on disk
+  // is already the best the run can offer: parking it again would re-persist the
+  // same point (and re-notify the task source) on every attempt, forever. A
+  // structurally unrecoverable resume ends the run.
+  resume: Object.freeze({ '*': both(error()) }),
 });
 
 /** The recovery prompt's options, derived from the row: what Retry does is fixed;
@@ -165,6 +174,7 @@ export function isTerminal(err) {
 const CONSEQUENCES = Object.freeze({
   manual:                { reportsToSource: false, stagesResults: false, severity: 'info',    notifyPref: 'paused', exitInteractive: 0, label: null },
   [REASON.USAGE_LIMIT]:  { reportsToSource: true,  stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'session/usage limit reached' },
+  [REASON.RECOVERABLE]:  { reportsToSource: true,  stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'recoverable error — resume to retry' },
   [REASON.COST_PIPELINE]:{ reportsToSource: true,  stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'pipeline cost limit reached' },
   [REASON.COST_TOTAL]:   { reportsToSource: true,  stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'total cost limit reached' },
   [REASON.ERROR]:        { reportsToSource: true,  stagesResults: true,  severity: 'error',   notifyPref: 'error',  exitInteractive: 1, label: 'a step failed' },

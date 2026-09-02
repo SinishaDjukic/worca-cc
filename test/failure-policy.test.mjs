@@ -14,6 +14,7 @@ import {
 
 const MAX = RECOVERY_MAX_AUTO_ATTEMPTS;
 const PAUSE_ERR = { outcome: 'pause', reason: 'error' };
+const PAUSE_REC = { outcome: 'pause', reason: 'recoverable' };
 
 // ── the matrix, cell by cell ────────────────────────────────────────────────────
 // [site, cls, auto, attempt, answer] -> expected verdict (options elided)
@@ -21,9 +22,10 @@ const ROWS = [
   // node / usage_limit: never retried, pauses with its own reason, both modes
   ['node', 'usage_limit', true,  1, undefined, { outcome: 'pause', reason: 'usage_limit' }],
   ['node', 'usage_limit', false, 1, undefined, { outcome: 'pause', reason: 'usage_limit' }],
-  // node / auth, quota: auto pauses on the FIRST hit (no futile backoff); interactive prompts
-  ['node', 'auth',  true,  1, undefined, PAUSE_ERR],
-  ['node', 'quota', true,  1, undefined, PAUSE_ERR],
+  // node / auth, quota: auto pauses on the FIRST hit (no futile backoff) as RECOVERABLE
+  // (the class is kept: resume when it clears); interactive prompts, and giving up is ERROR
+  ['node', 'auth',  true,  1, undefined, PAUSE_REC],
+  ['node', 'quota', true,  1, undefined, PAUSE_REC],
   ['node', 'auth',  false, 1, undefined, { outcome: 'prompt' }],
   ['node', 'quota', false, 1, undefined, { outcome: 'prompt' }],
   ['node', 'auth',  false, 1, 'retry',   { outcome: 'retry' }],
@@ -31,9 +33,9 @@ const ROWS = [
   // node / network, rate_limit: auto retries MAX times, then pauses; interactive prompts
   ['node', 'network',    true, 1,       undefined, { outcome: 'retry' }],
   ['node', 'network',    true, MAX,     undefined, { outcome: 'retry' }],
-  ['node', 'network',    true, MAX + 1, undefined, PAUSE_ERR],
+  ['node', 'network',    true, MAX + 1, undefined, PAUSE_REC],
   ['node', 'rate_limit', true, 1,       undefined, { outcome: 'retry' }],
-  ['node', 'rate_limit', true, MAX + 1, undefined, PAUSE_ERR],
+  ['node', 'rate_limit', true, MAX + 1, undefined, PAUSE_REC],
   ['node', 'network',    false, 1, undefined, { outcome: 'prompt' }],
   ['node', 'network',    false, 1, 'retry',   { outcome: 'retry' }],
   ['node', 'network',    false, 1, 'giveup',  PAUSE_ERR],
@@ -62,6 +64,10 @@ const ROWS = [
   ['shell', null,  true,  1, undefined, PAUSE_ERR],
   ['shell', null,  false, 1, undefined, PAUSE_ERR],
   ['shell', 'quota', true, 1, undefined, PAUSE_ERR],
+  // resume: the paused run could not be rehydrated (checkout gone, run.json corrupt) -> the run ends
+  ['resume', null,      true,  1, undefined, { outcome: 'error' }],
+  ['resume', null,      false, 1, undefined, { outcome: 'error' }],
+  ['resume', 'network', true,  1, undefined, { outcome: 'error' }],
 ];
 
 for (const [site, cls, auto, attempt, answer, want] of ROWS) {
@@ -104,6 +110,12 @@ test('every pause verdict names a known reason code', () => {
 test('the launch site can only end the run — nothing exists to resume into', () => {
   for (const cls of ['auth', 'network', null]) {
     for (const auto of [true, false]) assert.equal(resolveFailure({ site: 'launch', cls, auto }).outcome, 'error');
+  }
+});
+
+test('the resume site ends the run — re-parking an un-rehydratable point would loop forever', () => {
+  for (const cls of ['auth', 'network', null]) {
+    for (const auto of [true, false]) assert.equal(resolveFailure({ site: 'resume', cls, auto }).outcome, 'error');
   }
 });
 
@@ -166,7 +178,7 @@ test('consequences: only an error-pause stages the diff artifact and reads as an
   assert.equal(pauseConsequences(REASON.ERROR).stagesResults, true);
   assert.equal(pauseConsequences(REASON.ERROR).severity, 'error');
   assert.equal(pauseConsequences(REASON.ERROR).notifyPref, 'error');
-  for (const r of [REASON.USAGE_LIMIT, REASON.COST_PIPELINE, REASON.COST_TOTAL]) {
+  for (const r of [REASON.USAGE_LIMIT, REASON.RECOVERABLE, REASON.COST_PIPELINE, REASON.COST_TOTAL]) {
     assert.equal(pauseConsequences(r).stagesResults, false, r);
     assert.equal(pauseConsequences(r).severity, 'warning', r);
     assert.equal(pauseConsequences(r).notifyPref, 'paused', r);
@@ -184,6 +196,7 @@ test('exit codes: 3 under --yes for every pause; interactive 0 unless an error f
   for (const r of [null, ...REASON_CODES]) assert.equal(pauseExitCode(r, true), 3, `auto ${r}`);
   assert.equal(pauseExitCode(null, false), 0);
   assert.equal(pauseExitCode(REASON.USAGE_LIMIT, false), 0);
+  assert.equal(pauseExitCode(REASON.RECOVERABLE, false), 0);
   assert.equal(pauseExitCode(REASON.COST_PIPELINE, false), 0);
   assert.equal(pauseExitCode(REASON.COST_TOTAL, false), 0);
   assert.equal(pauseExitCode(REASON.ERROR, false), 1);
@@ -194,4 +207,5 @@ test('describePauseReason: a label per code, none for a manual pause', () => {
   assert.equal(describePauseReason(REASON.ERROR), 'a step failed');
   assert.equal(describePauseReason(REASON.COST_TOTAL), 'total cost limit reached');
   assert.equal(describePauseReason(REASON.USAGE_LIMIT), 'session/usage limit reached');
+  assert.match(describePauseReason(REASON.RECOVERABLE), /recoverable/);
 });

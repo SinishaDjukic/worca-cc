@@ -519,7 +519,10 @@ export class GraphOrchestrator extends RunHarness {
       if (ctx.slice && this.pendingQuestion?.kind === 'recovery') {
         const pq = this.pendingQuestion;
         this.pendingQuestion = null;
-        pq.reject(abortError());
+        // Stamped terminal: the released sibling's catch must ENACT this verdict
+        // (its row ends 'error' with the phase), never re-decide it at the flow site
+        // as a pause with the detail 'aborted'.
+        pq.reject(markTerminal(abortError()));
       }
       throw err;
     } finally {
@@ -791,7 +794,7 @@ export class GraphOrchestrator extends RunHarness {
         const verdict = await this._recover({ node: { key: nc.key || ctx.nodeId }, cls, err, attempt });
         if (this.pauseRequested) throw pauseErr();          // a pause landed during backoff/prompt: its reason stands
         if (verdict.outcome === 'retry') { this._execStep(ctx, 'start'); continue; }   // back to running for the retry
-        if (verdict.outcome === 'pause') { this._pauseFor(verdict.reason, err, { nc, ctx }); throw pauseErr(); }
+        if (verdict.outcome === 'pause') { this._pauseFor(verdict.reason, err, { nc, ctx, cls }); throw pauseErr(); }
         throw markTerminal(err);                           // terminal: _execute's catch ends the run
       }
     }

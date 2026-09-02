@@ -59,8 +59,9 @@ export function renderDone(meta, payload = {}) {
     const parts = head(isError ? '\u{1F534}' : '⏸', meta);
     parts.push(`   **Status:** paused${reason ? ` — ${reason}` : ''}`);
     if (payload.detail && payload.reason) {
-      const d = String(payload.detail);
-      parts.push(`   **${isError ? 'Error' : 'Cause'}:** ${d.length > 300 ? `${d.slice(0, 300)}…` : d}`);
+      // Already bounded (PAUSE_DETAIL_MAX, middle-clipped so the runner's trailing
+      // cause survives) — a head clip here would throw exactly that tail away.
+      parts.push(`   **${isError ? 'Error' : 'Cause'}:** ${String(payload.detail)}`);
     }
     parts.push(`   Resume from the worca-cc UI, or reply: /resume ${runRef(meta.runId)}`);
     return mdMsg(parts.join('\n'), isError ? 'error' : 'warning');

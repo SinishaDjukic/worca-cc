@@ -126,8 +126,10 @@ test('auto: bounded retry then PAUSE when a transient error never clears', async
   // An outage that outlasts the backoff budget is still outside the pipeline's
   // control: park the run as resumable instead of a terminal error.
   assert.equal(res.status, 'paused');
-  assert.equal(res.reason, 'error');
-  assert.match(res.detail || '', /ECONNRESET/);
+  // A self-parked auto run keeps its CLASS: 'recoverable' (resume when it clears),
+  // never the 'error' verdict a user's give-up or a genuine failure carries.
+  assert.equal(res.reason, 'recoverable');
+  assert.match(res.detail || '', /^network: .*ECONNRESET/);
   // First producer node: 1 initial + RECOVERY_MAX_AUTO_ATTEMPTS retries = 4 calls.
   assert.equal(calls, 4);
 });
@@ -135,16 +137,21 @@ test('auto: bounded retry then PAUSE when a transient error never clears', async
 test('auto: auth error pauses immediately — a 7s backoff cannot re-login', async () => {
   const dir = gitDir();
   let calls = 0;
+  const logs = [];
   const alwaysAuth = async () => { calls++; throw AUTH_ERR(); };
   const orch = createOrchestrator({
     projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
     runners: { producer: alwaysAuth, verifier: okVerifier },
   });
+  orch.on('log', (l) => logs.push(l));
   const res = await orch.run();
   assert.equal(res.status, 'paused', JSON.stringify(res));
-  assert.equal(res.reason, 'error');
-  assert.match(res.detail || '', /401/);
+  assert.equal(res.reason, 'recoverable');
+  assert.match(res.detail || '', /^auth: .*401/);
   assert.equal(calls, 1, 'auth is NOT retried — it pauses on the first hit');
+  // The class survives into the run log (a warn, not the error-level failure line).
+  assert.ok(logs.some((l) => l.level === 'warn' && /recoverable auth error — pausing/.test(l.text)), JSON.stringify(logs.map((l) => [l.level, l.text])));
+  assert.ok(!logs.some((l) => l.level === 'error'), 'a recoverable pause is not logged as a failure');
 });
 
 test('auto: quota error pauses immediately — retrying cannot top up the balance', async () => {
@@ -157,8 +164,8 @@ test('auto: quota error pauses immediately — retrying cannot top up the balanc
   });
   const res = await orch.run();
   assert.equal(res.status, 'paused');
-  assert.equal(res.reason, 'error');
-  assert.match(res.detail || '', /credit balance/i);
+  assert.equal(res.reason, 'recoverable');
+  assert.match(res.detail || '', /^quota: .*credit balance/i);
   assert.equal(calls, 1, 'quota is NOT retried — it pauses on the first hit');
 });
 

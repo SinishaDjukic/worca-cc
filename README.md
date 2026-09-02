@@ -205,6 +205,14 @@ worca --project /path/to/your/project --prompt "demo task" --mock --yes
 Run `worca --help` for all subcommands (projects, plugins, marketplaces,
 config, doctor) and flags.
 
+Exit codes, for scripts and CI wrappers: `0` the run finished (or an
+interactive run paused and you can resume it); `1` a hard error, a stop, or an
+interactive pause an error forced; `2` a usage error; `3` a `--yes` run that
+parked itself — auth, quota, a usage or cost limit, exhausted retries, or a
+step error — with nobody attached to resume it. Nothing is discarded on a
+pause: `worca resume <pipelineId>` picks the run up where it stopped, and the
+cause is printed with the pause block on stdout.
+
 ### `/worca` skill (inside Claude Code)
 
 ```bash

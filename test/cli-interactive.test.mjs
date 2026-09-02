@@ -347,7 +347,8 @@ test('recovery arm: a --yes run that pauses itself exits 3 — a wrapper must no
   });
   assert.equal(r.timedOut, false, r.stdout);
   assert.equal(r.code, 3, `expected the resumable-pause exit code (0=done, 1=error, 2=usage)\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
-  assert.match(r.stdout, /Pipeline paused after an error\./);
+  assert.match(r.stdout, /Pipeline paused on a recoverable error/);
+  assert.match(r.stdout, /auth: .*401/, 'the class and the cause print with the pause block');
   assert.match(r.stdout, /Resume with: /, 'the pause is resumable, and says how');
   const id = pipelineIdFrom(r.stdout);
   assert.ok(id, `no pipeline id in:\n${r.stdout}`);
