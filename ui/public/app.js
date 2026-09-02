@@ -626,6 +626,12 @@ function handleServerMessage(msg) {
     refreshBudget();
     return;
   }
+  // Another tab saved a Settings card: repaint ours from the server so a stale
+  // checkbox/field cannot be "saved" back over the change.
+  if (msg.type === 'settings-changed') {
+    loadSettings();
+    return;
+  }
   if (msg.type === 'projects-changed') {
     refreshAllCounts();
     if (currentView() === 'projects') loadProjectsView();
@@ -7963,10 +7969,27 @@ if (el.budgetReset) {
 }
 
 // ---- Ask Worca limits card (budget-card pattern above) ---------------------
-function setAskLimitsMsg(text, kind) {
-  const n = document.getElementById('askLimitsMsg');
+// Shared by the small Settings cards (Ask Worca, Spawn diagnostics): one hint
+// setter and one "POST /api/settings → parse → paint or show the error" routine,
+// so a fix to the fetch/parse/error path lands in every card at once.
+function setHintMsg(id, text, kind) {
+  const n = document.getElementById(id);
   if (n) { n.textContent = text || ''; n.className = `hint${kind ? ` ${kind}` : ''}`; }
 }
+async function postSettingsCard(body, { setMsg, paint, savedText = 'Saved.' }) {
+  setMsg('');
+  let res;
+  try {
+    res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch (e) { setMsg(e.message || 'network error', 'err'); return; }
+  const data = await safeJson(res);
+  if (!res.ok) { setMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+  // A 2xx with an unparsable body yields {} — leave the card as the user set it
+  // rather than painting every field as "unset".
+  if (Object.keys(data).length) paint(data);
+  setMsg(savedText);
+}
+function setAskLimitsMsg(text, kind) { setHintMsg('askLimitsMsg', text, kind); }
 function paintAskSettings(data) {
   const turns = document.getElementById('askMaxTurns');
   const budget = document.getElementById('askMaxBudgetUsd');
@@ -7977,17 +8000,8 @@ function paintAskSettings(data) {
   budget.disabled = noCap.checked;
   budget.value = data.askMaxBudgetUsd == null ? '' : String(data.askMaxBudgetUsd);
 }
-async function postAskLimits(body) {
-  setAskLimitsMsg('');
-  let res = null;
-  try {
-    res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  } catch { setAskLimitsMsg('network error', 'err'); return; }
-  let data = null;
-  try { data = await res.json(); } catch { data = null; }
-  if (!res.ok) { setAskLimitsMsg((data && data.error) || `save failed (${res.status})`, 'err'); return; }
-  paintAskSettings(data || {});
-  setAskLimitsMsg('Saved.');
+function postAskLimits(body) {
+  return postSettingsCard(body, { setMsg: setAskLimitsMsg, paint: paintAskSettings });
 }
 function saveAskLimits() {
   const turnsRaw = document.getElementById('askMaxTurns').value.trim();
@@ -8015,31 +8029,29 @@ document.getElementById('askNoCap')?.addEventListener('change', () => {
   if (budget) budget.disabled = document.getElementById('askNoCap').checked;
 });
 
-// ---- Spawn-debug diagnostics card (Ask Worca card pattern above) -----------
-function setDebugSpawnMsg(text, kind) {
-  const n = document.getElementById('debugSpawnMsg');
-  if (n) { n.textContent = text || ''; n.className = `hint${kind ? ` ${kind}` : ''}`; }
-}
+// ---- Spawn-debug diagnostics card (shares the Ask card's helpers above) ----
+function setDebugSpawnMsg(text, kind) { setHintMsg('debugSpawnMsg', text, kind); }
+// The checkbox is the STORED preference; the note says when the environment
+// overrides it (a non-empty WORCA_DEBUG_SPAWN at launch), so an operator never
+// sees an unchecked box while diagnostics are flowing — or the reverse.
 function paintDebugSpawnSettings(data) {
   const cb = document.getElementById('debugSpawnEnabled');
   if (!cb) return;
   cb.checked = !!data.debugSpawnEnabled;
+  const eff = data.debugSpawnEffective;
+  const envOverride = !!eff && eff.source === 'env';
+  setHintMsg('debugSpawnEnvNote', envOverride
+    ? `WORCA_DEBUG_SPAWN is set in the environment: diagnostics are ${eff.enabled ? 'ON' : 'OFF'} regardless of this setting.`
+    : '', envOverride ? 'warn' : '');
 }
-async function postDebugSpawn(body) {
-  setDebugSpawnMsg('');
-  let res = null;
-  try {
-    res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  } catch { setDebugSpawnMsg('network error', 'err'); return; }
-  let data = null;
-  try { data = await res.json(); } catch { data = null; }
-  if (!res.ok) { setDebugSpawnMsg((data && data.error) || `save failed (${res.status})`, 'err'); return; }
-  paintDebugSpawnSettings(data || {});
-  setDebugSpawnMsg('Saved. Applies to the next spawn — no restart needed.');
+function postDebugSpawn(body) {
+  return postSettingsCard(body, {
+    setMsg: setDebugSpawnMsg, paint: paintDebugSpawnSettings,
+    savedText: 'Saved. Applies to the next spawn — no restart needed.',
+  });
 }
 function saveDebugSpawn() {
-  const checked = document.getElementById('debugSpawnEnabled').checked;
-  postDebugSpawn({ debugSpawnEnabled: checked });
+  postDebugSpawn({ debugSpawnEnabled: document.getElementById('debugSpawnEnabled').checked });
 }
 document.getElementById('debugSpawnSave')?.addEventListener('click', saveDebugSpawn);
 document.getElementById('debugSpawnReset')?.addEventListener('click', () => postDebugSpawn({ debugSpawnEnabled: false }));

@@ -305,6 +305,7 @@ body.view-history .topnav{margin:12px 32px 0;flex:0 0 auto;}
 .field > label .opt,.field .opt{color:var(--ink-3);font-weight:500;font-style:normal;}
 .hint{display:block;color:var(--ink-3);font-size:12px;margin-top:7px;line-height:1.45;}
 .hint.err{color:var(--red-ink);}
+.hint.warn{color:var(--amber-ink);}
 
 .input,.select,.textarea,.ta-hl-back,
 input[type="text"],input[type="number"],textarea,select{

@@ -609,6 +609,24 @@ test('debugSpawnEnabled: off by default; truthy values enable; 0/false disable',
   }
 });
 
+test('debugSpawnEnabled: with the env unset or EMPTY the stored settings.json value applies (CLI runs honour the UI checkbox)', async () => {
+  const home = await tmp();
+  await mkdir(join(home, '.worca-cc'), { recursive: true });
+  const prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, WORCA_DEBUG_SPAWN: process.env.WORCA_DEBUG_SPAWN };
+  process.env.HOME = home; process.env.USERPROFILE = home;
+  try {
+    await writeFile(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ debugSpawnEnabled: true }), 'utf8');
+    delete process.env.WORCA_DEBUG_SPAWN; assert.equal(debugSpawnEnabled(), true, 'unset env → stored true');
+    process.env.WORCA_DEBUG_SPAWN = '';    assert.equal(debugSpawnEnabled(), true, 'empty env is not an override');
+    process.env.WORCA_DEBUG_SPAWN = '0';   assert.equal(debugSpawnEnabled(), false, 'an exported 0 is an explicit OFF');
+    await writeFile(join(home, '.worca-cc', 'settings.json'), '{}', 'utf8');
+    delete process.env.WORCA_DEBUG_SPAWN;  assert.equal(debugSpawnEnabled(), false, 'default stored → off');
+    process.env.WORCA_DEBUG_SPAWN = '1';   assert.equal(debugSpawnEnabled(), true, 'env on wins over default');
+  } finally {
+    for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});
+
 test('redactArgvForLog: truncates ANY long token (prompt, --settings JSON, tool lists); flags & short values verbatim', () => {
   const big = 'x'.repeat(500);
   const settings = JSON.stringify({ permissions: { deny: Array.from({ length: 40 }, (_, i) => `Bash(rm -rf /${i})`) } });

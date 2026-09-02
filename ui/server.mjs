@@ -41,7 +41,7 @@ import {
   setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod, assertCostLimitInputs,
   askMaxTurns, askMaxBudgetUsd, setAskMaxTurns, setAskMaxBudgetUsd, assertAskLimitInputs,
   chatPrefs, setChatPrefs,
-  debugSpawnEnabled as storedDebugSpawnEnabled, setDebugSpawnEnabled, applyDebugSpawnEnvFromSettings,
+  debugSpawnEnabled as storedDebugSpawnEnabled, effectiveDebugSpawn, setDebugSpawnEnabled, assertDebugSpawnInput, SETTINGS_POST_KEYS,
 } from '../src/core/settings.mjs';
 import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
@@ -2765,7 +2765,8 @@ const settingsState = () => ({
   costLimitResetPeriod: costLimitResetPeriod(),
   askMaxTurns: askMaxTurns(),
   askMaxBudgetUsd: askMaxBudgetUsd(),
-  debugSpawnEnabled: storedDebugSpawnEnabled(),
+  debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
+  debugSpawnEffective: effectiveDebugSpawn(),             // what the next spawn will DO, and why
 });
 
 app.get('/api/settings', (_req, res) => {
@@ -2802,8 +2803,14 @@ app.post('/api/settings', async (req, res) => {
   try {
     assertCostLimitInputs(budget);
     assertAskLimitInputs(ask);
-    if (hasDebugSpawnKey && typeof body.debugSpawnEnabled !== 'boolean') {
-      throw new Error('debugSpawnEnabled must be true or false');
+    if (hasDebugSpawnKey) assertDebugSpawnInput(body.debugSpawnEnabled);
+    // Root first: it is the one key whose setter can still fail AFTER the asserts
+    // above (an unusable path), so every other key's write must come after it or
+    // a mixed POST would answer 400 with those keys already applied on disk.
+    // Legacy contract: a POST that names NO known key clears root; the known
+    // keys live beside their setters (SETTINGS_POST_KEYS), not in a list here.
+    if (has('root') || !SETTINGS_POST_KEYS.some(has)) {
+      await setWorcaRoot(typeof body.root === 'string' ? body.root : '');
     }
     if (has('chat')) await setChatPrefs(body.chat);
     if (has('projectsRoot')) {
@@ -2815,12 +2822,10 @@ app.post('/api/settings', async (req, res) => {
     if (has('askMaxTurns')) await setAskMaxTurns(ask.askMaxTurns);
     if (has('askMaxBudgetUsd')) await setAskMaxBudgetUsd(ask.askMaxBudgetUsd);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
-    // Legacy contract: a POST that names no known key clears root. Budget, ask, and
-    // debug-spawn keys must not trip it — a debug-spawn-only save would otherwise wipe root.
-    if (has('root') || !(has('projectsRoot') || hasBudgetKey || hasAskKey || has('chat') || hasDebugSpawnKey)) {
-      await setWorcaRoot(typeof body.root === 'string' ? body.root : '');
-    }
     if (hasBudgetKey) emitChanged('budget-changed');
+    // Other open tabs repaint their Settings cards (a stale tab could otherwise
+    // "save" its old checkbox state over this one with no feedback to either).
+    if (hasAskKey || hasDebugSpawnKey) emitChanged('settings-changed');
     res.json({ ...settingsState(), chat: chatPrefs() });
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).
@@ -5268,11 +5273,6 @@ if (isMain) {
   } catch (err) {
     console.error(`[worca-ui] builtin marketplace seed skipped: ${err && err.message ? err.message : err}`);
   }
-
-  // Apply the stored spawn-debug preference to this process's env, unless an operator
-  // already exported WORCA_DEBUG_SPAWN before launching worca (that wins — see
-  // applyDebugSpawnEnvFromSettings's doc comment in settings.mjs).
-  applyDebugSpawnEnvFromSettings();
 
   bootMaintenance().catch((err) => {
     console.error(`[worca-ui] boot maintenance failed: ${err && err.message ? err.message : err}`);

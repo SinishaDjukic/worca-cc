@@ -11,13 +11,13 @@ import { JSDOM } from 'jsdom';
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
-const GET_BODY = (debugSpawnEnabled = false) => ({
+const GET_BODY = (debugSpawnEnabled = false, debugSpawnEffective = { enabled: debugSpawnEnabled, source: 'settings' }) => ({
   root: '/w', projectsRoot: '/p', projectsRootDefault: '/p', default: {}, chat: {},
   pipelineCostLimitUsd: null, totalCostLimitUsd: null, costLimitResetPeriod: 'monthly',
-  askMaxTurns: 40, askMaxBudgetUsd: 2, debugSpawnEnabled,
+  askMaxTurns: 40, askMaxBudgetUsd: 2, debugSpawnEnabled, debugSpawnEffective,
 });
 
-async function boot({ postResponse, initialDebugSpawnEnabled = false } = {}) {
+async function boot({ postResponse, initialDebugSpawnEnabled = false, initialEffective } = {}) {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -32,7 +32,7 @@ async function boot({ postResponse, initialDebugSpawnEnabled = false } = {}) {
         return Promise.resolve(postResponse
           || { ok: true, status: 200, json: async () => GET_BODY(body.debugSpawnEnabled) });
       }
-      return Promise.resolve({ ok: true, status: 200, json: async () => GET_BODY(initialDebugSpawnEnabled) });
+      return Promise.resolve({ ok: true, status: 200, json: async () => GET_BODY(initialDebugSpawnEnabled, initialEffective) });
     }
     if (u.includes('/api/budget'))
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelineLimitUsd: null, totalLimitUsd: null, resetPeriod: 'monthly', windowStartMs: 0, windowEndMs: 0, msUntilReset: 0, windowSpendUsd: 0, allTimeSpendUsd: 0, remainingUsd: null, blocked: false }) });
@@ -96,4 +96,37 @@ test('ui-settings-debug-spawn: a server 400 lands verbatim', async () => {
   $('#debugSpawnSave').click();
   await tick();
   assert.equal($('#debugSpawnMsg').textContent, 'debugSpawnEnabled must be true or false');
+});
+
+test('ui-settings-debug-spawn: no env override ⇒ the env note is empty', async () => {
+  const { $, openSettings } = await boot();
+  await openSettings();
+  assert.equal($('#debugSpawnEnvNote').textContent, '');
+});
+
+test('ui-settings-debug-spawn: a launch-time env override is SAID, with the effective state, over an unchecked box', async () => {
+  const { $, openSettings } = await boot({ initialDebugSpawnEnabled: false, initialEffective: { enabled: true, source: 'env' } });
+  await openSettings();
+  assert.equal($('#debugSpawnEnabled').checked, false, 'the checkbox is the STORED value');
+  assert.match($('#debugSpawnEnvNote').textContent, /WORCA_DEBUG_SPAWN is set in the environment: diagnostics are ON/);
+  assert.ok($('#debugSpawnEnvNote').classList.contains('warn'));
+});
+
+test('ui-settings-debug-spawn: the mirror case — stored true, env forces OFF', async () => {
+  const { $, openSettings } = await boot({ initialDebugSpawnEnabled: true, initialEffective: { enabled: false, source: 'env' } });
+  await openSettings();
+  assert.equal($('#debugSpawnEnabled').checked, true);
+  assert.match($('#debugSpawnEnvNote').textContent, /diagnostics are OFF regardless/);
+});
+
+test('ui-settings-debug-spawn: a 2xx with an unparsable body leaves the checkbox as the user set it', async () => {
+  const { $, tick, openSettings } = await boot({
+    postResponse: { ok: true, status: 200, json: async () => { throw new Error('bad json'); } },
+  });
+  await openSettings();
+  $('#debugSpawnEnabled').checked = true;
+  $('#debugSpawnSave').click();
+  await tick();
+  assert.equal($('#debugSpawnEnabled').checked, true, 'not repainted as unset from an empty body');
+  assert.match($('#debugSpawnMsg').textContent, /Saved/);
 });
