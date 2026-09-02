@@ -38,6 +38,20 @@ const isAgentTool = (name) => name === 'Task' || name === 'Agent';
 const COMMENT_WRITE_TOOLS = new Set([
   'mcp__worca__add_diff_comment', 'mcp__worca__resolve_diff_comment', 'mcp__worca__delete_diff_comment',
 ]);
+// The worktree-mutating tools (P4): the MCP child opens/removes checkouts and
+// moves HEAD (checkout/switch/fetch → tools.mjs noteNav) — invisible to this
+// process, so a successful result becomes the same `ask-worktrees` broadcast
+// the REST DELETE route emits (ui/server.mjs emitAskWorktrees). `git` counts
+// only when its subcommand is one noteNav acts on; a `log`/`status` never pokes.
+const WORKTREE_TOOLS = new Set(['mcp__worca__open_worktree', 'mcp__worca__remove_worktree', 'mcp__worca__git']);
+const GIT_NAV_SUBCOMMANDS = new Set(['checkout', 'switch', 'fetch']);
+/** True when a SUCCESSFUL call of `name` with `input` changed this thread's worktree rows. */
+export function worktreeMutatingCall(name, input) {
+  if (!WORKTREE_TOOLS.has(name)) return false;
+  if (name !== 'mcp__worca__git') return true;
+  const args = input && Array.isArray(input.args) ? input.args : null;
+  return !!args && GIT_NAV_SUBCOMMANDS.has(String(args[0] ?? '').trim());
+}
 
 /** claude's usage object → the persisted shape. */
 export function normalizeUsage(u) {
@@ -128,6 +142,8 @@ const resultText = (content) => {
  * @param {Function} [o.clearTimeout]
  * @param {(p:{toolUseId:string, input:object, childOk:boolean|null})=>void} [o.onProposal]
  * @param {(p:{runId:string})=>void} [o.onCommentMutation]  a successful MCP-side comment write
+ * @param {(p:{tool:string})=>void} [o.onWorktreeMutation]  a successful MCP-side worktree open/remove/navigate
+ * @param {(usage:object)=>number|null} [o.estimateLiveCost]  DISPLAY-ONLY $ estimate of the running usage (null = no estimate)
  * @param {Record<string,string>} [o.attachmentNames]  id → display name (labels only)
  * @param {(cliCostUsd:number, usage:object)=>number} [o.resolveCost]  re-price the
  *   turn: given what the CLI reported and this turn's usage, return the
@@ -144,6 +160,8 @@ export function createTurnReducer({
   clearTimeout: clearT = globalThis.clearTimeout,
   onProposal = null,
   onCommentMutation = null,
+  onWorktreeMutation = null,
+  estimateLiveCost = null,
   attachmentNames = {},
   resolveCost = null,
   limits = ASK_LIMITS,
@@ -163,7 +181,7 @@ export function createTurnReducer({
   const byId = new Map();          // block id → block (tool / agent / card)
   const startAt = new Map();       // tool or agent id → spawn time
   const fullInputs = new Map();    // tool id → unclipped input (the proposal hook needs it)
-  const childTools = new Map();    // child tool id → { agentId, t0 }
+  const childTools = new Map();    // child tool id → { agentId, t0, name, input }
   const labels = [];
   let lastLabel = null;
   let anyToolRan = false;
@@ -226,7 +244,16 @@ export function createTurnReducer({
     const resolved = currentCost();
     return resolved === null ? 1 : resolved / raw;
   };
-  const emitUsage = () => emit('ask-usage', { usage: currentUsage(), costUsd: currentCost() });
+  // DISPLAY ONLY: the injected estimator prices the running usage sum while no
+  // `result` has landed; once cliCost() is a number the authoritative figure is
+  // in costUsd and the estimate retires (null). Read by the ask-usage frame
+  // alone — never by snapshot()/finish(), so no sink can ever book it.
+  const liveEstimate = () => {
+    if (typeof estimateLiveCost !== 'function' || cliCost() !== null) return null;
+    try { const v = estimateLiveCost(currentUsage()); return Number.isFinite(v) ? v : null; }
+    catch { return null; }
+  };
+  const emitUsage = () => emit('ask-usage', { usage: currentUsage(), costUsd: currentCost(), estimatedCostUsd: liveEstimate() });
   const flushDeltas = () => {
     if (timer !== null) { clearT(timer); timer = null; }
     if (!pending) return;
@@ -325,7 +352,7 @@ export function createTurnReducer({
       } else {
         const agent = byId.get(ptu);
         if (!agent || agent.kind !== 'agent') continue;
-        childTools.set(c.id, { agentId: ptu, t0: now(), name: c.name });
+        childTools.set(c.id, { agentId: ptu, t0: now(), name: c.name, input });
         appendLog(agent, isAgentTool(c.name) ? `→ Task ${clipStr(input.description || '', 60)}` : `→ ${short(c.name)} ${clipStr(safeJson(input), 120)}`);
       }
     }
@@ -350,6 +377,16 @@ export function createTurnReducer({
     } catch { /* unparseable result — no poke; the next open refetches anyway */ }
   }
 
+  // Same idea for worktrees: open_worktree / remove_worktree / a navigating git
+  // call succeeded in the CHILD, so the parent re-reads the rows and broadcasts
+  // them. Error results changed nothing. Both paths — main transcript and
+  // sub-agent — carry the call's input (fullInputs / childTools.input), so the
+  // git subcommand filter is the same on both.
+  function pokeWorktreeMutation(name, input, isError) {
+    if (isError || typeof onWorktreeMutation !== 'function' || !worktreeMutatingCall(name, input)) return;
+    try { onWorktreeMutation({ tool: short(name) }); } catch { /* a broken sink never breaks the stream */ }
+  }
+
   function onUser(raw, ptu, isMain) {
     const content = Array.isArray(raw.message?.content) ? raw.message.content : [];
     for (const c of content) {
@@ -362,6 +399,7 @@ export function createTurnReducer({
         const agent = byId.get(ct.agentId);
         if (agent) appendLog(agent, c.is_error ? `← error: ${clipStr(text, 120)}` : `← ok ${((now() - ct.t0) / 1000).toFixed(1)}s`);
         pokeCommentWrite(ct.name, text, c.is_error);
+        pokeWorktreeMutation(ct.name, ct.input, c.is_error);
         continue;
       }
       const b = byId.get(c.tool_use_id);
@@ -398,6 +436,7 @@ export function createTurnReducer({
         } catch { reducerErrors += 1; }
       }
       pokeCommentWrite(b.name, text, c.is_error);
+      pokeWorktreeMutation(b.name, fullInputs.get(b.id), c.is_error);
     }
   }
 

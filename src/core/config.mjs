@@ -415,6 +415,47 @@ export function resolveModelCost(modelId, cliCostUsd, usage, costCfg = undefined
   return cliCostUsd;
 }
 
+// ── display-only list prices ──────────────────────────────────────────────────
+// USD per MILLION tokens for the built-in ids, from Anthropic's published
+// pricing (platform.claude.com/docs/en/pricing — snapshot 2026-06-24). DISPLAY
+// APPROXIMATION ONLY: it feeds the chat footer's live "≈" estimate while a turn
+// streams (ask/events.mjs `estimatedCostUsd`). The CLI's result.total_cost_usd,
+// re-priced by resolveModelCost, stays the ONLY figure any message row, thread
+// total, ledger or budget ever books — nothing here is read by those paths.
+// Ids missing here get no estimate (null), which is the pre-existing behaviour;
+// `[1m]` twins and dated ids resolve to their base row (the long-context premium
+// is not modelled). cacheWrite = 1.25× input (5-minute TTL), cacheWrite1h = 2×
+// input, cacheRead = 0.1× input except Fable 5.1 (0.025×). Refresh by hand when
+// Anthropic moves a price. PREDEFINED_MODELS itself stays untouched — its entry
+// shape is pinned (test/config-models-global.test.mjs:205).
+export const PREDEFINED_LIST_PRICES = Object.freeze({
+  'claude-fable-5-1':  { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5, cacheWrite1h: 20 },
+  'claude-opus-5':     { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25, cacheWrite1h: 10 },
+  'claude-opus-4-8':   { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25, cacheWrite1h: 10 },
+  'claude-opus-4-7':   { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25, cacheWrite1h: 10 },
+  'claude-opus-4-6':   { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25, cacheWrite1h: 10 },
+  'claude-sonnet-5':   { input: 2,  output: 10, cacheRead: 0.2,  cacheWrite: 2.5,  cacheWrite1h: 4 },
+  'claude-sonnet-4-6': { input: 3,  output: 15, cacheRead: 0.3,  cacheWrite: 3.75, cacheWrite1h: 6 },
+  'claude-haiku-4-5':  { input: 1,  output: 5,  cacheRead: 0.1,  cacheWrite: 1.25, cacheWrite1h: 2 },
+});
+
+const FREE_RATES = Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0 });
+
+/** The per-Mtok rates a DISPLAY estimate may price `modelId` with: the operator's
+ *  modelCostConfig override when one exists ({free} → all-zero rates, so a free
+ *  model estimates $0 instead of a list price), else the built-in list price,
+ *  else null (no estimate). Never throws. */
+export function liveCostRates(modelId) {
+  const id = typeof modelId === 'string' ? modelId.trim() : '';
+  if (!id) return null;
+  let cfg = null;
+  try { cfg = modelCostConfig(id); } catch { cfg = null; }
+  if (cfg && cfg.free === true) return FREE_RATES;
+  if (cfg && cfg.perMtok && typeof cfg.perMtok === 'object') return cfg.perMtok;
+  const base = id.toLowerCase().replace(/\[1m\]$/, '').replace(/-\d{8}$/, '');
+  return PREDEFINED_LIST_PRICES[base] ?? null;
+}
+
 /**
  * All selectable models for a project = the effective catalog (predefined ⊕
  * global ⊕ this project's legacy custom models). Legacy custom models

@@ -48,8 +48,8 @@ test('plain text turn: label, batched deltas, usage frames, the assistant block 
   h.push(atext('msg_1', 'Hello!'), mdelta({ output_tokens: 301, input_tokens: 12 }), result());
   const usageFrames = h.frames.filter((f) => f.type === 'ask-usage');
   assert.equal(usageFrames.length, 2);
-  assert.deepEqual(usageFrames[0], { type: 'ask-usage', usage: { input: 12, output: 301, cacheRead: 0, cacheCreation: 0, ctx: 313 }, costUsd: null }, 'message_delta wins over the message-start usage');
-  assert.deepEqual(usageFrames[1], { type: 'ask-usage', usage: { ...normalizeUsage(RESULT_USAGE), ctx: 313 }, costUsd: 0.0234 }, 'result usage + cost; ctx stays the last per-call figure');
+  assert.deepEqual(usageFrames[0], { type: 'ask-usage', usage: { input: 12, output: 301, cacheRead: 0, cacheCreation: 0, ctx: 313 }, costUsd: null, estimatedCostUsd: null }, 'message_delta wins over the message-start usage; no estimator → null');
+  assert.deepEqual(usageFrames[1], { type: 'ask-usage', usage: { ...normalizeUsage(RESULT_USAGE), ctx: 313 }, costUsd: 0.0234, estimatedCostUsd: null }, 'result usage + cost; ctx stays the last per-call figure');
   const s = h.r.finish();
   assert.equal(s.text, 'Hello!', 'the assistant text block replaces the deltas');
   assert.deepEqual(s.blocks, []);
@@ -496,4 +496,86 @@ test('resolveCost: the §6.6 per-agent split is scaled so agent rows never out-t
   assert.equal(half.total, 0.0117);
   assert.equal(half.agent.costUsd, 0.005);
   assert.equal(half.agent.estimated, true, 'still an estimate — scaling does not make it exact');
+});
+
+test('estimatedCostUsd: the injected estimator prices the live usage sum until the result lands, then retires', () => {
+  const calls = [];
+  const h = harness({ estimateLiveCost: (u) => { calls.push(u); return (u.input * 2 + u.output * 4) / 1e6; } });
+  h.push(session(), init(), mstart('msg_1'), atext('msg_1', 'Hello!'), mdelta({ output_tokens: 300, input_tokens: 12 }));
+  const live = h.frames.filter((f) => f.type === 'ask-usage');
+  assert.equal(live.length, 1);
+  assert.equal(live[0].costUsd, null, 'no result yet → costUsd stays null (§6.2.8)');
+  assert.equal(live[0].estimatedCostUsd, (12 * 2 + 300 * 4) / 1e6);
+  assert.deepEqual(calls[0], { input: 12, output: 300, cacheRead: 0, cacheCreation: 0, ctx: 312 }, 'the estimator sees exactly currentUsage()');
+  h.push(result());
+  const last = h.frames.filter((f) => f.type === 'ask-usage').at(-1);
+  assert.equal(last.costUsd, 0.0234, 'authoritative');
+  assert.equal(last.estimatedCostUsd, null, 'the estimate retires once the CLI figure exists');
+  const s = h.r.finish();
+  assert.equal(s.costUsd, 0.0234);
+  assert.equal('estimatedCostUsd' in s, false, 'never persisted: finish() is what every sink reads');
+});
+
+test('estimatedCostUsd: a throwing or non-finite estimator degrades to null and never breaks the stream', () => {
+  const h = harness({ estimateLiveCost: () => { throw new Error('boom'); } });
+  h.push(session(), init(), mstart('msg_1'), atext('msg_1', 'x'), mdelta({ output_tokens: 1, input_tokens: 1 }));
+  assert.equal(h.frames.filter((f) => f.type === 'ask-usage')[0].estimatedCostUsd, null);
+  const h2 = harness({ estimateLiveCost: () => NaN });
+  h2.push(session(), init(), mstart('msg_1'), atext('msg_1', 'x'), mdelta({ output_tokens: 1, input_tokens: 1 }));
+  assert.equal(h2.frames.filter((f) => f.type === 'ask-usage')[0].estimatedCostUsd, null);
+});
+
+test('a successful worktree write calls onWorktreeMutation; errors and read-only tools do not', () => {
+  const seen = [];
+  const h = harness({ onWorktreeMutation: (e) => seen.push(e) });
+  h.push(atool('msg_1', 'toolu_1', 'mcp__worca__open_worktree', { projectKey: 'demo-00000001', ref: 'main' }));
+  h.push(uresult('toolu_1', JSON.stringify({ worktreeId: 'wt_00000001', path: '/x', projectKey: 'demo-00000001', ref: 'main', commit: 'abc' })));
+  h.push(atool('msg_1', 'toolu_2', 'mcp__worca__remove_worktree', { worktreeId: 'wt_ffffffff' }));
+  h.push(uresult('toolu_2', 'error: worktree not found', { isError: true }));
+  h.push(atool('msg_1', 'toolu_3', 'mcp__worca__list_worktrees', {}));
+  h.push(uresult('toolu_3', JSON.stringify({ worktrees: [] })));
+  h.push(atool('msg_1', 'toolu_4', 'mcp__worca__remove_worktree', { worktreeId: 'wt_00000001' }));
+  h.push(uresult('toolu_4', JSON.stringify({ ok: true })));
+  assert.deepEqual(seen, [{ tool: 'open_worktree' }, { tool: 'remove_worktree' }], 'writes only, successes only');
+});
+
+test('git pokes only for the navigating subcommands (checkout/switch/fetch) — exactly the calls noteNav acts on', () => {
+  const seen = [];
+  const h = harness({ onWorktreeMutation: (e) => seen.push(e) });
+  const git = (id, args) => {
+    h.push(atool('msg_1', id, 'mcp__worca__git', { worktreeId: 'wt_00000001', args }));
+    h.push(uresult(id, JSON.stringify({ command: `git ${args.join(' ')}`, text: '', truncated: false, totalBytes: 0, nextOffset: 0 })));
+  };
+  git('toolu_1', ['log', '--oneline']);
+  git('toolu_2', ['status']);
+  git('toolu_3', ['checkout', 'v1.2.0']);
+  git('toolu_4', ['switch', '--detach', 'origin/dev']);
+  git('toolu_5', ['fetch', 'origin']);
+  h.push(atool('msg_1', 'toolu_6', 'mcp__worca__git', { worktreeId: 'wt_00000001', args: ['checkout', 'nope'] }));
+  h.push(uresult('toolu_6', 'error: git checkout failed', { isError: true }));
+  h.push(atool('msg_1', 'toolu_7', 'mcp__worca__git', { worktreeId: 'wt_00000001' }));   // no args: never pokes, never throws
+  h.push(uresult('toolu_7', 'error: args required', { isError: true }));
+  assert.equal(seen.length, 3, 'checkout + switch + fetch');
+  assert.ok(seen.every((e) => e.tool === 'git'));
+});
+
+test('a sub-agent worktree write pokes too, exactly once; its read-only git does not (the child input is kept)', () => {
+  const seen = [];
+  const h = harness({ onWorktreeMutation: (e) => seen.push(e) });
+  h.push(atool('msg_1', 'toolu_agent', 'Task', { description: 'inspect the branch', subagent_type: 'general-purpose' }));
+  h.push(atool('msg_c1', 'toolu_c1', 'mcp__worca__git', { worktreeId: 'wt_00000001', args: ['log', '-3'] }, 'toolu_agent'));
+  h.push(uresult('toolu_c1', JSON.stringify({ command: 'git log -3', text: 'x', truncated: false, totalBytes: 1, nextOffset: 1 }), { ptu: 'toolu_agent' }));
+  assert.equal(seen.length, 0, 'a child `git log` is read-only: the same subcommand filter applies');
+  h.push(atool('msg_c1', 'toolu_c2', 'mcp__worca__open_worktree', { projectKey: 'demo-00000001', ref: 'main' }, 'toolu_agent'));
+  h.push(uresult('toolu_c2', JSON.stringify({ worktreeId: 'wt_00000002', path: '/y', projectKey: 'demo-00000001', ref: 'main', commit: 'def' }), { ptu: 'toolu_agent' }));
+  assert.deepEqual(seen, [{ tool: 'open_worktree' }]);
+  h.push(uresult('toolu_agent', [{ type: 'text', text: 'opened wt_00000002' }], { tur: AGENT_TUR }));
+  assert.equal(seen.length, 1, 'the Task aggregate result never double-pokes');
+});
+
+test('onWorktreeMutation: a throwing sink is contained', () => {
+  const h = harness({ onWorktreeMutation: () => { throw new Error('sink'); } });
+  h.push(atool('msg_1', 'toolu_1', 'mcp__worca__open_worktree', { projectKey: 'p', ref: 'main' }));
+  assert.doesNotThrow(() => h.push(uresult('toolu_1', JSON.stringify({ worktreeId: 'wt_00000001' }))));
+  assert.equal(h.frames.filter((f) => f.type === 'ask-block').at(-1).block.status, 'done', 'the block still completed');
 });

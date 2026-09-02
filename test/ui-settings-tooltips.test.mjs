@@ -17,10 +17,10 @@ const settingsView = () => {
   return dom.window.document.querySelector('.view[data-view="settings"]');
 };
 
-test('settings: nine info-tip icons, each with non-empty tip content', () => {
+test('settings: ten info-tip icons, each with non-empty tip content', () => {
   const view = settingsView();
   const tips = [...view.querySelectorAll('button.info-tip')];
-  assert.equal(tips.length, 9, 'nine ⓘ icons (2 folder fields, budget heading, 3 budget fields, ask heading, 2 ask fields)');
+  assert.equal(tips.length, 10, 'ten ⓘ icons (2 folder fields, budget heading, 3 budget fields, ask heading, 2 ask fields, chat history)');
   for (const tip of tips) {
     assert.equal(tip.getAttribute('type'), 'button', 'icon must not submit anything');
     assert.match(tip.getAttribute('aria-label') || '', /^About /, 'icon names its setting');

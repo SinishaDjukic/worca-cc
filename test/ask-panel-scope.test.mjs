@@ -1,6 +1,6 @@
-// test/ask-panel-scope.test.mjs — the #397 project selector: header button,
-// popover, per-field context merge on send, PATCH persistence, restore on
-// thread load, and the scopeMismatch card warning.
+// test/ask-panel-scope.test.mjs — the #397 project selector: composer-row
+// button (right of "+"), popover, per-field context merge on send, PATCH
+// persistence, restore on thread load, and the scopeMismatch card warning.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -50,7 +50,7 @@ test('#397: pick a project → label, per-field merged send context, PATCH once 
   });
   ctx.panel.open();
   const btn = ctx.doc.querySelector('[data-ask-scope-btn]');
-  assert.ok(btn, 'the header carries the scope button');
+  assert.ok(btn, 'the composer row carries the scope button');
   assert.equal(btn.textContent.trim(), 'Auto');
 
   btn.click();
@@ -141,4 +141,23 @@ test('#397: a scopeMismatch card renders the warning; a clean card does not', as
   assert.equal(warns.length, 1, 'exactly the flagged card warns');
   assert.match(warns[0].textContent, /different project or workspace/);
   ctx.panel.destroy();
+});
+
+test('scope pill lives in the composer row: header is logo → title → spacer → icon buttons; row is attach → scope → spacer', () => {
+  const ctx = makePanel({ fetchHandler: handler({ patches: [], bodies: [], snap: null }) });
+  ctx.panel.open();
+  const kids = [...ctx.doc.querySelector('.ask-header').children];
+  assert.equal(kids[0].className, 'ask-header-logo');
+  assert.equal(kids[1].className, 'ask-title', 'the title follows the logo directly — no scope pill in between');
+  assert.equal(kids[2].className, 'ask-header-spacer');
+  assert.ok(kids[3].hasAttribute('data-ask-threads-btn'), 'then the icon buttons');
+  assert.equal(ctx.doc.querySelector('.ask-header [data-ask-scope-btn]'), null, 'the header no longer carries the scope pill');
+
+  const row = ctx.doc.querySelector('.ask-composer-row');
+  const attach = row.querySelector('[data-ask-attach-btn]');
+  const scope = attach.nextElementSibling;
+  assert.ok(scope && scope.hasAttribute('data-ask-scope-btn'), 'the scope pill sits right after the "+" attach button');
+  assert.ok(scope.classList.contains('ask-scope-btn'));
+  assert.equal(scope.nextElementSibling.className, 'ask-composer-spacer', 'and before the spacer');
+  assert.equal(row.querySelector('[data-ask-scope-btn]').textContent.trim(), 'Auto');
 });

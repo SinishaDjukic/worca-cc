@@ -184,3 +184,18 @@ test('ui-ask-style: composer textarea overrides the global textarea rules', () =
   assert.match(input, /max-height:120px/);
   assert.match(input, /resize:none/);
 });
+
+test('ui-ask-style: the composer-row scope pill never shrinks and its popover opens upward; the title keeps its ellipsis', () => {
+  assert.match(ruleBody('.ask-scope-btn') || '', /flex:none/, 'in the composer row next to "+" — the pill keeps its width, the spacer absorbs the slack');
+  const pop = ruleBody('.ask-pop-scope') || '';
+  assert.match(pop, /bottom:/, 'the scope popover is anchored to the bottom, above its composer-row trigger');
+  assert.match(pop, /left:16px/);
+  assert.doesNotMatch(pop, /top:46px/, 'no longer anchored to the header');
+  assert.match(pop, /max-height:min\(420px,70%\)/);
+  assert.match(pop, /overflow-y:auto/);
+  const title = ruleBody('.ask-title') || '';
+  assert.match(title, /min-width:0/);
+  assert.match(title, /overflow:hidden/);
+  assert.match(title, /text-overflow:ellipsis/);
+  assert.match(title, /white-space:nowrap/);
+});
