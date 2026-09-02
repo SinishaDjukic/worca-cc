@@ -100,10 +100,19 @@ test('a full mock turn: 202, stamped frames to ask-done, persistence, session, t
   assert.equal(r.status, 202);
   const { userMessageId, assistantMessageId } = await r.json();
   assert.match(userMessageId, /^askm_[0-9a-f]{8}$/);
-  // §7.4: the deterministic title is stamped SYNCHRONOUSLY before the 202 —
-  // read it NOW; after ask-done the fire-and-forget D13 title call replaces it.
-  assert.equal((await snapshot(t.id)).thread.title, 'hi there',
-    'deterministic title stamped by the message route');
+  // §7.4: the deterministic title is stamped SYNCHRONOUSLY before the 202. The
+  // D13 background title now runs CONCURRENTLY with the turn (not after it), so
+  // by the time this GET lands it may already have been replaced — but only ever
+  // by the title the ask-title frame announces (setThreadTitle's onlyIf guard
+  // proves the deterministic stamp happened first). The frame is written to the
+  // socket before the DB read below can be answered, but it is parsed on a
+  // different socket — so WAIT for it rather than peeking at msgs.
+  const early = (await snapshot(t.id)).thread.title;
+  if (early !== 'hi there') {
+    const announced = await waitFor(() => msgs.find((m) => m.type === 'ask-title' && m.threadId === t.id));
+    assert.equal(early, announced.title,
+      `deterministic title stamped by the message route, then only ever replaced by the announced one (got ${JSON.stringify(early)})`);
+  }
   await waitFor(() => framesFor(msgs, t.id).some((f) => f.type === 'ask-done'));
   const frames = framesFor(msgs, t.id);
   assert.equal(frames[0].type, 'ask-start');
