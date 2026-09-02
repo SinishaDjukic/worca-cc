@@ -285,3 +285,17 @@ test('a long stdout is_error detail keeps its class when the marker is capped aw
     return true;
   });
 });
+
+// An unspawnable CLI (not installed / not on PATH) is user-fixable, not a
+// pipeline bug: the spawn failure must carry a recovery class so the
+// orchestrator's gate pauses the run for manual resume instead of hard-failing.
+test('spawn failure (ENOENT) stamps errorClass so the run can pause, not hard-fail', async () => {
+  const dir = await makeTmpDir();
+  const bin = join(dir, 'no-such-claude');
+  await assert.rejects(() => runClaude({ bin, prompt: 'hi', cwd: dir }), (err) => {
+    assert.match(err.message, /ENOENT/, 'the spawn cause stays in the message');
+    assert.equal(err.errorClass, 'network', 'unspawnable CLI is stamped recoverable');
+    assert.equal(classifyError(err), 'network', 'the stamp is authoritative for the gate');
+    return true;
+  });
+});

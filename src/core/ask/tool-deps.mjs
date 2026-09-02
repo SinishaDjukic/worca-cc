@@ -11,7 +11,7 @@ import { DIFF_PATCH_FILE } from '../results.mjs';
 import { GUARDRAIL_PRESETS } from '../guardrails.mjs';
 import { buildCatalog } from './catalog.mjs';
 import { validateProposal } from './proposal.mjs';
-import { readAttachmentText, getThread } from './store.mjs';
+import { readAttachmentText, getAttachment, attachmentPath, getThread } from './store.mjs';
 import { redactAskText } from './redact.mjs';
 import { ASK_LIMITS } from './limits.mjs';
 
@@ -49,8 +49,19 @@ export function defaultToolDeps({ threadId }) {
     readDiffPatch,
     hasDiffPatch,
     readAttachment: (id) => {
-      const a = threadId ? readAttachmentText(threadId, id) : null;
-      return a ? { name: a.name, text: a.text } : null;
+      const row = threadId ? getAttachment(threadId, id) : null;
+      if (!row) return null;
+      if (row.kind === 'text') {
+        const a = readAttachmentText(threadId, id);
+        return a ? { name: a.name, kind: 'text', text: a.text } : null;
+      }
+      // Binary kinds (#398): metadata plus the on-disk path — the model views the
+      // body with its own Read tool; sliceBytes over raw bytes would be garbage.
+      // attachmentPath is null when the body is gone (DB-only restore, an external
+      // sweep of ask/<t>/att): the same not-found the text branch reports, never a
+      // path whose Read then fails with a raw ENOENT the model may retry.
+      const path = attachmentPath(threadId, id);
+      return path ? { name: row.name, kind: row.kind, mime: row.mime, bytes: row.bytes, path } : null;
     },
     validateProposal,
     // #397: the user-pinned scope of the owning thread — {projectKey}|{workspaceId}|

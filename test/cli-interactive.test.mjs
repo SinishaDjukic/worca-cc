@@ -322,6 +322,29 @@ test('recovery arm: Retry re-runs the failing node before the next prompt', asyn
   assert.equal(stub.spawnsMatching('# Task: Clarify'), 2);
 });
 
+test('recovery arm: a --yes run that pauses itself exits 3 — a wrapper must not read success', async () => {
+  // Same failing-auth stub, but headless: auto mode pauses on the first auth hit
+  // (no recovery prompt exists). Before the fix this exited 0 — a CI job went
+  // green on a run that parked with zero work done and nobody left to resume it.
+  const stub = failingClaudeBin('API Error: 401 Invalid authentication credentials');
+  const repo = freshRepo();
+  const r = await driveCli(['--project', repo, '--prompt', 'auto pause exit e2e', '--yes'], {
+    mock: false,
+    // PATH prefix: run-harness passes claude.bin = undefined to the capabilities probe, which
+    // then bare-PATH-looks-up `claude` — WORCA_CLAUDE_BIN alone would let the REAL one spawn.
+    env: { WORCA_CLAUDE_BIN: stub.bin, WORCA_RECOVERY_BACKOFF_MS: '0',
+           PATH: `${dirname(stub.bin)}:${process.env.PATH}` },
+    stdin: 'ignore',
+  });
+  assert.equal(r.timedOut, false, r.stdout);
+  assert.equal(r.code, 3, `expected the resumable-pause exit code (0=done, 1=error, 2=usage)\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+  assert.match(r.stdout, /Pipeline paused: /);
+  assert.match(r.stdout, /Resume with: /, 'the pause is resumable, and says how');
+  const id = pipelineIdFrom(r.stdout);
+  assert.ok(id, `no pipeline id in:\n${r.stdout}`);
+  assert.equal(pipelineStatuses().find((p) => p.id === id)?.status, 'paused');
+});
+
 // ── questions arm ──────────────────────────────────────────────────────────────
 // kind === 'questions' — the mid-run ask-then-resume round, which renders its own
 // "<Agent> has questions:" banner and then reuses askClarify.

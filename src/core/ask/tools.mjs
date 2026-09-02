@@ -334,7 +334,7 @@ export function createAskTools(deps) {
         commentIds: { type: 'array', items: { type: 'string' },
           description: 'diff comment ids (dc_…) this run is meant to address. They are stamped with the run id once the user confirms the card AND the run actually starts; nothing is resolved.' } }, ['brief']) },
     { name: 'read_attachment',
-      description: 'Read an attachment of this conversation by id, paged by byte offset (default 32000 bytes per page).',
+      description: 'Read an attachment of this conversation by id. Text attachments return their content, paged by byte offset (default 32000 bytes per page). Image and PDF attachments return metadata plus a file path — pass that path to your Read tool to view the content.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('attachment id'), offset: SCHEMA.i('byte offset', 0, Number.MAX_SAFE_INTEGER), maxBytes: SCHEMA.i('bytes per page', 1, L.attachmentReadMaxBytes) }, ['id']) },
     { name: 'list_diff_comments',
       description: 'List the internal review comments anchored to a run\'s diff lines, ordered by file then line then when they were written. status filters them (all | unresolved | resolved, default all); path narrows to one file. Every comment carries line_text — the snapshot of the line it was anchored to, taken when it was written, so it stays readable even though the source branch has moved on. When the patch is still readable, a few surrounding hunk lines come with each comment. Comments on credential files are never listed.',
@@ -753,10 +753,17 @@ export function createAskTools(deps) {
       if (!id) throw new AskToolError('read_attachment: id is required');
       const a = deps.readAttachment(id);
       if (!a) throw new AskToolError('read_attachment: attachment not found');
+      if (a.kind && a.kind !== 'text') {
+        // #398: never a sliceBytes view of binary garbage — and deps.redact is a
+        // TEXT guard, so the body deliberately does not pass through it (the
+        // model reads the raw file; nothing here can scrub pixels).
+        return { name: a.name, kind: a.kind, mime: a.mime, totalBytes: a.bytes, path: a.path,
+          note: 'binary attachment: pass `path` to your Read tool to view the content' };
+      }
       const offset = clampInt(input.offset, 0, Number.MAX_SAFE_INTEGER, 0);
       const maxBytes = clampInt(input.maxBytes, 1, L.attachmentReadMaxBytes, L.attachmentReadDefaultBytes);
       const { text, truncated, totalBytes, nextOffset } = sliceBytes(deps.redact(a.text), offset, maxBytes);
-      return { name: a.name, text, truncated, totalBytes, nextOffset };
+      return { name: a.name, kind: 'text', text, truncated, totalBytes, nextOffset };
     },
     async open_worktree(input) {
       try {

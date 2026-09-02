@@ -7,7 +7,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
@@ -153,6 +153,61 @@ test('MIN-51: bare `worca help` prints the help and starts nothing', () => {
   assert.match(r.stdout, /Usage:/);
   assert.equal(pipelineCount(), before, 'no pipeline row');
   assert.equal(branchesOf(repo).trim(), 'main', 'no feature branch');
+});
+
+// ── --version ──────────────────────────────────────────────────────────────────
+// `worca version` was not a subcommand and not a near-miss of one, so before this
+// arm existed it ran a real pipeline on the prompt "version" — the `help` bug again.
+
+const PKG_VERSION = JSON.parse(readFileSync(resolve(CLI, '..', '..', '..', 'package.json'), 'utf8')).version;
+
+for (const spelling of [['-v'], ['-V'], ['--version'], ['version']]) {
+  test(`--version: \`worca ${spelling.join(' ')}\` prints "worca <semver>" and exits 0`, () => {
+    const r = spawnSync(process.execPath, [CLI, ...spelling], { encoding: 'utf8' });
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+    assert.equal(r.stdout, `worca ${PKG_VERSION}\n`);
+    assert.equal(r.stderr, '');
+  });
+}
+
+test('--version: matches package.json (semver shape)', () => {
+  assert.match(PKG_VERSION, /^\d+\.\d+\.\d+/);
+});
+
+test('--version: wins over an otherwise-bad command line', () => {
+  const r = spawnSync(process.execPath, [CLI, '--bogus-flag', '--version'], { encoding: 'utf8' });
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.equal(r.stdout, `worca ${PKG_VERSION}\n`);
+});
+
+test('--version: bare `worca version` starts nothing', () => {
+  const repo = freshRepo();
+  const before = pipelineCount();
+  const r = runCli(['version'], repo);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.equal(r.stdout, `worca ${PKG_VERSION}\n`);
+  assert.equal(pipelineCount(), before, 'no pipeline row');
+  assert.equal(branchesOf(repo).trim(), 'main', 'no feature branch');
+});
+
+test('--version: a typo of `version` is refused, not run as a prompt', () => {
+  const repo = freshRepo();
+  const before = pipelineCount();
+  const r = runCli(['versoin', '--yes'], repo);
+  assert.equal(r.status, 2, `expected the fail() exit code\n${r.stdout}\n${r.stderr}`);
+  assert.equal(
+    r.stderr.trim(),
+    'worca: unknown subcommand "versoin" — did you mean "version"? (to run a prompt, use --prompt "…")',
+  );
+  assert.equal(pipelineCount(), before, 'no pipeline row');
+  assert.equal(branchesOf(repo).trim(), 'main', 'no feature branch');
+});
+
+test('--version: HELP documents the flag and the bare word', () => {
+  const r = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /-v, -V, --version/);
+  assert.match(r.stdout, /^  version\s+Print the version/m);
 });
 
 test('MIN-51: a typo of `help` itself is refused, not run as a prompt', () => {

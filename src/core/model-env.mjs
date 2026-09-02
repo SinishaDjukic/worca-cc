@@ -83,6 +83,74 @@ export function prepareModelEnv(modelEnv, sourceEnv = process.env) {
   return { env, dropped };
 }
 
+// ── env flags + masking (shared by claude-runner.mjs, plugin-shim.mjs, ui/server.mjs)
+
+/**
+ * The ONE "is this env flag on" rule for worca's own knobs (WORCA_MOCK,
+ * WORCA_SUBAGENT_HOOKS, WORCA_DEBUG_SPAWN, …): a denylist — anything but unset,
+ * "", "0" and "false" (any case) is on. Several names may be given; the first
+ * one that is set wins (WORCA_MOCK ?? ORCH_MOCK). Lives in this zero-import leaf
+ * so every gate shares it instead of hand-copying the comparison.
+ * @param {...string} names
+ */
+export function envFlag(...names) {
+  let v;
+  for (const n of names) { v = process.env[n]; if (v !== undefined) break; }
+  return !!v && v !== '0' && v.toLowerCase() !== 'false';
+}
+
+/**
+ * Mask a model-env VALUE for an operator-facing display (the Models editor):
+ * six bullets + the last 4 chars when longer than 8, else six bullets. The
+ * `••` prefix is what ui/server.mjs#isMaskedEcho keys on to treat an echoed
+ * value as "keep", so the shape is a contract — change both together. For LOG
+ * lines use describeModelEnvEntry: a per-spawn log must not carry a suffix.
+ */
+export function maskModelEnvValue(v) {
+  const s = String(v ?? '');
+  return s.length > 8 ? `••••••${s.slice(-4)}` : '••••••';
+}
+
+// Keys whose value is routing configuration, not a credential, and therefore
+// SAFE to print in a spawn log: which endpoint / which wire id a spawn used is
+// exactly the diagnostic question, and masking them makes two gateway cards
+// indistinguishable. Everything else (ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY,
+// ANTHROPIC_CUSTOM_HEADERS, plugin {secret} values, …) is treated as a secret.
+const READABLE_MODEL_ENV_KEYS = new Set([
+  'ANTHROPIC_MODEL', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_SMALL_FAST_MODEL',
+]);
+const READABLE_MODEL_ENV_KEY_RES = [/^ANTHROPIC_DEFAULT_[A-Z0-9]+_MODEL$/, /^CLAUDE_CODE_USE_[A-Z0-9]+$/];
+
+/** Whether a model-env key's value may be printed verbatim in a log line. */
+export function isReadableModelEnvKey(key) {
+  return typeof key === 'string'
+    && (READABLE_MODEL_ENV_KEYS.has(key) || READABLE_MODEL_ENV_KEY_RES.some((re) => re.test(key)));
+}
+
+/**
+ * One `KEY=value` fragment for a log line. Readable keys print their value
+ * (a URL with userinfo has the credentials stripped; an unparsable URL is
+ * treated as a secret); every other key prints `<set, N chars>` — presence and
+ * length prove the env reached the spawn without leaking any part of it.
+ */
+export function describeModelEnvEntry(key, value) {
+  const s = String(value ?? '');
+  const secret = `<set, ${s.length} chars>`;
+  if (!isReadableModelEnvKey(key)) return `${key}=${secret}`;
+  if (key === 'ANTHROPIC_BASE_URL') {
+    let u;
+    try { u = new URL(s); } catch { return `${key}=${secret}`; }
+    if (u.username || u.password) { u.username = ''; u.password = ''; }
+    return `${key}=${u.href}`;
+  }
+  return `${key}=${s}`;
+}
+
+/** The sorted, log-safe `KEY=value, …` rendering of a whole model env. */
+export function describeModelEnv(env) {
+  return Object.keys(env || {}).sort().map((k) => describeModelEnvEntry(k, env[k])).join(', ');
+}
+
 // ── per-model cost override (opt-in pricing, config.mjs resolveModelCost) ─────
 // Lives HERE for the same reason the env policy does: BOTH catalog layers must
 // validate it against one rule. settings.mjs owns the user's global catalog and

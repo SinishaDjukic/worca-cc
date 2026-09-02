@@ -104,6 +104,36 @@ test('ask-model: out-of-turn ask-message upserts by id and replaces the optimist
   assert.equal(m.messages()[0].blocks[0].id, 'att_00000001');
 });
 
+// #398: the sender's own tab — the broadcast (persisted row, store-minted ids)
+// lands before the 202 resolves, then the echo ran and REPLACED it with id-less
+// blocks, so buildAttachmentPill fell back from thumbnail to name pill.
+test('ask-model: the local echo never replaces an already-received canonical row', () => {
+  const m = createThreadModel({ threadId: TID });
+  const persisted = { id: 'askm_u0000001', threadId: TID, seq: 1, role: 'user', text: 'hello', blocks: [{ kind: 'attachment', id: 'att_00000001', name: 'shot.png', bytes: 2048, attKind: 'image', mime: 'image/png' }], status: null, reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: 't1' };
+  m.apply({ type: 'ask-message', threadId: TID, message: persisted });
+  m.noteLocalUserMessage({ id: 'askm_u0000001', text: 'hello', attachments: [{ name: 'shot.png', bytes: 2048, attKind: 'image', mime: 'image/png' }] });
+  assert.equal(m.messages().length, 1);
+  assert.deepEqual(m.messages()[0], persisted, 'the canonical row (ids, seq, createdAt) is kept whole');
+  assert.ok(m.takeDirty().messages.has('askm_u0000001'), 'the echo still marks the row for a repaint');
+});
+
+test('ask-model (#398): attachmentsBytes learns in-session uploads from the broadcast and the echo, each id once', () => {
+  const m = createThreadModel({ threadId: TID });
+  m.load({ thread: { id: TID, title: null, totals: {} }, messages: [], attachments: [{ id: 'att_00000000', name: 'old.md', bytes: 100 }], runLinks: [], inFlight: null });
+  assert.equal(m.attachmentsBytes(), 100, 'seeded by the snapshot');
+  const att1 = { kind: 'attachment', id: 'att_00000001', name: 'a.pdf', bytes: 50, attKind: 'binary', mime: 'application/pdf' };
+  m.apply({ type: 'ask-message', threadId: TID, message: { id: 'askm_u0000001', threadId: TID, seq: 1, role: 'user', text: 'x', blocks: [att1], status: null, reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: 't' } });
+  assert.equal(m.attachmentsBytes(), 150, 'the broadcast row counts');
+  m.noteLocalUserMessage({ id: 'askm_u0000001', text: 'x', attachments: [{ id: 'att_00000001', name: 'a.pdf', bytes: 50, attKind: 'binary' }] });
+  assert.equal(m.attachmentsBytes(), 150, 'the echo of the same row does not double-count');
+  m.noteLocalUserMessage({ id: 'askm_u0000002', text: 'y', attachments: [{ id: 'att_00000002', name: 'b.png', bytes: 25, attKind: 'image' }] });
+  assert.equal(m.attachmentsBytes(), 175, 'an echo that arrives first counts (ids from the 202 body)');
+  m.apply({ type: 'ask-message', threadId: TID, message: { id: 'askm_u0000002', threadId: TID, seq: 3, role: 'user', text: 'y', blocks: [{ ...att1, id: 'att_00000002', bytes: 25 }], status: null, reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: 't' } });
+  assert.equal(m.attachmentsBytes(), 175, 'its later broadcast does not double-count either');
+  m.noteLocalUserMessage({ id: 'askm_u0000003', text: 'z', attachments: [{ name: 'noid.md', bytes: 999 }] });
+  assert.equal(m.attachmentsBytes(), 175, 'an id-less echo (older server) is not counted — it cannot be deduped');
+});
+
 test('ask-model: ask-message inserts new rows in seq order', () => {
   const m = createThreadModel({ threadId: TID });
   m.load(snapshot({ messages: [doneRow('askm_00000002', 2)] }));
