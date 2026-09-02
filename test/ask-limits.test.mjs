@@ -98,8 +98,10 @@ test('ASK_LIMITS is frozen and carries the spec figures', () => {
   assert.equal(ASK_LIMITS.jobGraceMs, 30_000);
   assert.equal(ASK_LIMITS.emptyThreadSweepMs, 24 * 60 * 60 * 1000);
   assert.deepEqual(ASK_LIMITS.attachment, {
-    maxFiles: 8, maxBytesPerFile: 512 * 1024, maxBytesPerThread: 4 * 1024 * 1024,
+    maxFiles: 8, maxBytesPerFile: 512 * 1024, maxBytesPerBinaryFile: 5 * 1024 * 1024,
+    maxBytesPerThread: 25 * 1024 * 1024,
     extensions: ['.md', '.markdown', '.txt', '.json', '.csv', '.log'],
+    binaryExtensions: ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf'],
   });
   assert.equal(ASK_LIMITS.contextHeaderMaxChars, 1024);
   assert.equal(ASK_LIMITS.inlineAttachmentsMaxBytes, 24 * 1024);

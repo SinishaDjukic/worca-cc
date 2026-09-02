@@ -60,7 +60,9 @@ export const ASK_DENY_RULES = Object.freeze([
 export const ASK_SPAWN_ENV = Object.freeze({ CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' });
 
 /**
- * The per-thread Read allow rule of the chat's worktrees (P4 §6). Explicit
+ * The per-thread Read allow rules: the chat's worktrees (P4 §6) and its stored
+ * attachment bodies (#398 — read_attachment hands the model an `att/` path for
+ * an image or PDF, and the model views it with its own Read tool). Explicit
  * intent more than enforcement: under the engine's measured `unmatched ⇒ allow`
  * (gate E1, claude 2.1.241 — a path in neither list is read, verified OUTSIDE
  * the process cwd; and Grep ignored both `Read(<path>)` and `Grep(<path>)`
@@ -72,13 +74,14 @@ export const ASK_SPAWN_ENV = Object.freeze({ CLAUDE_CODE_DISABLE_BACKGROUND_TASK
  */
 export function askWorktreeAllowRules(threadId) {
   if (typeof threadId !== 'string' || !/^ask_[0-9a-f]{8}$/.test(threadId)) return [];
-  return [`Read(//**/.worca-cc/ask/${threadId}/wt/**)`];
+  return [`Read(//**/.worca-cc/ask/${threadId}/wt/**)`, `Read(//**/.worca-cc/ask/${threadId}/att/**)`];
 }
 
 export const SANDBOX_NOTE =
   "You are a sub-agent of Worca's assistant and run in the same sandbox: the only tools available are Task, Read, Grep, Glob and " +
   'the worca MCP tools (mcp__worca__*). You cannot run commands, edit files or use the network — do not try. ' +
-  "The only view into a repository is this chat's read-only detached worktrees: list_worktrees/open_worktree give the path; Read, Grep and Glob work under that path (never elsewhere on disk), and the worca `git` tool serves history and diffs. " +
+  "The only view into a repository is this chat's read-only detached worktrees: list_worktrees/open_worktree give the path; Read, Grep and Glob work under that path, and the worca `git` tool serves history and diffs. " +
+  'The one other place Read may go is the file path read_attachment returns for an image or PDF attachment of this chat; never read anywhere else on disk. ' +
   'Answer from tool results only; never invent run data; return a short report.';
 
 /** System-prompt-only mock markers (the runner parses the ask role from the SYSTEM prompt, Task 16). */

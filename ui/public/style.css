@@ -2827,6 +2827,8 @@ body.rail-collapsed .ask-dock{left:76px;}
   background:var(--field);color:var(--ink);font-size:13.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}
 .ask-user-pills{justify-content:flex-end;margin-top:0;}
 .ask-attachment-pill{padding-right:12px;}
+.ask-attachment-thumb-link{display:inline-block;line-height:0;}
+.ask-attachment-thumb{max-width:180px;max-height:130px;border-radius:8px;border:1px solid var(--line);display:block;}
 
 .ask-activity{border-left:1.5px solid var(--line);padding:2px 0 2px 14px;display:flex;flex-direction:column;gap:7px;}
 .ask-activity-head{display:flex;align-items:center;gap:9px;min-width:0;}
@@ -2964,6 +2966,7 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 8px 5px 9px;border:1px solid var(--line);
   border-radius:8px;background:var(--field);color:var(--ink-2);font-family:var(--mono);font-size:11px;max-width:240px;}
 .ask-chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-chip-thumb{width:24px;height:24px;object-fit:cover;border-radius:4px;flex:none;}
 .ask-chip-x{border:0;background:transparent;color:var(--ink-3);cursor:pointer;font-family:inherit;
   font-size:13px;line-height:1;padding:1px 4px;border-radius:5px;transition:.15s;}
 .ask-chip-x:hover{background:var(--line);color:var(--ink);}

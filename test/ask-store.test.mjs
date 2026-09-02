@@ -2,7 +2,7 @@
 // home; ids are minted by the store and read back from the returned objects.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -12,7 +12,8 @@ import {
   ASK_ID_RE, newAskId, askRoot, attachmentsDir,
   createThread, getThread, listThreads, updateThread, setThreadTitle, addThreadTotals, deleteThread, sweepEmptyThreads,
   appendMessage, getMessage, listMessages, finishMessage, setMessageBlocks, findCard, updateCardBlock, sweepStreamingMessages,
-  addAttachment, listAttachments, getAttachment, readAttachmentText, threadAttachmentBytes,
+  addAttachment, listAttachments, getAttachment, readAttachmentText, readAttachmentRaw,
+  attachmentPath, threadAttachmentBytes,
   linkRun, updateRunLink, listRunLinks,
 } from '../src/core/ask/store.mjs';
 
@@ -259,6 +260,37 @@ test('attachments: file under askRoot/<thread>/att/<id>.txt, thread-scoped reads
   assert.equal(threadAttachmentBytes(t.id), 8);
   assert.equal(listAttachments(t.id).length, 2);
   assert.throws(() => addAttachment('ask_ffffffff', null, { name: 'x', text: 'y' }), /unknown thread/);
+});
+
+test('binary attachments (#398): raw bytes under <id>.<ext>, kind/mime on the row, text readers refuse them', () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0xfe, 0xff]);
+  const t = createThread();
+  const m = appendMessage(t.id, { role: 'user', text: 'see shot' });
+  const a = addAttachment(t.id, m.id, { name: 'shot.png', kind: 'image', mime: 'image/png', data: png });
+  assert.equal(a.kind, 'image');
+  assert.equal(a.mime, 'image/png');
+  assert.equal(a.bytes, png.length);
+  const file = join(attachmentsDir(t.id), `${a.id}.png`);
+  assert.ok(existsSync(file), 'body stored with the mime extension, not .txt');
+  assert.deepEqual(readFileSync(file), png, 'bytes round-trip with no utf8 coercion');
+  assert.equal(attachmentPath(t.id, a.id), file);
+  assert.equal(attachmentPath(createThread().id, a.id), null, 'path is thread-scoped');
+  assert.equal(readAttachmentText(t.id, a.id), null, 'a binary body is never served as text');
+  const raw = readAttachmentRaw(t.id, a.id);
+  assert.deepEqual(raw.buffer, png);
+  assert.equal(raw.kind, 'image');
+  // text rows still read raw too (the download route uses one reader for both)
+  const txt = addAttachment(t.id, m.id, { name: 'n.txt', text: 'hey' });
+  assert.equal(txt.kind, 'text');
+  assert.equal(readAttachmentRaw(t.id, txt.id).buffer.toString('utf8'), 'hey');
+  assert.equal(threadAttachmentBytes(t.id), png.length + 3, 'the thread byte total spans kinds');
+  assert.throws(() => addAttachment(t.id, m.id, { name: 'x.png', kind: 'image', mime: 'image/png' }),
+    /Buffer/, 'a non-text attachment without a Buffer body is refused');
+  // a row that outlived its body must not hand out a dangling pointer
+  unlinkSync(file);
+  assert.equal(attachmentPath(t.id, a.id), null, 'no path for a body that is gone');
+  assert.equal(readAttachmentRaw(t.id, a.id), null);
+  assert.ok(getAttachment(t.id, a.id), 'the row itself is still there');
 });
 
 test('run links: insert, update, list', () => {
