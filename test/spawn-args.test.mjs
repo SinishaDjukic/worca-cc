@@ -16,7 +16,7 @@ import { mkdtemp, rm, writeFile, readFile, chmod, mkdir } from 'node:fs/promises
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildClaudeArgs, runClaude } from '../src/core/claude-runner.mjs';
+import { buildClaudeArgs, runClaude, debugSpawnEnabled, maskModelEnvValue, redactArgvForLog } from '../src/core/claude-runner.mjs';
 
 const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
 
@@ -589,4 +589,125 @@ test('wire id also lands in the spawn env (harmless: the explicit flag wins in t
     console.warn = realWarn;
   }
   assert.ok(dump.includes('ANTHROPIC_MODEL=claude-opus-4-8'));
+});
+
+// ── debugSpawnEnabled / maskModelEnvValue / redactArgvForLog unit tests ───────
+
+test('debugSpawnEnabled: off by default; truthy values enable; 0/false disable', () => {
+  const prev = process.env.WORCA_DEBUG_SPAWN;
+  try {
+    delete process.env.WORCA_DEBUG_SPAWN; assert.equal(debugSpawnEnabled(), false);
+    process.env.WORCA_DEBUG_SPAWN = '';      assert.equal(debugSpawnEnabled(), false);
+    process.env.WORCA_DEBUG_SPAWN = '0';     assert.equal(debugSpawnEnabled(), false);
+    process.env.WORCA_DEBUG_SPAWN = 'false'; assert.equal(debugSpawnEnabled(), false);
+    process.env.WORCA_DEBUG_SPAWN = '1';     assert.equal(debugSpawnEnabled(), true);
+    process.env.WORCA_DEBUG_SPAWN = 'yes';   assert.equal(debugSpawnEnabled(), true);
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_DEBUG_SPAWN; else process.env.WORCA_DEBUG_SPAWN = prev;
+  }
+});
+
+test('maskModelEnvValue: masks unconditionally — 6 bullets + last 4 when >8, else 6 bullets', () => {
+  assert.equal(maskModelEnvValue('short'), '••••••');            // <= 8 chars
+  assert.equal(maskModelEnvValue('12345678'), '••••••');         // exactly 8
+  assert.equal(maskModelEnvValue('super-secret-token-value'), '••••••alue');
+  assert.equal(maskModelEnvValue('${VAR}'), '••••••');           // no readable-ref pass-through at spawn time
+  assert.equal(maskModelEnvValue(''), '••••••');
+  assert.equal(maskModelEnvValue(undefined), '••••••');
+});
+
+test('redactArgvForLog: truncates inline -p/--append-system-prompt values; leaves flags & short values', () => {
+  const big = 'x'.repeat(500);
+  const out = redactArgvForLog(['-p', big, '--output-format', 'stream-json', '--append-system-prompt', big]);
+  assert.equal(out[0], '-p');
+  assert.ok(out[1].startsWith('x'.repeat(64)) && out[1].includes('(500 chars)'), out[1]);
+  assert.equal(out[2], '--output-format');
+  assert.equal(out[3], 'stream-json');
+  assert.equal(out[4], '--append-system-prompt');
+  assert.ok(out[5].includes('(500 chars)'), out[5]);
+});
+
+test('redactArgvForLog: staged bare -p (no inline value) preserves argv order', () => {
+  const staged = ['-p', '--output-format', 'stream-json', '--verbose'];
+  assert.deepEqual(redactArgvForLog(staged), staged);   // short follower passes through verbatim
+});
+
+// ── always-on applied-env confirmation (Step 4) ──────────────────────────────
+
+test('a resolved card whose ANTHROPIC_MODEL equals the catalog id still logs its applied env once', POSIX_SHIM, async () => {
+  const realWarn = console.warn; const warnings = [];
+  console.warn = (...a) => warnings.push(a.join(' '));
+  const prevDbg = process.env.WORCA_DEBUG_SPAWN; delete process.env.WORCA_DEBUG_SPAWN; // ungated path
+  try {
+    await runWithArgvDump({
+      model: 'claude-opus-4-8',
+      modelEnv: {
+        ANTHROPIC_MODEL: 'claude-opus-4-8',                 // EQUALS the catalog id — wire-model line stays silent
+        ANTHROPIC_AUTH_TOKEN: 'tok-abcdef123456',
+        ANTHROPIC_BASE_URL: 'https://gw.example/v1',
+      },
+    });
+  } finally {
+    console.warn = realWarn;
+    if (prevDbg === undefined) delete process.env.WORCA_DEBUG_SPAWN; else process.env.WORCA_DEBUG_SPAWN = prevDbg;
+  }
+  const applied = warnings.filter((w) => w.includes('routing env applied'));
+  assert.equal(applied.length, 1, `exactly one applied-env line: ${JSON.stringify(warnings)}`);
+  assert.ok(applied[0].includes('ANTHROPIC_AUTH_TOKEN'), 'key name present');
+  assert.ok(applied[0].includes('ANTHROPIC_BASE_URL') && applied[0].includes('ANTHROPIC_MODEL'), 'all key names present');
+  assert.ok(!applied[0].includes('tok-abcdef123456'), 'token value masked');
+  assert.equal(warnings.filter((w) => w.includes('wire model "')).length, 0, 'plain wire-model line does NOT fire when ids match');
+});
+
+// ── gated spawn-debug (Step 5) ───────────────────────────────────────────────
+
+test('WORCA_DEBUG_SPAWN off: no spawn-debug line, argv byte-identical (regression guard)', POSIX_SHIM, async () => {
+  const realWarn = console.warn; const warnings = [];
+  console.warn = (...a) => warnings.push(a.join(' '));
+  const prev = process.env.WORCA_DEBUG_SPAWN; delete process.env.WORCA_DEBUG_SPAWN;
+  let argv;
+  try {
+    argv = await runWithArgvDump({ allowedTools: ['Read', 'Bash'] });
+  } finally {
+    console.warn = realWarn;
+    if (prev === undefined) delete process.env.WORCA_DEBUG_SPAWN; else process.env.WORCA_DEBUG_SPAWN = prev;
+  }
+  assert.deepEqual(argv, [
+    '-p', 'p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits',
+    '--allowedTools', 'Read,Bash',
+  ]);
+  assert.equal(warnings.filter((w) => w.includes('spawn-debug')).length, 0, 'no debug output when gate off');
+});
+
+test('WORCA_DEBUG_SPAWN on: logs bin + argv + masked model-env key names; NO secret value leaks', POSIX_SHIM, async () => {
+  const SECRET = 'super-secret-token-value-9999';   // >8 chars; masked to ••••••9999
+  const realWarn = console.warn; const warnings = [];
+  console.warn = (...a) => warnings.push(a.join(' '));
+  const prev = process.env.WORCA_DEBUG_SPAWN; process.env.WORCA_DEBUG_SPAWN = '1';
+  let argv;
+  try {
+    argv = await runWithArgvDump({
+      model: 'claude-opus-4-8',
+      modelEnv: {
+        ANTHROPIC_BASE_URL: 'https://gw.example/v1',
+        ANTHROPIC_AUTH_TOKEN: SECRET,
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'sonnet-card-id',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'haiku-card-id',
+      },
+    });
+  } finally {
+    console.warn = realWarn;
+    if (prev === undefined) delete process.env.WORCA_DEBUG_SPAWN; else process.env.WORCA_DEBUG_SPAWN = prev;
+  }
+  const debug = warnings.find((w) => w.includes('spawn-debug'));
+  assert.ok(debug, `spawn-debug line present: ${JSON.stringify(warnings)}`);
+  assert.ok(debug.includes('bin=') && debug.includes('argv='), 'bin + argv logged');
+  assert.ok(debug.includes('envScrub=') && debug.includes('childEnvKeys='), 'scrub state + env count logged');
+  for (const k of ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL']) {
+    assert.ok(debug.includes(k), `key name ${k} present`);
+  }
+  assert.ok(debug.includes('••••••'), 'values are masked');
+  const all = warnings.join('\n');
+  assert.ok(!all.includes(SECRET), 'full token never printed anywhere');
+  assert.ok(!all.includes('super-secret-token'), 'token prefix never printed anywhere');
 });
