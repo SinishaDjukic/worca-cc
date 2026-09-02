@@ -80,13 +80,20 @@ function freshRepo(prefix = 'worca-cc-cliix-repo-') {
  * @param {RegExp} [opts.closeStdinAfter] end() the child's stdin the first time this
  *        matches stdout (models a wrapper whose input dies mid-run).
  * @param {RegExp} [opts.sigintAfter] send SIGINT the first time this matches stdout.
- * @param {number}   [opts.timeoutMs=30000]
+ * @param {number}   [opts.timeoutMs=DRIVE_TIMEOUT_MS] 30 s on POSIX, 120 s on win32
  * @returns {Promise<{code:number|null, signal:string|null, stdout:string,
  *                    stderr:string, sent:number, timedOut:boolean, ms:number}>}
  */
+// The deadline is a hang detector, not a performance budget. Each e2e run is a
+// real CLI process doing git + worktree work; on the Windows 11 VM that is ~5x
+// macOS alone and worse under full-suite load, where a 30 s kill turned the
+// questions-arm run into a timeout whose hard-killed `running` row then failed
+// the two stdin tests after it. Give win32 the headroom the same hang detector
+// still catches on POSIX.
+const DRIVE_TIMEOUT_MS = process.platform === 'win32' ? 120000 : 30000;
 function driveCli(args, {
   script = [], env = {}, mock = true, stdin = 'pipe',
-  closeStdinAfter = null, sigintAfter = null, timeoutMs = 30000,
+  closeStdinAfter = null, sigintAfter = null, timeoutMs = DRIVE_TIMEOUT_MS,
 } = {}) {
   return new Promise((res) => {
     const childEnv = { ...process.env, WORCA_HOME: home, ...env };
@@ -155,6 +162,15 @@ function pipelineIdFrom(stdout) {
  * many times a given agent was spawned.
  * @returns {{bin:string, calls:string, spawnsMatching:(needle:string)=>number}}
  */
+// The failing-claude stub below is a POSIX shell script: Node cannot spawn it on
+// Windows (ENOENT), so the run classifies a NETWORK error instead of the 401 the
+// stub prints and the recovery arm is never the one under test. Same reason
+// test/spawn-args.test.mjs skips its fake shim there.
+const POSIX_STUB = { skip: process.platform === 'win32' ? 'the failing-claude stub is a POSIX shell script (no .exe stand-in on Windows)' : false };
+// child.kill('SIGINT') is TerminateProcess on Windows — the child never sees a
+// signal, so there is no Ctrl+C-pauses path to exercise (exit code null).
+const POSIX_SIGINT = { skip: process.platform === 'win32' ? 'SIGINT is not deliverable to a child on Windows (kill = TerminateProcess)' : false };
+
 function failingClaudeBin(message) {
   const dir = mkdtempSync(join(tmpdir(), 'worca-cc-cliix-bin-'));
   scratch.push(dir);
@@ -275,33 +291,40 @@ test('gate arm: "continue" spends no cycle — the loop body never re-runs', asy
 // Real runner + a stub bin that always fails with a 401, so every attempt is a
 // recoverable `auth` error and the interactive gate re-opens after each Retry.
 
-test('recovery arm: Abort ends the run with a non-zero exit', async () => {
+test('recovery arm: Pause parks the run (paused · error) and exits non-zero', POSIX_STUB, async () => {
   const stub = failingClaudeBin('API Error: 401 Invalid authentication credentials');
   const repo = freshRepo();
-  const r = await driveCli(['--project', repo, '--prompt', 'recovery abort e2e'], {
+  const r = await driveCli(['--project', repo, '--prompt', 'recovery pause e2e'], {
     mock: false,
     // PATH prefix: run-harness passes claude.bin = undefined to the capabilities probe, which
     // then bare-PATH-looks-up `claude` — WORCA_CLAUDE_BIN alone would let the REAL one spawn.
     env: { WORCA_CLAUDE_BIN: stub.bin, WORCA_RECOVERY_BACKOFF_MS: '0',
            PATH: `${dirname(stub.bin)}:${process.env.PATH}` },
-    script: [{ cue: /Choose \[1-2\]/, send: '2\n' }],   // "Abort the run"
+    script: [{ cue: /Choose \[1-2\]/, send: '2\n' }],   // "Pause the run"
   });
   assert.equal(r.timedOut, false, r.stdout);
   assert.equal(r.sent, 1, `no recovery prompt rendered:\n${r.stdout}`);
-  assert.equal(r.code, 1, `expected a non-zero exit\n${r.stdout}`);
+  assert.equal(r.code, 1, `an error-pause exits non-zero\n${r.stdout}`);
 
   // Rendered by askRecovery.
   assert.match(r.stdout, /Recoverable auth error — the pipeline could not reach the model\./);
   assert.match(r.stdout, /Fix: re-authenticate \(claude setup-token or \/login\) in another terminal, then retry\./);
   assert.match(r.stdout, /^ {2}1\) Retry$/m);
-  assert.match(r.stdout, /^ {2}2\) Abort the run$/m);
-  assert.match(r.stdout, /Pipeline ended with status: error/);
+  assert.match(r.stdout, /^ {2}2\) Pause the run/m);
+  // Errors pause the run: the error text is kept, nothing is discarded, and the
+  // run is resumable — never the old `Pipeline ended with status: error`.
+  assert.match(r.stdout, /Pipeline paused after an error\./);
+  assert.match(r.stdout, /401 Invalid authentication credentials/);
+  assert.match(r.stdout, /Resume with: .*worca resume /);
+  assert.doesNotMatch(r.stdout, /Pipeline ended with status: error/);
 
-  // Behavioural consequence: aborting spawned the failing node exactly once.
+  // Behavioural consequence: pausing spawned the failing node exactly once.
   assert.equal(stub.spawnsMatching('# Task: Clarify'), 1);
+  const id = /worca resume ([A-Za-z0-9_-]+)/.exec(r.stdout)?.[1];
+  assert.equal(pipelineStatuses().find((p) => p.id === id)?.status, 'paused', 'the row is parked, resumable');
 });
 
-test('recovery arm: Retry re-runs the failing node before the next prompt', async () => {
+test('recovery arm: Retry re-runs the failing node before the next prompt', POSIX_STUB, async () => {
   const stub = failingClaudeBin('API Error: 401 Invalid authentication credentials');
   const repo = freshRepo();
   const r = await driveCli(['--project', repo, '--prompt', 'recovery retry e2e'], {
@@ -312,17 +335,19 @@ test('recovery arm: Retry re-runs the failing node before the next prompt', asyn
            PATH: `${dirname(stub.bin)}:${process.env.PATH}` },
     script: [
       { cue: /Choose \[1-2\]/, send: '1\n' },   // Retry -> the node runs again
-      { cue: /Choose \[1-2\]/, send: '2\n' },   // ...fails again; Abort out
+      { cue: /Choose \[1-2\]/, send: '2\n' },   // ...fails again; Pause out
     ],
   });
   assert.equal(r.timedOut, false, r.stdout);
   assert.equal(r.sent, 2, `only ${r.sent} recovery prompt(s) rendered:\n${r.stdout}`);
   assert.equal(r.code, 1, `expected a non-zero exit\n${r.stdout}`);
-  // The decisive contrast with the Abort-first test: two spawns, not one.
+  assert.match(r.stdout, /Pipeline paused after an error\./);
+  assert.doesNotMatch(r.stdout, /Pipeline ended with status: error/);
+  // The decisive contrast with the Pause-first test: two spawns, not one.
   assert.equal(stub.spawnsMatching('# Task: Clarify'), 2);
 });
 
-test('recovery arm: a --yes run that pauses itself exits 3 — a wrapper must not read success', async () => {
+test('recovery arm: a --yes run that pauses itself exits 3 — a wrapper must not read success', POSIX_STUB, async () => {
   // Same failing-auth stub, but headless: auto mode pauses on the first auth hit
   // (no recovery prompt exists). Before the fix this exited 0 — a CI job went
   // green on a run that parked with zero work done and nobody left to resume it.
@@ -338,7 +363,8 @@ test('recovery arm: a --yes run that pauses itself exits 3 — a wrapper must no
   });
   assert.equal(r.timedOut, false, r.stdout);
   assert.equal(r.code, 3, `expected the resumable-pause exit code (0=done, 1=error, 2=usage)\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
-  assert.match(r.stdout, /Pipeline paused: /);
+  assert.match(r.stdout, /Pipeline paused on a recoverable error/);
+  assert.match(r.stdout, /auth: .*401/, 'the class and the cause print with the pause block');
   assert.match(r.stdout, /Resume with: /, 'the pause is resumable, and says how');
   const id = pipelineIdFrom(r.stdout);
   assert.ok(id, `no pipeline id in:\n${r.stdout}`);
@@ -429,7 +455,7 @@ test('MAJ-7: stdin closed mid-run stops the run and exits non-zero', async () =>
   assert.equal(rows.filter((p) => p.status === 'running').length, 0, JSON.stringify(rows));
 });
 
-test('MAJ-7 pitfall: Ctrl+C at an open question still PAUSES (never errors)', async () => {
+test('MAJ-7 pitfall: Ctrl+C at an open question still PAUSES (never errors)', POSIX_SIGINT, async () => {
   const repo = freshRepo();
   const r = await driveCli(['--project', repo, '--prompt', 'sigint pause e2e'], {
     sigintAfter: /Choose \[number or text\]/,

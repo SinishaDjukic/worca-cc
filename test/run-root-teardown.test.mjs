@@ -612,7 +612,7 @@ test('detached: §8.20 — an edit INSIDE the CLAUDE.md fence is rescued, never 
 
 // ── detached partial-setup containment ───────────────────────────────────────
 
-test('detached: one member failing createWorktree tears down the sibling — no orphan under runs/<id>/repos', async () => {
+test('detached: one member failing createWorktree PAUSES the run — the run root is KEPT, and the resume replays the setup', async () => {
   const a = await freshRepo('worca-cc-rrt-a-');
   const b = await freshRepo('worca-cc-rrt-b-');
   const ws = workspaceOpts([a, b], { branch: { source: 'main', feature: 'collide' } });
@@ -627,12 +627,26 @@ test('detached: one member failing createWorktree tears down the sibling — no 
   await withMode('detached', async () => {
     const orch = createOrchestrator({ ...ws, prompt: 'x', auto: true, claude: { mock: true } });
     const res = await orch.run();
-    assert.equal(res.status, 'error', JSON.stringify(res));
+    assert.equal(res.status, 'paused', JSON.stringify(res));
+    assert.equal(res.reason, 'error');
+    assert.match(res.detail, /already checked out/);
     const id = orch.getState().id;
     const reposBase = join(worcaHome(), 'runs', id, 'repos');
-    // Whichever member DID get a worktree must be torn down, and the run root with it.
-    assert.ok(!existsSync(reposBase), `no orphan checkout under ${reposBase}`);
-    assert.ok(!existsSync(join(worcaHome(), 'runs', id)), 'the run root is reclaimed too');
+    // A pause never tears down: whichever member DID get a checkout keeps it, and the
+    // run root with it — that is what the resume replays INTO.
+    assert.ok(existsSync(reposBase), `the checkout under ${reposBase} is kept for the resume`);
+    assert.ok(existsSync(join(worcaHome(), 'runs', id)), 'the run root is kept too');
+    const saved = readPipelineForResume(id);
+    assert.equal(saved.row.status, 'paused');
+    assert.equal(saved.resumePoint.setupIncomplete, true);
+
+    // Free b's branch, then resume: the replay re-attaches a and creates b, and the
+    // finished run reclaims the whole run root exactly as a fresh run would.
+    assert.equal(spawnSync('git', ['-C', b, 'worktree', 'remove', '--force', squatDir]).status, 0);
+    const orch2 = createOrchestrator({ ...ws, auto: true, claude: { mock: true }, resume: saved });
+    const res2 = await orch2.resume();
+    assert.equal(res2.status, 'done', JSON.stringify(res2));
+    assert.ok(!existsSync(join(worcaHome(), 'runs', id)), 'the run root is reclaimed on done');
     // a's branch is still KEPT (only the disposable checkout goes).
     assert.ok(branchList(a).some((x) => x.startsWith('collide-')), "member a's branch is kept");
   });

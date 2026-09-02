@@ -596,7 +596,8 @@ test('deep link derives retained work from state.branch.commitFailed, then DEFER
 test('cost-paused run shows the banner; Continue-without-cap resumes with ignoreCostCap', async () => {
   const posts = [];
   const ctx = await bootDetail({
-    // 'cost_pipeline' and 'cost_total' are the only two reasons the product emits.
+    // Reasons the product emits: 'cost_pipeline', 'cost_total', 'error', or the
+    // usage-limit first line (free text).
     rows: [{ ...ROW, status: 'paused', pauseReason: 'cost_pipeline' }],
     detail: PAUSED_DETAIL,
     arms: (url, opts) => {
@@ -628,7 +629,7 @@ test('a deep-linked cost-paused run gains its banner exactly once when the row a
   await settle(ctx.window, 5);
   const doc = ctx.window.document;
   assert.equal(doc.querySelector('#hist-detail .hd-banners .cost-banner'), null,
-    'the stub carries no pauseReason (it lives on LIST rows only)');
+    'the stub carries no pauseReason and the detail payload none either');
 
   await deliverRows(ctx, [{ ...ROW, status: 'paused', pauseReason: 'cost_total' }]);
   assert.equal(doc.querySelectorAll('#hist-detail .hd-banners .cost-banner').length, 1);

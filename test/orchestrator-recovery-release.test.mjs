@@ -3,10 +3,17 @@
 // on an interactive recovery prompt is released — the doomed phase must not wait
 // on a human"), deleted by P8 commit 11c7b7ee with no replacement.
 //
-// The guard lives in GraphOrchestrator._execute's catch (orchestrator.mjs:444-448):
-// a recovery `_ask` settles ONLY through answer()/pause()/stop(), so no AbortSignal
-// can reach it. When a phase-mate slice fails for real, the doomed phase must reject
-// that prompt itself or the composite waits forever on an answer nobody will give.
+// Under the errors-pause policy the release is no longer a bespoke guard in
+// GraphOrchestrator._execute's catch: a recovery `_ask` settles ONLY through
+// answer()/pause()/stop() (no AbortSignal reaches it), and the phase-mate's genuine
+// failure now PAUSES the run — so pause() itself rejects the parked prompt with the
+// pause sentinel (run-harness.mjs#pause). Flow: p1t1's kaboom -> _runNodeAttempts
+// (classifyError -> null -> the node site's pause verdict) -> _pauseFor -> pause() rejects p1t2's parked _ask
+// with PauseError -> that rejection escapes _recover and propagates STRAIGHT out of
+// _runNodeAttempts (the `await this._recover(…)` sits INSIDE its catch, so there is
+// no re-classification) -> p1t2's _execute catch takes the pause branch. Both slices
+// answer { paused: true }, runSlice marks them 'paused', runPhase returns
+// { paused: true }, runComposite bails and settle -> pausedExecution for x:n_impl:1.
 //
 // Everything below the injected runner is REAL: the scheduler's composite driver
 // (expand -> phase -> parallel slices -> finish), the semaphore, the recoverable-
@@ -127,25 +134,27 @@ test('a slice parked on a recovery prompt is released when a phase-mate fails', 
   const recovery = questions.filter((q) => q.kind === 'recovery');
   assert.equal(recovery.length, 1, `exactly one recovery prompt opened: ${JSON.stringify(questions.map((q) => q.kind))}`);
   assert.match(recovery[0].id, /^recovery-auth-/, 'the prompt is keyed by its error class');
-  assert.deepEqual(recovery[0].recovery,
+  // The prompt carries the failure policy's row options next to the cause.
+  assert.deepEqual(recovery[0].recovery.options.map((o) => o.id), ['retry', 'pause']);
+  const { options: _opts, ...recoveryCause } = recovery[0].recovery;
+  assert.deepEqual(recoveryCause,
     { cls: 'auth', message: 'claude exited with code 1: invalid authentication' });
 
-  // 2. The doomed phase REJECTED it rather than waiting on a human — an _ask is
-  //    not signal-reachable, so nothing else can settle it.
-  assert.equal(rejectedWith?.name, 'AbortError', 'the parked prompt was rejected with an AbortError');
+  // 2. pause() released the parked prompt with the pause sentinel — nothing waits on a human.
+  assert.equal(rejectedWith?.name, 'PauseError', 'the parked prompt was rejected by the pause');
   assert.equal(orch.pendingQuestion, null, 'and the single prompt slot was cleared');
 
-  // 3. The run terminated on the FIRST genuine failure, not on the abort.
-  assert.equal(res.status, 'error', `the composite failed the run: ${JSON.stringify(res)}`);
-  assert.equal(res.error, 'claude exited with code 1: kaboom');
-  assert.equal(orch.getState().status, 'error');
-  const composite = execs.find((e) => e.executionId === 'x:n_impl:1' && e.status === 'error');
-  assert.match(composite.error, /^composite execution failed in phase 1: task "Slice one": .*kaboom/);
+  // 3. The genuine failure PAUSED the run (errors never end a run); the reason names it.
+  assert.equal(res.status, 'paused', JSON.stringify(res));
+  assert.equal(res.reason, 'error');
+  assert.equal(res.detail, 'claude exited with code 1: kaboom');
+  assert.equal(orch.getState().status, 'paused');
+  const composite = execs.find((e) => e.executionId === 'x:n_impl:1' && e.status === 'paused');
+  assert.ok(composite, 'the composite shell row is paused (non-terminal), so resume re-runs the whole fan-out');
+  assert.ok(!execs.some((e) => e.status === 'error'), 'the scheduler never recorded an error row');
 
-  // 4. Both slices are CLOSED rows. Without the guard the released slice's
-  //    _execute never reaches its `finally`, so its ledger row (and its task row)
-  //    stay 'start' forever — a task that reads as running after the run failed.
+  // 4. Both slices are CLOSED rows — paused, not error.
   const slices = orch.getState().steps.filter((s) => s.kind === 'task');
   assert.deepEqual(slices.map((s) => s.taskId).sort(), ['p1t1', 'p1t2']);
-  for (const s of slices) assert.equal(s.status, 'error', `${s.taskId} closed`);
+  for (const s of slices) assert.equal(s.status, 'paused', `${s.taskId} closed as paused`);
 });

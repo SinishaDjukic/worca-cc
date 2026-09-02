@@ -1117,3 +1117,38 @@ test('34 a composite cut short by the End drain is `skipped` and publishes nothi
   // `skipped` is TERMINAL, so a resume must not re-invoke the abandoned shell.
   assert.equal(h.last().execs.find((e) => e.executionId === 'x:n_work:1').status, 'skipped');
 });
+
+// ── a pause raised INSIDE the expansion settles the shell with its expands binding ──
+// The adapter converts an expand-time throw into `{ paused: true }`. runComposite
+// must settle the shell on that answer: falling through to runUnexpanded would
+// strip `expandsPort`/the binding from the very entry the resume re-invokes, so the
+// node would re-run ONCE as a plain execution and the decomposition never be re-read.
+test('35 a paused expand settles the shell in place — the resume re-runs the WHOLE fan-out', async () => {
+  const first = harness({
+    template: FANOUT,
+    script: {
+      n_make: () => md('/p/plan.md'),
+      n_split: manifest,
+      n_work: (a) => (a.composite === 'expand' ? { paused: true } : compositeWorker()(a)),
+      n_check: () => ({ verdict: CLEAN }),
+    },
+  });
+  assert.equal(await first.scheduler.run(), 'paused');
+  const calls = first.callsFor('n_work');
+  assert.equal(calls.length, 1, 'no plain execution ran after the paused expand');
+  assert.equal(calls[0].composite, 'expand');
+  const snap = first.last();
+  assert.equal(snap.execs.find((e) => e.executionId === 'x:n_work:1').status, 'paused', 'the shell is NON-terminal');
+  assert.deepEqual(first.callsFor('n_check'), [], 'nothing published');
+
+  const second = harness({
+    template: FANOUT,
+    script: { n_work: compositeWorker(), n_check: () => ({ verdict: CLEAN }) },
+  });
+  second.scheduler.reattach(snap);
+  assert.equal(await second.scheduler.run(), 'done');
+  const c = second.callsFor('n_work');
+  assert.equal(c[0].composite, 'expand', 'the resume re-expands: the expands binding survived the pause');
+  assert.ok(c.some((x) => x.slice?.id === 'p1t1'), 'the fan-out ran');
+  assert.equal(c.filter((x) => x.bindings?.task === undefined && !x.composite && !x.slice).length, 0, 'never a plain execution with the binding stripped');
+});

@@ -166,6 +166,32 @@ test('run(): a pause requested during preflight lands on _enginePrePausePoint an
   assert.equal(JSON.parse(row.resume_point).kind, 'stub-boundary', 'persisted through _completePaused');
 });
 
+test('run(): a throw AFTER createPipeline pauses on the pre-engine point with reason error (never status error)', async () => {
+  const dir = await makeRepo();
+  const orch = new StubEngine({ projectDir: dir, prompt: 'demo', claude: { mock: true }, auto: true });
+  orch._setupRunRoot = async () => { throw new Error('disk full'); };
+  const errors = [];
+  orch.on('error', (e) => errors.push(e));
+  const res = await orch.run();
+  assert.equal(res.status, 'paused', JSON.stringify(res));
+  assert.equal(res.reason, 'error');
+  assert.equal(res.detail, 'disk full');
+  assert.equal(errors.length, 0, "a converted failure emits no 'error' event");
+  assert.equal(orch.calls.prePause, 1, 'the engine decided the pre-engine resume point (the base hook default _engineLastPoint() is null)');
+  assert.equal(orch.calls.engineRun.length, 0, 'the engine never ran');
+  const rp = orch.state.resumePoint;
+  assert.equal(rp.kind, 'stub-boundary');
+  assert.equal(rp.snapshot, null);
+  assert.equal(rp.pauseReason, 'error');
+  assert.equal(rp.pauseDetail, 'disk full');
+  assert.equal(rp.setupIncomplete, true, 'resume() must replay the setup');
+  const row = getDb().prepare('SELECT status, resume_point FROM pipelines WHERE id = ?').get(orch.state.id);
+  assert.equal(row.status, 'paused');
+  assert.equal(JSON.parse(row.resume_point).pauseReason, 'error', 'persisted through _completePaused');
+  assert.match(auditOf(orch.state.id), /Pipeline \*\*paused\*\*: disk full/);
+  assert.doesNotMatch(auditOf(orch.state.id), /Pipeline \*\*error\*\*/);
+});
+
 test('resume(): the shell consumes the _engineRehydrate bag and never reads rp.bus', async () => {
   const dir = await makeRepo();
   const p = await createPipeline(dir, { promptText: 'demo', sourceType: 'prompt' });

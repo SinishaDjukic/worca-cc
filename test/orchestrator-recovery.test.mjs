@@ -1,17 +1,23 @@
 // test/orchestrator-recovery.test.mjs — recoverable-error retry gate.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { readPipelineForResume, reconcileStaleRunning } from '../src/core/artifacts.mjs';
+import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { getDb } from '../src/core/db.mjs';
 
 useTempHome(after);
 process.env.WORCA_RECOVERY_BACKOFF_MS = '0'; // no real waiting in tests
+// The D17 straggler test needs BOTH branches of its graph in flight at once:
+// defaultMaxParallel() reads WORCA_MAX_PARALLEL FIRST (scheduler.mjs:45-48), and at
+// an ambient 1 n_side may take the only slot, End never fires and the run hangs.
+// Same pin as test/orchestrator-recovery-release.test.mjs:34-38.
+process.env.WORCA_MAX_PARALLEL = '4';
 
 function gitDir() {
   const dir = mkdtempSync(join(tmpdir(), 'worca-cc-recovery-'));
@@ -66,7 +72,36 @@ test('interactive: recoverable error -> Retry re-runs the node, run completes', 
   assert.equal(res.status, 'done');
 });
 
-test('interactive: recoverable error -> Abort fails the run as today', async () => {
+test('interactive: recoverable error -> Pause parks the run as paused (reason error), never error', async () => {
+  const dir = gitDir();
+  let orch;
+  const logs = [];
+  orch = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: false, claude: { mock: true },
+    runners: { producer: authOnceProducer(), verifier: okVerifier },
+  });
+  orch.on('question', answerWith(() => orch, 'pause'));
+  orch.on('log', (l) => logs.push(l));
+  const res = await orch.run();
+  assert.equal(res.status, 'paused', JSON.stringify(res));
+  assert.equal(res.reason, 'error');
+  assert.match(res.detail, /401 Invalid authentication credentials/);
+  assert.equal(orch.getState().status, 'paused');
+  assert.equal(orch.getState().pauseReason, 'error', 'getState() carries the reason');
+  // The ONE error-level line is written BEFORE the error is converted into the pause sentinel.
+  assert.ok(logs.some((l) => l.level === 'error' && /execution failed: .*401/.test(l.text)), JSON.stringify(logs.filter((l) => l.level === 'error')));
+  const row = getDb().prepare('SELECT status, resume_point, branch FROM pipelines WHERE id = ?').get(orch.state.id);
+  assert.equal(row.status, 'paused');
+  const rp = JSON.parse(row.resume_point);
+  assert.equal(rp.pauseReason, 'error');
+  assert.match(rp.pauseDetail, /401/);
+  assert.ok(existsSync(JSON.parse(row.branch).worktreeDir), 'worktree kept for the resume');
+  // The failed execution is a PAUSED (non-terminal) row — what reattach re-invokes.
+  assert.ok(orch.getState().steps.some((s) => s.status === 'paused'), JSON.stringify(orch.getState().steps.map((s) => [s.key, s.status])));
+  assert.ok(!orch.getState().steps.some((s) => s.status === 'error'));
+});
+
+test("interactive: the legacy { decision: 'abort' } answer still means Pause", async () => {
   const dir = gitDir();
   let orch;
   orch = createOrchestrator({
@@ -75,7 +110,8 @@ test('interactive: recoverable error -> Abort fails the run as today', async () 
   });
   orch.on('question', answerWith(() => orch, 'abort'));
   const res = await orch.run();
-  assert.equal(res.status, 'error');
+  assert.equal(res.status, 'paused');
+  assert.equal(res.reason, 'error');
 });
 
 test('auto: bounded retry then PAUSE when a transient error never clears', async () => {
@@ -90,7 +126,10 @@ test('auto: bounded retry then PAUSE when a transient error never clears', async
   // An outage that outlasts the backoff budget is still outside the pipeline's
   // control: park the run as resumable instead of a terminal error.
   assert.equal(res.status, 'paused');
-  assert.match(res.reason || '', /ECONNRESET/);
+  // A self-parked auto run keeps its CLASS: 'recoverable' (resume when it clears),
+  // never the 'error' verdict a user's give-up or a genuine failure carries.
+  assert.equal(res.reason, 'recoverable');
+  assert.match(res.detail || '', /^network: .*ECONNRESET/);
   // First producer node: 1 initial + RECOVERY_MAX_AUTO_ATTEMPTS retries = 4 calls.
   assert.equal(calls, 4);
 });
@@ -98,15 +137,21 @@ test('auto: bounded retry then PAUSE when a transient error never clears', async
 test('auto: auth error pauses immediately — a 7s backoff cannot re-login', async () => {
   const dir = gitDir();
   let calls = 0;
+  const logs = [];
   const alwaysAuth = async () => { calls++; throw AUTH_ERR(); };
   const orch = createOrchestrator({
     projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
     runners: { producer: alwaysAuth, verifier: okVerifier },
   });
+  orch.on('log', (l) => logs.push(l));
   const res = await orch.run();
-  assert.equal(res.status, 'paused');
-  assert.match(res.reason || '', /401/);
+  assert.equal(res.status, 'paused', JSON.stringify(res));
+  assert.equal(res.reason, 'recoverable');
+  assert.match(res.detail || '', /^auth: .*401/);
   assert.equal(calls, 1, 'auth is NOT retried — it pauses on the first hit');
+  // The class survives into the run log (a warn, not the error-level failure line).
+  assert.ok(logs.some((l) => l.level === 'warn' && /recoverable auth error — pausing/.test(l.text)), JSON.stringify(logs.map((l) => [l.level, l.text])));
+  assert.ok(!logs.some((l) => l.level === 'error'), 'a recoverable pause is not logged as a failure');
 });
 
 test('auto: quota error pauses immediately — retrying cannot top up the balance', async () => {
@@ -119,7 +164,8 @@ test('auto: quota error pauses immediately — retrying cannot top up the balanc
   });
   const res = await orch.run();
   assert.equal(res.status, 'paused');
-  assert.match(res.reason || '', /credit balance/i);
+  assert.equal(res.reason, 'recoverable');
+  assert.match(res.detail || '', /^quota: .*credit balance/i);
   assert.equal(calls, 1, 'quota is NOT retried — it pauses on the first hit');
 });
 
@@ -150,6 +196,132 @@ test('auto: a network-paused run resumes to done once the outage clears', async 
   assert.equal(res2.status, 'done');
 });
 
+test('a NON-recoverable throw pauses the run with reason error + detail (was: status error)', async () => {
+  const dir = gitDir();
+  const orch = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    runners: { producer: async () => { throw new Error('claude exited with code 1: disk full'); }, verifier: okVerifier },
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'paused', JSON.stringify(res));
+  assert.equal(res.reason, 'error');
+  assert.equal(res.detail, 'claude exited with code 1: disk full');
+  assert.equal(res.error, undefined, 'a paused result has no error field');
+  const saved = readPipelineForResume(orch.state.id);
+  assert.equal(saved.row.status, 'paused');
+  assert.ok(saved.resumePoint?.snapshot, 'the frozen (clean) scheduler snapshot is persisted (the Task card completed before the agent fired)');
+  assert.ok(!saved.resumePoint.snapshot.execs.some((e) => e.status === 'error'), 'the scheduler never saw the error');
+});
+
+test('resume after an error-pause re-invokes the paused execution WITH its session and completes', async () => {
+  const dir = gitDir();
+  let boom = true;
+  const seen = [];
+  const mkRunners = () => ({
+    producer: async (ctx) => {
+      ctx.onEvent({ type: 'session', sessionId: `sess-${ctx.nodeId}` });
+      seen.push({ nodeId: ctx.nodeId, resume: ctx.resumeSessionId || null });
+      if (boom) { boom = false; throw new Error('claude exited with code 1: disk full'); }
+      return { status: 'ok', summary: 'ok' };
+    },
+    verifier: okVerifier,
+  });
+  const orch1 = createOrchestrator({ projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true }, runners: mkRunners() });
+  const r1 = await orch1.run();
+  assert.equal(r1.status, 'paused');
+  const failed = seen[0];
+  const saved = readPipelineForResume(orch1.state.id);
+  assert.equal(saved.steps.find((s) => s.nodeId === failed.nodeId)?.status, 'paused');
+
+  const orch2 = createOrchestrator({ projectDir: dir, auto: true, claude: { mock: true }, runners: mkRunners(), resume: saved });
+  const r2 = await orch2.resume();
+  assert.equal(r2.status, 'done', JSON.stringify(r2));
+  assert.ok(seen.some((s) => s.nodeId === failed.nodeId && s.resume === `sess-${failed.nodeId}`), 'the failed execution re-ran with its session re-attached');
+  assert.equal(orch2.pauseReason, null); assert.equal(orch2.getState().pauseDetail, null);
+  const after2 = readPipelineForResume(orch1.state.id);
+  assert.equal(after2.row.status, 'done');
+  assert.equal(after2.row.resume_point, null);
+});
+
+test('the user stop still ends the run STOPPED even when the child dies with a plain error', async () => {
+  const dir = gitDir();
+  let orch;
+  orch = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    runners: {
+      producer: async () => {
+        orch.stop();                                            // the user's stop lands mid-node…
+        await new Promise((r) => setTimeout(r, 5));
+        throw new Error('claude exited with code 143');         // …and the child reports a PLAIN error
+      },
+      verifier: okVerifier,
+    },
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'stopped', JSON.stringify(res));
+  const row = getDb().prepare('SELECT status, resume_point FROM pipelines WHERE id = ?').get(orch.state.id);
+  assert.equal(row.status, 'stopped');
+  assert.equal(row.resume_point, null, 'a stopped run is never resumable');
+});
+
+test('an error-pause that lands AFTER the End card fired still PAUSES the run (D17); resume re-invokes the straggler and completes', { timeout: 60_000 }, async () => {
+  const dir = gitDir();
+  // Two branches off the Task card: n_review (a verifier) reaches End at once;
+  // n_side (a producer, NOT wired to End) is still running when End fires and then
+  // fails. The scheduler prefers `ended` over `pauseRequested` (scheduler.mjs:1033-1034),
+  // so without _engineRun's D17 guard this run would end 'done' with the error swallowed.
+  // Needs BOTH branches in flight at once — the module-scope WORCA_MAX_PARALLEL pin
+  // (see the top of this file) guarantees the second slot; at 1 this would deadlock.
+  const wf = await writeGraphWorkflow({
+    id: 'wf_straggler', name: 'Straggler',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_review', kind: 'agent', key: 'reviewer', x: 240, y: 0, config: {} },
+      { id: 'n_side', kind: 'agent', key: 'planner', x: 240, y: 200, config: {} },
+      { id: 'n_end', kind: 'end', x: 480, y: 0, config: {} },
+    ],
+    wires: [
+      { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_review', port: 'plan' } },
+      { id: 'w2', from: { node: 'n_task', port: 'task' }, to: { node: 'n_side', port: 'task' } },
+      { id: 'w3', from: { node: 'n_review', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
+    ],
+  });
+  let sideCalls = 0;
+  let endFired;
+  const endReached = new Promise((r) => { endFired = r; });
+  const mk = () => ({
+    verifier: okVerifier,                                   // n_review: instant pass -> End fires
+    producer: async () => {                                 // n_side: the straggler
+      sideCalls++;
+      if (sideCalls === 1) {
+        await endReached;                                   // hold until End has settled…
+        await new Promise((r) => setTimeout(r, 10));
+        throw new Error('claude exited with code 1: side blew up');   // …then fail
+      }
+      return { status: 'ok', summary: 'ok' };
+    },
+  });
+  const orch1 = createOrchestrator({ projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true }, workflowId: wf.id, runners: mk() });
+  orch1.on('exec', (p) => { if (p.nodeId === 'n_end' && p.status === 'done') endFired(); });
+  const r1 = await orch1.run();
+  assert.equal(r1.status, 'paused', JSON.stringify(r1));
+  assert.equal(r1.reason, 'error');
+  assert.match(r1.detail, /side blew up/);
+  assert.equal(sideCalls, 1, 'the straggler DID run (both branches fire together: defaultMaxParallel is 4)');
+  const saved = readPipelineForResume(orch1.state.id);
+  assert.equal(saved.row.status, 'paused');
+  assert.ok(saved.resumePoint.snapshot?.ended, 'the frozen point already carries End');
+  assert.equal(saved.resumePoint.snapshot.execs.find((e) => e.executionId === 'x:n_side:1')?.status, 'start',
+    'the straggler is NON-terminal in the frozen point (onSnapshot froze when pause() ran)');
+
+  const orch2 = createOrchestrator({ projectDir: dir, auto: true, claude: { mock: true }, runners: mk(), resume: saved });
+  const r2 = await orch2.resume();
+  assert.equal(r2.status, 'done', JSON.stringify(r2));
+  assert.equal(sideCalls, 2, 'reattach re-invoked the straggler; nothing else re-ran');
+  assert.equal(orch2.getState().endReached, true);
+  assert.equal(readPipelineForResume(orch1.state.id).row.status, 'done');
+});
+
 test('auto: session-limit pauses the run (not error) and is resumable', async () => {
   const dir = gitDir();
   let calls = 0;
@@ -160,7 +332,8 @@ test('auto: session-limit pauses the run (not error) and is resumable', async ()
   });
   const res = await orch.run();
   assert.equal(res.status, 'paused');
-  assert.match(res.reason || '', /session limit/i);
+  assert.equal(res.reason, 'usage_limit', 'a machine-readable reason code');
+  assert.match(res.detail || '', /session limit/i, 'the cause rides the detail');
   assert.equal(calls, 1, 'a usage cap is NOT retried — it pauses on the first hit');
 });
 
@@ -195,8 +368,8 @@ test('shared gate: two concurrent recoveries of one class open ONE prompt', asyn
     orch._recover({ node, cls: 'auth', err: AUTH_ERR(), attempt: 1 }),
     orch._recover({ node, cls: 'auth', err: AUTH_ERR(), attempt: 1 }),
   ]);
-  assert.equal(a, 'retry');
-  assert.equal(b, 'retry');
+  assert.equal(a.outcome, 'retry');
+  assert.equal(b.outcome, 'retry');
   assert.equal(asks, 1, 'one shared prompt for both same-class failures');
 });
 
@@ -224,8 +397,8 @@ test('serialized gate: two DISTINCT classes never open two prompts at once', asy
     orch._recover({ node: { key: 'n1', nodeId: 'a' }, cls: 'auth', err: AUTH_ERR(), attempt: 1 }),
     orch._recover({ node: { key: 'n2', nodeId: 'b' }, cls: 'network', err: NET_ERR(), attempt: 1 }),
   ]);
-  assert.equal(a, 'retry');
-  assert.equal(b, 'retry');
+  assert.equal(a.outcome, 'retry');
+  assert.equal(b.outcome, 'retry');
   assert.equal(asks, 2, 'one prompt per distinct class');
   assert.equal(maxOpen, 1, 'prompts are serialized — only one open at a time');
 });

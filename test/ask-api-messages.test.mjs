@@ -100,10 +100,18 @@ test('a full mock turn: 202, stamped frames to ask-done, persistence, session, t
   assert.equal(r.status, 202);
   const { userMessageId, assistantMessageId } = await r.json();
   assert.match(userMessageId, /^askm_[0-9a-f]{8}$/);
-  // §7.4: the deterministic title is stamped SYNCHRONOUSLY before the 202 —
-  // read it NOW; after ask-done the fire-and-forget D13 title call replaces it.
-  assert.equal((await snapshot(t.id)).thread.title, 'hi there',
-    'deterministic title stamped by the message route');
+  // §7.4: NOTHING is stamped before the 202 — the row stays untitled (the header
+  // reads "Ask Worca") until the D13 background title lands. That call runs
+  // CONCURRENTLY with the turn, so by the time this GET is answered the row may
+  // already carry the announced title — but never the prompt text. The frame is
+  // written to the socket before the DB read below can be answered, but it is
+  // parsed on a different socket — so WAIT for it rather than peeking at msgs.
+  const early = (await snapshot(t.id)).thread.title;
+  if (early !== null) {
+    const announced = await waitFor(() => msgs.find((m) => m.type === 'ask-title' && m.threadId === t.id));
+    assert.equal(early, announced.title,
+      `no provisional title from the message route: null until the announced one (got ${JSON.stringify(early)})`);
+  }
   await waitFor(() => framesFor(msgs, t.id).some((f) => f.type === 'ask-done'));
   const frames = framesFor(msgs, t.id);
   assert.equal(frames[0].type, 'ask-start');
@@ -124,7 +132,7 @@ test('a full mock turn: 202, stamped frames to ask-done, persistence, session, t
   assert.equal(asst.text, '[mock] hi there', 'the mock echoes the USER text — the context header was stripped');
   assert.equal(snap.thread.sessionId, 'mock-session-ask-1');
   assert.equal(snap.inFlight, null);
-  // D13: the background title call then replaces the deterministic title and
+  // D13: the background title call titles the still-untitled thread and
   // announces it out-of-turn (under WORCA_MOCK it echoes the title prompt).
   const titled = await waitFor(() => msgs.find((m) => m.type === 'ask-title' && m.threadId === t.id));
   assert.ok(typeof titled.title === 'string' && titled.title, 'ask-title carries the new title');
@@ -161,8 +169,15 @@ test('mid-turn reconnect: ?threadId= replay and {type:subscribe,threadId} both d
   const c = openWs();
   await c.opened;
   c.ws.send(JSON.stringify({ type: 'subscribe', threadId: t.id }));
-  await waitFor(() => framesFor(c.msgs, t.id).length >= 3);
-  assert.equal(framesFor(c.msgs, t.id)[0].seq, 1, 'in-band subscribe replays from the start');
+  // Live frames are broadcast to EVERY socket, so a frame the turn emits between
+  // c opening and its subscribe being handled can land BEFORE the replay (seen on
+  // a loaded Windows VM: first frame seq 4). The contract is that the replay
+  // delivers the whole stamped prefix — the client dedupes by seq (§6.6) — not
+  // that it precedes every live frame. So wait for seq 1 itself, then check the
+  // prefix is complete and contiguous.
+  await waitFor(() => framesFor(c.msgs, t.id).some((f) => f.seq === 1));
+  const cSeqs = [...new Set(framesFor(c.msgs, t.id).map((f) => f.seq))].sort((x, y) => x - y);
+  assert.deepEqual(cSeqs.slice(0, 3), [1, 2, 3], 'in-band subscribe replays from the start');
   await waitFor(() => framesFor(a.msgs, t.id).some((f) => f.type === 'ask-done'));
   a.ws.close(); b.ws.close(); c.ws.close();
 });

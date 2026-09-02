@@ -368,6 +368,14 @@ input[type="file"]{font-size:12.5px;color:var(--ink-3);background:transparent;bo
 .add-project{margin-top:10px;display:flex;flex-direction:column;gap:9px;padding:14px;
   border:1.5px solid var(--line-2);border-radius:var(--r-ctrl);background:var(--field);}
 .add-project-actions{display:flex;gap:9px;justify-content:flex-end;}
+/* Settings → Chat history: a text-style destructive action so its label sits on
+   the same left edge as the "Chat history" heading and the counts line under it
+   (a pill's inner padding indented the text). Same shape as .hd-cmt-btn. */
+.ask-history-delete{border:none;background:none;padding:0;color:var(--red-ink);
+  font:600 12.5px var(--sans);cursor:pointer;line-height:1.45;}
+.ask-history-delete:hover:not(:disabled){text-decoration:underline;}
+.ask-history-delete:disabled{opacity:.45;cursor:not-allowed;}
+.ask-history-delete:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:3px;}
 /* path row (input + trailing button) — shared by add-project, project modal, plugin add */
 .path-row{display:flex;gap:9px;align-items:center;}
 .path-row input{flex:1 1 auto;min-width:0;}
@@ -1552,6 +1560,12 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    In the v2 card it is a direct child of .h-meta on its own line. */
 .hist-pausenote{font-size:11.5px;font-weight:600;color:var(--amber-ink);}
 .hist-pausenote.total{color:var(--red-ink);}
+.hist-pausenote.error{color:var(--red-ink);}
+.pause-error-banner{border-radius:var(--r-ctrl);padding:12px 14px;margin-top:12px;font-size:13px;background:var(--red-bg);color:var(--red-ink);}
+.pause-error-banner b{display:block;margin-bottom:4px;}
+.pause-error-banner .peb-text{color:var(--ink);font-family:var(--mono);font-size:12px;word-break:break-word;}
+.pause-error-banner .peb-hint{color:var(--ink-2);margin-top:6px;}
+.hd-banners .pause-error-banner,.rd-banners .pause-error-banner{align-self:stretch;margin:0;}
 
 @media (max-width:1080px){
   .stat-row{grid-template-columns:repeat(2,1fr);}
@@ -2816,7 +2830,7 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-header-logo{width:20px;height:20px;border-radius:50%;}
 .ask-title{font-weight:600;font-size:13px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ask-header-spacer,.ask-composer-spacer,.ask-activity-spacer,.ask-card-actions-spacer{flex:1 1 auto;}
-.ask-scope-btn{display:inline-flex;align-items:center;gap:5px;max-width:180px;padding:3px 9px;
+.ask-scope-btn{display:inline-flex;align-items:center;gap:5px;max-width:180px;height:30px;flex:none;padding:0 9px;
   border:1px solid var(--line);border-radius:999px;background:none;color:var(--ink-3);
   font:inherit;font-size:11.5px;cursor:pointer;}
 .ask-scope-btn:hover{background:var(--field);color:var(--ink);}
@@ -3016,7 +3030,7 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-pop{position:absolute;z-index:3;background:var(--panel);border:1px solid var(--line-2);
   padding:6px;box-shadow:0 12px 34px rgba(25,25,27,.12);border-radius:16px;}
 .ask-pop-threads{top:46px;right:76px;width:326px;}
-.ask-pop-scope{top:46px;left:16px;width:300px;max-height:min(420px,70%);overflow-y:auto;}
+.ask-pop-scope{left:16px;bottom:44px;width:300px;max-height:min(420px,70%);overflow-y:auto;}
 .ask-pop-model{right:30px;bottom:42px;width:292px;border-radius:18px;}
 .ask-pop-runinfo{right:96px;bottom:44px;width:326px;z-index:4;}
 .ask-pop-caption,.ask-pop-caption-row .ask-pop-caption{padding:8px 10px 6px;font-weight:600;font-size:10px;

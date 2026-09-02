@@ -47,6 +47,8 @@ import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
   listThreads as askListThreads, updateThread as askUpdateThread,
   deleteThread as askDeleteThread, sweepEmptyThreads, sweepStreamingMessages,
+  countThreads as askCountThreads, listThreadIds as askListThreadIds,
+  countWorktrees as askCountWorktrees, countAttachments as askCountAttachments,
   appendMessage as askAppendMessage, getMessage as askGetMessage,
   listMessages as askListMessages, setMessageBlocks as askSetMessageBlocks,
   findCard as askFindCard, updateCardBlock as askUpdateCardBlock,
@@ -54,7 +56,7 @@ import {
   getAttachment as askGetAttachment, attachmentPath as askAttachmentPath, threadAttachmentBytes as askThreadAttachmentBytes,
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
   findRunLinksByPipeline as askFindRunLinksByPipeline,
-  setThreadTitle as askSetThreadTitle, finishMessage as askFinishMessage,
+  finishMessage as askFinishMessage,
 } from '../src/core/ask/store.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
@@ -488,6 +490,9 @@ function summarizeRuns() {
     // 'cost_pipeline'/'cost_total') instead of showing a plain "Paused" card
     // until the next event.
     pauseReason: r.pauseReason || null,
+    // The clipped failure message behind reason 'error', or null — so a
+    // reload/reconnect restores the "Paused · error" detail, not a bare card.
+    pauseDetail: r.pauseDetail || null,
     startedAt: r.startedAt,
     pendingQuestion: r.pendingQuestion || null,
     // kind discriminator so the client routes runs vs scans vs agent generations
@@ -568,14 +573,21 @@ function wireRun(entry) {
         // Remember the pause reason for summarizeRuns (hello). Reset on every
         // done so a later reasonless finish cannot leave a stale cost banner.
         entry.pauseReason = (payload && payload.reason) || null;
+        // ...and WHAT went wrong for an error-pause, reset alongside it.
+        entry.pauseDetail = (payload && payload.detail) || null;
         resolvePending(entry, { reason: entry.status });
         if (payload?.reason === 'cost_pipeline' || payload?.reason === 'cost_total') {
           emitChanged('budget-changed');
         }
       }
       if (name === 'error') {
-        entry.status = 'error';
-        resolvePending(entry, { reason: 'error' });
+        // The launch-error channel (a failure BEFORE the pipeline row exists). A
+        // converted in-run failure pauses and emits no 'error'; never let a stray
+        // one demote a parked run.
+        if (entry.status !== 'paused' && entry.status !== 'pausing') {
+          entry.status = 'error';
+          resolvePending(entry, { reason: 'error' });
+        }
       }
       if (name === 'exec') {
         entry.status = 'running';
@@ -3586,6 +3598,29 @@ function stampAskFrames(threadId, job) {
   };
 }
 
+/** The narrow worktree envelope the snapshot GET and the `ask-worktrees` frame
+ *  share (P4 §10): never the full row — threadId/projectDir/updatedAt stay
+ *  server-side. Mirrors the list_worktrees MCP tool (src/core/ask/tools.mjs). */
+function askWorktreesEnvelope(threadId) {
+  return askListWorktrees(threadId).map((w) => ({
+    worktreeId: w.worktreeId, projectKey: w.projectKey, ref: w.ref,
+    commit: w.commit, path: w.path, createdAt: w.createdAt,
+  }));
+}
+
+/** Broadcast the thread's CURRENT worktrees as an out-of-turn frame (seq-less,
+ *  threadId-tagged, like ask-title). Fed by the turn's onWorktreeMutation hook —
+ *  the MCP child opened/removed/navigated a checkout this process never saw —
+ *  and by the manual DELETE route, so every tab's count and popover follow
+ *  without a snapshot GET. Best effort; false when the thread is gone. */
+function emitAskWorktrees(threadId) {
+  try {
+    if (!askGetThread(threadId)) return false;
+    broadcast({ type: 'ask-worktrees', threadId, worktrees: askWorktreesEnvelope(threadId) });
+    return true;
+  } catch { return false; }   // a poke is best effort
+}
+
 /** 400 on shape (spec §8.1 — a DELIBERATE divergence from the house 404-on-
  *  malformed-param style), null-return contract like badRequest. */
 function askIdParam(res, value, kind) {
@@ -3601,7 +3636,51 @@ app.get('/api/ask/threads', (req, res) => {
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
     const threads = askListThreads({ limit }).map((t) => ({ ...t, inFlight: !!askInFlight(t.id) }));
-    res.json({ threads });
+    // total = EVERY saved chat (the History popover's meter), not the capped page above.
+    res.json({ threads, total: askCountThreads() });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// Settings → "Delete all chat history": the counts the confirm dialog quotes,
+// read fresh right before it opens.
+app.get('/api/ask/history', (req, res) => {
+  try {
+    res.json({
+      threads: askCountThreads(),
+      worktrees: askCountWorktrees(),
+      attachments: askCountAttachments(),
+      inFlight: askRunningCount(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// Bulk delete: every thread through deleteAskThreadFully, SEQUENTIALLY (each
+// worktree removal spawns git — never in parallel), best-effort per thread. The
+// ids come from listThreadIds (no cap), never from the LIMIT-ed listThreads.
+// One JSON at the end; then a seq-less out-of-turn frame so every open tab
+// drops its now-dead st.threadId (the panel would otherwise keep it until the
+// next 404).
+app.delete('/api/ask/threads', async (req, res) => {
+  const removed = { threads: 0, worktrees: 0 };
+  const failed = [];
+  try {
+    for (const id of askListThreadIds()) {
+      try {
+        const r = await deleteAskThreadFully(id);
+        if (r.deleted) {
+          removed.threads += 1;
+          removed.worktrees += r.worktrees;
+        } else failed.push(id);
+      } catch {
+        failed.push(id);
+      }
+    }
+    res.json({ ok: true, removed, failed });
+    broadcast({ type: 'ask-history-cleared' });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -3637,12 +3716,9 @@ app.get('/api/ask/threads/:id', (req, res) => {
       messages: askListMessages(id),
       attachments: askListAttachments(id),
       runLinks: askListRunLinks(id),
-      // P4 §10: the SAME narrow envelope the list_worktrees MCP tool returns —
-      // never the full row (threadId/projectDir/updatedAt stay server-side).
-      worktrees: askListWorktrees(id).map((w) => ({
-        worktreeId: w.worktreeId, projectKey: w.projectKey, ref: w.ref,
-        commit: w.commit, path: w.path, createdAt: w.createdAt,
-      })),
+      // P4 §10: the SAME narrow envelope the list_worktrees MCP tool and the
+      // ask-worktrees frame carry — never the full row.
+      worktrees: askWorktreesEnvelope(id),
       inFlight: job && job.messageId ? { messageId: job.messageId } : null, // null while the slot is only reserved
     });
   } catch (err) {
@@ -3689,13 +3765,13 @@ app.patch('/api/ask/threads/:id', (req, res) => {
 
 // §7.5 order: abort the in-flight turn -> detach followers -> remove the chat's
 // worktrees git-properly -> delete the row (tx + cascades) + rm -rf inside
-// deleteThread -> drop the job entry.
-app.delete('/api/ask/threads/:id', async (req, res) => {
-  const id = askIdParam(res, req.params.id, 'thread');
-  if (!id) return;
+// deleteThread -> drop the job entry. Shared by the per-thread DELETE and the
+// bulk DELETE; askDeleting brackets the whole thing per id (POST /messages
+// refuses the thread while its delete is past the first await).
+// Returns { deleted, worktrees } — worktrees = rows removeThreadWorktrees removed.
+async function deleteAskThreadFully(id) {
+  askDeleting.add(id);
   try {
-    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
-    askDeleting.add(id);
     const stopJob = () => {
       const job = askJobs.get(id);
       if (job && job.turn && typeof job.turn.stop === 'function') {
@@ -3714,20 +3790,30 @@ app.delete('/api/ask/threads/:id', async (req, res) => {
     // P4 §5: git-proper removal of every worktree BEFORE the row cascade — the
     // rmSync inside askDeleteThread alone would leave stale `git worktree`
     // registrations in the source repos. Never throws (best-effort per row).
-    await askRemoveThreadWorktrees(id);
+    const { removed } = await askRemoveThreadWorktrees(id);
     // Re-read the job AFTER the await: askDeleting blocks new turns, but a turn
     // that was already mid-start is stopped here rather than left running.
     const job = stopJob();
-    askDeleteThread(id);
+    const deleted = askDeleteThread(id);
     if (job) {
       if (job.graceTimer) clearTimeout(job.graceTimer);
       askJobs.delete(id);
     }
+    return { deleted, worktrees: removed };
+  } finally {
+    askDeleting.delete(id);
+  }
+}
+
+app.delete('/api/ask/threads/:id', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  try {
+    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    await deleteAskThreadFully(id);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
-  } finally {
-    askDeleting.delete(id);
   }
 });
 
@@ -3741,6 +3827,7 @@ app.delete('/api/ask/threads/:id/worktrees/:wtId', async (req, res) => {
   try {
     if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
     const out = await askRemoveWorktree({ threadId: id, wtId });
+    emitAskWorktrees(id);   // every open tab's count/popover follows the delete
     res.json(out);
   } catch (err) {
     if (err && err.name === 'AskWorktreeError') return res.status(404).json({ error: err.message });
@@ -4055,16 +4142,14 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       // `ctx` (pin-merged) rather than cv.context: the stored row is what restores
       // the selector on reopen and what the MCP child reads for tool defaulting.
       askUpdateThread(id, { context: ctx, model: mv.model, effort: mv.effort });
-      let deterministicTitle = thread.title;
-      let titleWasAuto = false;
-      if (thread.title == null) {
-        // §7.4 — no frame for the deterministic title. titleWasAuto gates the
-        // D13 background replacement: a title given at THREAD CREATION is the
-        // user's, and the haiku call must never fire for it (§17 Q&A 1).
-        deterministicTitle = askSanitizeTitle(text.slice(0, 80)) || 'New chat';
-        askSetThreadTitle(id, deterministicTitle);
-        titleWasAuto = true;
-      }
+      // §7.4 — NOTHING is stamped on the row before the 202: the thread stays
+      // untitled (the header reads "Ask Worca") until the D13 background title
+      // announces itself. titleWasAuto gates that call: a title given at THREAD
+      // CREATION is the user's, and the haiku call must never fire for it
+      // (§17 Q&A 1). deterministicTitle is only the turn's fallback for an
+      // empty haiku result (turn.mjs _kickoffTitle), never written here.
+      const titleWasAuto = thread.title == null;
+      const deterministicTitle = titleWasAuto ? (askSanitizeTitle(text.slice(0, 80)) || 'New chat') : thread.title;
       const userMsg = askAppendMessage(id, { role: 'user', text });
       job.userMessageId = userMsg.id;
       const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, kind: f.kind, mime: f.mime, text: f.text, data: f.data }));
@@ -4111,6 +4196,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
           onFrame: stampAskFrames(id, job),
           onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
           onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
+          onWorktreeMutation: () => { emitAskWorktrees(id); },
         },
       });
       job.turn = turn;
@@ -5308,6 +5394,6 @@ export { app, server, runs };
 export const _testing = {
   wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork,
-  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, resolveAskContext, flipCard,
-  emitDiffCommentsChanged,
+  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard,
+  emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
 };
