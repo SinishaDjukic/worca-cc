@@ -225,20 +225,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     logo.alt = '';
     header.appendChild(logo);
     el.title = make('div', 'ask-title', 'Ask Worca');
-    // #397: the scope selector — which project/workspace this chat is about,
-    // independent of the page behind the sheet. It sits BEFORE the title
-    // (logo → scope → title → spacer): the pill keeps its width (style.css
-    // .ask-scope-btn flex:none), a long haiku title ellipsizes.
-    const scopeBtn = make('button', 'ask-scope-btn');
-    scopeBtn.type = 'button';
-    scopeBtn.setAttribute('data-ask-scope-btn', '');
-    scopeBtn.title = 'Project scope for this chat';
-    el.scopeLabel = make('span', 'ask-scope-label', 'Auto');
-    scopeBtn.appendChild(el.scopeLabel);
-    scopeBtn.appendChild(svgIcon(ICONS.chevronDown, 11, 2));
-    scopeBtn.addEventListener('click', () => openScopePopover(scopeBtn));
-    el.scopeBtn = scopeBtn;
-    header.appendChild(scopeBtn);
+    // Header is logo → title → spacer → icon buttons. The #397 scope selector
+    // used to sit here; it now lives in the composer's bottom row next to the
+    // "+" attach button (see buildComposer). A long haiku title still ellipsizes.
     header.appendChild(el.title);
     header.appendChild(make('span', 'ask-header-spacer'));
     const threadsBtn = iconButton('ask-icon-btn', 'Recent chats', ICONS.threads, () => toggleThreadsPopover(threadsBtn));
@@ -488,6 +477,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const attach = iconButton('ask-icon-btn', 'Attach files', ICONS.plus, () => el.fileInput.click());
     attach.setAttribute('data-ask-attach-btn', '');
     row.appendChild(attach);
+
+    // #397: the scope selector — which project/workspace this chat is about,
+    // independent of the page behind the sheet. It sits right after "+"
+    // (attach → scope → spacer → meter …): the pill keeps its width (style.css
+    // .ask-scope-btn flex:none), the spacer absorbs the slack. Its popover
+    // (.ask-pop-scope) opens upward from the sheet's bottom-left.
+    const scopeBtn = make('button', 'ask-scope-btn');
+    scopeBtn.type = 'button';
+    scopeBtn.setAttribute('data-ask-scope-btn', '');
+    scopeBtn.title = 'Project scope for this chat';
+    el.scopeLabel = make('span', 'ask-scope-label', 'Auto');
+    scopeBtn.appendChild(el.scopeLabel);
+    scopeBtn.appendChild(svgIcon(ICONS.chevronDown, 11, 2));
+    scopeBtn.addEventListener('click', () => openScopePopover(scopeBtn));
+    el.scopeBtn = scopeBtn;
+    row.appendChild(scopeBtn);
 
     row.appendChild(make('span', 'ask-composer-spacer'));
 
