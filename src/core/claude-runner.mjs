@@ -37,6 +37,7 @@ import { createInterface } from 'node:readline';
 import { prepareModelEnv, envFlag, describeModelEnv } from './model-env.mjs';
 import { classifyError, strongestClass } from './recoverable-error.mjs';
 import { explainUnspawnableClaude, resolveClaudeBin } from './preflight.mjs';
+import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from './host-guard.mjs';
 import { writeFile, mkdir, appendFile, readFile, access } from 'node:fs/promises';
 import { constants as FS, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -56,9 +57,14 @@ export function sigkillGraceMs() {
 }
 
 /** What `--settings` carries, or null when there is nothing to carry (no hook
- *  telemetry, no permission rules) — then the flag is omitted entirely. */
-export function buildSettingsPayload(permissionRules) {
+ *  telemetry, no permission rules, no host guard) — then the flag is omitted
+ *  entirely. `hostGuard` (set by runReal, gated by hostGuardEnabled) merges the
+ *  host-process-protection PreToolUse hook into the SAME single payload; the
+ *  returned `hook` flag stays telemetry-only (it drives --include-hook-events,
+ *  which the guard does not need). */
+export function buildSettingsPayload(permissionRules, { hostGuard = false } = {}) {
   const hook = buildHookSettings();
+  const guard = hostGuard && hostGuardEnabled() ? hostGuardHookEntry() : null;
   const hasRules = !!permissionRules && Object.values(permissionRules).some((a) => Array.isArray(a) && a.length);
   // Present-but-malformed rules (e.g. `{deny: 'Bash(curl:*)'}`) make the object
   // truthy while hasRules stays false, so the whole policy would drop out of
@@ -69,9 +75,13 @@ export function buildSettingsPayload(permissionRules) {
       && Object.values(permissionRules).some((a) => a != null && !Array.isArray(a))) {
     console.warn('[worca] guardrails: permissionRules is malformed (deny/allow/ask must be arrays of strings) — ignoring it; this spawn carries NO permission rules');
   }
-  if (!hook && !hasRules) return null;
+  if (!hook && !hasRules && !guard) return null;
   const settings = {};
-  if (hook) settings.hooks = hook.hooks;
+  if (hook) settings.hooks = { ...hook.hooks };
+  if (guard) {
+    settings.hooks = settings.hooks ?? {};
+    settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), guard];
+  }
   if (hasRules) settings.permissions = permissionRules;
   return { hook: !!hook, settings };
 }
@@ -216,10 +226,11 @@ export function buildHookSettings() {
  * [] when there is nothing to say, so the baseline argv is byte-identical.
  * @param {{deny?:string[],allow?:string[],ask?:string[]}|null|undefined} permissionRules
  * @param {string|null} [settingsFile] staged path (GH #380): `--settings <path>` carries the same JSON
+ * @param {{hostGuard?:boolean}} [opts] host-process guard (runReal sets it; see buildSettingsPayload)
  * @returns {string[]}
  */
-export function buildSettingsArgs(permissionRules, settingsFile = null) {
-  const payload = buildSettingsPayload(permissionRules);
+export function buildSettingsArgs(permissionRules, settingsFile = null, { hostGuard = false } = {}) {
+  const payload = buildSettingsPayload(permissionRules, { hostGuard });
   if (!payload) return [];
   const args = [];
   if (payload.hook) args.push('--include-hook-events');
@@ -439,7 +450,7 @@ export function buildClaudeArgs({
   // way in because the legacy body below already owns a local `tools` (the
   // --allowedTools union).
   tools: builtinTools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
-  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt,
+  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard,
 }, delivery = {}) {
   // delivery (GH #380, set only by planClaudeInvocation's staged branch):
   //   promptViaStdin   -> bare `-p`; the prompt is written to the child's stdin
@@ -462,7 +473,7 @@ export function buildClaudeArgs({
   // SINGLE inline JSON (two --settings flags would be last-wins at the CLI). [] when
   // there is neither, so the baseline argv is unchanged; a CLI that rejects these
   // flags would only ever fail when the operator opted in.
-  for (const a of buildSettingsArgs(permissionRules, settingsFile)) args.push(a);
+  for (const a of buildSettingsArgs(permissionRules, settingsFile, { hostGuard })) args.push(a);
   if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath);
   const tools = Array.isArray(allowedTools) ? allowedTools.slice() : [];
   for (const s of (Array.isArray(mcpServerGrants) ? mcpServerGrants : [])) {
@@ -532,7 +543,7 @@ export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limi
     files.push({ path: systemPromptFile, content: opts.systemPrompt });
   }
   let settingsFile = null;
-  const payload = buildSettingsPayload(opts.permissionRules);
+  const payload = buildSettingsPayload(opts.permissionRules, { hostGuard: opts.hostGuard });
   if (payload) {
     settingsFile = join(dir, 'settings.json');
     files.push({ path: settingsFile, content: JSON.stringify(payload.settings) });
@@ -615,10 +626,20 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     // ARGV_INLINE_LIMIT). The staging dir, when any, is removed on every
     // terminal path below (finish) and on a failed spawn.
     const limit = Number.isFinite(argvInlineLimit) && argvInlineLimit > 0 ? argvInlineLimit : ARGV_INLINE_LIMIT;
+    // Host guard (host-guard.mjs, 2026-08-31 incident): every REAL spawn — any
+    // role, custom agent, plugin agent, ask chat — carries the protection
+    // preamble, the PreToolUse hook (hostGuard -> the --settings payload), and
+    // WORCA_HOST_PID (below). One kill-switch: WORCA_HOST_GUARD=0. Mock spawns
+    // nothing, so runMock stays untouched.
+    const guardOn = hostGuardEnabled();
+    const guardedSystemPrompt = guardOn
+      ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n')
+      : systemPrompt;
     let plan;
     try {
       plan = stageClaudeInvocation({
-        prompt, systemPrompt, permissionMode, model: wireModel, effort, allowedTools, resumeSessionId,
+        prompt, systemPrompt: guardedSystemPrompt, hostGuard: guardOn,
+        permissionMode, model: wireModel, effort, allowedTools, resumeSessionId,
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
         maxTurns, maxBudgetUsd, appendSubagentSystemPrompt,
@@ -646,6 +667,10 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     // pre-feature behavior, including the undefined -> inherit-process.env case.
     let spawnEnv = guardrailEnv;
     if (safeModelEnv) spawnEnv = { ...(guardrailEnv ?? process.env), ...safeModelEnv };
+
+    // WORCA_HOST_PID rides every guarded spawn (the hook reads it; scrub would
+    // drop it — WORCA_ is not an allowlisted prefix — so it is added AFTER).
+    if (guardOn) spawnEnv = { ...(spawnEnv ?? process.env), WORCA_HOST_PID: String(process.pid) };
 
     // Opt-in spawn diagnostics (WORCA_DEBUG_SPAWN, default off — byte-identical spawn
     // path when unset). Everything here is derived from values already computed above
