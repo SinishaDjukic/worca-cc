@@ -149,6 +149,11 @@ test('diffPatch pins --submodule=short: an external diff tool cannot smuggle a s
     const base = g(['rev-parse', 'HEAD']).stdout.trim();
     await writeFile(join(dir, 'aaa.txt'), 'a\ntop changed\n');
     const gi = (args) => spawnSync('git', args, { cwd: join(dir, 'sub'), encoding: 'utf8' });
+    // The submodule working copy is a fresh clone — it inherits NO user identity
+    // from `subsrc`. Without these, the inner commit fails on a machine with no
+    // global git identity (CI), the submodule stays dirty, and the patch reads
+    // "+Subproject commit <same-hash>-dirty" instead of the new recorded commit.
+    gi(['config', 'user.email', 't@t']); gi(['config', 'user.name', 't']);
     await writeFile(join(dir, 'sub', '.env'), 'A=SK-LIVE-REALSECRET-0001\n');
     gi(['add', '-A']); gi(['commit', '-qm', 'secret']);
 

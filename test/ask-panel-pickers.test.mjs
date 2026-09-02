@@ -10,7 +10,7 @@ const TID = 'ask_00000001';
 const CATALOG = {
   models: [
     { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
-    { id: 'claude-fable-5', label: 'Fable 5 (1M)', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
+    { id: 'claude-fable-5-1', label: 'Fable 5.1 (1M)', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
     { id: 'claude-opus-4-8', label: 'Opus 4.8', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
     { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', efforts: ['medium', 'high', 'max'], custom: false },
     { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false },
@@ -59,7 +59,7 @@ test('ask-panel-pickers: primary list = one per family + globals; More models ho
   const pop = ctx.doc.querySelector('.ask-pop-model');
   assert.ok(pop);
   const names = [...pop.querySelectorAll('.ask-model-name')].map((n) => n.textContent);
-  assert.deepEqual(names, ['Opus 5', 'Fable 5 (1M)', 'Sonnet 4.6', 'Haiku 4.5', 'Corp']);
+  assert.deepEqual(names, ['Opus 5', 'Fable 5.1 (1M)', 'Sonnet 4.6', 'Haiku 4.5', 'Corp']);
   assert.match(pop.textContent, /More models/);
   assert.match(pop.textContent, /Effort/);
   // the selected model carries the check mark
@@ -70,7 +70,7 @@ test('ask-panel-pickers: primary list = one per family + globals; More models ho
   const moreNames = [...ctx.doc.querySelectorAll('.ask-pop-model .ask-model-name')].map((n) => n.textContent);
   assert.deepEqual(moreNames, ['Opus 4.8']);
   ctx.doc.querySelector('[data-ask-pane-back]').click();
-  assert.match(ctx.doc.querySelector('.ask-pop-model').textContent, /Fable 5/);
+  assert.match(ctx.doc.querySelector('.ask-pop-model').textContent, /Fable 5\.1/);
 });
 
 test('ask-panel-pickers: effort pane lists the current model efforts; picking persists', async () => {

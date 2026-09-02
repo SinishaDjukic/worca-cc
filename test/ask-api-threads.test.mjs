@@ -90,6 +90,68 @@ test('PATCH renames within 120 chars; empty and unknown rejected', async () => {
   assert.equal((await ok.json()).thread.title, 'Renamed');
 });
 
+test('#397 PATCH scope: pin project/workspace, Auto clears the target, invalid shapes rejected', async () => {
+  const { thread } = await (await post('/api/ask/threads', {})).json();
+  // pin a project
+  let r = await patch(`/api/ask/threads/${thread.id}`, { scope: { pinned: true, projectKey: 'demo-00000001' } });
+  assert.equal(r.status, 200);
+  assert.deepEqual((await r.json()).thread.context, { pinned: true, projectKey: 'demo-00000001' });
+  // switch to a workspace: the old target key is REPLACED, never kept alongside
+  r = await patch(`/api/ask/threads/${thread.id}`, { scope: { pinned: true, workspaceId: 'wks-team-0000abcd' } });
+  assert.deepEqual((await r.json()).thread.context, { pinned: true, workspaceId: 'wks-team-0000abcd' });
+  // Auto: pinned false and no target resurrected
+  r = await patch(`/api/ask/threads/${thread.id}`, { scope: { pinned: false } });
+  assert.deepEqual((await r.json()).thread.context, { pinned: false });
+  // invalid shapes are 400
+  for (const scope of [
+    { pinned: true },                                                             // no target
+    { pinned: true, projectKey: 'demo-00000001', workspaceId: 'wks-team-0000abcd' }, // both
+    { pinned: true, projectKey: 'Bad Key' },                                      // bad key shape
+    { pinned: 'yes', projectKey: 'demo-00000001' },                               // pinned not boolean
+    'x', 5, ['a'],                                                                // not an object
+  ]) {
+    assert.equal((await patch(`/api/ask/threads/${thread.id}`, { scope })).status, 400, JSON.stringify(scope));
+  }
+  // title and scope compose; a scope-only PATCH leaves the title alone
+  r = await patch(`/api/ask/threads/${thread.id}`, { title: 'Scoped', scope: { pinned: true, projectKey: 'demo-00000001' } });
+  const both = (await r.json()).thread;
+  assert.equal(both.title, 'Scoped');
+  assert.equal(both.context.projectKey, 'demo-00000001');
+  r = await patch(`/api/ask/threads/${thread.id}`, { scope: { pinned: false } });
+  assert.equal((await r.json()).thread.title, 'Scoped');
+  // unknown thread stays 404
+  assert.equal((await patch('/api/ask/threads/ask_ffffffff', { scope: { pinned: false } })).status, 404);
+});
+
+test('#397: a message whose context lacks `pinned` inherits the thread pin, per field', async () => {
+  const { thread } = await (await post('/api/ask/threads', {})).json();
+  await patch(`/api/ask/threads/${thread.id}`, { scope: { pinned: true, projectKey: 'demo-00000001' } });
+  // a pre-selector tab: page context only — the pin must survive AND merge per field
+  const r = await post(`/api/ask/threads/${thread.id}/messages`, {
+    text: 'hi', model: 'claude-opus-5', effort: 'high',
+    context: { view: 'history', projectDir: '/p/elsewhere', pipelineId: '4e1f2a9b' },
+  });
+  assert.equal(r.status, 202);
+  const snap = await (await fetch(`${base}/api/ask/threads/${thread.id}`)).json();
+  assert.equal(snap.thread.context.pinned, true, 'the stale tab could not unpin the thread');
+  assert.equal(snap.thread.context.projectKey, 'demo-00000001', 'the pin replaced the page target');
+  assert.equal(snap.thread.context.projectDir, undefined);
+  assert.equal(snap.thread.context.view, 'history', 'non-target fields still follow the page');
+  assert.equal(snap.thread.context.pipelineId, '4e1f2a9b');
+
+  // an explicit Auto (pinned:false) from a selector-aware client is authoritative
+  const { thread: t2 } = await (await post('/api/ask/threads', {})).json();
+  await patch(`/api/ask/threads/${t2.id}`, { scope: { pinned: true, projectKey: 'demo-00000001' } });
+  const r2 = await post(`/api/ask/threads/${t2.id}/messages`, {
+    text: 'hi', model: 'claude-opus-5', effort: 'high',
+    context: { view: 'new', pinned: false },
+  });
+  assert.equal(r2.status, 202);
+  const snap2 = await (await fetch(`${base}/api/ask/threads/${t2.id}`)).json();
+  assert.equal(snap2.thread.context.pinned, false);
+  assert.equal(snap2.thread.context.projectKey, undefined);
+});
+
 test('DELETE removes rows and the attachment directory; unknown is 404', async () => {
   assert.equal((await del('/api/ask/threads/ask_ffffffff')).status, 404);
   const store = await import('../src/core/ask/store.mjs');

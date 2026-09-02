@@ -44,6 +44,26 @@ async function openThread(ctx) {
 const userRow = (id, seq, text, blocks = []) => ({ id, threadId: TID, seq, role: 'user', text, blocks, status: null, reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: 't' });
 const asstRow = (id, seq, over = {}) => ({ id, threadId: TID, seq, role: 'assistant', text: 'the answer', blocks: [], status: 'done', reason: null, model: 'claude-opus-5', effort: 'high', usage: { input: 900, output: 1100, cacheRead: 0, cacheCreation: 0, ctx: 2000 }, costUsd: 0.14, durationMs: 6400, createdAt: 't', ...over });
 
+test('ask-panel-render (#398): an image attachment block renders as a thumbnail served by the download route; pdf stays a pill', async () => {
+  const snap = snapBody([
+    userRow('askm_u0000001', 1, 'see the screenshot', [
+      { kind: 'attachment', id: 'att_00000001', name: 'shot.png', bytes: 2048, attKind: 'image', mime: 'image/png' },
+      { kind: 'attachment', id: 'att_00000002', name: 'spec.pdf', bytes: 4096, attKind: 'binary', mime: 'application/pdf' },
+    ]),
+    asstRow('askm_00000001', 2),
+  ]);
+  const ctx = makePanel({ fetchHandler: handlerFor(snap) });
+  await openThread(ctx);
+  const user = ctx.doc.querySelector('.ask-msg-user');
+  const img = user.querySelector('img.ask-attachment-thumb');
+  assert.ok(img, 'image block renders an <img>');
+  assert.ok(img.src.endsWith(`/api/ask/threads/${TID}/attachments/att_00000001`), 'thumbnail src is the download route');
+  const link = user.querySelector('a.ask-attachment-thumb-link');
+  assert.equal(link.target, '_blank', 'thumbnail opens full-size in a new tab');
+  const pill = user.querySelector('.extra-pill');
+  assert.ok(pill && /spec\.pdf/.test(pill.textContent), 'pdf keeps the name pill');
+});
+
 test('ask-panel-render: user bubble + attachment pills, assistant answer plain fallback', async () => {
   const snap = snapBody([
     userRow('askm_u0000001', 1, 'what changed in run 4e1f?', [{ kind: 'attachment', id: 'att_00000001', name: 'notes.md', bytes: 41000 }]),

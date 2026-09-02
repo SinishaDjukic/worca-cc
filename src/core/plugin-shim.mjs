@@ -16,6 +16,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { envFlag } from './model-env.mjs';
 import { WORCA_PLUGIN_API } from './plugin-api.mjs';
 import { normalizeManifest, negotiatedApi } from './plugin-manifest.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs';
@@ -66,10 +67,9 @@ const MOCK_DEFAULTS = {
   validateConfig: () => ({ ok: true }),
 };
 
-/** Same env-flag semantics as claude-runner.mjs#mockEnabled (claude-runner.mjs:100-104). */
+/** Same env-flag semantics as claude-runner.mjs#mockEnabled — one shared rule. */
 function mockMode() {
-  const v = process.env.WORCA_MOCK ?? process.env.ORCH_MOCK;
-  return !!v && v !== '0' && v.toLowerCase() !== 'false';
+  return envFlag('WORCA_MOCK', 'ORCH_MOCK');
 }
 
 async function mockCall(op, args) {

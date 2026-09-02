@@ -40,6 +40,7 @@ class AskTurn extends EventEmitter {
     model, effort, resumeSessionId = null,
     firstTurn = false, firstText = '', deterministicTitle = null,
     mock = null, attachmentNames = {},
+    pinnedScope = null,
     deps = {},
   } = {}) {
     super();
@@ -57,6 +58,8 @@ class AskTurn extends EventEmitter {
     this.deterministicTitle = deterministicTitle ?? null;
     this.mock = mock || null;
     this.attachmentNames = attachmentNames || {};
+    // #397: {projectKey}|{workspaceId}|null — the user-pinned scope at POST time.
+    this.pinnedScope = pinnedScope && typeof pinnedScope === 'object' ? pinnedScope : null;
     this.deps = {
       runClaudeImpl: deps.runClaudeImpl ?? runClaude,
       store: {
@@ -125,10 +128,23 @@ class AskTurn extends EventEmitter {
   async _onProposal(input) {
     const d = this.deps;
     const cardId = d.newAskId('card');
+    const raw = input && typeof input === 'object' ? input : {};
+    // #397: a proposal that names NO target falls back to the user-pinned scope.
+    // Mirrors the MCP child's own defaulting, so this authoritative re-validation
+    // builds the same card the model was shown.
+    const pin = this.pinnedScope;
+    const hasTarget = (typeof raw.projectKey === 'string' && raw.projectKey.trim())
+      || (typeof raw.workspaceId === 'string' && raw.workspaceId.trim());
+    const inp = pin && !hasTarget ? { ...raw, ...pin } : raw;
     try {
-      const r = await d.validateProposal(input && typeof input === 'object' ? input : {}, { cardId });
+      const r = await d.validateProposal(inp, { cardId });
       if (r && r.ok) {
-        this.reducer.addBlock({ kind: 'card', id: cardId, state: 'proposed', card: r.card });
+        // #397 guardrail: a proposal targeting a DIFFERENT project/workspace than
+        // the pinned one is accepted but flagged — the card renders the mismatch
+        // instead of silently absorbing it.
+        const scopeMismatch = !!pin && ((pin.projectKey && r.card.projectKey !== pin.projectKey)
+          || (pin.workspaceId && r.card.workspaceId !== pin.workspaceId));
+        this.reducer.addBlock({ kind: 'card', id: cardId, state: 'proposed', card: r.card, ...(scopeMismatch ? { scopeMismatch: true } : {}) });
         // commentIds are propose_run INPUT only: they never enter the card block (its
         // key set is pinned in test/ask-proposal.test.mjs) nor CARD_PATCH_KEYS. Parked
         // against the card id until the user starts the run; unknown ids are dropped,

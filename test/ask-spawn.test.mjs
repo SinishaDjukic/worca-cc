@@ -105,7 +105,10 @@ test('native file tools: Read/Grep/Glob are granted; the home deny is enumerated
 test('askWorktreeAllowRules names the thread\'s worktree subtree, shape-checks the thread id, never interpolates the home', () => {
   const o = buildAskSpawnOptions(base());
   assert.deepEqual(o.permissionRules.allow, askWorktreeAllowRules('ask_00000001'));
-  assert.deepEqual(askWorktreeAllowRules('ask_00000001'), ['Read(//**/.worca-cc/ask/ask_00000001/wt/**)'], 'the chat may read its own worktrees');
+  assert.deepEqual(askWorktreeAllowRules('ask_00000001'), [
+    'Read(//**/.worca-cc/ask/ask_00000001/wt/**)',
+    'Read(//**/.worca-cc/ask/ask_00000001/att/**)', // #398: the image/PDF bodies read_attachment points at
+  ], 'the chat may read its own worktrees and its own attachment bodies');
   assert.deepEqual(askWorktreeAllowRules('../etc'), [], 'unminted id ⇒ NO allow rule (never interpolated)');
   assert.deepEqual(askWorktreeAllowRules(undefined), []);
   for (const rule of o.permissionRules.allow) {
@@ -118,7 +121,7 @@ test('P4: the settings payload carries the deny list (and the worktree allow) th
   const args = buildClaudeArgs(buildAskSpawnOptions(base()));
   const settings = JSON.parse(args[args.indexOf('--settings') + 1]);
   assert.deepEqual(settings.permissions.deny, [...ASK_DENY_RULES]);
-  assert.deepEqual(settings.permissions.allow, ['Read(//**/.worca-cc/ask/ask_00000001/wt/**)']);
+  assert.deepEqual(settings.permissions.allow, ['Read(//**/.worca-cc/ask/ask_00000001/wt/**)', 'Read(//**/.worca-cc/ask/ask_00000001/att/**)']);
   assert.equal(args[args.indexOf('--tools') + 1], 'Task,Read,Grep,Glob');
   assert.equal(args[args.indexOf('--allowedTools') + 1], 'Task,Read,Grep,Glob,mcp__worca');
 });
