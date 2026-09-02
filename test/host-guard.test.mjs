@@ -174,6 +174,30 @@ test('host-guard allows running script FILES whose name contains kill words (min
   deny('powershell "Stop-Process -Name node"', 'powershell bare argument IS an inline command');
 });
 
+// ── review fixes (2026-09-02 PR #408 review: {} placeholder bypass) ──────────
+// `{`/`}` are segment separators, so without the __ph__ replacement in
+// stripQuotes the braces of `-I{}` / `-exec … {}` vanish before the checks run:
+// the xargs segment loses its kill word and the kill segment loses its targets.
+
+test('host-guard denies xargs -I{} kill (the brace placeholder spelling)', () => {
+  deny('pgrep node | xargs -I{} kill {}', 'attached -I{}');
+  deny('pgrep node | xargs -I {} kill -9 {}', 'spaced -I {}');
+  deny("ps aux | grep '[n]ode --disable' | awk '{print $2}' | xargs -I{} kill {}",
+    'the incident transposed to -I{}');
+});
+
+test('host-guard denies find -exec kill', () => {
+  deny('find . -name "*.pid" -exec kill {} \\;', 'find -exec kill');
+  deny("find /tmp -name 'server*.pid' -execdir kill -9 '{}' +", 'find -execdir, quoted braces');
+  deny('find . -name node.pid -ok kill {} \\;', 'find -ok still fans out');
+  allow('find . -name "*.log" -exec rm {} \\;', 'find -exec of a non-killer stays allowed');
+  allow('find . -name kill.txt', 'kill-looking find pattern without -exec');
+});
+
+test('host-guard treats a bare {} kill target as non-literal', () => {
+  deny('kill {}', 'a placeholder is not a literal PID');
+});
+
 // ── the hook CLI ─────────────────────────────────────────────────────────────
 
 const SCRIPT = fileURLToPath(new URL('../src/core/host-guard.mjs', import.meta.url));

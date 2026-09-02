@@ -68,16 +68,24 @@ const NESTED_SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'powershell',
 /** Any killer, POSIX or Windows, appearing anywhere in a nested-shell payload. */
 const KILLER_WORD_RE = /\b(?:p?kill|killall|taskkill|stop-process|spps|wmic)\b/i;
 
+/** Killers that xargs / find -exec can hand targets to. */
+const KILLER_CMDS = new Set(['kill', 'pkill', 'killall', 'taskkill']);
+const isKillerToken = (t) => KILLER_CMDS.has(basename(t).toLowerCase().replace(/\.exe$/, ''));
+
 /** Replace quoted spans so quoted data ("fix; killall handling") never looks
  *  like a command, and substitutions so `kill $(…)` / `kill \`…\`` surface as a
  *  non-literal target instead of vanishing into the segment split; the RAW
- *  text is still consulted for nested-shell payloads. */
+ *  text is still consulted for nested-shell payloads. The `{}` placeholder
+ *  (xargs -I{}, find -exec … {}) becomes a token BEFORE the split eats the
+ *  braces — otherwise `xargs -I{} kill {}` splits into an xargs segment with
+ *  no kill word and a kill segment with no targets, and both pass. */
 function stripQuotes(s) {
   return s
     .replace(/'[^']*'/g, ' __q__ ')
     .replace(/"(?:[^"\\]|\\.)*"/g, ' __q__ ')
     .replace(/\$\([^()]*\)/g, ' __sub__ ')
-    .replace(/`[^`]*`/g, ' __sub__ ');
+    .replace(/`[^`]*`/g, ' __sub__ ')
+    .replace(/\{\}/g, ' __ph__ ');
 }
 
 const basename = (w) => w.slice(w.lastIndexOf('/') + 1);
@@ -139,9 +147,16 @@ export function evaluateKillCommand(command, hostPid) {
     if (cmd === 'pkill' || cmd === 'killall') {
       return `host guard: blocked \`${cmd}\` — pattern kills are forbidden.${pidNote}${advice}`;
     }
-    if (cmd === 'xargs'
-        && rest.some((t) => ['kill', 'pkill', 'killall', 'taskkill'].includes(basename(t).toLowerCase().replace(/\.exe$/, '')))) {
+    if (cmd === 'xargs' && rest.some(isKillerToken)) {
       return `host guard: blocked \`xargs kill\` — kill may only take literal numeric PIDs you name yourself.${pidNote}${advice}`;
+    }
+    // find spawns its -exec/-ok payload itself, so the kill never surfaces as
+    // a command word of its own segment; a killer anywhere in find's arguments
+    // alongside an -exec-family flag is the same unbounded fan-out as xargs.
+    if (cmd === 'find'
+        && rest.some((t) => /^-(?:exec|ok)(?:dir)?$/.test(t))
+        && rest.some(isKillerToken)) {
+      return `host guard: blocked \`find -exec kill\` — kill may only take literal numeric PIDs you name yourself.${pidNote}${advice}`;
     }
     // A nested shell is suspicious only when it carries an INLINE payload
     // (-c / /c / -Command); `bash scripts/kill-dev-server.sh` is a script FILE
