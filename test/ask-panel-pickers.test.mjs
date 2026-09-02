@@ -299,6 +299,26 @@ test('ask-panel-pickers: declining the confirm sends no DELETE', async () => {
   assert.ok(!ctx.fetchCalls.some((c) => c.opts.method === 'DELETE'));
 });
 
+test('ask-panel-pickers: a thread still being titled reads "New chat" in Recent chats, the trash label and the delete confirm', async () => {
+  const confirms = [];
+  const base = handler();
+  const untitled = { id: TID, title: null, updatedAt: 't', createdAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight: false };
+  const fetchHandler = (url, opts) => (url.startsWith('/api/ask/threads') && !url.startsWith(`/api/ask/threads/${TID}`) && !opts.method
+    ? { ok: true, status: 200, json: async () => ({ threads: [untitled] }) }
+    : base(url, opts));
+  const ctx = makePanel({ fetchHandler, confirm: async (opts) => { confirms.push(opts); return false; } });
+  ctx.panel.open();
+  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  ctx.doc.querySelector('[data-ask-threads-btn]').click();
+  await ctx.tick();
+  assert.equal(ctx.doc.querySelector('.ask-thread-title').textContent, 'New chat');
+  assert.equal(ctx.doc.querySelector('.ask-thread-trash').getAttribute('aria-label'), 'Delete "New chat"');
+  ctx.doc.querySelector('.ask-thread-trash').click();
+  await ctx.tick(); await ctx.tick();
+  assert.equal(confirms.length, 1);
+  assert.match(confirms[0].message, /^“New chat” and its transcript are removed/);
+});
+
 test('ask-panel-pickers: New chat clears the thread; the next send creates a fresh row', async () => {
   const ctx = makePanel({ fetchHandler: handler() });
   ctx.storage.setItem('worca-cc.ask.thread', TID);

@@ -438,13 +438,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         ? stored.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind ?? 'text', mime: a.mime ?? null }))
         : st.pendingFiles.map((f) => ({ name: f.name, bytes: f.bytes, attKind: f.attKind, mime: f.mime }));
       st.model.noteLocalUserMessage({ id: userMessageId, text, attachments: echoAtts });
-      if (!st.model.thread().title) {
-        // The deterministic first title has NO frame — record it in the MODEL
-        // as well as the header: model.load() left `title` dirty and the very
-        // next flushExtra() repaints el.title from thread().title.
-        st.model.thread().title = text.split('\n')[0].slice(0, 80);
-        el.title.textContent = st.model.thread().title;
-      }
+      // No provisional title from the prompt: the header keeps "Ask Worca" until
+      // the ask-title frame lands (ask-model marks title dirty, flushExtra repaints).
       el.input.value = '';
       st.pendingFiles = [];
       renderChips();
@@ -757,7 +752,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // starts at the left edge. The date rides the meter line under the title.
       pick.appendChild(make('span', `ask-dot ask-thread-dot${t.inFlight ? ' ask-dot-live' : ''}`));
       const col = make('span', 'ask-thread-col');
-      col.appendChild(make('span', 'ask-thread-title', t.title || '(untitled)'));
+      // A null title = the haiku title has not landed yet (the message route
+      // stamps nothing); "New chat" is the same label the turn falls back to.
+      col.appendChild(make('span', 'ask-thread-title', t.title || 'New chat'));
       col.appendChild(threadMeter(t));
       pick.appendChild(col);
       row.appendChild(pick);
@@ -1209,7 +1206,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     closePopover({ focusTrigger: false });
     const ok = await confirm({
       title: 'Delete this chat?',
-      message: `“${t.title || '(untitled)'}” and its transcript are removed${t.worktrees ? ` along with ${t.worktrees} worktree${t.worktrees === 1 ? '' : 's'}` : ''}. This cannot be undone.`,
+      message: `“${t.title || 'New chat'}” and its transcript are removed${t.worktrees ? ` along with ${t.worktrees} worktree${t.worktrees === 1 ? '' : 's'}` : ''}. This cannot be undone.`,
       confirmLabel: 'Delete',
       danger: true,
     });
@@ -1223,7 +1220,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildThreadTrash(t) {
     const b = make('button', 'ask-thread-trash');
     b.type = 'button';
-    b.setAttribute('aria-label', `Delete "${t.title || '(untitled)'}"`);
+    b.setAttribute('aria-label', `Delete "${t.title || 'New chat'}"`);
     b.appendChild(svgIcon('M4 7h16M9.5 7V4.8h5V7M6.5 7l.9 12.2h9.2L17.5 7', 14, 1.8));
     b.addEventListener('click', (e) => { e.stopPropagation(); deleteThread(t); });
     return b;

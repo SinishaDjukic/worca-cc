@@ -440,12 +440,18 @@ class AskTurn extends EventEmitter {
         disableSlashCommands: true, envScrub: true, envAllowlist: [],
         permissionMode: 'dontAsk',
       }))
-      .then((title) => {
-        if (!title || title === this.deterministicTitle) return;
-        // setThreadTitle's onlyIf is the rename guard: a PATCHed or deleted
-        // thread makes the UPDATE match 0 rows and the frame is suppressed.
+      .then((generated) => {
+        // The route stamps NOTHING before the 202 (the header reads "Ask Worca"
+        // until this frame lands), so an empty result — generateTitle swallows
+        // every failure/abort/refusal into '' — falls back to the route's
+        // deterministicTitle (sanitized first 80 chars, or "New chat"). That is
+        // the ONLY moment the prompt text may become the title.
+        const title = generated || this.deterministicTitle;
+        if (!title) return;
+        // `onlyIf: null` (title IS NULL) is the rename guard: a PATCHed or
+        // deleted thread makes the UPDATE match 0 rows and the frame is suppressed.
         let applied = false;
-        try { applied = d.store.setThreadTitle(this.threadId, title, { onlyIf: this.deterministicTitle }); }
+        try { applied = d.store.setThreadTitle(this.threadId, title, { onlyIf: null }); }
         catch { /* deleted thread */ }
         if (applied) {
           try { d.onOutOfTurn({ type: 'ask-title', title }); } catch { /* sink */ }

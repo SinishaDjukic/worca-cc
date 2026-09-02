@@ -367,7 +367,7 @@ test('title: fires on the first turn with the R-D + dontAsk option set; rename g
     generateTitle: async (text, opts) => { titleCalls.push({ text, opts }); return 'Fable Title'; },
     runClaudeImpl: async (opts) => { push(opts.onEvent, RESULT()); return { text: 'x', exitCode: 0 }; },
   });
-  setThreadTitle(s.thread.id, 'hello there');   // stamp the deterministic title like the route does
+  // The route stamps NOTHING before the 202: the row's title IS NULL while haiku runs.
   await turn.run();
   await turn.titlePromise;
   assert.equal(titleCalls.length, 1);
@@ -393,8 +393,8 @@ test('title suppressed when the user renamed mid-generation; not fired on later 
     generateTitle: () => gate.then(() => 'Late Title'),
     runClaudeImpl: async (opts) => { push(opts.onEvent, RESULT()); return { text: 'x', exitCode: 0 }; },
   });
-  setThreadTitle(s.thread.id, 'hi');
   await turn.run();
+  assert.equal(getThread(s.thread.id).title, null, 'nothing is stamped while haiku runs — the header stays "Ask Worca"');
   setThreadTitle(s.thread.id, 'User Named It');       // PATCH landed while haiku ran
   release();
   await turn.titlePromise;
@@ -410,6 +410,49 @@ test('title suppressed when the user renamed mid-generation; not fired on later 
   await t2.run();
   await t2.titlePromise;
   assert.equal(calls.length, 0, 'no title call on non-first turns');
+});
+
+test('title: an empty haiku result applies the route\'s fallback string + announces it, unless the user renamed meanwhile', async () => {
+  // Nothing is stamped before the 202 any more, so an empty generateTitle()
+  // (failure / abort / refusal) would leave the thread untitled for ever. The
+  // turn applies the route's fallback (sanitized first 80 chars, or "New chat")
+  // behind the same IS NULL guard and announces it with the same frame — the
+  // ONLY moment the prompt text may become the title.
+  const s = seed();
+  const { turn, outOfTurn } = makeTurn(s, { firstTurn: true, firstText: 'hello there', deterministicTitle: 'hello there' }, {
+    generateTitle: async () => '',
+    runClaudeImpl: async (opts) => { push(opts.onEvent, RESULT()); return { text: 'x', exitCode: 0 }; },
+  });
+  await turn.run();
+  await turn.titlePromise;
+  assert.equal(getThread(s.thread.id).title, 'hello there', 'fallback applied');
+  assert.deepEqual(outOfTurn, [{ type: 'ask-title', title: 'hello there' }], 'fallback announced like a generated title');
+
+  // The rename guard wins over the fallback too.
+  const s2 = seed();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { turn: t2, outOfTurn: o2 } = makeTurn(s2, { firstTurn: true, firstText: 'hi', deterministicTitle: 'hi' }, {
+    generateTitle: () => gate.then(() => ''),
+    runClaudeImpl: async (opts) => { push(opts.onEvent, RESULT()); return { text: 'x', exitCode: 0 }; },
+  });
+  await t2.run();
+  setThreadTitle(s2.thread.id, 'User Named It');      // PATCH landed while haiku ran
+  release();
+  await t2.titlePromise;
+  assert.equal(getThread(s2.thread.id).title, 'User Named It');
+  assert.equal(o2.length, 0, 'no frame for a suppressed fallback');
+
+  // No fallback string at all: the thread stays untitled and nothing is announced.
+  const s3 = seed();
+  const { turn: t3, outOfTurn: o3 } = makeTurn(s3, { firstTurn: true, firstText: 'x', deterministicTitle: null }, {
+    generateTitle: async () => '',
+    runClaudeImpl: async (opts) => { push(opts.onEvent, RESULT()); return { text: 'x', exitCode: 0 }; },
+  });
+  await t3.run();
+  await t3.titlePromise;
+  assert.equal(getThread(s3.thread.id).title, null);
+  assert.equal(o3.length, 0);
 });
 
 test("contract: run() never rejects — the terminal 'error' emit with NO listener resolves", async () => {
@@ -757,7 +800,6 @@ test('title: kicked off at the START of the first turn — ask-title lands BEFOR
       return { text: 'x', exitCode: 0 };
     },
   });
-  setThreadTitle(s.thread.id, 'hello there');
   const running = turn.run();
   await started;
   await turn.titlePromise;             // the (fake) haiku call resolved and ask-title went out
@@ -775,7 +817,6 @@ test('title: a scratch-dir failure still titles the first turn exactly once (the
     fs: { mkdir: async () => { throw new Error('EACCES: scratch'); }, writeFile: async () => {}, unlink: async () => {} },
     generateTitle: async () => { calls.push(1); return 'Backstop Title'; },
   });
-  setThreadTitle(s.thread.id, 'hello there');
   await turn.run();
   await turn.titlePromise;
   assert.equal(frames.at(-1).type, 'ask-error', 'the deps failure is an error completion');

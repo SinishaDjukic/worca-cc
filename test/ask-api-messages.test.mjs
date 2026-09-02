@@ -100,18 +100,17 @@ test('a full mock turn: 202, stamped frames to ask-done, persistence, session, t
   assert.equal(r.status, 202);
   const { userMessageId, assistantMessageId } = await r.json();
   assert.match(userMessageId, /^askm_[0-9a-f]{8}$/);
-  // §7.4: the deterministic title is stamped SYNCHRONOUSLY before the 202. The
-  // D13 background title now runs CONCURRENTLY with the turn (not after it), so
-  // by the time this GET lands it may already have been replaced — but only ever
-  // by the title the ask-title frame announces (setThreadTitle's onlyIf guard
-  // proves the deterministic stamp happened first). The frame is written to the
-  // socket before the DB read below can be answered, but it is parsed on a
-  // different socket — so WAIT for it rather than peeking at msgs.
+  // §7.4: NOTHING is stamped before the 202 — the row stays untitled (the header
+  // reads "Ask Worca") until the D13 background title lands. That call runs
+  // CONCURRENTLY with the turn, so by the time this GET is answered the row may
+  // already carry the announced title — but never the prompt text. The frame is
+  // written to the socket before the DB read below can be answered, but it is
+  // parsed on a different socket — so WAIT for it rather than peeking at msgs.
   const early = (await snapshot(t.id)).thread.title;
-  if (early !== 'hi there') {
+  if (early !== null) {
     const announced = await waitFor(() => msgs.find((m) => m.type === 'ask-title' && m.threadId === t.id));
     assert.equal(early, announced.title,
-      `deterministic title stamped by the message route, then only ever replaced by the announced one (got ${JSON.stringify(early)})`);
+      `no provisional title from the message route: null until the announced one (got ${JSON.stringify(early)})`);
   }
   await waitFor(() => framesFor(msgs, t.id).some((f) => f.type === 'ask-done'));
   const frames = framesFor(msgs, t.id);
@@ -133,7 +132,7 @@ test('a full mock turn: 202, stamped frames to ask-done, persistence, session, t
   assert.equal(asst.text, '[mock] hi there', 'the mock echoes the USER text — the context header was stripped');
   assert.equal(snap.thread.sessionId, 'mock-session-ask-1');
   assert.equal(snap.inFlight, null);
-  // D13: the background title call then replaces the deterministic title and
+  // D13: the background title call titles the still-untitled thread and
   // announces it out-of-turn (under WORCA_MOCK it echoes the title prompt).
   const titled = await waitFor(() => msgs.find((m) => m.type === 'ask-title' && m.threadId === t.id));
   assert.ok(typeof titled.title === 'string' && titled.title, 'ask-title carries the new title');

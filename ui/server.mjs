@@ -53,7 +53,7 @@ import {
   getAttachment as askGetAttachment, attachmentPath as askAttachmentPath, threadAttachmentBytes as askThreadAttachmentBytes,
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
   findRunLinksByPipeline as askFindRunLinksByPipeline,
-  setThreadTitle as askSetThreadTitle, finishMessage as askFinishMessage,
+  finishMessage as askFinishMessage,
 } from '../src/core/ask/store.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
@@ -4064,16 +4064,14 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       // `ctx` (pin-merged) rather than cv.context: the stored row is what restores
       // the selector on reopen and what the MCP child reads for tool defaulting.
       askUpdateThread(id, { context: ctx, model: mv.model, effort: mv.effort });
-      let deterministicTitle = thread.title;
-      let titleWasAuto = false;
-      if (thread.title == null) {
-        // §7.4 — no frame for the deterministic title. titleWasAuto gates the
-        // D13 background replacement: a title given at THREAD CREATION is the
-        // user's, and the haiku call must never fire for it (§17 Q&A 1).
-        deterministicTitle = askSanitizeTitle(text.slice(0, 80)) || 'New chat';
-        askSetThreadTitle(id, deterministicTitle);
-        titleWasAuto = true;
-      }
+      // §7.4 — NOTHING is stamped on the row before the 202: the thread stays
+      // untitled (the header reads "Ask Worca") until the D13 background title
+      // announces itself. titleWasAuto gates that call: a title given at THREAD
+      // CREATION is the user's, and the haiku call must never fire for it
+      // (§17 Q&A 1). deterministicTitle is only the turn's fallback for an
+      // empty haiku result (turn.mjs _kickoffTitle), never written here.
+      const titleWasAuto = thread.title == null;
+      const deterministicTitle = titleWasAuto ? (askSanitizeTitle(text.slice(0, 80)) || 'New chat') : thread.title;
       const userMsg = askAppendMessage(id, { role: 'user', text });
       job.userMessageId = userMsg.id;
       const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, kind: f.kind, mime: f.mime, text: f.text, data: f.data }));
