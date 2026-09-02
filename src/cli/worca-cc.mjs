@@ -4,13 +4,15 @@
 // CLI entry point. Parses flags, creates a core orchestrator, subscribes to its events,
 // renders a phase tracker + streamed agent logs to the terminal, and drives interactive
 // Q&A (clarify) and loop gates via node:readline. Supports --yes (auto), --mock,
-// --install <dir> (delegates to scripts/install.mjs), and --ui (spawns ui/server.mjs).
+// --install <dir> (delegates to scripts/install.mjs), --ui (spawns ui/server.mjs),
+// and -v/-V/--version (also the bare word `version`).
 //
 // ESM, no external dependencies.
 
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
 import { fstatSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, basename } from 'node:path';
 import process from 'node:process';
@@ -39,6 +41,18 @@ process.on('warning', (w) => {
   if (w && w.name === 'ExperimentalWarning' && /SQLite/i.test(w.message)) return;
   process.stderr.write(`${w?.stack || w?.message || w}\n`);
 });
+// ── --version ──────────────────────────────────────────────────────────────────
+// Answered BEFORE the Node preflight and before any flag validation: "which worca is
+// this?" is the first question asked when something else is broken, so it must work
+// on an unsupported Node and alongside an otherwise-bad command line. The bare word
+// `version` is only honoured in the subcommand slot (like `help`); the flags anywhere.
+// Output is the GNU/gh/go form, `<prog> <semver>`, on stdout, exit 0.
+const PKG_VERSION = createRequire(import.meta.url)('../../package.json').version;
+const VERSION_FLAGS = new Set(['-v', '-V', '--version']);
+if (process.argv[2] === 'version' || process.argv.slice(2).some((a) => VERSION_FLAGS.has(a))) {
+  process.stdout.write(`worca ${PKG_VERSION}\n`);
+  process.exit(0);
+}
 // Fail fast on an unsupported Node / missing node:sqlite BEFORE any DB is opened.
 preflightNode();
 
@@ -58,7 +72,8 @@ const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'bypassPermissions',
 
 /**
  * Parse argv into a flags object. Supports "--flag value" and "--flag=value", plus the
- * boolean flags --mock, --yes/--non-interactive, --ui, -h/--help.
+ * boolean flags --mock, --yes/--non-interactive, --ui, -h/--help. (-v/-V/--version
+ * never reach here: they are answered at module top, before the Node preflight.)
  */
 function parseArgs(argv) {
   const out = {
@@ -203,6 +218,7 @@ Subcommands:
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
   config [get|set|unset]      Budget & cost-limit settings
   help                        Print this help (same as --help).
+  version                     Print the version (same as --version).
 
 Options:
   --project <dir>          Target project directory (default: cwd)
@@ -222,6 +238,7 @@ Options:
   --ui                     Launch the web UI (ui/server.mjs) and exit
   --install <targetDir>    Copy agents + /worca skill into <targetDir>/.claude
   -h, --help               Show this help
+  -v, -V, --version        Print the version (worca <semver>) and exit
 `;
 
 // ── terminal rendering ───────────────────────────────────────────────────────────
@@ -380,7 +397,10 @@ function stdinCanAnswer() {
 /**
  * Wire readline Q&A, log/phase rendering, and SIGINT pause/stop onto an
  * orchestrator, then drive it. `start` launches run() or resume(). Returns the
- * process exit code (0 for done/paused, 1 otherwise).
+ * process exit code: 0 for done — and for a pause in an INTERACTIVE run (the
+ * user chose or witnessed it and can resume); 3 for a pause under --yes (the
+ * run parked itself on auth/quota/usage-limit/exhausted retries with nobody
+ * attached to resume it, so a wrapper must not read success); 1 otherwise.
  */
 async function attachAndDrive(orch, flags, start) {
   // Refuse an unanswerable interactive run BEFORE start(). The orchestrator
@@ -578,9 +598,15 @@ async function attachAndDrive(orch, flags, start) {
   // An unanswered question is a failure even if the run somehow settled `done`.
   if (answerFailure) return 1;
   if (result?.status === 'done') return 0;
-  // D10: a pause the user asked for is a success (Ctrl+C, a budget hold); a pause
-  // an ERROR forced is a failure a script must be able to read off the exit code.
-  if (result?.status === 'paused') return result.reason === 'error' ? 1 : 0;
+  // A pause exits 0 only when someone is attached to resume it (interactive —
+  // pinned by the MAJ-7 Ctrl+C pitfall test) AND the user asked for it (Ctrl+C,
+  // a budget hold). Under --yes every pause is the run parking ITSELF
+  // (auth/quota/usage limit/exhausted recoverable retries/an error) with nobody
+  // left to resume: exit 0 here would let a CI job go green on a run that did no
+  // work. 3, not 1, so wrappers can tell "resumable pause" from a hard error
+  // (2 is fail()'s usage-error code). An interactive pause an ERROR forced is a
+  // failure a script must be able to read off the exit code: 1.
+  if (result?.status === 'paused') return flags.auto ? 3 : (result.reason === 'error' ? 1 : 0);
   return 1;
 }
 
@@ -1661,15 +1687,16 @@ function editDistance(a, b) {
  */
 function nearestSubcommand(token) {
   if (!token || /\s/.test(token)) return null;
-  // 'help' is spliced into both loops: it is a real CLI arm (the head of main())
-  // but deliberately absent from the dispatch table, so without it a typo of help
-  // itself (`worca hlep`) is distance >= 4 from everything and runs as a PROMPT.
-  for (const name of [...SUBCOMMANDS, 'help']) {
+  // 'help' and 'version' are spliced into both loops: they are real CLI arms (the
+  // head of main() / the module top) but deliberately absent from the dispatch
+  // table, so without them a typo of either (`worca hlep`, `worca versoin`) is
+  // distance >= 3 from everything and runs as a PROMPT.
+  for (const name of [...SUBCOMMANDS, 'help', 'version']) {
     if (token.length >= 3 && name.length > token.length && name.startsWith(token)) return name;
   }
   let best = null;
   let bestD = 3;   // strictly less than 3 == distance <= 2
-  for (const name of [...SUBCOMMANDS, 'help']) {
+  for (const name of [...SUBCOMMANDS, 'help', 'version']) {
     const d = editDistance(token, name);
     if (d < bestD) { bestD = d; best = name; }
   }

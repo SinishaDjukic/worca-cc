@@ -101,6 +101,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     pickerFromStore: !!(storedPick && storedPick.model),
     effortFromStore: storedPick !== null,
     catalog: null,
+    // #397: the thread's project/workspace scope. pinned:false = Auto (follow the
+    // page — today's behaviour). label caches the display name once resolved.
+    scope: { pinned: false, projectKey: null, workspaceId: null, label: null },
     popover: null,            // {panel, trigger, onClose}
     expandedAgents: new Set(),
     worktrees: [],            // P4 §10: the chat's open worktrees (snapshot-fed)
@@ -223,6 +226,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     header.appendChild(logo);
     el.title = make('div', 'ask-title', 'Ask Worca');
     header.appendChild(el.title);
+    // #397: the scope selector — which project/workspace this chat is about,
+    // independent of the page behind the sheet.
+    const scopeBtn = make('button', 'ask-scope-btn');
+    scopeBtn.type = 'button';
+    scopeBtn.setAttribute('data-ask-scope-btn', '');
+    scopeBtn.title = 'Project scope for this chat';
+    el.scopeLabel = make('span', 'ask-scope-label', 'Auto');
+    scopeBtn.appendChild(el.scopeLabel);
+    scopeBtn.appendChild(svgIcon(ICONS.chevronDown, 11, 2));
+    scopeBtn.addEventListener('click', () => openScopePopover(scopeBtn));
+    el.scopeBtn = scopeBtn;
+    header.appendChild(scopeBtn);
     header.appendChild(make('span', 'ask-header-spacer'));
     const threadsBtn = iconButton('ask-icon-btn', 'Recent chats', ICONS.threads, () => toggleThreadsPopover(threadsBtn));
     threadsBtn.setAttribute('data-ask-threads-btn', '');
@@ -258,7 +273,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return dock;
   }
 
+  // Mirrors src/core/ask/attachment-kind.mjs + limits.mjs (#398): text kinds are
+  // UTF-8 capped at 512 KB, binary kinds (images + PDF) at 5 MB; the server
+  // re-validates everything, these are just early clear messages.
   const ASK_ATTACH_EXT = ['.md', '.markdown', '.txt', '.json', '.csv', '.log'];
+  const ASK_ATTACH_BINARY = {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf',
+  };
+  const ASK_MAX_TEXT_BYTES = 524_288;
+  const ASK_MAX_BINARY_BYTES = 5 * 1024 * 1024;
+  const ASK_MAX_THREAD_BYTES = 25 * 1024 * 1024;
 
   function bytesToBase64(bytes) {
     let bin = '';
@@ -276,6 +301,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.chips.hidden = !st.pendingFiles.length;
     for (const f of st.pendingFiles) {
       const chip = make('span', 'ask-chip');
+      if (f.attKind === 'image' && f.dataBase64) {
+        // #398: composer thumbnail straight from the bytes just read — no
+        // object-URL lifecycle to manage, the chip owns its data URI.
+        const img = doc.createElement('img');
+        img.className = 'ask-chip-thumb';
+        img.alt = f.name;
+        img.src = `data:${f.mime};base64,${f.dataBase64}`;
+        chip.appendChild(img);
+      }
       chip.appendChild(make('span', 'ask-chip-name', f.name));
       const x = make('button', 'ask-chip-x', '×');
       x.type = 'button';
@@ -294,18 +328,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const name = String(f.name || '');
       const dot = name.lastIndexOf('.');
       const ext = dot >= 0 ? name.slice(dot).toLowerCase() : '';
-      if (!ASK_ATTACH_EXT.includes(ext)) { setComposerMsg(`attachment type not allowed: ${name}`); continue; }
-      if (f.size > 524_288) { setComposerMsg(`attachment over 524288 bytes: ${name}`); continue; }
+      const binMime = ASK_ATTACH_BINARY[ext];
+      if (!ASK_ATTACH_EXT.includes(ext) && !binMime) { setComposerMsg(`attachment type not allowed: ${name}`); continue; }
+      const cap = binMime ? ASK_MAX_BINARY_BYTES : ASK_MAX_TEXT_BYTES;
+      if (f.size > cap) { setComposerMsg(`attachment over ${cap} bytes: ${name}`); continue; }
       const others = st.pendingFiles.filter((p) => p.name !== name); // dedupe by name, newest wins
       if (others.length >= 8) { setComposerMsg('at most 8 attachments per message'); continue; }
       const serverBytes = st.model ? st.model.attachmentsBytes() : 0;
       const pendingBytes = others.reduce((n, p) => n + p.bytes, 0);
-      if (serverBytes + pendingBytes + f.size > 4 * 1024 * 1024) { setComposerMsg('attachment budget for this thread exceeded'); continue; }
+      if (serverBytes + pendingBytes + f.size > ASK_MAX_THREAD_BYTES) { setComposerMsg('attachment budget for this thread exceeded'); continue; }
       let dataBase64 = '';
       try {
         dataBase64 = bytesToBase64(new Uint8Array(await f.arrayBuffer()));
       } catch { setComposerMsg(`could not read ${name}`); continue; }
-      st.pendingFiles = [...others, { name, bytes: f.size, dataBase64 }];
+      const attKind = binMime ? (binMime.startsWith('image/') ? 'image' : 'binary') : 'text';
+      st.pendingFiles = [...others, { name, bytes: f.size, dataBase64, attKind, mime: binMime || null }];
     }
     renderChips();
   }
@@ -366,7 +403,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         text,
         model: st.picker.model,
         effort: st.picker.effort,
-        context: getPageContext() || {},
+        context: scopedContext(getPageContext() || {}),
         ...(st.pendingFiles.length ? { attachments: st.pendingFiles.map((f) => ({ name: f.name, dataBase64: f.dataBase64 })) } : {}),
       };
       const model = st.model;
@@ -384,8 +421,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         setComposerMsg(msg);
         return;
       }
-      const { userMessageId } = await res.json();
-      st.model.noteLocalUserMessage({ id: userMessageId, text, attachments: st.pendingFiles.map((f) => ({ name: f.name, bytes: f.bytes })) });
+      const { userMessageId, attachments: stored } = await res.json();
+      // Prefer the server's rows: they carry the store-minted ids that key the
+      // image thumbnail (#398) and the thread's attachment ledger. The pending
+      // files are the fallback for a server that predates the field.
+      const echoAtts = Array.isArray(stored)
+        ? stored.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind ?? 'text', mime: a.mime ?? null }))
+        : st.pendingFiles.map((f) => ({ name: f.name, bytes: f.bytes, attKind: f.attKind, mime: f.mime }));
+      st.model.noteLocalUserMessage({ id: userMessageId, text, attachments: echoAtts });
       if (!st.model.thread().title) {
         // The deterministic first title has NO frame — record it in the MODEL
         // as well as the header: model.load() left `title` dirty and the very
@@ -434,7 +477,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.fileInput = doc.createElement('input');
     el.fileInput.type = 'file';
     el.fileInput.multiple = true;
-    el.fileInput.accept = `${ASK_ATTACH_EXT.join(',')},text/*`;
+    el.fileInput.accept = `${ASK_ATTACH_EXT.join(',')},${Object.keys(ASK_ATTACH_BINARY).join(',')},text/*`;
     el.fileInput.hidden = true;
     el.fileInput.addEventListener('change', () => { addFiles(el.fileInput.files); el.fileInput.value = ''; });
     row.appendChild(el.fileInput);
@@ -908,6 +951,121 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     renderPane('main');
   }
 
+  // ---- scope selector (#397) ------------------------------------------------
+  /** Per-field merge: the pinned scope replaces the page context's TARGET keys;
+   *  view/run/diff-file context still follow the page. Auto sends pinned:false so
+   *  the server never resurrects a stale thread pin over an explicit choice. */
+  function scopedContext(page) {
+    const ctx = { ...page };
+    if (!st.scope.pinned) return { ...ctx, pinned: false };
+    delete ctx.projectDir;
+    delete ctx.projectKey;
+    delete ctx.workspaceId;
+    ctx.pinned = true;
+    if (st.scope.projectKey) ctx.projectKey = st.scope.projectKey;
+    else if (st.scope.workspaceId) ctx.workspaceId = st.scope.workspaceId;
+    return ctx;
+  }
+
+  function updateScopeButton() {
+    if (!el.scopeLabel) return;
+    el.scopeLabel.textContent = st.scope.pinned
+      ? (st.scope.label || st.scope.projectKey || st.scope.workspaceId || 'Pinned')
+      : 'Auto';
+    el.scopeBtn.classList.toggle('is-pinned', st.scope.pinned);
+  }
+
+  function setScope(next) {
+    st.scope = {
+      pinned: !!next.pinned,
+      projectKey: next.projectKey || null,
+      workspaceId: next.workspaceId || null,
+      label: next.label || null,
+    };
+    updateScopeButton();
+    closePopover({ focusTrigger: false });
+    focusComposer();
+    // Persist on the thread so the pin survives reload with no message sent. A
+    // brand-new chat has no row yet — the first message's context (pinned:true)
+    // persists it then instead.
+    if (!st.threadId) return;
+    const scope = st.scope.pinned
+      ? (st.scope.projectKey ? { pinned: true, projectKey: st.scope.projectKey } : { pinned: true, workspaceId: st.scope.workspaceId })
+      : { pinned: false };
+    Promise.resolve()
+      .then(() => fetch(`/api/ask/threads/${st.threadId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope }) }))
+      .catch(() => { /* the next message carries the scope in its context anyway */ });
+  }
+
+  /** Restore the selector from a stored thread context (loadThread / reopen). */
+  function applyThreadScope(context) {
+    const c = context && typeof context === 'object' ? context : null;
+    const key = c && c.pinned === true && typeof c.projectKey === 'string' && c.projectKey ? c.projectKey : null;
+    const ws = c && c.pinned === true && typeof c.workspaceId === 'string' && c.workspaceId ? c.workspaceId : null;
+    st.scope = key
+      ? { pinned: true, projectKey: key, workspaceId: null, label: null }
+      : ws
+        ? { pinned: true, projectKey: null, workspaceId: ws, label: null }
+        : { pinned: false, projectKey: null, workspaceId: null, label: null };
+    updateScopeButton();          // the raw key shows until the name resolves
+    if (st.scope.pinned) resolveScopeLabel();
+  }
+
+  function resolveScopeLabel() {
+    const want = { projectKey: st.scope.projectKey, workspaceId: st.scope.workspaceId };
+    loadCardOptions().then((opts) => {
+      if (st.destroyed || !st.scope.pinned) return;
+      if (st.scope.projectKey !== want.projectKey || st.scope.workspaceId !== want.workspaceId) return;
+      const p = want.projectKey ? opts.projects.find((x) => x && x.key === want.projectKey) : null;
+      const w = want.workspaceId ? opts.workspaces.find((x) => x && x.id === want.workspaceId) : null;
+      st.scope.label = (p && p.name) || (w && (w.name || w.id)) || null;
+      updateScopeButton();
+    });
+  }
+
+  function openScopePopover(trigger) {
+    const panel = openPopover({ panelClass: 'ask-pop-scope', trigger, build: (p) => {
+      p.appendChild(make('div', 'ask-pop-caption', 'Chat scope'));
+    } });
+    if (!panel) return;
+    loadCardOptions().then((opts) => {
+      if (!st.popover || st.popover.panel !== panel) return;
+      const item = (label, on, onPick) => {
+        const it = menuItem('ask-scope-item', onPick);
+        it.appendChild(make('span', 'ask-model-name', label));
+        if (on) it.appendChild(make('span', 'ask-model-check', '✓'));
+        return it;
+      };
+      panel.appendChild(item('Auto (follow current page)', !st.scope.pinned, () => setScope({ pinned: false })));
+      const projects = opts.projects.filter((p) => p && p.key);
+      if (projects.length) {
+        panel.appendChild(make('div', 'ask-pop-divider'));
+        panel.appendChild(make('div', 'ask-pop-caption', 'Projects'));
+        for (const p of projects) {
+          panel.appendChild(item(
+            p.exists === false ? `${p.name} (missing)` : p.name,
+            st.scope.pinned && st.scope.projectKey === p.key,
+            () => setScope({ pinned: true, projectKey: p.key, label: p.name }),
+          ));
+        }
+      }
+      const workspaces = opts.workspaces.filter((w) => w && w.id);
+      if (workspaces.length) {
+        panel.appendChild(make('div', 'ask-pop-divider'));
+        panel.appendChild(make('div', 'ask-pop-caption', 'Workspaces'));
+        for (const w of workspaces) {
+          panel.appendChild(item(
+            w.name || w.id,
+            st.scope.pinned && st.scope.workspaceId === w.id,
+            () => setScope({ pinned: true, workspaceId: w.id, label: w.name || w.id }),
+          ));
+        }
+      }
+      const first = menuItems(panel)[0];
+      if (first) { first.tabIndex = 0; try { first.focus(); } catch { /* ignore */ } }
+    });
+  }
+
   // ---- run-info popover ("Agents this chat") --------------------------------
   // ---- worktrees (P4 §10) ---------------------------------------------------
   function setWorktrees(list) {
@@ -1014,6 +1172,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     stopElapsed();
     storeThread(null);
     el.title.textContent = 'Ask Worca';
+    applyThreadScope(null);             // #397: a brand-new chat starts on Auto
     renderTranscript();
     updateMeters();
     setWorktrees([]);
@@ -1049,6 +1208,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // ---- stubs the later tasks replace wholesale ------------------------------
   // ---- transcript (spec §10.5) ---------------------------------------------
   function buildAttachmentPill(b) {
+    // #398: an image attachment renders as a thumbnail served by the download
+    // route (sniff-verified mime, inline disposition); everything else keeps the
+    // name pill. The id comes from the 202 body or the ask-message broadcast; an
+    // echo without one (older server) pills until the snapshot.
+    if (b.attKind === 'image' && b.id && st.threadId) {
+      const link = make('a', 'ask-attachment-thumb-link');
+      link.href = `/api/ask/threads/${st.threadId}/attachments/${b.id}`;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      const img = doc.createElement('img');
+      img.className = 'ask-attachment-thumb';
+      img.alt = b.name || '(image)';
+      img.loading = 'lazy';
+      img.src = link.href;
+      link.appendChild(img);
+      return link;
+    }
     const pill = make('span', 'extra-pill ask-attachment-pill');
     pill.appendChild(make('span', 'extra-pill-name', b.name || '(attachment)'));
     return pill;
@@ -1145,6 +1321,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const local = { target: card.target === 'workspace' ? 'workspace' : 'project', options: null };
 
     rootEl.appendChild(make('div', 'ask-card-title', card.title || 'Run proposal'));
+
+    // #397 guardrail: the model proposed a different target than the chat's pin.
+    if (block.scopeMismatch) {
+      rootEl.appendChild(make('div', 'ask-card-scope-warn',
+        'This proposal targets a different project or workspace than the one pinned for this chat — check the target before starting.'));
+    }
 
     const seg = make('div', 'ask-card-seg');
     const segBtns = {};
@@ -1640,6 +1822,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.model = createThreadModel({ threadId: id });
     st.model.load(snap);
     el.title.textContent = (snap.thread && snap.thread.title) || 'Ask Worca';
+    applyThreadScope(snap.thread && snap.thread.context);   // #397: restore the pin
     renderTranscript();
     updateMeters();
     // P4: the count rides the snapshot loadThread ALREADY fetched — no extra GET.

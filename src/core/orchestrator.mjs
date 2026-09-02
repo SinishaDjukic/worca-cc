@@ -761,6 +761,11 @@ export class GraphOrchestrator extends RunHarness {
         const cls = classifyError(err);
         if (!cls) { this._pauseForError(nc, ctx, err); throw pauseErr(); }            // not recoverable -> pause
         if (cls === 'usage_limit') { this._pauseForLimit(nc, ctx, err); throw pauseErr(); }
+        // Auto mode: auth/quota are user-fixable but never time-fixable — a
+        // 1s/2s/4s backoff cannot re-login or top up a balance — so skip the
+        // futile retries and pause on the first hit. Interactive runs keep the
+        // recovery prompt: the user may fix the cause and hit Retry in place.
+        if (this.auto && (cls === 'auth' || cls === 'quota')) { this._pauseForError(nc, ctx, err); throw pauseErr(); }
         const decision = await this._recover({ node: { key: nc.key || ctx.nodeId }, cls, err, attempt });
         if (this.pauseRequested) throw pauseErr();                                    // a pause landed during backoff/prompt: its reason stands
         if (decision === 'pause') { this._pauseForError(nc, ctx, err); throw pauseErr(); }  // user/auto gave up -> pause

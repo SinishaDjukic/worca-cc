@@ -3662,10 +3662,16 @@ export class RunHarness extends EventEmitter {
     await this._persist();
     // A plain manual pause has no reason; every reasoned pause audited at its site.
     if (!this.pauseReason) await appendAudit(this.pipeline.dir, `Pipeline **paused**.`).catch(() => {});
-    if (this.pauseReason === 'error') {
-      await this._buildResults({ stage: true });
-      await this._reportToSource();
-    }
+    // A FORCED pause (pauseReason set: usage limit, cost cap, auto-mode
+    // auth/quota, exhausted recoverable retries, an error) parks the run with
+    // nobody attached, so the task source must hear it NOW — statusToResult
+    // ('paused') -> 'needs-human' — or the external task stays claimed "in
+    // progress" until a human stumbles on it. A manual pause skips this: the
+    // user is present and resuming shortly, and the resumed run's terminal path
+    // reports the real outcome. An ERROR-pause additionally keeps the diff
+    // artifact the retired error path produced. Never throws (spec §7.5).
+    if (this.pauseReason === 'error') await this._buildResults({ stage: true });
+    if (this.pauseReason) await this._reportToSource();
     const payload = {
       status: 'paused',
       pipelineDir: this.pipeline.dir,

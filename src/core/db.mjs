@@ -54,7 +54,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 26;
+export const SCHEMA_VERSION = 27;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -745,6 +745,8 @@ const INCREMENTAL_COLUMNS = {
   workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT', archived_at: 'TEXT' },
   config_workflow_nodes:  { ask_questions: 'INTEGER', subagent_model: 'TEXT' },  // v25: sub-agent model policy
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
+  ask_attachments:        { kind: "TEXT NOT NULL DEFAULT 'text'",  // v27: text | image | binary (#398)
+                            mime: 'TEXT' },               // v27: sniffed mime; NULL on pre-v27 rows (= text)
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -1097,6 +1099,15 @@ const V26_MODEL_RENAMES = [['claude-fable-5', 'claude-fable-5-1']];
 
 function applySchemaV26(db) {
   for (const [from, to] of V26_MODEL_RENAMES) renameStoredModelPins(db, from, to);
+}
+
+/** v27 (Ask Worca binary attachments, #398): ask_attachments.kind/mime — plain
+ *  additive columns declared in INCREMENTAL_COLUMNS, applySchemaV25's shape: this
+ *  repairSchemaGaps call is what CREATES them on the ladder path (a DB stamped
+ *  exactly 26), reconcileSchema covers the fast path. Existing rows keep the
+ *  column DEFAULT 'text', which is exactly what every pre-v27 attachment is. */
+function applySchemaV27(db) {
+  repairSchemaGaps(db, schemaGaps(db));
 }
 
 /** Move every stored pin on model id `from` (lower-case) to `to`. Each table
@@ -1481,6 +1492,7 @@ export function migrate(db) {
     if (current < 24) applySchemaV24(db, { existing: current >= 1 });  // the v2 break
     if (current < 25) applySchemaV25(db);            // sub-agent model policy + recorded child model
     if (current < 26) applySchemaV26(db);            // Fable 5 pins -> Fable 5.1 (catalog swap)
+    if (current < 27) applySchemaV27(db);            // ask_attachments.kind/mime (#398)
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

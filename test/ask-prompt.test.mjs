@@ -210,7 +210,7 @@ test('context header: the spec layout, exactly', () => {
   assert.ok(!ws.includes('runs from this thread'), 'empty lists are omitted');
 });
 
-test('context header clips: titles, then drops attachments → cards → runs, then hard-truncates keeping the closing tag', () => {
+test('context header clips: titles, then drops cards → runs → text attachments, then hard-truncates keeping the closing tag', () => {
   const long = 'L'.repeat(300);
   const big = {
     ...CTX,
@@ -232,6 +232,37 @@ test('context header clips: titles, then drops attachments → cards → runs, t
   assert.ok(buildContextHeader(CTX, { maxChars: 120 }).endsWith('[/worca context]'));
 });
 
+// #398: a binary attachment reaches the model ONLY through the header line (never
+// inlined, no list tool), so it must be the last thing the clipper sheds — after
+// cards and runs (both reachable again through the tools) and after text ones.
+test('context header (#398): cards go first, then runs, then text attachments; binary attachments outlive them all', () => {
+  const ctx = {
+    ...CTX,
+    linkedRuns: [{ id: '00000001', title: 'a run', status: 'done', phase: 'done' }],
+    cards: [{ id: 'card_00000001', state: 'proposed', workflowId: 'wf_default', targetName: 'worca-cc' }],
+    attachments: [
+      { id: 'att_00000001', name: 'notes.md', bytes: 10, kind: 'text' },
+      { id: 'att_00000002', name: 'shot.png', bytes: 2048, kind: 'image', mime: 'image/png' },
+      { id: 'att_00000003', name: 'spec.pdf', bytes: 1024, kind: 'binary', mime: 'application/pdf' },
+    ],
+  };
+  // Names/titles are all under 30 chars, so the 60→30 clip changes nothing and
+  // each successive cap forces exactly one more drop stage.
+  const full = buildContextHeader(ctx, { maxChars: 4000 });
+  for (const s of ['cards:', 'runs from this thread:', 'att_00000001', 'att_00000002', 'att_00000003']) assert.ok(full.includes(s), `unclipped header keeps ${s}`);
+  const noCards = buildContextHeader(ctx, { maxChars: full.length - 1 });
+  assert.ok(!noCards.includes('cards:'), 'cards are the first to go');
+  assert.ok(noCards.includes('runs from this thread:') && noCards.includes('att_00000001'), 'runs and attachments survive the cards drop');
+  const noRuns = buildContextHeader(ctx, { maxChars: noCards.length - 1 });
+  assert.ok(!noRuns.includes('runs from this thread:'), 'runs go second');
+  assert.ok(noRuns.includes('att_00000001 notes.md'), 'text attachments still listed');
+  const noText = buildContextHeader(ctx, { maxChars: noRuns.length - 1 });
+  assert.ok(!noText.includes('att_00000001'), 'text attachments go third');
+  assert.ok(noText.includes('att_00000002 shot.png (image/png, 2 KB, use read_attachment)'), 'the image line survives every drop stage');
+  assert.ok(noText.includes('att_00000003 spec.pdf (application/pdf, 1 KB, use read_attachment)'), 'so does the pdf line');
+  assert.ok(noText.length <= noRuns.length - 1);
+});
+
 test('selectInlineAttachments: upload order, running total ≤ maxBytes, the rest listed', () => {
   const list = [
     { id: 'att_1', name: 'a.md', bytes: 10_000, text: 'a' },
@@ -242,6 +273,33 @@ test('selectInlineAttachments: upload order, running total ≤ maxBytes, the res
   assert.deepEqual(r.inline.map((a) => a.id), ['att_1', 'att_3'], 'b is skipped (would exceed), c still fits');
   assert.deepEqual(r.listed.map((a) => a.id), ['att_2']);
   assert.deepEqual(selectInlineAttachments([], {}), { inline: [], listed: [] });
+});
+
+test('selectInlineAttachments (#398): binary kinds are always listed and consume no inline budget', () => {
+  const list = [
+    { id: 'att_1', name: 'shot.png', bytes: 2_000_000, kind: 'image', mime: 'image/png' },
+    { id: 'att_2', name: 'a.md', bytes: 10_000, kind: 'text', text: 'a' },
+    { id: 'att_3', name: 'spec.pdf', bytes: 40, kind: 'binary', mime: 'application/pdf' },
+    { id: 'att_4', name: 'b.md', bytes: 14_000, kind: 'text', text: 'b' },
+  ];
+  const r = selectInlineAttachments(list, { maxBytes: 24_576 });
+  assert.deepEqual(r.inline.map((a) => a.id), ['att_2', 'att_4'], 'both text files fit: the image did not eat the budget');
+  assert.deepEqual(r.listed.map((a) => a.id), ['att_1', 'att_3'], 'binary kinds listed even when tiny');
+});
+
+test('context header (#398): a binary attachment line carries its mime, text lines are unchanged', () => {
+  const out = buildContextHeader({
+    view: 'history',
+    attachments: [
+      { id: 'att_00000001', name: 'notes.md', bytes: 41 * 1024, kind: 'text' },
+      { id: 'att_00000002', name: 'shot.png', bytes: 2 * 1024 * 1024, kind: 'image', mime: 'image/png' },
+      { id: 'att_00000003', name: 'spec.pdf', bytes: 1024, kind: 'binary', mime: 'application/pdf' },
+    ],
+    now: '2026-08-22T08:00:00.000Z',
+  });
+  assert.ok(out.includes('att_00000001 notes.md (41 KB, use read_attachment)'), 'text line byte-identical to pre-#398');
+  assert.ok(out.includes('att_00000002 shot.png (image/png, 2048 KB, use read_attachment)'));
+  assert.ok(out.includes('att_00000003 spec.pdf (application/pdf, 1 KB, use read_attachment)'));
 });
 
 test('buildTurnPrompt: header, text, fenced attachments with a fence longer than any backtick run', () => {
@@ -333,6 +391,8 @@ test('the prompt advertises the worktree tools and the native file tools, and th
   assert.ok(SANDBOX_NOTE.includes('worktree'), 'sub-agents are told where the tools point');
   for (const t of ['Read', 'Grep', 'Glob', '`git`']) assert.ok(SANDBOX_NOTE.includes(t), `the sandbox note names ${t}`);
   assert.ok(SANDBOX_NOTE.includes('cannot run commands'), 'commands/network stay off');
+  assert.ok(SANDBOX_NOTE.includes('read_attachment'), '#398: sub-agents learn the one Read target outside a worktree');
+  assert.ok(!SANDBOX_NOTE.includes('never elsewhere on disk'), 'the worktree-only wording that contradicted rules 6/7 is gone');
   assert.ok(!SANDBOX_NOTE.includes('cannot read files'), 'the git-only wording is gone');
 });
 
@@ -365,4 +425,29 @@ test('rule 10 distils exploration findings into the brief, anchored and marked',
   }
   assert.ok(ASK_SYSTEM_RULES.includes('(rule 10)'), 'rule 3 points at it where the brief is written');
   assert.ok(!/\n\s*11\./.test(ASK_SYSTEM_RULES), 'the rules stop at 10 (renumbering would break these pins)');
+});
+
+// ── #397: the explicit project selector ──────────────────────────────────────
+
+test('#397: context.pinned is a boolean; anything else is rejected', () => {
+  assert.deepEqual(validateClientContext({ pinned: true }), { ok: true, context: { pinned: true } });
+  assert.deepEqual(validateClientContext({ pinned: false }), { ok: true, context: { pinned: false } });
+  assert.deepEqual(validateClientContext({ pinned: 'yes' }), { ok: false, error: 'context.pinned is invalid' });
+  assert.deepEqual(validateClientContext({ pinned: 1 }), { ok: false, error: 'context.pinned is invalid' });
+  assert.deepEqual(validateClientContext({ pinned: null }), { ok: true, context: {} }, 'null = absent, like every other key');
+});
+
+test('#397: rule 2 defines the pinned marker as the default target', () => {
+  assert.ok(ASK_SYSTEM_RULES.includes('[pinned by the user]'), 'rule 2 names the marker');
+  assert.ok(ASK_SYSTEM_RULES.includes('the scope the user explicitly selected for this chat'));
+});
+
+test('#397: a pinned scope renders the [pinned by the user] marker on the scope line only', () => {
+  const h = buildContextHeader({ ...CTX, pinned: true });
+  assert.ok(h.includes('project: worca-cc (key worca-cc-551183d0) [pinned by the user]\n'), h);
+  assert.ok(!h.includes('workspace: - [pinned by the user]'), 'the empty workspace line is never marked');
+  const ws = buildContextHeader({ view: 'new', pinned: true, workspace: { id: 'wks-team-0000abcd', name: 'Team', members: ['app'] }, now: CTX.now });
+  assert.ok(ws.includes('workspace: Team (wks-team-0000abcd) members: app [pinned by the user]\n'), ws);
+  assert.ok(!buildContextHeader(CTX).includes('[pinned by the user]'), 'an unpinned header is unchanged');
+  assert.ok(!buildContextHeader({ ...CTX, pinned: false }).includes('[pinned by the user]'), 'explicit Auto is unchanged too');
 });

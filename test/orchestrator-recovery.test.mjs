@@ -28,6 +28,7 @@ function gitDir() {
 const AUTH_ERR = () => new Error('claude exited with code 1: Failed to authenticate. API Error: 401 Invalid authentication credentials');
 const NET_ERR = () => new Error('request to https://api.anthropic.com failed, reason: ECONNRESET');
 const LIMIT_ERR = () => new Error("claude exited with code 1: You've hit your session limit · resets 6pm (Europe/Sofia)");
+const QUOTA_ERR = () => new Error('claude exited with code 1: Your credit balance is too low to access the Anthropic API');
 const okVerifier = async () => ({ status: 'ok', issues: [], review: { issues: [] }, summary: '' });
 
 // Producer that throws an auth error on its FIRST call, then succeeds.
@@ -113,7 +114,25 @@ test("interactive: the legacy { decision: 'abort' } answer still means Pause", a
   assert.equal(res.reason, 'error');
 });
 
-test('auto: bounded retry then PAUSE when the error never clears', async () => {
+test('auto: bounded retry then PAUSE when a transient error never clears', async () => {
+  const dir = gitDir();
+  let calls = 0;
+  const alwaysNet = async () => { calls++; throw NET_ERR(); };
+  const orch = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    runners: { producer: alwaysNet, verifier: okVerifier },
+  });
+  const res = await orch.run();
+  // An outage that outlasts the backoff budget is still outside the pipeline's
+  // control: park the run as resumable instead of a terminal error.
+  assert.equal(res.status, 'paused');
+  assert.equal(res.reason, 'error');
+  assert.match(res.detail || '', /ECONNRESET/);
+  // First producer node: 1 initial + RECOVERY_MAX_AUTO_ATTEMPTS retries = 4 calls.
+  assert.equal(calls, 4);
+});
+
+test('auto: auth error pauses immediately — a 7s backoff cannot re-login', async () => {
   const dir = gitDir();
   let calls = 0;
   const alwaysAuth = async () => { calls++; throw AUTH_ERR(); };
@@ -124,8 +143,50 @@ test('auto: bounded retry then PAUSE when the error never clears', async () => {
   const res = await orch.run();
   assert.equal(res.status, 'paused', JSON.stringify(res));
   assert.equal(res.reason, 'error');
-  // First producer node: 1 initial + RECOVERY_MAX_AUTO_ATTEMPTS retries = 4 calls.
-  assert.equal(calls, 4);
+  assert.match(res.detail || '', /401/);
+  assert.equal(calls, 1, 'auth is NOT retried — it pauses on the first hit');
+});
+
+test('auto: quota error pauses immediately — retrying cannot top up the balance', async () => {
+  const dir = gitDir();
+  let calls = 0;
+  const alwaysQuota = async () => { calls++; throw QUOTA_ERR(); };
+  const orch = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    runners: { producer: alwaysQuota, verifier: okVerifier },
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'paused');
+  assert.equal(res.reason, 'error');
+  assert.match(res.detail || '', /credit balance/i);
+  assert.equal(calls, 1, 'quota is NOT retried — it pauses on the first hit');
+});
+
+test('auto: a network-paused run resumes to done once the outage clears', async () => {
+  const dir = gitDir();
+  let calls = 0;
+  let healthy = false;
+  const flaky = async () => { calls++; if (!healthy) throw NET_ERR(); return { status: 'ok', summary: 'done' }; };
+  const orch = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    runners: { producer: flaky, verifier: okVerifier },
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'paused');
+  assert.equal(calls, 4, 'the retry budget ran dry before the pause');
+
+  // "Circumstances changed": the outage cleared; the paused row must resume to done.
+  healthy = true;
+  const saved = readPipelineForResume(orch.state.id);
+  assert.equal(saved.row.status, 'paused');
+  assert.ok(saved.resumePoint, 'the pause left a resume point');
+  const orch2 = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    runners: { producer: flaky, verifier: okVerifier },
+    resume: saved,
+  });
+  const res2 = await orch2.resume();
+  assert.equal(res2.status, 'done');
 });
 
 test('a NON-recoverable throw pauses the run with reason error + detail (was: status error)', async () => {

@@ -50,7 +50,7 @@ import {
   listMessages as askListMessages, setMessageBlocks as askSetMessageBlocks,
   findCard as askFindCard, updateCardBlock as askUpdateCardBlock,
   addAttachment as askAddAttachment, listAttachments as askListAttachments,
-  readAttachmentText as askReadAttachmentText, threadAttachmentBytes as askThreadAttachmentBytes,
+  getAttachment as askGetAttachment, attachmentPath as askAttachmentPath, threadAttachmentBytes as askThreadAttachmentBytes,
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
   findRunLinksByPipeline as askFindRunLinksByPipeline,
   setThreadTitle as askSetThreadTitle, finishMessage as askFinishMessage,
@@ -64,6 +64,9 @@ import {
   buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
   selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
 } from '../src/core/ask/prompt.mjs';
+import {
+  classifyExtension as askClassifyExtension, sniffMime as askSniffMime,
+} from '../src/core/ask/attachment-kind.mjs';
 import {
   listAskWorktrees as askListWorktrees,
   removeAskWorktree as askRemoveWorktree,
@@ -84,7 +87,7 @@ import {
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef, SUBAGENT_MODEL_VALUES, subagentModelIssue } from '../src/core/model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue } from '../src/core/model-env.mjs';
 import { listPluginModels, modelSecretsSchema, pluginModelSecretStatus } from '../src/core/plugin-models.mjs';
 import { testModel } from '../src/core/model-test.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
@@ -748,6 +751,15 @@ app.use((req, res, next) => {
   next();
 });
 
+// Ask attachments ride base64 inside the message JSON (§7.3), and a binary
+// attachment (#398) may legitimately be 5 MB — several of them blow the app-wide
+// 8mb cap below. Registered BEFORE the global parser on the ONE route that
+// carries uploads (a body parsed here is skipped there): every other ask route
+// reads a string field or nothing and keeps the 8mb window. 64mb covers
+// maxFiles × maxBytesPerBinaryFile at base64's 4/3 inflation, so every
+// over-budget upload still reaches the route's OWN clear 400/413, not a raw
+// parser error.
+app.post('/api/ask/threads/:id/messages', express.json({ limit: '64mb' }));
 app.use(express.json({ limit: '8mb' }));
 
 if (HLJS_ASSETS) {
@@ -2997,8 +3009,7 @@ app.delete('/api/config/models', async (req, res) => {
 // back means "keep" and is dropped from the write.
 // ---------------------------------------------------------------------------
 
-const maskEnvValue = (v) =>
-  (modelEnvRef(v) ? v : (v.length > 8 ? `••••••${v.slice(-4)}` : '••••••'));
+const maskEnvValue = (v) => (modelEnvRef(v) ? v : maskModelEnvValue(v));
 const maskedGlobalModel = (m) => (m.env
   ? { ...m, env: Object.fromEntries(Object.entries(m.env).map(([k, v]) => [k, maskEnvValue(v)])) }
   : m);
@@ -3641,11 +3652,32 @@ app.patch('/api/ask/threads/:id', (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
   try {
-    const raw = (req.body || {}).title;
-    if (typeof raw !== 'string' || !raw.trim() || raw.length > 120) {
-      return badRequest(res, 'title must be a non-empty string of at most 120 characters');
+    const body = req.body || {};
+    const patch = {};
+    // Title keeps its original contract exactly: a PATCH that names neither field
+    // still earns the title error, so pre-#397 callers see identical behaviour.
+    if (body.title !== undefined || body.scope === undefined) {
+      const raw = body.title;
+      if (typeof raw !== 'string' || !raw.trim() || raw.length > 120) {
+        return badRequest(res, 'title must be a non-empty string of at most 120 characters');
+      }
+      patch.title = raw.trim();
     }
-    const thread = askUpdateThread(id, { title: raw.trim() });
+    if (body.scope !== undefined) {
+      // #397: the Ask panel's scope selector. Merged per field into the stored
+      // context — the pin replaces only the target keys, so the last page
+      // context (view, run, diff file) survives a selector change.
+      const sv = askValidateScope(body.scope);
+      if (!sv.ok) return badRequest(res, sv.error);
+      const cur = askGetThread(id);
+      if (!cur) return res.status(404).json({ error: 'thread not found' });
+      const base = cur.context && typeof cur.context === 'object' && !Array.isArray(cur.context) ? { ...cur.context } : {};
+      delete base.projectDir;
+      delete base.projectKey;
+      delete base.workspaceId;
+      patch.context = { ...base, ...sv.scope };
+    }
+    const thread = askUpdateThread(id, patch);
     if (!thread) return res.status(404).json({ error: 'thread not found' });
     res.json({ thread });
   } catch (err) {
@@ -3721,11 +3753,34 @@ app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
   if (!attId) return;
   try {
     if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
-    const att = askReadAttachmentText(id, attId);
-    if (!att) return res.status(404).json({ error: 'attachment not found' });
-    res.set('X-Content-Type-Options', 'nosniff');
-    res.set('Content-Disposition', 'inline');
-    res.type('text/plain; charset=utf-8').send(att.text);
+    const att = askGetAttachment(id, attId);
+    const file = att ? askAttachmentPath(id, attId) : null;
+    if (!file) return res.status(404).json({ error: 'attachment not found' });
+    // Text bodies serve as utf-8 text/plain (pre-#398, byte-for-byte: the body
+    // was UTF-8-validated at upload and stored verbatim). Only sniff-verified
+    // allowlisted mimes are ever stored (never scriptable markup like SVG/HTML),
+    // so serving the real mime inline is safe — and it is what lets the
+    // transcript render <img> thumbnails (#398).
+    const type = att.kind === 'text' ? 'text/plain; charset=utf-8' : (att.mime || 'application/octet-stream');
+    // Streamed, not readFileSync + send: a body is immutable under its
+    // store-minted id, so a stat-based ETag/Last-Modified plus a year-long
+    // private immutable cache replaces a 5 MB sync read and sha1 per request —
+    // the transcript re-creates every <img> on each structural render.
+    res.sendFile(path.basename(file), {
+      root: path.dirname(file),
+      dotfiles: 'deny',
+      cacheControl: false,
+      headers: {
+        'Content-Type': type,
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Disposition': 'inline',
+        'Cache-Control': 'private, max-age=31536000, immutable',
+      },
+    }, (err) => {
+      if (!err || res.headersSent) return;
+      if (err.code === 'ENOENT' || err.status === 404) return res.status(404).json({ error: 'attachment not found' });
+      res.status(500).json({ error: err.message || String(err) });
+    });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -3765,12 +3820,44 @@ function askRunFromPipelineRow(row) {
   };
 }
 
+/** #397: the user-pinned scope of an ask context — {projectKey} | {workspaceId} | null. */
+function askPinnedScope(context) {
+  if (!context || typeof context !== 'object' || context.pinned !== true) return null;
+  if (typeof context.projectKey === 'string' && context.projectKey) return { projectKey: context.projectKey };
+  if (typeof context.workspaceId === 'string' && context.workspaceId) return { workspaceId: context.workspaceId };
+  return null;
+}
+
+/** #397 per-field merge: the pinned scope replaces the page context's TARGET keys
+ *  (projectDir/projectKey/workspaceId); view, run, pipeline and diff-file context
+ *  still follow the page. */
+function askApplyPin(ctx, pin) {
+  const out = { ...ctx, pinned: true };
+  delete out.projectDir;
+  delete out.projectKey;
+  delete out.workspaceId;
+  return { ...out, ...pin };
+}
+
+/** #397 selector PATCH body: {pinned:false} | {pinned:true, projectKey|workspaceId}. */
+function askValidateScope(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'scope must be an object' };
+  if (typeof raw.pinned !== 'boolean') return { ok: false, error: 'scope.pinned must be true or false' };
+  if (!raw.pinned) return { ok: true, scope: { pinned: false } };
+  const cv = validateClientContext({ projectKey: raw.projectKey, workspaceId: raw.workspaceId });
+  if (!cv.ok) return { ok: false, error: cv.error.replace('context.', 'scope.') };
+  const keys = ['projectKey', 'workspaceId'].filter((k) => cv.context[k]);
+  if (keys.length !== 1) return { ok: false, error: 'scope needs exactly one of projectKey / workspaceId' };
+  return { ok: true, scope: { pinned: true, [keys[0]]: cv.context[keys[0]] } };
+}
+
 /** Resolve the VALIDATED client context into the server-side shape
  *  buildContextHeader consumes (§6.5: server-resolved rows only — never
  *  client-supplied titles or paths). Every lookup is individually guarded:
  *  a vanished row degrades to an absent header line, never a 500. */
 async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], currentMessageId = null) {
   const out = { now: new Date().toISOString() };
+  if (ctx.pinned === true) out.pinned = true;   // #397: rendered as the [pinned by the user] marker
   if (ctx.view) out.view = ctx.view;
   if (ctx.diffPath) out.diffPath = ctx.diffPath;   // client-supplied, already length-checked by validateClientContext
   try {
@@ -3841,8 +3928,8 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
       .filter((a) => !currentMessageId || a.messageId !== currentMessageId)
       .slice(-ASK_LIMITS.headerAttachments)
       .reverse()
-      .map((a) => ({ id: a.id, name: a.name, bytes: a.bytes }));
-    const atts = [...listedAttachments.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes })), ...earlier];
+      .map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime }));
+    const atts = [...listedAttachments.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime })), ...earlier];
     if (atts.length) out.attachments = atts.slice(0, ASK_LIMITS.headerAttachments);
   } catch { /* absent lines */ }
   return out;
@@ -3882,6 +3969,16 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     if (!mv.ok) return badRequest(res, mv.error);
     const cv = validateClientContext(body.context);
     if (!cv.ok) return badRequest(res, cv.error);
+    // #397: explicit pin beats page context, per field. A context carrying its own
+    // `pinned` verdict is authoritative — the selector-aware client already merged
+    // (true) or explicitly chose Auto (false). A context WITHOUT one comes from a
+    // pre-selector tab, and inherits the thread's stored pin so a stale tab can
+    // never silently unpin (or re-scope) the conversation.
+    let ctx = cv.context;
+    if (ctx.pinned === undefined) {
+      const inherited = askPinnedScope(thread.context);
+      if (inherited) ctx = askApplyPin(ctx, inherited);
+    }
 
     // §7.3 — validate EVERY attachment before ANY write (all-or-nothing).
     const files = [];
@@ -3895,19 +3992,30 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         const name = a && typeof a.name === 'string' ? a.name : '';
         const dot = name.lastIndexOf('.');
         const ext = dot === -1 ? '' : name.slice(dot).toLowerCase();
-        if (!ASK_LIMITS.attachment.extensions.includes(ext)) {
-          return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
-        }
+        // #398: the extension CLAIMS a type; text kinds are then proven by UTF-8
+        // decoding (as before), binary kinds by their magic number — a body that
+        // does not match its claim is refused here, before any write.
+        const cls = askClassifyExtension(ext);
+        if (!cls) return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
         const raw = typeof a.dataBase64 === 'string' ? a.dataBase64 : '';
         const buf = raw ? Buffer.from(raw, 'base64') : Buffer.alloc(0);
         if (!buf.length) return badRequest(res, `attachment is empty or not valid base64: ${name}`);
-        if (buf.length > ASK_LIMITS.attachment.maxBytesPerFile) {
-          return res.status(413).json({ error: `attachment over ${ASK_LIMITS.attachment.maxBytesPerFile} bytes: ${name}` });
+        const cap = cls.kind === 'text' ? ASK_LIMITS.attachment.maxBytesPerFile : ASK_LIMITS.attachment.maxBytesPerBinaryFile;
+        if (buf.length > cap) {
+          return res.status(413).json({ error: `attachment over ${cap} bytes: ${name}` });
+        }
+        if (cls.kind !== 'text') {
+          const sniffed = askSniffMime(buf);
+          if (sniffed !== cls.mime) {
+            return badRequest(res, `attachment content does not match its extension: ${name}`);
+          }
+          files.push({ name, kind: cls.kind, mime: cls.mime, data: buf, bytes: buf.length });
+          continue;
         }
         let bodyText;
         try { bodyText = dec.decode(buf); } catch { return badRequest(res, `attachment is not valid UTF-8: ${name}`); }
         if (bodyText.includes('\u0000')) return badRequest(res, `attachment contains NUL bytes: ${name}`);
-        files.push({ name, text: bodyText, bytes: buf.length });
+        files.push({ name, kind: 'text', mime: cls.mime, text: bodyText, bytes: buf.length });
       }
       const total = askThreadAttachmentBytes(id) + files.reduce((s, f) => s + f.bytes, 0);
       if (total > ASK_LIMITS.attachment.maxBytesPerThread) {
@@ -3939,9 +4047,12 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
 
     let asstMsg = null;
     let turn;
+    let echoAttachments = [];
     try {
       // Writes. Store the LAST context + model/effort on the thread (§6.5 tail, D8).
-      askUpdateThread(id, { context: cv.context, model: mv.model, effort: mv.effort });
+      // `ctx` (pin-merged) rather than cv.context: the stored row is what restores
+      // the selector on reopen and what the MCP child reads for tool defaulting.
+      askUpdateThread(id, { context: ctx, model: mv.model, effort: mv.effort });
       let deterministicTitle = thread.title;
       let titleWasAuto = false;
       if (thread.title == null) {
@@ -3954,9 +4065,17 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       }
       const userMsg = askAppendMessage(id, { role: 'user', text });
       job.userMessageId = userMsg.id;
-      const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, text: f.text }));
+      const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, kind: f.kind, mime: f.mime, text: f.text, data: f.data }));
+      // The decoded binary bodies are on disk now. `files` is captured by this
+      // scope's closures (settleJob, the turn listeners, onOutOfTurn) for the whole
+      // turn plus jobGraceMs, so up to 25 MB of dead Buffers would otherwise stay
+      // reachable per running thread.
+      for (const f of files) f.data = null;
+      echoAttachments = attRows.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime }));
       if (attRows.length) {
-        askSetMessageBlocks(userMsg.id, attRows.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes })));
+        // `kind` is the BLOCK kind, so the attachment's own kind rides as attKind
+        // (the UI keys image thumbnails off it, #398).
+        askSetMessageBlocks(userMsg.id, attRows.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind, mime: a.mime })));
       }
       broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); // echo for other tabs
       asstMsg = askAppendMessage(id, { role: 'assistant', text: '', status: 'streaming', model: mv.model, effort: mv.effort });
@@ -3965,9 +4084,9 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       // Prompt assembly (§6.5) — the route owns it; the turn only spawns.
       const catalog = await askBuildCatalog();
       const systemPrompt = askBuildSystemPrompt(catalog);
-      const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, text: files[i].text }));
+      const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime, text: files[i].text }));
       const { inline, listed } = askSelectInlineAttachments(withText);
-      const headerCtx = await resolveAskContext(id, cv.context, listed, userMsg.id);
+      const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id);
       const header = askBuildContextHeader(headerCtx);
       const prompt = askBuildTurnPrompt(header, text, inline);
       const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
@@ -3983,7 +4102,8 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         firstTurn: userMsg.seq === 1 && titleWasAuto, // D13 guard: never replace a user-authored title
         firstText: text,
         deterministicTitle,
-        mock: mockEnabled({}) ? { card: mockAskCard(cv.context, text) } : null, // R-F
+        pinnedScope: askPinnedScope(ctx),             // #397: proposal defaulting + mismatch flag
+        mock: mockEnabled({}) ? { card: mockAskCard(ctx, text) } : null, // R-F
         attachmentNames,
         deps: {
           onFrame: stampAskFrames(id, job),
@@ -4023,7 +4143,10 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         console.error(`[worca-ui] ask turn crashed: ${err && err.message ? err.message : err}`);
         settleJob('error');
       });
-    res.status(202).json({ userMessageId: job.userMessageId, assistantMessageId: job.messageId });
+    // `attachments` carries the store-minted ids so the sender's own echo can key
+    // image thumbnails and the thread budget off them (the ask-message broadcast
+    // may have raced ahead of this response, or been missed on a brand-new thread).
+    res.status(202).json({ userMessageId: job.userMessageId, assistantMessageId: job.messageId, attachments: echoAttachments });
   } catch (err) {
     // Only pre-reservation throws land here (`job` is block-scoped to the outer
     // try and every post-reservation failure returned from the inner catch), so
