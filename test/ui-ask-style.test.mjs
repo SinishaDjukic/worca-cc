@@ -184,3 +184,12 @@ test('ui-ask-style: composer textarea overrides the global textarea rules', () =
   assert.match(input, /max-height:120px/);
   assert.match(input, /resize:none/);
 });
+
+test('ui-ask-style: the header scope pill never shrinks; the title keeps its ellipsis', () => {
+  assert.match(ruleBody('.ask-scope-btn') || '', /flex:none/, 'left of the title now — a long title ellipsizes, the pill does not');
+  const title = ruleBody('.ask-title') || '';
+  assert.match(title, /min-width:0/);
+  assert.match(title, /overflow:hidden/);
+  assert.match(title, /text-overflow:ellipsis/);
+  assert.match(title, /white-space:nowrap/);
+});

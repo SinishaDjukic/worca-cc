@@ -142,3 +142,14 @@ test('#397: a scopeMismatch card renders the warning; a clean card does not', as
   assert.match(warns[0].textContent, /different project or workspace/);
   ctx.panel.destroy();
 });
+
+test('#397 follow-up: header order is logo → scope → title → spacer → icon buttons', () => {
+  const ctx = makePanel({ fetchHandler: handler({ patches: [], bodies: [], snap: null }) });
+  ctx.panel.open();
+  const kids = [...ctx.doc.querySelector('.ask-header').children];
+  assert.equal(kids[0].className, 'ask-header-logo');
+  assert.ok(kids[1].hasAttribute('data-ask-scope-btn'), 'the scope pill sits right after the logo');
+  assert.equal(kids[2].className, 'ask-title');
+  assert.equal(kids[3].className, 'ask-header-spacer');
+  assert.ok(kids[4].hasAttribute('data-ask-threads-btn'), 'then the icon buttons');
+});

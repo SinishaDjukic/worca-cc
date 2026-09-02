@@ -104,7 +104,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // #397: the thread's project/workspace scope. pinned:false = Auto (follow the
     // page — today's behaviour). label caches the display name once resolved.
     scope: { pinned: false, projectKey: null, workspaceId: null, label: null },
-    popover: null,            // {panel, trigger, onClose}
+    popover: null,            // {panel, trigger, onClose, build, refreshOn}
     expandedAgents: new Set(),
     worktrees: [],            // P4 §10: the chat's open worktrees (snapshot-fed)
     pinned: true,
@@ -225,9 +225,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     logo.alt = '';
     header.appendChild(logo);
     el.title = make('div', 'ask-title', 'Ask Worca');
-    header.appendChild(el.title);
     // #397: the scope selector — which project/workspace this chat is about,
-    // independent of the page behind the sheet.
+    // independent of the page behind the sheet. It sits BEFORE the title
+    // (logo → scope → title → spacer): the pill keeps its width (style.css
+    // .ask-scope-btn flex:none), a long haiku title ellipsizes.
     const scopeBtn = make('button', 'ask-scope-btn');
     scopeBtn.type = 'button';
     scopeBtn.setAttribute('data-ask-scope-btn', '');
@@ -238,6 +239,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     scopeBtn.addEventListener('click', () => openScopePopover(scopeBtn));
     el.scopeBtn = scopeBtn;
     header.appendChild(scopeBtn);
+    header.appendChild(el.title);
     header.appendChild(make('span', 'ask-header-spacer'));
     const threadsBtn = iconButton('ask-icon-btn', 'Recent chats', ICONS.threads, () => toggleThreadsPopover(threadsBtn));
     threadsBtn.setAttribute('data-ask-threads-btn', '');
@@ -362,10 +364,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const liveCtx = totals.live && totals.live.usage ? totals.live.usage.ctx : null;
     const ctx = Number.isFinite(liveCtx) ? liveCtx : totals.ctx;
     el.meterTokens.textContent = fmtCtx(ctx) || ((totals.turns || 0) > 0 ? '' : '0 ctx');
-    // cost comes from thread totals only — never from a live null (P3-F5)
-    // No cost yet → empty cell, never a fabricated $0.00 (P3-F5).
-    el.meterCost.textContent = totals.costUsd == null ? '' : (fmtUsd(totals.costUsd) || '');
-    el.agentsBtnLabel.textContent = fmtAgents(totals.agents) || '0 agents';
+    // Cost: the stored thread total; while a turn streams, "≈" + that total plus
+    // this turn's live figure — the CLI's once its result landed, else the
+    // display-only list-price estimate the ask-usage frame carries. ask-done
+    // nulls `live` and replaces the totals in one frame, so the authoritative
+    // figure takes over with no special case. No figure at all → empty cell,
+    // never a fabricated $0.00 (P3-F5).
+    const lv = totals.live;
+    const liveCost = lv ? (Number.isFinite(lv.costUsd) ? lv.costUsd : (Number.isFinite(lv.estimatedCostUsd) ? lv.estimatedCostUsd : null)) : null;
+    if (liveCost != null) el.meterCost.textContent = `≈${fmtUsd((Number.isFinite(totals.costUsd) ? totals.costUsd : 0) + liveCost)}`;
+    else el.meterCost.textContent = totals.costUsd == null ? '' : (fmtUsd(totals.costUsd) || '');
+    el.agentsBtnLabel.textContent = fmtAgents(totals.agents) || '0 agents';   // totals().agents already includes the live row's agents
   }
 
   function stopTurn() {
@@ -677,7 +686,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     else if ((e.key === 'Enter' || e.key === ' ') && idx >= 0) { e.preventDefault(); items[idx].click(); }
   }
 
-  function openPopover({ panelClass, trigger, build, onClose }) {
+  function openPopover({ panelClass, trigger, build, onClose, refreshOn }) {
     if (st.popover && st.popover.trigger === trigger) { closePopover({ focusTrigger: false }); return null; }
     closePopover({ focusTrigger: false });
     const panel = make('div', `ask-pop ${panelClass}`);
@@ -685,7 +694,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     panel.addEventListener('keydown', onPopKeydown);
     build(panel);
     el.sheet.appendChild(panel);
-    st.popover = { panel, trigger, onClose: onClose || null };
+    // refreshOn(dirty) → true re-runs build() on that flush (flushExtra), so an
+    // OPEN popover follows the live meters / worktrees instead of freezing at open.
+    st.popover = { panel, trigger, onClose: onClose || null, build, refreshOn: refreshOn || null };
     const first = menuItems(panel)[0];
     if (first) { first.tabIndex = 0; try { first.focus(); } catch { /* ignore */ } }
     return panel;
@@ -1084,7 +1095,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       .catch(() => null)
       .then((snap) => {
         if (st.threadId !== tid) return st.worktrees;
-        setWorktrees(snap && Array.isArray(snap.worktrees) ? snap.worktrees : []);
+        const list = snap && Array.isArray(snap.worktrees) ? snap.worktrees : [];
+        // The model owns the list (ask-worktrees frames land there too) and the
+        // flush repaints an open popover; the count is ALSO written synchronously
+        // — deleteWorktree and the tests read it right after the awaited refetch.
+        if (st.model) { st.model.setWorktrees(list); scheduleFlush(); }
+        setWorktrees(list);
         return st.worktrees;
       });
   }
@@ -1104,39 +1120,47 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   function openWorktreesPopover(trigger) {
-    const panel = openPopover({ panelClass: 'ask-pop-runinfo ask-pop-worktrees', trigger, build: (p) => {
+    const panel = openPopover({ panelClass: 'ask-pop-runinfo ask-pop-worktrees', trigger, refreshOn: (d) => d.worktrees, build: (p) => {
       p.appendChild(make('div', 'ask-pop-caption', 'Worktrees this chat'));
+      // Synchronous: st.worktrees is the DOM mirror, already fed by the snapshot
+      // or the last frame, and flushExtra refreshes it BEFORE re-running build().
+      renderWorktreeRows(p, st.worktrees);
     } });
     if (!panel) return;
-    refreshWorktrees().then((list) => {
-      if (!st.popover || st.popover.panel !== panel) return;
-      if (!list.length) { panel.appendChild(make('div', 'ask-pop-empty', 'No worktrees open.')); return; }
-      for (const w of list) {
-        const row = make('div', 'ask-runinfo-row ask-wt-row');
-        const col = make('span', 'ask-runinfo-col');
-        col.appendChild(make('span', 'ask-runinfo-name', `${w.projectKey} · ${w.ref}@${wtShortSha(w.commit)}`));
-        const path = make('span', 'ask-runinfo-sub ask-wt-path', w.path);
-        path.title = 'Click to copy';
-        path.addEventListener('click', () => { try { win.navigator.clipboard.writeText(w.path); } catch { /* unsupported */ } });
-        col.appendChild(path);
-        row.appendChild(col);
-        // AGE (spec §10 row: project · ref@sha7 · AGE · path · trash). Reuses the
-        // run-info popover's `.ask-runinfo-elapsed` cell — its `margin-left:auto`
-        // also right-aligns the trash that follows.
-        row.appendChild(make('span', 'ask-runinfo-elapsed', w.createdAt ? fmtElapsed(now() - Date.parse(w.createdAt)) : '—'));
-        const trash = make('button', 'ask-thread-trash');
-        trash.type = 'button';
-        trash.setAttribute('aria-label', `Remove worktree ${w.worktreeId}`);
-        trash.appendChild(svgIcon('M4 7h16M9.5 7V4.8h5V7M6.5 7l.9 12.2h9.2L17.5 7', 14, 1.8));
-        trash.addEventListener('click', (e) => { e.stopPropagation(); closePopover({ focusTrigger: false }); deleteWorktree(w); });
-        row.appendChild(trash);
-        panel.appendChild(row);
-      }
-    });
+    // Heal on open (one snapshot GET): the list lands in the model and the
+    // dirty.worktrees flush re-runs build() above — one render path.
+    refreshWorktrees();
+  }
+
+  function renderWorktreeRows(panel, list) {
+    if (!list.length) { panel.appendChild(make('div', 'ask-pop-empty', 'No worktrees open.')); return; }
+    for (const w of list) {
+      const row = make('div', 'ask-runinfo-row ask-wt-row');
+      const col = make('span', 'ask-runinfo-col');
+      col.appendChild(make('span', 'ask-runinfo-name', `${w.projectKey} · ${w.ref}@${wtShortSha(w.commit)}`));
+      const path = make('span', 'ask-runinfo-sub ask-wt-path', w.path);
+      path.title = 'Click to copy';
+      path.addEventListener('click', () => { try { win.navigator.clipboard.writeText(w.path); } catch { /* unsupported */ } });
+      col.appendChild(path);
+      row.appendChild(col);
+      // AGE (spec §10 row: project · ref@sha7 · AGE · path · trash). Reuses the
+      // run-info popover's `.ask-runinfo-elapsed` cell — its `margin-left:auto`
+      // also right-aligns the trash that follows.
+      row.appendChild(make('span', 'ask-runinfo-elapsed', w.createdAt ? fmtElapsed(now() - Date.parse(w.createdAt)) : '—'));
+      const trash = make('button', 'ask-thread-trash');
+      trash.type = 'button';
+      trash.setAttribute('aria-label', `Remove worktree ${w.worktreeId}`);
+      trash.appendChild(svgIcon('M4 7h16M9.5 7V4.8h5V7M6.5 7l.9 12.2h9.2L17.5 7', 14, 1.8));
+      trash.addEventListener('click', (e) => { e.stopPropagation(); closePopover({ focusTrigger: false }); deleteWorktree(w); });
+      row.appendChild(trash);
+      panel.appendChild(row);
+    }
   }
 
   function openRunInfoPopover(trigger) {
-    openPopover({ panelClass: 'ask-pop-runinfo', trigger, build: (p) => {
+    // Rebuilt on every meters flush: agent blocks mark meters dirty (ask-model),
+    // so rows, dots, ctx and cost move while agents run.
+    openPopover({ panelClass: 'ask-pop-runinfo', trigger, refreshOn: (d) => d.meters, build: (p) => {
       const agents = [];
       if (st.model) {
         for (const row of st.model.messages()) {
@@ -1826,9 +1850,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     renderTranscript();
     updateMeters();
     // P4: the count rides the snapshot loadThread ALREADY fetched — no extra GET.
-    // It belongs here, not in switchThread: resync()/onHello() come through
-    // loadThread too, and a hook on switchThread would miss both.
-    setWorktrees(snap.worktrees);
+    // The model owns the list (load() seeded it). It belongs here, not in
+    // switchThread: resync()/onHello() come through loadThread too.
+    setWorktrees(st.model.worktrees());
     st.pinned = true;
     scheduleFlush();
     stopElapsed();      // a mid-stream thread switch must not leave the old
@@ -1905,10 +1929,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function afterFrame(frame) {
     if (frame.type === 'ask-start') { startElapsed(Date.parse(frame.startedAt)); updateSendStop(); }
-    else if (frame.type !== 'ask-done' && frame.type !== 'ask-error' && st.model && st.model.live() && el.send && !el.send.hidden) {
-      // A frame ADOPTED mid-turn (no ask-start seen — the ring buffer evicted it, or
-      // a broadcast delta beat the subscribe replay): the turn is live now, so the
-      // composer must show Stop and the timer must run (review of PR #376).
+    else if (typeof frame.seq === 'number' && frame.type !== 'ask-done' && frame.type !== 'ask-error' && st.model && st.model.live() && el.send && !el.send.hidden) {
+      // A JOB frame ADOPTED mid-turn (no ask-start seen — the ring buffer evicted
+      // it, or a broadcast delta beat the subscribe replay): the turn is live now,
+      // so the composer must show Stop and the timer must run (review of PR #376).
+      // Out-of-turn frames (ask-title — early now — ask-worktrees, ask-message)
+      // never adopt: startElapsed() here would reset the running clock.
       startElapsed(); updateSendStop();
     }
     if (frame.type === 'ask-done' || frame.type === 'ask-error') {
@@ -1998,6 +2024,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       for (const id of d.answer) renderAnswerFor(id);
     }
     if (d.meters) updateMeters();
+    if (d.worktrees) setWorktrees(st.model.worktrees());
+    // An open popover that subscribed to this flush's dirt is rebuilt in place
+    // (same node — never reopened, never refocused). Runs AFTER the mirror and
+    // the meters above: the worktrees build() reads st.worktrees.
+    const pop = st.popover;
+    if (pop && typeof pop.refreshOn === 'function' && pop.refreshOn(d)) { pop.panel.replaceChildren(); pop.build(pop.panel); }
     updateLiveElapsed();
   }
 

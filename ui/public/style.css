@@ -2815,7 +2815,7 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-header-logo{width:20px;height:20px;border-radius:50%;}
 .ask-title{font-weight:600;font-size:13px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ask-header-spacer,.ask-composer-spacer,.ask-activity-spacer,.ask-card-actions-spacer{flex:1 1 auto;}
-.ask-scope-btn{display:inline-flex;align-items:center;gap:5px;max-width:180px;padding:3px 9px;
+.ask-scope-btn{display:inline-flex;align-items:center;gap:5px;max-width:180px;flex:none;padding:3px 9px;
   border:1px solid var(--line);border-radius:999px;background:none;color:var(--ink-3);
   font:inherit;font-size:11.5px;cursor:pointer;}
 .ask-scope-btn:hover{background:var(--field);color:var(--ink);}
