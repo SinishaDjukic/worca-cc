@@ -84,7 +84,7 @@ import {
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef, SUBAGENT_MODEL_VALUES, subagentModelIssue } from '../src/core/model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue } from '../src/core/model-env.mjs';
 import { listPluginModels, modelSecretsSchema, pluginModelSecretStatus } from '../src/core/plugin-models.mjs';
 import { testModel } from '../src/core/model-test.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
@@ -2987,8 +2987,7 @@ app.delete('/api/config/models', async (req, res) => {
 // back means "keep" and is dropped from the write.
 // ---------------------------------------------------------------------------
 
-const maskEnvValue = (v) =>
-  (modelEnvRef(v) ? v : (v.length > 8 ? `••••••${v.slice(-4)}` : '••••••'));
+const maskEnvValue = (v) => (modelEnvRef(v) ? v : maskModelEnvValue(v));
 const maskedGlobalModel = (m) => (m.env
   ? { ...m, env: Object.fromEntries(Object.entries(m.env).map(([k, v]) => [k, maskEnvValue(v)])) }
   : m);
