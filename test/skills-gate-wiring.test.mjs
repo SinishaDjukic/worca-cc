@@ -21,6 +21,7 @@ import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { readRunManifest } from '../src/core/run-manifest.mjs';
+import { readPipelineForResume } from '../src/core/artifacts.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { fileURLToPath } from 'node:url';
@@ -166,7 +167,7 @@ test('detached + declared skills forwards the validated resolutions and mounts t
   });
 });
 
-test('detached + an UNRESOLVABLE declared skill still hard-fails before any node', async () => {
+test('detached + an UNRESOLVABLE declared skill still gates before any node — PAUSES the run, and the gate holds on resume', async () => {
   const repo = await freshRepo();
   const agentsDir = await agentsDirRequiring(['no-such-skill-anywhere']);
   await withMode('detached', async () => {
@@ -178,12 +179,30 @@ test('detached + an UNRESOLVABLE declared skill still hard-fails before any node
     const real = orch._assembleContext.bind(orch);
     orch._assembleContext = async (r) => { assembled++; return real(r); };
     const res = await orch.run();
-    assert.equal(res.status, 'error', JSON.stringify(res));
-    assert.match(res.error, /no-such-skill-anywhere/);
+    assert.equal(res.status, 'paused', JSON.stringify(res));
+    assert.equal(res.reason, 'error');
+    assert.match(res.detail, /no-such-skill-anywhere/);
     assert.equal(assembled, 0, 'the gate throws BEFORE assembly, so no context is generated');
-    // No node ever ran.
+    assert.equal(orch.getState().resumePoint?.setupIncomplete, true, 'resume replays the setup — including this gate');
     assert.ok(!orch.getState().steps.some((s) => s.status === 'start' || s.status === 'ok'),
       JSON.stringify(orch.getState().steps));
+
+    // The gate HOLDS on resume: with the skill still missing the replay pauses again
+    // on the same cause, and still nothing is assembled or dispatched.
+    const saved = readPipelineForResume(orch.getState().id);
+    const orch2 = createOrchestrator({
+      projectDir: repo, auto: true, claude: { mock: true },
+      branch: { source: 'main' }, agentsDir, resume: saved,
+    });
+    let assembled2 = 0;
+    const real2 = orch2._assembleContext.bind(orch2);
+    orch2._assembleContext = async (r) => { assembled2++; return real2(r); };
+    const res2 = await orch2.resume();
+    assert.equal(res2.status, 'paused', JSON.stringify(res2));
+    assert.equal(res2.reason, 'error');
+    assert.match(res2.detail, /no-such-skill-anywhere/);
+    assert.equal(assembled2, 0, 'the replayed gate throws BEFORE the replayed assembly');
+    assert.equal(readPipelineForResume(orch.getState().id).row.status, 'paused');
   });
 });
 

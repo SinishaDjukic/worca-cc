@@ -1,9 +1,10 @@
 // test/orchestrator-partial-diff.test.mjs
 // The diff artifact must survive the NON-done terminal paths. A run that is
-// stopped (or that errors) mid-flight still commits its work onto the kept
-// feature branch, so History must be able to show that work: _buildResults()
-// runs on the stopped/error branches too, while the checkpoint refs and the
-// worktree are still live (the `finally` tears them down right after).
+// stopped (or that paused on a failure) mid-flight still commits its work onto
+// the kept feature branch, so History must be able to show that work:
+// _buildResults() runs on the stopped and error-paused branches too, while the
+// checkpoint refs and the worktree are still live (the `finally` tears them down
+// right after — except on a pause, where the checkout is KEPT for the resume).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -81,7 +82,7 @@ test(`[${engine.id}] a run stopped mid-flight persists results.json + diff-patch
   assert.ok(arts.some((a) => a.kind === 'diff-patch'), 'the diff-patch artifact is indexed');
 });
 
-test(`[${engine.id}] a run that errors mid-flight persists results.json + diff-patch.patch`, async () => {
+test(`[${engine.id}] a run that pauses on a failure mid-flight persists results.json + diff-patch.patch`, async () => {
   const repo = await freshRepo();
   const orch = engine.create({
     projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
@@ -90,12 +91,14 @@ test(`[${engine.id}] a run that errors mid-flight persists results.json + diff-p
   const edit = editOnWorktree(orch, 'errored work\n');
 
   const res = await orch.run();
-  assert.equal(res.status, 'error', JSON.stringify(res));
+  assert.equal(res.status, 'paused', JSON.stringify(res));
+  assert.equal(res.reason, 'error');
   assert.ok(edit.done, 'precondition: the tracked file was edited inside the worktree');
 
-  assert.ok(existsSync(results(res.pipelineDir)), 'results.json is persisted on the error path');
+  assert.ok(existsSync(results(res.pipelineDir)), 'results.json is persisted on the error-pause path');
   const text = readFileSync(patch(res.pipelineDir), 'utf8');
   assert.match(text, /\+errored work/);
+  assert.ok(existsSync(orch.getState().branch.worktreeDir), 'the checkout is KEPT — the run is resumable');
 
   const arts = await listArtifacts(orch.getState().id);
   assert.ok(arts.some((a) => a.kind === 'diff-patch'), 'the diff-patch artifact is indexed');
@@ -157,7 +160,7 @@ test(`[${engine.id}] a stopped run keeps the files the agent CREATED (untracked)
   assert.match(fromBranch, /\+agent created this/, 'precondition: the kept branch carries the file');
 });
 
-test(`[${engine.id}] an errored run keeps the files the agent CREATED too`, async () => {
+test(`[${engine.id}] a failure-paused run keeps the files the agent CREATED too`, async () => {
   const repo = await freshRepo();
   const orch = engine.create({
     projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
@@ -166,9 +169,11 @@ test(`[${engine.id}] an errored run keeps the files the agent CREATED too`, asyn
   const made = editOnWorktree(orch, 'errored new file\n', 'brand-new.txt');
 
   const res = await orch.run();
-  assert.equal(res.status, 'error', JSON.stringify(res));
+  assert.equal(res.status, 'paused', JSON.stringify(res));
+  assert.equal(res.reason, 'error');
   assert.ok(made.done, 'precondition: an untracked file was created inside the worktree');
   assert.match(readFileSync(patch(res.pipelineDir), 'utf8'), /\+errored new file/);
+  assert.ok(existsSync(orch.getState().branch.worktreeDir), 'the checkout is KEPT — the run is resumable');
 });
 
 // A checkpoint existing is NOT the same as the run having a diff. Every downstream

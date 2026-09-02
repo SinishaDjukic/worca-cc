@@ -82,14 +82,14 @@ const historyList = (pipelines) =>
 // Seed one live run via `hello`, then drive it paused with a `done` frame that
 // carries the pause reason (the server's done broadcast really carries it —
 // orchestrator._completePaused emits it and wireRun spreads the payload).
-async function pausedRun(ctx, reason) {
+async function pausedRun(ctx, reason, detail = undefined) {
   ctx.showRunning();
   ctx.recv({
     type: 'hello',
     runs: [{ runId: 'r1', title: 'Feat', projectDir: PROJECT, status: 'running', startedAt: '00:00:00', pipelineId: 'pl_1' }],
   });
   await ctx.tick();
-  ctx.recv({ type: 'done', runId: 'r1', status: 'paused', reason });
+  ctx.recv({ type: 'done', runId: 'r1', status: 'paused', reason, ...(detail !== undefined ? { detail } : {}) });
   await ctx.tick();
   return ctx.window.document.querySelector('#run-list .run-card');
 }
@@ -183,6 +183,16 @@ test('a non-cost pause leaves the banner hidden and the pill plain', async () =>
   assert.equal(card.querySelector('.cost-banner').hidden, true);
   assert.equal(card.querySelector('.rc-status-word').textContent, 'Paused');
   assert.equal(card.querySelector('.btn-resume').disabled, false);
+});
+
+test('an error pause: pill "Paused · error", no cost banner, Resume enabled with the detail as tooltip', async () => {
+  const ctx = await boot();
+  const card = await pausedRun(ctx, 'error', 'claude exited with code 1: disk full');
+  assert.equal(card.querySelector('.rc-status-word').textContent, 'Paused · error');
+  assert.equal(card.querySelector('.cost-banner').hidden, true);
+  const resume = card.querySelector('.btn-resume');
+  assert.equal(resume.disabled, false, 'an error pause is always resumable');
+  assert.match(resume.title, /disk full/);
 });
 
 // Resume + the cost-pause banner moved to the History DETAIL screen; the card
@@ -291,4 +301,58 @@ test('reload parity: a hello-seeded paused run with pauseReason renders the bann
   assert.equal(ctx.window.__np.getRun('r9').pauseReason, 'cost_pipeline');
   assert.ok(card.querySelector('.cost-banner.cb-pipeline'), 'banner survives a reload');
   assert.equal(card.querySelector('.rc-status-word').textContent, 'Paused · cost limit');
+});
+
+// ---------------------------------------------------------------------------
+// Error pauses in History: the red card note, the detail banner, and the
+// deep-link fallback onto the DETAIL payload (rowToState now carries both keys).
+// ---------------------------------------------------------------------------
+const ERROR_ENTRIES = [
+  { id: 'h3', projectKey: 'k1', title: 'Blew up', status: 'paused', pauseReason: 'error',
+    pauseDetail: 'claude exited with code 1: disk full', startedAt: '2026-09-02T00:00:00Z' },
+];
+const errorDetailArm = (id) => Promise.resolve({
+  ok: true, status: 200,
+  json: async () => ({ state: { id, phase: 'implement', status: 'paused', totalCostUsd: 1.2, steps: [],
+                                pauseReason: 'error', pauseDetail: 'claude exited with code 1: disk full' } }),
+});
+const errorArms = (url) => {
+  if (url.endsWith('/api/history/k1/h3')) return errorDetailArm('h3');
+  if (url.endsWith('/api/history')) return historyList(ERROR_ENTRIES);
+  return null;
+};
+
+test('history: an error pause renders the red "paused · error" note; the detail screen shows the error banner and an enabled Resume', async () => {
+  const ctx = await boot({ fetchHandler: errorArms });
+  ctx.showHistory();
+  await ctx.tick();
+  const card = ctx.window.document.querySelector('#history .hist-card');
+  const note = card.querySelector('.hist-pausenote');
+  assert.equal(note.hidden, false);
+  assert.equal(note.textContent, 'paused · error');
+  assert.ok(note.classList.contains('error'), 'error note uses the red modifier');
+  assert.match(note.title, /disk full/);
+  assert.equal(card.dataset.pauseReason, 'error');
+
+  ctx.showDetail('k1', 'h3');
+  await ctx.settle();
+  const resume = ctx.window.document.querySelector('#hist-detail .hd-resume');
+  assert.equal(resume.disabled, false, 'an error pause never gates Resume');
+  assert.match(resume.title, /Paused after an error: claude exited with code 1: disk full/);
+  const banner = ctx.window.document.querySelector('#hist-detail .hd-banners .pause-error-banner');
+  assert.ok(banner, 'the detail screen shows the error-pause banner');
+  assert.match(banner.textContent, /Paused after an error/);
+  assert.match(banner.textContent, /disk full/);
+  assert.equal(ctx.window.document.querySelector('#hist-detail .hd-banners .cost-banner'), null, 'no cost banner for an error pause');
+});
+
+test('history deep link: the DETAIL payload alone (no list row yet) still shows the error banner', async () => {
+  // A list without the entry — only the detail arm knows the pause cause (rowToState).
+  const arms = (url) => (url.endsWith('/api/history/k1/h3') ? errorDetailArm('h3') : (url.endsWith('/api/history') ? historyList([]) : null));
+  const ctx = await boot({ fetchHandler: arms });
+  ctx.showDetail('k1', 'h3');
+  await ctx.settle();
+  const banner = ctx.window.document.querySelector('#hist-detail .hd-banners .pause-error-banner');
+  assert.ok(banner, 'the banner falls back to data.state.pauseReason/pauseDetail');
+  assert.match(banner.textContent, /disk full/);
 });

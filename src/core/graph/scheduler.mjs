@@ -393,6 +393,12 @@ export function createScheduler(opts) {
   async function runComposite(h) {
     const portId = h.entry.expandsPort;
     const expanded = await execute({ ...h.args, composite: 'expand', expandsPort: portId });
+    // A pause raised INSIDE the expansion (the adapter converted a throw) settles the
+    // shell row here, with its expands binding intact. Falling through to
+    // runUnexpanded would strip `expandsPort`/the binding from the very entry the
+    // resume re-invokes, so the node would re-run once as a plain execution and the
+    // decomposition would never be re-read.
+    if (expanded?.paused === true) return { paused: true };
     const phases = Array.isArray(expanded?.phases) ? expanded.phases : [];
     if (!phases.length) return runUnexpanded(h, portId);
 
@@ -444,7 +450,8 @@ export function createScheduler(opts) {
     const tasks = Array.isArray(ph.tasks) ? ph.tasks : [];
     const phaseAbort = new AbortController();
     let firstError = null;
-    await execute({ ...h.args, composite: 'phase', phase: ph.ordinal, phaseStatus: 'running' });
+    const opened = await execute({ ...h.args, composite: 'phase', phase: ph.ordinal, phaseStatus: 'running' });
+    if (opened?.paused === true) return { paused: true };   // the phase bookkeeping paused the run: no slice launches
 
     const results = await Promise.allSettled(tasks.map((task, index) =>
       runSlice(h, portId, ph, task, index, phaseAbort).catch((err) => {

@@ -119,7 +119,7 @@ test('/status: no-arg single-active default, wildcard suffix, history fallback, 
   assert.match(hist, /✅ `\*2222` done — Old run/);
 
   const paused = text(await send('/status *3333'));
-  assert.match(paused, /Pause reason:.*cost_pipeline/);
+  assert.match(paused, /Pause reason:.*pipeline cost limit reached/);
 
   assert.match(text(await send('/status *zzzz')), /No run matches/);
 
@@ -164,7 +164,31 @@ test('approvals: gate continue/another, recovery retry/abort, guardrails between
   await send('/approve');
   assert.deepEqual(calls.at(-1), ['answer', 'run-aaaa1111', 'rec-1', { decision: 'retry' }]);
   await send('/abort');
-  assert.deepEqual(calls.at(-1), ['answer', 'run-aaaa1111', 'rec-1', { decision: 'abort' }]);
+  assert.deepEqual(calls.at(-1), ['answer', 'run-aaaa1111', 'rec-1', { decision: 'pause' }]);
+});
+
+test('/status on an error-paused history row prints the error detail', async () => {
+  const { send, state } = fixture();
+  state.rows.push({ id: 'pipe-dddd4444', title: 'Blew up', status: 'paused', totalCostUsd: 0.5,
+    pauseReason: 'error', pauseDetail: 'claude exited with code 1: disk full' });
+  const out = text(await send('/status *4444'));
+  assert.match(out, /Pause reason:.*a step failed/);
+  assert.match(out, /\*\*Error:\*\* claude exited with code 1: disk full/);
+});
+
+test('/status on a recoverable- or limit-paused row labels the reason and calls the detail a cause', async () => {
+  const { send, state } = fixture();
+  state.rows.push({ id: 'pipe-eeee5555', title: 'Logged out', status: 'paused', totalCostUsd: 0.1,
+    pauseReason: 'recoverable', pauseDetail: 'auth: API Error: 401' });
+  state.rows.push({ id: 'pipe-ffff6666', title: 'Capped', status: 'paused', totalCostUsd: 0.1,
+    pauseReason: 'usage_limit', pauseDetail: "You've hit your session limit · resets 6pm" });
+  const rec = text(await send('/status *5555'));
+  assert.match(rec, /Pause reason:.*recoverable error/);
+  assert.match(rec, /\*\*Cause:\*\* auth: API Error: 401/);
+  assert.doesNotMatch(rec, /\*\*Error:\*\*/);
+  const lim = text(await send('/status *6666'));
+  assert.match(lim, /Pause reason:.*session\/usage limit reached/);
+  assert.match(lim, /\*\*Cause:\*\* You've hit your session limit/);
 });
 
 test('/answer: ordinal validation and clarify payload mapping', async () => {

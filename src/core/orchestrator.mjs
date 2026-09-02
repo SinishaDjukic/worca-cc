@@ -32,6 +32,7 @@ import {
 } from './artifacts.mjs';
 import { readQuestionsFile } from './protocol.mjs';
 import { classifyError } from './recoverable-error.mjs';
+import { resolveFailure, markTerminal, isTerminal } from './failure-policy.mjs';
 
 /** Max ask-then-resume question rounds per execution (mirrors v1's constant). */
 const MAX_QUESTION_ROUNDS = 3;
@@ -145,14 +146,30 @@ export class GraphOrchestrator extends RunHarness {
     return this._buildResumePoint(null);
   }
 
+  /** hook: the last clean point (see run-harness.mjs). _graphSnapshot is never cleared
+   *  (onSnapshot, the resume restore), and the scheduler's finish() takes one final
+   *  snapshot, so after a clean 'done' this IS the all-terminal point. */
+  _engineLastPoint() {
+    return this._graphSnapshot ? this._buildResumePoint(this._graphSnapshot) : null;
+  }
+
+  /** hook: agent keys for a setup replay — from the frozen manifest, never the workflow row. */
+  _engineAgentKeys() {
+    if (this.resolved?.agentKeys) return new Set(this.resolved.agentKeys);
+    const manifest = this.state.stepper;
+    return manifest ? new Set(resolvedFromManifest(manifest, this.registry).agentKeys) : new Set();
+  }
+
   // ── hook 2: run the graph ──────────────────────────────────────────────────
   /**
    * The scheduler owns readiness, loop budgets, gates and End; this method owns
    * the process side: the resume-time restoration (Task 6), the pre-rendered
    * task document, the executor binding, the event fan-out and the resume-v2
-   * snapshot. Returns 'done' | 'paused'; a genuine execution failure is re-thrown
-   * VERBATIM (AbortError/pause identity intact) so the base run()/resume() catch
-   * classifies it exactly as v1 does.
+   * snapshot. Returns 'done' | 'paused'; only the user's STOP is re-thrown (its
+   * AbortError/plain-error identity intact) so the base run()/resume() catch
+   * classifies it exactly as v1 does. Every other failure pauses inside _execute
+   * (errors never end a run), and a pause that lands after the End card fired
+   * returns 'paused', never 'done'.
    * @param {{resume?:object|null, rehydrated?:object|null}} [o] the base passes
    *   `{ resume: rp, rehydrated }` on a resume and `{ resume: null }` on a fresh run.
    * @returns {Promise<'done'|'paused'>}
@@ -212,6 +229,16 @@ export class GraphOrchestrator extends RunHarness {
       // agent's error otherwise). A scheduler abort with nothing recorded yet is a stop.
       throw this._graphError || (this.abort.signal.aborted ? abortError('stopped') : new Error('a graph execution failed'));
     }
+    if (outcome === 'done' && this.pauseRequested) {
+      // D17: the scheduler resolves `ended` BEFORE it looks at pauseRequested
+      // (scheduler.mjs:1033-1034), so a pause that landed on a straggler after the
+      // End card fired — an error-pause, or the user's — came back as 'done'. It is
+      // a pause: the point was frozen by onSnapshot the moment pause() ran (the
+      // straggler's row is still non-terminal in it), reattach() re-invokes that
+      // row on resume and the restored `ended` then quiesces the run to done.
+      this.state.resumePoint = this._buildResumePoint(this._graphSnapshot);
+      return 'paused';
+    }
     if (outcome === 'paused') {
       this.state.resumePoint = this._buildResumePoint(this._graphSnapshot);
       return 'paused';
@@ -256,6 +283,7 @@ export class GraphOrchestrator extends RunHarness {
       checkpointRefs: { ...this.checkpointRefs },
       workspace: this.isWorkspace ? { projects: this._workspaceProjects() } : null,
       pauseReason: this.pauseReason || null,
+      pauseDetail: this.pauseDetail || null,
       // The EFFECTIVE instruction at dispatch time (post in-worktree graph
       // build), not the detect-time tools.instruction.
       toolInstruction: this.toolInstruction ?? '',
@@ -401,16 +429,35 @@ export class GraphOrchestrator extends RunHarness {
     const nc = (this.resolved.nodeCtx || {})[node.id] || { nodeId: node.id, kind: node.kind, key: null };
     // The composite protocol: these three modes are the process side of a
     // fan-out — they spawn nothing, record no ledger row and allocate nothing,
-    // so a composite shell never burns a plan version.
-    if (args.composite === 'expand') return await this._expandDecomposition(node, args);
-    if (args.composite === 'phase') return this._compositePhase(args);
-    if (args.composite === 'finish') return await this._finishComposite(nc, args);
+    // so a composite shell never burns a plan version. Same policy as below: a
+    // throw pauses the run. Only the `finish` answer is read as a settlement
+    // (settle -> pausedExecution); runComposite ignores an `expand` answer
+    // without `phases` (it falls to runUnexpanded) and runPhase ignores the
+    // `phase` answers (scheduler.mjs:447/:469), so for those two the pause lands
+    // one call later, at the next ordinary execute's _checkPause() — the shell
+    // row ends 'paused' either way and the whole fan-out re-runs on resume.
+    if (args.composite) {
+      try {
+        if (args.composite === 'expand') return await this._expandDecomposition(node, args);
+        if (args.composite === 'phase') return this._compositePhase(args);
+        return await this._finishComposite(nc, args);
+      } catch (err) {
+        return this._settleUnstarted(nc, node, args, err);
+      }
+    }
 
-    const ctx = this._execCtx(node, nc, args);
+    let ctx;
+    try {
+      ctx = this._execCtx(node, nc, args);
+    } catch (err) {
+      return this._settleUnstarted(nc, node, args, err);   // allocation failed: no row to mark
+    }
     this._execStep(ctx, 'start');
-    if (ctx.slice) updateTaskStatus(this.pipeline.id, ctx.slice.id, 'running', new Date().toISOString());
     let endMark = 'done';
     try {
+      // A real DB write — inside the try: a throw here pauses like anything
+      // else, and the finally skips updateTaskStatus for a 'paused' mark.
+      if (ctx.slice) updateTaskStatus(this.pipeline.id, ctx.slice.id, 'running', new Date().toISOString());
       // Exactly what v1's dispatcher loop does at every step boundary
       // (orchestrator.mjs:259-261): a stop or pause requested while nothing was
       // in flight (e.g. between executions, or during a flow card) must land
@@ -435,17 +482,47 @@ export class GraphOrchestrator extends RunHarness {
         endMark = 'paused';
         return { paused: true };
       }
-      endMark = (isAbort(err) && this.abort.signal.aborted) ? 'stopped' : 'error';
-      this._graphError ||= err;                 // preserve identity for the base catch
+      if (this.abort.signal.aborted || this.state.status === 'stopped') {
+        // The user's stop — the ONLY path that still lets the scheduler see a
+        // failure. Its identity is kept for _engineRun's rethrow; the shell's catch
+        // classifies the run 'stopped' (status/isAbort), never 'error'. This also
+        // covers a child that died with a PLAIN error after the stop landed — that
+        // error still gets today's one error-level line (_logStepFailure skips
+        // AbortErrors itself).
+        endMark = 'stopped';
+        this._graphError ||= err;               // preserve identity for the base catch
+        this._logStepFailure(nc, ctx, err);
+        throw err;
+      }
+      // The FLOW site (failure-policy.mjs): anything that escaped _runNodeAttempts'
+      // own verdict — a flow card, the questions loop, _afterExecution, an
+      // unexpected throw — is decided here. A verdict the node site already issued
+      // (a terminal error) is enacted, never re-decided.
+      const verdict = isTerminal(err) ? { outcome: 'error' }
+        : resolveFailure({ site: 'flow', cls: classifyError(err), auto: this.auto });
+      if (verdict.outcome === 'pause') {
+        // pause() rejects a sibling parked on a recovery prompt with the pause
+        // sentinel, so that slice unwinds as paused too.
+        this._pauseFor(verdict.reason, err, { nc, ctx });
+        endMark = 'paused';
+        return { paused: true };
+      }
+      // Terminal: the scheduler sees the failure (its row ends 'error', in-flight
+      // siblings 'skipped') and _engineRun rethrows it for the shell's error path.
+      endMark = 'error';
+      this._graphError ||= markTerminal(err);   // preserve identity for the base catch
       this._logStepFailure(nc, ctx, err);
       // A sibling slice parked on an interactive recovery prompt is not
       // signal-reachable (_ask settles only via answer()/pause()/stop()), so a
-      // genuine slice failure rejects that prompt exactly as v1's noteFailure
-      // does — the phase is failing and must not wait on a now-meaningless answer.
+      // genuine slice failure rejects that prompt — the phase is failing and must
+      // not wait on a now-meaningless answer.
       if (ctx.slice && this.pendingQuestion?.kind === 'recovery') {
         const pq = this.pendingQuestion;
         this.pendingQuestion = null;
-        pq.reject(abortError());
+        // Stamped terminal: the released sibling's catch must ENACT this verdict
+        // (its row ends 'error' with the phase), never re-decide it at the flow site
+        // as a pause with the detail 'aborted'.
+        pq.reject(markTerminal(abortError()));
       }
       throw err;
     } finally {
@@ -456,6 +533,30 @@ export class GraphOrchestrator extends RunHarness {
         updateTaskStatus(this.pipeline.id, ctx.slice.id, endMark === 'stopped' ? 'error' : endMark, new Date().toISOString());
       }
     }
+  }
+
+  /** A throw before the execution had a ledger row (the composite shell modes, or
+   *  _execCtx's allocation): the SAME outcomes as _execute's catch, in the same
+   *  order and with the same conditions — the FLOW site — just without a row to
+   *  mark. args.executionId / args.ordinal exist on every composite call (argsFor,
+   *  scheduler.mjs:333-342, is spread into each of them). */
+  _settleUnstarted(nc, node, args, err) {
+    if (isPause(err) || (this.pauseRequested && (isAbort(err) || this.pauseAbort.signal.aborted))) return { paused: true };
+    const ctx = { nodeId: node.id, executionId: args.executionId, ordinal: args.ordinal || 1 };
+    if (this.abort.signal.aborted || this.state.status === 'stopped') {
+      this._graphError ||= err;                 // the stop keeps its identity for _engineRun's rethrow
+      this._logStepFailure(nc, ctx, err);
+      throw err;
+    }
+    const verdict = isTerminal(err) ? { outcome: 'error' }
+      : resolveFailure({ site: 'flow', cls: classifyError(err), auto: this.auto });
+    if (verdict.outcome === 'pause') {
+      this._pauseFor(verdict.reason, err, { nc, ctx });
+      return { paused: true };
+    }
+    this._graphError ||= markTerminal(err);
+    this._logStepFailure(nc, ctx, err);
+    throw err;
   }
 
   /** The five flow cards through P3's dispatcher. Engine-owned: instant, $0, no
@@ -675,9 +776,12 @@ export class GraphOrchestrator extends RunHarness {
     this._persist().catch(() => {});
   }
 
-  /** The recoverable-error retry loop around ONE execution. The pause paths throw
-   *  pauseErr() with pauseRequested already set (_pauseForLimit calls pause()),
-   *  so _execute's catch reproduces the 'paused' mark. */
+  /** The retry loop around ONE execution — the NODE site of failure-policy.mjs.
+   *  _recover() resolves the verdict (running the backoff or the recovery prompt
+   *  on the way); this loop enacts it. A pause throws pauseErr() with
+   *  pauseRequested already set (_pauseFor calls pause()), so _execute's catch
+   *  reproduces the 'paused' mark; a terminal error is stamped so _execute's
+   *  catch enacts it instead of re-deciding at the flow site. */
   async _runNodeAttempts(nc, ctx) {
     for (let attempt = 1; ; attempt++) {
       try {
@@ -685,18 +789,13 @@ export class GraphOrchestrator extends RunHarness {
       } catch (err) {
         if (this.pauseRequested && (isAbort(err) || isPause(err) || this.pauseAbort.signal.aborted)) throw pauseErr();
         if (isAbort(err) || isPause(err)) throw err;
+        if (this.abort.signal.aborted || this.state.status === 'stopped') throw err;  // a stop is in flight: _execute marks it 'stopped'
         const cls = classifyError(err);
-        if (!cls) throw err;                    // not recoverable -> today's path
-        if (cls === 'usage_limit') { this._pauseForLimit(nc, ctx, err); throw pauseErr(); }
-        // Auto mode: auth/quota are user-fixable but never time-fixable — a
-        // 1s/2s/4s backoff cannot re-login or top up a balance — so skip the
-        // futile retries and pause on the first hit. Interactive runs keep the
-        // recovery prompt: the user may fix the cause and hit Retry in place.
-        if (this.auto && (cls === 'auth' || cls === 'quota')) { this._pauseForRecoverable(nc, ctx, err, cls); throw pauseErr(); }
-        const decision = await this._recover({ node: { key: nc.key || ctx.nodeId }, cls, err, attempt });
-        if (decision === 'pause') { this._pauseForRecoverable(nc, ctx, err, cls); throw pauseErr(); }
-        if (decision === 'abort') throw err;    // user chose Abort -> fail as today
-        this._execStep(ctx, 'start');           // back to running for the retry
+        const verdict = await this._recover({ node: { key: nc.key || ctx.nodeId }, cls, err, attempt });
+        if (this.pauseRequested) throw pauseErr();          // a pause landed during backoff/prompt: its reason stands
+        if (verdict.outcome === 'retry') { this._execStep(ctx, 'start'); continue; }   // back to running for the retry
+        if (verdict.outcome === 'pause') { this._pauseFor(verdict.reason, err, { nc, ctx, cls }); throw pauseErr(); }
+        throw markTerminal(err);                           // terminal: _execute's catch ends the run
       }
     }
   }
@@ -728,35 +827,6 @@ export class GraphOrchestrator extends RunHarness {
       nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal,
       ...(err?.stream ? { stream: err.stream } : {}),
     });
-  }
-
-  /** A session/usage cap that only clears after a multi-hour reset: pause the run
-   *  (v1's _pauseForLimit, orchestrator.mjs:756, re-keyed by execution). */
-  _pauseForLimit(nc, ctx, err) {
-    const label = nc.key || ctx.nodeId;
-    const reason = firstLine(err?.message || String(err));
-    if (!this.pauseReason) this.pauseReason = reason;
-    this._log(label, 'warn', `session/usage limit reached — pausing for manual resume: ${reason}`,
-      { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal });
-    appendAudit(this.pipeline.dir, `Pipeline **paused**: session/usage limit on ${label} — ${reason}. Resume after the reset.`).catch(() => {});
-    this.pause();
-  }
-
-  /** A recoverable error the auto retry budget cannot outwait (an exhausted
-   *  network/rate_limit backoff) or cannot fix at all (auth, quota): pause the
-   *  run for manual resume instead of a terminal error. The cause is outside
-   *  the pipeline and may have cleared by the time the user resumes; a pause
-   *  also keeps the worktree alive, so the resume continues in place. An
-   *  interactive Abort never lands here — that is an explicit user verdict and
-   *  stays a terminal error. */
-  _pauseForRecoverable(nc, ctx, err, cls) {
-    const label = nc.key || ctx.nodeId;
-    const reason = firstLine(err?.message || String(err));
-    if (!this.pauseReason) this.pauseReason = reason;
-    this._log(label, 'warn', `recoverable ${cls} error — pausing for manual resume: ${reason}`,
-      { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal });
-    appendAudit(this.pipeline.dir, `Pipeline **paused**: recoverable ${cls} error on ${label} — ${reason}. Resume to retry.`).catch(() => {});
-    this.pause();
   }
 
   /**
@@ -1001,7 +1071,7 @@ export class GraphOrchestrator extends RunHarness {
     this._resumeSnapshot = rp.snapshot || null;
     this._graphSnapshot = rp.snapshot || null;
     this._planVersion = Number.isFinite(rp.planVersion) ? rp.planVersion : 0;
-    this.pauseReason = null;
+    this._clearPauseReason();
     const manifest = rp.manifest || this.state.stepper;
     this.state.stepper = manifest;
     this._adoptResolvedGraph(resolvedFromManifest(manifest, this.registry));

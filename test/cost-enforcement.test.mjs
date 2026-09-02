@@ -13,7 +13,7 @@ import { getDb } from '../src/core/db.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { setPipelineCostLimitUsd, setTotalCostLimitUsd } from '../src/core/settings.mjs';
 import { recordCostDelta, setCostCapOverride, recordAskCostDelta } from '../src/core/cost-budget.mjs';
-import { listAllPipelines, listPipelines } from '../src/core/artifacts.mjs';
+import { listAllPipelines, listPipelines, readPipelineByKey } from '../src/core/artifacts.mjs';
 
 useTempHome(after);
 
@@ -172,4 +172,24 @@ test('a malformed resume_point does not break the list queries', async () => {
   assert.equal(mine.pauseReason, null, 'unparseable resume points read as no reason');
   const perProject = await listPipelines('/tmp/proj-a');
   assert.ok(perProject.find((e) => e.id === id), 'the per-project list survives it too');
+});
+
+test('list wire rows AND the detail payload (rowToState) expose pauseReason + pauseDetail from resume_point', async () => {
+  const { id, key } = await seedPipeline('/tmp/proj-a', {
+    status: 'paused',
+    resumePoint: { version: 2, kind: 'boundary', pauseReason: 'error', pauseDetail: 'claude exited with code 1: disk full' },
+  });
+  const mine = (await listAllPipelines()).find((e) => e.id === id);
+  assert.equal(mine.pauseReason, 'error');
+  assert.equal(mine.pauseDetail, 'claude exited with code 1: disk full');
+  const perProject = (await listPipelines('/tmp/proj-a')).find((e) => e.id === id);
+  assert.equal(perProject.pauseDetail, 'claude exited with code 1: disk full');
+  // The DETAIL payload (GET /api/history/:key/:id serves readPipelineByKey) carries it too,
+  // so a deep-linked History detail no longer waits for the LIST row.
+  const detail = await readPipelineByKey(key, id);
+  assert.equal(detail.state.pauseReason, 'error');
+  assert.equal(detail.state.pauseDetail, 'claude exited with code 1: disk full');
+  // A reasonless / legacy point reads as null, never undefined.
+  const plain = await seedPipeline('/tmp/proj-a', { status: 'paused', resumePoint: { version: 2, kind: 'boundary' } });
+  assert.equal((await readPipelineByKey(plain.key, plain.id)).state.pauseDetail, null);
 });
