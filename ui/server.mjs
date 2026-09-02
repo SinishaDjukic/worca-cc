@@ -3574,6 +3574,29 @@ function stampAskFrames(threadId, job) {
   };
 }
 
+/** The narrow worktree envelope the snapshot GET and the `ask-worktrees` frame
+ *  share (P4 §10): never the full row — threadId/projectDir/updatedAt stay
+ *  server-side. Mirrors the list_worktrees MCP tool (src/core/ask/tools.mjs). */
+function askWorktreesEnvelope(threadId) {
+  return askListWorktrees(threadId).map((w) => ({
+    worktreeId: w.worktreeId, projectKey: w.projectKey, ref: w.ref,
+    commit: w.commit, path: w.path, createdAt: w.createdAt,
+  }));
+}
+
+/** Broadcast the thread's CURRENT worktrees as an out-of-turn frame (seq-less,
+ *  threadId-tagged, like ask-title). Fed by the turn's onWorktreeMutation hook —
+ *  the MCP child opened/removed/navigated a checkout this process never saw —
+ *  and by the manual DELETE route, so every tab's count and popover follow
+ *  without a snapshot GET. Best effort; false when the thread is gone. */
+function emitAskWorktrees(threadId) {
+  try {
+    if (!askGetThread(threadId)) return false;
+    broadcast({ type: 'ask-worktrees', threadId, worktrees: askWorktreesEnvelope(threadId) });
+    return true;
+  } catch { return false; }   // a poke is best effort
+}
+
 /** 400 on shape (spec §8.1 — a DELIBERATE divergence from the house 404-on-
  *  malformed-param style), null-return contract like badRequest. */
 function askIdParam(res, value, kind) {
@@ -3625,12 +3648,9 @@ app.get('/api/ask/threads/:id', (req, res) => {
       messages: askListMessages(id),
       attachments: askListAttachments(id),
       runLinks: askListRunLinks(id),
-      // P4 §10: the SAME narrow envelope the list_worktrees MCP tool returns —
-      // never the full row (threadId/projectDir/updatedAt stay server-side).
-      worktrees: askListWorktrees(id).map((w) => ({
-        worktreeId: w.worktreeId, projectKey: w.projectKey, ref: w.ref,
-        commit: w.commit, path: w.path, createdAt: w.createdAt,
-      })),
+      // P4 §10: the SAME narrow envelope the list_worktrees MCP tool and the
+      // ask-worktrees frame carry — never the full row.
+      worktrees: askWorktreesEnvelope(id),
       inFlight: job && job.messageId ? { messageId: job.messageId } : null, // null while the slot is only reserved
     });
   } catch (err) {
@@ -3729,6 +3749,7 @@ app.delete('/api/ask/threads/:id/worktrees/:wtId', async (req, res) => {
   try {
     if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
     const out = await askRemoveWorktree({ threadId: id, wtId });
+    emitAskWorktrees(id);   // every open tab's count/popover follows the delete
     res.json(out);
   } catch (err) {
     if (err && err.name === 'AskWorktreeError') return res.status(404).json({ error: err.message });
@@ -4099,6 +4120,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
           onFrame: stampAskFrames(id, job),
           onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
           onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
+          onWorktreeMutation: () => { emitAskWorktrees(id); },
         },
       });
       job.turn = turn;
@@ -5297,5 +5319,5 @@ export const _testing = {
   wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, resolveAskContext, flipCard,
-  emitDiffCommentsChanged,
+  emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope,
 };
