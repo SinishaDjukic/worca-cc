@@ -18,7 +18,7 @@
 
 import { createRequire } from 'node:module';
 import { mkdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { worcaHome } from './projects.mjs';
 import { maybeMigrateFromFs } from './migrate-fs-to-db.mjs';
 import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from './graph/seed-templates.mjs';
@@ -103,15 +103,22 @@ function _openConfiguredMigrated() {
 }
 
 /**
- * True when err is a transient SQLite lock/busy that retrying can clear. Prefers the
- * structured errcode (5 = SQLITE_BUSY, 6 = SQLITE_LOCKED) and falls back to the message
- * so a lock is still caught on any node:sqlite build that doesn't populate errcode. A
- * false positive only costs a bounded retry that still re-throws the original error.
+ * True when err is a transient SQLite error that retrying the open can clear. Prefers
+ * the structured errcode — 5 = SQLITE_BUSY, 6 = SQLITE_LOCKED, and primary code 10 =
+ * SQLITE_IOERR (extended codes carry it in the low byte) — and falls back to the
+ * message so a lock is still caught on any node:sqlite build that doesn't populate
+ * errcode. IOERR is here for the first-launch race on Windows: while one process
+ * performs the journal_mode=WAL switch, a competitor opening the same file can get
+ * "disk I/O error" from the -wal/-shm files being created and unlinked under it
+ * (seen on the Windows 11 VM with 12 concurrent openers). A persistent I/O error
+ * still surfaces: the retry is bounded and re-throws the original error. A false
+ * positive only costs that bounded retry.
  */
 function _isBusyError(err) {
   if (err && (err.errcode === 5 || err.errcode === 6)) return true;
+  if (err && Number.isInteger(err.errcode) && (err.errcode & 0xff) === 10) return true;
   const msg = err && err.message ? err.message : String(err);
-  return /locked|busy/i.test(msg);
+  return /locked|busy|disk I\/O error/i.test(msg);
 }
 
 /** Synchronous sleep (node:sqlite is sync; we must block this thread, not yield it). */
@@ -1215,7 +1222,7 @@ function backupBeforeV24(db) {
     throw new Error(`worca cannot take the pre-v24 database backup at ${bak}: `
       + `${err && err.message ? err.message : err}. The v2 upgrade rewrites saved `
       + 'pipelines, so it refuses to run without one — free disk space or make '
-      + `${file.replace(/\/[^/]*$/, '')} writable and start worca again.`, { cause: err });
+      + `${dirname(file)} writable and start worca again.`, { cause: err });
   }
 }
 

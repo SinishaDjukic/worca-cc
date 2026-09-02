@@ -111,7 +111,12 @@ function openWs(query = '') {
   const opened = new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
   return { ws, msgs, opened };
 }
-function waitFor(pred, timeoutMs = 10000) {
+// A hang detector, not a budget: the waits here cover a real mock pipeline run
+// (git init + worktree + spawn) that the loaded Windows 11 VM finishes 5-10x
+// slower than macOS — its 10 s default timed out mid-suite there. win32 gets
+// the headroom; POSIX keeps the tight deadline.
+const WAIT_FOR_MS = process.platform === 'win32' ? 60000 : 10000;
+function waitFor(pred, timeoutMs = WAIT_FOR_MS) {
   return new Promise((res, rej) => {
     const t0 = Date.now();
     (function tick() {

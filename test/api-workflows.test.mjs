@@ -44,7 +44,9 @@ after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
   delete process.env.WORCA_MOCK;
-  await rm(homeDir, { recursive: true, force: true });
+  // Windows: a pipeline dir whose log a finished run still holds open answers
+  // ENOTEMPTY/EBUSY for a moment; retry like test/cli-resume.test.mjs does.
+  await rm(homeDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 });
 
 test('GET /api/workflows lists the built-in default first', async () => {

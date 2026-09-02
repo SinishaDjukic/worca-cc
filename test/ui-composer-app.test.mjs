@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 import { realRegistryIndex } from './helpers/graph-ports.mjs';
@@ -68,7 +68,7 @@ async function boot({ agentsFail = false, archived = [], workflows = null, del =
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
   }
   globalThis.window = window; globalThis.document = window.document;
-  await import(appPath + `?b=${Date.now()}_${Math.random()}`);
+  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   window.location.hash = 'composer';
   window.dispatchEvent(new window.Event('hashchange'));
   for (let i = 0; i < 6; i += 1) await new Promise((r) => setTimeout(r, 0));
