@@ -366,3 +366,28 @@ test('rule 10 distils exploration findings into the brief, anchored and marked',
   assert.ok(ASK_SYSTEM_RULES.includes('(rule 10)'), 'rule 3 points at it where the brief is written');
   assert.ok(!/\n\s*11\./.test(ASK_SYSTEM_RULES), 'the rules stop at 10 (renumbering would break these pins)');
 });
+
+// ── #397: the explicit project selector ──────────────────────────────────────
+
+test('#397: context.pinned is a boolean; anything else is rejected', () => {
+  assert.deepEqual(validateClientContext({ pinned: true }), { ok: true, context: { pinned: true } });
+  assert.deepEqual(validateClientContext({ pinned: false }), { ok: true, context: { pinned: false } });
+  assert.deepEqual(validateClientContext({ pinned: 'yes' }), { ok: false, error: 'context.pinned is invalid' });
+  assert.deepEqual(validateClientContext({ pinned: 1 }), { ok: false, error: 'context.pinned is invalid' });
+  assert.deepEqual(validateClientContext({ pinned: null }), { ok: true, context: {} }, 'null = absent, like every other key');
+});
+
+test('#397: rule 2 defines the pinned marker as the default target', () => {
+  assert.ok(ASK_SYSTEM_RULES.includes('[pinned by the user]'), 'rule 2 names the marker');
+  assert.ok(ASK_SYSTEM_RULES.includes('the scope the user explicitly selected for this chat'));
+});
+
+test('#397: a pinned scope renders the [pinned by the user] marker on the scope line only', () => {
+  const h = buildContextHeader({ ...CTX, pinned: true });
+  assert.ok(h.includes('project: worca-cc (key worca-cc-551183d0) [pinned by the user]\n'), h);
+  assert.ok(!h.includes('workspace: - [pinned by the user]'), 'the empty workspace line is never marked');
+  const ws = buildContextHeader({ view: 'new', pinned: true, workspace: { id: 'wks-team-0000abcd', name: 'Team', members: ['app'] }, now: CTX.now });
+  assert.ok(ws.includes('workspace: Team (wks-team-0000abcd) members: app [pinned by the user]\n'), ws);
+  assert.ok(!buildContextHeader(CTX).includes('[pinned by the user]'), 'an unpinned header is unchanged');
+  assert.ok(!buildContextHeader({ ...CTX, pinned: false }).includes('[pinned by the user]'), 'explicit Auto is unchanged too');
+});
