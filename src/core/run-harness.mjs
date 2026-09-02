@@ -62,6 +62,11 @@ import {
   isValidSourceRef, snapshotWorktreePatch,
 } from './worktree.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
+import { classifyError } from './recoverable-error.mjs';
+import {
+  resolveFailure, isTerminal, markTerminal, answerFromDecision,
+  REASON, pauseConsequences, describePauseReason,
+} from './failure-policy.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
@@ -95,12 +100,6 @@ function findDisabledPluginFor(key) {
   } catch { /* no home / unreadable lock */ }
   return null;
 }
-
-/** Max auto-mode retries for a recoverable error before pausing the run. */
-const RECOVERY_MAX_AUTO_ATTEMPTS = (() => {
-  const n = Number(process.env.WORCA_RECOVERY_MAX_ATTEMPTS);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 3;
-})();
 
 /**
  * `attr` marking a log line whose text came from a subprocess's stderr.
@@ -184,12 +183,6 @@ export function pauseErr() {
 
 export function isPause(err) {
   return !!err && err.name === 'PauseError';
-}
-
-/** The recovery prompt's "give up" answer. 'pause' is the vocabulary; 'abort' is
- *  the pre-policy wire value (older UI tabs, chat /abort) and means the same. */
-export function isPauseDecision(ans) {
-  return !!ans && (ans.decision === 'pause' || ans.decision === 'abort');
 }
 
 /** Fail-safe JSON.parse for nullable DB text columns; null on absent/bad JSON. */
@@ -804,7 +797,7 @@ export class RunHarness extends EventEmitter {
    * Record WHY the run is pausing: a machine-readable reason (the cost codes, 'error',
    * or the usage-limit first line) plus an optional human detail. FIRST WRITER WINS —
    * a pause kills its siblings and their unwinds must not overwrite the cause (the
-   * rule _pauseForLimit/_pauseForCost already follow). Mirrored onto state so every
+   * rule every _pauseFor site follows). Mirrored onto state so every
    * `state` event and getState() carry it. @returns {boolean} true when recorded
    */
   _setPauseReason(reason, detail = null) {
@@ -821,6 +814,51 @@ export class RunHarness extends EventEmitter {
     this.pauseDetail = null;
     this.state.pauseReason = null;
     this.state.pauseDetail = null;
+  }
+
+  /**
+   * Enact a 'pause' verdict (failure-policy.mjs) at ANY site — the one mechanism
+   * behind every forced pause: the ONE log line, the reason + detail (first writer
+   * wins), the audit line, then pause(). pause() sets pauseRequested BEFORE anything
+   * reaches the scheduler, so onSnapshot stays frozen at the last clean point, the
+   * failing row settles 'paused' (non-terminal) and reattach() re-invokes it on
+   * resume. Returns false — recording nothing — when a pause is already unwinding
+   * (the user's, or a sibling's: its reason stands) or a stop is in flight (never
+   * re-labelled: pause() would be a no-op on 'stopped' and the scheduler must keep
+   * seeing the stop). The caller throws pauseErr() itself where a throw is due.
+   * @param {string} reason a REASON code
+   * @param {Error|null} err the failure; null for a cap (`detail` carries the text)
+   * @param {{nc?:object|null, ctx?:object|null, label?:string, detail?:string|null}} [o]
+   *   nc/ctx: the execution (orchestrator sites); label: the log source otherwise
+   */
+  _pauseFor(reason, err, { nc = null, ctx = null, label = null, detail = null } = {}) {
+    const where = label || nc?.key || ctx?.nodeId || 'orchestrator';
+    const meta = ctx ? { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal } : {};
+    const line = firstLine(err?.message || (err == null ? '' : String(err))) || 'unknown error';
+    const text = detail ?? (reason === REASON.ERROR ? errorDetail(err) : line);
+    if (reason === REASON.ERROR) {
+      // The ONE error-level line, written BEFORE the pause sentinel the caller
+      // throws next (a pause/abort is never logged as a failure).
+      this._log(where, 'error', `${ctx ? 'execution' : 'run'} failed: ${clipMiddle(err?.message || err, 500)}`,
+        { ...meta, ...(err?.stream ? { stream: err.stream } : {}) });
+    }
+    if (this.pauseRequested || this.state.status === 'stopped' || this.abort.signal.aborted) return false;
+    this._setPauseReason(reason, text);
+    let audit;
+    if (reason === REASON.ERROR) {
+      audit = ctx
+        ? `Pipeline **paused**: execution failed on ${where} — ${line}. Fix the cause, then resume.`
+        : `Pipeline **paused**: ${line}. Fix the cause, then resume.`;
+    } else if (reason === REASON.USAGE_LIMIT) {
+      this._log(where, 'warn', `${describePauseReason(reason)} — pausing for manual resume: ${text}`, meta);
+      audit = `Pipeline **paused**: session/usage limit on ${where} — ${text}. Resume after the reset.`;
+    } else {
+      this._log(where, 'warn', `${text} — pausing for manual resume`, meta);
+      audit = `Pipeline **paused**: ${text}.`;
+    }
+    appendAudit(this.pipeline.dir, audit).catch(() => {});
+    this.pause();
+    return true;
   }
 
   /**
@@ -1115,9 +1153,10 @@ export class RunHarness extends EventEmitter {
         return { status: 'stopped', pipelineDir: this.pipeline?.dir || null };
       }
       if (this.pipeline) {
-        // POLICY: a failure once the row exists never ends the run (D6).
+        // The SETUP / SHELL site (failure-policy.mjs): a failure once the row exists.
         try {
-          return await this._pauseForFailure(err);
+          const paused = await this._pauseForFailure(err);
+          if (paused) return paused;
         } catch (err2) {
           // Last resort: the pause bookkeeping itself failed. Fall through to today's
           // error shape (persist/audit/results/write-back) rather than reject run().
@@ -1127,7 +1166,9 @@ export class RunHarness extends EventEmitter {
           this.state.resumePoint = null;
         }
       }
-      // No row yet (topology, preflight, tool detection) — a launch error, as today.
+      // No row yet (topology, preflight, tool detection): the LAUNCH site. Its only
+      // enactable verdict is a terminal error — there is nothing to resume into.
+      else this._launchVerdict(err);
       this._setStatus('error');
       const message = err?.message || String(err);
       this._emit('error', { message });
@@ -1412,10 +1453,11 @@ export class RunHarness extends EventEmitter {
         return { status: 'stopped', pipelineDir: this.pipeline?.dir || null };
       }
       if (this.pipeline) {
-        // POLICY: a failure once the row exists never ends the run (D6). `rp` is the
-        // point this resume consumed — the fallback when the engine holds none.
+        // The SETUP / SHELL site (failure-policy.mjs). `rp` is the point this resume
+        // consumed — the fallback when the engine holds none.
         try {
-          return await this._pauseForFailure(err, rp);
+          const paused = await this._pauseForFailure(err, rp);
+          if (paused) return paused;
         } catch (err2) {
           // Last resort: the pause bookkeeping itself failed. Fall through to today's
           // error shape (persist/audit/results/write-back) rather than reject resume().
@@ -2348,7 +2390,7 @@ export class RunHarness extends EventEmitter {
     const spentHere = Math.max(this.state.totalCostUsd || 0, sumStepCosts(this.state.steps));
     if (pipeLimit != null && spentHere >= pipeLimit
         && !readCostCapOverride(this.pipeline.id)) {
-      this._pauseForCost('cost_pipeline',
+      this._capReached(REASON.COST_PIPELINE,
         `pipeline cost limit reached ($${spentHere.toFixed(2)} >= $${pipeLimit.toFixed(2)})`);
     }
     const totalLimit = totalCostLimitUsd();
@@ -2356,69 +2398,71 @@ export class RunHarness extends EventEmitter {
       const period = costLimitResetPeriod();
       const spent = totalWindowSpendUsd(costWindowStart(new Date(), period).getTime());
       if (spent >= totalLimit) {
-        this._pauseForCost('cost_total',
+        this._capReached(REASON.COST_TOTAL,
           `total cost limit reached ($${spent.toFixed(2)} >= $${totalLimit.toFixed(2)} this ${period === 'weekly' ? 'week' : 'month'})`);
       }
     }
   }
 
-  /** Mirror of _pauseForLimit, but with a MACHINE-READABLE reason code
-   *  ('cost_pipeline' | 'cost_total') the UI switches on. Unlike _pauseForLimit
-   *  (whose caller throws), this throws itself — its caller is the boundary
-   *  gate, not a catch block. The audit line here is required: _completePaused
-   *  suppresses its generic audit whenever pauseReason is set. */
-  _pauseForCost(code, detail) {
-    this._setPauseReason(code, detail);
-    this._log('orchestrator', 'warn', `${detail} — pausing for manual resume`);
-    appendAudit(this.pipeline.dir, `Pipeline **paused**: ${detail}.`).catch(() => {});
-    this.pause();
-    throw pauseErr();
+  /** The BUDGET site (failure-policy.mjs): a cost cap was reached at a step
+   *  boundary. Unlike the catch-block sites this throws itself — its caller is
+   *  the boundary gate. The audit line is required: _completePaused suppresses
+   *  its generic audit whenever pauseReason is set. */
+  _capReached(code, detail) {
+    const verdict = resolveFailure({ site: 'budget', cls: code, auto: this.auto });
+    if (verdict.outcome === 'pause') {
+      this._pauseFor(verdict.reason, null, { detail });
+      throw pauseErr();
+    }
+    throw markTerminal(new Error(detail));
   }
 
-  /** Decide how to recover from a classified error. Auto mode: bounded backoff
-   *  then give up (and give up immediately if a pause fired during backoff, so a
-   *  pause is never followed by a wasted retry). Interactive: ONE shared prompt
-   *  per error class (same-class siblings await the same answer), and distinct
-   *  classes are serialized so only one recovery prompt is open at a time (the
-   *  gate holds a single pendingQuestion). Returns 'retry' | 'pause' ('pause' =
-   *  the user or auto mode gave up: the run PAUSES with the error as its reason —
-   *  nothing here can end a run). The per-class dedupe map shares ONE decision
-   *  across siblings; a sibling that receives 'pause' second finds pauseRequested
-   *  already set and unwinds as that same pause. */
+  /**
+   * Resolve the NODE-site verdict for a failed execution (failure-policy.mjs),
+   * running the recovery round it calls for on the way: auto mode backs off before
+   * a 'retry' (a pause fired DURING backoff still returns 'retry' — the caller
+   * checks pauseRequested first and unwinds as THAT pause, so a user pause is never
+   * followed by a wasted retry); interactive mode opens ONE shared prompt per error
+   * class (same-class siblings await the same answer), serialized so only one
+   * recovery prompt is open at a time (the gate holds a single pendingQuestion),
+   * and re-resolves with the answer. The per-class dedupe map shares ONE answer
+   * across siblings; a sibling that receives a pause verdict second finds
+   * pauseRequested already set and unwinds as that same pause.
+   * @returns {Promise<{outcome:'retry'|'pause'|'error', reason?:string}>}
+   */
   async _recover({ node, cls, err, attempt }) {
+    const verdict = resolveFailure({ site: 'node', cls, auto: this.auto, attempt });
+    if (verdict.outcome !== 'retry' && verdict.outcome !== 'prompt') return verdict;   // no recovery round
     this._log(node.key, 'warn', `recoverable ${cls} error: ${err.message}`, err?.stream ? ERR_STREAM : null);
     await appendAudit(this.pipeline.dir, `Recoverable **${cls}** error on ${node.key}: ${firstLine(err.message)}`).catch(() => {});
 
-    if (this.auto) {
-      if (attempt > RECOVERY_MAX_AUTO_ATTEMPTS) return 'pause';
+    if (verdict.outcome === 'retry') {
       await this._backoff(attempt, this.pauseAbort.signal);
-      // A pause during backoff must win: report 'pause' instead of retrying. The
-      // loop's outer catch re-classifies under pauseRequested and unwinds as THAT
-      // pause (its reason stands — _runNodeAttempts checks pauseRequested first).
-      if (this.pauseRequested || this.pauseAbort.signal.aborted) return 'pause';
-      return 'retry';
+      return verdict;
     }
 
     this._recovery ||= new Map();
     if (!this._recovery.has(cls)) {
-      const p = this._enqueueRecoveryPrompt(cls, firstLine(err.message))
+      const p = this._enqueueRecoveryPrompt(cls, firstLine(err.message), verdict.options)
         .finally(() => { if (this._recovery) this._recovery.delete(cls); });
       this._recovery.set(cls, p);
     }
-    return this._recovery.get(cls);
+    const answer = await this._recovery.get(cls);
+    return resolveFailure({ site: 'node', cls, auto: this.auto, attempt, answer });
   }
 
   /** Open a recovery prompt for one class, serialized behind any in-flight
    *  recovery prompt (the question gate has a single pendingQuestion slot, so
-   *  distinct classes must queue — see the clarify answer). Returns 'retry'|'pause';
-   *  the legacy `{ decision: 'abort' }` wire value still reads as 'pause'. */
-  _enqueueRecoveryPrompt(cls, message) {
+   *  distinct classes must queue — see the clarify answer). The prompt carries the
+   *  row's options (what the give-up choice does); resolves the policy answer
+   *  'retry' | 'giveup' (the legacy `{ decision: 'abort' }` wire value is a give-up). */
+  _enqueueRecoveryPrompt(cls, message, options) {
     const run = () =>
       this._ask({
         id: `recovery-${cls}-${this._recoveryNonce()}`,
         kind: 'recovery',
-        recovery: { cls, message },
-      }).then((ans) => (isPauseDecision(ans) ? 'pause' : 'retry'));
+        recovery: { cls, message, options },
+      }).then((ans) => answerFromDecision(ans && ans.decision));
     return this._enqueueAsk(run);
   }
 
@@ -3670,8 +3714,9 @@ export class RunHarness extends EventEmitter {
     // user is present and resuming shortly, and the resumed run's terminal path
     // reports the real outcome. An ERROR-pause additionally keeps the diff
     // artifact the retired error path produced. Never throws (spec §7.5).
-    if (this.pauseReason === 'error') await this._buildResults({ stage: true });
-    if (this.pauseReason) await this._reportToSource();
+    const consequences = pauseConsequences(this.pauseReason);
+    if (consequences.stagesResults) await this._buildResults({ stage: true });
+    if (consequences.reportsToSource) await this._reportToSource();
     const payload = {
       status: 'paused',
       pipelineDir: this.pipeline.dir,
@@ -3693,26 +3738,28 @@ export class RunHarness extends EventEmitter {
   _engineAgentKeys() { return new Set(); }
 
   /**
-   * POLICY (errors pause; stop is user-only): a failure the shell sees once the
-   * pipeline row exists never ends the run. Record the cause; kill anything still
-   * in flight (pause() is a no-op unless the run is 'running', and the status write
-   * below is unconditional); pick the resume point MOST-SPECIFIC FIRST —
-   * state.resumePoint (the engine's live point), the engine's LAST clean point (the
-   * final all-terminal snapshot when the failure came after the engine finished, D14),
-   * the consumed `fallbackPoint` (resume()'s rp), else the engine's pre-dispatch
-   * point; scrub any terminal error row (and the fail-fast's skipped collateral) out
-   * of its snapshot; then complete as a pause — _completePaused stamps/strips
-   * `setupIncomplete` from _setupDone (D7) for EVERY pause path. Emits NO 'error'
-   * event: the `done` payload carries reason 'error' + detail, the run log the line.
+   * The SETUP / SHELL site (failure-policy.mjs): a failure the shell sees once the
+   * pipeline row exists — before run()'s setup finished ('setup') or after it
+   * ('shell'). A verdict already issued downstream (a terminal error from the node
+   * or flow site) is enacted, never re-decided. Returns null when the verdict is a
+   * terminal error — the caller then falls through to the error path — else records
+   * the cause; kills anything still in flight (pause() is a no-op unless the run is
+   * 'running', and the status write below is unconditional); picks the resume
+   * point MOST-SPECIFIC FIRST — state.resumePoint (the engine's live point), the
+   * engine's LAST clean point (the final all-terminal snapshot when the failure
+   * came after the engine finished, D14), the consumed `fallbackPoint` (resume()'s
+   * rp), else the engine's pre-dispatch point; scrubs any terminal error row (and
+   * the fail-fast's skipped collateral) out of its snapshot; then completes as a
+   * pause — _completePaused stamps/strips `setupIncomplete` from _setupDone (D7)
+   * for EVERY pause path. Emits NO 'error' event: the `done` payload carries the
+   * reason + detail, the run log the line.
    */
   async _pauseForFailure(err, fallbackPoint = null) {
-    const message = err?.message || String(err);
-    this._log('orchestrator', 'error', `run failed: ${clipMiddle(message, 500)} — pausing for manual resume`,
-      err?.stream ? ERR_STREAM : null);
-    this._setPauseReason('error', errorDetail(err));
-    await appendAudit(this.pipeline.dir,
-      `Pipeline **paused**: ${firstLine(message) || 'unknown error'}. Fix the cause, then resume.`).catch(() => {});
-    this.pause();
+    const site = this._setupDone ? 'shell' : 'setup';
+    const verdict = isTerminal(err) ? { outcome: 'error' }
+      : resolveFailure({ site, cls: classifyError(err), auto: this.auto });
+    if (verdict.outcome !== 'pause') { markTerminal(err); return null; }
+    this._pauseFor(verdict.reason, err);
     const source = this.state.resumePoint || this._engineLastPoint() || fallbackPoint || this._enginePrePausePoint();
     this.state.resumePoint = {
       ...source,
@@ -3722,6 +3769,17 @@ export class RunHarness extends EventEmitter {
       pausedAt: new Date().toISOString(),
     };
     return await this._completePaused();
+  }
+
+  /** The LAUNCH site: no pipeline row yet, so a terminal error is the only verdict
+   *  the shell can enact. Consulted for completeness — a row flipped to 'pause'
+   *  cannot be honored here and says so in the run log. */
+  _launchVerdict(err) {
+    const verdict = resolveFailure({ site: 'launch', cls: classifyError(err), auto: this.auto });
+    if (verdict.outcome !== 'error') {
+      this._log('orchestrator', 'warn', `failure policy asks to ${verdict.outcome} a launch failure, but no pipeline row exists to resume into — ending the run as an error`);
+    }
+    markTerminal(err);
   }
 
   /**

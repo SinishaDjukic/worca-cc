@@ -15,7 +15,7 @@ import { rm } from 'node:fs/promises';
 
 import {
   RunHarness, isAbort, isPause, pauseErr, firstLine, jsonClone,
-  clipMiddle, sumStepActive, normalizeClarifyAnswer, errorDetail,
+  clipMiddle, sumStepActive, normalizeClarifyAnswer,
 } from './run-harness.mjs';
 import { resolveGraph, loadAgentFile, GRAPH_DEFAULT_WORKFLOW } from './workflows.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
@@ -32,6 +32,7 @@ import {
 } from './artifacts.mjs';
 import { readQuestionsFile } from './protocol.mjs';
 import { classifyError } from './recoverable-error.mjs';
+import { resolveFailure, markTerminal, isTerminal } from './failure-policy.mjs';
 
 /** Max ask-then-resume question rounds per execution (mirrors v1's constant). */
 const MAX_QUESTION_ROUNDS = 3;
@@ -493,14 +494,34 @@ export class GraphOrchestrator extends RunHarness {
         this._logStepFailure(nc, ctx, err);
         throw err;
       }
-      // POLICY: no error ends the run. Anything that escaped _runNodeAttempts' own
-      // conversion — a flow card, the questions loop, _afterExecution, an unexpected
-      // throw — pauses the run with the error as its reason (D4). pause() rejects a
-      // sibling parked on a recovery prompt with the pause sentinel, so that slice
-      // unwinds as paused too (the old AbortError release is subsumed).
-      this._pauseForError(nc, ctx, err);
-      endMark = 'paused';
-      return { paused: true };
+      // The FLOW site (failure-policy.mjs): anything that escaped _runNodeAttempts'
+      // own verdict — a flow card, the questions loop, _afterExecution, an
+      // unexpected throw — is decided here. A verdict the node site already issued
+      // (a terminal error) is enacted, never re-decided.
+      const verdict = isTerminal(err) ? { outcome: 'error' }
+        : resolveFailure({ site: 'flow', cls: classifyError(err), auto: this.auto });
+      if (verdict.outcome === 'pause') {
+        // pause() rejects a sibling parked on a recovery prompt with the pause
+        // sentinel, so that slice unwinds as paused too.
+        this._pauseFor(verdict.reason, err, { nc, ctx });
+        endMark = 'paused';
+        return { paused: true };
+      }
+      // Terminal: the scheduler sees the failure (its row ends 'error', in-flight
+      // siblings 'skipped') and _engineRun rethrows it for the shell's error path.
+      endMark = 'error';
+      this._graphError ||= markTerminal(err);   // preserve identity for the base catch
+      this._logStepFailure(nc, ctx, err);
+      // A sibling slice parked on an interactive recovery prompt is not
+      // signal-reachable (_ask settles only via answer()/pause()/stop()), so a
+      // genuine slice failure rejects that prompt — the phase is failing and must
+      // not wait on a now-meaningless answer.
+      if (ctx.slice && this.pendingQuestion?.kind === 'recovery') {
+        const pq = this.pendingQuestion;
+        this.pendingQuestion = null;
+        pq.reject(abortError());
+      }
+      throw err;
     } finally {
       this._execStep(ctx, endMark);
       // A PAUSED slice stays 'running': the resume re-runs the whole composite,
@@ -512,9 +533,9 @@ export class GraphOrchestrator extends RunHarness {
   }
 
   /** A throw before the execution had a ledger row (the composite shell modes, or
-   *  _execCtx's allocation): the SAME three outcomes as _execute's catch, in the
-   *  same order and with the same conditions, just without a row to mark.
-   *  args.executionId / args.ordinal exist on every composite call (argsFor,
+   *  _execCtx's allocation): the SAME outcomes as _execute's catch, in the same
+   *  order and with the same conditions — the FLOW site — just without a row to
+   *  mark. args.executionId / args.ordinal exist on every composite call (argsFor,
    *  scheduler.mjs:333-342, is spread into each of them). */
   _settleUnstarted(nc, node, args, err) {
     if (isPause(err) || (this.pauseRequested && (isAbort(err) || this.pauseAbort.signal.aborted))) return { paused: true };
@@ -524,8 +545,15 @@ export class GraphOrchestrator extends RunHarness {
       this._logStepFailure(nc, ctx, err);
       throw err;
     }
-    this._pauseForError(nc, ctx, err);
-    return { paused: true };
+    const verdict = isTerminal(err) ? { outcome: 'error' }
+      : resolveFailure({ site: 'flow', cls: classifyError(err), auto: this.auto });
+    if (verdict.outcome === 'pause') {
+      this._pauseFor(verdict.reason, err, { nc, ctx });
+      return { paused: true };
+    }
+    this._graphError ||= markTerminal(err);
+    this._logStepFailure(nc, ctx, err);
+    throw err;
   }
 
   /** The five flow cards through P3's dispatcher. Engine-owned: instant, $0, no
@@ -745,11 +773,12 @@ export class GraphOrchestrator extends RunHarness {
     this._persist().catch(() => {});
   }
 
-  /** The recoverable-error retry loop around ONE execution. Every pause path throws
-   *  pauseErr() with pauseRequested already set (_pauseForLimit / _pauseForError call
-   *  pause()), so _execute's catch reproduces the 'paused' mark. Nothing here ends
-   *  the run: a non-recoverable error, and a recovery the user or auto mode gave up
-   *  on, PAUSE it (policy: errors pause; only the user's stop stops). */
+  /** The retry loop around ONE execution — the NODE site of failure-policy.mjs.
+   *  _recover() resolves the verdict (running the backoff or the recovery prompt
+   *  on the way); this loop enacts it. A pause throws pauseErr() with
+   *  pauseRequested already set (_pauseFor calls pause()), so _execute's catch
+   *  reproduces the 'paused' mark; a terminal error is stamped so _execute's
+   *  catch enacts it instead of re-deciding at the flow site. */
   async _runNodeAttempts(nc, ctx) {
     for (let attempt = 1; ; attempt++) {
       try {
@@ -759,17 +788,11 @@ export class GraphOrchestrator extends RunHarness {
         if (isAbort(err) || isPause(err)) throw err;
         if (this.abort.signal.aborted || this.state.status === 'stopped') throw err;  // a stop is in flight: _execute marks it 'stopped'
         const cls = classifyError(err);
-        if (!cls) { this._pauseForError(nc, ctx, err); throw pauseErr(); }            // not recoverable -> pause
-        if (cls === 'usage_limit') { this._pauseForLimit(nc, ctx, err); throw pauseErr(); }
-        // Auto mode: auth/quota are user-fixable but never time-fixable — a
-        // 1s/2s/4s backoff cannot re-login or top up a balance — so skip the
-        // futile retries and pause on the first hit. Interactive runs keep the
-        // recovery prompt: the user may fix the cause and hit Retry in place.
-        if (this.auto && (cls === 'auth' || cls === 'quota')) { this._pauseForError(nc, ctx, err); throw pauseErr(); }
-        const decision = await this._recover({ node: { key: nc.key || ctx.nodeId }, cls, err, attempt });
-        if (this.pauseRequested) throw pauseErr();                                    // a pause landed during backoff/prompt: its reason stands
-        if (decision === 'pause') { this._pauseForError(nc, ctx, err); throw pauseErr(); }  // user/auto gave up -> pause
-        this._execStep(ctx, 'start');           // back to running for the retry
+        const verdict = await this._recover({ node: { key: nc.key || ctx.nodeId }, cls, err, attempt });
+        if (this.pauseRequested) throw pauseErr();          // a pause landed during backoff/prompt: its reason stands
+        if (verdict.outcome === 'retry') { this._execStep(ctx, 'start'); continue; }   // back to running for the retry
+        if (verdict.outcome === 'pause') { this._pauseFor(verdict.reason, err, { nc, ctx }); throw pauseErr(); }
+        throw markTerminal(err);                           // terminal: _execute's catch ends the run
       }
     }
   }
@@ -801,43 +824,6 @@ export class GraphOrchestrator extends RunHarness {
       nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal,
       ...(err?.stream ? { stream: err.stream } : {}),
     });
-  }
-
-  /** A session/usage cap that only clears after a multi-hour reset: pause the run
-   *  (v1's _pauseForLimit, orchestrator.mjs:756, re-keyed by execution). */
-  _pauseForLimit(nc, ctx, err) {
-    const label = nc.key || ctx.nodeId;
-    const reason = firstLine(err?.message || String(err));
-    this._setPauseReason(reason, null);
-    this._log(label, 'warn', `session/usage limit reached — pausing for manual resume: ${reason}`,
-      { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal });
-    appendAudit(this.pipeline.dir, `Pipeline **paused**: session/usage limit on ${label} — ${reason}. Resume after the reset.`).catch(() => {});
-    this.pause();
-  }
-
-  /**
-   * POLICY (errors pause; stop is user-only): a failure that used to end the run as
-   * 'error' — a non-recoverable runner error, a recovery the user or auto mode gave
-   * up on, a flow-card / questions-round / _afterExecution throw — pauses it instead,
-   * mirroring _pauseForLimit. Order matters: the ONE error-level log line FIRST
-   * (_logStepFailure skips the pause sentinel the caller throws next), then the
-   * machine-readable reason 'error' + the clipped error text, the audit line, and
-   * pause() — which sets pauseRequested BEFORE anything reaches the scheduler, so
-   * onSnapshot stays frozen at the last clean point, this row settles 'paused'
-   * (non-terminal) and reattach() re-invokes it on resume with its session.
-   * A pause already unwinding (the user's, or a sibling's) keeps its own reason; a
-   * stop in flight is never re-labelled (pause() would be a no-op on 'stopped' and
-   * the scheduler must keep seeing the stop, not a pause).
-   */
-  _pauseForError(nc, ctx, err) {
-    const label = nc.key || ctx.nodeId;
-    this._logStepFailure(nc, ctx, err);
-    if (this.pauseRequested || this.state.status === 'stopped' || this.abort.signal.aborted) return;
-    this._setPauseReason('error', errorDetail(err));
-    appendAudit(this.pipeline.dir,
-      `Pipeline **paused**: execution failed on ${label} — ${firstLine(err?.message || String(err)) || 'unknown error'}. Fix the cause, then resume.`,
-    ).catch(() => {});
-    this.pause();
   }
 
   /**

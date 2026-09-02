@@ -325,7 +325,8 @@ test('auto: session-limit pauses the run (not error) and is resumable', async ()
   });
   const res = await orch.run();
   assert.equal(res.status, 'paused');
-  assert.match(res.reason || '', /session limit/i);
+  assert.equal(res.reason, 'usage_limit', 'a machine-readable reason code');
+  assert.match(res.detail || '', /session limit/i, 'the cause rides the detail');
   assert.equal(calls, 1, 'a usage cap is NOT retried — it pauses on the first hit');
 });
 
@@ -360,8 +361,8 @@ test('shared gate: two concurrent recoveries of one class open ONE prompt', asyn
     orch._recover({ node, cls: 'auth', err: AUTH_ERR(), attempt: 1 }),
     orch._recover({ node, cls: 'auth', err: AUTH_ERR(), attempt: 1 }),
   ]);
-  assert.equal(a, 'retry');
-  assert.equal(b, 'retry');
+  assert.equal(a.outcome, 'retry');
+  assert.equal(b.outcome, 'retry');
   assert.equal(asks, 1, 'one shared prompt for both same-class failures');
 });
 
@@ -389,8 +390,8 @@ test('serialized gate: two DISTINCT classes never open two prompts at once', asy
     orch._recover({ node: { key: 'n1', nodeId: 'a' }, cls: 'auth', err: AUTH_ERR(), attempt: 1 }),
     orch._recover({ node: { key: 'n2', nodeId: 'b' }, cls: 'network', err: NET_ERR(), attempt: 1 }),
   ]);
-  assert.equal(a, 'retry');
-  assert.equal(b, 'retry');
+  assert.equal(a.outcome, 'retry');
+  assert.equal(b.outcome, 'retry');
   assert.equal(asks, 2, 'one prompt per distinct class');
   assert.equal(maxOpen, 1, 'prompts are serialized — only one open at a time');
 });

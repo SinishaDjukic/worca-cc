@@ -14,6 +14,7 @@ import { readPluginConfig } from '../plugin-config.mjs';
 import { parseIdList } from './allowlist.mjs';
 import { createRateLimiter } from './rate-limiter.mjs';
 import { renderDone, renderError, renderQuestion } from './renderers.mjs';
+import { pauseConsequences } from '../failure-policy.mjs';
 
 /**
  * @param {{channelHost: object, getPrefs: () => {notify:object, channels:object},
@@ -89,9 +90,10 @@ export function createNotifier({ channelHost, getPrefs, chatContext, logger = ()
         const status = payload?.status || 'done';
         if (status === 'error') return; // the richer 'error' event already went out
         const prefs = getPrefsSafe().notify;
-        // An error-pause IS the failure notification (no 'error' event
-        // precedes it): notify.error gates it, not notify.paused.
-        const gate = status === 'paused' ? (payload?.reason === 'error' ? prefs.error : prefs.paused) : prefs.done;
+        // Which preference gates a pause follows its reason (failure-policy.mjs):
+        // an error-pause IS the failure notification (no 'error' event precedes
+        // it), so notify.error gates it, not notify.paused.
+        const gate = status === 'paused' ? prefs[pauseConsequences(payload?.reason).notifyPref] : prefs.done;
         if (gate === false) return;
         deliver(renderDone(meta(), payload || {}));
       }));

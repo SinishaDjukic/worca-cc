@@ -9,6 +9,8 @@
 // ordinals and embeds the exact reply commands (/approve, /retry, /answer n…)
 // using the run-id wildcard-suffix convention the command router resolves.
 
+import { pauseConsequences, describePauseReason, giveUpOption } from '../failure-policy.mjs';
+
 const md = (value) => ({ kind: 'markdown', value });
 
 export function fmtMs(ms) {
@@ -41,11 +43,6 @@ function head(icon, meta) {
   return parts;
 }
 
-const PAUSE_REASONS = {
-  cost_pipeline: 'pipeline cost limit reached',
-  cost_total: 'total cost limit reached',
-  error: 'a step failed',
-};
 
 /**
  * done event: status done|stopped|paused (+reason for limit pauses).
@@ -54,15 +51,16 @@ const PAUSE_REASONS = {
 export function renderDone(meta, payload = {}) {
   const status = payload.status || 'done';
   if (status === 'paused') {
-    // An error-pause IS the failure notification (no 'error' event precedes
-    // it), so it takes the failure icon/severity and carries the message.
-    const isError = payload.reason === 'error';
-    const reason = payload.reason ? (PAUSE_REASONS[payload.reason] || payload.reason) : null;
+    // The icon, severity and wording follow the pause's reason (failure-policy.mjs):
+    // an error-pause IS the failure notification (no 'error' event precedes it).
+    const { severity } = pauseConsequences(payload.reason);
+    const isError = severity === 'error';
+    const reason = payload.reason ? (describePauseReason(payload.reason) || payload.reason) : null;
     const parts = head(isError ? '\u{1F534}' : '⏸', meta);
     parts.push(`   **Status:** paused${reason ? ` — ${reason}` : ''}`);
-    if (isError && payload.detail) {
+    if (payload.detail && payload.reason) {
       const d = String(payload.detail);
-      parts.push(`   **Error:** ${d.length > 300 ? `${d.slice(0, 300)}…` : d}`);
+      parts.push(`   **${isError ? 'Error' : 'Cause'}:** ${d.length > 300 ? `${d.slice(0, 300)}…` : d}`);
     }
     parts.push(`   Resume from the worca-cc UI, or reply: /resume ${runRef(meta.runId)}`);
     return mdMsg(parts.join('\n'), isError ? 'error' : 'warning');
@@ -117,7 +115,7 @@ export function renderQuestion(meta, payload = {}) {
     }
     parts.push(kind === 'gate'
       ? `   Reply: /approve ${ref} to continue · /retry ${ref} for another cycle`
-      : `   Reply: /approve ${ref} to retry · /abort ${ref} to pause the run`);
+      : `   Reply: /approve ${ref} to retry · /abort ${ref} to ${giveUpOption(payload.recovery?.options).id === 'abort' ? 'abort the run' : 'pause the run'}`);
     return mdMsg(parts.join('\n'), 'warning');
   }
 

@@ -14,6 +14,7 @@ import { parseCommand } from './parser.mjs';
 import { BOOKEND_EXECUTION_IDS } from '../../shared/graph/constants.mjs';
 import { createAllowlistGuard, parseIdList } from './allowlist.mjs';
 import { runRef, fmtUsd, fmtMs } from './renderers.mjs';
+import { giveUpOption } from '../failure-policy.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
 const reply = (text, severity = 'info') => ({ title: null, body: [md(text)], severity });
@@ -323,14 +324,16 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
       if (verb === 'abort') return reply(`Gates have no abort — \`/approve ${ref}\`, \`/retry ${ref}\`, or \`/stop ${ref}\`.`, 'warning');
       payload = { decision: verb === 'approve' ? 'continue' : 'another' };
     } else if (pq.kind === 'recovery') {
-      payload = { decision: verb === 'abort' ? 'pause' : 'retry' };
+      // /abort is the give-up choice; what it does (pause or abort) is the row's
+      // option (failure-policy.mjs) — the option id is the wire decision.
+      payload = { decision: verb === 'abort' ? giveUpOption(pq.recovery?.options).id : 'retry' };
     } else {
       return reply(`\`${ref}\` is waiting on ${pq.kind} — use \`/answer ${ref} <n>\`.`, 'warning');
     }
     await actions.answer(t.run.runId, pq.id, payload);
     const what = pq.kind === 'gate'
       ? (payload.decision === 'continue' ? 'approved — continuing' : 'sent back for another cycle')
-      : (payload.decision === 'retry' ? 'retrying' : 'pausing the run');
+      : (payload.decision === 'retry' ? 'retrying' : payload.decision === 'abort' ? 'aborting the run' : 'pausing the run');
     return reply(`✅ \`${ref}\` ${what}.`, 'success');
   }
 

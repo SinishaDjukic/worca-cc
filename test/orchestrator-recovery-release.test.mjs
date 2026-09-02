@@ -8,7 +8,7 @@
 // answer()/pause()/stop() (no AbortSignal reaches it), and the phase-mate's genuine
 // failure now PAUSES the run — so pause() itself rejects the parked prompt with the
 // pause sentinel (run-harness.mjs#pause). Flow: p1t1's kaboom -> _runNodeAttempts
-// (classifyError -> null) -> _pauseForError -> pause() rejects p1t2's parked _ask
+// (classifyError -> null -> the node site's pause verdict) -> _pauseFor -> pause() rejects p1t2's parked _ask
 // with PauseError -> that rejection escapes _recover and propagates STRAIGHT out of
 // _runNodeAttempts (the `await this._recover(…)` sits INSIDE its catch, so there is
 // no re-classification) -> p1t2's _execute catch takes the pause branch. Both slices
@@ -134,7 +134,10 @@ test('a slice parked on a recovery prompt is released when a phase-mate fails', 
   const recovery = questions.filter((q) => q.kind === 'recovery');
   assert.equal(recovery.length, 1, `exactly one recovery prompt opened: ${JSON.stringify(questions.map((q) => q.kind))}`);
   assert.match(recovery[0].id, /^recovery-auth-/, 'the prompt is keyed by its error class');
-  assert.deepEqual(recovery[0].recovery,
+  // The prompt carries the failure policy's row options next to the cause.
+  assert.deepEqual(recovery[0].recovery.options.map((o) => o.id), ['retry', 'pause']);
+  const { options: _opts, ...recoveryCause } = recovery[0].recovery;
+  assert.deepEqual(recoveryCause,
     { cls: 'auth', message: 'claude exited with code 1: invalid authentication' });
 
   // 2. pause() released the parked prompt with the pause sentinel — nothing waits on a human.

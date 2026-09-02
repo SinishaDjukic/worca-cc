@@ -4078,11 +4078,16 @@ function renderRecoveryBody(r, panel, pq) {
 
   const foot = document.createElement('div');
   foot.className = 'qpanel-foot gate-actions';
+  // The give-up option comes from the failure policy's row (options ride the
+  // prompt): 'pause' parks the run, 'abort' ends it. Older payloads carry none.
+  const giveUp = (Array.isArray(rec.options) && rec.options.find((o) => o && o.id !== 'retry')) || { id: 'pause' };
   const pause = document.createElement('button');
   pause.type = 'button';
-  pause.className = 'btn recovery-pause';
-  pause.textContent = 'Pause run';
-  pause.title = 'Park the run here with this error as the reason. Nothing is discarded — Resume retries the step later.';
+  pause.className = giveUp.id === 'abort' ? 'btn recovery-abort' : 'btn recovery-pause';
+  pause.textContent = giveUp.id === 'abort' ? 'Abort run' : 'Pause run';
+  pause.title = giveUp.id === 'abort'
+    ? 'End the run here with this error. The worktree is torn down.'
+    : 'Park the run here with this error as the reason. Nothing is discarded — Resume retries the step later.';
   const retry = document.createElement('button');
   retry.type = 'button';
   retry.className = 'btn btn-primary recovery-retry';
@@ -9443,7 +9448,7 @@ if (runListEl) {
 
     // qpanel actions. Resolve the run per-card via the enclosing .run-card so
     // delegation works for any dynamically-built card.
-    const qbtn = e.target.closest && e.target.closest('.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause');
+    const qbtn = e.target.closest && e.target.closest('.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort');
     if (qbtn) {
       const card = qbtn.closest('.run-card');
       const runId = card && card.dataset.runId;
@@ -9453,6 +9458,7 @@ if (runListEl) {
       else if (qbtn.classList.contains('gate-another')) postAnswer(r, { decision: 'another' });
       else if (qbtn.classList.contains('recovery-retry')) postAnswer(r, { decision: 'retry' });
       else if (qbtn.classList.contains('recovery-pause')) postAnswer(r, { decision: 'pause' });
+      else if (qbtn.classList.contains('recovery-abort')) postAnswer(r, { decision: 'abort' });
       else submitAnswer(r, qbtn.closest('.qpanel'));
     }
   });
@@ -13540,8 +13546,11 @@ function rdStateCopy(r, stepName) {
     const why = r.pauseDetail ? `: ${r.pauseDetail}` : '';
     return `Paused after an error${why}. Fix the cause, then Resume — the worktree and progress are kept.`;
   }
+  if (r.pauseReason === 'usage_limit') {
+    return `Paused — session/usage limit reached${r.pauseDetail ? ` (${r.pauseDetail})` : ''}. Resume after the reset.`;
+  }
   if (r.pauseReason && (r.status === 'paused' || r.status === 'pausing' || r.status === 'interrupted')) {
-    // Any other reason is the orchestrator's own text (a session/usage-limit line).
+    // A legacy reason is the orchestrator's own text (a pre-policy session/usage-limit line).
     return `Paused — ${r.pauseReason}. Resume once it clears.`;
   }
   if (r.status === 'paused' || r.status === 'pausing' || r.status === 'interrupted') {
@@ -14334,6 +14343,7 @@ function statusPill(r) {
     if (r.pauseReason === 'cost_total') return { family: 'amber', text: 'Paused · total budget' };
     // An error pause is parked and resumable (never dead), so it stays in the amber family.
     if (r.pauseReason === 'error') return { family: 'amber', text: 'Paused · error' };
+    if (r.pauseReason === 'usage_limit') return { family: 'amber', text: 'Paused · usage limit' };
     return { family: 'amber', text: 'Paused' };
   }
   // Same family as `paused`: an interrupted run is parked and resumable, and
@@ -15397,12 +15407,13 @@ el.runDetail?.addEventListener('click', (e) => {
   if (override) { confirmCostOverride(r.runId, override); return; }   // async, fire-and-forget
   if (e.target.closest && e.target.closest('.cb-settings')) { location.hash = 'settings'; return; }
   const qbtn = e.target.closest && e.target.closest(
-    '.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause');
+    '.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort');
   if (!qbtn) return;
   if (qbtn.classList.contains('gate-continue')) postAnswer(r, { decision: 'continue' });
   else if (qbtn.classList.contains('gate-another')) postAnswer(r, { decision: 'another' });
   else if (qbtn.classList.contains('recovery-retry')) postAnswer(r, { decision: 'retry' });
   else if (qbtn.classList.contains('recovery-pause')) postAnswer(r, { decision: 'pause' });
+  else if (qbtn.classList.contains('recovery-abort')) postAnswer(r, { decision: 'abort' });
   else submitAnswer(r, qbtn.closest('.qpanel'));
 });
 

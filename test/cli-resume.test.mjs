@@ -286,10 +286,12 @@ test('resume an unregistered cwd project -> resolves past "not onboarded"', asyn
       resumePoint: graphResumePoint({ pipelineDir: projDir }),
     });
     const r = await run(['resume', id, '--mock', '--yes'], { cwd: projDir });
-    assert.equal(r.code, 1, r.stderr);
+    // The re-attach failure no longer emits an `error` event: it pauses the run
+    // (the shell site of failure-policy.mjs), so the cause prints with the pause
+    // block on stdout. Under --yes a pause exits 3 (pauseExitCode): the run parked
+    // itself with nobody attached to resume it — never 0, and distinct from 1.
+    assert.equal(r.code, 3, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
     assert.doesNotMatch(r.stderr, /not onboarded/i, `stderr: ${r.stderr}`);
-    // The re-attach failure no longer emits an `error` event: it pauses the run,
-    // so the cause prints with the pause block on stdout (exit still 1, D10).
     assert.match(r.stdout, /worktree missing/i, `stderr: ${r.stderr}\nstdout: ${r.stdout}`);
   } finally {
     await rm(projDir, { recursive: true, force: true });
