@@ -2,7 +2,7 @@
 // home; ids are minted by the store and read back from the returned objects.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -286,6 +286,11 @@ test('binary attachments (#398): raw bytes under <id>.<ext>, kind/mime on the ro
   assert.equal(threadAttachmentBytes(t.id), png.length + 3, 'the thread byte total spans kinds');
   assert.throws(() => addAttachment(t.id, m.id, { name: 'x.png', kind: 'image', mime: 'image/png' }),
     /Buffer/, 'a non-text attachment without a Buffer body is refused');
+  // a row that outlived its body must not hand out a dangling pointer
+  unlinkSync(file);
+  assert.equal(attachmentPath(t.id, a.id), null, 'no path for a body that is gone');
+  assert.equal(readAttachmentRaw(t.id, a.id), null);
+  assert.ok(getAttachment(t.id, a.id), 'the row itself is still there');
 });
 
 test('run links: insert, update, list', () => {

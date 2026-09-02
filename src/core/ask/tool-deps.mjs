@@ -57,6 +57,9 @@ export function defaultToolDeps({ threadId }) {
       }
       // Binary kinds (#398): metadata plus the on-disk path — the model views the
       // body with its own Read tool; sliceBytes over raw bytes would be garbage.
+      // attachmentPath is null when the body is gone (DB-only restore, an external
+      // sweep of ask/<t>/att): the same not-found the text branch reports, never a
+      // path whose Read then fails with a raw ENOENT the model may retry.
       const path = attachmentPath(threadId, id);
       return path ? { name: row.name, kind: row.kind, mime: row.mime, bytes: row.bytes, path } : null;
     },

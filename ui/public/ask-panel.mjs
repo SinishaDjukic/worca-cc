@@ -406,8 +406,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         setComposerMsg(msg);
         return;
       }
-      const { userMessageId } = await res.json();
-      st.model.noteLocalUserMessage({ id: userMessageId, text, attachments: st.pendingFiles.map((f) => ({ name: f.name, bytes: f.bytes, attKind: f.attKind, mime: f.mime })) });
+      const { userMessageId, attachments: stored } = await res.json();
+      // Prefer the server's rows: they carry the store-minted ids that key the
+      // image thumbnail (#398) and the thread's attachment ledger. The pending
+      // files are the fallback for a server that predates the field.
+      const echoAtts = Array.isArray(stored)
+        ? stored.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind ?? 'text', mime: a.mime ?? null }))
+        : st.pendingFiles.map((f) => ({ name: f.name, bytes: f.bytes, attKind: f.attKind, mime: f.mime }));
+      st.model.noteLocalUserMessage({ id: userMessageId, text, attachments: echoAtts });
       if (!st.model.thread().title) {
         // The deterministic first title has NO frame — record it in the MODEL
         // as well as the header: model.load() left `title` dirty and the very
@@ -1073,7 +1079,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildAttachmentPill(b) {
     // #398: an image attachment renders as a thumbnail served by the download
     // route (sniff-verified mime, inline disposition); everything else keeps the
-    // name pill. A local echo has no row id yet — it pills until the snapshot.
+    // name pill. The id comes from the 202 body or the ask-message broadcast; an
+    // echo without one (older server) pills until the snapshot.
     if (b.attKind === 'image' && b.id && st.threadId) {
       const link = make('a', 'ask-attachment-thumb-link');
       link.href = `/api/ask/threads/${st.threadId}/attachments/${b.id}`;

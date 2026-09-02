@@ -50,7 +50,7 @@ import {
   listMessages as askListMessages, setMessageBlocks as askSetMessageBlocks,
   findCard as askFindCard, updateCardBlock as askUpdateCardBlock,
   addAttachment as askAddAttachment, listAttachments as askListAttachments,
-  readAttachmentRaw as askReadAttachmentRaw, threadAttachmentBytes as askThreadAttachmentBytes,
+  getAttachment as askGetAttachment, attachmentPath as askAttachmentPath, threadAttachmentBytes as askThreadAttachmentBytes,
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
   findRunLinksByPipeline as askFindRunLinksByPipeline,
   setThreadTitle as askSetThreadTitle, finishMessage as askFinishMessage,
@@ -743,12 +743,13 @@ app.use((req, res, next) => {
 
 // Ask attachments ride base64 inside the message JSON (§7.3), and a binary
 // attachment (#398) may legitimately be 5 MB — several of them blow the app-wide
-// 8mb cap below. Mounted BEFORE the global parser: a body parsed here is skipped
-// there, so only the ask thread routes get the larger window (64mb covers
+// 8mb cap below. Registered BEFORE the global parser on the ONE route that
+// carries uploads (a body parsed here is skipped there): every other ask route
+// reads a string field or nothing and keeps the 8mb window. 64mb covers
 // maxFiles × maxBytesPerBinaryFile at base64's 4/3 inflation, so every
 // over-budget upload still reaches the route's OWN clear 400/413, not a raw
-// parser error).
-app.use('/api/ask/threads', express.json({ limit: '64mb' }));
+// parser error.
+app.post('/api/ask/threads/:id/messages', express.json({ limit: '64mb' }));
 app.use(express.json({ limit: '8mb' }));
 
 if (HLJS_ASSETS) {
@@ -3722,19 +3723,34 @@ app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
   if (!attId) return;
   try {
     if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
-    const att = askReadAttachmentRaw(id, attId);
-    if (!att) return res.status(404).json({ error: 'attachment not found' });
-    res.set('X-Content-Type-Options', 'nosniff');
-    res.set('Content-Disposition', 'inline');
-    if (att.kind === 'text') {
-      // pre-#398 behavior byte-for-byte: text bodies serve as utf-8 text/plain
-      res.type('text/plain; charset=utf-8').send(att.buffer.toString('utf8'));
-    } else {
-      // Only sniff-verified allowlisted mimes are ever stored (never scriptable
-      // markup like SVG/HTML), so serving the real mime inline is safe — and it
-      // is what lets the transcript render <img> thumbnails (#398).
-      res.type(att.mime || 'application/octet-stream').send(att.buffer);
-    }
+    const att = askGetAttachment(id, attId);
+    const file = att ? askAttachmentPath(id, attId) : null;
+    if (!file) return res.status(404).json({ error: 'attachment not found' });
+    // Text bodies serve as utf-8 text/plain (pre-#398, byte-for-byte: the body
+    // was UTF-8-validated at upload and stored verbatim). Only sniff-verified
+    // allowlisted mimes are ever stored (never scriptable markup like SVG/HTML),
+    // so serving the real mime inline is safe — and it is what lets the
+    // transcript render <img> thumbnails (#398).
+    const type = att.kind === 'text' ? 'text/plain; charset=utf-8' : (att.mime || 'application/octet-stream');
+    // Streamed, not readFileSync + send: a body is immutable under its
+    // store-minted id, so a stat-based ETag/Last-Modified plus a year-long
+    // private immutable cache replaces a 5 MB sync read and sha1 per request —
+    // the transcript re-creates every <img> on each structural render.
+    res.sendFile(path.basename(file), {
+      root: path.dirname(file),
+      dotfiles: 'deny',
+      cacheControl: false,
+      headers: {
+        'Content-Type': type,
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Disposition': 'inline',
+        'Cache-Control': 'private, max-age=31536000, immutable',
+      },
+    }, (err) => {
+      if (!err || res.headersSent) return;
+      if (err.code === 'ENOENT' || err.status === 404) return res.status(404).json({ error: 'attachment not found' });
+      res.status(500).json({ error: err.message || String(err) });
+    });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -3959,6 +3975,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
 
     let asstMsg = null;
     let turn;
+    let echoAttachments = [];
     try {
       // Writes. Store the LAST context + model/effort on the thread (§6.5 tail, D8).
       askUpdateThread(id, { context: cv.context, model: mv.model, effort: mv.effort });
@@ -3975,6 +3992,12 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       const userMsg = askAppendMessage(id, { role: 'user', text });
       job.userMessageId = userMsg.id;
       const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, kind: f.kind, mime: f.mime, text: f.text, data: f.data }));
+      // The decoded binary bodies are on disk now. `files` is captured by this
+      // scope's closures (settleJob, the turn listeners, onOutOfTurn) for the whole
+      // turn plus jobGraceMs, so up to 25 MB of dead Buffers would otherwise stay
+      // reachable per running thread.
+      for (const f of files) f.data = null;
+      echoAttachments = attRows.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime }));
       if (attRows.length) {
         // `kind` is the BLOCK kind, so the attachment's own kind rides as attKind
         // (the UI keys image thumbnails off it, #398).
@@ -4045,7 +4068,10 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         console.error(`[worca-ui] ask turn crashed: ${err && err.message ? err.message : err}`);
         settleJob('error');
       });
-    res.status(202).json({ userMessageId: job.userMessageId, assistantMessageId: job.messageId });
+    // `attachments` carries the store-minted ids so the sender's own echo can key
+    // image thumbnails and the thread budget off them (the ask-message broadcast
+    // may have raced ahead of this response, or been missed on a brand-new thread).
+    res.status(202).json({ userMessageId: job.userMessageId, assistantMessageId: job.messageId, attachments: echoAttachments });
   } catch (err) {
     // Only pre-reservation throws land here (`job` is block-scoped to the outer
     // try and every post-reservation failure returned from the inner catch), so

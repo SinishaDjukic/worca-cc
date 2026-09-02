@@ -6,6 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import http from 'node:http';
 import { WebSocket } from 'ws';
 
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -46,6 +47,12 @@ after(async () => {
 });
 
 const post = (p, body) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(body) });
+// A conditional GET over node:http: global fetch stamps `cache-control: no-cache`
+// onto any request that carries If-None-Match (Fetch spec: a conditional request
+// gets cache mode "no-store"), and `fresh` then answers 200 by design.
+const condGet = (p, headers) => new Promise((res, rej) => {
+  http.get(`${base}${p}`, { headers }, (r) => { r.resume(); r.on('end', () => res(r.statusCode)); }).on('error', rej);
+});
 const newThread = async () => (await (await post('/api/ask/threads', {})).json()).thread;
 const snapshot = async (id) => (await fetch(`${base}/api/ask/threads/${id}`)).json();
 
@@ -261,9 +268,16 @@ test('binary attachments (#398): png + pdf stored with kind/mime, served with th
     ],
   });
   assert.equal(ok.status, 202);
+  // the 202 carries the store-minted rows: the sender's echo keys its thumbnail
+  // and thread budget off them without waiting for a broadcast it may have missed
+  const okBody = await ok.json();
+  assert.deepEqual(okBody.attachments.map((a) => [a.name, a.kind, a.mime, a.bytes]),
+    [['shot.png', 'image', 'image/png', png.length], ['spec.pdf', 'binary', 'application/pdf', pdf.length]]);
+  for (const a of okBody.attachments) assert.match(a.id, /^att_[0-9a-f]{8}$/);
   await waitFor(() => framesFor(msgs, t.id).some((f) => f.type === 'ask-done'));
   const snap = await snapshot(t.id);
   const rows = Object.fromEntries(snap.attachments.map((a) => [a.name, a]));
+  assert.equal(rows['shot.png'].id, okBody.attachments[0].id);
   assert.equal(rows['shot.png'].kind, 'image');
   assert.equal(rows['shot.png'].mime, 'image/png');
   assert.equal(rows['shot.png'].bytes, png.length);
@@ -282,8 +296,17 @@ test('binary attachments (#398): png + pdf stored with kind/mime, served with th
   assert.match(dl.headers.get('content-type'), /^image\/png/);
   assert.equal(dl.headers.get('x-content-type-options'), 'nosniff');
   assert.deepEqual(Buffer.from(await dl.arrayBuffer()), png, 'bytes round-trip unmangled');
+  assert.equal(dl.headers.get('content-disposition'), 'inline');
+  // a body is immutable under its id: cached for a year, revalidated by a stat
+  // ETag (never a per-request sha1 of the whole file)
+  assert.equal(dl.headers.get('cache-control'), 'private, max-age=31536000, immutable');
+  assert.ok(dl.headers.get('etag'), 'an ETag is served');
+  assert.ok(dl.headers.get('last-modified'), 'Last-Modified is served');
+  assert.equal(await condGet(`/api/ask/threads/${t.id}/attachments/${rows['shot.png'].id}`, { 'If-None-Match': dl.headers.get('etag') }), 304, 'a matching ETag short-circuits the body');
+  assert.equal(await condGet(`/api/ask/threads/${t.id}/attachments/${rows['shot.png'].id}`, { 'If-Modified-Since': dl.headers.get('last-modified') }), 304, 'so does Last-Modified');
   const dlPdf = await fetch(`${base}/api/ask/threads/${t.id}/attachments/${rows['spec.pdf'].id}`);
   assert.match(dlPdf.headers.get('content-type'), /^application\/pdf/);
+  assert.equal((await fetch(`${base}/api/ask/threads/${t.id}/attachments/att_ffffffff`)).status, 404);
 
   // refusals, all before any write (the all-or-nothing shape of the text test)
   const t2 = await newThread();
@@ -293,6 +316,19 @@ test('binary attachments (#398): png + pdf stored with kind/mime, served with th
   assert.match((await spoof.json()).error, /does not match its extension/);
   assert.equal((await send([{ name: 'big.png', dataBase64: Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64') }])).status, 413);
   assert.equal((await send([{ name: 'vector.svg', dataBase64: Buffer.from('<svg/>').toString('base64') }])).status, 400, 'svg stays off the allowlist');
+  // The 64mb JSON window belongs to THIS route only: a ~13 MB body (two 5 MB
+  // images, base64) reaches the route's own per-file 413 …
+  const twoBig = await send([
+    { name: 'ok.png', dataBase64: Buffer.concat([png, Buffer.alloc(5 * 1024 * 1024 - png.length)]).toString('base64') },
+    { name: 'over.png', dataBase64: Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64') },
+  ]);
+  assert.equal(twoBig.status, 413);
+  assert.match((await twoBig.json()).error, /attachment over/, 'the route, not the parser, answered');
+  // … while the sibling routes keep the app-wide 8mb parser (a 9 MB PATCH dies
+  // in body-parser, never reaching the handler's string-field read)
+  const fat = await fetch(`${base}/api/ask/threads/${t2.id}`, { method: 'PATCH', headers: JSONH, body: JSON.stringify({ title: 'x'.repeat(9 * 1024 * 1024) }) });
+  assert.equal(fat.status, 413);
+  assert.equal((await snapshot(t2.id)).thread.title, null, 'the fat PATCH changed nothing');
   const after2 = await snapshot(t2.id);
   assert.deepEqual(after2.messages, [], 'no message rows written');
   assert.deepEqual(after2.attachments, [], 'no attachment rows written');

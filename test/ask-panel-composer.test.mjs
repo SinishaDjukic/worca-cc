@@ -204,6 +204,32 @@ test('ask-panel-composer: the user echo replaces the optimistic row (no duplicat
   assert.equal(ctx.doc.querySelectorAll('.ask-msg-user').length, 1, 'upsert by id, not append');
 });
 
+// #398: the sender's own tab must show the thumbnail right away — the 202 body
+// carries the store-minted id, and no later frame re-sends the row.
+test('ask-panel-composer (#398): the 202 attachment rows give the echo its ids — thumbnail now, and the thread budget counts them', async () => {
+  const calls = {
+    messages: () => ({ ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000001', assistantMessageId: MID,
+      attachments: [{ id: 'att_00000001', name: 'shot.png', bytes: 24 * 1024 * 1024, kind: 'image', mime: 'image/png' }] }) }),
+  };
+  const ctx = makePanel({ fetchHandler: apiHandler(calls) });
+  ctx.panel.open();
+  injectFiles(ctx, [new ctx.window.File(['not really a png'], 'shot.png', { type: 'image/png' })]);
+  await ctx.tick(); await ctx.tick();
+  ctx.doc.querySelector('textarea.ask-input').value = 'look at this';
+  ctx.doc.querySelector('[data-ask-send]').click();
+  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  ctx.flush();
+  const img = ctx.doc.querySelector('.ask-msg-user img.ask-attachment-thumb');
+  assert.ok(img, 'the echo renders the thumbnail without waiting for a broadcast or reload');
+  assert.ok(img.src.endsWith(`/api/ask/threads/${TID}/attachments/att_00000001`));
+  // the ledger learned the 24 MB the server reported: a further 2 MB is refused
+  // in the composer, before any base64 upload is paid
+  injectFiles(ctx, [new ctx.window.File([new Uint8Array(2 * 1024 * 1024)], 'more.png', { type: 'image/png' })]);
+  await ctx.tick(); await ctx.tick();
+  assert.equal(ctx.doc.querySelector('.ask-composer-msg').textContent, 'attachment budget for this thread exceeded');
+  assert.equal(ctx.doc.querySelector('.ask-chip'), null, 'no chip for the refused file');
+});
+
 test('ask-panel-composer: the meter shows context fill — 0 ctx on a fresh panel, the live ctx while streaming, the thread ctx after done', async () => {
   const ctx = makePanel({ fetchHandler: apiHandler() });
   ctx.panel.open();

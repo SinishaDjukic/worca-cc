@@ -4,7 +4,7 @@
 // read-only source scan (§6.1).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, unlinkSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -692,6 +692,10 @@ test('temp home: a seeded project run and a seeded workspace run round-trip thro
   assert.equal(binRead.totalBytes, png.length);
   assert.ok(binRead.path.endsWith(`${bin.id}.png`), 'path points at the stored body');
   assert.ok(!('text' in binRead));
+  // the row outliving its body (DB-only restore, external cleanup) is the clean
+  // not-found, never a path whose Read would fail ENOENT
+  unlinkSync(binRead.path);
+  await assert.rejects(() => real.call('read_attachment', { id: bin.id }), { message: 'read_attachment: attachment not found' }, 'a binary row without a body is not found');
   const other = createAskTools(defaultToolDeps({ threadId: otherThread.id }));
   await assert.rejects(() => other.call('read_attachment', { id: att.id }), { message: 'read_attachment: attachment not found' }, "another thread's attachment is invisible");
   await assert.rejects(() => other.call('read_attachment', { id: bin.id }), { message: 'read_attachment: attachment not found' }, "another thread's binary attachment is invisible");

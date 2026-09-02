@@ -210,7 +210,7 @@ test('context header: the spec layout, exactly', () => {
   assert.ok(!ws.includes('runs from this thread'), 'empty lists are omitted');
 });
 
-test('context header clips: titles, then drops attachments → cards → runs, then hard-truncates keeping the closing tag', () => {
+test('context header clips: titles, then drops cards → runs → text attachments, then hard-truncates keeping the closing tag', () => {
   const long = 'L'.repeat(300);
   const big = {
     ...CTX,
@@ -230,6 +230,37 @@ test('context header clips: titles, then drops attachments → cards → runs, t
   assert.match(mild, /"L{29,59}…"/, 'title clipped with an ellipsis');
   assert.equal(buildContextHeader(CTX, { maxChars: 120 }).length <= 120, true);
   assert.ok(buildContextHeader(CTX, { maxChars: 120 }).endsWith('[/worca context]'));
+});
+
+// #398: a binary attachment reaches the model ONLY through the header line (never
+// inlined, no list tool), so it must be the last thing the clipper sheds — after
+// cards and runs (both reachable again through the tools) and after text ones.
+test('context header (#398): cards go first, then runs, then text attachments; binary attachments outlive them all', () => {
+  const ctx = {
+    ...CTX,
+    linkedRuns: [{ id: '00000001', title: 'a run', status: 'done', phase: 'done' }],
+    cards: [{ id: 'card_00000001', state: 'proposed', workflowId: 'wf_default', targetName: 'worca-cc' }],
+    attachments: [
+      { id: 'att_00000001', name: 'notes.md', bytes: 10, kind: 'text' },
+      { id: 'att_00000002', name: 'shot.png', bytes: 2048, kind: 'image', mime: 'image/png' },
+      { id: 'att_00000003', name: 'spec.pdf', bytes: 1024, kind: 'binary', mime: 'application/pdf' },
+    ],
+  };
+  // Names/titles are all under 30 chars, so the 60→30 clip changes nothing and
+  // each successive cap forces exactly one more drop stage.
+  const full = buildContextHeader(ctx, { maxChars: 4000 });
+  for (const s of ['cards:', 'runs from this thread:', 'att_00000001', 'att_00000002', 'att_00000003']) assert.ok(full.includes(s), `unclipped header keeps ${s}`);
+  const noCards = buildContextHeader(ctx, { maxChars: full.length - 1 });
+  assert.ok(!noCards.includes('cards:'), 'cards are the first to go');
+  assert.ok(noCards.includes('runs from this thread:') && noCards.includes('att_00000001'), 'runs and attachments survive the cards drop');
+  const noRuns = buildContextHeader(ctx, { maxChars: noCards.length - 1 });
+  assert.ok(!noRuns.includes('runs from this thread:'), 'runs go second');
+  assert.ok(noRuns.includes('att_00000001 notes.md'), 'text attachments still listed');
+  const noText = buildContextHeader(ctx, { maxChars: noRuns.length - 1 });
+  assert.ok(!noText.includes('att_00000001'), 'text attachments go third');
+  assert.ok(noText.includes('att_00000002 shot.png (image/png, 2 KB, use read_attachment)'), 'the image line survives every drop stage');
+  assert.ok(noText.includes('att_00000003 spec.pdf (application/pdf, 1 KB, use read_attachment)'), 'so does the pdf line');
+  assert.ok(noText.length <= noRuns.length - 1);
 });
 
 test('selectInlineAttachments: upload order, running total ≤ maxBytes, the rest listed', () => {
@@ -360,6 +391,8 @@ test('the prompt advertises the worktree tools and the native file tools, and th
   assert.ok(SANDBOX_NOTE.includes('worktree'), 'sub-agents are told where the tools point');
   for (const t of ['Read', 'Grep', 'Glob', '`git`']) assert.ok(SANDBOX_NOTE.includes(t), `the sandbox note names ${t}`);
   assert.ok(SANDBOX_NOTE.includes('cannot run commands'), 'commands/network stay off');
+  assert.ok(SANDBOX_NOTE.includes('read_attachment'), '#398: sub-agents learn the one Read target outside a worktree');
+  assert.ok(!SANDBOX_NOTE.includes('never elsewhere on disk'), 'the worktree-only wording that contradicted rules 6/7 is gone');
   assert.ok(!SANDBOX_NOTE.includes('cannot read files'), 'the git-only wording is gone');
 });
 

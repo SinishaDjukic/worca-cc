@@ -52,6 +52,19 @@ export function createThreadModel({ threadId }) {
     dirty.structure = true;
   }
 
+  // The thread's attachment ledger (attachmentsBytes → the composer's budget
+  // pre-check) is seeded by the snapshot; without this it would never learn of
+  // an upload made in this session, and the composer would let a whole over-
+  // budget base64 POST through to the server's 413. Keyed by the store id, so a
+  // row seen through both the broadcast and the local echo counts once.
+  function noteAttachmentBlocks(blocks) {
+    for (const b of Array.isArray(blocks) ? blocks : []) {
+      if (!b || b.kind !== 'attachment' || typeof b.id !== 'string') continue;
+      if (attachments.some((a) => a && a.id === b.id)) continue;
+      attachments.push({ id: b.id, name: b.name, bytes: Number.isFinite(b.bytes) ? b.bytes : 0, kind: b.attKind ?? 'text', mime: b.mime ?? null });
+    }
+  }
+
   function markBlockDirty(messageId, blockId) {
     if (!dirty.blocks.has(messageId)) dirty.blocks.set(messageId, new Set());
     dirty.blocks.get(messageId).add(blockId);
@@ -187,6 +200,7 @@ export function createThreadModel({ threadId }) {
         const m = frame.message;
         if (!m || typeof m.id !== 'string') return { dropped: 'no-live' };
         upsertRow(m);
+        noteAttachmentBlocks(m.blocks);
         dirty.messages.add(m.id);
         return { ok: true };
       }
@@ -253,11 +267,18 @@ export function createThreadModel({ threadId }) {
       return null;
     },
     noteLocalUserMessage({ id, text, attachments: atts }) {
+      // The POST-side ask-message broadcast can land BEFORE the 202 resolves. That
+      // row is the persisted one (seq, store-minted attachment ids); an echo that
+      // replaced it would turn an image thumbnail back into a name pill until the
+      // next reload. Nothing the echo carries is newer than it, so keep it.
+      if (rowById(id)) { dirty.messages.add(id); return; }
+      const blocks = (Array.isArray(atts) ? atts : []).map((a) => ({ kind: 'attachment', id: a.id ?? null, name: a.name, bytes: a.bytes, attKind: a.attKind ?? 'text', mime: a.mime ?? null }));
       upsertRow({
         id, threadId, seq: undefined, role: 'user', text: String(text ?? ''),
-        blocks: (Array.isArray(atts) ? atts : []).map((a) => ({ kind: 'attachment', id: a.id ?? null, name: a.name, bytes: a.bytes, attKind: a.attKind ?? 'text', mime: a.mime ?? null })),
+        blocks,
         status: null, reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: null,
       });
+      noteAttachmentBlocks(blocks);
       dirty.messages.add(id);
     },
   });

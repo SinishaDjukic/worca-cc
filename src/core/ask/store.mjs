@@ -8,7 +8,7 @@
 // user-supplied name. Text kinds stay `.txt`/utf8; binary kinds (#398) keep the
 // extension of their SNIFFED mime and raw bytes.
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { getDb, prepare, tx } from '../db.mjs';
 import { worcaHome } from '../projects.mjs';
@@ -333,12 +333,16 @@ export function readAttachmentText(threadId, id) {
  * Absolute on-disk path of an attachment's body — the pointer the read_attachment
  * tool hands the model for binary kinds (its Read tool renders images and PDFs
  * natively; the ask/ subtree is deliberately outside spawn.mjs ASK_DENY_RULES).
- * Same guards as readAttachmentText: row must exist, id must be store-minted.
+ * Same guards as readAttachmentText: row must exist, id must be store-minted —
+ * and the body must actually be on disk. A row that outlived its file (DB-only
+ * restore, an external sweep of ask/<thread>/att) is the same `null` as a
+ * missing row: the model must never be handed a path whose Read fails ENOENT.
  */
 export function attachmentPath(threadId, id) {
   const a = getAttachment(threadId, id);
   if (!a || !ASK_ID_RE.test(a.id)) return null;
-  return join(attachmentsDir(threadId), `${a.id}${extensionForAttachment(a.kind, a.mime)}`);
+  const path = join(attachmentsDir(threadId), `${a.id}${extensionForAttachment(a.kind, a.mime)}`);
+  return existsSync(path) ? path : null;
 }
 
 /** Raw thread-scoped read for the download route: any kind, body as a Buffer. */

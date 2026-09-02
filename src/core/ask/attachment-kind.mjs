@@ -39,6 +39,11 @@ export const BINARY_EXTENSIONS = Object.freeze(Object.keys(BINARY_TYPES));
 
 const kindForMime = (mime) => (mime.startsWith('image/') ? 'image' : 'binary');
 
+/** ISO 32000-1 §7.5.2 (implementation note 13): the `%PDF-` header may be
+ *  preceded by up to 1024 bytes of junk (a UTF-8 BOM, print-driver or mail-
+ *  gateway preamble). Acrobat and pdf.js accept such files, so the sniff does too. */
+const PDF_HEADER_WINDOW = 1024;
+
 /**
  * Classify a lower-cased extension (with the leading dot) into {kind, mime},
  * or null when it is not on either allowlist.
@@ -61,7 +66,9 @@ export function sniffMime(buf) {
   if (buf.length >= 8
     && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47
     && buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a) return 'image/png';
-  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  // SOI (FF D8) followed by the first marker's FF and its marker byte (>= 0xC0:
+  // APPn/DQT/SOFn/…) — a bare 3-byte FF D8 FF stub is not a JPEG anything can open.
+  if (buf.length >= 4 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff && buf[3] >= 0xc0) return 'image/jpeg';
   if (buf.length >= 6) {
     const head6 = buf.toString('latin1', 0, 6);
     if (head6 === 'GIF87a' || head6 === 'GIF89a') return 'image/gif';
@@ -69,7 +76,10 @@ export function sniffMime(buf) {
   if (buf.length >= 12
     && buf.toString('latin1', 0, 4) === 'RIFF'
     && buf.toString('latin1', 8, 12) === 'WEBP') return 'image/webp';
-  if (buf.length >= 5 && buf.toString('latin1', 0, 5) === '%PDF-') return 'application/pdf';
+  if (buf.length >= 5) {
+    const at = buf.toString('latin1', 0, Math.min(buf.length, PDF_HEADER_WINDOW + 5)).indexOf('%PDF-');
+    if (at !== -1 && at <= PDF_HEADER_WINDOW) return 'application/pdf';
+  }
   return null;
 }
 
