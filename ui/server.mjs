@@ -3642,11 +3642,32 @@ app.patch('/api/ask/threads/:id', (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
   try {
-    const raw = (req.body || {}).title;
-    if (typeof raw !== 'string' || !raw.trim() || raw.length > 120) {
-      return badRequest(res, 'title must be a non-empty string of at most 120 characters');
+    const body = req.body || {};
+    const patch = {};
+    // Title keeps its original contract exactly: a PATCH that names neither field
+    // still earns the title error, so pre-#397 callers see identical behaviour.
+    if (body.title !== undefined || body.scope === undefined) {
+      const raw = body.title;
+      if (typeof raw !== 'string' || !raw.trim() || raw.length > 120) {
+        return badRequest(res, 'title must be a non-empty string of at most 120 characters');
+      }
+      patch.title = raw.trim();
     }
-    const thread = askUpdateThread(id, { title: raw.trim() });
+    if (body.scope !== undefined) {
+      // #397: the Ask panel's scope selector. Merged per field into the stored
+      // context — the pin replaces only the target keys, so the last page
+      // context (view, run, diff file) survives a selector change.
+      const sv = askValidateScope(body.scope);
+      if (!sv.ok) return badRequest(res, sv.error);
+      const cur = askGetThread(id);
+      if (!cur) return res.status(404).json({ error: 'thread not found' });
+      const base = cur.context && typeof cur.context === 'object' && !Array.isArray(cur.context) ? { ...cur.context } : {};
+      delete base.projectDir;
+      delete base.projectKey;
+      delete base.workspaceId;
+      patch.context = { ...base, ...sv.scope };
+    }
+    const thread = askUpdateThread(id, patch);
     if (!thread) return res.status(404).json({ error: 'thread not found' });
     res.json({ thread });
   } catch (err) {
@@ -3789,12 +3810,44 @@ function askRunFromPipelineRow(row) {
   };
 }
 
+/** #397: the user-pinned scope of an ask context — {projectKey} | {workspaceId} | null. */
+function askPinnedScope(context) {
+  if (!context || typeof context !== 'object' || context.pinned !== true) return null;
+  if (typeof context.projectKey === 'string' && context.projectKey) return { projectKey: context.projectKey };
+  if (typeof context.workspaceId === 'string' && context.workspaceId) return { workspaceId: context.workspaceId };
+  return null;
+}
+
+/** #397 per-field merge: the pinned scope replaces the page context's TARGET keys
+ *  (projectDir/projectKey/workspaceId); view, run, pipeline and diff-file context
+ *  still follow the page. */
+function askApplyPin(ctx, pin) {
+  const out = { ...ctx, pinned: true };
+  delete out.projectDir;
+  delete out.projectKey;
+  delete out.workspaceId;
+  return { ...out, ...pin };
+}
+
+/** #397 selector PATCH body: {pinned:false} | {pinned:true, projectKey|workspaceId}. */
+function askValidateScope(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'scope must be an object' };
+  if (typeof raw.pinned !== 'boolean') return { ok: false, error: 'scope.pinned must be true or false' };
+  if (!raw.pinned) return { ok: true, scope: { pinned: false } };
+  const cv = validateClientContext({ projectKey: raw.projectKey, workspaceId: raw.workspaceId });
+  if (!cv.ok) return { ok: false, error: cv.error.replace('context.', 'scope.') };
+  const keys = ['projectKey', 'workspaceId'].filter((k) => cv.context[k]);
+  if (keys.length !== 1) return { ok: false, error: 'scope needs exactly one of projectKey / workspaceId' };
+  return { ok: true, scope: { pinned: true, [keys[0]]: cv.context[keys[0]] } };
+}
+
 /** Resolve the VALIDATED client context into the server-side shape
  *  buildContextHeader consumes (§6.5: server-resolved rows only — never
  *  client-supplied titles or paths). Every lookup is individually guarded:
  *  a vanished row degrades to an absent header line, never a 500. */
 async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], currentMessageId = null) {
   const out = { now: new Date().toISOString() };
+  if (ctx.pinned === true) out.pinned = true;   // #397: rendered as the [pinned by the user] marker
   if (ctx.view) out.view = ctx.view;
   if (ctx.diffPath) out.diffPath = ctx.diffPath;   // client-supplied, already length-checked by validateClientContext
   try {
@@ -3906,6 +3959,16 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     if (!mv.ok) return badRequest(res, mv.error);
     const cv = validateClientContext(body.context);
     if (!cv.ok) return badRequest(res, cv.error);
+    // #397: explicit pin beats page context, per field. A context carrying its own
+    // `pinned` verdict is authoritative — the selector-aware client already merged
+    // (true) or explicitly chose Auto (false). A context WITHOUT one comes from a
+    // pre-selector tab, and inherits the thread's stored pin so a stale tab can
+    // never silently unpin (or re-scope) the conversation.
+    let ctx = cv.context;
+    if (ctx.pinned === undefined) {
+      const inherited = askPinnedScope(thread.context);
+      if (inherited) ctx = askApplyPin(ctx, inherited);
+    }
 
     // §7.3 — validate EVERY attachment before ANY write (all-or-nothing).
     const files = [];
@@ -3977,7 +4040,9 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     let echoAttachments = [];
     try {
       // Writes. Store the LAST context + model/effort on the thread (§6.5 tail, D8).
-      askUpdateThread(id, { context: cv.context, model: mv.model, effort: mv.effort });
+      // `ctx` (pin-merged) rather than cv.context: the stored row is what restores
+      // the selector on reopen and what the MCP child reads for tool defaulting.
+      askUpdateThread(id, { context: ctx, model: mv.model, effort: mv.effort });
       let deterministicTitle = thread.title;
       let titleWasAuto = false;
       if (thread.title == null) {
@@ -4011,7 +4076,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       const systemPrompt = askBuildSystemPrompt(catalog);
       const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime, text: files[i].text }));
       const { inline, listed } = askSelectInlineAttachments(withText);
-      const headerCtx = await resolveAskContext(id, cv.context, listed, userMsg.id);
+      const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id);
       const header = askBuildContextHeader(headerCtx);
       const prompt = askBuildTurnPrompt(header, text, inline);
       const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
@@ -4027,7 +4092,8 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         firstTurn: userMsg.seq === 1 && titleWasAuto, // D13 guard: never replace a user-authored title
         firstText: text,
         deterministicTitle,
-        mock: mockEnabled({}) ? { card: mockAskCard(cv.context, text) } : null, // R-F
+        pinnedScope: askPinnedScope(ctx),             // #397: proposal defaulting + mismatch flag
+        mock: mockEnabled({}) ? { card: mockAskCard(ctx, text) } : null, // R-F
         attachmentNames,
         deps: {
           onFrame: stampAskFrames(id, job),

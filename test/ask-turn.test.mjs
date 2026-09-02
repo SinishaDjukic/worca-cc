@@ -589,3 +589,58 @@ test('a throwing store.addThreadTotals does not swallow the ledger append (D10 p
   assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM ask_cost_ledger').get().n, 1,
     'the ledger call sits OUTSIDE the store try/catches');
 });
+
+// ── #397: the user-pinned scope on proposals ─────────────────────────────────
+
+const proposeRun = (input) => async (opts) => {
+  push(opts.onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id: 'toolu_1', name: 'mcp__worca__propose_run', input }] } });
+  push(opts.onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: '{"ok":true}' }] }, tool_use_result: '{"ok":true}' });
+  push(opts.onEvent, RESULT());
+  return { text: '', exitCode: 0 };
+};
+
+test('#397: a target-less proposal is validated with the pinned scope; a matching card carries no flag', async () => {
+  const s = seed();
+  let seen = null;
+  const { turn } = makeTurn(s, { pinnedScope: { projectKey: 'demo-00000001' } }, {
+    validateProposal: async (input) => { seen = input; return { ok: true, card: { target: 'project', projectKey: input.projectKey, workspaceId: null } }; },
+    runClaudeImpl: proposeRun({ brief: 'do it' }),
+  });
+  await turn.run();
+  assert.equal(seen.projectKey, 'demo-00000001', 'the pin fills the missing target before validation');
+  assert.equal(seen.brief, 'do it');
+  const block = getMessage(s.asst.id).blocks.find((b) => b.kind === 'card');
+  assert.equal(block.scopeMismatch, undefined, 'a card ON the pinned scope is not flagged');
+});
+
+test('#397: a proposal explicitly targeting ANOTHER project than the pin flags the card', async () => {
+  const s = seed();
+  const { turn, frames } = makeTurn(s, { pinnedScope: { projectKey: 'demo-00000001' } }, {
+    validateProposal: async (input) => ({ ok: true, card: { target: 'project', projectKey: input.projectKey, workspaceId: null } }),
+    runClaudeImpl: proposeRun({ brief: 'do it', projectKey: 'other-00000003' }),
+  });
+  await turn.run();
+  const block = getMessage(s.asst.id).blocks.find((b) => b.kind === 'card');
+  assert.equal(block.scopeMismatch, true, 'the mismatch is flagged on the persisted block');
+  const frame = frames.find((f) => f.type === 'ask-card');
+  assert.equal(frame.block.scopeMismatch, true, 'and on the broadcast card frame');
+});
+
+test('#397: a workspace pin flags a project-targeted card too; no pin means no flag ever', async () => {
+  const s = seed();
+  const { turn } = makeTurn(s, { pinnedScope: { workspaceId: 'wks-team-0000abcd' } }, {
+    validateProposal: async (input) => ({ ok: true, card: { target: 'project', projectKey: input.projectKey ?? null, workspaceId: input.workspaceId ?? null } }),
+    runClaudeImpl: proposeRun({ brief: 'do it', projectKey: 'demo-00000001' }),
+  });
+  await turn.run();
+  assert.equal(getMessage(s.asst.id).blocks.find((b) => b.kind === 'card').scopeMismatch, true);
+
+  const s2 = seed();
+  const { turn: t2 } = makeTurn(s2, {}, {
+    validateProposal: async (input) => ({ ok: true, card: { target: 'project', projectKey: input.projectKey ?? null, workspaceId: null } }),
+    runClaudeImpl: proposeRun({ brief: 'do it', projectKey: 'other-00000003' }),
+  });
+  await t2.run();
+  assert.equal(getMessage(s2.asst.id).blocks.find((b) => b.kind === 'card').scopeMismatch, undefined,
+    'an unpinned chat never flags anything');
+});

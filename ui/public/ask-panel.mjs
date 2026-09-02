@@ -101,6 +101,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     pickerFromStore: !!(storedPick && storedPick.model),
     effortFromStore: storedPick !== null,
     catalog: null,
+    // #397: the thread's project/workspace scope. pinned:false = Auto (follow the
+    // page — today's behaviour). label caches the display name once resolved.
+    scope: { pinned: false, projectKey: null, workspaceId: null, label: null },
     popover: null,            // {panel, trigger, onClose}
     expandedAgents: new Set(),
     worktrees: [],            // P4 §10: the chat's open worktrees (snapshot-fed)
@@ -223,6 +226,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     header.appendChild(logo);
     el.title = make('div', 'ask-title', 'Ask Worca');
     header.appendChild(el.title);
+    // #397: the scope selector — which project/workspace this chat is about,
+    // independent of the page behind the sheet.
+    const scopeBtn = make('button', 'ask-scope-btn');
+    scopeBtn.type = 'button';
+    scopeBtn.setAttribute('data-ask-scope-btn', '');
+    scopeBtn.title = 'Project scope for this chat';
+    el.scopeLabel = make('span', 'ask-scope-label', 'Auto');
+    scopeBtn.appendChild(el.scopeLabel);
+    scopeBtn.appendChild(svgIcon(ICONS.chevronDown, 11, 2));
+    scopeBtn.addEventListener('click', () => openScopePopover(scopeBtn));
+    el.scopeBtn = scopeBtn;
+    header.appendChild(scopeBtn);
     header.appendChild(make('span', 'ask-header-spacer'));
     const threadsBtn = iconButton('ask-icon-btn', 'Recent chats', ICONS.threads, () => toggleThreadsPopover(threadsBtn));
     threadsBtn.setAttribute('data-ask-threads-btn', '');
@@ -388,7 +403,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         text,
         model: st.picker.model,
         effort: st.picker.effort,
-        context: getPageContext() || {},
+        context: scopedContext(getPageContext() || {}),
         ...(st.pendingFiles.length ? { attachments: st.pendingFiles.map((f) => ({ name: f.name, dataBase64: f.dataBase64 })) } : {}),
       };
       const model = st.model;
@@ -936,6 +951,121 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     renderPane('main');
   }
 
+  // ---- scope selector (#397) ------------------------------------------------
+  /** Per-field merge: the pinned scope replaces the page context's TARGET keys;
+   *  view/run/diff-file context still follow the page. Auto sends pinned:false so
+   *  the server never resurrects a stale thread pin over an explicit choice. */
+  function scopedContext(page) {
+    const ctx = { ...page };
+    if (!st.scope.pinned) return { ...ctx, pinned: false };
+    delete ctx.projectDir;
+    delete ctx.projectKey;
+    delete ctx.workspaceId;
+    ctx.pinned = true;
+    if (st.scope.projectKey) ctx.projectKey = st.scope.projectKey;
+    else if (st.scope.workspaceId) ctx.workspaceId = st.scope.workspaceId;
+    return ctx;
+  }
+
+  function updateScopeButton() {
+    if (!el.scopeLabel) return;
+    el.scopeLabel.textContent = st.scope.pinned
+      ? (st.scope.label || st.scope.projectKey || st.scope.workspaceId || 'Pinned')
+      : 'Auto';
+    el.scopeBtn.classList.toggle('is-pinned', st.scope.pinned);
+  }
+
+  function setScope(next) {
+    st.scope = {
+      pinned: !!next.pinned,
+      projectKey: next.projectKey || null,
+      workspaceId: next.workspaceId || null,
+      label: next.label || null,
+    };
+    updateScopeButton();
+    closePopover({ focusTrigger: false });
+    focusComposer();
+    // Persist on the thread so the pin survives reload with no message sent. A
+    // brand-new chat has no row yet — the first message's context (pinned:true)
+    // persists it then instead.
+    if (!st.threadId) return;
+    const scope = st.scope.pinned
+      ? (st.scope.projectKey ? { pinned: true, projectKey: st.scope.projectKey } : { pinned: true, workspaceId: st.scope.workspaceId })
+      : { pinned: false };
+    Promise.resolve()
+      .then(() => fetch(`/api/ask/threads/${st.threadId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope }) }))
+      .catch(() => { /* the next message carries the scope in its context anyway */ });
+  }
+
+  /** Restore the selector from a stored thread context (loadThread / reopen). */
+  function applyThreadScope(context) {
+    const c = context && typeof context === 'object' ? context : null;
+    const key = c && c.pinned === true && typeof c.projectKey === 'string' && c.projectKey ? c.projectKey : null;
+    const ws = c && c.pinned === true && typeof c.workspaceId === 'string' && c.workspaceId ? c.workspaceId : null;
+    st.scope = key
+      ? { pinned: true, projectKey: key, workspaceId: null, label: null }
+      : ws
+        ? { pinned: true, projectKey: null, workspaceId: ws, label: null }
+        : { pinned: false, projectKey: null, workspaceId: null, label: null };
+    updateScopeButton();          // the raw key shows until the name resolves
+    if (st.scope.pinned) resolveScopeLabel();
+  }
+
+  function resolveScopeLabel() {
+    const want = { projectKey: st.scope.projectKey, workspaceId: st.scope.workspaceId };
+    loadCardOptions().then((opts) => {
+      if (st.destroyed || !st.scope.pinned) return;
+      if (st.scope.projectKey !== want.projectKey || st.scope.workspaceId !== want.workspaceId) return;
+      const p = want.projectKey ? opts.projects.find((x) => x && x.key === want.projectKey) : null;
+      const w = want.workspaceId ? opts.workspaces.find((x) => x && x.id === want.workspaceId) : null;
+      st.scope.label = (p && p.name) || (w && (w.name || w.id)) || null;
+      updateScopeButton();
+    });
+  }
+
+  function openScopePopover(trigger) {
+    const panel = openPopover({ panelClass: 'ask-pop-scope', trigger, build: (p) => {
+      p.appendChild(make('div', 'ask-pop-caption', 'Chat scope'));
+    } });
+    if (!panel) return;
+    loadCardOptions().then((opts) => {
+      if (!st.popover || st.popover.panel !== panel) return;
+      const item = (label, on, onPick) => {
+        const it = menuItem('ask-scope-item', onPick);
+        it.appendChild(make('span', 'ask-model-name', label));
+        if (on) it.appendChild(make('span', 'ask-model-check', '✓'));
+        return it;
+      };
+      panel.appendChild(item('Auto (follow current page)', !st.scope.pinned, () => setScope({ pinned: false })));
+      const projects = opts.projects.filter((p) => p && p.key);
+      if (projects.length) {
+        panel.appendChild(make('div', 'ask-pop-divider'));
+        panel.appendChild(make('div', 'ask-pop-caption', 'Projects'));
+        for (const p of projects) {
+          panel.appendChild(item(
+            p.exists === false ? `${p.name} (missing)` : p.name,
+            st.scope.pinned && st.scope.projectKey === p.key,
+            () => setScope({ pinned: true, projectKey: p.key, label: p.name }),
+          ));
+        }
+      }
+      const workspaces = opts.workspaces.filter((w) => w && w.id);
+      if (workspaces.length) {
+        panel.appendChild(make('div', 'ask-pop-divider'));
+        panel.appendChild(make('div', 'ask-pop-caption', 'Workspaces'));
+        for (const w of workspaces) {
+          panel.appendChild(item(
+            w.name || w.id,
+            st.scope.pinned && st.scope.workspaceId === w.id,
+            () => setScope({ pinned: true, workspaceId: w.id, label: w.name || w.id }),
+          ));
+        }
+      }
+      const first = menuItems(panel)[0];
+      if (first) { first.tabIndex = 0; try { first.focus(); } catch { /* ignore */ } }
+    });
+  }
+
   // ---- run-info popover ("Agents this chat") --------------------------------
   // ---- worktrees (P4 §10) ---------------------------------------------------
   function setWorktrees(list) {
@@ -1042,6 +1172,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     stopElapsed();
     storeThread(null);
     el.title.textContent = 'Ask Worca';
+    applyThreadScope(null);             // #397: a brand-new chat starts on Auto
     renderTranscript();
     updateMeters();
     setWorktrees([]);
@@ -1190,6 +1321,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const local = { target: card.target === 'workspace' ? 'workspace' : 'project', options: null };
 
     rootEl.appendChild(make('div', 'ask-card-title', card.title || 'Run proposal'));
+
+    // #397 guardrail: the model proposed a different target than the chat's pin.
+    if (block.scopeMismatch) {
+      rootEl.appendChild(make('div', 'ask-card-scope-warn',
+        'This proposal targets a different project or workspace than the one pinned for this chat — check the target before starting.'));
+    }
 
     const seg = make('div', 'ask-card-seg');
     const segBtns = {};
@@ -1685,6 +1822,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.model = createThreadModel({ threadId: id });
     st.model.load(snap);
     el.title.textContent = (snap.thread && snap.thread.title) || 'Ask Worca';
+    applyThreadScope(snap.thread && snap.thread.context);   // #397: restore the pin
     renderTranscript();
     updateMeters();
     // P4: the count rides the snapshot loadThread ALREADY fetched — no extra GET.

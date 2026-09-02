@@ -735,3 +735,45 @@ test('get_run_diff: paging reuses the parsed/redacted patch — one read per run
   assert.deepEqual(await t.call('get_run_diff', { id: '4e1f2a9b' }), await fresh.call('get_run_diff', { id: '4e1f2a9b' }));
   assert.equal(reads, 1);
 });
+
+// ── #397: the user-pinned scope ──────────────────────────────────────────────
+
+test('#397: an unscoped run id tries the pinned scope first, then falls back everywhere', async () => {
+  const hits = [];
+  const t = createAskTools({
+    ...fake,
+    pinnedScope: () => ({ projectKey: 'demo-00000001' }),
+    lookupPipelineRow: (key, id) => { hits.push([key, id]); return fake.lookupPipelineRow(key, id); },
+  });
+  const run = await t.call('get_run', { id: '4e1f2a9b' });
+  assert.equal(run.id, '4e1f2a9b');
+  assert.deepEqual(hits, [['demo-00000001', '4e1f2a9b']], 'resolved inside the pin, no global search');
+  // the pin never hides a run that lives elsewhere — the global fallback still fires
+  const other = await t.call('get_run', { id: 'bbbbbbbb' });
+  assert.equal(other.id, 'bbbbbbbb');
+  // a workspace pin scopes to the workspace store key
+  const tw = createAskTools({ ...fake, pinnedScope: () => ({ workspaceId: 'wks-team-0000abcd' }) });
+  assert.equal((await tw.call('get_run', { id: '8c3d12ab' })).id, '8c3d12ab');
+  // an explicit key always wins over the pin — a wrong one still means not found
+  await assert.rejects(t.call('get_run', { id: '4e1f2a9b', projectKey: 'other-00000003' }), /run not found/);
+});
+
+test('#397: propose_run defaults its target from the pin ONLY when both keys are absent', async () => {
+  const t = createAskTools({ ...fake, pinnedScope: () => ({ projectKey: 'demo-00000001' }) });
+  const r = await t.call('propose_run', { brief: 'x' });
+  assert.equal(r.card.echoed.projectKey, 'demo-00000001', 'the pin fills the missing target');
+  const r2 = await t.call('propose_run', { brief: 'x', workspaceId: 'wks-team-0000abcd' });
+  assert.equal(r2.card.echoed.projectKey, undefined, 'an explicit target is never overridden');
+  assert.equal(r2.card.echoed.workspaceId, 'wks-team-0000abcd');
+  const tw = createAskTools({ ...fake, pinnedScope: () => ({ workspaceId: 'wks-team-0000abcd' }) });
+  assert.deepEqual((await tw.call('propose_run', { brief: 'x' })).card.echoed.workspaceId, 'wks-team-0000abcd');
+});
+
+test('#397: a missing or failing pinnedScope dep means "nothing pinned", never an error', async () => {
+  const noDep = createAskTools(fake);   // the shared `fake` has no pinnedScope at all
+  assert.equal((await noDep.call('propose_run', { brief: 'x' })).card.echoed.projectKey, undefined);
+  assert.equal((await noDep.call('get_run', { id: '4e1f2a9b' })).id, '4e1f2a9b');
+  const throwing = createAskTools({ ...fake, pinnedScope: () => { throw new Error('db gone'); } });
+  assert.equal((await throwing.call('propose_run', { brief: 'x' })).card.echoed.projectKey, undefined);
+  assert.equal((await throwing.call('get_run', { id: '4e1f2a9b' })).id, '4e1f2a9b');
+});
