@@ -258,3 +258,62 @@ test('e2e: write-back failure completes the run anyway, with a warn log event', 
     'failure surfaced as a warn log event (UI shows it + offers manual retry)',
   );
 });
+
+// ── forced pauses write back too ───────────────────────────────────────────────
+// A run that parks ITSELF (auto-mode auth/quota, usage limit, cost cap,
+// exhausted recoverable retries — pauseReason is set) has nobody attached, so
+// without a report the external task stays claimed "in progress" forever. A
+// MANUAL pause is the opposite — the user is present and resuming shortly — and
+// must stay silent: the resumed run's own terminal path reports the outcome.
+
+test("e2e: a forced pause (auto-mode auth) reports 'needs-human' to the task source", async () => {
+  const calls = [];
+  setMockSourceResponses({
+    getTask: { id: 'T-2', title: 'Pausing', url: 'https://x.test/T-2', state: 'open', updatedAt: '2026-07-12T00:00:00Z', body: 'demo body', meta: {} },
+    reportResult: (args) => { calls.push(args); return { ok: true }; },
+  });
+  const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-wb-pause-'));
+  const orch = createOrchestrator({
+    projectDir, auto: true, claude: { mock: true },
+    source: { type: 'plugin', plugin: 'gh', sourceId: 'issues', taskId: 'T-2' },
+    runners: {
+      producer: async () => { throw new Error('claude exited with code 1: API Error: 401 Invalid authentication credentials'); },
+      verifier: async () => ({ status: 'ok', issues: [], review: { issues: [] }, summary: '' }),
+    },
+  });
+
+  const res = await orch.run();
+
+  assert.equal(res.status, 'paused');
+  assert.ok(orch.pauseReason, 'precondition: an auto-mode auth pause records a reason');
+  assert.equal(calls.length, 1, 'the forced pause reported exactly once');
+  assert.equal(calls[0].id, 'T-2', 'opaque task id round-trips from source_ref');
+  assert.equal(calls[0].status, 'needs-human', "row status 'paused' maps to 'needs-human'");
+  assert.match(calls[0].summary, /— paused/, 'thin status-only summary (no results bundle exists at a pause)');
+});
+
+test('e2e: a MANUAL pause never writes back — the user is driving', async () => {
+  const calls = [];
+  setMockSourceResponses({
+    getTask: { id: 'T-4', title: 'Held', url: 'https://x.test/T-4', state: 'open', updatedAt: '2026-07-12T00:00:00Z', body: 'demo body', meta: {} },
+    reportResult: (args) => { calls.push(args); return { ok: true }; },
+  });
+  const projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-wb-pause-'));
+  let orch;
+  orch = createOrchestrator({
+    projectDir, auto: true, claude: { mock: true },
+    source: { type: 'plugin', plugin: 'gh', sourceId: 'issues', taskId: 'T-4' },
+    runners: {
+      // Request the pause mid-node, exactly like the UI/CLI pause button: the
+      // engine unwinds at the next boundary with NO pauseReason recorded.
+      producer: async () => { orch.pause(); return { status: 'ok', summary: 'done' }; },
+      verifier: async () => ({ status: 'ok', issues: [], review: { issues: [] }, summary: '' }),
+    },
+  });
+
+  const res = await orch.run();
+
+  assert.equal(res.status, 'paused');
+  assert.equal(orch.pauseReason, null, 'precondition: a manual pause records no reason');
+  assert.equal(calls.length, 0, 'no reportResult for a manual pause');
+});

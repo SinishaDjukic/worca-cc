@@ -688,8 +688,14 @@ export class GraphOrchestrator extends RunHarness {
         const cls = classifyError(err);
         if (!cls) throw err;                    // not recoverable -> today's path
         if (cls === 'usage_limit') { this._pauseForLimit(nc, ctx, err); throw pauseErr(); }
+        // Auto mode: auth/quota are user-fixable but never time-fixable — a
+        // 1s/2s/4s backoff cannot re-login or top up a balance — so skip the
+        // futile retries and pause on the first hit. Interactive runs keep the
+        // recovery prompt: the user may fix the cause and hit Retry in place.
+        if (this.auto && (cls === 'auth' || cls === 'quota')) { this._pauseForRecoverable(nc, ctx, err, cls); throw pauseErr(); }
         const decision = await this._recover({ node: { key: nc.key || ctx.nodeId }, cls, err, attempt });
-        if (decision === 'abort') throw err;    // user/auto gave up -> fail as today
+        if (decision === 'pause') { this._pauseForRecoverable(nc, ctx, err, cls); throw pauseErr(); }
+        if (decision === 'abort') throw err;    // user chose Abort -> fail as today
         this._execStep(ctx, 'start');           // back to running for the retry
       }
     }
@@ -733,6 +739,23 @@ export class GraphOrchestrator extends RunHarness {
     this._log(label, 'warn', `session/usage limit reached — pausing for manual resume: ${reason}`,
       { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal });
     appendAudit(this.pipeline.dir, `Pipeline **paused**: session/usage limit on ${label} — ${reason}. Resume after the reset.`).catch(() => {});
+    this.pause();
+  }
+
+  /** A recoverable error the auto retry budget cannot outwait (an exhausted
+   *  network/rate_limit backoff) or cannot fix at all (auth, quota): pause the
+   *  run for manual resume instead of a terminal error. The cause is outside
+   *  the pipeline and may have cleared by the time the user resumes; a pause
+   *  also keeps the worktree alive, so the resume continues in place. An
+   *  interactive Abort never lands here — that is an explicit user verdict and
+   *  stays a terminal error. */
+  _pauseForRecoverable(nc, ctx, err, cls) {
+    const label = nc.key || ctx.nodeId;
+    const reason = firstLine(err?.message || String(err));
+    if (!this.pauseReason) this.pauseReason = reason;
+    this._log(label, 'warn', `recoverable ${cls} error — pausing for manual resume: ${reason}`,
+      { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal });
+    appendAudit(this.pipeline.dir, `Pipeline **paused**: recoverable ${cls} error on ${label} — ${reason}. Resume to retry.`).catch(() => {});
     this.pause();
   }
 

@@ -397,7 +397,10 @@ function stdinCanAnswer() {
 /**
  * Wire readline Q&A, log/phase rendering, and SIGINT pause/stop onto an
  * orchestrator, then drive it. `start` launches run() or resume(). Returns the
- * process exit code (0 for done/paused, 1 otherwise).
+ * process exit code: 0 for done — and for a pause in an INTERACTIVE run (the
+ * user chose or witnessed it and can resume); 3 for a pause under --yes (the
+ * run parked itself on auth/quota/usage-limit/exhausted retries with nobody
+ * attached to resume it, so a wrapper must not read success); 1 otherwise.
  */
 async function attachAndDrive(orch, flags, start) {
   // Refuse an unanswerable interactive run BEFORE start(). The orchestrator
@@ -586,7 +589,15 @@ async function attachAndDrive(orch, flags, start) {
   }
   // An unanswered question is a failure even if the run somehow settled `done`.
   if (answerFailure) return 1;
-  return result?.status === 'done' || result?.status === 'paused' ? 0 : 1;
+  if (result?.status === 'done') return 0;
+  // A pause exits 0 only when someone is attached to resume it (interactive —
+  // pinned by the MAJ-7 Ctrl+C pitfall test). Under --yes every pause is the run
+  // parking ITSELF (auth/quota/usage limit/exhausted recoverable retries) with
+  // nobody left to resume: exit 0 here would let a CI job go green on a run that
+  // did no work. 3, not 1, so wrappers can tell "resumable pause" from a hard
+  // error (2 is fail()'s usage-error code).
+  if (result?.status === 'paused') return flags.auto ? 3 : 0;
+  return 1;
 }
 
 // ── subcommands ──────────────────────────────────────────────────────────────────
