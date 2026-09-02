@@ -2587,7 +2587,10 @@ export class RunHarness extends EventEmitter {
    * Task-source write-back (spec §7.5): report the finished run to the plugin
    * source that produced it. Runs on EVERY terminal path and ALWAYS after
    * _buildResults() — done (statusToResult -> 'completed') and stopped/error alike
-   * (-> 'failed'; chat-connectivity design PR12 closed the old success-only gap).
+   * (-> 'failed'; chat-connectivity design PR12 closed the old success-only gap) —
+   * and on every FORCED pause (_completePaused with pauseReason set ->
+   * 'needs-human'; no results bundle exists yet there, so it reports the thin
+   * status-only summary).
    * So the payload is the same SHAPE on all three: retryWriteback reads
    * results.json (sources.mjs:215), and a stopped/error run that persisted one now
    * carries the diffstat and "Key things to check" lines too. Only a run with
@@ -3509,6 +3512,14 @@ export class RunHarness extends EventEmitter {
     // A plain manual pause has no reason; only a limit-pause records one (audited
     // already at the pause site, so don't double-log it here).
     if (!this.pauseReason) await appendAudit(this.pipeline.dir, `Pipeline **paused**.`).catch(() => {});
+    // A FORCED pause (pauseReason set: usage limit, cost cap, auto-mode
+    // auth/quota, exhausted recoverable retries) parks the run with nobody
+    // attached, so the task source must hear it NOW — statusToResult('paused')
+    // -> 'needs-human' — or the external task stays claimed "in progress" until
+    // a human stumbles on it. A manual pause skips this: the user is present and
+    // resuming shortly, and the resumed run's terminal path reports the real
+    // outcome. Never throws (spec §7.5), same as every other terminal path.
+    if (this.pauseReason) await this._reportToSource();
     this._emit('done', { status: 'paused', pipelineDir: this.pipeline.dir, reason: this.pauseReason || null });
     return { status: 'paused', pipelineDir: this.pipeline.dir, reason: this.pauseReason || null };
   }
