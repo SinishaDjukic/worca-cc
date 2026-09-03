@@ -152,6 +152,12 @@ and durations, the clarify Q&A, agent transcripts, and logs:
   per-model routing environment (e.g. `ANTHROPIC_BASE_URL`) that is merged
   into that model's agent spawns. Share a model catalog as a plugin, with
   secrets required at install time.
+- **No first-party account needed** — run and chat titles are written by the
+  model the run or chat itself uses (Settings › General › Title generation picks
+  a fixed one instead), endpoint-routed models carry Claude Code's internal
+  haiku/sonnet/opus/fable tier keys so nothing falls back to the Anthropic API,
+  and *Hide built-in models* (Settings › Models) drops the built-ins from every
+  picker.
 
 ### Storage
 

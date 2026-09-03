@@ -47,7 +47,12 @@ export function createAskModels({
   /** The D8 initial pick, validated against the live catalog (D5). */
   function pickDefault(models) {
     const want = String(defaults.defaultModel || '').toLowerCase();
-    const hit = models.find((m) => m.id.toLowerCase() === want) || models[0] || null;
+    // Hidden built-ins (#422) are never the initial pick: on an install that
+    // hides them the default is the first model the user actually owns. They
+    // stay in `models` so a stored thread on one keeps validating.
+    const visible = models.filter((m) => !m.hidden);
+    const pool = visible.length ? visible : models;
+    const hit = pool.find((m) => m.id.toLowerCase() === want) || pool[0] || null;
     if (!hit) return null;
     const efforts = hit.efforts.length ? hit.efforts : [...EFFORTS];
     const effort = efforts.includes(defaults.defaultEffort)
@@ -83,6 +88,7 @@ export function createAskModels({
         hasEnv: m.hasEnv === true,
       };
       if (custom === 'plugin' && typeof m.plugin === 'string' && m.plugin) entry.plugin = m.plugin;
+      if (m.hidden === true) entry.hidden = true;   // the picker skips it; validation does not (#422)
       // Only globals and plugin entries can arrive flagged: composeCatalog emits an
       // UNSHADOWED built-in as {...m, custom:false, hasEnv:false} with no
       // ...unreliable(lc) (src/core/config.mjs:200), so a built-in in model_cost_flags

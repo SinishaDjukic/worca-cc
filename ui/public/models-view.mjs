@@ -77,7 +77,7 @@ export function suggestDuplicateId(id, takenIds = []) {
  * `globals` come MASKED from GET /api/models. `predefinedShadowedIds` marks
  * built-ins currently overridden by a global entry.
  */
-export function renderModelsList({ globals = [], legacy = [], plugins = [], predefined = [], efforts = [], projectName = '' } = {}, { doc = globalThis.document } = {}) {
+export function renderModelsList({ globals = [], legacy = [], plugins = [], predefined = [], efforts = [], hideBuiltin = false, projectName = '' } = {}, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'mv-list');
   const predefLc = new Set(predefined.map((m) => m.id.toLowerCase()));
   const pluginLc = new Set(plugins.map((m) => m.id.toLowerCase()));
@@ -88,6 +88,30 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
     if (hint) s.appendChild(h(doc, 'small', 'hint', hint));
     return s;
   };
+
+  // The endpoint-routed badge (#422): honest disclosure that worca points the
+  // CLI's internal haiku/sonnet/opus/fable lookups at this model's own id
+  // (config.mjs#resolveModelEnv), so nothing falls back to the Anthropic API.
+  // The masked env still carries its KEYS, so presence is decidable here.
+  const routedBadge = (m) => {
+    if (!m.env || !Object.prototype.hasOwnProperty.call(m.env, 'ANTHROPIC_BASE_URL')) return null;
+    const b = h(doc, 'span', 'badge waiting mv-routed', 'endpoint-routed');
+    b.title = "worca points Claude Code's internal haiku/sonnet/opus/fable lookups at this model, so it never falls back to the Anthropic API.";
+    return b;
+  };
+
+  // ── Hide built-in models (#422) — one checkbox, top of the pane ──
+  const hideRow = h(doc, 'div', 'mv-hide-builtin-row');
+  const hideLabel = h(doc, 'label', 'check-row');
+  const hideCb = h(doc, 'input', 'mv-hide-builtin');
+  hideCb.type = 'checkbox';
+  hideCb.checked = !!hideBuiltin;
+  hideLabel.appendChild(hideCb);
+  hideLabel.appendChild(doc.createTextNode(" Hide built-in models (you don't use a first-party Anthropic account)"));
+  hideRow.appendChild(hideLabel);
+  hideRow.appendChild(h(doc, 'small', 'hint',
+    'Drops the built-ins from every model picker — new pipelines, the composer, Ask Worca, title generation. Cosmetic only: a run or reference that already names one keeps working.'));
+  root.appendChild(hideRow);
 
   // ── Your models (global) ──
   const yours = section('Your models', 'Defined once, available in every project. An entry with a built-in id overrides that built-in.');
@@ -102,6 +126,8 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
     head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
     if (predefLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadow', 'overrides built-in'));
     else if (pluginLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadow', 'overrides plugin'));
+    const rb = routedBadge(m);
+    if (rb) head.appendChild(rb);
     // The §4.6 "unreliable" badge is meaningless once an override GOVERNS this
     // model's spend — and the backend only lifts the stored flag on the model's
     // next result event, so suppress it here the moment pricing is pinned.
@@ -169,6 +195,8 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
       head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
       head.appendChild(h(doc, 'span', 'badge waiting mv-origin', `plugin: ${m.plugin}`));
       if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadowed', 'overridden by your copy'));
+      const prb = routedBadge(m);
+      if (prb) head.appendChild(prb);
       // Same rule as a global card: a manifest-pinned price governs the spend,
       // so the §4.6 "unreliable" flag says nothing about it.
       if (m.costUnreliable && !m.cost) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
@@ -199,8 +227,11 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
   }
 
   // ── Built-ins (read-only) ──
-  const builtins = section('Built-in models', 'Shipped with worca. Add a model with the same id to override its label, efforts, or routing.');
-  for (const m of predefined) {
+  const builtins = section('Built-in models', hideBuiltin
+    ? `Hidden from every picker (${predefined.length} built-in${predefined.length === 1 ? '' : 's'}) — untick the box above to show them.`
+    : 'Shipped with worca. Add a model with the same id to override its label, efforts, or routing.');
+  builtins.classList.add(hideBuiltin ? 'mv-builtins-hidden' : 'mv-builtins-shown');
+  for (const m of hideBuiltin ? [] : predefined) {
     const row = h(doc, 'div', 'mv-builtin');
     row.dataset.id = m.id;
     row.appendChild(h(doc, 'b', 'mv-name', m.label));

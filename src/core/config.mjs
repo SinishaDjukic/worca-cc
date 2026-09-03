@@ -15,8 +15,8 @@
 import { getDb, prepare, tx } from './db.mjs';
 import { projectKey } from './store.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
-import { EFFORTS, prepareModelEnv, isSubagentModelValue, subagentModelIssue } from './model-env.mjs';
-import { listGlobalModels, addGlobalModel, removeGlobalModel } from './settings.mjs';
+import { EFFORTS, prepareModelEnv, withTierModelEnv, isSubagentModelValue, subagentModelIssue } from './model-env.mjs';
+import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels } from './settings.mjs';
 import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plugin-models.mjs';
 
 /**
@@ -184,6 +184,11 @@ function composeCatalog(projectCustom = []) {
   const seen = new Set();
   const unreliable = (lc) => (flagged.has(lc) ? { costUnreliable: true } : {});
   const routedOf = (env) => !!(env && 'ANTHROPIC_BASE_URL' in env);
+  // "Hide built-in models" (#422): a cosmetic flag on the UNSHADOWED built-ins,
+  // read by every picker. The entry stays in the catalog — hiding an id must
+  // never stop it resolving, or a stored run / plugin reference that names it
+  // would break — so pickers skip `hidden`, validators ignore it.
+  const hidden = hideBuiltinModels() ? { hidden: true } : {};
   const pluginShape = (id, m, lc) => ({
     id, label: m.label, efforts: [...m.efforts], custom: 'plugin', plugin: m.plugin,
     hasEnv: !!m.env, routed: routedOf(m.env), ...unreliable(lc),
@@ -196,7 +201,7 @@ function composeCatalog(projectCustom = []) {
       ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], custom: 'global', hasEnv: !!shadow.env, routed: routedOf(shadow.env), ...unreliable(lc) }
       : pshadow
         ? pluginShape(m.id, pshadow, lc)
-        : { ...m, custom: false, hasEnv: false, routed: false });
+        : { ...m, custom: false, hasEnv: false, routed: false, ...hidden });
     seen.add(lc);
   }
   for (const m of globals) {
@@ -486,10 +491,12 @@ export function resolveModelEnv(modelId) {
   const lc = id.toLowerCase();
   let rawEnv;
   let who;
+  let canonicalId = id;
   const entry = listGlobalModels().find((m) => m.id.toLowerCase() === lc);
   if (entry && entry.env) {
     rawEnv = entry.env;
     who = JSON.stringify(entry.id);
+    canonicalId = entry.id;
   } else if (!entry) {
     const pm = listPluginModels().find((m) => m.id.toLowerCase() === lc);
     if (pm && pm.env) {
@@ -499,6 +506,7 @@ export function resolveModelEnv(modelId) {
       }
       rawEnv = env;
       who = `${JSON.stringify(pm.id)} (plugin "${pm.plugin}")`;
+      canonicalId = pm.id;
     }
   }
   if (!rawEnv) return undefined;
@@ -506,7 +514,27 @@ export function resolveModelEnv(modelId) {
   for (const k of dropped) {
     console.warn(`[worca] model ${who}: dropping env key ${JSON.stringify(k)} (reserved or unresolvable \${VAR} ref)`);
   }
-  return Object.keys(env).length ? env : undefined;
+  if (!Object.keys(env).length) return undefined;
+  // Endpoint-routed entries also carry the CLI's internal tier keys, pointed at
+  // this entry's own wire id (#422, model-env.mjs#withTierModelEnv) — so the
+  // CLI's session-title / alias / probe calls never fall back to a first-party
+  // id the endpoint has never heard of. Keys the entry sets itself win.
+  return withTierModelEnv(env, canonicalId);
+}
+
+/**
+ * Whether `modelId` names a catalog member — built-in, global, or plugin —
+ * regardless of the hide-built-ins flag (hidden entries still resolve).
+ * Case-insensitive like every other id lookup here. Synchronous; never throws.
+ * @param {string} modelId
+ */
+export function catalogHasModel(modelId) {
+  const id = typeof modelId === 'string' ? modelId.trim() : '';
+  if (!id) return false;
+  const lc = id.toLowerCase();
+  return PREDEFINED_MODELS.some((m) => m.id.toLowerCase() === lc)
+    || listGlobalModels().some((m) => m.id.toLowerCase() === lc)
+    || listPluginModels().some((m) => m.id.toLowerCase() === lc);
 }
 
 /**

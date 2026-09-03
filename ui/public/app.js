@@ -2490,7 +2490,9 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   };
   optgroup('Your models', state.models.filter((m) => m.custom && m.custom !== 'plugin').sort(byLabel));
   optgroup('Plugins', state.models.filter((m) => m.custom === 'plugin').sort(byLabel));
-  optgroup('Built-in', state.models.filter((m) => !m.custom).sort(byLabel));
+  // "Hide built-in models" (#422): a hidden built-in leaves the list — unless
+  // it is THIS selection, which still resolves and must stay visible.
+  optgroup('Built-in', state.models.filter((m) => !m.custom && (!m.hidden || m.id === sel.model)).sort(byLabel));
   modelSel.appendChild(option('__add__', '+ Add model…'));
   modelSel.value = sel.model || '';
 
@@ -7790,6 +7792,7 @@ async function loadSettings() {
     paintBudgetSettings(data);
     paintAskSettings(data);
     paintDebugSpawnSettings(data);
+    await paintTitleModelSettings(data);
     paintBudgetReadout();
     refreshBudget();
     paintChatSettings(data.chat);
@@ -8232,6 +8235,105 @@ function saveDebugSpawn() {
 }
 document.getElementById('debugSpawnSave')?.addEventListener('click', saveDebugSpawn);
 document.getElementById('debugSpawnReset')?.addEventListener('click', () => postDebugSpawn({ debugSpawnEnabled: false }));
+
+// ---- Title generation card (#422) ----
+// A SELECT over the project-less catalog, never a text field: free text could
+// store an id resolveModelEnv cannot route, and the failure would only show up
+// as a missing title minutes into a run. Same optgroups + order as the New
+// Pipeline picker. `titleModelCatalog` is fetched on every Settings paint so the
+// options track catalog edits without a reload.
+const TITLE_MODEL_DEFAULT_LABEL = "Same as the run's model";
+let titleModelCatalog = [];
+function setTitleModelMsg(text, kind) { setHintMsg('titleModelMsg', text, kind); }
+async function fetchTitleModelCatalog() {
+  try {
+    const res = await fetch('/api/config');
+    const data = await safeJson(res);
+    return res.ok && Array.isArray(data.models) ? data.models : [];
+  } catch { return []; }
+}
+function buildTitleModelOptions(sel, stored) {
+  sel.innerHTML = '';
+  sel.appendChild(option('', TITLE_MODEL_DEFAULT_LABEL));
+  const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
+  // Legacy per-project entries are not global — titles are; hidden built-ins
+  // stay out unless one IS the stored pick (it still resolves).
+  const models = titleModelCatalog.filter((m) => m && m.custom !== 'project' && (!m.hidden || m.id === stored));
+  const group = (label, xs) => {
+    if (!xs.length) return;
+    const og = document.createElement('optgroup');
+    og.label = label;
+    for (const m of xs) og.appendChild(option(m.id, (m.label || m.id) + (m.custom === 'plugin' && m.plugin ? ` (${m.plugin})` : '')));
+    sel.appendChild(og);
+  };
+  group('Your models', models.filter((m) => m.custom && m.custom !== 'plugin').sort(byLabel));
+  group('From plugins', models.filter((m) => m.custom === 'plugin').sort(byLabel));
+  group('Built-in', models.filter((m) => !m.custom).sort(byLabel));
+  if (stored && !models.some((m) => m.id === stored)) {
+    // Loud degrade: the stored id left the catalog (plugin removed, entry deleted).
+    const o = option(stored, `${stored} — not installed`);
+    o.disabled = true;
+    sel.appendChild(o);
+  }
+  sel.value = stored;
+}
+async function paintTitleModelSettings(data) {
+  const sel = document.getElementById('titleModel');
+  if (!sel) return;
+  titleModelCatalog = await fetchTitleModelCatalog();
+  const stored = typeof data.titleModel === 'string' ? data.titleModel : '';
+  buildTitleModelOptions(sel, stored);
+  const eff = data.titleModelEffective || {};
+  let note = '', kind = '';
+  if (eff.source === 'env') {
+    note = `WORCA_TITLE_MODEL is set in the environment: titles use ${eff.model} regardless of this setting.`; kind = 'warn';
+  } else if (eff.stale) {
+    note = `Model "${eff.stale}" is no longer in the catalog — titles fall back to the run's model.`; kind = 'warn';
+  }
+  setHintMsg('titleModelEnvNote', note, kind);
+  const testBtn = document.getElementById('titleModelTest');
+  if (testBtn) testBtn.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled;
+}
+function postTitleModel(body) {
+  return postSettingsCard(body, {
+    setMsg: setTitleModelMsg, paint: paintTitleModelSettings,
+    savedText: 'Saved. Applies to the next title — no restart needed.',
+  });
+}
+document.getElementById('titleModelSave')?.addEventListener('click', () => {
+  const sel = document.getElementById('titleModel');
+  const opt = sel.options[sel.selectedIndex];
+  if (opt && opt.disabled) { setTitleModelMsg('that model is no longer installed — pick another or use the default', 'err'); return; }
+  postTitleModel({ titleModel: sel.value || '' });
+});
+document.getElementById('titleModelReset')?.addEventListener('click', () => postTitleModel({ titleModel: '' }));
+document.getElementById('titleModel')?.addEventListener('change', () => {
+  const sel = document.getElementById('titleModel');
+  const testBtn = document.getElementById('titleModelTest');
+  if (testBtn) testBtn.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled;
+});
+// Test = the Models-view Test button verbatim (POST /api/models/:id/test): one
+// tiny spawn through the id's catalog routing. Without it the first evidence of
+// a bad pick is a missing title three minutes into a run.
+document.getElementById('titleModelTest')?.addEventListener('click', async () => {
+  const sel = document.getElementById('titleModel');
+  const btn = document.getElementById('titleModelTest');
+  const id = sel.value;
+  if (!id) return;
+  btn.disabled = true;
+  setTitleModelMsg(`Testing ${id}…`);
+  try {
+    const res = await fetch(`/api/models/${encodeURIComponent(id)}/test`, { method: 'POST' });
+    const data = await safeJson(res);
+    if (!res.ok) setTitleModelMsg(`✗ ${data.error || `HTTP ${res.status}`}`, 'err');
+    else if (data.ok) setTitleModelMsg(`✓ ${id} replied: ${data.text}`);
+    else setTitleModelMsg(`✗ ${data.hint || data.message}`, 'err');
+  } catch (e) {
+    setTitleModelMsg(`✗ ${e.message}`, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // Browse… for the projects root: native OS dialog, in-app modal fallback —
 // the same two endpoints the add-project Browse button uses (app.js:3793).
@@ -8889,9 +8991,32 @@ function renderModelsViewBody() {
     plugins: d.plugin || [],
     predefined: d.predefined || [],
     efforts: d.efforts || [],
+    hideBuiltin: !!d.hideBuiltinModels,
     projectName: pp ? pp.split('/').pop() : '',
   }));
   el.modelsList.replaceChildren(frag);
+}
+
+// "Hide built-in models" (#422): one settings key, saved on change. Every picker
+// reads the flag off /api/config, so the refresh below repaints them all.
+async function saveHideBuiltinModels(cb) {
+  const wanted = cb.checked;
+  cb.disabled = true;
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hideBuiltinModels: wanted }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { cb.checked = !wanted; return setModelsMsg(data.error || `HTTP ${res.status}`, 'err'); }
+    setModelsMsg(wanted ? 'Built-in models hidden from every picker. Runs that already use one keep working.' : 'Built-in models shown again.');
+    await refreshModelsEverywhere();
+  } catch (e) {
+    cb.checked = !wanted;
+    setModelsMsg(e.message, 'err');
+  } finally {
+    cb.disabled = false;
+  }
 }
 
 // "Edit a copy" prefill (design §9.6): create-mode editor seeded from a plugin
@@ -9197,6 +9322,10 @@ async function testModelFlow(btn) {
 }
 
 if (el.modelsList) {
+  el.modelsList.addEventListener('change', (ev) => {
+    const t = ev.target;
+    if (t && t.classList && t.classList.contains('mv-hide-builtin')) saveHideBuiltinModels(t);
+  });
   el.modelsList.addEventListener('click', (ev) => {
     const t = ev.target.closest('button');
     if (!t) return;

@@ -131,6 +131,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     const probes = {
       projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '',
       askMaxTurns: '', askMaxBudgetUsd: '', debugSpawnEnabled: false,
+      titleModel: '', hideBuiltinModels: false,
     };
     for (const k of SETTINGS_POST_KEYS) {
       if (k === 'root') continue;

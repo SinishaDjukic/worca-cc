@@ -18,7 +18,7 @@ import {
   PREDEFINED_MODELS,
 } from '../src/core/config.mjs';
 import { addGlobalModel, listGlobalModels } from '../src/core/settings.mjs';
-import { EFFORTS } from '../src/core/model-env.mjs';
+import { EFFORTS, TIER_MODEL_ENV_KEYS } from '../src/core/model-env.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 
@@ -102,12 +102,15 @@ test('resolveModelEnv: global env only, ${VAR} expanded, case-insensitive id, un
 
   process.env.GM_TEST_TOKEN = 'sk-42';
   try {
-    assert.deepEqual(resolveModelEnv('GLM-4.7'), { ANTHROPIC_BASE_URL: 'https://x', ANTHROPIC_AUTH_TOKEN: 'sk-42' });
+    // An endpoint-routed entry also carries the CLI tier keys = its own id (#422,
+    // test/model-env-tier.test.mjs) — the canonical spelling, not the lookup's.
+    const tier = Object.fromEntries(TIER_MODEL_ENV_KEYS.map((k) => [k, 'glm-4.7']));
+    assert.deepEqual(resolveModelEnv('GLM-4.7'), { ANTHROPIC_BASE_URL: 'https://x', ANTHROPIC_AUTH_TOKEN: 'sk-42', ...tier });
   } finally {
     delete process.env.GM_TEST_TOKEN;
   }
   // Unset ref -> that key dropped, the rest survives.
-  assert.deepEqual(resolveModelEnv('glm-4.7'), { ANTHROPIC_BASE_URL: 'https://x' });
+  assert.deepEqual(resolveModelEnv('glm-4.7'), { ANTHROPIC_BASE_URL: 'https://x', ...Object.fromEntries(TIER_MODEL_ENV_KEYS.map((k) => [k, 'glm-4.7'])) });
   assert.equal(resolveModelEnv('plain-model'), undefined);   // global, no env
   assert.equal(resolveModelEnv('proj-model'), undefined);    // legacy: never env
   assert.equal(resolveModelEnv('claude-opus-5'), undefined); // predefined, unshadowed

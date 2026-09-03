@@ -829,8 +829,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
     const list = st.catalog && Array.isArray(st.catalog.models) ? st.catalog.models : [];
     const wantedEntry = catalogEntry(wanted.model);
-    // Unknown stored/default id -> the backend default -> the first model we do have.
-    const entry = wantedEntry || catalogEntry(fallback.model) || list[0] || null;
+    // Unknown stored/default id -> the backend default -> the first model we do
+    // have that is not a hidden built-in (#422; a hidden id is still a valid pick).
+    const entry = wantedEntry || catalogEntry(fallback.model) || list.find((m) => m && !m.hidden) || list[0] || null;
     if (!entry) { updatePickerButton(); return; }  // empty catalog: keep what we have
     const effort = wantedEntry ? wanted.effort : fallback.effort;
     const next = { model: entry.id, effort: coerceEffort(entry, effort) };
@@ -885,6 +886,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const seen = new Set();
     for (const m of st.catalog ? st.catalog.models : []) {
       if (!m || typeof m.id !== 'string') continue;
+      if (m.hidden && m.id !== st.picker.model) continue;         // hidden built-in (#422); the current pick stays
       if (m.custom === 'global') { primary.push(m); continue; }   // user models are never demoted
       const fam = familyKey(m);
       // The picked model always shows up front so its ✓ is visible and it is one click away.
