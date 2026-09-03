@@ -16547,6 +16547,7 @@ function exportSyncFormat() {
   document.getElementById('export-folder-label').textContent = plugin ? 'Plugin folder' : 'Folder';
   document.getElementById('export-folder').placeholder = plugin ? '/path/to/my-plugin' : '/path/to/repo';
   show('export-plugin-field', plugin);
+  if (plugin) exportSyncPluginNamePreview();
   show('export-slug-field', skill);
   show('export-agents-field', skill);
   // JSON downloads straight away. The other two formats offer an optional Preview
@@ -16568,6 +16569,24 @@ function exportSyncFormat() {
       ? 'Bundles the pipeline, your own agents it uses and the skills they need. Built-in agents are not copied. The recipient runs: worca plugin link <folder>'
       : 'Writes a SKILL.md plus the agents it dispatches under .claude/, so the pipeline runs inside Claude Code without Worca.';
 }
+/** Plugin names are kebab-case (worca-cc-plugin.json `name`). Derive one from
+ *  what the user typed, else from the folder's basename, and say so under the
+ *  field — the same look-before-you-export the skill slug has. */
+function exportPluginName() {
+  const typed = document.getElementById('export-plugin-name').value.trim();
+  const folder = document.getElementById('export-folder').value.trim().replace(/[\\/]+$/, '');
+  const raw = typed || folder.split(/[\\/]/).pop() || '';
+  const name = raw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+  return { raw, name, fromFolder: !typed };
+}
+function exportSyncPluginNamePreview() {
+  const { raw, name, fromFolder } = exportPluginName();
+  const el = document.getElementById('export-plugin-name-preview');
+  if (!raw) { el.textContent = 'Plugin name: (choose a folder first)'; return; }
+  el.textContent = name
+    ? `Plugin name: ${name}${fromFolder ? ' (from the folder name)' : ''}`
+    : 'Plugin name: needs at least one letter or digit';
+}
 function exportSyncSlugPreview() {
   const raw = document.getElementById('export-slug').value;
   const { preview, valid } = exportSlugPreview(raw, exportModalState.item ? exportModalState.item.name : '');
@@ -16582,8 +16601,10 @@ function exportBuildOpts() {
       pluginDir: document.getElementById('export-folder').value.trim(),
       keepVersion: document.getElementById('export-keep-version').checked,
     };
-    const pluginName = document.getElementById('export-plugin-name').value.trim();
-    if (pluginName) opts.pluginName = pluginName;
+    // Always the NORMALIZED name (typed, else the folder's basename): the server
+    // refuses anything but kebab-case, and "Full-Special" is a typo, not a choice.
+    const { name } = exportPluginName();
+    if (name) opts.pluginName = name;
     return opts;
   }
   const rawSlug = document.getElementById('export-slug').value.trim();
@@ -16680,7 +16701,8 @@ function bindExportModal() {
   document.getElementById('export-slug').addEventListener('input', () => { exportSyncSlugPreview(); exportInvalidatePlan(); });
   document.getElementById('export-include-agents').addEventListener('change', exportInvalidatePlan);
   document.getElementById('export-folder').addEventListener('input', exportInvalidatePlan);
-  document.getElementById('export-plugin-name').addEventListener('input', exportInvalidatePlan);
+  document.getElementById('export-plugin-name').addEventListener('input', () => { exportSyncPluginNamePreview(); exportInvalidatePlan(); });
+  document.getElementById('export-folder').addEventListener('input', () => { if (exportModalState.format === 'plugin') exportSyncPluginNamePreview(); });
   document.getElementById('export-keep-version').addEventListener('change', exportInvalidatePlan);
   // Browse…: the native OS folder dialog (the server opens it — a web page never
   // learns an absolute path from its own file picker), exactly like Add Project;

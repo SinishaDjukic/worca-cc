@@ -1357,7 +1357,10 @@
         </div>
         <div id="export-plugin-field" class="export-field hidden">
           <span class="export-label">Plugin name</span>
-          <input type="text" id="export-plugin-name" class="input" placeholder="(defaults to the folder name, or the existing manifest's name)" />
+          <input type="text" id="export-plugin-name" class="input" placeholder="(defaults to the folder name)" />
+          <!-- Live: what the manifest will actually be called — kebab-case, derived
+               from the typed name or, when blank, from the folder's basename. -->
+          <span id="export-plugin-name-preview" class="hint"></span>
           <!-- Re-export only: a changed export into an existing plugin folder bumps
                the manifest's patch version (0.1.0 → 0.1.1) so the recipient's
                `worca plugin update` sees it. A first export is always 0.1.0. -->

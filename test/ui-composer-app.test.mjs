@@ -230,6 +230,15 @@ test('Export… opens the format dialog for a v2 row, not a v1 row', async () =>
   doc.querySelector('#export-format .seg-btn[data-format="plugin"]').dispatchEvent(new win.Event('click'));
   assert.ok(!hidden('export-folder-field') && !hidden('export-plugin-field') && hidden('export-slug-field') && hidden('export-dest-field'));
   assert.equal(doc.getElementById('export-folder-label').textContent, 'Plugin folder');
+  // The plugin name is normalized to kebab-case live: typed, else the folder's basename.
+  const preview = doc.getElementById('export-plugin-name-preview');
+  assert.equal(preview.textContent, 'Plugin name: (choose a folder first)');
+  doc.getElementById('export-folder').value = '/tmp/My Plugins/Full Special/';
+  doc.getElementById('export-folder').dispatchEvent(new win.Event('input'));
+  assert.equal(preview.textContent, 'Plugin name: full-special (from the folder name)');
+  doc.getElementById('export-plugin-name').value = 'Full-Special';
+  doc.getElementById('export-plugin-name').dispatchEvent(new win.Event('input'));
+  assert.equal(preview.textContent, 'Plugin name: full-special');
 
   doc.getElementById('export-cancel').dispatchEvent(new win.Event('click'));
   assert.equal(modal.classList.contains('hidden'), true, 'Cancel closes the dialog');

@@ -1041,7 +1041,7 @@ export async function exportWorkflowPlugin({ workflowId, targetDir, pluginName, 
   const askedName = typeof pluginName === 'string' && pluginName.trim() ? pluginName.trim() : '';
   const name = askedName || (existing && typeof existing.name === 'string' && existing.name.trim()) || basename(dir);
   if (!PLUGIN_NAME_RE.test(name) || name.length > 64) {
-    throw err(`plugin name must be kebab-case (got "${name}") — pass a --name`, 'BAD_REQUEST');
+    throw err(`plugin name must be kebab-case — lowercase letters, digits and hyphens (got "${name}")`, 'BAD_REQUEST');
   }
   if (existing && askedName && existing.name !== askedName) {
     throw err(`${dir} is plugin "${existing.name}" — pass --name ${existing.name} to update it, or choose another folder`, 'CONFLICT');
