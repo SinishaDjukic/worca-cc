@@ -68,3 +68,22 @@ export function pointerdown(window, target) {
   target.dispatchEvent(e);
   return e;
 }
+
+/**
+ * A PointerEvent with a stable pointerId for drag simulations. jsdom lays nothing
+ * out, so the coordinates mean whatever the test says they mean.
+ */
+export function pointer(window, type, init = {}) {
+  return new window.PointerEvent(type, { pointerId: 1, button: 0, bubbles: true, cancelable: true, ...init });
+}
+
+/**
+ * jsdom reports every box as 0×0. Give the dock a content box so the sheet's
+ * clamp has an upper bound: inner width = width − 2×28, inner height = height − 26 − 20.
+ */
+export function sizeDock(doc, width, height) {
+  const dock = doc.querySelector('.ask-dock');
+  Object.defineProperty(dock, 'clientWidth', { value: width, configurable: true });
+  Object.defineProperty(dock, 'clientHeight', { value: height, configurable: true });
+  return dock;
+}

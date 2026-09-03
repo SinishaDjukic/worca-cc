@@ -199,3 +199,36 @@ test('ui-ask-style: the composer-row scope pill never shrinks and its popover op
   assert.match(title, /text-overflow:ellipsis/);
   assert.match(title, /white-space:nowrap/);
 });
+
+test('ui-ask-style: resize grips are invisible edge zones that only set the cursor, with a tokened inset highlight', () => {
+  const base = ruleBody('.ask-resize');
+  assert.ok(base, '.ask-resize rule exists');
+  assert.match(base, /position:absolute/);
+  assert.match(base, /background:transparent/, 'invisible until hovered');
+  assert.match(base, /touch-action:none/, 'a touch drag resizes instead of scrolling the page');
+  assert.match(base, /--ask-grip:transparent/, 'idle: no highlight');
+  assert.match(base, /z-index:5/, 'above the popovers (3/4) so an edge stays grabbable');
+  assert.match(ruleBody('.ask-resize:hover') || '', /--ask-grip:var\(--ink-3\)/, 'hover: the section\'s hairline token');
+  assert.match(ruleBody('.ask-resize.is-active') || '', /--ask-grip:var\(--ink\)/, 'dragging: the section\'s hover-border token');
+  const cursors = { n: 'ns-resize', e: 'ew-resize', w: 'ew-resize', ne: 'nesw-resize', nw: 'nwse-resize' };
+  for (const [edge, cursor] of Object.entries(cursors)) {
+    const body = ruleBody(`.ask-resize-${edge}`);
+    assert.ok(body, `.ask-resize-${edge} rule exists`);
+    assert.match(body, new RegExp(`cursor:${cursor}`), `${edge} cursor`);
+    assert.match(body, /box-shadow:inset [^;]*var\(--ask-grip\)/, `${edge} highlight is a thin inset line, not a fill`);
+  }
+  assert.ok(!ruleBody('.ask-resize-s'), 'no bottom grip — the sheet is bottom-anchored');
+  assert.match(ruleBody('.ask-sheet.is-resizing') || '', /user-select:none/);
+});
+
+test('ui-ask-style: the sheet caps itself to the dock so an inline size can never overflow the viewport', () => {
+  const sheet = ruleBody('.ask-sheet');
+  assert.match(sheet, /max-width:100%/);
+  assert.match(sheet, /max-height:calc\(100% - 20px\)/, 'keeps the 20px top gap the default height leaves');
+  assert.ok(!/min-width|min-height/.test(sheet), 'the 540×360 floor lives in JS only — a CSS floor would overflow narrow viewports');
+  assert.match(sheet, /overflow:hidden/, 'the sheet still clips; .ask-transcript is the scrollport');
+  const t = ruleBody('.ask-transcript');
+  assert.match(t, /flex:1 1 auto/, 'the transcript absorbs every extra pixel of height');
+  assert.match(t, /min-height:0/);
+  assert.match(t, /overflow-y:auto/);
+});

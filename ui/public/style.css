@@ -2873,7 +2873,8 @@ body.rail-collapsed .ask-dock{left:76px;}
   font-family:var(--mono);font-weight:400;font-size:10.5px;}
 
 .ask-sheet{pointer-events:auto;position:relative;display:flex;flex-direction:column;overflow:hidden;
-  width:min(782px,100%);height:min(669px,calc(100% - 20px));background:var(--panel);
+  width:min(782px,100%);height:min(669px,calc(100% - 20px));max-width:100%;max-height:calc(100% - 20px);
+  background:var(--panel);
   border:1px solid var(--line-2);border-radius:var(--r-card);
   box-shadow:0 18px 60px rgba(25,25,27,.14),0 2px 6px rgba(25,25,27,.06);
   animation:wr-rise .26s cubic-bezier(.2,.7,.3,1) both;}
@@ -3157,6 +3158,26 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-pop-worktrees{min-width:340px;right:187px;}
 .ask-wt-row .ask-runinfo-sub.ask-wt-path{cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;}
 .ask-wt-row .ask-thread-trash{flex:none;}
+
+/* Resize grips (spec §10.3 addendum). Invisible edge zones INSIDE the sheet —
+   overflow:hidden would clip anything outside it — that only change the cursor;
+   a 2px inset line appears on hover and stays while dragging (.is-active). No
+   bottom grip: the sheet is bottom-anchored. ask-panel.mjs applies the user's
+   size as inline width/height and clamps it to the dock; the max-* pair on
+   .ask-sheet above is the backstop that keeps a stale inline size inside the
+   dock (the rail collapsing changes the dock width without a window resize).
+   The 540×360 floor is JS-only on purpose — a CSS floor would overflow narrow
+   viewports that width:min(782px,100%) handles today. */
+.ask-resize{position:absolute;z-index:5;background:transparent;touch-action:none;--ask-grip:transparent;
+  transition:box-shadow .15s;}
+.ask-resize:hover{--ask-grip:var(--ink-3);}
+.ask-resize.is-active{--ask-grip:var(--ink);}
+.ask-resize-n{top:0;left:18px;right:18px;height:6px;cursor:ns-resize;box-shadow:inset 0 2px 0 var(--ask-grip);}
+.ask-resize-e{top:18px;right:0;bottom:18px;width:6px;cursor:ew-resize;box-shadow:inset -2px 0 0 var(--ask-grip);}
+.ask-resize-w{top:18px;left:0;bottom:18px;width:6px;cursor:ew-resize;box-shadow:inset 2px 0 0 var(--ask-grip);}
+.ask-resize-ne{top:0;right:0;width:18px;height:18px;cursor:nesw-resize;box-shadow:inset -2px 2px 0 var(--ask-grip);}
+.ask-resize-nw{top:0;left:0;width:18px;height:18px;cursor:nwse-resize;box-shadow:inset 2px 2px 0 var(--ask-grip);}
+.ask-sheet.is-resizing{user-select:none;}
 
 /* ---------- Ask Worca dock clearance ---------- */
 /* The dock is a fixed overlay -- .ask-dock above: 26px dock padding-bottom plus the
