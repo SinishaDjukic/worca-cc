@@ -306,10 +306,12 @@ const postApi = (body) => fetch(`${apiBase}/api/settings`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 });
 
-test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, default} + the budget keys', async () => {
+test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, default} + the budget keys + app identity', async () => {
   await withEnv(undefined, async () => {
     const j = await getApi();
-    assert.deepEqual(Object.keys(j).sort(), ['askMaxBudgetUsd', 'askMaxTurns', 'chat', 'costLimitResetPeriod',
+    // `app` = static identity for the Settings ▸ About card (version + repo URL,
+    // read from package.json). GET-only: POST still echoes settingsState() + chat.
+    assert.deepEqual(Object.keys(j).sort(), ['app', 'askMaxBudgetUsd', 'askMaxTurns', 'chat', 'costLimitResetPeriod',
       'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'hideBuiltinModels', 'pipelineCostLimitUsd', 'projectsRoot', 'projectsRootDefault', 'root',
       'titleModel', 'titleModelEffective', 'totalCostLimitUsd']);
     assert.equal(j.titleModel, null, 'no title model stored -> the run\'s model');
