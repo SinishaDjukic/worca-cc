@@ -990,6 +990,7 @@ export async function setActiveWorkflow(projectDir, workflowId) {
  * @returns {Promise<{nodes:Record<string,object>,feedbacks:Record<string,{maxCycles:number}>}>}
  */
 export async function resolveRunConfig(projectDir, workflowId) {
+  if (!projectDir) return { nodes: {}, wires: {}, feedbacks: {} };   // defaults-only (global export); avoids projectKey(null). v2 shape incl. wires.
   const wf = readWorkflowsMap(projectKey(projectDir))[workflowId] || {};
   return {
     nodes: wf.nodes && typeof wf.nodes === 'object' ? wf.nodes : {},

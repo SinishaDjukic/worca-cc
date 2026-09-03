@@ -71,6 +71,7 @@ import { createHljsLoader } from './hljs-loader.mjs';
 import {
   buildFileTree, renderFileTree, firstFile,
 } from './file-tree.mjs';
+import { exportSlugPreview } from './export-slug.mjs';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport, renderReferences409,
@@ -1829,6 +1830,13 @@ async function gvRefreshSaved() {
         if (await gvComposer.openTemplate(full)) gvComposer.fit();
       });
       row.appendChild(open);
+      // Export to Claude Code — available for every v2 row incl. the built-in (you can
+      // export the default). Opens the plan/apply modal; the server resolves the graph.
+      const exportBtn = document.createElement('button');
+      exportBtn.type = 'button'; exportBtn.className = 'pl-export'; exportBtn.title = 'Export to Claude Code';
+      exportBtn.textContent = '⇪';
+      exportBtn.addEventListener('click', () => openExportModal({ id: wf.id, name: wf.name || wf.id }));
+      row.appendChild(exportBtn);
       // No × on the built-in: DELETE /api/workflows/wf_default always answers
       // 400 (ui/server.mjs), so the button could only ever fail. Open stays —
       // the built-in is meant to be opened and saved as a copy.
@@ -16398,3 +16406,188 @@ askPanel = createAskPanel({
   now: () => Date.now(),
 });
 document.body.appendChild(askPanel.root);
+
+// ---------------------------------------------------------------------------
+// Export to Claude Code — modal wiring. Turns a saved v2 workflow into a runnable
+// skill via POST /api/workflows/:id/export (dry-run = Plan, apply = Apply). The
+// export button is added to each v2 row in the graph-view saved list (gvRenderSaved).
+// (Re-homed from the retired v1 composer after the Node-graph v2 rebase.)
+// ---------------------------------------------------------------------------
+
+async function exportCall(id, opts) {
+  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/export`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(opts),
+  });
+  const data = await safeJson(res);
+  if (!res.ok) throw new Error(data.error || `export failed (${res.status})`);
+  return data;
+}
+async function exportPlan(id, opts) { return exportCall(id, { ...opts, dryRun: true }); }
+async function exportApply(id, opts) { return exportCall(id, opts); }
+
+const exportModalState = { item: null, destination: 'global', conflicts: [] };
+
+function openExportModal(item) {
+  const modal = document.getElementById('export-modal');
+  if (!modal) return;
+  exportModalState.item = item;
+  exportModalState.destination = 'global';
+  exportModalState.conflicts = [];
+  document.getElementById('export-subtitle').textContent = `Export "${item.name}" as a runnable /command skill.`;
+  document.getElementById('export-slug').value = '';
+  document.getElementById('export-folder').value = '';
+  document.getElementById('export-include-agents').checked = true;
+  document.getElementById('export-msg').textContent = '';
+  const planEl = document.getElementById('export-plan');
+  planEl.textContent = ''; planEl.classList.add('hidden');
+  document.getElementById('export-apply-btn').disabled = true;
+  exportSyncDest();
+  exportSyncSlugPreview();
+  modal.classList.remove('hidden');
+}
+function closeExportModal() {
+  const modal = document.getElementById('export-modal');
+  if (modal) modal.classList.add('hidden');
+}
+function exportSyncDest() {
+  const dest = exportModalState.destination;
+  for (const b of document.querySelectorAll('#export-dest .seg-btn')) {
+    b.classList.toggle('on', b.dataset.dest === dest);
+  }
+  document.getElementById('export-folder-field').classList.toggle('hidden', dest !== 'project');
+}
+function exportSyncSlugPreview() {
+  const raw = document.getElementById('export-slug').value;
+  const { preview, valid } = exportSlugPreview(raw, exportModalState.item ? exportModalState.item.name : '');
+  const el = document.getElementById('export-slug-preview');
+  el.textContent = valid ? `Command: ${preview}` : 'Invalid slug (letters, digits, . _ - only)';
+}
+function exportBuildOpts() {
+  const dest = exportModalState.destination;
+  const rawSlug = document.getElementById('export-slug').value.trim();
+  const opts = {
+    destination: dest,
+    includeAgents: document.getElementById('export-include-agents').checked,
+  };
+  if (rawSlug) opts.slug = rawSlug;
+  if (dest === 'project') opts.projectDir = document.getElementById('export-folder').value.trim();
+  return opts;
+}
+function exportRenderPlan(plan) {
+  const planEl = document.getElementById('export-plan');
+  planEl.textContent = '';
+  planEl.classList.remove('hidden');
+  const line = (label, path) => {
+    const row = document.createElement('div');
+    row.className = 'export-row';
+    row.innerHTML = `<span class="export-tag export-${label}">${label}</span> <code>${escapeHtml(path)}</code>`;
+    planEl.appendChild(row);
+  };
+  for (const p of plan.created) line('create', p);
+  for (const p of plan.updated) line('update', p);
+  for (const p of plan.noop) line('no-op', p);
+  for (const w of plan.warnings || []) {
+    const row = document.createElement('div');
+    row.className = 'export-row';
+    row.innerHTML = `<span class="export-tag export-warn">warn</span> ${escapeHtml(w)}`;
+    planEl.appendChild(row);
+  }
+  for (const o of plan.orphans || []) line('orphan', o);
+  exportModalState.conflicts = plan.conflicts || [];
+  for (const cf of exportModalState.conflicts) {
+    const row = document.createElement('div');
+    row.className = 'export-row export-conflict-row';
+    row.innerHTML = `<span class="export-tag export-conflict">conflict</span> <code>${escapeHtml(cf.path)}</code> <span class="hint">${escapeHtml(cf.reason)}</span>`;
+    const choices = document.createElement('div');
+    choices.className = 'export-choices';
+    for (const opt of cf.options || []) {
+      const label = document.createElement('label');
+      label.className = 'export-choice';
+      const radio = document.createElement('input');
+      radio.type = 'radio'; radio.name = cf.path; radio.value = opt;
+      radio.addEventListener('change', exportUpdateApplyEnabled);
+      label.appendChild(radio);
+      label.appendChild(document.createTextNode(' ' + opt));
+      choices.appendChild(label);
+    }
+    row.appendChild(choices);
+    planEl.appendChild(row);
+  }
+  exportUpdateApplyEnabled();
+}
+function exportGatherResolutions() {
+  const resolutions = {};
+  for (const cf of exportModalState.conflicts) {
+    const picked = document.querySelector(`#export-plan input[name="${CSS.escape(cf.path)}"]:checked`);
+    if (picked) resolutions[cf.path] = picked.value;
+  }
+  return resolutions;
+}
+function exportUpdateApplyEnabled() {
+  const resolutions = exportGatherResolutions();
+  const allResolved = exportModalState.conflicts.every((cf) => resolutions[cf.path]);
+  document.getElementById('export-apply-btn').disabled = !allResolved;
+}
+// A plan is keyed to the slug/destination/include-agents/folder in effect when Plan ran.
+// If any of those change afterward, the shown plan (and its gathered resolutions) no longer
+// matches what Apply would do — drop it and re-disable Apply so the user must re-Plan.
+function exportInvalidatePlan() {
+  exportModalState.conflicts = [];
+  const planEl = document.getElementById('export-plan');
+  if (planEl) { planEl.textContent = ''; planEl.classList.add('hidden'); }
+  const applyBtn = document.getElementById('export-apply-btn');
+  if (applyBtn) applyBtn.disabled = true;
+  const msg = document.getElementById('export-msg');
+  if (msg && msg.textContent) msg.textContent = 'Inputs changed — re-run Plan.';
+}
+function bindExportModal() {
+  const modal = document.getElementById('export-modal');
+  if (!modal) return;
+  for (const b of document.querySelectorAll('#export-dest .seg-btn')) {
+    b.addEventListener('click', () => { exportModalState.destination = b.dataset.dest; exportSyncDest(); exportInvalidatePlan(); });
+  }
+  document.getElementById('export-slug').addEventListener('input', () => { exportSyncSlugPreview(); exportInvalidatePlan(); });
+  document.getElementById('export-include-agents').addEventListener('change', exportInvalidatePlan);
+  document.getElementById('export-folder').addEventListener('input', exportInvalidatePlan);
+  document.getElementById('export-browse').addEventListener('click', () => {
+    const seed = document.getElementById('export-folder').value.trim();
+    openFolderBrowser(seed, (p) => { document.getElementById('export-folder').value = p; exportInvalidatePlan(); });
+  });
+  document.getElementById('export-cancel').addEventListener('click', closeExportModal);
+  document.getElementById('export-plan-btn').addEventListener('click', async () => {
+    const msg = document.getElementById('export-msg');
+    msg.textContent = 'Planning…';
+    try {
+      const plan = await exportPlan(exportModalState.item.id, exportBuildOpts());
+      exportRenderPlan(plan);
+      msg.textContent = plan.conflicts.length ? 'Resolve each conflict below, then Apply.' : 'Ready to apply.';
+    } catch (err) { msg.textContent = `Plan failed: ${err.message}`; }
+  });
+  document.getElementById('export-apply-btn').addEventListener('click', async () => {
+    const msg = document.getElementById('export-msg');
+    msg.textContent = 'Applying…';
+    try {
+      const opts = { ...exportBuildOpts(), resolutions: exportGatherResolutions() };
+      const applied = await exportApply(exportModalState.item.id, opts);
+      // A conflict Apply left UNWRITTEN (e.g. a TOCTOU conflict between Plan and Apply that
+      // had no resolution and fell to the blanket skip) is a stale partial export — re-render
+      // the fresh plan so the user can resolve it, and keep the modal open.
+      const written = new Set(applied.written || []);
+      const unwritten = (applied.conflicts || []).filter((c) => !written.has(c.path));
+      if (unwritten.length) {
+        exportRenderPlan(applied);
+        appendLog({ source: 'ui', level: 'error', text: `export of ${exportModalState.item.name} incomplete: ${applied.written.length} written, ${unwritten.length} conflict(s) left unwritten` });
+        msg.textContent = `${unwritten.length} unresolved conflict(s) were left unwritten — resolve below and Apply again.`;
+        return;
+      }
+      appendLog({ source: 'ui', level: 'info', text: `exported ${exportModalState.item.name}: ${applied.written.length} written, ${applied.skipped.length} skipped` });
+      closeExportModal();
+    } catch (err) {
+      exportInvalidatePlan();
+      msg.textContent = `Apply failed: ${err.message}`;
+    }
+  });
+  // Backdrop click (the overlay itself, not the inner card) closes the modal.
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeExportModal(); });
+}
+bindExportModal();

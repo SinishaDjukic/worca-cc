@@ -225,6 +225,7 @@ Subcommands:
   config [get|set|unset]      Budget & cost-limit settings
   ui [start|stop|restart|status]
                               Run the web UI (default http://localhost:4317). See: worca ui help
+  workflow <cmd> [...]        Export a workflow as a Claude Code skill: list|export. See: worca workflow help
   help                        Print this help (same as --help).
   version                     Print the version (same as --version).
 
@@ -1203,6 +1204,23 @@ working, including updates (install provenance lives in plugins.lock.json).
 Exit codes: 0 ok, 1 failure, 2 usage/validation errors.
 `;
 
+const WORKFLOW_HELP = `worca workflow — export a saved Composer workflow as a runnable Claude Code skill
+
+Usage:
+  worca workflow list                                List workflows (id, name, domain)
+  worca workflow export <id> [options]               Export a workflow to <dest>/.claude/
+
+Export options:
+  --global                 Export to the home dir (~/.claude), not a project
+  --target <dir>           Export into <dir>/.claude (default: cwd)
+  --slug <name>            Skill slug (default: slugified workflow name)
+  --dry-run                Show the classification (create/update/no-op/conflict); write nothing
+  --on-conflict <mode>     skip (default) | overwrite | namespace conflicting files
+
+Export always prints the plan first, then applies (unless --dry-run). A re-export
+of an unchanged workflow is an all-no-op. Exit codes: 0 ok, 1 failure, 2 usage errors.
+`;
+
 /** Tiny per-verb arg parser: positionals plus declared --value / --bool flags. */
 function pluginArgs(argv, valueFlags = [], boolFlags = []) {
   const out = { _: [] };
@@ -1838,9 +1856,69 @@ async function cmdMarketplace(argv) {
   }
 }
 
+async function cmdWorkflow(argv) {
+  const verb = argv[0];
+  const rest = argv.slice(1);
+  if (!verb || verb === 'help') { process.stdout.write(WORKFLOW_HELP); return 0; }
+  const wf = await import('../core/workflows.mjs');
+  const xp = await import('../core/workflow-export.mjs');
+  try {
+    switch (verb) {
+      case 'list': {
+        // GRAPH_DEFAULT_WORKFLOW (the built-in default) is not in the user store, so
+        // prepend it — mirrors the server/UI, which always show it first.
+        const items = [wf.GRAPH_DEFAULT_WORKFLOW, ...(await wf.listWorkflows())];
+        for (const w of items) out(`${w.id}\t${w.name}\t${(w.domain || 'general')}`);
+        return 0;
+      }
+      case 'export': {
+        const a = pluginArgs(rest, ['--target', '--slug', '--on-conflict'], ['--global', '--dry-run']);
+        const id = a._[0];
+        if (!id) fail('Usage: worca workflow export <id> [--global | --target <dir>] [--slug <name>] [--dry-run] [--on-conflict=skip|overwrite|namespace]');
+        if (a.global && a.target) fail('--global and --target are mutually exclusive');
+        const onConflict = a['on-conflict'] || 'skip';
+        if (!xp.ON_CONFLICT_MODES.includes(onConflict)) fail(`--on-conflict must be ${xp.ON_CONFLICT_MODES.join('|')} (got ${onConflict})`);
+        const destination = a.global ? 'global' : 'project';
+        const projectDir = a.global ? undefined : (a.target || process.cwd());
+        const common = { workflowId: id, destination, projectDir, slug: a.slug };
+
+        // Always show the classification first. A dry-run stops at planExport (writes nothing);
+        // an apply reuses the buckets applyExport already computes, so the full resolve+classify
+        // pipeline runs ONCE, not twice.
+        const printPlan = (p) => {
+          for (const path of p.created) out(`${c('green', 'create')}\t${path}`);
+          for (const path of p.updated) out(`${c('cyan', 'update')}\t${path}`);
+          for (const path of p.noop) out(`${c('gray', 'no-op')}\t${path}`);
+          for (const cf of p.conflicts) out(`${c('yellow', 'conflict')}\t${cf.path}\t(${cf.reason})`);
+          for (const w of p.warnings || []) out(`${c('yellow', 'warn')}\t${w}`);
+          for (const o of p.orphans || []) out(`${c('gray', 'orphan')}\t${o}`);
+        };
+
+        if (a['dry-run']) { printPlan(await xp.planExport(common)); return 0; }
+
+        const applied = await xp.applyExport({ ...common, onConflict });
+        printPlan(applied);
+        for (const p of applied.written) out(`${c('green', 'wrote')}\t${p}`);
+        for (const p of applied.skipped) out(`${c('gray', 'skip')}\t${p}`);
+        if (applied.conflicts.length) {
+          // A partial export (conflicts skipped) can leave a non-runnable skill on disk. Warn AND
+          // exit non-zero so a CI/script that only checks the exit code does not treat it as success.
+          out(c('yellow', `\n${applied.conflicts.length} conflict(s) left unresolved (--on-conflict=${onConflict}). Re-run with --on-conflict=overwrite|namespace.`));
+          return 1;
+        }
+        return 0;
+      }
+      default: fail(`unknown workflow verb "${verb}" — see: worca workflow help`);
+    }
+  } catch (err) {
+    process.stderr.write(`worca workflow ${verb}: ${err && err.message ? err.message : err}\n`);
+    return 1;
+  }
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config', 'ui']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -1899,6 +1977,7 @@ async function main() {
     if (sub === 'marketplace') return cmdMarketplace(rest);
     if (sub === 'config') return cmdConfig(rest);
     if (sub === 'ui') return cmdUi(rest);
+    if (sub === 'workflow') return cmdWorkflow(rest);
   }
   // `worca --ui [...]` is the historical spelling of `worca ui start [...]`; hand the
   // remaining tokens to the ui parser so --port/--open/--mock work with either.

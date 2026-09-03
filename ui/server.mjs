@@ -108,6 +108,7 @@ import {
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
 import { validateGraph, AGENT_TUNABLES } from '../src/shared/graph/validate.mjs';
+import { exportWorkflow, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
@@ -3495,6 +3496,52 @@ app.delete('/api/workflows/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+function workflowExportErrorStatus(code) {
+  if (code === 'NOT_FOUND') return 404;
+  if (code === 'BAD_REQUEST' || code === 'UNSUPPORTED' || code === 'MISSING_SKILL') return 400;
+  if (code === 'CONFLICT' || code === 'CANCELLED') return 409;
+  return 500;
+}
+
+app.post('/api/workflows/:id/export', async (req, res) => {
+  const body = req.body || {};
+  const destination = body.destination;
+  if (destination !== 'global' && destination !== 'project') {
+    return badRequest(res, "destination must be 'global' or 'project'");
+  }
+  let projectDir;
+  if (destination === 'project') {
+    projectDir = resolveProjectDir(body.projectDir);
+    if (!projectDir) return badRequest(res, 'projectDir is required for a project export');
+  }
+  // Validate conflict handling the same way the CLI does — the write loop only fails safe if
+  // it never sees a bogus value. An unrecognized onConflict/resolution is a caller error, not
+  // a silent overwrite.
+  if (body.onConflict !== undefined && !ON_CONFLICT_MODES.includes(body.onConflict)) {
+    return badRequest(res, `onConflict must be one of: ${ON_CONFLICT_MODES.join(', ')}`);
+  }
+  if (body.resolutions !== undefined) {
+    if (!body.resolutions || typeof body.resolutions !== 'object' || Array.isArray(body.resolutions)) {
+      return badRequest(res, 'resolutions must be an object keyed by path');
+    }
+    for (const [path, choice] of Object.entries(body.resolutions)) {
+      if (!RESOLUTION_CHOICES.includes(choice)) {
+        return badRequest(res, `invalid resolution ${JSON.stringify(choice)} for ${path} (allowed: ${RESOLUTION_CHOICES.join(', ')})`);
+      }
+    }
+  }
+  try {
+    const result = await exportWorkflow({
+      workflowId: req.params.id, destination, projectDir,
+      slug: body.slug, includeAgents: body.includeAgents !== false,
+      dryRun: !!body.dryRun, onConflict: body.onConflict, resolutions: body.resolutions,
+    });
+    res.json(result); // Plan {created,noop,updated,conflicts,warnings,orphans} OR Apply {written,skipped,...}
+  } catch (err) {
+    res.status(workflowExportErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
   }
 });
 
