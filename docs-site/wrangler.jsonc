@@ -1,0 +1,16 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	// Same Worker name as the 0.x-era docs site, so the existing Workers Builds
+	// project (root directory `docs-site`, watch path `docs-site/*`, production
+	// branch `docs-live`) keeps publishing docs.worca.dev without any dashboard
+	// change. Static assets only — no script. See README.md for the deploy model.
+	"name": "worca-docs",
+	"compatibility_date": "2026-05-27",
+	"assets": {
+		"directory": "./dist",
+		// Unknown paths (including the 0.x page slugs the old in-app help badges
+		// still link to) get dist/404.html — the same landing page, with a 404
+		// status so search engines drop the stale URLs.
+		"not_found_handling": "404-page"
+	}
+}
