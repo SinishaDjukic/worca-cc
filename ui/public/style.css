@@ -3482,6 +3482,8 @@ input.gv-name:focus-visible{outline:none;}
   padding:4px 11px;font:600 11.5px var(--sans);cursor:pointer;flex:0 0 auto;white-space:nowrap;}
 .gv-errchip:hover{filter:brightness(.97);}
 .gv-errchip[hidden]{display:none;}
+/* Unfinished wiring is a to-do, not a mistake: the same chip in a quiet dress. */
+.gv-errchip.is-incomplete{background:var(--field);color:var(--ink-2);border-color:var(--line-2);}
 /* Toolbar density: .btn-ghost/.btn-go are PAGE-level pills (13–14px of vertical
    padding, 20–28px horizontal). In a 52px bar they wrap their own labels, so
    the bar re-states them at .btn-mini metrics — same skin, toolbar size. */
