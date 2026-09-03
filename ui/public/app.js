@@ -1910,7 +1910,8 @@ function gvRenderSaved() {
       exportBtn.title = 'Export as a JSON file, a Claude Code skill or a Worca plugin';
       exportBtn.textContent = 'Export…';
       exportBtn.addEventListener('click', () => openExportModal({ id: wf.id, name: wf.name || wf.id }));
-      row.appendChild(exportBtn);
+      // Appended AFTER delete (below): Export… is the last element of every row, so
+      // it sits on the same right edge whether or not the row has a delete.
       // No delete on the built-in: DELETE /api/workflows/wf_default always answers
       // 400 (ui/server.mjs), so the button could only ever fail. Opening stays —
       // the built-in is meant to be opened and saved as a copy.
@@ -1935,6 +1936,7 @@ function gvRenderSaved() {
         });
         row.appendChild(del);
       }
+      row.appendChild(exportBtn);
     } else {
       const tag = document.createElement('span');
       tag.className = 'pl-legacy';
@@ -7090,9 +7092,11 @@ function basenameOf(p) {
 }
 
 // Thin wrapper over the native picker endpoint; never throws.
-async function pickFolder() {
+async function pickFolder(purpose = 'project') {
   try {
-    const res = await fetch('/api/fs/pick-folder', { method: 'POST' });
+    const res = await fetch('/api/fs/pick-folder', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ purpose }),
+    });
     return await safeJson(res); // {status:'picked',path} | {status:'canceled'} | {status:'unsupported'} | {status:'busy'}
   } catch {
     return { status: 'unsupported' };
@@ -16671,9 +16675,17 @@ function bindExportModal() {
   document.getElementById('export-folder').addEventListener('input', exportInvalidatePlan);
   document.getElementById('export-plugin-name').addEventListener('input', exportInvalidatePlan);
   document.getElementById('export-keep-version').addEventListener('change', exportInvalidatePlan);
-  document.getElementById('export-browse').addEventListener('click', () => {
-    const seed = document.getElementById('export-folder').value.trim();
-    openFolderBrowser(seed, (p) => { document.getElementById('export-folder').value = p; exportInvalidatePlan(); });
+  // Browse…: the native OS folder dialog (the server opens it — a web page never
+  // learns an absolute path from its own file picker), exactly like Add Project;
+  // the in-app browser is the fallback when the native one is unsupported.
+  document.getElementById('export-browse').addEventListener('click', async () => {
+    const folder = document.getElementById('export-folder');
+    const set = (p) => { folder.value = p; exportInvalidatePlan(); };
+    const data = await pickFolder(exportModalState.format === 'plugin' ? 'plugin' : 'export');
+    if (data && data.status === 'picked' && data.path) { set(data.path); return; }
+    if (data && data.status === 'canceled') return;
+    if (data && data.status === 'busy') { document.getElementById('export-msg').textContent = 'A folder dialog is already open — finish or cancel it first.'; return; }
+    openFolderBrowser(folder.value.trim(), set);
   });
   document.getElementById('export-cancel').addEventListener('click', closeExportModal);
   document.getElementById('export-plan-btn').addEventListener('click', async () => {

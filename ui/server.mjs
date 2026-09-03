@@ -2481,9 +2481,11 @@ app.delete('/api/projects', async (req, res) => {
 // user's machine); when it reports `unsupported` the UI falls back to an
 // in-app modal fed by GET /api/fs/dirs. Localhost-only like every route here
 // (global isLocalRequest middleware).
-app.post('/api/fs/pick-folder', async (_req, res) => {
+app.post('/api/fs/pick-folder', async (req, res) => {
   try {
-    res.json(await pickFolderNative());
+    // `purpose` only picks the dialog title from a closed set (folder-dialog.mjs).
+    const purpose = typeof req.body?.purpose === 'string' ? req.body.purpose : undefined;
+    res.json(await pickFolderNative({ purpose }));
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

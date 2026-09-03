@@ -199,6 +199,10 @@ test('Export… opens the format dialog for a v2 row, not a v1 row', async () =>
   assert.ok(rowById('wf_g').querySelector('.pl-export'), 'a v2 workflow is exportable');
   assert.equal(rowById('wf_old').querySelector('.pl-export'), null, 'a v1 workflow is not exportable');
   assert.equal(rowById('wf_g').querySelectorAll('button, a').length, 2, 'Export… + delete only');
+  // Export… is the LAST element of every row (delete sits before it), so it lines
+  // up on the same right edge whether or not the row has a delete.
+  assert.ok(rowById('wf_g').querySelector('.pl-row').lastElementChild.classList.contains('pl-export'));
+  assert.ok(rowById('wf_default').querySelector('.pl-row').lastElementChild.classList.contains('pl-export'));
 
   const modal = doc.getElementById('export-modal');
   assert.ok(modal.classList.contains('hidden'), 'modal starts hidden');
