@@ -1379,8 +1379,10 @@
         <p id="export-msg" class="confirm-message"></p>
         <div class="confirm-actions">
           <button type="button" id="export-cancel" class="btn btn-ghost btn-mini">Cancel</button>
-          <button type="button" id="export-plan-btn" class="btn btn-ghost btn-mini">Plan</button>
-          <button type="button" id="export-apply-btn" class="btn btn-primary btn-mini" disabled>Apply</button>
+          <!-- Preview = dry run (optional). Export runs the dry run itself and writes
+               unless it hits a conflict, which it then shows for per-file resolution. -->
+          <button type="button" id="export-plan-btn" class="btn btn-ghost btn-mini">Preview</button>
+          <button type="button" id="export-apply-btn" class="btn btn-primary btn-mini">Export</button>
         </div>
       </div>
     </div>

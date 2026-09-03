@@ -215,10 +215,12 @@ test('Export… opens the format dialog for a v2 row, not a v1 row', async () =>
   assert.equal(doc.getElementById('export-apply-btn').textContent, 'Download');
   assert.equal(doc.getElementById('export-apply-btn').disabled, false);
   assert.ok(hidden('export-plan-btn') && hidden('export-slug-field') && hidden('export-dest-field') && hidden('export-plugin-field'));
-  // Skill: location + slug + agents; Apply waits for a Plan.
+  // Skill: location + slug + agents; Export is live at once (it dry-runs itself),
+  // Preview is the optional look-first.
   doc.querySelector('#export-format .seg-btn[data-format="skill"]').dispatchEvent(new win.Event('click'));
-  assert.equal(doc.getElementById('export-apply-btn').textContent, 'Apply');
-  assert.equal(doc.getElementById('export-apply-btn').disabled, true);
+  assert.equal(doc.getElementById('export-apply-btn').textContent, 'Export');
+  assert.equal(doc.getElementById('export-apply-btn').disabled, false);
+  assert.equal(doc.getElementById('export-plan-btn').textContent, 'Preview');
   assert.ok(!hidden('export-plan-btn') && !hidden('export-slug-field') && !hidden('export-dest-field') && hidden('export-plugin-field'));
   assert.ok(hidden('export-folder-field'), 'global location needs no folder');
   assert.equal(doc.getElementById('export-slug-preview').textContent, 'Command: /graph-one', 'slug preview from the name');

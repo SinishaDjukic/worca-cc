@@ -16508,7 +16508,9 @@ async function exportApply(id, opts) { return exportCall(id, opts); }
 // format: 'json' (download the saved graph) | 'skill' (Claude Code skill; destination
 // global|project) | 'plugin' (Worca plugin folder). The dialog asks for the format
 // first — one Export… per row instead of one button per format.
-const exportModalState = { item: null, format: 'json', destination: 'global', conflicts: [] };
+// `planned`: a Preview (dry run) for the CURRENT inputs is on screen. Export runs
+// its own dry run when there is none, so the primary button is never dead.
+const exportModalState = { item: null, format: 'json', destination: 'global', conflicts: [], planned: false };
 
 function openExportModal(item) {
   const modal = document.getElementById('export-modal');
@@ -16517,6 +16519,7 @@ function openExportModal(item) {
   exportModalState.format = 'json';
   exportModalState.destination = 'global';
   exportModalState.conflicts = [];
+  exportModalState.planned = false;
   document.getElementById('export-slug').value = '';
   document.getElementById('export-folder').value = '';
   document.getElementById('export-plugin-name').value = '';
@@ -16546,12 +16549,13 @@ function exportSyncFormat() {
   show('export-plugin-field', plugin);
   show('export-slug-field', skill);
   show('export-agents-field', skill);
-  // JSON needs no plan: the primary action downloads straight away. The other two
-  // formats stay Plan → Apply (Apply enables once a plan has no open conflict).
+  // JSON downloads straight away. The other two formats offer an optional Preview
+  // (dry run); Export runs that dry run itself and writes unless it finds a
+  // conflict, which the user then resolves per file before exporting again.
   document.getElementById('export-plan-btn').classList.toggle('hidden', json);
   const apply = document.getElementById('export-apply-btn');
-  apply.textContent = json ? 'Download' : 'Apply';
-  if (json) apply.disabled = false;
+  apply.textContent = json ? 'Download' : 'Export';
+  apply.disabled = false;
   const name = exportModalState.item ? exportModalState.item.name : '';
   document.getElementById('export-subtitle').textContent = json
     ? `Download "${name}" as a JSON file another Worca user can import.`
@@ -16615,6 +16619,7 @@ function exportRenderPlan(plan) {
   }
   for (const o of plan.orphans || []) line('orphan', o);
   exportModalState.conflicts = plan.conflicts || [];
+  exportModalState.planned = true;
   for (const cf of exportModalState.conflicts) {
     const row = document.createElement('div');
     row.className = 'export-row export-conflict-row';
@@ -16654,12 +16659,14 @@ function exportUpdateApplyEnabled() {
 // matches what Apply would do — drop it and re-disable Apply so the user must re-Plan.
 function exportInvalidatePlan() {
   exportModalState.conflicts = [];
+  exportModalState.planned = false;
   const planEl = document.getElementById('export-plan');
   if (planEl) { planEl.textContent = ''; planEl.classList.add('hidden'); }
+  // Export re-plans on its own, so a stale preview never leaves the button dead.
   const applyBtn = document.getElementById('export-apply-btn');
-  if (applyBtn) applyBtn.disabled = exportModalState.format !== 'json';   // JSON never needs a plan
+  if (applyBtn) applyBtn.disabled = false;
   const msg = document.getElementById('export-msg');
-  if (msg && msg.textContent) msg.textContent = exportModalState.format === 'json' ? '' : 'Inputs changed — re-run Plan.';
+  if (msg) msg.textContent = '';
 }
 function bindExportModal() {
   const modal = document.getElementById('export-modal');
@@ -16688,15 +16695,19 @@ function bindExportModal() {
     openFolderBrowser(folder.value.trim(), set);
   });
   document.getElementById('export-cancel').addEventListener('click', closeExportModal);
+  // Preview: the optional dry run — shows what Export would write, writes nothing.
   document.getElementById('export-plan-btn').addEventListener('click', async () => {
     const msg = document.getElementById('export-msg');
-    msg.textContent = 'Planning…';
+    msg.textContent = 'Previewing…';
     try {
       const plan = await exportPlan(exportModalState.item.id, exportBuildOpts());
       exportRenderPlan(plan);
-      msg.textContent = plan.conflicts.length ? 'Resolve each conflict below, then Apply.' : 'Ready to apply.';
-    } catch (err) { msg.textContent = `Plan failed: ${err.message}`; }
+      msg.textContent = plan.conflicts.length ? 'Resolve each conflict below, then Export.' : 'Preview only — nothing is written until you click Export.';
+    } catch (err) { msg.textContent = `Preview failed: ${err.message}`; }
   });
+  // Export: writes. Without a preview for the current inputs it runs the dry run
+  // itself first; a conflict (only the skill format can raise one) stops it and is
+  // shown for per-file resolution — nothing is ever written past an unresolved one.
   document.getElementById('export-apply-btn').addEventListener('click', async () => {
     const msg = document.getElementById('export-msg');
     if (exportModalState.format === 'json') {
@@ -16710,8 +16721,16 @@ function bindExportModal() {
       closeExportModal();
       return;
     }
-    msg.textContent = 'Applying…';
+    msg.textContent = 'Exporting…';
     try {
+      if (!exportModalState.planned) {
+        const plan = await exportPlan(exportModalState.item.id, exportBuildOpts());
+        if ((plan.conflicts || []).length) {
+          exportRenderPlan(plan);
+          msg.textContent = 'Resolve each conflict below, then Export.';
+          return;
+        }
+      }
       const opts = { ...exportBuildOpts(), resolutions: exportGatherResolutions() };
       const applied = await exportApply(exportModalState.item.id, opts);
       // A conflict Apply left UNWRITTEN (e.g. a TOCTOU conflict between Plan and Apply that
@@ -16722,7 +16741,7 @@ function bindExportModal() {
       if (unwritten.length) {
         exportRenderPlan(applied);
         appendLog({ source: 'ui', level: 'error', text: `export of ${exportModalState.item.name} incomplete: ${applied.written.length} written, ${unwritten.length} conflict(s) left unwritten` });
-        msg.textContent = `${unwritten.length} unresolved conflict(s) were left unwritten — resolve below and Apply again.`;
+        msg.textContent = `${unwritten.length} unresolved conflict(s) were left unwritten — resolve below and Export again.`;
         return;
       }
       // A plugin folder that does not validate stays open: the recipient's
@@ -16739,7 +16758,7 @@ function bindExportModal() {
       closeExportModal();
     } catch (err) {
       exportInvalidatePlan();
-      msg.textContent = `Apply failed: ${err.message}`;
+      msg.textContent = `Export failed: ${err.message}`;
     }
   });
   // Backdrop click (the overlay itself, not the inner card) closes the modal.
