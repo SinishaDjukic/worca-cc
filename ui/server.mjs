@@ -41,19 +41,22 @@ import {
   setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod, assertCostLimitInputs,
   askMaxTurns, askMaxBudgetUsd, setAskMaxTurns, setAskMaxBudgetUsd, assertAskLimitInputs,
   chatPrefs, setChatPrefs,
+  debugSpawnEnabled as storedDebugSpawnEnabled, effectiveDebugSpawn, setDebugSpawnEnabled, assertDebugSpawnInput, SETTINGS_POST_KEYS,
 } from '../src/core/settings.mjs';
 import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
   listThreads as askListThreads, updateThread as askUpdateThread,
   deleteThread as askDeleteThread, sweepEmptyThreads, sweepStreamingMessages,
+  countThreads as askCountThreads, listThreadIds as askListThreadIds,
+  countWorktrees as askCountWorktrees, countAttachments as askCountAttachments,
   appendMessage as askAppendMessage, getMessage as askGetMessage,
   listMessages as askListMessages, setMessageBlocks as askSetMessageBlocks,
   findCard as askFindCard, updateCardBlock as askUpdateCardBlock,
   addAttachment as askAddAttachment, listAttachments as askListAttachments,
-  readAttachmentText as askReadAttachmentText, threadAttachmentBytes as askThreadAttachmentBytes,
+  getAttachment as askGetAttachment, attachmentPath as askAttachmentPath, threadAttachmentBytes as askThreadAttachmentBytes,
   linkRun as askLinkRun, updateRunLink as askUpdateRunLink, listRunLinks as askListRunLinks,
   findRunLinksByPipeline as askFindRunLinksByPipeline,
-  setThreadTitle as askSetThreadTitle, finishMessage as askFinishMessage,
+  finishMessage as askFinishMessage,
 } from '../src/core/ask/store.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
@@ -64,6 +67,9 @@ import {
   buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
   selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
 } from '../src/core/ask/prompt.mjs';
+import {
+  classifyExtension as askClassifyExtension, sniffMime as askSniffMime,
+} from '../src/core/ask/attachment-kind.mjs';
 import {
   listAskWorktrees as askListWorktrees,
   removeAskWorktree as askRemoveWorktree,
@@ -84,9 +90,12 @@ import {
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef, SUBAGENT_MODEL_VALUES, subagentModelIssue } from '../src/core/model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue } from '../src/core/model-env.mjs';
 import { listPluginModels, modelSecretsSchema, pluginModelSecretStatus } from '../src/core/plugin-models.mjs';
 import { testModel } from '../src/core/model-test.mjs';
+import {
+  DEFAULT_UI_PORT, UI_HEALTH_NAME, newUiToken, writeUiInstance, removeUiInstance, uiUrl,
+} from '../src/core/ui-instance.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
   listBuiltinGuardrailSets, listGuardrailSets, readGuardrailSet,
@@ -169,6 +178,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const AGENTS_DIR = path.join(PROJECT_ROOT, 'agents');
 const SKILLS_DIR = path.join(PROJECT_ROOT, 'skills');
 const require = createRequire(import.meta.url);
+const PKG_VERSION = require('../package.json').version;
 const HLJS_LANGUAGE_FILE_RE = /^[a-z0-9][a-z0-9-]{0,63}\.min\.js$/;
 // Primaries plus the sub-language grammars their instances register
 // (hljs-loader.mjs); a shipped but unmapped grammar stays a plain 404.
@@ -207,7 +217,7 @@ const ASK_VENDOR_ASSETS = {
   dompurify: resolveEsmAsset('dompurify'),
 };
 
-const PORT = Number(process.env.PORT) || 4317;
+const PORT = Number(process.env.PORT) || DEFAULT_UI_PORT;
 // Bind to loopback by default (S1). Power users who knowingly want LAN exposure
 // can set WORCA_HOST=0.0.0.0, but the localhost-only Host/Origin guard still
 // applies unless they also front it with auth.
@@ -270,6 +280,11 @@ const MAX_BUFFER = 5000;
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
+// ws re-emits the http server's 'error' on the WebSocketServer. With no listener
+// here, an EADDRINUSE on listen() became an unhandled 'error' event and a full
+// stack trace; the http server's own handler (isMain below) is the one that
+// reports it, so this side of the pair only has to not throw.
+wss.on('error', () => {});
 
 /** All currently connected sockets. */
 const sockets = new Set();
@@ -485,6 +500,9 @@ function summarizeRuns() {
     // 'cost_pipeline'/'cost_total') instead of showing a plain "Paused" card
     // until the next event.
     pauseReason: r.pauseReason || null,
+    // The clipped failure message behind reason 'error', or null — so a
+    // reload/reconnect restores the "Paused · error" detail, not a bare card.
+    pauseDetail: r.pauseDetail || null,
     startedAt: r.startedAt,
     pendingQuestion: r.pendingQuestion || null,
     // kind discriminator so the client routes runs vs scans vs agent generations
@@ -565,14 +583,21 @@ function wireRun(entry) {
         // Remember the pause reason for summarizeRuns (hello). Reset on every
         // done so a later reasonless finish cannot leave a stale cost banner.
         entry.pauseReason = (payload && payload.reason) || null;
+        // ...and WHAT went wrong for an error-pause, reset alongside it.
+        entry.pauseDetail = (payload && payload.detail) || null;
         resolvePending(entry, { reason: entry.status });
         if (payload?.reason === 'cost_pipeline' || payload?.reason === 'cost_total') {
           emitChanged('budget-changed');
         }
       }
       if (name === 'error') {
-        entry.status = 'error';
-        resolvePending(entry, { reason: 'error' });
+        // The launch-error channel (a failure BEFORE the pipeline row exists). A
+        // converted in-run failure pauses and emits no 'error'; never let a stray
+        // one demote a parked run.
+        if (entry.status !== 'paused' && entry.status !== 'pausing') {
+          entry.status = 'error';
+          resolvePending(entry, { reason: 'error' });
+        }
       }
       if (name === 'exec') {
         entry.status = 'running';
@@ -739,6 +764,15 @@ app.use((req, res, next) => {
   next();
 });
 
+// Ask attachments ride base64 inside the message JSON (§7.3), and a binary
+// attachment (#398) may legitimately be 5 MB — several of them blow the app-wide
+// 8mb cap below. Registered BEFORE the global parser on the ONE route that
+// carries uploads (a body parsed here is skipped there): every other ask route
+// reads a string field or nothing and keeps the 8mb window. 64mb covers
+// maxFiles × maxBytesPerBinaryFile at base64's 4/3 inflation, so every
+// over-budget upload still reaches the route's OWN clear 400/413, not a raw
+// parser error.
+app.post('/api/ask/threads/:id/messages', express.json({ limit: '64mb' }));
 app.use(express.json({ limit: '8mb' }));
 
 if (HLJS_ASSETS) {
@@ -2753,6 +2787,51 @@ const settingsState = () => ({
   costLimitResetPeriod: costLimitResetPeriod(),
   askMaxTurns: askMaxTurns(),
   askMaxBudgetUsd: askMaxBudgetUsd(),
+  debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
+  debugSpawnEffective: effectiveDebugSpawn(),             // what the next spawn will DO, and why
+});
+
+// ---------------------------------------------------------------------------
+// Instance lifecycle (`worca ui status|stop|restart`, src/core/ui-instance.mjs)
+// ---------------------------------------------------------------------------
+// `uiControl` is set by the boot block below when the server owns a port. Under
+// test (app imported, no bind) it stays empty: /api/health still answers, and
+// /api/shutdown refuses with 503 rather than exiting the test runner.
+const uiControl = { token: null, onShutdown: null, startedAt: null };
+const startedAtIso = () => uiControl.startedAt || null;
+
+app.get('/api/health', (req, res) => {
+  const addr = req.socket && req.socket.localPort;
+  res.json({
+    name: UI_HEALTH_NAME,
+    version: PKG_VERSION,
+    pid: process.pid,
+    host: HOST,
+    port: addr || PORT,
+    startedAt: startedAtIso(),
+  });
+});
+
+/** Constant-time bearer check; `expected` is the boot-time token from ui.json. */
+function bearerMatches(header, expected) {
+  if (!expected || typeof header !== 'string') return false;
+  const m = /^Bearer\s+(\S+)$/i.exec(header.trim());
+  if (!m) return false;
+  const a = Buffer.from(m[1]);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+app.post('/api/shutdown', (req, res) => {
+  if (!uiControl.token || typeof uiControl.onShutdown !== 'function') {
+    return res.status(503).json({ error: 'shutdown is only available on a server started with `worca ui`' });
+  }
+  if (!bearerMatches(req.headers.authorization, uiControl.token)) {
+    return res.status(401).json({ error: 'shutdown requires the bearer token from the instance file' });
+  }
+  res.status(202).json({ ok: true, pid: process.pid });
+  // Answer first, exit on the next tick so the 202 actually leaves the socket.
+  setImmediate(() => uiControl.onShutdown('request'));
 });
 
 app.get('/api/settings', (_req, res) => {
@@ -2768,6 +2847,7 @@ app.post('/api/settings', async (req, res) => {
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
   const hasBudgetKey = has('pipelineCostLimitUsd') || has('totalCostLimitUsd') || has('costLimitResetPeriod');
   const hasAskKey = has('askMaxTurns') || has('askMaxBudgetUsd');
+  const hasDebugSpawnKey = has('debugSpawnEnabled');
   // Normalize the budget keys first, then validate them as a SET before ANY write.
   // Each setter persists on its own, so a two-key POST whose second key is invalid
   // used to answer 400 with the first key already on disk, no budget-changed
@@ -2788,6 +2868,15 @@ app.post('/api/settings', async (req, res) => {
   try {
     assertCostLimitInputs(budget);
     assertAskLimitInputs(ask);
+    if (hasDebugSpawnKey) assertDebugSpawnInput(body.debugSpawnEnabled);
+    // Root first: it is the one key whose setter can still fail AFTER the asserts
+    // above (an unusable path), so every other key's write must come after it or
+    // a mixed POST would answer 400 with those keys already applied on disk.
+    // Legacy contract: a POST that names NO known key clears root; the known
+    // keys live beside their setters (SETTINGS_POST_KEYS), not in a list here.
+    if (has('root') || !SETTINGS_POST_KEYS.some(has)) {
+      await setWorcaRoot(typeof body.root === 'string' ? body.root : '');
+    }
     if (has('chat')) await setChatPrefs(body.chat);
     if (has('projectsRoot')) {
       await setProjectsRoot(typeof body.projectsRoot === 'string' ? body.projectsRoot : '');
@@ -2797,12 +2886,11 @@ app.post('/api/settings', async (req, res) => {
     if (has('costLimitResetPeriod')) await setCostLimitResetPeriod(budget.costLimitResetPeriod);
     if (has('askMaxTurns')) await setAskMaxTurns(ask.askMaxTurns);
     if (has('askMaxBudgetUsd')) await setAskMaxBudgetUsd(ask.askMaxBudgetUsd);
-    // Legacy contract: a POST that names no known key clears root. Budget and ask
-    // keys must not trip it — a budget-only or ask-only save would otherwise wipe the root.
-    if (has('root') || !(has('projectsRoot') || hasBudgetKey || hasAskKey || has('chat'))) {
-      await setWorcaRoot(typeof body.root === 'string' ? body.root : '');
-    }
+    if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
     if (hasBudgetKey) emitChanged('budget-changed');
+    // Other open tabs repaint their Settings cards (a stale tab could otherwise
+    // "save" its old checkbox state over this one with no feedback to either).
+    if (hasAskKey || hasDebugSpawnKey) emitChanged('settings-changed');
     res.json({ ...settingsState(), chat: chatPrefs() });
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).
@@ -2988,8 +3076,7 @@ app.delete('/api/config/models', async (req, res) => {
 // back means "keep" and is dropped from the write.
 // ---------------------------------------------------------------------------
 
-const maskEnvValue = (v) =>
-  (modelEnvRef(v) ? v : (v.length > 8 ? `••••••${v.slice(-4)}` : '••••••'));
+const maskEnvValue = (v) => (modelEnvRef(v) ? v : maskModelEnvValue(v));
 const maskedGlobalModel = (m) => (m.env
   ? { ...m, env: Object.fromEntries(Object.entries(m.env).map(([k, v]) => [k, maskEnvValue(v)])) }
   : m);
@@ -3610,6 +3697,29 @@ function stampAskFrames(threadId, job) {
   };
 }
 
+/** The narrow worktree envelope the snapshot GET and the `ask-worktrees` frame
+ *  share (P4 §10): never the full row — threadId/projectDir/updatedAt stay
+ *  server-side. Mirrors the list_worktrees MCP tool (src/core/ask/tools.mjs). */
+function askWorktreesEnvelope(threadId) {
+  return askListWorktrees(threadId).map((w) => ({
+    worktreeId: w.worktreeId, projectKey: w.projectKey, ref: w.ref,
+    commit: w.commit, path: w.path, createdAt: w.createdAt,
+  }));
+}
+
+/** Broadcast the thread's CURRENT worktrees as an out-of-turn frame (seq-less,
+ *  threadId-tagged, like ask-title). Fed by the turn's onWorktreeMutation hook —
+ *  the MCP child opened/removed/navigated a checkout this process never saw —
+ *  and by the manual DELETE route, so every tab's count and popover follow
+ *  without a snapshot GET. Best effort; false when the thread is gone. */
+function emitAskWorktrees(threadId) {
+  try {
+    if (!askGetThread(threadId)) return false;
+    broadcast({ type: 'ask-worktrees', threadId, worktrees: askWorktreesEnvelope(threadId) });
+    return true;
+  } catch { return false; }   // a poke is best effort
+}
+
 /** 400 on shape (spec §8.1 — a DELIBERATE divergence from the house 404-on-
  *  malformed-param style), null-return contract like badRequest. */
 function askIdParam(res, value, kind) {
@@ -3625,7 +3735,51 @@ app.get('/api/ask/threads', (req, res) => {
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
     const threads = askListThreads({ limit }).map((t) => ({ ...t, inFlight: !!askInFlight(t.id) }));
-    res.json({ threads });
+    // total = EVERY saved chat (the History popover's meter), not the capped page above.
+    res.json({ threads, total: askCountThreads() });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// Settings → "Delete all chat history": the counts the confirm dialog quotes,
+// read fresh right before it opens.
+app.get('/api/ask/history', (req, res) => {
+  try {
+    res.json({
+      threads: askCountThreads(),
+      worktrees: askCountWorktrees(),
+      attachments: askCountAttachments(),
+      inFlight: askRunningCount(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// Bulk delete: every thread through deleteAskThreadFully, SEQUENTIALLY (each
+// worktree removal spawns git — never in parallel), best-effort per thread. The
+// ids come from listThreadIds (no cap), never from the LIMIT-ed listThreads.
+// One JSON at the end; then a seq-less out-of-turn frame so every open tab
+// drops its now-dead st.threadId (the panel would otherwise keep it until the
+// next 404).
+app.delete('/api/ask/threads', async (req, res) => {
+  const removed = { threads: 0, worktrees: 0 };
+  const failed = [];
+  try {
+    for (const id of askListThreadIds()) {
+      try {
+        const r = await deleteAskThreadFully(id);
+        if (r.deleted) {
+          removed.threads += 1;
+          removed.worktrees += r.worktrees;
+        } else failed.push(id);
+      } catch {
+        failed.push(id);
+      }
+    }
+    res.json({ ok: true, removed, failed });
+    broadcast({ type: 'ask-history-cleared' });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -3661,12 +3815,9 @@ app.get('/api/ask/threads/:id', (req, res) => {
       messages: askListMessages(id),
       attachments: askListAttachments(id),
       runLinks: askListRunLinks(id),
-      // P4 §10: the SAME narrow envelope the list_worktrees MCP tool returns —
-      // never the full row (threadId/projectDir/updatedAt stay server-side).
-      worktrees: askListWorktrees(id).map((w) => ({
-        worktreeId: w.worktreeId, projectKey: w.projectKey, ref: w.ref,
-        commit: w.commit, path: w.path, createdAt: w.createdAt,
-      })),
+      // P4 §10: the SAME narrow envelope the list_worktrees MCP tool and the
+      // ask-worktrees frame carry — never the full row.
+      worktrees: askWorktreesEnvelope(id),
       inFlight: job && job.messageId ? { messageId: job.messageId } : null, // null while the slot is only reserved
     });
   } catch (err) {
@@ -3678,11 +3829,32 @@ app.patch('/api/ask/threads/:id', (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
   try {
-    const raw = (req.body || {}).title;
-    if (typeof raw !== 'string' || !raw.trim() || raw.length > 120) {
-      return badRequest(res, 'title must be a non-empty string of at most 120 characters');
+    const body = req.body || {};
+    const patch = {};
+    // Title keeps its original contract exactly: a PATCH that names neither field
+    // still earns the title error, so pre-#397 callers see identical behaviour.
+    if (body.title !== undefined || body.scope === undefined) {
+      const raw = body.title;
+      if (typeof raw !== 'string' || !raw.trim() || raw.length > 120) {
+        return badRequest(res, 'title must be a non-empty string of at most 120 characters');
+      }
+      patch.title = raw.trim();
     }
-    const thread = askUpdateThread(id, { title: raw.trim() });
+    if (body.scope !== undefined) {
+      // #397: the Ask panel's scope selector. Merged per field into the stored
+      // context — the pin replaces only the target keys, so the last page
+      // context (view, run, diff file) survives a selector change.
+      const sv = askValidateScope(body.scope);
+      if (!sv.ok) return badRequest(res, sv.error);
+      const cur = askGetThread(id);
+      if (!cur) return res.status(404).json({ error: 'thread not found' });
+      const base = cur.context && typeof cur.context === 'object' && !Array.isArray(cur.context) ? { ...cur.context } : {};
+      delete base.projectDir;
+      delete base.projectKey;
+      delete base.workspaceId;
+      patch.context = { ...base, ...sv.scope };
+    }
+    const thread = askUpdateThread(id, patch);
     if (!thread) return res.status(404).json({ error: 'thread not found' });
     res.json({ thread });
   } catch (err) {
@@ -3692,13 +3864,13 @@ app.patch('/api/ask/threads/:id', (req, res) => {
 
 // §7.5 order: abort the in-flight turn -> detach followers -> remove the chat's
 // worktrees git-properly -> delete the row (tx + cascades) + rm -rf inside
-// deleteThread -> drop the job entry.
-app.delete('/api/ask/threads/:id', async (req, res) => {
-  const id = askIdParam(res, req.params.id, 'thread');
-  if (!id) return;
+// deleteThread -> drop the job entry. Shared by the per-thread DELETE and the
+// bulk DELETE; askDeleting brackets the whole thing per id (POST /messages
+// refuses the thread while its delete is past the first await).
+// Returns { deleted, worktrees } — worktrees = rows removeThreadWorktrees removed.
+async function deleteAskThreadFully(id) {
+  askDeleting.add(id);
   try {
-    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
-    askDeleting.add(id);
     const stopJob = () => {
       const job = askJobs.get(id);
       if (job && job.turn && typeof job.turn.stop === 'function') {
@@ -3717,20 +3889,30 @@ app.delete('/api/ask/threads/:id', async (req, res) => {
     // P4 §5: git-proper removal of every worktree BEFORE the row cascade — the
     // rmSync inside askDeleteThread alone would leave stale `git worktree`
     // registrations in the source repos. Never throws (best-effort per row).
-    await askRemoveThreadWorktrees(id);
+    const { removed } = await askRemoveThreadWorktrees(id);
     // Re-read the job AFTER the await: askDeleting blocks new turns, but a turn
     // that was already mid-start is stopped here rather than left running.
     const job = stopJob();
-    askDeleteThread(id);
+    const deleted = askDeleteThread(id);
     if (job) {
       if (job.graceTimer) clearTimeout(job.graceTimer);
       askJobs.delete(id);
     }
+    return { deleted, worktrees: removed };
+  } finally {
+    askDeleting.delete(id);
+  }
+}
+
+app.delete('/api/ask/threads/:id', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  try {
+    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    await deleteAskThreadFully(id);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
-  } finally {
-    askDeleting.delete(id);
   }
 });
 
@@ -3744,6 +3926,7 @@ app.delete('/api/ask/threads/:id/worktrees/:wtId', async (req, res) => {
   try {
     if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
     const out = await askRemoveWorktree({ threadId: id, wtId });
+    emitAskWorktrees(id);   // every open tab's count/popover follows the delete
     res.json(out);
   } catch (err) {
     if (err && err.name === 'AskWorktreeError') return res.status(404).json({ error: err.message });
@@ -3758,11 +3941,34 @@ app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
   if (!attId) return;
   try {
     if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
-    const att = askReadAttachmentText(id, attId);
-    if (!att) return res.status(404).json({ error: 'attachment not found' });
-    res.set('X-Content-Type-Options', 'nosniff');
-    res.set('Content-Disposition', 'inline');
-    res.type('text/plain; charset=utf-8').send(att.text);
+    const att = askGetAttachment(id, attId);
+    const file = att ? askAttachmentPath(id, attId) : null;
+    if (!file) return res.status(404).json({ error: 'attachment not found' });
+    // Text bodies serve as utf-8 text/plain (pre-#398, byte-for-byte: the body
+    // was UTF-8-validated at upload and stored verbatim). Only sniff-verified
+    // allowlisted mimes are ever stored (never scriptable markup like SVG/HTML),
+    // so serving the real mime inline is safe — and it is what lets the
+    // transcript render <img> thumbnails (#398).
+    const type = att.kind === 'text' ? 'text/plain; charset=utf-8' : (att.mime || 'application/octet-stream');
+    // Streamed, not readFileSync + send: a body is immutable under its
+    // store-minted id, so a stat-based ETag/Last-Modified plus a year-long
+    // private immutable cache replaces a 5 MB sync read and sha1 per request —
+    // the transcript re-creates every <img> on each structural render.
+    res.sendFile(path.basename(file), {
+      root: path.dirname(file),
+      dotfiles: 'deny',
+      cacheControl: false,
+      headers: {
+        'Content-Type': type,
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Disposition': 'inline',
+        'Cache-Control': 'private, max-age=31536000, immutable',
+      },
+    }, (err) => {
+      if (!err || res.headersSent) return;
+      if (err.code === 'ENOENT' || err.status === 404) return res.status(404).json({ error: 'attachment not found' });
+      res.status(500).json({ error: err.message || String(err) });
+    });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -3802,12 +4008,44 @@ function askRunFromPipelineRow(row) {
   };
 }
 
+/** #397: the user-pinned scope of an ask context — {projectKey} | {workspaceId} | null. */
+function askPinnedScope(context) {
+  if (!context || typeof context !== 'object' || context.pinned !== true) return null;
+  if (typeof context.projectKey === 'string' && context.projectKey) return { projectKey: context.projectKey };
+  if (typeof context.workspaceId === 'string' && context.workspaceId) return { workspaceId: context.workspaceId };
+  return null;
+}
+
+/** #397 per-field merge: the pinned scope replaces the page context's TARGET keys
+ *  (projectDir/projectKey/workspaceId); view, run, pipeline and diff-file context
+ *  still follow the page. */
+function askApplyPin(ctx, pin) {
+  const out = { ...ctx, pinned: true };
+  delete out.projectDir;
+  delete out.projectKey;
+  delete out.workspaceId;
+  return { ...out, ...pin };
+}
+
+/** #397 selector PATCH body: {pinned:false} | {pinned:true, projectKey|workspaceId}. */
+function askValidateScope(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: 'scope must be an object' };
+  if (typeof raw.pinned !== 'boolean') return { ok: false, error: 'scope.pinned must be true or false' };
+  if (!raw.pinned) return { ok: true, scope: { pinned: false } };
+  const cv = validateClientContext({ projectKey: raw.projectKey, workspaceId: raw.workspaceId });
+  if (!cv.ok) return { ok: false, error: cv.error.replace('context.', 'scope.') };
+  const keys = ['projectKey', 'workspaceId'].filter((k) => cv.context[k]);
+  if (keys.length !== 1) return { ok: false, error: 'scope needs exactly one of projectKey / workspaceId' };
+  return { ok: true, scope: { pinned: true, [keys[0]]: cv.context[keys[0]] } };
+}
+
 /** Resolve the VALIDATED client context into the server-side shape
  *  buildContextHeader consumes (§6.5: server-resolved rows only — never
  *  client-supplied titles or paths). Every lookup is individually guarded:
  *  a vanished row degrades to an absent header line, never a 500. */
 async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], currentMessageId = null) {
   const out = { now: new Date().toISOString() };
+  if (ctx.pinned === true) out.pinned = true;   // #397: rendered as the [pinned by the user] marker
   if (ctx.view) out.view = ctx.view;
   if (ctx.diffPath) out.diffPath = ctx.diffPath;   // client-supplied, already length-checked by validateClientContext
   try {
@@ -3878,8 +4116,8 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
       .filter((a) => !currentMessageId || a.messageId !== currentMessageId)
       .slice(-ASK_LIMITS.headerAttachments)
       .reverse()
-      .map((a) => ({ id: a.id, name: a.name, bytes: a.bytes }));
-    const atts = [...listedAttachments.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes })), ...earlier];
+      .map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime }));
+    const atts = [...listedAttachments.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime })), ...earlier];
     if (atts.length) out.attachments = atts.slice(0, ASK_LIMITS.headerAttachments);
   } catch { /* absent lines */ }
   return out;
@@ -3919,6 +4157,16 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     if (!mv.ok) return badRequest(res, mv.error);
     const cv = validateClientContext(body.context);
     if (!cv.ok) return badRequest(res, cv.error);
+    // #397: explicit pin beats page context, per field. A context carrying its own
+    // `pinned` verdict is authoritative — the selector-aware client already merged
+    // (true) or explicitly chose Auto (false). A context WITHOUT one comes from a
+    // pre-selector tab, and inherits the thread's stored pin so a stale tab can
+    // never silently unpin (or re-scope) the conversation.
+    let ctx = cv.context;
+    if (ctx.pinned === undefined) {
+      const inherited = askPinnedScope(thread.context);
+      if (inherited) ctx = askApplyPin(ctx, inherited);
+    }
 
     // §7.3 — validate EVERY attachment before ANY write (all-or-nothing).
     const files = [];
@@ -3932,19 +4180,30 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         const name = a && typeof a.name === 'string' ? a.name : '';
         const dot = name.lastIndexOf('.');
         const ext = dot === -1 ? '' : name.slice(dot).toLowerCase();
-        if (!ASK_LIMITS.attachment.extensions.includes(ext)) {
-          return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
-        }
+        // #398: the extension CLAIMS a type; text kinds are then proven by UTF-8
+        // decoding (as before), binary kinds by their magic number — a body that
+        // does not match its claim is refused here, before any write.
+        const cls = askClassifyExtension(ext);
+        if (!cls) return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
         const raw = typeof a.dataBase64 === 'string' ? a.dataBase64 : '';
         const buf = raw ? Buffer.from(raw, 'base64') : Buffer.alloc(0);
         if (!buf.length) return badRequest(res, `attachment is empty or not valid base64: ${name}`);
-        if (buf.length > ASK_LIMITS.attachment.maxBytesPerFile) {
-          return res.status(413).json({ error: `attachment over ${ASK_LIMITS.attachment.maxBytesPerFile} bytes: ${name}` });
+        const cap = cls.kind === 'text' ? ASK_LIMITS.attachment.maxBytesPerFile : ASK_LIMITS.attachment.maxBytesPerBinaryFile;
+        if (buf.length > cap) {
+          return res.status(413).json({ error: `attachment over ${cap} bytes: ${name}` });
+        }
+        if (cls.kind !== 'text') {
+          const sniffed = askSniffMime(buf);
+          if (sniffed !== cls.mime) {
+            return badRequest(res, `attachment content does not match its extension: ${name}`);
+          }
+          files.push({ name, kind: cls.kind, mime: cls.mime, data: buf, bytes: buf.length });
+          continue;
         }
         let bodyText;
         try { bodyText = dec.decode(buf); } catch { return badRequest(res, `attachment is not valid UTF-8: ${name}`); }
         if (bodyText.includes('\u0000')) return badRequest(res, `attachment contains NUL bytes: ${name}`);
-        files.push({ name, text: bodyText, bytes: buf.length });
+        files.push({ name, kind: 'text', mime: cls.mime, text: bodyText, bytes: buf.length });
       }
       const total = askThreadAttachmentBytes(id) + files.reduce((s, f) => s + f.bytes, 0);
       if (total > ASK_LIMITS.attachment.maxBytesPerThread) {
@@ -3976,24 +4235,33 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
 
     let asstMsg = null;
     let turn;
+    let echoAttachments = [];
     try {
       // Writes. Store the LAST context + model/effort on the thread (§6.5 tail, D8).
-      askUpdateThread(id, { context: cv.context, model: mv.model, effort: mv.effort });
-      let deterministicTitle = thread.title;
-      let titleWasAuto = false;
-      if (thread.title == null) {
-        // §7.4 — no frame for the deterministic title. titleWasAuto gates the
-        // D13 background replacement: a title given at THREAD CREATION is the
-        // user's, and the haiku call must never fire for it (§17 Q&A 1).
-        deterministicTitle = askSanitizeTitle(text.slice(0, 80)) || 'New chat';
-        askSetThreadTitle(id, deterministicTitle);
-        titleWasAuto = true;
-      }
+      // `ctx` (pin-merged) rather than cv.context: the stored row is what restores
+      // the selector on reopen and what the MCP child reads for tool defaulting.
+      askUpdateThread(id, { context: ctx, model: mv.model, effort: mv.effort });
+      // §7.4 — NOTHING is stamped on the row before the 202: the thread stays
+      // untitled (the header reads "Ask Worca") until the D13 background title
+      // announces itself. titleWasAuto gates that call: a title given at THREAD
+      // CREATION is the user's, and the haiku call must never fire for it
+      // (§17 Q&A 1). deterministicTitle is only the turn's fallback for an
+      // empty haiku result (turn.mjs _kickoffTitle), never written here.
+      const titleWasAuto = thread.title == null;
+      const deterministicTitle = titleWasAuto ? (askSanitizeTitle(text.slice(0, 80)) || 'New chat') : thread.title;
       const userMsg = askAppendMessage(id, { role: 'user', text });
       job.userMessageId = userMsg.id;
-      const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, text: f.text }));
+      const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, kind: f.kind, mime: f.mime, text: f.text, data: f.data }));
+      // The decoded binary bodies are on disk now. `files` is captured by this
+      // scope's closures (settleJob, the turn listeners, onOutOfTurn) for the whole
+      // turn plus jobGraceMs, so up to 25 MB of dead Buffers would otherwise stay
+      // reachable per running thread.
+      for (const f of files) f.data = null;
+      echoAttachments = attRows.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime }));
       if (attRows.length) {
-        askSetMessageBlocks(userMsg.id, attRows.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes })));
+        // `kind` is the BLOCK kind, so the attachment's own kind rides as attKind
+        // (the UI keys image thumbnails off it, #398).
+        askSetMessageBlocks(userMsg.id, attRows.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind, mime: a.mime })));
       }
       broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); // echo for other tabs
       asstMsg = askAppendMessage(id, { role: 'assistant', text: '', status: 'streaming', model: mv.model, effort: mv.effort });
@@ -4002,9 +4270,9 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       // Prompt assembly (§6.5) — the route owns it; the turn only spawns.
       const catalog = await askBuildCatalog();
       const systemPrompt = askBuildSystemPrompt(catalog);
-      const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, text: files[i].text }));
+      const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime, text: files[i].text }));
       const { inline, listed } = askSelectInlineAttachments(withText);
-      const headerCtx = await resolveAskContext(id, cv.context, listed, userMsg.id);
+      const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id);
       const header = askBuildContextHeader(headerCtx);
       const prompt = askBuildTurnPrompt(header, text, inline);
       const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
@@ -4020,12 +4288,14 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         firstTurn: userMsg.seq === 1 && titleWasAuto, // D13 guard: never replace a user-authored title
         firstText: text,
         deterministicTitle,
-        mock: mockEnabled({}) ? { card: mockAskCard(cv.context, text) } : null, // R-F
+        pinnedScope: askPinnedScope(ctx),             // #397: proposal defaulting + mismatch flag
+        mock: mockEnabled({}) ? { card: mockAskCard(ctx, text) } : null, // R-F
         attachmentNames,
         deps: {
           onFrame: stampAskFrames(id, job),
           onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
           onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
+          onWorktreeMutation: () => { emitAskWorktrees(id); },
         },
       });
       job.turn = turn;
@@ -4060,7 +4330,10 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         console.error(`[worca-ui] ask turn crashed: ${err && err.message ? err.message : err}`);
         settleJob('error');
       });
-    res.status(202).json({ userMessageId: job.userMessageId, assistantMessageId: job.messageId });
+    // `attachments` carries the store-minted ids so the sender's own echo can key
+    // image thumbnails and the thread budget off them (the ask-message broadcast
+    // may have raced ahead of this response, or been missed on a brand-new thread).
+    res.status(202).json({ userMessageId: job.userMessageId, assistantMessageId: job.messageId, attachments: echoAttachments });
   } catch (err) {
     // Only pre-reservation throws land here (`job` is block-scoped to the outer
     // try and every post-reservation failure returned from the inner catch), so
@@ -5190,36 +5463,60 @@ if (isMain) {
     console.error(`[worca-ui] boot maintenance failed: ${err && err.message ? err.message : err}`);
   });
 
+  // A port that is already taken is an EXPECTED state (the UI is usually already
+  // up), not a crash: one line, no stack, exit 1. `worca ui` probes the port
+  // before spawning this process and prints the friendlier "already running"
+  // block itself; this branch is for `node ui/server.mjs` run by hand or a race.
   server.on('error', (err) => {
+    if (err && err.code === 'EADDRINUSE') {
+      console.error(`[worca-ui] port ${PORT} is already in use — is the UI already running?`);
+      console.error(`[worca-ui] check with \`worca ui status\`, restart with \`worca ui restart\`, or pick a port: \`worca ui --port <n>\``);
+      process.exit(1);
+    }
     console.error(`[worca-ui] server error: ${err && err.message ? err.message : err}`);
   });
 
+  // Channel workers must die with the server (design §9: persistent-process
+  // hygiene). Graceful shutdown frame -> 5s grace -> SIGKILL, then exit. The
+  // same path serves POST /api/shutdown (`worca ui stop`), which exits 0.
+  let shuttingDown = false;
+  let wroteInstanceFile = false;
+  const exitCodeFor = (signal) => (signal === 'SIGINT' ? 130 : signal === 'SIGTERM' ? 143 : 0);
+  const shutdown = (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    channelHost.stop().finally(() => process.exit(exitCodeFor(signal)));
+  };
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  // 'exit' handlers must be synchronous; removeUiInstance is. `ifPid` keeps an
+  // old server exiting late from deleting the file a newer one just wrote.
+  process.on('exit', () => { if (wroteInstanceFile) removeUiInstance({ ifPid: process.pid }); });
+
   server.listen(PORT, HOST, () => {
-    const shown = HOST === '127.0.0.1' || HOST === '::1' ? 'localhost' : HOST;
-    const url = `http://${shown}:${PORT}`;
+    const port = server.address().port;
+    const url = uiUrl({ host: HOST, port });
     console.log(`[worca-ui] listening on ${url} (bound to ${HOST})`);
-    console.log(`[worca-ui] WebSocket on ws://${shown}:${PORT}/ws`);
+    uiControl.token = newUiToken();
+    uiControl.onShutdown = shutdown;
+    uiControl.startedAt = new Date().toISOString();
+    writeUiInstance({
+      pid: process.pid, host: HOST, port, token: uiControl.token,
+      version: PKG_VERSION, startedAt: uiControl.startedAt,
+    }).then(() => { wroteInstanceFile = true; }, (err) => {
+      console.error(`[worca-ui] could not write the instance file (\`worca ui stop\` will fall back to a signal): ${err && err.message ? err.message : err}`);
+    });
     try { channelHost.start(); } catch (err) {
       console.error(`[worca-ui] chat channel host failed to start: ${err && err.message ? err.message : err}`);
     }
   });
-
-  // Channel workers must die with the server (design §9: persistent-process
-  // hygiene). Graceful shutdown frame -> 5s grace -> SIGKILL, then exit.
-  let shuttingDown = false;
-  const shutdownChat = (signal) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    channelHost.stop().finally(() => process.exit(signal === 'SIGINT' ? 130 : 143));
-  };
-  process.on('SIGINT', () => shutdownChat('SIGINT'));
-  process.on('SIGTERM', () => shutdownChat('SIGTERM'));
 }
 
 export { app, server, runs };
 export const _testing = {
   wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork,
-  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, resolveAskContext, flipCard,
-  emitDiffCommentsChanged,
+  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard,
+  emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
+  uiControl, bearerMatches,
 };

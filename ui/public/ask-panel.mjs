@@ -101,7 +101,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     pickerFromStore: !!(storedPick && storedPick.model),
     effortFromStore: storedPick !== null,
     catalog: null,
-    popover: null,            // {panel, trigger, onClose}
+    // #397: the thread's project/workspace scope. pinned:false = Auto (follow the
+    // page — today's behaviour). label caches the display name once resolved.
+    scope: { pinned: false, projectKey: null, workspaceId: null, label: null },
+    popover: null,            // {panel, trigger, onClose, build, refreshOn}
     expandedAgents: new Set(),
     worktrees: [],            // P4 §10: the chat's open worktrees (snapshot-fed)
     pinned: true,
@@ -222,9 +225,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     logo.alt = '';
     header.appendChild(logo);
     el.title = make('div', 'ask-title', 'Ask Worca');
+    // Header is logo → title → spacer → icon buttons. The #397 scope selector
+    // used to sit here; it now lives in the composer's bottom row next to the
+    // "+" attach button (see buildComposer). A long haiku title still ellipsizes.
     header.appendChild(el.title);
     header.appendChild(make('span', 'ask-header-spacer'));
-    const threadsBtn = iconButton('ask-icon-btn', 'Recent chats', ICONS.threads, () => toggleThreadsPopover(threadsBtn));
+    const threadsBtn = iconButton('ask-icon-btn', 'History', ICONS.threads, () => toggleThreadsPopover(threadsBtn));
     threadsBtn.setAttribute('data-ask-threads-btn', '');
     header.appendChild(threadsBtn);
     const newBtn = iconButton('ask-icon-btn', 'New chat', ICONS.plus, () => newThread());
@@ -258,7 +264,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return dock;
   }
 
+  // Mirrors src/core/ask/attachment-kind.mjs + limits.mjs (#398): text kinds are
+  // UTF-8 capped at 512 KB, binary kinds (images + PDF) at 5 MB; the server
+  // re-validates everything, these are just early clear messages.
   const ASK_ATTACH_EXT = ['.md', '.markdown', '.txt', '.json', '.csv', '.log'];
+  const ASK_ATTACH_BINARY = {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf',
+  };
+  const ASK_MAX_TEXT_BYTES = 524_288;
+  const ASK_MAX_BINARY_BYTES = 5 * 1024 * 1024;
+  const ASK_MAX_THREAD_BYTES = 25 * 1024 * 1024;
 
   function bytesToBase64(bytes) {
     let bin = '';
@@ -276,6 +292,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.chips.hidden = !st.pendingFiles.length;
     for (const f of st.pendingFiles) {
       const chip = make('span', 'ask-chip');
+      if (f.attKind === 'image' && f.dataBase64) {
+        // #398: composer thumbnail straight from the bytes just read — no
+        // object-URL lifecycle to manage, the chip owns its data URI.
+        const img = doc.createElement('img');
+        img.className = 'ask-chip-thumb';
+        img.alt = f.name;
+        img.src = `data:${f.mime};base64,${f.dataBase64}`;
+        chip.appendChild(img);
+      }
       chip.appendChild(make('span', 'ask-chip-name', f.name));
       const x = make('button', 'ask-chip-x', '×');
       x.type = 'button';
@@ -294,18 +319,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const name = String(f.name || '');
       const dot = name.lastIndexOf('.');
       const ext = dot >= 0 ? name.slice(dot).toLowerCase() : '';
-      if (!ASK_ATTACH_EXT.includes(ext)) { setComposerMsg(`attachment type not allowed: ${name}`); continue; }
-      if (f.size > 524_288) { setComposerMsg(`attachment over 524288 bytes: ${name}`); continue; }
+      const binMime = ASK_ATTACH_BINARY[ext];
+      if (!ASK_ATTACH_EXT.includes(ext) && !binMime) { setComposerMsg(`attachment type not allowed: ${name}`); continue; }
+      const cap = binMime ? ASK_MAX_BINARY_BYTES : ASK_MAX_TEXT_BYTES;
+      if (f.size > cap) { setComposerMsg(`attachment over ${cap} bytes: ${name}`); continue; }
       const others = st.pendingFiles.filter((p) => p.name !== name); // dedupe by name, newest wins
       if (others.length >= 8) { setComposerMsg('at most 8 attachments per message'); continue; }
       const serverBytes = st.model ? st.model.attachmentsBytes() : 0;
       const pendingBytes = others.reduce((n, p) => n + p.bytes, 0);
-      if (serverBytes + pendingBytes + f.size > 4 * 1024 * 1024) { setComposerMsg('attachment budget for this thread exceeded'); continue; }
+      if (serverBytes + pendingBytes + f.size > ASK_MAX_THREAD_BYTES) { setComposerMsg('attachment budget for this thread exceeded'); continue; }
       let dataBase64 = '';
       try {
         dataBase64 = bytesToBase64(new Uint8Array(await f.arrayBuffer()));
       } catch { setComposerMsg(`could not read ${name}`); continue; }
-      st.pendingFiles = [...others, { name, bytes: f.size, dataBase64 }];
+      const attKind = binMime ? (binMime.startsWith('image/') ? 'image' : 'binary') : 'text';
+      st.pendingFiles = [...others, { name, bytes: f.size, dataBase64, attKind, mime: binMime || null }];
     }
     renderChips();
   }
@@ -325,10 +353,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const liveCtx = totals.live && totals.live.usage ? totals.live.usage.ctx : null;
     const ctx = Number.isFinite(liveCtx) ? liveCtx : totals.ctx;
     el.meterTokens.textContent = fmtCtx(ctx) || ((totals.turns || 0) > 0 ? '' : '0 ctx');
-    // cost comes from thread totals only — never from a live null (P3-F5)
-    // No cost yet → empty cell, never a fabricated $0.00 (P3-F5).
-    el.meterCost.textContent = totals.costUsd == null ? '' : (fmtUsd(totals.costUsd) || '');
-    el.agentsBtnLabel.textContent = fmtAgents(totals.agents) || '0 agents';
+    // Cost: the stored thread total; while a turn streams, "≈" + that total plus
+    // this turn's live figure — the CLI's once its result landed, else the
+    // display-only list-price estimate the ask-usage frame carries. ask-done
+    // nulls `live` and replaces the totals in one frame, so the authoritative
+    // figure takes over with no special case. No figure at all → empty cell,
+    // never a fabricated $0.00 (P3-F5).
+    const lv = totals.live;
+    const liveCost = lv ? (Number.isFinite(lv.costUsd) ? lv.costUsd : (Number.isFinite(lv.estimatedCostUsd) ? lv.estimatedCostUsd : null)) : null;
+    if (liveCost != null) el.meterCost.textContent = `≈${fmtUsd((Number.isFinite(totals.costUsd) ? totals.costUsd : 0) + liveCost)}`;
+    else el.meterCost.textContent = totals.costUsd == null ? '' : (fmtUsd(totals.costUsd) || '');
+    el.agentsBtnLabel.textContent = fmtAgents(totals.agents) || '0 agents';   // totals().agents already includes the live row's agents
   }
 
   function stopTurn() {
@@ -366,7 +401,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         text,
         model: st.picker.model,
         effort: st.picker.effort,
-        context: getPageContext() || {},
+        context: scopedContext(getPageContext() || {}),
         ...(st.pendingFiles.length ? { attachments: st.pendingFiles.map((f) => ({ name: f.name, dataBase64: f.dataBase64 })) } : {}),
       };
       const model = st.model;
@@ -384,15 +419,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         setComposerMsg(msg);
         return;
       }
-      const { userMessageId } = await res.json();
-      st.model.noteLocalUserMessage({ id: userMessageId, text, attachments: st.pendingFiles.map((f) => ({ name: f.name, bytes: f.bytes })) });
-      if (!st.model.thread().title) {
-        // The deterministic first title has NO frame — record it in the MODEL
-        // as well as the header: model.load() left `title` dirty and the very
-        // next flushExtra() repaints el.title from thread().title.
-        st.model.thread().title = text.split('\n')[0].slice(0, 80);
-        el.title.textContent = st.model.thread().title;
-      }
+      const { userMessageId, attachments: stored } = await res.json();
+      // Prefer the server's rows: they carry the store-minted ids that key the
+      // image thumbnail (#398) and the thread's attachment ledger. The pending
+      // files are the fallback for a server that predates the field.
+      const echoAtts = Array.isArray(stored)
+        ? stored.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind ?? 'text', mime: a.mime ?? null }))
+        : st.pendingFiles.map((f) => ({ name: f.name, bytes: f.bytes, attKind: f.attKind, mime: f.mime }));
+      st.model.noteLocalUserMessage({ id: userMessageId, text, attachments: echoAtts });
+      // No provisional title from the prompt: the header keeps "Ask Worca" until
+      // the ask-title frame lands (ask-model marks title dirty, flushExtra repaints).
       el.input.value = '';
       st.pendingFiles = [];
       renderChips();
@@ -434,13 +470,29 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.fileInput = doc.createElement('input');
     el.fileInput.type = 'file';
     el.fileInput.multiple = true;
-    el.fileInput.accept = `${ASK_ATTACH_EXT.join(',')},text/*`;
+    el.fileInput.accept = `${ASK_ATTACH_EXT.join(',')},${Object.keys(ASK_ATTACH_BINARY).join(',')},text/*`;
     el.fileInput.hidden = true;
     el.fileInput.addEventListener('change', () => { addFiles(el.fileInput.files); el.fileInput.value = ''; });
     row.appendChild(el.fileInput);
     const attach = iconButton('ask-icon-btn', 'Attach files', ICONS.plus, () => el.fileInput.click());
     attach.setAttribute('data-ask-attach-btn', '');
     row.appendChild(attach);
+
+    // #397: the scope selector — which project/workspace this chat is about,
+    // independent of the page behind the sheet. It sits right after "+"
+    // (attach → scope → spacer → meter …): the pill keeps its width (style.css
+    // .ask-scope-btn flex:none), the spacer absorbs the slack. Its popover
+    // (.ask-pop-scope) opens upward from the sheet's bottom-left.
+    const scopeBtn = make('button', 'ask-scope-btn');
+    scopeBtn.type = 'button';
+    scopeBtn.setAttribute('data-ask-scope-btn', '');
+    scopeBtn.title = 'Project scope for this chat';
+    el.scopeLabel = make('span', 'ask-scope-label', 'Auto');
+    scopeBtn.appendChild(el.scopeLabel);
+    scopeBtn.appendChild(svgIcon(ICONS.chevronDown, 11, 2));
+    scopeBtn.addEventListener('click', () => openScopePopover(scopeBtn));
+    el.scopeBtn = scopeBtn;
+    row.appendChild(scopeBtn);
 
     row.appendChild(make('span', 'ask-composer-spacer'));
 
@@ -634,7 +686,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     else if ((e.key === 'Enter' || e.key === ' ') && idx >= 0) { e.preventDefault(); items[idx].click(); }
   }
 
-  function openPopover({ panelClass, trigger, build, onClose }) {
+  function openPopover({ panelClass, trigger, build, onClose, refreshOn }) {
     if (st.popover && st.popover.trigger === trigger) { closePopover({ focusTrigger: false }); return null; }
     closePopover({ focusTrigger: false });
     const panel = make('div', `ask-pop ${panelClass}`);
@@ -642,7 +694,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     panel.addEventListener('keydown', onPopKeydown);
     build(panel);
     el.sheet.appendChild(panel);
-    st.popover = { panel, trigger, onClose: onClose || null };
+    // refreshOn(dirty) → true re-runs build() on that flush (flushExtra), so an
+    // OPEN popover follows the live meters / worktrees instead of freezing at open.
+    st.popover = { panel, trigger, onClose: onClose || null, build, refreshOn: refreshOn || null };
     const first = menuItems(panel)[0];
     if (first) { first.tabIndex = 0; try { first.focus(); } catch { /* ignore */ } }
     return panel;
@@ -672,16 +726,38 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return meter;
   }
 
+  /** History meter: "12 chats" / "1 chat" / '' at 0 (same empty-string convention as the agents meter). */
+  function fmtChats(n) {
+    return Number.isFinite(n) && n > 0 ? `${n} chat${n === 1 ? '' : 's'}` : '';
+  }
+
   function toggleThreadsPopover(trigger) {
-    const panel = openPopover({ panelClass: 'ask-pop-threads', trigger, build: (p) => { p.appendChild(make('div', 'ask-pop-caption', 'Recent chats')); } });
+    let meter = null;
+    const panel = openPopover({
+      panelClass: 'ask-pop-threads',
+      trigger,
+      build: (p) => {
+        // Same caption-row pattern as the agents popover: the row paints at once,
+        // the meter fills once the list lands (the popover opens synchronously).
+        const head = make('div', 'ask-pop-caption-row');
+        head.appendChild(make('span', 'ask-pop-caption', 'History'));
+        meter = make('span', 'ask-pop-caption-meter', '');
+        head.appendChild(meter);
+        p.appendChild(head);
+      },
+    });
     if (!panel) return;
     Promise.resolve()
       .then(() => fetch('/api/ask/threads?limit=50'))
       .then((r) => (r && r.ok ? r.json() : { threads: [] }))
       .catch(() => ({ threads: [] }))
-      .then(({ threads }) => {
+      .then(({ threads, total }) => {
         if (st.popover === null || st.popover.panel !== panel) return; // closed meanwhile
-        renderThreadRows(panel, Array.isArray(threads) ? threads : []);
+        const rows = Array.isArray(threads) ? threads : [];
+        // `total` is EVERY saved chat (the route caps rows at limit); an older
+        // server without it degrades to the page size.
+        if (meter) meter.textContent = fmtChats(Number.isInteger(total) && total >= 0 ? total : rows.length);
+        renderThreadRows(panel, rows);
       });
   }
 
@@ -703,7 +779,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // starts at the left edge. The date rides the meter line under the title.
       pick.appendChild(make('span', `ask-dot ask-thread-dot${t.inFlight ? ' ask-dot-live' : ''}`));
       const col = make('span', 'ask-thread-col');
-      col.appendChild(make('span', 'ask-thread-title', t.title || '(untitled)'));
+      // A null title = the haiku title has not landed yet (the message route
+      // stamps nothing); "New chat" is the same label the turn falls back to.
+      col.appendChild(make('span', 'ask-thread-title', t.title || 'New chat'));
       col.appendChild(threadMeter(t));
       pick.appendChild(col);
       row.appendChild(pick);
@@ -908,6 +986,121 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     renderPane('main');
   }
 
+  // ---- scope selector (#397) ------------------------------------------------
+  /** Per-field merge: the pinned scope replaces the page context's TARGET keys;
+   *  view/run/diff-file context still follow the page. Auto sends pinned:false so
+   *  the server never resurrects a stale thread pin over an explicit choice. */
+  function scopedContext(page) {
+    const ctx = { ...page };
+    if (!st.scope.pinned) return { ...ctx, pinned: false };
+    delete ctx.projectDir;
+    delete ctx.projectKey;
+    delete ctx.workspaceId;
+    ctx.pinned = true;
+    if (st.scope.projectKey) ctx.projectKey = st.scope.projectKey;
+    else if (st.scope.workspaceId) ctx.workspaceId = st.scope.workspaceId;
+    return ctx;
+  }
+
+  function updateScopeButton() {
+    if (!el.scopeLabel) return;
+    el.scopeLabel.textContent = st.scope.pinned
+      ? (st.scope.label || st.scope.projectKey || st.scope.workspaceId || 'Pinned')
+      : 'Auto';
+    el.scopeBtn.classList.toggle('is-pinned', st.scope.pinned);
+  }
+
+  function setScope(next) {
+    st.scope = {
+      pinned: !!next.pinned,
+      projectKey: next.projectKey || null,
+      workspaceId: next.workspaceId || null,
+      label: next.label || null,
+    };
+    updateScopeButton();
+    closePopover({ focusTrigger: false });
+    focusComposer();
+    // Persist on the thread so the pin survives reload with no message sent. A
+    // brand-new chat has no row yet — the first message's context (pinned:true)
+    // persists it then instead.
+    if (!st.threadId) return;
+    const scope = st.scope.pinned
+      ? (st.scope.projectKey ? { pinned: true, projectKey: st.scope.projectKey } : { pinned: true, workspaceId: st.scope.workspaceId })
+      : { pinned: false };
+    Promise.resolve()
+      .then(() => fetch(`/api/ask/threads/${st.threadId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope }) }))
+      .catch(() => { /* the next message carries the scope in its context anyway */ });
+  }
+
+  /** Restore the selector from a stored thread context (loadThread / reopen). */
+  function applyThreadScope(context) {
+    const c = context && typeof context === 'object' ? context : null;
+    const key = c && c.pinned === true && typeof c.projectKey === 'string' && c.projectKey ? c.projectKey : null;
+    const ws = c && c.pinned === true && typeof c.workspaceId === 'string' && c.workspaceId ? c.workspaceId : null;
+    st.scope = key
+      ? { pinned: true, projectKey: key, workspaceId: null, label: null }
+      : ws
+        ? { pinned: true, projectKey: null, workspaceId: ws, label: null }
+        : { pinned: false, projectKey: null, workspaceId: null, label: null };
+    updateScopeButton();          // the raw key shows until the name resolves
+    if (st.scope.pinned) resolveScopeLabel();
+  }
+
+  function resolveScopeLabel() {
+    const want = { projectKey: st.scope.projectKey, workspaceId: st.scope.workspaceId };
+    loadCardOptions().then((opts) => {
+      if (st.destroyed || !st.scope.pinned) return;
+      if (st.scope.projectKey !== want.projectKey || st.scope.workspaceId !== want.workspaceId) return;
+      const p = want.projectKey ? opts.projects.find((x) => x && x.key === want.projectKey) : null;
+      const w = want.workspaceId ? opts.workspaces.find((x) => x && x.id === want.workspaceId) : null;
+      st.scope.label = (p && p.name) || (w && (w.name || w.id)) || null;
+      updateScopeButton();
+    });
+  }
+
+  function openScopePopover(trigger) {
+    const panel = openPopover({ panelClass: 'ask-pop-scope', trigger, build: (p) => {
+      p.appendChild(make('div', 'ask-pop-caption', 'Chat scope'));
+    } });
+    if (!panel) return;
+    loadCardOptions().then((opts) => {
+      if (!st.popover || st.popover.panel !== panel) return;
+      const item = (label, on, onPick) => {
+        const it = menuItem('ask-scope-item', onPick);
+        it.appendChild(make('span', 'ask-model-name', label));
+        if (on) it.appendChild(make('span', 'ask-model-check', '✓'));
+        return it;
+      };
+      panel.appendChild(item('Auto (follow current page)', !st.scope.pinned, () => setScope({ pinned: false })));
+      const projects = opts.projects.filter((p) => p && p.key);
+      if (projects.length) {
+        panel.appendChild(make('div', 'ask-pop-divider'));
+        panel.appendChild(make('div', 'ask-pop-caption', 'Projects'));
+        for (const p of projects) {
+          panel.appendChild(item(
+            p.exists === false ? `${p.name} (missing)` : p.name,
+            st.scope.pinned && st.scope.projectKey === p.key,
+            () => setScope({ pinned: true, projectKey: p.key, label: p.name }),
+          ));
+        }
+      }
+      const workspaces = opts.workspaces.filter((w) => w && w.id);
+      if (workspaces.length) {
+        panel.appendChild(make('div', 'ask-pop-divider'));
+        panel.appendChild(make('div', 'ask-pop-caption', 'Workspaces'));
+        for (const w of workspaces) {
+          panel.appendChild(item(
+            w.name || w.id,
+            st.scope.pinned && st.scope.workspaceId === w.id,
+            () => setScope({ pinned: true, workspaceId: w.id, label: w.name || w.id }),
+          ));
+        }
+      }
+      const first = menuItems(panel)[0];
+      if (first) { first.tabIndex = 0; try { first.focus(); } catch { /* ignore */ } }
+    });
+  }
+
   // ---- run-info popover ("Agents this chat") --------------------------------
   // ---- worktrees (P4 §10) ---------------------------------------------------
   function setWorktrees(list) {
@@ -926,7 +1119,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       .catch(() => null)
       .then((snap) => {
         if (st.threadId !== tid) return st.worktrees;
-        setWorktrees(snap && Array.isArray(snap.worktrees) ? snap.worktrees : []);
+        const list = snap && Array.isArray(snap.worktrees) ? snap.worktrees : [];
+        // The model owns the list (ask-worktrees frames land there too) and the
+        // flush repaints an open popover; the count is ALSO written synchronously
+        // — deleteWorktree and the tests read it right after the awaited refetch.
+        if (st.model) { st.model.setWorktrees(list); scheduleFlush(); }
+        setWorktrees(list);
         return st.worktrees;
       });
   }
@@ -946,39 +1144,47 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   function openWorktreesPopover(trigger) {
-    const panel = openPopover({ panelClass: 'ask-pop-runinfo ask-pop-worktrees', trigger, build: (p) => {
+    const panel = openPopover({ panelClass: 'ask-pop-runinfo ask-pop-worktrees', trigger, refreshOn: (d) => d.worktrees, build: (p) => {
       p.appendChild(make('div', 'ask-pop-caption', 'Worktrees this chat'));
+      // Synchronous: st.worktrees is the DOM mirror, already fed by the snapshot
+      // or the last frame, and flushExtra refreshes it BEFORE re-running build().
+      renderWorktreeRows(p, st.worktrees);
     } });
     if (!panel) return;
-    refreshWorktrees().then((list) => {
-      if (!st.popover || st.popover.panel !== panel) return;
-      if (!list.length) { panel.appendChild(make('div', 'ask-pop-empty', 'No worktrees open.')); return; }
-      for (const w of list) {
-        const row = make('div', 'ask-runinfo-row ask-wt-row');
-        const col = make('span', 'ask-runinfo-col');
-        col.appendChild(make('span', 'ask-runinfo-name', `${w.projectKey} · ${w.ref}@${wtShortSha(w.commit)}`));
-        const path = make('span', 'ask-runinfo-sub ask-wt-path', w.path);
-        path.title = 'Click to copy';
-        path.addEventListener('click', () => { try { win.navigator.clipboard.writeText(w.path); } catch { /* unsupported */ } });
-        col.appendChild(path);
-        row.appendChild(col);
-        // AGE (spec §10 row: project · ref@sha7 · AGE · path · trash). Reuses the
-        // run-info popover's `.ask-runinfo-elapsed` cell — its `margin-left:auto`
-        // also right-aligns the trash that follows.
-        row.appendChild(make('span', 'ask-runinfo-elapsed', w.createdAt ? fmtElapsed(now() - Date.parse(w.createdAt)) : '—'));
-        const trash = make('button', 'ask-thread-trash');
-        trash.type = 'button';
-        trash.setAttribute('aria-label', `Remove worktree ${w.worktreeId}`);
-        trash.appendChild(svgIcon('M4 7h16M9.5 7V4.8h5V7M6.5 7l.9 12.2h9.2L17.5 7', 14, 1.8));
-        trash.addEventListener('click', (e) => { e.stopPropagation(); closePopover({ focusTrigger: false }); deleteWorktree(w); });
-        row.appendChild(trash);
-        panel.appendChild(row);
-      }
-    });
+    // Heal on open (one snapshot GET): the list lands in the model and the
+    // dirty.worktrees flush re-runs build() above — one render path.
+    refreshWorktrees();
+  }
+
+  function renderWorktreeRows(panel, list) {
+    if (!list.length) { panel.appendChild(make('div', 'ask-pop-empty', 'No worktrees open.')); return; }
+    for (const w of list) {
+      const row = make('div', 'ask-runinfo-row ask-wt-row');
+      const col = make('span', 'ask-runinfo-col');
+      col.appendChild(make('span', 'ask-runinfo-name', `${w.projectKey} · ${w.ref}@${wtShortSha(w.commit)}`));
+      const path = make('span', 'ask-runinfo-sub ask-wt-path', w.path);
+      path.title = 'Click to copy';
+      path.addEventListener('click', () => { try { win.navigator.clipboard.writeText(w.path); } catch { /* unsupported */ } });
+      col.appendChild(path);
+      row.appendChild(col);
+      // AGE (spec §10 row: project · ref@sha7 · AGE · path · trash). Reuses the
+      // run-info popover's `.ask-runinfo-elapsed` cell — its `margin-left:auto`
+      // also right-aligns the trash that follows.
+      row.appendChild(make('span', 'ask-runinfo-elapsed', w.createdAt ? fmtElapsed(now() - Date.parse(w.createdAt)) : '—'));
+      const trash = make('button', 'ask-thread-trash');
+      trash.type = 'button';
+      trash.setAttribute('aria-label', `Remove worktree ${w.worktreeId}`);
+      trash.appendChild(svgIcon('M4 7h16M9.5 7V4.8h5V7M6.5 7l.9 12.2h9.2L17.5 7', 14, 1.8));
+      trash.addEventListener('click', (e) => { e.stopPropagation(); closePopover({ focusTrigger: false }); deleteWorktree(w); });
+      row.appendChild(trash);
+      panel.appendChild(row);
+    }
   }
 
   function openRunInfoPopover(trigger) {
-    openPopover({ panelClass: 'ask-pop-runinfo', trigger, build: (p) => {
+    // Rebuilt on every meters flush: agent blocks mark meters dirty (ask-model),
+    // so rows, dots, ctx and cost move while agents run.
+    openPopover({ panelClass: 'ask-pop-runinfo', trigger, refreshOn: (d) => d.meters, build: (p) => {
       const agents = [];
       if (st.model) {
         for (const row of st.model.messages()) {
@@ -1014,6 +1220,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     stopElapsed();
     storeThread(null);
     el.title.textContent = 'Ask Worca';
+    applyThreadScope(null);             // #397: a brand-new chat starts on Auto
     renderTranscript();
     updateMeters();
     setWorktrees([]);
@@ -1026,7 +1233,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     closePopover({ focusTrigger: false });
     const ok = await confirm({
       title: 'Delete this chat?',
-      message: `“${t.title || '(untitled)'}” and its transcript are removed${t.worktrees ? ` along with ${t.worktrees} worktree${t.worktrees === 1 ? '' : 's'}` : ''}. This cannot be undone.`,
+      message: `“${t.title || 'New chat'}” and its transcript are removed${t.worktrees ? ` along with ${t.worktrees} worktree${t.worktrees === 1 ? '' : 's'}` : ''}. This cannot be undone.`,
       confirmLabel: 'Delete',
       danger: true,
     });
@@ -1040,7 +1247,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function buildThreadTrash(t) {
     const b = make('button', 'ask-thread-trash');
     b.type = 'button';
-    b.setAttribute('aria-label', `Delete "${t.title || '(untitled)'}"`);
+    b.setAttribute('aria-label', `Delete "${t.title || 'New chat'}"`);
     b.appendChild(svgIcon('M4 7h16M9.5 7V4.8h5V7M6.5 7l.9 12.2h9.2L17.5 7', 14, 1.8));
     b.addEventListener('click', (e) => { e.stopPropagation(); deleteThread(t); });
     return b;
@@ -1049,6 +1256,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // ---- stubs the later tasks replace wholesale ------------------------------
   // ---- transcript (spec §10.5) ---------------------------------------------
   function buildAttachmentPill(b) {
+    // #398: an image attachment renders as a thumbnail served by the download
+    // route (sniff-verified mime, inline disposition); everything else keeps the
+    // name pill. The id comes from the 202 body or the ask-message broadcast; an
+    // echo without one (older server) pills until the snapshot.
+    if (b.attKind === 'image' && b.id && st.threadId) {
+      const link = make('a', 'ask-attachment-thumb-link');
+      link.href = `/api/ask/threads/${st.threadId}/attachments/${b.id}`;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      const img = doc.createElement('img');
+      img.className = 'ask-attachment-thumb';
+      img.alt = b.name || '(image)';
+      img.loading = 'lazy';
+      img.src = link.href;
+      link.appendChild(img);
+      return link;
+    }
     const pill = make('span', 'extra-pill ask-attachment-pill');
     pill.appendChild(make('span', 'extra-pill-name', b.name || '(attachment)'));
     return pill;
@@ -1145,6 +1369,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const local = { target: card.target === 'workspace' ? 'workspace' : 'project', options: null };
 
     rootEl.appendChild(make('div', 'ask-card-title', card.title || 'Run proposal'));
+
+    // #397 guardrail: the model proposed a different target than the chat's pin.
+    if (block.scopeMismatch) {
+      rootEl.appendChild(make('div', 'ask-card-scope-warn',
+        'This proposal targets a different project or workspace than the one pinned for this chat — check the target before starting.'));
+    }
 
     const seg = make('div', 'ask-card-seg');
     const segBtns = {};
@@ -1640,12 +1870,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.model = createThreadModel({ threadId: id });
     st.model.load(snap);
     el.title.textContent = (snap.thread && snap.thread.title) || 'Ask Worca';
+    applyThreadScope(snap.thread && snap.thread.context);   // #397: restore the pin
     renderTranscript();
     updateMeters();
     // P4: the count rides the snapshot loadThread ALREADY fetched — no extra GET.
-    // It belongs here, not in switchThread: resync()/onHello() come through
-    // loadThread too, and a hook on switchThread would miss both.
-    setWorktrees(snap.worktrees);
+    // The model owns the list (load() seeded it). It belongs here, not in
+    // switchThread: resync()/onHello() come through loadThread too.
+    setWorktrees(st.model.worktrees());
     st.pinned = true;
     scheduleFlush();
     stopElapsed();      // a mid-stream thread switch must not leave the old
@@ -1722,10 +1953,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function afterFrame(frame) {
     if (frame.type === 'ask-start') { startElapsed(Date.parse(frame.startedAt)); updateSendStop(); }
-    else if (frame.type !== 'ask-done' && frame.type !== 'ask-error' && st.model && st.model.live() && el.send && !el.send.hidden) {
-      // A frame ADOPTED mid-turn (no ask-start seen — the ring buffer evicted it, or
-      // a broadcast delta beat the subscribe replay): the turn is live now, so the
-      // composer must show Stop and the timer must run (review of PR #376).
+    else if (typeof frame.seq === 'number' && frame.type !== 'ask-done' && frame.type !== 'ask-error' && st.model && st.model.live() && el.send && !el.send.hidden) {
+      // A JOB frame ADOPTED mid-turn (no ask-start seen — the ring buffer evicted
+      // it, or a broadcast delta beat the subscribe replay): the turn is live now,
+      // so the composer must show Stop and the timer must run (review of PR #376).
+      // Out-of-turn frames (ask-title — early now — ask-worktrees, ask-message)
+      // never adopt: startElapsed() here would reset the running clock.
       startElapsed(); updateSendStop();
     }
     if (frame.type === 'ask-done' || frame.type === 'ask-error') {
@@ -1739,9 +1972,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       && /is waiting for your answer/.test(frame.message.text)) announce('run needs an answer');
   }
 
+  // Settings → "Delete all chat history" broadcast (seq-less, threadId-less): every
+  // row is gone server-side, so a tab still holding st.threadId would keep a dead
+  // chat in memory until its next fetch 404s. Reset exactly like the "+" button.
+  function onHistoryCleared() {
+    closePopover({ focusTrigger: false });
+    if (st.threadId) newThread();
+  }
+
   function pushServerFrame(frame) {
+    if (st.destroyed || !frame) return;
+    if (frame.type === 'ask-history-cleared') { onHistoryCleared(); return; }
     // Defence-in-depth: the model's own threadId filter is the real router — this early return only saves an apply() call and cannot be observed from tests (the model would drop the frame identically).
-    if (st.destroyed || !frame || !st.model || frame.threadId !== st.threadId) return;
+    if (!st.model || frame.threadId !== st.threadId) return;
     const r = st.model.apply(frame);
     if (r && r.gap) { resync(); return; }
     if (!r || !r.ok) return;
@@ -1815,6 +2058,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       for (const id of d.answer) renderAnswerFor(id);
     }
     if (d.meters) updateMeters();
+    if (d.worktrees) setWorktrees(st.model.worktrees());
+    // An open popover that subscribed to this flush's dirt is rebuilt in place
+    // (same node — never reopened, never refocused). Runs AFTER the mirror and
+    // the meters above: the worktrees build() reads st.worktrees.
+    const pop = st.popover;
+    if (pop && typeof pop.refreshOn === 'function' && pop.refreshOn(d)) { pop.panel.replaceChildren(); pop.build(pop.panel); }
     updateLiveElapsed();
   }
 

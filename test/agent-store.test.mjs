@@ -394,9 +394,11 @@ test('a variant whose sidecar cannot be written is warned about, not thrown', {
     });
   } finally { chmodSync(locked, 0o644); }
   assert.deepEqual(out.updatedVariants, ['lockAws'], 'only a variant actually written is listed');
-  assert.deepEqual(out.warnings, [
-    'workspace variant "lockZws" could not adopt the new ports (write failed: EACCES) — re-point it by hand',
-  ], 'the fs CODE only — never the message, which carries the absolute home path');
+  // The fs CODE only — never the message, which carries the absolute home path.
+  // POSIX reports EACCES for a 0444 file; Windows reports EPERM for the same.
+  assert.equal(out.warnings.length, 1, JSON.stringify(out.warnings));
+  assert.match(out.warnings[0],
+    /^workspace variant "lockZws" could not adopt the new ports \(write failed: (EACCES|EPERM)\) — re-point it by hand$/);
   assert.equal(JSON.parse(await readFile(join(userAgentsDir(), 'lockBase.meta.json'), 'utf8')).inputs.length, 2,
     'the base save STANDS: a variant write failure never rolls it back');
 });

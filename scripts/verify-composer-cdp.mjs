@@ -82,17 +82,32 @@ chrome = spawn(CHROME, ['--headless=new', ...SANDBOX, `--remote-debugging-port=$
   '--window-size=1280,900', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
   '--disable-background-timer-throttling', '--disable-renderer-backgrounding', 'about:blank'],
 { stdio: ['ignore', 'pipe', 'pipe'] });
-chrome.stderr.on('data', () => {});
+// Keep Chrome's last stderr lines: when no DevTools target ever appears, its own
+// words (a sandbox refusal, a profile lock, a crash) are the diagnosis.
+const chromeErr = [];
+chrome.stderr.on('data', (d) => { chromeErr.push(String(d)); if (chromeErr.length > 40) chromeErr.shift(); });
+let chromeExit = null;
+chrome.on('exit', (code, signal) => { chromeExit = { code, signal }; });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let wsUrl = null;
-for (let i = 0; i < 60 && !wsUrl; i += 1) {
+// Deadline-based, not iteration-based: a cold CI runner can take well over the
+// old ~15s (60 × 250ms) to bring the first page target up, and that budget was
+// the difference between a green and a red proofs job on the same commit.
+const targetDeadline = Date.now() + 60_000;
+while (!wsUrl && Date.now() < targetDeadline && !chromeExit) {
   try {
     const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
     const page = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl);
     if (page) wsUrl = page.webSocketDebuggerUrl; else await sleep(200);
   } catch { await sleep(250); }
 }
-if (!wsUrl) { console.error('no devtools target'); await shutdown(1); }
+if (!wsUrl) {
+  console.error(chromeExit
+    ? `no devtools target: chrome exited (code ${chromeExit.code}, signal ${chromeExit.signal})`
+    : 'no devtools target after 60s');
+  if (chromeErr.length) console.error(chromeErr.join('').trim().split('\n').slice(-15).join('\n'));
+  await shutdown(1);
+}
 const ws = new WebSocket(wsUrl);
 await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
 let msgId = 0; const pending = new Map(); const listeners = [];
@@ -156,18 +171,37 @@ const mup = (x, y, button = 'left') => pumped(cdp('Input.dispatchMouseEvent', { 
 // WheelEvent on the stage otherwise. The synthetic path still exercises the real
 // handler with real layout, and check (6) additionally asserts defaultPrevented,
 // which is what "the page never scrolls under the canvas" reduces to.
+// A delivered wheel counts as trusted ONLY when it is cancelable. Measured
+// 2026-09-02 on Chrome 151 / Linux (the GitHub runner): a CDP wheel reaches the
+// page as a NON-cancelable event, and only while some wheel listener other than
+// the composer's own is registered — the probe's. Once the probe's listener is
+// gone every later wheel is dropped outright, so the transform never moves and
+// check (6) fails while reporting delivery as trusted. The run-monitor proof
+// gates on `cancelable` for the same reason; this one now matches it.
 let wheelTrusted = null;        // null = not probed yet
+// Two probe wheels, not one: Chrome latches a wheel SEQUENCE — when the first
+// wheel of a sequence is not cancelled, every later wheel in it is dispatched
+// non-cancelable (preventDefault() becomes a no-op and `defaultPrevented` never
+// reads true), and a sequence outlives the settle() between two of our
+// dispatches. Linux CI Chrome 152 reports the FIRST wheel cancelable, so a
+// one-wheel probe picked the trusted path and then watched every real wheel
+// arrive non-cancelable (the run-monitor proof split on it).
+// Only a runner whose SECOND consecutive wheel is still cancelable can measure
+// `defaultPrevented` through trusted events; everything else runs the same
+// listener over the same layout through the synthetic path.
 async function probeWheel(x, y) {   // x,y come from the caller and are already inside the stage
-  await ev('window.__wp=0;window.__wpH=(e)=>{window.__wp++;};window.addEventListener("wheel",window.__wpH,{passive:true});0');
+  await ev('window.__wp=[];window.__wpH=(e)=>{window.__wp.push(e.cancelable);};window.addEventListener("wheel",window.__wpH,{passive:true});0');
   await mmove(x, y, 0);
   // A ZERO delta: the probe must not move the canvas. A real delta pans the view
   // (t -= delta), which shifts the world point under the cursor and makes the
   // very next invariance measurement read as broken.
   await wheelRaw(x, y, 0, 0, 0);
   await settle('wheel-probe');
+  await wheelRaw(x, y, 0, 0, 0);        // the second wheel of the sequence is the one that tells
+  await settle('wheel-probe');
   const seen = await ev('(()=>{const n=window.__wp;window.removeEventListener("wheel",window.__wpH);return n;})()');
-  wheelTrusted = seen > 0;
-  log(`wheel delivery: ${wheelTrusted ? 'trusted CDP events' : 'SYNTHETIC (this browser drops CDP wheels)'}`);
+  wheelTrusted = seen.length >= 2 && seen.every((c) => c === true);
+  log(`wheel delivery: ${wheelTrusted ? 'trusted CDP events' : 'SYNTHETIC'} (CDP wheels seen: ${seen.length}, cancelable: ${seen.join(',') || 'n/a'})`);
 }
 async function wheel(x, y, dx, dy, modifiers = 0) {
   if (wheelTrusted === null) await probeWheel(x, y);

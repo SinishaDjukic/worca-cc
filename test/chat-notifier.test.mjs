@@ -81,6 +81,17 @@ test('prefs gate events; per-channel toggle disables a channel', async () => {
   orch.emit('done', { status: 'done' });
   await settle();
   assert.equal(sent.length, 0, 'channel toggle wins');
+
+  state.prefs = { notify: { done: true, paused: false, error: true }, channels: {} };
+  orch.emit('done', { status: 'paused', reason: 'error', detail: 'boom' });
+  await settle();
+  assert.equal(sent.length, 2, 'an error-pause follows notify.error, not notify.paused');
+  assert.match(sent[0].message.body[0].value, /\*\*Error:\*\* boom/);
+  sent.length = 0;
+  state.prefs = { notify: { done: true, paused: true, error: false }, channels: {} };
+  orch.emit('done', { status: 'paused', reason: 'error', detail: 'boom' });
+  await settle();
+  assert.equal(sent.length, 0, 'notify.error=false suppresses the error-pause');
 });
 
 test('muted chats are skipped and counted; unmuted keep receiving', async () => {

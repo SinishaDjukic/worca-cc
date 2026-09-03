@@ -9,6 +9,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { posix } from './helpers/posix-path.mjs';
 import {
   allocateOutputs, allocateVerdict, portIoBlock, changesInstruction, selectMode, taskSourcedPorts,
   expandsOutputPort, normalizeDecomposition, readDecomposition, resolveMockRole, readVerdict,
@@ -52,10 +53,10 @@ test('1 allocation: one resolution per DISTINCT template, one plan-version tick'
   const rc = runCtx();
   const out = allocateOutputs({ node: node(), ports: REFINER_LIKE, ordinal: 2, runCtx: rc });
   assert.equal(out.plan.path, out.revise.path, 'a shared template resolves once');
-  assert.match(out.plan.path, /plans\/01-01-26-feature\.md$/, 'version 1 renders no suffix');
+  assert.match(posix(out.plan.path), /plans\/01-01-26-feature\.md$/, 'version 1 renders no suffix');
   assert.equal(out.plan.store, 'project');
   const second = allocateOutputs({ node: node(), ports: REFINER_LIKE, ordinal: 3, runCtx: rc });
-  assert.match(second.plan.path, /plans\/01-01-26-feature-v2\.md$/, 'the next execution ticks to -v2');
+  assert.match(posix(second.plan.path), /plans\/01-01-26-feature-v2\.md$/, 'the next execution ticks to -v2');
 });
 
 test('2 allocation: {cycle}, run store, void ports, duplicate-key and slice prefixes', () => {
@@ -83,7 +84,7 @@ test('2 allocation: {cycle}, run store, void ports, duplicate-key and slice pref
     ports: { outputs: [{ id: 'review', type: 'md', filename: '{base}-impl-review.md', store: 'project' }] },
     ordinal: 1, runCtx: runCtx(),
   });
-  assert.match(review.review.path, /reviews\/01-01-26-feature-impl-review\.md$/, 'a {base}-<kind>.md project template goes to the reviews store');
+  assert.match(posix(review.review.path), /reviews\/01-01-26-feature-impl-review\.md$/, 'a {base}-<kind>.md project template goes to the reviews store');
 });
 
 test('2b allocation: the duplicate-key prefix reaches the PROJECT store too', () => {
@@ -92,29 +93,29 @@ test('2b allocation: the duplicate-key prefix reaches the PROJECT store too', ()
   // A SINGLE card is byte-identical to what shipped: the prefix is empty, so no
   // seed's persisted artifact path moves.
   const lone = allocateOutputs({ node: node('n_rev'), ports: REVIEW_LIKE, ordinal: 1, runCtx: runCtx() });
-  assert.match(lone.review.path, /reviews\/01-01-26-feature-impl-review\.md$/);
+  assert.match(posix(lone.review.path), /reviews\/01-01-26-feature-impl-review\.md$/);
   const lonePlan = allocateOutputs({ node: node('n_ref'), ports: PLAN_LIKE, ordinal: 1, runCtx: runCtx() });
-  assert.match(lonePlan.plan.path, /plans\/01-01-26-feature\.md$/);
+  assert.match(posix(lonePlan.plan.path), /plans\/01-01-26-feature\.md$/);
   // TWO cards on one agent key: the persisted review/plan must NOT be one file.
   const rc1 = runCtx({ duplicateKey: true });
   const rc2 = runCtx({ duplicateKey: true });
   const a = allocateOutputs({ node: node('n_rev1'), ports: REVIEW_LIKE, ordinal: 1, runCtx: rc1 });
   const b = allocateOutputs({ node: node('n_rev2'), ports: REVIEW_LIKE, ordinal: 1, runCtx: rc2 });
-  assert.match(a.review.path, /reviews\/01-01-26-feature-n_rev1-impl-review\.md$/);
-  assert.match(b.review.path, /reviews\/01-01-26-feature-n_rev2-impl-review\.md$/);
+  assert.match(posix(a.review.path), /reviews\/01-01-26-feature-n_rev1-impl-review\.md$/);
+  assert.match(posix(b.review.path), /reviews\/01-01-26-feature-n_rev2-impl-review\.md$/);
   assert.notEqual(a.review.path, b.review.path, 'two reviewer cards must not clobber one review file');
   const p1 = allocateOutputs({ node: node('n_ref1'), ports: PLAN_LIKE, ordinal: 1, runCtx: rc1 });
   const p2 = allocateOutputs({ node: node('n_ref2'), ports: PLAN_LIKE, ordinal: 1, runCtx: rc2 });
-  assert.match(p1.plan.path, /plans\/01-01-26-n_ref1-feature\.md$/);
-  assert.match(p2.plan.path, /plans\/01-01-26-n_ref2-feature\.md$/);
+  assert.match(posix(p1.plan.path), /plans\/01-01-26-n_ref1-feature\.md$/);
+  assert.match(posix(p2.plan.path), /plans\/01-01-26-n_ref2-feature\.md$/);
   assert.notEqual(p1.plan.path, p2.plan.path, 'two planner cards must not clobber one plan file');
   // The -vN linkage still hangs off the node's OWN family.
   const p1v2 = allocateOutputs({ node: node('n_ref1'), ports: PLAN_LIKE, ordinal: 2, runCtx: rc1 });
-  assert.match(p1v2.plan.path, /plans\/01-01-26-n_ref1-feature-v2\.md$/);
+  assert.match(posix(p1v2.plan.path), /plans\/01-01-26-n_ref1-feature-v2\.md$/);
   // A composite slice discriminates the same way (a project-store output on an
   // `expands` consumer would otherwise collapse every parallel task onto one file).
   const sliced = allocateOutputs({ node: node('n_rev'), ports: REVIEW_LIKE, ordinal: 1, runCtx: runCtx({ slice: 'p1t2' }) });
-  assert.match(sliced.review.path, /reviews\/01-01-26-feature-p1t2-impl-review\.md$/);
+  assert.match(posix(sliced.review.path), /reviews\/01-01-26-feature-p1t2-impl-review\.md$/);
 });
 
 test('3 the Ports block: `as` renderers, the await port, shared paths, placeholders; changesInstruction', () => {
@@ -324,10 +325,10 @@ test('10 A2 planStoreSeed: the document lands in the plans store and consumes ve
     node: { id: 'n_task', kind: 'task', config: { planStoreSeed: true } },
     taskArtifact: { text: '# Provided plan\n' }, runCtx: rc,
   });
-  assert.match(res.outputs.task.path, /plans\/01-01-26-feature\.md$/, 'version 1, no suffix');
+  assert.match(posix(res.outputs.task.path), /plans\/01-01-26-feature\.md$/, 'version 1, no suffix');
   assert.equal(readFileSync(res.outputs.task.path, 'utf8'), '# Provided plan\n');
   const next = allocateOutputs({ node: node(), ports: REFINER_LIKE, ordinal: 1, runCtx: rc });
-  assert.match(next.plan.path, /-v2\.md$/, 'the counter was consumed at 1');
+  assert.match(posix(next.plan.path), /-v2\.md$/, 'the counter was consumed at 1');
 });
 
 test('11 AND is a void synchronizer, OR forwards the bound payload, End echoes the result', () => {

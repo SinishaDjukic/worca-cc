@@ -29,7 +29,8 @@ test('fresh DB: user_version = SCHEMA_VERSION, the four ask tables, the index an
     ['id', 'title', 'created_at', 'updated_at', 'model', 'effort', 'session_id', 'context', 'totals']);
   assert.deepEqual(cols(db, 'ask_messages'),
     ['id', 'thread_id', 'seq', 'role', 'text', 'blocks', 'status', 'reason', 'model', 'effort', 'usage', 'cost_usd', 'duration_ms', 'created_at']);
-  assert.deepEqual(cols(db, 'ask_attachments'), ['id', 'thread_id', 'message_id', 'name', 'bytes', 'created_at']);
+  // ALTER TABLE ADD COLUMN appends, so the v27 columns (#398) are LAST.
+  assert.deepEqual(cols(db, 'ask_attachments'), ['id', 'thread_id', 'message_id', 'name', 'bytes', 'created_at', 'kind', 'mime']);
   // ALTER TABLE ADD COLUMN appends, so the v22 column is LAST.
   assert.deepEqual(cols(db, 'ask_run_links'),
     ['thread_id', 'run_id', 'pipeline_id', 'card_id', 'status', 'phase', 'created_at', 'comment_ids']);
@@ -42,6 +43,25 @@ test('ladder: a v17 DB gets the ask tables and is stamped current', () => {
   migrate(db);
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
   for (const t of ASK_TABLES) assert.ok(tableNames(db).includes(t), `${t} created by the ladder`);
+});
+
+test('v27 ladder (#398): a stamped-26 DB with the old ask_attachments shape gains kind/mime; existing rows read as text', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(MINIMAL_SEED);
+  // the exact pre-v27 table shape, with one row already in it
+  db.exec(`CREATE TABLE ask_attachments (
+    id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, message_id TEXT, name TEXT NOT NULL,
+    bytes INTEGER NOT NULL, created_at TEXT NOT NULL);`);
+  db.prepare('INSERT INTO ask_attachments (id, thread_id, message_id, name, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run('att_00000001', 'ask_00000001', null, 'notes.md', 5, '2026-08-01T00:00:00.000Z');
+  db.exec('PRAGMA user_version = 26');
+  migrate(db);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
+  assert.deepEqual(cols(db, 'ask_attachments'),
+    ['id', 'thread_id', 'message_id', 'name', 'bytes', 'created_at', 'kind', 'mime']);
+  const row = db.prepare('SELECT kind, mime FROM ask_attachments WHERE id = ?').get('att_00000001');
+  assert.equal(row.kind, 'text', "the column DEFAULT backfills every pre-v27 row as 'text'");
+  assert.equal(row.mime, null);
 });
 
 test('self-heal: a DB already stamped current WITHOUT the ask tables gets them from reconcileSchema, stamp untouched', () => {

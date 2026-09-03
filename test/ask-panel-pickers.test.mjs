@@ -10,7 +10,7 @@ const TID = 'ask_00000001';
 const CATALOG = {
   models: [
     { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
-    { id: 'claude-fable-5', label: 'Fable 5 (1M)', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
+    { id: 'claude-fable-5-1', label: 'Fable 5.1 (1M)', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
     { id: 'claude-opus-4-8', label: 'Opus 4.8', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
     { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', efforts: ['medium', 'high', 'max'], custom: false },
     { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false },
@@ -59,7 +59,7 @@ test('ask-panel-pickers: primary list = one per family + globals; More models ho
   const pop = ctx.doc.querySelector('.ask-pop-model');
   assert.ok(pop);
   const names = [...pop.querySelectorAll('.ask-model-name')].map((n) => n.textContent);
-  assert.deepEqual(names, ['Opus 5', 'Fable 5 (1M)', 'Sonnet 4.6', 'Haiku 4.5', 'Corp']);
+  assert.deepEqual(names, ['Opus 5', 'Fable 5.1 (1M)', 'Sonnet 4.6', 'Haiku 4.5', 'Corp']);
   assert.match(pop.textContent, /More models/);
   assert.match(pop.textContent, /Effort/);
   // the selected model carries the check mark
@@ -70,7 +70,7 @@ test('ask-panel-pickers: primary list = one per family + globals; More models ho
   const moreNames = [...ctx.doc.querySelectorAll('.ask-pop-model .ask-model-name')].map((n) => n.textContent);
   assert.deepEqual(moreNames, ['Opus 4.8']);
   ctx.doc.querySelector('[data-ask-pane-back]').click();
-  assert.match(ctx.doc.querySelector('.ask-pop-model').textContent, /Fable 5/);
+  assert.match(ctx.doc.querySelector('.ask-pop-model').textContent, /Fable 5\.1/);
 });
 
 test('ask-panel-pickers: effort pane lists the current model efforts; picking persists', async () => {
@@ -299,6 +299,35 @@ test('ask-panel-pickers: declining the confirm sends no DELETE', async () => {
   assert.ok(!ctx.fetchCalls.some((c) => c.opts.method === 'DELETE'));
 });
 
+test('ask-panel-pickers: a thread still being titled reads "New chat" in History, the trash label and the delete confirm', async () => {
+  const confirms = [];
+  const base = handler();
+  const untitled = { id: TID, title: null, updatedAt: 't', createdAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight: false };
+  const fetchHandler = (url, opts) => (url.startsWith('/api/ask/threads') && !url.startsWith(`/api/ask/threads/${TID}`) && !opts.method
+    ? { ok: true, status: 200, json: async () => ({ threads: [untitled], total: 12 }) }
+    : base(url, opts));
+  const ctx = makePanel({ fetchHandler, confirm: async (opts) => { confirms.push(opts); return false; } });
+  ctx.panel.open();
+  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  const btn = ctx.doc.querySelector('[data-ask-threads-btn]');
+  assert.equal(btn.title, 'History');
+  assert.equal(btn.getAttribute('aria-label'), 'History');
+  btn.click();
+  // The caption row paints synchronously; the meter waits for the list.
+  const head = ctx.doc.querySelector('.ask-pop-threads .ask-pop-caption-row');
+  assert.ok(head, 'caption row rendered before the fetch lands');
+  assert.equal(head.querySelector('.ask-pop-caption').textContent, 'History');
+  assert.equal(head.querySelector('.ask-pop-caption-meter').textContent, '');
+  await ctx.tick();
+  assert.equal(head.querySelector('.ask-pop-caption-meter').textContent, '12 chats', 'the TOTAL, not the one row returned');
+  assert.equal(ctx.doc.querySelector('.ask-thread-title').textContent, 'New chat');
+  assert.equal(ctx.doc.querySelector('.ask-thread-trash').getAttribute('aria-label'), 'Delete "New chat"');
+  ctx.doc.querySelector('.ask-thread-trash').click();
+  await ctx.tick(); await ctx.tick();
+  assert.equal(confirms.length, 1);
+  assert.match(confirms[0].message, /^“New chat” and its transcript are removed/);
+});
+
 test('ask-panel-pickers: New chat clears the thread; the next send creates a fresh row', async () => {
   const ctx = makePanel({ fetchHandler: handler() });
   ctx.storage.setItem('worca-cc.ask.thread', TID);
@@ -416,4 +445,51 @@ test('ask-panel-pickers: the trigger button flags a picked model that is cost-fl
   await ctx.tick(); await ctx.tick(); await ctx.tick();
   assert.equal(bodies[0].model, 'bolt-x');
   assert.equal(bodies[0].effort, 'high');
+});
+
+// The History meter: singular at 1, empty at 0, and the row count when the
+// server predates `total`.
+test('ask-panel-pickers: the History meter pluralizes, hides at 0 and falls back to threads.length', async () => {
+  const row = { id: TID, title: 'Stored', updatedAt: 't', createdAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight: false };
+  const meterFor = async (body) => {
+    const base = handler();
+    const fetchHandler = (url, opts) => (url.startsWith('/api/ask/threads') && !url.startsWith(`/api/ask/threads/${TID}`) && !opts.method
+      ? { ok: true, status: 200, json: async () => body }
+      : base(url, opts));
+    const ctx = makePanel({ fetchHandler });
+    ctx.panel.open();
+    await ctx.tick(); await ctx.tick(); await ctx.tick();
+    ctx.doc.querySelector('[data-ask-threads-btn]').click();
+    await ctx.tick();
+    return ctx.doc.querySelector('.ask-pop-threads .ask-pop-caption-meter').textContent;
+  };
+  assert.equal(await meterFor({ threads: [row], total: 1 }), '1 chat');
+  assert.equal(await meterFor({ threads: [], total: 0 }), '');
+  assert.equal(await meterFor({ threads: [row] }), '1 chat', 'no total → threads.length');
+});
+
+// Settings → "Delete all chat history" broadcasts ask-history-cleared (seq-less,
+// threadId-less). The panel must not keep a dead st.threadId in memory: any open
+// popover closes and the active chat resets exactly like the "+" button.
+test('ask-panel-pickers: ask-history-cleared closes the popover and resets the active thread', async () => {
+  const ctx = makePanel({ fetchHandler: handler() });
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open();
+  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Stored');
+  ctx.doc.querySelector('[data-ask-threads-btn]').click();
+  await ctx.tick();
+  assert.ok(ctx.doc.querySelector('.ask-pop-threads'), 'History popover open');
+  const fetchesBefore = ctx.fetchCalls.length;
+  ctx.panel.pushServerFrame({ type: 'ask-history-cleared' });
+  ctx.flush();
+  assert.equal(ctx.doc.querySelector('.ask-pop-threads'), null, 'popover closed');
+  assert.equal(ctx.storage.getItem('worca-cc.ask.thread'), null, 'stored thread forgotten');
+  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Ask Worca');
+  assert.equal(ctx.fetchCalls.length, fetchesBefore, 'no fetch — the rows are gone server-side');
+  // With no active thread the frame is inert.
+  ctx.panel.pushServerFrame({ type: 'ask-history-cleared' });
+  ctx.flush();
+  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Ask Worca');
+  assert.equal(ctx.fetchCalls.length, fetchesBefore);
 });

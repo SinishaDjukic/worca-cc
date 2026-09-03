@@ -171,3 +171,16 @@ test('done{paused}: one "paused" notice (never "finished"), status paused, then 
   assert.equal(follower.detached, true, 'this orchestrator is done; the resume creates a new one');
   assert.equal(detached(), 1);
 });
+
+test('done{paused, reason:error}: the notice carries the error detail; the card stays paused (resumable), never failed', () => {
+  const { orch, posts, patches, follower, detached } = harness();
+  orch.state = { title: 'T' };
+  orch.emit('done', { status: 'paused', reason: 'error', detail: 'claude exited with code 1: disk full' });
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].kind, 'paused');
+  assert.match(posts[0].text, /^Run paused after an error — "T": claude exited with code 1: disk full · resume it from Running$/);
+  assert.equal(posts[0].href, '#running/run-uuid-1');
+  assert.deepEqual(patches, [{ status: 'paused' }], 'no cardFailed: the run is parked, not dead');
+  assert.equal(follower.detached, true);
+  assert.equal(detached(), 1);
+});

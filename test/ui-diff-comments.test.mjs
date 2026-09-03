@@ -736,10 +736,17 @@ test('a burst of pokes collapses into two passes, not one per frame', async () =
   const c0 = countCalls();
   const m0 = cmtCalls();
   const frame = JSON.stringify({ type: 'diff-comments-changed', storeKey: KEY, pipelineId: ROW.id });
+  const t0 = Date.now();
   for (let i = 0; i < 20; i++) ctx.wsBox.ws.dispatch('message', { data: frame });
   await settle(ctx.window, 8);
-  assert.equal(countCalls() - c0, 1, 'the leading frame runs immediately; the other 19 are queued');
-  assert.equal(cmtCalls() - m0, 1, 'same for the open tab');
+  // Eight timer ticks are normally a few ms, but a loaded runner (the Windows VM
+  // mid-suite) can stretch them past COMMENT_POKE_MS, at which point the ONE
+  // trailing pass has legitimately fired already. The leading-edge claim holds
+  // either way: 1 pass before the window closes, never more than 2 in total.
+  const lateTail = Date.now() - t0 >= 250;
+  const lead = countCalls() - c0;
+  assert.ok(lead === 1 || (lateTail && lead === 2), `the leading frame runs immediately; the other 19 are queued (got ${lead}, ${Date.now() - t0}ms elapsed)`);
+  assert.equal(cmtCalls() - m0, lead, 'same for the open tab');
   await new Promise((r) => setTimeout(r, 400));    // past COMMENT_POKE_MS
   assert.equal(countCalls() - c0, 2, 'the whole tail collapsed into ONE trailing pass');
   assert.equal(cmtCalls() - m0, 2);

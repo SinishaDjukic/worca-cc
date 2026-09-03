@@ -34,9 +34,11 @@
 
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { prepareModelEnv } from './model-env.mjs';
+import { prepareModelEnv, envFlag, describeModelEnv } from './model-env.mjs';
+import { effectiveDebugSpawn } from './settings.mjs';
 import { classifyError, strongestClass } from './recoverable-error.mjs';
 import { explainUnspawnableClaude, resolveClaudeBin } from './preflight.mjs';
+import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from './host-guard.mjs';
 import { writeFile, mkdir, appendFile, readFile, access } from 'node:fs/promises';
 import { constants as FS, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -56,9 +58,14 @@ export function sigkillGraceMs() {
 }
 
 /** What `--settings` carries, or null when there is nothing to carry (no hook
- *  telemetry, no permission rules) — then the flag is omitted entirely. */
-export function buildSettingsPayload(permissionRules) {
+ *  telemetry, no permission rules, no host guard) — then the flag is omitted
+ *  entirely. `hostGuard` (set by runReal, gated by hostGuardEnabled) merges the
+ *  host-process-protection PreToolUse hook into the SAME single payload; the
+ *  returned `hook` flag stays telemetry-only (it drives --include-hook-events,
+ *  which the guard does not need). */
+export function buildSettingsPayload(permissionRules, { hostGuard = false } = {}) {
   const hook = buildHookSettings();
+  const guard = hostGuard && hostGuardEnabled() ? hostGuardHookEntry() : null;
   const hasRules = !!permissionRules && Object.values(permissionRules).some((a) => Array.isArray(a) && a.length);
   // Present-but-malformed rules (e.g. `{deny: 'Bash(curl:*)'}`) make the object
   // truthy while hasRules stays false, so the whole policy would drop out of
@@ -69,9 +76,13 @@ export function buildSettingsPayload(permissionRules) {
       && Object.values(permissionRules).some((a) => a != null && !Array.isArray(a))) {
     console.warn('[worca] guardrails: permissionRules is malformed (deny/allow/ask must be arrays of strings) — ignoring it; this spawn carries NO permission rules');
   }
-  if (!hook && !hasRules) return null;
+  if (!hook && !hasRules && !guard) return null;
   const settings = {};
-  if (hook) settings.hooks = hook.hooks;
+  if (hook) settings.hooks = { ...hook.hooks };
+  if (guard) {
+    settings.hooks = settings.hooks ?? {};
+    settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), guard];
+  }
   if (hasRules) settings.permissions = permissionRules;
   return { hook: !!hook, settings };
 }
@@ -100,6 +111,21 @@ export function argvLength(bin, args) {
   return String(bin || '').length + args.reduce((n, a) => n + String(a).length + 3, 0);
 }
 
+const ARGV_VALUE_PREVIEW = 64;
+
+/** A copy of `args` safe to log: EVERY token longer than ARGV_VALUE_PREVIEW is
+ *  shortened to a 64-char prefix + "…(<N> chars)". Token-level, not flag-aware, on
+ *  purpose: an inline prompt, the `--settings` JSON (uncapped for a custom rule
+ *  set), `--allowedTools`, `--mcp-config` — any free-text value buildClaudeArgs
+ *  adds later — is capped without this list having to track it. Flags and short
+ *  values pass through verbatim, so argv order is always preserved. Pure. */
+export function redactArgvForLog(args) {
+  return args.map((a) => {
+    const v = String(a);
+    return v.length > ARGV_VALUE_PREVIEW ? `${v.slice(0, ARGV_VALUE_PREVIEW)}…(${v.length} chars)` : v;
+  });
+}
+
 /** Log each npm-shim resolution once per process, not once per spawn. */
 const _resolveNoted = new Set();
 
@@ -107,9 +133,15 @@ const _resolveNoted = new Set();
  *  explanation when that is what actually went wrong (ENOENT on a bare name
  *  whose only PATH hit is claude.cmd; EINVAL on an explicit .cmd). */
 function spawnFailure(bin, err, prefix) {
-  const hint = /ENOENT|EINVAL/.test(String(err && err.code || err && err.message || ''))
-    ? explainUnspawnableClaude(bin) : null;
-  return new Error(`${prefix}: ${err.message}${hint ? ` — ${hint}` : ''}`);
+  const unspawnable = /ENOENT|EINVAL/.test(String(err && err.code || err && err.message || ''));
+  const hint = unspawnable ? explainUnspawnableClaude(bin) : null;
+  const out = new Error(`${prefix}: ${err.message}${hint ? ` — ${hint}` : ''}`);
+  // An unspawnable CLI (not installed / not on PATH) is user-fixable, not a
+  // pipeline bug: stamp the recovery class so the orchestrator's gate pauses
+  // the run for manual resume instead of hard-failing it (ENOENT matches no
+  // message-sniff pattern, so without the stamp it would classify null).
+  if (unspawnable) out.errorClass = 'network';
+  return out;
 }
 
 // Cap for the stderr detail embedded in a non-zero-exit Error message. The
@@ -150,9 +182,29 @@ export function buildEffortArgs(effort) {
  * and the baseline sub-agent lifecycle (tool_use/tool_result) is unaffected.
  */
 export function subagentHooksEnabled() {
-  const v = process.env.WORCA_SUBAGENT_HOOKS;
-  return !!v && v !== '0' && v.toLowerCase() !== 'false';
+  return envFlag('WORCA_SUBAGENT_HOOKS');
 }
+
+/**
+ * Opt-in spawn diagnostics, DEFAULT OFF. A NON-EMPTY WORCA_DEBUG_SPAWN in the
+ * environment wins (envFlag rule: any value but "0"/"false" turns it on, so an
+ * exported "0" is an explicit OFF); otherwise the stored `debugSpawnEnabled`
+ * setting applies — read fresh per spawn (settings.mjs#effectiveDebugSpawn, the
+ * one precedence rule the settings API also reports), so the UI checkbox reaches
+ * the next spawn in this process AND in a CLI run with no restart and no env
+ * mutation. OFF ⇒ runReal emits NO spawn-debug event and does not touch
+ * argv/env, so the spawn path is byte-identical to today. (The once-per-process
+ * "routing env applied" confirmation below is a separate, always-on line: it
+ * fires only for a model env that carries an ANTHROPIC_* routing key, once per
+ * distinct model + env, never per spawn.) Read directly in runReal (not a
+ * runClaude option) so it bypasses the runClaude→runReal gate by construction.
+ */
+export function debugSpawnEnabled() {
+  return effectiveDebugSpawn().enabled;
+}
+
+/** Once per process per distinct (model, described env): see runReal. */
+const _routingNoted = new Set();
 
 // ── Sub-agent telemetry + the --settings seam ────────────────────────────────
 // Telemetry is GATED (subagentHooksEnabled) and OFF by default. When on it adds
@@ -179,10 +231,11 @@ export function buildHookSettings() {
  * [] when there is nothing to say, so the baseline argv is byte-identical.
  * @param {{deny?:string[],allow?:string[],ask?:string[]}|null|undefined} permissionRules
  * @param {string|null} [settingsFile] staged path (GH #380): `--settings <path>` carries the same JSON
+ * @param {{hostGuard?:boolean}} [opts] host-process guard (runReal sets it; see buildSettingsPayload)
  * @returns {string[]}
  */
-export function buildSettingsArgs(permissionRules, settingsFile = null) {
-  const payload = buildSettingsPayload(permissionRules);
+export function buildSettingsArgs(permissionRules, settingsFile = null, { hostGuard = false } = {}) {
+  const payload = buildSettingsPayload(permissionRules, { hostGuard });
   if (!payload) return [];
   const args = [];
   if (payload.hook) args.push('--include-hook-events');
@@ -245,8 +298,7 @@ export function buildSpawnEnv(envScrub, envAllowlist) {
  */
 export function mockEnabled(opts) {
   if (opts && opts.mock) return true;
-  const v = process.env.WORCA_MOCK ?? process.env.ORCH_MOCK;
-  return !!v && v !== '0' && v.toLowerCase() !== 'false';
+  return envFlag('WORCA_MOCK', 'ORCH_MOCK');
 }
 
 /**
@@ -403,7 +455,7 @@ export function buildClaudeArgs({
   // way in because the legacy body below already owns a local `tools` (the
   // --allowedTools union).
   tools: builtinTools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
-  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt,
+  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard,
 }, delivery = {}) {
   // delivery (GH #380, set only by planClaudeInvocation's staged branch):
   //   promptViaStdin   -> bare `-p`; the prompt is written to the child's stdin
@@ -426,7 +478,7 @@ export function buildClaudeArgs({
   // SINGLE inline JSON (two --settings flags would be last-wins at the CLI). [] when
   // there is neither, so the baseline argv is unchanged; a CLI that rejects these
   // flags would only ever fail when the operator opted in.
-  for (const a of buildSettingsArgs(permissionRules, settingsFile)) args.push(a);
+  for (const a of buildSettingsArgs(permissionRules, settingsFile, { hostGuard })) args.push(a);
   if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath);
   const tools = Array.isArray(allowedTools) ? allowedTools.slice() : [];
   for (const s of (Array.isArray(mcpServerGrants) ? mcpServerGrants : [])) {
@@ -496,7 +548,7 @@ export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limi
     files.push({ path: systemPromptFile, content: opts.systemPrompt });
   }
   let settingsFile = null;
-  const payload = buildSettingsPayload(opts.permissionRules);
+  const payload = buildSettingsPayload(opts.permissionRules, { hostGuard: opts.hostGuard });
   if (payload) {
     settingsFile = join(dir, 'settings.json');
     files.push({ path: settingsFile, content: JSON.stringify(payload.settings) });
@@ -547,6 +599,23 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     } else if (wireModel !== model) {
       console.warn(`[worca] model ${JSON.stringify(model ?? '')}: wire model ${JSON.stringify(wireModel)}`);
     }
+    // Confirm a resolved card's routing env actually reached a spawn — even when
+    // the wire id equals the catalog id, the case the wire-model line above stays
+    // silent for (that silence is exactly what hid a gateway card whose
+    // ANTHROPIC_MODEL matched its catalog id). Fires only for an env that carries
+    // an ANTHROPIC_* routing key (Ask Worca merges a CLAUDE_CODE_* knob into
+    // EVERY turn's env, which is not routing) and once per process per distinct
+    // line, like _resolveNoted — never per spawn. describeModelEnv prints the
+    // routing keys readable (endpoint, wire id — the diagnostic) and every other
+    // key as `<set, N chars>`: ANTHROPIC_AUTH_TOKEN and plugin {secret} values live
+    // in this map and no part of them may reach a log. Worded WITHOUT the
+    // substrings "wire model"/"modelEnv" — test/spawn-args.test.mjs counts by those.
+    const routingApplied = safeModelEnv && Object.keys(safeModelEnv).some((k) => k.startsWith('ANTHROPIC_'))
+      ? describeModelEnv(safeModelEnv) : null;
+    if (routingApplied) {
+      const line = `[worca] model ${JSON.stringify(model ?? '')}: routing env applied: ${routingApplied}`;
+      if (!_routingNoted.has(line)) { _routingNoted.add(line); console.warn(line); }
+    }
 
     // Windows + npm-installed Claude Code: the bare name is a .cmd shim Node
     // cannot spawn; resolveClaudeBin swaps in the package's native claude.exe.
@@ -562,10 +631,20 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     // ARGV_INLINE_LIMIT). The staging dir, when any, is removed on every
     // terminal path below (finish) and on a failed spawn.
     const limit = Number.isFinite(argvInlineLimit) && argvInlineLimit > 0 ? argvInlineLimit : ARGV_INLINE_LIMIT;
+    // Host guard (host-guard.mjs, 2026-08-31 incident): every REAL spawn — any
+    // role, custom agent, plugin agent, ask chat — carries the protection
+    // preamble, the PreToolUse hook (hostGuard -> the --settings payload), and
+    // WORCA_HOST_PID (below). One kill-switch: WORCA_HOST_GUARD=0. Mock spawns
+    // nothing, so runMock stays untouched.
+    const guardOn = hostGuardEnabled();
+    const guardedSystemPrompt = guardOn
+      ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n')
+      : systemPrompt;
     let plan;
     try {
       plan = stageClaudeInvocation({
-        prompt, systemPrompt, permissionMode, model: wireModel, effort, allowedTools, resumeSessionId,
+        prompt, systemPrompt: guardedSystemPrompt, hostGuard: guardOn,
+        permissionMode, model: wireModel, effort, allowedTools, resumeSessionId,
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
         maxTurns, maxBudgetUsd, appendSubagentSystemPrompt,
@@ -593,6 +672,29 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     // pre-feature behavior, including the undefined -> inherit-process.env case.
     let spawnEnv = guardrailEnv;
     if (safeModelEnv) spawnEnv = { ...(guardrailEnv ?? process.env), ...safeModelEnv };
+
+    // WORCA_HOST_PID rides every guarded spawn (the hook reads it; scrub would
+    // drop it — WORCA_ is not an allowlisted prefix — so it is added AFTER).
+    if (guardOn) spawnEnv = { ...(spawnEnv ?? process.env), WORCA_HOST_PID: String(process.pid) };
+
+    // Opt-in spawn diagnostics (WORCA_DEBUG_SPAWN, default off — byte-identical spawn
+    // path when unset). Everything here is derived from values already computed above
+    // (safeModelEnv is null or non-empty, so the routing field is either the described
+    // env — secrets as `<set, N chars>` — or "(none)"). Emitted right before spawn so
+    // it reflects the exact bin/argv/env handed to the child, ONCE, as the same
+    // `stderr` event the child's own stderr rides (run-harness logs it at `warn`
+    // into the run stream and live-log.ndjson; nothing here also console.warns, so
+    // a run never prints the line twice). Field is `routingEnv`, not `modelEnv`:
+    // test/spawn-args.test.mjs counts "modelEnv" warnings for the dropped-key path.
+    if (debugSpawnEnabled()) {
+      const summary =
+        `[worca] spawn-debug: bin=${JSON.stringify(resolved.bin)} `
+        + `argv=${JSON.stringify(redactArgvForLog(args))} `
+        + `promptViaStdin=${plan.stdin != null} staged=${plan.staged} `
+        + `envScrub=${guardrailEnv ? 'on' : 'off'} childEnvKeys=${Object.keys(spawnEnv ?? process.env).length} `
+        + `routingEnv=[${safeModelEnv ? describeModelEnv(safeModelEnv) : '(none)'}]`;
+      safeEmit(onEvent, { type: 'stderr', stream: 'err', text: summary });
+    }
 
     let child;
     try {

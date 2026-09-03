@@ -24,7 +24,8 @@ project's working tree, so nothing is ever committed to your repo.
                          rows (diff_comments), never files; ask_card_comments carries
                          a proposal's comment ids from propose_run through to launch.
                          Archiving a run deletes its comments with its artifacts.
-  ask/<threadId>/att/<attachmentId>.txt  Ask Worca attachment bodies (threads, messages and
+  ask/<threadId>/att/<attachmentId>.<ext>  Ask Worca attachment bodies — .txt for text kinds,
+                                        the sniffed type's extension for images/PDFs (threads, messages and
                                         run links live in the DB: ask_threads, ask_messages,
                                         ask_attachments, ask_run_links); removed with the thread.
                                         Chat spend is copied per turn into ask_cost_ledger

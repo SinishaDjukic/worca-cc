@@ -16,7 +16,7 @@ import { join, dirname, resolve as pathResolve } from 'node:path';
 import { mkdir, writeFile, unlink } from 'node:fs/promises';
 
 import { runClaude } from '../claude-runner.mjs';
-import { resolveModelEnv, resolveModelCost } from '../config.mjs';
+import { resolveModelEnv, resolveModelCost, estimateCost, liveCostRates as defaultLiveCostRates } from '../config.mjs';
 import { worcaHome } from '../projects.mjs';
 import { generateTitle } from '../title.mjs';
 import { createTurnReducer } from './events.mjs';
@@ -40,6 +40,7 @@ class AskTurn extends EventEmitter {
     model, effort, resumeSessionId = null,
     firstTurn = false, firstText = '', deterministicTitle = null,
     mock = null, attachmentNames = {},
+    pinnedScope = null,
     deps = {},
   } = {}) {
     super();
@@ -57,6 +58,8 @@ class AskTurn extends EventEmitter {
     this.deterministicTitle = deterministicTitle ?? null;
     this.mock = mock || null;
     this.attachmentNames = attachmentNames || {};
+    // #397: {projectKey}|{workspaceId}|null — the user-pinned scope at POST time.
+    this.pinnedScope = pinnedScope && typeof pinnedScope === 'object' ? pinnedScope : null;
     this.deps = {
       runClaudeImpl: deps.runClaudeImpl ?? runClaude,
       store: {
@@ -84,6 +87,11 @@ class AskTurn extends EventEmitter {
       onFrame: deps.onFrame ?? (() => {}),
       onOutOfTurn: deps.onOutOfTurn ?? (() => {}),
       onCommentMutation: deps.onCommentMutation ?? (() => {}),
+      onWorktreeMutation: deps.onWorktreeMutation ?? (() => {}),
+      // DISPLAY-ONLY rates for the footer's live "≈" estimate (config.mjs
+      // liveCostRates: override → list price → null). Injectable so tests pin
+      // the frame arithmetic without the catalog.
+      liveCostRates: deps.liveCostRates ?? defaultLiveCostRates,
     };
     this.abort = new AbortController();
     this.status = 'created';
@@ -93,6 +101,7 @@ class AskTurn extends EventEmitter {
     this.sessionId = this.resumeSessionId;
     this.scratchDir = null;
     this.titlePromise = Promise.resolve();
+    this._titleKicked = false;
     this._completed = false;
   }
 
@@ -125,10 +134,23 @@ class AskTurn extends EventEmitter {
   async _onProposal(input) {
     const d = this.deps;
     const cardId = d.newAskId('card');
+    const raw = input && typeof input === 'object' ? input : {};
+    // #397: a proposal that names NO target falls back to the user-pinned scope.
+    // Mirrors the MCP child's own defaulting, so this authoritative re-validation
+    // builds the same card the model was shown.
+    const pin = this.pinnedScope;
+    const hasTarget = (typeof raw.projectKey === 'string' && raw.projectKey.trim())
+      || (typeof raw.workspaceId === 'string' && raw.workspaceId.trim());
+    const inp = pin && !hasTarget ? { ...raw, ...pin } : raw;
     try {
-      const r = await d.validateProposal(input && typeof input === 'object' ? input : {}, { cardId });
+      const r = await d.validateProposal(inp, { cardId });
       if (r && r.ok) {
-        this.reducer.addBlock({ kind: 'card', id: cardId, state: 'proposed', card: r.card });
+        // #397 guardrail: a proposal targeting a DIFFERENT project/workspace than
+        // the pinned one is accepted but flagged — the card renders the mismatch
+        // instead of silently absorbing it.
+        const scopeMismatch = !!pin && ((pin.projectKey && r.card.projectKey !== pin.projectKey)
+          || (pin.workspaceId && r.card.workspaceId !== pin.workspaceId));
+        this.reducer.addBlock({ kind: 'card', id: cardId, state: 'proposed', card: r.card, ...(scopeMismatch ? { scopeMismatch: true } : {}) });
         // commentIds are propose_run INPUT only: they never enter the card block (its
         // key set is pinned in test/ask-proposal.test.mjs) nor CARD_PATCH_KEYS. Parked
         // against the card id until the user starts the run; unknown ids are dropped,
@@ -148,6 +170,10 @@ class AskTurn extends EventEmitter {
 
   _makeReducer() {
     const d = this.deps;
+    // One settings read per attempt, never per frame. null → the frames carry
+    // estimatedCostUsd:null and the footer keeps today's behaviour.
+    let liveRates = null;
+    try { liveRates = d.liveCostRates(this.model) ?? null; } catch { liveRates = null; }
     this.reducer = createTurnReducer({
       onFrame: (f) => this._frame(f),
       now: d.now,
@@ -165,6 +191,13 @@ class AskTurn extends EventEmitter {
       // The MCP child cannot broadcast; the parent turns its comment writes into
       // the same poke the REST routes emit.
       onCommentMutation: (e) => { try { this.deps.onCommentMutation(e); } catch { /* a broken sink never breaks the turn */ } },
+      // Same shape for worktrees: open/remove/navigate in the child → the server
+      // broadcasts the thread's worktree envelope (ui/server.mjs emitAskWorktrees).
+      onWorktreeMutation: (e) => { try { this.deps.onWorktreeMutation(e); } catch { /* a broken sink never breaks the turn */ } },
+      // DISPLAY ONLY — never a sink input: prices the running usage sum (main +
+      // sub-agent tokens) at the TURN model's rates; the "≈" in the footer owns
+      // that approximation. _complete() reads summary.costUsd, not this.
+      estimateLiveCost: liveRates ? (usage) => estimateCost(usage, liveRates) : null,
     });
     return this.reducer;
   }
@@ -275,6 +308,11 @@ class AskTurn extends EventEmitter {
       const scratchDir = join(d.worcaHome(), 'tmp', 'ask');
       this.scratchDir = scratchDir;
       await d.fs.mkdir(scratchDir, { recursive: true });
+      // D13 title runs CONCURRENTLY with the turn from here — the haiku call
+      // cwd's into scratchDir, so not a line earlier. Idempotent: the call after
+      // _attempts below is the backstop for a mkdir/write failure, so "fires
+      // after ANY terminal status of the first turn" stays true.
+      this._kickoffTitle();
       const homeBase = process.env.WORCA_HOME?.trim()
         ? pathResolve(process.env.WORCA_HOME)
         : dirname(d.worcaHome());
@@ -387,12 +425,14 @@ class AskTurn extends EventEmitter {
   }
 
   _kickoffTitle() {
-    if (!this.firstTurn) return;
+    if (!this.firstTurn || this._titleKicked) return;
+    this._titleKicked = true;
     const d = this.deps;
-    // Fire-and-forget after ANY terminal status of the first turn (§7.4).
+    // Fire-and-forget: kicked off at the START of the first turn (right after
+    // the scratch dir exists) and backstopped after its terminal status (§7.4).
     // Stored for test determinism, never awaited by run() (orchestrator.mjs:3821).
-    // NO signal: after a user stop this.abort is already aborted and would kill
-    // the call before it spawns. permissionMode 'dontAsk' is the B-1 fix.
+    // NO signal: a user stop aborts this.abort mid-turn and would kill the call
+    // before it spawns. permissionMode 'dontAsk' is the B-1 fix.
     this.titlePromise = Promise.resolve()
       .then(() => d.generateTitle(this.firstText, {
         cwd: this.scratchDir || join(d.worcaHome(), 'tmp', 'ask'),
@@ -400,12 +440,18 @@ class AskTurn extends EventEmitter {
         disableSlashCommands: true, envScrub: true, envAllowlist: [],
         permissionMode: 'dontAsk',
       }))
-      .then((title) => {
-        if (!title || title === this.deterministicTitle) return;
-        // setThreadTitle's onlyIf is the rename guard: a PATCHed or deleted
-        // thread makes the UPDATE match 0 rows and the frame is suppressed.
+      .then((generated) => {
+        // The route stamps NOTHING before the 202 (the header reads "Ask Worca"
+        // until this frame lands), so an empty result — generateTitle swallows
+        // every failure/abort/refusal into '' — falls back to the route's
+        // deterministicTitle (sanitized first 80 chars, or "New chat"). That is
+        // the ONLY moment the prompt text may become the title.
+        const title = generated || this.deterministicTitle;
+        if (!title) return;
+        // `onlyIf: null` (title IS NULL) is the rename guard: a PATCHed or
+        // deleted thread makes the UPDATE match 0 rows and the frame is suppressed.
         let applied = false;
-        try { applied = d.store.setThreadTitle(this.threadId, title, { onlyIf: this.deterministicTitle }); }
+        try { applied = d.store.setThreadTitle(this.threadId, title, { onlyIf: null }); }
         catch { /* deleted thread */ }
         if (applied) {
           try { d.onOutOfTurn({ type: 'ask-title', title }); } catch { /* sink */ }

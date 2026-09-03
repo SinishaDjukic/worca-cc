@@ -228,7 +228,7 @@ test('ui-ask-integration: the send body carries the resolved page context', asyn
   await openSheet(window);
   await sendText(window, 'context check one');
   const post1 = calls.filter((c) => c.url.includes('/messages') && c.opts.method === 'POST').at(-1);
-  assert.deepEqual(JSON.parse(post1.opts.body).context, { view: 'new', projectDir: '/repos/proj' });
+  assert.deepEqual(JSON.parse(post1.opts.body).context, { view: 'new', projectDir: '/repos/proj', pinned: false }); // #397: Auto declares itself
   recv({ type: 'ask-done', text: 'ok', blocks: [], usage: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0 }, costUsd: 0, durationMs: 5, model: 'm', status: 'done', threadTotals: {}, threadId: TID, messageId: MID, seq: 1 });
   recv({ type: 'hello', runs: [RUN_ROW], ask: [] });
   await settle(window);
@@ -236,5 +236,5 @@ test('ui-ask-integration: the send body carries the resolved page context', asyn
   await settle(window);
   await sendText(window, 'context check two');
   const post2 = calls.filter((c) => c.url.includes('/messages') && c.opts.method === 'POST').at(-1);
-  assert.deepEqual(JSON.parse(post2.opts.body).context, { view: 'running', runId: 'r1', projectDir: '/p' });
+  assert.deepEqual(JSON.parse(post2.opts.body).context, { view: 'running', runId: 'r1', projectDir: '/p', pinned: false }); // #397
 });

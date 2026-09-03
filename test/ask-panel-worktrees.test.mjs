@@ -112,3 +112,46 @@ test('cancel at the confirm dialog issues NO delete and leaves the button visibl
   assert.equal(state.deleted, false, 'cancelled → no DELETE issued');
   assert.equal(ctx.doc.querySelector('[data-ask-wt-btn]').hidden, false, 'worktree still present, button visible');
 });
+
+test('an ask-worktrees frame moves the count with NO snapshot GET; another thread\'s frame is ignored', async () => {
+  const state = { deleted: false, snapshots: 0 };
+  const inner = snapshotHandler(state);
+  const handler = (url, opts) => {
+    if (url === `/api/ask/threads/${TID}` && (((opts && opts.method) || 'GET').toUpperCase() === 'GET')) state.snapshots += 1;
+    return inner(url, opts);
+  };
+  const ctx = makePanel({ fetchHandler: handler, storage: seededStorage() });
+  ctx.panel.open();
+  await ctx.tick(); await ctx.tick(); await ctx.tick(); ctx.flush();
+  const btn = ctx.doc.querySelector('[data-ask-wt-btn]');
+  assert.match(btn.textContent, /1 worktree\b/);
+  const before = state.snapshots;
+  ctx.panel.pushServerFrame({ type: 'ask-worktrees', threadId: TID, worktrees: [WT, { ...WT, worktreeId: 'wt_00000002', ref: 'main' }] });
+  ctx.flush();
+  assert.match(btn.textContent, /2 worktrees/);
+  assert.equal(btn.hidden, false);
+  ctx.panel.pushServerFrame({ type: 'ask-worktrees', threadId: 'ask_ffffffff', worktrees: [] });
+  ctx.flush();
+  assert.match(btn.textContent, /2 worktrees/, 'another thread\'s frame is ignored');
+  ctx.panel.pushServerFrame({ type: 'ask-worktrees', threadId: TID, worktrees: [] });
+  ctx.flush();
+  assert.equal(btn.hidden, true, 'an empty list hides the button');
+  assert.equal(state.snapshots, before, 'the frame carried the list — no GET');
+});
+
+test('an open worktrees popover re-renders in place on the frame', async () => {
+  const state = { deleted: false, snapshots: 0 };
+  const ctx = makePanel({ fetchHandler: snapshotHandler(state), storage: seededStorage() });
+  ctx.panel.open();
+  await ctx.tick(); await ctx.tick(); await ctx.tick(); ctx.flush();
+  ctx.doc.querySelector('[data-ask-wt-btn]').click();
+  await ctx.tick(); await ctx.tick(); await ctx.tick(); ctx.flush();   // the on-open heal's dirty.worktrees flush
+  const pop = ctx.doc.querySelector('.ask-pop-worktrees');
+  assert.equal(pop.querySelectorAll('.ask-wt-row').length, 1);
+  ctx.panel.pushServerFrame({ type: 'ask-worktrees', threadId: TID, worktrees: [] });
+  ctx.flush();
+  assert.equal(ctx.doc.querySelector('.ask-pop-worktrees'), pop, 'same panel, still open');
+  assert.equal(pop.querySelectorAll('.ask-wt-row').length, 0);
+  assert.match(pop.textContent, /No worktrees open\./);
+  assert.match(pop.textContent, /Worktrees this chat/, 'the caption survives the re-render');
+});

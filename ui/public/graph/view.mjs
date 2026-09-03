@@ -682,9 +682,33 @@ export function createGraphView(host, {
       if (badge.title) b.title = badge.title;
       badgeHost.appendChild(b);
     },
+    /** Ants march per path (the :root clock is retired — it forced a whole-
+     *  document style recalc per frame). A wire GOING live starts its own
+     *  animation, so it is seated at the shared document-timeline phase with a
+     *  negative delay: every live wire marches in step, and because one
+     *  iteration is exactly one 12px dash period the seat itself is seamless.
+     *  600 = the .6s period style.css declares on `animation:wireDash`.
+     *  Steady-state calls must NOT rewrite the stamp: re-stamping a RUNNING
+     *  animation re-maps its time against the ORIGINAL start and desyncs the
+     *  phase — so the stamp is written only on the off→on edge, and it leaves
+     *  with the class. render() wipes wire classes wholesale (the
+     *  setAttribute('class', …) repaint), so a remounted wire re-enters
+     *  through was=false and gets a fresh, phase-exact seat; a stale inline
+     *  delay on a dark wire is inert (no animation without the class).
+     *  jsdom: no document.timeline -> t=0 -> a zero stamp. */
     setWireLive(ids) {
       const live = new Set(ids || []);
-      for (const [id, el] of wireEls) el.classList.toggle('wire-live', live.has(id));
+      for (const [id, el] of wireEls) {
+        const was = el.classList.contains('wire-live');
+        const on = live.has(id);
+        el.classList.toggle('wire-live', on);
+        if (on && !was) {
+          const t = Number(doc.timeline && doc.timeline.currentTime) || 0;
+          el.style.animationDelay = `-${t % 600}ms`;
+        } else if (!on && was) {
+          el.style.removeProperty('animation-delay');
+        }
+      }
     },
     /** One transform write per dragged node, then a dirty-filtered re-route: a
      *  card is an OBSTACLE, so moving it changes the wires it starts and stops

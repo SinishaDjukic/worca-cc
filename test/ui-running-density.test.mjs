@@ -244,3 +244,68 @@ test('the card no longer carries the Agents disclosure, and its painters are gon
   assert.match(css, /\.hd-ag-row \.st\{/);
   assert.match(css, /\.subs-skills\{/, 'the unscoped .subs-skills base rule History renders through is kept');
 });
+
+test('log autoscroll pins once per burst, never per line (coalesced into one flush)', async () => {
+  const { window, recv, showRunning } = await boot();
+  recv({ type: 'run-created', runId: RUN_ID, title: RUN_ID, projectDir: PROJECT, status: 'running', startedAt: '10:00:00' });
+  showRunning();
+  const doc = window.document;
+  const logEl = card(doc).querySelector('.log');
+  instrumentScroll(logEl, { scrollHeight: 1000, clientHeight: 200 });
+  // Count WRITES to scrollTop on top of the instrumented property.
+  let pins = 0;
+  const desc = Object.getOwnPropertyDescriptor(logEl, 'scrollTop');
+  Object.defineProperty(logEl, 'scrollTop', { configurable: true, get: desc.get, set: (v) => { pins += 1; desc.set(v); } });
+  for (let i = 0; i < 50; i += 1) {
+    recv({ type: 'log', runId: RUN_ID, source: 'orchestrator', level: 'info', text: `line ${i}`, ts: Date.now() });
+  }
+  assert.equal(logEl.querySelectorAll('.log-line').length, 50, 'appends stay synchronous');
+  assert.equal(pins, 0, 'no synchronous pin per line');
+  // No rAF under this jsdom boot (app.js resolves the bare identifier against
+  // globalThis, where the test copies no rAF and node has none), so the
+  // scheduler's 16ms setTimeout fallback fires. The 50-line burst is >16ms of
+  // synchronous work, so the timer is already due when the loop yields —
+  // rehearsal measured the pin landing by ~6ms after; 30ms is comfortably safe
+  // (20/20 clean runs).
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(pins, 1, 'ONE pin for the whole 50-line burst');
+  assert.equal(logEl.scrollTop, 1000, 'pinned to the bottom');
+});
+
+test('the coalesced pin re-arms, and auto-scroll OFF never lands one', async () => {
+  const { window, recv, showRunning } = await boot();
+  recv({ type: 'run-created', runId: RUN_ID, title: RUN_ID, projectDir: PROJECT, status: 'running', startedAt: '10:00:00' });
+  showRunning();
+  const doc = window.document;
+  const logEl = card(doc).querySelector('.log');
+  instrumentScroll(logEl, { scrollHeight: 1000, clientHeight: 200 });
+  let pins = 0;
+  const desc = Object.getOwnPropertyDescriptor(logEl, 'scrollTop');
+  Object.defineProperty(logEl, 'scrollTop', { configurable: true, get: desc.get, set: (v) => { pins += 1; desc.set(v); } });
+  const burst = (n) => { for (let i = 0; i < n; i += 1) recv({ type: 'log', runId: RUN_ID, source: 'orchestrator', level: 'info', text: `l${i}`, ts: Date.now() }); };
+  const settle = () => new Promise((r) => setTimeout(r, 30));
+  burst(20); await settle();
+  assert.equal(pins, 1, 'first burst: one pin');
+  pins = 0; burst(20); await settle();
+  assert.equal(pins, 1, 'a later burst pins again (the scheduler re-arms)');
+  // Auto-scroll OFF must never land a pin. The pin is deferred now, so nothing
+  // synchronous witnesses it any more — this replaces the five sync assertions
+  // the deferral blinded (four in ui-scroll, one in this file).
+  window.__np.setAutoscroll(window.__np.getRun(RUN_ID), false);
+  await settle();
+  pins = 0; burst(20); await settle();
+  assert.equal(pins, 0, 'auto-scroll OFF never lands a pin');
+});
+
+test('a pin queued before the switch flips OFF never lands (flush re-checks the flag)', async () => {
+  const { window, recv, showRunning } = await boot();
+  recv({ type: 'run-created', runId: RUN_ID, title: RUN_ID, projectDir: PROJECT, status: 'running', startedAt: '10:00:00' });
+  showRunning();
+  const logEl = card(window.document).querySelector('.log');
+  instrumentScroll(logEl, { scrollHeight: 1000, clientHeight: 200 });
+  logEl.scrollTop = 42;                                    // user parked mid-log
+  recv({ type: 'log', runId: RUN_ID, source: 'orchestrator', level: 'info', text: 'x', ts: Date.now() });
+  window.__np.setAutoscroll(window.__np.getRun(RUN_ID), false);  // the freeze gesture, same frame
+  await new Promise((res) => setTimeout(res, 30));
+  assert.equal(logEl.scrollTop, 42, 'the stale pin was dropped at flush');
+});

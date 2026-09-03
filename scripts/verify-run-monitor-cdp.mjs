@@ -96,16 +96,31 @@ chrome = spawn(CHROME, ['--headless=new', ...SANDBOX, `--remote-debugging-port=$
   '--window-size=1280,900', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
   '--disable-background-timer-throttling', '--disable-renderer-backgrounding', 'about:blank'],
 { stdio: ['ignore', 'pipe', 'pipe'] });
-chrome.stderr.on('data', () => {});
+// Keep Chrome's last stderr lines: when no DevTools target ever appears, its own
+// words (a sandbox refusal, a profile lock, a crash) are the diagnosis.
+const chromeErr = [];
+chrome.stderr.on('data', (d) => { chromeErr.push(String(d)); if (chromeErr.length > 40) chromeErr.shift(); });
+let chromeExit = null;
+chrome.on('exit', (code, signal) => { chromeExit = { code, signal }; });
 let wsUrl = null;
-for (let i = 0; i < 60 && !wsUrl; i += 1) {
+// Deadline-based, not iteration-based: a cold CI runner can take well over the
+// old ~15s (60 × 250ms) to bring the first page target up, and that budget was
+// the difference between a green and a red proofs job on the same commit.
+const targetDeadline = Date.now() + 60_000;
+while (!wsUrl && Date.now() < targetDeadline && !chromeExit) {
   try {
     const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
     const page = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl);
     if (page) wsUrl = page.webSocketDebuggerUrl; else await sleep(200);
   } catch { await sleep(250); }
 }
-if (!wsUrl) { console.error('no devtools target'); await shutdown(1); }
+if (!wsUrl) {
+  console.error(chromeExit
+    ? `no devtools target: chrome exited (code ${chromeExit.code}, signal ${chromeExit.signal})`
+    : 'no devtools target after 60s');
+  if (chromeErr.length) console.error(chromeErr.join('').trim().split('\n').slice(-15).join('\n'));
+  await shutdown(1);
+}
 const ws = new WebSocket(wsUrl);
 await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
 let msgId = 0; const pending = new Map(); const listeners = [];
@@ -173,6 +188,16 @@ const wheelRaw = (x, y, dx, dy, modifiers = 0) => pumped(cdp('Input.dispatchMous
 // whenever the trusted event is not cancelable. `defaultPrevented` is what "the
 // page scrolls / the canvas takes the wheel" reduces to, and only the synthetic
 // path can report it.
+// Two probe wheels, not one: Chrome latches a wheel SEQUENCE — when the first
+// wheel of a sequence is not cancelled, every later wheel in it is dispatched
+// non-cancelable (preventDefault() becomes a no-op and `defaultPrevented` never
+// reads true), and a sequence outlives the settle() between two of our
+// dispatches. Linux CI Chrome 152 reports the FIRST wheel cancelable, so a
+// one-wheel probe picked the trusted path and then watched every real wheel
+// arrive non-cancelable (the pull_request/push runs of one commit split on it).
+// Only a runner whose SECOND consecutive wheel is still cancelable can measure
+// `defaultPrevented` through trusted events; everything else runs the same
+// listener over the same layout through the synthetic path.
 let wheelMode = null;                   // 'trusted' | 'synthetic'
 async function probeWheel(stageSel, x, y) {
   await ev(`window.__wheels=[];window.addEventListener('wheel',(e)=>{window.__wheels.push(
@@ -180,9 +205,11 @@ async function probeWheel(stageSel, x, y) {
   await mmove(x, y);
   await wheelRaw(x, y, 0, 0, 0);        // ZERO delta: the probe must not move anything
   await settle('wheel-probe');
+  await wheelRaw(x, y, 0, 0, 0);        // the second wheel of the sequence is the one that tells
+  await settle('wheel-probe');
   const seen = await ev('window.__wheels');
-  wheelMode = seen.length && seen[seen.length - 1].cancelable ? 'trusted' : 'synthetic';
-  log(`wheel delivery: ${wheelMode} (CDP wheels seen: ${seen.length}, cancelable: ${seen.length ? seen[seen.length - 1].cancelable : 'n/a'})`);
+  wheelMode = seen.length >= 2 && seen.every((w) => w.cancelable) ? 'trusted' : 'synthetic';
+  log(`wheel delivery: ${wheelMode} (CDP wheels seen: ${seen.length}, cancelable: ${seen.map((w) => w.cancelable).join(',') || 'n/a'})`);
   await ev('window.__wheels=[];0');
 }
 /** One wheel over `stageSel` at client (x,y). Returns the event's
@@ -320,9 +347,11 @@ try {
     && Math.abs(g2.stage.l - g2.pad.l) < 0.6 && Math.abs(g2.stage.w - g2.pad.w) < 0.6
     && g2.hostPos === 'absolute' && g2.hostPad === '0px' && g2.hostDisplay === 'block', g2);
 
-  // (4a) ants: the in-flight execution's trigger wire marches. The dash phase comes
-  // from the shared :root clock (--wire-dash / wireDash), NOT a per-path animation —
-  // the path's own animationName is 'none' while its offset still moves between samples.
+  // (4a) ants: the in-flight execution's trigger wire marches. The animation lives
+  // ON THE PATH (the :root clock is retired — it forced a whole-document style
+  // recalc per frame); phase parity comes from setWireLive's negative
+  // animation-delay stamp, so the path's own animationName is the dash keyframe
+  // and :root animates nothing.
   const antsAt = () => ev(`(()=>{const p=document.querySelector('${RD} .gv-wires path.wire-live');
     if(!p)return {none:true};const cs=getComputedStyle(p);
     return {wireId:p.dataset.wireId,animationName:cs.animationName,
@@ -332,8 +361,8 @@ try {
   const ants = await antsAt();
   await sleep(250);
   const ants2 = await antsAt();
-  check('4a', 'a live run marches its trigger wire off the shared :root clock (path animationName "none", phase moving)',
-    !ants.none && !ants2.none && ants.animationName === 'none' && ants.clock === 'wireDash'
+  check('4a', 'a live run marches its trigger wire per path (animationName "wireDash", :root clock gone, phase moving)',
+    !ants.none && !ants2.none && ants.animationName === 'wireDash' && ants.clock === 'none'
     && ants.strokeDashoffset !== ants2.strokeDashoffset && ants.settled === false, { ants, ants2 });
 
   // (6) the engaged wheel (D8). FIRST on this screen, while nothing has scrolled
@@ -476,7 +505,7 @@ try {
       const bands=[...el.querySelectorAll(':scope > .xfoot > *')];
       const want=geo.nodeSize(node,ports.portsOf(pf,node),{footerRows:bands.length}).h;
       out.push({id:node.id,offsetHeight:el.offsetHeight,styleHeight:el.style.height,want,bands:bands.length,
-        bandH:bands.map((b)=>({cls:b.className,h:+getComputedStyle(b).height.replace('px','')}))});
+        bandH:bands.map((b,i)=>({cls:b.className,first:i===0,h:+getComputedStyle(b).height.replace('px','')}))});
     }
     return {FOOT_H:geo.FOOT_H,EXEC_ROW_H:geo.EXEC_ROW_H,cards:out};})()`;
   const s1 = await ev(SIZES);
@@ -487,10 +516,14 @@ try {
   const bands = [...s1.cards, ...s2.cards].flatMap((c) => c.bandH);
   const strips = bands.filter((b) => /(^|\s)(xtoggle|fan|xresult)(\s|$)/.test(b.cls));
   const rows = bands.filter((b) => /(^|\s)xrow(\s|$)/.test(b.cls));
-  check(3, `footer bands: .xtoggle/.fan/.xresult are ${FOOT_H}px and .xrow ${EXEC_ROW_H}px; every card's offsetHeight === nodeSize() before AND after expanding a strip`,
+  // style.css bills the footer the way nodeSize does (since f332d12c): the FIRST
+  // band is the tall --gv-foot-h line, every later .fan/.xtoggle/.xresult is one
+  // --gv-exec-row-h line, and a wrapped fan (.f2) adds one more exec line.
+  const stripWant = (b) => (b.first ? FOOT_H : EXEC_ROW_H) + (/(^|\s)f2(\s|$)/.test(b.cls) ? EXEC_ROW_H : 0);
+  check(3, `footer bands: the first .xtoggle/.fan/.xresult is ${FOOT_H}px, later strips and .xrow ${EXEC_ROW_H}px; every card's offsetHeight === nodeSize() before AND after expanding a strip`,
     s1.FOOT_H === FOOT_H && s1.EXEC_ROW_H === EXEC_ROW_H
     && bands.some((b) => /(^|\s)fan(\s|$)/.test(b.cls)) && bands.some((b) => /xtoggle/.test(b.cls))
-    && strips.every((b) => Math.abs(b.h - FOOT_H) < 0.01)
+    && strips.every((b) => Math.abs(b.h - stripWant(b)) < 0.01)
     && rows.length >= 2 && rows.every((b) => Math.abs(b.h - EXEC_ROW_H) < 0.01)
     // `offsetHeight` is an INTEGER, and nodeSize() lands on a .5 (PAD_T 8.5 +
     // 2×BORDER 1.5) — so the exact equality is on the height the renderer WRITES

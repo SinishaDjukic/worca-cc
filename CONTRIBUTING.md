@@ -41,6 +41,7 @@ Run from source:
 
 ```bash
 npm start                                 # web UI (default http://localhost:4317)
+npm run cli -- ui stop                    # stop it (also: status | restart | --port <n>)
 npm run cli -- --project <dir> --prompt "<task>"   # CLI pipeline run
 ```
 

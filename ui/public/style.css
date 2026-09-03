@@ -305,6 +305,7 @@ body.view-history .topnav{margin:12px 32px 0;flex:0 0 auto;}
 .field > label .opt,.field .opt{color:var(--ink-3);font-weight:500;font-style:normal;}
 .hint{display:block;color:var(--ink-3);font-size:12px;margin-top:7px;line-height:1.45;}
 .hint.err{color:var(--red-ink);}
+.hint.warn{color:var(--amber-ink);}
 
 .input,.select,.textarea,.ta-hl-back,
 input[type="text"],input[type="number"],textarea,select{
@@ -367,6 +368,14 @@ input[type="file"]{font-size:12.5px;color:var(--ink-3);background:transparent;bo
 .add-project{margin-top:10px;display:flex;flex-direction:column;gap:9px;padding:14px;
   border:1.5px solid var(--line-2);border-radius:var(--r-ctrl);background:var(--field);}
 .add-project-actions{display:flex;gap:9px;justify-content:flex-end;}
+/* Settings → Chat history: a text-style destructive action so its label sits on
+   the same left edge as the "Chat history" heading and the counts line under it
+   (a pill's inner padding indented the text). Same shape as .hd-cmt-btn. */
+.ask-history-delete{border:none;background:none;padding:0;color:var(--red-ink);
+  font:600 12.5px var(--sans);cursor:pointer;line-height:1.45;}
+.ask-history-delete:hover:not(:disabled){text-decoration:underline;}
+.ask-history-delete:disabled{opacity:.45;cursor:not-allowed;}
+.ask-history-delete:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:3px;}
 /* path row (input + trailing button) — shared by add-project, project modal, plugin add */
 .path-row{display:flex;gap:9px;align-items:center;}
 .path-row input{flex:1 1 auto;min-width:0;}
@@ -1575,6 +1584,12 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    In the v2 card it is a direct child of .h-meta on its own line. */
 .hist-pausenote{font-size:11.5px;font-weight:600;color:var(--amber-ink);}
 .hist-pausenote.total{color:var(--red-ink);}
+.hist-pausenote.error{color:var(--red-ink);}
+.pause-error-banner{border-radius:var(--r-ctrl);padding:12px 14px;margin-top:12px;font-size:13px;background:var(--red-bg);color:var(--red-ink);}
+.pause-error-banner b{display:block;margin-bottom:4px;}
+.pause-error-banner .peb-text{color:var(--ink);font-family:var(--mono);font-size:12px;word-break:break-word;}
+.pause-error-banner .peb-hint{color:var(--ink-2);margin-top:6px;}
+.hd-banners .pause-error-banner,.rd-banners .pause-error-banner{align-self:stretch;margin:0;}
 
 @media (max-width:1080px){
   .stat-row{grid-template-columns:repeat(2,1fr);}
@@ -2839,6 +2854,13 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-header-logo{width:20px;height:20px;border-radius:50%;}
 .ask-title{font-weight:600;font-size:13px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ask-header-spacer,.ask-composer-spacer,.ask-activity-spacer,.ask-card-actions-spacer{flex:1 1 auto;}
+.ask-scope-btn{display:inline-flex;align-items:center;gap:5px;max-width:180px;height:30px;flex:none;padding:0 9px;
+  border:1px solid var(--line);border-radius:999px;background:none;color:var(--ink-3);
+  font:inherit;font-size:11.5px;cursor:pointer;}
+.ask-scope-btn:hover{background:var(--field);color:var(--ink);}
+.ask-scope-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-scope-btn.is-pinned{color:var(--ink);border-color:var(--line-2);font-weight:600;}
+.ask-scope-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ask-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;
   border:0;border-radius:9px;background:transparent;color:var(--ink-2);cursor:pointer;transition:.15s;}
 .ask-icon-btn:hover{background:var(--field);color:var(--ink);}
@@ -2851,6 +2873,8 @@ body.rail-collapsed .ask-dock{left:76px;}
   background:var(--field);color:var(--ink);font-size:13.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}
 .ask-user-pills{justify-content:flex-end;margin-top:0;}
 .ask-attachment-pill{padding-right:12px;}
+.ask-attachment-thumb-link{display:inline-block;line-height:0;}
+.ask-attachment-thumb{max-width:180px;max-height:130px;border-radius:8px;border:1px solid var(--line);display:block;}
 
 .ask-activity{border-left:1.5px solid var(--line);padding:2px 0 2px 14px;display:flex;flex-direction:column;gap:7px;}
 .ask-activity-head{display:flex;align-items:center;gap:9px;min-width:0;}
@@ -2957,6 +2981,8 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-card-members-src summary{font-weight:600;font-size:10.5px;color:var(--ink-3);cursor:pointer;}
 .ask-card-members-src-list{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
 .ask-card-err{font-size:12px;color:var(--red-ink);min-height:0;}
+.ask-card-scope-warn{font-size:12px;color:var(--amber-ink);background:var(--amber-wash);
+  border:1px solid var(--amber-line);border-radius:8px;padding:6px 9px;}
 .ask-card-err:empty{display:none;}
 .ask-card-actions{display:flex;align-items:center;gap:8px;}
 .ask-card-open-np{border:0;background:transparent;padding:0;color:var(--blue-ink);font-family:inherit;
@@ -2988,6 +3014,7 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 8px 5px 9px;border:1px solid var(--line);
   border-radius:8px;background:var(--field);color:var(--ink-2);font-family:var(--mono);font-size:11px;max-width:240px;}
 .ask-chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-chip-thumb{width:24px;height:24px;object-fit:cover;border-radius:4px;flex:none;}
 .ask-chip-x{border:0;background:transparent;color:var(--ink-3);cursor:pointer;font-family:inherit;
   font-size:13px;line-height:1;padding:1px 4px;border-radius:5px;transition:.15s;}
 .ask-chip-x:hover{background:var(--line);color:var(--ink);}
@@ -3027,6 +3054,7 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-pop{position:absolute;z-index:3;background:var(--panel);border:1px solid var(--line-2);
   padding:6px;box-shadow:0 12px 34px rgba(25,25,27,.12);border-radius:16px;}
 .ask-pop-threads{top:46px;right:76px;width:326px;}
+.ask-pop-scope{left:16px;bottom:44px;width:300px;max-height:min(420px,70%);overflow-y:auto;}
 .ask-pop-model{right:30px;bottom:42px;width:292px;border-radius:18px;}
 .ask-pop-runinfo{right:96px;bottom:44px;width:326px;z-index:4;}
 .ask-pop-caption,.ask-pop-caption-row .ask-pop-caption{padding:8px 10px 6px;font-weight:600;font-size:10px;
@@ -3737,16 +3765,18 @@ input.gv-name:focus-visible{outline:none;}
 .run-flow.gv-host .gv-world .xresult a{color:var(--blue-ink);text-decoration:none;}
 .run-flow.gv-host .gv-world .xresult a:hover{text-decoration:underline;}
 /* ants on v2 wires (the v1 rule targets svg.wires; a dashoffset animation needs a dash).
-   The dash phase comes from ONE shared clock — a registered <length> animated on
-   :root — not from an animation on the path, so toggling `wire-live` (snapshot
-   repaints, graph remounts) never resets the phase and every live wire marches in
-   step. One iteration travels exactly one 6+6 dash period (-12px), so the loop
-   boundary is seamless; the old per-path keyframe travelled -18px — 1.5 periods —
-   and the phase visibly snapped every iteration. -12px per .6s keeps 20px/s. */
-@property --wire-dash{syntax:'<length>';inherits:true;initial-value:0px;}
-@keyframes wireDash{to{--wire-dash:-12px;}}
-:root{animation:wireDash .6s linear infinite;}
-.run-flow.gv-host .gv-wires path.wire-live{stroke-dasharray:6 6;stroke-width:2.4;stroke-dashoffset:var(--wire-dash);}
+   The animation lives ON THE PATH — never on :root. The old design animated a
+   registered inherited <length> on :root as a shared clock, which forced a
+   whole-document style recalc every frame on every view (GB-scale renderer
+   memory churn; the 2026-08-31 run-detail freeze). Phase parity across wires —
+   the one thing the :root clock bought — now comes from setWireLive (view.mjs)
+   stamping a negative animation-delay from the shared document timeline. One
+   iteration travels exactly one 6+6 dash period (-12px), so the loop boundary
+   AND any restart when wire-live flips on are seamless; the retired snapping
+   keyframe travelled -18px — 1.5 periods — and visibly jumped every iteration.
+   -12px per .6s keeps 20px/s. */
+@keyframes wireDash{to{stroke-dashoffset:-12px;}}
+.run-flow.gv-host .gv-wires path.wire-live{stroke-dasharray:6 6;stroke-width:2.4;animation:wireDash .6s linear infinite;}
 .rd-graph.settled .run-flow.gv-host .gv-wires path.wire-live{animation:none;stroke-dashoffset:0;}
 /* the composer's ≤N budget pill is REPLACED by the N× delivery count in run mode (§8) */
 .run-flow.gv-host .wbadge{font-size:0;line-height:0;padding:0;border:0;background:none;}
@@ -3764,8 +3794,7 @@ input.gv-name:focus-visible{outline:none;}
 @media (prefers-reduced-motion:reduce){
   .run-flow.gv-host .gv-wires path.wire-live,.run-flow.gv-host .gv-world .ngate,
   .run-flow.gv-host .gv-world .xfoot .xq.is-active,.run-flow.gv-host .gv-world .xfoot .xrow.is-active .led{animation:none;}
-  /* the ants own no animation — stop the shared clock and pin the phase instead */
-  :root{animation:none;}
+  /* the first selector above already stops the path's own dash animation; pin the phase */
   .run-flow.gv-host .gv-wires path.wire-live{stroke-dashoffset:0;}
 }
 
