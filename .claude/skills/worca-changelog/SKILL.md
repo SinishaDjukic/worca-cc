@@ -11,6 +11,10 @@ Artifact. It is not a bullet list of commits: every section sells one
 user-facing capability with a headline, a screenshot, and a small live demo
 of the mechanism.
 
+The output is written into `docs/changelog/` **on the current branch, left
+uncommitted**. This skill never branches, commits, pushes, or opens a PR —
+see Step 7.
+
 The design, layout and writing rules live next to this file — read both
 before writing a line of copy or markup:
 
@@ -123,9 +127,11 @@ Every feature section wants a real screenshot; a section with no UI surface
 (a CLI change, a policy) gets two demo cards instead, as `template.html`
 shows for `s3`.
 
-Follow the sandbox recipe in `docs/screenshots.md` — `WORCA_HOME` set to a
-throwaway dir, seeded mock runs, demo projects with plausible names — so
-nothing private lands in a published page. Then, with the UI running (the
+Follow the sandbox recipe in `docs/screenshots.md` — `HOME` and `WORCA_HOME`
+both set to a throwaway dir, seeded mock runs, demo projects with plausible
+names — so nothing private lands in a published page. Run the mock server
+from the current checkout; the sandbox is runtime state only and produces
+no branch, worktree, or commit of its own. Then, with the UI running (the
 `run` skill knows how), capture at **1440 × 900**, light theme, and save as
 PNG under:
 
@@ -185,9 +191,9 @@ screenshot went in as PNG; go back to Step 4.
    horizontal scroll at 390 px wide; `prefers-reduced-motion` shows every
    demo in its final state. Fix in the `.src.html`, rebuild.
 
-The `.src.html` is the editable source and is committed alongside the built
-file — the built one is what gets published, the source is what gets edited
-next time.
+The `.src.html` is the editable source and travels with the built file —
+the built one is what gets published, the source is what gets edited next
+time. Both are written into the working tree of the current branch (Step 7).
 
 ---
 
@@ -211,15 +217,18 @@ publish the same path again. A new version is a new file and a new URL.
 
 ---
 
-## Step 7: Commit
+## Step 7: Leave it on the current branch
 
-Repo rules apply: a branch off `dev`, a PR with `--base dev`, no direct
-push. Commit the source, the built page, the shots, and the index together:
+The entry stays **in the working tree of the branch that is checked out**.
+Do not create a branch, a worktree, a commit, a push, or a PR for it — a
+changelog is release material, and the release engineer decides when and
+how it lands (folded into the release commit, its own PR, or not at all).
+One PR per changelog is exactly the churn this rule avoids.
+
+Show what is waiting, then stop:
 
 ```bash
-git checkout -b docs/changelog-<VERSION> dev
-git add docs/changelog/
-git commit -m "docs(changelog): what's new in <VERSION>"
+git status --short docs/changelog/
 ```
 
 Finish with the summary:
@@ -231,5 +240,5 @@ Changelog entry ready
   Sections:   6 features + receipts
   Page:       docs/changelog/worca-app-v1.2.0-rc.3.html  (1.4 MB)
   Artifact:   <url>   |   not published (--no-publish)
-  PR:         <url>
+  Files:      uncommitted on <branch> — 9 files under docs/changelog/
 ```
