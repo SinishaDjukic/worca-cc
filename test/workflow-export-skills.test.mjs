@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { applyExport } from '../src/core/workflow-export.mjs';
 import { readPluginsLock, writePluginsLock, pluginDir } from '../src/core/plugins-lock.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -58,7 +58,7 @@ test('dep already at destination scope is left untouched (fill:false, not rewrit
   await writeFile(join(dest, '.claude/skills/mock-skill/SKILL.md'), existing, 'utf8');
   const result = await applyExport({ workflowId: id, destination: 'project', projectDir: dest, onConflict: 'overwrite', repoRoot });
   assert.equal(await readFile(join(dest, '.claude/skills/mock-skill/SKILL.md'), 'utf8'), existing);
-  assert.equal(result.written.some((p) => p.includes('skills/mock-skill/')), false, 'present dep is not rewritten');
+  assert.equal(result.written.some((p) => p.includes(join('skills', 'mock-skill') + sep)), false, 'present dep is not rewritten');
 });
 
 // REGRESSION GUARD: filling a dep skill copies its dir but must NEVER clobber a same-named file
@@ -107,7 +107,7 @@ test('a plugin-bundled dep skill resolves and is filled at export', async () => 
   const tpl = await writeKeyGraph({ name: 'Plugin Dep Flow', keys: ['pDep'] });
   const dest = await tmp();
   const applied = await applyExport({ workflowId: tpl.id, destination: 'project', projectDir: dest, onConflict: 'overwrite' });
-  assert.ok(applied.written.some((p) => p.endsWith('skills/plugin-skill/SKILL.md')), 'plugin dep skill filled');
+  assert.ok(applied.written.some((p) => p.endsWith(join('skills', 'plugin-skill', 'SKILL.md'))), 'plugin dep skill filled');
   const filled = await readFile(join(dest, '.claude/skills/plugin-skill/SKILL.md'), 'utf8');
   assert.match(filled, /a plugin-bundled dependency skill/);
 });

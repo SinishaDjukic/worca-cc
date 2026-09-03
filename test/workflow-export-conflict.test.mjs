@@ -39,7 +39,7 @@ test('a hand-written (unstamped) target is a conflict, not overwritten by defaul
   await mkdir(join(dest, '.claude/skills/default'), { recursive: true });
   await writeFile(join(dest, '.claude/skills/default/SKILL.md'), '---\nname: default\n---\nforeign\n', 'utf8');
   const plan = await planExport({ workflowId: 'wf_default', destination: 'project', projectDir: dest });
-  const skillConflict = plan.conflicts.find((c) => c.path.endsWith('skills/default/SKILL.md'));
+  const skillConflict = plan.conflicts.find((c) => c.path.endsWith(join('skills', 'default', 'SKILL.md')));
   assert.ok(skillConflict, 'unstamped SKILL.md must be a conflict');
   assert.match(skillConflict.reason, /unmanaged file/);
 });
@@ -256,7 +256,7 @@ test('content change + advanced updatedAt auto-updates stamped files (STORED wor
   await writeKeyGraph({ id: wf.id, name: 'Bumpable', createdAt: wf.createdAt,
     keys: [{ key: 'planner', config: { model: 'sonnet' } }, 'implementer', 'reviewer'] });
   const plan = await planExport({ workflowId: wf.id, destination: 'project', projectDir: dest });
-  assert.ok(plan.updated.some((p) => p.endsWith('agents/worca-cc-planner.md')), 'planner md auto-updates');
+  assert.ok(plan.updated.some((p) => p.endsWith(join('agents', 'worca-cc-planner.md'))), 'planner md auto-updates');
   assert.equal(plan.conflicts.length, 0);
 });
 
