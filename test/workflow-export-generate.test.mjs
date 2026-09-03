@@ -2,7 +2,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { applyExport, planExport, distinctAgents } from '../src/core/workflow-export.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { writeKeyGraph, writeLevelsGraph } from './helpers/export-fixtures.mjs';
@@ -157,7 +157,7 @@ test('includeAgents=false warns that dispatched agents are not exported', async 
     'a loud warning must name the un-exported dispatched agents',
   );
   // And no agent files are part of the plan.
-  assert.equal([...plan.created, ...plan.updated].some((p) => p.includes('/agents/')), false);
+  assert.equal([...plan.created, ...plan.updated].some((p) => p.includes(`${sep}agents${sep}`)), false);
 });
 
 // (Removed with the v1 engine: the "two feedback loops target one consumer" warning and

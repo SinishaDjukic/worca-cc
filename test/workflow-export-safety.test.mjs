@@ -2,7 +2,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { applyExport } from '../src/core/workflow-export.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { writeKeyGraph } from './helpers/export-fixtures.mjs';
@@ -25,7 +25,7 @@ test('slug traversal is rejected', async () => {
 test('every written path is under <dest>/.claude', async () => {
   const dest = await tmp();
   const applied = await applyExport({ workflowId: 'wf_default', destination: 'project', projectDir: dest, onConflict: 'overwrite' });
-  const root = join(dest, '.claude') + '/';
+  const root = join(dest, '.claude') + sep;   // platform separator: written paths use sep on Windows
   assert.ok(applied.written.length > 0);
   for (const p of applied.written) assert.ok(p.startsWith(root), `${p} must be under ${root}`);
 });

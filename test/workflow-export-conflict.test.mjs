@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { planExport, applyExport } from '../src/core/workflow-export.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -100,7 +100,7 @@ test('blanket --on-conflict=namespace writes <slug>-<stem>.md for the conflicted
   const applied2 = await applyExport({ workflowId: wfB.id, destination: 'project', projectDir: dest, onConflict: 'namespace' });
   assert.equal(applied2.written.length, 0, 'a second identical namespace export writes nothing');
   assert.ok(
-    plan2.conflicts.some((c) => c.path.endsWith('/agents/worca-cc-planner.md')),
+    plan2.conflicts.some((c) => c.path.endsWith(join(sep, 'agents', 'worca-cc-planner.md'))),
     'plain-stem plan still flags the default planner (Alpha2 lineage) as a conflict',
   );
 });
@@ -206,7 +206,7 @@ test('a stale plain agent left after namespacing is reported as an orphan', asyn
     resolutions: { [plannerPath]: 'namespace' },
   });
   assert.ok(res.written.some((p) => p.endsWith('orphan8-worca-cc-planner.md')), 'namespaced agent written');
-  assert.ok(res.orphans.some((p) => p.endsWith('/agents/worca-cc-planner.md')), 'stale plain planner reported as orphan');
+  assert.ok(res.orphans.some((p) => p.endsWith(join(sep, 'agents', 'worca-cc-planner.md'))), 'stale plain planner reported as orphan');
 });
 
 // REGRESSION GUARD (#4): the built-in wf_default (version pinned to 1, updatedAt frozen at
