@@ -177,6 +177,10 @@ to be on the released branch, because the next release computes its number from
 > the post-publish verification in §4.3. Use it in preference to running the
 > commands by hand; what follows is the specification it implements, and the
 > fallback when something goes wrong.
+>
+> Its companion `/worca-changelog` (`.claude/skills/worca-changelog/`) writes
+> the "What's new" page for a release from the PRs merged since the previous
+> stable version and publishes it as an Artifact.
 
 ### 4.1 Release candidates
 
