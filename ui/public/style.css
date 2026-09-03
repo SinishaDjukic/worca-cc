@@ -1066,6 +1066,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .pl-export svg{width:16px;height:16px;stroke-width:2;}
 /* JSON download (#421): an <a download> skinned like the export button. */
 a.pl-json{text-decoration:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;font-weight:700;letter-spacing:-.06em;}
+/* In the composer's saved list every row action (Open, ⇪, { }, ×) sits on the
+   row's center line — .pl-export's flex-start was the retired v1 list's. */
+.gv-saved .pl-export{align-self:center;}
 .saved-head-actions{display:flex;align-items:center;gap:8px;}
 /* Export-to-Claude-Code modal */
 .export-field{margin:12px 0;}
