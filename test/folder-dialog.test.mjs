@@ -99,3 +99,19 @@ test('a timed-out dialog maps to unsupported', async () => {
   runner({ ok: false, stdout: '', stderr: 'dialog timed out', code: -1, timedOut: true });
   assert.deepEqual(await pickFolderNative(), { status: 'unsupported' });
 });
+
+test('purpose picks the dialog title from a closed set; unknown purpose falls back to the project title', async () => {
+  _testing.set({ platform: 'darwin', env: {} });
+  const calls = runner({ ok: true, stdout: '/x\n', stderr: '', code: 0, timedOut: false });
+  await pickFolderNative({ purpose: 'plugin' });
+  await pickFolderNative({ purpose: 'export' });
+  await pickFolderNative({ purpose: 'rm -rf /' });           // never interpolated: not in the set
+  await pickFolderNative();
+  const prompts = calls.map((c) => /prompt "([^"]+)"/.exec(c.args[3])[1]);
+  assert.deepEqual(prompts, [
+    'Select the plugin folder',
+    'Select the project folder to export into',
+    'Select a project folder',
+    'Select a project folder',
+  ]);
+});

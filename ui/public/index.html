@@ -975,7 +975,17 @@
           <section class="card gv-saved">
             <div class="saved-head">
               <div><b>Saved pipelines</b><span class="cnt" id="gv-saved-count"></span></div>
+              <!-- Import a workflow another Worca user shared as JSON (#421): the
+                   file goes through POST /api/workflows/import-json — the same validator
+                   the composer's Save uses; a taken name gets a " (2)" suffix. -->
+              <div class="saved-head-actions">
+                <button type="button" id="gv-import-btn" class="btn btn-ghost btn-mini" title="Import a pipeline shared as a JSON file">Import…</button>
+                <input id="gv-import-file" type="file" accept=".json,application/json" hidden />
+              </div>
             </div>
+            <!-- One tab per domain; the row itself no longer repeats the domain.
+                 Rendered by gvRenderSaved(); hidden while the library is empty. -->
+            <div class="gv-saved-tabs" id="gv-saved-tabs" role="tablist" aria-label="Pipeline domains" hidden></div>
             <div class="saved-list" id="gv-saved-list"></div>
             <div class="gv-archived" id="gv-archived" hidden></div>
             <!-- A refused DELETE (the built-in, a 404, a 500) has to land
@@ -1243,7 +1253,7 @@
             <p id="plugins-msg" class="form-msg" aria-live="polite"></p>
             <div class="card hidden" id="marketplace-add-row" style="padding:16px 20px;margin-bottom:14px">
               <div class="path-row">
-                <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo" spellcheck="false" />
+                <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo · /path/to/a/plugin-folder" spellcheck="false" />
                 <button type="button" id="marketplace-add" class="btn btn-primary btn-mini">Add</button>
               </div>
             </div>
@@ -1315,38 +1325,81 @@
     <div id="export-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="export-title">
       <div class="card">
         <div class="card-head">
-          <h2 id="export-title">Export to Claude Code</h2>
+          <h2 id="export-title">Export pipeline</h2>
         </div>
         <p id="export-subtitle" class="confirm-message"></p>
+        <!-- The form; swapped for #export-done after a successful export. -->
+        <div id="export-form">
+        <!-- ONE Export… entry point per row; the dialog asks for the format first.
+             json = the saved graph as a file another Worca user imports (#421);
+             skill = a runnable Claude Code skill under .claude/ (#403);
+             plugin = a Worca plugin folder bundling agents + skills (#421). -->
         <div class="export-field">
-          <span class="export-label">Destination</span>
-          <div id="export-dest" class="seg" role="group" aria-label="Export destination">
+          <span class="export-label">Format</span>
+          <div id="export-format" class="seg" role="group" aria-label="Export format">
+            <button type="button" class="seg-btn on" data-format="json">JSON file</button>
+            <button type="button" class="seg-btn" data-format="skill">Claude Code skill</button>
+            <button type="button" class="seg-btn" data-format="plugin">Worca plugin</button>
+          </div>
+          <span id="export-format-hint" class="hint"></span>
+        </div>
+        <div id="export-dest-field" class="export-field hidden">
+          <span class="export-label">Location</span>
+          <div id="export-dest" class="seg" role="group" aria-label="Skill location">
             <button type="button" class="seg-btn on" data-dest="global">Global (~/.claude)</button>
             <button type="button" class="seg-btn" data-dest="project">Project folder</button>
           </div>
         </div>
         <div id="export-folder-field" class="export-field hidden">
-          <span class="export-label">Folder</span>
+          <span class="export-label" id="export-folder-label">Folder</span>
           <div class="export-folder-row">
             <input type="text" id="export-folder" class="input" placeholder="/path/to/repo" />
             <button type="button" id="export-browse" class="btn btn-ghost btn-mini">Browse…</button>
           </div>
         </div>
-        <div class="export-field">
+        <div id="export-plugin-field" class="export-field hidden">
+          <span class="export-label">Plugin name</span>
+          <input type="text" id="export-plugin-name" class="input" placeholder="(defaults to the folder name)" />
+          <!-- Live: what the manifest will actually be called — kebab-case, derived
+               from the typed name or, when blank, from the folder's basename. -->
+          <span id="export-plugin-name-preview" class="hint"></span>
+          <!-- Re-export only: a changed export into an existing plugin folder bumps
+               the manifest's patch version (0.1.0 → 0.1.1) so the recipient's
+               `worca plugin update` sees it. A first export is always 0.1.0. -->
+          <label class="confirm-checkbox">
+            <input type="checkbox" id="export-keep-version" />
+            <span>Don't bump the plugin version when updating an existing plugin folder<br><span class="hint">A changed re-export normally goes 0.1.0 → 0.1.1 so recipients see an update. A first export is always 0.1.0.</span></span>
+          </label>
+        </div>
+        <div class="export-field" id="export-slug-field">
           <span class="export-label">Slug</span>
           <input type="text" id="export-slug" class="input" placeholder="(defaults to the workflow name)" />
           <span id="export-slug-preview" class="hint"></span>
         </div>
-        <label class="confirm-checkbox">
+        <label class="confirm-checkbox" id="export-agents-field">
           <input type="checkbox" id="export-include-agents" checked />
           <span>Include referenced agents (recommended)</span>
         </label>
         <div id="export-plan" class="export-plan hidden"></div>
         <p id="export-msg" class="confirm-message"></p>
+        </div>
+        <!-- Result view: what was written, where, and the next step for the format.
+             Replaces the form (not a second dialog) once an export succeeded. -->
+        <div id="export-done" class="export-done hidden" role="status" aria-live="polite">
+          <div class="export-done-head">
+            <span class="export-done-check" aria-hidden="true">✓</span>
+            <b id="export-done-title"></b>
+          </div>
+          <dl id="export-done-lines" class="export-done-lines"></dl>
+          <p id="export-done-next" class="export-done-next"></p>
+        </div>
         <div class="confirm-actions">
           <button type="button" id="export-cancel" class="btn btn-ghost btn-mini">Cancel</button>
-          <button type="button" id="export-plan-btn" class="btn btn-ghost btn-mini">Plan</button>
-          <button type="button" id="export-apply-btn" class="btn btn-primary btn-mini" disabled>Apply</button>
+          <!-- Preview = dry run (optional). Export runs the dry run itself and writes
+               unless it hits a conflict, which it then shows for per-file resolution. -->
+          <button type="button" id="export-plan-btn" class="btn btn-ghost btn-mini">Preview</button>
+          <button type="button" id="export-apply-btn" class="btn btn-primary btn-mini">Export</button>
+          <button type="button" id="export-done-close" class="btn btn-primary btn-mini hidden">Done</button>
         </div>
       </div>
     </div>

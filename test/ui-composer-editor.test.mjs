@@ -295,6 +295,52 @@ test('errors disable Save, show the chip, pip the node, and centre it on click',
   assert.equal(s2.el.save.disabled, false);
 });
 
+// Unfinished is not wrong: a fresh canvas shows NO chip (Save stays gated, with a
+// tooltip saying what is missing); once the user starts working, still-unwired
+// mandatory ports get a quiet "N ports to wire" chip; only real mistakes are red.
+test('a pristine canvas shows no error chip; unfinished wiring is a quiet to-do, not an error', async () => {
+  const s = await open();
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  s.c.loadTemplate(null);
+  await tick();
+  assert.equal(s.c.report().errors.length, 2, 'precondition: V20 + V21 fire on Task + End alone');
+  assert.ok(s.c.report().errors.every((e) => e.incomplete), 'both are flagged incomplete by the validator');
+  assert.equal(s.el.errors.hidden, true, 'no chip on a canvas nobody has touched');
+  assert.equal(s.el.save.disabled, true, 'Save is still gated');
+  assert.equal(s.el.save.title, 'Wire Task → … → End to save');
+
+  s.c.spawn({ key: 'planner' });
+  await tick();
+  assert.equal(s.el.errors.hidden, false, 'once the user works, the to-do shows');
+  assert.ok(s.el.errors.classList.contains('is-incomplete'), 'in the quiet dress');
+  assert.match(s.el.errors.textContent, /^\d+ ports to wire$/);
+  assert.equal(s.el.save.disabled, true);
+
+  // A REAL mistake (a second End) turns the chip red and counts only real errors.
+  s.c.commit('dup-end', () => { s.c.template().nodes.push({ id: 'n_end2', kind: 'end', x: 900, y: 400, config: {} }); });
+  await tick();
+  assert.equal(s.el.errors.classList.contains('is-incomplete'), false);
+  assert.match(s.el.errors.textContent, /^\d+ errors?$/);
+  assert.equal(s.el.save.title, 'Fix the errors to save');
+  s.c.undo();
+  await tick();
+
+  // Wiring Task → planner → End finishes the drawing: no chip, Save enabled.
+  const t = s.c.template();
+  const task = t.nodes.find((n) => n.kind === 'task'), end = t.nodes.find((n) => n.kind === 'end');
+  const agent = t.nodes.find((n) => n.kind === 'agent');
+  s.c.commit('wire', () => {
+    s.c.template().wires.push(
+      { id: 'w_a', from: { node: task.id, port: 'task' }, to: { node: agent.id, port: 'task' } },
+      { id: 'w_b', from: { node: agent.id, port: 'plan' }, to: { node: end.id, port: 'result' } },
+    );
+  });
+  await tick();
+  assert.equal(s.el.errors.hidden, true, JSON.stringify(s.c.report().errors));
+  assert.equal(s.el.save.disabled, false);
+  assert.equal(s.el.save.title, '');
+});
+
 test('validation runs ONCE per commit, never per frame', async () => {
   const s = await open();
   await new Promise((r) => setTimeout(r, 0));

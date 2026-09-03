@@ -1682,6 +1682,18 @@ const gvApi = {
     const d = await safeJson(res);
     return { ok: false, status: res.status, error: (d && d.error) || `delete failed (${res.status})` };
   },
+  // Import a JSON export (#421). 422 carries the shared validator's issues plus
+  // `summary` (the one-line "agents you do not have" fold) when that is the cause.
+  importWorkflow: async (workflow) => {
+    const res = await fetch('/api/workflows/import-json', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workflow }),
+    });
+    const d = await safeJson(res);
+    if (!res.ok) {
+      return { ok: false, status: res.status, error: (d && d.error) || `import failed (${res.status})`, summary: d && d.summary, issues: d && d.errors };
+    }
+    return { ok: true, workflow: d.workflow, renamed: !!d.renamed, requestedName: d.requestedName, warnings: d.warnings || [] };
+  },
 };
 
 function gvEls() {
@@ -1776,13 +1788,57 @@ function composerExit() {
   if (gvComposer) gvComposer.suspend();
 }
 
+// Saved-list state that lives for the PAGE SESSION (not persisted): the selected
+// domain tab, the last fetched rows (tab switches re-render without a fetch),
+// and the ids imported since load — those carry a NEW pill until reload.
+let gvSavedTab = null;
+let gvSavedRows = [];
+const gvNewIds = new Set();
+const gvDomainOf = (wf) => wf.domain || 'general';
+
+/** Scroll the page to its top so the Workflow Composer title AND the canvas are in
+ *  view after a row is opened (the saved list sits below the fold). */
+function gvScrollToTop() {
+  const main = document.querySelector('.main');
+  try { if (main && typeof main.scrollTo === 'function') main.scrollTo({ top: 0, behavior: 'smooth' }); } catch { /* jsdom */ }
+  try { if (typeof window.scrollTo === 'function') window.scrollTo({ top: 0, behavior: 'smooth' }); } catch { /* jsdom */ }
+}
+
 async function gvRefreshSaved() {
+  gvSavedRows = await gvApi.listWorkflows();
+  gvRenderSaved();
+  await gvRefreshArchived();
+}
+
+function gvRenderSaved() {
   const els = gvEls();
-  const list = await gvApi.listWorkflows();
+  const list = gvSavedRows;
   els.savedCount.textContent = list.length ? `· ${list.length}` : '';
-  gvComposer.setSavedDomains([...new Set(list.map((w) => w.domain).filter(Boolean))]);
+  const domains = [...new Set(list.map(gvDomainOf))].sort();
+  gvComposer.setSavedDomains(domains);
+  if (!domains.includes(gvSavedTab)) gvSavedTab = domains[0] || null;
+  // ── One tab per domain (the row no longer repeats the domain) ──
+  const tabs = document.getElementById('gv-saved-tabs');
+  tabs.replaceChildren();
+  tabs.hidden = domains.length === 0;
+  for (const d of domains) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'gv-saved-tab' + (d === gvSavedTab ? ' active' : '');
+    b.dataset.domain = d;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', d === gvSavedTab ? 'true' : 'false');
+    b.appendChild(document.createTextNode(d));
+    const badge = document.createElement('span');
+    badge.className = 'gv-saved-tab-badge';
+    badge.textContent = String(list.filter((w) => gvDomainOf(w) === d).length);
+    b.appendChild(badge);
+    b.addEventListener('click', () => { gvSavedTab = d; gvRenderSaved(); });
+    tabs.appendChild(b);
+  }
   els.savedList.replaceChildren();
   for (const wf of list) {
+    if (gvDomainOf(wf) !== gvSavedTab) continue;
     const item = document.createElement('div');
     item.className = 'pl-item';
     item.dataset.id = wf.id;
@@ -1803,10 +1859,15 @@ async function gvRefreshSaved() {
     const name = document.createElement('div');
     name.className = 'pl-name';
     name.textContent = wf.name || wf.id;
-    const meta = document.createElement('div');
-    meta.className = 'pl-meta';
-    meta.textContent = wf.domain || 'general';
-    main.append(name, meta);
+    // Imported this page session: a NEW pill until the next reload (gvNewIds is
+    // module state, so a reload clears it by construction).
+    if (gvNewIds.has(wf.id)) {
+      const pill = document.createElement('span');
+      pill.className = 'pl-new';
+      pill.textContent = 'NEW';
+      name.appendChild(pill);
+    }
+    main.append(name);
     row.appendChild(main);
     // A plugin-owned row is replaced wholesale by the next `worca plugin update`
     // (src/core/plugin-workflows.mjs upserts ON CONFLICT), so say so BEFORE the
@@ -1820,29 +1881,46 @@ async function gvRefreshSaved() {
       row.appendChild(tag);
     }
     if (wf.version === 2) {
-      const open = document.createElement('button');
-      open.type = 'button'; open.className = 'btn-ghost pl-open'; open.textContent = 'Open';
-      open.addEventListener('click', async () => {
+      // The ROW is the Open action (no Open button): click or Enter/Space on the
+      // card loads it. openTemplate asks before discarding unsaved edits (MAJ-6)
+      // and resolves null when refused — the canvas and the undo ring must then
+      // be left exactly as they were. On success the page scrolls to its top so
+      // the Composer title and the loaded canvas are both in view.
+      row.classList.add('pl-openable');
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      row.title = `Open "${wf.name || wf.id}"`;
+      const open = async () => {
         const full = await gvApi.readWorkflow(wf.id);
         if (!full) return;
-        // openTemplate resolves null when the discard guard was refused — the
-        // canvas (and the undo ring) must then be left exactly as they were.
-        if (await gvComposer.openTemplate(full)) gvComposer.fit();
+        if (await gvComposer.openTemplate(full)) { gvComposer.fit(); gvScrollToTop(); }
+      };
+      row.addEventListener('click', (e) => {
+        if (e.target && e.target.closest && e.target.closest('button, a, input')) return;   // the row's own actions
+        open();
       });
-      row.appendChild(open);
-      // Export to Claude Code — available for every v2 row incl. the built-in (you can
-      // export the default). Opens the plan/apply modal; the server resolves the graph.
+      row.addEventListener('keydown', (e) => {
+        if (e.target !== row) return;
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+      });
+      // ONE Export… entry point (JSON file / Claude Code skill / Worca plugin): the
+      // dialog asks for the format. Available for every v2 row incl. the built-in.
       const exportBtn = document.createElement('button');
-      exportBtn.type = 'button'; exportBtn.className = 'pl-export'; exportBtn.title = 'Export to Claude Code';
-      exportBtn.textContent = '⇪';
+      exportBtn.type = 'button'; exportBtn.className = 'btn-ghost pl-export';
+      exportBtn.title = 'Export as a JSON file, a Claude Code skill or a Worca plugin';
+      exportBtn.textContent = 'Export…';
       exportBtn.addEventListener('click', () => openExportModal({ id: wf.id, name: wf.name || wf.id }));
-      row.appendChild(exportBtn);
-      // No × on the built-in: DELETE /api/workflows/wf_default always answers
-      // 400 (ui/server.mjs), so the button could only ever fail. Open stays —
+      // Appended AFTER delete (below): Export… is the last element of every row, so
+      // it sits on the same right edge whether or not the row has a delete.
+      // No delete on the built-in: DELETE /api/workflows/wf_default always answers
+      // 400 (ui/server.mjs), so the button could only ever fail. Opening stays —
       // the built-in is meant to be opened and saved as a copy.
       if (wf.id !== RESERVED_WORKFLOW_ID) {
         const del = document.createElement('button');
-        del.type = 'button'; del.className = 'pl-del'; del.textContent = '×';
+        del.type = 'button'; del.className = 'pl-del';
+        del.title = `Delete "${wf.name || wf.id}"`;
+        del.setAttribute('aria-label', `Delete "${wf.name || wf.id}"`);
+        del.innerHTML = TRASH_SVG;                          // the one bin icon (static markup)
         // A delete is destructive and unrecoverable: it asks first, in red — the
         // guard the v1 composer's saved list owned before it was retired.
         del.addEventListener('click', async () => {
@@ -1858,6 +1936,7 @@ async function gvRefreshSaved() {
         });
         row.appendChild(del);
       }
+      row.appendChild(exportBtn);
     } else {
       const tag = document.createElement('span');
       tag.className = 'pl-legacy';
@@ -1867,7 +1946,6 @@ async function gvRefreshSaved() {
     item.appendChild(row);
     els.savedList.appendChild(item);
   }
-  await gvRefreshArchived();
 }
 
 // The Archived footer only exists once V24 (P8) archives rows: it is rendered
@@ -7014,9 +7092,11 @@ function basenameOf(p) {
 }
 
 // Thin wrapper over the native picker endpoint; never throws.
-async function pickFolder() {
+async function pickFolder(purpose = 'project') {
   try {
-    const res = await fetch('/api/fs/pick-folder', { method: 'POST' });
+    const res = await fetch('/api/fs/pick-folder', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ purpose }),
+    });
     return await safeJson(res); // {status:'picked',path} | {status:'canceled'} | {status:'unsupported'} | {status:'busy'}
   } catch {
     return { status: 'unsupported' };
@@ -8275,8 +8355,17 @@ async function addMarketplaceFromInput() {
   if (!ok) return setPluginsMsg(data.error || 'add failed', 'err');
   el.marketplaceUrl.value = '';
   el.marketplaceAddRow.classList.add('hidden');
-  setPluginsMsg(`Added ${data.marketplace.name} (${data.marketplace.plugins.length} plugins).`, 'ok');
-  loadPluginsView();
+  // Reload FIRST: loadPluginsView() clears the message line as it starts, so a
+  // message set before it never survived.
+  await loadPluginsView();
+  if (data.linked) {
+    // The path was a single plugin folder (an Export… → Worca plugin result):
+    // the server linked it instead of registering a marketplace.
+    const n = (data.plugin.workflows?.imported || []).length;
+    setPluginsMsg(`Linked plugin "${data.plugin.name}" from ${data.plugin.dir} — ${n} pipeline template${n === 1 ? '' : 's'} added to your saved pipelines.`, 'ok');
+  } else {
+    setPluginsMsg(`Added ${data.marketplace.name} (${data.marketplace.plugins.length} plugins).`, 'ok');
+  }
 }
 
 function openInstallConsent(entry) {
@@ -16425,36 +16514,133 @@ async function exportCall(id, opts) {
 async function exportPlan(id, opts) { return exportCall(id, { ...opts, dryRun: true }); }
 async function exportApply(id, opts) { return exportCall(id, opts); }
 
-const exportModalState = { item: null, destination: 'global', conflicts: [] };
+// format: 'json' (download the saved graph) | 'skill' (Claude Code skill; destination
+// global|project) | 'plugin' (Worca plugin folder). The dialog asks for the format
+// first — one Export… per row instead of one button per format.
+// `planned`: a Preview (dry run) for the CURRENT inputs is on screen. Export runs
+// its own dry run when there is none, so the primary button is never dead.
+const exportModalState = { item: null, format: 'json', destination: 'global', conflicts: [], planned: false };
 
 function openExportModal(item) {
   const modal = document.getElementById('export-modal');
   if (!modal) return;
   exportModalState.item = item;
+  exportModalState.format = 'json';
   exportModalState.destination = 'global';
   exportModalState.conflicts = [];
-  document.getElementById('export-subtitle').textContent = `Export "${item.name}" as a runnable /command skill.`;
+  exportModalState.planned = false;
   document.getElementById('export-slug').value = '';
   document.getElementById('export-folder').value = '';
+  document.getElementById('export-plugin-name').value = '';
+  document.getElementById('export-keep-version').checked = false;
   document.getElementById('export-include-agents').checked = true;
   document.getElementById('export-msg').textContent = '';
   const planEl = document.getElementById('export-plan');
   planEl.textContent = ''; planEl.classList.add('hidden');
-  document.getElementById('export-apply-btn').disabled = true;
-  exportSyncDest();
+  exportSetDone(false);
+  exportSyncFormat();
   exportSyncSlugPreview();
   modal.classList.remove('hidden');
 }
 function closeExportModal() {
   const modal = document.getElementById('export-modal');
   if (modal) modal.classList.add('hidden');
+  exportSetDone(false);
 }
-function exportSyncDest() {
-  const dest = exportModalState.destination;
-  for (const b of document.querySelectorAll('#export-dest .seg-btn')) {
-    b.classList.toggle('on', b.dataset.dest === dest);
+/** Swap the form for the result view (or back). The dialog stays open so the
+ *  user reads where the export went and what to do next, then clicks Done. */
+function exportSetDone(done) {
+  const g = (id) => document.getElementById(id);
+  g('export-form').classList.toggle('hidden', done);
+  g('export-done').classList.toggle('hidden', !done);
+  for (const id of ['export-cancel', 'export-plan-btn', 'export-apply-btn']) g(id).classList.toggle('hidden', done);
+  if (!done && exportModalState.item) exportSyncFormat();          // Preview visibility is format-driven
+  g('export-done-close').classList.toggle('hidden', !done);
+  if (done) g('export-done-close').focus();
+}
+/** @param {{title:string, lines:Array<[string, string|Node]>, next?:string|Node}} r */
+function exportShowDone(r) {
+  const g = (id) => document.getElementById(id);
+  g('export-subtitle').textContent = '';
+  g('export-done-title').textContent = r.title;
+  const dl = g('export-done-lines');
+  dl.replaceChildren();
+  for (const [k, v] of r.lines) {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd');
+    if (typeof v === 'string') dd.textContent = v; else dd.appendChild(v);
+    dl.append(dt, dd);
   }
-  document.getElementById('export-folder-field').classList.toggle('hidden', dest !== 'project');
+  const next = g('export-done-next');
+  next.replaceChildren();
+  if (typeof r.next === 'string') next.textContent = r.next; else if (r.next) next.appendChild(r.next);
+  next.classList.toggle('hidden', !r.next);
+  exportSetDone(true);
+}
+/** "Then run <code>x</code>": a text + code fragment for the next-step line. */
+function exportNextStep(before, code, after = '') {
+  const frag = document.createDocumentFragment();
+  frag.appendChild(document.createTextNode(before));
+  const c = document.createElement('code'); c.textContent = code;
+  frag.appendChild(c);
+  if (after) frag.appendChild(document.createTextNode(after));
+  return frag;
+}
+/** Mirrors src/core/workflow-share.mjs workflowFileSlug (the download's filename). */
+function exportJsonFilename(id) {
+  const stem = String(id || '').replace(/^wf_/, '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return `${stem || 'workflow'}.json`;
+}
+function exportSyncFormat() {
+  const { format, destination } = exportModalState;
+  const json = format === 'json', skill = format === 'skill', plugin = format === 'plugin';
+  const show = (id, on) => document.getElementById(id).classList.toggle('hidden', !on);
+  for (const b of document.querySelectorAll('#export-format .seg-btn')) b.classList.toggle('on', b.dataset.format === format);
+  for (const b of document.querySelectorAll('#export-dest .seg-btn')) b.classList.toggle('on', b.dataset.dest === destination);
+  show('export-dest-field', skill);
+  show('export-folder-field', (skill && destination === 'project') || plugin);
+  document.getElementById('export-folder-label').textContent = plugin ? 'Plugin folder' : 'Folder';
+  document.getElementById('export-folder').placeholder = plugin ? '/path/to/my-plugin' : '/path/to/repo';
+  show('export-plugin-field', plugin);
+  if (plugin) exportSyncPluginNamePreview();
+  show('export-slug-field', skill);
+  show('export-agents-field', skill);
+  // JSON downloads straight away. The other two formats offer an optional Preview
+  // (dry run); Export runs that dry run itself and writes unless it finds a
+  // conflict, which the user then resolves per file before exporting again.
+  document.getElementById('export-plan-btn').classList.toggle('hidden', json);
+  const apply = document.getElementById('export-apply-btn');
+  apply.textContent = json ? 'Download' : 'Export';
+  apply.disabled = false;
+  const name = exportModalState.item ? exportModalState.item.name : '';
+  document.getElementById('export-subtitle').textContent = json
+    ? `Download "${name}" as a JSON file another Worca user can import.`
+    : plugin
+      ? `Export "${name}" as a Worca plugin folder to share with other Worca users.`
+      : `Export "${name}" as a runnable /command skill.`;
+  document.getElementById('export-format-hint').textContent = json
+    ? 'The saved graph only — no agents or skills travel with it. The recipient uses Import… in their saved list.'
+    : plugin
+      ? 'Bundles the pipeline, your own agents it uses and the skills they need. Built-in agents are not copied. The recipient runs: worca plugin link <folder>'
+      : 'Writes a SKILL.md plus the agents it dispatches under .claude/, so the pipeline runs inside Claude Code without Worca.';
+}
+/** Plugin names are kebab-case (worca-cc-plugin.json `name`). Derive one from
+ *  what the user typed, else from the folder's basename, and say so under the
+ *  field — the same look-before-you-export the skill slug has. */
+function exportPluginName() {
+  const typed = document.getElementById('export-plugin-name').value.trim();
+  const folder = document.getElementById('export-folder').value.trim().replace(/[\\/]+$/, '');
+  const raw = typed || folder.split(/[\\/]/).pop() || '';
+  const name = raw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+  return { raw, name, fromFolder: !typed };
+}
+function exportSyncPluginNamePreview() {
+  const { raw, name, fromFolder } = exportPluginName();
+  const el = document.getElementById('export-plugin-name-preview');
+  if (!raw) { el.textContent = 'Plugin name: (choose a folder first)'; return; }
+  el.textContent = name
+    ? `Plugin name: ${name}${fromFolder ? ' (from the folder name)' : ''}`
+    : 'Plugin name: needs at least one letter or digit';
 }
 function exportSyncSlugPreview() {
   const raw = document.getElementById('export-slug').value;
@@ -16464,6 +16650,18 @@ function exportSyncSlugPreview() {
 }
 function exportBuildOpts() {
   const dest = exportModalState.destination;
+  if (exportModalState.format === 'plugin') {
+    const opts = {
+      destination: 'plugin',
+      pluginDir: document.getElementById('export-folder').value.trim(),
+      keepVersion: document.getElementById('export-keep-version').checked,
+    };
+    // Always the NORMALIZED name (typed, else the folder's basename): the server
+    // refuses anything but kebab-case, and "Full-Special" is a typo, not a choice.
+    const { name } = exportPluginName();
+    if (name) opts.pluginName = name;
+    return opts;
+  }
   const rawSlug = document.getElementById('export-slug').value.trim();
   const opts = {
     destination: dest,
@@ -16486,6 +16684,9 @@ function exportRenderPlan(plan) {
   for (const p of plan.created) line('create', p);
   for (const p of plan.updated) line('update', p);
   for (const p of plan.noop) line('no-op', p);
+  // A plugin plan's `skipped` entries are {path, reason} (a Worca-shipped skill
+  // that is not bundled); the skill export's are plain paths.
+  for (const s of plan.skipped || []) line('skip', typeof s === 'string' ? s : `${s.path} — ${s.reason}`);
   for (const w of plan.warnings || []) {
     const row = document.createElement('div');
     row.className = 'export-row';
@@ -16494,6 +16695,7 @@ function exportRenderPlan(plan) {
   }
   for (const o of plan.orphans || []) line('orphan', o);
   exportModalState.conflicts = plan.conflicts || [];
+  exportModalState.planned = true;
   for (const cf of exportModalState.conflicts) {
     const row = document.createElement('div');
     row.className = 'export-row export-conflict-row';
@@ -16533,40 +16735,84 @@ function exportUpdateApplyEnabled() {
 // matches what Apply would do — drop it and re-disable Apply so the user must re-Plan.
 function exportInvalidatePlan() {
   exportModalState.conflicts = [];
+  exportModalState.planned = false;
   const planEl = document.getElementById('export-plan');
   if (planEl) { planEl.textContent = ''; planEl.classList.add('hidden'); }
+  // Export re-plans on its own, so a stale preview never leaves the button dead.
   const applyBtn = document.getElementById('export-apply-btn');
-  if (applyBtn) applyBtn.disabled = true;
+  if (applyBtn) applyBtn.disabled = false;
   const msg = document.getElementById('export-msg');
-  if (msg && msg.textContent) msg.textContent = 'Inputs changed — re-run Plan.';
+  if (msg) msg.textContent = '';
 }
 function bindExportModal() {
   const modal = document.getElementById('export-modal');
   if (!modal) return;
+  for (const b of document.querySelectorAll('#export-format .seg-btn')) {
+    b.addEventListener('click', () => { exportModalState.format = b.dataset.format; exportInvalidatePlan(); exportSyncFormat(); });
+  }
   for (const b of document.querySelectorAll('#export-dest .seg-btn')) {
-    b.addEventListener('click', () => { exportModalState.destination = b.dataset.dest; exportSyncDest(); exportInvalidatePlan(); });
+    b.addEventListener('click', () => { exportModalState.destination = b.dataset.dest; exportInvalidatePlan(); exportSyncFormat(); });
   }
   document.getElementById('export-slug').addEventListener('input', () => { exportSyncSlugPreview(); exportInvalidatePlan(); });
   document.getElementById('export-include-agents').addEventListener('change', exportInvalidatePlan);
   document.getElementById('export-folder').addEventListener('input', exportInvalidatePlan);
-  document.getElementById('export-browse').addEventListener('click', () => {
-    const seed = document.getElementById('export-folder').value.trim();
-    openFolderBrowser(seed, (p) => { document.getElementById('export-folder').value = p; exportInvalidatePlan(); });
+  document.getElementById('export-plugin-name').addEventListener('input', () => { exportSyncPluginNamePreview(); exportInvalidatePlan(); });
+  document.getElementById('export-folder').addEventListener('input', () => { if (exportModalState.format === 'plugin') exportSyncPluginNamePreview(); });
+  document.getElementById('export-keep-version').addEventListener('change', exportInvalidatePlan);
+  // Browse…: the native OS folder dialog (the server opens it — a web page never
+  // learns an absolute path from its own file picker), exactly like Add Project;
+  // the in-app browser is the fallback when the native one is unsupported.
+  document.getElementById('export-browse').addEventListener('click', async () => {
+    const folder = document.getElementById('export-folder');
+    const set = (p) => { folder.value = p; exportInvalidatePlan(); };
+    const data = await pickFolder(exportModalState.format === 'plugin' ? 'plugin' : 'export');
+    if (data && data.status === 'picked' && data.path) { set(data.path); return; }
+    if (data && data.status === 'canceled') return;
+    if (data && data.status === 'busy') { document.getElementById('export-msg').textContent = 'A folder dialog is already open — finish or cancel it first.'; return; }
+    openFolderBrowser(folder.value.trim(), set);
   });
   document.getElementById('export-cancel').addEventListener('click', closeExportModal);
+  document.getElementById('export-done-close').addEventListener('click', closeExportModal);
+  // Preview: the optional dry run — shows what Export would write, writes nothing.
   document.getElementById('export-plan-btn').addEventListener('click', async () => {
     const msg = document.getElementById('export-msg');
-    msg.textContent = 'Planning…';
+    msg.textContent = 'Previewing…';
     try {
       const plan = await exportPlan(exportModalState.item.id, exportBuildOpts());
       exportRenderPlan(plan);
-      msg.textContent = plan.conflicts.length ? 'Resolve each conflict below, then Apply.' : 'Ready to apply.';
-    } catch (err) { msg.textContent = `Plan failed: ${err.message}`; }
+      msg.textContent = plan.conflicts.length ? 'Resolve each conflict below, then Export.' : 'Preview only — nothing is written until you click Export.';
+    } catch (err) { msg.textContent = `Preview failed: ${err.message}`; }
   });
+  // Export: writes. Without a preview for the current inputs it runs the dry run
+  // itself first; a conflict (only the skill format can raise one) stops it and is
+  // shown for per-file resolution — nothing is ever written past an unresolved one.
   document.getElementById('export-apply-btn').addEventListener('click', async () => {
     const msg = document.getElementById('export-msg');
-    msg.textContent = 'Applying…';
+    if (exportModalState.format === 'json') {
+      // A plain download of the stored graph — the server sets Content-Disposition.
+      const a = document.createElement('a');
+      a.href = `/api/workflows/${encodeURIComponent(exportModalState.item.id)}/json`;
+      a.setAttribute('download', '');
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      exportShowDone({
+        title: 'JSON file downloaded',
+        lines: [['File', exportJsonFilename(exportModalState.item.id)], ['Pipeline', exportModalState.item.name]],
+        next: 'Send the file to another Worca user — they pick it up with Import… in their saved pipelines. Agents and skills do not travel with it; share a plugin for those.',
+      });
+      return;
+    }
+    msg.textContent = 'Exporting…';
     try {
+      if (!exportModalState.planned) {
+        const plan = await exportPlan(exportModalState.item.id, exportBuildOpts());
+        if ((plan.conflicts || []).length) {
+          exportRenderPlan(plan);
+          msg.textContent = 'Resolve each conflict below, then Export.';
+          return;
+        }
+      }
       const opts = { ...exportBuildOpts(), resolutions: exportGatherResolutions() };
       const applied = await exportApply(exportModalState.item.id, opts);
       // A conflict Apply left UNWRITTEN (e.g. a TOCTOU conflict between Plan and Apply that
@@ -16577,17 +16823,80 @@ function bindExportModal() {
       if (unwritten.length) {
         exportRenderPlan(applied);
         appendLog({ source: 'ui', level: 'error', text: `export of ${exportModalState.item.name} incomplete: ${applied.written.length} written, ${unwritten.length} conflict(s) left unwritten` });
-        msg.textContent = `${unwritten.length} unresolved conflict(s) were left unwritten — resolve below and Apply again.`;
+        msg.textContent = `${unwritten.length} unresolved conflict(s) were left unwritten — resolve below and Export again.`;
+        return;
+      }
+      // A plugin folder that does not validate stays open: the recipient's
+      // `worca plugin link` would refuse it, so the problems are the outcome.
+      if (applied.validation && !applied.validation.ok) {
+        exportRenderPlan(applied);
+        const problems = applied.validation.problems.filter((p) => p.level === 'error').map((p) => p.message);
+        appendLog({ source: 'ui', level: 'error', text: `plugin export of ${exportModalState.item.name} does not validate: ${problems.join('; ')}` });
+        msg.textContent = `Written, but the plugin folder does not validate: ${problems.join('; ')}`;
         return;
       }
       appendLog({ source: 'ui', level: 'info', text: `exported ${exportModalState.item.name}: ${applied.written.length} written, ${applied.skipped.length} skipped` });
-      closeExportModal();
+      const files = `${applied.written.length} written, ${(applied.noop || []).length} unchanged`;
+      if (applied.validation) {                                  // plugin
+        exportShowDone({
+          title: `Plugin "${applied.name}" v${applied.version} exported`,
+          lines: [['Folder', applied.dir], ['Files', files]],
+          next: exportNextStep('Share the folder. The recipient pastes its path into Plugins → Add marketplace, or runs ',
+            `worca plugin link ${applied.dir}`, ' — once; after a re-export they run worca plugin reimport.'),
+        });
+      } else {                                                    // Claude Code skill
+        const command = (document.getElementById('export-slug-preview').textContent.match(/\/[^\s]+/) || [''])[0];
+        const where = exportModalState.destination === 'project'
+          ? document.getElementById('export-folder').value.trim() : '~/.claude';
+        exportShowDone({
+          title: 'Claude Code skill exported',
+          lines: [['Skill', command || exportModalState.item.name], ['Location', where], ['Files', files]],
+          next: exportNextStep(exportModalState.destination === 'project' ? 'Open the project in Claude Code and run ' : 'In Claude Code, run ',
+            command || '/<skill>', ' — the pipeline runs there without Worca.'),
+        });
+      }
     } catch (err) {
       exportInvalidatePlan();
-      msg.textContent = `Apply failed: ${err.message}`;
+      msg.textContent = `Export failed: ${err.message}`;
     }
   });
   // Backdrop click (the overlay itself, not the inner card) closes the modal.
   modal.addEventListener('click', (e) => { if (e.target === modal) closeExportModal(); });
 }
 bindExportModal();
+
+// Import… (#421) — the saved list's header button. Parses the file in the
+// browser (so a non-JSON file says so without a round trip) and hands the object
+// to POST /api/workflows/import-json; the outcome lands on the list's message
+// line, like a refused delete. On success the imported row's domain tab is
+// selected and the row carries a NEW pill until reload.
+async function gvImportWorkflowObject(obj) {
+  const r = await gvApi.importWorkflow(obj);
+  if (!r.ok) {
+    const issues = (r.issues || []).slice(0, 5).map((i) => `${i.code}: ${i.message}`).join(' · ');
+    setGvSavedMsg(r.summary || (issues ? `${r.error} — ${issues}` : r.error), 'err');
+    return false;
+  }
+  gvSavedTab = gvDomainOf(r.workflow);
+  gvNewIds.add(r.workflow.id);
+  setGvSavedMsg(r.renamed
+    ? `Imported as "${r.workflow.name}" — "${r.requestedName}" was already taken.`
+    : `Imported "${r.workflow.name}".`, 'ok');
+  await gvRefreshSaved();
+  return true;
+}
+function bindGvImport() {
+  const btn = document.getElementById('gv-import-btn');
+  const input = document.getElementById('gv-import-file');
+  if (!btn || !input) return;
+  btn.addEventListener('click', () => { input.value = ''; input.click(); });
+  input.addEventListener('change', async () => {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    let obj;
+    try { obj = JSON.parse(await f.text()); }
+    catch (e) { setGvSavedMsg(`${f.name} is not valid JSON: ${e.message}`, 'err'); return; }
+    await gvImportWorkflowObject(obj);
+  });
+}
+bindGvImport();

@@ -175,12 +175,33 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     paintInspector();
     if (hooks.onRender) hooks.onRender();
   }
+  /** A canvas nobody has touched: the two bookends, no wires, no edits. */
+  function isPristine() {
+    return !dirty && tpl.wires.length === 0 && tpl.nodes.length === 2
+      && tpl.nodes.every((n) => n.kind === 'task' || n.kind === 'end');
+  }
   function paintChrome() {
+    // "Unfinished" (a mandatory port still to wire — validate.mjs flags those
+    // `incomplete`) is not "wrong". Save is gated by BOTH, but only real mistakes
+    // earn the red chip; unfinished wiring gets a quiet to-do chip, and a canvas
+    // nobody has touched yet shows no chip at all — a fresh drawing has nothing
+    // to shout about.
     const n = lastReport.errors.length;
-    if (hostEls.saveBtn) hostEls.saveBtn.disabled = n > 0 || !ready;
+    const real = lastReport.errors.filter((e) => !e.incomplete).length;
+    const todo = n - real;
+    if (hostEls.saveBtn) {
+      hostEls.saveBtn.disabled = n > 0 || !ready;
+      hostEls.saveBtn.title = real
+        ? 'Fix the errors to save'
+        : todo ? 'Wire Task → … → End to save' : '';
+    }
     if (hostEls.errors) {
-      hostEls.errors.hidden = n === 0;
-      hostEls.errors.textContent = n ? `${n} error${n === 1 ? '' : 's'}` : '';
+      const quiet = !real && todo > 0 && !isPristine();
+      hostEls.errors.hidden = !real && !quiet;
+      hostEls.errors.classList.toggle('is-incomplete', quiet);
+      hostEls.errors.textContent = real
+        ? `${real} error${real === 1 ? '' : 's'}`
+        : quiet ? `${todo} port${todo === 1 ? '' : 's'} to wire` : '';
     }
   }
 
