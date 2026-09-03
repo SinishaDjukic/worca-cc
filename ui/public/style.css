@@ -1061,17 +1061,10 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .pl-remove:disabled{opacity:.6;cursor:default;}
 .pl-remove svg{display:block;}
 
-.pl-export{flex:0 0 auto;width:34px;height:34px;border-radius:10px;border:1.5px solid var(--line-2);background:#fff;display:grid;place-items:center;cursor:pointer;color:var(--ink-3);transition:.12s;align-self:flex-start;}
-.pl-export:hover{border-color:var(--accent,#2b6);color:var(--ink);background:var(--field);}
-.pl-export svg{width:16px;height:16px;stroke-width:2;}
-/* JSON download (#421): an <a download> skinned like the export button. */
-a.pl-json{text-decoration:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;font-weight:700;letter-spacing:-.06em;}
-/* In the composer's saved list every row action (Open, ⇪, { }, ×) sits on the
-   row's center line — .pl-export's flex-start was the retired v1 list's. */
-.gv-saved .pl-export{align-self:center;}
-.saved-head-actions{display:flex;align-items:center;gap:8px;}
-/* Export-to-Claude-Code modal */
+/* Export dialog (JSON file / Claude Code skill / Worca plugin). The row's
+   Export… button itself is a .btn-ghost (see .gv-saved .pl-export). */
 .export-field{margin:12px 0;}
+.export-field .hint{display:block;margin-top:6px;}
 .export-label{display:block;font-weight:600;font-size:12.5px;color:var(--ink-2);margin-bottom:6px;}
 .export-folder-row{display:flex;gap:8px;align-items:center;}
 .export-folder-row .input{flex:1 1 auto;}
@@ -3667,11 +3660,27 @@ input.gv-name:focus-visible{outline:none;}
   padding:16px 20px;border-bottom:1px solid var(--line);}
 .saved-head b{font-size:15px;font-weight:600;letter-spacing:-.01em;}
 .saved-head .cnt{color:var(--ink-3);font-size:12.5px;font-weight:600;margin-left:9px;}
+.saved-head-actions{display:flex;align-items:center;gap:8px;}
+/* One tab per domain — the same pill tabs the History detail uses, one size down. */
+.gv-saved-tabs{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:12px 20px;border-bottom:1px solid var(--line);}
+.gv-saved-tabs[hidden]{display:none;}
+.gv-saved-tab{display:flex;align-items:center;gap:8px;padding:7px 13px;border:1.5px solid var(--line);
+  border-radius:999px;background:var(--panel);font:600 12.5px var(--sans);color:var(--ink-2);cursor:pointer;}
+.gv-saved-tab:hover{border-color:var(--ink-3);color:var(--ink);}
+.gv-saved-tab.active{background:var(--ink);color:#fff;border-color:var(--ink);}
+.gv-saved-tab:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.gv-saved-tab-badge{padding:1px 7px;border-radius:999px;background:var(--field);color:var(--ink-3);font:600 10.5px var(--mono);}
+.gv-saved-tab.active .gv-saved-tab-badge{background:var(--blue-bg);color:var(--blue-ink);}
 .saved-list{display:flex;flex-direction:column;}
 .gv-saved .pl-item{border-bottom:1px solid var(--line);}
 .gv-saved .pl-item:last-child{border-bottom:none;}
 .gv-saved .pl-row{display:flex;align-items:center;gap:14px;padding:12px 20px;transition:background .12s;}
 .gv-saved .pl-row:hover{background:var(--field);}
+/* The row IS the Open action for a v2 pipeline. */
+.gv-saved .pl-row.pl-openable{cursor:pointer;}
+.gv-saved .pl-row.pl-openable:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.gv-saved .pl-new{display:inline-block;margin-left:8px;padding:2px 7px;border-radius:999px;vertical-align:middle;
+  background:var(--blue-bg);color:var(--blue-ink);font:700 10px var(--mono);letter-spacing:.06em;}
 /* The thumbnail is a fixed TILE at the head of the row: the SVG carries its own
    width/height, so a percentage box would leave it stranded in dead space. */
 .gv-saved .pl-thumb{flex:0 0 auto;width:140px;height:54px;display:grid;place-items:center;overflow:hidden;
@@ -3684,14 +3693,16 @@ input.gv-name:focus-visible{outline:none;}
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .gv-saved .pl-meta{margin-top:4px;font-size:10.5px;font-weight:700;letter-spacing:.05em;
   text-transform:uppercase;color:var(--ink-3);}
-.gv-saved .pl-open{flex:0 0 auto;padding:7px 15px;font-size:12.5px;}
+.gv-saved .pl-export{flex:0 0 auto;padding:7px 15px;font-size:12.5px;}
 .gv-saved .pl-legacy,.gv-saved .pl-origin{flex:0 0 auto;background:var(--field);border:1px solid var(--line);color:var(--ink-3);
   border-radius:999px;padding:3px 10px;font-size:11px;font-weight:600;}
 .gv-saved .pl-origin{font-family:var(--mono);letter-spacing:-.01em;}
-.gv-saved .pl-del{flex:0 0 auto;width:34px;height:34px;border-radius:10px;border:1.5px solid var(--line-2);
-  background:#fff;display:grid;place-items:center;cursor:pointer;color:var(--ink-3);
-  font-family:inherit;font-size:15px;line-height:1;transition:.12s;}
-.gv-saved .pl-del:hover{border-color:var(--red);color:var(--red-ink);background:var(--red-bg);}
+/* Delete: the bin icon in the pipeline Archive button's dress (.hd-archive — red
+   ink on a red-bg hairline pill, fills on hover), icon-only at row-action size. */
+.gv-saved .pl-del{flex:0 0 auto;width:34px;height:34px;border-radius:999px;border:1.5px solid var(--red-bg);
+  background:var(--panel);display:grid;place-items:center;cursor:pointer;color:var(--red-ink);transition:.12s;}
+.gv-saved .pl-del svg{width:15px;height:15px;stroke-width:1.9;}
+.gv-saved .pl-del:hover{border-color:var(--red);background:var(--red-bg);}
 .gv-saved .pl-del:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .gv-saved .pl-empty{padding:30px 20px;text-align:center;color:var(--ink-3);font-size:13px;}
 .gv-archived{display:flex;flex-wrap:wrap;align-items:center;gap:7px;

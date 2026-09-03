@@ -90,15 +90,15 @@ and durations, the clarify Q&A, agent transcripts, and logs:
   runs out). Flow cards — **Task** (the run's request), **End** (the result),
   **AND**, **OR**, **Combine** — express joins, choices and merges without any
   code. Saved pipelines appear in the New Pipeline picker.
-- **Share a pipeline** — every saved pipeline can leave Worca three ways.
-  *Export to Claude Code* turns it into a runnable `/command` skill under
-  `.claude/` so it runs without Worca. *Download JSON* / *Import JSON* pass a
-  pipeline to another Worca user as a single file (a taken name gets a
-  ` (2)` suffix; nothing is ever overwritten). *Export to a plugin folder*
-  bundles the pipeline with your own agents it uses and the skills they need,
-  so the recipient runs `worca plugin link <folder>` and updates later with
-  `worca plugin reimport`. Built-in agents are never copied — a plugin
-  pipeline may reference them directly.
+- **Share a pipeline** — *Export…* on a saved pipeline offers three formats.
+  A *JSON file* passes it to another Worca user, who picks it up with
+  *Import…* (a taken name gets a ` (2)` suffix; nothing is ever overwritten).
+  A *Claude Code skill* turns it into a runnable `/command` under `.claude/`
+  so it runs without Worca. A *Worca plugin* folder bundles the pipeline with
+  your own agents it uses and the skills they need, so the recipient runs
+  `worca plugin link <folder>` and updates later with `worca plugin reimport`.
+  Built-in agents are never copied — a plugin pipeline may reference them
+  directly. The saved list is tabbed by domain; click a card to open it.
 
 ![Workflow Composer — drag agents into steps, groups, and feedback loops](docs/screenshots/composer.png)
 

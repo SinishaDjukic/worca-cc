@@ -979,10 +979,13 @@
                    file goes through POST /api/workflows/import-json — the same validator
                    the composer's Save uses; a taken name gets a " (2)" suffix. -->
               <div class="saved-head-actions">
-                <button type="button" id="gv-import-btn" class="btn btn-ghost btn-mini" title="Import a pipeline shared as JSON">Import JSON</button>
+                <button type="button" id="gv-import-btn" class="btn btn-ghost btn-mini" title="Import a pipeline shared as a JSON file">Import…</button>
                 <input id="gv-import-file" type="file" accept=".json,application/json" hidden />
               </div>
             </div>
+            <!-- One tab per domain; the row itself no longer repeats the domain.
+                 Rendered by gvRenderSaved(); hidden while the library is empty. -->
+            <div class="gv-saved-tabs" id="gv-saved-tabs" role="tablist" aria-label="Pipeline domains" hidden></div>
             <div class="saved-list" id="gv-saved-list"></div>
             <div class="gv-archived" id="gv-archived" hidden></div>
             <!-- A refused DELETE (the built-in, a 404, a 500) has to land
@@ -1325,14 +1328,24 @@
           <h2 id="export-title">Export pipeline</h2>
         </div>
         <p id="export-subtitle" class="confirm-message"></p>
+        <!-- ONE Export… entry point per row; the dialog asks for the format first.
+             json = the saved graph as a file another Worca user imports (#421);
+             skill = a runnable Claude Code skill under .claude/ (#403);
+             plugin = a Worca plugin folder bundling agents + skills (#421). -->
         <div class="export-field">
-          <span class="export-label">Destination</span>
-          <!-- global/project = a runnable Claude Code skill (#403); plugin = a Worca
-               plugin folder to share with other Worca users (#421). -->
-          <div id="export-dest" class="seg" role="group" aria-label="Export destination">
+          <span class="export-label">Format</span>
+          <div id="export-format" class="seg" role="group" aria-label="Export format">
+            <button type="button" class="seg-btn on" data-format="json">JSON file</button>
+            <button type="button" class="seg-btn" data-format="skill">Claude Code skill</button>
+            <button type="button" class="seg-btn" data-format="plugin">Worca plugin</button>
+          </div>
+          <span id="export-format-hint" class="hint"></span>
+        </div>
+        <div id="export-dest-field" class="export-field hidden">
+          <span class="export-label">Location</span>
+          <div id="export-dest" class="seg" role="group" aria-label="Skill location">
             <button type="button" class="seg-btn on" data-dest="global">Global (~/.claude)</button>
             <button type="button" class="seg-btn" data-dest="project">Project folder</button>
-            <button type="button" class="seg-btn" data-dest="plugin">Plugin folder</button>
           </div>
         </div>
         <div id="export-folder-field" class="export-field hidden">
@@ -1349,7 +1362,6 @@
             <input type="checkbox" id="export-keep-version" />
             <span>Keep the manifest version (no patch bump on update)</span>
           </label>
-          <span class="hint">Bundles the pipeline, your own agents it uses and the skills they need. Built-in agents are not copied. The recipient runs <code>worca plugin link &lt;folder&gt;</code>.</span>
         </div>
         <div class="export-field" id="export-slug-field">
           <span class="export-label">Slug</span>

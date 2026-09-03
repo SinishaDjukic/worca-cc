@@ -42,6 +42,14 @@ async function boot({ agentsFail = false, archived = [], workflows = null, del =
   const json = (v, status = 200) => Promise.resolve({ ok: status < 400, status, json: async () => v });
   window.fetch = (u, init) => {
     const url = String(u);
+    // POST /api/workflows/import-json — the Import… path: mint a row, echo the
+    // share contract ({workflow, renamed, requestedName, warnings}).
+    if (url.includes('/api/workflows/import-json')) {
+      const src = JSON.parse(init.body).workflow;
+      const row = { ...src, id: `wf_${String(src.name).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, origin: null };
+      rows.push(row);
+      return json({ workflow: row, renamed: false, requestedName: src.name, warnings: [] }, 201);
+    }
     if (init && init.method === 'DELETE') {
       deletes.push(url);
       if (del) return json(del.body, del.status);
@@ -92,7 +100,9 @@ test('entering the composer mounts once, preloads Task+End and lists saved rows'
   assert.equal(rows.length, 2);
   assert.ok(rows[0].querySelector('svg'), 'v2 row carries a thumbnail');
   assert.equal(rows[1].querySelector('.pl-legacy').textContent, 'legacy · runnable until the graph cut-over');
-  assert.equal(rows[1].querySelector('.pl-open'), null, 'a v1 row cannot be opened in the v2 composer');
+  assert.ok(rows[0].querySelector('.pl-row.pl-openable'), 'a v2 row IS the Open action');
+  assert.equal(rows[1].querySelector('.pl-row.pl-openable'), null, 'a v1 row cannot be opened in the v2 composer');
+  assert.equal(doc.querySelector('#gv-saved-list .pl-meta'), null, 'the domain lives in the tab, not the row');
   // re-entry re-fits without re-mounting
   win.location.hash = 'running'; win.dispatchEvent(new win.Event('hashchange'));
   win.location.hash = 'composer'; win.dispatchEvent(new win.Event('hashchange'));
@@ -173,29 +183,85 @@ test('a v1 workflow still produces v1 rows (no regression)', async () => {
   assert.deepEqual(np.buildFeedbackRows(V1_ROW, {}, { feedbacks: {} }), []);
 });
 
-// Export-to-Claude-Code: every v2 saved row (incl. the built-in) carries an export
-// button that opens the modal; a v1 row does not. Clicking it opens + populates the
-// modal, and Cancel closes it. (The plan/apply fetch is covered by the API suite.)
-test('the export button opens the export modal for a v2 row, not a v1 row', async () => {
+// Export…: every v2 saved row (incl. the built-in) carries ONE Export… button that
+// opens the dialog; a v1 row does not. The dialog asks for the format first (JSON
+// file / Claude Code skill / Worca plugin) and shows only that format's fields.
+// (The plan/apply/download fetches are covered by the API suites.)
+test('Export… opens the format dialog for a v2 row, not a v1 row', async () => {
   const win = await boot({ workflows: [DEFAULT_ROW, V2_ROW, V1_ROW] });
   const doc = win.document;
   const rowById = (id) => [...doc.querySelectorAll('#gv-saved-list .pl-item')].find((r) => r.dataset.id === id);
+  const hidden = (id) => doc.getElementById(id).classList.contains('hidden');
 
-  // v2 rows (built-in + user) get an export button; the v1 row does not.
-  assert.ok(rowById('wf_default').querySelector('.pl-export'), 'built-in default is exportable');
+  // v2 rows (built-in + user) get the button; the v1 row does not. No other row action
+  // except delete: Open is the row itself, JSON moved into the dialog.
+  assert.equal(rowById('wf_default').querySelector('.pl-export').textContent, 'Export…', 'built-in default is exportable');
   assert.ok(rowById('wf_g').querySelector('.pl-export'), 'a v2 workflow is exportable');
   assert.equal(rowById('wf_old').querySelector('.pl-export'), null, 'a v1 workflow is not exportable');
+  assert.equal(rowById('wf_g').querySelectorAll('button, a').length, 2, 'Export… + delete only');
 
   const modal = doc.getElementById('export-modal');
   assert.ok(modal.classList.contains('hidden'), 'modal starts hidden');
 
   rowById('wf_g').querySelector('.pl-export').dispatchEvent(new win.Event('click'));
-  assert.equal(modal.classList.contains('hidden'), false, 'clicking export opens the modal');
+  assert.equal(modal.classList.contains('hidden'), false, 'clicking Export… opens the dialog');
   assert.match(doc.getElementById('export-subtitle').textContent, /Graph one/);
+  // Default format: JSON — Download enabled, no Plan, no skill/plugin fields.
+  assert.ok(doc.querySelector('#export-format .seg-btn[data-format="json"]').classList.contains('on'));
+  assert.equal(doc.getElementById('export-apply-btn').textContent, 'Download');
+  assert.equal(doc.getElementById('export-apply-btn').disabled, false);
+  assert.ok(hidden('export-plan-btn') && hidden('export-slug-field') && hidden('export-dest-field') && hidden('export-plugin-field'));
+  // Skill: location + slug + agents; Apply waits for a Plan.
+  doc.querySelector('#export-format .seg-btn[data-format="skill"]').dispatchEvent(new win.Event('click'));
+  assert.equal(doc.getElementById('export-apply-btn').textContent, 'Apply');
+  assert.equal(doc.getElementById('export-apply-btn').disabled, true);
+  assert.ok(!hidden('export-plan-btn') && !hidden('export-slug-field') && !hidden('export-dest-field') && hidden('export-plugin-field'));
+  assert.ok(hidden('export-folder-field'), 'global location needs no folder');
   assert.equal(doc.getElementById('export-slug-preview').textContent, 'Command: /graph-one', 'slug preview from the name');
+  doc.querySelector('#export-dest .seg-btn[data-dest="project"]').dispatchEvent(new win.Event('click'));
+  assert.ok(!hidden('export-folder-field'), 'project location asks for the folder');
+  // Plugin: folder + plugin fields, no skill fields.
+  doc.querySelector('#export-format .seg-btn[data-format="plugin"]').dispatchEvent(new win.Event('click'));
+  assert.ok(!hidden('export-folder-field') && !hidden('export-plugin-field') && hidden('export-slug-field') && hidden('export-dest-field'));
+  assert.equal(doc.getElementById('export-folder-label').textContent, 'Plugin folder');
 
   doc.getElementById('export-cancel').dispatchEvent(new win.Event('click'));
-  assert.equal(modal.classList.contains('hidden'), true, 'Cancel closes the modal');
+  assert.equal(modal.classList.contains('hidden'), true, 'Cancel closes the dialog');
+});
+
+// One tab per domain; the row no longer shows its domain; Import… selects the
+// imported row's tab and pins a NEW pill on it for the page session.
+const GENERAL_ROW = { id: 'wf_gen', name: 'General one', version: 2, domain: 'general',
+  nodes: [{ id: 'n_task', kind: 'task', x: 60, y: 200, config: {} }, { id: 'n_end', kind: 'end', x: 960, y: 200, config: {} }], wires: [] };
+
+test('the saved list is tabbed by domain, and Import… lands on the imported row\'s tab with a NEW pill', async () => {
+  const win = await boot({ workflows: [DEFAULT_ROW, V2_ROW, GENERAL_ROW] });
+  const doc = win.document;
+  const tabs = () => [...doc.querySelectorAll('#gv-saved-tabs .gv-saved-tab')];
+  const listed = () => [...doc.querySelectorAll('#gv-saved-list .pl-item')].map((r) => r.dataset.id);
+  assert.deepEqual(tabs().map((t) => t.dataset.domain), ['coding', 'general'], 'alphabetical domain tabs');
+  assert.deepEqual(tabs().map((t) => t.querySelector('.gv-saved-tab-badge').textContent), ['2', '1']);
+  assert.ok(tabs()[0].classList.contains('active'), 'first tab selected by default');
+  assert.deepEqual(listed(), ['wf_default', 'wf_g'], 'only the selected domain is listed');
+  assert.equal(doc.getElementById('gv-saved-count').textContent, '· 3', 'the header count is the whole library');
+  tabs()[1].dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual(listed(), ['wf_gen']);
+  assert.ok(tabs()[1].classList.contains('active'));
+  assert.equal(doc.getElementById('gv-import-btn').textContent, 'Import…');
+
+  // Import a coding pipeline while the general tab is selected.
+  const input = doc.getElementById('gv-import-file');
+  const file = { name: 'shared.json', text: async () => JSON.stringify({ ...V2_ROW, id: undefined, name: 'Shared In' }) };
+  Object.defineProperty(input, 'files', { value: [file], configurable: true });
+  input.dispatchEvent(new win.Event('change'));
+  await tick(8);
+  assert.ok(tabs()[0].classList.contains('active'), 'the imported row\'s domain tab is selected');
+  assert.deepEqual(listed(), ['wf_default', 'wf_g', 'wf_shared-in']);
+  const pill = doc.querySelector('#gv-saved-list .pl-item[data-id="wf_shared-in"] .pl-new');
+  assert.ok(pill && pill.textContent === 'NEW', 'the imported row carries a NEW pill');
+  assert.equal(doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-new'), null, 'only the imported one');
+  assert.equal(doc.getElementById('gv-saved-msg').textContent, 'Imported "Shared In".');
+  assert.deepEqual(tabs().map((t) => t.querySelector('.gv-saved-tab-badge').textContent), ['3', '1']);
 });
 
 // MAJ-21: a flow card inside a loop must be named by the SHARED FLOW_LABEL table
@@ -226,7 +292,7 @@ test('MAJ-6: the saved list\'s Open asks before discarding unsaved edits', async
   const nodes = c.template().nodes.length;
   const depth = c.undoDepth();
   assert.equal(c.isDirty(), true, 'precondition: dirty');
-  doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-open')
+  doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-row')
     .dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
   for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
   assert.equal(modalUp(doc), true, 'the confirm modal is up');
@@ -238,7 +304,7 @@ test('MAJ-6: the saved list\'s Open asks before discarding unsaved edits', async
   assert.equal(c.undoDepth(), depth, 'Cancel keeps the undo ring');
   assert.equal(c.isDirty(), true);
   // …and Confirm goes through.
-  doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-open')
+  doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-row')
     .dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
   for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
   doc.getElementById('confirm-ok').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
@@ -299,14 +365,37 @@ test('MAJ-17: a successful delete clears the message and refreshes', async () =>
     'the list is refreshed: the deleted row is gone');
 });
 
-test('MAJ-17: the built-in Default row offers Open but no ×', async () => {
+test('MAJ-17: the built-in Default row opens but has no delete', async () => {
   const win = await boot({ workflows: [DEFAULT_ROW, V2_ROW, V1_ROW] });
   const doc = win.document;
   const def = doc.querySelector('#gv-saved-list .pl-item[data-id="wf_default"]');
   assert.ok(def, 'the built-in is listed');
-  assert.ok(def.querySelector('.pl-open'), 'Open stays — the built-in is editable as a copy');
-  assert.equal(def.querySelector('.pl-del'), null, 'no × on a row DELETE can never accept');
-  assert.ok(doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-del'), 'every other v2 row keeps its ×');
+  assert.ok(def.querySelector('.pl-row.pl-openable'), 'opening stays — the built-in is editable as a copy');
+  assert.equal(def.querySelector('.pl-del'), null, 'no delete on a row DELETE can never accept');
+  const del = doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-del');
+  assert.ok(del, 'every other v2 row keeps its delete');
+  assert.ok(del.querySelector('svg'), 'icon-only: the shared bin glyph');
+  assert.equal(del.textContent.trim(), '', 'no text label');
+  assert.equal(del.getAttribute('aria-label'), 'Delete "Graph one"');
+});
+
+test('the row\'s own actions do not open it, and Enter/Space on the row does', async () => {
+  const win = await boot({ workflows: [DEFAULT_ROW, V2_ROW] });
+  const doc = win.document;
+  const c = win.__gv().c;
+  const row = doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-row');
+  assert.equal(row.getAttribute('role'), 'button');
+  assert.equal(row.tabIndex, 0);
+  // Clicking Export… (a button inside the row) must not ALSO open the row.
+  row.querySelector('.pl-export').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  await tick();
+  assert.notEqual(c.template().id, 'wf_g', 'Export… did not open the row');
+  assert.equal(doc.getElementById('export-modal').classList.contains('hidden'), false, 'it opened the dialog');
+  doc.getElementById('export-cancel').dispatchEvent(new win.Event('click'));
+  // Keyboard: Enter on the focused row opens it (the canvas is clean, so no guard).
+  row.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await tick();
+  assert.equal(c.template().id, 'wf_g', 'Enter opens the row');
 });
 
 test('MAJ-17: the archived chip surfaces its refusal too', async () => {
