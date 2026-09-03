@@ -4,7 +4,8 @@
 // CLI entry point. Parses flags, creates a core orchestrator, subscribes to its events,
 // renders a phase tracker + streamed agent logs to the terminal, and drives interactive
 // Q&A (clarify) and loop gates via node:readline. Supports --yes (auto), --mock,
-// --install <dir> (delegates to scripts/install.mjs), --ui (spawns ui/server.mjs),
+// --install <dir> (delegates to scripts/install.mjs), ui start|stop|restart|status
+// (--ui is an alias of `ui start`; see cmdUi),
 // and -v/-V/--version (also the bare word `version`).
 //
 // ESM, no external dependencies.
@@ -28,6 +29,10 @@ import {
 import { projectKey } from '../core/store.mjs';
 import { formatExecLine, formatGateHeader, formatRunSummary } from './render.mjs';
 import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
+import { effectiveDebugSpawn } from '../core/settings.mjs';
+import {
+  DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
+} from '../core/ui-instance.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -204,7 +209,7 @@ Usage:
   worca --prompt "<task>" [--project <dir>] [options]
   worca --file <task.md> [--project <dir>] [options]
   worca "<task>" [--project <dir>] [options]   (bare prompt; quote it)
-  worca --ui
+  worca ui [start|stop|restart|status] [--port <n>] [--open]
   worca --install <targetDir> [--force]
 
 Subcommands:
@@ -218,6 +223,8 @@ Subcommands:
                               disable|doctor|link|reimport|init|validate|exec. See: worca plugin help
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
   config [get|set|unset]      Budget & cost-limit settings
+  ui [start|stop|restart|status]
+                              Run the web UI (default http://localhost:4317). See: worca ui help
   help                        Print this help (same as --help).
   version                     Print the version (same as --version).
 
@@ -236,7 +243,7 @@ Options:
   --branch <name>          Feature branch name (default: claude proposes one)
   --mock                   Offline mock mode (no claude, no tokens)
   --yes, --non-interactive Auto-answer clarify (first option) and gates (continue)
-  --ui                     Launch the web UI (ui/server.mjs) and exit
+  --ui                     Same as "worca ui start" (accepts --port, --open, --mock)
   --install <targetDir>    Copy agents + /worca skill into <targetDir>/.claude
   -h, --help               Show this help
   -v, -V, --version        Print the version (worca <semver>) and exit
@@ -629,11 +636,97 @@ async function attachAndDrive(orch, flags, start) {
 
 // ── subcommands ──────────────────────────────────────────────────────────────────
 
-/** Spawn the web UI server and inherit its stdio. Resolves when it exits. */
-function launchUi() {
+// ── web UI lifecycle ─────────────────────────────────────────────────────────────
+//
+// The UI is a singleton over the machine-wide store, so `worca ui` never blindly
+// binds: it probes the port first (src/core/ui-instance.mjs). A Worca UI already
+// answering there is the EXPECTED state — print where it is and how to restart
+// it, exit 0. Only a port held by some other program is an error (exit 1).
+
+const UI_HELP = `worca ui — the web UI server
+
+Usage:
+  worca ui [start] [--port <n>] [--open] [--mock]   Start the UI (default http://localhost:${DEFAULT_UI_PORT})
+  worca ui stop [--port <n>]                        Stop the running UI gracefully
+  worca ui restart [--port <n>] [--open] [--mock]   Stop it if running, then start it again
+  worca ui status [--port <n>]                      Report whether it is running (exit 0 = running, 1 = not)
+  worca ui help                                     Show this help
+
+Options:
+  --port <n>   Port to bind (start) or to look at (stop/restart/status).
+               Default: the PORT env var, then ${DEFAULT_UI_PORT}. stop/restart/status
+               also read the port of the last started UI (<worca home>/ui.json).
+  --open       Open the UI in your browser once it is up
+  --mock       Start in offline mock mode (same as WORCA_MOCK=1)
+
+\`worca --ui\` is an alias of \`worca ui start\`.
+`;
+
+/** Bind/probe port for a `worca ui` verb: --port > (instance file) > PORT env > default. */
+function resolveUiPort(a, { preferInstanceFile = false } = {}) {
+  if (a.port !== undefined) {
+    const n = Number(a.port);
+    if (!Number.isInteger(n) || n < 1 || n > 65535) fail(`--port must be an integer between 1 and 65535, got: ${a.port}`);
+    return { port: n, host: process.env.WORCA_HOST || DEFAULT_UI_HOST };
+  }
+  if (preferInstanceFile) {
+    const inst = readUiInstance();
+    if (inst) return { port: inst.port, host: inst.host || process.env.WORCA_HOST || DEFAULT_UI_HOST };
+  }
+  const env = Number(process.env.PORT);
+  const port = Number.isInteger(env) && env > 0 ? env : DEFAULT_UI_PORT;
+  return { port, host: process.env.WORCA_HOST || DEFAULT_UI_HOST };
+}
+
+/** Best-effort `open`/`start`/`xdg-open`; never throws, never keeps the CLI alive. */
+function openBrowser(url) {
+  const [cmd, args] = process.platform === 'darwin' ? ['open', [url]]
+    : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]]
+    : ['xdg-open', [url]];
+  try {
+    const p = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    p.on('error', () => {});
+    p.unref();
+  } catch { /* no browser opener on this box — the URL is printed anyway */ }
+}
+
+/** Spawn ui/server.mjs on `port` and inherit its stdio. Resolves with its exit code. */
+async function uiStart(a) {
+  const { port, host } = resolveUiPort(a);
+  const url = uiUrl({ host, port });
+  const probe = await probeUi({ host, port });
+  if (probe.state === 'worca') {
+    out(`Worca UI is already running at ${c('bold', url)}`);
+    out('');
+    out(`  Open it:       ${url}`);
+    out(`  Restart it:    ${c('bold', 'worca ui restart')}`);
+    out(`  Another port:  ${c('bold', `worca ui --port ${port + 1}`)}`);
+    if (a.open) openBrowser(url);
+    return 0;
+  }
+  if (probe.state === 'busy') {
+    process.stderr.write(`worca: port ${port} is in use by another program, so the Worca UI cannot start.\n\n`
+      + `  Pick a free port:  worca ui --port ${port + 1}   (or set PORT)\n`);
+    return 1;
+  }
+  // A UI started earlier on some OTHER port is worth a note, not a refusal.
+  const inst = readUiInstance();
+  if (inst && inst.port !== port) {
+    const other = await probeUi({ host: inst.host, port: inst.port });
+    if (other.state === 'worca') out(c('gray', `Note: another Worca UI is running at ${uiUrl({ host: inst.host, port: inst.port })}`));
+  }
+
   const server = join(REPO_ROOT, 'ui', 'server.mjs');
-  out(c('cyan', `Launching web UI: node ${server}`));
-  const child = spawn(process.execPath, [server], { stdio: 'inherit' });
+  out(c('cyan', `Starting Worca UI on ${url}`));
+  if (effectiveDebugSpawn().enabled) out(c('gray', `  node ${server}`));
+  const env = { ...process.env, PORT: String(port) };
+  if (a.mock) env.WORCA_MOCK = '1';
+  const child = spawn(process.execPath, [server], { stdio: 'inherit', env });
+  if (a.open) {
+    waitForUiState({ host, port, states: ['worca'], timeoutMs: 20000 })
+      .then((r) => { if (r) openBrowser(url); })
+      .catch(() => {});
+  }
   return new Promise((res) => {
     child.on('exit', (code) => res(code ?? 0));
     child.on('error', (err) => {
@@ -641,6 +734,75 @@ function launchUi() {
       res(1);
     });
   });
+}
+
+/** Stop the UI on the resolved port. Idempotent: "not running" exits 0. */
+async function uiStop(a, { quiet = false } = {}) {
+  const { port, host } = resolveUiPort(a, { preferInstanceFile: true });
+  const r = await stopUi({ host, port });
+  switch (r.status) {
+    case 'stopped':
+      out(`Stopped Worca UI on port ${port}${r.pid ? ` (pid ${r.pid})` : ''}.`);
+      return 0;
+    case 'not-running':
+      if (!quiet) out(`Worca UI is not running on port ${port}.`);
+      return 0;
+    case 'busy':
+      process.stderr.write(`worca: port ${port} is in use by another program, not a Worca UI — nothing to stop.\n`);
+      return 1;
+    case 'timeout':
+      process.stderr.write(`worca: the Worca UI on port ${port}${r.pid ? ` (pid ${r.pid})` : ''} did not exit in time.\n`);
+      return 1;
+    default:
+      process.stderr.write(`worca: could not stop the Worca UI on port ${port}: ${r.reason || r.status}\n`);
+      return 1;
+  }
+}
+
+async function uiStatus(a) {
+  const { port, host } = resolveUiPort(a, { preferInstanceFile: true });
+  const probe = await probeUi({ host, port });
+  if (probe.state === 'worca') {
+    const info = probe.info || {};
+    const detail = [info.pid ? `pid ${info.pid}` : null, info.version ? `v${info.version}` : null].filter(Boolean).join(', ');
+    out(`Worca UI is running at ${c('bold', uiUrl({ host, port }))}${detail ? ` (${detail})` : ''}`);
+    return 0;
+  }
+  if (probe.state === 'busy') {
+    out(`Worca UI is not running on port ${port} (the port is in use by another program).`);
+    return 1;
+  }
+  out(`Worca UI is not running on port ${port}.`);
+  return 1;
+}
+
+/** `worca ui [start|stop|restart|status|help] [--port <n>] [--open] [--mock]` */
+async function cmdUi(argv) {
+  const verbs = new Set(['start', 'stop', 'restart', 'status']);
+  let verb = 'start';
+  let rest = argv;
+  if (argv[0] === 'help' || argv[0] === '--help' || argv[0] === '-h') {
+    process.stdout.write(UI_HELP);
+    return 0;
+  }
+  if (argv[0] && !argv[0].startsWith('-')) {
+    if (!verbs.has(argv[0])) fail(`unknown ui command "${argv[0]}" — expected one of: start, stop, restart, status (see: worca ui help)`);
+    verb = argv[0];
+    rest = argv.slice(1);
+  }
+  const a = pluginArgs(rest, ['--port'], ['--open', '--mock']);
+  if (a._.length) fail(`unexpected argument: ${a._[0]} (see: worca ui help)`);
+  if (verb === 'stop') return uiStop(a);
+  if (verb === 'status') return uiStatus(a);
+  if (verb === 'restart') {
+    // Pin the port stop resolved (possibly from the instance file) so start reuses it.
+    const { port } = resolveUiPort(a, { preferInstanceFile: true });
+    a.port = String(port);
+    const code = await uiStop(a, { quiet: true });
+    if (code !== 0) return code;
+    return uiStart(a);
+  }
+  return uiStart(a);
 }
 
 /** Delegate to scripts/install.mjs, forwarding the target dir and any passthrough args. */
@@ -1678,7 +1840,7 @@ async function cmdMarketplace(argv) {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config', 'ui']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -1736,6 +1898,12 @@ async function main() {
     if (sub === 'plugin') return cmdPlugin(rest);
     if (sub === 'marketplace') return cmdMarketplace(rest);
     if (sub === 'config') return cmdConfig(rest);
+    if (sub === 'ui') return cmdUi(rest);
+  }
+  // `worca --ui [...]` is the historical spelling of `worca ui start [...]`; hand the
+  // remaining tokens to the ui parser so --port/--open/--mock work with either.
+  if (process.argv.slice(2).includes('--ui')) {
+    return cmdUi(process.argv.slice(2).filter((t) => t !== '--ui'));
   }
 
   const flags = parseArgs(process.argv.slice(2));
@@ -1750,10 +1918,6 @@ async function main() {
     const passthrough = [];
     if (process.argv.includes('--force')) passthrough.push('--force');
     return runInstall(flags.install, passthrough);
-  }
-
-  if (flags.ui) {
-    return launchUi();
   }
 
   if (flags.mock) {

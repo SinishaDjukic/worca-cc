@@ -93,6 +93,9 @@ import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core
 import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue } from '../src/core/model-env.mjs';
 import { listPluginModels, modelSecretsSchema, pluginModelSecretStatus } from '../src/core/plugin-models.mjs';
 import { testModel } from '../src/core/model-test.mjs';
+import {
+  DEFAULT_UI_PORT, UI_HEALTH_NAME, newUiToken, writeUiInstance, removeUiInstance, uiUrl,
+} from '../src/core/ui-instance.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
   listBuiltinGuardrailSets, listGuardrailSets, readGuardrailSet,
@@ -174,6 +177,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const AGENTS_DIR = path.join(PROJECT_ROOT, 'agents');
 const SKILLS_DIR = path.join(PROJECT_ROOT, 'skills');
 const require = createRequire(import.meta.url);
+const PKG_VERSION = require('../package.json').version;
 const HLJS_LANGUAGE_FILE_RE = /^[a-z0-9][a-z0-9-]{0,63}\.min\.js$/;
 // Primaries plus the sub-language grammars their instances register
 // (hljs-loader.mjs); a shipped but unmapped grammar stays a plain 404.
@@ -212,7 +216,7 @@ const ASK_VENDOR_ASSETS = {
   dompurify: resolveEsmAsset('dompurify'),
 };
 
-const PORT = Number(process.env.PORT) || 4317;
+const PORT = Number(process.env.PORT) || DEFAULT_UI_PORT;
 // Bind to loopback by default (S1). Power users who knowingly want LAN exposure
 // can set WORCA_HOST=0.0.0.0, but the localhost-only Host/Origin guard still
 // applies unless they also front it with auth.
@@ -275,6 +279,11 @@ const MAX_BUFFER = 5000;
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
+// ws re-emits the http server's 'error' on the WebSocketServer. With no listener
+// here, an EADDRINUSE on listen() became an unhandled 'error' event and a full
+// stack trace; the http server's own handler (isMain below) is the one that
+// reports it, so this side of the pair only has to not throw.
+wss.on('error', () => {});
 
 /** All currently connected sockets. */
 const sockets = new Set();
@@ -2779,6 +2788,49 @@ const settingsState = () => ({
   askMaxBudgetUsd: askMaxBudgetUsd(),
   debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
   debugSpawnEffective: effectiveDebugSpawn(),             // what the next spawn will DO, and why
+});
+
+// ---------------------------------------------------------------------------
+// Instance lifecycle (`worca ui status|stop|restart`, src/core/ui-instance.mjs)
+// ---------------------------------------------------------------------------
+// `uiControl` is set by the boot block below when the server owns a port. Under
+// test (app imported, no bind) it stays empty: /api/health still answers, and
+// /api/shutdown refuses with 503 rather than exiting the test runner.
+const uiControl = { token: null, onShutdown: null, startedAt: null };
+const startedAtIso = () => uiControl.startedAt || null;
+
+app.get('/api/health', (req, res) => {
+  const addr = req.socket && req.socket.localPort;
+  res.json({
+    name: UI_HEALTH_NAME,
+    version: PKG_VERSION,
+    pid: process.pid,
+    host: HOST,
+    port: addr || PORT,
+    startedAt: startedAtIso(),
+  });
+});
+
+/** Constant-time bearer check; `expected` is the boot-time token from ui.json. */
+function bearerMatches(header, expected) {
+  if (!expected || typeof header !== 'string') return false;
+  const m = /^Bearer\s+(\S+)$/i.exec(header.trim());
+  if (!m) return false;
+  const a = Buffer.from(m[1]);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+app.post('/api/shutdown', (req, res) => {
+  if (!uiControl.token || typeof uiControl.onShutdown !== 'function') {
+    return res.status(503).json({ error: 'shutdown is only available on a server started with `worca ui`' });
+  }
+  if (!bearerMatches(req.headers.authorization, uiControl.token)) {
+    return res.status(401).json({ error: 'shutdown requires the bearer token from the instance file' });
+  }
+  res.status(202).json({ ok: true, pid: process.pid });
+  // Answer first, exit on the next tick so the 202 actually leaves the socket.
+  setImmediate(() => uiControl.onShutdown('request'));
 });
 
 app.get('/api/settings', (_req, res) => {
@@ -5364,30 +5416,53 @@ if (isMain) {
     console.error(`[worca-ui] boot maintenance failed: ${err && err.message ? err.message : err}`);
   });
 
+  // A port that is already taken is an EXPECTED state (the UI is usually already
+  // up), not a crash: one line, no stack, exit 1. `worca ui` probes the port
+  // before spawning this process and prints the friendlier "already running"
+  // block itself; this branch is for `node ui/server.mjs` run by hand or a race.
   server.on('error', (err) => {
+    if (err && err.code === 'EADDRINUSE') {
+      console.error(`[worca-ui] port ${PORT} is already in use — is the UI already running?`);
+      console.error(`[worca-ui] check with \`worca ui status\`, restart with \`worca ui restart\`, or pick a port: \`worca ui --port <n>\``);
+      process.exit(1);
+    }
     console.error(`[worca-ui] server error: ${err && err.message ? err.message : err}`);
   });
 
+  // Channel workers must die with the server (design §9: persistent-process
+  // hygiene). Graceful shutdown frame -> 5s grace -> SIGKILL, then exit. The
+  // same path serves POST /api/shutdown (`worca ui stop`), which exits 0.
+  let shuttingDown = false;
+  let wroteInstanceFile = false;
+  const exitCodeFor = (signal) => (signal === 'SIGINT' ? 130 : signal === 'SIGTERM' ? 143 : 0);
+  const shutdown = (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    channelHost.stop().finally(() => process.exit(exitCodeFor(signal)));
+  };
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  // 'exit' handlers must be synchronous; removeUiInstance is. `ifPid` keeps an
+  // old server exiting late from deleting the file a newer one just wrote.
+  process.on('exit', () => { if (wroteInstanceFile) removeUiInstance({ ifPid: process.pid }); });
+
   server.listen(PORT, HOST, () => {
-    const shown = HOST === '127.0.0.1' || HOST === '::1' ? 'localhost' : HOST;
-    const url = `http://${shown}:${PORT}`;
+    const port = server.address().port;
+    const url = uiUrl({ host: HOST, port });
     console.log(`[worca-ui] listening on ${url} (bound to ${HOST})`);
-    console.log(`[worca-ui] WebSocket on ws://${shown}:${PORT}/ws`);
+    uiControl.token = newUiToken();
+    uiControl.onShutdown = shutdown;
+    uiControl.startedAt = new Date().toISOString();
+    writeUiInstance({
+      pid: process.pid, host: HOST, port, token: uiControl.token,
+      version: PKG_VERSION, startedAt: uiControl.startedAt,
+    }).then(() => { wroteInstanceFile = true; }, (err) => {
+      console.error(`[worca-ui] could not write the instance file (\`worca ui stop\` will fall back to a signal): ${err && err.message ? err.message : err}`);
+    });
     try { channelHost.start(); } catch (err) {
       console.error(`[worca-ui] chat channel host failed to start: ${err && err.message ? err.message : err}`);
     }
   });
-
-  // Channel workers must die with the server (design §9: persistent-process
-  // hygiene). Graceful shutdown frame -> 5s grace -> SIGKILL, then exit.
-  let shuttingDown = false;
-  const shutdownChat = (signal) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    channelHost.stop().finally(() => process.exit(signal === 'SIGINT' ? 130 : 143));
-  };
-  process.on('SIGINT', () => shutdownChat('SIGINT'));
-  process.on('SIGTERM', () => shutdownChat('SIGTERM'));
 }
 
 export { app, server, runs };
@@ -5396,4 +5471,5 @@ export const _testing = {
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
+  uiControl, bearerMatches,
 };
