@@ -20,6 +20,7 @@
 // when the token is unavailable (file missing, or a server too old to have one).
 
 import fs from 'node:fs';
+import http from 'node:http';
 import fsp from 'node:fs/promises';
 import process from 'node:process';
 import { join } from 'node:path';
@@ -106,7 +107,7 @@ function dialHost(host) {
   return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
 }
 
-/** Every error code nested in a fetch failure (Node wraps them in `cause`, sometimes an AggregateError). */
+/** Every error code nested in a request failure (Node wraps them in `cause`, sometimes an AggregateError). */
 function errorCodes(err) {
   const out = new Set();
   const walk = (e, depth) => {
@@ -119,12 +120,38 @@ function errorCodes(err) {
   return out;
 }
 
+/**
+ * One-shot HTTP call on a throwaway connection. NOT fetch(): the lifecycle verbs
+ * call process.exit() right after a probe, and undici's pooled keep-alive socket is
+ * still closing at that moment — on Windows libuv asserts on it
+ * (`!(handle->flags & UV_HANDLE_CLOSING)`, src/win/async.c) and the CLI dies with
+ * 0xC0000409 instead of its exit code, after printing the right message. A bare
+ * `agent: false` + `Connection: close` request leaves nothing behind to tear down.
+ * Rejects with the socket error (its `code` intact, e.g. ECONNREFUSED) or the
+ * signal's AbortError.
+ */
+function request(url, { method = 'GET', headers = {}, signal } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(url, { method, agent: false, signal, headers: { ...headers, connection: 'close' } }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('error', reject);
+      res.on('end', () => resolve({
+        status: res.statusCode, ok: res.statusCode >= 200 && res.statusCode < 300,
+        text: Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 /** GET a JSON object from the UI, or null (non-2xx, non-JSON, non-object). Network errors propagate. */
 async function getJson(url, signal) {
-  const res = await fetch(url, { signal, headers: { accept: 'application/json' } });
+  const res = await request(url, { signal, headers: { accept: 'application/json' } });
   if (!res.ok) return null;
   try {
-    const data = await res.json();
+    const data = JSON.parse(res.text);
     return data && typeof data === 'object' && !Array.isArray(data) ? data : null;
   } catch {
     return null;
@@ -212,7 +239,7 @@ export async function stopUi({ host = DEFAULT_UI_HOST, port = DEFAULT_UI_PORT, t
 
   if (bearer) {
     try {
-      const res = await fetch(`http://${dialHost(host)}:${port}/api/shutdown`, {
+      const res = await request(`http://${dialHost(host)}:${port}/api/shutdown`, {
         method: 'POST',
         headers: { authorization: `Bearer ${bearer}`, accept: 'application/json' },
         signal: AbortSignal.timeout(3000),
