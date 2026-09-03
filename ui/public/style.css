@@ -1624,6 +1624,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* ---- Models view (configurable-models-design.md §4.10) ---- */
 .mv-list{display:grid;gap:18px;}
 .mv-section{display:grid;gap:10px;}
+.mv-hide-builtin-row{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--line-2,#e6e6ec);border-radius:10px;}
+.mv-hide-builtin-row .hint{margin:0;}
 .mv-section-title{margin:4px 0 0;font-size:13px;text-transform:uppercase;letter-spacing:.04em;opacity:.75;}
 .mv-card{padding:16px 20px;display:flex;align-items:center;gap:14px;}
 .mv-body{flex:1 1 auto;min-width:0;}

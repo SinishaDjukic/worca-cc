@@ -42,7 +42,10 @@ import {
   askMaxTurns, askMaxBudgetUsd, setAskMaxTurns, setAskMaxBudgetUsd, assertAskLimitInputs,
   chatPrefs, setChatPrefs,
   debugSpawnEnabled as storedDebugSpawnEnabled, effectiveDebugSpawn, setDebugSpawnEnabled, assertDebugSpawnInput, SETTINGS_POST_KEYS,
+  titleModel as storedTitleModel, setTitleModel, assertTitleModelInput,
+  hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput,
 } from '../src/core/settings.mjs';
+import { describeTitleModel } from '../src/core/title.mjs';
 import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
   listThreads as askListThreads, updateThread as askUpdateThread,
@@ -85,7 +88,7 @@ import { pickFolderNative } from '../src/core/folder-dialog.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
-  PREDEFINED_MODELS, agentSteps, EFFORTS,
+  PREDEFINED_MODELS, agentSteps, EFFORTS, catalogHasModel,
   readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, resetWorkflowConfig,
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
 } from '../src/core/config.mjs';
@@ -2793,6 +2796,9 @@ const settingsState = () => ({
   askMaxBudgetUsd: askMaxBudgetUsd(),
   debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
   debugSpawnEffective: effectiveDebugSpawn(),             // what the next spawn will DO, and why
+  titleModel: storedTitleModel(),                         // the STORED id (the select), null = run's model
+  titleModelEffective: describeTitleModel(),              // env override / stale id, for the hint line (#422)
+  hideBuiltinModels: hideBuiltinModels(),
 });
 
 // ---------------------------------------------------------------------------
@@ -2852,6 +2858,12 @@ app.post('/api/settings', async (req, res) => {
   const hasBudgetKey = has('pipelineCostLimitUsd') || has('totalCostLimitUsd') || has('costLimitResetPeriod');
   const hasAskKey = has('askMaxTurns') || has('askMaxBudgetUsd');
   const hasDebugSpawnKey = has('debugSpawnEnabled');
+  const hasTitleModelKey = has('titleModel');
+  const hasHideBuiltinKey = has('hideBuiltinModels');
+  // #422: the title model is a SELECT over the catalog, so an id that is not a
+  // catalog member is a client bug (or a stale option) — refuse it here rather
+  // than store an id resolveModelEnv could never route.
+  const titleModelInput = hasTitleModelKey ? (body.titleModel ?? '') : undefined;
   // Normalize the budget keys first, then validate them as a SET before ANY write.
   // Each setter persists on its own, so a two-key POST whose second key is invalid
   // used to answer 400 with the first key already on disk, no budget-changed
@@ -2873,6 +2885,13 @@ app.post('/api/settings', async (req, res) => {
     assertCostLimitInputs(budget);
     assertAskLimitInputs(ask);
     if (hasDebugSpawnKey) assertDebugSpawnInput(body.debugSpawnEnabled);
+    if (hasTitleModelKey) {
+      assertTitleModelInput(titleModelInput);
+      if (titleModelInput !== '' && titleModelInput !== null && !catalogHasModel(titleModelInput)) {
+        throw new Error(`unknown model ${JSON.stringify(String(titleModelInput))} — pick one from the catalog`);
+      }
+    }
+    if (hasHideBuiltinKey) assertHideBuiltinModelsInput(body.hideBuiltinModels);
     // Root first: it is the one key whose setter can still fail AFTER the asserts
     // above (an unusable path), so every other key's write must come after it or
     // a mixed POST would answer 400 with those keys already applied on disk.
@@ -2891,10 +2910,12 @@ app.post('/api/settings', async (req, res) => {
     if (has('askMaxTurns')) await setAskMaxTurns(ask.askMaxTurns);
     if (has('askMaxBudgetUsd')) await setAskMaxBudgetUsd(ask.askMaxBudgetUsd);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
+    if (hasTitleModelKey) await setTitleModel(titleModelInput);
+    if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasDebugSpawnKey) emitChanged('settings-changed');
+    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey) emitChanged('settings-changed');
     res.json({ ...settingsState(), chat: chatPrefs() });
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).
@@ -3115,7 +3136,10 @@ const pluginModelsPayload = () => {
 };
 
 app.get('/api/models', (req, res) => {
-  res.json({ models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS });
+  res.json({
+    models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS,
+    hideBuiltinModels: hideBuiltinModels(),   // the Models-view checkbox (#422)
+  });
 });
 
 app.post('/api/models', async (req, res) => {
@@ -3328,7 +3352,10 @@ app.post('/api/models/:id/test', async (req, res) => {
   const lc = id.toLowerCase();
   const global = listGlobalModels().find((m) => m.id.toLowerCase() === lc);
   const plugin = global ? null : listPluginModels().find((m) => m.id.toLowerCase() === lc);
-  if (!global && !plugin) return res.status(404).json({ error: `unknown model id ${JSON.stringify(id)}` });
+  // A built-in is testable too (#422): the Title-generation card offers it, and
+  // a first-party id with no routing env is exactly the spawn a run would make.
+  const builtin = !global && !plugin && PREDEFINED_MODELS.some((m) => m.id.toLowerCase() === lc);
+  if (!global && !plugin && !builtin) return res.status(404).json({ error: `unknown model id ${JSON.stringify(id)}` });
   if (plugin && plugin.secrets.length) {
     // Don't burn a spawn guaranteed to fail — resolveModelEnv drops unset secrets.
     const unset = pluginModelSecretStatus(plugin.plugin)

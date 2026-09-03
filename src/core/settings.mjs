@@ -543,7 +543,68 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod',
   'askMaxTurns', 'askMaxBudgetUsd',
   'debugSpawnEnabled',
+  'titleModel', 'hideBuiltinModels',
 ]);
+
+// ── Title-generation model + hidden built-ins (#422) ─────────────────────────
+// `titleModel` is the catalog id every run/chat title is written with; absent
+// means "the model of the run or chat that asked for the title" (title.mjs owns
+// that precedence, and the catalog check — settings.mjs cannot import config.mjs).
+// `hideBuiltinModels` drops the first-party built-ins from every model picker
+// for an install with no first-party account; it is cosmetic + defaults only,
+// a hidden id still resolves (config.mjs#composeCatalog). Both are read at use
+// time like every other stored setting — a UI save reaches the next title call.
+export const DEFAULT_HIDE_BUILTIN_MODELS = false;
+const TITLE_MODEL_MAX_LEN = 200;
+
+const isTitleModelId = (v) => typeof v === 'string' && v.trim().length > 0 && v.length <= TITLE_MODEL_MAX_LEN;
+
+/** The STORED title model id (trimmed), or null when unset/invalid (loudly). */
+export function titleModel() {
+  const v = readSettings().titleModel;
+  if (v === undefined) return null;
+  if (isTitleModelId(v)) return v.trim();
+  console.warn(`[worca] invalid titleModel ${JSON.stringify(v)} — titles use the run's model`);
+  return null;
+}
+
+/** @throws {Error} unless `input` is a non-empty model id (or empty, which clears). */
+export function assertTitleModelInput(input) {
+  if (isClearInput(input)) return;
+  if (!isTitleModelId(input)) throw new Error(`titleModel must be a model id of at most ${TITLE_MODEL_MAX_LEN} characters, or empty to use the run's model`);
+}
+
+export async function setTitleModel(input) {
+  assertTitleModelInput(input);
+  const settings = readSettings();
+  if (isClearInput(input)) delete settings.titleModel;
+  else settings.titleModel = input.trim();
+  await persistSettings(settings);
+  return { titleModel: titleModel() };
+}
+
+/** Whether built-in (first-party) models are hidden from every picker. */
+export function hideBuiltinModels() {
+  const v = readSettings().hideBuiltinModels;
+  if (v === undefined) return DEFAULT_HIDE_BUILTIN_MODELS;
+  if (typeof v === 'boolean') return v;
+  console.warn(`[worca] invalid hideBuiltinModels ${JSON.stringify(v)} — using the default (${DEFAULT_HIDE_BUILTIN_MODELS})`);
+  return DEFAULT_HIDE_BUILTIN_MODELS;
+}
+
+/** @throws {Error} unless `input` is a boolean. */
+export function assertHideBuiltinModelsInput(input) {
+  if (typeof input !== 'boolean') throw new Error('hideBuiltinModels must be true or false');
+}
+
+export async function setHideBuiltinModels(input) {
+  assertHideBuiltinModelsInput(input);
+  const settings = readSettings();
+  if (input === DEFAULT_HIDE_BUILTIN_MODELS) delete settings.hideBuiltinModels;
+  else settings.hideBuiltinModels = input;
+  await persistSettings(settings);
+  return { hideBuiltinModels: hideBuiltinModels() };
+}
 
 // ── Spawn-debug diagnostics toggle (the stored side of WORCA_DEBUG_SPAWN) ────
 // Like every other stored setting (skillMount, the cost caps, the ask caps) this

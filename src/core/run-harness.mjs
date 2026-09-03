@@ -3641,6 +3641,13 @@ export class RunHarness extends EventEmitter {
       signal: this.abort.signal,
       bin: this.claude.bin,
       mock: this.claude.mock,
+      // The run's own model is the title default (#422, title.mjs#resolveTitleModel):
+      // an install with no first-party model titles its runs with no setup.
+      runModel: this.claude.model,
+      // A failed title used to vanish into a kept provisional title. Say so in
+      // the run log — once per run, there is only ever one title call.
+      onError: ({ model, error }) => this._log('orchestrator', 'warn',
+        `title generation failed (model ${model}): ${clipMiddle(error?.message || error, 300)} — keeping the provisional title`),
       // Same env policy as the pipeline nodes. Both undefined on an unconfigured
       // project ⇒ byte-identical spawn env (legacy parity).
       envScrub: this.guardrails?.envScrub || undefined,

@@ -1,11 +1,61 @@
 // src/core/title.mjs
 import { runClaude } from './claude-runner.mjs';
-import { resolveModelEnv } from './config.mjs';
+import { resolveModelEnv, catalogHasModel } from './config.mjs';
+import { titleModel as storedTitleModel } from './settings.mjs';
+import { AUX_EFFORT } from './model-env.mjs';
 
-// A fast, cheap model is enough for a one-line summary. Overridable for tests/cost tuning.
-const DEFAULT_TITLE_MODEL =
-  process.env.WORCA_TITLE_MODEL || 'claude-haiku-4-5-20251001';
+// The last-resort title model: the BUILT-IN Haiku id (config.mjs PREDEFINED_MODELS),
+// not the dated API id it used to be — a global entry that shadows the built-in
+// (to route it) must match, or its routing env would never reach a title call.
+export const DEFAULT_TITLE_MODEL = 'claude-haiku-4-5';
 const MAX_LEN = 70;
+
+/**
+ * Which model writes a title, decided PER CALL (#422) — nothing is captured at
+ * import, so a Settings save or an env change reaches the very next title:
+ *   1. `opts.model`            — an explicit caller choice
+ *   2. WORCA_TITLE_MODEL       — a non-empty env override (tests, cost tuning);
+ *                                verbatim, no catalog check: an operator escape hatch
+ *   3. the stored `titleModel` — only while it is still a catalog member; a stale
+ *                                id (plugin removed, entry deleted) is reported and skipped
+ *   4. `opts.runModel`         — the model of the run / chat that asked for the title,
+ *                                which is what makes an install with NO first-party
+ *                                model produce titles with zero configuration
+ *   5. DEFAULT_TITLE_MODEL     — the built-in Haiku
+ * Pure apart from the injectable readers. Exported for tests and for the
+ * settings API (describeTitleModel below).
+ * @param {{model?:string, runModel?:string}} [opts]
+ * @param {{env?:NodeJS.ProcessEnv, stored?:()=>string|null, inCatalog?:(id:string)=>boolean}} [deps]
+ * @returns {{model:string, source:'explicit'|'env'|'settings'|'run'|'builtin', stale:string|null}}
+ */
+export function resolveTitleModel(opts = {}, { env = process.env, stored = storedTitleModel, inCatalog = catalogHasModel } = {}) {
+  const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '');
+  const explicit = str(opts.model);
+  if (explicit) return { model: explicit, source: 'explicit', stale: null };
+  const fromEnv = str(env.WORCA_TITLE_MODEL);
+  if (fromEnv) return { model: fromEnv, source: 'env', stale: null };
+  let stale = null;
+  const configured = str(stored());
+  if (configured) {
+    if (inCatalog(configured)) return { model: configured, source: 'settings', stale: null };
+    stale = configured;
+  }
+  const runModel = str(opts.runModel);
+  if (runModel) return { model: runModel, source: 'run', stale };
+  return { model: DEFAULT_TITLE_MODEL, source: 'builtin', stale };
+}
+
+/**
+ * What the Settings card shows: the stored id, whether the environment
+ * overrides it, and a stale stored id that no longer resolves. `model` is
+ * null when titles follow the run's model (the default).
+ * @returns {{model:string|null, source:'env'|'settings'|'run', stale:string|null}}
+ */
+export function describeTitleModel(deps) {
+  const r = resolveTitleModel({}, deps);
+  if (r.source === 'env' || r.source === 'settings') return { model: r.model, source: r.source, stale: null };
+  return { model: null, source: 'run', stale: r.stale };
+}
 
 const SYSTEM = [
   'You write a SHORT, human-readable title for a software task.',
@@ -60,24 +110,34 @@ export function isRefusalTitle(t) {
  * failure/abort/empty input so the caller keeps the provisional title.
  * `permissionMode` (default 'acceptEdits') exists for Ask Worca: its title call
  * passes 'dontAsk' so the mock dispatcher can never reach a file-writing role.
+ * `runModel` is the model of the run/chat asking (resolveTitleModel step 4).
+ * `onError` fires ONCE when the call yields no usable title for any reason but
+ * an abort (a spawn failure, a refusal, an empty reply) — the caller logs it on
+ * its own channel; the return value stays '' so every existing caller is unchanged.
  * @param {string} prompt
- * @param {{cwd:string, signal?:AbortSignal, model?:string, bin?:string, mock?:boolean, envScrub?:boolean, envAllowlist?:string[], tools?:string[], strictMcpConfig?:boolean, settingSources?:string[], disableSlashCommands?:boolean, mcpConfigPath?:string, permissionMode?:string}} opts
+ * @param {{cwd:string, signal?:AbortSignal, model?:string, runModel?:string, onError?:(info:{model:string, error:Error})=>void, bin?:string, mock?:boolean, envScrub?:boolean, envAllowlist?:string[], tools?:string[], strictMcpConfig?:boolean, settingSources?:string[], disableSlashCommands?:boolean, mcpConfigPath?:string, permissionMode?:string}} opts
  * @returns {Promise<string>}
  */
 export async function generateTitle(prompt, opts = {}) {
   const text = String(prompt || '').trim();
   if (!text) return '';
+  const { model, stale } = resolveTitleModel(opts);
+  if (stale) console.warn(`[worca] titleModel ${JSON.stringify(stale)} is no longer in the catalog — titles use ${model}`);
+  const report = (error) => {
+    if (typeof opts.onError !== 'function') return;
+    try { opts.onError({ model, error }); } catch { /* a logging sink must never fail the caller */ }
+  };
   try {
     const { text: out } = await runClaude({
       cwd: opts.cwd || process.cwd(),
       systemPrompt: SYSTEM,
       prompt: `Write the title for this task:\n\n${text.slice(0, 4000)}`,
-      model: opts.model || DEFAULT_TITLE_MODEL,
+      model,
       // Aux calls keep their model choice but still route through the catalog's
       // env (design §4.8) — a global entry matching this id carries its routing
       // env everywhere the id is used.
-      modelEnv: resolveModelEnv(opts.model || DEFAULT_TITLE_MODEL),
-      effort: 'low',
+      modelEnv: resolveModelEnv(model),
+      effort: AUX_EFFORT,
       permissionMode: opts.permissionMode || 'acceptEdits',
       allowedTools: [],            // empty → no --allowedTools flag → claude defaults; pure text gen
       signal: opts.signal,
@@ -103,9 +163,12 @@ export async function generateTitle(prompt, opts = {}) {
       onEvent: () => {},
     });
     const title = sanitizeTitle(out);
-    return isRefusalTitle(title) ? '' : title;
+    if (!title) { report(new Error('the model returned an empty reply')); return ''; }
+    if (isRefusalTitle(title)) { report(new Error(`the model did not write a title: ${title.slice(0, 120)}`)); return ''; }
+    return title;
   } catch (err) {
     if (err && err.name === 'AbortError') return ''; // run was stopped — caller keeps provisional
+    report(err instanceof Error ? err : new Error(String(err)));
     return '';
   }
 }

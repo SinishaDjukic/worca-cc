@@ -1156,6 +1156,39 @@
               </div>
             </section>
 
+            <!-- Title generation (#422): which model writes run/chat titles.
+                 Empty = the model of the run or chat itself (title.mjs
+                 resolveTitleModel), so a first-party-free install needs no setup.
+                 The select is built from the project-less catalog; a stored id
+                 that left the catalog paints disabled + "not installed". -->
+            <section class="card settings-card" id="title-model-settings-card">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Title generation</h2>
+                  <button type="button" class="info-tip" aria-label="About title generation">i<span class="tip-content hidden">
+                    Every run and chat gets a short LLM-written title. By default it is written by the
+                    model the run or chat itself uses, so an install without a first-party Anthropic
+                    account needs no setup here. Pick a model to write every title with it instead;
+                    the change applies to the next title, no restart. A non-empty
+                    <code>WORCA_TITLE_MODEL</code> in the environment overrides this setting.
+                  </span></button>
+                </div>
+              </div>
+              <div class="field">
+                <div class="label-row">
+                  <label for="titleModel">Model</label>
+                </div>
+                <select id="titleModel" class="select" aria-label="Title model"></select>
+              </div>
+              <small class="hint" id="titleModelEnvNote"></small>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="titleModelTest" class="btn btn-ghost btn-mini" title="Send one tiny prompt to the selected model">Test</button>
+                <button type="button" id="titleModelReset" class="btn btn-ghost btn-mini">Use default</button>
+                <button type="button" id="titleModelSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="titleModelMsg"></small>
+            </section>
+
             <!-- Spawn-debug diagnostics: the stored side of WORCA_DEBUG_SPAWN.
                  claude-runner.mjs reads the setting per spawn (UI server AND CLI);
                  a non-empty env var overrides it. This card only flips the gate —

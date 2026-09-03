@@ -17,6 +17,47 @@
  *  without importing the core graph. */
 export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
 
+// The effort worca's own auxiliary calls run at (title generation, the Models
+// view Test button). Deliberately BELOW the pipeline list: the CLI accepts
+// `--effort low` (claude --help, 2.1.259) and a one-line summary needs nothing
+// more, so the cheapest tier is the right one. EFFORTS omits it on purpose —
+// pipeline nodes are not offered `low` — which is why it lives here as its own
+// constant instead of being clamped into that list (#422).
+export const AUX_EFFORT = 'low';
+
+// Claude Code resolves its OWN internal calls — session titles, the alias tiers
+// a Task `model: haiku|sonnet|opus|fable` expands to, quota probes — through
+// these keys. A catalog entry that routes to a custom endpoint (ANTHROPIC_BASE_URL)
+// routinely sets ANTHROPIC_MODEL and nothing else, so the CLI falls back to
+// first-party ids against an endpoint that does not serve them (the
+// `unrecognized_model` noise in run logs). withTierModelEnv fills every one the
+// entry left unset with the entry's own wire id (#422). ANTHROPIC_SMALL_FAST_MODEL
+// is the pre-DEFAULT_HAIKU spelling older CLIs still read.
+export const TIER_MODEL_ENV_KEYS = Object.freeze([
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_FABLE_MODEL',
+  'ANTHROPIC_SMALL_FAST_MODEL',
+]);
+
+/**
+ * The tier keys an endpoint-routed model env should carry, synthesized from
+ * the env's wire id. Pure: a non-routed env (no ANTHROPIC_BASE_URL) comes back
+ * untouched, an explicit key in the env is never overwritten, and with no wire
+ * id to point at (no ANTHROPIC_MODEL and no model id) nothing is added.
+ * @param {Record<string,string>|undefined} env  a PREPARED model env
+ * @param {string} [modelId]  the catalog id — the wire id when ANTHROPIC_MODEL is unset (#374)
+ * @returns {Record<string,string>|undefined}
+ */
+export function withTierModelEnv(env, modelId) {
+  if (!env || typeof env !== 'object' || !('ANTHROPIC_BASE_URL' in env)) return env;
+  const wire = (typeof env.ANTHROPIC_MODEL === 'string' && env.ANTHROPIC_MODEL.trim())
+    || (typeof modelId === 'string' ? modelId.trim() : '');
+  if (!wire) return env;
+  const out = { ...env };
+  for (const k of TIER_MODEL_ENV_KEYS) if (!(k in out)) out[k] = wire;
+  return out;
+}
+
 // Env keys a model entry may NOT set (§4.4): process fundamentals and worca's
 // own runtime knobs, any of which injection could otherwise subvert (mock
 // mode, the claude binary path, the effort flag name). Everything else —

@@ -439,6 +439,11 @@ class AskTurn extends EventEmitter {
         tools: [], strictMcpConfig: true, settingSources: ['project'],
         disableSlashCommands: true, envScrub: true, envAllowlist: [],
         permissionMode: 'dontAsk',
+        // The chat's own model is the title default (#422) — a chat on a
+        // custom endpoint titles itself there, not on a first-party Haiku.
+        runModel: this.model,
+        onError: ({ model, error }) => console.warn(
+          `[worca-ask] thread ${this.threadId}: title generation failed (model ${model}): ${error?.message || error} — keeping the fallback title`),
       }))
       .then((generated) => {
         // The route stamps NOTHING before the 202 (the header reads "Ask Worca"

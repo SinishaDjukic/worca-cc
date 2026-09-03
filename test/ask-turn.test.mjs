@@ -380,6 +380,8 @@ test('title: fires on the first turn with the R-D + dontAsk option set; rename g
   assert.equal(o.envScrub, true);
   assert.deepEqual(o.envAllowlist, []);
   assert.equal(o.permissionMode, 'dontAsk');
+  assert.equal(o.runModel, 'claude-opus-5', '#422: the chat\'s own model is the title default');
+  assert.equal(typeof o.onError, 'function', '#422: a failed title is reported, not swallowed');
   assert.equal(o.signal, undefined, 'no signal — fires after ANY terminal, incl. a stop that aborted the controller');
   assert.equal(getThread(s.thread.id).title, 'Fable Title');
   assert.deepEqual(outOfTurn, [{ type: 'ask-title', title: 'Fable Title' }]);
