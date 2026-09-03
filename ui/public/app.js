@@ -7758,7 +7758,7 @@ function setFormMsg(text, kind) {
 }
 
 // ---------------------------------------------------------------------------
-// Settings view: the machine-wide Worca CC root folder + the projects root
+// Settings view: the machine-wide Worca root folder + the projects root
 // (§5.1) whose CLAUDE.md / .claude/skills / .mcp.json every pipeline agent sees.
 // ---------------------------------------------------------------------------
 function setSettingsMsg(text, kind) {
