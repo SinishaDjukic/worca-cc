@@ -214,6 +214,31 @@ test('updatePlugin: swap to candidate; GC keeps last 2 versions; atomic swap', a
   assert.equal(noop.updated, false);
 });
 
+test('updatePlugin: version field updates from new manifest', async () => {
+  const { exec } = makeExec();
+  // Bump version in manifest
+  const manifest = JSON.parse(readFileSync(join(origin.root, 'worca-cc-plugin.json'), 'utf8'));
+  manifest.version = '0.2.0';
+  writeFileSync(join(origin.root, 'worca-cc-plugin.json'), JSON.stringify(manifest));
+  await git(origin.root, 'add', '-A'); await git(origin.root, 'commit', '-qm', 'bump to 0.2.0');
+  const shaNew = await git(origin.root, 'rev-parse', 'HEAD');
+
+  const before = readPluginsLock()[NAME];
+  assert.equal(before.version, '0.1.0', 'version starts at 0.1.0');
+
+  const r = await updatePlugin(NAME, { exec });
+  assert.equal(r.updated, true);
+
+  const after = readPluginsLock()[NAME];
+  assert.equal(after.version, '0.2.0', 'lock file version updated to 0.2.0');
+  assert.equal(after.pinnedSha, shaNew, 'pinnedSha updated');
+  assert.match(after.updatedAt, /^\d{4}-\d{2}-\d{2}T/, 'updatedAt set');
+
+  // listInstalledPlugins must return the new version
+  const listed = listInstalledPlugins().find((p) => p.name === NAME);
+  assert.equal(listed.version, '0.2.0', 'listInstalledPlugins returns new version');
+});
+
 test('doctorPlugin: detects missing node_modules when setup.node; heals detection on restore', async () => {
   const cur = pluginCurrentDir(NAME);
   const link = readlinkSync(cur); // absolute on a Windows junction, relative on a POSIX symlink

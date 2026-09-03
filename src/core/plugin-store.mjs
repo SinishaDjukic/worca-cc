@@ -521,7 +521,7 @@ export function listInstalledPlugins() {
       : null;
     return {
       name,
-      version: e.version ?? null,
+      version: manifest ? (manifest.version || sha7(e.pinnedSha)) : (e.version ?? null),
       pinnedSha: e.pinnedSha ?? null,
       repo: e.repo ?? null,
       subdir: e.subdir ?? '',
