@@ -107,8 +107,10 @@ import {
 } from '../src/core/workflows.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
-import { validateGraph, AGENT_TUNABLES } from '../src/shared/graph/validate.mjs';
-import { exportWorkflow, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
+import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
+import {
+  saveGraphWorkflow, importGraphWorkflow, exportGraphJson, workflowFileSlug, nodeDefaultsError,
+} from '../src/core/workflow-share.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
@@ -3348,25 +3350,35 @@ app.post('/api/models/:id/test', async (req, res) => {
 // /api/projects + /api/config delegation pattern: thin handlers, validation and
 // atomic persistence owned by src/core/workflows.mjs + workflow-validator.mjs.
 // ---------------------------------------------------------------------------
-// Validate one node-defaults block against the project-less catalog. Returns an
-// error message, or '' when the block is acceptable. Mirrors setStep's rules so a
-// workflow default can never name something a per-project override could not.
-function nodeDefaultsError(raw, models, where) {
-  if (raw == null) return '';
-  if (typeof raw !== 'object' || Array.isArray(raw)) return `defaults for ${where} must be an object`;
-  const model = typeof raw.model === 'string' ? raw.model.trim() : '';
-  const effort = typeof raw.effort === 'string' ? raw.effort.trim() : '';
-  const entry = model ? models.find((m) => m.id === model) : null;
-  if (model && !entry) return `unknown model "${model}"`;
-  // subagentModel is a fixed alias enum, NOT a catalog id: validated via the
-  // shared helper so a typo is a 400 with the same message every writer uses.
-  const subIssue = subagentModelIssue(raw.subagentModel);
-  if (subIssue) return subIssue;
-  if (!effort) return '';
-  if (!EFFORTS.includes(effort)) return `unknown effort "${effort}"`;
-  if (!entry) return 'select a model before choosing an effort';
-  if (!entry.efforts.includes(effort)) return `model "${model}" does not support effort "${effort}"`;
-  return '';
+// nodeDefaultsError (one node-defaults block vs the project-less catalog) lives
+// in src/core/workflow-share.mjs now, so `worca workflow import` applies the
+// same gate as the routes below.
+
+/** Error -> HTTP for the shared save/import/JSON path (workflow-share.mjs codes). */
+function sendWorkflowShareError(res, err) {
+  const code = err && err.code;
+  const message = err && err.message ? err.message : String(err);
+  if (code === 'BAD_REQUEST' || code === 'UNSUPPORTED') return badRequest(res, message);
+  // The 422 body is the SHARED validator's issue list, by construction: the
+  // composer renders exactly what it would have computed locally, so the server
+  // and the client can never disagree about why a graph is illegal. `summary`
+  // is the one-line V4 fold for surfaces with no issue list (the Import button).
+  if (code === 'INVALID_GRAPH') {
+    return res.status(422).json({
+      error: message, errors: err.errors || [], warnings: err.warnings || [],
+      ...(err.summary ? { summary: err.summary } : {}),
+    });
+  }
+  // C-3: a name that slugs onto the reserved wf_default is a caller error, not
+  // a server fault — 422, the same code the validator's refusal uses. MAJ-5: a
+  // minted id already in use is a 409 carrying that id, so the dialog can offer
+  // rename/overwrite. Both bodies carry NO issues/errors array on purpose:
+  // app.js's saveWorkflow maps `error` straight into the save dialog's message
+  // line, verbatim.
+  if (code === 'RESERVED_NAME') return res.status(422).json({ error: message });
+  if (code === 'ID_TAKEN') return res.status(409).json({ error: message, id: err.id });
+  if (code === 'NOT_FOUND') return res.status(404).json({ error: message });
+  return res.status(500).json({ error: message });
 }
 
 app.get('/api/workflows', async (req, res) => {
@@ -3400,58 +3412,53 @@ app.get('/api/workflows/:id', async (req, res) => {
 });
 
 app.post('/api/workflows', async (req, res) => {
-  const body = req.body || {};
   // The v1 pipeline format is RETIRED: only graphs are accepted (spec §10.2).
   // The whole v1 arm (its steps-borne node defaults, validateWorkflow and
   // writeWorkflow) died with it — nothing reaches the v1 store through the API.
-  if (body.version !== 2) {
-    return badRequest(res, 'v1 pipeline templates are no longer accepted — save a graph (version 2)');
-  }
   // ── v2 graph save ──────────────────────────────────────────────────────────
-  // The 422 body is the SHARED validator's issue list, by construction: the
-  // composer renders exactly what it would have computed locally, so the server
-  // and the client can never disagree about why a graph is illegal.
-  const graph = {
-    id: typeof body.id === 'string' ? body.id : undefined,
-    name: typeof body.name === 'string' ? body.name.trim() : '',
-    domain: typeof body.domain === 'string' ? body.domain : undefined,
-    nodes: Array.isArray(body.nodes) ? body.nodes : [],
-    wires: Array.isArray(body.wires) ? body.wires : [],
-    ...(body.canvas && typeof body.canvas === 'object' ? { canvas: body.canvas } : {}),
-  };
-  if (!graph.name) return badRequest(res, 'name is required');
+  // Catalog check + shared validator + rejectCollision persistence live in
+  // workflow-share.mjs (saveGraphWorkflow): the SAME path the JSON import
+  // route and `worca workflow import` take, so they can never drift. A body
+  // WITHOUT an id mints wf_<slug(name)> — a GUESS that must never silently
+  // replace a pipeline the user can see (MAJ-5 -> 409).
   try {
-    // Catalog validation FIRST: a v2 node's `config` IS its defaults block (§4),
-    // so a value the per-project override could not name must not ride in
-    // through a template save. nodeDefaultsError checks the tunables (model +
-    // effort against the catalog, subagentModel against the alias enum), so
-    // only AGENT_TUNABLES are handed to it — topology keys (awaitAll, arity,
-    // planStoreSeed) never are.
-    const models = await listModels('');
-    for (const n of graph.nodes) {
-      if (!n || n.kind !== 'agent' || !n.config || typeof n.config !== 'object') continue;
-      const picked = Object.fromEntries(
-        AGENT_TUNABLES.filter((k) => k in n.config).map((k) => [k, n.config[k]]));
-      const bad = nodeDefaultsError(picked, models, `node "${n.id}"`);
-      if (bad) return badRequest(res, bad);
-    }
-    const portsFn = registryPortsFn(loadAgentRegistry(AGENTS_DIR));
-    const { errors, warnings } = validateGraph({ ...graph, version: 2 }, portsFn);
-    if (errors.length) return res.status(422).json({ error: 'invalid graph', errors, warnings });
-    // rejectCollision (MAJ-5): the body carried no id, so wf_<slug(name)> is a
-    // GUESS — it must never silently replace a pipeline the user can see.
-    const workflow = await writeGraphWorkflow(graph, { rejectCollision: true });
+    const { workflow, warnings } = await saveGraphWorkflow(req.body || {}, { agentsDir: AGENTS_DIR });
     return res.status(201).json({ workflow, warnings });
   } catch (err) {
-    // C-3: a name that slugs onto the reserved wf_default is a caller error, not
-    // a server fault — 422, the same code the validator's refusal uses. MAJ-5: a
-    // minted id already in use is a 409 carrying that id, so the dialog can offer
-    // rename/overwrite. Both bodies carry NO issues/errors array on purpose:
-    // app.js's saveWorkflow maps `error` straight into the save dialog's message
-    // line, verbatim.
-    if (err && err.code === 'RESERVED_NAME') return res.status(422).json({ error: err.message });
-    if (err && err.code === 'ID_TAKEN') return res.status(409).json({ error: err.message, id: err.id });
-    return res.status(500).json({ error: err && err.message ? err.message : String(err) });
+    return sendWorkflowShareError(res, err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Share a workflow as JSON (issue #421). GET .../json is the unstamped v2 graph
+// of the STORED row (no id/origin/timestamps; `canvas` kept), served as a
+// download; POST /import-json feeds one back through the shared validator,
+// minting an id and suffixing the name (`Name (2)`) on a collision — never
+// overwrite. Registered BEFORE the /:id routes so the segment can never be read
+// as an id. (Not `/import`: test/shared-graph-purity.test.mjs scans ui/public
+// for `import '<spec>'` and a bare `import'` in app.js's fetch URL trips it.)
+// ---------------------------------------------------------------------------
+app.post('/api/workflows/import-json', async (req, res) => {
+  const body = req.body || {};
+  const src = body.workflow && typeof body.workflow === 'object' && !Array.isArray(body.workflow) ? body.workflow : null;
+  if (!src) return badRequest(res, 'workflow (the exported JSON object) is required');
+  try {
+    const r = await importGraphWorkflow(src, {
+      name: typeof body.name === 'string' ? body.name : undefined, agentsDir: AGENTS_DIR,
+    });
+    return res.status(201).json(r);
+  } catch (err) {
+    return sendWorkflowShareError(res, err);
+  }
+});
+
+app.get('/api/workflows/:id/json', async (req, res) => {
+  try {
+    const payload = await exportGraphJson(req.params.id);
+    res.setHeader('Content-Disposition', `attachment; filename="${workflowFileSlug(req.params.id)}.json"`);
+    res.type('application/json').send(JSON.stringify(payload, null, 2) + '\n');
+  } catch (err) {
+    sendWorkflowShareError(res, err);
   }
 });
 
@@ -3502,6 +3509,7 @@ app.delete('/api/workflows/:id', async (req, res) => {
 function workflowExportErrorStatus(code) {
   if (code === 'NOT_FOUND') return 404;
   if (code === 'BAD_REQUEST' || code === 'UNSUPPORTED' || code === 'MISSING_SKILL') return 400;
+  if (code === 'INVALID_GRAPH') return 422;
   if (code === 'CONFLICT' || code === 'CANCELLED') return 409;
   return 500;
 }
@@ -3509,8 +3517,27 @@ function workflowExportErrorStatus(code) {
 app.post('/api/workflows/:id/export', async (req, res) => {
   const body = req.body || {};
   const destination = body.destination;
-  if (destination !== 'global' && destination !== 'project') {
-    return badRequest(res, "destination must be 'global' or 'project'");
+  if (destination !== 'global' && destination !== 'project' && destination !== 'plugin') {
+    return badRequest(res, "destination must be 'global', 'project' or 'plugin'");
+  }
+  // ── destination 'plugin' (#421): a plugin folder the recipient links/reimports.
+  //    Same Plan/Apply shape as the Claude Code export, so the modal renders both.
+  if (destination === 'plugin') {
+    const pluginDir = resolveProjectDir(body.pluginDir);
+    if (!pluginDir) return badRequest(res, 'pluginDir is required for a plugin export');
+    try {
+      const result = await exportWorkflowPlugin({
+        workflowId: req.params.id, targetDir: pluginDir,
+        pluginName: typeof body.pluginName === 'string' ? body.pluginName : undefined,
+        keepVersion: !!body.keepVersion, dryRun: !!body.dryRun,
+      });
+      return res.json(result);
+    } catch (err) {
+      return res.status(workflowExportErrorStatus(err && err.code)).json({
+        error: err && err.message ? err.message : String(err),
+        ...(Array.isArray(err?.errors) ? { errors: err.errors } : {}),
+      });
+    }
   }
   let projectDir;
   if (destination === 'project') {

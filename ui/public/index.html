@@ -975,6 +975,13 @@
           <section class="card gv-saved">
             <div class="saved-head">
               <div><b>Saved pipelines</b><span class="cnt" id="gv-saved-count"></span></div>
+              <!-- Import a workflow another Worca user shared as JSON (#421): the
+                   file goes through POST /api/workflows/import-json — the same validator
+                   the composer's Save uses; a taken name gets a " (2)" suffix. -->
+              <div class="saved-head-actions">
+                <button type="button" id="gv-import-btn" class="btn btn-ghost btn-mini" title="Import a pipeline shared as JSON">Import JSON</button>
+                <input id="gv-import-file" type="file" accept=".json,application/json" hidden />
+              </div>
             </div>
             <div class="saved-list" id="gv-saved-list"></div>
             <div class="gv-archived" id="gv-archived" hidden></div>
@@ -1315,29 +1322,41 @@
     <div id="export-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="export-title">
       <div class="card">
         <div class="card-head">
-          <h2 id="export-title">Export to Claude Code</h2>
+          <h2 id="export-title">Export pipeline</h2>
         </div>
         <p id="export-subtitle" class="confirm-message"></p>
         <div class="export-field">
           <span class="export-label">Destination</span>
+          <!-- global/project = a runnable Claude Code skill (#403); plugin = a Worca
+               plugin folder to share with other Worca users (#421). -->
           <div id="export-dest" class="seg" role="group" aria-label="Export destination">
             <button type="button" class="seg-btn on" data-dest="global">Global (~/.claude)</button>
             <button type="button" class="seg-btn" data-dest="project">Project folder</button>
+            <button type="button" class="seg-btn" data-dest="plugin">Plugin folder</button>
           </div>
         </div>
         <div id="export-folder-field" class="export-field hidden">
-          <span class="export-label">Folder</span>
+          <span class="export-label" id="export-folder-label">Folder</span>
           <div class="export-folder-row">
             <input type="text" id="export-folder" class="input" placeholder="/path/to/repo" />
             <button type="button" id="export-browse" class="btn btn-ghost btn-mini">Browse…</button>
           </div>
         </div>
-        <div class="export-field">
+        <div id="export-plugin-field" class="export-field hidden">
+          <span class="export-label">Plugin name</span>
+          <input type="text" id="export-plugin-name" class="input" placeholder="(defaults to the folder name, or the existing manifest's name)" />
+          <label class="confirm-checkbox">
+            <input type="checkbox" id="export-keep-version" />
+            <span>Keep the manifest version (no patch bump on update)</span>
+          </label>
+          <span class="hint">Bundles the pipeline, your own agents it uses and the skills they need. Built-in agents are not copied. The recipient runs <code>worca plugin link &lt;folder&gt;</code>.</span>
+        </div>
+        <div class="export-field" id="export-slug-field">
           <span class="export-label">Slug</span>
           <input type="text" id="export-slug" class="input" placeholder="(defaults to the workflow name)" />
           <span id="export-slug-preview" class="hint"></span>
         </div>
-        <label class="confirm-checkbox">
+        <label class="confirm-checkbox" id="export-agents-field">
           <input type="checkbox" id="export-include-agents" checked />
           <span>Include referenced agents (recommended)</span>
         </label>

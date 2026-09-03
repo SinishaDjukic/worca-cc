@@ -90,6 +90,15 @@ and durations, the clarify Q&A, agent transcripts, and logs:
   runs out). Flow cards — **Task** (the run's request), **End** (the result),
   **AND**, **OR**, **Combine** — express joins, choices and merges without any
   code. Saved pipelines appear in the New Pipeline picker.
+- **Share a pipeline** — every saved pipeline can leave Worca three ways.
+  *Export to Claude Code* turns it into a runnable `/command` skill under
+  `.claude/` so it runs without Worca. *Download JSON* / *Import JSON* pass a
+  pipeline to another Worca user as a single file (a taken name gets a
+  ` (2)` suffix; nothing is ever overwritten). *Export to a plugin folder*
+  bundles the pipeline with your own agents it uses and the skills they need,
+  so the recipient runs `worca plugin link <folder>` and updates later with
+  `worca plugin reimport`. Built-in agents are never copied — a plugin
+  pipeline may reference them directly.
 
 ![Workflow Composer — drag agents into steps, groups, and feedback loops](docs/screenshots/composer.png)
 
@@ -214,10 +223,15 @@ worca resume <pipelineId>
 
 # offline demo — full pipeline, no tokens
 worca --project /path/to/your/project --prompt "demo task" --mock --yes
+
+# share a saved pipeline: as JSON, or as a plugin folder bundling your agents + skills
+worca workflow export wf_my-flow --format json --out my-flow.json
+worca workflow import my-flow.json
+worca workflow export wf_my-flow --format plugin --target ./my-flow-plugin
 ```
 
 Run `worca --help` for all subcommands (projects, plugins, marketplaces,
-config, doctor) and flags.
+workflows, config, doctor) and flags.
 
 Exit codes, for scripts and CI wrappers: `0` the run finished (or an
 interactive run paused and you can resume it); `1` a hard error, a stop, or an

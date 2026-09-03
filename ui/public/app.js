@@ -1682,6 +1682,18 @@ const gvApi = {
     const d = await safeJson(res);
     return { ok: false, status: res.status, error: (d && d.error) || `delete failed (${res.status})` };
   },
+  // Import a JSON export (#421). 422 carries the shared validator's issues plus
+  // `summary` (the one-line "agents you do not have" fold) when that is the cause.
+  importWorkflow: async (workflow) => {
+    const res = await fetch('/api/workflows/import-json', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workflow }),
+    });
+    const d = await safeJson(res);
+    if (!res.ok) {
+      return { ok: false, status: res.status, error: (d && d.error) || `import failed (${res.status})`, summary: d && d.summary, issues: d && d.errors };
+    }
+    return { ok: true, workflow: d.workflow, renamed: !!d.renamed, requestedName: d.requestedName, warnings: d.warnings || [] };
+  },
 };
 
 function gvEls() {
@@ -1833,10 +1845,18 @@ async function gvRefreshSaved() {
       // Export to Claude Code — available for every v2 row incl. the built-in (you can
       // export the default). Opens the plan/apply modal; the server resolves the graph.
       const exportBtn = document.createElement('button');
-      exportBtn.type = 'button'; exportBtn.className = 'pl-export'; exportBtn.title = 'Export to Claude Code';
+      exportBtn.type = 'button'; exportBtn.className = 'pl-export'; exportBtn.title = 'Export as a Claude Code skill or a Worca plugin';
       exportBtn.textContent = '⇪';
       exportBtn.addEventListener('click', () => openExportModal({ id: wf.id, name: wf.name || wf.id }));
       row.appendChild(exportBtn);
+      // Download as JSON (#421): the stored v2 graph, unstamped, for another Worca
+      // user to Import. A plain download link — the server sets Content-Disposition.
+      const jsonBtn = document.createElement('a');
+      jsonBtn.className = 'pl-export pl-json'; jsonBtn.title = 'Download as JSON (share with another Worca user)';
+      jsonBtn.textContent = '{ }';
+      jsonBtn.href = `/api/workflows/${encodeURIComponent(wf.id)}/json`;
+      jsonBtn.setAttribute('download', '');
+      row.appendChild(jsonBtn);
       // No × on the built-in: DELETE /api/workflows/wf_default always answers
       // 400 (ui/server.mjs), so the button could only ever fail. Open stays —
       // the built-in is meant to be opened and saved as a copy.
@@ -16433,9 +16453,10 @@ function openExportModal(item) {
   exportModalState.item = item;
   exportModalState.destination = 'global';
   exportModalState.conflicts = [];
-  document.getElementById('export-subtitle').textContent = `Export "${item.name}" as a runnable /command skill.`;
   document.getElementById('export-slug').value = '';
   document.getElementById('export-folder').value = '';
+  document.getElementById('export-plugin-name').value = '';
+  document.getElementById('export-keep-version').checked = false;
   document.getElementById('export-include-agents').checked = true;
   document.getElementById('export-msg').textContent = '';
   const planEl = document.getElementById('export-plan');
@@ -16451,10 +16472,21 @@ function closeExportModal() {
 }
 function exportSyncDest() {
   const dest = exportModalState.destination;
+  const plugin = dest === 'plugin';
   for (const b of document.querySelectorAll('#export-dest .seg-btn')) {
     b.classList.toggle('on', b.dataset.dest === dest);
   }
-  document.getElementById('export-folder-field').classList.toggle('hidden', dest !== 'project');
+  // global/project share the skill fields; plugin swaps them for the plugin ones.
+  document.getElementById('export-folder-field').classList.toggle('hidden', dest === 'global');
+  document.getElementById('export-folder-label').textContent = plugin ? 'Plugin folder' : 'Folder';
+  document.getElementById('export-folder').placeholder = plugin ? '/path/to/my-plugin' : '/path/to/repo';
+  document.getElementById('export-plugin-field').classList.toggle('hidden', !plugin);
+  document.getElementById('export-slug-field').classList.toggle('hidden', plugin);
+  document.getElementById('export-agents-field').classList.toggle('hidden', plugin);
+  const name = exportModalState.item ? exportModalState.item.name : '';
+  document.getElementById('export-subtitle').textContent = plugin
+    ? `Export "${name}" as a Worca plugin folder to share with other Worca users.`
+    : `Export "${name}" as a runnable /command skill.`;
 }
 function exportSyncSlugPreview() {
   const raw = document.getElementById('export-slug').value;
@@ -16464,6 +16496,16 @@ function exportSyncSlugPreview() {
 }
 function exportBuildOpts() {
   const dest = exportModalState.destination;
+  if (dest === 'plugin') {
+    const opts = {
+      destination: 'plugin',
+      pluginDir: document.getElementById('export-folder').value.trim(),
+      keepVersion: document.getElementById('export-keep-version').checked,
+    };
+    const pluginName = document.getElementById('export-plugin-name').value.trim();
+    if (pluginName) opts.pluginName = pluginName;
+    return opts;
+  }
   const rawSlug = document.getElementById('export-slug').value.trim();
   const opts = {
     destination: dest,
@@ -16486,6 +16528,9 @@ function exportRenderPlan(plan) {
   for (const p of plan.created) line('create', p);
   for (const p of plan.updated) line('update', p);
   for (const p of plan.noop) line('no-op', p);
+  // A plugin plan's `skipped` entries are {path, reason} (a Worca-shipped skill
+  // that is not bundled); the skill export's are plain paths.
+  for (const s of plan.skipped || []) line('skip', typeof s === 'string' ? s : `${s.path} — ${s.reason}`);
   for (const w of plan.warnings || []) {
     const row = document.createElement('div');
     row.className = 'export-row';
@@ -16549,6 +16594,8 @@ function bindExportModal() {
   document.getElementById('export-slug').addEventListener('input', () => { exportSyncSlugPreview(); exportInvalidatePlan(); });
   document.getElementById('export-include-agents').addEventListener('change', exportInvalidatePlan);
   document.getElementById('export-folder').addEventListener('input', exportInvalidatePlan);
+  document.getElementById('export-plugin-name').addEventListener('input', exportInvalidatePlan);
+  document.getElementById('export-keep-version').addEventListener('change', exportInvalidatePlan);
   document.getElementById('export-browse').addEventListener('click', () => {
     const seed = document.getElementById('export-folder').value.trim();
     openFolderBrowser(seed, (p) => { document.getElementById('export-folder').value = p; exportInvalidatePlan(); });
@@ -16580,7 +16627,17 @@ function bindExportModal() {
         msg.textContent = `${unwritten.length} unresolved conflict(s) were left unwritten — resolve below and Apply again.`;
         return;
       }
+      // A plugin folder that does not validate stays open: the recipient's
+      // `worca plugin link` would refuse it, so the problems are the outcome.
+      if (applied.validation && !applied.validation.ok) {
+        exportRenderPlan(applied);
+        const problems = applied.validation.problems.filter((p) => p.level === 'error').map((p) => p.message);
+        appendLog({ source: 'ui', level: 'error', text: `plugin export of ${exportModalState.item.name} does not validate: ${problems.join('; ')}` });
+        msg.textContent = `Written, but the plugin folder does not validate: ${problems.join('; ')}`;
+        return;
+      }
       appendLog({ source: 'ui', level: 'info', text: `exported ${exportModalState.item.name}: ${applied.written.length} written, ${applied.skipped.length} skipped` });
+      if (applied.validation) setGvSavedMsg(`Plugin "${applied.name}" v${applied.version} written to ${applied.dir} — share the folder; the recipient runs: worca plugin link`, 'ok');
       closeExportModal();
     } catch (err) {
       exportInvalidatePlan();
@@ -16591,3 +16648,32 @@ function bindExportModal() {
   modal.addEventListener('click', (e) => { if (e.target === modal) closeExportModal(); });
 }
 bindExportModal();
+
+// Import JSON (#421) — the saved list's "Import JSON" button. Parses the file in
+// the browser (so a non-JSON file says so without a round trip) and hands the
+// object to POST /api/workflows/import-json; the outcome lands on the list's message
+// line, like a refused delete.
+function bindGvImport() {
+  const btn = document.getElementById('gv-import-btn');
+  const input = document.getElementById('gv-import-file');
+  if (!btn || !input) return;
+  btn.addEventListener('click', () => { input.value = ''; input.click(); });
+  input.addEventListener('change', async () => {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    let obj;
+    try { obj = JSON.parse(await f.text()); }
+    catch (e) { setGvSavedMsg(`${f.name} is not valid JSON: ${e.message}`, 'err'); return; }
+    const r = await gvApi.importWorkflow(obj);
+    if (!r.ok) {
+      const issues = (r.issues || []).slice(0, 5).map((i) => `${i.code}: ${i.message}`).join(' · ');
+      setGvSavedMsg(r.summary || (issues ? `${r.error} — ${issues}` : r.error), 'err');
+      return;
+    }
+    setGvSavedMsg(r.renamed
+      ? `Imported as "${r.workflow.name}" — "${r.requestedName}" was already taken.`
+      : `Imported "${r.workflow.name}".`, 'ok');
+    gvRefreshSaved();
+  });
+}
+bindGvImport();

@@ -225,7 +225,7 @@ Subcommands:
   config [get|set|unset]      Budget & cost-limit settings
   ui [start|stop|restart|status]
                               Run the web UI (default http://localhost:4317). See: worca ui help
-  workflow <cmd> [...]        Export a workflow as a Claude Code skill: list|export. See: worca workflow help
+  workflow <cmd> [...]        Export a workflow (Claude Code skill, JSON, or plugin) / import JSON: list|export|import. See: worca workflow help
   help                        Print this help (same as --help).
   version                     Print the version (same as --version).
 
@@ -1204,21 +1204,41 @@ working, including updates (install provenance lives in plugins.lock.json).
 Exit codes: 0 ok, 1 failure, 2 usage/validation errors.
 `;
 
-const WORKFLOW_HELP = `worca workflow — export a saved Composer workflow as a runnable Claude Code skill
+const WORKFLOW_HELP = `worca workflow — export a saved Composer workflow (as a Claude Code skill, as
+shareable JSON, or as a Worca plugin) and import one shared as JSON
 
 Usage:
   worca workflow list                                List workflows (id, name, domain)
-  worca workflow export <id> [options]               Export a workflow to <dest>/.claude/
+  worca workflow export <id> [options]               Export a workflow (see --format)
+  worca workflow import <file> [--name <name>]       Import a JSON export into your library ('-' = stdin)
 
-Export options:
+Export formats (--format):
+  claude (default)         A runnable Claude Code skill tree under <dest>/.claude/
+  json                     The shareable v2 graph, to stdout (or --out <file>)
+  plugin                   A Worca plugin folder (--target <dir>) bundling the workflow,
+                           your own agents it uses and the skills they require; the
+                           recipient runs: worca plugin link <dir>
+
+Options (claude):
   --global                 Export to the home dir (~/.claude), not a project
   --target <dir>           Export into <dir>/.claude (default: cwd)
   --slug <name>            Skill slug (default: slugified workflow name)
   --dry-run                Show the classification (create/update/no-op/conflict); write nothing
   --on-conflict <mode>     skip (default) | overwrite | namespace conflicting files
+Options (json):
+  --out <file>             Write to <file> instead of stdout
+Options (plugin):
+  --target <dir>           The plugin folder (created, or updated in place)
+  --name <plugin>          Plugin name (default: an existing manifest's name, else the folder name)
+  --keep-version           Do not patch-bump the manifest version on an update
+  --dry-run                Show the classification; write nothing
+
+Import: the id is minted from the name; a name already in use gets a " (2)" suffix —
+nothing is ever overwritten. A workflow that needs agents you do not have is refused;
+ask its author for the plugin export instead.
 
 Export always prints the plan first, then applies (unless --dry-run). A re-export
-of an unchanged workflow is an all-no-op. Exit codes: 0 ok, 1 failure, 2 usage errors.
+of an unchanged workflow is an all-no-op. Exit codes: 0 ok, 1 failure, 2 usage/validation errors.
 `;
 
 /** Tiny per-verb arg parser: positionals plus declared --value / --bool flags. */
@@ -1238,7 +1258,7 @@ function pluginArgs(argv, valueFlags = [], boolFlags = []) {
       out[a.slice(2)] = v;
     } else if (boolFlags.includes(a)) {
       out[a.slice(2)] = true;
-    } else if (a.startsWith('-')) {
+    } else if (a.startsWith('-') && a !== '-') {                 // a lone '-' is the stdin positional
       fail(`Unknown flag: ${a}`);
     } else {
       out._.push(a);
@@ -1323,9 +1343,8 @@ async function pluginInit(rest) {
   for (const part of withParts) {
     if (!INIT_PARTS.includes(part)) fail(`unknown --with part "${part}" (known: ${INIT_PARTS.join(', ')})`);
   }
-  if (withParts.includes('workflows') && !withParts.includes('agents')) {
-    fail('--with workflows requires agents (templates may only reference the plugin\'s own agent keys)');
-  }
+  // `--with workflows` no longer requires `agents`: a plugin template may reference
+  // built-in agents (#421), so a workflow-only plugin scaffolds a built-in chain.
   const target = resolve(process.cwd(), a.dir || name);
   const { mkdir, writeFile, chmod, readdir } = await import('node:fs/promises');
   try {
@@ -1434,19 +1453,24 @@ async function pluginInit(rest) {
   }
   if (withParts.includes('workflows')) {
     // A v2 graph: the Task and End cards are mandatory (V20/V21) and every input
-    // takes exactly one wire (V7). Ports come from the sidecar above.
+    // takes exactly one wire (V7). With agents, ports come from the sidecar above;
+    // without, the chain runs the built-in planner (a plugin template may
+    // reference built-ins — they are on every host).
+    const withAgent = withParts.includes('agents');
+    const key = withAgent ? agentKey : 'planner';
+    const outPort = withAgent ? 'notes' : 'plan';
     files.set('workflows/example-flow.json', JSON.stringify({
       name: `${name} example flow`,
       version: 2,
       domain: 'general',
       nodes: [
         { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
-        { id: 'n_helper', kind: 'agent', key: agentKey, x: 320, y: 200, config: {} },
+        { id: 'n_helper', kind: 'agent', key, x: 320, y: 200, config: {} },
         { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
       ],
       wires: [
         { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_helper', port: 'task' } },
-        { id: 'w2', from: { node: 'n_helper', port: 'notes' }, to: { node: 'n_end', port: 'result' } },
+        { id: 'w2', from: { node: 'n_helper', port: outPort }, to: { node: 'n_end', port: 'result' } },
       ],
     }, null, 2) + '\n');
   }
@@ -1862,6 +1886,8 @@ async function cmdWorkflow(argv) {
   if (!verb || verb === 'help') { process.stdout.write(WORKFLOW_HELP); return 0; }
   const wf = await import('../core/workflows.mjs');
   const xp = await import('../core/workflow-export.mjs');
+  const share = await import('../core/workflow-share.mjs');
+  const { formatIssue } = await import('../shared/graph/validate.mjs');
   try {
     switch (verb) {
       case 'list': {
@@ -1871,10 +1897,80 @@ async function cmdWorkflow(argv) {
         for (const w of items) out(`${w.id}\t${w.name}\t${(w.domain || 'general')}`);
         return 0;
       }
+      case 'import': {
+        const a = pluginArgs(rest, ['--name'], []);
+        const file = a._[0];
+        if (!file) fail('Usage: worca workflow import <file> [--name <name>]');
+        const { readFile } = await import('node:fs/promises');
+        let text;
+        try {
+          text = file === '-'
+            ? await new Promise((res, rej) => { let s = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (c) => (s += c)); process.stdin.on('end', () => res(s)); process.stdin.on('error', rej); })
+            : await readFile(resolve(process.cwd(), file), 'utf8');
+        } catch (e) { process.stderr.write(`worca workflow import: cannot read ${file}: ${e.message}\n`); return 1; }
+        let obj;
+        try { obj = JSON.parse(text); } catch (e) { process.stderr.write(`worca workflow import: ${file} is not valid JSON (${e.message})\n`); return 2; }
+        try {
+          const r = await share.importGraphWorkflow(obj, { name: a.name });
+          out(`imported\t${r.workflow.id}\t${r.workflow.name}`);
+          if (r.renamed) out(c('yellow', `renamed: "${r.requestedName}" was already taken — saved as "${r.workflow.name}"`));
+          for (const w of r.warnings || []) out(`${c('yellow', 'warn')}\t${formatIssue(w)}`);
+          return 0;
+        } catch (e) {
+          if (e && e.code === 'INVALID_GRAPH') {
+            process.stderr.write(`worca workflow import: ${e.summary || 'invalid graph'}\n`);
+            for (const issue of e.errors || []) process.stderr.write(`  - ${formatIssue(issue)}\n`);
+            return 2;
+          }
+          if (e && (e.code === 'BAD_REQUEST' || e.code === 'RESERVED_NAME')) { process.stderr.write(`worca workflow import: ${e.message}\n`); return 2; }
+          throw e;
+        }
+      }
       case 'export': {
-        const a = pluginArgs(rest, ['--target', '--slug', '--on-conflict'], ['--global', '--dry-run']);
+        const a = pluginArgs(rest, ['--target', '--slug', '--on-conflict', '--format', '--out', '--name'], ['--global', '--dry-run', '--keep-version']);
         const id = a._[0];
-        if (!id) fail('Usage: worca workflow export <id> [--global | --target <dir>] [--slug <name>] [--dry-run] [--on-conflict=skip|overwrite|namespace]');
+        if (!id) fail('Usage: worca workflow export <id> [--format claude|json|plugin] [--global | --target <dir>] [--slug <name>] [--out <file>] [--name <plugin>] [--keep-version] [--dry-run] [--on-conflict=skip|overwrite|namespace]');
+        const format = a.format || 'claude';
+        if (!['claude', 'json', 'plugin'].includes(format)) fail(`--format must be claude|json|plugin (got ${format})`);
+
+        if (format === 'json') {
+          const payload = await share.exportGraphJson(id);
+          const text = JSON.stringify(payload, null, 2) + '\n';
+          if (a.out) {
+            const { writeFile } = await import('node:fs/promises');
+            const dest = resolve(process.cwd(), a.out);
+            await writeFile(dest, text, 'utf8');
+            out(`${c('green', 'wrote')}\t${dest}`);
+          } else {
+            process.stdout.write(text);
+          }
+          return 0;
+        }
+
+        if (format === 'plugin') {
+          if (!a.target) fail('--format plugin requires --target <dir> (the plugin folder)');
+          if (a.global) fail('--global does not apply to --format plugin');
+          const r = await xp.exportWorkflowPlugin({
+            workflowId: id, targetDir: resolve(process.cwd(), a.target), pluginName: a.name,
+            keepVersion: !!a['keep-version'], dryRun: !!a['dry-run'],
+          });
+          for (const p of r.created) out(`${c('green', 'create')}\t${p}`);
+          for (const p of r.updated) out(`${c('cyan', 'update')}\t${p}`);
+          for (const p of r.noop) out(`${c('gray', 'no-op')}\t${p}`);
+          for (const s of r.skipped) out(`${c('gray', 'skip')}\t${s.path}\t(${s.reason})`);
+          for (const w of r.warnings || []) out(`${c('yellow', 'warn')}\t${w}`);
+          for (const p of r.written) out(`${c('green', 'wrote')}\t${p}`);
+          if (r.validation && !r.validation.ok) {
+            out(c('yellow', `\nthe plugin folder does not validate — fix the errors above before sharing it`));
+            return 1;
+          }
+          if (!a['dry-run']) {
+            out(`\nplugin "${r.name}" v${r.version} at ${r.dir}`);
+            out(`share the folder; the recipient runs: worca plugin link ${r.dir}`);
+          }
+          return 0;
+        }
+
         if (a.global && a.target) fail('--global and --target are mutually exclusive');
         const onConflict = a['on-conflict'] || 'skip';
         if (!xp.ON_CONFLICT_MODES.includes(onConflict)) fail(`--on-conflict must be ${xp.ON_CONFLICT_MODES.join('|')} (got ${onConflict})`);

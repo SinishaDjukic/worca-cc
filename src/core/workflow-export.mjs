@@ -14,9 +14,13 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir, cp, readdir, rename } from 'node:fs/promises';
-import { join, resolve, dirname, sep } from 'node:path';
+import { join, resolve, dirname, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readWorkflow, resolveGraph } from './workflows.mjs';
+import { exportGraphJson, workflowFileSlug, summarizeUnknownAgents } from './workflow-share.mjs';
+import { validatePluginDir, PLUGIN_NAME_RE } from './plugin-manifest.mjs';
+import { registryPortsFn } from './graph/registry-ports.mjs';
+import { validateGraph, formatIssue } from '../shared/graph/validate.mjs';
 import { EFFORTS as EFFORT_LIST } from './model-env.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
 import { slugify } from './artifacts.mjs';
@@ -668,7 +672,18 @@ function makeWorkflowJson(set) {
 
 // ── Step 6: skill-dependency resolution — resolve-and-fill ───────────────────
 
-function resolveDepSkills(registry, agentKeys, dest, destination, projectDir, repoRootOverride) {
+/**
+ * Resolve-and-fill for the skills the given agents require. Exported for the
+ * plugin exporter (#421), which passes `layout:'plugin'` (the "already at the
+ * destination" probe becomes `<dest>/skills/<name>/SKILL.md`) and
+ * `skipSources:['bundle']` (a Worca-shipped skill is present on every host, so
+ * it is reported as skipped rather than copied — the agent analogue is "built-ins
+ * are never bundled"). Default options reproduce the Claude Code export exactly.
+ * @returns {Array<{skill, requiredBy, resolvedFrom, srcDir, fill:boolean, skipped?:true}>}
+ */
+export function resolveDepSkills(registry, agentKeys, dest, destination, projectDir, repoRootOverride, opts = {}) {
+  const layout = opts.layout === 'plugin' ? 'plugin' : 'claude';
+  const skipSources = new Set(Array.isArray(opts.skipSources) ? opts.skipSources : []);
   const required = collectRequiredSkills(registry, agentKeys);   // [{skill, requiredBy, origin?}]
   // fileURLToPath (not URL.pathname) — correct on Windows and for paths with spaces.
   const repoRoot = repoRootOverride || resolve(fileURLToPath(new URL('../../', import.meta.url)));
@@ -690,13 +705,19 @@ function resolveDepSkills(registry, agentKeys, dest, destination, projectDir, re
     // rather than via resolveSkill.source, because resolveSkill's chain probes the
     // source-repo `bundle` (repoRoot/skills) BEFORE the destination scopes — a bundle
     // hit is a SOURCE to copy from, not proof the dep is present at the destination.
-    const destSkillMd = join(dest, '.claude', 'skills', r.skill, 'SKILL.md');
+    const destSkillMd = layout === 'plugin'
+      ? join(dest, 'skills', r.skill, 'SKILL.md')
+      : join(dest, '.claude', 'skills', r.skill, 'SKILL.md');
     if (existsSync(destSkillMd)) {
       out.push({ ...r, resolvedFrom: 'destination', srcDir: dirname(destSkillMd), fill: false });
       continue;
     }
     // Not at the destination → locate a source (bundle/global/plugin/owner) to fill from.
     const hit = resolveSkill(r.skill, { ...ctx, origin: r.origin ?? null }); // {source, path, searched}
+    if (hit.source && skipSources.has(hit.source)) {
+      out.push({ ...r, resolvedFrom: hit.source, srcDir: hit.path, fill: false, skipped: true });
+      continue;
+    }
     if (hit.source) { out.push({ ...r, resolvedFrom: hit.source, srcDir: hit.path, fill: true }); continue; }
     missing.push({ ...r, searched: hit.searched });
   }
@@ -966,4 +987,183 @@ async function findOrphans(set, nameFor) {
     }
   }
   return orphans;
+}
+
+// ── Export to plugin (#421) ──────────────────────────────────────────────────
+// "Share this workflow with another Worca user", the durable way: a plugin
+// folder the recipient `worca plugin link`s (or publishes) and updates with
+// `worca plugin reimport`. Bundles the workflow (unstamped v2 graph), every USER
+// agent it references (built-ins are on every host; another plugin's agent is
+// refused — bundling it would create two owners) and every non-bundle skill
+// those agents require. Deterministic: a re-export of an unchanged workflow with
+// --keep-version is an all-no-op.
+
+const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)$/;
+
+/** Patch-bump a plain x.y.z; anything else yields null (caller warns). */
+function bumpPatch(version) {
+  const m = SEMVER_RE.exec(String(version || ''));
+  return m ? `${m[1]}.${m[2]}.${Number(m[3]) + 1}` : null;
+}
+
+async function readTextOrNull(path) {
+  try { return await readFile(path, 'utf8'); } catch { return null; }
+}
+
+/**
+ * Plan (dryRun) or write a plugin folder for one saved v2 workflow.
+ * @param {{workflowId:string, targetDir:string, pluginName?:string, keepVersion?:boolean,
+ *          dryRun?:boolean, repoRoot?:string}} opts
+ * @returns {Promise<{dir, name, slug, version, created:string[], updated:string[], noop:string[],
+ *   skipped:Array<{path:string, reason:string}>, conflicts:[], warnings:string[], orphans:[],
+ *   written:string[], validation:{ok:boolean, problems:Array}|null}>}
+ * Error codes: BAD_REQUEST | NOT_FOUND | UNSUPPORTED | INVALID_GRAPH | CONFLICT | MISSING_SKILL
+ */
+export async function exportWorkflowPlugin({ workflowId, targetDir, pluginName, keepVersion = false, dryRun = false, repoRoot } = {}) {
+  if (!workflowId || typeof workflowId !== 'string') throw err('workflowId is required', 'BAD_REQUEST');
+  if (!targetDir || typeof targetDir !== 'string' || !targetDir.trim()) throw err('a target plugin folder is required', 'BAD_REQUEST');
+  const dir = resolve(targetDir);
+  const tpl = await readWorkflow(workflowId);
+  if (!tpl) throw err(`workflow not found: ${workflowId}`, 'NOT_FOUND');
+  const payload = await exportGraphJson(workflowId);            // UNSUPPORTED for a v1 row
+  const slug = workflowFileSlug(tpl.id);
+  const warnings = [];
+
+  // ── Manifest identity: an explicit --name must match an existing manifest; absent
+  //    a --name, an existing manifest's name is adopted, else the folder's basename.
+  const manifestPath = join(dir, 'worca-cc-plugin.json');
+  let existing = null;
+  const existingText = await readTextOrNull(manifestPath);
+  if (existingText !== null) {
+    try { existing = JSON.parse(existingText); } catch (e) { throw err(`${manifestPath}: invalid JSON (${e.message})`, 'BAD_REQUEST'); }
+    if (!existing || typeof existing !== 'object' || Array.isArray(existing)) throw err(`${manifestPath}: not a JSON object`, 'BAD_REQUEST');
+  }
+  const askedName = typeof pluginName === 'string' && pluginName.trim() ? pluginName.trim() : '';
+  const name = askedName || (existing && typeof existing.name === 'string' && existing.name.trim()) || basename(dir);
+  if (!PLUGIN_NAME_RE.test(name) || name.length > 64) {
+    throw err(`plugin name must be kebab-case (got "${name}") — pass a --name`, 'BAD_REQUEST');
+  }
+  if (existing && askedName && existing.name !== askedName) {
+    throw err(`${dir} is plugin "${existing.name}" — pass --name ${existing.name} to update it, or choose another folder`, 'CONFLICT');
+  }
+
+  // ── The stored graph must be runnable HERE before it is shared: a stranded
+  //    key (deleted agent) would only surface at the recipient's link.
+  const registry = loadAgentRegistry();
+  const { errors } = validateGraph({ ...payload, id: tpl.id }, registryPortsFn(registry));
+  if (errors.length) {
+    const summary = summarizeUnknownAgents(errors);
+    throw Object.assign(
+      err(`workflow ${tpl.id} cannot be exported: ${summary || errors.map(formatIssue).join('; ')}`, 'INVALID_GRAPH'),
+      { errors, summary });
+  }
+
+  // ── Agents: user-owned are bundled, built-ins never, another plugin's refused.
+  const agentNodes = payload.nodes.filter((n) => n && n.kind === 'agent' && n.key);
+  const keys = distinctAgents([agentNodes]);
+  const userAgents = [];
+  const foreign = [];
+  const builtins = [];
+  for (const key of keys) {
+    const meta = registry[key];
+    if (!meta) continue;                                          // validateGraph refused above
+    const origin = String(meta.origin || '');
+    if (origin === 'builtin') builtins.push(key);
+    else if (origin.startsWith('plugin:')) foreign.push({ key, plugin: origin.slice('plugin:'.length) });
+    else userAgents.push({ key, meta });
+  }
+  if (foreign.length) {
+    const list = foreign.map((f) => `"${f.key}" (owned by plugin "${f.plugin}")`).join(', ');
+    throw err(`cannot bundle ${list} — a shared workflow bundles only your own agents; ` +
+      'the recipient installs that plugin alongside, or you duplicate the agent under your own name', 'UNSUPPORTED');
+  }
+  if (builtins.length) warnings.push(`built-in agent(s) not bundled (present on every Worca host): ${builtins.join(', ')}`);
+
+  // ── Skills the bundled agents require: filled from global/project/other-plugin
+  //    sources; a Worca-shipped (bundle) skill is skipped, like a built-in agent.
+  const depSkills = resolveDepSkills(registry, userAgents.map((a) => a.key), dir, 'plugin', null, repoRoot,
+    { layout: 'plugin', skipSources: ['bundle'] });
+
+  // ── Intended files ──
+  const targets = [];                                             // {path, text?, copyFrom?}
+  const skipped = [];
+  const noop = [];
+  targets.push({ path: join(dir, 'workflows', `${slug}.json`), text: JSON.stringify(payload, null, 2) + '\n' });
+  for (const { key, meta } of userAgents) {
+    const mdPath = meta.agentPath || null;
+    if (!mdPath || !existsSync(mdPath)) throw err(`agent source not found for "${key}"`, 'NOT_FOUND');
+    const sidecarPath = join(dirname(mdPath), `${key}.meta.json`);
+    if (!existsSync(sidecarPath)) throw err(`agent sidecar not found for "${key}" (${sidecarPath})`, 'NOT_FOUND');
+    // Byte-identical copies: the plugin ships exactly what the exporter runs.
+    targets.push({ path: join(dir, 'agents', `${key}.md`), text: await readFile(mdPath, 'utf8') });
+    targets.push({ path: join(dir, 'agents', `${key}.meta.json`), text: await readFile(sidecarPath, 'utf8') });
+  }
+  for (const s of depSkills) {
+    const skillMd = join(dir, 'skills', s.skill, 'SKILL.md');
+    if (s.skipped) skipped.push({ path: skillMd, reason: `skill "${s.skill}" ships with Worca (${s.resolvedFrom}) — not bundled` });
+    else if (!s.fill) noop.push(skillMd);                          // already in the folder: never touched
+    else targets.push({ path: skillMd, copyFrom: join(s.srcDir, 'SKILL.md') });
+  }
+
+  // ── Classify everything but the manifest (its version bump depends on this).
+  const created = [];
+  const updated = [];
+  for (const t of targets) {
+    if (t.copyFrom) { t.action = 'create'; created.push(t.path); continue; }   // fill:true == absent
+    const cur = await readTextOrNull(t.path);
+    if (cur === null) { t.action = 'create'; created.push(t.path); }
+    else if (cur === t.text) { t.action = 'noop'; noop.push(t.path); }
+    else { t.action = 'update'; updated.push(t.path); }
+  }
+
+  // ── Manifest: adopt what is there, record the export, bump the patch version
+  //    when this export changes a file (unless keepVersion).
+  const changed = created.length + updated.length > 0;
+  const manifest = existing ? { ...existing } : {
+    name, version: '0.1.0',
+    description: `Workflows shared from Worca — ${tpl.name}`,
+    engines: { 'worca-cc-api': '>=3 <4' },
+  };
+  if (!manifest.name) manifest.name = name;
+  let version = typeof manifest.version === 'string' ? manifest.version : '';
+  if (existing && changed && !keepVersion) {
+    const next = bumpPatch(version);
+    if (next) version = next;
+    else warnings.push(`manifest version "${version}" is not plain x.y.z — left unchanged (bump it yourself before publishing)`);
+  }
+  if (version) manifest.version = version;
+  const prevWorca = existing && existing.worca && typeof existing.worca === 'object' && !Array.isArray(existing.worca) ? existing.worca : {};
+  const prevExports = prevWorca.exports && typeof prevWorca.exports === 'object' && !Array.isArray(prevWorca.exports) ? prevWorca.exports : {};
+  manifest.worca = {
+    ...prevWorca,
+    exports: { ...prevExports, [slug]: { workflowId: tpl.id, name: tpl.name, updatedAt: tpl.updatedAt || null } },
+  };
+  const manifestText = JSON.stringify(manifest, null, 2) + '\n';
+  const manifestTarget = { path: manifestPath, text: manifestText };
+  if (existingText === null) { manifestTarget.action = 'create'; created.push(manifestPath); }
+  else if (existingText === manifestText) { manifestTarget.action = 'noop'; noop.push(manifestPath); }
+  else { manifestTarget.action = 'update'; updated.push(manifestPath); }
+  targets.push(manifestTarget);
+
+  const plan = {
+    dir, name, slug, version: manifest.version || null,
+    created, updated, noop, skipped, conflicts: [], warnings, orphans: [], written: [], validation: null,
+  };
+  if (dryRun) return plan;
+
+  // ── Apply ──
+  for (const t of targets) {
+    if (t.action === 'noop') continue;
+    await mkdir(dirname(t.path), { recursive: true });
+    // dep skill: copy the whole source dir; SKILL.md is absent by construction (fill:true), but
+    // the dir may hold unrelated user files — force:false leaves those untouched.
+    if (t.copyFrom) await cp(dirname(t.copyFrom), dirname(t.path), { recursive: true, force: false, errorOnExist: false });
+    else await writeFileAtomic(t.path, t.text);
+    plan.written.push(t.path);
+  }
+  // The folder must lint clean — the recipient's `worca plugin link` runs this same gate.
+  const v = validatePluginDir(dir);
+  plan.validation = { ok: v.ok, problems: v.problems };
+  for (const p of v.problems) warnings.push(`plugin validation ${p.level}: ${p.message}`);
+  return plan;
 }

@@ -1064,6 +1064,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .pl-export{flex:0 0 auto;width:34px;height:34px;border-radius:10px;border:1.5px solid var(--line-2);background:#fff;display:grid;place-items:center;cursor:pointer;color:var(--ink-3);transition:.12s;align-self:flex-start;}
 .pl-export:hover{border-color:var(--accent,#2b6);color:var(--ink);background:var(--field);}
 .pl-export svg{width:16px;height:16px;stroke-width:2;}
+/* JSON download (#421): an <a download> skinned like the export button. */
+a.pl-json{text-decoration:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;font-weight:700;letter-spacing:-.06em;}
+.saved-head-actions{display:flex;align-items:center;gap:8px;}
 /* Export-to-Claude-Code modal */
 .export-field{margin:12px 0;}
 .export-label{display:block;font-weight:600;font-size:12.5px;color:var(--ink-2);margin-bottom:6px;}
