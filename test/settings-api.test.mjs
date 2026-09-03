@@ -3,6 +3,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -144,4 +145,29 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     await post('');
     await rm(target, { recursive: true, force: true });
   }
+});
+
+// The Settings ▸ About card reads these two fields. They are derived from
+// package.json at module load, so a release bump needs no code change; the
+// assertion below is what stops anyone hardcoding a version string.
+test('GET /api/settings carries app identity: version + a browsable repo URL', async () => {
+  const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
+  const j = await (await fetch(`${base}/api/settings`)).json();
+
+  assert.ok(j.app && typeof j.app === 'object', 'GET carries an `app` block');
+  assert.deepEqual(Object.keys(j.app).sort(), ['releaseUrl', 'repoUrl', 'version'], 'exactly the three About fields');
+  assert.equal(j.app.version, pkg.version, 'straight from package.json — never a literal');
+  // Derived, not hardcoded: this stays true if the repo is ever moved or renamed.
+  assert.equal(j.app.repoUrl, pkg.repository.url.replace(/^git\+/, '').replace(/\.git$/, ''),
+    'the npm git URL normalised to its browsable form');
+  assert.match(j.app.repoUrl, /^https:\/\//, 'browsable, not a git:// or git+ URL');
+  // The tag the release workflow publishes from (.github/workflows/release-npm-app.yml).
+  assert.equal(j.app.releaseUrl, `${j.app.repoUrl}/releases/tag/worca-app-v${pkg.version}`,
+    'version links to its worca-app-v<version> release tag');
+});
+
+test('POST /api/settings does NOT echo app identity (it is not a setting)', async () => {
+  const posted = await (await post('')).json();       // resets root to '', as the suite already does above
+  assert.equal(posted.app, undefined, 'app identity is GET-only; POST echoes settings state only');
+  assert.equal(posted.root, '', 'the reset itself still works');
 });

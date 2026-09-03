@@ -296,6 +296,10 @@ const el = {
   chatSettingsMsg: $('#chatSettingsMsg'),
   settingsTabs: $('#settings-tabs'),
 
+  // About (Settings card): read-only app identity, painted from /api/settings
+  aboutVersion: $('#aboutVersion'),
+  aboutRepoLink: $('#aboutRepoLink'),
+
   // Guardrails view
   guardrailsList: $('#guardrails-list'),
   guardrailsMsg: $('#guardrails-msg'),
@@ -7754,7 +7758,7 @@ function setFormMsg(text, kind) {
 }
 
 // ---------------------------------------------------------------------------
-// Settings view: the machine-wide Worca CC root folder + the projects root
+// Settings view: the machine-wide Worca root folder + the projects root
 // (§5.1) whose CLAUDE.md / .claude/skills / .mcp.json every pipeline agent sees.
 // ---------------------------------------------------------------------------
 function setSettingsMsg(text, kind) {
@@ -7782,6 +7786,22 @@ function paintSettings(data) {
 // fallback so an older/partial response still fills the placeholder.
 const projectsRootFallback = (data) => data.projectsRootDefault || data.default || '';
 
+// About card: painted from the `app` block of GET /api/settings. A missing or
+// malformed payload leaves the static markup (including target/rel) untouched.
+function paintAbout(info) {
+  if (!info) return;
+  if (el.aboutVersion && info.version) {
+    el.aboutVersion.textContent = info.version;
+    // Links the version to its release tag; a missing/malformed URL leaves the
+    // anchor href-less, i.e. plain text.
+    if (typeof info.releaseUrl === 'string' && info.releaseUrl) el.aboutVersion.href = info.releaseUrl;
+  }
+  if (el.aboutRepoLink && typeof info.repoUrl === 'string' && info.repoUrl) {
+    el.aboutRepoLink.href = info.repoUrl;
+    el.aboutRepoLink.textContent = info.repoUrl.replace(/^https?:\/\//, '');
+  }
+}
+
 async function loadSettings() {
   if (!el.settingsRoot) return;
   try {
@@ -7789,6 +7809,7 @@ async function loadSettings() {
     const data = await safeJson(res);
     if (!res.ok) { setSettingsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     paintSettings(data);
+    paintAbout(data.app);
     paintBudgetSettings(data);
     paintAskSettings(data);
     paintDebugSpawnSettings(data);

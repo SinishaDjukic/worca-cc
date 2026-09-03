@@ -1574,9 +1574,22 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .topnav button.active .topnav-amt{color:inherit;}
 
 /* ---------- Settings cards ---------- */
-/* One width/centering/gap rule for all three Settings cards. */
+/* One width/centering/gap rule for every Settings card. */
 .settings-card{max-width:760px;padding:22px;margin-left:auto;margin-right:auto;}
 .settings-card + .settings-card{margin-top:18px;}
+
+/* About card rows. .about-val and .about-link share specificity on one anchor, so
+   .about-link must stay AFTER .about-val (test/ui-settings-about.test.mjs pins it). */
+.about-row{display:flex;align-items:baseline;gap:10px;font-size:13px;}
+.about-row + .about-row{margin-top:10px;}
+.about-key{flex:0 0 96px;font-weight:600;color:var(--ink-2);}
+.about-val{color:var(--ink);min-width:0;}
+.about-version{font-family:var(--mono);}
+/* Once painted with a release-tag href the version reads as a link. */
+.about-version[href]{color:var(--green-ink);text-decoration:none;}
+.about-version[href]:hover{text-decoration:underline;}
+.about-link{color:var(--green-ink);font-weight:600;text-decoration:none;overflow-wrap:anywhere;}
+.about-link:hover{text-decoration:underline;}
 
 /* ---------- Budget readout (Settings) ---------- */
 /* Section gap before the limit fields (the disclaimer hint that used to sit

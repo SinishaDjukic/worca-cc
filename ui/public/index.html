@@ -1024,12 +1024,12 @@
             <section class="card settings-card">
               <div class="field">
                 <div class="label-row">
-                  <label for="settingsRoot">Worca CC root folder</label>
-                  <button type="button" class="info-tip" aria-label="About Worca CC root folder">i<span class="tip-content hidden">
-                    The folder under which Worca CC keeps its data &mdash; a <code>.worca-cc/</code> directory holding the
+                  <label for="settingsRoot">Worca root folder</label>
+                  <button type="button" class="info-tip" aria-label="About Worca root folder">i<span class="tip-content hidden">
+                    The folder under which Worca keeps its data &mdash; a <code>.worca-cc/</code> directory holding the
                     history store, the project list, and saved workflows. Leave empty to use the default.
                     Changes apply to new runs immediately. Changing the root does <b>not</b> move existing
-                    data: Worca CC starts a fresh <code>.worca-cc/</code> under the new folder; history under
+                    data: Worca starts a fresh <code>.worca-cc/</code> under the new folder; history under
                     the old root is left in place.
                   </span></button>
                 </div>
@@ -1230,6 +1230,26 @@
                 <button id="chatSettingsSave" class="btn btn-primary btn-mini" type="button">Save</button>
               </div>
               <small class="hint" id="chatSettingsMsg"></small>
+            </section>
+
+            <!-- About: intentionally no info-tip and no .hint (test/ui-settings-tooltips.test.mjs pins both). -->
+            <section class="card settings-card" id="about-card">
+              <div class="label-row">
+                <h2>About</h2>
+              </div>
+              <div class="about-row">
+                <span class="about-key">Version</span>
+                <!-- href is painted from app.releaseUrl (the worca-app-v<version> tag);
+                     without one the anchor is plain text, so the placeholder never links. -->
+                <a class="about-val about-version" id="aboutVersion"
+                   target="_blank" rel="noopener noreferrer">&mdash;</a>
+              </div>
+              <div class="about-row">
+                <span class="about-key">Repository</span>
+                <a class="about-val about-link" id="aboutRepoLink"
+                   href="https://github.com/SinishaDjukic/worca-cc"
+                   target="_blank" rel="noopener noreferrer">github.com/SinishaDjukic/worca-cc</a>
+              </div>
             </section>
           </section>
           <!-- /pane general -->
