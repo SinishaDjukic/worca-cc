@@ -3409,6 +3409,9 @@ app.get('/api/workflows/:id', async (req, res) => {
     if (err && (err.code === 'NOT_FOUND' || err.code === 'ARCHIVED')) {
       return res.status(404).json({ error: err.message });
     }
+    // The row exists but its plugin is disabled: a conflict with the plugin's
+    // state, not a missing row — the message names the fix.
+    if (err && err.code === 'PLUGIN_DISABLED') return res.status(409).json({ error: err.message });
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });

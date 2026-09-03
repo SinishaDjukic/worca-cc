@@ -22,6 +22,7 @@ import { isSubagentModelValue } from './model-env.mjs';
 const validSubagentModel = (v) => (isSubagentModelValue(v) ? v : undefined);
 import { slugify } from './artifacts.mjs';
 import { DEFAULT_AGENTS_DIR, loadAgentRegistry } from './agent-registry.mjs'; // fileURLToPath-based (Windows-safe)
+import { readPluginsLock } from './plugins-lock.mjs';                 // a DISABLED plugin's rows are hidden
 import { validateGraph, formatIssue, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { GRAPH_DEFAULT_WORKFLOW } from './graph/builtin-workflows.mjs';
@@ -373,15 +374,35 @@ export async function readWorkflow(id, opts = {}) {
 }
 
 /**
+ * A row owned by a plugin that is DISABLED in the lock. Disabling a plugin already
+ * withdraws its agents, skills and task sources (agent-registry / skills /
+ * sources honour `enabled:false`); its workflow templates follow the same rule,
+ * or the composer would list a pipeline whose agents are gone.
+ * @param {string|null} origin  'plugin:<name>' | null
+ * @param {object} lock         readPluginsLock()
+ */
+function pluginDisabled(origin, lock) {
+  if (typeof origin !== 'string' || !origin.startsWith('plugin:')) return false;
+  const entry = lock[origin.slice('plugin:'.length)];
+  return !!entry && entry.enabled === false;
+}
+
+/**
  * List user templates (NOT GRAPH_DEFAULT_WORKFLOW — callers prepend it), newest first by
- * createdAt. Archived rows are hidden unless asked for. Empty store => [].
+ * createdAt. Archived rows are hidden unless asked for; so are the rows of a
+ * disabled plugin (`includeDisabled` lifts that — the plugin lifecycle's own
+ * guards need to see them). Empty store => [].
  * @returns {Promise<object[]>}
  */
-export async function listWorkflows({ includeArchived = false } = {}) {
+export async function listWorkflows({ includeArchived = false, includeDisabled = false } = {}) {
   getDb();
   const where = includeArchived ? '' : 'WHERE archived_at IS NULL';
   const rows = prepare(`SELECT ${ROW_COLS} FROM workflows ${where} ORDER BY created_at DESC, id`).all();
-  return rows.filter((r) => r.id !== GRAPH_DEFAULT_WORKFLOW.id).map(rowToTpl);
+  const lock = includeDisabled ? null : readPluginsLock();
+  return rows
+    .filter((r) => r.id !== GRAPH_DEFAULT_WORKFLOW.id)
+    .filter((r) => includeDisabled || !pluginDisabled(r.origin, lock))
+    .map(rowToTpl);
 }
 
 /**
@@ -418,6 +439,14 @@ export async function assertRunnableWorkflow(id, { registry, checkGraph = true }
   const wanted = typeof id === 'string' && id.trim() ? id.trim() : GRAPH_DEFAULT_WORKFLOW.id;
   const live = await readWorkflow(wanted);
   if (live) {
+    // A disabled plugin's template is neither runnable nor openable: its agents
+    // are withdrawn with the plugin. Same posture as ARCHIVED — a coded refusal
+    // the callers map, with the fix in the message.
+    if (pluginDisabled(live.origin, readPluginsLock())) {
+      const plugin = live.origin.slice('plugin:'.length);
+      throw Object.assign(new Error(`workflow "${wanted}" belongs to plugin "${plugin}", which is disabled — `
+        + `enable the plugin (Plugins view, or: worca plugin enable ${plugin}) to use it`), { code: 'PLUGIN_DISABLED' });
+    }
     // A v1 row is not a graph: engine-select owns its refusal (V1_RUN_RETIRED).
     if (checkGraph && live.version === 2) assertValidGraph(live, registry);
     return live;
