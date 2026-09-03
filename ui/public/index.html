@@ -1358,9 +1358,12 @@
         <div id="export-plugin-field" class="export-field hidden">
           <span class="export-label">Plugin name</span>
           <input type="text" id="export-plugin-name" class="input" placeholder="(defaults to the folder name, or the existing manifest's name)" />
+          <!-- Re-export only: a changed export into an existing plugin folder bumps
+               the manifest's patch version (0.1.0 → 0.1.1) so the recipient's
+               `worca plugin update` sees it. A first export is always 0.1.0. -->
           <label class="confirm-checkbox">
             <input type="checkbox" id="export-keep-version" />
-            <span>Keep the manifest version (no patch bump on update)</span>
+            <span>Don't bump the plugin version when updating an existing plugin folder<br><span class="hint">A changed re-export normally goes 0.1.0 → 0.1.1 so recipients see an update. A first export is always 0.1.0.</span></span>
           </label>
         </div>
         <div class="export-field" id="export-slug-field">

@@ -1065,6 +1065,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    Export… button itself is a .btn-ghost (see .gv-saved .pl-export). */
 .export-field{margin:12px 0;}
 .export-field .hint{display:block;margin-top:6px;}
+/* A checkbox row directly under a text input needs its own breathing room:
+   .confirm-checkbox ships margin:0 (it is built for the confirm dialog's stack). */
+.export-field .confirm-checkbox{margin-top:10px;}
 .export-label{display:block;font-weight:600;font-size:12.5px;color:var(--ink-2);margin-bottom:6px;}
 .export-folder-row{display:flex;gap:8px;align-items:center;}
 .export-folder-row .input{flex:1 1 auto;}
