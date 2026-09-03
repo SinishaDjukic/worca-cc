@@ -143,9 +143,11 @@ const wksDetailHash = `history/${WKS_KEY}/${ROW.id}`;
 // ARM ORDER IS LOAD-BEARING (ui-history-routing.test.mjs:119-127): the detail URL
 // is a PREFIX of the /log and /diff URLs, and `/api/history` is a prefix of the
 // POST /api/history/pr enrichment call. Most-specific first, and every history arm
-// matches with endsWith, never includes.
+// matches with endsWith, never includes — except the remotes arm, whose URL carries
+// a query string (it can never collide with the `/api/pr` endsWith matchers).
 function historyArms(box) {
   return (url) => {
+    if (/\/api\/pr\/remotes\?/.test(url)) return box.remotes ? ok(box.remotes) : fail(500, { error: 'git remote failed' });
     if (url.endsWith('/api/history/pr')) return ok({ ok: true });
     if (url.endsWith('/diff')) return fail(404, { error: 'no diff' });
     if (url.endsWith('/log')) return fail(404, { error: 'no log' });
@@ -156,8 +158,8 @@ function historyArms(box) {
   };
 }
 
-async function bootShip({ rows = [row()], detail = DETAIL, gh = true, arms = null, deepLink = false } = {}) {
-  const box = { rows, detail, gh, budget: okBudget() };
+async function bootShip({ rows = [row()], detail = DETAIL, gh = true, arms = null, deepLink = false, remotes = REMOTES } = {}) {
+  const box = { rows, detail, gh, remotes, budget: okBudget() };
   const base = historyArms(box);
   const ctx = await boot({
     fetchHandler: (url, opts) => (arms && arms(url, opts, box)) || base(url, opts),
@@ -193,12 +195,23 @@ const prArm = (body) => (url, opts) => (
   url.endsWith('/api/pr') && opts.method === 'POST' ? ok(body) : null);
 const PR_OK = { ok: true, url: 'https://x/pull/7', mergeable: 'MERGEABLE', existed: false };
 
+// Shapes mirror GET /api/pr/remotes.
+const remote = (name, owner, url) => ({ name, fetchUrl: url, pushUrl: url, host: 'github.com', owner, repo: 'repo', slug: `${owner}/repo` });
+const REMOTES = { ok: true, remotes: [remote('origin', 'me', 'https://github.com/me/repo.git')],
+  defaults: { pushRemote: 'origin', baseRemote: 'origin' }, remembered: null };
+const FORK_REMOTES = { ok: true,
+  remotes: [remote('origin', 'me', 'https://github.com/me/repo.git'), remote('upstream', 'up', 'git@github.com:up/repo.git')],
+  defaults: { pushRemote: 'origin', baseRemote: 'upstream' }, remembered: null };
+const remotesCalls = (ctx) => ctx.calls.filter((c) => /\/api\/pr\/remotes\?/.test(c.url));   // like prPosts above
+const optionValues = (sel) => [...sel.options].map((o) => o.value);
+
 // Open the detail screen and press its Create-PR button.
 async function openModal(ctx) {
   await openDetail(ctx);
   const btn = hdPr(ctx.window);
   assert.equal(btn.hidden, false, 'an eligible, resolved run offers Create PR');
   click(ctx.window, btn);
+  await settle(ctx.window);          // let the remotes fetch land before a test confirms
   return modalOf(ctx.window);
 }
 
@@ -249,7 +262,8 @@ test('confirm POSTs /api/pr and swaps the header control to a link + merge pill'
 
   const post = prPosts(ctx)[0];
   assert.ok(post, 'the confirm button POSTs /api/pr');
-  assert.deepEqual(JSON.parse(post.opts.body), { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id });
+  assert.deepEqual(JSON.parse(post.opts.body),
+    { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id, pushRemote: 'origin', baseRemote: 'origin' });
   assert.equal(modal.classList.contains('hidden'), true, 'a successful ship closes the modal');
   const link = hdPrLink(ctx.window);
   assert.equal(link.hidden, false);
@@ -595,4 +609,111 @@ test('a re-check that is still UNKNOWN hides the pill instead of leaving it stuc
   releaseRecheck();
   await settle(ctx.window, 4);
   assert.equal(pill.hidden, true, 'still-unknown pill is hidden, not left stuck');
+});
+
+// ---------------------------------------------------------------------------
+// Fork support: the push-remote / base-repo selectors
+// ---------------------------------------------------------------------------
+
+test('the modal loads the project remotes into both selects with the server defaults', async () => {
+  const ctx = await bootShip({ remotes: FORK_REMOTES });
+  const modal = await openModal(ctx);
+  assert.equal(modal.querySelector('.shipit-remotes').hidden, false);
+  const pushSel = modal.querySelector('.shipit-push-remote');
+  const baseSel = modal.querySelector('.shipit-base-remote');
+  assert.deepEqual(optionValues(pushSel), ['origin', 'upstream']);
+  assert.deepEqual([...baseSel.options].map((o) => o.textContent), ['origin — me/repo', 'upstream — up/repo']);
+  assert.equal(pushSel.value, 'origin');
+  assert.equal(baseSel.value, 'upstream');
+  assert.equal(pushSel.disabled, false);
+  assert.match(modal.querySelector('.shipit-remotes-hint').textContent, /me:worca-cc\/log-ux-fcec04e8 → up\/repo feat\/log-ux/);
+  assert.equal(modal.querySelector('.shipit-base').textContent, 'feat/log-ux', 'the summary line is untouched');
+  const req = remotesCalls(ctx)[0];
+  assert.ok(req && req.url.includes(`projectKey=${KEY}`) && req.url.includes(`id=${ROW.id}`), 'resolved by key + id');
+});
+
+test('confirm POSTs the chosen push/base remotes', async () => {
+  const ctx = await bootShip({ remotes: FORK_REMOTES, arms: prArm(PR_OK) });
+  const modal = await openModal(ctx);
+  const baseSel = modal.querySelector('.shipit-base-remote');
+  baseSel.value = 'origin';
+  baseSel.dispatchEvent(new ctx.window.Event('change'));
+  assert.equal(modal.querySelector('.shipit-remotes-hint').textContent, '', 'same repo: no cross-repo hint');
+  click(ctx.window, modal.querySelector('.shipit-ok'));
+  await settle(ctx.window, 6);
+  assert.deepEqual(JSON.parse(prPosts(ctx)[0].opts.body),
+    { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id, pushRemote: 'origin', baseRemote: 'origin' });
+  assert.equal(hdPrLink(ctx.window).hidden, false);
+});
+
+test('when the remotes cannot be loaded the selectors stay hidden and the POST omits them', async () => {
+  const ctx = await bootShip({ remotes: null, arms: prArm(PR_OK) });
+  const modal = await openModal(ctx);
+  assert.equal(modal.querySelector('.shipit-remotes').hidden, true);
+  click(ctx.window, modal.querySelector('.shipit-ok'));
+  await settle(ctx.window, 6);
+  assert.deepEqual(JSON.parse(prPosts(ctx)[0].opts.body), { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id });
+  assert.equal(hdPrLink(ctx.window).hidden, false, 'the ship still succeeds on server defaults');
+});
+
+test('a remotes response that lands after cancel does not touch a re-opened modal', async () => {
+  let release;
+  const hanging = new Promise((r) => { release = r; });
+  let n = 0;
+  const ctx = await bootShip({
+    arms: (url) => (/\/api\/pr\/remotes\?/.test(url) && ++n === 1 ? hanging : null),
+  });
+  const { window } = ctx;
+  await openDetail(ctx);
+  click(window, hdPr(window));                                  // (1) first open: remotes hang
+  click(window, modalOf(window).querySelector('.shipit-cancel'));
+  click(window, hdPr(window));                                  // (2) second open: served by historyArms (origin only)
+  await settle(window);
+  const modal = modalOf(window);
+  assert.deepEqual(optionValues(modal.querySelector('.shipit-push-remote')), ['origin']);
+  release({ ok: true, status: 200, json: async () => FORK_REMOTES });   // (3) the stale response lands
+  await settle(window, 3);
+  assert.deepEqual(optionValues(modal.querySelector('.shipit-push-remote')), ['origin'],
+    'the stale generation must not repopulate the new generation');
+  assert.equal(remotesCalls(ctx).length, 2);
+});
+
+test('selects are disabled while the POST is in flight and re-enabled on failure', async () => {
+  const ctx = await bootShip({
+    arms: (url, opts) => (url.endsWith('/api/pr') && opts.method === 'POST' ? fail(500, { error: 'git push failed: denied' }) : null),
+  });
+  const modal = await openModal(ctx);
+  const sel = modal.querySelector('.shipit-push-remote');
+  click(ctx.window, modal.querySelector('.shipit-ok'));
+  assert.equal(sel.disabled, true, 'locked while the POST is in flight');
+  await settle(ctx.window, 6);
+  assert.equal(sel.disabled, false, 'unlocked so the user can pick another remote and retry');
+  assert.match(modal.querySelector('.shipit-err').textContent, /push failed/);
+});
+
+test('remotes that arrive after confirm was pressed stay disabled until that POST settles', async () => {
+  let releaseRemotes;
+  const remotesGate = new Promise((r) => { releaseRemotes = r; });
+  let releasePost;
+  const postGate = new Promise((r) => { releasePost = r; });
+  const ctx = await bootShip({
+    arms: (url, opts) => {
+      if (/\/api\/pr\/remotes\?/.test(url)) return remotesGate;
+      if (url.endsWith('/api/pr') && opts.method === 'POST') return postGate.then(() => fail(500, { error: 'git push failed: denied' }));
+      return null;
+    },
+  });
+  await openDetail(ctx);
+  click(ctx.window, hdPr(ctx.window));
+  const modal = modalOf(ctx.window);
+  click(ctx.window, modal.querySelector('.shipit-ok'));           // confirm before the list arrived
+  releaseRemotes({ ok: true, status: 200, json: async () => FORK_REMOTES });
+  await settle(ctx.window, 3);
+  assert.equal(modal.querySelector('.shipit-remotes').hidden, false, 'the list still paints');
+  assert.equal(modal.querySelector('.shipit-push-remote').disabled, true, 'but stays locked under the in-flight POST');
+  assert.deepEqual(JSON.parse(prPosts(ctx)[0].opts.body), { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id },
+    'that POST went out without the fields (server defaults)');
+  releasePost();
+  await settle(ctx.window, 6);
+  assert.equal(modal.querySelector('.shipit-push-remote').disabled, false, 'unlocked once the POST failed');
 });

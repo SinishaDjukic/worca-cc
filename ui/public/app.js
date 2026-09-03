@@ -11477,6 +11477,74 @@ function paintHistStatusIcon(host, p) {
 let shipItClose = null;
 function closeShipItModal() { if (shipItClose) shipItClose(); }
 
+// Per-open generation for the remotes fetch. Cancel is never disabled, so a
+// response can land after the modal was closed and re-opened for a NEWER
+// generation; it must not repopulate selects it does not own. Same guard as
+// populateBranchSelect's `_branchGen` (:5204-5205).
+let shipItRemotesGen = 0;
+
+function remoteOptionLabel(r) { return r.slug ? `${r.name} — ${r.slug}` : r.name; }
+
+function fillRemoteSelect(select, remotes, chosen) {
+  select.innerHTML = '';
+  for (const r of remotes) select.appendChild(option(r.name, remoteOptionLabel(r)));
+  if (chosen && remotes.some((r) => r.name === chosen)) select.value = chosen;
+}
+
+// Hint under the selects: names the cross-repo head when the two remotes point at
+// different repositories ("me:branch → up/repo main"); empty otherwise.
+function paintShipItRemotesHint(modal, remotes, record) {
+  const byName = (sel) => remotes.find((r) => r.name === modal.querySelector(sel).value);
+  const push = byName('.shipit-push-remote');
+  const base = byName('.shipit-base-remote');
+  const cross = !!(push && base && push.slug && base.slug && push.slug.toLowerCase() !== base.slug.toLowerCase());
+  modal.querySelector('.shipit-remotes-hint').textContent = cross
+    ? `Cross-repo: ${push.owner}:${record.branch || ''} → ${base.slug} ${record.sourceBranch || ''}`
+    : '';
+}
+
+function setShipItRemotesDisabled(modal, on) {
+  for (const s of modal.querySelectorAll('.shipit-remotes select')) s.disabled = on;
+}
+
+// Load the project's remotes into the two selects. `isClosed` reports whether this
+// generation's modal was already torn down. On any failure (network, non-2xx, or a
+// body without a `remotes` array — safeJson answers `{}` for an unparseable body and
+// the UI test harness answers un-armed URLs with a generic config payload) the block
+// stays hidden and the POST simply omits the fields (the server applies its defaults).
+async function loadShipItRemotes(modal, record, gen, isClosed) {
+  const box = modal.querySelector('.shipit-remotes');
+  const pushSel = modal.querySelector('.shipit-push-remote');
+  const baseSel = modal.querySelector('.shipit-base-remote');
+  box.hidden = true;
+  pushSel.innerHTML = ''; baseSel.innerHTML = '';
+  setShipItRemotesDisabled(modal, true);
+  modal.querySelector('.shipit-remotes-hint').textContent = '';
+  const qs = new URLSearchParams({ id: record.id });
+  if (record.projectKey) qs.set('projectKey', record.projectKey);   // server prefers the key
+  if (record.projectDir) qs.set('projectDir', record.projectDir);   // deep-link stubs may lack it
+  try {
+    const res = await fetch(`/api/pr/remotes?${qs}`);
+    const data = await safeJson(res);
+    if (gen !== shipItRemotesGen || isClosed()) return;              // stale: cancelled or re-opened since
+    const remotes = res.ok && Array.isArray(data.remotes) ? data.remotes.filter((r) => r && r.name) : [];
+    if (!remotes.length) return;
+    const d = data.defaults || {};
+    fillRemoteSelect(pushSel, remotes, d.pushRemote);
+    fillRemoteSelect(baseSel, remotes, d.baseRemote);
+    // Confirm may already have been pressed (okBtn disabled = POST in flight, sent
+    // without the fields): paint the list, but keep it locked until that POST settles.
+    setShipItRemotesDisabled(modal, modal.querySelector('.shipit-ok').disabled);
+    box.hidden = false;
+    paintShipItRemotesHint(modal, remotes, record);
+    // Property assignment, not addEventListener: re-runs per open without stacking.
+    pushSel.onchange = () => paintShipItRemotesHint(modal, remotes, record);
+    baseSel.onchange = pushSel.onchange;
+  } catch {
+    /* remotes unavailable: block stays hidden, POST omits the fields */
+  }
+}
+
 function openShipItModal(record, data) {
   const modal = document.getElementById('shipit-modal');
   if (!modal) return;
@@ -11505,6 +11573,9 @@ function openShipItModal(record, data) {
   okBtn.disabled = false; okBtn.textContent = 'Open pull request';
   modal.classList.remove('hidden');
   okBtn.focus();
+  // The double-open guard above already returned for a second open, so the
+  // generation only advances for a real one.
+  const gen = ++shipItRemotesGen;
 
   // `closed` is load-bearing, not defensive noise. Cancel is NOT disabled while the
   // POST is in flight, so this sequence is reachable: confirm -> cancel mid-flight
@@ -11533,10 +11604,16 @@ function openShipItModal(record, data) {
   const onOk = async () => {
     okBtn.disabled = true;
     okBtn.textContent = 'Opening…';
+    setShipItRemotesDisabled(modal, true);
+    const payload = { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id };
+    if (!q('.shipit-remotes').hidden) {
+      payload.pushRemote = q('.shipit-push-remote').value;
+      payload.baseRemote = q('.shipit-base-remote').value;
+    }
     try {
       const res = await fetch('/api/pr', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id }),
+        body: JSON.stringify(payload),
       });
       const dd = await safeJson(res);
       if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
@@ -11572,6 +11649,7 @@ function openShipItModal(record, data) {
       if (closed) return;
       okBtn.disabled = false;
       okBtn.textContent = 'Open pull request';
+      if (!q('.shipit-remotes').hidden) setShipItRemotesDisabled(modal, false);
       err.hidden = false;
       err.textContent = `Could not open PR: ${e2.message}`;
     }
@@ -11580,6 +11658,7 @@ function openShipItModal(record, data) {
   q('.shipit-cancel').addEventListener('click', onCancel);
   modal.addEventListener('click', onBackdrop);
   document.addEventListener('keydown', onKey);
+  loadShipItRemotes(modal, record, gen, () => closed);
 }
 
 // THE single PR-eligibility predicate. Every caller uses it: paintHdPr (below),
