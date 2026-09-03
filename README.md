@@ -177,7 +177,7 @@ Requirements:
 ### Web UI
 
 ```bash
-worca --ui
+worca ui            # start it (worca --ui does the same)
 ```
 
 Open the printed URL (default `http://localhost:4317`), add a project, and
@@ -185,6 +185,20 @@ click **New pipeline**: describe the task (or paste a markdown brief, or pull
 a task from a plugin source like GitHub Issues), pick a workflow and
 guardrails, and run. Answer clarify questions and loop gates as they come —
 in the browser or from chat.
+
+The UI is one process per machine. Starting it while it is already up is not
+an error — Worca prints the URL and how to restart it, and exits 0:
+
+```bash
+worca ui status                 # is it running? (exit 0 = yes, 1 = no)
+worca ui restart                # stop the running one, start it again
+worca ui stop                   # stop it gracefully
+worca ui --port 4318 --open     # another port; open the browser when up
+```
+
+`--port` (or the `PORT` env var) picks the port; `stop`, `restart` and
+`status` remember the port of the last started UI, so they usually need no
+flag. See `worca ui help`.
 
 ### CLI
 
@@ -204,6 +218,14 @@ worca --project /path/to/your/project --prompt "demo task" --mock --yes
 
 Run `worca --help` for all subcommands (projects, plugins, marketplaces,
 config, doctor) and flags.
+
+Exit codes, for scripts and CI wrappers: `0` the run finished (or an
+interactive run paused and you can resume it); `1` a hard error, a stop, or an
+interactive pause an error forced; `2` a usage error; `3` a `--yes` run that
+parked itself — auth, quota, a usage or cost limit, exhausted retries, or a
+step error — with nobody attached to resume it. Nothing is discarded on a
+pause: `worca resume <pipelineId>` picks the run up where it stopped, and the
+cause is printed with the pause block on stdout.
 
 ### `/worca` skill (inside Claude Code)
 

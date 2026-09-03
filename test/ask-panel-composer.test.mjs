@@ -58,16 +58,17 @@ test('ask-panel-composer: attach → chip; send posts base64 attachments and the
   assert.equal(bodies[0].text, 'summarize the notes');
   assert.equal(bodies[0].model, 'claude-opus-5');
   assert.equal(bodies[0].effort, 'high');
-  assert.deepEqual(bodies[0].context, { view: 'new' });
+  assert.deepEqual(bodies[0].context, { view: 'new', pinned: false }); // #397: Auto declares itself
   assert.equal(bodies[0].attachments.length, 1);
   assert.equal(bodies[0].attachments[0].name, 'notes.md');
   assert.equal(bodies[0].attachments[0].dataBase64, Buffer.from('hello world').toString('base64'));
-  // 202 aftermath: optimistic user row, cleared composer, local title, stored thread
+  // 202 aftermath: optimistic user row, cleared composer, header untouched, stored thread
   ctx.flush();
   assert.match(ctx.doc.querySelector('.ask-msg-user').textContent, /summarize the notes/);
   assert.equal(ctx.doc.querySelector('textarea.ask-input').value, '');
   assert.equal(ctx.doc.querySelector('.ask-chip'), null, 'chips cleared after send');
-  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'summarize the notes');
+  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Ask Worca',
+    'no provisional title from the prompt — the header waits for the ask-title frame');
   assert.equal(ctx.storage.getItem('worca-cc.ask.thread'), TID);
   assert.deepEqual(ctx.wsSends.at(-1), { type: 'subscribe', threadId: TID });
 });
@@ -97,6 +98,30 @@ test('ask-panel-composer: bad extension and oversize rejected inline; the × rem
   assert.ok(ctx.doc.querySelector('.ask-chip'));
   ctx.doc.querySelector('.ask-chip .ask-chip-x').click();
   assert.equal(ctx.doc.querySelector('.ask-chip'), null);
+});
+
+test('ask-panel-composer (#398): png accepted with a thumbnail chip, pdf accepted, binary cap is 5 MB', async () => {
+  const ctx = makePanel({ fetchHandler: apiHandler() });
+  ctx.panel.open();
+  const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+  injectFiles(ctx, [new ctx.window.File([pngBytes], 'shot.png', { type: 'image/png' })]);
+  await ctx.tick(); await ctx.tick();
+  const chip = ctx.doc.querySelector('.ask-chip');
+  assert.ok(chip, 'a png is accepted by the composer');
+  assert.match(chip.textContent, /shot\.png/);
+  const thumb = chip.querySelector('img.ask-chip-thumb');
+  assert.ok(thumb, 'image chips carry a thumbnail');
+  assert.ok(thumb.src.startsWith('data:image/png;base64,'), 'thumbnail is a data URI of the bytes just read');
+  injectFiles(ctx, [new ctx.window.File(['%PDF-1.7 fake'], 'spec.pdf', { type: 'application/pdf' })]);
+  await ctx.tick(); await ctx.tick();
+  assert.equal(ctx.doc.querySelectorAll('.ask-chip').length, 2, 'pdf accepted too');
+  assert.equal(ctx.doc.querySelectorAll('.ask-chip img.ask-chip-thumb').length, 1, 'no thumbnail on a pdf chip');
+  injectFiles(ctx, [new ctx.window.File([new Uint8Array(5 * 1024 * 1024 + 1)], 'big.png', { type: 'image/png' })]);
+  await ctx.tick(); await ctx.tick();
+  assert.match(ctx.doc.querySelector('.ask-composer-msg').textContent, /attachment over 5242880 bytes: big\.png/);
+  // the file input advertises the binary types
+  const accept = ctx.doc.querySelector('.ask-composer input[type="file"]').accept;
+  for (const e of ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf']) assert.ok(accept.includes(e), `accept carries ${e}`);
 });
 
 test('ask-panel-composer: at most 8 attachments', async () => {
@@ -178,6 +203,32 @@ test('ask-panel-composer: the user echo replaces the optimistic row (no duplicat
   ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: { id: 'askm_u0000001', threadId: TID, seq: 1, role: 'user', text: 'echo me', blocks: [], status: null, reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: 't' } });
   ctx.flush();
   assert.equal(ctx.doc.querySelectorAll('.ask-msg-user').length, 1, 'upsert by id, not append');
+});
+
+// #398: the sender's own tab must show the thumbnail right away — the 202 body
+// carries the store-minted id, and no later frame re-sends the row.
+test('ask-panel-composer (#398): the 202 attachment rows give the echo its ids — thumbnail now, and the thread budget counts them', async () => {
+  const calls = {
+    messages: () => ({ ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000001', assistantMessageId: MID,
+      attachments: [{ id: 'att_00000001', name: 'shot.png', bytes: 24 * 1024 * 1024, kind: 'image', mime: 'image/png' }] }) }),
+  };
+  const ctx = makePanel({ fetchHandler: apiHandler(calls) });
+  ctx.panel.open();
+  injectFiles(ctx, [new ctx.window.File(['not really a png'], 'shot.png', { type: 'image/png' })]);
+  await ctx.tick(); await ctx.tick();
+  ctx.doc.querySelector('textarea.ask-input').value = 'look at this';
+  ctx.doc.querySelector('[data-ask-send]').click();
+  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  ctx.flush();
+  const img = ctx.doc.querySelector('.ask-msg-user img.ask-attachment-thumb');
+  assert.ok(img, 'the echo renders the thumbnail without waiting for a broadcast or reload');
+  assert.ok(img.src.endsWith(`/api/ask/threads/${TID}/attachments/att_00000001`));
+  // the ledger learned the 24 MB the server reported: a further 2 MB is refused
+  // in the composer, before any base64 upload is paid
+  injectFiles(ctx, [new ctx.window.File([new Uint8Array(2 * 1024 * 1024)], 'more.png', { type: 'image/png' })]);
+  await ctx.tick(); await ctx.tick();
+  assert.equal(ctx.doc.querySelector('.ask-composer-msg').textContent, 'attachment budget for this thread exceeded');
+  assert.equal(ctx.doc.querySelector('.ask-chip'), null, 'no chip for the refused file');
 });
 
 test('ask-panel-composer: the meter shows context fill — 0 ctx on a fresh panel, the live ctx while streaming, the thread ctx after done', async () => {

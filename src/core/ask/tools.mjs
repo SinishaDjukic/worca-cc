@@ -298,6 +298,14 @@ const SCHEMA = {
 export function createAskTools(deps) {
   const L = deps.limits;
 
+  // #397: the user-pinned scope of this conversation — {projectKey}|{workspaceId}|
+  // null — re-read per call so a mid-conversation selector change is honoured.
+  // Optional dep: an absent or failing reader means "nothing pinned", never an error.
+  const pinnedScope = () => {
+    try { return typeof deps.pinnedScope === 'function' ? (deps.pinnedScope() || null) : null; }
+    catch { return null; }
+  };
+
   const defs = [
     { name: 'list_projects',
       description: 'List the registered projects (key, name, path) and workspaces (id, name, member project keys). Use the key / id in the other tools.',
@@ -310,7 +318,7 @@ export function createAskTools(deps) {
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('project key from list_projects'), workspaceId: SCHEMA.s('workspace id from list_projects'),
         status: SCHEMA.s('run status to match'), limit: SCHEMA.i('max results (1-100)', 1, L.listRunsMaxLimit), query: SCHEMA.s('case-insensitive title substring') }) },
     { name: 'get_run',
-      description: 'Read one run: its metadata and the user\'s original prompt. Give projectKey or workspaceId when known; without them the id is searched everywhere.',
+      description: 'Read one run: its metadata and the user\'s original prompt. Give projectKey or workspaceId when known; without them the user-pinned scope (when the chat has one) is tried first, then the id is searched everywhere.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id (8 hex)'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace') }, ['id']) },
     { name: 'get_run_diff',
       description: 'Read the unified diff of a run, paged by byte offset (use nextOffset until truncated is false). Optional path = one file only. files[] lists every file with added/removed counts; credential files are omitted.',
@@ -318,7 +326,7 @@ export function createAskTools(deps) {
         path: SCHEMA.s('only this file path'), offset: SCHEMA.i('byte offset to start at', 0, Number.MAX_SAFE_INTEGER),
         maxBytes: SCHEMA.i('bytes per page (default 60000, max 200000)', 1, L.diffMaxBytes) }, ['id']) },
     { name: 'propose_run',
-      description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId. guardrailsId defaults to "normal"; "permissive" is not allowed. Returns {ok:true, card} or {ok:false, errors}.',
+      description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId; omitting both targets the scope the user pinned for this chat, when there is one. guardrailsId defaults to "normal"; "permissive" is not allowed. Returns {ok:true, card} or {ok:false, errors}.',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('target project key'), workspaceId: SCHEMA.s('target workspace id'), workflowId: SCHEMA.s('workflow id (default wf_default)'),
         brief: SCHEMA.s('the full task description for the run (≤ 8000 chars)'), title: SCHEMA.s('short run title'), guardrailsId: SCHEMA.s('guardrail set id (default normal)'),
         sourceBranch: SCHEMA.s('branch to start from (default: current)'), featureBranch: SCHEMA.s('feature branch name'),
@@ -326,7 +334,7 @@ export function createAskTools(deps) {
         commentIds: { type: 'array', items: { type: 'string' },
           description: 'diff comment ids (dc_…) this run is meant to address. They are stamped with the run id once the user confirms the card AND the run actually starts; nothing is resolved.' } }, ['brief']) },
     { name: 'read_attachment',
-      description: 'Read an attachment of this conversation by id, paged by byte offset (default 32000 bytes per page).',
+      description: 'Read an attachment of this conversation by id. Text attachments return their content, paged by byte offset (default 32000 bytes per page). Image and PDF attachments return metadata plus a file path — pass that path to your Read tool to view the content.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('attachment id'), offset: SCHEMA.i('byte offset', 0, Number.MAX_SAFE_INTEGER), maxBytes: SCHEMA.i('bytes per page', 1, L.attachmentReadMaxBytes) }, ['id']) },
     { name: 'list_diff_comments',
       description: 'List the internal review comments anchored to a run\'s diff lines, ordered by file then line then when they were written. status filters them (all | unresolved | resolved, default all); path narrows to one file. Every comment carries line_text — the snapshot of the line it was anchored to, taken when it was written, so it stays readable even though the source branch has moved on. When the patch is still readable, a few surrounding hunk lines come with each comment. Comments on credential files are never listed.',
@@ -392,11 +400,19 @@ export function createAskTools(deps) {
     const projectKey = str(input.projectKey);
     const workspaceId = str(input.workspaceId);
     if (projectKey && workspaceId) throw new AskToolError(`${tool}: give projectKey OR workspaceId, not both`);
-    const row = projectKey
-      ? deps.lookupPipelineRow(projectKey, id)
-      : workspaceId
-        ? deps.lookupPipelineRow(`workspaces/${workspaceId}`, id)
-        : deps.findPipelineRowById(id);
+    let row;
+    if (projectKey) row = deps.lookupPipelineRow(projectKey, id);
+    else if (workspaceId) row = deps.lookupPipelineRow(`workspaces/${workspaceId}`, id);
+    else {
+      // #397: an unscoped id tries the user-pinned scope first (disambiguation
+      // when the same short id exists in two stores), then everywhere — never
+      // fewer results than an unpinned chat.
+      const pin = pinnedScope();
+      row = (pin && pin.projectKey ? deps.lookupPipelineRow(pin.projectKey, id)
+        : pin && pin.workspaceId ? deps.lookupPipelineRow(`workspaces/${pin.workspaceId}`, id)
+          : null)
+        || deps.findPipelineRowById(id);
+    }
     if (!row) throw new AskToolError(`${tool}: run not found`);
     return row;
   }
@@ -636,7 +652,15 @@ export function createAskTools(deps) {
       return { available: true, files, ...sliceBytes(filtered(str(input.path)), offset, maxBytes) };
     },
     async propose_run(input) {
-      const r = await deps.validateProposal(input);
+      // #397: a proposal naming NO target defaults to the user-pinned scope. The
+      // parent turn applies the same default before its authoritative
+      // re-validation, so the card the user sees matches what the model got.
+      let inp = input;
+      if (!str(input.projectKey) && !str(input.workspaceId)) {
+        const pin = pinnedScope();
+        if (pin) inp = { ...input, ...pin };
+      }
+      const r = await deps.validateProposal(inp);
       // commentIds are a ONE-WAY hand-off: a comment cited here is stamped
       // "sent to #<runId>" the moment the user starts the run, and nothing ever
       // un-stamps it. Refuse ids from a different project/workspace than this
@@ -748,10 +772,17 @@ export function createAskTools(deps) {
       if (!id) throw new AskToolError('read_attachment: id is required');
       const a = deps.readAttachment(id);
       if (!a) throw new AskToolError('read_attachment: attachment not found');
+      if (a.kind && a.kind !== 'text') {
+        // #398: never a sliceBytes view of binary garbage — and deps.redact is a
+        // TEXT guard, so the body deliberately does not pass through it (the
+        // model reads the raw file; nothing here can scrub pixels).
+        return { name: a.name, kind: a.kind, mime: a.mime, totalBytes: a.bytes, path: a.path,
+          note: 'binary attachment: pass `path` to your Read tool to view the content' };
+      }
       const offset = clampInt(input.offset, 0, Number.MAX_SAFE_INTEGER, 0);
       const maxBytes = clampInt(input.maxBytes, 1, L.attachmentReadMaxBytes, L.attachmentReadDefaultBytes);
       const { text, truncated, totalBytes, nextOffset } = sliceBytes(deps.redact(a.text), offset, maxBytes);
-      return { name: a.name, text, truncated, totalBytes, nextOffset };
+      return { name: a.name, kind: 'text', text, truncated, totalBytes, nextOffset };
     },
     async open_worktree(input) {
       try {

@@ -367,7 +367,7 @@ test('title: fires on the first turn with the R-D + dontAsk option set; rename g
     generateTitle: async (text, opts) => { titleCalls.push({ text, opts }); return 'Fable Title'; },
     runClaudeImpl: async (opts) => { push(opts.onEvent, RESULT()); return { text: 'x', exitCode: 0 }; },
   });
-  setThreadTitle(s.thread.id, 'hello there');   // stamp the deterministic title like the route does
+  // The route stamps NOTHING before the 202: the row's title IS NULL while haiku runs.
   await turn.run();
   await turn.titlePromise;
   assert.equal(titleCalls.length, 1);
@@ -393,8 +393,8 @@ test('title suppressed when the user renamed mid-generation; not fired on later 
     generateTitle: () => gate.then(() => 'Late Title'),
     runClaudeImpl: async (opts) => { push(opts.onEvent, RESULT()); return { text: 'x', exitCode: 0 }; },
   });
-  setThreadTitle(s.thread.id, 'hi');
   await turn.run();
+  assert.equal(getThread(s.thread.id).title, null, 'nothing is stamped while haiku runs — the header stays "Ask Worca"');
   setThreadTitle(s.thread.id, 'User Named It');       // PATCH landed while haiku ran
   release();
   await turn.titlePromise;
@@ -410,6 +410,49 @@ test('title suppressed when the user renamed mid-generation; not fired on later 
   await t2.run();
   await t2.titlePromise;
   assert.equal(calls.length, 0, 'no title call on non-first turns');
+});
+
+test('title: an empty haiku result applies the route\'s fallback string + announces it, unless the user renamed meanwhile', async () => {
+  // Nothing is stamped before the 202 any more, so an empty generateTitle()
+  // (failure / abort / refusal) would leave the thread untitled for ever. The
+  // turn applies the route's fallback (sanitized first 80 chars, or "New chat")
+  // behind the same IS NULL guard and announces it with the same frame — the
+  // ONLY moment the prompt text may become the title.
+  const s = seed();
+  const { turn, outOfTurn } = makeTurn(s, { firstTurn: true, firstText: 'hello there', deterministicTitle: 'hello there' }, {
+    generateTitle: async () => '',
+    runClaudeImpl: async (opts) => { push(opts.onEvent, RESULT()); return { text: 'x', exitCode: 0 }; },
+  });
+  await turn.run();
+  await turn.titlePromise;
+  assert.equal(getThread(s.thread.id).title, 'hello there', 'fallback applied');
+  assert.deepEqual(outOfTurn, [{ type: 'ask-title', title: 'hello there' }], 'fallback announced like a generated title');
+
+  // The rename guard wins over the fallback too.
+  const s2 = seed();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { turn: t2, outOfTurn: o2 } = makeTurn(s2, { firstTurn: true, firstText: 'hi', deterministicTitle: 'hi' }, {
+    generateTitle: () => gate.then(() => ''),
+    runClaudeImpl: async (opts) => { push(opts.onEvent, RESULT()); return { text: 'x', exitCode: 0 }; },
+  });
+  await t2.run();
+  setThreadTitle(s2.thread.id, 'User Named It');      // PATCH landed while haiku ran
+  release();
+  await t2.titlePromise;
+  assert.equal(getThread(s2.thread.id).title, 'User Named It');
+  assert.equal(o2.length, 0, 'no frame for a suppressed fallback');
+
+  // No fallback string at all: the thread stays untitled and nothing is announced.
+  const s3 = seed();
+  const { turn: t3, outOfTurn: o3 } = makeTurn(s3, { firstTurn: true, firstText: 'x', deterministicTitle: null }, {
+    generateTitle: async () => '',
+    runClaudeImpl: async (opts) => { push(opts.onEvent, RESULT()); return { text: 'x', exitCode: 0 }; },
+  });
+  await t3.run();
+  await t3.titlePromise;
+  assert.equal(getThread(s3.thread.id).title, null);
+  assert.equal(o3.length, 0);
 });
 
 test("contract: run() never rejects — the terminal 'error' emit with NO listener resolves", async () => {
@@ -588,4 +631,195 @@ test('a throwing store.addThreadTotals does not swallow the ledger append (D10 p
   await turn.run();
   assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM ask_cost_ledger').get().n, 1,
     'the ledger call sits OUTSIDE the store try/catches');
+});
+
+// ── #397: the user-pinned scope on proposals ─────────────────────────────────
+
+const proposeRun = (input) => async (opts) => {
+  push(opts.onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id: 'toolu_1', name: 'mcp__worca__propose_run', input }] } });
+  push(opts.onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: '{"ok":true}' }] }, tool_use_result: '{"ok":true}' });
+  push(opts.onEvent, RESULT());
+  return { text: '', exitCode: 0 };
+};
+
+test('#397: a target-less proposal is validated with the pinned scope; a matching card carries no flag', async () => {
+  const s = seed();
+  let seen = null;
+  const { turn } = makeTurn(s, { pinnedScope: { projectKey: 'demo-00000001' } }, {
+    validateProposal: async (input) => { seen = input; return { ok: true, card: { target: 'project', projectKey: input.projectKey, workspaceId: null } }; },
+    runClaudeImpl: proposeRun({ brief: 'do it' }),
+  });
+  await turn.run();
+  assert.equal(seen.projectKey, 'demo-00000001', 'the pin fills the missing target before validation');
+  assert.equal(seen.brief, 'do it');
+  const block = getMessage(s.asst.id).blocks.find((b) => b.kind === 'card');
+  assert.equal(block.scopeMismatch, undefined, 'a card ON the pinned scope is not flagged');
+});
+
+test('#397: a proposal explicitly targeting ANOTHER project than the pin flags the card', async () => {
+  const s = seed();
+  const { turn, frames } = makeTurn(s, { pinnedScope: { projectKey: 'demo-00000001' } }, {
+    validateProposal: async (input) => ({ ok: true, card: { target: 'project', projectKey: input.projectKey, workspaceId: null } }),
+    runClaudeImpl: proposeRun({ brief: 'do it', projectKey: 'other-00000003' }),
+  });
+  await turn.run();
+  const block = getMessage(s.asst.id).blocks.find((b) => b.kind === 'card');
+  assert.equal(block.scopeMismatch, true, 'the mismatch is flagged on the persisted block');
+  const frame = frames.find((f) => f.type === 'ask-card');
+  assert.equal(frame.block.scopeMismatch, true, 'and on the broadcast card frame');
+});
+
+test('#397: a workspace pin flags a project-targeted card too; no pin means no flag ever', async () => {
+  const s = seed();
+  const { turn } = makeTurn(s, { pinnedScope: { workspaceId: 'wks-team-0000abcd' } }, {
+    validateProposal: async (input) => ({ ok: true, card: { target: 'project', projectKey: input.projectKey ?? null, workspaceId: input.workspaceId ?? null } }),
+    runClaudeImpl: proposeRun({ brief: 'do it', projectKey: 'demo-00000001' }),
+  });
+  await turn.run();
+  assert.equal(getMessage(s.asst.id).blocks.find((b) => b.kind === 'card').scopeMismatch, true);
+
+  const s2 = seed();
+  const { turn: t2 } = makeTurn(s2, {}, {
+    validateProposal: async (input) => ({ ok: true, card: { target: 'project', projectKey: input.projectKey ?? null, workspaceId: null } }),
+    runClaudeImpl: proposeRun({ brief: 'do it', projectKey: 'other-00000003' }),
+  });
+  await t2.run();
+  assert.equal(getMessage(s2.asst.id).blocks.find((b) => b.kind === 'card').scopeMismatch, undefined,
+    'an unpinned chat never flags anything');
+});
+
+const toolUse = (onEvent, msgId, toolId, name, input) => push(onEvent, { type: 'assistant', message: { id: msgId, content: [{ type: 'tool_use', id: toolId, name, input }] }, parent_tool_use_id: null });
+const toolResult = (onEvent, toolId, text) => push(onEvent, { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: [{ type: 'text', text }] }] }, parent_tool_use_id: null });
+const mainUsage = (onEvent, id, usage) => {
+  push(onEvent, { type: 'stream_event', event: { type: 'message_start', message: { id, role: 'assistant', content: [], usage: { input_tokens: 1, output_tokens: 1 } } }, parent_tool_use_id: null });
+  push(onEvent, { type: 'stream_event', event: { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage }, parent_tool_use_id: null });
+};
+
+test('onWorktreeMutation dep: a worktree write in the stream reaches the injected sink once; a throwing sink is contained', async () => {
+  const s = seed(); const pokes = [];
+  const { turn } = makeTurn(s, {}, {
+    onWorktreeMutation: (e) => pokes.push(e),
+    runClaudeImpl: async ({ onEvent }) => {
+      toolUse(onEvent, 'm1', 'toolu_1', 'mcp__worca__open_worktree', { projectKey: 'p', ref: 'main' });
+      toolResult(onEvent, 'toolu_1', JSON.stringify({ worktreeId: 'wt_00000001' }));
+      toolUse(onEvent, 'm1', 'toolu_2', 'mcp__worca__git', { worktreeId: 'wt_00000001', args: ['status'] });
+      toolResult(onEvent, 'toolu_2', '{}');
+      say(onEvent, 'm2', 'done');
+      push(onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  assert.deepEqual(pokes, [{ tool: 'open_worktree' }], 'the reducer hook is wired to the dep; read-only git filtered');
+
+  const s2 = seed();
+  const { turn: t2, frames } = makeTurn(s2, {}, {
+    onWorktreeMutation: () => { throw new Error('sink down'); },
+    runClaudeImpl: async ({ onEvent }) => {
+      toolUse(onEvent, 'm1', 'toolu_1', 'mcp__worca__open_worktree', {});
+      toolResult(onEvent, 'toolu_1', '{}');
+      push(onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await t2.run();
+  assert.equal(frames.at(-1).type, 'ask-done');
+  assert.equal(frames.at(-1).status, 'done', 'a broken sink never breaks the turn');
+});
+
+test('liveCostRates dep: ask-usage frames carry a display estimate before the result and null after; no sink sees it', async () => {
+  clearAskLedger();
+  const s = seed(); const costs = [];
+  const { turn, frames } = makeTurn(s, {}, {
+    liveCostRates: (model) => (model === 'claude-opus-5' ? { input: 2, output: 4 } : null),
+    recordAskCost: (a) => costs.push(a),
+    runClaudeImpl: async ({ onEvent }) => {
+      mainUsage(onEvent, 'm1', { input_tokens: 10, output_tokens: 20 });
+      say(onEvent, 'm1', 'answer');
+      push(onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  const usage = frames.filter((f) => f.type === 'ask-usage');
+  assert.equal(usage[0].costUsd, null);
+  assert.equal(usage[0].estimatedCostUsd, (10 * 2 + 20 * 4) / 1e6, 'priced at the injected rates');
+  assert.equal(usage.at(-1).costUsd, 0.05, 'the CLI figure');
+  assert.equal(usage.at(-1).estimatedCostUsd, null, 'retired once authoritative');
+  const done = frames.at(-1);
+  assert.equal(done.type, 'ask-done');
+  assert.equal(done.costUsd, 0.05);
+  assert.equal('estimatedCostUsd' in done, false);
+  assert.equal(getThread(s.thread.id).totals.costUsd, 0.05, 'thread totals: the authoritative figure only');
+  assert.equal(costs.length, 1);
+  assert.equal(costs[0].amountUsd, 0.05, 'ledger: the authoritative figure only');
+});
+
+test('liveCostRates default: a built-in id prices from the list table; an unknown id → estimatedCostUsd null', async () => {
+  const s = seed();   // makeTurn's model is claude-opus-5 → PREDEFINED_LIST_PRICES row ($5 / $25)
+  const { turn, frames } = makeTurn(s, {}, {
+    runClaudeImpl: async ({ onEvent }) => {
+      mainUsage(onEvent, 'm1', { input_tokens: 1_000_000, output_tokens: 1_000_000 });
+      say(onEvent, 'm1', 'answer');
+      push(onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  assert.equal(frames.filter((f) => f.type === 'ask-usage')[0].estimatedCostUsd, 30, '1M in @ $5 + 1M out @ $25');
+
+  const s2 = seed();
+  const { turn: t2, frames: f2 } = makeTurn(s2, { model: 'onprem-llama' }, {
+    runClaudeImpl: async ({ onEvent }) => {
+      mainUsage(onEvent, 'm1', { input_tokens: 5, output_tokens: 5 });
+      say(onEvent, 'm1', 'answer');
+      push(onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await t2.run();
+  assert.equal(f2.filter((f) => f.type === 'ask-usage')[0].estimatedCostUsd, null, 'no rates: today\'s behaviour');
+});
+
+test('title: kicked off at the START of the first turn — ask-title lands BEFORE ask-done when haiku beats the turn', async () => {
+  const s = seed();
+  const order = [];
+  let releaseTurn, runnerStarted;
+  const turnGate = new Promise((r) => { releaseTurn = r; });
+  const started = new Promise((r) => { runnerStarted = r; });
+  // onFrame/onOutOfTurn are overridden on purpose (deps spread last in makeTurn):
+  // one array gives the cross-stream order the rig's two arrays cannot.
+  const { turn } = makeTurn(s, { firstTurn: true, firstText: 'hello there', deterministicTitle: 'hello there' }, {
+    onFrame: (f) => order.push(f.type),
+    onOutOfTurn: (f) => order.push(f.type),
+    generateTitle: async () => 'Fast Title',
+    runClaudeImpl: async (opts) => {
+      runnerStarted();                 // the runner is spawned AFTER mkdir → the title was already kicked off
+      await turnGate;                  // …and the turn outlives the title call
+      push(opts.onEvent, RESULT());
+      return { text: 'x', exitCode: 0 };
+    },
+  });
+  const running = turn.run();
+  await started;
+  await turn.titlePromise;             // the (fake) haiku call resolved and ask-title went out
+  releaseTurn();
+  await running;
+  assert.ok(order.indexOf('ask-title') > order.indexOf('ask-start'), 'after the turn started');
+  assert.ok(order.indexOf('ask-title') < order.indexOf('ask-done'), 'and BEFORE the turn ended');
+  assert.equal(getThread(s.thread.id).title, 'Fast Title');
+  assert.equal(order.filter((t) => t === 'ask-title').length, 1, 'kicked off once — the post-turn backstop is a no-op');
+});
+
+test('title: a scratch-dir failure still titles the first turn exactly once (the post-terminal backstop)', async () => {
+  const s = seed(); const calls = [];
+  const { turn, frames, outOfTurn } = makeTurn(s, { firstTurn: true, firstText: 'hello there', deterministicTitle: 'hello there' }, {
+    fs: { mkdir: async () => { throw new Error('EACCES: scratch'); }, writeFile: async () => {}, unlink: async () => {} },
+    generateTitle: async () => { calls.push(1); return 'Backstop Title'; },
+  });
+  await turn.run();
+  await turn.titlePromise;
+  assert.equal(frames.at(-1).type, 'ask-error', 'the deps failure is an error completion');
+  assert.equal(calls.length, 1);
+  assert.deepEqual(outOfTurn, [{ type: 'ask-title', title: 'Backstop Title' }]);
 });

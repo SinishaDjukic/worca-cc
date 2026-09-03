@@ -4,13 +4,16 @@
 // CLI entry point. Parses flags, creates a core orchestrator, subscribes to its events,
 // renders a phase tracker + streamed agent logs to the terminal, and drives interactive
 // Q&A (clarify) and loop gates via node:readline. Supports --yes (auto), --mock,
-// --install <dir> (delegates to scripts/install.mjs), and --ui (spawns ui/server.mjs).
+// --install <dir> (delegates to scripts/install.mjs), ui start|stop|restart|status
+// (--ui is an alias of `ui start`; see cmdUi),
+// and -v/-V/--version (also the bare word `version`).
 //
 // ESM, no external dependencies.
 
 import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
 import { fstatSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, basename } from 'node:path';
 import process from 'node:process';
@@ -25,6 +28,11 @@ import {
 } from '../core/projects.mjs';
 import { projectKey } from '../core/store.mjs';
 import { formatExecLine, formatGateHeader, formatRunSummary } from './render.mjs';
+import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
+import { effectiveDebugSpawn } from '../core/settings.mjs';
+import {
+  DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
+} from '../core/ui-instance.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -39,6 +47,18 @@ process.on('warning', (w) => {
   if (w && w.name === 'ExperimentalWarning' && /SQLite/i.test(w.message)) return;
   process.stderr.write(`${w?.stack || w?.message || w}\n`);
 });
+// ── --version ──────────────────────────────────────────────────────────────────
+// Answered BEFORE the Node preflight and before any flag validation: "which worca is
+// this?" is the first question asked when something else is broken, so it must work
+// on an unsupported Node and alongside an otherwise-bad command line. The bare word
+// `version` is only honoured in the subcommand slot (like `help`); the flags anywhere.
+// Output is the GNU/gh/go form, `<prog> <semver>`, on stdout, exit 0.
+const PKG_VERSION = createRequire(import.meta.url)('../../package.json').version;
+const VERSION_FLAGS = new Set(['-v', '-V', '--version']);
+if (process.argv[2] === 'version' || process.argv.slice(2).some((a) => VERSION_FLAGS.has(a))) {
+  process.stdout.write(`worca ${PKG_VERSION}\n`);
+  process.exit(0);
+}
 // Fail fast on an unsupported Node / missing node:sqlite BEFORE any DB is opened.
 preflightNode();
 
@@ -58,7 +78,8 @@ const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'bypassPermissions',
 
 /**
  * Parse argv into a flags object. Supports "--flag value" and "--flag=value", plus the
- * boolean flags --mock, --yes/--non-interactive, --ui, -h/--help.
+ * boolean flags --mock, --yes/--non-interactive, --ui, -h/--help. (-v/-V/--version
+ * never reach here: they are answered at module top, before the Node preflight.)
  */
 function parseArgs(argv) {
   const out = {
@@ -188,7 +209,7 @@ Usage:
   worca --prompt "<task>" [--project <dir>] [options]
   worca --file <task.md> [--project <dir>] [options]
   worca "<task>" [--project <dir>] [options]   (bare prompt; quote it)
-  worca --ui
+  worca ui [start|stop|restart|status] [--port <n>] [--open]
   worca --install <targetDir> [--force]
 
 Subcommands:
@@ -202,7 +223,11 @@ Subcommands:
                               disable|doctor|link|reimport|init|validate|exec. See: worca plugin help
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
   config [get|set|unset]      Budget & cost-limit settings
+  ui [start|stop|restart|status]
+                              Run the web UI (default http://localhost:4317). See: worca ui help
+  workflow <cmd> [...]        Export a workflow as a Claude Code skill: list|export. See: worca workflow help
   help                        Print this help (same as --help).
+  version                     Print the version (same as --version).
 
 Options:
   --project <dir>          Target project directory (default: cwd)
@@ -219,9 +244,10 @@ Options:
   --branch <name>          Feature branch name (default: claude proposes one)
   --mock                   Offline mock mode (no claude, no tokens)
   --yes, --non-interactive Auto-answer clarify (first option) and gates (continue)
-  --ui                     Launch the web UI (ui/server.mjs) and exit
+  --ui                     Same as "worca ui start" (accepts --port, --open, --mock)
   --install <targetDir>    Copy agents + /worca skill into <targetDir>/.claude
   -h, --help               Show this help
+  -v, -V, --version        Print the version (worca <semver>) and exit
 `;
 
 // ── terminal rendering ───────────────────────────────────────────────────────────
@@ -334,22 +360,27 @@ async function askGate(rl, issues, header) {
 
 /**
  * Ask the user how to handle a recoverable error (auth / rate-limit / quota /
- * network). Shows the cause and waits for retry / abort. Returns { decision }.
+ * network). Shows the cause and the row's options (failure-policy.mjs: Retry, plus
+ * what giving up does — pause or abort). Returns { decision } with the chosen
+ * option's id as the wire value.
  */
 async function askRecovery(rl, recovery) {
   const rec = recovery || {};
+  const options = Array.isArray(rec.options) && rec.options.length ? rec.options : promptOptions({ outcome: 'pause' });
   out('');
   out(c('yellow', c('bold', `Recoverable ${String(rec.cls || 'error').replace('_', ' ')} error — the pipeline could not reach the model.`)));
   if (rec.message) out(c('gray', `  ${rec.message}`));
   if (rec.cls === 'auth') out(c('gray', '  Fix: re-authenticate (claude setup-token or /login) in another terminal, then retry.'));
   else out(c('gray', '  Fix: wait out the limit / restore connectivity / top up credit, then retry.'));
-  out('  1) Retry');
-  out('  2) Abort the run');
+  options.forEach((o, i) => out(`  ${i + 1}) ${o.label}`));
   let decision = '';
   while (!decision) {
-    const raw = (await question(rl, c('cyan', 'Choose [1-2]: '))).trim();
-    if (raw === '1' || /^retry/i.test(raw)) decision = 'retry';
-    else if (raw === '2' || /^abort/i.test(raw)) decision = 'abort';
+    const raw = (await question(rl, c('cyan', `Choose [1-${options.length}]: `))).trim();
+    const byNumber = options[Number(raw) - 1];
+    if (byNumber) decision = byNumber.id;
+    else if (/^retry/i.test(raw)) decision = 'retry';
+    // 'pause' and 'abort' both mean give up; the option offered names the verdict.
+    else if (/^(pause|abort)/i.test(raw)) decision = options.find((o) => o.id !== 'retry')?.id || 'pause';
   }
   return { decision };
 }
@@ -380,7 +411,16 @@ function stdinCanAnswer() {
 /**
  * Wire readline Q&A, log/phase rendering, and SIGINT pause/stop onto an
  * orchestrator, then drive it. `start` launches run() or resume(). Returns the
- * process exit code (0 for done/paused, 1 otherwise).
+ * process exit code (pauseExitCode, failure-policy.mjs):
+ *   0  done — and an INTERACTIVE pause the user chose or a limit/cap forced (they
+ *      witnessed it and can resume);
+ *   1  a terminal error (a launch failure, an unrecoverable resume, a stop) and an
+ *      INTERACTIVE pause an error forced;
+ *   2  a usage error (fail());
+ *   3  any pause under --yes — the run parked itself (auth/quota/usage limit,
+ *      exhausted retries, an error) with nobody attached to resume it, so a
+ *      wrapper must not read success. Under --yes a parked run's cause prints
+ *      on STDOUT with the pause block; only a terminal error reaches stderr.
  */
 async function attachAndDrive(orch, flags, start) {
   // Refuse an unanswerable interactive run BEFORE start(). The orchestrator
@@ -557,7 +597,22 @@ async function attachAndDrive(orch, flags, start) {
       for (const line of summary.slice(1)) out(line);
     }
   } else if (result?.status === 'paused') {
-    out(c('yellow', result?.reason ? `Pipeline paused: ${result.reason}` : 'Pipeline paused.'));
+    // An error-pause reads as a failure the user can pick up again: the cause on
+    // its own line, then the reassurance that nothing was thrown away.
+    if (result.reason === REASON.ERROR) {
+      out(c('red', c('bold', 'Pipeline paused after an error.')));
+      if (result.detail) out(c('red', `  ${result.detail}`));
+      out(c('yellow', 'Nothing was discarded: the worktree and the run position are kept.'));
+    } else if (result.reason === REASON.RECOVERABLE) {
+      out(c('yellow', c('bold', 'Pipeline paused on a recoverable error — resume once it clears.')));
+      if (result.detail) out(c('yellow', `  ${result.detail}`));
+      out(c('yellow', 'Nothing was discarded: the worktree and the run position are kept.'));
+    } else if (result?.reason) {
+      const label = describePauseReason(result.reason) || result.reason;
+      out(c('yellow', `Pipeline paused: ${label}${result.detail ? ` — ${result.detail}` : ''}`));
+    } else {
+      out(c('yellow', 'Pipeline paused.'));
+    }
     out(`Resume with: ${c('bold', `worca resume ${orch.state.id}`)}`);
   } else if (result?.status === 'stopped') {
     out(c('yellow', 'Pipeline stopped.'));
@@ -569,16 +624,110 @@ async function attachAndDrive(orch, flags, start) {
   }
   // An unanswered question is a failure even if the run somehow settled `done`.
   if (answerFailure) return 1;
-  return result?.status === 'done' || result?.status === 'paused' ? 0 : 1;
+  if (result?.status === 'done') return 0;
+  // The exit code for a pause is a consequence of its reason (failure-policy.mjs):
+  // 0 only when someone is attached to resume it (interactive — pinned by the
+  // MAJ-7 Ctrl+C pitfall test) and no error forced it; 1 for an interactive
+  // error-pause; 3 under --yes, where every pause is the run parking ITSELF with
+  // nobody left to resume (0 would let a CI job go green on a run that did no
+  // work; 2 is fail()'s usage-error code).
+  if (result?.status === 'paused') return pauseExitCode(result.reason, flags.auto);
+  return 1;
 }
 
 // ── subcommands ──────────────────────────────────────────────────────────────────
 
-/** Spawn the web UI server and inherit its stdio. Resolves when it exits. */
-function launchUi() {
+// ── web UI lifecycle ─────────────────────────────────────────────────────────────
+//
+// The UI is a singleton over the machine-wide store, so `worca ui` never blindly
+// binds: it probes the port first (src/core/ui-instance.mjs). A Worca UI already
+// answering there is the EXPECTED state — print where it is and how to restart
+// it, exit 0. Only a port held by some other program is an error (exit 1).
+
+const UI_HELP = `worca ui — the web UI server
+
+Usage:
+  worca ui [start] [--port <n>] [--open] [--mock]   Start the UI (default http://localhost:${DEFAULT_UI_PORT})
+  worca ui stop [--port <n>]                        Stop the running UI gracefully
+  worca ui restart [--port <n>] [--open] [--mock]   Stop it if running, then start it again
+  worca ui status [--port <n>]                      Report whether it is running (exit 0 = running, 1 = not)
+  worca ui help                                     Show this help
+
+Options:
+  --port <n>   Port to bind (start) or to look at (stop/restart/status).
+               Default: the PORT env var, then ${DEFAULT_UI_PORT}. stop/restart/status
+               also read the port of the last started UI (<worca home>/ui.json).
+  --open       Open the UI in your browser once it is up
+  --mock       Start in offline mock mode (same as WORCA_MOCK=1)
+
+\`worca --ui\` is an alias of \`worca ui start\`.
+`;
+
+/** Bind/probe port for a `worca ui` verb: --port > (instance file) > PORT env > default. */
+function resolveUiPort(a, { preferInstanceFile = false } = {}) {
+  if (a.port !== undefined) {
+    const n = Number(a.port);
+    if (!Number.isInteger(n) || n < 1 || n > 65535) fail(`--port must be an integer between 1 and 65535, got: ${a.port}`);
+    return { port: n, host: process.env.WORCA_HOST || DEFAULT_UI_HOST };
+  }
+  if (preferInstanceFile) {
+    const inst = readUiInstance();
+    if (inst) return { port: inst.port, host: inst.host || process.env.WORCA_HOST || DEFAULT_UI_HOST };
+  }
+  const env = Number(process.env.PORT);
+  const port = Number.isInteger(env) && env > 0 ? env : DEFAULT_UI_PORT;
+  return { port, host: process.env.WORCA_HOST || DEFAULT_UI_HOST };
+}
+
+/** Best-effort `open`/`start`/`xdg-open`; never throws, never keeps the CLI alive. */
+function openBrowser(url) {
+  const [cmd, args] = process.platform === 'darwin' ? ['open', [url]]
+    : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]]
+    : ['xdg-open', [url]];
+  try {
+    const p = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    p.on('error', () => {});
+    p.unref();
+  } catch { /* no browser opener on this box — the URL is printed anyway */ }
+}
+
+/** Spawn ui/server.mjs on `port` and inherit its stdio. Resolves with its exit code. */
+async function uiStart(a) {
+  const { port, host } = resolveUiPort(a);
+  const url = uiUrl({ host, port });
+  const probe = await probeUi({ host, port });
+  if (probe.state === 'worca') {
+    out(`Worca UI is already running at ${c('bold', url)}`);
+    out('');
+    out(`  Open it:       ${url}`);
+    out(`  Restart it:    ${c('bold', 'worca ui restart')}`);
+    out(`  Another port:  ${c('bold', `worca ui --port ${port + 1}`)}`);
+    if (a.open) openBrowser(url);
+    return 0;
+  }
+  if (probe.state === 'busy') {
+    process.stderr.write(`worca: port ${port} is in use by another program, so the Worca UI cannot start.\n\n`
+      + `  Pick a free port:  worca ui --port ${port + 1}   (or set PORT)\n`);
+    return 1;
+  }
+  // A UI started earlier on some OTHER port is worth a note, not a refusal.
+  const inst = readUiInstance();
+  if (inst && inst.port !== port) {
+    const other = await probeUi({ host: inst.host, port: inst.port });
+    if (other.state === 'worca') out(c('gray', `Note: another Worca UI is running at ${uiUrl({ host: inst.host, port: inst.port })}`));
+  }
+
   const server = join(REPO_ROOT, 'ui', 'server.mjs');
-  out(c('cyan', `Launching web UI: node ${server}`));
-  const child = spawn(process.execPath, [server], { stdio: 'inherit' });
+  out(c('cyan', `Starting Worca UI on ${url}`));
+  if (effectiveDebugSpawn().enabled) out(c('gray', `  node ${server}`));
+  const env = { ...process.env, PORT: String(port) };
+  if (a.mock) env.WORCA_MOCK = '1';
+  const child = spawn(process.execPath, [server], { stdio: 'inherit', env });
+  if (a.open) {
+    waitForUiState({ host, port, states: ['worca'], timeoutMs: 20000 })
+      .then((r) => { if (r) openBrowser(url); })
+      .catch(() => {});
+  }
   return new Promise((res) => {
     child.on('exit', (code) => res(code ?? 0));
     child.on('error', (err) => {
@@ -586,6 +735,75 @@ function launchUi() {
       res(1);
     });
   });
+}
+
+/** Stop the UI on the resolved port. Idempotent: "not running" exits 0. */
+async function uiStop(a, { quiet = false } = {}) {
+  const { port, host } = resolveUiPort(a, { preferInstanceFile: true });
+  const r = await stopUi({ host, port });
+  switch (r.status) {
+    case 'stopped':
+      out(`Stopped Worca UI on port ${port}${r.pid ? ` (pid ${r.pid})` : ''}.`);
+      return 0;
+    case 'not-running':
+      if (!quiet) out(`Worca UI is not running on port ${port}.`);
+      return 0;
+    case 'busy':
+      process.stderr.write(`worca: port ${port} is in use by another program, not a Worca UI — nothing to stop.\n`);
+      return 1;
+    case 'timeout':
+      process.stderr.write(`worca: the Worca UI on port ${port}${r.pid ? ` (pid ${r.pid})` : ''} did not exit in time.\n`);
+      return 1;
+    default:
+      process.stderr.write(`worca: could not stop the Worca UI on port ${port}: ${r.reason || r.status}\n`);
+      return 1;
+  }
+}
+
+async function uiStatus(a) {
+  const { port, host } = resolveUiPort(a, { preferInstanceFile: true });
+  const probe = await probeUi({ host, port });
+  if (probe.state === 'worca') {
+    const info = probe.info || {};
+    const detail = [info.pid ? `pid ${info.pid}` : null, info.version ? `v${info.version}` : null].filter(Boolean).join(', ');
+    out(`Worca UI is running at ${c('bold', uiUrl({ host, port }))}${detail ? ` (${detail})` : ''}`);
+    return 0;
+  }
+  if (probe.state === 'busy') {
+    out(`Worca UI is not running on port ${port} (the port is in use by another program).`);
+    return 1;
+  }
+  out(`Worca UI is not running on port ${port}.`);
+  return 1;
+}
+
+/** `worca ui [start|stop|restart|status|help] [--port <n>] [--open] [--mock]` */
+async function cmdUi(argv) {
+  const verbs = new Set(['start', 'stop', 'restart', 'status']);
+  let verb = 'start';
+  let rest = argv;
+  if (argv[0] === 'help' || argv[0] === '--help' || argv[0] === '-h') {
+    process.stdout.write(UI_HELP);
+    return 0;
+  }
+  if (argv[0] && !argv[0].startsWith('-')) {
+    if (!verbs.has(argv[0])) fail(`unknown ui command "${argv[0]}" — expected one of: start, stop, restart, status (see: worca ui help)`);
+    verb = argv[0];
+    rest = argv.slice(1);
+  }
+  const a = pluginArgs(rest, ['--port'], ['--open', '--mock']);
+  if (a._.length) fail(`unexpected argument: ${a._[0]} (see: worca ui help)`);
+  if (verb === 'stop') return uiStop(a);
+  if (verb === 'status') return uiStatus(a);
+  if (verb === 'restart') {
+    // Pin the port stop resolved (possibly from the instance file) so start reuses it.
+    const { port } = resolveUiPort(a, { preferInstanceFile: true });
+    a.port = String(port);
+    const code = await uiStop(a, { quiet: true });
+    if (code !== 0) return code;
+    return uiStart(a);
+  }
+  return uiStart(a);
 }
 
 /** Delegate to scripts/install.mjs, forwarding the target dir and any passthrough args. */
@@ -984,6 +1202,23 @@ Usage:
 Removing a marketplace only removes discovery — already-installed plugins keep
 working, including updates (install provenance lives in plugins.lock.json).
 Exit codes: 0 ok, 1 failure, 2 usage/validation errors.
+`;
+
+const WORKFLOW_HELP = `worca workflow — export a saved Composer workflow as a runnable Claude Code skill
+
+Usage:
+  worca workflow list                                List workflows (id, name, domain)
+  worca workflow export <id> [options]               Export a workflow to <dest>/.claude/
+
+Export options:
+  --global                 Export to the home dir (~/.claude), not a project
+  --target <dir>           Export into <dir>/.claude (default: cwd)
+  --slug <name>            Skill slug (default: slugified workflow name)
+  --dry-run                Show the classification (create/update/no-op/conflict); write nothing
+  --on-conflict <mode>     skip (default) | overwrite | namespace conflicting files
+
+Export always prints the plan first, then applies (unless --dry-run). A re-export
+of an unchanged workflow is an all-no-op. Exit codes: 0 ok, 1 failure, 2 usage errors.
 `;
 
 /** Tiny per-verb arg parser: positionals plus declared --value / --bool flags. */
@@ -1621,9 +1856,69 @@ async function cmdMarketplace(argv) {
   }
 }
 
+async function cmdWorkflow(argv) {
+  const verb = argv[0];
+  const rest = argv.slice(1);
+  if (!verb || verb === 'help') { process.stdout.write(WORKFLOW_HELP); return 0; }
+  const wf = await import('../core/workflows.mjs');
+  const xp = await import('../core/workflow-export.mjs');
+  try {
+    switch (verb) {
+      case 'list': {
+        // GRAPH_DEFAULT_WORKFLOW (the built-in default) is not in the user store, so
+        // prepend it — mirrors the server/UI, which always show it first.
+        const items = [wf.GRAPH_DEFAULT_WORKFLOW, ...(await wf.listWorkflows())];
+        for (const w of items) out(`${w.id}\t${w.name}\t${(w.domain || 'general')}`);
+        return 0;
+      }
+      case 'export': {
+        const a = pluginArgs(rest, ['--target', '--slug', '--on-conflict'], ['--global', '--dry-run']);
+        const id = a._[0];
+        if (!id) fail('Usage: worca workflow export <id> [--global | --target <dir>] [--slug <name>] [--dry-run] [--on-conflict=skip|overwrite|namespace]');
+        if (a.global && a.target) fail('--global and --target are mutually exclusive');
+        const onConflict = a['on-conflict'] || 'skip';
+        if (!xp.ON_CONFLICT_MODES.includes(onConflict)) fail(`--on-conflict must be ${xp.ON_CONFLICT_MODES.join('|')} (got ${onConflict})`);
+        const destination = a.global ? 'global' : 'project';
+        const projectDir = a.global ? undefined : (a.target || process.cwd());
+        const common = { workflowId: id, destination, projectDir, slug: a.slug };
+
+        // Always show the classification first. A dry-run stops at planExport (writes nothing);
+        // an apply reuses the buckets applyExport already computes, so the full resolve+classify
+        // pipeline runs ONCE, not twice.
+        const printPlan = (p) => {
+          for (const path of p.created) out(`${c('green', 'create')}\t${path}`);
+          for (const path of p.updated) out(`${c('cyan', 'update')}\t${path}`);
+          for (const path of p.noop) out(`${c('gray', 'no-op')}\t${path}`);
+          for (const cf of p.conflicts) out(`${c('yellow', 'conflict')}\t${cf.path}\t(${cf.reason})`);
+          for (const w of p.warnings || []) out(`${c('yellow', 'warn')}\t${w}`);
+          for (const o of p.orphans || []) out(`${c('gray', 'orphan')}\t${o}`);
+        };
+
+        if (a['dry-run']) { printPlan(await xp.planExport(common)); return 0; }
+
+        const applied = await xp.applyExport({ ...common, onConflict });
+        printPlan(applied);
+        for (const p of applied.written) out(`${c('green', 'wrote')}\t${p}`);
+        for (const p of applied.skipped) out(`${c('gray', 'skip')}\t${p}`);
+        if (applied.conflicts.length) {
+          // A partial export (conflicts skipped) can leave a non-runnable skill on disk. Warn AND
+          // exit non-zero so a CI/script that only checks the exit code does not treat it as success.
+          out(c('yellow', `\n${applied.conflicts.length} conflict(s) left unresolved (--on-conflict=${onConflict}). Re-run with --on-conflict=overwrite|namespace.`));
+          return 1;
+        }
+        return 0;
+      }
+      default: fail(`unknown workflow verb "${verb}" — see: worca workflow help`);
+    }
+  } catch (err) {
+    process.stderr.write(`worca workflow ${verb}: ${err && err.message ? err.message : err}\n`);
+    return 1;
+  }
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -1649,15 +1944,16 @@ function editDistance(a, b) {
  */
 function nearestSubcommand(token) {
   if (!token || /\s/.test(token)) return null;
-  // 'help' is spliced into both loops: it is a real CLI arm (the head of main())
-  // but deliberately absent from the dispatch table, so without it a typo of help
-  // itself (`worca hlep`) is distance >= 4 from everything and runs as a PROMPT.
-  for (const name of [...SUBCOMMANDS, 'help']) {
+  // 'help' and 'version' are spliced into both loops: they are real CLI arms (the
+  // head of main() / the module top) but deliberately absent from the dispatch
+  // table, so without them a typo of either (`worca hlep`, `worca versoin`) is
+  // distance >= 3 from everything and runs as a PROMPT.
+  for (const name of [...SUBCOMMANDS, 'help', 'version']) {
     if (token.length >= 3 && name.length > token.length && name.startsWith(token)) return name;
   }
   let best = null;
   let bestD = 3;   // strictly less than 3 == distance <= 2
-  for (const name of [...SUBCOMMANDS, 'help']) {
+  for (const name of [...SUBCOMMANDS, 'help', 'version']) {
     const d = editDistance(token, name);
     if (d < bestD) { bestD = d; best = name; }
   }
@@ -1680,6 +1976,13 @@ async function main() {
     if (sub === 'plugin') return cmdPlugin(rest);
     if (sub === 'marketplace') return cmdMarketplace(rest);
     if (sub === 'config') return cmdConfig(rest);
+    if (sub === 'ui') return cmdUi(rest);
+    if (sub === 'workflow') return cmdWorkflow(rest);
+  }
+  // `worca --ui [...]` is the historical spelling of `worca ui start [...]`; hand the
+  // remaining tokens to the ui parser so --port/--open/--mock work with either.
+  if (process.argv.slice(2).includes('--ui')) {
+    return cmdUi(process.argv.slice(2).filter((t) => t !== '--ui'));
   }
 
   const flags = parseArgs(process.argv.slice(2));
@@ -1694,10 +1997,6 @@ async function main() {
     const passthrough = [];
     if (process.argv.includes('--force')) passthrough.push('--force');
     return runInstall(flags.install, passthrough);
-  }
-
-  if (flags.ui) {
-    return launchUi();
   }
 
   if (flags.mock) {

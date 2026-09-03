@@ -6,8 +6,8 @@
 //
 // Frame classes (spec §6.6 / the P2→P3 contract): job frames carry
 // {threadId, messageId, seq} and are deduped by the per-job monotonic seq;
-// out-of-turn frames (ask-message / ask-title / ask-run-status) upsert by their
-// own key. A seq gap is REPORTED ({gap:true}), never healed here — the panel
+// out-of-turn frames (ask-message / ask-title / ask-run-status / ask-worktrees)
+// upsert by their own key. A seq gap is REPORTED ({gap:true}), never healed here — the panel
 // re-fetches the thread over REST and resubscribes (spec §10.8).
 
 const TERMINAL = new Set(['done', 'stopped', 'error']);
@@ -20,15 +20,27 @@ export function createThreadModel({ threadId }) {
   let live = null;
   let inFlight = null;
   let dirty = newDirty();
+  let worktrees = [];   // P4 §10: the chat's open worktrees (snapshot + ask-worktrees frames); the panel mirrors it
 
   function newDirty() {
     // runLinks dirt is produced but not yet consumed — no v1 UI renders run links directly; the follower notices carry the visible state.
-    return { structure: false, messages: new Set(), blocks: new Map(), answer: new Set(), label: false, meters: false, title: false, runLinks: false };
+    return { structure: false, messages: new Set(), blocks: new Map(), answer: new Set(), label: false, meters: false, title: false, runLinks: false, worktrees: false };
   }
 
   function rowById(id) {
     for (const r of rows) if (r && r.id === id) return r;
     return null;
+  }
+
+  // Agent blocks on the LIVE row, unique by id (upsertBlock replaces in place).
+  // Finished turns are already inside thread.totals.agents; ask-done replaces
+  // those totals and nulls `live` in ONE frame, so the two never overlap.
+  function liveAgentCount() {
+    const row = live ? rowById(live.messageId) : null;
+    if (!row || !Array.isArray(row.blocks)) return 0;
+    let n = 0;
+    for (const b of row.blocks) if (b && b.kind === 'agent') n += 1;
+    return n;
   }
 
   function upsertRow(message) {
@@ -50,6 +62,19 @@ export function createThreadModel({ threadId }) {
       else rows.splice(at, 0, message);
     }
     dirty.structure = true;
+  }
+
+  // The thread's attachment ledger (attachmentsBytes → the composer's budget
+  // pre-check) is seeded by the snapshot; without this it would never learn of
+  // an upload made in this session, and the composer would let a whole over-
+  // budget base64 POST through to the server's 413. Keyed by the store id, so a
+  // row seen through both the broadcast and the local echo counts once.
+  function noteAttachmentBlocks(blocks) {
+    for (const b of Array.isArray(blocks) ? blocks : []) {
+      if (!b || b.kind !== 'attachment' || typeof b.id !== 'string') continue;
+      if (attachments.some((a) => a && a.id === b.id)) continue;
+      attachments.push({ id: b.id, name: b.name, bytes: Number.isFinite(b.bytes) ? b.bytes : 0, kind: b.attKind ?? 'text', mime: b.mime ?? null });
+    }
   }
 
   function markBlockDirty(messageId, blockId) {
@@ -118,14 +143,14 @@ export function createThreadModel({ threadId }) {
       }
     } else if (frame.type === 'ask-start') {
       ensureStreamingRow(frame.messageId, frame);
-      live = { messageId: frame.messageId, userMessageId: frame.userMessageId ?? null, label: 'Thinking', startedAt: frame.startedAt ?? null, lastSeq: frame.seq, text: '', usage: null, costUsd: null };
+      live = { messageId: frame.messageId, userMessageId: frame.userMessageId ?? null, label: 'Thinking', startedAt: frame.startedAt ?? null, lastSeq: frame.seq, text: '', usage: null, costUsd: null, estimatedCostUsd: null };
       inFlight = { messageId: frame.messageId };
       dirty.label = true;
     } else if (!live && inFlight && frame.messageId === inFlight.messageId) {
       // Adoption: the ring buffer may have evicted the prefix — accept the first
       // frame at whatever seq it carries; ask-done.text heals the missing text.
       ensureStreamingRow(frame.messageId);
-      live = { messageId: frame.messageId, userMessageId: null, label: null, startedAt: null, lastSeq: frame.seq, text: '', usage: null, costUsd: null, adopted: true };
+      live = { messageId: frame.messageId, userMessageId: null, label: null, startedAt: null, lastSeq: frame.seq, text: '', usage: null, costUsd: null, estimatedCostUsd: null, adopted: true };
     } else {
       return { dropped: 'no-live' };
     }
@@ -149,11 +174,13 @@ export function createThreadModel({ threadId }) {
         if (frame.block && frame.block.id != null) {
           upsertBlock(row, frame.block);
           markBlockDirty(frame.messageId, frame.block.id);
+          if (frame.type === 'ask-block' && frame.block.kind === 'agent') dirty.meters = true;   // "N agents" moves live
         }
         break;
       case 'ask-usage':
         live.usage = frame.usage ?? null;
         live.costUsd = frame.costUsd ?? null;
+        live.estimatedCostUsd = Number.isFinite(frame.estimatedCostUsd) ? frame.estimatedCostUsd : null;   // display-only
         dirty.meters = true;
         break;
       case 'ask-done':
@@ -187,6 +214,7 @@ export function createThreadModel({ threadId }) {
         const m = frame.message;
         if (!m || typeof m.id !== 'string') return { dropped: 'no-live' };
         upsertRow(m);
+        noteAttachmentBlocks(m.blocks);
         dirty.messages.add(m.id);
         return { ok: true };
       }
@@ -202,6 +230,11 @@ export function createThreadModel({ threadId }) {
         dirty.runLinks = true;
         return { ok: true };
       }
+      case 'ask-worktrees':
+        if (!Array.isArray(frame.worktrees)) return { dropped: 'no-live' };
+        worktrees = frame.worktrees.slice();
+        dirty.worktrees = true;
+        return { ok: true };
       default:
         return { dropped: 'no-live' };
     }
@@ -217,6 +250,7 @@ export function createThreadModel({ threadId }) {
       for (const l of Array.isArray(snapshot.runLinks) ? snapshot.runLinks : []) {
         links.set(l.runId, { pipelineId: l.pipelineId ?? null, cardId: l.cardId ?? null, status: l.status ?? null, phase: l.phase ?? null });
       }
+      worktrees = Array.isArray(snapshot.worktrees) ? snapshot.worktrees.slice() : [];   // the fresh-thread load carries no key
       live = null;
       inFlight = snapshot.inFlight ?? null;
       dirty = newDirty();
@@ -225,6 +259,7 @@ export function createThreadModel({ threadId }) {
       dirty.meters = true;
       dirty.runLinks = true;
       dirty.label = true;
+      dirty.worktrees = true;
     },
     apply(frame) {
       if (!frame || frame.threadId !== threadId) return { dropped: 'other-thread' };
@@ -239,11 +274,22 @@ export function createThreadModel({ threadId }) {
     messages() { return rows; },
     thread() { return thread; },
     totals() {
-      return { ...thread.totals, live: live ? { usage: live.usage, costUsd: live.costUsd } : null };
+      const base = thread.totals && typeof thread.totals === 'object' ? thread.totals : {};
+      const liveAgents = live ? liveAgentCount() : 0;
+      return {
+        ...base,
+        ...(liveAgents ? { agents: (Number.isFinite(base.agents) ? base.agents : 0) + liveAgents } : {}),
+        live: live ? { usage: live.usage, costUsd: live.costUsd, estimatedCostUsd: live.estimatedCostUsd } : null,
+      };
     },
     inFlight() { return inFlight; },
     live() { return live; },
     runLinks() { return links; },
+    worktrees() { return worktrees; },
+    setWorktrees(list) {   // the panel's heal (refreshWorktrees) feeds the same store the frames do
+      worktrees = Array.isArray(list) ? list.slice() : [];
+      dirty.worktrees = true;
+    },
     attachmentsBytes() { return attachments.reduce((n, a) => n + (a && Number.isFinite(a.bytes) ? a.bytes : 0), 0); },
     findCard(cardId) {
       for (const r of rows) {
@@ -253,11 +299,18 @@ export function createThreadModel({ threadId }) {
       return null;
     },
     noteLocalUserMessage({ id, text, attachments: atts }) {
+      // The POST-side ask-message broadcast can land BEFORE the 202 resolves. That
+      // row is the persisted one (seq, store-minted attachment ids); an echo that
+      // replaced it would turn an image thumbnail back into a name pill until the
+      // next reload. Nothing the echo carries is newer than it, so keep it.
+      if (rowById(id)) { dirty.messages.add(id); return; }
+      const blocks = (Array.isArray(atts) ? atts : []).map((a) => ({ kind: 'attachment', id: a.id ?? null, name: a.name, bytes: a.bytes, attKind: a.attKind ?? 'text', mime: a.mime ?? null }));
       upsertRow({
         id, threadId, seq: undefined, role: 'user', text: String(text ?? ''),
-        blocks: (Array.isArray(atts) ? atts : []).map((a) => ({ kind: 'attachment', id: a.id ?? null, name: a.name, bytes: a.bytes })),
+        blocks,
         status: null, reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: null,
       });
+      noteAttachmentBlocks(blocks);
       dirty.messages.add(id);
     },
   });

@@ -72,6 +72,7 @@ import { artifactsByNodeCycle, viewerKindFor, renderArtifact } from './artifact-
 import {
   buildFileTree, renderFileTree, firstFile,
 } from './file-tree.mjs';
+import { exportSlugPreview } from './export-slug.mjs';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport, renderReferences409,
@@ -627,6 +628,12 @@ function handleServerMessage(msg) {
     refreshBudget();
     return;
   }
+  // Another tab saved a Settings card: repaint ours from the server so a stale
+  // checkbox/field cannot be "saved" back over the change.
+  if (msg.type === 'settings-changed') {
+    loadSettings();
+    return;
+  }
   if (msg.type === 'projects-changed') {
     refreshAllCounts();
     if (currentView() === 'projects') loadProjectsView();
@@ -771,6 +778,7 @@ function onHello(msg) {
       kind: r0.kind || 'run',
       pipelineId: r0.pipelineId || null,
       pauseReason: r0.pauseReason || null,
+      pauseDetail: r0.pauseDetail || null,
       workspaceId: r0.workspaceId || undefined,
       projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
     });
@@ -899,6 +907,7 @@ function nowHMS() {
 function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
+  pauseDetail = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null,
 }) {
   return {
@@ -913,6 +922,7 @@ function makeRun({
     pipelineId,           // matches a History row id once persisted; used to hide lingerers from History
     pauseReason,          // why it paused, or null — ANY orchestrator pause code rides here
                           // (e.g. 'usage_limit'); only the cost pair renders a cost banner
+    pauseDetail,          // the human-readable cause behind an 'error' pause, or null
     workspaceId,
     workspaceName,
     // Stable ordering key: assigned once per runId, never bumped by activity
@@ -1821,6 +1831,13 @@ async function gvRefreshSaved() {
         if (await gvComposer.openTemplate(full)) gvComposer.fit();
       });
       row.appendChild(open);
+      // Export to Claude Code — available for every v2 row incl. the built-in (you can
+      // export the default). Opens the plan/apply modal; the server resolves the graph.
+      const exportBtn = document.createElement('button');
+      exportBtn.type = 'button'; exportBtn.className = 'pl-export'; exportBtn.title = 'Export to Claude Code';
+      exportBtn.textContent = '⇪';
+      exportBtn.addEventListener('click', () => openExportModal({ id: wf.id, name: wf.name || wf.id }));
+      row.appendChild(exportBtn);
       // No × on the built-in: DELETE /api/workflows/wf_default always answers
       // 400 (ui/server.mjs), so the button could only ever fail. Open stays —
       // the built-in is meant to be opened and saved as a copy.
@@ -4071,7 +4088,8 @@ function renderGateBody(r, panel, pq) {
 }
 
 // Recovery prompt: a node hit a recoverable error (auth / rate-limit / quota /
-// network). Show the cause and let the user fix it then Retry, or Abort the run.
+// network). Show the cause and let the user fix it then Retry, or park the run
+// with Pause run — nothing here ends a run, only Stop does.
 function renderRecoveryBody(r, panel, pq) {
   const rec = pq.recovery || {};
   const intro = document.createElement('div');
@@ -4079,7 +4097,7 @@ function renderRecoveryBody(r, panel, pq) {
   const hint = rec.cls === 'auth'
     ? 'Re-authenticate (e.g. run `claude setup-token` or `/login`), then Retry.'
     : 'Fix the problem (wait out a limit, restore connectivity, top up credit), then Retry.';
-  intro.textContent = `This step could not reach the model. ${hint}`;
+  intro.textContent = `This step could not reach the model. ${hint} Or pause the run and come back later — only Stop ends it.`;
   panel.appendChild(intro);
 
   if (rec.message) {
@@ -4091,15 +4109,21 @@ function renderRecoveryBody(r, panel, pq) {
 
   const foot = document.createElement('div');
   foot.className = 'qpanel-foot gate-actions';
-  const abort = document.createElement('button');
-  abort.type = 'button';
-  abort.className = 'btn recovery-abort';
-  abort.textContent = 'Abort run';
+  // The give-up option comes from the failure policy's row (options ride the
+  // prompt): 'pause' parks the run, 'abort' ends it. Older payloads carry none.
+  const giveUp = (Array.isArray(rec.options) && rec.options.find((o) => o && o.id !== 'retry')) || { id: 'pause' };
+  const pause = document.createElement('button');
+  pause.type = 'button';
+  pause.className = giveUp.id === 'abort' ? 'btn recovery-abort' : 'btn recovery-pause';
+  pause.textContent = giveUp.id === 'abort' ? 'Abort run' : 'Pause run';
+  pause.title = giveUp.id === 'abort'
+    ? 'End the run here with this error. The worktree is torn down.'
+    : 'Park the run here with this error as the reason. Nothing is discarded — Resume retries the step later.';
   const retry = document.createElement('button');
   retry.type = 'button';
   retry.className = 'btn btn-primary recovery-retry';
   retry.textContent = 'Retry';
-  foot.append(abort, retry);
+  foot.append(pause, retry);
   panel.appendChild(foot);
 }
 
@@ -4286,6 +4310,9 @@ function onDone(r, msg) {
   // unconditionally so a later reasonless done clears it, matching the server's
   // own entry.pauseReason reset in wireRun.
   r.pauseReason = msg.reason || null;
+  // An 'error' pause also carries the cause it parked on; assigned unconditionally
+  // for the same reason as the code above — a later reasonless done must clear it.
+  r.pauseDetail = msg.detail || null;
   finishRun(r, msg.status || 'done');
   // Nothing else picks up the FINAL spend delta: a non-cost `done` broadcasts no
   // budget-changed, and startBudgetTick refetches only while runs are live. Without
@@ -7699,9 +7726,11 @@ async function loadSettings() {
     paintSettings(data);
     paintBudgetSettings(data);
     paintAskSettings(data);
+    paintDebugSpawnSettings(data);
     paintBudgetReadout();
     refreshBudget();
     paintChatSettings(data.chat);
+    loadAskHistory();
     setSettingsMsg('');
   } catch (e) { setSettingsMsg(e.message, 'err'); }
 }
@@ -7979,10 +8008,27 @@ if (el.budgetReset) {
 }
 
 // ---- Ask Worca limits card (budget-card pattern above) ---------------------
-function setAskLimitsMsg(text, kind) {
-  const n = document.getElementById('askLimitsMsg');
+// Shared by the small Settings cards (Ask Worca, Spawn diagnostics): one hint
+// setter and one "POST /api/settings → parse → paint or show the error" routine,
+// so a fix to the fetch/parse/error path lands in every card at once.
+function setHintMsg(id, text, kind) {
+  const n = document.getElementById(id);
   if (n) { n.textContent = text || ''; n.className = `hint${kind ? ` ${kind}` : ''}`; }
 }
+async function postSettingsCard(body, { setMsg, paint, savedText = 'Saved.' }) {
+  setMsg('');
+  let res;
+  try {
+    res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch (e) { setMsg(e.message || 'network error', 'err'); return; }
+  const data = await safeJson(res);
+  if (!res.ok) { setMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+  // A 2xx with an unparsable body yields {} — leave the card as the user set it
+  // rather than painting every field as "unset".
+  if (Object.keys(data).length) paint(data);
+  setMsg(savedText);
+}
+function setAskLimitsMsg(text, kind) { setHintMsg('askLimitsMsg', text, kind); }
 function paintAskSettings(data) {
   const turns = document.getElementById('askMaxTurns');
   const budget = document.getElementById('askMaxBudgetUsd');
@@ -7993,17 +8039,8 @@ function paintAskSettings(data) {
   budget.disabled = noCap.checked;
   budget.value = data.askMaxBudgetUsd == null ? '' : String(data.askMaxBudgetUsd);
 }
-async function postAskLimits(body) {
-  setAskLimitsMsg('');
-  let res = null;
-  try {
-    res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  } catch { setAskLimitsMsg('network error', 'err'); return; }
-  let data = null;
-  try { data = await res.json(); } catch { data = null; }
-  if (!res.ok) { setAskLimitsMsg((data && data.error) || `save failed (${res.status})`, 'err'); return; }
-  paintAskSettings(data || {});
-  setAskLimitsMsg('Saved.');
+function postAskLimits(body) {
+  return postSettingsCard(body, { setMsg: setAskLimitsMsg, paint: paintAskSettings });
 }
 function saveAskLimits() {
   const turnsRaw = document.getElementById('askMaxTurns').value.trim();
@@ -8030,6 +8067,108 @@ document.getElementById('askNoCap')?.addEventListener('change', () => {
   const budget = document.getElementById('askMaxBudgetUsd');
   if (budget) budget.disabled = document.getElementById('askNoCap').checked;
 });
+
+// ---- Ask Worca chat history (same card, same hint pattern) -----------------
+// The counts line paints with the settings view; the destructive button refetches
+// GET /api/ask/history so the dialog quotes what is about to go, then one bulk
+// DELETE /api/ask/threads. The server broadcasts ask-history-cleared afterwards
+// — the ask panel resets itself off that frame, nothing to do here.
+function setAskHistoryMsg(text, kind) {
+  const n = document.getElementById('askHistoryMsg');
+  if (n) { n.textContent = text || ''; n.className = `hint${kind ? ` ${kind}` : ''}`; }
+}
+function askHistoryCount(n, one, many = `${one}s`) {
+  return `${n} ${n === 1 ? one : many}`;
+}
+function normalizeAskHistory(data) {
+  const num = (v) => (Number.isInteger(v) && v > 0 ? v : 0);
+  return { threads: num(data?.threads), worktrees: num(data?.worktrees), attachments: num(data?.attachments), inFlight: num(data?.inFlight) };
+}
+function paintAskHistory(counts) {
+  const line = document.getElementById('askHistoryCounts');
+  const btn = document.getElementById('askHistoryDelete');
+  if (!line || !btn) return;
+  line.textContent = counts.threads
+    ? `${askHistoryCount(counts.threads, 'chat')} · ${askHistoryCount(counts.worktrees, 'worktree')}`
+    : 'No saved chats.';
+  btn.disabled = counts.threads === 0;
+}
+async function fetchAskHistory() {
+  const res = await fetch('/api/ask/history');
+  const data = await safeJson(res);
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return normalizeAskHistory(data);
+}
+async function loadAskHistory() {
+  if (!document.getElementById('askHistoryCounts')) return;
+  try { paintAskHistory(await fetchAskHistory()); } catch (e) { setAskHistoryMsg(e.message, 'err'); }
+}
+// One bullet per non-zero count; the in-progress line only when a turn is live.
+function askHistoryConfirmMessage(c) {
+  const lines = ['This permanently deletes all Ask Worca chat history:'];
+  if (c.threads) lines.push(`• ${askHistoryCount(c.threads, 'chat thread')} and ${c.threads === 1 ? 'its transcript' : 'their transcripts'}`);
+  if (c.worktrees) {
+    lines.push(`• ${askHistoryCount(c.worktrees, 'git worktree')} checked out for ${c.threads === 1 ? 'that chat' : 'those chats'} (removed from ${c.worktrees === 1 ? 'its source repo' : 'their source repos'})`);
+  }
+  if (c.attachments) lines.push(`• ${askHistoryCount(c.attachments, 'attachment')}`);
+  if (c.inFlight) lines.push(`• ${askHistoryCount(c.inFlight, 'chat')} currently in progress will be stopped`);
+  lines.push('Runs started from these chats are not affected. This cannot be undone.');
+  return lines.join('\n');
+}
+async function deleteAskHistory() {
+  setAskHistoryMsg('');
+  let counts;
+  try { counts = await fetchAskHistory(); } catch (e) { setAskHistoryMsg(e.message, 'err'); return; }
+  paintAskHistory(counts);
+  if (!counts.threads) return;   // emptied meanwhile — nothing to confirm
+  const ok = await confirmModal({
+    title: 'Delete all chat history?',
+    message: askHistoryConfirmMessage(counts),
+    confirmLabel: 'Delete everything',
+    danger: true,
+  });
+  if (!ok) return;
+  let res = null;
+  try {
+    res = await fetch('/api/ask/threads', { method: 'DELETE' });
+  } catch { setAskHistoryMsg('network error', 'err'); return; }
+  const data = await safeJson(res);
+  if (!res.ok) { setAskHistoryMsg(data.error || `HTTP ${res.status}`, 'err'); await loadAskHistory(); return; }
+  const removed = normalizeAskHistory(data.removed);
+  const failed = Array.isArray(data.failed) ? data.failed.length : 0;
+  const summary = `Deleted ${askHistoryCount(removed.threads, 'chat')} and ${askHistoryCount(removed.worktrees, 'worktree')}.`;
+  if (failed) setAskHistoryMsg(`${summary} ${askHistoryCount(failed, 'chat')} could not be removed.`, 'err');
+  else setAskHistoryMsg(summary);
+  await loadAskHistory();
+}
+document.getElementById('askHistoryDelete')?.addEventListener('click', deleteAskHistory);
+
+// ---- Spawn-debug diagnostics card (shares the Ask card's helpers above) ----
+function setDebugSpawnMsg(text, kind) { setHintMsg('debugSpawnMsg', text, kind); }
+// The checkbox is the STORED preference; the note says when the environment
+// overrides it (a non-empty WORCA_DEBUG_SPAWN at launch), so an operator never
+// sees an unchecked box while diagnostics are flowing — or the reverse.
+function paintDebugSpawnSettings(data) {
+  const cb = document.getElementById('debugSpawnEnabled');
+  if (!cb) return;
+  cb.checked = !!data.debugSpawnEnabled;
+  const eff = data.debugSpawnEffective;
+  const envOverride = !!eff && eff.source === 'env';
+  setHintMsg('debugSpawnEnvNote', envOverride
+    ? `WORCA_DEBUG_SPAWN is set in the environment: diagnostics are ${eff.enabled ? 'ON' : 'OFF'} regardless of this setting.`
+    : '', envOverride ? 'warn' : '');
+}
+function postDebugSpawn(body) {
+  return postSettingsCard(body, {
+    setMsg: setDebugSpawnMsg, paint: paintDebugSpawnSettings,
+    savedText: 'Saved. Applies to the next spawn — no restart needed.',
+  });
+}
+function saveDebugSpawn() {
+  postDebugSpawn({ debugSpawnEnabled: document.getElementById('debugSpawnEnabled').checked });
+}
+document.getElementById('debugSpawnSave')?.addEventListener('click', saveDebugSpawn);
+document.getElementById('debugSpawnReset')?.addEventListener('click', () => postDebugSpawn({ debugSpawnEnabled: false }));
 
 // Browse… for the projects root: native OS dialog, in-app modal fallback —
 // the same two endpoints the add-project Browse button uses (app.js:3793).
@@ -9452,7 +9591,7 @@ if (runListEl) {
 
     // qpanel actions. Resolve the run per-card via the enclosing .run-card so
     // delegation works for any dynamically-built card.
-    const qbtn = e.target.closest && e.target.closest('.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-abort');
+    const qbtn = e.target.closest && e.target.closest('.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort');
     if (qbtn) {
       const card = qbtn.closest('.run-card');
       const runId = card && card.dataset.runId;
@@ -9461,6 +9600,7 @@ if (runListEl) {
       if (qbtn.classList.contains('gate-continue')) postAnswer(r, { decision: 'continue' });
       else if (qbtn.classList.contains('gate-another')) postAnswer(r, { decision: 'another' });
       else if (qbtn.classList.contains('recovery-retry')) postAnswer(r, { decision: 'retry' });
+      else if (qbtn.classList.contains('recovery-pause')) postAnswer(r, { decision: 'pause' });
       else if (qbtn.classList.contains('recovery-abort')) postAnswer(r, { decision: 'abort' });
       else submitAnswer(r, qbtn.closest('.qpanel'));
     }
@@ -10305,12 +10445,19 @@ const PAUSED_STATUSES = ['paused', 'pausing', 'interrupted'];
 // Disable a history Resume button while a total-budget pause is still blocked by
 // the current window. Shared by setupHdActions (first paint) and
 // refreshHistResumeGating (every later budget change).
-function applyHistResumeGate(btn, pauseReason, budget) {
+function applyHistResumeGate(btn, pauseReason, budget, pauseDetail = '') {
   const totalBlocked = pauseReason === 'cost_total' && !!(budget && budget.blocked);
   btn.disabled = totalBlocked;
-  btn.title = totalBlocked
-    ? `Total budget reached — blocked until ${fmtResetAtLocal(budget.windowEndMs)} or a higher total limit`
-    : '';
+  if (totalBlocked) {
+    btn.title = `Total budget reached — blocked until ${fmtResetAtLocal(budget.windowEndMs)} or a higher total limit`;
+  } else if (pauseReason === 'error' || pauseReason === 'recoverable') {
+    // An error pause is never gated — the tooltip carries the cause instead.
+    btn.title = pauseReason === 'recoverable'
+      ? `Paused on a recoverable error${pauseDetail ? `: ${pauseDetail}` : ''} — resume once it clears`
+      : `Paused after an error${pauseDetail ? `: ${pauseDetail}` : ''} — fix the cause, then resume`;
+  } else {
+    btn.title = '';
+  }
 }
 
 // Re-gate the mounted history Resume button from the dataset.pauseReason stamp
@@ -10329,7 +10476,7 @@ function refreshHistResumeGating() {
     // otherwise a `cost_total` block that lands later leaves the button enabled and
     // the user clicks into a guaranteed 403. Re-gate, then restore the D3 error
     // title when gating did not take the button away.
-    applyHistResumeGate(btn, root.dataset.pauseReason || '', budgetState.budget);
+    applyHistResumeGate(btn, root.dataset.pauseReason || '', budgetState.budget, root.dataset.pauseDetail || '');
     if (btn.dataset.resumeState === 'error' && btn.dataset.resumeError && !btn.disabled) {
       btn.title = btn.dataset.resumeError;
     }
@@ -10451,14 +10598,21 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   // Pause note. Resume + its budget gating live on the detail page now; the
   // dataset stamp survives for parity/debugging.
   const pauseReason = typeof p.pauseReason === 'string' ? p.pauseReason : '';
+  const pauseDetail = typeof p.pauseDetail === 'string' ? p.pauseDetail : '';
   if (pauseReason) node.dataset.pauseReason = pauseReason;
+  if (pauseDetail) node.dataset.pauseDetail = pauseDetail;
   const noteEl = node.querySelector('.hist-pausenote');
-  const costPaused = PAUSED_STATUSES.includes(String(p.status || '').toLowerCase())
-    && pauseReason.startsWith('cost_');
-  noteEl.hidden = !costPaused;
+  const parked = PAUSED_STATUSES.includes(String(p.status || '').toLowerCase());
+  const costPaused = parked && pauseReason.startsWith('cost_');
+  const errorPaused = parked && (pauseReason === 'error' || pauseReason === 'recoverable');
+  noteEl.hidden = !(costPaused || errorPaused);
   noteEl.textContent = costPaused
-    ? (pauseReason === 'cost_total' ? 'paused · total budget' : 'paused · cost limit') : '';
+    ? (pauseReason === 'cost_total' ? 'paused · total budget' : 'paused · cost limit')
+    : (errorPaused ? (pauseReason === 'recoverable' ? 'paused · recoverable' : 'paused · error') : '');
+  // The cause is too long for the caption line — it rides as the tooltip.
+  noteEl.title = errorPaused ? pauseDetail : '';
   noteEl.classList.toggle('total', costPaused && pauseReason === 'cost_total');
+  noteEl.classList.toggle('error', errorPaused);
 
   renderRetainedWork(node, p);           // badge only — the card has no banner node
   setupPrButton(node, projectDir, p, ghAvailable);
@@ -11483,14 +11637,48 @@ function hdRetainedFor(record, st) {
   return { retained: derived, provisional: true };
 }
 
+// Error-pause banner (D11): the cause, and the promise that nothing was discarded.
+function renderErrorPauseBanner(detail, reason = 'error') {
+  const recoverable = reason === 'recoverable';
+  const el = document.createElement('div');
+  el.className = 'pause-error-banner';
+  el.dataset.reason = reason;
+  const b = document.createElement('b');
+  b.textContent = recoverable ? 'Paused on a recoverable error' : 'Paused after an error';
+  const text = document.createElement('div');
+  text.className = 'peb-text';
+  text.textContent = detail || 'The run hit an error it could not recover from.';
+  const hint = document.createElement('div');
+  hint.className = 'peb-hint';
+  hint.textContent = recoverable
+    ? 'The run could not reach the model and parked itself. Nothing was discarded — once the cause clears (re-login, connectivity, credit, a rate limit), Resume retries the step.'
+    : 'Nothing was discarded: the worktree and the run position are kept. Fix the cause, then Resume.';
+  el.append(b, text, hint);
+  return el;
+}
+
 function paintHdBanners(screen, record, data) {
   const st = data.state;
   const banners = screen.querySelector('.hd-banners');
 
-  // Cost-pause banner. pauseReason lives on LIST rows only (rowToState has none),
-  // so a deep link gets it late — rebuild idempotently instead of once.
-  const pauseReason = typeof record.pauseReason === 'string' ? record.pauseReason : '';
+  // Pause banners. The LIST row is authoritative, but a deep link has only the
+  // stub until the row lands — so fall back to the DETAIL payload, which now
+  // carries both keys too. Rebuild idempotently instead of once.
+  const pauseReason = typeof record.pauseReason === 'string' ? record.pauseReason
+    : (typeof st.pauseReason === 'string' ? st.pauseReason : '');
   if (pauseReason) screen.dataset.pauseReason = pauseReason; else delete screen.dataset.pauseReason;
+  const pauseDetail = typeof record.pauseDetail === 'string' ? record.pauseDetail
+    : (typeof st.pauseDetail === 'string' ? st.pauseDetail : '');
+  if (pauseDetail) screen.dataset.pauseDetail = pauseDetail; else delete screen.dataset.pauseDetail;
+  // Keyed on the detail so a corrected cause replaces the banner instead of stacking.
+  const wantErr = (pauseReason === 'error' || pauseReason === 'recoverable') && HD_RESUMABLE.has(String(st.status || '').toLowerCase());
+  const oldErr = banners.querySelector('.pause-error-banner');
+  if (oldErr && (!wantErr || oldErr.dataset.detail !== pauseDetail || oldErr.dataset.reason !== pauseReason)) oldErr.remove();
+  if (wantErr && !banners.querySelector('.pause-error-banner')) {
+    const errBanner = renderErrorPauseBanner(pauseDetail, pauseReason);
+    errBanner.dataset.detail = pauseDetail;
+    banners.prepend(errBanner);
+  }
   // Rebuild the cost banner ONLY when the reason actually changed. An
   // unconditional remove+rebuild detaches the `.cb-override` button mid-flight:
   // that click awaits confirmModal then resumePipeline, and ANY paintHistory()
@@ -11602,7 +11790,7 @@ function setupHdActions(screen, record, data) {
   const resumeBtn = screen.querySelector('.hd-resume');
   if (HD_RESUMABLE.has(status) && st.resumable !== false) {
     resumeBtn.hidden = false;
-    applyHistResumeGate(resumeBtn, screen.dataset.pauseReason || '', budgetState.budget);
+    applyHistResumeGate(resumeBtn, screen.dataset.pauseReason || '', budgetState.budget, screen.dataset.pauseDetail || '');
     resumeBtn.addEventListener('click', () => {
       const r = hdCurrentRecord(record);              // never the load-time object
       resumePipeline(r, r.projectDir || null, resumeBtn);
@@ -13525,6 +13713,21 @@ function rdStateCopy(r, stepName) {
   // line and the banner above the graph never disagree.
   if (r.pauseReason === 'cost_pipeline') return 'Paused — pipeline cost limit reached.';
   if (r.pauseReason === 'cost_total') return 'Paused — total budget reached.';
+  if (r.pauseReason === 'error') {
+    const why = r.pauseDetail ? `: ${r.pauseDetail}` : '';
+    return `Paused after an error${why}. Fix the cause, then Resume — the worktree and progress are kept.`;
+  }
+  if (r.pauseReason === 'recoverable') {
+    const why = r.pauseDetail ? ` (${r.pauseDetail})` : '';
+    return `Paused on a recoverable error${why}. Once it clears, Resume retries the step — the worktree and progress are kept.`;
+  }
+  if (r.pauseReason === 'usage_limit') {
+    return `Paused — session/usage limit reached${r.pauseDetail ? ` (${r.pauseDetail})` : ''}. Resume after the reset.`;
+  }
+  if (r.pauseReason && (r.status === 'paused' || r.status === 'pausing' || r.status === 'interrupted')) {
+    // A legacy reason is the orchestrator's own text (a pre-policy session/usage-limit line).
+    return `Paused — ${r.pauseReason}. Resume once it clears.`;
+  }
   if (r.status === 'paused' || r.status === 'pausing' || r.status === 'interrupted') {
     return 'Paused by you. Agents in flight finished their checkpoint; nothing new is dispatched.';
   }
@@ -14318,10 +14521,14 @@ function statusPill(r) {
     // A cost pause names its cause so the pill alone explains why the run parked.
     if (r.pauseReason === 'cost_pipeline') return { family: 'amber', text: 'Paused · cost limit' };
     if (r.pauseReason === 'cost_total') return { family: 'amber', text: 'Paused · total budget' };
+    // An error pause is parked and resumable (never dead), so it stays in the amber family.
+    if (r.pauseReason === 'error') return { family: 'amber', text: 'Paused · error' };
+    if (r.pauseReason === 'recoverable') return { family: 'amber', text: 'Paused · recoverable' };
+    if (r.pauseReason === 'usage_limit') return { family: 'amber', text: 'Paused · usage limit' };
     return { family: 'amber', text: 'Paused' };
   }
   // Same family as `paused`: an interrupted run is parked and resumable, and
-  // PAUSED_STATUSES (app.js:8726) already treats it that way.
+  // PAUSED_STATUSES (app.js:10286) already treats it that way.
   if (r.status === 'interrupted') return { family: 'amber', text: 'Interrupted' };
   if (r.pendingQuestion != null) return { family: 'amber', text: 'Paused · awaiting answers' };
   if (r.status === 'starting') return { family: 'peach', text: 'Starting' };
@@ -15123,9 +15330,16 @@ function paintRunCard(r) {
   const totalBlocked = r.pauseReason === 'cost_total' && budgetState.budget?.blocked;
   if (resumeBtn) {
     resumeBtn.disabled = !!totalBlocked;
-    resumeBtn.title = totalBlocked
-      ? `Total budget reached — blocked until ${fmtResetAtLocal(budgetState.budget.windowEndMs)} or a higher total limit`
-      : stockResumeTitle();
+    if (totalBlocked) {
+      resumeBtn.title = `Total budget reached — blocked until ${fmtResetAtLocal(budgetState.budget.windowEndMs)} or a higher total limit`;
+    } else if (r.pauseReason === 'error' || r.pauseReason === 'recoverable') {
+      // The cause the run parked on, so the card alone explains what to fix.
+      resumeBtn.title = r.pauseReason === 'recoverable'
+        ? `Paused on a recoverable error${r.pauseDetail ? `: ${r.pauseDetail}` : ''} — resume once it clears`
+        : `Paused after an error${r.pauseDetail ? `: ${r.pauseDetail}` : ''} — fix the cause, then resume`;
+    } else {
+      resumeBtn.title = stockResumeTitle();
+    }
   }
 }
 
@@ -15539,6 +15753,19 @@ function paintRdBanners(screen, r) {
     banners.prepend(fresh);                      // above the retained-work banner
   }
 
+  // ---- error-pause banner (D11) ----
+  // Same conditional-rebuild shape as paintHdBanners': keyed on the detail so a
+  // repaint neither stacks a second banner nor freezes a corrected cause.
+  const errPaused = isPaused(r) && (r.pauseReason === 'error' || r.pauseReason === 'recoverable');
+  const errDetail = r.pauseDetail || '';
+  const oldErr = banners.querySelector('.pause-error-banner');
+  if (oldErr && (!errPaused || oldErr.dataset.detail !== errDetail)) oldErr.remove();
+  if (errPaused && !banners.querySelector('.pause-error-banner')) {
+    const errBanner = renderErrorPauseBanner(errDetail);
+    errBanner.dataset.detail = errDetail;
+    banners.prepend(errBanner);
+  }
+
   // ---- retained work (D11) ----
   // renderRetainedWork only READS `p.retainedWork`, so a derived carrier is fine
   // for the paint; every MUTATING helper below gets the same carrier so the
@@ -15585,11 +15812,12 @@ el.runDetail?.addEventListener('click', (e) => {
   if (override) { confirmCostOverride(r.runId, override); return; }   // async, fire-and-forget
   if (e.target.closest && e.target.closest('.cb-settings')) { location.hash = 'settings'; return; }
   const qbtn = e.target.closest && e.target.closest(
-    '.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-abort');
+    '.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort');
   if (!qbtn) return;
   if (qbtn.classList.contains('gate-continue')) postAnswer(r, { decision: 'continue' });
   else if (qbtn.classList.contains('gate-another')) postAnswer(r, { decision: 'another' });
   else if (qbtn.classList.contains('recovery-retry')) postAnswer(r, { decision: 'retry' });
+  else if (qbtn.classList.contains('recovery-pause')) postAnswer(r, { decision: 'pause' });
   else if (qbtn.classList.contains('recovery-abort')) postAnswer(r, { decision: 'abort' });
   else submitAnswer(r, qbtn.closest('.qpanel'));
 });
@@ -16444,3 +16672,188 @@ askPanel = createAskPanel({
   now: () => Date.now(),
 });
 document.body.appendChild(askPanel.root);
+
+// ---------------------------------------------------------------------------
+// Export to Claude Code — modal wiring. Turns a saved v2 workflow into a runnable
+// skill via POST /api/workflows/:id/export (dry-run = Plan, apply = Apply). The
+// export button is added to each v2 row in the graph-view saved list (gvRenderSaved).
+// (Re-homed from the retired v1 composer after the Node-graph v2 rebase.)
+// ---------------------------------------------------------------------------
+
+async function exportCall(id, opts) {
+  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/export`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(opts),
+  });
+  const data = await safeJson(res);
+  if (!res.ok) throw new Error(data.error || `export failed (${res.status})`);
+  return data;
+}
+async function exportPlan(id, opts) { return exportCall(id, { ...opts, dryRun: true }); }
+async function exportApply(id, opts) { return exportCall(id, opts); }
+
+const exportModalState = { item: null, destination: 'global', conflicts: [] };
+
+function openExportModal(item) {
+  const modal = document.getElementById('export-modal');
+  if (!modal) return;
+  exportModalState.item = item;
+  exportModalState.destination = 'global';
+  exportModalState.conflicts = [];
+  document.getElementById('export-subtitle').textContent = `Export "${item.name}" as a runnable /command skill.`;
+  document.getElementById('export-slug').value = '';
+  document.getElementById('export-folder').value = '';
+  document.getElementById('export-include-agents').checked = true;
+  document.getElementById('export-msg').textContent = '';
+  const planEl = document.getElementById('export-plan');
+  planEl.textContent = ''; planEl.classList.add('hidden');
+  document.getElementById('export-apply-btn').disabled = true;
+  exportSyncDest();
+  exportSyncSlugPreview();
+  modal.classList.remove('hidden');
+}
+function closeExportModal() {
+  const modal = document.getElementById('export-modal');
+  if (modal) modal.classList.add('hidden');
+}
+function exportSyncDest() {
+  const dest = exportModalState.destination;
+  for (const b of document.querySelectorAll('#export-dest .seg-btn')) {
+    b.classList.toggle('on', b.dataset.dest === dest);
+  }
+  document.getElementById('export-folder-field').classList.toggle('hidden', dest !== 'project');
+}
+function exportSyncSlugPreview() {
+  const raw = document.getElementById('export-slug').value;
+  const { preview, valid } = exportSlugPreview(raw, exportModalState.item ? exportModalState.item.name : '');
+  const el = document.getElementById('export-slug-preview');
+  el.textContent = valid ? `Command: ${preview}` : 'Invalid slug (letters, digits, . _ - only)';
+}
+function exportBuildOpts() {
+  const dest = exportModalState.destination;
+  const rawSlug = document.getElementById('export-slug').value.trim();
+  const opts = {
+    destination: dest,
+    includeAgents: document.getElementById('export-include-agents').checked,
+  };
+  if (rawSlug) opts.slug = rawSlug;
+  if (dest === 'project') opts.projectDir = document.getElementById('export-folder').value.trim();
+  return opts;
+}
+function exportRenderPlan(plan) {
+  const planEl = document.getElementById('export-plan');
+  planEl.textContent = '';
+  planEl.classList.remove('hidden');
+  const line = (label, path) => {
+    const row = document.createElement('div');
+    row.className = 'export-row';
+    row.innerHTML = `<span class="export-tag export-${label}">${label}</span> <code>${escapeHtml(path)}</code>`;
+    planEl.appendChild(row);
+  };
+  for (const p of plan.created) line('create', p);
+  for (const p of plan.updated) line('update', p);
+  for (const p of plan.noop) line('no-op', p);
+  for (const w of plan.warnings || []) {
+    const row = document.createElement('div');
+    row.className = 'export-row';
+    row.innerHTML = `<span class="export-tag export-warn">warn</span> ${escapeHtml(w)}`;
+    planEl.appendChild(row);
+  }
+  for (const o of plan.orphans || []) line('orphan', o);
+  exportModalState.conflicts = plan.conflicts || [];
+  for (const cf of exportModalState.conflicts) {
+    const row = document.createElement('div');
+    row.className = 'export-row export-conflict-row';
+    row.innerHTML = `<span class="export-tag export-conflict">conflict</span> <code>${escapeHtml(cf.path)}</code> <span class="hint">${escapeHtml(cf.reason)}</span>`;
+    const choices = document.createElement('div');
+    choices.className = 'export-choices';
+    for (const opt of cf.options || []) {
+      const label = document.createElement('label');
+      label.className = 'export-choice';
+      const radio = document.createElement('input');
+      radio.type = 'radio'; radio.name = cf.path; radio.value = opt;
+      radio.addEventListener('change', exportUpdateApplyEnabled);
+      label.appendChild(radio);
+      label.appendChild(document.createTextNode(' ' + opt));
+      choices.appendChild(label);
+    }
+    row.appendChild(choices);
+    planEl.appendChild(row);
+  }
+  exportUpdateApplyEnabled();
+}
+function exportGatherResolutions() {
+  const resolutions = {};
+  for (const cf of exportModalState.conflicts) {
+    const picked = document.querySelector(`#export-plan input[name="${CSS.escape(cf.path)}"]:checked`);
+    if (picked) resolutions[cf.path] = picked.value;
+  }
+  return resolutions;
+}
+function exportUpdateApplyEnabled() {
+  const resolutions = exportGatherResolutions();
+  const allResolved = exportModalState.conflicts.every((cf) => resolutions[cf.path]);
+  document.getElementById('export-apply-btn').disabled = !allResolved;
+}
+// A plan is keyed to the slug/destination/include-agents/folder in effect when Plan ran.
+// If any of those change afterward, the shown plan (and its gathered resolutions) no longer
+// matches what Apply would do — drop it and re-disable Apply so the user must re-Plan.
+function exportInvalidatePlan() {
+  exportModalState.conflicts = [];
+  const planEl = document.getElementById('export-plan');
+  if (planEl) { planEl.textContent = ''; planEl.classList.add('hidden'); }
+  const applyBtn = document.getElementById('export-apply-btn');
+  if (applyBtn) applyBtn.disabled = true;
+  const msg = document.getElementById('export-msg');
+  if (msg && msg.textContent) msg.textContent = 'Inputs changed — re-run Plan.';
+}
+function bindExportModal() {
+  const modal = document.getElementById('export-modal');
+  if (!modal) return;
+  for (const b of document.querySelectorAll('#export-dest .seg-btn')) {
+    b.addEventListener('click', () => { exportModalState.destination = b.dataset.dest; exportSyncDest(); exportInvalidatePlan(); });
+  }
+  document.getElementById('export-slug').addEventListener('input', () => { exportSyncSlugPreview(); exportInvalidatePlan(); });
+  document.getElementById('export-include-agents').addEventListener('change', exportInvalidatePlan);
+  document.getElementById('export-folder').addEventListener('input', exportInvalidatePlan);
+  document.getElementById('export-browse').addEventListener('click', () => {
+    const seed = document.getElementById('export-folder').value.trim();
+    openFolderBrowser(seed, (p) => { document.getElementById('export-folder').value = p; exportInvalidatePlan(); });
+  });
+  document.getElementById('export-cancel').addEventListener('click', closeExportModal);
+  document.getElementById('export-plan-btn').addEventListener('click', async () => {
+    const msg = document.getElementById('export-msg');
+    msg.textContent = 'Planning…';
+    try {
+      const plan = await exportPlan(exportModalState.item.id, exportBuildOpts());
+      exportRenderPlan(plan);
+      msg.textContent = plan.conflicts.length ? 'Resolve each conflict below, then Apply.' : 'Ready to apply.';
+    } catch (err) { msg.textContent = `Plan failed: ${err.message}`; }
+  });
+  document.getElementById('export-apply-btn').addEventListener('click', async () => {
+    const msg = document.getElementById('export-msg');
+    msg.textContent = 'Applying…';
+    try {
+      const opts = { ...exportBuildOpts(), resolutions: exportGatherResolutions() };
+      const applied = await exportApply(exportModalState.item.id, opts);
+      // A conflict Apply left UNWRITTEN (e.g. a TOCTOU conflict between Plan and Apply that
+      // had no resolution and fell to the blanket skip) is a stale partial export — re-render
+      // the fresh plan so the user can resolve it, and keep the modal open.
+      const written = new Set(applied.written || []);
+      const unwritten = (applied.conflicts || []).filter((c) => !written.has(c.path));
+      if (unwritten.length) {
+        exportRenderPlan(applied);
+        appendLog({ source: 'ui', level: 'error', text: `export of ${exportModalState.item.name} incomplete: ${applied.written.length} written, ${unwritten.length} conflict(s) left unwritten` });
+        msg.textContent = `${unwritten.length} unresolved conflict(s) were left unwritten — resolve below and Apply again.`;
+        return;
+      }
+      appendLog({ source: 'ui', level: 'info', text: `exported ${exportModalState.item.name}: ${applied.written.length} written, ${applied.skipped.length} skipped` });
+      closeExportModal();
+    } catch (err) {
+      exportInvalidatePlan();
+      msg.textContent = `Apply failed: ${err.message}`;
+    }
+  });
+  // Backdrop click (the overlay itself, not the inner card) closes the modal.
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeExportModal(); });
+}
+bindExportModal();

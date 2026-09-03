@@ -105,7 +105,10 @@ test('native file tools: Read/Grep/Glob are granted; the home deny is enumerated
 test('askWorktreeAllowRules names the thread\'s worktree subtree, shape-checks the thread id, never interpolates the home', () => {
   const o = buildAskSpawnOptions(base());
   assert.deepEqual(o.permissionRules.allow, askWorktreeAllowRules('ask_00000001'));
-  assert.deepEqual(askWorktreeAllowRules('ask_00000001'), ['Read(//**/.worca-cc/ask/ask_00000001/wt/**)'], 'the chat may read its own worktrees');
+  assert.deepEqual(askWorktreeAllowRules('ask_00000001'), [
+    'Read(//**/.worca-cc/ask/ask_00000001/wt/**)',
+    'Read(//**/.worca-cc/ask/ask_00000001/att/**)', // #398: the image/PDF bodies read_attachment points at
+  ], 'the chat may read its own worktrees and its own attachment bodies');
   assert.deepEqual(askWorktreeAllowRules('../etc'), [], 'unminted id ⇒ NO allow rule (never interpolated)');
   assert.deepEqual(askWorktreeAllowRules(undefined), []);
   for (const rule of o.permissionRules.allow) {
@@ -118,7 +121,7 @@ test('P4: the settings payload carries the deny list (and the worktree allow) th
   const args = buildClaudeArgs(buildAskSpawnOptions(base()));
   const settings = JSON.parse(args[args.indexOf('--settings') + 1]);
   assert.deepEqual(settings.permissions.deny, [...ASK_DENY_RULES]);
-  assert.deepEqual(settings.permissions.allow, ['Read(//**/.worca-cc/ask/ask_00000001/wt/**)']);
+  assert.deepEqual(settings.permissions.allow, ['Read(//**/.worca-cc/ask/ask_00000001/wt/**)', 'Read(//**/.worca-cc/ask/ask_00000001/att/**)']);
   assert.equal(args[args.indexOf('--tools') + 1], 'Task,Read,Grep,Glob');
   assert.equal(args[args.indexOf('--allowedTools') + 1], 'Task,Read,Grep,Glob,mcp__worca');
 });
@@ -216,6 +219,8 @@ test('fake bin env dump: the sandbox var reaches the SPAWNED env and every WORCA
   const env = (await readFile(out, 'utf8')).split('\n').filter(Boolean);
   assert.ok(env.includes('CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1'), 'survives buildSpawnEnv + prepareModelEnv and wins over a caller value');
   assert.ok(env.includes('ANTHROPIC_BASE_URL=http://proxy'), 'caller routing env still merged');
-  assert.ok(!env.some((l) => l.startsWith('WORCA_')), `WORCA_* scrubbed: ${env.filter((l) => l.startsWith('WORCA_'))}`);
+  const worcaLeaks = env.filter((l) => l.startsWith('WORCA_') && !l.startsWith('WORCA_HOST_PID='));
+  assert.equal(worcaLeaks.length, 0, `WORCA_* scrubbed (host-guard PID excepted): ${worcaLeaks}`);
+  assert.ok(env.includes(`WORCA_HOST_PID=${process.pid}`), 'the host-guard PID deliberately rides scrubbed spawns (host-guard.mjs)');
   assert.ok(env.some((l) => l.startsWith('PATH=')) && env.some((l) => l.startsWith('HOME=')), 'base vars kept');
 });

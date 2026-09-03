@@ -7,8 +7,9 @@
 //   post({kind, text, href})                     → a system message + notice
 //   updateStatus({pipelineId?, status?, phase?, cardFailed?}) → ask_run_links + ask-run-status
 // Message budget per run: ≤3 question notices (deduped by id) + exactly one of
-// failed/finished. done{status:'error'} posts nothing — the richer `error`
-// event already did (the orchestrator emits both for one failure).
+// failed/finished/paused; an error-pause rides the paused notice with its detail
+// (no `error` event precedes it). done{status:'error'} posts nothing — the richer
+// `error` event already did (the orchestrator emits both for one failure).
 // detach() removes the named listeners and latches; the follower self-detaches
 // on error/done. Core module: no Express, no orchestrator import — driven by a
 // bare EventEmitter in tests.
@@ -84,8 +85,13 @@ export function attachRunFollower(orch, {
       if (status === 'paused') {
         // Terminal for THIS orchestrator, not for the run: a resume builds a new
         // one (ui/server.mjs resumeRun), which re-attaches a fresh follower. So say
-        // "paused" — never "finished" — and let go (review of PR #376).
-        post({ kind: 'paused', text: `Run paused — "${runName()}" · resume it from Running`, href: `#running/${runId}` });
+        // "paused" — never "finished" — and let go (review of PR #376). An ERROR-
+        // pause (errors-pause policy: no `error` event precedes it) names the cause
+        // here, since this is the only line the thread will ever see for it.
+        const text = p.reason === 'error'
+          ? `Run paused after an error — "${runName()}": ${String(p.detail || 'unknown error')} · resume it from Running`
+          : `Run paused — "${runName()}" · resume it from Running`;
+        post({ kind: 'paused', text, href: `#running/${runId}` });
       } else if (status !== 'error') {
         post({ kind: 'done', text: finishLine(status), href: `#running/${runId}` });
       }

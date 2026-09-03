@@ -1,6 +1,6 @@
 {
   "name": "@worca/app",
-  "version": "1.0.0",
+  "version": "1.2.0-rc.2",
   "description": "Worca — deterministic multi-agent pipeline that drives Claude Code (headless) through Plan -> Refine -> Implement -> Review, with a CLI, an installable /worca skill, and a web UI.",
   "license": "MIT",
   "author": "Sinisha Djukic",

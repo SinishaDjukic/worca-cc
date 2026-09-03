@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { createGraphView } from '../ui/public/graph/view.mjs';
 import { manifestPortsFn, manifestTemplate } from '../src/shared/graph/manifest.mjs';
@@ -609,7 +609,7 @@ async function bootApp() {
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
   }
   globalThis.window = window; globalThis.document = window.document;
-  await import(appPath + `?b=${Date.now()}_${Math.random()}`);
+  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   return window;
 }
@@ -642,6 +642,13 @@ test('every label helper reads the graph; a run with no manifest reads plainly "
     steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'start', activeMs: 10, startedAt: '2026-08-26T10:00:00Z' }] });
   assert.equal(np.statusPill(r).text, '2 agents running');
   assert.equal(np.rdStateCopy(r, 'Planner'), '2 agents running.');
+  // An error pause names its cause; any OTHER reason is the orchestrator's own
+  // free text (a usage-limit line); a reasonless pause is still "Paused by you".
+  assert.match(np.rdStateCopy({ ...r, status: 'paused', pauseReason: 'error', pauseDetail: 'claude exited with code 1: disk full' }, 'Planner'),
+    /^Paused after an error: claude exited with code 1: disk full\. Fix the cause, then Resume/);
+  assert.match(np.rdStateCopy({ ...r, status: 'paused', pauseReason: "You've hit your session limit · resets 6pm" }, 'Planner'),
+    /^Paused — You've hit your session limit · resets 6pm\./);
+  assert.match(np.rdStateCopy({ ...r, status: 'paused', pauseReason: null }, 'Planner'), /^Paused by you\./);
   // A run whose manifest has not arrived yet: no active agent to name, and the
   // v1 phaseKey switch that used to name a phase is gone.
   const bare = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'running' });

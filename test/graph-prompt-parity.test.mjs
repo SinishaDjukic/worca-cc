@@ -26,9 +26,10 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { posix } from './helpers/posix-path.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
@@ -402,22 +403,22 @@ test('every builtin pins its v1 MOCK_ROLE and names its allocated outputs absolu
     assert.ok(p.includes(`MOCK_CYCLE: ${ORDINAL}`), `${key}: MOCK_CYCLE`);
     assert.ok(!p.includes('MOCK_STRATEGY'), `${key}: no dead marker`);
     for (const [portId, alloc] of Object.entries(ctx.outputs)) {
-      assert.ok(alloc.path.startsWith('/'), `${key}.${portId}: absolute`);
+      assert.ok(isAbsolute(alloc.path), `${key}.${portId}: absolute`);
       assert.ok(p.includes(alloc.path), `${key}.${portId}: the path is in the prompt`);
     }
     if (ctx.verdict) assert.ok(p.includes(`MOCK_JSON: ${ctx.verdict.path}`), `${key}: MOCK_JSON`);
   }
   // The filename contract, spot-checked against v1's shipped names.
-  assert.match(ctxFor('reviewer').outputs.review.path, /reviews\/01-01-26-feature-impl-review\.md$/);
-  assert.match(ctxFor('reviewer').verdict.path, /impl-review-cycle2\.json$/);
-  assert.match(ctxFor('planReviewer').outputs.review.path, /reviews\/01-01-26-feature-plan-review\.md$/);
-  assert.match(ctxFor('workspaceReviewer').verdict.path, /ws-review-cycle2\.json$/);
-  assert.match(ctxFor('refiner').verdict.path, /refine-review-cycle2\.json$/);
-  assert.match(ctxFor('manualWebUiTesting').outputs.review.path, /webui-review-cycle2\.md$/);
-  assert.match(ctxFor('manualTestsChecklist').outputs.checklist.path, /manual-tests-checklist\.md$/);
-  assert.match(ctxFor('decomposer').outputs.tasks.path, /decomposition\.json$/);
-  assert.match(ctxFor('clarify').outputs.answers.path, /clarify\.json$/);
-  assert.match(ctxFor('planner').outputs.plan.path, /plans\/01-01-26-feature\.md$/);
+  assert.match(posix(ctxFor('reviewer').outputs.review.path), /reviews\/01-01-26-feature-impl-review\.md$/);
+  assert.match(posix(ctxFor('reviewer').verdict.path), /impl-review-cycle2\.json$/);
+  assert.match(posix(ctxFor('planReviewer').outputs.review.path), /reviews\/01-01-26-feature-plan-review\.md$/);
+  assert.match(posix(ctxFor('workspaceReviewer').verdict.path), /ws-review-cycle2\.json$/);
+  assert.match(posix(ctxFor('refiner').verdict.path), /refine-review-cycle2\.json$/);
+  assert.match(posix(ctxFor('manualWebUiTesting').outputs.review.path), /webui-review-cycle2\.md$/);
+  assert.match(posix(ctxFor('manualTestsChecklist').outputs.checklist.path), /manual-tests-checklist\.md$/);
+  assert.match(posix(ctxFor('decomposer').outputs.tasks.path), /decomposition\.json$/);
+  assert.match(posix(ctxFor('clarify').outputs.answers.path), /clarify\.json$/);
+  assert.match(posix(ctxFor('planner').outputs.plan.path), /plans\/01-01-26-feature\.md$/);
   assert.equal(ctxFor('refiner').outputs.plan.path, ctxFor('refiner').outputs.revise.path);
   assert.ok(buildAgentPrompt(ctxFor('decomposer')).includes(`MOCK_TASKS_DIR: ${join(pipelineDir, 'tasks')}`),
     'the decomposer is discovered through the wire into implementer.task');
@@ -558,7 +559,12 @@ function normalizePrompt(text) {
     [projectDir, '<PROJECT_DIR>'],
     [projectKey(projectDir), '<STORE_KEY>'],
   ].sort((a, b) => b[0].length - a[0].length);
-  return subs.reduce((acc, [from, to]) => acc.split(from).join(to), text);
+  const out = subs.reduce((acc, [from, to]) => acc.split(from).join(to), text);
+  // On Windows an allocation under one of those dirs continues with the native
+  // separator (`<PIPELINE_DIR>\clarify.json`); the committed snapshots are the
+  // POSIX form. Only the run of path segments right after a placeholder is
+  // normalised — never the prompt prose.
+  return out.replace(/(<(?:WORCA_HOME|PIPELINE_DIR|PROJECT_DIR)>)((?:\\[^\s'"`]*)+)/g, (m, ph, rest) => ph + posix(rest));
 }
 
 test('every builtin prompt matches its committed whole-prompt snapshot', () => {
@@ -569,7 +575,7 @@ test('every builtin prompt matches its committed whole-prompt snapshot', () => {
     const actual = normalizePrompt(promptFor(key));
     assert.equal(actual.includes(tmpdir()), false, `${key}: an un-normalised temp path leaked into the snapshot`);
     if (update) { writeFileSync(file, `${actual}\n`, 'utf8'); continue; }   // newline-terminated: a POSIX text file, byte-exact in a listing
-    assert.equal(`${actual}\n`, readFileSync(file, 'utf8'),
+    assert.equal(`${actual}\n`, readFileSync(file, 'utf8').replace(/\r\n/g, '\n'),
       `${key}: the assembled prompt no longer matches test/fixtures/prompt-snapshots/${key}.md. `
       + 'If the change is deliberate, review the diff and regenerate with '
       + 'UPDATE_PROMPT_SNAPSHOTS=1 (see this file\'s header).');

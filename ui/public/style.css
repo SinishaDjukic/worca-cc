@@ -305,6 +305,7 @@ body.view-history .topnav{margin:12px 32px 0;flex:0 0 auto;}
 .field > label .opt,.field .opt{color:var(--ink-3);font-weight:500;font-style:normal;}
 .hint{display:block;color:var(--ink-3);font-size:12px;margin-top:7px;line-height:1.45;}
 .hint.err{color:var(--red-ink);}
+.hint.warn{color:var(--amber-ink);}
 
 .input,.select,.textarea,.ta-hl-back,
 input[type="text"],input[type="number"],textarea,select{
@@ -367,6 +368,14 @@ input[type="file"]{font-size:12.5px;color:var(--ink-3);background:transparent;bo
 .add-project{margin-top:10px;display:flex;flex-direction:column;gap:9px;padding:14px;
   border:1.5px solid var(--line-2);border-radius:var(--r-ctrl);background:var(--field);}
 .add-project-actions{display:flex;gap:9px;justify-content:flex-end;}
+/* Settings → Chat history: a text-style destructive action so its label sits on
+   the same left edge as the "Chat history" heading and the counts line under it
+   (a pill's inner padding indented the text). Same shape as .hd-cmt-btn. */
+.ask-history-delete{border:none;background:none;padding:0;color:var(--red-ink);
+  font:600 12.5px var(--sans);cursor:pointer;line-height:1.45;}
+.ask-history-delete:hover:not(:disabled){text-decoration:underline;}
+.ask-history-delete:disabled{opacity:.45;cursor:not-allowed;}
+.ask-history-delete:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:3px;}
 /* path row (input + trailing button) — shared by add-project, project modal, plugin add */
 .path-row{display:flex;gap:9px;align-items:center;}
 .path-row input{flex:1 1 auto;min-width:0;}
@@ -950,6 +959,11 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* Confirm dialog must stack ABOVE the plugin/wizard modal (equal .viewer-modal z-index,
    but #confirm-modal precedes #plugin-modal in the DOM). */
 #confirm-modal.viewer-modal{z-index:60;}
+/* The folder browser is a leaf picker opened FROM other modals (add-project,
+   export). It precedes #export-modal in the DOM, so at equal .viewer-modal
+   z-index the export modal would paint over it, hiding the Browse… picker.
+   Elevate it above every other modal so it is always usable when open. */
+#folder-browser.viewer-modal{z-index:70;}
 .viewer-modal .card{width:min(860px,100%);max-height:86vh;overflow:auto;}
 /* folder browser modal (native-dialog fallback). Must come AFTER the
    .viewer-modal rules: `.folder-modal .card` ties with `.viewer-modal .card`
@@ -1047,6 +1061,25 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .pl-remove:disabled{opacity:.6;cursor:default;}
 .pl-remove svg{display:block;}
 
+.pl-export{flex:0 0 auto;width:34px;height:34px;border-radius:10px;border:1.5px solid var(--line-2);background:#fff;display:grid;place-items:center;cursor:pointer;color:var(--ink-3);transition:.12s;align-self:flex-start;}
+.pl-export:hover{border-color:var(--accent,#2b6);color:var(--ink);background:var(--field);}
+.pl-export svg{width:16px;height:16px;stroke-width:2;}
+/* Export-to-Claude-Code modal */
+.export-field{margin:12px 0;}
+.export-label{display:block;font-weight:600;font-size:12.5px;color:var(--ink-2);margin-bottom:6px;}
+.export-folder-row{display:flex;gap:8px;align-items:center;}
+.export-folder-row .input{flex:1 1 auto;}
+.export-plan{margin:12px 0;max-height:240px;overflow:auto;border:1px solid var(--line-2);border-radius:10px;padding:8px;font-size:12.5px;}
+.export-row{padding:4px 2px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+.export-conflict-row{flex-direction:column;align-items:flex-start;}
+.export-tag{display:inline-block;min-width:58px;text-align:center;border-radius:6px;padding:1px 6px;font-weight:700;font-size:11px;}
+.export-create{background:var(--green-bg,#e6f7ec);color:var(--green-ink,#137a3b);}
+.export-update{background:var(--field);color:var(--ink);}
+.export-no-op{background:var(--field);color:var(--ink-3);}
+.export-warn,.export-conflict{background:var(--red-bg,#fde8e8);color:var(--red-ink,#b42323);}
+.export-orphan{background:var(--field);color:var(--ink-3);}
+.export-choices{display:flex;gap:12px;margin:4px 0 2px 64px;}
+.export-choice{font-size:12.5px;color:var(--ink-2);cursor:pointer;}
 /* Per-agent fan-out toggle in the New Pipeline rows. */
 .fanout-toggle {
   display: inline-flex;
@@ -1551,6 +1584,12 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    In the v2 card it is a direct child of .h-meta on its own line. */
 .hist-pausenote{font-size:11.5px;font-weight:600;color:var(--amber-ink);}
 .hist-pausenote.total{color:var(--red-ink);}
+.hist-pausenote.error{color:var(--red-ink);}
+.pause-error-banner{border-radius:var(--r-ctrl);padding:12px 14px;margin-top:12px;font-size:13px;background:var(--red-bg);color:var(--red-ink);}
+.pause-error-banner b{display:block;margin-bottom:4px;}
+.pause-error-banner .peb-text{color:var(--ink);font-family:var(--mono);font-size:12px;word-break:break-word;}
+.pause-error-banner .peb-hint{color:var(--ink-2);margin-top:6px;}
+.hd-banners .pause-error-banner,.rd-banners .pause-error-banner{align-self:stretch;margin:0;}
 
 @media (max-width:1080px){
   .stat-row{grid-template-columns:repeat(2,1fr);}
@@ -2815,6 +2854,13 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-header-logo{width:20px;height:20px;border-radius:50%;}
 .ask-title{font-weight:600;font-size:13px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ask-header-spacer,.ask-composer-spacer,.ask-activity-spacer,.ask-card-actions-spacer{flex:1 1 auto;}
+.ask-scope-btn{display:inline-flex;align-items:center;gap:5px;max-width:180px;height:30px;flex:none;padding:0 9px;
+  border:1px solid var(--line);border-radius:999px;background:none;color:var(--ink-3);
+  font:inherit;font-size:11.5px;cursor:pointer;}
+.ask-scope-btn:hover{background:var(--field);color:var(--ink);}
+.ask-scope-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-scope-btn.is-pinned{color:var(--ink);border-color:var(--line-2);font-weight:600;}
+.ask-scope-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ask-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;
   border:0;border-radius:9px;background:transparent;color:var(--ink-2);cursor:pointer;transition:.15s;}
 .ask-icon-btn:hover{background:var(--field);color:var(--ink);}
@@ -2827,6 +2873,8 @@ body.rail-collapsed .ask-dock{left:76px;}
   background:var(--field);color:var(--ink);font-size:13.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}
 .ask-user-pills{justify-content:flex-end;margin-top:0;}
 .ask-attachment-pill{padding-right:12px;}
+.ask-attachment-thumb-link{display:inline-block;line-height:0;}
+.ask-attachment-thumb{max-width:180px;max-height:130px;border-radius:8px;border:1px solid var(--line);display:block;}
 
 .ask-activity{border-left:1.5px solid var(--line);padding:2px 0 2px 14px;display:flex;flex-direction:column;gap:7px;}
 .ask-activity-head{display:flex;align-items:center;gap:9px;min-width:0;}
@@ -2933,6 +2981,8 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-card-members-src summary{font-weight:600;font-size:10.5px;color:var(--ink-3);cursor:pointer;}
 .ask-card-members-src-list{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
 .ask-card-err{font-size:12px;color:var(--red-ink);min-height:0;}
+.ask-card-scope-warn{font-size:12px;color:var(--amber-ink);background:var(--amber-wash);
+  border:1px solid var(--amber-line);border-radius:8px;padding:6px 9px;}
 .ask-card-err:empty{display:none;}
 .ask-card-actions{display:flex;align-items:center;gap:8px;}
 .ask-card-open-np{border:0;background:transparent;padding:0;color:var(--blue-ink);font-family:inherit;
@@ -2964,6 +3014,7 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 8px 5px 9px;border:1px solid var(--line);
   border-radius:8px;background:var(--field);color:var(--ink-2);font-family:var(--mono);font-size:11px;max-width:240px;}
 .ask-chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-chip-thumb{width:24px;height:24px;object-fit:cover;border-radius:4px;flex:none;}
 .ask-chip-x{border:0;background:transparent;color:var(--ink-3);cursor:pointer;font-family:inherit;
   font-size:13px;line-height:1;padding:1px 4px;border-radius:5px;transition:.15s;}
 .ask-chip-x:hover{background:var(--line);color:var(--ink);}
@@ -3003,6 +3054,7 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-pop{position:absolute;z-index:3;background:var(--panel);border:1px solid var(--line-2);
   padding:6px;box-shadow:0 12px 34px rgba(25,25,27,.12);border-radius:16px;}
 .ask-pop-threads{top:46px;right:76px;width:326px;}
+.ask-pop-scope{left:16px;bottom:44px;width:300px;max-height:min(420px,70%);overflow-y:auto;}
 .ask-pop-model{right:30px;bottom:42px;width:292px;border-radius:18px;}
 .ask-pop-runinfo{right:96px;bottom:44px;width:326px;z-index:4;}
 .ask-pop-caption,.ask-pop-caption-row .ask-pop-caption{padding:8px 10px 6px;font-weight:600;font-size:10px;

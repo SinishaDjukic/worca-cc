@@ -3,6 +3,7 @@
 // operator-configurable per-turn guards, read fresh on every turn (D12). Pure
 // apart from the settings readers, which are injectable for tests.
 import { askMaxTurns as readAskMaxTurns, askMaxBudgetUsd as readAskMaxBudgetUsd } from '../settings.mjs';
+import { TEXT_EXTENSIONS, BINARY_EXTENSIONS } from './attachment-kind.mjs';
 
 export const ASK_LIMITS = Object.freeze({
   turnsPerThread: 1,                       // one running turn per thread (409)
@@ -12,9 +13,11 @@ export const ASK_LIMITS = Object.freeze({
   emptyThreadSweepMs: 24 * 60 * 60 * 1000, // empty threads older than this are swept at boot
   attachment: Object.freeze({
     maxFiles: 8,                           // per message
-    maxBytesPerFile: 512 * 1024,
-    maxBytesPerThread: 4 * 1024 * 1024,
-    extensions: Object.freeze(['.md', '.markdown', '.txt', '.json', '.csv', '.log']),
+    maxBytesPerFile: 512 * 1024,           // text kinds — they are inlined/paged into prompts
+    maxBytesPerBinaryFile: 5 * 1024 * 1024, // image/pdf kinds — read from disk, never inlined (#398)
+    maxBytesPerThread: 25 * 1024 * 1024,   // enforced ACROSS kinds (was 4 MB text-only pre-#398)
+    extensions: TEXT_EXTENSIONS,           // attachment-kind.mjs owns both tables
+    binaryExtensions: BINARY_EXTENSIONS,
   }),
   contextHeaderMaxChars: 1024,             // [worca context] block
   inlineAttachmentsMaxBytes: 24 * 1024,    // inlined into the turn prompt

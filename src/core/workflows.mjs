@@ -574,7 +574,9 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   const { nodes: nodeCfg, wires: wireCfg } = await resolveRunConfig(projectDir, workflowId);
   // The legacy per-role layer is the Default workflow's storage only (saved rows
   // use nodeCfg); it is addressed by agent KEY, never by node id.
-  const stepsCfg = workflowId === GRAPH_DEFAULT_WORKFLOW.id ? (await readConfig(projectDir)).steps : {};
+  // A defaults-only global export passes projectDir=null and must not touch the config
+  // store (projectKey(null) throws); its legacy per-role layer is empty by definition.
+  const stepsCfg = (workflowId === GRAPH_DEFAULT_WORKFLOW.id && projectDir) ? (await readConfig(projectDir)).steps : {};
   const firstDefined = (...vals) => vals.find((v) => v !== undefined);
 
   const nodes = {};

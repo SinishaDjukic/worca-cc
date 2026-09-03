@@ -6,6 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import http from 'node:http';
 import { WebSocket } from 'ws';
 
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -46,6 +47,12 @@ after(async () => {
 });
 
 const post = (p, body) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(body) });
+// A conditional GET over node:http: global fetch stamps `cache-control: no-cache`
+// onto any request that carries If-None-Match (Fetch spec: a conditional request
+// gets cache mode "no-store"), and `fresh` then answers 200 by design.
+const condGet = (p, headers) => new Promise((res, rej) => {
+  http.get(`${base}${p}`, { headers }, (r) => { r.resume(); r.on('end', () => res(r.statusCode)); }).on('error', rej);
+});
 const newThread = async () => (await (await post('/api/ask/threads', {})).json()).thread;
 const snapshot = async (id) => (await fetch(`${base}/api/ask/threads/${id}`)).json();
 
@@ -93,10 +100,18 @@ test('a full mock turn: 202, stamped frames to ask-done, persistence, session, t
   assert.equal(r.status, 202);
   const { userMessageId, assistantMessageId } = await r.json();
   assert.match(userMessageId, /^askm_[0-9a-f]{8}$/);
-  // §7.4: the deterministic title is stamped SYNCHRONOUSLY before the 202 —
-  // read it NOW; after ask-done the fire-and-forget D13 title call replaces it.
-  assert.equal((await snapshot(t.id)).thread.title, 'hi there',
-    'deterministic title stamped by the message route');
+  // §7.4: NOTHING is stamped before the 202 — the row stays untitled (the header
+  // reads "Ask Worca") until the D13 background title lands. That call runs
+  // CONCURRENTLY with the turn, so by the time this GET is answered the row may
+  // already carry the announced title — but never the prompt text. The frame is
+  // written to the socket before the DB read below can be answered, but it is
+  // parsed on a different socket — so WAIT for it rather than peeking at msgs.
+  const early = (await snapshot(t.id)).thread.title;
+  if (early !== null) {
+    const announced = await waitFor(() => msgs.find((m) => m.type === 'ask-title' && m.threadId === t.id));
+    assert.equal(early, announced.title,
+      `no provisional title from the message route: null until the announced one (got ${JSON.stringify(early)})`);
+  }
   await waitFor(() => framesFor(msgs, t.id).some((f) => f.type === 'ask-done'));
   const frames = framesFor(msgs, t.id);
   assert.equal(frames[0].type, 'ask-start');
@@ -117,7 +132,7 @@ test('a full mock turn: 202, stamped frames to ask-done, persistence, session, t
   assert.equal(asst.text, '[mock] hi there', 'the mock echoes the USER text — the context header was stripped');
   assert.equal(snap.thread.sessionId, 'mock-session-ask-1');
   assert.equal(snap.inFlight, null);
-  // D13: the background title call then replaces the deterministic title and
+  // D13: the background title call titles the still-untitled thread and
   // announces it out-of-turn (under WORCA_MOCK it echoes the title prompt).
   const titled = await waitFor(() => msgs.find((m) => m.type === 'ask-title' && m.threadId === t.id));
   assert.ok(typeof titled.title === 'string' && titled.title, 'ask-title carries the new title');
@@ -154,8 +169,15 @@ test('mid-turn reconnect: ?threadId= replay and {type:subscribe,threadId} both d
   const c = openWs();
   await c.opened;
   c.ws.send(JSON.stringify({ type: 'subscribe', threadId: t.id }));
-  await waitFor(() => framesFor(c.msgs, t.id).length >= 3);
-  assert.equal(framesFor(c.msgs, t.id)[0].seq, 1, 'in-band subscribe replays from the start');
+  // Live frames are broadcast to EVERY socket, so a frame the turn emits between
+  // c opening and its subscribe being handled can land BEFORE the replay (seen on
+  // a loaded Windows VM: first frame seq 4). The contract is that the replay
+  // delivers the whole stamped prefix — the client dedupes by seq (§6.6) — not
+  // that it precedes every live frame. So wait for seq 1 itself, then check the
+  // prefix is complete and contiguous.
+  await waitFor(() => framesFor(c.msgs, t.id).some((f) => f.seq === 1));
+  const cSeqs = [...new Set(framesFor(c.msgs, t.id).map((f) => f.seq))].sort((x, y) => x - y);
+  assert.deepEqual(cSeqs.slice(0, 3), [1, 2, 3], 'in-band subscribe replays from the start');
   await waitFor(() => framesFor(a.msgs, t.id).some((f) => f.type === 'ask-done'));
   a.ws.close(); b.ws.close(); c.ws.close();
 });
@@ -242,6 +264,87 @@ test('attachments: stored + block on the user message; caps enforced', async () 
   assert.equal(after2.thread.title, before.title, 'no deterministic title on a rejected message');
   assert.deepEqual(after2.thread.context, before.context, 'context not stored on a rejected message');
   assert.equal(after2.thread.model, before.model, 'model not stored on a rejected message');
+  assert.deepEqual(after2.messages, [], 'no message rows written');
+  assert.deepEqual(after2.attachments, [], 'no attachment rows written');
+  ws.close();
+});
+
+test('binary attachments (#398): png + pdf stored with kind/mime, served with their real type; spoofed or oversized bodies refused', async () => {
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from([0, 1, 2, 0xfe, 0xff])]);
+  const pdf = Buffer.from('%PDF-1.7\nfake body\n%%EOF\n', 'latin1');
+  const t = await newThread();
+  const { ws, msgs, opened } = openWs(`?threadId=${t.id}`);
+  await opened;
+  const ok = await post(`/api/ask/threads/${t.id}/messages`, {
+    text: 'see the screenshot and the spec', ...MODEL,
+    attachments: [
+      { name: 'shot.png', dataBase64: png.toString('base64') },
+      { name: 'spec.pdf', dataBase64: pdf.toString('base64') },
+    ],
+  });
+  assert.equal(ok.status, 202);
+  // the 202 carries the store-minted rows: the sender's echo keys its thumbnail
+  // and thread budget off them without waiting for a broadcast it may have missed
+  const okBody = await ok.json();
+  assert.deepEqual(okBody.attachments.map((a) => [a.name, a.kind, a.mime, a.bytes]),
+    [['shot.png', 'image', 'image/png', png.length], ['spec.pdf', 'binary', 'application/pdf', pdf.length]]);
+  for (const a of okBody.attachments) assert.match(a.id, /^att_[0-9a-f]{8}$/);
+  await waitFor(() => framesFor(msgs, t.id).some((f) => f.type === 'ask-done'));
+  const snap = await snapshot(t.id);
+  const rows = Object.fromEntries(snap.attachments.map((a) => [a.name, a]));
+  assert.equal(rows['shot.png'].id, okBody.attachments[0].id);
+  assert.equal(rows['shot.png'].kind, 'image');
+  assert.equal(rows['shot.png'].mime, 'image/png');
+  assert.equal(rows['shot.png'].bytes, png.length);
+  assert.equal(rows['spec.pdf'].kind, 'binary');
+  assert.equal(rows['spec.pdf'].mime, 'application/pdf');
+  const user = snap.messages.find((m) => m.role === 'user');
+  assert.ok(user.blocks.some((b) => b.kind === 'attachment' && b.name === 'shot.png' && b.attKind === 'image' && b.mime === 'image/png'),
+    'the message block carries attKind/mime for the UI thumbnail');
+  // body on disk under the row id with the mime extension, never the user name
+  // (worcaHome() is <WORCA_HOME>/.worca-cc)
+  assert.ok(existsSync(join(homeDir, '.worca-cc', 'ask', t.id, 'att', `${rows['shot.png'].id}.png`)));
+  assert.ok(existsSync(join(homeDir, '.worca-cc', 'ask', t.id, 'att', `${rows['spec.pdf'].id}.pdf`)));
+  // the download route serves the REAL mime and the exact bytes
+  const dl = await fetch(`${base}/api/ask/threads/${t.id}/attachments/${rows['shot.png'].id}`);
+  assert.equal(dl.status, 200);
+  assert.match(dl.headers.get('content-type'), /^image\/png/);
+  assert.equal(dl.headers.get('x-content-type-options'), 'nosniff');
+  assert.deepEqual(Buffer.from(await dl.arrayBuffer()), png, 'bytes round-trip unmangled');
+  assert.equal(dl.headers.get('content-disposition'), 'inline');
+  // a body is immutable under its id: cached for a year, revalidated by a stat
+  // ETag (never a per-request sha1 of the whole file)
+  assert.equal(dl.headers.get('cache-control'), 'private, max-age=31536000, immutable');
+  assert.ok(dl.headers.get('etag'), 'an ETag is served');
+  assert.ok(dl.headers.get('last-modified'), 'Last-Modified is served');
+  assert.equal(await condGet(`/api/ask/threads/${t.id}/attachments/${rows['shot.png'].id}`, { 'If-None-Match': dl.headers.get('etag') }), 304, 'a matching ETag short-circuits the body');
+  assert.equal(await condGet(`/api/ask/threads/${t.id}/attachments/${rows['shot.png'].id}`, { 'If-Modified-Since': dl.headers.get('last-modified') }), 304, 'so does Last-Modified');
+  const dlPdf = await fetch(`${base}/api/ask/threads/${t.id}/attachments/${rows['spec.pdf'].id}`);
+  assert.match(dlPdf.headers.get('content-type'), /^application\/pdf/);
+  assert.equal((await fetch(`${base}/api/ask/threads/${t.id}/attachments/att_ffffffff`)).status, 404);
+
+  // refusals, all before any write (the all-or-nothing shape of the text test)
+  const t2 = await newThread();
+  const send = (atts) => post(`/api/ask/threads/${t2.id}/messages`, { text: 'x', ...MODEL, attachments: atts });
+  const spoof = await send([{ name: 'spoof.png', dataBase64: Buffer.from('plain text, not a png').toString('base64') }]);
+  assert.equal(spoof.status, 400);
+  assert.match((await spoof.json()).error, /does not match its extension/);
+  assert.equal((await send([{ name: 'big.png', dataBase64: Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64') }])).status, 413);
+  assert.equal((await send([{ name: 'vector.svg', dataBase64: Buffer.from('<svg/>').toString('base64') }])).status, 400, 'svg stays off the allowlist');
+  // The 64mb JSON window belongs to THIS route only: a ~13 MB body (two 5 MB
+  // images, base64) reaches the route's own per-file 413 …
+  const twoBig = await send([
+    { name: 'ok.png', dataBase64: Buffer.concat([png, Buffer.alloc(5 * 1024 * 1024 - png.length)]).toString('base64') },
+    { name: 'over.png', dataBase64: Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64') },
+  ]);
+  assert.equal(twoBig.status, 413);
+  assert.match((await twoBig.json()).error, /attachment over/, 'the route, not the parser, answered');
+  // … while the sibling routes keep the app-wide 8mb parser (a 9 MB PATCH dies
+  // in body-parser, never reaching the handler's string-field read)
+  const fat = await fetch(`${base}/api/ask/threads/${t2.id}`, { method: 'PATCH', headers: JSONH, body: JSON.stringify({ title: 'x'.repeat(9 * 1024 * 1024) }) });
+  assert.equal(fat.status, 413);
+  assert.equal((await snapshot(t2.id)).thread.title, null, 'the fat PATCH changed nothing');
+  const after2 = await snapshot(t2.id);
   assert.deepEqual(after2.messages, [], 'no message rows written');
   assert.deepEqual(after2.attachments, [], 'no attachment rows written');
   ws.close();

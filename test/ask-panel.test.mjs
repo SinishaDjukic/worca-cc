@@ -165,7 +165,12 @@ test('ask-panel: threads rows live in a scroller; the caption stays pinned; empt
   const list = pop.querySelector('.ask-threads-list');
   assert.ok(list, 'the rows are wrapped in a scroller');
   assert.equal(list.parentNode, pop, 'the scroller is the popover own child (menuItems/panel guard)');
-  assert.equal(pop.querySelector('.ask-pop-caption').parentNode, pop, 'the caption sits outside the scroller');
+  // The caption rides the History caption-row (caption + total meter); the ROW is
+  // the popover's own child, so the caption stays pinned above the scroller.
+  const captionRow = pop.querySelector('.ask-pop-caption-row');
+  assert.equal(captionRow.parentNode, pop, 'the caption row sits outside the scroller');
+  assert.equal(pop.querySelector('.ask-pop-caption').parentNode, captionRow, 'the caption lives in its row');
+  assert.equal(pop.querySelector('.ask-pop-caption').textContent, 'History');
   assert.equal(pop.querySelectorAll(':scope > .ask-thread-row').length, 0, 'no row hangs off the panel itself');
   assert.equal(list.querySelectorAll('.ask-thread-row').length, 2, 'every row went into the scroller');
   assert.equal(pop.querySelectorAll('[role="menuitem"]').length, 2, 'arrow-key navigation still sees them');
