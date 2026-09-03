@@ -360,11 +360,12 @@ const fake = {
 };
 const tools = createAskTools(fake);
 
-test('list(): fifteen tools with JSON-Schema inputs', () => {
+test('list(): eighteen tools with JSON-Schema inputs', () => {
   const defs = tools.list();
   assert.deepEqual(defs.map((d) => d.name), ['list_projects', 'list_workflows', 'list_runs', 'get_run', 'get_run_diff', 'propose_run', 'read_attachment',
     'list_diff_comments', 'add_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
-    'open_worktree', 'list_worktrees', 'remove_worktree', 'git']);
+    'open_worktree', 'list_worktrees', 'remove_worktree', 'git',
+    'list_run_artifacts', 'read_run_artifact', 'get_run_progress']);
   for (const d of defs) {
     assert.ok(typeof d.description === 'string' && d.description.length > 20, `${d.name} description`);
     assert.equal(d.inputSchema.type, 'object');
@@ -675,6 +676,73 @@ test('temp home: a seeded project run and a seeded workspace run round-trip thro
   const proposal = await real.call('propose_run', { projectKey: project.key, brief: 'Add a badge' });
   assert.equal(proposal.ok, true);
   assert.equal(proposal.card.projectKey, project.key);
+});
+
+// ── run-artifact + progress tools over the real readers ──────────────────────
+test('list_run_artifacts / read_run_artifact / get_run_progress over real deps', async () => {
+  const { recordArtifact, writeDecomposition, listRunArtifacts } = await import('../src/core/artifacts.mjs');
+  const { writeFileSync, mkdirSync } = await import('node:fs');
+  const projectDir = mkdtempSync(join(tmpdir(), 'worca-ask-art-proj-'));
+  await addProject({ name: 'artdemo', path: projectDir });
+  const seeded = await seedPipeline(projectDir, { title: 'Art run', status: 'done', phase: 'review' });
+  writeFileSync(join(seeded.dir, 'plan.md'), '# Plan\ncover feature X\n');
+  mkdirSync(join(seeded.dir, 'extras'), { recursive: true });
+  writeFileSync(join(seeded.dir, 'extras', 'notes.txt'), 'hi');
+  recordArtifact(seeded.id, 'plan', 'plan.md', { stepKey: 'exec-1', nodeId: 'planner', cycle: 0 });
+  recordArtifact(seeded.id, 'extra', 'extras/notes.txt', { stepKey: 'exec-2', nodeId: 'refiner', cycle: 1 });
+  // A 'questions' row whose scratch file the orchestrator deletes once answered:
+  // indexed for bookkeeping but unreadable, so list_run_artifacts must drop it.
+  recordArtifact(seeded.id, 'questions', 'questions-x-planner-c0-r1.json', { stepKey: 'exec-1', nodeId: 'planner', cycle: 0 });
+  writeDecomposition(seeded.id, [{ ordinal: 0, tasks: [{ id: 't1', title: 'leak ghp_abcdefghijklmnopqrstuvwxyz0123456789', file: 'x', nodeId: 'n' }] }]);
+
+  const thread = createThread();
+  const real = createAskTools(defaultToolDeps({ threadId: thread.id }));
+
+  // list_run_artifacts: shape, filter, limit
+  const listed = await real.call('list_run_artifacts', { runId: seeded.id });
+  const plan = listed.artifacts.find((a) => a.relPath === 'plan.md');
+  assert.ok(plan, 'plan.md listed');
+  assert.equal(plan.stepKey, 'exec-1');
+  assert.equal(plan.nodeId, 'planner');
+  assert.equal(plan.cycle, 0);
+  assert.equal(typeof plan.bytes, 'number');
+  assert.ok('createdAt' in plan);
+  assert.equal((await real.call('list_run_artifacts', { runId: seeded.id, kind: 'plan' })).artifacts.length, 1);
+  assert.equal((await real.call('list_run_artifacts', { runId: seeded.id, stepKey: 'exec-2' })).artifacts.length, 1);
+  // The transient 'questions' row is never offered (read_run_artifact would 404).
+  assert.ok(!listed.artifacts.some((a) => a.kind === 'questions'), 'questions rows dropped from list_run_artifacts');
+  // excludeKinds drops in SQL so LIMIT counts only kept rows: the core reader keeps
+  // questions by default but honours excludeKinds, and a limit never lets the
+  // excluded row steal a slot from a readable artifact.
+  const allRows = await listRunArtifacts(seeded.id, {});
+  const keptRows = await listRunArtifacts(seeded.id, { excludeKinds: ['questions'] });
+  assert.ok(allRows.some((a) => a.kind === 'questions'), 'core reader keeps questions by default');
+  assert.ok(!keptRows.some((a) => a.kind === 'questions'), 'excludeKinds drops questions in SQL');
+  assert.equal(keptRows.length, allRows.length - 1, 'exactly the one questions row is dropped');
+  const oneKept = await listRunArtifacts(seeded.id, { excludeKinds: ['questions'], limit: 1 });
+  assert.equal(oneKept.length, 1);
+  assert.notEqual(oneKept[0].kind, 'questions', 'the limited row is a readable artifact, not the excluded one');
+  const capped = await real.call('list_run_artifacts', { runId: seeded.id, limit: 1 });
+  assert.equal(capped.artifacts.length, 1);
+  assert.equal(capped.truncated, true);
+
+  // read_run_artifact: indexed read, plus refusal of unindexed / traversing paths
+  const read = await real.call('read_run_artifact', { runId: seeded.id, relPath: 'plan.md' });
+  assert.match(read.text, /cover feature X/);
+  assert.equal(read.relPath, 'plan.md');
+  await assert.rejects(() => real.call('read_run_artifact', { runId: seeded.id, relPath: '../escape.md' }),
+    { message: 'read_run_artifact: artifact not found' });
+  await assert.rejects(() => real.call('read_run_artifact', { runId: seeded.id, relPath: 'nope.md' }),
+    { message: 'read_run_artifact: artifact not found' });
+
+  // get_run_progress: shape + free-text redaction of a task title
+  const prog = await real.call('get_run_progress', { runId: seeded.id });
+  assert.equal(prog.runId, seeded.id);
+  assert.equal(prog.status, 'done');
+  assert.ok(Array.isArray(prog.phases) && Array.isArray(prog.tasks));
+  assert.ok(prog.clarify && Array.isArray(prog.reviews) && Array.isArray(prog.stepQuestions));
+  const t1 = prog.tasks.find((t) => t.id === 't1');
+  assert.doesNotMatch(t1.title, /ghp_abcdefghijklmnopqrstuvwxyz0123456789/, 'task title redacted');
 });
 
 test('source scan: tools.mjs issues no writes and never touches db.mjs; tool-deps.mjs only reads', () => {

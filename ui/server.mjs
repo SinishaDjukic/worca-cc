@@ -23,7 +23,7 @@ import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState,
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
-  listArtifacts, lookupPipelineRow, findPipelineRowById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
+  listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
   readPromptFile,
 } from '../src/core/artifacts.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
@@ -1804,6 +1804,19 @@ app.get('/api/runs/:id/artifact', async (req, res) => {
     const hit = await resolveIndexedArtifactForRow(row, req.query.rel);
     if (!hit) return res.status(404).json({ error: 'artifact not found' });
     res.json(hit);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/runs/:id/artifacts', async (req, res) => {
+  try {
+    const row = findPipelineRowById(req.params.id);
+    if (!row) return res.status(404).json({ error: 'pipeline not found' });
+    // Cap the row set (each row costs a synchronous statSync for its byte size, on
+    // the event loop) at the same ceiling the ask tool uses.
+    const artifacts = await listRunArtifacts(row.id, { limit: ASK_LIMITS.artifactsListMaxLimit });
+    res.json({ runId: row.id, artifacts });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

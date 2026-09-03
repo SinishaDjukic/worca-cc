@@ -6,6 +6,7 @@ import { readFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   listAllPipelines, lookupPipelineRow, findPipelineRowById, totalsFor, readStoreMeta, runDirForRow,
+  listRunArtifacts, readRunProgress, resolveIndexedArtifactForRow,
 } from '../artifacts.mjs';
 import { DIFF_PATCH_FILE } from '../results.mjs';
 import { GUARDRAIL_PRESETS } from '../guardrails.mjs';
@@ -48,6 +49,9 @@ export function defaultToolDeps({ threadId }) {
     readStoreMeta,
     readDiffPatch,
     hasDiffPatch,
+    listRunArtifacts: (row, filter) => listRunArtifacts(row.id, filter),
+    readRunArtifact: (row, rel) => resolveIndexedArtifactForRow(row, rel), // {rel, text}|null
+    readRunProgress: (row) => readRunProgress(row.id),
     readAttachment: (id) => {
       const a = threadId ? readAttachmentText(threadId, id) : null;
       return a ? { name: a.name, text: a.text } : null;

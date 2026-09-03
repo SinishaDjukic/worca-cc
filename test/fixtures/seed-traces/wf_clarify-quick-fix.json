@@ -18,6 +18,7 @@
     "reviewer": 2
   },
   "artifacts": [
+    "clarify:clarify.json",
     "diff-patch:diff-patch.patch",
     "live-log:live-log.ndjson",
     "plan:plans/<DATE>-seed-trace-probe.md",

@@ -736,6 +736,77 @@ test('tabs render with badges; default = Diff when results exist, else Overview'
   assert.equal(badgeOf(bareDoc, 'agents'), null, 'an empty sub-agent list carries no badge');
 });
 
+// The saved detail payload's `artifacts` (listArtifacts' [{kind, relPath}]) carries
+// no step attribution, so the Artifacts tab must fetch the ATTRIBUTED plural
+// endpoint before rendering. This proves that wiring, not just the pure grouping.
+test('the Artifacts tab fetches GET /api/runs/:id/artifacts and renders per-node groups', async () => {
+  const detail = {
+    ...DETAIL,
+    state: { ...DETAIL.state, stepper: null, steps: [], subAgents: [] },
+    // A non-live-log indexed artifact gates the tab's visibility.
+    artifacts: [{ kind: 'plan', relPath: 'plans/plan.md' }],
+  };
+  let asked = null;
+  const ctx = await bootDetail({
+    detail,
+    arms: (url) => {
+      if (url.endsWith(`/api/runs/${ROW.id}/artifacts`)) {
+        asked = url;
+        return ok({ runId: ROW.id, artifacts: [
+          { kind: 'plan', stepKey: 'plan#1', nodeId: 'plan', cycle: 0, relPath: 'plans/plan.md', bytes: 42, createdAt: ROW.startedAt },
+        ] });
+      }
+      return null;
+    },
+  });
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+  const tab = doc.querySelector('#hist-detail .hd-tab[data-sec="artifacts"]');
+  assert.ok(tab, 'the Artifacts tab is visible for a run with an indexed artifact');
+  click(ctx.window, tab);
+  await settle(ctx.window, 6);
+  assert.ok(asked, 'buildHdArtifacts fetched the attributed plural endpoint');
+  const sec = doc.querySelector('#hist-detail .hd-sec[data-sec="artifacts"]');
+  const rows = [...sec.querySelectorAll('.artifact-row')];
+  assert.equal(rows.length, 1, 'the fetched artifact renders as a row');
+  assert.equal(rows[0].querySelector('.artifact-name').textContent, 'plan.md');
+  assert.equal(sec.querySelector('.artifact-group-head b').textContent, 'plan',
+    'grouped under its producing node');
+});
+
+// 'questions' rows are indexed with attribution but the orchestrator deletes the
+// scratch file once the round is answered, so a persisted questions row would 404
+// when clicked. isDisplayableArtifact excludes it (like 'live-log'/'pipeline'), so
+// the Artifacts tab neither counts nor renders it.
+test('the Artifacts tab drops transient questions rows (deleted file would 404)', async () => {
+  const detail = {
+    ...DETAIL,
+    state: { ...DETAIL.state, stepper: null, steps: [], subAgents: [] },
+    artifacts: [{ kind: 'plan', relPath: 'plans/plan.md' }],
+  };
+  const ctx = await bootDetail({
+    detail,
+    arms: (url) => {
+      if (url.endsWith(`/api/runs/${ROW.id}/artifacts`)) {
+        return ok({ runId: ROW.id, artifacts: [
+          { kind: 'plan', stepKey: 'plan#1', nodeId: 'plan', cycle: 0, relPath: 'plans/plan.md', bytes: 42, createdAt: ROW.startedAt },
+          { kind: 'questions', stepKey: 'clarify#1', nodeId: 'clarify', cycle: 0, relPath: 'questions-x-clarify-c1-r1.json', bytes: 0, createdAt: ROW.startedAt },
+        ] });
+      }
+      return null;
+    },
+  });
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+  click(ctx.window, doc.querySelector('#hist-detail .hd-tab[data-sec="artifacts"]'));
+  await settle(ctx.window, 6);
+  const sec = doc.querySelector('#hist-detail .hd-sec[data-sec="artifacts"]');
+  const rows = [...sec.querySelectorAll('.artifact-row')];
+  assert.equal(rows.length, 1, 'only the durable plan row renders; questions is dropped');
+  assert.equal(rows[0].querySelector('.artifact-name').textContent, 'plan.md');
+  assert.doesNotMatch(sec.textContent, /questions-x-clarify/, 'no questions row is shown');
+});
+
 test('clicking a tab switches the visible section and lazy-builds exactly once', async () => {
   const ctx = await bootDetail({ detail: TABS_DETAIL });
   await openDetail(ctx);

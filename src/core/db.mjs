@@ -745,6 +745,7 @@ const INCREMENTAL_COLUMNS = {
   workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT', archived_at: 'TEXT' },
   config_workflow_nodes:  { ask_questions: 'INTEGER', subagent_model: 'TEXT' },  // v25: sub-agent model policy
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
+  artifacts:              { step_key: 'TEXT', node_id: 'TEXT', cycle: 'INTEGER', created_at: 'TEXT' }, // per-step attribution
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of

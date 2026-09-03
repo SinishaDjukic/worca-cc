@@ -32,6 +32,9 @@ export const ASK_LIMITS = Object.freeze({
   worktreesGlobal: 15,                     // P4 D9
   attachmentReadDefaultBytes: 32_000,
   attachmentReadMaxBytes: 200_000,
+  artifactsListMaxLimit: 200,
+  artifactReadDefaultBytes: 60_000,
+  artifactReadMaxBytes: 200_000,
   briefMaxChars: 8000,
   commentBodyMaxChars: 4000,               // diff_comments.body cap (pinned equal to COMMENT_BODY_MAX)
   titleMaxChars: 120,
