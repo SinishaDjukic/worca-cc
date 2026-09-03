@@ -155,12 +155,15 @@ test('GET /api/settings carries app identity: version + a browsable repo URL', a
   const j = await (await fetch(`${base}/api/settings`)).json();
 
   assert.ok(j.app && typeof j.app === 'object', 'GET carries an `app` block');
-  assert.deepEqual(Object.keys(j.app).sort(), ['repoUrl', 'version'], 'exactly the two About fields');
+  assert.deepEqual(Object.keys(j.app).sort(), ['releaseUrl', 'repoUrl', 'version'], 'exactly the three About fields');
   assert.equal(j.app.version, pkg.version, 'straight from package.json — never a literal');
   // Derived, not hardcoded: this stays true if the repo is ever moved or renamed.
   assert.equal(j.app.repoUrl, pkg.repository.url.replace(/^git\+/, '').replace(/\.git$/, ''),
     'the npm git URL normalised to its browsable form');
   assert.match(j.app.repoUrl, /^https:\/\//, 'browsable, not a git:// or git+ URL');
+  // The tag the release workflow publishes from (.github/workflows/release-npm-app.yml).
+  assert.equal(j.app.releaseUrl, `${j.app.repoUrl}/releases/tag/worca-app-v${pkg.version}`,
+    'version links to its worca-app-v<version> release tag');
 });
 
 test('POST /api/settings does NOT echo app identity (it is not a setting)', async () => {

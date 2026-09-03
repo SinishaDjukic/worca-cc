@@ -1,5 +1,6 @@
 // test/ui-settings-about.test.mjs
-// Settings ▸ About card: version + repo link painted from the `app` block of GET /api/settings.
+// Settings ▸ About card: version (linked to its release tag) + repo link, painted
+// from the `app` block of GET /api/settings.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -20,6 +21,7 @@ const EM_DASH = '\u2014';
 const PAINTED_VERSION = '9.9.9-test';
 const PAINTED_REPO_URL = 'https://example.com/acme/widget';
 const PAINTED_REPO_TEXT = 'example.com/acme/widget';
+const PAINTED_RELEASE_URL = 'https://example.com/acme/widget/releases/tag/worca-app-v9.9.9-test';
 
 const DAY = 86400000;
 const okBudget = () => ({
@@ -35,7 +37,7 @@ const okSettings = () => ({
   root: '', projectsRoot: '', projectsRootDefault: '/home/me', default: '/home/me',
   pipelineCostLimitUsd: null, totalCostLimitUsd: null, costLimitResetPeriod: 'monthly',
   askMaxTurns: 40, askMaxBudgetUsd: 2, chat: {},
-  app: { version: PAINTED_VERSION, repoUrl: PAINTED_REPO_URL },
+  app: { version: PAINTED_VERSION, repoUrl: PAINTED_REPO_URL, releaseUrl: PAINTED_RELEASE_URL },
 });
 
 const settingsView = () => {
@@ -86,7 +88,14 @@ test('About is the LAST settings card, read-only, with no version baked into the
   assert.equal(about.querySelector('.hint'), null, 'no status line (nothing saves)');
 
   assert.ok(!/\d+\.\d+\.\d+/.test(about.textContent), 'no version string in the markup');
-  assert.equal(about.querySelector('#aboutVersion').textContent.trim(), EM_DASH, 'placeholder only');
+  const version = about.querySelector('#aboutVersion');
+  assert.equal(version.textContent.trim(), EM_DASH, 'placeholder only');
+  // The version is an anchor so paint can link it to its release tag, but the
+  // placeholder must never be clickable: no href until the payload supplies one.
+  assert.equal(version.tagName, 'A');
+  assert.equal(version.hasAttribute('href'), false, 'placeholder carries no href');
+  assert.equal(version.getAttribute('target'), '_blank');
+  assert.equal(version.getAttribute('rel'), 'noopener noreferrer');
 
   // The two existing settings-view invariants stay intact (ui-settings-tooltips).
   assert.equal(view.querySelectorAll('button.info-tip').length, 12, 'About adds no ⓘ icon');
@@ -108,6 +117,7 @@ test('opening Settings paints the version and repo link from the server payload'
   await openSettings();
   // None of these values is in index.html, so each line fails if paintAbout stops running.
   assert.equal($('#aboutVersion').textContent.trim(), PAINTED_VERSION, 'version painted from the payload');
+  assert.equal($('#aboutVersion').getAttribute('href'), PAINTED_RELEASE_URL, 'version links to its release tag');
   assert.equal($('#aboutRepoLink').getAttribute('href'), PAINTED_REPO_URL, 'href painted from the payload');
   assert.equal($('#aboutRepoLink').textContent.trim(), PAINTED_REPO_TEXT, 'link text is the URL without its scheme');
   assert.equal($('#aboutRepoLink').getAttribute('target'), '_blank', 'paint never drops target');
@@ -119,18 +129,20 @@ test('a payload with no `app` block leaves the static fallback alone (never blan
   const { $, openSettings } = await boot({ settings: noApp });
   await openSettings();
   assert.equal($('#aboutVersion').textContent.trim(), EM_DASH, 'placeholder kept, not emptied');
+  assert.equal($('#aboutVersion').hasAttribute('href'), false, 'placeholder still unlinked');
   assert.equal($('#aboutRepoLink').getAttribute('href'), REPO_URL, 'static href kept');
   // Without paintAbout's `if (!info) return` the throw would abort every later paint.
   assert.equal($('#settingsMsg').textContent.trim(), '', 'the rest of the settings paint still ran');
 });
 
-test('a malformed `repoUrl` cannot abort the rest of the settings paint', async () => {
-  const badUrl = () => ({ ...okSettings(), app: { version: PAINTED_VERSION, repoUrl: 42 } });
+test('malformed `repoUrl`/`releaseUrl` cannot abort the rest of the settings paint', async () => {
+  const badUrl = () => ({ ...okSettings(), app: { version: PAINTED_VERSION, repoUrl: 42, releaseUrl: null } });
   const { $, openSettings } = await boot({ settings: badUrl });
   await openSettings();
   assert.equal($('#settingsMsg').textContent.trim(), '', 'no throw reached the loadSettings catch');
   assert.equal($('#aboutRepoLink').getAttribute('href'), REPO_URL, 'static href kept');
-  assert.equal($('#aboutVersion').textContent.trim(), PAINTED_VERSION, 'the usable half still painted');
+  assert.equal($('#aboutVersion').textContent.trim(), PAINTED_VERSION, 'the usable part still painted');
+  assert.equal($('#aboutVersion').hasAttribute('href'), false, 'no release link without a usable URL');
 });
 
 test('style.css styles the About rows', () => {
@@ -140,6 +152,7 @@ test('style.css styles the About rows', () => {
   assert.ok(css.includes('.about-val{'), '.about-val rule');
   assert.ok(css.includes('.about-version{'), '.about-version rule');
   assert.ok(css.includes('.about-link{'), '.about-link rule');
+  assert.ok(css.includes('.about-version[href]{'), 'the painted version reads as a link');
   // Same specificity on one anchor: .about-link must come after .about-val to win.
   assert.ok(css.indexOf('.about-val{') < css.indexOf('.about-link{'),
     '.about-link must stay after .about-val');

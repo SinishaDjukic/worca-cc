@@ -1585,6 +1585,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .about-key{flex:0 0 96px;font-weight:600;color:var(--ink-2);}
 .about-val{color:var(--ink);min-width:0;}
 .about-version{font-family:var(--mono);}
+/* Once painted with a release-tag href the version reads as a link. */
+.about-version[href]{color:var(--green-ink);text-decoration:none;}
+.about-version[href]:hover{text-decoration:underline;}
 .about-link{color:var(--green-ink);font-weight:600;text-decoration:none;overflow-wrap:anywhere;}
 .about-link:hover{text-decoration:underline;}
 

@@ -309,8 +309,8 @@ const postApi = (body) => fetch(`${apiBase}/api/settings`, {
 test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, default} + the budget keys + app identity', async () => {
   await withEnv(undefined, async () => {
     const j = await getApi();
-    // `app` = static identity for the Settings ▸ About card (version + repo URL,
-    // read from package.json). GET-only: POST still echoes settingsState() + chat.
+    // `app` = static identity for the Settings ▸ About card (version, repo URL,
+    // release-tag URL — read from package.json). GET-only: POST still echoes settingsState() + chat.
     assert.deepEqual(Object.keys(j).sort(), ['app', 'askMaxBudgetUsd', 'askMaxTurns', 'chat', 'costLimitResetPeriod',
       'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'hideBuiltinModels', 'pipelineCostLimitUsd', 'projectsRoot', 'projectsRootDefault', 'root',
       'titleModel', 'titleModelEffective', 'totalCostLimitUsd']);

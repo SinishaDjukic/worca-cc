@@ -1239,7 +1239,10 @@
               </div>
               <div class="about-row">
                 <span class="about-key">Version</span>
-                <span class="about-val about-version" id="aboutVersion">&mdash;</span>
+                <!-- href is painted from app.releaseUrl (the worca-app-v<version> tag);
+                     without one the anchor is plain text, so the placeholder never links. -->
+                <a class="about-val about-version" id="aboutVersion"
+                   target="_blank" rel="noopener noreferrer">&mdash;</a>
               </div>
               <div class="about-row">
                 <span class="about-key">Repository</span>

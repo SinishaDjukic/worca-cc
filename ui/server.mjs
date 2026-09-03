@@ -183,7 +183,24 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const AGENTS_DIR = path.join(PROJECT_ROOT, 'agents');
 const SKILLS_DIR = path.join(PROJECT_ROOT, 'skills');
 const require = createRequire(import.meta.url);
-const PKG_VERSION = require('../package.json').version;
+const PKG = require('../package.json');
+const PKG_VERSION = PKG.version;
+// Settings ▸ About identity, fixed at module load. repository.url is normalised
+// from npm's git forms (git+https, ssh://git@, git://, scp-style git@host:path)
+// to a browsable https URL; releaseUrl points at the tag the release workflow
+// publishes from (.github/workflows/release-npm-app.yml: worca-app-v<version>).
+const repoWebUrl = (raw) => String(raw || '')
+  .replace(/^git\+/, '')
+  .replace(/^ssh:\/\/git@/, 'https://')
+  .replace(/^git:\/\//, 'https://')
+  .replace(/^git@([^:/]+):/, 'https://$1/')
+  .replace(/\.git$/, '');
+const APP_REPO_URL = repoWebUrl(PKG.repository && PKG.repository.url);
+const APP_INFO = Object.freeze({
+  version: PKG_VERSION || '',
+  repoUrl: APP_REPO_URL,
+  releaseUrl: APP_REPO_URL && PKG_VERSION ? `${APP_REPO_URL}/releases/tag/worca-app-v${PKG_VERSION}` : '',
+});
 const HLJS_LANGUAGE_FILE_RE = /^[a-z0-9][a-z0-9-]{0,63}\.min\.js$/;
 // Primaries plus the sub-language grammars their instances register
 // (hljs-loader.mjs); a shipped but unmapped grammar stays a plain 404.
@@ -2777,9 +2794,10 @@ app.get('/api/workspaces/:id/runs/:runId/artifact', async (req, res) => {
 //   projectsRootDefault : what applies when projectsRoot is blank — the env tier
 //                         when exported, else defaultRoot(). The UI placeholder.
 //                         Additive; `default` keeps its `root` meaning.
-//   app                 : { version, repoUrl } — static identity for the About
-//                         card, from package.json. GET-only: it is not a setting,
-//                         so POST keeps echoing settingsState() + chat unchanged.
+//   app                 : { version, repoUrl, releaseUrl } — static identity for
+//                         the About card (APP_INFO, from package.json). GET-only:
+//                         it is not a setting, so POST keeps echoing
+//                         settingsState() + chat unchanged.
 // POST /api/settings -> set either key and return the resulting full state.
 //   Only keys PRESENT in the body are written, so a projectsRoot-only POST can
 //   never reset `root` (and vice versa). An explicitly empty value still resets
@@ -2789,19 +2807,6 @@ app.get('/api/workspaces/:id/runs/:runId/artifact', async (req, res) => {
 // Validation lives in src/core/settings.mjs; this is thin delegation mirroring
 // /api/projects.
 // ---------------------------------------------------------------------------
-// About card identity, read from package.json at module load; repository.url is
-// normalised from npm's git form to a browsable https URL.
-const PKG = require('../package.json');
-const repoWebUrl = (raw) => String(raw || '')
-  .replace(/^git\+/, '')
-  .replace(/^ssh:\/\/git@/, 'https://')
-  .replace(/^git:\/\//, 'https://')
-  .replace(/\.git$/, '');
-const APP_INFO = Object.freeze({
-  version: PKG.version || '',
-  repoUrl: repoWebUrl(PKG.repository && PKG.repository.url),
-});
-
 const settingsState = () => ({
   root: getWorcaRoot(), projectsRoot: rawProjectsRoot(),
   projectsRootDefault: defaultProjectsRoot(), default: defaultRoot(),

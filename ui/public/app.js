@@ -7790,7 +7790,12 @@ const projectsRootFallback = (data) => data.projectsRootDefault || data.default 
 // malformed payload leaves the static markup (including target/rel) untouched.
 function paintAbout(info) {
   if (!info) return;
-  if (el.aboutVersion && info.version) el.aboutVersion.textContent = info.version;
+  if (el.aboutVersion && info.version) {
+    el.aboutVersion.textContent = info.version;
+    // Links the version to its release tag; a missing/malformed URL leaves the
+    // anchor href-less, i.e. plain text.
+    if (typeof info.releaseUrl === 'string' && info.releaseUrl) el.aboutVersion.href = info.releaseUrl;
+  }
   if (el.aboutRepoLink && typeof info.repoUrl === 'string' && info.repoUrl) {
     el.aboutRepoLink.href = info.repoUrl;
     el.aboutRepoLink.textContent = info.repoUrl.replace(/^https?:\/\//, '');
