@@ -122,6 +122,16 @@ async function syncEntry(entry, { exec } = {}) {
 export async function addMarketplace(url, { exec } = {}) {
   const norm = normalizeMarketplaceUrl(url);
   if (!norm) throw Object.assign(new Error('marketplace url is required'), { code: 'BAD_REQUEST' });
+  // A single PLUGIN folder (a worca-cc-plugin.json, no marketplace manifest) is
+  // not a marketplace — the natural mistake after `worca workflow export
+  // --format plugin`. Say so, name the fix, and carry the dir so the server
+  // route can link it on the user's behalf (code PLUGIN_FOLDER).
+  if (!/^[a-z+]+:\/\//i.test(norm) && !/^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:/.test(norm)
+    && existsSync(join(norm, 'worca-cc-plugin.json')) && !existsSync(join(norm, 'worca-cc-marketplace.json'))) {
+    throw Object.assign(
+      new Error(`${norm} is a single plugin folder, not a marketplace — link it instead: worca plugin link ${norm}`),
+      { code: 'PLUGIN_FOLDER', dir: norm });
+  }
   const id = marketplaceId(norm);
   if (readMarketplaces().marketplaces[id]) { // cheap pre-check: fail before any git work
     throw Object.assign(new Error(`marketplace already added: ${norm}`), { code: 'EXISTS' });

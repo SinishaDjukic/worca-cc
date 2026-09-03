@@ -242,6 +242,23 @@ test('Export… opens the format dialog for a v2 row, not a v1 row', async () =>
 
   doc.getElementById('export-cancel').dispatchEvent(new win.Event('click'));
   assert.equal(modal.classList.contains('hidden'), true, 'Cancel closes the dialog');
+
+  // A successful export swaps the form for a result view (same card, not a second
+  // dialog): what was written, where, the next step, and a Done button.
+  rowById('wf_g').querySelector('.pl-export').dispatchEvent(new win.Event('click'));
+  win.HTMLAnchorElement.prototype.click = function () {};          // jsdom: no navigation on the download link
+  doc.getElementById('export-apply-btn').dispatchEvent(new win.Event('click'));
+  assert.equal(modal.classList.contains('hidden'), false, 'the dialog stays open');
+  assert.ok(hidden('export-form') && !hidden('export-done'), 'form swapped for the result view');
+  assert.equal(doc.getElementById('export-done-title').textContent, 'JSON file downloaded');
+  assert.match(doc.getElementById('export-done-lines').textContent, /g\.json/);
+  assert.match(doc.getElementById('export-done-next').textContent, /Import…/);
+  assert.ok(hidden('export-apply-btn') && hidden('export-cancel') && !hidden('export-done-close'));
+  doc.getElementById('export-done-close').dispatchEvent(new win.Event('click'));
+  assert.equal(modal.classList.contains('hidden'), true, 'Done closes it');
+  rowById('wf_g').querySelector('.pl-export').dispatchEvent(new win.Event('click'));
+  assert.ok(!hidden('export-form') && hidden('export-done'), 'reopening shows the form again');
+  doc.getElementById('export-cancel').dispatchEvent(new win.Event('click'));
 });
 
 // One tab per domain; the row no longer shows its domain; Import… selects the

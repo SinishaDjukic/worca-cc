@@ -1253,7 +1253,7 @@
             <p id="plugins-msg" class="form-msg" aria-live="polite"></p>
             <div class="card hidden" id="marketplace-add-row" style="padding:16px 20px;margin-bottom:14px">
               <div class="path-row">
-                <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo" spellcheck="false" />
+                <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo · /path/to/a/plugin-folder" spellcheck="false" />
                 <button type="button" id="marketplace-add" class="btn btn-primary btn-mini">Add</button>
               </div>
             </div>
@@ -1328,6 +1328,8 @@
           <h2 id="export-title">Export pipeline</h2>
         </div>
         <p id="export-subtitle" class="confirm-message"></p>
+        <!-- The form; swapped for #export-done after a successful export. -->
+        <div id="export-form">
         <!-- ONE Export… entry point per row; the dialog asks for the format first.
              json = the saved graph as a file another Worca user imports (#421);
              skill = a runnable Claude Code skill under .claude/ (#403);
@@ -1380,12 +1382,24 @@
         </label>
         <div id="export-plan" class="export-plan hidden"></div>
         <p id="export-msg" class="confirm-message"></p>
+        </div>
+        <!-- Result view: what was written, where, and the next step for the format.
+             Replaces the form (not a second dialog) once an export succeeded. -->
+        <div id="export-done" class="export-done hidden" role="status" aria-live="polite">
+          <div class="export-done-head">
+            <span class="export-done-check" aria-hidden="true">✓</span>
+            <b id="export-done-title"></b>
+          </div>
+          <dl id="export-done-lines" class="export-done-lines"></dl>
+          <p id="export-done-next" class="export-done-next"></p>
+        </div>
         <div class="confirm-actions">
           <button type="button" id="export-cancel" class="btn btn-ghost btn-mini">Cancel</button>
           <!-- Preview = dry run (optional). Export runs the dry run itself and writes
                unless it hits a conflict, which it then shows for per-file resolution. -->
           <button type="button" id="export-plan-btn" class="btn btn-ghost btn-mini">Preview</button>
           <button type="button" id="export-apply-btn" class="btn btn-primary btn-mini">Export</button>
+          <button type="button" id="export-done-close" class="btn btn-primary btn-mini hidden">Done</button>
         </div>
       </div>
     </div>

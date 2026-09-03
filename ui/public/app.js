@@ -8355,7 +8355,14 @@ async function addMarketplaceFromInput() {
   if (!ok) return setPluginsMsg(data.error || 'add failed', 'err');
   el.marketplaceUrl.value = '';
   el.marketplaceAddRow.classList.add('hidden');
-  setPluginsMsg(`Added ${data.marketplace.name} (${data.marketplace.plugins.length} plugins).`, 'ok');
+  if (data.linked) {
+    // The path was a single plugin folder (an Export… → Worca plugin result):
+    // the server linked it instead of registering a marketplace.
+    const n = (data.plugin.workflows?.imported || []).length;
+    setPluginsMsg(`Linked plugin "${data.plugin.name}" from ${data.plugin.dir} — ${n} pipeline template${n === 1 ? '' : 's'} added to your saved pipelines.`, 'ok');
+  } else {
+    setPluginsMsg(`Added ${data.marketplace.name} (${data.marketplace.plugins.length} plugins).`, 'ok');
+  }
   loadPluginsView();
 }
 
@@ -16528,6 +16535,7 @@ function openExportModal(item) {
   document.getElementById('export-msg').textContent = '';
   const planEl = document.getElementById('export-plan');
   planEl.textContent = ''; planEl.classList.add('hidden');
+  exportSetDone(false);
   exportSyncFormat();
   exportSyncSlugPreview();
   modal.classList.remove('hidden');
@@ -16535,6 +16543,51 @@ function openExportModal(item) {
 function closeExportModal() {
   const modal = document.getElementById('export-modal');
   if (modal) modal.classList.add('hidden');
+  exportSetDone(false);
+}
+/** Swap the form for the result view (or back). The dialog stays open so the
+ *  user reads where the export went and what to do next, then clicks Done. */
+function exportSetDone(done) {
+  const g = (id) => document.getElementById(id);
+  g('export-form').classList.toggle('hidden', done);
+  g('export-done').classList.toggle('hidden', !done);
+  for (const id of ['export-cancel', 'export-plan-btn', 'export-apply-btn']) g(id).classList.toggle('hidden', done);
+  if (!done && exportModalState.item) exportSyncFormat();          // Preview visibility is format-driven
+  g('export-done-close').classList.toggle('hidden', !done);
+  if (done) g('export-done-close').focus();
+}
+/** @param {{title:string, lines:Array<[string, string|Node]>, next?:string|Node}} r */
+function exportShowDone(r) {
+  const g = (id) => document.getElementById(id);
+  g('export-subtitle').textContent = '';
+  g('export-done-title').textContent = r.title;
+  const dl = g('export-done-lines');
+  dl.replaceChildren();
+  for (const [k, v] of r.lines) {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd');
+    if (typeof v === 'string') dd.textContent = v; else dd.appendChild(v);
+    dl.append(dt, dd);
+  }
+  const next = g('export-done-next');
+  next.replaceChildren();
+  if (typeof r.next === 'string') next.textContent = r.next; else if (r.next) next.appendChild(r.next);
+  next.classList.toggle('hidden', !r.next);
+  exportSetDone(true);
+}
+/** "Then run <code>x</code>": a text + code fragment for the next-step line. */
+function exportNextStep(before, code, after = '') {
+  const frag = document.createDocumentFragment();
+  frag.appendChild(document.createTextNode(before));
+  const c = document.createElement('code'); c.textContent = code;
+  frag.appendChild(c);
+  if (after) frag.appendChild(document.createTextNode(after));
+  return frag;
+}
+/** Mirrors src/core/workflow-share.mjs workflowFileSlug (the download's filename). */
+function exportJsonFilename(id) {
+  const stem = String(id || '').replace(/^wf_/, '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return `${stem || 'workflow'}.json`;
 }
 function exportSyncFormat() {
   const { format, destination } = exportModalState;
@@ -16717,6 +16770,7 @@ function bindExportModal() {
     openFolderBrowser(folder.value.trim(), set);
   });
   document.getElementById('export-cancel').addEventListener('click', closeExportModal);
+  document.getElementById('export-done-close').addEventListener('click', closeExportModal);
   // Preview: the optional dry run — shows what Export would write, writes nothing.
   document.getElementById('export-plan-btn').addEventListener('click', async () => {
     const msg = document.getElementById('export-msg');
@@ -16740,7 +16794,11 @@ function bindExportModal() {
       document.body.appendChild(a);
       a.click();
       a.remove();
-      closeExportModal();
+      exportShowDone({
+        title: 'JSON file downloaded',
+        lines: [['File', exportJsonFilename(exportModalState.item.id)], ['Pipeline', exportModalState.item.name]],
+        next: 'Send the file to another Worca user — they pick it up with Import… in their saved pipelines. Agents and skills do not travel with it; share a plugin for those.',
+      });
       return;
     }
     msg.textContent = 'Exporting…';
@@ -16776,8 +16834,25 @@ function bindExportModal() {
         return;
       }
       appendLog({ source: 'ui', level: 'info', text: `exported ${exportModalState.item.name}: ${applied.written.length} written, ${applied.skipped.length} skipped` });
-      if (applied.validation) setGvSavedMsg(`Plugin "${applied.name}" v${applied.version} written to ${applied.dir} — share the folder; the recipient runs: worca plugin link`, 'ok');
-      closeExportModal();
+      const files = `${applied.written.length} written, ${(applied.noop || []).length} unchanged`;
+      if (applied.validation) {                                  // plugin
+        exportShowDone({
+          title: `Plugin "${applied.name}" v${applied.version} exported`,
+          lines: [['Folder', applied.dir], ['Files', files]],
+          next: exportNextStep('Share the folder. The recipient pastes its path into Plugins → Add marketplace, or runs ',
+            `worca plugin link ${applied.dir}`, ' — once; after a re-export they run worca plugin reimport.'),
+        });
+      } else {                                                    // Claude Code skill
+        const command = (document.getElementById('export-slug-preview').textContent.match(/\/[^\s]+/) || [''])[0];
+        const where = exportModalState.destination === 'project'
+          ? document.getElementById('export-folder').value.trim() : '~/.claude';
+        exportShowDone({
+          title: 'Claude Code skill exported',
+          lines: [['Skill', command || exportModalState.item.name], ['Location', where], ['Files', files]],
+          next: exportNextStep(exportModalState.destination === 'project' ? 'Open the project in Claude Code and run ' : 'In Claude Code, run ',
+            command || '/<skill>', ' — the pipeline runs there without Worca.'),
+        });
+      }
     } catch (err) {
       exportInvalidatePlan();
       msg.textContent = `Export failed: ${err.message}`;

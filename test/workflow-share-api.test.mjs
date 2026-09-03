@@ -130,3 +130,26 @@ test('POST /api/workflows/:id/export destination=plugin: plan, apply, validation
   assert.equal(unknown.status, 400);
   assert.match((await unknown.json()).error, /'plugin'/);
 });
+
+test('a plugin folder pasted into "Add marketplace" is linked, not registered; POST /api/plugins/link does the same', async () => {
+  const dir = join(await tmp(), 'link-me');
+  const exp = await post('/api/workflows/wf_default/export', { destination: 'plugin', pluginDir: dir });
+  assert.equal(exp.status, 200);
+  const r = await post('/api/marketplaces', { url: dir });
+  const text = await r.text();
+  assert.equal(r.status, 200, text);
+  const j = JSON.parse(text);
+  assert.equal(j.linked, true, 'a plugin folder is linked rather than added as a marketplace');
+  assert.equal(j.plugin.name, 'link-me');
+  assert.deepEqual(j.plugin.workflows.imported, ['wfp_link-me_default']);
+  const names = (await (await fetch(`${base}/api/marketplaces`)).json()).marketplaces.map((m) => m.url);
+  assert.ok(!names.includes(dir), 'no marketplace entry was recorded for it');
+  const rows = (await (await fetch(`${base}/api/workflows`)).json()).workflows;
+  const row = rows.find((w) => w.id === 'wfp_link-me_default');
+  assert.ok(row && row.origin === 'plugin:link-me', 'its workflow is in the library as plugin-owned');
+  // The direct route, and its refusal of a folder that is not a plugin.
+  const bad = await post('/api/plugins/link', { dir: await tmp() });
+  assert.equal(bad.status, 400);
+  assert.match((await bad.json()).error, /cannot link/);
+  assert.equal((await post('/api/plugins/link', {})).status, 400);
+});

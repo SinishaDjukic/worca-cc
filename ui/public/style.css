@@ -1068,6 +1068,18 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* A checkbox row directly under a text input needs its own breathing room:
    .confirm-checkbox ships margin:0 (it is built for the confirm dialog's stack). */
 .export-field .confirm-checkbox{margin-top:10px;}
+/* Result view after a successful export (replaces #export-form in the same card). */
+.export-done{margin:12px 0 4px;}
+.export-done.hidden{display:none;}
+.export-done-head{display:flex;align-items:center;gap:10px;font-size:14px;margin-bottom:12px;}
+.export-done-check{display:grid;place-items:center;width:26px;height:26px;border-radius:999px;
+  background:var(--green-bg,#e6f4ea);color:var(--green-ink,#1e6b3a);font-weight:700;font-size:14px;}
+.export-done-lines{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:0;font-size:12.5px;}
+.export-done-lines dt{color:var(--ink-3);font-weight:600;}
+.export-done-lines dd{margin:0;color:var(--ink);word-break:break-all;}
+.export-done-lines code{font:12px var(--mono);background:var(--field);border-radius:6px;padding:1px 6px;}
+.export-done-next{margin:14px 0 0;padding:10px 12px;border-radius:10px;background:var(--field);font-size:12.5px;color:var(--ink-2);}
+.export-done-next code{font:12px var(--mono);}
 .export-label{display:block;font-weight:600;font-size:12.5px;color:var(--ink-2);margin-bottom:6px;}
 .export-folder-row{display:flex;gap:8px;align-items:center;}
 .export-folder-row .input{flex:1 1 auto;}

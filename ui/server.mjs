@@ -129,7 +129,7 @@ import { createAgentGen } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
 import {
   listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin,
-  setPluginEnabled, doctorPlugin,
+  setPluginEnabled, doctorPlugin, linkPlugin,
   listOrphanPluginData, purgePluginData,
 } from '../src/core/plugin-store.mjs';
 import { fetchCandidate } from '../src/core/plugin-repo.mjs';
@@ -152,7 +152,7 @@ import { createNotifier } from '../src/core/chat/notifier.mjs';
 import { TokenBucket } from '../src/core/chat/rate-limiter.mjs';
 import { renderTest } from '../src/core/chat/renderers.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
-import { normalizeManifest, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
+import { normalizeManifest, validatePluginDir, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
 import { listTaskSources, retryWriteback } from '../src/core/sources.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
@@ -4686,12 +4686,45 @@ app.get('/api/marketplaces', (req, res) => {
   } catch (err) { sendPluginError(res, err); }
 });
 
+// Dev-mode link of a LOCAL plugin folder — the `worca plugin link <dir>` path
+// (validate, symlink current/, import its workflow templates). Reached directly
+// via POST /api/plugins/link, and by POST /api/marketplaces when the "marketplace"
+// handed in turns out to be a single plugin folder (the natural thing to paste
+// after `Export… → Worca plugin`, issue #421).
+async function linkPluginDir(dir) {
+  const abs = resolveProjectDir(dir);
+  if (!abs) throw Object.assign(new Error('dir is required'), { code: 'BAD_REQUEST' });
+  const v = validatePluginDir(abs);
+  if (!v.ok || !v.manifest) {
+    const lines = v.problems.filter((p) => p.level === 'error').map((p) => p.message);
+    throw Object.assign(new Error(`cannot link ${abs}: ${lines.join('; ') || 'not a valid plugin folder'}`), { code: 'BAD_REQUEST' });
+  }
+  let out;
+  try { out = await linkPlugin(v.manifest.name, abs); }
+  catch (err) { throw Object.assign(err instanceof Error ? err : new Error(String(err)), { code: err?.code || 'BAD_REQUEST' }); }
+  reloadChatWorkers(v.manifest.name);
+  return out; // { ok, name, dir, workflows: { imported, skipped } }
+}
+
+app.post('/api/plugins/link', async (req, res) => {
+  try {
+    res.json(await linkPluginDir(req.body && typeof req.body.dir === 'string' ? req.body.dir : ''));
+  } catch (err) { sendPluginError(res, err); }
+});
+
 app.post('/api/marketplaces', async (req, res) => {
   const url = req.body && typeof req.body.url === 'string' ? req.body.url.trim() : '';
   if (!url) return badRequest(res, 'url is required');
   try {
     res.json({ ok: true, marketplace: withInstalled([await addMarketplace(url)])[0] });
-  } catch (err) { sendPluginError(res, err); }
+  } catch (err) {
+    if (err && err.code === 'PLUGIN_FOLDER') {
+      // Not a marketplace but a plugin folder: link it, and SAY that is what happened.
+      try { return res.json({ ok: true, linked: true, plugin: await linkPluginDir(err.dir) }); }
+      catch (e) { return sendPluginError(res, e); }
+    }
+    sendPluginError(res, err);
+  }
 });
 
 // refresh-all (a distinct path from :id/refresh, so registration order is irrelevant).
