@@ -8355,6 +8355,9 @@ async function addMarketplaceFromInput() {
   if (!ok) return setPluginsMsg(data.error || 'add failed', 'err');
   el.marketplaceUrl.value = '';
   el.marketplaceAddRow.classList.add('hidden');
+  // Reload FIRST: loadPluginsView() clears the message line as it starts, so a
+  // message set before it never survived.
+  await loadPluginsView();
   if (data.linked) {
     // The path was a single plugin folder (an Export… → Worca plugin result):
     // the server linked it instead of registering a marketplace.
@@ -8363,7 +8366,6 @@ async function addMarketplaceFromInput() {
   } else {
     setPluginsMsg(`Added ${data.marketplace.name} (${data.marketplace.plugins.length} plugins).`, 'ok');
   }
-  loadPluginsView();
 }
 
 function openInstallConsent(entry) {
