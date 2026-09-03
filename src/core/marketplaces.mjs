@@ -122,12 +122,15 @@ async function syncEntry(entry, { exec } = {}) {
 export async function addMarketplace(url, { exec } = {}) {
   const norm = normalizeMarketplaceUrl(url);
   if (!norm) throw Object.assign(new Error('marketplace url is required'), { code: 'BAD_REQUEST' });
-  // A single PLUGIN folder (a worca-cc-plugin.json, no marketplace manifest) is
-  // not a marketplace — the natural mistake after `worca workflow export
-  // --format plugin`. Say so, name the fix, and carry the dir so the server
-  // route can link it on the user's behalf (code PLUGIN_FOLDER).
+  // A plain PLUGIN folder — a worca-cc-plugin.json, no marketplace manifest, and
+  // NOT a git repository (a git repo whose root is a plugin IS a marketplace:
+  // the fallback scan discovers it at depth 0) — is not a marketplace. It is the
+  // natural thing to paste after `worca workflow export --format plugin`. Say
+  // so, name the fix, and carry the dir so the server route can link it on the
+  // user's behalf (code PLUGIN_FOLDER).
   if (!/^[a-z+]+:\/\//i.test(norm) && !/^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:/.test(norm)
-    && existsSync(join(norm, 'worca-cc-plugin.json')) && !existsSync(join(norm, 'worca-cc-marketplace.json'))) {
+    && existsSync(join(norm, 'worca-cc-plugin.json')) && !existsSync(join(norm, 'worca-cc-marketplace.json'))
+    && !existsSync(join(norm, '.git'))) {
     throw Object.assign(
       new Error(`${norm} is a single plugin folder, not a marketplace — link it instead: worca plugin link ${norm}`),
       { code: 'PLUGIN_FOLDER', dir: norm });
