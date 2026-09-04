@@ -199,3 +199,58 @@ test('ui-ask-style: the composer-row scope pill never shrinks and its popover op
   assert.match(title, /text-overflow:ellipsis/);
   assert.match(title, /white-space:nowrap/);
 });
+
+test('ui-ask-style: resize grips are invisible edge zones that only set the cursor, with a tokened inset highlight', () => {
+  const base = ruleBody('.ask-resize');
+  assert.ok(base, '.ask-resize rule exists');
+  assert.match(base, /position:absolute/);
+  assert.match(base, /background:transparent/, 'invisible until hovered');
+  assert.match(base, /touch-action:none/, 'a touch drag resizes instead of scrolling the page');
+  assert.match(base, /--ask-grip:transparent/, 'idle: no highlight');
+  assert.match(base, /z-index:5/, 'above the popovers (3/4) so an edge stays grabbable');
+  assert.match(ruleBody('.ask-resize:hover') || '', /--ask-grip:var\(--ink-3\)/, 'hover: the section\'s hairline token');
+  assert.match(ruleBody('.ask-resize.is-active') || '', /--ask-grip:var\(--ink\)/, 'dragging: the section\'s hover-border token');
+  const cursors = { n: 'ns-resize', e: 'ew-resize', w: 'ew-resize', ne: 'nesw-resize', nw: 'nwse-resize' };
+  for (const [edge, cursor] of Object.entries(cursors)) {
+    const body = ruleBody(`.ask-resize-${edge}`);
+    assert.ok(body, `.ask-resize-${edge} rule exists`);
+    assert.match(body, new RegExp(`cursor:${cursor}`), `${edge} cursor`);
+    assert.match(body, /box-shadow:inset [^;]*var\(--ask-grip\)/, `${edge} highlight is a thin inset line, not a fill`);
+  }
+  assert.ok(!ruleBody('.ask-resize-s'), 'no bottom grip — the sheet is bottom-anchored');
+  assert.match(ruleBody('.ask-sheet.is-resizing') || '', /user-select:none/);
+  // The sheet clips at its rounded corner (r-card minus the 1px border): a corner
+  // grip is exactly one radius square and carries that radius, so its inset line
+  // bends along the arc instead of being clipped away; the straight grips start
+  // where the arc ends.
+  assert.match(base, /--ask-corner:calc\(var\(--r-card\) - 1px\)/, 'the corner size is the sheet\'s inner radius');
+  assert.match(ruleBody('.ask-resize-ne'), /width:var\(--ask-corner\);height:var\(--ask-corner\)/);
+  assert.match(ruleBody('.ask-resize-ne'), /border-top-right-radius:var\(--ask-corner\)/, 'ne bends along the arc');
+  assert.match(ruleBody('.ask-resize-nw'), /border-top-left-radius:var\(--ask-corner\)/, 'nw bends along the arc');
+  assert.match(ruleBody('.ask-resize-n'), /left:var\(--ask-corner\);right:var\(--ask-corner\)/, 'top grip spans between the arcs');
+  for (const edge of ['e', 'w']) {
+    assert.match(ruleBody(`.ask-resize-${edge}`), /top:var\(--ask-corner\)/, `${edge} starts below the top arc`);
+    assert.match(ruleBody(`.ask-resize-${edge}`), /bottom:var\(--ask-corner\)/, `${edge} stops above the bottom arc`);
+  }
+  // The header's icon buttons sit above the ne corner grip, so its hit box never
+  // swallows a click (or a double-click) on the last button.
+  assert.match(ruleBody('.ask-header .ask-icon-btn') || '', /position:relative;z-index:6/, 'header buttons above the grips');
+});
+
+test('ui-ask-style: an assistant answer spans the full transcript width — a table or code block ends at the same edge as the user bubble', () => {
+  const answer = ruleBody('.ask-answer');
+  assert.ok(answer, '.ask-answer rule exists');
+  assert.match(answer, /max-width:100%/, 'no 92% measure: the transcript padding is the only gutter, symmetric on both sides');
+});
+
+test('ui-ask-style: the sheet caps itself to the dock so an inline size can never overflow the viewport', () => {
+  const sheet = ruleBody('.ask-sheet');
+  assert.match(sheet, /max-width:100%/);
+  assert.match(sheet, /max-height:calc\(100% - 20px\)/, 'keeps the 20px top gap the default height leaves');
+  assert.ok(!/min-width|min-height/.test(sheet), 'the 782×669 floor lives in JS only — a CSS floor would overflow narrow viewports');
+  assert.match(sheet, /overflow:hidden/, 'the sheet still clips; .ask-transcript is the scrollport');
+  const t = ruleBody('.ask-transcript');
+  assert.match(t, /flex:1 1 auto/, 'the transcript absorbs every extra pixel of height');
+  assert.match(t, /min-height:0/);
+  assert.match(t, /overflow-y:auto/);
+});

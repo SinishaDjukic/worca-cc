@@ -85,6 +85,22 @@ export function shortcutLabel(win) {
   return /mac|iphone|ipad|ipod/i.test(platform) ? '⌘K' : 'Ctrl K';
 }
 
+/**
+ * Sheet geometry shared with style.css: .ask-dock{padding:0 28px 26px} and
+ * .ask-sheet{width:min(782px,100%);height:min(669px,calc(100% - 20px))}. The
+ * user's size is clamped to [minW×minH, dock inner box]. The floor IS the
+ * stylesheet default: the sheet grows from what it always was and never shrinks
+ * below it, so every layout the fixed-size sheet was designed around (the
+ * non-wrapping composer row, the popovers written in 100vh terms) still holds.
+ * Border-box px throughout — the sheet has no padding.
+ */
+export const ASK_SHEET_SIZE = Object.freeze({
+  defaultW: 782, defaultH: 669,
+  minW: 782, minH: 669,
+  dockPadX: 28, dockPadBottom: 26, topGap: 20,
+});
+const SIZE_KEY = 'worca-cc.ask.size';
+
 export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, loadMarkdown, hljsLoader, storage, raf, now }) {
   const storedPick = readStoredModel();   // hoisted declaration (defined below); null when nothing is stored
   const st = {
@@ -109,6 +125,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     worktrees: [],            // P4 §10: the chat's open worktrees (snapshot-fed)
     pinned: true,
     prevFocus: null,
+    size: readStoredSize(),   // {w,h} the user's persisted sheet size (hoisted reader); null = stylesheet default
+    applied: null,            // {w,h} the inline size currently on the sheet (clamped); null = default
+    drag: null,               // the active resize gesture — see startResize()
     pendingFiles: [],
     sending: false,
     subscribedFor: null,
@@ -160,6 +179,32 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (id) storage.setItem('worca-cc.ask.thread', id);
       else storage.removeItem('worca-cc.ask.thread');
     } catch { /* ignore */ }
+  }
+  /** The persisted sheet size, or null when nothing usable is stored. Clamped later, against a live dock. */
+  function readStoredSize() {
+    try {
+      const raw = storage.getItem(SIZE_KEY);
+      const v = raw ? JSON.parse(raw) : null;
+      if (v && Number.isFinite(v.w) && Number.isFinite(v.h)) return { w: Math.round(v.w), h: Math.round(v.h) };
+    } catch { /* storage unavailable */ }
+    return null;
+  }
+  function storeSize(size) {
+    try {
+      if (size) storage.setItem(SIZE_KEY, JSON.stringify({ w: size.w, h: size.h }));
+      else storage.removeItem(SIZE_KEY);
+    } catch { /* ignore */ }
+  }
+
+  /**
+   * Size the composer textarea to its content, one line minimum, 120px maximum.
+   * Bound to the input event; every programmatic write to el.input.value (the
+   * post-send clear, appendToComposer) must call it too, since assignment
+   * fires no input event and the box would keep the previous draft's height.
+   */
+  function fitInput() {
+    el.input.style.height = 'auto';
+    el.input.style.height = `${Math.min(el.input.scrollHeight || 0, 120)}px`;
   }
 
   // ---- tiny DOM helpers -----------------------------------------------------
@@ -257,10 +302,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.jump.hidden = true;
     el.jump.addEventListener('click', jumpToLatest);
     sheet.appendChild(el.jump);
+    for (const edge of ['n', 'e', 'w', 'ne', 'nw']) sheet.appendChild(buildResizeHandle(edge));
     dock.appendChild(sheet);
     dock.appendChild(pill);
     el.pill = pill;
     el.sheet = sheet;
+    el.dock = dock;           // measured by dockInner(); `root` is TDZ here
     return dock;
   }
 
@@ -430,6 +477,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // No provisional title from the prompt: the header keeps "Ask Worca" until
       // the ask-title frame lands (ask-model marks title dirty, flushExtra repaints).
       el.input.value = '';
+      fitInput();                                    // a programmatic clear fires no input event
       st.pendingFiles = [];
       renderChips();
       subscribe(id);
@@ -455,10 +503,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMessage(); }
     });
-    el.input.addEventListener('input', () => {
-      el.input.style.height = 'auto';
-      el.input.style.height = `${Math.min(el.input.scrollHeight || 0, 120)}px`;
-    });
+    el.input.addEventListener('input', fitInput);
     wrap.appendChild(el.input);
 
     el.composerMsg = make('div', 'ask-composer-msg');
@@ -581,6 +626,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.prevFocus = doc.activeElement;
     el.pill.hidden = true;
     el.sheet.hidden = false;
+    restoreSize();                                 // the sheet has a box now — clamp the stored size to the dock
     st.pinned = true;
     ensureFirstOpen();
     focusComposer();
@@ -598,8 +644,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     openSheet();                                   // no-op when already open…
     const cur = el.input.value;
     el.input.value = cur ? `${cur.replace(/\s*$/, '')}\n${add}` : add;
-    // …so the autosize listener and the focus have to be driven here.
-    el.input.dispatchEvent(new win.Event('input'));
+    // …so the autosize and the focus have to be driven here.
+    fitInput();
     focusComposer();
     try { el.input.selectionStart = el.input.selectionEnd = el.input.value.length; } catch { /* jsdom */ }
     return true;
@@ -619,6 +665,180 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function toggleSheet() { (st.open ? closeSheet : openSheet)(); }
 
+  // ---- resize ---------------------------------------------------------------
+  // The sheet is a bottom-anchored, horizontally centred flex child of the dock,
+  // so a top-edge drag is a pure height change and a side drag grows the width
+  // symmetrically about the centre (each edge moves half the delta, which keeps
+  // the grabbed edge under the cursor). Sizes are border-box px applied as
+  // inline width/height, so the stylesheet's default rule stays byte-identical
+  // and its max-width/max-height backstop still bounds a stale inline size.
+  //
+  // A gesture ends on pointerup/pointercancel, and — like graph/composer.mjs —
+  // on window blur, lostpointercapture (the sheet was hidden, the capture was
+  // taken) and a pointermove that reports no button held (the release landed
+  // outside the window and never reached us). All of those COMMIT: a half-done
+  // resize is still a size the user chose, unlike a half-drawn wire. Escape is
+  // the one CANCEL: the pre-drag size comes back and nothing is stored. Only a
+  // gesture that actually moved persists, and only the axis it dragged — the
+  // other axis keeps the stored preference, so a click on a dock-clamped sheet
+  // can never write the clamp back over a larger preference.
+  function buildResizeHandle(edge) {
+    const h = make('div', `ask-resize ask-resize-${edge}`);
+    h.setAttribute('data-ask-resize', edge);
+    h.setAttribute('aria-hidden', 'true');
+    h.addEventListener('pointerdown', (e) => startResize(e, edge, h));
+    h.addEventListener('lostpointercapture', () => { if (st.drag && st.drag.handle === h) finishResize(); });
+    h.addEventListener('dblclick', (e) => { e.preventDefault(); resetSize(); });
+    return h;
+  }
+
+  /** The dock's content box in px; zeros when there is no layout (hidden, detached, jsdom). */
+  function dockInner() {
+    const d = el.dock;
+    const w = d ? d.clientWidth : 0;
+    const h = d ? d.clientHeight : 0;
+    return {
+      w: w > 0 ? w - 2 * ASK_SHEET_SIZE.dockPadX : 0,
+      h: h > 0 ? h - ASK_SHEET_SIZE.dockPadBottom - ASK_SHEET_SIZE.topGap : 0,
+    };
+  }
+
+  /** Clamp to [min, dock inner]. The dock bound wins when the two conflict (a narrow viewport). */
+  function clampSize(size) {
+    const inner = dockInner();
+    const maxW = inner.w > 0 ? inner.w : Infinity;
+    const maxH = inner.h > 0 ? inner.h : Infinity;
+    return {
+      w: Math.round(Math.min(Math.max(size.w, ASK_SHEET_SIZE.minW), maxW)),
+      h: Math.round(Math.min(Math.max(size.h, ASK_SHEET_SIZE.minH), maxH)),
+    };
+  }
+
+  /** Write the inline size, or clear it (null) so min(782px,100%) rules again. */
+  function applySize(size) {
+    if (size) {
+      el.sheet.style.width = `${size.w}px`;
+      el.sheet.style.height = `${size.h}px`;
+    } else {
+      el.sheet.style.removeProperty('width');
+      el.sheet.style.removeProperty('height');
+    }
+    st.applied = size;
+  }
+
+  /** Re-apply the persisted preference against the current dock — on open and on window resize. */
+  function restoreSize() {
+    applySize(st.size ? clampSize(st.size) : null);
+  }
+
+  /** The sheet's live border-box size; the applied/default size when there is no layout. */
+  function currentSize() {
+    const w = el.sheet.offsetWidth;
+    const h = el.sheet.offsetHeight;
+    if (w > 0 && h > 0) return { w, h };
+    return st.applied ? { w: st.applied.w, h: st.applied.h } : { w: ASK_SHEET_SIZE.defaultW, h: ASK_SHEET_SIZE.defaultH };
+  }
+
+  function startResize(e, edge, handle) {
+    if (st.drag || st.destroyed || (e.button != null && e.button !== 0)) return;
+    const start = currentSize();
+    st.drag = {
+      edge, handle, pointerId: e.pointerId, x: e.clientX, y: e.clientY, w: start.w, h: start.h,
+      moved: false,                                  // set by the first pointermove that applies a size
+      before: st.applied ? { w: st.applied.w, h: st.applied.h } : null,   // what Escape restores
+    };
+    handle.classList.add('is-active');
+    el.sheet.classList.add('is-resizing');
+    // Capture is a bonus, never a precondition (Chrome throws for a synthetic
+    // pointerId; jsdom has no such method) — the document listeners carry the
+    // gesture either way, exactly like graph/composer.mjs.
+    try { handle.setPointerCapture?.(e.pointerId); } catch { /* synthetic pointer */ }
+    doc.addEventListener('pointermove', onResizeMove);
+    doc.addEventListener('pointerup', onResizeEnd);
+    doc.addEventListener('pointercancel', onResizeEnd);
+    win.addEventListener('blur', onResizeBlur);
+    e.preventDefault();                              // no text selection / focus steal mid-drag
+  }
+
+  function samePointer(g, e) {
+    return g.pointerId == null || e.pointerId == null || e.pointerId === g.pointerId;
+  }
+
+  function onResizeMove(e) {
+    const g = st.drag;
+    if (!g || !samePointer(g, e)) return;
+    if (e.buttons === 0) { finishResize(); return; }   // the release never reached us
+    g.moved = true;
+    const dx = e.clientX - g.x;
+    const dy = e.clientY - g.y;
+    let w = g.w;
+    let h = g.h;
+    if (g.edge === 'w' || g.edge === 'nw') w = g.w - 2 * dx;                  // left edge: leftwards grows
+    if (g.edge === 'e' || g.edge === 'ne') w = g.w + 2 * dx;                  // right edge: rightwards grows
+    if (g.edge === 'n' || g.edge === 'ne' || g.edge === 'nw') h = g.h - dy;   // top edge: upwards grows
+    applySize(clampSize({ w, h }));
+  }
+
+  function onResizeEnd(e) {
+    const g = st.drag;
+    if (!g || !samePointer(g, e)) return;
+    finishResize();
+  }
+
+  function onResizeBlur() { finishResize(); }
+
+  /** Idempotent; also run from destroy() so a mid-drag unmount leaves no document listeners. */
+  function finishResize() {
+    const g = endResize();
+    if (!g || !g.moved || !st.applied) return;
+    // Persist the dragged axis only; the other keeps the stored preference (or,
+    // with none stored, the size it had) — the clamp is never written back.
+    const movesW = g.edge !== 'n';
+    const movesH = g.edge !== 'e' && g.edge !== 'w';
+    const prev = st.size;
+    st.size = {
+      w: movesW || !prev ? st.applied.w : prev.w,
+      h: movesH || !prev ? st.applied.h : prev.h,
+    };
+    storeSize(st.size);
+  }
+
+  /** Escape: the pre-drag size comes back and nothing is stored. */
+  function cancelResize() {
+    const g = endResize();
+    if (!g) return;
+    applySize(g.before);
+  }
+
+  /** Tear the gesture down (listeners, classes, capture) and hand it back; null when none. */
+  function endResize() {
+    const g = st.drag;
+    if (!g) return null;
+    st.drag = null;
+    doc.removeEventListener('pointermove', onResizeMove);
+    doc.removeEventListener('pointerup', onResizeEnd);
+    doc.removeEventListener('pointercancel', onResizeEnd);
+    win.removeEventListener('blur', onResizeBlur);
+    g.handle.classList.remove('is-active');
+    el.sheet.classList.remove('is-resizing');
+    try { if (g.handle.hasPointerCapture?.(g.pointerId)) g.handle.releasePointerCapture(g.pointerId); } catch { /* already gone */ }
+    return g;
+  }
+
+  /** Double-click on any grip: back to the stylesheet default and forget the stored size. */
+  function resetSize() {
+    finishResize();
+    st.size = null;
+    applySize(null);
+    storeSize(null);
+  }
+
+  /** Window resize or dock resize (the rail toggling, the dock's slide): re-clamp — never under a held pointer. */
+  function onWinResize() {
+    if (st.destroyed || !st.open || !st.size || st.drag) return;
+    restoreSize();
+  }
+
   // ---- keyboard + pointer routing ------------------------------------------
   function containsNode(rootEl, t) { return !!(t && t.nodeType && rootEl.contains(t)); }
 
@@ -633,6 +853,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function onDocKeydown(e) {
     if (st.destroyed) return;
+    if (st.drag && e.key === 'Escape') { e.preventDefault(); cancelResize(); return; }
     if (isToggleCombo(e)) {
       if (e.repeat || e.isComposing) return;
       e.preventDefault();
@@ -2104,15 +2325,26 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   const root = buildRoot();
   doc.addEventListener('keydown', onDocKeydown, true);
   doc.addEventListener('pointerdown', onDocPointerdown, true);
+  win.addEventListener('resize', onWinResize);
+  // The rail collapsing changes the dock width by 222px with no window resize;
+  // observe the dock itself (guarded: jsdom has no ResizeObserver — P5's idiom).
+  let dockRo = null;
+  if (typeof win.ResizeObserver === 'function') {
+    dockRo = new win.ResizeObserver(onWinResize);
+    dockRo.observe(el.dock);
+  }
 
   function destroy() {
     if (st.destroyed) return;
     st.destroyed = true;
+    finishResize();                                  // a mid-drag unmount leaves no document listeners
     closePopover({ focusTrigger: false });
     if (st.elapsedTimer) { clearInterval(st.elapsedTimer); st.elapsedTimer = null; }
     if (el.orb) el.orb.stop();
     doc.removeEventListener('keydown', onDocKeydown, true);
     doc.removeEventListener('pointerdown', onDocPointerdown, true);
+    win.removeEventListener('resize', onWinResize);
+    if (dockRo) { dockRo.disconnect(); dockRo = null; }
     root.remove();
   }
 
