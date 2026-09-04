@@ -196,6 +196,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     } catch { /* ignore */ }
   }
 
+  /**
+   * Size the composer textarea to its content, one line minimum, 120px maximum.
+   * Bound to the input event; every programmatic write to el.input.value (the
+   * post-send clear, appendToComposer) must call it too, since assignment
+   * fires no input event and the box would keep the previous draft's height.
+   */
+  function fitInput() {
+    el.input.style.height = 'auto';
+    el.input.style.height = `${Math.min(el.input.scrollHeight || 0, 120)}px`;
+  }
+
   // ---- tiny DOM helpers -----------------------------------------------------
   function make(tag, className, text) {
     const n = doc.createElement(tag);
@@ -466,6 +477,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // No provisional title from the prompt: the header keeps "Ask Worca" until
       // the ask-title frame lands (ask-model marks title dirty, flushExtra repaints).
       el.input.value = '';
+      fitInput();                                    // a programmatic clear fires no input event
       st.pendingFiles = [];
       renderChips();
       subscribe(id);
@@ -491,10 +503,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMessage(); }
     });
-    el.input.addEventListener('input', () => {
-      el.input.style.height = 'auto';
-      el.input.style.height = `${Math.min(el.input.scrollHeight || 0, 120)}px`;
-    });
+    el.input.addEventListener('input', fitInput);
     wrap.appendChild(el.input);
 
     el.composerMsg = make('div', 'ask-composer-msg');
@@ -635,8 +644,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     openSheet();                                   // no-op when already open…
     const cur = el.input.value;
     el.input.value = cur ? `${cur.replace(/\s*$/, '')}\n${add}` : add;
-    // …so the autosize listener and the focus have to be driven here.
-    el.input.dispatchEvent(new win.Event('input'));
+    // …so the autosize and the focus have to be driven here.
+    fitInput();
     focusComposer();
     try { el.input.selectionStart = el.input.selectionEnd = el.input.value.length; } catch { /* jsdom */ }
     return true;

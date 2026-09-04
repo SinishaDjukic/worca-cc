@@ -272,3 +272,22 @@ test('ask-panel-composer: a legacy thread (totals without ctx) hides the fill bu
   assert.equal(ctx.doc.querySelector('.ask-meter-tokens').textContent, '', 'no fabricated 0 ctx on a thread that has turns');
   assert.match(ctx.doc.querySelector('[data-ask-meter]').textContent, /\$0\.25/);
 });
+
+test('ask-panel-composer: the textarea grows with the draft and shrinks back once the send clears it', async () => {
+  const ctx = makePanel({ fetchHandler: apiHandler() });
+  ctx.panel.open();
+  const input = ctx.doc.querySelector('textarea.ask-input');
+  // jsdom lays nothing out: scrollHeight is whatever the draft would need.
+  let need = 96;
+  Object.defineProperty(input, 'scrollHeight', { get: () => need, configurable: true });
+  input.value = 'line 1\nline 2\nline 3\nline 4';
+  input.dispatchEvent(new ctx.window.Event('input'));
+  assert.equal(input.style.height, '96px', 'a multi-line draft grows the box');
+  need = 24;                                          // an empty textarea needs one line again
+  ctx.doc.querySelector('[data-ask-send]').click();
+  await ctx.tick();
+  await ctx.tick();
+  await ctx.tick();
+  assert.equal(input.value, '', 'the send cleared the draft');
+  assert.equal(input.style.height, '24px', 'the box shrank back with it — a programmatic clear fires no input event');
+});
