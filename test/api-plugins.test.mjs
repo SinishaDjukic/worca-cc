@@ -258,3 +258,42 @@ test('DELETE /api/plugins/:name is guarded when a user workflow references a plu
   assert.equal((await get('/api/plugins/local-src/config')).status, 404, 'gone after uninstall');
   assert.equal((await del('/api/plugins/nope')).status, 404);
 });
+
+test('POST /api/plugins/:name/update -> version updates in lock file and API response', async () => {
+  // Re-install the fixture for this test
+  const { dir, sha } = await makeFixtureRepo();
+  await post('/api/plugins/install', { repoUrl: dir, subdir: '', name: 'local-src', sha });
+
+  // Verify initial version
+  let list = await (await get('/api/plugins')).json();
+  let p = list.plugins.find((x) => x.name === 'local-src');
+  assert.equal(p.version, '0.1.0', 'initial version is 0.1.0');
+
+  // Bump version in the repo
+  const manifest = { ...MANIFEST, version: '0.2.0' };
+  await writeFile(join(dir, 'worca-cc-plugin.json'), JSON.stringify(manifest, null, 2));
+  const git = (...args) => run('git', ['-C', dir, ...args]);
+  await git('add', '-A');
+  await git('commit', '-q', '-m', 'bump to 0.2.0');
+  const { stdout: newSha } = await git('rev-parse', 'HEAD');
+
+  // Preview update
+  const preview = await post(`/api/plugins/local-src/update`, {});
+  assert.equal(preview.status, 200);
+  const previewBody = await preview.json();
+  assert.ok(previewBody.preview, 'preview returned');
+  assert.equal(previewBody.preview.candidateSha, newSha.trim(), 'candidate is new sha');
+
+  // Confirm update
+  const updated = await post(`/api/plugins/local-src/update`, { confirm: true });
+  assert.equal(updated.status, 200);
+  const updateBody = await updated.json();
+  assert.equal(updateBody.ok, true);
+  assert.equal(updateBody.updated, true, 'update performed');
+
+  // Verify version in API response
+  list = await (await get('/api/plugins')).json();
+  p = list.plugins.find((x) => x.name === 'local-src');
+  assert.equal(p.version, '0.2.0', 'API returns updated version 0.2.0');
+  assert.equal(p.pinnedSha, newSha.trim(), 'pinnedSha updated');
+});
