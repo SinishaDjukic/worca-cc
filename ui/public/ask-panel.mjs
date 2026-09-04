@@ -88,13 +88,15 @@ export function shortcutLabel(win) {
 /**
  * Sheet geometry shared with style.css: .ask-dock{padding:0 28px 26px} and
  * .ask-sheet{width:min(782px,100%);height:min(669px,calc(100% - 20px))}. The
- * user's size is clamped to [minW×minH, dock inner box]; minW is 540 so every
- * popover the sheet clips still fits (.ask-pop-worktrees needs right:187px +
- * min-width:340px). Border-box px throughout — the sheet has no padding.
+ * user's size is clamped to [minW×minH, dock inner box]. The floor IS the
+ * stylesheet default: the sheet grows from what it always was and never shrinks
+ * below it, so every layout the fixed-size sheet was designed around (the
+ * non-wrapping composer row, the popovers written in 100vh terms) still holds.
+ * Border-box px throughout — the sheet has no padding.
  */
 export const ASK_SHEET_SIZE = Object.freeze({
   defaultW: 782, defaultH: 669,
-  minW: 540, minH: 360,
+  minW: 782, minH: 669,
   dockPadX: 28, dockPadBottom: 26, topGap: 20,
 });
 const SIZE_KEY = 'worca-cc.ask.size';

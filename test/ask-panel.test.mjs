@@ -412,7 +412,8 @@ test('ask-panel: resize — five invisible grips inside the sheet, decorative an
   assert.equal(panel.root.querySelector('[data-view],[data-nav]'), null, 'still nothing navigational in the dock');
   assert.equal(sheet.style.width, '', 'no inline size until the user drags');
   assert.equal(sheet.style.height, '');
-  assert.deepEqual(ASK_SHEET_SIZE, { defaultW: 782, defaultH: 669, minW: 540, minH: 360, dockPadX: 28, dockPadBottom: 26, topGap: 20 });
+  assert.deepEqual(ASK_SHEET_SIZE, { defaultW: 782, defaultH: 669, minW: 782, minH: 669, dockPadX: 28, dockPadBottom: 26, topGap: 20 },
+    'the floor is the stylesheet default: the sheet grows, never shrinks');
 });
 
 test('ask-panel: resize — a stored size is restored on open by a fresh panel, re-clamped to its dock', () => {
@@ -486,13 +487,15 @@ test('ask-panel: resize — each grip moves only its own axis, in the right dire
   assert.equal(sheet.style.height, '699px');
   drag(ctx, 'w', { x: 300, y: 0 }, { x: 340, y: 0 })();         // left grip moved right 40 → 2×40 narrower
   assert.equal(sheet.style.width, '782px');
-  drag(ctx, 'ne', { x: 300, y: 200 }, { x: 350, y: 250 })();    // right 50 & down 50 → wider and shorter
+  drag(ctx, 'ne', { x: 300, y: 200 }, { x: 350, y: 220 })();    // right 50 & down 20 → wider and shorter (699 → 679, still above the floor)
   assert.equal(sheet.style.width, '882px');
-  assert.equal(sheet.style.height, '649px');
-  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 882, h: 649 });
+  assert.equal(sheet.style.height, '679px');
+  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 882, h: 679 });
+  drag(ctx, 'ne', { x: 300, y: 200 }, { x: 300, y: 260 })();    // down 60 would be 619 → floored at the default
+  assert.equal(sheet.style.height, '669px', 'the sheet never gets shorter than it opened');
 });
 
-test('ask-panel: resize — the size is clamped to [540×360, dock inner box] whatever the pointer does', () => {
+test('ask-panel: resize — the size is clamped to [782×669 default, dock inner box] whatever the pointer does', () => {
   const ctx = makePanel();
   sizeDock(ctx.doc, 1200, 900);                        // inner 1200−2×28 = 1144 wide, 900−26−20 = 854 tall
   ctx.panel.open();
