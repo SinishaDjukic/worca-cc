@@ -2971,7 +2971,7 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-agent-log-t{flex:0 0 auto;color:var(--seq);}
 .ask-agent-log-text{min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;}
 
-.ask-answer{max-width:92%;font-size:13.5px;line-height:1.72;color:var(--ink);}
+.ask-answer{max-width:100%;font-size:13.5px;line-height:1.72;color:var(--ink);}
 .ask-answer-plain{white-space:pre-wrap;overflow-wrap:anywhere;}
 .ask-md :is(h1,h2,h3,h4,h5,h6){margin:14px 0 6px;font-size:13.5px;font-weight:600;color:var(--ink);}
 .ask-md h1{font-size:15px;}

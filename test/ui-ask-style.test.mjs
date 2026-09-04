@@ -237,6 +237,12 @@ test('ui-ask-style: resize grips are invisible edge zones that only set the curs
   assert.match(ruleBody('.ask-header .ask-icon-btn') || '', /position:relative;z-index:6/, 'header buttons above the grips');
 });
 
+test('ui-ask-style: an assistant answer spans the full transcript width — a table or code block ends at the same edge as the user bubble', () => {
+  const answer = ruleBody('.ask-answer');
+  assert.ok(answer, '.ask-answer rule exists');
+  assert.match(answer, /max-width:100%/, 'no 92% measure: the transcript padding is the only gutter, symmetric on both sides');
+});
+
 test('ui-ask-style: the sheet caps itself to the dock so an inline size can never overflow the viewport', () => {
   const sheet = ruleBody('.ask-sheet');
   assert.match(sheet, /max-width:100%/);
