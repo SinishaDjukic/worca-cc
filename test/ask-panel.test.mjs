@@ -505,8 +505,8 @@ test('ask-panel: resize — the size is clamped to [782×669 default, dock inner
   assert.equal(sheet.style.height, '854px', 'never taller than the dock minus 26px bottom padding and the 20px top gap');
   assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 1144, h: 854 });
   drag(ctx, 'nw', { x: 0, y: 0 }, { x: 5000, y: 5000 })();
-  assert.equal(sheet.style.width, `${ASK_SHEET_SIZE.minW}px`, '540 — every popover still fits');
-  assert.equal(sheet.style.height, `${ASK_SHEET_SIZE.minH}px`);
+  assert.equal(sheet.style.width, '782px', 'never narrower than the default the sheet opened at');
+  assert.equal(sheet.style.height, '669px', 'never shorter either — the composer row and the popovers assume it');
   // a dock narrower than the floor: the dock wins, the sheet never overflows the viewport
   sizeDock(ctx.doc, 500, 400);                         // inner 444 × 354
   drag(ctx, 'e', { x: 0, y: 0 }, { x: 1, y: 0 })();
@@ -556,4 +556,132 @@ test('ask-panel: resize — double-click on a grip resets to the stylesheet defa
   assert.equal(sheet.style.width, '', 'reopen does not resurrect the old size');
   drag(ctx, 'n', { x: 0, y: 200 }, { x: 0, y: 100 })();
   assert.equal(sheet.style.height, '769px', 'a later drag starts again from the default 669');
+});
+
+// ---- resize: what persists, and how a drag ends when the pointerup never comes ----
+
+test('ask-panel: resize — a grip click with no movement never touches the stored preference', () => {
+  const store = makePanel().storage;
+  store.setItem(SIZE_KEY, JSON.stringify({ w: 900, h: 700 }));
+  const ctx = makePanel({ storage: store });
+  sizeDock(ctx.doc, 800, 600);                         // inner 744 × 554 — the sheet opens clamped
+  ctx.panel.open();
+  const sheet = ctx.doc.querySelector('.ask-sheet');
+  assert.equal(sheet.style.width, '744px');
+  const grip = ctx.doc.querySelector('[data-ask-resize="n"]');
+  grip.dispatchEvent(pointer(ctx.window, 'pointerdown', { clientX: 0, clientY: 200 }));
+  ctx.doc.dispatchEvent(pointer(ctx.window, 'pointerup', { clientX: 0, clientY: 200 }));
+  assert.deepEqual(JSON.parse(store.getItem(SIZE_KEY)), { w: 900, h: 700 }, 'a click is not a resize: the clamp is not written back');
+  assert.ok(!sheet.classList.contains('is-resizing'));
+});
+
+test('ask-panel: resize — dragging one axis keeps the stored preference of the other, even while that one is clamped', () => {
+  const store = makePanel().storage;
+  store.setItem(SIZE_KEY, JSON.stringify({ w: 900, h: 700 }));
+  const ctx = makePanel({ storage: store });
+  sizeDock(ctx.doc, 800, 900);                         // inner 744 × 854: the width is clamped, the height fits
+  ctx.panel.open();
+  const sheet = ctx.doc.querySelector('.ask-sheet');
+  assert.equal(sheet.style.width, '744px');
+  assert.equal(sheet.style.height, '700px');
+  drag(ctx, 'n', { x: 0, y: 200 }, { x: 0, y: 180 })();   // up 20 → taller; the width is not part of this gesture
+  assert.equal(sheet.style.height, '720px');
+  assert.equal(sheet.style.width, '744px');
+  assert.deepEqual(JSON.parse(store.getItem(SIZE_KEY)), { w: 900, h: 720 }, 'the untouched axis keeps its 900, not the clamped 744');
+});
+
+test('ask-panel: resize — losing window focus mid-drag ends the drag where it is and persists it', () => {
+  const ctx = makePanel();
+  sizeDock(ctx.doc, 1200, 900);
+  ctx.panel.open();
+  const sheet = ctx.doc.querySelector('.ask-sheet');
+  const grip = ctx.doc.querySelector('[data-ask-resize="n"]');
+  drag(ctx, 'n', { x: 0, y: 200 }, { x: 0, y: 150 });     // up 50 → 719; the pointerup lands in another app
+  assert.equal(sheet.style.height, '719px');
+  ctx.window.dispatchEvent(new ctx.window.Event('blur'));
+  assert.ok(!sheet.classList.contains('is-resizing'), 'the gesture is over');
+  assert.ok(!grip.classList.contains('is-active'));
+  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 782, h: 719 }, 'a half-done resize is still a size');
+  ctx.doc.dispatchEvent(pointer(ctx.window, 'pointermove', { clientX: 0, clientY: 0 }));
+  assert.equal(sheet.style.height, '719px', 'the sheet no longer follows a mouse with no button held');
+});
+
+test('ask-panel: resize — Escape mid-drag cancels: the start size comes back and nothing is stored', () => {
+  const ctx = makePanel();
+  sizeDock(ctx.doc, 1200, 900);
+  ctx.panel.open();
+  const sheet = ctx.doc.querySelector('.ask-sheet');
+  drag(ctx, 'e', { x: 300, y: 0 }, { x: 350, y: 0 })();   // 882 wide, stored
+  drag(ctx, 'e', { x: 350, y: 0 }, { x: 400, y: 0 });     // 982 wide, still held
+  assert.equal(sheet.style.width, '982px');
+  const e = key(ctx.window, ctx.doc.body, 'Escape');
+  assert.equal(sheet.style.width, '882px', 'back to where this drag started');
+  assert.ok(!sheet.classList.contains('is-resizing'));
+  assert.equal(e.defaultPrevented, true, 'the drag owned that Escape');
+  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 882, h: 669 }, 'the cancelled drag wrote nothing');
+  ctx.doc.dispatchEvent(pointer(ctx.window, 'pointerup', { clientX: 400, clientY: 0 }));
+  assert.equal(sheet.style.width, '882px', 'a late pointerup does not resurrect the cancelled size');
+  assert.equal(ctx.panel.isOpen(), true, 'Escape mid-drag does not close the sheet');
+});
+
+test('ask-panel: resize — a pointermove with no button held means the release was missed: the drag ends there', () => {
+  const ctx = makePanel();
+  sizeDock(ctx.doc, 1200, 900);
+  ctx.panel.open();
+  const sheet = ctx.doc.querySelector('.ask-sheet');
+  drag(ctx, 'n', { x: 0, y: 200 }, { x: 0, y: 150 });     // 719 tall, held
+  ctx.doc.dispatchEvent(pointer(ctx.window, 'pointermove', { clientX: 0, clientY: 100, buttons: 0 }));
+  assert.equal(sheet.style.height, '719px', 'the button-less move does not resize');
+  assert.ok(!sheet.classList.contains('is-resizing'));
+  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 782, h: 719 });
+});
+
+test('ask-panel: resize — lostpointercapture on the grip ends the drag (the sheet went away or the capture was taken)', () => {
+  const ctx = makePanel();
+  sizeDock(ctx.doc, 1200, 900);
+  ctx.panel.open();
+  const sheet = ctx.doc.querySelector('.ask-sheet');
+  const grip = ctx.doc.querySelector('[data-ask-resize="w"]');
+  drag(ctx, 'w', { x: 300, y: 0 }, { x: 250, y: 0 });     // 882 wide, held
+  grip.dispatchEvent(new ctx.window.Event('lostpointercapture'));
+  assert.ok(!sheet.classList.contains('is-resizing'));
+  assert.ok(!grip.classList.contains('is-active'));
+  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 882, h: 669 });
+  ctx.doc.dispatchEvent(pointer(ctx.window, 'pointermove', { clientX: 0, clientY: 0 }));
+  assert.equal(sheet.style.width, '882px', 'nothing follows the pointer any more');
+});
+
+test('ask-panel: resize — the dock changing size with no window resize (the rail toggle) re-clamps the open sheet', () => {
+  const store = makePanel().storage;
+  store.setItem(SIZE_KEY, JSON.stringify({ w: 900, h: 700 }));
+  const ctx = makePanel({ storage: store, resizeObserver: true });
+  const [ro] = ctx.resizeObservers;
+  assert.ok(ro, 'the panel observes its dock');
+  assert.ok(ro.targets.includes(ctx.doc.querySelector('.ask-dock')));
+  sizeDock(ctx.doc, 800, 600);                         // inner 744 × 554 — the rail is open
+  ctx.panel.open();
+  const sheet = ctx.doc.querySelector('.ask-sheet');
+  assert.equal(sheet.style.width, '744px');
+  sizeDock(ctx.doc, 1022, 600);                        // the rail collapsed: 222px more dock, no window event
+  ro.cb([{ target: ctx.doc.querySelector('.ask-dock') }], ro);
+  assert.equal(sheet.style.width, '900px', 'the stored preference comes back when there is room again');
+  assert.equal(sheet.style.height, '554px');
+  ctx.panel.destroy();
+  assert.ok(ro.disconnected, 'destroy() disconnects the dock observer');
+});
+
+test('ask-panel: resize — a dock or window resize during a drag leaves the drag alone', () => {
+  const store = makePanel().storage;
+  store.setItem(SIZE_KEY, JSON.stringify({ w: 900, h: 700 }));
+  const ctx = makePanel({ storage: store, resizeObserver: true });
+  sizeDock(ctx.doc, 1200, 900);
+  ctx.panel.open();
+  const sheet = ctx.doc.querySelector('.ask-sheet');
+  const up = drag(ctx, 'e', { x: 300, y: 0 }, { x: 400, y: 0 });   // 1100 wide, held
+  assert.equal(sheet.style.width, '1100px');
+  ctx.window.dispatchEvent(new ctx.window.Event('resize'));
+  ctx.resizeObservers[0].cb([], ctx.resizeObservers[0]);
+  assert.equal(sheet.style.width, '1100px', 'no snap back to the stored 900 under the held pointer');
+  up();
+  assert.deepEqual(JSON.parse(store.getItem(SIZE_KEY)), { w: 1100, h: 700 });
 });

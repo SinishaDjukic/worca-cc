@@ -663,11 +663,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // the grabbed edge under the cursor). Sizes are border-box px applied as
   // inline width/height, so the stylesheet's default rule stays byte-identical
   // and its max-width/max-height backstop still bounds a stale inline size.
+  //
+  // A gesture ends on pointerup/pointercancel, and — like graph/composer.mjs —
+  // on window blur, lostpointercapture (the sheet was hidden, the capture was
+  // taken) and a pointermove that reports no button held (the release landed
+  // outside the window and never reached us). All of those COMMIT: a half-done
+  // resize is still a size the user chose, unlike a half-drawn wire. Escape is
+  // the one CANCEL: the pre-drag size comes back and nothing is stored. Only a
+  // gesture that actually moved persists, and only the axis it dragged — the
+  // other axis keeps the stored preference, so a click on a dock-clamped sheet
+  // can never write the clamp back over a larger preference.
   function buildResizeHandle(edge) {
     const h = make('div', `ask-resize ask-resize-${edge}`);
     h.setAttribute('data-ask-resize', edge);
     h.setAttribute('aria-hidden', 'true');
     h.addEventListener('pointerdown', (e) => startResize(e, edge, h));
+    h.addEventListener('lostpointercapture', () => { if (st.drag && st.drag.handle === h) finishResize(); });
     h.addEventListener('dblclick', (e) => { e.preventDefault(); resetSize(); });
     return h;
   }
@@ -722,7 +733,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function startResize(e, edge, handle) {
     if (st.drag || st.destroyed || (e.button != null && e.button !== 0)) return;
     const start = currentSize();
-    st.drag = { edge, handle, pointerId: e.pointerId, x: e.clientX, y: e.clientY, w: start.w, h: start.h };
+    st.drag = {
+      edge, handle, pointerId: e.pointerId, x: e.clientX, y: e.clientY, w: start.w, h: start.h,
+      moved: false,                                  // set by the first pointermove that applies a size
+      before: st.applied ? { w: st.applied.w, h: st.applied.h } : null,   // what Escape restores
+    };
     handle.classList.add('is-active');
     el.sheet.classList.add('is-resizing');
     // Capture is a bonus, never a precondition (Chrome throws for a synthetic
@@ -732,6 +747,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     doc.addEventListener('pointermove', onResizeMove);
     doc.addEventListener('pointerup', onResizeEnd);
     doc.addEventListener('pointercancel', onResizeEnd);
+    win.addEventListener('blur', onResizeBlur);
     e.preventDefault();                              // no text selection / focus steal mid-drag
   }
 
@@ -742,6 +758,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function onResizeMove(e) {
     const g = st.drag;
     if (!g || !samePointer(g, e)) return;
+    if (e.buttons === 0) { finishResize(); return; }   // the release never reached us
+    g.moved = true;
     const dx = e.clientX - g.x;
     const dy = e.clientY - g.y;
     let w = g.w;
@@ -758,18 +776,44 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     finishResize();
   }
 
+  function onResizeBlur() { finishResize(); }
+
   /** Idempotent; also run from destroy() so a mid-drag unmount leaves no document listeners. */
   function finishResize() {
-    const g = st.drag;
+    const g = endResize();
+    if (!g || !g.moved || !st.applied) return;
+    // Persist the dragged axis only; the other keeps the stored preference (or,
+    // with none stored, the size it had) — the clamp is never written back.
+    const movesW = g.edge !== 'n';
+    const movesH = g.edge !== 'e' && g.edge !== 'w';
+    const prev = st.size;
+    st.size = {
+      w: movesW || !prev ? st.applied.w : prev.w,
+      h: movesH || !prev ? st.applied.h : prev.h,
+    };
+    storeSize(st.size);
+  }
+
+  /** Escape: the pre-drag size comes back and nothing is stored. */
+  function cancelResize() {
+    const g = endResize();
     if (!g) return;
+    applySize(g.before);
+  }
+
+  /** Tear the gesture down (listeners, classes, capture) and hand it back; null when none. */
+  function endResize() {
+    const g = st.drag;
+    if (!g) return null;
     st.drag = null;
     doc.removeEventListener('pointermove', onResizeMove);
     doc.removeEventListener('pointerup', onResizeEnd);
     doc.removeEventListener('pointercancel', onResizeEnd);
+    win.removeEventListener('blur', onResizeBlur);
     g.handle.classList.remove('is-active');
     el.sheet.classList.remove('is-resizing');
     try { if (g.handle.hasPointerCapture?.(g.pointerId)) g.handle.releasePointerCapture(g.pointerId); } catch { /* already gone */ }
-    if (st.applied) { st.size = { w: st.applied.w, h: st.applied.h }; storeSize(st.size); }
+    return g;
   }
 
   /** Double-click on any grip: back to the stylesheet default and forget the stored size. */
@@ -780,8 +824,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     storeSize(null);
   }
 
+  /** Window resize or dock resize (the rail toggling, the dock's slide): re-clamp — never under a held pointer. */
   function onWinResize() {
-    if (st.destroyed || !st.open || !st.size) return;
+    if (st.destroyed || !st.open || !st.size || st.drag) return;
     restoreSize();
   }
 
@@ -799,6 +844,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function onDocKeydown(e) {
     if (st.destroyed) return;
+    if (st.drag && e.key === 'Escape') { e.preventDefault(); cancelResize(); return; }
     if (isToggleCombo(e)) {
       if (e.repeat || e.isComposing) return;
       e.preventDefault();
@@ -2271,6 +2317,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   doc.addEventListener('keydown', onDocKeydown, true);
   doc.addEventListener('pointerdown', onDocPointerdown, true);
   win.addEventListener('resize', onWinResize);
+  // The rail collapsing changes the dock width by 222px with no window resize;
+  // observe the dock itself (guarded: jsdom has no ResizeObserver — P5's idiom).
+  let dockRo = null;
+  if (typeof win.ResizeObserver === 'function') {
+    dockRo = new win.ResizeObserver(onWinResize);
+    dockRo.observe(el.dock);
+  }
 
   function destroy() {
     if (st.destroyed) return;
@@ -2282,6 +2335,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     doc.removeEventListener('keydown', onDocKeydown, true);
     doc.removeEventListener('pointerdown', onDocPointerdown, true);
     win.removeEventListener('resize', onWinResize);
+    if (dockRo) { dockRo.disconnect(); dockRo = null; }
     root.remove();
   }
 

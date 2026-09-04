@@ -18,6 +18,18 @@ function makeStorage() {
 export function makePanel(overrides = {}) {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost:4317/' });
   const { window } = dom;
+  // jsdom has no ResizeObserver. `resizeObserver: true` installs a recording
+  // fake BEFORE the panel is built: a test fires an observer's `cb` by hand and
+  // reads `disconnected` after destroy().
+  const resizeObservers = [];
+  if (overrides.resizeObserver) {
+    window.ResizeObserver = class FakeResizeObserver {
+      constructor(cb) { this.cb = cb; this.targets = []; this.disconnected = false; resizeObservers.push(this); }
+      observe(t) { this.targets.push(t); }
+      unobserve(t) { this.targets = this.targets.filter((x) => x !== t); }
+      disconnect() { this.targets = []; this.disconnected = true; }
+    };
+  }
   const fetchCalls = [];
   const wsSends = [];
   const rafQueue = [];
@@ -54,7 +66,7 @@ export function makePanel(overrides = {}) {
     for (let i = 0; i < 5 && rafQueue.length; i++) rafQueue.splice(0).forEach((fn) => fn());
   };
   const tick = () => new Promise((r) => setTimeout(r, 0));
-  return { panel, window, doc: window.document, fetchCalls, wsSends, flush, tick, storage };
+  return { panel, window, doc: window.document, fetchCalls, wsSends, flush, tick, storage, resizeObservers };
 }
 
 export function key(window, target, key, init = {}) {
@@ -71,10 +83,14 @@ export function pointerdown(window, target) {
 
 /**
  * A PointerEvent with a stable pointerId for drag simulations. jsdom lays nothing
- * out, so the coordinates mean whatever the test says they mean.
+ * out, so the coordinates mean whatever the test says they mean. `buttons` is
+ * what a real primary-button gesture reports: held (1) on down/move, released
+ * (0) on up/cancel — a test passes buttons:0 on a move to mean "the release
+ * never reached us".
  */
 export function pointer(window, type, init = {}) {
-  return new window.PointerEvent(type, { pointerId: 1, button: 0, bubbles: true, cancelable: true, ...init });
+  const buttons = type === 'pointerup' || type === 'pointercancel' ? 0 : 1;
+  return new window.PointerEvent(type, { pointerId: 1, button: 0, buttons, bubbles: true, cancelable: true, ...init });
 }
 
 /**
