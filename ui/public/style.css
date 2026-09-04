@@ -78,7 +78,7 @@ body{
 .sidebar{
   width:298px;flex:0 0 298px;
   background:var(--panel);
-  padding:26px 18px 22px;
+  padding:26px 18px 10px;
   display:flex;flex-direction:column;
   border-right:1px solid var(--line);
   overflow-y:auto;
@@ -86,14 +86,14 @@ body{
              width .2s cubic-bezier(.65,.02,.28,1);
 }
 .brand{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px;margin-bottom:24px;}
-.brand .logo{height:36px;width:auto;display:block;}
+.brand .logo{height:34px;width:auto;display:block;}
 
-.nav{display:flex;flex-direction:column;gap:4px;flex:1 1 auto;}
+.nav{display:flex;flex-direction:column;gap:2px;flex:1 1 auto;}
 .nav button{
   display:flex;align-items:center;gap:13px;width:100%;margin:0;
-  padding:11px 13px;border:0;border-radius:13px;
+  padding:8px 13px;border:0;border-radius:13px;
   background:transparent;color:var(--ink-2);
-  font-family:inherit;font-size:inherit;line-height:inherit;font-weight:500;
+  font-family:inherit;font-size:13px;line-height:inherit;font-weight:500;
   text-align:left;cursor:pointer;
   transition:background .15s,color .15s;
 }
@@ -102,13 +102,25 @@ body{
 .nav button.active{background:var(--ink);color:#fff;}
 .nav button.active svg{stroke:#fff;}
 .nav button:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.nav-sect{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;
-  color:var(--ink-3);padding:14px 13px 2px;user-select:none;}
-.nav-sep{margin-top:auto;border-top:1px solid var(--line);}
+/* Sentence case, not caps: the markup already ships "Activity"/"Build"/"Manage",
+   so the label is whatever the HTML says. The .11em tracking and the 10.5px size
+   existed to keep ALL-CAPS legible; sentence case needs neither, and at 10.5px a
+   lowercase x-height reads a size smaller than caps did, so the size goes up as
+   the tracking comes down.
+   The padding is deliberately lopsided — 24px above, 5px below. A heading
+   belongs to the items UNDER it, so the big gap has to fall between groups, not
+   between a heading and its own first row. */
+.nav-sect{font-size:11.5px;font-weight:600;letter-spacing:.01em;text-transform:none;
+  color:var(--ink-3);padding:24px 13px 5px;user-select:none;}
+/* Settings is the only row that hangs between two edges — the divider above it
+   and the spend card below — so both gaps are set here and in .side-foot's
+   padding-top, and they must stay equal. 8 + the 2px .nav gap = the 10px the
+   foot pads with. */
+.nav-sep{margin-top:auto;margin-bottom:8px;border-top:1px solid var(--line);}
 /* Primary action: outlined at rest so it doesn't fight the dark current-view
    fill; border thickness is absorbed into padding to keep row height equal. */
 .nav button.nav-cta{border:1.5px solid var(--ink);color:var(--ink);font-weight:600;
-  padding:9.5px 11.5px;}
+  padding:6.5px 11.5px;}
 .nav button.nav-cta:hover{background:var(--field);}
 .nav button.nav-cta.active{background:var(--ink);border-color:var(--ink);color:#fff;}
 .nav-count{margin-left:auto;min-width:22px;height:22px;padding:0 7px;border-radius:999px;
@@ -220,7 +232,11 @@ body{
 .side-project .sp-select{padding:11px 38px 11px 13px;font-size:13.5px;font-weight:600;border-radius:12px;}
 .nav-label{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
   color:var(--ink-3);padding:8px 12px 6px;}
-.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:14px;padding-top:14px;}
+/* The three numbers are one number: the toggle hangs between the spend card and
+   the rail's bottom edge exactly as Settings hangs between the divider and that
+   same card, so padding-top (above Settings), gap (above the toggle) and
+   .sidebar's padding-bottom (below it) all read 10px. */
+.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding-top:10px;}
 .user{display:flex;align-items:center;gap:11px;padding:6px 8px;}
 .user .ava{width:36px;height:36px;border-radius:50%;flex:0 0 auto;
   background:linear-gradient(135deg,#cfcfca,#a8a8a2);}
@@ -2657,7 +2673,12 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
    closing brace in any comment — ruleBody() stops its capture at the first one
    and both would break the tests. */
 .brand .logo-mark{display:none;width:32px;height:32px;border-radius:50%;}
+/* The foot is a column flex, so the button parks itself: flex-end pins it to
+   the rail's right edge under the spend block while expanded, and the collapsed
+   override below re-centres it in the 76px rail — `align-self` on the child
+   out-ranks the `align-items:center` the collapsed foot sets. */
 .side-toggle{display:flex;align-items:center;justify-content:center;
+  align-self:flex-end;
   width:30px;height:30px;flex:0 0 auto;padding:0;border:0;border-radius:9px;
   background:transparent;color:var(--ink);cursor:pointer;}
 .side-toggle svg{width:23px;height:23px;}
@@ -2670,21 +2691,27 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
    gutter takes another 10px and shoves the icon column 5px off centre. Suppress
    it here only; the rail still scrolls by wheel and keyboard, and the base
    overflow-y is deliberately NOT restated (a test asserts it isn't). */
-.sidebar.collapsed{width:76px;flex:0 0 76px;padding:22px 18px 18px;
+.sidebar.collapsed{width:76px;flex:0 0 76px;padding:26px 18px 10px;
   scrollbar-width:none;}
 .sidebar.collapsed::-webkit-scrollbar{width:0;height:0;}
-.sidebar.collapsed .brand{flex-direction:column;gap:6px;margin-bottom:8px;padding:0;}
+/* The nav must not jump when the rail collapses: the first tile sits at
+   26 + 34 + 24 = 84px expanded (sidebar padding-top + wordmark + .brand
+   margin-bottom), so the rail keeps the same 26px top padding above and makes
+   up the difference below. 26, not 24, because the round mark is 32px tall
+   against the wordmark's 34 — the gap absorbs the 2px so the sum still lands
+   on 84. */
+.sidebar.collapsed .brand{flex-direction:column;gap:6px;margin-bottom:26px;padding:0;}
 .sidebar.collapsed .logo{display:none;}
 .sidebar.collapsed .logo-mark{display:block;}
-.sidebar.collapsed .side-toggle{width:40px;height:40px;margin:10px 0 8px;border-radius:12px;}
-/* The glyph is a panel outline with a fixed left divider, so it must NOT be
-   mirrored: scaleX(-1) would throw the divider to the right edge and claim the
-   sidebar had moved. Only the inner chevron turns round, and applySidebarCollapsed
-   (app.js:365) rewrites its `d` instead — the box stays put in both states.
-   Both glyph sizes are the originals +30% (18 -> 23 beside the wordmark,
-   20 -> 26 on the rail). stroke-width lives in the markup, not here: at 1.2 in a
-   24-unit viewBox both sizes land on a ~1.2px hairline, so neither state needs
-   walking back. */
+.sidebar.collapsed .side-toggle{width:40px;height:40px;margin:0;border-radius:12px;
+  align-self:center;}
+/* One bare chevron, pointing wherever the rail is about to go. It is NOT
+   mirrored in CSS: scaleX(-1) shifts a chevron's visual mass off the button's
+   centre, so applySidebarCollapsed rewrites the path's `d` and the arrow stays
+   optically centred in both states. Sizes: 23px under the spend block, 26px on
+   the rail. stroke-width lives in the markup, not here — 2 in a 24-unit viewBox
+   is a ~2px stroke at both sizes, which a lone arrow needs and the old boxed
+   glyph did not. */
 .sidebar.collapsed .side-toggle svg{width:26px;height:26px;}
 
 /* `:not(.rail-tile)` is LOAD-BEARING on both rules below. Run tiles are
@@ -2731,7 +2758,6 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
    so that is NOT the reason.) 26px hairline, per the mock. */
 .sidebar.collapsed .nav-sect{width:26px;height:1px;margin:10px auto;padding:0;
   font-size:0;letter-spacing:0;background:var(--line);overflow:hidden;}
-.sidebar.collapsed .nav-sep{width:26px;margin-top:auto;}
 
 .sidebar.collapsed .nav-count{position:absolute;top:-2px;right:-2px;margin:0;
   min-width:17px;height:17px;padding:0 4px;font-size:10px;
@@ -2758,8 +2784,13 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
 .sidebar.collapsed .nav-rollup{position:absolute;right:-1px;bottom:-1px;margin:0;
   border:2px solid var(--panel);}
 
-.sidebar.collapsed .side-foot{align-items:center;gap:8px;
-  padding-top:12px;border-top:1px solid var(--line);}
+/* The rail reproduces the expanded 10px on all four edges around Settings and
+   the toggle. padding-top is 9, not 10, because the foot's own 1px border-top
+   is what the tile is measured from — the two together are the 10. The nav-sep
+   override does the same arithmetic against the 6px collapsed .nav gap. */
+.sidebar.collapsed .nav-sep{width:26px;margin-top:auto;margin-bottom:4px;}
+.sidebar.collapsed .side-foot{align-items:center;gap:10px;
+  padding-top:9px;border-top:1px solid var(--line);}
 
 /* ---- rail run tiles ---- */
 /* Scoped `.nav .rail-tile` (0,2,0) for the same reason `.nav .nav-child` is

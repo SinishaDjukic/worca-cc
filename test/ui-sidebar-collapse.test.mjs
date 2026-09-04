@@ -192,28 +192,33 @@ test('the favicon replaces the wordmark on the rail', () => {
 });
 
 test('the expanded wordmark keeps its own sizing rule', () => {
-  // `.brand` (:87) and `.brand .logo` (:88) are ADJACENT lines. Editing the
-  // wrong one silently unsizes the expanded wordmark, and nothing else in the
-  // suite covers `.brand .logo` — the string `.brand` appears nowhere in test/.
+  // `.brand` and `.brand .logo` are ADJACENT lines. Editing the wrong one
+  // silently unsizes the expanded wordmark, and nothing else in the suite
+  // covers `.brand .logo`.
   const logo = ruleBody('.brand .logo');
   assert.ok(logo, '.brand .logo must survive the .brand edit');
-  assert.match(logo, /height:\s*36px/);
+  assert.match(logo, /height:\s*34px/);
 });
 
-test('one panel glyph whose box never moves — only the chevron turns round', () => {
-  const brand = html.match(/<div class="brand">[\s\S]*?<\/button>\s*<\/div>/);
-  assert.ok(brand, '.brand must close after the toggle button');
-  assert.equal((brand[0].match(/<svg/g) || []).length, 1,
-    'exactly one SVG — both states are the same glyph with a rewritten chevron');
-  // Panel outline + a divider fixed at x=9, drawn in hairlines (the mock is a
-  // thin-stroke icon, not the 2px chevron this replaced).
-  assert.match(brand[0], /<rect x="3" y="3" width="18" height="18"/);
-  assert.match(brand[0], /<path d="M9 3v18">/);
-  assert.match(brand[0], /stroke-width="1\.2"/);
-  // The chevron is the ONLY part app.js may rewrite, so it needs its own hook.
-  assert.match(brand[0], /<path class="chev" d="M16 15l-3-3 3-3">/);
-  // Mirroring the whole glyph would swing the divider to the right edge and
-  // claim the sidebar had moved sides; the CSS must only resize it.
+test('the toggle is one bare chevron and nothing else', () => {
+  // The toggle lives in .side-foot, UNDER the spend block — not in .brand. The
+  // foot's only other child is the (empty at boot) #side-spend mount, so this
+  // slice is the button and nothing else.
+  const foot = html.match(/<div class="side-foot">[\s\S]*?<\/button>\s*<\/div>/);
+  assert.ok(foot, '.side-foot must close after the toggle button');
+  assert.match(foot[0], /<div id="side-spend"><\/div>\s*<button[^>]*id="side-toggle"/,
+    'the toggle follows the spend mount — moving it back into .brand reds this');
+  assert.equal((foot[0].match(/<svg/g) || []).length, 1);
+  // ONE path: no panel outline, no divider, no second stroke to explain. Both
+  // states are the same arrow with a rewritten `d`.
+  assert.equal((foot[0].match(/<path/g) || []).length, 1,
+    'a lone chevron — anything else and it stops reading as an arrow');
+  assert.doesNotMatch(foot[0], /<rect/, 'the boxed panel glyph is gone');
+  assert.match(foot[0], /stroke-width="2"/,
+    'a hairline reads as a stray mark once the box around it is gone');
+  assert.match(foot[0], /<path class="chev" d="M15 6l-6 6 6 6">/,
+    'markup ships the expanded "<" — app.js only ever rewrites this one hook');
+  // scaleX(-1) shifts a chevron's visual mass off centre; app.js swaps `d`.
   assert.doesNotMatch(ruleBody('.sidebar.collapsed .side-toggle svg'), /transform:/);
 });
 
@@ -290,6 +295,25 @@ test('counts become corner badges; inert grey ones and the paused pill drop out'
   assert.match(hidden, /display:\s*none/);
 });
 
+test('the nav does not jump vertically when the rail collapses', () => {
+  // Measured in Chrome at 1440x900: .nav (and its first tile) sits at y=84 in
+  // BOTH states. Expanded that is 26 (.sidebar padding-top) + 34 (.brand .logo)
+  // + 24 (.brand margin-bottom). The rail has to reproduce the same sum with a
+  // 32px round mark, so it keeps padding-top:26px and absorbs the 2px
+  // difference in the gap: 26 + 32 + 26 = 84. Change any of the three and the
+  // icons slide under the user's cursor on every toggle.
+  assert.match(ruleBody('.brand'), /margin-bottom:\s*24px/);
+  assert.match(ruleBody('.brand .logo'), /height:\s*34px/);
+  assert.match(ruleBody('.brand .logo-mark'), /height:\s*32px/);
+  assert.match(ruleBody('.sidebar'), /padding:\s*26px/);
+  // Only the TOP number is part of this invariant — the bottom one belongs to
+  // the toggle's spacing (ui-nav-sections) and moves independently.
+  assert.match(ruleBody('.sidebar.collapsed'), /padding:\s*26px 18px \d+px/,
+    'the rail must keep the expanded top padding');
+  assert.match(ruleBody('.sidebar.collapsed .brand'), /margin-bottom:\s*26px/,
+    '32px mark vs a 34px wordmark — the gap makes up the 2px so the sum lands on 84');
+});
+
 test('the rail stops reserving a scrollbar gutter it cannot afford', () => {
   const rail = ruleBody('.sidebar.collapsed');
   // ::-webkit-scrollbar{width:10px} (style.css:898) forces CLASSIC, space-
@@ -309,6 +333,12 @@ test('the rail stops reserving a scrollbar gutter it cannot afford', () => {
   const foot = ruleBody('.sidebar.collapsed .side-foot');
   assert.ok(foot, 'the collapsed foot needs its own centring rule');
   assert.match(foot, /align-items:\s*center/);
+  // The toggle carries `align-self:flex-end` so it sits bottom-RIGHT under the
+  // spend block while expanded. align-self on the child beats align-items on the
+  // parent, so the collapsed rail has to re-centre it explicitly or the 40px
+  // square hangs off the right edge of the 76px column.
+  assert.match(ruleBody('.side-toggle'), /align-self:\s*flex-end/);
+  assert.match(ruleBody('.sidebar.collapsed .side-toggle'), /align-self:\s*center/);
 });
 
 test('the width change is a transition, so reduced motion actually kills it', () => {
@@ -363,11 +393,11 @@ test('the chevron points into the panel collapsed, out of it expanded', async ()
   // still read correctly at boot — collapse first, then expand, to catch that.
   const { window, click } = await boot();
   const chev = () => window.document.querySelector('#side-toggle .chev').getAttribute('d');
-  assert.equal(chev(), 'M16 15l-3-3 3-3');
+  assert.equal(chev(), 'M15 6l-6 6 6 6', 'expanded points "<" — click pulls the rail in');
   click('#side-toggle');
-  assert.equal(chev(), 'M14 9l3 3-3 3', 'collapsed chevron must point right, out of the rail');
+  assert.equal(chev(), 'M9 6l6 6-6 6', 'collapsed points ">" — click pushes it back out');
   click('#side-toggle');
-  assert.equal(chev(), 'M16 15l-3-3 3-3');
+  assert.equal(chev(), 'M15 6l-6 6 6 6');
 });
 
 test('a stored "1" restores the rail at boot', async () => {
