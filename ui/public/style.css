@@ -3857,3 +3857,57 @@ input.gv-name:focus-visible{outline:none;}
 .run-strip .rchip.is-active{color:var(--c);}
 .run-strip .rchip.is-paused{color:var(--amber-ink);}
 .run-strip .rchip.is-error,.run-strip .rchip.is-stopped{color:var(--red-ink);}
+
+/* ---------- per-step artifacts (Phase 3 UI) ---------- */
+/* Run-level grouped browser (Running + History "Artifacts" tab): one card per
+   node, a step header, and clickable artifact rows. Mirrors the .rd-ag-group card
+   shell so the two detail tabs read as one system. */
+.artifact-group{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;}
+.artifact-group + .artifact-group{margin-top:14px;}
+.artifact-group-head{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:15px 20px;border-bottom:1px solid var(--line);}
+.artifact-group-head b{font-size:13.5px;font-weight:600;letter-spacing:-.01em;}
+.artifact-cycle{padding:8px 20px 0;font-size:10.5px;letter-spacing:.02em;text-transform:uppercase;color:var(--ink-3);}
+.artifact-empty{padding:18px 20px;color:var(--ink-2);}
+
+/* Per-node affordance inside an Agents-tab group card. */
+.node-artifacts{flex:0 0 100%;margin-top:8px;padding-top:8px;border-top:1px solid var(--line);}
+.artifact-toggle{appearance:none;border:1px solid var(--line-2);background:var(--field);color:var(--ink);
+  font:600 11.5px var(--sans);padding:4px 12px;border-radius:999px;cursor:pointer;}
+.artifact-toggle:hover{border-color:var(--blue);color:var(--blue-ink);}
+.artifact-toggle[aria-expanded="true"]{background:var(--blue-bg);color:var(--blue-ink);border-color:var(--blue);}
+.artifact-list{display:flex;flex-direction:column;gap:6px;margin-top:8px;}
+
+/* A single clickable artifact row (kind chip · name · byte size). */
+.artifact-group .artifact-row{border-top:1px solid var(--line);}
+.artifact-group-head + .artifact-row,.artifact-cycle + .artifact-row{border-top:none;}
+.artifact-row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+  appearance:none;border:none;background:transparent;cursor:pointer;
+  padding:11px 20px;font:500 12.5px var(--sans);color:var(--ink);}
+.artifact-list .artifact-row{padding:8px 12px;border:1px solid var(--line-2);border-radius:10px;background:var(--field);}
+.artifact-row:hover{background:var(--field);}
+.artifact-list .artifact-row:hover{border-color:var(--blue);}
+.artifact-kind{flex:0 0 auto;font-size:10px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;
+  padding:2px 8px;border-radius:6px;background:var(--violet-bg);color:var(--violet-ink);}
+.artifact-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.artifact-bytes{margin-left:auto;flex:0 0 auto;font-size:11px;color:var(--ink-3);}
+
+/* Typed viewers rendered into the shared #viewer modal by renderArtifact. The
+   host resets the enclosing <pre>'s white-space:pre so each viewer owns its own. */
+.artifact-view{white-space:normal;}
+.artifact-text,.artifact-json,.artifact-diff{margin:0;font-family:var(--mono);font-size:12px;line-height:1.55;
+  white-space:pre-wrap;word-break:break-word;color:var(--ink);}
+.artifact-diff{white-space:pre;overflow-x:auto;}
+.artifact-diff-line{display:block;}
+.artifact-diff-line.add{background:var(--green-bg);color:var(--green-ink);}
+.artifact-diff-line.del{background:var(--red-bg);color:var(--red-ink);}
+.artifact-diff-line.hunk{color:var(--blue-ink);background:var(--field);}
+.artifact-diff-line.meta{color:var(--ink-3);}
+.artifact-markdown{font-family:var(--sans);font-size:13.5px;line-height:1.6;color:var(--ink);}
+.artifact-markdown h1,.artifact-markdown h2,.artifact-markdown h3{line-height:1.3;margin:1em 0 .5em;}
+.artifact-markdown pre{background:var(--field);border:1px solid var(--line);border-radius:10px;
+  padding:12px;overflow-x:auto;font-family:var(--mono);font-size:12px;}
+.artifact-markdown code{font-family:var(--mono);font-size:.92em;}
+.artifact-markdown :not(pre) > code{background:var(--field);border-radius:5px;padding:1px 5px;}
+.artifact-markdown a{color:var(--blue-ink);}
+.artifact-markdown table{border-collapse:collapse;}
+.artifact-markdown th,.artifact-markdown td{border:1px solid var(--line-2);padding:5px 9px;}
