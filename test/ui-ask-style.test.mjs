@@ -15,6 +15,11 @@ function ruleBody(selector) {
   return m ? m[1].replace(/\s+/g, ' ') : null;
 }
 
+const tokenValue = (name) => {
+  const m = css.match(new RegExp(`--${name}\\s*:\\s*([^;]+);`));
+  return m ? m[1].trim().toLowerCase() : null;
+};
+
 test('ui-ask-style: the dock is a fixed, click-through layer at z-40 with the rail arms', () => {
   const dock = ruleBody('.ask-dock');
   assert.ok(dock, '.ask-dock rule exists');
@@ -253,4 +258,54 @@ test('ui-ask-style: the sheet caps itself to the dock so an inline size can neve
   assert.match(t, /flex:1 1 auto/, 'the transcript absorbs every extra pixel of height');
   assert.match(t, /min-height:0/);
   assert.match(t, /overflow-y:auto/);
+});
+
+test('ui-ask-style: the pill wave is a permanent ::before that .is-live fades in and drifts with transform only', () => {
+  // the pill becomes the glow's stacking context and clip, nothing else about it moves
+  const pill = ruleBody('.ask-pill');
+  assert.match(pill, /position:relative/);
+  assert.match(pill, /isolation:isolate/);
+  assert.match(pill, /overflow:hidden/);
+  assert.match(pill, /border-radius:999px/);
+  assert.match(pill, /pointer-events:auto/);
+  assert.match(pill, /transition:border-color \.15s/, 'the hover transition survives');
+  assert.match(ruleBody('.ask-pill[hidden]'), /display:none/, 'hidden twin untouched');
+  assert.match(ruleBody('.ask-pill:focus-visible'), /outline:2px solid var\(--ink\)/, 'focus ring untouched');
+  // the layer is always in the tree and transparent at rest; the drift is declared
+  // here but PAUSED, so dropping .is-live freezes it where it is and only the
+  // opacity fades — removing an animation instead would snap it back at opacity 1
+  const glow = ruleBody('.ask-pill::before');
+  assert.ok(glow, '.ask-pill::before rule exists');
+  assert.match(glow, /content:''/);
+  assert.match(glow, /position:absolute/);
+  assert.match(glow, /z-index:-1/);
+  assert.match(glow, /pointer-events:none/);
+  assert.match(glow, /opacity:0;/);
+  assert.match(glow, /transition:opacity \.45s/);
+  assert.match(glow, /transform-origin:50% 100%/, 'breathes upward from the bottom edge');
+  assert.match(glow, /animation:ask-pill-wave/, 'the drift is declared on the rest rule…');
+  assert.match(glow, /animation-play-state:paused/, '…and held at rest, so nothing moves until .is-live');
+  for (const t of ['pink', 'violet', 'lilac']) {
+    assert.match(glow, new RegExp(`var\\(--ask-wave-${t}\\)`), `the glow spends --ask-wave-${t}`);
+    assert.match(tokenValue(`ask-wave-${t}`) || '', /^#[0-9a-f]{6}$/, `--ask-wave-${t} is a :root hex token`);
+  }
+  // live: opacity 1 + the drift released
+  const live = ruleBody('.ask-pill.is-live::before');
+  assert.ok(live, '.ask-pill.is-live::before rule exists');
+  assert.match(live, /opacity:1/);
+  assert.match(live, /animation-play-state:running/, 'the live class only releases the paused drift');
+  // the keyframes move the layer with transform ONLY (compositor-cached texture)
+  assert.equal((css.match(/@keyframes\s+ask-pill-wave\b/g) || []).length, 1, 'declared exactly once');
+  const kfAt = css.indexOf('@keyframes ask-pill-wave');
+  const kf = css.slice(kfAt, css.indexOf('}}', kfAt) + 2);
+  assert.match(kf, /transform:/);
+  assert.doesNotMatch(kf, /(?:^|[{;\s])(left|top|right|bottom|width|height|background|opacity|filter|margin|padding):/, 'transform only');
+  // reduced motion: pseudo-elements escape the `.ask-dock *` blanket, so the
+  // FINAL block names the drift; the opacity fade is deliberately kept (D6).
+  // It pauses rather than removes: `animation:none` would re-create the paused
+  // animation at its 0% frame when .is-live comes off, i.e. a jump at opacity 1.
+  const guard = css.lastIndexOf('@media (prefers-reduced-motion: reduce)');
+  assert.ok(css.slice(guard).includes('.ask-pill.is-live::before{animation-play-state:paused;}'), 'the final block stops the drift by name');
+  assert.ok(css.lastIndexOf('animation:ask-pill-wave') < guard, 'the animation use precedes the guard');
+  assert.ok(!css.slice(guard).includes('.ask-pill::before{'), 'no unconditional ::before rule in the guard — an idle pill must stay dark');
 });

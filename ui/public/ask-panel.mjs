@@ -390,6 +390,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const streaming = !!(st.model && st.model.live());
     el.send.hidden = streaming;
     el.stop.hidden = !streaming;
+    // The collapsed launcher pill mirrors "Ask Worca is working": a live turn, a
+    // snapshot that reports one in flight (load() nulls live until a frame is
+    // adopted, so Stop alone would stay dark on a collapsed reload), or the
+    // POST→ask-start window (st.sending). The glow is pure CSS on this class
+    // (.ask-pill.is-live::before), so a boundary costs one classList write and
+    // nothing else — keep side effects OUT of here, see afterFrame()'s
+    // refreshWorktrees() note.
+    const inFlight = !!(st.model && st.model.inFlight && st.model.inFlight());
+    if (el.pill) el.pill.classList.toggle('is-live', streaming || inFlight || !!st.sending);
   }
 
   function updateMeters() {
@@ -427,6 +436,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!text) return;
     st.sending = true;
     setComposerMsg(null);
+    updateSendStop();      // the pill lights the moment the user sends; Send/Stop do not move (nothing streams yet)
     try {
       let id = st.threadId;
       if (!id) {
