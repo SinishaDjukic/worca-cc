@@ -3166,18 +3166,33 @@ body.rail-collapsed .ask-dock{left:76px;}
    size as inline width/height and clamps it to the dock; the max-* pair on
    .ask-sheet above is the backstop that keeps a stale inline size inside the
    dock (the rail collapsing changes the dock width without a window resize).
-   The 540×360 floor is JS-only on purpose — a CSS floor would overflow narrow
-   viewports that width:min(782px,100%) handles today. */
+   The floor (JS-only, the stylesheet default 782×669: the sheet grows, never
+   shrinks) is not a CSS min-* on purpose — that would overflow narrow viewports
+   that width:min(782px,100%) handles today.
+   Corners: the sheet clips at its rounded corner (inner radius = --r-card minus
+   the 1px border), so a square corner grip's straight inset lines fall almost
+   entirely outside the clip and only a ~3px sliver ever shows. Each corner is
+   therefore exactly one radius wide and carries the same outer radius, so its
+   inset shadow bends along the arc, flush with the border like the straight
+   edges; the straight grips start where the arc ends (--ask-corner). */
 .ask-resize{position:absolute;z-index:5;background:transparent;touch-action:none;--ask-grip:transparent;
-  transition:box-shadow .15s;}
+  --ask-corner:calc(var(--r-card) - 1px);transition:box-shadow .15s;}
 .ask-resize:hover{--ask-grip:var(--ink-3);}
 .ask-resize.is-active{--ask-grip:var(--ink);}
-.ask-resize-n{top:0;left:18px;right:18px;height:6px;cursor:ns-resize;box-shadow:inset 0 2px 0 var(--ask-grip);}
-.ask-resize-e{top:18px;right:0;bottom:18px;width:6px;cursor:ew-resize;box-shadow:inset -2px 0 0 var(--ask-grip);}
-.ask-resize-w{top:18px;left:0;bottom:18px;width:6px;cursor:ew-resize;box-shadow:inset 2px 0 0 var(--ask-grip);}
-.ask-resize-ne{top:0;right:0;width:18px;height:18px;cursor:nesw-resize;box-shadow:inset -2px 2px 0 var(--ask-grip);}
-.ask-resize-nw{top:0;left:0;width:18px;height:18px;cursor:nwse-resize;box-shadow:inset 2px 2px 0 var(--ask-grip);}
+.ask-resize-n{top:0;left:var(--ask-corner);right:var(--ask-corner);height:6px;cursor:ns-resize;box-shadow:inset 0 2px 0 var(--ask-grip);}
+.ask-resize-e{top:var(--ask-corner);right:0;bottom:var(--ask-corner);width:6px;cursor:ew-resize;box-shadow:inset -2px 0 0 var(--ask-grip);}
+.ask-resize-w{top:var(--ask-corner);left:0;bottom:var(--ask-corner);width:6px;cursor:ew-resize;box-shadow:inset 2px 0 0 var(--ask-grip);}
+.ask-resize-ne{top:0;right:0;width:var(--ask-corner);height:var(--ask-corner);cursor:nesw-resize;
+  border-top-right-radius:var(--ask-corner);box-shadow:inset -2px 2px 0 var(--ask-grip);}
+.ask-resize-nw{top:0;left:0;width:var(--ask-corner);height:var(--ask-corner);cursor:nwse-resize;
+  border-top-left-radius:var(--ask-corner);box-shadow:inset 2px 2px 0 var(--ask-grip);}
 .ask-sheet.is-resizing{user-select:none;}
+/* The ne corner grip (one radius square, z-index:5) overlaps the top-right
+   corner of the header's last icon button (30×30 at padding 13px/14px): the
+   buttons sit above the grips so a click there still closes/opens instead of
+   starting a resize, and a hurried double-click never resets the size. The
+   grip's visible band hugs the border, well outside the button box. */
+.ask-header .ask-icon-btn{position:relative;z-index:6;}
 
 /* ---------- Ask Worca dock clearance ---------- */
 /* The dock is a fixed overlay -- .ask-dock above: 26px dock padding-bottom plus the
