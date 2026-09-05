@@ -7810,6 +7810,7 @@ async function loadSettings() {
     const data = await safeJson(res);
     if (!res.ok) { setSettingsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     paintSettings(data);
+    paintTheme(data.theme);
     paintAbout(data.app);
     paintBudgetSettings(data);
     paintAskSettings(data);
@@ -8116,6 +8117,86 @@ async function postSettingsCard(body, { setMsg, paint, savedText = 'Saved.' }) {
   if (Object.keys(data).length) paint(data);
   setMsg(savedText);
 }
+
+// ── Appearance (dark-mode design §5.3) ──────────────────────────────────────
+// The mode lives in settings.json and is server-rendered into <html data-theme>
+// for the first paint; this block keeps it live: the segmented control, the
+// theme-color meta, the `worca:theme` event the thinking orb listens to, and
+// the OS-change listener for system mode. Nothing is stored in this browser.
+const THEME_MODES = ['system', 'light', 'dark'];
+function syncThemeColorMeta() {
+  const meta = document.querySelector('meta[name="theme-color"]');
+  // Resolved by the browser; never getPropertyValue('--bg'), which is the raw light-dark() text.
+  // `window.` — the bare global is not the jsdom window's under the test boots (house rule, app.js:5115).
+  let bg = '';
+  try { bg = window.getComputedStyle(document.body).backgroundColor || ''; } catch { bg = ''; }
+  // A fully transparent background is "no colour": read the alpha rather than comparing
+  // against a literal — test/ui-js-colors forbids `rgba(` followed by a digit in browser JS.
+  const alpha = Number((/^rgba\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*([\d.]+)\s*\)$/.exec(bg) || [])[1] ?? '1');
+  if (meta && bg && alpha > 0) meta.setAttribute('content', bg);
+}
+function applyTheme(mode) {
+  const m = THEME_MODES.includes(mode) ? mode : 'system';
+  document.documentElement.dataset.theme = m;
+  syncThemeColorMeta();
+  document.dispatchEvent(new window.CustomEvent('worca:theme', { detail: { mode: m } }));   // window.CustomEvent: jsdom rejects Node's
+  return m;
+}
+function setThemeMsg(text, kind) { setHintMsg('themeMsg', text, kind); }
+let confirmedTheme = 'system';       // the last SERVER-confirmed mode (GET, POST 200, settings-changed)
+let themeSeq = 0;                    // out-of-order POST resolutions never repaint a stale answer
+function paintTheme(mode) {
+  const m = applyTheme(mode);
+  confirmedTheme = m;
+  for (const b of document.querySelectorAll('#theme-seg button[data-theme-mode]')) {
+    const on = b.dataset.themeMode === m;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+}
+async function chooseTheme(mode) {
+  const mine = ++themeSeq;
+  const previous = confirmedTheme;
+  applyTheme(mode);                                                        // optimistic (not a confirmation)
+  for (const b of document.querySelectorAll('#theme-seg button[data-theme-mode]')) {
+    b.classList.toggle('on', b.dataset.themeMode === mode); b.setAttribute('aria-pressed', b.dataset.themeMode === mode ? 'true' : 'false');
+  }
+  setThemeMsg('');
+  let res; let data;
+  try {
+    res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ theme: mode }) });
+    data = await safeJson(res);
+  } catch (e) { if (mine === themeSeq) { paintTheme(previous); setThemeMsg(e.message || 'network error', 'err'); } return; }
+  if (mine !== themeSeq) return;                                           // a later click owns the paint now
+  if (!res.ok) {
+    setThemeMsg(data.error || `HTTP ${res.status}`, 'err');
+    // Spec §5.3: paint what the SERVER holds, not what this tab guessed.
+    // A non-2xx on that re-fetch yields {error} (safeJson never throws): fall back to the last
+    // CONFIRMED mode, never to an undefined theme (applyTheme would normalise it to 'system').
+    try { const d2 = await safeJson(await fetch('/api/settings')); if (mine === themeSeq) paintTheme(THEME_MODES.includes(d2.theme) ? d2.theme : previous); }
+    catch { if (mine === themeSeq) paintTheme(previous); }
+    return;
+  }
+  paintTheme(data.theme);
+}
+document.getElementById('theme-seg')?.addEventListener('click', (e) => {
+  const btn = e.target.closest && e.target.closest('button[data-theme-mode]');
+  if (btn) chooseTheme(btn.dataset.themeMode);
+});
+// Boot: the shell arrived with the stored mode on <html>; normalise it, sync the
+// meta, tell the orb, and seed `confirmedTheme` + the seg buttons from it (paintTheme,
+// not applyTheme: otherwise a click before the General GET resolves would remember
+// 'system' as `previous`). No fetch — the server already rendered the right attribute.
+// One worca:theme event fires here and none elsewhere at boot (boot routes to 'new';
+// loadSettings runs only on the General tab and on settings-changed).
+paintTheme(document.documentElement.dataset.theme);
+// System mode: the OS can flip underneath; the CSS follows on its own, the meta
+// and the orb need a nudge. Guarded — jsdom has no matchMedia.
+try {
+  const mq = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  if (mq && typeof mq.addEventListener === 'function') mq.addEventListener('change', () => applyTheme(document.documentElement.dataset.theme));
+} catch { /* no media queries here */ }
+
 function setAskLimitsMsg(text, kind) { setHintMsg('askLimitsMsg', text, kind); }
 function paintAskSettings(data) {
   const turns = document.getElementById('askMaxTurns');
