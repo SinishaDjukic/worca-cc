@@ -248,10 +248,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     const pill = make('button', 'ask-pill');
     pill.type = 'button';
-    const pillLogo = doc.createElement('img');
-    pillLogo.className = 'ask-pill-logo';
-    pillLogo.src = '/assets/worca-favicon.png';
-    pillLogo.alt = '';
+    const pillLogo = make('span', 'ask-pill-logo');
+    pillLogo.setAttribute('aria-hidden', 'true');
     pill.appendChild(pillLogo);
     pill.appendChild(make('span', 'ask-pill-label', 'Ask Worca'));
     pill.appendChild(make('span', 'ask-kbd', shortcutLabel(win)));
@@ -264,10 +262,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     sheet.setAttribute('aria-label', 'Ask Worca');
 
     const header = make('header', 'ask-header');
-    const logo = doc.createElement('img');
-    logo.className = 'ask-header-logo';
-    logo.src = '/assets/worca-favicon.png';
-    logo.alt = '';
+    const logo = make('span', 'ask-header-logo');
+    logo.setAttribute('aria-hidden', 'true');
     header.appendChild(logo);
     el.title = make('div', 'ask-title', 'Ask Worca');
     // Header is logo → title → spacer → icon buttons. The #397 scope selector
@@ -555,10 +551,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     meter.setAttribute('data-ask-meter', '');
     el.meterTokens = make('span', 'ask-meter-tokens', '0 ctx');
     meter.appendChild(el.meterTokens);
-    meter.appendChild(make('span', 'ask-meter-sep', '|'));
+    { const sep = make('span', 'ask-meter-sep', '|'); sep.setAttribute('aria-hidden', 'true'); meter.appendChild(sep); }
     el.meterCost = make('span', 'ask-meter-cost', '');
     meter.appendChild(el.meterCost);
-    meter.appendChild(make('span', 'ask-meter-sep', '|'));
+    { const sep = make('span', 'ask-meter-sep', '|'); sep.setAttribute('aria-hidden', 'true'); meter.appendChild(sep); }
     row.appendChild(meter);
 
     const wtBtn = make('button', 'ask-agents-btn ask-wt-btn');
