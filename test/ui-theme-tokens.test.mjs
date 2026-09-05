@@ -138,3 +138,15 @@ test('theme: the dark arms are the warm-charcoal palette and none of the removed
   assert.equal(arm('--line-2', 'dark'), '#494944');
   for (const dead of ['#0e1116', '#0a0d12', '#232c38', '#4f9cf9']) assert.ok(!css.toLowerCase().includes(dead), dead);
 });
+
+test('theme: no colour literal outside the token blocks (spec §4.2; Task 2 codemod)', () => {
+  const noData = bare.replace(/url\("data:[^"]*"\)/g, 'url(DATA)');              // :805 keeps stroke='%23fff' inside its SVG
+  const withoutTokens = noData.replace(rootBody, '').replace(hdBody, '').replace(synBody, '');
+  const bodies = withoutTokens.match(/\{[^{}]*\}/g) || [];
+  const offenders = [];
+  for (const b of bodies) {
+    const m = b.match(/#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(|(?<![-\w])(?:white|black)(?![-\w])/gi);
+    if (m) offenders.push(`${m.join(' ')}  ←  ${b.slice(0, 110).replace(/\s+/g, ' ')}`);
+  }
+  assert.deepEqual(offenders, []);
+});

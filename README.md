@@ -215,6 +215,12 @@ worca ui --port 4318 --open     # another port; open the browser when up
 `status` remember the port of the last started UI, so they usually need no
 flag. See `worca ui help`.
 
+**Appearance.** Settings › General › Appearance picks **System** (follow the
+operating system), **Light** or **Dark** — one setting for every browser that
+opens this Worca. The web UI relies on CSS `light-dark()` (and `::backdrop`
+inheriting the dialog's scheme), so it needs Chrome/Edge 123, Firefox 120 or
+Safari 17.5 (or newer).
+
 ### CLI
 
 ```bash
