@@ -34,6 +34,7 @@ import {
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
+import { renderIndexHtml, INDEX_THEME_ANCHOR } from '../src/core/index-html.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
   rawProjectsRoot, defaultProjectsRoot, runRootMode,
@@ -864,6 +865,32 @@ app.use('/src/shared', express.static(SHARED_DIR, {
 app.use('/src/shared', (_req, res) => {
   res.set('Cache-Control', 'no-store');
   res.status(404).type('text/plain').send('Not found');
+});
+
+// The shell is rendered, not static: the stored theme mode goes into
+// <html data-theme> so the first paint is already dark or light (dark-mode
+// design §5.2). Read per request (100 KB, local) so an index.html edit is live
+// without a restart, exactly like static serving was. no-store: a theme change
+// must never be served from the browser cache.
+const INDEX_FILE = path.join(PUBLIC_DIR, 'index.html');
+if (!fs.readFileSync(INDEX_FILE, 'utf8').includes(INDEX_THEME_ANCHOR)) {
+  throw new Error(`ui/public/index.html lost its theme anchor ${INDEX_THEME_ANCHOR}`);
+}
+function sendIndex(res) {
+  let html;
+  try { html = renderIndexHtml(fs.readFileSync(INDEX_FILE, 'utf8'), storedTheme()); }
+  catch (err) { return res.status(500).json({ error: err && err.message ? err.message : 'shell unavailable' }); }
+  res.set('Content-Type', 'text/html; charset=utf-8');
+  res.set('Cache-Control', 'no-store');
+  res.set('X-Content-Type-Options', 'nosniff');
+  return res.send(html);
+}
+// `/index` (express.static's `extensions:['html']`) and `/Index.html` on a case-insensitive
+// file system would otherwise reach the raw file: route every spelling here.
+app.use((req, res, next) => {
+  if (req.method !== 'GET') return next();
+  if (req.path === '/' || /^\/index(\.html)?$/i.test(req.path)) return sendIndex(res);
+  return next();
 });
 
 app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
@@ -5419,9 +5446,7 @@ app.use((req, res, next) => {
   if (req.method !== 'GET') return next();
   if (req.path.startsWith('/api/') || req.path.startsWith('/ws')) return next();
   if (req.path === '/vendor' || req.path.startsWith('/vendor/')) return next();
-  res.sendFile(path.join(PUBLIC_DIR, 'index.html'), (err) => {
-    if (err) next();
-  });
+  sendIndex(res);
 });
 
 // ---------------------------------------------------------------------------
