@@ -44,6 +44,7 @@ import {
   debugSpawnEnabled as storedDebugSpawnEnabled, effectiveDebugSpawn, setDebugSpawnEnabled, assertDebugSpawnInput, SETTINGS_POST_KEYS,
   titleModel as storedTitleModel, setTitleModel, assertTitleModelInput,
   hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput,
+  theme as storedTheme, setTheme, assertThemeInput,
 } from '../src/core/settings.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
 import {
@@ -2820,6 +2821,7 @@ const settingsState = () => ({
   titleModel: storedTitleModel(),                         // the STORED id (the select), null = run's model
   titleModelEffective: describeTitleModel(),              // env override / stale id, for the hint line (#422)
   hideBuiltinModels: hideBuiltinModels(),
+  theme: storedTheme(),                                   // system | light | dark (dark-mode design §6)
 });
 
 // ---------------------------------------------------------------------------
@@ -2881,6 +2883,7 @@ app.post('/api/settings', async (req, res) => {
   const hasDebugSpawnKey = has('debugSpawnEnabled');
   const hasTitleModelKey = has('titleModel');
   const hasHideBuiltinKey = has('hideBuiltinModels');
+  const hasThemeKey = has('theme');
   // #422: the title model is a SELECT over the catalog, so an id that is not a
   // catalog member is a client bug (or a stale option) — refuse it here rather
   // than store an id resolveModelEnv could never route.
@@ -2913,6 +2916,7 @@ app.post('/api/settings', async (req, res) => {
       }
     }
     if (hasHideBuiltinKey) assertHideBuiltinModelsInput(body.hideBuiltinModels);
+    if (hasThemeKey) assertThemeInput(body.theme);
     // Root first: it is the one key whose setter can still fail AFTER the asserts
     // above (an unusable path), so every other key's write must come after it or
     // a mixed POST would answer 400 with those keys already applied on disk.
@@ -2933,10 +2937,11 @@ app.post('/api/settings', async (req, res) => {
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
+    if (hasThemeKey) await setTheme(body.theme);
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey) emitChanged('settings-changed');
+    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey) emitChanged('settings-changed');
     res.json({ ...settingsState(), chat: chatPrefs() });
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).

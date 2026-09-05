@@ -544,6 +544,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'askMaxTurns', 'askMaxBudgetUsd',
   'debugSpawnEnabled',
   'titleModel', 'hideBuiltinModels',
+  'theme',
 ]);
 
 // ── Title-generation model + hidden built-ins (#422) ─────────────────────────
@@ -604,6 +605,39 @@ export async function setHideBuiltinModels(input) {
   else settings.hideBuiltinModels = input;
   await persistSettings(settings);
   return { hideBuiltinModels: hideBuiltinModels() };
+}
+
+// ── Theme mode (2026-09-04 dark-mode design §6.1) ────────────────────────────
+// One machine-wide preference: `system` follows the OS, `light`/`dark` force a
+// scheme. The server writes it into the shell's <html data-theme> at serve time
+// (ui/server.mjs sendIndex) and the client keeps it live; the value is read at
+// use time like every other stored setting, so a save reaches the next request.
+export const THEME_MODES = Object.freeze(['system', 'light', 'dark']);
+export const DEFAULT_THEME = 'system';
+const isThemeMode = (v) => THEME_MODES.includes(v);
+
+/** STORED theme mode; an absent key is the default, an invalid value is the default (loudly). */
+export function theme() {
+  const v = readSettings().theme;
+  if (v === undefined) return DEFAULT_THEME;
+  if (isThemeMode(v)) return v;
+  console.warn(`[worca] invalid theme ${JSON.stringify(v)} — using the default (${DEFAULT_THEME})`);
+  return DEFAULT_THEME;
+}
+
+/** @throws {Error} unless `input` is system|light|dark, or empty/null (a clear). */
+export function assertThemeInput(input) {
+  if (isClearInput(input)) return;
+  if (!isThemeMode(input)) throw new Error('theme must be system, light or dark');
+}
+
+export async function setTheme(input) {
+  assertThemeInput(input);
+  const settings = readSettings();
+  if (isClearInput(input) || input === DEFAULT_THEME) delete settings.theme;
+  else settings.theme = input;
+  await persistSettings(settings);
+  return { theme: theme() };
 }
 
 // ── Spawn-debug diagnostics toggle (the stored side of WORCA_DEBUG_SPAWN) ────
