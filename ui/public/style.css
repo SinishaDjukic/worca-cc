@@ -8,51 +8,80 @@
 @font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400;font-display:swap;src:url('/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');}
 
 :root{
-  --bg:#F1F1EF;
-  --panel:#FFFFFF;
-  --ink:#19191B;
-  --ink-2:#5C5C63;
-  --ink-3:#9A9AA1;
-  --line:#ECECEA;
-  --line-2:#E3E3E0;
-  --field:#F6F6F4;
+  /* Theme (spec 2026-09-04 §4.1): every colour token is light-dark(<light>, <dark>).
+     The light arm is the "Refined" palette exactly as it always was; the dark arm is
+     the warm-charcoal palette of spec §3. The MODE is the color-scheme property:
+     `light dark` here follows the OS; the two [data-theme] rules after this block
+     force one. The six status bases have equal arms and stay plain (D13).
+     Never restate a token's hex anywhere else — several tests count occurrences. */
+  color-scheme:light dark;
 
-  --green-bg:#E2F3DF; --green:#5BAE5B; --green-ink:#2F7A38;
-  --peach-bg:#FCEEDA; --peach:#EFA63C; --peach-ink:#B5751A;
-  --red-bg:#FBE3E0;  --red:#E76A5A;  --red-ink:#C5483A;
-  --blue-bg:#DEEFF7; --blue:#5BA6CC; --blue-ink:#3782A8;
-  --violet-bg:#EAE6F8; --violet:#8C7FD6; --violet-ink:#6353B8;
-  --amber-bg:#FCE8C8; --amber:#E6962A; --amber-ink:#A66510;
-  --seq:#B7B7BC;
+  --bg:light-dark(#F1F1EF,#161614);
+  --canvas-2:light-dark(#FBFBF9,#1B1B19);
+  --panel:light-dark(#FFFFFF,#222220);
+  --surface:light-dark(#FFFFFF,#34342F);
+  --field:light-dark(#F6F6F4,#2C2C29);
+  --field-focus:light-dark(#FFFFFF,#2E2E2B);
+  --ink:light-dark(#19191B,#ECECE8);
+  --ink-2:light-dark(#5C5C63,#B4B4AE);
+  --ink-3:light-dark(#9A9AA1,#9E9E98);
+  --on-ink:light-dark(#FFFFFF,#161614);
+  --on-status:light-dark(#FFFFFF,#161614);
+  --line:light-dark(#ECECEA,#30302D);
+  --line-2:light-dark(#E3E3E0,#494944);
+
+  --green-bg:light-dark(#E2F3DF,#1C2F1D);  --green:#5BAE5B;  --green-ink:light-dark(#2F7A38,#8FD48F);
+  --peach-bg:light-dark(#FCEEDA,#33261A);  --peach:#EFA63C;  --peach-ink:light-dark(#B5751A,#F2B96A);
+  --red-bg:light-dark(#FBE3E0,#34201D);    --red:#E76A5A;    --red-ink:light-dark(#C5483A,#F08C7E);
+  --blue-bg:light-dark(#DEEFF7,#1A2A33);   --blue:#5BA6CC;   --blue-ink:light-dark(#3782A8,#86C4E3);
+  --violet-bg:light-dark(#EAE6F8,#262336); --violet:#8C7FD6; --violet-ink:light-dark(#6353B8,#B3A8EE);
+  --amber-bg:light-dark(#FCE8C8,#332715);  --amber:#E6962A;  --amber-ink:light-dark(#A66510,#F0B45A);
+  --seq:light-dark(#B7B7BC,#8E8E92);   /* text role too (.ask-thinking-meter): 4.85:1 on panel */
 
   /* Question/ask amber wash (design §9, C3). --amber-bg is the SOLID amber; this
-     is the pale field it sits on. Task 11 adds --amber-wash-2/--amber-line/
-     --radio-ring beside it. */
-  --amber-wash:#FEF7EC;
+     is the pale field it sits on, with its line and the radio ring. */
+  --amber-wash:light-dark(#FEF7EC,#322816);
+  --amber-wash-2:light-dark(#FEFAF3,#2B2314); --amber-line:light-dark(#F5D9A8,#6A5228); --radio-ring:light-dark(#D6D6D2,#4A4A45);
 
-  /* Question panel (design §9): the remaining literals in the Running mockup that
-     no existing token already carries. The two hexes §9 also lists as "new" are
-     NOT added — they are already the values of --violet (:24) and --peach-ink
-     (:21); use those tokens.
-     Do NOT name those two hexes here, or anywhere else in this stylesheet: Task 12
-     asserts each appears EXACTLY ONCE, and its regex reads the raw file, so a
-     mention inside a comment counts as a second occurrence and reds the test. */
-  --amber-wash-2:#FEFAF3; --amber-line:#F5D9A8; --radio-ring:#D6D6D2;
+  /* Ask Worca launcher pill: the "thinking" wave painted on .ask-pill.is-live::before
+     spends these three; the ask section itself carries no literal. */
+  --ask-wave-pink:light-dark(#F6A9DC,#8E4F7B); --ask-wave-violet:light-dark(#B8A6FF,#6F5FC4); --ask-wave-lilac:light-dark(#CDA2F2,#7E57A8);
+
+  /* Semantic tokens introduced by the theme work (spec §3.2). Each light arm is
+     the literal it replaced, so the light theme did not move. */
+  --on-ink-wash:light-dark(rgba(255,255,255,.18),rgba(22,22,20,.18));
+  --on-ink-wash-2:light-dark(rgba(255,255,255,.22),rgba(22,22,20,.22));
+  --on-ink-code:light-dark(rgba(255,255,255,.14),rgba(22,22,20,.14));
+  --panel-wash:light-dark(rgba(255,255,255,.7),rgba(236,236,232,.12));
+  --knob:light-dark(#FFFFFF,#ECECE8);
+  --scrim:light-dark(rgba(25,25,27,.42),rgba(0,0,0,.62));
+  --scrim-soft:light-dark(rgba(25,25,27,.34),rgba(0,0,0,.55));
+  --selection:light-dark(rgba(25,25,27,.16),rgba(236,236,232,.22));
+  --ava-a:light-dark(#CFCFCA,#4A4A46); --ava-b:light-dark(#A8A8A2,#6A6A64);
+  --h-blue-ink:light-dark(#2E6E8E,#9FD3EE); --h-green-ink:light-dark(#3B7C3B,#9BD69B); --h-peach-ink:light-dark(#8A5A16,#F2C27A);
+  --drop-ring:light-dark(#D8EFD6,#2A4A2C);
+  --trunc-ink:light-dark(#994466,#E39BBE);
+  --chip-ink:light-dark(#555555,#B4B4AE);
 
   --r-card:24px;
   --r-ctrl:14px;
-  --shadow:0 6px 28px rgba(25,25,27,.05), 0 1px 2px rgba(25,25,27,.04);
-  --shadow-soft:0 2px 12px rgba(25,25,27,.04);
+  --shadow:0 6px 28px light-dark(rgba(25,25,27,.05),rgba(0,0,0,.45)), 0 1px 2px light-dark(rgba(25,25,27,.04),rgba(0,0,0,.35));
+  --shadow-soft:0 2px 12px light-dark(rgba(25,25,27,.04),rgba(0,0,0,.35));
+  --shadow-pop:0 6px 28px light-dark(rgba(25,25,27,.10),rgba(0,0,0,.55)),0 1px 2px light-dark(rgba(25,25,27,.06),rgba(0,0,0,.4));
+  --shadow-sheet:0 18px 60px light-dark(rgba(25,25,27,.14),rgba(0,0,0,.65)),0 2px 6px light-dark(rgba(25,25,27,.06),rgba(0,0,0,.4));
+  --shadow-hover:0 6px 18px light-dark(rgba(25,25,27,.10),rgba(0,0,0,.55));
+  --shadow-menu:0 12px 34px light-dark(rgba(25,25,27,.12),rgba(0,0,0,.6));
+  --knob-shadow:0 1px 3px light-dark(rgba(0,0,0,.18),rgba(0,0,0,.6));
   --ask-dock-clearance:96px;
-  /* Ask Worca launcher pill: the "thinking" wave painted on .ask-pill.is-live::before.
-     Pastel tints that only ever show through that glow. No status family fits, and
-     restating a family hex would double it (test/ui-theme.test.mjs), so three new
-     literals; the ask section itself spends only the tokens. */
-  --ask-wave-pink:#F6A9DC; --ask-wave-violet:#B8A6FF; --ask-wave-lilac:#CDA2F2;
 
   --sans:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
 }
+:root[data-theme="light"]{color-scheme:light;}
+:root[data-theme="dark"]{color-scheme:dark;}
+/* Paper is white: a forced dark scheme would print light ink on it. (@media print
+   is a medium query, not a scheme query — D5 holds.) */
+@media print{:root{color-scheme:light;}}
 
 /* ---------- base reset ---------- */
 *{box-sizing:border-box;}
@@ -1871,20 +1900,20 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* ---------- History detail: Diff tab ---------- */
 .hd-diff{display:grid;grid-template-columns:minmax(280px,340px) 1fr;gap:18px;align-items:start;}
 .hd-diff{
-  --hd-count-add:#176B4D;
-  --hd-count-del:#B31D28;
+  --hd-count-add:light-dark(#176B4D,#6CCB93);
+  --hd-count-del:light-dark(#B31D28,#F0868E);
 }
 .hd-diff .diff-add{color:var(--hd-count-add);}
 .hd-diff .diff-del{color:var(--hd-count-del);}
 @media (max-width:900px){.hd-diff{grid-template-columns:1fr;}}
 .hd-diff-list,.hd-diff-pane{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;}
 .hd-diff-pane,.ask-md{
-  --hd-syntax-comment:#5B6167;
-  --hd-syntax-keyword:#B31D28;
-  --hd-syntax-type:#9A3E00;
-  --hd-syntax-string:#176B4D;
-  --hd-syntax-literal:#713BB8;
-  --hd-syntax-title:#075C82;
+  --hd-syntax-comment:light-dark(#5B6167,#8B949E);
+  --hd-syntax-keyword:light-dark(#B31D28,#FF7B72);
+  --hd-syntax-type:light-dark(#9A3E00,#FFA657);
+  --hd-syntax-string:light-dark(#176B4D,#7EE787);
+  --hd-syntax-literal:light-dark(#713BB8,#D2A8FF);
+  --hd-syntax-title:light-dark(#075C82,#79C0FF);
 }
 .hd-diff-list-head,.hd-diff-pane-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
   padding:15px 18px;border-bottom:1px solid var(--line);font-size:12.5px;}

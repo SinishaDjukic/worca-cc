@@ -15,9 +15,12 @@ function ruleBody(selector) {
   return m ? m[1].replace(/\s+/g, ' ') : null;
 }
 
+const arms = (v) => { const m = /^light-dark\(([\s\S]*)\)$/.exec(v); if (!m) return null; let d = 0; const s = m[1];
+  for (let i = 0; i < s.length; i += 1) { if (s[i] === '(') d += 1; else if (s[i] === ')') d -= 1; else if (s[i] === ',' && d === 0) return [s.slice(0, i).trim(), s.slice(i + 1).trim()]; } return null; };
 const tokenValue = (name) => {
   const m = css.match(new RegExp(`--${name}\\s*:\\s*([^;]+);`));
-  return m ? m[1].trim().toLowerCase() : null;
+  if (!m) return null;
+  const a = arms(m[1].trim()); return (a ? a[0] : m[1].trim()).toLowerCase();
 };
 
 test('ui-ask-style: the dock is a fixed, click-through layer at z-40 with the rail arms', () => {
@@ -81,8 +84,8 @@ test('ui-ask-style: the FINAL reduced-motion block neutralises the dock', () => 
 
 test('ui-ask-style: the hljs variable block now feeds .ask-md too', () => {
   assert.match(css, /\.hd-diff-pane,\.ask-md\{\s*--hd-syntax-comment/, 'selector widened without restating hexes');
-  const count = (css.match(/--hd-syntax-comment:#/g) || []).length;
-  assert.equal(count, 1, 'the six syntax hexes still appear exactly once');
+  const count = (css.match(/--hd-syntax-comment:light-dark\(#/g) || []).length;
+  assert.equal(count, 1, 'the six syntax pairs still appear exactly once');
 });
 
 test('ui-ask-style: dots reuse wr-pulse; the pill and popovers are tokened', () => {

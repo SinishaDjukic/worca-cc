@@ -160,7 +160,7 @@ test('.run-ask-banner is an amber flex row whose [hidden] beats the author displ
     const m = css.match(new RegExp('(?:^|[\\s,}])' + escaped + '\\s*\\{([^}]*)\\}'));
     return m ? m[1] : null;
   };
-  assert.match(ruleBody(':root'), /--amber-wash:\s*#FEF7EC/i,
+  assert.match(ruleBody(':root'), /--amber-wash:\s*light-dark\(#FEF7EC,/i,
     'C3: this task owns the --amber-wash declaration');
   const body = ruleBody('.run-ask-banner');
   assert.ok(body, '.run-ask-banner rule missing');
