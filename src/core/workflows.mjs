@@ -28,6 +28,7 @@ import { classifyLoops } from '../shared/graph/loops.mjs';
 import { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, AUTO_WORKFLOW_STUB } from './graph/builtin-workflows.mjs';
 export { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID };
 import { registryPortsFn } from './graph/registry-ports.mjs';
+import { parseFrontmatter } from './frontmatter.mjs';
 
 /**
  * Default feedback cycle count when run-config does not override it. Matches the
@@ -70,20 +71,7 @@ export async function loadAgentFile(agentsDir, agentFile, agentPath = null) {
   } catch {
     return { prompt: '', tools: [] };
   }
-  return { prompt: text, tools: parseFrontmatterTools(text) };
-}
-
-/** Extract a comma-separated `tools:` list from leading --- YAML frontmatter. */
-function parseFrontmatterTools(text) {
-  const m = /^---\s*\n([\s\S]*?)\n---/.exec(text);
-  if (!m) return [];
-  const line = m[1].split(/\r?\n/).find((l) => /^tools\s*:/.test(l));
-  if (!line) return [];
-  return line
-    .replace(/^tools\s*:/, '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  return { prompt: text, tools: parseFrontmatter(text)?.tools ?? [] };
 }
 
 /**
@@ -554,7 +542,7 @@ export async function deleteWorkflow(id) {
  * @param {string} workflowId
  * @param {Record<string,object>} registry  loadAgentRegistry() output
  * @param {string} [agentsDir]  override for tests; defaults to ../../agents
- * @param {{ isWorkspace?: boolean }} [opts]  workspace-mode resolve options
+ * @param {{ isWorkspace?: boolean, overlay?: {nodes?: object, wires?: object}, ignoreProjectOverrides?: boolean }} [opts]  workspace-mode resolve options
  * @returns {Promise<object>} ExecutablePlan
  * @throws {Error} when the workflow id is unknown, or a node resolves the off-pipeline scanner
  */
@@ -609,12 +597,27 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   const reg = registry && typeof registry === 'object' ? registry : {};
   const isWorkspace = !!opts.isWorkspace;
   const variants = isWorkspace ? workspaceVariants(reg) : {};
-  const { nodes: nodeCfg, wires: wireCfg } = await resolveRunConfig(projectDir, workflowId);
+  // Per-project overlays. An Auto run owns its tuning (spec D7/D9): with
+  // `ignoreProjectOverrides` every per-project layer is skipped and `overlay`
+  // (the proposal the user accepted) is the ONLY overlay. Otherwise `overlay`
+  // merges PER NODE / PER WIRE over the project layer.
+  const ignore = !!opts.ignoreProjectOverrides;
+  const runCfg = ignore ? { nodes: {}, wires: {} } : await resolveRunConfig(projectDir, workflowId);
+  const over = opts.overlay && typeof opts.overlay === 'object' ? opts.overlay : {};
+  const mergeMaps = (base, extra) => {
+    const out = { ...base };
+    for (const [id, sel] of Object.entries(extra && typeof extra === 'object' ? extra : {})) {
+      if (sel && typeof sel === 'object') out[id] = { ...(out[id] || {}), ...sel };
+    }
+    return out;
+  };
+  const nodeCfg = mergeMaps(runCfg.nodes, over.nodes);
+  const wireCfg = mergeMaps(runCfg.wires, over.wires);
   // The legacy per-role layer is the Default workflow's storage only (saved rows
   // use nodeCfg); it is addressed by agent KEY, never by node id.
   // A defaults-only global export passes projectDir=null and must not touch the config
   // store (projectKey(null) throws); its legacy per-role layer is empty by definition.
-  const stepsCfg = (workflowId === GRAPH_DEFAULT_WORKFLOW.id && projectDir) ? (await readConfig(projectDir)).steps : {};
+  const stepsCfg = (!ignore && workflowId === GRAPH_DEFAULT_WORKFLOW.id && projectDir) ? (await readConfig(projectDir)).steps : {};
   const firstDefined = (...vals) => vals.find((v) => v !== undefined);
 
   const nodes = {};

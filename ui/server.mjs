@@ -46,6 +46,7 @@ import {
   titleModel as storedTitleModel, setTitleModel, assertTitleModelInput,
   hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput,
   theme as storedTheme, setTheme, assertThemeInput,
+  autoWorkflowModel as storedAutoWorkflowModel, setAutoWorkflowModel, assertAutoWorkflowModelInput,
 } from '../src/core/settings.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
 import {
@@ -91,7 +92,7 @@ import { listFolders } from '../src/core/fs-browse.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, agentSteps, EFFORTS, catalogHasModel,
-  readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, resetWorkflowConfig,
+  readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, setHumanInLoop, resetWorkflowConfig,
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
@@ -107,7 +108,7 @@ import {
   writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
 } from '../src/core/guardrail-store.mjs';
 import {
-  GRAPH_DEFAULT_WORKFLOW, listWorkflows, deleteWorkflow, isSafeWorkflowId,
+  GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, listWorkflows, deleteWorkflow, isSafeWorkflowId,
   setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow,
 } from '../src/core/workflows.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
@@ -160,6 +161,7 @@ import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs'
 import { normalizeManifest, validatePluginDir, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
 import { listTaskSources, retryWriteback } from '../src/core/sources.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
+import { resolveAutoModel, AUTO_MODEL_ENV } from '../src/core/auto/model.mjs';
 import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
@@ -1214,6 +1216,15 @@ app.post('/api/run', async (req, res) => {
       return badRequest(res, err && err.message ? err.message : String(err));
     }
 
+    // Auto workflow (spec D19): project targets only in v1. Before the workspace lookup,
+    // so an Auto request for ANY workspace id answers 400, never 404.
+    if (workflowId === AUTO_WORKFLOW_ID && hasWorkspace) {
+      return badRequest(res, 'Auto workflow is not available for workspace targets yet');
+    }
+    // Human in the loop (spec D15): the body wins, else the project's stored
+    // switch, else on. Resolved per target below (it needs the project dir).
+    const bodyHumanInLoop = typeof body.humanInLoop === 'boolean' ? body.humanInLoop : null;
+
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
     // Absent/blank/null normalizes to 'permissive' — the empty policy,
@@ -1360,6 +1371,8 @@ app.post('/api/run', async (req, res) => {
       const fileProblem = await promptFileProblem(effectiveSource, projectDir);
       if (fileProblem) return badRequest(res, fileProblem);
 
+      const humanInLoop = bodyHumanInLoop ?? ((await readRunConfig(projectDir)).humanInLoop !== false);
+
       orch = await createOrchestratorFor({
         projectDir,
         prompt: effectivePrompt,
@@ -1371,6 +1384,7 @@ app.post('/api/run', async (req, res) => {
         template: workflowRow,
         guardrailsId,
         branch,
+        humanInLoop,
         claude: { permissionMode: 'acceptEdits', mock },
       });
 
@@ -2851,6 +2865,18 @@ const settingsState = () => ({
   theme: storedTheme(),                                   // system | light | dark (dark-mode design §6)
 });
 
+/** Settings ▸ Auto workflow model: the stored id + what the classifier will actually use
+ *  (env override > stored catalog id > the Sonnet-class default). Async because the
+ *  catalog is. */
+async function autoModelState() {
+  const models = await listModels('');
+  const stored = storedAutoWorkflowModel();
+  const model = resolveAutoModel(models, { setting: stored });
+  const source = process.env[AUTO_MODEL_ENV]?.trim() ? 'env'
+    : (stored && model.toLowerCase() === stored.toLowerCase()) ? 'settings' : 'default';
+  return { autoWorkflowModel: stored, autoWorkflowModelEffective: { model, source } };
+}
+
 // ---------------------------------------------------------------------------
 // Instance lifecycle (`worca ui status|stop|restart`, src/core/ui-instance.mjs)
 // ---------------------------------------------------------------------------
@@ -2894,8 +2920,8 @@ app.post('/api/shutdown', (req, res) => {
   setImmediate(() => uiControl.onShutdown('request'));
 });
 
-app.get('/api/settings', (_req, res) => {
-  res.json({ ...settingsState(), chat: chatPrefs(), app: APP_INFO });
+app.get('/api/settings', async (_req, res) => {
+  res.json({ ...settingsState(), ...(await autoModelState()), chat: chatPrefs(), app: APP_INFO });
 });
 
 app.get('/api/budget', (_req, res) => {
@@ -2911,6 +2937,8 @@ app.post('/api/settings', async (req, res) => {
   const hasTitleModelKey = has('titleModel');
   const hasHideBuiltinKey = has('hideBuiltinModels');
   const hasThemeKey = has('theme');
+  const hasAutoKey = has('autoWorkflowModel');
+  const autoModels = hasAutoKey ? await listModels('') : null;
   // #422: the title model is a SELECT over the catalog, so an id that is not a
   // catalog member is a client bug (or a stale option) — refuse it here rather
   // than store an id resolveModelEnv could never route.
@@ -2944,6 +2972,7 @@ app.post('/api/settings', async (req, res) => {
     }
     if (hasHideBuiltinKey) assertHideBuiltinModelsInput(body.hideBuiltinModels);
     if (hasThemeKey) assertThemeInput(body.theme);
+    if (hasAutoKey) assertAutoWorkflowModelInput(body.autoWorkflowModel ?? '', autoModels);
     // Root first: it is the one key whose setter can still fail AFTER the asserts
     // above (an unusable path), so every other key's write must come after it or
     // a mixed POST would answer 400 with those keys already applied on disk.
@@ -2965,11 +2994,12 @@ app.post('/api/settings', async (req, res) => {
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
     if (hasThemeKey) await setTheme(body.theme);
+    if (hasAutoKey) await setAutoWorkflowModel(body.autoWorkflowModel ?? '', { models: autoModels });
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey) emitChanged('settings-changed');
-    res.json({ ...settingsState(), chat: chatPrefs() });
+    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasAutoKey) emitChanged('settings-changed');
+    res.json({ ...settingsState(), ...(await autoModelState()), chat: chatPrefs() });
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).
     return badRequest(res, err && err.message ? err.message : String(err));
@@ -3048,7 +3078,7 @@ app.post('/api/config', async (req, res) => {
 // validates model/effort against the effective catalog exactly like setStep
 // (configurable-models-design.md §4.5) -> 400; setFeedbackCycles still COERCES
 // maxCycles to >= 1 (it never throws).
-// body: { projectDir, workflowId, nodes?:{[id]:{model,effort}}, feedbacks?:{[id]:{maxCycles}}, wires?:{[wireId]:{maxCycles}}, activeWorkflowId? }
+// body: { projectDir, workflowId, nodes?:{[id]:{model,effort}}, feedbacks?:{[id]:{maxCycles}}, wires?:{[wireId]:{maxCycles}}, activeWorkflowId?, humanInLoop? }
 // ---------------------------------------------------------------------------
 app.patch('/api/config', async (req, res) => {
   const body = req.body || {};
@@ -3098,6 +3128,7 @@ app.patch('/api/config', async (req, res) => {
       if (!isSafeWorkflowId(active)) return badRequest(res, 'invalid workflowId');
       await setActiveWorkflow(projectDir, active);
     }
+    if (typeof body.humanInLoop === 'boolean') await setHumanInLoop(projectDir, body.humanInLoop);
     const config = await readRunConfig(projectDir);
     res.json({ config });
   } catch (err) {

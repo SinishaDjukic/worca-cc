@@ -146,3 +146,35 @@ export function formatRunSummary(state) {
   }));
   return lines;
 }
+
+/**
+ * The interactive Auto proposal (spec §9): what the question panel shows in the
+ * browser, as text. Pure — the payload is `question.workflow` (auto/proposal.mjs).
+ * Stages follow the proposal's DISPATCH `order` (a reused composer row's node order
+ * is arbitrary); every model/plugin-authored string in the payload was cleaned by
+ * the assembler (single line, no control characters), so it is safe to print.
+ * @param {object} w the proposal
+ * @returns {string[]} lines
+ */
+export function formatWorkflowProposal(w) {
+  const p = w && typeof w === 'object' ? w : {};
+  const where = p.match
+    ? `(same shape as your saved workflow "${p.match.name}" — Accept reuses it)`
+    : `(no saved workflow has this shape — Accept saves it as "${p.name ?? ''}")`;
+  const lines = [`? Auto proposes a workflow · round ${p.round || 1}  ${where}`];
+  if (p.reasoning) lines.push(`  ${p.reasoning}`);
+  const nodes = p.manifest?.graph?.nodes || [];
+  const wires = p.manifest?.graph?.wires || [];
+  const agents = nodes.filter((n) => n.kind === 'agent');
+  const ordered = Array.isArray(p.order) && p.order.length
+    ? p.order.map((id) => agents.find((n) => n.id === id)).filter(Boolean)
+    : agents;
+  const labelOf = (id) => nodes.find((n) => n.id === id)?.label || id;
+  const tune = (n) => [n.model, n.effort].filter(Boolean).join(' · ');
+  lines.push(`  stages: ${ordered.map((n) => `${n.label || n.key}${tune(n) ? ` (${tune(n)})` : ''}${n.fanOut ? ' ⤴' : ''}`).join(' → ')}`);
+  for (const l of wires.filter((x) => x.loop)) lines.push(`  loop: ${labelOf(l.from.node)} → ${labelOf(l.to.node)} (max ${l.maxCycles} cycles)`);
+  if (p.ignoredProjectOverrides) lines.push('  note: this project\'s saved settings for that workflow are not applied to Auto runs');
+  for (const msg of p.warnings || []) lines.push(`  ! ${msg}`);
+  if (Number(p.costUsd) > 0) lines.push(`  classifier cost so far: $${Number(p.costUsd).toFixed(2)}`);
+  return lines;
+}

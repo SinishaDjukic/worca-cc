@@ -27,7 +27,7 @@ import {
   normalizeProjectPath,
 } from '../core/projects.mjs';
 import { projectKey } from '../core/store.mjs';
-import { formatExecLine, formatGateHeader, formatRunSummary } from './render.mjs';
+import { formatExecLine, formatGateHeader, formatRunSummary, formatWorkflowProposal } from './render.mjs';
 import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
 import { effectiveDebugSpawn } from '../core/settings.mjs';
 import {
@@ -141,6 +141,10 @@ function parseArgs(argv) {
       out.auto = true;
       continue;
     }
+    if (arg === '--no-human') {
+      out.humanInLoop = false;
+      continue;
+    }
     if (arg === '--ui') {
       out.ui = true;
       continue;
@@ -240,6 +244,8 @@ Options:
   --permission-mode <m>    Claude permission mode: default | acceptEdits | plan |
                            bypassPermissions (default acceptEdits)
   --workflow <id>          Saved pipeline template to run (default: wf_default — the built-in graph)
+                           auto (= wf_auto) lets worca pick the workflow per task
+  --no-human               Auto workflow only: no proposal, no clarify, no agent questions
   --source-branch <name>   Branch to fork the per-run worktree from (default: current HEAD)
   --branch <name>          Feature branch name (default: claude proposes one)
   --mock                   Offline mock mode (no claude, no tokens)
@@ -383,6 +389,27 @@ async function askRecovery(rl, recovery) {
     else if (/^(pause|abort)/i.test(raw)) decision = options.find((o) => o.id !== 'retry')?.id || 'pause';
   }
   return { decision };
+}
+
+/**
+ * Ask the Auto workflow proposal (spec §9). Empty input accepts, `r` reads one line of
+ * revise text, `c` cancels the run. Returns the `workflow` answer payload.
+ */
+async function askWorkflow(rl, workflow) {
+  out('');
+  for (const line of formatWorkflowProposal(workflow)) out(c('yellow', line));
+  out('  a) Accept and run');
+  out('  r) Revise — describe what to change');
+  out('  c) Cancel the run');
+  for (;;) {
+    const raw = (await question(rl, c('cyan', 'Choose [a/r/c]: '))).trim().toLowerCase();
+    if (raw === '' || raw === 'a' || raw === 'accept') return { decision: 'accept' };
+    if (raw === 'c' || raw === 'cancel') return { decision: 'cancel' };
+    if (raw === 'r' || raw === 'revise') {
+      const text = (await question(rl, c('cyan', 'What should change? '))).trim();
+      if (text) return { decision: 'revise', text };
+    }
+  }
 }
 
 // ── shared drive loop ────────────────────────────────────────────────────────────
@@ -536,6 +563,9 @@ async function attachAndDrive(orch, flags, start) {
       } else if (kind === 'recovery') {
         const payload = await askRecovery(rl, recovery);
         orch.answer(id, payload);
+      } else if (kind === 'workflow') {
+        const answer = await askWorkflow(rl, payload.workflow);
+        orch.answer(id, answer);
       } else if (kind === 'questions') {
         out(c('yellow', c('bold', `${agent || 'Agent'} has questions:`)));
         const payload = await askClarify(rl, questions || []);
@@ -2151,6 +2181,11 @@ async function main() {
   // Validate --workflow before spawning anything: an unknown or archived template
   // must fail with one line, not a stack trace half-way through a run. The read row
   // doubles as createOrchestratorFor's routing hint (it skips a second row read).
+  // `--workflow auto` is the Auto entry (spec D15); `--no-human` means nothing elsewhere.
+  if (flags.workflow === 'auto') flags.workflow = 'wf_auto';
+  if (flags.humanInLoop === false && flags.workflow !== 'wf_auto') {
+    out(c('yellow', '--no-human only affects the Auto workflow (--workflow auto); ignored for this run.'));
+  }
   let row;
   if (flags.workflow) {
     const { assertRunnableWorkflow } = await import('../core/workflows.mjs');
@@ -2173,6 +2208,7 @@ async function main() {
       mock: flags.mock,
     },
     auto: flags.auto,
+    humanInLoop: flags.humanInLoop === false ? false : undefined,
   });
 
   out(c('bold', `orchestrator — project: ${projectDir}`));

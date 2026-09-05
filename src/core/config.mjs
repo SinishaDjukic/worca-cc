@@ -14,6 +14,7 @@
 
 import { getDb, prepare, tx } from './db.mjs';
 import { projectKey } from './store.mjs';
+import { AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
 import { EFFORTS, prepareModelEnv, withTierModelEnv, isSubagentModelValue, subagentModelIssue } from './model-env.mjs';
 import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels } from './settings.mjs';
@@ -136,7 +137,7 @@ function parseJson(text, fallback) {
 function readConfigRow(key) {
   getDb();
   return prepare(
-    'SELECT steps, custom_models, active_workflow_id, extra FROM project_config WHERE project_key = ?'
+    'SELECT steps, custom_models, active_workflow_id, extra, human_in_loop FROM project_config WHERE project_key = ?'
   ).get(key) || null;
 }
 
@@ -842,7 +843,13 @@ export async function readRunConfig(projectDir) {
     if (k !== 'webUiTesting' && !(k in out)) out[k] = v;
   }
   const active = row && typeof row.active_workflow_id === 'string' ? row.active_workflow_id.trim() : '';
-  if (active) out.activeWorkflowId = active;
+  // Spec §6.1 / D16: a project with no remembered New-pipeline choice starts on Auto.
+  out.activeWorkflowId = active || AUTO_WORKFLOW_ID;
+  // Auto workflow (spec §6.1): the human-in-the-loop switch. ON is the default
+  // and is NOT echoed — the key appears only when the project turned it off, so
+  // every consumer reads `config.humanInLoop ?? true` and the config shape of a
+  // project that never touched it stays otherwise byte-identical.
+  if (row && row.human_in_loop === 0) out.humanInLoop = false;
   return out;
 }
 
@@ -1007,6 +1014,23 @@ export async function setActiveWorkflow(projectDir, workflowId) {
       VALUES (?, '{}', '[]', ?, '{}')
       ON CONFLICT(project_key) DO UPDATE SET active_workflow_id = excluded.active_workflow_id
     `).run(key, active);
+  });
+}
+
+/**
+ * Set the project's human-in-the-loop switch for Auto runs (spec D15/D20).
+ * @param {string} projectDir
+ * @param {boolean} value
+ */
+export async function setHumanInLoop(projectDir, value) {
+  const key = projectKey(projectDir);
+  const v = value === false ? 0 : 1;
+  tx(() => {
+    prepare(`
+      INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra, human_in_loop)
+      VALUES (?, '{}', '[]', NULL, '{}', ?)
+      ON CONFLICT(project_key) DO UPDATE SET human_in_loop = excluded.human_in_loop
+    `).run(key, v);
   });
 }
 

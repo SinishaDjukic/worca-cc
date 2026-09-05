@@ -545,6 +545,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'debugSpawnEnabled',
   'titleModel', 'hideBuiltinModels',
   'theme',
+  'autoWorkflowModel',                       // auto-workflow spec D14
 ]);
 
 // ── Title-generation model + hidden built-ins (#422) ─────────────────────────
@@ -638,6 +639,41 @@ export async function setTheme(input) {
   else settings.theme = input;
   await persistSettings(settings);
   return { theme: theme() };
+}
+
+// ── Auto workflow classifier model (auto-workflow spec D14) ─────────────────
+// '' = unset: the runtime resolves a default from the catalog
+// (src/core/auto/model.mjs). Read at use time like every other stored setting.
+
+/** The configured classifier model id, or '' when unset. */
+export function autoWorkflowModel() {
+  const v = readSettings().autoWorkflowModel;
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+/**
+ * Validate a POST value. With `models` (the effective catalog) the id must name an
+ * entry and comes back in the catalog's casing; without it the id is returned as
+ * given (CLI, tests). Empty/null/undefined means "clear".
+ * @returns {string|null} the canonical id to store, null to clear
+ * @throws {Error} on a non-string or an id the catalog does not carry
+ */
+export function assertAutoWorkflowModelInput(input, models = null) {
+  if (input === '' || input === null || input === undefined) return null;
+  if (typeof input !== 'string' || !input.trim()) throw new Error('autoWorkflowModel must be a catalog model id');
+  const id = input.trim();
+  if (!Array.isArray(models)) return id;
+  const hit = models.find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === id.toLowerCase());
+  if (!hit) throw new Error(`unknown model "${id}" — add it to the catalog first`);
+  return hit.id;
+}
+
+export async function setAutoWorkflowModel(input, { models = null } = {}) {
+  const id = assertAutoWorkflowModelInput(input, models);
+  const settings = readSettings();
+  if (id === null) delete settings.autoWorkflowModel; else settings.autoWorkflowModel = id;
+  await persistSettings(settings);
+  return { autoWorkflowModel: autoWorkflowModel() };
 }
 
 // ── Spawn-debug diagnostics toggle (the stored side of WORCA_DEBUG_SPAWN) ────

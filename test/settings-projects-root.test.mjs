@@ -311,9 +311,10 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
     const j = await getApi();
     // `app` = static identity for the Settings ▸ About card (version, repo URL,
     // release-tag URL — read from package.json). GET-only: POST still echoes settingsState() + chat.
-    assert.deepEqual(Object.keys(j).sort(), ['app', 'askMaxBudgetUsd', 'askMaxTurns', 'chat', 'costLimitResetPeriod',
+    assert.deepEqual(Object.keys(j).sort(), ['app', 'askMaxBudgetUsd', 'askMaxTurns', 'autoWorkflowModel', 'autoWorkflowModelEffective', 'chat', 'costLimitResetPeriod',
       'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'hideBuiltinModels', 'pipelineCostLimitUsd', 'projectsRoot', 'projectsRootDefault', 'root',
       'theme', 'titleModel', 'titleModelEffective', 'totalCostLimitUsd']);
+    assert.equal(j.autoWorkflowModel, '', 'no classifier model stored -> the catalog default applies');
     assert.equal(j.titleModel, null, 'no title model stored -> the run\'s model');
     assert.deepEqual(j.titleModelEffective, { model: null, source: 'run', stale: null });
     assert.equal(j.hideBuiltinModels, false);
