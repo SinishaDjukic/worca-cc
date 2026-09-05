@@ -72,6 +72,20 @@ export function createThinkingOrb({ doc, win, size = 28.5, ink = '25,25,27' }) {
     else cv.remove();
   }
 
+  // The ink follows the theme (spec D16): the resolved body colour is the --ink
+  // token in whatever scheme is active. Read on every start() and on the theme
+  // event app.js dispatches; keep the previous value whenever nothing parses
+  // (jsdom, a keyword, no stylesheet).
+  let inkRgb = ink;
+  function refreshInk() {
+    try {
+      const c = win.getComputedStyle ? win.getComputedStyle(doc.body).color : '';
+      const m = /^rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(c || '');
+      if (m) inkRgb = `${m[1]},${m[2]},${m[3]}`;
+    } catch { /* keep inkRgb */ }
+  }
+  if (typeof doc.addEventListener === 'function') doc.addEventListener('worca:theme', refreshInk);
+
   const pts = orbPoints();
   const R = size * 0.40;
   const c = size / 2;
@@ -91,12 +105,13 @@ export function createThinkingOrb({ doc, win, size = 28.5, ink = '25,25,27' }) {
       const d = (z + 1) / 2;                       // 0 back … 1 front
       ctx.beginPath();
       ctx.arc(c + x * R, c - y * R, 0.5 + d * 1.05, 0, 6.2832);
-      ctx.fillStyle = `rgba(${ink},${(0.08 + d * 0.82).toFixed(3)})`;
+      ctx.fillStyle = `rgba(${inkRgb},${(0.08 + d * 0.82).toFixed(3)})`;
       ctx.fill();
     }
   }
 
   function start() {
+    refreshInk();
     if (handle != null || !ctx || !raf) return;
     handle = raf(draw);
   }
@@ -106,5 +121,5 @@ export function createThinkingOrb({ doc, win, size = 28.5, ink = '25,25,27' }) {
   }
 
   start();
-  return { el, start, stop };
+  return { el, start, stop, ink: () => inkRgb };
 }

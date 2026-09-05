@@ -864,7 +864,7 @@ async function ensureAgentMeta(onReady) {
 }
 
 // The palette the graph cards and the frozen-v1 chip strip read for --c.
-const COMPOSER_COLORS = { green: '#5BAE5B', peach: '#EFA63C', red: '#E76A5A', blue: '#5BA6CC', violet: '#8C7FD6', amber: '#E6962A' };
+const COMPOSER_COLORS = { green: 'var(--green)', peach: 'var(--peach)', red: 'var(--red)', blue: 'var(--blue)', violet: 'var(--violet)', amber: 'var(--amber)' };
 
 // Pick the manifest to render. A v2 run always carries one; a run with no
 // manifest at all (pre-stepper history) renders NOTHING rather than the v1
@@ -15064,7 +15064,7 @@ function paintLegacyStrip(host, manifest, steps) {
     const el = document.createElement('span');
     el.className = `rchip is-${chip.status}`;
     el.dataset.id = chip.id;
-    if (chip.color) el.style.setProperty('--c', COMPOSER_COLORS[chip.color] || '#ccc');
+    if (chip.color) el.style.setProperty('--c', COMPOSER_COLORS[chip.color] || 'var(--ink-3)');
     el.textContent = chip.text;
     strip.appendChild(el);
   }
