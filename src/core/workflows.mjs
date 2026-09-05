@@ -25,8 +25,8 @@ import { DEFAULT_AGENTS_DIR, loadAgentRegistry } from './agent-registry.mjs'; //
 import { readPluginsLock } from './plugins-lock.mjs';                 // a DISABLED plugin's rows are hidden
 import { validateGraph, formatIssue, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
-import { GRAPH_DEFAULT_WORKFLOW } from './graph/builtin-workflows.mjs';
-export { GRAPH_DEFAULT_WORKFLOW };
+import { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, AUTO_WORKFLOW_STUB } from './graph/builtin-workflows.mjs';
+export { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID };
 import { registryPortsFn } from './graph/registry-ports.mjs';
 
 /**
@@ -310,16 +310,18 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   // The ONE reserved id is the built-in default's; a save may never claim it,
   // so it falls back to the slug.
   const asked = tpl && typeof tpl.id === 'string' ? tpl.id.trim() : '';
-  const minted = !(asked && isSafeWorkflowId(asked) && asked !== GRAPH_DEFAULT_WORKFLOW.id);
+  const reserved = (id) => id === GRAPH_DEFAULT_WORKFLOW.id || id === AUTO_WORKFLOW_ID;
+  const minted = !(asked && isSafeWorkflowId(asked) && !reserved(asked));
   const id = minted ? `wf_${slugify(name)}` : asked;
   // C-3: the fallback re-mints the reserved id for ANY name slugging to
   // "default" ('Default', ' dEfAuLt ', 'default!!', 'Défault'…). That row is
   // filtered out of listWorkflows(), short-circuited past by readWorkflow() and
   // refused by DELETE — the user's pipeline would vanish behind a 201. Refuse
   // the WRITE instead; only the name is wrong, so the caller can rename.
-  if (id === GRAPH_DEFAULT_WORKFLOW.id) {
+  if (reserved(id)) {
+    const which = id === AUTO_WORKFLOW_ID ? AUTO_WORKFLOW_NAME : GRAPH_DEFAULT_WORKFLOW.name;
     throw Object.assign(
-      new Error(`the name "${GRAPH_DEFAULT_WORKFLOW.name}" is reserved — choose another name`),
+      new Error(`the name "${which}" is reserved — choose another name`),
       { code: 'RESERVED_NAME' });
   }
   const domain = normDomain(tpl && tpl.domain);
@@ -370,6 +372,7 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
 export async function readWorkflow(id, opts = {}) {
   // `wf_default` IS the graph: the v1 default died with the v1 engine.
   if (id === GRAPH_DEFAULT_WORKFLOW.id) return GRAPH_DEFAULT_WORKFLOW;
+  if (id === AUTO_WORKFLOW_ID) return AUTO_WORKFLOW_STUB;
   return readRaw(id, opts);
 }
 
@@ -400,7 +403,7 @@ export async function listWorkflows({ includeArchived = false, includeDisabled =
   const rows = prepare(`SELECT ${ROW_COLS} FROM workflows ${where} ORDER BY created_at DESC, id`).all();
   const lock = includeDisabled ? null : readPluginsLock();
   return rows
-    .filter((r) => r.id !== GRAPH_DEFAULT_WORKFLOW.id)
+    .filter((r) => r.id !== GRAPH_DEFAULT_WORKFLOW.id && r.id !== AUTO_WORKFLOW_ID)
     .filter((r) => includeDisabled || !pluginDisabled(r.origin, lock))
     .map(rowToTpl);
 }
@@ -437,6 +440,8 @@ function assertValidGraph(tpl, registry) {
  */
 export async function assertRunnableWorkflow(id, { registry, checkGraph = true } = {}) {
   const wanted = typeof id === 'string' && id.trim() ? id.trim() : GRAPH_DEFAULT_WORKFLOW.id;
+  // The Auto entry has no graph to check: the run decides one (spec §5.1).
+  if (wanted === AUTO_WORKFLOW_ID) return AUTO_WORKFLOW_STUB;
   const live = await readWorkflow(wanted);
   if (live) {
     // A disabled plugin's template is neither runnable nor openable: its agents
@@ -523,6 +528,7 @@ export async function setWorkflowNodeDefaults(id, map) {
  */
 export async function deleteWorkflow(id) {
   if (id === GRAPH_DEFAULT_WORKFLOW.id) return false; // built-in default is undeletable
+  if (id === AUTO_WORKFLOW_ID) return false;    // never a row
   if (!isSafeWorkflowId(id)) return false;      // SECURITY: reject unsafe ids
   getDb();
   let changed = 0;
@@ -591,6 +597,9 @@ export function workspaceVariants(registry) {
  * @throws {Error} unknown workflow, a v1 row, an unknown/un-ported/unplaceable agent
  */
 export async function resolveGraph(projectDir, workflowId, registry, agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
+  if (workflowId === AUTO_WORKFLOW_ID) {
+    throw new Error('the Auto workflow is decided per run — resolveGraph needs the adopted workflow id');
+  }
   const stored = await readWorkflow(workflowId);
   if (!stored) throw new Error(`unknown workflowId "${workflowId}"`);
   if (stored.version !== 2) throw new Error('template is not a graph — runs on the v1 engine');

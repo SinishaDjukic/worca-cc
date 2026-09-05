@@ -379,6 +379,7 @@ function deriveNodeIo(graph, tnode, nodeKey, { cycle = 1, channelDefs } = {}) {
 async function buildExportSet({ workflowId, destination, projectDir, slug, includeAgents = true, repoRoot }) {
   const tpl = await readWorkflow(workflowId);
   if (!tpl) throw err(`workflow not found: ${workflowId}`, 'NOT_FOUND');
+  if (tpl.auto) throw err('the Auto entry has no graph to export — it is decided per run', 'UNSUPPORTED');
 
   const dest = resolveDest({ destination, projectDir });
   const finalSlug = assertName(slug || slugify(tpl.name).slice(0, 48) || 'workflow', 'slug');
