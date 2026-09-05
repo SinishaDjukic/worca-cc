@@ -21,6 +21,26 @@ bottom](screenshots/architecture.png)
   talks to the Anthropic cloud, a gateway/proxy, an on-prem or dev-machine
   endpoint, or Bedrock/Vertex. See the README's Models section.
 
+### Auto workflow
+
+`wf_auto` is a reserved id, never a row. A run started on it gets a bootstrap
+manifest (`auto.status: 'deciding'`), and once the run row and run root exist the
+orchestrator's `_decideTopology()` hook runs the decision loop: one classifier
+call (`src/core/auto/classify.mjs`, no tools) whose agent vocabulary is built from
+every registry entry's sidecar meta plus the agent file's YAML front matter
+(`src/core/frontmatter.mjs` — never the agent body) returns a small *shape*; the
+shared assembler (`src/shared/graph/assemble.mjs`) turns it into a validated v2
+template (it also owns two scheduler-safety rules: `awaitAll` on a parallel
+group's successor and `LOOP_INTO_GROUP`); the matcher (`src/core/auto/match.mjs`)
+reuses an exact-topology twin among the Default, the seeds and every saved row
+(oldest first); the proposal goes to the user through the ordinary question
+channel (`kind: 'workflow'`, kept pending on a malformed answer) unless *human in
+the loop* is off; on accept the run adopts the graph (a new row with `origin:
+'auto'` when nothing matched) and continues exactly like a saved workflow. A
+classifier or assembler failure is rethrown into the shell's failure policy
+(`reason: 'error'`); a pause before the decision keeps the decision state in the
+resume point, and `resume()` re-enters the loop BEFORE the setup replay.
+
 Deep dives: [Guardrails](guardrails.md) · [Storage](storage.md)
 
 <!--

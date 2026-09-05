@@ -19,6 +19,19 @@ Claude Code — all running the same engine. See the
 
 ## How a run works
 
+Pick **Auto** (`--workflow auto` on the CLI; the web picker's Auto entry ships with
+the UI update) and worca picks the workflow for you: it classifies the task (a
+free-form prompt, a partial plan, or a complete plan; web feature or not; trivial or
+large) from the task text, the attached files and a small offline fingerprint of the
+repository, knowing every agent by its metadata and the front matter of its agent
+file (never the agent's full instructions), assembles a matching workflow from those
+agents, reuses a saved workflow when one has exactly that shape — otherwise the
+proposal is saved as a new workflow when you accept it — and, with *Human in the
+loop* on, shows you the proposal first so you can accept it, ask for changes in plain
+text, or cancel. Turn the switch off and the run decides on its own, asks no
+questions, and never stops for you. Pick any saved workflow instead to skip all of
+this.
+
 1. **Clarify** — instead of assuming, the planner turns hidden decisions into
    multiple-choice questions (2–4 options plus free text). Your answers are
    appended to the plan so reviewers see them.
@@ -229,6 +242,12 @@ worca --project /path/to/your/project --prompt "Add a /search endpoint"
 
 # use a markdown brief as the prompt
 worca --project /path/to/your/project --file ./brief.md --title "Search feature"
+
+# let worca pick the workflow for the task (Auto), review the proposal first
+worca --project /path/to/your/project --prompt "Add a /search endpoint" --workflow auto
+
+# fully unattended Auto run: no proposal, no questions
+worca --project /path/to/your/project --prompt "Add a /search endpoint" --workflow auto --no-human
 
 # pause with Ctrl+C, continue later (survives restarts)
 worca resume <pipelineId>
