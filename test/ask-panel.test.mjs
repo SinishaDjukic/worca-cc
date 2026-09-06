@@ -2,6 +2,8 @@
 // popover primitive (spec §10.4, §10.6). No app boot; see the harness header.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { makePanel, key, pointerdown, pointer, sizeDock } from './helpers/ask-panel-harness.mjs';
 import { fmtStarted, shortcutLabel, ASK_SHEET_SIZE, chipPickerTop } from '../ui/public/ask-panel.mjs';
@@ -694,4 +696,11 @@ test('ask-panel: the chip picker prefers the space under the chip, flips above w
   assert.equal(chipPickerTop({ top: 20, bottom: 40, panelH: 640, sheetH: 669 }), 23, 'neither side fits ⇒ clamped into the sheet, where the panel scrolls itself');
   assert.equal(chipPickerTop({ top: 4, bottom: 8, panelH: 200, sheetH: 100 }), 0, 'never negative');
   assert.equal(chipPickerTop({ top: 0, bottom: 0, panelH: 0, sheetH: 0 }), 6, 'jsdom measures 0 everywhere: the plain anchor, no clamp');
+});
+
+test('ask-panel: bytesToBase64 is declared once — the composer upload and the card extras share one helper', () => {
+  // A second declaration in the same createAskPanel scope is legal and silently wins for
+  // EVERY caller, leaving the first dead and its callers on the redeclared body.
+  const src = readFileSync(fileURLToPath(new URL('../ui/public/ask-panel.mjs', import.meta.url)), 'utf8');
+  assert.equal((src.match(/function bytesToBase64\(/g) || []).length, 1);
 });

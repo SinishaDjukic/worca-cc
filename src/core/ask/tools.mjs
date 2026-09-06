@@ -330,6 +330,9 @@ export function createAskTools(deps) {
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('target project key'), workspaceId: SCHEMA.s('target workspace id'), workflowId: SCHEMA.s('workflow id (default wf_default)'),
         brief: SCHEMA.s('the full task description for the run (≤ 8000 chars)'), title: SCHEMA.s('short run title'), guardrailsId: SCHEMA.s('guardrail set id (default normal)'),
         sourceBranch: SCHEMA.s('branch to start from (default: current)'), featureBranch: SCHEMA.s('feature branch name'),
+        note: SCHEMA.s('one line shown on the card: why this workflow fits the work (≤ 200 chars)'),
+        attachmentIds: { type: 'array', items: { type: 'string' },
+          description: 'attachment ids of this conversation the run should receive as extra files — copied into the run\'s extras/ folder when the user starts it' },
         sourceBranchByKey: { type: 'object', description: 'workspace only: per-member source branch overrides keyed by project key', additionalProperties: { type: 'string' } },
         commentIds: { type: 'array', items: { type: 'string' },
           description: 'diff comment ids (dc_…) this run is meant to address. They are stamped with the run id once the user confirms the card AND the run actually starts; nothing is resolved.' } }, ['brief']) },
@@ -651,7 +654,8 @@ export function createAskTools(deps) {
         const pin = pinnedScope();
         if (pin) inp = { ...input, ...pin };
       }
-      const r = await deps.validateProposal(inp);
+      const attachments = typeof deps.listAttachments === 'function' ? (deps.listAttachments() || []) : [];
+      const r = await deps.validateProposal(inp, { attachments });
       // commentIds are a ONE-WAY hand-off: a comment cited here is stamped
       // "sent to #<runId>" the moment the user starts the run, and nothing ever
       // un-stamps it. Refuse ids from a different project/workspace than this

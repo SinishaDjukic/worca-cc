@@ -10,6 +10,9 @@ import { createThinkingOrb } from './thinking-orb.mjs';
 import { workflowPickerLabel } from './results-view.mjs';
 import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
+import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf } from './node-tunables.mjs';
+import { classifyLoops } from '../../src/shared/graph/loops.mjs';
+import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 
 /**
  * Cold-start pick, used ONLY until GET /api/ask/models resolves — and afterwards
@@ -1582,10 +1585,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (value != null && [...select.options].some((o) => o.value === value)) select.value = value;
   }
 
+  /** Returns the fill promise so a caller can re-read the select once the list lands. */
   function loadBranchesInto(select, projectDir, want) {
     fillSelect(select, [{ value: '', label: 'current branch (auto)' }], '');
-    if (!projectDir) return;
-    Promise.resolve()
+    if (!projectDir) return Promise.resolve();
+    return Promise.resolve()
       .then(() => fetch(`/api/branches?projectDir=${encodeURIComponent(projectDir)}`))
       .then((r) => (r && r.ok ? r.json() : null))
       .catch(() => null)
@@ -1598,6 +1602,244 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   function wsBasename(p) { return String(p || '').replace(/\/+$/, '').split('/').pop() || String(p || ''); }
+
+  // ---- Run proposal card v2 (spec 2026-09-06-ask-run-card-v2 §7.3) --------------------------------------------------
+  const RP_ACC = new Set(['violet', 'blue', 'green', 'peach', 'red', 'amber']);
+  function rpField(labelText, control, hint) {
+    const f = make('div', 'ask-rp-field');
+    const l = make('span', 'ask-rp-label', labelText);
+    if (hint) l.appendChild(make('span', 'ask-rp-hint', ` · ${hint}`));
+    f.append(l, control);
+    return f;
+  }
+  function rpSelect(className, ariaLabel) {
+    const s = doc.createElement('select');
+    s.className = className;
+    s.setAttribute('aria-label', ariaLabel);
+    return s;
+  }
+  /** "3 agents · 1 loop · Review → Implement, max 3 cycles" from a v2 template + registry (v1: agents only).
+   *  Loop wires and the cycle budget follow New Pipeline's buildGraphWireRows: classifyLoops decides what is a
+   *  loop (needs the registry's ported metas), runConfig.wires[id].maxCycles beats the template's config. */
+  function workflowDesc(wf, registry, runConfig) {
+    if (!wf) return '';
+    if (Array.isArray(wf.nodes)) {
+      const agents = wf.nodes.filter((n) => n && n.kind === 'agent');
+      const label = (id) => { const n = agents.find((a) => a.id === id); const m = n && registry && registry[n.key]; return (m && m.displayName) || (n && n.key) || id; };
+      const { loopWireIds } = classifyLoops(wf, portsFnFor(registry || {}));
+      const savedWires = (runConfig && runConfig.wires) || {};
+      const loops = (wf.wires || []).filter((w) => w && loopWireIds.has(w.id));
+      const parts = [`${agents.length} agent${agents.length === 1 ? '' : 's'}`, `${loops.length} loop${loops.length === 1 ? '' : 's'}`];
+      for (const w of loops) {
+        const n = Number((savedWires[w.id] || {}).maxCycles);
+        const cfg = Number(w.config && w.config.maxCycles);
+        const max = Number.isFinite(n) && n >= 1 ? n : (Number.isFinite(cfg) && cfg >= 1 ? cfg : 3);
+        parts.push(`${label(w.from.node)} → ${label(w.to.node)}, max ${max} cycles`);
+      }
+      return parts.join(' · ');
+    }
+    const n = (wf.steps || []).flat().length;
+    return `${n} agent${n === 1 ? '' : 's'}`;
+  }
+
+  async function fetchJsonOk(url) {
+    try { const r = await fetch(url); return r && r.ok ? await r.json() : null; } catch { return null; }
+  }
+  /** The lane's three sources (spec D5): workflow template, registry, per-project config. null = unusable. */
+  async function loadLane(workflowId, projectDir) {
+    const qs = projectDir ? `?projectDir=${encodeURIComponent(projectDir)}` : '';
+    const [wf, agents, cfg] = await Promise.all([
+      fetchJsonOk(`/api/workflows/${encodeURIComponent(workflowId)}`), fetchJsonOk('/api/agents'), fetchJsonOk(`/api/config${qs}`),
+    ]);
+    const registry = agents && Array.isArray(agents.agents) ? Object.fromEntries(agents.agents.map((a) => [a.key, a])) : {};
+    if (!wf || !(Array.isArray(wf.nodes) || Array.isArray(wf.steps)) || !Object.keys(registry).length || !cfg) return null;
+    const config = (cfg.config && typeof cfg.config === 'object') ? cfg.config : { steps: {}, customModels: [] };
+    const runConfig = (config.workflows && config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
+    const rows = buildNodeConfigRows(wf, registry, runConfig, workflowId === 'wf_default' ? { legacySteps: config.steps || {} } : {});
+    return { wf, registry, runConfig, rows, edits: {}, editable: !!projectDir,
+      models: Array.isArray(cfg.models) ? cfg.models : [], efforts: Array.isArray(cfg.efforts) ? cfg.efforts : [],
+      subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
+  }
+  const laneEffective = (lane, row) => ({ ...row, ...(lane.edits[row.nodeId] || {}) });
+  const laneCaps = (row) => ({ asksQuestions: row.askQuestions !== null, questionsLocked: row.questionsLocked });
+  const laneEditedRows = (lane) => lane.rows.filter((r) => lane.edits[r.nodeId]);
+  const laneOverrideCount = (lane) => lane.rows.filter((r) => modifiedFieldsOf(laneEffective(lane, r), r.def, laneCaps(r)).length).length;
+  const modelLabel = (lane, id) => { const m = lane.models.find((x) => x.id === id); return m ? (m.label || m.id).replace(' (1M)', '') : id; };
+  function laneSummary(lane) {
+    const counts = new Map();
+    let fan = 0;
+    for (const r of lane.rows) {
+      const c = laneEffective(lane, r);
+      const k = c.model ? modelLabel(lane, c.model) : 'inherit';
+      counts.set(k, (counts.get(k) || 0) + 1);
+      if (c.fanOut) fan++;
+    }
+    return `${lane.rows.length} agents · ${[...counts].map(([k, v]) => `${k} ×${v}`).join(' · ')}${fan ? ` · ${fan} fan-out` : ''}`;
+  }
+  function laneSet(lane, row, patch) {
+    const next = { ...(lane.edits[row.nodeId] || {}), ...patch };
+    for (const k of Object.keys(next)) if (next[k] === row[k]) delete next[k];   // back to the proposal = no edit
+    if (Object.keys(next).length) lane.edits[row.nodeId] = next; else delete lane.edits[row.nodeId];
+  }
+  /** D1: persist every edited row through the New Pipeline writers' bodies (app.js saveStep / saveNode), pruned to
+   *  inherit. Returns an error line or null. Nothing is written for a workspace target or an unloaded lane. */
+  async function saveLaneEdits(local) {
+    const lane = local.lane;
+    const projectDir = local.projectDir();
+    if (!lane || !lane.editable || !projectDir) return null;
+    const workflowId = local.workflowId();
+    for (const row of laneEditedRows(lane)) {
+      const patch = pruneNodeSelection(row, lane.edits[row.nodeId]);
+      const body = row.role
+        ? { projectDir, step: row.role, ...patch }
+        : { projectDir, workflowId, nodes: { [row.nodeId]: patch } };
+      let res = null;
+      try {
+        res = await fetch('/api/config', { method: row.role ? 'POST' : 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      } catch { return `network error saving ${row.label}`; }
+      if (!res || !res.ok) {
+        let msg = `request failed (${res ? res.status : '?'})`;
+        try { const b = await res.json(); if (b && b.error) msg = b.error; } catch { /* keep */ }
+        return `could not save ${row.label}: ${msg}`;
+      }
+    }
+    return null;
+  }
+  const lanePending = (local) => !!(local.lane && local.lane.editable && laneEditedRows(local.lane).length);
+  const RP_EXTRAS_MAX_BYTES = 5 * 1024 * 1024;   // D3: the JSON body cap is 8 MB and base64 grows by a third
+  /** The pills as /api/run extras. {extras} or {error}. */
+  async function collectCardExtras(local) {
+    const pills = local.pills || [];
+    if (!pills.length) return { extras: [] };
+    if (pills.reduce((n, p) => n + (p.bytes || 0), 0) > RP_EXTRAS_MAX_BYTES) return { error: 'attachments exceed 5 MB — remove one' };
+    const extras = [];
+    for (const p of pills) {
+      let res = null;
+      try { res = await fetch(`/api/ask/threads/${st.threadId}/attachments/${p.id}`); } catch { res = null; }
+      if (!res || !res.ok || typeof res.arrayBuffer !== 'function') return { error: `could not read attachment ${p.name}` };
+      let buf = null;
+      try { buf = await res.arrayBuffer(); } catch { return { error: `could not read attachment ${p.name}` }; }
+      extras.push({ name: p.name, dataBase64: bytesToBase64(new Uint8Array(buf)) });   // the composer's helper (:345) takes a view
+    }
+    return { extras };
+  }
+  const cardPending = (local) => lanePending(local) || !!(local.pills && local.pills.length);
+  function rpSwitch(ctl, label, on, locked, onChange, editable) {
+    const wrap = make('label', 'ask-rp-ctl');
+    wrap.appendChild(make('span', null, label));
+    const sw = make('span', 'ask-rp-sw');
+    const cb = doc.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!on;
+    cb.disabled = !!locked || !editable;
+    cb.setAttribute('data-ctl', ctl);
+    cb.setAttribute('aria-label', label);
+    cb.addEventListener('change', () => onChange(cb.checked));
+    sw.append(cb, make('span', 'ask-rp-knob'));
+    if (locked) wrap.title = 'Fixed for this agent';
+    wrap.appendChild(sw);
+    return wrap;
+  }
+  /** Paint the lane section: header (sub-line + Reset), tiles, footer. Re-run on every edit.
+   *  `lc` = { summary: <span>, workflowId(): string }. lane === null → the unusable state. */
+  function renderLane(laneSec, lane, lc, loadingText = null) {
+    laneSec.replaceChildren();
+    const head = make('div', 'ask-rp-sec-head');
+    const sub = make('span', 'ask-rp-sec-sub');
+    const reset = make('button', 'ask-rp-mini', 'Reset to proposal');
+    reset.type = 'button';
+    head.append(make('span', 'ask-rp-sec-title', 'Agents'), sub, reset);
+    laneSec.appendChild(head);
+    if (!lane) {
+      sub.textContent = '';
+      reset.hidden = true;
+      laneSec.appendChild(make('div', 'ask-rp-lane-msg', loadingText || 'Could not load agent settings.'));
+      lc.summary.textContent = '';
+      return;
+    }
+    const edited = laneEditedRows(lane).length;
+    const over = laneOverrideCount(lane);
+    sub.textContent = edited
+      ? `you changed ${edited} agent${edited > 1 ? 's' : ''} · ${over} override${over === 1 ? '' : 's'} of the workflow defaults`
+      : `proposed by Worca · ${over} override${over === 1 ? '' : 's'} of the workflow defaults`;
+    reset.hidden = !edited;
+    reset.addEventListener('click', () => { lane.edits = {}; renderLane(laneSec, lane, lc); });
+    const box = make('div', 'ask-rp-agents');
+    const opt = (v, t) => { const o = doc.createElement('option'); o.value = v; o.textContent = t; return o; };
+    lane.rows.forEach((row, i) => {
+      const c = laneEffective(lane, row);
+      const changed = !!lane.edits[row.nodeId];
+      const tile = make('div', `ask-rp-tile${changed ? ' mod' : ''}`);
+      tile.dataset.nodeId = row.nodeId;
+      const l1 = make('div', 'ask-rp-tile-l1');
+      l1.appendChild(make('span', `ask-rp-acc${RP_ACC.has(row.color) ? ` ${row.color}` : ''}`));
+      const name = make('div', 'ask-rp-name');
+      name.appendChild(make('b', null, row.label));
+      const small = make('small');
+      // "step N" = position in the lane (launch order); row.stepIndex ranks the task card as 0.
+      if (changed) { small.appendChild(make('span', 'ask-rp-m', 'edited')); small.appendChild(doc.createTextNode(` · step ${i + 1}`)); }
+      else small.textContent = `step ${i + 1} · ${row.modified ? 'project override' : 'workflow default'}`;
+      name.appendChild(small);
+      l1.appendChild(name);
+      // model
+      const sel = rpSelect('ask-rp-model', `Model for ${row.label}`);
+      sel.appendChild(opt('', 'inherit (workflow default)'));
+      for (const m of lane.models) if (!m.hidden || m.id === c.model) sel.appendChild(opt(m.id, m.label || m.id));
+      sel.value = c.model || '';
+      sel.disabled = !lane.editable;
+      sel.addEventListener('change', () => {
+        const mid = sel.value;
+        const list = (lane.models.find((m) => m.id === mid) || {}).efforts || [];
+        const keep = list.includes(c.effort) ? c.effort : (list[1] || list[0] || '');   // the qpanel's rule (app.js buildTunablesTable)
+        laneSet(lane, row, { model: mid, effort: mid ? keep : '' });
+        renderLane(laneSec, lane, lc);
+      });
+      l1.appendChild(sel);
+      // effort pills
+      const eff = make('div', `ask-rp-eff${c.model ? '' : ' unset'}`);
+      eff.setAttribute('role', 'radiogroup');
+      eff.setAttribute('aria-label', `Effort for ${row.label}`);
+      const offered = (lane.models.find((m) => m.id === c.model) || {}).efforts || [];
+      for (const e of lane.efforts) {
+        const b = make('button', `ask-rp-effbtn${e === c.effort ? ' on' : ''}`, e);
+        b.type = 'button';
+        b.setAttribute('role', 'radio');
+        b.setAttribute('aria-checked', String(e === c.effort));
+        b.disabled = !lane.editable || !offered.includes(e);
+        if (!offered.includes(e) && c.model) b.title = `Not offered by ${modelLabel(lane, c.model)}`;
+        b.addEventListener('click', () => { laneSet(lane, row, { effort: e }); renderLane(laneSec, lane, lc); });
+        eff.appendChild(b);
+      }
+      l1.appendChild(eff);
+      tile.appendChild(l1);
+      // line 2
+      const l2 = make('div', 'ask-rp-tile-l2');
+      l2.appendChild(rpSwitch('fanOut', 'fan-out', c.fanOut, false, (v) => { laneSet(lane, row, { fanOut: v }); renderLane(laneSec, lane, lc); }, lane.editable));
+      const subWrap = make('label', 'ask-rp-ctl');
+      subWrap.appendChild(make('span', null, 'sub-agents'));
+      const subSel = rpSelect('ask-rp-subagent', `Sub-agent model for ${row.label}`);
+      subSel.appendChild(opt('', 'subs: default (agent picks)'));
+      for (const v of lane.subagentModels) subSel.appendChild(opt(v, v === 'auto' ? 'subs: agent picks' : `subs: ${v}`));
+      subSel.value = lane.subagentModels.includes(c.subagentModel) ? c.subagentModel : '';
+      subSel.disabled = !lane.editable;
+      subSel.title = 'Model for the sub-agents this node spawns (needs fan-out)';
+      subSel.addEventListener('change', () => { laneSet(lane, row, { subagentModel: subSel.value }); renderLane(laneSec, lane, lc); });
+      subWrap.appendChild(subSel);
+      l2.appendChild(subWrap);
+      if (row.askQuestions !== null) {
+        l2.appendChild(rpSwitch('questions', 'questions', c.askQuestions, row.questionsLocked, (v) => { laneSet(lane, row, { askQuestions: v }); renderLane(laneSec, lane, lc); }, lane.editable));
+      }
+      tile.appendChild(l2);
+      box.appendChild(tile);
+    });
+    const foot = make('div', 'ask-rp-agents-foot');
+    foot.textContent = !lane.editable
+      ? 'Agent settings are per project — pick a project target to edit them.'
+      : edited ? `Edits become this project's defaults for ${lane.wf.name || lc.workflowId()}` : 'Everything at the workflow default';
+    box.appendChild(foot);
+    laneSec.appendChild(box);
+    lc.summary.textContent = laneSummary(lane);
+  }
 
   function buildCardTerminal(block) {
     const card = block.card || {};
@@ -1759,12 +2001,73 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     chip.setAttribute('aria-expanded', 'true');
   }
 
+  /** D9: the `@` popover — the thread's attachments not yet pilled; picking inserts the name at the caret
+   *  (right after the `@` the user typed) and adds the pill. Closes a same-trigger popover first:
+   *  openPopover toggles SHUT on the same trigger, so a second `@` would otherwise close it.
+   *  Focus: openPopover (:949-950) moves focus to the first menu item — right for a click-opened menu, wrong for
+   *  a picker opened by a keystroke — so the brief takes it back and keeps its caret; ArrowDown in the brief
+   *  enters the list (buildCardForm), Escape (onDocKeydown :891) and a pointerdown elsewhere close it. `pos` is
+   *  the `@` position at open time; the caret cannot move by typing while the picker is open (typing closes it),
+   *  only by mouse/arrow keys — the name still lands right after the `@`, which is what the user meant. */
+  function openAtPopover(brief, pos, local, renderPills) {
+    const have = new Set((local.pills || []).map((p) => p.id));
+    const list = (st.model ? st.model.attachments() : []).filter((a) => a && a.id && !have.has(a.id));
+    if (st.popover && st.popover.trigger === brief) closePopover({ focusTrigger: false });
+    if (!list.length) return;
+    const panel = openPopover({
+      panelClass: 'ask-pop-at', trigger: brief,
+      build: (p) => {
+        p.appendChild(make('div', 'ask-pop-cap', 'Attach to the run'));
+        for (const a of list) {
+          const item = menuItem('ask-at-item', () => {
+            brief.setRangeText(a.name, pos, pos, 'end');
+            local.pills = [...local.pills, { id: a.id, name: a.name, bytes: a.bytes || 0, kind: a.kind || 'text' }];
+            renderPills();
+            closePopover({ focusTrigger: true });
+            brief.dispatchEvent(new win.Event('input', { bubbles: true }));   // count + autosize; the char before the caret is now a letter, so no reopen
+          });
+          item.textContent = a.name;
+          p.appendChild(item);
+        }
+      },
+    });
+    if (!panel) return;
+    const br = brief.getBoundingClientRect();
+    const sr = el.sheet.getBoundingClientRect();
+    panel.style.left = `${Math.max(0, br.left - sr.left + 12)}px`;
+    // Same flip/clamp as the chip picker: the brief is the LAST section of the card, so under a
+    // tall card the list would hang out of the overflow:hidden sheet and be chopped or invisible.
+    panel.style.top = `${chipPickerTop({
+      top: br.top - sr.top, bottom: br.bottom - sr.top,
+      panelH: panel.offsetHeight || 0, sheetH: el.sheet.clientHeight,
+    })}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    // Take the caret back from the first menu item (openPopover focused it) — the user is still typing.
+    try { brief.focus(); brief.setSelectionRange(pos, pos); } catch { /* ignore */ }
+  }
+
   function buildCardForm(block) {
     const card = block.card || {};
-    const rootEl = make('div', 'ask-card');
-    const local = { target: card.target === 'workspace' ? 'workspace' : 'project', options: null };
+    const rootEl = make('div', 'ask-card ask-rp');
+    const local = { target: card.target === 'workspace' ? 'workspace' : 'project', options: null, lane: null, pills: [], projectDir: () => '', workflowId: () => '' };
+    const summary = make('span', 'ask-rp-summary');   // footer; renderLane paints it from the loaded lane
 
-    rootEl.appendChild(make('div', 'ask-card-title', card.title || 'Run proposal'));
+    // head
+    const head = make('header', 'ask-rp-head');
+    const eyebrow = make('div', 'ask-rp-eyebrow');
+    eyebrow.append(make('span', 'ask-rp-kicker', 'Run proposal'), make('span', 'ask-rp-from', 'from this chat'));
+    head.appendChild(eyebrow);
+    const titleRow = make('div', 'ask-rp-title');
+    const titleInput = doc.createElement('input');
+    titleInput.type = 'text';
+    titleInput.value = card.title || '';
+    titleInput.setAttribute('aria-label', 'Run title');
+    titleInput.placeholder = 'Run title';
+    titleRow.append(titleInput, make('span', 'ask-rp-edit', '✎ click to rename'));
+    head.appendChild(titleRow);
+    if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
+    rootEl.appendChild(head);
 
     // #397 guardrail: the model proposed a different target than the chat's pin.
     if (block.scopeMismatch) {
@@ -1772,138 +2075,248 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         'This proposal targets a different project or workspace than the one pinned for this chat — check the target before starting.'));
     }
 
+    // target section
+    const targetSec = make('div', 'ask-rp-sec');
+    const targetHead = make('div', 'ask-rp-sec-head');
+    const targetSub = make('span', 'ask-rp-sec-sub');
+    targetHead.append(make('span', 'ask-rp-sec-title', 'Where it runs'), targetSub);
     const seg = make('div', 'ask-card-seg');
+    seg.setAttribute('role', 'tablist');
     const segBtns = {};
     for (const [t, label] of [['project', 'Project'], ['workspace', 'Workspace']]) {
       const b = make('button', 'ask-card-seg-btn', label);
       b.type = 'button';
+      b.setAttribute('role', 'tab');
       b.setAttribute('data-ask-card-seg', t);
       b.addEventListener('click', () => {
         if (local.target === t) return;
         local.target = t;
-        for (const k of Object.keys(segBtns)) segBtns[k].classList.toggle('on', k === local.target);
+        paintSeg();
         renderTarget();
+        reloadLane();
       });
       segBtns[t] = b;
       seg.appendChild(b);
     }
-    segBtns[local.target].classList.add('on');
-    rootEl.appendChild(seg);
-
+    // Both tabs carry aria-selected from the first paint (not only the active one).
+    function paintSeg() { for (const k of Object.keys(segBtns)) { segBtns[k].classList.toggle('on', k === local.target); segBtns[k].setAttribute('aria-selected', String(k === local.target)); } }
+    paintSeg();
+    targetHead.appendChild(seg);
+    targetSec.appendChild(targetHead);
     const targetHost = make('div', 'ask-card-target');
-    rootEl.appendChild(targetHost);
+    targetSec.appendChild(targetHost);
 
-    const field = (label, control) => {
-      const f = make('div', 'ask-card-field');
-      f.appendChild(make('label', 'ask-card-label', label));
-      f.appendChild(control);
-      return f;
-    };
+    const wfRow = make('div', 'ask-rp-grid two');
+    const workflowSel = rpSelect('ask-card-workflow', 'Workflow');
+    const wfDesc = make('span', 'ask-rp-wfdesc', '');
+    wfDesc.setAttribute('data-for', 'workflow');
+    const wfField = rpField('Workflow', workflowSel);
+    wfField.appendChild(wfDesc);
+    const guardSel = rpSelect('ask-card-guardrails', 'Guardrails');
+    const guardDesc = make('span', 'ask-rp-wfdesc', 'Applies to every agent in this run');
+    guardDesc.setAttribute('data-for', 'guardrails');
+    const guardField = rpField('Guardrails', guardSel);
+    guardField.appendChild(guardDesc);
+    wfRow.append(wfField, guardField);
+    targetSec.appendChild(wfRow);
+    rootEl.appendChild(targetSec);
+    workflowSel.addEventListener('change', () => reloadLane());
 
-    const workflowSel = doc.createElement('select');
-    workflowSel.className = 'ask-card-workflow';
-    rootEl.appendChild(field('Workflow', workflowSel));
+    // agents lane (reloadLane → renderLane fills laneSec)
+    const laneSec = make('div', 'ask-rp-sec ask-rp-lane');
+    rootEl.appendChild(laneSec);
 
-    const guardSel = doc.createElement('select');
-    guardSel.className = 'ask-card-guardrails';
-    rootEl.appendChild(field('Guardrails', guardSel));
-
+    const briefSec = make('div', 'ask-rp-sec ask-rp-brief-host');
+    const briefHead = make('div', 'ask-rp-sec-head');
+    briefHead.append(make('span', 'ask-rp-sec-title', 'Task brief'), make('span', 'ask-rp-sec-sub', 'what the first agent reads · Markdown ok'));
+    const pillRow = make('div', 'ask-rp-pills');
+    briefHead.appendChild(pillRow);
+    briefSec.appendChild(briefHead);
     const brief = doc.createElement('textarea');
-    brief.className = 'ask-card-brief';
+    brief.className = 'ask-card-brief ask-rp-brief';
     brief.value = card.brief || '';
-    brief.addEventListener('input', () => {
+    brief.setAttribute('aria-label', 'Task brief');
+    briefSec.appendChild(brief);
+    const briefFoot = make('div', 'ask-rp-brief-foot');
+    const hint = make('span');
+    hint.appendChild(make('kbd', null, '@'));
+    hint.appendChild(doc.createTextNode(' mention an attached file'));
+    const count = make('span', 'ask-rp-count');
+    briefFoot.append(hint, count);
+    briefSec.appendChild(briefFoot);
+    rootEl.appendChild(briefSec);
+    local.pills = Array.isArray(card.attachments) ? card.attachments.filter((a) => a && a.id).map((a) => ({ ...a })) : [];
+    function renderPills() {
+      pillRow.replaceChildren();
+      for (const p of local.pills) {
+        const pill = make('span', 'ask-rp-pill', `@${p.name} `);
+        const x = make('button', null, '×');
+        x.type = 'button';
+        x.setAttribute('aria-label', `Remove ${p.name}`);
+        x.addEventListener('click', () => { local.pills = local.pills.filter((q) => q.id !== p.id); renderPills(); });   // the text stays (D9)
+        pill.appendChild(x);
+        pillRow.appendChild(pill);
+      }
+    }
+    const grow = () => {
       brief.style.height = 'auto';
-      brief.style.height = `${Math.min(brief.scrollHeight || 0, 160)}px`;
+      brief.style.height = `${Math.min((brief.scrollHeight || 0) + 2, 420)}px`;   // jsdom: scrollHeight 0 → 2px, harmless (CSS min-height wins)
+      count.textContent = `${brief.value.length.toLocaleString('en-US')} chars`;
+    };
+    brief.addEventListener('input', () => {
+      grow();
+      const pos = typeof brief.selectionStart === 'number' ? brief.selectionStart : brief.value.length;
+      if (brief.value[pos - 1] === '@') openAtPopover(brief, pos, local, renderPills);
+      else if (st.popover && st.popover.trigger === brief) closePopover({ focusTrigger: false });   // typed past the @: the picker never filters, so it goes
     });
-    rootEl.appendChild(field('Task brief', brief));
+    // The caret stays in the brief while the picker is open (see openAtPopover); ArrowDown hands focus to the
+    // list, where the popover's own keydown handler (arrows / Enter / Escape → back to the brief) takes over.
+    brief.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowDown' || !st.popover || st.popover.trigger !== brief) return;
+      const first = st.popover.panel.querySelector('[role="menuitem"]');
+      if (!first) return;
+      e.preventDefault();
+      first.tabIndex = 0;
+      try { first.focus(); } catch { /* ignore */ }
+    });
+    renderPills();
+    grow();
 
+    // ONE feature-branch input for both targets; renderTarget moves it into the current grid.
     const feature = doc.createElement('input');
     feature.type = 'text';
     feature.className = 'ask-card-feature';
     feature.value = card.featureBranch || '';
-    rootEl.appendChild(field('Feature branch', feature));
+    feature.setAttribute('aria-label', 'Feature branch');
 
     const err = make('div', 'ask-card-err');
     rootEl.appendChild(err);
 
-    const actions = make('div', 'ask-card-actions');
-    const openNp = make('button', 'ask-card-open-np', 'Open in New Pipeline');
+    // footer
+    const foot = make('footer', 'ask-rp-foot');
+    const openNp = make('button', 'ask-card-open-np', '↗ Open in New Pipeline');
     openNp.type = 'button';
     openNp.setAttribute('data-ask-card-open-np', '');
     openNp.addEventListener('click', () => prefillFromCard(block, rootEl, local));
-    actions.appendChild(openNp);
-    actions.appendChild(make('span', 'ask-card-actions-spacer'));
     const dismissBtn = make('button', 'ask-card-not-now', 'Not now');
     dismissBtn.type = 'button';
     dismissBtn.setAttribute('data-ask-card-dismiss', '');
     dismissBtn.addEventListener('click', () => dismissCard(block, rootEl));
-    actions.appendChild(dismissBtn);
-    const startBtn = make('button', 'ask-card-start', 'Start');
+    const startBtn = make('button', 'ask-card-start');
     startBtn.type = 'button';
     startBtn.setAttribute('data-ask-card-start', '');
+    const play = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');   // filled, unlike svgIcon's stroked glyphs
+    play.setAttribute('viewBox', '0 0 24 24'); play.setAttribute('fill', 'currentColor'); play.setAttribute('aria-hidden', 'true');
+    const playPath = doc.createElementNS('http://www.w3.org/2000/svg', 'path'); playPath.setAttribute('d', 'M6 4l14 8-14 8V4Z');
+    play.appendChild(playPath); startBtn.appendChild(play);
+    startBtn.appendChild(doc.createTextNode('Start run'));
     startBtn.addEventListener('click', () => startCard(block, rootEl, local));
-    actions.appendChild(startBtn);
-    rootEl.appendChild(actions);
+    foot.append(openNp, summary, dismissBtn, startBtn);
+    rootEl.appendChild(foot);
+
+    local.projectDir = () => (local.target === 'project' ? ((rootEl.querySelector('.ask-card-project-select') || {}).value || '') : '');
+    local.workflowId = () => workflowSel.value || card.workflowId || 'wf_default';
+
+    function updateTargetSub() {
+      const opts = local.options;
+      if (local.target === 'project') {
+        const projSel = rootEl.querySelector('.ask-card-project-select');
+        const srcSel = rootEl.querySelector('.ask-card-source');
+        const name = projSel && projSel.selectedOptions[0] ? projSel.selectedOptions[0].textContent : (card.projectName || '');
+        targetSub.textContent = `${name} · branch ${(srcSel && srcSel.value) || 'current'} · feature ${feature.value.trim() || 'auto'}`;
+      } else {
+        const wsSel = rootEl.querySelector('.ask-card-workspace-select');
+        const row = opts && wsSel && opts.workspaces.find((w) => w && w.id === wsSel.value);
+        const n = row && Array.isArray(row.projectKeys) ? row.projectKeys.length : (Array.isArray(card.members) ? card.members.length : 0);
+        targetSub.textContent = `${(row && row.name) || card.workspaceName || 'workspace'} · ${n} member${n === 1 ? '' : 's'} · feature ${feature.value.trim() || 'auto'}`;
+      }
+    }
+    feature.addEventListener('input', updateTargetSub);
 
     function renderTarget() {
       targetHost.replaceChildren();
       const opts = local.options;
+      const grid = make('div', 'ask-rp-grid');
       if (local.target === 'project') {
-        const projSel = doc.createElement('select');
-        projSel.className = 'ask-card-project-select';
-        const srcSel = doc.createElement('select');
-        srcSel.className = 'ask-card-source';
+        const projSel = rpSelect('ask-card-project-select', 'Project');
+        const srcSel = rpSelect('ask-card-source', 'Source branch');
         if (opts) {
           fillSelect(projSel, opts.projects.map((p) => ({ value: p.path, label: p.exists === false ? `${p.name} (missing)` : p.name })), card.projectDir || (opts.projects[0] && opts.projects[0].path) || '');
-          loadBranchesInto(srcSel, projSel.value, card.sourceBranch || '');
+          // The fill is async: the sub-line reads the select again when the branches land,
+          // or a proposed sourceBranch would read "branch current" until the user touches it.
+          loadBranchesInto(srcSel, projSel.value, card.sourceBranch || '').then(updateTargetSub);
         }
-        projSel.addEventListener('change', () => loadBranchesInto(srcSel, projSel.value, ''));
-        targetHost.appendChild(field('Project', projSel));
-        targetHost.appendChild(field('Source branch', srcSel));
-      } else {
-        const wsSel = doc.createElement('select');
-        wsSel.className = 'ask-card-workspace-select';
-        const members = make('div', 'ask-card-members');
-        const srcInput = doc.createElement('input');
-        srcInput.type = 'text';
-        srcInput.className = 'ask-card-source-input';
-        srcInput.placeholder = 'auto';
-        srcInput.value = card.sourceBranch || '';
-        const details = doc.createElement('details');
-        // .disclosure swaps the OS triangle for the app's own chevron
-        details.className = 'ask-card-members-src disclosure';
-        details.appendChild(make('summary', null, 'Per-member source branches'));
-        const memberHost = make('div', 'ask-card-members-src-list');
-        details.appendChild(memberHost);
-        const renderMembers = () => {
-          members.replaceChildren();
-          memberHost.replaceChildren();
-          const row = opts && opts.workspaces.find((w) => w && w.id === wsSel.value);
-          const list = row && Array.isArray(row.projectKeys)
-            ? row.projectKeys.map((k, i) => ({ projectKey: k, name: wsBasename(row.projectPaths && row.projectPaths[i]) }))
-            : Array.isArray(card.members) ? card.members.map((m) => ({ projectKey: m.projectKey, name: m.projectName })) : [];
-          members.textContent = list.map((m) => m.name).join(', ');
-          for (const m of list) {
-            const inp = doc.createElement('input');
-            inp.type = 'text';
-            inp.className = 'ask-card-member-src';
-            inp.placeholder = 'auto';
-            inp.setAttribute('data-project-key', m.projectKey);
-            if (card.sourceBranchByKey && card.sourceBranchByKey[m.projectKey]) inp.value = card.sourceBranchByKey[m.projectKey];
-            memberHost.appendChild(field(m.name, inp));
-          }
-        };
-        if (opts) {
-          fillSelect(wsSel, opts.workspaces.map((w) => ({ value: w.id, label: w.name || w.id })), card.workspaceId || (opts.workspaces[0] && opts.workspaces[0].id) || '');
-          renderMembers();
-        }
-        wsSel.addEventListener('change', renderMembers);
-        targetHost.appendChild(field('Workspace', wsSel));
-        targetHost.appendChild(members);
-        targetHost.appendChild(field('Source branch (default)', srcInput));
-        targetHost.appendChild(details);
+        projSel.addEventListener('change', () => { loadBranchesInto(srcSel, projSel.value, '').then(updateTargetSub); updateTargetSub(); reloadLane(); });
+        srcSel.addEventListener('change', updateTargetSub);
+        grid.append(rpField('Project', projSel), rpField('Source branch', srcSel), rpField('Feature branch', feature, 'created for the run'));
+        targetHost.appendChild(grid);
+        updateTargetSub();
+        return;
       }
+      const wsSel = rpSelect('ask-card-workspace-select', 'Workspace');
+      const members = make('div', 'ask-card-members');
+      const srcInput = doc.createElement('input');
+      srcInput.type = 'text';
+      srcInput.className = 'ask-card-source-input';
+      srcInput.placeholder = 'auto';
+      srcInput.value = card.sourceBranch || '';
+      srcInput.setAttribute('aria-label', 'Source branch default');
+      const details = doc.createElement('details');
+      details.className = 'ask-card-members-src disclosure';   // .disclosure swaps the OS triangle for the app's chevron
+      details.appendChild(make('summary', null, 'Per-member source branches'));
+      const memberHost = make('div', 'ask-card-members-src-list');
+      details.appendChild(memberHost);
+      const renderMembers = () => {
+        members.replaceChildren();
+        memberHost.replaceChildren();
+        const row = opts && opts.workspaces.find((w) => w && w.id === wsSel.value);
+        const list = row && Array.isArray(row.projectKeys)
+          ? row.projectKeys.map((k, i) => ({ projectKey: k, name: wsBasename(row.projectPaths && row.projectPaths[i]) }))
+          : Array.isArray(card.members) ? card.members.map((m) => ({ projectKey: m.projectKey, name: m.projectName })) : [];
+        members.textContent = list.map((m) => m.name).join(', ');
+        for (const m of list) {
+          const inp = doc.createElement('input');
+          inp.type = 'text';
+          inp.className = 'ask-card-member-src';
+          inp.placeholder = 'auto';
+          inp.setAttribute('data-project-key', m.projectKey);
+          if (card.sourceBranchByKey && card.sourceBranchByKey[m.projectKey]) inp.value = card.sourceBranchByKey[m.projectKey];
+          memberHost.appendChild(rpField(m.name, inp));
+        }
+        updateTargetSub();
+      };
+      wsSel.addEventListener('change', renderMembers);
+      const wsField = rpField('Workspace', wsSel);
+      wsField.appendChild(members);
+      grid.append(wsField, rpField('Source branch', srcInput, 'default for members'), rpField('Feature branch', feature));
+      targetHost.appendChild(grid);      // attach BEFORE filling: renderMembers → updateTargetSub finds the select through rootEl
+      targetHost.appendChild(details);
+      if (opts) {
+        fillSelect(wsSel, opts.workspaces.map((w) => ({ value: w.id, label: w.name || w.id })), card.workspaceId || (opts.workspaces[0] && opts.workspaces[0].id) || '');
+        renderMembers();
+      }
+      updateTargetSub();
     }
+
+    // A reload (workflow / project / target change) rebuilds the lane from scratch:
+    // `edits` are per workflow-and-project and are DISCARDED, silently.
+    const laneCtx = { summary, workflowId: () => local.workflowId() };
+    let laneSeq = 0;
+    function reloadLane() {
+      const seq = ++laneSeq;
+      const workflowId = local.workflowId();
+      const projectDir = local.projectDir();
+      local.lane = null;
+      renderLane(laneSec, null, laneCtx, 'Loading agent settings…');
+      loadLane(workflowId, projectDir).then((lane) => {
+        if (st.destroyed || seq !== laneSeq) return;            // a later reload won
+        local.lane = lane;
+        wfDesc.textContent = lane ? workflowDesc(lane.wf, lane.registry, lane.runConfig) : '';
+        renderLane(laneSec, lane, laneCtx);
+      });
+    }
+    local.reloadLane = reloadLane;   // after a successful save the lane re-reads the persisted config
+    renderLane(laneSec, null, laneCtx, 'Loading agent settings…');   // until the option lists arrive
 
     renderTarget();
     loadCardOptions().then((opts) => {
@@ -1912,7 +2325,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       fillSelect(workflowSel, opts.workflows.map((w) => ({ value: w.id, label: workflowPickerLabel(w, null) || w.name || w.id })), card.workflowId || 'wf_default');
       fillSelect(guardSel, opts.guardrails.map((g) => ({ value: g.id, label: g.id === 'permissive' ? 'Permissive' : (g.name || g.id) })), card.guardrailsId || 'normal');
       renderTarget();
+      reloadLane();
     });
+    rootEl.__rp = { local, wfDesc, summary, laneSec, briefSec, brief, titleInput, lane: () => local.lane };   // consumed by later tasks + tests
     return rootEl;
   }
 
@@ -1921,7 +2336,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       prompt: rootEl.querySelector('.ask-card-brief').value,
       workflowId: rootEl.querySelector('.ask-card-workflow').value,
       guardrailsId: rootEl.querySelector('.ask-card-guardrails').value, // ALWAYS sent (spec §9.4)
-      title: card.title || undefined,
+      title: ((rootEl.querySelector('.ask-rp-title input') || {}).value || '').trim() || card.title || undefined,
       mock: false,
     };
     const feature = rootEl.querySelector('.ask-card-feature').value.trim();
@@ -1945,13 +2360,29 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return body;
   }
 
+  /** Freeze the controls Start's two awaits straddle. A workflow or target change mid-flight
+   *  repoints the lane (reloadLane nulls local.lane) while saveLaneEdits still holds the old
+   *  one, so the config written and the body posted would describe different runs. */
+  function freezeTargetInputs(rootEl, on) {
+    for (const sel of ['.ask-card-workflow', '.ask-card-project-select', '.ask-card-workspace-select', '[data-ask-card-seg]']) {
+      for (const node of rootEl.querySelectorAll(sel)) node.disabled = on;
+    }
+  }
+
   async function startCard(block, rootEl, local) {
     const err = rootEl.querySelector('.ask-card-err');
     const startBtn = rootEl.querySelector('[data-ask-card-start]');
     err.textContent = '';
     startBtn.disabled = true;
+    freezeTargetInputs(rootEl, true);
     try {
+      // D3: read-only, so it runs BEFORE saveLaneEdits — a refusal here must not leave the config already written.
+      const ex = await collectCardExtras(local);
+      if (ex.error) { err.textContent = ex.error; return; }
+      const saveErr = await saveLaneEdits(local);            // the previous phase's guard, now second
+      if (saveErr) { err.textContent = saveErr; return; }
       const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id };
+      if (ex.extras.length) body.extras = ex.extras;
       let res = null;
       try {
         res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -1967,6 +2398,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // (beginRun is NEVER called — spec §10.5).
     } finally {
       startBtn.disabled = false;
+      freezeTargetInputs(rootEl, false);
     }
   }
 
@@ -2011,7 +2443,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       workflowId: rootEl.querySelector('.ask-card-workflow').value,
       guardrailsId: rootEl.querySelector('.ask-card-guardrails').value,
       prompt: rootEl.querySelector('.ask-card-brief').value,
-      title: card.title || '',
+      title: ((rootEl.querySelector('.ask-rp-title input') || {}).value || '').trim() || card.title || '',
       featureBranch: rootEl.querySelector('.ask-card-feature').value.trim(),
     };
     if (local.target === 'workspace') {
@@ -2030,7 +2462,25 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const src = rootEl.querySelector('.ask-card-source');
       p.sourceBranch = src ? src.value : '';
     }
-    openNewPipeline(p);
+    // Nothing to save or fetch → hand over synchronously (the caller may not await).
+    const pending = cardPending(local);
+    if (!pending) { openNewPipeline(p); return; }
+    const err = rootEl.querySelector('.ask-card-err');
+    if (err) err.textContent = '';
+    // Same guard Start has: without it two quick clicks run two extras fetches, two save
+    // rounds and two handovers. Released on every exit of the continuation.
+    const openNp = rootEl.querySelector('[data-ask-card-open-np]');
+    if (openNp) openNp.disabled = true;
+    collectCardExtras(local).then(async (ex) => {
+      if (st.destroyed) return;
+      if (ex.error) { if (err) err.textContent = ex.error; return; }
+      const saveErr = await saveLaneEdits(local);
+      if (st.destroyed) return;
+      if (saveErr) { if (err) err.textContent = saveErr; return; }
+      if (ex.extras.length) p.extras = ex.extras;
+      if (typeof local.reloadLane === 'function') local.reloadLane();   // the card stays proposed: show the persisted state, not stale edits
+      openNewPipeline(p);
+    }).finally(() => { if (openNp) openNp.disabled = false; });
   }
 
   // ---- card cache: ONE element per card id, rebuilt only on a STATE change (V7 for run cards; every state for

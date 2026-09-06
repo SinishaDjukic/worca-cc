@@ -4,7 +4,7 @@
 // read-only source scan (§6.1).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,6 +13,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline, seedWorkspacePipeline } from './helpers/db-seed.mjs';
 import { createAskTools, AskToolError, splitUnifiedDiff, isProtectedBasename, sliceBytes } from '../src/core/ask/tools.mjs';
 import { defaultToolDeps } from '../src/core/ask/tool-deps.mjs';
+import { closeDb } from '../src/core/db.mjs';
 import { addProject } from '../src/core/projects.mjs';
 import { createThread, appendMessage, addAttachment } from '../src/core/ask/store.mjs';
 import { GUARDRAIL_PRESETS } from '../src/core/guardrails.mjs';
@@ -623,6 +624,48 @@ test('propose_run passes through validateProposal; unknown tools and bad input a
 test('propose_run accepts commentIds and passes them through untouched', async () => {
   assert.deepEqual(await tools.call('propose_run', { projectKey: 'demo-00000001', brief: 'b', commentIds: ['dc_00000001'] }),
     { ok: true, card: { echoed: { projectKey: 'demo-00000001', brief: 'b', commentIds: ['dc_00000001'] } } });
+});
+
+test('propose_run schema names note + attachmentIds', () => {
+  const props = tools.list().find((d) => d.name === 'propose_run').inputSchema.properties;
+  assert.equal(props.note.type, 'string');
+  assert.equal(props.attachmentIds.type, 'array');
+  assert.deepEqual(props.attachmentIds.items, { type: 'string' });
+  assert.match(props.attachmentIds.description, /extra files/);
+});
+
+test('propose_run hands the thread\'s attachment ledger to the validator', async () => {
+  const rows = [{ id: 'att_00000001', name: 'notes.md', bytes: 3, kind: 'text' }];
+  const t = createAskTools({ ...fake,
+    listAttachments: () => rows,
+    validateProposal: async (input, opts) => ({ ok: true, card: { input, opts } }) });
+  const r = await t.call('propose_run', { projectKey: 'demo-00000001', brief: 'b', attachmentIds: ['att_00000001'] });
+  assert.deepEqual(r.card.opts, { attachments: rows });
+  const t2 = createAskTools({ ...fake,
+    listAttachments: undefined,
+    validateProposal: async (input, opts) => ({ ok: true, card: { opts } }) });
+  assert.deepEqual((await t2.call('propose_run', { projectKey: 'demo-00000001', brief: 'b' })).card.opts, { attachments: [] }, 'no dep → empty ledger');
+});
+
+test('defaultToolDeps.listAttachments is thread-scoped and empty without a thread', () => {
+  assert.deepEqual(defaultToolDeps({ threadId: null }).listAttachments(), []);
+  assert.equal(typeof defaultToolDeps({ threadId: 'ask_00000001' }).listAttachments, 'function');
+});
+
+test('defaultToolDeps.listAttachments degrades to [] on an unreadable DB — never an error the model cannot propose past', () => {
+  // Same contract as the sibling pinnedScope dep and the parent path (turn.mjs): the ledger is
+  // context for the card, so a locked/corrupt store means "no attachments", not a failed tool call.
+  const prev = process.env.WORCA_HOME;
+  const blocked = join(mkdtempSync(join(tmpdir(), 'worca-ask-deps-')), 'not-a-dir');
+  writeFileSync(blocked, 'x');            // getDb() mkdirSync's the home first: a FILE there throws
+  closeDb();                              // drop the handle opened at the temp home
+  process.env.WORCA_HOME = blocked;
+  try {
+    assert.deepEqual(defaultToolDeps({ threadId: 'ask_00000001' }).listAttachments(), []);
+  } finally {
+    process.env.WORCA_HOME = prev;
+    closeDb();                            // the next getDb() reopens against the suite's temp home
+  }
 });
 
 test('propose_run refuses commentIds from another project and says so', async () => {

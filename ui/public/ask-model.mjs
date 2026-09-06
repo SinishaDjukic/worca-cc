@@ -291,6 +291,7 @@ export function createThreadModel({ threadId }) {
       dirty.worktrees = true;
     },
     attachmentsBytes() { return attachments.reduce((n, a) => n + (a && Number.isFinite(a.bytes) ? a.bytes : 0), 0); },
+    attachments() { return attachments.map((a) => ({ ...a })); },   // the run card's @-popover + pills
     findCard(cardId) {
       for (const r of rows) {
         const b = (r && Array.isArray(r.blocks) ? r.blocks : []).find((x) => x && x.kind === 'card' && x.id === cardId);

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { createProposalValidator, isSyntacticRef, PROPOSAL_ERRORS } from '../src/core/ask/proposal.mjs';
+import { createProposalValidator, isSyntacticRef, PROPOSAL_ERRORS, pickCardAttachments } from '../src/core/ask/proposal.mjs';
 
 const dirA = mkdtempSync(join(tmpdir(), 'worca-ask-prop-a-'));
 const dirB = mkdtempSync(join(tmpdir(), 'worca-ask-prop-b-'));
@@ -54,7 +54,7 @@ test('target: exactly one of projectKey / workspaceId', async () => {
 
 test('happy project card: every key present, defaults applied, feature branch unique per card', async () => {
   const card = ok(await validateProposal({ projectKey: 'demo-00000001', brief: '  Add a README badge\nsecond line  ' }, { cardId: 'card_3f2a9c01' }));
-  assert.deepEqual(Object.keys(card).sort(), ['brief', 'featureBranch', 'guardrailsId', 'members', 'projectDir', 'projectKey', 'projectName',
+  assert.deepEqual(Object.keys(card).sort(), ['attachments', 'brief', 'featureBranch', 'guardrailsId', 'members', 'note', 'projectDir', 'projectKey', 'projectName',
     'sourceBranch', 'sourceBranchByKey', 'target', 'title', 'workflowId', 'workflowName', 'workspaceId', 'workspaceName']);
   assert.equal(card.target, 'project');
   assert.equal(card.projectKey, 'demo-00000001');
@@ -137,4 +137,31 @@ test('propose_run ACCEPTS a graph template', async () => {
   const r = await v({ projectKey: 'demo-00000001', brief: 'x', workflowId: 'wf_g' });
   assert.equal(r.ok, true, `a graph template is runnable now: ${JSON.stringify(r)}`);
   assert.equal(r.card.workflowId, 'wf_g');
+});
+
+const ROWS = [
+  { id: 'att_00000001', threadId: 'ask_00000001', messageId: null, name: 'notes.md', bytes: 12, kind: 'text', mime: null, createdAt: 't' },
+  { id: 'att_00000002', threadId: 'ask_00000001', messageId: null, name: 'shot.png', bytes: 3000, kind: 'image', mime: 'image/png', createdAt: 't' },
+];
+
+test('pickCardAttachments keeps known ids in the model\'s order, drops unknown/duplicate/non-string', () => {
+  assert.deepEqual(pickCardAttachments(['att_00000002', 'att_ffffffff', 'att_00000001', 'att_00000002', 7], ROWS), [
+    { id: 'att_00000002', name: 'shot.png', bytes: 3000, kind: 'image' },
+    { id: 'att_00000001', name: 'notes.md', bytes: 12, kind: 'text' },
+  ]);
+  assert.deepEqual(pickCardAttachments(undefined, ROWS), []);
+  assert.deepEqual(pickCardAttachments(['att_00000001'], null), []);
+});
+
+test('card carries note (flattened, clipped to 200) and attachments; both default empty', async () => {
+  const bare = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x' }));
+  assert.equal(bare.note, null);
+  assert.deepEqual(bare.attachments, []);
+  const note = 'why this\u0001shape\n  ' + 'z'.repeat(300);
+  const card = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', note, attachmentIds: ['att_00000001', 'nope'] }, { attachments: ROWS }));
+  assert.equal(card.note.length, 200);
+  assert.ok(card.note.startsWith('why this shape z'), 'control chars and line breaks become one space');
+  assert.deepEqual(card.attachments, [{ id: 'att_00000001', name: 'notes.md', bytes: 12, kind: 'text' }]);
+  assert.equal(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', note: 42 })).note, null, 'a non-string note is ignored');
+  assert.equal(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', note: '   ' })).note, null, 'whitespace-only → null');
 });

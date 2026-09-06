@@ -933,3 +933,35 @@ test('mock ask: the word "workflow" fabricates a propose_workflow pair from mock
   assert.equal(getMessage(s3.asst.id).blocks.filter((x) => x.kind === 'card').length, 0, 'the word "workflow" inside an EVENT never builds a card');
   } finally { if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock; }
 });
+
+// ── The authoritative re-validation gets the thread's attachment ledger ───────
+
+test('propose_run re-validation hands the thread\'s attachment ledger + cardId to the validator', async () => {
+  const s = seed();
+  let seenOpts = null;
+  let seenTid = null;   // asserted OUTSIDE the fake: _onProposal wraps the ledger call in try/catch, so a throw in here would be swallowed
+  const rows = [{ id: 'att_00000001', threadId: s.thread.id, messageId: null, name: 'a.md', bytes: 1, kind: 'text', mime: null, createdAt: 't' }];
+  const { turn } = makeTurn(s, {}, {
+    store: { listAttachments: (tid) => { seenTid = tid; return rows; } },
+    validateProposal: async (input, o) => { seenOpts = o; return { ok: true, card: { target: 'project', projectKey: 'demo-00000001', workspaceId: null } }; },
+    runClaudeImpl: proposeRun({ projectKey: 'demo-00000001', brief: 'x', attachmentIds: ['att_00000001'] }),
+  });
+  await turn.run();
+  assert.ok(seenOpts, 'the validator ran');
+  assert.equal(seenTid, s.thread.id, 'the OWNING thread\'s ledger');
+  assert.match(seenOpts.cardId, /^card_[0-9a-f]{8}$/);
+  assert.deepEqual(seenOpts.attachments, rows);
+});
+
+test('propose_run re-validation survives a throwing ledger (empty attachments, card still lands)', async () => {
+  const s = seed();
+  let seenOpts = null;
+  const { turn } = makeTurn(s, {}, {
+    store: { listAttachments: () => { throw new Error('db gone'); } },
+    validateProposal: async (input, o) => { seenOpts = o; return { ok: true, card: { target: 'project', projectKey: 'demo-00000001', workspaceId: null } }; },
+    runClaudeImpl: proposeRun({ projectKey: 'demo-00000001', brief: 'x' }),
+  });
+  await turn.run();
+  assert.deepEqual(seenOpts.attachments, []);
+  assert.ok(getMessage(s.asst.id).blocks.some((b) => b.kind === 'card'), 'the card still landed');
+});

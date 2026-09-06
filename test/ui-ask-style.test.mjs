@@ -318,3 +318,31 @@ test('ui-ask-style: the pill wave is a permanent ::before that .is-live fades in
   assert.ok(css.lastIndexOf('animation:ask-pill-wave') < guard, 'the animation use precedes the guard');
   assert.ok(!css.slice(guard).includes('.ask-pill::before{'), 'no unconditional ::before rule in the guard — an idle pill must stay dark');
 });
+
+test('ui-ask-style: run card v2 — violet wash token exists once, the block is tokened and inside the ask section', () => {
+  assert.equal((css.match(/--violet-wash:light-dark\(#/g) || []).length, 1, 'one definition in :root');
+  assert.match(ruleBody('.ask-rp-head') || '', /var\(--violet-wash\)/);
+  assert.match(ruleBody('.ask-card.ask-rp') || '', /animation:wr-rise/);
+  assert.match(ruleBody('.ask-rp-tile.mod') || '', /var\(--amber-wash\)/);
+  // (0,3,1): the textarea carries BOTH classes (`ask-card-brief ask-rp-brief`, collectCardBody reads the first),
+  // so the v1 rule `.ask-card textarea.ask-card-brief{max-height:160px;resize:none}` (0,2,1) applies to it too and must lose
+  const brief = ruleBody('.ask-card.ask-rp textarea.ask-rp-brief') || '';
+  assert.match(brief, /min-height:150px/);
+  assert.match(brief, /max-height:420px/);
+  assert.match(brief, /resize:vertical/);
+  assert.match(ruleBody('.ask-rp-tile-l2') || '', /flex-wrap:wrap/);
+  const start = css.indexOf('/* ---------- Ask Worca');
+  const guard = css.lastIndexOf('@media (prefers-reduced-motion: reduce)');
+  const at = css.indexOf('.ask-card.ask-rp{');
+  assert.ok(at > start && at < guard, '.ask-rp lives in the ask section, before the final reduced-motion guard');
+  assert.ok(at < css.indexOf('/* ---------- workflow card chrome'), 'right after the v1 card rules, before the workflow card');
+});
+
+test('ui-ask-style: run card v2 — the v1 card rules it replaced are deleted, the still-emitted spacer stays', () => {
+  // buildCardForm emits .ask-rp-* for all four; nothing in ui/ or test/ names them any more.
+  assert.equal(ruleBody('.ask-card-title'), null, 'v1 title rule is dead CSS');
+  assert.equal(ruleBody('.ask-card-field'), null, 'v1 field rule is dead CSS');
+  assert.equal(ruleBody('.ask-card-label'), null, 'v1 label rule is dead CSS');
+  assert.equal(/\.ask-card-actions\s*\{/.test(css), false, 'v1 actions container rule is dead CSS');
+  assert.ok(css.includes('.ask-card-actions-spacer'), 'the spacer buildWorkflowCard still emits keeps its rule');
+});

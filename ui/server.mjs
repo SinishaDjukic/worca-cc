@@ -4319,7 +4319,8 @@ function mockAskCard(ctx = {}, text = '') {
   const target = ctx.workspaceId
     ? { workspaceId: ctx.workspaceId }
     : { projectKey: ctx.projectKey || 'mock-project-00000000' };
-  return { ...target, workflowId: 'wf_default', guardrailsId: 'normal', brief: text.slice(0, 200) || 'Mock run' };
+  return { ...target, workflowId: 'wf_default', guardrailsId: 'normal', brief: text.slice(0, 200) || 'Mock run',
+    note: 'Mock proposal — a fixed shape so the offline card can be exercised.' };
 }
 
 /**

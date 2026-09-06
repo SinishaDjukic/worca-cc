@@ -42,6 +42,8 @@
      is the pale field it sits on, with its line and the radio ring. */
   --amber-wash:light-dark(#FEF7EC,#322816);
   --amber-wash-2:light-dark(#FEFAF3,#2B2314); --amber-line:light-dark(#F5D9A8,#6A5228); --radio-ring:light-dark(#D6D6D2,#4A4A45);
+  /* Ask Worca run card head wash (mockup 2026-09-06): Worca-authored, same hue as the Auto tag. */
+  --violet-wash:light-dark(#F6F4FC,#211E2E);
 
   /* Ask Worca launcher pill: the "thinking" wave painted on .ask-pill.is-live::before
      spends these three; the ask section itself carries no literal. */
@@ -3134,14 +3136,11 @@ body.rail-collapsed .ask-dock{left:76px;}
 
 .ask-card{margin-top:2px;display:flex;flex-direction:column;gap:10px;padding:13px 15px;
   border:1.5px solid var(--line);border-radius:16px;background:var(--panel);}
-.ask-card-title{font-weight:600;font-size:12.5px;color:var(--ink);}
 .ask-card-seg{display:flex;gap:4px;}
 .ask-card-seg-btn{padding:5px 12px;border:1px solid var(--line-2);border-radius:999px;background:transparent;
   color:var(--ink-2);font-family:inherit;font-weight:600;font-size:11px;cursor:pointer;transition:.15s;}
 .ask-card-seg-btn.on{background:var(--ink);border-color:var(--ink);color:var(--panel);}
 .ask-card-target{display:flex;flex-direction:column;gap:10px;}
-.ask-card-field{display:flex;flex-direction:column;gap:4px;}
-.ask-card-label{font-weight:600;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);}
 .ask-card :is(select,input[type="text"],textarea){font-size:12.5px;padding:8px 11px;border-radius:10px;}
 .ask-card textarea.ask-card-brief{min-height:0;height:auto;max-height:160px;resize:none;line-height:1.5;}
 .ask-card-members{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
@@ -3151,7 +3150,6 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-card-scope-warn{font-size:12px;color:var(--amber-ink);background:var(--amber-wash);
   border:1px solid var(--amber-line);border-radius:8px;padding:6px 9px;}
 .ask-card-err:empty{display:none;}
-.ask-card-actions{display:flex;align-items:center;gap:8px;}
 .ask-card-open-np{border:0;background:transparent;padding:0;color:var(--blue-ink);font-family:inherit;
   font-size:11.5px;cursor:pointer;}
 .ask-card-not-now{padding:8px 13px;border:0;border-radius:999px;background:transparent;color:var(--ink-2);
@@ -3165,6 +3163,91 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-card-stub{font-size:12.5px;color:var(--ink-3);}
 .ask-card-failed{color:var(--red-ink);}
 .ask-card-link{color:var(--blue-ink);}
+
+/* ---------- run proposal card v2 (ui/public/ask-panel.mjs buildCardForm; mockup 2026-09-06) ----------
+   The v1 card rules above still apply to this root (.ask-card); every override below
+   is written at higher specificity than the rule it replaces. Tokens only. */
+.ask-card.ask-rp{gap:0;padding:0;overflow:hidden;border-radius:18px;border:1.5px solid var(--line-2);box-shadow:var(--shadow-soft);animation:wr-rise .26s cubic-bezier(.2,.7,.3,1) both;}
+.ask-rp>*{min-width:0;}
+.ask-rp-head{padding:16px 18px 14px;background:linear-gradient(180deg,var(--violet-wash),var(--panel) 92%);border-bottom:1px solid var(--line);}
+.ask-rp-eyebrow{display:flex;align-items:center;gap:8px;height:20px;}
+.ask-rp-kicker{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--violet-ink);font-weight:700;}
+.ask-rp-kicker::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--violet);margin-right:7px;vertical-align:1px;}
+.ask-rp-from{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+.ask-rp-title{margin:8px 0 0;display:flex;align-items:center;gap:8px;}
+.ask-rp-edit{font-size:11px;color:var(--ink-3);white-space:nowrap;}
+.ask-rp-why{margin:6px 0 0;font-size:12.5px;line-height:1.55;color:var(--ink-2);max-width:66ch;}
+.ask-rp-sec{padding:14px 18px;border-bottom:1px solid var(--line);}
+.ask-rp-sec-head{display:flex;align-items:center;gap:10px;margin-bottom:10px;min-height:22px;flex-wrap:wrap;}
+.ask-rp-sec-title{font-weight:600;font-size:12.5px;color:var(--ink);}
+.ask-rp-sec-sub{font-size:11.5px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto;}
+.ask-rp-mini{height:22px;padding:0 9px;border:0;border-radius:999px;background:transparent;color:var(--ink-2);font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;}
+.ask-rp-mini:hover{background:var(--field);color:var(--ink);}
+.ask-rp .ask-card-seg{gap:3px;padding:3px;border-radius:999px;background:var(--field);margin-left:auto;}
+.ask-rp .ask-card-seg-btn{height:24px;padding:0 12px;border:0;font-size:11.5px;}
+.ask-rp .ask-card-seg-btn.on{background:var(--ink);color:var(--on-ink);}
+.ask-rp-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 12px;}
+.ask-rp-grid.two{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:10px;}
+.ask-rp-field{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.ask-rp-label{font-weight:600;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);}
+.ask-rp-hint{font-weight:400;text-transform:none;letter-spacing:0;}
+.ask-rp :is(select,input[type="text"]){height:36px;padding:0 12px;border:1px solid var(--line-2);border-radius:11px;background:var(--field);font-size:12.5px;}
+.ask-rp .ask-rp-title input{flex:1 1 auto;min-width:0;height:auto;border:0;background:transparent;padding:2px 0;font-size:17px;font-weight:600;letter-spacing:-.01em;line-height:1.3;border-bottom:1.5px dashed transparent;border-radius:0;color:var(--ink);}
+.ask-rp .ask-rp-title input:hover{border-bottom-color:var(--line-2);}
+.ask-rp .ask-rp-title input:focus-visible{box-shadow:none;outline:none;border-bottom-color:var(--violet);background:transparent;}
+.ask-rp-wfdesc{font-size:11.5px;color:var(--ink-3);}
+.ask-rp-wfdesc b{font-weight:600;color:var(--ink-2);}
+.ask-rp-agents{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--canvas-2);}
+.ask-rp-tile{display:flex;flex-direction:column;gap:8px;padding:10px 14px;border-top:1px solid var(--line);background:var(--panel);}
+.ask-rp-tile:first-child{border-top:0;}
+.ask-rp-tile.mod{background:var(--amber-wash);}
+.ask-rp-tile-l1{display:flex;align-items:center;gap:10px;min-width:0;flex-wrap:wrap;}
+.ask-rp-tile-l2{display:flex;align-items:center;gap:6px 18px;flex-wrap:wrap;padding-left:16px;}
+.ask-rp-acc{width:6px;height:26px;border-radius:3px;flex:0 0 auto;background:var(--ink-3);}
+.ask-rp-acc.violet{background:var(--violet);} .ask-rp-acc.blue{background:var(--blue);} .ask-rp-acc.green{background:var(--green);} .ask-rp-acc.peach{background:var(--peach);} .ask-rp-acc.red{background:var(--red);} .ask-rp-acc.amber{background:var(--amber);}
+.ask-rp-name{display:flex;flex-direction:column;min-width:0;line-height:1.25;flex:1 1 140px;}
+.ask-rp-name b{font-weight:600;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink);}
+.ask-rp-name small{font-family:var(--mono);font-size:10px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-rp-m{color:var(--amber-ink);font-weight:700;}
+.ask-rp .ask-rp-tile select{height:32px;padding:0 10px;border-radius:10px;font-size:12px;background:var(--surface);}
+.ask-rp-model{flex:0 1 170px;}
+.ask-rp-eff{display:inline-flex;gap:2px;padding:2px;border-radius:999px;background:var(--field);border:1px solid var(--line);position:relative;}
+.ask-rp-eff button{height:24px;padding:0 7px;border:0;border-radius:999px;background:transparent;font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--ink-3);cursor:pointer;transition:.12s;}
+.ask-rp-eff button:hover{color:var(--ink);}
+.ask-rp-eff button.on{background:var(--ink);color:var(--on-ink);}
+.ask-rp-eff button[disabled]{opacity:.35;cursor:default;}
+.ask-rp-eff.unset button{visibility:hidden;}
+.ask-rp-eff.unset::after{content:"inherits workflow";position:absolute;inset:0;display:grid;place-items:center;font-family:var(--mono);font-size:10px;color:var(--ink-3);}
+.ask-rp-ctl{display:inline-flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink-2);}
+.ask-rp-ctl>span:first-child{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
+.ask-rp-sw{display:inline-flex;align-items:center;position:relative;}
+.ask-rp-sw input{position:absolute;opacity:0;width:1px;height:1px;}
+.ask-rp-knob{width:32px;height:18px;border-radius:999px;background:var(--line-2);position:relative;transition:.15s;cursor:pointer;}
+.ask-rp-knob::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--knob);transition:.15s;}
+.ask-rp-sw input:checked+.ask-rp-knob{background:var(--ink);}
+.ask-rp-sw input:checked+.ask-rp-knob::after{transform:translateX(14px);}
+.ask-rp-sw input:disabled+.ask-rp-knob{opacity:.4;cursor:not-allowed;}
+.ask-rp-sw input:focus-visible+.ask-rp-knob{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-rp-agents-foot{display:flex;align-items:center;gap:8px;padding:8px 14px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-3);}
+.ask-rp-lane-msg{padding:12px 14px;font-size:12px;color:var(--ink-3);}
+.ask-card.ask-rp textarea.ask-rp-brief{width:100%;min-height:150px;max-height:420px;padding:12px 14px;border:1px solid var(--line-2);border-radius:12px;background:var(--field);font-size:13px;line-height:1.6;resize:vertical;}
+.ask-rp-brief-foot{display:flex;align-items:center;gap:12px;margin-top:8px;font-size:11.5px;color:var(--ink-3);flex-wrap:wrap;}
+.ask-rp-brief-foot kbd{font-family:var(--mono);font-size:10px;padding:1px 5px;border:1px solid var(--line-2);border-radius:5px;background:var(--panel);color:var(--ink-2);}
+.ask-rp-count{margin-left:auto;}
+.ask-rp-pills{display:flex;gap:6px;flex-wrap:wrap;}
+.ask-rp-pill{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px;border-radius:999px;background:var(--panel);border:1px solid var(--line-2);font-family:var(--mono);font-size:10.5px;color:var(--ink-2);}
+.ask-rp-pill button{border:0;background:none;padding:0;color:var(--ink-3);font-family:inherit;cursor:pointer;}
+.ask-rp-foot{display:flex;align-items:center;gap:10px;padding:12px 18px 14px;background:var(--canvas-2);flex-wrap:wrap;}
+.ask-rp-foot .ask-card-open-np{font-size:12px;font-weight:500;}
+.ask-rp-summary{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);text-align:right;margin-left:auto;}
+.ask-rp-foot .ask-card-not-now{height:34px;padding:0 14px;font-size:12.5px;}
+.ask-rp-foot .ask-card-start{height:36px;padding:0 18px 0 15px;font-size:12.5px;color:var(--on-ink);box-shadow:var(--shadow-pop);}
+.ask-rp-foot .ask-card-start svg{width:11px;height:11px;}
+.ask-rp .ask-card-err{padding:0 18px 10px;}
+.ask-rp .ask-card-scope-warn{margin:12px 18px 0;}
+.ask-pop-at{width:288px;padding:6px;border-radius:14px;max-height:min(320px,60%);overflow-y:auto;}
+@media (max-width:640px){.ask-rp-grid,.ask-rp-grid.two{grid-template-columns:1fr;}}
+@media (prefers-reduced-motion: reduce){.ask-card.ask-rp{animation:none;} .ask-rp *{transition:none!important;}}
 
 /* ---------- workflow card chrome (ui/public/ask-panel.mjs buildWorkflowCard; mockup 2026-09-05 §A-§C) ---------- */
 .ask-card.ask-wfcard{gap:0;padding:16px 18px;border-width:1px;animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}

@@ -38,6 +38,7 @@ export const ASK_LIMITS = Object.freeze({
   briefMaxChars: 8000,
   workflowTaskMaxChars: 32_000,            // propose_workflow task text (= classify.mjs TASK_TEXT_CAP)
   workflowNoteMaxChars: 200,               // propose_workflow note shown on the card
+  proposalNoteMaxChars: 200,               // propose_run note ("why this shape") shown on the run card
   commentBodyMaxChars: 4000,               // diff_comments.body cap (pinned equal to COMMENT_BODY_MAX)
   titleMaxChars: 120,
   headerRuns: 5,

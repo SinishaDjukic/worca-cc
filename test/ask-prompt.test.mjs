@@ -489,3 +489,8 @@ test('#397: a pinned scope renders the [pinned by the user] marker on the scope 
   assert.ok(!buildContextHeader(CTX).includes('[pinned by the user]'), 'an unpinned header is unchanged');
   assert.ok(!buildContextHeader({ ...CTX, pinned: false }).includes('[pinned by the user]'), 'explicit Auto is unchanged too');
 });
+
+test('rule 3 asks for the note and the attachmentIds hand-off; rules still stop at 12', () => {
+  for (const t of ['one-line note', 'attachmentIds', 'extra files', '(rule 10)']) assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 3 states "${t}"`);
+  assert.ok(!/\n\s*13\./.test(ASK_SYSTEM_RULES));
+});

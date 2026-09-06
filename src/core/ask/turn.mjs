@@ -26,7 +26,7 @@ import { validateProposal } from './proposal.mjs';
 import { revalidateWorkflowProposal } from './workflow-deps.mjs';
 import { askLimits, ASK_LIMITS } from './limits.mjs';
 import {
-  newAskId, finishMessage, setMessageBlocks, addThreadTotals, updateThread, setThreadTitle,
+  newAskId, finishMessage, setMessageBlocks, addThreadTotals, updateThread, setThreadTitle, listAttachments,
 } from './store.mjs';
 import { recordAskCostDelta } from '../cost-budget.mjs';
 import { setPendingCardComments } from '../diff-comments.mjs';
@@ -67,7 +67,7 @@ class AskTurn extends EventEmitter {
     this.deps = {
       runClaudeImpl: deps.runClaudeImpl ?? runClaude,
       store: {
-        finishMessage, setMessageBlocks, addThreadTotals, updateThread, setThreadTitle,
+        finishMessage, setMessageBlocks, addThreadTotals, updateThread, setThreadTitle, listAttachments,
         ...(deps.store || {}),
       },
       validateProposal: deps.validateProposal ?? validateProposal,
@@ -149,7 +149,11 @@ class AskTurn extends EventEmitter {
       || (typeof raw.workspaceId === 'string' && raw.workspaceId.trim());
     const inp = pin && !hasTarget ? { ...raw, ...pin } : raw;
     try {
-      const r = await d.validateProposal(inp, { cardId });
+      // The thread's attachment ledger, so attachmentIds the model cites resolve
+      // to real rows (spec §6.4). A ledger failure never blocks the card.
+      let attachments = [];
+      try { attachments = (typeof d.store.listAttachments === 'function' && d.store.listAttachments(this.threadId)) || []; } catch { attachments = []; }
+      const r = await d.validateProposal(inp, { cardId, attachments });
       if (r && r.ok) {
         // #397 guardrail: a proposal targeting a DIFFERENT project/workspace than
         // the pinned one is accepted but flagged — the card renders the mismatch
