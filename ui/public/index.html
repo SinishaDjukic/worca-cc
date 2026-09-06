@@ -1484,6 +1484,25 @@
           <span class="shipit-arrow">→</span>
           <span class="shipit-base"></span>
         </div>
+        <!-- Fork support: where the branch is pushed and which repo the PR opens in
+             (GitHub's "compare across forks"). Filled from GET /api/pr/remotes on
+             open; hidden until the list arrives and stays hidden when it cannot be
+             loaded (the server then applies its own defaults). -->
+        <div class="shipit-remotes" hidden>
+          <div class="shipit-remote-field">
+            <label for="shipit-push-remote">Push branch to</label>
+            <div class="select-wrap">
+              <select id="shipit-push-remote" class="select shipit-push-remote" aria-label="Push remote"></select>
+            </div>
+          </div>
+          <div class="shipit-remote-field">
+            <label for="shipit-base-remote">Open PR in</label>
+            <div class="select-wrap">
+              <select id="shipit-base-remote" class="select shipit-base-remote" aria-label="Base repository"></select>
+            </div>
+          </div>
+          <small class="shipit-remotes-hint hint"></small>
+        </div>
         <!-- `hint err`, not `err`: style.css has no standalone .err rule, only
              .hint.err (:284). .hint sets display:block, so .shipit-err ships an
              explicit [hidden] twin. -->

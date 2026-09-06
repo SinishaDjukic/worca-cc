@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { persistPrState, enrichPipelinesPr, writeStoreMeta } from '../src/core/artifacts.mjs';
+import { persistPrState, readPrState, enrichPipelinesPr, writeStoreMeta } from '../src/core/artifacts.mjs';
 import { archivePipeline } from '../src/core/pipeline-delete.mjs';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
 
@@ -87,6 +87,39 @@ test('enrichPipelinesPr persists positive observations only', async () => {
   await runEnrichment();
   row = getDb().prepare('SELECT pr_state FROM pipelines WHERE id = ?').get(id);
   assert.equal(row.pr_state, 'MERGED');                  // null observation never clears
+});
+
+test('readPrState returns the persisted facts or null', async () => {
+  const { id } = await seedPipeline('/tmp/proj-a', { status: 'done' });
+  assert.equal(readPrState(id), null);
+  persistPrState(id, { url: 'https://github.com/o/r/pull/2', number: 2, state: 'OPEN' });
+  assert.deepEqual(readPrState(id), { url: 'https://github.com/o/r/pull/2', number: 2, state: 'OPEN' });
+  assert.equal(readPrState(''), null);
+});
+
+test('enrichPipelinesPr resolves a row with a persisted pr_url via gh pr view <url>, not the branch search', async () => {
+  const id = await seedPipelineWithBranch({ feature: 'feat/z' });
+  const URL21 = 'https://github.com/up/repo/pull/21';
+  persistPrState(id, { url: URL21, number: 21, state: 'OPEN' });
+  const seen = [];
+  gitInfo.setRunner((cmd, args) => {
+    seen.push([cmd, ...args]);
+    if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') {
+      // Answer ONLY this row's url. Other rows in the shared DB (feat/x from the test
+      // above carries its own pr_url) get an empty view → branch search → [] → null.
+      return args[2] === URL21
+        ? Promise.resolve({ ok: true, stdout: JSON.stringify({ number: 21, state: 'MERGED', url: URL21 }), stderr: '', code: 0 })
+        : Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
+    }
+    if (cmd === 'git' && args[0] === 'rev-parse') return Promise.resolve({ ok: false, stdout: '', stderr: '', code: 1 });
+    return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });   // gh pr list → '' → [] → null
+  });
+  await runEnrichment();
+  assert.equal(getDb().prepare('SELECT pr_state FROM pipelines WHERE id = ?').get(id).pr_state, 'MERGED');
+  assert.ok(seen.some((c) => c[0] === 'gh' && c[2] === 'view' && c[3] === URL21));
+  assert.ok(!seen.some((c) => c[0] === 'gh' && c[2] === 'list' && c[4] === 'feat/z'),
+    'no branch search for the row whose pr_url is known');
 });
 
 test('archive runs a final PR refresh before FS cleanup', async () => {

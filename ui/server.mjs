@@ -21,7 +21,7 @@ import { preflightNode } from '../src/core/preflight-node.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
-  enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState,
+  enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState, readPrState,
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
   listArtifacts, lookupPipelineRow, findPipelineRowById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
   readPromptFile,
@@ -91,6 +91,7 @@ import {
   PREDEFINED_MODELS, agentSteps, EFFORTS, catalogHasModel,
   readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, resetWorkflowConfig,
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
+  readPrRemotePrefs, setPrRemotePrefs,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
 import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue } from '../src/core/model-env.mjs';
@@ -118,7 +119,7 @@ import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
 } from '../src/core/worktree.mjs';
-import { hasGh, pushBranch, createPr, prMergeable } from '../src/core/git-info.mjs';
+import { hasGh, pushBranch, createPr, prMergeable, listRemotes, sameRepo } from '../src/core/git-info.mjs';
 import { archivePipeline, discardRetainedWorktrees } from '../src/core/pipeline-delete.mjs';
 import {
   listWorkspaces, readWorkspace, createWorkspace,
@@ -2328,37 +2329,87 @@ app.post('/api/runs/:id/discard-worktree', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/pr  -> push the pipeline's feature branch (if needed) and open a PR
-// against its source branch via the GitHub CLI. Mergeability is read back only
-// here (never during list rendering). body: { id, projectDir? , projectKey? }
+// PR remotes (fork support). The ship-it dialog picks (1) the remote the feature
+// branch is pushed to and (2) the remote whose repo the PR is opened in — GitHub's
+// "compare across forks". Names are user-defined, so nothing is special-cased
+// beyond fallbacks: the project's remembered choice (when those remotes still
+// exist) -> `upstream` for the base when one exists -> `origin` -> first remote.
 // ---------------------------------------------------------------------------
-app.post('/api/pr', async (req, res) => {
-  const body = req.body || {};
-  const id = typeof body.id === 'string' ? body.id.trim() : '';
-  if (!id) return badRequest(res, 'id is required');
-  if (!(await hasGh())) {
-    return res.status(409).json({ error: 'GitHub CLI (gh) is not available' });
-  }
+function defaultPrRemotes(remotes, remembered) {
+  const names = remotes.map((r) => r.name);
+  const has = (n) => !!n && names.includes(n);
+  const first = names[0] || null;
+  const pushRemote = has(remembered?.pushRemote) ? remembered.pushRemote : (has('origin') ? 'origin' : first);
+  const baseRemote = has(remembered?.baseRemote) ? remembered.baseRemote
+    : (has('upstream') ? 'upstream' : (has('origin') ? 'origin' : first));
+  return { pushRemote, baseRemote };
+}
 
-  // Resolve the pipeline state (by store key, else by project dir).
+// Resolve a pipeline for the PR routes (store key first, else project dir) from a
+// body or a query object. Writes the error response itself and returns null.
+// (/api/pr/mergeable keeps its own copy: its bad-key/not-found cases answer 200
+// UNKNOWN, not 404.)
+async function resolvePrPipeline(src, res) {
+  const id = typeof src.id === 'string' ? src.id.trim() : '';
+  if (!id) { badRequest(res, 'id is required'); return null; }
   let state = null;
   try {
-    if (typeof body.projectKey === 'string' && body.projectKey.trim()) {
-      if (!/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(body.projectKey)) {
-        return res.status(404).json({ error: 'pipeline not found' });
+    if (typeof src.projectKey === 'string' && src.projectKey.trim()) {
+      if (!/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(src.projectKey)) {
+        res.status(404).json({ error: 'pipeline not found' });
+        return null;
       }
-      const data = await readPipelineByKey(body.projectKey, id);
+      const data = await readPipelineByKey(src.projectKey, id);
       state = data && data.state;
     } else {
-      const projectDir = resolveProjectDir(body.projectDir);
-      if (!projectDir) return badRequest(res, 'projectDir or projectKey is required');
+      const projectDir = resolveProjectDir(src.projectDir);
+      if (!projectDir) { badRequest(res, 'projectDir or projectKey is required'); return null; }
       const data = await readPipeline(projectDir, id);
       state = data && data.state;
     }
   } catch (err) {
-    return res.status(500).json({ error: err && err.message ? err.message : String(err) });
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+    return null;
   }
-  if (!state) return res.status(404).json({ error: 'pipeline not found' });
+  if (!state) { res.status(404).json({ error: 'pipeline not found' }); return null; }
+  return { id, state };
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/pr/remotes?id=&projectKey=|projectDir=  -> the project's git remotes for
+// the ship-it dialog plus the defaults POST /api/pr applies when the body names
+// none. Same pipeline resolution as POST /api/pr (the repo dir comes from the
+// pipeline's store_meta, never from the query). gh is not required here.
+// -> { ok, remotes:[{name,fetchUrl,pushUrl,host,owner,repo,slug}],
+//      defaults:{pushRemote,baseRemote}, remembered:{pushRemote,baseRemote}|null }
+// ---------------------------------------------------------------------------
+app.get('/api/pr/remotes', async (req, res) => {
+  const resolved = await resolvePrPipeline(req.query || {}, res);
+  if (!resolved) return;
+  const repoDir = resolved.state.projectDir;          // null when store_meta is missing
+  if (!repoDir) return badRequest(res, 'pipeline has no project directory');
+  const rl = await listRemotes(repoDir);
+  if (!rl.ok) return res.status(500).json({ error: `git remote failed: ${rl.error}` });
+  const remembered = readPrRemotePrefs(repoDir);
+  res.json({ ok: true, remotes: rl.remotes, defaults: defaultPrRemotes(rl.remotes, remembered), remembered });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/pr  -> push the pipeline's feature branch (if needed) and open a PR
+// against its source branch via the GitHub CLI. Mergeability is read back only
+// here (never during list rendering).
+// body: { id, projectDir?, projectKey?, pushRemote?, baseRemote? } — remote names
+// are validated against the repo's real remote list (never trusted from the body).
+// ---------------------------------------------------------------------------
+app.post('/api/pr', async (req, res) => {
+  const body = req.body || {};
+  if (!(typeof body.id === 'string' && body.id.trim())) return badRequest(res, 'id is required');
+  if (!(await hasGh())) {
+    return res.status(409).json({ error: 'GitHub CLI (gh) is not available' });
+  }
+  const resolved = await resolvePrPipeline(body, res);
+  if (!resolved) return;
+  const { id, state } = resolved;
 
   const repoDir = state.projectDir;
   const feature = state.branch && state.branch.feature;
@@ -2367,12 +2418,49 @@ app.post('/api/pr', async (req, res) => {
     return badRequest(res, 'pipeline has no branch info to open a PR');
   }
 
+  // Remote selection. A named remote must exist; unnamed ones take the dialog's
+  // defaults. With no usable remote list (no remotes, unparseable URLs) the legacy
+  // argv applies: push `origin`, no --repo, bare head. A git failure is only fatal
+  // when the body actually names a remote (otherwise legacy argv, as before).
+  const named = (v) => !(v === undefined || v === null || v === '');
+  const rl = await listRemotes(repoDir);
+  if (!rl.ok && (named(body.pushRemote) || named(body.baseRemote))) {
+    return res.status(500).json({ error: `git remote failed: ${rl.error}` });
+  }
+  const remotes = rl.ok ? rl.remotes : [];
+  const byName = new Map(remotes.map((r) => [r.name, r]));
+  const pick = (field, label) => {
+    const v = body[field];
+    if (!named(v)) return { name: null };
+    if (typeof v !== 'string' || !byName.has(v.trim())) {
+      return { error: `unknown ${label} remote: ${String(v).slice(0, 80)}` };
+    }
+    return { name: v.trim() };
+  };
+  const pushPick = pick('pushRemote', 'push');
+  if (pushPick.error) return badRequest(res, pushPick.error);
+  const basePick = pick('baseRemote', 'base');
+  if (basePick.error) return badRequest(res, basePick.error);
+  const defaults = defaultPrRemotes(remotes, readPrRemotePrefs(repoDir));
+  const pushRemote = pushPick.name || defaults.pushRemote || 'origin';
+  const baseRemote = basePick.name || defaults.baseRemote || 'origin';
+  const pushR = byName.get(pushRemote) || null;
+  const baseR = byName.get(baseRemote) || null;
+  // Always target the chosen base repo explicitly (gh's default-repo guess prefers
+  // a remote named upstream over origin); use the owner:branch head only when the
+  // branch lives in a different repository than the PR (gh matches by head label).
+  const repo = baseR?.slug || null;
+  const crossRepo = !!(pushR?.slug && baseR?.slug && !sameRepo(pushR, baseR));
+  const headOwner = crossRepo ? pushR.owner : null;
+
   // Push (idempotent) -> create PR -> read mergeability. All args are passed as
-  // an argv array (no shell), so branch/source names cannot inject.
-  const pushed = await pushBranch(repoDir, feature);
+  // an argv array (no shell), so branch/remote/source names cannot inject.
+  const pushed = await pushBranch(repoDir, feature, pushRemote);
   if (!pushed.ok) return res.status(500).json({ error: `git push failed: ${pushed.stderr}` });
 
-  const pr = await createPr({ projectDir: repoDir, base: source, head: feature, title: state.title || feature });
+  const pr = await createPr({
+    projectDir: repoDir, base: source, head: feature, title: state.title || feature, repo, headOwner,
+  });
   if (!pr.ok) return res.status(500).json({ error: `gh pr create failed: ${pr.error}` });
 
   // Persist the PR facts we just learned, so History/stats survive a gh outage.
@@ -2381,9 +2469,13 @@ app.post('/api/pr', async (req, res) => {
   if (pipelineIdForPr) {
     persistPrState(pipelineIdForPr, { url: pr.url, number: parsePrNumber(pr.url), state: 'OPEN' });
   }
+  // Remember the choice for this project (only once a PR was actually created).
+  if (remotes.length) {
+    try { await setPrRemotePrefs(repoDir, { pushRemote, baseRemote }); } catch { /* best-effort */ }
+  }
 
-  const mergeable = await prMergeable({ projectDir: repoDir, head: feature });
-  res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed });
+  const mergeable = await prMergeable({ projectDir: repoDir, head: feature, repo, headOwner, prUrl: pr.url || null });
+  res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed, pushRemote, baseRemote, crossRepo });
 });
 
 // ---------------------------------------------------------------------------
@@ -2421,7 +2513,11 @@ app.post('/api/pr/mergeable', async (req, res) => {
     const feature = state && state.branch && state.branch.feature;
     if (!repoDir || !feature) return res.json({ ok: true, mergeable: 'UNKNOWN' });
 
-    const mergeable = await prMergeable({ projectDir: repoDir, head: feature });
+    // A persisted pr_url is repo-agnostic (a fork PR lives in the base repo, which
+    // need not be gh's default for this checkout); the head selector is only the
+    // fallback for rows that never recorded a PR.
+    const prUrl = readPrState(state.id || id)?.url || null;
+    const mergeable = await prMergeable({ projectDir: repoDir, head: feature, prUrl });
     res.json({ ok: true, mergeable });
   } catch {
     res.json({ ok: true, mergeable: 'UNKNOWN' });   // best-effort: never error the refresh

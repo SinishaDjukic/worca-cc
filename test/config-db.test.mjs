@@ -14,6 +14,7 @@ import {
   readConfig, readRunConfig, listModels, resolveStepModels,
   setStep, addCustomModel, removeCustomModel,
   setNodeModel, setFeedbackCycles, setActiveWorkflow, resolveRunConfig,
+  readPrRemotePrefs, setPrRemotePrefs,
 } from '../src/core/config.mjs';
 import { PREDEFINED_MODELS } from '../src/core/config.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
@@ -246,4 +247,27 @@ test('legacy per-project guardrails blob in extra is INERT: never interpreted, r
   const rc = await readRunConfig(dir);
   assert.deepEqual(rc.guardrails, legacy, 'forwarded raw, never normalized');
   assert.deepEqual(rc.webUiTesting, { enabled: true });
+});
+
+test('PR remote prefs round-trip through project_config.extra without clobbering other keys', async () => {
+  const dir = await freshProject();
+  const key = projectKey(dir);
+  assert.equal(readPrRemotePrefs(dir), null, 'fresh project: nothing remembered');
+  getDb().prepare(`
+    INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
+    VALUES (?, '{}', '[]', NULL, ?)
+  `).run(key, JSON.stringify({ webUiTesting: { enabled: true } }));
+  await setPrRemotePrefs(dir, { pushRemote: 'origin', baseRemote: 'upstream' });
+  assert.deepEqual(readPrRemotePrefs(dir), { pushRemote: 'origin', baseRemote: 'upstream' });
+  const raw = JSON.parse(getDb().prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key).extra);
+  assert.deepEqual(raw, { webUiTesting: { enabled: true }, prRemotes: { pushRemote: 'origin', baseRemote: 'upstream' } });
+  // Sibling writers leave the blob alone; readRunConfig forwards it verbatim.
+  await setActiveWorkflow(dir, 'wf_default');
+  assert.deepEqual((await readRunConfig(dir)).prRemotes, { pushRemote: 'origin', baseRemote: 'upstream' });
+  // A project with no row gets one; blanks are stored as null; all-blank reads back as null.
+  const dir2 = await freshProject();
+  await setPrRemotePrefs(dir2, { pushRemote: 'fork', baseRemote: '' });
+  assert.deepEqual(readPrRemotePrefs(dir2), { pushRemote: 'fork', baseRemote: null });
+  await setPrRemotePrefs(dir2, {});
+  assert.equal(readPrRemotePrefs(dir2), null, 'clearing = remembering nothing');
 });

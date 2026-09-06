@@ -1139,6 +1139,22 @@ export function persistPrState(pipelineId, pr) {
 }
 
 /**
+ * Last persisted PR facts for a pipeline (spec §6.8), or null when none were
+ * ever observed. Read by the later PR lookups so a cross-repo PR (which lives in
+ * the base repo, not the cwd's default) is resolved by URL instead of by branch.
+ * The resolved `state` (rowToState) deliberately omits pr_* — use this instead.
+ * @param {string} pipelineId
+ * @returns {{ url:string, number:(number|null), state:string }|null}
+ */
+export function readPrState(pipelineId) {
+  if (!pipelineId) return null;
+  try {
+    const row = getDb().prepare('SELECT pr_url, pr_number, pr_state FROM pipelines WHERE id = ?').get(pipelineId);
+    return row && row.pr_url ? { url: row.pr_url, number: row.pr_number ?? null, state: row.pr_state ?? 'OPEN' } : null;
+  } catch { return null; }
+}
+
+/**
  * The status a stale (crashed/killed) run is reconciled to. Distinct from a user
  * 'stopped' and a real 'error': the owning process died before Orchestrator.run()'s
  * catch/finally could write a terminal status, so the row was frozen at 'running'.
@@ -1532,7 +1548,10 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
   // unavailable we still set pr:null (the field is present whenever requested), so
   // callers can distinguish "looked, none" from "did not look".
   if (opts.withPr && repoDir && feature) {
-    entry.pr = (await hasGh()) ? await findPrForBranch({ projectDir: repoDir, head: feature }) : null;
+    // pr_url first (repo-agnostic view); the branch search only for rows with no PR yet.
+    entry.pr = (await hasGh())
+      ? await findPrForBranch({ projectDir: repoDir, head: feature, prUrl: row.pr_url || null })
+      : null;
   }
   return entry;
 }
@@ -1574,7 +1593,7 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
     SELECT id, project_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
-           branch, workspace_meta, guardrails_id,
+           branch, workspace_meta, guardrails_id, pr_url,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail
     FROM pipelines
@@ -1603,7 +1622,7 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
 export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
-           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id,
+           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, pr_url,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail
     FROM pipelines
@@ -1700,7 +1719,8 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
   for (let i = 0; i < targets.length; i += batchSize) {
     const slice = targets.slice(i, i + batchSize);
     const items = await Promise.all(slice.map(async (r) => {
-      const pr = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch })) || null;
+      const prUrl = readPrState(r.id)?.url || null;
+      const pr = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl })) || null;
       if (pr) persistPrState(r.id, pr);   // positive observations only (null never clears)
       return { projectKey: r.projectKey, id: r.id, pr };
     }));

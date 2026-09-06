@@ -2186,6 +2186,19 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    stray node in the a11y tree). */
 .shipit-err[hidden]{display:none;}
 
+/* Fork support: push-remote + base-repo selects. Left-aligned inside the centered
+   card; the global select{width:100%} fills each grid cell. */
+.shipit-remotes{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px;margin-top:14px;text-align:left;}
+.shipit-remotes[hidden]{display:none;}
+.shipit-remote-field label{display:block;margin:0 0 6px 2px;font:600 11.5px/1.2 var(--sans);color:var(--ink-2);
+  text-transform:uppercase;letter-spacing:.04em;}
+.shipit-remotes .select{padding:10px 36px 10px 12px;font-size:13px;}
+.shipit-remotes .select-wrap::after{right:13px;}
+.shipit-remotes select:disabled{opacity:.55;cursor:not-allowed;}
+.shipit-remotes-hint{grid-column:1/-1;margin:0;font-size:12px;color:var(--ink-3);word-break:break-all;}
+.shipit-remotes-hint:empty{display:none;}
+@media (max-width:520px){.shipit-remotes{grid-template-columns:1fr;}}
+
 /* Reduced motion for the three ship-it animations. This block MUST sit AFTER the
    rules that declare them: `@media` contributes no specificity, so naming
    `.shipit-card` in the kill list at :763 would tie at (0,1,0) and LOSE on source
