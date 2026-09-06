@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   classifyTask, ClassifierError, buildClassifierSystemPrompt, buildClassifierUserPrompt, parseShapeReply, checkShapeModels,
-  agentVocabulary, summarizeTools, renderAgentCards, shapeForPrompt, TASK_TEXT_CAP, EXTRA_TEXT_CAP,
+  agentVocabulary, summarizeTools, renderAgentCards, shapeForPrompt, withCardsSignal, TASK_TEXT_CAP, EXTRA_TEXT_CAP,
 } from '../src/core/auto/classify.mjs';
-import { normalizeShape } from '../src/shared/graph/assemble.mjs';
+import { normalizeShape, SHAPE_LIMITS } from '../src/shared/graph/assemble.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 
 const REG = loadAgentRegistry(undefined, { userAgentsDir: null, includePlugins: false });
@@ -78,6 +78,7 @@ test('agentVocabulary: derived/identical blurbs do not repeat, a missing .md lea
 test('the prompts carry the cards, the recipes, the models, the HITL rule, the fingerprint, extras, feedback and the capped task', () => {
   const sys = buildClassifierSystemPrompt({ agents: agentVocabulary(REG), models: [...MODELS, { id: 'claude-hidden-9', efforts: ['medium'], hidden: true }], humanInLoop: false });
   for (const s of ['```json', 'manualWebUiTesting', 'Recipes', 'claude-opus-5', 'medium/high/max', 'NO human is in the loop',
+    '"size": "small" | "medium" | "large"', '"signals"',
     'purpose: ', 'role (agent file): ', 'hints: ', 'tools: ', 'Drives the RUNNING web UI', 'plugin_playwright_playwright MCP (14 tools',
     'flags are the engine', 'builtin · coding']) assert.ok(sys.includes(s), s);
   assert.ok(!sys.includes('claude-hidden-9'), 'a hidden catalog model is never offered');
@@ -131,6 +132,7 @@ test('a good reply classifies on the first attempt; cost, usage, the raw reply a
   assert.equal(r.raw, reply(GOOD));
   assert.equal(r.shape.stages[0].tunables.model, 'claude-opus-5');
   assert.deepEqual(r.shape.stages.map((s) => s.id), ['s1', 's2', 's3']);
+  assert.equal(r.shape.size, 'medium', 'a reply without size normalizes to the default');
   assert.deepEqual(r.warnings, []);
   const o = calls[0];
   assert.deepEqual(o.allowedTools, []);
@@ -183,4 +185,19 @@ test('mock mode answers without spawning (opts.mock or WORCA_MOCK=1)', async () 
   } finally { delete process.env.WORCA_MOCK; }
   const off = await classifyTask(base({ mock: true, humanInLoop: false, taskText: 'Please add a background job that re-indexes the search catalogue every night and reports failures to the ops channel.' }), { run });
   assert.ok(!off.shape.stages.some((s) => s.agent === 'clarify'));
+});
+
+test('classifyTask appends the agent-card count to signals in the mock arm and keeps size', async () => {
+  const r = await classifyTask({ taskText: 'demo task', registry: REG, mock: true, models: MODELS });
+  assert.equal(r.shape.size, 'small');
+  assert.deepEqual(r.shape.signals, ['trivial', `${agentVocabulary(REG).length} agent cards read`]);
+});
+
+test('the agent-card signal survives the cap: it takes the LAST slot, never the first', () => {
+  const eight = Array.from({ length: 8 }, (_, i) => `s${i}`);
+  const capped = withCardsSignal({ stages: [{ agent: 'planner' }], signals: eight }, 9);
+  assert.equal(capped.signals.length, SHAPE_LIMITS.maxSignals);
+  assert.equal(capped.signals.at(-1), '9 agent cards read');
+  assert.deepEqual(capped.signals.slice(0, 7), eight.slice(0, 7));
+  assert.deepEqual(withCardsSignal(capped, 9).signals, capped.signals, 'idempotent: a second stamp replaces, never appends');
 });

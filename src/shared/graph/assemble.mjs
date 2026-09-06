@@ -20,7 +20,8 @@ export class ShapeError extends Error {
 
 export const TASK_KINDS = Object.freeze(['prompt', 'plan-partial', 'plan-complete-detailed', 'plan-complete-small']);
 export const STAGE_TUNABLES = Object.freeze(['model', 'effort', 'fanOut', 'askQuestions']);
-export const SHAPE_LIMITS = Object.freeze({ maxStages: 24, maxGroupMembers: 8, maxNameLen: 60, maxReasoningLen: 500, maxCycles: 20 });
+export const SIZES = Object.freeze(['small', 'medium', 'large']);
+export const SHAPE_LIMITS = Object.freeze({ maxStages: 24, maxGroupMembers: 8, maxNameLen: 60, maxReasoningLen: 500, maxCycles: 20, maxSignals: 8, maxSignalLen: 60 });
 
 const AGENT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const isObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
@@ -69,7 +70,7 @@ function tunablesOf(raw) {
 /**
  * Canonicalize a raw shape. Throws ShapeError with EVERY issue found (not just
  * the first) so a classifier retry can fix them all in one round. Idempotent.
- * @returns {{name:string, taskKind:string, reasoning:string, stages:Array, loops:Array}}
+ * @returns {{name:string, taskKind:string, reasoning:string, size:string, signals:string[], stages:Array, loops:Array}}
  */
 export function normalizeShape(raw) {
   const issues = [];
@@ -77,6 +78,15 @@ export function normalizeShape(raw) {
   const name = cleanText(r.name, SHAPE_LIMITS.maxNameLen) || 'Auto workflow';
   const taskKind = TASK_KINDS.includes(r.taskKind) ? r.taskKind : 'prompt';
   const reasoning = cleanText(r.reasoning, SHAPE_LIMITS.maxReasoningLen);
+  // size/signals are advisory (they paint chips): never an issue, always a default — a retry is for real errors.
+  // Model output is UNTRUSTED (see cleanText): every signal is cleaned per element, deduped and capped.
+  const size = SIZES.includes(r.size) ? r.size : 'medium';
+  const signals = [];
+  for (const v of Array.isArray(r.signals) ? r.signals : []) {
+    const t = typeof v === 'string' ? cleanText(v, SHAPE_LIMITS.maxSignalLen) : '';
+    if (t && !signals.includes(t)) signals.push(t);
+    if (signals.length >= SHAPE_LIMITS.maxSignals) break;
+  }
   const rawStages = Array.isArray(r.stages) ? r.stages : [];
   if (!rawStages.length) issues.push({ code: 'NO_STAGES', message: 'stages must be a non-empty array' });
   if (rawStages.length > SHAPE_LIMITS.maxStages) issues.push({ code: 'TOO_MANY_STAGES', message: `at most ${SHAPE_LIMITS.maxStages} stages` });
@@ -142,7 +152,7 @@ export function normalizeShape(raw) {
   });
 
   if (issues.length) throw new ShapeError(issues);
-  return { name, taskKind, reasoning, stages, loops };
+  return { name, taskKind, reasoning, size, signals, stages, loops };
 }
 
 // ── the assembler ─────────────────────────────────────────────────────────────

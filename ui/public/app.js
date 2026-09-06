@@ -3,6 +3,11 @@
 const $ = (sel, root = document) => (root || document).querySelector(sel);
 const $$ = (sel, root = document) => [...(root || document).querySelectorAll(sel)];
 
+// The client-side Auto entry (D24): /api/workflows never lists wf_auto and the
+// row stub has no graph, so the picker owns this one constant.
+const AUTO_WORKFLOW = Object.freeze({ id: 'wf_auto', name: 'Auto' });
+const AUTO_WORKFLOW_ID = AUTO_WORKFLOW.id;
+
 // ---------------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------------
@@ -98,6 +103,8 @@ import { createComposer, RESERVED_WORKFLOW_ID, pluginOriginName } from './graph/
 // lived in the composer's saved list, retired in P5 Task 8). P6's Running list is
 // its first caller.
 import { thumbnailFor } from './graph/view.mjs';
+import { createThinkingOrb } from './thinking-orb.mjs';
+import { renderAutoProposal, AUTO_PROPOSAL_ORDER_QPANEL } from './auto-proposal.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
@@ -155,6 +162,8 @@ const el = {
   guardrailsHint: $('#guardrailsHint'),
   agentsConfig: $('#agents-config'),
   agentRows: $('#agents-rows'),
+  hitlRow: $('#hitl-row'),
+  humanInLoop: $('#humanInLoop'),
   agentsWorkflow: $('#agentsWorkflow'),
   agentsSummary: $('#agentsSummary'),
   agentsPromote: $('#agentsPromote'),
@@ -1885,6 +1894,14 @@ function gvRenderSaved() {
       tag.title = `Provided by plugin "${plugin}" — replaced on plugin update`;
       row.appendChild(tag);
     }
+    if (wf.origin === 'auto') {
+      // Spec §7.6 / D10: an Auto-created row is an ordinary workflow that Auto will match next time.
+      const tag = document.createElement('span');
+      tag.className = 'pl-origin pl-auto';
+      tag.textContent = 'Auto';
+      tag.title = 'Created by Auto — an ordinary workflow you can open, edit and delete';
+      row.appendChild(tag);
+    }
     if (wf.version === 2) {
       // The ROW is the Open action (no Open button): click or Enter/Space on the
       // card loads it. openTemplate asks before discarding unsaved edits (MAJ-6)
@@ -2637,12 +2654,20 @@ async function loadWorkflowsInto(selectId) {
     await renderWorkflowConfig(state.workflowId);
     return;
   }
-  const list = workflows.length ? workflows : [{ id: 'wf_default', name: 'Default' }];
-  const want = selectId || state.workflowId || 'wf_default';
+  const isWorkspace = state.runTarget === 'workspace';
+  // Auto is a client-side constant (D24): /api/workflows never lists wf_auto and the row stub has no graph.
+  const list = [AUTO_WORKFLOW, ...(workflows.length ? workflows : [{ id: 'wf_default', name: 'Default' }])];
+  const want = selectId || state.workflowId || AUTO_WORKFLOW_ID;
   sel.innerHTML = '';
-  list.forEach((wf) => sel.appendChild(option(wf.id, workflowPickerLabel(wf, enabledPluginNames) || wf.id)));
-  // Fall back to default if the wanted id is gone (e.g. a deleted workflow).
-  state.workflowId = list.some((wf) => wf.id === want) ? want : 'wf_default';
+  list.forEach((wf) => {
+    const o = option(wf.id, wf.id === AUTO_WORKFLOW_ID ? wf.name : (workflowPickerLabel(wf, enabledPluginNames) || wf.id));
+    if (wf.id === AUTO_WORKFLOW_ID && isWorkspace) { o.disabled = true; o.title = 'Auto is not available for workspaces yet'; }
+    sel.appendChild(o);
+  });
+  // Fall back to default if the wanted id is gone (e.g. a deleted workflow). D19: a workspace
+  // target SHOWS Default in Auto's place but never persists it — the project keeps its choice.
+  const known = list.some((wf) => wf.id === want);
+  state.workflowId = !known || (isWorkspace && want === AUTO_WORKFLOW_ID) ? 'wf_default' : want;
   sel.value = state.workflowId;
   await renderWorkflowConfig(state.workflowId);
 }
@@ -2718,6 +2743,25 @@ async function loadGuardrailsInto(selectId) {
 // and hide the dynamic containers. Saved -> fetch topology + registry, render a
 // node row per node and a cycle input per feedback.
 async function renderWorkflowConfig(workflowId) {
+  const isAuto = workflowId === AUTO_WORKFLOW_ID;
+  if (el.agentsConfig) el.agentsConfig.hidden = isAuto;
+  if (el.hitlRow) el.hitlRow.hidden = !isAuto;
+  if (isAuto) {
+    // Auto picks the agents per run (spec §7.2 / D20): no accordion, one switch, read from the project config.
+    // The switch is per PROJECT like the accordion's rows, and saveHumanInLoop drops the
+    // write with no project selected — so disable it there instead of accepting a flip
+    // the save discards (.sw-input:disabled + .switch is already styled).
+    if (el.humanInLoop) {
+      el.humanInLoop.checked = state.config.humanInLoop !== false;   // readRunConfig echoes only `false`
+      el.humanInLoop.disabled = !agentsEditable();
+    }
+    // Reset what the failed-fetch arm resets, so nothing from the previous workflow lingers inside the
+    // hidden accordion (#wf-feedback-config and the agents header live INSIDE #agents-config).
+    if (el.agentRows) el.agentRows.innerHTML = '';
+    if (el.wfFeedbackConfig) { el.wfFeedbackConfig.innerHTML = ''; el.wfFeedbackConfig.hidden = true; }
+    setAgentsHeader(null, '');
+    return;
+  }
   const isDefault = !workflowId || workflowId === 'wf_default';
   const [fetchedWf, fetchedReg] = await Promise.all([getWorkflowApi(workflowId), getAgentsApi()]);
   // The Default workflow has offline fallbacks for both halves (topology + the
@@ -3222,6 +3266,19 @@ async function saveActiveWorkflow(workflowId) {
     /* selection is best-effort; ignore transient errors */
   }
 }
+
+// Persist the Auto "Human in the loop" switch: PATCH /api/config { projectDir, humanInLoop }.
+async function saveHumanInLoop(on) {
+  const projectDir = selectedProjectPath();
+  if (!projectDir) return;
+  try {
+    const res = await fetch('/api/config', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectDir, humanInLoop: !!on }) });
+    const data = await safeJson(res);
+    if (!res.ok) appendLog({ source: 'ui', level: 'error', text: `human in the loop: ${data.error || res.status}`, ts: Date.now() });
+    else if (data.config) state.config = data.config;
+  } catch { /* best-effort, like saveActiveWorkflow */ }
+}
+if (el.humanInLoop) el.humanInLoop.addEventListener('change', () => saveHumanInLoop(el.humanInLoop.checked));
 
 // "+ Add model…" in any model dropdown: restore the selection and jump to the
 // global Models view with the create editor open (models are added GLOBALLY —
@@ -3880,6 +3937,21 @@ function questionIcon() {
   return svg;
 }
 
+// The 14px play triangle both primary panel buttons carry (clarify Submit,
+// workflow Accept & run). Built fresh each call, like questionIcon().
+function playIcon() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const play = document.createElementNS(NS, 'svg');
+  play.setAttribute('width', '14');
+  play.setAttribute('height', '14');
+  play.setAttribute('viewBox', '0 0 24 24');
+  play.setAttribute('fill', 'currentColor');
+  const tri = document.createElementNS(NS, 'path');
+  tri.setAttribute('d', 'M6 4l14 8-14 8V4Z');
+  play.appendChild(tri);
+  return play;
+}
+
 // Filter a clarify question's options down to the real ones (the contract pads
 // to 3 slots with '' — drop empty/whitespace).
 function realOptions(q) {
@@ -3896,22 +3968,27 @@ function renderQpanel(r, root = r.el) {
   if (!root) return;
   const panel = root.querySelector('.qpanel');
   if (!panel) return;
+  disposeQpanel(panel);                       // a workflow body owns a graph mount + ResizeObserver
   const pq = r.pendingQuestion;
   panel.innerHTML = '';
+  panel.classList.toggle('qpanel-workflow', !!(pq && pq.kind === 'workflow'));
   if (!pq) {
     panel.classList.add('hidden');
     return;
   }
 
+  const isWorkflow = pq.kind === 'workflow';
   const isRecovery = pq.kind === 'recovery';
-  const isGate = !isRecovery && (pq.kind === 'gate' || Array.isArray(pq.issues));
+  const isGate = !isRecovery && !isWorkflow && (pq.kind === 'gate' || Array.isArray(pq.issues));
 
   // ----- head -----
   const head = document.createElement('div');
   head.className = 'qpanel-head';
   head.appendChild(questionIcon());
   const title = document.createElement('b');
-  if (isRecovery) {
+  if (isWorkflow) {
+    title.textContent = `Auto proposes a workflow · round ${(pq.workflow && pq.workflow.round) || 1}`;
+  } else if (isRecovery) {
     const cls = (pq.recovery && pq.recovery.cls) || 'recoverable';
     title.textContent = `${cls.replace('_', ' ')} error — action needed`;
   } else if (isGate) {
@@ -3924,7 +4001,12 @@ function renderQpanel(r, root = r.el) {
     title.textContent = `${label} needs your input`;
   }
   head.appendChild(title);
-  if (!isGate && !isRecovery) {
+  if (isWorkflow) {
+    const count = document.createElement('span');
+    count.className = 'qcount';
+    count.textContent = 'workflow';
+    head.appendChild(count);
+  } else if (!isGate && !isRecovery) {
     const n = realQuestions(pq).length;
     const count = document.createElement('span');
     count.className = 'qcount';
@@ -3933,11 +4015,25 @@ function renderQpanel(r, root = r.el) {
   }
   panel.appendChild(head);
 
-  if (isRecovery) renderRecoveryBody(r, panel, pq);
+  // Un-hide BEFORE the workflow body measures: a hidden host has no layout width in a browser.
+  if (isWorkflow) { panel.classList.remove('hidden'); renderWorkflowBody(r, panel, pq); }
+  else if (isRecovery) renderRecoveryBody(r, panel, pq);
   else if (isGate) renderGateBody(r, panel, pq);
   else renderClarifyBody(r, panel, pq);
 
   panel.classList.remove('hidden');
+}
+
+/** A panel body that owns resources (the workflow graph) registers panel.__dispose; run it before any rebuild. */
+function disposeQpanel(panel) {
+  if (panel && typeof panel.__dispose === 'function') { try { panel.__dispose(); } catch { /* never block a repaint */ } }
+  if (panel) panel.__dispose = null;
+}
+/** A34: the paths that destroy panel DOM WITHOUT renderQpanel/clearQpanel (openRunDetail,
+ *  closeRunDetail, paintRunList's sweep) all go through destroyGraphMounts — dispose there. */
+function disposeQpanelsIn(root) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+  for (const p of root.querySelectorAll('.qpanel')) disposeQpanel(p);
 }
 
 // Clarify questions with at least a question string. (questions may be [] when
@@ -4082,16 +4178,7 @@ function renderClarifyBody(r, panel, pq) {
   const submit = document.createElement('button');
   submit.type = 'button';
   submit.className = 'btn-go';
-  const NS = 'http://www.w3.org/2000/svg';
-  const play = document.createElementNS(NS, 'svg');
-  play.setAttribute('width', '14');
-  play.setAttribute('height', '14');
-  play.setAttribute('viewBox', '0 0 24 24');
-  play.setAttribute('fill', 'currentColor');
-  const tri = document.createElementNS(NS, 'path');
-  tri.setAttribute('d', 'M6 4l14 8-14 8V4Z');
-  play.appendChild(tri);
-  submit.appendChild(play);
+  submit.appendChild(playIcon());
   submit.appendChild(document.createTextNode('Submit answers & resume'));
   foot.appendChild(submit);
   panel.appendChild(foot);
@@ -4195,6 +4282,143 @@ function renderRecoveryBody(r, panel, pq) {
   panel.appendChild(foot);
 }
 
+// ---- the `workflow` arm (spec §7.4): Auto's proposal, the shared body plus this host's
+// tunables table and buttons. Both mounted panels (card + detail) keep their own renderer
+// and their own edit state on the panel node (panel.__wf), like panel.__answers.
+function renderWorkflowBody(r, panel, pq) {
+  const w = pq.workflow || {};
+  const base = w.nodes || {};
+  const wf = { name: w.name || '', nodes: {}, handle: null };   // nodes: edits only (diff against `base`)
+  panel.__wf = wf;
+  const classifyRows = (r.subAgents || []).filter((s) => s && s.subagentType === 'auto-classify');
+  const costUsd = classifyRows.length ? classifyRows.reduce((sum, s) => sum + (Number(s.costUsd) || 0), 0) : w.costUsd;
+  const body = document.createElement('div');
+  body.className = 'qbody';
+  const handle = renderAutoProposal(w, { doc: document, order: AUTO_PROPOSAL_ORDER_QPANEL, costUsd, rounds: w.round, onName: (v) => { wf.name = v; } });
+  wf.handle = handle;
+  panel.__dispose = () => { handle.destroy(); wf.handle = null; };
+  body.appendChild(handle.el);
+  // A23: what the user asked for last round, from this client's memory (the payload carries no echo).
+  if (r._autoRevise && (w.round || 1) > 1) {
+    const note = document.createElement('div'); note.className = 'qnote';
+    const b = document.createElement('b'); b.textContent = `Round ${w.round - 1} revised: `;
+    note.append(b, document.createTextNode(`\u201c${r._autoRevise}\u201d`));
+    handle.el.insertBefore(note, handle.parts.name);
+  }
+  // ---- tunables table, between the match line and the meta line (mockup §D)
+  const table = buildTunablesTable(w, wf, handle);
+  handle.el.insertBefore(table, handle.parts.warnings || handle.parts.meta);
+  // ---- revise box + foot
+  const ta = document.createElement('textarea');
+  ta.className = 'qfree qfree-area'; ta.rows = 3; ta.hidden = true;
+  ta.placeholder = 'What should change? e.g. "drop the manual web check, add a plan review"';
+  ta.setAttribute('aria-label', 'Revision request');
+  body.appendChild(ta);
+  const foot = document.createElement('div'); foot.className = 'qpanel-foot';
+  const mk = (cls, text) => { const b = document.createElement('button'); b.type = 'button'; b.className = cls; b.textContent = text; return b; };
+  const cancel = mk('qcancel wf-cancel', 'Cancel run');
+  const revise = mk('qopen wf-revise', 'Revise');
+  const send = mk('qopen wf-send', 'Send'); send.hidden = true;
+  const accept = mk('btn-go wf-accept', 'Accept & run');
+  accept.dataset.busyLabel = 'Starting…';                 // A31: setPanelBusy's primary swap reads it
+  accept.prepend(playIcon());
+  const stop = (fn) => (e) => { e.stopPropagation(); fn(); };   // the #run-list / #run-detail delegates sit above this node
+  cancel.addEventListener('click', stop(async () => {
+    const ok = await confirmModal({ title: 'Cancel this run?', message: 'The run stops now. Nothing is saved — no workflow row is written.', confirmLabel: 'Cancel run', cancelLabel: 'Keep', danger: true });
+    if (ok) postAnswer(r, { decision: 'cancel' });
+  }));
+  revise.addEventListener('click', stop(() => { ta.hidden = !ta.hidden; send.hidden = ta.hidden; if (!ta.hidden) ta.focus(); }));
+  send.addEventListener('click', stop(async () => {
+    const text = ta.value.trim().slice(0, 4096);
+    if (!text) { ta.classList.add('qfree-err'); ta.focus(); return; }
+    // Record the echo only once the server has it: a failed POST leaves the panel
+    // usable, and the next round must not quote text that never arrived (A23).
+    if (await postAnswer(r, { decision: 'revise', text })) r._autoRevise = text;
+  }));
+  ta.addEventListener('input', () => ta.classList.remove('qfree-err'));
+  accept.addEventListener('click', stop(() => {
+    const nodes = {};
+    for (const [id, sel] of Object.entries(wf.nodes)) {
+      const diff = {};
+      for (const k of ['model', 'effort', 'fanOut', 'askQuestions']) if (sel[k] !== undefined && sel[k] !== (base[id] || {})[k]) diff[k] = sel[k];
+      if (Object.keys(diff).length) nodes[id] = diff;
+    }
+    postAnswer(r, { decision: 'accept', name: handle.getName(), nodes });
+  }));
+  foot.append(cancel, revise, send, accept);
+  body.appendChild(foot);
+  panel.appendChild(body);
+  handle.relayout();                                        // measure now that the body is attached (0 => 702 default)
+}
+
+// The tunables table: one row per dispatch-ordered agent. Columns 1fr · 160 · 160 · 90 · 100.
+function buildTunablesTable(w, wf, handle) {
+  const models = Array.isArray(w.models) ? w.models : [];
+  const table = document.createElement('table');
+  table.className = 'qtune';
+  table.innerHTML = '<colgroup><col><col style="width:160px"><col style="width:160px"><col style="width:90px"><col style="width:100px"></colgroup>'
+    + '<thead><tr><th>agent</th><th>model</th><th>effort</th><th>fan-out</th><th>questions</th></tr></thead>';
+  const tb = document.createElement('tbody');
+  const cur = (id) => ({ ...(w.nodes[id] || {}), ...(wf.nodes[id] || {}) });
+  const set = (id, patch) => { wf.nodes[id] = { ...(wf.nodes[id] || {}), ...patch }; handle.setNodeTunables(id, patch); };
+  const sel = (label, opts, value) => {
+    const wrap = document.createElement('span'); wrap.className = 'select-wrap';
+    const s = document.createElement('select'); s.setAttribute('aria-label', label);
+    for (const [v, t] of opts) s.appendChild(option(v, t));
+    s.value = value; wrap.appendChild(s); return { wrap, s };
+  };
+  // `locked` = disabled for good (A34): data-locked="1" keeps setPanelBusy's restore from re-enabling it.
+  const sw = (label, on, locked, onChange) => {
+    const l = document.createElement('label'); l.className = 'qtune-sw';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'sw-input'; cb.checked = !!on; cb.setAttribute('aria-label', label);
+    if (locked) { cb.disabled = true; cb.dataset.locked = '1'; }
+    cb.addEventListener('change', () => onChange(cb.checked));
+    const knob = document.createElement('span'); knob.className = 'switch switch-sm';
+    l.append(cb, knob); return l;
+  };
+  const lockEffort = (s, locked) => { s.disabled = locked; if (locked) s.dataset.locked = '1'; else delete s.dataset.locked; };
+  const effortsOf = (mid) => models.find((m) => m.id === mid)?.efforts || [];
+  // Only a model's OWN efforts are selectable: sanitizeProposalAnswer keeps `effort` only when the
+  // resolved model lists it — `effort: ''` on a set model is silently dropped, so a choosable
+  // "default" would lie. A node whose effort is unset shows a DISABLED `default` placeholder.
+  const fillEffort = (s, mid, value) => {
+    const list = effortsOf(mid);
+    const kids = list.map((e) => option(e, e));
+    const picked = mid && list.includes(value) ? value : '';
+    if (mid && !picked) { const ph = option('', 'default'); ph.disabled = true; kids.unshift(ph); }
+    s.replaceChildren(...kids); s.value = picked;              // '' selects the placeholder
+    lockEffort(s, !mid);
+  };
+  for (const id of Array.isArray(w.order) ? w.order : Object.keys(w.nodes || {})) {
+    const n = w.nodes[id]; if (!n) continue;
+    const tr = document.createElement('tr'); tr.dataset.nodeId = id;
+    const name = document.createElement('td'); name.textContent = n.label || n.key || id; name.title = name.textContent; tr.appendChild(name);
+    const tdModel = document.createElement('td'); const tdEffort = document.createElement('td');
+    const model = sel(`Model for ${name.textContent}`, [['', 'default'], ...models.map((m) => [m.id, m.label || m.id])], n.model || '');
+    const effort = sel(`Effort for ${name.textContent}`, [], '');
+    fillEffort(effort.s, n.model || '', n.effort || '');
+    model.s.addEventListener('change', () => {
+      const mid = model.s.value;
+      // the mockup's rule over the model's REAL efforts: keep the current one if offered, else its
+      // second, else its first — so a set model always posts a valid effort, never the placeholder
+      const list = effortsOf(mid);
+      const keep = list.includes(cur(id).effort) ? cur(id).effort : (list[1] || list[0] || '');
+      fillEffort(effort.s, mid, keep);
+      set(id, { model: mid, effort: mid ? keep : '' });
+    });
+    effort.s.addEventListener('change', () => set(id, { effort: effort.s.value }));
+    tdModel.appendChild(model.wrap); tdEffort.appendChild(effort.wrap); tr.append(tdModel, tdEffort);
+    const tdFan = document.createElement('td'); tdFan.appendChild(sw(`Fan-out for ${name.textContent}`, n.fanOut, !n.canFanOut, (on) => set(id, { fanOut: on }))); tr.appendChild(tdFan);
+    const tdQ = document.createElement('td');
+    if (n.asksQuestions) tdQ.appendChild(sw(`Questions for ${name.textContent}`, n.askQuestions, n.questionsLocked, (on) => set(id, { askQuestions: on })));
+    else tdQ.textContent = '\u2014';
+    tr.appendChild(tdQ);
+    tb.appendChild(tr);
+  }
+  table.appendChild(tb);
+  return table;
+}
+
 // Gather the clarify answers from the slots of the panel that was submitted and
 // POST them. `panel` is null only for a caller that has no panel node.
 function submitAnswer(r, panel = null) {
@@ -4212,14 +4436,17 @@ function submitAnswer(r, panel = null) {
 // resumed (the server returns 200 even for a stale id) — we disable the panel,
 // show a "Resuming…" affordance, set r._answering, and KEEP r.pendingQuestion.
 // The panel is cleared only when the next phase/state event confirms resume.
+// Returns TRUE only when the POST came back 200 — the workflow panel's Revise
+// echo is recorded off that, so a failed send never claims a round the server
+// never saw. Every other caller ignores the return.
 async function postAnswer(r, payload) {
-  if (!r || !r.pendingQuestion) return;
+  if (!r || !r.pendingQuestion) return false;
   // Re-entrancy guard: an answer is already in flight for this run. Without
   // this a synthetic/double click (or a re-triggered handler) could fire a
   // second POST before maybeResume clears _answering.
-  if (r._answering) return;
+  if (r._answering) return false;
   // Never post for a dead run.
-  if (r._finished || isTerminalStatus(r.status)) return;
+  if (r._finished || isTerminalStatus(r.status)) return false;
   const id = r.pendingQuestion.id;
   const runId = r.runId;
 
@@ -4237,13 +4464,15 @@ async function postAnswer(r, payload) {
       r._answering = false;
       setPanelBusy(r, false);
       onLog(r, { source: 'ui', level: 'error', text: `answer failed: ${err.error || res.status}`, ts: Date.now() });
-      return;
+      return false;
     }
     // 200: keep pendingQuestion; wait for the next phase/state to confirm resume.
+    return true;
   } catch (e) {
     r._answering = false;
     setPanelBusy(r, false);
     onLog(r, { source: 'ui', level: 'error', text: `answer error: ${e.message}`, ts: Date.now() });
+    return false;
   }
 }
 
@@ -4275,11 +4504,13 @@ function qpanelsFor(r) {
 // state on the primary button while an answer is in flight / awaiting resume.
 function setPanelBusy(r, busy) {
   for (const panel of qpanelsFor(r)) {
-    panel.querySelectorAll('button, input').forEach((node) => { node.disabled = busy; });
+    // A25: the workflow arm's table has selects and its revise box is a textarea.
+    // A34: a control locked for good (data-locked) stays disabled through the busy -> idle restore.
+    panel.querySelectorAll('button, input, select, textarea').forEach((node) => { node.disabled = busy || node.dataset.locked === '1'; });
     const primary = panel.querySelector('.btn-go, .gate-another');
     if (primary && busy && !primary.dataset.label) {
       primary.dataset.label = primary.textContent;
-      primary.textContent = 'Resuming…';
+      primary.textContent = primary.dataset.busyLabel || 'Resuming…';
     } else if (primary && !busy && primary.dataset.label) {
       primary.textContent = primary.dataset.label;
       delete primary.dataset.label;
@@ -4291,6 +4522,10 @@ function setPanelBusy(r, busy) {
 // from finishRun's terminal path.
 function clearQpanel(r) {
   for (const panel of qpanelsFor(r)) {
+    disposeQpanel(panel);
+    // A stale `.qpanel-workflow` would make the delegates swallow a later clarify Submit in this node.
+    panel.classList.remove('qpanel-workflow');
+    panel.__wf = null;
     panel.innerHTML = '';
     panel.classList.add('hidden');
     // The identity stamp paintRdQuestions keys its rebuild on. Emptying the panel
@@ -7633,6 +7868,9 @@ el.form.addEventListener('submit', async (e) => {
     mock: el.mock.checked,
     sourceBranch: (el.sourceBranch && el.sourceBranch.value) || undefined,
     featureBranch: (el.featureBranch && el.featureBranch.value.trim()) || undefined,
+    // Auto only (spec §7.2): this run's switch; the server falls back to the project setting
+    // when absent. JSON.stringify drops an own key whose value is `undefined`.
+    humanInLoop: state.workflowId === AUTO_WORKFLOW_ID ? !!(el.humanInLoop && el.humanInLoop.checked) : undefined,
   };
   if (target === 'workspace') {
     body.workspaceId = workspaceId;
@@ -7816,6 +8054,7 @@ async function loadSettings() {
     paintAskSettings(data);
     paintDebugSpawnSettings(data);
     await paintTitleModelSettings(data);
+    await paintAutoModelSettings(data);
     paintBudgetReadout();
     refreshBudget();
     paintChatSettings(data.chat);
@@ -8417,26 +8656,87 @@ document.getElementById('titleModel')?.addEventListener('change', () => {
 });
 // Test = the Models-view Test button verbatim (POST /api/models/:id/test): one
 // tiny spawn through the id's catalog routing. Without it the first evidence of
-// a bad pick is a missing title three minutes into a run.
-document.getElementById('titleModelTest')?.addEventListener('click', async () => {
-  const sel = document.getElementById('titleModel');
-  const btn = document.getElementById('titleModelTest');
+// a bad pick is a missing title three minutes into a run. Shared by BOTH model
+// cards (title generation and the Auto workflow model) — one implementation.
+async function testModelFromSettings(selectId, buttonId, setMsg) {
+  const sel = document.getElementById(selectId);
+  const btn = document.getElementById(buttonId);
   const id = sel.value;
   if (!id) return;
   btn.disabled = true;
-  setTitleModelMsg(`Testing ${id}…`);
+  setMsg(`Testing ${id}…`);
   try {
     const res = await fetch(`/api/models/${encodeURIComponent(id)}/test`, { method: 'POST' });
     const data = await safeJson(res);
-    if (!res.ok) setTitleModelMsg(`✗ ${data.error || `HTTP ${res.status}`}`, 'err');
-    else if (data.ok) setTitleModelMsg(`✓ ${id} replied: ${data.text}`);
-    else setTitleModelMsg(`✗ ${data.hint || data.message}`, 'err');
+    if (!res.ok) setMsg(`✗ ${data.error || `HTTP ${res.status}`}`, 'err');
+    else if (data.ok) setMsg(`✓ ${id} replied: ${data.text}`);
+    else setMsg(`✗ ${data.hint || data.message}`, 'err');
   } catch (e) {
-    setTitleModelMsg(`✗ ${e.message}`, 'err');
+    setMsg(`✗ ${e.message}`, 'err');
   } finally {
     btn.disabled = false;
   }
+}
+document.getElementById('titleModelTest')?.addEventListener('click', () => testModelFromSettings('titleModel', 'titleModelTest', setTitleModelMsg));
+
+// ---- Auto workflow model (spec D14 / §7.7): the model that classifies a task into a workflow.
+// Reuses fetchTitleModelCatalog (the project-less /api/config catalog), setHintMsg and
+// postSettingsCard. The option list is FLAT on purpose (no optgroups): one plain list.
+const AUTO_MODEL_DEFAULT_LABEL = 'Default (Sonnet-class)';
+function setAutoModelMsg(text, kind) { setHintMsg('autoModelMsg', text, kind); }
+function buildAutoModelOptions(sel, stored, catalog, stale = false) {
+  sel.innerHTML = '';
+  sel.appendChild(option('', AUTO_MODEL_DEFAULT_LABEL));
+  const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
+  const models = catalog.filter((m) => m && m.custom !== 'project' && (!m.hidden || m.id === stored)).sort(byLabel);
+  for (const m of models) sel.appendChild(option(m.id, (m.label || m.id) + (m.custom === 'plugin' && m.plugin ? ` (${m.plugin})` : '')));
+  // Only a MISSING model is condemned. fetchTitleModelCatalog returns [] on any
+  // non-OK/throw, so an unreachable catalog would otherwise disable Save and Test on
+  // a perfectly good setting — `stale` is the caller's verdict, not this list's.
+  if (stored && !models.some((m) => m.id === stored)) {
+    const o = option(stored, stale ? `${stored} — not installed` : stored);
+    o.disabled = stale;
+    sel.appendChild(o);
+  }
+  sel.value = stored;
+}
+async function paintAutoModelSettings(data) {
+  const sel = document.getElementById('autoModel');
+  if (!sel) return;
+  const catalog = await fetchTitleModelCatalog();                     // the same project-less /api/config catalog
+  const stored = typeof data.autoWorkflowModel === 'string' ? data.autoWorkflowModel : '';
+  // autoWorkflowModelEffective is {model, source} only (no `stale`, unlike titleModelEffective).
+  const eff = data.autoWorkflowModelEffective || {};
+  // The SERVER decides staleness: autoModelState() reports source 'settings' only when the
+  // stored id resolved against the real catalog, so anything else with an id stored means it
+  // did not. An older server sends no `source` at all — there the client catalog is the only
+  // evidence, and an EMPTY one is a failed GET, not an empty catalog, so it condemns nothing.
+  const stale = !!stored && (eff.source
+    ? (eff.source !== 'settings' && eff.source !== 'env')
+    : (catalog.length > 0 && !catalog.some((m) => m && m.id === stored)));
+  buildAutoModelOptions(sel, stored, catalog, stale);
+  const effModel = eff.model || 'the default model';
+  let note = '', kind = '';
+  if (eff.source === 'env') { note = `WORCA_AUTO_MODEL is set in the environment: Auto uses ${effModel} regardless of this setting.`; kind = 'warn'; }
+  else if (stale) { note = `Model "${stored}" is no longer in the catalog — Auto uses ${effModel} (the default).`; kind = 'warn'; }
+  else if (eff.source === 'settings') note = `Auto classifies with ${effModel}.`;
+  else note = `Auto classifies with ${effModel} (the default).`;
+  setHintMsg('autoModelEnvNote', note, kind);
+  const testBtn = document.getElementById('autoModelTest');
+  if (testBtn) testBtn.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled;
+}
+function postAutoModel(body) {
+  return postSettingsCard(body, { setMsg: setAutoModelMsg, paint: paintAutoModelSettings, savedText: 'Saved. Applies to the next Auto run — no restart needed.' });
+}
+document.getElementById('autoModelSave')?.addEventListener('click', () => {
+  const sel = document.getElementById('autoModel');
+  const opt = sel.options[sel.selectedIndex];
+  if (opt && opt.disabled) { setAutoModelMsg('that model is no longer installed — pick another or use the default', 'err'); return; }
+  postAutoModel({ autoWorkflowModel: sel.value || '' });
 });
+document.getElementById('autoModelReset')?.addEventListener('click', () => postAutoModel({ autoWorkflowModel: '' }));
+document.getElementById('autoModel')?.addEventListener('change', () => { const sel = document.getElementById('autoModel'); const b = document.getElementById('autoModelTest'); if (b) b.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled; });
+document.getElementById('autoModelTest')?.addEventListener('click', () => testModelFromSettings('autoModel', 'autoModelTest', setAutoModelMsg));
 
 // Browse… for the projects root: native OS dialog, in-app modal fallback —
 // the same two endpoints the add-project Browse button uses (app.js:3793).
@@ -9897,6 +10197,7 @@ if (runListEl) {
     // delegation works for any dynamically-built card.
     const qbtn = e.target.closest && e.target.closest('.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort');
     if (qbtn) {
+      if (qbtn.closest('.qpanel-workflow')) return;        // workflow buttons bind directly (renderWorkflowBody)
       const card = qbtn.closest('.run-card');
       const runId = card && card.dataset.runId;
       const r = runId && runs.get(runId);
@@ -11738,6 +12039,7 @@ function hdDot() {
 
 function paintHdHeaderMeta(screen, record, data) {
   const st = data.state;
+  paintAutoBadge(screen.querySelector('.hd-row1 .auto-badge'), st && st.stepper);
   const meta = screen.querySelector('.hd-meta');
   meta.innerHTML = '';
   const { family, word } = histStatusMeta({ status: st.status });
@@ -14789,6 +15091,21 @@ function startedLabel(startedAt) {
   return String(startedAt);
 }
 
+/** Spec §7.5 / A11: the Auto badge. `Auto` while deciding, `Auto → ‹adopted name›` after adoption
+ *  (the adopted manifest is rebuilt from the workflow row, so template.name IS the workflow name). */
+function paintAutoBadge(el, stepper) {
+  if (!el) return;
+  const auto = stepper && stepper.auto;
+  if (!auto) { el.hidden = true; el.textContent = ''; el.title = ''; return; }
+  const name = (stepper.template && stepper.template.name) || '';
+  const decided = auto.status === 'decided' && name;
+  el.hidden = false;
+  el.textContent = decided ? `Auto → ${name}` : 'Auto';
+  el.title = !decided ? 'Auto is deciding the workflow'
+    : auto.via === 'reused' ? `Auto reused the saved workflow "${name}"` : `Auto created the workflow "${name}"`;
+  el.classList.toggle('is-deciding', !decided);
+}
+
 // Status-pill copy map (committed — no '?'). Returns { family, text }.
 // pausing/paused are checked BEFORE the pendingQuestion state so an in-flight
 // pause is never mislabeled "awaiting answers".
@@ -14807,7 +15124,7 @@ function statusPill(r) {
   // Same family as `paused`: an interrupted run is parked and resumable, and
   // PAUSED_STATUSES (app.js:10286) already treats it that way.
   if (r.status === 'interrupted') return { family: 'amber', text: 'Interrupted' };
-  if (r.pendingQuestion != null) return { family: 'amber', text: 'Paused · awaiting answers' };
+  if (r.pendingQuestion != null) return { family: 'amber', text: r.pendingQuestion.kind === 'workflow' ? 'Paused · your decision' : 'Paused · awaiting answers' };
   if (r.status === 'starting') return { family: 'peach', text: 'Starting' };
   if (r.status === 'done') return { family: 'green', text: 'Done' };
   if (r.status === 'stopped') return { family: 'red', text: 'Stopped' };
@@ -14872,7 +15189,7 @@ function renderRunMeta(r, root = r.el) {
   const prog = root.querySelector('.rc-prog');
   if (prog) {
     const d = isGraphRun(r) ? runDecorFor(r).progress : null;
-    prog.hidden = !d;
+    prog.hidden = !d || !d.total;        // a deciding Auto run has 0 agent nodes: no "0/0" (A33)
     if (d) prog.querySelector('.rc-prog-text').textContent = `${d.done}/${d.total}`;
   }
 
@@ -15090,6 +15407,9 @@ function nodeLabelLookup(stepper) {
   if (isGraphManifest(stepper)) {
     const g = {};
     for (const n of stepper.graph.nodes) { if (n && n.id) g[n.id] = n.label || n.id; }
+    // The bookend cells (preflight/done) are NOT in graph.nodes, and a sub-agent group can be keyed by one
+    // (Auto's classifier rows sit under `preflight`) — without this the head would read the raw id.
+    for (const cell of Array.isArray(stepper.steps) ? stepper.steps : []) for (const n of cell.nodes || []) if (n && n.id && !g[n.id]) g[n.id] = n.label || n.id;
     return (id) => g[id] || id;
   }
   const m = manifestFor(stepper);
@@ -15158,7 +15478,65 @@ function paintLegacyStrip(host, manifest, steps) {
 // the v1 arm needs and `decor` cannot carry: every caller passes decor = null on
 // the v1 path, so the strip takes its rows explicitly.
 const GRAPH_MOUNTS = new WeakMap();   // .run-flow element -> { m, ctx }
+const AUTO_PLACEHOLDERS = new WeakMap();   // .run-flow element -> { box, label, orb }
+/** Spec §7.3: the Auto bootstrap manifest IS a v2 manifest with zero nodes (isGraphManifest is
+ *  true), so this branch runs BEFORE the mount. Live: orb + "Auto is deciding…" / "Waiting for your
+ *  decision"; parked mid-decision: a still "Paused before deciding" (resume re-decides); frozen
+ *  (decor.live === false and not parked): a still line — an orb on a dead run would lie (A24). */
+function paintAutoDeciding(host, decor) {
+  const run = decor && decor.run;
+  const live = !(decor && decor.live === false);
+  // A24 belongs to a run that can never decide again. A run PARKED mid-decision can:
+  // the resume point keeps `auto.status` at 'deciding' and `resume()` re-enters
+  // `_decideTopology` (src/core/orchestrator.mjs:147-157), and a parked run is
+  // resumable from the Running card AND from History. So the frozen line is reserved
+  // for a non-live run that is not parked; a park says so. PAUSED_STATUSES (:11022) is
+  // the app's own parked set — deliberately not isTerminalStatus, which counts
+  // 'interrupted' as over.
+  const parked = PAUSED_STATUSES.includes(String((run && run.status) || '').toLowerCase());
+  const frozen = !live && !parked;
+  const waiting = !!(run && run.pendingQuestion && run.pendingQuestion.kind === 'workflow');
+  const text = frozen ? 'Auto did not decide a workflow'
+    : !live ? 'Paused before deciding'
+      : waiting ? 'Waiting for your decision' : 'Auto is deciding the workflow…';
+  let slot = AUTO_PLACEHOLDERS.get(host);
+  if (!slot) {
+    const mounted = GRAPH_MOUNTS.get(host);
+    if (mounted) { mounted.m.destroy(); GRAPH_MOUNTS.delete(host); }   // a resumed run re-entering `deciding` (A28)
+    host.classList.remove('gv-host');                                   // mountRunGraph's absolute-position class
+    host.replaceChildren();
+    host.classList.add('auto-deciding-host');
+    const box = document.createElement('div');
+    box.className = 'auto-deciding ask-thinking';
+    const label = document.createElement('span');
+    label.className = 'ask-thinking-label auto-deciding-label';
+    box.appendChild(label);
+    host.appendChild(box);
+    slot = { box, label, orb: null };
+    AUTO_PLACEHOLDERS.set(host, slot);
+  }
+  // The orb follows `live` on EVERY repaint, not just on construction: the same host
+  // survives the run pausing, stopping or resuming while Auto is still deciding, and a
+  // canvas that keeps spinning on a parked run is the lie A24 was written to prevent.
+  // createThinkingOrb starts its own RAF loop at construction, honours prefers-reduced-motion
+  // itself, and registers a `worca:theme` document listener that `stop()` does not remove
+  // (module limitation shared with the Ask panel) — so build it only while live.
+  if (slot.orb && !live) { slot.orb.stop(); slot.orb.el.remove(); slot.orb = null; }
+  else if (!slot.orb && live) { slot.orb = createThinkingOrb({ doc: document, win: window, size: 22 }); slot.box.prepend(slot.orb.el); }
+  if (slot.label.textContent !== text) slot.label.textContent = text;
+  slot.box.classList.toggle('is-waiting', waiting);
+}
+function dropAutoPlaceholder(host) {
+  const slot = AUTO_PLACEHOLDERS.get(host);
+  if (!slot) return;
+  if (slot.orb) slot.orb.stop();
+  slot.box.remove();
+  host.classList.remove('auto-deciding-host');
+  AUTO_PLACEHOLDERS.delete(host);
+}
 function paintGraphFor(host, stepper, decor, legacySteps) {
+  if (host && stepper && stepper.auto && stepper.auto.status === 'deciding') { paintAutoDeciding(host, decor); return; }
+  if (host) dropAutoPlaceholder(host);
   if (!isGraphManifest(stepper)) {
     if (host && stepper) paintLegacyStrip(host, stepper, legacySteps);
     else if (host) host.replaceChildren();
@@ -15186,10 +15564,12 @@ function paintGraphFor(host, stepper, decor, legacySteps) {
  *  ResizeObserver, which `host.innerHTML = ''` alone would leak. */
 function destroyGraphMounts(root) {
   if (!root || typeof root.querySelectorAll !== 'function') return;
+  disposeQpanelsIn(root);
   for (const host of root.querySelectorAll('.run-flow.gv-host')) {
     const slot = GRAPH_MOUNTS.get(host);
     if (slot) { slot.m.destroy(); GRAPH_MOUNTS.delete(host); }
   }
+  for (const host of root.querySelectorAll('.run-flow.auto-deciding-host')) dropAutoPlaceholder(host);
 }
 
 /** The ONE writer of a run's log filter from outside its own bar (footer rows;
@@ -15271,7 +15651,9 @@ function paintStepper(r) {
   if (!r.el) return;
   const host = r.el.querySelector('.run-flow');
   if (!host) return;
-  if (isGraphRun(r) && r.el.dataset.density === 'compact') return;   // locked: compact density renders NO graph
+  // locked: compact density renders NO graph — but release the deciding placeholder
+  // first, or its orb keeps its RAF canvas alive behind a `display:none` card body.
+  if (isGraphRun(r) && r.el.dataset.density === 'compact') { dropAutoPlaceholder(host); return; }
   paintGraphFor(host, r.stepper, isGraphRun(r) ? runDecorFor(r, 'static') : null, r.steps);
 }
 
@@ -15316,14 +15698,16 @@ function paintRunCard(r) {
     wordEl.textContent = text;
     wordEl.className = `rc-status-word st-${family}`;
   }
+  paintAutoBadge(r.el.querySelector('.rc-acts .auto-badge'), r.stepper);
 
   // Question-count pill in the action cluster (replaces the foot chip's
   // "<phase> paused · N questions" copy).
   const qpill = r.el.querySelector('.rc-qpill');
   if (qpill) {
-    const n = r.pendingQuestion != null ? questionCount(r.pendingQuestion) : 0;
+    const pq = r.pendingQuestion;
+    const n = pq != null ? questionCount(pq) : 0;
     qpill.hidden = n === 0;
-    qpill.textContent = n ? `${n} question${n === 1 ? '' : 's'}` : '';
+    qpill.textContent = !n ? '' : pq.kind === 'workflow' ? 'proposal' : `${n} question${n === 1 ? '' : 's'}`;
   }
 
   // Density: the root attribute selects which body the stylesheet shows.
@@ -15488,7 +15872,8 @@ function paintRunList(list, rlist, emptyMsg) {
     prev = r.el;
   }
   [...list.children].forEach((c) => {
-    if (c.dataset && c.dataset.runId && !seen.has(c.dataset.runId)) c.remove();
+    // Release the leaving card's mounts, orbs and panel resources before dropping its DOM (A34).
+    if (c.dataset && c.dataset.runId && !seen.has(c.dataset.runId)) { destroyGraphMounts(c); c.remove(); }
   });
   if (!rlist.length) list.innerHTML = `<div class="run-empty">${emptyMsg}</div>`;
 }
@@ -15723,6 +16108,12 @@ function paintRdQuestions(screen, r) {
   const key = pq
     ? `${pq.id || 'pending'}|${pq.kind || ''}|${Array.isArray(pq.questions) ? pq.questions.length : (Array.isArray(pq.issues) ? pq.issues.length : 0)}`
     : '';
+  // Un-hide BEFORE the rebuild: index.html ships .rd-questions hidden, and a workflow
+  // body measures its graph host the moment it is attached (renderWorkflowBody's
+  // handle.relayout()). Inside a hidden host clientWidth is 0, so the flow would lay
+  // out at the 702 default and the ResizeObserver would re-lay it a frame later — a
+  // visible flash on top of the wr-rise entry. The card path already un-hides first.
+  host.hidden = pq == null;                    // drives the wr-rise entry
   if (panel && panel.dataset.qid !== key) {
     renderQpanel(r, host);                     // host contains the .qpanel node
     // Stamp '' rather than deleting: `clearQpanel` already removed the attribute,
@@ -15737,7 +16128,6 @@ function paintRdQuestions(screen, r) {
     // `if (r._answering) return;` and die silently. Re-apply from the model.
     if (r._answering) setPanelBusy(r, true);
   }
-  host.hidden = pq == null;                    // drives the wr-rise entry
 }
 
 // { screen, runId } the detail's Discard-worktree listener is currently bound to.
@@ -15869,6 +16259,7 @@ el.runDetail?.addEventListener('click', (e) => {
   const qbtn = e.target.closest && e.target.closest(
     '.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort');
   if (!qbtn) return;
+  if (qbtn.closest('.qpanel-workflow')) return;            // same guard, early-return shape
   if (qbtn.classList.contains('gate-continue')) postAnswer(r, { decision: 'continue' });
   else if (qbtn.classList.contains('gate-another')) postAnswer(r, { decision: 'another' });
   else if (qbtn.classList.contains('recovery-retry')) postAnswer(r, { decision: 'retry' });
@@ -15893,6 +16284,7 @@ function rdDot() {
 
 function paintRdHeader(screen, r) {
   screen.querySelector('.rd-title').textContent = r.title || r.runId;
+  paintAutoBadge(screen.querySelector('.rd-row1 .auto-badge'), r.stepper);
 
   // Status pill: statusPill's family + word (spec §4.3 pins it as the source).
   const { family, text } = statusPill(r);

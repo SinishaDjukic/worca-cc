@@ -7,7 +7,7 @@
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { resolveModelEnv, resolveModelCost } from '../config.mjs';
 import { safeParseJson } from '../protocol.mjs';
-import { normalizeShape, ShapeError, cleanText } from '../../shared/graph/assemble.mjs';
+import { normalizeShape, ShapeError, cleanText, SHAPE_LIMITS } from '../../shared/graph/assemble.mjs';
 import { RECIPE_GUIDE, mockShapeFor } from './recipes.mjs';
 
 export const CLASSIFIER_TIMEOUT_MS = 90_000;
@@ -146,6 +146,8 @@ export function buildClassifierSystemPrompt({ agents = [], models = [], humanInL
     '{ "name": string (<= 60 chars, names the workflow),',
     '  "taskKind": "prompt" | "plan-partial" | "plan-complete-detailed" | "plan-complete-small",',
     '  "reasoning": string (1-2 sentences shown to the user),',
+    '  "size": "small" | "medium" | "large" (how much the change touches),',
+    '  "signals": [string, ...] (up to 8 short cues that drove the choice — e.g. "web UI", "risky", "large", "trivial", "plan"),',
     '  "stages": [ { "agent": <key>, "model"?: <model id>, "effort"?: <effort>, "fanOut"?: boolean, "askQuestions"?: boolean, "selfLoop"?: true | { "maxCycles": 1-20 }, "loop"?: false }',
     '              | { "parallel": [ <stage>, <stage>, ... ] } ],',
     '  "loops"?: [ { "from": <agent key or stage id>, "to": <agent key or stage id>, "maxCycles": 1-20 } ] }',
@@ -162,6 +164,7 @@ export function buildClassifierSystemPrompt({ agents = [], models = [], humanInL
     '## Models (use only these ids; omit "model" to run on the default model)',
     ...modelLines,
     'Tuning guide: planning and review stages deserve the strongest model at high effort; producer stages (checklist, decomposer) the cheapest; the implementer a strong model at medium or high effort; set fanOut only where allowed and only for wide tasks.',
+    'size and signals are shown to the user as chips: keep them short and literal.',
     '',
     humanInLoop
       ? 'A human is in the loop: open with a clarifier stage when the task is ambiguous; askQuestions may be true where allowed.'
@@ -215,6 +218,14 @@ export function checkShapeModels(shape, models) {
   return issues;
 }
 
+const CARDS_SIGNAL = (n) => `${n} agent cards read`;
+/** Append the "N agent cards read" fact, reserving the LAST signal slot for it (normalizeShape caps at maxSignals). */
+export function withCardsSignal(shape, n) {
+  const sig = CARDS_SIGNAL(n);
+  const own = (Array.isArray(shape.signals) ? shape.signals : []).filter((s) => !/^\d+ agent cards read$/.test(s));
+  return normalizeShape({ ...shape, signals: [...own.slice(0, SHAPE_LIMITS.maxSignals - 1), sig] });
+}
+
 /**
  * One classification, with ONE retry on an unusable reply (the issues go back
  * as feedback). See the test file for the exact contract.
@@ -226,10 +237,11 @@ export async function classifyTask(input, deps = {}) {
   } = input || {};
   const run = deps.run || runClaude;
   const usage = { input_tokens: 0, output_tokens: 0 };
-  if (mockEnabled({ mock })) {
-    return { shape: normalizeShape(mockShapeFor(taskText, { humanInLoop })), warnings: [], attempts: 0, costUsd: 0, usage, raw: '', model: model || null };
-  }
+  // The vocabulary is pure and offline, and BOTH arms stamp its size into the signals (A9).
   const agents = agentVocabulary(registry, { domain });
+  if (mockEnabled({ mock })) {
+    return { shape: withCardsSignal(normalizeShape(mockShapeFor(taskText, { humanInLoop })), agents.length), warnings: [], attempts: 0, costUsd: 0, usage, raw: '', model: model || null };
+  }
   const known = new Set(agents.map((a) => a.key));
   const systemPrompt = buildClassifierSystemPrompt({ agents, models, humanInLoop });
   let fb = [...feedback];
@@ -291,7 +303,7 @@ export async function classifyTask(input, deps = {}) {
         issues.push(...checkShapeModels(shape, models));
       }
     }
-    if (!issues.length) return { shape, warnings, attempts: attempt, costUsd, usage, raw: text, model: model || null };
+    if (!issues.length) return { shape: withCardsSignal(shape, agents.length), warnings, attempts: attempt, costUsd, usage, raw: text, model: model || null };
     const detail = issues.map((i) => i.message).join('; ');
     warnings.push({ code: 'CLASSIFIER_RETRY', message: `attempt ${attempt}: ${detail}` });
     if (attempt === maxAttempts) throw new ClassifierError('CLASSIFIER_FAILED', `unusable shape after ${attempt} attempts: ${detail}`, issues, { costUsd, usage });

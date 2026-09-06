@@ -111,7 +111,7 @@ const KEY_ALLOW = new Set([
 test('no agent-key literal drives engine or UI control flow', () => {
   const hits = [];
   for (const f of files()) {
-    if (KEY_ALLOW.has(f) || !/^src\/core\/(graph|orchestrator|run-harness|auto)|^src\/shared\/graph\/(assemble|isomorphic)|^ui\/public\/graph/.test(f)) continue;
+    if (KEY_ALLOW.has(f) || !/^src\/core\/(graph|orchestrator|run-harness|auto)|^src\/shared\/graph\/(assemble|isomorphic|flow-layout)|^ui\/public\/(graph|auto-proposal)/.test(f)) continue;
     const text = stripComments(readFileSync(f, 'utf8'));
     for (const k of AGENT_KEYS) {
       if (new RegExp(`['"\`]${k}['"\`]`).test(text)) hits.push(`${f}: hardcodes agent key "${k}"`);

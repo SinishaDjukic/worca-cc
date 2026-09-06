@@ -281,7 +281,7 @@ test('the workflow select is populated with Default + saved names from GET /api/
   selectProjectAnd(window);
   await new Promise((r) => setTimeout(r, 0));
   const opts = [...window.document.querySelectorAll('#workflowSelect option')].map((o) => o.textContent);
-  assert.deepEqual(opts, ['Default', 'Demo']);
+  assert.deepEqual(opts, ['Auto', 'Default', 'Demo']);
 });
 
 test('selecting a saved workflow renders one accordion row per node (keyed by node id) + one cycle input per feedback', async () => {

@@ -74,12 +74,12 @@ const optionIds = (sel) => [...sel.options].map((o) => o.value);
 test('a workflow saved while away shows in the picker on returning to New Pipeline (no reload)', async () => {
   const { window, server } = await boot();
   const sel = window.document.getElementById('workflowSelect');
-  assert.deepEqual(optionIds(sel), ['wf_default'], 'boot: Default only');
+  assert.deepEqual(optionIds(sel), ['wf_auto', 'wf_default'], 'boot: Auto + Default only');
 
   await go(window, 'composer');
   server.workflows.push(WF_A);                       // what Composer's save does server-side
   await go(window, 'new');
-  assert.deepEqual(optionIds(sel), ['wf_default', 'wf_a'], 'picker re-fetched on re-entry');
+  assert.deepEqual(optionIds(sel), ['wf_auto', 'wf_default', 'wf_a'], 'picker re-fetched on re-entry');
   assert.equal(sel.value, 'wf_default', 'active selection preserved');
 });
 

@@ -36,6 +36,11 @@ test('mockShapeFor is deterministic and picks by cheap heuristics', () => {
   const small = mockShapeFor('# Plan\n\n- rename the flag\n- update the test');
   assert.equal(small.taskKind, 'plan-complete-small');
   assert.deepEqual(small.stages.map((s) => s.agent), ['implementer']);
+  assert.equal(trivial.size, 'small');           assert.deepEqual(trivial.signals, ['trivial']);
+  assert.equal(prompt.size, 'medium');           assert.deepEqual(prompt.signals, []);
+  assert.equal(web.size, 'medium');              assert.deepEqual(web.signals, ['web UI']);
+  assert.equal(plan.size, 'large');              assert.deepEqual(plan.signals, ['plan', 'large']);
+  assert.equal(small.size, 'small');             assert.deepEqual(small.signals, ['plan', 'trivial']);
   assert.notEqual(mockShapeFor('demo task'), mockShapeFor('demo task'), 'a fresh object every call');
   for (const s of [trivial, prompt, noHuman, web, plan, small]) normalizeShape(s);   // all canonical
 });

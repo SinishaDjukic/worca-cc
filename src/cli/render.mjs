@@ -163,6 +163,10 @@ export function formatWorkflowProposal(w) {
     : `(no saved workflow has this shape — Accept saves it as "${p.name ?? ''}")`;
   const lines = [`? Auto proposes a workflow · round ${p.round || 1}  ${where}`];
   if (p.reasoning) lines.push(`  ${p.reasoning}`);
+  // buildProposal defaults `size` to 'medium', so every REAL proposal prints this line;
+  // the guard only spares the unit fixtures that carry neither field.
+  const cues = [p.size, ...(Array.isArray(p.signals) ? p.signals : [])].filter(Boolean);
+  if (cues.length) lines.push(`  ${cues.join(' · ')}`);
   const nodes = p.manifest?.graph?.nodes || [];
   const wires = p.manifest?.graph?.wires || [];
   const agents = nodes.filter((n) => n.kind === 'agent');

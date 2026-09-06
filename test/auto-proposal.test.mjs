@@ -12,7 +12,7 @@ const S = (agent, extra = {}) => ({ agent, ...extra });
 const seed = (id) => SEED_TEMPLATES.find((t) => t.id === id);
 
 function proposalFor({ match = null } = {}) {
-  const shape = { name: 'Quick and careful', reasoning: 'small task', stages: [S('planner', { model: 'claude-opus-5', effort: 'high' }), S('implementer', { fanOut: true }), S('reviewer')] };
+  const shape = { name: 'Quick and careful', reasoning: 'small task', taskKind: 'prompt', size: 'medium', signals: ['web UI', '9 agent cards read'], stages: [S('planner', { model: 'claude-opus-5', effort: 'high' }), S('implementer', { fanOut: true }), S('reviewer')] };
   const built = assembleShape(shape, { registry: REG });
   let template = built.template;
   let tunables = built.tunables;
@@ -29,6 +29,7 @@ test('buildProposal: a new workflow — manifest under wf_auto, dispatch order, 
   assert.equal(p.round, 2);
   assert.equal(p.name, 'Quick and careful');
   assert.equal(p.reasoning, 'small task');
+  assert.equal(p.taskKind, 'prompt'); assert.equal(p.size, 'medium'); assert.deepEqual(p.signals, ['web UI', '9 agent cards read']);
   assert.deepEqual(p.warnings, ['a warning']);
   assert.equal(p.match, null);
   assert.equal(p.costUsd, 0.03);

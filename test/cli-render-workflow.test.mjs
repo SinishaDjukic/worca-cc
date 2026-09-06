@@ -44,3 +44,10 @@ test('the stages line follows the proposal\'s dispatch order, not the node order
   const lines = formatWorkflowProposal({ round: 1, name: 'x', match: null, manifest, order: ['n_rev', 'n_plan', 'n_impl'] });
   assert.equal(lines[1], '  stages: Review (claude-sonnet-5) → Plan (claude-opus-5 · high) → Implement ⤴');
 });
+
+test('size and signals render as one line after the reasoning', () => {
+  const lines = formatWorkflowProposal({ round: 1, name: 'x', reasoning: 'why', size: 'medium', signals: ['web UI', '9 agent cards read'], match: null, manifest, order: ['n_plan'] });
+  assert.equal(lines[1], '  why');
+  assert.equal(lines[2], '  medium · web UI · 9 agent cards read');
+  assert.equal(formatWorkflowProposal({ round: 1, name: 'x', size: 'small', match: null, manifest: { graph: { nodes: [], wires: [] } } })[1], '  small');
+});

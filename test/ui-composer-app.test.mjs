@@ -555,3 +555,17 @@ test('MAJ-16: after a registry reload the OPEN canvas is re-validated against th
   assert.equal(doc.getElementById('gv-errors').hidden, false, 'the wire into the deleted port is flagged after the reload');
   assert.equal(doc.getElementById('gv-save').disabled, true, 'Save is disabled instead of 422ing later');
 });
+
+// Spec §7.6 / D10: an Auto-created workflow is an ORDINARY row that says where it came from.
+const AUTO_WF = { id: 'wf_theme', name: 'Theme switch', version: 2, domain: 'coding', origin: 'auto', nodes: [], wires: [] };
+
+test('an origin=auto row carries the Auto tag and stays an ordinary openable row', async () => {
+  const win = await boot({ workflows: [AUTO_WF, V2_ROW] });
+  const doc = win.document;
+  const item = doc.querySelector('#gv-saved-list .pl-item[data-id="wf_theme"]');
+  const tag = item.querySelector('.pl-origin.pl-auto');
+  assert.equal(tag.textContent, 'Auto');
+  assert.equal(tag.title, 'Created by Auto — an ordinary workflow you can open, edit and delete');
+  assert.ok(item.querySelector('.pl-row').classList.contains('pl-openable'), 'still an ordinary v2 row');
+  assert.equal(doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-origin'), null, 'a user-created row is not badged');
+});

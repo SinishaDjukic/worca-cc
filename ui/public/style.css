@@ -676,6 +676,11 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .advanced[open] .adv-chev{transform:rotate(90deg);}
 .advanced-body{padding-top:12px;}
 .advanced-body .switch-row{margin-top:4px;}
+/* `.switch-row{display:flex}` (:537) beats the UA [hidden] rule (this file's own footgun), so the
+   Auto row and its hint need explicit rules. The .sw-input bridge (:3370) requires `.switch` to be
+   the input's NEXT sibling — the markup keeps them adjacent. */
+#hitl-row[hidden]{display:none;}
+#hitl-row[hidden]+#hitlHint{display:none;}
 
 /* per-step model/effort controls (app.js: .step-config / .step-model / .step-effort / .step-current) */
 .step-config{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;}
@@ -888,6 +893,32 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    becomes space-between, and `margin-right:auto` on the counter achieves that
    WITHOUT a second .qpanel-foot rule that the footer test would then contradict. */
 .qanswered{margin-right:auto;font:500 11.5px var(--mono);color:var(--ink-3);}
+
+/* ---------- the `workflow` question arm (spec §7.4): Auto's proposal in a qpanel ---------- */
+.qpanel-workflow .qpanel-head .qcount{font-family:var(--mono);font-weight:600;letter-spacing:.06em;}
+.qbody{display:flex;flex-direction:column;margin-top:12px;}
+.qbody>*{min-width:0;}
+.qnote{margin:12px 0;padding:10px 12px;background:var(--amber-wash-2);border:1px solid var(--amber-line);border-radius:10px;font-size:13px;line-height:1.5;color:var(--ink-2);}
+.qnote b{font-weight:600;color:var(--ink);}
+/* The revise echo already carries its own 12px bottom margin — one child-selector
+   deeper than the generic name margin below, so it wins wherever both match. */
+.ask-wfcard-body>.qnote+.ask-wfcard-namewrap{margin-top:0;}
+.qtune{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:16px;font-size:13px;}
+.qtune th{text-align:left;font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:400;height:32px;padding:0 8px;border-bottom:1px solid var(--line);white-space:nowrap;}
+.qtune td{height:44px;padding:0 8px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.qtune th:first-child,.qtune td:first-child{padding-left:0;}
+.qtune td:first-child{font-weight:500;color:var(--ink);}
+.qtune .select-wrap{width:150px;max-width:100%;}
+.qtune .select-wrap select{height:34px;border-radius:10px;}
+.qtune-sw{display:inline-block;position:relative;vertical-align:middle;}
+/* (no disabled rule here: `.sw-input:disabled + .switch{opacity:.5;cursor:not-allowed}` already exists) */
+.qfree-area{margin-top:12px;min-height:64px;resize:vertical;line-height:1.5;}
+.qfree-area[hidden]{display:none;}
+.qfree.qfree-err{border-color:var(--red);}
+.qcancel{margin-right:auto;height:36px;padding:0 8px;border:0;border-radius:999px;background:transparent;color:var(--red-ink);font-family:inherit;font-weight:600;font-size:13px;cursor:pointer;}
+.qcancel:hover{background:var(--red-bg);}
+.qcancel:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.qopen[hidden]{display:none;}
 .rd-questions .qanswered{font-size:12.5px;}
 
 /* ---------- Gate (cycle gate) ---------- */
@@ -1083,6 +1114,12 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    the bare `.diff-add`/`.diff-del` rules further down. */
 .hist-diff{display:inline-flex;gap:6px;font-family:var(--mono);font-size:12px;font-weight:700;}
 
+/* Spec §7.5: the "Auto → ‹workflow name›" badge, in all three headers. */
+.auto-badge{display:inline-flex;align-items:center;max-width:220px;padding:3px 9px;border-radius:999px;font-size:10.5px;font-weight:700;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  background:var(--violet-bg);color:var(--violet-ink);flex:0 0 auto;}
+.auto-badge[hidden]{display:none;}
+.auto-badge.is-deciding{background:var(--amber-bg);color:var(--amber-ink);}
+.rc-acts .auto-badge{max-width:160px;}
 .hist-merge{font-size:10.5px;font-weight:700;letter-spacing:.04em;padding:3px 8px;border-radius:999px;white-space:nowrap;}
 .hist-merge[hidden]{display:none;}
 .hist-merge.ok{background:var(--green-bg);color:var(--green-ink);}
@@ -3129,6 +3166,48 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-card-failed{color:var(--red-ink);}
 .ask-card-link{color:var(--blue-ink);}
 
+/* ---------- Auto proposal body (ui/public/auto-proposal.mjs) — one body, two hosts (mockup §D/§F) ----------
+   Rhythm top→bottom: name → 8 → reasoning → 16 → chips → 8 → fingerprint → 16 → graph → 12 → loops → 16 → match → 8 → meta.
+   Per-child margins so every host keeps the same gaps. */
+.ask-wfcard-body{display:flex;flex-direction:column;min-width:0;}
+.ask-wfcard-body>*{margin:0;min-width:0;}
+.ask-wfcard-namerow{display:flex;align-items:baseline;gap:10px;}
+.ask-wfcard-namewrap+*{margin-top:8px;}
+/* The name leads the CARD order (no predecessor, no margin) but sits mid-list in the
+   question panel (reason → signals → fingerprint → name → graph), where it would butt
+   against the 11px mono fingerprint line. The `*+` guard keeps the card's first child flush. */
+.ask-wfcard-body>*+.ask-wfcard-namewrap{margin-top:12px;}
+.ask-wfcard-name{flex:0 1 auto;min-width:0;font-weight:600;font-size:15px;line-height:1.35;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-wfcard-edit{flex:0 0 auto;border:0;background:transparent;padding:0;color:var(--ink-3);font-family:var(--sans);font-size:11px;line-height:1.35;white-space:nowrap;cursor:pointer;border-radius:4px;}
+.ask-wfcard-edit svg{width:11px;height:11px;margin-right:4px;vertical-align:-1px;stroke:currentColor;fill:none;stroke-width:2;}
+.ask-wfcard-edit:hover{color:var(--ink);}
+.ask-wfcard-edit:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-wfcard-nameedit[hidden],.ask-wfcard-namerow[hidden]{display:none;}
+.ask-wfcard-field{display:block;width:100%;height:36px;padding:0 12px;border:1px solid var(--line-2);border-radius:10px;background:var(--field);color:var(--ink);font-family:var(--sans);font-size:13px;font-weight:500;outline:none;}
+.ask-wfcard-field:focus{border-color:var(--ink);background:var(--field-focus);}
+.ask-wfcard-fieldhint{margin-top:8px;font-size:11px;line-height:1.35;color:var(--ink-3);}
+.ask-wfcard-reason{font-size:13px;line-height:1.55;color:var(--ink-2);max-width:62ch;}
+.ask-wfcard-signals{display:flex;flex-wrap:wrap;gap:6px;margin-top:16px;}
+.ask-wfcard-sig{display:inline-flex;align-items:center;height:22px;padding:0 10px;border-radius:999px;font-family:var(--mono);font-size:11px;line-height:1;background:var(--field);color:var(--ink-2);white-space:nowrap;}
+.ask-wfcard-sig.kind{background:transparent;border:1px solid var(--ink);color:var(--ink);font-weight:700;}
+.ask-wfcard-sig.size{background:var(--violet-bg);color:var(--violet-ink);}
+.ask-wfcard-fp{margin-top:8px;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-wfcard-fp .k{margin-right:8px;}
+.ask-wfcard-graph{position:relative;margin-top:16px;min-height:120px;overflow:hidden;border:1px solid var(--line);border-radius:12px;
+  background:var(--canvas-2) radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;transition:height .24s cubic-bezier(.2,.7,.3,1);}
+.ask-wfcard-loops{display:flex;flex-direction:column;gap:6px;margin-top:12px;padding:0;list-style:none;}
+.ask-wfcard-loop{position:relative;padding-left:22px;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink-2);}
+.ask-wfcard-loop::before{content:"↻";position:absolute;left:0;top:0;width:14px;text-align:center;color:var(--amber);font-size:13px;line-height:16px;}
+.ask-wfcard-loop b{font-weight:700;color:var(--amber-ink);}
+.ask-wfcard-match{position:relative;margin-top:16px;padding-left:24px;font-size:13px;line-height:1.55;color:var(--ink-2);}
+.ask-wfcard-match svg{position:absolute;left:0;top:3px;width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;}
+.ask-wfcard-match b{font-weight:600;color:var(--ink);}
+.ask-wfcard-match.is-hit{color:var(--green-ink);}
+.ask-wfcard-warnings{display:flex;flex-direction:column;gap:8px;margin-top:12px;}
+.ask-wfcard-warn{font-size:13px;line-height:1.5;color:var(--amber-ink);background:var(--amber-wash);border:1px solid var(--amber-line);border-radius:10px;padding:8px 12px;}
+.ask-wfcard-meta{margin-top:8px;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;}
+@media (prefers-reduced-motion: reduce){.ask-wfcard-graph{transition:none;}}
+
 .ask-jump{position:absolute;left:0;right:0;bottom:104px;margin:0 auto;width:max-content;
   display:flex;align-items:center;gap:7px;padding:6px 12px;border:1px solid var(--line-2);border-radius:999px;
   background:var(--panel);color:var(--ink);font-family:inherit;font-weight:600;font-size:11.5px;cursor:pointer;
@@ -3517,16 +3596,16 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .gv-wires path.ghost.legal{stroke:var(--green);stroke-dasharray:none;}
 .gv-wires path.ghost.illegal{stroke:var(--red);}
 .gv-world .node{position:absolute;left:0;top:0;display:block;padding:0;gap:0;align-items:stretch;z-index:2;
-  width:var(--gv-node-w);background:var(--panel);border:var(--gv-border) solid var(--line-2);border-radius:16px;
+  width:var(--gv-node-w);background:var(--panel);border:var(--gv-border) solid var(--line-2);border-radius:calc(16px * var(--gv-scale));
   box-shadow:var(--shadow-soft);cursor:grab;transition:box-shadow .12s;}
 .gv-world .node::before{content:none;}
 .gv-world .node:hover{box-shadow:var(--shadow);}
 .gv-world .node.sel{outline:2px solid var(--ink);outline-offset:2px;}
 .gv-world .node.dragging{cursor:grabbing;transition:none;}
 .gv-static .node,.gv-static .wbadge{pointer-events:none;}
-.gv-world .nhead{height:var(--gv-head-h);display:flex;align-items:center;gap:8px;padding:0 11px;
-  border-radius:14.5px 14.5px 0 0;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.gv-world .nhead svg{width:15px;height:15px;flex:0 0 auto;stroke-width:1.85;}
+.gv-world .nhead{height:var(--gv-head-h);display:flex;align-items:center;gap:calc(8px * var(--gv-scale));padding:0 calc(11px * var(--gv-scale));
+  border-radius:calc(14.5px * var(--gv-scale)) calc(14.5px * var(--gv-scale)) 0 0;font-size:max(9px,calc(13px * var(--gv-scale)));font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.gv-world .nhead svg{width:calc(15px * var(--gv-scale));height:calc(15px * var(--gv-scale));flex:0 0 auto;stroke-width:1.85;}
 .gv-world .nhead .tt{overflow:hidden;text-overflow:ellipsis;}
 .gv-world .h-flow{background:var(--ink);color:var(--on-ink);}
 .gv-world .h-violet{background:var(--violet-bg);color:var(--violet-ink);}
@@ -3536,10 +3615,30 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .gv-world .h-peach{background:var(--peach-bg);color:var(--h-peach-ink);}
 .gv-world .h-amber{background:var(--amber-bg);color:var(--amber-ink);}
 .gv-world .nbody{padding:var(--gv-pad-t) 0 var(--gv-pad-b);}
-.gv-world .prow{position:relative;height:var(--gv-row-h);display:flex;align-items:center;gap:7px;padding:0 13px;}
+/* the chip band (A2/A26): model · effort · flags, ONE line between the head and the body, on the panel (never on a
+   tinted head). Chips are the mockup's one unfloored font — 10px mono, 13px tall at .65 — so the band's inner 137px
+   holds "Sonnet 5 · medium · asks" (mockup F); the model chip ellipsises first. */
+.gv-world .nband{height:var(--gv-band-h);display:flex;align-items:center;gap:3px;padding:0 calc(3px * var(--gv-scale));overflow:hidden;}
+.gv-world .bchip{display:inline-block;flex:0 0 auto;height:calc(20px * var(--gv-scale));line-height:calc(20px * var(--gv-scale));padding:0 calc(6.15px * var(--gv-scale));
+  border-radius:999px;font-family:var(--mono);font-size:10px;font-weight:700;white-space:nowrap;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;}
+/* 6.15 / 4.6 × 0.65 = the mockup's 4px / 3px chip paddings (its .fl-chip is fixed px; ours scales, no hard-coded px in node CSS) */
+.gv-world .bchip.model{flex:0 1 auto;background:var(--ink);color:var(--on-ink);}
+.gv-world .bchip.model.is-unset{background:var(--field);color:var(--ink-3);}
+.gv-world .bchip.effort{background:var(--field);color:var(--ink-2);}
+.gv-world .bchip.flag{padding:0 calc(4.6px * var(--gv-scale));background:var(--amber-bg);color:var(--amber-ink);}
+.gv-world .bchip.flag.q{background:var(--red-bg);color:var(--red-ink);}
+/* A36: a port row is ONE line by construction (its height is --gv-row-h); at the 9px floor the Task/OR captions
+   ("prompt + attached files", "forwards freshest input") wrapped to two lines inside the 15.6px row and ate --gv-pad-b
+   (measured in Chrome at 0.65: .prow.cap scrollHeight 19 vs clientHeight 16). The mockup's .fl .prow is nowrap; a caption
+   that STILL does not fit ellipsises. NO overflow:hidden on .prow itself — the port dots hang outside it. */
+.gv-world .prow{position:relative;height:var(--gv-row-h);display:flex;align-items:center;gap:calc(7px * var(--gv-scale));padding:0 calc(13px * var(--gv-scale));white-space:nowrap;}
+.gv-world .prow.cap .pt{min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .gv-world .prow.out{justify-content:flex-end;}
-.gv-world .prow .pn{font-size:12.5px;font-weight:500;}
-.gv-world .prow .pt{font:10px/1.3 var(--mono);color:var(--ink-3);}
+/* nowrap without a guard would let a long port NAME (plugin agents mint their own ids)
+   spill past the card border at every scale — .pn is a flex item, so it needs min-width:0
+   before it will shrink. Same treatment the caption above gets. */
+.gv-world .prow .pn{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:max(9px,calc(12.5px * var(--gv-scale)));font-weight:500;}
+.gv-world .prow .pt{font-family:var(--mono);font-size:max(9px,calc(10px * var(--gv-scale)));line-height:1.3;color:var(--ink-3);}
 .gv-world .prow .pt.cond{color:var(--amber-ink);}
 .gv-world .prow .mla{margin-left:auto;}
 /* The global .chip (:692) is a 7px/13px page pill — ~28px tall inside a 24px
@@ -3547,12 +3646,13 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
    with a loop / fan-out input (the "loop" / "⤫N" pills seen on running cards).
    Same override the palette needs (.ap .chip); metrics mirror the loop wire's
    .wbadge so "loop" on the port and "2×" on the wire read as one family. */
-.gv-world .prow .chip{flex:0 0 auto;font:700 10px/1.4 var(--mono);padding:1px 7px;border-radius:999px;
+.gv-world .prow .chip{flex:0 0 auto;font-family:var(--mono);font-weight:700;font-size:max(9px,calc(10px * var(--gv-scale)));line-height:1.4;
+  padding:calc(1px * var(--gv-scale)) calc(7px * var(--gv-scale));border-radius:999px;
   white-space:nowrap;background:var(--field);color:var(--ink-3);}
 .gv-world .prow .chip.am{background:var(--amber-bg);color:var(--amber-ink);}
 .gv-world .prow .chip.fan{background:var(--blue-bg);color:var(--blue-ink);}
 .gv-world .psep{height:var(--gv-sep-h);position:relative;}
-.gv-world .psep::after{content:"";position:absolute;left:13px;right:13px;top:4px;height:1px;background:var(--line);}
+.gv-world .psep::after{content:"";position:absolute;left:calc(13px * var(--gv-scale));right:calc(13px * var(--gv-scale));top:calc(4px * var(--gv-scale));height:1px;background:var(--line);}
 /* dot centre = row centre: top = (ROW_H − DOT)/2; x overhang = DOT/2 + BORDER,
    so the anchor lands exactly on node.x / node.x + NODE_W. */
 .gv-world .dot,.gv-world .gdot{position:absolute;top:calc((var(--gv-row-h) - var(--gv-dot)) / 2);
@@ -3561,11 +3661,11 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .gv-world .prow.out .dot{right:calc(-1 * (var(--gv-dot) / 2 + var(--gv-border)));}
 .gv-world .dot.md{background:var(--ink);}
 .gv-world .dot.json{background:var(--blue);}
-.gv-world .dot.void{background:var(--panel);border:2px solid var(--ink-3);}
-.gv-world .dot.any{background:var(--panel);border:2px solid var(--ink);}
-.gv-world .dia{position:absolute;top:8px;right:calc(-1 * (4px + var(--gv-border)));width:8px;height:8px;
+.gv-world .dot.void{background:var(--panel);border:calc(2px * var(--gv-scale)) solid var(--ink-3);}
+.gv-world .dot.any{background:var(--panel);border:calc(2px * var(--gv-scale)) solid var(--ink);}
+.gv-world .dia{position:absolute;top:calc(8px * var(--gv-scale));right:calc(-1 * (4px * var(--gv-scale) + var(--gv-border)));width:calc(8px * var(--gv-scale));height:calc(8px * var(--gv-scale));
   background:var(--amber);border-radius:2px;transform:rotate(45deg);}
-.gv-world .gdot{background:var(--field);border:2px dashed var(--seq);}
+.gv-world .gdot{background:var(--field);border:calc(2px * var(--gv-scale)) dashed var(--seq);}
 .gv-world .prow.gate .pn,.gv-world .prow.gate .pt{color:var(--ink-3);}
 .gv-world .prow.gate.wired .gdot{background:var(--panel);border-color:var(--ink);}
 .gv-world .prow.gate.wired .pn{color:var(--ink);}
@@ -3573,9 +3673,14 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .gv-world .prow.drop-bad .dot,.gv-world .prow.drop-bad .gdot{box-shadow:0 0 0 3px var(--red-bg);border-color:var(--red);}
 .gv-world .npip{position:absolute;top:-7px;left:-7px;width:14px;height:14px;border-radius:50%;
   background:var(--red);border:2px solid var(--panel);cursor:pointer;z-index:3;}
+/* the wire badge is the SECOND unfloored font (A26/A35 — the mockup's .fl .wbadge{font-size:10px;line-height:14px}); at scale 1 this is today's 10px/1.4 */
 .gv-world .wbadge{position:absolute;transform:translate(-50%,-50%);z-index:2;background:var(--amber-bg);
-  color:var(--amber-ink);border:1px solid var(--amber);border-radius:999px;padding:1px 7px;
-  font:10px/1.4 var(--mono);pointer-events:none;}
+  color:var(--amber-ink);border:1px solid var(--amber);border-radius:999px;padding:calc(1px * var(--gv-scale)) calc(7px * var(--gv-scale));
+  font-family:var(--mono);font-size:10px;line-height:14px;pointer-events:none;}
+/* flow mode (A3): the stage is as tall as its rows — the host reads it back — and the world never transforms */
+.gv-stage.gv-flow{position:relative;inset:auto;width:100%;}
+/* A35: a flow host is never inside a click-to-open card, so its cards/badges may take pointer events (head + chip tooltips) */
+.gv-static.gv-flow .node,.gv-static.gv-flow .wbadge{pointer-events:auto;}
 /* Run-mode executions footer (P6 fills it through view.setFooter, which is the
    ONE writer of a run card's height). Heights MUST stay var(--gv-foot-h) /
    var(--gv-exec-row-h): nodeSize bills FOOT_H for the first footer LINE and
@@ -3875,6 +3980,7 @@ input.gv-name:focus-visible{outline:none;}
 .gv-saved .pl-legacy,.gv-saved .pl-origin{flex:0 0 auto;background:var(--field);border:1px solid var(--line);color:var(--ink-3);
   border-radius:999px;padding:3px 10px;font-size:11px;font-weight:600;}
 .gv-saved .pl-origin{font-family:var(--mono);letter-spacing:-.01em;}
+.gv-saved .pl-origin.pl-auto{background:var(--violet-bg);border-color:var(--violet-bg);color:var(--violet-ink);font-family:var(--sans);letter-spacing:.04em;}
 /* Delete: the bin icon in the pipeline Archive button's dress (.hd-archive — red
    ink on a red-bg hairline pill, fills on hover), icon-only at row-action size. */
 .gv-saved .pl-del{flex:0 0 auto;width:34px;height:34px;border-radius:999px;border:1.5px solid var(--red-bg);
@@ -3930,6 +4036,11 @@ input.gv-name:focus-visible{outline:none;}
    fills, so the stage rect === the wrap's padding box. A static host may be
    widened inline (native horizontal scroll, D5); monitor wraps never scroll. */
 .run-flow.gv-host{position:absolute;top:0;left:0;bottom:0;width:auto;min-width:100%;padding:0;margin:0;display:block;gap:0;}
+/* The Auto deciding placeholder (spec §7.3). The host never gets gv-host/gv-wrap-static
+   (mountRunGraph adds those), so it supplies its own box; (0,2,0) beats the base .run-flow. */
+.run-flow.auto-deciding-host{display:flex;align-items:center;justify-content:center;min-height:120px;padding:24px;width:auto;}
+.auto-deciding{gap:12px;}
+.auto-deciding .auto-deciding-label{font-size:13px;}
 .run-flow-wrap.gv-wrap{user-select:none;-webkit-user-select:none;}
 .run-flow-wrap.gv-wrap-monitor{overflow:hidden;height:var(--run-host-h,360px);}
 .rc-detailed .run-flow-wrap.gv-wrap-static{height:300px;overflow-x:auto;overflow-y:hidden;}   /* additive (Running D17) */

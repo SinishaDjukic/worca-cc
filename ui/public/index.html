@@ -297,6 +297,15 @@
                   </div>
                 </div>
 
+                    <!-- Auto only (spec §7.2 / D20): the ONE agent-level option. The .sw-input bridge
+                         (style.css:3370) paints the same switch as #mock-switch from a REAL checkbox — no JS mirror. -->
+                    <label class="switch-row" id="hitl-row" hidden>
+                      <input id="humanInLoop" class="sw-input" type="checkbox" checked aria-describedby="hitlHint">
+                      <span class="switch"></span>
+                      <span class="txt">Human in the loop — Auto shows its proposal, clarifies, and agents may ask</span>
+                    </label>
+                    <small class="hint" id="hitlHint">Off runs unattended: the proposal is accepted as proposed, no clarify card, no agent questions. Cost and error pauses still apply.</small>
+
                     <!-- Guardrails picker (built-ins + named sets; the selection IS the
                          run's policy, applied uniformly to every member). app.js populates
                          from GET /api/guardrails. Applies to Project and Workspace targets
@@ -400,6 +409,7 @@
                   </span>
                 </div>
                 <div class="rc-acts">
+                  <span class="auto-badge" hidden></span>
                   <span class="rc-qpill" hidden></span>
                   <button type="button" class="btn-resume" title="Resume — restart this paused pipeline where it left off" aria-label="Resume" hidden><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg></button>
                   <button type="button" class="btn-pause" title="Pause — gracefully stop the session so it can be resumed" aria-label="Pause"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg></button>
@@ -437,6 +447,7 @@
                     Back
                   </button>
                   <h1 class="rd-title"></h1>
+                  <span class="auto-badge" hidden></span>
                   <span class="rd-status pill-run"><span class="pdot"></span><span class="rd-status-word"></span></span>
                 </div>
                 <div class="rd-meta mono"></div>
@@ -584,6 +595,7 @@
                     Back
                   </button>
                   <h1 class="hd-title"></h1>
+                  <span class="auto-badge" hidden></span>
                   <span class="hist-merge" hidden></span>
                   <button type="button" class="hd-pr" hidden>Create PR</button>
                   <a class="hd-pr-link" hidden target="_blank" rel="noopener"></a>
@@ -1205,6 +1217,33 @@
                 <button type="button" id="titleModelSave" class="btn btn-primary btn-mini">Save</button>
               </div>
               <small class="hint" id="titleModelMsg"></small>
+            </section>
+
+            <!-- Auto workflow model (spec D14 / §7.7): which model classifies a task into a workflow.
+                 Empty = the Sonnet-class default; WORCA_AUTO_MODEL in the environment wins. -->
+            <section class="card settings-card" id="auto-model-settings-card">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Auto workflow model</h2>
+                  <button type="button" class="info-tip" aria-label="About the Auto workflow model">i<span class="tip-content hidden">
+                    When a run starts on <b>Auto</b>, one short model call reads the task and picks the workflow.
+                    Pick the model that makes that call; empty means the Sonnet-class default. A non-empty
+                    <code>WORCA_AUTO_MODEL</code> in the environment overrides this setting. Each call is billed to the
+                    run as a sub-agent row named "Auto workflow (round n)".
+                  </span></button>
+                </div>
+              </div>
+              <div class="field">
+                <div class="label-row"><label for="autoModel">Model</label></div>
+                <select id="autoModel" class="select" aria-label="Auto workflow model"></select>
+              </div>
+              <small class="hint" id="autoModelEnvNote"></small>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="autoModelTest" class="btn btn-ghost btn-mini" title="Send one tiny prompt to the selected model">Test</button>
+                <button type="button" id="autoModelReset" class="btn btn-ghost btn-mini">Use default</button>
+                <button type="button" id="autoModelSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="autoModelMsg"></small>
             </section>
 
             <!-- Spawn-debug diagnostics: the stored side of WORCA_DEBUG_SPAWN.

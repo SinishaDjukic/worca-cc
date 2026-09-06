@@ -1,7 +1,7 @@
 // test/graph-assemble.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeShape, cleanText, ShapeError, TASK_KINDS, SHAPE_LIMITS } from '../src/shared/graph/assemble.mjs';
+import { normalizeShape, cleanText, ShapeError, TASK_KINDS, SIZES, SHAPE_LIMITS } from '../src/shared/graph/assemble.mjs';
 
 const codes = (fn) => { try { fn(); } catch (e) { assert.ok(e instanceof ShapeError, String(e)); return e.issues.map((i) => i.code); } assert.fail('expected a ShapeError'); };
 
@@ -10,6 +10,8 @@ test('a minimal shape normalizes: minted ids, defaults, filtered tunables', () =
   assert.equal(s.name, 'Auto workflow');
   assert.equal(s.taskKind, 'prompt');
   assert.equal(s.reasoning, '');
+  assert.equal(s.size, 'medium', 'size defaults');
+  assert.deepEqual(s.signals, [], 'signals default');
   assert.deepEqual(s.stages.map((x) => x.id), ['s1', 's2']);
   assert.deepEqual(s.stages[0].tunables, { model: 'm', effort: 'high', askQuestions: true });
   assert.equal(s.stages[0].selfLoop, null);
@@ -24,7 +26,19 @@ test('name/taskKind/reasoning are sanitised; TASK_KINDS is the closed vocabulary
   assert.equal(s.taskKind, 'prompt');
   assert.equal(s.reasoning.length, SHAPE_LIMITS.maxReasoningLen);
   assert.deepEqual([...TASK_KINDS], ['prompt', 'plan-partial', 'plan-complete-detailed', 'plan-complete-small']);
+  assert.deepEqual([...SIZES], ['small', 'medium', 'large']);
   assert.equal(normalizeShape({ taskKind: 'plan-complete-small', stages: [{ agent: 'implementer' }] }).taskKind, 'plan-complete-small');
+});
+
+test('size is a closed vocabulary with a silent default; signals are cleaned, deduped, capped — and both survive a second pass', () => {
+  const s = normalizeShape({ stages: [{ agent: 'implementer' }], size: 'huge', signals: [' web UI ', 'web UI', 'x\x1b[31my', 7, '', 'a'.repeat(100)] });
+  assert.equal(s.size, 'medium');
+  assert.deepEqual(s.signals, ['web UI', 'xy', 'a'.repeat(SHAPE_LIMITS.maxSignalLen)]);
+  assert.equal(normalizeShape({ stages: [{ agent: 'implementer' }], size: 'large' }).size, 'large');
+  assert.equal(normalizeShape({ stages: [{ agent: 'implementer' }], signals: 'nope' }).signals.length, 0);
+  const many = normalizeShape({ stages: [{ agent: 'implementer' }], signals: Array.from({ length: 20 }, (_, i) => `s${i}`) });
+  assert.equal(many.signals.length, SHAPE_LIMITS.maxSignals);
+  assert.deepEqual(normalizeShape(s), s, 'idempotent with the new fields');
 });
 
 test('cleanText: ANSI, control and format characters are stripped; whitespace collapses to one line; caps apply', () => {
@@ -72,7 +86,7 @@ test('selfLoop accepts true | n | {maxCycles}; loops resolve by id or by a uniqu
 
 test('normalizeShape is IDEMPOTENT — assembleShape re-normalizes the classifier\'s already-normalized output', () => {
   const RAW = {
-    name: 'N', taskKind: 'plan-partial', reasoning: 'r',
+    name: 'N', taskKind: 'plan-partial', reasoning: 'r', size: 'large', signals: ['risky'],
     stages: [{ id: 'p', agent: 'planner', model: 'm', effort: 'high', fanOut: true, askQuestions: true },
       { agent: 'refiner', selfLoop: { maxCycles: 4 } },
       { parallel: [{ agent: 'reviewer', loop: false }, { agent: 'manualTestsChecklist' }] }],
@@ -80,6 +94,8 @@ test('normalizeShape is IDEMPOTENT — assembleShape re-normalizes the classifie
   };
   const once = normalizeShape(RAW);
   assert.deepEqual(once.stages[0].tunables, { model: 'm', effort: 'high', fanOut: true, askQuestions: true });
+  assert.equal(once.size, 'large');
+  assert.deepEqual(once.signals, ['risky']);
   assert.deepEqual(normalizeShape(once), once, 'a second pass must not drop the tunables (they now live under stage.tunables)');
 });
 

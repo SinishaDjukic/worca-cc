@@ -57,5 +57,8 @@ export function mockShapeFor(taskText, { humanInLoop = true } = {}) {
   else shape = byId('prompt');
   if (!humanInLoop) shape.stages = shape.stages.filter((s) => s.agent !== 'clarify');
   shape.reasoning = `mock classifier: ${hasHeading ? 'the task is a plan' : text.length < 80 ? 'a trivial prompt' : 'a free-form prompt'}${WEB_RE.test(text) && !hasHeading && text.length >= 80 ? ' for a web feature' : ''}`;
+  const web = WEB_RE.test(text) && !hasHeading && text.length >= 80;
+  shape.size = hasHeading ? (text.length >= 1200 ? 'large' : 'small') : (text.length < 80 ? 'small' : 'medium');
+  shape.signals = hasHeading ? ['plan', text.length >= 1200 ? 'large' : 'trivial'] : (text.length < 80 ? ['trivial'] : (web ? ['web UI'] : []));
   return shape;
 }
