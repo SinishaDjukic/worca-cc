@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { makePanel, key, pointerdown, pointer, sizeDock } from './helpers/ask-panel-harness.mjs';
-import { fmtStarted, shortcutLabel, ASK_SHEET_SIZE } from '../ui/public/ask-panel.mjs';
+import { fmtStarted, shortcutLabel, ASK_SHEET_SIZE, chipPickerTop } from '../ui/public/ask-panel.mjs';
 
 const THREADS = {
   threads: [
@@ -684,4 +684,14 @@ test('ask-panel: resize — a dock or window resize during a drag leaves the dra
   assert.equal(sheet.style.width, '1100px', 'no snap back to the stored 900 under the held pointer');
   up();
   assert.deepEqual(JSON.parse(store.getItem(SIZE_KEY)), { w: 1100, h: 700 });
+});
+
+test('ask-panel: the chip picker prefers the space under the chip, flips above when the menu would not fit, and clamps inside a short sheet', () => {
+  // .ask-sheet clips (overflow:hidden) and a chip sits wherever the transcript scrolled
+  // it, so a downward-only anchor chops the menu's Effort row off with no way to reach it.
+  assert.equal(chipPickerTop({ top: 100, bottom: 120, panelH: 200, sheetH: 669 }), 126, 'room below: 6px under the chip');
+  assert.equal(chipPickerTop({ top: 500, bottom: 520, panelH: 400, sheetH: 669 }), 94, 'no room below (526+400 past the sheet) ⇒ above the chip');
+  assert.equal(chipPickerTop({ top: 20, bottom: 40, panelH: 640, sheetH: 669 }), 23, 'neither side fits ⇒ clamped into the sheet, where the panel scrolls itself');
+  assert.equal(chipPickerTop({ top: 4, bottom: 8, panelH: 200, sheetH: 100 }), 0, 'never negative');
+  assert.equal(chipPickerTop({ top: 0, bottom: 0, panelH: 0, sheetH: 0 }), 6, 'jsdom measures 0 everywhere: the plain anchor, no clamp');
 });

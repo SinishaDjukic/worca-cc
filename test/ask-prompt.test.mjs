@@ -25,15 +25,16 @@ const CATALOG = {
               [{ nodeId: 's1', key: 'implementer', displayName: 'Implementer', description: 'Implements' }, { nodeId: 's1b', key: 'reviewer', displayName: 'Reviewer', description: 'Reviews the diff' }]],
       feedbacks: [{ id: 'fb', from: 's1b', to: 's1' }] },
   ],
+  // Deliberately unsorted: renderCatalog sorts by key, so the section is byte-stable.
+  agents: [
+    { key: 'reviewer', displayName: 'Reviewer', purpose: 'Checks the diff against the plan', inputs: 'plan:md, done:void?', outputs: 'review:md/blocking, pass:void/clean', verifier: true, clarifier: false, selfLoop: false, fanOut: true, asksQuestions: false },
+    { key: 'planner', displayName: 'Planner', purpose: 'Writes the plan', inputs: 'task:json', outputs: 'plan:md', verifier: false, clarifier: false, selfLoop: false, fanOut: false, asksQuestions: false },
+  ],
 };
 
 test('system prompt: rules + catalog, byte-stable under permutation, wf_default first, agents listed once', () => {
   const a = buildSystemPrompt(CATALOG);
-  const permuted = {
-    projects: [...CATALOG.projects].reverse(),
-    workspaces: [...CATALOG.workspaces],
-    workflows: [...CATALOG.workflows].reverse(),
-  };
+  const permuted = { ...CATALOG, projects: [...CATALOG.projects].reverse(), workflows: [...CATALOG.workflows].reverse() };
   assert.equal(buildSystemPrompt(permuted), a, 'identical catalogs render identically regardless of array order');
   assert.ok(a.startsWith(ASK_SYSTEM_RULES));
   assert.ok(a.includes('[worca context]'), 'the context-block rule is stated');
@@ -111,7 +112,7 @@ test('system prompt: every interpolated name is capped, so one plugin name canno
   for (const line of catalog.split('\n')) {
     assert.ok(line.length <= 8 * ASK_LIMITS.titleMaxChars, `line of ${line.length} chars: ${line.slice(0, 60)}`);
   }
-  assert.ok(catalog.length < 4000, `catalog is ${catalog.length} chars, not ~50 KB`);
+  assert.ok(catalog.length < 8000, `catalog is ${catalog.length} chars, not ~50 KB`);
 });
 
 test('validateClientContext: schema, unknown keys dropped, invalid keys rejected', () => {
@@ -424,7 +425,7 @@ test('rule 10 distils exploration findings into the brief, anchored and marked',
     assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 10 states "${t}"`);
   }
   assert.ok(ASK_SYSTEM_RULES.includes('(rule 10)'), 'rule 3 points at it where the brief is written');
-  assert.ok(!/\n\s*11\./.test(ASK_SYSTEM_RULES), 'the rules stop at 10 (renumbering would break these pins)');
+  assert.ok(!/\n\s*13\./.test(ASK_SYSTEM_RULES), 'the rules stop at 12 (renumbering would break these pins)');
 });
 
 // ── #397: the explicit project selector ──────────────────────────────────────
@@ -435,6 +436,43 @@ test('#397: context.pinned is a boolean; anything else is rejected', () => {
   assert.deepEqual(validateClientContext({ pinned: 'yes' }), { ok: false, error: 'context.pinned is invalid' });
   assert.deepEqual(validateClientContext({ pinned: 1 }), { ok: false, error: 'context.pinned is invalid' });
   assert.deepEqual(validateClientContext({ pinned: null }), { ok: true, context: {} }, 'null = absent, like every other key');
+});
+
+// ── P3: propose_workflow — the two modes, the two events, the placeable agents ─
+
+test('rules 11/12 describe the two modes and the two events, name propose_workflow, and still no agent key; sub-agents are told not to propose', () => {
+  assert.ok(ASK_SYSTEM_RULES.includes('propose_workflow'));
+  for (const t of ['11. Workflows you can create', 'task mode', 'shape mode', 'never claim a workflow was saved', 'never from a sub-agent', '12. Events', '[worca event]', 'thenRun=true', 'list_workflows']) {
+    assert.ok(ASK_SYSTEM_RULES.includes(t), `rules state "${t}"`);
+  }
+  for (const key of ['implementer', 'planner', 'refiner', 'reviewer', 'clarify', 'decomposer']) assert.ok(!ASK_SYSTEM_RULES.includes(key), `no agent key (${key})`);
+  // v7: a sub-agent's propose_workflow/propose_run call is logged on its agent block and never intercepted (Task 4) — no card, and the
+  // classifier spend it caused would be invisible to the parent; the sandbox note tells sub-agents so (SANDBOX_NOTE is pinned by substrings, :391-396).
+  assert.ok(SANDBOX_NOTE.includes('Never call propose_workflow or propose_run'), 'sub-agents are told the two proposal tools are the assistant\'s alone');
+});
+
+test('catalog: the "Workflows you can create" section lists the shape DSL, one line per agent WITH its key, and the recipe guide; byte-stable', () => {
+  const a = buildSystemPrompt(CATALOG);
+  const i = a.indexOf('### Workflows you can create (propose_workflow)');
+  assert.ok(i > 0 && i > a.indexOf('### Workflows (steps in order'), 'the section follows the saved workflows');
+  const section = a.slice(i);
+  assert.ok(section.includes('"stages": [') && section.includes('"selfLoop"') && section.includes('"parallel"'), 'the DSL one-liner');
+  assert.ok(section.includes('- planner "Planner"') && section.includes('- reviewer "Reviewer"'), 'agents by KEY');
+  assert.ok(section.indexOf('- planner') < section.indexOf('- reviewer'), 'sorted by key regardless of catalog order');
+  assert.ok(section.includes('· verdict') && section.includes('· fanOut'), 'flags');
+  assert.ok(section.includes('## Recipes (starting points'), 'RECIPE_GUIDE verbatim');
+  const permuted = { ...CATALOG, agents: [...CATALOG.agents].reverse() };
+  assert.equal(buildSystemPrompt(permuted), a);
+  assert.equal(buildSystemPrompt({ ...CATALOG, agents: undefined }).includes('### Workflows you can create'), true, 'no agents ⇒ the section still renders (DSL + recipes)');
+});
+
+test('context header: a workflow card renders with its type, name and workflowId; run cards render as before', () => {
+  const h = buildContextHeader({ ...CTX, cards: [
+    { id: 'card_3f2a9c01', state: 'proposed', workflowId: 'wf_review', targetName: 'worca-cc' },
+    { id: 'card_0000aa01', type: 'workflow', state: 'saved', name: 'Rename fix', workflowId: 'wf_rename-fix', targetName: 'worca-cc' },
+    { id: 'card_0000aa02', type: 'workflow', state: 'proposed', name: 'Two step', workflowId: null, targetName: 'worca-cc' },
+  ] });
+  assert.ok(h.includes('cards: card_3f2a9c01 proposed (wf_review on worca-cc), workflow card_0000aa01 saved "Rename fix" → wf_rename-fix (on worca-cc), workflow card_0000aa02 proposed "Two step" (on worca-cc)'), h);
 });
 
 test('#397: rule 2 defines the pinned marker as the default target', () => {

@@ -27,6 +27,27 @@ function graphSteps(tpl, portsFn) {
   return [...byRank.keys()].sort((a, b) => a - b).map((r) => byRank.get(r));
 }
 import { loadAgentRegistry as realLoadAgentRegistry } from '../agent-registry.mjs';
+import { agentVocabulary } from '../auto/classify.mjs';
+
+/** The agents a hand-authored shape may place (spec §8.5): the classifier's vocabulary, one compact record each.
+ *  selfLoop mirrors the assembler's BAD_SELF_LOOP rule EXACTLY (assemble.mjs:349,:363-367): the agent's FIRST
+ *  `when:'blocking'` output exists and one of its `loop` inputs accepts that type (equal, or the input is `any`).
+ *  Read from the registry's port objects, not the card's summary strings. */
+export function shapeAgents(registry) {
+  const loops = (m) => {
+    const outs = Array.isArray(m?.outputs) ? m.outputs : [];
+    const blocking = outs.find((o) => o && o.when === 'blocking') || null;
+    if (!blocking) return false;
+    const ins = Array.isArray(m?.inputs) ? m.inputs.filter((p) => p && p.loop) : [];
+    return ins.some((i) => i.type === 'any' || i.type === blocking.type);
+  };
+  return agentVocabulary(registry, { domain: 'coding' })
+    .map((c) => ({
+      key: c.key, displayName: c.displayName, purpose: c.purpose, inputs: c.inputs, outputs: c.outputs,
+      verifier: c.verifier, clarifier: c.clarifier, selfLoop: loops(registry[c.key]), fanOut: c.fanOut, asksQuestions: c.asksQuestions,
+    }))
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
 
 /**
  * Pure: a stored workflow template → the catalog shape. `tpl.steps` is already
@@ -102,6 +123,7 @@ export function createCatalog({
       projects: projects.map((p) => ({ key: p.key, name: p.name, path: p.path })),
       workspaces: workspaces.map((w) => ({ id: w.id, name: w.name, projectKeys: [...(w.projectKeys || [])] })),
       workflows: templates.map((t) => shapeWorkflow(t, registry)),
+      agents: shapeAgents(registry),
     };
   }
   return { buildCatalog };

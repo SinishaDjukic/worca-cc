@@ -579,3 +579,23 @@ test('onWorktreeMutation: a throwing sink is contained', () => {
   assert.doesNotThrow(() => h.push(uresult('toolu_1', JSON.stringify({ worktreeId: 'wt_00000001' }))));
   assert.equal(h.frames.filter((f) => f.type === 'ask-block').at(-1).block.status, 'done', 'the block still completed');
 });
+
+test('propose_workflow: label, START hook with the full input, RESULT hook with the raw text + isError; sub-agent calls never fire the hooks', () => {
+  assert.equal(labelForTool('mcp__worca__propose_workflow', {}), 'Building a workflow');
+  const starts = []; const results = [];
+  const h = harness({ onWorkflowStart: (e) => starts.push(e), onWorkflowResult: (e) => { results.push(e); return Promise.resolve(); } });
+  const input = { task: 'make it', projectKey: 'p-1', thenRun: true };
+  h.push(session(), init(), mstart('msg_1'), atool('msg_1', 'toolu_wf', 'mcp__worca__propose_workflow', input));
+  assert.deepEqual(starts, [{ toolUseId: 'toolu_wf', input }], 'START fires synchronously at the tool_use, with the UNCLIPPED input');
+  assert.ok(h.frames.some((f) => f.type === 'ask-label' && f.label === 'Building a workflow'));
+  h.push(uresult('toolu_wf', '{"ok":true,"shape":{}}'));
+  assert.deepEqual(results, [{ toolUseId: 'toolu_wf', input, text: '{"ok":true,"shape":{}}', isError: false }]);
+  // A sub-agent's call (parent_tool_use_id set): logged on the agent block if one exists, never intercepted.
+  h.push(atool('msg_1', 'toolu_task', 'Agent', { description: 'helper', subagent_type: 'general-purpose', prompt: 'x' }));
+  h.push(atool('msg_c', 'toolu_wf2', 'mcp__worca__propose_workflow', {}, 'toolu_task'));
+  h.push(uresult('toolu_wf2', 'error: nope', { isError: true, ptu: 'toolu_task' }));
+  assert.equal(starts.length, 1); assert.equal(results.length, 1, 'child-stream calls are logged, never intercepted');
+  h.push(atool('msg_1', 'toolu_wf3', 'mcp__worca__propose_workflow', {}));
+  h.push(uresult('toolu_wf3', 'error: propose_workflow: boom', { isError: true }));
+  assert.deepEqual(results.at(-1), { toolUseId: 'toolu_wf3', input: {}, text: 'error: propose_workflow: boom', isError: true });
+});

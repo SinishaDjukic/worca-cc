@@ -566,6 +566,20 @@ test('layout flow: rows of perRow in dispatch order, routes from the flow router
   assert.equal(view.fitToWidth(702).perRow, 4, 'fitToWidth delegates to relayout in flow mode');
 });
 
+test('band pick: model/effort chips become <button aria-haspopup="menu" data-chip> when the band says pick; flags stay spans; the signature separates pick', async () => {
+  const { doc, host } = boot();
+  const { createGraphView } = await import(viewPath);
+  const band = (node) => (node.id === 'n_agent' ? { model: 'Opus 5', effort: '', flags: [{ text: 'asks', cls: 'q' }], pick: true } : null);
+  const view = createGraphView(host, { doc, mode: 'static', portsFn, agents: AGENTS, band });
+  view.render(fixture(), {});
+  const nb = view.nodeEl('n_agent').querySelector(':scope > .nband');
+  const chips = [...nb.querySelectorAll('.bchip')];
+  assert.deepEqual(chips.map((c) => [c.tagName, c.dataset.chip || null, c.textContent]), [['BUTTON', 'model', 'Opus 5'], ['BUTTON', 'effort', 'effort'], ['SPAN', null, 'asks']], 'an empty effort still gets a pickable placeholder chip');
+  assert.equal(chips[0].getAttribute('aria-haspopup'), 'menu'); assert.equal(chips[0].getAttribute('aria-expanded'), 'false'); assert.equal(chips[0].type, 'button');
+  view.setBands({ n_agent: { model: 'Opus 5', effort: '', flags: [{ text: 'asks', cls: 'q' }] } });
+  assert.deepEqual([...nb.querySelectorAll('.bchip')].map((c) => c.tagName), ['SPAN', 'SPAN'], 'pick off ⇒ spans, and the empty effort chip is gone');
+});
+
 test('mountStaticGraph flow: host height set, width option honoured, destroy is idempotent without a ResizeObserver', async () => {
   const { doc, host } = boot();
   const { mountStaticGraph } = await import(viewPath);

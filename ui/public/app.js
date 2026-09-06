@@ -17008,6 +17008,21 @@ function openNewPipeline(prefill) {
   else location.hash = 'new';
 }
 
+/** Ask Worca's "Open in composer" (spec §8.3, plan PD14): the composer must EXIST before showView fires its own
+ *  un-awaited initComposer(); showView('composer') sets #composer itself; openTemplate asks before discarding an
+ *  unsaved canvas and may resolve null. */
+async function openComposerFromAsk(workflowId) {
+  askPanel?.close();
+  try {
+    await initComposer();
+    showView('composer');
+    const full = await gvApi.readWorkflow(workflowId);
+    if (!full || !gvComposer) return false;
+    if (await gvComposer.openTemplate(full)) { gvComposer.fit(); gvScrollToTop(); return true; }
+  } catch (err) { console.error('[worca] open in composer failed:', err && err.message ? err.message : err); }
+  return false;
+}
+
 // Apply a card handoff to the New Pipeline form (§10.2 seam 7). One-shot; runs
 // at the end of showView('new'). Async — the pickers and branch lists load
 // through their normal async loaders; every await keeps the user-visible form
@@ -17110,6 +17125,7 @@ askPanel = createAskPanel({
   confirm: confirmModal,
   getPageContext,
   openNewPipeline,
+  openComposer: (id) => { openComposerFromAsk(id); },
   loadMarkdown: window.__worcaTestHooks?.askMarkdown
     ?? (() => Promise.all([import('/vendor/marked/marked.esm.js'), import('/vendor/dompurify/purify.es.mjs')])
       .then(([m, d]) => ({ marked: m.marked, createDOMPurify: d.default }))),

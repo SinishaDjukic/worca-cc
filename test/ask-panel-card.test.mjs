@@ -219,3 +219,25 @@ test('ask-panel-card: Open in New Pipeline hands over the CURRENT values', async
     prompt: 'edited brief', title: 'Fix login', sourceBranch: '', featureBranch: 'worca/fix-login',
   });
 });
+
+test('workflow card: openComposer receives the workflowId; dropping the card (new thread) disposes the graph mount', async () => {
+  const opened = [];
+  const ctx = makePanel({ fetchHandler: apiHandler({}), resizeObserver: true, deps: { openComposer: (id) => opened.push(id) } });
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open();
+  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  const { proposalFor } = await import('./helpers/auto-proposal-fixture.mjs');
+  const card = { type: 'workflow', mode: 'task', projectKey: 'p', projectName: 'p', note: '', thenRun: false, shape: {}, summary: '', adopted: false, ...proposalFor() };
+  for (const f of stampFrames([
+    { type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't' },
+    { type: 'ask-card', block: { kind: 'card', id: 'card_0000ab02', state: 'saved', workflowId: 'wf_x', card } },
+  ], { threadId: TID, messageId: MID })) ctx.panel.pushServerFrame(f);
+  ctx.flush(); await ctx.tick(); ctx.flush();
+  ctx.doc.querySelector('[data-ask-wf-open]').click();
+  assert.deepEqual(opened, ['wf_x']);
+  const graphObservers = ctx.resizeObservers.filter((o) => o.targets.some((t) => t.classList && t.classList.contains('ask-wfcard-graph')));
+  assert.equal(graphObservers.length, 1, 'mountStaticGraph observed the graph host');
+  ctx.doc.querySelector('[data-ask-new-btn]').click();
+  ctx.flush();
+  assert.ok(graphObservers[0].disconnected, 'newThread pruned the card and destroyed the mount');
+});

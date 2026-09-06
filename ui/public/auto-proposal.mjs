@@ -36,8 +36,9 @@ export function proposalLoops(manifest) {
   }));
 }
 
-/** Band data per agent node for view.mjs's `band` option (A7, A22). */
-export function proposalBands(proposal, nodesState = null) {
+/** Band data per agent node for view.mjs's `band` option (A7, A22). `pick` turns the model/effort
+ *  chips into buttons the host opens a picker for (P3); read-only hosts leave it off. */
+export function proposalBands(proposal, nodesState = null, { pick = false } = {}) {
   const models = new Map((proposal.models || []).map((m) => [m.id, m.label || m.id]));
   const loops = proposalLoops(proposal.manifest);
   const out = {};
@@ -46,7 +47,7 @@ export function proposalBands(proposal, nodesState = null) {
     const flags = [];
     if (cur.askQuestions) flags.push({ text: 'asks', cls: 'q', title: 'may ask you questions' });
     for (const l of loops.filter((x) => x.from === id)) flags.push({ text: `${l.self ? '⟳' : '↩'} ${l.maxCycles}`, title: `${l.self ? 'refines itself' : `loops to ${l.toLabel}`} · max ${l.maxCycles} cycles` });
-    out[id] = { model: cur.model ? (models.get(cur.model) || cur.model) : '', effort: cur.effort || '', flags };
+    out[id] = { model: cur.model ? (models.get(cur.model) || cur.model) : '', effort: cur.effort || '', flags, ...(pick ? { pick: true } : {}) };
   }
   return out;
 }
@@ -66,13 +67,13 @@ const agentOrderOf = (proposal) => (Array.isArray(proposal.order) && proposal.or
 /**
  * @param {object} proposal  the `workflow` question payload (buildProposal)
  * @param {{doc?:Document, width?:number, order?:readonly string[], editableName?:boolean, costUsd?:number, rounds?:number,
- *          scale?:number, onName?:(name:string)=>void}} [opts]
+ *          scale?:number, pick?:boolean, onName?:(name:string)=>void}} [opts]
  * @returns {{el:HTMLElement, parts:Record<string,HTMLElement|null>, graph:object|null, getName():string, setName(v:string):void,
  *            setNodeTunables(id:string, sel:object):void, relayout(width?:number):void, destroy():void}}
  */
 export function renderAutoProposal(proposal, {
   doc = globalThis.document, width = 0, order = AUTO_PROPOSAL_ORDER_CARD, editableName = true,
-  costUsd = null, rounds = null, scale = FLOW_SCALE, onName = null,
+  costUsd = null, rounds = null, scale = FLOW_SCALE, pick = false, onName = null,
 } = {}) {
   const p = proposal || {};
   const state = { name: String(p.name || ''), nodes: {} };     // nodes: host-applied tunable edits, keyed by node id
@@ -115,7 +116,7 @@ export function renderAutoProposal(proposal, {
   const graphHost = h(doc, 'div', 'ask-wfcard-graph');
   graphHost.setAttribute('role', 'img');
   const labelOf = (id) => (m.graph?.nodes || []).find((n) => n.id === id)?.label || id;
-  let bands = proposalBands(p, state.nodes);
+  let bands = proposalBands(p, state.nodes, { pick });
   let graph = null;
   if ((m.graph?.nodes || []).length) {
     graph = mountStaticGraph(graphHost, manifestTemplate(m), {
@@ -161,7 +162,7 @@ export function renderAutoProposal(proposal, {
     /** A tunable edit from the host's table: repaint that node's band (no geometry change). */
     setNodeTunables(id, sel) {
       state.nodes[id] = { ...(state.nodes[id] || {}), ...(sel || {}) };
-      bands = proposalBands(p, state.nodes);
+      bands = proposalBands(p, state.nodes, { pick });
       if (graph) graph.setBands(bands);
     },
     /** Re-measure after the host attached `el` (a detached host has clientWidth 0 ⇒ the 702 default was used).

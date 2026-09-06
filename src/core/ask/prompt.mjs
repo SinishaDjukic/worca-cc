@@ -8,6 +8,7 @@
 //  - attachment inlining and the DB-replay restore prompt.
 import { WORKSPACE_KEY_RE } from '../workspaces.mjs';
 import { ASK_LIMITS } from './limits.mjs';
+import { RECIPE_GUIDE } from '../auto/recipes.mjs';   // prompt DATA (D23 — recipes.mjs is the ONE Auto module naming agents; it has zero imports)
 
 export const ASK_SYSTEM_RULES = [
   'You are Ask Worca, the in-app assistant of worca-cc (a tool that runs multi-agent pipelines — "runs" — over the user\'s projects and workspaces, using saved workflows made of agent steps. Most workflows are coding ones, but a workflow can be built for any kind of work).',
@@ -23,6 +24,8 @@ export const ASK_SYSTEM_RULES = [
   '8. Never edit code anywhere. When a change is needed, propose it with propose_run and describe exactly what the run should do.',
   '9. Diff comments are internal notes the user and you leave on individual lines of a run\'s diff — they are notes, not code, so writing one is not an edit (rule 8 still stands: you never change a file). They live only in worca and are never pushed anywhere. When you compose a fix-run brief from them, quote each comment\'s path, line and side, its body AND its line_text: the patch was frozen when the run finished, so the line numbers may have shifted on the source branch since, and the snapshot is what identifies the line. Compose from UNRESOLVED comments unless the user asks otherwise. Resolve a comment only when the user asks; you can delete only comments you wrote yourself and deletion is permanent, so confirm first, and always confirm before deleting several — the user deletes their own comments from the Diff tab. To have a run address comments, pass their ids as propose_run commentIds — they are stamped with the run id once the user starts it, and nothing is resolved for them.',
   '10. When you explored before proposing, distil what you found into the brief — do not transcribe the conversation. The run starts a FRESH agent that sees none of this chat and will explore on its own, so the brief carries only what changes what it does: the files and symbols worth starting from, the root cause or constraint you established, the approach the user settled on and the ones already ruled out, and any trap that would cost the run a wasted cycle. A few compact lines, written as a head start for someone who will verify them — no story of how you looked, no recap of the discussion, no pasted files or diffs. Anchor code by path plus symbol plus a short quote, never by line number alone: the run branches from a source branch that may have moved since you read it. Mark anything you did not verify as a lead to check, never as fact, and never describe code you have not read. If the exploring turned up nothing that steers the work, add nothing.',
+  '11. Workflows you can create: propose_workflow builds a workflow card the user can save — it writes nothing until they do. Use task mode (pass the full task text as `task`) when the user says "auto" or simply gives you a task: worca\'s classifier picks the agents, loops and models exactly as an Auto run would. Use shape mode (pass a `shape`) only when the user describes the steps themselves; build it from the "Workflows you can create" catalog section: stages in order, each an agent key, optional selfLoop on a stage whose line carries the selfLoop flag, parallel groups as {"parallel": [...]}, loops from a verdict stage back to a stage with a loop input; omit model and effort unless the user named a model (the user tunes them on the card). Call it once per proposal and only from your own turn, never from a sub-agent (its card and cost would be lost); say in one sentence why the shape fits, and never claim a workflow was saved — the card says so when it happens.',
+  '12. Events: when the user acts on a workflow card the app sends you a "[worca event] workflow card <id> saved as <workflowId> "<name>"; thenRun=<true|false>; project=<key>" or "… declined" message (the context block lists the card too). On saved with thenRun=true — or when the user asked to run the work — call propose_run once with that workflowId and the task you discussed as the brief (rule 3). On saved with thenRun=false, confirm in one line and offer a run. On declined, ask whether they want another auto workflow, describe what to change, or choose a saved workflow (list_workflows).',
 ].join('\n');
 
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -53,6 +56,10 @@ const flatten = (line) => flattenBreaks(line).replace(CONTEXT_TAG_RE, '(worca co
 // a ~1 MB SYSTEM prompt that is re-sent every turn (and busted the prompt cache).
 const T = ASK_LIMITS.titleMaxChars;
 const label = (s) => clip(s, T);
+
+// The shape a propose_workflow call may hand-author (spec §8.5), rendered as one
+// line of the catalog so the model reads the DSL and the placeable agents together.
+const SHAPE_DSL = '{ "name": "<= 60 chars", "taskKind": "prompt" | "plan-partial" | "plan-complete-detailed" | "plan-complete-small", "reasoning": "1-2 sentences", "size": "small" | "medium" | "large", "signals": ["<= 8 short cues"], "stages": [ { "agent": "<key>", "model"?: "<model id>", "effort"?: "<effort>", "fanOut"?: bool, "askQuestions"?: bool, "selfLoop"?: true | { "maxCycles": 1-20 } } | { "parallel": [ <stage>, ... ] } ], "loops"?: [ { "from": "<key or stage id>", "to": "<key or stage id>", "maxCycles": 1-20 } ] }';
 
 function renderCatalog(cat = {}) {
   const projects = [...(cat.projects || [])].sort(byProp('key'));
@@ -94,6 +101,14 @@ function renderCatalog(cat = {}) {
       push(`  feedback loops: ${wf.feedbacks.map((f) => `${label(f.from)}→${label(f.to)}`).join(', ')}`);
     }
   }
+  lines.push('', '### Workflows you can create (propose_workflow)', `Shape: ${SHAPE_DSL}`, 'Agents you can place (key "name": purpose · in: ports · out: ports · flags):');
+  const placeable = [...(cat.agents || [])].sort(byProp('key'));
+  if (!placeable.length) lines.push('(no agents loaded)');
+  for (const a of placeable) {
+    const flags = [a.verifier && 'verdict', a.selfLoop && 'selfLoop', a.clarifier && 'clarifier', a.fanOut && 'fanOut', a.asksQuestions && 'askQuestions'].filter(Boolean);
+    push(`- ${label(a.key)} "${label(a.displayName)}": ${clip(a.purpose || '', 140)} · in: ${clip(a.inputs || '-', 120)} · out: ${clip(a.outputs || '-', 120)}${flags.length ? ` · ${flags.join(' · ')}` : ''}`);
+  }
+  lines.push(RECIPE_GUIDE);
   return lines.join('\n');
 }
 
@@ -183,7 +198,12 @@ export function buildContextHeader(ctx = {}, { maxChars = ASK_LIMITS.contextHead
     }
     const cards = Array.isArray(ctx.cards) ? ctx.cards.slice(0, ASK_LIMITS.headerCards) : [];
     if (!drop.has('cards') && cards.length) {
-      push(`cards: ${cards.map((c) => `${label(c.id)} ${label(c.state)} (${label(c.workflowId)} on ${clip(c.targetName, titleMax)})`).join(', ')}`);
+      // A workflow card (P3) names the workflow it proposes and only carries a
+      // workflowId once the user saved it; a run card keeps its pre-P3 line byte for byte.
+      const one = (c) => (c.type === 'workflow'
+        ? `workflow ${label(c.id)} ${label(c.state)} "${clip(c.name || '', titleMax)}"${c.workflowId ? ` → ${label(c.workflowId)}` : ''} (on ${clip(c.targetName, titleMax)})`
+        : `${label(c.id)} ${label(c.state)} (${label(c.workflowId)} on ${clip(c.targetName, titleMax)})`);
+      push(`cards: ${cards.map(one).join(', ')}`);
     }
     // Dropping 'attachments' sheds the text ones only: the header is the sole
     // route by which the model learns an image/PDF exists.

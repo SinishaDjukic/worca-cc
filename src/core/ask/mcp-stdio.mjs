@@ -25,6 +25,7 @@ import { createAskTools, AskToolError } from './tools.mjs';
 import { defaultToolDeps } from './tool-deps.mjs';
 import { defaultWorktreeDeps } from './worktree-deps.mjs';
 import { defaultCommentDeps } from './comment-deps.mjs';
+import { defaultWorkflowDeps } from './workflow-deps.mjs';
 
 const SUPPORTED_PROTOCOLS = Object.freeze(['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25']);
 const DEFAULT_PROTOCOL = '2025-06-18';
@@ -112,17 +113,22 @@ export async function main({ argv = process.argv.slice(2), env = process.env, st
   const { home, thread } = parseArgv(argv);
   if (home) env.WORCA_HOME = home;                               // argv wins; worcaHome() reads the env at call time
   const threadId = thread || env.WORCA_ASK_THREAD_ID || null;
+  // P3 (v7): stdin closing == the chat turn ended or was stopped — abort whatever propose_workflow is still classifying
+  // (its result could never be delivered), so the drain below returns promptly instead of after the classifier's timeout.
+  const life = new AbortController();
   const server = createRpcServer({
     tools: createAskTools({
       ...defaultToolDeps({ threadId }),
       ...defaultWorktreeDeps({ threadId }),
       ...defaultCommentDeps(),
+      ...defaultWorkflowDeps({ threadId, signal: life.signal }),
     }),
     write: (s) => stdout.write(s),
   });
   const rl = createInterface({ input: stdin });
   rl.on('line', (line) => { server.feed(line); });
   await new Promise((resolve) => rl.on('close', resolve));
+  life.abort();
   await server.idle();
   await new Promise((resolve) => stdout.write('', resolve));      // macOS pipes are async: drain before exit
 }

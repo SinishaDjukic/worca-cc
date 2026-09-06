@@ -8,6 +8,8 @@ import { createThreadModel } from './ask-model.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
 import { createThinkingOrb } from './thinking-orb.mjs';
 import { workflowPickerLabel } from './results-view.mjs';
+import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mjs';
+import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 
 /**
  * Cold-start pick, used ONLY until GET /api/ask/models resolves — and afterwards
@@ -99,9 +101,27 @@ export const ASK_SHEET_SIZE = Object.freeze({
   minW: 782, minH: 669,
   dockPadX: 28, dockPadBottom: 26, topGap: 20,
 });
+/**
+ * Where the chip picker's panel sits inside the sheet (sheet-relative px, from
+ * sheet-relative chip edges). Every other .ask-pop is CSS-anchored to a fixed
+ * corner; a band chip sits wherever the transcript scrolled it, and .ask-sheet
+ * clips (overflow:hidden), so a downward-only anchor chops the menu's Effort row
+ * off with no way to reach it. Prefer the space under the chip, flip above it
+ * when the menu would not fit, and clamp into the sheet when neither side has
+ * room — .ask-pop-chip's own max-height/overflow-y makes the rest reachable.
+ * A sheetH of 0 (jsdom measures nothing) skips the clamp: no fake geometry.
+ */
+export function chipPickerTop({ top, bottom, panelH, sheetH, gap = 6 }) {
+  const below = bottom + gap;
+  const above = top - gap - panelH;
+  let t = (below + panelH <= sheetH - gap) || above < gap ? below : above;
+  if (sheetH > 0 && t + panelH > sheetH - gap) t = sheetH - panelH - gap;
+  return Math.max(0, t);
+}
+
 const SIZE_KEY = 'worca-cc.ask.size';
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, loadMarkdown, hljsLoader, storage, raf, now }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, loadMarkdown, hljsLoader, storage, raf, now }) {
   const storedPick = readStoredModel();   // hoisted declaration (defined below); null when nothing is stored
   const st = {
     open: false,
@@ -839,10 +859,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     storeSize(null);
   }
 
-  /** Window resize or dock resize (the rail toggling, the dock's slide): re-clamp — never under a held pointer. */
+  /** Window resize or dock resize (the rail toggling, the dock's slide): re-clamp — never under a held pointer.
+   *  A card graph re-measures on EVERY such change, not only when a stored size is being re-clamped. */
   function onWinResize() {
-    if (st.destroyed || !st.open || !st.size || st.drag) return;
-    restoreSize();
+    if (st.destroyed || !st.open || st.drag) return;
+    if (st.size) restoreSize();
+    relayoutCards();
   }
 
   // ---- keyboard + pointer routing ------------------------------------------
@@ -1450,6 +1472,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     storeThread(null);
     el.title.textContent = 'Ask Worca';
     applyThreadScope(null);             // #397: a brand-new chat starts on Auto
+    pruneCardEls();                     // st.model is already null — renderTranscript's keep set cannot see the old ids
     renderTranscript();
     updateMeters();
     setWorktrees([]);
@@ -1590,6 +1613,150 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return make('div', 'ask-card-stub ask-card-failed', `Run failed${block.error ? `: ${block.error}` : ''} — ${card.title || card.brief || ''}`);
     }
     return make('div', 'ask-card-stub', `Not now — ${card.title || card.brief || 'run proposal'}`);
+  }
+
+  // ---- Workflow card (spec §8.3, mockup 2026-09-05 §A-§C, plan PD4/PD7/PD12-15) ---------------------------------
+  const WF_ICO = { check: 'M5 13l4 4L19 7', play: 'M8 5l11 7-11 7z', save: 'M5 12l5 5L20 7' };
+  const TUNABLE_KEYS = ['model', 'effort', 'fanOut', 'askQuestions'];
+  /** The answer's `nodes`: a DIFF against the proposal (the qpanel's rule, app.js renderWorkflowBody). */
+  function diffNodes(base, edits) {
+    const nodes = {};
+    for (const [id, sel] of Object.entries(edits || {})) {
+      const diff = {};
+      for (const k of TUNABLE_KEYS) if (sel[k] !== undefined && sel[k] !== ((base || {})[id] || {})[k]) diff[k] = sel[k];
+      if (Object.keys(diff).length) nodes[id] = diff;
+    }
+    return nodes;
+  }
+
+  function buildWorkflowCard(block, prev) {
+    const card = block.card || {};
+    const name = card.name || '';
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${name || 'workflow proposal'}`) };
+    if (block.state === 'failed') return { el: make('div', 'ask-card-stub ask-card-failed', `Proposal failed: ${block.error || 'unknown error'}`) };
+    // State modifier = `is-<state>` (v6): `ask-wfcard-${state}` would make the SAVED root carry the same class as the check line below.
+    const rootEl = make('div', `ask-card ask-wfcard is-${block.state}`);
+    rootEl.setAttribute('data-ask-wfcard', block.state);
+    const head = make('div', 'ask-wfcard-head');
+    head.appendChild(make('span', 'ask-wfcard-title', block.state === 'saved' ? 'Saved workflow' : 'Proposed workflow'));
+    head.appendChild(make('span', 'ask-wfcard-round', `round ${card.round || 1}`));
+    if (block.state === 'saved') { head.appendChild(make('span', 'ask-wfcard-spacer')); head.appendChild(make('span', 'ask-wfcard-tag', 'Auto')); }
+    rootEl.appendChild(head);
+    if (block.state === 'building') {
+      const trace = buildTrace(doc, { mode: card.mode });
+      rootEl.appendChild(trace.el);
+      const stop = scheduleTrace(trace, { win, mode: card.mode });
+      return { el: rootEl, dispose: stop };
+    }
+    const proposed = block.state === 'proposed';
+    const matched = !!(card.match && card.match.id);
+    const editable = proposed && !matched;                       // PD4: only a NEW row takes a name and chip edits
+    const wf = { nodes: {}, name };
+    const handle = renderAutoProposal({ ...card, reasoning: card.reasoning || card.note || '' }, {
+      doc, order: proposed ? AUTO_PROPOSAL_ORDER_CARD : ['name', 'graph', 'loops'],
+      editableName: editable, pick: editable, onName: (v) => { wf.name = v; },
+    });
+    if (!proposed) {
+      const saved = make('div', 'ask-wfcard-saved');
+      saved.appendChild(svgIcon(WF_ICO.check, 15, 2.4));
+      saved.appendChild(make('span', null, name));
+      const line = make('div', 'ask-wfcard-savedline', card.adopted ? 'Uses your saved workflow' : 'Saved as a new workflow, tagged Auto');
+      handle.parts.name.replaceWith(saved);
+      saved.after(line);
+    } else if (matched) {
+      const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow — edit them in the composer.');
+      handle.parts.match.after(hint);
+    }
+    rootEl.appendChild(handle.el);
+    rootEl.appendChild(make('div', 'ask-card-err'));
+    const actions = make('div', 'ask-wfcard-actions');
+    // svgIcon hard-codes fill="none"; the mockup's play glyph is a FILLED triangle (fill="currentColor" stroke="none").
+    const btn = (cls, text, attr, icon, filled = false) => {
+      const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, '');
+      if (icon) { const ic = svgIcon(icon, 12, 2.2); if (filled) { ic.setAttribute('fill', 'currentColor'); ic.setAttribute('stroke', 'none'); } b.prepend(ic); }
+      return b;
+    };
+    if (proposed) {
+      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-wf-decline');
+      decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
+      const save = btn('ask-card-start', card.thenRun ? 'Save & propose run' : 'Save as workflow', 'data-ask-wf-save', WF_ICO.save);
+      save.addEventListener('click', () => postCard(block, rootEl, { state: 'saved', name: handle.getName(), nodes: diffNodes(card.nodes, wf.nodes) }, save));
+      actions.append(make('span', 'ask-card-actions-spacer'), decline, save);
+    } else {
+      const open = btn('ask-card-open-np', 'Open in composer', 'data-ask-wf-open');
+      open.disabled = !(typeof openComposer === 'function' && block.workflowId);   // v7: an inert button beats a dead click
+      open.addEventListener('click', () => { if (typeof openComposer === 'function' && block.workflowId) openComposer(block.workflowId); });
+      const run = btn('ask-card-start', 'Run with this', 'data-ask-wf-run', WF_ICO.play, true);
+      run.addEventListener('click', () => postCard(block, rootEl, { action: 'run' }, run));
+      actions.append(open, make('span', 'ask-card-actions-spacer'), run);
+    }
+    rootEl.appendChild(actions);
+    if (editable) {
+      // PD12: paintBand re-creates the chips on every repaint, so the click is delegated from the card root.
+      rootEl.addEventListener('click', (e) => {
+        const chip = e.target && e.target.closest ? e.target.closest('.bchip[data-chip]') : null;
+        if (!chip) return;
+        const nodeEl = chip.closest('[data-node-id]');
+        if (!nodeEl) return;
+        e.stopPropagation();
+        openChipPicker(chip, nodeEl.dataset.nodeId, card, wf, handle);
+      });
+    }
+    rootEl.__wf = { handle, wf };                                  // tests (like the qpanel's panel.__wf)
+    return { el: rootEl, handle, dispose: () => handle.destroy(), animate: proposed && !!prev && prev.state === 'building' };
+  }
+
+  /** The model · effort picker (mockup §C): the panel's popover chrome, anchored under the chip. Rows are menuitems (PD28). */
+  function openChipPicker(chip, nodeId, card, wf, handle) {
+    const node = card.nodes && card.nodes[nodeId];
+    if (!node) return;
+    const models = Array.isArray(card.models) ? card.models : [];
+    const cur = () => ({ ...node, ...(wf.nodes[nodeId] || {}) });
+    const effortsOf = (mid) => (models.find((m) => m.id === mid) || {}).efforts || [];
+    const set = (patch) => { wf.nodes[nodeId] = { ...(wf.nodes[nodeId] || {}), ...patch }; handle.setNodeTunables(nodeId, patch); };
+    const panel = openPopover({
+      panelClass: 'ask-pop-chip', trigger: chip,
+      onClose: () => chip.setAttribute('aria-expanded', 'false'),
+      build: (p) => {
+        p.appendChild(make('div', 'ask-pop-cap', `Model · ${node.label || nodeId}`));
+        for (const m of models) {
+          const item = menuItem(`ask-model-item${m.id === cur().model ? ' on' : ''}`, () => {
+            const list = effortsOf(m.id);
+            const keep = list.includes(cur().effort) ? cur().effort : (list[1] || list[0] || '');   // the qpanel's rule (app.js buildTunablesTable)
+            set({ model: m.id, effort: keep });
+            closePopover({ focusTrigger: true });
+          });
+          item.appendChild(make('span', 'ask-model-name', m.label || m.id));
+          if (m.id === cur().model) item.appendChild(make('span', 'ask-model-check', '✓'));
+          p.appendChild(item);
+        }
+        p.appendChild(make('div', 'ask-pop-divider'));
+        const row = make('div', 'ask-pop-effort');
+        row.appendChild(make('span', 'ask-pop-effort-label', 'Effort'));
+        for (const e of effortsOf(cur().model)) {
+          const b = menuItem(`ask-effort-pill${e === cur().effort ? ' on' : ''}`, () => { set({ effort: e }); closePopover({ focusTrigger: true }); });
+          b.textContent = e;
+          row.appendChild(b);
+        }
+        if (!cur().model) row.appendChild(make('span', 'ask-pop-effort-none', 'pick a model first'));
+        p.appendChild(row);
+      },
+    });
+    if (!panel) return;                                             // same chip toggled the open picker shut
+    // Anchor under the chip (the composer's popovers are CSS-anchored; a chip lives anywhere in the transcript).
+    const cr = chip.getBoundingClientRect();
+    const sr = el.sheet.getBoundingClientRect();
+    const width = 288;
+    let left = cr.left - sr.left;
+    if (left + width > el.sheet.clientWidth - 6) left = Math.max(6, el.sheet.clientWidth - width - 6);
+    panel.style.left = `${Math.max(0, left)}px`;
+    // Vertical: measured, then flipped/clamped — the sheet chops whatever hangs out of it.
+    panel.style.top = `${chipPickerTop({
+      top: cr.top - sr.top, bottom: cr.bottom - sr.top, panelH: panel.offsetHeight || 0, sheetH: el.sheet.clientHeight,
+    })}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    chip.setAttribute('aria-expanded', 'true');
   }
 
   function buildCardForm(block) {
@@ -1803,20 +1970,39 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
   }
 
-  async function dismissCard(block, rootEl) {
+  /** POST the card endpoint; the flip FRAME renders the next state (never a local flip). Returns the body or null. */
+  async function postCard(block, rootEl, body, btn = null) {
     const err = rootEl.querySelector('.ask-card-err');
-    err.textContent = '';
+    if (err) err.textContent = '';
+    // `posting` marks OUR disable so the per-flush run-button sync leaves it alone.
+    if (btn) { btn.disabled = true; btn.dataset.posting = '1'; }
+    const release = () => { if (btn) { btn.disabled = false; delete btn.dataset.posting; } };
     let res = null;
     try {
-      res = await fetch(`/api/ask/threads/${st.threadId}/cards/${block.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state: 'dismissed' }) });
-    } catch { err.textContent = 'network error'; return; }
+      res = await fetch(`/api/ask/threads/${st.threadId}/cards/${block.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    } catch { if (err) err.textContent = 'network error'; release(); return null; }
     if (!res.ok) {
       let msg = `request failed (${res.status})`;
       try { const b = await res.json(); if (b && b.error) msg = b.error; } catch { /* keep */ }
-      err.textContent = msg;
+      // One turn per thread: the route refuses every card verb that starts one while a
+      // reply streams. Say what to do instead of echoing the wire's `turn in flight`.
+      if (res.status === 409 && msg === 'turn in flight') msg = 'Ask Worca is still replying — try again once the answer lands.';
+      if (err) err.textContent = msg;
+      release();
+      return null;
     }
-    // the flip frame renders the stub
+    let out = null;
+    try { out = await res.json(); } catch { out = null; }
+    // v6: re-enable on success for EVERY verb. For save/decline the flip frame replaces this element within milliseconds anyway;
+    // a click landing in that window is answered 409 by the route's state check (+ askCardBusy) — harmless.
+    release();
+    // A failed event turn ALSO posts a system notice row (the server's failedEventTurn):
+    // for save/decline the flip has already rebuilt this element, so the row is the only
+    // message that survives. This line is what the run verb — which never flips — shows.
+    if (out && out.turn && out.turn.error && err) err.textContent = `Ask Worca could not reply: ${out.turn.error}`;
+    return out;
   }
+  function dismissCard(block, rootEl) { return postCard(block, rootEl, { state: 'dismissed' }); }
 
   function prefillFromCard(block, rootEl, local) {
     const card = block.card || {};
@@ -1847,13 +2033,61 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     openNewPipeline(p);
   }
 
+  // ---- card cache: ONE element per card id, rebuilt only on a STATE change (V7 for run cards; every state for
+  // workflow cards, whose graph mount + ResizeObserver must not be re-created on each streaming re-render, PD15).
   function buildCard(block) {
     if (!st.cardEls) st.cardEls = new Map();
     const cached = st.cardEls.get(block.id);
-    if (cached && cached.state === block.state && block.state === 'proposed') return cached.el;
-    const built = block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block);
-    st.cardEls.set(block.id, { el: built, state: block.state });
-    return built;
+    const isWorkflow = !!(block.card && block.card.type === 'workflow');
+    if (cached && cached.state === block.state && (isWorkflow || block.state === 'proposed')) return cached.el;
+    if (cached) disposeCardEntry(cached);
+    const built = isWorkflow ? buildWorkflowCard(block, cached) : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
+    st.cardEls.set(block.id, { el: built.el, state: block.state, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1 });
+    return built.el;
+  }
+  function disposeCardEntry(c) {
+    try { if (c.cancelAnim) c.cancelAnim(); } catch { /* ignore */ }
+    try { if (c.dispose) c.dispose(); } catch { /* a dead mount never breaks a render */ }
+  }
+  /** Drop cached card elements whose block is gone (keep = the live ids), or every one. */
+  function pruneCardEls(keep = null) {
+    if (!st.cardEls) return;
+    for (const [id, c] of st.cardEls) {
+      if (keep && keep.has(id)) continue;
+      disposeCardEntry(c);
+      st.cardEls.delete(id);
+    }
+  }
+  /** After a flush: measure the attached graph hosts once per width (jsdom: 0 ⇒ the 702 default) and start a pending build animation.
+   *  A width change DURING a build lands it first (v5): view.relayout re-creates the wire paths, which would drop their `is-hid`
+   *  mid-choreography (measured) — so cancel() (which lands everything) runs before the relayout. */
+  function relayoutCards() {
+    if (!st.cardEls) return;
+    for (const c of st.cardEls.values()) {
+      if (!c.handle || !c.el.isConnected) continue;
+      const w = (c.handle.parts.graph && c.handle.parts.graph.clientWidth) || 0;
+      if (w !== c.lastW) {
+        if (c.cancelAnim) { try { c.cancelAnim(); } catch { /* ignore */ } c.cancelAnim = null; }
+        c.lastW = w;
+        c.handle.relayout(w);
+      }
+      if (c.animate) { c.animate = false; c.cancelAnim = playAssembly(c.handle, { win, onDone: () => { c.cancelAnim = null; } }); }
+    }
+  }
+
+  /** "Run with this" starts a TURN, and a thread runs one turn at a time — the route
+   *  answers 409 while one streams. The card element is cached across re-renders (it is
+   *  never rebuilt at the same state), so the live state is applied on every flush
+   *  instead of at build time; `posting` is postCard's own disable, which outlives it. */
+  function syncWorkflowRunButtons() {
+    if (!st.cardEls) return;
+    const streaming = !!(st.model && st.model.live());
+    for (const c of st.cardEls.values()) {
+      const run = c.el && c.el.querySelector ? c.el.querySelector('[data-ask-wf-run]') : null;
+      if (!run || run.dataset.posting === '1') continue;
+      run.disabled = streaming;
+      run.title = streaming ? 'Ask Worca is replying — run this workflow once the answer lands' : '';
+    }
   }
 
   function toolRow(block) {
@@ -2018,13 +2252,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const wrap = make('div', `ask-msg ask-msg-${row.role}`);
     let renderAnswer = null;
     if (row.role === 'user') {
-      const bubble = make('div', 'ask-user-bubble', row.text || '');
-      wrap.appendChild(bubble);
-      const atts = (row.blocks || []).filter((b) => b && b.kind === 'attachment');
-      if (atts.length) {
-        const pills = make('div', 'extras-pills ask-user-pills');
-        for (const b of atts) pills.appendChild(buildAttachmentPill(b));
-        wrap.appendChild(pills);
+      // PD6: a synthetic row (a workflow-card event) is a notice, never a bubble — its text is the model-facing event line.
+      const synthetic = (row.blocks || []).filter((b) => b && b.kind === 'notice' && b.synthetic);
+      if (synthetic.length) {
+        for (const b of synthetic) wrap.appendChild(buildNotice(b));
+      } else {
+        const bubble = make('div', 'ask-user-bubble', row.text || '');
+        wrap.appendChild(bubble);
+        const atts = (row.blocks || []).filter((b) => b && b.kind === 'attachment');
+        if (atts.length) {
+          const pills = make('div', 'extras-pills ask-user-pills');
+          for (const b of atts) pills.appendChild(buildAttachmentPill(b));
+          wrap.appendChild(pills);
+        }
       }
     } else if (row.role === 'system') {
       const notices = (row.blocks || []).filter((b) => b && b.kind === 'notice');
@@ -2069,6 +2309,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   function renderTranscript() {
+    // A card element outlives its row entry (it is cached by card id): drop — and dispose — the ones no row carries any more.
+    const keep = new Set();
+    if (st.model) for (const row of st.model.messages()) for (const b of row.blocks || []) if (b && b.kind === 'card' && b.id != null) keep.add(b.id);
+    pruneCardEls(keep);
     st.rowEls = new Map();
     el.transcript.replaceChildren();
     if (!st.model) return;
@@ -2077,6 +2321,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       st.rowEls.set(row.id, entry);
       el.transcript.appendChild(entry.el);
     }
+    // A card can be built here with no flush behind it (thread switch, resync into a
+    // live turn) — the run verb must never look available while that turn streams.
+    syncWorkflowRunButtons();
   }
 
   // Bumped by every loadThread()/newThread()/thread creation: whichever GET resolves
@@ -2306,6 +2553,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function flush() {
     if (st.destroyed) return;
     flushExtra();
+    relayoutCards();
+    syncWorkflowRunButtons();
     applyPin();
   }
 
@@ -2351,6 +2600,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     doc.removeEventListener('pointerdown', onDocPointerdown, true);
     win.removeEventListener('resize', onWinResize);
     if (dockRo) { dockRo.disconnect(); dockRo = null; }
+    pruneCardEls();                                  // every card graph mount and its ResizeObserver goes with the sheet
     root.remove();
   }
 

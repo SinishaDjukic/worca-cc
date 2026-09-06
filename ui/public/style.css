@@ -3166,6 +3166,38 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-card-failed{color:var(--red-ink);}
 .ask-card-link{color:var(--blue-ink);}
 
+/* ---------- workflow card chrome (ui/public/ask-panel.mjs buildWorkflowCard; mockup 2026-09-05 §A-§C) ---------- */
+.ask-card.ask-wfcard{gap:0;padding:16px 18px;border-width:1px;animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
+.ask-wfcard>*{min-width:0;}
+.ask-wfcard-head{display:flex;align-items:center;gap:8px;height:24px;}
+.ask-wfcard-title{font-weight:600;font-size:15px;line-height:1.35;color:var(--ink);white-space:nowrap;}
+.ask-wfcard-round{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;background:var(--field);color:var(--ink-2);font-family:var(--mono);font-size:10.5px;white-space:nowrap;}
+.ask-wfcard-spacer,.ask-wfcard-actions .ask-card-actions-spacer{flex:1 1 auto;}
+.ask-wfcard-tag{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;background:var(--violet-bg);color:var(--violet-ink);white-space:nowrap;}
+.ask-wfcard-head+.ask-wfcard-body{margin-top:12px;}
+.ask-wfcard-body>.ask-wfcard-hint{margin-top:8px;font-size:12px;line-height:1.5;color:var(--ink-3);}
+.ask-wfcard-saved{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600;line-height:1.35;color:var(--ink);}
+.ask-wfcard-saved svg{flex:0 0 auto;stroke:var(--green);}
+.ask-wfcard-saved span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-wfcard-savedline{margin-top:4px;font-size:13px;line-height:1.55;color:var(--ink-2);}
+.ask-wfcard-savedline+.ask-wfcard-graph{margin-top:16px;}
+.ask-wfcard .ask-card-err{margin-top:8px;}
+.ask-wfcard-actions{display:flex;align-items:center;gap:8px;margin-top:20px;}
+.ask-wfcard-actions .ask-card-start,.ask-wfcard-actions .ask-card-not-now,.ask-wfcard-actions .ask-card-open-np{height:36px;font-size:13px;}
+.ask-wfcard-actions .ask-card-start{padding:0 18px;}
+.ask-wfcard-actions .ask-card-not-now{padding:0 16px;}
+/* .ask-pop-chip itself lives with the other popover panels (below .ask-pop): both
+   selectors are (0,1,0) on the same element, so a rule written here would lose its
+   radius to .ask-pop's on source order alone. */
+.ask-pop-cap{padding:8px 10px 4px;font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-pop-chip .ask-model-item.on{background:var(--field);}
+.ask-pop-effort{display:flex;align-items:center;gap:4px;padding:8px 10px 6px;}
+.ask-pop-effort-label{font-size:12px;color:var(--ink-2);margin-right:auto;white-space:nowrap;}
+.ask-pop-effort .ask-effort-pill{width:auto;height:24px;padding:0 8px;border:1px solid var(--line-2);border-radius:999px;background:transparent;color:var(--ink-2);font-weight:600;font-size:11px;white-space:nowrap;}
+.ask-pop-effort .ask-effort-pill.on{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
+.ask-pop-effort-none{font-size:11px;color:var(--ink-3);}
+@media (prefers-reduced-motion: reduce){.ask-card.ask-wfcard{animation:none;}}
+
 /* ---------- Auto proposal body (ui/public/auto-proposal.mjs) — one body, two hosts (mockup §D/§F) ----------
    Rhythm top→bottom: name → 8 → reasoning → 16 → chips → 8 → fingerprint → 16 → graph → 12 → loops → 16 → match → 8 → meta.
    Per-child margins so every host keeps the same gaps. */
@@ -3207,6 +3239,29 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-wfcard-warn{font-size:13px;line-height:1.5;color:var(--amber-ink);background:var(--amber-wash);border:1px solid var(--amber-line);border-radius:10px;padding:8px 12px;}
 .ask-wfcard-meta{margin-top:8px;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;}
 @media (prefers-reduced-motion: reduce){.ask-wfcard-graph{transition:none;}}
+
+/* ---------- workflow card build (ui/public/auto-build.mjs; mockup §B/§F motion) ---------- */
+.ask-wfcard-graph .gv-world .node{transition:opacity .28s cubic-bezier(.2,.7,.3,1),translate .28s cubic-bezier(.2,.7,.3,1);}
+.ask-wfcard-graph .gv-world .node.is-hid{opacity:0;translate:0 8px;}
+.ask-wfcard-graph .gv-wires path.wire{transition:opacity .42s cubic-bezier(.4,0,.2,1);}
+.ask-wfcard-graph .gv-wires path.wire.is-hid,.ask-wfcard-graph .gv-world .wbadge.is-hid{opacity:0;}
+.ask-wfcard-match.is-hid,.ask-wfcard-loops.is-hid{opacity:0;}
+.ask-wfcard-match,.ask-wfcard-loops{transition:opacity .2s ease;}
+.ask-wfcard-trace{display:flex;flex-direction:column;margin:12px 0 0;padding:0;list-style:none;}
+.ask-wfcard-step{display:flex;align-items:center;gap:12px;height:28px;font-size:13px;color:var(--ink-3);}
+.ask-wfcard-step .st-ico{width:14px;height:14px;flex:0 0 14px;display:grid;place-items:center;}
+.ask-wfcard-step .st-dot{width:6px;height:6px;border-radius:50%;background:var(--ink-3);}
+.ask-wfcard-step .st-check{width:14px;height:14px;stroke:var(--green);fill:none;stroke-width:2.4;display:none;}
+.ask-wfcard-step .st-label{font-weight:500;white-space:nowrap;}
+.ask-wfcard-step .st-meter{font-family:var(--mono);font-size:11px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;}
+.ask-wfcard-step.is-live .st-label{background:linear-gradient(100deg,var(--ink-3) 0%,var(--ink-3) 34%,var(--ink) 50%,var(--ink-3) 66%,var(--ink-3) 100%);
+  background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:ask-shimmer 2.4s linear infinite;}
+.ask-wfcard-step.is-live .st-dot,.ask-wfcard-step.is-done .st-dot{display:none;}
+.ask-wfcard-step.is-done{color:var(--ink-2);}
+.ask-wfcard-step.is-done .st-check{display:block;}
+@media (prefers-reduced-motion: reduce){
+  .ask-wfcard-step.is-live .st-label{background:none;-webkit-background-clip:border-box;background-clip:border-box;color:var(--ink-2);animation:none;}
+}
 
 .ask-jump{position:absolute;left:0;right:0;bottom:104px;margin:0 auto;width:max-content;
   display:flex;align-items:center;gap:7px;padding:6px 12px;border:1px solid var(--line-2);border-radius:999px;
@@ -3266,6 +3321,11 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-pop-scope{left:16px;bottom:44px;width:300px;max-height:min(420px,70%);overflow-y:auto;}
 .ask-pop-model{right:30px;bottom:42px;width:292px;border-radius:18px;}
 .ask-pop-runinfo{right:96px;bottom:44px;width:326px;z-index:4;}
+/* The chip picker (ask-panel.mjs openChipPicker) is the only JS-positioned panel: a band
+   chip sits wherever the transcript scrolled it. Its rows are the WHOLE model catalog, so
+   the menu outgrows the sheet, which clips -- the same cap .ask-pop-scope carries keeps
+   the Effort row reachable, and chipPickerTop() flips it above the chip when that fits. */
+.ask-pop-chip{width:288px;padding:6px;border-radius:14px;max-height:min(420px,70%);overflow-y:auto;}
 .ask-pop-caption,.ask-pop-caption-row .ask-pop-caption{padding:8px 10px 6px;font-weight:600;font-size:10px;
   letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);}
 .ask-pop-caption-row{display:flex;align-items:baseline;gap:8px;}
@@ -3627,6 +3687,9 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .gv-world .bchip.effort{background:var(--field);color:var(--ink-2);}
 .gv-world .bchip.flag{padding:0 calc(4.6px * var(--gv-scale));background:var(--amber-bg);color:var(--amber-ink);}
 .gv-world .bchip.flag.q{background:var(--red-bg);color:var(--red-ink);}
+.gv-world button.bchip{border:0;font-family:var(--mono);font-weight:700;cursor:pointer;color:inherit;}
+.gv-world button.bchip:hover,.gv-world button.bchip[aria-expanded="true"]{box-shadow:0 0 0 2px var(--line-2);}
+.gv-world button.bchip:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
 /* A36: a port row is ONE line by construction (its height is --gv-row-h); at the 9px floor the Task/OR captions
    ("prompt + attached files", "forwards freshest input") wrapped to two lines inside the 15.6px row and ate --gv-pad-b
    (measured in Chrome at 0.65: .prow.cap scrollHeight 19 vs clientHeight 16). The mockup's .fl .prow is nowrap; a caption

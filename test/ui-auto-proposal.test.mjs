@@ -107,3 +107,15 @@ test('a matched proposal reads "Same as your saved workflow"; an empty graph mou
   assert.equal(fingerprintLine({}), '');
   assert.deepEqual(proposalBands({ models: [{ id: 'm', label: 'M' }], nodes: { n: { model: '', effort: '', askQuestions: false } }, manifest: { graph: { nodes: [], wires: [] } } }), { n: { model: '', effort: '', flags: [] } });
 });
+
+test('pick: renderAutoProposal({pick:true}) renders button chips; setNodeTunables keeps them pickable', () => {
+  const h = renderAutoProposal(proposalFor(), { doc, width: 702, pick: true });
+  const first = h.graph.nodeEl(h.graph.flowLayout().order[1]);          // flow order[0] is the Task card; [1] the first agent
+  assert.equal(first.querySelector('.bchip.model').tagName, 'BUTTON');
+  h.setNodeTunables(h.graph.flowLayout().order[1], { model: 'claude-opus-5', effort: 'high' });
+  assert.equal(first.querySelector('.bchip.model').tagName, 'BUTTON'); assert.equal(first.querySelector('.bchip.model').textContent, 'Opus 5');
+  h.destroy();
+  const ro = renderAutoProposal(proposalFor(), { doc, width: 702 });
+  assert.equal(ro.graph.nodeEl(ro.graph.flowLayout().order[1]).querySelector('.bchip.model').tagName, 'SPAN', 'default: read-only spans');
+  ro.destroy();
+});

@@ -129,14 +129,15 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
     { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'propose_run', arguments: { projectKey: project.key, brief: 'Add a badge' } } },
     { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'get_run', arguments: { id: 'zzzzzzzz' } } },
     { jsonrpc: '2.0', id: 8, method: 'foo/bar' },
+    { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'propose_workflow', arguments: { projectKey: project.key, shape: { name: 'Two step', taskKind: 'plan-complete-small', stages: [{ agent: 'implementer' }] } } } },
   ];
   // argv wins over env: env points at a bogus base, argv at the real one
   const r = await runChild(['--home', home, '--thread', thread.id], calls, { env: { WORCA_HOME: '/nonexistent/base', WORCA_ASK_THREAD_ID: other.id } });
   assert.equal(r.code, 0, `exit 0 (stderr: ${r.err})`);
   const msgs = r.out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  assert.deepEqual(msgs.map((m) => m.id), [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(msgs.map((m) => m.id), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
   assert.equal(msgs[0].result.protocolVersion, '2025-11-25');
-  assert.deepEqual(msgs[1].result.tools.map((t) => t.name), ['list_projects', 'list_workflows', 'list_runs', 'get_run', 'get_run_diff', 'propose_run', 'read_attachment',
+  assert.deepEqual(msgs[1].result.tools.map((t) => t.name), ['list_projects', 'list_workflows', 'list_runs', 'get_run', 'get_run_diff', 'propose_run', 'propose_workflow', 'read_attachment',
     'list_diff_comments', 'add_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
     'open_worktree', 'list_worktrees', 'remove_worktree', 'git']);
   const projects = JSON.parse(msgs[2].result.content[0].text);
@@ -154,6 +155,9 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
   assert.equal(proposal.card.projectKey, project.key);
   assert.deepEqual(msgs[7].result, { content: [{ type: 'text', text: 'error: get_run: run not found' }], isError: true });
   assert.equal(msgs[8].error.code, -32601);
+  const wf = JSON.parse(msgs[9].result.content[0].text);
+  assert.equal(wf.ok, true); assert.equal(wf.name, 'Two step'); assert.equal(wf.projectKey, project.key);
+  assert.equal(wf.shape.stages.length, 1); assert.match(wf.summary, /^stages: /); assert.equal(wf.match, null);
 });
 
 test('real child: the env-only form works too, and another thread cannot read the attachment', async () => {

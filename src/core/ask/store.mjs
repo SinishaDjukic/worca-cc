@@ -261,22 +261,30 @@ export function findCard(threadId, cardId) {
   return null;
 }
 
-const CARD_PATCH_KEYS = ['state', 'runId', 'error'];
+const CARD_PATCH_KEYS = ['state', 'runId', 'error', 'workflowId'];
 
-/** Patch ⊆ {state, runId, error} on one card block; the 'proposed' precondition is the caller's (route) business. */
+/** Patch ⊆ {state, runId, error, workflowId} on one card block. A WORKFLOW card (card.type === 'workflow') also takes a
+ *  SHALLOW `card` sub-patch (its name / match / nodes / adopted refresh at Save); a run card's `card` is never touched
+ *  (its key set is pinned). The 'proposed' precondition is the caller's (route) business. */
 export function updateCardBlock(threadId, cardId, patch = {}) {
   return tx(() => {
     const found = findCard(threadId, cardId);
     if (!found) return null;
     const allowed = {};
     for (const k of CARD_PATCH_KEYS) if (Object.prototype.hasOwnProperty.call(patch, k)) allowed[k] = patch[k];
-    const blocks = found.message.blocks.map((b) => (b && b.kind === 'card' && b.id === cardId ? { ...b, ...allowed } : b));
+    const sub = patch.card && typeof patch.card === 'object' && !Array.isArray(patch.card) ? patch.card : null;
+    const blocks = found.message.blocks.map((b) => {
+      if (!(b && b.kind === 'card' && b.id === cardId)) return b;
+      const isWorkflow = !!(b.card && b.card.type === 'workflow');
+      return { ...b, ...allowed, ...(sub && isWorkflow ? { card: { ...(b.card || {}), ...sub } } : {}) };
+    });
     prepare('UPDATE ask_messages SET blocks = ? WHERE id = ?').run(JSON.stringify(blocks), found.message.id);
     return blocks.find((b) => b && b.kind === 'card' && b.id === cardId);
   });
 }
 
-/** Boot sweep (spec §6.2): a turn the previous server process never finished. */
+/** Boot sweep (spec §6.2): a turn the previous server process never finished. A workflow card still
+ *  `building` in such a row can never flip (its turn is gone) — it fails with the same text. */
 export function sweepStreamingMessages({ text = 'interrupted by restart' } = {}) {
   return tx(() => {
     const rows = prepare("SELECT id, blocks FROM ask_messages WHERE status = 'streaming'").all();
@@ -284,7 +292,8 @@ export function sweepStreamingMessages({ text = 'interrupted by restart' } = {})
       // The whole sweep is ONE tx(): a TypeError on a single poisoned row would roll
       // back every other row's fix, and would do so again on every later boot.
       const prev = parse(r.blocks, []);
-      const blocks = Array.isArray(prev) ? prev : [];
+      const blocks = (Array.isArray(prev) ? prev : [])
+        .map((b) => (b && b.kind === 'card' && b.state === 'building' ? { ...b, state: 'failed', error: text } : b));
       blocks.push({ kind: 'notice', text });
       prepare("UPDATE ask_messages SET status = 'error', blocks = ? WHERE id = ?").run(JSON.stringify(blocks), r.id);
     }

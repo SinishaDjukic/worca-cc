@@ -381,8 +381,10 @@ export function createGraphView(host, {
   const bandDataOf = (node) => (bandOverride && bandOverride.has(node.id) ? bandOverride.get(node.id) : (hasBand ? band(node) : null));
   // Separated: an unseparated join lets {model:'Opus', effort:'5'} and {model:'Opus5', effort:''}
   // share a signature, and paintBand early-returns on an equal one — stale chips after setBands.
-  const bandSig = (b) => (b ? [b.model || '', b.effort || '', ...(b.flags || []).map((f) => `${f.text}|${f.cls || ''}`)].join('\u0001') : '');
-  /** The chip band: model · effort · flags, one BAND_H×s row between .nhead and .nbody (agents only). */
+  const bandSig = (b) => (b ? [b.model || '', b.effort || '', b.pick ? 'pick' : '', ...(b.flags || []).map((f) => `${f.text}|${f.cls || ''}`)].join('\u0001') : '');
+  /** The chip band: model · effort · flags, one BAND_H×s row between .nhead and .nbody (agents only).
+   *  `pick` (the chat card's proposed state, P3) makes the model/effort chips real buttons the host's delegated
+   *  click opens a picker for; flags stay inert. Listeners never live here: replaceChildren would drop them. */
   function paintBand(el, node) {
     let nb = el.querySelector(':scope > .nband');
     if (!hasBand || node.kind !== 'agent') { if (nb) nb.remove(); return; }
@@ -391,11 +393,15 @@ export function createGraphView(host, {
     if (nb && nb.dataset.sig === sig) return;
     if (!nb) { nb = h('div', 'nband'); el.insertBefore(nb, el.querySelector(':scope > .nbody')); }
     nb.dataset.sig = sig;
-    const kids = [];
-    const model = h('span', `bchip model${data.model ? '' : ' is-unset'}`, data.model || 'default');
-    model.title = data.model ? `model: ${data.model}` : 'model: the CLI default';
-    kids.push(model);
-    if (data.effort) { const e = h('span', 'bchip effort', data.effort); e.title = `effort: ${data.effort}`; kids.push(e); }
+    const pick = !!data.pick;
+    const chip = (cls, text, which, title) => {
+      const c = h(pick ? 'button' : 'span', cls, text);
+      c.title = title;
+      if (pick) { c.type = 'button'; c.dataset.chip = which; c.setAttribute('aria-haspopup', 'menu'); c.setAttribute('aria-expanded', 'false'); }
+      return c;
+    };
+    const kids = [chip(`bchip model${data.model ? '' : ' is-unset'}`, data.model || 'default', 'model', data.model ? `model: ${data.model}` : 'model: the CLI default')];
+    if (data.effort || pick) kids.push(chip('bchip effort', data.effort || 'effort', 'effort', data.effort ? `effort: ${data.effort}` : 'effort: pick one'));
     for (const f of data.flags || []) { const c = h('span', `bchip flag${f.cls ? ` ${f.cls}` : ''}`, f.text); c.title = f.title || f.text; kids.push(c); }
     nb.replaceChildren(...kids);
   }

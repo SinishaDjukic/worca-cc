@@ -333,6 +333,16 @@ export function createAskTools(deps) {
         sourceBranchByKey: { type: 'object', description: 'workspace only: per-member source branch overrides keyed by project key', additionalProperties: { type: 'string' } },
         commentIds: { type: 'array', items: { type: 'string' },
           description: 'diff comment ids (dc_…) this run is meant to address. They are stamped with the run id once the user confirms the card AND the run actually starts; nothing is resolved.' } }, ['brief']) },
+    { name: 'propose_workflow',
+      description: 'Propose a NEW workflow for the user to save — it never writes anything; the user sees a card and decides. Exactly one of task / shape: task = the full task text (worca\'s Auto classifier picks the agents, loops and models exactly as an Auto run would — use this when the user says "auto" or simply gives a task); shape = a hand-authored shape (see "Workflows you can create" in your instructions — only when the user describes the steps). projectKey defaults to the project pinned for this chat and is required when none is pinned (a workspace cannot be the target). thenRun = the user also asked to run it. Returns {ok:true, name, match, warnings, summary, shape}: match names the saved workflow with the same shape (Save reuses it), summary lists the stages and loops. Returns {ok:false, error} when worca\'s classifier failed (timeout, unusable replies): tell the user, retry at most once. Do not search list_workflows for a match yourself — the tool does.',
+      inputSchema: SCHEMA.obj({
+        task: SCHEMA.s('the full task text (≤ 32000 chars) — mode task'),
+        shape: { type: 'object', description: 'a hand-authored workflow shape {name, taskKind, reasoning, stages[], loops?} — mode shape', additionalProperties: true },
+        name: SCHEMA.s('workflow name (≤ 60 chars); overrides the classifier\'s / shape\'s name'),
+        projectKey: SCHEMA.s('target project key (default: the pinned project)'),
+        thenRun: SCHEMA.b('the user also asked to run the work: the card offers "Save & propose run"'),
+        note: SCHEMA.s('one line shown on the card: why this shape (≤ 200 chars)'),
+      }) },
     { name: 'read_attachment',
       description: 'Read an attachment of this conversation by id. Text attachments return their content, paged by byte offset (default 32000 bytes per page). Image and PDF attachments return metadata plus a file path — pass that path to your Read tool to view the content.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('attachment id'), offset: SCHEMA.i('byte offset', 0, Number.MAX_SAFE_INTEGER), maxBytes: SCHEMA.i('bytes per page', 1, L.attachmentReadMaxBytes) }, ['id']) },
@@ -660,6 +670,26 @@ export function createAskTools(deps) {
         }
       }
       return r;
+    },
+    async propose_workflow(input) {
+      const task = str(input.task);
+      const shape = input.shape && typeof input.shape === 'object' && !Array.isArray(input.shape) ? input.shape : null;
+      if ((task && shape) || (!task && !shape)) throw new AskToolError('propose_workflow: give exactly one of task / shape');
+      if (task.length > L.workflowTaskMaxChars) throw new AskToolError(`propose_workflow: task is longer than ${L.workflowTaskMaxChars} chars`);
+      // The pinned scope is the default target ONLY when it is a project (D19: no workspace targets in v1).
+      let projectKey = str(input.projectKey);
+      if (!projectKey) { const pin = pinnedScope(); if (pin && pin.projectKey) projectKey = pin.projectKey; }
+      if (!projectKey) throw new AskToolError('propose_workflow: projectKey is required — no project is pinned for this chat (a workspace cannot be the target)');
+      if (!deps.workflow || typeof deps.workflow.propose !== 'function') throw new AskToolError('propose_workflow: unavailable');
+      try {
+        return await deps.workflow.propose({
+          mode: task ? 'task' : 'shape', task, shape, name: str(input.name).slice(0, 60), projectKey,
+          note: str(input.note).slice(0, L.workflowNoteMaxChars), thenRun: input.thenRun === true,
+        });
+      } catch (err) {
+        if (err instanceof AskToolError) throw err;
+        throw new AskToolError(`propose_workflow: ${err && err.message ? err.message : String(err)}`);
+      }
     },
     async list_diff_comments(input) {
       const row = await resolveRow(input, 'list_diff_comments');

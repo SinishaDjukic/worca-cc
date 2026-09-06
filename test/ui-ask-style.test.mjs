@@ -201,6 +201,12 @@ test('ui-ask-style: the composer-row scope pill never shrinks and its popover op
   assert.doesNotMatch(pop, /top:46px/, 'no longer anchored to the header');
   assert.match(pop, /max-height:min\(420px,70%\)/);
   assert.match(pop, /overflow-y:auto/);
+  const chip = ruleBody('.ask-pop-chip') || '';
+  assert.match(chip, /width:288px/);
+  assert.match(chip, /max-height:min\(420px,70%\)/, 'the whole catalog is 12+ rows and .ask-sheet clips — without a cap the Effort row is unreachable');
+  assert.match(chip, /overflow-y:auto/);
+  assert.match(chip, /border-radius:14px/);
+  assert.ok(css.indexOf('.ask-pop-chip{') > css.indexOf('.ask-pop{'), '.ask-pop-chip and .ask-pop are both (0,1,0) on the same element — source order decides, so the chip rule must come last');
   const title = ruleBody('.ask-title') || '';
   assert.match(title, /min-width:0/);
   assert.match(title, /overflow:hidden/);
