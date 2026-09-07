@@ -141,8 +141,8 @@ async function openBuilding(ctx) {
   await settle(ctx.window, 4);
 }
 const flip = (ctx, seq, block) => { ctx.recv({ type: 'ask-card', block: { kind: 'card', id: CID, ...block }, threadId: TID, messageId: MID, seq }); };
-// The turn's terminal frame (test/ask-panel-live-meters.test.mjs's shape) — Run with this
-// is only live between turns, so a saved-card test that clicks it must end the turn first.
+// The turn's terminal frame (test/ask-panel-live-meters.test.mjs's shape) — a saved card
+// is asserted across it: its footer never grows a verb once the turn ends.
 const DONE = { type: 'ask-done', text: 'ok', blocks: [], usage: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0 }, costUsd: 0, durationMs: 5, model: 'm', status: 'done', threadTotals: { costUsd: 0, input: 1, output: 1, cacheRead: 0, cacheCreation: 0, turns: 1, agents: 0 } };
 
 test('building → proposed: the trace renders first; the flip mounts the REAL graph in the same cached slot, chips are buttons, the primary reads "Save & propose run"; a later frame keeps the element and the edited name', async () => {
@@ -224,7 +224,7 @@ test('saved: head "Saved workflow" + Auto tag + the check line; Open in composer
   assert.equal(el.querySelector('.ask-wfcard-savedline').textContent, 'Saved as a new workflow, tagged Auto');
   assert.ok(el.querySelector('.ask-wfcard-graph .node'), 'the graph stays'); assert.equal(el.querySelector('.ask-wfcard-graph .bchip.model').tagName, 'SPAN', 'chips inert');
   assert.equal(el.querySelector('.ask-wfcard-match'), null, 'no match line on a saved card');
-  assert.equal(el.querySelector('[data-ask-wf-run]').disabled, true, 'the proposing turn still streams — Run is inert here; the next test drives the whole verb');
+  assert.equal(el.querySelector('[data-ask-wf-run]'), null, 'no "Run with this": the save already fired the event turn, which proposes (thenRun) or offers (chat) the run');
   el.querySelector('[data-ask-wf-open]').click();
   await settle(ctx.window, 8);
   assert.equal(ctx.window.location.hash, '#composer', 'showView("composer") sets the hash itself');
@@ -237,7 +237,7 @@ test('saved: head "Saved workflow" + Auto tag + the check line; Open in composer
   assert.equal(ctx.window.document.querySelector('.ask-card-stub.ask-card-failed').textContent, 'Proposal failed: classifier returned an unknown agent "e2e-tester"');
 });
 
-test('Run with this is inert while a turn streams and live again on ask-done — the server refuses the verb in flight (one turn per thread), so a click must never look accepted', async () => {
+test('saved card footer is "Open in composer" alone, while the turn streams and after ask-done — no card verb starts a paid turn, the event turn proposes or offers the run', async () => {
   const ctx = await boot();
   await openBuilding(ctx);
   flip(ctx, 3, { state: 'proposed', card: wfCard() });
@@ -245,21 +245,14 @@ test('Run with this is inert while a turn streams and live again on ask-done —
   const savedBlock = { kind: 'card', id: CID, state: 'saved', workflowId: 'wf_rename-fix', card: wfCard({ name: 'Rename fix', adopted: false, match: { id: 'wf_rename-fix', name: 'Rename fix' } }) };
   flip(ctx, 4, savedBlock);
   await settle(ctx.window, 6);
-  const el = ctx.window.document.querySelector('[data-ask-wfcard="saved"]');
-  const run = el.querySelector('[data-ask-wf-run]');
-  assert.equal(run.disabled, true, 'the turn that proposed the card is still streaming');
-  assert.match(run.title, /replying/i, 'the reason is on the button, not only in the greying');
-  run.click();
-  await settle(ctx.window, 4);
-  assert.equal(ctx.cardPosts.length, 0, 'no POST: the queue can never take a second paid turn from an impatient click');
+  const footer = () => [...ctx.window.document.querySelector('[data-ask-wfcard="saved"] .ask-wfcard-actions').children].map((c) => `${c.tagName}:${c.textContent}`);
+  assert.deepEqual(footer(), ['BUTTON:Open in composer'], 'one button, no spacer, no "Run with this"');
   // ask-done replaces the row's blocks wholesale, so the terminal frame carries the card.
   ctx.recv({ ...DONE, blocks: [savedBlock], threadId: TID, messageId: MID, seq: 5 });
   await settle(ctx.window, 4);
-  assert.equal(run.disabled, false, 'the same cached element is re-enabled, never rebuilt');
-  assert.equal(run.title, '');
-  run.click();
-  await settle(ctx.window, 4);
-  assert.deepEqual(ctx.cardPosts, [{ action: 'run' }]);
+  assert.equal(ctx.window.document.querySelector('[data-ask-wf-run]'), null, 'nothing comes back once the turn ends');
+  assert.deepEqual(footer(), ['BUTTON:Open in composer']);
+  assert.equal(ctx.cardPosts.length, 0, 'no card verb was posted');
 });
 
 test('matched proposed card: no pencil, span chips and the composer hint; the narrow host stacks one card per row', async () => {

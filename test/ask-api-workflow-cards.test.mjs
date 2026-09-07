@@ -2,8 +2,8 @@
 // The workflow card state machine end to end over WORCA_MOCK: building →
 // proposed, then POST /api/ask/threads/:id/cards/:cardId with `saved` (adopt an
 // existing twin, or write a new origin:'auto' row with the node tunables baked
-// in), `declined`, and {action:'run'} — each flipping the card, storing the
-// synthetic user-row notice and starting (or queueing) the event turn; the
+// in) or `declined` — each flipping the card, storing the synthetic user-row
+// notice and starting (or queueing) the event turn; the
 // context header's workflow arm; and the queued turn that cannot start. The
 // full agentgen-api boot (cwd git sandbox — the mock pipeline runs for real).
 import { test, before, after } from 'node:test';
@@ -208,7 +208,9 @@ test('save (twin = the built-in Default): adopts it, writes nothing, ignores nam
   assert.equal((await post(`/api/ask/threads/${thread.id}/cards/${card.id}`, { state: 'declined' })).status, 409);
   const d = await proposeWorkflow({ projectKey }, NEW_TEXT);
   const w = openWs(); await w.opened;
-  assert.equal((await post(`/api/ask/threads/${d.thread.id}/cards/${d.card.id}`, { action: 'run' })).status, 409, 'run needs saved');
+  const stray = await post(`/api/ask/threads/${d.thread.id}/cards/${d.card.id}`, { action: 'run' });
+  assert.equal(stray.status, 400, 'no run verb: the saved card has no "Run with this", the event turn proposes or offers the run');
+  assert.equal((await stray.json()).error, 'state must be "saved" or "declined"');
   assert.equal((await post(`/api/ask/threads/${d.thread.id}/cards/${d.card.id}`, { state: 'dismissed' })).status, 400, 'run-card verbs are refused on a workflow card');
   const dec = await post(`/api/ask/threads/${d.thread.id}/cards/${d.card.id}`, { state: 'declined' });
   assert.equal((await dec.json()).block.state, 'declined');
@@ -219,21 +221,8 @@ test('save (twin = the built-in Default): adopts it, writes nothing, ignores nam
   w.ws.close();
 });
 
-test('run with this: {action:"run"} on a saved card starts the saved+thenRun event turn; a save DURING a running turn is queued until it ends', async () => {
-  const { thread, card } = await proposeWorkflow({ projectKey }, NEW_TEXT);   // by now a twin exists (test 2 wrote wf_rename-fix) — Save adopts it
-  assert.match(card.card.match?.id || '', /^wf_rename-fix/);
-  const w = openWs(); await w.opened;
-  const saved = await (await post(`/api/ask/threads/${thread.id}/cards/${card.id}`, { state: 'saved' })).json();
-  assert.equal(saved.block.card.adopted, true);
-  await waitFor(() => frames(w.msgs, thread.id, 'ask-done').length >= 1);               // the save's event turn (thenRun=false ⇒ text only)
-  const r = await post(`/api/ask/threads/${thread.id}/cards/${card.id}`, { action: 'run' });
-  assert.equal(r.status, 200);
-  await waitFor(() => frames(w.msgs, thread.id, 'ask-done').length >= 2);               // the run's event turn
-  const snap = await snapshot(thread.id);
-  assert.equal(snap.messages.filter((m) => m.role === 'user' && m.blocks?.[0]?.synthetic).at(-1).blocks[0].text, `Run requested with "${saved.block.card.name}" · Auto will propose a run next`);
-  assert.ok((snap.messages.at(-1).blocks || []).some((b) => b.kind === 'card' && !b.card.type && b.state === 'proposed'), 'a run card followed');
-  w.ws.close();
-  // queued: propose while a slow turn streams, save immediately — the event turn starts after ask-done
+test('a save DURING a running turn is queued until it ends', async () => {
+  // propose while a slow turn streams, save immediately — the event turn starts after ask-done
   const t2 = await newThread();
   const w2 = openWs(`?threadId=${t2.id}`); await w2.opened;
   await post(`/api/ask/threads/${t2.id}/messages`, { text: `MOCK_SLOW ${NEW_TEXT}`, ...MODEL, context: { projectKey } });
@@ -291,31 +280,6 @@ test('a queued event turn that cannot start (total cost window spent by the turn
     await setTotalCostLimitUsd(null);
     w.ws.close();
   }
-});
-
-test('{action:"run"} is refused while a turn streams: the run verb has no state transition, so only this guard keeps a click from queueing another PAID turn', async () => {
-  const { thread, card } = await proposeWorkflow({ projectKey }, NEW_TEXT);
-  const w = openWs(); await w.opened;                                        // bare: no replay of the finished job
-  const saved = await (await post(`/api/ask/threads/${thread.id}/cards/${card.id}`, { state: 'saved' })).json();
-  assert.equal(saved.block.state, 'saved');
-  await waitFor(() => frames(w.msgs, thread.id, 'ask-done').length >= 1);     // the save's own event turn
-  // Hold the thread with a slow typed turn and hammer Run: the save/decline verbs are
-  // one-shot (the `proposed` check refuses the second POST), the run verb is not.
-  await post(`/api/ask/threads/${thread.id}/messages`, { text: 'MOCK_SLOW hold the thread', ...MODEL, context: { projectKey } });
-  await waitFor(() => frames(w.msgs, thread.id, 'ask-start').length >= 2);
-  const rs = await Promise.all([1, 2, 3].map(() => post(`/api/ask/threads/${thread.id}/cards/${card.id}`, { action: 'run' })));
-  assert.deepEqual(rs.map((r) => r.status), [409, 409, 409], 'every impatient click is refused, exactly as the typed-message route refuses a second turn');
-  assert.equal((await rs[0].json()).error, 'turn in flight');
-  await waitFor(() => frames(w.msgs, thread.id, 'ask-done').length >= 2, 15_000);
-  const runRows = (s) => s.messages.filter((m) => m.role === 'user' && /^Run requested/.test(m.blocks?.[0]?.text || ''));
-  assert.equal(runRows(await snapshot(thread.id)).length, 0, 'nothing was queued: no run event turn ran');
-  // The verb still works once the thread is idle.
-  const ok = await post(`/api/ask/threads/${thread.id}/cards/${card.id}`, { action: 'run' });
-  assert.equal(ok.status, 200);
-  assert.ok((await ok.json()).turn.assistantMessageId, 'the event turn started at once');
-  await waitFor(() => frames(w.msgs, thread.id, 'ask-done').length >= 3, 15_000);
-  assert.equal(runRows(await snapshot(thread.id)).length, 1, 'exactly one paid run turn, from the one accepted click');
-  w.ws.close();
 });
 
 test('an event turn that fails IMMEDIATELY (no turn was running) posts the same system notice — the flip has already replaced the card element the inline error would have landed on', async () => {

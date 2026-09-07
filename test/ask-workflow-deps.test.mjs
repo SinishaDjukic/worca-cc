@@ -129,7 +129,6 @@ test('event prompt + notice text are single-line and cleaned', () => {
   assert.equal(workflowEventPrompt({ cardId: 'card_0000aa01', state: 'declined', projectKey: 'p-1' }), '[worca event] workflow card card_0000aa01 declined; project=p-1');
   assert.equal(workflowNoticeText({ state: 'saved', name: 'A', thenRun: true }), 'Workflow "A" saved · Auto will propose a run next');
   assert.equal(workflowNoticeText({ state: 'saved', name: 'A', matched: true }), 'Using your saved workflow "A"');
-  assert.equal(workflowNoticeText({ state: 'saved', name: 'A', run: true, thenRun: true }), 'Run requested with "A" · Auto will propose a run next');
   assert.equal(workflowNoticeText({ state: 'declined', name: 'A' }), 'Workflow "A" declined');
 });
 

@@ -127,10 +127,10 @@ export function workflowEventPrompt({ cardId, state, workflowId = null, name = '
 }
 
 /** The user-row notice (mockup §C copy). */
-export function workflowNoticeText({ state, name = '', matched = false, thenRun = false, run = false }) {
+export function workflowNoticeText({ state, name = '', matched = false, thenRun = false }) {
   const n = flat(name, 60);
   if (state === 'declined') return `Workflow "${n}" declined`;
-  const head = run ? `Run requested with "${n}"` : matched ? `Using your saved workflow "${n}"` : `Workflow "${n}" saved`;
+  const head = matched ? `Using your saved workflow "${n}"` : `Workflow "${n}" saved`;
   return thenRun ? `${head} · Auto will propose a run next` : head;
 }
 

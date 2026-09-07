@@ -1858,7 +1858,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- Workflow card (spec §8.3, mockup 2026-09-05 §A-§C, plan PD4/PD7/PD12-15) ---------------------------------
-  const WF_ICO = { check: 'M5 13l4 4L19 7', play: 'M8 5l11 7-11 7z', save: 'M5 12l5 5L20 7' };
+  const WF_ICO = { check: 'M5 13l4 4L19 7', save: 'M5 12l5 5L20 7' };
   const TUNABLE_KEYS = ['model', 'effort', 'fanOut', 'askQuestions'];
   /** The answer's `nodes`: a DIFF against the proposal (the qpanel's rule, app.js renderWorkflowBody). */
   function diffNodes(base, edits) {
@@ -1912,10 +1912,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     rootEl.appendChild(handle.el);
     rootEl.appendChild(make('div', 'ask-card-err'));
     const actions = make('div', 'ask-wfcard-actions');
-    // svgIcon hard-codes fill="none"; the mockup's play glyph is a FILLED triangle (fill="currentColor" stroke="none").
-    const btn = (cls, text, attr, icon, filled = false) => {
+    const btn = (cls, text, attr, icon) => {
       const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, '');
-      if (icon) { const ic = svgIcon(icon, 12, 2.2); if (filled) { ic.setAttribute('fill', 'currentColor'); ic.setAttribute('stroke', 'none'); } b.prepend(ic); }
+      if (icon) b.prepend(svgIcon(icon, 12, 2.2));
       return b;
     };
     if (proposed) {
@@ -1928,9 +1927,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const open = btn('ask-card-open-np', 'Open in composer', 'data-ask-wf-open');
       open.disabled = !(typeof openComposer === 'function' && block.workflowId);   // v7: an inert button beats a dead click
       open.addEventListener('click', () => { if (typeof openComposer === 'function' && block.workflowId) openComposer(block.workflowId); });
-      const run = btn('ask-card-start', 'Run with this', 'data-ask-wf-run', WF_ICO.play, true);
-      run.addEventListener('click', () => postCard(block, rootEl, { action: 'run' }, run));
-      actions.append(open, make('span', 'ask-card-actions-spacer'), run);
+      // No "Run with this": the save already fired the event turn, which proposes the run
+      // itself (thenRun) or offers one in chat — a card verb would only queue a second paid turn.
+      actions.append(open);
     }
     rootEl.appendChild(actions);
     if (editable) {
@@ -2525,21 +2524,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
   }
 
-  /** "Run with this" starts a TURN, and a thread runs one turn at a time — the route
-   *  answers 409 while one streams. The card element is cached across re-renders (it is
-   *  never rebuilt at the same state), so the live state is applied on every flush
-   *  instead of at build time; `posting` is postCard's own disable, which outlives it. */
-  function syncWorkflowRunButtons() {
-    if (!st.cardEls) return;
-    const streaming = !!(st.model && st.model.live());
-    for (const c of st.cardEls.values()) {
-      const run = c.el && c.el.querySelector ? c.el.querySelector('[data-ask-wf-run]') : null;
-      if (!run || run.dataset.posting === '1') continue;
-      run.disabled = streaming;
-      run.title = streaming ? 'Ask Worca is replying — run this workflow once the answer lands' : '';
-    }
-  }
-
   function toolRow(block) {
     const rowEl = make('div', 'ask-tool-row');
     const short = String(block.name || '').replace(/^mcp__worca__/, '');
@@ -2771,9 +2755,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       st.rowEls.set(row.id, entry);
       el.transcript.appendChild(entry.el);
     }
-    // A card can be built here with no flush behind it (thread switch, resync into a
-    // live turn) — the run verb must never look available while that turn streams.
-    syncWorkflowRunButtons();
   }
 
   // Bumped by every loadThread()/newThread()/thread creation: whichever GET resolves
@@ -3004,7 +2985,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.destroyed) return;
     flushExtra();
     relayoutCards();
-    syncWorkflowRunButtons();
     applyPin();
   }
 

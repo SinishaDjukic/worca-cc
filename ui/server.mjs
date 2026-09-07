@@ -4598,9 +4598,6 @@ function flipCard(threadId, cardId, patch) {
 // Card ids with a Save in flight: the mint + the row write await, so the
 // `state === 'proposed'` check alone would let two Saves both pass and write two rows.
 const askCardBusy = new Set();
-// Thread ids with a {action:'run'} event turn between the route's askInFlight() guard
-// and startAskTurn's own reservation — the same TOCTOU askCardBusy closes for Save.
-const askRunVerbBusy = new Set();
 
 /** Save a PROPOSED workflow card: adopt the twin (nothing written) or write a new origin:'auto' row (spec §8.4, PD9). */
 async function saveWorkflowCard(threadId, block, body = {}) {
@@ -4654,7 +4651,7 @@ function failedEventTurn(threadId, turn) {
 }
 
 /** Store the synthetic user-row notice and start (or queue) the assistant turn whose prompt is the event (spec §8.4, PD5/PD6/PD26). */
-async function startWorkflowEventTurn(threadId, block, { declined = false, thenRun = false, run = false } = {}) {
+async function startWorkflowEventTurn(threadId, block, { declined = false, thenRun = false } = {}) {
   const thread = askGetThread(threadId);
   if (!thread) return null;
   const card = block.card || {};
@@ -4662,7 +4659,7 @@ async function startWorkflowEventTurn(threadId, block, { declined = false, thenR
   const text = workflowEventPrompt({
     cardId: block.id, state, workflowId: block.workflowId, name: card.name, thenRun, projectKey: card.projectKey || '',
   });
-  const notice = workflowNoticeText({ state, name: card.name, matched: !declined && card.adopted === true, thenRun, run });
+  const notice = workflowNoticeText({ state, name: card.name, matched: !declined && card.adopted === true, thenRun });
   let mv = await validateModelEffort(thread.model, thread.effort);
   if (!mv.ok) {
     const d = (await askCatalog({ withSecrets: false })).default;
@@ -4712,25 +4709,10 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       catch (e) { console.error('[diff-comments] dismiss cleanup failed:', e && e.message ? e.message : e); }
       return res.json({ block });
     }
-    // Workflow card state machine (spec §8.4): proposed → saved | declined; saved → run (no write).
-    if (body.action === 'run') {
-      if (found.block.state !== 'saved') return res.status(409).json({ error: `card is ${found.block.state}` });
-      // The run verb is the ONLY card verb with no state transition: save/decline are
-      // one-shot (their `proposed` check refuses the second POST), run leaves the card
-      // `saved` forever. Without this guard every impatient click queues one more PAID
-      // turn onto askDeferred — the typed-message route (:4479) refuses a second turn
-      // the same way, and that one-turn-per-thread invariant is what this restores.
-      // askRunVerbBusy covers the awaits inside startWorkflowEventTurn, before the
-      // reservation makes askInFlight() true.
-      if (askInFlight(id) || askRunVerbBusy.has(id)) return res.status(409).json({ error: 'turn in flight' });
-      askRunVerbBusy.add(id);
-      let turn;
-      try { turn = await startWorkflowEventTurn(id, found.block, { thenRun: true, run: true }); }
-      finally { askRunVerbBusy.delete(id); }
-      return res.json({ block: found.block, turn });
-    }
+    // Workflow card state machine (spec §8.4): proposed → saved | declined. A saved card has no
+    // verb — its event turn proposes the run itself (thenRun) or offers one in chat.
     if (body.state !== 'saved' && body.state !== 'declined') {
-      return badRequest(res, 'state must be "saved" or "declined", or action "run"');
+      return badRequest(res, 'state must be "saved" or "declined"');
     }
     if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
     if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being saved' });
