@@ -287,3 +287,28 @@ test('a synthetic user row renders the notice and no bubble; a typed row still r
   assert.equal(syn.querySelector('.ask-notice').textContent, 'Workflow "X" saved · Auto will propose a run next');
   assert.ok(!syn.textContent.includes('[worca event]'), 'the model-facing event line is never shown');
 });
+
+test('saving the workflow card drops the cached option lists — the next cached consumer (scope popover) refetches them', async () => {
+  const ctx = await boot();
+  await openBuilding(ctx);
+  flip(ctx, 3, { state: 'proposed', card: wfCard() });
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const projectsCalls = () => ctx.calls.filter((c) => c.url.split('?')[0].endsWith('/api/projects')).length;
+  const scopeBtn = doc.querySelector('[data-ask-scope-btn]');
+  const openScope = async () => { if (!doc.querySelector('.ask-pop-scope')) scopeBtn.click(); await settle(ctx.window, 4); };
+  const closeScope = async () => { if (doc.querySelector('.ask-pop-scope')) scopeBtn.click(); await settle(ctx.window, 2); };
+  const base = projectsCalls();
+  await openScope();
+  assert.ok(doc.querySelector('.ask-pop-scope'), 'the popover opened');
+  assert.equal(projectsCalls(), base + 1, 'the first open fetches the lists');
+  await closeScope();
+  await openScope();
+  assert.equal(projectsCalls(), base + 1, 'a reopen reads the cache — the cheap path stays cheap');
+  await closeScope();
+  doc.querySelector('[data-ask-wf-save]').click();
+  await settle(ctx.window, 4);
+  assert.equal(ctx.cardPosts.at(-1).state, 'saved');
+  await openScope();
+  assert.equal(projectsCalls(), base + 2, 'the save invalidated the cache: the next consumer refetches');
+});

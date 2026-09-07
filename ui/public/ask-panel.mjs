@@ -1550,8 +1550,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // by card id and REUSED across message re-renders, so streaming updates and
   // proposed re-emits never clobber what the user typed. Only a STATE change
   // (started/dismissed/failed) builds a fresh terminal element.
-  function loadCardOptions() {
-    if (st.cardOptions) return st.cardOptions;
+  // The four lists are cached for the panel's lifetime (the scope label / popover read
+  // them on every open). `fresh: true` refetches and REPLACES the cache — the run card
+  // builds with it, because a workflow saved seconds earlier in this chat is not in the
+  // cached list and fillSelect would silently leave the select on another row.
+  function loadCardOptions({ fresh = false } = {}) {
+    if (st.cardOptions && !fresh) return st.cardOptions;
     const grab = (url, key) => Promise.resolve()
       .then(() => fetch(url))
       .then((r) => (r && r.ok ? r.json() : null))
@@ -1921,7 +1925,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const decline = btn('ask-card-not-now', 'Decline', 'data-ask-wf-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
       const save = btn('ask-card-start', card.thenRun ? 'Save & propose run' : 'Save as workflow', 'data-ask-wf-save', WF_ICO.save);
-      save.addEventListener('click', () => postCard(block, rootEl, { state: 'saved', name: handle.getName(), nodes: diffNodes(card.nodes, wf.nodes) }, save));
+      // A 200 means the row exists now: drop the cached option lists so every later consumer sees it.
+      save.addEventListener('click', () => postCard(block, rootEl, { state: 'saved', name: handle.getName(), nodes: diffNodes(card.nodes, wf.nodes) }, save)
+        .then((out) => { if (out) st.cardOptions = null; }));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, save);
     } else {
       const open = btn('ask-card-open-np', 'Open in composer', 'data-ask-wf-open');
@@ -2119,7 +2125,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     wfRow.append(wfField, guardField);
     targetSec.appendChild(wfRow);
     rootEl.appendChild(targetSec);
-    workflowSel.addEventListener('change', () => reloadLane());
+    workflowSel.addEventListener('change', () => {
+      if (local.workflowUnavailable) { local.workflowUnavailable = false; err.textContent = ''; startBtn.disabled = false; }
+      reloadLane();
+    });
 
     // agents lane (reloadLane → renderLane fills laneSec)
     const laneSec = make('div', 'ask-rp-sec ask-rp-lane');
@@ -2317,11 +2326,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     local.reloadLane = reloadLane;   // after a successful save the lane re-reads the persisted config
     renderLane(laneSec, null, laneCtx, 'Loading agent settings…');   // until the option lists arrive
 
+    // Fail loudly, never substitute: the proposed id is in no list, so the select shows
+    // nothing, the error says which id is missing and Start stays inert until the user
+    // picks a row (the change handler above lifts all three). local.workflowId() keeps
+    // reporting the proposed id meanwhile, so the lane shows its unusable state instead
+    // of another workflow's agents.
+    function markWorkflowUnavailable() {
+      workflowSel.selectedIndex = -1;
+      err.textContent = `Workflow ${card.workflowId} is not available — pick one`;
+      startBtn.disabled = true;
+      local.workflowUnavailable = true;
+    }
+
     renderTarget();
-    loadCardOptions().then((opts) => {
+    loadCardOptions({ fresh: true }).then((opts) => {
       if (st.destroyed) return;
       local.options = opts;
       fillSelect(workflowSel, opts.workflows.map((w) => ({ value: w.id, label: workflowPickerLabel(w, null) || w.name || w.id })), card.workflowId || 'wf_default');
+      if (card.workflowId && workflowSel.value !== card.workflowId) markWorkflowUnavailable();
       fillSelect(guardSel, opts.guardrails.map((g) => ({ value: g.id, label: g.id === 'permissive' ? 'Permissive' : (g.name || g.id) })), card.guardrailsId || 'normal');
       renderTarget();
       reloadLane();

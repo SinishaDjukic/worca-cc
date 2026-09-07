@@ -79,7 +79,10 @@ function askArms(url, opts) {
   return null;
 }
 
-async function boot({ url = 'http://localhost:4317/', runResponse = null } = {}) {
+// `workflows` is the LIVE list behind /api/workflows and /api/workflows/:id — a test
+// mutates it between two card renders to model a row saved mid-chat.
+async function boot({ url = 'http://localhost:4317/', runResponse = null, workflows = null } = {}) {
+  const wfList = workflows || [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }];
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url });
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -105,8 +108,12 @@ async function boot({ url = 'http://localhost:4317/', runResponse = null } = {})
       runBodies.push(JSON.parse(opts.body));
       return Promise.resolve(runResponse || { ok: true, status: 200, json: async () => ({ runId: 'run-uuid-1' }) });
     }
-    if (path.endsWith('/api/workflows/wf_review') || path.endsWith('/api/workflows/wf_default')) {
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({ ...WF_DEFAULT_TPL, id: path.split('/').pop() }) });
+    // /api/workflows/:id serves the template for a LISTED id and 404s the rest, like the real route.
+    const wfRow = path.match(/\/api\/workflows\/([^/]+)$/);
+    if (wfRow) {
+      return Promise.resolve(wfList.some((w) => w.id === wfRow[1])
+        ? { ok: true, status: 200, json: async () => ({ ...WF_DEFAULT_TPL, id: wfRow[1] }) }
+        : { ok: false, status: 404, json: async () => ({ error: 'workflow not found' }) });
     }
     if (path.endsWith('/api/agents')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ agents: AGENTS, mockWriterRoles: [] }) });
     if (path.endsWith('/api/config') && method === 'GET') return Promise.resolve({ ok: true, status: 200, json: async () => configBody() });
@@ -114,7 +121,7 @@ async function boot({ url = 'http://localhost:4317/', runResponse = null } = {})
     // EXACT path match, not includes(): /api/workflows/:id is the per-workflow
     // config fetch — a substring test hands it the LIST envelope instead.
     if (path.endsWith('/api/workflows')) {
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) });
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: [...wfList] }) });
     }
     if (path.endsWith('/api/guardrails')) {
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'permissive', name: 'Permissive' }, { id: 'normal', name: 'Normal' }] }) });
@@ -316,4 +323,57 @@ test('ui-ask-card: a handoff with no pills clears the extras the user picked ear
     'the handoff owns the extras list — the old pick must not upload into this run');
   assert.equal(doc.querySelector('#extrasPills').hidden, true);
   assert.equal(doc.querySelector('#extrasNote').textContent, 'Leave empty and the run gets no extra files.');
+});
+
+const listCalls = (ctx) => ctx.calls.filter((c) => c.url.split('?')[0].endsWith('/api/workflows')).length;
+
+test('ui-ask-card: a card built after a workflow was saved refetches the lists — the select shows the new id and the lane loads it', async () => {
+  const workflows = [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }];
+  const ctx = await boot({ workflows });
+  await openCard(ctx, CARD);
+  const first = listCalls(ctx);
+  assert.ok(first >= 1, 'the first card loaded the lists');
+  // The workflow card saved a row seconds later; the panel-lifetime cache never saw it.
+  workflows.push({ id: 'wf_implement-review', name: 'Implement + review' });
+  ctx.recv({ type: 'ask-card', block: { kind: 'card', id: 'card_00000002', state: 'proposed', card: { ...CARD, workflowId: 'wf_implement-review', workflowName: 'Implement + review', title: 'Second' } }, threadId: TID, messageId: MID, seq: 3 });
+  await settle(ctx.window, 6);
+  assert.equal(listCalls(ctx), first + 1, 'the second card fetched /api/workflows again');
+  const cards = [...ctx.window.document.querySelectorAll('.ask-card.ask-rp')];
+  assert.equal(cards.length, 2);
+  const second = cards[1];
+  assert.equal(second.querySelector('.ask-card-workflow').value, 'wf_implement-review');
+  assert.ok(ctx.calls.some((c) => c.url.split('?')[0].endsWith('/api/workflows/wf_implement-review')), 'the lane loaded the proposed workflow');
+  assert.ok(second.querySelector('.ask-rp-agents'), 'the lane rendered its agents');
+  assert.equal(second.querySelector('.ask-card-err').textContent, '');
+  assert.equal(second.querySelector('[data-ask-card-start]').disabled, false);
+  second.querySelector('[data-ask-card-start]').click();
+  await settle(ctx.window, 6);
+  assert.equal(ctx.runBodies.length, 1);
+  assert.equal(ctx.runBodies[0].workflowId, 'wf_implement-review');
+});
+
+test('ui-ask-card: a proposed workflowId no list serves fails loudly — inline error, no substitute selected, Start inert until the user picks', async () => {
+  const ctx = await boot();
+  await openCard(ctx, { ...CARD, workflowId: 'wf_ghost', workflowName: 'Ghost' });
+  const card = ctx.window.document.querySelector('.ask-card.ask-rp');
+  const sel = card.querySelector('.ask-card-workflow');
+  const start = card.querySelector('[data-ask-card-start]');
+  assert.equal(card.querySelector('.ask-card-err').textContent, 'Workflow wf_ghost is not available — pick one');
+  assert.equal(sel.value, '', 'no other option is silently selected');
+  assert.deepEqual([...sel.options].map((o) => o.value), ['wf_default', 'wf_review'], 'the served list is still offered');
+  assert.equal(start.disabled, true);
+  assert.equal(card.querySelector('.ask-rp-lane-msg').textContent, 'Could not load agent settings.', 'the lane never loads a substitute');
+  start.click();
+  await settle(ctx.window, 6);
+  assert.equal(ctx.runBodies.length, 0, 'Start posts nothing while the proposed workflow is missing');
+  sel.value = 'wf_review';
+  sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  await settle(ctx.window, 6);
+  assert.equal(card.querySelector('.ask-card-err').textContent, '', 'the pick clears the error');
+  assert.equal(start.disabled, false);
+  assert.ok(card.querySelector('.ask-rp-agents'), 'the lane loaded the picked workflow');
+  start.click();
+  await settle(ctx.window, 6);
+  assert.equal(ctx.runBodies.length, 1);
+  assert.equal(ctx.runBodies[0].workflowId, 'wf_review', 'Start posts the id the USER picked, never a fallback');
 });
