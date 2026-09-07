@@ -268,8 +268,8 @@ test('ask-panel-stream: switching off a streaming thread resets the stop button'
     if (url.startsWith(`/api/ask/threads/${TID2}`)) return { ok: true, status: 200, json: async () => idle };
     if (url.startsWith(`/api/ask/threads/${TID}`)) return { ok: true, status: 200, json: async () => snapBody({ inFlight: { messageId: MID } }) };
     if (url.startsWith('/api/ask/threads')) return { ok: true, status: 200, json: async () => ({ threads: [
-      { id: TID, title: 'T', updatedAt: 't', createdAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight: true },
-      { id: TID2, title: 'T2', updatedAt: 't', createdAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight: false },
+      { id: TID, title: 'T', updatedAt: 't', createdAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight: true, tracking: false },
+      { id: TID2, title: 'T2', updatedAt: 't', createdAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight: false, tracking: false },
     ] }) };
     return { ok: true, status: 200, json: async () => ({}) };
   };
@@ -290,6 +290,74 @@ test('ask-panel-stream: switching off a streaming thread resets the stop button'
   await pick(1);
   assert.equal(ctx.doc.querySelector('[data-ask-stop]').hidden, true, 'stop hidden on the idle thread');
   assert.equal(ctx.doc.querySelector('[data-ask-send]').hidden, false, 'send back');
+});
+
+test('ask-panel-stream: an open History popover refetches its rows on ask-run-status for ANY thread (debounced), keeps its caption, and stops once closed', async () => {
+  const TID2 = 'ask_00000002';
+  const listRow = (id, inFlight, tracking) => ({ id, title: id, updatedAt: 't', createdAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight, tracking });
+  const list = { threads: [listRow(TID, false, false), listRow(TID2, false, false)], total: 2 };
+  const handler = (url) => {
+    if (url.startsWith(`/api/ask/threads/${TID}`)) return { ok: true, status: 200, json: async () => snapBody() };
+    if (url.startsWith('/api/ask/threads')) return { ok: true, status: 200, json: async () => list };
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  const ctx = makePanel({ fetchHandler: handler });
+  const listFetches = () => ctx.fetchCalls.filter((c) => c.url.startsWith('/api/ask/threads?')).length;
+  const settle = () => new Promise((r) => setTimeout(r, 320));   // past the ~250 ms debounce
+  ctx.panel.open();
+  ctx.doc.querySelector('[data-ask-threads-btn]').click();
+  await ctx.tick();
+  assert.equal(listFetches(), 1, 'one fetch on open');
+  const pop = ctx.doc.querySelector('.ask-pop-threads');
+  const rows = () => [...pop.querySelectorAll('.ask-thread-pick')];
+  assert.equal(rows()[1].querySelector('.ask-dot-track'), null, 'T2 not tracking at open');
+  const focused = ctx.doc.activeElement;
+  assert.equal(focused, rows()[0], 'the first row holds focus');
+  // The chat behind row 2 starts following a run: no thread is active (st.threadId null),
+  // so the frame would otherwise be dropped before the model — the popover still refetches.
+  list.threads[1] = listRow(TID2, false, true);
+  list.total = 3;
+  ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'plan' });
+  ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'implement' });
+  ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: 'ask_ffffffff', runId: 'uuid-2', pipelineId: 'bbbb2222', cardId: null, status: 'done', phase: null });
+  assert.equal(listFetches(), 1, 'nothing refetched synchronously — the burst is debounced');
+  await settle();
+  assert.equal(listFetches(), 2, 'three frames in a burst → ONE refetch');
+  assert.ok(rows()[1].querySelector('.ask-dot-track'), 'T2 now shows the violet tracking dot');
+  assert.equal(rows()[0].querySelector('.ask-dot-track'), null);
+  assert.equal(pop.querySelectorAll('.ask-threads-list').length, 1, 'the rows were replaced, not appended');
+  assert.equal(pop.querySelectorAll('.ask-thread-pick').length, 2);
+  assert.equal(pop.querySelector('.ask-pop-caption').textContent, 'History', 'the caption survives');
+  assert.equal(pop.querySelector('.ask-pop-caption-meter').textContent, '3 chats', 'the meter follows the fresh total');
+  assert.equal(ctx.doc.activeElement, rows()[0], 'focus stays on the same row, not reset by the rebuild');
+  assert.equal(ctx.doc.querySelector('.ask-pop-threads'), pop, 'same panel node — never reopened');
+  // A turn starting elsewhere arms the thinking dot the same way.
+  list.threads[1] = listRow(TID2, true, true);
+  ctx.panel.pushServerFrame({ type: 'ask-start', userMessageId: 'u', model: 'm', effort: 'high', startedAt: 't', threadId: TID2, messageId: 'askm_00000009', seq: 1 });
+  await settle();
+  assert.equal(listFetches(), 3);
+  assert.ok(rows()[1].querySelector('.ask-dot-live'), 'T2 thinking');
+  assert.ok(rows()[1].querySelector('.ask-dot-track'), 'and still tracking');
+  // The run settles but the chat follows another: the row is re-read, never flipped from the frame's status.
+  list.threads[1] = listRow(TID2, true, true);
+  ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'done', phase: null });
+  await settle();
+  assert.equal(listFetches(), 4);
+  assert.ok(rows()[1].querySelector('.ask-dot-track'), 'a terminal status alone does not clear the dot');
+  // Closed: a pending debounce is cancelled and later frames fetch nothing.
+  ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'x' });
+  ctx.doc.querySelector('[data-ask-threads-btn]').click();   // toggles it closed
+  assert.equal(ctx.doc.querySelector('.ask-pop-threads'), null);
+  ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'y' });
+  await settle();
+  assert.equal(listFetches(), 4, 'no refetch once the popover is gone');
+  // Another popover open (agents) is left alone.
+  ctx.doc.querySelector('[data-ask-agents-btn]').click();
+  assert.ok(ctx.doc.querySelector('.ask-pop'), 'the agents popover is open');
+  assert.equal(ctx.doc.querySelector('.ask-pop-threads'), null);
+  ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'z' });
+  await settle();
+  assert.equal(listFetches(), 4, 'only the History popover refetches');
 });
 
 test('ask-panel-stream: the orb node survives live-row rebuilds so the spin never rewinds', async () => {

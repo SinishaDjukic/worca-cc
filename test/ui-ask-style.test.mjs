@@ -148,6 +148,25 @@ test('ui-ask-style: the thread date leads the meter in bold; an idle dot collaps
   assert.ok(!/display:none/.test(ruleBody('.ask-dot') || ''), 'hiding is scoped to the threads rows');
 });
 
+test('ui-ask-style: the tracking dot is a second, violet arm of the thread dot, a few px behind the green one', () => {
+  const track = ruleBody('.ask-thread-dot.ask-dot-track');
+  assert.ok(track, 'the tracking arm exists');
+  assert.match(track, /display:block/, 'a chat following a live run gets its dot');
+  assert.match(track, /background:var\(--violet\)/, 'a different colour from the green thinking dot');
+  assert.match(track, /animation:wr-pulse/, 'it pulses like the sub-agent run dot');
+  assert.ok(!/var\(--green\)/.test(track), 'never green — the two dots must differ');
+  assert.match(ruleBody('.ask-thread-dot.ask-dot-live') || '', /display:block/, 'the thinking arm is kept as it was');
+  assert.ok(!/var\(--violet\)/.test(ruleBody('.ask-thread-dot.ask-dot-live') || ''), 'and stays green');
+  // Both armed: the two spans are siblings under the pick's 10px gap; the tracking
+  // dot pulls itself back so the pair sits 4px apart rather than a full slot.
+  const pair = ruleBody('.ask-thread-dot.ask-dot-live+.ask-thread-dot.ask-dot-track');
+  assert.ok(pair, 'the both-armed pair rule exists');
+  assert.match(pair, /margin-left:-6px/, '10px gap − 6px = 4px between the dots');
+  assert.ok(!/gap:/.test(ruleBody('.ask-thread-pick') || ''), 'the pick keeps the 10px .ask-pop-item gap');
+  // A tracking-only row still collapses the unarmed thinking span (display:none base rule).
+  assert.ok(!/ask-dot-track/.test(ruleBody('.ask-thread-dot') || ''), 'the base rule stays the collapse rule');
+});
+
 test('ui-ask-style: a model row survives an arbitrarily long plugin name', () => {
   // .ask-pop-model is a fixed 292px panel and plugin names are arbitrary, so the
   // origin is not in the row at all and the name is the only thing left that can

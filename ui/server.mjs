@@ -3927,6 +3927,21 @@ function askInFlight(threadId) {
   return job && job.status === 'running' ? job : null;
 }
 
+/** How many live runs this thread still follows: undetached followers (askFollowers is the truth, the way
+ *  askInFlight reads askJobs — ask_run_links.status is written BY the follower and stays `running` across a
+ *  restart that dropped every follower) whose runs-Map entry exists and has not settled. */
+function askTrackingCount(threadId) {
+  const set = askFollowers.get(threadId);
+  if (!set) return 0;
+  let n = 0;
+  for (const f of set) {
+    if (f.detached) continue;
+    const entry = liveRunEntry(f.runId);
+    if (entry && !SETTLED_RUN.has(String(entry.status || ''))) n += 1;
+  }
+  return n;
+}
+
 function askRunningCount() {
   let n = 0;
   for (const job of askJobs.values()) if (job.status === 'running') n += 1;
@@ -3999,7 +4014,10 @@ app.get('/api/ask/threads', (req, res) => {
   try {
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
-    const threads = askListThreads({ limit }).map((t) => ({ ...t, inFlight: !!askInFlight(t.id) }));
+    const threads = askListThreads({ limit }).map((t) => {
+      const trackingRuns = askTrackingCount(t.id);
+      return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns };
+    });
     // total = EVERY saved chat (the History popover's meter), not the capped page above.
     res.json({ threads, total: askCountThreads() });
   } catch (err) {

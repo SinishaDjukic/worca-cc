@@ -10,8 +10,8 @@ import { fmtStarted, shortcutLabel, ASK_SHEET_SIZE, chipPickerTop } from '../ui/
 
 const THREADS = {
   threads: [
-    { id: 'ask_00000001', title: 'Fix the login bug', updatedAt: 't2', createdAt: 't1', model: 'claude-opus-5', effort: 'high', sessionId: null, context: null, totals: { costUsd: 0.21, input: 9200, output: 9200, cacheRead: 0, cacheCreation: 0, ctx: 68400, turns: 3, agents: 3 }, runLinks: 0, inFlight: true },
-    { id: 'ask_00000002', title: 'Explain run 4e1f', updatedAt: 't1', createdAt: 't0', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight: false },
+    { id: 'ask_00000001', title: 'Fix the login bug', updatedAt: 't2', createdAt: 't1', model: 'claude-opus-5', effort: 'high', sessionId: null, context: null, totals: { costUsd: 0.21, input: 9200, output: 9200, cacheRead: 0, cacheCreation: 0, ctx: 68400, turns: 3, agents: 3 }, runLinks: 0, inFlight: true, tracking: false },
+    { id: 'ask_00000002', title: 'Explain run 4e1f', updatedAt: 't1', createdAt: 't0', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight: false, tracking: false },
   ],
 };
 
@@ -143,18 +143,50 @@ test('ask-panel: threads popover lists rows with meter and live dot; empty state
   assert.match(items[0].textContent, /68\.4k ctx · \$0\.21 · 3 agents/, 'the row shows context fill, not cumulative tokens');
   assert.ok(items[0].querySelector('.ask-dot-live'), 'in-flight thread shows the live dot');
   assert.equal(items[1].querySelector('.ask-dot-live'), null);
-  // The idle row still emits the span, but the CSS collapses .ask-thread-dot
-  // (display:none) unless the live arm joins it, so no empty gutter is left.
-  const idleDot = items[1].querySelector('.ask-dot');
-  assert.ok(idleDot, 'the idle row still emits the dot span');
-  assert.ok(idleDot.classList.contains('ask-thread-dot'), 'the span carries the threads-only class that collapses it');
-  assert.equal(idleDot.classList.contains('ask-dot-live'), false, 'nothing green shows for an idle chat');
+  // The idle row still emits the spans, but the CSS collapses .ask-thread-dot
+  // (display:none) unless an arm joins it, so no empty gutter is left.
+  const idleDots = [...items[1].querySelectorAll('.ask-dot')];
+  assert.equal(idleDots.length, 2, 'the idle row still emits both dot spans');
+  for (const idleDot of idleDots) {
+    assert.ok(idleDot.classList.contains('ask-thread-dot'), 'the span carries the threads-only class that collapses it');
+    assert.equal(idleDot.classList.contains('ask-dot-live'), false, 'nothing green shows for an idle chat');
+    assert.equal(idleDot.classList.contains('ask-dot-track'), false, 'nothing violet either');
+  }
   // empty state
   const empty = makePanel({ fetchHandler: () => ({ ok: true, status: 200, json: async () => ({ threads: [] }) }) });
   empty.panel.open();
   empty.doc.querySelector('[data-ask-threads-btn]').click();
   await empty.tick();
   assert.match(empty.doc.querySelector('.ask-pop').textContent, /No saved chats\./);
+});
+
+test('ask-panel: thread rows carry two independent dots — thinking (green) first, tracking (violet) second', async () => {
+  const row = (id, inFlight, tracking) => ({ id, title: id, updatedAt: 't', createdAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight, tracking });
+  const four = { threads: [row('ask_think', true, false), row('ask_track', false, true), row('ask_both', true, true), row('ask_idle', false, false)] };
+  const { panel, doc, tick } = makePanel({ fetchHandler: () => ({ ok: true, status: 200, json: async () => four }) });
+  panel.open();
+  doc.querySelector('[data-ask-threads-btn]').click();
+  await tick();
+  const picks = [...doc.querySelectorAll('.ask-thread-pick')];
+  assert.equal(picks.length, 4);
+  const arms = (p) => [...p.children].map((n) => n.className);
+  // Every row emits both spans in the same order; only the arm classes differ, so
+  // the CSS collapse (display:none) decides what shows and no gutter is ever left.
+  assert.deepEqual(arms(picks[0]), ['ask-dot ask-thread-dot ask-dot-live', 'ask-dot ask-thread-dot', 'ask-thread-col'], 'thinking only → one green dot');
+  assert.deepEqual(arms(picks[1]), ['ask-dot ask-thread-dot', 'ask-dot ask-thread-dot ask-dot-track', 'ask-thread-col'], 'tracking only → one violet dot');
+  assert.deepEqual(arms(picks[2]), ['ask-dot ask-thread-dot ask-dot-live', 'ask-dot ask-thread-dot ask-dot-track', 'ask-thread-col'], 'both → green then violet');
+  assert.deepEqual(arms(picks[3]), ['ask-dot ask-thread-dot', 'ask-dot ask-thread-dot', 'ask-thread-col'], 'neither → both collapsed');
+  // The arms never cross: the first span is only ever the thinking dot, the second only ever the tracking dot.
+  for (const p of picks) {
+    assert.equal(p.children[0].classList.contains('ask-dot-track'), false);
+    assert.equal(p.children[1].classList.contains('ask-dot-live'), false);
+  }
+  // An older server without the field is an idle tracking arm, never a throw.
+  const legacy = makePanel({ fetchHandler: () => ({ ok: true, status: 200, json: async () => ({ threads: [{ ...row('ask_old', true, undefined), tracking: undefined }] }) }) });
+  legacy.panel.open();
+  legacy.doc.querySelector('[data-ask-threads-btn]').click();
+  await legacy.tick();
+  assert.deepEqual(arms(legacy.doc.querySelector('.ask-thread-pick')), ['ask-dot ask-thread-dot ask-dot-live', 'ask-dot ask-thread-dot', 'ask-thread-col']);
 });
 
 test('ask-panel: threads rows live in a scroller; the caption stays pinned; empty state has none', async () => {
@@ -242,12 +274,12 @@ test('ask-panel: thread rows report when the chat was started; unusable createdA
     if (whens[i]) assert.ok(m.startsWith(`${whens[i]}`), `the date is the meter's first part: ${m}`);
     else assert.ok(!/ago|\d{4}-\d{2}-\d{2}/.test(m), `no date, so none rides the meter: ${m}`);
   });
-  // Row order: [dot slot] [title + meter]. The date is no longer a column of its
-  // own, so a dateless row is shaped exactly like a dated one.
+  // Row order: [thinking dot] [tracking dot] [title + meter]. The date is no
+  // longer a column of its own, so a dateless row is shaped exactly like a dated one.
   const cls = (n) => (n ? n.className : null);
-  assert.deepEqual([...picks[0].children].map(cls), ['ask-dot ask-thread-dot', 'ask-thread-col']);
-  assert.deepEqual([...picks[4].children].map(cls), ['ask-dot ask-thread-dot', 'ask-thread-col'],
-    'a dateless row keeps the dot slot and nothing else changes');
+  assert.deepEqual([...picks[0].children].map(cls), ['ask-dot ask-thread-dot', 'ask-dot ask-thread-dot', 'ask-thread-col']);
+  assert.deepEqual([...picks[4].children].map(cls), ['ask-dot ask-thread-dot', 'ask-dot ask-thread-dot', 'ask-thread-col'],
+    'a dateless row keeps both dot slots and nothing else changes');
   // Only the date is an element; the grey figures are plain text beside it.
   assert.deepEqual([...meterEls[0].children].map(cls), ['ask-thread-when']);
   assert.deepEqual([...meterEls[4].children].map(cls), [],

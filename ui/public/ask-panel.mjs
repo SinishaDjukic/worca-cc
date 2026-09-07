@@ -125,6 +125,10 @@ export function chipPickerTop({ top, bottom, panelH, sheetH, gap = 6 }) {
 }
 
 const SIZE_KEY = 'worca-cc.ask.size';
+/** Out-of-turn / other-thread frames that can move a History row's dots: a run a
+ *  chat follows changed (tracking) or a turn started/ended there (thinking). */
+const THREADS_REFRESH_FRAMES = new Set(['ask-run-status', 'ask-start', 'ask-done', 'ask-error']);
+const THREADS_REFRESH_MS = 250;
 
 export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null }) {
   const storedPick = readStoredModel();   // hoisted declaration (defined below); null when nothing is stored
@@ -145,7 +149,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // #397: the thread's project/workspace scope. pinned:false = Auto (follow the
     // page — today's behaviour). label caches the display name once resolved.
     scope: { pinned: false, projectKey: null, workspaceId: null, label: null },
-    popover: null,            // {panel, trigger, onClose, build, refreshOn}
+    popover: null,            // {panel, trigger, onClose, build, refreshOn, refresh}
+    threadsRefresh: null,     // the debounce timer behind the History popover's ask-run-status refetch
     expandedAgents: new Set(),
     worktrees: [],            // P4 §10: the chat's open worktrees (snapshot-fed)
     pinned: true,
@@ -935,6 +940,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const p = st.popover;
     if (!p) return;
     st.popover = null;
+    if (st.threadsRefresh) { clearTimeout(st.threadsRefresh); st.threadsRefresh = null; }
     p.panel.remove();
     if (p.onClose) { try { p.onClose(); } catch { /* ignore */ } }
     if (focusTrigger) { try { p.trigger.focus(); } catch { /* ignore */ } }
@@ -956,7 +962,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     else if ((e.key === 'Enter' || e.key === ' ') && idx >= 0) { e.preventDefault(); items[idx].click(); }
   }
 
-  function openPopover({ panelClass, trigger, build, onClose, refreshOn }) {
+  function openPopover({ panelClass, trigger, build, onClose, refreshOn, refresh }) {
     if (st.popover && st.popover.trigger === trigger) { closePopover({ focusTrigger: false }); return null; }
     closePopover({ focusTrigger: false });
     const panel = make('div', `ask-pop ${panelClass}`);
@@ -966,7 +972,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.sheet.appendChild(panel);
     // refreshOn(dirty) → true re-runs build() on that flush (flushExtra), so an
     // OPEN popover follows the live meters / worktrees instead of freezing at open.
-    st.popover = { panel, trigger, onClose: onClose || null, build, refreshOn: refreshOn || null };
+    // refresh(panel) is the server-fed twin: scheduleThreadsRefresh calls it
+    // (debounced) on out-of-turn frames the model never sees.
+    st.popover = { panel, trigger, onClose: onClose || null, build, refreshOn: refreshOn || null, refresh: refresh || null };
     const first = menuItems(panel)[0];
     if (first) { first.tabIndex = 0; try { first.focus(); } catch { /* ignore */ } }
     return panel;
@@ -1015,8 +1023,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         head.appendChild(meter);
         p.appendChild(head);
       },
+      refresh: (p) => loadThreadRows(p, meter),
     });
     if (!panel) return;
+    loadThreadRows(panel, meter);
+  }
+
+  /** Fetch the list and (re)render the rows under the pinned caption. On a
+   *  refresh the old rows are replaced in place — same panel node, the focused
+   *  row keeps focus by index — so the dots follow the server while it is open. */
+  function loadThreadRows(panel, meter) {
     Promise.resolve()
       .then(() => fetch('/api/ask/threads?limit=50'))
       .then((r) => (r && r.ok ? r.json() : { threads: [] }))
@@ -1027,11 +1043,34 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         // `total` is EVERY saved chat (the route caps rows at limit); an older
         // server without it degrades to the page size.
         if (meter) meter.textContent = fmtChats(Number.isInteger(total) && total >= 0 ? total : rows.length);
-        renderThreadRows(panel, rows);
+        const stale = panel.querySelectorAll(':scope > .ask-threads-list, :scope > .ask-pop-empty');
+        const refreshing = stale.length > 0;
+        // First load focuses the first row (menu semantics). A refresh keeps the
+        // focused row by index, and leaves focus alone when it sits elsewhere.
+        let focusIndex = 0;
+        if (refreshing) focusIndex = panel.contains(doc.activeElement) ? Math.max(0, menuItems(panel).indexOf(doc.activeElement)) : null;
+        for (const n of stale) n.remove();
+        renderThreadRows(panel, rows, focusIndex);
       });
   }
 
-  function renderThreadRows(panel, threads) {
+  /** The History popover is open and a run some chat follows just moved: refetch
+   *  the list (debounced — a run transition fans out one frame per linked thread,
+   *  and a chat may follow several runs, so a single terminal status never flips a
+   *  dot directly). Sits BEFORE pushServerFrame's threadId filter: the frame is
+   *  usually for ANOTHER chat. A turn starting/ending elsewhere arms the thinking
+   *  dot the same way. */
+  function scheduleThreadsRefresh() {
+    const pop = st.popover;
+    if (!pop || typeof pop.refresh !== 'function' || st.threadsRefresh) return;
+    st.threadsRefresh = setTimeout(() => {
+      st.threadsRefresh = null;
+      if (st.popover === pop) pop.refresh(pop.panel);
+    }, THREADS_REFRESH_MS);
+  }
+
+  /** @param {number|null} focusIndex row to focus after the render; null leaves focus alone */
+  function renderThreadRows(panel, threads, focusIndex = 0) {
     if (!threads.length) {
       panel.appendChild(make('div', 'ask-pop-empty', 'No saved chats.'));
       return;
@@ -1043,11 +1082,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     for (const t of threads) {
       const row = make('div', 'ask-thread-row');
       const pick = menuItem('ask-thread-pick', () => { closePopover({ focusTrigger: false }); switchThread(t.id); });
-      // The dot leads the row, sitting against the title where it reads as "this
-      // chat is live" -- .ask-thread-dot collapses it (display:none) unless the
-      // live arm joins it, so an idle row leaves no empty gutter and its title
+      // Two dots lead the row, sitting against the title: green = the chat's own
+      // turn is thinking, violet = the chat follows a live run. Each span is
+      // always emitted and .ask-thread-dot collapses it (display:none) unless
+      // its arm joins it, so an idle row leaves no empty gutter and its title
       // starts at the left edge. The date rides the meter line under the title.
       pick.appendChild(make('span', `ask-dot ask-thread-dot${t.inFlight ? ' ask-dot-live' : ''}`));
+      pick.appendChild(make('span', `ask-dot ask-thread-dot${t.tracking ? ' ask-dot-track' : ''}`));
       const col = make('span', 'ask-thread-col');
       // A null title = the haiku title has not landed yet (the message route
       // stamps nothing); "New chat" is the same label the turn falls back to.
@@ -1059,8 +1100,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       list.appendChild(row);
     }
     panel.appendChild(list);
-    const first = menuItems(panel)[0];
-    if (first) { first.tabIndex = 0; try { first.focus(); } catch { /* ignore */ } }
+    if (focusIndex === null) return;
+    const items = menuItems(panel);
+    const target = items[Math.min(focusIndex, items.length - 1)];
+    if (target) { target.tabIndex = 0; try { target.focus(); } catch { /* ignore */ } }
   }
 
   // ---- catalog + picker (D8) ------------------------------------------------
@@ -3051,6 +3094,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function pushServerFrame(frame) {
     if (st.destroyed || !frame) return;
     if (frame.type === 'ask-history-cleared') { onHistoryCleared(); return; }
+    if (THREADS_REFRESH_FRAMES.has(frame.type)) scheduleThreadsRefresh();
     // Defence-in-depth: the model's own threadId filter is the real router — this early return only saves an apply() call and cannot be observed from tests (the model would drop the frame identically).
     if (!st.model || frame.threadId !== st.threadId) return;
     const r = st.model.apply(frame);
