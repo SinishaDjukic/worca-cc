@@ -107,7 +107,6 @@ const PAIRS = [
   ['--hd-count-add', '--panel', 4.5], ['--hd-count-del', '--panel', 4.5],
   ...['comment', 'keyword', 'type', 'string', 'literal', 'title'].map((s) => [`--hd-syntax-${s}`, '--panel', 4.5]),
   ['--chip-ink', '--field', 4.5], ['--trunc-ink', '--panel', 4.5], ['--h-blue-ink', '--blue-bg', 4.5], ['--h-peach-ink', '--peach-bg', 4.5],
-  ['--ink', '--ask-wave-pink', 3], ['--ink', '--ask-wave-violet', 3], ['--ink', '--ask-wave-lilac', 3],
 ];
 const DARK_ONLY = [   // light fails these today (spec §7.4 baseline); dark must not
   ['--ink-3', '--panel', 4.5], ['--ink-3', '--bg', 4.5], ['--ink-3', '--field', 4.5], ['--ink-3', '--field-focus', 4.5], ['--ink-3', '--surface', 4.5], ['--ink-3', '--canvas-2', 4.5], ['--ink-3', '--amber-wash', 4.5],

@@ -45,12 +45,6 @@
   /* Ask Worca run card head wash (mockup 2026-09-06): Worca-authored, same hue as the Auto tag. */
   --violet-wash:light-dark(#F6F4FC,#211E2E);
 
-  /* Ask Worca launcher pill: the "thinking" wave painted on .ask-pill.is-live::before
-     and ::after spends these three; the ask section itself carries no literal.
-     Saturated on purpose — the label sits on them, so each arm keeps ≥3:1 against
-     --ink (test/ui-theme-tokens PAIRS): light arms not too dark, dark not too light. */
-  --ask-wave-pink:light-dark(#F56FC4,#B8408F); --ask-wave-violet:light-dark(#9A80FF,#7A5FE6); --ask-wave-lilac:light-dark(#BD75EE,#9552CC);
-
   /* Semantic tokens introduced by the theme work (spec §3.2). Each light arm is
      the literal it replaced, so the light theme did not move. */
   --on-ink-wash:light-dark(rgba(255,255,255,.18),rgba(22,22,20,.18));
@@ -2976,46 +2970,17 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-pill{pointer-events:auto;display:flex;align-items:center;gap:10px;padding:11px 18px 11px 14px;
   border:1.5px solid var(--line-2);border-radius:999px;background:var(--panel);color:var(--ink);
   font-family:inherit;font-weight:600;font-size:13.5px;cursor:pointer;
-  box-shadow:var(--shadow-pop);transition:border-color .15s;
-  position:relative;isolation:isolate;overflow:hidden;}
+  box-shadow:var(--shadow-pop);transition:border-color .15s;}
 .ask-pill:hover{border-color:var(--ink);}
 .ask-pill:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .ask-pill[hidden]{display:none;}
-/* The "thinking" wave. Two permanent layers, ::before and ::after, under the
-   pill's text (z-index:-1 inside the isolation:isolate context the pill opens,
-   so they paint above the panel fill and below the mark/label/kbd), clipped by
-   the pill's overflow:hidden to its rounded padding box; the focus outline and
-   the box-shadow are drawn outside that box and are not clipped. Each layer is
-   2.6x the pill's width and hangs 75% below its bottom edge, so three
-   bottom-anchored ellipses per layer rise into the lower ~80% of the pill and
-   the drift (up to ±22% of the layer, swelling to 1.2x about the bottom edge)
-   never shows an edge. Each ellipse holds its colour to ~half its radius before
-   fading, so the tint reads on the pill rather than at its rim. The two drifts
-   run on non-commensurate periods (6.3s and 9.7s) through unevenly spaced
-   stops, so the composite never visibly repeats. Appear/disappear is an opacity
-   transition on the .is-live class toggled by ask-panel.mjs updateSendStop();
-   the drifts are transform-only, so the compositor moves cached textures and no
-   JS runs per frame. Each animation is declared HERE and merely paused, and
-   .is-live only flips animation-play-state: dropping the class then freezes
-   the layer wherever the loop left it while the opacity fades, whereas
-   cancelling the animation would snap the transform back to identity at full
-   opacity - a visible sideways jolt at the start of every fade-out. Cost of the
-   pause: some engines keep the two ~400x100 layers promoted while idle. No
-   will-change on top of that. */
-.ask-pill::before{content:'';position:absolute;z-index:-1;left:-80%;width:260%;bottom:-75%;height:200%;
-  pointer-events:none;opacity:0;transition:opacity .45s ease;transform-origin:50% 100%;
-  animation:ask-pill-wave 6.3s ease-in-out infinite;animation-play-state:paused;
-  background:radial-gradient(34% 72% at 24% 100%,var(--ask-wave-pink) 0%,var(--ask-wave-pink) 55%,transparent 100%),
-    radial-gradient(36% 76% at 52% 100%,var(--ask-wave-violet) 0%,var(--ask-wave-violet) 55%,transparent 100%),
-    radial-gradient(32% 68% at 80% 100%,var(--ask-wave-lilac) 0%,var(--ask-wave-lilac) 55%,transparent 100%);}
-.ask-pill::after{content:'';position:absolute;z-index:-1;left:-80%;width:260%;bottom:-75%;height:200%;
-  pointer-events:none;opacity:0;transition:opacity .45s ease;transform-origin:50% 100%;
-  animation:ask-pill-swell 9.7s ease-in-out infinite;animation-play-state:paused;
-  background:radial-gradient(28% 64% at 38% 100%,var(--ask-wave-lilac) 0%,var(--ask-wave-lilac) 50%,transparent 100%),
-    radial-gradient(30% 70% at 66% 100%,var(--ask-wave-pink) 0%,var(--ask-wave-pink) 50%,transparent 100%),
-    radial-gradient(26% 60% at 12% 100%,var(--ask-wave-violet) 0%,var(--ask-wave-violet) 50%,transparent 100%);}
-.ask-pill.is-live::before{opacity:1;animation-play-state:running;}
-.ask-pill.is-live::after{opacity:1;animation-play-state:running;}
+/* "Thinking" on the collapsed pill: the label shimmers, the same sweep the live
+   thinking row paints on .ask-thinking-label (gradient clipped to the glyphs,
+   swept by the shared ask-shimmer keyframes). At rest the label needs no rule:
+   the pill's own color/weight paint it. Toggled with the .is-live class by
+   ask-panel.mjs updateSendStop(), alongside the mark<->orb morph below. */
+.ask-pill.is-live .ask-pill-label{background:linear-gradient(100deg,var(--ink-3) 0%,var(--ink-3) 34%,var(--ink) 50%,var(--ink-3) 66%,var(--ink-3) 100%);
+  background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:ask-shimmer 2.4s linear infinite;}
 .ask-pill-logo{width:22px;height:22px;border-radius:50%;display:inline-block;flex:0 0 auto;background:var(--ink);
   -webkit-mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;-webkit-mask-mode:luminance;
   mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;mask-mode:luminance;}
@@ -3120,14 +3085,11 @@ body.rail-collapsed .ask-dock{left:76px;}
   animation:ask-shimmer 2.4s linear infinite;}
 .ask-thinking-meter{font-family:var(--mono);font-size:11px;color:var(--seq);white-space:nowrap;}
 @keyframes ask-shimmer{from{background-position:180% 0;}to{background-position:-60% 0;}}
-/* The pill's two wave drifts (see .ask-pill::before): transform-only, uneven
-   stops, both loops closed (0% = 100%) so the seam never jumps. */
-@keyframes ask-pill-wave{0%{transform:translate3d(-20%,7%,0) scale(1);}23%{transform:translate3d(9%,-3%,0) scale(1.12);}41%{transform:translate3d(-6%,4%,0) scale(1.04);}67%{transform:translate3d(22%,-6%,0) scale(1.18);}84%{transform:translate3d(4%,2%,0) scale(1.08);}100%{transform:translate3d(-20%,7%,0) scale(1);}}
-@keyframes ask-pill-swell{0%{transform:translate3d(20%,-4%,0) scale(1.06);}17%{transform:translate3d(-8%,6%,0) scale(1);}38%{transform:translate3d(-22%,-7%,0) scale(1.16);}56%{transform:translate3d(3%,3%,0) scale(1.02);}81%{transform:translate3d(15%,-8%,0) scale(1.2);}100%{transform:translate3d(20%,-4%,0) scale(1.06);}}
 /* The `.ask-dock *` blanket at the end of this file already kills the sweep;
    this only restores a legible fill under the clipped background. */
 @media (prefers-reduced-motion: reduce){
   .ask-thinking-label{background:none;-webkit-background-clip:border-box;background-clip:border-box;color:var(--ink-2);}
+  .ask-pill.is-live .ask-pill-label{background:none;-webkit-background-clip:border-box;background-clip:border-box;color:var(--ink-2);}
 }
 .ask-tool-row{display:flex;align-items:center;gap:9px;min-width:0;}
 .ask-tool-op{width:38px;flex:0 0 38px;font-family:var(--mono);font-size:10px;letter-spacing:.06em;
@@ -3587,7 +3549,7 @@ body.rail-collapsed .ask-dock{left:76px;}
    The run-state ornaments are restated for THIS host: the run-monitor block is scoped to its own host class
    (pinned by test/ui-run-hosts.test.mjs), and keyframes are name-resolved — referenced here, declared once there.
    Reduced motion: the dock blanket (.ask-dock *{animation:none !important;}) covers every ELEMENT below — never a
-   pseudo-element (style.css:3714-3717), so nothing here animates a ::before/::after (D25; pinned). Pips scale with
+   pseudo-element (they do not inherit `animation`), so nothing here animates a ::before/::after (D25; pinned). Pips scale with
    --gv-scale (geometry.mjs) because the flow card is drawn at 0.65 while the world transform stays identity.
    Every rule that restates a v2-canvas base rule carries .gv-world: the base lives LATER in this file, so a
    two-class .ask-rc-graph .wbadge would tie on specificity and lose (the budget pill would keep painting its
@@ -3824,15 +3786,6 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
      Tasks 3/6/7/8 and silently rot the day one of them is renamed. The run-graph's
      own reduced-motion block (:1253-1258) is unaffected — it substitutes
      box-shadows, and only its redundant `animation:none` is overridden. */
-  /* Ask Worca: the launcher pill's wave lives on a ::before and an ::after,
-     which the `*` blanket below cannot reach (pseudo-elements do not inherit
-     `animation`), so both are named — like the log caret above. Their opacity
-     fade is kept on purpose: a cross-fade moves nothing, and the tint still
-     says "working". Paused, not `animation:none`: none would re-create the
-     paused animation at its 0% frame the moment .is-live comes off, i.e. a
-     jump at full opacity; pausing holds the 0% frame for good. */
-  .ask-pill.is-live::before{animation-play-state:paused;}
-  .ask-pill.is-live::after{animation-play-state:paused;}
   /* Ask Worca: every element inside the dock, same blanket rationale as the
      .run-shell one below. */
   .ask-dock *{animation:none !important;}

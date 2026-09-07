@@ -342,83 +342,54 @@ test('ui-ask-style: the composer popovers follow the box, not the sheet corners'
   assert.doesNotMatch(ruleBody('.ask-pop-at') || '', /--ask-col-inset|--ask-box-top/);
 });
 
-test('ui-ask-style: the pill wave is a permanent ::before that .is-live fades in and drifts with transform only', () => {
-  // the pill becomes the glow's stacking context and clip, nothing else about it moves
+test('ui-ask-style: the live pill shimmers its label, the same sweep the thinking row paints — no wave pseudo-elements', () => {
+  // the pill itself keeps its chrome; nothing about it moves while live
   const pill = ruleBody('.ask-pill');
-  assert.match(pill, /position:relative/);
-  assert.match(pill, /isolation:isolate/);
-  assert.match(pill, /overflow:hidden/);
+  assert.ok(pill, '.ask-pill rule exists');
   assert.match(pill, /border-radius:999px/);
   assert.match(pill, /pointer-events:auto/);
   assert.match(pill, /transition:border-color \.15s/, 'the hover transition survives');
   assert.match(ruleBody('.ask-pill[hidden]'), /display:none/, 'hidden twin untouched');
   assert.match(ruleBody('.ask-pill:focus-visible'), /outline:2px solid var\(--ink\)/, 'focus ring untouched');
-  // TWO layers now (::before and ::after), each on its own drift with a
-  // non-commensurate duration so the composite never visibly repeats. Both keep
-  // the one pattern: always in the tree and transparent at rest, the drift
-  // declared on the rest rule but PAUSED, so dropping .is-live freezes the layer
-  // where it is and only the opacity fades — removing an animation instead
-  // would snap it back at opacity 1.
-  const LAYERS = [['::before', 'ask-pill-wave', '6.3s'], ['::after', 'ask-pill-swell', '9.7s']];
-  const kfBlock = (name) => {
-    assert.equal((css.match(new RegExp(`@keyframes\\s+${name}(?![-\\w])`, 'g')) || []).length, 1, `${name} declared exactly once`);
-    const at = css.indexOf(`@keyframes ${name}`);
-    return css.slice(at, css.indexOf('}}', at) + 2);
-  };
-  for (const [pseudo, name, dur] of LAYERS) {
-    const glow = ruleBody(`.ask-pill${pseudo}`);
-    assert.ok(glow, `.ask-pill${pseudo} rule exists`);
-    assert.match(glow, /content:''/);
-    assert.match(glow, /position:absolute/);
-    assert.match(glow, /z-index:-1/);
-    assert.match(glow, /pointer-events:none/);
-    assert.match(glow, /opacity:0;/);
-    assert.match(glow, /transition:opacity \.45s/);
-    assert.match(glow, /transform-origin:50% 100%/, 'breathes upward from the bottom edge');
-    assert.match(glow, new RegExp(`animation:${name} ${dur.replace('.', '\\.')} ease-in-out infinite`), `${pseudo}: its own drift, declared on the rest rule…`);
-    assert.match(glow, /animation-play-state:paused/, '…and held at rest, so nothing moves until .is-live');
-    // the bigger drift needs a bigger layer or the clip would show an edge: the
-    // layer is 2.6× the pill's width and hangs 75% below its bottom edge
-    assert.match(glow, /left:-80%;width:260%;bottom:-75%;height:200%/, `${pseudo}: grown with the drift`);
-    for (const t of ['pink', 'violet', 'lilac']) {
-      // colour held to ~half the ellipse before it fades: two colour stops, then transparent
-      assert.match(glow, new RegExp(`var\\(--ask-wave-${t}\\) 0%,var\\(--ask-wave-${t}\\) 5\\d%,transparent 100%`), `${pseudo} holds --ask-wave-${t} past the centre`);
-      assert.match(tokenValue(`ask-wave-${t}`) || '', /^#[0-9a-f]{6}$/, `--ask-wave-${t} is a :root hex token`);
-    }
-    // live: opacity 1 + the drift released
-    const live = ruleBody(`.ask-pill.is-live${pseudo}`);
-    assert.ok(live, `.ask-pill.is-live${pseudo} rule exists`);
-    assert.match(live, /opacity:1/);
-    assert.match(live, /animation-play-state:running/, 'the live class only releases the paused drift');
-    // the keyframes move the layer with transform ONLY (compositor-cached
-    // texture), through several unevenly spaced stops so the loop reads as
-    // irregular, with a drift of at least ±20% and a swell past 1.15
-    const kf = kfBlock(name);
-    assert.match(kf, /transform:/);
-    assert.doesNotMatch(kf, /(?:^|[{;\s])(left|top|right|bottom|width|height|background|opacity|filter|margin|padding):/, 'transform only');
-    const stops = [...kf.matchAll(/(\d+)%\{/g)].map((m) => Number(m[1]));
-    assert.ok(stops.length >= 6, `${name}: at least six stops (got ${stops.length})`);
-    const gaps = stops.slice(1).map((s, i) => s - stops[i]);
-    assert.ok(new Set(gaps).size >= 4, `${name}: unevenly spaced stops (${gaps.join(',')})`);
-    const xs = [...kf.matchAll(/translate3d\((-?\d+)%/g)].map((m) => Number(m[1]));
-    assert.ok(Math.min(...xs) <= -20 && Math.max(...xs) >= 20, `${name}: drifts at least ±20% (${xs.join(',')})`);
-    const scales = [...kf.matchAll(/scale\(([\d.]+)\)/g)].map((m) => Number(m[1]));
-    assert.ok(Math.max(...scales) >= 1.15, `${name}: swells past 1.15 (${scales.join(',')})`);
-    assert.ok(Math.min(...scales) >= 1, `${name}: never shrinks below the layer's rest size`);
-    assert.ok(css.lastIndexOf(`animation:${name}`) < css.lastIndexOf('@media (prefers-reduced-motion: reduce)'), 'the animation use precedes the guard');
+  // the wave is gone: no pseudo-element layers, no drift keyframes, no tokens
+  assert.equal(ruleBody('.ask-pill::before'), null, 'no .ask-pill::before layer');
+  assert.equal(ruleBody('.ask-pill::after'), null, 'no .ask-pill::after layer');
+  assert.equal(ruleBody('.ask-pill.is-live::before'), null, 'no live ::before arm');
+  assert.equal(ruleBody('.ask-pill.is-live::after'), null, 'no live ::after arm');
+  assert.doesNotMatch(css, /@keyframes\s+ask-pill-wave(?![-\w])/, 'ask-pill-wave keyframes removed');
+  assert.doesNotMatch(css, /@keyframes\s+ask-pill-swell(?![-\w])/, 'ask-pill-swell keyframes removed');
+  assert.doesNotMatch(css, /ask-pill-(?:wave|swell)/, 'no reference to either drift remains');
+  assert.doesNotMatch(css, /--ask-wave-/, 'the three wave tokens are gone with the glow');
+  // the label is painted THROUGH the text while live: the exact recipe of
+  // .ask-thinking-label (gradient, size, clip, transparent fill, one sweep)
+  const SHIMMER = 'background:linear-gradient(100deg,var(--ink-3) 0%,var(--ink-3) 34%,var(--ink) 50%,var(--ink-3) 66%,var(--ink-3) 100%);'
+    + 'background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:ask-shimmer 2.4s linear infinite;';
+  const label = ruleBody('.ask-pill.is-live .ask-pill-label');
+  assert.ok(label, '.ask-pill.is-live .ask-pill-label rule exists');
+  const tight = (t) => t.replace(/\s+/g, '');
+  assert.equal(tight(label), tight(SHIMMER), 'the live label carries exactly the thinking-row shimmer');
+  const row = ruleBody('.ask-thinking-label');
+  for (const decl of tight(SHIMMER).split(';').filter(Boolean)) assert.ok(tight(row).includes(decl + ';'), '.ask-thinking-label still has ' + decl);
+  assert.doesNotMatch(css, /(?:^|[}\n])\s*\.ask-pill-label\s*\{/, 'at rest the label needs no rule of its own: the pill\'s colour and weight paint it');
+  // one sweep for both: the keyframes are declared once and reused
+  assert.equal((css.match(/@keyframes\s+ask-shimmer(?![-\w])/g) || []).length, 1, 'ask-shimmer declared exactly once');
+  assert.ok(css.lastIndexOf('animation:ask-shimmer') < css.lastIndexOf('@media (prefers-reduced-motion: reduce)'), 'the animation use precedes the final guard');
+  // reduced motion: color:transparent with the sweep killed would blank the
+  // label, so a guard restores a plain fill — like the thinking row\'s own
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const guards = [];
+  for (let at = bare.indexOf('@media (prefers-reduced-motion'); at !== -1; at = bare.indexOf('@media (prefers-reduced-motion', at + 1)) {
+    let i = bare.indexOf('{', at); let depth = 0;
+    for (; i < bare.length; i += 1) { if (bare[i] === '{') depth += 1; else if (bare[i] === '}' && --depth === 0) break; }
+    guards.push(bare.slice(at, i + 1));
   }
-  const [, , dA] = LAYERS[0]; const [, , dB] = LAYERS[1];
-  assert.notEqual(dA, dB, 'the two drifts must not share a period');
-  assert.ok((parseFloat(dB) / parseFloat(dA)) % 1 !== 0, 'non-commensurate: the periods are not multiples');
-  // reduced motion: pseudo-elements escape the `.ask-dock *` blanket, so the
-  // FINAL block names BOTH drifts; the opacity fade is deliberately kept (D6).
-  // It pauses rather than removes: `animation:none` would re-create the paused
-  // animation at its 0% frame when .is-live comes off, i.e. a jump at opacity 1.
-  const guard = css.lastIndexOf('@media (prefers-reduced-motion: reduce)');
-  assert.ok(css.slice(guard).includes('.ask-pill.is-live::before{animation-play-state:paused;}'), 'the final block stops the ::before drift by name');
-  assert.ok(css.slice(guard).includes('.ask-pill.is-live::after{animation-play-state:paused;}'), 'the final block stops the ::after drift by name');
-  assert.ok(!css.slice(guard).includes('.ask-pill::before{'), 'no unconditional ::before rule in the guard — an idle pill must stay dark');
-  assert.ok(!css.slice(guard).includes('.ask-pill::after{'), 'no unconditional ::after rule in the guard either');
+  const m = guards.map((g) => /\.ask-pill\.is-live \.ask-pill-label\s*\{([^}]*)\}/.exec(g)).find(Boolean);
+  assert.ok(m, 'a reduced-motion guard names .ask-pill.is-live .ask-pill-label');
+  const guard = m[1].replace(/\s+/g, '');
+  assert.ok(guard.includes('background:none;'), 'guard drops the gradient');
+  assert.ok(guard.includes('-webkit-background-clip:border-box;background-clip:border-box;'), 'guard un-clips the text');
+  assert.match(guard, /color:var\(--ink(?:-2)?\);/, 'guard restores a real colour');
+  assert.ok(guards.every((g) => !/\.ask-pill(?:\.is-live)?::(?:before|after)/.test(g)), 'no guard still names the wave pseudo-elements');
 });
 
 test('ui-ask-style: the pill mark morphs into the orb on .is-live — transitions on two stacked layers, quicker in, slower and eased-out back', () => {
@@ -431,7 +402,7 @@ test('ui-ask-style: the pill mark morphs into the orb on .is-live — transition
   assert.ok(logo && orb, 'both layers have a scoped rule');
   for (const b of [logo, orb]) assert.match(b, /position:absolute;inset:0/, 'stacked on the host');
   // rest state: the mark whole, the orb transparent; the way BACK is the slow,
-  // eased-out one (.8s — the wave fades in .45s underneath it)
+  // eased-out one (.8s — the label shimmer alongside it simply stops)
   assert.match(orb, /opacity:0/, 'the orb is invisible at rest');
   assert.doesNotMatch(logo, /opacity:0/, 'the mark is whole at rest');
   assert.match(logo, /transition:opacity \.8s cubic-bezier\([^)]*\),transform \.8s cubic-bezier\([^)]*\)/, 'mark: opacity + scale, .8s eased out');

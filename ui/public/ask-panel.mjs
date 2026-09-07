@@ -456,8 +456,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // The collapsed launcher pill mirrors "Ask Worca is working": a live turn, a
     // snapshot that reports one in flight (load() nulls live until a frame is
     // adopted, so Stop alone would stay dark on a collapsed reload), or the
-    // POST→ask-start window (st.sending). The glow and the mark↔orb morph are
-    // pure CSS on this class (.ask-pill.is-live::before/::after and
+    // POST→ask-start window (st.sending). The label shimmer and the mark↔orb
+    // morph are pure CSS on this class (.ask-pill.is-live .ask-pill-label and
     // .ask-pill.is-live .ask-pill-mark), so a boundary costs one classList
     // write plus syncPillOrb() — local rAF bookkeeping for the pill's canvas,
     // idle when nothing changed. Keep every OTHER side effect out of here, see

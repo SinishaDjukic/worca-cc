@@ -1,6 +1,6 @@
 // test/ask-panel-pill-live.test.mjs — the collapsed launcher pill's "thinking"
-// state. The glow itself is CSS (style.css .ask-pill.is-live::before, pinned by
-// test/ui-ask-style.test.mjs); this suite pins WHEN the panel raises and lowers
+// state. The label shimmer itself is CSS (style.css .ask-pill.is-live .ask-pill-label,
+// pinned by test/ui-ask-style.test.mjs); this suite pins WHEN the panel raises and lowers
 // the `is-live` class, through the same public surface the stream suite drives
 // (pushServerFrame / open / close / the History popover / the composer).
 import { test, mock } from 'node:test';
@@ -94,7 +94,7 @@ test('pill-live: ask-start lights the collapsed pill; ask-done puts it back to r
   ctx.flush();
   assert.equal(lit(ctx.pill), true, 'lit from ask-start while the sheet is closed');
   assert.equal(ctx.pill.hidden, false);
-  assert.deepEqual(childClasses(ctx.pill), PILL_CHILDREN, 'the glow is a pseudo-element, not a child');
+  assert.deepEqual(childClasses(ctx.pill), PILL_CHILDREN, 'the shimmer is CSS on the existing label, not a new child');
   assert.deepEqual(childClasses(ctx.pill.firstElementChild), MARK_CHILDREN, 'the orb was built with the pill, not on lighting');
   ctx.panel.pushServerFrame(done);
   ctx.flush();
