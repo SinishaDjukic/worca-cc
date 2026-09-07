@@ -82,6 +82,14 @@ test('the prompts carry the cards, the recipes, the models, the HITL rule, the f
     'purpose: ', 'role (agent file): ', 'hints: ', 'tools: ', 'Drives the RUNNING web UI', 'plugin_playwright_playwright MCP (14 tools',
     'flags are the engine', 'builtin · coding']) assert.ok(sys.includes(s), s);
   assert.ok(!sys.includes('claude-hidden-9'), 'a hidden catalog model is never offered');
+  // The sizing directive sits right under the opening line, before the schema: the
+  // objective is the smallest workflow that still does the work properly, every stage
+  // beyond the minimum is named in the reasoning, and size/signals are never inflated.
+  const head = sys.slice(0, sys.indexOf('## Shape'));
+  assert.ok(head.startsWith('You design a worca workflow for ONE software task.'), 'the opening line is unchanged');
+  for (const s of ['the SMALLEST workflow that still does the work properly', 'each stage must be justified by the task',
+    '"reasoning" must name why every stage beyond the minimum is there', '"size" and "signals" must be honest']) assert.ok(head.includes(s), `sizing directive: ${s}`);
+  assert.ok(sys.includes('start from the SMALLEST recipe that fits the task kind'), 'the recipe guide carries the same principle');
   assert.ok(!sys.includes('A human is in the loop'), 'the HITL sentences are mutually exclusive');
   assert.ok(!sys.includes('You are the **'), 'agent bodies never reach the classifier');
   assert.ok(!/worca-cc-[a-z-]+\.md/.test(sys), 'no file names or paths in the prompt');

@@ -403,13 +403,33 @@ test('the prompt advertises the worktree tools and the native file tools, and th
 // weight) instead of naming steps: a pinned agent key here would silently stop
 // applying the moment someone's pipeline is made of their own agents.
 test('rule 4 sizes the work, matches the kind first, and names no agent', () => {
-  for (const t of ['what KIND of work it is', 'documentation, marketing, research',
-    'LIGHTEST', 'over- or under-powered']) {
+  for (const t of ['what KIND of work it is', 'documentation, marketing, research', 'LIGHTEST']) {
     assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 4 states "${t}"`);
   }
   for (const key of ['implementer', 'planner', 'refiner', 'reviewer', 'clarify', 'decomposer']) {
     assert.ok(!ASK_SYSTEM_RULES.includes(key), `the rules hardcode no agent key (${key})`);
   }
+});
+
+// Lean selection: the judgement is careful and meticulous (four questions), the answer
+// is the SMALLEST workflow that still yields a good result, a live manual UI test stage
+// is reserved for a very big user-facing UI feature, and when no saved workflow has the
+// right kind AND weight the chat builds one (rule 11) instead of settling for a heavier
+// saved one — the old "propose the closest one" fallback is gone.
+test('rule 4 asks the four sizing questions, answers with the smallest workflow, and builds one instead of settling for a heavier saved one', () => {
+  const rule4 = ASK_SYSTEM_RULES.slice(ASK_SYSTEM_RULES.indexOf('\n4. '), ASK_SYSTEM_RULES.indexOf('\n5. '));
+  assert.ok(rule4.startsWith('\n4. Before you propose, judge the work itself'), 'rule 4 keeps its opening');
+  for (const t of ['carefully and meticulously', 'how large it is', 'files and subsystems', 'how precisely the user has already specified it',
+    'needs no planning stage', 'how expensive a wrong result would be', 'SMALLEST workflow that still yields a good-quality result',
+    'live manual UI test stage', 'very big user-facing UI feature', 'otherwise left out',
+    'right kind AND weight', 'do not settle for a heavier one', 'lightest fitting shape with propose_workflow', '(rule 11', 'once the card is saved', '(rule 12)',
+    'heavier saved workflow', 'as an alternative']) {
+    assert.ok(rule4.includes(t), `rule 4 states "${t}"`);
+  }
+  assert.ok(!ASK_SYSTEM_RULES.includes('over- or under-powered'), 'the "propose the closest one" fallback is gone');
+  assert.ok(!ASK_SYSTEM_RULES.includes('propose the closest one'), 'the "propose the closest one" fallback is gone');
+  assert.ok(ASK_SYSTEM_RULES.includes('why this workflow fits the work (rule 4)'), 'rule 3 still points at rule 4 for the note');
+  assert.ok(!/\n\s*13\./.test(ASK_SYSTEM_RULES), 'the rules still stop at 12');
 });
 
 // The chat often explores before it proposes (a worktree, a run diff, comments), but

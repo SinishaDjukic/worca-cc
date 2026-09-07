@@ -141,6 +141,7 @@ export function buildClassifierSystemPrompt({ agents = [], models = [], humanInL
   const modelLines = models.filter((m) => m && !m.hidden).map((m) => `- ${m.id}${m.label && m.label !== m.id ? ` (${m.label})` : ''}: efforts ${(m.efforts || []).join('/')}`);
   return [
     'You design a worca workflow for ONE software task. Reply with exactly one fenced ```json block containing a shape object and nothing else.',
+    'Objective: the SMALLEST workflow that still does the work properly. Judge the task carefully — its kind, its size in files and subsystems, how precisely it is already specified, and the cost of a wrong result — and each stage must be justified by the task: extra stages cost time and money, so "reasoning" must name why every stage beyond the minimum is there, and "size" and "signals" must be honest, never inflated to justify a heavier shape.',
     '',
     '## Shape',
     '{ "name": string (<= 60 chars, names the workflow),',

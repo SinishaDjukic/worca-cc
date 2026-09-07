@@ -57,6 +57,34 @@ test('RECIPE_GUIDE names every task kind, modifier and agent key; RECIPE_SHAPES 
   for (const r of RECIPE_SHAPES) { assert.ok(r.id); normalizeShape(r.shape); }
 });
 
+// The guide is rendered into BOTH selection paths (the Ask system prompt and the
+// classifier system prompt), so the sizing principle lives here once. Every extra
+// stage costs time and money; the web pair in particular used to fire on any UI
+// mention and even on the fingerprint alone.
+test('RECIPE_GUIDE opens with the sizing principle and reserves the web pair for a very big UI feature', () => {
+  const lines = RECIPE_GUIDE.split('\n');
+  assert.ok(lines[0].startsWith('## Recipes (starting points'), 'the heading the Ask catalog pins stays first');
+  assert.ok(lines[1].includes('start from the SMALLEST recipe that fits the task kind'), 'the sizing principle is the first thing after the heading');
+  for (const t of ['add a stage only when a concrete signal in the task itself demands it', 'every extra stage must earn its cost', 'when unsure between two shapes, take the lighter one']) {
+    assert.ok(RECIPE_GUIDE.includes(t), `sizing: "${t}"`);
+  }
+  const web = lines.find((l) => l.startsWith('- web / UI feature'));
+  assert.ok(web, 'the web modifier line survives');
+  assert.ok(web.includes('ONLY for a very big user-facing UI feature'), 'the web pair is reserved for a very big UI feature');
+  assert.ok(web.includes('never a trigger'), 'the fingerprint hint is context, never a trigger');
+  assert.ok(web.includes('stays with the reviewer only'), 'small and medium UI changes stop at the reviewer');
+  assert.ok(!web.includes('or the fingerprint says "web-ui likely"'), 'the old fingerprint trigger is gone');
+  assert.ok(!web.startsWith('- web / UI feature (pages, components, CSS, browser behaviour'), 'the old any-UI-mention trigger is gone');
+  const large = lines.find((l) => l.startsWith('- large task'));
+  const risky = lines.find((l) => l.startsWith('- risky or large plan'));
+  assert.ok(large.includes('many files or subsystems') && large.includes('only when'), 'large is an exception with a real signal');
+  assert.ok(risky.includes('irreversible or high-blast-radius') && risky.includes('only for'), 'risky is an exception with a real signal');
+  assert.ok(lines.some((l) => l.startsWith('Modifiers') && l.includes('never a default')), 'modifiers are framed as exceptions');
+  const small = lines.find((l) => l.startsWith('- plan-complete-small'));
+  const trivial = lines.find((l) => l.startsWith('- trivial'));
+  assert.ok(small.includes('well-specified small change') || trivial.includes('well-specified small change'), 'a well-specified small change is steered to trivial or plan-complete-small');
+});
+
 test('every recipe shape assembles and runs offline to the End card, with and without a human in the loop', { timeout: 300000 }, async () => {
   const shapes = [...RECIPE_SHAPES.map((r) => ({ id: r.id, shape: r.shape })),
     { id: 'mock:trivial', shape: mockShapeFor('demo task') },
