@@ -46,8 +46,10 @@
   --violet-wash:light-dark(#F6F4FC,#211E2E);
 
   /* Ask Worca launcher pill: the "thinking" wave painted on .ask-pill.is-live::before
-     spends these three; the ask section itself carries no literal. */
-  --ask-wave-pink:light-dark(#F6A9DC,#8E4F7B); --ask-wave-violet:light-dark(#B8A6FF,#6F5FC4); --ask-wave-lilac:light-dark(#CDA2F2,#7E57A8);
+     and ::after spends these three; the ask section itself carries no literal.
+     Saturated on purpose — the label sits on them, so each arm keeps ≥3:1 against
+     --ink (test/ui-theme-tokens PAIRS): light arms not too dark, dark not too light. */
+  --ask-wave-pink:light-dark(#F56FC4,#B8408F); --ask-wave-violet:light-dark(#9A80FF,#7A5FE6); --ask-wave-lilac:light-dark(#BD75EE,#9552CC);
 
   /* Semantic tokens introduced by the theme work (spec §3.2). Each light arm is
      the literal it replaced, so the light theme did not move. */
@@ -2979,32 +2981,64 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-pill:hover{border-color:var(--ink);}
 .ask-pill:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .ask-pill[hidden]{display:none;}
-/* The "thinking" wave. A permanent ::before under the pill's text (z-index:-1
-   inside the isolation:isolate context the pill opens, so it paints above the
-   panel fill and below the logo/label/kbd), clipped by the pill's overflow:hidden
-   to its rounded padding box; the focus outline and the box-shadow are drawn
-   outside that box and are not clipped. The layer is twice the pill's width and
-   hangs 45% below its bottom edge, so three bottom-anchored ellipses rise into
-   the lower ~70% of the pill and the horizontal drift never shows an edge.
-   Appear/disappear is an opacity transition on the .is-live class toggled by
-   ask-panel.mjs updateSendStop(); the drift is transform-only, so the
-   compositor moves a cached texture and no JS runs per frame. The animation is
-   declared HERE and merely paused, and .is-live only flips animation-play-state:
-   dropping the class then freezes the layer wherever the loop left it while the
-   opacity fades, whereas cancelling the animation would snap the transform back
-   to identity at full opacity - a visible sideways jolt at the start of every
-   fade-out. Cost of the pause: some engines keep the ~300x70 layer promoted
-   while idle. No will-change on top of that. */
-.ask-pill::before{content:'';position:absolute;z-index:-1;left:-50%;width:200%;bottom:-45%;height:150%;
+/* The "thinking" wave. Two permanent layers, ::before and ::after, under the
+   pill's text (z-index:-1 inside the isolation:isolate context the pill opens,
+   so they paint above the panel fill and below the mark/label/kbd), clipped by
+   the pill's overflow:hidden to its rounded padding box; the focus outline and
+   the box-shadow are drawn outside that box and are not clipped. Each layer is
+   2.6x the pill's width and hangs 75% below its bottom edge, so three
+   bottom-anchored ellipses per layer rise into the lower ~80% of the pill and
+   the drift (up to ±22% of the layer, swelling to 1.2x about the bottom edge)
+   never shows an edge. Each ellipse holds its colour to ~half its radius before
+   fading, so the tint reads on the pill rather than at its rim. The two drifts
+   run on non-commensurate periods (6.3s and 9.7s) through unevenly spaced
+   stops, so the composite never visibly repeats. Appear/disappear is an opacity
+   transition on the .is-live class toggled by ask-panel.mjs updateSendStop();
+   the drifts are transform-only, so the compositor moves cached textures and no
+   JS runs per frame. Each animation is declared HERE and merely paused, and
+   .is-live only flips animation-play-state: dropping the class then freezes
+   the layer wherever the loop left it while the opacity fades, whereas
+   cancelling the animation would snap the transform back to identity at full
+   opacity - a visible sideways jolt at the start of every fade-out. Cost of the
+   pause: some engines keep the two ~400x100 layers promoted while idle. No
+   will-change on top of that. */
+.ask-pill::before{content:'';position:absolute;z-index:-1;left:-80%;width:260%;bottom:-75%;height:200%;
   pointer-events:none;opacity:0;transition:opacity .45s ease;transform-origin:50% 100%;
-  animation:ask-pill-wave 6s ease-in-out infinite;animation-play-state:paused;
-  background:radial-gradient(38% 78% at 24% 100%,var(--ask-wave-pink) 0%,transparent 100%),
-    radial-gradient(40% 82% at 52% 100%,var(--ask-wave-violet) 0%,transparent 100%),
-    radial-gradient(36% 74% at 80% 100%,var(--ask-wave-lilac) 0%,transparent 100%);}
+  animation:ask-pill-wave 6.3s ease-in-out infinite;animation-play-state:paused;
+  background:radial-gradient(34% 72% at 24% 100%,var(--ask-wave-pink) 0%,var(--ask-wave-pink) 55%,transparent 100%),
+    radial-gradient(36% 76% at 52% 100%,var(--ask-wave-violet) 0%,var(--ask-wave-violet) 55%,transparent 100%),
+    radial-gradient(32% 68% at 80% 100%,var(--ask-wave-lilac) 0%,var(--ask-wave-lilac) 55%,transparent 100%);}
+.ask-pill::after{content:'';position:absolute;z-index:-1;left:-80%;width:260%;bottom:-75%;height:200%;
+  pointer-events:none;opacity:0;transition:opacity .45s ease;transform-origin:50% 100%;
+  animation:ask-pill-swell 9.7s ease-in-out infinite;animation-play-state:paused;
+  background:radial-gradient(28% 64% at 38% 100%,var(--ask-wave-lilac) 0%,var(--ask-wave-lilac) 50%,transparent 100%),
+    radial-gradient(30% 70% at 66% 100%,var(--ask-wave-pink) 0%,var(--ask-wave-pink) 50%,transparent 100%),
+    radial-gradient(26% 60% at 12% 100%,var(--ask-wave-violet) 0%,var(--ask-wave-violet) 50%,transparent 100%);}
 .ask-pill.is-live::before{opacity:1;animation-play-state:running;}
+.ask-pill.is-live::after{opacity:1;animation-play-state:running;}
 .ask-pill-logo{width:22px;height:22px;border-radius:50%;display:inline-block;flex:0 0 auto;background:var(--ink);
   -webkit-mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;-webkit-mask-mode:luminance;
   mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;mask-mode:luminance;}
+/* The mark slot: the masked logo and the pill's own thinking orb stacked in one
+   22px host. A CSS mask clips children, so the orb is a SIBLING of the masked
+   span, absolutely stacked on it; the host is what the pill's flex row sizes,
+   so the label and the kbd never move. The morph between them is these
+   transitions, keyed off .is-live: lighting shrinks and fades the mark while
+   the orb fades in (.52s — the canvas grows its dots out of the centre on the
+   same clock, thinking-orb morphTo, so no CSS scale on the orb: a scaled
+   canvas would blur them); resting is the slow, eased-out way back (.8s, over
+   the wave's .45s fade). A transition reads its timing from the AFTER-change
+   style, so the live rules carry the morph-in duration and the rest rules the
+   morph-back one. Under prefers-reduced-motion the `*{transition:none}`
+   blanket makes this an instant swap and the orb snaps its tween too; no rule
+   of its own is needed. */
+.ask-pill-mark{position:relative;width:22px;height:22px;flex:0 0 auto;display:inline-block;line-height:0;}
+.ask-pill-mark>.ask-pill-logo{position:absolute;inset:0;
+  transition:opacity .8s cubic-bezier(.22,1,.36,1),transform .8s cubic-bezier(.22,1,.36,1);}
+.ask-pill-mark>.ask-orb{position:absolute;inset:0;opacity:0;transition:opacity .8s cubic-bezier(.22,1,.36,1);}
+.ask-pill.is-live .ask-pill-mark>.ask-pill-logo{opacity:0;transform:scale(.35);
+  transition-duration:.52s;transition-timing-function:cubic-bezier(.4,0,.7,.2);}
+.ask-pill.is-live .ask-pill-mark>.ask-orb{opacity:1;transition-duration:.52s;transition-timing-function:cubic-bezier(.2,.7,.3,1);}
 .ask-kbd{padding:3px 7px;border-radius:7px;background:var(--field);color:var(--ink-3);
   font-family:var(--mono);font-weight:400;font-size:10.5px;}
 
@@ -3086,7 +3120,10 @@ body.rail-collapsed .ask-dock{left:76px;}
   animation:ask-shimmer 2.4s linear infinite;}
 .ask-thinking-meter{font-family:var(--mono);font-size:11px;color:var(--seq);white-space:nowrap;}
 @keyframes ask-shimmer{from{background-position:180% 0;}to{background-position:-60% 0;}}
-@keyframes ask-pill-wave{0%{transform:translate3d(-12%,10%,0) scale(1);}50%{transform:translate3d(12%,0,0) scale(1.06);}100%{transform:translate3d(-12%,10%,0) scale(1);}}
+/* The pill's two wave drifts (see .ask-pill::before): transform-only, uneven
+   stops, both loops closed (0% = 100%) so the seam never jumps. */
+@keyframes ask-pill-wave{0%{transform:translate3d(-20%,7%,0) scale(1);}23%{transform:translate3d(9%,-3%,0) scale(1.12);}41%{transform:translate3d(-6%,4%,0) scale(1.04);}67%{transform:translate3d(22%,-6%,0) scale(1.18);}84%{transform:translate3d(4%,2%,0) scale(1.08);}100%{transform:translate3d(-20%,7%,0) scale(1);}}
+@keyframes ask-pill-swell{0%{transform:translate3d(20%,-4%,0) scale(1.06);}17%{transform:translate3d(-8%,6%,0) scale(1);}38%{transform:translate3d(-22%,-7%,0) scale(1.16);}56%{transform:translate3d(3%,3%,0) scale(1.02);}81%{transform:translate3d(15%,-8%,0) scale(1.2);}100%{transform:translate3d(20%,-4%,0) scale(1.06);}}
 /* The `.ask-dock *` blanket at the end of this file already kills the sweep;
    this only restores a legible fill under the clipped background. */
 @media (prefers-reduced-motion: reduce){
@@ -3787,14 +3824,15 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
      Tasks 3/6/7/8 and silently rot the day one of them is renamed. The run-graph's
      own reduced-motion block (:1253-1258) is unaffected — it substitutes
      box-shadows, and only its redundant `animation:none` is overridden. */
-  /* Ask Worca: the launcher pill's wave lives on a ::before, which the `*`
-     blanket below cannot reach (pseudo-elements do not inherit `animation`), so
-     it is named — like the log caret above. Its opacity fade is kept on purpose:
-     a cross-fade moves nothing, and the tint still says "working". Paused, not
-     `animation:none`: none would re-create the paused animation at its 0% frame
-     the moment .is-live comes off, i.e. a jump at full opacity; pausing holds
-     the 0% frame for good. */
+  /* Ask Worca: the launcher pill's wave lives on a ::before and an ::after,
+     which the `*` blanket below cannot reach (pseudo-elements do not inherit
+     `animation`), so both are named — like the log caret above. Their opacity
+     fade is kept on purpose: a cross-fade moves nothing, and the tint still
+     says "working". Paused, not `animation:none`: none would re-create the
+     paused animation at its 0% frame the moment .is-live comes off, i.e. a
+     jump at full opacity; pausing holds the 0% frame for good. */
   .ask-pill.is-live::before{animation-play-state:paused;}
+  .ask-pill.is-live::after{animation-play-state:paused;}
   /* Ask Worca: every element inside the dock, same blanket rationale as the
      .run-shell one below. */
   .ask-dock *{animation:none !important;}

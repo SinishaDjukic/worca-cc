@@ -365,7 +365,9 @@ test('ask-panel-stream: the orb node survives live-row rebuilds so the spin neve
   const ctx = await openWith(ref);
   ctx.panel.pushServerFrame({ type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't', threadId: TID, messageId: MID, seq: 1 });
   ctx.flush();
-  const first = ctx.doc.querySelector('.ask-orb');
+  // Scoped to the transcript: the launcher pill carries its OWN orb from build
+  // time (ask-panel-pill-live), so a document-wide count would read two.
+  const first = ctx.doc.querySelector('.ask-transcript .ask-orb');
   assert.ok(first, 'the orb mounted with the live turn');
   assert.equal(first.style.width, '28.5px', 'the panel mounts the orb at 28.5 CSS px');
   // A tool block rebuilds the whole row (buildMessage → replaceWith); the ONE
@@ -373,8 +375,8 @@ test('ask-panel-stream: the orb node survives live-row rebuilds so the spin neve
   ctx.panel.pushServerFrame({ type: 'ask-block', block: { kind: 'tool', id: 't1', name: 'mcp__worca__list_runs', input: {}, status: 'running' }, threadId: TID, messageId: MID, seq: 2 });
   ctx.flush();
   assert.ok(ctx.doc.querySelector('.ask-tool-row'), 'the row really was rebuilt');
-  assert.equal(ctx.doc.querySelector('.ask-orb'), first, 'same node, moved');
-  assert.equal(ctx.doc.querySelectorAll('.ask-orb').length, 1, 'never two orbs');
+  assert.equal(ctx.doc.querySelector('.ask-transcript .ask-orb'), first, 'same node, moved');
+  assert.equal(ctx.doc.querySelectorAll('.ask-transcript .ask-orb').length, 1, 'never two orbs in the transcript');
 });
 
 test('ask-panel-stream: the orb row owns the live meter; the head shows only the word and the dot', async () => {
@@ -416,7 +418,7 @@ test('ask-panel-stream: an adopted turn with no ask-start still gets the orb row
   ctx.panel.pushServerFrame({ type: 'ask-delta', text: 'adopted', threadId: TID, messageId: MID, seq: 77 });
   ctx.flush();
   assert.match(ctx.doc.querySelector('.ask-answer').textContent, /adopted/);
-  assert.ok(ctx.doc.querySelector('.ask-orb'), 'the orb mounted on the adopted turn');
+  assert.ok(ctx.doc.querySelector('.ask-transcript .ask-orb'), 'the orb mounted on the adopted turn');
   assert.ok(ctx.doc.querySelector('.ask-thinking'), 'and the row with it');
 });
 

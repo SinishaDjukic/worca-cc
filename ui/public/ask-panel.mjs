@@ -129,6 +129,13 @@ const SIZE_KEY = 'worca-cc.ask.size';
  *  chat follows changed (tracking) or a turn started/ended there (thinking). */
 const THREADS_REFRESH_FRAMES = new Set(['ask-run-status', 'ask-start', 'ask-done', 'ask-error']);
 const THREADS_REFRESH_MS = 250;
+/** The pill's mark ↔ orb morph: the canvas tween (thinking-orb morphTo) runs on
+ *  the same clocks as the CSS transitions on the two layers — .52s in, .8s out
+ *  (style.css .ask-pill-mark rules). The settle fallback outlives the fade-out,
+ *  for the case the transitionend never arrives. */
+const PILL_MORPH_IN_MS = 520;
+const PILL_MORPH_OUT_MS = 800;
+const PILL_SETTLE_FALLBACK_MS = PILL_MORPH_OUT_MS + 150;
 
 export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null }) {
   const storedPick = readStoredModel();   // hoisted declaration (defined below); null when nothing is stored
@@ -163,6 +170,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     subscribedFor: null,
     elapsedTimer: null,
     elapsedStart: null,
+    pillOrbLive: false,       // what the pill orb was last told — see syncPillOrb()
+    pillOrbSettle: null,      // the morph-back's fallback timer, while one runs
     flushArmed: false,
     resyncing: false,
     firstOpenDone: false,
@@ -282,9 +291,28 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     const pill = make('button', 'ask-pill');
     pill.type = 'button';
+    // The mark slot: the masked logo and the pill's OWN thinking orb stacked in
+    // one 22px host (a CSS mask clips children, so the orb cannot live under
+    // the masked span). Both exist from birth — .is-live morphs one into the
+    // other in CSS and syncPillOrb() runs the canvas only while there is
+    // something to paint. Its own instance on purpose: the transcript's orb
+    // (ensureThinking) is re-parented into each live row and cannot be shared.
+    const mark = make('span', 'ask-pill-mark');
+    mark.setAttribute('aria-hidden', 'true');
     const pillLogo = make('span', 'ask-pill-logo');
     pillLogo.setAttribute('aria-hidden', 'true');
-    pill.appendChild(pillLogo);
+    mark.appendChild(pillLogo);
+    el.pillOrb = createThinkingOrb({ doc, win, size: 22 });
+    el.pillOrb.stop();                 // the factory arms its loop; nothing is lit yet
+    el.pillOrb.morphTo(0, 0);          // the dots wait on the centre for the first morph-in
+    // The morph-back ends when the orb layer's opacity fade does (the transform
+    // fade shares the clock, so one of the two is enough); a late event from a
+    // fade that a new turn aborted must not cut a live loop — hence the guard.
+    el.pillOrb.el.addEventListener('transitionend', (e) => {
+      if (e.target === el.pillOrb.el && e.propertyName === 'opacity' && !st.pillOrbLive) settlePillOrb();
+    });
+    mark.appendChild(el.pillOrb.el);
+    pill.appendChild(mark);
     pill.appendChild(make('span', 'ask-pill-label', 'Ask Worca'));
     pill.appendChild(make('span', 'ask-kbd', shortcutLabel(win)));
     pill.addEventListener('click', openSheet);
@@ -428,12 +456,47 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // The collapsed launcher pill mirrors "Ask Worca is working": a live turn, a
     // snapshot that reports one in flight (load() nulls live until a frame is
     // adopted, so Stop alone would stay dark on a collapsed reload), or the
-    // POST→ask-start window (st.sending). The glow is pure CSS on this class
-    // (.ask-pill.is-live::before), so a boundary costs one classList write and
-    // nothing else — keep side effects OUT of here, see afterFrame()'s
-    // refreshWorktrees() note.
+    // POST→ask-start window (st.sending). The glow and the mark↔orb morph are
+    // pure CSS on this class (.ask-pill.is-live::before/::after and
+    // .ask-pill.is-live .ask-pill-mark), so a boundary costs one classList
+    // write plus syncPillOrb() — local rAF bookkeeping for the pill's canvas,
+    // idle when nothing changed. Keep every OTHER side effect out of here, see
+    // afterFrame()'s refreshWorktrees() note.
     const inFlight = !!(st.model && st.model.inFlight && st.model.inFlight());
-    if (el.pill) el.pill.classList.toggle('is-live', streaming || inFlight || !!st.sending);
+    if (el.pill) { el.pill.classList.toggle('is-live', streaming || inFlight || !!st.sending); syncPillOrb(); }
+  }
+
+  /**
+   * The pill's mark ↔ orb morph, canvas half. CSS cross-fades and scales the
+   * two layers off .is-live; this runs the orb's rAF loop only while there is
+   * something to paint — live AND the pill visible — and drives the canvas
+   * tween (dots grow out of the centre on lighting, sink back on rest) on the
+   * same clocks. Hidden behind the open sheet the layers snap (display:none
+   * skips transitions), so the factor snaps with them: nothing replays when
+   * closeSheet() shows the pill again. The morph-back keeps painting until the
+   * opacity transitionend (fallback: a timer), then the loop is cut.
+   */
+  function syncPillOrb() {
+    if (!el.pillOrb) return;
+    const live = el.pill.classList.contains('is-live');
+    if (live !== st.pillOrbLive) {
+      st.pillOrbLive = live;
+      clearPillOrbSettle();
+      el.pillOrb.morphTo(live ? 1 : 0, el.pill.hidden ? 0 : (live ? PILL_MORPH_IN_MS : PILL_MORPH_OUT_MS));
+      if (!live && !el.pill.hidden) {
+        st.pillOrbSettle = setTimeout(settlePillOrb, PILL_SETTLE_FALLBACK_MS);
+        if (st.pillOrbSettle && typeof st.pillOrbSettle.unref === 'function') st.pillOrbSettle.unref();
+      }
+    }
+    if (!el.pill.hidden && (live || st.pillOrbSettle)) el.pillOrb.start();
+    else settlePillOrb();
+  }
+  function clearPillOrbSettle() {
+    if (st.pillOrbSettle) { clearTimeout(st.pillOrbSettle); st.pillOrbSettle = null; }
+  }
+  function settlePillOrb() {
+    clearPillOrbSettle();
+    if (el.pillOrb) el.pillOrb.stop();
   }
 
   function updateMeters() {
@@ -676,6 +739,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.open = true;
     st.prevFocus = doc.activeElement;
     el.pill.hidden = true;
+    syncPillOrb();                                 // nothing to paint behind the sheet
     el.sheet.hidden = false;
     restoreSize();                                 // the sheet has a box now — clamp the stored size to the dock
     st.pinned = true;
@@ -709,6 +773,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.open = false;
     el.sheet.hidden = true;
     el.pill.hidden = false;
+    syncPillOrb();                                 // still live? the orb loop comes back, whole
     const prev = st.prevFocus;
     st.prevFocus = null;
     if (prev && prev.isConnected && typeof prev.focus === 'function') { try { prev.focus(); return; } catch { /* fall through */ } }
@@ -3233,6 +3298,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     closePopover({ focusTrigger: false });
     if (st.elapsedTimer) { clearInterval(st.elapsedTimer); st.elapsedTimer = null; }
     if (el.orb) el.orb.stop();
+    settlePillOrb();
     doc.removeEventListener('keydown', onDocKeydown, true);
     doc.removeEventListener('pointerdown', onDocPointerdown, true);
     win.removeEventListener('resize', onWinResize);

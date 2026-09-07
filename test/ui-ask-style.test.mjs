@@ -353,43 +353,123 @@ test('ui-ask-style: the pill wave is a permanent ::before that .is-live fades in
   assert.match(pill, /transition:border-color \.15s/, 'the hover transition survives');
   assert.match(ruleBody('.ask-pill[hidden]'), /display:none/, 'hidden twin untouched');
   assert.match(ruleBody('.ask-pill:focus-visible'), /outline:2px solid var\(--ink\)/, 'focus ring untouched');
-  // the layer is always in the tree and transparent at rest; the drift is declared
-  // here but PAUSED, so dropping .is-live freezes it where it is and only the
-  // opacity fades — removing an animation instead would snap it back at opacity 1
-  const glow = ruleBody('.ask-pill::before');
-  assert.ok(glow, '.ask-pill::before rule exists');
-  assert.match(glow, /content:''/);
-  assert.match(glow, /position:absolute/);
-  assert.match(glow, /z-index:-1/);
-  assert.match(glow, /pointer-events:none/);
-  assert.match(glow, /opacity:0;/);
-  assert.match(glow, /transition:opacity \.45s/);
-  assert.match(glow, /transform-origin:50% 100%/, 'breathes upward from the bottom edge');
-  assert.match(glow, /animation:ask-pill-wave/, 'the drift is declared on the rest rule…');
-  assert.match(glow, /animation-play-state:paused/, '…and held at rest, so nothing moves until .is-live');
-  for (const t of ['pink', 'violet', 'lilac']) {
-    assert.match(glow, new RegExp(`var\\(--ask-wave-${t}\\)`), `the glow spends --ask-wave-${t}`);
-    assert.match(tokenValue(`ask-wave-${t}`) || '', /^#[0-9a-f]{6}$/, `--ask-wave-${t} is a :root hex token`);
+  // TWO layers now (::before and ::after), each on its own drift with a
+  // non-commensurate duration so the composite never visibly repeats. Both keep
+  // the one pattern: always in the tree and transparent at rest, the drift
+  // declared on the rest rule but PAUSED, so dropping .is-live freezes the layer
+  // where it is and only the opacity fades — removing an animation instead
+  // would snap it back at opacity 1.
+  const LAYERS = [['::before', 'ask-pill-wave', '6.3s'], ['::after', 'ask-pill-swell', '9.7s']];
+  const kfBlock = (name) => {
+    assert.equal((css.match(new RegExp(`@keyframes\\s+${name}(?![-\\w])`, 'g')) || []).length, 1, `${name} declared exactly once`);
+    const at = css.indexOf(`@keyframes ${name}`);
+    return css.slice(at, css.indexOf('}}', at) + 2);
+  };
+  for (const [pseudo, name, dur] of LAYERS) {
+    const glow = ruleBody(`.ask-pill${pseudo}`);
+    assert.ok(glow, `.ask-pill${pseudo} rule exists`);
+    assert.match(glow, /content:''/);
+    assert.match(glow, /position:absolute/);
+    assert.match(glow, /z-index:-1/);
+    assert.match(glow, /pointer-events:none/);
+    assert.match(glow, /opacity:0;/);
+    assert.match(glow, /transition:opacity \.45s/);
+    assert.match(glow, /transform-origin:50% 100%/, 'breathes upward from the bottom edge');
+    assert.match(glow, new RegExp(`animation:${name} ${dur.replace('.', '\\.')} ease-in-out infinite`), `${pseudo}: its own drift, declared on the rest rule…`);
+    assert.match(glow, /animation-play-state:paused/, '…and held at rest, so nothing moves until .is-live');
+    // the bigger drift needs a bigger layer or the clip would show an edge: the
+    // layer is 2.6× the pill's width and hangs 75% below its bottom edge
+    assert.match(glow, /left:-80%;width:260%;bottom:-75%;height:200%/, `${pseudo}: grown with the drift`);
+    for (const t of ['pink', 'violet', 'lilac']) {
+      // colour held to ~half the ellipse before it fades: two colour stops, then transparent
+      assert.match(glow, new RegExp(`var\\(--ask-wave-${t}\\) 0%,var\\(--ask-wave-${t}\\) 5\\d%,transparent 100%`), `${pseudo} holds --ask-wave-${t} past the centre`);
+      assert.match(tokenValue(`ask-wave-${t}`) || '', /^#[0-9a-f]{6}$/, `--ask-wave-${t} is a :root hex token`);
+    }
+    // live: opacity 1 + the drift released
+    const live = ruleBody(`.ask-pill.is-live${pseudo}`);
+    assert.ok(live, `.ask-pill.is-live${pseudo} rule exists`);
+    assert.match(live, /opacity:1/);
+    assert.match(live, /animation-play-state:running/, 'the live class only releases the paused drift');
+    // the keyframes move the layer with transform ONLY (compositor-cached
+    // texture), through several unevenly spaced stops so the loop reads as
+    // irregular, with a drift of at least ±20% and a swell past 1.15
+    const kf = kfBlock(name);
+    assert.match(kf, /transform:/);
+    assert.doesNotMatch(kf, /(?:^|[{;\s])(left|top|right|bottom|width|height|background|opacity|filter|margin|padding):/, 'transform only');
+    const stops = [...kf.matchAll(/(\d+)%\{/g)].map((m) => Number(m[1]));
+    assert.ok(stops.length >= 6, `${name}: at least six stops (got ${stops.length})`);
+    const gaps = stops.slice(1).map((s, i) => s - stops[i]);
+    assert.ok(new Set(gaps).size >= 4, `${name}: unevenly spaced stops (${gaps.join(',')})`);
+    const xs = [...kf.matchAll(/translate3d\((-?\d+)%/g)].map((m) => Number(m[1]));
+    assert.ok(Math.min(...xs) <= -20 && Math.max(...xs) >= 20, `${name}: drifts at least ±20% (${xs.join(',')})`);
+    const scales = [...kf.matchAll(/scale\(([\d.]+)\)/g)].map((m) => Number(m[1]));
+    assert.ok(Math.max(...scales) >= 1.15, `${name}: swells past 1.15 (${scales.join(',')})`);
+    assert.ok(Math.min(...scales) >= 1, `${name}: never shrinks below the layer's rest size`);
+    assert.ok(css.lastIndexOf(`animation:${name}`) < css.lastIndexOf('@media (prefers-reduced-motion: reduce)'), 'the animation use precedes the guard');
   }
-  // live: opacity 1 + the drift released
-  const live = ruleBody('.ask-pill.is-live::before');
-  assert.ok(live, '.ask-pill.is-live::before rule exists');
-  assert.match(live, /opacity:1/);
-  assert.match(live, /animation-play-state:running/, 'the live class only releases the paused drift');
-  // the keyframes move the layer with transform ONLY (compositor-cached texture)
-  assert.equal((css.match(/@keyframes\s+ask-pill-wave\b/g) || []).length, 1, 'declared exactly once');
-  const kfAt = css.indexOf('@keyframes ask-pill-wave');
-  const kf = css.slice(kfAt, css.indexOf('}}', kfAt) + 2);
-  assert.match(kf, /transform:/);
-  assert.doesNotMatch(kf, /(?:^|[{;\s])(left|top|right|bottom|width|height|background|opacity|filter|margin|padding):/, 'transform only');
+  const [, , dA] = LAYERS[0]; const [, , dB] = LAYERS[1];
+  assert.notEqual(dA, dB, 'the two drifts must not share a period');
+  assert.ok((parseFloat(dB) / parseFloat(dA)) % 1 !== 0, 'non-commensurate: the periods are not multiples');
   // reduced motion: pseudo-elements escape the `.ask-dock *` blanket, so the
-  // FINAL block names the drift; the opacity fade is deliberately kept (D6).
+  // FINAL block names BOTH drifts; the opacity fade is deliberately kept (D6).
   // It pauses rather than removes: `animation:none` would re-create the paused
   // animation at its 0% frame when .is-live comes off, i.e. a jump at opacity 1.
   const guard = css.lastIndexOf('@media (prefers-reduced-motion: reduce)');
-  assert.ok(css.slice(guard).includes('.ask-pill.is-live::before{animation-play-state:paused;}'), 'the final block stops the drift by name');
-  assert.ok(css.lastIndexOf('animation:ask-pill-wave') < guard, 'the animation use precedes the guard');
+  assert.ok(css.slice(guard).includes('.ask-pill.is-live::before{animation-play-state:paused;}'), 'the final block stops the ::before drift by name');
+  assert.ok(css.slice(guard).includes('.ask-pill.is-live::after{animation-play-state:paused;}'), 'the final block stops the ::after drift by name');
   assert.ok(!css.slice(guard).includes('.ask-pill::before{'), 'no unconditional ::before rule in the guard — an idle pill must stay dark');
+  assert.ok(!css.slice(guard).includes('.ask-pill::after{'), 'no unconditional ::after rule in the guard either');
+});
+
+test('ui-ask-style: the pill mark morphs into the orb on .is-live — transitions on two stacked layers, quicker in, slower and eased-out back', () => {
+  // the host is the flex item; the two layers stack on it and never size the row
+  const host = ruleBody('.ask-pill-mark');
+  assert.ok(host, '.ask-pill-mark rule exists');
+  assert.match(host, /position:relative;width:22px;height:22px;flex:0 0 auto/, 'a fixed 22px slot: no layout shift when the layers swap');
+  const logo = ruleBody('.ask-pill-mark>.ask-pill-logo');
+  const orb = ruleBody('.ask-pill-mark>.ask-orb');
+  assert.ok(logo && orb, 'both layers have a scoped rule');
+  for (const b of [logo, orb]) assert.match(b, /position:absolute;inset:0/, 'stacked on the host');
+  // rest state: the mark whole, the orb transparent; the way BACK is the slow,
+  // eased-out one (.8s — the wave fades in .45s underneath it)
+  assert.match(orb, /opacity:0/, 'the orb is invisible at rest');
+  assert.doesNotMatch(logo, /opacity:0/, 'the mark is whole at rest');
+  assert.match(logo, /transition:opacity \.8s cubic-bezier\([^)]*\),transform \.8s cubic-bezier\([^)]*\)/, 'mark: opacity + scale, .8s eased out');
+  assert.match(orb, /transition:opacity \.8s cubic-bezier\([^)]*\)/, 'orb: opacity only, .8s eased out');
+  assert.doesNotMatch(orb, /transform/, 'no CSS scale on the canvas: the orb grows its dots out of the centre itself (thinking-orb morphTo), a scaled canvas would blur them');
+  // live state: the mark shrinks and fades while the orb fades in, quicker (.52s,
+  // the canvas tween's PILL_MORPH_IN_MS) — transitions read their timing from the
+  // AFTER-change style, so the live rule's duration governs the morph-in and
+  // the rest rule's the morph-back
+  const logoLive = ruleBody('.ask-pill.is-live .ask-pill-mark>.ask-pill-logo');
+  const orbLive = ruleBody('.ask-pill.is-live .ask-pill-mark>.ask-orb');
+  assert.ok(logoLive && orbLive, 'both live arms exist');
+  assert.match(logoLive, /opacity:0/);
+  assert.match(logoLive, /transform:scale\(\.\d+\)/, 'the mark shrinks away');
+  assert.match(logoLive, /transition-duration:\.52s/);
+  assert.match(orbLive, /opacity:1/);
+  assert.match(orbLive, /transition-duration:\.52s/);
+  assert.doesNotMatch(orbLive, /transform/);
+  // reduced motion: transitions are killed file-wide by the legacy blanket, so
+  // the morph becomes an instant swap with no rule of its own; the canvas tween
+  // snaps on its side (thinking-orb reads the same media query)
+  const blanket = css.indexOf('*{transition:none !important;}');
+  assert.ok(blanket !== -1, 'the *{transition:none} blanket exists');
+  const mediaAt = css.lastIndexOf('@media (prefers-reduced-motion: reduce)', blanket);
+  const between = css.slice(mediaAt, blanket);
+  assert.ok(mediaAt !== -1 && (between.split('{').length - between.split('}').length) > 0, 'the blanket sits inside a reduced-motion block');
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const reducedBlocks = [];
+  for (let at = bare.indexOf('@media (prefers-reduced-motion'); at !== -1; at = bare.indexOf('@media (prefers-reduced-motion', at + 1)) {
+    let i = bare.indexOf('{', at); let depth = 0;
+    for (; i < bare.length; i += 1) { if (bare[i] === '{') depth += 1; else if (bare[i] === '}' && --depth === 0) break; }
+    reducedBlocks.push(bare.slice(at, i + 1));
+  }
+  assert.ok(reducedBlocks.length > 0);
+  assert.ok(reducedBlocks.every((b) => !b.includes('ask-pill-mark')), 'no reduced-motion rule names the mark host — the blanket covers it');
+  // the pinned .ask-pill-logo rule (ui-logo-mask) is not restated here
+  assert.doesNotMatch(logo, /mask/);
+  assert.doesNotMatch(logoLive, /mask/);
 });
 
 test('ui-ask-style: run card v2 — violet wash token exists once, the block is tokened and inside the ask section', () => {

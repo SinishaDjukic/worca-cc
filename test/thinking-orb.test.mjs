@@ -160,6 +160,78 @@ test('thinking-orb: a null 2d context degrades to an inert element', () => {
   assert.doesNotThrow(() => orb.stop());
 });
 
+// ---- the morph factor: the pill's mark grows the orb out of its centre --------
+const dist = (arcs, c) => arcs.map(([x, y]) => Math.hypot(x - c, y - c));
+const alphaOf = (s) => Number(/,([\d.]+)\)$/.exec(s)[1]);
+
+test('thinking-orb: the morph factor rests at 1 and a whole sphere paints as before', () => {
+  const { doc, rec } = makeDoc();
+  const { win, calls } = makeWin();
+  const orb = createThinkingOrb({ doc, win, size: 30 });
+  assert.equal(orb.morph(), 1, 'the transcript orb never morphs: factor 1 from birth');
+  win._t = 400;
+  calls.raf.shift()();
+  assert.ok(Math.max(...dist(rec.arcs, 15)) > 10, 'dots reach the full 12px radius');
+  orb.stop();
+});
+
+test('thinking-orb: morphTo(0, 0) snaps every dot onto the centre at alpha 0; the value is clamped to 0..1', () => {
+  const { doc, rec } = makeDoc();
+  const { win, calls } = makeWin();
+  const orb = createThinkingOrb({ doc, win, size: 30 });
+  orb.morphTo(0, 0);
+  assert.equal(orb.morph(), 0);
+  win._t = 400;
+  calls.raf.shift()();
+  assert.equal(rec.arcs.length, ORB_DOTS, 'still one arc per dot');
+  for (const d of dist(rec.arcs, 15)) assert.ok(d < 1e-9, 'every dot sits on the centre');
+  for (const s of rec.fills) assert.equal(alphaOf(s), 0, 'and paints nothing');
+  orb.morphTo(7); assert.equal(orb.morph(), 1, 'clamped high');
+  orb.morphTo(-2); assert.equal(orb.morph(), 0, 'clamped low');
+  orb.stop();
+});
+
+test('thinking-orb: morphTo(1, ms) tweens the radius and alpha up on the draw clock, eased out, from wherever it is', () => {
+  const { doc, rec } = makeDoc();
+  const { win, calls } = makeWin();
+  const orb = createThinkingOrb({ doc, win, size: 30 });
+  orb.morphTo(0, 0);
+  win._t = 1000;
+  orb.morphTo(1, 500);
+  assert.equal(orb.morph(), 0, 'starts from the current factor');
+  win._t = 1250;
+  const mid = orb.morph();
+  assert.ok(mid > 0.5 && mid < 1, `ease-out: past half way at half time (${mid})`);
+  calls.raf.shift()();
+  const midMax = Math.max(...dist(rec.arcs.slice(-ORB_DOTS), 15));
+  assert.ok(midMax > 12 * mid - 0.3 && midMax < 12 * mid + 0.3, 'the sphere radius is R × factor');
+  const midAlphas = rec.fills.slice(-ORB_DOTS).map(alphaOf);
+  assert.ok(Math.max(...midAlphas) < 0.9 * mid + 0.01, 'alpha scales with the factor too');
+  win._t = 1500;
+  assert.equal(orb.morph(), 1, 'whole at the end of the tween');
+  win._t = 9000;
+  assert.equal(orb.morph(), 1, 'and it stays there');
+  // reversing mid-tween starts from the current value, not from 1
+  win._t = 9000; orb.morphTo(0, 800);
+  win._t = 9400;
+  const back = orb.morph();
+  assert.ok(back > 0 && back < 0.5, `sinking back from 1, past half way at half time (${back})`);
+  orb.stop();
+});
+
+test('thinking-orb: under prefers-reduced-motion a timed morph snaps (the CSS side is an instant swap there too)', () => {
+  const { doc } = makeDoc();
+  const { win } = makeWin();
+  win.matchMedia = () => ({ matches: true });
+  const orb = createThinkingOrb({ doc, win, size: 30 });
+  win._t = 100;
+  orb.morphTo(0, 600);
+  assert.equal(orb.morph(), 0, 'no tween: already there');
+  orb.morphTo(1, 600);
+  assert.equal(orb.morph(), 1);
+  orb.stop();
+});
+
 test('thinking-orb: the phase is wall-clock, so re-parenting never rewinds the spin', () => {
   const { doc, rec } = makeDoc();
   const { win, calls } = makeWin();

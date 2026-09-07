@@ -73,6 +73,23 @@ test('the Ask sheet logos are decorative spans, no <img>, no favicon src', () =>
   ctx.panel.destroy();
 });
 
+test('the pill mark sits in a 22px host beside the thinking orb — a mask clips children, so the orb is a sibling, not a child', () => {
+  const host = ruleBody('.ask-pill-mark');
+  assert.ok(host, '.ask-pill-mark rule');
+  assert.match(host, /position:\s*relative/);
+  assert.match(host, /width:\s*22px/); assert.match(host, /height:\s*22px/);
+  assert.match(host, /flex:\s*0 0 auto/, 'the slot never changes size: label and kbd stay put');
+  assert.doesNotMatch(host, /mask/, 'the host itself is unmasked, or it would clip the orb too');
+  const ctx = makePanel({});
+  const mark = ctx.doc.querySelector('.ask-pill > .ask-pill-mark');
+  assert.ok(mark, 'the host is the pill\'s first child');
+  assert.equal(mark.tagName, 'SPAN');
+  assert.ok(mark.querySelector(':scope > .ask-pill-logo'), 'the masked span is inside the host');
+  assert.ok(mark.querySelector(':scope > .ask-orb'), 'and so is the orb, as a sibling of the masked span');
+  assert.equal(mark.querySelector('.ask-pill-logo .ask-orb'), null, 'never nested under the mask');
+  ctx.panel.destroy();
+});
+
 test('the rail select chevron is a token-coloured ::after on a wrapper, not a baked-hex data-URI', () => {
   const sel = ruleBody('.ins-panel .ins-select');
   assert.ok(sel, '.ins-panel .ins-select rule');
