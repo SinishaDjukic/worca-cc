@@ -3008,8 +3008,18 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-kbd{padding:3px 7px;border-radius:7px;background:var(--field);color:var(--ink-3);
   font-family:var(--mono);font-weight:400;font-size:10.5px;}
 
+/* Content cap. The sheet grows to the full dock, what is INSIDE it does not: the
+   transcript column and the composer box share --ask-col-max and centre under it,
+   so at the default 782px sheet nothing moves and a wide sheet reads as a column.
+   --ask-col-inset is the box's distance from the sheet edge (the band padding until
+   the cap bites, then the centring remainder) — the composer popovers stay children
+   of the sheet (their max-height:70% means the sheet's height) and anchor to it.
+   --ask-box-top is the sheet bottom → box top distance with an empty one-line
+   composer: 14px band padding + box (1 border + 8 padding + ~36 textarea + 4 gap +
+   31 row + 8 padding + 1 border); the jump pill and the popovers float above it. */
 .ask-sheet{pointer-events:auto;position:relative;display:flex;flex-direction:column;overflow:hidden;
   width:min(782px,100%);height:min(669px,calc(100% - 20px));max-width:100%;max-height:calc(100% - 20px);
+  --ask-col-max:880px;--ask-col-inset:max(16px,calc(50% - var(--ask-col-max) / 2));--ask-box-top:103px;
   background:var(--panel);
   border:1px solid var(--line-2);border-radius:var(--r-card);
   box-shadow:var(--shadow-sheet);
@@ -3035,7 +3045,10 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-icon-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
 .ask-transcript{position:relative;flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
-  padding:18px 20px 8px;display:flex;flex-direction:column;gap:16px;}
+  padding:18px 20px 8px;}
+/* .ask-transcript is only the scrollport; every message lands in this column
+   (ask-panel.mjs renderTranscript), which carries the stack + gap and the cap. */
+.ask-transcript-col{width:100%;max-width:var(--ask-col-max);margin-inline:auto;display:flex;flex-direction:column;gap:16px;}
 .ask-msg{display:flex;flex-direction:column;gap:6px;animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
 .ask-user-bubble{align-self:flex-end;max-width:78%;padding:10px 14px;border-radius:16px 16px 4px 16px;
   background:var(--field);color:var(--ink);font-size:13.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}
@@ -3346,7 +3359,7 @@ body.rail-collapsed .ask-dock{left:76px;}
   .ask-wfcard-step.is-live .st-label{background:none;-webkit-background-clip:border-box;background-clip:border-box;color:var(--ink-2);animation:none;}
 }
 
-.ask-jump{position:absolute;left:0;right:0;bottom:104px;margin:0 auto;width:max-content;
+.ask-jump{position:absolute;left:0;right:0;bottom:calc(var(--ask-box-top) + 9px);margin:0 auto;width:max-content;
   display:flex;align-items:center;gap:7px;padding:6px 12px;border:1px solid var(--line-2);border-radius:999px;
   background:var(--panel);color:var(--ink);font-family:inherit;font-weight:600;font-size:11.5px;cursor:pointer;
   box-shadow:var(--shadow-hover);transition:border-color .15s;}
@@ -3354,8 +3367,15 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-jump[hidden]{display:none;}
 .ask-jump:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
-.ask-composer{position:relative;flex:0 0 auto;border-top:1px solid var(--line);padding:10px 12px 11px;
-  display:flex;flex-direction:column;gap:4px;}
+/* The band is the padded outer strip (no border-top: the box is the separation);
+   the box holds chips → textarea → msg → row, rounded and bordered, on the same
+   cap as the transcript column. Panel background, not field: the textarea keeps
+   the contrast baseline (scripts/verify-theme-cdp.mjs) it has today. */
+.ask-composer{position:relative;flex:0 0 auto;padding:10px 16px 14px;display:flex;flex-direction:column;}
+.ask-composer-box{width:100%;max-width:var(--ask-col-max);margin-inline:auto;padding:8px 10px;
+  border:1px solid var(--line-2);border-radius:16px;background:var(--panel);
+  display:flex;flex-direction:column;gap:4px;transition:border-color .15s;}
+.ask-composer-box:focus-within{border-color:var(--ink-3);}
 .ask-chips{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px 4px;}
 .ask-chips[hidden]{display:none;}
 .ask-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 8px 5px 9px;border:1px solid var(--line);
@@ -3401,9 +3421,12 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-pop{position:absolute;z-index:3;background:var(--panel);border:1px solid var(--line-2);
   padding:6px;box-shadow:var(--shadow-menu);border-radius:16px;}
 .ask-pop-threads{top:46px;right:76px;width:326px;}
-.ask-pop-scope{left:16px;bottom:44px;width:300px;max-height:min(420px,70%);overflow-y:auto;}
-.ask-pop-model{right:30px;bottom:42px;width:292px;border-radius:18px;}
-.ask-pop-runinfo{right:96px;bottom:44px;width:326px;z-index:4;}
+/* The composer popovers hug the box (--ask-col-inset, see .ask-sheet) and float
+   just above it (--ask-box-top); agents/worktrees keep their old offsets left of
+   the model popover. */
+.ask-pop-scope{left:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:300px;max-height:min(420px,70%);overflow-y:auto;}
+.ask-pop-model{right:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:292px;border-radius:18px;}
+.ask-pop-runinfo{right:calc(var(--ask-col-inset) + 66px);bottom:calc(var(--ask-box-top) + 6px);width:326px;z-index:4;}
 /* The chip picker (ask-panel.mjs openChipPicker) is the only JS-positioned panel: a band
    chip sits wherever the transcript scrolled it. Its rows are the WHOLE model catalog, so
    the menu outgrows the sheet, which clips -- the same cap .ask-pop-scope carries keeps
@@ -3475,9 +3498,9 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-runinfo-name{font-family:var(--mono);font-size:11.5px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ask-runinfo-sub{font-family:var(--mono);font-size:10px;color:var(--ink-3);}
 .ask-runinfo-elapsed{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--seq);}
-/* .ask-pop-worktrees inherits .ask-pop-runinfo's right/bottom offset, which is
+/* .ask-pop-worktrees inherits .ask-pop-runinfo's bottom offset, which is
    calibrated for the AGENTS button; the worktrees button sits to its left. */
-.ask-pop-worktrees{min-width:340px;right:187px;}
+.ask-pop-worktrees{min-width:340px;right:calc(var(--ask-col-inset) + 157px);}
 .ask-wt-row .ask-runinfo-sub.ask-wt-path{cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;}
 .ask-wt-row .ask-thread-trash{flex:none;}
 

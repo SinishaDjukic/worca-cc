@@ -197,7 +197,7 @@ test('ui-ask-style: the composer-row scope pill never shrinks and its popover op
   assert.match(ruleBody('.ask-scope-btn') || '', /flex:none/, 'in the composer row next to "+" — the pill keeps its width, the spacer absorbs the slack');
   const pop = ruleBody('.ask-pop-scope') || '';
   assert.match(pop, /bottom:/, 'the scope popover is anchored to the bottom, above its composer-row trigger');
-  assert.match(pop, /left:16px/);
+  assert.match(pop, /left:var\(--ask-col-inset\)/, 'flush with the composer box\'s left edge, wherever the cap centres it');
   assert.doesNotMatch(pop, /top:46px/, 'no longer anchored to the header');
   assert.match(pop, /max-height:min\(420px,70%\)/);
   assert.match(pop, /overflow-y:auto/);
@@ -267,6 +267,57 @@ test('ui-ask-style: the sheet caps itself to the dock so an inline size can neve
   assert.match(t, /flex:1 1 auto/, 'the transcript absorbs every extra pixel of height');
   assert.match(t, /min-height:0/);
   assert.match(t, /overflow-y:auto/);
+});
+
+test('ui-ask-style: a wide sheet caps its content — the transcript column and the composer box share one max width, centred', () => {
+  // The cap is one token on the sheet so the column, the box and the popover
+  // insets can never drift apart. 880px: invisible at the default 782px sheet,
+  // it only bites once the sheet is dragged wider.
+  const sheet = ruleBody('.ask-sheet');
+  assert.match(sheet, /--ask-col-max:880px/, 'the cap lives on the sheet');
+  const col = ruleBody('.ask-transcript-col');
+  assert.ok(col, '.ask-transcript-col rule exists');
+  assert.match(col, /width:100%/);
+  assert.match(col, /max-width:var\(--ask-col-max\)/);
+  assert.match(col, /margin-inline:auto/, 'centred inside the scrollport');
+  assert.match(col, /display:flex;flex-direction:column;gap:16px/, 'the message stack moved here from .ask-transcript');
+  const t = ruleBody('.ask-transcript');
+  assert.doesNotMatch(t, /display:flex|gap:/, '.ask-transcript is only the scrollport now');
+  assert.match(t, /overscroll-behavior:contain/, 'still the scrollport');
+  assert.match(t, /position:relative/);
+  // the composer box: rounded, bordered, same cap, centred under the column
+  const box = ruleBody('.ask-composer-box');
+  assert.ok(box, '.ask-composer-box rule exists');
+  assert.match(box, /width:100%/);
+  assert.match(box, /max-width:var\(--ask-col-max\)/);
+  assert.match(box, /margin-inline:auto/);
+  assert.match(box, /border:1px solid var\(--line-2\)/);
+  assert.match(box, /border-radius:16px/);
+  assert.match(box, /background:var\(--panel\)/, 'panel, not field: the textarea keeps its contrast baseline');
+  assert.match(box, /display:flex;flex-direction:column;gap:4px/, 'chips → textarea → msg → row stack inside the box');
+  assert.match(ruleBody('.ask-composer-box:focus-within') || '', /border-color:var\(--ink-3\)/, 'typing lifts the border');
+  const composer = ruleBody('.ask-composer');
+  assert.doesNotMatch(composer, /border-top/, 'the separation moved from the band to the box');
+  assert.match(composer, /padding:10px 16px 14px/, 'the band is the padded outer strip');
+  assert.match(composer, /position:relative/);
+});
+
+test('ui-ask-style: the composer popovers follow the box, not the sheet corners', () => {
+  // The popovers stay children of .ask-sheet (its height is what their
+  // max-height:70% means), so their horizontal anchor is the box\'s own inset:
+  // the band padding until the cap bites, then the centring remainder.
+  const sheet = ruleBody('.ask-sheet');
+  assert.match(sheet, /--ask-col-inset:max\(16px,calc\(50% - var\(--ask-col-max\) \/ 2\)\)/, 'inset = max(band padding, centring remainder)');
+  assert.match(sheet, /--ask-box-top:103px/, 'sheet bottom → box top with an empty one-line composer: 14px band + 1+8+36+4+31+8+1 box');
+  assert.match(ruleBody('.ask-pop-scope') || '', /left:var\(--ask-col-inset\);bottom:calc\(var\(--ask-box-top\) \+ 6px\)/, 'scope: box left edge, floats above the box');
+  assert.match(ruleBody('.ask-pop-model') || '', /right:var\(--ask-col-inset\);bottom:calc\(var\(--ask-box-top\) \+ 6px\)/, 'model: box right edge');
+  assert.match(ruleBody('.ask-pop-runinfo') || '', /right:calc\(var\(--ask-col-inset\) \+ 66px\);bottom:calc\(var\(--ask-box-top\) \+ 6px\)/, 'agents: the same 66px left of the model popover as before');
+  assert.match(ruleBody('.ask-pop-worktrees') || '', /right:calc\(var\(--ask-col-inset\) \+ 157px\)/, 'worktrees: the same 157px left of the model popover as before');
+  assert.match(ruleBody('.ask-jump') || '', /bottom:calc\(var\(--ask-box-top\) \+ 9px\)/, 'the jump pill floats just above the box');
+  // untouched: the threads popover hangs off the header, the chip picker is JS-positioned
+  assert.match(ruleBody('.ask-pop-threads') || '', /top:46px;right:76px/);
+  assert.doesNotMatch(ruleBody('.ask-pop-chip') || '', /--ask-col-inset|--ask-box-top/);
+  assert.doesNotMatch(ruleBody('.ask-pop-at') || '', /--ask-col-inset|--ask-box-top/);
 });
 
 test('ui-ask-style: the pill wave is a permanent ::before that .is-live fades in and drifts with transform only', () => {

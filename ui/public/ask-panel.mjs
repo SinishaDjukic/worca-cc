@@ -106,8 +106,9 @@ export const ASK_SHEET_SIZE = Object.freeze({
 });
 /**
  * Where the chip picker's panel sits inside the sheet (sheet-relative px, from
- * sheet-relative chip edges). Every other .ask-pop is CSS-anchored to a fixed
- * corner; a band chip sits wherever the transcript scrolled it, and .ask-sheet
+ * sheet-relative chip edges). Every other .ask-pop is CSS-anchored (the header
+ * corner, or the composer box's inset — style.css --ask-col-inset); a band chip
+ * sits wherever the transcript scrolled it, and .ask-sheet
  * clips (overflow:hidden), so a downward-only anchor chops the menu's Effort row
  * off with no way to reach it. Prefer the space under the chip, flip above it
  * when the menu would not fit, and clamp into the sheet when neither side has
@@ -306,6 +307,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.transcript = make('div', 'ask-transcript');
     el.transcript.setAttribute('data-ask-scroll', '');
     el.transcript.addEventListener('scroll', updatePinFromScroll);
+    // The transcript is only the scrollport; every row lands in this column,
+    // which style.css caps (--ask-col-max) and centres once the sheet is
+    // dragged wider than the cap. Scroll/pin logic keeps reading el.transcript.
+    el.transcriptCol = make('div', 'ask-transcript-col');
+    el.transcript.appendChild(el.transcriptCol);
     sheet.appendChild(el.transcript);
 
     sheet.appendChild(buildComposer());
@@ -520,10 +526,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function buildComposer() {
     const wrap = make('div', 'ask-composer');
+    // The band is the padded outer strip; the rounded, bordered box inside it
+    // holds chips → textarea → msg → row and shares the transcript column's cap
+    // (style.css .ask-composer-box), so both centre together in a wide sheet.
+    const box = make('div', 'ask-composer-box');
+    el.composerBox = box;
+    wrap.appendChild(box);
 
     el.chips = make('div', 'ask-chips');
     el.chips.hidden = true;
-    wrap.appendChild(el.chips);
+    box.appendChild(el.chips);
 
     el.input = doc.createElement('textarea');
     el.input.className = 'ask-input';
@@ -533,11 +545,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMessage(); }
     });
     el.input.addEventListener('input', fitInput);
-    wrap.appendChild(el.input);
+    box.appendChild(el.input);
 
     el.composerMsg = make('div', 'ask-composer-msg');
     el.composerMsg.hidden = true;
-    wrap.appendChild(el.composerMsg);
+    box.appendChild(el.composerMsg);
 
     const row = make('div', 'ask-composer-row');
 
@@ -556,7 +568,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // independent of the page behind the sheet. It sits right after "+"
     // (attach → scope → spacer → meter …): the pill keeps its width (style.css
     // .ask-scope-btn flex:none), the spacer absorbs the slack. Its popover
-    // (.ask-pop-scope) opens upward from the sheet's bottom-left.
+    // (.ask-pop-scope) opens above the composer box, flush with its left edge.
     const scopeBtn = make('button', 'ask-scope-btn');
     scopeBtn.type = 'button';
     scopeBtn.setAttribute('data-ask-scope-btn', '');
@@ -639,7 +651,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.stop.addEventListener('click', stopTurn);
     row.appendChild(el.stop);
 
-    wrap.appendChild(row);
+    box.appendChild(row);
     return wrap;
   }
 
@@ -2770,12 +2782,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.model) for (const row of st.model.messages()) for (const b of row.blocks || []) if (b && b.kind === 'card' && b.id != null) keep.add(b.id);
     pruneCardEls(keep);
     st.rowEls = new Map();
-    el.transcript.replaceChildren();
+    el.transcriptCol.replaceChildren();
     if (!st.model) return;
     for (const row of st.model.messages()) {
       const entry = buildMessage(row);
       st.rowEls.set(row.id, entry);
-      el.transcript.appendChild(entry.el);
+      el.transcriptCol.appendChild(entry.el);
     }
   }
 
