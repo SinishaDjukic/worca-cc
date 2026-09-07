@@ -51,7 +51,7 @@ test('ui-ask-style: the sheet uses wr-rise and the card radius token', () => {
   const sheet = ruleBody('.ask-sheet');
   assert.match(sheet, /animation:wr-rise/);
   assert.match(sheet, /var\(--r-card\)/);
-  assert.match(sheet, /width:min\(782px/);
+  assert.match(sheet, /width:min\(821px/);
   assert.match(sheet, /height:min\(669px/);
 });
 
@@ -261,7 +261,7 @@ test('ui-ask-style: the sheet caps itself to the dock so an inline size can neve
   const sheet = ruleBody('.ask-sheet');
   assert.match(sheet, /max-width:100%/);
   assert.match(sheet, /max-height:calc\(100% - 20px\)/, 'keeps the 20px top gap the default height leaves');
-  assert.ok(!/min-width|min-height/.test(sheet), 'the 782×669 floor lives in JS only — a CSS floor would overflow narrow viewports');
+  assert.ok(!/min-width|min-height/.test(sheet), 'the 821×669 floor lives in JS only — a CSS floor would overflow narrow viewports');
   assert.match(sheet, /overflow:hidden/, 'the sheet still clips; .ask-transcript is the scrollport');
   const t = ruleBody('.ask-transcript');
   assert.match(t, /flex:1 1 auto/, 'the transcript absorbs every extra pixel of height');
@@ -271,7 +271,7 @@ test('ui-ask-style: the sheet caps itself to the dock so an inline size can neve
 
 test('ui-ask-style: a wide sheet caps its content — the transcript column and the composer box share one max width, centred', () => {
   // The cap is one token on the sheet so the column, the box and the popover
-  // insets can never drift apart. 880px: invisible at the default 782px sheet,
+  // insets can never drift apart. 880px: invisible at the default 821px sheet,
   // it only bites once the sheet is dragged wider.
   const sheet = ruleBody('.ask-sheet');
   assert.match(sheet, /--ask-col-max:880px/, 'the cap lives on the sheet');
@@ -295,7 +295,10 @@ test('ui-ask-style: a wide sheet caps its content — the transcript column and 
   assert.match(box, /border-radius:16px/);
   assert.match(box, /background:var\(--panel\)/, 'panel, not field: the textarea keeps its contrast baseline');
   assert.match(box, /display:flex;flex-direction:column;gap:4px/, 'chips → textarea → msg → row stack inside the box');
-  assert.match(ruleBody('.ask-composer-box:focus-within') || '', /border-color:var\(--ink-3\)/, 'typing lifts the border');
+  // No focus-within override: the box keeps the same --line-2 grey while typing,
+  // so with no state left to change the colour the transition is dead weight too.
+  assert.ok(!ruleBody('.ask-composer-box:focus-within'), 'the border stays grey when focused');
+  assert.doesNotMatch(box, /transition:border-color/, 'nothing animates a border-color that never changes');
   const composer = ruleBody('.ask-composer');
   assert.doesNotMatch(composer, /border-top/, 'the separation moved from the band to the box');
   assert.match(composer, /padding:10px 16px 14px/, 'the band is the padded outer strip');

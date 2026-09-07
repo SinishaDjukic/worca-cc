@@ -93,7 +93,7 @@ export function shortcutLabel(win) {
 
 /**
  * Sheet geometry shared with style.css: .ask-dock{padding:0 28px 26px} and
- * .ask-sheet{width:min(782px,100%);height:min(669px,calc(100% - 20px))}. The
+ * .ask-sheet{width:min(821px,100%);height:min(669px,calc(100% - 20px))}. The
  * user's size is clamped to [minW×minH, dock inner box]. The floor IS the
  * stylesheet default: the sheet grows from what it always was and never shrinks
  * below it, so every layout the fixed-size sheet was designed around (the
@@ -101,8 +101,8 @@ export function shortcutLabel(win) {
  * Border-box px throughout — the sheet has no padding.
  */
 export const ASK_SHEET_SIZE = Object.freeze({
-  defaultW: 782, defaultH: 669,
-  minW: 782, minH: 669,
+  defaultW: 821, defaultH: 669,
+  minW: 821, minH: 669,
   dockPadX: 28, dockPadBottom: 26, topGap: 20,
 });
 /**
@@ -761,7 +761,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
   }
 
-  /** Write the inline size, or clear it (null) so min(782px,100%) rules again. */
+  /** Write the inline size, or clear it (null) so min(821px,100%) rules again. */
   function applySize(size) {
     if (size) {
       el.sheet.style.width = `${size.w}px`;

@@ -487,7 +487,7 @@ test('ask-panel-card v2: the @ picker flips above the brief when the sheet would
   // jsdom lays nothing out, so the geometry is stated: a 669px sheet with the brief low in it
   // (bottom 620) and a 300px panel — under the brief the panel would end at 926, outside the
   // sheet, and .ask-sheet is overflow:hidden.
-  sheet.getBoundingClientRect = () => ({ top: 0, bottom: 669, left: 0, right: 782, width: 782, height: 669 });
+  sheet.getBoundingClientRect = () => ({ top: 0, bottom: 669, left: 0, right: 821, width: 821, height: 669 });
   Object.defineProperty(sheet, 'clientHeight', { configurable: true, value: 669 });
   brief.getBoundingClientRect = () => ({ top: 560, bottom: 620, left: 24, right: 700, width: 676, height: 60 });
   Object.defineProperty(ctx.window.HTMLElement.prototype, 'offsetHeight', {

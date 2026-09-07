@@ -3010,7 +3010,7 @@ body.rail-collapsed .ask-dock{left:76px;}
 
 /* Content cap. The sheet grows to the full dock, what is INSIDE it does not: the
    transcript column and the composer box share --ask-col-max and centre under it,
-   so at the default 782px sheet nothing moves and a wide sheet reads as a column.
+   so at the default 821px sheet nothing moves and a wide sheet reads as a column.
    --ask-col-inset is the box's distance from the sheet edge (the band padding until
    the cap bites, then the centring remainder) — the composer popovers stay children
    of the sheet (their max-height:70% means the sheet's height) and anchor to it.
@@ -3018,7 +3018,7 @@ body.rail-collapsed .ask-dock{left:76px;}
    composer: 14px band padding + box (1 border + 8 padding + ~36 textarea + 4 gap +
    31 row + 8 padding + 1 border); the jump pill and the popovers float above it. */
 .ask-sheet{pointer-events:auto;position:relative;display:flex;flex-direction:column;overflow:hidden;
-  width:min(782px,100%);height:min(669px,calc(100% - 20px));max-width:100%;max-height:calc(100% - 20px);
+  width:min(821px,100%);height:min(669px,calc(100% - 20px));max-width:100%;max-height:calc(100% - 20px);
   --ask-col-max:880px;--ask-col-inset:max(16px,calc(50% - var(--ask-col-max) / 2));--ask-box-top:103px;
   background:var(--panel);
   border:1px solid var(--line-2);border-radius:var(--r-card);
@@ -3374,8 +3374,7 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-composer{position:relative;flex:0 0 auto;padding:10px 16px 14px;display:flex;flex-direction:column;}
 .ask-composer-box{width:100%;max-width:var(--ask-col-max);margin-inline:auto;padding:8px 10px;
   border:1px solid var(--line-2);border-radius:16px;background:var(--panel);
-  display:flex;flex-direction:column;gap:4px;transition:border-color .15s;}
-.ask-composer-box:focus-within{border-color:var(--ink-3);}
+  display:flex;flex-direction:column;gap:4px;}
 .ask-chips{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px 4px;}
 .ask-chips[hidden]{display:none;}
 .ask-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 8px 5px 9px;border:1px solid var(--line);
@@ -3511,9 +3510,9 @@ body.rail-collapsed .ask-dock{left:76px;}
    size as inline width/height and clamps it to the dock; the max-* pair on
    .ask-sheet above is the backstop that keeps a stale inline size inside the
    dock (the rail collapsing changes the dock width without a window resize).
-   The floor (JS-only, the stylesheet default 782×669: the sheet grows, never
+   The floor (JS-only, the stylesheet default 821×669: the sheet grows, never
    shrinks) is not a CSS min-* on purpose — that would overflow narrow viewports
-   that width:min(782px,100%) handles today.
+   that width:min(821px,100%) handles today.
    Corners: the sheet clips at its rounded corner (inner radius = --r-card minus
    the 1px border), so a square corner grip's straight inset lines fall almost
    entirely outside the clip and only a ~3px sliver ever shows. Each corner is
