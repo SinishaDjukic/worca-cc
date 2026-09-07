@@ -72,7 +72,7 @@ test('--no-human without --yes: no proposal prompt, the run completes; on a save
   const h = runCli(['--help']);
   assert.match(h.stdout, /--workflow <id>\s+Saved pipeline template to run \(default: wf_default — the built-in graph\)/);
   assert.match(h.stdout, /auto \(= wf_auto\) lets worca pick the workflow per task/);
-  assert.match(h.stdout, /--no-human\s+Auto workflow only: no proposal, no clarify, no agent questions/);
+  assert.match(h.stdout, /--no-human\s+Auto workflow only: no proposal, no clarify, no agent questions \(loop-budget, recovery, cost and error pauses still apply\)/);
 });
 
 test('interactive: the proposal renders, revise re-asks, accept runs; cancel stops', async () => {

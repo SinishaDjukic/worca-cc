@@ -105,6 +105,21 @@ test('a non-finite cost is normalised to 0', () => {
   assert.equal(buildProposal({ round: 1, shape: built.shape, template: built.template, tunables: {}, registry: REG, models: MODELS }).costUsd, 0);
 });
 
+test('B1: a tunable model WITHOUT an effort paints effort "" (what resolveGraph runs) in the table AND the manifest, never the row\'s authored effort', () => {
+  const built = assembleShape({ name: 'Twin', taskKind: 'prompt', stages: [S('planner'), S('implementer'), S('reviewer')] }, { registry: REG });
+  // a composer-authored twin: the planner node carries model + effort in its config
+  const twin = { ...built.template, id: 'wf_twin', name: 'Twin', nodes: built.template.nodes.map((n) => (n.id === 'n_planner' ? { ...n, config: { model: 'claude-opus-5', effort: 'high' } } : n)) };
+  const p = (tunables) => {
+    const b = buildProposal({ round: 1, shape: built.shape, template: twin, match: { id: 'wf_twin', name: 'Twin' }, tunables, registry: REG, models: MODELS });
+    const cell = b.manifest.graph.nodes.find((n) => n.id === 'n_planner');
+    return [b.nodes.n_planner.model, b.nodes.n_planner.effort, cell.model, cell.effort];
+  };
+  assert.deepEqual(p({}), ['claude-opus-5', 'high', 'claude-opus-5', 'high'], 'no overlay: the row\'s own model + effort run');
+  assert.deepEqual(p({ n_planner: { model: 'claude-sonnet-5' } }), ['claude-sonnet-5', '', 'claude-sonnet-5', ''], 'a model without an effort: the resolver drops the row\'s effort, so neither the table nor the graph chips may show it');
+  assert.deepEqual(p({ n_planner: { model: 'claude-sonnet-5', effort: 'medium' } }), ['claude-sonnet-5', 'medium', 'claude-sonnet-5', 'medium']);
+  assert.deepEqual(p({ n_planner: { effort: 'medium' } }), ['claude-opus-5', 'medium', 'claude-opus-5', 'medium'], 'an effort alone overrides the row\'s effort');
+});
+
 test('mintAutoWorkflowId slugs the name, avoids reserved ids and bumps on collision', async () => {
   const taken = new Set(['wf_plan-and-build', 'wf_plan-and-build-2']);
   const exists = async (id) => taken.has(id);

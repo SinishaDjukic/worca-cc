@@ -77,8 +77,10 @@ export class GraphOrchestrator extends RunHarness {
     this.extrasFiles = [];
     // Auto workflow (spec §5): the decision loop's state. `feedback`/`round`/`prior`
     // ride the resume point while the run is undecided; `costUsd` is the running
-    // classifier spend shown in the proposal. `classify` is the test seam.
-    this._auto = { feedback: [], round: 0, prior: null, costUsd: 0 };
+    // classifier spend shown in the proposal. `pending` = the proposal that is OPEN
+    // (or the round a cost cap parked), replayed on resume without a classifier call.
+    // `classify` is the test seam.
+    this._auto = { feedback: [], round: 0, prior: null, costUsd: 0, pending: null };
     this._classify = typeof opts?.classify === 'function' ? opts.classify : null;
     Object.assign(this.state, {
       engine: 2,
@@ -149,7 +151,18 @@ export class GraphOrchestrator extends RunHarness {
     if (resume) {
       if (resume.manifest?.auto?.status !== 'deciding') return null;   // decided before the pause: the normal resume path
       const saved = resume.auto || {};
-      this._auto = { ...this._auto, feedback: Array.isArray(saved.feedback) ? [...saved.feedback] : [], round: Number(saved.round) || 0, prior: saved.prior || null };
+      this._auto = {
+        ...this._auto,
+        feedback: Array.isArray(saved.feedback) ? [...saved.feedback] : [],
+        round: Number(saved.round) || 0,
+        prior: saved.prior || null,
+        costUsd: Number.isFinite(Number(saved.costUsd)) ? Number(saved.costUsd) : 0,   // B5: the spend before the pause
+        // B4/B6: the proposal that was OPEN (or the round a cost cap parked) — replayed below without a classifier call
+        pending: saved.pending && saved.pending.shape && typeof saved.pending.shape === 'object' ? jsonClone(saved.pending) : null,
+      };
+      // resume() stamps titleProvisional only AFTER this hook (run-harness.mjs:1420); a point
+      // re-stamped while the replayed proposal is open must not lose the flag.
+      if (resume.titleProvisional === true) this.state.titleProvisional = true;
       this.humanInLoop = typeof saved.humanInLoop === 'boolean' ? saved.humanInLoop : (resume.manifest.auto.humanInLoop ?? this.humanInLoop);
     }
     try {
@@ -178,13 +191,37 @@ export class GraphOrchestrator extends RunHarness {
     for (;;) {
       this._checkAbort();
       this._checkPause();
-      this._auto.round += 1;
-      const round = this._auto.round;
+      // B4/B6: a pending proposal (a pause with the question open, a cost cap inside the round, a
+      // server restart) is re-proposed AS-IS: the assembler and the matcher are deterministic and
+      // free, so the user sees the SAME proposal and pays no second classifier bill. Not a new round.
+      const pending = this._auto.pending;
+      let round;
+      let classifyFor;
+      if (pending) {
+        round = Number(pending.round) || this._auto.round || 1;
+        this._auto.round = round;
+        classifyFor = async (input) => ({
+          shape: jsonClone(pending.shape), warnings: Array.isArray(pending.warnings) ? [...pending.warnings] : [],
+          attempts: 0, costUsd: 0, usage: { input_tokens: 0, output_tokens: 0 }, raw: '', model: input.model || null, replayed: true,
+        });
+        this._log('orchestrator', 'info', `auto: re-proposing round ${round} from the saved point (no classifier call)`);
+      } else {
+        this._auto.round += 1;
+        round = this._auto.round;
+        classifyFor = classify;
+      }
       let outcome;
       try {
-        outcome = await this._autoRound({ registry, models, model, fingerprint, extras, taskText, classify, round });
+        outcome = await this._autoRound({ registry, models, model, fingerprint, extras, taskText, classify: classifyFor, round });
       } catch (err) {
         if (isAbort(err) || isPause(err)) throw err;
+        if (pending && err instanceof ShapeError) {
+          // The saved shape no longer assembles (the registry changed while the run was parked):
+          // drop it and classify afresh in THIS resume instead of parking the run a second time.
+          this._log('orchestrator', 'warn', `auto: the saved proposal no longer assembles (${firstLine(err.message)}); classifying afresh`);
+          this._auto.pending = null;
+          continue;
+        }
         if (err instanceof ClassifierError || err instanceof ShapeError) {
           // spec D17 / §5.6: the shell's failure policy parks the run (setup site ⇒
           // pause, reason 'error', detail = the message) and the resume point keeps
@@ -195,9 +232,22 @@ export class GraphOrchestrator extends RunHarness {
       }
       const { proposal, template, match, tunables, shape } = outcome;
       this._checkPause();   // a pause requested while the classifier was out parks the run BEFORE any row is written
+      if (this.humanInLoop) {
+        // B6: the proposal may stay open for hours. Stamp the current decision state on the row
+        // NOW, as the setup-incomplete point every Auto pause produces (run-harness.mjs
+        // _completePaused), so a server restart in this window reconciles to a RESUMABLE row
+        // that resumes into this very proposal. _autoAdopt nulls the point once decided; every
+        // throw below it goes through _decideTopology's catch, which rebuilds the point (pending included).
+        const rp = this._buildResumePoint(null);
+        rp.setupIncomplete = true;
+        rp.titleProvisional = this.state.titleProvisional === true;
+        this.state.resumePoint = rp;
+        await this._persist();
+      }
       const answer = this.humanInLoop
         ? await this._autoAsk(proposal, models, registry)
         : { decision: 'accept', name: proposal.name, nodes: {} };
+      this._auto.pending = null;                       // answered: the next round (revise) classifies afresh
       if (answer.decision === 'cancel') {
         this._log('orchestrator', 'info', 'auto: cancelled by the user');
         await appendAudit(this.pipeline.dir, 'Auto workflow **cancelled** by the user.').catch(() => {});
@@ -220,13 +270,13 @@ export class GraphOrchestrator extends RunHarness {
       taskText, extras, fingerprint, models, registry,
       domain: 'coding',                                // the domain the assembler stamps: coding + shared + general agents are offered
       humanInLoop: this.humanInLoop, feedback: [...this._auto.feedback], priorShape: this._auto.prior,
-      // cwd = the run's scratch dir (spec §4.5): it exists on both shells at hook time
-      // (run() creates it before the hook; resume() re-reads it from the point), it is
-      // never the user's live checkout, and — unlike runCwd — it does not depend on a
-      // worktree being attached. (runCwd IS set by the time resume() reaches the hook,
-      // run-harness.mjs:1360-1362; it is simply not the right directory for a
-      // tool-less reasoning call.)
-      model, cwd: this.pipeline.dir, bin: this.claude.bin, mock: this.claude.mock,
+      // D6 amendment (2026-09-07): the classifier may Grep/Glob/Read the RUN'S OWN checkout to
+      // size the change — this.runCwd is set by _setupRunRoot before the run() hook
+      // (run-harness.mjs:1641) and rehydrated before the resume() hook (:1360). It is never the
+      // user's live checkout. With no worktree (not a case a project run reaches today) it
+      // falls back to the scratch dir, text-only, exactly as before. (A detached WORKSPACE run's
+      // runCwd is the neutral run root whose repos/<key>/ checkouts sit below it — still readable.)
+      model, cwd: this.runCwd || this.pipeline.dir, repoLook: !!this.runCwd, bin: this.claude.bin, mock: this.claude.mock,
       // Stop OR pause ends the call (the same composition every node spawn uses).
       signal: AbortSignal.any([this.abort.signal, this.pauseAbort.signal]),
       envScrub: this.guardrails?.envScrub || undefined,
@@ -240,7 +290,10 @@ export class GraphOrchestrator extends RunHarness {
       try {
         assembled = assembleShape(classified.shape, { registry, humanInLoop: this.humanInLoop });
       } catch (err) {
-        if (!(err instanceof ShapeError)) throw err;
+        // A REPLAYED shape (B4/B6 resume) gets no second round here: `classify` is then the replay
+        // stub, which would only hand the same stale shape back. Let the ShapeError escape to
+        // _decideTopologyInner, which drops the pending proposal and classifies afresh.
+        if (!(err instanceof ShapeError) || classified.replayed) throw err;
         // ONE more classifier round with the assembler's issues as feedback (spec §5.3);
         // a second ShapeError propagates and pauses the run.
         const note = `The previous shape could not be assembled: ${err.issues.map((i) => i.message).join('; ')}. Fix it and reply with the full shape.`;
@@ -259,7 +312,11 @@ export class GraphOrchestrator extends RunHarness {
       if (spent > 0 || err?.usage) this._recordAutoCost(round, { costUsd: spent, usage: sumUsage(classified?.usage, err?.usage) }, startedAt, model, { checkCaps: false });
       throw err;
     }
-    this._recordAutoCost(round, classified, startedAt, model);
+    // B4: keep this round's shape (and the classifier's warnings) from here on — a cost cap raised
+    // by _recordAutoCost below, or a pause while the proposal is open, resumes into it instead of
+    // paying for a new classification. Set BEFORE the cost row: the cap check lives inside it.
+    this._auto.pending = { round, shape: jsonClone(assembled.shape), warnings: [...(classified.warnings || [])] };
+    if (!classified.replayed) this._recordAutoCost(round, classified, startedAt, model);
     const match = findEquivalentWorkflow(assembled.template, await autoCandidates());
     let template = assembled.template;
     let tunables = assembled.tunables;
@@ -295,6 +352,20 @@ export class GraphOrchestrator extends RunHarness {
   /** Reuse the twin or save a new row, resolve it with the accepted tunables as the ONLY overlay, re-stamp the manifest. */
   async _autoAdopt({ template, match, tunables, shape, answer, registry, round }) {
     const name = answer.name || shape.name;
+    if (!match) {
+      // B3: the twin search ran at proposal time; another Auto run, the composer or the chat may
+      // have saved this exact topology while the proposal was open. Reuse it now rather than
+      // write a duplicate — remapping the classifier's tunables AND the user's table edits
+      // (both keyed by the assembled node ids) onto the twin's node ids.
+      const late = findEquivalentWorkflow(template, await autoCandidates());
+      if (late) {
+        this._log('orchestrator', 'info', `auto: saved workflow "${late.candidate.name}" (${late.candidate.id}) appeared while the proposal was open — reusing it`);
+        match = late;
+        tunables = remapTunables(tunables, late.nodeMap);
+        answer = { ...answer, nodes: remapTunables(answer.nodes || {}, late.nodeMap) };
+        template = late.candidate;
+      }
+    }
     let workflowId;
     let via;
     if (match) {
@@ -554,7 +625,12 @@ export class GraphOrchestrator extends RunHarness {
       // Auto workflow: the decision state while UNDECIDED (spec §5.6); null once
       // the graph is adopted (workflowId is then the real id) and on saved workflows.
       auto: this.workflowId === AUTO_WORKFLOW_ID
-        ? { humanInLoop: this.humanInLoop, feedback: [...this._auto.feedback], round: this._auto.round, prior: this._auto.prior ? jsonClone(this._auto.prior) : null }
+        ? {
+          humanInLoop: this.humanInLoop, feedback: [...this._auto.feedback], round: this._auto.round,
+          prior: this._auto.prior ? jsonClone(this._auto.prior) : null,
+          costUsd: this._auto.costUsd,                                                   // B5
+          pending: this._auto.pending ? jsonClone(this._auto.pending) : null,            // B4/B6
+        }
         : null,
       guardrailsId: this.guardrailsId,
       checkpointRef: this.checkpointRef || null,

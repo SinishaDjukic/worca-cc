@@ -130,6 +130,19 @@ test('Accept posts the §5.4 payload with only the changed tunables and the edit
   assert.equal(panel.querySelector('select').disabled, true, 'selects are disabled too (A25)');
 });
 
+test('B1: a model change posts its effort even when that effort equals the base\'s (the resolver would otherwise drop it)', async () => {
+  const ctx = await boot(); helloRunning(ctx, { stepper: DECIDING }); ctx.showRunning();
+  const p = ask(ctx); const panel = panelOf(ctx);
+  // the fixture's FIRST node (clarify) carries model claude-sonnet-5 + effort medium; opus offers medium too, so
+  // the "keep the current effort" rule leaves effort at the BASE value — and the old diff dropped it.
+  const row = panel.querySelector(`.qtune tr[data-node-id="${p.order[0]}"]`);
+  assert.deepEqual([p.nodes[p.order[0]].model, p.nodes[p.order[0]].effort], ['claude-sonnet-5', 'medium'], 'fixture precondition');
+  const model = row.querySelector('select[aria-label^="Model"]'); model.value = 'claude-opus-5'; model.dispatchEvent(new ctx.window.Event('change'));
+  assert.equal(row.querySelector('select[aria-label^="Effort"]').value, 'medium', 'effort kept');
+  panel.querySelector('.wf-accept').click(); await settle(ctx.window);
+  assert.deepEqual(ctx.answers.at(-1).payload.nodes, { [p.order[0]]: { model: 'claude-opus-5', effort: 'medium' } }, 'model AND effort travel together');
+});
+
 test('Revise reveals the box, refuses empty text, posts the text; the next round shows the note', async () => {
   const ctx = await boot(); helloRunning(ctx, { stepper: DECIDING }); ctx.showRunning();
   ask(ctx); const panel = panelOf(ctx);
@@ -191,4 +204,13 @@ test('the Running detail paints its own panel for the same question (two mounts,
   assert.ok(detail && !detail.classList.contains('hidden'));
   assert.ok(detail.querySelector('.ask-wfcard-graph .gv-stage'));
   assert.notEqual(detail, panelOf(ctx));
+});
+
+test('B5: the cost line is max(Σ auto-classify rows, proposal.costUsd) — rows that undercount after a resume never hide the spend', async () => {
+  const ctx = await boot(); helloRunning(ctx, { stepper: DECIDING }); ctx.showRunning();
+  // resume() rehydrates no sub-agent rows: a resumed run's state carries only the rounds spawned since (here round 2's $0.01),
+  // while the proposal's own costUsd (restored from the resume point) is the whole spend ($0.02).
+  ctx.dispatch({ type: 'state', runId: RUN_ID, status: 'running', steps: [], stepper: DECIDING, subAgents: [{ id: 'auto-classify-2', label: 'Auto workflow (round 2)', subagentType: 'auto-classify', status: 'finished', nodeId: 'preflight', uiPhase: 'preflight', stepKey: 'x:preflight:1', costUsd: 0.01 }] });
+  ask(ctx, proposalFor(WEB_TASK, { round: 2 }));
+  assert.match(panelOf(ctx).querySelector('.ask-wfcard-meta').textContent, /^classifier ≈ \$0\.02 · /);
 });

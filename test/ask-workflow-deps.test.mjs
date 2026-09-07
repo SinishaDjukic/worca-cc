@@ -1,11 +1,12 @@
 // test/ask-workflow-deps.test.mjs — the propose_workflow dependency bundle: the REAL P1 pipeline offline.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdtempSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { addProject } from '../src/core/projects.mjs';
+import { gitDir } from './helpers/git-dir.mjs';
+import { addProject, worcaHome } from '../src/core/projects.mjs';
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 import { mockShapeFor, RECIPE_SHAPES } from '../src/core/auto/recipes.mjs';
@@ -49,10 +50,39 @@ test('propose (task mode): a plain prompt is the built-in Default\'s twin', asyn
   assert.equal(out.shape.taskKind, 'prompt');
 });
 
+test('propose (task mode) under mock never creates a repo-look checkout, even for a git project', async () => {
+  const deps = defaultWorkflowDeps({ threadId: null });
+  const p = (await addProject({ name: 'wflook', path: gitDir('wflook') })).find((x) => x.name === 'wflook');
+  await deps.workflow.propose({ mode: 'task', task: PLAIN_TASK, projectKey: p.key });
+  const askTmp = join(worcaHome(), 'tmp', 'ask');
+  const entries = existsSync(askTmp) ? readdirSync(askTmp) : [];
+  assert.ok(!entries.some((n) => n.startsWith('auto-look-')), `no auto-look-* under ${askTmp}: ${entries.join(', ')}`);
+  const reg = join(p.path, '.git', 'worktrees');
+  assert.ok(!existsSync(reg) || readdirSync(reg).length === 0, 'no worktree registered on the project');
+});
+
+test('propose (task mode) off mock: the classifier runs inside a throwaway auto-look checkout that is gone after the call', async () => {
+  delete process.env.WORCA_MOCK;                       // the injected seam below never spawns; only the checkout is real
+  try {
+    const seen = [];
+    const deps = defaultWorkflowDeps({ classify: async (input) => { seen.push({ ...input, existed: existsSync(input.cwd) }); return { shape: mockShapeFor(PLAIN_TASK), warnings: [], costUsd: 0 }; } });
+    const p = (await addProject({ name: 'wflook2', path: gitDir('wflook2') })).find((x) => x.name === 'wflook2');
+    const out = await deps.workflow.propose({ mode: 'task', task: PLAIN_TASK, projectKey: p.key });
+    assert.equal(out.ok, true);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].repoLook, true, 'the look is on');
+    assert.ok(seen[0].cwd.startsWith(join(worcaHome(), 'tmp', 'ask', 'auto-look-')), seen[0].cwd);
+    assert.equal(seen[0].existed, true, 'the checkout exists during the call');
+    assert.equal(existsSync(seen[0].cwd), false, 'and is removed after it');
+    const reg = join(p.path, '.git', 'worktrees');
+    assert.ok(!existsSync(reg) || readdirSync(reg).length === 0, 'and unregistered from the project');
+  } finally { process.env.WORCA_MOCK = '1'; }
+});
+
 test('propose (shape mode): a hand-authored shape is normalized, unknown models are dropped with a warning, the name override wins', async () => {
   const deps = defaultWorkflowDeps({ threadId: null });
   const p = await project('wfshape');
-  const shape = mockShapeFor('rename a symbol');                 // the trivial recipe: planner → implementer ⇄ reviewer (no twin in a fresh home)
+  const shape = mockShapeFor('rename a symbol');                 // the trivial recipe: implementer only (no twin in a fresh home)
   shape.stages[0].model = 'claude-nonexistent-9'; shape.stages[0].effort = 'high';
   const out = await deps.workflow.propose({ mode: 'shape', shape, name: 'Tiny fix', projectKey: p.key });
   assert.equal(out.name, 'Tiny fix');

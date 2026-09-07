@@ -26,7 +26,10 @@ bottom](screenshots/architecture.png)
 `wf_auto` is a reserved id, never a row. A run started on it gets a bootstrap
 manifest (`auto.status: 'deciding'`), and once the run row and run root exist the
 orchestrator's `_decideTopology()` hook runs the decision loop: one classifier
-call (`src/core/auto/classify.mjs`, no tools) whose agent vocabulary is built from
+call (`src/core/auto/classify.mjs`) — with a bounded read-only look at a detached
+checkout (`Read`/`Grep`/`Glob`, a 6-call prompt budget under a `--max-turns` cap;
+the run's own worktree, or a throwaway worktree `src/core/auto/repo-look.mjs` lends
+the chat's `propose_workflow`) — whose agent vocabulary is built from
 every registry entry's sidecar meta plus the agent file's YAML front matter
 (`src/core/frontmatter.mjs` — never the agent body) returns a small *shape*; the
 shared assembler (`src/shared/graph/assemble.mjs`) turns it into a validated v2
@@ -40,6 +43,13 @@ the loop* is off; on accept the run adopts the graph (a new row with `origin:
 classifier or assembler failure is rethrown into the shell's failure policy
 (`reason: 'error'`); a pause before the decision keeps the decision state in the
 resume point, and `resume()` re-enters the loop BEFORE the setup replay.
+
+While the proposal question is open the run row carries a setup-incomplete resume
+point with the pending proposal, so a pause, a cost cap or a server restart resumes
+into the same proposal without a second classifier call; Accept re-checks for a twin
+before saving a row. The recipe guide (`src/core/auto/recipes.mjs`) is an additive
+ladder — implementer only, + reviewer, + clarify/planner, + refiner — with the web
+test pair, the decomposer and the plan reviewer as signal-gated modifiers.
 
 Deep dives: [Guardrails](guardrails.md) · [Storage](storage.md)
 

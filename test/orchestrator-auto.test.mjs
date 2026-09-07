@@ -6,10 +6,11 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
-import { normalizeShape } from '../src/shared/graph/assemble.mjs';
-import { readWorkflow, listWorkflows } from '../src/core/workflows.mjs';
+import { normalizeShape, assembleShape } from '../src/shared/graph/assemble.mjs';
+import { readWorkflow, listWorkflows, writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { listSubAgents, readPipelineForResume } from '../src/core/artifacts.mjs';
 import { setHideBuiltinModels } from '../src/core/settings.mjs';
+import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 
 useTempHome(after);
 // settings/catalog lookups resolve under HOME (same sandbox as test/orchestrator-graph.test.mjs).
@@ -89,6 +90,11 @@ test('accept: the proposal carries the manifest, the dispatch order and editable
   assert.deepEqual(calls[0].feedback, []);
   assert.equal(typeof calls[0].model, 'string');
   assert.ok(calls[0].signal instanceof AbortSignal, 'the classifier gets the composed stop-or-pause signal');
+  // D6 amendment: the classifier runs inside the run's own worktree with the read-only repo look on.
+  assert.equal(calls[0].repoLook, true, 'the run path turns the repo look on');
+  assert.equal(calls[0].cwd, orch.runCwd, 'cwd is the run worktree, not the scratch dir');
+  assert.notEqual(calls[0].cwd, orch.pipeline.dir);
+  assert.equal(orch.getState().branch.worktreeDir, calls[0].cwd, 'the recorded worktree IS the classifier cwd');
   // adoption
   const st = orch.getState();
   assert.deepEqual(st.stepper.auto, { status: 'decided', via: 'created', rounds: 1, humanInLoop: true, workflowId: 'wf_my-flow' });
@@ -257,4 +263,29 @@ test('under mock with no injected classifier the recipes answer and a saved work
   const r2 = await saved.run();
   assert.equal(r2.status, 'done', r2.error);
   assert.equal(saved.getState().stepper.auto, undefined);
+});
+
+test('B3: a twin saved while the proposal is open is reused at Accept instead of writing a duplicate row', { timeout: 120000 }, async () => {
+  const SMALL = { name: 'Small change', taskKind: 'prompt', stages: [S('implementer'), S('reviewer')] };   // no earlier test in this file adopts this topology
+  const before = await ids();
+  const { classify } = scripted([SMALL]);
+  const orch = orchFor({ classify });
+  const REG = loadAgentRegistry(undefined, { userAgentsDir: null, includePlugins: false });
+  let matchAtProposal = 'unset';
+  orch.on('question', (q) => {
+    if (q.kind !== 'workflow') { setImmediate(() => orch.answer(q.id, q.kind === 'clarify' || q.kind === 'questions' ? { answers: [] } : { decision: 'continue' })); return; }
+    matchAtProposal = q.workflow.match;
+    // someone (another run, the composer, the chat) saves the same topology while the question is open
+    const built = assembleShape(SMALL, { registry: REG });
+    writeGraphWorkflow({ ...built.template, id: 'wf_meanwhile', name: 'Meanwhile', domain: 'coding' })
+      .then(() => orch.answer(q.id, { decision: 'accept', name: 'Small change', nodes: { n_implementer: { model: 'claude-opus-5', effort: 'high' } } }));
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  assert.equal(matchAtProposal, null, 'nothing matched at proposal time');
+  const st = orch.getState();
+  assert.deepEqual(st.stepper.auto, { status: 'decided', via: 'reused', rounds: 1, humanInLoop: true, workflowId: 'wf_meanwhile' });
+  assert.deepEqual(await ids(), [...before, 'wf_meanwhile'].sort(), 'no duplicate row');
+  const impl = st.stepper.graph.nodes.find((n) => n.key === 'implementer');
+  assert.deepEqual([impl.model, impl.effort], ['claude-opus-5', 'high'], 'the table edit was remapped onto the twin\'s node ids');
 });

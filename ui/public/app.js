@@ -4116,7 +4116,9 @@ function renderWorkflowBody(r, panel, pq) {
   const wf = { name: w.name || '', nodes: {}, handle: null };   // nodes: edits only (diff against `base`)
   panel.__wf = wf;
   const classifyRows = (r.subAgents || []).filter((s) => s && s.subagentType === 'auto-classify');
-  const costUsd = classifyRows.length ? classifyRows.reduce((sum, s) => sum + (Number(s.costUsd) || 0), 0) : w.costUsd;
+  // B5: resume() does not rehydrate sub-agent rows, so after a resume the rows undercount; the
+  // proposal's own costUsd (restored from the resume point) is the floor.
+  const costUsd = Math.max(classifyRows.reduce((sum, s) => sum + (Number(s.costUsd) || 0), 0), Number(w.costUsd) || 0);
   const body = document.createElement('div');
   body.className = 'qbody';
   const handle = renderAutoProposal(w, { doc: document, order: AUTO_PROPOSAL_ORDER_QPANEL, costUsd, rounds: w.round, onName: (v) => { wf.name = v; } });
@@ -4166,6 +4168,11 @@ function renderWorkflowBody(r, panel, pq) {
     for (const [id, sel] of Object.entries(wf.nodes)) {
       const diff = {};
       for (const k of ['model', 'effort', 'fanOut', 'askQuestions']) if (sel[k] !== undefined && sel[k] !== (base[id] || {})[k]) diff[k] = sel[k];
+      // A model change carries its effort even when it equals the base's: the resolver drops a
+      // row's authored effort whenever the overlay names a model without one (workflows.mjs:664),
+      // so `{model}` alone would run with NO effort while this table showed one (B1). The model
+      // `change` handler always writes `sel.effort` next to `sel.model` (buildTunablesTable).
+      if (diff.model !== undefined && sel.effort !== undefined) diff.effort = sel.effort;
       if (Object.keys(diff).length) nodes[id] = diff;
     }
     postAnswer(r, { decision: 'accept', name: handle.getName(), nodes });

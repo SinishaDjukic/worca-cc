@@ -9,7 +9,7 @@ import { gitDir } from './helpers/git-dir.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { normalizeShape } from '../src/shared/graph/assemble.mjs';
 import { ClassifierError } from '../src/core/auto/classify.mjs';
-import { readPipelineForResume, listSubAgents } from '../src/core/artifacts.mjs';
+import { readPipelineForResume, listSubAgents, reconcileStaleRunning } from '../src/core/artifacts.mjs';
 import { setPipelineCostLimitUsd } from '../src/core/settings.mjs';
 
 useTempHome(after);
@@ -41,6 +41,27 @@ function spy(orch) {
   orch._restoreFromResumePoint = async (rp) => { restored.push(rp?.manifest?.auto?.status ?? null); return origRestore(rp); };
   return { order, restored };
 }
+/** Answer every workflow question with `onWorkflow`; clarify with no answers; gates continue. */
+function answerer(orch, onWorkflow) {
+  const seen = [];
+  orch.on('question', (q) => {
+    seen.push(q);
+    setImmediate(() => {
+      if (q.kind === 'workflow') orch.answer(q.id, onWorkflow(q));
+      else if (q.kind === 'clarify' || q.kind === 'questions') orch.answer(q.id, { answers: [] });
+      else orch.answer(q.id, { decision: 'continue' });
+    });
+  });
+  return seen;
+}
+/** Run to the open proposal and pause there (the worktree is KEPT — stop() would tear it down). */
+async function pausedOnProposal(dir, classify) {
+  const first = orchFor(dir, { humanInLoop: true, classify });
+  first.on('question', (q) => { if (q.kind === 'workflow') setImmediate(() => first.pause()); });
+  const r1 = await first.run();
+  assert.equal(r1.status, 'paused', JSON.stringify(r1));
+  return { first, saved: readPipelineForResume(first.getState().id) };
+}
 
 test('a classifier failure pauses the run through the failure policy before any graph exists; resume re-decides BEFORE the setup replay and finishes', { timeout: 120000 }, async () => {
   const dir = gitDir('auto-fail');
@@ -61,7 +82,7 @@ test('a classifier failure pauses the run through the failure policy before any 
   assert.equal(rp.pauseReason, 'error');
   assert.equal(rp.setupIncomplete, true, 'the hook sits before _setupDone: resume replays the setup');
   assert.equal(rp.manifest.auto.status, 'deciding');
-  assert.deepEqual(rp.auto, { humanInLoop: false, feedback: [], round: 1, prior: null });
+  assert.deepEqual(rp.auto, { humanInLoop: false, feedback: [], round: 1, prior: null, costUsd: 0.03, pending: null }, 'a round that never assembled leaves no pending proposal');
   assert.equal(rp.snapshot, null, 'nothing was dispatched');
 
   const calls = [];
@@ -152,5 +173,93 @@ test('a pause AFTER the decision resumes through the normal path: no classifier 
   assert.equal(r2.status, 'done', r2.error);
   assert.equal(calls, 1);
   assert.ok(!order.includes('_replaySetup') || order.indexOf('_decideTopology') < order.indexOf('_replaySetup'));
+  assert.equal(second.getState().stepper.auto.rounds, 1);
+});
+
+test('B4: a pause while the proposal is open resumes INTO the same proposal — no classifier call, no second cost row, round unchanged', { timeout: 120000 }, async () => {
+  const dir = gitDir('auto-pending-pause');
+  let calls = 0;
+  const { saved } = await pausedOnProposal(dir, async (input) => { calls += 1; return shapeOf(QUICK, 0.02)(input); });
+  assert.equal(saved.resumePoint.manifest.auto.status, 'deciding');
+  assert.equal(saved.resumePoint.setupIncomplete, true);
+  assert.deepEqual(saved.resumePoint.auto.pending && { round: saved.resumePoint.auto.pending.round, name: saved.resumePoint.auto.pending.shape.name, warnings: saved.resumePoint.auto.pending.warnings }, { round: 1, name: 'Quick fix', warnings: [] }, 'the open proposal rides the point');
+  assert.equal(saved.resumePoint.auto.costUsd, 0.02, 'the classifier spend rides the point (B5)');
+  const second = createOrchestrator({ projectDir: dir, claude: { mock: true }, resume: saved, classify: async () => { throw new Error('the classifier must not run again'); } });
+  const seen = answerer(second, () => ({ decision: 'accept', name: 'Quick fix', nodes: {} }));
+  const r2 = await second.resume();
+  assert.equal(r2.status, 'done', r2.error);
+  assert.equal(calls, 1);
+  assert.equal(seen.filter((q) => q.kind === 'workflow').length, 1, 'the SAME proposal is re-asked once');
+  assert.equal(seen[0].workflow.round, 1);
+  assert.equal(seen[0].workflow.costUsd, 0.02, 'proposal.costUsd includes the pre-pause spend');
+  assert.equal(second.getState().stepper.auto.rounds, 1, 'a replay is not a new round');
+  assert.deepEqual(listSubAgents(second.getState().id).filter((s) => s.subagentType === 'auto-classify').map((s) => s.id), ['auto-classify-1'], 'no second cost row');
+  assert.equal(readPipelineForResume(second.getState().id).row.resume_point, null, 'decided + done: the point is gone');
+});
+
+test('B4: a pipeline cost cap raised inside the classifier round resumes into the pending proposal without a second bill', { timeout: 120000 }, async () => {
+  const dir = gitDir('auto-pending-cap');
+  await setPipelineCostLimitUsd(0.01);
+  try {
+    const first = orchFor(dir, { classify: shapeOf(QUICK, 0.05) });
+    const r1 = await first.run();
+    assert.equal(r1.status, 'paused'); assert.equal(r1.reason, 'cost_pipeline');
+    const saved = readPipelineForResume(first.getState().id);
+    assert.equal(saved.resumePoint.auto.pending.shape.name, 'Quick fix', 'the round that tripped the cap is kept (pending is set BEFORE the cost row)');
+    assert.equal(saved.resumePoint.auto.costUsd, 0.05);
+    await setPipelineCostLimitUsd(10);
+    let calls = 0;
+    const second = createOrchestrator({ projectDir: dir, claude: { mock: true }, resume: saved, classify: async (i) => { calls += 1; return shapeOf(QUICK, 0.05)(i); } });
+    const r2 = await second.resume();
+    assert.equal(r2.status, 'done', r2.error);
+    assert.equal(calls, 0, 'replayed, not re-classified');
+    assert.equal(second.getState().stepper.auto.rounds, 1);
+    assert.equal(listSubAgents(second.getState().id).filter((s) => s.subagentType === 'auto-classify').length, 1);
+  } finally { await setPipelineCostLimitUsd(''); }
+});
+
+test('B4: a saved proposal that no longer assembles is dropped and the resume classifies afresh in the same call (no second pause)', { timeout: 120000 }, async () => {
+  const dir = gitDir('auto-pending-stale');
+  const { saved } = await pausedOnProposal(dir, shapeOf(QUICK, 0.02));
+  saved.resumePoint.auto.pending.shape.stages[0].agent = 'workspaceScanner';   // a real key the assembler refuses (placeable:false)
+  let calls = 0;
+  const second = createOrchestrator({ projectDir: dir, claude: { mock: true }, resume: saved, classify: async (i) => { calls += 1; return shapeOf(QUICK, 0.02)(i); } });
+  answerer(second, () => ({ decision: 'accept', name: 'Quick fix', nodes: {} }));
+  const r2 = await second.resume();
+  assert.equal(r2.status, 'done', r2.error);
+  assert.equal(calls, 1, 'one fresh classification');
+  assert.equal(second.getState().stepper.auto.rounds, 2, 'the stale replay is not a round; the fresh classification is');
+  assert.deepEqual(listSubAgents(second.getState().id).filter((s) => s.subagentType === 'auto-classify').map((s) => s.id), ['auto-classify-1', 'auto-classify-2']);
+});
+
+test('B6: a server restart while the proposal is open leaves a RESUMABLE row (setup-incomplete point with the pending proposal)', { timeout: 120000 }, async () => {
+  const dir = gitDir('auto-pending-restart');
+  const first = orchFor(dir, { humanInLoop: true, classify: shapeOf(QUICK, 0.02) });
+  const asked = new Promise((res) => { first.on('question', (q) => { if (q.kind === 'workflow') res(q); }); });
+  const running = first.run();                       // stays blocked on the open proposal
+  await asked;
+  const id = first.getState().id;
+  const live = readPipelineForResume(id);
+  assert.equal(live.row.status, 'running');
+  assert.ok(live.resumePoint, 'the row carries a point WHILE the proposal is open (persisted before the question went out)');
+  assert.equal(live.resumePoint.setupIncomplete, true, 'a pre-setup point: resume() replays the setup');
+  assert.equal(live.resumePoint.manifest.auto.status, 'deciding');
+  assert.equal(live.resumePoint.auto.pending.shape.name, 'Quick fix');
+  // The boot reconcile of a restarted server: the owner pid is dead ⇒ interrupted, the point untouched.
+  const flipped = reconcileStaleRunning({ liveIds: [], pidAlive: () => false, now: Date.now() + 24 * 3600 * 1000 });
+  assert.ok(flipped.ids.includes(id), `reconciled: ${JSON.stringify(flipped)}`);
+  const saved = readPipelineForResume(id);
+  assert.equal(saved.row.status, 'interrupted');
+  assert.ok(saved.resumePoint, 'still resumable');
+  assert.equal(saved.resumePoint.auto.pending.shape.name, 'Quick fix');
+  // Park the blocked process WITHOUT tearing its worktree down: stop() removes the checkout a resume
+  // needs (run-harness.mjs finally, :1232), a real crash leaves it in place — pause() keeps it. The
+  // in-memory `saved` (status interrupted) is what a fresh server would hand to resume().
+  first.pause(); await running;
+  const second = createOrchestrator({ projectDir: dir, claude: { mock: true }, resume: saved, classify: async () => { throw new Error('no re-classification after a restart'); } });
+  const seen = answerer(second, () => ({ decision: 'accept', name: 'Quick fix', nodes: {} }));
+  const r2 = await second.resume();
+  assert.equal(r2.status, 'done', r2.error);
+  assert.equal(seen[0].workflow.round, 1);
   assert.equal(second.getState().stepper.auto.rounds, 1);
 });

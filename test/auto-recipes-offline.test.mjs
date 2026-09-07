@@ -22,7 +22,7 @@ const S2 = (agent, extra = {}) => ({ agent, ...extra });
 test('mockShapeFor is deterministic and picks by cheap heuristics', () => {
   const trivial = mockShapeFor('demo task');
   assert.equal(trivial.taskKind, 'prompt');
-  assert.deepEqual(trivial.stages.map((s) => s.agent), ['planner', 'implementer', 'reviewer'], 'a short prompt is a quick fix');
+  assert.deepEqual(trivial.stages.map((s) => s.agent), ['implementer'], 'a short prompt is the trivial rung: implementer only');
   const prompt = mockShapeFor('Please add a background job that re-indexes the search catalogue every night and reports failures to the ops channel.');
   assert.deepEqual(prompt.stages.map((s) => s.agent), ['clarify', 'planner', 'refiner', 'implementer', 'reviewer']);
   assert.equal(prompt.stages[2].selfLoop, true);
@@ -45,44 +45,59 @@ test('mockShapeFor is deterministic and picks by cheap heuristics', () => {
   for (const s of [trivial, prompt, noHuman, web, plan, small]) normalizeShape(s);   // all canonical
 });
 
-test('RECIPE_GUIDE names every task kind, modifier and agent key; RECIPE_SHAPES all normalize', () => {
+test('RECIPE_GUIDE names every task kind, rung, modifier and agent key; RECIPE_SHAPES all normalize', () => {
   for (const k of ['prompt', 'plan-partial', 'plan-complete-detailed', 'plan-complete-small', 'web', 'large', 'risky', 'trivial']) assert.ok(RECIPE_GUIDE.includes(k), k);
-  // Substring checks alone are vacuous: pin the SHAPE of the guide too.
-  for (const line of ['- web / UI feature', '- large task', '- risky or large plan', '- trivial']) assert.ok(RECIPE_GUIDE.includes(line), line);
+  // Substring checks alone are vacuous: pin the SHAPE of the guide too — the five rungs and the three modifiers as line prefixes.
+  for (const line of ['- trivial', '- small', '- needs a plan', '- big plan', '- given plan, large', '- web / UI feature', '- large task', '- risky or large plan']) assert.ok(RECIPE_GUIDE.includes(`\n${line}`), line);
   for (const key of ['clarify', 'planner', 'refiner', 'implementer', 'reviewer', 'decomposer', 'planReviewer', 'manualTestsChecklist', 'manualWebUiTesting']) assert.ok(RECIPE_GUIDE.includes(key), key);
   assert.ok(RECIPE_GUIDE.includes('a stage after a parallel group waits for the whole group'), 'the group rule is taught');
   assert.ok(!RECIPE_GUIDE.includes('only as the LAST stage'), 'the old (false) terminal-only rule is gone');
-  assert.ok(RECIPE_SHAPES.length >= 12);
-  assert.ok(RECIPE_SHAPES.some((r) => r.id === 'parallel-mid'), 'a mid-workflow group is taught and tested');
+  assert.ok(RECIPE_SHAPES.length >= 15);
+  for (const id of ['trivial', 'small', 'needs-plan', 'plan-complete-large', 'parallel-mid']) assert.ok(RECIPE_SHAPES.some((r) => r.id === id), `recipe ${id}`);
+  assert.deepEqual(RECIPE_SHAPES.find((r) => r.id === 'trivial').shape.stages.map((s) => s.agent), ['implementer']);
+  assert.deepEqual(RECIPE_SHAPES.find((r) => r.id === 'small').shape.stages.map((s) => s.agent), ['implementer', 'reviewer']);
+  assert.deepEqual(RECIPE_SHAPES.find((r) => r.id === 'needs-plan').shape.stages.map((s) => s.agent), ['clarify', 'planner', 'implementer', 'reviewer']);
+  assert.deepEqual(RECIPE_SHAPES.find((r) => r.id === 'plan-complete-large').shape.stages.map((s) => s.agent), ['refiner', 'implementer', 'reviewer']);
+  assert.equal(RECIPE_SHAPES.find((r) => r.id === 'plan-complete-large').shape.taskKind, 'plan-complete-detailed', 'a given large plan keeps the plan-of-record seed');
   for (const r of RECIPE_SHAPES) { assert.ok(r.id); normalizeShape(r.shape); }
 });
 
 // The guide is rendered into BOTH selection paths (the Ask system prompt and the
-// classifier system prompt), so the sizing principle lives here once. Every extra
-// stage costs time and money; the web pair in particular used to fire on any UI
-// mention and even on the fingerprint alone.
-test('RECIPE_GUIDE opens with the sizing principle and reserves the web pair for a very big UI feature', () => {
+// classifier system prompt), so the sizing principle lives here once: an additive
+// ladder from the implementer up, one rung per concrete signal (2026-09-07).
+test('RECIPE_GUIDE opens with the ladder principle, ties clarify to the planner, and reserves the web pair for a very big UI feature', () => {
   const lines = RECIPE_GUIDE.split('\n');
   assert.ok(lines[0].startsWith('## Recipes (starting points'), 'the heading the Ask catalog pins stays first');
-  assert.ok(lines[1].includes('start from the SMALLEST recipe that fits the task kind'), 'the sizing principle is the first thing after the heading');
+  assert.ok(lines[1].includes('build the workflow UP from the implementer'), 'the sizing principle is the first thing after the heading');
   for (const t of ['add a stage only when a concrete signal in the task itself demands it', 'every extra stage must earn its cost', 'when unsure between two shapes, take the lighter one']) {
     assert.ok(RECIPE_GUIDE.includes(t), `sizing: "${t}"`);
   }
+  assert.ok(lines[2].startsWith('taskKind names what the user GAVE, never how big the work is'), 'taskKind is specification form, not size');
+  assert.ok(lines[2].includes('never label a prompt as a plan'), 'the plan-complete mislabel the live probe showed is forbidden');
+  const trivial = lines.find((l) => l.startsWith('- trivial'));
+  assert.ok(trivial.includes('implementer only') && trivial.includes('well-specified small change'), 'rung 1 is implementer only for a well-specified small change');
+  const small = lines.find((l) => l.startsWith('- small'));
+  assert.ok(small.includes('implementer ⇄ reviewer') && small.includes('bigger than one bounded edit'), 'rung 2 adds the reviewer');
+  const plan = lines.find((l) => l.startsWith('- needs a plan'));
+  assert.ok(plan.includes('clarify → planner → implementer ⇄ reviewer') && plan.includes('WHAT but not HOW'), 'rung 3 adds clarify + planner');
+  const big = lines.find((l) => l.startsWith('- big plan'));
+  assert.ok(big.includes('refiner (selfLoop)'), 'rung 4 adds the refiner');
+  const given = lines.find((l) => l.startsWith('- given plan, large'));
+  assert.ok(given.startsWith('- given plan, large — refiner (selfLoop) → implementer ⇄ reviewer'), 'a large given plan is refiner-first, no planner');
+  const clarify = lines.find((l) => l.startsWith('Clarify:'));
+  assert.ok(clarify.includes('only directly in front of a planner') && clarify.includes('only when a human is in the loop'), 'clarify is tied to the planner and to HITL');
   const web = lines.find((l) => l.startsWith('- web / UI feature'));
   assert.ok(web, 'the web modifier line survives');
   assert.ok(web.includes('ONLY for a very big user-facing UI feature'), 'the web pair is reserved for a very big UI feature');
   assert.ok(web.includes('never a trigger'), 'the fingerprint hint is context, never a trigger');
   assert.ok(web.includes('stays with the reviewer only'), 'small and medium UI changes stop at the reviewer');
   assert.ok(!web.includes('or the fingerprint says "web-ui likely"'), 'the old fingerprint trigger is gone');
-  assert.ok(!web.startsWith('- web / UI feature (pages, components, CSS, browser behaviour'), 'the old any-UI-mention trigger is gone');
   const large = lines.find((l) => l.startsWith('- large task'));
   const risky = lines.find((l) => l.startsWith('- risky or large plan'));
   assert.ok(large.includes('many files or subsystems') && large.includes('only when'), 'large is an exception with a real signal');
   assert.ok(risky.includes('irreversible or high-blast-radius') && risky.includes('only for'), 'risky is an exception with a real signal');
   assert.ok(lines.some((l) => l.startsWith('Modifiers') && l.includes('never a default')), 'modifiers are framed as exceptions');
-  const small = lines.find((l) => l.startsWith('- plan-complete-small'));
-  const trivial = lines.find((l) => l.startsWith('- trivial'));
-  assert.ok(small.includes('well-specified small change') || trivial.includes('well-specified small change'), 'a well-specified small change is steered to trivial or plan-complete-small');
+  assert.ok(!RECIPE_GUIDE.includes('start from the SMALLEST recipe that fits the task kind'), 'the taskKind-keyed base table is gone');
 });
 
 test('every recipe shape assembles and runs offline to the End card, with and without a human in the loop', { timeout: 300000 }, async () => {

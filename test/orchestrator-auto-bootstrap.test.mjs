@@ -37,7 +37,7 @@ test('the resume point of an undecided Auto run carries the decision state; a de
   const rp = orch._buildResumePoint(null);
   assert.equal(rp.version, 2);
   assert.equal(rp.workflowId, 'wf_auto');
-  assert.deepEqual(rp.auto, { humanInLoop: false, feedback: ['shorter'], round: 2, prior: null });
+  assert.deepEqual(rp.auto, { humanInLoop: false, feedback: ['shorter'], round: 2, prior: null, costUsd: 0, pending: null });
   assert.equal(rp.manifest.auto.status, 'deciding');
   const saved = createOrchestrator({ projectDir: process.cwd(), workflowId: 'wf_default', claude: { mock: true } });
   saved.pipeline = { id: 'p', dir: '/tmp/p', promptText: 'x' };

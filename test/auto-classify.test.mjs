@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   classifyTask, ClassifierError, buildClassifierSystemPrompt, buildClassifierUserPrompt, parseShapeReply, checkShapeModels,
   agentVocabulary, summarizeTools, renderAgentCards, shapeForPrompt, withCardsSignal, TASK_TEXT_CAP, EXTRA_TEXT_CAP,
+  REPO_LOOK_TOOLS, REPO_LOOK_MAX_TOOL_CALLS, REPO_LOOK_MAX_TURNS, REPO_LOOK_TIMEOUT_MS, CLASSIFIER_TIMEOUT_MS,
 } from '../src/core/auto/classify.mjs';
 import { normalizeShape, SHAPE_LIMITS } from '../src/shared/graph/assemble.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
@@ -89,7 +90,7 @@ test('the prompts carry the cards, the recipes, the models, the HITL rule, the f
   assert.ok(head.startsWith('You design a worca workflow for ONE software task.'), 'the opening line is unchanged');
   for (const s of ['the SMALLEST workflow that still does the work properly', 'each stage must be justified by the task',
     '"reasoning" must name why every stage beyond the minimum is there', '"size" and "signals" must be honest']) assert.ok(head.includes(s), `sizing directive: ${s}`);
-  assert.ok(sys.includes('start from the SMALLEST recipe that fits the task kind'), 'the recipe guide carries the same principle');
+  assert.ok(sys.includes('build the workflow UP from the implementer'), 'the recipe guide carries the same principle');
   assert.ok(!sys.includes('A human is in the loop'), 'the HITL sentences are mutually exclusive');
   assert.ok(!sys.includes('You are the **'), 'agent bodies never reach the classifier');
   assert.ok(!/worca-cc-[a-z-]+\.md/.test(sys), 'no file names or paths in the prompt');
@@ -150,6 +151,70 @@ test('a good reply classifies on the first attempt; cost, usage, the raw reply a
   assert.ok(o.systemPrompt.includes('Recipes') && o.systemPrompt.includes('purpose: ') && o.prompt.includes('Build the thing'));
 });
 
+test('the shape schema ties effort to model, the default-model line says "omit both", and the HITL sentence ties clarify to the planner', () => {
+  const sys = buildClassifierSystemPrompt({ agents: agentVocabulary(REG), models: MODELS, humanInLoop: true });
+  assert.ok(sys.includes('"effort"?: <effort> (only together with "model")'), 'an effort needs a model — the live probe paid a retry for this');
+  assert.ok(sys.includes('omit both "model" and "effort" to run on the default model'), 'the default-model line covers the effort too');
+  assert.ok(sys.includes('A human is in the loop: a clarifier stage may open a plain prompt that needs a planner'), 'clarify is conditional, matching the recipe ladder');
+  assert.ok(!sys.includes('open with a clarifier stage when the task is ambiguous'), 'the old unconditional wording is gone');
+  assert.ok(!sys.includes('## Repository'), 'text-only by default: no Repository section');
+});
+
+test('repoLook: the call carries Read/Grep/Glob, --max-turns and the Repository section; the default stays tool-less', async () => {
+  const look = fakeRun([reply(GOOD)]);
+  const r = await classifyTask(base({ repoLook: true, cwd: '/some/checkout' }), { run: look.run });
+  assert.equal(r.attempts, 1);
+  const o = look.calls[0];
+  assert.deepEqual(o.tools, ['Read', 'Grep', 'Glob']);
+  assert.deepEqual(o.allowedTools, ['Read', 'Grep', 'Glob']);
+  assert.equal(o.maxTurns, REPO_LOOK_MAX_TURNS);
+  assert.equal(o.cwd, '/some/checkout');
+  assert.equal(o.effort, 'medium');
+  assert.ok(o.systemPrompt.includes('## Repository'));
+  assert.ok(o.systemPrompt.includes(`at most ${REPO_LOOK_MAX_TOOL_CALLS} tool calls in total`));
+  assert.ok(o.systemPrompt.includes('Look only to SIZE the work, never to design it'));
+  assert.deepEqual(REPO_LOOK_TOOLS, ['Read', 'Grep', 'Glob']);
+  assert.equal(REPO_LOOK_MAX_TURNS, 10);
+  assert.equal(REPO_LOOK_TIMEOUT_MS, 240_000);
+  assert.equal(CLASSIFIER_TIMEOUT_MS, 90_000, 'the text-only timeout is unchanged');
+  const plain = fakeRun([reply(GOOD)]);
+  await classifyTask(base(), { run: plain.run });
+  assert.deepEqual(plain.calls[0].tools, []);
+  assert.deepEqual(plain.calls[0].allowedTools, []);
+  assert.equal(plain.calls[0].maxTurns, undefined);
+  assert.ok(!plain.calls[0].systemPrompt.includes('## Repository'));
+});
+
+test('repoLook: an empty reply retries with a "reply now" nudge (and the nudge is absent text-only)', async () => {
+  const { run, calls } = fakeRun(['', reply(GOOD)]);
+  const r = await classifyTask(base({ repoLook: true }), { run });
+  assert.equal(r.attempts, 2);
+  assert.ok(calls[1].prompt.includes('Do not spend more tool calls: reply with the shape now.'), 'the retry feedback tells the model to stop looking');
+  const plain = fakeRun(['', reply(GOOD)]);
+  await classifyTask(base(), { run: plain.run });
+  assert.ok(!plain.calls[1].prompt.includes('Do not spend more tool calls'), 'no tools ⇒ no nudge');
+});
+
+test('repoLook: the hard turn cap (an error_max_turns result frame, then the runner rejects with an empty stderr) is ONE failed attempt: retried once with the nudge, billed, and fatal the second time', async () => {
+  // What runReal does on `--max-turns` (claude-runner.mjs:782-786 + :849-867): the frame is emitted, then the
+  // child exits 1 with NOTHING on stderr — the rejection message carries no "max turns" text to match on.
+  const capped = (o) => {
+    o.onEvent?.({ type: 'result', costUsd: 0.01, raw: { type: 'result', subtype: 'error_max_turns', is_error: true, terminal_reason: 'max_turns', total_cost_usd: 0.01, usage: { input_tokens: 10, output_tokens: 5 } } });
+    throw new Error('claude exited with code 1: no stderr');
+  };
+  const { run, calls } = fakeRun([capped, reply(GOOD)]);
+  const r = await classifyTask(base({ repoLook: true }), { run });
+  assert.equal(r.attempts, 2);
+  assert.equal(r.costUsd, 0.02, 'the capped attempt is billed');
+  assert.deepEqual(r.usage, { input_tokens: 20, output_tokens: 10 });
+  assert.deepEqual(r.warnings.map((w) => w.code), ['CLASSIFIER_RETRY']);
+  assert.match(r.warnings[0].message, /ran out of turns/);
+  assert.ok(calls[1].prompt.includes('ran out of turns') && calls[1].prompt.includes('reply with the shape now'), 'the retry says why and what to do');
+  const twice = fakeRun([capped, capped]);
+  await assert.rejects(() => classifyTask(base({ repoLook: true }), { run: twice.run }),
+    (e) => e instanceof ClassifierError && e.code === 'CLASSIFIER_FAILED' && /ran out of turns/.test(e.detail) && e.costUsd === 0.02, 'two cap hits fail the classification with the spend attached');
+});
+
 test('a bad first reply is retried ONCE with the issues as feedback; a second bad reply fails; usage sums both attempts', async () => {
   const { run, calls } = fakeRun(['no json', reply(GOOD)]);
   const r = await classifyTask(base(), { run });
@@ -184,7 +249,7 @@ test('mock mode answers without spawning (opts.mock or WORCA_MOCK=1)', async () 
   assert.equal(calls.length, 0);
   assert.equal(r.attempts, 0);
   assert.deepEqual(r.usage, { input_tokens: 0, output_tokens: 0 });
-  assert.deepEqual(r.shape.stages.map((s) => s.agent), ['planner', 'implementer', 'reviewer']);
+  assert.deepEqual(r.shape.stages.map((s) => s.agent), ['implementer']);
   process.env.WORCA_MOCK = '1';
   try {
     const viaEnv = await classifyTask(base({ taskText: 'demo task' }), { run });

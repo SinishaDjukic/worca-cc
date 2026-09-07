@@ -245,7 +245,7 @@ Options:
                            bypassPermissions (default acceptEdits)
   --workflow <id>          Saved pipeline template to run (default: wf_default — the built-in graph)
                            auto (= wf_auto) lets worca pick the workflow per task
-  --no-human               Auto workflow only: no proposal, no clarify, no agent questions
+  --no-human               Auto workflow only: no proposal, no clarify, no agent questions (loop-budget, recovery, cost and error pauses still apply)
   --source-branch <name>   Branch to fork the per-run worktree from (default: current HEAD)
   --branch <name>          Feature branch name (default: claude proposes one)
   --mock                   Offline mock mode (no claude, no tokens)

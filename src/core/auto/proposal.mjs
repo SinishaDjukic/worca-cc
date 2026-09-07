@@ -29,19 +29,26 @@ export function buildProposal({ round, shape, template, match = null, tunables =
   const name = shape?.name || template?.name || 'Auto workflow';
   const agentsByKey = {};
   for (const n of template.nodes || []) if (n.kind === 'agent' && registry[n.key]) agentsByKey[n.key] = registry[n.key];
-  const manifest = buildGraphManifest({ ...template, id: match ? match.id : AUTO_WORKFLOW_ID, name }, agentsByKey, { overlays: { nodes: tunables } });
+  // B1 (2026-09-07 review): paint what resolveGraph will RUN (workflows.mjs:664) — an overlay
+  // model without an effort suppresses the row's authored effort, so a matched twin's "high"
+  // must not be shown next to a classifier-picked model that carries none. The manifest (the
+  // graph's band chips, manifest.mjs:145) and the table below read the SAME effective pair:
+  // an explicit `effort: ''` overlay is what makes the manifest agree.
   const nodes = {};
+  const overlays = {};
   for (const n of template.nodes || []) {
     if (n.kind !== 'agent') continue;
     const meta = registry[n.key] || {};
     const cfg = n.config || {};
     const t = tunables[n.id] || {};
+    const effort = t.effort ?? (t.model ? '' : (cfg.effort ?? ''));
+    overlays[n.id] = t.model && t.effort === undefined ? { ...t, effort: '' } : { ...t };
     const asks = !!meta.asksQuestions;
     nodes[n.id] = {
       key: n.key,
       label: meta.displayName || n.key,
       model: t.model ?? cfg.model ?? '',
-      effort: t.effort ?? cfg.effort ?? '',
+      effort,
       fanOut: !!(t.fanOut ?? cfg.fanOut ?? meta.fanOut ?? false),
       askQuestions: asks ? (meta.questionsLocked ? !!meta.questionsDefault : !!(t.askQuestions ?? cfg.askQuestions ?? meta.questionsDefault ?? false)) : false,
       asksQuestions: asks,
@@ -49,6 +56,7 @@ export function buildProposal({ round, shape, template, match = null, tunables =
       canFanOut: !!meta.fanOut,
     };
   }
+  const manifest = buildGraphManifest({ ...template, id: match ? match.id : AUTO_WORKFLOW_ID, name }, agentsByKey, { overlays: { nodes: overlays } });
   // The DISPATCH order of the AGENT nodes (rank, then launch order) — the manifest
   // already computes it for the run monitor; a reused composer row's graph.nodes order
   // is arbitrary. The steps cells bucket EVERY node — the Task card, End and the gates

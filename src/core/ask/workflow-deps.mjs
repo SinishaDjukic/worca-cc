@@ -17,6 +17,7 @@ import { assembleShape, ShapeError, cleanText, normalizeShape } from '../../shar
 import { fingerprintProject } from '../auto/fingerprint.mjs';
 import { classifyTask, checkShapeModels, ClassifierError } from '../auto/classify.mjs';
 import { autoCandidates, findEquivalentWorkflow } from '../auto/match.mjs';
+import { openRepoLook } from '../auto/repo-look.mjs';
 import { buildProposal, remapTunables } from '../auto/proposal.mjs';
 import { resolveAutoModel } from '../auto/model.mjs';
 import { ASK_LIMITS } from './limits.mjs';
@@ -167,37 +168,46 @@ export function defaultWorkflowDeps({ threadId = null, signal = null, classify =
         if (mode === 'task') {
           const cwd = join(worcaHome(), 'tmp', 'ask');           // the ask scratch dir — never the user's checkout (spec §4.5)
           await mkdir(cwd, { recursive: true });
+          // D6 amendment: the classifier may Read/Grep/Glob a throwaway detached checkout of the
+          // project's HEAD to SIZE the change. Mock never spawns, so it never borrows one; a project
+          // without git (or a failed `git worktree add`) classifies text-only, exactly as before.
+          const look = mockEnabled({}) ? null : await openRepoLook(project.path, cwd, { signal: signal || bundleSignal });
           const input = {
             taskText: String(task).slice(0, ASK_LIMITS.workflowTaskMaxChars), extras: [], fingerprint, models, registry, domain: 'coding',
-            humanInLoop: true, feedback: [], priorShape: null, model: resolveAutoModel(models), cwd, mock: mockEnabled({}), signal: signal || bundleSignal,
+            humanInLoop: true, feedback: [], priorShape: null, model: resolveAutoModel(models), cwd: look ? look.cwd : cwd, repoLook: !!look,
+            mock: mockEnabled({}), signal: signal || bundleSignal,
           };
           // Every failure AFTER money may have been spent resolves {ok:false, costUsd} (v7): ClassifierError carries what its
-          // failed attempts cost (classify.mjs:18-29); a ShapeError after the retry means two billed classifier calls.
+          // failed attempts cost (classify.mjs); a ShapeError after the retry means two billed classifier calls.
           const spent = (err) => ({
             ok: false, mode, projectKey: project.key, projectName: flat(project.name, 120),
             error: flat(err && err.message ? err.message : String(err), 300), costUsd: Math.round((costUsd + (Number(err && err.costUsd) || 0)) * 1e6) / 1e6,
           });
-          let classified;
-          try { classified = await classify(input); }
-          catch (err) { if (err instanceof ClassifierError) return spent(err); throw err; }
-          costUsd += Number(classified.costUsd) || 0;
-          warnings.push(...(classified.warnings || []));
-          picked = name ? { ...classified.shape, name } : classified.shape;
           try {
-            r = await revalidateWorkflowProposal({ shape: picked, projectKey: project.key, warnings, costUsd, fingerprint, models, registry });
-          } catch (err) {
-            if (!(err instanceof ShapeError)) throw err;
-            let again;
-            try {
-              again = await classify({ ...input, priorShape: classified.shape,
-                feedback: [`The previous shape could not be assembled: ${err.issues.map((i) => i.message).join('; ')}. Fix it and reply with the full shape.`] });
-            } catch (e2) { if (e2 instanceof ClassifierError) return spent(e2); throw e2; }
-            costUsd += Number(again.costUsd) || 0;
-            warnings.push(...(again.warnings || []));
-            picked = name ? { ...again.shape, name } : again.shape;
+            let classified;
+            try { classified = await classify(input); }
+            catch (err) { if (err instanceof ClassifierError) return spent(err); throw err; }
+            costUsd += Number(classified.costUsd) || 0;
+            warnings.push(...(classified.warnings || []));
+            picked = name ? { ...classified.shape, name } : classified.shape;
             try {
               r = await revalidateWorkflowProposal({ shape: picked, projectKey: project.key, warnings, costUsd, fingerprint, models, registry });
-            } catch (e3) { if (e3 instanceof ShapeError) return spent(e3); throw e3; }
+            } catch (err) {
+              if (!(err instanceof ShapeError)) throw err;
+              let again;
+              try {
+                again = await classify({ ...input, priorShape: classified.shape,
+                  feedback: [`The previous shape could not be assembled: ${err.issues.map((i) => i.message).join('; ')}. Fix it and reply with the full shape.`] });
+              } catch (e2) { if (e2 instanceof ClassifierError) return spent(e2); throw e2; }
+              costUsd += Number(again.costUsd) || 0;
+              warnings.push(...(again.warnings || []));
+              picked = name ? { ...again.shape, name } : again.shape;
+              try {
+                r = await revalidateWorkflowProposal({ shape: picked, projectKey: project.key, warnings, costUsd, fingerprint, models, registry });
+              } catch (e3) { if (e3 instanceof ShapeError) return spent(e3); throw e3; }
+            }
+          } finally {
+            if (look) await look.close();                            // the checkout never outlives the call (every `return spent(...)` above passes through here)
           }
         } else {
           picked = normalizeShape(name ? { ...shape, name } : shape);   // throws ShapeError with EVERY issue — the model fixes them in one go
