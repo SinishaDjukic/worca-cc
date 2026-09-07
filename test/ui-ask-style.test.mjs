@@ -397,3 +397,78 @@ test('ui-ask-style: run card v2 — the v1 card rules it replaced are deleted, t
   assert.equal(/\.ask-card-actions\s*\{/.test(css), false, 'v1 actions container rule is dead CSS');
   assert.ok(css.includes('.ask-card-actions-spacer'), 'the spacer buildWorkflowCard still emits keeps its rule');
 });
+
+test('ui-ask-style: the run progress card block is tokened, keeps the ask-card base, and restates the run-state ornaments for its host', () => {
+  assert.ok(ruleBody('.ask-card.ask-rc'), '.ask-card.ask-rc rule exists');
+  assert.match(ruleBody('.ask-card.ask-rc'), /animation:wr-rise/);
+  for (const fam of ['peach', 'blue', 'violet', 'green', 'red', 'amber']) assert.ok(ruleBody(`.ask-rc-pill.st-${fam}`), `pill family ${fam}`);
+  assert.match(ruleBody('.ask-rc.is-live .ask-rc-dot') || '', /animation:dotpulse/);
+  assert.match(ruleBody('.ask-rc-graph .gv-world .node.is-active') || '', /animation:nodeGlow 2\.2s/);
+  assert.match(ruleBody('.ask-rc-graph .gv-wires path.wire-live') || '', /animation:wireDash \.6s linear infinite/);
+  assert.ok(css.includes('.ask-rc-graph .wbadge:not(:has(> .wfired))'), 'the composer budget pill hides until a delivery fires');
+  const block = css.slice(css.indexOf('/* ---------- run progress card'), css.indexOf('/* ---------- Ask Worca dock clearance'));
+  assert.ok(block.length > 0 && !/@keyframes/.test(block), 'the block references keyframes, never re-declares one');
+  assert.ok(!/@media/.test(block), 'no media block of its own: the dock reduced-motion blanket already covers it');
+  assert.ok(!/\.run-flow/.test(block), 'never widens the pinned .run-flow.gv-host rules');
+  assert.match(ruleBody('.ask-rc-agent-dot') || '', /animation:dotpulse/, 'the agent pulse is a real element');
+  assert.ok(!/::(?:before|after)\{[^}]*animation/.test(block), 'no animated pseudo-element: the dock reduced-motion blanket cannot reach ::before/::after');
+  assert.ok(block.includes('calc(21px * var(--gv-scale))'), 'settled pips scale with the 0.65 flow card');
+});
+
+// The chat card restates ornaments the v2 canvas already styles LATER in the file, so a textual pin proves
+// nothing: an .ask-rc-graph rule only lands if it also out-specifies the base rule it restates. The badge pair
+// is the one that matters (a base pill left visible reads "3× 2×"), so resolve it the way a browser would.
+const RULE_RE = /([^{}]+)\{([^{}]*)\}/g;
+const cssNoComments = css.replace(/\/\*[\s\S]*?\*\//g, ' ');
+/** Every rule (selector arm, body, source order) whose arm is a plain descendant chain of classes. */
+function classRules() {
+  const out = [];
+  let m, i = 0;
+  RULE_RE.lastIndex = 0;
+  while ((m = RULE_RE.exec(cssNoComments))) {
+    const body = m[2];
+    for (const arm of m[1].split(',')) {
+      const sel = arm.trim();
+      i += 1;
+      if (!sel || !/^\.[-\w]+(?:\.[-\w]+)*(?:\s+\.[-\w]+(?:\.[-\w]+)*)*$/.test(sel)) continue;
+      const compounds = sel.split(/\s+/).map((c) => c.split('.').filter(Boolean));
+      out.push({ sel, body, order: i, compounds, spec: compounds.reduce((n, c) => n + c.length, 0) });
+    }
+  }
+  return out;
+}
+/** Does a descendant chain of class compounds match this element, given its ancestor chain (outermost first)? */
+function matches(rule, ancestors, target) {
+  const subset = (compound, classes) => compound.every((c) => classes.includes(c));
+  if (!subset(rule.compounds[rule.compounds.length - 1], target)) return false;
+  let a = ancestors.length - 1;
+  for (let k = rule.compounds.length - 2; k >= 0; k -= 1) {
+    while (a >= 0 && !subset(rule.compounds[k], ancestors[a])) a -= 1;
+    if (a < 0) return false;
+    a -= 1;
+  }
+  return true;
+}
+const declares = (body, prop) => new RegExp(`(?:^|;)\\s*${prop}\\s*:`).test(body);
+/** The rule a browser would let win for `prop`: highest specificity, then latest in source order. */
+function winner(ancestors, target, prop) {
+  return classRules().filter((r) => matches(r, ancestors, target) && declares(r.body, prop))
+    .sort((x, y) => (x.spec - y.spec) || (x.order - y.order)).pop() || null;
+}
+
+test('ui-ask-style: the chat card wins the cascade over the later v2-canvas badge rules (a fired loop wire reads "2×", never "3× 2×")', () => {
+  const CARD = ['ask-card ask-rc'.split(' '), ['ask-rc-graph'], 'gv-stage gv-static gv-flow'.split(' '), ['gv-world']];
+  // the base pill must be blanked out by the chat card's own rule, not painted by .gv-world .wbadge (style.css:3902)
+  for (const prop of ['font-size', 'line-height', 'padding', 'border', 'background']) {
+    const win = winner(CARD, ['wbadge'], prop);
+    assert.ok(win, `some rule sets ${prop} on a chat-card wire badge`);
+    assert.ok(win.sel.startsWith('.ask-rc-graph '), `${prop} on a chat-card wire badge resolves to "${win.sel}" — the .ask-rc-graph rule must out-specify the later .gv-world base rule`);
+  }
+  // and the fired overlay keeps its own pill geometry (the base adds margin-left:5px at style.css:3956)
+  for (const prop of ['margin', 'padding', 'background', 'font']) {
+    const win = winner([...CARD, ['wbadge']], ['wfired'], prop);
+    assert.ok(win && win.sel.startsWith('.ask-rc-graph '), `${prop} on the fired overlay resolves to "${win && win.sel}"`);
+  }
+  const block = css.slice(css.indexOf('/* ---------- run progress card'), css.indexOf('/* ---------- Ask Worca dock clearance'));
+  assert.ok(!block.includes('.ask-rc-graph .wbadge{'), 'the two-class form loses to .gv-world .wbadge: scope the badge rules through .gv-world');
+});

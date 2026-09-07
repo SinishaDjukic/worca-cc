@@ -23,7 +23,7 @@ import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState,
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
-  listArtifacts, lookupPipelineRow, findPipelineRowById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
+  listArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
   readPromptFile,
 } from '../src/core/artifacts.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
@@ -514,6 +514,24 @@ function resolvePending(entry, { id = null, reason = 'resolved' } = {}) {
   entry.pendingQuestion = null;
   broadcast(bufferEvent(entry, { type: 'question-resolved', id: pq.id, reason }));
   return true;
+}
+
+/** Statuses under which an entry no longer drives its pipeline (the resumeRun double-resume guard's list, :1713). */
+const SETTLED_RUN = new Set(['done', 'stopped', 'error', 'paused', 'interrupted']);
+/** A runs-Map PIPELINE entry by its UUID or by its 8-hex History id (scans / agentgens never match). */
+function liveRunEntry(id) {
+  if (typeof id !== 'string' || !id) return null;
+  const isRun = (r) => r && r.orch && (r.kind === 'run' || r.kind === 'workspace-run' || r.kind == null);
+  const direct = runs.get(id);
+  if (isRun(direct)) return direct;
+  // D23: resumeRun evicts only the paused/interrupted lineage; a same-pipeline entry left done/stopped/error sits
+  // EARLIER in Map order — the entry still driving the pipeline wins, else the newest (last inserted).
+  let best = null;
+  for (const r of runs.values()) {
+    if (!isRun(r) || r.pipelineId !== id) continue;
+    if (!best || !SETTLED_RUN.has(String(r.status || '')) || SETTLED_RUN.has(String(best.status || ''))) best = r;
+  }
+  return best;
 }
 
 function summarizeRuns() {
@@ -1085,7 +1103,7 @@ function attachAskFollower(orch, { threadId, runId, cardId }) {
         if (linkPatch.pipelineId && row && row.commentIds.length) {
           try { stampSentRunId(row.commentIds, linkPatch.pipelineId); } catch { /* best effort */ }
         }
-        if (patch.cardFailed) {
+        if (patch.cardFailed && cardId) {
           flipCard(threadId, cardId, { state: 'failed', error: patch.cardFailed });
         }
         broadcast({
@@ -1111,6 +1129,75 @@ function attachAskFollower(orch, { threadId, runId, cardId }) {
     askFollowers.set(threadId, set);
   }
   set.add(follower);
+}
+
+/** An undetached follower for this (thread, runId) already exists — the proposal launch attached it, or an earlier track_run. */
+function askFollowerAttached(threadId, runId) {
+  const set = askFollowers.get(threadId);
+  return !!set && [...set].some((f) => f.runId === runId && !f.detached);
+}
+
+/**
+ * track_run's parent-side half (the MCP child only resolves — src/core/ask/tools.mjs is write-free by contract):
+ * resolve the run (live entry by UUID or 8-hex, else the pipelines table — the user-pinned scope first, like
+ * resolveRow), link it to the thread ONCE per pipeline (D5: a run with no live UUID keys the row by its pipeline
+ * id until a live run takes it over; the dedupe is application-level — the PK is (thread, run_id) and linkRun
+ * throws on a collision), attach a follower to a live run ONCE per runId (D6), and hand back the progress card's
+ * identity. Never throws; a failure is a model-readable {ok:false, error}.
+ */
+function askTrackRun(threadId, input, pin) {
+  const raw = input && typeof input.id === 'string' ? input.id.trim() : '';
+  if (!raw) return { ok: false, error: 'id is required' };
+  let entry = liveRunEntry(raw);
+  let state = null;
+  if (entry) {
+    if (!entry.pipelineId) return { ok: false, error: 'the run has no pipeline id yet — try again in a moment' };
+    state = readPipelineStateById(entry.pipelineId);
+  } else {
+    const scopeKey = typeof input.projectKey === 'string' && input.projectKey ? input.projectKey
+      : typeof input.workspaceId === 'string' && input.workspaceId ? `workspaces/${input.workspaceId}`
+        : pin && pin.projectKey ? pin.projectKey : pin && pin.workspaceId ? `workspaces/${pin.workspaceId}` : null;
+    const row = (scopeKey ? lookupPipelineRow(scopeKey, raw) : null) || findPipelineRowById(raw);
+    if (!row) return { ok: false, error: 'run not found' };
+    // The row lookups canonicalise (lower case, the `…-<8hex>` dir-name form); the runs-Map scan compares verbatim.
+    // Re-ask with the canonical id so an uppercase or dir-name id still finds the live lineage.
+    entry = liveRunEntry(row.id) || null;
+    state = readPipelineStateById(row.id);
+  }
+  if (!state) return { ok: false, error: 'run not found' };
+  const pipelineId = state.id;
+  const isWs = !!((entry && entry.workspaceId) || state.target === 'workspace');
+  const workspaceId = isWs ? ((entry && entry.workspaceId) || state.workspaceId || null) : null;
+  const projKey = isWs ? null : ((entry && entry.projectDir) ? projectKey(entry.projectDir) : (state.projectKey || null));
+  const label = isWs
+    ? (state.workspaceName || (Array.isArray(state.projects) ? state.projects.map((p) => p.projectName).filter(Boolean).join(' · ') : '') || '')
+    : String((entry && entry.projectDir) || state.projectDir || '').split(/[\\/]/).filter(Boolean).pop() || (projKey || '');
+  const title = (entry && entry.title) || state.title || pipelineId;
+  const status = (entry && entry.status) || state.status || null;
+  const liveRunId = entry ? entry.id : null;
+  // ONE row per (thread, pipeline): by the live UUID first (a proposal launch whose block threw after askLinkRun leaves a
+  // uuid row with pipeline_id NULL that no follower fills — adopt it), then by pipeline id. UUID-first also means the
+  // patch below never moves a run_id onto a key that already exists (the (thread_id, run_id) PK would throw).
+  const links = askListRunLinks(threadId);
+  const existing = (liveRunId ? links.find((l) => l.runId === liveRunId) : null) || links.find((l) => l.pipelineId === pipelineId) || null;
+  try {
+    if (!existing) askLinkRun(threadId, { runId: liveRunId || pipelineId, pipelineId, status });
+    else {
+      const patch = { status };
+      if (!existing.pipelineId) patch.pipelineId = pipelineId;
+      if (liveRunId && existing.runId !== liveRunId) patch.runId = liveRunId;
+      askUpdateRunLink(threadId, existing.runId, patch);
+    }
+  } catch (err) {
+    return { ok: false, error: `could not link the run: ${err && err.message ? err.message : String(err)}` };
+  }
+  // Only a run that still drives its pipeline gets a follower: attachRunFollower subscribes unconditionally
+  // (follow.mjs:111) and a settled orchestrator never emits again, so it would sit in askFollowers for the life
+  // of the thread — and pin a paused lineage's dead orchestrator once resumeRun evicts the entry.
+  if (entry && !SETTLED_RUN.has(String(entry.status || '')) && !askFollowerAttached(threadId, entry.id)) {
+    attachAskFollower(entry.orch, { threadId, runId: entry.id, cardId: null });
+  }
+  return { ok: true, card: { type: 'progress', pipelineId, runId: liveRunId, projectKey: projKey, workspaceId, title, label, status } };
 }
 
 // ---------------------------------------------------------------------------
@@ -4003,6 +4090,21 @@ app.get('/api/ask/threads/:id', (req, res) => {
   }
 });
 
+// Ask Worca progress card hydration (plan D9): the run's detail state by pipeline id OR live run id, no store key.
+const ASK_RUN_REF_RE = /^(?:[0-9a-f]{8}|[0-9a-zA-Z-]{9,64})$/;
+app.get('/api/ask/runs/:id', (req, res) => {
+  const id = String(req.params.id || '');
+  if (!ASK_RUN_REF_RE.test(id)) return res.status(400).json({ error: 'invalid run id' });
+  try {
+    const entry = liveRunEntry(id);
+    const state = readPipelineStateById(entry && entry.pipelineId ? entry.pipelineId : id);
+    if (!state) return res.status(404).json({ error: 'run not found' });
+    res.json({ state, live: entry ? { runId: entry.id, status: entry.status } : null });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 app.patch('/api/ask/threads/:id', (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
@@ -4430,6 +4532,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
         onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
         onWorktreeMutation: () => { emitAskWorktrees(id); },
+        trackRun: (input, { pin } = {}) => askTrackRun(id, input, pin ?? null),
       },
     });
     job.turn = turn;
@@ -5886,5 +5989,6 @@ export const _testing = {
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
+  askTrackRun, liveRunEntry,
   uiControl, bearerMatches,
 };

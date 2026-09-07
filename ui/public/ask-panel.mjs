@@ -9,6 +9,7 @@ import { createMarkdownRenderer } from './ask-markdown.mjs';
 import { createThinkingOrb } from './thinking-orb.mjs';
 import { workflowPickerLabel } from './results-view.mjs';
 import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mjs';
+import { createRunProgressCard, snapshotFromState, PROGRESS_CARD_TYPE } from './ask-run-card.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf } from './node-tunables.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
@@ -125,7 +126,7 @@ export function chipPickerTop({ top, bottom, panelH, sheetH, gap = 6 }) {
 
 const SIZE_KEY = 'worca-cc.ask.size';
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, loadMarkdown, hljsLoader, storage, raf, now }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null }) {
   const storedPick = readStoredModel();   // hoisted declaration (defined below); null when nothing is stored
   const st = {
     open: false,
@@ -169,6 +170,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     mdKicked: false,
     answerPending: null,
     rowPending: null,
+    progress: null,           // Map<cardId, {ident, handle, rest, hydrating, nextHydrateAt}> — the live run cards
+    runTick: null,
+    runUnsub: null,
+    runPoked: false,
   };
   const el = {}; // element refs, filled by the builders
   const renderer = createMarkdownRenderer({ doc, load: loadMarkdown, hljsLoader });
@@ -672,6 +677,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     ensureFirstOpen();
     focusComposer();
     scheduleFlush();
+    repaintProgressCards({ hydrate: true });
   }
 
   /**
@@ -1857,16 +1863,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     lc.summary.textContent = laneSummary(lane);
   }
 
+  /** The stub states. A `started` run — and a `failed` one that HAS a runId — renders the live progress
+   *  card instead (buildProgressCard), so neither reaches here. */
   function buildCardTerminal(block) {
     const card = block.card || {};
-    if (block.state === 'started') {
-      const n = make('div', 'ask-card ask-card-started');
-      n.appendChild(make('span', null, `Run started — ${card.title || card.brief || 'run'} `));
-      const a = make('a', 'ask-card-link', 'open');
-      a.setAttribute('href', `#running/${block.runId || ''}`);
-      n.appendChild(a);
-      return n;
-    }
     if (block.state === 'failed') {
       return make('div', 'ask-card-stub ask-card-failed', `Run failed${block.error ? `: ${block.error}` : ''} — ${card.title || card.brief || ''}`);
     }
@@ -2517,14 +2517,27 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- card cache: ONE element per card id, rebuilt only on a STATE change (V7 for run cards; every state for
-  // workflow cards, whose graph mount + ResizeObserver must not be re-created on each streaming re-render, PD15).
+  // workflow cards AND run progress cards, whose graph mount + ResizeObserver must not be re-created on each
+  // streaming re-render, PD15 / D10).
+  /** A block that renders as the live run progress card: a track_run card, or a run proposal the user started.
+   *  A `failed` proposal WITH a runId is a run that errored after launch — still the card; without one it is a
+   *  rejected proposal and stays the stub. */
+  function isProgressBlock(block) {
+    const card = block.card || {};
+    if (card.type === PROGRESS_CARD_TYPE) return true;
+    if (card.type === 'workflow') return false;
+    return block.state === 'started' || (block.state === 'failed' && !!block.runId);
+  }
   function buildCard(block) {
     if (!st.cardEls) st.cardEls = new Map();
     const cached = st.cardEls.get(block.id);
     const isWorkflow = !!(block.card && block.card.type === 'workflow');
-    if (cached && cached.state === block.state && (isWorkflow || block.state === 'proposed')) return cached.el;
+    const isProgress = isProgressBlock(block);
+    if (cached && cached.state === block.state && (isWorkflow || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
-    const built = isWorkflow ? buildWorkflowCard(block, cached) : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
+    const built = isWorkflow ? buildWorkflowCard(block, cached)
+      : isProgress ? buildProgressCard(block)
+        : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
     st.cardEls.set(block.id, { el: built.el, state: block.state, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1 });
     return built.el;
   }
@@ -2556,6 +2569,119 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       }
       if (c.animate) { c.animate = false; c.cancelAnim = playAssembly(c.handle, { win, onDone: () => { c.cancelAnim = null; } }); }
     }
+  }
+
+  // ---- run progress cards (ui/public/ask-run-card.mjs; D1 runStore seam, D9 REST hydration, D11 cadence) ------------
+  const PROGRESS_TICK_MS = 1000, PROGRESS_REHYDRATE_MS = 30_000;
+  const PIPELINE_ID_RE = /^[0-9a-f]{8}$/;
+
+  /** The persisted identity a card starts from (§4.2). The pipeline id of a started proposal arrives later
+   *  (run store, then the thread's run links — keyed by the card, so a resume cannot orphan it). */
+  function progressIdent(block) {
+    const card = block.card || {};
+    if (card.type === PROGRESS_CARD_TYPE) {
+      return { cardId: block.id, pipelineId: card.pipelineId || null, runId: card.runId || null, projectKey: card.projectKey || null,
+        workspaceId: card.workspaceId || null, title: card.title || '', label: card.label || '' };
+    }
+    return { cardId: block.id, pipelineId: null, runId: block.runId || null, projectKey: card.projectKey || null, workspaceId: card.workspaceId || null,
+      title: card.title || card.brief || 'run', label: card.workspaceName || card.projectName || '' };
+  }
+  /** Fold the thread's run links into the identity: the first `state` reveals the pipeline id; a resume moves the runId. */
+  function refreshProgressIdent(ident) {
+    if (!st.model) return;
+    const link = (ident.pipelineId && st.model.runLinkByPipeline(ident.pipelineId)) || st.model.runLinkForCard(ident.cardId)
+      || (ident.runId ? (() => { const l = st.model.runLinks().get(ident.runId); return l ? { runId: ident.runId, ...l } : null; })() : null);
+    if (!link) return;
+    if (link.pipelineId) ident.pipelineId = link.pipelineId;
+    if (link.runId && !PIPELINE_ID_RE.test(link.runId)) ident.runId = link.runId;   // a pipeline-id-keyed link has no live UUID (D5)
+  }
+  function progressSnapshot(entry) {
+    const ident = entry.ident;
+    let snap = null;
+    // D23: the pipeline id is the stable key; byPipeline resolves the LIVE lineage when a superseded twin shares it.
+    if (runStore) {
+      if (ident.pipelineId) snap = runStore.byPipeline(ident.pipelineId);
+      if (!snap && ident.runId) snap = runStore.get(ident.runId);
+    }
+    if (snap) {
+      if (snap.pipelineId && !ident.pipelineId) ident.pipelineId = snap.pipelineId;
+      if (snap.runId) ident.runId = snap.runId;
+      return snap;
+    }
+    return entry.rest;
+  }
+  function buildProgressCard(block) {
+    if (!st.progress) st.progress = new Map();
+    const ident = progressIdent(block);
+    const handle = createRunProgressCard({ doc, ident, onOpen: (href) => {
+      closeSheet();                                            // openNewPipeline precedent: close, then route
+      if (href && href.startsWith('#') && win.location.hash !== href) win.location.hash = href.slice(1);
+    } });
+    const entry = { ident, handle, rest: null, hydrating: false, nextHydrateAt: 0 };
+    st.progress.set(block.id, entry);
+    if (block.state === 'failed' && block.error) handle.setReason(`Run failed: ${block.error}`);
+    repaintProgress(entry, { hydrate: true });
+    ensureRunTick();
+    return { el: handle.el, handle, dispose: () => { if (st.progress && st.progress.get(block.id) === entry) st.progress.delete(block.id); handle.destroy(); } };
+  }
+  function repaintProgress(entry, { hydrate = false } = {}) {
+    refreshProgressIdent(entry.ident);
+    const snap = progressSnapshot(entry);
+    // D24: a lineage this tab just dropped (the acting tab's resume evicts the superseded entry) must not regress the
+    // card to "Starting" — keep the last paint until the new lineage's first state or REST lands.
+    entry.handle.update(snap || entry.handle.snapshot, now());
+    if (hydrate && !(snap && snap.source === 'live') && entry.ident.pipelineId) hydrateProgress(entry);
+  }
+  /** Repaint every attached progress card; `hydrate` re-reads REST for the ones the live map does not hold. */
+  function repaintProgressCards({ hydrate = false } = {}) {
+    st.runPoked = false;
+    if (!st.progress || !st.progress.size) return;
+    for (const entry of st.progress.values()) if (entry.handle.el.isConnected) repaintProgress(entry, { hydrate });
+  }
+  async function hydrateProgress(entry) {
+    if (entry.hydrating || st.destroyed) return;
+    entry.hydrating = true;
+    const id = entry.ident.pipelineId;
+    try {
+      const res = await fetch(`/api/ask/runs/${id}`);
+      if (res && res.ok) {
+        const body = await res.json();
+        // The envelope, not any 200: a stub that answers every URL must never paint a run (test/ui-ask-card.test.mjs boot stub).
+        if (body && body.state && typeof body.state.status === 'string' && body.state.id === id) {
+          entry.rest = snapshotFromState(body.state, { now: now() });
+          if (body.live && body.live.runId) entry.ident.runId = body.live.runId;
+        }
+      }
+    } catch { /* offline: the card keeps its last paint */ }
+    entry.hydrating = false;
+    entry.nextHydrateAt = now() + PROGRESS_REHYDRATE_MS;
+    if (st.destroyed || !st.progress || st.progress.get(entry.ident.cardId) !== entry) return;
+    entry.handle.update(progressSnapshot(entry) || entry.handle.snapshot, now());   // D24: a failed/junk hydrate keeps the last paint
+  }
+  function ensureRunTick() {
+    if (st.runTick || st.destroyed) return;
+    // Bare setInterval, unref'd — the startElapsed() precedent (a jsdom window timer has no unref()).
+    st.runTick = setInterval(onRunTick, PROGRESS_TICK_MS);
+    if (st.runTick && typeof st.runTick.unref === 'function') st.runTick.unref();
+  }
+  function onRunTick() {
+    if (st.destroyed || !st.progress || !st.progress.size) { if (st.runTick) { clearInterval(st.runTick); st.runTick = null; } return; }
+    if (!st.open) return;                                       // the tick idles behind a closed sheet (a frame-driven flush may still patch the hidden DOM — harmless); openSheet() catches up
+    const t = now();
+    for (const entry of st.progress.values()) {
+      if (!entry.handle.el.isConnected) continue;
+      const snap = entry.handle.snapshot;
+      if (!snap || snap.terminal) continue;
+      if (snap.source === 'live') entry.handle.update(progressSnapshot(entry) || snap, t); // fresh elapsed + cost from the store (D24: never null)
+      else if (t >= entry.nextHydrateAt) hydrateProgress(entry);                            // a run this tab gets no frames for
+    }
+  }
+  if (runStore && typeof runStore.subscribe === 'function') {
+    st.runUnsub = runStore.subscribe((runId, type) => {
+      if (st.destroyed || type === 'log' || !st.progress || !st.progress.size) return;
+      st.runPoked = true;
+      if (st.open) scheduleFlush();
+    });
   }
 
   function toolRow(block) {
@@ -2823,6 +2949,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     stopElapsed();      // a mid-stream thread switch must not leave the old
     updateSendStop();   // turn's timer or stop button behind (V3/D2 reset)
     if (snap.inFlight) { subscribe(id); startElapsed(); }
+    repaintProgressCards({ hydrate: true });   // thread load + reconnect (onHello → resync → loadThread): re-resolve + re-hydrate every card
     return snap;
   }
 
@@ -3000,6 +3127,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     if (d.meters) updateMeters();
     if (d.worktrees) setWorktrees(st.model.worktrees());
+    if (d.runLinks) st.runPoked = true;   // D13: a first `state` reveals the pipeline id; a resume moves the runId
     // An open popover that subscribed to this flush's dirt is rebuilt in place
     // (same node — never reopened, never refocused). Runs AFTER the mirror and
     // the meters above: the worktrees build() reads st.worktrees.
@@ -3018,6 +3146,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function flush() {
     if (st.destroyed) return;
     flushExtra();
+    if (st.runPoked) repaintProgressCards();
     relayoutCards();
     applyPin();
   }
@@ -3064,6 +3193,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     doc.removeEventListener('pointerdown', onDocPointerdown, true);
     win.removeEventListener('resize', onWinResize);
     if (dockRo) { dockRo.disconnect(); dockRo = null; }
+    if (st.runTick) { clearInterval(st.runTick); st.runTick = null; }
+    if (st.runUnsub) { try { st.runUnsub(); } catch { /* ignore */ } st.runUnsub = null; }
     pruneCardEls();                                  // every card graph mount and its ResizeObserver goes with the sheet
     root.remove();
   }

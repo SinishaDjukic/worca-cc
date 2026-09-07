@@ -325,6 +325,9 @@ export function createAskTools(deps) {
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace'),
         path: SCHEMA.s('only this file path'), offset: SCHEMA.i('byte offset to start at', 0, Number.MAX_SAFE_INTEGER),
         maxBytes: SCHEMA.i('bytes per page (default 60000, max 200000)', 1, L.diffMaxBytes) }, ['id']) },
+    { name: 'track_run',
+      description: 'Follow a run in this chat: puts a live progress card (status, elapsed time, cost, active agents, the workflow) into your reply, kept current while the user watches. Works for running, paused and finished runs. id is the run\'s 8-hex id; the app\'s live run id also works. Call it once per run per reply, only from your own turn.',
+      inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id (8 hex), or the app\'s live run id'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace') }, ['id']) },
     { name: 'propose_run',
       description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId; omitting both targets the scope the user pinned for this chat, when there is one. guardrailsId defaults to "normal"; "permissive" is not allowed. Returns {ok:true, card} or {ok:false, errors}.',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('target project key'), workspaceId: SCHEMA.s('target workspace id'), workflowId: SCHEMA.s('workflow id (default wf_default)'),
@@ -606,6 +609,15 @@ export function createAskTools(deps) {
       const row = await resolveRow(input, 'get_run');
       const run = shapeRun(row);
       return { ...run, hasDiff: !run.archived && await deps.hasDiffPatch(row) };
+    },
+    // Read-only by contract: the parent process (ui/server.mjs askTrackRun, via the turn's onTrackRun hook) does the
+    // linking and the following. A live run id lives only in the server's runs Map, so the child passes it through.
+    async track_run(input) {
+      const id = str(input.id);
+      if (!id) throw new AskToolError('track_run: id is required');
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return { ok: true, tracked: { id, resolved: false } };
+      const row = await resolveRow(input, 'track_run');
+      return { ok: true, tracked: shapeRun(row) };
     },
     async get_run_diff(input) {
       const row = await resolveRow(input, 'get_run_diff');

@@ -965,3 +965,54 @@ test('propose_run re-validation survives a throwing ledger (empty attachments, c
   assert.deepEqual(seenOpts.attachments, []);
   assert.ok(getMessage(s.asst.id).blocks.some((b) => b.kind === 'card'), 'the card still landed');
 });
+
+test('track_run: the parent links through deps.trackRun and mints ONE progress card per pipeline per reply; a failure is a notice', async () => {
+  const s = seed();
+  const tracked = [];
+  let midBlocks = null;
+  const CARD = { type: 'progress', pipelineId: 'abcd1234', runId: null, projectKey: 'demo-00000001', workspaceId: null, title: 'T', label: 'demo', status: 'done' };
+  const call = (onEvent, n, id) => {
+    push(onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: `msg_${n}`, content: [{ type: 'tool_use', id: `toolu_${n}`, name: 'mcp__worca__track_run', input: { id } }] } });
+    push(onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: `toolu_${n}`, content: '{"ok":true}' }] } });
+  };
+  const { turn, frames } = makeTurn(s, { pinnedScope: { projectKey: 'demo-00000001' } }, {
+    trackRun: async (input, { threadId, pin }) => { tracked.push({ input, threadId, pin }); return input.id === 'bad' ? { ok: false, error: 'run not found' } : { ok: true, card: CARD }; },
+    runClaudeImpl: async (opts) => {
+      call(opts.onEvent, 1, 'abcd1234'); call(opts.onEvent, 2, 'abcd1234'); call(opts.onEvent, 3, 'bad');
+      for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+      midBlocks = getMessage(s.asst.id).blocks;
+      push(opts.onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  assert.equal(tracked.length, 3);
+  assert.deepEqual(tracked[0], { input: { id: 'abcd1234' }, threadId: s.thread.id, pin: { projectKey: 'demo-00000001' } });
+  const cards = (midBlocks || []).filter((b) => b.kind === 'card');
+  assert.equal(cards.length, 1, 'the second track of the same pipeline mints nothing');
+  assert.equal(cards[0].state, 'tracked');
+  assert.match(cards[0].id, /^card_[0-9a-f]{8}$/);
+  assert.deepEqual(cards[0].card, CARD);
+  assert.deepEqual(Object.keys(cards[0]).sort(), ['card', 'id', 'kind', 'state']);
+  assert.ok(midBlocks.some((b) => b.kind === 'notice' && b.text === 'Could not track the run: run not found'));
+  const iCard = frames.findIndex((f) => f.type === 'ask-card');
+  assert.ok(iCard !== -1 && iCard < frames.findIndex((f) => f.type === 'ask-done'));
+});
+
+test('track_run: an isError tool result mints nothing (the child already told the model why)', async () => {
+  const s = seed();
+  let calls = 0;
+  const { turn } = makeTurn(s, {}, {
+    trackRun: async () => { calls += 1; return { ok: true, card: {} }; },
+    runClaudeImpl: async (opts) => {
+      push(opts.onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id: 'toolu_1', name: 'mcp__worca__track_run', input: { id: 'zz' } }] } });
+      push(opts.onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'error: track_run: run not found', is_error: true }] } });
+      await new Promise((r) => setImmediate(r));
+      push(opts.onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  assert.equal(calls, 0);
+  assert.ok(!getMessage(s.asst.id).blocks.some((b) => b.kind === 'card'));
+});

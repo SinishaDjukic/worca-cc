@@ -599,3 +599,17 @@ test('propose_workflow: label, START hook with the full input, RESULT hook with 
   h.push(uresult('toolu_wf3', 'error: propose_workflow: boom', { isError: true }));
   assert.deepEqual(results.at(-1), { toolUseId: 'toolu_wf3', input: {}, text: 'error: propose_workflow: boom', isError: true });
 });
+
+test('onTrackRun fires on the MAIN-stream track_run tool_result with the full input, the text and isError; never for a sub-agent', () => {
+  const calls = [];
+  const h = harness({ onTrackRun: (e) => calls.push(e) });
+  h.push(session(), init(), atool('msg_1', 't1', 'mcp__worca__track_run', { id: 'abcd1234' }), uresult('t1', '{"ok":true}'));
+  assert.deepEqual(calls, [{ toolUseId: 't1', input: { id: 'abcd1234' }, text: '{"ok":true}', isError: false }]);
+  assert.ok(h.frames.some((f) => f.type === 'ask-label' && f.label === 'Tracking a run'), 'the activity label has its own arm (the FIRST ask-label frame is the turn\'s own Thinking)');
+  h.push(atool('msg_2', 't2', 'mcp__worca__track_run', { id: 'zz' }), uresult('t2', 'error: track_run: run not found', { isError: true }));
+  assert.equal(calls[1].isError, true);
+  assert.equal(calls[1].text, 'error: track_run: run not found');
+  // a sub-agent's call (parent_tool_use_id set) is logged on the agent block, never hooked (D16)
+  h.push(atool('msg_3', 'agent-1', 'Task', { prompt: 'x' }), atool('msg_4', 't3', 'mcp__worca__track_run', { id: 'abcd1234' }, 'agent-1'), uresult('t3', '{"ok":true}', { ptu: 'agent-1' }));
+  assert.equal(calls.length, 2);
+});

@@ -119,6 +119,7 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'list_projects': return 'Looking at projects';
     case 'propose_run': return 'Preparing a run';
     case 'propose_workflow': return 'Building a workflow';
+    case 'track_run': return 'Tracking a run';
     case 'read_attachment': return `Reading ${(attachmentNames && attachmentNames[id]) || 'attachment'}`;
     case 'list_diff_comments': return id ? `Reading comments on ${id.slice(0, 12)}` : 'Reading diff comments';
     case 'add_diff_comment': return 'Writing a diff comment';
@@ -162,6 +163,7 @@ export function createTurnReducer({
   onProposal = null,
   onWorkflowStart = null,
   onWorkflowResult = null,
+  onTrackRun = null,
   onCommentMutation = null,
   onWorktreeMutation = null,
   estimateLiveCost = null,
@@ -448,6 +450,13 @@ export function createTurnReducer({
         // carries "error: <message>" and flips the card to failed.
         try {
           const ret = onWorkflowResult({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__track_run' && typeof onTrackRun === 'function') {
+        // The parent owns the runs Map, the link rows and the followers: it re-resolves the id itself (D4).
+        try {
+          const ret = onTrackRun({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }

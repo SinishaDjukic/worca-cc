@@ -694,6 +694,7 @@ function handleServerMessage(msg) {
     updateNavCounts();
     renderPipelineTabs();
     renderRunningView();
+    pokeAskRuns(msg.runId, 'run-created');
     return;
   }
   // A 'subagent' delta attaches to an existing run; it must never MATERIALIZE one.
@@ -754,6 +755,7 @@ function handleServerMessage(msg) {
   // render a card until the user navigated away and back. renderRunningView
   // diffs by data-run-id and reuses r.el, so this is cheap + idempotent.
   renderPipelineTabs();            // keep sidebar child rows + roll-up live from ANY view
+  pokeAskRuns(msg.runId, msg.type);
   // §5.9. Every frame repaints the open detail through the ONE entry point
   // renderRunningView owns (C11) — except `log`, which arrives at log speed and
   // has already been handled line-by-line by onLog's mirror above. Without
@@ -821,6 +823,7 @@ function onHello(msg) {
     // Terminal runs (done|error|stopped) are simply excluded from liveRuns().
   }
 
+  pokeAskRuns(null, 'hello');
   askPanel?.onHello(msg.ask);
 
   // diff-comments-changed is a plain global broadcast with no per-socket buffer
@@ -14862,6 +14865,49 @@ function progressText(r) {
   return `${done}/${total} done`;
 }
 
+// ---- Ask Worca run store (spec seam 2): the chat's progress cards read the SAME run models the Running list
+// paints, through one snapshot shape (ui/public/ask-run-card.mjs). Snapshots are plain data built on demand;
+// `decor` is the memoised static bag, so a card can skip the graph pass on an unchanged generation. ----
+const askRunListeners = new Set();
+function askRunSnapshot(r) {
+  const graph = isGraphRun(r);
+  const decor = graph ? runDecorFor(r, 'static') : null;
+  return {
+    source: 'live', runId: r.runId, pipelineId: r.pipelineId || null, kind: r.kind || 'run',
+    title: r.title || '', projectKey: null, workspaceId: r.workspaceId || null, projectDir: r.projectDir || '',
+    projectNames: Array.isArray(r.projectNames) ? r.projectNames : null,
+    status: r.status, pauseReason: r.pauseReason || null, pendingQuestion: r.pendingQuestion || null,
+    live: isLive(r), terminal: !!r._finished || isTerminalStatus(r.status),
+    startedAt: r.startedAt || null, elapsedMs: liveTotalMs(r.steps, Date.now()), costUsd: r.totalCostUsd || 0,
+    progress: decor ? decor.progress : null, active: graph ? activeNodes(r) : [],
+    stepper: graph ? r.stepper : null, decor,
+  };
+}
+const askRunStore = Object.freeze({
+  get(runId) { const r = runId ? runs.get(runId) : null; return r && isPipelineRun(r) ? askRunSnapshot(r) : null; },
+  byPipeline(pipelineId) {
+    if (!pipelineId) return null;
+    // D23: a resumed pipeline can leave its superseded lineage in this Map — another tab's paused entry (only the
+    // acting tab deletes it, resumeRunFromCard/resumePipeline), a History resume whose paused run had no log lines
+    // to match — and Map order lists that dead entry FIRST. The lineage still live wins; among settled ones the
+    // newest (orderKey, minted once per runId) does.
+    let best = null;
+    for (const r of runs.values()) {
+      if (!isPipelineRun(r) || r.pipelineId !== pipelineId) continue;
+      if (!best || (isLive(r) && !isLive(best)) || (isLive(r) === isLive(best) && (r.orderKey || 0) > (best.orderKey || 0))) best = r;
+    }
+    return best ? askRunSnapshot(best) : null;
+  },
+  subscribe(fn) { askRunListeners.add(fn); return () => { askRunListeners.delete(fn); }; },
+});
+// Test hook — assigned HERE, after the const, never inside the window.__np literal at :2183: that literal is built
+// at module evaluation, when this const is still in its temporal dead zone (the trap app.js:2176-2178 documents).
+if (typeof window !== 'undefined' && window.__np) window.__np.askRunStore = askRunStore;
+/** Every per-run frame ends here (the dispatcher tail, run-created, the hello merge): the chat's cards decide what to repaint. */
+function pokeAskRuns(runId, type) {
+  for (const fn of askRunListeners) { try { fn(runId, type); } catch { /* a chat listener never breaks a frame */ } }
+}
+
 /** History Overview DURATION sub-line: `9 executions · 2 loop deliveries`. */
 function histCountsLine(st) {
   const d = decorFromState(st, { live: false, now: 0 });
@@ -16966,6 +17012,7 @@ askPanel = createAskPanel({
   storage: window.localStorage,
   raf: window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : ((fn) => setTimeout(fn, 0)),
   now: () => Date.now(),
+  runStore: askRunStore,
 });
 document.body.appendChild(askPanel.root);
 

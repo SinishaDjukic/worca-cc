@@ -49,10 +49,10 @@ async function realTools(extra = {}) {
   return { tools: createAskTools(deps), run: seeded, deps };
 }
 
-test('list(): sixteen tools, the four comment tools in place, all with JSON-Schema inputs', async () => {
+test('list(): seventeen tools, the four comment tools in place, all with JSON-Schema inputs', async () => {
   const { tools } = await realTools();
   assert.deepEqual(tools.list().map((d) => d.name), ['list_projects', 'list_workflows', 'list_runs',
-    'get_run', 'get_run_diff', 'propose_run', 'propose_workflow', 'read_attachment',
+    'get_run', 'get_run_diff', 'track_run', 'propose_run', 'propose_workflow', 'read_attachment',
     'list_diff_comments', 'add_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
     'open_worktree', 'list_worktrees', 'remove_worktree', 'git']);
   const byName = (n) => tools.list().find((d) => d.name === n);

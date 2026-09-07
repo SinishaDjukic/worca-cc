@@ -63,6 +63,7 @@ class AskTurn extends EventEmitter {
     // #397: {projectKey}|{workspaceId}|null — the user-pinned scope at POST time.
     this.pinnedScope = pinnedScope && typeof pinnedScope === 'object' ? pinnedScope : null;
     this._wfCards = new Map();        // tool_use id → card id (START → RESULT of one propose_workflow call)
+    this._tracked = new Set();        // pipeline ids minted as progress cards in THIS reply (one card per pipeline)
     this.extraCostUsd = 0;            // PD2: money the MCP child spent on the workflow classifier, booked by this turn
     this.deps = {
       runClaudeImpl: deps.runClaudeImpl ?? runClaude,
@@ -72,6 +73,7 @@ class AskTurn extends EventEmitter {
       },
       validateProposal: deps.validateProposal ?? validateProposal,
       revalidateWorkflow: deps.revalidateWorkflow ?? revalidateWorkflowProposal,
+      trackRun: deps.trackRun ?? null,
       generateTitle: deps.generateTitle ?? generateTitle,
       askLimits: deps.askLimits ?? askLimits,
       limits: deps.limits ?? ASK_LIMITS,
@@ -178,6 +180,29 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /** track_run's card (D3/D4): the MCP child only resolved the id — deps.trackRun (ui/server.mjs askTrackRun)
+   *  links the run to this thread and follows a live one; this mints ONE stateless progress card per pipeline
+   *  per reply (older replies keep theirs — every card derives what it shows). */
+  async _onTrackRun(input, isError) {
+    if (isError) return;
+    const d = this.deps;
+    if (typeof d.trackRun !== 'function') return;
+    const raw = input && typeof input === 'object' ? input : {};
+    let r = null;
+    try { r = await d.trackRun(raw, { threadId: this.threadId, pin: this.pinnedScope }); }
+    catch (err) { r = { ok: false, error: err?.message || String(err) }; }
+    if (!r || !r.ok || !r.card || !r.card.pipelineId) {
+      this.reducer.addBlock({ kind: 'notice', text: `Could not track the run: ${(r && r.error) || 'unknown error'}` });
+      this._persistBlocks();
+      return;
+    }
+    if (this._tracked.has(r.card.pipelineId)) return;          // the hook continuations run one at a time after their await
+    this._tracked.add(r.card.pipelineId);
+    const block = this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'tracked', card: r.card });
+    if (!block) return;                                          // null after finish() (events.mjs:511) — _onWorkflowResult's own guard
+    this._persistBlocks();                                       // a store write; the browser gets the reducer's ask-card frame
+  }
+
   /** The card exists from the tool_use on (spec §8.2, PD7): a building block with the four-step trace, persisted. */
   _onWorkflowStart(toolUseId, input) {
     const d = this.deps;
@@ -238,6 +263,7 @@ class AskTurn extends EventEmitter {
 
   _makeReducer() {
     this._wfCards.clear();
+    this._tracked.clear();
     const d = this.deps;
     // One settings read per attempt, never per frame. null → the frames carry
     // estimatedCostUsd:null and the footer keeps today's behaviour.
@@ -259,6 +285,7 @@ class AskTurn extends EventEmitter {
       onProposal: ({ input }) => this._onProposal(input),
       onWorkflowStart: ({ toolUseId, input }) => this._onWorkflowStart(toolUseId, input),
       onWorkflowResult: ({ toolUseId, text, isError }) => this._onWorkflowResult(toolUseId, text, isError),   // the hook's `input` is not needed here: the card is rebuilt from `out`
+      onTrackRun: ({ input, isError }) => this._onTrackRun(input, isError),
       // The MCP child cannot broadcast; the parent turns its comment writes into
       // the same poke the REST routes emit.
       onCommentMutation: (e) => { try { this.deps.onCommentMutation(e); } catch { /* a broken sink never breaks the turn */ } },

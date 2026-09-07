@@ -3539,6 +3539,65 @@ body.rail-collapsed .ask-dock{left:76px;}
    grip's visible band hugs the border, well outside the button box. */
 .ask-header .ask-icon-btn{position:relative;z-index:6;}
 
+/* ---------- run progress card (ui/public/ask-run-card.mjs; the live view of a pipeline run in the transcript) ----------
+   Stateless: every value is repainted from the app's run store or GET /api/ask/runs/:id. Tokens only.
+   The run-state ornaments are restated for THIS host: the run-monitor block is scoped to its own host class
+   (pinned by test/ui-run-hosts.test.mjs), and keyframes are name-resolved — referenced here, declared once there.
+   Reduced motion: the dock blanket (.ask-dock *{animation:none !important;}) covers every ELEMENT below — never a
+   pseudo-element (style.css:3714-3717), so nothing here animates a ::before/::after (D25; pinned). Pips scale with
+   --gv-scale (geometry.mjs) because the flow card is drawn at 0.65 while the world transform stays identity.
+   Every rule that restates a v2-canvas base rule carries .gv-world: the base lives LATER in this file, so a
+   two-class .ask-rc-graph .wbadge would tie on specificity and lose (the budget pill would keep painting its
+   "3×" under the fired "2×"). Pinned by the cascade test in test/ui-ask-style.test.mjs. */
+.ask-card.ask-rc{gap:0;padding:16px 18px;border-width:1px;animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
+.ask-rc>*{min-width:0;}
+.ask-rc-head{display:flex;align-items:center;gap:8px;height:28px;}
+.ask-rc-kicker{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;background:var(--violet-bg);color:var(--violet-ink);white-space:nowrap;}
+.ask-rc-pill{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;font-family:var(--mono);font-size:11px;font-weight:700;white-space:nowrap;}
+.ask-rc-dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:0 0 auto;}
+.ask-rc.is-live .ask-rc-dot{animation:dotpulse 1.3s ease-in-out infinite;}
+.ask-rc-pill.st-peach{background:var(--peach-bg);color:var(--h-peach-ink);}
+.ask-rc-pill.st-blue{background:var(--blue-bg);color:var(--h-blue-ink);}
+.ask-rc-pill.st-violet{background:var(--violet-bg);color:var(--violet-ink);}
+.ask-rc-pill.st-green{background:var(--green-bg);color:var(--h-green-ink);}
+.ask-rc-pill.st-red{background:var(--red-bg);color:var(--red-ink);}
+.ask-rc-pill.st-amber{background:var(--amber-bg);color:var(--amber-ink);}
+.ask-rc-spacer{flex:1 1 auto;}
+.ask-rc-open{display:inline-flex;align-items:center;height:28px;padding:0 12px;border-radius:999px;background:var(--ink);color:var(--panel);font-weight:600;font-size:12px;text-decoration:none;white-space:nowrap;transition:.15s;}
+.ask-rc-open:hover{filter:brightness(1.08);}
+.ask-rc-open:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-rc-title{margin-top:12px;font-weight:600;font-size:15px;line-height:1.35;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-rc-sub{margin-top:4px;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-rc-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:14px;}
+.ask-rc-stat{display:flex;flex-direction:column;gap:3px;padding:9px 11px;border:1px solid var(--line);border-radius:12px;background:var(--field);}
+.ask-rc-stat-k{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);}
+.ask-rc-stat-v{font-family:var(--mono);font-size:14px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;}
+.ask-rc-active{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}
+.ask-rc-active[hidden]{display:none;}
+.ask-rc-agent{--c:var(--ink-3);display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px 0 7px;border-radius:999px;border:1px solid color-mix(in srgb, var(--c) 45%, var(--line));background:color-mix(in srgb, var(--c) 12%, var(--panel));color:var(--ink);font-size:11.5px;font-weight:600;white-space:nowrap;}
+.ask-rc-agent-dot{width:7px;height:7px;border-radius:50%;background:var(--c);flex:0 0 auto;animation:dotpulse 1.3s ease-in-out infinite;}
+.ask-rc-banner{margin-top:12px;padding:9px 12px;border-radius:10px;font-size:12.5px;font-weight:600;color:var(--amber-ink);background:var(--amber-wash);border:1px solid var(--amber-line);}
+.ask-rc-banner[hidden]{display:none;}
+.ask-rc-reason{margin-top:10px;font-size:12px;color:var(--red-ink);}
+.ask-rc-reason[hidden]{display:none;}
+.ask-rc-graph{position:relative;margin-top:14px;min-height:120px;overflow:hidden;border:1px solid var(--line);border-radius:12px;cursor:pointer;
+  background:var(--canvas-2) radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;transition:height .24s cubic-bezier(.2,.7,.3,1);}
+.ask-rc-graph[hidden]{display:none;}
+.ask-rc-graph .gv-world .node.is-active{border-color:color-mix(in srgb, var(--c) 55%, var(--line-2));animation:nodeGlow 2.2s ease-in-out infinite;}
+.ask-rc-graph .gv-world .node.is-paused{border-color:color-mix(in srgb, var(--amber) 55%, var(--line-2));animation:nodeGlowAmber 2.2s ease-in-out infinite;}
+.ask-rc-graph .gv-world .node.is-stopped,.ask-rc-graph .gv-world .node.is-error{border-color:color-mix(in srgb, var(--red) 50%, var(--line-2));box-shadow:0 0 0 3px color-mix(in srgb, var(--red) 13%, transparent),var(--shadow-soft);}
+.ask-rc-graph .gv-world .node.is-skipped{opacity:.35;border-style:dashed;}
+.ask-rc-graph .gv-world .node.is-done::after,.ask-rc-graph .gv-world .node.is-paused::after,.ask-rc-graph .gv-world .node.is-stopped::after,.ask-rc-graph .gv-world .node.is-error::after{content:"";position:absolute;top:calc(-8px * var(--gv-scale));right:calc(-8px * var(--gv-scale));width:calc(21px * var(--gv-scale));height:calc(21px * var(--gv-scale));border-radius:50%;box-shadow:var(--shadow-soft);z-index:3;color:var(--on-status);font:800 calc(12px * var(--gv-scale))/calc(21px * var(--gv-scale)) var(--sans);text-align:center;}
+.ask-rc-graph .gv-world .node.is-done::after{content:"✓";background:var(--green);}
+.ask-rc-graph .gv-world .node.is-paused::after{content:"❚❚";font-size:calc(8px * var(--gv-scale));background:var(--amber);}
+.ask-rc-graph .gv-world .node.is-stopped::after,.ask-rc-graph .gv-world .node.is-error::after{content:"×";background:var(--red);}
+.ask-rc-graph .gv-world .node:has(> .ngate)::after{content:none;}
+.ask-rc-graph .gv-world .ngate{animation:dotpulse 1.3s ease-in-out infinite;}
+.ask-rc-graph .gv-wires path.wire-live{stroke-dasharray:6 6;stroke-width:2.4;animation:wireDash .6s linear infinite;}
+.ask-rc-graph .gv-world .wbadge{font-size:0;line-height:0;padding:0;border:0;background:none;}
+.ask-rc-graph .wbadge:not(:has(> .wfired)){display:none;}
+.ask-rc-graph .gv-world .wbadge .wfired{display:inline-block;margin:0;padding:1px 7px;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink);border:1px solid var(--amber);font:700 10px/1.4 var(--mono);}
+
 /* ---------- Ask Worca dock clearance ---------- */
 /* The dock is a fixed overlay -- .ask-dock above: 26px dock padding-bottom plus the
    ~47px pill occludes a ~73px strip at the bottom of every scrollport, while the page

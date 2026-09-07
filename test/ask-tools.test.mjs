@@ -365,9 +365,9 @@ const fake = {
 };
 const tools = createAskTools(fake);
 
-test('list(): sixteen tools with JSON-Schema inputs', () => {
+test('list(): seventeen tools with JSON-Schema inputs', () => {
   const defs = tools.list();
-  assert.deepEqual(defs.map((d) => d.name), ['list_projects', 'list_workflows', 'list_runs', 'get_run', 'get_run_diff', 'propose_run', 'propose_workflow', 'read_attachment',
+  assert.deepEqual(defs.map((d) => d.name), ['list_projects', 'list_workflows', 'list_runs', 'get_run', 'get_run_diff', 'track_run', 'propose_run', 'propose_workflow', 'read_attachment',
     'list_diff_comments', 'add_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
     'open_worktree', 'list_worktrees', 'remove_worktree', 'git']);
   for (const d of defs) {
@@ -444,6 +444,22 @@ test('get_run: scoped and key-less lookups, project and workspace shapes, archiv
   const s = await tools.call('get_run', { id: 'cccccccc' });
   assert.equal(s.title, 'Leak ghp_<redacted>', 'titles are redacted before they reach the model');
   assert.equal(s.prompt, 'use AKIA<redacted> please', 'run prompts are untrusted text: redacted');
+});
+
+test('track_run: resolves an 8-hex id like get_run (pinned scope first), passes a live UUID through unresolved, needs an id', async () => {
+  const r = await tools.call('track_run', { id: '4e1f2a9b' });
+  assert.equal(r.ok, true);
+  assert.equal(r.tracked.id, '4e1f2a9b');
+  assert.equal(r.tracked.title, 'Fix login');
+  assert.equal(r.tracked.status, 'done');
+  assert.deepEqual(r.tracked.project, { key: 'demo-00000001', name: 'Demo' });
+  const ws = await tools.call('track_run', { id: '8c3d12ab', workspaceId: 'wks-team-0000abcd' });
+  assert.equal(ws.tracked.workspace.id, 'wks-team-0000abcd');
+  await assert.rejects(tools.call('track_run', { id: '4e1f2a9b', projectKey: 'other-00000003' }), /track_run: run not found/);
+  await assert.rejects(tools.call('track_run', {}), /track_run: id is required/);
+  const uuid = await tools.call('track_run', { id: '0f6e5d4c-1b2a-4c3d-8e9f-0a1b2c3d4e5f' });
+  assert.deepEqual(uuid, { ok: true, tracked: { id: '0f6e5d4c-1b2a-4c3d-8e9f-0a1b2c3d4e5f', resolved: false } });
+  assert.deepEqual(tools.list().find((d) => d.name === 'track_run').inputSchema.required, ['id']);
 });
 
 test('get_run_diff: protected basenames dropped, redaction, path filter, paging, archived/missing', async () => {

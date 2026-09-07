@@ -514,3 +514,11 @@ test('rule 3 asks for the note and the attachmentIds hand-off; rules still stop 
   for (const t of ['one-line note', 'attachmentIds', 'extra files', '(rule 10)']) assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 3 states "${t}"`);
   assert.ok(!/\n\s*13\./.test(ASK_SYSTEM_RULES));
 });
+
+test('track_run: named in rule 1, guided in rule 5, and the rules still stop at 12', () => {
+  const rule1 = ASK_SYSTEM_RULES.slice(ASK_SYSTEM_RULES.indexOf('\n1. '), ASK_SYSTEM_RULES.indexOf('\n2. '));
+  assert.ok(rule1.includes('get_run_diff, track_run, read_attachment'), 'listed among the read tools');
+  const rule5 = ASK_SYSTEM_RULES.slice(ASK_SYSTEM_RULES.indexOf('\n5. '), ASK_SYSTEM_RULES.indexOf('\n6. '));
+  for (const t of ['call track_run once', 'live progress card', 'do not restate']) assert.ok(rule5.includes(t), t);
+  assert.ok(!/\n\s*13\./.test(ASK_SYSTEM_RULES));
+});
