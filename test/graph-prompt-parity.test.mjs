@@ -124,7 +124,7 @@ const V1_DECOMPOSER_SLICES =
   'tracer-bullet vertical slices grouped into ordered phases. Within a phase, tasks must be ' +
   'parallel-safe and edit DISJOINT files';
 const V1_DECOMPOSER_TASKS_DIR =
-  `Write each task file under: ${join(pipelineDir, 'tasks')}/ (name them p<phase>-t<n>-<kebab-title>.md)`;
+  `Write each task file under: ${join(pipelineDir, 'steps', 'n_decomposer-c2', 'tasks')}/ (name them p<phase>-t<n>-<kebab-title>.md)`;
 const V1_DECOMPOSER_MANIFEST =
   'The manifest shape is { "phases": [ { "ordinal", "tasks": [ { "id", "title", "file" } ] } ] }. ' +
   'Use id "p<ordinal>t<n>" and a pipeline-dir-relative "file" path.';
@@ -409,19 +409,28 @@ test('every builtin pins its v1 MOCK_ROLE and names its allocated outputs absolu
     if (ctx.verdict) assert.ok(p.includes(`MOCK_JSON: ${ctx.verdict.path}`), `${key}: MOCK_JSON`);
   }
   // The filename contract, spot-checked against v1's shipped names.
-  assert.match(posix(ctxFor('reviewer').outputs.review.path), /reviews\/01-01-26-feature-impl-review\.md$/);
-  assert.match(posix(ctxFor('reviewer').verdict.path), /impl-review-cycle2\.json$/);
-  assert.match(posix(ctxFor('planReviewer').outputs.review.path), /reviews\/01-01-26-feature-plan-review\.md$/);
-  assert.match(posix(ctxFor('workspaceReviewer').verdict.path), /ws-review-cycle2\.json$/);
-  assert.match(posix(ctxFor('refiner').verdict.path), /refine-review-cycle2\.json$/);
-  assert.match(posix(ctxFor('manualWebUiTesting').outputs.review.path), /webui-review-cycle2\.md$/);
-  assert.match(posix(ctxFor('manualTestsChecklist').outputs.checklist.path), /manual-tests-checklist\.md$/);
-  assert.match(posix(ctxFor('decomposer').outputs.tasks.path), /decomposition\.json$/);
-  assert.match(posix(ctxFor('clarify').outputs.answers.path), /clarify\.json$/);
-  assert.match(posix(ctxFor('planner').outputs.plan.path), /plans\/01-01-26-feature\.md$/);
+  assert.equal(ctxFor('reviewer').outputs.review.path, join(pipelineDir, 'steps', 'n_reviewer-c2', 'impl-review-cycle2.md'));
+  assert.equal(ctxFor('reviewer').verdict.path, join(pipelineDir, 'steps', 'n_reviewer-c2', 'impl-review-cycle2.json'));
+  assert.equal(ctxFor('planReviewer').outputs.review.path, join(pipelineDir, 'steps', 'n_planReviewer-c2', 'plan-review-cycle2.md'));
+  assert.equal(ctxFor('workspaceReviewer').verdict.path, join(pipelineDir, 'steps', 'n_workspaceReviewer-c2', 'ws-review-cycle2.json'));
+  assert.equal(ctxFor('refiner').verdict.path, join(pipelineDir, 'steps', 'n_refiner-c2', 'refine-review-cycle2.json'));
+  assert.equal(ctxFor('manualWebUiTesting').outputs.review.path, join(pipelineDir, 'steps', 'n_manualWebUiTesting-c2', 'webui-review-cycle2.md'));
+  assert.equal(ctxFor('manualTestsChecklist').outputs.checklist.path, join(pipelineDir, 'steps', 'n_manualTestsChecklist-c2', 'manual-tests-checklist.md'));
+  assert.equal(ctxFor('decomposer').outputs.tasks.path, join(pipelineDir, 'steps', 'n_decomposer-c2', 'decomposition.json'));
+  assert.equal(ctxFor('clarify').outputs.answers.path, join(pipelineDir, 'steps', 'n_clarify-c2', 'clarify.json'));
+  assert.equal(ctxFor('planner').outputs.plan.path, join(pipelineDir, 'steps', 'n_planner-c2', 'plan.md'));
   assert.equal(ctxFor('refiner').outputs.plan.path, ctxFor('refiner').outputs.revise.path);
-  assert.ok(buildAgentPrompt(ctxFor('decomposer')).includes(`MOCK_TASKS_DIR: ${join(pipelineDir, 'tasks')}`),
+  assert.ok(buildAgentPrompt(ctxFor('decomposer')).includes(`MOCK_TASKS_DIR: ${join(pipelineDir, 'steps', 'n_decomposer-c2', 'tasks')}`),
     'the decomposer is discovered through the wire into implementer.task');
+});
+
+test('every builtin prompt carries the step-folder block (spec D9)', () => {
+  for (const key of BUILTIN_KEYS) {
+    const p = promptFor(key);
+    assert.ok(p.includes(`- Your step folder for this execution: ${join(pipelineDir, 'steps', `${nodeId(key)}-c2`)}`), `${key}: step folder line`);
+    assert.ok(p.includes('inside it — never anywhere else in the run store.'), `${key}: the containment sentence`);
+    assert.ok(p.includes(`MOCK_STEP_DIR: ${join(pipelineDir, 'steps', `${nodeId(key)}-c2`)}`), `${key}: MOCK_STEP_DIR`);
+  }
 });
 
 // ── the per-agent load-bearing sentences (adj-f1 §5; §0 item 2: what the old branch lost) ──
@@ -533,7 +542,7 @@ test('runAgentExecution ships exactly the prompt buildAgentPrompt produced', asy
   const ctx = ctxFor('reviewer');
   const r = await runAgentExecution(ctx);
   assert.equal(r.prompt, buildAgentPrompt(ctx), 'no second builder, no drift');
-  assert.ok(r.outputs.review.path.endsWith('-impl-review.md'));
+  assert.equal(r.outputs.review.path, join(pipelineDir, 'steps', 'n_reviewer-c2', 'impl-review-cycle2.md'));
   assert.ok(Array.isArray(r.verdict.issues));
   assert.match(r.sessionId, /^mock-session-/);
 });

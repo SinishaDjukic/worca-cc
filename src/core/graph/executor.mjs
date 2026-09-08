@@ -32,14 +32,14 @@
 // input left UNBOUND. The composite DRIVER is scheduler.mjs; this module owns the
 // document — including the prompt block that tells a producer where to write the
 // task files and what the manifest looks like.
-import { join, dirname, relative, basename } from 'node:path';
+import { join, dirname, relative, basename, sep } from 'node:path';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 
 import {
   runClaude, MOCK_WRITER_ROLES, MOCK_ROLE_CLARIFY, MOCK_ROLE_DECOMPOSER,
 } from '../claude-runner.mjs';
-import { planPath, reviewPath, writeStepQuestions, writeClarify } from '../artifacts.mjs';
+import { writeStepQuestions, writeClarify } from '../artifacts.mjs';
 import { readReview, normalizeClarify, normalizeReview, safeParseJson } from '../protocol.mjs';
 import {
   taskHeader, buildSystemPrompt, resolveAgentBody, mockMarkers, runOpts,
@@ -64,22 +64,47 @@ export const VERDICT_CONTRACT =
   '"summary" }. Use severities critical|major|minor|suggestion; only critical/major block the ' +
   'pipeline.\n\n';
 
+// ── the step folder ───────────────────────────────────────────────────────────
+
+/** One path segment from an untrusted id: everything outside [A-Za-z0-9_-] becomes
+ *  `_`. The `_questionsPath` rule, hoisted here so the orchestrator and the executor
+ *  can never disagree about a folder name. */
+export const safeSegment = (s) => String(s).replace(/[^A-Za-z0-9_-]/g, '_');
+
+/**
+ * The step folder NAME of one execution — `<safe(nodeId)>-c<ordinal>[-<safe(sliceId)>]`
+ * (spec D2). Flat under `steps/`: the folder is the provenance (node, cycle, slice),
+ * so filenames carry no duplicate-key or slice prefix any more (D5). `runCtx.slice`
+ * is the manifest task id STRING (unvalidated, agent-written — hence `safe` on it).
+ */
+export function stepDirName(node, ordinal, runCtx) {
+  return `${safeSegment(node?.id)}-c${ordinal ?? 1}${runCtx?.slice ? `-${safeSegment(runCtx.slice)}` : ''}`;
+}
+
+/** The absolute step folder: `<pipelineDir>/steps/<stepDirName>`. PURE — allocation,
+ *  the Ports block, the mock markers and the orchestrator's scan all derive the
+ *  identical value from `(node, ordinal, runCtx)`; nothing is stored. */
+export function stepDirOf(node, ordinal, runCtx) {
+  return join(String(runCtx?.pipelineDir || ''), 'steps', stepDirName(node, ordinal, runCtx));
+}
+
+/** `plan.md` for version 1, `plan-vN.md` after — the planStoreSeed's file name. */
+export const planFileName = (version) => `plan${Number(version) > 1 ? `-v${Number(version)}` : ''}.md`;
+
 // ── allocation ────────────────────────────────────────────────────────────────
 
 /**
- * Resolve one filename template into `{ path, store }`. Tokens: `{cycle}` -> the
- * execution ordinal, `{base}` -> the run base name, `{vsuffix}` -> the run-global
+ * Resolve one filename template into `{ path, store }` INSIDE the step folder.
+ * Tokens: `{cycle}` -> the execution ordinal, `{base}` -> the run base name (kept
+ * for third-party sidecars; no builtin uses it), `{vsuffix}` -> the run-global
  * plan-version suffix ('' for version 1, '-vN' after). `{vsuffix}` CONSUMES one tick
  * of `runCtx.planVersion()`, and only when the template actually carries it.
- * The duplicate-key/slice `prefix` applies to EVERY store: the plans/reviews store is
- * one file per base name (v1 parity), so without it two cards on one agent key —
- * trivial to place in the composer — resolve to ONE persisted path and the later
- * writer clobbers the earlier. The prefix is EMPTY for a single card, so every
- * single-card graph keeps its v1 path byte-for-byte.
+ * The port's `store` property is accepted and IGNORED (spec D4): every output of
+ * every store lands in the step folder, so the project-store `plans/` and
+ * `reviews/` directories receive no new files.
  */
-function resolveTemplate(port, { ordinal, runCtx, prefix }) {
+function resolveTemplate(port, { ordinal, runCtx, stepDir }) {
   const tpl = String(port.filename);
-  const store = port.store || 'run';
   let version = null;
   const nextVersion = () => {
     if (version === null) {
@@ -91,57 +116,28 @@ function resolveTemplate(port, { ordinal, runCtx, prefix }) {
     .replace(/\{cycle\}/g, String(ordinal))
     .replace(/\{base\}/g, String(runCtx.baseName || ''))
     .replace(/\{vsuffix\}/g, () => (nextVersion() > 1 ? `-v${nextVersion()}` : ''));
-
-  if (store !== 'project') return { path: join(runCtx.pipelineDir, prefix + name), store };
-
-  // The prefix rides the discriminating half of each store's name so the -vN
-  // linkage still hangs off the node's OWN plan family: plans get it on the base
-  // (`<date>-<prefix><base>[-vN].md`), reviews on the kind (`<date>-<base>-<prefix><kind>.md`).
-  if ((port.artifactKind || port.id) === 'plan') {
-    const v = tpl.includes('{vsuffix}') ? nextVersion() : 1;
-    return {
-      path: planPath(runCtx.projectDir, prefix + String(runCtx.baseName || ''), v, runCtx.datePrefix, runCtx.workspaceKey),
-      store,
-    };
-  }
-  const m = /^\{base\}-(.+)\.md$/.exec(tpl);
-  const kind = m ? m[1] : (port.artifactKind || port.id);
-  return {
-    path: reviewPath(runCtx.projectDir, runCtx.baseName, runCtx.datePrefix, prefix + kind, runCtx.workspaceKey),
-    store,
-  };
+  return { path: join(stepDir, name), store: 'run' };
 }
 
-/**
- * DUPLICATE-KEY RULE (generic): when two or more agent nodes share one agent key,
- * every `store:'run'` output and the verdict of those nodes is prefixed `<nodeId>-`.
- * `runCtx.slice` extends the same rule to a COMPOSITE fan-out: every sub-execution of
- * one composite shares its parent's ordinal, so without a per-task prefix the parallel
- * slices would resolve to one filename and clobber each other.
- */
-function dupPrefix(node, runCtx) {
-  const dup = runCtx && runCtx.duplicateKey ? `${node.id}-` : '';
-  const slice = runCtx && runCtx.slice ? `${runCtx.slice}-` : '';
-  return dup + slice;
-}
-
-/** The combine card's own allocation: one md artifact per emission. */
+/** The combine card's own allocation: one md artifact per emission, in its step folder. */
 function combinePath(node, ordinal, runCtx) {
-  return join(runCtx.pipelineDir, `combine-${node.id}-c${ordinal}.md`);
+  return join(stepDirOf(node, ordinal, runCtx), 'combine.md');
 }
 
-/** Where a decomposition's task files live: `<pipelineDir>/tasks` — v1's
- *  `join(dirname(decompositionPath), 'tasks')` for a run-store manifest. ONE helper
- *  feeds both the prompt block and the mock's `MOCK_TASKS_DIR`. */
-function tasksDirOf(runCtx) {
-  return join(String(runCtx?.pipelineDir || ''), 'tasks');
+/** Where a decomposition's task files live: `<stepDir>/tasks` of the execution that
+ *  writes the manifest (spec D10). ONE helper feeds both the prompt block and the
+ *  mock's `MOCK_TASKS_DIR`. */
+function tasksDirOf(node, ordinal, runCtx) {
+  return join(stepDirOf(node, ordinal, runCtx), 'tasks');
 }
 
 /**
  * Allocate this execution's output paths, keyed by port id. Outputs whose templates
  * are IDENTICAL resolve to ONE `{path, store}` object (the refiner's `plan`/`revise`
  * pair is the live case): each distinct template is evaluated exactly ONCE per
- * execution, so a refine cycle consumes one plan version, not two.
+ * execution, so a refine cycle consumes one plan version, not two. The folder —
+ * `stepDirOf(node, ordinal, runCtx)` — scopes duplicate keys and composite slices,
+ * so no filename prefix is applied any more (D5).
  * @returns {Record<string, {path:string, store:string}>}
  */
 export function allocateOutputs({ node, ports, executionId, ordinal = 1, runCtx = {} }) {  // eslint-disable-line no-unused-vars
@@ -150,28 +146,24 @@ export function allocateOutputs({ node, ports, executionId, ordinal = 1, runCtx 
     out.out = { path: combinePath(node, ordinal, runCtx), store: 'run' };
     return out;
   }
-  const prefix = dupPrefix(node, runCtx);
+  const stepDir = stepDirOf(node, ordinal, runCtx);
   const byTemplate = new Map();
   for (const port of ports?.outputs || []) {
     if (!port || !port.filename) continue;
-    const cacheKey = JSON.stringify([port.store || 'run', port.filename]);
-    if (!byTemplate.has(cacheKey)) {
-      byTemplate.set(cacheKey, resolveTemplate(port, { ordinal, runCtx, prefix }));
-    }
-    out[port.id] = byTemplate.get(cacheKey);
+    const tpl = String(port.filename);              // `store` is ignored, so the template alone is the key
+    if (!byTemplate.has(tpl)) byTemplate.set(tpl, resolveTemplate(port, { ordinal, runCtx, stepDir }));
+    out[port.id] = byTemplate.get(tpl);
   }
   return out;
 }
 
-/** The node-level verdict allocation (a verdict is NOT a port). Always lands in the
- *  pipeline dir, and carries the duplicate-key prefix for the same reason. */
+/** The node-level verdict allocation (a verdict is NOT a port). Lands in the step
+ *  folder under its rendered basename (`{cycle}` renders; the composer already
+ *  validates the template is a plain basename). */
 export function allocateVerdict({ node, ports, ordinal = 1, runCtx = {} }) {
   const filename = ports?.verdict?.filename;
   if (!filename) return null;
-  const { path } = resolveTemplate(
-    { id: 'verdict', filename, store: 'run' },
-    { ordinal, runCtx, prefix: dupPrefix(node, runCtx) },
-  );
+  const { path } = resolveTemplate({ id: 'verdict', filename }, { ordinal, runCtx, stepDir: stepDirOf(node, ordinal, runCtx) });
   return { path };
 }
 
@@ -223,9 +215,10 @@ const INPUT_RENDERERS = {
  * outputs are listed on EVERY execution (`when` gates token ROUTING only, so a
  * passing verifier still writes its review markdown and its verdict exactly as
  * today). Outputs sharing ONE allocated path render ONE line. The synthesized
- * `await` input is never listed.
+ * `await` input is never listed. With `stepDir` the block ends with the
+ * `### Step folder` section (D9).
  */
-export function portIoBlock({ node, ports, bindings = {}, outputs = {}, verdict = null, ctx = {} }) {  // eslint-disable-line no-unused-vars
+export function portIoBlock({ node, ports, bindings = {}, outputs = {}, verdict = null, ctx = {}, stepDir = '' }) {  // eslint-disable-line no-unused-vars
   const inLines = [];
   for (const port of ports?.inputs || []) {
     if (!port || port.id === AWAIT_ID) continue;
@@ -257,7 +250,19 @@ export function portIoBlock({ node, ports, bindings = {}, outputs = {}, verdict 
     (inLines.length ? inLines.join('\n') : '- (none — work from the request above)') +
     '\n\n### Outputs\n\n' +
     (outLines.length ? outLines.join('\n') : '- (none — report your findings as your final message)') +
-    '\n\n'
+    '\n\n' +
+    (stepDir ? stepFolderBlock(stepDir) : '')
+  );
+}
+
+/** Spec D9: the ONE place an agent learns where its extra files go. Rendered for
+ *  every agent execution, producers included. */
+function stepFolderBlock(stepDir) {
+  return (
+    '### Step folder\n\n' +
+    `- Your step folder for this execution: ${stepDir}\n` +
+    '- Put every additional artifact you produce (deviation notes, findings, scratch, screenshots, task files) ' +
+    'inside it — never anywhere else in the run store. Files there are indexed and shown to the user after this step.\n\n'
   );
 }
 
@@ -419,10 +424,10 @@ export async function readVerdict(verdictPath) {
   return normalizeReview(data);
 }
 
-/** The warning line a missing verdict raises, relative to the pipeline dir so the
- *  run log stays readable. */
+/** The warning line a missing verdict raises, relative to the pipeline dir and
+ *  `/`-joined so the pinned text is identical on Windows. */
 function missingVerdictWarning(ctx, verdictPath) {
-  const rel = ctx?.pipelineDir ? relative(ctx.pipelineDir, verdictPath) : basename(verdictPath);
+  const rel = ctx?.pipelineDir ? relative(ctx.pipelineDir, verdictPath).split(sep).join('/') : basename(verdictPath);
   return `verdict file missing: ${ctx?.nodeId || ctx?.node?.id || '?'} ${rel} — treated as clean`;
 }
 
@@ -473,10 +478,10 @@ function substituteHints(raw, ctx) {
  * the manifest looks like. v1's decomposer lines (phases.mjs:727-731), byte-faithful;
  * the manifest path itself is the Ports block's output line.
  */
-function decompositionContractBlock(expandsPort, runCtx) {
+function decompositionContractBlock(expandsPort, node, ordinal, runCtx) {
   if (!expandsPort) return '';
   return (
-    `Write each task file under: ${tasksDirOf(runCtx)}/ (name them p<phase>-t<n>-<kebab-title>.md)\n` +
+    `Write each task file under: ${tasksDirOf(node, ordinal, runCtx)}/ (name them p<phase>-t<n>-<kebab-title>.md)\n` +
     'The manifest shape is { "phases": [ { "ordinal", "tasks": [ { "id", "title", "file" } ] } ] }. ' +
     'Use id "p<ordinal>t<n>" and a pipeline-dir-relative "file" path.\n\n'
   );
@@ -484,15 +489,16 @@ function decompositionContractBlock(expandsPort, runCtx) {
 
 /** The MOCK marker set for this execution, per the resolution chain. Only markers
  *  `runMock` reads are emitted (MOCK_ROLE, MOCK_CYCLE, MOCK_BASE, MOCK_OUT, MOCK_JSON,
- *  MOCK_IN, MOCK_PRIOR, MOCK_TASKS_DIR). */
-function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, expandsPort, priorCount }) {
+ *  MOCK_IN, MOCK_PRIOR, MOCK_TASKS_DIR, MOCK_STEP_DIR). */
+function markersFor({ role, node, ordinal, runCtx, outputs, verdict, bindings, ports, expandsPort, stepDir, priorCount }) {
   const markers = { MOCK_ROLE: role, MOCK_CYCLE: ordinal, MOCK_BASE: runCtx.baseName };
+  markers.MOCK_STEP_DIR = stepDir;
   if (role === MOCK_ROLE_CLARIFY) {
     markers.MOCK_OUT = outputs[answersPortOf(ports)?.id]?.path;
     markers.MOCK_PRIOR = priorCount;
   } else if (role === MOCK_ROLE_DECOMPOSER) {
     markers.MOCK_OUT = outputs[expandsPort]?.path;
-    markers.MOCK_TASKS_DIR = tasksDirOf(runCtx);
+    markers.MOCK_TASKS_DIR = tasksDirOf(node, ordinal, runCtx);
   } else {
     markers.MOCK_OUT = Object.values(outputs).find((o) => o && o.path)?.path;
   }
@@ -517,6 +523,8 @@ export function buildAgentPrompt(ctx) {
   const outputs = ctx.outputs || {};
   const verdict = ctx.verdict || null;
   const expandsPort = ctx.expandsPort ?? null;
+  // D9: one pure derivation — allocation, the scan and the prompt all agree.
+  const stepDir = ctx.stepDir || stepDirOf(node, ordinal, runCtx);
 
   // Who gets the raw request and the attachments: binding a task node's token, or
   // declaring `wantsRequest`. taskHeader reads those decisions off `isEntry` /
@@ -550,14 +558,14 @@ export function buildAgentPrompt(ctx) {
     fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed }) +
     workspaceFanOutDirective(meta.workspaceStrategy, ctx.workspace, { relative, endpointRouted: routed }) +
     (siblings ? siblings + '\n' : '') +
-    portIoBlock({ node, ports, bindings, outputs, verdict, ctx }) +
-    decompositionContractBlock(expandsPort, runCtx) +
+    portIoBlock({ node, ports, bindings, outputs, verdict, ctx, stepDir }) +
+    decompositionContractBlock(expandsPort, node, ordinal, runCtx) +
     answersBlock +
     (verdict?.path ? VERDICT_CONTRACT : '') +
     mockMarkers(markersFor({
       role: ctx.mockRole || resolveMockRole({ meta, expandsPort }),
-      ordinal, runCtx, outputs, verdict, bindings, ports,
-      expandsPort,
+      node, ordinal, runCtx, outputs, verdict, bindings, ports,
+      expandsPort, stepDir,
       priorCount: (ctx.priorAnswers || []).length,
     }))
   );
@@ -606,7 +614,8 @@ async function prepare(ctx) {
     console.warn(`[executor] node "${node?.id}": no agent .md body resolved — running with an empty system prompt`);
   }
   const systemPrompt = buildSystemPrompt(ctx.toolInstruction, body, role, ctx.workspace);
-  const full = { ...ctx, ports, meta, outputs, verdict, expandsPort, mockRole, priorAnswers };
+  const stepDir = stepDirOf(node, ordinal, runCtx);
+  const full = { ...ctx, ports, meta, outputs, verdict, expandsPort, mockRole, priorAnswers, stepDir };
   const prompt = buildAgentPrompt(full);
   const allowedTools = meta.sideEffect === 'code' ? IMPLEMENTER_TOOLS : READ_WRITE_TOOLS;
   // D3: an EXPLICIT alias pin on an endpoint-routed node is a stored promise the
@@ -761,9 +770,9 @@ function writeOut(path, text) {
  * source card has nothing to emit is a wiring bug, never a silent empty token).
  *
  * A2 (parity-mandatory for the mid-stream entry template): with
- * `config.planStoreSeed`, the document ALSO lands in the plans store at version 1, the
- * emitted token IS that plans-store path, and the run's plan-version counter is
- * consumed at 1 — so the next plan-store write allocates `-v2`.
+ * `config.planStoreSeed`, the document ALSO lands in the task card's step folder as
+ * `plan.md` (version 1), the emitted token IS that path, and the run's plan-version
+ * counter is consumed at 1 — so the next plan write allocates `-v2`.
  */
 export function runTaskExecution({ node, taskArtifact, runCtx = {} }) {
   const given = taskArtifact?.path || null;
@@ -785,7 +794,9 @@ export function runTaskExecution({ node, taskArtifact, runCtx = {} }) {
 
   if (text === null) throw missing();
   const version = typeof runCtx.planVersion === 'function' ? Number(runCtx.planVersion()) || 1 : 1;
-  const seeded = planPath(runCtx.projectDir, runCtx.baseName, version, runCtx.datePrefix, runCtx.workspaceKey);
+  // A2: the seed IS plan version 1 of the run, in the task card's own step folder
+  // (the card fires once, at ordinal 1); the next plan write allocates -v2.
+  const seeded = join(stepDirOf(node, 1, runCtx), planFileName(version));
   writeOut(seeded, text);
   return { outputs: { task: { path: seeded } } };
 }

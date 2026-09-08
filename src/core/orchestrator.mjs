@@ -10,8 +10,9 @@
 // an ordinary execution, `x:<nodeId>:<ordinal>:<taskId>` for a composite slice.
 // state.steps[] IS the execution ledger: one row per execution, key ===
 // executionId. There is no separate executions[] array.
-import { join, isAbsolute } from 'node:path';
+import { join, isAbsolute, resolve, sep } from 'node:path';
 import { rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 
 import {
   RunHarness, isAbort, isPause, pauseErr, firstLine, jsonClone,
@@ -23,12 +24,13 @@ import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared
 import { DEFAULT_MAX_CYCLES } from '../shared/graph/constants.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
-import { runExecution, allocateOutputs, allocateVerdict, readDecomposition } from './graph/executor.mjs';
+import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, safeSegment, stepDirOf } from './graph/executor.mjs';
+import { scanStepFolder } from './step-scan.mjs';
 import { renderPromptArtifact } from './phases.mjs';
 import { modelHasBaseUrlRouting } from './config.mjs';
 import {
   appendAudit, writeReview, reviewKindOf, writeDecomposition, updateTaskStatus,
-  updatePhaseStatus, writeStepQuestions, readStepQuestions,
+  updatePhaseStatus, writeStepQuestions, readStepQuestions, listArtifacts,
 } from './artifacts.mjs';
 import { readQuestionsFile } from './protocol.mjs';
 import { classifyError } from './recoverable-error.mjs';
@@ -368,7 +370,7 @@ export class GraphOrchestrator extends RunHarness {
       // in P6 serves exactly what listArtifacts() carries).
       if (payload.result?.path) {
         this._artifact('result', payload.result.path, {
-          nodeId: payload.nodeId, executionId: payload.executionId, port: null,
+          nodeId: payload.nodeId, executionId: payload.executionId, port: null, cycle: null,
         });
       }
     }
@@ -464,7 +466,11 @@ export class GraphOrchestrator extends RunHarness {
       // here, not on the next spawn.
       this._checkAbort();
       this._checkPause();
-      if (node.kind !== 'agent') return await this._runFlow(ctx);
+      if (node.kind !== 'agent') {
+        const result = await this._runFlow(ctx);
+        this._recordFlowOutputs(node, ctx, result);
+        return result;
+      }
       this._checkCostLimits();                  // budget gate at EVERY agent launch (throws pauseErr)
       this._primeQuestions(nc, ctx);
       let result = await this._runNodeAttempts(nc, ctx);
@@ -835,6 +841,8 @@ export class GraphOrchestrator extends RunHarness {
    *    filename-derived kind;
    *  - ONE `artifact` per DISTINCT allocated output path (the refiner's plan and
    *    revise ports resolve to the same file — that is one artifact, not two);
+   *  - the verdict as kind `verdict` (D6);
+   *  - a bounded scan of the step folder (D7);
    *  - a `sideEffect: 'code'` node stages its working tree so the next node's
    *    `git diff` sees newly created files. A composite SLICE skips that: its
    *    phase-mates edit the same tree in parallel and the composite stages once
@@ -844,7 +852,8 @@ export class GraphOrchestrator extends RunHarness {
     // `missing` = the verifier never wrote its verdict (MAJ-10). Persisting that as
     // a zero-issue row makes History render a genuine-looking clean review of work
     // nobody reviewed, so the row is SKIPPED; the run log + state.warnings carry it.
-    if (this.pipeline && ctx.verdict?.path && result?.verdict && !result.verdict.missing) {
+    const hasVerdict = !!(ctx.verdict?.path && result?.verdict && !result.verdict.missing);
+    if (this.pipeline && hasVerdict) {
       await writeReview(this.pipeline.id, this._verdictKind(nc, ctx), ctx.ordinal, result.verdict);
     }
     const seen = new Set();
@@ -853,10 +862,59 @@ export class GraphOrchestrator extends RunHarness {
       if (!path || seen.has(path)) continue;
       seen.add(path);
       this._artifact(port.artifactKind || port.id, path, {
-        nodeId: ctx.nodeId, executionId: ctx.executionId, port: port.id,
+        nodeId: ctx.nodeId, executionId: ctx.executionId, port: port.id, cycle: ctx.ordinal,
       });
     }
+    // D6: the verdict is an artifact of its own (kind 'verdict'), recorded BEFORE the
+    // scan so the scan's dedupe sees it, and skipped when the verifier never wrote
+    // it — a bytes-0 row would 404 when clicked.
+    const attr = { nodeId: ctx.nodeId, executionId: ctx.executionId, port: null, cycle: ctx.ordinal };
+    if (hasVerdict) this._artifact('verdict', ctx.verdict.path, attr);
+    await this._scanStepFolder(nc, ctx, attr);
     if (nc.meta?.sideEffect === 'code' && !ctx.slice) await this._stageWorkingTree();
+  }
+
+  /**
+   * D7: index whatever else the agent left in its step folder — DEVIATIONS.md, task
+   * files, screenshots, scratch — under FORMAT kinds with this execution's
+   * attribution. `skip` is every rel path the run has indexed so far: the allocated
+   * outputs and the verdict were recorded a moment ago, earlier cycles and a re-run
+   * of this same folder are in there too, so the scan only ADDS rows and never
+   * doubles an allocated file under a second kind. Warnings become run-log lines.
+   * Cost: one `listArtifacts` per execution, linear in the run's row count. The D7
+   * caps (<= 50 files per step) bound the growth; if a very long run ever makes this
+   * hurt, narrow the query to the `steps/<dir>/` prefix rather than caching.
+   */
+  async _scanStepFolder(nc, ctx, attr) {
+    if (!this.pipeline) return;
+    const stepDir = stepDirOf(ctx.node, ctx.ordinal, ctx.runCtx);
+    const skip = new Set((await listArtifacts(this.pipeline.id)).map((a) => a.relPath));
+    const { files, warnings } = await scanStepFolder(stepDir, { pipelineDir: this.pipeline.dir, skip });
+    for (const f of files) this._artifact(f.kind, f.path, attr);
+    for (const msg of warnings) this._log(nc.key || ctx.nodeId, 'warn', msg, attr);
+  }
+
+  /**
+   * D8: a flow card's outputs that landed under steps/ are indexed without a scan —
+   * the combine card's combine.md (kind 'combine') and a planStoreSeed task card's
+   * plan.md (kind 'plan'). A task card without the seed emits the engine's own
+   * task.md/prompt.md (root files, not recorded, as today); AND/OR/End emit no file.
+   * BEST-EFFORT, like every other indexing site: this runs INSIDE _execute's try, on
+   * a flow-card path that could not fail before, so a stat/DB hiccup must never be
+   * mistaken for an execution failure.
+   */
+  _recordFlowOutputs(node, ctx, result) {
+    if (!this.pipeline) return;
+    const kind = node.kind === 'combine' ? 'combine' : node.kind === 'task' ? 'plan' : null;
+    if (!kind) return;
+    try {
+      const stepsRoot = join(this.pipeline.dir, 'steps') + sep;
+      for (const [portId, out] of Object.entries(result?.outputs || {})) {
+        const path = out?.path;
+        if (!path || !String(path).startsWith(stepsRoot) || !existsSync(path)) continue;
+        this._artifact(kind, path, { nodeId: node.id, executionId: ctx.executionId, port: portId, cycle: ctx.ordinal });
+      }
+    } catch { /* artifact indexing never fails a flow card */ }
   }
 
   /** reviews.kind, derived from the verdict FILENAME minus `-cycle{cycle}.json`
@@ -898,8 +956,7 @@ export class GraphOrchestrator extends RunHarness {
    * and pins the basename this builds.)
    */
   _questionsPath(nodeId, ordinal, round) {
-    const nodeIdSafe = String(nodeId).replace(/[^A-Za-z0-9_-]/g, '_');
-    return join(this.pipeline.dir, `questions-x-${nodeIdSafe}-c${ordinal}-r${round}.json`);
+    return join(this.pipeline.dir, `questions-x-${safeSegment(nodeId)}-c${ordinal}-r${round}.json`);
   }
 
   /**
@@ -931,7 +988,7 @@ export class GraphOrchestrator extends RunHarness {
       await writeStepQuestions(this.pipeline.id, stepKey, round, {
         agentKey: nc.key, nodeId: ctx.nodeId, questions: { questions },
       });
-      this._artifact('questions', qPath, { nodeId: ctx.nodeId, executionId: ctx.executionId, port: null });
+      this._artifact('questions', qPath, { nodeId: ctx.nodeId, executionId: ctx.executionId, port: null, cycle: ctx.ordinal });
       await appendAudit(this.pipeline.dir, `${agentLabel} asked ${questions.length} question(s) (round ${round}).`).catch(() => {});
       const payload = await this._enqueueAsk(() => this._ask({
         id: `questions-${stepKey}-r${round}`,
@@ -970,9 +1027,10 @@ export class GraphOrchestrator extends RunHarness {
    * — so the records exist even if the fan-out aborts mid-phase. Each task row is
    * stamped with the sub-EXECUTION id that will run it.
    *
-   * readDecomposition emits tasks as { id, title, file } (pipelineDir-relative);
-   * the scheduler binds each slice to `task.path`, so the absolute path is added
-   * HERE (P3 contract gap the adapter owns). An empty or malformed document is
+   * readDecomposition emits tasks as { id, title, file } (absolute or
+   * pipelineDir-relative); the scheduler binds each slice to `task.path`, so the
+   * absolute, containment-checked path is added HERE
+   * (P3 contract gap the adapter owns). An empty or malformed document is
    * not an error: it warns and hands back zero phases, which the scheduler turns
    * into one ordinary unexpanded execution.
    */
@@ -989,13 +1047,20 @@ export class GraphOrchestrator extends RunHarness {
         + 'running one normal execution with that input unbound.').catch(() => {});
       return { phases: [] };
     }
+    // D10: a task file may be absolute or run-dir-relative, but it MUST resolve
+    // inside the run folder — an escaping path is a wiring/agent bug and fails the
+    // expansion loudly (the flow-site policy decides pause vs error), never a
+    // silent read of a foreign file.
+    const root = resolve(this.pipeline.dir);
     const resolved = phases.map((ph) => ({
       ordinal: ph.ordinal,
-      tasks: ph.tasks.map((t) => ({
-        ...t,
-        nodeId: sliceExecutionId(args.executionId, t.id),
-        path: isAbsolute(t.file || '') ? t.file : join(this.pipeline.dir, t.file || ''),
-      })),
+      tasks: ph.tasks.map((t) => {
+        const path = isAbsolute(t.file || '') ? resolve(t.file) : resolve(root, t.file || '');
+        if (!path.startsWith(root + sep)) {
+          throw new Error(`${node.id}: task "${t.id}" file resolves outside the run folder: ${t.file}`);
+        }
+        return { ...t, nodeId: sliceExecutionId(args.executionId, t.id), path };
+      }),
     }));
     writeDecomposition(this.pipeline.id, resolved);
     const count = resolved.reduce((n, ph) => n + ph.tasks.length, 0);

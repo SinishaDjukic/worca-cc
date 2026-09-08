@@ -76,7 +76,7 @@ jobs:
       # server on an ephemeral port, and runs the pipeline under WORCA_MOCK=1 —
       # nothing else has to be provisioned. --no-sandbox is required whenever
       # headless Chrome runs as root.
-      - name: Composer and run-monitor CDP proofs
+      - name: Composer, run-monitor and artifacts CDP proofs
         env:
           CHROME_NO_SANDBOX: "1"
-        run: npm run verify:composer && npm run verify:run-monitor
+        run: npm run verify:composer && npm run verify:run-monitor && npm run verify:artifacts

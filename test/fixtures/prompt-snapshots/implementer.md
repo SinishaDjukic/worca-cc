@@ -52,7 +52,13 @@ When unsure between two tiers, take the lower one only if you will verify the re
 
 - (none — report your findings as your final message)
 
+### Step folder
+
+- Your step folder for this execution: <PIPELINE_DIR>/steps/n_implementer-c2
+- Put every additional artifact you produce (deviation notes, findings, scratch, screenshots, task files) inside it — never anywhere else in the run store. Files there are indexed and shown to the user after this step.
+
 MOCK_ROLE: implementer
 MOCK_CYCLE: 2
 MOCK_BASE: feature
+MOCK_STEP_DIR: <PIPELINE_DIR>/steps/n_implementer-c2
 MOCK_IN: /abs/plan.md

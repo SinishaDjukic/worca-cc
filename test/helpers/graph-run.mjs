@@ -2,7 +2,7 @@
 // Run a whole v2 graph offline: the real scheduler + the real executor, wired by the
 // same ctx shape P4's GraphOrchestrator._execute will build (minus the ledger, the DB
 // and the harness). Everything spawns through the offline mock (`claudeOpts.mock`).
-import { join } from 'node:path';
+import { join, isAbsolute } from 'node:path';
 import { createScheduler } from '../../src/core/graph/scheduler.mjs';
 import {
   runExecution, allocateOutputs, allocateVerdict, expandsOutputPort,
@@ -50,7 +50,7 @@ export async function runGraphOffline({
       return {
         phases: doc.phases.map((ph) => ({
           ordinal: ph.ordinal,
-          tasks: ph.tasks.map((t) => ({ ...t, path: join(pipelineDir, t.file) })),
+          tasks: ph.tasks.map((t) => ({ ...t, path: isAbsolute(t.file) ? t.file : join(pipelineDir, t.file) })),
         })),
       };
     }

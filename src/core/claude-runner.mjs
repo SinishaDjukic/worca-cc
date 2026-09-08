@@ -25,6 +25,12 @@
 //                          question there and STOPS (no role side effects); the
 //                          resumed prompt carries no MOCK_ASK, so the role arm
 //                          runs then.
+//   MOCK_PRIOR: <n>        clarify: how many prior answers exist
+//   MOCK_TASKS_DIR: <dir>  decomposer: where the task files go (absolute `file`
+//                          values in the manifest point into it)
+//   MOCK_STEP_DIR: <dir>   the execution's step folder (run-folder-artifacts D13).
+//                          Test-only: WORCA_MOCK_EXTRA_FILES="rel=text;rel=text"
+//                          writes those files into it after the role switch.
 //
 // Markers are matched leniently: "KEY: value" anywhere at the start of a line,
 // case-sensitive keys, value trimmed. Missing markers degrade gracefully.
@@ -1244,6 +1250,7 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessi
   }
 
   abortIfNeeded(signal);
+  await writeMockExtraFiles(m, onEvent);
   // Offline sub-agent indicator: for the fan-out-eligible roles, emit a couple of
   // fake Task/Agent spawn tool_use blocks + matching tool_result finishes so
   // `npm run smoke` exercises the sub-agent lifecycle (squares/pill) with no real
@@ -1443,24 +1450,50 @@ async function mockDecomposer(m, onEvent) {
   const tasksDir = m.MOCK_TASKS_DIR;
   if (!out || !tasksDir) return '[mock] decomposer: no MOCK_OUT / MOCK_TASKS_DIR given';
   await mkdir(tasksDir, { recursive: true });
+  // Absolute `file` paths: the orchestrator's _expandDecomposition accepts absolute
+  // or run-dir-relative and enforces containment in the run folder (D10).
   const phases = [
     { ordinal: 1, tasks: [
-      { id: 'p1t1', title: 'Slice one', file: 'tasks/p1-t1-slice-one.md' },
-      { id: 'p1t2', title: 'Slice two', file: 'tasks/p1-t2-slice-two.md' },
+      { id: 'p1t1', title: 'Slice one', file: join(tasksDir, 'p1-t1-slice-one.md') },
+      { id: 'p1t2', title: 'Slice two', file: join(tasksDir, 'p1-t2-slice-two.md') },
     ] },
     { ordinal: 2, tasks: [
-      { id: 'p2t1', title: 'Slice three', file: 'tasks/p2-t1-slice-three.md' },
+      { id: 'p2t1', title: 'Slice three', file: join(tasksDir, 'p2-t1-slice-three.md') },
     ] },
   ];
   for (const ph of phases) {
     for (const t of ph.tasks) {
-      await writeFile(join(tasksDir, t.file.replace(/^tasks\//, '')),
-        `# ${t.title}\n\nSelf-contained mock task for phase ${ph.ordinal}.\n`, 'utf8');
+      await writeFile(t.file, `# ${t.title}\n\nSelf-contained mock task for phase ${ph.ordinal}.\n`, 'utf8');
     }
   }
+  await ensureDir(out);
   await writeFile(out, JSON.stringify({ phases }, null, 2) + '\n', 'utf8');
   await emitLog(onEvent, `[mock] decomposer wrote ${phases.length} phases`);
   return '[mock] decomposer complete';
+}
+
+/**
+ * Test-only (run-folder-artifacts D13): `WORCA_MOCK_EXTRA_FILES="rel=text;rel=text"`
+ * writes each entry into the execution's step folder AFTER the role side effects, so
+ * a suite can prove the orchestrator's post-execution scan indexes agent-written
+ * files with the right kind and attribution. Role-independent; nothing happens
+ * without the env or without MOCK_STEP_DIR; a `rel` carrying a `..` segment is
+ * ignored (the folder is the contract). Same tool_use event the writers emit.
+ */
+async function writeMockExtraFiles(m, onEvent) {
+  const spec = process.env.WORCA_MOCK_EXTRA_FILES;
+  if (!m.MOCK_STEP_DIR || !spec) return;
+  for (const entry of String(spec).split(';')) {
+    const eq = entry.indexOf('=');
+    if (eq <= 0) continue;
+    const rel = entry.slice(0, eq).trim();
+    const text = entry.slice(eq + 1);
+    if (!rel || rel.split(/[\\/]/).includes('..')) continue;
+    const file = join(m.MOCK_STEP_DIR, rel);
+    await ensureDir(file);
+    await writeFile(file, text, 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${file}`, raw: { mock: true, file } });
+  }
 }
 
 /**

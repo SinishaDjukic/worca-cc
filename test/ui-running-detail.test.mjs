@@ -593,15 +593,16 @@ test('the question panel rises in and is neutralized under reduced motion', () =
 
 // --- T7: tabs ---------------------------------------------------------------
 
-test('the detail has exactly three tabs, Live log first and active by default', async () => {
+test('the detail has exactly four tabs, Live log first and active by default', async () => {
   const ctx = await bootRunning();
   await openRun(ctx);
   const { window } = ctx;
   const tabs = [...window.document.querySelectorAll('#run-detail .rd-tab')];
-  assert.deepEqual(tabs.map((b) => b.dataset.sec), ['logs', 'overview', 'agents']);
+  assert.deepEqual(tabs.map((b) => b.dataset.sec), ['logs', 'overview', 'agents', 'artifacts']);
   assert.match(tabs[0].textContent, /Live log/);
   assert.match(tabs[1].textContent, /Overview/);
   assert.match(tabs[2].textContent, /Agents/);
+  assert.match(tabs[3].textContent, /Artifacts/);
   assert.ok(tabs[0].classList.contains('active'), 'Live log is the default tab');
   assert.equal(tabs[0].getAttribute('aria-selected'), 'true');
   assert.equal(secOf(window, 'logs').hidden, false);

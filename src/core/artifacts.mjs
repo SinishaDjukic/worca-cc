@@ -8,16 +8,21 @@
 // timeline and machine state live in the DB (pipeline_events + the pipelines row),
 // which is the authoritative store (no more pipeline.md / state.json on disk).
 
-import { mkdir, writeFile, readFile, copyFile, readdir } from 'node:fs/promises';
-import { join, basename, resolve, isAbsolute } from 'node:path';
+import { mkdir, writeFile, readFile, copyFile, readdir, realpath, stat } from 'node:fs/promises';
+import { join, basename, resolve, isAbsolute, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { realpathSync, existsSync } from 'node:fs';
+import { realpathSync, existsSync, statSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { projectKey, projectStorePath, canonicalProjectRoot, workspaceStorePath } from './store.mjs';
 import { listProjects } from './projects.mjs';
 import { branchExists, diffShortstat, hasGh, findPrForBranch } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
+
+/** The artifact read guard (run-folder-artifacts-design.md D11): the largest file
+ *  the artifact routes / Ask read as text, and the kinds never read as text at all. */
+export const ARTIFACT_READ_MAX_BYTES = 2 * 1024 * 1024;
+export const BINARY_KINDS = new Set(['image', 'binary']);
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -82,17 +87,27 @@ export function deleteStoreMeta(key) {
  * in plans//reviews/, siblings of pipelines/). Idempotent (INSERT OR IGNORE on the
  * (pipeline_id, kind, rel_path) PK), best-effort: a logging failure never breaks a
  * run. A null/empty path is a no-op. The pipelines row must already exist (FK).
+ * Optional per-step attribution (step_key/node_id/cycle/created_at) is stamped on
+ * the FIRST insert only — the conflict behavior stays byte-for-byte INSERT OR
+ * IGNORE (first write wins), so a re-record never clobbers an existing row's
+ * attribution. The 3-arg form still works (attr defaults to {}, columns NULL).
  * @param {string} pipelineId
  * @param {string} kind
  * @param {string} relPath
+ * @param {{stepKey?:string, nodeId?:string, cycle?:number}} [attr]
  */
-export function recordArtifact(pipelineId, kind, relPath) {
+export function recordArtifact(pipelineId, kind, relPath, attr = {}) {
   if (!pipelineId || !kind || !relPath) return;
+  const stepKey = attr.stepKey ?? null;
+  const nodeId = attr.nodeId ?? null;
+  const cycle = attr.cycle ?? null;
+  const createdAt = new Date().toISOString();
   try {
     tx(() => {
       getDb().prepare(
-        'INSERT OR IGNORE INTO artifacts (pipeline_id, kind, rel_path) VALUES (?, ?, ?)',
-      ).run(pipelineId, kind, relPath);
+        'INSERT OR IGNORE INTO artifacts (pipeline_id, kind, rel_path, step_key, node_id, cycle, created_at) '
+        + 'VALUES (?, ?, ?, ?, ?, ?, ?)',
+      ).run(pipelineId, kind, relPath, stepKey, nodeId, cycle, createdAt);
     });
   } catch { /* artifact indexing is best-effort; never break a run on it */ }
 }
@@ -109,6 +124,59 @@ export function recordArtifact(pipelineId, kind, relPath) {
 export async function listArtifacts(pipelineId) {
   return getDb().prepare('SELECT kind, rel_path FROM artifacts WHERE pipeline_id = ?')
     .all(pipelineId).map((r) => ({ kind: r.kind, relPath: r.rel_path }));
+}
+
+/**
+ * List a run's artifacts with step attribution and on-disk byte size, ordered
+ * created_at (NULLs first, so legacy rows bucket ahead) then rel_path. `bytes` is
+ * stat-ed run dir first, store root second (mirroring resolveIndexedArtifactForRow's
+ * base order); a missing file reports bytes: 0. Optional { stepKey, kind } filter.
+ * `excludeKinds` drops those kinds in SQL (so `limit` counts only kept rows — a
+ * caller offering readable artifacts passes ['questions'] to skip the transient
+ * scratch rows whose files the orchestrator deletes). An optional `limit` caps the
+ * SQL result so the per-row statSync only runs on rows the caller keeps (pass
+ * limit+1 to detect truncation); omit it to size every row.
+ * @param {string} pipelineId
+ * @param {{stepKey?:string, kind?:string, excludeKinds?:string[], limit?:number}} [filter]
+ * @returns {Promise<Array<{kind:string, stepKey:string|null, nodeId:string|null, cycle:number|null, relPath:string, bytes:number, createdAt:string|null}>>}
+ */
+export async function listRunArtifacts(pipelineId, filter = {}) {
+  const row = findPipelineRowById(pipelineId);
+  if (!row) return [];
+  // Query the RESOLVED id: findPipelineRowById accepts a run-dir basename/suffix
+  // (DIR_ID_RE), so `pipelineId` may not equal the stored `pipeline_id`.
+  const clauses = ['pipeline_id = ?'];
+  const args = [row.id];
+  if (filter.stepKey) { clauses.push('step_key = ?'); args.push(filter.stepKey); }
+  if (filter.kind) { clauses.push('kind = ?'); args.push(filter.kind); }
+  if (Array.isArray(filter.excludeKinds) && filter.excludeKinds.length) {
+    clauses.push(`kind NOT IN (${filter.excludeKinds.map(() => '?').join(', ')})`);
+    args.push(...filter.excludeKinds);
+  }
+  const hasLimit = Number.isInteger(filter.limit) && filter.limit > 0;
+  const raw = getDb().prepare(
+    `SELECT kind, rel_path, step_key, node_id, cycle, created_at FROM artifacts
+     WHERE ${clauses.join(' AND ')}
+     ORDER BY (created_at IS NULL) DESC, created_at ASC, rel_path ASC${hasLimit ? ' LIMIT ?' : ''}`,
+  ).all(...args, ...(hasLimit ? [filter.limit] : []));
+  const isWs = row.target === 'workspace' || !!row.workspace_key;
+  const storeRoot = isWs ? workspaceStorePath(row.workspace_key) : projectStorePath(row.project_key);
+  const runDir = await runDirForRow(row);
+  const sizeOf = (rel) => {
+    for (const base of [runDir, storeRoot]) {
+      try { return statSync(join(base, rel)).size; } catch { /* try next base */ }
+    }
+    return 0;
+  };
+  return raw.map((r) => ({
+    kind: r.kind,
+    stepKey: r.step_key ?? null,
+    nodeId: r.node_id ?? null,
+    cycle: r.cycle ?? null,
+    relPath: r.rel_path,
+    bytes: sizeOf(r.rel_path),
+    createdAt: r.created_at ?? null,
+  }));
 }
 
 /**
@@ -539,6 +607,32 @@ export function updatePhaseStatus(pipelineId, ordinal, status, ts) {
 }
 
 /**
+ * Aggregate live run progress from the existing readers. Free-text fields
+ * (titles, review summaries, question/answer text) are redacted by the caller,
+ * not here — this is a pure data assembler. Returns null for an unknown run.
+ * @param {string} pipelineId
+ * @returns {Promise<null | {runId:string, phase:string|null, status:string|null, phases:Array, tasks:Array, clarify:object, reviews:Array, stepQuestions:Array}>}
+ */
+export async function readRunProgress(pipelineId) {
+  const row = findPipelineRowById(pipelineId);
+  if (!row) return null;
+  // Read against the RESOLVED id — `pipelineId` may be a run-dir basename/suffix
+  // (findPipelineRowById's DIR_ID_RE) that no downstream table keys on.
+  const id = row.id;
+  const extras = readPipelineExtras(id);
+  return {
+    runId: row.id,
+    phase: row.phase ?? null,
+    status: row.status ?? null,
+    phases: listPhases(id),
+    tasks: listTasks(id),
+    clarify: extras.clarify,
+    reviews: extras.reviews,
+    stepQuestions: extras.stepQuestions,
+  };
+}
+
+/**
  * Convert an arbitrary string to a safe kebab-case slug.
  * - Lowercases, replaces non-alphanumerics with hyphens, collapses repeats,
  *   trims leading/trailing hyphens.
@@ -660,15 +754,15 @@ async function ensureWorkspaceMeta(primaryProjectDir, workspaceKey, opts = {}) {
 }
 
 /**
- * Ensure the artifact directories (plans/reviews/pipelines) + meta.json exist.
- * When `workspaceKey` is set, routes to the workspace store and writes the
+ * Ensure the run store exists: `pipelines/` + the store meta. `plans/` and
+ * `reviews/` are NOT created any more — every run output lives inside its run
+ * folder (run-folder-artifacts-design.md D1/D12); `artifactPaths` still names them
+ * for the delete path and the legacy migrator, and existing directories are left
+ * alone. When `workspaceKey` is set, routes to the workspace store and writes the
  * workspace meta shape; `opts` carries {workspaceId, workspaceName, projects}.
- * Single-project callers (no second arg) are byte-identical.
  */
 export async function ensureArtifactDirs(projectDir, workspaceKey, opts = {}) {
   const p = artifactPaths(projectDir, workspaceKey);
-  await mkdir(p.plans, { recursive: true });
-  await mkdir(p.reviews, { recursive: true });
   await mkdir(p.pipelines, { recursive: true });
   const meta = workspaceKey
     ? await ensureWorkspaceMeta(projectDir, workspaceKey, opts)
@@ -677,6 +771,8 @@ export async function ensureArtifactDirs(projectDir, workspaceKey, opts = {}) {
 }
 
 /**
+ * Legacy: no engine caller since run-folder-artifacts; kept for the migrator,
+ * pipeline-delete and old tests (D12).
  * Path for a plan markdown file.
  * version 1 => <DD-MM-YY-baseName>.md ; version N>1 => <...>-vN.md
  *
@@ -700,6 +796,8 @@ export function planPath(projectDir, baseName, version = 1, datePrefix, workspac
 }
 
 /**
+ * Legacy: no engine caller since run-folder-artifacts; kept for the migrator,
+ * pipeline-delete and old tests (D12).
  * Path for an implementation review markdown file.
  * @param {string} projectDir
  * @param {string} baseName
@@ -2126,7 +2224,11 @@ export async function findRunDir(pipelinesDir, id) {
  * never matches a nested row. The path that is read is ALWAYS the stored one,
  * run dir first, store root second (plan/review markdown is store-root-relative);
  * a stored path with a `..` segment is refused outright. Null when the row, the
- * index row or the file is missing.
+ * index row or the file is missing. It stats before it reads; a realpath outside
+ * the base it reads from — a symlink, a traversal, an absolute stored row — is
+ * `null`, never a fall-through to the next base; `BINARY_KINDS` answer
+ * `{ rel, bytes, binary: true }` and files above `ARTIFACT_READ_MAX_BYTES` answer
+ * `{ rel, bytes, tooLarge: true }`; a directory is `null`.
  */
 export async function resolveIndexedArtifactForRow(row, rel) {
   const norm = (p) => String(p || '').replace(/\\/g, '/');
@@ -2145,7 +2247,16 @@ export async function resolveIndexedArtifactForRow(row, rel) {
   const storeRoot = isWs ? workspaceStorePath(row.workspace_key) : projectStorePath(row.project_key);
   const runDir = await runDirForRow(row);
   for (const base of [runDir, storeRoot]) {
-    try { return { rel: hit.relPath, text: await readFile(join(base, hit.relPath), 'utf8') }; } catch { /* try the next base */ }
+    const abs = join(base, hit.relPath);
+    let real, root;
+    try { real = await realpath(abs); root = await realpath(base); } catch { continue; }   // missing here: try the next base
+    if (real !== root && !real.startsWith(root + sep)) return null;   // a symlink or traversal escapes the base
+    let st;
+    try { st = await stat(real); } catch { continue; }
+    if (!st.isFile()) return null;
+    if (BINARY_KINDS.has(hit.kind)) return { rel: hit.relPath, bytes: st.size, binary: true };
+    if (st.size > ARTIFACT_READ_MAX_BYTES) return { rel: hit.relPath, bytes: st.size, tooLarge: true };
+    try { return { rel: hit.relPath, text: await readFile(real, 'utf8') }; } catch { continue; }
   }
   return null;
 }

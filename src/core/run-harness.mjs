@@ -3096,7 +3096,7 @@ export class RunHarness extends EventEmitter {
   /**
    * @param {string} kind
    * @param {string} path
-   * @param {{nodeId?:string, executionId?:string, port?:string|null}|null} [attr]
+   * @param {{nodeId?:string, executionId?:string, port?:string|null, cycle?:number|null}|null} [attr]
    *   v2 attribution (§5.7). Omitted keys are omitted from the event, so every
    *   2-arg v1 call emits the byte-identical `{kind, path}` payload it always did.
    */
@@ -3106,19 +3106,21 @@ export class RunHarness extends EventEmitter {
       if (attr.nodeId != null) evt.nodeId = attr.nodeId;
       if (attr.executionId != null) evt.executionId = attr.executionId;
       if (attr.port != null) evt.port = attr.port;
+      if (attr.cycle != null) evt.cycle = attr.cycle;
     }
     this._emit('artifact', evt);
-    // Phase 3.9: ALSO index FS markdown/extra paths so pipeline-delete (Task 3.13)
-    // can unlink the EXACT files later (best-effort; never blocks a run). Skip the
-    // synthetic 'pipeline'/'clarify' kinds (clarify lives in the clarify table;
-    // 'pipeline' is the dir itself). plan/review markdown live under
-    // <store>/<key>/{plans,reviews} (store-root-relative); checklist/webui live in
-    // the pipeline dir (dir-relative).
-    if (!this.pipeline || !path || kind === 'pipeline' || kind === 'clarify' || kind === 'questions') return;
+    // ALSO index FS markdown/extra paths so pipeline-delete can unlink the EXACT
+    // files later, per-step attribution rides along (best-effort; never blocks a
+    // run). Every kind with a resolvable on-disk relPath is recorded (clarify
+    // decision 2). Only 'pipeline' is skipped — it is the run DIR itself, with no
+    // single on-disk file. plan/review markdown live under <store>/<key>/{plans,
+    // reviews} (store-root-relative); prompt/checklist/webui/questions live in the
+    // pipeline dir (dir-relative).
+    if (!this.pipeline || !path || kind === 'pipeline') return;
     let relPath = null;
     const pdir = this.pipeline.dir;
     if (path.startsWith(pdir + sep)) {
-      relPath = relative(pdir, path);                 // dir-relative (checklist, webui)
+      relPath = relative(pdir, path);                 // dir-relative (checklist, webui, questions)
     } else {
       const root = this.isWorkspace
         ? workspaceStorePath(this.workspaceKey)
@@ -3128,7 +3130,13 @@ export class RunHarness extends EventEmitter {
     // Indexed with '/' on every OS: the row is a store-layout key, not a native
     // path (pipeline-delete re-roots 'plans/…' / 'reviews/…' under the store),
     // so a Windows-native 'reviews\\x.md' would silently miss that re-rooting.
-    if (relPath) recordArtifact(this.pipeline.id, kind, relPath.split(sep).join('/'));
+    if (relPath) {
+      recordArtifact(this.pipeline.id, kind, relPath.split(sep).join('/'), {
+        stepKey: attr?.executionId ?? null,
+        nodeId: attr?.nodeId ?? null,
+        cycle: attr?.cycle ?? null,
+      });
+    }
   }
 
   /** Translate a low-level claude/mock event into a pipeline 'log' event. */

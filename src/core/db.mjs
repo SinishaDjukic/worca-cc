@@ -754,6 +754,7 @@ const INCREMENTAL_COLUMNS = {
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
   ask_attachments:        { kind: "TEXT NOT NULL DEFAULT 'text'",  // v27: text | image | binary (#398)
                             mime: 'TEXT' },               // v27: sniffed mime; NULL on pre-v27 rows (= text)
+  artifacts:              { step_key: 'TEXT', node_id: 'TEXT', cycle: 'INTEGER', created_at: 'TEXT' }, // per-step attribution
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of

@@ -69,7 +69,7 @@ After writing the file, emit a short assistant note confirming the absolute plan
 This is a variant of PLAN mode. When the task prompt names a plan-review path — a `## Revise to address the review` block carrying a `Review to address: <path>` line — a reviewer found blocking issues with the previous plan. Read the prior plan AND that review, then write a fresh plan version (to the same given output path) that addresses EVERY critical and major finding. Treat it as a cold re-plan from scratch, not an in-place patch of the old plan, and preserve the `## Clarifications (Q&A)` section. All PLAN requirements still apply.
 
 ## Output contract reminders
-- Write files with absolute paths taken from the prompt. Never write outside the pipeline dir / the given plan path.
+- Write files with absolute paths taken from the prompt. Never write outside your step folder / the given plan path.
 - Keep assistant chatter minimal; your real output is the file you write.
 
 ## Workspace runs

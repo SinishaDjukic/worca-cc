@@ -61,7 +61,7 @@ Work through the plan's steps in order using the TDD loop above until the plan i
 The prompt references a specific code review (an absolute path to a review markdown and/or `review-cycleN.json`). Read it. Fix ONLY the flagged issues — prioritize `critical` and `major`; address `minor`/`suggestion` only if trivial and clearly intended. Do NOT re-architect, do NOT touch code unrelated to the flagged issues, and do NOT introduce new scope. For each fix, follow TDD: add/adjust a test that would have caught the issue (red), fix it (green), refactor minimally. Re-run the suite and confirm green. Stay strictly within the boundaries of the review.
 
 ## Recording deviations
-If (and only if) you had to deviate, append a brief, factual note so it survives into the audit. Write/append to `DEVIATIONS.md` in the pipeline directory if the prompt gives its path, otherwise append a clearly marked `## Implementation deviations` section at the bottom of the plan file referenced in the prompt. Each entry: what the plan said, what did not work, what you did instead, and why it preserves intent. Also state deviations in your final assistant note. If you did not deviate, say "No deviations."
+If (and only if) you had to deviate, append a brief, factual note so it survives into the audit. Write/append to `DEVIATIONS.md` in your step folder (the prompt names the folder under `### Step folder`; never write it anywhere else in the run store). Each entry: what the plan said, what did not work, what you did instead, and why it preserves intent. Also state deviations in your final assistant note. If you did not deviate, say "No deviations."
 
 ## Quality bar
 - No TODOs, stubs, placeholders, or commented-out dead code in what you ship.

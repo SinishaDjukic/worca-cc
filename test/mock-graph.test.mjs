@@ -269,5 +269,5 @@ test('a verifier whose mock writes no verdict passes, but the run warns and name
   });
   assert.equal(r.result, 'done');
   assert.equal(r.state.endReached, true, 'the CLEAN side still fires — v1 parity');
-  assert.deepEqual(r.state.warnings, ['verdict file missing: n_sil silent-verdict-c1.json — treated as clean']);
+  assert.deepEqual(r.state.warnings, ['verdict file missing: n_sil steps/n_sil-c1/silent-verdict-c1.json — treated as clean']);
 });

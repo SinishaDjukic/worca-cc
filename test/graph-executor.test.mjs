@@ -9,7 +9,6 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { posix } from './helpers/posix-path.mjs';
 import {
   allocateOutputs, allocateVerdict, portIoBlock, changesInstruction, selectMode, taskSourcedPorts,
   expandsOutputPort, normalizeDecomposition, readDecomposition, resolveMockRole, readVerdict,
@@ -43,79 +42,64 @@ const node = (id = 'n_x', over = {}) => ({ id, kind: 'agent', key: 'custom', x: 
 const REFINER_LIKE = {
   inputs: [{ id: 'plan', type: 'md', required: true }, { id: 'revise', type: 'md', loop: true }],
   outputs: [
-    { id: 'plan', type: 'md', when: 'clean', filename: '{base}{vsuffix}.md', store: 'project', artifactKind: 'plan' },
-    { id: 'revise', type: 'md', when: 'blocking', filename: '{base}{vsuffix}.md', store: 'project', artifactKind: 'plan' },
+    { id: 'plan', type: 'md', when: 'clean', filename: 'plan{vsuffix}.md', artifactKind: 'plan' },
+    { id: 'revise', type: 'md', when: 'blocking', filename: 'plan{vsuffix}.md', artifactKind: 'plan' },
   ],
   verdict: { filename: 'refine-review-cycle{cycle}.json' },
 };
 
-test('1 allocation: one resolution per DISTINCT template, one plan-version tick', () => {
+test('1 allocation: one resolution per DISTINCT template, one plan-version tick, in the step folder', () => {
   const rc = runCtx();
   const out = allocateOutputs({ node: node(), ports: REFINER_LIKE, ordinal: 2, runCtx: rc });
   assert.equal(out.plan.path, out.revise.path, 'a shared template resolves once');
-  assert.match(posix(out.plan.path), /plans\/01-01-26-feature\.md$/, 'version 1 renders no suffix');
-  assert.equal(out.plan.store, 'project');
+  assert.equal(out.plan.path, join(pipelineDir, 'steps', 'n_x-c2', 'plan.md'), 'version 1 renders no suffix');
+  assert.equal(out.plan.store, 'run');
   const second = allocateOutputs({ node: node(), ports: REFINER_LIKE, ordinal: 3, runCtx: rc });
-  assert.match(posix(second.plan.path), /plans\/01-01-26-feature-v2\.md$/, 'the next execution ticks to -v2');
+  assert.equal(second.plan.path, join(pipelineDir, 'steps', 'n_x-c3', 'plan-v2.md'), 'the next execution ticks to -v2');
 });
 
-test('2 allocation: {cycle}, run store, void ports, duplicate-key and slice prefixes', () => {
+test('2 allocation: {cycle}, void ports, the verdict — all in the step folder, no prefixes', () => {
   const ports = {
     outputs: [
-      { id: 'review', type: 'md', when: 'blocking', filename: 'webui-review-cycle{cycle}.md', store: 'run' },
+      { id: 'review', type: 'md', when: 'blocking', filename: 'webui-review-cycle{cycle}.md' },
       { id: 'pass', type: 'void', when: 'clean' },
     ],
     verdict: { filename: 'webui-review-cycle{cycle}.json' },
   };
   const plain = allocateOutputs({ node: node(), ports, ordinal: 2, runCtx: runCtx() });
-  assert.equal(plain.review.path, join(pipelineDir, 'webui-review-cycle2.md'));
+  assert.equal(plain.review.path, join(pipelineDir, 'steps', 'n_x-c2', 'webui-review-cycle2.md'));
   assert.equal(plain.pass, undefined, 'a void port allocates nothing');
   assert.equal(allocateVerdict({ node: node(), ports, ordinal: 2, runCtx: runCtx() }).path,
-    join(pipelineDir, 'webui-review-cycle2.json'));
+    join(pipelineDir, 'steps', 'n_x-c2', 'webui-review-cycle2.json'));
   const dup = allocateOutputs({ node: node('n_two'), ports, ordinal: 1, runCtx: runCtx({ duplicateKey: true }) });
-  assert.equal(dup.review.path, join(pipelineDir, 'n_two-webui-review-cycle1.md'));
+  assert.equal(dup.review.path, join(pipelineDir, 'steps', 'n_two-c1', 'webui-review-cycle1.md'), 'D5: the folder scopes a duplicate key');
   const slice = allocateOutputs({ node: node(), ports, ordinal: 1, runCtx: runCtx({ slice: 'p1t2' }) });
-  assert.equal(slice.review.path, join(pipelineDir, 'p1t2-webui-review-cycle1.md'));
-  assert.equal(allocateVerdict({ node: node(), ports, ordinal: 1, runCtx: runCtx() }).path,
-    join(pipelineDir, 'webui-review-cycle1.json'));
+  assert.equal(slice.review.path, join(pipelineDir, 'steps', 'n_x-c1-p1t2', 'webui-review-cycle1.md'), 'D5: the folder scopes a slice');
   assert.equal(allocateVerdict({ node: node(), ports: { outputs: [] }, ordinal: 1, runCtx: runCtx() }), null);
-  const review = allocateOutputs({
+  const legacy = allocateOutputs({
     node: node(),
     ports: { outputs: [{ id: 'review', type: 'md', filename: '{base}-impl-review.md', store: 'project' }] },
     ordinal: 1, runCtx: runCtx(),
   });
-  assert.match(posix(review.review.path), /reviews\/01-01-26-feature-impl-review\.md$/, 'a {base}-<kind>.md project template goes to the reviews store');
+  assert.deepEqual(legacy.review, { path: join(pipelineDir, 'steps', 'n_x-c1', 'feature-impl-review.md'), store: 'run' },
+    "{base} still renders; store:'project' is ignored (D4)");
 });
 
-test('2b allocation: the duplicate-key prefix reaches the PROJECT store too', () => {
-  const REVIEW_LIKE = { outputs: [{ id: 'review', type: 'md', filename: '{base}-impl-review.md', store: 'project' }] };
-  const PLAN_LIKE = { outputs: [{ id: 'plan', type: 'md', filename: '{base}{vsuffix}.md', store: 'project', artifactKind: 'plan' }] };
-  // A SINGLE card is byte-identical to what shipped: the prefix is empty, so no
-  // seed's persisted artifact path moves.
-  const lone = allocateOutputs({ node: node('n_rev'), ports: REVIEW_LIKE, ordinal: 1, runCtx: runCtx() });
-  assert.match(posix(lone.review.path), /reviews\/01-01-26-feature-impl-review\.md$/);
-  const lonePlan = allocateOutputs({ node: node('n_ref'), ports: PLAN_LIKE, ordinal: 1, runCtx: runCtx() });
-  assert.match(posix(lonePlan.plan.path), /plans\/01-01-26-feature\.md$/);
-  // TWO cards on one agent key: the persisted review/plan must NOT be one file.
+test('2b two cards on one key, and two slices, are kept apart by the FOLDER', () => {
+  const PLAN_LIKE = { outputs: [{ id: 'plan', type: 'md', filename: 'plan{vsuffix}.md', artifactKind: 'plan' }] };
   const rc1 = runCtx({ duplicateKey: true });
   const rc2 = runCtx({ duplicateKey: true });
-  const a = allocateOutputs({ node: node('n_rev1'), ports: REVIEW_LIKE, ordinal: 1, runCtx: rc1 });
-  const b = allocateOutputs({ node: node('n_rev2'), ports: REVIEW_LIKE, ordinal: 1, runCtx: rc2 });
-  assert.match(posix(a.review.path), /reviews\/01-01-26-feature-n_rev1-impl-review\.md$/);
-  assert.match(posix(b.review.path), /reviews\/01-01-26-feature-n_rev2-impl-review\.md$/);
-  assert.notEqual(a.review.path, b.review.path, 'two reviewer cards must not clobber one review file');
-  const p1 = allocateOutputs({ node: node('n_ref1'), ports: PLAN_LIKE, ordinal: 1, runCtx: rc1 });
-  const p2 = allocateOutputs({ node: node('n_ref2'), ports: PLAN_LIKE, ordinal: 1, runCtx: rc2 });
-  assert.match(posix(p1.plan.path), /plans\/01-01-26-n_ref1-feature\.md$/);
-  assert.match(posix(p2.plan.path), /plans\/01-01-26-n_ref2-feature\.md$/);
-  assert.notEqual(p1.plan.path, p2.plan.path, 'two planner cards must not clobber one plan file');
-  // The -vN linkage still hangs off the node's OWN family.
-  const p1v2 = allocateOutputs({ node: node('n_ref1'), ports: PLAN_LIKE, ordinal: 2, runCtx: rc1 });
-  assert.match(posix(p1v2.plan.path), /plans\/01-01-26-n_ref1-feature-v2\.md$/);
-  // A composite slice discriminates the same way (a project-store output on an
-  // `expands` consumer would otherwise collapse every parallel task onto one file).
-  const sliced = allocateOutputs({ node: node('n_rev'), ports: REVIEW_LIKE, ordinal: 1, runCtx: runCtx({ slice: 'p1t2' }) });
-  assert.match(posix(sliced.review.path), /reviews\/01-01-26-feature-p1t2-impl-review\.md$/);
+  const a = allocateOutputs({ node: node('n_ref1'), ports: PLAN_LIKE, ordinal: 1, runCtx: rc1 });
+  const b = allocateOutputs({ node: node('n_ref2'), ports: PLAN_LIKE, ordinal: 1, runCtx: rc2 });
+  assert.equal(a.plan.path, join(pipelineDir, 'steps', 'n_ref1-c1', 'plan.md'));
+  assert.equal(b.plan.path, join(pipelineDir, 'steps', 'n_ref2-c1', 'plan.md'));
+  assert.notEqual(a.plan.path, b.plan.path, 'two planner cards never share a file');
+  const a2 = allocateOutputs({ node: node('n_ref1'), ports: PLAN_LIKE, ordinal: 2, runCtx: rc1 });
+  assert.equal(a2.plan.path, join(pipelineDir, 'steps', 'n_ref1-c2', 'plan-v2.md'), 'the -vN linkage rides the run counter');
+  const s1 = allocateOutputs({ node: node('n_w'), ports: PLAN_LIKE, ordinal: 1, runCtx: runCtx({ slice: 'p1t1' }) });
+  const s2 = allocateOutputs({ node: node('n_w'), ports: PLAN_LIKE, ordinal: 1, runCtx: runCtx({ slice: 'p1t2' }) });
+  assert.notEqual(s1.plan.path, s2.plan.path, 'parallel slices never share a file');
+  assert.equal(s2.plan.path, join(pipelineDir, 'steps', 'n_w-c1-p1t2', 'plan.md'));
 });
 
 test('3 the Ports block: `as` renderers, the await port, shared paths, placeholders; changesInstruction', () => {
@@ -287,7 +271,7 @@ test('8b a verifier that never wrote its verdict warns, naming the node and the 
   const c = ctx8({ node: nodeObj, meta, ports: meta });
   const r = await runAgentExecution(c);
   assert.deepEqual(r.verdict.issues, [], 'a missing verdict still routes the CLEAN side (v1 parity)');
-  assert.deepEqual(r.warnings, ['verdict file missing: n_c custom-review-cycle2.json — treated as clean']);
+  assert.deepEqual(r.warnings, ['verdict file missing: n_c steps/n_c-c2/custom-review-cycle2.json — treated as clean']);
   // And the happy path carries no warning at all.
   const ok = await runAgentExecution(ctx8());
   assert.deepEqual(ok.warnings, []);
@@ -319,16 +303,16 @@ test('9 the Task card: a given path passes through, given text is written, neith
   );
 });
 
-test('10 A2 planStoreSeed: the document lands in the plans store and consumes version 1', () => {
+test('10 A2 planStoreSeed: the document lands in steps/<task>-c1/plan.md and consumes version 1', () => {
   const rc = runCtx();
   const res = runTaskExecution({
     node: { id: 'n_task', kind: 'task', config: { planStoreSeed: true } },
     taskArtifact: { text: '# Provided plan\n' }, runCtx: rc,
   });
-  assert.match(posix(res.outputs.task.path), /plans\/01-01-26-feature\.md$/, 'version 1, no suffix');
+  assert.equal(res.outputs.task.path, join(pipelineDir, 'steps', 'n_task-c1', 'plan.md'), 'version 1, no suffix, in the task step folder');
   assert.equal(readFileSync(res.outputs.task.path, 'utf8'), '# Provided plan\n');
   const next = allocateOutputs({ node: node(), ports: REFINER_LIKE, ordinal: 1, runCtx: rc });
-  assert.match(posix(next.plan.path), /-v2\.md$/, 'the counter was consumed at 1');
+  assert.equal(next.plan.path, join(pipelineDir, 'steps', 'n_x-c1', 'plan-v2.md'), 'the counter was consumed at 1');
 });
 
 test('11 AND is a void synchronizer, OR forwards the bound payload, End echoes the result', () => {
@@ -352,7 +336,7 @@ test('12 Combine concatenates in numeric port order under `## From <node name>` 
     names: { in1: 'Planner', in2: 'Refiner' },
     ordinal: 1, runCtx: runCtx(),
   });
-  assert.equal(res.outputs.out.path, join(pipelineDir, 'combine-n_comb-c1.md'));
+  assert.equal(res.outputs.out.path, join(pipelineDir, 'steps', 'n_comb-c1', 'combine.md'));
   const text = readFileSync(res.outputs.out.path, 'utf8');
   assert.deepEqual(text.match(/^## From .*$/gm), ['## From Planner', '## From Refiner', '## From in10'],
     'in2 before in10, and an unnamed port falls back to its id');
@@ -432,8 +416,8 @@ test('14 buildAgentPrompt assembles the blocks in the documented order', () => {
   assert.ok(!p.includes('Write each task file under:'), 'no expands consumer ⇒ no decomposition contract');
   assert.ok(!p.includes('MOCK_STRATEGY'), 'a dead marker is never emitted');
   assert.ok(p.includes('MOCK_CYCLE: 2'));
-  assert.ok(p.includes(`MOCK_JSON: ${join(pipelineDir, 'custom-review-cycle2.json')}`));
-  assert.ok(p.includes(`MOCK_OUT: ${join(pipelineDir, 'custom-review-cycle2.md')}`));
+  assert.ok(p.includes(`MOCK_JSON: ${join(pipelineDir, 'steps', 'n_c-c2', 'custom-review-cycle2.json')}`));
+  assert.ok(p.includes(`MOCK_OUT: ${join(pipelineDir, 'steps', 'n_c-c2', 'custom-review-cycle2.md')}`));
   assert.ok(p.includes('MOCK_IN: /abs/plan.md'));
 });
 
@@ -454,10 +438,10 @@ test('15 prompt hints substitute {pipelineDir}, {cycle} and {diffInstruction}; t
     outputs: { tasks: { path: join(pipelineDir, 'split.json'), store: 'run' } }, verdict: null,
     expandsPort: 'tasks',
   }));
-  assert.ok(producer.includes(`Write each task file under: ${join(pipelineDir, 'tasks')}/ (name them p<phase>-t<n>-<kebab-title>.md)`));
+  assert.ok(producer.includes(`Write each task file under: ${join(pipelineDir, 'steps', 'n_c-c2', 'tasks')}/ (name them p<phase>-t<n>-<kebab-title>.md)`));
   assert.ok(producer.includes('The manifest shape is { "phases": [ { "ordinal", "tasks": [ { "id", "title", "file" } ] } ] }. Use id "p<ordinal>t<n>" and a pipeline-dir-relative "file" path.'));
   assert.ok(producer.includes('MOCK_ROLE: decomposer'), 'the chain resolves the expands producer to the decomposer writer');
-  assert.ok(producer.includes(`MOCK_TASKS_DIR: ${join(pipelineDir, 'tasks')}`));
+  assert.ok(producer.includes(`MOCK_TASKS_DIR: ${join(pipelineDir, 'steps', 'n_c-c2', 'tasks')}`));
 });
 
 test('16 a composite slice renders the shared-working-tree block', () => {
@@ -478,7 +462,7 @@ test('17 runAgentExecution spawns through runOpts, returns the same prompt it bu
   const r = await runAgentExecution(c);
   assert.equal(r.prompt, buildAgentPrompt(c), 'the round trip is byte-identical');
   assert.deepEqual(Object.keys(r.outputs).sort(), ['pass', 'review'], 'every declared port is publishable');
-  assert.equal(r.outputs.review.path, join(pipelineDir, 'custom-review-cycle2.md'));
+  assert.equal(r.outputs.review.path, join(pipelineDir, 'steps', 'n_c-c2', 'custom-review-cycle2.md'));
   assert.deepEqual(r.outputs.pass, {}, 'a void port publishes an empty payload');
   assert.ok(Array.isArray(r.verdict.issues), 'the verdict JSON is read back');
   assert.ok(r.summary.length > 0);
@@ -510,12 +494,12 @@ test('18 runClarifierExecution gates the human and rewrites the file as {questio
   assert.equal(asked[0].nodeId, 'n_ask');
   assert.equal(asked[0].agent, 'Ask First');
   assert.ok(asked[0].questions.length >= 1);
-  const written = JSON.parse(readFileSync(join(pipelineDir, 'clarify.json'), 'utf8'));
+  const written = JSON.parse(readFileSync(join(pipelineDir, 'steps', 'n_ask-c1', 'clarify.json'), 'utf8'));
   assert.deepEqual(Object.keys(written).sort(), ['answers', 'questions']);
   assert.equal(written.answers[0].choice, 'Option A');
   assert.ok(written.answers[0].question.length > 0, 'each answer carries its question text');
   assert.equal(written.answers.length, written.questions.length, 'an unanswered question falls back to its first option');
-  assert.equal(r.outputs.answers.path, join(pipelineDir, 'clarify.json'));
+  assert.equal(r.outputs.answers.path, join(pipelineDir, 'steps', 'n_ask-c1', 'clarify.json'));
   assert.ok(r.prompt.includes('MOCK_PRIOR: 0'));
   assert.ok(r.prompt.includes('Identify the decisions you cannot safely resolve from the task text or the real codebase'));
   assert.match(r.sessionId, /^mock-session-/);
@@ -525,7 +509,7 @@ test('18 runClarifierExecution gates the human and rewrites the file as {questio
   const r2 = await runClarifierExecution(noAsk);
   assert.equal(r2.answers.length, r2.questions.length, 'one answer per question');
   assert.ok(r2.questions.length >= 1 && r2.answers.every((a) => a.choice.length > 0), 'first-option fallback');
-  assert.deepEqual(Object.keys(JSON.parse(readFileSync(join(pipelineDir, 'clarify.json'), 'utf8'))).sort(), ['answers', 'questions']);
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(join(pipelineDir, 'steps', 'n_ask-c1', 'clarify.json'), 'utf8'))).sort(), ['answers', 'questions']);
 });
 
 // ── endpoint-routed nodes ────────────────────────────────────────────────────
