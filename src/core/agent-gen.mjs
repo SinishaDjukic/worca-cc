@@ -154,7 +154,8 @@ class AgentGen extends EventEmitter {
       '{path} is substituted) }.\n' +
       'An OUTPUT port: { "id", "type", "when": "always"|"blocking"|"clean" (default always; ' +
       'anything else requires "verdict"), "filename" (plain basename, required on md/json, may use ' +
-      '{cycle} {vsuffix} {base}), "store": "run"|"project" (default run), "artifactKind" (defaults ' +
+      '{cycle} {vsuffix} {base}), "store": "run"|"project" (accepted for compatibility and IGNORED — every ' +
+      'output lands in the execution\'s step folder inside the run), "artifactKind" (defaults ' +
       'to the id) }. A void port carries no payload — no filename, no store.\n' +
       'Port ids are lowerCamel (letters and digits only, first char lowercase), <=32 chars, unique ' +
       'per side. The id "await" is RESERVED — the ' +

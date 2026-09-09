@@ -7,23 +7,31 @@
 // rows already recorded) and turns the warnings into run-log lines. No `realpath`
 // here: containment is enforced on READ (artifacts.mjs#resolveIndexedArtifactForRow).
 import { readdir, stat } from 'node:fs/promises';
-import { join, relative, sep, extname } from 'node:path';
+import { join, relative, sep } from 'node:path';
+
+/**
+ * `relative(base, p)` spelled with '/' on every OS — the store-layout key the
+ * artifacts index, the pipeline_tasks file_rel_path column and the run log all
+ * carry (a Windows-native 'steps\\x.md' would miss every '/'-keyed lookup). Lives
+ * in this leaf module (node imports only) so the scanner that PRODUCES the skip
+ * key and the harness/orchestrator/executor sites that write or delete rows all
+ * spell it byte-for-byte the same.
+ */
+export function posixRel(base, p) {
+  return relative(base, p).split(sep).join('/');
+}
+
+/** A rel path carrying a `..` segment (either separator) — never served, sized,
+ *  or written. ONE spelling for the artifact index and the mock file writer. */
+export const hasDotDot = (rel) => String(rel).split(/[\\/]/).includes('..');
 
 export const SCAN_LIMITS = Object.freeze({ maxDepth: 8, maxFiles: 50, maxBytes: 5 * 1024 * 1024 });
 
-/** Extension -> kind. FORMAT kinds only — never the semantic `plan`/`review`/
- *  `result`/`verdict` kinds the engine records for allocated outputs, so a scanned
- *  row can never masquerade as one. Anything else is `text`. */
-export const KIND_BY_EXT = Object.freeze({
-  md: 'markdown', markdown: 'markdown', json: 'json', diff: 'diff', patch: 'diff',
-  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', svg: 'image',
-  pdf: 'binary', zip: 'binary', gz: 'binary', tgz: 'binary', tar: 'binary', woff: 'binary', woff2: 'binary', ttf: 'binary',
-});
-
-export function scanKindFor(name) {
-  const ext = extname(String(name || '')).slice(1).toLowerCase();
-  return KIND_BY_EXT[ext] || 'text';
-}
+// The extension -> kind table lives in src/shared (browser-importable) so the
+// artifact viewer derives its binary set from the same table this scanner and the
+// read route use.
+export { KIND_BY_EXT, scanKindFor } from '../shared/artifact-kinds.mjs';
+import { scanKindFor } from '../shared/artifact-kinds.mjs';
 
 const mb = (n) => (n / (1024 * 1024)).toFixed(1);
 
@@ -38,7 +46,7 @@ export async function scanStepFolder(stepDir, { pipelineDir, skip = new Set(), l
   const files = [];
   const warnings = [];
   const root = String(pipelineDir || stepDir);
-  const toRel = (abs) => relative(root, abs).split(sep).join('/');
+  const toRel = (abs) => posixRel(root, abs);
   let full = false;
 
   async function walk(dir, depth) {

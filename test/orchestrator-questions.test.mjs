@@ -21,7 +21,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
-import { readStepQuestions } from '../src/core/artifacts.mjs';
+import { readStepQuestions, listRunArtifacts } from '../src/core/artifacts.mjs';
 import { runAgentExecution } from '../src/core/graph/executor.mjs';
 import { getDb } from '../src/core/db.mjs';
 
@@ -205,6 +205,9 @@ test('enabled node: ask -> answer -> resume same session -> done; rounds persist
   // The processed round file is CONSUMED: a surviving file would re-gate the
   // user on a crash/pause-resumed re-run (orchestrator.mjs:848-850).
   assert.equal(existsSync(qPath1), false, 'answered round file is consumed');
+  // ...and its artifacts-index row goes with it: a row for a deleted file would be
+  // offered as a clickable/readable artifact that 404s.
+  assert.deepEqual(await listRunArtifacts(orch.getState().id, { kind: 'questions' }), [], 'the consumed round leaves no artifacts row');
   assert.ok(auditLines(orch.getState().id).includes('Implementation asked 1 question(s) (round 1).'));
   assert.ok(auditLines(orch.getState().id).includes('Implementation: 1 answer(s) received (round 1).'));
 });

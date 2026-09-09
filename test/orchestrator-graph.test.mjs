@@ -223,9 +223,12 @@ test('the End-bound result is recorded as an artifact', { timeout: 120000 }, asy
   await orch.run();
   const st = orch.getState();
   if (st.result?.path) {
-    const hit = arts.find((a) => a.kind === 'result' && a.path === st.result.path);
-    assert.ok(hit, 'the End-bound path was recorded');
-    assert.ok(hit.nodeId && hit.executionId, 'the artifact event carries its node + execution attribution');
+    // The producer indexes the file under its own kind; End adds a 'result' row
+    // only when nothing else did (the artifacts PK is per kind, so a second row
+    // would list one file twice). Either way the path is recorded exactly once.
+    const hits = arts.filter((a) => a.path === st.result.path);
+    assert.equal(hits.length, 1, 'the End-bound path was recorded exactly once');
+    assert.ok(hits[0].nodeId && hits[0].executionId, 'the artifact event carries its node + execution attribution');
   } else {
     assert.equal(st.result.type, 'void', 'a void End binds no path (the graph default ends on reviewer.pass)');
   }
@@ -350,6 +353,12 @@ test('two cards on one agent key keep their reviews apart — one step folder ea
   }
   const shared = artifactPaths(dir).reviews;
   assert.ok(!existsSync(shared) || (await readdir(shared)).length === 0, 'the project reviews/ dir receives no file');
+  // The reviews TABLE is keyed (pipeline_id, kind, cycle) and upserts: both cards
+  // share the verdict basename AND the ordinal now that the step folder carries
+  // the node id, so the kind must carry it instead or the second card's verdict
+  // silently replaces the first's.
+  const kinds = readPipelineExtras(orch.getState().id).reviews.map((r) => `${r.kind}@${r.cycle}`).sort();
+  assert.deepEqual(kinds, ['n_rev1-impl@1', 'n_rev2-impl@1'], 'one reviews row per card (node-prefixed, stem mapped through reviewKindOf), not one overwritten row');
 });
 
 test('a SINGLE card allocates its review under its own step folder, cycle in the name', { timeout: 120000 }, async () => {

@@ -17,8 +17,8 @@ import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { join, basename, resolve, sep, relative } from 'node:path';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join, basename, resolve, sep } from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { readFile, writeFile, readdir, mkdir, realpath } from 'node:fs/promises';
 
 import { generateTitle } from './title.mjs';
@@ -52,6 +52,7 @@ import {
   probeClaudeCapabilities, explainUnspawnableClaude,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
+import { posixRel } from './step-scan.mjs';
 import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig } from './config.mjs';
 import { readGuardrailSet } from './guardrail-store.mjs';
 import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
@@ -192,6 +193,11 @@ export function safeParse(text) {
   } catch {
     return null;
   }
+}
+
+/** True when `p` is an existing regular file (a missing path or a directory is not). */
+export function isRegularFile(p) {
+  try { return statSync(p).isFile(); } catch { return false; }
 }
 
 export function firstLine(text) {
@@ -3101,6 +3107,58 @@ export class RunHarness extends EventEmitter {
    *   2-arg v1 call emits the byte-identical `{kind, path}` payload it always did.
    */
   _artifact(kind, path, attr = null) {
+    // A path that is not a regular file on disk is NOT an artifact: an event/row
+    // for it would render as a clickable bytes-0 entry that 404s. One check here
+    // covers every site (allocated outputs the agent never wrote, the End-bound
+    // result path, flow-card outputs); the run log carries the gap. 'pipeline' is
+    // the run DIR itself and pipeline-less (v1 / test) calls are emit-only.
+    if (this.pipeline && path && kind !== 'pipeline' && !isRegularFile(path)) {
+      this._log(attr?.nodeId || kind, 'warn',
+        `artifact "${kind}" was not written: ${posixRel(this.pipeline.dir, path)}`, attr);
+      return;
+    }
+    this._emitArtifact(kind, path, attr);
+    // ALSO index FS markdown/extra paths so pipeline-delete can unlink the EXACT
+    // files later, per-step attribution rides along (best-effort; never blocks a
+    // run). Every kind with a resolvable on-disk relPath is recorded (clarify
+    // decision 2). Only 'pipeline' is skipped — it is the run DIR itself, with no
+    // single on-disk file. Every new-engine output lives in the run dir
+    // (steps/<node>-cN/…, prompt/checklist/webui/questions at its root) and is
+    // indexed dir-relative; the store-root branch below survives only for the
+    // legacy <store>/<key>/{plans,reviews} markdown (run-folder-artifacts D1/D12:
+    // nothing new is written there).
+    if (!this.pipeline || !path || kind === 'pipeline') return;
+    let relPath = null;
+    const pdir = this.pipeline.dir;
+    // Indexed with '/' on every OS (posixRel): the row is a store-layout key, not
+    // a native path (pipeline-delete re-roots 'plans/…' / 'reviews/…' under the
+    // store), so a Windows-native 'reviews\\x.md' would silently miss that re-rooting.
+    if (path.startsWith(pdir + sep)) {
+      relPath = posixRel(pdir, path);                 // dir-relative (checklist, webui, questions)
+    } else {
+      const root = this.isWorkspace
+        ? workspaceStorePath(this.workspaceKey)
+        : projectStorePath(projectKey(this.projectDir));
+      if (path.startsWith(root + sep)) relPath = posixRel(root, path); // store-rel (plan/review)
+    }
+    if (relPath) {
+      recordArtifact(this.pipeline.id, kind, relPath, {
+        stepKey: attr?.executionId ?? null,
+        nodeId: attr?.nodeId ?? null,
+        cycle: attr?.cycle ?? null,
+      });
+    }
+  }
+
+  /**
+   * The event half of _artifact, with no on-disk check and no index row: the step
+   * folder scan calls it per file it already stat-ed as regular and indexes the
+   * rows itself in one batched transaction (artifacts.recordArtifacts).
+   * @param {string} kind
+   * @param {string} path
+   * @param {{nodeId?:string, executionId?:string, port?:string|null, cycle?:number|null}|null} [attr]
+   */
+  _emitArtifact(kind, path, attr = null) {
     const evt = { kind, path };
     if (attr) {
       if (attr.nodeId != null) evt.nodeId = attr.nodeId;
@@ -3109,34 +3167,6 @@ export class RunHarness extends EventEmitter {
       if (attr.cycle != null) evt.cycle = attr.cycle;
     }
     this._emit('artifact', evt);
-    // ALSO index FS markdown/extra paths so pipeline-delete can unlink the EXACT
-    // files later, per-step attribution rides along (best-effort; never blocks a
-    // run). Every kind with a resolvable on-disk relPath is recorded (clarify
-    // decision 2). Only 'pipeline' is skipped — it is the run DIR itself, with no
-    // single on-disk file. plan/review markdown live under <store>/<key>/{plans,
-    // reviews} (store-root-relative); prompt/checklist/webui/questions live in the
-    // pipeline dir (dir-relative).
-    if (!this.pipeline || !path || kind === 'pipeline') return;
-    let relPath = null;
-    const pdir = this.pipeline.dir;
-    if (path.startsWith(pdir + sep)) {
-      relPath = relative(pdir, path);                 // dir-relative (checklist, webui, questions)
-    } else {
-      const root = this.isWorkspace
-        ? workspaceStorePath(this.workspaceKey)
-        : projectStorePath(projectKey(this.projectDir));
-      if (path.startsWith(root + sep)) relPath = relative(root, path); // store-rel (plan/review)
-    }
-    // Indexed with '/' on every OS: the row is a store-layout key, not a native
-    // path (pipeline-delete re-roots 'plans/…' / 'reviews/…' under the store),
-    // so a Windows-native 'reviews\\x.md' would silently miss that re-rooting.
-    if (relPath) {
-      recordArtifact(this.pipeline.id, kind, relPath.split(sep).join('/'), {
-        stepKey: attr?.executionId ?? null,
-        nodeId: attr?.nodeId ?? null,
-        cycle: attr?.cycle ?? null,
-      });
-    }
   }
 
   /** Translate a low-level claude/mock event into a pipeline 'log' event. */

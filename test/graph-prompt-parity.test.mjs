@@ -127,7 +127,7 @@ const V1_DECOMPOSER_TASKS_DIR =
   `Write each task file under: ${join(pipelineDir, 'steps', 'n_decomposer-c2', 'tasks')}/ (name them p<phase>-t<n>-<kebab-title>.md)`;
 const V1_DECOMPOSER_MANIFEST =
   'The manifest shape is { "phases": [ { "ordinal", "tasks": [ { "id", "title", "file" } ] } ] }. ' +
-  'Use id "p<ordinal>t<n>" and a pipeline-dir-relative "file" path.';
+  'Use id "p<ordinal>t<n>"; "file" is the absolute path of the task file (a run-folder-relative path is also accepted).';
 const V1_PLANNER_INSTRUCTION =
   'Write a complete, build-ready implementation plan. It MUST contain concrete code snippets ' +
   'for the features and MUST end with a "## Clarifications (Q&A)" section';

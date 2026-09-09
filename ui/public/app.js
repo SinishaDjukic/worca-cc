@@ -11705,7 +11705,7 @@ function paintHdHeaderMeta(screen, record, data) {
     if (st.result.path) {
       const a = document.createElement('a');
       a.href = '#';
-      a.textContent = String(st.result.path).split('/').filter(Boolean).pop();
+      a.textContent = basenameOf(st.result.path); // native engine path: '/' alone leaves a whole Windows path
       a.title = st.result.path;
       a.addEventListener('click', (e) => {
         e.preventDefault();
@@ -15216,7 +15216,7 @@ function focusQuestionPanel(ctx) {
 async function openRunArtifact(ctx, path) {
   const r = ctx && ctx.run;
   if (!r || !path) return;
-  const name = String(path).split('/').filter(Boolean).pop();
+  const name = basenameOf(path); // native engine path (see showArtifactViewer)
   const rel = encodeURIComponent(String(path));
   const pid = r.pipelineId || r.id || ctx.runId;
   const url = ctx.record
@@ -15237,14 +15237,11 @@ async function openRunArtifact(ctx, path) {
 // GET /api/runs/:id/artifact route, and renders it with the typed viewer. Content
 // is untrusted DATA — the markdown path reuses the vendored marked + DOMPurify.
 
-// The marked+DOMPurify seam, read at CALL time so a test harness can stub it via
-// window.__worcaTestHooks.askMarkdown — the SAME hook the Ask panel wires.
+// The marked+DOMPurify seam the artifact viewer shares with the Ask panel
+// (loadAskMarkdown, below the Ask wiring): the hook is read at CALL time so a
+// test harness can stub window.__worcaTestHooks.askMarkdown after boot.
 function artifactViewerDeps() {
-  return {
-    loadMarkdown: window.__worcaTestHooks?.askMarkdown
-      ?? (() => Promise.all([import('/vendor/marked/marked.esm.js'), import('/vendor/dompurify/purify.es.mjs')])
-        .then(([m, d]) => ({ marked: m.marked, createDOMPurify: d.default }))),
-  };
+  return { loadMarkdown: loadAskMarkdown };
 }
 
 // nodeId half of a `nodeId|executionId`/`nodeId|cycle` group key.
@@ -15293,7 +15290,9 @@ function artifactErrorText(data, status) {
 // and History share one path.
 async function showArtifactViewer(pid, artifact) {
   const rel = artifactRelOf(artifact);
-  const name = rel.split('/').filter(Boolean).pop() || (artifact && artifact.kind) || 'artifact';
+  // basenameOf: a live WS artifact carries the NATIVE path, so '/' alone would
+  // show a whole Windows path as the name.
+  const name = basenameOf(rel) || (artifact && artifact.kind) || 'artifact';
   el.viewerTitle.textContent = `Artifact: ${name}`;
   // #viewer is a <pre> (white-space:pre); mount into a host div so the typed
   // viewers own their own whitespace instead of inheriting the pre's.
@@ -15324,7 +15323,7 @@ function buildArtifactRow(a, pid) {
   const row = document.createElement('button');
   row.type = 'button';
   row.className = 'artifact-row';
-  const name = artifactRelOf(a).split('/').filter(Boolean).pop() || a.kind || 'artifact';
+  const name = basenameOf(artifactRelOf(a)) || a.kind || 'artifact';
   row.innerHTML =
     `<span class="artifact-kind mono">${escapeHtml(a.kind || '')}</span>`
     + `<span class="artifact-name">${escapeHtml(name)}</span>`
@@ -15333,26 +15332,34 @@ function buildArtifactRow(a, pid) {
   return row;
 }
 
+// Which per-node artifact lists the user has expanded, keyed `${pid}::${nodeId}`.
+// The Agents tab is rebuilt wholesale on every live frame (rdAgentsBody), so the
+// open state has to live OUTSIDE the DOM or the list snaps shut on the next
+// state/subagent/artifact event.
+const openNodeArtifactLists = new Set();
+
 // A collapsed "Artifacts (N)" affordance for one node's artifacts, expanding to a
-// list of clickable rows. Returns null when the node produced none.
-function buildNodeArtifactAffordance(list, pid) {
+// list of clickable rows. Returns null when the node produced none. `stateKey`
+// remembers the expanded state across rebuilds. Rows are built on first open:
+// the tab is rebuilt per live frame and nearly every list is collapsed.
+function buildNodeArtifactAffordance(list, pid, stateKey) {
   if (!Array.isArray(list) || !list.length) return null;
   const wrap = document.createElement('div');
   wrap.className = 'node-artifacts';
   const toggle = document.createElement('button');
   toggle.type = 'button';
   toggle.className = 'artifact-toggle';
-  toggle.setAttribute('aria-expanded', 'false');
   toggle.textContent = `Artifacts (${list.length})`;
   const body = document.createElement('div');
   body.className = 'artifact-list';
-  body.hidden = true;
-  for (const a of list) body.appendChild(buildArtifactRow(a, pid));
-  toggle.addEventListener('click', () => {
-    const open = body.hidden;
+  const setOpen = (open) => {
+    if (open && !body.childElementCount) for (const a of list) body.appendChild(buildArtifactRow(a, pid));
     body.hidden = !open;
     toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-  });
+    if (open) openNodeArtifactLists.add(stateKey); else openNodeArtifactLists.delete(stateKey);
+  };
+  setOpen(openNodeArtifactLists.has(stateKey));
+  toggle.addEventListener('click', () => { setOpen(body.hidden); });
   wrap.append(toggle, body);
   return wrap;
 }
@@ -15367,12 +15374,15 @@ function attachNodeArtifactAffordances(cardsByNode, artifacts, pid) {
   // Same display gate as the Artifacts tab (isDisplayableArtifact): transient
   // markers (questions/live-log/pipeline) never become a clickable, 404-able row.
   const groups = artifactsByNodeCycle((Array.isArray(artifacts) ? artifacts : []).filter(isDisplayableArtifact));
+  // No pruning of openNodeArtifactLists: keys are pid-scoped (no cross-run
+  // collision, unlike openAgentRows' bare nodeId keys), exist only after a click,
+  // and a node that ever had a card keeps one for the run's lifetime.
   for (const [nodeId, card] of cardsByNode) {
     const byCyc = groups.get(nodeId);
     if (!byCyc) continue;
     const list = [];
     for (const arr of byCyc.values()) for (const a of arr) list.push(a);
-    const aff = buildNodeArtifactAffordance(list, pid);
+    const aff = buildNodeArtifactAffordance(list, pid, `${pid}::${nodeId}`);
     if (aff) card.appendChild(aff);
   }
 }
@@ -15444,7 +15454,9 @@ function buildRdArtifacts(sec, ctx) {
 // History Artifacts tab: fetch the ATTRIBUTED list (GET /api/runs/:id/artifacts,
 // resolved by pipeline id alone) — the saved detail payload's `artifacts` carries
 // no step attribution — then render the same grouped view. Fire-and-forget like
-// buildHdLogs; a failed fetch re-arms via the empty render.
+// buildHdLogs; a failed fetch shows the error and clears the tab's `loaded` stamp
+// (the same re-arm loadLiveLogs does) so the next open retries instead of
+// showing a false "(no artifacts recorded)" forever.
 function buildHdArtifacts(sec, record, data) {
   sec.innerHTML = '';
   const loading = document.createElement('div');
@@ -15456,7 +15468,13 @@ function buildHdArtifacts(sec, record, data) {
   const stateLike = { subAgents: st.subAgents, steps: st.steps, stepper: st.stepper };
   if (!pid) { renderRunArtifacts(sec, [], null, stateLike); return; }
   fetch(`/api/runs/${encodeURIComponent(pid)}/artifacts`)
-    .then((res) => (res.ok ? res.json() : null))
+    .then(async (res) => {
+      if (!res.ok) {
+        const errBody = await safeJson(res);
+        throw new Error((errBody && errBody.error) || `HTTP ${res.status}`);
+      }
+      return res.json();
+    })
     .then((body) => {
       const arts = body && Array.isArray(body.artifacts) ? body.artifacts : [];
       renderRunArtifacts(sec, arts, pid, stateLike);
@@ -15471,7 +15489,13 @@ function buildHdArtifacts(sec, record, data) {
         sec.appendChild(hint);
       }
     })
-    .catch(() => { renderRunArtifacts(sec, [], pid, stateLike); });
+    .catch((e) => {
+      // Reuse the placeholder as the error line (renderRunArtifacts may already
+      // have detached it, so re-mount rather than assume it is still there).
+      loading.textContent = `Could not load artifacts: ${(e && e.message) || String(e)}`;
+      sec.replaceChildren(loading);
+      sec.dataset.loaded = ''; // allow a retry on the next open
+    });
 }
 
 function paintStepper(r) {
@@ -16912,6 +16936,16 @@ startBudgetTick();
 // Ask Worca mount (§10.2 seam 1): a JS-built body-level overlay — index.html is
 // untouched so ui-shell's routed-view census stays at 11. No network happens here;
 // the panel fetches only on first open / hello.
+// The ONE marked+DOMPurify loader (vendored bundles), shared by the Ask panel and
+// the artifact markdown viewer. The test hook window.__worcaTestHooks.askMarkdown
+// is read at CALL time, so a harness can stub it before OR after boot.
+function loadAskMarkdown() {
+  const stub = window.__worcaTestHooks?.askMarkdown;
+  if (stub) return stub();
+  return Promise.all([import('/vendor/marked/marked.esm.js'), import('/vendor/dompurify/purify.es.mjs')])
+    .then(([m, d]) => ({ marked: m.marked, createDOMPurify: d.default }));
+}
+
 askPanel = createAskPanel({
   doc: document,
   win: window,
@@ -16925,9 +16959,7 @@ askPanel = createAskPanel({
   confirm: confirmModal,
   getPageContext,
   openNewPipeline,
-  loadMarkdown: window.__worcaTestHooks?.askMarkdown
-    ?? (() => Promise.all([import('/vendor/marked/marked.esm.js'), import('/vendor/dompurify/purify.es.mjs')])
-      .then(([m, d]) => ({ marked: m.marked, createDOMPurify: d.default }))),
+  loadMarkdown: loadAskMarkdown,
   hljsLoader: diffHljsLoader,
   storage: window.localStorage,
   raf: window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : ((fn) => setTimeout(fn, 0)),

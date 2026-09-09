@@ -307,8 +307,10 @@ CREATE TABLE clarify (
   FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
 );
 
--- reviews: per-cycle review verdicts (was *-review-cycleN.json). kind is one of
--- refine|impl|plan|ws|webui (5-value open set, A2); verdict is JSON {issues:[...],summary}.
+-- reviews: per-cycle review verdicts (was *-review-cycleN.json). kind is free text
+-- (A2): a reviewKindOf stem (refine|impl|plan|ws|webui, or unknown verbatim), prefixed
+-- <nodeId>- / <sliceId>- when executions share an ordinal; verdict is JSON
+-- {issues:[...],summary}.
 CREATE TABLE reviews (
   pipeline_id TEXT NOT NULL,
   kind        TEXT NOT NULL,

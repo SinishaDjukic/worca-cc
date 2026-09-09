@@ -3,18 +3,14 @@
 // Markdown reuses ask-markdown.mjs's createMarkdownRenderer verbatim — the SAME
 // sanitizer the Ask panel uses (marked + DOMPurify, one shared allowlist +
 // post-pass), so there is exactly ONE security-sensitive markdown path to audit.
-// `escapeHtml`, `viewerKindFor` and `artifactsByNodeCycle` are pure and
-// node-testable; the renderers touch the DOM and (for markdown) lazily load the
-// vendor bundle through an injected `deps.loadMarkdown`, so a test harness can
-// stub it the way window.__worcaTestHooks?.askMarkdown does.
+// `viewerKindFor` and `artifactsByNodeCycle` are pure and node-testable; the
+// renderers touch the DOM (textContent / replaceChildren, never innerHTML — so no
+// escape helper lives here; app.js keeps its own escapeHtml for the rows it
+// templates) and (for markdown) lazily load the vendor bundle through an
+// injected `deps.loadMarkdown`, so a test harness can stub it the way
+// window.__worcaTestHooks?.askMarkdown does.
 import { createMarkdownRenderer } from './ask-markdown.mjs';
-
-/** Escape the five HTML metacharacters. Pure. */
-export function escapeHtml(s) {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
+import { BINARY_KINDS, scanKindFor } from '../../src/shared/artifact-kinds.mjs';
 
 /**
  * Pick a viewer for an artifact by kind + relPath. Pure.
@@ -23,19 +19,28 @@ export function escapeHtml(s) {
  * @returns {'markdown'|'diff'|'json'|'text'|'binary'}
  */
 export function viewerKindFor(kind, relPath = '') {
-  // A binary kind never reaches a text viewer, whatever the extension says (D11).
-  if (kind === 'image' || kind === 'binary') return 'binary';
-  const ext = (String(relPath).split('.').pop() || '').toLowerCase();
-  // An explicit file extension is authoritative; the generic kind (plan/review/
-  // result) is only a fallback for extensionless paths, so a 'result' that is a
-  // .json renders as JSON rather than being forced through the diff viewer.
-  if (ext === 'md') return 'markdown';
-  if (ext === 'diff' || ext === 'patch') return 'diff';
-  if (ext === 'json') return 'json';
-  if (kind === 'plan' || kind === 'review') return 'markdown';
-  if (kind === 'result') return 'diff';
+  // The extension's FORMAT kind, by the SAME function the read route classifies
+  // with (artifacts.mjs resolveIndexedArtifactForRow) — one parser, so a name the
+  // route serves as text (`.env`, a leading-dot name) is never shown as binary
+  // here, and vice versa.
+  const fmt = scanKindFor(relPath);
+  // A binary kind — or a binary EXTENSION under any kind (a run extra, a free-text
+  // artifactKind) — never reaches a text viewer (D11); the read route answers 415.
+  if (BINARY_KINDS.has(kind) || BINARY_KINDS.has(fmt)) return 'binary';
+  // An explicit file extension is authoritative; the generic engine kind (plan/
+  // review/result) is only a fallback for extensionless paths, so a 'result' that
+  // is a .json renders as JSON rather than being forced through the diff viewer.
+  if (fmt !== 'text') return fmt;
+  if (kind === 'markdown' || kind === 'plan' || kind === 'review') return 'markdown';
+  if (kind === 'json') return 'json';
+  if (kind === 'diff' || kind === 'result') return 'diff';
   return 'text';
 }
+
+/** Rows rendered before the diff viewer stops and says how many it left out —
+ *  the read cap is 2 MB, i.e. tens of thousands of lines, and one <span> per line
+ *  in a single synchronous pass is what makes the page unresponsive. */
+export const DIFF_MAX_ROWS = 5000;
 
 /**
  * Group a run's artifacts by nodeId then cycle for the per-node UI. Legacy
@@ -77,23 +82,39 @@ export function renderJson(text, mount) {
 }
 
 /** Render a unified diff, colouring +/-/@@ lines. */
-export function renderDiff(text, mount) {
+export function renderDiff(text, mount, { maxRows = DIFF_MAX_ROWS } = {}) {
   const doc = mount.ownerDocument;
   const pre = doc.createElement('pre');
   pre.className = 'artifact-diff';
-  for (const line of String(text ?? '').split('\n')) {
+  const lines = String(text ?? '').split('\n');
+  // Position-aware headers, the way diff-view.mjs parses them: `--- `/`+++ ` are
+  // file headers only OUTSIDE a hunk; inside one they are removed/added CONTENT
+  // (deleting a SQL comment `-- note` yields the line `--- note`; adding
+  // `++ counter` right after it yields `+++ counter` — a pair that LOOKS like a
+  // header, which is why no lookahead is used). Every file section of the
+  // patches this app writes (git-info.mjs diffPatch: `git diff`) opens with a
+  // `diff ` line, which is what closes the hunk. A bare `+++`/`---` with no
+  // space is content everywhere ('---flag' from '--flag').
+  let inHunk = false;
+  const shown = Math.min(lines.length, maxRows);
+  for (let i = 0; i < shown; i++) {
+    const line = lines[i];
     const row = doc.createElement('span');
-    // File headers are the space-terminated '+++ '/'--- ' forms (plus diff/index);
-    // a bare '+++'/'---' with no space is real added/removed CONTENT (e.g. deleting
-    // '--flag' yields the line '---flag'), so classify meta FIRST, then +/-.
-    row.className = 'artifact-diff-line'
-      + (line.startsWith('+++ ') || line.startsWith('--- ')
-        || line.startsWith('diff ') || line.startsWith('index ') ? ' meta'
-        : line.startsWith('+') ? ' add'
-          : line.startsWith('-') ? ' del'
-            : line.startsWith('@@') ? ' hunk' : '');
+    let cls = '';
+    if (line.startsWith('diff ') || line.startsWith('index ')) { cls = ' meta'; inHunk = false; }
+    else if (line.startsWith('@@')) { cls = ' hunk'; inHunk = true; }
+    else if (!inHunk && (line.startsWith('--- ') || line.startsWith('+++ '))) cls = ' meta';
+    else if (line.startsWith('+')) cls = ' add';
+    else if (line.startsWith('-')) cls = ' del';
+    row.className = `artifact-diff-line${cls}`;
     row.textContent = `${line}\n`;
     pre.appendChild(row);
+  }
+  if (lines.length > shown) {
+    const more = doc.createElement('span');
+    more.className = 'artifact-diff-line meta artifact-diff-more';
+    more.textContent = `… ${lines.length - shown} more lines not shown\n`;
+    pre.appendChild(more);
   }
   mount.replaceChildren(pre);
   return pre;

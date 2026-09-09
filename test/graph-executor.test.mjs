@@ -439,7 +439,7 @@ test('15 prompt hints substitute {pipelineDir}, {cycle} and {diffInstruction}; t
     expandsPort: 'tasks',
   }));
   assert.ok(producer.includes(`Write each task file under: ${join(pipelineDir, 'steps', 'n_c-c2', 'tasks')}/ (name them p<phase>-t<n>-<kebab-title>.md)`));
-  assert.ok(producer.includes('The manifest shape is { "phases": [ { "ordinal", "tasks": [ { "id", "title", "file" } ] } ] }. Use id "p<ordinal>t<n>" and a pipeline-dir-relative "file" path.'));
+  assert.ok(producer.includes('The manifest shape is { "phases": [ { "ordinal", "tasks": [ { "id", "title", "file" } ] } ] }. Use id "p<ordinal>t<n>"; "file" is the absolute path of the task file (a run-folder-relative path is also accepted).'));
   assert.ok(producer.includes('MOCK_ROLE: decomposer'), 'the chain resolves the expands producer to the decomposer writer');
   assert.ok(producer.includes(`MOCK_TASKS_DIR: ${join(pipelineDir, 'steps', 'n_c-c2', 'tasks')}`));
 });

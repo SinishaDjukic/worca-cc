@@ -23,7 +23,7 @@ import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState,
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
-  listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
+  listArtifacts, listReadableRunArtifacts, lookupPipelineRow, findPipelineRowById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
   readPromptFile,
 } from '../src/core/artifacts.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
@@ -1879,16 +1879,11 @@ app.get('/api/runs/:id/artifacts', async (req, res) => {
   try {
     const row = findPipelineRowById(req.params.id);
     if (!row) return res.status(404).json({ error: 'pipeline not found' });
-    // Cap the row set (each row costs a synchronous statSync for its byte size, on
-    // the event loop) at the same ceiling the ask tool uses — and SAY so: fetch one
-    // extra row to detect truncation. `questions` rows are excluded in SQL, exactly
-    // as list_run_artifacts does: they are scratch the orchestrator deletes once the
-    // round is answered, the UI drops them anyway (isDisplayableArtifact), and
-    // filtering post-LIMIT would let a transient row steal the look-ahead slot and
-    // under-report truncation.
-    const L = ASK_LIMITS.artifactsListMaxLimit;
-    const rows = await listRunArtifacts(row.id, { excludeKinds: ['questions'], limit: L + 1 });
-    res.json({ runId: row.id, artifacts: rows.slice(0, L), truncated: rows.length > L });
+    // The same READABLE page the ask tool serves (each row costs a stat for its
+    // byte size, so the set is capped at the ask ceiling — and SAYS so via
+    // `truncated`); transient `questions` rows are excluded in SQL.
+    const { artifacts, truncated } = await listReadableRunArtifacts(row, {}, ASK_LIMITS.artifactsListMaxLimit);
+    res.json({ runId: row.id, artifacts, truncated });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

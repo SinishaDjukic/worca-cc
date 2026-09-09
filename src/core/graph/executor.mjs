@@ -32,7 +32,7 @@
 // input left UNBOUND. The composite DRIVER is scheduler.mjs; this module owns the
 // document — including the prompt block that tells a producer where to write the
 // task files and what the manifest looks like.
-import { join, dirname, relative, basename, sep } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 
@@ -40,6 +40,7 @@ import {
   runClaude, MOCK_WRITER_ROLES, MOCK_ROLE_CLARIFY, MOCK_ROLE_DECOMPOSER,
 } from '../claude-runner.mjs';
 import { writeStepQuestions, writeClarify } from '../artifacts.mjs';
+import { posixRel } from '../step-scan.mjs';
 import { readReview, normalizeClarify, normalizeReview, safeParseJson } from '../protocol.mjs';
 import {
   taskHeader, buildSystemPrompt, resolveAgentBody, mockMarkers, runOpts,
@@ -87,9 +88,6 @@ export function stepDirName(node, ordinal, runCtx) {
 export function stepDirOf(node, ordinal, runCtx) {
   return join(String(runCtx?.pipelineDir || ''), 'steps', stepDirName(node, ordinal, runCtx));
 }
-
-/** `plan.md` for version 1, `plan-vN.md` after — the planStoreSeed's file name. */
-export const planFileName = (version) => `plan${Number(version) > 1 ? `-v${Number(version)}` : ''}.md`;
 
 // ── allocation ────────────────────────────────────────────────────────────────
 
@@ -427,7 +425,7 @@ export async function readVerdict(verdictPath) {
 /** The warning line a missing verdict raises, relative to the pipeline dir and
  *  `/`-joined so the pinned text is identical on Windows. */
 function missingVerdictWarning(ctx, verdictPath) {
-  const rel = ctx?.pipelineDir ? relative(ctx.pipelineDir, verdictPath).split(sep).join('/') : basename(verdictPath);
+  const rel = ctx?.pipelineDir ? posixRel(ctx.pipelineDir, verdictPath) : basename(verdictPath);
   return `verdict file missing: ${ctx?.nodeId || ctx?.node?.id || '?'} ${rel} — treated as clean`;
 }
 
@@ -483,7 +481,7 @@ function decompositionContractBlock(expandsPort, node, ordinal, runCtx) {
   return (
     `Write each task file under: ${tasksDirOf(node, ordinal, runCtx)}/ (name them p<phase>-t<n>-<kebab-title>.md)\n` +
     'The manifest shape is { "phases": [ { "ordinal", "tasks": [ { "id", "title", "file" } ] } ] }. ' +
-    'Use id "p<ordinal>t<n>" and a pipeline-dir-relative "file" path.\n\n'
+    'Use id "p<ordinal>t<n>"; "file" is the absolute path of the task file (a run-folder-relative path is also accepted).\n\n'
   );
 }
 
@@ -524,7 +522,7 @@ export function buildAgentPrompt(ctx) {
   const verdict = ctx.verdict || null;
   const expandsPort = ctx.expandsPort ?? null;
   // D9: one pure derivation — allocation, the scan and the prompt all agree.
-  const stepDir = ctx.stepDir || stepDirOf(node, ordinal, runCtx);
+  const stepDir = stepDirOf(node, ordinal, runCtx);
 
   // Who gets the raw request and the attachments: binding a task node's token, or
   // declaring `wantsRequest`. taskHeader reads those decisions off `isEntry` /
@@ -614,8 +612,7 @@ async function prepare(ctx) {
     console.warn(`[executor] node "${node?.id}": no agent .md body resolved — running with an empty system prompt`);
   }
   const systemPrompt = buildSystemPrompt(ctx.toolInstruction, body, role, ctx.workspace);
-  const stepDir = stepDirOf(node, ordinal, runCtx);
-  const full = { ...ctx, ports, meta, outputs, verdict, expandsPort, mockRole, priorAnswers, stepDir };
+  const full = { ...ctx, ports, meta, outputs, verdict, expandsPort, mockRole, priorAnswers };
   const prompt = buildAgentPrompt(full);
   const allowedTools = meta.sideEffect === 'code' ? IMPLEMENTER_TOOLS : READ_WRITE_TOOLS;
   // D3: an EXPLICIT alias pin on an endpoint-routed node is a stored promise the
@@ -793,10 +790,15 @@ export function runTaskExecution({ node, taskArtifact, runCtx = {} }) {
   }
 
   if (text === null) throw missing();
-  const version = typeof runCtx.planVersion === 'function' ? Number(runCtx.planVersion()) || 1 : 1;
+  // stepDirOf is tolerant (pure, relative without a pipelineDir) so the prompt
+  // and the scan can always derive it; a WRITE through it must not be — it would
+  // land `steps/…` under process.cwd(), the project checkout.
+  if (!runCtx.pipelineDir) throw new Error(`task node "${node?.id}": runCtx.pipelineDir is required to seed the plan`);
   // A2: the seed IS plan version 1 of the run, in the task card's own step folder
-  // (the card fires once, at ordinal 1); the next plan write allocates -v2.
-  const seeded = join(stepDirOf(node, 1, runCtx), planFileName(version));
+  // (the card fires once, at ordinal 1); the next plan write allocates -v2. The
+  // SAME template engine every port uses: `{vsuffix}` consumes exactly one
+  // planVersion tick and renders `plan.md` / `plan-vN.md`.
+  const seeded = resolveTemplate({ id: 'task', filename: 'plan{vsuffix}.md' }, { ordinal: 1, runCtx, stepDir: stepDirOf(node, 1, runCtx) }).path;
   writeOut(seeded, text);
   return { outputs: { task: { path: seeded } } };
 }

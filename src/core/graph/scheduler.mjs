@@ -530,7 +530,10 @@ export function createScheduler(opts) {
         index,
         siblings: (Array.isArray(ph.tasks) ? ph.tasks : [])
           .filter((t) => t.id !== task.id)
-          .map((t) => ({ id: t.id, title: t.title ?? null, file: t.file ?? null })),
+          // The absolute `path` (same as the slice binding above): siblingsBlock
+          // prints it into a prompt whose cwd is the project tree, where the
+          // run-dir-relative `file` resolves to nothing — so never fall back to it.
+          .map((t) => ({ id: t.id, title: t.title ?? null, file: t.path ?? null })),
       },
     };
     try {

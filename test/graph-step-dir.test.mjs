@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { safeSegment, stepDirName, stepDirOf, planFileName } from '../src/core/graph/executor.mjs';
+import { safeSegment, stepDirName, stepDirOf } from '../src/core/graph/executor.mjs';
 
 test('safeSegment keeps [A-Za-z0-9_-] and turns everything else into _', () => {
   assert.equal(safeSegment('n_impl'), 'n_impl');
@@ -28,11 +28,4 @@ test('stepDirOf joins <pipelineDir>/steps/<name>', () => {
   assert.equal(stepDirOf({ id: 'n_a' }, 2, { pipelineDir: '/p/run' }), join('/p/run', 'steps', 'n_a-c2'));
   assert.equal(stepDirOf({ id: 'n_a' }, 1, { pipelineDir: '/p/run', slice: 'p1t1' }), join('/p/run', 'steps', 'n_a-c1-p1t1'));
   assert.equal(stepDirOf({ id: 'n_a' }, 1, {}), join('steps', 'n_a-c1'), 'no pipelineDir ⇒ still pure, relative');
-});
-
-test('planFileName: version 1 has no suffix, later versions get -vN', () => {
-  assert.equal(planFileName(1), 'plan.md');
-  assert.equal(planFileName(undefined), 'plan.md');
-  assert.equal(planFileName(2), 'plan-v2.md');
-  assert.equal(planFileName('3'), 'plan-v3.md');
 });

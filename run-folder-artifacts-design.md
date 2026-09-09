@@ -46,7 +46,8 @@ directories receive no new files.
   prefixes are removed; the folder is the discriminator.
 - The `{vsuffix}` counter is unchanged: run-global, one tick per distinct
   template per execution, persisted in the resume point, consumed at 1 by
-  `planStoreSeed`. `planFileName(v)` = `plan.md` / `plan-vN.md`.
+  `planStoreSeed`, which seeds through the same template engine as every
+  port (`plan{vsuffix}.md` = `plan.md` / `plan-vN.md`).
 - The combine card allocates `<stepDir>/combine.md`; the decomposition's task
   files live in `<stepDir>/tasks` of the execution that writes the manifest
   (**D10**, see §6.4).
@@ -157,7 +158,8 @@ the seed-trace goldens. Browser proof: `scripts/verify-artifacts-cdp.mjs`.
 - **D15** The engine names no agent key; branching on flow KIND (`combine`,
   `task`) is engine-owned and allowed.
 - Baseline `npm test` on dev @ 7b188b2c + 115ee556: 4762 pass / 0 fail
-  (measured 2026-09-08). After this feature: 4801 pass / 0 fail (+39). Run it
+  (measured 2026-09-08). After this feature: 4803 pass / 0 fail (+41, measured
+  2026-09-09 once the review passes had landed their extra cases). Run it
   with `WORCA_HOST_PID` unset: the worca app server exports that variable and
   `test/host-guard-wiring.test.mjs` asserts a spawned child never sees it, so an
   inherited value reddens one case for environmental reasons alone.

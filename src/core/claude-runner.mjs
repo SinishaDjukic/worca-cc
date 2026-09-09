@@ -45,6 +45,7 @@ import { effectiveDebugSpawn } from './settings.mjs';
 import { classifyError, strongestClass } from './recoverable-error.mjs';
 import { explainUnspawnableClaude, resolveClaudeBin } from './preflight.mjs';
 import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from './host-guard.mjs';
+import { hasDotDot } from './step-scan.mjs';
 import { writeFile, mkdir, appendFile, readFile, access } from 'node:fs/promises';
 import { constants as FS, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -1488,7 +1489,7 @@ async function writeMockExtraFiles(m, onEvent) {
     if (eq <= 0) continue;
     const rel = entry.slice(0, eq).trim();
     const text = entry.slice(eq + 1);
-    if (!rel || rel.split(/[\\/]/).includes('..')) continue;
+    if (!rel || hasDotDot(rel)) continue;
     const file = join(m.MOCK_STEP_DIR, rel);
     await ensureDir(file);
     await writeFile(file, text, 'utf8');

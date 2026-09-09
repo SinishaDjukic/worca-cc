@@ -888,30 +888,27 @@ export function createAskTools(deps) {
       if (str(input.stepKey)) filter.stepKey = str(input.stepKey);
       if (str(input.kind)) filter.kind = str(input.kind);
       const limit = clampInt(input.limit, 1, L.artifactsListMaxLimit, L.artifactsListMaxLimit);
-      // 'questions' rows index scratch files the orchestrator deletes once the
-      // round is answered, so a follow-up read_run_artifact would 404. Exclude
-      // them in SQL (so LIMIT counts only readable rows — filtering post-LIMIT
-      // would let a transient row steal the look-ahead slot and under-report
-      // truncation) — the Q&A itself is exposed via get_run_progress.
-      // Fetch one extra row to detect truncation without sizing the whole table.
-      const rows = await deps.listRunArtifacts(row, { ...filter, excludeKinds: ['questions'], limit: limit + 1 });
-      const artifacts = rows.slice(0, limit).map((a) => ({
+      // The READABLE page (artifacts.listReadableRunArtifacts): transient
+      // 'questions' rows are excluded in SQL and truncation is detected with one
+      // look-ahead row — the Q&A itself is exposed via get_run_progress.
+      const { artifacts: rows, truncated } = await deps.listRunArtifacts(row, filter, limit);
+      const artifacts = rows.map((a) => ({
         kind: a.kind, stepKey: a.stepKey, nodeId: a.nodeId, cycle: a.cycle,
         relPath: a.relPath, bytes: a.bytes, createdAt: a.createdAt,
       }));
-      return { runId: row.id, artifacts, truncated: rows.length > limit };
+      return { runId: row.id, artifacts, truncated };
     },
     async read_run_artifact(input) {
       const row = await resolveRow({ ...input, id: str(input.runId) || str(input.id) }, 'read_run_artifact');
       const rel = str(input.relPath);
       if (!rel) throw new AskToolError('read_run_artifact: relPath is required');
-      const hit = await deps.readRunArtifact(row, rel);       // resolveIndexedArtifactForRow -> {rel, text}|null
+      const hit = await deps.readRunArtifact(row, rel);       // resolveIndexedArtifactForRow -> {rel, text} | {rel, bytes, binary} | {rel, bytes, tooLarge, cap} | null
       if (!hit) throw new AskToolError('read_run_artifact: artifact not found');
       // D11: binary kinds and over-cap files are refused with a model-actionable
-      // message (the 2 MB figure mirrors artifacts.mjs#ARTIFACT_READ_MAX_BYTES;
-      // tools.mjs stays import-free — its source is scanned by three suites).
+      // message; the cap rides on the hit (artifacts.mjs#ARTIFACT_READ_MAX_BYTES)
+      // so this import-free module never restates the number.
       if (hit.binary) throw new AskToolError(`read_run_artifact: binary artifact (${hit.bytes} bytes) — not readable as text`);
-      if (hit.tooLarge) throw new AskToolError(`read_run_artifact: artifact is ${hit.bytes} bytes, above the 2 MB cap`);
+      if (hit.tooLarge) throw new AskToolError(`read_run_artifact: artifact is ${hit.bytes} bytes, above the ${Number.isFinite(hit.cap) ? `${hit.cap / (1024 * 1024)} MB ` : ''}cap`);
       const offset = clampInt(input.offset, 0, Number.MAX_SAFE_INTEGER, 0);
       const maxBytes = clampInt(input.maxBytes, 1, L.artifactReadMaxBytes, L.artifactReadDefaultBytes);
       const { text, truncated, totalBytes, nextOffset } = sliceBytes(deps.redact(hit.text), offset, maxBytes);

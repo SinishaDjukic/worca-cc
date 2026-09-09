@@ -35,7 +35,7 @@ test('constants: 2 MB cap, image + binary refused', () => {
 });
 
 test('plain read, legacy store-root row, binary kind, too-large file, missing file', async () => {
-  const { id, key, step, row, attr } = await seeded();
+  const { id, dir, key, step, row, attr } = await seeded();
   writeFileSync(join(step, 'note.md'), '# hi\n');
   recordArtifact(id, 'markdown', 'steps/n_x-c1/note.md', attr);
   assert.deepEqual(await resolveIndexedArtifactForRow(row, 'steps/n_x-c1/note.md'), { rel: 'steps/n_x-c1/note.md', text: '# hi\n' });
@@ -53,11 +53,17 @@ test('plain read, legacy store-root row, binary kind, too-large file, missing fi
   writeFileSync(join(step, 'bundle.zip'), 'zz');
   recordArtifact(id, 'binary', 'steps/n_x-c1/bundle.zip', attr);
   assert.deepEqual(await resolveIndexedArtifactForRow(row, 'steps/n_x-c1/bundle.zip'), { rel: 'steps/n_x-c1/bundle.zip', bytes: 2, binary: true });
+  // A binary EXTENSION under a non-binary kind (a run extra, a free-text
+  // artifactKind) is refused the same way: the bytes are never read as utf8.
+  mkdirSync(join(dir, 'extras'), { recursive: true });
+  writeFileSync(join(dir, 'extras', 'shot.png'), Buffer.from([0x89, 0x50, 0x4e]));
+  recordArtifact(id, 'extra', 'extras/shot.png');
+  assert.deepEqual(await resolveIndexedArtifactForRow(row, 'extras/shot.png'), { rel: 'extras/shot.png', bytes: 3, binary: true });
   // Above the cap: stat only (sparse file — nothing is read).
   writeFileSync(join(step, 'big.txt'), '');
   await truncate(join(step, 'big.txt'), ARTIFACT_READ_MAX_BYTES + 1);
   recordArtifact(id, 'text', 'steps/n_x-c1/big.txt', attr);
-  assert.deepEqual(await resolveIndexedArtifactForRow(row, 'steps/n_x-c1/big.txt'), { rel: 'steps/n_x-c1/big.txt', bytes: ARTIFACT_READ_MAX_BYTES + 1, tooLarge: true });
+  assert.deepEqual(await resolveIndexedArtifactForRow(row, 'steps/n_x-c1/big.txt'), { rel: 'steps/n_x-c1/big.txt', bytes: ARTIFACT_READ_MAX_BYTES + 1, tooLarge: true, cap: ARTIFACT_READ_MAX_BYTES });
   // Exactly at the cap still reads.
   writeFileSync(join(step, 'edge.txt'), '');
   await truncate(join(step, 'edge.txt'), ARTIFACT_READ_MAX_BYTES);
