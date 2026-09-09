@@ -98,3 +98,17 @@ test('interactive: the proposal renders, revise re-asks, accept runs; cancel sto
   assert.notEqual(c.code, 0, 'a cancelled run is a stopped run (exit 1, like any non-done run)');
   assert.equal(newestRow().status, 'stopped');
 });
+
+test('finding 4: --no-human with an unanswerable stdin is refused BEFORE any row exists, and the refusal names both flags', () => {
+  const rows = () => getDb().prepare('SELECT count(*) AS n FROM pipelines').get().n;
+  const before = rows();
+  const r = spawnSync(process.execPath, [CLI, '--project', freshRepo(), '--prompt', 'ci run', '--workflow', 'auto', '--no-human'], {
+    env: { ...process.env, WORCA_HOME: home, WORCA_MOCK: '1' }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.equal(r.status, 2, `expected the fail() exit code\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+  assert.equal(
+    r.stderr.trim(),
+    'worca: stdin cannot answer prompts (it is /dev/null or closed) — --no-human leaves the loop-budget and recovery gates interactive; pass --yes for a non-interactive run.',
+  );
+  assert.equal(rows(), before, 'refused before start(): no pipelines row');
+});

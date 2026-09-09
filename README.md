@@ -246,7 +246,7 @@ worca --project /path/to/your/project --file ./brief.md --title "Search feature"
 # let worca pick the workflow for the task (Auto), review the proposal first
 worca --project /path/to/your/project --prompt "Add a /search endpoint" --workflow auto
 
-# Auto run with no proposal and no questions (loop-budget, recovery, cost and error pauses still apply)
+# Auto run with no proposal and no questions (loop-budget, recovery, cost and error pauses still apply; add --yes when nothing can answer them, e.g. in CI)
 worca --project /path/to/your/project --prompt "Add a /search endpoint" --workflow auto --no-human
 
 # pause with Ctrl+C, continue later (survives restarts)

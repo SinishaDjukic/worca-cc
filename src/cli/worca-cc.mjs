@@ -457,7 +457,13 @@ async function attachAndDrive(orch, flags, start) {
   // `Failed to read answer: readline was closed` and exited 0 with the row left
   // `running` — a CI job read success on an abandoned run.
   if (!flags.auto && !stdinCanAnswer()) {
-    fail('stdin cannot answer prompts (it is /dev/null or closed) — pass --yes for a non-interactive run.');
+    // `--no-human` silences the Auto proposal, the clarify card and agent questions only;
+    // the loop-budget and recovery gates still ask (spec D3), so a CI user who passed it
+    // must be told which flag is missing (PR #434 review, finding 4).
+    const hint = flags.humanInLoop === false
+      ? '--no-human leaves the loop-budget and recovery gates interactive; pass --yes for a non-interactive run.'
+      : 'pass --yes for a non-interactive run.';
+    fail(`stdin cannot answer prompts (it is /dev/null or closed) — ${hint}`);
   }
   const rl = flags.auto ? null : makeRl();
   let answering = false; // serialize interactive prompts vs. log rendering
