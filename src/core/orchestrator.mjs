@@ -329,6 +329,12 @@ export class GraphOrchestrator extends RunHarness {
       // NOT applied; the proposal says so, so the user is not surprised.
       const rc = await resolveRunConfig(this.projectDir, match.candidate.id);
       ignoredProjectOverrides = Object.keys(rc?.nodes || {}).length > 0 || Object.keys(rc?.wires || {}).length > 0;
+      // With human-in-the-loop OFF there is no proposal to say it (PR #434 review, finding 5):
+      // the run log is then the only place the user can learn why the run used models they
+      // never picked, so say it here regardless of the switch.
+      if (ignoredProjectOverrides) {
+        this._log('orchestrator', 'warn', `auto: this project's saved per-node/wire settings for "${match.candidate.name}" (${match.candidate.id}) are not applied — Auto owns the tuning`);
+      }
     }
     const proposal = buildProposal({
       round, shape: assembled.shape, template,

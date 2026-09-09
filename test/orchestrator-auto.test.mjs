@@ -11,6 +11,7 @@ import { readWorkflow, listWorkflows, writeGraphWorkflow } from '../src/core/wor
 import { listSubAgents, readPipelineForResume } from '../src/core/artifacts.mjs';
 import { setHideBuiltinModels } from '../src/core/settings.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
+import { setNodeModel } from '../src/core/config.mjs';
 
 useTempHome(after);
 // settings/catalog lookups resolve under HOME (same sandbox as test/orchestrator-graph.test.mjs).
@@ -288,4 +289,24 @@ test('B3: a twin saved while the proposal is open is reused at Accept instead of
   assert.deepEqual(await ids(), [...before, 'wf_meanwhile'].sort(), 'no duplicate row');
   const impl = st.stepper.graph.nodes.find((n) => n.key === 'implementer');
   assert.deepEqual([impl.model, impl.effort], ['claude-opus-5', 'high'], 'the table edit was remapped onto the twin\'s node ids');
+});
+
+test('finding 5: with human-in-the-loop OFF, a reused twin whose per-project overrides are ignored still says so in the run log', { timeout: 120000 }, async () => {
+  const dir = gitDir('auto-overrides-log');
+  const REG = loadAgentRegistry(undefined, { userAgentsDir: null, includePlugins: false });
+  const TUNED = { name: 'Tuned twin', taskKind: 'prompt', stages: [S('planner'), S('reviewer')] };   // no other test in this file adopts this topology
+  const built = assembleShape(TUNED, { registry: REG, humanInLoop: false });
+  await writeGraphWorkflow({ ...built.template, id: 'wf_tuned', name: 'Tuned', domain: 'coding' });
+  const plannerId = built.template.nodes.find((n) => n.key === 'planner').id;
+  await setNodeModel(dir, 'wf_tuned', plannerId, { model: 'claude-opus-5', effort: 'high' });   // the project's own tuning of that row
+  const logs = [];
+  const orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_auto', prompt: 'Build the thing, carefully.', claude: { mock: true }, humanInLoop: false, classify: scripted([TUNED]).classify });
+  orch.on('log', (e) => logs.push(e));
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  assert.deepEqual(orch.getState().stepper.auto, { status: 'decided', via: 'reused', rounds: 1, humanInLoop: false, workflowId: 'wf_tuned' }, 'the tuned row was the twin');
+  const line = logs.find((e) => /auto: this project's saved per-node\/wire settings for "Tuned" \(wf_tuned\) are not applied/.test(e.text));
+  assert.ok(line, `expected the ignored-overrides log line; got:\n${logs.map((e) => e.text).join('\n')}`);
+  assert.equal(line.level, 'warn');
+  assert.equal(line.source, 'orchestrator');
 });
