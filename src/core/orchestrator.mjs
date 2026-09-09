@@ -242,7 +242,6 @@ export class GraphOrchestrator extends RunHarness {
       const answer = this.humanInLoop
         ? await this._autoAsk(proposal, models, registry)
         : { decision: 'accept', name: proposal.name, nodes: {} };
-      this._auto.pending = null;                       // answered: the next round (revise) classifies afresh
       if (answer.decision === 'cancel') {
         this._log('orchestrator', 'info', 'auto: cancelled by the user');
         await appendAudit(this.pipeline.dir, 'Auto workflow **cancelled** by the user.').catch(() => {});
@@ -250,6 +249,7 @@ export class GraphOrchestrator extends RunHarness {
         throw abortError('cancelled');
       }
       if (answer.decision === 'revise') {
+        this._auto.pending = null;                       // answered: the next round classifies afresh
         this._auto.feedback.push(answer.text);
         this._auto.prior = shape;
         this._log('orchestrator', 'info', `auto: revise — ${clipMiddle(answer.text, 200)}`);
@@ -395,6 +395,15 @@ export class GraphOrchestrator extends RunHarness {
     manifest.auto = { status: 'decided', via, rounds: round, humanInLoop: this.humanInLoop, workflowId };
     this._preflightAgentKeys(this.resolved.agentKeys);
     this.state.stepper = manifest;
+    // PR #434 review, finding 3: the pending proposal is kept until HERE. A throw before the
+    // workflowId swap above (mintAutoWorkflowId, writeGraphWorkflow, resolveGraph) unwinds
+    // through _decideTopology's catch, which rebuilds the point WITH it, so the resume replays
+    // the same proposal for free instead of paying a second classifier round. (The answer
+    // itself is not persisted: with a proposal open the user answers the replay again. That
+    // catch is gated on workflowId === AUTO_WORKFLOW_ID: a throw after the swap leaves the
+    // point as it was — the B6 stamp when a proposal was open, none otherwise — and the steps
+    // between are bookkeeping over the graph resolveGraph just resolved.)
+    this._auto.pending = null;
     this.state.resumePoint = null;                  // decided: the engine's onSnapshot owns the point from here
     this._emit('state', this.getState());
     await this._persist();

@@ -316,3 +316,27 @@ test('finding 2: the revise answer is persisted BEFORE the next classifier call 
   assert.equal(second.getState().stepper.auto.rounds, 2);
   assert.deepEqual(listSubAgents(id).filter((s) => s.subagentType === 'auto-classify').map((s) => s.id), ['auto-classify-1', 'auto-classify-2']);
 });
+
+test('finding 3: a failure inside _autoAdopt keeps the accepted proposal on the point — the resume replays it with no classifier bill instead of re-classifying', { timeout: 120000 }, async () => {
+  const dir = gitDir('auto-adopt-fail');
+  let calls = 0;
+  const first = orchFor(dir, { humanInLoop: false, classify: async (i) => { calls += 1; return shapeOf(QUICK, 0.02)(i); } });
+  // The row write / resolveGraph failing AFTER the answer (a full disk, an agent that lost its ports).
+  first._autoAdopt = async () => { throw new Error('SQLITE_FULL: database or disk is full'); };
+  const r1 = await first.run();
+  assert.equal(r1.status, 'paused', JSON.stringify(r1));
+  assert.equal(r1.reason, 'error', 'the setup site pauses every error with reason "error"');
+  assert.equal(calls, 1);
+  const saved = readPipelineForResume(first.getState().id);
+  assert.equal(saved.row.status, 'paused');
+  assert.equal(saved.resumePoint.manifest.auto.status, 'deciding');
+  assert.equal(saved.resumePoint.auto.pending?.shape?.name, 'Quick fix', 'the ACCEPTED proposal still rides the point');
+  assert.equal(saved.resumePoint.auto.round, 1);
+  assert.equal(saved.resumePoint.auto.costUsd, 0.02);
+  const second = createOrchestrator({ projectDir: dir, claude: { mock: true }, resume: saved, classify: async () => { throw new Error('the classifier must not run again'); } });
+  const r2 = await second.resume();
+  assert.equal(r2.status, 'done', r2.error);
+  assert.equal(second.getState().stepper.auto.rounds, 1, 'a replay is not a new round');
+  assert.deepEqual(listSubAgents(second.getState().id).filter((s) => s.subagentType === 'auto-classify').map((s) => s.id), ['auto-classify-1'], 'no second cost row');
+  assert.equal(readPipelineForResume(second.getState().id).row.resume_point, null, 'decided + done: the point is gone');
+});
