@@ -234,15 +234,10 @@ export class GraphOrchestrator extends RunHarness {
       this._checkPause();   // a pause requested while the classifier was out parks the run BEFORE any row is written
       if (this.humanInLoop) {
         // B6: the proposal may stay open for hours. Stamp the current decision state on the row
-        // NOW, as the setup-incomplete point every Auto pause produces (run-harness.mjs
-        // _completePaused), so a server restart in this window reconciles to a RESUMABLE row
-        // that resumes into this very proposal. _autoAdopt nulls the point once decided; every
-        // throw below it goes through _decideTopology's catch, which rebuilds the point (pending included).
-        const rp = this._buildResumePoint(null);
-        rp.setupIncomplete = true;
-        rp.titleProvisional = this.state.titleProvisional === true;
-        this.state.resumePoint = rp;
-        await this._persist();
+        // NOW, so a server restart in this window reconciles to a RESUMABLE row that resumes
+        // into this very proposal. _autoAdopt nulls the point once decided; every throw below
+        // it goes through _decideTopology's catch, which rebuilds the point (pending included).
+        await this._stampDecisionPoint();
       }
       const answer = this.humanInLoop
         ? await this._autoAsk(proposal, models, registry)
@@ -258,6 +253,12 @@ export class GraphOrchestrator extends RunHarness {
         this._auto.feedback.push(answer.text);
         this._auto.prior = shape;
         this._log('orchestrator', 'info', `auto: revise — ${clipMiddle(answer.text, 200)}`);
+        // PR #434 review, finding 2: until the NEXT round's own stamp the feedback lives only in
+        // memory, and that round opens with a 60–120 s classifier call. A hard kill in that
+        // window (ui/server.mjs shutdown() never pauses runs; the boot reconcile keeps the row's
+        // point) would resume into the stamp above and re-show the ORIGINAL proposal with the
+        // revise text gone. Persist the decision state now.
+        await this._stampDecisionPoint();
         continue;
       }
       return await this._autoAdopt({ template, match, tunables, shape, answer, registry, round });
@@ -593,6 +594,18 @@ export class GraphOrchestrator extends RunHarness {
       await appendAudit(this.pipeline.dir, `Run **${QUIESCENCE_WARNING}**.`).catch(() => {});
     }
     return 'done';
+  }
+
+  /** Stamp the CURRENT decision state on the row as the setup-incomplete point every Auto
+   *  pause produces (run-harness.mjs _completePaused): a hard kill after this persist
+   *  reconciles to a RESUMABLE row that resumes into exactly this state. Used while a
+   *  proposal is open (B6) and right after a revise answer (PR #434 review, finding 2). */
+  async _stampDecisionPoint() {
+    const rp = this._buildResumePoint(null);
+    rp.setupIncomplete = true;
+    rp.titleProvisional = this.state.titleProvisional === true;
+    this.state.resumePoint = rp;
+    await this._persist();
   }
 
   /**

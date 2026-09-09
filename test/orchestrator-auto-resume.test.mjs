@@ -263,3 +263,56 @@ test('B6: a server restart while the proposal is open leaves a RESUMABLE row (se
   assert.equal(seen[0].workflow.round, 1);
   assert.equal(second.getState().stepper.auto.rounds, 1);
 });
+
+test('finding 2: the revise answer is persisted BEFORE the next classifier call — a hard kill during that call resumes with the feedback, not into the original proposal', { timeout: 120000 }, async () => {
+  const dir = gitDir('auto-revise-restart');
+  let calls = 0;
+  let round2Started;
+  const round2Blocked = new Promise((res) => { round2Started = res; });
+  let releaseRound2;
+  const gate = new Promise((res) => { releaseRound2 = res; });
+  const classify = async (input) => {
+    calls += 1;
+    if (calls === 1) return shapeOf(QUICK, 0.02)(input);
+    round2Started();                                   // round 2 is "out at the model" — the 60–120 s window
+    await gate;                                        // held until the test has read the row and paused the run
+    throw new ClassifierError('CLASSIFIER_FAILED', 'process killed', [], { costUsd: 0 });
+  };
+  const first = orchFor(dir, { humanInLoop: true, classify });
+  first.on('question', (q) => { if (q.kind === 'workflow') setImmediate(() => first.answer(q.id, { decision: 'revise', text: 'make it bigger' })); });
+  const running = first.run();
+  await round2Blocked;
+  const id = first.getState().id;
+  // What the row holds while round 2 is out: the state a restarted server would resume from.
+  const live = readPipelineForResume(id);
+  assert.equal(live.row.status, 'running');
+  assert.ok(live.resumePoint, 'a point is on the row while the classifier is out');
+  assert.equal(live.resumePoint.manifest.auto.status, 'deciding');
+  assert.equal(live.resumePoint.setupIncomplete, true, 'a pre-setup point: resume() replays the setup');
+  assert.deepEqual(live.resumePoint.auto.feedback, ['make it bigger'], 'the revise text rides the row BEFORE round 2 persists anything');
+  assert.equal(live.resumePoint.auto.prior.name, 'Quick fix', 'the revised shape rides too');
+  assert.equal(live.resumePoint.auto.pending, null, 'the answered proposal is NOT replayed');
+  assert.equal(live.resumePoint.auto.round, 1, 'stamped before the round counter moved');
+  assert.equal(live.resumePoint.auto.costUsd, 0.02, 'B5: the spend so far rides');
+  // The boot reconcile of a restarted server: the owner pid is dead ⇒ interrupted, the point untouched.
+  const flipped = reconcileStaleRunning({ liveIds: [], pidAlive: () => false, now: Date.now() + 24 * 3600 * 1000 });
+  assert.ok(flipped.ids.includes(id), `reconciled: ${JSON.stringify(flipped)}`);
+  const saved = readPipelineForResume(id);
+  assert.equal(saved.row.status, 'interrupted');
+  assert.deepEqual(saved.resumePoint.auto.feedback, ['make it bigger']);
+  // Park the blocked process WITHOUT tearing its worktree down (as the B6 test does): pause(),
+  // then let the stub return so run() unwinds.
+  first.pause(); releaseRound2(); await running;
+  const inputs = [];
+  const second = createOrchestrator({ projectDir: dir, claude: { mock: true }, resume: saved, classify: async (i) => { inputs.push(i); return shapeOf(QUICK, 0.02)(i); } });
+  const seen = answerer(second, () => ({ decision: 'accept', name: 'Quick fix', nodes: {} }));
+  const r2 = await second.resume();
+  assert.equal(r2.status, 'done', r2.error);
+  assert.equal(inputs.length, 1, 'ONE fresh classification, carrying the feedback');
+  assert.deepEqual(inputs[0].feedback, ['make it bigger']);
+  assert.equal(inputs[0].priorShape.name, 'Quick fix');
+  assert.equal(seen.filter((q) => q.kind === 'workflow').length, 1);
+  assert.equal(seen[0].workflow.round, 2, 'round 2 — not a replay of round 1');
+  assert.equal(second.getState().stepper.auto.rounds, 2);
+  assert.deepEqual(listSubAgents(id).filter((s) => s.subagentType === 'auto-classify').map((s) => s.id), ['auto-classify-1', 'auto-classify-2']);
+});
