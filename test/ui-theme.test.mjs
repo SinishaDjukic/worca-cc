@@ -5,7 +5,13 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../ui/public/style.css'), 'utf8');
-const tokenValue = (name) => { const m = css.match(new RegExp(`--${name}\\s*:\\s*([^;]+);`)); return m ? m[1].trim().toLowerCase() : null; };
+const rawToken = (name) => { const m = css.match(new RegExp(`--${name}\\s*:\\s*([^;]+);`)); return m ? m[1].trim() : null; };
+/** 'light-dark(A, B)' → [A, B] at the top-level comma; anything else → null. */
+const arms = (v) => { const m = /^light-dark\(([\s\S]*)\)$/.exec(v); if (!m) return null; let d = 0; const s = m[1];
+  for (let i = 0; i < s.length; i += 1) { if (s[i] === '(') d += 1; else if (s[i] === ')') d -= 1; else if (s[i] === ',' && d === 0) return [s.slice(0, i).trim(), s.slice(i + 1).trim()]; } return null; };
+/** The LIGHT arm of a token (or its plain value), lowercased — every existing pin below reads light. */
+const tokenValue = (name) => { const v = rawToken(name); if (v == null) return null; const a = arms(v); return (a ? a[0] : v).toLowerCase(); };
+const darkTokenValue = (name) => { const v = rawToken(name); if (v == null) return null; const a = arms(v); return (a ? a[1] : v).toLowerCase(); };
 
 test('refined palette: warm off-white canvas + white panels', () => {
   assert.equal(tokenValue('bg'), '#f1f1ef');
@@ -108,4 +114,11 @@ test('the redesign orphans are gone from the stylesheet', () => {
   assert.ok(css.includes('.skill-pill'), '.skill-pill kept');
   assert.ok(css.includes('.agent-type-pill'), '.agent-type-pill kept');
   assert.ok(css.includes('.graphify-pill'), '.graphify-pill kept');
+});
+
+test('dark arms exist for the canvas trio and are the warm charcoal', () => {
+  assert.equal(darkTokenValue('bg'), '#161614');
+  assert.equal(darkTokenValue('panel'), '#222220');
+  assert.equal(darkTokenValue('ink'), '#ecece8');
+  assert.equal(darkTokenValue('r-card'), '24px', 'non-colour tokens have no arms');
 });

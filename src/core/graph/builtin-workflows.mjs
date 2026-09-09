@@ -49,3 +49,21 @@ export const GRAPH_DEFAULT_WORKFLOW = deepFreeze({
     { id: 'w10', from: { node: 'n_review', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
   ],
 });
+
+/** The Auto entry's reserved id. Like wf_default it is NEVER a row: the picker
+ *  lists it as a client-side constant, POST /api/run + the CLI accept it, and the
+ *  orchestrator decides the real graph per run (auto-workflow spec §5). */
+export const AUTO_WORKFLOW_ID = 'wf_auto';
+export const AUTO_WORKFLOW_NAME = 'Auto';
+
+/** What readWorkflow('wf_auto') answers: an id + name and NO graph, so nothing
+ *  can validate or run it as a template. `auto: true` is the discriminator. */
+export const AUTO_WORKFLOW_STUB = deepFreeze({
+  id: AUTO_WORKFLOW_ID,
+  name: AUTO_WORKFLOW_NAME,
+  version: 2,
+  domain: 'coding',
+  auto: true,
+  createdAt: '1970-01-01T00:00:00.000Z',
+  updatedAt: '1970-01-01T00:00:00.000Z',
+});

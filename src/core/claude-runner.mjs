@@ -39,6 +39,10 @@ import { effectiveDebugSpawn } from './settings.mjs';
 import { classifyError, strongestClass } from './recoverable-error.mjs';
 import { explainUnspawnableClaude, resolveClaudeBin } from './preflight.mjs';
 import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from './host-guard.mjs';
+// The offline classifier and the shape normalizer the mock ask role answers
+// propose_workflow with — both pure (no DB, no spawn).
+import { mockShapeFor } from './auto/recipes.mjs';
+import { normalizeShape } from '../shared/graph/assemble.mjs';
 import { writeFile, mkdir, appendFile, readFile, access } from 'node:fs/promises';
 import { constants as FS, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -1065,15 +1069,19 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   const maxTurns = /\bMOCK_MAX_TURNS\b/.test(userText);
   const maxBudget = /\bMOCK_MAX_BUDGET\b/.test(userText);
   const slow = /\bMOCK_SLOW\b/.test(userText);
-  const agents = /\bagents?\b/i.test(userText);
-  const propose = /\b(propose|start|run)\b/i.test(userText);
+  // P3 (PD11): a workflow-card EVENT is matched first — it contains the words "workflow" and, when thenRun, "run",
+  // which would otherwise trip the two arms below. Then the workflow trigger, then the run proposal.
+  const wfEvent = /^\s*\[worca event\] workflow card (card_[0-9a-f]{8}) (?:(declined)|saved as (\S+) "([^"]*)"; thenRun=(true|false))/.exec(userText);
+  const workflow = !wfEvent && /\bworkflow\b/i.test(userText);
+  const agents = !wfEvent && /\bagents?\b/i.test(userText);
+  const propose = !wfEvent && !workflow && /\b(propose|start|run)\b/i.test(userText);
 
   const SID = resumeSessionId || 'mock-session-ask-1';
   const USAGE = { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   const firstLine = userText.split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
   const ANSWER = `[mock] ${firstLine.slice(0, 200)}`;
   const init = { type: 'system', subtype: 'init', session_id: SID, cwd, model: 'mock', permissionMode: 'dontAsk',
-    tools: ['Task', 'mcp__worca__list_runs', 'mcp__worca__get_run', 'mcp__worca__propose_run'],
+    tools: ['Task', 'mcp__worca__list_runs', 'mcp__worca__get_run', 'mcp__worca__propose_run', 'mcp__worca__propose_workflow'],
     mcp_servers: [{ name: 'worca', status: 'connected' }], plugins: [], skills: [], slash_commands: [], agents: [], uuid: 'mock-uuid-init' };
   const mstart = (id) => ({ type: 'stream_event', event: { type: 'message_start', message: { id, model: 'mock', role: 'assistant', content: [], usage: USAGE } }, parent_tool_use_id: null, session_id: SID });
   const delta = (t) => ({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: t } }, parent_tool_use_id: null, session_id: SID });
@@ -1108,6 +1116,29 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
           usage: { input_tokens: 1000, output_tokens: 234, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
         } }),
       );
+      answerMsg = MSG2;
+    }
+    if (workflow) {
+      // The result the real MCP child would return (plan PD1) — the parent re-assembles it with the real registry.
+      const shape = normalizeShape(mockShapeFor(userText, { humanInLoop: true }));
+      const wfInput = { task: userText.slice(0, 2000), projectKey: card.projectKey || null, thenRun: /\brun\b/i.test(userText) };
+      frames.push(delta('[mock] '), delta('building '), delta('a workflow'), atext(MSG1, 'Building a workflow card.'),
+        atool(MSG1, 'toolu_mock_workflow', 'mcp__worca__propose_workflow', wfInput),
+        uresult('toolu_mock_workflow', JSON.stringify({ ok: true, mode: 'task', projectKey: card.projectKey || null, projectName: null, name: shape.name, match: null,
+          warnings: [], summary: '', shape, costUsd: 0, fingerprint: 'top-level: (mock)\nhints: mock', note: '', thenRun: wfInput.thenRun })));
+      answerMsg = MSG2;
+    }
+    if (wfEvent) {
+      // Every event arm answers on MSG2: a second atext on MSG1 would REPLACE the first reply's text.
+      if (wfEvent[2] === 'declined') {
+        frames.push(delta('[mock] '), delta('declined'), atext(MSG1, 'Declined. Want another auto workflow, tell me what to change, or pick a saved workflow?'));
+      } else if (wfEvent[5] === 'true') {
+        frames.push(delta('[mock] '), delta('proposing '), delta('a run'), atext(MSG1, `Proposing a run with "${wfEvent[4]}".`),
+          atool(MSG1, 'toolu_mock_propose', 'mcp__worca__propose_run', { ...card, workflowId: wfEvent[3], brief: `Run with "${wfEvent[4]}"` }),
+          uresult('toolu_mock_propose', JSON.stringify({ ok: true })));
+      } else {
+        frames.push(delta('[mock] '), delta('saved'), atext(MSG1, `Saved "${wfEvent[4]}". Say "run it" when you want a run with it.`));
+      }
       answerMsg = MSG2;
     }
     if (propose) {

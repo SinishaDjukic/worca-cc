@@ -78,10 +78,11 @@ test('tree native controls hide groups explicitly and preserve visible focus', (
   assert.match(panePath, /font-weight:400/, 'the h3 must not keep the UA bold');
 });
 
-function hex(value) {
-  const match = css.match(new RegExp(`${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*(#[0-9A-Fa-f]{6})`));
+function hex(value, arm = 'light') {
+  const esc = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = css.match(new RegExp(`${esc}\\s*:\\s*(?:light-dark\\(\\s*(#[0-9A-Fa-f]{6})\\s*,\\s*(#[0-9A-Fa-f]{6})\\s*\\)|(#[0-9A-Fa-f]{6}))`));
   assert.ok(match, `missing color ${value}`);
-  return match[1];
+  return arm === 'dark' ? (match[2] || match[3]) : (match[1] || match[3]);
 }
 
 function rgb(value) {
@@ -107,15 +108,17 @@ test('small diff text palette clears 4.5:1 on every possible row background', ()
     '--hd-syntax-string', '--hd-syntax-literal', '--hd-syntax-title',
   ];
   const backgrounds = ['--panel', '--green-bg', '--red-bg'];
-  for (const fgName of foregrounds) {
-    for (const bgName of backgrounds) {
-      const ratio = contrast(hex(fgName), hex(bgName));
-      assert.ok(ratio >= 4.5, `${fgName} on ${bgName}: ${ratio.toFixed(2)}:1`);
+  for (const arm of ['light', 'dark']) {
+    for (const fgName of foregrounds) {
+      for (const bgName of backgrounds) {
+        const ratio = contrast(hex(fgName, arm), hex(bgName, arm));
+        assert.ok(ratio >= 4.5, `${fgName} on ${bgName} (${arm}): ${ratio.toFixed(2)}:1`);
+      }
     }
-  }
-  for (const count of ['--hd-count-add', '--hd-count-del']) {
-    const ratio = contrast(hex(count), hex('--field'));
-    assert.ok(ratio >= 4.5, `${count} on --field: ${ratio.toFixed(2)}:1`);
+    for (const count of ['--hd-count-add', '--hd-count-del']) {
+      const ratio = contrast(hex(count, arm), hex('--field', arm));
+      assert.ok(ratio >= 4.5, `${count} on --field (${arm}): ${ratio.toFixed(2)}:1`);
+    }
   }
 });
 

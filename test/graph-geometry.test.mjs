@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
 import {
   NODE_W, ROW0, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, GEOMETRY_CSS_VARS, injectGeometry,
   nodeSize, portAnchor, snap,
   hitNode, hitPort, graphBounds, fitBounds, fanLines, FAN_PER_ROW, FAN_ROW_W,
+  BAND_H, geometryCssVars,
 } from '../src/shared/graph/geometry.mjs';
 import { portsFnFor } from '../src/shared/graph/ports.mjs';
 
@@ -114,13 +116,51 @@ test('graphBounds + fitBounds reproduce the measured auto-fit', () => {
 });
 
 test('GEOMETRY_CSS_VARS covers every CSS-visible number and injectGeometry writes px', () => {
-  assert.deepEqual(Object.keys(GEOMETRY_CSS_VARS).sort(), ['--gv-border', '--gv-dot', '--gv-exec-row-h',
-    '--gv-fan-w', '--gv-foot-h', '--gv-head-h', '--gv-node-w', '--gv-pad-b', '--gv-pad-t', '--gv-row-h', '--gv-sep-h']);
+  assert.deepEqual(Object.keys(GEOMETRY_CSS_VARS).sort(), ['--gv-band-h', '--gv-border', '--gv-dot', '--gv-exec-row-h',
+    '--gv-fan-w', '--gv-foot-h', '--gv-head-h', '--gv-node-w', '--gv-pad-b', '--gv-pad-t', '--gv-row-h', '--gv-scale', '--gv-sep-h']);
   assert.equal(GEOMETRY_CSS_VARS['--gv-node-w'], '220px');
   assert.equal(GEOMETRY_CSS_VARS['--gv-pad-t'], '8.5px');
   const written = [];
   injectGeometry({ style: { setProperty: (k, v) => written.push([k, v]) } });
-  assert.equal(written.length, 11);
+  assert.equal(written.length, 13);
   assert.deepEqual(written.find(([k]) => k === '--gv-row-h'), ['--gv-row-h', '24px']);
   injectGeometry(null);                                    // never throws on a missing host
+});
+
+test('scale multiplies every length; band adds BAND_H under an AGENT head only', () => {
+  assert.equal(BAND_H, 24);
+  const s = 0.65;
+  assert.deepEqual(nodeSize(N_AGENT, P(N_AGENT), { scale: s }), { w: 220 * s, h: 191.5 * s });
+  assert.equal(nodeSize(N_AGENT, P(N_AGENT), { band: true }).h, 191.5 + 24);
+  assert.equal(nodeSize(N_TASK, P(N_TASK), { band: true }).h, 110.5, 'flow cards get no band');
+  assert.equal(Math.round(nodeSize(N_AGENT, P(N_AGENT), { band: true, scale: s }).h * 10) / 10, 140.1, 'Plan at chat scale (mockup F)');
+  const a0 = portAnchor(N_AGENT, P(N_AGENT), 'task', 'in');
+  const a1 = portAnchor(N_AGENT, P(N_AGENT), 'task', 'in', { band: true });
+  assert.equal(a1.y - a0.y, 24, 'inputs move down by the band');
+  const o = portAnchor(N_AGENT, P(N_AGENT), 'plan', 'out', { band: true, scale: s });
+  assert.equal(o.x, N_AGENT.x + 220 * s, 'output anchors sit on the SCALED right edge');
+  assert.equal(o.y, N_AGENT.y + (56 + 24 + 2 * 24 + 9) * s, 'first output = ROW0 + band + 2 input rows + 1 sep, scaled');
+  assert.equal(portAnchor(N_AGENT, P(N_AGENT), 'await', 'in', { band: true, scale: s }).y,
+    N_AGENT.y + (56 + 24 + 2 * 24 + 9 + 2 * 24 + 9) * s);
+  const b = graphBounds({ nodes: [N_AGENT] }, portsFn, { band: true, scale: s });
+  assert.deepEqual(b, { x: N_AGENT.x, y: N_AGENT.y, w: 220 * s, h: (191.5 + 24) * s });
+});
+
+test('geometryCssVars(scale) scales the px vars, carries --gv-scale and --gv-band-h; injectGeometry(el, scale) writes them', () => {
+  const one = geometryCssVars(1);
+  assert.equal(one['--gv-node-w'], '220px');
+  assert.equal(one['--gv-band-h'], '24px');
+  assert.equal(one['--gv-scale'], '1');
+  assert.deepEqual(GEOMETRY_CSS_VARS, one, 'the frozen constant is scale 1');
+  const s = geometryCssVars(0.65);
+  assert.equal(s['--gv-node-w'], '143px');
+  assert.equal(s['--gv-head-h'], '22.1px');
+  assert.equal(s['--gv-band-h'], '15.6px');
+  assert.equal(s['--gv-scale'], '0.65');
+  assert.deepEqual(Object.keys(s), Object.keys(one), 'same key set at every scale (ui-graph-css pins the set)');
+  const dom = new JSDOM('<!doctype html><body><div id="s"></div></body>');
+  const el = dom.window.document.getElementById('s');
+  injectGeometry(el, 0.65);
+  assert.equal(el.style.getPropertyValue('--gv-node-w'), '143px');
+  assert.equal(el.style.getPropertyValue('--gv-scale'), '0.65');
 });

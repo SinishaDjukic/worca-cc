@@ -17,6 +17,7 @@ import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // plugi
 import { declaredApi, NOT_META_V2 } from './plugin-manifest.mjs'; // plugin API declared by a layer's manifest
 import { normalizeAgentMeta, DEFAULT_ORDER } from '../shared/graph/agent-meta.mjs'; // meta v2 (one source: registry + store + UI)
 import { MOCK_WRITER_ROLES } from './claude-runner.mjs';             // mockRole vocabulary (no cycle: claude-runner imports no registry)
+import { readFrontmatterSync } from './frontmatter.mjs';
 
 /**
  * Default location of the agent metadata sidecars, relative to this module.
@@ -213,32 +214,6 @@ export function pluginAgentLayers() {
   }
 }
 
-/**
- * Fallback palette blurb: the agent .md's YAML frontmatter `description:` line,
- * stored VERBATIM (clarify 2026-08-09: the UI clamps, the bubble wants the full
- * text — never truncate here). Single-line values only (plain or quoted);
- * folded/multi-line scalars are out of scope by design (spec 2026-08-09; every
- * shipped .md uses a single-line scalar) and degrade to '' — the block-scalar
- * indicator is detected, never stored. Any read/parse failure returns '' so
- * scanLayer never throws because of the fallback.
- */
-function frontmatterDescription(mdPath) {
-  let text;
-  try { text = readFileSync(mdPath, 'utf8'); } catch { return ''; }
-  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!fm) return '';
-  const line = fm[1].match(/^description:[ \t]*(.+)$/m);
-  if (!line) return '';
-  let v = line[1].trim();
-  // Folded/literal block scalars ('>', '>-', '|', '|+', …): the captured value
-  // is just the indicator, not the text — degrade to '' rather than store junk.
-  if (/^[>|][+-]?$/.test(v)) return '';
-  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-    v = v.slice(1, -1).trim();
-  }
-  return v;
-}
-
 /** Scan one layer dir for *.meta.json; stamps the COMPUTED origin/agentPath/
  *  descriptionDerived fields (none of which normalizeMeta returns, so none can
  *  be persisted back into a sidecar). */
@@ -294,15 +269,18 @@ function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null, onDrop
       continue;
     }
     meta.agentPath = meta.agentFile ? join(dir, meta.agentFile) : null; // layer-correct abs path
+    // The agent .md's frontmatter (name/description/tools/model), read from the
+    // file HEAD only (frontmatter.mjs) — COMPUTED like origin/agentPath, never
+    // stored (normalizeMeta's fixed key set drops it on every write path). The
+    // Auto classifier reads it (auto-workflow P1); the chat catalog can too.
+    meta.frontmatter = meta.agentPath ? readFrontmatterSync(meta.agentPath) : null;
     // Description fallback (spec 2026-08-09): empty sidecar description →
-    // the .md frontmatter description. Only costs a file read when empty.
-    // descriptionDerived marks the RESOLVED description as computed too: unlike
-    // origin/agentPath, `description` has a slot in normalizeMeta, so without
-    // this flag every write path would bake the fallback into the sidecar and
-    // the blurb would stop tracking the .md (and could never be cleared).
-    if (!meta.description && meta.agentPath) {
-      meta.description = frontmatterDescription(meta.agentPath);
-      if (meta.description) meta.descriptionDerived = true;             // computed, never stored
+    // the .md frontmatter description. descriptionDerived marks the RESOLVED
+    // description as computed too, so no write path bakes the fallback into
+    // the sidecar and the blurb keeps tracking the .md.
+    if (!meta.description && meta.frontmatter?.description) {
+      meta.description = meta.frontmatter.description;
+      meta.descriptionDerived = true;                                    // computed, never stored
     }
     metas.push(meta);
   }

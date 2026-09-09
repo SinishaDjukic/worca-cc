@@ -48,6 +48,36 @@ export function isSyntacticRef(s) {
   return s.split('/').every((c) => c !== '' && !c.startsWith('.') && !c.endsWith('.lock'));
 }
 
+// The run card's attachment pills. `ids` is the model's attachmentIds, `rows` the
+// thread's attachment ledger (store.listAttachments — 8 keys; only four ride on
+// the card). Unknown ids are dropped silently (the user may have deleted one
+// since — like commentIds), duplicates collapse, the model's order is kept.
+export function pickCardAttachments(ids, rows) {
+  if (!Array.isArray(ids) || !Array.isArray(rows)) return [];
+  const byId = new Map(rows.filter((r) => r && typeof r.id === 'string').map((r) => [r.id, r]));
+  const seen = new Set();
+  const out = [];
+  for (const id of ids) {
+    if (typeof id !== 'string' || seen.has(id)) continue;
+    const r = byId.get(id);
+    if (!r) continue;
+    seen.add(id);
+    out.push({ id: r.id, name: String(r.name ?? ''), bytes: Number.isFinite(r.bytes) ? r.bytes : 0, kind: r.kind ?? 'text' });
+  }
+  return out;
+}
+
+// One line on the card (spec §6.1): C0/DEL/C1 + the Unicode line separators
+// become spaces (NOT stripped — a note broken by a control char must still read
+// as two words), runs of whitespace collapse, then the cap. Written with
+// escapes — never a raw byte.
+const NOTE_BREAK_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+function cleanNote(v) {
+  if (typeof v !== 'string') return null;
+  const s = v.replace(NOTE_BREAK_RE, ' ').replace(/\s+/g, ' ').trim().slice(0, ASK_LIMITS.proposalNoteMaxChars);
+  return s || null;
+}
+
 /**
  * @param {{listProjects?:Function, readWorkspace?:Function, readWorkflow?:Function, assertRunnableWorkflow?:Function, readGuardrailSet?:Function, isGitRepo?:Function, pathExists?:Function}} [deps]
  */
@@ -66,7 +96,7 @@ export function createProposalValidator({
    * @param {{cardId?:string|null}} [opts]  the server passes the minted card id (feature-branch uniqueness)
    * @returns {Promise<{ok:true, card:object}|{ok:false, errors:string[]}>}
    */
-  async function validateProposal(input, { cardId = null } = {}) {
+  async function validateProposal(input, { cardId = null, attachments = [] } = {}) {
     const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
     const errors = [];
     const fail = () => ({ ok: false, errors });
@@ -160,7 +190,8 @@ export function createProposalValidator({
     if (errors.length) return fail();
     return {
       ok: true,
-      card: { ...target, workflowId: wf.id, workflowName: wf.name, guardrailsId, brief, title, sourceBranch, featureBranch, sourceBranchByKey },
+      card: { ...target, workflowId: wf.id, workflowName: wf.name, guardrailsId, brief, title, sourceBranch, featureBranch, sourceBranchByKey,
+        note: cleanNote(inp.note), attachments: pickCardAttachments(inp.attachmentIds, attachments) },
     };
   }
   return { validateProposal };

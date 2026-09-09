@@ -19,12 +19,14 @@ import { runClaude } from '../claude-runner.mjs';
 import { resolveModelEnv, resolveModelCost, estimateCost, liveCostRates as defaultLiveCostRates } from '../config.mjs';
 import { worcaHome } from '../projects.mjs';
 import { generateTitle } from '../title.mjs';
+import { cleanText } from '../../shared/graph/assemble.mjs';
 import { createTurnReducer } from './events.mjs';
 import { buildAskSpawnOptions, buildMcpConfig, ASK_MCP_SERVER_PATH } from './spawn.mjs';
 import { validateProposal } from './proposal.mjs';
+import { revalidateWorkflowProposal } from './workflow-deps.mjs';
 import { askLimits, ASK_LIMITS } from './limits.mjs';
 import {
-  newAskId, finishMessage, setMessageBlocks, addThreadTotals, updateThread, setThreadTitle,
+  newAskId, finishMessage, setMessageBlocks, addThreadTotals, updateThread, setThreadTitle, listAttachments,
 } from './store.mjs';
 import { recordAskCostDelta } from '../cost-budget.mjs';
 import { setPendingCardComments } from '../diff-comments.mjs';
@@ -60,13 +62,18 @@ class AskTurn extends EventEmitter {
     this.attachmentNames = attachmentNames || {};
     // #397: {projectKey}|{workspaceId}|null — the user-pinned scope at POST time.
     this.pinnedScope = pinnedScope && typeof pinnedScope === 'object' ? pinnedScope : null;
+    this._wfCards = new Map();        // tool_use id → card id (START → RESULT of one propose_workflow call)
+    this._tracked = new Set();        // pipeline ids minted as progress cards in THIS reply (one card per pipeline)
+    this.extraCostUsd = 0;            // PD2: money the MCP child spent on the workflow classifier, booked by this turn
     this.deps = {
       runClaudeImpl: deps.runClaudeImpl ?? runClaude,
       store: {
-        finishMessage, setMessageBlocks, addThreadTotals, updateThread, setThreadTitle,
+        finishMessage, setMessageBlocks, addThreadTotals, updateThread, setThreadTitle, listAttachments,
         ...(deps.store || {}),
       },
       validateProposal: deps.validateProposal ?? validateProposal,
+      revalidateWorkflow: deps.revalidateWorkflow ?? revalidateWorkflowProposal,
+      trackRun: deps.trackRun ?? null,
       generateTitle: deps.generateTitle ?? generateTitle,
       askLimits: deps.askLimits ?? askLimits,
       limits: deps.limits ?? ASK_LIMITS,
@@ -125,6 +132,7 @@ class AskTurn extends EventEmitter {
   }
 
   _persistBlocks() {
+    if (this._completed) return;                                  // v7: after _complete() the terminal write owns the row
     // R-A: the card (and every mid-turn notice) must survive a server restart
     // and be visible to findCard/updateCardBlock while the turn streams.
     try { this.deps.store.setMessageBlocks(this.assistantMessageId, this.reducer.snapshot().blocks); }
@@ -143,7 +151,11 @@ class AskTurn extends EventEmitter {
       || (typeof raw.workspaceId === 'string' && raw.workspaceId.trim());
     const inp = pin && !hasTarget ? { ...raw, ...pin } : raw;
     try {
-      const r = await d.validateProposal(inp, { cardId });
+      // The thread's attachment ledger, so attachmentIds the model cites resolve
+      // to real rows (spec §6.4). A ledger failure never blocks the card.
+      let attachments = [];
+      try { attachments = (typeof d.store.listAttachments === 'function' && d.store.listAttachments(this.threadId)) || []; } catch { attachments = []; }
+      const r = await d.validateProposal(inp, { cardId, attachments });
       if (r && r.ok) {
         // #397 guardrail: a proposal targeting a DIFFERENT project/workspace than
         // the pinned one is accepted but flagged — the card renders the mismatch
@@ -168,7 +180,90 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /** track_run's card (D3/D4): the MCP child only resolved the id — deps.trackRun (ui/server.mjs askTrackRun)
+   *  links the run to this thread and follows a live one; this mints ONE stateless progress card per pipeline
+   *  per reply (older replies keep theirs — every card derives what it shows). */
+  async _onTrackRun(input, isError) {
+    if (isError) return;
+    const d = this.deps;
+    if (typeof d.trackRun !== 'function') return;
+    const raw = input && typeof input === 'object' ? input : {};
+    let r = null;
+    try { r = await d.trackRun(raw, { threadId: this.threadId, pin: this.pinnedScope }); }
+    catch (err) { r = { ok: false, error: err?.message || String(err) }; }
+    if (!r || !r.ok || !r.card || !r.card.pipelineId) {
+      this.reducer.addBlock({ kind: 'notice', text: `Could not track the run: ${(r && r.error) || 'unknown error'}` });
+      this._persistBlocks();
+      return;
+    }
+    if (this._tracked.has(r.card.pipelineId)) return;          // the hook continuations run one at a time after their await
+    this._tracked.add(r.card.pipelineId);
+    const block = this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'tracked', card: r.card });
+    if (!block) return;                                          // null after finish() (events.mjs:511) — _onWorkflowResult's own guard
+    this._persistBlocks();                                       // a store write; the browser gets the reducer's ask-card frame
+  }
+
+  /** The card exists from the tool_use on (spec §8.2, PD7): a building block with the four-step trace, persisted. */
+  _onWorkflowStart(toolUseId, input) {
+    const d = this.deps;
+    const cardId = d.newAskId('card');
+    this._wfCards.set(toolUseId, cardId);
+    const raw = input && typeof input === 'object' ? input : {};
+    const pin = this.pinnedScope;
+    // A pinned WORKSPACE is not a default target (D19/PD17): the building card then carries projectKey null and the child's
+    // own "projectKey is required" error flips it to failed at RESULT.
+    const projectKey = (typeof raw.projectKey === 'string' && raw.projectKey.trim()) || (pin && pin.projectKey) || null;
+    const mode = typeof raw.task === 'string' && raw.task.trim() ? 'task' : 'shape';
+    this.reducer.addBlock({ kind: 'card', id: cardId, state: 'building', card: {
+      type: 'workflow', mode, projectKey, projectName: null,
+      // v7: the building payload is transient (the proposed flip replaces `card` wholesale) — cap a hand-authored shape like the task text.
+      ...(mode === 'task' ? { task: String(raw.task).slice(0, 2000) } : { shape: raw.shape && typeof raw.shape === 'object' && JSON.stringify(raw.shape).length <= 8000 ? raw.shape : null }),
+      name: cleanText(raw.name, 60), note: cleanText(raw.note, d.limits.workflowNoteMaxChars ?? 200), thenRun: raw.thenRun === true,
+      trace: { step: 1, startedAt: new Date(d.now()).toISOString() },
+    } });
+    this._persistBlocks();
+  }
+
+  /** RESULT: re-validate the returned shape in the parent (assemble, validateGraph, match, buildProposal) and flip the block. */
+  async _onWorkflowResult(toolUseId, text, isError) {
+    const d = this.deps;
+    const cardId = this._wfCards.get(toolUseId);
+    if (!cardId) return;
+    this._wfCards.delete(toolUseId);
+    const fail = (reason) => this.reducer.updateBlock(cardId, { state: 'failed', error: cleanText(reason, 300) || 'proposal failed' });
+    let out = null;
+    if (!isError) { try { out = JSON.parse(text); } catch { out = null; } }
+    // PD2: the classifier ran in the child whatever happens next — book its spend BEFORE judging the result. v7: a
+    // {ok:false, error, costUsd} result (classifier timeout / two unusable replies / a shape still rejected after the retry)
+    // carries what the failed attempts cost (ClassifierError.costUsd); v6 booked only on ok:true and lost it.
+    if (out && Number(out.costUsd) > 0) this.extraCostUsd += Number(out.costUsd);
+    if (isError || !out || out.ok !== true || !out.shape || typeof out.shape !== 'object') {
+      const reason = isError ? String(text ?? '').replace(/^error:\s*/, '') : (out && typeof out.error === 'string' && out.error) || 'the tool returned no shape';
+      if (!fail(reason)) return;                                  // null: the reducer is finished (stop/timeout) — the terminal write already happened
+      this._persistBlocks();
+      return;
+    }
+    try {
+      const r = await d.revalidateWorkflow({ shape: out.shape, projectKey: out.projectKey, warnings: Array.isArray(out.warnings) ? out.warnings : [], costUsd: Number(out.costUsd) || 0, fingerprint: typeof out.fingerprint === 'string' ? out.fingerprint : '' });
+      // v4: the child's projectName first (the real child resolves it), else the parent's own lookup (the MOCK child
+      // returns null — without this every mock card, and its context-header line, would have no project name).
+      const projectName = cleanText(out.projectName, 120) || cleanText(r.project && r.project.name, 120) || null;
+      const flipped = this.reducer.updateBlock(cardId, { state: 'proposed', card: {
+        type: 'workflow', mode: out.mode === 'shape' ? 'shape' : 'task', projectKey: typeof out.projectKey === 'string' ? out.projectKey : null,
+        projectName, note: cleanText(out.note, 200), thenRun: out.thenRun === true,
+        shape: r.shape, summary: cleanText(r.summary, 2000),
+        ...r.proposal,
+      } });
+      if (!flipped) return;                                       // v7: finished reducer (the turn was stopped mid-revalidate) — never persist a stale snapshot
+    } catch (err) {
+      if (!fail(err && err.message ? err.message : String(err))) return;
+    }
+    this._persistBlocks();
+  }
+
   _makeReducer() {
+    this._wfCards.clear();
+    this._tracked.clear();
     const d = this.deps;
     // One settings read per attempt, never per frame. null → the frames carry
     // estimatedCostUsd:null and the footer keeps today's behaviour.
@@ -188,6 +283,9 @@ class AskTurn extends EventEmitter {
       resolveCost: (cliCostUsd, usage) => d.resolveModelCost(this.model, cliCostUsd, usage),
       limits: d.limits,
       onProposal: ({ input }) => this._onProposal(input),
+      onWorkflowStart: ({ toolUseId, input }) => this._onWorkflowStart(toolUseId, input),
+      onWorkflowResult: ({ toolUseId, text, isError }) => this._onWorkflowResult(toolUseId, text, isError),   // the hook's `input` is not needed here: the card is rebuilt from `out`
+      onTrackRun: ({ input, isError }) => this._onTrackRun(input, isError),
       // The MCP child cannot broadcast; the parent turns its comment writes into
       // the same poke the REST routes emit.
       onCommentMutation: (e) => { try { this.deps.onCommentMutation(e); } catch { /* a broken sink never breaks the turn */ } },
@@ -228,13 +326,20 @@ class AskTurn extends EventEmitter {
     this._completed = true;
     const d = this.deps;
     await this._settle();
+    // PD7: a card still building when the reply ends can never flip — fail it while the reducer is still open.
+    for (const b of this.reducer.snapshot().blocks) {
+      if (b && b.kind === 'card' && b.state === 'building') this.reducer.updateBlock(b.id, { state: 'failed', error: 'the reply ended before the proposal was ready' });
+    }
     const summary = this.reducer.finish();
     const finalStatus = kind === 'error' ? 'error' : status;
     // Already AUTHORITATIVE: the reducer applied this turn's per-model cost
     // override (the `resolveCost` hook in _makeReducer), so this one value is
     // correct for all four sinks below — the message row, the thread totals, the
     // budget ledger, and the ask-done frame.
-    const costUsd = summary.costUsd;
+    // PD2: the MCP child's classifier spend (propose_workflow task mode) is real money this turn caused — it rides
+    // the SAME figure the four sinks read. No `result` frame (stopped early) still books it: the classifier ran.
+    const extra = Math.round((Number(this.extraCostUsd) || 0) * 1e6) / 1e6;
+    const costUsd = summary.costUsd == null ? (extra > 0 ? extra : null) : Math.round((summary.costUsd + extra) * 1e6) / 1e6;
     // Persist BEFORE broadcasting: a client re-fetch on the terminal frame must
     // never see a still-streaming row. finishMessage gets the FULL patch (B-5).
     try {

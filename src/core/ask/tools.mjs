@@ -325,14 +325,30 @@ export function createAskTools(deps) {
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace'),
         path: SCHEMA.s('only this file path'), offset: SCHEMA.i('byte offset to start at', 0, Number.MAX_SAFE_INTEGER),
         maxBytes: SCHEMA.i('bytes per page (default 60000, max 200000)', 1, L.diffMaxBytes) }, ['id']) },
+    { name: 'track_run',
+      description: 'Follow a run in this chat: puts a live progress card (status, elapsed time, cost, active agents, the workflow) into your reply, kept current while the user watches. Works for running, paused and finished runs. id is the run\'s 8-hex id; the app\'s live run id also works. Call it once per run per reply, only from your own turn.',
+      inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id (8 hex), or the app\'s live run id'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace') }, ['id']) },
     { name: 'propose_run',
       description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId; omitting both targets the scope the user pinned for this chat, when there is one. guardrailsId defaults to "normal"; "permissive" is not allowed. Returns {ok:true, card} or {ok:false, errors}.',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('target project key'), workspaceId: SCHEMA.s('target workspace id'), workflowId: SCHEMA.s('workflow id (default wf_default)'),
         brief: SCHEMA.s('the full task description for the run (≤ 8000 chars)'), title: SCHEMA.s('short run title'), guardrailsId: SCHEMA.s('guardrail set id (default normal)'),
         sourceBranch: SCHEMA.s('branch to start from (default: current)'), featureBranch: SCHEMA.s('feature branch name'),
+        note: SCHEMA.s('one line shown on the card: why this workflow fits the work (≤ 200 chars)'),
+        attachmentIds: { type: 'array', items: { type: 'string' },
+          description: 'attachment ids of this conversation the run should receive as extra files — copied into the run\'s extras/ folder when the user starts it' },
         sourceBranchByKey: { type: 'object', description: 'workspace only: per-member source branch overrides keyed by project key', additionalProperties: { type: 'string' } },
         commentIds: { type: 'array', items: { type: 'string' },
           description: 'diff comment ids (dc_…) this run is meant to address. They are stamped with the run id once the user confirms the card AND the run actually starts; nothing is resolved.' } }, ['brief']) },
+    { name: 'propose_workflow',
+      description: 'Propose a NEW workflow for the user to save — it never writes anything; the user sees a card and decides. Exactly one of task / shape: task = the full task text (worca\'s Auto classifier picks the agents, loops and models exactly as an Auto run would — use this when the user says "auto" or simply gives a task); shape = a hand-authored shape (see "Workflows you can create" in your instructions — only when the user describes the steps). projectKey defaults to the project pinned for this chat and is required when none is pinned (a workspace cannot be the target). thenRun = the user also asked to run it. Returns {ok:true, name, match, warnings, summary, shape}: match names the saved workflow with the same shape (Save reuses it), summary lists the stages and loops. Returns {ok:false, error} when worca\'s classifier failed (timeout, unusable replies): tell the user, retry at most once. Do not search list_workflows for a match yourself — the tool does.',
+      inputSchema: SCHEMA.obj({
+        task: SCHEMA.s('the full task text (≤ 32000 chars) — mode task'),
+        shape: { type: 'object', description: 'a hand-authored workflow shape {name, taskKind, reasoning, stages[], loops?} — mode shape', additionalProperties: true },
+        name: SCHEMA.s('workflow name (≤ 60 chars); overrides the classifier\'s / shape\'s name'),
+        projectKey: SCHEMA.s('target project key (default: the pinned project)'),
+        thenRun: SCHEMA.b('the user also asked to run the work: the card offers "Save & propose run"'),
+        note: SCHEMA.s('one line shown on the card: why this shape (≤ 200 chars)'),
+      }) },
     { name: 'read_attachment',
       description: 'Read an attachment of this conversation by id. Text attachments return their content, paged by byte offset (default 32000 bytes per page). Image and PDF attachments return metadata plus a file path — pass that path to your Read tool to view the content.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('attachment id'), offset: SCHEMA.i('byte offset', 0, Number.MAX_SAFE_INTEGER), maxBytes: SCHEMA.i('bytes per page', 1, L.attachmentReadMaxBytes) }, ['id']) },
@@ -594,6 +610,15 @@ export function createAskTools(deps) {
       const run = shapeRun(row);
       return { ...run, hasDiff: !run.archived && await deps.hasDiffPatch(row) };
     },
+    // Read-only by contract: the parent process (ui/server.mjs askTrackRun, via the turn's onTrackRun hook) does the
+    // linking and the following. A live run id lives only in the server's runs Map, so the child passes it through.
+    async track_run(input) {
+      const id = str(input.id);
+      if (!id) throw new AskToolError('track_run: id is required');
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return { ok: true, tracked: { id, resolved: false } };
+      const row = await resolveRow(input, 'track_run');
+      return { ok: true, tracked: shapeRun(row) };
+    },
     async get_run_diff(input) {
       const row = await resolveRow(input, 'get_run_diff');
       if (row.archived_at) return EMPTY_DIFF();
@@ -641,7 +666,8 @@ export function createAskTools(deps) {
         const pin = pinnedScope();
         if (pin) inp = { ...input, ...pin };
       }
-      const r = await deps.validateProposal(inp);
+      const attachments = typeof deps.listAttachments === 'function' ? (deps.listAttachments() || []) : [];
+      const r = await deps.validateProposal(inp, { attachments });
       // commentIds are a ONE-WAY hand-off: a comment cited here is stamped
       // "sent to #<runId>" the moment the user starts the run, and nothing ever
       // un-stamps it. Refuse ids from a different project/workspace than this
@@ -660,6 +686,26 @@ export function createAskTools(deps) {
         }
       }
       return r;
+    },
+    async propose_workflow(input) {
+      const task = str(input.task);
+      const shape = input.shape && typeof input.shape === 'object' && !Array.isArray(input.shape) ? input.shape : null;
+      if ((task && shape) || (!task && !shape)) throw new AskToolError('propose_workflow: give exactly one of task / shape');
+      if (task.length > L.workflowTaskMaxChars) throw new AskToolError(`propose_workflow: task is longer than ${L.workflowTaskMaxChars} chars`);
+      // The pinned scope is the default target ONLY when it is a project (D19: no workspace targets in v1).
+      let projectKey = str(input.projectKey);
+      if (!projectKey) { const pin = pinnedScope(); if (pin && pin.projectKey) projectKey = pin.projectKey; }
+      if (!projectKey) throw new AskToolError('propose_workflow: projectKey is required — no project is pinned for this chat (a workspace cannot be the target)');
+      if (!deps.workflow || typeof deps.workflow.propose !== 'function') throw new AskToolError('propose_workflow: unavailable');
+      try {
+        return await deps.workflow.propose({
+          mode: task ? 'task' : 'shape', task, shape, name: str(input.name).slice(0, 60), projectKey,
+          note: str(input.note).slice(0, L.workflowNoteMaxChars), thenRun: input.thenRun === true,
+        });
+      } catch (err) {
+        if (err instanceof AskToolError) throw err;
+        throw new AskToolError(`propose_workflow: ${err && err.message ? err.message : String(err)}`);
+      }
     },
     async list_diff_comments(input) {
       const row = await resolveRow(input, 'list_diff_comments');

@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { confirmDialog } from './helpers/confirm-modal.mjs';
+import { proposalFor } from './helpers/auto-proposal-fixture.mjs';
 import { MAX_FILE_SECTION_CODE_UNITS } from '../ui/public/diff-view.mjs';
 import { MAX_HIGHLIGHT_INPUT_BYTES } from '../ui/public/syntax-highlight.mjs';
 
@@ -2378,4 +2379,41 @@ test('a frozen v1 run renders a legacy chip strip, never the v2 graph', async ()
   // Inert: no wires, no per-chip click handlers, no executions footer.
   assert.equal(strip.querySelector('svg, .gv-wires'), null, 'no wires');
   assert.equal(ctx.window.document.querySelector('#hist-detail .rg-execs'), null, 'no executions footer');
+});
+
+// ── Auto (spec §7.5 / §7.7) ───────────────────────────────────────────────────
+
+test('History detail header badges an Auto run and its Agents tab labels the classifier rows under "Preflight"', async () => {
+  const p = proposalFor();
+  const stepper = { ...p.manifest, template: { id: 'wf_quick-fix', name: 'Quick fix' }, auto: { status: 'decided', via: 'reused', rounds: 2, humanInLoop: true, workflowId: 'wf_quick-fix' } };
+  const subAgents = [{ id: 'auto-classify-1', label: 'Auto workflow (round 1)', subagentType: 'auto-classify', status: 'finished', nodeId: 'preflight', uiPhase: 'preflight', stepKey: 'x:preflight:1', costUsd: 0.02, runModel: 'claude-sonnet-5' }];
+  const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, stepper, subAgents } } });
+  await openDetail(ctx);
+  const badge = ctx.window.document.querySelector('#hist-detail .hd-row1 .auto-badge');
+  assert.equal(badge.hidden, false); assert.equal(badge.textContent, 'Auto → Quick fix'); assert.equal(badge.title, 'Auto reused the saved workflow "Quick fix"');
+  ctx.window.document.querySelector('#hd-tab-agents').click(); await settle(ctx.window);
+  const names = [...ctx.window.document.querySelectorAll('#hist-detail .hd-ag-name')].map((n) => n.textContent);
+  assert.deepEqual(names, ['Auto workflow (round 1)']);
+  const head = ctx.window.document.querySelector('#hist-detail .hd-ag-head').textContent;
+  assert.match(head, /Preflight/); assert.doesNotMatch(head, /\bpreflight\b/, 'the bookend label, never the raw id');
+});
+
+test('a non-Auto History run shows no badge', async () => {
+  const ctx = await bootDetail(); await openDetail(ctx);
+  assert.equal(ctx.window.document.querySelector('#hist-detail .hd-row1 .auto-badge').hidden, true);
+});
+
+// A24: a finished run whose manifest is STILL the Auto bootstrap never adopted a
+// workflow. History is frozen, so the placeholder says so and paints no orb — a
+// spinning canvas on a dead run would lie, and would run for the life of the page.
+// The bootstrap manifest exactly as buildGraphManifest() emits it for the empty Auto template.
+const DECIDING_BOOTSTRAP = { version: 2, template: { id: 'wf_auto', name: 'Auto' }, auto: { status: 'deciding', humanInLoop: true }, graph: { nodes: [], wires: [] }, bookends: { preflight: true, done: true }, steps: [{ kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] }, { kind: 'done', nodes: [{ id: 'done', label: 'Done', sub: 'complete' }] }], feedbacks: [] };
+
+test('a History run frozen while Auto was still deciding: the still line, no orb (A24)', async () => {
+  const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, stepper: DECIDING_BOOTSTRAP } } });
+  await openDetail(ctx);
+  const host = ctx.window.document.querySelector('#hist-detail .run-flow');
+  assert.ok(host.classList.contains('auto-deciding-host'), 'the placeholder, not an empty graph');
+  assert.equal(host.querySelector('.auto-deciding-label').textContent, 'Auto did not decide a workflow');
+  assert.equal(host.querySelector('.ask-orb'), null, 'no orb on a frozen run');
 });

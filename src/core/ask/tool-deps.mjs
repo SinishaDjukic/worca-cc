@@ -11,7 +11,7 @@ import { DIFF_PATCH_FILE } from '../results.mjs';
 import { GUARDRAIL_PRESETS } from '../guardrails.mjs';
 import { buildCatalog } from './catalog.mjs';
 import { validateProposal } from './proposal.mjs';
-import { readAttachmentText, getAttachment, attachmentPath, getThread } from './store.mjs';
+import { readAttachmentText, getAttachment, attachmentPath, getThread, listAttachments } from './store.mjs';
 import { redactAskText } from './redact.mjs';
 import { ASK_LIMITS } from './limits.mjs';
 
@@ -64,6 +64,14 @@ export function defaultToolDeps({ threadId }) {
       return path ? { name: row.name, kind: row.kind, mime: row.mime, bytes: row.bytes, path } : null;
     },
     validateProposal,
+    // The run card's attachment pills (propose_run attachmentIds): the ledger of
+    // the owning thread only — never another thread's files. An unreadable DB means
+    // "no attachments", never an error: tools.call does not catch handler throws, so
+    // a locked store would otherwise make the model unable to propose at all.
+    listAttachments: () => {
+      if (!threadId) return [];
+      try { return listAttachments(threadId); } catch { return []; }
+    },
     // #397: the user-pinned scope of the owning thread — {projectKey}|{workspaceId}|
     // null — read fresh from the thread row per call, so a selector change lands on
     // the very next tool call. A missing thread or an unreadable DB means "nothing

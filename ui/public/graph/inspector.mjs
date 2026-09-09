@@ -31,7 +31,9 @@ function select(doc, cls, name, label, items, value, { disabled = false, title =
     if (opt.value === (value == null ? '' : String(value))) o.selected = true;
     sel.appendChild(o);
   }
-  wrap.appendChild(sel);
+  const shell = h(doc, 'span', 'ins-select-wrap');   // the product's .select-wrap idea: the chevron is a token-coloured ::after on a wrapper
+  shell.appendChild(sel);
+  wrap.appendChild(shell);
   return wrap;
 }
 function toggle(doc, cls, name, label, hint, { checked = false, disabled = false, title = '' } = {}) {

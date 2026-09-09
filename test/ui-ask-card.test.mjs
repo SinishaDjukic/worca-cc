@@ -16,8 +16,48 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const TID = 'ask_00000001';
 const MID = 'askm_00000001';
 
+const WF_DEFAULT_TPL = { id: 'wf_default', name: 'Default', version: 2,
+  nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+          { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
+          { id: 'n_impl', kind: 'agent', key: 'implementer', x: 600, y: 0, config: { model: 'claude-opus-5', effort: 'high' } },
+          { id: 'n_rev', kind: 'agent', key: 'reviewer', x: 900, y: 0, config: {} },
+          { id: 'n_end', kind: 'end', x: 1200, y: 0, config: {} }],
+  wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+          { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
+          { id: 'w3', from: { node: 'n_impl', port: 'diff' }, to: { node: 'n_rev', port: 'diff' } },
+          { id: 'w4', from: { node: 'n_rev', port: 'review' }, to: { node: 'n_impl', port: 'revise' }, config: { maxCycles: 3 } },
+          { id: 'w5', from: { node: 'n_rev', port: 'pass' }, to: { node: 'n_end', port: 'result' } }] };
+// Ported metas (metaVersion 2), like the real /api/agents rows — the loop wire w4 is a
+// loop only because the reviewer's `review` output is when:'blocking' (loops.mjs:90-91).
+const AGENTS = [
+  { key: 'planner', displayName: 'Plan', color: 'violet', metaVersion: 2, fanOut: false, asksQuestions: true, questionsLocked: false, questionsDefault: true,
+    inputs: [{ id: 'task', type: 'md', required: true }, { id: 'revise', type: 'md', required: false, loop: true }],
+    outputs: [{ id: 'plan', type: 'md', when: 'always' }] },
+  { key: 'implementer', displayName: 'Implement', color: 'green', metaVersion: 2, fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: false,
+    inputs: [{ id: 'plan', type: 'md', required: true }, { id: 'revise', type: 'md', required: false, loop: true }],
+    outputs: [{ id: 'diff', type: 'diff', when: 'always' }] },
+  { key: 'reviewer', displayName: 'Review', color: 'peach', metaVersion: 2, fanOut: false, asksQuestions: false,
+    verdict: { filename: 'review-cycle{cycle}.json' },
+    inputs: [{ id: 'diff', type: 'diff', required: true }],
+    outputs: [{ id: 'review', type: 'md', when: 'blocking' }, { id: 'pass', type: 'void', when: 'clean' }] },
+];
+const MODELS = [
+  { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1 (1M)', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false },
+];
+// The real GET /api/config envelope: {config, models, steps, efforts, subagentModels} (ui/server.mjs:3044-3050).
+function configBody() {
+  return { config: { steps: {}, customModels: [], workflows: {} }, models: MODELS, steps: [], efforts: ['medium', 'high', 'xhigh', 'max'],
+    subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'] };
+}
+
 function askArms(url, opts) {
   const method = ((opts && opts.method) || 'GET').toUpperCase();
+  // FIRST: the thread-GET arm below matches with includes() and would swallow it.
+  if (url.includes(`/api/ask/threads/${TID}/attachments/att_00000001`)) {
+    return { ok: true, status: 200, arrayBuffer: async () => new TextEncoder().encode('hello').buffer, json: async () => ({}) };
+  }
   if (url.includes('/api/ask/models')) {
     return { ok: true, status: 200, json: async () => ({ models: [{ id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false }], efforts: ['medium', 'high', 'xhigh', 'max'] }) };
   }
@@ -39,7 +79,10 @@ function askArms(url, opts) {
   return null;
 }
 
-async function boot({ url = 'http://localhost:4317/', runResponse = null } = {}) {
+// `workflows` is the LIVE list behind /api/workflows and /api/workflows/:id — a test
+// mutates it between two card renders to model a row saved mid-chat.
+async function boot({ url = 'http://localhost:4317/', runResponse = null, workflows = null } = {}) {
+  const wfList = workflows || [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }];
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url });
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -65,10 +108,20 @@ async function boot({ url = 'http://localhost:4317/', runResponse = null } = {})
       runBodies.push(JSON.parse(opts.body));
       return Promise.resolve(runResponse || { ok: true, status: 200, json: async () => ({ runId: 'run-uuid-1' }) });
     }
+    // /api/workflows/:id serves the template for a LISTED id and 404s the rest, like the real route.
+    const wfRow = path.match(/\/api\/workflows\/([^/]+)$/);
+    if (wfRow) {
+      return Promise.resolve(wfList.some((w) => w.id === wfRow[1])
+        ? { ok: true, status: 200, json: async () => ({ ...WF_DEFAULT_TPL, id: wfRow[1] }) }
+        : { ok: false, status: 404, json: async () => ({ error: 'workflow not found' }) });
+    }
+    if (path.endsWith('/api/agents')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ agents: AGENTS, mockWriterRoles: [] }) });
+    if (path.endsWith('/api/config') && method === 'GET') return Promise.resolve({ ok: true, status: 200, json: async () => configBody() });
+    if (path.endsWith('/api/config') && (method === 'PATCH' || method === 'POST')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: configBody().config }) });
     // EXACT path match, not includes(): /api/workflows/:id is the per-workflow
     // config fetch — a substring test hands it the LIST envelope instead.
     if (path.endsWith('/api/workflows')) {
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) });
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: [...wfList] }) });
     }
     if (path.endsWith('/api/guardrails')) {
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'permissive', name: 'Permissive' }, { id: 'normal', name: 'Normal' }] }) });
@@ -122,8 +175,10 @@ async function sendText(window, text) {
   await settle(window, 6);
 }
 
-const CARD = { target: 'project', projectKey: 'proj-00000001', projectName: 'proj', projectDir: '/repos/proj', workspaceId: null, workspaceName: null, members: null, workflowId: 'wf_review', workflowName: 'Review only', guardrailsId: 'normal', brief: 'Fix the login bug', title: 'Fix login', sourceBranch: 'dev', featureBranch: 'worca/fix-login', sourceBranchByKey: null };
-const WS_CARD = { ...CARD, target: 'workspace', projectKey: null, projectName: null, projectDir: null, workspaceId: 'wks-team-00000001', workspaceName: 'team', members: [{ projectKey: 'proj-00000001', projectName: 'proj', projectDir: '/repos/proj' }, { projectKey: 'lib-00000002', projectName: 'lib', projectDir: '/repos/lib' }], sourceBranch: '', sourceBranchByKey: { 'lib-00000002': 'release' } };
+const CARD = { target: 'project', projectKey: 'proj-00000001', projectName: 'proj', projectDir: '/repos/proj', workspaceId: null, workspaceName: null, members: null, workflowId: 'wf_review', workflowName: 'Review only', guardrailsId: 'normal', brief: 'Fix the login bug', title: 'Fix login', sourceBranch: 'dev', featureBranch: 'worca/fix-login', sourceBranchByKey: null, note: 'why', attachments: [] };
+// The two exact-body pins above stay byte-identical: only these two tests carry a pill.
+const ATT_CARD = { ...CARD, attachments: [{ id: 'att_00000001', name: 'notes.md', bytes: 5, kind: 'text' }] };
+const WS_CARD ={ ...CARD, target: 'workspace', projectKey: null, projectName: null, projectDir: null, workspaceId: 'wks-team-00000001', workspaceName: 'team', members: [{ projectKey: 'proj-00000001', projectName: 'proj', projectDir: '/repos/proj' }, { projectKey: 'lib-00000002', projectName: 'lib', projectDir: '/repos/lib' }], sourceBranch: '', sourceBranchByKey: { 'lib-00000002': 'release' } };
 
 async function openCard(ctx, card) {
   await openSheet(ctx.window);
@@ -215,4 +270,110 @@ test('ui-ask-card: a workspace card Start posts the workspace §9.4 body from in
     mock: false, askThreadId: TID, askCardId: 'card_00000001',
   });
   assert.notEqual(ctx.window.location.hash, '#running', 'no navigation');
+});
+
+test('ui-ask-card: Open in New Pipeline carries the attachment pills into the extras file list', async () => {
+  const ctx = await boot();
+  await openCard(ctx, ATT_CARD);
+  await settle(ctx.window, 4);                       // the lane loaded
+  ctx.window.document.querySelector('[data-ask-card-open-np]').click();
+  await settle(ctx.window, 12);                      // attachment fetch → prefill → view switch
+  assert.equal(ctx.window.location.hash, '#new');
+  const pills = [...ctx.window.document.querySelectorAll('#extrasPills .extra-pill .extra-pill-name')].map((p) => p.textContent);
+  assert.deepEqual(pills, ['notes.md']);
+  assert.equal(ctx.window.document.querySelector('#title').value, 'Fix login');
+});
+
+test('ui-ask-card: Start from inside the app writes the lane edits, then posts the §9.4 body + title + extras', async () => {
+  const ctx = await boot();
+  await openCard(ctx, ATT_CARD);
+  await settle(ctx.window, 8);
+  const doc = ctx.window.document;
+  const before = ctx.window.location.hash;
+  const sel = doc.querySelector('.ask-rp-tile[data-node-id="n_impl"] .ask-rp-model');
+  assert.ok(sel, 'lane rendered inside the app');
+  sel.value = 'claude-haiku-4-5';
+  sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  doc.querySelector('[data-ask-card-start]').click();
+  await settle(ctx.window, 10);
+  const pathOf = (u) => u.split('?')[0].replace(/^https?:\/\/[^/]+/, '');
+  const seq = ctx.calls
+    .filter((c) => (c.opts.method || 'GET').toUpperCase() !== 'GET' && ['/api/config', '/api/run'].includes(pathOf(c.url)))
+    .map((c) => `${c.opts.method.toUpperCase()} ${pathOf(c.url)}`);
+  assert.deepEqual(seq, ['PATCH /api/config', 'POST /api/run']);
+  assert.equal(ctx.runBodies[0].title, 'Fix login');
+  assert.deepEqual(ctx.runBodies[0].extras, [{ name: 'notes.md', dataBase64: 'aGVsbG8=' }]);
+  assert.equal(ctx.window.location.hash, before, 'the page does not navigate');
+});
+
+test('ui-ask-card: a handoff with no pills clears the extras the user picked earlier', async () => {
+  const ctx = await boot();
+  const doc = ctx.window.document;
+  // Seed the New Pipeline form the way the OS picker does (the FileList is read-only).
+  const input = doc.querySelector('#extras');
+  Object.defineProperty(input, 'files', { value: [new ctx.window.File(['x'], 'stale.md', { type: 'text/plain' })], configurable: true });
+  input.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  assert.deepEqual([...doc.querySelectorAll('#extrasPills .extra-pill-name')].map((p) => p.textContent), ['stale.md']);
+  await openCard(ctx, CARD);                         // CARD carries no attachments
+  await settle(ctx.window, 4);
+  doc.querySelector('[data-ask-card-open-np]').click();
+  await settle(ctx.window, 12);
+  assert.equal(ctx.window.location.hash, '#new');
+  assert.deepEqual([...doc.querySelectorAll('#extrasPills .extra-pill-name')].map((p) => p.textContent), [],
+    'the handoff owns the extras list — the old pick must not upload into this run');
+  assert.equal(doc.querySelector('#extrasPills').hidden, true);
+  assert.equal(doc.querySelector('#extrasNote').textContent, 'Leave empty and the run gets no extra files.');
+});
+
+const listCalls = (ctx) => ctx.calls.filter((c) => c.url.split('?')[0].endsWith('/api/workflows')).length;
+
+test('ui-ask-card: a card built after a workflow was saved refetches the lists — the select shows the new id and the lane loads it', async () => {
+  const workflows = [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }];
+  const ctx = await boot({ workflows });
+  await openCard(ctx, CARD);
+  const first = listCalls(ctx);
+  assert.ok(first >= 1, 'the first card loaded the lists');
+  // The workflow card saved a row seconds later; the panel-lifetime cache never saw it.
+  workflows.push({ id: 'wf_implement-review', name: 'Implement + review' });
+  ctx.recv({ type: 'ask-card', block: { kind: 'card', id: 'card_00000002', state: 'proposed', card: { ...CARD, workflowId: 'wf_implement-review', workflowName: 'Implement + review', title: 'Second' } }, threadId: TID, messageId: MID, seq: 3 });
+  await settle(ctx.window, 6);
+  assert.equal(listCalls(ctx), first + 1, 'the second card fetched /api/workflows again');
+  const cards = [...ctx.window.document.querySelectorAll('.ask-card.ask-rp')];
+  assert.equal(cards.length, 2);
+  const second = cards[1];
+  assert.equal(second.querySelector('.ask-card-workflow').value, 'wf_implement-review');
+  assert.ok(ctx.calls.some((c) => c.url.split('?')[0].endsWith('/api/workflows/wf_implement-review')), 'the lane loaded the proposed workflow');
+  assert.ok(second.querySelector('.ask-rp-agents'), 'the lane rendered its agents');
+  assert.equal(second.querySelector('.ask-card-err').textContent, '');
+  assert.equal(second.querySelector('[data-ask-card-start]').disabled, false);
+  second.querySelector('[data-ask-card-start]').click();
+  await settle(ctx.window, 6);
+  assert.equal(ctx.runBodies.length, 1);
+  assert.equal(ctx.runBodies[0].workflowId, 'wf_implement-review');
+});
+
+test('ui-ask-card: a proposed workflowId no list serves fails loudly — inline error, no substitute selected, Start inert until the user picks', async () => {
+  const ctx = await boot();
+  await openCard(ctx, { ...CARD, workflowId: 'wf_ghost', workflowName: 'Ghost' });
+  const card = ctx.window.document.querySelector('.ask-card.ask-rp');
+  const sel = card.querySelector('.ask-card-workflow');
+  const start = card.querySelector('[data-ask-card-start]');
+  assert.equal(card.querySelector('.ask-card-err').textContent, 'Workflow wf_ghost is not available — pick one');
+  assert.equal(sel.value, '', 'no other option is silently selected');
+  assert.deepEqual([...sel.options].map((o) => o.value), ['wf_default', 'wf_review'], 'the served list is still offered');
+  assert.equal(start.disabled, true);
+  assert.equal(card.querySelector('.ask-rp-lane-msg').textContent, 'Could not load agent settings.', 'the lane never loads a substitute');
+  start.click();
+  await settle(ctx.window, 6);
+  assert.equal(ctx.runBodies.length, 0, 'Start posts nothing while the proposed workflow is missing');
+  sel.value = 'wf_review';
+  sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  await settle(ctx.window, 6);
+  assert.equal(card.querySelector('.ask-card-err').textContent, '', 'the pick clears the error');
+  assert.equal(start.disabled, false);
+  assert.ok(card.querySelector('.ask-rp-agents'), 'the lane loaded the picked workflow');
+  start.click();
+  await settle(ctx.window, 6);
+  assert.equal(ctx.runBodies.length, 1);
+  assert.equal(ctx.runBodies[0].workflowId, 'wf_review', 'Start posts the id the USER picked, never a fallback');
 });

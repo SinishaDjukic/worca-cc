@@ -414,8 +414,20 @@ test('a loop / fan-out input row carries a compact port chip that fits the 24px 
   };
   const base = rule('.gv-world .prow .chip');
   assert.ok(base, '.gv-world .prow .chip rule must exist to override the page pill');
-  assert.match(base, /font:\s*(?:700\s+)?10px\/1\.4 var\(--mono\)/, '10px/1.4 mono like .wbadge');
-  assert.match(base, /padding:\s*1px 7px/, '1px vertical padding keeps it inside the row');
+  assert.match(base, /font-family:\s*var\(--mono\)/, 'mono like .wbadge');
+  assert.match(base, /font-size:\s*max\(9px,\s*calc\(10px \* var\(--gv-scale\)\)\)/, '10px mono, floored at 9px');
+  assert.match(base, /line-height:\s*1\.4/);
+  assert.match(base, /padding:\s*calc\(1px \* var\(--gv-scale\)\) calc\(7px \* var\(--gv-scale\)\)/, '1px vertical padding keeps it inside the row (scaled)');
+  // A36 (cycle-4 Chrome proof): at the 9px floor "prompt + attached files" / "forwards freshest input" wrapped to a
+  // second line inside the fixed-height caption row; the mockup's .fl .prow is nowrap.
+  assert.match(rule('.gv-world .prow') || '', /white-space:\s*nowrap/, 'rows never wrap at the 9px floor (mockup .fl .prow; the Task/OR captions wrapped in Chrome at 0.65)');
+  assert.match(rule('.gv-world .prow.cap .pt') || '', /text-overflow:\s*ellipsis/, 'a caption that still does not fit ellipsises instead of leaving the card');
+  // nowrap without a guard let an over-long port NAME (plugin agents mint their own ids)
+  // escape the card horizontally; .pn is a flex item, so it needs min-width:0 to shrink.
+  const pn = rule('.gv-world .prow .pn') || '';
+  assert.match(pn, /min-width:\s*0/, 'the name shrinks instead of overflowing the card');
+  assert.match(pn, /overflow:\s*hidden/);
+  assert.match(pn, /text-overflow:\s*ellipsis/, 'a long port name ellipsises, like the caption');
   assert.match(base, /white-space:\s*nowrap/);
   assert.match(rule('.gv-world .prow .chip.am') || '', /var\(--amber-bg\)/, 'loop chip is amber (spec legend)');
   assert.match(rule('.gv-world .prow .chip.fan') || '', /var\(--blue-bg\)/, 'fan-out chip is blue');
@@ -485,4 +497,96 @@ test('setWireLive seats a newly-live wire at the shared timeline phase', async (
   assert.equal(view.wireEl('w1').style.animationDelay, '', 'the stamp leaves with the class');
   view.setWireLive(['w1']);                    // re-lit: a FRESH seat
   assert.equal(view.wireEl('w1').style.animationDelay, '-200ms', '5000 % 600 = 200');
+});
+
+const nodeOf = (view, id) => view.template().nodes.find((n) => n.id === id);
+
+test('scale: --gv-* are injected scaled, cards take the scaled box, anchors follow (no world transform)', async () => {
+  const { doc, host } = boot();
+  const { createGraphView } = await import(viewPath);
+  const view = createGraphView(host, { doc, mode: 'static', portsFn, agents: AGENTS, scale: 0.65 });
+  view.render(fixture(), {});
+  assert.equal(view.stage.style.getPropertyValue('--gv-node-w'), '143px');
+  assert.equal(view.stage.style.getPropertyValue('--gv-scale'), '0.65');
+  const card = view.nodeEl('n_agent');
+  assert.equal(card.style.width, '143px');
+  assert.equal(card.style.height, `${191.5 * 0.65}px`);
+  assert.deepEqual(view.getTransform(), { x: 0, y: 0, z: 1 }, 'scale is geometry, not a transform');
+  assert.deepEqual(view.anchor(nodeOf(view, 'n_agent'), 'plan', 'out'), { x: 400 + 143, y: 80 + (56 + 2 * 24 + 9) * 0.65 });
+});
+
+test('band: an agent card grows a .nband under its head with model · effort · flags; flow cards never do', async () => {
+  const { doc, host } = boot();
+  const { createGraphView } = await import(viewPath);
+  const band = (node) => (node.id === 'n_agent' ? { model: 'Opus 5', effort: 'high', flags: [{ text: 'asks', cls: 'q' }, { text: '↩ 3' }] } : null);
+  const view = createGraphView(host, { doc, mode: 'static', portsFn, agents: AGENTS, band });
+  view.render(fixture(), {});
+  const el = view.nodeEl('n_agent');
+  const nb = el.querySelector(':scope > .nband');
+  assert.ok(nb, 'agent has a band');
+  assert.ok(nb.previousElementSibling.classList.contains('nhead'), 'band sits under the head (class is "nhead h-<colour>")'); assert.equal(nb.nextElementSibling.className, 'nbody');
+  assert.equal(el.querySelector('.nhead .tt').title, el.querySelector('.nhead .tt').textContent, 'head titles carry a tooltip (mockup F, A35)');
+  assert.deepEqual([...nb.querySelectorAll('.bchip')].map((c) => c.textContent), ['Opus 5', 'high', 'asks', '↩ 3']);
+  assert.ok(nb.querySelector('.bchip.flag.q'));
+  assert.equal(view.nodeEl('n_task').querySelector(':scope > .nband'), null, 'task card: no band');
+  assert.equal(el.style.height, `${191.5 + 24}px`, 'nodeSize bills the band');
+  assert.equal(view.anchor(nodeOf(view, 'n_agent'), 'task', 'in').y, 80 + 56 + 24, 'anchors move with the band');
+  // The repaint is skipped on an equal signature, so the signature must separate its
+  // fields: concatenated, {model:'Opus', effort:'5'} and {model:'Opus5', effort:''} collide.
+  view.setBands({ n_agent: { model: 'Opus', effort: '5', flags: [] } });
+  assert.deepEqual([...el.querySelectorAll('.bchip')].map((c) => c.textContent), ['Opus', '5']);
+  view.setBands({ n_agent: { model: 'Opus5', effort: '', flags: [] } });
+  assert.deepEqual([...el.querySelectorAll('.bchip')].map((c) => c.textContent), ['Opus5'], 'the band repaints — the two are not the same band');
+  view.setBands({ n_agent: { model: '', effort: '', flags: [] } });
+  assert.deepEqual([...el.querySelectorAll('.bchip')].map((c) => c.textContent), ['default']);
+  assert.ok(el.querySelector('.bchip.model.is-unset'));
+});
+
+test('layout flow: rows of perRow in dispatch order, routes from the flow router, badges read n×, relayout on width', async () => {
+  const { doc, host } = boot();
+  const { createGraphView } = await import(viewPath);
+  const view = createGraphView(host, { doc, mode: 'static', portsFn, agents: AGENTS, scale: 0.65, layout: 'flow', band: () => null, order: ['n_agent', 'n_rev'] });
+  view.render(loopFixture(), {});
+  assert.ok(view.stage.classList.contains('gv-flow'));
+  const lay = view.flowLayout();
+  assert.equal(lay.width, 702, 'no width yet → FLOW_DEFAULT_WIDTH');
+  assert.deepEqual(lay.order, ['n_task', 'n_agent', 'n_rev', 'n_end']);
+  assert.equal(lay.perRow, 4);
+  const tx = (id) => view.nodeEl(id).style.transform;
+  assert.equal(tx('n_task'), 'translate(20px, 20px)');
+  assert.equal(tx('n_agent'), `translate(${20 + 169}px, 20px)`);
+  assert.equal(host.querySelector('.wbadge[data-wire-id="w4"]').textContent, '2×');
+  assert.equal(view.stage.style.height, `${lay.height}px`);
+  assert.equal(view.template().nodes.find((n) => n.id === 'n_agent').x, 189, 'the laid-out copy carries flow positions');
+  assert.equal(loopFixture().nodes.find((n) => n.id === 'n_agent').x, 400, 'the caller\'s template is never mutated');
+  const lay2 = view.relayout(310);
+  assert.equal(lay2.perRow, 1);
+  assert.equal(tx('n_agent'), `translate(20px, ${lay2.rows[1].top}px)`);
+  assert.equal(view.stage.style.height, `${lay2.height}px`);
+  assert.equal(view.fitToWidth(702).perRow, 4, 'fitToWidth delegates to relayout in flow mode');
+});
+
+test('band pick: model/effort chips become <button aria-haspopup="menu" data-chip> when the band says pick; flags stay spans; the signature separates pick', async () => {
+  const { doc, host } = boot();
+  const { createGraphView } = await import(viewPath);
+  const band = (node) => (node.id === 'n_agent' ? { model: 'Opus 5', effort: '', flags: [{ text: 'asks', cls: 'q' }], pick: true } : null);
+  const view = createGraphView(host, { doc, mode: 'static', portsFn, agents: AGENTS, band });
+  view.render(fixture(), {});
+  const nb = view.nodeEl('n_agent').querySelector(':scope > .nband');
+  const chips = [...nb.querySelectorAll('.bchip')];
+  assert.deepEqual(chips.map((c) => [c.tagName, c.dataset.chip || null, c.textContent]), [['BUTTON', 'model', 'Opus 5'], ['BUTTON', 'effort', 'effort'], ['SPAN', null, 'asks']], 'an empty effort still gets a pickable placeholder chip');
+  assert.equal(chips[0].getAttribute('aria-haspopup'), 'menu'); assert.equal(chips[0].getAttribute('aria-expanded'), 'false'); assert.equal(chips[0].type, 'button');
+  view.setBands({ n_agent: { model: 'Opus 5', effort: '', flags: [{ text: 'asks', cls: 'q' }] } });
+  assert.deepEqual([...nb.querySelectorAll('.bchip')].map((c) => c.tagName), ['SPAN', 'SPAN'], 'pick off ⇒ spans, and the empty effort chip is gone');
+});
+
+test('mountStaticGraph flow: host height set, width option honoured, destroy is idempotent without a ResizeObserver', async () => {
+  const { doc, host } = boot();
+  const { mountStaticGraph } = await import(viewPath);
+  const view = mountStaticGraph(host, loopFixture(), { doc, portsFn, agents: AGENTS, layout: 'flow', scale: 0.65, width: 310, band: () => null });
+  assert.equal(view.flowLayout().perRow, 1);
+  assert.equal(host.style.height, `${view.flowLayout().height}px`);
+  view.destroy(); view.destroy();
+  assert.equal(host.querySelector('.gv-stage'), null);
+  assert.equal(host.style.height, '', 'destroy releases the host height');
 });

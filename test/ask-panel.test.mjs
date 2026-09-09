@@ -2,14 +2,16 @@
 // popover primitive (spec §10.4, §10.6). No app boot; see the harness header.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { makePanel, key, pointerdown, pointer, sizeDock } from './helpers/ask-panel-harness.mjs';
-import { fmtStarted, shortcutLabel, ASK_SHEET_SIZE } from '../ui/public/ask-panel.mjs';
+import { fmtStarted, shortcutLabel, ASK_SHEET_SIZE, chipPickerTop } from '../ui/public/ask-panel.mjs';
 
 const THREADS = {
   threads: [
-    { id: 'ask_00000001', title: 'Fix the login bug', updatedAt: 't2', createdAt: 't1', model: 'claude-opus-5', effort: 'high', sessionId: null, context: null, totals: { costUsd: 0.21, input: 9200, output: 9200, cacheRead: 0, cacheCreation: 0, ctx: 68400, turns: 3, agents: 3 }, runLinks: 0, inFlight: true },
-    { id: 'ask_00000002', title: 'Explain run 4e1f', updatedAt: 't1', createdAt: 't0', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight: false },
+    { id: 'ask_00000001', title: 'Fix the login bug', updatedAt: 't2', createdAt: 't1', model: 'claude-opus-5', effort: 'high', sessionId: null, context: null, totals: { costUsd: 0.21, input: 9200, output: 9200, cacheRead: 0, cacheCreation: 0, ctx: 68400, turns: 3, agents: 3 }, runLinks: 0, inFlight: true, tracking: false },
+    { id: 'ask_00000002', title: 'Explain run 4e1f', updatedAt: 't1', createdAt: 't0', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight: false, tracking: false },
   ],
 };
 
@@ -141,18 +143,50 @@ test('ask-panel: threads popover lists rows with meter and live dot; empty state
   assert.match(items[0].textContent, /68\.4k ctx · \$0\.21 · 3 agents/, 'the row shows context fill, not cumulative tokens');
   assert.ok(items[0].querySelector('.ask-dot-live'), 'in-flight thread shows the live dot');
   assert.equal(items[1].querySelector('.ask-dot-live'), null);
-  // The idle row still emits the span, but the CSS collapses .ask-thread-dot
-  // (display:none) unless the live arm joins it, so no empty gutter is left.
-  const idleDot = items[1].querySelector('.ask-dot');
-  assert.ok(idleDot, 'the idle row still emits the dot span');
-  assert.ok(idleDot.classList.contains('ask-thread-dot'), 'the span carries the threads-only class that collapses it');
-  assert.equal(idleDot.classList.contains('ask-dot-live'), false, 'nothing green shows for an idle chat');
+  // The idle row still emits the spans, but the CSS collapses .ask-thread-dot
+  // (display:none) unless an arm joins it, so no empty gutter is left.
+  const idleDots = [...items[1].querySelectorAll('.ask-dot')];
+  assert.equal(idleDots.length, 2, 'the idle row still emits both dot spans');
+  for (const idleDot of idleDots) {
+    assert.ok(idleDot.classList.contains('ask-thread-dot'), 'the span carries the threads-only class that collapses it');
+    assert.equal(idleDot.classList.contains('ask-dot-live'), false, 'nothing green shows for an idle chat');
+    assert.equal(idleDot.classList.contains('ask-dot-track'), false, 'nothing violet either');
+  }
   // empty state
   const empty = makePanel({ fetchHandler: () => ({ ok: true, status: 200, json: async () => ({ threads: [] }) }) });
   empty.panel.open();
   empty.doc.querySelector('[data-ask-threads-btn]').click();
   await empty.tick();
   assert.match(empty.doc.querySelector('.ask-pop').textContent, /No saved chats\./);
+});
+
+test('ask-panel: thread rows carry two independent dots — thinking (green) first, tracking (violet) second', async () => {
+  const row = (id, inFlight, tracking) => ({ id, title: id, updatedAt: 't', createdAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight, tracking });
+  const four = { threads: [row('ask_think', true, false), row('ask_track', false, true), row('ask_both', true, true), row('ask_idle', false, false)] };
+  const { panel, doc, tick } = makePanel({ fetchHandler: () => ({ ok: true, status: 200, json: async () => four }) });
+  panel.open();
+  doc.querySelector('[data-ask-threads-btn]').click();
+  await tick();
+  const picks = [...doc.querySelectorAll('.ask-thread-pick')];
+  assert.equal(picks.length, 4);
+  const arms = (p) => [...p.children].map((n) => n.className);
+  // Every row emits both spans in the same order; only the arm classes differ, so
+  // the CSS collapse (display:none) decides what shows and no gutter is ever left.
+  assert.deepEqual(arms(picks[0]), ['ask-dot ask-thread-dot ask-dot-live', 'ask-dot ask-thread-dot', 'ask-thread-col'], 'thinking only → one green dot');
+  assert.deepEqual(arms(picks[1]), ['ask-dot ask-thread-dot', 'ask-dot ask-thread-dot ask-dot-track', 'ask-thread-col'], 'tracking only → one violet dot');
+  assert.deepEqual(arms(picks[2]), ['ask-dot ask-thread-dot ask-dot-live', 'ask-dot ask-thread-dot ask-dot-track', 'ask-thread-col'], 'both → green then violet');
+  assert.deepEqual(arms(picks[3]), ['ask-dot ask-thread-dot', 'ask-dot ask-thread-dot', 'ask-thread-col'], 'neither → both collapsed');
+  // The arms never cross: the first span is only ever the thinking dot, the second only ever the tracking dot.
+  for (const p of picks) {
+    assert.equal(p.children[0].classList.contains('ask-dot-track'), false);
+    assert.equal(p.children[1].classList.contains('ask-dot-live'), false);
+  }
+  // An older server without the field is an idle tracking arm, never a throw.
+  const legacy = makePanel({ fetchHandler: () => ({ ok: true, status: 200, json: async () => ({ threads: [{ ...row('ask_old', true, undefined), tracking: undefined }] }) }) });
+  legacy.panel.open();
+  legacy.doc.querySelector('[data-ask-threads-btn]').click();
+  await legacy.tick();
+  assert.deepEqual(arms(legacy.doc.querySelector('.ask-thread-pick')), ['ask-dot ask-thread-dot ask-dot-live', 'ask-dot ask-thread-dot', 'ask-thread-col']);
 });
 
 test('ask-panel: threads rows live in a scroller; the caption stays pinned; empty state has none', async () => {
@@ -240,12 +274,12 @@ test('ask-panel: thread rows report when the chat was started; unusable createdA
     if (whens[i]) assert.ok(m.startsWith(`${whens[i]}`), `the date is the meter's first part: ${m}`);
     else assert.ok(!/ago|\d{4}-\d{2}-\d{2}/.test(m), `no date, so none rides the meter: ${m}`);
   });
-  // Row order: [dot slot] [title + meter]. The date is no longer a column of its
-  // own, so a dateless row is shaped exactly like a dated one.
+  // Row order: [thinking dot] [tracking dot] [title + meter]. The date is no
+  // longer a column of its own, so a dateless row is shaped exactly like a dated one.
   const cls = (n) => (n ? n.className : null);
-  assert.deepEqual([...picks[0].children].map(cls), ['ask-dot ask-thread-dot', 'ask-thread-col']);
-  assert.deepEqual([...picks[4].children].map(cls), ['ask-dot ask-thread-dot', 'ask-thread-col'],
-    'a dateless row keeps the dot slot and nothing else changes');
+  assert.deepEqual([...picks[0].children].map(cls), ['ask-dot ask-thread-dot', 'ask-dot ask-thread-dot', 'ask-thread-col']);
+  assert.deepEqual([...picks[4].children].map(cls), ['ask-dot ask-thread-dot', 'ask-dot ask-thread-dot', 'ask-thread-col'],
+    'a dateless row keeps both dot slots and nothing else changes');
   // Only the date is an element; the grey figures are plain text beside it.
   assert.deepEqual([...meterEls[0].children].map(cls), ['ask-thread-when']);
   assert.deepEqual([...meterEls[4].children].map(cls), [],
@@ -412,7 +446,7 @@ test('ask-panel: resize — five invisible grips inside the sheet, decorative an
   assert.equal(panel.root.querySelector('[data-view],[data-nav]'), null, 'still nothing navigational in the dock');
   assert.equal(sheet.style.width, '', 'no inline size until the user drags');
   assert.equal(sheet.style.height, '');
-  assert.deepEqual(ASK_SHEET_SIZE, { defaultW: 782, defaultH: 669, minW: 782, minH: 669, dockPadX: 28, dockPadBottom: 26, topGap: 20 },
+  assert.deepEqual(ASK_SHEET_SIZE, { defaultW: 821, defaultH: 669, minW: 821, minH: 669, dockPadX: 28, dockPadBottom: 26, topGap: 20 },
     'the floor is the stylesheet default: the sheet grows, never shrinks');
 });
 
@@ -460,18 +494,18 @@ test('ask-panel: resize — dragging the top-left corner grows both axes symmetr
   const sheet = ctx.doc.querySelector('.ask-sheet');
   const grip = ctx.doc.querySelector('[data-ask-resize="nw"]');
   const up = drag(ctx, 'nw', { x: 300, y: 200 }, { x: 250, y: 150 });
-  // width 782 + 2×50 (the centred sheet grows on both sides); height 669 + 50
-  assert.equal(sheet.style.width, '882px');
+  // width 821 + 2×50 (the centred sheet grows on both sides); height 669 + 50
+  assert.equal(sheet.style.width, '921px');
   assert.equal(sheet.style.height, '719px');
   assert.ok(sheet.classList.contains('is-resizing'));
   assert.ok(grip.classList.contains('is-active'), 'the grabbed grip shows the highlight while dragging');
   assert.equal(ctx.storage.getItem(SIZE_KEY), null, 'nothing is written mid-drag');
   up();
-  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 882, h: 719 });
+  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 921, h: 719 });
   assert.ok(!sheet.classList.contains('is-resizing'));
   assert.ok(!grip.classList.contains('is-active'));
   ctx.doc.dispatchEvent(pointer(ctx.window, 'pointermove', { clientX: 0, clientY: 0 }));
-  assert.equal(sheet.style.width, '882px', 'after pointerup a stray move no longer resizes');
+  assert.equal(sheet.style.width, '921px', 'after pointerup a stray move no longer resizes');
 });
 
 test('ask-panel: resize — each grip moves only its own axis, in the right direction', () => {
@@ -481,21 +515,21 @@ test('ask-panel: resize — each grip moves only its own axis, in the right dire
   const sheet = ctx.doc.querySelector('.ask-sheet');
   drag(ctx, 'n', { x: 0, y: 200 }, { x: 40, y: 170 })();        // up 30 → taller; x ignored
   assert.equal(sheet.style.height, '699px');
-  assert.equal(sheet.style.width, '782px', 'the top grip carries the width through unchanged');
+  assert.equal(sheet.style.width, '821px', 'the top grip carries the width through unchanged');
   drag(ctx, 'e', { x: 300, y: 0 }, { x: 340, y: 60 })();        // right 40 → 2×40 wider; y ignored
-  assert.equal(sheet.style.width, '862px');
+  assert.equal(sheet.style.width, '901px');
   assert.equal(sheet.style.height, '699px');
   drag(ctx, 'w', { x: 300, y: 0 }, { x: 340, y: 0 })();         // left grip moved right 40 → 2×40 narrower
-  assert.equal(sheet.style.width, '782px');
+  assert.equal(sheet.style.width, '821px');
   drag(ctx, 'ne', { x: 300, y: 200 }, { x: 350, y: 220 })();    // right 50 & down 20 → wider and shorter (699 → 679, still above the floor)
-  assert.equal(sheet.style.width, '882px');
+  assert.equal(sheet.style.width, '921px');
   assert.equal(sheet.style.height, '679px');
-  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 882, h: 679 });
+  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 921, h: 679 });
   drag(ctx, 'ne', { x: 300, y: 200 }, { x: 300, y: 260 })();    // down 60 would be 619 → floored at the default
   assert.equal(sheet.style.height, '669px', 'the sheet never gets shorter than it opened');
 });
 
-test('ask-panel: resize — the size is clamped to [782×669 default, dock inner box] whatever the pointer does', () => {
+test('ask-panel: resize — the size is clamped to [821×669 default, dock inner box] whatever the pointer does', () => {
   const ctx = makePanel();
   sizeDock(ctx.doc, 1200, 900);                        // inner 1200−2×28 = 1144 wide, 900−26−20 = 854 tall
   ctx.panel.open();
@@ -505,7 +539,7 @@ test('ask-panel: resize — the size is clamped to [782×669 default, dock inner
   assert.equal(sheet.style.height, '854px', 'never taller than the dock minus 26px bottom padding and the 20px top gap');
   assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 1144, h: 854 });
   drag(ctx, 'nw', { x: 0, y: 0 }, { x: 5000, y: 5000 })();
-  assert.equal(sheet.style.width, '782px', 'never narrower than the default the sheet opened at');
+  assert.equal(sheet.style.width, '821px', 'never narrower than the default the sheet opened at');
   assert.equal(sheet.style.height, '669px', 'never shorter either — the composer row and the popovers assume it');
   // a dock narrower than the floor: the dock wins, the sheet never overflows the viewport
   sizeDock(ctx.doc, 500, 400);                         // inner 444 × 354
@@ -539,7 +573,7 @@ test('ask-panel: resize — double-click on a grip resets to the stylesheet defa
   ctx.panel.open();
   const sheet = ctx.doc.querySelector('.ask-sheet');
   drag(ctx, 'e', { x: 300, y: 0 }, { x: 350, y: 0 })();
-  assert.equal(sheet.style.width, '882px');
+  assert.equal(sheet.style.width, '921px');
   assert.ok(ctx.storage.getItem(SIZE_KEY));
   const grip = ctx.doc.querySelector('[data-ask-resize="e"]');
   // a real double-click is two full click sequences and then dblclick
@@ -548,7 +582,7 @@ test('ask-panel: resize — double-click on a grip resets to the stylesheet defa
     ctx.doc.dispatchEvent(pointer(ctx.window, 'pointerup', { clientX: 400, clientY: 0 }));
   }
   grip.dispatchEvent(new ctx.window.MouseEvent('dblclick', { bubbles: true, cancelable: true }));
-  assert.equal(sheet.style.width, '', 'inline width gone — min(782px,100%) rules again');
+  assert.equal(sheet.style.width, '', 'inline width gone — min(821px,100%) rules again');
   assert.equal(sheet.style.height, '');
   assert.equal(ctx.storage.getItem(SIZE_KEY), null, 'the stored value is cleared, not zeroed');
   ctx.panel.close();
@@ -601,7 +635,7 @@ test('ask-panel: resize — losing window focus mid-drag ends the drag where it 
   ctx.window.dispatchEvent(new ctx.window.Event('blur'));
   assert.ok(!sheet.classList.contains('is-resizing'), 'the gesture is over');
   assert.ok(!grip.classList.contains('is-active'));
-  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 782, h: 719 }, 'a half-done resize is still a size');
+  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 821, h: 719 }, 'a half-done resize is still a size');
   ctx.doc.dispatchEvent(pointer(ctx.window, 'pointermove', { clientX: 0, clientY: 0 }));
   assert.equal(sheet.style.height, '719px', 'the sheet no longer follows a mouse with no button held');
 });
@@ -611,16 +645,16 @@ test('ask-panel: resize — Escape mid-drag cancels: the start size comes back a
   sizeDock(ctx.doc, 1200, 900);
   ctx.panel.open();
   const sheet = ctx.doc.querySelector('.ask-sheet');
-  drag(ctx, 'e', { x: 300, y: 0 }, { x: 350, y: 0 })();   // 882 wide, stored
-  drag(ctx, 'e', { x: 350, y: 0 }, { x: 400, y: 0 });     // 982 wide, still held
-  assert.equal(sheet.style.width, '982px');
+  drag(ctx, 'e', { x: 300, y: 0 }, { x: 350, y: 0 })();   // 921 wide, stored
+  drag(ctx, 'e', { x: 350, y: 0 }, { x: 400, y: 0 });     // 1021 wide, still held
+  assert.equal(sheet.style.width, '1021px');
   const e = key(ctx.window, ctx.doc.body, 'Escape');
-  assert.equal(sheet.style.width, '882px', 'back to where this drag started');
+  assert.equal(sheet.style.width, '921px', 'back to where this drag started');
   assert.ok(!sheet.classList.contains('is-resizing'));
   assert.equal(e.defaultPrevented, true, 'the drag owned that Escape');
-  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 882, h: 669 }, 'the cancelled drag wrote nothing');
+  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 921, h: 669 }, 'the cancelled drag wrote nothing');
   ctx.doc.dispatchEvent(pointer(ctx.window, 'pointerup', { clientX: 400, clientY: 0 }));
-  assert.equal(sheet.style.width, '882px', 'a late pointerup does not resurrect the cancelled size');
+  assert.equal(sheet.style.width, '921px', 'a late pointerup does not resurrect the cancelled size');
   assert.equal(ctx.panel.isOpen(), true, 'Escape mid-drag does not close the sheet');
 });
 
@@ -633,7 +667,7 @@ test('ask-panel: resize — a pointermove with no button held means the release 
   ctx.doc.dispatchEvent(pointer(ctx.window, 'pointermove', { clientX: 0, clientY: 100, buttons: 0 }));
   assert.equal(sheet.style.height, '719px', 'the button-less move does not resize');
   assert.ok(!sheet.classList.contains('is-resizing'));
-  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 782, h: 719 });
+  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 821, h: 719 });
 });
 
 test('ask-panel: resize — lostpointercapture on the grip ends the drag (the sheet went away or the capture was taken)', () => {
@@ -642,13 +676,13 @@ test('ask-panel: resize — lostpointercapture on the grip ends the drag (the sh
   ctx.panel.open();
   const sheet = ctx.doc.querySelector('.ask-sheet');
   const grip = ctx.doc.querySelector('[data-ask-resize="w"]');
-  drag(ctx, 'w', { x: 300, y: 0 }, { x: 250, y: 0 });     // 882 wide, held
+  drag(ctx, 'w', { x: 300, y: 0 }, { x: 250, y: 0 });     // 921 wide, held
   grip.dispatchEvent(new ctx.window.Event('lostpointercapture'));
   assert.ok(!sheet.classList.contains('is-resizing'));
   assert.ok(!grip.classList.contains('is-active'));
-  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 882, h: 669 });
+  assert.deepEqual(JSON.parse(ctx.storage.getItem(SIZE_KEY)), { w: 921, h: 669 });
   ctx.doc.dispatchEvent(pointer(ctx.window, 'pointermove', { clientX: 0, clientY: 0 }));
-  assert.equal(sheet.style.width, '882px', 'nothing follows the pointer any more');
+  assert.equal(sheet.style.width, '921px', 'nothing follows the pointer any more');
 });
 
 test('ask-panel: resize — the dock changing size with no window resize (the rail toggle) re-clamps the open sheet', () => {
@@ -684,4 +718,21 @@ test('ask-panel: resize — a dock or window resize during a drag leaves the dra
   assert.equal(sheet.style.width, '1100px', 'no snap back to the stored 900 under the held pointer');
   up();
   assert.deepEqual(JSON.parse(store.getItem(SIZE_KEY)), { w: 1100, h: 700 });
+});
+
+test('ask-panel: the chip picker prefers the space under the chip, flips above when the menu would not fit, and clamps inside a short sheet', () => {
+  // .ask-sheet clips (overflow:hidden) and a chip sits wherever the transcript scrolled
+  // it, so a downward-only anchor chops the menu's Effort row off with no way to reach it.
+  assert.equal(chipPickerTop({ top: 100, bottom: 120, panelH: 200, sheetH: 669 }), 126, 'room below: 6px under the chip');
+  assert.equal(chipPickerTop({ top: 500, bottom: 520, panelH: 400, sheetH: 669 }), 94, 'no room below (526+400 past the sheet) ⇒ above the chip');
+  assert.equal(chipPickerTop({ top: 20, bottom: 40, panelH: 640, sheetH: 669 }), 23, 'neither side fits ⇒ clamped into the sheet, where the panel scrolls itself');
+  assert.equal(chipPickerTop({ top: 4, bottom: 8, panelH: 200, sheetH: 100 }), 0, 'never negative');
+  assert.equal(chipPickerTop({ top: 0, bottom: 0, panelH: 0, sheetH: 0 }), 6, 'jsdom measures 0 everywhere: the plain anchor, no clamp');
+});
+
+test('ask-panel: bytesToBase64 is declared once — the composer upload and the card extras share one helper', () => {
+  // A second declaration in the same createAskPanel scope is legal and silently wins for
+  // EVERY caller, leaving the first dead and its callers on the redeclared body.
+  const src = readFileSync(fileURLToPath(new URL('../ui/public/ask-panel.mjs', import.meta.url)), 'utf8');
+  assert.equal((src.match(/function bytesToBase64\(/g) || []).length, 1);
 });

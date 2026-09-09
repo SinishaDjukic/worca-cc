@@ -39,7 +39,7 @@ test('readRunConfig on a fresh project returns empty workflows and no active id'
   const p = await freshProject();
   const rc = await readRunConfig(p);
   assert.deepEqual(rc.workflows, {});
-  assert.equal(rc.activeWorkflowId, undefined);
+  assert.equal(rc.activeWorkflowId, 'wf_auto', 'D16: a fresh project starts on Auto');
   // Legacy keys still present and empty.
   assert.deepEqual(rc.steps, {});
   assert.deepEqual(rc.customModels, []);

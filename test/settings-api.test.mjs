@@ -132,7 +132,8 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     const probes = {
       projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '',
       askMaxTurns: '', askMaxBudgetUsd: '', debugSpawnEnabled: false,
-      titleModel: '', hideBuiltinModels: false,
+      titleModel: '', hideBuiltinModels: false, theme: '',
+      autoWorkflowModel: '',
     };
     for (const k of SETTINGS_POST_KEYS) {
       if (k === 'root') continue;
@@ -170,4 +171,47 @@ test('POST /api/settings does NOT echo app identity (it is not a setting)', asyn
   const posted = await (await post('')).json();       // resets root to '', as the suite already does above
   assert.equal(posted.app, undefined, 'app identity is GET-only; POST echoes settings state only');
   assert.equal(posted.root, '', 'the reset itself still works');
+});
+
+test('GET /api/settings: theme defaults to "system"', async () => {
+  const j = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(j.theme, 'system');
+});
+
+test('POST { theme } stores the mode, answers the full shape, does not touch root; the default deletes the key', async () => {
+  const target = await mkdtemp(join(tmpdir(), 'worca-cc-setapi-themeroot-'));
+  try {
+    const first = await (await post(target)).json();   // not `before`: that name is the node:test hook imported above
+    assert.equal(first.root, target);
+    const after = await (await postJson({ theme: 'dark' })).json();
+    assert.equal(after.theme, 'dark');
+    assert.equal(after.root, target, 'a theme-only POST must not clear root');
+    const refetched = await (await fetch(`${base}/api/settings`)).json();
+    assert.equal(refetched.theme, 'dark');
+    const file = JSON.parse(readFileSync(join(home, '.worca-cc', 'settings.json'), 'utf8'));
+    assert.equal(file.theme, 'dark');
+    const back = await (await postJson({ theme: 'system' })).json();
+    assert.equal(back.theme, 'system');
+    assert.equal('theme' in JSON.parse(readFileSync(join(home, '.worca-cc', 'settings.json'), 'utf8')), false);
+  } finally {
+    await postJson({ theme: 'system' });
+    await post('');
+    await rm(target, { recursive: true, force: true });
+  }
+});
+
+test('POST rejects an unknown theme → 400, nothing written', async () => {
+  const r = await postJson({ theme: 'blue' });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /theme must be system, light or dark/);
+  const j = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(j.theme, 'system');
+});
+
+test('a mixed POST whose root is unusable answers 400 with the theme NOT applied', async () => {
+  const filePath = fileURLToPath(import.meta.url);
+  const r = await postJson({ theme: 'dark', root: filePath });
+  assert.equal(r.status, 400);
+  const j = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(j.theme, 'system', 'the theme write must come after the root write, which failed');
 });

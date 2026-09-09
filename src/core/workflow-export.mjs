@@ -41,6 +41,7 @@ import { portsOf, findPort } from '../shared/graph/ports.mjs';
 /** Canonical leading-`---` YAML frontmatter matcher (was workflows.mjs FRONTMATTER_RE).
  *  Group 1 is the inner YAML; the whole match (m[0]) is the fence block incl. its
  *  trailing newline when present. */
+// Readers use src/core/frontmatter.mjs; this stays a WRITER's fence matcher (m[0] bounds the stamp insertion — byte-pinned by the export tests).
 const FRONTMATTER_RE = /^---\s*\n([\s\S]*?)\n---\n?/;
 
 /**
@@ -379,6 +380,7 @@ function deriveNodeIo(graph, tnode, nodeKey, { cycle = 1, channelDefs } = {}) {
 async function buildExportSet({ workflowId, destination, projectDir, slug, includeAgents = true, repoRoot }) {
   const tpl = await readWorkflow(workflowId);
   if (!tpl) throw err(`workflow not found: ${workflowId}`, 'NOT_FOUND');
+  if (tpl.auto) throw err('the Auto entry has no graph to export — it is decided per run', 'UNSUPPORTED');
 
   const dest = resolveDest({ destination, projectDir });
   const finalSlug = assertName(slug || slugify(tpl.name).slice(0, 48) || 'workflow', 'slug');

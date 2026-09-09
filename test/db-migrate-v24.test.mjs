@@ -108,12 +108,14 @@ test('the alias folds first and wins, overlays remap, budgets copy to wires, arc
   assert.equal(db.prepare('SELECT resume_point FROM pipelines WHERE id = ?').get(fx.v1AliasRunId).resume_point, null,
     'a v1 point naming the alias is SWEPT, not remapped');
 
-  // an active workflow that was archived falls back to the graph default…
-  assert.equal(db.prepare('SELECT active_workflow_id FROM project_config WHERE project_key = ?')
-    .get(fx.projectKey).active_workflow_id, 'wf_default');
-  // …and one pointing at a LIVE seed is left alone
-  assert.equal(db.prepare('SELECT active_workflow_id FROM project_config WHERE project_key = ?')
-    .get(fx.projectKeyLive).active_workflow_id, 'wf_quick-fix');
+  // V24: an active workflow that was archived falls back to the graph default, and
+  // one pointing at a LIVE seed is left alone — pinned through V24's own report
+  // (activeReset, below). The COLUMN then takes the V28 one-time flip to the Auto
+  // entry (auto-workflow spec D16), so after the full ladder every project reads wf_auto.
+  for (const key of [fx.projectKey, fx.projectKeyLive]) {
+    assert.equal(db.prepare('SELECT active_workflow_id FROM project_config WHERE project_key = ?')
+      .get(key).active_workflow_id, 'wf_auto');
+  }
   const report = JSON.parse(db.prepare("SELECT data FROM store_meta WHERE key = 'migration:v24'").get().data);
   assert.deepEqual(report.activeReset, [fx.projectKey], 'only the stranded project is reset');
   // The counters are the only place the `version = 2` filter on the json_set arm

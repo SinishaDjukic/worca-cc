@@ -186,9 +186,9 @@ test('the favicon replaces the wordmark on the rail', () => {
   assert.match(ruleBody('.sidebar.collapsed .logo-mark'), /display:\s*block/);
   // Attribute ORDER must not matter: `<img src=… class="logo-mark">` is the same
   // element. Match the tag, then assert inside it.
-  const mark = html.match(/<img[^>]*class="logo-mark"[^>]*>/);
-  assert.ok(mark, 'the rail wordmark <img class="logo-mark"> must exist');
-  assert.match(mark[0], /src="\/assets\/worca-favicon\.png"/);
+  const mark = html.match(/<span[^>]*class="logo-mark"[^>]*>/);
+  assert.ok(mark, 'the rail mark <span class="logo-mark"> must exist (mask-painted, spec 2026-09-04 §4.4)');
+  assert.match(mark[0], /role="img"/);
 });
 
 test('the expanded wordmark keeps its own sizing rule', () => {
@@ -625,7 +625,7 @@ test('a hovered tile keeps its own fill — .nav button:hover out-specifies the 
     'the selected tile is a filled square, not just a bordered one');
   assert.match(act, /border-color:\s*var\(--ink\)/,
     'without this the --line-2 resting border rings the dark fill');
-  assert.match(act, /(?:^|[;{\s])color:\s*#fff/,
+  assert.match(act, /(?:^|[;{\s])color:\s*var\(--on-ink\)/,
     'and its initials have to invert, or they are --ink-2 on --ink');
 });
 
@@ -879,7 +879,7 @@ test('every remaining new rule carries the declarations it exists for', () => {
   // New pipeline is the rail's one filled control (mock); outlined-at-rest only
   // reads as a button next to a label.
   mark('.sidebar.collapsed .nav button.nav-cta', /background:\s*var\(--ink\)/,
-    /(?:^|[;{\s])color:\s*#fff/);
+    /(?:^|[;{\s])color:\s*var\(--on-ink\)/);
   // Pinned to the Running square's corner, and ringed in --panel like both
   // sibling markers — .nav button.active .nav-rollup fills it #fff (:140), which
   // is invisible on the white sidebar for the half of the dot that overhangs.

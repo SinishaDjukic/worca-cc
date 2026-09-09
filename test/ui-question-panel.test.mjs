@@ -115,10 +115,10 @@ function seedClarify(ctx) {
 test('the four question-panel tokens exist', () => {
   const root = ruleBody(':root');
   assert.ok(root, ':root block missing');
-  assert.match(root, /--amber-wash:\s*#FEF7EC/i);
-  assert.match(root, /--amber-wash-2:\s*#FEFAF3/i);
-  assert.match(root, /--amber-line:\s*#F5D9A8/i);
-  assert.match(root, /--radio-ring:\s*#D6D6D2/i);
+  assert.match(root, /--amber-wash:\s*light-dark\(#FEF7EC,/i);
+  assert.match(root, /--amber-wash-2:\s*light-dark\(#FEFAF3,/i);
+  assert.match(root, /--amber-line:\s*light-dark\(#F5D9A8,/i);
+  assert.match(root, /--radio-ring:\s*light-dark\(#D6D6D2,/i);
 });
 
 test('.qpanel is the amber card variant and no longer shares its rules with the dead .q-* twins', () => {

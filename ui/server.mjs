@@ -23,7 +23,7 @@ import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState,
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
-  listArtifacts, lookupPipelineRow, findPipelineRowById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
+  listArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
   readPromptFile,
 } from '../src/core/artifacts.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
@@ -34,6 +34,7 @@ import {
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
 import { listProjects, addProject, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
+import { renderIndexHtml, INDEX_THEME_ANCHOR } from '../src/core/index-html.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
   rawProjectsRoot, defaultProjectsRoot, runRootMode,
@@ -44,6 +45,8 @@ import {
   debugSpawnEnabled as storedDebugSpawnEnabled, effectiveDebugSpawn, setDebugSpawnEnabled, assertDebugSpawnInput, SETTINGS_POST_KEYS,
   titleModel as storedTitleModel, setTitleModel, assertTitleModelInput,
   hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput,
+  theme as storedTheme, setTheme, assertThemeInput,
+  autoWorkflowModel as storedAutoWorkflowModel, setAutoWorkflowModel, assertAutoWorkflowModelInput,
 } from '../src/core/settings.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
 import {
@@ -89,7 +92,7 @@ import { listFolders } from '../src/core/fs-browse.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
   PREDEFINED_MODELS, agentSteps, EFFORTS, catalogHasModel,
-  readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, resetWorkflowConfig,
+  readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, setHumanInLoop, resetWorkflowConfig,
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
@@ -105,9 +108,13 @@ import {
   writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
 } from '../src/core/guardrail-store.mjs';
 import {
-  GRAPH_DEFAULT_WORKFLOW, listWorkflows, deleteWorkflow, isSafeWorkflowId,
-  setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow,
+  GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, listWorkflows, deleteWorkflow, isSafeWorkflowId,
+  setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow, readWorkflow,
 } from '../src/core/workflows.mjs';
+import { mintAutoWorkflowId, sanitizeProposalAnswer } from '../src/core/auto/proposal.mjs';
+import {
+  revalidateWorkflowProposal, applyTunables, workflowEventPrompt, workflowNoticeText,
+} from '../src/core/ask/workflow-deps.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
@@ -158,6 +165,7 @@ import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs'
 import { normalizeManifest, validatePluginDir, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
 import { listTaskSources, retryWriteback } from '../src/core/sources.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
+import { resolveAutoModel, AUTO_MODEL_ENV } from '../src/core/auto/model.mjs';
 import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
@@ -506,6 +514,24 @@ function resolvePending(entry, { id = null, reason = 'resolved' } = {}) {
   entry.pendingQuestion = null;
   broadcast(bufferEvent(entry, { type: 'question-resolved', id: pq.id, reason }));
   return true;
+}
+
+/** Statuses under which an entry no longer drives its pipeline (the resumeRun double-resume guard's list, :1713). */
+const SETTLED_RUN = new Set(['done', 'stopped', 'error', 'paused', 'interrupted']);
+/** A runs-Map PIPELINE entry by its UUID or by its 8-hex History id (scans / agentgens never match). */
+function liveRunEntry(id) {
+  if (typeof id !== 'string' || !id) return null;
+  const isRun = (r) => r && r.orch && (r.kind === 'run' || r.kind === 'workspace-run' || r.kind == null);
+  const direct = runs.get(id);
+  if (isRun(direct)) return direct;
+  // D23: resumeRun evicts only the paused/interrupted lineage; a same-pipeline entry left done/stopped/error sits
+  // EARLIER in Map order — the entry still driving the pipeline wins, else the newest (last inserted).
+  let best = null;
+  for (const r of runs.values()) {
+    if (!isRun(r) || r.pipelineId !== id) continue;
+    if (!best || !SETTLED_RUN.has(String(r.status || '')) || SETTLED_RUN.has(String(best.status || ''))) best = r;
+  }
+  return best;
 }
 
 function summarizeRuns() {
@@ -865,6 +891,32 @@ app.use('/src/shared', (_req, res) => {
   res.status(404).type('text/plain').send('Not found');
 });
 
+// The shell is rendered, not static: the stored theme mode goes into
+// <html data-theme> so the first paint is already dark or light (dark-mode
+// design §5.2). Read per request (100 KB, local) so an index.html edit is live
+// without a restart, exactly like static serving was. no-store: a theme change
+// must never be served from the browser cache.
+const INDEX_FILE = path.join(PUBLIC_DIR, 'index.html');
+if (!fs.readFileSync(INDEX_FILE, 'utf8').includes(INDEX_THEME_ANCHOR)) {
+  throw new Error(`ui/public/index.html lost its theme anchor ${INDEX_THEME_ANCHOR}`);
+}
+function sendIndex(res) {
+  let html;
+  try { html = renderIndexHtml(fs.readFileSync(INDEX_FILE, 'utf8'), storedTheme()); }
+  catch (err) { return res.status(500).json({ error: err && err.message ? err.message : 'shell unavailable' }); }
+  res.set('Content-Type', 'text/html; charset=utf-8');
+  res.set('Cache-Control', 'no-store');
+  res.set('X-Content-Type-Options', 'nosniff');
+  return res.send(html);
+}
+// `/index` (express.static's `extensions:['html']`) and `/Index.html` on a case-insensitive
+// file system would otherwise reach the raw file: route every spelling here.
+app.use((req, res, next) => {
+  if (req.method !== 'GET') return next();
+  if (req.path === '/' || /^\/index(\.html)?$/i.test(req.path)) return sendIndex(res);
+  return next();
+});
+
 app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
 
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
@@ -1051,7 +1103,7 @@ function attachAskFollower(orch, { threadId, runId, cardId }) {
         if (linkPatch.pipelineId && row && row.commentIds.length) {
           try { stampSentRunId(row.commentIds, linkPatch.pipelineId); } catch { /* best effort */ }
         }
-        if (patch.cardFailed) {
+        if (patch.cardFailed && cardId) {
           flipCard(threadId, cardId, { state: 'failed', error: patch.cardFailed });
         }
         broadcast({
@@ -1077,6 +1129,75 @@ function attachAskFollower(orch, { threadId, runId, cardId }) {
     askFollowers.set(threadId, set);
   }
   set.add(follower);
+}
+
+/** An undetached follower for this (thread, runId) already exists — the proposal launch attached it, or an earlier track_run. */
+function askFollowerAttached(threadId, runId) {
+  const set = askFollowers.get(threadId);
+  return !!set && [...set].some((f) => f.runId === runId && !f.detached);
+}
+
+/**
+ * track_run's parent-side half (the MCP child only resolves — src/core/ask/tools.mjs is write-free by contract):
+ * resolve the run (live entry by UUID or 8-hex, else the pipelines table — the user-pinned scope first, like
+ * resolveRow), link it to the thread ONCE per pipeline (D5: a run with no live UUID keys the row by its pipeline
+ * id until a live run takes it over; the dedupe is application-level — the PK is (thread, run_id) and linkRun
+ * throws on a collision), attach a follower to a live run ONCE per runId (D6), and hand back the progress card's
+ * identity. Never throws; a failure is a model-readable {ok:false, error}.
+ */
+function askTrackRun(threadId, input, pin) {
+  const raw = input && typeof input.id === 'string' ? input.id.trim() : '';
+  if (!raw) return { ok: false, error: 'id is required' };
+  let entry = liveRunEntry(raw);
+  let state = null;
+  if (entry) {
+    if (!entry.pipelineId) return { ok: false, error: 'the run has no pipeline id yet — try again in a moment' };
+    state = readPipelineStateById(entry.pipelineId);
+  } else {
+    const scopeKey = typeof input.projectKey === 'string' && input.projectKey ? input.projectKey
+      : typeof input.workspaceId === 'string' && input.workspaceId ? `workspaces/${input.workspaceId}`
+        : pin && pin.projectKey ? pin.projectKey : pin && pin.workspaceId ? `workspaces/${pin.workspaceId}` : null;
+    const row = (scopeKey ? lookupPipelineRow(scopeKey, raw) : null) || findPipelineRowById(raw);
+    if (!row) return { ok: false, error: 'run not found' };
+    // The row lookups canonicalise (lower case, the `…-<8hex>` dir-name form); the runs-Map scan compares verbatim.
+    // Re-ask with the canonical id so an uppercase or dir-name id still finds the live lineage.
+    entry = liveRunEntry(row.id) || null;
+    state = readPipelineStateById(row.id);
+  }
+  if (!state) return { ok: false, error: 'run not found' };
+  const pipelineId = state.id;
+  const isWs = !!((entry && entry.workspaceId) || state.target === 'workspace');
+  const workspaceId = isWs ? ((entry && entry.workspaceId) || state.workspaceId || null) : null;
+  const projKey = isWs ? null : ((entry && entry.projectDir) ? projectKey(entry.projectDir) : (state.projectKey || null));
+  const label = isWs
+    ? (state.workspaceName || (Array.isArray(state.projects) ? state.projects.map((p) => p.projectName).filter(Boolean).join(' · ') : '') || '')
+    : String((entry && entry.projectDir) || state.projectDir || '').split(/[\\/]/).filter(Boolean).pop() || (projKey || '');
+  const title = (entry && entry.title) || state.title || pipelineId;
+  const status = (entry && entry.status) || state.status || null;
+  const liveRunId = entry ? entry.id : null;
+  // ONE row per (thread, pipeline): by the live UUID first (a proposal launch whose block threw after askLinkRun leaves a
+  // uuid row with pipeline_id NULL that no follower fills — adopt it), then by pipeline id. UUID-first also means the
+  // patch below never moves a run_id onto a key that already exists (the (thread_id, run_id) PK would throw).
+  const links = askListRunLinks(threadId);
+  const existing = (liveRunId ? links.find((l) => l.runId === liveRunId) : null) || links.find((l) => l.pipelineId === pipelineId) || null;
+  try {
+    if (!existing) askLinkRun(threadId, { runId: liveRunId || pipelineId, pipelineId, status });
+    else {
+      const patch = { status };
+      if (!existing.pipelineId) patch.pipelineId = pipelineId;
+      if (liveRunId && existing.runId !== liveRunId) patch.runId = liveRunId;
+      askUpdateRunLink(threadId, existing.runId, patch);
+    }
+  } catch (err) {
+    return { ok: false, error: `could not link the run: ${err && err.message ? err.message : String(err)}` };
+  }
+  // Only a run that still drives its pipeline gets a follower: attachRunFollower subscribes unconditionally
+  // (follow.mjs:111) and a settled orchestrator never emits again, so it would sit in askFollowers for the life
+  // of the thread — and pin a paused lineage's dead orchestrator once resumeRun evicts the entry.
+  if (entry && !SETTLED_RUN.has(String(entry.status || '')) && !askFollowerAttached(threadId, entry.id)) {
+    attachAskFollower(entry.orch, { threadId, runId: entry.id, cardId: null });
+  }
+  return { ok: true, card: { type: 'progress', pipelineId, runId: liveRunId, projectKey: projKey, workspaceId, title, label, status } };
 }
 
 // ---------------------------------------------------------------------------
@@ -1185,6 +1306,15 @@ app.post('/api/run', async (req, res) => {
     } catch (err) {
       return badRequest(res, err && err.message ? err.message : String(err));
     }
+
+    // Auto workflow (spec D19): project targets only in v1. Before the workspace lookup,
+    // so an Auto request for ANY workspace id answers 400, never 404.
+    if (workflowId === AUTO_WORKFLOW_ID && hasWorkspace) {
+      return badRequest(res, 'Auto workflow is not available for workspace targets yet');
+    }
+    // Human in the loop (spec D15): the body wins, else the project's stored
+    // switch, else on. Resolved per target below (it needs the project dir).
+    const bodyHumanInLoop = typeof body.humanInLoop === 'boolean' ? body.humanInLoop : null;
 
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
@@ -1332,6 +1462,8 @@ app.post('/api/run', async (req, res) => {
       const fileProblem = await promptFileProblem(effectiveSource, projectDir);
       if (fileProblem) return badRequest(res, fileProblem);
 
+      const humanInLoop = bodyHumanInLoop ?? ((await readRunConfig(projectDir)).humanInLoop !== false);
+
       orch = await createOrchestratorFor({
         projectDir,
         prompt: effectivePrompt,
@@ -1343,6 +1475,7 @@ app.post('/api/run', async (req, res) => {
         template: workflowRow,
         guardrailsId,
         branch,
+        humanInLoop,
         claude: { permissionMode: 'acceptEdits', mock },
       });
 
@@ -2820,7 +2953,20 @@ const settingsState = () => ({
   titleModel: storedTitleModel(),                         // the STORED id (the select), null = run's model
   titleModelEffective: describeTitleModel(),              // env override / stale id, for the hint line (#422)
   hideBuiltinModels: hideBuiltinModels(),
+  theme: storedTheme(),                                   // system | light | dark (dark-mode design §6)
 });
+
+/** Settings ▸ Auto workflow model: the stored id + what the classifier will actually use
+ *  (env override > stored catalog id > the Sonnet-class default). Async because the
+ *  catalog is. */
+async function autoModelState() {
+  const models = await listModels('');
+  const stored = storedAutoWorkflowModel();
+  const model = resolveAutoModel(models, { setting: stored });
+  const source = process.env[AUTO_MODEL_ENV]?.trim() ? 'env'
+    : (stored && model.toLowerCase() === stored.toLowerCase()) ? 'settings' : 'default';
+  return { autoWorkflowModel: stored, autoWorkflowModelEffective: { model, source } };
+}
 
 // ---------------------------------------------------------------------------
 // Instance lifecycle (`worca ui status|stop|restart`, src/core/ui-instance.mjs)
@@ -2865,8 +3011,8 @@ app.post('/api/shutdown', (req, res) => {
   setImmediate(() => uiControl.onShutdown('request'));
 });
 
-app.get('/api/settings', (_req, res) => {
-  res.json({ ...settingsState(), chat: chatPrefs(), app: APP_INFO });
+app.get('/api/settings', async (_req, res) => {
+  res.json({ ...settingsState(), ...(await autoModelState()), chat: chatPrefs(), app: APP_INFO });
 });
 
 app.get('/api/budget', (_req, res) => {
@@ -2881,6 +3027,9 @@ app.post('/api/settings', async (req, res) => {
   const hasDebugSpawnKey = has('debugSpawnEnabled');
   const hasTitleModelKey = has('titleModel');
   const hasHideBuiltinKey = has('hideBuiltinModels');
+  const hasThemeKey = has('theme');
+  const hasAutoKey = has('autoWorkflowModel');
+  const autoModels = hasAutoKey ? await listModels('') : null;
   // #422: the title model is a SELECT over the catalog, so an id that is not a
   // catalog member is a client bug (or a stale option) — refuse it here rather
   // than store an id resolveModelEnv could never route.
@@ -2913,6 +3062,8 @@ app.post('/api/settings', async (req, res) => {
       }
     }
     if (hasHideBuiltinKey) assertHideBuiltinModelsInput(body.hideBuiltinModels);
+    if (hasThemeKey) assertThemeInput(body.theme);
+    if (hasAutoKey) assertAutoWorkflowModelInput(body.autoWorkflowModel ?? '', autoModels);
     // Root first: it is the one key whose setter can still fail AFTER the asserts
     // above (an unusable path), so every other key's write must come after it or
     // a mixed POST would answer 400 with those keys already applied on disk.
@@ -2933,11 +3084,13 @@ app.post('/api/settings', async (req, res) => {
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
+    if (hasThemeKey) await setTheme(body.theme);
+    if (hasAutoKey) await setAutoWorkflowModel(body.autoWorkflowModel ?? '', { models: autoModels });
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey) emitChanged('settings-changed');
-    res.json({ ...settingsState(), chat: chatPrefs() });
+    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasAutoKey) emitChanged('settings-changed');
+    res.json({ ...settingsState(), ...(await autoModelState()), chat: chatPrefs() });
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).
     return badRequest(res, err && err.message ? err.message : String(err));
@@ -3016,7 +3169,7 @@ app.post('/api/config', async (req, res) => {
 // validates model/effort against the effective catalog exactly like setStep
 // (configurable-models-design.md §4.5) -> 400; setFeedbackCycles still COERCES
 // maxCycles to >= 1 (it never throws).
-// body: { projectDir, workflowId, nodes?:{[id]:{model,effort}}, feedbacks?:{[id]:{maxCycles}}, wires?:{[wireId]:{maxCycles}}, activeWorkflowId? }
+// body: { projectDir, workflowId, nodes?:{[id]:{model,effort}}, feedbacks?:{[id]:{maxCycles}}, wires?:{[wireId]:{maxCycles}}, activeWorkflowId?, humanInLoop? }
 // ---------------------------------------------------------------------------
 app.patch('/api/config', async (req, res) => {
   const body = req.body || {};
@@ -3066,6 +3219,7 @@ app.patch('/api/config', async (req, res) => {
       if (!isSafeWorkflowId(active)) return badRequest(res, 'invalid workflowId');
       await setActiveWorkflow(projectDir, active);
     }
+    if (typeof body.humanInLoop === 'boolean') await setHumanInLoop(projectDir, body.humanInLoop);
     const config = await readRunConfig(projectDir);
     res.json({ config });
   } catch (err) {
@@ -3736,10 +3890,56 @@ const askJobs = new Map();      // threadId -> {turn, messageId, userMessageId, 
 const askDeleting = new Set();
 const askFollowers = new Map(); // threadId -> Set<{detach}>
 const ASK_JOB_MAX_BUFFER = 5000; // same arithmetic as MAX_BUFFER: deltas dominate; eviction ⇒ client seq-gap re-sync
+const askDeferred = new Map();  // threadId → Array<() => Promise>: workflow-card event turns that arrived while a turn was running (PD5/PD26), FIFO
+
+/** A `role:'system'` notice row + its broadcast — the shape attachAskFollower posts. */
+function postAskSystemNotice(threadId, text) {
+  try {
+    const m = askAppendMessage(threadId, { role: 'system', text, blocks: [{ kind: 'notice', text }] });
+    broadcast({ type: 'ask-message', threadId, message: m });
+  } catch { /* thread deleted */ }
+}
+
+/**
+ * Start the oldest queued workflow-card event turn (PD26). A starter resolves {ok:false,status,error}
+ * — it never throws — when the reservation fails at START time (403: the turn the user waited on spent
+ * the last of the total cost window, `_complete` writes the ledger BEFORE `_emit('done')`; 429: the
+ * global cap; 409: a typed message won the race). A failed starter posts a system notice and the NEXT
+ * one is tried; a started turn's own settleJob drains the rest. The queue is re-read per iteration: a
+ * starter pushed while `await next()` ran lives in a fresh array (the queue is re-created after the
+ * delete below).
+ */
+async function drainAskDeferred(threadId) {
+  for (;;) {
+    const queue = askDeferred.get(threadId);
+    if (!queue || !queue.length) return;
+    const next = queue.shift();
+    if (!queue.length) askDeferred.delete(threadId);
+    let r = null;
+    try { r = await next(); } catch (e) { r = { ok: false, error: e && e.message ? e.message : String(e) }; }
+    if (r && r.ok) return;                                        // its settleJob continues the chain
+    postAskSystemNotice(threadId, `Ask Worca could not reply to the workflow card: ${(r && r.error) || 'unknown error'}`);
+  }
+}
 
 function askInFlight(threadId) {
   const job = askJobs.get(threadId);
   return job && job.status === 'running' ? job : null;
+}
+
+/** How many live runs this thread still follows: undetached followers (askFollowers is the truth, the way
+ *  askInFlight reads askJobs — ask_run_links.status is written BY the follower and stays `running` across a
+ *  restart that dropped every follower) whose runs-Map entry exists and has not settled. */
+function askTrackingCount(threadId) {
+  const set = askFollowers.get(threadId);
+  if (!set) return 0;
+  let n = 0;
+  for (const f of set) {
+    if (f.detached) continue;
+    const entry = liveRunEntry(f.runId);
+    if (entry && !SETTLED_RUN.has(String(entry.status || ''))) n += 1;
+  }
+  return n;
 }
 
 function askRunningCount() {
@@ -3814,7 +4014,10 @@ app.get('/api/ask/threads', (req, res) => {
   try {
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
-    const threads = askListThreads({ limit }).map((t) => ({ ...t, inFlight: !!askInFlight(t.id) }));
+    const threads = askListThreads({ limit }).map((t) => {
+      const trackingRuns = askTrackingCount(t.id);
+      return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns };
+    });
     // total = EVERY saved chat (the History popover's meter), not the capped page above.
     res.json({ threads, total: askCountThreads() });
   } catch (err) {
@@ -3905,6 +4108,21 @@ app.get('/api/ask/threads/:id', (req, res) => {
   }
 });
 
+// Ask Worca progress card hydration (plan D9): the run's detail state by pipeline id OR live run id, no store key.
+const ASK_RUN_REF_RE = /^(?:[0-9a-f]{8}|[0-9a-zA-Z-]{9,64})$/;
+app.get('/api/ask/runs/:id', (req, res) => {
+  const id = String(req.params.id || '');
+  if (!ASK_RUN_REF_RE.test(id)) return res.status(400).json({ error: 'invalid run id' });
+  try {
+    const entry = liveRunEntry(id);
+    const state = readPipelineStateById(entry && entry.pipelineId ? entry.pipelineId : id);
+    if (!state) return res.status(404).json({ error: 'run not found' });
+    res.json({ state, live: entry ? { runId: entry.id, status: entry.status } : null });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 app.patch('/api/ask/threads/:id', (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
@@ -3950,6 +4168,9 @@ app.patch('/api/ask/threads/:id', (req, res) => {
 // Returns { deleted, worktrees } — worktrees = rows removeThreadWorktrees removed.
 async function deleteAskThreadFully(id) {
   askDeleting.add(id);
+  // Outside the `if (job)` block below: a thread deleted while it had a queued
+  // event turn but no live job entry would otherwise keep its queue forever.
+  askDeferred.delete(id);
   try {
     const stopJob = () => {
       const job = askJobs.get(id);
@@ -4180,12 +4401,20 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
     for (const m of askListMessages(threadId)) {
       if (!Array.isArray(m.blocks)) continue;
       for (const b of m.blocks) {
-        if (b && b.kind === 'card') {
-          cards.push({
+        if (!(b && b.kind === 'card')) continue;
+        // P3 (PD25): a workflow card names the workflow it proposes and only owns a
+        // workflowId once the user saved it; a run card keeps its pre-P3 line byte for byte.
+        const wf = !!(b.card && b.card.type === 'workflow');
+        if (wf && b.state === 'building') continue;   // transient (no name yet) — never worth a header line
+        cards.push(wf
+          ? {
+            id: b.id, type: 'workflow', state: b.state, name: (b.card && b.card.name) || '',
+            workflowId: b.workflowId || null, targetName: (b.card && b.card.projectName) || '',
+          }
+          : {
             id: b.id, state: b.state, workflowId: b.card && b.card.workflowId,
             targetName: (b.card && (b.card.projectName || b.card.workspaceName)) || '',
           });
-        }
       }
     }
     if (cards.length) out.cards = cards.slice(-ASK_LIMITS.headerCards);
@@ -4210,7 +4439,156 @@ function mockAskCard(ctx = {}, text = '') {
   const target = ctx.workspaceId
     ? { workspaceId: ctx.workspaceId }
     : { projectKey: ctx.projectKey || 'mock-project-00000000' };
-  return { ...target, workflowId: 'wf_default', guardrailsId: 'normal', brief: text.slice(0, 200) || 'Mock run' };
+  return { ...target, workflowId: 'wf_default', guardrailsId: 'normal', brief: text.slice(0, 200) || 'Mock run',
+    note: 'Mock proposal — a fixed shape so the offline card can be exercised.' };
+}
+
+/**
+ * The ONE turn starter (spec §8.4): the typed-message route and the workflow-card event path both land here.
+ * SYNCHRONOUS until the first write — the §6.2.2 guards + the slot reservation run before any await, so two callers
+ * cannot interleave (the route's earlier checks are only the fast-path 4xx). Resolves {ok:false,status,error} for the
+ * 403/409/429 cases the message route maps to HTTP; {ok:true,…} once the turn is running.
+ * @param {{threadId:string, thread:object, ctx:object, model:string, effort:string, text:string,
+ *          files?:Array, synthetic?:{notice:string}|null}} o
+ *   text      what the MODEL gets as the user message: the typed text, or the `[worca event] …` line (synthetic)
+ *   synthetic the user row renders as a notice (never a bubble) and never titles the thread (PD6)
+ */
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null }) {
+  // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
+  // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
+  // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
+  // reads), so the route is macrotask-atomic and two POSTs cannot interleave
+  // (empirically instrumented). The reservation is what keeps that true if
+  // any of those readers ever becomes genuinely async: it is synchronous —
+  // check-and-set cannot interleave — and runs BEFORE the first write, so a
+  // loser leaves no rows.
+  if (askDeleting.has(id)) return { ok: false, status: 409, error: 'thread is being deleted' };
+  if (askInFlight(id)) return { ok: false, status: 409, error: 'turn in flight' };
+  const budget = budgetStatus();                                                    // P3: the event path needs the same gate the route head applies
+  if (budget.blocked) return { ok: false, status: 403, error: 'total cost limit reached', budget };
+  if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {
+    return { ok: false, status: 429, error: `at most ${ASK_LIMITS.turnsGlobal} turns may run at once` };
+  }
+  const prev = askJobs.get(id);
+  if (prev && prev.graceTimer) clearTimeout(prev.graceTimer); // atomic replace of a grace entry (§8.3)
+  const job = {
+    turn: null, messageId: null, userMessageId: null, // ids filled once the rows exist;
+    events: [], seq: 0, status: 'running',            // askHello()/GET inFlight skip a null messageId
+    startedAt: new Date().toISOString(), graceTimer: null,
+  };
+  askJobs.set(id, job);
+
+  let asstMsg = null;
+  let turn;
+  let echoAttachments = [];
+  try {
+    // Writes. Store the LAST context + model/effort on the thread (§6.5 tail, D8).
+    // `ctx` (pin-merged) rather than cv.context: the stored row is what restores
+    // the selector on reopen and what the MCP child reads for tool defaulting.
+    askUpdateThread(id, { context: ctx, model, effort });
+    // §7.4 — NOTHING is stamped on the row before the 202: the thread stays
+    // untitled (the header reads "Ask Worca") until the D13 background title
+    // announces itself. titleWasAuto gates that call: a title given at THREAD
+    // CREATION is the user's, and the haiku call must never fire for it
+    // (§17 Q&A 1). deterministicTitle is only the turn's fallback for an
+    // empty haiku result (turn.mjs _kickoffTitle), never written here.
+    const titleWasAuto = thread.title == null;
+    const deterministicTitle = titleWasAuto && !synthetic ? (askSanitizeTitle(text.slice(0, 80)) || 'New chat') : thread.title;
+    // P3: a synthetic row keeps the EVENT as its text (buildRestoredPrompt replays it truthfully) and carries the
+    // human notice as a block the panel renders instead of a bubble.
+    const userMsg = askAppendMessage(id, synthetic
+      ? { role: 'user', text, blocks: [{ kind: 'notice', synthetic: true, text: synthetic.notice }] }
+      : { role: 'user', text });
+    job.userMessageId = userMsg.id;
+    const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, kind: f.kind, mime: f.mime, text: f.text, data: f.data }));
+    // The decoded binary bodies are on disk now. `files` is captured by this
+    // scope's closures (settleJob, the turn listeners, onOutOfTurn) for the whole
+    // turn plus jobGraceMs, so up to 25 MB of dead Buffers would otherwise stay
+    // reachable per running thread.
+    for (const f of files) f.data = null;
+    echoAttachments = attRows.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime }));
+    if (attRows.length) {
+      // `kind` is the BLOCK kind, so the attachment's own kind rides as attKind
+      // (the UI keys image thumbnails off it, #398).
+      // P3: keep the synthetic notice in front of the attachment blocks (unreachable today — event turns pass no files — but
+      // an unconditional overwrite would silently drop the notice for a future caller).
+      askSetMessageBlocks(userMsg.id, [
+        ...(synthetic ? [{ kind: 'notice', synthetic: true, text: synthetic.notice }] : []),
+        ...attRows.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind, mime: a.mime })),
+      ]);
+    }
+    broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); // echo for other tabs
+    asstMsg = askAppendMessage(id, { role: 'assistant', text: '', status: 'streaming', model, effort });
+    job.messageId = asstMsg.id;
+
+    // Prompt assembly (§6.5) — the route owns it; the turn only spawns.
+    const catalog = await askBuildCatalog();
+    const systemPrompt = askBuildSystemPrompt(catalog);
+    const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime, text: files[i].text }));
+    const { inline, listed } = askSelectInlineAttachments(withText);
+    const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id);
+    const header = askBuildContextHeader(headerCtx);
+    const prompt = askBuildTurnPrompt(header, text, inline);
+    const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
+    const restoredPrompt = askBuildRestoredPrompt(prior, prompt);
+    const attachmentNames = {};
+    for (const a of askListAttachments(id)) attachmentNames[a.id] = a.name;
+
+    turn = createAskTurn({
+      threadId: id, assistantMessageId: asstMsg.id, userMessageId: userMsg.id,
+      prompt, systemPrompt, restoredPrompt,
+      model, effort,
+      resumeSessionId: thread.sessionId || null,
+      firstTurn: !synthetic && userMsg.seq === 1 && titleWasAuto, // P3: an event never titles the thread (D13 guard kept)
+      firstText: text,
+      deterministicTitle,
+      pinnedScope: askPinnedScope(ctx),             // #397: proposal defaulting + mismatch flag
+      mock: mockEnabled({}) ? { card: mockAskCard(ctx, text) } : null, // R-F
+      attachmentNames,
+      deps: {
+        onFrame: stampAskFrames(id, job),
+        onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
+        onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
+        onWorktreeMutation: () => { emitAskWorktrees(id); },
+        trackRun: (input, { pin } = {}) => askTrackRun(id, input, pin ?? null),
+      },
+    });
+    job.turn = turn;
+  } catch (err) {
+    // A write/assembly failure must release the reserved slot and never leave
+    // a `streaming` row for the boot sweep to find.
+    if (askJobs.get(id) === job) askJobs.delete(id);
+    if (asstMsg) {
+      try {
+        askFinishMessage(asstMsg.id, {
+          text: '', blocks: [{ kind: 'notice', text: 'failed to start the turn' }],
+          status: 'error', reason: null, usage: null, costUsd: null, durationMs: null,
+        });
+      } catch { /* thread gone */ }
+    }
+    return { ok: false, status: 500, error: err && err.message ? err.message : String(err) };
+  }
+  const settleJob = (status) => {
+    if (askJobs.get(id) !== job) return;
+    job.status = status;
+    job.graceTimer = setTimeout(() => {
+      if (askJobs.get(id) === job) askJobs.delete(id);
+    }, ASK_LIMITS.jobGraceMs);
+    job.graceTimer.unref?.();
+    // P3 (PD5/PD26): the workflow-card events that arrived while this turn ran start now — status is already terminal,
+    // so askInFlight() is null and the starter's own reservation succeeds; the started turn's settleJob continues the chain.
+    Promise.resolve().then(() => drainAskDeferred(id)).catch((e) => console.error(`[worca-ui] deferred ask turn failed: ${e && e.message ? e.message : e}`));
+  };
+  turn.on('done', () => settleJob('done'));
+  turn.on('error', () => settleJob('error'));
+  // Fire-and-forget with a backstop (startAgentGen shape) — run() never throws.
+  Promise.resolve()
+    .then(() => turn.run())
+    .catch((err) => {
+      console.error(`[worca-ui] ask turn crashed: ${err && err.message ? err.message : err}`);
+      settleJob('error');
+    });
+  return { ok: true, job, userMessageId: job.userMessageId, assistantMessageId: job.messageId, attachments: echoAttachments };
 }
 
 app.post('/api/ask/threads/:id/messages', async (req, res) => {
@@ -4291,133 +4669,15 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       }
     }
 
-    // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
-    // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
-    // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
-    // reads), so the route is macrotask-atomic and two POSTs cannot interleave
-    // (empirically instrumented). The reservation is what keeps that true if
-    // any of those readers ever becomes genuinely async: it is synchronous —
-    // check-and-set cannot interleave — and runs BEFORE the first write, so a
-    // loser leaves no rows.
-    if (askDeleting.has(id)) return res.status(409).json({ error: 'thread is being deleted' });
-    if (askInFlight(id)) return res.status(409).json({ error: 'turn in flight' });
-    if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {
-      return res.status(429).json({ error: `at most ${ASK_LIMITS.turnsGlobal} turns may run at once` });
-    }
-    const prev = askJobs.get(id);
-    if (prev && prev.graceTimer) clearTimeout(prev.graceTimer); // atomic replace of a grace entry (§8.3)
-    const job = {
-      turn: null, messageId: null, userMessageId: null, // ids filled once the rows exist;
-      events: [], seq: 0, status: 'running',            // askHello()/GET inFlight skip a null messageId
-      startedAt: new Date().toISOString(), graceTimer: null,
-    };
-    askJobs.set(id, job);
-
-    let asstMsg = null;
-    let turn;
-    let echoAttachments = [];
-    try {
-      // Writes. Store the LAST context + model/effort on the thread (§6.5 tail, D8).
-      // `ctx` (pin-merged) rather than cv.context: the stored row is what restores
-      // the selector on reopen and what the MCP child reads for tool defaulting.
-      askUpdateThread(id, { context: ctx, model: mv.model, effort: mv.effort });
-      // §7.4 — NOTHING is stamped on the row before the 202: the thread stays
-      // untitled (the header reads "Ask Worca") until the D13 background title
-      // announces itself. titleWasAuto gates that call: a title given at THREAD
-      // CREATION is the user's, and the haiku call must never fire for it
-      // (§17 Q&A 1). deterministicTitle is only the turn's fallback for an
-      // empty haiku result (turn.mjs _kickoffTitle), never written here.
-      const titleWasAuto = thread.title == null;
-      const deterministicTitle = titleWasAuto ? (askSanitizeTitle(text.slice(0, 80)) || 'New chat') : thread.title;
-      const userMsg = askAppendMessage(id, { role: 'user', text });
-      job.userMessageId = userMsg.id;
-      const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, kind: f.kind, mime: f.mime, text: f.text, data: f.data }));
-      // The decoded binary bodies are on disk now. `files` is captured by this
-      // scope's closures (settleJob, the turn listeners, onOutOfTurn) for the whole
-      // turn plus jobGraceMs, so up to 25 MB of dead Buffers would otherwise stay
-      // reachable per running thread.
-      for (const f of files) f.data = null;
-      echoAttachments = attRows.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime }));
-      if (attRows.length) {
-        // `kind` is the BLOCK kind, so the attachment's own kind rides as attKind
-        // (the UI keys image thumbnails off it, #398).
-        askSetMessageBlocks(userMsg.id, attRows.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind, mime: a.mime })));
-      }
-      broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); // echo for other tabs
-      asstMsg = askAppendMessage(id, { role: 'assistant', text: '', status: 'streaming', model: mv.model, effort: mv.effort });
-      job.messageId = asstMsg.id;
-
-      // Prompt assembly (§6.5) — the route owns it; the turn only spawns.
-      const catalog = await askBuildCatalog();
-      const systemPrompt = askBuildSystemPrompt(catalog);
-      const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime, text: files[i].text }));
-      const { inline, listed } = askSelectInlineAttachments(withText);
-      const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id);
-      const header = askBuildContextHeader(headerCtx);
-      const prompt = askBuildTurnPrompt(header, text, inline);
-      const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
-      const restoredPrompt = askBuildRestoredPrompt(prior, prompt);
-      const attachmentNames = {};
-      for (const a of askListAttachments(id)) attachmentNames[a.id] = a.name;
-
-      turn = createAskTurn({
-        threadId: id, assistantMessageId: asstMsg.id, userMessageId: userMsg.id,
-        prompt, systemPrompt, restoredPrompt,
-        model: mv.model, effort: mv.effort,
-        resumeSessionId: thread.sessionId || null,
-        firstTurn: userMsg.seq === 1 && titleWasAuto, // D13 guard: never replace a user-authored title
-        firstText: text,
-        deterministicTitle,
-        pinnedScope: askPinnedScope(ctx),             // #397: proposal defaulting + mismatch flag
-        mock: mockEnabled({}) ? { card: mockAskCard(ctx, text) } : null, // R-F
-        attachmentNames,
-        deps: {
-          onFrame: stampAskFrames(id, job),
-          onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
-          onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
-          onWorktreeMutation: () => { emitAskWorktrees(id); },
-        },
-      });
-      job.turn = turn;
-    } catch (err) {
-      // A write/assembly failure must release the reserved slot and never leave
-      // a `streaming` row for the boot sweep to find.
-      if (askJobs.get(id) === job) askJobs.delete(id);
-      if (asstMsg) {
-        try {
-          askFinishMessage(asstMsg.id, {
-            text: '', blocks: [{ kind: 'notice', text: 'failed to start the turn' }],
-            status: 'error', reason: null, usage: null, costUsd: null, durationMs: null,
-          });
-        } catch { /* thread gone */ }
-      }
-      return res.status(500).json({ error: err && err.message ? err.message : String(err) });
-    }
-    const settleJob = (status) => {
-      if (askJobs.get(id) !== job) return;
-      job.status = status;
-      job.graceTimer = setTimeout(() => {
-        if (askJobs.get(id) === job) askJobs.delete(id);
-      }, ASK_LIMITS.jobGraceMs);
-      job.graceTimer.unref?.();
-    };
-    turn.on('done', () => settleJob('done'));
-    turn.on('error', () => settleJob('error'));
-    // Fire-and-forget with a backstop (startAgentGen shape) — run() never throws.
-    Promise.resolve()
-      .then(() => turn.run())
-      .catch((err) => {
-        console.error(`[worca-ui] ask turn crashed: ${err && err.message ? err.message : err}`);
-        settleJob('error');
-      });
+    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files });
+    if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
     // image thumbnails and the thread budget off them (the ask-message broadcast
     // may have raced ahead of this response, or been missed on a brand-new thread).
-    res.status(202).json({ userMessageId: job.userMessageId, assistantMessageId: job.messageId, attachments: echoAttachments });
+    res.status(202).json({ userMessageId: r.userMessageId, assistantMessageId: r.assistantMessageId, attachments: r.attachments });
   } catch (err) {
-    // Only pre-reservation throws land here (`job` is block-scoped to the outer
-    // try and every post-reservation failure returned from the inner catch), so
-    // there is no slot to release.
+    // startAskTurn never throws (it returns {ok:false,…}); only the route's own
+    // pre-checks can land here, so there is no slot to release.
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -4444,7 +4704,11 @@ function flipCard(threadId, cardId, patch) {
   const block = askUpdateCardBlock(threadId, cardId, patch);
   if (!block) return null;
   const job = askInFlight(threadId);
-  const live = job && job.turn && job.turn.reducer ? job.turn.reducer.updateBlock(cardId, patch) : null;
+  // The store SHALLOW-merges `patch.card` on a workflow card; the reducer's
+  // updateBlock replaces `card` wholesale — hand it the MERGED one (PD23),
+  // else the live frame loses every key this patch did not name.
+  const livePatch = patch && patch.card ? { ...patch, card: block.card } : patch;
+  const live = job && job.turn && job.turn.reducer ? job.turn.reducer.updateBlock(cardId, livePatch) : null;
   if (!live) {
     const found = askFindCard(threadId, cardId);
     if (found) broadcast({ type: 'ask-message', threadId, message: found.message });
@@ -4452,27 +4716,141 @@ function flipCard(threadId, cardId, patch) {
   return block;
 }
 
-// D14 dismiss ("Not now" keeps a stub — the client renders state:'dismissed').
-app.post('/api/ask/threads/:id/cards/:cardId', (req, res) => {
+// Card ids with a Save in flight: the mint + the row write await, so the
+// `state === 'proposed'` check alone would let two Saves both pass and write two rows.
+const askCardBusy = new Set();
+
+/** Save a PROPOSED workflow card: adopt the twin (nothing written) or write a new origin:'auto' row (spec §8.4, PD9). */
+async function saveWorkflowCard(threadId, block, body = {}) {
+  const card = block.card || {};
+  const registry = loadAgentRegistry(AGENTS_DIR);
+  const models = await listModels('');
+  // A non-string `name` would be stringified by cleanText ("[object Object]" as the
+  // workflow name) — only a string counts; anything else falls back to the card's own.
+  const ans = sanitizeProposalAnswer(
+    { decision: 'accept', name: typeof body.name === 'string' ? body.name : undefined, nodes: body.nodes },
+    { proposal: card, models, registry },
+  ) || { name: card.name, nodes: {} };
+  let workflowId; let name; let matched = false; let nodes = card.nodes;
+  // `card.match` is a snapshot from proposal time; a row archived or deleted since
+  // (composer delete) must not be "adopted" as a dangling id — re-check it still
+  // reads (readWorkflow returns null for archived/missing rows; wf_default always reads).
+  if (card.match && card.match.id && (await readWorkflow(card.match.id))) {
+    workflowId = card.match.id; name = card.match.name; matched = true;   // adopt: name/nodes ignored, row untouched
+  } else {
+    const r = await revalidateWorkflowProposal({
+      shape: { ...card.shape, name: ans.name }, projectKey: card.projectKey, models, registry,
+    });
+    if (r.match) { workflowId = r.match.id; name = r.match.name; matched = true; }   // a twin appeared since the proposal
+    else {
+      name = ans.name;
+      workflowId = await mintAutoWorkflowId(name, async (wid) => !!(await readWorkflow(wid, { includeArchived: true })));
+      await writeGraphWorkflow({ ...applyTunables(r.template, ans.nodes), id: workflowId, name, domain: 'coding', origin: 'auto' });
+      nodes = { ...(card.nodes || {}) };
+      for (const [nid, sel] of Object.entries(ans.nodes)) nodes[nid] = { ...(nodes[nid] || {}), ...sel };
+    }
+  }
+  // `adopted` tells the saved card which line to show ("Uses your saved workflow"
+  // vs "Saved as a new workflow, tagged Auto") — card.match is set on BOTH paths.
+  const flipped = flipCard(threadId, block.id, {
+    state: 'saved', workflowId, card: { name, nodes, match: { id: workflowId, name }, adopted: matched },
+  });
+  return { block: flipped, workflowId, name, matched };
+}
+
+/**
+ * The IMMEDIATE twin of drainAskDeferred's failure arm (PD29). The route answers the
+ * flip and `turn:{error,status}` in one 200, but by then the flip frame has already
+ * rebuilt the card element in every tab, so the panel's inline "Ask Worca could not
+ * reply" lands on a detached node and the human sees a saved card and no reply at all.
+ * The system notice row is the only channel that survives the rebuild; the response
+ * keeps `turn.error` for API clients.
+ */
+function failedEventTurn(threadId, turn) {
+  postAskSystemNotice(threadId, `Ask Worca could not reply to the workflow card: ${turn.error || 'unknown error'}`);
+  return turn;
+}
+
+/** Store the synthetic user-row notice and start (or queue) the assistant turn whose prompt is the event (spec §8.4, PD5/PD6/PD26). */
+async function startWorkflowEventTurn(threadId, block, { declined = false, thenRun = false } = {}) {
+  const thread = askGetThread(threadId);
+  if (!thread) return null;
+  const card = block.card || {};
+  const state = declined ? 'declined' : 'saved';
+  const text = workflowEventPrompt({
+    cardId: block.id, state, workflowId: block.workflowId, name: card.name, thenRun, projectKey: card.projectKey || '',
+  });
+  const notice = workflowNoticeText({ state, name: card.name, matched: !declined && card.adopted === true, thenRun });
+  let mv = await validateModelEffort(thread.model, thread.effort);
+  if (!mv.ok) {
+    const d = (await askCatalog({ withSecrets: false })).default;
+    if (!d) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
+    mv = { ok: true, ...d };
+  }
+  const start = () => startAskTurn({
+    threadId, thread: askGetThread(threadId) || thread, ctx: thread.context || {},
+    model: mv.model, effort: mv.effort, text, synthetic: { notice },
+  });
+  if (askInFlight(threadId)) {
+    // PD5/PD26: the flip stands and the reply waits — settleJob drains the queue
+    // when the running turn ends, and a starter that cannot reserve a slot then
+    // posts a system notice rather than vanishing.
+    if (!askDeferred.has(threadId)) askDeferred.set(threadId, []);
+    askDeferred.get(threadId).push(start);
+    return { deferred: true };
+  }
+  const r = await start();
+  if (r.ok) return { assistantMessageId: r.assistantMessageId };
+  return failedEventTurn(threadId, { error: r.error, status: r.status, ...(r.budget ? { budget: r.budget } : {}) });
+}
+
+// D14 dismiss ("Not now" keeps a stub — the client renders state:'dismissed') for a RUN card;
+// the workflow-card state machine (spec §8.4) for a workflow one. The card is looked up BEFORE
+// the body is validated because the legal verb set depends on the card's type.
+app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
   const cardId = askIdParam(res, req.params.cardId, 'card');
   if (!cardId) return;
   try {
     if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
-    if ((req.body || {}).state !== 'dismissed') return badRequest(res, 'state must be "dismissed"');
+    const body = req.body || {};
     const found = askFindCard(id, cardId);
     if (!found) return res.status(404).json({ error: 'card not found' });
-    if (found.block.state !== 'proposed') {
-      return res.status(409).json({ error: `card is ${found.block.state}` });
+    if (!(found.block.card && found.block.card.type === 'workflow')) {
+      if (body.state !== 'dismissed') return badRequest(res, 'state must be "dismissed"');
+      if (found.block.state !== 'proposed') {
+        return res.status(409).json({ error: `card is ${found.block.state}` });
+      }
+      const block = flipCard(id, cardId, { state: 'dismissed' });
+      // Dismiss is terminal: the card's parked comment ids can never reach a run,
+      // so drop them here exactly as the launch path does at its own success point
+      // (:1155). Own try/catch — comment bookkeeping must never fail the dismiss.
+      try { clearPendingCardComments(cardId); }
+      catch (e) { console.error('[diff-comments] dismiss cleanup failed:', e && e.message ? e.message : e); }
+      return res.json({ block });
     }
-    const block = flipCard(id, cardId, { state: 'dismissed' });
-    // Dismiss is terminal: the card's parked comment ids can never reach a run,
-    // so drop them here exactly as the launch path does at its own success point
-    // (:1155). Own try/catch — comment bookkeeping must never fail the dismiss.
-    try { clearPendingCardComments(cardId); }
-    catch (e) { console.error('[diff-comments] dismiss cleanup failed:', e && e.message ? e.message : e); }
-    res.json({ block });
+    // Workflow card state machine (spec §8.4): proposed → saved | declined. A saved card has no
+    // verb — its event turn proposes the run itself (thenRun) or offers one in chat.
+    if (body.state !== 'saved' && body.state !== 'declined') {
+      return badRequest(res, 'state must be "saved" or "declined"');
+    }
+    if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+    if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being saved' });
+    if (body.state === 'declined') {
+      const block = flipCard(id, cardId, { state: 'declined' });
+      if (!block) return res.status(409).json({ error: 'card vanished' });   // the thread was deleted between the lookup and the flip
+      const turn = await startWorkflowEventTurn(id, block, { declined: true });
+      return res.json({ block, turn });
+    }
+    askCardBusy.add(cardId);
+    let saved;
+    try { saved = await saveWorkflowCard(id, found.block, body); }
+    finally { askCardBusy.delete(cardId); }
+    // flipCard() null — the row (if written) stays, the card is gone with its thread.
+    if (!saved.block) return res.status(409).json({ error: 'card vanished' });
+    const turn = await startWorkflowEventTurn(id, saved.block, { thenRun: !!found.block.card.thenRun });
+    res.json({ block: saved.block, turn });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -5414,9 +5792,7 @@ app.use((req, res, next) => {
   if (req.method !== 'GET') return next();
   if (req.path.startsWith('/api/') || req.path.startsWith('/ws')) return next();
   if (req.path === '/vendor' || req.path.startsWith('/vendor/')) return next();
-  res.sendFile(path.join(PUBLIC_DIR, 'index.html'), (err) => {
-    if (err) next();
-  });
+  sendIndex(res);
 });
 
 // ---------------------------------------------------------------------------
@@ -5631,5 +6007,6 @@ export const _testing = {
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
+  askTrackRun, liveRunEntry,
   uiControl, bearerMatches,
 };

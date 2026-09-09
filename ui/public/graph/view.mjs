@@ -17,9 +17,10 @@
 // graphBounds/fitBounds are imported HERE even though only Task 3 calls them:
 // this is the file's one geometry import and Task 3 appends code, not imports.
 import {
-  NODE_W, ZOOM_MIN, ZOOM_MAX,
+  ZOOM_MIN, ZOOM_MAX,
   injectGeometry, nodeSize, portAnchor, graphBounds, fitBounds,
 } from '../../../src/shared/graph/geometry.mjs';
+import { flowLayout, flowAnchors, routeFlow, FLOW_DEFAULT_WIDTH, FLOW_RADIUS } from '../../../src/shared/graph/flow-layout.mjs';
 import { routeAll, routeWire, routePathD, routeMid } from '../../../src/shared/graph/route.mjs';
 import { portsOf, resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
 import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
@@ -85,6 +86,10 @@ export function createGraphView(host, {
   zoomMin = null,
   zoomMax = null,
   wheelPan = 'always',
+  scale = 1,             // geometry multiplier (A1): every --gv-* length × scale, fonts floor at 9px in CSS
+  layout = 'auto',       // 'auto' = the template's x/y (today) · 'flow' = rows in dispatch order (flow-layout.mjs)
+  band = null,           // (node) => {model, effort, flags:[{text, cls?, title?}]} | null — the chip band under agent heads
+  order = null,          // flow only: agent ids in dispatch order (a host may pass the proposal's `order[]`)
 } = {}) {
   const win = doc.defaultView || globalThis;
   const clamps = MODE_ZOOM[mode] || MODE_ZOOM.edit;
@@ -92,9 +97,16 @@ export function createGraphView(host, {
   const zMax = zoomMax == null ? clamps.max : zoomMax;
   const schedule = raf || ((fn) => (win.requestAnimationFrame ? win.requestAnimationFrame(fn) : setTimeout(fn, 16)));
   let agents = agentsIn || {};
+  const S = Number(scale) > 0 ? Number(scale) : 1;
+  const isFlow = layout === 'flow';
+  const hasBand = typeof band === 'function';
+  let bandOverride = null;          // Map(nodeId -> band data) set by setBands(); wins over band(node)
+  let source = null;                // the caller's template (flow re-lays it out on every render; never mutated)
+  let flowLay = null;               // last flowLayout() result (flow only)
+  let flowWidth = 0;                // last known host width (flow only; 0 => FLOW_DEFAULT_WIDTH)
 
   const stage = doc.createElement('div');
-  stage.className = `gv-stage gv-${mode}`;
+  stage.className = `gv-stage gv-${mode}${isFlow ? ' gv-flow' : ''}`;
   stage.setAttribute('tabindex', '0');
   stage.setAttribute('aria-label', 'pipeline canvas');
   const world = doc.createElement('div');
@@ -112,7 +124,8 @@ export function createGraphView(host, {
   // Never replaceChildren(host): `.gv-chip` and `.gv-ins-rail` are the stage's
   // SIBLINGS inside the same canvas host and must survive a (re)mount.
   host.prepend(stage);
-  injectGeometry(stage);
+  injectGeometry(stage, S);
+  const geo = { band: hasBand, scale: S };
 
   const nodeEls = new Map();      // nodeId  -> card element
   const wireEls = new Map();      // wireId  -> path element
@@ -140,7 +153,7 @@ export function createGraphView(host, {
     return n;
   };
   const portsAt = (node) => portsOf(portsFn, node) || { inputs: [], outputs: [] };
-  const sizeOf = (node) => nodeSize(node, portsAt(node), { footerRows: footers.get(node.id) || 0 });
+  const sizeOf = (node) => nodeSize(node, portsAt(node), { footerRows: footers.get(node.id) || 0, ...geo });
 
   // ------------------------------------------------------------ wire routing
   // Cards are the router's OBSTACLES, so every repaint derives the wire shapes
@@ -159,6 +172,12 @@ export function createGraphView(host, {
    *  the canonical full pass (D15). Also refreshes lastRect for every node. */
   function reroute(dirty = null) {
     if (!ctx || !current) return;
+    if (isFlow) {
+      // The flow router only needs the laid-out rows — no obstacles, no A*. Raw portsFn (A27).
+      routesBag = routeFlow(flowAnchors(current, portsFn, flowLay), flowLay);
+      for (const n of current.nodes) if (isNodeObj(n)) lastRect.set(n.id, rectOf(n));
+      return;
+    }
     const list = [];
     for (const w of current.wires) {
       if (!w || !w.from || !w.to) continue;
@@ -359,6 +378,34 @@ export function createGraphView(host, {
     return true;
   }
 
+  const bandDataOf = (node) => (bandOverride && bandOverride.has(node.id) ? bandOverride.get(node.id) : (hasBand ? band(node) : null));
+  // Separated: an unseparated join lets {model:'Opus', effort:'5'} and {model:'Opus5', effort:''}
+  // share a signature, and paintBand early-returns on an equal one — stale chips after setBands.
+  const bandSig = (b) => (b ? [b.model || '', b.effort || '', b.pick ? 'pick' : '', ...(b.flags || []).map((f) => `${f.text}|${f.cls || ''}`)].join('\u0001') : '');
+  /** The chip band: model · effort · flags, one BAND_H×s row between .nhead and .nbody (agents only).
+   *  `pick` (the chat card's proposed state, P3) makes the model/effort chips real buttons the host's delegated
+   *  click opens a picker for; flags stay inert. Listeners never live here: replaceChildren would drop them. */
+  function paintBand(el, node) {
+    let nb = el.querySelector(':scope > .nband');
+    if (!hasBand || node.kind !== 'agent') { if (nb) nb.remove(); return; }
+    const data = bandDataOf(node) || { model: '', effort: '', flags: [] };
+    const sig = bandSig(data);
+    if (nb && nb.dataset.sig === sig) return;
+    if (!nb) { nb = h('div', 'nband'); el.insertBefore(nb, el.querySelector(':scope > .nbody')); }
+    nb.dataset.sig = sig;
+    const pick = !!data.pick;
+    const chip = (cls, text, which, title) => {
+      const c = h(pick ? 'button' : 'span', cls, text);
+      c.title = title;
+      if (pick) { c.type = 'button'; c.dataset.chip = which; c.setAttribute('aria-haspopup', 'menu'); c.setAttribute('aria-expanded', 'false'); }
+      return c;
+    };
+    const kids = [chip(`bchip model${data.model ? '' : ' is-unset'}`, data.model || 'default', 'model', data.model ? `model: ${data.model}` : 'model: the CLI default')];
+    if (data.effort || pick) kids.push(chip('bchip effort', data.effort || 'effort', 'effort', data.effort ? `effort: ${data.effort}` : 'effort: pick one'));
+    for (const f of data.flags || []) { const c = h('span', `bchip flag${f.cls ? ` ${f.cls}` : ''}`, f.text); c.title = f.title || f.text; kids.push(c); }
+    nb.replaceChildren(...kids);
+  }
+
   function paintCard(el, node) {
     const p = portsAt(node);
     const orType = node.kind === 'or' ? resolveOrOutType(current, portsFn, node.id, new Set()) : null;
@@ -370,8 +417,9 @@ export function createGraphView(host, {
       el.classList.add('node', `node-${node.kind}`);
       el.dataset.kind = node.kind;
     }
-    el.style.width = `${NODE_W}px`;
-    el.style.height = `${sizeOf(node).h}px`;
+    const box = sizeOf(node);
+    el.style.width = `${box.w}px`;                 // inline width beats the CSS var (a scaled host)
+    el.style.height = `${box.h}px`;
     const head = el.querySelector(':scope > .nhead');
     const hd = headerOf(node);
     const sig = `${hd.cls}|${hd.title}|${hd.icon}`;
@@ -383,8 +431,11 @@ export function createGraphView(host, {
       icon.setAttribute('fill', 'none');
       icon.setAttribute('stroke', 'currentColor');
       icon.innerHTML = hd.icon;
-      head.replaceChildren(icon, h('span', 'tt', hd.title));
+      const tt = h('span', 'tt', hd.title);
+      tt.title = hd.title;                          // A35: an ellipsised name keeps its tooltip
+      head.replaceChildren(icon, tt);
     }
+    paintBand(el, node);
     paintBody(el, node, p, orType, awaitWired);
     placeCard(node);
   }
@@ -400,7 +451,7 @@ export function createGraphView(host, {
 
   const anchorOf = (end, dir) => {
     const node = ctx.byId.get(end.node);
-    return node ? portAnchor(node, portsAt(node), end.port, dir) : null;
+    return node ? portAnchor(node, portsAt(node), end.port, dir, geo) : null;
   };
 
   /** Writes `d` only when the cached string differs — the whole point of the cache. */
@@ -409,7 +460,7 @@ export function createGraphView(host, {
     if (!path) return;
     const pts = routesBag.routes.get(wireId);
     if (!pts) return;                           // dangling endpoint paints nothing, never NaN
-    const d = routePathD(pts);
+    const d = routePathD(pts, isFlow ? FLOW_RADIUS : undefined);
     if (dCache.get(wireId) !== d) {
       dCache.set(wireId, d);
       path.setAttribute('d', d);
@@ -417,7 +468,7 @@ export function createGraphView(host, {
     }
     const badge = badgeEls.get(wireId);
     if (badge) {
-      const mid = routeMid(pts);
+      const mid = (isFlow && routesBag.badges && routesBag.badges.get(wireId)) || routeMid(pts);
       badge.style.left = `${mid.x}px`;
       badge.style.top = `${mid.y}px`;
     }
@@ -463,7 +514,7 @@ export function createGraphView(host, {
         seenB.add(w.id);
         let badge = badgeEls.get(w.id);
         if (!badge) { badge = h('div', 'wbadge'); badge.dataset.wireId = w.id; badgeEls.set(w.id, badge); world.appendChild(badge); }
-        badge.textContent = `≤${budget}`;
+        badge.textContent = isFlow ? `${budget}×` : `≤${budget}`;
       }
       dCache.delete(w.id);                      // geometry may have moved: force one write
       paintWire(w.id);
@@ -490,13 +541,22 @@ export function createGraphView(host, {
     for (const [id, el] of wireEls) el.classList.toggle('bad', badWires.has(id));
   }
 
+  /** flow: lay the caller's template out in rows and return a POSITIONED COPY (never mutate the caller's). */
+  function layoutFlow(template) {
+    flowLay = flowLayout(template, portsFn, { width: flowWidth || FLOW_DEFAULT_WIDTH, scale: S, band: hasBand, agentOrder: order });
+    stage.style.height = `${flowLay.height}px`;
+    return { ...template, nodes: template.nodes.map((n) => (isNodeObj(n) && flowLay.positions[n.id] ? { ...n, ...flowLay.positions[n.id] } : n)) };
+  }
+
   function render(template, state = {}) {
-    current = template;
+    source = template;
+    current = isFlow ? layoutFlow(template) : template;
+    // ALL FOUR ctx fields read `current`: in flow mode `template` still carries the caller's x/y.
     ctx = {
-      byId: new Map(template.nodes.map((n) => [n.id, n])),
-      wireById: new Map(template.wires.map((w) => [w.id, w])),
-      wiredInputs: new Set(template.wires.filter((w) => w && w.to).map((w) => `${w.to.node}.${w.to.port}`)),
-      loopWireIds: classifyLoops(template, portsFn).loopWireIds,
+      byId: new Map(current.nodes.map((n) => [n.id, n])),
+      wireById: new Map(current.wires.map((w) => [w.id, w])),
+      wiredInputs: new Set(current.wires.filter((w) => w && w.to).map((w) => `${w.to.node}.${w.to.port}`)),
+      loopWireIds: classifyLoops(current, portsFn).loopWireIds,
     };
     renderNodes();
     renderWires();
@@ -521,7 +581,7 @@ export function createGraphView(host, {
    *  the card union, and a fit must never clip it (D9). */
   function bounds(pad = 0) {
     if (!current || !current.nodes.length) return null;
-    const base = graphBounds(current, portsAt, { pad: 0, footerRowsOf: (n) => footers.get(n.id) || 0 });
+    const base = graphBounds(current, portsAt, { pad: 0, footerRowsOf: (n) => footers.get(n.id) || 0, ...geo });
     if (!base) return null;
     let x0 = base.x; let y0 = base.y; let x1 = base.x + base.w; let y1 = base.y + base.h;
     for (const pts of routesBag.routes.values()) {
@@ -566,7 +626,22 @@ export function createGraphView(host, {
     template: () => current,
     ports: (node) => portsAt(node),
     size: (node) => sizeOf(node),
-    anchor: (node, portId, dir) => portAnchor(node, portsAt(node), portId, dir),
+    anchor: (node, portId, dir) => portAnchor(node, portsAt(node), portId, dir, geo),
+    layout,
+    /** flow: re-lay out for a host width (px) and repaint; returns the layout (null outside flow mode). */
+    relayout(width) {
+      if (!isFlow || !source) return flowLay;
+      flowWidth = Math.max(0, Number(width) || 0);
+      render(source, {});
+      setTransform({ x: 0, y: 0, z: 1 });
+      return flowLay;
+    },
+    flowLayout: () => flowLay,
+    /** Replace the band data for some nodes (the tunables table drives this); geometry never moves. */
+    setBands(map) {
+      bandOverride = map ? new Map(Object.entries(map)) : null;
+      for (const [id, el] of nodeEls) { const node = ctx && ctx.byId.get(id); if (node) paintBand(el, node); }
+    },
     incidentOf: (nodeId) => incident.get(nodeId) || new Set(),
     isLoopWire: (wireId) => Boolean(ctx && ctx.loopWireIds.has(wireId)),
     setSelection(sel) {
@@ -765,6 +840,7 @@ export function createGraphView(host, {
     },
     /** Static hosts: fit the graph into a card of width `w` (ResizeObserver-driven). */
     fitToWidth(w) {
+      if (isFlow) return view.relayout(w);
       const r = view.readRect();
       const b = bounds(60);
       if (!b) return;
@@ -818,13 +894,14 @@ export function createGraphView(host, {
         const head = el.querySelector(':scope > .nhead');
         if (head) delete head.dataset.sig;
       }
-      if (current) render(current, {});
+      if (current) render(source || current, {});
     },
     destroy() {
       for (const n of navs.splice(0)) n.destroy();
       stage.remove();
       nodeEls.clear(); wireEls.clear(); badgeEls.clear(); incident.clear(); dCache.clear(); footers.clear();
       current = null; ctx = null;
+      source = null; flowLay = null; bandOverride = null;
     },
   };
   // Internals the later tasks' fast paths close over.
@@ -842,17 +919,30 @@ export function thumbnailFor(template, portsFn, { width = 240, height = 96 } = {
 /** A non-interactive graph for a fixed-width card (saved rows, Running list).
  *  NO listeners: the card's own click handler must keep working, which is why
  *  `.gv-static .node` is pointer-events:none in style.css. */
-export function mountStaticGraph(host, template, { doc = globalThis.document, portsFn, agents = {}, width = 0, viewport = null } = {}) {
-  const view = createGraphView(host, { doc, mode: 'static', portsFn, agents, viewport });
+export function mountStaticGraph(host, template, {
+  doc = globalThis.document, portsFn, agents = {}, width = 0, viewport = null,
+  scale = 1, layout = 'auto', band = null, order = null, onLayout = null,
+} = {}) {
+  const view = createGraphView(host, { doc, mode: 'static', portsFn, agents, viewport, scale, layout, band, order });
   view.render(template, {});
-  const paint = () => view.fitToWidth(width || host.clientWidth || 0);
+  const isFlow = layout === 'flow';
+  const widthOf = () => host.clientWidth || width || 0;
+  const paint = () => {
+    if (!isFlow) { view.fitToWidth(width || host.clientWidth || 0); return; }
+    const lay = view.relayout(widthOf());          // 0 → FLOW_DEFAULT_WIDTH inside the view
+    host.style.height = `${lay.height}px`;         // the host grows with the rows (min 120)
+    if (onLayout) onLayout(lay);
+  };
   paint();
   const win = doc.defaultView || globalThis;
+  const inner = view.destroy;
+  let ro = null;
   if (typeof win.ResizeObserver === 'function') {
-    const ro = new win.ResizeObserver(() => view.fitToWidth(host.clientWidth || width || 0));
+    let lastW = host.clientWidth;
+    ro = new win.ResizeObserver(() => { const w = host.clientWidth; if (isFlow && w === lastW) return; lastW = w; paint(); });
     ro.observe(host);
-    const inner = view.destroy;
-    view.destroy = () => { ro.disconnect(); inner(); };
   }
+  let dead = false;
+  view.destroy = () => { if (dead) return; dead = true; if (ro) ro.disconnect(); inner(); if (isFlow) host.style.removeProperty('height'); };
   return view;
 }

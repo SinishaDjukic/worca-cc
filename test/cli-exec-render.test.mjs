@@ -164,7 +164,7 @@ test('the CLI renders exec lines ONLY, drops stop noise, prints the pure summary
   const { readFileSync } = await import('node:fs');
   const { fileURLToPath } = await import('node:url');
   const src = readFileSync(fileURLToPath(new URL('../src/cli/worca-cc.mjs', import.meta.url)), 'utf8');
-  assert.ok(/import \{ formatExecLine, formatGateHeader, formatRunSummary \} from '\.\/render\.mjs';/.test(src), 'the CLI imports the pure renderer');
+  assert.ok(/import \{ formatExecLine, formatGateHeader, formatRunSummary, formatWorkflowProposal \} from '\.\/render\.mjs';/.test(src), 'the CLI imports the pure renderer');
   assert.ok(/orch\.on\('exec'/.test(src), 'exec lines are the CLI renderer');
   assert.equal(/orch\.on\('phase'/.test(src), false, 'the v1 phase listener is gone');
   assert.equal(/function (phaseLabel|statusMark)\(/.test(src), false, 'and so are its two renderers');
