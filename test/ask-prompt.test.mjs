@@ -381,9 +381,10 @@ test('buildRestoredPrompt: newest messages first within the cap, chronological o
 // are pinned by substring here so a future edit cannot drop them.
 test('the prompt advertises the worktree tools and the native file tools, and the sandbox note names both', () => {
   for (const t of ['open_worktree', 'list_worktrees', 'remove_worktree', 'propose_run',
-    'list_diff_comments', 'add_diff_comment', 'resolve_diff_comment', 'delete_diff_comment']) {
+    'list_diff_comments', 'add_diff_comment', 'reply_to_diff_comment', 'resolve_diff_comment', 'delete_diff_comment']) {
     assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 1 enumerates ${t}`);
   }
+  assert.ok(ASK_SYSTEM_RULES.includes('reply_to_diff_comment'), 'rule 9 tells the model to answer a comment in its thread');
   assert.ok(ASK_SYSTEM_RULES.includes('cat-file'), 'the "no raw git read" guidance survives');
   assert.ok(ASK_SYSTEM_RULES.includes('DETACHED'), 'rule 7 states the checkout is detached');
   for (const t of ['Read', 'Grep', 'Glob']) assert.ok(ASK_SYSTEM_RULES.includes(t), `the rules advertise ${t}`);

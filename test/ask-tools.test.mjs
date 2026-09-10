@@ -365,10 +365,10 @@ const fake = {
 };
 const tools = createAskTools(fake);
 
-test('list(): seventeen tools with JSON-Schema inputs', () => {
+test('list(): eighteen tools with JSON-Schema inputs', () => {
   const defs = tools.list();
   assert.deepEqual(defs.map((d) => d.name), ['list_projects', 'list_workflows', 'list_runs', 'get_run', 'get_run_diff', 'track_run', 'propose_run', 'propose_workflow', 'read_attachment',
-    'list_diff_comments', 'add_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
+    'list_diff_comments', 'add_diff_comment', 'reply_to_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
     'open_worktree', 'list_worktrees', 'remove_worktree', 'git']);
   for (const d of defs) {
     assert.ok(typeof d.description === 'string' && d.description.length > 20, `${d.name} description`);

@@ -363,6 +363,10 @@ export function createAskTools(deps) {
         path: SCHEMA.s('file path as it appears in the diff'), side: SCHEMA.s('"old" or "new"'),
         line: SCHEMA.i('line number on that side', 1, Number.MAX_SAFE_INTEGER),
         body: SCHEMA.s(`the comment text (max ${L.commentBodyMaxChars} chars)`) }, ['id', 'path', 'side', 'line', 'body']) },
+    { name: 'reply_to_diff_comment',
+      description: 'Reply inside the thread of one diff comment (authored by you). commentId is the thread\'s FIRST comment — a dc_… id from list_diff_comments, or the id quoted in the user\'s "[diff comment dc_… — path:line (side)]" reference. Replies to a reply are refused (threads are one level deep). Use it when the user asks you to answer, explain or respond to a comment, so the answer sits next to the code. A reply never resolves anything.',
+      inputSchema: SCHEMA.obj({ commentId: SCHEMA.s('id of the thread\'s first comment (dc_…)'),
+        body: SCHEMA.s(`the reply text (max ${L.commentBodyMaxChars} chars)`) }, ['commentId', 'body']) },
     { name: 'resolve_diff_comment',
       description: 'Mark one diff comment resolved, or reopen it with resolved:false. Nothing is deleted, and resolving is never automatic — do it only when the user asks.',
       inputSchema: SCHEMA.obj({ commentId: SCHEMA.s('comment id (dc_…) from list_diff_comments'),
@@ -431,6 +435,7 @@ export function createAskTools(deps) {
     side: c.side, line: c.line,
     lineText: deps.redact(c.lineText), body: deps.redact(c.body), author: c.author,
     resolved: c.resolved, resolvedAt: c.resolvedAt, sentRunId: c.sentRunId, createdAt: c.createdAt,
+    parentId: c.parentId ?? null,
   });
 
   // Comment failures are model-actionable -> AskToolError text, never a crash.
@@ -727,12 +732,23 @@ export function createAskTools(deps) {
       // Re-applied here even though `keep` was handed to the bundle above: the
       // filter is this module's guarantee, not the bundle's, and it costs nothing
       // on rows that are already gone.
-      const comments = raw.filter((c) => !commentBlocked(c)).map((c) => ({
+      const visible = raw.filter((c) => !commentBlocked(c));
+      // Threads (D7): roots at the top, each with its replies nested in creation
+      // order. A reply whose root the guard dropped is dropped with it — same path,
+      // same verdict — so nothing here can leak a hidden thread through a reply.
+      const byParent = new Map();
+      for (const c of visible) {
+        if (!c.parentId) continue;
+        if (!byParent.has(c.parentId)) byParent.set(c.parentId, []);
+        byParent.get(c.parentId).push(c);
+      }
+      const comments = visible.filter((c) => !c.parentId).map((c) => ({
         ...shapeComment(c),
         // Every string the model sees is redacted: line_text and the context come
         // from the patch, and the BODY is user-authored text that can hold a pasted
         // secret just as easily. shapeComment already redacts the first two.
         ...(Array.isArray(c.context) && c.context.length ? { context: c.context.map((l) => deps.redact(l)) } : {}),
+        replies: (byParent.get(c.id) || []).map(shapeComment),
       }));
       return { runId: row.id, patchAvailable: patchText != null, comments };
     },
@@ -749,6 +765,18 @@ export function createAskTools(deps) {
         });
         return { comment: shapeComment(comment) };
       } catch (err) { throw asCommentError('add_diff_comment', err); }
+    },
+    async reply_to_diff_comment(input) {
+      const id = str(input.commentId);
+      if (!id) throw new AskToolError('reply_to_diff_comment: commentId is required');
+      // The read filter applies to the PARENT (D5): a thread the guard hides takes
+      // no reply by id, and the refusal text never becomes an existence oracle.
+      const parent = deps.comments.get(id);
+      if (!parent || commentBlocked(parent)) throw new AskToolError('reply_to_diff_comment: comment not found');
+      try {
+        const comment = deps.comments.reply({ parentId: id, body: str(input.body) });
+        return { comment: shapeComment(comment) };
+      } catch (err) { throw asCommentError('reply_to_diff_comment', err); }
     },
     async resolve_diff_comment(input) {
       const id = str(input.commentId);
@@ -769,7 +797,9 @@ export function createAskTools(deps) {
       if (input.resolved !== undefined && typeof input.resolved !== 'boolean') {
         throw new AskToolError('resolve_diff_comment: resolved must be true or false');
       }
-      const comment = deps.comments.setResolved(id, input.resolved !== false);
+      let comment;
+      try { comment = deps.comments.setResolved(id, input.resolved !== false); }
+      catch (err) { throw asCommentError('resolve_diff_comment', err); }   // a reply id: D2, the store refuses
       if (!comment) throw new AskToolError('resolve_diff_comment: comment not found');
       return { comment: shapeComment(comment) };
     },

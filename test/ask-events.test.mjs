@@ -166,6 +166,7 @@ test('labelForTool table', () => {
   assert.equal(labelForTool('mcp__worca__add_diff_comment', {}), 'Writing a diff comment');
   assert.equal(labelForTool('mcp__worca__resolve_diff_comment', {}), 'Updating a diff comment');
   assert.equal(labelForTool('mcp__worca__delete_diff_comment', {}), 'Deleting a diff comment');
+  assert.equal(labelForTool('mcp__worca__reply_to_diff_comment', {}), 'Replying to a diff comment');
 
   assert.equal(labelForTool('Task', {}), null);
   assert.equal(labelForTool('Agent', {}), null);
@@ -182,6 +183,14 @@ test('a successful comment write calls onCommentMutation; an error result does n
   h.push(atool('msg_1', 'toolu_3', 'mcp__worca__list_diff_comments', { id: '4e1f2a9b' }));
   h.push(uresult('toolu_3', JSON.stringify({ runId: '4e1f2a9b', comments: [] })));
   assert.deepEqual(seen, [{ runId: '4e1f2a9b' }], 'writes only, successes only');
+});
+
+test('a successful reply_to_diff_comment calls onCommentMutation like the other comment writes', () => {
+  const seen = [];
+  const h = harness({ onCommentMutation: (e) => seen.push(e) });
+  h.push(atool('msg_r', 'toolu_r', 'mcp__worca__reply_to_diff_comment', { commentId: 'dc_00000001', body: 'x' }));
+  h.push(uresult('toolu_r', JSON.stringify({ comment: { id: 'dc_00000002', runId: 'abcdef12', storeKey: 'p-1' } })));
+  assert.deepEqual(seen, [{ runId: 'abcdef12' }]);
 });
 
 test('an unparseable comment-write result pokes nothing and does not throw', () => {
