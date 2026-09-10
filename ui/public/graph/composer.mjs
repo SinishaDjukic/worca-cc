@@ -374,6 +374,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   const onSaveClick = () => openSaveDialog();
   const onZoomIn = () => zoomStep(ZOOM_STEP);
   const onZoomOut = () => zoomStep(1 / ZOOM_STEP);
+  const onCenterClick = () => centerGraph();
 
   function zoomAbout(zNext, sx, sy) {
     const t = T();
@@ -414,6 +415,17 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   function zoomStep(mult) {
     const c = bandCenter();
     zoomAbout(T().z * mult, c.x, c.y);
+  }
+  /** Pan the drawing's bounds centre to the band centre. The ZOOM IS UNTOUCHED
+   *  (the user's decision): the +/- buttons own the scale, this button only
+   *  re-finds the cards. `bounds(0)` is the model union INCLUDING routed wire
+   *  vertices, so a backward detour cannot sit off-screen after a centre. */
+  function centerGraph() {
+    const c = bandCenter();
+    const b = view.bounds(0);
+    if (!b) return;
+    const z = T().z;
+    view.setTransform({ x: c.x - (b.x + b.w / 2) * z, y: c.y - (b.y + b.h / 2) * z, z });
   }
   /** The cluster's only state: a button that cannot move is disabled. Guarded
    *  per element — every headless caller (unit tests, the CDP probe) may hand us
@@ -815,6 +827,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     hostEls.saveBtn?.addEventListener('click', onSaveClick);
     hostEls.zoomIn?.addEventListener('click', onZoomIn);
     hostEls.zoomOut?.addEventListener('click', onZoomOut);
+    hostEls.centerBtn?.addEventListener('click', onCenterClick);
     setRail(readKey(INSPECTOR_KEY) !== 'collapsed');
     setTab(readKey(TAB_KEY) || TABS[0]);
     // The model/effort lists are chrome, not graph state: pull them once through
@@ -854,6 +867,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     hostEls.saveBtn?.removeEventListener('click', onSaveClick);
     hostEls.zoomIn?.removeEventListener('click', onZoomIn);
     hostEls.zoomOut?.removeEventListener('click', onZoomOut);
+    hostEls.centerBtn?.removeEventListener('click', onCenterClick);
     endPalDrag();
     stage.removeEventListener('pointermove', onMove);
     stage.removeEventListener('pointerup', onUp);
@@ -898,7 +912,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   const composer = {
     view, stats, hooks,
     mount, destroy, resume, suspend, commit, loadTemplate,
-    fit, autoLayout: runAutoLayout, zoomAbout, zoomStep, undo, redo, undoDepth: () => undoStack.length, deleteSelection,
+    fit, autoLayout: runAutoLayout, zoomAbout, zoomStep, centerGraph, undo, redo, undoDepth: () => undoStack.length, deleteSelection,
     spawn, paintPalette, paintInspector,
     openSaveDialog, setSavedDomains(list) { savedDomains = list || []; },
     setModels(cfg) { modelsSet = true; applyModels(cfg || {}); },

@@ -1000,3 +1000,26 @@ test('a routed model locks the sub-agent select; a plain model keeps it editable
   assert.ok(free.options.length > 1, 'the alias/auto/inherit options are back');
   assert.equal(free.value, 'sonnet', 'the preserved pin is re-selected after unlocking');
 });
+
+test('Center pans the graph centre into the band and never touches the zoom', async () => {
+  const s = await open();
+  s.c.view.setTransform({ x: 0, y: 0, z: 1.3 });
+  click(s, s.el.center);
+  assert.equal(s.c.view.getTransform().z, 1.3, 'pan only: the zoom the user picked survives');
+  const b = s.c.view.bounds(0);
+  const c = s.c._internal.toWorld(BAND_CX, BAND_CY);
+  assert.ok(Math.abs(c.x - (b.x + b.w / 2)) < 1e-6, 'the bounds centre sits under the band centre');
+  assert.ok(Math.abs(c.y - (b.y + b.h / 2)) < 1e-6);
+});
+
+test('Center follows the rail: collapsing it widens the band it centres into', async () => {
+  const s = await open();
+  s.c.view.setTransform({ x: 0, y: 0, z: 1 });
+  click(s, s.el.center);
+  const withRail = s.c.view.getTransform().x;
+  s.el.insRail.dataset.open = 'collapsed';
+  click(s, s.el.center);
+  const collapsed = s.c.view.getTransform().x;
+  assert.ok(Math.abs(collapsed - withRail - (340 - 28) / 2) < 1e-6,
+    'the band centre moved right by half the freed rail (INSET_OPEN - INSET_COLLAPSED)/2');
+});
