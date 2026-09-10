@@ -1001,25 +1001,29 @@ test('a routed model locks the sub-agent select; a plain model keeps it editable
   assert.equal(free.value, 'sonnet', 'the preserved pin is re-selected after unlocking');
 });
 
-test('Center pans the graph centre into the band and never touches the zoom', async () => {
+test('Center is a zoom-to-FIT: it scales the graph into the band, never past 1x, and lands its centre on the band centre', async () => {
   const s = await open();
   s.c.view.setTransform({ x: 0, y: 0, z: 1.3 });
   click(s, s.el.center);
-  assert.equal(s.c.view.getTransform().z, 1.3, 'pan only: the zoom the user picked survives');
-  const b = s.c.view.bounds(0);
+  const b = s.c.view.bounds(60);                       // fit() pads by 60
+  const expect = Math.max(0.4, Math.min(1, Math.min(BAND_CX * 2 / b.w, 560 / b.h)));
+  assert.ok(Math.abs(s.c.view.getTransform().z - expect) < 1e-9, 'the zoom is the fit zoom, clamped 0.4..1');
   const c = s.c._internal.toWorld(BAND_CX, BAND_CY);
-  assert.ok(Math.abs(c.x - (b.x + b.w / 2)) < 1e-6, 'the bounds centre sits under the band centre');
+  assert.ok(Math.abs(c.x - (b.x + b.w / 2)) < 1e-6, 'the padded bounds centre sits under the band centre');
   assert.ok(Math.abs(c.y - (b.y + b.h / 2)) < 1e-6);
+  assert.equal(s.el.zoomIn.disabled, false, 'and the cluster repaints off the fit');
 });
 
-test('Center follows the rail: collapsing it widens the band it centres into', async () => {
+test('Center follows the rail: collapsing it fits into the wider band', async () => {
   const s = await open();
-  s.c.view.setTransform({ x: 0, y: 0, z: 1 });
   click(s, s.el.center);
-  const withRail = s.c.view.getTransform().x;
+  const withRail = s.c.view.getTransform();
   s.el.insRail.dataset.open = 'collapsed';
   click(s, s.el.center);
-  const collapsed = s.c.view.getTransform().x;
-  assert.ok(Math.abs(collapsed - withRail - (340 - 28) / 2) < 1e-6,
-    'the band centre moved right by half the freed rail (INSET_OPEN - INSET_COLLAPSED)/2');
+  const collapsed = s.c.view.getTransform();
+  const b = s.c.view.bounds(60);
+  const bandW = 1280 - 28;                             // INSET_COLLAPSED
+  assert.ok(collapsed.z >= withRail.z - 1e-12, 'the freed rail can only widen the band');
+  const c = s.c._internal.toWorld(bandW / 2, BAND_CY);
+  assert.ok(Math.abs(c.x - (b.x + b.w / 2)) < 1e-6, 'and the fit centres on the NEW band centre');
 });

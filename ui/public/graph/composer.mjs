@@ -14,7 +14,7 @@ import { createGraphView } from './view.mjs';
 import { renderPalette, applyFilter, FLOW_GROUP } from './palette.mjs';
 import { renderNodeInspector, renderWireInspector, renderEmptyInspector } from './inspector.mjs';
 import { renderSaveDialog, openDialog, closeDialog } from './save-dialog.mjs';
-import { PORT_HIT_R, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, NODE_W, snap }
+import { PORT_HIT_R, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, ZOOM_STEP, NODE_W, snap }
   from '../../../src/shared/graph/geometry.mjs';
 import { hitRoute } from '../../../src/shared/graph/route.mjs';
 import { canWire, newNode, newWire, normalizeTemplate, serializeTemplate }
@@ -34,9 +34,6 @@ export const TABS = Object.freeze(['agents', 'info']);
 /** px of canvas hidden under the floating inspector rail (§7.6 constants). */
 export const INSET_OPEN = 340;
 export const INSET_COLLAPSED = 28;
-/** Multiplier per zoom-BUTTON press. The wheel/pinch path keeps its own
- *  exponential curve (ZOOM_K in geometry.mjs); a button is a discrete step. */
-export const ZOOM_STEP = 1.2;
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 /** 'plugin:demo-plug' -> 'demo-plug'; anything else -> ''. `origin` is a row
@@ -68,7 +65,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
 
   const view = createGraphView(hostEls.canvas, {
     doc, mode: 'edit', portsFn, agents, viewport,
-    zoomMin: ZOOM_MIN, zoomMax: ZOOM_MAX, wheelPan: 'always',
+    zoomMin: ZOOM_MIN, zoomMax: ZOOM_MAX,
   });
   const stage = view.stage;
 
@@ -374,7 +371,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   const onSaveClick = () => openSaveDialog();
   const onZoomIn = () => zoomStep(ZOOM_STEP);
   const onZoomOut = () => zoomStep(1 / ZOOM_STEP);
-  const onCenterClick = () => centerGraph();
+  const onCenterClick = () => fit();
 
   function zoomAbout(zNext, sx, sy) {
     const t = T();
@@ -415,17 +412,6 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   function zoomStep(mult) {
     const c = bandCenter();
     zoomAbout(T().z * mult, c.x, c.y);
-  }
-  /** Pan the drawing's bounds centre to the band centre. The ZOOM IS UNTOUCHED
-   *  (the user's decision): the +/- buttons own the scale, this button only
-   *  re-finds the cards. `bounds(0)` is the model union INCLUDING routed wire
-   *  vertices, so a backward detour cannot sit off-screen after a centre. */
-  function centerGraph() {
-    const c = bandCenter();
-    const b = view.bounds(0);
-    if (!b) return;
-    const z = T().z;
-    view.setTransform({ x: c.x - (b.x + b.w / 2) * z, y: c.y - (b.y + b.h / 2) * z, z });
   }
   /** The cluster's only state: a button that cannot move is disabled. Guarded
    *  per element — every headless caller (unit tests, the CDP probe) may hand us
@@ -912,7 +898,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   const composer = {
     view, stats, hooks,
     mount, destroy, resume, suspend, commit, loadTemplate,
-    fit, autoLayout: runAutoLayout, zoomAbout, zoomStep, centerGraph, undo, redo, undoDepth: () => undoStack.length, deleteSelection,
+    fit, autoLayout: runAutoLayout, zoomAbout, zoomStep, undo, redo, undoDepth: () => undoStack.length, deleteSelection,
     spawn, paintPalette, paintInspector,
     openSaveDialog, setSavedDomains(list) { savedDomains = list || []; },
     setModels(cfg) { modelsSet = true; applyModels(cfg || {}); },

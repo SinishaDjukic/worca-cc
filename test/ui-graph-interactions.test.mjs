@@ -79,35 +79,34 @@ test('the composer canvas swallows EVERY wheel — plain, ctrl and meta — and 
 // ─── wheel preventDefault, canvas 2: the run monitor ─────────────────────────
 // CDP: verify-run-monitor-cdp.mjs check(6) `prevented0` / `prevented1`.
 
-test('the monitor canvas preventDefaults only what it consumes: ctrl+wheel always, a plain wheel only while engaged', () => {
+test('the monitor canvas preventDefaults only what it consumes: ⌘/ctrl+wheel always, a plain wheel never', () => {
   const { window, host, view } = mountView('monitor');
-  const nav = view.createNav({ wheelPan: 'engaged' });
+  const nav = view.createNav();
   const stage = view.stage;
   view.setTransform({ x: 0, y: 0, z: 1 });
 
-  // (a) disengaged: a plain wheel belongs to the PAGE — untouched and unmoved.
+  // (a) a plain wheel belongs to the PAGE — untouched and unmoved, with no click first.
   const idle = wheelOn(window, stage, { clientX: 400, clientY: 200, deltaX: 40, deltaY: -25 });
-  assert.equal(idle.defaultPrevented, false, 'a disengaged plain wheel scrolls the page');
+  assert.equal(idle.defaultPrevented, false, 'a plain wheel scrolls the page');
   assert.deepEqual(view.getTransform(), { x: 0, y: 0, z: 1 }, 'and pans nothing');
 
-  // (b) ctrl+wheel zooms with no click at all, and it is always consumed.
-  const zoom = wheelOn(window, stage, { clientX: 400, clientY: 200, deltaY: -120, ctrlKey: true });
-  assert.equal(zoom.defaultPrevented, true, 'the pinch/ctrl zoom is consumed even while disengaged');
-  assert.ok(view.getTransform().z > 1, 'and it really zoomed in');
-
-  // (c) a press on the stage engages; the plain wheel then pans by −delta.
-  view.setTransform({ x: 0, y: 0, z: 1 });
+  // (b) a press does NOT change that: there is no engagement any more.
   stage.dispatchEvent(pev(window, 'pointerdown', { button: 0, clientX: 400, clientY: 200 }));
-  assert.equal(nav.isEngaged(), true);
-  const panned = wheelOn(window, stage, { clientX: 400, clientY: 200, deltaX: 40, deltaY: -25 });
-  assert.equal(panned.defaultPrevented, true, 'an engaged plain wheel is the canvas\'s');
-  assert.deepEqual(view.getTransform(), { x: -40, y: 25, z: 1 });
+  window.document.dispatchEvent(pev(window, 'pointerup', { clientX: 400, clientY: 200 }));
+  const after = wheelOn(window, stage, { clientX: 400, clientY: 200, deltaX: 40, deltaY: -25 });
+  assert.equal(after.defaultPrevented, false, 'clicking the canvas never captures the page scroll');
+  assert.deepEqual(view.getTransform(), { x: 0, y: 0, z: 1 });
 
-  // (d) Escape releases the engagement and the page gets the wheel back.
-  window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  assert.equal(nav.isEngaged(), false);
-  const released = wheelOn(window, stage, { clientX: 400, clientY: 200, deltaY: 120 });
-  assert.equal(released.defaultPrevented, false, 'Escape gives the wheel back to the page');
+  // (c) ctrl+wheel and meta+wheel zoom, and are always consumed.
+  for (const mod of [{ ctrlKey: true }, { metaKey: true }]) {
+    const z0 = view.getTransform().z;
+    const zoom = wheelOn(window, stage, { clientX: 400, clientY: 200, deltaY: -120, ...mod });
+    assert.equal(zoom.defaultPrevented, true, `${JSON.stringify(mod)}+wheel is the canvas's`);
+    assert.ok(view.getTransform().z > z0, 'and it really zoomed in');
+  }
+  nav.destroy();
+  const dead = wheelOn(window, stage, { clientX: 400, clientY: 200, deltaY: -120, ctrlKey: true });
+  assert.equal(dead.defaultPrevented, false, 'destroy() unbinds the wheel handler');
   assert.equal(host.isConnected, true);
 });
 

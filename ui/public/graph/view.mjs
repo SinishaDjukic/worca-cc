@@ -17,7 +17,7 @@
 // graphBounds/fitBounds are imported HERE even though only Task 3 calls them:
 // this is the file's one geometry import and Task 3 appends code, not imports.
 import {
-  ZOOM_MIN, ZOOM_MAX,
+  ZOOM_MIN, ZOOM_MAX, ZOOM_K,
   injectGeometry, nodeSize, portAnchor, graphBounds, fitBounds,
 } from '../../../src/shared/graph/geometry.mjs';
 import { flowLayout, flowAnchors, routeFlow, FLOW_DEFAULT_WIDTH, FLOW_RADIUS } from '../../../src/shared/graph/flow-layout.mjs';
@@ -32,6 +32,10 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 /** Legend copy is NORMATIVE (spec §7.1); the agents card header row renders it. */
 export const LEGEND_TEXT = 'grey = data · amber = loop · ◆ = conditional · ○ = gate · ⤫N = fan-out';
 export const FANOUT_GLYPH = '⤫';
+/** px a press must travel before it becomes a PAN rather than a click. The run
+ *  canvas delegates row/gate/result clicks off the same stage, so the threshold
+ *  is what keeps a shaky click from stealing them. */
+export const DRAG_PX = 4;
 
 /** Per-mode zoom clamps (§7.6). `edit` uses the geometry defaults. */
 export const MODE_ZOOM = {
@@ -85,7 +89,6 @@ export function createGraphView(host, {
   viewport = null,
   zoomMin = null,
   zoomMax = null,
-  wheelPan = 'always',
   scale = 1,             // geometry multiplier (A1): every --gv-* length × scale, fonts floor at 9px in CSS
   layout = 'auto',       // 'auto' = the template's x/y (today) · 'flow' = rows in dispatch order (flow-layout.mjs)
   band = null,           // (node) => {model, effort, flags:[{text, cls?, title?}]} | null — the chip band under agent heads
@@ -310,7 +313,9 @@ export function createGraphView(host, {
     const res = h('div', 'xresult');           // kind: 'result'
     if (!band.path) { res.textContent = band.text || ''; return res; }
     const a = h('a', null, band.text || '');
-    a.href = '#'; a.dataset.path = band.path; a.title = band.path;
+    // draggable=false: Chrome drags an <a href> natively, which pointercancels a
+    // pan that started on it (D16). The click stays delegated to run-hosts.
+    a.href = '#'; a.draggable = false; a.dataset.path = band.path; a.title = band.path;
     res.appendChild(a);
     return res;
   }
@@ -616,7 +621,7 @@ export function createGraphView(host, {
   const toScreen = (wx, wy) => ({ x: wx * T.z + T.x, y: wy * T.z + T.y });
 
   const view = {
-    stage, world, wiresEl, ghostEl: ghost, mode, stats, schedule, wheelPan,
+    stage, world, wiresEl, ghostEl: ghost, mode, stats, schedule,
     zoomMin: zMin, zoomMax: zMax,
     render,
     setTransform,
@@ -848,37 +853,110 @@ export function createGraphView(host, {
       const f = fitBounds(b, { width: vw, height: Number.MAX_SAFE_INTEGER }, { zoomMin: zMin, zoomMax: 1 });   // width decides z
       setTransform({ x: f.tx, y: (Math.max(1, r.height || 0) - b.h * f.z) / 2 - b.y * f.z, z: f.z });
     },
-    /** Wheel/zoom nav for `monitor` hosts. `static` gets nothing; `edit` binds its
-     *  own richer pipeline in composer.mjs and does NOT call this. */
-    createNav({ wheelPan: pan = wheelPan, onEngaged = null } = {}) {
+    /** Wheel zoom + (Task 2) left-drag pan for `monitor` hosts. `static` gets
+     *  nothing; `edit` binds its own richer pipeline in composer.mjs and does NOT
+     *  call this. POLICY (2026-09-10): a modifier-less wheel is the PAGE's — this
+     *  canvas never traps a scroll — and ⌘/ctrl+wheel zooms about the cursor.
+     *  The trackpad pinch arrives as ctrl+wheel on macOS, Windows and Linux alike.
+     *  `onTransform` fires after every transform the NAV writes (the host repaints
+     *  its zoom buttons off it); a programmatic setTransform/fit never calls it. */
+    createNav({ onTransform = null } = {}) {
       if (mode === 'static') return { destroy() {} };
-      let engaged = pan === 'always';
-      const setEngaged = (v) => { if (engaged !== v) { engaged = v; if (onEngaged) onEngaged(v); } };
+      const emit = () => { if (onTransform) onTransform({ ...T }); };
       const onWheel = (ev) => {
-        const zoom = ev.ctrlKey || ev.metaKey;
-        if (!zoom && !engaged) return;                   // engaged-only: let the PAGE scroll
+        if (!(ev.ctrlKey || ev.metaKey)) return;         // the page keeps its scroll
         ev.preventDefault();
+        readRect();                                      // the page may have scrolled since the last fit
         const m = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? (R.height || 560) : 1;
-        if (zoom) { zoomAbout(T.z * Math.exp(-ev.deltaY * m * 0.002), ev.clientX - R.left, ev.clientY - R.top); return; }
-        setTransform({ x: T.x - ev.deltaX * m, y: T.y - ev.deltaY * m, z: T.z });
+        zoomAbout(T.z * Math.exp(-ev.deltaY * m * ZOOM_K), ev.clientX - R.left, ev.clientY - R.top);
+        emit();
       };
-      const engage = () => setEngaged(true);
-      const disengage = (ev) => { if (pan !== 'always' && !stage.contains(ev.target)) setEngaged(false); };
-      const onKey = (ev) => { if (ev.key === 'Escape' && pan !== 'always') setEngaged(false); };
-      view.readRect();
+      // ---- left-drag pan ---------------------------------------------------
+      // The press is NOT preventDefault'ed: the run host delegates .xrow /
+      // .xtoggle / .ngate / .xresult clicks off this very stage, so a press that
+      // never crosses DRAG_PX has to stay a click. Past the threshold the gesture
+      // is a pan, and the click the browser fires at the end of it is swallowed.
+      let drag = null;
+      let swallowT = 0;
+      function swallow(ev) { ev.stopPropagation(); ev.preventDefault(); disarm(); }
+      function disarm() {
+        doc.removeEventListener('click', swallow, true);
+        if (swallowT) { win.clearTimeout(swallowT); swallowT = 0; }
+      }
+      function armSwallow() {
+        disarm();
+        doc.addEventListener('click', swallow, true);
+        swallowT = win.setTimeout(disarm, 0);
+      }
+      function settle() {
+        if (!drag) return;
+        setTransform({ x: drag.ox + (drag.px - drag.sx), y: drag.oy + (drag.py - drag.sy), z: T.z });
+        emit();
+      }
+      function pump() {
+        if (!drag || drag.pending) return;
+        drag.pending = true;
+        schedule(() => { if (drag) { drag.pending = false; settle(); } });
+      }
+      /** Drop the gesture WITHOUT settling. Chrome reports pointercancel at
+       *  client (0,0), so settling off it would teleport the graph by the whole
+       *  press offset — and leave untouched() false, killing the auto re-fit.
+       *  The last rAF settle already left the pan where the user saw it. */
+      function onCancel() { endDrag(); }
+      function endDrag() {
+        if (!drag) return;
+        const id = drag.id;
+        drag = null;                                   // FIRST: releasePointerCapture below
+        stage.classList.remove('panning');             // can re-enter through lostpointercapture
+        doc.removeEventListener('pointermove', onMove);
+        doc.removeEventListener('pointerup', onEnd);
+        doc.removeEventListener('pointercancel', onCancel);
+        stage.removeEventListener('lostpointercapture', onCancel);
+        win.removeEventListener('blur', onCancel);
+        try { if (stage.hasPointerCapture?.(id)) stage.releasePointerCapture(id); } catch { /* already gone */ }
+      }
+      function onDown(ev) {
+        if (drag || ev.button !== 0) return;
+        if (ev.pointerType && ev.pointerType !== 'mouse') return;
+        readRect();
+        drag = { id: ev.pointerId, sx: ev.clientX, sy: ev.clientY, px: ev.clientX, py: ev.clientY,
+          ox: T.x, oy: T.y, moved: false, pending: false };
+        doc.addEventListener('pointermove', onMove);
+        doc.addEventListener('pointerup', onEnd);
+        doc.addEventListener('pointercancel', onCancel);
+        stage.addEventListener('lostpointercapture', onCancel);
+        win.addEventListener('blur', onCancel);
+      }
+      function onMove(ev) {
+        if (!drag || ev.pointerId !== drag.id) return;
+        if (!ev.buttons) { endDrag(); return; }          // a release this document never saw
+        drag.px = ev.clientX; drag.py = ev.clientY;
+        if (!drag.moved) {
+          if (Math.abs(drag.px - drag.sx) < DRAG_PX && Math.abs(drag.py - drag.sy) < DRAG_PX) return;
+          drag.moved = true;
+          drag.ox = T.x; drag.oy = T.y;                  // a re-fit may have landed since the press
+          stage.classList.add('panning');
+          try { stage.setPointerCapture?.(drag.id); } catch { /* synthetic pointer */ }
+        }
+        ev.preventDefault();
+        pump();
+      }
+      function onEnd(ev) {
+        if (!drag || (ev.pointerId != null && ev.pointerId !== drag.id)) return;
+        const moved = drag.moved;
+        if (moved) { drag.px = ev.clientX; drag.py = ev.clientY; settle(); }
+        endDrag();
+        if (moved) armSwallow();
+      }
+      readRect();
       stage.addEventListener('wheel', onWheel, { passive: false });
-      stage.addEventListener('pointerdown', engage);
-      stage.addEventListener('focus', engage);
-      doc.addEventListener('pointerdown', disengage, true);
-      doc.addEventListener('keydown', onKey);
+      stage.addEventListener('pointerdown', onDown);
       const nav = {
-        isEngaged: () => engaged,
         destroy() {
           stage.removeEventListener('wheel', onWheel);
-          stage.removeEventListener('pointerdown', engage);
-          stage.removeEventListener('focus', engage);
-          doc.removeEventListener('pointerdown', disengage, true);
-          doc.removeEventListener('keydown', onKey);
+          stage.removeEventListener('pointerdown', onDown);
+          endDrag();
+          disarm();
         },
       };
       navs.push(nav);

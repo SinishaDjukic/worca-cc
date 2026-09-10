@@ -314,25 +314,37 @@ test('static mode binds NO listeners and fitToWidth uses the host width', async 
   assert.equal(view.getTransform().z, 0.5);
 });
 
-test('monitor nav: wheelPan "engaged" ignores a plain wheel until engaged', async () => {
+test('monitor nav: a plain wheel is the PAGE\'s; ctrl/meta+wheel zooms about the cursor and reports through onTransform', async () => {
   const { doc, host, win } = boot();
   const { createGraphView } = await import(viewPath);
   const view = createGraphView(host, { doc, mode: 'monitor', portsFn, agents: AGENTS, viewport: () => ({ ...VP }) });
   view.render(fixture(), {});
-  const nav = view.createNav({ wheelPan: 'engaged' });
+  const seen = [];
+  const nav = view.createNav({ onTransform: (t) => seen.push(t) });
   view.setTransform({ x: 0, y: 0, z: 1 });
-  view.stage.dispatchEvent(new win.WheelEvent('wheel', { deltaX: 40, deltaY: -25, bubbles: true, cancelable: true }));
-  assert.deepEqual(view.getTransform(), { x: 0, y: 0, z: 1 }, 'not engaged => page scrolls, graph does not pan');
-  // ctrl+wheel is captured even when not engaged
-  view.stage.dispatchEvent(new win.WheelEvent('wheel', { deltaY: -120, ctrlKey: true, clientX: 600, clientY: 300, bubbles: true, cancelable: true }));
-  assert.ok(view.getTransform().z > 1);
-  view.setTransform({ x: 0, y: 0, z: 1 });
-  view.stage.dispatchEvent(new win.PointerEvent('pointerdown', { pointerId: 1, button: 0, clientX: 10, clientY: 10, bubbles: true }));
-  view.stage.dispatchEvent(new win.WheelEvent('wheel', { deltaX: 40, deltaY: -25, bubbles: true, cancelable: true }));
-  assert.deepEqual(view.getTransform(), { x: -40, y: 25, z: 1 }, 'engaged => plain wheel pans by exactly -delta');
+  // (a) no modifier: never consumed, never pans — the canvas must not trap a scroll.
+  const plain = new win.WheelEvent('wheel', { deltaX: 40, deltaY: -25, bubbles: true, cancelable: true });
+  view.stage.dispatchEvent(plain);
+  assert.equal(plain.defaultPrevented, false, 'a plain wheel scrolls the PAGE');
+  assert.deepEqual(view.getTransform(), { x: 0, y: 0, z: 1 }, 'and pans nothing');
+  assert.equal(seen.length, 0, 'and reports nothing');
+  // (b) ctrl+wheel zooms about the cursor: the world point under it is invariant.
+  const before = view.toWorld(600, 300);
+  const zoom = new win.WheelEvent('wheel', { deltaY: -120, ctrlKey: true, clientX: 600, clientY: 300, bubbles: true, cancelable: true });
+  view.stage.dispatchEvent(zoom);
+  assert.equal(zoom.defaultPrevented, true, 'the zoom is consumed');
+  assert.ok(Math.abs(view.getTransform().z - Math.exp(0.24)) < 1e-9, 'z x exp(-dy*0.002)');
+  const after = view.toWorld(600, 300);
+  assert.ok(Math.abs(after.x - before.x) < 1e-6 && Math.abs(after.y - before.y) < 1e-6, 'the cursor stays over its world point');
+  assert.equal(seen.length, 1, 'the host is told the transform moved');
+  // (c) meta+wheel (macOS) takes the same path.
+  view.stage.dispatchEvent(new win.WheelEvent('wheel', { deltaY: -120, metaKey: true, clientX: 600, clientY: 300, bubbles: true, cancelable: true }));
+  assert.equal(seen.length, 2);
   nav.destroy();
-  view.stage.dispatchEvent(new win.WheelEvent('wheel', { deltaX: 40, deltaY: 0, bubbles: true, cancelable: true }));
-  assert.equal(view.getTransform().x, -40, 'no listener after destroy');
+  const dead = new win.WheelEvent('wheel', { deltaY: -120, ctrlKey: true, clientX: 600, clientY: 300, bubbles: true, cancelable: true });
+  view.stage.dispatchEvent(dead);
+  assert.equal(dead.defaultPrevented, false, 'no wheel listener after destroy()');
+  assert.equal(seen.length, 2);
 });
 
 test('thumbnailFor guards empty templates and returns svg markup otherwise', async () => {
@@ -379,15 +391,22 @@ test('safeAgentIcon refuses a user agent\'s icon markup and keeps builtin glyphs
 test('destroy() removes the stage and leaves no listener that can mutate anything', async () => {
   const { doc, host, win } = boot();
   const { createGraphView } = await import(viewPath);
-  const view = createGraphView(host, { doc, mode: 'monitor', portsFn, agents: AGENTS, viewport: () => ({ ...VP }) });
+  // A synchronous raf: the pan settles inside pump() rather than a frame later,
+  // so the transform below really would have moved if onMove were still bound.
+  const view = createGraphView(host, { doc, mode: 'monitor', portsFn, agents: AGENTS,
+    viewport: () => ({ ...VP }), raf: (fn) => { fn(); return 1; } });
   view.render(fixture(), {});
-  view.createNav({ wheelPan: 'always' });
+  view.createNav();
   const stage = view.stage;
   view.setTransform({ x: 0, y: 0, z: 1 });
   view.destroy();
   assert.equal(host.querySelector('.gv-stage'), null, 'stage removed');
-  stage.dispatchEvent(new win.WheelEvent('wheel', { deltaX: 40, bubbles: true, cancelable: true }));
-  doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  stage.dispatchEvent(new win.WheelEvent('wheel', { deltaY: -120, ctrlKey: true, clientX: 10, clientY: 10, bubbles: true, cancelable: true }));
+  // `buttons: 1` is what a real drag reports: onMove drops a button-less move as a
+  // release it never saw (D17), which would pass this test against a LIVE nav.
+  stage.dispatchEvent(new win.PointerEvent('pointerdown', { pointerId: 3, button: 0, clientX: 10, clientY: 10, bubbles: true }));
+  doc.dispatchEvent(new win.PointerEvent('pointermove', { pointerId: 3, buttons: 1, clientX: 200, clientY: 200, bubbles: true }));
+  assert.equal(stage.classList.contains('panning'), false, 'no pointerdown listener survived destroy()');
   assert.deepEqual(view.getTransform(), { x: 0, y: 0, z: 1 }, 'no listener survived destroy()');
 });
 
@@ -590,4 +609,87 @@ test('mountStaticGraph flow: host height set, width option honoured, destroy is 
   view.destroy(); view.destroy();
   assert.equal(host.querySelector('.gv-stage'), null);
   assert.equal(host.style.height, '', 'destroy releases the host height');
+});
+
+test('monitor nav: a left-drag pans by the exact delta past the 4px threshold, and swallows exactly the click it ends with', async () => {
+  const { doc, host, win } = boot();
+  const { createGraphView, DRAG_PX } = await import(viewPath);
+  const view = createGraphView(host, { doc, mode: 'monitor', portsFn, agents: AGENTS,
+    viewport: () => ({ ...VP }), raf: (fn) => { fn(); return 1; } });
+  view.render(fixture(), {});
+  const seen = [];
+  view.createNav({ onTransform: (t) => seen.push(t) });
+  view.setTransform({ x: 0, y: 0, z: 1 });
+  assert.equal(DRAG_PX, 4);
+  // `buttons: 1` is what a real drag reports on every move; the nav treats a move
+  // with no button as a release this document never saw (D17).
+  const pe = (type, o) => new win.PointerEvent(type, { pointerId: 7, buttons: 1, bubbles: true, cancelable: true, ...o });
+  let clicks = 0;
+  host.addEventListener('click', () => { clicks += 1; });
+
+  // (a) a press over a CARD still starts a pan — the run canvas is read-only.
+  const card = view.nodeEl('n_agent');
+  card.dispatchEvent(pe('pointerdown', { button: 0, clientX: 100, clientY: 100 }));
+  doc.dispatchEvent(pe('pointermove', { clientX: 102, clientY: 101 }));
+  assert.deepEqual(view.getTransform(), { x: 0, y: 0, z: 1 }, 'under 4px is a click, not a pan');
+  assert.equal(view.stage.classList.contains('panning'), false);
+  doc.dispatchEvent(pe('pointermove', { clientX: 140, clientY: 60 }));
+  assert.deepEqual(view.getTransform(), { x: 40, y: -40, z: 1 }, 'pans by the delta FROM THE PRESS');
+  assert.equal(view.stage.classList.contains('panning'), true, 'the grabbing cursor is on');
+  doc.dispatchEvent(pe('pointermove', { clientX: 150, clientY: 60 }));
+  assert.deepEqual(view.getTransform(), { x: 50, y: -40, z: 1 }, 'and keeps tracking the press origin');
+  doc.dispatchEvent(pe('pointerup', { clientX: 150, clientY: 60 }));
+  assert.equal(view.stage.classList.contains('panning'), false, 'released');
+  assert.ok(seen.length >= 1 && seen[seen.length - 1].x === 50, 'the host is told');
+
+  // (b) the click the browser fires after that drag is NOT a click on the card.
+  card.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(clicks, 0, 'the drag swallowed its own click');
+  card.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(clicks, 1, 'exactly one: the guard disarms itself');
+
+  // (c) a press that never moved is still a click (the accordion, the gate, the result link).
+  card.dispatchEvent(pe('pointerdown', { button: 0, clientX: 10, clientY: 10 }));
+  doc.dispatchEvent(pe('pointerup', { clientX: 11, clientY: 10 }));
+  card.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(clicks, 2, 'a press that never crossed the threshold clicks through');
+
+  // (d) a RIGHT button press starts nothing.
+  const t = view.getTransform();
+  view.stage.dispatchEvent(pe('pointerdown', { button: 2, clientX: 300, clientY: 300 }));
+  doc.dispatchEvent(pe('pointermove', { clientX: 400, clientY: 400 }));
+  assert.deepEqual(view.getTransform(), t, 'only the left button pans');
+
+  // (e) a TOUCH press starts nothing either (D13): a finger keeps the page's scroll,
+  //     which is the only thing it can do here — the wrap declares no touch-action.
+  view.stage.dispatchEvent(pe('pointerdown', { button: 0, pointerType: 'touch', clientX: 300, clientY: 300 }));
+  doc.dispatchEvent(pe('pointermove', { pointerType: 'touch', clientX: 400, clientY: 400 }));
+  assert.deepEqual(view.getTransform(), t, 'a finger never pans');
+
+  // (f) a cancelled drag is DROPPED, never settled: Chrome reports pointercancel
+  //     at client (0,0), and settling off that teleports the graph (D17).
+  view.stage.dispatchEvent(pe('pointerdown', { button: 0, clientX: 500, clientY: 500 }));
+  doc.dispatchEvent(pe('pointermove', { clientX: 560, clientY: 530 }));
+  const panned = view.getTransform();
+  assert.equal(panned.x, t.x + 60, 'the cancelled drag really had panned first');
+  doc.dispatchEvent(pe('pointercancel', { clientX: 0, clientY: 0 }));
+  assert.deepEqual(view.getTransform(), panned, 'cancel leaves the pan exactly where the user saw it');
+  assert.equal(view.stage.classList.contains('panning'), false, 'and the gesture is over');
+
+  // (g) a move that reports NO button is a release this document never saw.
+  view.stage.dispatchEvent(pe('pointerdown', { button: 0, clientX: 600, clientY: 600 }));
+  doc.dispatchEvent(pe('pointermove', { buttons: 0, clientX: 700, clientY: 700 }));
+  assert.deepEqual(view.getTransform(), panned, 'a button-less move ends the gesture instead of panning');
+});
+
+test('the run card\'s result link is not natively draggable: a pan that starts on it survives', async () => {
+  const { doc, host } = boot();
+  const { createGraphView } = await import(viewPath);
+  const view = createGraphView(host, { doc, mode: 'monitor', portsFn, agents: AGENTS, viewport: () => ({ ...VP }) });
+  view.render(fixture(), {});
+  view.setFooter('n_agent', [{ kind: 'result', text: 'plan.md', path: '/tmp/plan.md' }]);
+  const a = view.nodeEl('n_agent').querySelector('.xresult a');
+  assert.ok(a, 'the result band renders an anchor');
+  assert.equal(a.draggable, false, 'Chrome drags an <a href> natively, which pointercancels the pan (D16)');
+  assert.equal(a.getAttribute('href'), '#', 'and it is still the delegated link the host handles');
 });

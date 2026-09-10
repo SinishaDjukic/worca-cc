@@ -4392,10 +4392,26 @@ input.gv-name:focus-visible{outline:none;}
 /* quiescence banner (.rd-banners / .hd-banners / History Overview note) */
 .run-warn{margin:0;padding:11px 15px;border-radius:12px;background:var(--amber-bg);color:var(--amber-ink);font-size:12.5px;font-weight:600;border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);align-self:stretch;}
 .run-warn[hidden]{display:none;}
-/* engaged-wheel hint chip (D8) */
-.rg-hint{position:absolute;right:12px;bottom:10px;padding:4px 9px;border-radius:999px;background:color-mix(in srgb, var(--ink) 72%, transparent);color:var(--on-ink);font-size:10.5px;font-weight:600;pointer-events:none;opacity:0;transition:opacity .15s;z-index:5;}
+/* gesture hint chip (D10) */
+.rg-hint{position:absolute;left:12px;bottom:10px;padding:4px 9px;border-radius:999px;background:color-mix(in srgb, var(--ink) 72%, transparent);color:var(--on-ink);font-size:10.5px;font-weight:600;pointer-events:none;opacity:0;transition:opacity .15s;z-index:5;}
 .run-flow-wrap.gv-wrap-monitor:hover > .rg-hint{opacity:1;}
-.run-flow-wrap.rg-engaged > .rg-hint{opacity:0;}
+/* The whole monitor canvas is a pan surface (drag from a card, a wire or the
+   void), so the stage AND the card body advertise `grab`. Everything is scoped
+   to .gv-wrap-monitor (D19): `gv-host` is on the Running LIST CARD's host too,
+   and that preview has no gestures at all. `cursor` is inherited only by
+   children that declare none, and the cards do — :4346 default, :4360/:4368
+   pointer, :4391 History's pointer — so a live pan says `grabbing` through the
+   house blanket idiom (`X, X *{… !important}`) rather than a specificity arms
+   race. Measured in Chrome 152: without the blanket the cursor under a dragged
+   card reads `default` while the stage reads `grabbing`. The clickable rows,
+   gate and link keep `pointer` at rest — they are later at equal specificity. */
+.gv-wrap-monitor .run-flow.gv-host .gv-world .node{cursor:grab;}
+.gv-wrap-monitor .run-flow.gv-host .gv-stage{cursor:grab;}
+.gv-wrap-monitor .run-flow.gv-host .gv-stage.panning,.gv-wrap-monitor .run-flow.gv-host .gv-stage.panning *{cursor:grabbing !important;}
+/* The composer's own `.gv-nav` is rail-aware (right:352px). A run wrap has no
+   inspector rail, so the cluster hugs the corner; the hint chip sits bottom-LEFT
+   so the two never overlap. Later in the file AND more specific — either wins. */
+.run-flow-wrap.gv-wrap-monitor > .gv-nav{right:12px;bottom:12px;}
 @media (prefers-reduced-motion:reduce){
   .run-flow.gv-host .gv-wires path.wire-live,.run-flow.gv-host .gv-world .ngate,
   .run-flow.gv-host .gv-world .xfoot .xq.is-active,.run-flow.gv-host .gv-world .xfoot .xrow.is-active .led{animation:none;}
