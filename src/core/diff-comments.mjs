@@ -1,5 +1,6 @@
 // src/core/diff-comments.mjs
-// Internal, line-anchored comments on a run's persisted diff (diff_comments, v22).
+// Internal, line-anchored comments on a run's persisted diff (diff_comments, v22;
+// reply threads via parent_id, v29).
 // The ONE mutation module: the REST routes in ui/server.mjs and the Ask MCP tools
 // (through src/core/ask/comment-deps.mjs) both write through here, so anchor
 // validation, the protected-path floor, the body cap and the change notification
@@ -35,6 +36,7 @@ function rowToComment(r) {
     body: r.body, author: r.author,
     resolved: !!r.resolved, resolvedAt: r.resolved_at ?? null,
     sentRunId: r.sent_run_id ?? null, createdAt: r.created_at,
+    parentId: r.parent_id ?? null,
   };
 }
 
@@ -89,7 +91,8 @@ export function listDiffComments(storeKey, pipelineId, { status = 'all', path = 
                   ORDER BY path, line_no, rowid`).all(...vals).map(rowToComment);
 }
 
-/** Unresolved counts keyed "<storeKey>/<pipelineId>", newest-commented first and
+/** Unresolved counts keyed "<storeKey>/<pipelineId>" — roots only: a reply is part
+ *  of its thread, not an item. Newest-commented first and
  *  hard-capped: the endpoint fans out to every open tab on every poke, and an
  *  unbounded row-per-commented-run response is the one part of it that grows with
  *  history. 5000 is a backstop, not a paging story — /api/history is itself
@@ -98,7 +101,7 @@ export function unresolvedCounts() {
   getDb();
   const out = {};
   for (const r of prepare(`SELECT store_key, pipeline_id, count(*) AS n, max(rowid) AS last
-                           FROM diff_comments WHERE resolved = 0
+                           FROM diff_comments WHERE resolved = 0 AND parent_id IS NULL
                            GROUP BY store_key, pipeline_id
                            ORDER BY last DESC LIMIT 5000`).all()) {
     out[`${r.store_key}/${r.pipeline_id}`] = r.n;
@@ -107,6 +110,14 @@ export function unresolvedCounts() {
 }
 
 // ── writes ──────────────────────────────────────────────────────────────────
+
+/** Trimmed body, or a DiffCommentError — the one place the cap is enforced. */
+function cleanBody(body) {
+  const text = typeof body === 'string' ? body.trim() : '';
+  if (!text) throw new DiffCommentError('body is required');
+  if (text.length > COMMENT_BODY_MAX) throw new DiffCommentError(`body exceeds ${COMMENT_BODY_MAX} characters`);
+  return text;
+}
 
 /**
  * Create one comment. `patchText` is the run's diff-patch.patch as READ BY THE
@@ -123,9 +134,7 @@ export function addDiffComment({
     throw new DiffCommentError('this run has no stored diff — comments cannot be created on it');
   }
   if (!COMMENT_AUTHORS.includes(author)) throw new DiffCommentError('author must be "user" or "ask"');
-  const text = typeof body === 'string' ? body.trim() : '';
-  if (!text) throw new DiffCommentError('body is required');
-  if (text.length > COMMENT_BODY_MAX) throw new DiffCommentError(`body exceeds ${COMMENT_BODY_MAX} characters`);
+  const text = cleanBody(body);
 
   let anchor;
   try {
@@ -147,14 +156,44 @@ export function addDiffComment({
   return getDiffComment(id);
 }
 
-/** Toggle. Returns the updated comment, or null when the id is unknown. */
+/**
+ * Reply inside a thread (D1–D3). The parent must be a ROOT; the reply copies the
+ * root's anchor and its resolved state, so every reader keeps working without a
+ * join: ordering (same path/line, later rowid), the status filters, the
+ * protected-path guard (same path/old_path) and the line_text snapshot.
+ * No patch is needed — a reply anchors to nothing new, so archived runs take one.
+ * @throws {DiffCommentError}
+ */
+export function addDiffCommentReply({ parentId, body, author } = {}) {
+  const parent = getDiffComment(parentId);
+  if (!parent) throw new DiffCommentError('comment not found');
+  if (parent.parentId) throw new DiffCommentError('replies cannot be nested — reply to the thread\'s first comment');
+  if (!COMMENT_AUTHORS.includes(author)) throw new DiffCommentError('author must be "user" or "ask"');
+  const text = cleanBody(body);
+  const id = newCommentId();
+  const ts = now();
+  getDb();
+  prepare(`INSERT INTO diff_comments
+    (id, store_key, pipeline_id, project_key, path, old_path, side, line_no, line_text,
+     body, author, resolved, resolved_at, sent_run_id, source, external_url, created_at, parent_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)`)
+    .run(id, parent.storeKey, parent.pipelineId, parent.projectKey, parent.path, parent.oldPath,
+      parent.side, parent.line, parent.lineText, text, author,
+      parent.resolved ? 1 : 0, parent.resolvedAt, ts, parent.id);
+  notify(parent.storeKey, parent.pipelineId);
+  return getDiffComment(id);
+}
+
+/** Toggle a THREAD (D2). Returns the updated root, or null when the id is unknown.
+ *  @throws {DiffCommentError} when `id` is a reply — replies mirror their root. */
 export function setDiffCommentResolved(id, resolved = true) {
   const before = getDiffComment(id);
   if (!before) return null;
+  if (before.parentId) throw new DiffCommentError('replies cannot be resolved on their own — resolve the thread\'s first comment');
   const on = resolved !== false;
   getDb();
-  prepare('UPDATE diff_comments SET resolved = ?, resolved_at = ? WHERE id = ?')
-    .run(on ? 1 : 0, on ? now() : null, id);
+  prepare('UPDATE diff_comments SET resolved = ?, resolved_at = ? WHERE id = ? OR parent_id = ?')
+    .run(on ? 1 : 0, on ? now() : null, id, id);
   notify(before.storeKey, before.pipelineId);
   return getDiffComment(id);
 }

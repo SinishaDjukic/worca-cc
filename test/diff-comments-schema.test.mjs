@@ -21,15 +21,19 @@ const MINIMAL_SEED = `
   CREATE TABLE workflows (id TEXT PRIMARY KEY, name TEXT);
 `;
 
-test('v22: diff_comments has the spec columns, its index, and declares the pipelines cascade', () => {
+test('v22/v29: diff_comments has the spec columns (+ parent_id last), its index, and both cascades', () => {
   getDb();
   assert.deepEqual(prepare('PRAGMA table_info(diff_comments)').all().map((c) => c.name), [
     'id', 'store_key', 'pipeline_id', 'project_key', 'path', 'old_path', 'side', 'line_no',
     'line_text', 'body', 'author', 'resolved', 'resolved_at', 'sent_run_id', 'source',
-    'external_url', 'created_at']);
-  const fk = prepare('PRAGMA foreign_key_list(diff_comments)').all()[0];
-  assert.equal(fk.table, 'pipelines');
-  assert.equal(fk.on_delete, 'CASCADE');
+    'external_url', 'created_at', 'parent_id']);
+  const fks = prepare('PRAGMA foreign_key_list(diff_comments)').all();
+  const runFk = fks.find((f) => f.from === 'pipeline_id');
+  assert.equal(runFk.table, 'pipelines');
+  assert.equal(runFk.on_delete, 'CASCADE');
+  const parentFk = fks.find((f) => f.from === 'parent_id');
+  assert.equal(parentFk.table, 'diff_comments');
+  assert.equal(parentFk.on_delete, 'CASCADE');
   assert.ok(prepare('PRAGMA user_version').get().user_version >= SCHEMA_VERSION);
   const idx = prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='diff_comments'")
     .all().map((r) => r.name);
