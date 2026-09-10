@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { confirmDialog, cancelDialog, dialogText } from './helpers/confirm-modal.mjs';
 import { proposalFor, WEB_TASK } from './helpers/auto-proposal-fixture.mjs';
+import { FLOW_PAD_Y } from '../src/shared/graph/flow-layout.mjs';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
@@ -93,7 +94,7 @@ test('the workflow question renders head, the shared body, the graph at chat sca
   const cards = [...panel.querySelectorAll('.ask-wfcard-graph .node')];
   assert.equal(cards.length, p.manifest.graph.nodes.length);
   const ys = cards.map((c) => /,\s*([-\d.]+)px\)/.exec(c.style.transform)[1]);
-  assert.equal(ys.filter((y) => y === '20').length, 4, 'four cards on the first row (702px default width)');
+  assert.equal(ys.filter((y) => y === String(FLOW_PAD_Y)).length, 4, 'four cards on the first row (702px default width)');
   assert.equal(panel.querySelectorAll('.qtune tbody tr').length, p.order.length);
   const first = panel.querySelector('.qtune tbody tr');
   assert.equal(first.dataset.nodeId, p.order[0]);

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { flowOrder, flowPerRow, flowLayout, flowAnchors, routeFlow, FLOW_SCALE } from '../src/shared/graph/flow-layout.mjs';
+import { flowOrder, flowPerRow, flowLayout, flowAnchors, routeFlow, FLOW_SCALE, FLOW_PAD, FLOW_PAD_Y, FLOW_BADGE_H } from '../src/shared/graph/flow-layout.mjs';
 import { nodeSize } from '../src/shared/graph/geometry.mjs';
 
 const AGENT_PORTS = {
@@ -58,7 +58,7 @@ test('order: Task, the agents (rank, then host order), the loop-only valve, End'
   assert.deepEqual(derived.slice(1, 8), ORDER, 'ranks alone reproduce the dispatch order of a chain');
 });
 
-test('placement: rows top/left aligned, row height = tallest card, host height = rows + pad (min 120)', () => {
+test('placement: rows top/left aligned, row height = tallest card, host height = rows + vertical pad (min 120)', () => {
   const tpl = theme(); const lay = flowLayout(tpl, portsFn, { width: 702, order: ['n_task', ...ORDER, 'n_or', 'n_end'] });
   assert.equal(lay.perRow, 4); assert.equal(lay.rows.length, 3);
   assert.deepEqual(lay.rows.map((r) => r.ids.length), [4, 4, 2]);
@@ -67,8 +67,8 @@ test('placement: rows top/left aligned, row height = tallest card, host height =
   const agentH = nodeSize(A('n1'), portsFn(A('n1')), { band: true, scale: FLOW_SCALE }).h;
   assert.equal(Math.round(agentH * 10) / 10, 140.1, 'Plan-shaped agent at chat scale (mockup F)');
   assert.equal(lay.rows[0].h, agentH, 'the tallest card in the row (an agent, band included)');
-  assert.equal(lay.rows[1].top, 20 + agentH + 44 * FLOW_SCALE);
-  assert.equal(lay.height, lay.rows[2].top + lay.rows[2].h + 20);
+  assert.equal(lay.rows[1].top, FLOW_PAD_Y + agentH + 44 * FLOW_SCALE);
+  assert.equal(lay.height, lay.rows[2].top + lay.rows[2].h + FLOW_PAD_Y, 'nothing routes under the last row here');
   assert.equal(flowLayout({ nodes: [], wires: [] }, portsFn).height, 120, 'min height');
   const narrow = flowLayout(tpl, portsFn, { width: 310, order: lay.order });
   assert.equal(narrow.perRow, 1); assert.ok(narrow.order.every((id) => narrow.positions[id].x === 20), 'one under another');
@@ -119,4 +119,47 @@ test('narrow host (310 → 1 per row): every wire still routes inside the host a
   }
   const padXs = [...routes.values()].flatMap((pts) => pts.map((p) => p.x)).filter((x) => x < 20);
   assert.ok(padXs.length && padXs.every((x) => x >= 2 && x <= 12), `left-pad lanes inside [2, 12]: ${[...new Set(padXs)].join(',')}`);
+});
+
+// The screenshot bug: a one-row proposal whose reviewer loops back to the implementer routes that
+// wire through the BOTTOM gutter and paints a `N×` badge centred on it. The height billed only the
+// cards (lastRow + pad), so the badge — half of it below the gutter y — sat on the host's border and
+// read as clipped. The bottom band must be billed, and the vertical pad kept clear under it.
+test('a loop in the LAST row is billed: the badge clears the host edge by the full vertical pad', () => {
+  const tpl = { version: 2, nodes: [
+    { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, A('n1'), A('n2'), { id: 'n_end', kind: 'end', x: 0, y: 0, config: {} },
+  ], wires: [
+    W('w1', 'n_task.task', 'n1.task'), W('w2', 'n1.plan', 'n2.task'),
+    W('w3', 'n2.review', 'n1.fix', { maxCycles: 3 }), W('w4', 'n2.plan', 'n_end.result'),
+  ] };
+  const lay = flowLayout(tpl, portsFn, { width: 702, agentOrder: ['n1', 'n2'] });
+  assert.equal(lay.rows.length, 1, 'all four cards on one row, like the chat card');
+  const { badges } = routeFlow(flowAnchors(tpl, portsFn, lay), lay);
+  const b = badges.get('w3');
+  assert.ok(b.y > lay.rows[0].top + lay.rows[0].h, 'the loop badge sits in the bottom gutter');
+  assert.ok(b.y + FLOW_BADGE_H / 2 + FLOW_PAD_Y <= lay.height,
+    `badge bottom ${b.y + FLOW_BADGE_H / 2} + pad ${FLOW_PAD_Y} must fit in ${lay.height}`);
+  // two trunks in the same gutter take a second lane — the band grows with them
+  const two = { version: 2, nodes: [...tpl.nodes, A('n3')], wires: [
+    ...tpl.wires.filter((w) => w.id !== 'w4'), W('w4', 'n2.plan', 'n3.task'),
+    W('w5', 'n3.review', 'n2.fix', { maxCycles: 2 }), W('w6', 'n3.plan', 'n_end.result'),
+  ] };
+  const lay2 = flowLayout(two, portsFn, { width: 1040, agentOrder: ['n1', 'n2', 'n3'] });   // 5 cards, still one row
+  assert.equal(lay2.rows.length, 1);
+  const b2 = routeFlow(flowAnchors(two, portsFn, lay2), lay2).badges;
+  for (const id of ['w3', 'w5']) {
+    assert.ok(b2.get(id).y + FLOW_BADGE_H / 2 + FLOW_PAD_Y <= lay2.height, `${id} badge crowds the host edge`);
+  }
+  assert.ok(lay2.bottomBand > lay.bottomBand, 'a second trunk widens the billed band');
+  // and a graph with nothing under the last row keeps the plain pad — no dead band
+  const flat = flowLayout({ version: 2, nodes: tpl.nodes, wires: tpl.wires.filter((w) => w.id !== 'w3') }, portsFn, { width: 702, agentOrder: ['n1', 'n2'] });
+  assert.equal(flat.height, flat.rows[0].top + flat.rows[0].h + FLOW_PAD_Y, 'no bottom gutter ⇒ just the pad');
+});
+
+test('the vertical pad is FLOW_PAD_Y on both ends; the horizontal pad (and so perRow) is untouched', () => {
+  const tpl = theme(); const lay = flowLayout(tpl, portsFn, { width: 702, agentOrder: ORDER });
+  assert.equal(lay.perRow, 4, 'the x pad still fits 4 cards in the chat sheet');
+  assert.equal(lay.rows[0].top, FLOW_PAD_Y);
+  assert.equal(lay.positions.n_task.x, FLOW_PAD, 'x keeps the 20px pad');
+  assert.equal(lay.height, lay.rows.at(-1).top + lay.rows.at(-1).h + FLOW_PAD_Y);
 });

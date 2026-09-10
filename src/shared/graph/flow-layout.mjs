@@ -11,13 +11,16 @@ import { classifyLoops } from './loops.mjs';
 import { portsOf } from './ports.mjs';
 
 export const FLOW_SCALE = 0.65;
-export const FLOW_PAD = 20;            // host padding, NOT scaled
+export const FLOW_PAD = 20;            // host padding on X, NOT scaled
+export const FLOW_PAD_Y = 28;          // host padding above the first row and under whatever is painted last
 export const FLOW_GAP = 40;            // column gap at 1× (× scale)
 export const FLOW_ROW_GAP = 44;        // row gap at 1× (× scale)
 export const FLOW_MIN_H = 120;
 export const FLOW_DEFAULT_WIDTH = 702; // the chat sheet's inner width; used when a host has no layout width yet
 export const FLOW_LANE = 6;            // lane pitch inside gaps and gutters
 export const FLOW_PAD_LANE = 5;        // lane pitch inside the pads
+export const FLOW_GUT_ROOM = 12;       // lane room in the BOTTOM gutter (3 lanes at the nominal pitch, tighter after)
+export const FLOW_BADGE_H = 18;        // the wire badge's painted box (10px/14px line + scaled padding + borders)
 export const FLOW_RADIUS = 6;          // wire corner radius
 
 const isNode = (n) => Boolean(n) && typeof n === 'object' && !Array.isArray(n) && typeof n.id === 'string';
@@ -54,6 +57,21 @@ export function flowPerRow(width, { scale = FLOW_SCALE, pad = FLOW_PAD, gap = FL
   return Math.max(1, Math.floor(((Number(width) || 0) - 2 * pad + g) / (cw + g)));
 }
 
+/** How many lanes can the LAST row's gutter hold at most? Only a same-row backwards (non-`direct`) wire
+ *  routes there — routeFlow's `g` is `S.r` for a same-row pair, and no wire reaches a gutter below the row
+ *  it starts in — and the router gives one interval per output trunk, so the distinct trunk count is an
+ *  upper bound on its lane count (allocLanes only ever reuses lanes). */
+function bottomGutterTrunks(tpl, pos, lastR) {
+  if (lastR < 0) return 0;
+  const keys = new Set();
+  for (const w of Array.isArray(tpl?.wires) ? tpl.wires : []) {
+    const S = pos[w?.from?.node]; const T = pos[w?.to?.node];
+    if (!S || !T || S.r !== lastR || T.r !== lastR || T.c === S.c + 1) continue;
+    keys.add(`${w.from.node}.${w.from.port || ''}`);
+  }
+  return keys.size;
+}
+
 /**
  * @returns {{positions:{[id]:{x,y}}, pos:{[id]:{r,c,h,x,y}}, order:string[], rows:{top,h,ids}[],
  *            perRow:number, height:number, cardW:number, gap:number, rowGap:number, pad:number,
@@ -61,7 +79,7 @@ export function flowPerRow(width, { scale = FLOW_SCALE, pad = FLOW_PAD, gap = FL
  */
 export function flowLayout(tpl, portsFn, {
   width = FLOW_DEFAULT_WIDTH, scale = FLOW_SCALE, band = true, order = null, agentOrder = null,
-  pad = FLOW_PAD, gap = FLOW_GAP, rowGap = FLOW_ROW_GAP, minHeight = FLOW_MIN_H,
+  pad = FLOW_PAD, padY = FLOW_PAD_Y, gap = FLOW_GAP, rowGap = FLOW_ROW_GAP, minHeight = FLOW_MIN_H,
 } = {}) {
   const nodes = (Array.isArray(tpl?.nodes) ? tpl.nodes : []).filter(isNode);
   const byId = new Map(nodes.map((n) => [n.id, n]));
@@ -83,12 +101,17 @@ export function flowLayout(tpl, portsFn, {
     rows[r].ids.push(id);
     pos[id] = { r, c, h, x: 0, y: 0 };
   });
-  let y = pad;
+  let y = padY;
   for (const row of rows) { row.top = y; y = y + row.h + rg; }        // left-to-right, the order the tests reproduce
-  // Height from the LAST row's own numbers (never `y - rg + pad`: 0.65-scaled sums do not round-trip through
+  // A backwards wire inside the LAST row is routed through the bottom gutter and carries its `N×` badge
+  // there (routeFlow's `g === rows.length - 1` case), so the height must bill that band too — billing the
+  // cards alone left half a badge sitting on the host's border (it read as clipped).
+  const trunks = bottomGutterTrunks(tpl, pos, rows.length - 1);
+  const bottomBand = trunks ? END_OFF + Math.min(FLOW_GUT_ROOM, (trunks - 1) * FLOW_LANE) + FLOW_BADGE_H / 2 : 0;
+  // Height from the LAST row's own numbers (never `y - rg + padY`: 0.65-scaled sums do not round-trip through
   // a subtraction — 464.775 vs 464.77500000000003 — and the placement test compares with `===`).
   const last = rows[rows.length - 1];
-  const height = Math.max(minHeight, last ? last.top + last.h + pad : 2 * pad);
+  const height = Math.max(minHeight, last ? last.top + last.h + bottomBand + padY : 2 * padY);
   const positions = {};
   for (const id of ids) {
     const p = pos[id];
@@ -96,7 +119,7 @@ export function flowLayout(tpl, portsFn, {
     p.y = rows[p.r].top;
     positions[id] = { x: p.x, y: p.y };
   }
-  return { positions, pos, order: ids, rows, perRow: per, height, cardW: cw, gap: g, rowGap: rg, pad, scale, width: Number(width) || 0, band };
+  return { positions, pos, order: ids, rows, perRow: per, height, cardW: cw, gap: g, rowGap: rg, pad, padY, bottomBand, scale, width: Number(width) || 0, band };
 }
 
 /** The anchor list the router consumes, from a laid-out template: one entry per wire
@@ -187,7 +210,7 @@ export function routeFlow(wires, lay) {
   };
   const gutY = (g, lane, n) => {
     const row = rows[g]; const bottom = row.top + row.h;
-    if (g === rows.length - 1) return bottom + END_OFF + pitchFor(n, pad - END_OFF - EDGE, FLOW_LANE) * lane;
+    if (g === rows.length - 1) return bottom + END_OFF + pitchFor(n, FLOW_GUT_ROOM, FLOW_LANE) * lane;
     return bottom + rowGap / 2 + (lane - (n - 1) / 2) * pitchFor(n, rowGap - 2 * EDGE, FLOW_LANE);
   };
   const R = [];

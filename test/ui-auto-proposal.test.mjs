@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { renderAutoProposal, proposalLoops, proposalBands, fingerprintLine, AUTO_PROPOSAL_ORDER_QPANEL } from '../ui/public/auto-proposal.mjs';
 import { proposalFor, WEB_TASK } from './helpers/auto-proposal-fixture.mjs';
+import { FLOW_PAD_Y } from '../src/shared/graph/flow-layout.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const xy = (el) => { const m = /translate\(([-\d.]+)px, ([-\d.]+)px\)/.exec(el.style.transform); return { x: Number(m[1]), y: Number(m[2]) }; };
@@ -18,7 +19,7 @@ test('body parts in card order, real graph at chat scale: 4 cards per row in a 7
   const lay = h.graph.flowLayout();
   assert.equal(lay.perRow, 4);
   const firstRow = lay.order.slice(0, 4).map((id) => xy(h.graph.nodeEl(id)));
-  assert.deepEqual(firstRow.map((q) => q.y), [20, 20, 20, 20]);
+  assert.deepEqual(firstRow.map((q) => q.y), [FLOW_PAD_Y, FLOW_PAD_Y, FLOW_PAD_Y, FLOW_PAD_Y]);
   assert.deepEqual(firstRow.map((q) => q.x), [20, 189, 358, 527]);
   assert.equal(lay.order[0], p.manifest.graph.nodes.find((n) => n.kind === 'task').id, 'Task first');
   assert.deepEqual(lay.order.slice(1, 1 + p.order.length), p.order, 'agents in dispatch order');

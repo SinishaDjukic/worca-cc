@@ -7,6 +7,7 @@ import { boot, fixture, loopFixture, portsFn, AGENTS } from './helpers/graph-vie
 import { routeAll, routePathD } from '../src/shared/graph/route.mjs';
 import { nodeSize, portAnchor } from '../src/shared/graph/geometry.mjs';
 import { portsOf } from '../src/shared/graph/ports.mjs';
+import { FLOW_PAD_Y } from '../src/shared/graph/flow-layout.mjs';
 
 const viewPath = new URL('../ui/public/graph/view.mjs', import.meta.url).href;
 
@@ -553,8 +554,8 @@ test('layout flow: rows of perRow in dispatch order, routes from the flow router
   assert.deepEqual(lay.order, ['n_task', 'n_agent', 'n_rev', 'n_end']);
   assert.equal(lay.perRow, 4);
   const tx = (id) => view.nodeEl(id).style.transform;
-  assert.equal(tx('n_task'), 'translate(20px, 20px)');
-  assert.equal(tx('n_agent'), `translate(${20 + 169}px, 20px)`);
+  assert.equal(tx('n_task'), `translate(20px, ${FLOW_PAD_Y}px)`);
+  assert.equal(tx('n_agent'), `translate(${20 + 169}px, ${FLOW_PAD_Y}px)`);
   assert.equal(host.querySelector('.wbadge[data-wire-id="w4"]').textContent, '2×');
   assert.equal(view.stage.style.height, `${lay.height}px`);
   assert.equal(view.template().nodes.find((n) => n.id === 'n_agent').x, 189, 'the laid-out copy carries flow positions');
