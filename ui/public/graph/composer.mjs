@@ -34,6 +34,9 @@ export const TABS = Object.freeze(['agents', 'info']);
 /** px of canvas hidden under the floating inspector rail (§7.6 constants). */
 export const INSET_OPEN = 340;
 export const INSET_COLLAPSED = 28;
+/** Multiplier per zoom-BUTTON press. The wheel/pinch path keeps its own
+ *  exponential curve (ZOOM_K in geometry.mjs); a button is a discrete step. */
+export const ZOOM_STEP = 1.2;
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 /** 'plugin:demo-plug' -> 'demo-plug'; anything else -> ''. `origin` is a row
@@ -369,11 +372,15 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   const onRefresh = () => readRect();
   const onNewCanvas = () => composer.newCanvas();
   const onSaveClick = () => openSaveDialog();
+  const onZoomIn = () => zoomStep(ZOOM_STEP);
+  const onZoomOut = () => zoomStep(1 / ZOOM_STEP);
+  const onCenterClick = () => centerGraph();
 
   function zoomAbout(zNext, sx, sy) {
     const t = T();
     const z2 = clamp(zNext, ZOOM_MIN, ZOOM_MAX);
     view.setTransform({ x: sx - ((sx - t.x) / t.z) * z2, y: sy - ((sy - t.y) / t.z) * z2, z: z2 });
+    paintNav();
   }
 
   function onWheel(ev) {
@@ -395,6 +402,38 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   }
   function fit(opts = {}) {
     view.fit({ insetRight: opts.insetRight == null ? insetRight() : opts.insetRight, pad: 60 });
+    paintNav();
+  }
+  /** Stage-local centre of the band the rail leaves visible — the point the
+   *  buttons zoom about and centre to. Reads the rect itself: the rail may have
+   *  been collapsed since the last gesture. */
+  function bandCenter() {
+    readRect();
+    return { x: (R.width - insetRight()) / 2, y: R.height / 2 };
+  }
+  /** One discrete zoom press. zoomAbout owns the 0.4..1.6 clamp. */
+  function zoomStep(mult) {
+    const c = bandCenter();
+    zoomAbout(T().z * mult, c.x, c.y);
+  }
+  /** Pan the drawing's bounds centre to the band centre. The ZOOM IS UNTOUCHED
+   *  (the user's decision): the +/- buttons own the scale, this button only
+   *  re-finds the cards. `bounds(0)` is the model union INCLUDING routed wire
+   *  vertices, so a backward detour cannot sit off-screen after a centre. */
+  function centerGraph() {
+    const c = bandCenter();
+    const b = view.bounds(0);
+    if (!b) return;
+    const z = T().z;
+    view.setTransform({ x: c.x - (b.x + b.w / 2) * z, y: c.y - (b.y + b.h / 2) * z, z });
+  }
+  /** The cluster's only state: a button that cannot move is disabled. Guarded
+   *  per element — every headless caller (unit tests, the CDP probe) may hand us
+   *  hostEls without a cluster at all. */
+  function paintNav() {
+    const z = T().z;
+    if (hostEls.zoomIn) hostEls.zoomIn.disabled = z >= ZOOM_MAX - 1e-9;
+    if (hostEls.zoomOut) hostEls.zoomOut.disabled = z <= ZOOM_MIN + 1e-9;
   }
   // `autoLayout(tpl, portsFn)` returns a POSITION MAP `{ [nodeId]: {x, y} }` — not
   // a template, not `{nodes}` (verified 2026-08-27 against src/shared/graph/layout.mjs,
@@ -786,6 +825,9 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     hostEls.insToggle?.addEventListener('click', onRailToggle);
     hostEls.insTabs?.addEventListener('click', onTabClick);
     hostEls.saveBtn?.addEventListener('click', onSaveClick);
+    hostEls.zoomIn?.addEventListener('click', onZoomIn);
+    hostEls.zoomOut?.addEventListener('click', onZoomOut);
+    hostEls.centerBtn?.addEventListener('click', onCenterClick);
     setRail(readKey(INSPECTOR_KEY) !== 'collapsed');
     setTab(readKey(TAB_KEY) || TABS[0]);
     // The model/effort lists are chrome, not graph state: pull them once through
@@ -803,6 +845,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       ro.observe(stage);
     }
     readRect();
+    paintNav();
     return composer;
   }
   let ro = null;
@@ -822,6 +865,9 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     hostEls.insToggle?.removeEventListener('click', onRailToggle);
     hostEls.insTabs?.removeEventListener('click', onTabClick);
     hostEls.saveBtn?.removeEventListener('click', onSaveClick);
+    hostEls.zoomIn?.removeEventListener('click', onZoomIn);
+    hostEls.zoomOut?.removeEventListener('click', onZoomOut);
+    hostEls.centerBtn?.removeEventListener('click', onCenterClick);
     endPalDrag();
     stage.removeEventListener('pointermove', onMove);
     stage.removeEventListener('pointerup', onUp);
@@ -866,7 +912,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   const composer = {
     view, stats, hooks,
     mount, destroy, resume, suspend, commit, loadTemplate,
-    fit, autoLayout: runAutoLayout, zoomAbout, undo, redo, undoDepth: () => undoStack.length, deleteSelection,
+    fit, autoLayout: runAutoLayout, zoomAbout, zoomStep, centerGraph, undo, redo, undoDepth: () => undoStack.length, deleteSelection,
     spawn, paintPalette, paintInspector,
     openSaveDialog, setSavedDomains(list) { savedDomains = list || []; },
     setModels(cfg) { modelsSet = true; applyModels(cfg || {}); },

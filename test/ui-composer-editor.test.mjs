@@ -23,6 +23,7 @@ const RECT = { left: 0, top: 0, width: 1280, height: 560 };
 
 const IDS = ['gv-canvas', 'gv-chip', 'gv-head', 'gv-name', 'gv-errors', 'gv-new', 'gv-autolayout',
   'gv-save', 'gv-ins-rail', 'gv-ins-body', 'gv-ins-toggle', 'gv-ins-tabs', 'gv-palette', 'gv-agent-filter',
+  'gv-nav', 'gv-zoom-in', 'gv-zoom-out', 'gv-center',
   'gv-saved-list', 'gv-saved-count', 'gv-archived', 'gv-dialog-host'];
 
 export function shell() {
@@ -33,13 +34,17 @@ export function shell() {
     // Anchored: a loose /save/ also matches gv-saved-list and gv-saved-count,
     // which are containers, not buttons.
     const tag = /^gv-(name|agent-filter)$/.test(id) ? 'input'
-      : (/^gv-(save|new|autolayout|errors|ins-toggle)$/.test(id) ? 'button' : 'div');
+      : (/^gv-(save|new|autolayout|errors|ins-toggle|zoom-in|zoom-out|center)$/.test(id) ? 'button' : 'div');
     const n = doc.createElement(tag);
     n.id = id;
     doc.body.appendChild(n);
   }
   // chip and rail are the stage's SIBLINGS inside the canvas host, exactly as in index.html
-  doc.getElementById('gv-canvas').append(doc.getElementById('gv-chip'), doc.getElementById('gv-ins-rail'));
+  // …and the nav cluster follows the rail, as the `~` offset selector requires.
+  doc.getElementById('gv-canvas').append(doc.getElementById('gv-chip'), doc.getElementById('gv-ins-rail'),
+    doc.getElementById('gv-nav'));
+  doc.getElementById('gv-nav').append(doc.getElementById('gv-zoom-in'),
+    doc.getElementById('gv-zoom-out'), doc.getElementById('gv-center'));
   // …and the tablist is the rail's own top row, mirroring index.html.
   for (const tab of ['agents', 'info']) {
     const b = doc.createElement('button');
@@ -54,6 +59,7 @@ export function shell() {
       canvas: el.canvas, chip: el.chip, head: el.head, name: el.name, errors: el.errors,
       newBtn: el.new, autoBtn: el.autolayout, saveBtn: el.save, insRail: el.insRail, insBody: el.insBody,
       insToggle: el.insToggle, insTabs: el.insTabs, palette: el.palette, filter: el.agentFilter, savedList: el.savedList,
+      zoomIn: el.zoomIn, zoomOut: el.zoomOut, centerBtn: el.center,
       savedCount: el.savedCount, archived: el.archived, dialogHost: el.dialogHost,
     },
     raf: (fn) => { q.push(fn); return q.length; },
@@ -205,6 +211,33 @@ test('ctrl+wheel zooms about the cursor (world point invariant) and clamps 0.4..
   assert.ok(s.c.view.getTransform().z <= 1.6 + 1e-12);
   for (let i = 0; i < 30; i += 1) wheel(s, { deltaY: 240, ctrlKey: true, clientX: 600, clientY: 300 });
   assert.ok(s.c.view.getTransform().z >= 0.4 - 1e-12);
+});
+
+const click = (s, el) => el.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+// RECT is 1280x560 and INSET_OPEN is 340, so the open-rail band centre is the
+// stage-local (470, 280) — and RECT.left/top are 0, so it is also the client point.
+const BAND_CX = (1280 - 340) / 2;
+const BAND_CY = 560 / 2;
+
+test('the zoom buttons step by 1.2 about the band centre, clamp 0.4..1.6 and disable at the stops', async () => {
+  const s = await open();
+  s.c.view.setTransform({ x: 0, y: 0, z: 1 });
+  const before = s.c._internal.toWorld(BAND_CX, BAND_CY);
+  click(s, s.el.zoomIn);
+  assert.ok(Math.abs(s.c.view.getTransform().z - 1.2) < 1e-12, 'z x 1.2');
+  const after = s.c._internal.toWorld(BAND_CX, BAND_CY);
+  assert.ok(Math.abs(after.x - before.x) < 1e-6 && Math.abs(after.y - before.y) < 1e-6,
+    'the world point under the band centre never moves');
+  for (let i = 0; i < 6; i += 1) click(s, s.el.zoomIn);
+  assert.ok(Math.abs(s.c.view.getTransform().z - 1.6) < 1e-12, 'clamped at ZOOM_MAX');
+  assert.equal(s.el.zoomIn.disabled, true, 'a button that cannot move is disabled');
+  assert.equal(s.el.zoomOut.disabled, false);
+  for (let i = 0; i < 12; i += 1) click(s, s.el.zoomOut);
+  assert.ok(Math.abs(s.c.view.getTransform().z - 0.4) < 1e-12, 'clamped at ZOOM_MIN');
+  assert.equal(s.el.zoomOut.disabled, true);
+  assert.equal(s.el.zoomIn.disabled, false);
+  s.c.fit();
+  assert.equal(s.el.zoomOut.disabled, false, 'fit() repaints the cluster too');
 });
 
 test('plain wheel pans by exactly −delta; deltaMode 1 scales by 16', async () => {
@@ -966,4 +999,27 @@ test('a routed model locks the sub-agent select; a plain model keeps it editable
   assert.equal(free.disabled, false);
   assert.ok(free.options.length > 1, 'the alias/auto/inherit options are back');
   assert.equal(free.value, 'sonnet', 'the preserved pin is re-selected after unlocking');
+});
+
+test('Center pans the graph centre into the band and never touches the zoom', async () => {
+  const s = await open();
+  s.c.view.setTransform({ x: 0, y: 0, z: 1.3 });
+  click(s, s.el.center);
+  assert.equal(s.c.view.getTransform().z, 1.3, 'pan only: the zoom the user picked survives');
+  const b = s.c.view.bounds(0);
+  const c = s.c._internal.toWorld(BAND_CX, BAND_CY);
+  assert.ok(Math.abs(c.x - (b.x + b.w / 2)) < 1e-6, 'the bounds centre sits under the band centre');
+  assert.ok(Math.abs(c.y - (b.y + b.h / 2)) < 1e-6);
+});
+
+test('Center follows the rail: collapsing it widens the band it centres into', async () => {
+  const s = await open();
+  s.c.view.setTransform({ x: 0, y: 0, z: 1 });
+  click(s, s.el.center);
+  const withRail = s.c.view.getTransform().x;
+  s.el.insRail.dataset.open = 'collapsed';
+  click(s, s.el.center);
+  const collapsed = s.c.view.getTransform().x;
+  assert.ok(Math.abs(collapsed - withRail - (340 - 28) / 2) < 1e-6,
+    'the band centre moved right by half the freed rail (INSET_OPEN - INSET_COLLAPSED)/2');
 });

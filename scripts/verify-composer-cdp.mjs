@@ -22,6 +22,8 @@
 //     (12)      the 22px editor-to-saved-list card gap
 //     (13)      the PAINTED wire routes vs the real card boxes: a card dragged
 //               into a corridor pushes a wire it is not wired to, mid-drag
+//     (14)      the cluster's measured box: bottom-right, clear of the rail,
+//               and a real click that zooms/centres without a stage gesture
 //     (console) the no-page-error gate
 //   NOW ALSO IN test/ (green with no browser at all)
 //     (1), (2) counters, (5), (6) zoom/pan math, (7) fit math, (8) undo + the
@@ -414,6 +416,41 @@ try {
     Math.abs((a.saved.t - a.editor.b) - 22) < 0.6, { editorBottom: a.editor.b, savedTop: a.saved.t });
   // leave the persisted tab as we found it — the next run must start on Agents
   await ev(`(()=>{try{localStorage.removeItem('worca.composer.tab');}catch{}return 1;})()`);
+
+  // ---- (14) the canvas nav cluster, measured in REAL layout -----------------
+  // Bottom-right of the canvas, clear of the rail, and a REAL click on a button
+  // zooms without the stage seeing a gesture (the cluster is the stage's
+  // sibling, so nothing should reach the pointer pipeline).
+  await load();
+  const NAV = () => ev(`(()=>{const q=(s)=>document.querySelector(s);const r=(e)=>{const b=e.getBoundingClientRect();
+    return {l:b.left,t:b.top,r:b.right,b:b.bottom,w:b.width,h:b.height};};
+    const nav=q('#gv-nav'),rail=q('#gv-ins-rail'),canvas=q('#gv-canvas');
+    const {c,v}=window.__gv();const t=v.getTransform();
+    return {nav:r(nav),rail:r(rail),canvas:r(canvas),z:t.z,x:t.x,y:t.y,ges:c.gesture(),
+      btns:[...nav.querySelectorAll('button')].map(b=>({id:b.id,dis:b.disabled,...r(b)}))};})()`);
+  const nav0 = await NAV();
+  const zin = nav0.btns.find((b) => b.id === 'gv-zoom-in');
+  await press(zin.l + zin.w / 2, zin.t + zin.h / 2);
+  await mup(zin.l + zin.w / 2, zin.t + zin.h / 2);
+  await settle('nav-zoom-in');
+  const nav1 = await NAV();
+  const ctr = nav0.btns.find((b) => b.id === 'gv-center');
+  await press(ctr.l + ctr.w / 2, ctr.t + ctr.h / 2);
+  await mup(ctr.l + ctr.w / 2, ctr.t + ctr.h / 2);
+  await settle('nav-center');
+  const nav2 = await NAV();
+  const centred = await ev(`(()=>{const {v}=window.__gv();const b=v.bounds(0);const t=v.getTransform();const r=v.rect();
+    const cx=(r.width-${INSET_OPEN})/2, cy=r.height/2;
+    return {dx:Math.abs((cx-t.x)/t.z-(b.x+b.w/2)),dy:Math.abs((cy-t.y)/t.z-(b.y+b.h/2))};})()`);
+  check(14, 'the nav cluster sits bottom-right inside the canvas, clear of the rail; a real click zooms, centres, and starts no gesture',
+    nav0.btns.length === 3
+    && nav0.nav.r <= nav0.rail.l + 0.6 && nav0.nav.b <= nav0.canvas.b - 0.6
+    && nav0.nav.l >= nav0.canvas.l - 0.6 && nav0.nav.t > nav0.canvas.t
+    && nav0.btns.every((b) => b.w >= 24 && b.h >= 24)
+    && Math.abs(nav1.z - nav0.z * 1.2) < 1e-6 && nav1.ges === null
+    && Math.abs(nav2.z - nav1.z) < 1e-9 && nav2.ges === null
+    && centred.dx < 0.6 && centred.dy < 0.6,
+    { nav: nav0.nav, rail: nav0.rail, canvas: nav0.canvas, z: [nav0.z, nav1.z, nav2.z], centred, btns: nav0.btns });
 
   // ---- (13) obstacle avoidance in a REAL browser ---------------------------
   // A card dragged into the corridor of a wire it is NOT incident to must push
