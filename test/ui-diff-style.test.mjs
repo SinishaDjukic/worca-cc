@@ -139,3 +139,52 @@ test('syntax selectors use only measured foreground variables and never token ba
   const diffEnd = css.indexOf('/* ---------- History detail: Overview tab ---------- */');
   assert.doesNotMatch(css.slice(diffStart, diffEnd), /color:var\(--ink-3\)/);
 });
+
+test('comment threads: surface cards, the sidebar rail recipe, quiet buttons, a ringed composer, tokens only', () => {
+  const card = bodyAfter('.hd-cmt-card{');
+  assert.match(card, /background:var\(--surface\)/);
+  assert.match(card, /border:1px solid var\(--line\)/);
+  assert.match(card, /border-radius:14px/);
+  assert.match(card, /box-shadow:var\(--shadow-soft\)/);
+  assert.match(bodyAfter('.hd-cmt-thread{'), /max-width:720px/);
+  // The rail is .nav-child's connector, card-sized: same stroke, token and radius.
+  const elbow = bodyAfter('.hd-cmt-replies>.hd-cmt-reply-row::before{');
+  assert.match(elbow, /border-left:1\.5px solid var\(--line-2\)/);
+  assert.match(elbow, /border-bottom:1\.5px solid var\(--line-2\)/);
+  assert.match(elbow, /border-bottom-left-radius:7px/);
+  assert.match(bodyAfter('.hd-cmt-replies>.hd-cmt-reply-row:not(:last-child)::after{'), /width:1\.5px/);
+  assert.match(bodyAfter('.hd-cmt-thread.collapsed .hd-cmt-replies{'), /display:none/);
+  const mark = bodyAfter('.hd-cmt-mark{');
+  assert.match(mark, /worca-mark-mask\.png/);
+  assert.match(mark, /background:var\(--ink\)/, 'black on light, white on dark — never a coloured disc');
+  assert.match(bodyAfter('.hd-cmt-body{'), /font:400 13px\/1\.5 var\(--sans\)/);
+  assert.match(bodyAfter('.hd-cmt-body.ask-md{'), /white-space:normal/, 'marked emits newlines between blocks; pre-wrap would double-space them');
+  const btn = bodyAfter('.hd-cmt-btn{');
+  assert.match(btn, /height:26px/);
+  assert.match(btn, /border-radius:8px/);
+  assert.match(btn, /color:var\(--ink-2\)/);
+  assert.match(bodyAfter('.hd-cmt-btn:hover{'), /background:var\(--field\)/);
+  assert.match(bodyAfter('.hd-cmt-delete:hover{'), /color:var\(--red-ink\)/);
+  const reply = bodyAfter('.hd-cmt-btn.hd-cmt-reply{');
+  assert.match(reply, /border:1px solid var\(--line-2\)/);
+  assert.match(reply, /border-radius:999px/);
+  const save = bodyAfter('.hd-cmt-save{');
+  assert.match(save, /background:var\(--ink\)/);
+  assert.match(save, /border-radius:999px/);
+  const focus = bodyAfter('.hd-cmt-composer:focus-within{');
+  assert.match(focus, /box-shadow:0 0 0 3px var\(--selection\)/);
+  assert.match(focus, /border-color:var\(--ink\)/);
+  assert.match(bodyAfter('.hd-cmt-tab[aria-selected="true"]{'), /box-shadow:var\(--knob-shadow\)/);
+  assert.match(bodyAfter('.hd-cmt-preview:empty::before{'), /Nothing to preview yet/);
+  assert.match(bodyAfter('.hd-cmt-tag{'), /background:var\(--green-bg\)/);
+  assert.doesNotMatch(bodyAfter('.hd-cmt-thread.resolved .hd-cmt-body{'), /opacity/, 'resolved dims the text, never the card');
+  // The whole block is token-only, --ink-3-free, and guards its own animation.
+  const start = css.indexOf('/* ---------- History detail: diff comments ---------- */');
+  const end = css.indexOf('/* ---------- end diff comments ---------- */', start);
+  assert.ok(start > 0 && end > start);
+  const block = css.slice(start, end);
+  assert.doesNotMatch(block, /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(/i);
+  assert.doesNotMatch(block, /--ink-3/);
+  assert.match(block, /@media \(prefers-reduced-motion: reduce\)\{\.hd-cmt-thread\{animation:none;\}\}/);
+  assert.equal(css.indexOf('.hd-cmt-body{'), css.indexOf('.hd-cmt-body{', start), 'the base body rule is the first .hd-cmt-body{ in the file — bodyAfter depends on it');
+});
