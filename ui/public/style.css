@@ -2076,7 +2076,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    the card edge; nothing sits on the rail. */
 .hd-cmt-replies{display:flex;flex-direction:column;gap:10px;margin-top:10px;}
 .hd-cmt-thread.collapsed .hd-cmt-replies{display:none;}
-.hd-cmt-replies>.hd-cmt-reply-row{position:relative;padding-left:52px;}
+.hd-cmt-replies>.hd-cmt-reply-row{position:relative;display:block;padding:0 0 0 52px;}
 .hd-cmt-replies>.hd-cmt-reply-row::before{content:"";position:absolute;left:20px;top:-10px;width:30px;height:31px;
   border-left:1.5px solid var(--line-2);border-bottom:1.5px solid var(--line-2);
   border-bottom-left-radius:7px;pointer-events:none;}

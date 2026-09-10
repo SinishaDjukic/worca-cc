@@ -154,6 +154,12 @@ test('comment threads: surface cards, the sidebar rail recipe, quiet buttons, a 
   assert.match(elbow, /border-bottom-left-radius:7px/);
   assert.match(bodyAfter('.hd-cmt-replies>.hd-cmt-reply-row:not(:last-child)::after{'), /width:1\.5px/);
   assert.match(bodyAfter('.hd-cmt-thread.collapsed .hd-cmt-replies{'), /display:none/);
+  // The row states display and all four padding sides itself: a bare `.user` in the
+  // sidebar section (display:flex; padding:6px 8px) also matches the reply row's D12
+  // modifier class `hd-cmt-reply-row user`, and would otherwise shrink-wrap the card.
+  const replyRow = bodyAfter('.hd-cmt-replies>.hd-cmt-reply-row{');
+  assert.match(replyRow, /display:block/);
+  assert.match(replyRow, /padding:0 0 0 52px/);
   const mark = bodyAfter('.hd-cmt-mark{');
   assert.match(mark, /worca-mark-mask\.png/);
   assert.match(mark, /background:var\(--ink\)/, 'black on light, white on dark — never a coloured disc');
