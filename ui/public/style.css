@@ -4072,6 +4072,21 @@ input.gv-name:focus-visible{outline:none;}
 .gv-ins-rail[data-tab="agents"] > .gv-ins-body{display:none;}
 .gv-ins-rail[data-tab="info"] > .gv-agents-pane{display:none;}
 
+/* The nav cluster rides the canvas, clear of the rail: 352px is the open rail's
+   340 plus a 12px gutter, 40px the collapsed 28 plus the same gutter — the
+   INSET_OPEN / INSET_COLLAPSED pair above, so change them together. The sibling
+   selector only works because #gv-nav FOLLOWS #gv-ins-rail in index.html. */
+.gv-nav{position:absolute;z-index:6;bottom:12px;right:352px;display:flex;flex-direction:column;gap:6px;}
+.gv-ins-rail[data-open="collapsed"] ~ .gv-nav{right:40px;}
+.gv-nav-btn{width:30px;height:30px;padding:0;display:grid;place-items:center;
+  border:1px solid var(--line-2);border-radius:9px;background:var(--panel);color:var(--ink-2);
+  box-shadow:var(--shadow-soft);cursor:pointer;line-height:1;font-family:inherit;
+  transition:background .12s,color .12s,opacity .12s;}
+.gv-nav-btn:hover:not(:disabled){background:var(--field);color:var(--ink);}
+.gv-nav-btn:disabled{opacity:.42;cursor:default;box-shadow:none;}
+.gv-nav-btn:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.gv-nav-btn svg{display:block;}
+
 .gv-ins-bar{flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:5px 9px 5px 0;
   border-bottom:1px solid var(--line);}
 .gv-ins-rail[data-open="collapsed"] .gv-ins-bar{padding:0;border-bottom:none;}
