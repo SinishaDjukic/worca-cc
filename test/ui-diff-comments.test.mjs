@@ -236,9 +236,14 @@ const keydown = (window, node, key, init = {}) => node.dispatchEvent(
  *  change the comment set between renders. 8 ticks, not 3: buildHdDiff paints the
  *  file list from `results` first and repaints after the SECOND fetch
  *  (ensureComments) lands, so a synthetic row appears one round trip late. */
-async function bootComments({ patch = CMT_PATCH, files = A_JS, comments = [], patchAvailable = true, counts = {}, markdown = null } = {}) {
+async function bootComments({ patch = CMT_PATCH, files = A_JS, comments = [], patchAvailable = true, counts = {}, markdown = null, arms = null } = {}) {
   const box = { patch, comments, patchAvailable, counts, calls: [] };
-  const ctx = await bootDetail({ detail: diffDetail(cmtResults(files)), arms: armsFor(box), markdown });
+  const base = armsFor(box);
+  const ctx = await bootDetail({
+    detail: diffDetail(cmtResults(files)),
+    arms: (url, opts) => (arms && arms(url, opts, box)) || base(url, opts),
+    markdown,
+  });
   await openDetail(ctx);
   await settle(ctx.window, 8);
   ctx.cbox = box;
@@ -336,6 +341,35 @@ test('hovering a row arms the + button; Cmd+Enter POSTs the exact anchor', async
     { path: 'src/a.js', side: 'new', line: 2, body: 'please add a test' },
     'no `project` key at all on a single-project run (D4)');
   assert.equal(doc.querySelector('.hd-cmt-input'), null, 'the composer closed on success');
+});
+
+// save.disabled gates the BUTTON; the Cmd+Enter listener sits on `wrap` and never
+// looked at it, so an impatient second press posted the same body twice.
+test('a fast double Cmd+Enter posts exactly once', async () => {
+  const ctx = await bootComments();
+  const { window } = ctx;
+  const doc = window.document;
+  hover(window, doc.querySelector('.hd-dl-row[data-new="2"]'));
+  click(window, doc.querySelector('.hd-cmt-add'));
+  const ta = doc.querySelector('.hd-cmt-input');
+  ta.value = 'only once';
+  keydown(window, ta, 'Enter', { metaKey: true });
+  keydown(window, ta, 'Enter', { metaKey: true });   // still in flight
+  await settle(window, 8);
+  assert.equal(ctx.cbox.calls.filter((c) => c[0] === 'POST').length, 1, 'one POST, not two');
+});
+
+test('a fast double Cmd+Enter on a REPLY posts exactly once', async () => {
+  const ctx = await bootComments({ comments: [cmt()] });
+  const { window } = ctx;
+  const doc = window.document;
+  click(window, doc.querySelector('[data-comment-id="dc_00000001"] .hd-cmt-reply'));
+  const ta = doc.querySelector('.hd-cmt-composer.reply .hd-cmt-input');
+  ta.value = 'only once';
+  keydown(window, ta, 'Enter', { metaKey: true });
+  keydown(window, ta, 'Enter', { metaKey: true });
+  await settle(window, 8);
+  assert.equal(ctx.cbox.calls.filter((c) => c[0] === 'POST' && c[1].endsWith('/replies')).length, 1);
 });
 
 test('the + button refuses to arm on a row with no number on either side', async () => {
@@ -669,7 +703,12 @@ test('replies are cards on a rail under their root; Worca wears the mark inline;
   assert.ok(doc.querySelector('[data-comment-id="dc_00000003"] .hd-cmt-head > .hd-cmt-mark + .hd-cmt-author'),
     'the mark sits inline, left of the name');
   assert.equal(rows[1].querySelector('.hd-cmt-mark'), null, 'the user has no picture');
-  assert.equal(thread.querySelector('.hd-cmt-node'), null, 'nothing sits on the rail');
+  // The rail is drawn by CSS off the rows themselves (ui-diff-style.test.mjs pins
+  // the ::before elbow), so the column must hold reply rows and NOTHING else — a
+  // node/dot element emitted onto it would double the rail's geometry.
+  const col = thread.querySelector(':scope > .hd-cmt-replies');
+  assert.ok([...col.children].every((n) => n.matches('.hd-cmt-reply-row')), 'only reply rows sit on the rail');
+  assert.equal(col.children.length, rows.length, 'and every child is one of the rows counted above');
   assert.ok(block.querySelector('[data-thread-id="dc_00000002"] .hd-cmt-card.root .hd-cmt-head > .hd-cmt-mark'), 'a Worca root wears it too');
   const first = thread.querySelector('[data-comment-id="dc_00000003"]');
   const last = thread.querySelector('[data-comment-id="dc_00000004"]');
@@ -766,6 +805,64 @@ test('a poke never destroys an open REPLY draft, and the thread catches up when 
     'landed while typing', 'closing the draft repaints the thread');
 });
 
+test('a reply draft on a DETACHED thread survives its row entering the window, and the thread is never doubled', async () => {
+  const ctx = await bootComments({ patch: bigPatch(), files: BIG_JS,
+    comments: [cmt({ path: 'big.js', line: 5500, lineText: 'line 5500', body: 'late row' })] });
+  const { window } = ctx;
+  const doc = window.document;
+  const detached = doc.querySelector('.hd-cmt-detached [data-thread-id="dc_00000001"]');
+  assert.ok(detached, 'precondition: the row is outside the first window, so the thread starts detached');
+  click(window, detached.querySelector('.hd-cmt-reply'));
+  doc.querySelector('.hd-cmt-composer.reply .hd-cmt-input').value = 'half-written';
+  // "Show more" connects row 5500, so attachComments would re-home this thread —
+  // and used to delete the detached copy, composer and all (D13).
+  click(window, doc.querySelector('.hd-dl-more-btn'));
+  await settle(window, 8);
+  assert.equal(doc.querySelector('.hd-cmt-composer.reply .hd-cmt-input').value, 'half-written',
+    'the draft survived the window growing');
+  assert.equal(doc.querySelectorAll('[data-thread-id="dc_00000001"]').length, 1, 'and it is not shown twice');
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'diff-comments-changed', storeKey: KEY, pipelineId: ROW.id }) });
+  await settle(window, 8);
+  assert.equal(doc.querySelector('.hd-cmt-composer.reply .hd-cmt-input').value, 'half-written', 'a poke leaves it alone too');
+  assert.equal(doc.querySelectorAll('[data-thread-id="dc_00000001"]').length, 1);
+  click(window, doc.querySelector('.hd-cmt-cancel'));
+  await settle(window, 4);
+  assert.ok(doc.querySelector('.hd-cmt-block [data-comment-id="dc_00000001"]'), 'closing the draft re-homes it under its row');
+  assert.equal(doc.querySelector('.hd-cmt-detached'), null, 'and the detached block goes');
+});
+
+// groupCommentThreads never drops a reply whose root is absent — it promotes it to
+// its own thread. Rendering it as a ROOT would offer Resolve / Ask Worca / Reply,
+// and the store refuses every one of them on a reply id (D1/D2 → 400).
+test('a promoted stray reply renders with Delete only', async () => {
+  const ctx = await bootComments({ comments: [cmt({ id: 'dc_00000007', body: 'orphan', parentId: 'dc_00000001' })] });
+  const doc = ctx.window.document;
+  const threads = [...doc.querySelectorAll('.hd-cmt-thread')];
+  assert.equal(threads.length, 1, 'nothing is dropped — it is shown, just not as a root');
+  const card = threads[0].querySelector('.hd-cmt-card');
+  assert.equal(card.dataset.commentId, 'dc_00000007');
+  assert.ok(card.querySelector('.hd-cmt-delete'), 'deleting a reply is the one thing the store allows');
+  for (const cls of ['.hd-cmt-resolve', '.hd-cmt-ask', '.hd-cmt-reply', '.hd-cmt-toggle']) {
+    assert.equal(card.querySelector(cls), null, `${cls} would be a 400 the UI could only swallow`);
+  }
+});
+
+test('a Resolve the server refuses says why, inline on the card', async () => {
+  const ctx = await bootComments({
+    comments: [cmt()],
+    arms: (url, opts) => ((opts.method || 'GET') === 'PATCH' && /\/comments\/dc_[0-9a-f]{8}$/.test(url)
+      ? fail(400, { error: 'replies cannot be resolved on their own' })
+      : null),
+  });
+  const { window } = ctx;
+  const doc = window.document;
+  click(window, doc.querySelector('[data-comment-id="dc_00000001"] .hd-cmt-resolve'));
+  await settle(window, 6);
+  const card = doc.querySelector('[data-comment-id="dc_00000001"]');
+  assert.ok(card, 'the card is still there');
+  assert.equal(card.querySelector('.hd-cmt-err').textContent, 'replies cannot be resolved on their own');
+});
+
 test('Delete on a root with replies says so; Delete on a reply asks about the reply', async () => {
   const ctx = await bootComments({ comments: [cmt(), cmt({ id: 'dc_00000003', body: 'r', parentId: 'dc_00000001' })] });
   const { window } = ctx;
@@ -813,6 +910,11 @@ test('bodies render as sanitized markdown once the renderer is ready; Preview sh
   assert.deepEqual(tabs.map((t) => [t.textContent, t.getAttribute('aria-selected')]), [['Text', 'true'], ['Preview', 'false']]);
   click(window, tabs[1]);
   assert.equal(ta.hidden, true);
+  // Preview hides the focused textarea. Focus has to land back INSIDE the card or
+  // `.hd-cmt-composer:focus-within` drops the ring and the Cmd+Enter listener on
+  // `wrap` stops hearing anything — browsers do not all focus a clicked button.
+  assert.ok(composer.contains(doc.activeElement), 'focus stayed inside the composer card');
+  assert.equal(doc.activeElement, tabs[1], 'on the Preview tab itself, not the textarea it just hid');
   assert.equal(composer.querySelector('.hd-cmt-preview').hidden, false);
   assert.equal(composer.querySelector('.hd-cmt-preview').textContent, '', 'empty draft: the CSS hint does the talking');
   click(window, tabs[0]);

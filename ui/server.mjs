@@ -2289,7 +2289,9 @@ function commentsPatch(req, res, storeKey, id, cid) {
 
 /** Reply inside a thread. The parent must belong to THIS run (commentOfRun); the
  *  store enforces one level, the body cap and the author. No patch gate: a reply
- *  anchors to nothing new, so an archived run's thread still takes one. */
+ *  anchors to nothing new, so there is no anchor to re-resolve and no patch to read
+ *  it from. (Not an archived-run affordance — archiving deletes a run's comments,
+ *  src/core/pipeline-delete.mjs.) */
 function commentsReply(req, res, storeKey, id, cid) {
   try {
     if (!commentOfRun(res, storeKey, id, cid)) return;

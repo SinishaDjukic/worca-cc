@@ -353,7 +353,7 @@ export function createAskTools(deps) {
       description: 'Read an attachment of this conversation by id. Text attachments return their content, paged by byte offset (default 32000 bytes per page). Image and PDF attachments return metadata plus a file path — pass that path to your Read tool to view the content.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('attachment id'), offset: SCHEMA.i('byte offset', 0, Number.MAX_SAFE_INTEGER), maxBytes: SCHEMA.i('bytes per page', 1, L.attachmentReadMaxBytes) }, ['id']) },
     { name: 'list_diff_comments',
-      description: 'List the internal review comments anchored to a run\'s diff lines, ordered by file then line then when they were written. status filters them (all | unresolved | resolved, default all); path narrows to one file. Every comment carries line_text — the snapshot of the line it was anchored to, taken when it was written, so it stays readable even though the source branch has moved on. When the patch is still readable, a few surrounding hunk lines come with each comment. Comments on credential files are never listed.',
+      description: 'List the internal review comments anchored to a run\'s diff lines as THREADS, ordered by file then line then when they were written. Every entry is a thread\'s first comment and carries that thread\'s replies nested under `replies`, oldest first; a reply is never returned on its own at the top level, and a thread\'s replies share its anchor and its resolved state. status filters them (all | unresolved | resolved, default all); path narrows to one file. Every comment carries line_text — the snapshot of the line it was anchored to, taken when it was written, so it stays readable even though the source branch has moved on. When the patch is still readable, a few surrounding hunk lines come with each thread root. Comments on credential files are never listed.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace'),
         status: SCHEMA.s('all | unresolved | resolved (default all)'), path: SCHEMA.s('only this file path') }, ['id']) },
     { name: 'add_diff_comment',
@@ -820,6 +820,18 @@ export function createAskTools(deps) {
       // user deletes theirs from the Diff tab, behind a confirm (app.js:11323).
       if (before.author !== 'ask') {
         throw new AskToolError('delete_diff_comment: only comments Ask wrote can be deleted — the user deletes their own from the Diff tab');
+      }
+      // ...and "nothing else" has to hold for the whole THREAD: removing a root
+      // cascades its replies (the parent_id foreign key), so an ask-authored root
+      // would carry away replies the user wrote. Refuse that; a thread whose
+      // replies are all ask-authored still goes, because the cascade then reaches
+      // only rows the model wrote. The reply row itself stays deletable, which is
+      // what the refusal points the model at.
+      if (!before.parentId) {
+        const kin = deps.comments.list(before.storeKey, before.pipelineId, {});
+        if (kin.some((c) => c.parentId === id && c.author !== 'ask')) {
+          throw new AskToolError('delete_diff_comment: this comment has replies from the user — delete your own reply instead');
+        }
       }
       if (!deps.comments.remove(id)) throw new AskToolError('delete_diff_comment: comment not found');
       return { ok: true, commentId: id, comment: { runId: before.pipelineId, storeKey: before.storeKey } };

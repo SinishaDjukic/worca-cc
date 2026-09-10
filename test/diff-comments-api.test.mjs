@@ -238,7 +238,9 @@ test('POST /:cid/replies: 201 with the root anchor; nested/empty 400; foreign 40
   const mine = (await j(url())).body.comments.filter((c) => c.id === root.id || c.parentId === root.id);
   assert.deepEqual(mine.map((c) => c.id), [root.id, r.body.comment.id], 'flat list, root first, reply after it');
   assert.equal((await post(url(`/${r.body.comment.id}/replies`), { body: 'nested' })).status, 400, 'one level only');
-  assert.match((await post(url(`/${root.id}/replies`), { body: '   ' })).body.error, /body is required/);
+  const blank = await post(url(`/${root.id}/replies`), { body: '   ' });
+  assert.equal(blank.status, 400, 'an empty body is a refusal, not a 500 and not a 201');
+  assert.match(blank.body.error, /body is required/);
   assert.equal((await post(url(`/${root.id}/replies`), { body: 'x'.repeat(4001) })).status, 400);
   assert.equal((await post(url('/dc_00000000/replies'), { body: 'x' })).status, 404);
   assert.equal((await post(url('/nope/replies'), { body: 'x' })).status, 400, 'malformed id');

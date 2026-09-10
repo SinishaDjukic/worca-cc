@@ -161,7 +161,9 @@ export function addDiffComment({
  * root's anchor and its resolved state, so every reader keeps working without a
  * join: ordering (same path/line, later rowid), the status filters, the
  * protected-path guard (same path/old_path) and the line_text snapshot.
- * No patch is needed — a reply anchors to nothing new, so archived runs take one.
+ * No patch is needed — a reply anchors to nothing new, so there is no anchor to
+ * resolve and nothing to resolve it against. (Not an archived-run affordance:
+ * archiving deletes a run's comments, pipeline-delete.mjs.)
  * @throws {DiffCommentError}
  */
 export function addDiffCommentReply({ parentId, body, author } = {}) {
@@ -255,6 +257,11 @@ export function stampSentRunId(commentIds, pipelineId) {
  * Delete every comment of a run. NO transaction of its own — the CALLER owns it
  * (db.mjs tx() is not re-entrant and throws on nesting, and archivePipeline calls
  * this from inside its own tx). Used only by the archive path.
+ * @returns {number} rows the DELETE removed DIRECTLY. Since v29 a root takes its
+ *   replies with it through the parent_id cascade, and SQLite does not count
+ *   cascaded rows in `.changes` — so this UNDER-counts a run with threads and is
+ *   not the number of comments that went away. No caller reads it; do not start
+ *   without switching to a `SELECT count(*)` taken first.
  */
 export function deleteCommentsForRun(pipelineId) {
   getDb();

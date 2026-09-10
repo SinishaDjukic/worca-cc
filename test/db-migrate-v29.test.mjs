@@ -41,10 +41,16 @@ test('ladder: a DB stamped 28 gains diff_comments.parent_id with its self-FK and
   db.close();
 });
 
-test('self-heal: a stamped-current DB missing only parent_id is ALTERed, stamp untouched', () => {
-  const db = dbWithoutParentId(SCHEMA_VERSION);
+// Stamped PAST current — a DB written by a newer build, or by a divergent ladder.
+// That is the case the "stamp not rewritten" claim actually guards: the fast path
+// must heal the missing column and leave user_version alone, because re-stamping it
+// would silently DOWNGRADE the record of what the file has been through. A fixture
+// stamped AT SCHEMA_VERSION cannot show that — the assertion would then compare the
+// constant with itself and hold even if migrate() did rewrite the stamp.
+test('self-heal: a DB stamped past current, missing only parent_id, is ALTERed and never re-stamped', () => {
+  const db = dbWithoutParentId(SCHEMA_VERSION + 1);
   migrate(db);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION, 'stamp not rewritten');
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION + 1, 'stamp not rewritten');
   assert.ok(cols(db, 'diff_comments').includes('parent_id'), 'healed by reconcileSchema');
   db.close();
 });

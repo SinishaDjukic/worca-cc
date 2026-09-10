@@ -12698,6 +12698,20 @@ function hdCmtBody(doc, text, cls = 'hd-cmt-body') {
   return el;
 }
 
+/** The composer's inline-error idiom (`.hd-cmt-err`, hidden while `:empty`), reused
+ *  on a CARD when the server refuses one of its actions. Created lazily, above the
+ *  action row, so an ordinary card carries no extra node. */
+function hdCmtCardError(card, text) {
+  if (!card) return;
+  let el = card.querySelector(':scope > .hd-cmt-err');
+  if (!el) {
+    el = card.ownerDocument.createElement('div');
+    el.className = 'hd-cmt-err';
+    card.insertBefore(el, card.querySelector(':scope > .hd-cmt-foot'));
+  }
+  el.textContent = text;
+}
+
 // One comment card (D12): the thread's ROOT (tags, the detached anchor, the toggle
 // and the full action row) or a REPLY (`reply: true` — Delete, plus Reply on the
 // LAST one). Actions are wired to `ctx` (the per-tab controller) rather than to
@@ -12769,9 +12783,13 @@ function hdCommentCard(doc, comment, ctx, { detached = false, reply = false, las
   };
   const actions = doc.createElement('div');
   actions.className = 'hd-cmt-actions';
-  if (reply) {
+  // A thread root that carries a parentId is a STRAY — groupCommentThreads promotes
+  // a reply whose root is missing rather than drop it. It is still a reply to the
+  // store, which refuses Resolve on one (D2) and has no thread for Reply or Ask
+  // Worca to address, so it gets the reply foot: Delete and nothing else.
+  if (reply || comment.parentId) {
     foot.appendChild(act('hd-cmt-delete', 'Delete', () => { void ctx.remove(comment); }));
-    if (last) actions.appendChild(act('hd-cmt-reply', 'Reply', () => ctx.openReply(root, threadEl), 'reply'));
+    if (reply && last) actions.appendChild(act('hd-cmt-reply', 'Reply', () => ctx.openReply(root, threadEl), 'reply'));
   } else {
     if (replyCount) {
       const toggle = act('hd-cmt-toggle', '', () => ctx.toggleCollapsed(comment, threadEl, toggle));
@@ -12781,7 +12799,7 @@ function hdCommentCard(doc, comment, ctx, { detached = false, reply = false, las
       foot.appendChild(doc.createElement('span'));   // keeps the actions on the right
     }
     actions.append(
-      act('hd-cmt-resolve', comment.resolved ? 'Reopen' : 'Resolve', () => { void ctx.setResolved(comment, !comment.resolved); }),
+      act('hd-cmt-resolve', comment.resolved ? 'Reopen' : 'Resolve', () => { void ctx.setResolved(comment, !comment.resolved, card); }),
       act('hd-cmt-ask', 'Ask Worca', () => ctx.toAsk(comment)),
       act('hd-cmt-delete', 'Delete', () => { void ctx.remove(comment); }),
       act('hd-cmt-reply', 'Reply', () => ctx.openReply(comment, threadEl), 'reply'),
@@ -12881,6 +12899,11 @@ function hdCommentComposer(doc, anchor, ctx, onClose, { mode = 'comment', root =
     ta.hidden = preview;
     pv.hidden = !preview;
     if (!preview) { if (wrap.isConnected) focus(); return; }
+    // Preview hides the textarea, which is usually the focused element. Not every
+    // browser focuses a clicked button, and once focus leaves the card entirely
+    // `.hd-cmt-composer:focus-within` drops the ring AND the keydown listener on
+    // `wrap` stops receiving Cmd+Enter — so put it on the tab explicitly.
+    if (wrap.isConnected) { try { tabPreview.focus(); } catch { /* detached */ } }
     const text = ta.value.trim();
     const out = text && hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' };
     pv.className = `hd-cmt-preview hd-cmt-body${out.kind === 'md' ? ' ask-md' : ''}`;
@@ -12891,12 +12914,19 @@ function hdCommentComposer(doc, anchor, ctx, onClose, { mode = 'comment', root =
   tabText.addEventListener('click', (e) => { e.stopPropagation(); setMode(false); });
   tabPreview.addEventListener('click', (e) => { e.stopPropagation(); setMode(true); });
 
+  // `save.disabled` gates the BUTTON only — the Cmd+Enter listener lives on `wrap`
+  // and fires whatever the button's state — so an impatient second press posted the
+  // same body twice. One flag in this closure covers both paths; the finally clears
+  // it even when the request throws, so a failed save is still retryable.
+  let busy = false;
   const submit = async () => {
     const text = ta.value.trim();
-    if (!text) return;
+    if (!text || busy) return;
+    busy = true;
     save.disabled = true;
-    const err = isReply ? await ctx.reply(root, text) : await ctx.create(anchor, text);
-    save.disabled = false;
+    let err;
+    try { err = isReply ? await ctx.reply(root, text) : await ctx.create(anchor, text); }
+    finally { busy = false; save.disabled = false; }
     if (err) { msg.textContent = err; return; }
     onClose();
   };
@@ -13374,12 +13404,21 @@ function buildHdDiff(sec, record, data) {
       col.appendChild(row);
       focus();
     },
-    async setResolved(comment, resolved) {
+    async setResolved(comment, resolved, card = null) {
       try {
-        await fetch(historyCommentsUrl(record.id, record, `/${comment.id}`), {
+        const res = await fetch(historyCommentsUrl(record.id, record, `/${comment.id}`), {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ resolved }),
         });
+        // A refusal used to be swallowed whole: the button did nothing and said
+        // nothing. Same inline idiom as a failed save in the composer — and no
+        // reload(), which would rebuild the card and wipe the message off it.
+        if (!res.ok) {
+          let m = `could not update (${res.status})`;
+          try { const b = await res.json(); if (b && b.error) m = b.error; } catch { /* keep the fallback */ }
+          hdCmtCardError(card, m);
+          return;
+        }
       } catch { /* the WS poke or the next open corrects it */ }
       await reload();
     },
@@ -13487,7 +13526,15 @@ function buildHdDiff(sec, record, data) {
       const { root } = thread;
       const row = hdRowFor(body, root);
       if (!row) { orphans.push(thread); continue; }
-      body.querySelector(`.hd-cmt-detached [data-thread-id="${cssEscape(root.id)}"]`)?.remove();
+      // The row is in the window now, so this thread belongs under it — UNLESS the
+      // detached copy has an open reply draft (D13): re-homing it would delete the
+      // composer and the typed text with it. Leave it detached (orphans keeps the
+      // block alive and paintDetached refuses to rebuild a drafting thread) and do
+      // NOT also render it under the row, which would show one thread twice. The
+      // draft's own close calls repaintCards(), and that pass re-homes it.
+      const away = body.querySelector(`.hd-cmt-detached [data-thread-id="${cssEscape(root.id)}"]`);
+      if (away && away.dataset.draft === '1') { orphans.push(thread); continue; }
+      away?.remove();
       const existing = body.querySelector(`.hd-cmt-block [data-thread-id="${cssEscape(root.id)}"]`);
       if (existing) {
         if (existing.dataset.draft !== '1') existing.replaceWith(hdCommentThread(document, thread, ctx));
