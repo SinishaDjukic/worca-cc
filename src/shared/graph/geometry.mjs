@@ -30,6 +30,9 @@ export const WIRE_HIT_TOL = 6;
 export const ZOOM_MIN = 0.4;
 export const ZOOM_MAX = 1.6;
 export const ZOOM_K = 0.002;
+/** Multiplier per zoom-BUTTON press — the discrete step both canvases use; the
+ *  wheel keeps its exponential ZOOM_K curve. */
+export const ZOOM_STEP = 1.2;
 /** First row centre from the top of the card: 1.5 + 34 + 8.5 + 12. */
 export const ROW0 = BORDER + HEAD_H + PAD_T + ROW_H / 2;
 

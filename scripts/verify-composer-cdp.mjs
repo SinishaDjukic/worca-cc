@@ -23,7 +23,7 @@
 //     (13)      the PAINTED wire routes vs the real card boxes: a card dragged
 //               into a corridor pushes a wire it is not wired to, mid-drag
 //     (14)      the cluster's measured box: bottom-right, clear of the rail,
-//               and a real click that zooms/centres without a stage gesture
+//               and a real click that zooms/fits without a stage gesture
 //     (console) the no-page-error gate
 //   NOW ALSO IN test/ (green with no browser at all)
 //     (1), (2) counters, (5), (6) zoom/pan math, (7) fit math, (8) undo + the
@@ -439,18 +439,18 @@ try {
   await mup(ctr.l + ctr.w / 2, ctr.t + ctr.h / 2);
   await settle('nav-center');
   const nav2 = await NAV();
-  const centred = await ev(`(()=>{const {v}=window.__gv();const b=v.bounds(0);const t=v.getTransform();const r=v.rect();
-    const cx=(r.width-${INSET_OPEN})/2, cy=r.height/2;
-    return {dx:Math.abs((cx-t.x)/t.z-(b.x+b.w/2)),dy:Math.abs((cy-t.y)/t.z-(b.y+b.h/2))};})()`);
-  check(14, 'the nav cluster sits bottom-right inside the canvas, clear of the rail; a real click zooms, centres, and starts no gesture',
+  const fitted = await ev(`(()=>{const {v}=window.__gv();const b=v.bounds(60);const t=v.getTransform();const r=v.rect();
+    const vw=r.width-${INSET_OPEN}, vh=r.height;
+    const z=Math.max(0.4,Math.min(1,Math.min(vw/b.w,vh/b.h)));
+    return {dz:Math.abs(t.z-z),dx:Math.abs((vw/2-t.x)/t.z-(b.x+b.w/2)),dy:Math.abs((vh/2-t.y)/t.z-(b.y+b.h/2))};})()`);
+  check(14, 'the nav cluster sits bottom-right inside the canvas, clear of the rail; a real click zooms, fits, and starts no gesture',
     nav0.btns.length === 3
     && nav0.nav.r <= nav0.rail.l + 0.6 && nav0.nav.b <= nav0.canvas.b - 0.6
     && nav0.nav.l >= nav0.canvas.l - 0.6 && nav0.nav.t > nav0.canvas.t
     && nav0.btns.every((b) => b.w >= 24 && b.h >= 24)
     && Math.abs(nav1.z - nav0.z * 1.2) < 1e-6 && nav1.ges === null
-    && Math.abs(nav2.z - nav1.z) < 1e-9 && nav2.ges === null
-    && centred.dx < 0.6 && centred.dy < 0.6,
-    { nav: nav0.nav, rail: nav0.rail, canvas: nav0.canvas, z: [nav0.z, nav1.z, nav2.z], centred, btns: nav0.btns });
+    && nav2.ges === null && fitted.dz < 1e-6 && fitted.dx < 0.6 && fitted.dy < 0.6,
+    { nav: nav0.nav, rail: nav0.rail, canvas: nav0.canvas, z: [nav0.z, nav1.z, nav2.z], fitted, btns: nav0.btns });
 
   // ---- (13) obstacle avoidance in a REAL browser ---------------------------
   // A card dragged into the corridor of a wire it is NOT incident to must push
