@@ -1732,6 +1732,7 @@ function gvEls() {
     errors: g('gv-errors'), newBtn: g('gv-new'), autoBtn: g('gv-autolayout'), saveBtn: g('gv-save'),
     insRail: g('gv-ins-rail'), insBody: g('gv-ins-body'), insToggle: g('gv-ins-toggle'),
     insTabs: g('gv-ins-tabs'), palette: g('gv-palette'), filter: g('gv-agent-filter'),
+    zoomIn: g('gv-zoom-in'), zoomOut: g('gv-zoom-out'), centerBtn: g('gv-center'),
     savedList: g('gv-saved-list'), savedCount: g('gv-saved-count'), archived: g('gv-archived'),
     savedMsg: g('gv-saved-msg'), dialogHost: g('gv-dialog-host'),
   };
