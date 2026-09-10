@@ -29,7 +29,7 @@ import {
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
 import { protectedSectionKeys } from '../src/core/diff-anchor.mjs';
 import {
-  addDiffComment, listDiffComments, getDiffComment, setDiffCommentResolved,
+  addDiffComment, addDiffCommentReply, listDiffComments, getDiffComment, setDiffCommentResolved,
   deleteDiffComment, unresolvedCounts, onDiffCommentsChanged, stampSentRunId,
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
@@ -2280,7 +2280,27 @@ function commentsPatch(req, res, storeKey, id, cid) {
     const raw = (req.body || {}).resolved;
     if (typeof raw !== 'boolean') return badRequest(res, 'resolved must be a boolean');
     res.json({ comment: setDiffCommentResolved(cid, raw) });
-  } catch (err) { commentsFail(res, err); }
+  } catch (err) {
+    // A reply id: the store refuses (D2) and the browser shows the reason inline.
+    if (err instanceof DiffCommentError) return badRequest(res, err.message);
+    commentsFail(res, err);
+  }
+}
+
+/** Reply inside a thread. The parent must belong to THIS run (commentOfRun); the
+ *  store enforces one level, the body cap and the author. No patch gate: a reply
+ *  anchors to nothing new, so there is no anchor to re-resolve and no patch to read
+ *  it from. (Not an archived-run affordance — archiving deletes a run's comments,
+ *  src/core/pipeline-delete.mjs.) */
+function commentsReply(req, res, storeKey, id, cid) {
+  try {
+    if (!commentOfRun(res, storeKey, id, cid)) return;
+    const comment = addDiffCommentReply({ parentId: cid, body: (req.body || {}).body, author: 'user' });
+    res.status(201).json({ comment });
+  } catch (err) {
+    if (err instanceof DiffCommentError) return badRequest(res, err.message);
+    commentsFail(res, err);
+  }
 }
 
 function commentsDelete(res, storeKey, id, cid) {
@@ -2309,6 +2329,11 @@ app.delete('/api/history/:key/:id/comments/:cid', (req, res) => {
   const cid = commentIdParam(res, req.params.cid); if (!cid) return;
   commentsDelete(res, key, req.params.id, cid);
 });
+app.post('/api/history/:key/:id/comments/:cid/replies', (req, res) => {
+  const key = commentsHistoryKey(res, req.params.key); if (!key) return;
+  const cid = commentIdParam(res, req.params.cid); if (!cid) return;
+  commentsReply(req, res, key, req.params.id, cid);
+});
 
 app.get('/api/workspaces/:id/runs/:runId/comments', async (req, res) => {
   const key = commentsWorkspaceKey(res, req.params.id); if (!key) return;
@@ -2327,6 +2352,11 @@ app.delete('/api/workspaces/:id/runs/:runId/comments/:cid', (req, res) => {
   const key = commentsWorkspaceKey(res, req.params.id); if (!key) return;
   const cid = commentIdParam(res, req.params.cid); if (!cid) return;
   commentsDelete(res, key, req.params.runId, cid);
+});
+app.post('/api/workspaces/:id/runs/:runId/comments/:cid/replies', (req, res) => {
+  const key = commentsWorkspaceKey(res, req.params.id); if (!key) return;
+  const cid = commentIdParam(res, req.params.cid); if (!cid) return;
+  commentsReply(req, res, key, req.params.runId, cid);
 });
 
 // Unresolved counts for every run, for the History list pill. Its own endpoint

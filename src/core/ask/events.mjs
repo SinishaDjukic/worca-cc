@@ -32,11 +32,12 @@ const weight = (u) => u.input + 1.25 * u.cacheCreation + 0.1 * u.cacheRead + 5 *
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const short = (name) => String(name ?? '').replace(/^mcp__worca__/, '');
 const isAgentTool = (name) => name === 'Task' || name === 'Agent';
-// The three write tools whose success must reach the browser. The reducer runs in
+// The four write tools whose success must reach the browser. The reducer runs in
 // the PARENT process, so this is the only place a child-process write becomes a
 // broadcast (the MCP server cannot call broadcast()).
 const COMMENT_WRITE_TOOLS = new Set([
-  'mcp__worca__add_diff_comment', 'mcp__worca__resolve_diff_comment', 'mcp__worca__delete_diff_comment',
+  'mcp__worca__add_diff_comment', 'mcp__worca__reply_to_diff_comment',
+  'mcp__worca__resolve_diff_comment', 'mcp__worca__delete_diff_comment',
 ]);
 // The worktree-mutating tools (P4): the MCP child opens/removes checkouts and
 // moves HEAD (checkout/switch/fetch → tools.mjs noteNav) — invisible to this
@@ -123,6 +124,7 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'read_attachment': return `Reading ${(attachmentNames && attachmentNames[id]) || 'attachment'}`;
     case 'list_diff_comments': return id ? `Reading comments on ${id.slice(0, 12)}` : 'Reading diff comments';
     case 'add_diff_comment': return 'Writing a diff comment';
+    case 'reply_to_diff_comment': return 'Replying to a diff comment';
     case 'resolve_diff_comment': return 'Updating a diff comment';
     case 'delete_diff_comment': return 'Deleting a diff comment';
     default: return `Using ${n}`;

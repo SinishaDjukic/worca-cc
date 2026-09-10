@@ -157,6 +157,9 @@ test('workspace runs go through the twin route (the history :key regex forbids t
   assert.equal(ok.status, 201);
   assert.equal(ok.body.comment.projectKey, 'team-00000001');
   assert.equal((await j(wsUrl)).body.comments.length, 1);
+  const wsReply = await post(`${wsUrl}/${ok.body.comment.id}/replies`, { body: 'twin reply' });
+  assert.equal(wsReply.status, 201);
+  assert.equal(wsReply.body.comment.projectKey, 'team-00000001', 'the member key is inherited too');
   assert.equal((await j(`/api/history/workspaces%2Fwks-team-0000abcd/${seeded.id}/comments`)).status, 404,
     'the slashed key can never reach the project route family');
 });
@@ -221,4 +224,40 @@ test('emitDiffCommentsChanged resolves an id to its store key and pokes; an unkn
   while (!pokes().length && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
   assert.deepEqual(pokes(), [{ type: 'diff-comments-changed', storeKey: run.key, pipelineId: run.id }]);
   sock.close();
+});
+
+test('POST /:cid/replies: 201 with the root anchor; nested/empty 400; foreign 404; the reply follows its root', async () => {
+  const root = (await post(url(), { path: 'src/a.js', side: 'new', line: 4, body: 'thread' })).body.comment;
+  const r = await post(url(`/${root.id}/replies`), { body: '  reply  ' });
+  assert.equal(r.status, 201);
+  assert.equal(r.body.comment.parentId, root.id);
+  assert.equal(r.body.comment.author, 'user');
+  assert.equal(r.body.comment.body, 'reply');
+  assert.equal(r.body.comment.lineText, 'line3', 'the anchor snapshot is the root\'s');
+  assert.equal(root.parentId, null);
+  const mine = (await j(url())).body.comments.filter((c) => c.id === root.id || c.parentId === root.id);
+  assert.deepEqual(mine.map((c) => c.id), [root.id, r.body.comment.id], 'flat list, root first, reply after it');
+  assert.equal((await post(url(`/${r.body.comment.id}/replies`), { body: 'nested' })).status, 400, 'one level only');
+  const blank = await post(url(`/${root.id}/replies`), { body: '   ' });
+  assert.equal(blank.status, 400, 'an empty body is a refusal, not a 500 and not a 201');
+  assert.match(blank.body.error, /body is required/);
+  assert.equal((await post(url(`/${root.id}/replies`), { body: 'x'.repeat(4001) })).status, 400);
+  assert.equal((await post(url('/dc_00000000/replies'), { body: 'x' })).status, 404);
+  assert.equal((await post(url('/nope/replies'), { body: 'x' })).status, 400, 'malformed id');
+  const p = await patch(url(`/${r.body.comment.id}`), { resolved: true });
+  assert.equal(p.status, 400, 'a reply is not resolvable on its own');
+  assert.match(p.body.error, /resolve the thread/);
+  assert.equal((await patch(url(`/${root.id}`), { resolved: true })).body.comment.resolved, true);
+  assert.equal((await j(url())).body.comments.find((c) => c.id === r.body.comment.id).resolved, true, 'mirrored');
+  assert.equal((await del(url(`/${root.id}`))).status, 200);
+  assert.equal((await j(url())).body.comments.some((c) => c.id === r.body.comment.id), false, 'the reply went with its root');
+});
+
+test("a reply to another run's comment is not reachable through this run's URL", async () => {
+  const otherDir = await mkdtemp(join(tmpdir(), 'worca-cc-dcapi-other2-'));
+  const other = await seedPipeline(otherDir, { title: 'Other', status: 'done' });
+  await writeFile(join(other.dir, 'diff-patch.patch'), PATCH, 'utf8');
+  const theirs = (await post(`/api/history/${other.key}/${other.id}/comments`,
+    { path: 'src/a.js', side: 'new', line: 1, body: 'elsewhere' })).body.comment;
+  assert.equal((await post(url(`/${theirs.id}/replies`), { body: 'x' })).status, 404);
 });

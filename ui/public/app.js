@@ -76,6 +76,8 @@ import { createHljsLoader } from './hljs-loader.mjs';
 import {
   buildFileTree, renderFileTree, firstFile,
 } from './file-tree.mjs';
+import { groupCommentThreads, commentWhen } from './comment-thread.mjs';
+import { createMarkdownRenderer } from './ask-markdown.mjs';
 import { exportSlugPreview } from './export-slug.mjs';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
@@ -111,6 +113,15 @@ import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
+
+// One markdown pipeline for the whole page — Ask answers AND diff-comment bodies
+// (D15): marked + DOMPurify from the vendor routes, the test hook first. This is
+// the exact loader the Ask panel construction used to build inline; it is hoisted
+// so the comment layer can share it, and createAskPanel now receives it by name.
+const loadAskMarkdown = window.__worcaTestHooks?.askMarkdown
+  ?? (() => Promise.all([import('/vendor/marked/marked.esm.js'), import('/vendor/dompurify/purify.es.mjs')])
+    .then(([m, d]) => ({ marked: m.marked, createDOMPurify: d.default })));
+const hdMarkdown = createMarkdownRenderer({ doc: document, load: loadAskMarkdown, hljsLoader: diffHljsLoader });
 
 let askPanel = null;           // Ask Worca panel — assigned by the boot mount; every seam uses askPanel?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
@@ -12619,7 +12630,7 @@ function hdCommentIndex(list) {
   return byFile;
 }
 
-const hdUnresolved = (list) => (list || []).filter((c) => !c.resolved).length;
+const hdUnresolved = (list) => (list || []).filter((c) => !c.resolved && !c.parentId).length;   // threads, not rows (D4)
 
 function hdCmtStamp(iso) {
   const d = new Date(iso);
@@ -12637,29 +12648,105 @@ function hdRowFor(body, comment) {
   return body.querySelector(`.hd-dl-row[${attr}="${cssEscape(String(comment.line))}"]`);
 }
 
-// One comment card. Actions are wired to `ctx` (the per-tab controller) rather than
-// to captured DOM, so a repaint after a WS poke rebuilds them cleanly.
-function hdCommentCard(doc, comment, ctx, { detached = false } = {}) {
+const HD_CMT_SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** The three 14px stroke icons of the component: circle-minus / circle-plus for the
+ *  replies toggle, a speech bubble for Reply. currentColor, so they follow the button. */
+function hdCmtIcon(doc, kind) {
+  const svg = doc.createElementNS(HD_CMT_SVG_NS, 'svg');
+  for (const [k, v] of [['viewBox', '0 0 16 16'], ['width', '14'], ['height', '14'], ['fill', 'none'],
+    ['stroke', 'currentColor'], ['stroke-width', '1.5'], ['stroke-linecap', 'round'], ['stroke-linejoin', 'round'],
+    ['aria-hidden', 'true']]) svg.setAttribute(k, v);
+  const paths = kind === 'reply'
+    ? ['M3 3.75h10a1.25 1.25 0 0 1 1.25 1.25v5.5A1.25 1.25 0 0 1 13 11.75H7.5L4.5 14v-2.25H3A1.25 1.25 0 0 1 1.75 10.5V5A1.25 1.25 0 0 1 3 3.75Z', 'M5 7h6M5 9.25h4']
+    : ['M5.5 8h5', ...(kind === 'plus' ? ['M8 5.5v5'] : [])];
+  if (kind !== 'reply') {
+    const c = doc.createElementNS(HD_CMT_SVG_NS, 'circle');
+    c.setAttribute('cx', '8'); c.setAttribute('cy', '8'); c.setAttribute('r', '6.25');
+    svg.appendChild(c);
+  }
+  for (const d of paths) {
+    const p = doc.createElementNS(HD_CMT_SVG_NS, 'path');
+    p.setAttribute('d', d);
+    svg.appendChild(p);
+  }
+  return svg;
+}
+
+/** "Hide replies (2)" / "Show replies (2)" with the matching icon (D16). */
+function hdCmtToggleLabel(doc, btn, collapsed, n) {
+  btn.replaceChildren(hdCmtIcon(doc, collapsed ? 'plus' : 'minus'),
+    doc.createTextNode(`${collapsed ? 'Show' : 'Hide'} replies (${n})`));
+  btn.setAttribute('aria-expanded', String(!collapsed));
+}
+
+// A body is markdown (D15), rendered through the SAME sanitized pipeline as an Ask
+// answer — marked, then DOMPurify's allow-list — so a comment can never inject
+// markup. Until the renderer is ready (or if it failed to load) the body is plain
+// text: same words, no styling; buildHdDiff repaints once it is.
+function hdCmtBody(doc, text, cls = 'hd-cmt-body') {
+  const el = doc.createElement('div');
+  const out = hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' };
+  if (out.kind === 'md') {
+    el.className = `${cls} ask-md`;
+    el.appendChild(out.frag);
+    void hdMarkdown.highlight(el);
+  } else {
+    el.className = cls;
+    el.textContent = String(text ?? '');
+  }
+  return el;
+}
+
+/** The composer's inline-error idiom (`.hd-cmt-err`, hidden while `:empty`), reused
+ *  on a CARD when the server refuses one of its actions. Created lazily, above the
+ *  action row, so an ordinary card carries no extra node. */
+function hdCmtCardError(card, text) {
+  if (!card) return;
+  let el = card.querySelector(':scope > .hd-cmt-err');
+  if (!el) {
+    el = card.ownerDocument.createElement('div');
+    el.className = 'hd-cmt-err';
+    card.insertBefore(el, card.querySelector(':scope > .hd-cmt-foot'));
+  }
+  el.textContent = text;
+}
+
+// One comment card (D12): the thread's ROOT (tags, the detached anchor, the toggle
+// and the full action row) or a REPLY (`reply: true` — Delete, plus Reply on the
+// LAST one). Actions are wired to `ctx` (the per-tab controller) rather than to
+// captured DOM, so a repaint after a WS poke rebuilds them cleanly. `root` is the
+// thread's first comment (what Reply posts to); `threadEl` the thread element.
+function hdCommentCard(doc, comment, ctx, { detached = false, reply = false, last = false, replyCount = 0, root = null, threadEl = null } = {}) {
   const card = doc.createElement('div');
-  card.className = `hd-cmt-card${comment.resolved ? ' resolved' : ''}${detached ? ' detached' : ''}`;
+  card.className = `hd-cmt-card ${reply ? 'reply' : 'root'}${detached ? ' detached' : ''}`;
   card.dataset.commentId = comment.id;
 
   const head = doc.createElement('div');
   head.className = 'hd-cmt-head';
+  if (comment.author === 'ask') {
+    // The Worca mark, inline left of the name (D14). The user has no picture.
+    const mark = doc.createElement('span');
+    mark.className = 'hd-cmt-mark';
+    mark.setAttribute('aria-hidden', 'true');
+    head.appendChild(mark);
+  }
   const who = doc.createElement('span');
-  who.className = `hd-cmt-author ${comment.author === 'ask' ? 'ask' : 'user'}`;
-  who.textContent = comment.author === 'ask' ? 'Ask' : 'User';
-  const when = doc.createElement('span');
+  who.className = 'hd-cmt-author';
+  who.textContent = comment.author === 'ask' ? 'Worca' : 'You';
+  const when = doc.createElement('time');
   when.className = 'hd-cmt-time';
-  when.textContent = hdCmtStamp(comment.createdAt);
+  when.dateTime = comment.createdAt || '';
+  when.title = hdCmtStamp(comment.createdAt);
+  when.textContent = commentWhen(comment.createdAt);
   head.append(who, when);
-  if (comment.resolved) {
+  if (!reply && comment.resolved) {
     const tag = doc.createElement('span');
     tag.className = 'hd-cmt-tag';
     tag.textContent = 'Resolved';
     head.appendChild(tag);
   }
-  if (comment.sentRunId) {
+  if (!reply && comment.sentRunId) {
     const sent = doc.createElement('span');
     sent.className = 'hd-cmt-sent';
     sent.textContent = `sent to #${comment.sentRunId}`;
@@ -12667,7 +12754,7 @@ function hdCommentCard(doc, comment, ctx, { detached = false } = {}) {
   }
   card.appendChild(head);
 
-  if (detached) {
+  if (detached && !reply) {
     // The anchor could not be rendered (cut by the parse cap, a binary section, or
     // a path that is not in the patch at all). The comment is NEVER dropped — the
     // line_text snapshot is exactly what this case exists for. Anchoring is
@@ -12681,39 +12768,112 @@ function hdCommentCard(doc, comment, ctx, { detached = false } = {}) {
     card.append(where, quoted);
   }
 
-  const bodyEl = doc.createElement('div');
-  bodyEl.className = 'hd-cmt-body';
-  bodyEl.textContent = comment.body;        // textContent: comment bodies are never markup
-  card.appendChild(bodyEl);
+  card.appendChild(hdCmtBody(doc, comment.body));
 
-  const actions = doc.createElement('div');
-  actions.className = 'hd-cmt-actions';
-  const act = (cls, text, fn) => {
+  const foot = doc.createElement('div');
+  foot.className = 'hd-cmt-foot';
+  const act = (cls, text, fn, icon = null) => {
     const b = doc.createElement('button');
     b.type = 'button';
     b.className = `hd-cmt-btn ${cls}`;
-    b.textContent = text;
+    if (icon) b.appendChild(hdCmtIcon(doc, icon));
+    if (text) b.appendChild(doc.createTextNode(text));
     b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
     return b;
   };
-  actions.append(
-    act('hd-cmt-resolve', comment.resolved ? 'Reopen' : 'Resolve', () => { void ctx.setResolved(comment, !comment.resolved); }),
-    act('hd-cmt-delete', 'Delete', () => { void ctx.remove(comment); }),
-    act('hd-cmt-ask', 'Ask Worca', () => ctx.toAsk(comment)),
-  );
-  card.appendChild(actions);
+  const actions = doc.createElement('div');
+  actions.className = 'hd-cmt-actions';
+  // A thread root that carries a parentId is a STRAY — groupCommentThreads promotes
+  // a reply whose root is missing rather than drop it. It is still a reply to the
+  // store, which refuses Resolve on one (D2) and has no thread for Reply or Ask
+  // Worca to address, so it gets the reply foot: Delete and nothing else.
+  if (reply || comment.parentId) {
+    foot.appendChild(act('hd-cmt-delete', 'Delete', () => { void ctx.remove(comment); }));
+    if (reply && last) actions.appendChild(act('hd-cmt-reply', 'Reply', () => ctx.openReply(root, threadEl), 'reply'));
+  } else {
+    if (replyCount) {
+      const toggle = act('hd-cmt-toggle', '', () => ctx.toggleCollapsed(comment, threadEl, toggle));
+      hdCmtToggleLabel(doc, toggle, ctx.isCollapsed(comment.id), replyCount);
+      foot.appendChild(toggle);
+    } else {
+      foot.appendChild(doc.createElement('span'));   // keeps the actions on the right
+    }
+    actions.append(
+      act('hd-cmt-resolve', comment.resolved ? 'Reopen' : 'Resolve', () => { void ctx.setResolved(comment, !comment.resolved, card); }),
+      act('hd-cmt-ask', 'Ask Worca', () => ctx.toAsk(comment)),
+      act('hd-cmt-delete', 'Delete', () => { void ctx.remove(comment); }),
+      act('hd-cmt-reply', 'Reply', () => ctx.openReply(comment, threadEl), 'reply'),
+    );
+  }
+  if (actions.childElementCount) foot.appendChild(actions);
+  card.appendChild(foot);
   return card;
 }
 
-/** The inline composer, opened from a row's + button. */
-function hdCommentComposer(doc, anchor, ctx, onClose) {
+/** One row of the reply column: draws its own elbow off the rail (CSS), holds the card. */
+function hdReplyRow(doc, comment, ctx, { last, root, threadEl }) {
+  const row = doc.createElement('div');
+  row.className = `hd-cmt-reply-row ${comment.author === 'ask' ? 'ask' : 'user'}`;
+  row.appendChild(hdCommentCard(doc, comment, ctx, { reply: true, last, root, threadEl }));
+  return row;
+}
+
+/** One thread (D12): the root card, then — when there are replies — the reply
+ *  column. ctx.openReply appends the composing row to that column (creating it
+ *  for a thread without replies) and marks the thread data-draft. */
+function hdCommentThread(doc, thread, ctx, { detached = false } = {}) {
+  const { root, replies } = thread;
+  const el = doc.createElement('div');
+  el.className = `hd-cmt-thread${root.resolved ? ' resolved' : ''}${replies.length && ctx.isCollapsed(root.id) ? ' collapsed' : ''}`;
+  el.dataset.threadId = root.id;
+  el.appendChild(hdCommentCard(doc, root, ctx, { detached, replyCount: replies.length, threadEl: el }));
+  if (replies.length) {
+    const col = doc.createElement('div');
+    col.className = 'hd-cmt-replies';
+    replies.forEach((r, i) => col.appendChild(hdReplyRow(doc, r, ctx, { last: i === replies.length - 1, root, threadEl: el })));
+    el.appendChild(col);
+  }
+  return el;
+}
+
+/** The composer card (D15): a NEW comment from a row's + button (`anchor`), or a
+ *  REPLY at the end of a thread (`mode:'reply'`, `root`). Titled, with a Text /
+ *  Preview segmented control; the card itself carries the focus ring (CSS). */
+function hdCommentComposer(doc, anchor, ctx, onClose, { mode = 'comment', root = null } = {}) {
+  const isReply = mode === 'reply';
   const wrap = doc.createElement('div');
-  wrap.className = 'hd-cmt-composer';
+  wrap.className = `hd-cmt-card hd-cmt-composer${isReply ? ' reply' : ''}`;
+
+  const title = doc.createElement('div');
+  title.className = 'hd-cmt-composer-title';
+  const label = doc.createElement('span');
+  label.textContent = isReply ? 'Your reply' : 'New comment';
+  const tabs = doc.createElement('div');
+  tabs.className = 'hd-cmt-tabs';
+  tabs.setAttribute('role', 'tablist');
+  const tab = (text) => {
+    const b = doc.createElement('button');
+    b.type = 'button';
+    b.className = 'hd-cmt-tab';
+    b.setAttribute('role', 'tab');
+    b.textContent = text;
+    return b;
+  };
+  const tabText = tab('Text');
+  const tabPreview = tab('Preview');
+  tabs.append(tabText, tabPreview);
+  title.append(label, tabs);
+
   const ta = doc.createElement('textarea');
   ta.className = 'hd-cmt-input';
-  ta.rows = 3;
-  ta.placeholder = 'Leave a note on this line…';
-  ta.setAttribute('aria-label', `Comment on ${anchor.path} line ${anchor.line}`);
+  ta.rows = isReply ? 2 : 3;
+  ta.placeholder = isReply ? 'Reply…' : 'Leave a note on this line…';
+  ta.setAttribute('aria-label', isReply
+    ? `Reply to the comment on ${root.path} line ${root.line}`
+    : `Comment on ${anchor.path} line ${anchor.line}`);
+  const pv = doc.createElement('div');
+  pv.className = 'hd-cmt-preview hd-cmt-body';
+  pv.hidden = true;
   const msg = doc.createElement('div');
   msg.className = 'hd-cmt-err';
   const actions = doc.createElement('div');
@@ -12721,20 +12881,52 @@ function hdCommentComposer(doc, anchor, ctx, onClose) {
   const save = doc.createElement('button');
   save.type = 'button';
   save.className = 'hd-cmt-btn hd-cmt-save';
-  save.textContent = 'Comment';
+  save.textContent = isReply ? 'Reply' : 'Comment';
   const cancel = doc.createElement('button');
   cancel.type = 'button';
   cancel.className = 'hd-cmt-btn hd-cmt-cancel';
   cancel.textContent = 'Cancel';
-  actions.append(save, cancel);
-  wrap.append(ta, msg, actions);
+  actions.append(cancel, save);          // primary on the right
+  wrap.append(title, ta, pv, msg, actions);
 
+  const focus = () => { try { ta.focus(); } catch { /* detached */ } };
+  // Text / Preview. Preview renders the CURRENT draft through the same sanitized
+  // pipeline as a saved body; the textarea keeps the raw markdown, so Text loses
+  // nothing and Cmd+Enter (on `wrap`) saves from either tab.
+  const setMode = (preview) => {
+    tabText.setAttribute('aria-selected', String(!preview));
+    tabPreview.setAttribute('aria-selected', String(preview));
+    ta.hidden = preview;
+    pv.hidden = !preview;
+    if (!preview) { if (wrap.isConnected) focus(); return; }
+    // Preview hides the textarea, which is usually the focused element. Not every
+    // browser focuses a clicked button, and once focus leaves the card entirely
+    // `.hd-cmt-composer:focus-within` drops the ring AND the keydown listener on
+    // `wrap` stops receiving Cmd+Enter — so put it on the tab explicitly.
+    if (wrap.isConnected) { try { tabPreview.focus(); } catch { /* detached */ } }
+    const text = ta.value.trim();
+    const out = text && hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' };
+    pv.className = `hd-cmt-preview hd-cmt-body${out.kind === 'md' ? ' ask-md' : ''}`;
+    if (out.kind === 'md') { pv.replaceChildren(out.frag); void hdMarkdown.highlight(pv); }
+    else pv.textContent = text;          // '' leaves it :empty → the CSS "Nothing to preview yet" hint
+  };
+  setMode(false);
+  tabText.addEventListener('click', (e) => { e.stopPropagation(); setMode(false); });
+  tabPreview.addEventListener('click', (e) => { e.stopPropagation(); setMode(true); });
+
+  // `save.disabled` gates the BUTTON only — the Cmd+Enter listener lives on `wrap`
+  // and fires whatever the button's state — so an impatient second press posted the
+  // same body twice. One flag in this closure covers both paths; the finally clears
+  // it even when the request throws, so a failed save is still retryable.
+  let busy = false;
   const submit = async () => {
     const text = ta.value.trim();
-    if (!text) return;
+    if (!text || busy) return;
+    busy = true;
     save.disabled = true;
-    const err = await ctx.create(anchor, text);
-    save.disabled = false;
+    let err;
+    try { err = isReply ? await ctx.reply(root, text) : await ctx.create(anchor, text); }
+    finally { busy = false; save.disabled = false; }
     if (err) { msg.textContent = err; return; }
     onClose();
   };
@@ -12757,7 +12949,7 @@ function hdCommentComposer(doc, anchor, ctx, onClose) {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.isComposing) { e.preventDefault(); void submit(); }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); }
   });
-  return { wrap, focus: () => { try { ta.focus(); } catch { /* detached */ } } };
+  return { wrap, focus };
 }
 
 // File rows for the Diff tab. Single-project: results.newFiles + changedFiles.
@@ -13091,7 +13283,8 @@ function buildHdDiff(sec, record, data) {
   // ---- the comment layer ---------------------------------------------------
   const cstate = { comments: [], byFile: new Map(), patchAvailable: false, treeSig: null,
     guarded: new Set(),      // section keys the protected-path floor always refuses (m16)
-    collapsed: new Set() };  // dir keys the user collapsed; survives a tree re-render (m11)
+    collapsed: new Set(),       // dir keys the user collapsed; survives a tree re-render (m11)
+    collapsedThreads: new Set() };   // thread root ids the user folded (D16); local, survives a poke repaint
   let commentsPromise = null;
   let lastPick = null;   // { entry, key } — the file currently selected
   let lastMeta = null;   // diffSectionMeta of the body currently in the pane
@@ -13151,19 +13344,91 @@ function buildHdDiff(sec, record, data) {
       await reload();
       return null;
     },
-    async setResolved(comment, resolved) {
+    /** @returns {Promise<string|null>} an error message to show inline, or null */
+    async reply(root, body) {
       try {
-        await fetch(historyCommentsUrl(record.id, record, `/${comment.id}`), {
+        const res = await fetch(historyCommentsUrl(record.id, record, `/${root.id}/replies`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ body }),
+        });
+        if (!res.ok) {
+          let m = `could not save (${res.status})`;
+          try { const b = await res.json(); if (b && b.error) m = b.error; } catch { /* keep the fallback */ }
+          return m;
+        }
+      } catch { return 'network error — the reply was not saved'; }
+      await reload();
+      return null;
+    },
+    replyCountOf: (root) => ctx.for(root.projectKey, root.path).filter((c) => c.parentId === root.id).length,
+    isCollapsed: (rootId) => cstate.collapsedThreads.has(rootId),
+    /** Local only (D16): the choice lives in this tab's state, so a poke repaint keeps it. */
+    toggleCollapsed(root, threadEl, btn) {
+      const on = !cstate.collapsedThreads.has(root.id);
+      if (on) cstate.collapsedThreads.add(root.id); else cstate.collapsedThreads.delete(root.id);
+      threadEl?.classList.toggle('collapsed', on);
+      if (btn) hdCmtToggleLabel(document, btn, on, ctx.replyCountOf(root));
+    },
+    /** Open the reply composer as the last row of `threadEl`'s column — one open
+     *  draft per pane (D13). The thread is marked data-draft so a poke leaves it
+     *  alone until the draft closes, at which point the thread catches up. */
+    openReply(root, threadEl) {
+      if (!threadEl) return;
+      const body = threadEl.closest('.hd-diff-body');
+      for (const open of body ? body.querySelectorAll('.hd-cmt-thread[data-draft="1"]') : []) {
+        if (open === threadEl) continue;
+        const col = open.querySelector(':scope > .hd-cmt-replies');
+        col?.querySelector(':scope > .hd-cmt-reply-row.composing')?.remove();
+        if (col && !col.childElementCount) col.remove();
+        delete open.dataset.draft;
+      }
+      if (threadEl.dataset.draft === '1') { threadEl.querySelector('.hd-cmt-input')?.focus(); return; }
+      // A folded thread opens so the draft is visible; the fold is forgotten.
+      cstate.collapsedThreads.delete(root.id);
+      threadEl.classList.remove('collapsed');
+      const toggle = threadEl.querySelector(':scope > .hd-cmt-card > .hd-cmt-foot > .hd-cmt-toggle');
+      if (toggle) hdCmtToggleLabel(document, toggle, false, ctx.replyCountOf(root));
+      let col = threadEl.querySelector(':scope > .hd-cmt-replies');
+      if (!col) { col = document.createElement('div'); col.className = 'hd-cmt-replies'; threadEl.appendChild(col); }
+      threadEl.dataset.draft = '1';
+      const row = document.createElement('div');
+      row.className = 'hd-cmt-reply-row composing';
+      const { wrap, focus } = hdCommentComposer(document, null, ctx, () => {
+        row.remove();
+        if (!col.childElementCount) col.remove();
+        delete threadEl.dataset.draft;
+        repaintCards();      // anything a poke brought while drafting lands now
+      }, { mode: 'reply', root });
+      row.appendChild(wrap);
+      col.appendChild(row);
+      focus();
+    },
+    async setResolved(comment, resolved, card = null) {
+      try {
+        const res = await fetch(historyCommentsUrl(record.id, record, `/${comment.id}`), {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ resolved }),
         });
+        // A refusal used to be swallowed whole: the button did nothing and said
+        // nothing. Same inline idiom as a failed save in the composer — and no
+        // reload(), which would rebuild the card and wipe the message off it.
+        if (!res.ok) {
+          let m = `could not update (${res.status})`;
+          try { const b = await res.json(); if (b && b.error) m = b.error; } catch { /* keep the fallback */ }
+          hdCmtCardError(card, m);
+          return;
+        }
       } catch { /* the WS poke or the next open corrects it */ }
       await reload();
     },
     async remove(comment) {
+      const replies = comment.parentId ? 0 : ctx.replyCountOf(comment);
       const ok = await confirmModal({
-        title: 'Delete this comment?',
-        message: 'Comments cannot be recovered. This does not change the diff or the run.',
+        title: comment.parentId ? 'Delete this reply?' : 'Delete this comment?',
+        message: `${replies
+          ? `This comment and its ${replies} ${replies === 1 ? 'reply' : 'replies'} cannot`
+          : 'Comments cannot'} be recovered. This does not change the diff or the run.`,
         confirmLabel: 'Delete',
         danger: true,
       });
@@ -13173,7 +13438,7 @@ function buildHdDiff(sec, record, data) {
       } catch { /* as above */ }
       await reload();
     },
-    toAsk(comment) { askAboutDiffComment(comment); },
+    toAsk(comment) { askAboutDiffComment(comment, ctx.replyCountOf(comment)); },
   };
 
   // A comment can name a path the patch does not contain (or the patch may be gone
@@ -13248,18 +13513,33 @@ function buildHdDiff(sec, record, data) {
     return firstNode;
   }
 
-  // Cards for every comment of this file: under its row when that row is in the
-  // CURRENT window, in the detached block otherwise. Idempotent — a later window
-  // never doubles a card, and a comment whose window has just materialised loses
-  // its detached copy in the same pass.
+  // Threads for every comment of this file: under the root's row when that row is
+  // in the CURRENT window, in the detached block otherwise. Idempotent — a later
+  // window never doubles a thread, a thread already on screen is refreshed IN PLACE
+  // (its replies may have grown), and a thread with an open reply draft is left
+  // exactly as it is (D13).
   function attachComments(body, meta) {
-    const list = ctx.for(meta.project, meta.path);
+    const threads = groupCommentThreads(ctx.for(meta.project, meta.path));
+    const live = new Set(threads.map((t) => t.root.id));
     const orphans = [];
-    for (const comment of list) {
-      const row = hdRowFor(body, comment);
-      if (!row) { orphans.push(comment); continue; }
-      body.querySelector(`.hd-cmt-detached [data-comment-id="${cssEscape(comment.id)}"]`)?.remove();
-      if (body.querySelector(`.hd-cmt-block [data-comment-id="${cssEscape(comment.id)}"]`)) continue;
+    for (const thread of threads) {
+      const { root } = thread;
+      const row = hdRowFor(body, root);
+      if (!row) { orphans.push(thread); continue; }
+      // The row is in the window now, so this thread belongs under it — UNLESS the
+      // detached copy has an open reply draft (D13): re-homing it would delete the
+      // composer and the typed text with it. Leave it detached (orphans keeps the
+      // block alive and paintDetached refuses to rebuild a drafting thread) and do
+      // NOT also render it under the row, which would show one thread twice. The
+      // draft's own close calls repaintCards(), and that pass re-homes it.
+      const away = body.querySelector(`.hd-cmt-detached [data-thread-id="${cssEscape(root.id)}"]`);
+      if (away && away.dataset.draft === '1') { orphans.push(thread); continue; }
+      away?.remove();
+      const existing = body.querySelector(`.hd-cmt-block [data-thread-id="${cssEscape(root.id)}"]`);
+      if (existing) {
+        if (existing.dataset.draft !== '1') existing.replaceWith(hdCommentThread(document, thread, ctx));
+        continue;
+      }
       // A context row carries BOTH numbers, so one row can host an old-side and a
       // new-side block: match on line AND side, and scan the whole run of blocks
       // already following the row rather than only its immediate sibling. A new
@@ -13272,23 +13552,30 @@ function buildHdDiff(sec, record, data) {
         n && n.classList.contains(HD_CMT_BLOCK); n = n.nextElementSibling) {
         tail = n;
         if (n.dataset.composer !== '1'
-          && n.dataset.line === String(comment.line)
-          && n.dataset.side === comment.side) { block = n; break; }
+          && n.dataset.line === String(root.line)
+          && n.dataset.side === root.side) { block = n; break; }
       }
       if (!block) {
         block = document.createElement('div');
         block.className = HD_CMT_BLOCK;
-        block.dataset.line = String(comment.line);
-        block.dataset.side = comment.side;
+        block.dataset.line = String(root.line);
+        block.dataset.side = root.side;
         tail.after(block);
       }
-      block.appendChild(hdCommentCard(document, comment, ctx));
+      block.appendChild(hdCommentThread(document, thread, ctx));
+    }
+    // A thread deleted elsewhere (another tab, Ask) leaves; a block left empty goes too.
+    for (const stale of body.querySelectorAll('.hd-cmt-block [data-thread-id]')) {
+      if (!live.has(stale.dataset.threadId) && stale.dataset.draft !== '1') stale.remove();
+    }
+    for (const b of body.querySelectorAll(':scope > .hd-cmt-block')) {
+      if (b.dataset.composer !== '1' && !b.childElementCount) b.remove();
     }
     paintDetached(body, orphans);
   }
 
-  // A comment whose anchor is not renderable still shows — as a detached card at
-  // the BOTTOM of the pane, below the truncation / no-textual-diff note.
+  // A thread whose root anchor is not renderable still shows — at the BOTTOM of the
+  // pane, below the truncation / no-textual-diff note.
   //
   // The block is re-appended on EVERY call, not only when it is created: `tail` is
   // null for any file that is not truncated, and hdDiffAppendWindow's
@@ -13309,13 +13596,17 @@ function buildHdDiff(sec, record, data) {
       block.appendChild(head);
     }
     body.appendChild(block);   // create OR re-home: always the last child
-    const keep = new Set(orphans.map((c) => c.id));
-    for (const card of block.querySelectorAll('[data-comment-id]')) {
-      if (!keep.has(card.dataset.commentId)) card.remove();
+    const keep = new Set(orphans.map((t) => t.root.id));
+    for (const el of block.querySelectorAll('[data-thread-id]')) {
+      if (!keep.has(el.dataset.threadId) && el.dataset.draft !== '1') el.remove();
     }
-    for (const comment of orphans) {
-      if (block.querySelector(`[data-comment-id="${cssEscape(comment.id)}"]`)) continue;
-      block.appendChild(hdCommentCard(document, comment, ctx, { detached: true }));
+    for (const thread of orphans) {
+      const existing = block.querySelector(`[data-thread-id="${cssEscape(thread.root.id)}"]`);
+      if (existing) {
+        if (existing.dataset.draft !== '1') existing.replaceWith(hdCommentThread(document, thread, ctx, { detached: true }));
+        continue;
+      }
+      block.appendChild(hdCommentThread(document, thread, ctx, { detached: true }));
     }
   }
 
@@ -13326,7 +13617,8 @@ function buildHdDiff(sec, record, data) {
     const body = pane.querySelector('.hd-diff-body');
     if (!body || !lastMeta) return;
     for (const el of body.querySelectorAll(':scope > .hd-cmt-block, :scope > .hd-cmt-detached')) {
-      if (el.dataset.composer === '1') continue;   // never destroy an open draft
+      if (el.dataset.composer === '1') continue;                          // never destroy an open draft
+      if (el.querySelector('.hd-cmt-thread[data-draft="1"]')) continue;   // nor an open reply draft — attachComments refreshes its siblings in place (D13)
       el.remove();
     }
     attachComments(body, lastMeta);
@@ -13529,6 +13821,10 @@ function buildHdDiff(sec, record, data) {
   // Publish the poke target BEFORE the first fetch settles: a mutation from another
   // tab can land while this one is still loading.
   hdCommentState = { key: hdStoreKey(record), id: record.id, reload };
+  // Bodies are markdown (D15). The renderer loads lazily, so the first paint may be
+  // plain text; repaint the cards once it is ready (a no-op when it already was,
+  // and nothing happens when it failed — plain text is the fallback, not an error).
+  void hdMarkdown.ensure().then((ok) => { if (ok && hdPaneLive()) repaintCards(); });
   void ensureComments().then(() => {
     if (!hdPaneLive()) return;
     // Synthetic rows may appear now (a comment on a path the patch never had, or a
@@ -16817,10 +17113,13 @@ if (_timerTick && typeof _timerTick.unref === 'function') _timerTick.unref();
 
 // Append a reference to the chat composer WITHOUT sending, so several comments can
 // stack and the user presses send once. Plain text: the [worca context] block is
-// server-built and any attempt to forge one here is flattened server-side.
-function askAboutDiffComment(comment) {
+// server-built and any attempt to forge one here is flattened server-side. A thread
+// that already has replies says so, so the model reads them (list_diff_comments
+// nests them) before it answers in the thread.
+function askAboutDiffComment(comment, replyCount = 0) {
   const where = `${comment.path}:${comment.line} (${comment.side})`;
-  askPanel?.appendToComposer(`[diff comment ${comment.id} — ${where}] "${comment.body}"`);
+  const thread = replyCount ? `, ${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}` : '';
+  askPanel?.appendToComposer(`[diff comment ${comment.id} — ${where}${thread}] "${comment.body}"`);
 }
 
 // Server-resolvable page context only (§6.5 keys); the server re-validates and
@@ -17012,9 +17311,7 @@ askPanel = createAskPanel({
   getPageContext,
   openNewPipeline,
   openComposer: (id) => { openComposerFromAsk(id); },
-  loadMarkdown: window.__worcaTestHooks?.askMarkdown
-    ?? (() => Promise.all([import('/vendor/marked/marked.esm.js'), import('/vendor/dompurify/purify.es.mjs')])
-      .then(([m, d]) => ({ marked: m.marked, createDOMPurify: d.default }))),
+  loadMarkdown: loadAskMarkdown,
   hljsLoader: diffHljsLoader,
   storage: window.localStorage,
   raf: window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : ((fn) => setTimeout(fn, 0)),

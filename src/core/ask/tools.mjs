@@ -353,7 +353,7 @@ export function createAskTools(deps) {
       description: 'Read an attachment of this conversation by id. Text attachments return their content, paged by byte offset (default 32000 bytes per page). Image and PDF attachments return metadata plus a file path — pass that path to your Read tool to view the content.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('attachment id'), offset: SCHEMA.i('byte offset', 0, Number.MAX_SAFE_INTEGER), maxBytes: SCHEMA.i('bytes per page', 1, L.attachmentReadMaxBytes) }, ['id']) },
     { name: 'list_diff_comments',
-      description: 'List the internal review comments anchored to a run\'s diff lines, ordered by file then line then when they were written. status filters them (all | unresolved | resolved, default all); path narrows to one file. Every comment carries line_text — the snapshot of the line it was anchored to, taken when it was written, so it stays readable even though the source branch has moved on. When the patch is still readable, a few surrounding hunk lines come with each comment. Comments on credential files are never listed.',
+      description: 'List the internal review comments anchored to a run\'s diff lines as THREADS, ordered by file then line then when they were written. Every entry is a thread\'s first comment and carries that thread\'s replies nested under `replies`, oldest first; a reply is never returned on its own at the top level, and a thread\'s replies share its anchor and its resolved state. status filters them (all | unresolved | resolved, default all); path narrows to one file. Every comment carries line_text — the snapshot of the line it was anchored to, taken when it was written, so it stays readable even though the source branch has moved on. When the patch is still readable, a few surrounding hunk lines come with each thread root. Comments on credential files are never listed.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace'),
         status: SCHEMA.s('all | unresolved | resolved (default all)'), path: SCHEMA.s('only this file path') }, ['id']) },
     { name: 'add_diff_comment',
@@ -363,6 +363,10 @@ export function createAskTools(deps) {
         path: SCHEMA.s('file path as it appears in the diff'), side: SCHEMA.s('"old" or "new"'),
         line: SCHEMA.i('line number on that side', 1, Number.MAX_SAFE_INTEGER),
         body: SCHEMA.s(`the comment text (max ${L.commentBodyMaxChars} chars)`) }, ['id', 'path', 'side', 'line', 'body']) },
+    { name: 'reply_to_diff_comment',
+      description: 'Reply inside the thread of one diff comment (authored by you). commentId is the thread\'s FIRST comment — a dc_… id from list_diff_comments, or the id quoted in the user\'s "[diff comment dc_… — path:line (side)]" reference. Replies to a reply are refused (threads are one level deep). Use it when the user asks you to answer, explain or respond to a comment, so the answer sits next to the code. A reply never resolves anything.',
+      inputSchema: SCHEMA.obj({ commentId: SCHEMA.s('id of the thread\'s first comment (dc_…)'),
+        body: SCHEMA.s(`the reply text (max ${L.commentBodyMaxChars} chars)`) }, ['commentId', 'body']) },
     { name: 'resolve_diff_comment',
       description: 'Mark one diff comment resolved, or reopen it with resolved:false. Nothing is deleted, and resolving is never automatic — do it only when the user asks.',
       inputSchema: SCHEMA.obj({ commentId: SCHEMA.s('comment id (dc_…) from list_diff_comments'),
@@ -431,6 +435,7 @@ export function createAskTools(deps) {
     side: c.side, line: c.line,
     lineText: deps.redact(c.lineText), body: deps.redact(c.body), author: c.author,
     resolved: c.resolved, resolvedAt: c.resolvedAt, sentRunId: c.sentRunId, createdAt: c.createdAt,
+    parentId: c.parentId ?? null,
   });
 
   // Comment failures are model-actionable -> AskToolError text, never a crash.
@@ -727,12 +732,23 @@ export function createAskTools(deps) {
       // Re-applied here even though `keep` was handed to the bundle above: the
       // filter is this module's guarantee, not the bundle's, and it costs nothing
       // on rows that are already gone.
-      const comments = raw.filter((c) => !commentBlocked(c)).map((c) => ({
+      const visible = raw.filter((c) => !commentBlocked(c));
+      // Threads (D7): roots at the top, each with its replies nested in creation
+      // order. A reply whose root the guard dropped is dropped with it — same path,
+      // same verdict — so nothing here can leak a hidden thread through a reply.
+      const byParent = new Map();
+      for (const c of visible) {
+        if (!c.parentId) continue;
+        if (!byParent.has(c.parentId)) byParent.set(c.parentId, []);
+        byParent.get(c.parentId).push(c);
+      }
+      const comments = visible.filter((c) => !c.parentId).map((c) => ({
         ...shapeComment(c),
         // Every string the model sees is redacted: line_text and the context come
         // from the patch, and the BODY is user-authored text that can hold a pasted
         // secret just as easily. shapeComment already redacts the first two.
         ...(Array.isArray(c.context) && c.context.length ? { context: c.context.map((l) => deps.redact(l)) } : {}),
+        replies: (byParent.get(c.id) || []).map(shapeComment),
       }));
       return { runId: row.id, patchAvailable: patchText != null, comments };
     },
@@ -749,6 +765,18 @@ export function createAskTools(deps) {
         });
         return { comment: shapeComment(comment) };
       } catch (err) { throw asCommentError('add_diff_comment', err); }
+    },
+    async reply_to_diff_comment(input) {
+      const id = str(input.commentId);
+      if (!id) throw new AskToolError('reply_to_diff_comment: commentId is required');
+      // The read filter applies to the PARENT (D5): a thread the guard hides takes
+      // no reply by id, and the refusal text never becomes an existence oracle.
+      const parent = deps.comments.get(id);
+      if (!parent || commentBlocked(parent)) throw new AskToolError('reply_to_diff_comment: comment not found');
+      try {
+        const comment = deps.comments.reply({ parentId: id, body: str(input.body) });
+        return { comment: shapeComment(comment) };
+      } catch (err) { throw asCommentError('reply_to_diff_comment', err); }
     },
     async resolve_diff_comment(input) {
       const id = str(input.commentId);
@@ -769,7 +797,9 @@ export function createAskTools(deps) {
       if (input.resolved !== undefined && typeof input.resolved !== 'boolean') {
         throw new AskToolError('resolve_diff_comment: resolved must be true or false');
       }
-      const comment = deps.comments.setResolved(id, input.resolved !== false);
+      let comment;
+      try { comment = deps.comments.setResolved(id, input.resolved !== false); }
+      catch (err) { throw asCommentError('resolve_diff_comment', err); }   // a reply id: D2, the store refuses
       if (!comment) throw new AskToolError('resolve_diff_comment: comment not found');
       return { comment: shapeComment(comment) };
     },
@@ -790,6 +820,18 @@ export function createAskTools(deps) {
       // user deletes theirs from the Diff tab, behind a confirm (app.js:11323).
       if (before.author !== 'ask') {
         throw new AskToolError('delete_diff_comment: only comments Ask wrote can be deleted — the user deletes their own from the Diff tab');
+      }
+      // ...and "nothing else" has to hold for the whole THREAD: removing a root
+      // cascades its replies (the parent_id foreign key), so an ask-authored root
+      // would carry away replies the user wrote. Refuse that; a thread whose
+      // replies are all ask-authored still goes, because the cascade then reaches
+      // only rows the model wrote. The reply row itself stays deletable, which is
+      // what the refusal points the model at.
+      if (!before.parentId) {
+        const kin = deps.comments.list(before.storeKey, before.pipelineId, {});
+        if (kin.some((c) => c.parentId === id && c.author !== 'ask')) {
+          throw new AskToolError('delete_diff_comment: this comment has replies from the user — delete your own reply instead');
+        }
       }
       if (!deps.comments.remove(id)) throw new AskToolError('delete_diff_comment: comment not found');
       return { ok: true, commentId: id, comment: { runId: before.pipelineId, storeKey: before.storeKey } };

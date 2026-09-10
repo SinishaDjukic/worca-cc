@@ -381,9 +381,20 @@ test('buildRestoredPrompt: newest messages first within the cap, chronological o
 // are pinned by substring here so a future edit cannot drop them.
 test('the prompt advertises the worktree tools and the native file tools, and the sandbox note names both', () => {
   for (const t of ['open_worktree', 'list_worktrees', 'remove_worktree', 'propose_run',
-    'list_diff_comments', 'add_diff_comment', 'resolve_diff_comment', 'delete_diff_comment']) {
+    'list_diff_comments', 'add_diff_comment', 'reply_to_diff_comment', 'resolve_diff_comment', 'delete_diff_comment']) {
     assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 1 enumerates ${t}`);
   }
+  // Rule 9 itself, not the whole blob: the loop above already guarantees the tool
+  // NAME appears (rule 1 enumerates it), so a bare substring check on
+  // ASK_SYSTEM_RULES would stay green with the entire threads paragraph deleted.
+  const rule9 = ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('9.'));
+  assert.ok(rule9, 'rule 9 is one line of its own');
+  for (const phrase of [
+    'returns each thread as its first comment with its replies nested under `replies` (oldest first)',
+    'treat the latest reply as the current state of the conversation',
+    'post the answer in that thread with reply_to_diff_comment',
+    ', N replies" when the thread already has some',
+  ]) assert.ok(rule9.includes(phrase), `rule 9 states: ${phrase}`);
   assert.ok(ASK_SYSTEM_RULES.includes('cat-file'), 'the "no raw git read" guidance survives');
   assert.ok(ASK_SYSTEM_RULES.includes('DETACHED'), 'rule 7 states the checkout is detached');
   for (const t of ['Read', 'Grep', 'Glob']) assert.ok(ASK_SYSTEM_RULES.includes(t), `the rules advertise ${t}`);
