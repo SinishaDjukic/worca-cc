@@ -20,6 +20,11 @@ const state = {
   projects: [], // saved {name, path, exists} registry, loaded from /api/projects
   config: { steps: {}, customModels: [] }, // per-project model/effort selections
   models: [], // predefined + custom, from /api/config
+  // Bumped by setModelCatalog() every time `models` is REPLACED. Anything that
+  // renders a catalog LABEL (a model id resolved to its display name) keys its
+  // memo on this: the catalog arrives asynchronously, so a graph painted before
+  // /api/config lands shows raw ids and has to be told to re-resolve them.
+  modelsSeq: 0,
   efforts: [], // effort levels, from /api/config
   // Sub-agent model policy vocabulary, from /api/config. A FIXED alias enum (the
   // CLI's Task tool refuses catalog ids), not a slice of `models`.
@@ -59,8 +64,10 @@ const state = {
 
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
-import { decorFromState, applyDecor, isGraphManifest } from './graph/run-decor.mjs';
+import { decorFromState, applyDecor, isGraphManifest, tuneByNode, manifestNodeById,
+  NO_DISPATCH_STATUS, nodeBusy } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
+import { createRetunePopover } from './graph/retune-popover.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion. They stay EXPORTED
 // from results-view.mjs (test/results-view-helpers.test.mjs imports four of them).
@@ -899,16 +906,6 @@ function manifestFor(stepper) {
   return EMPTY_MANIFEST;
 }
 
-// Stable node-id signature of a manifest. Used to detect a manifest REPLACEMENT
-// so the live view can re-swap mid-run.
-function manifestSig(stepper) {
-  const m = manifestFor(stepper);
-  return (Array.isArray(m.steps) ? m.steps : [])
-    .map((cell) => (Array.isArray(cell.nodes) ? cell.nodes.map((n) => n.id).join(',') : ''))
-    .join('|');
-}
-
-
 // ---------------------------------------------------------------------------
 // Multi-run engine: per-run model + Map. Each run renders into one card in the
 // Running view; events are fanned out by handleServerMessage.
@@ -1142,6 +1139,27 @@ function modelUsedByNode(steps) {
     if (key) out[key] = s.modelUsed;
   }
   return out;
+}
+
+/**
+ * The Agents-tab group header, shared by the live run detail (`rd-ag-head`) and
+ * History (`hd-ag-head`). The two screens differ only in that class and in what
+ * their meta segment says — everything else, down to the pill ORDER, has to match:
+ * skillPillsHtml goes LAST because the pill block claims a full row of its own, so
+ * a mid-header block would push the meta onto a second line.
+ *
+ * `key` is the GROUP key, which carries a cycle suffix; the per-node maps are
+ * keyed by the node id alone, hence `nodeKey`.
+ */
+function agentGroupHeadHtml(cls, key, { label, gstat, tune, catalog, graphify, meta, skills }) {
+  const sep = String(key).indexOf(CYCLE_KEY_SEP);
+  const nodeKey = sep >= 0 ? String(key).slice(0, sep) : String(key);
+  return `<b>${escapeHtml(label)}</b>`
+    + `<span class="subs-stat ${gstat}">${SUBS_STAT_TEXT[gstat] || gstat}</span>`
+    + stepModelPillHtml(tune[nodeKey], catalog)
+    + graphifyCountPillHtml(graphify)
+    + `<span class="${cls}-meta mono">${escapeHtml(meta)}</span>`
+    + skillPillsHtml(skills);
 }
 
 // A single node's sub-agents (for its graph card), preserving insertion order.
@@ -1419,14 +1437,25 @@ function onState(r, msg) {
   // state.prompt is stamped after createPipeline, so the first snapshots have
   // none; keep the last non-empty value.
   if (typeof msg.prompt === 'string' && msg.prompt) r.prompt = msg.prompt;
-  // Swap the manifest when it FIRST arrives OR when its node-id signature changes
-  // (a decomposed run rewrites the implementer node into per-phase/per-task nodes
-  // mid-run). Rebuild the stepper DOM so subsequent paints address the right nodes.
-  if (msg.stepper && (r.stepper == null || manifestSig(msg.stepper) !== manifestSig(r.stepper))) {
-    r.stepper = msg.stepper;
-    // paintGraphFor mounts the graph renderer into the same host on the next
-    // paint; there is no separate structural rebuild any more.
-  }
+  // ADOPT any manifest the frame carries. This used to be gated on a signature
+  // that hashed node IDS, which missed the one other thing a manifest legitimately
+  // changes mid-run: a live retune patches `model`/`effort` on a cell, the ids
+  // never move, and the card kept the stale model for the life of the run.
+  // Widening that hash to `id:model:effort` fixed the retune and left the trap in
+  // place — a whitelist of fields has to be kept in lockstep with
+  // manifest.mjs#patchManifestNodeTune by hand.
+  //
+  // There is nothing to protect by refusing: the frame's stepper is a deep clone
+  // of the engine's own, so it is never staler than ours. A fresh object identity
+  // every frame costs nothing — every downstream reader compares content.
+  //
+  // This is the MODEL's adoption only. What the rendered graph picks up is
+  // run-hosts' business: it re-reads ports, agent meta and the template on its own
+  // id-only `nodeSig` (so a decomposition still rebuilds the DOM), and everything
+  // else it shows comes through applyDecor. A cell's `label`, `icon` or `ports`
+  // changing mid-run would land in `r.stepper` here and go no further — which is
+  // fine today, because nothing mutates them after run start.
+  if (msg.stepper) r.stepper = msg.stepper;
   if (Array.isArray(msg.steps)) {
     r.steps = msg.steps;
     r.costByNode = costByNode(msg.steps);
@@ -1562,7 +1591,7 @@ async function loadConfig(projectDir) {
     const data = await safeJson(res);
     if (res.ok) {
       state.config = data.config || { steps: {}, customModels: [] };
-      state.models = Array.isArray(data.models) ? data.models : [];
+      setModelCatalog(data.models);
       state.efforts = Array.isArray(data.efforts) ? data.efforts : [];
       if (Array.isArray(data.subagentModels) && data.subagentModels.length) {
         state.subagentModels = data.subagentModels;
@@ -2012,8 +2041,113 @@ async function gvRefreshArchived() {
   }
 }
 
-function modelById(id) {
-  return state.models.find((m) => m.id === id) || null;
+function modelById(id, models = state.models) {
+  return (models || []).find((m) => m && m.id === id) || null;
+}
+
+/** Push freshly-resolved catalog captions into the DOM. No `_decorSeq` bump is
+ *  needed — runDecorFor keys its memo on the catalog generations, so the bag is
+ *  already invalid; this pass only repaints. paintRunCard no-ops on a card-less
+ *  run, and both detail repaints no-op when their screen is closed. */
+/** Coalesce catalog repaints into ONE pass per microtask. Several foreign-project
+ *  fetches can land together — five live runs spanning five projects is five
+ *  answers — and each one invalidates every run's decor bag, so running the pass
+ *  per answer means N full re-layouts of every mounted graph host where one would
+ *  do. The generation is already bumped by the time this flushes. */
+let catalogRepaintQueued = false;
+function scheduleCatalogRepaint() {
+  if (catalogRepaintQueued) return;
+  catalogRepaintQueued = true;
+  Promise.resolve().then(() => { catalogRepaintQueued = false; repaintForCatalog(); });
+}
+
+function repaintForCatalog() {
+  for (const r of runs.values()) paintRunCard(r);
+  const open = rdOpenRun();
+  if (open) repaintRunDetail(open);
+  repaintHistGraph();   // the History detail's pills read a catalog too
+  // ...and so does its AGENTS tab, which is lazy-built once and then never
+  // rebuilt. Without this its `.sub-model-pill` keeps the fallback catalog's
+  // labels while the `.ntune` pill on the graph directly above it shows the run's
+  // own — the exact divergence the shared formatter exists to prevent.
+  invalidateHistAgentsTab();
+}
+
+/** Force the open History detail's Agents tab to rebuild. Visible: rebuild now.
+ *  Hidden: drop the lazy-build stamp so the next activation does it. */
+function invalidateHistAgentsTab() {
+  const screen = histDetailState && histDetailState.screen;
+  const sec = screen && screen.querySelector('#hd-sec-agents');
+  if (!sec || sec.dataset.loaded !== '1') return;
+  if (sec.hidden) { sec.dataset.loaded = ''; return; }
+  const st = detailTabsOf(screen);
+  if (st && typeof st.activate === 'function') { sec.dataset.loaded = ''; st.activate('agents'); }
+}
+
+/**
+ * Replace the model catalog and tell every catalog-label reader to re-resolve.
+ *
+ * The catalog is loaded ASYNCHRONOUSLY (loadConfig -> /api/config), so a run
+ * graph can paint before it lands — with a raw `claude-opus-5` where the pill
+ * should say `Opus 5`. Nothing would ever fix it on its own: runDecorFor memoises
+ * the decor bag per `_decorSeq`, and run-hosts' update() skips paint() outright
+ * when the bag identity is unchanged, so an id painted early would stay raw for
+ * the life of the card.
+ *
+ * Bumping every live run's `_decorSeq` mints fresh bag identities, and the
+ * repaint pass pushes the resolved labels into the DOM. Cheap and rare: the
+ * catalog is replaced on boot and on a project switch, not per frame.
+ */
+function setModelCatalog(models) {
+  const next = Array.isArray(models) ? models : [];
+  // An UNCHANGED catalog is a no-op. loadConfig runs on every project
+  // re-selection and on every flip of the run-type radio, and bumping the
+  // generation invalidates the memoised decor bag for every run — forcing
+  // decorFromState, applyDecor and a fit pass on every mounted graph host. That is
+  // a full re-layout of every Running card's graph in exchange for captions that
+  // did not move.
+  // The WHOLE entry, not a hand-picked subset: readers consume `routed`, `custom`,
+  // `plugin`, `costUnreliable` and more, and a subset signature would take the
+  // early return on a catalog that changed in one of them — leaving every decor
+  // bag on the old generation and MODELS_BY_PROJECT holding the stale per-project
+  // catalogs this function exists to drop.
+  // Serialise only the INCOMING list and compare it to the signature kept from
+  // last time: this runs on every project re-selection and every flip of the
+  // run-type radio, and stringifying both catalogs each time is pure cost on a
+  // path whose usual answer is "nothing moved". A length check first skips even
+  // that for the common project switch.
+  const sig = next.length === state.models.length ? JSON.stringify(next) : null;
+  if (state.modelsSeq && sig !== null && sig === modelsSig) { state.models = next; return; }
+  modelsSig = sig !== null ? sig : JSON.stringify(next);
+  state.models = next;
+  state.modelsSeq++;
+  // Drop the per-project caches and bump their generation BEFORE the repaint, not
+  // after: repainting first would re-resolve every caption from exactly the caches
+  // about to be discarded and store that in each run's decor memo — and with the
+  // generation unchanged, nothing would ever re-resolve them. The History detail
+  // is the worst case: it has no `_decorSeq` of its own and repaints only from
+  // here, so it would keep stale labels for the life of the screen.
+  MODELS_BY_PROJECT.clear();
+  CATALOG_INFLIGHT.clear();   // an answer fetched before this edit is stale now
+  catalogEpoch++;
+  for (const dir of [...PROJECT_CATALOG_SEQ.keys()]) {
+    PROJECT_CATALOG_SEQ.set(dir, projectCatalogSeqOf(dir) + 1);
+  }
+  // Through the SAME coalescer the per-project answers use, so a project switch
+  // whose in-flight fetches land in this tick runs one pass, not two back to back.
+  scheduleCatalogRepaint();
+  // A popover left open across the boot race is holding the EMPTY catalog it was
+  // handed; hand it the real one so the user is not stuck with one unusable
+  // dropdown until they close and reopen it.
+  //
+  // ONLY when this catalog is the open panel's own. A project switch runs through
+  // here, and pushing the newly-selected project's models onto a panel editing a
+  // run from a DIFFERENT project would replace a valid offer list with one the
+  // engine will refuse — openRetuneFor fetched that run's catalog for exactly this
+  // reason.
+  if (retunePopover && retuneRun && runOnSelectedCatalog(retuneRun)) {
+    retunePopover.refresh(state.models);
+  }
 }
 
 function option(value, text) {
@@ -2212,9 +2346,8 @@ if (typeof window !== 'undefined') {
     setAgentRowsEnabled,
     effectiveDefaultsOf,
     openAgentRows,
-    _setModels: (m) => { state.models = Array.isArray(m) ? m : []; },
+    _setModels: (m) => setModelCatalog(m),
     manifestFor,
-    manifestSig,
     stepStatusByKey,
     makeRun,
     onLog,
@@ -2245,7 +2378,9 @@ if (typeof window !== 'undefined') {
     skillPillsHtml,
     agentTypePillHtml,
     graphifyCountPillHtml,
-    stepModelByNode,
+    tuneByNode,
+    modelEffortText,
+    catalogForRun,
     stepModelPillHtml,
     onStepSkills,
     onStepGraphify,
@@ -11440,6 +11575,30 @@ function parseHistDetailParam(param) {
 }
 
 let histDetailState = null; // { key, id, record, data, screen } while open
+
+/** Re-paint the open History detail's graph. No-op when none is open, or before
+ *  its data has arrived.
+ *
+ *  Every input is read from `histDetailState` at call time, never stashed: the
+ *  record is re-resolved after a deep link and mutated by paintHdPr, so a copy
+ *  captured at first paint would go stale.
+ *
+ *  v2: the frozen state renders through the same reducer as the live one (History
+ *  carries `record` in the bag for the keyed artifact route); v1: the untouched
+ *  column painter, as a thunk. */
+function repaintHistGraph() {
+  const hd = histDetailState;
+  const st = hd && hd.data && hd.data.state;
+  const flow = st && hd.screen && hd.screen.querySelector('.run-flow');
+  if (!flow) return;
+  // Resolved ONCE, not per tuned node: decorFromState calls tuneText for every
+  // entry, and each call would re-read the record and re-check the catalog map.
+  const catalog = catalogForRun(hd.record);
+  paintGraphFor(flow, st.stepper, isGraphManifest(st.stepper) ? Object.assign(
+    decorFromState(st, { live: false, now: 0, subsOf: (id) => subAgentsForNode(st, id),
+      tuneText: (t) => modelEffortText(t, catalog) }),
+    { run: st, runId: hd.id, mode: 'monitor', record: hd.record }) : null, st.steps);
+}
 // The open Diff tab's comment layer, published so the WS router can poke it.
 // Assigned by buildHdDiff, cleared by closeHistDetail and by the next buildHdDiff.
 // `reload` refetches the comments and repaints CARDS ONLY — never the diff, never
@@ -11626,14 +11785,14 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
   screen.querySelector('.hd-title').textContent = data.state.title || rec.title || parsed.id;
   paintHistStatusIcon(screen.querySelector('.hd-sic'), { ...rec, status: data.state.status });
 
-  const flow = screen.querySelector('.run-flow');
   const st = data.state;
-  // v2: the frozen state renders through the same reducer as the live one (History
-  // carries `record` in the bag for the keyed artifact route); v1: the untouched
-  // column painter, as a thunk.
-  paintGraphFor(flow, st.stepper, isGraphManifest(st.stepper) ? Object.assign(
-    decorFromState(st, { live: false, now: 0, subsOf: (id) => subAgentsForNode(st, id) }),
-    { run: st, runId: parsed.id, mode: 'monitor', record: rec }) : null, st.steps);
+  // Painted through repaintHistGraph so the catalog can re-resolve it later: the
+  // `.ntune` pill turns a model id into its catalog LABEL, and the catalog loads
+  // asynchronously — deep-link straight to a History detail and it paints before
+  // /api/config lands, leaving raw ids on the cards. Live runs recover through
+  // their own repaint (setModelCatalog); History had no entry point at all, so the
+  // ids stuck for the life of the screen.
+  repaintHistGraph();
   if (isGraphManifest(st.stepper)) paintQuiescenceBanner(screen.querySelector('.hd-banners'), decorFromState(st, { live: false, now: 0 }));
 
   paintHdHeaderMeta(screen, rec, data);
@@ -14011,10 +14170,11 @@ function buildHdAgents(sec, record, data) {
     return;
   }
   const labelOf = cycleAwareLabel(st.stepper, st.subAgents, keys, st.steps);
+  const agentsCatalog = catalogForRun(record);   // History rows carry projectDir too
   const skillsByGroup = stepSkillsFromSteps(st.steps);
   const graphifyByGroup = stepGraphifyFromSteps(st.steps);
   const statusOf = stepStatusByKey(st.steps, st.stepper);
-  const modelByNode = stepModelByNode(st.stepper);
+  const modelByNode = tuneByNode(st.stepper);
 
   for (const key of keys) {
     const list = Array.isArray(groups[key]) ? groups[key] : [];
@@ -14030,16 +14190,12 @@ function buildHdAgents(sec, record, data) {
       durSum ? fmtDuration(durSum) : '',
       costSum ? fmtUsd4(costSum) : '',
     ].filter(Boolean).join(' · ');
-    const sep = String(key).indexOf(CYCLE_KEY_SEP);
     const head = document.createElement('div');
     head.className = 'hd-ag-head';
-    head.innerHTML =
-      `<b>${escapeHtml(labelOf(key))}</b>` +
-      `<span class="subs-stat ${gstat}">${SUBS_STAT_TEXT[gstat] || gstat}</span>` +
-      stepModelPillHtml(modelByNode[sep >= 0 ? String(key).slice(0, sep) : String(key)]) +
-      graphifyCountPillHtml(graphifyByGroup[key]) +
-      `<span class="hd-ag-meta mono">${escapeHtml(metaBits)}</span>` +
-      skillPillsHtml(skillsByGroup[key]);
+    head.innerHTML = agentGroupHeadHtml('hd-ag', key, {
+      label: labelOf(key), gstat, tune: modelByNode, catalog: agentsCatalog,
+      graphify: graphifyByGroup[key], meta: metaBits, skills: skillsByGroup[key],
+    });
     card.appendChild(head);
     if (!list.length) {
       const note = document.createElement('div');
@@ -14593,7 +14749,8 @@ function rdAgentsBody(sec, r) {
   const skillsByGroup = stepSkillsFromSteps(r.steps);
   const graphifyByGroup = stepGraphifyFromSteps(r.steps);
   const statusOf = stepStatusByKey(r.steps, r.stepper);
-  const modelByNode = stepModelByNode(r.stepper);
+  const modelByNode = tuneByNode(r.stepper);
+  const agentsCatalog = catalogForRun(r);   // the RUN's ids resolve in the RUN's catalog
 
   for (const key of keys) {
     const list = Array.isArray(groups[key]) ? groups[key] : [];
@@ -14614,17 +14771,12 @@ function rdAgentsBody(sec, r) {
     ].filter(Boolean).join(' · ');
     const head = document.createElement('div');
     head.className = 'rd-ag-head';
-    // Skill + graphify pills are kept here so nothing the removed .subs-bar
-    // showed (spec §7) is lost. skillPillsHtml goes LAST, exactly as
-    // buildHdAgents emits it — the pill block claims a full row of its own, so a
-    // mid-header block would push the meta onto a second line.
-    head.innerHTML =
-      `<b>${escapeHtml(labelOf(key))}</b>` +
-      `<span class="subs-stat ${gstat}">${SUBS_STAT_TEXT[gstat] || gstat}</span>` +
-      stepModelPillHtml(modelByNode[sep >= 0 ? String(key).slice(0, sep) : String(key)]) +
-      graphifyCountPillHtml(graphifyByGroup[key]) +
-      `<span class="rd-ag-meta mono">${escapeHtml(metaBits)}</span>` +
-      skillPillsHtml(skillsByGroup[key]);
+    // Skill + graphify pills are kept here so nothing the removed .subs-bar showed
+    // (spec §7) is lost. The ORDER is agentGroupHeadHtml's, shared with History.
+    head.innerHTML = agentGroupHeadHtml('rd-ag', key, {
+      label: labelOf(key), gstat, tune: modelByNode, catalog: agentsCatalog,
+      graphify: graphifyByGroup[key], meta: metaBits, skills: skillsByGroup[key],
+    });
     card.appendChild(head);
     if (!list.length) {
       const note = document.createElement('div');
@@ -15104,11 +15256,11 @@ function isGraphRun(r) { return isGraphManifest(r && r.stepper); }
  *  RUNNING surfaces show and History never may (D5): model + effort. */
 function activeNodes(r) {
   if (!isGraphRun(r)) return [];
-  const byId = new Map(r.stepper.graph.nodes.filter(Boolean).map((n) => [n.id, n]));
-  return runDecorFor(r).activeNodes.map((a) => {
-    const n = byId.get(a.nodeId);
-    return { ...a, model: (n && n.model) || '', effort: (n && n.effort) || '' };
-  });
+  // The bag ALREADY carries this map (decorFromState publishes `tune`), so read it
+  // rather than walking the manifest again — activeCopy and runStepLabel both call
+  // through here on every state/token frame.
+  const d = runDecorFor(r);
+  return d.activeNodes.map((a) => ({ ...a, ...(d.tune[a.nodeId] || { model: '', effort: '' }) }));
 }
 
 const PILL_FAMILIES = new Set(['violet', 'blue', 'peach', 'green', 'red', 'amber']);
@@ -15134,10 +15286,19 @@ function activeCopy(r) {
  *  is holding. The per-mode copy is memoised too, so run-hosts' `nextDecor ===
  *  decor` skip still recognises an unchanged generation and no repaint is added. */
 function runDecorFor(r, mode = 'monitor') {
-  const seq = r._decorSeq || 0;
+  // Keyed on the model-catalog generation as well as the run's own: the bag
+  // carries RESOLVED `tune` captions, and the catalog loads asynchronously, so a
+  // bag built before /api/config landed holds raw model ids. Naming both inputs in
+  // the key is what lets a late catalog mint a fresh bag — which run-hosts needs,
+  // since it skips paint() outright on an unchanged bag identity.
+  const seq = `${r._decorSeq || 0}:${state.modelsSeq}:${projectCatalogSeqOf(r.projectDir)}`;
   if (!r._decorCache || r._decorCache.seq !== seq) {
+    // Bound to the RUN's own catalog, not the selected project's — see
+    // catalogForRun. Both generations are in the key because either can move.
+    const catalog = catalogForRun(r);
     r._decorCache = { seq, views: new Map(),
-      decor: decorFromState(r, { live: isLive(r), now: Date.now(), subsOf: (id) => subAgentsForNode(r, id) }) };
+      decor: decorFromState(r, { live: isLive(r), now: Date.now(),
+        subsOf: (id) => subAgentsForNode(r, id), tuneText: (t) => modelEffortText(t, catalog) }) };
   }
   const cache = r._decorCache;
   let bag = cache.views.get(mode);
@@ -15534,30 +15695,51 @@ function subModelPillHtml(model) {
   return `<span class="sub-model-pill">${escapeHtml(m)}</span>`;
 }
 
-// {nodeId: {model, effort}} a MAIN agent was configured to run with, from the
-// run's stepper manifest — manifest.mjs folds the run-config overlay in at build
-// time, so a node's model/effort there IS its effective selection. '' = inherit
-// the CLI/global default, which the client cannot resolve: no entry, no pill,
-// never a guess. v2 graph manifests only (frozen v1 snapshots recorded none).
-function stepModelByNode(stepper) {
-  const out = {};
-  if (!isGraphManifest(stepper)) return out;
-  for (const n of stepper.graph.nodes) {
-    if (!n || n.kind !== 'agent' || !n.id || typeof n.model !== 'string' || !n.model) continue;
-    out[n.id] = { model: n.model, effort: typeof n.effort === 'string' ? n.effort : '' };
-  }
-  return out;
+// `Opus 5 · high` — how a {model, effort} selection is SPOKEN, in one place.
+// The catalog label when the id is known (state.models loads at boot; an
+// unknown/custom id prints raw), plus "· effort" only when one was set. The
+// Agents-tab pill, the graph card's `.ntune` pill and the compact run card's
+// step label all read this, which is what keeps them saying the same words.
+//
+// An EFFORT with no model reads `default · high`: the model is inherited but the
+// effort is an explicit override that reaches the CLI as `--effort high`, so it
+// is not nothing. '' only when neither is set — pure inherit, which the client
+// cannot resolve to a name and must never guess at.
+function modelEffortText(sel, models = state.models) {
+  if (!sel) return '';
+  // Pure inherit says nothing — UNLESS the run retuned this node to it. That the
+  // node changed mid-run is worth saying on its own; dropping the caption would
+  // take the "changed during the run" marker with it, on the one screen (History)
+  // where it is the only record that the node did not always run on this.
+  if (!sel.model && !sel.effort) return sel.retuned ? 'inherit' : '';
+  const m = sel.model ? modelById(sel.model, models) : null;
+  const name = sel.model ? (m ? m.label : sel.model) : 'default';
+  return name + (sel.effort ? ` · ${sel.effort}` : '');
 }
 
-// The Agents-tab group header's model pill: the catalog label when the id is
-// known (state.models loads at boot; an unknown/custom id prints raw), plus
-// "· effort" only when one was set. Same quiet outline as the sub-agent rows'
-// run-model pill — it is configuration, not status.
-function stepModelPillHtml(sel) {
-  if (!sel || !sel.model) return '';
-  const m = modelById(sel.model);
-  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '');
-  return `<span class="sub-model-pill">${escapeHtml(text)}</span>`;
+// The Agents-tab group header's model pill. Same quiet outline as the sub-agent
+// rows' run-model pill — it is CONFIGURATION, not status: what the node is set to
+// run on, which after a live retune means what its NEXT execution will use.
+//
+// It deliberately does NOT try to also report what an earlier cycle ran on.
+// `steps[].modelUsed` records that, but it is the CLI's WIRE id, echoed verbatim
+// from its init event, while `sel.model` is worca's catalog handle — and the two
+// differ by construction for an endpoint-routed entry (which spawns with the
+// entry's ANTHROPIC_MODEL) and for a 1M entry (whose catalog id carries a
+// worca-only `[1m]` suffix the CLI cannot echo). Comparing them marks every node
+// that has ever executed as "changed", which is worse than saying nothing.
+// Reporting a per-execution model honestly needs a resolved-id mapping the client
+// does not have.
+function stepModelPillHtml(sel, models = state.models) {
+  const text = modelEffortText(sel, models);
+  if (!text) return '';
+  // The one reliable divergence signal: the engine STAMPS `retuned` on the cell it
+  // patches, so this needs no comparison against a wire id the client cannot
+  // resolve.
+  const marked = sel && sel.retuned
+    ? ' class="sub-model-pill is-retuned" title="changed during the run — earlier executions used a different model"'
+    : ' class="sub-model-pill"';
+  return `<span${marked}>${escapeHtml(text)}</span>`;
 }
 
 // Neutral count badge for how many times an agent / sub-agent invoked the graphify
@@ -15649,6 +15831,213 @@ function paintLegacyStrip(host, manifest, steps) {
 // (History passes `record` too) — and `legacySteps` is the run's ledger, which
 // the v1 arm needs and `decor` cannot carry: every caller passes decor = null on
 // the v1 path, so the strip takes its rows explicitly.
+// One popover for the whole app: opening it on a second card closes the first.
+let retunePopover = null;
+// The run the OPEN popover belongs to, re-pointed on every open. The popover is
+// built lazily and then reused, so its callbacks cannot close over one run — and
+// they must not resolve one with rdOpenRun() when a response lands either, or a
+// slow failure lands in whatever detail the user has navigated to by then.
+let retuneRun = null;
+
+/**
+ * Open the retune popover for a node on the LIVE run detail graph. `ctx` is the
+ * decor bag paintGraphFor keeps current, so `ctx.run` is the run model and
+ * `ctx.record` (History) has already been ruled out by the caller.
+ *
+ * @returns {boolean} whether the activation was CONSUMED. The keyboard arm in
+ *   run-hosts only calls preventDefault() when it was: swallowing Space on a card
+ *   this function declines would leave the key doing nothing at all, where it
+ *   used to scroll the detail body.
+ */
+function openRetuneFor(ctx, nodeId, cardEl) {
+  const r = ctx && ctx.run;
+  // NO_DISPATCH_STATUS is the engine's own list (retune-gate.mjs), not a local
+  // copy and not isTerminalStatus — that predicate also matches 'interrupted',
+  // and the detail screen already warns it is the wrong test there. An interrupted
+  // or paused run resumes, so its nodes stay retunable (D6).
+  if (!r || NO_DISPATCH_STATUS.includes(String(r.status || ''))) return false;
+  const node = manifestNodeById(r.stepper, nodeId);
+  if (!node) return false;
+  if (!retunePopover) {
+    retunePopover = createRetunePopover({
+      doc: document,
+      onError: (msg) => {
+        if (retuneRun) onLog(retuneRun, { source: 'ui', level: 'error', text: `retune failed: ${msg}`, ts: Date.now() });
+      },
+      // Drop the run reference with the panel: a closed popover holding one would
+      // pin a whole run model — logLines, steps, subAgents, stepper — alive after
+      // the run is evicted from the runs Map.
+      onClose: () => { retuneRun = null; },
+    });
+  }
+  // The catalog has to be the RUN's, not the selected project's. paintRunList
+  // applies no project filter, so a live run of project B is openable while A is
+  // selected — and the engine validates against listModels(run.projectDir). Offer
+  // A's models for a B node and picking one comes back 400 `unknown model`, while
+  // B's own custom model (the node's stored value) reads "not in this catalog".
+  const ownCatalog = runOnSelectedCatalog(r);
+  // The cached answer if there IS one: catalogForRun may already have fetched this
+  // project during an earlier paint, and re-deriving it through a promise would
+  // build and measure the panel against an empty list first.
+  const known = ownCatalog ? state.models : (MODELS_BY_PROJECT.get(r.projectDir) || []);
+  // AFTER open(), never before: open() closes any panel already up, and that
+  // close fires onClose, which nulls this. Assigning first left every popover
+  // opened while another was open with no run reference at all — so a failed
+  // Apply on it logged nowhere, the one job the reference exists for.
+  const opened = retunePopover.open(cardEl, {
+    runId: r.runId,
+    node,
+    models: known,
+    busy: nodeBusy(r, nodeId),   // the engine's own predicate, not a second copy
+  });
+  // A null return is the toggle path: the click CLOSED the panel that was up, so
+  // there is no run to hold on to.
+  retuneRun = opened ? r : null;
+  // Fetch the run's own catalog and hand it over when it lands. Deliberately not
+  // awaited: the panel opens now, showing the node's stored value flagged rather
+  // than nothing at all, and refresh() fills the list in. The identity check is
+  // what keeps a slow reply off a panel the user has since moved on from.
+  if (opened && !ownCatalog && !known.length) {
+    modelsForProject(r.projectDir, { retry: true }).then((models) => {
+      // ONLY a real answer. modelsForProject returns null when the fetch failed,
+      // and pushing the selected project's catalog into the picker would offer ids
+      // the engine validates against a different project and answers 400 — the very
+      // thing opening with [] avoids.
+      if (models && retuneRun === r && retunePopover) retunePopover.refresh(models);
+    });
+  }
+  return true;
+}
+
+/** The model catalog for ONE project, memoised per projectDir. `state.models` is
+ *  the SELECTED project's; a run from another project needs its own, because that
+ *  is what the engine validates a retune against AND what its model ids resolve to
+ *  a label in. Falls back to the loaded catalog if the fetch fails — a stale offer
+ *  list beats an empty one, and the engine refuses a wrong id by name anyway. */
+const MODELS_BY_PROJECT = new Map();
+/** projectDir -> how many times ITS catalog has been answered. Folded into that
+ *  run's decor memo key, so a catalog arriving for one project re-resolves only
+ *  the runs that belong to it — a single global counter invalidated every run's
+ *  bag and re-laid-out every mounted graph host once per foreign project. */
+const PROJECT_CATALOG_SEQ = new Map();
+const projectCatalogSeqOf = (dir) => PROJECT_CATALOG_SEQ.get(dir) || 0;
+/** Bumped when the SELECTED catalog is replaced, which drops every per-project
+ *  cache. An in-flight fetch that started before it is answering about a world
+ *  that no longer holds. */
+let catalogEpoch = 0;
+/** JSON of `state.models` as last replaced — the cheap half of the no-op check. */
+let modelsSig = '';
+/** projectDir -> the in-flight fetch promise. Both a paint and a popover open can
+ *  ask for the same catalog at once; one request answers both. */
+const CATALOG_INFLIGHT = new Map();
+
+/** Does this run's model catalog happen to be the one already loaded? ONE
+ *  definition: the caption reader below, the popover's offer list and the
+ *  catalog-refresh guard all ask it, and a rule that gained a case (a workspace run
+ *  spanning several projectDirs, a canonicalised path compare) in only one of them
+ *  would have the picker offering A's models beside a pill resolved from B's. */
+function runOnSelectedCatalog(r) {
+  const dir = r && r.projectDir;
+  return !dir || dir === state.projectDir;
+}
+
+/**
+ * The catalog to resolve a RUN's model ids against, synchronously.
+ *
+ * `state.models` belongs to the SELECTED project, and paintRunList applies no
+ * project filter — so a live run of project B is on screen while A is selected.
+ * Resolving B's ids against A's catalog prints a raw id at best, and A's label for
+ * a different model of the same id at worst, while the retune popover right beside
+ * it (which fetches B's catalog) shows the truth.
+ *
+ * Kicks the fetch on first ask and returns the selected catalog meanwhile; the
+ * generation bump re-resolves the captions when it lands.
+ */
+function catalogForRun(r) {
+  if (runOnSelectedCatalog(r)) return state.models;
+  const dir = r.projectDir;
+  const hit = MODELS_BY_PROJECT.get(dir);
+  if (hit && hit.length) return hit;
+  // Not resolved (yet, or at all): the BUILT-INS only. Every project's catalog
+  // carries the same built-in entries, so those labels are safe to borrow — but a
+  // CUSTOM id can be defined differently in two projects, and printing A's name for
+  // B's model is a confident wrong answer where the raw id is at least honest, with
+  // the retune popover right beside it showing something else.
+  //
+  // The lookup is NOT retried here: this runs on every decor rebuild, several times
+  // a second on a live run, so a failing project would issue a request per frame.
+  // The user gesture has its own retry (modelsForProject's `retry`), and the map is
+  // dropped wholesale when the selected catalog changes.
+  if (hit === undefined) modelsForProject(dir);   // kicks once; its in-flight map dedupes
+  return state.models.filter((m) => m && !m.custom);
+}
+
+/**
+ * Fetch and cache ONE project's catalog. Returns null when the answer did not
+ * arrive — callers decide what that means, and they differ:
+ *   - a LABEL reader (catalogForRun) falls back to the selected catalog, because a
+ *     probably-right name beats a raw id;
+ *   - the retune OFFER list must not, because offering another project's ids gets
+ *     the user a 400 from the engine. openRetuneFor opens with [] for exactly that
+ *     reason and refreshes only on a real answer.
+ *
+ * Deduped by an in-flight promise map: both callers can ask for the same project
+ * at the same moment (a paint and a popover open), and two identical requests
+ * would also mean two full repaint passes for one catalog.
+ */
+function modelsForProject(projectDir, { retry = false } = {}) {
+  // `retry` is the USER-GESTURE door. A cached miss is deliberately never re-asked
+  // by the per-frame label reader — a failing project would issue a request per
+  // frame — but the retune picker is a different contract: without a real answer it
+  // can offer nothing at all, and one transient failure would leave every popover
+  // on that project's runs permanently empty with no way to try again.
+  if (MODELS_BY_PROJECT.has(projectDir) && !(retry && MODELS_BY_PROJECT.get(projectDir) === null)) {
+    return Promise.resolve(MODELS_BY_PROJECT.get(projectDir));
+  }
+  const inflight = CATALOG_INFLIGHT.get(projectDir);
+  if (inflight) return inflight;
+  const epoch = catalogEpoch;
+  const p = (async () => {
+    let models = null;
+    try {
+      const res = await fetch(`/api/config?projectDir=${encodeURIComponent(projectDir)}`);
+      const data = await safeJson(res);
+      // An EMPTY list is not a real answer either — /api/config returns the
+      // built-ins even for a project it knows nothing about — so it is recorded as
+      // a miss rather than cached as the truth.
+      if (res.ok && Array.isArray(data.models) && data.models.length) models = data.models;
+    } catch { /* recorded as a miss below */ }
+    // The catalog was replaced while this was in flight, so this answer describes
+    // a world that no longer holds. Drop it rather than caching it as current.
+    if (epoch !== catalogEpoch) return models;
+    MODELS_BY_PROJECT.set(projectDir, models);
+    // ONLY on a real answer. A miss leaves catalogForRun returning exactly what it
+    // returned before it, so every caption is byte-identical — bumping the
+    // generation would invalidate every run's decor bag and re-run decorFromState,
+    // applyDecor and a fit pass on every mounted host for nothing.
+    if (models) {
+      PROJECT_CATALOG_SEQ.set(projectDir, projectCatalogSeqOf(projectDir) + 1);
+      scheduleCatalogRepaint();
+    }
+    return models;
+  })();
+  CATALOG_INFLIGHT.set(projectDir, p);
+  // By IDENTITY, not by key: setModelCatalog clears this map, and a fetch that
+  // started before that clear would otherwise evict the replacement registered
+  // after it — leaving the dedupe broken and a live run firing one request per
+  // frame until one happened to land.
+  p.finally(() => { if (CATALOG_INFLIGHT.get(projectDir) === p) CATALOG_INFLIGHT.delete(projectDir); });
+  return p;
+}
+
+/** Close the retune popover IF its own card is under `root` — never otherwise.
+ *  Called from the graph teardown and, before it, from the animated detail close,
+ *  which defers that teardown by a 600ms slide. */
+function closeRetuneUnder(root) {
+  const anchored = root && retunePopover && retunePopover.anchorEl();
+  if (anchored && typeof root.contains === 'function' && root.contains(anchored)) retunePopover.close();
+}
+
 const GRAPH_MOUNTS = new WeakMap();   // .run-flow element -> { m, ctx }
 const AUTO_PLACEHOLDERS = new WeakMap();   // .run-flow element -> { box, label, orb }
 /** Spec §7.3: the Auto bootstrap manifest IS a v2 manifest with zero nodes (isGraphManifest is
@@ -15715,6 +16104,17 @@ function paintGraphFor(host, stepper, decor, legacySteps) {
     return;
   }
   if (!host || !decor) return;
+  // Whether a card on THIS host opens the retune panel, recomputed per paint: the
+  // cards advertise it to assistive tech and the stylesheet drops the cursor on the
+  // same condition. History mounts the same monitor host with the same callback
+  // wired and never opens anything, and a live run stops offering it the moment
+  // nothing can dispatch — so "a callback was passed" is not the question.
+  //
+  // Passed to update(), NOT stamped on `decor`: runDecorFor memoises one bag per
+  // mode and documents it as immutable, and activeNodes, progressText and the
+  // quiescence banner all hold the same object.
+  const opensPanel = !decor.record && (decor.mode || 'monitor') === 'monitor'
+    && !NO_DISPATCH_STATUS.includes(String((decor.run && decor.run.status) || ''));
   let slot = GRAPH_MOUNTS.get(host);
   if (!slot) {
     host.innerHTML = '';                      // drop any v1 columns this host held
@@ -15724,19 +16124,58 @@ function paintGraphFor(host, stepper, decor, legacySteps) {
       onRowClick: (executionId, nodeId) => focusLogExecution(slot.ctx, executionId, nodeId),
       onGateClick: () => focusQuestionPanel(slot.ctx),
       onResultClick: (path) => openRunArtifact(slot.ctx, path),
+      // Live run detail ONLY. History's bag carries `record` and the Running-list
+      // card mounts mode 'static'. `slot.ctx` is re-pointed on every paint, so
+      // this reads the CURRENT host, not the first one.
+      onNodeClick: (nodeId, cardEl) => {
+        if (slot.ctx.record || (slot.ctx.mode || 'monitor') !== 'monitor') return false;
+        return openRetuneFor(slot.ctx, nodeId, cardEl);
+      },
     });
     GRAPH_MOUNTS.set(host, slot);
   }
   slot.ctx = decor;                            // callbacks always read the CURRENT bag
-  slot.m.update(decor.runId, stepper, decor);
+  slot.m.update(decor.runId, stepper, decor, { opensPanel });
+  // AFTER update(), never before. A paint whose node ids moved (a decomposition)
+  // makes update() destroy and rebuild every card, so syncing first would
+  // re-render and re-measure the panel against a card that is about to vanish.
+  //
+  // Keeping an OPEN popover in step matters because a retune from chat or another
+  // tab arrives as an ordinary state frame: the pill repaints, but the panel would
+  // still be showing — and on Apply, still posting — what the node looked like when
+  // it opened, quietly reverting the newer override. Cheap: syncNode returns on its
+  // first line unless this host owns the open panel and something actually moved.
+  const anchored = retunePopover && retunePopover.anchorEl();
+  if (anchored && host.contains(anchored)) {
+    // The RUN, not just a busy flag: the panel has to notice a run ending under it
+    // too, and retuneArm is the one derivation that answers both questions.
+    retunePopover.syncNode(manifestNodeById(stepper, anchored.dataset.nodeId), decor.run || null);
+  } else if (anchored && !anchored.isConnected) {
+    // The rebuild dropped the card this panel points at. The follow loop notices
+    // this too, but it is optional (no requestAnimationFrame, no loop), so the
+    // paint path has to be able to say it as well — a fixed panel at z-index 70
+    // with a live Apply, anchored to nothing, is not something to leave to chance.
+    retunePopover.close();
+  }
 }
 
 /** Tear down every graph mount under `root` (a detail screen about to be
  *  dropped): a monitor mount owns two document-level listeners and a
- *  ResizeObserver, which `host.innerHTML = ''` alone would leak. */
+ *  ResizeObserver, which `host.innerHTML = ''` alone would leak. The retune
+ *  popover goes with them WHEN ITS OWN CARD is under `root`: it lives in
+ *  `document.body` at z-index 70, so a teardown that left it behind would float
+ *  it over the next screen — anchored to a detached card, with Apply still live.
+ *  Its own outside-pointerdown/Escape arms only catch a navigation the user drove
+ *  with the mouse.
+ *
+ *  The containment check is what keeps that from over-reaching: this function
+ *  also runs for the HISTORY host (closeHistDetail), and closing the popover for
+ *  a teardown of a graph it is not anchored in would throw away an in-progress
+ *  model/effort edit on the live detail behind it. */
 function destroyGraphMounts(root) {
   if (!root || typeof root.querySelectorAll !== 'function') return;
   disposeQpanelsIn(root);
+  closeRetuneUnder(root);
   for (const host of root.querySelectorAll('.run-flow.gv-host')) {
     const slot = GRAPH_MOUNTS.get(host);
     if (slot) { slot.m.destroy(); GRAPH_MOUNTS.delete(host); }
@@ -15836,9 +16275,14 @@ function paintStepper(r) {
 // node's `model · effort` caption. Every run is a graph run now.
 function runStepLabel(r) {
   const d = runDecorFor(r);
-  const a = activeNodes(r)[0] || null;
+  // modelEffortText, not a second inline format: it resolves the catalog LABEL,
+  // so the compact card, the graph card's `.ntune` pill and the Agents tab all
+  // say `Opus 5 · high` rather than one of them printing the raw id.
+  // `.text` is already on the entry: decorFromState resolved it once inside the
+  // memoised reducer, and activeNodes spreads the tune entry onto each row. Calling
+  // modelEffortText again here would re-scan the catalog on every state/token frame.
   return { n: d.progress.done, m: d.progress.total, name: activeCopy(r).text,
-    model: a && (a.model || a.effort) ? `${a.model || 'default'}${a.effort ? ` · ${a.effort}` : ''}` : '' };
+    model: (activeNodes(r)[0] || {}).text || '' };
 }
 
 // The run-card template's stock Resume tooltip. Read from the template rather
@@ -16117,7 +16561,13 @@ let runDetailState = { runId: '', screen: null };
 // 'aborted', 'failed', 'complete' and 'completed'; `interrupted` is a resumable
 // park that the list card still offers Pause/Stop for, and the detail must agree
 // with the card. NOT exported on `window.__np` (C10: it is a `const`).
-const RD_TERMINAL = ['done', 'stopped', 'error'];
+// The detail screen's terminal chrome, and — through the `.settled` class
+// paintRdTerminal stamps from it — the stylesheet's retune cursor opt-in. Aliased
+// to the engine's own NO_DISPATCH_STATUS rather than re-listed: the two questions
+// ("is this run over?" and "can anything still dispatch?") have the same answer,
+// and a fourth status added to one list only would leave the graph advertising a
+// click the engine refuses.
+const RD_TERMINAL = NO_DISPATCH_STATUS;
 
 function routeRunDetail(param, { instant = false } = {}) {
   const runId = String(param || '');
@@ -16227,6 +16677,13 @@ function closeRunDetail({ instant = false } = {}) {
     return;
   }
   shell.classList.remove('detail-open');
+  // The popover goes NOW, not with the deferred teardown below. It is mounted on
+  // document.body at z-index 70, so `inert` on the host does not reach it and its
+  // own outside-pointerdown arm never fired (the click was on .rd-back, inside the
+  // screen). Left to `clear()` it would hover over the Running list for the whole
+  // 600ms slide, chasing the sliding card through its follow loop, with Apply
+  // still clickable. The `instant` branch above is already immediate.
+  closeRetuneUnder(host);
   // Empty the screen after the slide (or via the timeout under reduced motion /
   // jsdom, where transitionend never fires natively). transitionend BUBBLES, so a
   // descendant's transition would otherwise clear the DOM mid-slide — hence the

@@ -16,8 +16,40 @@ const FLOW_BLURB = {
   combine: 'Joins its md inputs into one document, in port order.',
 };
 
-const h = (doc, tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
-const field = (doc, cls, label) => { const w = h(doc, 'div', `ins-f ${cls}`); w.appendChild(h(doc, 'label', 'ins-label', label)); return w; };
+// Exported so every panel wearing the `ins-*` skin builds it the same way — the
+// live-run retune popover (retune-popover.mjs) is the second one. Two hand-rolled
+// copies of this markup drift, and the stylesheet only dresses one shape.
+export const h = (doc, tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+export const field = (doc, cls, label) => { const w = h(doc, 'div', `ins-f ${cls}`); w.appendChild(h(doc, 'label', 'ins-label', label)); return w; };
+
+/**
+ * The models a picker may OFFER. "Hide built-in models" (#422) drops a hidden
+ * entry from every list — unless it is the id currently stored on the thing being
+ * edited, which still resolves at run time and so must stay selectable. The
+ * catalog's own rule: hiding an id never stops it resolving; pickers skip
+ * `hidden`, validators ignore it. `hidden` is OPTIONAL on an entry, so it is
+ * probed, never assumed.
+ */
+export function offeredModels(models, keepId = '') {
+  return (models || []).filter((m) => m && (!m.hidden || m.id === keepId));
+}
+
+/**
+ * Replace a select's options from `[{value, text}]` and select `value`. Exported
+ * because the live-run retune popover REBUILDS its option lists in place (the
+ * effort list is filtered by the chosen model, so it repaints on every change)
+ * and would otherwise hand-roll the same loop.
+ */
+export function fillOptions(doc, sel, items, value) {
+  sel.replaceChildren();
+  const want = value == null ? '' : String(value);
+  for (const opt of items) {
+    const o = doc.createElement('option');
+    o.value = opt.value; o.textContent = opt.text;
+    if (opt.value === want) o.selected = true;
+    sel.appendChild(o);
+  }
+}
 
 function select(doc, cls, name, label, items, value, { disabled = false, title = '' } = {}) {
   const wrap = field(doc, cls, label);
@@ -25,12 +57,7 @@ function select(doc, cls, name, label, items, value, { disabled = false, title =
   const sel = h(doc, 'select', 'ins-select');
   sel.dataset.field = name;
   sel.disabled = Boolean(disabled);
-  for (const opt of items) {
-    const o = doc.createElement('option');
-    o.value = opt.value; o.textContent = opt.text;
-    if (opt.value === (value == null ? '' : String(value))) o.selected = true;
-    sel.appendChild(o);
-  }
+  fillOptions(doc, sel, items, value);
   const shell = h(doc, 'span', 'ins-select-wrap');   // the product's .select-wrap idea: the chevron is a token-coloured ::after on a wrapper
   shell.appendChild(sel);
   wrap.appendChild(shell);
@@ -95,9 +122,7 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
 
   if (node.kind === 'agent') {
     root.appendChild(head(doc, (meta && meta.displayName) || node.key || node.id, `${node.key} · ${node.id}`));
-    // Hidden built-ins (#422) leave the list unless one is THIS node's stored
-    // pick — it still resolves at run time and must stay visible here.
-    const offered = models.filter((m) => m && (!m.hidden || m.id === node.config.model));
+    const offered = offeredModels(models, node.config.model);
     body.appendChild(select(doc, 'ins-model', 'model', 'Model',
       [{ value: '', text: 'inherit' }, ...offered.map((m) => ({ value: m.id, text: m.label || m.id }))], node.config.model));
     body.appendChild(select(doc, 'ins-effort', 'effort', 'Effort',

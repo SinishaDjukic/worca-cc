@@ -20,13 +20,14 @@ import {
 import { resolveGraph, loadAgentFile, GRAPH_DEFAULT_WORKFLOW, writeGraphWorkflow, readWorkflow } from './workflows.mjs';
 import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME } from './graph/builtin-workflows.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
-import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
+import { NO_DISPATCH_STATUS, nodeBusy } from '../shared/graph/retune-gate.mjs';
+import { buildGraphManifest, manifestTemplate, manifestPortsFn, patchManifestNodeTune } from '../shared/graph/manifest.mjs';
 import { DEFAULT_MAX_CYCLES } from '../shared/graph/constants.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition } from './graph/executor.mjs';
 import { renderPromptArtifact } from './phases.mjs';
-import { listModels, modelHasBaseUrlRouting, resolveRunConfig } from './config.mjs';
+import { listModels, modelHasBaseUrlRouting, resolveRunConfig, validateModelSelection } from './config.mjs';
 import { assembleShape, ShapeError } from '../shared/graph/assemble.mjs';
 import { fingerprintProject } from './auto/fingerprint.mjs';
 import { classifyTask, ClassifierError } from './auto/classify.mjs';
@@ -55,6 +56,27 @@ const sumUsage = (a, b) => ({
   input_tokens: (Number(a?.input_tokens) || 0) + (Number(b?.input_tokens) || 0),
   output_tokens: (Number(a?.output_tokens) || 0) + (Number(b?.output_tokens) || 0),
 });
+
+/** A retune refusal the caller maps to a 400. The CODE is the contract, not the
+ *  message — same shape as pauseRun's CANNOT_PAUSE (ui/server.mjs:1561). */
+function retuneErr(code, message) {
+  return Object.assign(new Error(message), { code });
+}
+
+/** Every code retuneNode() can throw. ui/server.mjs maps exactly these to 400;
+ *  anything else is a caller bug and falls through to a 500. */
+export const RETUNE_ERROR_CODES = Object.freeze(
+  new Set(['UNKNOWN_NODE', 'NOT_AGENT', 'NODE_BUSY', 'RUN_NOT_RETUNABLE', 'BAD_SELECTION']),
+);
+
+/** Run statuses past which nothing will dispatch again. The list itself lives in
+ *  src/shared/graph/retune-gate.mjs (run-decor.mjs only re-exports it to the
+ *  browser) because the browser gates the retune affordance on the same three — a fourth
+ *  non-dispatching status added on one side only would leave the UI offering a
+ *  panel this file 400s. _setStatus's own terminal set also counts 'paused',
+ *  deliberately NOT here: a paused run resumes, so it stays retunable (D6).
+ *  'pausing' is absent from both. */
+const TERMINAL_RUN_STATUS = new Set(NO_DISPATCH_STATUS);
 
 export function createOrchestrator(opts = {}) {
   return new GraphOrchestrator(opts);
@@ -1479,6 +1501,142 @@ export class GraphOrchestrator extends RunHarness {
         .filter((s) => s.status === 'paused' && s.sessionId)
         .map((s) => [s.key, s.sessionId]),
     );
+  }
+
+  /**
+   * LIVE NODE RETUNE — change one agent node's model/effort on a run that is
+   * already in flight; the NEXT dispatch of that node honours it.
+   *
+   * The engine side is this small because _execute re-reads
+   * this.resolved.nodeCtx[node.id] on EVERY call and _execCtx is a non-async
+   * function with no await between its entry and the claudeOpts literal — an
+   * already-spawned child keeps the argv it launched with, and the next one
+   * picks the new value up with no further plumbing.
+   *
+   * @param {string} nodeId
+   * @param {{guard?:()=>void}} opts `guard` is re-asked after the catalog await and
+   *   before anything is written; it throws to abort. The caller owns whatever
+   *   question it answers — this method only guarantees when it is asked.
+   * @param {{model?:string, effort?:string}} selection '' on either field clears
+   *   it back to inherit: the run-global model and no --effort flag at all
+   *   (claude-runner.mjs buildEffortArgs returns [] on falsy).
+   * @returns {Promise<{nodeId:string, model:string, effort:string, persisted:boolean}>}
+   *   `persisted` false means the change is live in this process but did not reach
+   *   the database, so a resume would revert it.
+   * @throws {Error & {code:string}} one of RETUNE_ERROR_CODES
+   */
+  async retuneNode(nodeId, selection = {}, { guard = null } = {}) {
+    const id = typeof nodeId === 'string' ? nodeId.trim() : '';
+    // Same normalization as setNodeModel (config.mjs) so the three write paths
+    // agree on what '' means.
+    const model = typeof selection.model === 'string' ? selection.model.trim() : '';
+    const effort = typeof selection.effort === 'string' ? selection.effort.trim() : '';
+
+    this._retunableNode(id);   // D5: the fast refusal, BEFORE the await
+
+    // The SAME validator setNodeModel uses — "the two write paths must not
+    // disagree", and a copy of the rules here would enforce that by discipline
+    // alone. Its messages already name the offending value; only the code is added,
+    // so the route can map it to a 400. It reads project_config, which is exactly
+    // the await D5 is about.
+    try {
+      await validateModelSelection(this.projectDir, { model, effort });
+    } catch (err) {
+      // Only the validator's OWN refusals become a 400. It reads the config DB and
+      // the plugins lock, and a locked or corrupt one throws through here — telling
+      // the user `SQLITE_BUSY: database is locked` under the model dropdown, as
+      // though they had picked something invalid, would be a lie about whose fault
+      // it is. An untagged error falls through as a 500.
+      if (err && err.badSelection) throw retuneErr('BAD_SELECTION', err.message);
+      throw err;
+    }
+
+    // The caller's own eligibility question, re-asked now that the await is over.
+    // ui/server.mjs uses it to refuse a run that was resumed out from under this
+    // orchestrator while the catalog was being read: from here to _persist() there
+    // is no further suspension point until the write itself.
+    if (guard) guard();
+
+    // D5: the scheduler may have fired this node while the await above was
+    // suspended. Re-check, and take the entry from THIS call — _adoptResolvedGraph
+    // replaces this.resolved wholesale, so an entry captured before the await
+    // could be a detached object by now and the write would go nowhere.
+    // From here to the end of the mutation everything is SYNCHRONOUS: a
+    // single-threaded event loop cannot interleave inside it.
+    const nc = this._retunableNode(id);
+
+    nc.model = model || undefined;
+    nc.effort = effort || undefined;
+    // D4: patch, never rebuild. buildGraphManifest derives the cell as
+    // `over.model ?? cfg.model`, so a rebuild would resurface the authored config
+    // behind a cleared override AND blank label/colour/icon on a resumed run
+    // whose agent meta is `reg[key] || {}`.
+    patchManifestNodeTune(this.state.stepper, id, model, effort);
+    // D6: _buildResumePoint stores a jsonClone and _engineRehydrate hard-fails
+    // without rp.manifest, so _restoreFromResumePoint ALWAYS adopts it. Without
+    // this line a paused run's retune evaporates on resume — and a RUNNING run's
+    // too: onSnapshot (:210-220) assigns state.resumePoint at every clean
+    // completion, so any run past its first one already holds a stale clone this
+    // patch has to reach. Only before that first completion is there nothing to
+    // patch, and there the later _buildResumePoint clones the patched stepper.
+    patchManifestNodeTune(this.state.resumePoint?.manifest, id, model, effort);
+
+    const ts = new Date().toISOString();
+    this.state.updatedAt = ts;
+    // _log's 4th arg is a FILTERED attr bag: only nodeId/executionId/stepIndex/
+    // cycle/sub/stream survive, anything else is dropped silently. nodeId is what
+    // the Log tab's per-node filter reads.
+    this._log('orchestrator', 'info',
+      `retuned ${id} → ${model || 'inherit'}${effort ? ` · ${effort}` : ''} (applies from its next execution)`,
+      { nodeId: id });
+    // The ORDINARY state frame carries it: getState() deep-clones this.state,
+    // stepper included, and the client adopts whatever manifest a frame carries.
+    // No dedicated event type — one channel, one contract.
+    this._emit('state', this.getState());
+    // writeState UPSERTs both `stepper` and `resume_point`, which is what
+    // readPipelineForResume reads back. _persist swallows its own errors by house
+    // contract, but this caller REPORTS success to a person: a write that did not
+    // land means the in-memory nodeCtx honours the retune for the rest of this
+    // process and then it silently vanishes on resume. Say so instead of answering
+    // a flat "applied".
+    // A run that has not created its pipeline row yet (the preflight window: the
+    // graph is on screen and every node reads idle, but `this.pipeline` is not
+    // assigned until after setup) has nothing to write — and run()'s own persist,
+    // a few lines later, carries the patch. Reporting "could not be saved" there
+    // would be a warning about a loss that does not happen.
+    const persisted = this.pipeline ? await this._persist() : true;
+    if (!persisted) {
+      this._log('orchestrator', 'warn',
+        `retune of ${id} could not be saved — it applies to this process only and will be lost on resume`,
+        { nodeId: id });
+    }
+    return { nodeId: id, model, effort, persisted };
+  }
+
+  /** The eligibility gate, run twice per retune (D5). Returns the nodeCtx entry. */
+  _retunableNode(nodeId) {
+    if (TERMINAL_RUN_STATUS.has(this.state.status)) {
+      throw retuneErr('RUN_NOT_RETUNABLE', `cannot retune a ${this.state.status} run`);
+    }
+    const nc = (this.resolved?.nodeCtx || {})[nodeId];
+    if (!nc) throw retuneErr('UNKNOWN_NODE', `unknown node "${nodeId}"`);
+    // D2: flow cards spawn nothing, so there is no model to change. `kind` is the
+    // discriminator everywhere; both graph builders emit a key-less entry for a
+    // flow node, so this branch is reached before AND after a resume.
+    if (nc.kind !== 'agent') throw retuneErr('NOT_AGENT', `node "${nodeId}" is a ${nc.kind} card, not an agent`);
+    // D1: refuse an execution IN FLIGHT, not one that already ran — nodeBusy is
+    // the shared predicate the browser gates its affordance on, so the two cannot
+    // drift into offering a panel this line then refuses.
+    //
+    // D7: a COMPOSITE SHELL (args.composite) writes no row at all — the guard
+    // returns before _execStep is ever reached — so a node mid-decomposition
+    // passes this gate. That is intended: no slice has spawned yet, so the retune
+    // reaches all of them. Once slices run, each writes its own row with nodeId
+    // and the node is refused like any other busy node.
+    if (nodeBusy(this.state, nodeId)) {
+      throw retuneErr('NODE_BUSY', `node "${nodeId}" has an execution in flight`);
+    }
+    return nc;
   }
 }
 

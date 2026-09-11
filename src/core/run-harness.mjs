@@ -1472,7 +1472,15 @@ export class RunHarness extends EventEmitter {
           this._log('orchestrator', 'error', `failed while pausing: ${clipMiddle(err?.message || err, 500)}`, err?.stream ? ERR_STREAM : null);
         }
         if (this.pipeline) {
-          if (!this.state.resumePoint) this.state.resumePoint = rp; // re-arm the consumed point: a paused row must stay resumable
+          if (!this.state.resumePoint) {
+            // Re-arm the consumed point: a paused row must stay resumable. Its
+            // MANIFEST comes from the live state, not from the pre-resume clone —
+            // a live retune applied after the resume began patches state.stepper
+            // and, with resumePoint null, has nothing else to patch (retuneNode
+            // documents that no-op). Re-arming `rp` verbatim would revert it on the
+            // next resume, after retuneNode already reported the change as saved.
+            this.state.resumePoint = { ...rp, manifest: jsonClone(this.state.stepper) || rp.manifest };
+          }
           return await this._completePaused();
         }
       }
@@ -3718,12 +3726,21 @@ export class RunHarness extends EventEmitter {
       .catch(() => { /* generateTitle already swallows; this is a final backstop */ });
   }
 
+  /**
+   * Best-effort state write. Swallows its own errors by house contract — a run
+   * must not die because the row could not be updated.
+   *
+   * @returns {Promise<boolean>} whether the write actually landed. Callers that
+   *   REPORT success to a user (the live retune) need to know; every other caller
+   *   is free to ignore it and keep the old fire-and-forget reading.
+   */
   async _persist() {
-    if (!this.pipeline) return;
+    if (!this.pipeline) return false;
     try {
       await writeState(this.pipeline.dir, this.state);
+      return true;
     } catch {
-      /* persistence is best-effort */
+      return false;   /* persistence is best-effort */
     }
   }
 
@@ -3830,6 +3847,14 @@ export class RunHarness extends EventEmitter {
     const source = this.state.resumePoint || this._engineLastPoint() || fallbackPoint || this._enginePrePausePoint();
     this.state.resumePoint = {
       ...source,
+      // The MANIFEST is always the live one, never the source's. A live retune
+      // patches state.stepper, and when state.resumePoint is null (the window
+      // between a resume and the first clean completion) it has nothing else to
+      // patch — so a `source` that fell through to fallbackPoint or a pre-pause
+      // point carries a manifest from before it, and persisting that reverts a
+      // change retuneNode already reported as saved. Same rule as run()'s own
+      // re-arm on the pause path.
+      manifest: jsonClone(this.state.stepper) || source.manifest,
       snapshot: scrubErrorRows(source.snapshot ?? null),
       pauseReason: this.pauseReason,
       pauseDetail: this.pauseDetail,

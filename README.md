@@ -145,7 +145,7 @@ and durations, the clarify Q&A, agent transcripts, and logs:
   **Discord**, and **Microsoft Teams** channels: get notified on questions,
   finishes, failures, and cost pauses, and answer back with commands —
   `/status`, `/cost`, `/answer`, `/approve`, `/pause`, `/resume`, `/stop`,
-  and more — with allowlist-based authorization.
+  `/retune`, and more — with allowlist-based authorization.
 
 ### Costs & budgets
 

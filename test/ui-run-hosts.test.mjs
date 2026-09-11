@@ -322,7 +322,8 @@ function mountHost(mode, w = 800) {
     viewport: () => ({ left: 0, top: 0, width: w, height: mode === 'static' ? STATIC_HOST_H : 520 }),
     onRowClick: (...a) => calls.push(['row', ...a]),
     onGateClick: (...a) => calls.push(['gate', ...a]),
-    onResultClick: (...a) => calls.push(['result', ...a]) });
+    onResultClick: (...a) => calls.push(['result', ...a]),
+    onNodeClick: (...a) => calls.push(['node', ...a]) });
   return { window, wrap, host, m };
 }
 let calls = [];
@@ -687,7 +688,7 @@ async function bootApp() {
   return window;
 }
 // A v2 manifest WITH the v1 shim cells a real buildGraphManifest emits (P4–P7),
-// so the v1-only helpers (manifestSig, manifestFor) see what they see live.
+// so the v1-only helper (manifestFor) sees what it sees live.
 const WITH_SHIM = { ...MANIFEST, steps: [
   { kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
   { kind: 'agents', nodes: [{ id: 'n_a', key: 'planner', uiPhase: 'plan', label: 'Planner', color: 'violet' }] },
@@ -873,6 +874,462 @@ test('destroyGraphMounts tears down every mount under a root; the next paint mou
   np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
   assert.ok(host.querySelector('.gv-world'), 'a fresh mount');
   assert.notEqual(host.querySelector('.gv-world'), world);
+});
+
+// ── the app-level retune wiring (Task 7) ─────────────────────────────────────
+async function liveGraph(stepper = MANIFEST) {
+  const window = await bootApp();
+  const np = window.__np;
+  const host = hostPair(window.document);
+  const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
+  np.onState(r, { status: 'running', stepper, active: [], steps: [] });
+  return { window, np, host, r, doc: window.document };
+}
+const clickCard = (window, host, id = 'n_a') =>
+  host.querySelector(`[data-node-id="${id}"]`).dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+
+test('a card click on the LIVE detail graph opens the retune popover', async () => {
+  const { window, np, host, doc, r } = await liveGraph();
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  clickCard(window, host);
+  const pop = doc.querySelector('.rt-pop');
+  assert.ok(pop, 'the popover opened for an agent card on a running run');
+  assert.match(pop.textContent, /n_a/, 'and it is pointed at the node that was clicked');
+});
+
+test('destroyGraphMounts closes the retune popover: it must not outlive its host', async () => {
+  const { window, np, host, doc, r } = await liveGraph();
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  clickCard(window, host);
+  assert.ok(doc.querySelector('.rt-pop'), 'open first');
+  // The panel is appended to document.body at z-index 70, so a screen teardown
+  // that leaves it there floats it over the NEXT screen, anchored to a card that
+  // is no longer in the document, with Apply still live.
+  np.destroyGraphMounts(doc.body);
+  assert.equal(doc.querySelector('.rt-pop'), null, 'the teardown takes the popover with it');
+});
+
+test('destroyGraphMounts leaves a popover anchored OUTSIDE the root it is tearing down', async () => {
+  const { window, np, host, doc, r } = await liveGraph();
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  clickCard(window, host);
+  assert.ok(doc.querySelector('.rt-pop'), 'open first');
+  // This function also runs for the HISTORY host (closeHistDetail). Closing on a
+  // teardown of a graph the popover is not anchored in would throw away the
+  // user's in-progress model/effort edit on the live detail behind it.
+  const elsewhere = doc.createElement('div');
+  doc.body.appendChild(elsewhere);
+  np.destroyGraphMounts(elsewhere);
+  assert.ok(doc.querySelector('.rt-pop'), 'an unrelated teardown leaves the edit alone');
+});
+
+test('a FLOW card opens the popover too, and the cursor rule agrees with it', async () => {
+  const { window, np, host, doc, r } = await liveGraph();
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  const flow = [...host.querySelectorAll('.node[data-node-id]')]
+    .find((el) => !el.classList.contains('node-agent'));
+  assert.ok(flow, 'the fixture manifest has a flow card');
+  flow.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const pop = doc.querySelector('.rt-pop');
+  assert.ok(pop, 'a flow card explains itself rather than being a dead click');
+  assert.match(pop.textContent, /Flow cards spawn nothing/);
+  // The cursor opt-in must cover the same cards; scoping it to `.node-agent` left
+  // this one looking inert while still opening a panel.
+  assert.ok(css.includes('.gv-world .node[data-node-id]{cursor:pointer;}'));
+});
+
+test('an EFFORT with no model still gets a caption — it is in the argv', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  // buildGraphManifest fills `effort` independently of `model`, and _execCtx passes
+  // it to the CLI whether or not a model is set, so `--effort high` is genuinely
+  // there. Dropping the caption would stop the card reporting a real flag.
+  assert.equal(np.modelEffortText({ model: '', effort: 'high' }), 'default · high');
+  assert.equal(np.modelEffortText({ model: '', effort: '' }), '', 'pure inherit still says nothing');
+  assert.equal(np.modelEffortText(null), '');
+  const tuned = { ...MANIFEST, graph: { ...MANIFEST.graph,
+    nodes: [{ ...MANIFEST.graph.nodes[0], model: '', effort: 'high' }, MANIFEST.graph.nodes[1]] } };
+  assert.deepEqual(np.tuneByNode(tuned), { n_a: { model: '', effort: 'high', retuned: false } },
+    'and the shared manifest read keeps the node');
+});
+
+test('a card that opens a panel says so to assistive tech', async () => {
+  const { window, np, host, doc, r } = await liveGraph();
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  const card = host.querySelector('[data-node-id="n_a"]');
+  // It swallows Enter/Space and mounts a role="dialog" elsewhere in the DOM. A
+  // bare tabindex div announces none of that: `cursor:pointer` is the sighted half
+  // of the affordance, this is the other half.
+  assert.equal(card.getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(card.getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(card.getAttribute('aria-expanded'), 'false');
+  clickCard(window, host, 'n_a');
+  assert.equal(card.getAttribute('aria-expanded'), 'true', 'only the popover knows when it is up');
+  doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+  assert.equal(card.getAttribute('aria-expanded'), 'false');
+});
+
+test('History and a settled run make no such promise, though they mount the same host', async () => {
+  const { window, np, host, doc, r } = await liveGraph();
+  const card = () => host.querySelector('[data-node-id="n_a"]');
+
+  // History mounts mode 'monitor' with onNodeClick wired and never opens anything,
+  // so "a callback was passed" is not the question — the screen is.
+  np.paintGraphFor(host, r.stepper, Object.assign({}, np.runDecorFor(r, 'monitor'), { record: { runId: 'r1' } }));
+  assert.equal(card().getAttribute('aria-haspopup'), null, 'History cards are not triggers');
+
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  assert.equal(card().getAttribute('aria-haspopup'), 'dialog', 'the live detail is');
+
+  // And it goes away when the run does — the same moment the stylesheet's
+  // `:not(.settled)` drops the pointer cursor.
+  r.status = 'done';
+  r._decorSeq = (r._decorSeq || 0) + 1;
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  assert.equal(card().getAttribute('aria-haspopup'), null);
+  assert.equal(card().getAttribute('aria-expanded'), null);
+  void window; void doc;
+});
+
+test('a card whose dialog is still OPEN keeps its trigger relationship', async () => {
+  const { window, np, host, doc, r } = await liveGraph();
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  clickCard(window, host, 'n_a');
+  const card = host.querySelector('[data-node-id="n_a"]');
+  assert.equal(card.getAttribute('aria-expanded'), 'true');
+
+  // The run ends. The panel does NOT close — it swaps to a note — so stripping the
+  // trigger here would leave a live role="dialog" on document.body that nothing
+  // points at, and rob the popover's own close() of the attribute it resets.
+  r.status = 'done';
+  r._decorSeq = (r._decorSeq || 0) + 1;
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  assert.ok(doc.querySelector('.rt-pop'), 'the panel is still up');
+  assert.equal(card.getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(card.getAttribute('aria-expanded'), 'true');
+
+  doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+  assert.equal(card.getAttribute('aria-expanded'), 'false', 'the popover resets it on close');
+});
+
+test('the skipped card is revisited once its dialog closes', async () => {
+  const { window, np, host, doc, r } = await liveGraph();
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  clickCard(window, host, 'n_a');
+  const card = host.querySelector('[data-node-id="n_a"]');
+
+  r.status = 'done';
+  r._decorSeq = (r._decorSeq || 0) + 1;
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  assert.equal(card.getAttribute('aria-haspopup'), 'dialog', 'kept while its dialog is up');
+
+  // Recording that pass as done would short-circuit every later call and leave
+  // this card announcing itself as a trigger for good — long after the popover
+  // closed and the cursor rule stopped offering it.
+  doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+  r._decorSeq = (r._decorSeq || 0) + 1;
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  assert.equal(card.getAttribute('aria-haspopup'), null);
+  assert.equal(card.getAttribute('aria-expanded'), null);
+});
+
+test('a static host mounts no panel, so its cards make no such promise', () => {
+  const { host, m } = mountHost('static');
+  m.update('r1', MANIFEST, { nodeIds: ['n_a'], wireIds: [], status: {}, colors: {}, footers: {}, totals: {} });
+  const card = host.querySelector('[data-node-id="n_a"]');
+  assert.equal(card.getAttribute('aria-haspopup'), null);
+});
+
+test('an auto-repeat verdict belongs to the card it was decided for', () => {
+  calls = [];
+  const dom = new JSDOM('<!doctype html><div class="run-flow-wrap"><div class="run-flow"></div></div>');
+  const { window } = dom;
+  const host = window.document.querySelector('.run-flow');
+  const THREE = { ...MANIFEST, graph: { ...MANIFEST.graph,
+    nodes: [MANIFEST.graph.nodes[0], { ...MANIFEST.graph.nodes[0], id: 'n_c', y: 300 }, MANIFEST.graph.nodes[1]] } };
+  // Declines for n_a, accepts for n_c. A single per-host flag let a repeat that
+  // arrived after focus moved apply one card's verdict to the other.
+  const m = mountRunGraph(host, { mode: 'monitor', doc: window.document, raf: (fn) => { fn(); return 1; },
+    viewport: () => ({ left: 0, top: 0, width: 900, height: 520 }),
+    onNodeClick: (id) => { calls.push(id); return id !== 'n_a'; } });
+  m.update('r1', THREE, { nodeIds: ['n_a', 'n_c', 'n_end'], wireIds: [], status: {}, colors: {}, footers: {}, totals: {} });
+  const a = host.querySelector('[data-node-id="n_a"]');
+  const c = host.querySelector('[data-node-id="n_c"]');
+  c.dispatchEvent(new window.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
+  const strayRepeat = new window.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true, repeat: true });
+  a.dispatchEvent(strayRepeat);
+  assert.equal(strayRepeat.defaultPrevented, false, "n_c's verdict is not n_a's");
+});
+
+test('a node retuned back to INHERIT keeps its pill, marked', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const host = hostPair(window.document);
+  const r = np.upsertRun({ runId: 'r1', title: 't', projectDir: '', status: 'running' });
+  // The engine stamps `retuned` and clears model/effort. Without the marker
+  // carrying its own caption the pill vanishes — and with it the only record, on
+  // History, that this node did not always run on what it ended up inheriting.
+  const cleared = { ...MANIFEST, graph: { ...MANIFEST.graph,
+    nodes: [{ ...MANIFEST.graph.nodes[0], model: '', effort: '', retuned: true }, MANIFEST.graph.nodes[1]] } };
+  np.onState(r, { status: 'running', stepper: cleared, active: [], steps: [] });
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'), []);
+  const pill = host.querySelector('[data-node-id="n_a"] .ntune');
+  assert.ok(pill, 'the pill survives the clear');
+  assert.equal(pill.textContent, 'inherit');
+  assert.equal(pill.classList.contains('is-retuned'), true);
+  assert.match(pill.title, /changed during the run/);
+  // A node nobody touched and nothing configured still paints nothing.
+  assert.equal(np.modelEffortText({ model: '', effort: '' }), '');
+});
+
+test('a pill clipped by its own max-width still has a tooltip', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const host = hostPair(window.document);
+  const r = np.upsertRun({ runId: 'r1', title: 't', projectDir: '', status: 'running' });
+  const long = { ...MANIFEST, graph: { ...MANIFEST.graph,
+    nodes: [{ ...MANIFEST.graph.nodes[0], model: 'anthropic/claude-opus-5-20260101-1m', effort: 'max' },
+      MANIFEST.graph.nodes[1]] } };
+  np.onState(r, { status: 'running', stepper: long, active: [], steps: [] });
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'), []);
+  // `.gv-world .ntune` is max-width + ellipsis, and the graph has no other surface
+  // that spells the model out.
+  const pill = host.querySelector('[data-node-id="n_a"] .ntune');
+  assert.equal(pill.title, 'anthropic/claude-opus-5-20260101-1m · max');
+});
+
+test('the .ntune pill is a MONITOR ornament: the clipped list card does not paint it', async () => {
+  const { np, host, r } = await liveGraph(TUNED);
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'), []);
+  assert.ok(host.querySelector('[data-node-id="n_a"] .ntune'), 'the run detail shows it');
+
+  // The Running-list card mounts 'static': its wrap is a fixed 300px with
+  // overflow-y:hidden and the pill hangs at bottom:-9px, outside view.bounds(), so
+  // the fit reserves no room and the bottom row's pill would be clipped. That card
+  // already prints the same words in its step label.
+  const staticHost = hostPair(host.ownerDocument);
+  np.paintGraphFor(staticHost, r.stepper, np.runDecorFor(r, 'static'), []);
+  assert.equal(staticHost.querySelector('[data-node-id="n_a"] .ntune'), null);
+  // The bag is SHARED across modes, so the entry is still there — only the paint
+  // is gated.
+  assert.ok(np.runDecorFor(r, 'static').tune.n_a.text);
+});
+
+test('the .ntune pill is stacked and click-through, so it cannot hide or steal the footer', () => {
+  // It straddles the card's bottom edge and `.xfoot` is bottom:0 with an opaque
+  // background, so they share 9px of a 22px band.
+  const rule = /\.gv-world \.ntune\{([^}]*)\}/.exec(css);
+  assert.ok(rule, '.ntune is declared');
+  assert.match(rule[1], /z-index:3/, 'without it the winner is DOM insertion order');
+  assert.match(rule[1], /pointer-events:none/, 'a click in the overlap belongs to .xrow / .xresult a');
+});
+
+test('History and a terminal run never open it (the guard lives inside onNodeClick)', async () => {
+  const { window, np, host, doc, r } = await liveGraph();
+  // History mounts mode 'monitor' too and always supplies onNodeClick; `record`
+  // on the bag is what tells the two screens apart (app.js:11439).
+  np.paintGraphFor(host, r.stepper, Object.assign({}, np.runDecorFor(r, 'monitor'), { record: { runId: 'r1' } }));
+  clickCard(window, host);
+  assert.equal(doc.querySelector('.rt-pop'), null, "History's graph is read-only");
+
+  const host2 = hostPair(doc);
+  r.status = 'done';                       // RETUNE_DEAD_STATUS: nothing will dispatch again
+  np.paintGraphFor(host2, r.stepper, np.runDecorFor(r, 'monitor'));
+  clickCard(window, host2);
+  assert.equal(doc.querySelector('.rt-pop'), null, 'a finished run has nothing left to retune');
+});
+
+// `tune` is read straight off the MANIFEST cell (run-decor.mjs#tuneByNode), which
+// is what a live retune patches (manifest.mjs#patchManifestNodeTune).
+const TUNED = { ...MANIFEST, graph: { ...MANIFEST.graph,
+  nodes: [{ ...MANIFEST.graph.nodes[0], model: 'claude-opus-5', effort: 'high' }, MANIFEST.graph.nodes[1]] } };
+
+test('the tune pill label is resolved INSIDE the memoised bag, not stamped on afterwards', async () => {
+  const { np, host, r } = await liveGraph(TUNED);
+  const shared = np.runDecorFor(r, 'monitor');
+  assert.ok(shared.tune.n_a, 'the manifest cell produced a tune entry');
+  // decorFromState takes the app's formatter (`tuneText: modelEffortText`), so the
+  // caption is part of the reducer's output. Nothing mutates the bag after the
+  // fact: it is documented as IMMUTABLE and shared across every host, and
+  // run-hosts skips paint() outright on an unchanged bag identity, so a caption
+  // written into it later could not reach the DOM anyway.
+  assert.equal(shared.tune.n_a.text, 'claude-opus-5 · high',
+    'no catalog in this harness (state.models is []), so the label falls back to the raw id');
+  np.paintGraphFor(host, r.stepper, shared, []);
+  assert.equal(host.querySelector('[data-node-id="n_a"] .ntune').textContent, 'claude-opus-5 · high');
+});
+
+test('a rebuild that drops the anchored card closes the panel, with no follow loop', async () => {
+  const { window, np, host, doc, r } = await liveGraph();
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  clickCard(window, host, 'n_a');
+  assert.ok(doc.querySelector('.rt-pop'), 'open first');
+
+  // A decomposition rewrites the node ids, so run-hosts destroys and rebuilds every
+  // card. The rAF follow loop notices a detached anchor too — but it is OPTIONAL
+  // (jsdom defines no requestAnimationFrame here, and neither do some embedders),
+  // so the paint path has to be able to say it as well. A fixed panel at z-index 70
+  // with a live Apply, anchored to nothing, is not something to leave to chance.
+  const rewritten = { ...MANIFEST, graph: { ...MANIFEST.graph,
+    nodes: [{ ...MANIFEST.graph.nodes[0], id: 'n_a_t1' }, MANIFEST.graph.nodes[1]] } };
+  np.onState(r, { status: 'running', stepper: rewritten, active: [], steps: [] });
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  assert.equal(doc.querySelector('.rt-pop'), null);
+});
+
+test('a state frame carrying a retune reaches the OPEN popover, not just the pill', async () => {
+  const { window, np, host, doc, r } = await liveGraph();
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  clickCard(window, host);
+  const modelSel = doc.querySelector('.rt-pop [data-field="model"]');
+  assert.ok(modelSel, 'open on n_a');
+  assert.equal(modelSel.value, '', 'opened while the node was on inherit');
+
+  // A `/retune` from chat, or a second browser tab. No node id moves, so the card
+  // and the panel both survive — and without a sync, Apply would post the stale
+  // inherit and quietly revert the override that just landed.
+  const tuned = { ...MANIFEST, graph: { ...MANIFEST.graph,
+    nodes: [{ ...MANIFEST.graph.nodes[0], model: 'claude-opus-5', effort: 'high' }, MANIFEST.graph.nodes[1]] } };
+  np.onState(r, { status: 'running', stepper: tuned, active: [], steps: [] });
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  assert.equal(doc.querySelector('.rt-pop [data-field="model"]').value, 'claude-opus-5');
+});
+
+test('a popover opened while another was up still logs its failures to the run', async () => {
+  const { window, np, host, doc, r } = await liveGraph();
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  window.fetch = () => Promise.resolve({ ok: false, status: 400, json: async () => ({ error: 'nope' }) });
+
+  clickCard(window, host, 'n_a');       // first panel
+  clickCard(window, host, 'n_end');     // opening this CLOSES the first
+  clickCard(window, host, 'n_a');       // and this one opens after that close
+  const apply = doc.querySelector('.rt-apply');
+  assert.ok(apply, 'the agent card is back to its editable arm');
+
+  // open() closes whatever panel is up, and that close fires onClose, which drops
+  // the app's run reference. Assigning the reference BEFORE open() therefore left
+  // every popover opened this way with none at all, and a failed Apply logged
+  // nowhere — the one job the reference exists for.
+  const before = (r.logLines || []).length;
+  apply.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await new Promise((res) => setTimeout(res, 0));
+  const added = (r.logLines || []).slice(before);
+  assert.equal(added.length, 1, 'the failure reached the run log');
+  assert.match(added[0].text, /retune failed: nope/);
+});
+
+test('a cross-project catalog that FAILS to load is never offered as the picker list', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const host = hostPair(window.document);
+  const doc = window.document;
+  np._setModels([{ id: 'a-only', label: 'A Only', efforts: ['high'] }]);
+  const r = np.upsertRun({ runId: 'r1', title: 't', projectDir: '/proj/b', status: 'running' });
+  np.onState(r, { status: 'running', stepper: MANIFEST, active: [], steps: [] });
+
+  let hits = 0;
+  const stub = () => { hits++; return Promise.reject(new Error('down')); };
+  window.fetch = stub;
+  Object.defineProperty(globalThis, 'fetch', { value: stub, configurable: true, writable: true });
+
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  clickCard(window, host, 'n_a');
+  for (let i = 0; i < 4; i++) await new Promise((res) => setTimeout(res, 0));
+  const opts = [...doc.querySelectorAll('.rt-pop [data-field="model"] option')].map((o) => o.value);
+  // Pushing A's catalog in would offer ids the engine validates against B and
+  // answers 400 to — the very thing opening with [] avoids.
+  assert.deepEqual(opts, [''], "the selected project's models are never offered here");
+
+  // And a failed answer is recorded, so a run streaming state frames does not
+  // issue one /api/config per frame forever.
+  const before = hits;
+  for (let i = 0; i < 5; i++) {
+    r._decorSeq = (r._decorSeq || 0) + 1;
+    np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  }
+  assert.equal(hits, before, 'no re-ask per paint');
+});
+
+test("an unresolved project borrows BUILT-IN labels only, never a custom collision", async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  np._setModels([
+    { id: 'claude-opus-5', label: 'Opus 5', efforts: ['high'] },              // built-in
+    { id: 'shared-id', label: 'A: Shared', efforts: ['high'], custom: 'global' },
+  ]);
+  const r = np.upsertRun({ runId: 'r1', title: 't', projectDir: '/proj/b', status: 'running' });
+  const cat = np.catalogForRun(r);
+  // Every project's catalog carries the same built-ins, so borrowing those labels
+  // is safe. A CUSTOM id can mean a different model in another project — printing
+  // A's name for B's model is a confident wrong answer, and the retune popover
+  // beside it would be showing something else.
+  assert.deepEqual(cat.map((m) => m.id), ['claude-opus-5']);
+  assert.equal(np.modelEffortText({ model: 'claude-opus-5', effort: 'high' }, cat), 'Opus 5 · high');
+  assert.equal(np.modelEffortText({ model: 'shared-id', effort: '' }, cat), 'shared-id',
+    'the raw id, not the other project\'s label');
+});
+
+test("a run from ANOTHER project is offered its own catalog, not the selected one", async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const host = hostPair(window.document);
+  const doc = window.document;
+  // state.projectDir is '' in this harness (no project selected); the run names
+  // one, so the two differ exactly as they do when A is selected and B is running.
+  np._setModels([{ id: 'a-only', label: 'A Only', efforts: ['high'] }]);
+  const r = np.upsertRun({ runId: 'r1', title: 't', projectDir: '/proj/b', status: 'running' });
+  np.onState(r, { status: 'running', stepper: MANIFEST, active: [], steps: [] });
+
+  // paintRunList applies no project filter, so a live run of project B is openable
+  // while A is selected — and the engine validates against listModels(B).
+  // app.js calls the BARE global `fetch` (bootApp copies the boot stub onto
+  // globalThis), while the popover calls `doc.defaultView.fetch` — stub both.
+  const stub = () => Promise.resolve({ ok: true, status: 200,
+    json: async () => ({ models: [{ id: 'b-only', label: 'B Only', efforts: ['high'] }] }) });
+  window.fetch = stub;
+  Object.defineProperty(globalThis, 'fetch', { value: stub, configurable: true, writable: true });
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'));
+  clickCard(window, host, 'n_a');
+  const opts = () => [...doc.querySelectorAll('.rt-pop [data-field="model"] option')].map((o) => o.value);
+  assert.deepEqual(opts(), [''], "A's models are not offered for a B node");
+  for (let i = 0; i < 4; i++) await new Promise((res) => setTimeout(res, 0));
+  assert.deepEqual(opts(), ['', 'b-only'], "B's own catalog arrived and filled the list");
+});
+
+test('a catalog that lands AFTER the first paint re-resolves the pill label', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const host = hostPair(window.document);
+  // upsertRun, not makeRun: the invalidation walks the runs Map, which is where
+  // every live run actually lives (handleServerMessage upserts on the first frame).
+  // projectDir '' — the SELECTED project, so state.models is this run's catalog.
+  // A foreign-project run is a different question, covered by its own tests.
+  const r = np.upsertRun({ runId: 'r1', title: 't', projectDir: '', status: 'running' });
+  np.onState(r, { status: 'running', stepper: TUNED, active: [], steps: [] });
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'), []);
+  const pill = () => host.querySelector('[data-node-id="n_a"] .ntune').textContent;
+  assert.equal(pill(), 'claude-opus-5 · high', 'no catalog yet -> the raw id');
+
+  // /api/config resolves. Nothing would fix the pill on its own: runDecorFor
+  // memoises the bag per _decorSeq and run-hosts skips paint() outright when the
+  // bag identity is unchanged, so an id painted early would stay raw for the life
+  // of the card. setModelCatalog bumps both.
+  np._setModels([{ id: 'claude-opus-5', label: 'Opus 5', efforts: ['high'] }]);
+  np.paintGraphFor(host, r.stepper, np.runDecorFor(r, 'monitor'), []);
+  assert.equal(pill(), 'Opus 5 · high', 'the catalog label, not the raw id');
+});
+
+test('the tune map is built once per generation, not rebuilt per paint', async () => {
+  const { np, host, r } = await liveGraph(TUNED);
+  const bag = np.runDecorFor(r, 'monitor');
+  np.paintGraphFor(host, r.stepper, bag, []);
+  const first = bag.tune;
+  np.paintGraphFor(host, r.stepper, bag, []);
+  // The monitor host paints on every state/token frame and most of those paints
+  // are dropped by run-hosts' `nextDecor === decor` fast path, so rebuilding the
+  // map per frame would be pure garbage.
+  assert.equal(bag.tune, first, 'the same map object survives a second paint');
+  assert.equal(np.runDecorFor(r, 'monitor').tune, first, 'and a second bag read of the same generation');
 });
 
 test('a v2 CARD: the graph mounts into an empty host, survives a shim-signature change, and its wrap click opens the detail (v2 only)', async () => {
@@ -1201,4 +1658,231 @@ test('MAJ-20: rows that vanish are removed, new ones are appended in order, and 
   assert.equal(card.querySelectorAll('.xrow').length, 0);
   assert.equal(card.querySelector('.xtoggle'), toggle, 'the toggle is never rebuilt by a collapse');
   assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+});
+
+// ── live node retune: the card-click knob and the model · effort pill ────────
+
+test('monitor: a click on a card body fires onNodeClick with the node id', () => {
+  calls = [];
+  const { window, host, m } = mountHost('monitor');
+  m.update('r1', MANIFEST, { nodeIds: ['n_a'], wireIds: [], status: { n_a: 'pending' }, colors: {}, footers: {}, totals: {} });
+  const card = host.querySelector('[data-node-id="n_a"]');
+  // `.nhead .tt` always exists (view.mjs:386) — a descendant, to prove delegation.
+  card.querySelector('.nhead .tt').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual(calls.filter((c) => c[0] === 'node'), [['node', 'n_a', card]],
+    'the delegated handler resolves the card from a descendant target');
+});
+
+test('monitor: a footer row still wins over the card handler', () => {
+  calls = [];
+  const { window, host, m } = mountHost('monitor');
+  // A real decor bag: the footer bands `.xrow` lives in are built by
+  // decorFromState/applyDecor, not by a hand-rolled footers literal.
+  const st = RUN({
+    steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, kind: 'cycle',
+      status: 'done', activeMs: 1000, costUsd: 0, trigger: { wireIds: [], freshPorts: ['task'] } }],
+  });
+  m.update('r1', MANIFEST, decorFromState(st));
+  // The host owns `expanded` itself (the bag's flag is overwritten on paint), so
+  // open the footer the way a user does — through .xtoggle, which the click chain
+  // handles and returns on, reaching neither onRowClick nor the card branch.
+  host.querySelector('.xtoggle').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  host.querySelector('.xrow').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual(calls.map((c) => c[0]), ['row'], 'the card branch is last and never swallows a row click');
+});
+
+test('static: no click listener at all, so the Running-list card stays inert', () => {
+  calls = [];
+  const { window, host, m } = mountHost('static');
+  m.update('r1', MANIFEST, { nodeIds: ['n_a'], wireIds: [], status: {}, colors: {}, footers: {}, totals: {} });
+  host.querySelector('[data-node-id="n_a"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual(calls, []);
+});
+
+test('monitor: Enter on a focused card fires onNodeClick (cards are tabindex=0)', () => {
+  calls = [];
+  const { window, host, m } = mountHost('monitor');
+  m.update('r1', MANIFEST, { nodeIds: ['n_a'], wireIds: [], status: {}, colors: {}, footers: {}, totals: {} });
+  const card = host.querySelector('[data-node-id="n_a"]');
+  card.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  assert.deepEqual(calls.filter((c) => c[0] === 'node').map((c) => c.slice(0, 2)), [['node', 'n_a']]);
+});
+
+test('a footer row click never falls through to the card when no onRowClick is wired', () => {
+  const dom = new JSDOM('<!doctype html><div class="run-flow-wrap"><div class="run-flow"></div></div>');
+  const { window } = dom;
+  const host = window.document.querySelector('.run-flow');
+  const seen = [];
+  // `if (row && onRowClick)` let a host mounted WITHOUT onRowClick reach the card
+  // branch below, opening the retune popover from a click on an execution log row.
+  const m = mountRunGraph(host, { mode: 'monitor', doc: window.document, raf: (fn) => { fn(); return 1; },
+    viewport: () => ({ left: 0, top: 0, width: 900, height: 520 }),
+    onNodeClick: (...a) => { seen.push(a); return true; } });
+  const st = RUN({
+    steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, kind: 'cycle',
+      status: 'done', activeMs: 1000, costUsd: 0, trigger: { wireIds: [], freshPorts: ['task'] } }],
+  });
+  m.update('r1', MANIFEST, decorFromState(st));
+  host.querySelector('.xtoggle').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const row = host.querySelector('.xrow');
+  assert.ok(row.closest('.node[data-node-id]'), 'the row really does sit inside a card');
+  row.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual(seen, [], 'the row branch consumed it, as .ngate does');
+});
+
+test('a card keydown the callback DECLINES is left to the browser (History, a settled run)', () => {
+  calls = [];
+  const dom = new JSDOM('<!doctype html><div class="run-flow-wrap"><div class="run-flow"></div></div>');
+  const { window } = dom;
+  const document = window.document;
+  const host = document.querySelector('.run-flow');
+  // The app's own onNodeClick returns false on History and on a terminal run.
+  // Swallowing the key anyway would leave Space on a focused card doing nothing
+  // at all, where it used to page-scroll the detail body.
+  const m = mountRunGraph(host, { mode: 'monitor', doc: document, raf: (fn) => { fn(); return 1; },
+    viewport: () => ({ left: 0, top: 0, width: 900, height: 520 }),
+    onNodeClick: (...a) => { calls.push(['node', ...a]); return false; } });
+  m.update('r1', MANIFEST, { nodeIds: ['n_a'], wireIds: [], status: {}, colors: {}, footers: {}, totals: {} });
+  const card = host.querySelector('[data-node-id="n_a"]');
+  const ev = new window.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
+  card.dispatchEvent(ev);
+  assert.equal(calls.length, 1, 'the callback still gets its say');
+  assert.equal(ev.defaultPrevented, false, 'a declined activation keeps the browser default');
+});
+
+test('auto-repeat leaves keys it has no business with alone', () => {
+  calls = [];
+  const { window, document } = (() => {
+    const dom = new JSDOM('<!doctype html><div class="run-flow-wrap"><div class="run-flow"></div></div>');
+    return { window: dom.window, document: dom.window.document };
+  })();
+  const host = document.querySelector('.run-flow');
+  // A History host: onNodeClick always declines. An `e.repeat` bail placed above
+  // the target and callback guards preventDefaulted every held key in the host —
+  // the first Space scrolled once and every repeat after it jammed, and a repeat
+  // on the host BACKGROUND was swallowed with no card involved at all.
+  const m = mountRunGraph(host, { mode: 'monitor', doc: document, raf: (fn) => { fn(); return 1; },
+    viewport: () => ({ left: 0, top: 0, width: 900, height: 520 }),
+    onNodeClick: (...a) => { calls.push(['node', ...a]); return false; } });
+  m.update('r1', MANIFEST, { nodeIds: ['n_a'], wireIds: [], status: {}, colors: {}, footers: {}, totals: {} });
+  const card = host.querySelector('[data-node-id="n_a"]');
+  const first = new window.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
+  card.dispatchEvent(first);
+  const repeat = new window.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true, repeat: true });
+  card.dispatchEvent(repeat);
+  assert.equal(first.defaultPrevented, false, 'a declined press scrolls');
+  assert.equal(repeat.defaultPrevented, false, 'and so does every repeat of it — no jam');
+
+  const bg = new window.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true, repeat: true });
+  host.dispatchEvent(bg);
+  assert.equal(bg.defaultPrevented, false, 'a repeat on the background is not the card handler\'s business');
+});
+
+test('auto-repeat is not a second activation: a HELD key fires the card once', () => {
+  calls = [];
+  const { window, host, m } = mountHost('monitor');
+  m.update('r1', MANIFEST, { nodeIds: ['n_a'], wireIds: [], status: {}, colors: {}, footers: {}, totals: {} });
+  const card = host.querySelector('[data-node-id="n_a"]');
+  card.dispatchEvent(new window.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
+  // The popover toggles when reopened on the same anchor, so ~30 repeats a second
+  // would strobe it open/closed with focus ping-ponging between card and panel.
+  const held = new window.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true, repeat: true });
+  card.dispatchEvent(held);
+  card.dispatchEvent(new window.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true, repeat: true }));
+  assert.equal(calls.filter((c) => c[0] === 'node').length, 1, 'only the first keydown activates');
+  assert.equal(held.defaultPrevented, true, 'and the held key still does not fall through to scrolling');
+});
+
+test('static: no keydown listener either', () => {
+  calls = [];
+  const { window, host, m } = mountHost('static');
+  m.update('r1', MANIFEST, { nodeIds: ['n_a'], wireIds: [], status: {}, colors: {}, footers: {}, totals: {} });
+  host.querySelector('[data-node-id="n_a"]')
+    .dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  assert.deepEqual(calls, [], 'the keydown arm lives inside the same isStatic guard');
+});
+
+// The ornaments the click chain deliberately excludes are DESCENDANTS of the card
+// (`.xfoot` is a direct child, view.mjs:618), and two of them are natively keyboard
+// activatable: `.xtoggle` is a <button> (view.mjs:276-277) and `.xresult a` is an
+// <a href> (view.mjs:292-294). For both, the activation click IS the keydown's
+// default action, so a preventDefault() on the way up cancels it.
+test('monitor: Enter on the footer toggle is left to the browser, not swallowed by the card arm', () => {
+  calls = [];
+  const { window, host, m } = mountHost('monitor');
+  const st = RUN({
+    steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, kind: 'cycle',
+      status: 'done', activeMs: 1000, costUsd: 0, trigger: { wireIds: [], freshPorts: ['task'] } }],
+  });
+  m.update('r1', MANIFEST, decorFromState(st));
+  const toggle = host.querySelector('.xtoggle');
+  assert.ok(toggle.closest('.node[data-node-id]'), 'the toggle really does sit inside a card');
+  const ev = new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+  toggle.dispatchEvent(ev);
+  assert.equal(ev.defaultPrevented, false, 'the browser still synthesises the activation click');
+  assert.deepEqual(calls, [], 'and the card handler never fires from an ornament');
+  // The activation click the browser would now generate still expands the footer.
+  toggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.equal(host.querySelectorAll('.xrow').length, 1, 'Enter on the toggle still opens the footer');
+});
+
+test('monitor: Enter on a result link is left to the browser too', () => {
+  calls = [];
+  const { window, host, m } = mountHost('monitor');
+  m.update('r1', MANIFEST, decorFromState(RUN({ status: 'done', endReached: true,
+    result: { type: 'md', path: '/tmp/p/plan.md' } })));
+  const link = host.querySelector('.xresult a');
+  assert.ok(link.closest('.node[data-node-id]'), 'the result link really does sit inside a card');
+  const ev = new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+  link.dispatchEvent(ev);
+  assert.equal(ev.defaultPrevented, false);
+  assert.deepEqual(calls, []);
+});
+
+test('monitor: Space on a footer row does not fire the card handler', () => {
+  calls = [];
+  const { window, host, m } = mountHost('monitor');
+  const st = RUN({
+    steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, kind: 'cycle',
+      status: 'done', activeMs: 1000, costUsd: 0, trigger: { wireIds: [], freshPorts: ['task'] } }],
+  });
+  m.update('r1', MANIFEST, decorFromState(st));
+  host.querySelector('.xtoggle').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const ev = new window.KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
+  host.querySelector('.xrow').dispatchEvent(ev);
+  assert.equal(ev.defaultPrevented, false);
+  assert.deepEqual(calls, [], 'ornaments are excluded from the keydown arm exactly as from the click chain');
+});
+
+test('the live-detail cursor opt-in is written, and the base cursor is untouched', () => {
+  // Both halves of the selector are load-bearing, not decoration. `:not(.settled)`
+  // mirrors RD_TERMINAL, the set openRetuneFor refuses; `.node` rather than
+  // `.node-agent` covers flow cards, which openRetuneFor also accepts (on its
+  // note-only arm). Either mismatch leaves a cursor promising what the click does
+  // not deliver, or an inert-looking card that opens a panel anyway.
+  assert.ok(css.includes('.rd-graph:not(.settled) .run-flow.gv-host .gv-world .node[data-node-id]{cursor:pointer;}'));
+  assert.ok(css.includes('.run-flow.gv-host .gv-world .node{cursor:default;}'), 'the default still applies elsewhere');
+});
+
+test('setNodeTune writes, updates and removes the pill in place', () => {
+  const { view, host } = mountView();
+  const card = () => host.querySelector('[data-node-id="n_a"]');
+  view.setNodeTune('n_a', { text: 'Opus 5 · high' });
+  assert.equal(card().querySelector('.ntune').textContent, 'Opus 5 · high');
+  const pill = card().querySelector('.ntune');
+  view.setNodeTune('n_a', { text: 'Sonnet 5' });
+  assert.equal(card().querySelector('.ntune'), pill, 'the element is reused, never rebuilt');
+  assert.equal(pill.textContent, 'Sonnet 5', 'no effort, no separator');
+  view.setNodeTune('n_a', null);
+  assert.equal(card().querySelector('.ntune'), null, "'' = inherit removes the pill");
+  // A raw decor entry that never went through paintGraphFor's label pass has no
+  // `text` — the pill must stay off rather than print an object.
+  view.setNodeTune('n_a', { model: 'claude-opus-5', effort: 'high' });
+  assert.equal(card().querySelector('.ntune'), null, 'no text, no pill');
+});
+
+test('the .ntune pill is styled and cannot collide with .nrun', () => {
+  assert.match(css, /\.gv-world \.ntune\{[^}]*position:absolute[^}]*\}/);
+  assert.match(css, /\.gv-world \.ntune\{[^}]*bottom:-9px;left:16px[^}]*\}/);
+  assert.match(css, /\.gv-world \.nrun\{[^}]*top:-9px;right:16px[^}]*\}/);
 });
