@@ -1,6 +1,7 @@
 // test/orchestrator-graph.test.mjs
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
@@ -222,9 +223,12 @@ test('the End-bound result is recorded as an artifact', { timeout: 120000 }, asy
   await orch.run();
   const st = orch.getState();
   if (st.result?.path) {
-    const hit = arts.find((a) => a.kind === 'result' && a.path === st.result.path);
-    assert.ok(hit, 'the End-bound path was recorded');
-    assert.ok(hit.nodeId && hit.executionId, 'the artifact event carries its node + execution attribution');
+    // The producer indexes the file under its own kind; End adds a 'result' row
+    // only when nothing else did (the artifacts PK is per kind, so a second row
+    // would list one file twice). Either way the path is recorded exactly once.
+    const hits = arts.filter((a) => a.path === st.result.path);
+    assert.equal(hits.length, 1, 'the End-bound path was recorded exactly once');
+    assert.ok(hits[0].nodeId && hits[0].executionId, 'the artifact event carries its node + execution attribution');
   } else {
     assert.equal(st.result.type, 'void', 'a void End binds no path (the graph default ends on reviewer.pass)');
   }
@@ -304,10 +308,8 @@ test('bookends are exec rows carrying an executionId, and no phase event is emit
 });
 
 // ── MAJ-3: two cards on ONE agent key must not clobber one persisted artifact ──
-// The composer accepts duplicate agent keys (dupPrefix exists for them), so this
-// is a supported graph, not a malformed one. The run-store verdicts were already
-// node-prefixed; the PROJECT store (plans/reviews) was not, so the later writer
-// silently destroyed the earlier reviewer's persisted file.
+// The FOLDER is the discriminator now (run-folder-artifacts D5): each execution
+// writes into steps/<node>-cN/, so two reviewer cards can never share a file.
 const TWO_REVIEWERS = {
   id: 'wf_tworev', name: 'Two reviewers', domain: 'coding',
   nodes: [
@@ -329,7 +331,7 @@ const TWO_REVIEWERS = {
   ],
 };
 
-test('two cards on one agent key keep their project-store reviews apart', { timeout: 120000 }, async () => {
+test('two cards on one agent key keep their reviews apart — one step folder each', { timeout: 120000 }, async () => {
   await writeGraphWorkflow(TWO_REVIEWERS);
   const dir = gitDir('tworev');
   const orch = createOrchestrator({
@@ -339,31 +341,38 @@ test('two cards on one agent key keep their project-store reviews apart', { time
   orch.on('artifact', (a) => arts.push(a));
   const res = await orch.run();
   assert.equal(res.status, 'done', res.error);
-  // Both reviewers ran in the SAME drain (parallel) off one implementer.
   const stepIds = orch.getState().steps.filter((s) => s.agentKey === 'reviewer').map((s) => s.nodeId).sort();
   assert.deepEqual(stepIds, ['n_rev1', 'n_rev2']);
   const reviewed = arts.filter((a) => a.kind === 'review').map((a) => a.path);
   assert.equal(reviewed.length, 2, 'two review artifacts were published');
-  assert.equal(new Set(reviewed).size, 2, `the two tokens must name different files: ${JSON.stringify(reviewed)}`);
-  const files = (await readdir(artifactPaths(dir).reviews)).sort();
-  assert.equal(files.length, 2, `both persisted reviews must survive; got ${JSON.stringify(files)}`);
-  assert.ok(files.some((f) => f.endsWith('-n_rev1-impl-review.md')), JSON.stringify(files));
-  assert.ok(files.some((f) => f.endsWith('-n_rev2-impl-review.md')), JSON.stringify(files));
+  const runDir = orch.getState().pipelineDir;
+  for (const nid of ['n_rev1', 'n_rev2']) {
+    const f = join(runDir, 'steps', `${nid}-c1`, 'impl-review-cycle1.md');
+    assert.ok(reviewed.includes(f), `${nid}: the token names its own step folder`);
+    assert.ok(existsSync(f), `${nid}: the review survives on disk`);
+  }
+  const shared = artifactPaths(dir).reviews;
+  assert.ok(!existsSync(shared) || (await readdir(shared)).length === 0, 'the project reviews/ dir receives no file');
+  // The reviews TABLE is keyed (pipeline_id, kind, cycle) and upserts: both cards
+  // share the verdict basename AND the ordinal now that the step folder carries
+  // the node id, so the kind must carry it instead or the second card's verdict
+  // silently replaces the first's.
+  const kinds = readPipelineExtras(orch.getState().id).reviews.map((r) => `${r.kind}@${r.cycle}`).sort();
+  assert.deepEqual(kinds, ['n_rev1-impl@1', 'n_rev2-impl@1'], 'one reviews row per card (node-prefixed, stem mapped through reviewKindOf), not one overwritten row');
 });
 
-test('a SINGLE card keeps the unprefixed v1 project-store path', { timeout: 120000 }, async () => {
+test('a SINGLE card allocates its review under its own step folder, cycle in the name', { timeout: 120000 }, async () => {
   const dir = gitDir('onerev');
   const orch = createOrchestrator({
     projectDir: dir, workflowId: 'wf_quick-fix', prompt: 'demo', claude: { mock: true }, auto: true,
   });
   const res = await orch.run();
   assert.equal(res.status, 'done', res.error);
-  const files = (await readdir(artifactPaths(dir).reviews)).sort();
-  assert.ok(files.length >= 1, JSON.stringify(files));
-  for (const f of files) {
-    assert.match(f, /^\d\d-\d\d-\d\d-[a-z0-9-]+-impl-review\.md$/,
-      `a single-card graph's persisted path must stay byte-identical: ${f}`);
-  }
+  const runDir = orch.getState().pipelineDir;
+  const folders = (await readdir(join(runDir, 'steps'))).sort();
+  assert.ok(folders.includes('n_review-c1') && folders.includes('n_review-c2'), JSON.stringify(folders));
+  assert.ok(existsSync(join(runDir, 'steps', 'n_review-c1', 'impl-review-cycle1.md')));
+  assert.ok(existsSync(join(runDir, 'steps', 'n_review-c2', 'impl-review-cycle2.md')), 'cycle 2 did not overwrite cycle 1');
 });
 
 // ── MAJ-11: one ask id per HOLD, and the delivery number rides the payload ─────

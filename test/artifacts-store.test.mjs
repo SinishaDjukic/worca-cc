@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { artifactPaths, ensureArtifactDirs, createPipeline, planPath, reviewPath, readStoreMeta } from '../src/core/artifacts.mjs';
 import { projectKey, storeRoot, workspaceStorePath } from '../src/core/store.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
@@ -32,6 +33,9 @@ test('ensureArtifactDirs creates dirs + writes+returns project meta once (store_
   try {
     const p = await ensureArtifactDirs(proj);
     await stat(p.pipelines); // throws if missing
+    assert.equal(existsSync(p.plans), false, 'plans/ is no longer created (run-folder-artifacts D12)');
+    assert.equal(existsSync(p.reviews), false, 'reviews/ is no longer created');
+    assert.ok(p.plans.endsWith(join('', 'plans')) && p.reviews.endsWith(join('', 'reviews')), 'artifactPaths still names both for delete/migrate');
     assert.equal(p.meta.key, projectKey(proj), 'ensureArtifactDirs returns the meta object');
     // Meta now lives in the store_meta table, not a meta.json file.
     const onDisk = readStoreMeta(projectKey(proj));

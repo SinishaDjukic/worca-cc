@@ -758,7 +758,9 @@ test('23 composite: expand → phases → parallel slices with siblings → fini
   const slice = c.find((x) => x.slice?.id === 'p1t1');
   assert.deepEqual(slice.slice, {
     id: 'p1t1', title: 'One', phase: 1, path: '/p/tasks/p1-t1.md', index: 0,
-    siblings: [{ id: 'p1t2', title: 'Two', file: 'tasks/p1-t2.md' }],
+    // The sibling `file` is the ABSOLUTE task path (it is printed into a prompt
+    // whose cwd is the project tree, not the run dir).
+    siblings: [{ id: 'p1t2', title: 'Two', file: '/p/tasks/p1-t2.md' }],
   });
   assert.equal(slice.executionId, 'x:n_work:1:p1t1');
   assert.equal(slice.taskIndex, 1);

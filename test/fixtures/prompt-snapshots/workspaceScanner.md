@@ -42,10 +42,16 @@ When unsure between two tiers, take the lower one only if you will verify the re
 
 ### Outputs
 
-- Write **workspace** to: <PIPELINE_DIR>/workspace-description.md
+- Write **workspace** to: <PIPELINE_DIR>/steps/n_workspaceScanner-c2/workspace-description.md
+
+### Step folder
+
+- Your step folder for this execution: <PIPELINE_DIR>/steps/n_workspaceScanner-c2
+- Put every additional artifact you produce (deviation notes, findings, scratch, screenshots, task files) inside it — never anywhere else in the run store. Files there are indexed and shown to the user after this step.
 
 MOCK_ROLE: workspace-scan
 MOCK_CYCLE: 2
 MOCK_BASE: feature
-MOCK_OUT: <PIPELINE_DIR>/workspace-description.md
+MOCK_STEP_DIR: <PIPELINE_DIR>/steps/n_workspaceScanner-c2
+MOCK_OUT: <PIPELINE_DIR>/steps/n_workspaceScanner-c2/workspace-description.md
 MOCK_IN: /abs/task.md

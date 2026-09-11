@@ -15,12 +15,12 @@
 
 import { rm, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join, isAbsolute } from 'node:path';
+import { join } from 'node:path';
 
 import { projectKey, projectStorePath } from './store.mjs';
 import {
   listArtifacts, readPipelineByKey, persistPrState, retainedWorkFor,
-  recordArtifact, appendAudit, findRunDir,
+  recordArtifact, appendAudit, findRunDir, artifactAbsPath,
 } from './artifacts.mjs';
 import { worcaHome } from './projects.mjs';
 import { getDb, tx } from './db.mjs';
@@ -50,23 +50,6 @@ function lookupRow(storeKey, id) {
   const m = /-([0-9a-f]{8})$/i.exec(String(id));
   if (m) row = getDb().prepare(`SELECT * FROM pipelines WHERE ${col} = ? AND id = ?`).get(val, m[1].toLowerCase());
   return row || null;
-}
-
-/**
- * Resolve an indexed artifact's absolute path. The artifacts index encodes scope by
- * convention (recordArtifact / orchestrator._artifact): plans/ and reviews/ are
- * store-root-relative (the shared markdown, a sibling of pipelines/); everything else
- * (prompt.md, manual-tests-checklist.md, webui-review-cycleN.md, extras/*) is
- * pipeline-dir-relative.
- */
-function artifactAbsPath(relPath, pipelineDir, storeRootDir) {
-  if (isAbsolute(relPath)) return relPath;
-  // Rows are indexed with '/' (see _recordArtifact); rows written by earlier
-  // Windows builds carry '\\' — normalise before the layout check so those
-  // shared plan/review files are still re-rooted (and unlinked) correctly.
-  const rel = relPath.replace(/\\/g, '/');
-  if (rel.startsWith('plans/') || rel.startsWith('reviews/')) return join(storeRootDir, rel);
-  return join(pipelineDir, rel);
 }
 
 /**

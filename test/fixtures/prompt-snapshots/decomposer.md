@@ -44,14 +44,20 @@ When unsure between two tiers, take the lower one only if you will verify the re
 
 ### Outputs
 
-- Write **tasks** to: <PIPELINE_DIR>/decomposition.json
+- Write **tasks** to: <PIPELINE_DIR>/steps/n_decomposer-c2/decomposition.json
 
-Write each task file under: <PIPELINE_DIR>/tasks/ (name them p<phase>-t<n>-<kebab-title>.md)
-The manifest shape is { "phases": [ { "ordinal", "tasks": [ { "id", "title", "file" } ] } ] }. Use id "p<ordinal>t<n>" and a pipeline-dir-relative "file" path.
+### Step folder
+
+- Your step folder for this execution: <PIPELINE_DIR>/steps/n_decomposer-c2
+- Put every additional artifact you produce (deviation notes, findings, scratch, screenshots, task files) inside it — never anywhere else in the run store. Files there are indexed and shown to the user after this step.
+
+Write each task file under: <PIPELINE_DIR>/steps/n_decomposer-c2/tasks/ (name them p<phase>-t<n>-<kebab-title>.md)
+The manifest shape is { "phases": [ { "ordinal", "tasks": [ { "id", "title", "file" } ] } ] }. Use id "p<ordinal>t<n>"; "file" is the absolute path of the task file (a run-folder-relative path is also accepted).
 
 MOCK_ROLE: decomposer
 MOCK_CYCLE: 2
 MOCK_BASE: feature
-MOCK_OUT: <PIPELINE_DIR>/decomposition.json
-MOCK_TASKS_DIR: <PIPELINE_DIR>/tasks
+MOCK_STEP_DIR: <PIPELINE_DIR>/steps/n_decomposer-c2
+MOCK_OUT: <PIPELINE_DIR>/steps/n_decomposer-c2/decomposition.json
+MOCK_TASKS_DIR: <PIPELINE_DIR>/steps/n_decomposer-c2/tasks
 MOCK_IN: /abs/plan.md

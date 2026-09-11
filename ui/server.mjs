@@ -23,7 +23,7 @@ import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState,
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
-  listArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
+  listArtifacts, listReadableRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
   readPromptFile,
 } from '../src/core/artifacts.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
@@ -1987,13 +1987,36 @@ app.get('/api/runs/:id', async (req, res) => {
 // id ALONE (findPipelineRowById): the Running page knows the run's pipelineId
 // but no store key until History has been visited. Placed beside /api/runs/:id
 // (`:id` matches one path segment, so the two never shadow each other).
+// The one answer shape of the three artifact routes (run-folder-artifacts D11):
+// a binary kind is 415, a file above the read cap is 413 — both with rel + bytes
+// so the client can show the size — a hit with text is 200, nothing is 404.
+function sendArtifactHit(res, hit) {
+  if (!hit) return res.status(404).json({ error: 'artifact not found' });
+  if (hit.binary) return res.status(415).json({ error: 'binary artifact', rel: hit.rel, bytes: hit.bytes });
+  if (hit.tooLarge) return res.status(413).json({ error: 'artifact too large to view', rel: hit.rel, bytes: hit.bytes });
+  return res.json(hit);
+}
+
 app.get('/api/runs/:id/artifact', async (req, res) => {
   try {
     const row = findPipelineRowById(req.params.id);
     if (!row) return res.status(404).json({ error: 'pipeline not found' });
     const hit = await resolveIndexedArtifactForRow(row, req.query.rel);
-    if (!hit) return res.status(404).json({ error: 'artifact not found' });
-    res.json(hit);
+    sendArtifactHit(res, hit);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/runs/:id/artifacts', async (req, res) => {
+  try {
+    const row = findPipelineRowById(req.params.id);
+    if (!row) return res.status(404).json({ error: 'pipeline not found' });
+    // The same READABLE page the ask tool serves (each row costs a stat for its
+    // byte size, so the set is capped at the ask ceiling — and SAYS so via
+    // `truncated`); transient `questions` rows are excluded in SQL.
+    const { artifacts, truncated } = await listReadableRunArtifacts(row, {}, ASK_LIMITS.artifactsListMaxLimit);
+    res.json({ runId: row.id, artifacts, truncated });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -2404,8 +2427,7 @@ app.get('/api/history/:key/:id/artifact', async (req, res) => {
   }
   try {
     const hit = await resolveIndexedArtifact(req.params.key, req.params.id, req.query.rel);
-    if (!hit) return res.status(404).json({ error: 'artifact not found' });
-    res.json(hit);
+    sendArtifactHit(res, hit);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -2934,8 +2956,7 @@ app.get('/api/workspaces/:id/runs/:runId/artifact', async (req, res) => {
   if (!WORKSPACE_KEY_RE.test(req.params.id)) return res.status(404).json({ error: 'pipeline not found' });
   try {
     const hit = await resolveIndexedArtifact(`workspaces/${req.params.id}`, req.params.runId, req.query.rel);
-    if (!hit) return res.status(404).json({ error: 'artifact not found' });
-    res.json(hit);
+    sendArtifactHit(res, hit);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

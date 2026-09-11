@@ -11,7 +11,7 @@
     { "id": "revise", "type": "md", "required": false, "loop": true,
       "directive": "## Revise to address the review\n\nA reviewer found issues with the previous plan. Re-plan from scratch (cold start) and address EVERY critical and major finding in the review below. Preserve the \"## Clarifications (Q&A)\" section." }
   ],
-  "outputs": [{ "id": "plan", "type": "md", "filename": "{base}{vsuffix}.md", "store": "project" }],
+  "outputs": [{ "id": "plan", "type": "md", "filename": "plan{vsuffix}.md" }],
   "domain": "coding",
   "displayName": "Plan",
   "description": "Explores the codebase and writes the implementation plan. Architecture, task breakdown, concrete code snippets; can ask clarifying questions first.",
