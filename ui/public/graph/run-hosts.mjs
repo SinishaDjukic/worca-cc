@@ -45,7 +45,7 @@ const nodeSig = (stepper) => manifestNodes(stepper).map((n) => n.id).join(',');
 
 export function mountRunGraph(hostEl, opts = {}) {
   const { mode = 'monitor', doc = hostEl.ownerDocument, raf = null, viewport = null,
-    onRowClick = null, onGateClick = null, onResultClick = null } = opts;
+    onRowClick = null, onGateClick = null, onResultClick = null, onNodeClick = null } = opts;
   const wrap = hostEl.closest('.run-flow-wrap') || hostEl.parentElement || hostEl;
   const win = doc.defaultView || globalThis;
   const isStatic = mode === 'static';
@@ -171,9 +171,14 @@ export function mountRunGraph(hostEl, opts = {}) {
   /** Re-fit while the user has not touched the view; otherwise only re-size the host. */
   function refit() { if (untouched()) fit(); else sizeHost(); }
 
+  // Per-HOST, never on the decor bag: runDecorFor memoises one bag per mode and
+  // documents it as immutable, so stamping this on it would hand the answer to
+  // every other consumer of that memo. It rides the same spread `expanded` does.
+  let opensPanel = false;
+
   function paint() {
     if (!view || !decor) return;
-    applyDecor(view, { ...decor, expanded });
+    applyDecor(view, { ...decor, expanded, opensPanel });
   }
 
   function mount() {
@@ -190,10 +195,14 @@ export function mountRunGraph(hostEl, opts = {}) {
     if (!isStatic) view.createNav({ onTransform: paintNav });
   }
 
-  function update(nextRunId, nextStepper, nextDecor) {
+  function update(nextRunId, nextStepper, nextDecor, { opensPanel: nextOpens = false } = {}) {
     const runChanged = nextRunId !== runId;
     const structural = !view || runChanged || nodeSig(nextStepper) !== nodeSig(stepper);
-    const sameBag = !structural && nextDecor === decor;
+    // `opensPanel` joins the fast-path test: it is NOT on the bag, so an unchanged
+    // bag identity would otherwise skip the paint that has to strip or restamp the
+    // cards' trigger semantics.
+    const sameBag = !structural && nextDecor === decor && nextOpens === opensPanel;
+    opensPanel = nextOpens;
     if (runChanged) { runId = nextRunId; expanded = null; lastFit = null; }   // one node open per surface; a new run is a new build
     // A node-set change needs a view whose portsFn/headers read the NEW manifest.
     if (view && structural && nodeSig(nextStepper) !== nodeSig(stepper)) { view.destroy(); view = null; lastFit = null; }
@@ -226,8 +235,67 @@ export function mountRunGraph(hostEl, opts = {}) {
         if (link) { e.preventDefault(); if (onResultClick) onResultClick(link.dataset.path); return; }
         const gate = e.target.closest && e.target.closest('.ngate');
         if (gate) { if (onGateClick) onGateClick(gate.dataset.wireId); return; }
+        // `if (row) { if (onRowClick) …; return; }`, the shape `.ngate` uses one
+        // line up — NOT `if (row && onRowClick)`. A host mounted without an
+        // onRowClick would otherwise fall through to the card branch below and
+        // open the retune popover from a click on an execution log row.
         const row = e.target.closest && e.target.closest('.xrow');
-        if (row && onRowClick) onRowClick(row.dataset.executionId, row.dataset.nodeId);
+        if (row) { if (onRowClick) onRowClick(row.dataset.executionId, row.dataset.nodeId); return; }
+        // LAST in the chain on purpose: every ornament above (.xtoggle, .xresult a,
+        // .ngate, .xrow) lives INSIDE a card, so a card handler placed earlier would
+        // swallow them all. `mode:'static'` never enters this block, so the
+        // Running-list card stays inert.
+        const card = e.target.closest && e.target.closest('.node[data-node-id]');
+        if (card && onNodeClick) onNodeClick(card.dataset.nodeId, card);
+      });
+      // Cards carry tabindex="0" (view.mjs:392-396), so the keyboard must reach the
+      // same action. Registered through the tracked `on()` helper, so destroy()
+      // removes it with everything else.
+      //
+      // It matches the CARD ITSELF and never walks up to one, which is the
+      // keyboard mirror of the click chain's ornament exclusions: `.xfoot` is a
+      // CHILD of the card (view.mjs:618) and two of its bands are natively
+      // keyboard-activatable — `.xtoggle` is a <button> (view.mjs:276-277) and
+      // `.xresult a` is an <a href> (view.mjs:292-294). For both, the activation
+      // click IS the keydown's default action, so resolving an ancestor card and
+      // calling preventDefault() would cancel it and leave the footer toggle and
+      // the artifact links dead to the keyboard — on History too, where the
+      // callback's own guard returns and the keypress then does nothing at all.
+      // The card is where focus lands when the card is what the user tabbed to,
+      // so this stays correct for any ornament added later, with no second
+      // exclusion list to keep in sync.
+      //
+      // preventDefault() is CONDITIONAL on the callback reporting that it acted.
+      // onNodeClick has screen guards of its own (History, a settled run, a
+      // non-agent card) and returns false when it declines; swallowing the key
+      // anyway would leave Space on a focused History card doing nothing at all,
+      // where it used to page-scroll the detail body. Calling preventDefault()
+      // after the callback is still in time — it only has to happen somewhere
+      // inside this handler, not before the work.
+      // The card whose last real activation was consumed, or null. Auto-repeats
+      // mirror that verdict rather than re-deciding — but only for the SAME card:
+      // a bare boolean let a repeat that arrived after focus moved apply one card's
+      // verdict to another. The state describes one key-press, so it is keyed by
+      // the element the press landed on.
+      let heldOn = null;
+      on(hostEl, 'keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+        // BOTH guards come first. An `e.repeat` bail placed above them would
+        // preventDefault every held Enter/Space anywhere in the host — including
+        // on the background, where no card is involved at all, and on a History
+        // card whose callback declines: the first press would scroll and every
+        // repeat after it would jam.
+        if (!onNodeClick || !e.target.matches || !e.target.matches('.node[data-node-id]')) return;
+        // Auto-repeat is NOT a second activation. The retune popover toggles when
+        // reopened on the same anchor, so a held key would strobe it ~30×/s —
+        // opening and closing, focus ping-ponging between the card and the panel's
+        // first select, with no way to land on a stable panel until the user lets
+        // go. The repeat still inherits the first press's verdict, so a held key
+        // over an OPEN popover does not scroll the detail body out from under it.
+        if (e.repeat) { if (heldOn === e.target) e.preventDefault(); return; }
+        const consumed = onNodeClick(e.target.dataset.nodeId, e.target) !== false;
+        heldOn = consumed ? e.target : null;
+        if (consumed) e.preventDefault();   // Space would otherwise scroll
       });
     }
     // jsdom has no ResizeObserver — guard through the document's window (P5's idiom).

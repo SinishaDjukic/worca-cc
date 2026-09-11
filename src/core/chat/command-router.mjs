@@ -12,6 +12,7 @@
 
 import { parseCommand } from './parser.mjs';
 import { BOOKEND_EXECUTION_IDS } from '../../shared/graph/constants.mjs';
+import { NO_DISPATCH_STATUS } from '../../shared/graph/retune-gate.mjs';
 import { createAllowlistGuard, parseIdList } from './allowlist.mjs';
 import { runRef, fmtUsd, fmtMs } from './renderers.mjs';
 import { giveUpOption, describePauseReason, pauseConsequences } from '../failure-policy.mjs';
@@ -44,6 +45,7 @@ const HELP_TEXT = [
   '`/runs` — live runs · `/last` — latest finished pipeline',
   '`/status [*ref]` — run detail · `/cost [*ref]` — run cost',
   '`/pause [*ref]` · `/stop [*ref]` · `/resume [*ref]`',
+  '`/retune [*ref] <nodeId> <model|-> [effort|-]` — repoint an idle agent node; `-` clears to inherit',
   '`/approve [*ref]` — continue past a gate · `/retry [*ref]` — another cycle',
   '`/abort [*ref]` — give up on a recovery prompt (pauses the run; nothing is discarded)',
   '`/answer [*ref] <n|text> [| …]` — answer clarify questions (option number, or text for free-text)',
@@ -61,13 +63,18 @@ const LIVE = new Set(['running', 'starting', 'pausing']);
  * @returns {{run?:object, row?:object, error?:object}} run = live entry summary,
  *          row = history row (when not live); error = NormalizedMessage reply
  */
-function resolveTarget(arg, live, rows, { wantLive = false } = {}) {
+function resolveTarget(arg, live, rows, { wantLive = false, preferActive = true } = {}) {
   // wantLive commands (/pause /stop /approve /answer…) must never bind to a
   // finished entry still parked in the runs Map.
   if (wantLive) live = live.filter((r) => LIVE.has(String(r.status || '')));
   const suffix = String(arg || '').replace(/^\*/, '').trim();
   if (!suffix) {
-    const active = live.filter((r) => LIVE.has(String(r.status || '')));
+    // `preferActive` breaks a no-arg tie toward a RUNNING entry, which is right
+    // when a parked run is a second-class target. /retune turns it off: a paused
+    // run is a first-class target there — pausing to retune is the whole gesture —
+    // so silently picking the running one instead would apply the change to the
+    // wrong run and report success.
+    const active = preferActive ? live.filter((r) => LIVE.has(String(r.status || ''))) : [];
     const pool = active.length ? active : live;
     if (pool.length === 1) return { run: pool[0] };
     if (pool.length === 0) return { error: reply('No live runs. `/runs` lists them, `/last` shows the latest finished one.', 'warning') };
@@ -106,7 +113,8 @@ export function lastPathSegment(p) {
  * @param {{actions:object, chatContext:object, logger?:(l:string,m:string)=>void}} deps
  * actions: listRuns(), runState(runId), pendingQuestion(runId),
  *          answer(runId, id, payload), stop(runId), pause(runId),
- *          resume(pipelineId), history({limit}), listProjects()
+ *          resume(pipelineId), retune(runId, nodeId, selection),
+ *          history({limit}), listProjects()
  */
 export function createCommandRouter({ actions, chatContext, logger = () => {} }) {
   const projectOf = (chatKey) => chatContext.get(chatKey).active_project;
@@ -239,6 +247,82 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
       const out = await actions.resume(t.row.id);
       if (out?.ok) return reply(`▶️ Resuming \`${runRef(t.row.id)}\` — ${String(t.row.title || '').slice(0, 50)}`);
       return reply(`Could not resume \`${runRef(t.row.id)}\`: ${out?.error || 'unknown error'}`, 'error');
+    },
+
+    // Deliberately NOT wantLive: a PAUSED run is retunable (D6) and 'paused' is
+    // not in LIVE. resolveTarget's no-arg path already prefers the ACTIVE pool
+    // and only falls back to the full pool when nothing is live, so a bare
+    // `/retune n_impl …` still binds to the paused run when it is the only one.
+    // The engine's own RUN_NOT_RETUNABLE guard rejects a finished run with a
+    // message that explains itself — better than "No live run matches".
+    retune: async ({ chatKey, args }) => {
+      const hasRef = !!(args[0] && args[0].startsWith('*'));
+      // rows is [] here, so resolveTarget can only answer {run} or {error}: a
+      // history ROW carries no orchestrator and could never be retuned anyway.
+      //
+      // The no-arg form narrows the pool to runs that can still DISPATCH. A
+      // finished entry is never evicted from the server's runs Map, so with one
+      // paused run and any earlier finished one the bare `/retune n_impl …` this
+      // handler exists to support came back "Ambiguous — use a longer suffix".
+      // /pause and /stop are immune because they pass wantLive, which this command
+      // cannot: 'paused' is not in LIVE and a paused run IS retunable (D6).
+      //
+      // `preferActive: false` for the same reason. A paused run is a first-class
+      // target here, so a tie between it and a running one is a real ambiguity to
+      // put to the user — not something to break silently toward the running one,
+      // which would retune a run they said nothing about.
+      //
+      // With an explicit *ref the FULL pool stands, so naming a finished run still
+      // reaches the engine's RUN_NOT_RETUNABLE, whose message explains itself
+      // better than "No run matches".
+      const scoped = scopedRuns(chatKey);
+      const pool = hasRef ? scoped
+        : scoped.filter((r) => !NO_DISPATCH_STATUS.includes(String(r.status || '')));
+      const t = resolveTarget(hasRef ? args[0] : '', pool, [], { preferActive: false });
+      if (t.error) return t.error;
+      const rest = hasRef ? args.slice(1) : args;
+      const [nodeId, modelArg, effortArg] = rest;
+      // The model token is REQUIRED. Omitting it must not be read as the `-`
+      // clear: `/retune n_impl` after a typo that ate the model would otherwise
+      // wipe the node's override back to inherit and answer as if that was the
+      // request, with the authored value gone from nodeCtx and both manifests.
+      if (!nodeId || modelArg === undefined) {
+        return reply('Usage: `/retune [*ref] <nodeId> <model|-> [effort|-]` — `-` clears the model back to inherit; an omitted effort resets to the model default.', 'warning');
+      }
+      // A chat line cannot carry an empty positional token, so `-` is the clear.
+      const clear = (v) => (v === undefined || v === '-' ? '' : v);
+      const model = clear(modelArg);
+      // An OMITTED effort token resets the effort, and the reply below SAYS so.
+      //
+      // Which levels exist is a property of the model, so an effort cannot
+      // meaningfully outlive a change of model: the popover's own model-change
+      // handler repaints with `effort: ''` for exactly this reason, and carrying
+      // the old level over instead would refuse a plain model swap outright
+      // (`opus-5 · max` -> haiku-4.5, whose efforts are medium/high, comes back
+      // BAD_SELECTION about a field the user never mentioned). The two surfaces
+      // have to agree on what "change the model" means.
+      //
+      // What must not happen is doing it QUIETLY — that was the whole complaint
+      // about the model token. Hence `· default effort` in the success line.
+      const effort = clear(effortArg);
+      try {
+        const applied = await actions.retune(t.run.runId, nodeId, { model, effort });
+        const pick = applied.model
+          ? `**${applied.model}** · ${applied.effort || 'default effort'}`
+          : '**inherit**';
+        const line = `🎛 \`${nodeId}\` on \`${runRef(t.run.runId)}\` → ${pick} — applies from its next execution.`;
+        // The engine reports whether the change reached the database. An unsaved
+        // retune is live in that process and gone on resume — a flat success line
+        // would be a lie the user only discovers much later.
+        if (applied.persisted === false) {
+          return reply(`${line}\n⚠️ It could not be saved, so a resume will revert it.`, 'warning');
+        }
+        return reply(line, 'success');
+      } catch (err) {
+        // Caught here rather than left to the dispatcher's generic "Command
+        // failed" so the engine's own refusal text survives verbatim.
+        return reply(`Retune failed: ${String(err?.message || err).slice(0, 200)}`, 'warning');
+      }
     },
 
     approve: async (env) => answerDecision(env, 'approve'),

@@ -39,7 +39,8 @@ function fixture(overrideActions = {}) {
       ],
       active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }],
       stepper: { version: 2, graph: { nodes: [
-        { id: 'n_plan', label: 'Plan' }, { id: 'n_impl', label: 'Implementation' },
+        { id: 'n_plan', label: 'Plan' },
+        { id: 'n_impl', label: 'Implementation', model: 'claude-opus-5', effort: 'max' },
       ], wires: [] } },
     } },
   };
@@ -51,6 +52,7 @@ function fixture(overrideActions = {}) {
     stop: async (runId) => calls.push(['stop', runId]),
     pause: async (runId) => calls.push(['pause', runId]),
     resume: async (pipelineId) => { calls.push(['resume', pipelineId]); return { ok: true }; },
+    retune: async (runId, nodeId, sel) => { calls.push(['retune', runId, nodeId, sel]); return { nodeId, ...sel }; },
     history: async () => state.rows,
     listProjects: async () => [{ name: 'worca', path: '/x/worca' }, { name: 'other', path: '/x/other' }],
     ...overrideActions,
@@ -339,4 +341,122 @@ test('/use scopes /runs by project on a Windows-style projectDir (backslash sepa
   assert.match(text(await send('/runs')), /Fix login/, 'the live run in C:\\x\\worca is in scope');
   await send('/use other');
   assert.match(text(await send('/runs')), /No live runs/, 'scoped away from it');
+});
+
+test('/retune targets a run, passes the selection through, and reports the pick', async () => {
+  const { send, calls } = fixture();
+  const out = text(await send('/retune *1111 n_impl claude-opus-5 high'));
+  assert.deepEqual(calls.at(-1), ['retune', 'run-aaaa1111', 'n_impl', { model: 'claude-opus-5', effort: 'high' }]);
+  assert.match(out, /n_impl/);
+  assert.match(out, /claude-opus-5/);
+  assert.match(out, /applies from its next execution/);
+});
+
+test('/retune omits the ref when one run is live, and `-` clears a field', async () => {
+  const { send, calls } = fixture();
+  await send('/retune n_plan - -');
+  assert.deepEqual(calls.at(-1), ['retune', 'run-aaaa1111', 'n_plan', { model: '', effort: '' }]);
+  await send('/retune n_plan claude-sonnet-5');
+  assert.deepEqual(calls.at(-1), ['retune', 'run-aaaa1111', 'n_plan', { model: 'claude-sonnet-5', effort: '' }]);
+});
+
+test('/retune with no nodeId prints usage and calls nothing', async () => {
+  const { send, calls } = fixture();
+  const before = calls.length;
+  assert.match(text(await send('/retune')), /Usage: `\/retune/);
+  assert.equal(calls.length, before, 'no action was invoked');
+});
+
+test('/retune with no MODEL token prints usage — it must never be read as the `-` clear', async () => {
+  const { send, calls } = fixture();
+  const before = calls.length;
+  // `/retune n_impl` after a typo that ate the model token used to post
+  // {model:'', effort:''}, wiping the node's override back to inherit and
+  // answering as if that was the request. The authored value is unrecoverable.
+  assert.match(text(await send('/retune n_impl')), /Usage: `\/retune/);
+  assert.match(text(await send('/retune *1111 n_impl')), /Usage: `\/retune/);
+  assert.equal(calls.length, before, 'the engine is never reached');
+  // The EXPLICIT clear still works — that is what `-` is for.
+  await send('/retune n_impl -');
+  assert.deepEqual(calls.at(-1), ['retune', 'run-aaaa1111', 'n_impl', { model: '', effort: '' }]);
+});
+
+test('an omitted EFFORT token resets the effort, and the reply says so out loud', async () => {
+  const { send, calls } = fixture();
+  // Which levels exist is a property of the MODEL, so an effort cannot outlive a
+  // model change — the popover's model-change handler repaints with effort:''
+  // for the same reason, and carrying the old level over would refuse a plain
+  // model swap (`opus-5 · max` -> haiku-4.5) with an error about a field the user
+  // never typed. What matters is that it is not done quietly.
+  const out = text(await send('/retune *1111 n_impl claude-sonnet-5'));
+  assert.deepEqual(calls.at(-1), ['retune', 'run-aaaa1111', 'n_impl', { model: 'claude-sonnet-5', effort: '' }]);
+  assert.match(out, /default effort/, 'the reset is stated, not silent');
+
+  const withEffort = text(await send('/retune *1111 n_impl claude-sonnet-5 high'));
+  assert.deepEqual(calls.at(-1), ['retune', 'run-aaaa1111', 'n_impl', { model: 'claude-sonnet-5', effort: 'high' }]);
+  assert.match(withEffort, /· high/);
+
+  await send('/retune *1111 n_impl -');
+  assert.deepEqual(calls.at(-1), ['retune', 'run-aaaa1111', 'n_impl', { model: '', effort: '' }]);
+  assert.match(text(await send('/retune *1111 n_impl -')), /inherit/);
+});
+
+test('/retune warns when the change could not be saved', async () => {
+  const f = makeRouter({
+    retune: async (runId, nodeId, sel) => ({ nodeId, ...sel, persisted: false }),
+  });
+  const out = text(await handle(f, '/retune n_impl claude-opus-5'));
+  assert.match(out, /claude-opus-5/, 'it DID apply to the running process');
+  assert.match(out, /could not be saved/);
+  assert.match(out, /resume will revert/);
+});
+
+test('a bare /retune ignores finished runs, which the server never evicts', async () => {
+  const f = makeRouter();
+  // ui/server.mjs has only two runs.delete sites, so every done/stopped/error run
+  // stays in the Map for the life of the process. Without narrowing the no-arg
+  // pool, one paused run plus any earlier finished one answered "Ambiguous" — in
+  // exactly the case this command drops wantLive to support.
+  f.state.live = [
+    { runId: 'run-aaaa1111', title: 'Paused', status: 'paused', projectDir: '/x/worca' },
+    { runId: 'run-bbbb2222', title: 'Old', status: 'done', projectDir: '/x/worca' },
+    { runId: 'run-cccc3333', title: 'Older', status: 'error', projectDir: '/x/worca' },
+  ];
+  await handle(f, '/retune n_impl claude-opus-5');
+  assert.deepEqual(f.calls.at(-1), ['retune', 'run-aaaa1111', 'n_impl', { model: 'claude-opus-5', effort: '' }]);
+  // An explicit *ref keeps the FULL pool, so naming a finished run still reaches
+  // the engine, whose refusal explains itself better than "No run matches".
+  await handle(f, '/retune *2222 n_impl claude-opus-5');
+  assert.deepEqual(f.calls.at(-1), ['retune', 'run-bbbb2222', 'n_impl', { model: 'claude-opus-5', effort: '' }]);
+});
+
+test('a bare /retune will not silently pick the RUNNING run over a paused one', async () => {
+  const f = makeRouter();
+  // Pausing a run in order to retune it is the whole gesture, so a paused run is a
+  // first-class target here — a tie with a running one is a real ambiguity to put
+  // to the user, not something to break silently toward the run they said nothing
+  // about. (/pause and /stop may prefer the active one; they are not this.)
+  f.state.live = [
+    { runId: 'run-aaaa1111', title: 'Paused', status: 'paused', projectDir: '/x/worca' },
+    { runId: 'run-dddd4444', title: 'Live', status: 'running', projectDir: '/x/worca' },
+  ];
+  const before = f.calls.length;
+  const out = text(await handle(f, '/retune n_impl claude-opus-5'));
+  assert.match(out, /Ambiguous/);
+  assert.equal(f.calls.length, before, 'nothing was retuned');
+  // Naming one is unambiguous either way.
+  await handle(f, '/retune *1111 n_impl claude-opus-5');
+  assert.deepEqual(f.calls.at(-1), ['retune', 'run-aaaa1111', 'n_impl', { model: 'claude-opus-5', effort: '' }]);
+});
+
+test('/retune surfaces the engine refusal verbatim', async () => {
+  const f = makeRouter({
+    retune: () => { throw Object.assign(new Error('node "n_impl" has an execution in flight'), { code: 'NODE_BUSY' }); },
+  });
+  assert.match(text(await handle(f, '/retune n_impl claude-opus-5')), /has an execution in flight/);
+});
+
+test('/help lists /retune', async () => {
+  const { send } = fixture();
+  assert.match(text(await send('/help')), /\/retune/);
 });

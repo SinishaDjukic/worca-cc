@@ -4012,6 +4012,32 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
   font:9px/13px var(--sans);text-align:center;z-index:3;}
 .gv-world .nrun{position:absolute;top:-9px;right:16px;display:flex;gap:6px;background:var(--panel);
   border:1px solid var(--line-2);border-radius:999px;padding:1px 8px;font:10px/1.4 var(--mono);color:var(--ink-3);}
+/* The node's effective model · effort. Bottom-left so it never collides with
+   .nrun (top-right), .ngate (top-right corner) or the settled pip (top-right).
+   It does STRADDLE the card's bottom edge, though (bottom:-9px, the mirror of
+   .nrun's top:-9px), and `.xfoot` is `position:absolute;bottom:0` with an OPAQUE
+   `var(--panel)` background — so the pill and the last footer row share 9px of a
+   22px band. Hence the two declarations below, neither cosmetic:
+     z-index:3        — without it both are `z-index:auto` and which one paints on
+                        top comes down to DOM insertion order, which differs by
+                        whether the node had a model before it had executions
+                        (setNodeTune and setFooter both append). The footer would
+                        hide the pill's top half on one path and not the other.
+     pointer-events   — the pill must never eat a click in that overlap. The
+                        footer bands are the interactive ones (`.xrow` focuses an
+                        execution's log, `.xresult a` opens an artifact); a click
+                        the pill swallowed would miss run-hosts' ornament chain
+                        and fall through to the card branch, opening the retune
+                        popover instead. There is nothing to click on the pill. */
+.gv-world .ntune{position:absolute;bottom:-9px;left:16px;max-width:calc(100% - 32px);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:var(--panel);
+  border:1px solid var(--line-2);border-radius:999px;padding:1px 8px;
+  font:10px/1.4 var(--mono);color:var(--ink-3);z-index:3;pointer-events:none;}
+/* A cell the run RETUNED: the pill describes what the node will run on NEXT, so on
+   a finished run it is not the whole story. Amber, the same "read this" register
+   the loop badge and the quiescence banner use. */
+.gv-world .ntune.is-retuned{border-color:var(--amber);color:var(--amber-ink);background:var(--amber-bg);}
+.sub-model-pill.is-retuned{border-color:var(--amber);color:var(--amber-ink);background:var(--amber-bg);}
 .gv-world .wbadge .wfired{margin-left:5px;font-weight:700;}
 .gv-chip{position:absolute;z-index:6;pointer-events:none;background:var(--red-bg);color:var(--red-ink);
   border:1px solid var(--red);border-radius:8px;padding:4px 8px;font-size:11px;font-weight:600;white-space:nowrap;}
@@ -4172,6 +4198,21 @@ input.gv-name:focus-visible{outline:none;}
 .ins-pitem .mla{margin-left:auto;}
 .ins-pitem.gate .pn{color:var(--ink-3);}
 .ins-empty .ins-blurb{color:var(--ink-3);text-align:center;padding:22px 6px;}
+
+/* ---------- live-run retune popover (graph/retune-popover.mjs) ---------- */
+/* position:fixed, NOT absolute: .gv-world carries the pan/zoom transform and
+   .run-flow-wrap.gv-wrap-monitor clips overflow, so the panel lives on body. */
+.rt-pop{position:fixed;z-index:70;width:268px;padding:14px;background:var(--panel);
+  border:1px solid var(--line-2);border-radius:16px;box-shadow:var(--shadow-menu);}
+.rt-pop .rt-apply{width:100%;margin-top:2px;}
+.rt-pop .rt-note{margin-top:10px;font-size:11px;line-height:1.45;color:var(--ink-3);}
+.rt-pop .rt-err{font-size:11.5px;color:var(--red-ink);}
+.rt-pop .rt-err[hidden]{display:none;}
+/* "changed elsewhere while you had this open" — a warning, not a failure: the
+   panel still applies, it just says what it is about to overwrite. */
+.rt-pop .rt-stale{font-size:11.5px;line-height:1.45;color:var(--amber-ink);
+  background:var(--amber-bg);border:1px solid var(--amber);border-radius:8px;padding:5px 8px;}
+.rt-pop .rt-stale[hidden]{display:none;}
 
 /* ---------- the rail's agents pane ---------- */
 /* Restored from the retired v1 palette: a bare <input type="search"> matches
@@ -4344,6 +4385,20 @@ input.gv-name:focus-visible{outline:none;}
 .run-flow-wrap.gv-wrap-monitor{overflow:hidden;height:var(--run-host-h,360px);}
 .rc-detailed .run-flow-wrap.gv-wrap-static{height:300px;overflow-x:auto;overflow-y:hidden;}   /* additive (Running D17) */
 .run-flow.gv-host .gv-world .node{cursor:default;}
+/* Live run detail: a card click opens the retune popover. The added .rd-graph +
+   [data-node-id] lift specificity above the base rule above, so source order does
+   not matter — the same trick the History .linked rule uses.
+   The selector matches the SAME cards openRetuneFor accepts, so the cursor never
+   promises something the click does not do:
+     :not(.settled)  — paintRdTerminal stamps `.settled` for exactly RD_TERMINAL
+                       (done/stopped/error), which is the set openRetuneFor
+                       refuses; a finished run would otherwise advertise a click
+                       that silently does nothing.
+     .node, not      — a FLOW card opens the popover too, on its note-only arm
+     .node-agent       ("Flow cards spawn nothing — there is no model to change").
+                       Scoping the cursor to agents left flow cards looking inert
+                       while still opening a panel, and swallowing their Space. */
+.rd-graph:not(.settled) .run-flow.gv-host .gv-world .node[data-node-id]{cursor:pointer;}
 /* v1 descendant rules that out-rank P5's .gv-world block (3-4 classes) — one neutraliser each */
 .run-flow.gv-host .gv-world .xfoot>.fan{flex:none;flex-wrap:nowrap;margin:0;border-top:0;}
 .run-flow.gv-host .gv-world .xfoot .fl{margin-left:auto;font:700 10px/1.4 var(--mono);color:var(--ink-3);}

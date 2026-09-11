@@ -752,6 +752,77 @@ export function createGraphView(host, {
       run.querySelector('.dur').textContent = totals.dur || '';
       run.querySelector('.cost').textContent = totals.cost || '';
     },
+    /**
+     * Whether a card OPENS A PANEL right now: it is a dialog trigger, not a label.
+     * It swallows Enter/Space and mounts a role="dialog" elsewhere in the DOM, so
+     * without this a screen-reader user hears "agent implementer", presses Space
+     * expecting the page to scroll, and gets an unannounced dialog.
+     * `cursor:pointer` is the sighted half of the same affordance.
+     *
+     * Deliberately NOT `role="button"`. The card CONTAINS interactive descendants —
+     * the executions-strip `<button class="xtoggle">` and the artifact `<a href>`
+     * links inside `.xfoot` — and a button's content model forbids those, so AT
+     * flattens the card and drops exactly the two controls run-hosts' keydown arm
+     * goes out of its way to keep operable. `aria-haspopup` + `aria-expanded` on a
+     * focusable element say what this card does without making that claim.
+     *
+     * Set per PAINT, not at build: the answer changes under the same cards. A run
+     * that reaches done/stopped/error stops offering the panel — which is exactly
+     * when the stylesheet drops the cursor — and History never offers it at all,
+     * though it mounts the same monitor host with the same callback wired.
+     * `aria-expanded` is otherwise owned by the popover, the only thing that knows
+     * when the dialog is actually up.
+     */
+    setCardsOpenPanel(on) {
+      const want = on === true;
+      for (const el of nodeEls.values()) {
+        const has = el.hasAttribute('aria-haspopup');
+        // A card whose dialog is STILL OPEN keeps its relationship to it: the panel
+        // outlives the flag, because a run that ends under an open popover swaps it
+        // to a note rather than closing it, and stripping the trigger would leave a
+        // live role="dialog" on document.body that nothing points at.
+        if (!want && el.getAttribute('aria-expanded') === 'true') continue;
+        // Per-ELEMENT, and only when it differs — no module-level "already done"
+        // flag. applyDecor runs several times a second, so reissuing the writes
+        // every frame would be a stream of mutations AT observes for nothing; but a
+        // cached verdict goes wrong twice over, once for the card skipped above
+        // (which then never gets revisited) and once for a render() that REUSES
+        // card elements for unchanged ids.
+        if (want === has) continue;
+        if (want) {
+          el.setAttribute('aria-haspopup', 'dialog');
+          el.setAttribute('aria-expanded', 'false');
+        } else {
+          el.removeAttribute('aria-haspopup');
+          el.removeAttribute('aria-expanded');
+        }
+      }
+    },
+    /** The node's effective model · effort, patched in place like .nrun above.
+     *  null (or a text-less entry) removes the pill: '' means inherit, which the
+     *  client cannot resolve to a name — no entry, no pill, never a guess (the
+     *  tuneByNode rule, run-decor.mjs). The TEXT is resolved by the caller, which
+     *  owns the model catalog; this method never guesses a label. */
+    setNodeTune(nodeId, tune) {
+      const el = nodeEls.get(nodeId);
+      if (!el) return;
+      let pill = el.querySelector(':scope > .ntune');
+      if (!tune || !tune.text) { if (pill) pill.remove(); return; }
+      if (!pill) { pill = h('div', 'ntune'); el.appendChild(pill); }
+      if (pill.textContent !== tune.text) pill.textContent = tune.text;
+      // A cell the run RETUNED says so. This is configuration, and after a mid-run
+      // change it describes only what the node runs on NEXT — on History, where the
+      // whole premise is a frozen artifact, an unmarked pill would claim a node
+      // that provably executed on two models only ever used the last one.
+      pill.classList.toggle('is-retuned', tune.retuned === true);
+      // The pill is `max-width` + ellipsis, so a long model id is clipped and the
+      // graph has no other surface that spells it out — the title carries the full
+      // caption when there is nothing more urgent to say.
+      const title = tune.retuned
+        ? 'changed during the run — earlier executions used a different model'
+        : tune.text;
+      if (pill.title !== title) pill.title = title;
+    },
     /** The amber `N×` delivery badge on a loop wire's bow (no-op on a plain wire). */
     setWireBadge(wireId, badge) {
       const badgeHost = badgeEls.get(wireId);

@@ -320,3 +320,17 @@ test('execBandLayout bills 1 line for a compact row, 2 with dur · cost stacked,
   // A flow row has no dur · cost and always fits its one line.
   assert.deepEqual(execBandLayout('cycle 1', ''), { units: 1, stack: false, l2: false });
 });
+
+test('decorFromState carries a tune map for agent nodes with an explicit model', () => {
+  const stepper = { version: 2, template: { id: 'w', name: 'W' }, steps: [],
+    graph: { nodes: [
+      { id: 'n_a', kind: 'agent', key: 'planner', model: 'claude-opus-5', effort: 'high', ports: { inputs: [], outputs: [] } },
+      { id: 'n_b', kind: 'agent', key: 'impl', model: '', effort: '', ports: { inputs: [], outputs: [] } },
+      { id: 'n_end', kind: 'end', ports: { inputs: [], outputs: [] } },
+    ], wires: [] } };
+  const decor = decorFromState({ stepper, status: 'running', steps: [], active: [] }, { live: true, now: 0 });
+  assert.deepEqual(decor.tune, { n_a: { model: 'claude-opus-5', effort: 'high', retuned: false } },
+    "'' = inherit is omitted, and a flow card carries no model cell at all");
+  assert.equal(decor.tune.n_a.text, undefined,
+    'run-decor.mjs is pure — paintGraphFor owns the catalog label');
+});

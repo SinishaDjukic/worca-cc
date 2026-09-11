@@ -3,6 +3,9 @@
 // design: History renders it when the registry is gone or edited, so nothing
 // here may be re-resolved later. Built once per run (and by resume()), NEVER
 // rewritten mid-run — fan-out lives in the execution ledger, not the manifest.
+// The ONE exception is a live node retune (patchManifestNodeTune, below), which
+// patches the `model`/`effort` scalars of one cell in place — the topology, ports
+// and authored config are still frozen for the life of the run.
 //
 // It also carries DERIVED `steps` cells and `feedbacks` in the shape the v1
 // buildStepperManifest used to produce. P1's handoff said P8 would delete them;
@@ -254,4 +257,61 @@ export function manifestTemplate(manifest) {
       return wire;
     }),
   };
+}
+
+/**
+ * The ONE mid-run mutation a manifest allows: repoint one agent cell's
+ * `model`/`effort` scalars (a live node retune). Everything else — topology,
+ * ports, authored `config` — stays frozen for the life of the run.
+ *
+ * Shared, not duplicated: the orchestrator patches the run's own stepper AND its
+ * resume-point clone, and the browser reads the result back through the same
+ * cells.
+ *
+ * `cell.config` is deliberately untouched: it is the AUTHORED config, verbatim
+ * and complete, and nothing reads a model out of it after run start.
+ *
+ * @param {object|null|undefined} manifest tolerated absent — a run before its
+ *   first clean completion has no resume point to patch.
+ * @param {string} nodeId
+ * @param {string} model '' clears the override back to inherit
+ * @param {string} effort '' clears it
+ */
+export function patchManifestNodeTune(manifest, nodeId, model, effort) {
+  if (!manifest) return;
+  for (const cell of manifest.graph?.nodes || []) {
+    if (!cell || cell.id !== nodeId) continue;
+    // `retuned` is a STICKY marker, never cleared. It is the only durable record
+    // that this cell's model is not what the run started with — the manifest is
+    // persisted and History renders it, so without it a node that provably executed
+    // on two models reads as though it always ran on the last one. It cannot be
+    // reconstructed by comparing `steps[].modelUsed`: that is the CLI's wire id,
+    // which differs from worca's catalog handle by construction for an
+    // endpoint-routed or 1M entry.
+    //
+    // Stamped only when something ACTUALLY moved. Re-applying the pick a node
+    // already has — a repeated `/retune`, a second Apply on an unedited panel —
+    // changes nothing, and branding the cell would put a permanent, un-clearable
+    // "earlier executions used a different model" on a node where none did.
+    if (cell.model !== model || cell.effort !== effort) cell.retuned = true;
+    cell.model = model;
+    cell.effort = effort;
+  }
+  // The v1 stepper shim keeps its own copy of the same two values. Its bands are
+  // interleaved with the preflight/done bookends, so iterate — never index a
+  // fixed position — and tolerate a band with no `nodes`.
+  //
+  // Yes, this writes one fact into two places. The duplication is buildGraphManifest's
+  // (`:188-189`), not this function's, and it is PERSISTED — every manifest already
+  // in the database carries both copies. Un-duplicating it means deriving the shim
+  // cells at read time and dealing with the two shapes coexisting, which is a
+  // change to the stored format and not this feature's to make. Until then the only
+  // honest option is to keep them equal: nothing resolves a model out of the shim
+  // today, but a persisted manifest holding two different answers is a trap for the
+  // next reader that picks the wrong one.
+  for (const band of manifest.steps || []) {
+    for (const cell of band.nodes || []) {
+      if (cell && cell.id === nodeId) { cell.model = model; cell.effort = effort; }
+    }
+  }
 }

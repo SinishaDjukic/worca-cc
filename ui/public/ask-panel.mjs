@@ -996,7 +996,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     // `.hd-cmt-card` joins the allowlist: its "Ask Worca" button appends to the
     // composer, and pointerdown lands BEFORE the click that would open the sheet.
-    if (t.closest('.viewer-modal, #confirm-modal, .info-bubble, .mention-popup, .hd-cmt-card')) return;
+    if (t.closest('.viewer-modal, #confirm-modal, .info-bubble, .mention-popup, .hd-cmt-card, .rt-pop')) return;
     closeSheet();
   }
 

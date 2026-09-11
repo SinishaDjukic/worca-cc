@@ -619,19 +619,7 @@ function inheritOrSubagentModel(next, prev) {
  */
 export async function setStep(projectDir, step, selection = {}) {
   if (!stepKeys().has(step)) throw new Error(`unknown step "${step}"`);
-  const model = typeof selection.model === 'string' ? selection.model.trim() : '';
-  const effort = typeof selection.effort === 'string' ? selection.effort.trim() : '';
-
-  const models = await listModels(projectDir);
-  const entry = model ? models.find((m) => m.id === model) : null;
-  if (model && !entry) throw new Error(`unknown model "${model}"`);
-  if (effort) {
-    if (!EFFORTS.includes(effort)) throw new Error(`unknown effort "${effort}"`);
-    if (!entry) throw new Error('select a model before choosing an effort');
-    if (!entry.efforts.includes(effort)) {
-      throw new Error(`model "${model}" does not support effort "${effort}"`);
-    }
-  }
+  const { model, effort } = await validateModelSelection(projectDir, selection);
 
   {
     const issue = subagentModelIssue(selection.subagentModel);
@@ -854,6 +842,44 @@ export async function readRunConfig(projectDir) {
 }
 
 /**
+ * Normalize and validate a {model, effort} pick against the project's catalog.
+ *
+ * The ONE place these rules live. There are THREE write paths — setStep and
+ * setNodeModel below, and the live retune (orchestrator.mjs#retuneNode) — and they
+ * must not disagree about what is acceptable, or a selection the composer refuses
+ * could be smuggled onto a running node. All three call this, so a rule added here
+ * reaches all three.
+ *
+ * Returns the TRIMMED pair: '' on either field means "clear back to inherit", and
+ * an effort with no model behind it is refused rather than silently dropped.
+ *
+ * @param {string} projectDir
+ * @param {{model?:string, effort?:string}} selection
+ * @returns {Promise<{model:string, effort:string, entry:object|null}>}
+ * @throws {Error} with a message naming the offending value
+ */
+export async function validateModelSelection(projectDir, selection = {}) {
+  // Every refusal below is about the SELECTION, and says so on the error. Anything
+  // listModels itself throws (a locked config DB, an unreadable plugins lock)
+  // travels untagged, so a caller mapping refusals to a 4xx does not report an
+  // infrastructure fault as "your model choice is invalid".
+  const bad = (message) => Object.assign(new Error(message), { badSelection: true });
+  const model = typeof selection.model === 'string' ? selection.model.trim() : '';
+  const effort = typeof selection.effort === 'string' ? selection.effort.trim() : '';
+  const models = await listModels(projectDir);
+  const entry = model ? models.find((m) => m.id === model) : null;
+  if (model && !entry) throw bad(`unknown model "${model}"`);
+  if (effort) {
+    if (!EFFORTS.includes(effort)) throw bad(`unknown effort "${effort}"`);
+    if (!entry) throw bad('select a model before choosing an effort');
+    if (!entry.efforts.includes(effort)) {
+      throw bad(`model "${model}" does not support effort "${effort}"`);
+    }
+  }
+  return { model, effort, entry: entry || null };
+}
+
+/**
  * Set (or clear) the model+effort+subagentModel+fanOut+askQuestions for one node
  * instance of a workflow. A cleaned selection of null (all blank) deletes the row. fanOut and
  * askQuestions are preserved when the caller omits them (read from the existing
@@ -869,18 +895,10 @@ export async function readRunConfig(projectDir) {
  * @returns {Promise<void>}
  */
 export async function setNodeModel(projectDir, workflowId, nodeId, selection = {}) {
-  const model = typeof selection.model === 'string' ? selection.model.trim() : '';
-  const effort = typeof selection.effort === 'string' ? selection.effort.trim() : '';
-  const models = await listModels(projectDir);
-  const entry = model ? models.find((m) => m.id === model) : null;
-  if (model && !entry) throw new Error(`unknown model "${model}"`);
-  if (effort) {
-    if (!EFFORTS.includes(effort)) throw new Error(`unknown effort "${effort}"`);
-    if (!entry) throw new Error('select a model before choosing an effort');
-    if (!entry.efforts.includes(effort)) {
-      throw new Error(`model "${model}" does not support effort "${effort}"`);
-    }
-  }
+  // Validation only — the row below is written from `selection` through
+  // cleanNodeSel, which does its own trimming. Destructuring the validated pair
+  // here would suggest it is what gets persisted; it is not.
+  await validateModelSelection(projectDir, selection);
 
   {
     const issue = subagentModelIssue(selection.subagentModel);
