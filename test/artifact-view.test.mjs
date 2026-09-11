@@ -1,9 +1,9 @@
 // test/artifact-view.test.mjs — the PURE, node-testable parts of the artifact
 // viewers. The marked/DOMPurify/hljs render path is browser-only (jsdom UI
-// harness); here we only assert viewerKindFor and artifactsByNodeCycle.
+// harness); here we only assert viewerKindFor and artifactsByNodeStep.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { viewerKindFor, artifactsByNodeCycle, renderDiff } from '../ui/public/artifact-view.mjs';
+import { viewerKindFor, artifactsByNodeStep, renderDiff } from '../ui/public/artifact-view.mjs';
 import { KIND_BY_EXT, BINARY_KINDS } from '../src/shared/artifact-kinds.mjs';
 
 test('viewerKindFor maps kind/relPath to a viewer', () => {
@@ -54,16 +54,43 @@ test('renderDiff: `--- `/`+++ ` are headers only outside a hunk (a `diff ` line 
   assert.deepEqual(classes, ['meta', 'meta', 'hunk', 'del', 'del', 'add', 'meta', 'meta', 'meta', 'hunk', 'add']);
 });
 
-test('artifactsByNodeCycle groups by nodeId then cycle, null -> run bucket', () => {
-  const groups = artifactsByNodeCycle([
-    { nodeId: 'planner', cycle: 0, relPath: 'plan.md' },
-    { nodeId: 'planner', cycle: 1, relPath: 'plan-v2.md' },
-    { nodeId: 'planner', cycle: 0, relPath: 'extra.md' },
-    { nodeId: null, cycle: null, relPath: 'prompt.md' },
+test('artifactsByNodeStep groups by nodeId then EXECUTION, null -> run bucket', () => {
+  const groups = artifactsByNodeStep([
+    { nodeId: 'planner', stepKey: 'x:planner:1', cycle: 1, relPath: 'plan.md' },
+    { nodeId: 'planner', stepKey: 'x:planner:2', cycle: 2, relPath: 'plan-v2.md' },
+    { nodeId: 'planner', stepKey: 'x:planner:1', cycle: 1, relPath: 'extra.md' },
+    { nodeId: null, stepKey: null, cycle: null, relPath: 'prompt.md' },
   ]);
   assert.deepEqual([...groups.keys()], ['planner', '__run__']);
-  assert.equal(groups.get('planner').get(0).length, 2);
-  assert.equal(groups.get('planner').get(1).length, 1);
-  assert.equal(groups.get('__run__').get(0).length, 1);
-  assert.equal(groups.get('__run__').get(0)[0].relPath, 'prompt.md');
+  assert.deepEqual([...groups.get('planner').keys()], ['x:planner:1', 'x:planner:2']);
+  assert.equal(groups.get('planner').get('x:planner:1').artifacts.length, 2);
+  assert.equal(groups.get('planner').get('x:planner:1').cycle, 1);
+  assert.equal(groups.get('planner').get('x:planner:2').artifacts.length, 1);
+  const run = groups.get('__run__').get('c0');
+  assert.equal(run.artifacts.length, 1);
+  assert.equal(run.artifacts[0].relPath, 'prompt.md');
+});
+
+test('artifactsByNodeStep keeps two slices of ONE cycle apart, and orders buckets by cycle', () => {
+  // A fan-out: both executions are cycle 1, so grouping by cycle alone would merge
+  // them into one list even though their step folders are distinct on disk.
+  const groups = artifactsByNodeStep([
+    { nodeId: 'impl', stepKey: 'x:impl:2', cycle: 2, relPath: 'steps/impl-c2/late.md' },
+    { nodeId: 'impl', stepKey: 'x:impl:1:p1t2', cycle: 1, relPath: 'steps/impl-c1-p1t2/b.md' },
+    { nodeId: 'impl', stepKey: 'x:impl:1:p1t1', cycle: 1, relPath: 'steps/impl-c1-p1t1/a.md' },
+  ]);
+  // Cycle order first, arrival order within the cycle (p1t2 was framed first).
+  assert.deepEqual([...groups.get('impl').keys()], ['x:impl:1:p1t2', 'x:impl:1:p1t1', 'x:impl:2']);
+  for (const b of groups.get('impl').values()) assert.equal(b.artifacts.length, 1, 'no slice absorbs another');
+});
+
+test('artifactsByNodeStep falls back to the cycle when a row carries no stepKey (v1)', () => {
+  const groups = artifactsByNodeStep([
+    { nodeId: 'planner', cycle: 1, relPath: 'plans/a.md' },
+    { nodeId: 'planner', cycle: 2, relPath: 'plans/b.md' },
+    { nodeId: 'planner', cycle: 1, relPath: 'plans/c.md' },
+  ]);
+  assert.deepEqual([...groups.get('planner').keys()], ['c1', 'c2']);
+  assert.equal(groups.get('planner').get('c1').artifacts.length, 2);
+  assert.equal(groups.get('planner').get('c1').stepKey, null);
 });

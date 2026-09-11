@@ -7,9 +7,9 @@ Base: dev @ 7b188b2c + 115ee556 "Per-step artifacts" (cherry-picked).
 
 Every file a pipeline execution produces lands inside the run folder, under one
 step folder per execution, is indexed with its node/cycle attribution, and is
-served safely to the UI Artifacts tab, the per-node "Artifacts (N)" affordance
-and the Ask Worca artifact tools. The project store's `plans/` and `reviews/`
-directories receive no new files.
+served safely to the UI Artifacts tab, the per-execution "Artifacts (N)"
+affordance and the Ask Worca artifact tools. The project store's `plans/` and
+`reviews/` directories receive no new files.
 
 ## §2 Layout
 
@@ -128,6 +128,23 @@ else `{ rel, text }`. Routes: 415 / 413 with `{ error, rel, bytes }`, 200, 404.
 `GET /api/runs/:id/artifacts` fetches `limit + 1` rows and reports `truncated`.
 Ask's `read_run_artifact` throws `AskToolError` for binary / too-large. The
 viewer never fetches a binary kind and shows the route's message with the size.
+
+## §7b The UI's unit is the EXECUTION
+
+Both surfaces cut artifacts the way `steps/` does, not by node:
+
+- The Agents tab already draws one card per execution (`nodeId|executionId`), so
+  each card carries the files ITS execution wrote. Grouping the affordance by node
+  put a looping agent's whole history on its FIRST card and left every later card
+  with no affordance at all.
+- The run-level Artifacts tab keeps one card per node and captions one block per
+  execution inside it: `cycle N`, or `cycle N · <task>` for a fan-out slice —
+  two slices share a cycle number, so a (node, cycle) grouping merged their
+  distinct step folders into one list.
+- `artifactsByNodeStep` is the one pure grouping both read: node -> executionId ->
+  `{stepKey, cycle, artifacts}`, buckets ordered by cycle then arrival. A row with
+  no `stepKey` (a v1 artifact) falls back to its cycle; a bucket whose execution
+  has no card falls back to the node's first card, so nothing is unreachable.
 
 ## §8 Windows
 Folder segments are `[A-Za-z0-9_-]`; every stored rel path and every warning

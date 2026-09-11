@@ -73,7 +73,7 @@ import {
   langForPath, canHighlightParsed, highlightParsed,
 } from './syntax-highlight.mjs';
 import { createHljsLoader } from './hljs-loader.mjs';
-import { artifactsByNodeCycle, viewerKindFor, renderArtifact } from './artifact-view.mjs';
+import { artifactsByNodeStep, viewerKindFor, renderArtifact } from './artifact-view.mjs';
 import {
   buildFileTree, renderFileTree, firstFile,
 } from './file-tree.mjs';
@@ -2320,7 +2320,7 @@ if (typeof window !== 'undefined') {
     initDetailTabs,
     detailTabsOf,
     onArtifact,
-    artifactsByNodeCycle,
+    artifactsByNodeStep,
     viewerKindFor,
     renderArtifact,
     renderRunArtifacts,
@@ -14637,7 +14637,7 @@ function rdAgentsBody(sec, r) {
   const graphifyByGroup = stepGraphifyFromSteps(r.steps);
   const statusOf = stepStatusByKey(r.steps, r.stepper);
   const modelByNode = stepModelByNode(r.stepper);
-  const cardsByNode = new Map();   // nodeId -> first group card, for the per-node artifact affordance
+  const cardsByKey = new Map();    // group key -> its card, for the per-execution artifact affordance
 
   for (const key of keys) {
     const list = Array.isArray(groups[key]) ? groups[key] : [];
@@ -14695,12 +14695,11 @@ function rdAgentsBody(sec, r) {
         skillPillsHtml(s && s.skills);
       card.appendChild(row);
     }
-    const nodeId = artifactNodeIdOf(key);
-    if (!cardsByNode.has(nodeId)) cardsByNode.set(nodeId, card);
+    cardsByKey.set(key, card);
     sec.appendChild(card);
   }
-  // Per-node "Artifacts (N)" affordance from the live, attributed r.artifacts.
-  attachNodeArtifactAffordances(cardsByNode, r.artifacts, r.pipelineId || r.id);
+  // Per-execution "Artifacts (N)" affordance from the live, attributed r.artifacts.
+  attachNodeArtifactAffordances(cardsByKey, r.artifacts, r.pipelineId || r.id);
 }
 
 function buildRdAgents(sec, ctx) {
@@ -15869,7 +15868,7 @@ async function openRunArtifact(ctx, path) {
 
 // ── Per-step artifact viewers (Phase 3 UI) ──────────────────────────────────
 // DOM glue for per-step artifacts. The pure primitives live in
-// ./artifact-view.mjs (artifactsByNodeCycle / viewerKindFor / renderArtifact);
+// ./artifact-view.mjs (artifactsByNodeStep / viewerKindFor / renderArtifact);
 // this block lists a run's artifacts per node, opens one through the id-based
 // GET /api/runs/:id/artifact route, and renders it with the typed viewer. Content
 // is untrusted DATA — the markdown path reuses the vendored marked + DOMPurify.
@@ -15970,16 +15969,17 @@ function buildArtifactRow(a, pid) {
   return row;
 }
 
-// Which per-node artifact lists the user has expanded, keyed `${pid}::${nodeId}`.
+// Which artifact lists the user has expanded, keyed `${pid}::${groupKey}` — one
+// entry per EXECUTION card, so expanding cycle 1's list leaves cycle 2's closed.
 // The Agents tab is rebuilt wholesale on every live frame (rdAgentsBody), so the
 // open state has to live OUTSIDE the DOM or the list snaps shut on the next
 // state/subagent/artifact event.
 const openNodeArtifactLists = new Set();
 
-// A collapsed "Artifacts (N)" affordance for one node's artifacts, expanding to a
-// list of clickable rows. Returns null when the node produced none. `stateKey`
-// remembers the expanded state across rebuilds. Rows are built on first open:
-// the tab is rebuilt per live frame and nearly every list is collapsed.
+// A collapsed "Artifacts (N)" affordance for one execution's artifacts, expanding
+// to a list of clickable rows. Returns null when that execution produced none.
+// `stateKey` remembers the expanded state across rebuilds. Rows are built on first
+// open: the tab is rebuilt per live frame and nearly every list is collapsed.
 function buildNodeArtifactAffordance(list, pid, stateKey) {
   if (!Array.isArray(list) || !list.length) return null;
   const wrap = document.createElement('div');
@@ -16002,34 +16002,83 @@ function buildNodeArtifactAffordance(list, pid, stateKey) {
   return wrap;
 }
 
-// Append per-node "Artifacts (N)" affordances to already-built agent group cards.
-// `cardsByNode` is nodeId -> the first group card for that node; each node's
-// artifacts (flattened across its cycles) render once, on its first card. Legacy
-// artifacts with nodeId == null land in artifactsByNodeCycle's '__run__' bucket
-// and are surfaced by the run-level Artifacts tab, not here.
-function attachNodeArtifactAffordances(cardsByNode, artifacts, pid) {
-  if (!(cardsByNode instanceof Map) || !cardsByNode.size) return;
+// Append "Artifacts (N)" affordances to already-built agent group cards.
+// `cardsByKey` is the group key (`nodeId|executionId`, or `nodeId|cycle` on a v1
+// run) -> that card. The Agents tab draws ONE CARD PER EXECUTION, so each card
+// gets the files ITS execution wrote — the same cut the run folder makes on disk
+// (steps/<node>-c<N>[-<slice>]/). Artifacts whose execution has no card of its own
+// fall back to the node's first card so nothing becomes unreachable, and artifacts
+// with nodeId == null belong to the run-level Artifacts tab, not here.
+function attachNodeArtifactAffordances(cardsByKey, artifacts, pid) {
+  if (!(cardsByKey instanceof Map) || !cardsByKey.size) return;
   // Same display gate as the Artifacts tab (isDisplayableArtifact): transient
   // markers (questions/live-log/pipeline) never become a clickable, 404-able row.
-  const groups = artifactsByNodeCycle((Array.isArray(artifacts) ? artifacts : []).filter(isDisplayableArtifact));
+  const list = (Array.isArray(artifacts) ? artifacts : []).filter(isDisplayableArtifact);
+  if (!list.length) return;
+  // Bucket by the SAME key the cards carry: execKey(nodeId, stepKey, cycle) is
+  // `nodeId|<executionId>` whenever the row is attributed, which is exactly what
+  // subsGroupsForRender built its keys from (the ledger row's executionId).
+  const byKey = new Map();
+  for (const a of list) {
+    if (a.nodeId == null) continue;                 // run-level bucket, not a node card
+    const k = execKey(a.nodeId, a.stepKey, a.cycle);
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(a);
+  }
+  // First card per node — the landing place for a bucket whose execution the
+  // ledger never gave a card (a v1 row keyed by cycle against a v2 card key).
+  const firstKeyOfNode = new Map();
+  for (const key of cardsByKey.keys()) {
+    const nid = artifactNodeIdOf(key);
+    if (!firstKeyOfNode.has(nid)) firstKeyOfNode.set(nid, key);
+  }
+  const forCard = new Map();
+  for (const [k, arr] of byKey) {
+    const target = cardsByKey.has(k) ? k : firstKeyOfNode.get(artifactNodeIdOf(k));
+    if (!target) continue;                          // that node has no card at all
+    if (!forCard.has(target)) forCard.set(target, []);
+    forCard.get(target).push(...arr);
+  }
   // No pruning of openNodeArtifactLists: keys are pid-scoped (no cross-run
   // collision, unlike openAgentRows' bare nodeId keys), exist only after a click,
-  // and a node that ever had a card keeps one for the run's lifetime.
-  for (const [nodeId, card] of cardsByNode) {
-    const byCyc = groups.get(nodeId);
-    if (!byCyc) continue;
-    const list = [];
-    for (const arr of byCyc.values()) for (const a of arr) list.push(a);
-    const aff = buildNodeArtifactAffordance(list, pid, `${pid}::${nodeId}`);
+  // and a card that ever existed keeps existing for the run's lifetime.
+  for (const [key, card] of cardsByKey) {
+    const own = forCard.get(key);
+    if (!own || !own.length) continue;
+    const aff = buildNodeArtifactAffordance(own, pid, `${pid}::${key}`);
     if (aff) card.appendChild(aff);
   }
 }
 
+// The task slice an executionId names, if any: `x:<node>:<ordinal>:<taskId>` ->
+// taskId (spec §5.3), anything shorter -> ''. Two executions of one node in the
+// SAME cycle can only be fan-out slices, so this is what tells them apart when
+// the ledger carries no title for them.
+function artifactSliceTailOf(stepKey) {
+  const parts = String(stepKey || '').split(':');
+  return parts.length > 3 ? parts.slice(3).join(':') : '';
+}
+
+// Caption for one execution bucket inside a node's card. `cycle N` for a plain
+// loop pass; `cycle N · <task>` for a fan-out slice, so the slices of one cycle
+// are told apart the way their step folders are (steps/<node>-cN-<slice>/).
+function artifactStepCaption(bucket, byExec) {
+  const row = bucket.stepKey ? byExec.get(bucket.stepKey) : null;
+  const cyc = bucket.cycle ?? (row && (row.cycle ?? row.ordinal)) ?? 0;
+  const slice = row && row.kind === 'task'
+    ? (row.title || artifactSliceTailOf(bucket.stepKey) || 'task')
+    : artifactSliceTailOf(bucket.stepKey);
+  return slice ? `cycle ${cyc} · ${slice}` : `cycle ${cyc}`;
+}
+
 // Run-level grouped artifact browser: one card per node (ordered to match the
-// Agents dropdown via subsGroupsForRender), each a step header + its artifact
-// rows, with a trailing "Run" bucket for legacy/unattributed artifacts
-// (nodeId == null -> the '__run__' bucket). Shared by the live Running detail and
-// History (which fetches the plural endpoint before calling this).
+// Agents dropdown via subsGroupsForRender), each a step header + one captioned
+// block PER EXECUTION of that node — the same cut the run folder makes on disk,
+// so a loop's cycles and a fan-out's slices never merge into one list. A node
+// that ran exactly once carries no caption. A trailing "Run" bucket holds the
+// legacy/unattributed artifacts (nodeId == null -> the '__run__' bucket). Shared
+// by the live Running detail and History (which fetches the plural endpoint
+// before calling this).
 function renderRunArtifacts(mount, artifacts, pid, stateLike = {}) {
   mount.innerHTML = '';
   const list = (Array.isArray(artifacts) ? artifacts : []).filter(isDisplayableArtifact);
@@ -16040,7 +16089,7 @@ function renderRunArtifacts(mount, artifacts, pid, stateLike = {}) {
     mount.appendChild(empty);
     return;
   }
-  const groups = artifactsByNodeCycle(list);
+  const groups = artifactsByNodeStep(list);
   const orderKeys = Object.keys(subsGroupsForRender(stateLike.subAgents, stateLike.steps, stateLike.stepper));
   const ordered = [];
   const seen = new Set();
@@ -16053,25 +16102,27 @@ function renderRunArtifacts(mount, artifacts, pid, stateLike = {}) {
   }
   if (groups.has('__run__')) ordered.push('__run__');
   const byId = nodeLabelLookup(stateLike.stepper);
+  // Ledger rows by executionId — the caption's source for a slice's title.
+  const byExec = new Map((Array.isArray(stateLike.steps) ? stateLike.steps : [])
+    .filter((st) => st && st.executionId).map((st) => [st.executionId, st]));
   for (const nid of ordered) {
-    const byCyc = groups.get(nid);
-    if (!byCyc) continue;
+    const byStep = groups.get(nid);
+    if (!byStep) continue;
     const card = document.createElement('div');
     card.className = 'artifact-group';
     const head = document.createElement('div');
     head.className = 'artifact-group-head';
     head.innerHTML = `<b>${escapeHtml(nid === '__run__' ? 'Run' : byId(nid))}</b>`;
     card.appendChild(head);
-    const cycles = [...byCyc.keys()].sort((x, y) => x - y);
-    const multiCycle = cycles.length > 1;
-    for (const cyc of cycles) {
-      if (multiCycle) {
+    const multiStep = byStep.size > 1;
+    for (const bucket of byStep.values()) {
+      if (multiStep) {
         const cap = document.createElement('div');
         cap.className = 'hint artifact-cycle';
-        cap.textContent = `cycle ${cyc}`;
+        cap.textContent = artifactStepCaption(bucket, byExec);
         card.appendChild(cap);
       }
-      for (const a of byCyc.get(cyc)) card.appendChild(buildArtifactRow(a, pid));
+      for (const a of bucket.artifacts) card.appendChild(buildArtifactRow(a, pid));
     }
     mount.appendChild(card);
   }

@@ -132,3 +132,75 @@ test('onArtifact dedupes a re-emitted (stepKey, path) frame', async () => {
   assert.equal(names.filter((n) => n === 'plan.md').length, 2, 'one row per (stepKey, path)');
   assert.equal(names.length, ARTIFACTS.length + 1);
 });
+
+// ── per-EXECUTION display (spec §2 D2: one step folder per execution) ─────────
+// A loop (refine ×2) and a fan-out (implement, one cycle, two task slices): the
+// four artifact rows below live in four DIFFERENT step folders on disk, so the UI
+// must keep them in four buckets. Grouping by node alone put a node's whole
+// history on its FIRST card and left later cards blank; grouping by (node, cycle)
+// merged the two slices of one cycle.
+const LOOP_STEPPER = () => ({ version: 1, steps: [
+  { kind: 'agents', nodes: [{ id: 'refine', key: 'refine', uiPhase: 'plan', label: 'Refine Plan' }] },
+  { kind: 'agents', nodes: [{ id: 'implement', key: 'implement', uiPhase: 'implement', label: 'Implementer' }] },
+], feedbacks: [] });
+const LOOP_STEPS = () => ([
+  { key: 'x:refine:1', executionId: 'x:refine:1', nodeId: 'refine', cycle: 1, ordinal: 1, status: 'done' },
+  { key: 'x:refine:2', executionId: 'x:refine:2', nodeId: 'refine', cycle: 2, ordinal: 2, status: 'done' },
+  { key: 'x:implement:1:p1t1', executionId: 'x:implement:1:p1t1', nodeId: 'implement', cycle: 1, ordinal: 1, kind: 'task', title: 'Slice A', status: 'done' },
+  { key: 'x:implement:1:p1t2', executionId: 'x:implement:1:p1t2', nodeId: 'implement', cycle: 1, ordinal: 1, kind: 'task', title: 'Slice B', status: 'done' },
+]);
+const LOOP_ARTIFACTS = [
+  { type: 'artifact', kind: 'plan', path: '/run/steps/refine-c1/plan-v2.md', nodeId: 'refine', executionId: 'x:refine:1', cycle: 1 },
+  { type: 'artifact', kind: 'plan', path: '/run/steps/refine-c2/plan-v3.md', nodeId: 'refine', executionId: 'x:refine:2', cycle: 2 },
+  { type: 'artifact', kind: 'markdown', path: '/run/steps/implement-c1-p1t1/notes-a.md', nodeId: 'implement', executionId: 'x:implement:1:p1t1', cycle: 1 },
+  { type: 'artifact', kind: 'markdown', path: '/run/steps/implement-c1-p1t2/notes-b.md', nodeId: 'implement', executionId: 'x:implement:1:p1t2', cycle: 1 },
+];
+async function openLoopRun(ctx) {
+  frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', phase: 'implement', cycle: 2, stepper: LOOP_STEPPER(), steps: LOOP_STEPS(), subAgents: [], totalCostUsd: 1.5,
+    branch: { source: 'main', feature: 'worca-cc/dark-p1', worktreeDir: '/tmp/wt' }, prompt: 'Add a dark mode toggle.' });
+  go(ctx.window, 'running/r1');
+  await settle(ctx.window);
+  for (const a of LOOP_ARTIFACTS) frame(ctx, { ...a, runId: 'r1' });
+  await settle(ctx.window);
+  return ctx;
+}
+
+test('the Agents tab gives every EXECUTION card its own artifacts, not the node\'s whole history', async () => {
+  const ctx = await openLoopRun(await boot());
+  click(ctx.window, tabOf(ctx.window, 'agents'));
+  await settle(ctx.window);
+  const seen = [];
+  for (const card of secOf(ctx.window, 'agents').querySelectorAll('.rd-ag-group')) {
+    const toggle = card.querySelector('.node-artifacts .artifact-toggle');
+    assert.ok(toggle, `every execution card carries an affordance (${card.querySelector('.rd-ag-head b').textContent})`);
+    click(ctx.window, toggle);
+    seen.push([card.querySelector('.rd-ag-head b').textContent, toggle.textContent,
+      [...card.querySelectorAll('.artifact-list .artifact-row .artifact-name')].map((n) => n.textContent)]);
+  }
+  assert.deepEqual(seen, [
+    ['Refine Plan #1', 'Artifacts (1)', ['plan-v2.md']],
+    ['Refine Plan #2', 'Artifacts (1)', ['plan-v3.md']],
+    ['Implementer #1 · Slice A', 'Artifacts (1)', ['notes-a.md']],
+    ['Implementer #1 · Slice B', 'Artifacts (1)', ['notes-b.md']],
+  ]);
+});
+
+test('the Artifacts tab captions one block per execution: cycles apart, slices apart', async () => {
+  const ctx = await openLoopRun(await boot());
+  click(ctx.window, tabOf(ctx.window, 'artifacts'));
+  await settle(ctx.window);
+  const shape = [...secOf(ctx.window, 'artifacts').querySelectorAll('.artifact-group')].map((g) => {
+    const out = [g.querySelector('.artifact-group-head b').textContent];
+    for (const ch of g.children) {
+      if (ch.classList.contains('artifact-cycle')) out.push(`— ${ch.textContent}`);
+      if (ch.classList.contains('artifact-row')) out.push(ch.querySelector('.artifact-name').textContent);
+    }
+    return out;
+  });
+  assert.deepEqual(shape, [
+    ['Refine Plan', '— cycle 1', 'plan-v2.md', '— cycle 2', 'plan-v3.md'],
+    // Both slices are cycle 1 — the task title is what tells their step folders apart.
+    ['Implementer', '— cycle 1 · Slice A', 'notes-a.md', '— cycle 1 · Slice B', 'notes-b.md'],
+  ]);
+});

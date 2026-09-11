@@ -188,6 +188,21 @@ try {
     && ['clarify', 'plan', 'review', 'verdict'].every((k) => tab.kinds.includes(k))
     && tab.names.includes('plan-v2.md') && tab.names.includes('refine-review-cycle1.json') && tab.truncated === false, tab);
 
+  // ---- (2b) the group's rows are CUT BY EXECUTION, in step order
+  // Each captioned block must hold exactly the files ITS step folder holds
+  // (steps/n_refine-c1/… under "cycle 1", steps/n_refine-c2/… under "cycle 2") —
+  // grouping by node alone would list all four under one heading.
+  const refine = await ev(`(()=>{const g=[...document.querySelectorAll('${SEC} .artifact-group')]
+    .find((x)=>/Refine/i.test(x.querySelector('.artifact-group-head').textContent));
+    if(!g) return null;
+    const out=[];for(const ch of g.children){
+      if(ch.classList.contains('artifact-cycle')) out.push('['+ch.textContent.trim()+']');
+      else if(ch.classList.contains('artifact-row')) out.push(ch.querySelector('.artifact-name').textContent.trim());}
+    return out;})()`);
+  check('2b', 'the Refine group cuts its rows per execution: [cycle 1] its two files, then [cycle 2] its two',
+    Array.isArray(refine) && refine.join(' ') === '[cycle 1] plan-v2.md refine-review-cycle1.json [cycle 2] plan-v3.md refine-review-cycle2.json',
+    refine);
+
   // ---- (3) a verdict row opens the JSON viewer
   await ev(`(()=>{const r=[...document.querySelectorAll('${SEC} .artifact-row')].find((x)=>x.querySelector('.artifact-name').textContent.trim()==='impl-review-cycle1.json');r.click();return 1;})()`);
   await until(`document.querySelector('#viewer .artifact-view .artifact-json')`, 'the JSON viewer');

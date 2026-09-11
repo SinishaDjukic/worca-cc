@@ -3,7 +3,7 @@
 // Markdown reuses ask-markdown.mjs's createMarkdownRenderer verbatim — the SAME
 // sanitizer the Ask panel uses (marked + DOMPurify, one shared allowlist +
 // post-pass), so there is exactly ONE security-sensitive markdown path to audit.
-// `viewerKindFor` and `artifactsByNodeCycle` are pure and node-testable; the
+// `viewerKindFor` and `artifactsByNodeStep` are pure and node-testable; the
 // renderers touch the DOM (textContent / replaceChildren, never innerHTML — so no
 // escape helper lives here; app.js keeps its own escapeHtml for the rows it
 // templates) and (for markdown) lazily load the vendor bundle through an
@@ -43,20 +43,38 @@ export function viewerKindFor(kind, relPath = '') {
 export const DIFF_MAX_ROWS = 5000;
 
 /**
- * Group a run's artifacts by nodeId then cycle for the per-node UI. Legacy
- * artifacts (nodeId == null) fall into the '__run__' bucket. Pure.
- * @param {Array<{nodeId?:string|null, cycle?:number|null}>} [artifacts]
- * @returns {Map<string, Map<number, Array>>} nodeId -> cycle -> artifacts[]
+ * Group a run's artifacts by nodeId, then by the EXECUTION that wrote them — the
+ * same unit the run folder is cut by (`steps/<node>-c<N>[-<slice>]/`), so a node
+ * that looped keeps one bucket per cycle and a node that fanned out keeps one
+ * bucket per slice instead of merging the slices under their shared cycle number.
+ * `stepKey` (the executionId) is the bucket identity; a row that carries none (a
+ * v1 artifact, or a legacy re-index) falls back to its cycle. Artifacts with no
+ * node (nodeId == null) fall into the '__run__' bucket. Buckets come out ordered
+ * by cycle, ties in arrival order. Pure.
+ * @param {Array<{nodeId?:string|null, stepKey?:string|null, cycle?:number|null}>} [artifacts]
+ * @returns {Map<string, Map<string, {stepKey:string|null, cycle:number|null, artifacts:Array}>>}
+ *   nodeId -> bucketId -> {stepKey, cycle, artifacts}
  */
-export function artifactsByNodeCycle(artifacts = []) {
-  const groups = new Map(); // nodeId -> Map(cycle -> [])
+export function artifactsByNodeStep(artifacts = []) {
+  const groups = new Map(); // nodeId -> Map(bucketId -> {stepKey, cycle, artifacts})
   for (const a of artifacts) {
     const node = a.nodeId ?? '__run__';
-    const cyc = a.cycle ?? 0;
+    const stepKey = a.stepKey ?? null;
+    const cycle = a.cycle ?? null;
+    const bucketId = stepKey ?? `c${cycle ?? 0}`;
     if (!groups.has(node)) groups.set(node, new Map());
-    const byCyc = groups.get(node);
-    if (!byCyc.has(cyc)) byCyc.set(cyc, []);
-    byCyc.get(cyc).push(a);
+    const byStep = groups.get(node);
+    if (!byStep.has(bucketId)) byStep.set(bucketId, { stepKey, cycle, artifacts: [] });
+    byStep.get(bucketId).artifacts.push(a);
+  }
+  // Cycle order, arrival order within a cycle: a loop reads 1 → 2 → 3 top to
+  // bottom however the rows arrived, and a fan-out's slices keep emission order.
+  for (const [node, byStep] of groups) {
+    const sorted = [...byStep.entries()]
+      .map((e, i) => ({ e, i }))
+      .sort((x, y) => ((x.e[1].cycle ?? 0) - (y.e[1].cycle ?? 0)) || (x.i - y.i))
+      .map(({ e }) => e);
+    groups.set(node, new Map(sorted));
   }
   return groups;
 }
