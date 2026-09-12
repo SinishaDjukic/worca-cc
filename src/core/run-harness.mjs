@@ -19,7 +19,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join, basename, resolve, sep, relative } from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { readFile, writeFile, readdir, mkdir, realpath } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, realpath, rename } from 'node:fs/promises';
 
 import { generateTitle } from './title.mjs';
 import {
@@ -38,7 +38,10 @@ import { worcaHome } from './projects.mjs';
 import {
   runRootMode, getProjectsRoot,
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
+  memoryCaps,
 } from './settings.mjs';
+import { mountDirs, mountMemory, syncBack, memoryTotals } from './memory-sync.mjs';
+import { memoryRoot, listMemoryDir, renderMemoryIndex } from './memory-store.mjs';
 import { readCostCapOverride, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
@@ -677,6 +680,12 @@ export class RunHarness extends EventEmitter {
     this._askTail = null;       // serializes _ask: ONE prompt open at a time (recovery + step questions)
     this._recoverySeq = 0;      // monotonic id source for recovery prompts (determinism-safe)
     this.agentPrompts = null;
+    this.memory = null;          // { root, mount, dirs, baseline } after _mountMemory
+    this.memoryIndex = '';       // rendered index block, re-rendered after every sync (amendment A4)
+    this.memoryChanges = [];     // Change[] — the durable ledger's `changes`
+    this._memoryWarned = new Set();
+    this._memoryTail = null;     // per-run sync chain: one syncBack at a time (F1)
+    this._ledgerSeq = 0;         // monotonic: two ledger writes must never share a temp name
     this.toolInstruction = '';
     // Cap for the in-worktree graphify build (macOS has no timeout(1)).
     // Resolution order: constructor option → WORCA_GRAPH_TIMEOUT_MS env → 120s.
@@ -721,6 +730,7 @@ export class RunHarness extends EventEmitter {
       // detached run throws TypeError on the first this.state.branches[key] = … .
       branches: {},
       checkpointRefs: {},
+      memoryMount: null, // <pipeline.dir>/memory after _mountMemory (agent-memory-design.md §4.1, A1)
       pauseReason: null,   // mirrors this.pauseReason so getState() (a deep clone of state) carries it live
       pauseDetail: null,   // mirrors this.pauseDetail
       // Sub-agent lifecycle records (rides the existing `state` snapshot; mirrored to
@@ -1112,6 +1122,11 @@ export class RunHarness extends EventEmitter {
         await this._assembleContext(resolvedSkills);
       }
       this._checkAbort();
+      // 3f) Agent memory: mount the store into <pipeline.dir>/memory and render the
+      // index every spawn carries (agent-memory-design.md §4). Pure fs work, both
+      // modes, mock included — the tests assert the mount.
+      await this._mountMemory();
+      this._checkAbort();
       // D7: every setup step above is done — a pause from here on has nothing to
       // replay, so _completePaused strips any `setupIncomplete` stamp instead.
       this._setupDone = true;
@@ -1450,6 +1465,10 @@ export class RunHarness extends EventEmitter {
         }
       }
 
+      // Agent memory on resume (§5): capture what the interrupted execution wrote,
+      // then remount fresh from the store.
+      await this._mountMemory({ resume: true });
+
       const dispatched = await this._engineRun({ resume: rp, rehydrated });
       this._checkAbort();
       if (dispatched === 'paused') return await this._completePaused();
@@ -1785,6 +1804,164 @@ export class RunHarness extends EventEmitter {
     await appendAudit(this.pipeline.dir, renderContextAudit(rc)).catch(() => {});
     await this._recordCapabilities();
     return rc;
+  }
+
+  /** Absolute `<pipeline.dir>/memory.json` — the durable memory ledger (amendment A2). */
+  _memoryLedgerPath() { return join(this.pipeline.dir, 'memory.json'); }
+
+  /** Mount the memory store into this run — best-effort. Memory is additive (spec §4.3):
+   *  a store/mount fs failure degrades the run to "no memory" (no index, no sync) and is
+   *  logged + audited; it never pauses the run at 'setup', where the replay would hit the
+   *  same error again. */
+  async _mountMemory({ resume = false } = {}) {
+    if (!this.pipeline?.dir) return;
+    try { await this._mountMemoryUnguarded({ resume }); }
+    catch (err) {
+      this.memory = null; this.memoryIndex = ''; this.state.memoryMount = null;
+      if (existsSync(this._memoryLedgerPath())) await this._writeMemoryLedger({ neutralised: true });
+      const why = String(err?.message || err).split('\n')[0];
+      this._log('memory', 'warn', `memory not mounted: ${why} — this run carries no memory index and its agents' memory writes are not captured`);
+      await appendAudit(this.pipeline.dir, `Memory: not mounted (${why}).`).catch(() => {});
+    }
+  }
+
+  /**
+   * Mount the memory store into this run (§4.1, A1: `<pipeline.dir>/memory` in BOTH
+   * modes). On resume, the previous segment's ledger is read first and its mount is
+   * synced back BEFORE the remount wipes it (§5 "resume of a paused run").
+   */
+  async _mountMemoryUnguarded({ resume }) {
+    const root = memoryRoot();
+    const mount = join(this.pipeline.dir, 'memory');          // always recomputed — never the ledger's absolute path
+    const dirs = mountDirs({ members: this.members, isWorkspace: this.isWorkspace, memoryScope: this.opts.memoryScope || null });
+    const onError = (p, err) => this._memoryReadWarn(p, err);
+    if (resume) {
+      let ledger = null;
+      try { ledger = JSON.parse(await readFile(this._memoryLedgerPath(), 'utf8')); } catch { ledger = null; }
+      if (ledger && ledger.baseline && Array.isArray(ledger.dirs)) {
+        this.memoryChanges = Array.isArray(ledger.changes) ? ledger.changes : [];
+        try {
+          await this._syncMemoryWith({ mount, dirs: ledger.dirs, baseline: ledger.baseline, nodeId: 'resume', executionId: null, agentKey: null, label: 'the interrupted execution' });
+        } catch (err) {
+          // Defensive — syncBack does not reject today (every fs error is per-file or routed
+          // through onError). If it ever does: do NOT remount over unsynced writes; keep the
+          // old mount + baseline so the next execution's sync retries them.
+          this._log('memory', 'warn', `memory: the interrupted execution's writes could not be synced (${err?.message || err}); keeping the previous mount`);
+          this.memory = { root, mount, dirs: ledger.dirs, baseline: ledger.baseline };
+          this.state.memoryMount = mount;
+          await this._refreshMemoryIndex();
+          return;
+        }
+      }
+    }
+    const m = await mountMemory({ root, mount, dirs, onError });
+    this.memory = { root, mount, dirs, baseline: m.baseline };
+    this.state.memoryMount = mount;
+    await this._refreshMemoryIndex();
+    await this._writeMemoryLedger();
+    this._log('memory', 'info', `Memory mounted at ${mount}: ${m.files} file(s) across ${dirs.length} scope(s)`);
+  }
+
+  /** Re-render the index from the MOUNT (so a file written by node N is listed for node N+1). */
+  async _refreshMemoryIndex() {
+    if (!this.memory) { this.memoryIndex = ''; return; }
+    const onError = (p, err) => this._memoryReadWarn(p, err);
+    const sections = [];
+    for (const d of this.memory.dirs) {
+      const dir = join(this.memory.mount, d.rel);
+      sections.push({ label: d.label, dir, entries: await listMemoryDir(dir, { onError }) });
+    }
+    const caps = memoryCaps();
+    const { text, warnings } = renderMemoryIndex(sections, { maxBytes: caps.indexMaxBytes, hookMaxChars: caps.hookMaxChars });
+    this.memoryIndex = text;
+    for (const w of warnings) this._memoryWarn(w);
+  }
+
+  /** The `onError` every memory listing gets. A junk NAME is not an I/O failure — phrasing it
+   *  as "cannot read" sends the user hunting a broken disk instead of renaming a file. */
+  _memoryReadWarn(p, err) {
+    if (err?.code === 'ENAME') this._memoryWarn(`memory: ignored ${p} (invalid name — not a memory file)`);
+    else this._memoryWarn(`memory: cannot read ${p}: ${err?.code || err?.message || err}`);
+  }
+
+  /** Record-once warnings: the index is re-rendered after every execution. */
+  _memoryWarn(text) {
+    if (this._memoryWarned.has(text)) return;
+    this._memoryWarned.add(text);
+    this._log('memory', 'warn', text);
+  }
+
+  /** After ONE execution (orchestrator._afterExecution) — never rejects, and serialised per
+   *  run: the job reads `this.memory` when the PREVIOUS sync has published its baseline.
+   *  (Composite slices and parallel branches finish together; two syncs diffing against one
+   *  baseline would both write and both report the same files.) */
+  _syncMemory(nc, ctx) {
+    if (!this.memory) return Promise.resolve(null);
+    const job = async () => {
+      if (!this.memory) return null;
+      try {
+        return await this._syncMemoryWith({ ...this.memory, nodeId: ctx.nodeId, executionId: ctx.executionId, agentKey: nc?.key ?? null, label: nc?.key || ctx.label || ctx.nodeId });
+      } catch (err) {
+        this._log('memory', 'warn', `memory sync failed after ${ctx.executionId}: ${err?.message || err}`);
+        return null;
+      }
+    };
+    this._memoryTail = (this._memoryTail || Promise.resolve()).then(job, job);
+    return this._memoryTail;
+  }
+
+  async _syncMemoryWith({ mount, dirs, baseline, nodeId, executionId, agentKey, label }) {
+    const now = new Date().toISOString();
+    const res = await syncBack({
+      root: memoryRoot(), mount, dirs, baseline, source: `run:${this.pipeline.id}`, now,
+      caps: memoryCaps(), onWarn: (w) => this._log('memory', 'warn', w),
+      onError: (p, err) => this._memoryReadWarn(p, err),
+    });
+    // `mount` equals this.memory.mount for every in-run sync and for a same-process resume;
+    // an OLD instance can never race a resumed one because the scheduler drains in-flight
+    // executions before the run reports 'paused' (scheduler.mjs, the pause drain).
+    if (this.memory && this.memory.mount === mount) this.memory.baseline = res.baseline;
+    if (res.total || res.rejected.length) {
+      this.memoryChanges.push({
+        executionId, nodeId, agentKey, at: now,
+        added: res.added, modified: res.modified, deleted: res.deleted, rejected: res.rejected,
+      });
+      const head = `Memory: +${res.added.length} ~${res.modified.length} -${res.deleted.length}` +
+        `${res.rejected.length ? ` (${res.rejected.length} rejected)` : ''} by ${label}`;
+      const name = (r) => `${r.scope}/${r.name}.md`;
+      const details = [
+        ...res.added.map((r) => `added ${name(r)}`), ...res.modified.map((r) => `updated ${name(r)}`),
+        ...res.deleted.map((r) => `deleted ${name(r)}`), ...res.rejected.map((r) => `rejected ${name(r)} — ${r.reason}`),
+      ];
+      this._log('memory', 'info', `${head}: ${details.join('; ')}`, { nodeId, executionId });
+      await appendAudit(this.pipeline.dir, `${head}: ${details.join('; ')}`).catch(() => {});
+    }
+    if (this.memory && this.memory.mount === mount) {
+      await this._refreshMemoryIndex();
+      await this._writeMemoryLedger();
+    }
+    return res;
+  }
+
+  /** `{ mount, dirs, baseline, changes }` — best-effort, atomic via temp + rename. */
+  async _writeMemoryLedger({ neutralised = false } = {}) {
+    if (!this.pipeline?.dir || (!this.memory && !neutralised)) return;
+    const file = this._memoryLedgerPath();
+    // `neutralised` (after a mount failure) keeps the change history but writes no dirs and
+    // no baseline, so a later resume has nothing stale to diff against (a missing mount dir
+    // must never read as "the run deleted every file").
+    const payload = neutralised
+      ? { mount: null, dirs: [], baseline: {}, changes: this.memoryChanges }
+      : { mount: this.memory.mount, dirs: this.memory.dirs, baseline: this.memory.baseline, changes: this.memoryChanges };
+    const tmp = `${file}.tmp-${process.pid}-${++this._ledgerSeq}`;
+    try { await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8'); await rename(tmp, file); }
+    catch (err) { this._log('memory', 'warn', `memory ledger not written: ${err?.message || err}`); }
+  }
+
+  /** The run-summary shape (§6). null when nothing changed, so results.json is unchanged for such runs. */
+  memorySummary() {
+    if (!this.memoryChanges.length) return null;
+    return { changes: this.memoryChanges, totals: memoryTotals(this.memoryChanges) };
   }
 
   /**
@@ -2757,6 +2934,10 @@ export class RunHarness extends EventEmitter {
       // bound signal kills the staging before git can touch the index.
       // INSIDE the try: the stopped path calls _buildResults from run()'s catch, so
       // anything that escaped here would reject run() itself.
+      // The final sync runs BEFORE the two early returns below (`!members.length`,
+      // `noPatch && stage && !listed`), so results.json.memory is absent on those paths;
+      // the ledger (memory.json) is the durable carrier and History reads it.
+      if (this.memory) await this._syncMemory(null, { nodeId: 'final', executionId: null, label: 'the run end' }).catch(() => {});
       if (stage) await this._stageWorkingTree({ ignoreAbort: true });
       const reviews = readPipelineExtras(this.pipeline.id).reviews || [];
       // Unified iteration over workDirs + checkpointRefs — the ref map is filled in
@@ -2803,12 +2984,14 @@ export class RunHarness extends EventEmitter {
       // no-op run must not lose them (review of PR #376). The 0-byte
       // diff-patch.patch is still never written on any path.
       if (noPatch && stage && !listed) return;
+      const memory = this.memorySummary();
       if (members.length === 1 && !this.isWorkspace) {
+        if (memory) members[0].results.memory = memory;
         await persistResults(this.pipeline.dir, members[0].results);
         if (!noPatch) await persistDiffPatch(this.pipeline.dir, patches[0].patch);
       } else {
         const perProject = buildPerProject(members);
-        const results = { summary: rollupSummary(perProject), perProject };
+        const results = { summary: rollupSummary(perProject), perProject, ...(memory ? { memory } : {}) };
         await persistResults(this.pipeline.dir, results);
         if (!noPatch) await persistDiffPatch(this.pipeline.dir, patches.map((p) => `# ${p.key}\n${p.patch}`).join('\n\n'));
       }

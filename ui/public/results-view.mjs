@@ -119,3 +119,25 @@ export function workflowPickerLabel(wf, enabledPluginNames = []) {
   const disabled = Array.isArray(enabledPluginNames) && !enabledPluginNames.includes(plugin);
   return `${wf.name} [plugin: ${plugin}${disabled ? ' — disabled' : ''}]`;
 }
+
+/**
+ * Rows for the History Overview "Memory changes" block (agent-memory-design.md §6).
+ * Pure: `memory` is results.json.memory / the detail's `memory` ({ changes }).
+ * One row per change entry that carries at least one file; chips in the order
+ * added, modified, deleted, rejected; a rejected chip's `title` is the reason.
+ */
+export function memoryChangesRows(memory) {
+  const changes = Array.isArray(memory?.changes) ? memory.changes : [];
+  const file = (r) => `${r.scope}/${r.name}.md`;
+  const rows = [];
+  for (const c of changes) {
+    const chips = [
+      ...(c.added || []).map((r) => ({ kind: 'add', text: `+ ${file(r)}` })),
+      ...(c.modified || []).map((r) => ({ kind: 'mod', text: `~ ${file(r)}` })),
+      ...(c.deleted || []).map((r) => ({ kind: 'del', text: `− ${file(r)}` })),
+      ...(c.rejected || []).map((r) => ({ kind: 'rej', text: `✕ ${file(r)}`, title: String(r.reason || '') })),
+    ];
+    if (chips.length) rows.push({ node: c.agentKey || c.nodeId || 'run', chips });
+  }
+  return rows;
+}

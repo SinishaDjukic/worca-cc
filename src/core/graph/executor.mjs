@@ -605,7 +605,7 @@ async function prepare(ctx) {
   if (!String(body || '').trim()) {
     console.warn(`[executor] node "${node?.id}": no agent .md body resolved — running with an empty system prompt`);
   }
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, body, role, ctx.workspace);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, body, role, ctx.workspace, ctx.memoryIndex);
   const full = { ...ctx, ports, meta, outputs, verdict, expandsPort, mockRole, priorAnswers };
   const prompt = buildAgentPrompt(full);
   const allowedTools = meta.sideEffect === 'code' ? IMPLEMENTER_TOOLS : READ_WRITE_TOOLS;
@@ -670,6 +670,7 @@ export async function runAgentExecution(ctx) {
     ],
     sessionId,
     prompt,
+    systemPrompt,
   };
 }
 

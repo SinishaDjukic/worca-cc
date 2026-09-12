@@ -162,9 +162,13 @@ test('resumeRun re-attaches the Ask follower of a linked paused run: link moves 
   // them the way test/ask-api-cards.test.mjs does until the follower reports.
   const t0 = Date.now();
   let last = null;
+  const notified = () => listMessages(t.id).some((m) => /Run finished|Run failed/.test(m.text));
   while (Date.now() - t0 < 15000) {
     const st = listRunLinks(t.id)[0].status;
-    if (/^(done|error|stopped)$/.test(st)) break;
+    // The link row turns terminal on the STATE event, which the harness emits before
+    // _buildResults; the follower posts its finish line on the DONE event after it.
+    // Wait for the notice too, or this races whatever _buildResults happens to do.
+    if (/^(done|error|stopped)$/.test(st) && notified()) break;
     const pq = runs.get(out.runId)?.pendingQuestion;
     if (pq && pq !== last) {
       last = pq;

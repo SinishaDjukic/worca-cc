@@ -371,14 +371,20 @@ export function workspaceFanOutDirective(strategy, ws, { relative = false, endpo
  * sensible inline fallback when the body is missing/empty). The optional 4th
  * `workspace` arg is the read-only workspace metadata; absent it,
  * workspaceContextBlock returns '' and the prompt is byte-identical to today's
- * single-project prompt. Exported for testing.
+ * single-project prompt. The optional 5th `memoryIndex` arg is the rendered
+ * `## Worca memory` block, '' when the run has no mount. Exported for testing.
  */
-export function buildSystemPrompt(toolInstruction, agentBody, role, workspace) {
+export function buildSystemPrompt(toolInstruction, agentBody, role, workspace, memoryIndex = '') {
   const parts = [];
   const tool = (toolInstruction || '').trim();
   if (tool) parts.push(tool);
   const ws = workspaceContextBlock(workspace); // '' when not a workspace run
   if (ws) parts.push(ws);
+  // Agent memory (agent-memory-design.md §4.3): the rendered index block, '' when the
+  // run has no mount. Between the workspace preamble and the role body so the body
+  // (the contract) stays last. Trimmed: the renderer ends with one newline.
+  const mem = (typeof memoryIndex === 'string' ? memoryIndex : '').trim();
+  if (mem) parts.push(mem);
   const body = (agentBody || '').trim();
   // The agent's .md body IS the contract (spec §1: the engine is generic). The v1
   // per-role FALLBACK_PROMPTS table died with the v1 engine; a missing body now
@@ -516,6 +522,10 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // touch this env: its only wire is the prompt block (subagentModelDirective),
     // and CLAUDE_CODE_SUBAGENT_MODEL is a reserved model-env key.
     modelEnv: resolveModelEnv(c.model),
+    // Agent memory (§4.3): Task-tool sub-agents do not inherit --append-system-prompt,
+    // so the same index block rides the sub-agent flag. undefined when the run has no
+    // mount ⇒ buildClaudeArgs emits nothing and legacy argv stays byte-identical.
+    appendSubagentSystemPrompt: typeof ctx.memoryIndex === 'string' && ctx.memoryIndex.trim() ? ctx.memoryIndex : undefined,
     // Guardrails: worca policy + lifted repo deny rules as {deny,...} rules ->
     // ONE --settings payload; envScrub/envAllowlist -> spawn env. All undefined
     // when the project has no guardrails, so the argv and env stay byte-identical
@@ -791,7 +801,7 @@ export async function runWorkspaceScan(ctx, opts = {}) {
   const outPath = opts.outPath || joinPipeline(ctx.pipelineDir, 'workspace-description.md');
   // The scanner IS the source of the workspace description, so it does NOT receive
   // an injected workspace block (4th arg undefined). The body is the contract (C10).
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'workspaceScanner'), role, undefined);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'workspaceScanner'), role, undefined, ctx.memoryIndex);
 
   const memberLines = projects.map((p) =>
     `- **${p.projectName || p.projectKey}** (\`${p.projectKey}\`): investigate \`${p.scanDir || p.projectDir}\`` +

@@ -2209,6 +2209,16 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hd-ov-chip.st-stopped,.hd-ov-chip.st-error{background:var(--red-bg);color:var(--red-ink);}
 .hd-ov-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;}
 .hd-ov-card{padding:20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+/* Agent memory (agent-memory-design.md §6): what this run wrote into worca's memory. */
+.hd-ov-mem{padding:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);display:flex;flex-direction:column;gap:8px;}
+.hd-ov-mem .mono{font-family:var(--mono);}
+.hd-mem-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+.hd-mem-node{color:var(--ink-3);min-width:90px;}
+.hd-mem-chip{padding:2px 8px;border-radius:999px;border:1px solid var(--line);font-size:12px;}
+.hd-mem-add{color:var(--green-ink);}
+.hd-mem-mod{color:var(--blue-ink);}
+.hd-mem-del{color:var(--ink-3);text-decoration:line-through;}
+.hd-mem-rej{color:var(--red-ink);}
 .hd-ov-label{font:600 10.5px var(--sans);letter-spacing:.14em;color:var(--ink-3);}
 .hd-ov-value{margin-top:10px;font-size:22px;color:var(--ink);}
 .hd-ov-sub{margin-top:6px;font-size:11.5px;color:var(--ink-3);overflow-wrap:anywhere;}

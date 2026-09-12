@@ -277,6 +277,35 @@ export function contextMaxBytesTotal() {
   return readByteCap('contextMaxBytesTotal', DEFAULT_CONTEXT_MAX_BYTES_TOTAL);
 }
 
+// ── Agent memory caps (agent-memory-design.md §2 / §12) ─────────────────────
+export const DEFAULT_MEMORY_SOFT_BYTES_PER_FILE = 8192;    // flagged in health above this
+export const DEFAULT_MEMORY_HARD_BYTES_PER_FILE = 32768;   // rejected at sync-back / write above this
+export const DEFAULT_MEMORY_MAX_FILES_PER_SCOPE = 50;
+export const DEFAULT_MEMORY_INDEX_MAX_BYTES = 4096;
+export const DEFAULT_MEMORY_HOOK_MAX_CHARS = 160;
+
+/** settings.json → { memory: { maxBytesPerFile, softBytesPerFile, maxFilesPerScope, indexMaxBytes, hookMaxChars } }.
+ *  Every key optional; a non-positive-integer value warns (naming `memory.<key>`) and falls back. */
+function readMemoryCap(key, fallback) {
+  const block = readSettings().memory;
+  const v = block && typeof block === 'object' && !Array.isArray(block) ? block[key] : undefined;
+  if (v === undefined) return fallback;
+  if (isByteCap(v)) return v;
+  console.warn(`[worca] invalid memory.${key} ${JSON.stringify(v)} — using ${fallback}`);
+  return fallback;
+}
+
+/** The caps every memory reader/writer takes (memory-store.mjs, memory-sync.mjs). Read fresh per call. */
+export function memoryCaps() {
+  return {
+    softBytesPerFile: readMemoryCap('softBytesPerFile', DEFAULT_MEMORY_SOFT_BYTES_PER_FILE),
+    hardBytesPerFile: readMemoryCap('maxBytesPerFile', DEFAULT_MEMORY_HARD_BYTES_PER_FILE),
+    maxFilesPerScope: readMemoryCap('maxFilesPerScope', DEFAULT_MEMORY_MAX_FILES_PER_SCOPE),
+    indexMaxBytes: readMemoryCap('indexMaxBytes', DEFAULT_MEMORY_INDEX_MAX_BYTES),
+    hookMaxChars: readMemoryCap('hookMaxChars', DEFAULT_MEMORY_HOOK_MAX_CHARS),
+  };
+}
+
 /** Skill delivery mechanism (§5.6): 'copy' (default, isolated) | 'symlink' (write-through). */
 export function skillMount() {
   const v = readSettings().skillMount;

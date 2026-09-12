@@ -485,6 +485,16 @@ test('17 runAgentExecution spawns through runOpts, returns the same prompt it bu
   assert.match(r.sessionId, /^mock-session-/, 'the session id comes from the session event, not the resolved value');
 });
 
+test('17b runAgentExecution: ctx.memoryIndex is part of the system prompt it spawns with', async () => {
+  const INDEX = '## Worca memory\nintro\nGlobal — /m/global:\n- (nothing yet)\n';
+  const r = await runAgentExecution(ctx8({ memoryIndex: INDEX }));
+  assert.ok(r.systemPrompt.includes(INDEX.trim()), 'the block is in the spawned system prompt');
+  assert.ok(r.systemPrompt.indexOf('TOOLS') < r.systemPrompt.indexOf('## Worca memory'));
+  assert.ok(r.systemPrompt.indexOf('## Worca memory') < r.systemPrompt.indexOf('You are custom.'));
+  const plain = await runAgentExecution(ctx8());
+  assert.ok(!plain.systemPrompt.includes('## Worca memory'), 'no index ⇒ no block');
+});
+
 test('18 runClarifierExecution gates the human and rewrites the file as {questions, answers}', async () => {
   const asked = [];
   const meta = {

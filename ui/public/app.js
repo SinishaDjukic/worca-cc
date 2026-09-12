@@ -64,7 +64,7 @@ import { mountRunGraph } from './graph/run-hosts.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion. They stay EXPORTED
 // from results-view.mjs (test/results-view-helpers.test.mjs imports four of them).
-import { sourceBadge, workflowPickerLabel } from './results-view.mjs';
+import { sourceBadge, workflowPickerLabel, memoryChangesRows } from './results-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
 import {
   splitPatchSections, parseFileSection, patchIndex, sectionKey,
@@ -13936,6 +13936,28 @@ function buildHdOverview(sec, record, data) {
   // not, so without it the card would read `released` for the life of the screen.)
   grid.appendChild(hdStatCard('worktree', 'WORKTREE', retained ? 'retained' : 'released', wt.worktreeDir || ''));
   wrap.appendChild(grid);
+  // Agent memory (§6): what this run wrote into worca's memory, per execution.
+  const memRows = memoryChangesRows(data.memory || (results && results.memory));
+  if (memRows.length) {
+    const box = document.createElement('div');
+    box.className = 'hd-ov-mem';
+    const l = document.createElement('div'); l.className = 'hd-ov-label'; l.textContent = 'MEMORY CHANGES';
+    box.appendChild(l);
+    for (const row of memRows) {
+      const line = document.createElement('div'); line.className = 'hd-mem-row';
+      const who = document.createElement('span'); who.className = 'hd-mem-node mono'; who.textContent = row.node;
+      line.appendChild(who);
+      for (const c of row.chips) {
+        const chip = document.createElement('span');
+        chip.className = `hd-mem-chip hd-mem-${c.kind} mono`;
+        chip.textContent = c.text;
+        if (c.title) chip.title = c.title;
+        line.appendChild(chip);
+      }
+      box.appendChild(line);
+    }
+    wrap.appendChild(box);
+  }
   // spec §8: the one-line quiescence note, under the stat grid, v2 runs only.
   if (isGraphManifest(st.stepper) && decorFromState(st, { live: false, now: 0 }).quiescent) {
     const note = document.createElement('div');

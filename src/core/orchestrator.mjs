@@ -1006,6 +1006,8 @@ export class GraphOrchestrator extends RunHarness {
       pipelineId: this.pipeline.id,
       taskPrompt: this.pipeline.promptText,
       toolInstruction: this.toolInstruction,
+      memoryIndex: this.memoryIndex || '',              // §4.3: rendered per spawn from the mount (A4)
+      memoryMount: this.memory?.mount || null,          // absolute mount dir (tests + P2's defrag agent read it)
       agentPrompts: this.agentPrompts,
       checkpointRef: this.checkpointRef,
       workspace: this.isWorkspace ? this._workspaceChannel() : undefined,
@@ -1238,6 +1240,8 @@ export class GraphOrchestrator extends RunHarness {
         nodeId: ctx.nodeId, executionId: ctx.executionId, port: port.id,
       });
     }
+    // Agent memory (§5): sync the mount back after EVERY execution, slices included.
+    await this._syncMemory(nc, ctx);
     if (nc.meta?.sideEffect === 'code' && !ctx.slice) await this._stageWorkingTree();
   }
 

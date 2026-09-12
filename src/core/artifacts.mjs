@@ -18,6 +18,7 @@ import { listProjects } from './projects.mjs';
 import { branchExists, diffShortstat, hasGh, findPrForBranch } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
+import { memoryTotals } from './memory-sync.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -2049,12 +2050,14 @@ export async function readPipelineByKey(key, id) {
   const dir = await runDirForRow(row);
   const results = await readJsonFile(join(dir, 'results.json'));
   const overview = await readJsonFile(join(dir, 'overview.json'));
+  const ledger = await readJsonFile(join(dir, 'memory.json'));
   return {
     state: rowToState(row),
     auditMarkdown: buildAuditMarkdown(row),
     artifacts: await listArtifacts(row.id), // [{kind, relPath}] — drives the Live-logs dropdown (project + workspace)
     results,
     overview,
+    memory: ledger && Array.isArray(ledger.changes) ? { mount: ledger.mount || null, changes: ledger.changes, totals: memoryTotals(ledger.changes) } : null,
     ...readPipelineExtras(row.id),
   };
 }

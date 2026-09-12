@@ -39,3 +39,25 @@ test('diffBadges always returns changed + removed, even at zero', () => {
     [{ kind: 'changed', n: 0, text: '0 changed' }, { kind: 'removed', n: 0, text: '0 removed' }],
   );
 });
+
+import { memoryChangesRows } from '../ui/public/results-view.mjs';
+
+test('memoryChangesRows: one row per change entry, chips per file, rejected chips carry the reason as title', () => {
+  const rows = memoryChangesRows({ changes: [
+    { executionId: 'x:n_impl:1', nodeId: 'n_impl', agentKey: 'implementer',
+      added: [{ scope: 'project', name: 'lesson' }], modified: [{ scope: 'global', name: 'testing' }], deleted: [],
+      rejected: [{ scope: 'global', name: 'huge', reason: 'over the 32768-byte cap' }] },
+    { executionId: null, nodeId: 'resume', agentKey: null, added: [], modified: [], deleted: [{ scope: 'project', name: 'old' }], rejected: [] },
+  ] });
+  assert.deepEqual(rows, [
+    { node: 'implementer', chips: [
+      { kind: 'add', text: '+ project/lesson.md' },
+      { kind: 'mod', text: '~ global/testing.md' },
+      { kind: 'rej', text: '✕ global/huge.md', title: 'over the 32768-byte cap' },
+    ] },
+    { node: 'resume', chips: [{ kind: 'del', text: '− project/old.md' }] },
+  ]);
+  assert.deepEqual(memoryChangesRows(null), []);
+  assert.deepEqual(memoryChangesRows({ changes: [] }), []);
+  assert.deepEqual(memoryChangesRows({ changes: [{ nodeId: 'n', added: [], modified: [], deleted: [], rejected: [] }] }), [], 'an empty entry renders nothing');
+});
