@@ -43,7 +43,7 @@ import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from './h
 // propose_workflow with — both pure (no DB, no spawn).
 import { mockShapeFor } from './auto/recipes.mjs';
 import { normalizeShape } from '../shared/graph/assemble.mjs';
-import { writeFile, mkdir, appendFile, readFile, access } from 'node:fs/promises';
+import { writeFile, mkdir, appendFile, readFile, access, readdir } from 'node:fs/promises';
 import { constants as FS, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -969,13 +969,17 @@ async function emitLog(onEvent, text) {
  */
 export const MOCK_WRITER_ROLES = new Set([
   'clarify', 'planner-plan', 'refiner', 'decomposer', 'implementer', 'reviewer', 'plan-review',
-  'workspace-scan', 'agent-gen', 'workspace-reviewer', 'manual-tests-checklist', 'manual-web-ui-testing',
+  'workspace-scan', 'agent-gen', 'workspace-reviewer', 'manual-tests-checklist', 'manual-web-ui-testing', 'memory-defrag',
   'generic-producer', 'generic-verifier',
 ]);
 
 /** Named so the executor's mock-role chain and the switch cannot drift apart. */
 export const MOCK_ROLE_CLARIFY = 'clarify';
 export const MOCK_ROLE_DECOMPOSER = 'decomposer';
+
+/** The memory defragmenter's role, exported like the other two named roles (the switch below
+ *  still uses the literal string: mock-writer-roles.test.mjs parses the switch arms). */
+export const MOCK_ROLE_MEMORY_DEFRAG = 'memory-defrag';
 
 /**
  * The mock-fan-out roles (mirror the orchestrator's FANOUT_ELIGIBLE intent): the
@@ -1261,6 +1265,9 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessi
     case 'manual-web-ui-testing':
       text = await mockManualWebUiTesting(m, cycle, onEvent);
       break;
+    case 'memory-defrag':
+      text = await mockMemoryDefrag(m, systemPrompt, onEvent);
+      break;
     case 'generic-producer':
       text = await mockGenericProducer(m, onEvent);
       break;
@@ -1360,6 +1367,61 @@ async function mockGenericProducer(m, onEvent) {
   await writeFile(out, body, 'utf8');
   safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
   return `[mock] generic artifact written to ${out}`;
+}
+
+/** The scope dirs the `## Worca memory` block of a system prompt names (memory-store.mjs
+ *  renderIndexOnce: `<label> — <abs dir>:` lines under the heading; the block is contiguous,
+ *  so the first blank line ends it). The mock defragmenter finds its mount exactly the way the
+ *  real agent is told to — from its system prompt — so no MOCK marker is needed. Exported for
+ *  the parity test against a real renderMemoryIndex output. Both captures are greedy: a project
+ *  LABEL may itself contain ` — ` (the renderer's separator is the last one on the line), and a
+ *  Windows dir carries a drive colon while the line still ends with `:`. */
+export function memoryDirsFromPrompt(systemPrompt) {
+  const text = String(systemPrompt || '');
+  const at = text.indexOf('## Worca memory');
+  if (at === -1) return [];
+  const out = [];
+  for (const line of text.slice(at).split(/\r?\n/).slice(1)) {
+    if (!line.trim()) break;
+    const m = line.match(/^(?:Global|Project .*) — (.+):$/);
+    if (m) out.push(m[1]);
+  }
+  return out;
+}
+
+/** Memory defragment mock (agent-memory-design.md §7.1): in the FIRST scope dir the system
+ *  prompt names, fold the second (sorted) file's body into the first and EMPTY it (amendment
+ *  B19 — the memory tool set cannot unlink, so this is the path the real agent takes), then
+ *  write the report to MOCK_OUT. A defrag run mounts exactly ONE scope dir. */
+async function mockMemoryDefrag(m, systemPrompt, onEvent) {
+  const out = m.MOCK_OUT;
+  const dir = memoryDirsFromPrompt(systemPrompt)[0] || null;
+  await emitLog(onEvent, '[mock] memory defragmenter restructuring the mounted scope');
+  const lines = ['# Memory defragment report', ''];
+  let merged = null;
+  if (dir) {
+    const files = (await readdir(dir, { withFileTypes: true })).filter((e) => e.isFile() && e.name.endsWith('.md')).map((e) => e.name).sort();
+    if (files.length < 2) {
+      lines.push(`- ${dir}: ${files.length} file(s), nothing to merge`);
+    } else {
+      const [a, b] = files;
+      const bodyB = (await readFile(join(dir, b), 'utf8')).replace(/^---\n[\s\S]*?\n---\n/, '');
+      const text = `${await readFile(join(dir, a), 'utf8')}\n## Merged from ${b.slice(0, -3)}\n\n${bodyB}`;
+      await writeFile(join(dir, a), text, 'utf8');
+      await writeFile(join(dir, b), '', 'utf8');            // B19: an EMPTIED mount file is a deletion request
+      merged = [a, b];
+      lines.push(`- ${dir}: merged ${b} into ${a}; emptied ${b} (worca removes it at sync-back)`);
+      safeEmit(onEvent, { type: 'tool_use', text: `merged ${join(dir, b)} into ${join(dir, a)}`, raw: { mock: true, file: join(dir, a) } });
+    }
+  } else {
+    lines.push('- no memory scope in the system prompt: nothing to defragment');
+  }
+  if (out) {
+    await ensureDir(out);
+    await writeFile(out, `${lines.join('\n')}\n`, 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
+  }
+  return merged ? `[mock] memory defragment: merged ${merged[1]} into ${merged[0]}` : '[mock] memory defragment: nothing to merge';
 }
 
 async function mockPlannerPlan(m, onEvent) {

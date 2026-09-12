@@ -8,7 +8,7 @@
 // graph-executor.test.mjs; what this file adds is the two things a unit test cannot
 // see:
 //   1. the STRUCTURAL audit — the writer switch's case labels and the
-//      MOCK_WRITER_ROLES export are the same set, and the 11 builtin sidecars pin
+//      MOCK_WRITER_ROLES export are the same set, and the 12 builtin sidecars pin
 //      roles that already exist in it;
 //   2. the BEHAVIOURAL audit — real graphs run to completion offline. Every seed
 //      graph and the graph default terminate because the mock verdicts get less
@@ -20,13 +20,14 @@
 // goes red first.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { runGraphOffline } from './helpers/graph-run.mjs';
-import { MOCK_WRITER_ROLES, MOCK_ROLE_CLARIFY, MOCK_ROLE_DECOMPOSER } from '../src/core/claude-runner.mjs';
+import { MOCK_WRITER_ROLES, MOCK_ROLE_CLARIFY, MOCK_ROLE_DECOMPOSER, runClaude, memoryDirsFromPrompt } from '../src/core/claude-runner.mjs';
+import { renderMemoryIndex } from '../src/core/memory-store.mjs';
 import { QUIESCENCE_WARNING, quiescenceDeadEnd } from '../src/core/graph/scheduler.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
@@ -71,13 +72,13 @@ test('MOCK_WRITER_ROLES is exactly the writer switch case set', () => {
     'the export and the switch it mirrors must not drift');
 });
 
-test('the 11 builtins pin roles the switch already handles — no new case strings', () => {
+test('the 12 builtins pin roles the switch already handles — no new case strings', () => {
   const pinned = {};
   for (const file of readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.meta.json'))) {
     const meta = JSON.parse(readFileSync(join(AGENTS_DIR, file), 'utf8'));
     pinned[meta.key] = meta.mockRole ?? null;
   }
-  assert.equal(Object.keys(pinned).length, 11, 'the 11 builtin sidecars');
+  assert.equal(Object.keys(pinned).length, 12, 'the 12 builtin sidecars');
   for (const [key, role] of Object.entries(pinned)) {
     assert.notEqual(role, null, `${key} pins an explicit mockRole`);
     assert.ok(MOCK_WRITER_ROLES.has(role), `${key} -> ${role} is a handled writer role`);
@@ -87,6 +88,71 @@ test('the 11 builtins pin roles the switch already handles — no new case strin
   const unclaimed = [...MOCK_WRITER_ROLES].filter((r) => !Object.values(pinned).includes(r));
   assert.deepEqual(unclaimed.sort(), ['agent-gen', 'generic-producer', 'generic-verifier'],
     'the switch carries no case the chain can never reach');
+});
+
+test('memoryDirsFromPrompt: reads the scope dirs out of a REAL memory index block, and nothing else', () => {
+  const { text } = renderMemoryIndex([
+    { label: 'Global', dir: '/abs/m/global', entries: [{ name: 'testing', description: 'How tests run', paths: [] }] },
+    { label: 'Project My App', dir: '/abs/m/project', entries: [] },
+  ]);
+  const sys = `TOOLS\n\n${text.trim()}\n\nYou are the agent.\nGlobal — /not/in/the/block:\n`;
+  assert.deepEqual(memoryDirsFromPrompt(sys), ['/abs/m/global', '/abs/m/project'], 'the block is contiguous; the blank line ends it');
+  assert.deepEqual(memoryDirsFromPrompt('no block here'), []);
+  assert.deepEqual(memoryDirsFromPrompt(`## Worca memory\nintro\nGlobal — C:\\Users\\me\\.worca-cc\\p\\memory\\global:\n- (nothing yet)\n`), ['C:\\Users\\me\\.worca-cc\\p\\memory\\global'], 'a Windows dir keeps its drive colon');
+  // The label is the model's project NAME: it may contain the separator itself. The renderer's
+  // separator is the LAST one on the line, so the label pattern must be greedy.
+  const { text: odd } = renderMemoryIndex([{ label: 'Project My — App', dir: '/abs/m/project', entries: [] }]);
+  assert.deepEqual(memoryDirsFromPrompt(`TOOLS\n\n${odd.trim()}\n`), ['/abs/m/project'], 'a project name containing the separator keeps the whole dir');
+});
+
+test('memory-defrag mock: merges the first two files of the FIRST scope dir named by the system prompt and writes the report', async () => {
+  const mount = mkdtempSync(join(tmpdir(), 'worca-mock-mem-'));
+  const out = join(mount, 'defrag-report.md');
+  const dir = join(mount, 'global');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'a.md'), '---\nname: a\ndescription: A\n---\nRule A.\n');
+  writeFileSync(join(dir, 'b.md'), '---\nname: b\ndescription: B\n---\nRule B.\n');
+  writeFileSync(join(dir, 'c.md'), 'Rule C.\n');
+  const { text: index } = renderMemoryIndex([{ label: 'Global', dir, entries: [] }]);
+  const events = [];
+  const res = await runClaude({ cwd: mount, mock: true, permissionMode: 'acceptEdits', systemPrompt: `TOOLS\n\n${index}`, onEvent: (e) => events.push(e),
+    prompt: `Defragment.\n\nMOCK_ROLE: memory-defrag\nMOCK_OUT: ${out}` });
+  assert.ok(res && !res.error, JSON.stringify(res));
+  assert.deepEqual(readdirSync(dir).sort(), ['a.md', 'b.md', 'c.md'], 'the file stays on disk — the memory tool set has no unlink');
+  assert.equal(readFileSync(join(dir, 'b.md'), 'utf8'), '', 'b was EMPTIED: amendment B19, worca deletes it at sync-back');
+  const a = readFileSync(join(dir, 'a.md'), 'utf8');
+  assert.ok(a.startsWith('---\nname: a\n'), 'the surviving file keeps its own frontmatter');
+  assert.ok(a.includes('## Merged from b') && a.includes('Rule B.') && !a.includes('name: b'), 'the merged body is appended without its fence');
+  const report = readFileSync(out, 'utf8');
+  assert.ok(report.startsWith('# Memory defragment report'), report);
+  assert.ok(report.includes('merged b.md into a.md'), report);
+  rmSync(mount, { recursive: true, force: true });
+});
+
+test('memory-defrag mock: the "nothing to merge" boundary is ONE file — two files still merge; a dir named *.md is never read', async () => {
+  const defrag = async (files) => {
+    const mount = mkdtempSync(join(tmpdir(), 'worca-mock-mem1-'));
+    const out = join(mount, 'defrag-report.md');
+    const dir = join(mount, 'global');
+    mkdirSync(dir, { recursive: true });
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+    mkdirSync(join(dir, 'notes.md'), { recursive: true });        // a DIRECTORY named like a file: never read
+    const { text: index } = renderMemoryIndex([{ label: 'Global', dir, entries: [] }]);
+    const res = await runClaude({ cwd: mount, mock: true, permissionMode: 'acceptEdits', systemPrompt: `TOOLS\n\n${index}`,
+      prompt: `Defragment.\n\nMOCK_ROLE: memory-defrag\nMOCK_OUT: ${out}` });
+    assert.ok(res && !res.error, JSON.stringify(res));
+    const report = readFileSync(out, 'utf8');
+    const after = Object.fromEntries(readdirSync(dir).filter((n) => n.endsWith('.md') && n !== 'notes.md').map((n) => [n, readFileSync(join(dir, n), 'utf8')]));
+    rmSync(mount, { recursive: true, force: true });
+    return { report, after };
+  };
+  const one = await defrag({ 'only.md': '---\nname: only\ndescription: O\n---\nRule.\n' });
+  assert.ok(one.report.includes('1 file(s), nothing to merge'), one.report);
+  assert.deepEqual(one.after, { 'only.md': '---\nname: only\ndescription: O\n---\nRule.\n' }, 'untouched');
+  const two = await defrag({ 'a.md': '---\nname: a\n---\nRule A.\n', 'b.md': '---\nname: b\n---\nRule B.\n' });
+  assert.ok(two.report.includes('merged b.md into a.md'), two.report);
+  assert.equal(two.after['b.md'], '', 'exactly two files is still a merge, not "nothing to merge"');
+  assert.ok(two.after['a.md'].includes('Rule B.'));
 });
 
 // ── 2. behavioural audit: whole graphs, offline ──────────────────────────────

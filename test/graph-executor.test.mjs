@@ -14,8 +14,9 @@ import {
   allocateOutputs, allocateVerdict, portIoBlock, changesInstruction, selectMode, taskSourcedPorts,
   expandsOutputPort, normalizeDecomposition, readDecomposition, resolveMockRole, readVerdict,
   runTaskExecution, runAndExecution, runOrExecution, runEndExecution, runCombineExecution, runExecution,
-  buildAgentPrompt, runAgentExecution, runClarifierExecution,
+  buildAgentPrompt, runAgentExecution, runClarifierExecution, toolsForMeta,
 } from '../src/core/graph/executor.mjs';
+import { READ_WRITE_TOOLS, IMPLEMENTER_TOOLS, MEMORY_TOOLS } from '../src/core/phases.mjs';
 
 // `store:'project'` allocations resolve under worcaHome() — MANDATORY isolation:
 // projects.mjs throws under node:test when WORCA_HOME is unset.
@@ -493,6 +494,24 @@ test('17b runAgentExecution: ctx.memoryIndex is part of the system prompt it spa
   assert.ok(r.systemPrompt.indexOf('## Worca memory') < r.systemPrompt.indexOf('You are custom.'));
   const plain = await runAgentExecution(ctx8());
   assert.ok(!plain.systemPrompt.includes('## Worca memory'), 'no index ⇒ no block');
+});
+
+test('17c toolsForMeta: code ⇒ implementer tools, memory ⇒ no Bash and no Skill, else the read-write set', () => {
+  assert.deepEqual(toolsForMeta({ sideEffect: 'code' }), IMPLEMENTER_TOOLS);
+  assert.deepEqual(toolsForMeta({ sideEffect: 'memory' }), MEMORY_TOOLS);
+  assert.deepEqual(toolsForMeta({ sideEffect: 'memory' }), ['Read', 'Write', 'Edit', 'Glob', 'Grep']);
+  assert.deepEqual(toolsForMeta({}), READ_WRITE_TOOLS);
+  assert.deepEqual(toolsForMeta(null), READ_WRITE_TOOLS);
+  assert.ok(!MEMORY_TOOLS.includes('Bash') && !MEMORY_TOOLS.includes('Skill') && !MEMORY_TOOLS.includes('MultiEdit'));
+});
+
+test('17d prepare() selects the spawn tool set through toolsForMeta ONLY — the old inline ternary is gone', () => {
+  // runAgentExecution does not return allowedTools and the mock runner ignores it, so the only
+  // way to pin the CALL SITE offline is the source: an inline `sideEffect === 'code' ? …` would
+  // silently spawn a memory agent with READ_WRITE_TOOLS (Bash + Skill) and no test would notice.
+  const src = readFileSync(new URL('../src/core/graph/executor.mjs', import.meta.url), 'utf8');
+  assert.match(src, /const allowedTools = toolsForMeta\(meta\);/, 'prepare() must delegate the choice');
+  assert.equal(src.includes("sideEffect === 'code' ? IMPLEMENTER_TOOLS"), false, 'no inline side-effect ternary anywhere in the executor');
 });
 
 test('18 runClarifierExecution gates the human and rewrites the file as {questions, answers}', async () => {

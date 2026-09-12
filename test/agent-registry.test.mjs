@@ -8,17 +8,17 @@ import { fileURLToPath } from 'node:url';
 import { loadAgentRegistry, registryToSteps, normalizeMeta, collectDomains } from '../src/core/agent-registry.mjs';
 import { AGENT_STEPS } from '../src/core/config.mjs';
 
-test('loadAgentRegistry returns all shipped agents (9 project + 2 workspace)', () => {
+test('loadAgentRegistry returns all shipped agents (10 project + 2 workspace)', () => {
   const reg = loadAgentRegistry();
   assert.deepEqual(
     Object.keys(reg).sort(),
-    ['clarify', 'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'planner', 'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner'],
+    ['clarify', 'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'memoryDefragmenter', 'planReviewer', 'planner', 'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner'],
   );
-  assert.equal(Object.keys(reg).length, 11);
+  assert.equal(Object.keys(reg).length, 12);
   // The two workspace agents are scope:'workspace-only'; the original 9 are 'project'.
   const projectScoped = Object.values(reg).filter((m) => m.scope !== 'workspace-only').map((m) => m.key).sort();
   assert.deepEqual(projectScoped,
-    ['clarify', 'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'planner', 'refiner', 'reviewer']);
+    ['clarify', 'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'memoryDefragmenter', 'planReviewer', 'planner', 'refiner', 'reviewer']);
 });
 
 test('normalizeMeta.domain: default general, sentinel shared, malformed→general, valid kebab passes', () => {
@@ -85,7 +85,7 @@ test('registry insertion order follows .order ascending', () => {
   // workspaceReviewer (order 4.5) sorts between reviewer (4) and manualTestsChecklist (5).
   assert.deepEqual(Object.keys(reg), [
     'clarify', 'workspaceScanner', 'planner', 'refiner', 'decomposer', 'implementer', 'reviewer', 'workspaceReviewer',
-    'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer',
+    'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'memoryDefragmenter',
   ]);
 });
 
@@ -109,7 +109,7 @@ test('registryToSteps matches the legacy AGENT_STEPS for the original 4', () => 
 
 test('registryToSteps appends the new agents with their display names', () => {
   const steps = registryToSteps(loadAgentRegistry());
-  assert.equal(steps.length, 9);
+  assert.equal(steps.length, 10);
   assert.deepEqual(steps[0], { key: 'clarify', label: 'Clarify', fanOut: true, asksQuestions: true, questionsLocked: true, questionsDefault: true });
   assert.deepEqual(steps[3], { key: 'decomposer', label: 'Decompose', fanOut: true, asksQuestions: true, questionsLocked: false, questionsDefault: false });
   assert.deepEqual(steps[6], { key: 'manualTestsChecklist', label: 'Manual Tests Checklist', fanOut: false, asksQuestions: true, questionsLocked: false, questionsDefault: false });

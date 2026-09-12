@@ -97,7 +97,7 @@ test('no builtin agent sidecar carries a v1 wiring field', () => {
 
 // Agent keys are DATA, never control flow: the engine is generic (spec §1).
 const AGENT_KEYS = ['planner', 'refiner', 'implementer', 'reviewer', 'decomposer',
-  'planReviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'workspaceReviewer'];
+  'planReviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'workspaceReviewer', 'memoryDefragmenter'];
 // 'clarify' is NOT in the list: it is also an artifact kind, a question kind and
 // a DB table name, and `run-harness.mjs` branches on all three.
 const KEY_ALLOW = new Set([
