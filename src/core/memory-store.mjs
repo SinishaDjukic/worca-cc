@@ -4,8 +4,8 @@
 // through it. fs posture mirrors run-context.mjs: ENOENT is a normal, silent
 // outcome; a REAL read error is reported through `onError` and skipped; nothing
 // here throws on a missing source. Every store write is preceded by a snapshot.
-import { readFile, writeFile, readdir, mkdir, rm, rename, cp } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { readFile, writeFile, readdir, mkdir, rm, rename, cp, realpath } from 'node:fs/promises';
+import { join, resolve, relative, isAbsolute, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { worcaHome } from './projects.mjs';
 import { isValidSkillName } from './skills.mjs';
@@ -16,9 +16,10 @@ export const HOOK_MAX_CHARS = 160;
 export const SNAPSHOT_KEEP = 20;
 export const GLOBAL_SCOPE = Object.freeze({ kind: 'global' });
 
-/** Every refusal this module raises: ENAME (unusable name), ECASE (case twin),
- *  ETOOBIG (over the hard cap), ENOSCOPE (no such snapshot). Callers branch on
- *  `code`; syncBack turns them into per-file rejections instead of aborting. */
+/** Every refusal this module raises: ENAME (unusable name), ECASE (case twin), ETOOBIG (over
+ *  the hard cap), EFULL (the scope holds caps.maxFilesPerScope files and this is a new one),
+ *  ENOSCOPE (no such snapshot), EESCAPE (the scope dir resolves outside the store root).
+ *  Callers branch on `code`; syncBack turns them into per-file rejections instead of aborting. */
 export class MemoryError extends Error {
   constructor(code, message) { super(message); this.name = 'MemoryError'; this.code = code; }
 }
@@ -150,6 +151,25 @@ async function writeAtomic(p, text) {
   try { await writeFile(tmp, text, 'utf8'); await rename(tmp, p); }
   catch (err) { await rm(tmp, { force: true }).catch(() => {}); throw err; }
 }
+/** The scope dir, created and PROVEN to live under the store root. A scope dir that is a
+ *  symlink or junction out of the root would carry writeAtomic's temp file + rename (and
+ *  removeMemory's rm, restoreSnapshot's rm/cp) elsewhere — spec §2/§13, the realpath
+ *  re-check P1's amendment A5 deferred. `mkdir` first: a fresh store has no root yet.
+ *  `relative` on the REAL paths handles the macOS /tmp → /private/tmp alias and (on Windows,
+ *  where path.relative is case-insensitive) a drive-letter case difference.
+ *  Two accepted edges: a linked `projects/` PARENT has the empty scope dir created at its target
+ *  before the refusal (nothing is ever written there), and because this runs before writeMemory's
+ *  cap checks a refused ETOOBIG/EFULL write can leave an empty scope dir behind (listMemory: []). */
+async function writableScopeDir(root, scope) {
+  const dir = scopeDir(root, scope);
+  await mkdir(dir, { recursive: true });
+  const [realRoot, realDir] = await Promise.all([realpath(root), realpath(dir)]);
+  const rel = relative(realRoot, realDir);
+  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new MemoryError('EESCAPE', `memory: ${dir} resolves to ${realDir}, outside the memory store — refusing to write`);
+  }
+  return dir;
+}
 function assertName(name) {
   if (!isValidMemoryName(name)) throw new MemoryError('ENAME', `memory: invalid name ${JSON.stringify(name)} — letters, digits, ".", "_" and "-" only, no extension`);
 }
@@ -240,23 +260,31 @@ export async function restoreSnapshot(root, scope, id, { source, now } = {}) {
   if (!isValidSkillName(id)) throw new MemoryError('ENAME', `memory: invalid snapshot id ${JSON.stringify(id)}`);
   const snap = (await listSnapshots(root, scope)).find((s) => s.id === id);
   if (!snap) throw new MemoryError('ENOSCOPE', `memory: no snapshot ${id}`);
+  const dir = await writableScopeDir(root, scope);   // BEFORE the pre-restore snapshot: never read or copy through a link
   await snapshotScope(root, scope, { source, now });
-  const dir = scopeDir(root, scope);
   for (const e of await listMemory(root, scope, { onError: throwUnlessJunk })) await rm(join(dir, `${e.name}.md`), { force: true });
-  await mkdir(dir, { recursive: true });
   for (const f of snap.files) await cp(join(snap.dir, f), join(dir, f));
   await bumpScopeState(root, scope, { lastWriteAt: now || new Date().toISOString() });
 }
 
 // ── writing ──────────────────────────────────────────────────────────────────
-/** Case-folded uniqueness: 'Testing' next to 'testing' is one file on macOS/Windows and two on Linux — refuse both ways. */
+/** Case-folded uniqueness: 'Testing' next to 'testing' is one file on macOS/Windows and two on
+ *  Linux — refuse both ways. Returns how many valid-named `.md` files the dir holds (the class
+ *  listMemory serves and syncBack counts), so writeMemory needs no second readdir for EFULL.
+ *  The `isFile()` + `isValidMemoryName` filters align the twin check with listMemoryDir's served
+ *  class: a DIRECTORY named `Testing.md`, or a junk-named `my Notes.md`, no longer collides and
+ *  no longer counts toward the cap. */
 async function assertNoCaseTwin(dir, name) {
   const lower = name.toLowerCase();
+  let count = 0;
   for (const e of await readdirMaybe(dir)) {
-    if (!e.name.endsWith('.md')) continue;
+    if (!e.isFile() || !e.name.endsWith('.md')) continue;
     const stem = e.name.slice(0, -3);
+    if (!isValidMemoryName(stem)) continue;
+    count++;
     if (stem !== name && stem.toLowerCase() === lower) throw new MemoryError('ECASE', `memory: "${name}" collides with existing "${stem}" (names differ only by case)`);
   }
+  return count;
 }
 /**
  * Write one memory file: validate, repair frontmatter (name forced, hook derived/clipped,
@@ -268,8 +296,8 @@ async function assertNoCaseTwin(dir, name) {
  */
 export async function writeMemory(root, scope, name, text, { source, now, caps, onError, snapshot = true } = {}) {
   assertName(name);
-  const dir = scopeDir(root, scope);
-  await assertNoCaseTwin(dir, name);
+  const dir = await writableScopeDir(root, scope);
+  const existing = await assertNoCaseTwin(dir, name);
   const when = now || new Date().toISOString();
   const repaired = repairMemoryFile(String(text ?? ''), { name, source: source || 'user', now: when, hookMaxChars: caps?.hookMaxChars });
   const bytes = bytesOf(repaired.text);
@@ -277,6 +305,11 @@ export async function writeMemory(root, scope, name, text, { source, now, caps, 
   if (hard && bytes > hard) throw new MemoryError('ETOOBIG', `memory: "${name}" is ${bytes} bytes, over the ${hard}-byte cap`);
   const target = join(dir, `${name}.md`);
   const before = await readTextMaybe(target, onError);
+  // A NEW file past the per-scope cap is refused before the snapshot (spec §2 caps; P2 amendment
+  // B12). syncBack pre-checks the same count and its reason text is identical minus the prefix.
+  if (before === null && caps?.maxFilesPerScope && existing >= caps.maxFilesPerScope) {
+    throw new MemoryError('EFULL', `memory: scope is full (${caps.maxFilesPerScope} files)`);
+  }
   if (typeof snapshot === 'function') await snapshot();
   else if (snapshot !== false) await snapshotScope(root, scope, { source, now: when });
   await writeAtomic(target, repaired.text);
@@ -286,8 +319,12 @@ export async function writeMemory(root, scope, name, text, { source, now, caps, 
 }
 export async function removeMemory(root, scope, name, { source, now, snapshot = true } = {}) {
   assertName(name);
+  // Exact-cased existence: on macOS/Windows `readTextMaybe` would happily open testing.md through
+  // "Testing" and the rm below would delete a file the caller never named. readdir is the truth.
+  const names = (await readdirMaybe(scopeDir(root, scope))).filter((e) => e.isFile()).map((e) => e.name);
+  if (!names.includes(`${name}.md`)) return false;
   const target = join(scopeDir(root, scope), `${name}.md`);
-  if ((await readTextMaybe(target)) === null) return false;
+  await writableScopeDir(root, scope);                 // a no-op remove above never created a dir; a real one is proven in-root
   const when = now || new Date().toISOString();
   if (typeof snapshot === 'function') await snapshot();
   else if (snapshot !== false) await snapshotScope(root, scope, { source, now: when });
@@ -307,8 +344,8 @@ export const MEMORY_INDEX_INTRO =
 const CLIPPED_HOOK_CHARS = 60;   // second-stage clip when the cap binds
 const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 
-function renderIndexOnce(sections, omit, hookChars) {
-  const lines = [MEMORY_INDEX_HEADING, MEMORY_INDEX_INTRO];
+function renderIndexOnce(sections, omit, hookChars, intro) {
+  const lines = [MEMORY_INDEX_HEADING, intro];
   for (const s of sections) {
     lines.push(`${flattenLine(s.label)} — ${s.dir}:`);
     const kept = [...(s.entries || [])].sort(byName).filter((e) => !omit.has(`${s.dir}/${e.name}`));
@@ -332,11 +369,11 @@ function renderIndexOnce(sections, omit, hookChars) {
  * `maxBytes` is a floor as well as a cap: the heading + intro (~430 bytes) are never
  * dropped; a smaller cap is honoured as far as the file lines allow.
  */
-export function renderMemoryIndex(sections, { maxBytes = 4096, hookMaxChars = HOOK_MAX_CHARS } = {}) {
+export function renderMemoryIndex(sections, { maxBytes = 4096, hookMaxChars = HOOK_MAX_CHARS, intro = MEMORY_INDEX_INTRO } = {}) {
   const omit = new Set();
-  let text = renderIndexOnce(sections, omit, hookMaxChars);
+  let text = renderIndexOnce(sections, omit, hookMaxChars, intro);
   if (bytesOf(text) <= maxBytes) return { text, dropped: [], warnings: [] };
-  text = renderIndexOnce(sections, omit, Math.min(hookMaxChars, CLIPPED_HOOK_CHARS));
+  text = renderIndexOnce(sections, omit, Math.min(hookMaxChars, CLIPPED_HOOK_CHARS), intro);
   // Drop oldest-updated first (an empty `updated` is oldest of all); ties by name.
   const all = sections.flatMap((s) => (s.entries || []).map((e) => ({ key: `${s.dir}/${e.name}`, name: e.name, updated: e.updated || '' })))
     .sort((a, b) => (a.updated < b.updated ? -1 : a.updated > b.updated ? 1 : byName(a, b)));
@@ -344,8 +381,73 @@ export function renderMemoryIndex(sections, { maxBytes = 4096, hookMaxChars = HO
   for (const e of all) {
     if (bytesOf(text) <= maxBytes) break;
     omit.add(e.key); dropped.push(e.name);
-    text = renderIndexOnce(sections, omit, Math.min(hookMaxChars, CLIPPED_HOOK_CHARS));
+    text = renderIndexOnce(sections, omit, Math.min(hookMaxChars, CLIPPED_HOOK_CHARS), intro);
   }
   const warnings = dropped.length ? [`memory index: dropped ${dropped.length} file(s) to fit ${maxBytes} bytes: ${dropped.join(', ')}`] : [];
   return { text, dropped, warnings };
+}
+
+// ── health (§8) ──────────────────────────────────────────────────────────────
+export const MEMORY_LEVELS = Object.freeze(['fresh', 'ok', 'due', 'overdue']);
+const DEFAULT_DEFRAG = Object.freeze({ writes: 10, files: 30, bytesPct: 60 });
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const names = (list) => `${list.slice(0, 3).map((e) => `${e.name}.md`).join(', ')}${list.length > 3 ? ', …' : ''}`;
+
+/**
+ * Pure. `entries` are listMemory rows, `state` the scope's .state counters, `caps` memoryCaps()
+ * (a caps object without `defrag` falls back to the spec defaults 10 / 30 / 60 %).
+ * fresh = no files. overdue = writes at 2× the threshold OR any file over the hard cap.
+ * due = writes ≥ threshold, files ≥ threshold, bytes ≥ bytesPct % of maxFilesPerScope × soft cap,
+ * any oversized (soft) or fence-less file, or files dropped from the index (`indexDropped`).
+ * P2 additions over spec §8's shape (amendment B27): the `{ indexDropped }` options bag, and the
+ * `overHard`, `indexDropped` and `lastDefragRunId` keys on the result.
+ */
+export function memoryHealth(entries, state, caps, { indexDropped = 0 } = {}) {
+  const list = Array.isArray(entries) ? entries : [];
+  const st = { ...EMPTY_STATE, ...(state && typeof state === 'object' ? state : {}) };
+  const T = { ...DEFAULT_DEFRAG, ...(caps?.defrag && typeof caps.defrag === 'object' ? caps.defrag : {}) };
+  const soft = caps?.softBytesPerFile ?? 8192;
+  const hard = caps?.hardBytesPerFile ?? 32768;
+  const maxFiles = caps?.maxFilesPerScope ?? 50;
+  const indexMax = caps?.indexMaxBytes ?? 4096;
+  const size = (e) => Number(e.bytes) || 0;
+  const files = list.length;
+  const bytes = list.reduce((n, e) => n + size(e), 0);
+  const oversized = list.filter((e) => size(e) > soft);
+  const overHard = list.filter((e) => size(e) > hard);
+  const invalid = list.filter((e) => e.hasFrontmatter === false);
+  const budget = maxFiles * soft;
+  // Spec §8's threshold is `bytes ≥ bytesPct % of budget`: compare integers, never a rounded
+  // percentage (Math.round would turn 59.5 % into a 60 % "due"). `pct` is for the message only.
+  const overBudget = budget > 0 && bytes * 100 >= T.bytesPct * budget;
+  const pct = budget > 0 ? Math.floor((bytes * 100) / budget) : 0;
+  const writes = Number(st.writesSinceDefrag) || 0;
+  const dropped = Number(indexDropped) || 0;
+  const reasons = [];
+  if (files > 0) {
+    if (writes >= T.writes) reasons.push(`${plural(writes, 'memory write')} since the last defragment (due at ${T.writes})`);
+    if (files >= T.files) reasons.push(`${plural(files, 'file')} in this scope (due at ${T.files})`);
+    if (overBudget) reasons.push(`${pct}% of the scope's byte budget in use (due at ${T.bytesPct}%)`);
+    if (oversized.length) reasons.push(`${plural(oversized.length, 'file')} over the ${soft}-byte soft cap: ${names(oversized)}`);
+    if (overHard.length) reasons.push(`${plural(overHard.length, 'file')} over the ${hard}-byte hard cap — runs cannot update them: ${names(overHard)}`);
+    if (invalid.length) reasons.push(`${plural(invalid.length, 'file')} without frontmatter — added by hand? worca still serves them; a defragment rewrites them: ${names(invalid)}`);
+    if (dropped > 0) reasons.push(`${plural(dropped, 'file')} dropped from the ${indexMax}-byte index agents see`);
+  }
+  const level = files === 0 ? 'fresh' : (writes >= 2 * T.writes || overHard.length) ? 'overdue' : reasons.length ? 'due' : 'ok';
+  return {
+    files, bytes, oversized: oversized.length, overHard: overHard.length, invalidFrontmatter: invalid.length, indexDropped: dropped,
+    writesSinceDefrag: writes, lastWriteAt: st.lastWriteAt, lastDefragAt: st.lastDefragAt, lastDefragRunId: st.lastDefragRunId,
+    level, reasons,
+  };
+}
+
+/** Everything a scope view or route needs in one read: the listing, the counters and the health.
+ *  The index-fit check renders the scope ALONE (a run's index is global + project, so this is a
+ *  lower bound on truncation, never an over-report). */
+export async function memoryScopeReport(root, scope, caps, { onError } = {}) {
+  const entries = await listMemory(root, scope, { onError });
+  const state = await readScopeState(root, scope);
+  const key = scopeKey(scope);
+  const { dropped } = renderMemoryIndex([{ label: key, dir: scopeDir(root, scope), entries }], { maxBytes: caps?.indexMaxBytes, hookMaxChars: caps?.hookMaxChars });
+  return { scope: key, entries, state, health: memoryHealth(entries, state, caps, { indexDropped: dropped.length }) };
 }

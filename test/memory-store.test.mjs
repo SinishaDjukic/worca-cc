@@ -82,7 +82,7 @@ test('repairMemoryFile: adds a fence, fixes the name, derives the hook, stamps s
   assert.equal(repairMemoryFile('---\nunclosed\nRule one.\n', { name: 'setup', source: 'user', now }).meta.description, 'unclosed', 'an unclosed fence is body; the hook skips fence lines');
 });
 
-import { mkdtemp, rm, readFile, writeFile, mkdir, readdir, stat, chmod } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile, mkdir, readdir, stat, chmod, symlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { after } from 'node:test';
@@ -268,3 +268,69 @@ test('snapshotScope: a REAL read error still fails the snapshot', {
     await assert.rejects(() => snapshotScope(r, GLOBAL_SCOPE, { source: 'user', now: NOW }), (e) => e.code === 'EACCES');
   } finally { await chmod(locked, 0o644); }
 });
+
+test('writeMemory: a NEW file past caps.maxFilesPerScope is EFULL; an existing file still saves; no caps ⇒ no limit', async () => {
+  const r = await root();
+  const caps = { ...CAPS, hardBytesPerFile: 32768, maxFilesPerScope: 2 };
+  await writeMemory(r, GLOBAL_SCOPE, 'a', 'A.\n', { source: 'user', now: NOW, caps });
+  await writeMemory(r, GLOBAL_SCOPE, 'b', 'B.\n', { source: 'user', now: NOW, caps });
+  await assert.rejects(() => writeMemory(r, GLOBAL_SCOPE, 'c', 'C.\n', { source: 'user', now: NOW, caps }),
+    (e) => e instanceof MemoryError && e.code === 'EFULL' && e.message === 'memory: scope is full (2 files)');
+  assert.deepEqual((await listMemory(r, GLOBAL_SCOPE)).map((e) => e.name), ['a', 'b'], 'nothing written, no snapshot taken');
+  assert.equal((await listSnapshots(r, GLOBAL_SCOPE)).length, 1, 'only the snapshot b took (a was the first write)');
+  assert.equal((await writeMemory(r, GLOBAL_SCOPE, 'a', 'A2.\n', { source: 'user', now: NOW, caps })).created, false, 'an overwrite is never "full"');
+  await writeMemory(r, GLOBAL_SCOPE, 'c', 'C.\n', { source: 'user', now: NOW });   // no caps at all: the P1 contract
+  assert.equal((await listMemory(r, GLOBAL_SCOPE)).length, 3);
+  // A junk-named `.md` is not one of the files the scope SERVES (listMemoryDir skips it), so it
+  // must not count toward the cap either — the count comes from assertNoCaseTwin's own walk.
+  const r2 = await root();
+  await mkdir(scopeDir(r2, GLOBAL_SCOPE), { recursive: true });
+  await writeFile(join(scopeDir(r2, GLOBAL_SCOPE), 'bad name.md'), 'junk\n');
+  await writeMemory(r2, GLOBAL_SCOPE, 'a', 'A.\n', { source: 'user', now: NOW, caps });
+  assert.equal((await writeMemory(r2, GLOBAL_SCOPE, 'b', 'B.\n', { source: 'user', now: NOW, caps })).created, true, 'a junk-named .md never counts toward maxFilesPerScope');
+  assert.deepEqual((await listMemory(r2, GLOBAL_SCOPE)).map((e) => e.name), ['a', 'b']);
+});
+
+test('writers refuse a scope dir whose realpath leaves the store root (EESCAPE); nothing lands at the link target', async () => {
+  const r = await root();
+  const outside = await mkdtemp(join(tmpdir(), 'worca-mem-outside-'));
+  roots.push(outside);
+  await mkdir(join(r, 'projects'), { recursive: true });
+  // A junction needs no privilege on Windows and IS the Windows escape vector (realpath resolves it).
+  await symlink(outside, join(r, 'projects', 'evil-00000001'), process.platform === 'win32' ? 'junction' : 'dir');
+  const scope = projectScope('evil-00000001');
+  await assert.rejects(() => writeMemory(r, scope, 'x', 'X.\n', { source: 'user', now: NOW }), (e) => e.code === 'EESCAPE' && /outside the memory store/.test(e.message));
+  assert.deepEqual(await readdir(outside), [], 'no temp file, no target file at the link target');
+  await writeFile(join(outside, 'x.md'), 'planted\n');
+  await assert.rejects(() => removeMemory(r, scope, 'x', { source: 'user', now: NOW }), (e) => e.code === 'EESCAPE');
+  assert.ok(existsSync(join(outside, 'x.md')), 'removeMemory never unlinked through the link');
+  // A REAL snapshot dir, so the ENOSCOPE lookup passes and the EESCAPE arm is the one under test.
+  const snapDir = join(r, '.history', 'projects', 'evil-00000001', '20260909-100000-user');
+  await mkdir(snapDir, { recursive: true });
+  await writeFile(join(snapDir, 'x.md'), 'snap\n');
+  await assert.rejects(() => restoreSnapshot(r, scope, '20260909-100000-user', { source: 'user', now: NOW }), (e) => e.code === 'EESCAPE');
+  assert.equal(await readFile(join(outside, 'x.md'), 'utf8'), 'planted\n', 'the link target was not restored over');
+  assert.equal((await listSnapshots(r, scope)).length, 1, 'the guard runs BEFORE the pre-restore snapshot: nothing was copied OUT of the link target either');
+  // The ordinary case still writes — tmpdir() on macOS is itself an alias (/var → /private/var).
+  const ok = await writeMemory(r, GLOBAL_SCOPE, 'fine', 'F.\n', { source: 'user', now: NOW });
+  assert.equal(ok.created, true);
+});
+
+test('removeMemory: a name that differs only by case from the file on disk is NOT removed (exact-cased match)', async () => {
+  const r = await root();
+  await writeMemory(r, GLOBAL_SCOPE, 'testing', 'T.\n', { source: 'user', now: NOW, caps: CAPS });
+  assert.equal(await removeMemory(r, GLOBAL_SCOPE, 'Testing', { source: 'user', now: NOW }), false, 'case-insensitive filesystems must not delete testing.md through "Testing"');
+  assert.deepEqual((await listMemory(r, GLOBAL_SCOPE)).map((e) => e.name), ['testing']);
+  assert.equal(await removeMemory(r, GLOBAL_SCOPE, 'testing', { source: 'user', now: NOW }), true);
+  assert.deepEqual(await listMemory(r, GLOBAL_SCOPE), []);
+});
+
+test('renderMemoryIndex: `intro` swaps the second line and nothing else; omitted ⇒ byte-identical to P1', () => {
+  const sections = [{ label: 'Global', dir: 'scope "global"', entries: [{ name: 'a', description: 'Hook A', paths: [], updated: NOW }] }];
+  const base = renderMemoryIndex(sections).text;
+  assert.ok(base.startsWith(`${MEMORY_INDEX_HEADING}\n${MEMORY_INDEX_INTRO}\nGlobal — scope "global":\n`));
+  const custom = renderMemoryIndex(sections, { intro: 'Read with read_memory.' }).text;
+  assert.equal(custom, base.replace(MEMORY_INDEX_INTRO, 'Read with read_memory.'));
+  assert.equal(renderMemoryIndex(sections, { intro: undefined }).text, base, 'undefined means the default');
+});
+

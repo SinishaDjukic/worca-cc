@@ -1,0 +1,109 @@
+// test/memory-health.test.mjs — memoryHealth (pure, agent-memory-design.md §8) + memoryScopeReport (fs).
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  memoryHealth, memoryScopeReport, MEMORY_LEVELS, GLOBAL_SCOPE, projectScope, scopeDir,
+  writeMemory, bumpScopeState, readScopeState,
+} from '../src/core/memory-store.mjs';
+
+const CAPS = { softBytesPerFile: 100, hardBytesPerFile: 200, maxFilesPerScope: 10, indexMaxBytes: 4096, hookMaxChars: 160, defrag: { writes: 4, files: 5, bytesPct: 60 } };
+const NOW = '2026-09-09T10:00:00.000Z';
+const file = (name, bytes, over = {}) => ({ name, description: `Hook ${name}`, paths: [], source: 'user', updated: NOW, bytes, hasFrontmatter: true, hash: name, ...over });
+const STATE = { writesSinceDefrag: 0, lastWriteAt: null, lastDefragAt: null, lastDefragRunId: null };
+
+test('levels are the four the UI knows', () => {
+  assert.deepEqual([...MEMORY_LEVELS], ['fresh', 'ok', 'due', 'overdue']);
+});
+
+test('fresh: no files ⇒ fresh with no reasons, whatever the counters say', () => {
+  const h = memoryHealth([], { ...STATE, writesSinceDefrag: 99 }, CAPS);
+  assert.equal(h.level, 'fresh');
+  assert.deepEqual(h.reasons, []);
+  assert.equal(h.files, 0); assert.equal(h.bytes, 0); assert.equal(h.writesSinceDefrag, 99);
+});
+
+test('ok: files under every threshold', () => {
+  const h = memoryHealth([file('a', 10), file('b', 20)], { ...STATE, writesSinceDefrag: 3, lastWriteAt: NOW }, CAPS);
+  assert.equal(h.level, 'ok');
+  assert.deepEqual(h.reasons, []);
+  assert.deepEqual({ files: h.files, bytes: h.bytes, oversized: h.oversized, overHard: h.overHard, invalidFrontmatter: h.invalidFrontmatter, indexDropped: h.indexDropped },
+    { files: 2, bytes: 30, oversized: 0, overHard: 0, invalidFrontmatter: 0, indexDropped: 0 });
+  assert.equal(h.lastWriteAt, NOW);
+});
+
+test('due: each trigger alone, with its exact reason', () => {
+  const one = [file('a', 10)];
+  const r = (entries, state = STATE, opts) => memoryHealth(entries, state, CAPS, opts);
+  assert.deepEqual(r(one, { ...STATE, writesSinceDefrag: 4 }).reasons, ['4 memory writes since the last defragment (due at 4)']);
+  assert.equal(r(one, { ...STATE, writesSinceDefrag: 4 }).level, 'due');
+  assert.deepEqual(r([file('a', 1), file('b', 1), file('c', 1), file('d', 1), file('e', 1)]).reasons, ['5 files in this scope (due at 5)']);
+  // budget = 10 × 100 = 1000 bytes; 60 % = 600
+  assert.deepEqual(r([file('a', 100), file('b', 100), file('c', 100), file('d', 100), file('e', 100), file('f', 100)]).reasons.filter((s) => /budget/.test(s)), ["60% of the scope's byte budget in use (due at 60%)"]);
+  // The threshold is compared on integers (spec §8's `≥`), never on a rounded percentage —
+  // 595/1000 is 59.5 %, which Math.round would turn into a 60 % "due".
+  assert.deepEqual(r([file('a', 595)]).reasons.filter((s) => /budget/.test(s)), [], '59.5% of the budget is not 60%');
+  assert.deepEqual(r([file('a', 649)]).reasons.filter((s) => /budget/.test(s)), ["64% of the scope's byte budget in use (due at 60%)"], 'the displayed share is floored, never rounded up');
+  assert.deepEqual(r([file('big', 150)]).reasons, ['1 file over the 100-byte soft cap: big.md']);
+  assert.deepEqual(r([file('a', 10, { hasFrontmatter: false })]).reasons, ['1 file without frontmatter — added by hand? worca still serves them; a defragment rewrites them: a.md']);
+  assert.deepEqual(r(one, STATE, { indexDropped: 2 }).reasons, ['2 files dropped from the 4096-byte index agents see']);
+  assert.equal(r(one, STATE, { indexDropped: 2 }).indexDropped, 2);
+});
+
+test('overdue: writes at twice the threshold, or any file over the hard cap (which is also oversized)', () => {
+  const a = memoryHealth([file('a', 10)], { ...STATE, writesSinceDefrag: 8 }, CAPS);
+  assert.equal(a.level, 'overdue');
+  const b = memoryHealth([file('huge', 250)], STATE, CAPS);
+  assert.equal(b.level, 'overdue');
+  assert.deepEqual(b.reasons, [
+    '1 file over the 100-byte soft cap: huge.md',
+    '1 file over the 200-byte hard cap — runs cannot update them: huge.md',
+  ]);
+  assert.equal(b.oversized, 1); assert.equal(b.overHard, 1);
+  assert.equal(memoryHealth([file('a', 10)], { ...STATE, writesSinceDefrag: 7 }, CAPS).level, 'due', 'one short of 2× is due, not overdue');
+});
+
+test('names are capped at three, then an ellipsis; caps without a defrag block fall back to 10 / 30 / 60', () => {
+  const many = ['a', 'b', 'c', 'd'].map((n) => file(n, 150));
+  assert.equal(memoryHealth(many, STATE, CAPS).reasons.find((s) => /soft cap/.test(s)), '4 files over the 100-byte soft cap: a.md, b.md, c.md, …');
+  const noDefrag = { softBytesPerFile: 8192, hardBytesPerFile: 32768, maxFilesPerScope: 50, indexMaxBytes: 4096, hookMaxChars: 160 };
+  assert.equal(memoryHealth([file('a', 10)], { ...STATE, writesSinceDefrag: 9 }, noDefrag).level, 'ok');
+  assert.equal(memoryHealth([file('a', 10)], { ...STATE, writesSinceDefrag: 10 }, noDefrag).level, 'due');
+  assert.equal(memoryHealth([file('a', 10)], { ...STATE, writesSinceDefrag: 20 }, noDefrag).level, 'overdue');
+});
+
+const roots = [];
+after(() => Promise.all(roots.map((d) => rm(d, { recursive: true, force: true }))));
+async function root() { const d = await mkdtemp(join(tmpdir(), 'worca-mem-health-')); roots.push(d); return d; }
+
+test('memoryScopeReport: entries + state + health from disk; the index-fit check runs on the scope alone', async () => {
+  const r = await root();
+  const caps = { ...CAPS, hardBytesPerFile: 32768, softBytesPerFile: 8192 };
+  const fresh = await memoryScopeReport(r, GLOBAL_SCOPE, caps);
+  assert.deepEqual(fresh, { scope: 'global', entries: [], state: { writesSinceDefrag: 0, lastWriteAt: null, lastDefragAt: null, lastDefragRunId: null }, health: fresh.health });
+  assert.equal(fresh.health.level, 'fresh');
+  // A 160-char hook: the index line must overflow a 450-byte cap even on a short tmpdir (Linux CI).
+  await writeMemory(r, GLOBAL_SCOPE, 'a', `---\nname: a\ndescription: ${'h'.repeat(160)}\n---\nA.\n`, { source: 'user', now: NOW, caps });
+  await bumpScopeState(r, GLOBAL_SCOPE, { writesSinceDefrag: 4 });
+  const due = await memoryScopeReport(r, GLOBAL_SCOPE, caps);
+  assert.equal(due.scope, 'global');
+  assert.deepEqual(due.entries.map((e) => e.name), ['a']);
+  assert.equal(due.state.writesSinceDefrag, 4);
+  assert.equal(due.health.level, 'due');
+  assert.deepEqual(due.health.reasons, ['4 memory writes since the last defragment (due at 4)']);
+  // A tiny index cap drops files ⇒ the report says so (the "defragment me" signal of P2-note 8).
+  const tight = await memoryScopeReport(r, GLOBAL_SCOPE, { ...caps, indexMaxBytes: 450, defrag: { writes: 99, files: 99, bytesPct: 99 } });
+  assert.equal(tight.health.indexDropped, 1);
+  assert.deepEqual(tight.health.reasons, ['1 file dropped from the 450-byte index agents see']);
+  // A project scope reports under its own key; a junk file is reported through onError, never thrown.
+  const pk = projectScope('demo-00000001');
+  await mkdir(scopeDir(r, pk), { recursive: true });
+  await writeFile(join(scopeDir(r, pk), 'bad name.md'), 'x\n');
+  const seen = [];
+  const p = await memoryScopeReport(r, pk, caps, { onError: (path, err) => seen.push(err.code) });
+  assert.equal(p.scope, 'projects/demo-00000001');
+  assert.deepEqual(seen, ['ENAME']);
+  assert.equal(p.health.level, 'fresh');
+});
