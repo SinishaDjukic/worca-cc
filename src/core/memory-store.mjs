@@ -50,6 +50,10 @@ const WIN_RESERVED_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;   // Win32 dev
 export function isValidMemoryName(name) {
   return isValidSkillName(name) && !name.startsWith('.') && !name.endsWith('.') && !/\.md$/i.test(name) && !WIN_RESERVED_RE.test(name.split('.')[0]);   // the STEM before the first dot: Win32 reserves `nul.rules.md` too
 }
+/** The ONE human wording of that rule. The /api/memory routes answer `invalid memory name — ${MEMORY_NAME_HELP}`
+ *  and ui/public/memory-view.mjs declares the same literal for the editor's client-side refusal, so the
+ *  message a user sees never depends on which side refused (test/api-memory.test.mjs compares them). */
+export const MEMORY_NAME_HELP = 'letters, digits, ".", "_" and "-" only, no extension, no leading or trailing dot';
 
 // Built from char codes so the SOURCE carries no escape sequence (see the plan's
 // escape-safety rule): C0 + DEL, C1 (incl. U+0085 NEL), U+2028 and U+2029.

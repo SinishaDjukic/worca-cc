@@ -83,6 +83,7 @@ export const SANDBOX_NOTE =
   "The only view into a repository is this chat's read-only detached worktrees: list_worktrees/open_worktree give the path; Read, Grep and Glob work under that path, and the worca `git` tool serves history and diffs. " +
   'The one other place Read may go is the file path read_attachment returns for an image or PDF attachment of this chat; never read anywhere else on disk. ' +
   "Never call propose_workflow or propose_run yourself: proposals belong to the assistant's own turn (a sub-agent's call produces no card). " +
+  "Never call remember or forget yourself: saving or removing memory belongs to the assistant's own turn (list_memory and read_memory are fine). " +
   'Answer from tool results only; never invent run data; return a short report.';
 
 /** System-prompt-only mock markers (the runner parses the ask role from the SYSTEM prompt, Task 16). */

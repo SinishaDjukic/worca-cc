@@ -4,7 +4,7 @@
 // mount never enters the worktree diff. Default (detached) mode + a legacy pin.
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile, readdir } from 'node:fs/promises';
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,7 +12,8 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { runAgentExecution } from '../src/core/graph/executor.mjs';
-import { memoryRoot, writeMemory, readMemory, listMemory, readScopeState, GLOBAL_SCOPE, projectScope } from '../src/core/memory-store.mjs';
+import { memoryRoot, writeMemory, readMemory, listMemory, readScopeState, GLOBAL_SCOPE, projectScope, bumpScopeState, listSnapshots } from '../src/core/memory-store.mjs';
+import { projectKey } from '../src/core/store.mjs';
 import { RESULTS_FILE } from '../src/core/results.mjs';
 import { RUN_LOG_FILE } from '../src/core/run-log.mjs';
 import { readPipelineByKey, readPipelineForResume } from '../src/core/artifacts.mjs';
@@ -279,4 +280,137 @@ test('junk in a store scope never blocks the run\'s memory writes, and is logged
   assert.match(log, /memory: ignored [^"]*my notes\.md \(invalid name/, log.split('\n').filter((l) => /memory/.test(l)).join('\n'));
   assert.equal(/cannot read [^"]*my notes\.md/.test(log), false, 'a junk name is not an I/O failure');
   assert.ok(!seen[0].index.includes('my notes'), 'and it never reaches an agent index');
+});
+
+test('wf_memory_defrag + memoryScope global: one-scope mount, the mock merges, sync lands as defrag:, .state stamped, project scope untouched', { timeout: 120000 }, async () => {
+  await rm(memoryRoot(), { recursive: true, force: true });
+  const dir = gitDir('mem');
+  const pk = projectKey(dir);
+  await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'a', 'Rule A.\n', { source: 'user', now: NOW, caps: CAPS });
+  await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'b', 'Rule B.\n', { source: 'user', now: NOW, caps: CAPS });
+  await writeMemory(memoryRoot(), projectScope(pk), 'keep', 'Keep me.\n', { source: 'user', now: NOW, caps: CAPS });
+  await bumpScopeState(memoryRoot(), GLOBAL_SCOPE, { writesSinceDefrag: 7 });
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_memory_defrag', memoryScope: 'global', prompt: 'Defragment global memory.', claude: { mock: true }, auto: true,
+  });
+  assert.equal(orch.memoryScope, 'global');
+  const res = await orch.run();
+  assert.equal(res.status, 'done', JSON.stringify(res));
+  const st = orch.getState();
+  assert.deepEqual((await readdir(st.memoryMount)).sort(), ['global'], 'ONE scope dir is mounted — never project/');
+  assert.deepEqual((await listMemory(memoryRoot(), GLOBAL_SCOPE)).map((e) => e.name), ['a'], 'b was merged into a and removed');
+  const a = await readMemory(memoryRoot(), GLOBAL_SCOPE, 'a');
+  assert.equal(a.meta.source, `defrag:${orch.pipeline.id}`);
+  assert.ok(a.body.includes('Rule B.'), 'the merged body landed');
+  const state = await readScopeState(memoryRoot(), GLOBAL_SCOPE);
+  assert.equal(state.writesSinceDefrag, 0, 'zeroed AFTER the final sync counted the defragmenter\'s own writes');
+  assert.equal(state.lastDefragRunId, orch.pipeline.id);
+  assert.match(String(state.lastDefragAt), /^\d{4}-\d{2}-\d{2}T/);
+  const snaps = await listSnapshots(memoryRoot(), GLOBAL_SCOPE);
+  const snap = snaps.find((s) => s.id.includes(`-defrag-${orch.pipeline.id}`));   // A8: a same-second second snapshot carries a -NN suffix
+  assert.ok(snap, `a defrag-sourced snapshot: ${snaps.map((s) => s.id)}`);
+  assert.deepEqual(snap.files, ['a.md', 'b.md'], 'the pre-defrag scope is recoverable');
+  assert.deepEqual((await listMemory(memoryRoot(), projectScope(pk))).map((e) => e.name), ['keep'], 'the other scope was never mounted, never touched');
+  const results = JSON.parse(await readFile(join(st.pipelineDir, RESULTS_FILE), 'utf8'));
+  // ONE entry: the node sync writes the repaired text back into the mount, so _buildResults'
+  // final sync is a no-op (and an emptied b.md never re-enters the baseline — B19).
+  assert.equal(results.memory.changes.length, 1);
+  assert.equal(results.memory.changes[0].agentKey, 'memoryDefragmenter');
+  assert.deepEqual(results.memory.changes[0].modified, [{ scope: 'global', name: 'a' }]);
+  assert.deepEqual(results.memory.changes[0].deleted, [{ scope: 'global', name: 'b' }]);
+  assert.deepEqual(results.memory.totals, { added: 0, modified: 1, deleted: 1, rejected: 0 });
+  assert.ok(existsSync(join(st.pipelineDir, 'defrag-report.md')), 'the report output landed in the pipeline dir');
+  const detail = await readPipelineByKey(pk, orch.pipeline.id);
+  assert.match(detail.auditMarkdown, /Memory: \+0 ~1 -1 by memoryDefragmenter/);
+  assert.match(detail.auditMarkdown, /Memory: Global defragmented by this run\./);
+});
+
+test('memoryScope: the constructor refuses the illegal combinations (the API/CLI answer 400 first; this is the last line)', () => {
+  const dir = gitDir('mem');
+  assert.throws(() => createOrchestrator({ projectDir: dir, workflowId: 'wf_memory_defrag', prompt: 'x', claude: { mock: true } }), /needs memoryScope/);
+  assert.throws(() => createOrchestrator({ projectDir: dir, workflowId: 'wf_default', memoryScope: 'global', prompt: 'x', claude: { mock: true } }), /only valid with the Memory defragment workflow/);
+  assert.throws(() => createOrchestrator({ projectDir: dir, workflowId: 'wf_memory_defrag', memoryScope: 'both', prompt: 'x', claude: { mock: true } }), /must be "global" or "project"/);
+  const workspace = { id: 'wks-two-0000abcd', key: 'wks-two-0000abcd', name: 'Two', description: '',
+    projects: [{ projectKey: 'a-00000001', projectName: 'A', projectDir: dir }, { projectKey: 'b-00000002', projectName: 'B', projectDir: dir }] };
+  assert.throws(() => createOrchestrator({ workspace, workflowId: 'wf_memory_defrag', memoryScope: 'global', prompt: 'x', claude: { mock: true } }), /targets one project, not a workspace/);
+});
+
+test('a defragment run whose mount fails PAUSES on the setup failure policy instead of running on nothing', { timeout: 120000 }, async () => {
+  const dir = gitDir('mem');
+  const orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_memory_defrag', memoryScope: 'project', prompt: 'Defragment.', claude: { mock: true }, auto: true });
+  orch._mountMemoryUnguarded = async () => { throw new Error('boom'); };
+  const res = await orch.run();
+  assert.equal(res.status, 'paused', JSON.stringify(res));
+  const st = orch.getState();
+  assert.equal(st.pauseReason, 'error');
+  assert.match(String(st.pauseDetail || ''), /memory not mounted: boom/);
+  assert.equal(orch.memory, null, 'no mount, no index');
+  const detail = await readPipelineByKey(projectKey(dir), orch.pipeline.id);
+  assert.match(detail.auditMarkdown, /Memory: not mounted \(boom\) — a defragment run cannot continue\./);
+});
+
+test('memoryScope rides the resume point: a paused defrag resumes with ONE scope and still stamps', { timeout: 120000 }, async () => {
+  await rm(memoryRoot(), { recursive: true, force: true });
+  const dir = gitDir('mem');
+  await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'a', 'Rule A.\n', { source: 'user', now: NOW, caps: CAPS });
+  await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'b', 'Rule B.\n', { source: 'user', now: NOW, caps: CAPS });
+  let orchRef = null; let hangOnce = true;
+  const mkRunners = () => ({
+    producer: async (ctx) => {
+      if (hangOnce && ctx.node.key === 'memoryDefragmenter') {
+        hangOnce = false;
+        queueMicrotask(() => orchRef.pause());
+        return new Promise((_r, rej) => {
+          const onAbort = () => { const e = new Error('aborted'); e.name = 'AbortError'; rej(e); };
+          if (ctx.signal.aborted) onAbort(); else ctx.signal.addEventListener('abort', onAbort, { once: true });
+        });
+      }
+      return runAgentExecution(ctx);
+    },
+  });
+  const orch1 = createOrchestrator({ projectDir: dir, workflowId: 'wf_memory_defrag', memoryScope: 'global', prompt: 'Defragment global memory.', claude: { mock: true }, auto: true, runners: mkRunners() });
+  orchRef = orch1;
+  assert.equal((await orch1.run()).status, 'paused');
+  const saved = readPipelineForResume(orch1.state.id);
+  assert.equal(saved.resumePoint.memoryScope, 'global', 'the point carries the option');
+  const orch2 = createOrchestrator({ projectDir: dir, claude: { mock: true }, auto: true, runners: mkRunners(), resume: saved });
+  orchRef = orch2;
+  assert.equal(orch2.memoryScope, 'global', 'rehydrated from the point, not from opts');
+  assert.equal((await orch2.resume()).status, 'done');
+  assert.deepEqual((await readdir(orch2.getState().memoryMount)).sort(), ['global'], 'the remount is still one scope');
+  assert.deepEqual((await listMemory(memoryRoot(), GLOBAL_SCOPE)).map((e) => e.name), ['a']);
+  assert.equal((await readScopeState(memoryRoot(), GLOBAL_SCOPE)).lastDefragRunId, orch2.pipeline.id);
+});
+
+// I1-F5 / amendment B31: "defragmented" must mean the store IS what the agent intended. A run
+// whose writes were all refused is `done` all the same — zeroing the counters there would hide
+// an unchanged (or worse) scope behind a green health card.
+test('a defragment run whose write was REJECTED finishes done but does NOT stamp the scope', { timeout: 120000 }, async () => {
+  await rm(memoryRoot(), { recursive: true, force: true });
+  const dir = gitDir('mem');
+  await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'a', 'Rule A.\n', { source: 'user', now: NOW, caps: CAPS });
+  await bumpScopeState(memoryRoot(), GLOBAL_SCOPE, { writesSinceDefrag: 7 });
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_memory_defrag', memoryScope: 'global', prompt: 'Defragment global memory.', claude: { mock: true }, auto: true,
+    runners: {
+      producer: async (ctx) => {
+        if (ctx.node.key === 'memoryDefragmenter') {
+          // Over the 32 KB hard cap: syncBack refuses it and the node still finishes.
+          await writeFile(join(ctx.memoryMount, 'global', 'a.md'), `---\nname: a\n---\n${'x'.repeat(40000)}\n`);
+        }
+        return runAgentExecution(ctx);
+      },
+    },
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', JSON.stringify(res));
+  const results = JSON.parse(await readFile(join(orch.getState().pipelineDir, RESULTS_FILE), 'utf8'));
+  assert.ok(results.memory.totals.rejected >= 1, JSON.stringify(results.memory.totals));
+  const state = await readScopeState(memoryRoot(), GLOBAL_SCOPE);
+  assert.equal(state.writesSinceDefrag, 7, 'the counter is NOT reset');
+  assert.equal(state.lastDefragRunId, null);
+  assert.equal(state.lastDefragAt, null);
+  const detail = await readPipelineByKey(projectKey(dir), orch.pipeline.id);
+  assert.match(detail.auditMarkdown, /counters not reset/);
+  assert.equal(/defragmented by this run/.test(detail.auditMarkdown), false, 'and it never claims success');
 });

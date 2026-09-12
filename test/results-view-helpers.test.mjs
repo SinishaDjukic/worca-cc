@@ -51,11 +51,11 @@ test('memoryChangesRows: one row per change entry, chips per file, rejected chip
   ] });
   assert.deepEqual(rows, [
     { node: 'implementer', chips: [
-      { kind: 'add', text: '+ project/lesson.md' },
-      { kind: 'mod', text: '~ global/testing.md' },
-      { kind: 'rej', text: '✕ global/huge.md', title: 'over the 32768-byte cap' },
+      { kind: 'add', text: '+ project/lesson.md', scope: 'project', name: 'lesson' },
+      { kind: 'mod', text: '~ global/testing.md', scope: 'global', name: 'testing' },
+      { kind: 'rej', text: '✕ global/huge.md', title: 'over the 32768-byte cap', scope: 'global', name: 'huge' },
     ] },
-    { node: 'resume', chips: [{ kind: 'del', text: '− project/old.md' }] },
+    { node: 'resume', chips: [{ kind: 'del', text: '− project/old.md', scope: 'project', name: 'old' }] },
   ]);
   assert.deepEqual(memoryChangesRows(null), []);
   assert.deepEqual(memoryChangesRows({ changes: [] }), []);

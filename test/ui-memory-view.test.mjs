@@ -253,6 +253,49 @@ test('a memory-changed frame never clobbers a dirty editor — it warns instead'
   assert.equal(memPane(window).querySelector('.mem-text').value, 'my unsaved edit\n', 'the edit survived the second frame too');
 });
 
+test('a memory-changed frame keeps focus and the selection in the dirty textarea; the next Space never reloads the file', async () => {
+  const { window, calls } = await boot();
+  await go(window, 'settings/memory/testing');
+  const ta = memPane(window).querySelector('.mem-text');
+  ta.value = 'my unsaved edit\n';
+  ta.focus();
+  ta.setSelectionRange(3, 10);
+  const fileGets = () => calls.filter((c) => c.url.endsWith('/api/memory/global/files/testing') && c.method === 'GET').length;
+  const before = fileGets();
+  WSStub.last._message({ type: 'memory-changed', scope: 'global' });
+  await new Promise((r) => setTimeout(r, 300));
+  await tick(); await tick(); await tick();
+  const active = window.document.activeElement;
+  assert.ok(active && active.classList.contains('mem-text'), `focus stayed in the textarea, got ${active && active.className}`);
+  assert.equal(active.value, 'my unsaved edit\n');
+  assert.deepEqual([active.selectionStart, active.selectionEnd], [3, 10], 'the selection survived the repaint');
+  active.dispatchEvent(new window.KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+  await tick(); await tick(); await tick();
+  assert.equal(memPane(window).querySelector('.mem-text').value, 'my unsaved edit\n', 'the draft is intact');
+  assert.equal(fileGets(), before, 'Space never reloaded the file from disk');
+  assert.match(window.document.getElementById('memory-msg').textContent, /changed on disk while you were editing/, 'the warning stays');
+});
+
+test('Defragment never discards a dirty draft', async () => {
+  const { window, calls } = await boot();
+  await go(window, 'settings/memory/testing');
+  memPane(window).querySelector('.mem-text').value = 'my unsaved edit\n';
+  click(window, memPane(window).querySelector('.mem-defrag'));
+  await tick(); await tick(); await tick(); await tick();
+  assert.ok(calls.some((c) => c.url.endsWith('/api/memory/global/defragment') && c.method === 'POST'), 'the run was started');
+  assert.equal(memPane(window).querySelector('.mem-text').value, 'my unsaved edit\n', 'the draft survived the reload');
+  assert.match(window.document.getElementById('memory-msg').textContent, /Defragment run started\./);
+});
+
+test('linked History memory chips keep their kind colour: the kind rules outrank button.hd-mem-chip', () => {
+  // `button.hd-mem-chip` (0,1,1) resets colour; a bare `.hd-mem-add` (0,1,0) would lose to it
+  // whatever the source order, so the kind rules must be compound selectors.
+  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  for (const kind of ['add', 'mod', 'del', 'rej']) {
+    assert.match(css, new RegExp(`\\.hd-mem-chip\\.hd-mem-${kind}\\{color:`), `.hd-mem-chip.hd-mem-${kind} carries the colour`);
+  }
+});
+
 test('two loads in flight: the LAST one issued wins, whatever order the responses land in', async () => {
   let slow = true;
   const { window } = await boot({
@@ -368,4 +411,56 @@ test('an Ask card handoff carrying memoryScope paints the seg and rides the next
   const run = calls.find((c) => c.url.endsWith('/api/run') && c.method === 'POST');
   assert.ok(run, 'the form posted');
   assert.equal(run.body.memoryScope, 'project', 'the proposal scope was not silently turned into global');
+});
+
+// ---- History detail: the Memory changes chips (agent-memory-design.md §6 / B6) ----
+// buildHdOverview is the only site that renders them; the History screen itself is exercised by
+// test/ui-history-detail.test.mjs, so the chips are driven through the same test hook it uses.
+const HD_STATE = {
+  id: 'p1', status: 'done', startedAt: '2026-09-09T10:00:00Z', totalActiveMs: 1000, totalCostUsd: 0.1,
+  stepper: null, steps: [], active: [], warnings: [], wireDeliveries: {}, gate: null,
+};
+
+test('History memory chips: added and modified files link to their Memory view, a deleted one stays inert', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  const sec = doc.createElement('div');
+  const record = { id: 'p1', projectKey: 'alpha-00000001', title: 't' };
+  window.__np.buildHdOverview(sec, record, {
+    state: HD_STATE,
+    results: null,
+    memory: { changes: [{ nodeId: 'n_impl', agentKey: 'implementer',
+      added: [{ scope: 'global', name: 'testing' }],
+      modified: [{ scope: 'project', name: 'conv' }],
+      deleted: [{ scope: 'global', name: 'old' }],
+      rejected: [] }] },
+  });
+  const chips = [...sec.querySelectorAll('.hd-mem-chip')];
+  assert.deepEqual(chips.map((c) => c.tagName), ['BUTTON', 'BUTTON', 'SPAN']);
+  click(window, chips[0]);
+  assert.equal(window.location.hash, '#settings/memory/testing');
+  click(window, chips[1]);
+  assert.equal(window.location.hash, '#projects/alpha-00000001/memory/conv', 'the mount-relative scope resolved to this run\'s project');
+});
+
+test('History memory chips: a rejected write links to the stored file; a project chip with no key does not', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  const sec = doc.createElement('div');
+  window.__np.buildHdOverview(sec, { id: 'p1', projectKey: 'alpha-00000001', title: 't' }, {
+    state: HD_STATE, results: null,
+    memory: { changes: [{ nodeId: 'n', agentKey: null, added: [], modified: [], deleted: [],
+      rejected: [{ scope: 'global', name: 'huge', reason: 'over the 32768-byte cap' }] }] },
+  });
+  const rej = sec.querySelector('.hd-mem-rej');
+  assert.equal(rej.tagName, 'BUTTON');
+  assert.equal(rej.title, 'over the 32768-byte cap');
+  click(window, rej);
+  assert.equal(window.location.hash, '#settings/memory/huge');
+  const sec2 = doc.createElement('div');
+  window.__np.buildHdOverview(sec2, { id: 'p2', projectKey: '', title: 't' }, {
+    state: HD_STATE, results: null,
+    memory: { changes: [{ nodeId: 'n', agentKey: null, added: [{ scope: 'project', name: 'lesson' }], modified: [], deleted: [], rejected: [] }] },
+  });
+  assert.equal(sec2.querySelector('.hd-mem-chip').tagName, 'SPAN', 'no project key, nothing to open');
 });

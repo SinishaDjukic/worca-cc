@@ -730,6 +730,22 @@ test('onWorktreeMutation dep: a worktree write in the stream reaches the injecte
   assert.equal(frames.at(-1).status, 'done', 'a broken sink never breaks the turn');
 });
 
+test('onMemoryMutation dep: a remember in the stream reaches the injected sink with its scope key', async () => {
+  const s = seed(); const pokes = [];
+  const { turn } = makeTurn(s, {}, {
+    onMemoryMutation: (e) => pokes.push(e),
+    runClaudeImpl: async ({ onEvent }) => {
+      toolUse(onEvent, 'm1', 'toolu_1', 'mcp__worca__remember', { scope: 'global', name: 'style', body: 'x' });
+      toolResult(onEvent, 'toolu_1', JSON.stringify({ scope: 'global', projectKey: null, scopeKey: 'global', name: 'style', bytes: 1, created: true, mode: 'replace' }));
+      say(onEvent, 'm2', 'saved');
+      push(onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  assert.deepEqual(pokes, [{ scope: 'global', tool: 'remember' }]);
+});
+
 test('liveCostRates dep: ask-usage frames carry a display estimate before the result and null after; no sink sees it', async () => {
   clearAskLedger();
   const s = seed(); const costs = [];

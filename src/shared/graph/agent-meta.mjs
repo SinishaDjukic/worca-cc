@@ -16,6 +16,9 @@ const RESERVED_PORT_ID = 'await';
 const DOMAIN_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const COLORS = new Set(['green', 'peach', 'red', 'blue', 'violet', 'amber']);
 const RUNNER_TYPES = new Set(['producer', 'verifier', 'clarifier']);
+/** What an agent may write outside its output ports: 'code' (the worktree — implementer tool
+ *  set) or 'memory' (worca's memory mount only — Read/Write/Edit/Glob/Grep, no Bash). */
+const SIDE_EFFECTS = new Set(['code', 'memory']);
 const INPUT_AS = new Set(['file', 'answers', 'fix-review', 'worktree']);
 /** The port type each non-default `as` renderer requires. `file` is the default
  *  and is materialized on NON-VOID inputs only, which makes `worktree` the only
@@ -112,7 +115,7 @@ export function normalizeAgentMeta(raw, opts = {}) {
   // Scope coercion mirrors color: anything but the explicit 'workspace-only'
   // marker is a normal project agent, so a typo fails safe to a VISIBLE agent.
   const scope = raw.scope === 'workspace-only' ? 'workspace-only' : 'project';
-  if (raw.sideEffect !== undefined && raw.sideEffect !== 'code') err('sideEffect must be "code" when present');
+  if (raw.sideEffect !== undefined && !SIDE_EFFECTS.has(raw.sideEffect)) err(`sideEffect must be one of ${[...SIDE_EFFECTS].join(', ')}`);
   if (raw.workspaceStrategy !== undefined && !WORKSPACE_STRATEGIES.has(raw.workspaceStrategy)) {
     err(`workspaceStrategy must be one of ${[...WORKSPACE_STRATEGIES].join(', ')}`);
   }
@@ -164,7 +167,7 @@ export function normalizeAgentMeta(raw, opts = {}) {
   // an absent field means "the default", so a v2 entry stays diffable against
   // the sidecar that produced it.
   if (verdict) meta.verdict = verdict;
-  if (raw.sideEffect === 'code') meta.sideEffect = 'code';
+  if (SIDE_EFFECTS.has(raw.sideEffect)) meta.sideEffect = raw.sideEffect;
   if (mockRole) meta.mockRole = mockRole;
   if (raw.wantsRequest) meta.wantsRequest = true;
   if (raw.workspaceFanOut) meta.workspaceFanOut = true;

@@ -2214,11 +2214,17 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hd-ov-mem .mono{font-family:var(--mono);}
 .hd-mem-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
 .hd-mem-node{color:var(--ink-3);min-width:90px;}
+/* A linked chip is a real <button> (B6): reset the UA look so it reads as the span next to it. The
+   kind colour rules below are compound (.hd-mem-chip.hd-mem-*, 0,2,0) so they outrank
+   button.hd-mem-chip's color reset (0,1,1) — source order alone would not. */
 .hd-mem-chip{padding:2px 8px;border-radius:999px;border:1px solid var(--line);font-size:12px;}
-.hd-mem-add{color:var(--green-ink);}
-.hd-mem-mod{color:var(--blue-ink);}
-.hd-mem-del{color:var(--ink-3);text-decoration:line-through;}
-.hd-mem-rej{color:var(--red-ink);}
+button.hd-mem-chip{background:transparent;font:inherit;font-family:var(--mono);font-size:12px;line-height:inherit;color:inherit;cursor:pointer;}
+button.hd-mem-chip:hover{background:var(--field);}
+button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.hd-mem-chip.hd-mem-add{color:var(--green-ink);}
+.hd-mem-chip.hd-mem-mod{color:var(--blue-ink);}
+.hd-mem-chip.hd-mem-del{color:var(--ink-3);text-decoration:line-through;}
+.hd-mem-chip.hd-mem-rej{color:var(--red-ink);}
 .hd-ov-label{font:600 10.5px var(--sans);letter-spacing:.14em;color:var(--ink-3);}
 .hd-ov-value{margin-top:10px;font-size:22px;color:var(--ink);}
 .hd-ov-sub{margin-top:6px;font-size:11.5px;color:var(--ink-3);overflow-wrap:anywhere;}
@@ -2262,6 +2268,15 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .mem-host .mono{font-family:var(--mono);}
 .pl-item .mem-host{padding:0 20px 18px;}
 @media (max-width:900px){.mem-host{grid-template-columns:1fr;}}
+
+/* Projects page: the per-row Memory expander (agent-memory-design.md §10). */
+#projects-list .proj-mem-head{display:flex;align-items:center;gap:8px;padding:8px 20px 12px;cursor:pointer;color:var(--ink-3);font:600 10.5px var(--sans);letter-spacing:.14em;text-transform:uppercase;}
+#projects-list .proj-mem-head:hover{color:var(--ink-2);}
+#projects-list .proj-mem-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+#projects-list .proj-mem-head .chev{transition:transform .15s ease;}
+#projects-list .proj-mem-head[aria-expanded="true"] .chev{transform:rotate(180deg);}
+#projects-list .proj-mem-detail{padding:0 0 4px;}
+#projects-list .proj-mem-detail .form-msg{margin:0 20px 8px;}
 
 /* ---------- History detail: Agents tab ---------- */
 .hd-ag-group{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);

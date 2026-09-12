@@ -26,6 +26,9 @@ import { join } from 'node:path';
 export const READ_WRITE_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'Skill'];
 // Implementer additionally gets MultiEdit for larger, multi-hunk edits.
 export const IMPLEMENTER_TOOLS = ['Read', 'Write', 'Edit', 'MultiEdit', 'Bash', 'Grep', 'Glob', 'Skill'];
+// A memory agent (sideEffect 'memory', agent-memory-design.md §7.1) edits files under the
+// run's memory mount and nothing else: no Bash, no Skill, no MultiEdit.
+export const MEMORY_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep'];
 
 /**
  * Effective `--allowedTools` for a node: the role's baseline file/exec tools UNION

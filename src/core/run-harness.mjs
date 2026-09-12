@@ -40,8 +40,8 @@ import {
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   memoryCaps,
 } from './settings.mjs';
-import { mountDirs, mountMemory, syncBack, memoryTotals } from './memory-sync.mjs';
-import { memoryRoot, listMemoryDir, renderMemoryIndex } from './memory-store.mjs';
+import { mountDirs, mountMemory, syncBack, memoryTotals, validateMemoryScope, withStoreLock } from './memory-sync.mjs';
+import { memoryRoot, listMemoryDir, renderMemoryIndex, bumpScopeState } from './memory-store.mjs';
 import { readCostCapOverride, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
@@ -675,6 +675,15 @@ export class RunHarness extends EventEmitter {
     this._pauseGate = null;                  // gate context snapshot when paused at a gate
     this._resumeNodeSessions = null;         // nodeId -> sessionId map, set by resume() (Task 5)
     this.resumeOpts = this.opts.resume || null; // { row, resumePoint, steps } from readPipelineForResume
+    // Agent memory (agent-memory-design.md §7.3): the defragment run option. A resumed run reads
+    // it back from its resume point — the resume sites pass no run options (B10). The API and the
+    // CLI validated already; this throw is the programming-error backstop (never a 400).
+    this.memoryScope = this.opts.memoryScope || this.resumeOpts?.resumePoint?.memoryScope || null;
+    {
+      const wf = this.resumeOpts?.resumePoint?.workflowId || this.workflowId;
+      const reason = validateMemoryScope({ workflowId: wf, memoryScope: this.memoryScope, isWorkspace: this.isWorkspace });
+      if (reason) throw new Error(reason);
+    }
     this.pendingQuestion = null; // { id, resolve, reject, kind }
     this._recovery = null;      // class -> in-flight Promise<'retry'|'pause'> (same-class dedupe)
     this._askTail = null;       // serializes _ask: ONE prompt open at a time (recovery + step questions)
@@ -1150,6 +1159,7 @@ export class RunHarness extends EventEmitter {
       await this._persist();
       await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
       await this._buildResults();          // refs + worktree still live here
+      await this._stampDefrag();           // AFTER the final sync inside _buildResults counted the defragmenter's writes
       await this._reportToSource();        // task-source write-back (never throws, spec §7.5)
       this._emit('done', { status: 'done', pipelineDir: this.pipeline.dir });
       return { status: 'done', pipelineDir: this.pipeline.dir };
@@ -1479,6 +1489,7 @@ export class RunHarness extends EventEmitter {
       await this._persist();
       await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
       await this._buildResults();          // refs + worktree still live here
+      await this._stampDefrag();           // AFTER the final sync inside _buildResults counted the defragmenter's writes
       await this._reportToSource();        // task-source write-back (never throws, spec §7.5)
       this._emit('done', { status: 'done', pipelineDir: this.pipeline.dir });
       return { status: 'done', pipelineDir: this.pipeline.dir };
@@ -1812,7 +1823,9 @@ export class RunHarness extends EventEmitter {
   /** Mount the memory store into this run — best-effort. Memory is additive (spec §4.3):
    *  a store/mount fs failure degrades the run to "no memory" (no index, no sync) and is
    *  logged + audited; it never pauses the run at 'setup', where the replay would hit the
-   *  same error again. */
+   *  same error again. EXCEPTION (amendment B8): a DEFRAGMENT run (`this.memoryScope` set) IS
+   *  its mount — the error is rethrown and run()'s setup failure policy parks the run
+   *  paused/error with setupIncomplete, so a retryable mount failure can resume. */
   async _mountMemory({ resume = false } = {}) {
     if (!this.pipeline?.dir) return;
     try { await this._mountMemoryUnguarded({ resume }); }
@@ -1820,6 +1833,13 @@ export class RunHarness extends EventEmitter {
       this.memory = null; this.memoryIndex = ''; this.state.memoryMount = null;
       if (existsSync(this._memoryLedgerPath())) await this._writeMemoryLedger({ neutralised: true });
       const why = String(err?.message || err).split('\n')[0];
+      // A defragment run IS its mount (B8): rethrow, and run()'s setup failure policy parks the run
+      // as paused/error with setupIncomplete — a retryable mount failure resumes, a persistent one
+      // stays visible. An ordinary run degrades to "no memory" as in P1.
+      if (this.memoryScope) {
+        await appendAudit(this.pipeline.dir, `Memory: not mounted (${why}) — a defragment run cannot continue.`).catch(() => {});
+        throw new Error(`memory not mounted: ${why}`);
+      }
       this._log('memory', 'warn', `memory not mounted: ${why} — this run carries no memory index and its agents' memory writes are not captured`);
       await appendAudit(this.pipeline.dir, `Memory: not mounted (${why}).`).catch(() => {});
     }
@@ -1833,7 +1853,7 @@ export class RunHarness extends EventEmitter {
   async _mountMemoryUnguarded({ resume }) {
     const root = memoryRoot();
     const mount = join(this.pipeline.dir, 'memory');          // always recomputed — never the ledger's absolute path
-    const dirs = mountDirs({ members: this.members, isWorkspace: this.isWorkspace, memoryScope: this.opts.memoryScope || null });
+    const dirs = mountDirs({ members: this.members, isWorkspace: this.isWorkspace, memoryScope: this.memoryScope });
     const onError = (p, err) => this._memoryReadWarn(p, err);
     if (resume) {
       let ledger = null;
@@ -1913,7 +1933,7 @@ export class RunHarness extends EventEmitter {
   async _syncMemoryWith({ mount, dirs, baseline, nodeId, executionId, agentKey, label }) {
     const now = new Date().toISOString();
     const res = await syncBack({
-      root: memoryRoot(), mount, dirs, baseline, source: `run:${this.pipeline.id}`, now,
+      root: memoryRoot(), mount, dirs, baseline, source: `${this.memoryScope ? 'defrag' : 'run'}:${this.pipeline.id}`, now,
       caps: memoryCaps(), onWarn: (w) => this._log('memory', 'warn', w),
       onError: (p, err) => this._memoryReadWarn(p, err),
     });
@@ -1956,6 +1976,31 @@ export class RunHarness extends EventEmitter {
     const tmp = `${file}.tmp-${process.pid}-${++this._ledgerSeq}`;
     try { await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8'); await rename(tmp, file); }
     catch (err) { this._log('memory', 'warn', `memory ledger not written: ${err?.message || err}`); }
+  }
+
+  /** A finished defragment run resets the scope's counters (spec §5, §7): called on the `done`
+   *  arms only, after _buildResults' final sync. `this.memory.dirs[0]` is the one mounted scope.
+   *  Amendment B31: a run whose ledger holds ANY rejected write did not produce the scope the
+   *  agent intended — leave the counters alone (health stays `due`) and say so, loudly.
+   *  `withStoreLock` is a per-process promise chain: it serialises this stamp against this
+   *  process's own syncs only, not against another worca process. */
+  async _stampDefrag() {
+    if (!this.memoryScope || !this.memory?.dirs?.length) return;
+    const d = this.memory.dirs[0];
+    const { rejected } = memoryTotals(this.memoryChanges);
+    if (rejected) {
+      this._log('memory', 'warn', `Memory: ${d.label} — ${rejected} write(s) were rejected during this defragment; counters NOT reset (see the rejections above)`);
+      await appendAudit(this.pipeline.dir, `Memory: ${d.label} defragment finished with ${rejected} rejected write(s) — counters not reset.`).catch(() => {});
+      return;
+    }
+    const now = new Date().toISOString();
+    try {
+      await withStoreLock(memoryRoot(), () => bumpScopeState(memoryRoot(), d.scope, { lastDefragAt: now, lastDefragRunId: this.pipeline.id, writesSinceDefrag: 0 }));
+      this._log('memory', 'info', `Memory: ${d.label} defragmented — write counter reset`);
+      await appendAudit(this.pipeline.dir, `Memory: ${d.label} defragmented by this run.`).catch(() => {});
+    } catch (err) {
+      this._log('memory', 'warn', `memory: defrag stamp failed: ${err?.message || err}`);
+    }
   }
 
   /** The run-summary shape (§6). null when nothing changed, so results.json is unchanged for such runs. */

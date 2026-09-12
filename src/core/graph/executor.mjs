@@ -44,7 +44,7 @@ import { readReview, normalizeClarify, normalizeReview, safeParseJson } from '..
 import {
   taskHeader, buildSystemPrompt, resolveAgentBody, mockMarkers, runOpts,
   fanOutDirective, ctxFanOut, ctxSubagentModel, ctxEndpointRouted, workspaceFanOutDirective, workspaceDiffInstruction,
-  renderAnswers, siblingsBlock, diffInstruction, READ_WRITE_TOOLS, IMPLEMENTER_TOOLS,
+  renderAnswers, siblingsBlock, diffInstruction, READ_WRITE_TOOLS, IMPLEMENTER_TOOLS, MEMORY_TOOLS,
 } from '../phases.mjs';
 import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
@@ -578,6 +578,13 @@ async function readPriorAnswers(ports, bindings = {}) {
   return Array.isArray(json?.answers) ? json.answers : [];
 }
 
+/** The role's base allow-list by side effect (effectiveAllowedTools unions the .md frontmatter on top). */
+export function toolsForMeta(meta) {
+  if (meta?.sideEffect === 'code') return IMPLEMENTER_TOOLS;
+  if (meta?.sideEffect === 'memory') return MEMORY_TOOLS;
+  return READ_WRITE_TOOLS;
+}
+
 /**
  * Prepare an agent execution: allocate whatever the caller did not, resolve the mock
  * role and the prior answers, and assemble both prompts. Shared by the agent and
@@ -608,7 +615,7 @@ async function prepare(ctx) {
   const systemPrompt = buildSystemPrompt(ctx.toolInstruction, body, role, ctx.workspace, ctx.memoryIndex);
   const full = { ...ctx, ports, meta, outputs, verdict, expandsPort, mockRole, priorAnswers };
   const prompt = buildAgentPrompt(full);
-  const allowedTools = meta.sideEffect === 'code' ? IMPLEMENTER_TOOLS : READ_WRITE_TOOLS;
+  const allowedTools = toolsForMeta(meta);
   // D3: an EXPLICIT alias pin on an endpoint-routed node is a stored promise the
   // run cannot keep — degrade it (the prompt already carries the same-endpoint
   // block) and say so on the result, which the scheduler folds into

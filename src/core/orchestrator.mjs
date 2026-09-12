@@ -661,6 +661,7 @@ export class GraphOrchestrator extends RunHarness {
         }
         : null,
       guardrailsId: this.guardrailsId,
+      memoryScope: this.memoryScope || null,   // agent memory §7.3: a paused defrag resumes with ONE scope (B10)
       checkpointRef: this.checkpointRef || null,
       checkpointRefs: { ...this.checkpointRefs },
       workspace: this.isWorkspace ? { projects: this._workspaceProjects() } : null,

@@ -7250,9 +7250,15 @@ async function pickFolder(purpose = 'project') {
   }
 }
 
-async function loadProjectsView() {
+async function loadProjectsView(param = '') {
   await loadProjects();      // refresh shared state.projects from /api/projects
   renderProjectsList();
+  // #projects/<key>/memory[/<name>] (agent memory §10, B6): open that row's expander on the file.
+  const m = /^([a-z0-9][a-z0-9-]*-[0-9a-f]{8})\/memory(?:\/(.+))?$/.exec(String(param || ''));
+  if (!m || !el.projectsList) return;
+  const item = el.projectsList.querySelector(`.pl-item[data-key="${m[1]}"]`);
+  if (item) { toggleProjectMemory(item, { open: true, name: m[2] ? safeDecode(m[2]) : '' }); item.scrollIntoView?.({ block: 'nearest' }); }
+  else setProjectsMsg(`project "${m[1]}" is not registered here`, 'err');
 }
 
 function buildProjectRow(p) {
@@ -7290,14 +7296,37 @@ function buildProjectRow(p) {
   del.setAttribute('aria-label', `Delete ${p.name}`);
   del.innerHTML = TRASH_SVG;
 
+  if (p.key) item.dataset.key = p.key;
   row.append(main, del);
   item.append(row);
+  // Agent memory (§10): a per-project Memory expander — the Workspaces .ws-head/.ws-detail idiom.
+  // A row with no store key has no scope to mount (a project registered outside worca's store).
+  if (p.key) {
+    const head = document.createElement('div');
+    head.className = 'proj-mem-head';
+    head.setAttribute('role', 'button'); head.tabIndex = 0; head.setAttribute('aria-expanded', 'false');
+    const label = document.createElement('span'); label.className = 'proj-mem-label'; label.textContent = 'Memory';
+    head.appendChild(label);
+    head.insertAdjacentHTML('beforeend', '<svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>');
+    const detail = document.createElement('div');
+    detail.className = 'proj-mem-detail';
+    detail.hidden = true;
+    const msg = document.createElement('p'); msg.className = 'form-msg'; msg.setAttribute('aria-live', 'polite');
+    const host = document.createElement('div'); host.className = 'mem-host';
+    detail.append(msg, host);
+    item.append(head, detail);
+  }
   return item;
 }
 
 function renderProjectsList() {
   const host = el.projectsList;
   if (!host) return;
+  // Every row is rebuilt from scratch (a projects-changed frame does this under the user), so the
+  // mounted Memory controllers die with their hosts — snapshot what was open and re-open it after.
+  const reopen = [...projectMemoryControllers.values()].map((c) => ({ key: c.scopeKey.slice('projects/'.length), name: c.selectedName() }));
+  for (const ctl of projectMemoryControllers.values()) ctl.destroy();
+  projectMemoryControllers.clear();
   host.innerHTML = '';
   updateProjectsCount();
   if (!state.projects.length) {
@@ -7322,6 +7351,10 @@ function renderProjectsList() {
 
   card.append(head, list);
   host.appendChild(card);
+  for (const o of reopen) {
+    const item = host.querySelector(`.pl-item[data-key="${o.key}"]`);
+    if (item) toggleProjectMemory(item, { open: true, name: o.name });
+  }
 }
 
 // ---- Reusable confirm / prompt modal ---------------------------------------
@@ -7518,12 +7551,48 @@ async function saveProjectAdd() {
 if (el.projectsList) {
   el.projectsList.addEventListener('click', (e) => {
     const del = e.target.closest && e.target.closest('.proj-del');
-    if (!del) return;
-    const item = del.closest('.pl-item');
-    if (!item) return;
-    const p = state.projects.find((x) => x.name === item.dataset.name);
-    if (p) deleteProject(p);
+    if (del) {
+      const item = del.closest('.pl-item');
+      if (!item) return;
+      const p = state.projects.find((x) => x.name === item.dataset.name);
+      if (p) deleteProject(p);
+      return;
+    }
+    const head = e.target.closest && e.target.closest('.proj-mem-head');
+    if (head) toggleProjectMemory(head.closest('.pl-item'));
   });
+  el.projectsList.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    const head = e.target.closest && e.target.closest('.proj-mem-head');
+    if (!head) return;
+    e.preventDefault();
+    toggleProjectMemory(head.closest('.pl-item'));
+  });
+}
+
+/** Open (and mount, once) or close a row's Memory expander. `open: true` forces open; `name` opens
+ *  a file. The controller is kept while the row lives: closing is a display toggle, not a teardown. */
+function toggleProjectMemory(item, { open = null, name = '' } = {}) {
+  if (!item || !item.dataset.key) return;
+  const head = item.querySelector('.proj-mem-head');
+  const detail = item.querySelector('.proj-mem-detail');
+  if (!head || !detail) return;
+  const isOpen = head.getAttribute('aria-expanded') === 'true';
+  const next = open === null ? !isOpen : open;
+  head.setAttribute('aria-expanded', String(next));
+  detail.hidden = !next;
+  if (!next) return;
+  const scopeKey = `projects/${item.dataset.key}`;
+  let ctl = projectMemoryControllers.get(scopeKey);
+  if (!ctl) {
+    ctl = createMemoryController({
+      host: detail.querySelector('.mem-host'), msgEl: detail.querySelector('.form-msg'), scopeKey, navigate: false,
+    });
+    projectMemoryControllers.set(scopeKey, ctl);
+    void ctl.load(name);
+  } else if (name) {
+    void ctl.load(name);
+  }
 }
 if (el.projectAddBtn) el.projectAddBtn.addEventListener('click', addProjectFlow);
 if (el.projAddSave) {
@@ -9292,7 +9361,13 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
   const hostRef = () => (typeof hostProject === 'function' ? hostProject() : hostProject);
 
   function paint() {
-    const hadFocus = !!document.activeElement && host.contains(document.activeElement);
+    const active = document.activeElement;
+    const hadFocus = !!active && host.contains(active);
+    // Remember WHICH editor control had focus, with its caret/selection and scroll: a frame repaint
+    // while the user types must hand the keyboard back to the same field. Focus on a file row
+    // instead would swallow the typing, and the next Space/Enter would reload the file over the draft.
+    const field = hadFocus && active.classList ? ['mem-text', 'mem-name'].find((c) => active.classList.contains(c)) : null;
+    const caret = field ? { start: active.selectionStart, end: active.selectionEnd, dir: active.selectionDirection, top: active.scrollTop } : null;
     host.replaceChildren();
     if (!st.report) return;
     // A live defragment run owns the scope: Save / Delete / Restore resume when it finishes (B23).
@@ -9306,14 +9381,24 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     host.appendChild(right);
     // replaceChildren drops focus to <body>; put it back where the user was.
     if (!hadFocus) return;
+    const same = field ? host.querySelector(`.mem-editor .${field}`) : null;
+    if (same && typeof same.focus === 'function') {
+      same.focus({ preventScroll: true });
+      try { same.setSelectionRange(caret.start, caret.end, caret.dir || 'none'); } catch { /* not a text control */ }
+      same.scrollTop = caret.top;
+      return;
+    }
     const back = st.isNew ? host.querySelector('.mem-name')
       : (st.selected ? [...host.querySelectorAll('.mem-row')].find((r) => r.dataset.name === st.selected) : null);
     if (back && typeof back.focus === 'function') back.focus({ preventScroll: true });
   }
 
-  async function load(name = '', { fromFrame = false } = {}) {
+  /** `fromFrame`: a memory-changed refetch. `keepDraft`: a reload the user's own action triggered
+   *  (Defragment, a 409) — it keeps a dirty editor like a frame does, without the conflict warning,
+   *  and it keeps the message the caller already said. */
+  async function load(name = '', { fromFrame = false, keepDraft = false } = {}) {
     const my = ++seq;
-    if (!fromFrame && !st.flash) say('');
+    if (!fromFrame && !keepDraft && !st.flash) say('');
     const dirty = !!st.editor && (st.isNew || collectEditor(host).text !== st.editor.loaded);
     const r = await memoryApi('GET', base);
     if (my !== seq) return;
@@ -9323,13 +9408,15 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     if (my !== seq) return;
     st.report = report;
     st.snapshots = hist.ok && Array.isArray(hist.data.snapshots) ? hist.data.snapshots : [];
-    if (fromFrame && dirty) {
-      // Someone else wrote this scope while the user was typing: refresh the card, the list and the
-      // history, keep every unsaved byte, and say what the two exits do.
+    if ((fromFrame || keepDraft) && dirty) {
+      // Someone else wrote this scope while the user was typing (or the user's own action reloads
+      // it): refresh the card, the list and the history, keep every unsaved byte, and — for a frame —
+      // say what the two exits do.
       const cur = collectEditor(host);
       st.editor = { ...st.editor, name: st.isNew ? cur.name : st.editor.name, text: cur.text };
-      say('This scope changed on disk while you were editing — Save overwrites, Cancel reloads.', 'warn');
       paint();
+      if (st.flash) { say(...st.flash); st.flash = null; }
+      else if (fromFrame) say('This scope changed on disk while you were editing — Save overwrites, Cancel reloads.', 'warn');
       return;
     }
     st.selected = ''; st.editor = null; st.isNew = false;
@@ -9384,7 +9471,7 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     });
     if (!ok) return;
     const r = await memoryApi('POST', `${base}/history/${encodeURIComponent(id)}/restore`);
-    if (!r.ok) { say(r.data.error || `HTTP ${r.status}`, 'err'); if (r.status === 409) await load(st.selected); return; }
+    if (!r.ok) { say(r.data.error || `HTTP ${r.status}`, 'err'); if (r.status === 409) await load(st.selected, { keepDraft: true }); return; }
     st.flash = [`Restored ${id}`, 'ok'];
     await load('');
   }
@@ -9394,9 +9481,9 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     if (runId) { location.hash = `running/${runId}`; return; }
     const h = hostRef();
     const r = await memoryApi('POST', `${base}/defragment`, scopeKey === 'global' ? { projectKey: h ? h.key : '' } : undefined);
-    if (!r.ok) { say(r.data.error || `HTTP ${r.status}`, 'err'); if (r.status === 409) await load(st.selected); return; }
+    if (!r.ok) { say(r.data.error || `HTTP ${r.status}`, 'err'); if (r.status === 409) await load(st.selected, { keepDraft: true }); return; }
     st.flash = ['Defragment run started.', 'ok'];
-    await load(st.selected);
+    await load(st.selected, { keepDraft: true });
   }
 
   const open = (name) => {
@@ -14240,10 +14327,21 @@ function buildHdOverview(sec, record, data) {
       const who = document.createElement('span'); who.className = 'hd-mem-node mono'; who.textContent = row.node;
       line.appendChild(who);
       for (const c of row.chips) {
-        const chip = document.createElement('span');
+        // A chip opens the file in its Memory view (B6): `global` under Settings, a project scope on
+        // its Projects row. The mount-relative `project` is THIS run's project (the History record's
+        // key); a workspace run's `projects/<key>` passes straight through. A deleted file has
+        // nothing to open, and neither has a `project` chip on a record with no key.
+        const scopeKey = c.scope === 'global' ? 'global'
+          : c.scope === 'project' ? (hdStoreKey(record) ? `projects/${hdStoreKey(record)}` : '') : c.scope;
+        const linked = !!scopeKey && c.kind !== 'del';
+        const chip = document.createElement(linked ? 'button' : 'span');
         chip.className = `hd-mem-chip hd-mem-${c.kind} mono`;
         chip.textContent = c.text;
         if (c.title) chip.title = c.title;
+        if (linked) {
+          chip.type = 'button';
+          chip.addEventListener('click', () => { location.hash = memoryRoute(scopeKey, c.name); });
+        }
         line.appendChild(chip);
       }
       box.appendChild(line);
@@ -17296,7 +17394,9 @@ function showView(name, param = '') {
   if (name === 'workspace-create') enterWizard();
   if (name === 'agents') loadAgentsView();
   if (name === 'agent-create') enterAgentWizard();
-  if (name === 'projects') loadProjectsView();
+  // A route entry starts clean: a previous "not registered here" error must not linger (a
+  // projects-changed rebuild calls loadProjectsView directly and keeps the message).
+  if (name === 'projects') { setProjectsMsg(''); loadProjectsView(param); }
   if (name === 'composer') initComposer();
   if (name === 'settings') showSettingsTab(param);
   if (name === 'new') {

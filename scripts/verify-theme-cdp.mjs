@@ -64,7 +64,7 @@ const CHROME = process.env.CHROME_BIN || CHROME_PATHS.find((p) => existsSync(p))
 const SANDBOX = process.env.CHROME_NO_SANDBOX === '1' || process.getuid?.() === 0
   ? ['--no-sandbox', '--disable-dev-shm-usage'] : [];
 if (!existsSync(CHROME)) { console.error(`no Chrome at ${CHROME} - set CHROME_BIN`); process.exit(1); }
-const PORT = Number(process.env.CDP_PORT || 9336);   // 9333 composer, 9334 run-monitor, 9335 the spend-gradient proof (if that branch merges), 9337 the mask generator
+const PORT = Number(process.env.CDP_PORT || 9336);   // 9333 composer, 9334 run-monitor, 9335 memory, 9337 the mask generator
 const T0 = Date.now();
 const log = (m) => process.stderr.write(`[${((Date.now() - T0) / 1000).toFixed(1)}s] ${m}\n`);
 
@@ -419,6 +419,16 @@ const states = [
   ['settings-guardrails', async () => { await go('settings/guardrails'); }],
   ['settings-models', async () => { await go('settings/models'); }],
   ['settings-plugins', async () => { await go('settings/plugins'); }],
+  // Agent memory (§10): seed ONE file through the API and open it, so the audit samples a selected
+  // row, the editor, its status line and a History row — an empty scope would paint the fresh badge
+  // and nothing else. The contrast baseline is NEVER regenerated for this: a new failing pair means
+  // a memory rule uses a wrong token.
+  ['settings-memory', async () => {
+    await api('/api/memory/global/files/theme-proof', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: '---\nname: theme-proof\ndescription: Theme audit seed\n---\nOne seeded rule.\n' }) });
+    await go('settings/memory/theme-proof');
+    await until(`document.querySelector('.settings-pane[data-tab="memory"]:not(.hidden) .mem-editor')`, 'the memory editor');
+  }],
   ['ask-sheet', async () => { await go('new'); await clickSel('.ask-pill'); await until(`document.querySelector('.ask-sheet:not([hidden])')`, 'ask sheet'); }],
   ['ask-model-picker', async () => { await clickSel('.ask-model-btn'); await until(`document.querySelector('.ask-pop-model')`, 'model popover'); }, async () => { await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));0`); }],
   ['ask-scope-picker', async () => { await clickSel('.ask-scope-btn'); await until(`document.querySelector('.ask-pop-scope')`, 'scope popover'); }, async () => { await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));0`); await ev(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));0`); }],

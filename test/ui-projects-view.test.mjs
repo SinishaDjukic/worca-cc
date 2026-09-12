@@ -16,8 +16,8 @@ class WSStub {
 }
 
 const PROJECTS = [
-  { name: 'alpha', path: '/Users/me/dev/alpha', exists: true },
-  { name: 'beta', path: '/Users/me/dev/beta', exists: false },
+  { name: 'alpha', path: '/Users/me/dev/alpha', exists: true, key: 'alpha-00000001' },
+  { name: 'beta', path: '/Users/me/dev/beta', exists: false, key: 'beta-00000002' },
 ];
 
 async function boot({ fetchHandler } = {}) {
@@ -131,5 +131,124 @@ test('add: + picks a folder, prefills the basename, and POSTs the project', asyn
   await tick(); await tick();
   assert.equal(posts.length, 1);
   assert.deepEqual(posts[0], { name: 'cool-app', path: '/Users/me/dev/cool-app' });
-  assert.equal([...doc.querySelectorAll('#projects-list .pl-item')].length, 3);
+  const items = [...doc.querySelectorAll('#projects-list .pl-item')];
+  assert.equal(items.length, 3);
+  // A row with no store key has no memory scope to mount (agent memory §10).
+  assert.equal(items[2].dataset.key, undefined);
+  assert.equal(items[2].querySelector('.proj-mem-head'), null, 'a keyless project renders no Memory expander');
+});
+
+// ---- Agent memory: the per-project Memory expander (agent-memory-design.md §10) ----
+
+const MEM = {
+  scope: 'projects/alpha-00000001',
+  project: { key: 'alpha-00000001', name: 'alpha', path: '/Users/me/dev/alpha' },
+  files: [{ name: 'conv', description: 'Naming', paths: [], source: 'user', updated: '', bytes: 10, hasFrontmatter: true }],
+  state: {}, health: { level: 'ok', reasons: [], files: 1, bytes: 10, writesSinceDefrag: 0 }, defragRunId: null,
+};
+const memJson = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
+const memFetch = (u, o = {}) => {
+  const method = (o.method || 'GET').toUpperCase();
+  if (u.includes('/api/memory/projects/alpha-00000001/files/')) {
+    if (method !== 'GET') return memJson({ ok: true });
+    return memJson({ name: 'conv', text: '---\nname: conv\n---\nkebab.\n', meta: {}, body: 'kebab.\n' });
+  }
+  if (u.includes('/api/memory/projects/alpha-00000001/history')) return memJson({ snapshots: [] });
+  if (u.includes('/api/memory/projects/alpha-00000001')) return memJson(MEM);
+  return null;
+};
+async function goHash(window, hash) {
+  window.location.hash = hash;
+  window.dispatchEvent(new window.Event('hashchange'));
+  await tick(); await tick(); await tick();
+}
+
+test("every project row with a key gets a collapsed Memory expander; opening it fetches that project's scope", async () => {
+  const { window } = await boot({ fetchHandler: memFetch });
+  await goHash(window, 'projects');
+  const doc = window.document;
+  const items = [...doc.querySelectorAll('#projects-list .pl-item')];
+  assert.deepEqual(items.map((i) => i.dataset.key), ['alpha-00000001', 'beta-00000002']);
+  const head = items[0].querySelector('.proj-mem-head');
+  assert.equal(head.getAttribute('aria-expanded'), 'false');
+  assert.equal(items[0].querySelector('.proj-mem-detail').hidden, true);
+  click(window, head);
+  await tick(); await tick(); await tick();
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  const detail = items[0].querySelector('.proj-mem-detail');
+  assert.equal(detail.hidden, false);
+  assert.deepEqual([...detail.querySelectorAll('.mem-row')].map((r) => r.dataset.name), ['conv']);
+  assert.equal(detail.querySelector('.mem-defrag').disabled, false, 'a project defragment never needs a host');
+  assert.equal(detail.querySelector('.mem-host-hint'), null, 'and never names one');
+  click(window, head);
+  assert.equal(detail.hidden, true, 'toggles closed; the controller stays mounted');
+});
+
+test('#projects/<key>/memory/<name> lands on the Projects page with that row expanded and the file open', async () => {
+  const { window } = await boot({ fetchHandler: memFetch });
+  await goHash(window, 'projects/alpha-00000001/memory/conv');
+  const doc = window.document;
+  assert.equal(doc.querySelector('[data-view="projects"]').classList.contains('hidden'), false);
+  const item = doc.querySelector('#projects-list .pl-item[data-key="alpha-00000001"]');
+  assert.equal(item.querySelector('.proj-mem-head').getAttribute('aria-expanded'), 'true');
+  const ed = item.querySelector('.mem-editor');
+  assert.ok(ed, 'the file is open');
+  assert.equal(ed.querySelector('.mem-name').value, 'conv');
+  assert.equal(doc.querySelector('.pl-item[data-key="beta-00000002"] .proj-mem-detail').hidden, true, 'other rows stay collapsed');
+});
+
+test('an expander survives a projects-changed rebuild: it re-opens on the same file', async () => {
+  const { window } = await boot({ fetchHandler: memFetch });
+  await goHash(window, 'projects/alpha-00000001/memory/conv');
+  const doc = window.document;
+  WSStub.last._listeners.message.forEach((fn) => fn({ data: JSON.stringify({ type: 'projects-changed' }) }));
+  await tick(); await tick(); await tick(); await tick();
+  const item = doc.querySelector('#projects-list .pl-item[data-key="alpha-00000001"]');
+  assert.equal(item.querySelector('.proj-mem-head').getAttribute('aria-expanded'), 'true', 'still open after the rebuild');
+  assert.equal(item.querySelector('.mem-name').value, 'conv', 'and still on the same file');
+});
+
+test('inside an expander a NEW file saves without navigating and shows up as a saved row', async () => {
+  const puts = [];
+  let saved = false;
+  const { window } = await boot({
+    fetchHandler: (u, o = {}) => {
+      const method = (o.method || 'GET').toUpperCase();
+      if (u.includes('/api/memory/projects/alpha-00000001/files/conv2') && method === 'PUT') {
+        puts.push(JSON.parse(o.body)); saved = true;
+        return memJson({ ok: true, name: 'conv2', created: true, bytes: 2 });
+      }
+      if (u.includes('/api/memory/projects/alpha-00000001/files/conv2')) return memJson({ name: 'conv2', text: 'x\n', meta: {}, body: 'x\n' });
+      if (u.endsWith('/api/memory/projects/alpha-00000001')) {
+        return memJson(saved
+          ? { ...MEM, files: [...MEM.files, { name: 'conv2', description: '', paths: [], source: 'user', updated: '', bytes: 2, hasFrontmatter: false }] }
+          : MEM);
+      }
+      return memFetch(u, o);
+    },
+  });
+  await goHash(window, 'projects/alpha-00000001/memory');
+  const doc = window.document;
+  const detail = doc.querySelector('.pl-item[data-key="alpha-00000001"] .proj-mem-detail');
+  click(window, detail.querySelector('.mem-new'));
+  await tick();
+  const ed = detail.querySelector('.mem-editor');
+  ed.querySelector('.mem-name').value = 'conv2';
+  ed.querySelector('.mem-text').value = 'x\n';
+  click(window, ed.querySelector('.mem-save'));
+  await tick(); await tick(); await tick();
+  assert.deepEqual(puts, [{ text: 'x\n' }]);
+  assert.equal(window.location.hash, '#projects/alpha-00000001/memory', 'an expander never navigates');
+  assert.deepEqual([...detail.querySelectorAll('.mem-row')].map((r) => r.dataset.name), ['conv', 'conv2']);
+  assert.equal(detail.querySelector('.mem-name').readOnly, true, 'the editor left "new" mode');
+});
+
+test('an unknown-key memory route error is cleared on the next #projects entry', async () => {
+  const { window } = await boot({ fetchHandler: memFetch });
+  await goHash(window, 'projects/ghost-00000009/memory');
+  const msg = window.document.getElementById('projects-msg');
+  assert.match(msg.textContent, /project "ghost-00000009" is not registered here/);
+  await goHash(window, 'workspaces');
+  await goHash(window, 'projects');
+  assert.equal(msg.textContent, '', 'the stale error is gone');
 });
