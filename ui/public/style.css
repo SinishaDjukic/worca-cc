@@ -2233,6 +2233,36 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hd-ov-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px;}
 .hd-ov-tag{padding:6px 12px;border:1px solid var(--line);border-radius:999px;font-size:11.5px;color:var(--ink-2);}
 
+/* Settings → Memory and the Projects-page Memory expander (agent-memory-design.md §10).
+   The namespace is `mem-*`: `mv-*` is Settings → Models. */
+.mem-host{display:grid;grid-template-columns:minmax(260px,1fr) minmax(0,2fr);gap:18px;align-items:start;}
+.mem-host > .mem-health{grid-column:1 / -1;}
+.mem-health-head{display:flex;flex-wrap:wrap;align-items:center;gap:12px;}
+.mem-counters{font-size:12.5px;color:var(--ink-3);}
+.mem-reasons{margin:12px 0 0 18px;padding:0;font-size:13px;color:var(--ink-2);}
+.mem-reasons li{margin:4px 0;}
+.mem-actions{margin-top:12px;align-items:center;gap:10px;}
+.mem-host-hint{display:block;margin-top:8px;}
+.mem-list,.mem-history{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:14px 16px;}
+.mem-list-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.mem-list-title{font:600 10.5px var(--sans);letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase;}
+.mem-row{display:flex;align-items:center;gap:12px;padding:10px 8px;border-radius:var(--r-ctrl);cursor:pointer;}
+.mem-row:hover{background:var(--field);}
+.mem-row.on{background:var(--field);box-shadow:inset 0 0 0 1px var(--line-2);}
+.mem-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.mem-row-main{min-width:0;flex:1;}
+.mem-row-name{font-size:13px;color:var(--ink);}
+.mem-row-hook{font-size:12.5px;color:var(--ink-2);overflow-wrap:anywhere;}
+.mem-row-meta{font-size:11.5px;color:var(--ink-3);margin-top:2px;}
+.mem-editor{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:16px;margin-bottom:18px;}
+.mem-editor .mem-text{min-height:260px;}
+.mem-snap{display:flex;align-items:center;gap:12px;padding:6px 8px;font-size:12.5px;}
+.mem-snap-id{color:var(--ink-2);}
+.mem-snap-count{color:var(--ink-3);flex:1;}
+.mem-host .mono{font-family:var(--mono);}
+.pl-item .mem-host{padding:0 20px 18px;}
+@media (max-width:900px){.mem-host{grid-template-columns:1fr;}}
+
 /* ---------- History detail: Agents tab ---------- */
 .hd-ag-group{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);
   overflow:hidden;margin-bottom:18px;}

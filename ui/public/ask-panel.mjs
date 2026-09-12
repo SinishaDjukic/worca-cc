@@ -2480,6 +2480,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       title: ((rootEl.querySelector('.ask-rp-title input') || {}).value || '').trim() || card.title || undefined,
       mock: false,
     };
+    // Agent memory (§7.3 / B17): the card's scope rides along only while its workflow is still the
+    // defragment one — a user who switched the picker to another workflow gets a legacy body.
+    if (card.memoryScope && body.workflowId === 'wf_memory_defrag') body.memoryScope = card.memoryScope;
     const feature = rootEl.querySelector('.ask-card-feature').value.trim();
     if (feature) body.featureBranch = feature;
     if (local.target === 'workspace') {
@@ -2586,6 +2589,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       prompt: rootEl.querySelector('.ask-card-brief').value,
       title: ((rootEl.querySelector('.ask-rp-title input') || {}).value || '').trim() || card.title || '',
       featureBranch: rootEl.querySelector('.ask-card-feature').value.trim(),
+      // The picker has no way to re-derive this: a `project` proposal opened in New Pipeline would
+      // otherwise start with the row's default `global` and restructure the wrong scope (B17).
+      memoryScope: card.memoryScope || null,
     };
     if (local.target === 'workspace') {
       p.workspaceId = rootEl.querySelector('.ask-card-workspace-select').value;

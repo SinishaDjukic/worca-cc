@@ -7,6 +7,9 @@ const $$ = (sel, root = document) => [...(root || document).querySelectorAll(sel
 // row stub has no graph, so the picker owns this one constant.
 const AUTO_WORKFLOW = Object.freeze({ id: 'wf_auto', name: 'Auto' });
 const AUTO_WORKFLOW_ID = AUTO_WORKFLOW.id;
+// The reserved Memory defragment workflow (agent-memory-design.md §7.2): the picker shows a
+// Memory scope control for it and the run body carries `memoryScope`. Built-in, never a saved row.
+const MEMORY_DEFRAG_WORKFLOW_ID = 'wf_memory_defrag';
 
 // ---------------------------------------------------------------------------
 // App state
@@ -26,6 +29,7 @@ const state = {
   subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'],
   workflowId: 'wf_default', // currently selected workflow in New Pipeline
   guardrailsId: 'permissive', // the guardrail set the next run applies ('permissive' = unrestricted default)
+  memoryScope: 'global', // Memory defragment only: the scope the next run restructures
   guardrailSets: [], // GET /api/guardrails cache for the picker + hint
   agents: {}, // registry { [key]: AgentMeta }, lazily loaded from /api/agents
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
@@ -65,6 +69,11 @@ import { mountRunGraph } from './graph/run-hosts.mjs';
 // lost their last app.js caller with the retired card accordion. They stay EXPORTED
 // from results-view.mjs (test/results-view-helpers.test.mjs imports four of them).
 import { sourceBadge, workflowPickerLabel, memoryChangesRows } from './results-view.mjs';
+// `renderHistory` is taken in this file (the History list painter), so the memory one is aliased.
+import {
+  memoryRoute, renderHealthCard, renderFileList, renderEditor, collectEditor,
+  renderMemoryHistory, MEMORY_NAME_HELP,
+} from './memory-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
 import {
   splitPatchSections, parseFileSection, patchIndex, sectionKey,
@@ -99,7 +108,7 @@ import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
 import { renderStatsBody, renderBudgetIndicator, renderBudgetRing, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
-import { createComposer, RESERVED_WORKFLOW_ID, pluginOriginName } from './graph/composer.mjs';
+import { createComposer, isReservedWorkflowId, pluginOriginName } from './graph/composer.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
 // bare <select> with no preview host on this branch (the v1 read-only mini-graph
 // lived in the composer's saved list, retired in P5 Task 8). P6's Running list is
@@ -176,6 +185,8 @@ const el = {
   agentRows: $('#agents-rows'),
   hitlRow: $('#hitl-row'),
   humanInLoop: $('#humanInLoop'),
+  memoryScopeRow: $('#memory-scope-row'),
+  memoryScopeSeg: $('#memory-scope-seg'),
   agentsWorkflow: $('#agentsWorkflow'),
   agentsSummary: $('#agentsSummary'),
   agentsPromote: $('#agentsPromote'),
@@ -325,6 +336,10 @@ const el = {
   guardrailsList: $('#guardrails-list'),
   guardrailsMsg: $('#guardrails-msg'),
   guardrailCreateBtn: $('#guardrail-create-btn'),
+
+  // Memory view (Settings tab; the Projects expanders mount their own hosts)
+  memoryHost: $('#memory-host'),
+  memoryMsg: $('#memory-msg'),
 
   // Models view
   modelsList: $('#models-list'),
@@ -667,6 +682,18 @@ function handleServerMessage(msg) {
   if (msg.type === 'workspaces-changed') {
     refreshAllCounts();
     if (currentView() === 'workspaces') loadWorkspacesView();
+    return;
+  }
+
+  // Agent memory (§10, B29): an Ask tool, a REST write or a run that mounted memory changed a
+  // scope — the frame means "refetch this scope's view". It is thread-less and seq-less, so it is
+  // handled HERE and never reaches the Ask panel (the shell routes only `ask-*` types there). Only
+  // an OPEN view of that scope refetches; a closed one reloads on entry anyway. Bursts (an Ask turn
+  // remembering five things) are coalesced per scope, and a dirty editor is never clobbered.
+  if (msg.type === 'memory-changed') {
+    const scope = String(msg.scope || '');
+    if (scope === 'global' && currentView() === 'settings' && currentSettingsTab === 'memory' && memoryTabCtl) pokeGlobalMemory();
+    else if (scope && currentView() === 'projects' && projectMemoryControllers.has(scope)) pokeProjectMemory(scope);
     return;
   }
 
@@ -1953,7 +1980,7 @@ function gvRenderSaved() {
       // No delete on the built-in: DELETE /api/workflows/wf_default always answers
       // 400 (ui/server.mjs), so the button could only ever fail. Opening stays —
       // the built-in is meant to be opened and saved as a copy.
-      if (wf.id !== RESERVED_WORKFLOW_ID) {
+      if (!isReservedWorkflowId(wf.id)) {
         const del = document.createElement('button');
         del.type = 'button'; del.className = 'pl-del';
         del.title = `Delete "${wf.name || wf.id}"`;
@@ -2314,6 +2341,7 @@ if (typeof window !== 'undefined') {
     rdMaybePaintLogFilters,
     initDetailTabs,
     detailTabsOf,
+    openNewPipeline,
   });
 }
 
@@ -2499,12 +2527,15 @@ async function loadWorkflowsInto(selectId) {
   list.forEach((wf) => {
     const o = option(wf.id, wf.id === AUTO_WORKFLOW_ID ? wf.name : (workflowPickerLabel(wf, enabledPluginNames) || wf.id));
     if (wf.id === AUTO_WORKFLOW_ID && isWorkspace) { o.disabled = true; o.title = 'Auto is not available for workspaces yet'; }
+    // Memory defragment holds exactly one scope, and a workspace run has no single project to
+    // resolve `project` against (the server 400s) — same treatment as Auto.
+    if (wf.id === MEMORY_DEFRAG_WORKFLOW_ID && isWorkspace) { o.disabled = true; o.title = 'Memory defragment runs on one project'; }
     sel.appendChild(o);
   });
   // Fall back to default if the wanted id is gone (e.g. a deleted workflow). D19: a workspace
   // target SHOWS Default in Auto's place but never persists it — the project keeps its choice.
   const known = list.some((wf) => wf.id === want);
-  state.workflowId = !known || (isWorkspace && want === AUTO_WORKFLOW_ID) ? 'wf_default' : want;
+  state.workflowId = !known || (isWorkspace && (want === AUTO_WORKFLOW_ID || want === MEMORY_DEFRAG_WORKFLOW_ID)) ? 'wf_default' : want;
   sel.value = state.workflowId;
   await renderWorkflowConfig(state.workflowId);
 }
@@ -2583,6 +2614,9 @@ async function renderWorkflowConfig(workflowId) {
   const isAuto = workflowId === AUTO_WORKFLOW_ID;
   if (el.agentsConfig) el.agentsConfig.hidden = isAuto;
   if (el.hitlRow) el.hitlRow.hidden = !isAuto;
+  // Memory defragment (agent memory §7.3 / B11): the ONE run option that workflow needs. Every
+  // path that changes the picker ends here, so this single line covers them all.
+  if (el.memoryScopeRow) el.memoryScopeRow.hidden = workflowId !== MEMORY_DEFRAG_WORKFLOW_ID;
   if (isAuto) {
     // Auto picks the agents per run (spec §7.2 / D20): no accordion, one switch, read from the project config.
     // The switch is per PROJECT like the accordion's rows, and saveHumanInLoop drops the
@@ -2668,9 +2702,9 @@ function setAgentsHeader(rows, workflowName) {
   const anyModified = editable && !!rows && rows.some((r) => r.modified);
   if (el.agentsReset) el.agentsReset.hidden = !anyModified;
   if (el.agentsPromote) {
-    // The built-in Default is frozen and never persisted, so it has no row to
-    // carry defaults (design D6) — offering the button there would only fail.
-    const canPromote = anyModified && state.workflowId && state.workflowId !== 'wf_default';
+    // A graph BUILT-IN is frozen and never persisted, so it has no row to carry defaults
+    // (design D6) — offering the button there would only fail (setWorkflowNodeDefaults throws).
+    const canPromote = anyModified && state.workflowId && !isReservedWorkflowId(state.workflowId);
     el.agentsPromote.hidden = !canPromote;
   }
 }
@@ -2944,6 +2978,26 @@ if (el.workflowSelect) {
     state.workflowId = el.workflowSelect.value || 'wf_default';
     saveActiveWorkflow(state.workflowId);
     await renderWorkflowConfig(state.workflowId);
+  });
+}
+
+/** Write the picker's Memory scope into state AND the segmented control. Used by the seg itself and
+ *  by the Ask card handoff, whose proposal carries the scope it wants restructured (B17). */
+function setMemoryScope(scope) {
+  state.memoryScope = scope === 'project' ? 'project' : 'global';
+  for (const b of el.memoryScopeSeg ? el.memoryScopeSeg.querySelectorAll('button[data-scope]') : []) {
+    const on = b.dataset.scope === state.memoryScope;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+}
+
+// Memory scope (Memory defragment only): a two-way segmented control, remembered per session.
+if (el.memoryScopeSeg) {
+  el.memoryScopeSeg.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('button[data-scope]');
+    if (!btn) return;
+    setMemoryScope(btn.dataset.scope);
   });
 }
 
@@ -3231,7 +3285,7 @@ if (el.agentsPromote) {
   el.agentsPromote.addEventListener('click', async () => {
     const projectDir = selectedProjectPath();
     const workflowId = state.workflowId;
-    if (!projectDir || !workflowId || workflowId === 'wf_default') return;
+    if (!projectDir || !workflowId || isReservedWorkflowId(workflowId)) return;
     const rows = Object.values(agentRowsById);
     if (!rows.length) return;
     const defaults = Object.fromEntries(rows.map((r) => [r.nodeId, effectiveDefaultsOf(r)]));
@@ -6892,11 +6946,17 @@ function agentFormRender(host, meta, opts = {}) {
     fmCheck('agent-f-questions', 'Asks questions', m.asksQuestions),
     fmCheck('agent-f-questions-locked', 'Questions locked', m.questionsLocked),
     fmCheck('agent-f-questions-default', 'Questions on by default', m.questionsDefault),
-    fmCheck('agent-f-sideeffect', 'Writes code (sideEffect)', m.sideEffect === 'code'),
     fmCheck('agent-f-wantsrequest', 'Carries the original request', m.wantsRequest === true),
     fmCheck('agent-f-placeable', 'Placeable on a canvas', m.placeable !== false),
   );
   frag.appendChild(caps);
+  // sideEffect is a three-way value (agent-meta.mjs SIDE_EFFECTS): a checkbox could only write
+  // 'code' and would silently drop 'memory' on the next save.
+  frag.appendChild(fmField('Side effect', fmSelect('agent-f-sideeffect', [
+    { value: '', text: 'none — writes only its output ports' },
+    { value: 'code', text: 'code — edits the worktree (implementer tool set)' },
+    { value: 'memory', text: 'memory — edits worca memory only (no Bash)' },
+  ], m.sideEffect || '')));
 
   const row4 = document.createElement('div');
   row4.className = 'row-2';
@@ -7062,7 +7122,8 @@ function agentFormRead(host) {
   if (val('agent-f-scope') === 'workspace-only') meta.scope = 'workspace-only';
   const icon = val('agent-f-icon').trim();
   if (icon) meta.icon = icon;
-  if (on('agent-f-sideeffect')) meta.sideEffect = 'code';
+  const sideEffect = val('agent-f-sideeffect');
+  if (sideEffect) meta.sideEffect = sideEffect;
   const mockRole = val('agent-f-mockrole');
   if (mockRole) meta.mockRole = mockRole;
   if (on('agent-f-wantsrequest')) meta.wantsRequest = true;
@@ -7701,6 +7762,10 @@ el.form.addEventListener('submit', async (e) => {
   const mdText = el.promptMarkdown.value.trim();
   const title = el.title.value.trim();
 
+  // Memory defragment (agent memory §7.3): one scope, a synthesised brief, and the `normal`
+  // guardrails the API wrappers use unless the user deliberately picked another set.
+  const isDefragRun = state.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
+
   const body = {
     title: title || undefined,
     workflowId: state.workflowId || 'wf_default',
@@ -7708,13 +7773,16 @@ el.form.addEventListener('submit', async (e) => {
     // absent on default runs — byte-identical legacy request bodies. (The
     // server normalizes omitted/''/null to 'permissive'; always-sending would
     // be equivalent but would change every legacy-shaped request for no gain.)
-    guardrailsId: state.guardrailsId !== 'permissive' ? state.guardrailsId : undefined,
+    guardrailsId: isDefragRun && state.guardrailsId === 'permissive' ? 'normal'
+      : (state.guardrailsId !== 'permissive' ? state.guardrailsId : undefined),
     mock: el.mock.checked,
     sourceBranch: (el.sourceBranch && el.sourceBranch.value) || undefined,
     featureBranch: (el.featureBranch && el.featureBranch.value.trim()) || undefined,
     // Auto only (spec §7.2): this run's switch; the server falls back to the project setting
     // when absent. JSON.stringify drops an own key whose value is `undefined`.
     humanInLoop: state.workflowId === AUTO_WORKFLOW_ID ? !!(el.humanInLoop && el.humanInLoop.checked) : undefined,
+    // Only this workflow carries it: every other run body stays byte-identical to the legacy one.
+    memoryScope: isDefragRun ? state.memoryScope : undefined,
   };
   if (target === 'workspace') {
     body.workspaceId = workspaceId;
@@ -7738,7 +7806,14 @@ el.form.addEventListener('submit', async (e) => {
   }
 
   const psrc = state.activePluginSource;
-  if (psrc) {
+  if (isDefragRun) {
+    // A defragment run needs no task text: synthesise the same brief and title the API wrapper
+    // sends, whatever the shared source switch says (the markdown / plugin panes are skipped).
+    const pn = selectedProjectName();
+    body.prompt = promptText || (state.memoryScope === 'project'
+      ? `Defragment the memory of project ${pn}.` : 'Defragment global memory.');
+    if (!title) body.title = state.memoryScope === 'project' ? `Memory defragment: ${pn}` : 'Memory defragment (global)';
+  } else if (psrc) {
     const picked = collectSourcePane(el.pluginSourcePane);
     if (picked.error) return setFormMsg(picked.error, 'err');
     // The profile travels with the run and is pinned onto the row, so a result
@@ -9178,6 +9253,204 @@ async function grvSave(rootEl) {
   } catch (e) {
     grvRenderEditor(cur.settings, { dirty: true, msg: e.message, msgErr: true });
   }
+}
+
+// ── Settings → Memory / project Memory expanders (agent-memory-design.md §10) ──
+// One controller per mounted scope: the Settings tab owns `memoryTabCtl` (global), the Projects
+// page owns one per expanded row (`projectMemoryControllers`, keyed by 'projects/<key>'). Pure
+// renderers live in memory-view.mjs; this owns the endpoint calls and ONE delegated listener pair.
+let memoryTabCtl = null;
+const projectMemoryControllers = new Map();
+
+function memoryApiBase(scopeKey) { return scopeKey === 'global' ? '/api/memory/global' : `/api/memory/${scopeKey}`; }
+/** A body-less request sends no content-type — the request shapes stay identical to every other fetch here. */
+async function memoryApi(method, url, body) {
+  const init = { method };
+  if (body !== undefined) { init.headers = { 'Content-Type': 'application/json' }; init.body = JSON.stringify(body); }
+  const res = await fetch(url, init);
+  return { ok: res.ok, status: res.status, data: await safeJson(res) };
+}
+// Instant feedback only: isValidMemoryName on the server is the authority (it also knows the Win32
+// reserved stems), and both spell the rule with the SAME string.
+const MEMORY_NAME_RE = /^[A-Za-z0-9._-]+$/;
+const memoryNameOk = (n) => MEMORY_NAME_RE.test(n) && n !== '.' && n !== '..' && !n.startsWith('.') && !n.endsWith('.') && !/\.md$/i.test(n);
+/** decodeURIComponent that never throws: a hand-typed hash can hold a truncated escape. */
+const safeDecode = (s) => { try { return decodeURIComponent(s); } catch { return String(s); } };
+
+function createMemoryController({ host, msgEl, scopeKey, hostProject = null, navigate = true }) {
+  const base = memoryApiBase(scopeKey);
+  // `editor.loaded` is the text the editor was LOADED from — the dirty baseline. It has to survive
+  // a frame refresh (a draft is not a baseline), or the next frame reads the editor as clean and
+  // refetches over the unsaved text. `flash` carries a success message across the reload a write
+  // triggers: load() clears the message as its first act, so say() before it would never be seen.
+  const st = { report: null, selected: '', editor: null, isNew: false, snapshots: [], flash: null };
+  // Request token: a frame poke, a save and a route change can all be in flight at once, and the
+  // LAST one issued must win however the responses land.
+  let seq = 0;
+  const say = (text, kind) => { if (msgEl) { msgEl.textContent = text || ''; msgEl.className = 'form-msg' + (kind ? ' ' + kind : ''); } };
+  const route = (name) => { if (navigate) location.hash = memoryRoute(scopeKey, name); };
+  const hostRef = () => (typeof hostProject === 'function' ? hostProject() : hostProject);
+
+  function paint() {
+    const hadFocus = !!document.activeElement && host.contains(document.activeElement);
+    host.replaceChildren();
+    if (!st.report) return;
+    // A live defragment run owns the scope: Save / Delete / Restore resume when it finishes (B23).
+    const locked = !!st.report.defragRunId;
+    host.appendChild(renderHealthCard(st.report, { host: hostRef() }));
+    host.appendChild(renderFileList(st.report.files, { selected: st.selected }));
+    const right = document.createElement('div');
+    right.className = 'mem-right';
+    if (st.editor) right.appendChild(renderEditor(st.editor, { isNew: st.isNew, msg: st.editor.msg || '', msgErr: !!st.editor.msgErr, locked }));
+    right.appendChild(renderMemoryHistory(st.snapshots, { locked }));
+    host.appendChild(right);
+    // replaceChildren drops focus to <body>; put it back where the user was.
+    if (!hadFocus) return;
+    const back = st.isNew ? host.querySelector('.mem-name')
+      : (st.selected ? [...host.querySelectorAll('.mem-row')].find((r) => r.dataset.name === st.selected) : null);
+    if (back && typeof back.focus === 'function') back.focus({ preventScroll: true });
+  }
+
+  async function load(name = '', { fromFrame = false } = {}) {
+    const my = ++seq;
+    if (!fromFrame && !st.flash) say('');
+    const dirty = !!st.editor && (st.isNew || collectEditor(host).text !== st.editor.loaded);
+    const r = await memoryApi('GET', base);
+    if (my !== seq) return;
+    if (!r.ok) { say(r.data.error || `HTTP ${r.status}`, 'err'); st.report = null; paint(); return; }
+    const report = r.data;
+    const hist = await memoryApi('GET', `${base}/history`);
+    if (my !== seq) return;
+    st.report = report;
+    st.snapshots = hist.ok && Array.isArray(hist.data.snapshots) ? hist.data.snapshots : [];
+    if (fromFrame && dirty) {
+      // Someone else wrote this scope while the user was typing: refresh the card, the list and the
+      // history, keep every unsaved byte, and say what the two exits do.
+      const cur = collectEditor(host);
+      st.editor = { ...st.editor, name: st.isNew ? cur.name : st.editor.name, text: cur.text };
+      say('This scope changed on disk while you were editing — Save overwrites, Cancel reloads.', 'warn');
+      paint();
+      return;
+    }
+    st.selected = ''; st.editor = null; st.isNew = false;
+    if (name) {
+      const f = await memoryApi('GET', `${base}/files/${encodeURIComponent(name)}`);
+      if (my !== seq) return;
+      if (f.ok) { st.selected = name; st.editor = { name, text: f.data.text, loaded: f.data.text }; }
+      else say(f.data.error || `memory file "${name}" not found`, 'err');
+    }
+    paint();
+    if (st.flash) { say(...st.flash); st.flash = null; }
+  }
+
+  async function save() {
+    const ed = host.querySelector('.mem-editor');
+    if (!ed) return;
+    const { name, text } = collectEditor(ed);
+    if (!memoryNameOk(name)) { st.editor = { ...st.editor, name, text, msg: `Name: ${MEMORY_NAME_HELP}.`, msgErr: true }; paint(); return; }
+    const r = await memoryApi('PUT', `${base}/files/${encodeURIComponent(name)}`, { text });
+    if (!r.ok) { st.editor = { ...st.editor, name, text, msg: r.data.error || `HTTP ${r.status}`, msgErr: true }; paint(); return; }
+    st.flash = [`Saved ${name}.md`, 'ok'];
+    st.selected = name; st.isNew = false;
+    st.editor = { ...st.editor, name, text, loaded: text, msg: '', msgErr: false };
+    // Route only when the hash would actually change: an unchanged hash fires no hashchange, so the
+    // repaint would never happen.
+    if (navigate && location.hash.slice(1) !== memoryRoute(scopeKey, name)) route(name);
+    else await load(name);
+  }
+
+  async function remove() {
+    const name = st.selected;
+    if (!name) return;
+    const ok = await confirmModal({
+      title: 'Delete memory file',
+      message: `Delete “${name}.md”? A snapshot stays in this scope's History, so it can be restored.`,
+      confirmLabel: 'Delete', danger: true,
+    });
+    if (!ok) return;
+    const r = await memoryApi('DELETE', `${base}/files/${encodeURIComponent(name)}`);
+    if (!r.ok) { say(r.data.error || `HTTP ${r.status}`, 'err'); return; }
+    st.flash = [`Deleted ${name}.md`, 'ok'];
+    st.selected = ''; st.isNew = false; st.editor = null;
+    if (navigate && location.hash.slice(1) !== memoryRoute(scopeKey)) route('');
+    else await load('');
+  }
+
+  async function restore(id) {
+    const ok = await confirmModal({
+      title: 'Restore snapshot',
+      message: `Replace every file of this scope with snapshot ${id}? The current files are snapshotted first.`,
+      confirmLabel: 'Restore',
+    });
+    if (!ok) return;
+    const r = await memoryApi('POST', `${base}/history/${encodeURIComponent(id)}/restore`);
+    if (!r.ok) { say(r.data.error || `HTTP ${r.status}`, 'err'); if (r.status === 409) await load(st.selected); return; }
+    st.flash = [`Restored ${id}`, 'ok'];
+    await load('');
+  }
+
+  async function defragment(runId) {
+    // ONE control (spec §10): while a run is live the same button opens it instead of starting a second.
+    if (runId) { location.hash = `running/${runId}`; return; }
+    const h = hostRef();
+    const r = await memoryApi('POST', `${base}/defragment`, scopeKey === 'global' ? { projectKey: h ? h.key : '' } : undefined);
+    if (!r.ok) { say(r.data.error || `HTTP ${r.status}`, 'err'); if (r.status === 409) await load(st.selected); return; }
+    st.flash = ['Defragment run started.', 'ok'];
+    await load(st.selected);
+  }
+
+  const open = (name) => {
+    if (navigate && location.hash.slice(1) !== memoryRoute(scopeKey, name)) route(name);
+    else void load(name);
+  };
+  const onClick = (e) => {
+    const t = e.target;
+    const hit = (cls) => (t.closest ? t.closest(`.${cls}`) : null);
+    if (hit('mem-new')) { st.selected = ''; st.isNew = true; st.editor = { name: '', text: '' }; paint(); return; }
+    if (hit('mem-cancel')) {
+      st.selected = ''; st.isNew = false; st.editor = null; paint();
+      if (navigate && location.hash.slice(1) !== memoryRoute(scopeKey)) route('');
+      return;
+    }
+    if (hit('mem-save')) { void save(); return; }
+    if (hit('mem-delete')) { void remove(); return; }
+    if (hit('mem-restore')) { void restore(hit('mem-restore').dataset.id); return; }
+    if (hit('mem-defrag')) { void defragment(hit('mem-defrag').dataset.runId || ''); return; }
+    const row = hit('mem-row');
+    if (row) open(row.dataset.name);
+  };
+  const onKey = (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    const row = e.target.closest && e.target.closest('.mem-row');
+    if (!row) return;
+    e.preventDefault();
+    open(row.dataset.name);
+  };
+  host.addEventListener('click', onClick);
+  host.addEventListener('keydown', onKey);
+  return {
+    scopeKey,
+    load,
+    selectedName: () => st.selected,
+    destroy() { host.removeEventListener('click', onClick); host.removeEventListener('keydown', onKey); host.replaceChildren(); },
+  };
+}
+
+/** The project that hosts a GLOBAL defragment run (B32): the one picked on New pipeline, else the
+ *  first registered project that exists. Disabled only when NO project is registered (spec §7.3). */
+function globalDefragHost() {
+  const path = selectedProjectPath();
+  const picked = path ? state.projects.find((x) => x && x.path === path) : null;
+  const p = picked || state.projects.find((x) => x && x.exists && x.key) || null;
+  return p && p.key ? { key: p.key, name: p.name } : null;
+}
+
+async function loadMemoryTab(sub = '') {
+  if (!el.memoryHost) return;
+  if (!memoryTabCtl) {
+    memoryTabCtl = createMemoryController({ host: el.memoryHost, msgEl: el.memoryMsg, scopeKey: 'global', hostProject: globalDefragHost });
+  }
+  await memoryTabCtl.load(sub ? safeDecode(sub) : '');
 }
 
 // Final routing: render the list and, when `param` names a set, open the wizard in
@@ -11134,6 +11407,25 @@ function coalesce(fn, ms) {
 }
 const pokeCommentCounts = coalesce(() => { void refreshCommentCounts(); }, COMMENT_POKE_MS);
 const pokeOpenDiffTab = coalesce(() => { if (hdCommentState) void hdCommentState.reload(); }, COMMENT_POKE_MS);
+
+// Agent memory (§10 / A11): a burst of `memory-changed` frames (an Ask turn remembering five
+// things) costs ONE refetch per scope. Declared HERE, after `coalesce` and after the controllers
+// they poke; `handleServerMessage` only ever runs them at socket time.
+const pokeGlobalMemory = coalesce(() => {
+  if (memoryTabCtl) void memoryTabCtl.load(memoryTabCtl.selectedName(), { fromFrame: true });
+}, COMMENT_POKE_MS);
+const projectMemoryPokes = new Map();
+function pokeProjectMemory(scopeKey) {
+  let poke = projectMemoryPokes.get(scopeKey);
+  if (!poke) {
+    poke = coalesce(() => {
+      const ctl = projectMemoryControllers.get(scopeKey);
+      if (ctl) void ctl.load(ctl.selectedName(), { fromFrame: true });
+    }, COMMENT_POKE_MS);
+    projectMemoryPokes.set(scopeKey, poke);
+  }
+  poke();
+}
 
 function renderHistCommentPill(pill, p) {
   if (!pill) return;
@@ -16865,7 +17157,7 @@ const VIEW_NAMES = ['new', 'running', 'history', 'stats', 'composer', 'workspace
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
 // behind it (#settings/guardrails/<id>). parseHash splits on the FIRST '/' only,
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
-const SETTINGS_TABS = ['general', 'guardrails', 'models', 'plugins'];
+const SETTINGS_TABS = ['general', 'guardrails', 'models', 'plugins', 'memory'];
 const settingsPanes = $$('[data-view="settings"] .settings-pane');
 // Old top-level hashes keep working. The hashchange listener DROPS any view it
 // does not know, so without this map a bookmark or an old in-app link would
@@ -16920,6 +17212,9 @@ function showView(name, param = '') {
     if (currentSettingsTab === 'guardrails' && grvState.wizard) {
       grvState.wizard = null; grvState.editing = null; closePluginModal();
     }
+    // The Memory controller owns two delegated listeners and a painted host; a tab switch tears it
+    // down so the next entry mounts a fresh one (and a stray frame paints nothing).
+    if (currentSettingsTab === 'memory' && memoryTabCtl) { memoryTabCtl.destroy(); memoryTabCtl = null; }
   }
   // Leaving History resets the two-screen track, so the next visit lands on the
   // list instead of a stale detail screen sliding in behind the new view.
@@ -17044,6 +17339,7 @@ function showSettingsTab(param = '') {
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'models') loadModelsView();
   if (tab === 'plugins') loadPluginsView({ refresh: true });
+  if (tab === 'memory') loadMemoryTab(sub);
 }
 
 // Tracks the currently shown view so the leave-guard can fire on transition.
@@ -17269,6 +17565,9 @@ async function applyAskPrefill() {
     extrasFiles = p.extras.filter((e) => e && e.name).map((e) => new window.File([toBytes(e.dataBase64)], String(e.name)));
     renderExtrasPills();
   }
+  // BEFORE loadWorkflowsInto: that call renders the workflow config, which reveals the Memory
+  // scope row — a `project` proposal must not land on the row's default `global` (B17).
+  setMemoryScope(p.memoryScope);
   await loadWorkflowsInto(p.workflowId);
   await loadGuardrailsInto(p.guardrailsId);
   if (el.advancedConfig) el.advancedConfig.open = true;

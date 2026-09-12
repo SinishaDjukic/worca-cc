@@ -199,6 +199,16 @@
                   </div>
                 </div>
 
+                <!-- Memory defragment only (agent memory §7.3 / B11): the scope the run restructures. -->
+                <div class="field field-compact" id="memory-scope-row" hidden>
+                  <label>Memory scope</label>
+                  <div class="seg" id="memory-scope-seg" role="group" aria-label="Memory scope">
+                    <button type="button" data-scope="global" class="on" aria-pressed="true">Global</button>
+                    <button type="button" data-scope="project" aria-pressed="false">Project</button>
+                  </div>
+                  <small class="hint">Global: the rules every project shares. Project: this project's memory. The run restructures that scope and nothing else — the task text is optional, and it runs with the Normal guardrails unless you pick another set.</small>
+                </div>
+
                 <!-- Task source switch; the panes below span the full width. -->
                 <div class="field field-compact">
                   <label>Task source</label>
@@ -1036,6 +1046,7 @@
             <button type="button" data-tab="guardrails" aria-pressed="false">Guardrails</button>
             <button type="button" data-tab="models" aria-pressed="false">Models</button>
             <button type="button" data-tab="plugins" aria-pressed="false">Plugins</button>
+            <button type="button" data-tab="memory" aria-pressed="false">Memory</button>
           </div>
 
           <section class="settings-pane" data-tab="general">
@@ -1387,6 +1398,19 @@
             <div class="run-list" id="marketplaces-list"></div>
           </section>
           <!-- /pane plugins -->
+
+          <!-- ===== TAB: MEMORY (agent-memory-design.md §10) ===== -->
+          <section class="settings-pane hidden" data-tab="memory">
+            <div class="topbar">
+              <div>
+                <h1>Memory</h1>
+                <div class="sub">What worca remembers across runs and chats — the global rules and preferences every agent sees. A project's own memory lives on the Projects page.</div>
+              </div>
+            </div>
+            <p id="memory-msg" class="form-msg" aria-live="polite"></p>
+            <div id="memory-host" class="mem-host"></div>
+          </section>
+          <!-- /pane memory -->
         </section>
         <!-- /view settings -->
       </main>
