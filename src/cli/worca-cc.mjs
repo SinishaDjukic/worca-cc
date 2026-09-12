@@ -1927,9 +1927,9 @@ async function cmdWorkflow(argv) {
   try {
     switch (verb) {
       case 'list': {
-        // GRAPH_DEFAULT_WORKFLOW (the built-in default) is not in the user store, so
-        // prepend it — mirrors the server/UI, which always show it first.
-        const items = [wf.GRAPH_DEFAULT_WORKFLOW, ...(await wf.listWorkflows())];
+        // The built-ins (Default, Memory defragment) are not in the user store, so
+        // prepend them — mirrors the server/UI, which always show them first.
+        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(await wf.listWorkflows())];
         for (const w of items) out(`${w.id}\t${w.name}\t${(w.domain || 'general')}`);
         return 0;
       }

@@ -108,7 +108,7 @@ import {
   writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
 } from '../src/core/guardrail-store.mjs';
 import {
-  GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, listWorkflows, deleteWorkflow, isSafeWorkflowId,
+  GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, listWorkflows, deleteWorkflow, isSafeWorkflowId,
   setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow, readWorkflow,
 } from '../src/core/workflows.mjs';
 import { mintAutoWorkflowId, sanitizeProposalAnswer } from '../src/core/auto/proposal.mjs';
@@ -3621,9 +3621,9 @@ app.get('/api/workflows', async (req, res) => {
       const all = await listWorkflows({ includeArchived: true });
       return res.json({ workflows: all.filter((w) => w.archivedAt) });
     }
-    // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, ...listWorkflows() ]. The built-in is
-    // never a persisted row (listWorkflows filters its id), so it cannot appear twice.
-    res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, ...(await listWorkflows())] });
+    // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, ...listWorkflows() ]. The
+    // built-ins are never persisted rows (listWorkflows filters their ids), so none appears twice.
+    res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(await listWorkflows())] });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -3734,6 +3734,7 @@ app.delete('/api/workflows/:id', async (req, res) => {
   const id = req.params.id;
   // The built-in default is not in the user store and must never be deleted.
   if (id === 'wf_default') return badRequest(res, 'the default workflow cannot be deleted');
+  if (id === MEMORY_DEFRAG_WORKFLOW_ID) return badRequest(res, 'the Memory defragment workflow cannot be deleted');
   try {
     const removed = await deleteWorkflow(id); // CONV-1: await
     if (!removed) return res.status(404).json({ error: 'workflow not found' });
