@@ -8,6 +8,7 @@ import {
   GLOBAL_SCOPE, projectScope, scopeDir, listMemory, listMemoryDir, hashText,
   repairMemoryFile, parseMemoryFile, writeMemory, removeMemory, snapshotScope, MemoryError,
 } from './memory-store.mjs';
+import { MEMORY_DEFRAG_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 
 export const baselineKey = (rel, name) => `${rel}/${name}.md`;
 const byKey = (a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0);
@@ -34,6 +35,25 @@ export function mountDirs({ members = [], isWorkspace = false, memoryScope = nul
     return out.filter((d) => d.rel === 'project');
   }
   return out;
+}
+
+export const MEMORY_SCOPES = Object.freeze(['global', 'project']);
+
+/**
+ * The run-option gate (agent-memory-design.md §7.3), shared by POST /api/run, the CLI, Ask's
+ * proposal validator and the harness constructor: null when the combination is legal, else the
+ * reason — an HTTP 400 / CLI usage error / proposal error, verbatim. `memoryScope` is only ever
+ * legal with the Memory defragment workflow, that workflow always needs it, and a defragment
+ * run is a single-project run (the mount is one scope dir: mountDirs).
+ */
+export function validateMemoryScope({ workflowId, memoryScope, isWorkspace = false } = {}) {
+  const has = memoryScope !== undefined && memoryScope !== null && memoryScope !== '';
+  const defrag = workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
+  if (has && !MEMORY_SCOPES.includes(memoryScope)) return 'memoryScope must be "global" or "project"';
+  if (has && !defrag) return `memoryScope is only valid with the Memory defragment workflow (${MEMORY_DEFRAG_WORKFLOW_ID})`;
+  if (defrag && !has) return 'the Memory defragment workflow needs memoryScope ("global" or "project")';
+  if (has && isWorkspace) return 'a memory defragment run targets one project, not a workspace';
+  return null;
 }
 
 /**
@@ -75,7 +95,13 @@ export function withStoreLock(root, fn) {
 }
 
 const REJECTED_INVALID = 'rejected:invalid';
+/** Keep `isHash`: `storeHashOf` is defined in terms of it and is its only remaining caller. */
 const isHash = (v) => typeof v === 'string' && !v.startsWith('rejected:');
+/** The store hash a baseline value still vouches for: a plain hash, or the third segment of a
+ *  `rejected:<mountHash>:<storeHash>` marker (the store held the file when its overwrite was
+ *  refused, and that copy is what a later deletion may mirror — spec §5 step 5). null for
+ *  `rejected:invalid` and for P1's two-part `rejected:<mountHash>` (the store never vouched). */
+const storeHashOf = (v) => (isHash(v) ? v : ((typeof v === 'string' && v.split(':')[2]) || null));
 
 /** Totals over a list of Change entries — one shape for results.json and the History detail. */
 export function memoryTotals(changes) {
@@ -96,8 +122,14 @@ export function memoryTotals(changes) {
  *    baseline; otherwise kept + warned. A key whose last write was rejected is dropped with
  *    a warning (the store never took that text).
  *  - a file the store refuses (invalid name, cap, twin, scope full, or a store-side fs
- *    error) stays in the mount, is baselined as `rejected:<hash>` (reported ONCE per text,
- *    re-tried whenever the text — or the cap — changes) and never reaches the store.
+ *    error) stays in the mount, is baselined as `rejected:<mountHash>[:<storeHash>]` (the store
+ *    hash rides along when the store held the file, so a later mount deletion of that file
+ *    still mirrors; reported ONCE per text, re-tried whenever the text — or the cap — changes)
+ *    and never reaches the store.
+ *  - a mount file the run EMPTIED is a DELETION request (amendment B19): the memory tool set
+ *    has no unlink, and no legitimate memory file is empty (every writer renders a fence), so
+ *    the key is handed to the deletion pass above. A NEW empty file is simply ignored; this
+ *    arm runs BEFORE the scope-full pre-check, so a full scope never turns it into a rejection.
  *  - a mount file that cannot be READ is skipped this sync with its baseline untouched.
  * Never throws for one file's sake; a listing error is reported through `onError`.
  */
@@ -132,19 +164,30 @@ async function syncBackUnlocked({ root, mount, dirs, baseline, source, now, caps
       seen.add(key);
       if (next[key] === e.hash) continue;                                     // unchanged since the last sync
       const inStore = store.has(e.name);
-      const tracked = isHash(baseline[key]);
-      const marker = `rejected:${e.hash}`;
+      // The marker keeps the STORE hash (when there is one) so the same text is not re-reported
+      // on the next sync (the marker must be stable) and a later mount deletion can still tell
+      // whether the store copy is the one this run mounted.
+      const storeHash = storeHashOf(baseline[key]);
+      const marker = `rejected:${e.hash}${storeHash ? `:${storeHash}` : ''}`;
       const reject = (reason) => { if (baseline[key] !== marker) rejected.push({ scope: d.rel, name: e.name, reason }); next[key] = marker; };
-      if (!inStore && store.size >= (caps?.maxFilesPerScope ?? Infinity)) { reject(`scope is full (${caps.maxFilesPerScope} files)`); continue; }
       let text;
       try { text = await readFile(join(dir, `${e.name}.md`), 'utf8'); }
       catch (err) {
         if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') continue;     // vanished between the listing and the read
         warn(`memory: cannot read ${key}: ${err?.code || err?.message || err} — skipped this sync`); continue;
       }
+      // B19: a mount file the agent EMPTIED is a deletion request — the memory tool set has
+      // no unlink (Write/Edit only), and no legitimate memory file is empty (every writer
+      // renders a fence). Hand the key to the deletion pass: it mirrors the removal only
+      // when the store copy is unchanged since the mount (spec §5 step 5), else keeps + warns.
+      // A NEW empty file is simply ignored (the deletion pass sees no baseline for it).
+      if (!text.trim()) { seen.delete(key); continue; }
+      // The scope-full pre-check comes AFTER the read and the B19 arm: a file the run EMPTIED is a
+      // deletion request, never a new file, so a full scope must not turn it into a rejection.
+      if (!inStore && store.size >= (caps?.maxFilesPerScope ?? Infinity)) { reject(`scope is full (${caps.maxFilesPerScope} files)`); continue; }
       const declared = parseMemoryFile(text).meta.name;
       if (declared && declared !== e.name) warn(`memory: ${key} declares name "${declared}" — repaired to the filename stem "${e.name}"`);
-      if (inStore && tracked && store.get(e.name) !== baseline[key]) {
+      if (inStore && storeHash && store.get(e.name) !== storeHash) {
         warn(`memory: ${key} changed in the store since this run mounted it — the run's version wins (the store's version is kept in .history)`);
       }
       try {
@@ -163,11 +206,12 @@ async function syncBackUnlocked({ root, mount, dirs, baseline, source, now, caps
       if (!key.startsWith(`${d.rel}/`) || seen.has(key)) continue;
       const name = key.slice(d.rel.length + 1).replace(/\.md$/, '');
       if (!store.has(name)) { delete next[key]; continue; }                   // already gone from the store (or never accepted)
-      if (!isHash(baseline[key])) {                                            // the run's last write of it was rejected: the store never took it
+      const storeHash = storeHashOf(baseline[key]);
+      if (storeHash === null) {                                               // the store never vouched for this key (P1 marker / invalid name)
         warn(`memory: ${key} was deleted by the run after a rejected write — the store's version is kept`);
         delete next[key]; continue;
       }
-      if (store.get(name) !== baseline[key]) {
+      if (store.get(name) !== storeHash) {
         warn(`memory: ${key} was deleted by the run but changed in the store since this run mounted it — kept`);
         delete next[key]; continue;
       }

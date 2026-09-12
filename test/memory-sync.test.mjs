@@ -4,7 +4,8 @@ import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mountDirs, mountMemory, baselineKey } from '../src/core/memory-sync.mjs';
+import { mountDirs, mountMemory, baselineKey, validateMemoryScope, MEMORY_SCOPES } from '../src/core/memory-sync.mjs';
+import { MEMORY_DEFRAG_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
 import { writeMemory, GLOBAL_SCOPE, projectScope, hashText, listMemoryDir } from '../src/core/memory-store.mjs';
 
 const CAPS = { softBytesPerFile: 8192, hardBytesPerFile: 32768, maxFilesPerScope: 50, indexMaxBytes: 4096, hookMaxChars: 160 };
@@ -228,4 +229,125 @@ test('syncBack: junk in the STORE scope never blocks an agent write; the snapsho
   assert.deepEqual(snaps[0].files, ['testing.md'], 'the junk file is not a memory file: not snapshotted');
   assert.deepEqual(warns, [], warns.join('\n'));
   assert.equal(existsSync(join(root, 'global', 'my notes.md')), true, 'and it is left where the user put it');
+});
+
+test('validateMemoryScope: the §7.3 matrix, one reason per refusal', () => {
+  assert.deepEqual([...MEMORY_SCOPES], ['global', 'project']);
+  const D = MEMORY_DEFRAG_WORKFLOW_ID;
+  assert.equal(validateMemoryScope({ workflowId: 'wf_default' }), null);
+  assert.equal(validateMemoryScope({ workflowId: 'wf_default', memoryScope: undefined, isWorkspace: true }), null);
+  assert.equal(validateMemoryScope({ workflowId: D, memoryScope: 'global' }), null);
+  assert.equal(validateMemoryScope({ workflowId: D, memoryScope: 'project' }), null);
+  assert.equal(validateMemoryScope({ workflowId: D, memoryScope: 'both' }), 'memoryScope must be "global" or "project"');
+  assert.equal(validateMemoryScope({ workflowId: D, memoryScope: 42 }), 'memoryScope must be "global" or "project"');
+  assert.equal(validateMemoryScope({ workflowId: 'wf_default', memoryScope: 'global' }), `memoryScope is only valid with the Memory defragment workflow (${D})`);
+  assert.equal(validateMemoryScope({ workflowId: D }), 'the Memory defragment workflow needs memoryScope ("global" or "project")');
+  assert.equal(validateMemoryScope({ workflowId: D, memoryScope: '' }), 'the Memory defragment workflow needs memoryScope ("global" or "project")');
+  assert.equal(validateMemoryScope({ workflowId: D, memoryScope: 'global', isWorkspace: true }), 'a memory defragment run targets one project, not a workspace');
+  assert.equal(validateMemoryScope({ workflowId: D, memoryScope: 'project', isWorkspace: true }), 'a memory defragment run targets one project, not a workspace');
+  assert.equal(validateMemoryScope({}), null, 'no workflow, no scope: nothing to say (the caller defaults the workflow)');
+});
+
+test('marker: a rejected overwrite remembers the STORE hash, so a later mount deletion still mirrors (spec §5 step 5)', async () => {
+  const root = await tmp('worca-mem-root-'); const mount = await tmp('worca-mem-mount-');
+  const dirs = mountDirs({ members: [] });                                  // global only
+  await writeMemory(root, GLOBAL_SCOPE, 'a', 'Rule A.\n', { source: 'user', now: NOW, caps: CAPS });
+  const storeHash = (await listMemory(root, GLOBAL_SCOPE))[0].hash;
+  const { baseline } = await mountMemory({ root, mount, dirs });
+  const big = `---\nname: a\n---\n${'x'.repeat(CAPS.hardBytesPerFile + 1)}\n`;
+  await writeFile(join(mount, 'global', 'a.md'), big);
+  const s1 = await syncBack({ root, mount, dirs, baseline, source: 'run:p1', now: NOW, caps: CAPS });
+  assert.equal(s1.rejected.length, 1);
+  assert.match(s1.baseline['global/a.md'], /^rejected:[0-9a-f]{40}:[0-9a-f]{40}$/, 'mount hash AND store hash');
+  assert.ok(s1.baseline['global/a.md'].endsWith(`:${storeHash}`));
+  const s1b = await syncBack({ root, mount, dirs, baseline: s1.baseline, source: 'run:p1', now: NOW, caps: CAPS });
+  assert.equal(s1b.rejected.length, 0, 'the same text is not reported twice');
+  assert.equal(s1b.baseline['global/a.md'], s1.baseline['global/a.md'], 'and the marker is stable');
+  await rm(join(mount, 'global', 'a.md'));
+  const warnings = [];
+  const s2 = await syncBack({ root, mount, dirs, baseline: s1b.baseline, source: 'run:p1', now: NOW, caps: CAPS, onWarn: (w) => warnings.push(w) });
+  assert.deepEqual(s2.deleted, [{ scope: 'global', name: 'a' }], 'the store was unchanged since the mount, so the deletion mirrors');
+  assert.equal(await readMemory(root, GLOBAL_SCOPE, 'a'), null);
+  assert.deepEqual(warnings.filter((w) => /kept/.test(w)), []);
+});
+
+test('marker: the store changed between the rejection and the deletion ⇒ kept + warned; a legacy two-part marker keeps P1 behaviour', async () => {
+  const root = await tmp('worca-mem-root-'); const mount = await tmp('worca-mem-mount-');
+  const dirs = mountDirs({ members: [] });
+  await writeMemory(root, GLOBAL_SCOPE, 'a', 'Rule A.\n', { source: 'user', now: NOW, caps: CAPS });
+  const { baseline } = await mountMemory({ root, mount, dirs });
+  await writeFile(join(mount, 'global', 'a.md'), `---\nname: a\n---\n${'x'.repeat(CAPS.hardBytesPerFile + 1)}\n`);
+  const s1 = await syncBack({ root, mount, dirs, baseline, source: 'run:p1', now: NOW, caps: CAPS });
+  await writeMemory(root, GLOBAL_SCOPE, 'a', 'Rule A, edited by the user.\n', { source: 'user', now: NOW, caps: CAPS });
+  await rm(join(mount, 'global', 'a.md'));
+  const warnings = [];
+  const s2 = await syncBack({ root, mount, dirs, baseline: s1.baseline, source: 'run:p1', now: NOW, caps: CAPS, onWarn: (w) => warnings.push(w) });
+  assert.deepEqual(s2.deleted, []);
+  assert.ok(await readMemory(root, GLOBAL_SCOPE, 'a'), 'the user edit survives');
+  assert.ok(warnings.some((w) => /changed in the store since this run mounted it — kept/.test(w)), warnings.join('\n'));
+  // Legacy: a P1 ledger marker without the store hash — the store never vouched for anything.
+  const legacy = { 'global/a.md': 'rejected:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef' };
+  const w3 = [];
+  const s3 = await syncBack({ root, mount, dirs, baseline: legacy, source: 'run:p1', now: NOW, caps: CAPS, onWarn: (w) => w3.push(w) });
+  assert.deepEqual(s3.deleted, []);
+  assert.ok(w3.some((w) => /deleted by the run after a rejected write — the store's version is kept/.test(w)), w3.join('\n'));
+  assert.ok(await readMemory(root, GLOBAL_SCOPE, 'a'));
+});
+
+test('B19: an EMPTIED mount file is a deletion (store unchanged ⇒ removed; store changed ⇒ kept + warned); a new empty file is ignored', async () => {
+  const root = await tmp('worca-mem-root-'); const mount = await tmp('worca-mem-mount-');
+  const mdirs = mountDirs({ members: [] });
+  await writeMemory(root, GLOBAL_SCOPE, 'gone', 'Rule.\n', { source: 'user', now: NOW, caps: CAPS });
+  await writeMemory(root, GLOBAL_SCOPE, 'kept', 'Rule.\n', { source: 'user', now: NOW, caps: CAPS });
+  const { baseline } = await mountMemory({ root, mount, dirs: mdirs });
+  await writeFile(join(mount, 'global', 'gone.md'), '');
+  await writeFile(join(mount, 'global', 'kept.md'), '\n');
+  await writeFile(join(mount, 'global', 'new.md'), '');
+  await writeMemory(root, GLOBAL_SCOPE, 'kept', 'Rule, edited.\n', { source: 'user', now: NOW, caps: CAPS });
+  const warnings = [];
+  const s = await syncBack({ root, mount, dirs: mdirs, baseline, source: 'run:p1', now: NOW, caps: CAPS, onWarn: (w) => warnings.push(w) });
+  assert.deepEqual(s.deleted, [{ scope: 'global', name: 'gone' }]);
+  assert.deepEqual(s.added, []); assert.deepEqual(s.modified, []); assert.deepEqual(s.rejected, []);
+  assert.equal(await readMemory(root, GLOBAL_SCOPE, 'gone'), null);
+  assert.ok(await readMemory(root, GLOBAL_SCOPE, 'kept'), 'the user edit survives');
+  assert.ok(warnings.some((w) => /global\/kept\.md was deleted by the run but changed in the store/.test(w)), warnings.join('\n'));
+  assert.equal(Object.keys(s.baseline).includes('global/new.md'), false, 'a new empty file never enters the baseline');
+  const s2 = await syncBack({ root, mount, dirs: mdirs, baseline: s.baseline, source: 'run:p1', now: NOW, caps: CAPS, onWarn: (w) => warnings.push(w) });
+  assert.equal(s2.total + s2.rejected.length, 0, 'stable: the empty files are not re-reported');
+});
+
+test('B19 runs BEFORE the scope-full pre-check: a new EMPTY mount file in a full scope is ignored, not rejected', async () => {
+  // The pre-check must not see a file the run emptied: reading comes first, then B19, then the cap.
+  const root = await tmp('worca-mem-root-'); const mount = await tmp('worca-mem-mount-');
+  const mdirs = mountDirs({ members: [] });
+  const small = { ...CAPS, maxFilesPerScope: 2 };
+  await writeMemory(root, GLOBAL_SCOPE, 'one', 'Rule one.\n', { source: 'user', now: NOW, caps: small });
+  await writeMemory(root, GLOBAL_SCOPE, 'two', 'Rule two.\n', { source: 'user', now: NOW, caps: small });
+  const { baseline } = await mountMemory({ root, mount, dirs: mdirs });
+  await writeFile(join(mount, 'global', 'new.md'), '');
+  const warnings = [];
+  const s = await syncBack({ root, mount, dirs: mdirs, baseline, source: 'run:p1', now: NOW, caps: small, onWarn: (w) => warnings.push(w) });
+  assert.deepEqual(s.rejected, [], 'an emptied new file is never reported as "scope is full"');
+  assert.deepEqual(s.added, []); assert.deepEqual(s.modified, []); assert.deepEqual(s.deleted, []);
+  assert.equal(Object.keys(s.baseline).includes('global/new.md'), false, 'a new empty file never enters the baseline');
+  assert.deepEqual((await listMemory(root, GLOBAL_SCOPE)).map((e) => e.name), ['one', 'two']);
+});
+
+test('a file rejected, then accepted after a store edit, still warns that the run\'s version wins', async () => {
+  // The conflict warning compares the STORE hash the baseline vouches for — not the raw baseline
+  // value — so it still fires for a key whose last sync was a rejection (spec §5 step 5).
+  const root = await tmp('worca-mem-root-'); const mount = await tmp('worca-mem-mount-');
+  const mdirs = mountDirs({ members: [] });
+  await writeMemory(root, GLOBAL_SCOPE, 'a', 'Rule A.\n', { source: 'user', now: NOW, caps: CAPS });
+  const { baseline } = await mountMemory({ root, mount, dirs: mdirs });
+  await writeFile(join(mount, 'global', 'a.md'), `---\nname: a\n---\n${'x'.repeat(CAPS.hardBytesPerFile + 1)}\n`);
+  const s1 = await syncBack({ root, mount, dirs: mdirs, baseline, source: 'run:p1', now: NOW, caps: CAPS });
+  assert.equal(s1.rejected.length, 1);
+  await writeMemory(root, GLOBAL_SCOPE, 'a', 'Rule A, edited by the user.\n', { source: 'user', now: NOW, caps: CAPS });
+  await writeFile(join(mount, 'global', 'a.md'), '---\nname: a\n---\nRule A, trimmed by the run.\n');
+  const warnings = [];
+  const s2 = await syncBack({ root, mount, dirs: mdirs, baseline: s1.baseline, source: 'run:p1', now: NOW, caps: CAPS, onWarn: (w) => warnings.push(w) });
+  assert.deepEqual(s2.modified, [{ scope: 'global', name: 'a' }]);
+  assert.ok(warnings.some((w) => /global\/a\.md changed in the store since this run mounted it — the run's version wins/.test(w)), warnings.join('\n'));
+  assert.match((await readMemory(root, GLOBAL_SCOPE, 'a')).body, /trimmed by the run/);
 });
