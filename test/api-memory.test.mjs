@@ -109,6 +109,8 @@ test('GET /api/memory/global on a fresh store: empty list, fresh health, no live
   const j = await r.json();
   assert.deepEqual({ scope: j.scope, project: j.project, files: j.files, defragRunId: j.defragRunId }, { scope: 'global', project: null, files: [], defragRunId: null });
   assert.equal(j.health.level, 'fresh');
+  assert.equal(j.health.alwaysOnBytes, 0);
+  assert.equal('indexDropped' in j.health, false);
   assert.deepEqual(j.state, { writesSinceDefrag: 0, lastWriteAt: null, lastDefragAt: null, lastDefragRunId: null });
 });
 
@@ -233,6 +235,7 @@ test('GET /api/memory/health: global + every registered project, with the live-d
   let j = await (await get('/api/memory/health')).json();
   assert.equal(j.global.health.level, 'ok', JSON.stringify(j.global.health.reasons));
   assert.equal(j.global.health.files, 2, 'Twin.md + h.md');
+  assert.equal(typeof j.global.health.alwaysOnBytes, 'number');
   assert.equal(j.global.defragRunId, null);
   assert.deepEqual(j.projects.map((p) => [p.key, p.name]), [[project.key, 'apimem']]);
   assert.equal(j.projects[0].health.files, 1, 'conventions.md from the previous test');

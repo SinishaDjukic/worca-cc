@@ -26,6 +26,7 @@ import { readPipelineForResume, readPipelineByKey } from '../src/core/artifacts.
 import {
   readRunManifest, updateRunManifest, claudeMdFenceBegin, CLAUDE_MD_FENCE_END,
 } from '../src/core/run-manifest.mjs';
+import { RUN_LOG_FILE } from '../src/core/run-log.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 
 useTempHome(after);
@@ -501,6 +502,7 @@ test('detached: per-member order — mounts/fence never reach the commit and are
     const tree = treeOf(repo, feature);
     // (3) the commit excludes every injected path…
     assert.ok(!tree.some((p) => p.startsWith('.claude/')), `no mount in the commit: ${tree.join(',')}`);
+    assert.ok(!tree.some((p) => p.startsWith('.claude/rules/worca/')), 'the memory mount is excluded too');
     assert.ok(!tree.includes('.env'), 'no linkPaths entry in the commit');
     // …and the fenced block never reaches it, while the tracked file itself does.
     assert.ok(tree.includes('CLAUDE.md'), 'the tracked CLAUDE.md is still committed');
@@ -513,6 +515,10 @@ test('detached: per-member order — mounts/fence never reach the commit and are
     // (4)+(5) the checkout (and hence every injected path in it) is gone.
     assert.ok(!existsSync(seenWorktree), 'the checkout was removed after the injected paths');
     assert.ok(!existsSync(join(worcaHome(), 'runs', orch.getState().id)), 'the run root is gone');
+    // The run root is gone: read the DURABLE manifest copy for the memory record the boot sweep
+    // and pipeline-delete need. plantInjected MERGES, so the entry registered at step 3f survives.
+    const durable = JSON.parse(await readFile(join(orch.getState().pipelineDir, 'run.json'), 'utf8'));
+    assert.ok(durable.injectedPaths[projectKey(repo)].some((e) => e.kind === 'memory'), 'run.json carries the memory record for the sweep / pipeline-delete');
   });
 });
 
@@ -671,6 +677,7 @@ test('legacy (pinned): _teardownRunRoot delegates verbatim — worktree removed,
     // No stray/ artifact dir is created when there is no run root to scan.
     assert.ok(!existsSync(join(st.pipelineDir, 'stray')), 'no stray dir on a legacy run');
     assert.ok(!existsSync(join(st.pipelineDir, 'run.json')), 'no manifest copy on a legacy run');
+    assert.ok(!treeOf(repo, st.branch.feature).some((p) => p.startsWith('.claude/')), 'legacy: the memory mount is excluded from the commit');
   });
 });
 
@@ -680,10 +687,12 @@ test('legacy: a failed teardown commit survives a DB round trip and keeps the ch
     const orch = createOrchestrator({
       projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
     });
+    const commitArgvs = [];
     const realGit = orch._git.bind(orch);
     orch._git = (args, opts) => {
       const msgAt = args.indexOf('-m');
       if (args.includes('commit') && msgAt >= 0 && String(args[msgAt + 1] || '').startsWith('worca:')) {
+        commitArgvs.push(args);
         return Promise.resolve({ ok: false, code: 1, stdout: '', stderr: 'legacy commit failure' });
       }
       return realGit(args, opts);
@@ -696,6 +705,42 @@ test('legacy: a failed teardown commit survives a DB round trip and keeps the ch
     assert.equal(saved.state.branch.commitFailed.code, 'commit_failed');
     assert.equal(saved.state.branch.commitFailed.step, 'commit');
     assert.equal(saved.state.branch.worktreeRemoved, false);
+    // §8.8: the hooks-bypass retry is gated on the MODE, not on the exclusion set. A legacy run
+    // now carries one exclusion pathspec (the memory mount), and must STILL keep its verbatim,
+    // hooks-enabled commit — it never even ATTEMPTS a core.hooksPath= retry. (Asserting on the
+    // log alone would not catch a wrong gate here: this spy fails the retry too, and the
+    // 'hooks BYPASSED' line is only written when the retry SUCCEEDS.)
+    assert.ok(commitArgvs.length >= 1, 'the forced failure was reached');
+    assert.ok(!commitArgvs.some((a) => a.some((x) => String(x).startsWith('core.hooksPath='))),
+      `legacy never retries with hooks bypassed: ${JSON.stringify(commitArgvs)}`);
+    const log = await readFile(join(st.pipelineDir, RUN_LOG_FILE), 'utf8');
+    assert.equal(/hooks BYPASSED/.test(log), false);
+  });
+});
+
+test('detached: a hook-failing commit is retried with hooks bypassed even on the default workflow (no skill mount) — the gate is the mode, not the exclusion set', async () => {
+  const repo = await freshRepo();
+  await withMode('detached', async () => {
+    const orch = createOrchestrator({
+      projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+    });
+    const realGit = orch._git.bind(orch);
+    orch._git = (args, opts) => {
+      const msgAt = args.indexOf('-m');
+      const isWorcaCommit = args.includes('commit') && msgAt >= 0 && String(args[msgAt + 1] || '').startsWith('worca:');
+      if (isWorcaCommit && !args.some((a) => String(a).startsWith('core.hooksPath='))) {
+        return Promise.resolve({ ok: false, code: 1, stdout: '', stderr: 'pre-commit hook failed' });
+      }
+      return realGit(args, opts);
+    };
+    const res = await orch.run();
+    assert.equal(res.status, 'done', JSON.stringify(res));
+    const st = orch.getState();
+    assert.match(String(st.branch.commit), /^[0-9a-f]{40}$/, 'the bypassed retry produced the commit');
+    const log = await readFile(join(st.pipelineDir, RUN_LOG_FILE), 'utf8');
+    assert.match(log, /retried the commit with hooks BYPASSED/);
+    assert.match(log, /retried with hooks bypassed/);
+    assert.ok(treeOf(repo, st.branch.feature).includes('src/feature.mjs'), 'the agent work reached the kept branch');
   });
 });
 
@@ -740,6 +785,22 @@ test('the retention stamp is durable in the DB before _recordCommitFailure retur
   const persisted = await readPipelineByKey(projectKey(repo), 'rcf00001');
   assert.equal(persisted.state.branch.commitFailed.code, 'commit_failed',
     'the row is durable before any caller-side persist runs');
+});
+
+test('detached workspace: the memory mount sits at <runRoot>/.claude/rules/worca, is never a stray, and goes with the run root', async () => {
+  const a = await freshRepo('worca-cc-rrt-a-'); const b = await freshRepo('worca-cc-rrt-b-');
+  await withMode('detached', async () => {
+    let seenMount = null;
+    const orch = createOrchestrator({ projectDir: a, prompt: 'x', auto: true, claude: { mock: true }, ...workspaceOpts([a, b]) });
+    orch.on('state', (s) => { if (!seenMount && s.memoryMount) seenMount = s.memoryMount; });   // captured live: the run root is gone after teardown
+    const res = await orch.run();
+    assert.equal(res.status, 'done', JSON.stringify(res));
+    const runRoot = join(worcaHome(), 'runs', orch.getState().id);
+    assert.equal(seenMount, join(runRoot, '.claude', 'rules', 'worca'));
+    assert.ok(!existsSync(runRoot), 'the run root is gone');
+    assert.ok(!existsSync(join(orch.getState().pipelineDir, 'stray')), 'the mount was never rescued as a stray (.claude is in the known set)');
+    for (const repo of [a, b]) for (const br of branchList(repo).filter((x) => x !== 'main')) assert.ok(!treeOf(repo, br).some((p) => p.startsWith('.claude/')), `${repo}: no mount in the commit`);
+  });
 });
 
 test('legacy workspace: the scalar mirror is NOT stamped removed while a member is retained', async () => {

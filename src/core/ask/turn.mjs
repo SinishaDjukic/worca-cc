@@ -22,6 +22,7 @@ import { generateTitle } from '../title.mjs';
 import { cleanText } from '../../shared/graph/assemble.mjs';
 import { createTurnReducer } from './events.mjs';
 import { buildAskSpawnOptions, buildMcpConfig, ASK_MCP_SERVER_PATH } from './spawn.mjs';
+import { refreshAskMemoryMount } from './memory-deps.mjs';
 import { validateProposal } from './proposal.mjs';
 import { revalidateWorkflowProposal } from './workflow-deps.mjs';
 import { askLimits, ASK_LIMITS } from './limits.mjs';
@@ -43,6 +44,7 @@ class AskTurn extends EventEmitter {
     firstTurn = false, firstText = '', deterministicTitle = null,
     mock = null, attachmentNames = {},
     pinnedScope = null,
+    memoryProject = null,
     deps = {},
   } = {}) {
     super();
@@ -62,11 +64,15 @@ class AskTurn extends EventEmitter {
     this.attachmentNames = attachmentNames || {};
     // #397: {projectKey}|{workspaceId}|null — the user-pinned scope at POST time.
     this.pinnedScope = pinnedScope && typeof pinnedScope === 'object' ? pinnedScope : null;
+    // Native-rules revision (D16): {key, name}|null — the scope set this turn mounts through --add-dir.
+    this.memoryProject = memoryProject && typeof memoryProject === 'object' ? memoryProject : null;
+    this.memoryDir = null;
     this._wfCards = new Map();        // tool_use id → card id (START → RESULT of one propose_workflow call)
     this._tracked = new Set();        // pipeline ids minted as progress cards in THIS reply (one card per pipeline)
     this.extraCostUsd = 0;            // PD2: money the MCP child spent on the workflow classifier, booked by this turn
     this.deps = {
       runClaudeImpl: deps.runClaudeImpl ?? runClaude,
+      memoryMount: deps.memoryMount ?? refreshAskMemoryMount,
       store: {
         finishMessage, setMessageBlocks, addThreadTotals, updateThread, setThreadTitle, listAttachments,
         ...(deps.store || {}),
@@ -421,6 +427,14 @@ class AskTurn extends EventEmitter {
       // _attempts below is the backstop for a mkdir/write failure, so "fires
       // after ANY terminal status of the first turn" stays true.
       this._kickoffTitle();
+      // Native-rules revision: refresh the chat's memory mount for this turn's scope set and hand
+      // it to the spawn as --add-dir. A store failure never breaks a turn — the turn carries no
+      // memory and says so on the server log (the rules are additive; the chat is unaffected).
+      try { this.memoryDir = await d.memoryMount({ projectKey: this.memoryProject?.key ?? null, projectName: this.memoryProject?.name ?? null }); }
+      catch (err) {
+        this.memoryDir = null;
+        console.warn(`[worca-ask] thread ${this.threadId}: memory mount failed (${err?.message || err}) — this turn carries no memory`);
+      }
       const homeBase = process.env.WORCA_HOME?.trim()
         ? pathResolve(process.env.WORCA_HOME)
         : dirname(d.worcaHome());
@@ -484,6 +498,7 @@ class AskTurn extends EventEmitter {
         limits: limitsNow,
         mcpConfigPath,
         scratchDir,
+        memoryDir: this.memoryDir,
       });
       try {
         await d.runClaudeImpl(options);

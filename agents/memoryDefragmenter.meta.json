@@ -5,7 +5,7 @@
   "sideEffect": "memory",
   "inputs": [
     { "id": "task", "type": "md", "required": true,
-      "directive": "Defragment the memory scope named below. Work only inside the mounted memory directory given in your system prompt (the `## Worca memory` block); never touch the project directory." }
+      "directive": "Defragment the memory scope named below. Work only inside the mounted memory directory given in your system prompt (the `## Worca memory` block) \u2014 it sits under the project directory at .claude/rules/worca/; never touch anything else in the project directory." }
   ],
   "outputs": [
     { "id": "report", "type": "md", "filename": "defrag-report.md" },

@@ -230,7 +230,7 @@ test('no preset protects a memory mount path: a defragment run is never blocked 
   const protects = (pat, rel) => (pat.includes('/') ? globRe(pat).test(rel) : globRe(pat).test(rel.split('/').pop()));
   assert.equal(protects('.env*', 'a/b/.env.local'), true, 'the matcher itself is not vacuous');
   assert.equal(protects('**/secrets/**', 'deep/secrets/token.txt'), true);
-  const MOUNTED = ['memory/global/testing.md', 'memory/projects/demo-00000001/conventions.md'];
+  const MOUNTED = ['.claude/rules/worca/global/testing.md', '.claude/rules/worca/project/conventions.md', '.claude/rules/worca/projects/demo-00000001/conventions.md'];
   for (const [level, preset] of Object.entries(GUARDRAIL_PRESETS)) {
     for (const pat of preset.protectedPaths) {
       for (const rel of MOUNTED) {

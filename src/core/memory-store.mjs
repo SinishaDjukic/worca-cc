@@ -338,95 +338,70 @@ export async function removeMemory(root, scope, name, { source, now, snapshot = 
   return true;
 }
 
-// ── the agent-facing index (§4.2) ────────────────────────────────────────────
-export const MEMORY_INDEX_HEADING = '## Worca memory';
-export const MEMORY_INDEX_INTRO =
-  'Durable rules and preferences kept across runs and chats. Read a file (by the path below) when its hook ' +
-  'matches what you are doing; do not read all of them. Write or edit a file there only for something worth ' +
-  'keeping for future runs — a hard-won rule, a user preference, a trap — never progress notes or a summary of ' +
-  'this run. Keep the frontmatter (name, description, paths); worca stamps source and updated.';
-const CLIPPED_HOOK_CHARS = 60;   // second-stage clip when the cap binds
-const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-
-function renderIndexOnce(sections, omit, hookChars, intro) {
-  const lines = [MEMORY_INDEX_HEADING, intro];
-  for (const s of sections) {
-    lines.push(`${flattenLine(s.label)} — ${s.dir}:`);
-    const kept = [...(s.entries || [])].sort(byName).filter((e) => !omit.has(`${s.dir}/${e.name}`));
-    // A scope whose files were all dropped must not read like an EMPTY scope: the
-    // agent would conclude there is nothing to read there and never look.
-    const hidden = (s.entries || []).length - kept.length;
-    if (!kept.length) lines.push(hidden ? `- (${hidden} file(s) in this scope, not listed — the index is over its byte cap)` : '- (nothing yet)');
-    else if (hidden) lines.push(`- (${hidden} more file(s) not listed)`);
-    for (const e of kept) {
-      const hook = clipHook(e.description, hookChars) || '(no description)';
-      const paths = e.paths?.length ? ` [paths: ${clipHook(e.paths.map(flattenLine).join(', '), hookChars)}]` : '';   // clipped like a hook: one long paths line must not push a whole scope out of the index
-      lines.push(`- \`${e.name}.md\` — ${hook}${paths}`);
-    }
-  }
-  return `${lines.join('\n')}\n`;
-}
+// ── the agent-facing pointer block (§4.2, native-rules revision) ─────
+// The bodies reach the agent through Claude Code's own `.claude/rules` loader (the
+// mount lives inside every spawn's cwd — memory-sync.mjs MEMORY_RULES_REL); this block
+// only says WHERE memory lives and WHAT belongs there. One `Label — /abs/dir:` line per
+// mounted scope: claude-runner.mjs memoryDirsFromPrompt reads exactly those lines, so the
+// intro must stay ONE line and nothing may follow the dir lines inside the block.
+export const MEMORY_BLOCK_HEADING = '## Worca memory';
+export const MEMORY_BLOCK_INTRO =
+  'Durable rules, preferences and traps kept across runs and chats. Claude Code loads them into your context ' +
+  'from the memory directories below (a file with `paths` loads when you read a matching file), so never search ' +
+  'for them (the built-in Explore and Plan sub-agents do not load them — read the files there if you are one). ' +
+  'Write or edit a file there only for something worth keeping for future runs — a hard-won rule, a ' +
+  'user preference, a trap — never progress notes or a summary of this run. One topic per file (`<topic>.md`); ' +
+  'keep the frontmatter: `name` (the filename stem), `description` (one line: when the file is worth reading), ' +
+  'optional `paths` (comma-separated globs); worca stamps `source` and `updated`. To remove a file, empty it.';
 
 /**
- * @param {Array<{label:string, dir:string, entries:Array}>} sections
- * @returns {{text:string, dropped:string[], warnings:string[]}}
- * `maxBytes` is a floor as well as a cap: the heading + intro (~430 bytes) are never
- * dropped; a smaller cap is honoured as far as the file lines allow.
+ * @param {Array<{label:string, dir:string}>} sections  one per mounted scope, in mount order
+ * @returns {string} the block with one trailing newline; byte-stable for identical input
  */
-export function renderMemoryIndex(sections, { maxBytes = 4096, hookMaxChars = HOOK_MAX_CHARS, intro = MEMORY_INDEX_INTRO } = {}) {
-  const omit = new Set();
-  let text = renderIndexOnce(sections, omit, hookMaxChars, intro);
-  if (bytesOf(text) <= maxBytes) return { text, dropped: [], warnings: [] };
-  text = renderIndexOnce(sections, omit, Math.min(hookMaxChars, CLIPPED_HOOK_CHARS), intro);
-  // Drop oldest-updated first (an empty `updated` is oldest of all); ties by name.
-  const all = sections.flatMap((s) => (s.entries || []).map((e) => ({ key: `${s.dir}/${e.name}`, name: e.name, updated: e.updated || '' })))
-    .sort((a, b) => (a.updated < b.updated ? -1 : a.updated > b.updated ? 1 : byName(a, b)));
-  const dropped = [];
-  for (const e of all) {
-    if (bytesOf(text) <= maxBytes) break;
-    omit.add(e.key); dropped.push(e.name);
-    text = renderIndexOnce(sections, omit, Math.min(hookMaxChars, CLIPPED_HOOK_CHARS), intro);
-  }
-  const warnings = dropped.length ? [`memory index: dropped ${dropped.length} file(s) to fit ${maxBytes} bytes: ${dropped.join(', ')}`] : [];
-  return { text, dropped, warnings };
+export function renderMemoryBlock(sections) {
+  const lines = [MEMORY_BLOCK_HEADING, MEMORY_BLOCK_INTRO];
+  for (const s of sections || []) lines.push(`${flattenLine(s.label)} — ${s.dir}:`);
+  return `${lines.join('\n')}\n`;
 }
 
 // ── health (§8) ──────────────────────────────────────────────────────────────
 export const MEMORY_LEVELS = Object.freeze(['fresh', 'ok', 'due', 'overdue']);
-const DEFAULT_DEFRAG = Object.freeze({ writes: 10, files: 30, bytesPct: 60 });
+const DEFAULT_DEFRAG = Object.freeze({ writes: 10, files: 30, bytesPct: 60, alwaysOnBytes: 16384 });
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const names = (list) => `${list.slice(0, 3).map((e) => `${e.name}.md`).join(', ')}${list.length > 3 ? ', …' : ''}`;
 
 /**
  * Pure. `entries` are listMemory rows, `state` the scope's .state counters, `caps` memoryCaps()
- * (a caps object without `defrag` falls back to the spec defaults 10 / 30 / 60 %).
- * fresh = no files. overdue = writes at 2× the threshold OR any file over the hard cap.
- * due = writes ≥ threshold, files ≥ threshold, bytes ≥ bytesPct % of maxFilesPerScope × soft cap,
- * any oversized (soft) or fence-less file, or files dropped from the index (`indexDropped`).
- * P2 additions over spec §8's shape (amendment B27): the `{ indexDropped }` options bag, and the
- * `overHard`, `indexDropped` and `lastDefragRunId` keys on the result.
+ * (a caps object without `defrag` falls back to the defaults 10 / 30 / 60 % / 16 384).
+ * fresh = no files. overdue = writes at 2× the threshold, any file over the hard cap, or the
+ * always-on bytes at 2× their threshold. due = writes ≥ threshold, files ≥ threshold, bytes ≥
+ * bytesPct % of maxFilesPerScope × soft cap, any oversized (soft) or fence-less file, or the
+ * always-on bytes ≥ `defrag.alwaysOnBytes`.
+ * Native rules: every file WITHOUT `paths` is loaded into every agent's context at launch —
+ * `alwaysOnBytes` is that cost (the figure the old 4 KB index cap used to bound). A path-scoped
+ * file costs nothing until a matching file is read, so it is excluded from it.
  */
-export function memoryHealth(entries, state, caps, { indexDropped = 0 } = {}) {
+export function memoryHealth(entries, state, caps) {
   const list = Array.isArray(entries) ? entries : [];
   const st = { ...EMPTY_STATE, ...(state && typeof state === 'object' ? state : {}) };
   const T = { ...DEFAULT_DEFRAG, ...(caps?.defrag && typeof caps.defrag === 'object' ? caps.defrag : {}) };
   const soft = caps?.softBytesPerFile ?? 8192;
   const hard = caps?.hardBytesPerFile ?? 32768;
   const maxFiles = caps?.maxFilesPerScope ?? 50;
-  const indexMax = caps?.indexMaxBytes ?? 4096;
   const size = (e) => Number(e.bytes) || 0;
   const files = list.length;
   const bytes = list.reduce((n, e) => n + size(e), 0);
   const oversized = list.filter((e) => size(e) > soft);
   const overHard = list.filter((e) => size(e) > hard);
   const invalid = list.filter((e) => e.hasFrontmatter === false);
+  const alwaysOn = list.filter((e) => !(Array.isArray(e.paths) && e.paths.length));
+  const alwaysOnBytes = alwaysOn.reduce((n, e) => n + size(e), 0);
   const budget = maxFiles * soft;
   // Spec §8's threshold is `bytes ≥ bytesPct % of budget`: compare integers, never a rounded
   // percentage (Math.round would turn 59.5 % into a 60 % "due"). `pct` is for the message only.
   const overBudget = budget > 0 && bytes * 100 >= T.bytesPct * budget;
   const pct = budget > 0 ? Math.floor((bytes * 100) / budget) : 0;
   const writes = Number(st.writesSinceDefrag) || 0;
-  const dropped = Number(indexDropped) || 0;
   const reasons = [];
   if (files > 0) {
     if (writes >= T.writes) reasons.push(`${plural(writes, 'memory write')} since the last defragment (due at ${T.writes})`);
@@ -435,23 +410,22 @@ export function memoryHealth(entries, state, caps, { indexDropped = 0 } = {}) {
     if (oversized.length) reasons.push(`${plural(oversized.length, 'file')} over the ${soft}-byte soft cap: ${names(oversized)}`);
     if (overHard.length) reasons.push(`${plural(overHard.length, 'file')} over the ${hard}-byte hard cap — runs cannot update them: ${names(overHard)}`);
     if (invalid.length) reasons.push(`${plural(invalid.length, 'file')} without frontmatter — added by hand? worca still serves them; a defragment rewrites them: ${names(invalid)}`);
-    if (dropped > 0) reasons.push(`${plural(dropped, 'file')} dropped from the ${indexMax}-byte index agents see`);
+    if (alwaysOnBytes >= T.alwaysOnBytes) reasons.push(`${alwaysOnBytes} bytes of memory load into the context of every agent that mounts this scope (${plural(alwaysOn.length, 'file')} without paths; due at ${T.alwaysOnBytes})`);
   }
-  const level = files === 0 ? 'fresh' : (writes >= 2 * T.writes || overHard.length) ? 'overdue' : reasons.length ? 'due' : 'ok';
+  const level = files === 0 ? 'fresh'
+    : (writes >= 2 * T.writes || overHard.length || alwaysOnBytes >= 2 * T.alwaysOnBytes) ? 'overdue'
+    : reasons.length ? 'due' : 'ok';
   return {
-    files, bytes, oversized: oversized.length, overHard: overHard.length, invalidFrontmatter: invalid.length, indexDropped: dropped,
+    files, bytes, oversized: oversized.length, overHard: overHard.length, invalidFrontmatter: invalid.length,
+    alwaysOnBytes, alwaysOnFiles: alwaysOn.length,
     writesSinceDefrag: writes, lastWriteAt: st.lastWriteAt, lastDefragAt: st.lastDefragAt, lastDefragRunId: st.lastDefragRunId,
     level, reasons,
   };
 }
 
-/** Everything a scope view or route needs in one read: the listing, the counters and the health.
- *  The index-fit check renders the scope ALONE (a run's index is global + project, so this is a
- *  lower bound on truncation, never an over-report). */
+/** Everything a scope view or route needs in one read: the listing, the counters and the health. */
 export async function memoryScopeReport(root, scope, caps, { onError } = {}) {
   const entries = await listMemory(root, scope, { onError });
   const state = await readScopeState(root, scope);
-  const key = scopeKey(scope);
-  const { dropped } = renderMemoryIndex([{ label: key, dir: scopeDir(root, scope), entries }], { maxBytes: caps?.indexMaxBytes, hookMaxChars: caps?.hookMaxChars });
-  return { scope: key, entries, state, health: memoryHealth(entries, state, caps, { indexDropped: dropped.length }) };
+  return { scope: scopeKey(scope), entries, state, health: memoryHealth(entries, state, caps) };
 }

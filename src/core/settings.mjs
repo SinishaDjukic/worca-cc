@@ -281,15 +281,15 @@ export function contextMaxBytesTotal() {
 export const DEFAULT_MEMORY_SOFT_BYTES_PER_FILE = 8192;    // flagged in health above this
 export const DEFAULT_MEMORY_HARD_BYTES_PER_FILE = 32768;   // rejected at sync-back / write above this
 export const DEFAULT_MEMORY_MAX_FILES_PER_SCOPE = 50;
-export const DEFAULT_MEMORY_INDEX_MAX_BYTES = 4096;
 export const DEFAULT_MEMORY_HOOK_MAX_CHARS = 160;
 
 export const DEFAULT_MEMORY_DEFRAG_WRITES = 10;     // writesSinceDefrag at which a scope is "due"
 export const DEFAULT_MEMORY_DEFRAG_FILES = 30;      // file count at which a scope is "due"
 export const DEFAULT_MEMORY_DEFRAG_BYTES_PCT = 60;  // % of (maxFilesPerScope × softBytesPerFile) at which a scope is "due"
+export const DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES = 16384;  // bytes of path-less memory (loaded into EVERY agent's context) at which a scope is "due"
 
-/** settings.json → { memory: { maxBytesPerFile, softBytesPerFile, maxFilesPerScope, indexMaxBytes, hookMaxChars,
- *  defrag: { writes, files, bytesPct } } }. Every key optional; a bad value warns (naming the full key) and falls back. */
+/** settings.json → { memory: { maxBytesPerFile, softBytesPerFile, maxFilesPerScope, hookMaxChars,
+ *  defrag: { writes, files, bytesPct, alwaysOnBytes } } }. Every key optional; a bad value warns (naming the full key) and falls back. */
 function memoryBlock() {
   const block = readSettings().memory;
   return block && typeof block === 'object' && !Array.isArray(block) ? block : {};
@@ -328,12 +328,12 @@ export function memoryCaps() {
     softBytesPerFile: readMemoryCap('softBytesPerFile', DEFAULT_MEMORY_SOFT_BYTES_PER_FILE),
     hardBytesPerFile: readMemoryCap('maxBytesPerFile', DEFAULT_MEMORY_HARD_BYTES_PER_FILE),
     maxFilesPerScope: readMemoryCap('maxFilesPerScope', DEFAULT_MEMORY_MAX_FILES_PER_SCOPE),
-    indexMaxBytes: readMemoryCap('indexMaxBytes', DEFAULT_MEMORY_INDEX_MAX_BYTES),
     hookMaxChars: readMemoryCap('hookMaxChars', DEFAULT_MEMORY_HOOK_MAX_CHARS),
     defrag: {
       writes: readDefragThreshold('writes', DEFAULT_MEMORY_DEFRAG_WRITES),
       files: readDefragThreshold('files', DEFAULT_MEMORY_DEFRAG_FILES),
       bytesPct: readDefragThreshold('bytesPct', DEFAULT_MEMORY_DEFRAG_BYTES_PCT, { pct: true }),
+      alwaysOnBytes: readDefragThreshold('alwaysOnBytes', DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES),
     },
   };
 }

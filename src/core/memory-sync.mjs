@@ -1,14 +1,33 @@
 // The per-run memory MOUNT (agent-memory-design.md §4.1, amendment A1) and the
 // hash-baselined SYNC-BACK (§5). Pure over injected paths: `root` is the store
-// (memory-store.mjs' layout), `mount` is `<pipeline.dir>/memory`. No DB, no
+// (memory-store.mjs' layout), `mount` is `<runCwd>/.claude/rules/worca` (memoryMountPath). No DB, no
 // orchestrator state, no settings reads — the harness passes caps and paths.
-import { mkdir, rm, cp, readFile, writeFile, stat } from 'node:fs/promises';
+import { mkdir, rm, cp, readFile, writeFile, stat, rename, unlink, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   GLOBAL_SCOPE, projectScope, scopeDir, listMemory, listMemoryDir, hashText,
   repairMemoryFile, parseMemoryFile, writeMemory, removeMemory, snapshotScope, MemoryError,
 } from './memory-store.mjs';
 import { MEMORY_DEFRAG_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
+
+/**
+ * Where the mount lives INSIDE a run's cwd (native-rules revision, 2026-09-13): Claude Code
+ * discovers `<cwd>/.claude/rules/**` recursively, honours `paths:` frontmatter (comma-separated
+ * string included) and hands the files to Task sub-agents — probed on claude 2.1.270 from a git
+ * worktree cwd and from a non-git run root. `worca/` namespaces the mount away from a project's
+ * own committed rules. Forward slashes on purpose: the string is also the git pathspec of the
+ * §8.8 exclusion set (`:(exclude).claude/rules/worca`).
+ */
+export const MEMORY_RULES_REL = '.claude/rules/worca';
+/** `<cwd>/.claude/rules/worca` with the platform separator. */
+export function memoryMountPath(cwd) { return join(cwd, ...MEMORY_RULES_REL.split('/')); }
+/**
+ * The §8.8 injected-path record of the mount. `kind: 'memory'` is EXCLUDED from every commit,
+ * intent-to-add staging and result diff (run-harness `_excludePathspecs`), REMOVED at teardown
+ * (`removeInjectedPaths`) and NEVER rescued (`rescueModifiedMounts` handles the skill/claudeMd
+ * kinds only — sync-back is this mount's rescue). `source: null`: there is no one source file.
+ */
+export const MEMORY_INJECTED_ENTRY = Object.freeze({ path: MEMORY_RULES_REL, kind: 'memory', source: null });
 
 export const baselineKey = (rel, name) => `${rel}/${name}.md`;
 const byKey = (a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0);
@@ -57,14 +76,24 @@ export function validateMemoryScope({ workflowId, memoryScope, isWorkspace = fal
 }
 
 /**
- * (Re)create the mount from the store: every dir exists even when empty (the
- * index tells the agent it is writable), stale content from a previous segment
+ * (Re)create the mount from the store — the rm is scoped to the `worca/` subtree, so a project's
+ * own `.claude/rules/*.md` beside it is never touched: every dir exists even when empty (the
+ * pointer block tells the agent it is writable), stale content from a previous segment
  * is removed first (the caller syncs back BEFORE remounting on resume), files are
  * COPIED (never linked). Returns the baseline `{ '<rel>/<name>.md': sha1 }`.
+ * `gitIgnore: true` writes `<mount>/.gitignore` = `*` FIRST (before any file is copied, so a
+ * mount that fails half way never leaves files without their ignore — an ignore without files
+ * is harmless, bare files inside a checkout are not): the mount then sits inside a checkout
+ * invisibly — an agent's own `git add -A`, a staging pre-commit hook and the reviewer's
+ * `git status` all skip it. Not a memory file: `listMemoryDir` lists `*.md` only, so sync-back
+ * neither syncs it nor reads it as a deletion. The §8.8 `:(exclude)` pathspec stays as defence
+ * in depth (a hand-deleted sentinel, an older git).
  */
-export async function mountMemory({ root, mount, dirs, onError }) {
+export async function mountMemory({ root, mount, dirs, onError, gitIgnore = false }) {
   // (Windows: an indexer/AV may hold a handle for a moment.)
   await rm(mount, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  await mkdir(mount, { recursive: true });
+  if (gitIgnore) await writeFile(join(mount, '.gitignore'), '*\n', 'utf8');
   const baseline = {};
   let files = 0;
   for (const d of dirs) {
@@ -77,6 +106,53 @@ export async function mountMemory({ root, mount, dirs, onError }) {
     }
   }
   return { mount, dirs, baseline, files };
+}
+
+/**
+ * The NON-destructive twin of mountMemory, for a mount a process may be READING while we refresh
+ * it (the Ask chat's --add-dir base, memory-deps.mjs refreshAskMemoryMount): every store file is
+ * written atomically by name (temp + rename), files no longer in the store are unlinked, dirs are
+ * created and never removed. No `.gitignore` sentinel — an Ask mount is not inside a checkout.
+ * No baseline — nothing syncs back from an Ask mount.
+ * Failure is PER FILE: a target that cannot be written keeps its previous copy (a stale rule still
+ * loads; a file that never landed is simply absent this turn), its temp is unlinked and its name is
+ * reported. Returns `{ files, failed }` where `files` is what the mount SHOULD hold (the store
+ * entries of the scope set) and `failed` the names that could not be refreshed this call.
+ */
+export async function refreshMount({ root, mount, dirs, onError }) {
+  let files = 0;
+  const failed = [];
+  for (const d of dirs) {
+    const dest = join(mount, d.rel);
+    await mkdir(dest, { recursive: true });
+    const entries = await listMemory(root, d.scope, { onError });
+    // `keep` is built from what we actually WROTE or deliberately kept — an entry that vanished
+    // between the listing and the read is not in it, so its stale mount copy is swept THIS call.
+    const keep = new Set();
+    for (const e of entries) {
+      const text = await readFile(join(scopeDir(root, d.scope), `${e.name}.md`), 'utf8').catch(() => null);
+      if (text === null) continue;                                    // vanished between the listing and the read
+      files++;
+      const target = join(dest, `${e.name}.md`);
+      keep.add(`${e.name}.md`);                                       // written below, or kept as the previous copy on failure
+      const tmp = `${target}.tmp-${process.pid}-${Date.now()}`;
+      try {
+        await writeFile(tmp, text, 'utf8');
+        await rename(tmp, target);
+      } catch (err) {
+        await unlink(tmp).catch(() => {});
+        failed.push(e.name);
+        onError?.(target, err);
+      }
+    }
+    // Stale files go. A name of THIS shape (`x.md.tmp-<pid>-<ms>`) is another writer's in-flight rename,
+    // never a memory file (those end in `.md`) — a memory file named `a.tmp-b` lands as `a.tmp-b.md` and is swept.
+    for (const f of await readdir(dest).catch(() => [])) {
+      if (keep.has(f) || /\.md\.tmp-\d+-\d+$/.test(f)) continue;
+      await unlink(join(dest, f)).catch(() => {});
+    }
+  }
+  return { files, failed };
 }
 
 // ── one writer per store root per process ────────────────────────────────────

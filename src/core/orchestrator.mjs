@@ -1007,8 +1007,8 @@ export class GraphOrchestrator extends RunHarness {
       pipelineId: this.pipeline.id,
       taskPrompt: this.pipeline.promptText,
       toolInstruction: this.toolInstruction,
-      memoryIndex: this.memoryIndex || '',              // §4.3: rendered per spawn from the mount (A4)
-      memoryMount: this.memory?.mount || null,          // absolute mount dir (tests + P2's defrag agent read it)
+      memoryBlock: this.memoryBlock || '',              // §4.3: the pointer block, rendered once per mount
+      memoryMount: this.memory?.mount || null,          // absolute mount dir: <runCwd>/.claude/rules/worca (tests + the defrag mock read it)
       agentPrompts: this.agentPrompts,
       checkpointRef: this.checkpointRef,
       workspace: this.isWorkspace ? this._workspaceChannel() : undefined,

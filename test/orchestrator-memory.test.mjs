@@ -1,20 +1,23 @@
 // Offline end-to-end: the store is mounted into a mock run, every agent execution
-// sees the index, a file an agent writes lands in the store after its execution,
-// the next execution's index lists it, the run summary carries the change, and the
-// mount never enters the worktree diff. Default (detached) mode + a legacy pin.
+// carries the pointer block; the files are in the run cwd's `.claude/rules/worca/`, where
+// Claude Code loads them natively. A file an agent writes lands in the store after its
+// execution, the run summary carries the change, and the mount never enters the worktree
+// diff or the kept branch. Default (detached) mode + a legacy pin.
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, writeFile, readdir } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile, readdir, mkdir, cp } from 'node:fs/promises';
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { runAgentExecution } from '../src/core/graph/executor.mjs';
 import { memoryRoot, writeMemory, readMemory, listMemory, readScopeState, GLOBAL_SCOPE, projectScope, bumpScopeState, listSnapshots } from '../src/core/memory-store.mjs';
 import { projectKey } from '../src/core/store.mjs';
-import { RESULTS_FILE } from '../src/core/results.mjs';
+import { RESULTS_FILE, retainedWorkPatchName } from '../src/core/results.mjs';
+import { memoryMountPath, MEMORY_RULES_REL } from '../src/core/memory-sync.mjs';
 import { RUN_LOG_FILE } from '../src/core/run-log.mjs';
 import { readPipelineByKey, readPipelineForResume } from '../src/core/artifacts.mjs';
 
@@ -44,13 +47,17 @@ const NOW = '2026-09-09T10:00:00.000Z';
 /** A producer runner that records what every producer execution saw (`runners.producer`
  *  intercepts producer nodes only — planner, refiner x2, implementer x2 under mock
  *  wf_default; the reviewer is runnerType verifier and clarify is clarifier, and they
- *  still get the index through _execCtx) and, on the FIRST implementer execution, writes
+ *  still get the block through _execCtx) and, on the FIRST implementer execution, writes
  *  one memory file into the mount before delegating to the real (mock) execution.
  *  `ctx.memoryMount` is null when the mount failed — the producer must still run. */
 function recordingProducer(seen) {
   let wrote = false;
   return async (ctx) => {
-    seen.push({ key: ctx.node.key, executionId: ctx.executionId, index: ctx.memoryIndex, mount: ctx.memoryMount, cwd: ctx.projectDir });
+    seen.push({ key: ctx.node.key, executionId: ctx.executionId, block: ctx.memoryBlock, mount: ctx.memoryMount, cwd: ctx.projectDir,
+      projectScopeDir: ctx.memoryMount ? existsSync(join(ctx.memoryMount, 'project')) : null,
+      junk: ctx.memoryMount ? existsSync(join(ctx.memoryMount, 'global', 'my notes.md')) : null,
+      sentinel: ctx.memoryMount ? existsSync(join(ctx.memoryMount, '.gitignore')) : null,
+      status: spawnSync('git', ['-C', ctx.projectDir, 'status', '--porcelain']).stdout.toString() });
     if (ctx.memoryMount && ctx.node.key === 'implementer' && !wrote) {
       wrote = true;
       await writeFile(join(ctx.memoryMount, 'project', 'lesson.md'), 'Run npm ci before the suite.\nElse express fails.\n');
@@ -77,22 +84,56 @@ async function runOnce({ seed = true } = {}) {
   return { dir, orch, seen };
 }
 
-test('detached (default): mount at <pipeline.dir>/memory, index in every producer ctx, sync after the writing execution, summary + ledger', { timeout: 120000 }, async () => {
-  const { orch, seen } = await runOnce();
+/** Run wf_default under mock until the FIRST implementer execution pauses the run. The mount now
+ *  lives INSIDE the run cwd, which teardown removes — but a PAUSE keeps the checkout (and the
+ *  mount in it), so a live-mount assertion runs against the still-live orchestrator instead of
+ *  reading a directory that is already gone. `mkRunners` is handed back for the resuming twin
+ *  (its `hangOnce` is already spent, so the resume runs to `done`). */
+async function pausedRun({ seed = true, onPause } = {}) {
+  const dir = gitDir('mem');
+  if (seed) await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'testing', 'How the suite runs.\n', { source: 'user', now: NOW, caps: CAPS });
+  let orchRef = null; let hangOnce = true;
+  const mkRunners = () => ({
+    producer: async (ctx) => {
+      if (hangOnce && ctx.node.key === 'implementer') {
+        hangOnce = false;
+        if (onPause) await onPause(ctx);
+        queueMicrotask(() => orchRef.pause());
+        return new Promise((_r, rej) => {
+          const onAbort = () => { const e = new Error('aborted'); e.name = 'AbortError'; rej(e); };
+          if (ctx.signal.aborted) onAbort(); else ctx.signal.addEventListener('abort', onAbort, { once: true });
+        });
+      }
+      return runAgentExecution(ctx);
+    },
+  });
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo task', claude: { mock: true }, auto: true, runners: mkRunners(),
+  });
+  orchRef = orch;
+  assert.equal((await orch.run()).status, 'paused');
+  return { dir, orch, mkRunners, setRef: (o) => { orchRef = o; } };
+}
+
+test('detached (default): mount at <worktree>/.claude/rules/worca, pointer block in every producer ctx, sync after the writing execution, summary + ledger, nothing memory in the commit', { timeout: 120000 }, async () => {
+  const { dir, orch, seen } = await runOnce();
   const st = orch.getState();
   const pipelineDir = st.pipelineDir;
-  assert.equal(st.memoryMount, join(pipelineDir, 'memory'));
-  assert.ok(seen.every((s) => !s.mount.startsWith(s.cwd)), 'the mount is outside every run cwd');
+  assert.equal(st.memoryMount, memoryMountPath(st.branch.worktreeDir));
+  assert.ok(seen.every((s) => s.mount.startsWith(s.cwd + sep)), 'the mount is INSIDE every run cwd (native rules load from the cwd)');
   assert.ok(seen.length >= 4, `producers ran: ${seen.length}`);
   for (const s of seen) {
-    assert.ok(s.index.startsWith('## Worca memory\n'), `${s.key}: index present`);
-    assert.ok(s.index.includes('`testing.md`'), `${s.key}: seeded global file listed`);
+    assert.ok(s.block.startsWith('## Worca memory\n'), `${s.key}: block present`);
+    assert.ok(s.block.includes(`Global — ${join(st.memoryMount, 'global')}:`), `${s.key}: the global dir is named`);
+    assert.ok(!s.block.includes('`testing.md`'), `${s.key}: the block lists no files — the CLI loads them`);
     assert.equal(s.mount, st.memoryMount);
+    assert.equal(s.sentinel, true, `${s.key}: the .gitignore sentinel is in the mount`);
   }
+  // Captured INSIDE the first producer execution: with the sentinel the mount is invisible to
+  // an agent's own `git add -A`, to a staging pre-commit hook and to the reviewer's `git status`.
+  assert.equal(seen[0].status, '', `git status inside the live checkout: ${JSON.stringify(seen[0].status)}`);
   const impl = seen.filter((s) => s.key === 'implementer');
   assert.ok(impl.length >= 2, 'wf_default under mock runs the implementer twice (review → fix)');
-  assert.ok(!impl[0].index.includes('lesson.md'), 'first implementer spawn: not yet written');
-  assert.ok(impl[1].index.includes('`lesson.md`') && impl[1].index.includes('`style.md`'), 'the fix cycle sees both new files');
   // Store: repaired frontmatter, run-stamped.
   const pk = orch.members[0].projectKey;
   const lesson = await readMemory(memoryRoot(), projectScope(pk), 'lesson');
@@ -107,6 +148,11 @@ test('detached (default): mount at <pipeline.dir>/memory, index in every produce
   assert.deepEqual(ch.added.map((r) => `${r.scope}/${r.name}`).sort(), ['global/style', 'project/lesson']);
   assert.deepEqual(results.memory.totals, { added: 2, modified: 0, deleted: 0, rejected: 0 });
   assert.ok(!(results.newFiles || []).some((f) => /lesson\.md|style\.md/.test(f.path || f)), 'memory files never enter the run diff');
+  assert.equal(orch.injectedPaths[pk].filter((e) => e.kind === 'memory').length, 1, 'ONE memory entry in the §8.8 set');
+  assert.deepEqual(orch.injectedPaths[pk].find((e) => e.kind === 'memory'), { path: MEMORY_RULES_REL, kind: 'memory', source: null });
+  const tree = spawnSync('git', ['-C', dir, 'ls-tree', '-r', '--name-only', st.branch.feature]).stdout.toString().split(/\r?\n/).filter(Boolean);
+  assert.ok(!tree.some((q) => q.startsWith('.claude/rules/worca/')), `memory never enters the kept branch: ${tree.join(',')}`);
+  assert.ok(!existsSync(st.branch.worktreeDir), 'the checkout (and the mount in it) is gone after teardown');
   const ledger = JSON.parse(await readFile(join(pipelineDir, 'memory.json'), 'utf8'));
   assert.equal(ledger.mount, st.memoryMount);
   assert.ok(ledger.baseline['project/lesson.md']);
@@ -118,25 +164,120 @@ test('detached (default): mount at <pipeline.dir>/memory, index in every produce
   assert.match(detail.auditMarkdown, /Memory: \+2 ~0 -0 by implementer/);
 });
 
-test('legacy (pinned): same mount location and the same sync', { timeout: 120000 }, async () => {
+test('legacy (pinned): mount in the legacy worktree, the ONE legacy exclusion pathspec, nothing memory in the commit', { timeout: 120000 }, async () => {
   process.env.WORCA_RUN_ROOT = 'legacy';
   try {
-    const { orch } = await runOnce();
+    const { dir, orch } = await runOnce();
     const st = orch.getState();
-    assert.equal(st.memoryMount, join(st.pipelineDir, 'memory'));
+    assert.equal(st.memoryMount, memoryMountPath(st.branch.worktreeDir));
+    assert.ok(st.branch.worktreeDir.includes(join('.worca-cc', 'worktrees')), 'legacy checkout');
     assert.ok(await readMemory(memoryRoot(), projectScope(orch.members[0].projectKey), 'lesson'));
+    assert.deepEqual(orch._excludePathspecs(orch.members[0].projectKey), [`:(exclude)${MEMORY_RULES_REL}`]);
+    const tree = spawnSync('git', ['-C', dir, 'ls-tree', '-r', '--name-only', st.branch.feature]).stdout.toString().split(/\r?\n/).filter(Boolean);
+    assert.ok(!tree.some((q) => q.startsWith('.claude/')), `legacy commit carries no mount: ${tree.join(',')}`);
+    assert.ok(tree.includes('src/feature.mjs'), 'the mock edit was committed (the status recheck did not swallow a real change)');
   } finally { delete process.env.WORCA_RUN_ROOT; }
 });
 
-test('empty store: every scope dir exists in the mount and the index says so', { timeout: 120000 }, async () => {
-  const { orch, seen } = await runOnce({ seed: false });
-  const first = seen[0].index;
-  assert.match(first, /Global — .*:\n- \(nothing yet\)\n/);
-  assert.ok(existsSync(join(orch.getState().memoryMount, 'project')));
+test('a checkout that TRACKS .claude/rules/worca is never mounted over: the run degrades to no memory with the audit line', { timeout: 120000 }, async () => {
+  const dir = gitDir('mem');
+  await mkdir(join(dir, '.claude', 'rules', 'worca'), { recursive: true });
+  await writeFile(join(dir, '.claude', 'rules', 'worca', 'theirs.md'), 'committed by the project\n');
+  spawnSync('git', ['-C', dir, 'add', '-A']); spawnSync('git', ['-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'own worca rules']);   // gitDir() configures no identity
+  const seen = [];
+  const orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_default', prompt: 'demo task', claude: { mock: true }, auto: true, runners: { producer: recordingProducer(seen) } });
+  // The guard must ask git with a CASE-FOLDED pathspec, in the run cwd, exactly once.
+  const calls = [];
+  const realGit = orch._git.bind(orch);
+  orch._git = (args, o) => { if (args[0] === 'ls-files') calls.push(args); return realGit(args, o); };
+  assert.equal((await orch.run()).status, 'done');
+  assert.deepEqual(calls, [['ls-files', '--', ':(icase).claude/rules/worca']]);
+  assert.equal(orch.memory, null); assert.equal(orch.getState().memoryMount, null);
+  const detail = await readPipelineByKey(orch.members[0].projectKey, orch.pipeline.id);
+  assert.match(detail.auditMarkdown, /Memory: not mounted \(the checkout tracks \.claude\/rules\/worca/);
+  assert.match(detail.auditMarkdown, /untrack it/);
+  assert.ok(!detail.auditMarkdown.includes('start the defragment'), 'an ordinary run is not told to start a defragment elsewhere');
+  const tree = spawnSync('git', ['-C', dir, 'ls-tree', '-r', '--name-only', orch.getState().branch.feature]).stdout.toString();
+  assert.ok(tree.includes('.claude/rules/worca/theirs.md'), 'the project\'s committed file is still on the branch, untouched');
+  // A DEFRAGMENT of the same tracked checkout gets the extra way out: its scope is not this
+  // project's checkout, so another project's can host the run. (B8: it pauses, never degrades.)
+  const d2 = createOrchestrator({ projectDir: dir, workflowId: 'wf_memory_defrag', memoryScope: 'global', prompt: 'Defragment global memory.', claude: { mock: true }, auto: true, runners: { producer: recordingProducer([]) } });
+  assert.equal((await d2.run()).status, 'paused');
+  assert.match(String(d2.getState().pauseDetail || ''), /untrack it \(or start the defragment from another project\)/);
+});
+
+test('legacy retained checkout (commit failed): the mount is removed before the retained-work snapshot, so neither the kept checkout nor the patch carries memory', { timeout: 120000 }, async () => {
+  process.env.WORCA_RUN_ROOT = 'legacy';
+  try {
+    const dir = gitDir('mem');
+    const seen = [];
+    const orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_default', prompt: 'demo task', claude: { mock: true }, auto: true, runners: { producer: recordingProducer(seen) } });
+    const realGit = orch._git.bind(orch);
+    orch._git = (args, opts) => {
+      const at = args.indexOf('-m');
+      if (args.includes('commit') && at >= 0 && String(args[at + 1] || '').startsWith('worca:')) return Promise.resolve({ ok: false, code: 1, stdout: '', stderr: 'forced commit failure' });
+      return realGit(args, opts);
+    };
+    assert.equal((await orch.run()).status, 'done');
+    const st = orch.getState();
+    assert.ok(existsSync(st.branch.worktreeDir), 'the checkout is RETAINED');
+    assert.equal(st.branch.worktreeRemoved, false);
+    assert.equal(existsSync(join(st.branch.worktreeDir, '.claude', 'rules', 'worca')), false, 'the mount was removed after the commit attempt');
+    const patch = await readFile(join(st.pipelineDir, retainedWorkPatchName(null)), 'utf8').catch(() => '');
+    assert.ok(!patch.includes('.claude/rules/worca'), 'the recovery patch carries no memory');
+    assert.ok(await readMemory(memoryRoot(), projectScope(orch.members[0].projectKey), 'lesson'), 'the agent write still reached the store (final sync at _buildResults)');
+  } finally { delete process.env.WORCA_RUN_ROOT; }
+});
+
+test('resume: the ledger sync runs BEFORE the tracked guard — a guard that fails only now degrades the run to no memory but never loses the interrupted segment\'s writes', { timeout: 120000 }, async () => {
+  const { orch } = await pausedRun();
+  const mount = orch.getState().memoryMount;
+  await writeFile(join(mount, 'project', 'guard-race.md'), 'Written before the pause.\n');
+  // git breaks between the pause and the resume (a broken index, or — IDH-1 — the previous
+  // segment's agent staged the mount): the guard throws where it used to run FIRST.
+  const realGit = orch._git.bind(orch);
+  orch._git = (args, opts) => (args[0] === 'ls-files'
+    ? Promise.resolve({ ok: false, code: 128, stdout: '', stderr: 'fatal: not a git repository' })
+    : realGit(args, opts));
+  await orch._mountMemory({ resume: true });
+  assert.ok(await readMemory(memoryRoot(), projectScope(orch.members[0].projectKey), 'guard-race'),
+    'the interrupted execution\'s write was synced before the guard ran');
+  assert.equal(orch.memory, null, 'and the run degraded to no memory');
+  assert.equal(orch.getState().memoryMount, null);
+  assert.equal(orch.memoryBlock, '');
+});
+
+test('resume: a run paused BEFORE the native-rules revision keeps its files at the ledger\'s old mount — synced once, then remounted at the recomputed path', { timeout: 120000 }, async () => {
+  const { dir, orch: orch1, mkRunners, setRef } = await pausedRun();
+  const pdir = orch1.getState().pipelineDir;
+  const oldMount = join(pdir, 'memory');
+  await cp(orch1.getState().memoryMount, oldMount, { recursive: true });
+  await writeFile(join(oldMount, 'project', 'legacy-paused.md'), 'Written under the old mount.\n');
+  const ledger = JSON.parse(await readFile(join(pdir, 'memory.json'), 'utf8'));
+  ledger.mount = oldMount;
+  await writeFile(join(pdir, 'memory.json'), JSON.stringify(ledger, null, 2));
+  const pk = orch1.members[0].projectKey;
+  const saved = readPipelineForResume(orch1.state.id);
+  const orch2 = createOrchestrator({ projectDir: dir, claude: { mock: true }, auto: true, runners: mkRunners(), resume: saved });
+  setRef(orch2);
+  let liveMount = null; let liveWorktree = null;
+  orch2.on('state', (st) => { if (st.memoryMount) liveMount = st.memoryMount; if (st.branch?.worktreeDir) liveWorktree = st.branch.worktreeDir; });
+  assert.equal((await orch2.resume()).status, 'done');
+  assert.ok(await readMemory(memoryRoot(), projectScope(pk), 'legacy-paused'), 'the pre-revision mount was synced once');
+  assert.ok(orch2.memoryChanges.some((c) => c.nodeId === 'resume' && c.added.some((r) => r.name === 'legacy-paused')), JSON.stringify(orch2.memoryChanges));
+  assert.equal(liveMount, memoryMountPath(liveWorktree), 'and the remount is at the RECOMPUTED path, never the ledger\'s');
+});
+
+test('empty store: every scope dir exists in the mount and the block names it', { timeout: 120000 }, async () => {
+  const { seen } = await runOnce({ seed: false });
+  const first = seen[0].block;
+  assert.match(first, /Global — .*[\\/]global:\n/);
+  assert.match(first, /Project .* — .*[\\/]project:\n/);
+  assert.equal(seen[0].projectScopeDir, true, 'the empty project scope dir exists in the mount');
 });
 
 test('resume: a file written by an interrupted execution is synced BEFORE the remount', { timeout: 120000 }, async () => {
-  const { orch } = await runOnce();
+  const { orch } = await pausedRun();
   const mount = orch.getState().memoryMount;
   await writeFile(join(mount, 'project', 'interrupted.md'), 'Written mid-execution.\n');
   const before = orch.memoryChanges.length;
@@ -146,7 +287,8 @@ test('resume: a file written by an interrupted execution is synced BEFORE the re
   assert.equal(orch.memoryChanges.at(-1).agentKey, null);
   assert.equal(orch.memoryChanges.at(-1).nodeId, 'resume');
   assert.ok(existsSync(join(mount, 'project', 'interrupted.md')), 'the fresh mount carries it (it is in the store now)');
-  assert.ok(orch.memoryIndex.includes('`interrupted.md`'));
+  assert.equal(await readFile(join(mount, '.gitignore'), 'utf8'), '*\n', 'the remount re-writes the sentinel');
+  assert.ok(orch.memoryBlock.startsWith('## Worca memory\n'));
 });
 
 // ── survivor-killing additions found by the mutation audit ───────────────────
@@ -222,7 +364,7 @@ test('resume(): the REAL call site syncs the interrupted mount back before remou
 });
 
 test('two executions finishing together sync ONCE: one change entry, one store write', { timeout: 120000 }, async () => {
-  const { orch } = await runOnce();
+  const { orch } = await pausedRun();
   const mount = orch.getState().memoryMount;
   const writesBefore = (await readScopeState(memoryRoot(), GLOBAL_SCOPE)).writesSinceDefrag;
   const entriesBefore = orch.memoryChanges.length;
@@ -248,10 +390,10 @@ test('a mount failure degrades to no memory; the run still finishes', { timeout:
   const res = await orch.run();
   assert.equal(res.status, 'done', JSON.stringify(res));
   assert.equal(orch.memory, null, 'the run carries no memory');
-  assert.equal(orch.memoryIndex, '');
+  assert.equal(orch.memoryBlock, '');
   assert.equal(orch.getState().memoryMount, null);
   assert.ok(seen.length >= 4, `producers ran: ${seen.length}`);
-  for (const s of seen) { assert.equal(s.index, '', `${s.key}: no index`); assert.equal(s.mount, null, `${s.key}: no mount`); }
+  for (const s of seen) { assert.equal(s.block, '', `${s.key}: no block`); assert.equal(s.mount, null, `${s.key}: no mount`); assert.equal(s.sentinel, null); }
   assert.equal(existsSync(join(orch.getState().pipelineDir, 'memory.json')), false, 'no ledger without a mount');
   const detail = await readPipelineByKey(orch.members[0].projectKey, orch.pipeline.id);
   assert.match(detail.auditMarkdown, /Memory: not mounted \(boom\)/);
@@ -279,7 +421,7 @@ test('junk in a store scope never blocks the run\'s memory writes, and is logged
   const log = await readFile(join(orch.getState().pipelineDir, RUN_LOG_FILE), 'utf8');
   assert.match(log, /memory: ignored [^"]*my notes\.md \(invalid name/, log.split('\n').filter((l) => /memory/.test(l)).join('\n'));
   assert.equal(/cannot read [^"]*my notes\.md/.test(log), false, 'a junk name is not an I/O failure');
-  assert.ok(!seen[0].index.includes('my notes'), 'and it never reaches an agent index');
+  assert.equal(seen[0].junk, false, 'and it never reaches the mount (captured live: teardown removes the checkout)');
 });
 
 test('wf_memory_defrag + memoryScope global: one-scope mount, the mock merges, sync lands as defrag:, .state stamped, project scope untouched', { timeout: 120000 }, async () => {
@@ -290,14 +432,17 @@ test('wf_memory_defrag + memoryScope global: one-scope mount, the mock merges, s
   await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'b', 'Rule B.\n', { source: 'user', now: NOW, caps: CAPS });
   await writeMemory(memoryRoot(), projectScope(pk), 'keep', 'Keep me.\n', { source: 'user', now: NOW, caps: CAPS });
   await bumpScopeState(memoryRoot(), GLOBAL_SCOPE, { writesSinceDefrag: 7 });
+  let mounted = null;
   const orch = createOrchestrator({
     projectDir: dir, workflowId: 'wf_memory_defrag', memoryScope: 'global', prompt: 'Defragment global memory.', claude: { mock: true }, auto: true,
+    runners: { producer: async (ctx) => { if (ctx.node.key === 'memoryDefragmenter') mounted = (await readdir(ctx.memoryMount)).sort(); return runAgentExecution(ctx); } },
   });
   assert.equal(orch.memoryScope, 'global');
   const res = await orch.run();
   assert.equal(res.status, 'done', JSON.stringify(res));
   const st = orch.getState();
-  assert.deepEqual((await readdir(st.memoryMount)).sort(), ['global'], 'ONE scope dir is mounted — never project/');
+  // Captured LIVE from the defragmenter's own ctx: teardown removes the checkout the mount is in.
+  assert.deepEqual(mounted, ['.gitignore', 'global'], 'ONE scope dir is mounted — never project/ (plus the git sentinel)');
   assert.deepEqual((await listMemory(memoryRoot(), GLOBAL_SCOPE)).map((e) => e.name), ['a'], 'b was merged into a and removed');
   const a = await readMemory(memoryRoot(), GLOBAL_SCOPE, 'a');
   assert.equal(a.meta.source, `defrag:${orch.pipeline.id}`);
@@ -354,7 +499,7 @@ test('memoryScope rides the resume point: a paused defrag resumes with ONE scope
   const dir = gitDir('mem');
   await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'a', 'Rule A.\n', { source: 'user', now: NOW, caps: CAPS });
   await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'b', 'Rule B.\n', { source: 'user', now: NOW, caps: CAPS });
-  let orchRef = null; let hangOnce = true;
+  let orchRef = null; let hangOnce = true; let mounted2 = null;
   const mkRunners = () => ({
     producer: async (ctx) => {
       if (hangOnce && ctx.node.key === 'memoryDefragmenter') {
@@ -365,6 +510,7 @@ test('memoryScope rides the resume point: a paused defrag resumes with ONE scope
           if (ctx.signal.aborted) onAbort(); else ctx.signal.addEventListener('abort', onAbort, { once: true });
         });
       }
+      if (ctx.node.key === 'memoryDefragmenter') mounted2 = (await readdir(ctx.memoryMount)).sort();
       return runAgentExecution(ctx);
     },
   });
@@ -377,7 +523,7 @@ test('memoryScope rides the resume point: a paused defrag resumes with ONE scope
   orchRef = orch2;
   assert.equal(orch2.memoryScope, 'global', 'rehydrated from the point, not from opts');
   assert.equal((await orch2.resume()).status, 'done');
-  assert.deepEqual((await readdir(orch2.getState().memoryMount)).sort(), ['global'], 'the remount is still one scope');
+  assert.deepEqual(mounted2, ['.gitignore', 'global'], 'the remount is still one scope (captured live)');
   assert.deepEqual((await listMemory(memoryRoot(), GLOBAL_SCOPE)).map((e) => e.name), ['a']);
   assert.equal((await readScopeState(memoryRoot(), GLOBAL_SCOPE)).lastDefragRunId, orch2.pipeline.id);
 });
@@ -413,4 +559,29 @@ test('a defragment run whose write was REJECTED finishes done but does NOT stamp
   const detail = await readPipelineByKey(projectKey(dir), orch.pipeline.id);
   assert.match(detail.auditMarkdown, /counters not reset/);
   assert.equal(/defragmented by this run/.test(detail.auditMarkdown), false, 'and it never claims success');
+});
+
+test('an agent that `git add -f`s the mount never gets it onto the kept branch: the exclusion set is UNSTAGED before the add', { timeout: 120000 }, async () => {
+  const dir = gitDir('mem');
+  await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'testing', 'How the suite runs.\n', { source: 'user', now: NOW, caps: CAPS });
+  let forced = false;
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo task', claude: { mock: true }, auto: true,
+    runners: {
+      producer: async (ctx) => {
+        // The one way a mount file can reach the index despite the sentinel: an explicit `-f`.
+        if (!forced && ctx.node.key === 'implementer' && ctx.memoryMount) {
+          forced = true;
+          assert.equal(spawnSync('git', ['-C', ctx.projectDir, 'add', '-f', MEMORY_RULES_REL]).status, 0);
+        }
+        return runAgentExecution(ctx);
+      },
+    },
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', JSON.stringify(res));
+  assert.equal(forced, true, 'the mount existed and was force-staged');
+  const tree = spawnSync('git', ['-C', dir, 'ls-tree', '-r', '--name-only', orch.getState().branch.feature]).stdout.toString().split(/\r?\n/).filter(Boolean);
+  assert.ok(!tree.some((q) => q.startsWith('.claude/rules/worca/')), `the kept branch carries no mount file: ${tree.join(',')}`);
+  assert.ok(tree.includes('src/feature.mjs'), 'and the agent work was still committed');
 });

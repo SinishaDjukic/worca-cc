@@ -1032,3 +1032,37 @@ test('track_run: an isError tool result mints nothing (the child already told th
   assert.equal(calls, 0);
   assert.ok(!getMessage(s.asst.id).blocks.some((b) => b.kind === 'card'));
 });
+
+test('memory: the turn refreshes the mount for its project before spawning and hands it to the spawn as --add-dir + the env override; a failing refresh proceeds without memory', async () => {
+  const s = seed();
+  const calls = [];
+  let seenOpts = null;
+  const impl = async (opts) => {
+    seenOpts = opts;
+    opts.onEvent({ type: 'session', sessionId: 'sess-mem' });
+    say(opts.onEvent, 'msg_1', 'ok');
+    push(opts.onEvent, RESULT());
+    return { text: 'ok', exitCode: 0 };
+  };
+  const { turn } = makeTurn(s, { memoryProject: { key: 'proj-00000001', name: 'Proj' } }, {
+    runClaudeImpl: impl,
+    memoryMount: async (arg) => { calls.push(arg); return '/m/proj-00000001'; },
+  });
+  assert.equal((await turn.run()).status, 'done');
+  assert.deepEqual(calls, [{ projectKey: 'proj-00000001', projectName: 'Proj' }]);
+  assert.equal(turn.memoryDir, '/m/proj-00000001');
+  assert.deepEqual(seenOpts.addDirs, ['/m/proj-00000001']);
+  assert.equal(seenOpts.modelEnv.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD, '1');
+  // No project in the context ⇒ the global-only mount is still refreshed; null ⇒ no flag, no override.
+  const calls2 = [];
+  const { turn: global } = makeTurn(seed(), {}, { runClaudeImpl: impl, memoryMount: async (arg) => { calls2.push(arg); return null; } });
+  assert.equal((await global.run()).status, 'done');
+  assert.deepEqual(calls2, [{ projectKey: null, projectName: null }]);
+  assert.equal(seenOpts.addDirs, undefined, 'null ⇒ no --add-dir');
+  assert.equal('CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD' in seenOpts.modelEnv, false, 'and no override');
+  // A store failure never breaks a turn.
+  const { turn: broken } = makeTurn(seed(), {}, { runClaudeImpl: impl, memoryMount: async () => { throw new Error('store down'); } });
+  assert.equal((await broken.run()).status, 'done');
+  assert.equal(broken.memoryDir, null);
+  assert.equal(seenOpts.addDirs, undefined);
+});

@@ -40,8 +40,8 @@ import {
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   memoryCaps,
 } from './settings.mjs';
-import { mountDirs, mountMemory, syncBack, memoryTotals, validateMemoryScope, withStoreLock } from './memory-sync.mjs';
-import { memoryRoot, listMemoryDir, renderMemoryIndex, bumpScopeState } from './memory-store.mjs';
+import { mountDirs, mountMemory, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryMountPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY } from './memory-sync.mjs';
+import { memoryRoot, renderMemoryBlock, bumpScopeState } from './memory-store.mjs';
 import { readCostCapOverride, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
@@ -690,7 +690,7 @@ export class RunHarness extends EventEmitter {
     this._recoverySeq = 0;      // monotonic id source for recovery prompts (determinism-safe)
     this.agentPrompts = null;
     this.memory = null;          // { root, mount, dirs, baseline } after _mountMemory
-    this.memoryIndex = '';       // rendered index block, re-rendered after every sync (amendment A4)
+    this.memoryBlock = '';       // the ## Worca memory pointer block, rendered once per mount (files load natively — no per-spawn re-render)
     this.memoryChanges = [];     // Change[] — the durable ledger's `changes`
     this._memoryWarned = new Set();
     this._memoryTail = null;     // per-run sync chain: one syncBack at a time (F1)
@@ -739,7 +739,7 @@ export class RunHarness extends EventEmitter {
       // detached run throws TypeError on the first this.state.branches[key] = … .
       branches: {},
       checkpointRefs: {},
-      memoryMount: null, // <pipeline.dir>/memory after _mountMemory (agent-memory-design.md §4.1, A1)
+      memoryMount: null, // <runCwd>/.claude/rules/worca after _mountMemory (native rules: inside every spawn's cwd)
       pauseReason: null,   // mirrors this.pauseReason so getState() (a deep clone of state) carries it live
       pauseDetail: null,   // mirrors this.pauseDetail
       // Sub-agent lifecycle records (rides the existing `state` snapshot; mirrored to
@@ -1131,9 +1131,10 @@ export class RunHarness extends EventEmitter {
         await this._assembleContext(resolvedSkills);
       }
       this._checkAbort();
-      // 3f) Agent memory: mount the store into <pipeline.dir>/memory and render the
-      // index every spawn carries (agent-memory-design.md §4). Pure fs work, both
-      // modes, mock included — the tests assert the mount.
+      // 3f) Agent memory: mount the store into <runCwd>/.claude/rules/worca — the CLI loads it
+      // natively — and render the pointer block every spawn carries. Pure fs work, both modes,
+      // mock included. AFTER 3e: the assembly rewrites injectedPaths and the mount registers
+      // itself into that map.
       await this._mountMemory();
       this._checkAbort();
       // D7: every setup step above is done — a pause from here on has nothing to
@@ -1821,7 +1822,7 @@ export class RunHarness extends EventEmitter {
   _memoryLedgerPath() { return join(this.pipeline.dir, 'memory.json'); }
 
   /** Mount the memory store into this run — best-effort. Memory is additive (spec §4.3):
-   *  a store/mount fs failure degrades the run to "no memory" (no index, no sync) and is
+   *  a store/mount fs failure degrades the run to "no memory" (no pointer block, no sync) and is
    *  logged + audited; it never pauses the run at 'setup', where the replay would hit the
    *  same error again. EXCEPTION (amendment B8): a DEFRAGMENT run (`this.memoryScope` set) IS
    *  its mount — the error is rethrown and run()'s setup failure policy parks the run
@@ -1830,7 +1831,7 @@ export class RunHarness extends EventEmitter {
     if (!this.pipeline?.dir) return;
     try { await this._mountMemoryUnguarded({ resume }); }
     catch (err) {
-      this.memory = null; this.memoryIndex = ''; this.state.memoryMount = null;
+      this.memory = null; this.memoryBlock = ''; this.state.memoryMount = null;
       if (existsSync(this._memoryLedgerPath())) await this._writeMemoryLedger({ neutralised: true });
       const why = String(err?.message || err).split('\n')[0];
       // A defragment run IS its mount (B8): rethrow, and run()'s setup failure policy parks the run
@@ -1840,19 +1841,31 @@ export class RunHarness extends EventEmitter {
         await appendAudit(this.pipeline.dir, `Memory: not mounted (${why}) — a defragment run cannot continue.`).catch(() => {});
         throw new Error(`memory not mounted: ${why}`);
       }
-      this._log('memory', 'warn', `memory not mounted: ${why} — this run carries no memory index and its agents' memory writes are not captured`);
+      this._log('memory', 'warn', `memory not mounted: ${why} — this run's agents see no memory and their memory writes are not captured`);
       await appendAudit(this.pipeline.dir, `Memory: not mounted (${why}).`).catch(() => {});
     }
   }
 
   /**
-   * Mount the memory store into this run (§4.1, A1: `<pipeline.dir>/memory` in BOTH
-   * modes). On resume, the previous segment's ledger is read first and its mount is
-   * synced back BEFORE the remount wipes it (§5 "resume of a paused run").
+   * Mount the memory store into this run at `<runCwd>/.claude/rules/worca` — INSIDE the cwd of
+   * every spawn, where Claude Code discovers rules natively (run root on a detached workspace
+   * run, the primary worktree otherwise). Always recomputed, never the ledger's absolute path.
+   * On resume, the previous segment's ledger is read first and its mount is synced back BEFORE
+   * anything else (§5 "resume of a paused run"): the sync is pure fs and needs neither git nor
+   * the tracked guard, so a guard that fails only NOW (git broken, the previous segment's agent
+   * staged the mount) can never lose the interrupted segment's writes.
    */
   async _mountMemoryUnguarded({ resume }) {
     const root = memoryRoot();
-    const mount = join(this.pipeline.dir, 'memory');          // always recomputed — never the ledger's absolute path
+    // Pre-setup there is no run cwd, and the LIVE checkout must never take a mount.
+    const cwd = this.runCwd || null;
+    if (!cwd || cwd === this.projectDir) throw new Error('no run cwd to mount into');
+    const mount = memoryMountPath(cwd);
+    // §8.8 scope of the record: 'runRoot' when the cwd IS the run root, else the member whose
+    // checkout is the cwd (the primary member on single and legacy-workspace runs).
+    const scope = (this.runRoot && cwd === this.runRoot) ? 'runRoot'
+      : ([...this.workDirs.entries()].find(([, d]) => d === cwd)?.[0] ?? null);
+    if (!scope) throw new Error(`run cwd ${cwd} is neither the run root nor a member checkout`);
     const dirs = mountDirs({ members: this.members, isWorkspace: this.isWorkspace, memoryScope: this.memoryScope });
     const onError = (p, err) => this._memoryReadWarn(p, err);
     if (resume) {
@@ -1860,41 +1873,78 @@ export class RunHarness extends EventEmitter {
       try { ledger = JSON.parse(await readFile(this._memoryLedgerPath(), 'utf8')); } catch { ledger = null; }
       if (ledger && ledger.baseline && Array.isArray(ledger.dirs)) {
         this.memoryChanges = Array.isArray(ledger.changes) ? ledger.changes : [];
+        // A run paused BEFORE the native-rules revision still has its files at the ledger's
+        // old path (<pipeline.dir>/memory): sync THAT dir once, so nothing the interrupted
+        // execution wrote is lost; the recomputed path is used from here on.
+        const prev = (typeof ledger.mount === 'string' && ledger.mount !== mount && existsSync(ledger.mount)) ? ledger.mount : mount;
         try {
-          await this._syncMemoryWith({ mount, dirs: ledger.dirs, baseline: ledger.baseline, nodeId: 'resume', executionId: null, agentKey: null, label: 'the interrupted execution' });
+          await this._syncMemoryWith({ mount: prev, dirs: ledger.dirs, baseline: ledger.baseline, nodeId: 'resume', executionId: null, agentKey: null, label: 'the interrupted execution' });
         } catch (err) {
           // Defensive — syncBack does not reject today (every fs error is per-file or routed
           // through onError). If it ever does: do NOT remount over unsynced writes; keep the
-          // old mount + baseline so the next execution's sync retries them.
+          // PREVIOUS mount + baseline so the next execution's sync retries them.
           this._log('memory', 'warn', `memory: the interrupted execution's writes could not be synced (${err?.message || err}); keeping the previous mount`);
-          this.memory = { root, mount, dirs: ledger.dirs, baseline: ledger.baseline };
-          this.state.memoryMount = mount;
-          await this._refreshMemoryIndex();
+          this.memory = { root, mount: prev, dirs: ledger.dirs, baseline: ledger.baseline };
+          this.state.memoryMount = prev;
+          // Register ONLY when the kept mount is the one inside this run's cwd: a mount there must
+          // stay excluded from the commit and removed at teardown, while the pre-revision
+          // <pipeline.dir>/memory path is outside every checkout and needs no §8.8 record.
+          if (prev === mount) await this._registerMemoryMount(scope);
+          this._refreshMemoryBlock();
           return;
         }
       }
     }
-    const m = await mountMemory({ root, mount, dirs, onError });
+    // A checkout that TRACKS the mount path would have its committed files overwritten, excluded
+    // from the commit and deleted at teardown — refuse, like the skill mount's trackedNames guard.
+    // `:(icase)`: on a case-insensitive file system a repo tracking `.Claude/rules/worca` would
+    // otherwise pass the guard and have those files rm'd through the case-folded path. The
+    // detached workspace run root has no git and no check.
+    if (scope !== 'runRoot') {
+      const tracked = await this._git(['ls-files', '--', `:(icase)${MEMORY_RULES_REL}`], { cwd });
+      if (!tracked.ok) throw new Error(`cannot tell whether the checkout tracks ${MEMORY_RULES_REL} (git ls-files: ${tracked.stderr.trim() || `exit ${tracked.code}`})`);
+      // The way out differs: an ordinary run has nowhere else to go (its checkout IS the project's),
+      // a defragment targets a scope and can be started from any other project's checkout.
+      if (tracked.stdout.trim()) throw new Error(`the checkout tracks ${MEMORY_RULES_REL} — untrack it${this.memoryScope ? ' (or start the defragment from another project)' : ''}`);
+    }
+    // Register BEFORE anything touches the disk: a mount that fails half-way (EACCES, a Windows
+    // EBUSY past the retries) leaves files under the cwd, and only the §8.8 entry keeps them out
+    // of the commit and gets them removed at teardown. Idempotent, harmless on failure.
+    await this._registerMemoryMount(scope);
+    // gitIgnore: the mount now lives INSIDE a checkout an AGENT runs git in. `<mount>/.gitignore`
+    // = `*` makes it invisible to an agent's own `git add -A`, to a staging pre-commit hook, to
+    // snapshotWorktreePatch's bare `git add -A` and to the reviewer's `git status`. The §8.8
+    // `:(exclude)` pathspec stays as defence in depth. Harmless at a non-git run root.
+    const m = await mountMemory({ root, mount, dirs, onError, gitIgnore: true });
     this.memory = { root, mount, dirs, baseline: m.baseline };
     this.state.memoryMount = mount;
-    await this._refreshMemoryIndex();
+    this._refreshMemoryBlock();
     await this._writeMemoryLedger();
     this._log('memory', 'info', `Memory mounted at ${mount}: ${m.files} file(s) across ${dirs.length} scope(s)`);
   }
 
-  /** Re-render the index from the MOUNT (so a file written by node N is listed for node N+1). */
-  async _refreshMemoryIndex() {
-    if (!this.memory) { this.memoryIndex = ''; return; }
-    const onError = (p, err) => this._memoryReadWarn(p, err);
-    const sections = [];
-    for (const d of this.memory.dirs) {
-      const dir = join(this.memory.mount, d.rel);
-      sections.push({ label: d.label, dir, entries: await listMemoryDir(dir, { onError }) });
-    }
-    const caps = memoryCaps();
-    const { text, warnings } = renderMemoryIndex(sections, { maxBytes: caps.indexMaxBytes, hookMaxChars: caps.hookMaxChars });
-    this.memoryIndex = text;
-    for (const w of warnings) this._memoryWarn(w);
+  /**
+   * §8.8: the mount rides `injectedPaths[<scope>]` as a `kind:'memory'` entry — excluded from the
+   * commit, the intent-to-add staging and the three result diffs (_excludePathspecs), removed at
+   * teardown (removeInjectedPaths), never rescued (sync-back is its rescue). Idempotent: a resume
+   * re-assembly rewrites the map without it, so it is re-added here; persisted into run.json on
+   * detached runs so the boot sweep and pipeline-delete see the same set. Under legacy the map was
+   * always {} — the memory entry is the ONE legacy pathspec, and the legacy `git add -A` becomes
+   * `git add -A -- . :(exclude).claude/rules/worca` (§10's byte-identical contract, amended: memory
+   * has been mounted in both modes since P1, and an unexcluded mount would be committed).
+   */
+  async _registerMemoryMount(scope) {
+    const map = { ...(this.injectedPaths || {}) };
+    map[scope] = [...(map[scope] || []).filter((e) => e?.kind !== 'memory'), { ...MEMORY_INJECTED_ENTRY }];
+    this.injectedPaths = map;
+    if (this.runRoot) await updateRunManifest(this.runRoot, { injectedPaths: map }).catch(() => {});
+  }
+
+  /** The `## Worca memory` pointer block: heading, one-line intro, one `Label — /abs/dir:` line per
+   *  mounted scope. Depends on dirs + mount only (never on file contents), so one render per mount. */
+  _refreshMemoryBlock() {
+    if (!this.memory) { this.memoryBlock = ''; return; }
+    this.memoryBlock = renderMemoryBlock(this.memory.dirs.map((d) => ({ label: d.label, dir: join(this.memory.mount, d.rel) })));
   }
 
   /** The `onError` every memory listing gets. A junk NAME is not an I/O failure — phrasing it
@@ -1904,7 +1954,7 @@ export class RunHarness extends EventEmitter {
     else this._memoryWarn(`memory: cannot read ${p}: ${err?.code || err?.message || err}`);
   }
 
-  /** Record-once warnings: the index is re-rendered after every execution. */
+  /** Record-once warnings: the pointer block is rendered once per mount. */
   _memoryWarn(text) {
     if (this._memoryWarned.has(text)) return;
     this._memoryWarned.add(text);
@@ -1956,10 +2006,7 @@ export class RunHarness extends EventEmitter {
       this._log('memory', 'info', `${head}: ${details.join('; ')}`, { nodeId, executionId });
       await appendAudit(this.pipeline.dir, `${head}: ${details.join('; ')}`).catch(() => {});
     }
-    if (this.memory && this.memory.mount === mount) {
-      await this._refreshMemoryIndex();
-      await this._writeMemoryLedger();
-    }
+    if (this.memory && this.memory.mount === mount) await this._writeMemoryLedger();
     return res;
   }
 
@@ -2175,7 +2222,12 @@ export class RunHarness extends EventEmitter {
     // branch carries no changes (the staging in _stageWorkingTree is intent-to-add
     // for the reviewer's diff only — it never creates a commit). On error/stop this
     // is what captures the partial work made up to that point.
-    const commit = await this._commitWork(info);
+    const key = this.members[0]?.projectKey ?? null;
+    const injected = key ? (this.injectedPaths?.[key] ?? []) : [];
+    const commit = await this._commitWork(info, this.state.branch, { excludePathspecs: this._excludePathspecs(key) });
+    // The memory mount (the one legacy injected path) was synced at _buildResults; remove it now
+    // so it rides neither the retained-work snapshot nor an outlived checkout.
+    await removeInjectedPaths(info.worktreeDir, injected);
     const retained = await this._recordCommitFailure(commit, { info, branchRecord: this.state.branch });
     if (retained) {
       await this._snapshotRetained(info);
@@ -2225,7 +2277,8 @@ export class RunHarness extends EventEmitter {
     for (const [projectKey_, info] of entries) {
       if (!info || !info.worktreeDir) continue;
       const branchRecord = (this.state.branches && this.state.branches[projectKey_]) || null;
-      const commit = await this._commitWork(info, branchRecord);
+      const commit = await this._commitWork(info, branchRecord, { excludePathspecs: this._excludePathspecs(projectKey_) });
+      await removeInjectedPaths(info.worktreeDir, this.injectedPaths?.[projectKey_] ?? []);
       if (await this._recordCommitFailure(commit, { key: projectKey_, info, branchRecord })) {
         anyRetained = true;
         await this._snapshotRetained(info, projectKey_);
@@ -2273,7 +2326,8 @@ export class RunHarness extends EventEmitter {
    * Still skipped entirely when the run paused (§8.13) — the caller guards.
    *
    * Under `legacy` this delegates to today's _teardownWorktree / _teardownWorktreeAll
-   * verbatim and does nothing else. Under `detached`, per member, in NORMATIVE order:
+   * verbatim, except that both now commit with the §8.8 exclusion set (the memory mount)
+   * and remove the mount after the commit attempt. Under `detached`, per member, in NORMATIVE order:
    *   1. modified-mount rescue (§8.20) — read-only, so it survives any later failure
    *   2. strip every claudeMdSection fenced block (must precede the commit — that
    *      file is deliberately NOT in the exclusion pathspecs)
@@ -2515,8 +2569,12 @@ export class RunHarness extends EventEmitter {
    *   (defaults to the scalar this.state.branch; a workspace member passes its own
    *   state.branches[projectKey] so per-member SHAs are recorded distinctly).
    * @param {{excludePathspecs?:string[]}} [opts] §8.8 exclusion set for this
-   *   worktree. With the DEFAULT empty array — every legacy run — the method keeps
-   *   today's bare `git add -A` byte-identically (§10 rollback contract).
+   *   worktree. Since the native-rules revision every run passes one (the memory mount),
+   *   so the argv is `git add -A -- . :(exclude).claude/rules/worca`, preceded by a
+   *   `git rm -r --cached --ignore-unmatch -- .claude/rules/worca` that unstages anything an
+   *   agent force-staged there (`git add -A` with an exclude never unstages); the DEFAULT empty
+   *   array (a refused mount) still reproduces the bare `git add -A`. The detached
+   *   `_teardownRunRoot` path commits through this same method, so it is covered too.
    * @returns {Promise<{ok:true,committed:boolean,sha:string|null}|
    *                   {ok:false,step:'status'|'add'|'commit',message:string,fromStderr:boolean}>}
    *   `fromStderr` records whether `message` embeds real stderr bytes (vs. the
@@ -2543,6 +2601,15 @@ export class RunHarness extends EventEmitter {
     if (!status.stdout.trim()) {
       this._log('git', 'info', 'No changes to commit (working tree clean).');
       return { ok: true, committed: false, sha: null };
+    }
+    // `git add -A -- . :(exclude)X` does not UNSTAGE what is already in the index: an agent that
+    // ran `git add -f .claude/rules/worca` (the one way past the mount's `.gitignore` sentinel)
+    // would otherwise put memory files on the kept branch, and on a resume the tracked guard would
+    // then refuse the mount for the rest of the run. Drop the exclusion set from the index first —
+    // a no-op (exit 0) when nothing under it is staged, thanks to --ignore-unmatch.
+    if (excludePathspecs.length) {
+      await this._git(['rm', '-r', '--cached', '-q', '--ignore-unmatch', '--',
+        ...excludePathspecs.map((s) => s.replace(/^:\(exclude\)/, ''))], gitOpts);
     }
     const add = excludePathspecs.length
       ? await this._git(['add', '-A', '--', '.', ...excludePathspecs], gitOpts)
@@ -2574,8 +2641,9 @@ export class RunHarness extends EventEmitter {
         gitOpts,
       );
     }
-    if (!commit.ok && excludePathspecs.length) {
-      // §8.8 (detached runs — the same scope as the exclusion set): a failing hook
+    if (!commit.ok && this.runRootMode === 'detached') {
+      // §8.8 (detached runs only — legacy keeps its verbatim commit even now that it carries an
+      // exclusion set): a failing hook
       // must never silently delete an agent's work. Teardown removeWorktree(force:true)s
       // the checkout right after a successful commit, so this commit is the ONLY thing
       // that carries the work onto the kept branch. A diff artifact does now survive
@@ -2584,7 +2652,9 @@ export class RunHarness extends EventEmitter {
       // rebase or push. Detached worktrees make hook failure MORE likely (§8.1:
       // husky/lint-staged resolve through an ancestor node_modules today and do not
       // detached). Retry ONCE with hooks disabled for that invocation only, logging
-      // both facts.
+      // both facts. The gate is the MODE, not the exclusion set: before the native-rules
+      // revision a detached default-workflow run recorded no injected path at all and was
+      // silently excluded from the retry — exactly the runs §8.1 is about.
       const hookErr = commit.stderr.trim() || `exit ${commit.code}`;
       this._log('git', 'warn', `commit failed with hooks enabled: ${hookErr}`, errStreamAttr(commit.stderr));
       const retry = await this._git(
@@ -3144,8 +3214,8 @@ export class RunHarness extends EventEmitter {
     // setup never ran, in which case staging must be a NO-OP — the old single arm
     // fell back to this.workDir, which pre-setup is the user's LIVE checkout.
     for (const [key, dir] of this.workDirs.entries()) {
-      // §8.8: an empty exclusion set (every legacy run) reproduces today's argv
-      // byte-identically — `--` with no trailing pathspec is a no-op for git add.
+      // §8.8: the exclusion set is the memory mount in both modes (and the skill mount under
+      // detached); an empty set (a refused mount) reproduces the bare argv.
       const ex = this._excludePathspecs(key);
       const args = ex.length ? ['add', '-A', '-N', '--', '.', ...ex] : ['add', '-A', '-N'];
       const res = await this._git(args, { cwd: dir, ignoreAbort });
@@ -3161,8 +3231,9 @@ export class RunHarness extends EventEmitter {
    * `kind:'claudeMdSection'` entries are deliberately EXCLUDED from the set — their
    * file is the user's tracked CLAUDE.md, and a blanket `:(exclude)CLAUDE.md` would
    * silently strip the agent's legitimate edits (teardown strips the fence instead).
-   * Returns [] under legacy and through Phase 2 (this.injectedPaths is always {}),
-   * which is what makes every legacy argv byte-identical.
+   * Under legacy the set holds exactly the memory mount (`_registerMemoryMount`), so
+   * `git add -A -- . :(exclude).claude/rules/worca` is the legacy argv since the
+   * native-rules revision.
    * @param {string} projectKey
    * @returns {string[]}
    */

@@ -91,7 +91,7 @@ import {
   snapshotScope, listSnapshots, restoreSnapshot, readScopeState, bumpScopeState, hashText,
 } from '../src/core/memory-store.mjs';
 
-const CAPS = { softBytesPerFile: 8192, hardBytesPerFile: 200, maxFilesPerScope: 50, indexMaxBytes: 4096, hookMaxChars: 160 };
+const CAPS = { softBytesPerFile: 8192, hardBytesPerFile: 200, maxFilesPerScope: 50, hookMaxChars: 160 };
 const roots = [];
 after(() => Promise.all(roots.map((d) => rm(d, { recursive: true, force: true }))));
 async function root() { const d = await mkdtemp(join(tmpdir(), 'worca-mem-store-')); roots.push(d); return d; }
@@ -189,58 +189,6 @@ test('bumpScopeState: defrag stamps reset the write counter', async () => {
   assert.deepEqual(await readScopeState(r, GLOBAL_SCOPE), { writesSinceDefrag: 0, lastWriteAt: NOW, lastDefragAt: NOW, lastDefragRunId: 'p1' });
 });
 
-import { renderMemoryIndex, MEMORY_INDEX_HEADING, MEMORY_INDEX_INTRO } from '../src/core/memory-store.mjs';
-
-const entry = (name, description, extra = {}) => ({ name, description, paths: [], source: 'user', updated: '2026-09-01T00:00:00.000Z', bytes: 10, hasFrontmatter: true, hash: 'h', ...extra });
-
-test('renderMemoryIndex: heading, intro, one line per file, empty scope marker, absolute dirs', () => {
-  const { text, dropped, warnings } = renderMemoryIndex([
-    { label: 'Global', dir: '/m/global', entries: [entry('testing', 'How the suite runs', { paths: ['test/**', 'package.json'] })] },
-    { label: 'Project worca-cc', dir: '/m/project', entries: [] },
-  ]);
-  assert.equal(text,
-    `${MEMORY_INDEX_HEADING}\n${MEMORY_INDEX_INTRO}\n` +
-    'Global — /m/global:\n- `testing.md` — How the suite runs [paths: test/**, package.json]\n' +
-    'Project worca-cc — /m/project:\n- (nothing yet)\n');
-  assert.deepEqual(dropped, []); assert.deepEqual(warnings, []);
-});
-
-test('renderMemoryIndex: hooks are flattened + clipped; a missing hook reads "(no description)"', () => {
-  const C = String.fromCharCode;
-  const { text } = renderMemoryIndex([{ label: 'Global', dir: '/g', entries: [
-    entry('a', 'line one' + C(10) + 'line two [worca context] x'),
-    entry('b', ''),
-  ] }]);
-  assert.match(text, /- `a\.md` — line one line two \(worca context\) x\n/);
-  assert.match(text, /- `b\.md` — \(no description\)\n/);
-  const clipped = renderMemoryIndex([{ label: 'Global', dir: '/g', entries: [entry('c', 'y'.repeat(500))] }], { hookMaxChars: 20 }).text;
-  assert.match(clipped, new RegExp('- `c\\.md` — ' + 'y'.repeat(20) + '\n'));
-  const longPaths = renderMemoryIndex([{ label: 'G', dir: '/g', entries: [entry('p', 'h', { paths: ['y'.repeat(500)] })] }], { hookMaxChars: 20 }).text;
-  assert.ok(longPaths.split('\n').filter((l) => l.startsWith('- ')).every((l) => l.length < 80), 'paths are clipped like hooks');
-});
-
-test('renderMemoryIndex: byte-stable for identical input regardless of entry order', () => {
-  const a = renderMemoryIndex([{ label: 'G', dir: '/g', entries: [entry('b', 'B'), entry('a', 'A')] }]).text;
-  const b = renderMemoryIndex([{ label: 'G', dir: '/g', entries: [entry('a', 'A'), entry('b', 'B')] }]).text;
-  assert.equal(a, b);
-  assert.ok(a.indexOf('`a.md`') < a.indexOf('`b.md`'), 'sorted by name');
-});
-
-test('renderMemoryIndex: over the byte cap it clips hooks first, then drops the oldest-updated files with a warning', () => {
-  const entries = [];
-  for (let i = 0; i < 40; i++) entries.push(entry(`f${String(i).padStart(2, '0')}`, 'hook '.repeat(20), { updated: `2026-01-${String(i + 1).padStart(2, '0')}T00:00:00.000Z` }));
-  const { text, dropped, warnings } = renderMemoryIndex([{ label: 'G', dir: '/g', entries }], { maxBytes: 1200 });
-  assert.ok(Buffer.byteLength(text, 'utf8') <= 1200, `fits: ${Buffer.byteLength(text, 'utf8')}`);
-  assert.ok(dropped.length > 0);
-  assert.equal(dropped[0], 'f00', 'the OLDEST updated entry goes first');
-  assert.ok(text.includes('`f39.md`'), 'the newest survives');
-  const f39 = text.split('\n').find((l) => l.startsWith('- `f39.md`'));
-  assert.equal(f39.slice('- `f39.md` — '.length).length, 60, 'surviving hooks are clipped to 60 chars when the cap binds');
-  assert.match(text, /- \(\d+ more file\(s\) not listed\)\n/, 'the agent is told files are hidden');
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /memory index: dropped \d+ file\(s\) to fit 1200 bytes: f00/);
-});
-
 test('snapshotScope / restoreSnapshot: junk-named files are skipped, never a reason to fail the scope', async () => {
   const r = await root();
   await writeMemory(r, GLOBAL_SCOPE, 'ok', 'Fine.\n', { source: 'user', now: NOW, caps: CAPS });
@@ -325,12 +273,20 @@ test('removeMemory: a name that differs only by case from the file on disk is NO
   assert.deepEqual(await listMemory(r, GLOBAL_SCOPE), []);
 });
 
-test('renderMemoryIndex: `intro` swaps the second line and nothing else; omitted ⇒ byte-identical to P1', () => {
-  const sections = [{ label: 'Global', dir: 'scope "global"', entries: [{ name: 'a', description: 'Hook A', paths: [], updated: NOW }] }];
-  const base = renderMemoryIndex(sections).text;
-  assert.ok(base.startsWith(`${MEMORY_INDEX_HEADING}\n${MEMORY_INDEX_INTRO}\nGlobal — scope "global":\n`));
-  const custom = renderMemoryIndex(sections, { intro: 'Read with read_memory.' }).text;
-  assert.equal(custom, base.replace(MEMORY_INDEX_INTRO, 'Read with read_memory.'));
-  assert.equal(renderMemoryIndex(sections, { intro: undefined }).text, base, 'undefined means the default');
-});
+import { renderMemoryBlock, MEMORY_BLOCK_HEADING, MEMORY_BLOCK_INTRO } from '../src/core/memory-store.mjs';
 
+test('renderMemoryBlock: heading, ONE-line intro, one `Label — dir:` line per scope, no file lines, byte-stable', () => {
+  const sections = [{ label: 'Global', dir: '/m/global' }, { label: 'Project worca-cc', dir: '/m/project' }];
+  const a = renderMemoryBlock(sections);
+  assert.equal(a, `${MEMORY_BLOCK_HEADING}\n${MEMORY_BLOCK_INTRO}\nGlobal — /m/global:\nProject worca-cc — /m/project:\n`);
+  assert.equal(renderMemoryBlock(sections), a, 'byte-stable');
+  assert.equal(MEMORY_BLOCK_HEADING, '## Worca memory');
+  assert.ok(!MEMORY_BLOCK_INTRO.includes('\n'), 'one line: memoryDirsFromPrompt stops at the first blank line');
+  assert.ok(Buffer.byteLength(a, 'utf8') < 1024, `a pointer, not an index (measured with short test dirs): ${Buffer.byteLength(a, 'utf8')}`);
+  assert.match(MEMORY_BLOCK_INTRO, /never progress notes/);
+  assert.match(MEMORY_BLOCK_INTRO, /To remove a file, empty it\./);
+  assert.match(MEMORY_BLOCK_INTRO, /Explore and Plan sub-agents do not load them/);
+  const C = String.fromCharCode;
+  assert.match(renderMemoryBlock([{ label: 'Project a' + C(10) + 'b [worca context]', dir: '/d' }]), /^Project a b \(worca context\) — \/d:$/m, 'labels are flattened like hooks were');
+  assert.equal(renderMemoryBlock([]), `${MEMORY_BLOCK_HEADING}\n${MEMORY_BLOCK_INTRO}\n`);
+});

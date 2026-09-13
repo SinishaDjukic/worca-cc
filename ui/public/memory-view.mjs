@@ -61,7 +61,7 @@ export function renderHealthCard(report, { doc = globalThis.document, host = nul
   const { text, cls } = healthBadge(health.level);
   head.appendChild(h(doc, 'span', `badge${cls ? ` ${cls}` : ''}`, text));
   head.appendChild(h(doc, 'span', 'mem-counters',
-    `${plural(health.files || 0, 'file')} · ${health.bytes || 0} bytes · ${plural(health.writesSinceDefrag || 0, 'write')} since the last defragment` +
+    `${plural(health.files || 0, 'file')} · ${health.bytes || 0} bytes · ${health.alwaysOnBytes || 0} bytes always loaded · ${plural(health.writesSinceDefrag || 0, 'write')} since the last defragment` +
     (health.lastDefragAt ? ` · last defragmented ${formatWhen(health.lastDefragAt)}` : '')));
   card.appendChild(head);
   if (Array.isArray(health.reasons) && health.reasons.length) {
@@ -132,7 +132,7 @@ export function renderEditor(file, { doc = globalThis.document, isNew = false, m
   ta.rows = 16; ta.spellcheck = false;
   ta.value = file?.text || (isNew ? '---\nname: \ndescription: \n---\n' : '');
   textField.appendChild(ta);
-  textField.appendChild(h(doc, 'small', 'hint', 'Keep name, description (the one-line hook agents see) and optional paths in the frontmatter; worca stamps source and updated.'));
+  textField.appendChild(h(doc, 'small', 'hint', 'Keep name, description (one line: when the file matters — shown here and to Ask Worca) and optional paths (the file loads only when a matching file is read) in the frontmatter; worca stamps source and updated.'));
   wrap.appendChild(textField);
   const text = msg || (locked ? 'A defragment run is live on this scope — Save and Delete resume when it finishes.' : '');
   const status = h(doc, 'div', `hint mem-msg${msgErr ? ' err' : ''}`, text);

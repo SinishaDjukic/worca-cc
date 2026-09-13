@@ -244,7 +244,7 @@ test('--memory-scope global with --workflow wf_memory_defrag runs a mock defragm
   const repo = freshRepo();
   const r = runCli(['--project', repo, '--workflow', 'wf_memory_defrag', '--memory-scope', 'global', '--mock', '--yes'], repo);
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
-  assert.match(r.stdout, /Memory mounted at .*memory: \d+ file\(s\) across 1 scope\(s\)/, 'one scope mounted');
+  assert.match(r.stdout, /Memory mounted at .*[\\/]\.claude[\\/]rules[\\/]worca: \d+ file\(s\) across 1 scope\(s\)/, 'one scope mounted');
   const row = getDb().prepare('SELECT prompt, status FROM pipelines ORDER BY started_at DESC LIMIT 1').get();
   assert.equal(row.prompt, 'Defragment global memory.');
   assert.equal(row.status, 'done');

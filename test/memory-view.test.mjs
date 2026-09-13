@@ -9,7 +9,7 @@ import {
 } from '../ui/public/memory-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
-const HEALTH = { files: 2, bytes: 300, oversized: 0, overHard: 0, invalidFrontmatter: 0, indexDropped: 0, writesSinceDefrag: 3, lastWriteAt: '2026-09-09T10:00:00.000Z', lastDefragAt: null, lastDefragRunId: null, level: 'ok', reasons: [] };
+const HEALTH = { files: 2, bytes: 300, oversized: 0, overHard: 0, invalidFrontmatter: 0, alwaysOnBytes: 120, alwaysOnFiles: 1, writesSinceDefrag: 3, lastWriteAt: '2026-09-09T10:00:00.000Z', lastDefragAt: null, lastDefragRunId: null, level: 'ok', reasons: [] };
 const REPORT = { scope: 'global', project: null, files: [], state: {}, health: HEALTH, defragRunId: null };
 const HOST = { key: 'alpha-00000001', name: 'alpha' };
 const PROJECT_REPORT = { ...REPORT, scope: 'projects/alpha-00000001', project: { key: 'alpha-00000001', name: 'alpha' } };
@@ -42,7 +42,7 @@ test('renderHealthCard: badge, reasons, counters, and the Defragment control in 
   assert.equal(ok.querySelector('.badge').textContent, 'Healthy');
   assert.ok(ok.querySelector('.badge').classList.contains('green'));
   assert.equal(ok.querySelector('.mem-reasons'), null, 'no reasons list when there are none');
-  assert.match(ok.querySelector('.mem-counters').textContent, /2 files · 300 bytes · 3 writes since the last defragment/);
+  assert.match(ok.querySelector('.mem-counters').textContent, /2 files · 300 bytes · 120 bytes always loaded · 3 writes since the last defragment/);
   const btn = ok.querySelector('.mem-defrag');
   assert.equal(btn.disabled, false); assert.equal(btn.textContent, 'Defragment');
   assert.equal(btn.dataset.runId, undefined, 'no run to open');

@@ -536,11 +536,11 @@ test('track_run: named in rule 1, guided in rule 5, and the rules still stop at 
   assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*14\./.test(ASK_SYSTEM_RULES), 'the rules stop at 13');
 });
 
-test('rule 13 (memory): reads by hook, saves only durable preferences, names the block, never an agent key, never the context tags', () => {
+test('rule 13 (memory): the files are loaded as rules, saves only durable preferences, never an agent key, never the context tags', () => {
   const rule13 = ASK_SYSTEM_RULES.slice(ASK_SYSTEM_RULES.indexOf('\n13. '));
-  for (const t of ['## Worca memory', 'read_memory', 'remember', 'forget', 'one file per topic', 'global for how the user works', 'project for facts about one repository',
+  for (const t of ['loaded into this session as rules', 'read_memory', 'remember', 'forget', 'one file per topic', 'global for how the user works', 'project for facts about one repository',
     'say in one line what you saved', 'Never store secrets', 'run-specific progress', 'forget only when the user asks', 'Memory defragment',
-    'when present', 'propose it only when the user asks to clean up, merge or defragment memory']) {
+    'loads from the next turn on', 'propose it only when the user asks to clean up, merge or defragment memory']) {
     assert.ok(rule13.includes(t), `rule 13 states "${t}"`);
   }
   assert.ok(!rule13.includes('[worca context]'));
@@ -550,17 +550,9 @@ test('rule 13 (memory): reads by hook, saves only durable preferences, names the
   assert.ok(rule1.includes('get_run_diff, track_run, read_attachment'), 'the pinned substring survives');
 });
 
-test('buildSystemPrompt: the memory block sits between the rules and the catalog; no block ⇒ byte-identical', () => {
+test('buildSystemPrompt: rules + catalog only — no memory block, byte-stable under permutation', () => {
   const plain = buildSystemPrompt(CATALOG);
-  assert.equal(buildSystemPrompt(CATALOG, {}), plain);
-  assert.equal(buildSystemPrompt(CATALOG, { memoryIndex: '' }), plain);
-  assert.equal(buildSystemPrompt(CATALOG, { memoryIndex: '   \n' }), plain, 'whitespace is no block');
-  const INDEX = '## Worca memory\nintro line\nGlobal — scope "global":\n- `style.md` — Terse commits\n';
-  const withMem = buildSystemPrompt(CATALOG, { memoryIndex: INDEX });
-  assert.ok(withMem.startsWith(ASK_SYSTEM_RULES));
-  assert.equal(withMem, `${ASK_SYSTEM_RULES}\n\n${INDEX.trim()}\n\n${plain.slice(ASK_SYSTEM_RULES.length + 2)}`);
-  assert.ok(withMem.indexOf('## Worca memory') < withMem.indexOf('## Catalog'));
-  const catalogSlice = withMem.slice(withMem.indexOf('## Catalog'));
-  assert.equal(catalogSlice, plain.slice(plain.indexOf('## Catalog')), 'the catalog bytes are untouched by the block');
-  assert.equal(buildSystemPrompt({ ...CATALOG, workflows: [...CATALOG.workflows].reverse() }, { memoryIndex: INDEX }), withMem, 'still byte-stable under permutation');
+  assert.ok(plain.startsWith(ASK_SYSTEM_RULES));
+  assert.ok(!plain.includes('## Worca memory'), 'the prompt carries no memory block — the files load natively');
+  assert.equal(buildSystemPrompt({ ...CATALOG, workflows: [...CATALOG.workflows].reverse() }), plain);
 });

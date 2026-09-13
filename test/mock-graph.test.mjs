@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { runGraphOffline } from './helpers/graph-run.mjs';
 import { MOCK_WRITER_ROLES, MOCK_ROLE_CLARIFY, MOCK_ROLE_DECOMPOSER, runClaude, memoryDirsFromPrompt } from '../src/core/claude-runner.mjs';
-import { renderMemoryIndex } from '../src/core/memory-store.mjs';
+import { renderMemoryBlock } from '../src/core/memory-store.mjs';
 import { QUIESCENCE_WARNING, quiescenceDeadEnd } from '../src/core/graph/scheduler.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
@@ -90,10 +90,10 @@ test('the 12 builtins pin roles the switch already handles — no new case strin
     'the switch carries no case the chain can never reach');
 });
 
-test('memoryDirsFromPrompt: reads the scope dirs out of a REAL memory index block, and nothing else', () => {
-  const { text } = renderMemoryIndex([
-    { label: 'Global', dir: '/abs/m/global', entries: [{ name: 'testing', description: 'How tests run', paths: [] }] },
-    { label: 'Project My App', dir: '/abs/m/project', entries: [] },
+test('memoryDirsFromPrompt: reads the scope dirs out of a REAL memory pointer block, and nothing else', () => {
+  const text = renderMemoryBlock([
+    { label: 'Global', dir: '/abs/m/global' },
+    { label: 'Project My App', dir: '/abs/m/project' },
   ]);
   const sys = `TOOLS\n\n${text.trim()}\n\nYou are the agent.\nGlobal — /not/in/the/block:\n`;
   assert.deepEqual(memoryDirsFromPrompt(sys), ['/abs/m/global', '/abs/m/project'], 'the block is contiguous; the blank line ends it');
@@ -101,7 +101,7 @@ test('memoryDirsFromPrompt: reads the scope dirs out of a REAL memory index bloc
   assert.deepEqual(memoryDirsFromPrompt(`## Worca memory\nintro\nGlobal — C:\\Users\\me\\.worca-cc\\p\\memory\\global:\n- (nothing yet)\n`), ['C:\\Users\\me\\.worca-cc\\p\\memory\\global'], 'a Windows dir keeps its drive colon');
   // The label is the model's project NAME: it may contain the separator itself. The renderer's
   // separator is the LAST one on the line, so the label pattern must be greedy.
-  const { text: odd } = renderMemoryIndex([{ label: 'Project My — App', dir: '/abs/m/project', entries: [] }]);
+  const odd = renderMemoryBlock([{ label: 'Project My — App', dir: '/abs/m/project' }]);
   assert.deepEqual(memoryDirsFromPrompt(`TOOLS\n\n${odd.trim()}\n`), ['/abs/m/project'], 'a project name containing the separator keeps the whole dir');
 });
 
@@ -113,7 +113,7 @@ test('memory-defrag mock: merges the first two files of the FIRST scope dir name
   writeFileSync(join(dir, 'a.md'), '---\nname: a\ndescription: A\n---\nRule A.\n');
   writeFileSync(join(dir, 'b.md'), '---\nname: b\ndescription: B\n---\nRule B.\n');
   writeFileSync(join(dir, 'c.md'), 'Rule C.\n');
-  const { text: index } = renderMemoryIndex([{ label: 'Global', dir, entries: [] }]);
+  const index = renderMemoryBlock([{ label: 'Global', dir }]);
   const events = [];
   const res = await runClaude({ cwd: mount, mock: true, permissionMode: 'acceptEdits', systemPrompt: `TOOLS\n\n${index}`, onEvent: (e) => events.push(e),
     prompt: `Defragment.\n\nMOCK_ROLE: memory-defrag\nMOCK_OUT: ${out}` });
@@ -137,7 +137,7 @@ test('memory-defrag mock: the "nothing to merge" boundary is ONE file — two fi
     mkdirSync(dir, { recursive: true });
     for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
     mkdirSync(join(dir, 'notes.md'), { recursive: true });        // a DIRECTORY named like a file: never read
-    const { text: index } = renderMemoryIndex([{ label: 'Global', dir, entries: [] }]);
+    const index = renderMemoryBlock([{ label: 'Global', dir }]);
     const res = await runClaude({ cwd: mount, mock: true, permissionMode: 'acceptEdits', systemPrompt: `TOOLS\n\n${index}`,
       prompt: `Defragment.\n\nMOCK_ROLE: memory-defrag\nMOCK_OUT: ${out}` });
     assert.ok(res && !res.error, JSON.stringify(res));

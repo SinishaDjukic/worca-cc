@@ -2,16 +2,17 @@
 // the real bundle on a temp home, and the read-only source scans (agent-memory-design.md §9.1, B3, B24).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { createAskTools } from '../src/core/ask/tools.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 import { redactAskText } from '../src/core/ask/redact.mjs';
 import { defaultToolDeps } from '../src/core/ask/tool-deps.mjs';
-import { defaultMemoryDeps, askMemoryIndex, ASK_MEMORY_INDEX_INTRO } from '../src/core/ask/memory-deps.mjs';
+import { defaultMemoryDeps, refreshAskMemoryMount } from '../src/core/ask/memory-deps.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { memoryRoot, GLOBAL_SCOPE, projectScope, readMemory, listSnapshots, MemoryError } from '../src/core/memory-store.mjs';
-import { addProject } from '../src/core/projects.mjs';
+import { addProject, worcaHome } from '../src/core/projects.mjs';
 import { createThread, updateThread } from '../src/core/ask/store.mjs';
 
 useTempHome(after);
@@ -137,11 +138,11 @@ test('list_memory / read_memory / forget over the fake store: B24 shapes, every 
   await assert.rejects(() => tools.call('forget', { scope: 'project', name: 'conv' }), /forget: no memory file "conv" in project/);
 });
 
-test('the REAL bundle on a temp home: remember writes through the store with an ask: source and a snapshot; forget removes; the index renders by scope', async () => {
+test('the REAL bundle on a temp home: remember writes through the store with an ask: source and a snapshot; forget removes; the mount refreshes by scope', async () => {
   const p = (await addProject({ name: 'realmem', path: process.cwd() })).find((x) => x.name === 'realmem');
   const threadId = 'ask_0000abcd';
   const tools = createAskTools({ ...defaultToolDeps({ threadId }), ...defaultMemoryDeps({ threadId }) });
-  assert.equal(await askMemoryIndex({}), '', 'B33: an empty store renders NO block (today\'s prompts stay byte-identical)');
+  assert.equal(await refreshAskMemoryMount({}), null, 'B33: an empty store mounts NOTHING (the spawn stays byte-identical)');
   const r = await tools.call('remember', { scope: 'project', projectKey: p.key, name: 'conventions', body: 'kebab-case files.\n', description: 'Naming rules' });
   assert.equal(r.created, true);
   const f = await readMemory(memoryRoot(), projectScope(p.key), 'conventions');
@@ -153,10 +154,15 @@ test('the REAL bundle on a temp home: remember writes through the store with an 
   assert.equal(f2.meta.description, 'Naming rules', 'kept across an append that named no description');
   assert.ok((await listSnapshots(memoryRoot(), projectScope(p.key))).length >= 1, 'every store write snapshots');
   await tools.call('remember', { scope: 'global', name: 'style', body: 'Terse commits.\n' });
-  const idx = await askMemoryIndex({ projectKey: p.key, projectName: 'realmem' });
-  assert.ok(idx.startsWith(`## Worca memory\n${ASK_MEMORY_INDEX_INTRO}\nGlobal — scope "global":\n- \`style.md\` — Terse commits.\nProject realmem — scope "project":\n- \`conventions.md\` — Naming rules\n`), idx);
-  assert.equal(await askMemoryIndex({}), `## Worca memory\n${ASK_MEMORY_INDEX_INTRO}\nGlobal — scope "global":\n- \`style.md\` — Terse commits.\n`, 'no project ⇒ global only');
-  assert.equal(await askMemoryIndex({ projectKey: 'not a key' }), '', 'any failure renders nothing (the prompt is never broken)');
+  const mount = await refreshAskMemoryMount({ projectKey: p.key, projectName: 'realmem' });
+  assert.equal(mount, join(worcaHome(), 'ask', 'memory', p.key));
+  assert.equal(existsSync(join(mount, '.claude', 'rules', 'worca', 'global', 'style.md')), true);
+  assert.equal(existsSync(join(mount, '.claude', 'rules', 'worca', 'project', 'conventions.md')), true);
+  const globalOnly = await refreshAskMemoryMount({});
+  assert.equal(globalOnly, join(worcaHome(), 'ask', 'memory', 'global'));
+  assert.equal(existsSync(join(globalOnly, '.claude', 'rules', 'worca', 'project')), false, 'no project ⇒ global only');
+  await assert.rejects(() => refreshAskMemoryMount({ projectKey: 'not a key' }), /invalid projectKey/,
+    'a key that is not a registry key never reaches mkdir — and the guard REJECTS (async), so a .catch() caller sees it too');
   assert.deepEqual(await tools.call('forget', { scope: 'global', name: 'style' }), { scope: 'global', projectKey: null, scopeKey: 'global', name: 'style', removed: true });
   assert.equal(await readMemory(memoryRoot(), GLOBAL_SCOPE, 'style'), null);
 });
@@ -184,6 +190,8 @@ test('source scans: tools.mjs still has no imports and no SQL verbs; memory-deps
   const deps = readFileSync(new URL('../src/core/ask/memory-deps.mjs', import.meta.url), 'utf8');
   assert.match(deps, /from '\.\.\/memory-store\.mjs'/);
   assert.doesNotMatch(deps, /from 'node:fs/, 'no direct fs — the store owns every write');
+  assert.match(deps, /export async function refreshAskMemoryMount[\s\S]*?withStoreLock\(memoryRoot\(\), async \(\) =>[\s\S]*?await refreshMount\(/,
+    'the mount refresh is serialised with every other in-process store writer (anchored on the function: remember() takes the same lock)');
   const toolDeps = readFileSync(new URL('../src/core/ask/tool-deps.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(toolDeps, /memory-store/, 'tool-deps stays store-free');
   const stdio = readFileSync(new URL('../src/core/ask/mcp-stdio.mjs', import.meta.url), 'utf8');

@@ -135,7 +135,6 @@ import { listWorkspacePipelines, readWorkspacePipeline } from '../src/core/artif
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
 import { validateMemoryScope, withStoreLock } from '../src/core/memory-sync.mjs';
-import { askMemoryIndex } from '../src/core/ask/memory-deps.mjs';
 import {
   memoryRoot, GLOBAL_SCOPE, projectScope, scopeKey, isValidMemoryName, MEMORY_NAME_HELP, memoryScopeReport,
   readMemory, writeMemory, removeMemory, listSnapshots, restoreSnapshot,
@@ -4576,13 +4575,10 @@ function askValidateScope(raw) {
   return { ok: true, scope: { pinned: true, [keys[0]]: cv.context[keys[0]] } };
 }
 
-/** The system prompt of ONE Ask turn: the rules, the `## Worca memory` block for the project the
- *  context resolved (B33: no block at all when the store is empty) and the catalog. A store failure
- *  renders no block, never an error. Exported through _testing so the assembly is assertable
- *  without racing a live job. */
-async function askSystemPromptFor(catalog, headerCtx = {}) {
-  const memoryIndex = await askMemoryIndex({ projectKey: headerCtx.project?.key || null, projectName: headerCtx.project?.name || null });
-  return askBuildSystemPrompt(catalog, { memoryIndex });
+/** The system prompt of ONE Ask turn: the rules and the catalog, byte-stable. Memory is mounted,
+ *  not rendered (native-rules revision) — see createAskTurn's memoryProject. */
+async function askSystemPromptFor(catalog) {
+  return askBuildSystemPrompt(catalog);
 }
 
 /** Resolve the VALIDATED client context into the server-side shape
@@ -4767,12 +4763,12 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     job.messageId = asstMsg.id;
 
     // Prompt assembly (§6.5) — the route owns it; the turn only spawns. The header context
-    // resolves the project FIRST so the memory index (§9.2) can cover it.
+    // resolves the project FIRST so the turn can mount its memory (native rules).
     const catalog = await askBuildCatalog();
     const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime, text: files[i].text }));
     const { inline, listed } = askSelectInlineAttachments(withText);
     const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id);
-    const systemPrompt = await askSystemPromptFor(catalog, headerCtx);
+    const systemPrompt = await askSystemPromptFor(catalog);
     const header = askBuildContextHeader(headerCtx);
     const prompt = askBuildTurnPrompt(header, text, inline);
     const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
@@ -4789,6 +4785,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       firstText: text,
       deterministicTitle,
       pinnedScope: askPinnedScope(ctx),             // #397: proposal defaulting + mismatch flag
+      memoryProject: headerCtx.project ? { key: headerCtx.project.key, name: headerCtx.project.name || '' } : null,   // native-rules revision: the turn mounts global + this project through --add-dir
       mock: mockEnabled({}) ? { card: mockAskCard(ctx, text) } : null, // R-F
       attachmentNames,
       deps: {

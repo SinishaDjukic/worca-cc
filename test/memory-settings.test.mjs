@@ -6,8 +6,9 @@ import { join } from 'node:path';
 import {
   memoryCaps, setWorcaRoot, settingsFile,
   DEFAULT_MEMORY_SOFT_BYTES_PER_FILE, DEFAULT_MEMORY_HARD_BYTES_PER_FILE,
-  DEFAULT_MEMORY_MAX_FILES_PER_SCOPE, DEFAULT_MEMORY_INDEX_MAX_BYTES, DEFAULT_MEMORY_HOOK_MAX_CHARS,
+  DEFAULT_MEMORY_MAX_FILES_PER_SCOPE, DEFAULT_MEMORY_HOOK_MAX_CHARS,
   DEFAULT_MEMORY_DEFRAG_WRITES, DEFAULT_MEMORY_DEFRAG_FILES, DEFAULT_MEMORY_DEFRAG_BYTES_PCT,
+  DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES,
 } from '../src/core/settings.mjs';
 
 // settingsFile() resolves under HOME (not WORCA_HOME): sandbox HOME like
@@ -30,14 +31,13 @@ test('memoryCaps: defaults when settings carry no memory block', () => {
     softBytesPerFile: DEFAULT_MEMORY_SOFT_BYTES_PER_FILE,
     hardBytesPerFile: DEFAULT_MEMORY_HARD_BYTES_PER_FILE,
     maxFilesPerScope: DEFAULT_MEMORY_MAX_FILES_PER_SCOPE,
-    indexMaxBytes: DEFAULT_MEMORY_INDEX_MAX_BYTES,
     hookMaxChars: DEFAULT_MEMORY_HOOK_MAX_CHARS,
-    defrag: { writes: DEFAULT_MEMORY_DEFRAG_WRITES, files: DEFAULT_MEMORY_DEFRAG_FILES, bytesPct: DEFAULT_MEMORY_DEFRAG_BYTES_PCT },
+    defrag: { writes: DEFAULT_MEMORY_DEFRAG_WRITES, files: DEFAULT_MEMORY_DEFRAG_FILES, bytesPct: DEFAULT_MEMORY_DEFRAG_BYTES_PCT, alwaysOnBytes: DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES },
   });
   assert.equal(DEFAULT_MEMORY_SOFT_BYTES_PER_FILE, 8192);
   assert.equal(DEFAULT_MEMORY_HARD_BYTES_PER_FILE, 32768);
   assert.equal(DEFAULT_MEMORY_MAX_FILES_PER_SCOPE, 50);
-  assert.equal(DEFAULT_MEMORY_INDEX_MAX_BYTES, 4096);
+  assert.equal(DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES, 16384);
   assert.equal(DEFAULT_MEMORY_HOOK_MAX_CHARS, 160);
   assert.equal(DEFAULT_MEMORY_DEFRAG_WRITES, 10);
   assert.equal(DEFAULT_MEMORY_DEFRAG_FILES, 30);
@@ -47,16 +47,18 @@ test('memoryCaps: defaults when settings carry no memory block', () => {
 test('memoryCaps: settings.memory overrides each key; invalid values fall back WITH a warning', async () => {
   await setWorcaRoot('');                                   // creates settings.json
   const cur = JSON.parse(await readFile(settingsFile(), 'utf8'));
-  await writeFile(settingsFile(), JSON.stringify({ ...cur, memory: { maxBytesPerFile: 1000, softBytesPerFile: 500, maxFilesPerScope: 7, indexMaxBytes: 'big', hookMaxChars: 0 } }, null, 2));
+  await writeFile(settingsFile(), JSON.stringify({ ...cur, memory: { maxBytesPerFile: 1000, softBytesPerFile: 500, maxFilesPerScope: 7, indexMaxBytes: 4096, hookMaxChars: 0, defrag: { alwaysOnBytes: 'lots' } } }, null, 2));
   const warnings = []; const orig = console.warn; console.warn = (...a) => warnings.push(a.join(' '));
   try {
     const caps = memoryCaps();
     assert.equal(caps.hardBytesPerFile, 1000);
     assert.equal(caps.softBytesPerFile, 500);
     assert.equal(caps.maxFilesPerScope, 7);
-    assert.equal(caps.indexMaxBytes, DEFAULT_MEMORY_INDEX_MAX_BYTES, 'a string is not a cap');
+    assert.equal('indexMaxBytes' in caps, false, 'the index cap is gone; a leftover settings key is ignored');
+    assert.ok(!warnings.some((w) => /indexMaxBytes/.test(w)), 'and never warned about');
+    assert.equal(caps.defrag.alwaysOnBytes, DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES, 'a string is not a byte threshold');
+    assert.ok(warnings.some((w) => /memory\.defrag\.alwaysOnBytes/.test(w)), warnings.join('\n'));
     assert.equal(caps.hookMaxChars, DEFAULT_MEMORY_HOOK_MAX_CHARS, '0 is not a cap');
-    assert.ok(warnings.some((w) => /memory\.indexMaxBytes/.test(w)), warnings.join('\n'));
     assert.ok(warnings.some((w) => /memory\.hookMaxChars/.test(w)), warnings.join('\n'));
   } finally { console.warn = orig; }
 });
@@ -68,14 +70,14 @@ test('memoryCaps.defrag: settings.memory.defrag overrides each threshold; bytesP
   const warnings = []; const orig = console.warn; console.warn = (...a) => warnings.push(a.join(' '));
   try {
     const { defrag } = memoryCaps();
-    assert.deepEqual(defrag, { writes: 3, files: 12, bytesPct: DEFAULT_MEMORY_DEFRAG_BYTES_PCT }, '150 % is not a share');
+    assert.deepEqual(defrag, { writes: 3, files: 12, bytesPct: DEFAULT_MEMORY_DEFRAG_BYTES_PCT, alwaysOnBytes: DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES }, '150 % is not a share');
     assert.ok(warnings.some((w) => /memory\.defrag\.bytesPct/.test(w)), warnings.join('\n'));
   } finally { console.warn = orig; }
   await writeFile(settingsFile(), JSON.stringify({ ...cur, memory: { defrag: 'soon', maxFilesPerScope: 9 } }, null, 2));
   const blockWarnings = []; console.warn = (...a) => blockWarnings.push(a.join(' '));
   let caps;
   try { caps = memoryCaps(); } finally { console.warn = orig; }
-  assert.deepEqual(caps.defrag, { writes: DEFAULT_MEMORY_DEFRAG_WRITES, files: DEFAULT_MEMORY_DEFRAG_FILES, bytesPct: DEFAULT_MEMORY_DEFRAG_BYTES_PCT }, 'a non-object defrag block is ignored');
+  assert.deepEqual(caps.defrag, { writes: DEFAULT_MEMORY_DEFRAG_WRITES, files: DEFAULT_MEMORY_DEFRAG_FILES, bytesPct: DEFAULT_MEMORY_DEFRAG_BYTES_PCT, alwaysOnBytes: DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES }, 'a non-object defrag block is ignored');
   assert.equal(caps.maxFilesPerScope, 9, 'the flat keys next to it still read');
   assert.ok(blockWarnings.some((w) => /memory\.defrag\b/.test(w)), blockWarnings.join('\n'));
   assert.equal(blockWarnings.length, 1, 'warned ONCE, not once per threshold key');

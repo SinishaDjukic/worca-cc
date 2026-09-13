@@ -11,7 +11,7 @@ import { confirmDialog } from './helpers/confirm-modal.mjs';
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
-const HEALTH = { files: 1, bytes: 40, oversized: 0, overHard: 0, invalidFrontmatter: 0, indexDropped: 0, writesSinceDefrag: 2, lastWriteAt: '2026-09-09T10:00:00.000Z', lastDefragAt: null, lastDefragRunId: null, level: 'ok', reasons: [] };
+const HEALTH = { files: 1, bytes: 40, oversized: 0, overHard: 0, invalidFrontmatter: 0, alwaysOnBytes: 25, alwaysOnFiles: 1, writesSinceDefrag: 2, lastWriteAt: '2026-09-09T10:00:00.000Z', lastDefragAt: null, lastDefragRunId: null, level: 'ok', reasons: [] };
 const FILE = { name: 'testing', description: 'How the suite runs', paths: ['test/**'], source: 'user', updated: '2026-09-09T10:00:00.000Z', bytes: 40, hasFrontmatter: true };
 const REPORT = { scope: 'global', project: null, files: [FILE], state: {}, health: HEALTH, defragRunId: null };
 const FILE_BODY = { name: 'testing', text: '---\nname: testing\ndescription: How the suite runs\n---\nnpm ci first.\n', meta: FILE, body: 'npm ci first.\n' };

@@ -3,21 +3,16 @@
 // writes under ONE namespaced sub-object, exactly like worktree-deps.mjs / comment-deps.mjs.
 // Deliberately separate from tool-deps.mjs, whose source is pinned read-only. Everything goes
 // through src/core/memory-store.mjs (validation, frontmatter repair, caps, snapshots, counters),
-// so the MCP path and the REST path share one writer. Also the Ask prompt's index renderer.
+// so the MCP path and the REST path share one writer. Also the chat's --add-dir memory mount.
+import { join } from 'node:path';
 import {
-  memoryRoot, GLOBAL_SCOPE, projectScope, listMemory, readMemory, writeMemory, removeMemory,
-  renderMemoryFile, renderMemoryIndex,
+  memoryRoot, listMemory, readMemory, writeMemory, removeMemory, renderMemoryFile, MEMORY_NAME_HELP,
 } from '../memory-store.mjs';
-import { withStoreLock } from '../memory-sync.mjs';
+import { mountDirs, withStoreLock, refreshMount } from '../memory-sync.mjs';
 import { memoryCaps } from '../settings.mjs';
-import { listProjects } from '../projects.mjs';
+import { listProjects, worcaHome } from '../projects.mjs';
+import { PROJECT_KEY_RE } from '../store.mjs';
 import { getThread } from './store.mjs';
-
-/** The Ask intro (B4): Ask has no mount and its Read tool is confined to worktrees, so the block
- *  points at read_memory / remember / forget instead of at paths. Sections are labelled by scope. */
-export const ASK_MEMORY_INDEX_INTRO =
-  'Durable rules and preferences kept across runs and chats. Read one with read_memory({ scope, name }) when its ' +
-  'hook matters to the answer; do not read all of them. Save or change one only through remember / forget (rule 13).';
 
 /** {key, name, path} for a registered project key, or null. */
 async function projectByKey(key) {
@@ -73,16 +68,40 @@ export function defaultMemoryDeps({ threadId }) {
   };
 }
 
-/** The `## Worca memory` block for the Ask system prompt (§9.2): global + the given project. '' on
- *  ANY failure — the prompt is never broken by the store — and '' when every section is empty
- *  (B33: an upgrade with no memory leaves today's prompts byte-identical). Byte-stable until
- *  memory changes. */
-export async function askMemoryIndex({ projectKey = null, projectName = null } = {}) {
-  try {
-    const caps = memoryCaps();
-    const sections = [{ label: 'Global', dir: 'scope "global"', entries: await listMemory(memoryRoot(), GLOBAL_SCOPE) }];
-    if (projectKey) sections.push({ label: `Project ${projectName || projectKey}`, dir: 'scope "project"', entries: await listMemory(memoryRoot(), projectScope(projectKey)) });
-    if (sections.every((s) => !s.entries.length)) return '';
-    return renderMemoryIndex(sections, { maxBytes: caps.indexMaxBytes, hookMaxChars: caps.hookMaxChars, intro: ASK_MEMORY_INDEX_INTRO }).text;
-  } catch { return ''; }
+/** `<home>/ask/memory/<projectKey|global>` — the --add-dir base of one scope set. Never the cwd (one
+ *  Claude Code project slug for every thread) and never under tmp/ (Read-denied there). `global` is a
+ *  safe sentinel: a registry key is `<slug>-<8 hex>` (PROJECT_KEY_RE), so it can never be that word. */
+export function askMemoryMountBase(projectKey) { return join(worcaHome(), 'ask', 'memory', projectKey || 'global'); }
+
+/**
+ * Refresh the chat's rules mount for one scope set (native-rules revision, D16): global + the
+ * given project, written under `<base>/.claude/rules/worca/{global,project}/` — the layout the
+ * CLI loads through `--add-dir <base>` + CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 (probes J/J2).
+ * The writing is memory-sync's refreshMount (NON-destructive: files written atomically by name,
+ * stale ones unlinked, dirs never removed — a turn already spawning on the same mount must not
+ * read an empty dir; a file that cannot be written keeps its previous copy and is reported).
+ * Serialised under the store lock so it never interleaves with an in-process sync or remember
+ * (the MCP child writes from another process; whole-file atomic writes make that harmless).
+ * `async` on purpose: the projectKey guard REJECTS rather than throwing at the call site.
+ * @returns {Promise<string|null>} the base to pass as --add-dir, or null when the scope set holds
+ *   no file (B33: nothing to load ⇒ the spawn stays byte-identical); the mount is emptied then.
+ */
+export async function refreshAskMemoryMount({ projectKey = null, projectName = null } = {}) {
+  // A path segment: refuse anything but a registry-shaped key before a single mkdir (defence in
+  // depth — today's only caller passes a resolved key; the shape store.mjs#projectKey produces and
+  // the server's memory routes test). The rejection lands in the turn's catch.
+  if (projectKey != null && !PROJECT_KEY_RE.test(projectKey)) throw new Error(`refreshAskMemoryMount: invalid projectKey ${JSON.stringify(projectKey)}`);
+  const base = askMemoryMountBase(projectKey);
+  const dirs = mountDirs({ members: projectKey ? [{ projectKey, projectName }] : [], isWorkspace: false });
+  return withStoreLock(memoryRoot(), async () => {
+    // Two different failures reach ONE callback: a junk name / unreadable file in the STORE (the
+    // listing, `listMemoryDir` → ENAME) and a mount target that could not be written (the rename).
+    // Only the second has a "previous copy"; reporting a store name that way would promise a copy
+    // that never existed and name a path the user cannot fix by retrying.
+    const onError = (p, err) => console.warn(err?.code === 'ENAME'
+      ? `[worca-ask] memory: ignoring ${JSON.stringify(p)} — ${MEMORY_NAME_HELP}`
+      : `[worca-ask] memory mount: ${p} could not be refreshed (${err?.message || err}); the previous copy (if any) is served this turn`);
+    const { files } = await refreshMount({ root: memoryRoot(), mount: join(base, '.claude', 'rules', 'worca'), dirs, onError });
+    return files ? base : null;
+  });
 }

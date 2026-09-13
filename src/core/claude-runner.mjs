@@ -346,7 +346,8 @@ export function mockEnabled(opts) {
  * @param {number} [o.maxTurns]             --max-turns <n> (positive safe integer; else omitted)
  * @param {number|null} [o.maxBudgetUsd]    --max-budget-usd <n> (finite > 0; null/else omitted)
  * @param {string} [o.appendSubagentSystemPrompt] --append-subagent-system-prompt <text> (Task children only)
- *   All eight are Ask Worca sandbox options (ask-worca-design.md §6.3) and default-off.
+ * @param {string[]} [o.addDirs]            --add-dir <dir> per entry (Ask Worca's memory mount; the CLI loads <dir>/.claude/rules only with CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 in the env — memory-deps.mjs / spawn.mjs set it)
+ *   All nine are Ask Worca sandbox options (ask-worca-design.md §6.3) and default-off.
  * @param {number} [o.argvInlineLimit]     override ARGV_INLINE_LIMIT (GH #380; tests force the staged path)
  * @returns {Promise<{text:string, exitCode:number}>}
  */
@@ -384,6 +385,7 @@ export async function runClaude(o = {}) {
     maxTurns,
     maxBudgetUsd,
     appendSubagentSystemPrompt,
+    addDirs,
     argvInlineLimit,
     bin = DEFAULT_BIN,
   } = o;
@@ -428,6 +430,7 @@ export async function runClaude(o = {}) {
     maxTurns,
     maxBudgetUsd,
     appendSubagentSystemPrompt,
+    addDirs,
     argvInlineLimit,
   });
 }
@@ -450,8 +453,9 @@ export async function runClaude(o = {}) {
  *                        (docs/run-root-verification.md, branch (a); argv-attested
  *                        transcript phase0/out/v1a-rerun.jsonl, with a no-grant
  *                        negative control proving the grant is load-bearing).
- *  `--add-dir` is deliberately absent: it needs an env override to carry memory at
- *  all (E2) and no shipped feature uses it (§5.3 / §8.18). */
+ *  `--add-dir` carries Ask Worca's memory mount ONLY (`addDirs`): it needs the
+ *  CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 env override to load memory at all
+ *  (E2, re-probed 2026-09-13 on 2.1.270), and no pipeline path passes it (§5.3 / §8.18 unchanged). */
 export function buildClaudeArgs({
   prompt, systemPrompt, permissionMode, model, effort, allowedTools, resumeSessionId,
   mcpConfigPath, mcpServerGrants, permissionRules,
@@ -459,7 +463,7 @@ export function buildClaudeArgs({
   // way in because the legacy body below already owns a local `tools` (the
   // --allowedTools union).
   tools: builtinTools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
-  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard,
+  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard, addDirs,
 }, delivery = {}) {
   // delivery (GH #380, set only by planClaudeInvocation's staged branch):
   //   promptViaStdin   -> bare `-p`; the prompt is written to the child's stdin
@@ -520,6 +524,9 @@ export function buildClaudeArgs({
   if (typeof appendSubagentSystemPrompt === 'string' && appendSubagentSystemPrompt) {
     args.push('--append-subagent-system-prompt', appendSubagentSystemPrompt);
   }
+  // Native-rules revision (2026-09-13): Ask Worca's memory mount. LAST, so every earlier argv
+  // stays a prefix; absent / [] / non-strings ⇒ nothing (the `names` filter above).
+  for (const d of names(addDirs)) args.push('--add-dir', d);
   return args;
 }
 
@@ -572,7 +579,7 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
   return { ...plan, dir };
 }
 
-function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, argvInlineLimit }) {
+function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, argvInlineLimit }) {
   return new Promise((resolveP, rejectP) => {
     // Per-model routing env (design §4.4), prepared BEFORE argv: reserved keys
     // are re-dropped here defensively — the write path already rejects them, so
@@ -651,7 +658,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         permissionMode, model: wireModel, effort, allowedTools, resumeSessionId,
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
-        maxTurns, maxBudgetUsd, appendSubagentSystemPrompt,
+        maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs,
       }, { bin: resolved.bin, limit });
     } catch (err) {
       rejectP(new Error(`Failed to stage the claude prompt files: ${err.message}`));
@@ -1370,10 +1377,10 @@ async function mockGenericProducer(m, onEvent) {
 }
 
 /** The scope dirs the `## Worca memory` block of a system prompt names (memory-store.mjs
- *  renderIndexOnce: `<label> — <abs dir>:` lines under the heading; the block is contiguous,
+ *  renderMemoryBlock: `<label> — <abs dir>:` lines under the heading; the block is contiguous,
  *  so the first blank line ends it). The mock defragmenter finds its mount exactly the way the
  *  real agent is told to — from its system prompt — so no MOCK marker is needed. Exported for
- *  the parity test against a real renderMemoryIndex output. Both captures are greedy: a project
+ *  the parity test against a real renderMemoryBlock output. Both captures are greedy: a project
  *  LABEL may itself contain ` — ` (the renderer's separator is the last one on the line), and a
  *  Windows dir carries a drive colon while the line still ends with `:`. */
 export function memoryDirsFromPrompt(systemPrompt) {

@@ -486,14 +486,14 @@ test('17 runAgentExecution spawns through runOpts, returns the same prompt it bu
   assert.match(r.sessionId, /^mock-session-/, 'the session id comes from the session event, not the resolved value');
 });
 
-test('17b runAgentExecution: ctx.memoryIndex is part of the system prompt it spawns with', async () => {
-  const INDEX = '## Worca memory\nintro\nGlobal — /m/global:\n- (nothing yet)\n';
-  const r = await runAgentExecution(ctx8({ memoryIndex: INDEX }));
-  assert.ok(r.systemPrompt.includes(INDEX.trim()), 'the block is in the spawned system prompt');
+test('17b runAgentExecution: ctx.memoryBlock is part of the system prompt it spawns with', async () => {
+  const BLOCK = '## Worca memory\nintro\nGlobal — /m/global:\n';
+  const r = await runAgentExecution(ctx8({ memoryBlock: BLOCK }));
+  assert.ok(r.systemPrompt.includes(BLOCK.trim()), 'the block is in the spawned system prompt');
   assert.ok(r.systemPrompt.indexOf('TOOLS') < r.systemPrompt.indexOf('## Worca memory'));
   assert.ok(r.systemPrompt.indexOf('## Worca memory') < r.systemPrompt.indexOf('You are custom.'));
   const plain = await runAgentExecution(ctx8());
-  assert.ok(!plain.systemPrompt.includes('## Worca memory'), 'no index ⇒ no block');
+  assert.ok(!plain.systemPrompt.includes('## Worca memory'), 'no block ⇒ nothing');
 });
 
 test('17c toolsForMeta: code ⇒ implementer tools, memory ⇒ no Bash and no Skill, else the read-write set', () => {

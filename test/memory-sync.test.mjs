@@ -1,14 +1,14 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mountDirs, mountMemory, baselineKey, validateMemoryScope, MEMORY_SCOPES } from '../src/core/memory-sync.mjs';
 import { MEMORY_DEFRAG_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
 import { writeMemory, GLOBAL_SCOPE, projectScope, hashText, listMemoryDir } from '../src/core/memory-store.mjs';
 
-const CAPS = { softBytesPerFile: 8192, hardBytesPerFile: 32768, maxFilesPerScope: 50, indexMaxBytes: 4096, hookMaxChars: 160 };
+const CAPS = { softBytesPerFile: 8192, hardBytesPerFile: 32768, maxFilesPerScope: 50, hookMaxChars: 160 };
 const NOW = '2026-09-09T10:00:00.000Z';
 const dirs = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
@@ -350,4 +350,120 @@ test('a file rejected, then accepted after a store edit, still warns that the ru
   assert.deepEqual(s2.modified, [{ scope: 'global', name: 'a' }]);
   assert.ok(warnings.some((w) => /global\/a\.md changed in the store since this run mounted it — the run's version wins/.test(w)), warnings.join('\n'));
   assert.match((await readMemory(root, GLOBAL_SCOPE, 'a')).body, /trimmed by the run/);
+});
+
+import { spawnSync } from 'node:child_process';
+import { readdir } from 'node:fs/promises';
+import { MEMORY_RULES_REL, memoryMountPath, MEMORY_INJECTED_ENTRY, refreshMount } from '../src/core/memory-sync.mjs';
+
+test('the mount lives at <cwd>/.claude/rules/worca — a namespaced, git-excludable subtree; the record never rescues', () => {
+  assert.equal(MEMORY_RULES_REL, '.claude/rules/worca', 'forward slashes: this is also the git pathspec');
+  assert.equal(memoryMountPath('/w'), join('/w', '.claude', 'rules', 'worca'));
+  assert.deepEqual(MEMORY_INJECTED_ENTRY, { path: '.claude/rules/worca', kind: 'memory', source: null });
+  assert.ok(Object.isFrozen(MEMORY_INJECTED_ENTRY));
+});
+
+test('mountMemory at <wt>/.claude/rules/worca: a remount clears only the worca subtree, the gitIgnore sentinel hides the mount from git, and a sync over the fresh mount reports nothing', async () => {
+  const root = await tmp('worca-mem-root-');
+  const wt = await tmp('worca-mem-wt-');
+  spawnSync('git', ['-C', wt, 'init', '-q', '-b', 'main']);
+  await writeFile(join(wt, 'README.md'), 'repo\n');
+  spawnSync('git', ['-C', wt, 'add', '-A']);
+  spawnSync('git', ['-C', wt, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init']);
+  await writeMemory(root, GLOBAL_SCOPE, 'testing', 'T', { source: 'user', now: NOW, caps: CAPS });
+  await mkdir(join(wt, '.claude', 'rules'), { recursive: true });
+  await writeFile(join(wt, '.claude', 'rules', 'own.md'), 'the project\'s committed rule\n');
+  const mount = memoryMountPath(wt);
+  const d = mountDirs({ members: [MEMBERS[0]], isWorkspace: false });
+  await mountMemory({ root, mount, dirs: d, gitIgnore: true });
+  await writeFile(join(mount, 'project', 'stale.md'), 'x');
+  const m2 = await mountMemory({ root, mount, dirs: d, gitIgnore: true });
+  assert.equal(m2.files, 1);
+  assert.equal(existsSync(join(mount, 'project', 'stale.md')), false);
+  assert.equal(await readFile(join(wt, '.claude', 'rules', 'own.md'), 'utf8'), 'the project\'s committed rule\n', 'the sibling is untouched');
+  assert.equal(await readFile(join(mount, 'global', 'testing.md'), 'utf8'), await readFile(join(root, 'global', 'testing.md'), 'utf8'), 'byte-identical copy (no path rewrite)');
+  // The sentinel: an agent's own `git add -A`, a staging hook and the reviewer's `git status`
+  // all skip the mount. `.claude/rules/own.md` is the project's own untracked file, so stage it
+  // away first — what must be empty is everything UNDER the mount.
+  assert.equal(await readFile(join(mount, '.gitignore'), 'utf8'), '*\n');
+  spawnSync('git', ['-C', wt, 'add', join('.claude', 'rules', 'own.md')]);
+  spawnSync('git', ['-C', wt, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'own rule']);
+  const porcelain = spawnSync('git', ['-C', wt, 'status', '--porcelain']).stdout.toString();
+  assert.equal(porcelain, '', `the mount is invisible to git: ${JSON.stringify(porcelain)}`);
+  assert.equal(spawnSync('git', ['-C', wt, 'add', '-A']).status, 0);
+  assert.equal(spawnSync('git', ['-C', wt, 'diff', '--cached', '--name-only']).stdout.toString(), '', 'git add -A stages nothing from the mount');
+  // The sentinel is not a memory file: listMemoryDir lists *.md only, so a sync over the fresh
+  // mount reports no change and never a rejection.
+  const warns = [];
+  const r = await syncBack({ root, mount, dirs: d, baseline: m2.baseline, source: 'run:p1', now: NOW, caps: CAPS, onWarn: (w) => warns.push(w) });
+  assert.deepEqual({ added: r.added, modified: r.modified, deleted: r.deleted, rejected: r.rejected }, { added: [], modified: [], deleted: [], rejected: [] });
+  assert.deepEqual(warns, []);
+});
+
+test('refreshMount: the non-destructive twin — files written by name, stale ones unlinked, dirs / foreign files / in-flight temps kept', async () => {
+  const root = await tmp('worca-mem-root-');
+  const mount = join(await tmp(), '.claude', 'rules', 'worca');
+  await writeMemory(root, GLOBAL_SCOPE, 'testing', 'T', { source: 'user', now: NOW, caps: CAPS });
+  const d = mountDirs({ members: [], isWorkspace: false });
+  assert.deepEqual(await refreshMount({ root, mount, dirs: d }), { files: 1, failed: [] });
+  assert.equal(await readFile(join(mount, 'global', 'testing.md'), 'utf8'), await readFile(join(root, 'global', 'testing.md'), 'utf8'));
+  await writeFile(join(mount, 'global', 'stale.md'), 'x');
+  await writeFile(join(mount, 'sentinel.txt'), 'a foreign file outside the scope dirs');
+  await writeFile(join(mount, 'global', 'other.md.tmp-1-2'), 'another writer in flight');
+  assert.deepEqual(await refreshMount({ root, mount, dirs: d }), { files: 1, failed: [] });
+  assert.equal(existsSync(join(mount, 'global', 'stale.md')), false, 'stale file unlinked');
+  assert.equal(existsSync(join(mount, 'sentinel.txt')), true, 'never an rm of the mount');
+  assert.equal(existsSync(join(mount, 'global', 'other.md.tmp-1-2')), true, 'an in-flight temp is not ours');
+  assert.equal(existsSync(join(mount, '.gitignore')), false, 'the Ask mount is not in a checkout — no sentinel');
+  // A store entry that vanishes BETWEEN the listing and the read is NOT kept: its stale mount copy
+  // is swept on THIS call. (`d.scope` is read once by the listing and once per entry read, so
+  // deleting the store file as the first entry is read reproduces that race deterministically.)
+  await writeMemory(root, GLOBAL_SCOPE, 'gone', 'G', { source: 'user', now: NOW, caps: CAPS });
+  await writeFile(join(mount, 'global', 'gone.md'), 'the stale mount copy of a file that vanishes');
+  let hits = 0;
+  const racing = [{ rel: 'global', label: 'Global', get scope() {
+    if (hits++ === 1) rmSync(join(root, 'global', 'gone.md'));
+    return GLOBAL_SCOPE;
+  } }];
+  assert.deepEqual(await refreshMount({ root, mount, dirs: racing }), { files: 1, failed: [] });
+  assert.equal(existsSync(join(mount, 'global', 'gone.md')), false, 'the vanished entry is swept, never kept');
+  await rm(join(root, 'global'), { recursive: true, force: true });
+  assert.deepEqual(await refreshMount({ root, mount, dirs: d }), { files: 0, failed: [] });
+  assert.equal(existsSync(join(mount, 'global', 'testing.md')), false, 'an emptied store empties the mount');
+  assert.equal(existsSync(join(mount, 'global')), true, 'the dir stays');
+});
+
+test('refreshMount: one unwritable target fails alone — the previous copy is kept, the rest is refreshed, no temp left behind', async () => {
+  const root = await tmp('worca-mem-root-');
+  const mount = join(await tmp(), '.claude', 'rules', 'worca');
+  await writeMemory(root, GLOBAL_SCOPE, 'a', 'A', { source: 'user', now: NOW, caps: CAPS });
+  await writeMemory(root, GLOBAL_SCOPE, 'b', 'B', { source: 'user', now: NOW, caps: CAPS });
+  const d = mountDirs({ members: [], isWorkspace: false });
+  assert.deepEqual(await refreshMount({ root, mount, dirs: d }), { files: 2, failed: [] });
+  // b.md becomes a DIRECTORY: the rename onto it fails (EISDIR/ENOTDIR on POSIX, EPERM on Windows).
+  await rm(join(mount, 'global', 'b.md'));
+  await mkdir(join(mount, 'global', 'b.md'));
+  await writeMemory(root, GLOBAL_SCOPE, 'a', 'A refreshed', { source: 'user', now: NOW, caps: CAPS });
+  const seen = [];
+  assert.deepEqual(await refreshMount({ root, mount, dirs: d, onError: (p, err) => seen.push([p, !!err]) }), { files: 2, failed: ['b'] });
+  assert.match(await readFile(join(mount, 'global', 'a.md'), 'utf8'), /A refreshed/, 'the healthy file was refreshed');
+  assert.equal(seen.length, 1, 'onError fired once, for the failing target');
+  assert.equal(seen[0][0], join(mount, 'global', 'b.md'));
+  assert.ok(!(await readdir(join(mount, 'global'))).some((f) => f.includes('.tmp-')), 'the temp was unlinked');
+});
+
+test('mountMemory writes the .gitignore sentinel FIRST: a mount that dies half way leaves the ignore, never bare files', async () => {
+  const root = await tmp('worca-mem-root-');
+  const wt = await tmp('worca-mem-wt-');
+  await writeMemory(root, GLOBAL_SCOPE, 'testing', 'T', { source: 'user', now: NOW, caps: CAPS });
+  const mount = memoryMountPath(wt);
+  // The second dir's mkdir lands UNDER the file the first dir just copied (ENOTDIR on POSIX,
+  // EEXIST/ENOTDIR on Windows): a mount that fails after some files were already written.
+  const d = [
+    { scope: GLOBAL_SCOPE, rel: 'global', label: 'Global' },
+    { scope: GLOBAL_SCOPE, rel: join('global', 'testing.md', 'nested'), label: 'Broken' },
+  ];
+  await assert.rejects(mountMemory({ root, mount, dirs: d, gitIgnore: true }));
+  assert.equal(existsSync(join(mount, 'global', 'testing.md')), true, 'files landed before the failure');
+  assert.equal(await readFile(join(mount, '.gitignore'), 'utf8'), '*\n', 'the sentinel is already there: git never sees a half mount');
 });
