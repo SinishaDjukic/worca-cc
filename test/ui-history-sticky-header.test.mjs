@@ -38,7 +38,10 @@ test('the per-project header sticks just below the pinned toolbar, not behind it
 });
 
 test('the History scroll area drops its top padding so sticky elements pin flush (kills the peek-through band)', () => {
-  const body = ruleBody('body.view-history .main');
+  // The Projects two-screen track shares this rule (project-detail spec D2), so match the joined head.
+  const head = 'body.view-history .main,body.view-projects .main{';
+  const at = css.indexOf(head);
+  const body = at === -1 ? null : css.slice(at + head.length, css.indexOf('}', at));
   assert.ok(body, 'body.view-history .main rule must exist');
   assert.match(body, /padding(-top)?:\s*0/, 'no top padding for sticky to fight while History is active');
   assert.match(body, /display:\s*flex/, '.main is the bounded column that gives the two-screen track its height');

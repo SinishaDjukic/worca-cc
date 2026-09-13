@@ -21,7 +21,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
  *  check is instant feedback, not a complete gate (it knows nothing about Win32 reserved stems). */
 export const MEMORY_NAME_HELP = 'letters, digits, ".", "_" and "-" only, no extension, no leading or trailing dot';
 
-/** The hash for a scope (and optionally one file): global lives under Settings, a project under its Projects row. */
+/** The hash for a scope (and optionally one file): global lives under Settings, a project under its project page's Memory tab. */
 export function memoryRoute(scopeKey, name = '') {
   const base = scopeKey === 'global' ? 'settings/memory' : `${scopeKey}/memory`;
   return name ? `${base}/${encodeURIComponent(name)}` : base;

@@ -864,18 +864,64 @@
 
         <!-- ===== VIEW: PROJECTS ===== -->
         <section class="view hidden" data-view="projects">
-          <div class="topbar">
-            <div>
-              <h1>Projects</h1>
-              <div class="sub">Registered projects. Add a folder or remove one from the list — files on disk and run history are never touched.</div>
+          <!-- Two-screen slide track, twin of History's #hist-shell: the list and the project
+               page (#projects/<key>[/memory[/<name>]]) are sibling screens; .detail-open slides. -->
+          <div class="proj-shell" id="proj-shell">
+            <div class="proj-screen proj-screen-list">
+              <div class="topbar">
+                <div>
+                  <h1>Projects</h1>
+                  <div class="sub">Registered projects. Open one for its details and memory; add a folder or remove one from the list — files on disk and run history are never touched.</div>
+                </div>
+                <button type="button" id="project-add-btn" class="btn btn-primary btn-mini">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                  Add project
+                </button>
+              </div>
+              <p id="projects-msg" class="form-msg" aria-live="polite"></p>
+              <div class="run-list" id="projects-list"></div>
             </div>
-            <button type="button" id="project-add-btn" class="btn btn-primary btn-mini">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-              Add project
-            </button>
+            <div class="proj-screen proj-screen-detail" id="proj-detail" aria-hidden="true"></div>
           </div>
-          <p id="projects-msg" class="form-msg" aria-live="polite"></p>
-          <div class="run-list" id="projects-list"></div>
+
+          <!-- clone target for the project page (#projects/<key>). It is a SCREEN inside this
+               section, never a routed view of its own: the page's view count is pinned. -->
+          <template id="proj-detail-tpl">
+            <div class="pd">
+              <header class="pd-header">
+                <div class="pd-row1">
+                  <button type="button" class="pd-back btn-ghost" aria-label="Back to projects">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    Back
+                  </button>
+                  <h1 class="pd-title"></h1>
+                </div>
+                <div class="pd-meta mono"><span class="pd-path"></span></div>
+                <div class="pd-actions">
+                  <button type="button" class="pd-new btn-ghost">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                    New pipeline
+                  </button>
+                  <button type="button" class="pd-history btn-ghost">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    Open in History
+                  </button>
+                  <span class="pd-spacer"></span>
+                  <!-- The label lives in its own span so a busy state can swap the word and keep the icon. -->
+                  <button type="button" class="pd-remove">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"></path></svg>
+                    <span class="pd-btn-label">Remove</span>
+                  </button>
+                </div>
+                <!-- On the HEADER (like .hd-error): a remove failure must not sit below a long Memory tab. -->
+                <div class="pd-error" hidden></div>
+              </header>
+              <div class="pd-body">
+                <div class="pd-tabs" role="tablist"></div>
+                <div class="pd-sections"></div>
+              </div>
+            </div>
+          </template>
         </section>
         <!-- /view projects -->
 
@@ -1404,7 +1450,7 @@
             <div class="topbar">
               <div>
                 <h1>Memory</h1>
-                <div class="sub">What worca remembers across runs and chats — the global rules and preferences every agent sees. A project's own memory lives on the Projects page.</div>
+                <div class="sub">What worca remembers across runs and chats — the global rules and preferences every agent sees. A project's own memory lives on its project page (Projects → open a project → Memory).</div>
               </div>
             </div>
             <p id="memory-msg" class="form-msg" aria-live="polite"></p>

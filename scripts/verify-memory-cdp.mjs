@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // scripts/verify-memory-cdp.mjs — headless-Chrome proof of the Settings → Memory tab and the
-// project Memory expander (agent-memory-design.md §10, §15): the health badge + the host hint, the
+// project page's Memory tab (agent-memory-design.md §10, §15): the health badge + the host hint, the
 // file list, the deep link, edit + Save (a real PUT into a real store), Delete through the app's own
 // confirm modal, the History panel + Restore, a REAL defragment run through the wrapper (the stamp,
 // the live control, the History memory chips) and the picker's Memory scope row. NOT part of
@@ -291,16 +291,29 @@ try {
     after6.disabled === false && after6.runId === null && after6.text === 'Defragment' && after6.run === false
     && after6.rows.join(',') === 'style,traps', after6);
 
-  // ---- (7) the project expander on the Projects page + its deep link --------
+  // ---- (7) the project page's Memory tab + its deep link -------------------
   await go(`projects/${project.key}/memory/conventions`);
-  await until(`document.querySelector('#projects-list .pl-item[data-key="${project.key}"] .mem-editor')`, 'project expander open on the file');
-  const pr = await ev(`(()=>{const it=document.querySelector('#projects-list .pl-item[data-key="${project.key}"]');return {
-    expanded:it.querySelector('.proj-mem-head').getAttribute('aria-expanded'),hidden:it.querySelector('.proj-mem-detail').hidden,
-    name:it.querySelector('.mem-name').value,rows:[...it.querySelectorAll('.mem-row')].map(r=>r.dataset.name),
-    hint:!!it.querySelector('.mem-host-hint'),defragDisabled:it.querySelector('.mem-defrag').disabled};})()`);
-  check('7', 'the project row is expanded on conventions.md, lists only that scope, and its Defragment needs no host project',
-    pr.expanded === 'true' && pr.hidden === false && pr.name === 'conventions' && pr.rows.join(',') === 'conventions'
-    && pr.defragDisabled === false && pr.hint === false, pr);
+  await until(`document.querySelector('#proj-detail .pd-sec-memory .mem-editor')`, 'project page open on the file');
+  const pr = await ev(`(()=>{const d=document.querySelector('#proj-detail');return {
+    open:document.getElementById('proj-shell').classList.contains('detail-open'),
+    title:d.querySelector('.pd-title').textContent.trim(),
+    tab:d.querySelector('.pd-tab.active').dataset.sec,
+    name:d.querySelector('.mem-name').value,rows:[...d.querySelectorAll('.mem-row')].map(r=>r.dataset.name),
+    hint:!!d.querySelector('.mem-host-hint'),defragDisabled:d.querySelector('.mem-defrag').disabled,
+    expander:!!document.querySelector('#projects-list .proj-mem-head')};})()`);
+  check('7', 'the project page is open on its Memory tab with conventions.md in the editor, lists only that scope, its Defragment needs no host project, and the list has no expander',
+    pr.open === true && pr.title === 'memproof' && pr.tab === 'memory' && pr.name === 'conventions' && pr.rows.join(',') === 'conventions'
+    && pr.defragDisabled === false && pr.hint === false && pr.expander === false, pr);
+
+  // ---- (7b) the pills are hash-first ------------------------------------------
+  await ev(`document.getElementById('pd-tab-overview').click();0`);
+  await until(`location.hash === '#projects/${project.key}'`, 'the Overview route');
+  const ov = await ev(`(()=>{const d=document.querySelector('#proj-detail');return {
+    tab:d.querySelector('.pd-tab.active').dataset.sec,
+    path:d.querySelector('.pd-ov-card-path .pd-ov-value').textContent,
+    memoryHidden:d.querySelector('.pd-sec[data-sec="memory"]').hidden};})()`);
+  check('7b', 'clicking Overview routes to #projects/<key>, lights its pill, hides the Memory section and shows the project path',
+    ov.tab === 'overview' && ov.path === project.path && ov.memoryHidden === true, ov);
 
   // ---- (8) the picker's Memory scope row ------------------------------------
   await go('new');

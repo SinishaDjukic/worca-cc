@@ -268,6 +268,8 @@ const el = {
   projectsMsg: $('#projects-msg'),
   projectAddBtn: $('#project-add-btn'),
   navProjectsCount: $('#nav-projects-count'),
+  projShell: $('#proj-shell'),
+  projDetail: $('#proj-detail'),
 
   // Reusable confirm modal
   confirmModal: $('#confirm-modal'),
@@ -676,7 +678,7 @@ function handleServerMessage(msg) {
   }
   if (msg.type === 'projects-changed') {
     refreshAllCounts();
-    if (currentView() === 'projects') loadProjectsView();
+    if (currentView() === 'projects') void refreshProjectsPage();
     return;
   }
   if (msg.type === 'workspaces-changed') {
@@ -693,7 +695,7 @@ function handleServerMessage(msg) {
   if (msg.type === 'memory-changed') {
     const scope = String(msg.scope || '');
     if (scope === 'global' && currentView() === 'settings' && currentSettingsTab === 'memory' && memoryTabCtl) pokeGlobalMemory();
-    else if (scope && currentView() === 'projects' && projectMemoryControllers.has(scope)) pokeProjectMemory(scope);
+    else if (scope && currentView() === 'projects' && projDetail && projDetail.memCtl && projDetail.memCtl.scopeKey === scope) pokeProjectMemory();
     return;
   }
 
@@ -7250,28 +7252,45 @@ async function pickFolder(purpose = 'project') {
   }
 }
 
+// #projects entry: refetch the registry, paint the list, then route the detail half of the
+// hash (#projects/<key>[/memory[/<name>]]). In-view hops (list <-> page, tab <-> tab, the
+// hashchange echo of a route the page itself wrote) skip the fetch — showView calls
+// routeProjectDetail directly for those.
 async function loadProjectsView(param = '') {
   await loadProjects();      // refresh shared state.projects from /api/projects
   renderProjectsList();
-  // #projects/<key>/memory[/<name>] (agent memory §10, B6): open that row's expander on the file.
-  const m = /^([a-z0-9][a-z0-9-]*-[0-9a-f]{8})\/memory(?:\/(.+))?$/.exec(String(param || ''));
-  if (!m || !el.projectsList) return;
-  const item = el.projectsList.querySelector(`.pl-item[data-key="${m[1]}"]`);
-  if (item) { toggleProjectMemory(item, { open: true, name: m[2] ? safeDecode(m[2]) : '' }); item.scrollIntoView?.({ block: 'nearest' }); }
-  else setProjectsMsg(`project "${m[1]}" is not registered here`, 'err');
+  routeProjectDetail(param, { instant: true });
 }
+
+// A projects-changed frame while the page is open: rebuild the list under the user and keep
+// the open page — unless its project left the registry, which closes it with a note. The
+// header repaints from the NEW row (`exists` can flip). showView('projects', '') is called
+// directly (not via the hash) so its own setProjectsMsg('') runs BEFORE the note is set.
+async function refreshProjectsPage() {
+  await loadProjects();
+  renderProjectsList();
+  if (!projDetail) return;
+  const p = projectByKey(projDetail.key);
+  if (p) { paintProjHeader(projDetail.screen, p); refreshProjOverview(); return; }
+  const name = projDetail.name;
+  showView('projects', '');
+  setProjectsMsg(`project "${name}" was removed`, 'err');
+}
+
+const CHEVRON_RIGHT_SVG =
+  '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
 
 function buildProjectRow(p) {
   const item = document.createElement('div');
   item.className = 'pl-item';
   item.dataset.name = p.name;
+  if (p.key) item.dataset.key = p.key;
 
   const row = document.createElement('div');
   row.className = 'pl-row';
 
   const main = document.createElement('div');
   main.className = 'pl-main';
-
   const name = document.createElement('div');
   name.className = 'pl-name';
   name.textContent = p.name;
@@ -7281,52 +7300,34 @@ function buildProjectRow(p) {
     miss.textContent = 'missing';
     name.append(' ', miss);
   }
-
   const path = document.createElement('div');
   path.className = 'proj-path';
   path.textContent = p.path;
   path.title = p.path;
-
   main.append(name, path);
+  row.appendChild(main);
 
-  const del = document.createElement('button');
-  del.type = 'button';
-  del.className = 'proj-del';
-  del.title = `Delete ${p.name}`;
-  del.setAttribute('aria-label', `Delete ${p.name}`);
-  del.innerHTML = TRASH_SVG;
-
-  if (p.key) item.dataset.key = p.key;
-  row.append(main, del);
-  item.append(row);
-  // Agent memory (§10): a per-project Memory expander — the Workspaces .ws-head/.ws-detail idiom.
-  // A row with no store key has no scope to mount (a project registered outside worca's store).
+  // A keyed row IS the control (click / Enter / Space open the project page — the History
+  // card's .hist-head idiom) and carries the chevron. A keyless row (a project registered
+  // outside worca's store) has no page: no role, no chevron, default cursor.
   if (p.key) {
-    const head = document.createElement('div');
-    head.className = 'proj-mem-head';
-    head.setAttribute('role', 'button'); head.tabIndex = 0; head.setAttribute('aria-expanded', 'false');
-    const label = document.createElement('span'); label.className = 'proj-mem-label'; label.textContent = 'Memory';
-    head.appendChild(label);
-    head.insertAdjacentHTML('beforeend', '<svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>');
-    const detail = document.createElement('div');
-    detail.className = 'proj-mem-detail';
-    detail.hidden = true;
-    const msg = document.createElement('p'); msg.className = 'form-msg'; msg.setAttribute('aria-live', 'polite');
-    const host = document.createElement('div'); host.className = 'mem-host';
-    detail.append(msg, host);
-    item.append(head, detail);
+    row.setAttribute('role', 'button');
+    row.tabIndex = 0;
+    row.setAttribute('aria-label', `Open ${p.name}`);
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'proj-open';
+    open.setAttribute('aria-label', 'Open project details');
+    open.innerHTML = CHEVRON_RIGHT_SVG;   // static markup
+    row.appendChild(open);
   }
+  item.appendChild(row);
   return item;
 }
 
 function renderProjectsList() {
   const host = el.projectsList;
   if (!host) return;
-  // Every row is rebuilt from scratch (a projects-changed frame does this under the user), so the
-  // mounted Memory controllers die with their hosts — snapshot what was open and re-open it after.
-  const reopen = [...projectMemoryControllers.values()].map((c) => ({ key: c.scopeKey.slice('projects/'.length), name: c.selectedName() }));
-  for (const ctl of projectMemoryControllers.values()) ctl.destroy();
-  projectMemoryControllers.clear();
   host.innerHTML = '';
   updateProjectsCount();
   if (!state.projects.length) {
@@ -7351,10 +7352,317 @@ function renderProjectsList() {
 
   card.append(head, list);
   host.appendChild(card);
-  for (const o of reopen) {
-    const item = host.querySelector(`.pl-item[data-key="${o.key}"]`);
-    if (item) toggleProjectMemory(item, { open: true, name: o.name });
+}
+
+// ---------------------------------------------------------------------------
+// Project page (#projects/<key>[/memory[/<name>]]) — spec 2026-09-13-project-detail-design.md
+// ---------------------------------------------------------------------------
+// The param after "projects/" is "<key>" (Overview), "<key>/memory" (Memory tab) or
+// "<key>/memory/<enc name>" (that file open). Keys are `<slug>-<8hex>` (store.mjs#projectKey)
+// and never contain "/", so the first slash splits key from tab. An unknown tab word reads as
+// Overview (the hash is left alone, as History leaves an odd param alone).
+const PROJ_TABS = ['overview', 'memory'];
+function parseProjParam(param = '') {
+  const s = String(param || '');
+  if (!s) return null;
+  const i = s.indexOf('/');
+  const key = i === -1 ? s : s.slice(0, i);
+  const rest = i === -1 ? '' : s.slice(i + 1);
+  const j = rest.indexOf('/');
+  const tab = j === -1 ? rest : rest.slice(0, j);
+  const sub = j === -1 ? '' : rest.slice(j + 1);
+  return PROJ_TABS.includes(tab) && tab === 'memory' ? { key, tab, sub } : { key, tab: 'overview', sub: '' };
+}
+// The canonical param for a tab: Overview is plain '<key>', never '<key>/overview'.
+function projParamFor(key, tab = 'overview', sub = '') {
+  if (tab !== 'memory') return key;
+  return sub ? `${key}/memory/${encodeURIComponent(sub)}` : `${key}/memory`;
+}
+const projectByKey = (key) => state.projects.find((x) => x && x.key === key) || null;
+const projectHistoryRows = (key) => (state.historyAll || []).filter((r) => r && r.projectKey === key);
+
+let projDetail = null;      // { key, name, screen, memCtl } while a page is open
+let projReturnFocus = '';   // the key of the row that opened the page; closeProjDetail hands focus back
+
+function routeProjectDetail(param, { instant = false } = {}) {
+  const parsed = parseProjParam(param);
+  if (!parsed) { closeProjDetail({ instant }); return; }
+  const p = projectByKey(parsed.key);
+  if (!p) {
+    closeProjDetail({ instant });
+    setProjectsMsg(`project "${parsed.key}" is not registered here`, 'err');
+    return;
   }
+  // The same project is already open: a tab hop, or the hashchange echo of a route the page
+  // itself wrote (a pill click, a memory Save). Never remount — that would drop the editor.
+  if (projDetail && projDetail.key === parsed.key) { activateProjTab(parsed.tab, parsed.sub); return; }
+  openProjDetail(p, parsed, { instant });
+}
+
+function openProjDetail(p, parsed, { instant = false } = {}) {
+  const host = el.projDetail;
+  const shell = el.projShell;
+  if (!host || !shell) return;
+  teardownProjDetail();                     // a page->page hop never passes closeProjDetail
+  host.innerHTML = '';
+  host.scrollTop = 0;                       // a prior visit's scroll must not carry over
+  const screen = $('#proj-detail-tpl').content.firstElementChild.cloneNode(true);
+  host.appendChild(screen);
+  projDetail = { key: p.key, name: p.name, screen, memCtl: null };
+
+  // Handlers close over the KEY and re-resolve the row at click time: a projects-changed
+  // rebuild replaces the object in state.projects.
+  screen.querySelector('.pd-back').addEventListener('click', () => { location.hash = 'projects'; });
+  screen.querySelector('.pd-new').addEventListener('click', () => { newPipelineForProject(p.key); });
+  screen.querySelector('.pd-history').addEventListener('click', () => { openHistoryForProject(p.key); });
+  screen.querySelector('.pd-remove').addEventListener('click', () => { void removeProjectFromPage(p.key); });
+  paintProjHeader(screen, p);
+  initPdTabs(screen, p);
+  activateProjTab(parsed.tab, parsed.sub);
+
+  if (instant) shell.classList.add('no-anim');
+  shell.classList.add('detail-open');
+  host.setAttribute('aria-hidden', 'false');
+  host.removeAttribute('inert');   // the previous close left it inert for the slide
+  // `aria-hidden` alone does NOT remove focusability — only `inert` does, so set BOTH.
+  const list = shell.querySelector('.proj-screen-list');
+  if (list) { list.setAttribute('aria-hidden', 'true'); list.setAttribute('inert', ''); }
+  // AFTER the mount and AFTER the list went inert; `.pd-back` is always present.
+  screen.querySelector('.pd-back').focus({ preventScroll: true });
+  if (instant) rafSafe(() => shell.classList.remove('no-anim'));
+}
+
+function paintProjHeader(screen, p) {
+  const title = screen.querySelector('.pd-title');
+  title.textContent = p.name;
+  if (!p.exists) {
+    const miss = document.createElement('span');
+    miss.className = 'proj-missing';
+    miss.textContent = 'missing';
+    title.append(' ', miss);
+  }
+  const path = screen.querySelector('.pd-path');
+  path.textContent = p.path;
+  path.title = p.path;
+  const fresh = screen.querySelector('.pd-new');
+  fresh.disabled = !p.exists;
+  fresh.title = p.exists ? 'Start a pipeline in this project' : 'The folder is missing on disk';
+  syncProjHistoryButton(screen, p.key);
+}
+
+// "Open in History" is live only while History has rows for this project: restoreHistoryFilter
+// keeps a remembered key only when rows exist, so without rows the hop would land on All Projects.
+function syncProjHistoryButton(screen, key) {
+  const btn = screen.querySelector('.pd-history');
+  if (!btn) return;
+  const n = projectHistoryRows(key).length;
+  btn.disabled = n === 0;
+  btn.title = n === 0 ? 'No runs yet' : `${n} run${n === 1 ? '' : 's'} in History`;
+}
+
+function teardownProjDetail() {
+  if (projDetail && projDetail.memCtl) projDetail.memCtl.destroy();
+  projDetail = null;
+}
+
+function closeProjDetail({ instant = false } = {}) {
+  const shell = el.projShell;
+  const host = el.projDetail;
+  if (!shell || !host) return;
+  if (!shell.classList.contains('detail-open')) { projReturnFocus = ''; teardownProjDetail(); return; }
+  teardownProjDetail();
+  host.setAttribute('aria-hidden', 'true');
+  // Un-inert the list FIRST — focus() is a no-op inside an inert subtree.
+  const list = shell.querySelector('.proj-screen-list');
+  if (list) { list.removeAttribute('aria-hidden'); list.removeAttribute('inert'); }
+  // Hand focus back to the row the page was opened from (re-queried: a rebuild may have replaced
+  // the node). One-shot, and NOT on the instant path — that one runs from showView, which hides
+  // the whole section a few lines later.
+  const back = projReturnFocus;
+  projReturnFocus = '';
+  if (back && el.projectsList && !instant) {
+    const row = el.projectsList.querySelector(`.pl-item[data-key="${cssEscape(back)}"] .pl-row`);
+    if (row) row.focus({ preventScroll: true });
+  }
+  host.setAttribute('inert', '');
+  if (instant) {
+    shell.classList.add('no-anim');
+    shell.classList.remove('detail-open');
+    host.innerHTML = '';
+    rafSafe(() => shell.classList.remove('no-anim'));
+    return;
+  }
+  shell.classList.remove('detail-open');
+  // Empty the screen after the slide (or via the timeout under reduced motion / jsdom).
+  const clear = () => { if (!projDetail) host.innerHTML = ''; };
+  const onEnd = (e) => {
+    if (e.target !== host || e.propertyName !== 'transform') return;
+    host.removeEventListener('transitionend', onEnd);
+    clear();
+  };
+  host.addEventListener('transitionend', onEnd);
+  const t = setTimeout(() => { host.removeEventListener('transitionend', onEnd); clear(); }, 600);
+  if (t && typeof t.unref === 'function') t.unref();
+}
+
+// ---- header actions ----
+// "New pipeline": pick the project in the New-pipeline select (it persists across views;
+// renderProjectOptions -> onProjectChanged loads its config + branches and remembers it as the
+// last project), make sure the target is a project, then go there.
+function newPipelineForProject(key) {
+  const p = projectByKey(key);
+  if (!p) return;
+  setRunTarget('project');
+  renderProjectOptions(p.name);
+  location.hash = 'new';
+}
+// "Open in History": the History project filter, pre-set. restoreHistoryFilter reads the key on
+// the way in (the button is disabled while the project has no rows — see syncProjHistoryButton).
+function openHistoryForProject(key) {
+  state.historyFilter = key;
+  localStorage.setItem(HISTORY_FILTER_KEY, key);
+  location.hash = 'history';
+}
+async function removeProjectFromPage(key) {
+  const p = projectByKey(key);
+  if (!p || !projDetail) return;
+  const screen = projDetail.screen;
+  const btn = screen.querySelector('.pd-remove');
+  btn.disabled = true;
+  try {
+    const removed = await deleteProject(p, screen.querySelector('.pd-error'));
+    if (removed) location.hash = 'projects';
+  } finally {
+    if (btn.isConnected) btn.disabled = false;
+  }
+}
+
+// ---- tabs ----
+const PD_TAB_ICONS = {
+  overview: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>',
+  memory: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"></path><path d="M4 20.5V5.5M8 7h8M8 10.5h6"></path></svg>',
+};
+// Table-driven, like HD_TABS. `build(sec, key)` takes the KEY (buildArgs), never the project object.
+const PD_TABS = [
+  { key: 'overview', label: 'Overview', badge: () => null, visible: () => true, build: (sec, key) => buildPdOverview(sec, key) },
+  { key: 'memory', label: 'Memory', badge: () => null, visible: () => true, build: (sec, key) => buildPdMemory(sec, key) },
+];
+function initPdTabs(screen, p) {
+  initDetailTabs(screen, PD_TABS.map((t) => ({ ...t, icon: PD_TAB_ICONS[t.key] })), p, {
+    tabsSel: '.pd-tabs', secsSel: '.pd-sections',
+    tabClass: 'pd-tab', secClass: 'pd-sec', badgeClass: 'pd-tab-badge',
+    idPrefix: 'pd',
+    buildArgs: () => [p.key],
+    initial: () => 'overview',
+  });
+  // Hash-first pills (the Settings-tabs idiom): the engine's own click listener has already lit
+  // the pill and built the section; this one puts the tab in the URL so Back and deep links agree
+  // with the screen. The hashchange echo lands in routeProjectDetail -> activateProjTab. An
+  // unchanged hash fires no hashchange, and there is nothing left to do in that case.
+  screen.querySelector('.pd-tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('button[data-sec]');
+    if (!btn || !projDetail) return;
+    const target = `projects/${projParamFor(projDetail.key, btn.dataset.sec)}`;
+    if (location.hash.slice(1) !== target) location.hash = target;
+  });
+}
+// Every route into the Memory tab loads the file the hash names — the same contract
+// loadMemoryTab(sub) keeps for Settings, which is what lets the controller's own routes (Save,
+// Delete, Cancel, a row) repaint on their hashchange echo. The section (and so memCtl) exists by
+// the time load() runs: activate() builds synchronously.
+function activateProjTab(tab, sub = '') {
+  const tabs = detailTabsOf(projDetail && projDetail.screen);
+  if (!tabs) return;
+  tabs.activate(tabs.cells.has(tab) ? tab : 'overview');
+  if (tab === 'memory' && projDetail.memCtl) void projDetail.memCtl.load(sub ? safeDecode(sub) : '');
+}
+
+// ---- Overview tab ----
+function pdStatCard(kind, label, value, sub, { tag = 'div' } = {}) {
+  const card = document.createElement(tag);
+  card.className = `pd-ov-card pd-ov-card-${kind}`;
+  if (tag === 'button') card.type = 'button';
+  const l = document.createElement('div'); l.className = 'pd-ov-label'; l.textContent = label;
+  const v = document.createElement('div'); v.className = 'pd-ov-value mono'; v.textContent = value;
+  card.append(l, v);
+  if (sub) { const s = document.createElement('div'); s.className = 'pd-ov-sub'; s.textContent = sub; card.appendChild(s); }
+  return card;
+}
+const histTs = (v) => (typeof v === 'number' ? v : (Date.parse(String(v || '')) || 0));
+
+function buildPdOverview(sec, key) {
+  sec.innerHTML = '';
+  sec.classList.add('pd-sec-overview');
+  const p = projectByKey(key);
+  if (!p) return;
+  const grid = document.createElement('div');
+  grid.className = 'pd-ov-grid';
+
+  const pathCard = pdStatCard('path', 'PATH', p.path, p.exists ? 'On disk' : 'Missing on disk');
+  pathCard.querySelector('.pd-ov-value').classList.add('pd-ov-wrap');
+  if (!p.exists) pathCard.querySelector('.pd-ov-sub').classList.add('pd-ov-missing');
+  grid.appendChild(pathCard);
+
+  const rows = projectHistoryRows(key);
+  const fam = { done: 0, paused: 0, stopped: 0, error: 0 };
+  for (const r of rows) { const f = histStatusMeta(r).family; if (f in fam) fam[f] += 1; }
+  const live = [...runs.values()].filter((r) => r && r.projectDir === p.path && (r.status === 'running' || r.status === 'starting')).length;
+  const parts = [`${fam.done} done`, `${fam.paused} paused`, `${fam.stopped} stopped`, `${fam.error} error`];
+  if (live) parts.push(`${live} running now`);
+  grid.appendChild(pdStatCard('runs', 'RUNS', String(rows.length), parts.join(' · ')));
+
+  let last = null;
+  for (const r of rows) { const t = histTs(r.startedAt || r.mtime); if (!last || t > last.t) last = { t, r }; }
+  if (last) {
+    const card = pdStatCard('last', 'LAST RUN', fmtDate(last.r.startedAt || last.r.mtime), last.r.title || last.r.id, { tag: 'button' });
+    card.classList.add('pd-ov-link');
+    card.title = 'Open in History';
+    card.addEventListener('click', () => { location.hash = `history/${histDetailParam(last.r)}`; });
+    grid.appendChild(card);
+  } else {
+    grid.appendChild(pdStatCard('last', 'LAST RUN', '—', 'No runs yet'));
+  }
+  grid.appendChild(pdStatCard('key', 'KEY', p.key, `memory scope projects/${p.key}`));
+  sec.appendChild(grid);
+  ensureHistoryLoaded();
+}
+
+// A deep link into a project page can land before the socket's `hello` background-loads History;
+// load it once here so the counts are real, not a permanent "0 runs". onHello's own
+// `!historyBooted` guard then skips its load. `historyBooted` is declared with loadHistoryView.
+function ensureHistoryLoaded() {
+  if (historyBooted) return;
+  historyBooted = true;
+  void loadHistoryView();
+}
+
+// The Overview reads the History dataset; repaint it (and the header's History button) whenever
+// that dataset changes. paintHistory() is the one funnel every history load/patch ends in.
+function refreshProjOverview() {
+  if (!projDetail || !projDetail.screen) return;
+  const p = projectByKey(projDetail.key);
+  if (!p) return;
+  syncProjHistoryButton(projDetail.screen, p.key);
+  const sec = projDetail.screen.querySelector('.pd-sec[data-sec="overview"]');
+  if (sec && sec.dataset.loaded === '1') buildPdOverview(sec, p.key);
+}
+
+// ---- Memory tab ----
+// The same grid Settings → Memory paints, for scope 'projects/<key>', hash-first (navigate: true):
+// memoryRoute() yields 'projects/<key>/memory[/<name>]', so the controller's routes are this page's
+// own routes. No load here — activateProjTab loads what the hash names.
+function buildPdMemory(sec, key) {
+  sec.innerHTML = '';
+  sec.classList.add('pd-sec-memory');
+  const msg = document.createElement('p');
+  msg.className = 'form-msg';
+  msg.setAttribute('aria-live', 'polite');
+  const host = document.createElement('div');
+  host.className = 'mem-host';
+  sec.append(msg, host);
+  if (!projDetail) return;
+  if (projDetail.memCtl) projDetail.memCtl.destroy();
+  projDetail.memCtl = createMemoryController({ host, msgEl: msg, scopeKey: `projects/${key}`, navigate: true });
 }
 
 // ---- Reusable confirm / prompt modal ---------------------------------------
@@ -7467,24 +7775,32 @@ function promptModal({ confirmLabel = 'Save', fields = [], ...rest } = {}) {
   return modalShell({ ...rest, confirmLabel, fields });
 }
 
-async function deleteProject(p) {
+// Remove a project. Returns true when the registry changed, false on cancel or failure. `errEl`
+// (the project page's .pd-error) takes the failure text when given; the list message otherwise.
+async function deleteProject(p, errEl = null) {
   const ok = await confirmModal({
     title: 'Remove project',
     message: `Remove “${p.name}” from the list?\nThe folder on disk and its run history are left untouched.`,
     confirmLabel: 'Remove project',
   });
-  if (!ok) return;
-  setProjectsMsg('');
+  if (!ok) return false;
+  const say = (text) => {
+    if (errEl) { errEl.hidden = !text; errEl.textContent = text || ''; }
+    else setProjectsMsg(text, text ? 'err' : '');
+  };
+  say('');
   try {
     const res = await fetch(`/api/projects?name=${encodeURIComponent(p.name)}`, { method: 'DELETE' });
     const data = await safeJson(res);
-    if (!res.ok) { setProjectsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    if (!res.ok) { say(data.error || `HTTP ${res.status}`); return false; }
     state.projects = Array.isArray(data.projects) ? data.projects : [];
     if (localStorage.getItem(LAST_PROJECT_KEY) === p.name) localStorage.removeItem(LAST_PROJECT_KEY);
     renderProjectsList();
     renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || ''); // keep New-pipeline dropdown in sync
+    return true;
   } catch (e) {
-    setProjectsMsg(e.message, 'err');
+    say(e.message);
+    return false;
   }
 }
 
@@ -7549,50 +7865,23 @@ async function saveProjectAdd() {
 
 // ---- Event wiring (guarded so non-UI test imports don't throw) --------------
 if (el.projectsList) {
+  const openRow = (row) => {
+    const item = row.closest('.pl-item');
+    if (!item || !item.dataset.key) return;
+    projReturnFocus = item.dataset.key;                 // Back / Esc come home to this row
+    location.hash = `projects/${item.dataset.key}`;
+  };
   el.projectsList.addEventListener('click', (e) => {
-    const del = e.target.closest && e.target.closest('.proj-del');
-    if (del) {
-      const item = del.closest('.pl-item');
-      if (!item) return;
-      const p = state.projects.find((x) => x.name === item.dataset.name);
-      if (p) deleteProject(p);
-      return;
-    }
-    const head = e.target.closest && e.target.closest('.proj-mem-head');
-    if (head) toggleProjectMemory(head.closest('.pl-item'));
+    const row = e.target.closest && e.target.closest('.pl-row[role="button"]');
+    if (row) openRow(row);                              // a chevron click bubbles here too — one open
   });
   el.projectsList.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
-    const head = e.target.closest && e.target.closest('.proj-mem-head');
-    if (!head) return;
+    const row = e.target.closest && e.target.closest('.pl-row[role="button"]');
+    if (!row || e.target !== row) return;               // the chevron's own Enter/Space arrives as a click
     e.preventDefault();
-    toggleProjectMemory(head.closest('.pl-item'));
+    openRow(row);
   });
-}
-
-/** Open (and mount, once) or close a row's Memory expander. `open: true` forces open; `name` opens
- *  a file. The controller is kept while the row lives: closing is a display toggle, not a teardown. */
-function toggleProjectMemory(item, { open = null, name = '' } = {}) {
-  if (!item || !item.dataset.key) return;
-  const head = item.querySelector('.proj-mem-head');
-  const detail = item.querySelector('.proj-mem-detail');
-  if (!head || !detail) return;
-  const isOpen = head.getAttribute('aria-expanded') === 'true';
-  const next = open === null ? !isOpen : open;
-  head.setAttribute('aria-expanded', String(next));
-  detail.hidden = !next;
-  if (!next) return;
-  const scopeKey = `projects/${item.dataset.key}`;
-  let ctl = projectMemoryControllers.get(scopeKey);
-  if (!ctl) {
-    ctl = createMemoryController({
-      host: detail.querySelector('.mem-host'), msgEl: detail.querySelector('.form-msg'), scopeKey, navigate: false,
-    });
-    projectMemoryControllers.set(scopeKey, ctl);
-    void ctl.load(name);
-  } else if (name) {
-    void ctl.load(name);
-  }
 }
 if (el.projectAddBtn) el.projectAddBtn.addEventListener('click', addProjectFlow);
 if (el.projAddSave) {
@@ -9324,12 +9613,11 @@ async function grvSave(rootEl) {
   }
 }
 
-// ── Settings → Memory / project Memory expanders (agent-memory-design.md §10) ──
-// One controller per mounted scope: the Settings tab owns `memoryTabCtl` (global), the Projects
-// page owns one per expanded row (`projectMemoryControllers`, keyed by 'projects/<key>'). Pure
-// renderers live in memory-view.mjs; this owns the endpoint calls and ONE delegated listener pair.
+// ── Settings → Memory / the project page's Memory tab (agent-memory-design.md §10) ──
+// One controller per mounted scope: the Settings tab owns `memoryTabCtl` (global); the project
+// page owns `projDetail.memCtl` for the open project ('projects/<key>'). Pure renderers live in
+// memory-view.mjs; this owns the endpoint calls and ONE delegated listener pair.
 let memoryTabCtl = null;
-const projectMemoryControllers = new Map();
 
 function memoryApiBase(scopeKey) { return scopeKey === 'global' ? '/api/memory/global' : `/api/memory/${scopeKey}`; }
 /** A body-less request sends no content-type — the request shapes stay identical to every other fetch here. */
@@ -10953,6 +11241,7 @@ function paintHistory() {
   // An open detail screen re-reads its (possibly late-arriving, possibly mutated)
   // list row from the same dataset. No-op when no detail is open.
   refreshHdFromRow();
+  refreshProjOverview();
 }
 
 // Render #history from state.historyAll filtered by state.historyFilter.
@@ -11501,18 +11790,12 @@ const pokeOpenDiffTab = coalesce(() => { if (hdCommentState) void hdCommentState
 const pokeGlobalMemory = coalesce(() => {
   if (memoryTabCtl) void memoryTabCtl.load(memoryTabCtl.selectedName(), { fromFrame: true });
 }, COMMENT_POKE_MS);
-const projectMemoryPokes = new Map();
-function pokeProjectMemory(scopeKey) {
-  let poke = projectMemoryPokes.get(scopeKey);
-  if (!poke) {
-    poke = coalesce(() => {
-      const ctl = projectMemoryControllers.get(scopeKey);
-      if (ctl) void ctl.load(ctl.selectedName(), { fromFrame: true });
-    }, COMMENT_POKE_MS);
-    projectMemoryPokes.set(scopeKey, poke);
-  }
-  poke();
-}
+// One coalescer is enough now: there is at most one project page open. It reads the controller
+// at FIRE time, so a page swapped inside the window refetches the new scope — a harmless reload.
+const pokeProjectMemory = coalesce(() => {
+  const ctl = projDetail && projDetail.memCtl;
+  if (ctl) void ctl.load(ctl.selectedName(), { fromFrame: true });
+}, COMMENT_POKE_MS);
 
 function renderHistCommentPill(pill, p) {
   if (!pill) return;
@@ -14328,7 +14611,7 @@ function buildHdOverview(sec, record, data) {
       line.appendChild(who);
       for (const c of row.chips) {
         // A chip opens the file in its Memory view (B6): `global` under Settings, a project scope on
-        // its Projects row. The mount-relative `project` is THIS run's project (the History record's
+        // its project page's Memory tab. The mount-relative `project` is THIS run's project (the History record's
         // key); a workspace run's `projects/<key>` passes straight through. A deleted file has
         // nothing to open, and neither has a `project` chip on a record with no key.
         const scopeKey = c.scope === 'global' ? 'global'
@@ -15292,6 +15575,21 @@ document.addEventListener('keydown', (e) => {
   const stop = document.getElementById('stop-modal');
   if (stop && !stop.classList.contains('hidden')) return;
   location.hash = 'running';
+}, true);
+
+// Escape on a project page navigates back to the list — never while an overlay modal is open,
+// and never from inside the Memory editor (Escape there is the textarea's). Capture phase, like
+// the two arms above.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (askPanel?.ownsKey(e)) return;
+  if (currentView() !== 'projects') return;
+  if (!el.projShell || !el.projShell.classList.contains('detail-open')) return;
+  if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
+  if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
+  if (el.projectAddModal && !el.projectAddModal.classList.contains('hidden')) return;
+  if (e.target && typeof e.target.closest === 'function' && e.target.closest('.mem-editor')) return;
+  location.hash = 'projects';
 }, true);
 
 async function viewPipeline(projectDir, id, title, record) {
@@ -17317,6 +17615,9 @@ function showView(name, param = '') {
   // Leaving History resets the two-screen track, so the next visit lands on the
   // list instead of a stale detail screen sliding in behind the new view.
   if (currentShownView === 'history' && name !== 'history') closeHistDetail({ instant: true });
+  // Same for the Projects track: leaving must not park a project page mid-slide behind the next
+  // view, and its Memory controller must not outlive the view.
+  if (currentShownView === 'projects' && name !== 'projects') closeProjDetail({ instant: true });
   // Same for Running's two-screen track (spec §5.1): leaving must not park a
   // detail screen mid-slide behind the next view.
   //
@@ -17366,6 +17667,7 @@ function showView(name, param = '') {
   // letting the sticky pills toolbar + project headers pin flush to the top.
   document.body.classList.toggle('view-history', name === 'history');
   document.body.classList.toggle('view-running', name === 'running');
+  document.body.classList.toggle('view-projects', name === 'projects');
   if (name === 'running') {
     renderRunningView();
     routeRunDetail(param, { instant: prevView !== 'running' });
@@ -17395,8 +17697,15 @@ function showView(name, param = '') {
   if (name === 'agents') loadAgentsView();
   if (name === 'agent-create') enterAgentWizard();
   // A route entry starts clean: a previous "not registered here" error must not linger (a
-  // projects-changed rebuild calls loadProjectsView directly and keeps the message).
-  if (name === 'projects') { setProjectsMsg(''); loadProjectsView(param); }
+  // projects-changed rebuild calls refreshProjectsPage directly and keeps the message).
+  if (name === 'projects') {
+    setProjectsMsg('');
+    // A view entry refetches the registry and then routes the page half of the hash; an in-view
+    // hop (list <-> page, tab <-> tab, a controller's route echo) only routes — the History arm
+    // above skips its reload on hops for the same reason.
+    if (prevView !== 'projects') void loadProjectsView(param);
+    else routeProjectDetail(param);
+  }
   if (name === 'composer') initComposer();
   if (name === 'settings') showSettingsTab(param);
   if (name === 'new') {
@@ -17582,6 +17891,12 @@ function getPageContext() {
       }
       return ctx;
     }
+  }
+  // A project page names its project (spec D12): the context header carries it and the Ask memory
+  // tools' page-following project resolves to it.
+  if (ctx.view === 'projects' && param) {
+    const parsed = parseProjParam(param);
+    if (parsed && projectByKey(parsed.key)) { ctx.view = 'project-detail'; ctx.projectKey = parsed.key; return ctx; }
   }
   if (ctx.view === 'new' && state.runTarget === 'workspace' && state.selectedWorkspaceId) {
     ctx.workspaceId = state.selectedWorkspaceId;

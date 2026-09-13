@@ -322,7 +322,7 @@ const WALKER = (rootSel, withStyles = false) => `(() => {
 // have hover RULES but no live element (the buttons are `.ask-icon-btn`; `.field-clear` lives only in a mockup) — kept
 // so a future element is sampled; `.sidebar.collapsed .nav button.nav-cta` matches only in the rail-collapsed state.
 const HOVER_SELECTORS = ['.icon-btn', '.ask-icon-btn', '.btn', '.btn-ghost', '.btn-primary', '.hist-open', '.rc-open', '.wiz-proj', '.sp-row', '.grv-source-row',
-  '.proj-del', '.gr-rm', '.field-clear', '.agent-row-head', '.sidebar.collapsed .nav button.nav-cta', '.nav button', '.spend-ind', '.hd-tree-file', '.ap'];
+  '.gr-rm', '.field-clear', '.agent-row-head', '.sidebar.collapsed .nav button.nav-cta', '.nav button', '.spend-ind', '.hd-tree-file', '.ap'];
 async function hoverSamples() {
   // CDP node ids die on every Page.reload (every go()): fetch the document per call, and let a
   // querySelector error THROW — a swallowed "Could not find node" would silently drop hover coverage.
@@ -406,6 +406,16 @@ const states = [
   ['agents', async () => { await go('agents'); }],
   ['agent-create', async () => { await go('agent-create'); }],
   ['projects', async () => { await go('projects'); }],
+  // The project page: register a folder through the API first (the proof's home has none), then
+  // open it — Overview + header. The Memory tab is the Settings grid already audited above.
+  ['projects-detail', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'worca-theme-proj-'));
+    const r = await api('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'themeproof', path: dir }) });
+    const p = (r.body.projects || []).find((x) => x.name === 'themeproof');
+    if (!p) throw new Error(`could not register the theme project: ${JSON.stringify(r.body)}`);
+    await go(`projects/${p.key}`);
+    await until(`document.querySelector('#proj-shell.detail-open .pd-ov-card-key')`, 'the project page');
+  }],
   ['workspaces', async () => { await go('workspaces'); }],
   ['workspace-create', async () => { await go('workspace-create'); }],
   ['stats', async () => { await go('stats'); }],
