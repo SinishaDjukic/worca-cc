@@ -568,6 +568,46 @@ test('the page keeps its Memory grid while it slides out; it is emptied after th
   assert.equal(doc.getElementById('proj-detail').innerHTML, '', 'emptied after the slide');
 });
 
+test('a row opened while the #projects fetch is in flight stays open: the late reply never routes the stale param', async () => {
+  let holdNext = false; let release; const gate = new Promise((r) => { release = r; });
+  const { window } = await boot({
+    fetchHandler: (u) => {
+      if (u.includes('/api/projects') && holdNext) { holdNext = false; return gate.then(() => ({ ok: true, status: 200, json: async () => ({ projects: PROJECTS }) })); }
+      return null;
+    },
+  });
+  await goProjects(window);                       // first entry paints the list
+  await goHash(window, 'new');
+  holdNext = true;
+  await goHash(window, 'projects');               // second entry: its /api/projects is held
+  const doc = window.document;
+  click(window, doc.querySelector('#projects-list .pl-item[data-key="alpha-00000001"] .pl-row'));   // an in-view hop
+  await tick(); await tick();
+  assert.equal(doc.getElementById('proj-shell').classList.contains('detail-open'), true);
+  release();
+  await tick(); await tick(); await tick();
+  assert.equal(window.location.hash, '#projects/alpha-00000001');
+  assert.equal(doc.getElementById('proj-shell').classList.contains('detail-open'), true, 'the late reply did not close the page');
+});
+
+test('leaving Projects while its fetch is in flight mounts nothing in the hidden view', async () => {
+  let holdNext = false; let release; const gate = new Promise((r) => { release = r; });
+  const { window } = await boot({
+    fetchHandler: (u, o = {}) => {
+      if (u.includes('/api/projects') && holdNext) { holdNext = false; return gate.then(() => ({ ok: true, status: 200, json: async () => ({ projects: PROJECTS }) })); }
+      return memFetch(u, o);
+    },
+  });
+  holdNext = true;
+  await goHash(window, 'projects/alpha-00000001/memory/conv');   // held
+  await goHash(window, 'workspaces');                            // leave before the reply
+  release();
+  await tick(); await tick(); await tick();
+  const doc = window.document;
+  assert.equal(doc.getElementById('proj-detail').innerHTML, '', 'nothing mounted behind the Workspaces view');
+  assert.equal(doc.getElementById('proj-shell').classList.contains('detail-open'), false);
+});
+
 // ---- Project detail page (2026-09-13-project-detail-design.md) ----
 
 const cssText = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');

@@ -45,6 +45,21 @@ export function formatWhen(iso) {
 
 const NO_HOST_HINT = 'Register a project on the Projects page to host the global defragment run.';
 
+/** The defragment glyph: three rows of blocks, the lower ones fragmented. Pure SVG elements (no
+ *  text node), so the button's textContent stays its label alone. */
+function defragIcon(doc) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = doc.createElementNS(NS, 'svg');
+  svg.setAttribute('width', '13'); svg.setAttribute('height', '13'); svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'currentColor'); svg.setAttribute('aria-hidden', 'true');
+  for (const [x, y, w] of [[3, 4, 18], [3, 10, 8], [13, 10, 8], [3, 16, 5], [10, 16, 11]]) {
+    const r = doc.createElementNS(NS, 'rect');
+    r.setAttribute('x', String(x)); r.setAttribute('y', String(y)); r.setAttribute('width', String(w)); r.setAttribute('height', '4'); r.setAttribute('rx', '1');
+    svg.appendChild(r);
+  }
+  return svg;
+}
+
 /**
  * The health card: badge + reasons + counters + the ONE Defragment control (spec §10). `host` is
  * `{ key, name } | null` — the project that would host a GLOBAL defragment run (a project scope
@@ -63,20 +78,22 @@ export function renderHealthCard(report, { doc = globalThis.document, host = nul
   head.appendChild(h(doc, 'span', 'mem-counters',
     `${plural(health.files || 0, 'file')} · ${health.bytes || 0} bytes · ${health.alwaysOnBytes || 0} bytes always loaded · ${plural(health.writesSinceDefrag || 0, 'write')} since the last defragment` +
     (health.lastDefragAt ? ` · last defragmented ${formatWhen(health.lastDefragAt)}` : '')));
+  // The ONE control sits at the head's right edge (margin-left:auto), styled like every other
+  // secondary pill (btn-ghost) with the defragment glyph before its label.
+  const runId = report?.defragRunId ? String(report.defragRunId) : '';
+  const btn = h(doc, 'button', 'btn btn-ghost btn-mini mem-defrag');
+  btn.type = 'button';
+  btn.appendChild(defragIcon(doc));
+  btn.appendChild(doc.createTextNode(runId ? 'Defragmenting… open the run' : 'Defragment'));
+  if (runId) btn.dataset.runId = runId;
+  else if (isGlobal && !host) { btn.disabled = true; btn.title = NO_HOST_HINT; }
+  head.appendChild(btn);
   card.appendChild(head);
   if (Array.isArray(health.reasons) && health.reasons.length) {
     const ul = h(doc, 'ul', 'mem-reasons');
     for (const r of health.reasons) ul.appendChild(h(doc, 'li', '', String(r)));
     card.appendChild(ul);
   }
-  const actions = h(doc, 'div', 'actions mem-actions');
-  const runId = report?.defragRunId ? String(report.defragRunId) : '';
-  const btn = h(doc, 'button', 'btn btn-primary btn-mini mem-defrag', runId ? 'Defragmenting… open the run' : 'Defragment');
-  btn.type = 'button';
-  if (runId) btn.dataset.runId = runId;
-  else if (isGlobal && !host) { btn.disabled = true; btn.title = NO_HOST_HINT; }
-  actions.appendChild(btn);
-  card.appendChild(actions);
   if (isGlobal && !runId) {
     card.appendChild(h(doc, 'small', 'hint mem-host-hint',
       host ? `Runs on ${host.name || host.key} — pick another project on the New pipeline page.` : NO_HOST_HINT));

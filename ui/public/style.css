@@ -2274,6 +2274,8 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .mem-reasons{margin:12px 0 0 18px;padding:0;font-size:13px;color:var(--ink-2);}
 .mem-reasons li{margin:4px 0;}
 .mem-actions{margin-top:12px;align-items:center;gap:10px;}
+.mem-health-head .mem-defrag{margin-left:auto;}
+.mem-defrag svg{display:block;flex:none;}
 .mem-host-hint{display:block;margin-top:8px;}
 .mem-list,.mem-history{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:14px 16px;}
 .mem-list-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}

@@ -7272,22 +7272,33 @@ async function pickFolder(purpose = 'project') {
   }
 }
 
-// #projects entry: refetch the registry, paint the list, then route the detail half of the
-// hash (#projects/<key>[/memory[/<name>]]). In-view hops (list <-> page, tab <-> tab, the
-// hashchange echo of a route the page itself wrote) skip the fetch — showView calls
-// routeProjectDetail directly for those.
-async function loadProjectsView(param = '') {
+// #projects entry: refetch the registry, paint the list, then route the detail half of the hash
+// (#projects/<key>[/memory[/<name>]]). In-view hops (list <-> page, tab <-> tab, the hashchange
+// echo of a route the page itself wrote) skip the fetch — showView calls routeProjectDetail
+// directly for those. The user may leave the view or hop within it while /api/projects is in
+// flight: a superseded entry paints nothing (loadHistoryView's historyLoadToken idiom), a reply
+// landing behind another view paints nothing, and the route half follows the hash as it is NOW,
+// not the param captured at entry — an in-view hop already routed that one, and re-routing the
+// same key is a no-op.
+let projectsLoadToken = 0;
+async function loadProjectsView() {
+  const token = ++projectsLoadToken;
   await loadProjects();      // refresh shared state.projects from /api/projects
+  if (token !== projectsLoadToken || currentShownView !== 'projects') return;
   renderProjectsList();
-  routeProjectDetail(param, { instant: true });
+  const [view, param] = parseHash();
+  if (view === 'projects') routeProjectDetail(param, { instant: true });
 }
 
 // A projects-changed frame while the page is open: rebuild the list under the user and keep
 // the open page — unless its project left the registry, which closes it with a note. The
 // header repaints from the NEW row (`exists` can flip). showView('projects', '') is called
 // directly (not via the hash) so its own setProjectsMsg('') runs BEFORE the note is set.
+// No entry token here: a frame reply that outlived a view entry must not cancel that entry's
+// route, and everything below reads live state (never the reply), so a late one is harmless.
 async function refreshProjectsPage() {
   await loadProjects();
+  if (currentShownView !== 'projects') return;
   renderProjectsList();
   if (!projDetail) return;
   const p = projectByKey(projDetail.key);
@@ -17768,7 +17779,7 @@ function showView(name, param = '') {
     // A view entry refetches the registry and then routes the page half of the hash; an in-view
     // hop (list <-> page, tab <-> tab, a controller's route echo) only routes — the History arm
     // above skips its reload on hops for the same reason.
-    if (prevView !== 'projects') void loadProjectsView(param);
+    if (prevView !== 'projects') void loadProjectsView();   // routes the LIVE hash after its fetch
     else routeProjectDetail(param);
   }
   if (name === 'composer') initComposer();
