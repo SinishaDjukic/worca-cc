@@ -455,6 +455,48 @@ test('leaving the view tears the page down instantly', async () => {
   assert.equal(doc.body.classList.contains('view-projects'), false);
 });
 
+// ---- Review majors (2026-09-14-project-detail-review-majors.md) ----
+
+const WORKFLOWS = [
+  { id: 'wf_alpha', name: 'Alpha flow', version: 2, nodes: [], wires: [] },
+  { id: 'wf_beta', name: 'Beta flow', version: 2, nodes: [], wires: [] },
+];
+// /api/config keyed by the project in the query: beta's reply is SLOW, alpha's immediate.
+const cfgReply = (wf, delay) => new Promise((r) => setTimeout(() => r({
+  ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [], activeWorkflowId: wf }, models: [], efforts: [] }),
+}), delay));
+
+test('two /api/config loads in flight: the LAST project picked wins, whatever order the replies land', async () => {
+  const { window } = await boot({
+    fetchHandler: (u) => {
+      if (u.startsWith('/api/config')) return cfgReply(u.includes('beta') ? 'wf_beta' : 'wf_alpha', u.includes('beta') ? 40 : 0);
+      if (u.endsWith('/api/workflows')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: WORKFLOWS }) });
+      return null;
+    },
+  });
+  await tick();
+  const doc = window.document;
+  const sel = doc.getElementById('projectSelect');
+  const pick = (path) => { sel.value = path; sel.dispatchEvent(new window.Event('change', { bubbles: true })); };
+  pick('/Users/me/dev/beta');    // slow reply
+  pick('/Users/me/dev/alpha');   // fast reply — the project the user ends on
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal(sel.options[sel.selectedIndex].dataset.name, 'alpha');
+  assert.equal(doc.getElementById('workflowSelect').value, 'wf_alpha', 'the earlier, slower reply never painted over the later pick');
+});
+
+test('New pipeline from a project page issues ONE config load, for the page project', async () => {
+  const cfgDirs = [];
+  const { window } = await boot({
+    fetchHandler: (u) => { if (u.startsWith('/api/config')) cfgDirs.push(decodeURIComponent(u.split('projectDir=')[1] || '')); return null; },
+  });
+  await goHash(window, 'projects/alpha-00000001');
+  cfgDirs.length = 0;
+  click(window, window.document.querySelector('#proj-detail .pd-new'));
+  await tick(); await tick();
+  assert.deepEqual(cfgDirs, ['/Users/me/dev/alpha']);
+});
+
 // ---- Project detail page (2026-09-13-project-detail-design.md) ----
 
 const cssText = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');

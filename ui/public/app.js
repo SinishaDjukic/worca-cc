@@ -1582,13 +1582,27 @@ function setConfigError(text) {
   el.configError.hidden = !text;
 }
 
+// Per-target request generation (the populateBranchSelect idiom, :5485): bump on every rebuild
+// issued for `node`; the returned stale() tells the caller's awaits whether a NEWER rebuild has
+// been issued since. The LAST one issued wins, whatever order the replies land in.
+function bumpGen(node, key = '_gen') {
+  const gen = (node[key] = (node[key] || 0) + 1);
+  return () => node[key] !== gen;
+}
+// loadConfig's own generation: two chains in flight (a target flip + a project pick, a fast
+// project switch) must never paint state.config / the pickers out of order.
+let configGen = 0;
+
 async function loadConfig(projectDir) {
+  const gen = ++configGen;
+  const stale = () => gen !== configGen;   // a newer loadConfig owns state.config now
   try {
     // No project => omit projectDir; the server replies with the built-in models
     // so the picker always shows Opus/Sonnet/Haiku, even on a fresh clone.
     const qs = projectDir ? `?projectDir=${encodeURIComponent(projectDir)}` : '';
     const res = await fetch(`/api/config${qs}`);
     const data = await safeJson(res);
+    if (stale()) return;
     if (res.ok) {
       state.config = data.config || { steps: {}, customModels: [] };
       state.models = Array.isArray(data.models) ? data.models : [];
@@ -1618,6 +1632,7 @@ async function loadConfig(projectDir) {
       setConfigError(`Could not load saved config (${data.error || `HTTP ${res.status}`}) — showing defaults.`);
     }
   } catch {
+    if (stale()) return;
     // Network-level failure: same reset as the non-ok branch (a previous
     // project's config must not linger), but keep last-known models/efforts.
     state.config = { steps: {}, customModels: [] };
@@ -1630,6 +1645,7 @@ async function loadConfig(projectDir) {
   // storage differs (legacy per-role steps, resolved in buildNodeConfigRows).
   if (state.config.activeWorkflowId) state.workflowId = state.config.activeWorkflowId;
   await loadWorkflowsInto(state.workflowId);
+  if (stale()) return;                     // the newer chain repaints guardrails itself
   await loadGuardrailsInto(state.guardrailsId);
 }
 
@@ -2511,8 +2527,10 @@ async function loadEnabledPluginNames() {
 async function loadWorkflowsInto(selectId) {
   const sel = el.workflowSelect;
   if (!sel) return;
+  const stale = bumpGen(sel);
   await loadEnabledPluginNames();
   const workflows = await listWorkflowsApi();
+  if (stale()) return;                     // a newer rebuild of this picker was issued meanwhile
   if (workflows === null) {
     // List fetch failed: keep whatever the dropdown already shows (do NOT
     // rebuild to Default-only — that would silently reroute the next run) and
@@ -2583,7 +2601,9 @@ function updateGuardrailsHint() {
 async function loadGuardrailsInto(selectId) {
   const sel = el.guardrailsSelect;
   if (!sel) return;
+  const stale = bumpGen(sel);
   const sets = await listGuardrailsApi();
+  if (stale()) return;                     // a newer rebuild of this picker was issued meanwhile
   if (sets === null) {
     // List fetch failed: keep whatever the dropdown already shows (do NOT
     // rebuild to Permissive-only — that would silently reroute the next run's
@@ -7508,11 +7528,14 @@ function closeProjDetail({ instant = false } = {}) {
 // ---- header actions ----
 // "New pipeline": pick the project in the New-pipeline select (it persists across views;
 // renderProjectOptions -> onProjectChanged loads its config + branches and remembers it as the
-// last project), make sure the target is a project, then go there.
+// last project), make sure the target is a project, then go there. The target is flipped only
+// when it is not already a project: setRunTarget('project') re-resolves the CURRENTLY selected
+// project (a second config chain for the wrong project); the loaders' generation guards make a
+// superseded chain a no-op, but there is no reason to issue it.
 function newPipelineForProject(key) {
   const p = projectByKey(key);
   if (!p) return;
-  setRunTarget('project');
+  if (state.runTarget !== 'project') setRunTarget('project');
   renderProjectOptions(p.name);
   location.hash = 'new';
 }
