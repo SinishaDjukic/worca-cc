@@ -7580,24 +7580,32 @@ function initPdTabs(screen, p) {
   });
   // Hash-first pills (the Settings-tabs idiom): the engine's own click listener has already lit
   // the pill and built the section; this one puts the tab in the URL so Back and deep links agree
-  // with the screen. The hashchange echo lands in routeProjectDetail -> activateProjTab. An
-  // unchanged hash fires no hashchange, and there is nothing left to do in that case.
+  // with the screen. The Memory pill names the file the controller shows, so a hop back lands on
+  // it (and keeps a draft there — see activateProjTab). The hashchange echo lands in
+  // routeProjectDetail -> activateProjTab. An unchanged hash fires no hashchange, and there is
+  // nothing left to do in that case.
   screen.querySelector('.pd-tabs').addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('button[data-sec]');
     if (!btn || !projDetail) return;
-    const target = `projects/${projParamFor(projDetail.key, btn.dataset.sec)}`;
+    const sub = btn.dataset.sec === 'memory' && projDetail.memCtl ? projDetail.memCtl.selectedName() : '';
+    const target = `projects/${projParamFor(projDetail.key, btn.dataset.sec, sub)}`;
     if (location.hash.slice(1) !== target) location.hash = target;
   });
 }
-// Every route into the Memory tab loads the file the hash names — the same contract
-// loadMemoryTab(sub) keeps for Settings, which is what lets the controller's own routes (Save,
-// Delete, Cancel, a row) repaint on their hashchange echo. The section (and so memCtl) exists by
-// the time load() runs: activate() builds synchronously.
+// Every route into the Memory tab loads what the hash names — the same contract loadMemoryTab(sub)
+// keeps for Settings, which is what lets the controller's own routes (Save, Delete, Cancel, a row)
+// repaint on their hashchange echo. A route to the file the controller ALREADY shows (a tab hop
+// back, the echo of a route the controller wrote) is a keepDraft reload: the card, list and
+// history refresh, an unsaved draft or NEW file stays. The section (and so memCtl) exists by the
+// time load() runs: activate() builds synchronously.
 function activateProjTab(tab, sub = '') {
   const tabs = detailTabsOf(projDetail && projDetail.screen);
   if (!tabs) return;
   tabs.activate(tabs.cells.has(tab) ? tab : 'overview');
-  if (tab === 'memory' && projDetail.memCtl) void projDetail.memCtl.load(sub ? safeDecode(sub) : '');
+  if (tab !== 'memory' || !projDetail.memCtl) return;
+  const ctl = projDetail.memCtl;
+  const name = sub ? safeDecode(sub) : '';
+  void ctl.load(name, { keepDraft: ctl.loaded() && name === ctl.selectedName() });
 }
 
 // ---- Overview tab ----
@@ -9704,13 +9712,16 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     if (back && typeof back.focus === 'function') back.focus({ preventScroll: true });
   }
 
+  // An editor whose text differs from what it was LOADED from, or a New file (never saved).
+  const isDirty = () => !!st.editor && (st.isNew || collectEditor(host).text !== st.editor.loaded);
+
   /** `fromFrame`: a memory-changed refetch. `keepDraft`: a reload the user's own action triggered
-   *  (Defragment, a 409) — it keeps a dirty editor like a frame does, without the conflict warning,
-   *  and it keeps the message the caller already said. */
+   *  (Defragment, a 409, a route back to the file already shown) — it keeps a dirty editor like a
+   *  frame does, without the conflict warning, and it keeps the message the caller already said. */
   async function load(name = '', { fromFrame = false, keepDraft = false } = {}) {
     const my = ++seq;
     if (!fromFrame && !keepDraft && !st.flash) say('');
-    const dirty = !!st.editor && (st.isNew || collectEditor(host).text !== st.editor.loaded);
+    const dirty = isDirty();
     const r = await memoryApi('GET', base);
     if (my !== seq) return;
     if (!r.ok) { say(r.data.error || `HTTP ${r.status}`, 'err'); st.report = null; paint(); return; }
@@ -9830,6 +9841,8 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     scopeKey,
     load,
     selectedName: () => st.selected,
+    loaded: () => !!st.report,
+    dirty: isDirty,
     destroy() { host.removeEventListener('click', onClick); host.removeEventListener('keydown', onKey); host.replaceChildren(); },
   };
 }

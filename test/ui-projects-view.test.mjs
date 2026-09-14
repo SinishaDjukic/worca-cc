@@ -497,6 +497,42 @@ test('New pipeline from a project page issues ONE config load, for the page proj
   assert.deepEqual(cfgDirs, ['/Users/me/dev/alpha']);
 });
 
+test('a Memory draft survives Overview → Memory: the pill returns to the open file and the hop keeps the unsaved text', async () => {
+  const { window } = await boot({ fetchHandler: memFetch });
+  await goHash(window, 'projects/alpha-00000001/memory/conv');
+  const doc = window.document;
+  const sec = doc.querySelector('#proj-detail .pd-sec[data-sec="memory"]');
+  sec.querySelector('.mem-text').value = 'unsaved edit\n';
+  click(window, doc.getElementById('pd-tab-overview'));
+  await tick(); await tick(); await tick();
+  assert.equal(window.location.hash, '#projects/alpha-00000001');
+  click(window, doc.getElementById('pd-tab-memory'));
+  await tick(); await tick(); await tick();
+  assert.equal(window.location.hash, '#projects/alpha-00000001/memory/conv', 'the pill returns to the open file');
+  assert.equal(sec.querySelector('.mem-text').value, 'unsaved edit\n', 'the draft survived the hop');
+});
+
+test('a NEW, unsaved memory file survives the same hop', async () => {
+  const { window } = await boot({ fetchHandler: memFetch });
+  await goHash(window, 'projects/alpha-00000001/memory');
+  const doc = window.document;
+  const sec = doc.querySelector('#proj-detail .pd-sec[data-sec="memory"]');
+  click(window, sec.querySelector('.mem-new'));
+  await tick();
+  sec.querySelector('.mem-name').value = 'draft';
+  sec.querySelector('.mem-text').value = 'x\n';
+  click(window, doc.getElementById('pd-tab-overview'));
+  await tick(); await tick(); await tick();
+  click(window, doc.getElementById('pd-tab-memory'));
+  await tick(); await tick(); await tick();
+  assert.equal(window.location.hash, '#projects/alpha-00000001/memory');
+  const ed = sec.querySelector('.mem-editor');
+  assert.ok(ed, 'the editor is still up');
+  assert.equal(ed.querySelector('.mem-name').value, 'draft');
+  assert.equal(ed.querySelector('.mem-text').value, 'x\n');
+  assert.equal(ed.querySelector('.mem-name').readOnly, false, 'still a NEW file');
+});
+
 // ---- Project detail page (2026-09-13-project-detail-design.md) ----
 
 const cssText = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
