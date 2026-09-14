@@ -533,6 +533,41 @@ test('a NEW, unsaved memory file survives the same hop', async () => {
   assert.equal(ed.querySelector('.mem-name').readOnly, false, 'still a NEW file');
 });
 
+test('Back with an unsaved memory draft asks first: Cancel stays, Discard leaves', async () => {
+  const { window } = await boot({ fetchHandler: memFetch });
+  await goHash(window, 'projects/alpha-00000001/memory/conv');
+  const doc = window.document;
+  const sec = doc.querySelector('#proj-detail .pd-sec[data-sec="memory"]');
+  sec.querySelector('.mem-text').value = 'unsaved\n';
+  click(window, doc.querySelector('#proj-detail .pd-back'));
+  await tick();
+  assert.equal(doc.getElementById('confirm-modal').classList.contains('hidden'), false, 'asks first');
+  click(window, doc.getElementById('confirm-cancel'));
+  await tick(); await tick();
+  assert.equal(window.location.hash, '#projects/alpha-00000001/memory/conv', 'Cancel stays');
+  assert.equal(sec.querySelector('.mem-text').value, 'unsaved\n');
+  // Escape goes through the same guard.
+  doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await tick();
+  assert.equal(doc.getElementById('confirm-modal').classList.contains('hidden'), false, 'Escape asks too');
+  click(window, doc.getElementById('confirm-ok'));
+  await tick(); await tick(); await tick();
+  assert.equal(window.location.hash, '#projects');
+  assert.equal(doc.getElementById('proj-shell').classList.contains('detail-open'), false);
+});
+
+test('the page keeps its Memory grid while it slides out; it is emptied after the slide', async () => {
+  const { window } = await boot({ fetchHandler: memFetch });
+  await goHash(window, 'projects/alpha-00000001/memory');
+  const doc = window.document;
+  click(window, doc.querySelector('#proj-detail .pd-back'));
+  await tick(); await tick();
+  assert.equal(doc.getElementById('proj-shell').classList.contains('detail-open'), false, 'the slide started');
+  assert.ok(doc.querySelector('#proj-detail .mem-host .mem-row'), 'the grid is still painted during the slide');
+  await new Promise((r) => setTimeout(r, 700));   // jsdom has no transitionend: the 600 ms fallback clears
+  assert.equal(doc.getElementById('proj-detail').innerHTML, '', 'emptied after the slide');
+});
+
 // ---- Project detail page (2026-09-13-project-detail-design.md) ----
 
 const cssText = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');

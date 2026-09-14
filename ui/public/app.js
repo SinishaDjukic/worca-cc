@@ -7432,7 +7432,7 @@ function openProjDetail(p, parsed, { instant = false } = {}) {
 
   // Handlers close over the KEY and re-resolve the row at click time: a projects-changed
   // rebuild replaces the object in state.projects.
-  screen.querySelector('.pd-back').addEventListener('click', () => { location.hash = 'projects'; });
+  screen.querySelector('.pd-back').addEventListener('click', () => { void leaveProjDetail(); });
   screen.querySelector('.pd-new').addEventListener('click', () => { newPipelineForProject(p.key); });
   screen.querySelector('.pd-history').addEventListener('click', () => { openHistoryForProject(p.key); });
   screen.querySelector('.pd-remove').addEventListener('click', () => { void removeProjectFromPage(p.key); });
@@ -7485,12 +7485,38 @@ function teardownProjDetail() {
   projDetail = null;
 }
 
+// Back / Escape from a page whose Memory editor holds an unsaved draft asks first. Only the two
+// exits the page itself owns pass through here — browser Back and a typed hash cannot be
+// intercepted and leave without asking, exactly as the retired list expander did.
+async function leaveProjDetail() {
+  const ctl = projDetail && projDetail.memCtl;
+  if (ctl && ctl.dirty()) {
+    // One macrotask later, past the keystroke that got us here: the modal registers its own
+    // document keydown listener while opening, and the Escape arm below runs in the CAPTURE pass
+    // of that same keydown — the bubble pass at document would hand the key to the fresh listener
+    // and close the prompt before it was seen. A click never reaches the modal's listeners.
+    await new Promise((r) => setTimeout(r, 0));
+    if (!projDetail || projDetail.memCtl !== ctl) return;   // the page went away meanwhile
+    const ok = await confirmModal({
+      title: 'Discard changes',
+      message: 'The memory editor has unsaved changes. Leave the page and discard them?',
+      confirmLabel: 'Discard', danger: true,
+    });
+    if (!ok || !projDetail) return;   // cancelled, or the page went away while the modal was up
+  }
+  location.hash = 'projects';
+}
+
 function closeProjDetail({ instant = false } = {}) {
   const shell = el.projShell;
   const host = el.projDetail;
   if (!shell || !host) return;
   if (!shell.classList.contains('detail-open')) { projReturnFocus = ''; teardownProjDetail(); return; }
-  teardownProjDetail();
+  // The Memory controller stays mounted for the slide: the page must slide out showing its
+  // content, not a blank body (closeHistDetail keeps its graph mounts the same way). `clear`
+  // below destroys it; the state is dropped NOW so a frame poke paints nothing meanwhile.
+  const ctl = projDetail && projDetail.memCtl;
+  projDetail = null;
   host.setAttribute('aria-hidden', 'true');
   // Un-inert the list FIRST — focus() is a no-op inside an inert subtree.
   const list = shell.querySelector('.proj-screen-list');
@@ -7508,13 +7534,16 @@ function closeProjDetail({ instant = false } = {}) {
   if (instant) {
     shell.classList.add('no-anim');
     shell.classList.remove('detail-open');
+    if (ctl) ctl.destroy();
     host.innerHTML = '';
     rafSafe(() => shell.classList.remove('no-anim'));
     return;
   }
   shell.classList.remove('detail-open');
-  // Empty the screen after the slide (or via the timeout under reduced motion / jsdom).
-  const clear = () => { if (!projDetail) host.innerHTML = ''; };
+  // Empty the screen after the slide (or via the timeout under reduced motion / jsdom). The
+  // closed page's controller is destroyed either way; the host is emptied only if no NEW page
+  // was mounted meanwhile (a page->page hop replaces the screen itself).
+  const clear = () => { if (ctl) ctl.destroy(); if (!projDetail) host.innerHTML = ''; };
   const onEnd = (e) => {
     if (e.target !== host || e.propertyName !== 'transform') return;
     host.removeEventListener('transitionend', onEnd);
@@ -15625,7 +15654,7 @@ document.addEventListener('keydown', (e) => {
   if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
   if (el.projectAddModal && !el.projectAddModal.classList.contains('hidden')) return;
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('.mem-editor')) return;
-  location.hash = 'projects';
+  void leaveProjDetail();
 }, true);
 
 async function viewPipeline(projectDir, id, title, record) {
