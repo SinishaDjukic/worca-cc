@@ -178,6 +178,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     destroyed: false,
     lastAnswerRender: 0,
     rowEls: null,
+    seenRows: new Set(),      // message ids the transcript has already shown — see renderTranscript
     cardEls: null,
     cardOptions: null,
     catalogLoading: null,
@@ -1596,6 +1597,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     loadGen += 1;                       // a load still in flight must not resurrect the old thread
     st.threadId = null;
     st.model = null;
+    st.seenRows = new Set();            // a different chat: its rows have never been shown
     st.subscribedFor = null;
     stopElapsed();
     storeThread(null);
@@ -2859,45 +2861,92 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (entry) entry.update(row);
   }
 
+  const isLiveRow = (row) => !!(row && st.model && st.model.live() && st.model.live().messageId === row.id);
+
+  /**
+   * The block above the answer, with an `update(row)` that patches it IN PLACE:
+   * the head is re-stated (one line, fixed height), a tool/agent row already on
+   * screen is replaced by its own fresh node, and a new one is appended into its
+   * group. Nothing outside `.ask-activity` is touched, so an ask-label or
+   * ask-block frame can no longer re-create the message around the text being
+   * read (which replayed the entry animation on every frame of a turn).
+   */
   function buildActivity(row) {
-    const isLive = !!(st.model && st.model.live() && st.model.live().messageId === row.id);
     const activity = make('div', 'ask-activity');
     const head = make('div', 'ask-activity-head');
-    const stopped = row.status === 'stopped' || row.status === 'error';
-    if (isLive) head.appendChild(make('span', 'ask-activity-label', 'Thinking'));
-    else if (!stopped) head.appendChild(make('span', 'ask-activity-label', 'Done'));
-    head.appendChild(make('span', `ask-dot${isLive ? ' ask-dot-run' : row.status === 'error' ? '' : ' ask-dot-done'}`));
-    // The head names its state in one word ahead of the dot — Thinking, Done, or
-    // Stopped after — and nothing more while the turn is live: the orb row at the
-    // bottom of the message owns the elapsed and the meter, and printing either
-    // set twice is the noise this replaced. A turn that ended badly says so
-    // instead of Done; nothing else marks a stop.
-    if (!isLive) {
-      if (stopped) head.appendChild(make('span', 'ask-activity-label', 'Stopped after'));
-      head.appendChild(make('span', 'ask-activity-elapsed', fmtElapsed(row.durationMs) || ''));
-      head.appendChild(make('span', 'ask-activity-spacer'));
-      const meter = [fmtCtx(row.usage && row.usage.ctx), fmtUsd(row.costUsd)].filter(Boolean).join(' · ');
-      head.appendChild(make('span', 'ask-activity-meter', meter));
-    }
     activity.appendChild(head);
-    const tools = (row.blocks || []).filter((b) => b && b.kind === 'tool');
-    for (const b of tools) activity.appendChild(toolRow(b));
-    const agents = (row.blocks || []).filter((b) => b && b.kind === 'agent');
-    if (agents.length) {
-      const sect = make('div', 'ask-agents');
-      const cap = make('div', 'ask-agents-cap');
-      cap.appendChild(make('span', null, 'Sub-agents'));
-      cap.appendChild(make('span', 'ask-agents-count', String(agents.length)));
-      sect.appendChild(cap);
-      for (const b of agents) sect.appendChild(agentRow(b));
-      activity.appendChild(sect);
+    const toolEls = new Map();     // block id → the row currently rendered for it
+    const agentEls = new Map();
+    let agents = null;             // the .ask-agents section, once the row has one
+    let agentsCount = null;
+
+    function renderHead(r) {
+      const isLive = isLiveRow(r);
+      const stopped = r.status === 'stopped' || r.status === 'error';
+      const parts = [];
+      if (isLive) parts.push(make('span', 'ask-activity-label', 'Thinking'));
+      else if (!stopped) parts.push(make('span', 'ask-activity-label', 'Done'));
+      parts.push(make('span', `ask-dot${isLive ? ' ask-dot-run' : r.status === 'error' ? '' : ' ask-dot-done'}`));
+      // The head names its state in one word ahead of the dot — Thinking, Done, or
+      // Stopped after — and nothing more while the turn is live: the orb row at the
+      // bottom of the message owns the elapsed and the meter, and printing either
+      // set twice is the noise this replaced. A turn that ended badly says so
+      // instead of Done; nothing else marks a stop.
+      if (!isLive) {
+        if (stopped) parts.push(make('span', 'ask-activity-label', 'Stopped after'));
+        parts.push(make('span', 'ask-activity-elapsed', fmtElapsed(r.durationMs) || ''));
+        parts.push(make('span', 'ask-activity-spacer'));
+        const meter = [fmtCtx(r.usage && r.usage.ctx), fmtUsd(r.costUsd)].filter(Boolean).join(' · ');
+        parts.push(make('span', 'ask-activity-meter', meter));
+      }
+      head.replaceChildren(...parts);
     }
-    return { el: activity };
+
+    /** Re-render the tracked rows of one kind against `blocks`, in order, inside `host` before `before`. */
+    function syncRows(blocks, els, build, host, before) {
+      const keep = new Set();
+      for (const b of blocks) {
+        const fresh = build(b);
+        const prev = els.get(b.id);
+        if (prev) prev.replaceWith(fresh);      // a block upserts by id: same slot, new node
+        else host.insertBefore(fresh, before);
+        els.set(b.id, fresh);
+        keep.add(b.id);
+      }
+      for (const [id, node] of els) if (!keep.has(id)) { node.remove(); els.delete(id); }
+    }
+
+    function sync(r) {
+      renderHead(r);
+      const blocks = Array.isArray(r.blocks) ? r.blocks : [];
+      const agentBlocks = blocks.filter((b) => b && b.kind === 'agent');
+      if (agentBlocks.length && !agents) {
+        agents = make('div', 'ask-agents');
+        const cap = make('div', 'ask-agents-cap');
+        cap.appendChild(make('span', null, 'Sub-agents'));
+        agentsCount = make('span', 'ask-agents-count', '');
+        cap.appendChild(agentsCount);
+        agents.appendChild(cap);
+        activity.appendChild(agents);
+      }
+      // Tool rows go before the sub-agent section, so a tool that lands after the
+      // first agent still slots into its own group.
+      syncRows(blocks.filter((b) => b && b.kind === 'tool'), toolEls, toolRow, activity, agents);
+      if (agents) {
+        agentsCount.textContent = String(agentBlocks.length);
+        syncRows(agentBlocks, agentEls, agentRow, agents, null);
+        if (!agentBlocks.length) { agents.remove(); agents = null; agentsCount = null; }
+      }
+    }
+
+    sync(row);
+    return { el: activity, update: sync };
   }
 
-  // The ONE orb: created on first live turn and re-parented into each rebuilt
-  // live row. Rebuilding it per row would restart the canvas — and since a tool
-  // block rebuilds the row, the sphere would visibly snap back mid-turn.
+  // The ONE orb: created on first live turn and re-parented into each live row a
+  // STRUCTURAL repaint rebuilds (a tool block no longer rebuilds the row — see
+  // buildMessage's patch path). Rebuilding it per row would restart the canvas
+  // and the sphere would visibly snap back mid-turn.
   function ensureThinking() {
     if (el.thinking) return el.thinking;
     el.orb = createThinkingOrb({ doc, win, size: 28.5 });
@@ -2956,8 +3005,30 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     scheduleFlush();
   }
 
+  /**
+   * What the region BELOW the answer is made of — the notices, the cards, the
+   * error line and whether the orb row belongs here. Rebuilding that region on
+   * every frame would re-insert the cards inside the message, and a re-inserted
+   * element replays its OWN entry animation (.ask-rp/.ask-wfcard/.ask-rc all
+   * carry wr-rise), so it is rebuilt only when this string changes.
+   */
+  function tailSignature(row) {
+    const parts = [];
+    for (const b of row.blocks || []) {
+      if (!b) continue;
+      if (b.kind === 'notice') parts.push(`n:${b.id ?? ''}:${b.text || ''}:${b.href || ''}`);
+      else if (b.kind === 'card') parts.push(`c:${b.id}:${b.state || ''}:${(b.card && b.card.type) || ''}:${b.runId || ''}:${b.error || ''}`);
+    }
+    parts.push(`r:${row.status || ''}:${row.errorMessage || ''}:${isLiveRow(row) ? 1 : 0}`);
+    return parts.join('|');
+  }
+
   function buildMessage(row) {
     const wrap = make('div', `ask-msg ask-msg-${row.role}`);
+    // The model REPLACES a row object on upsert (ask-model upsertRow), so every
+    // closure below reads the latest one through this, never the captured `row`.
+    let cur = row;
+    let patch = null;   // the in-place update for an assistant row; null ⇒ update() rebuilds
     let renderAnswer = null;
     if (row.role === 'user') {
       // PD6: a synthetic row (a workflow-card event) is a notice, never a bubble — its text is the model-facing event line.
@@ -2979,35 +3050,55 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (notices.length) for (const b of notices) wrap.appendChild(buildNotice(b));
       else wrap.appendChild(buildNotice({ text: row.text }));
     } else {
-      wrap.appendChild(buildActivity(row).el);
+      const activity = buildActivity(row);
+      wrap.appendChild(activity.el);
       const answer = make('div', 'ask-answer');
       wrap.appendChild(answer);
-      renderAnswer = () => renderAnswerInto(answer, row);
+      renderAnswer = () => renderAnswerInto(answer, cur);
       renderAnswer();
-      for (const b of row.blocks || []) {
-        if (!b) continue;
-        if (b.kind === 'notice') wrap.appendChild(buildNotice(b));
-        else if (b.kind === 'card') wrap.appendChild(buildCard(b, row));
-      }
-      if (row.status === 'error') {
-        const explained = (row.blocks || []).some((b) => b && b.kind === 'notice');
-        if (row.errorMessage) wrap.appendChild(make('div', 'ask-error-line', row.errorMessage));
-        else if (!explained) wrap.appendChild(make('div', 'ask-error-line', 'This turn ended with an error.'));
-      }
-      if (st.model && st.model.live() && st.model.live().messageId === row.id) {
-        wrap.appendChild(ensureThinking());   // last child: the bottom of the message
-        el.elapsed = el.thinkingElapsed;      // the ONE live elapsed node
-        // Idempotent, and the only re-arm on the adoption path: a thread whose
-        // ask-start the ring buffer already evicted goes live without ever
-        // passing through startElapsed(), and would otherwise show a dead orb.
-        el.orb.start();
-        updateThinking();
-      }
+      let tailSig = null;
+      const renderTail = () => {
+        const sig = tailSignature(cur);
+        if (sig === tailSig) return;
+        tailSig = sig;
+        while (wrap.lastChild && wrap.lastChild !== answer) wrap.removeChild(wrap.lastChild);
+        for (const b of cur.blocks || []) {
+          if (!b) continue;
+          if (b.kind === 'notice') wrap.appendChild(buildNotice(b));
+          else if (b.kind === 'card') wrap.appendChild(buildCard(b, cur));
+        }
+        if (cur.status === 'error') {
+          const explained = (cur.blocks || []).some((b) => b && b.kind === 'notice');
+          if (cur.errorMessage) wrap.appendChild(make('div', 'ask-error-line', cur.errorMessage));
+          else if (!explained) wrap.appendChild(make('div', 'ask-error-line', 'This turn ended with an error.'));
+        }
+        if (isLiveRow(cur)) {
+          wrap.appendChild(ensureThinking());   // last child: the bottom of the message
+          el.elapsed = el.thinkingElapsed;      // the ONE live elapsed node
+          // Idempotent, and the only re-arm on the adoption path: a thread whose
+          // ask-start the ring buffer already evicted goes live without ever
+          // passing through startElapsed(), and would otherwise show a dead orb.
+          el.orb.start();
+          updateThinking();
+        }
+      };
+      renderTail();
+      // The answer is deliberately NOT re-rendered here: its text only ever moves
+      // on `dirty.answer` (renderAnswerFor) or with `dirty.structure`, and
+      // replacing its subtree per tool row is exactly what defeated the browser's
+      // scroll anchoring mid-turn.
+      patch = (row2) => { cur = row2; activity.update(row2); renderTail(); };
     }
     const entry = {
       el: wrap,
       renderAnswer,
       update(row2) {
+        // An assistant row is PATCHED. Rebuilding it handed the column a brand-new
+        // `.ask-msg` on every ask-label and every ask-block frame, so the whole
+        // message — entry animation, answer subtree and cards — was re-created
+        // under the text being read. A user/system row carries nothing live and
+        // changes only through a structural repaint, so it still rebuilds.
+        if (patch) { patch(row2); return; }
         const fresh = buildMessage(row2);
         wrap.replaceWith(fresh.el);
         st.rowEls.set(row2.id, fresh);
@@ -3026,6 +3117,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!st.model) return;
     for (const row of st.model.messages()) {
       const entry = buildMessage(row);
+      // The entry animation belongs to a message this transcript has never shown.
+      // ask-start, ask-done and every ask-message rebuild the WHOLE column, so
+      // without the ledger the rows already on screen would rise and fade in
+      // again — including on a mid-turn resync, which repaints the same thread.
+      // The ledger is written at the END of a flush, not here: see flush().
+      if (!st.seenRows.has(row.id)) entry.el.setAttribute('data-ask-enter', '');
       st.rowEls.set(row.id, entry);
       el.transcriptCol.appendChild(entry.el);
     }
@@ -3047,6 +3144,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     let snap = null;
     try { snap = await res.json(); } catch { return null; }
     if (gen !== loadGen || st.destroyed) return null;
+    // A SWITCH starts a fresh ledger, so the new chat rises in. A resync or a
+    // reconnect re-loads the SAME thread and must keep it: those repaint rows the
+    // user is already reading, mid-turn.
+    if (st.threadId !== id) st.seenRows = new Set();
     st.threadId = id;
     st.model = createThreadModel({ threadId: id });
     st.model.load(snap);
@@ -3264,6 +3365,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.runPoked) repaintProgressCards();
     relayoutCards();
     applyPin();
+    // A row counts as SHOWN once a flush ends with it in the column. Marking it
+    // inside renderTranscript() would be too early: loadThread paints once and the
+    // structural flush behind it repaints immediately, and the browser only ever
+    // shows the second element — a freshly loaded thread would never rise in.
+    if (st.rowEls) for (const id of st.rowEls.keys()) st.seenRows.add(id);
   }
 
   function updatePinFromScroll() {
@@ -3274,7 +3380,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function applyPin() {
     if (!st.open) return;
-    if (st.pinned) el.transcript.scrollTop = el.transcript.scrollHeight;
+    if (st.pinned) {
+      const t = el.transcript;
+      // Only when the bottom has actually moved away. flush() runs this on EVERY
+      // rAF of a stream, and an unconditional write re-snapped the scrollport on
+      // each one — which is what turned a growing answer into a twitch.
+      const max = t.scrollHeight - t.clientHeight;
+      if (max > 0 && t.scrollTop < max) t.scrollTop = t.scrollHeight;
+    }
     if (el.jump) el.jump.hidden = st.pinned;
   }
 
