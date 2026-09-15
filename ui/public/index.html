@@ -479,6 +479,12 @@
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
                     <span class="rd-btn-label">Stop</span>
                   </button>
+                  <!-- Report this run: hidden until the run reaches a terminal state
+                       (paintRdTerminal), because a mid-flight run has no totals to
+                       report. paintRdTerminal appends .rd-history-link after this
+                       button, so the painted row reads
+                       Stop · Report this run · View in History. -->
+                  <button type="button" class="rd-report btn-ghost" hidden>Report this run</button>
                 </div>
                 <!-- Inline error slot for failed actions, on the HEADER so it is never
                      pushed below the fold by the graph or a tab body (mirrors .hd-error). -->
@@ -637,6 +643,11 @@
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
                     <span class="hd-btn-label">Archive</span>
                   </button>
+                  <!-- Report this run: a History row is finished by definition, but a
+                       still-live row also appears here, so setupHdActions unhides it
+                       only for a deletable entry — the same gate .hd-archive uses.
+                       Ships `hidden`; nothing else ever re-hides it. -->
+                  <button type="button" class="hd-report btn-ghost" hidden>Report this run</button>
                 </div>
                 <!-- The inline error lives on the HEADER, not in .hd-body, so an archive
                      failure is not pushed below the fold by a long Diff or Logs tab.
@@ -1319,6 +1330,22 @@
                    href="https://github.com/SinishaDjukic/worca-cc"
                    target="_blank" rel="noopener noreferrer">github.com/SinishaDjukic/worca-cc</a>
               </div>
+              <div class="about-row">
+                <span class="about-key">Feedback</span>
+                <!-- hrefs are repainted from app.bugsUrl (package.json bugs.url); the
+                     static fallback keeps the links usable before /api/settings lands.
+                     Anchors only: ui-settings-about.test.mjs forbids a control here,
+                     and neither the label nor the href carries a version string. -->
+                <a class="about-val about-link" id="aboutBugLink"
+                   href="https://github.com/SinishaDjukic/worca-cc/issues/new?labels=bug"
+                   target="_blank" rel="noopener noreferrer">Report a bug</a>
+              </div>
+              <div class="about-row">
+                <span class="about-key"></span>
+                <a class="about-val about-link" id="aboutIdeaLink"
+                   href="https://github.com/SinishaDjukic/worca-cc/issues/new?labels=enhancement"
+                   target="_blank" rel="noopener noreferrer">Suggest an improvement</a>
+              </div>
             </section>
           </section>
           <!-- /pane general -->
@@ -1439,6 +1466,46 @@
         <div class="confirm-actions">
           <button type="button" id="confirm-cancel" class="btn btn-ghost btn-mini">Cancel</button>
           <button type="button" id="confirm-ok" class="btn btn-primary btn-mini">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Report this run ===== -->
+    <!-- The <pre> shows the EXACT payload that will leave the machine; nothing is
+         sent without a click. Follows the #viewer-card shape (scrollable monospace
+         body) plus the #export-modal checkbox rows.
+         NOTE: any new overlay must also be added to the two capture-phase Escape
+         guards in app.js (History and Running) or Escape will close it AND navigate
+         the detail screen back to its list. -->
+    <div id="report-modal" class="viewer-modal report-modal hidden" role="dialog" aria-modal="true" aria-labelledby="report-title">
+      <div class="card">
+        <div class="card-head">
+          <h2 id="report-title">Report this run</h2>
+          <button type="button" id="report-close" class="btn btn-mini">Close</button>
+        </div>
+        <p class="confirm-message">Worca sends nothing on its own. Everything below stays on this machine until you press a button.</p>
+        <div class="report-field">
+          <label for="report-reason">What went wrong?</label>
+          <select id="report-reason" class="select"></select>
+        </div>
+        <div class="report-field">
+          <label for="report-expectation">What did you expect? (optional)</label>
+          <textarea id="report-expectation" class="textarea" rows="3" placeholder="What should have happened instead?"></textarea>
+        </div>
+        <div id="report-optins"></div>
+        <div class="report-field">
+          <label for="report-preview">This is exactly what will be sent</label>
+          <pre id="report-preview" class="viewer"></pre>
+        </div>
+        <div class="report-error" hidden></div>
+        <div class="confirm-actions">
+          <button type="button" id="report-copy" class="btn btn-ghost btn-mini">Copy JSON</button>
+          <button type="button" id="report-download" class="btn btn-ghost btn-mini">Download JSON</button>
+          <!-- An <a>, not a button: there is no window.open anywhere in ui/public,
+               and a real anchor gives the browser a genuine user-gesture new tab.
+               app.js strips the href while a rebuild is in flight, so the link can
+               never fire with a payload that disagrees with the preview. -->
+          <a id="report-issue" class="btn btn-primary btn-mini" target="_blank" rel="noopener noreferrer">Open a GitHub issue</a>
         </div>
       </div>
     </div>

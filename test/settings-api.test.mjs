@@ -148,7 +148,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
   }
 });
 
-// The Settings ▸ About card reads these two fields. They are derived from
+// The Settings ▸ About card reads these fields. They are derived from
 // package.json at module load, so a release bump needs no code change; the
 // assertion below is what stops anyone hardcoding a version string.
 test('GET /api/settings carries app identity: version + a browsable repo URL', async () => {
@@ -156,7 +156,8 @@ test('GET /api/settings carries app identity: version + a browsable repo URL', a
   const j = await (await fetch(`${base}/api/settings`)).json();
 
   assert.ok(j.app && typeof j.app === 'object', 'GET carries an `app` block');
-  assert.deepEqual(Object.keys(j.app).sort(), ['releaseUrl', 'repoUrl', 'version'], 'exactly the three About fields');
+  assert.deepEqual(Object.keys(j.app).sort(), ['bugsUrl', 'releaseUrl', 'repoUrl', 'version'],
+    'exactly the four About fields');
   assert.equal(j.app.version, pkg.version, 'straight from package.json — never a literal');
   // Derived, not hardcoded: this stays true if the repo is ever moved or renamed.
   assert.equal(j.app.repoUrl, pkg.repository.url.replace(/^git\+/, '').replace(/\.git$/, ''),

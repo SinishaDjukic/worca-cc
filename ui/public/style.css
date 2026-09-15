@@ -4429,3 +4429,23 @@ input.gv-name:focus-visible{outline:none;}
 .run-strip .rchip.is-active{color:var(--c);}
 .run-strip .rchip.is-paused{color:var(--amber-ink);}
 .run-strip .rchip.is-error,.run-strip .rchip.is-stopped{color:var(--red-ink);}
+
+/* ---- Report this run modal ---- */
+/* Wider than a confirm (it carries a JSON preview), narrower than the viewer. */
+.report-modal .card{width:min(680px,100%);}
+.report-field{margin-bottom:14px;}
+.report-field > label{display:block;font-weight:600;font-size:12.5px;margin-bottom:6px;}
+.report-field textarea.textarea{resize:vertical;min-height:64px;font-size:13.5px;}
+.report-modal #report-preview{max-height:300px;margin:0;font-size:12px;}
+.report-optins .confirm-checkbox + .confirm-checkbox{margin-top:8px;}
+.report-optin-hint{display:block;margin-top:3px;color:var(--ink-2);font-size:11.5px;line-height:1.4;}
+.report-error{margin:10px 0 0;color:var(--red-ink);font-size:12.5px;}
+.report-error[hidden]{display:none;}
+/* The issue link is an <a> so it opens in a real new tab; keep it button-shaped.
+   SCOPED to .report-modal: an unscoped `.confirm-actions a.btn` would reach into every
+   confirm/export/stop dialog in the app, and the :not([href]) rule below would silently
+   grey out any future anchor another modal adds before it has an href. */
+.report-modal .confirm-actions a.btn{display:inline-flex;align-items:center;text-decoration:none;}
+/* No href => the preview is still building. Make that legible rather than letting a
+   dead-looking button sit there (D24). */
+.report-modal .confirm-actions a.btn:not([href]){opacity:.5;pointer-events:none;}
