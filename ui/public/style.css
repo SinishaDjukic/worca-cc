@@ -3175,12 +3175,23 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-icon-btn:hover{background:var(--field);color:var(--ink);}
 .ask-icon-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
+/* `overflow-anchor:auto` is the UA default, stated here on purpose: it is the
+   only thing that keeps the text being read still while the activity block above
+   it grows a tool row mid-turn, and a later `overflow-anchor:none` anywhere up
+   the chain would silently switch it off. */
 .ask-transcript{position:relative;flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
-  padding:18px 20px 8px;}
+  padding:18px 20px 8px;overflow-anchor:auto;}
 /* .ask-transcript is only the scrollport; every message lands in this column
    (ask-panel.mjs renderTranscript), which carries the stack + gap and the cap. */
 .ask-transcript-col{width:100%;max-width:var(--ask-col-max);margin-inline:auto;display:flex;flex-direction:column;gap:16px;}
-.ask-msg{display:flex;flex-direction:column;gap:6px;animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
+.ask-msg{display:flex;flex-direction:column;gap:6px;}
+/* The entry rise is OPT-IN, per message. A live row is patched in place, but a
+   structural flush (ask-start, ask-done, a new message) still rebuilds the whole
+   column — so an `animation` on the bare `.ask-msg` replayed the 10px rise and
+   the fade on every message already on screen. ask-panel.mjs stamps the
+   attribute from its ledger of rows the transcript has shown before, and on
+   nothing else. */
+.ask-msg[data-ask-enter]{animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
 .ask-user-bubble{align-self:flex-end;max-width:78%;padding:10px 14px;border-radius:16px 16px 4px 16px;
   background:var(--field);color:var(--ink);font-size:13.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}
 .ask-user-pills{justify-content:flex-end;margin-top:0;}
