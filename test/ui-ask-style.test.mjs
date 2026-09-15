@@ -55,6 +55,22 @@ test('ui-ask-style: the sheet uses wr-rise and the card radius token', () => {
   assert.match(sheet, /height:min\(669px/);
 });
 
+test('ui-ask-style: the message rise is opt-in, so a rebuilt row cannot replay it', () => {
+  const msg = ruleBody('.ask-msg');
+  assert.ok(msg, '.ask-msg rule exists');
+  assert.ok(!/animation:/.test(msg), 'the bare row carries NO entry animation — every structural flush rebuilds it');
+  assert.match(ruleBody('.ask-msg[data-ask-enter]') || '', /animation:wr-rise/, 'the rise lives on the stamped twin');
+  // ask-panel.mjs stamps the attribute from its own ledger of rows already shown.
+  const anim = css.indexOf('.ask-msg[data-ask-enter]');
+  assert.ok(anim > 0 && anim < css.lastIndexOf('@media (prefers-reduced-motion: reduce)'),
+    'the twin still precedes the final reduced-motion block that neutralises it');
+});
+
+test('ui-ask-style: the transcript scrollport keeps scroll anchoring', () => {
+  assert.match(ruleBody('.ask-transcript') || '', /overflow-anchor:auto/,
+    'an ancestor turning anchoring off would let a growing activity block shove the text being read');
+});
+
 test('ui-ask-style: hidden twins exist for the hideable ask elements', () => {
   for (const sel of ['.ask-sheet[hidden]', '.ask-pill[hidden]', '.ask-jump[hidden]', '.ask-composer-msg[hidden]', '.ask-chips[hidden]',
     '.ask-wt-btn[hidden]']) {   // shares display:flex from .ask-agents-btn, so without the twin it never hides (jsdom cannot catch it)

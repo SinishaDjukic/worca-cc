@@ -48,6 +48,7 @@ test('the recipe: cwd, dontAsk, Task + Read/Grep/Glob built-ins, worca grant, sc
   assert.deepEqual(o.envAllowlist, ['SSH_AUTH_SOCK'], 'P4 §12 E3: ssh-remote fetch credentials (there is no Bash/sub-shell to leak the socket to)');
   assert.deepEqual(o.modelEnv, { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' }, 'probe F1: foreground Task sub-agents');
   assert.deepEqual(ASK_SPAWN_ENV, { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' });
+  assert.equal(o.addDirs, undefined, 'no memory dir ⇒ no --add-dir and no env override');
   assert.equal(o.strictMcpConfig, true);
   assert.deepEqual(o.settingSources, ['project']);
   assert.equal(o.disableSlashCommands, true);
@@ -140,7 +141,7 @@ test('mock markers go to the SYSTEM prompt only (never the user prompt)', () => 
   assert.ok(!buildMockMarkers({ a: 'x\ny' }).split('\n').some((l) => l.startsWith('MOCK_ASK_CARD') && !l.endsWith('}')), 'JSON.stringify keeps the card on one line');
 });
 
-test('buildClaudeArgs over the recipe carries every flag and never --add-dir', () => {
+test('buildClaudeArgs over the recipe carries every flag and --add-dir only with a memoryDir', () => {
   const args = buildClaudeArgs(buildAskSpawnOptions(base()));
   const has = (flag, value) => { const i = args.indexOf(flag); assert.ok(i > -1, `${flag} present`); if (value !== undefined) assert.equal(args[i + 1], value, `${flag} value`); };
   has('--permission-mode', 'dontAsk');
@@ -161,6 +162,19 @@ test('buildClaudeArgs over the recipe carries every flag and never --add-dir', (
   assert.deepEqual(settings.permissions.deny, [...ASK_DENY_RULES]);
   const noCap = buildClaudeArgs(buildAskSpawnOptions({ ...base(), limits: { maxTurns: 40, maxBudgetUsd: null } }));
   assert.ok(!noCap.includes('--max-budget-usd'));
+  const withMem = buildClaudeArgs(buildAskSpawnOptions({ ...base(), memoryDir: '/m/x' }));
+  assert.deepEqual(withMem.slice(-2), ['--add-dir', '/m/x']);
+});
+
+import { ASK_MEMORY_ENV } from '../src/core/ask/spawn.mjs';
+test('memoryDir: the mount rides --add-dir plus the CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 override (probes J/J2: the documented override; without it loading depends on the setting sources)', () => {
+  const o = buildAskSpawnOptions({ ...base(), memoryDir: join(FAKE_HOME, 'ask', 'memory', 'proj-00000001') });
+  assert.deepEqual(o.addDirs, [join(FAKE_HOME, 'ask', 'memory', 'proj-00000001')]);
+  assert.deepEqual(o.modelEnv, { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1', CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1' });
+  assert.deepEqual(ASK_MEMORY_ENV, { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1' });
+  assert.equal(o.cwd, join(FAKE_HOME, 'tmp', 'ask'), 'the cwd is unchanged — one Claude Code project slug for every thread');
+  const without = buildAskSpawnOptions(base());
+  assert.deepEqual(Object.keys(without.modelEnv), ['CLAUDE_CODE_DISABLE_BACKGROUND_TASKS']);
 });
 
 test('fake bin: the whole recipe reaches the spawned argv through runClaude (five gates)', POSIX_SHIM, async () => {
@@ -227,4 +241,21 @@ test('fake bin env dump: the sandbox var reaches the SPAWNED env and every WORCA
   assert.equal(worcaLeaks.length, 0, `WORCA_* scrubbed (host-guard PID excepted): ${worcaLeaks}`);
   assert.ok(env.includes(`WORCA_HOST_PID=${process.pid}`), 'the host-guard PID deliberately rides scrubbed spawns (host-guard.mjs)');
   assert.ok(env.some((l) => l.startsWith('PATH=')) && env.some((l) => l.startsWith('HOME=')), 'base vars kept');
+});
+
+test('fake bin: a memoryDir puts CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 in the SPAWNED env and --add-dir in the spawned argv (the override is what makes an added dir load its rules — probes J/J2)', POSIX_SHIM, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'worca-ask-spawn-mem-'));
+  const envOut = join(dir, 'env.txt');
+  const argvOut = join(dir, 'argv.txt');
+  const bin = join(dir, 'fake-claude.sh');
+  await writeFile(bin, `#!/bin/sh\nenv > ${JSON.stringify(envOut)}\nfor a in "$@"; do printf '%s\\0' "$a" >> ${JSON.stringify(argvOut)}; done\nexit 0\n`, 'utf8');
+  await chmod(bin, 0o755);
+  const memoryDir = join(dir, 'mount');
+  const o = buildAskSpawnOptions({ ...base(), scratchDir: dir, mcpConfigPath: join(dir, 'mcp.json'), memoryDir });
+  await runClaude({ ...o, bin });
+  const env = (await readFile(envOut, 'utf8')).split('\n').filter(Boolean);
+  assert.ok(env.includes('CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1'),
+    `the override reaches the spawned env: ${env.filter((l) => l.startsWith('CLAUDE_')).join(' ')}`);
+  const argv = (await readFile(argvOut, 'utf8')).split('\0'); argv.pop();
+  assert.deepEqual(argv.slice(-2), ['--add-dir', memoryDir], 'and --add-dir is the last pair of the argv');
 });

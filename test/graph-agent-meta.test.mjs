@@ -107,7 +107,9 @@ test('runner obligations and verdict shape', () => {
 });
 
 test('capability fields', () => {
-  assert.ok(errs(base({ sideEffect: 'files' })).includes('sideEffect must be "code" when present'));
+  assert.ok(errs(base({ sideEffect: 'files' })).includes('sideEffect must be one of code, memory'));
+  assert.deepEqual(errs(base({ sideEffect: 'memory' })), [], 'the memory side effect is a legal value');
+  assert.equal(normalizeAgentMeta(base({ sideEffect: 'memory' })).meta.sideEffect, 'memory', 'and it is written through');
   assert.ok(errs(base({ workspaceStrategy: 'ponder' }))
     .includes('workspaceStrategy must be one of explore, task, review'));
   assert.ok(errs(base({ workspaceVariantOf: '9x' })).includes('workspaceVariantOf must be an agent key'));

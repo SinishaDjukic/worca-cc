@@ -37,6 +37,7 @@ test('absent options: argv byte-identical to the baseline', () => {
     ...BASE, allowedTools: ['Read', 'Bash'],
     tools: undefined, strictMcpConfig: undefined, settingSources: undefined, disableSlashCommands: undefined,
     includePartialMessages: undefined, maxTurns: undefined, maxBudgetUsd: undefined, appendSubagentSystemPrompt: undefined,
+    addDirs: undefined,
   });
   assert.deepEqual(args, BASELINE);
 });
@@ -55,6 +56,7 @@ test('every flag, in the fixed order, appended after the legacy block', () => {
     ...BASE, allowedTools: ['Task'],
     tools: ['Task'], strictMcpConfig: true, settingSources: ['project'], disableSlashCommands: true,
     includePartialMessages: true, maxTurns: 40, maxBudgetUsd: 2, appendSubagentSystemPrompt: 'NOTE',
+    addDirs: ['/m/one', '/m/two'],
   });
   assert.deepEqual(args, [
     '-p', 'p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits',
@@ -62,6 +64,7 @@ test('every flag, in the fixed order, appended after the legacy block', () => {
     '--tools', 'Task', '--strict-mcp-config', '--setting-sources', 'project', '--disable-slash-commands',
     '--include-partial-messages', '--max-turns', '40', '--max-budget-usd', '2',
     '--append-subagent-system-prompt', 'NOTE',
+    '--add-dir', '/m/one', '--add-dir', '/m/two',
   ]);
 });
 
@@ -69,9 +72,11 @@ test('false / cleared / invalid values emit nothing', () => {
   const args = buildClaudeArgs({
     ...BASE, allowedTools: ['Read', 'Bash'],
     strictMcpConfig: false, settingSources: [], disableSlashCommands: false, includePartialMessages: false,
-    maxTurns: 0, maxBudgetUsd: null, appendSubagentSystemPrompt: '',
+    maxTurns: 0, maxBudgetUsd: null, appendSubagentSystemPrompt: '', addDirs: [],
   });
   assert.deepEqual(args, BASELINE);
+  assert.deepEqual(buildClaudeArgs({ ...BASE, allowedTools: ['Read', 'Bash'], addDirs: [1, ''] }), BASELINE,
+    'no usable dir name ⇒ no --add-dir at all');
   assert.deepEqual(buildClaudeArgs({ ...BASE, allowedTools: ['Read', 'Bash'], maxTurns: 2.5, maxBudgetUsd: -1 }), BASELINE);
   assert.deepEqual(buildClaudeArgs({ ...BASE, allowedTools: ['Read', 'Bash'], maxTurns: '40', maxBudgetUsd: '2' }), BASELINE,
     'strings are not numbers: omitted, never coerced');
@@ -115,7 +120,7 @@ async function fakeBin(dir, outFile) {
 /** NUL-split that KEEPS empty arguments (`--tools ""`): only the trailing empty entry is dropped. */
 function splitArgv(dump) { const parts = dump.split('\0'); parts.pop(); return parts; }
 
-test('runClaude forwards all eight options to the spawned argv (five gates)', POSIX_SHIM, async () => {
+test('runClaude forwards all nine options to the spawned argv (five gates)', POSIX_SHIM, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-ask-runner-'));
   const out = join(dir, 'argv.txt');
   const bin = await fakeBin(dir, out);
@@ -123,6 +128,7 @@ test('runClaude forwards all eight options to the spawned argv (five gates)', PO
     cwd: dir, bin, prompt: 'p', allowedTools: ['Task'], mcpServerGrants: ['mcp__worca'],
     tools: [], strictMcpConfig: true, settingSources: ['project'], disableSlashCommands: true,
     includePartialMessages: true, maxTurns: 7, maxBudgetUsd: 1.5, appendSubagentSystemPrompt: 'SANDBOX',
+    addDirs: [join(dir, 'mount')],
   });
   const argv = splitArgv(await readFile(out, 'utf8'));
   assert.equal(argv[argv.indexOf('--allowedTools') + 1], 'Task,mcp__worca');
@@ -134,10 +140,10 @@ test('runClaude forwards all eight options to the spawned argv (five gates)', PO
   assert.equal(argv[argv.indexOf('--max-turns') + 1], '7');
   assert.equal(argv[argv.indexOf('--max-budget-usd') + 1], '1.5');
   assert.equal(argv[argv.indexOf('--append-subagent-system-prompt') + 1], 'SANDBOX');
-  assert.ok(!argv.includes('--add-dir'), 'never --add-dir');
+  assert.deepEqual(argv.slice(-2), ['--add-dir', join(dir, 'mount')], '--add-dir is emitted LAST and reached the spawn');
 });
 
-test('runClaude without the eight options spawns the legacy argv (parity)', POSIX_SHIM, async () => {
+test('runClaude without the nine options spawns the legacy argv (parity)', POSIX_SHIM, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-ask-runner-'));
   const out = join(dir, 'argv.txt');
   const bin = await fakeBin(dir, out);

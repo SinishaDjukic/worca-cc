@@ -167,6 +167,11 @@ test('labelForTool table', () => {
   assert.equal(labelForTool('mcp__worca__resolve_diff_comment', {}), 'Updating a diff comment');
   assert.equal(labelForTool('mcp__worca__delete_diff_comment', {}), 'Deleting a diff comment');
   assert.equal(labelForTool('mcp__worca__reply_to_diff_comment', {}), 'Replying to a diff comment');
+  assert.equal(labelForTool('mcp__worca__list_memory', {}), 'Reading memory');
+  assert.equal(labelForTool('mcp__worca__read_memory', { name: 'testing' }), 'Reading memory: testing');
+  assert.equal(labelForTool('mcp__worca__read_memory', {}), 'Reading memory');
+  assert.equal(labelForTool('mcp__worca__remember', { name: 'style' }), 'Saving memory: style');
+  assert.equal(labelForTool('mcp__worca__forget', { name: 'style' }), 'Removing memory: style');
 
   assert.equal(labelForTool('Task', {}), null);
   assert.equal(labelForTool('Agent', {}), null);
@@ -587,6 +592,28 @@ test('onWorktreeMutation: a throwing sink is contained', () => {
   h.push(atool('msg_1', 'toolu_1', 'mcp__worca__open_worktree', { projectKey: 'p', ref: 'main' }));
   assert.doesNotThrow(() => h.push(uresult('toolu_1', JSON.stringify({ worktreeId: 'wt_00000001' }))));
   assert.equal(h.frames.filter((f) => f.type === 'ask-block').at(-1).block.status, 'done', 'the block still completed');
+});
+
+test('a successful remember/forget calls onMemoryMutation with the scope key from the RESULT; errors, reads and sub-agent double-fires do not', () => {
+  const seen = [];
+  const h = harness({ onMemoryMutation: (e) => seen.push(e) });
+  h.push(atool('msg_1', 'toolu_1', 'mcp__worca__remember', { scope: 'global', name: 'style', body: 'x' }));
+  h.push(uresult('toolu_1', JSON.stringify({ scope: 'global', projectKey: null, scopeKey: 'global', name: 'style', bytes: 9, created: true, mode: 'replace' })));
+  // The refusal carries a VALID result body with a scopeKey, so ONLY `is_error` can stop the poke.
+  h.push(atool('msg_1', 'toolu_2', 'mcp__worca__forget', { scope: 'project', name: 'old' }));
+  h.push(uresult('toolu_2', JSON.stringify({ scope: 'project', projectKey: 'demo-00000001', scopeKey: 'projects/demo-00000001', name: 'old', removed: true }), { isError: true }));
+  // ...and the READ carries one too (B24 does not, by design), so ONLY the tool name can stop it.
+  h.push(atool('msg_1', 'toolu_3', 'mcp__worca__read_memory', { scope: 'global', name: 'style' }));
+  h.push(uresult('toolu_3', JSON.stringify({ scope: 'global', scopeKey: 'global', name: 'style', body: 'x' })));
+  h.push(atool('msg_1', 'toolu_agent', 'Task', { description: 'save it', subagent_type: 'general-purpose' }));
+  h.push(atool('msg_c1', 'toolu_c1', 'mcp__worca__forget', { scope: 'project', name: 'conv' }, 'toolu_agent'));
+  h.push(uresult('toolu_c1', JSON.stringify({ scope: 'project', projectKey: 'demo-00000001', scopeKey: 'projects/demo-00000001', name: 'conv', removed: true }), { ptu: 'toolu_agent' }));
+  h.push(uresult('toolu_agent', [{ type: 'text', text: 'removed' }], { tur: AGENT_TUR }));
+  assert.deepEqual(seen, [{ scope: 'global', tool: 'remember' }, { scope: 'projects/demo-00000001', tool: 'forget' }]);
+  const boom = harness({ onMemoryMutation: () => { throw new Error('sink'); } });
+  boom.push(atool('msg_1', 'toolu_1', 'mcp__worca__remember', { scope: 'global', name: 'a', body: 'x' }));
+  assert.doesNotThrow(() => boom.push(uresult('toolu_1', JSON.stringify({ scopeKey: 'global' }))));
+  assert.equal(boom.frames.filter((f) => f.type === 'ask-block').at(-1).block.status, 'done', 'the block still completed');
 });
 
 test('propose_workflow: label, START hook with the full input, RESULT hook with the raw text + isError; sub-agent calls never fire the hooks', () => {

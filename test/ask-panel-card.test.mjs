@@ -274,7 +274,46 @@ test('ask-panel-card: Open in New Pipeline hands over the CURRENT values', async
   assert.deepEqual(handoffs[0], {
     target: 'project', projectDir: '/repos/proj', workflowId: 'wf_default', guardrailsId: 'normal',
     prompt: 'edited brief', title: 'Fix login', sourceBranch: '', featureBranch: 'worca/fix-login',
+    memoryScope: null,
   });
+});
+
+// Agent memory (§7.3 / B17): a Memory defragment proposal carries the scope it restructures. Both
+// exits of the card must keep it — Start sends it in the run body, Open in New Pipeline hands it to
+// the picker, which would otherwise default to `global` and restructure the wrong scope.
+const MEM_WORKFLOWS = [{ id: 'wf_default', name: 'Default' }, { id: 'wf_memory_defrag', name: 'Memory defragment' }];
+const MEM_CARD = { ...PROJECT_CARD, workflowId: 'wf_memory_defrag', workflowName: 'Memory defragment',
+  memoryScope: 'project', brief: 'Defragment the memory of project proj.', title: 'Memory defragment: proj' };
+function memHandler(rec) {
+  const base = apiHandler(rec);
+  return (url, opts) => {
+    const path = String(url).split('?')[0];
+    if (path === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: MEM_WORKFLOWS }) };
+    if (path === '/api/workflows/wf_memory_defrag') return { ok: true, status: 200, json: async () => ({ ...WF_DEFAULT_TPL, id: 'wf_memory_defrag', name: 'Memory defragment' }) };
+    return base(url, opts);
+  };
+}
+
+test('ask-panel-card: a Memory defragment proposal sends memoryScope with Start', async () => {
+  const rec = {};
+  const ctx = await openWithCard(MEM_CARD, rec, { fetchHandler: memHandler(rec) });
+  assert.equal(ctx.doc.querySelector('.ask-card-workflow').value, 'wf_memory_defrag');
+  ctx.doc.querySelector('[data-ask-card-start]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.equal(rec.runBodies.length, 1);
+  assert.equal(rec.runBodies[0].workflowId, 'wf_memory_defrag');
+  assert.equal(rec.runBodies[0].memoryScope, 'project');
+});
+
+test('ask-panel-card: a Memory defragment proposal hands memoryScope to New Pipeline', async () => {
+  const rec = {};
+  const handed = [];
+  const ctx = await openWithCard(MEM_CARD, rec, { fetchHandler: memHandler(rec), openNewPipeline: (p) => handed.push(p) });
+  ctx.doc.querySelector('[data-ask-card-open-np]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.equal(handed.length, 1);
+  assert.equal(handed[0].workflowId, 'wf_memory_defrag');
+  assert.equal(handed[0].memoryScope, 'project');
 });
 
 test('ask-panel-card v2: head shows kicker, editable title and the note; the title edit posts as title', async () => {

@@ -6,7 +6,7 @@
 // Readers are injected so unit tests run without a DB.
 import { listProjects as realListProjects } from '../projects.mjs';
 import { listWorkspaces as realListWorkspaces } from '../workspaces.mjs';
-import { listWorkflows as realListWorkflows, GRAPH_DEFAULT_WORKFLOW } from '../workflows.mjs';
+import { listWorkflows as realListWorkflows, GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW } from '../workflows.mjs';
 import { classifyLoops } from '../../shared/graph/loops.mjs';
 import { rankNodes } from '../../shared/graph/layout.mjs';
 import { registryPortsFn } from '../graph/registry-ports.mjs';
@@ -99,25 +99,28 @@ export function shapeWorkflow(tpl, registry = {}) {
 }
 
 /**
- * @param {{listProjects?:Function, listWorkspaces?:Function, listWorkflows?:Function, defaultWorkflow?:object, loadAgentRegistry?:Function}} [deps]
+ * @param {{listProjects?:Function, listWorkspaces?:Function, listWorkflows?:Function, defaultWorkflow?:object, builtinWorkflows?:object[], loadAgentRegistry?:Function}} [deps]
  */
 export function createCatalog({
   listProjects = realListProjects,
   listWorkspaces = realListWorkspaces,
   listWorkflows = realListWorkflows,
   defaultWorkflow = GRAPH_DEFAULT_WORKFLOW,
+  builtinWorkflows = [GRAPH_MEMORY_DEFRAG_WORKFLOW],
   loadAgentRegistry = realLoadAgentRegistry,
 } = {}) {
   async function buildCatalog() {
     const [projects, workspaces, workflows] = await Promise.all([listProjects(), listWorkspaces(), listWorkflows()]);
     let registry = {};
     try { registry = loadAgentRegistry() || {}; } catch { registry = {}; }
-    // Same order as GET /api/workflows: the graph default, then saved rows.
-    // shapeWorkflow already derives `steps` (condensation-topo ranks) +
-    // `feedbacks` (loop wires) for a v2 template, so the LLM-facing shape is unchanged.
+    // Same order as GET /api/workflows: the graph default, the other built-ins (Memory
+    // defragment — spec §7.2 wants the assistant to see it), then saved rows. wf_auto
+    // stays out: it has no graph. shapeWorkflow already derives `steps` + `feedbacks`.
+    const builtins = [defaultWorkflow, ...builtinWorkflows];
+    const builtinIds = new Set(builtins.map((t) => t.id));
     const templates = [
-      defaultWorkflow,
-      ...workflows.filter((t) => t && t.id !== defaultWorkflow.id),
+      ...builtins,
+      ...workflows.filter((t) => t && !builtinIds.has(t.id)),
     ];
     return {
       projects: projects.map((p) => ({ key: p.key, name: p.name, path: p.path })),

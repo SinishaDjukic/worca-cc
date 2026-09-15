@@ -24,7 +24,8 @@ const deps = {
       : id === 'wks-nogit-0000abcd'
         ? { id, name: 'NoGit', description: '', projectPaths: ['/p/demo'], projectKeys: ['demo-00000001'], exists: [true] }
         : null),
-  readWorkflow: async (id) => (id === 'wf_default' ? { id, name: 'Default' } : id === 'wf_review' ? { id, name: 'Review only' } : null),
+  readWorkflow: async (id) => (id === 'wf_default' ? { id, name: 'Default' } : id === 'wf_review' ? { id, name: 'Review only' }
+    : id === 'wf_memory_defrag' ? { id: 'wf_memory_defrag', name: 'Memory defragment', version: 2, domain: 'shared', nodes: [], wires: [] } : null),
   // The runnable gate rides the same seam: derive it from the fake reader so the
   // two can never disagree about which ids exist.
   assertRunnableWorkflow: async (id) => {
@@ -54,7 +55,7 @@ test('target: exactly one of projectKey / workspaceId', async () => {
 
 test('happy project card: every key present, defaults applied, feature branch unique per card', async () => {
   const card = ok(await validateProposal({ projectKey: 'demo-00000001', brief: '  Add a README badge\nsecond line  ' }, { cardId: 'card_3f2a9c01' }));
-  assert.deepEqual(Object.keys(card).sort(), ['attachments', 'brief', 'featureBranch', 'guardrailsId', 'members', 'note', 'projectDir', 'projectKey', 'projectName',
+  assert.deepEqual(Object.keys(card).sort(), ['attachments', 'brief', 'featureBranch', 'guardrailsId', 'members', 'memoryScope', 'note', 'projectDir', 'projectKey', 'projectName',
     'sourceBranch', 'sourceBranchByKey', 'target', 'title', 'workflowId', 'workflowName', 'workspaceId', 'workspaceName']);
   assert.equal(card.target, 'project');
   assert.equal(card.projectKey, 'demo-00000001');
@@ -164,4 +165,19 @@ test('card carries note (flattened, clipped to 200) and attachments; both defaul
   assert.deepEqual(card.attachments, [{ id: 'att_00000001', name: 'notes.md', bytes: 12, kind: 'text' }]);
   assert.equal(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', note: 42 })).note, null, 'a non-string note is ignored');
   assert.equal(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', note: '   ' })).note, null, 'whitespace-only → null');
+});
+
+test('memoryScope: only with wf_memory_defrag, never on a workspace; the card carries it (null otherwise)', async () => {
+  const card = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x' }));
+  assert.equal(card.memoryScope, null);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', memoryScope: 'global' })), ['memoryScope is only valid with the Memory defragment workflow (wf_memory_defrag)']);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', workflowId: 'wf_memory_defrag' })), ['the Memory defragment workflow needs memoryScope ("global" or "project")']);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', workflowId: 'wf_memory_defrag', memoryScope: 'both' })), ['memoryScope must be "global" or "project"']);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', workflowId: 'wf_memory_defrag', memoryScope: 42 })), ['memoryScope must be "global" or "project"']);
+  assert.deepEqual(errs(await validateProposal({ workspaceId: 'wks-team-0000abcd', brief: 'x', workflowId: 'wf_memory_defrag', memoryScope: 'global' })), ['a memory defragment run targets one project, not a workspace']);
+  // I2-#8: an unknown workflow id is ONE error — the scope check is skipped while `wf` is null,
+  // or a typo of the defragment id would also claim "only valid with the Memory defragment workflow".
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', workflowId: 'wf_nope', memoryScope: 'global' })), ['unknown workflowId "wf_nope"']);
+  const good = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', workflowId: 'wf_memory_defrag', memoryScope: 'project' }));
+  assert.equal(good.memoryScope, 'project'); assert.equal(good.workflowId, 'wf_memory_defrag');
 });

@@ -661,6 +661,7 @@ export class GraphOrchestrator extends RunHarness {
         }
         : null,
       guardrailsId: this.guardrailsId,
+      memoryScope: this.memoryScope || null,   // agent memory §7.3: a paused defrag resumes with ONE scope (B10)
       checkpointRef: this.checkpointRef || null,
       checkpointRefs: { ...this.checkpointRefs },
       workspace: this.isWorkspace ? { projects: this._workspaceProjects() } : null,
@@ -1006,6 +1007,8 @@ export class GraphOrchestrator extends RunHarness {
       pipelineId: this.pipeline.id,
       taskPrompt: this.pipeline.promptText,
       toolInstruction: this.toolInstruction,
+      memoryBlock: this.memoryBlock || '',              // §4.3: the pointer block, rendered once per mount
+      memoryMount: this.memory?.mount || null,          // absolute mount dir: <runCwd>/.claude/rules/worca (tests + the defrag mock read it)
       agentPrompts: this.agentPrompts,
       checkpointRef: this.checkpointRef,
       workspace: this.isWorkspace ? this._workspaceChannel() : undefined,
@@ -1238,6 +1241,8 @@ export class GraphOrchestrator extends RunHarness {
         nodeId: ctx.nodeId, executionId: ctx.executionId, port: port.id,
       });
     }
+    // Agent memory (§5): sync the mount back after EVERY execution, slices included.
+    await this._syncMemory(nc, ctx);
     if (nc.meta?.sideEffect === 'code' && !ctx.slice) await this._stageWorkingTree();
   }
 
