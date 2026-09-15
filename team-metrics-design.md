@@ -5,6 +5,12 @@ and a new top-level **Team metrics** page that aggregates it per project and per
 workspace for the people who own budget and pace: project managers, product owners,
 solution managers.
 
+UI mockups: [`team-metrics-mockups.html`](team-metrics-mockups.html) — a design canvas
+with eight boards (the page in project and workspace scope, the empty state, the
+Projects page cells, both enable dialogs, the workspace wizard step, the workspace card
+row). Open it in a browser to view and export; the live, editable copy is at
+<https://claude.ai/artifact/Gt6YcqYsU81xhJZgkQEJXT>.
+
 ## 1. Problem
 
 Everything Worca knows about a run lives in `~/.worca-cc/worca-cc.db` on the machine
@@ -429,8 +435,9 @@ enable), **Range** segmented control, **Group** select for the series (workflow 
 is full at 1080 px): `synced 2 min ago · 3 runs pending push` with **Refresh** and
 **Push now**.
 
-Mockups: `worca-team-metrics` design canvas (project scope, workspace scope, empty
-state, Projects page cells, enable dialog, workspace wizard step, workspace card row).
+Mockups: [`team-metrics-mockups.html`](team-metrics-mockups.html) — boards *Team
+metrics · project scope*, *Team metrics · workspace scope* and *Team metrics · nothing
+enabled yet*.
 
 Empty states:
 
@@ -445,10 +452,10 @@ when at least one scope is enabled.
 
 | surface | addition |
 |---|---|
-| Projects page, project card | "Team metrics" row: status (`off` / `on since …` / `on · recorded in acme/gateway` / `pending push n` / `delegate invalid`), **Enable** button, local **Record my runs** toggle |
-| Enable dialog | *Where to record*: **here** (creates the branch, asks attribution) or **in another project** (picks from projects already recording, writes a delegation marker) |
-| Workspace wizard | new step *Team metrics* (§4.8) |
-| Workspace card | "Metrics home" row + **Change** + **Route all members to the metrics home** (§4.6b) |
+| Projects page, project card ([mockup](team-metrics-mockups.html), board *Projects · team metrics status per project*) | "Team metrics" row: status (`off` / `on since …` / `on · recorded in acme/gateway` / `pending push n` / `delegate invalid`), **Enable** button, local **Record my runs** toggle |
+| Enable dialog ([mockup](team-metrics-mockups.html), boards *Enable dialog · record here* / *· record in another project*) | *Where to record*: **here** (creates the branch, asks attribution) or **in another project** (picks from projects already recording, writes a delegation marker) |
+| Workspace wizard ([mockup](team-metrics-mockups.html), board *Workspace wizard · new step*) | new step *Team metrics* (§4.8) |
+| Workspace card ([mockup](team-metrics-mockups.html), board *Workspace cards · metrics home row*) | "Metrics home" row + **Change** + **Route all members to the metrics home** (§4.6b) |
 | Settings | nothing new in v1 |
 | Nav | "Team metrics" under Activity |
 | Run detail (History) | small "recorded to team metrics ✓ / pending / not enabled" line in the run header |
