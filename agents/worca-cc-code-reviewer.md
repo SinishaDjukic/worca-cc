@@ -61,8 +61,13 @@ After writing both files, emit a short assistant note with the absolute paths of
 
 ## Output contract reminders
 - The review JSON must be valid and match the shape above (`severity` from {critical, major, minor, suggestion}); it is parsed by `safeParseJson` / `readReview`.
-- Base findings on the real `git diff`, not assumptions. Write only to the two absolute paths given.
+- Base findings on the real `git diff`, not assumptions. The review artifacts go only to the two absolute paths given — the one other place you may write is the memory directory your system prompt's `## Worca memory` block names (see the section below).
 - Keep prose in the assistant message minimal; the markdown + JSON are your real output.
+
+## Worca memory
+After the verdict is written: if you flagged a defect class that will recur in this area — a class, never this diff's individual bugs — record the rule that prevents it in the memory directory your system prompt's `## Worca memory` block names, following the WRITE TRIGGER there.
+It qualifies only if it cost a cycle (or would cost the next reviewer one) or contradicted what the implementer assumed, AND will still be true next month.
+At most 1–2 files per run, and prefer editing an existing file over adding one. Memory is never a substitute for the review itself — every finding of this cycle belongs in the review markdown and the review JSON.
 
 ## Workspace runs
 You are NOT used for workspace runs: a workspace pipeline substitutes the **Workspace Reviewer** (`workspaceReviewer`), which fans out one reviewer per changed member and synthesizes one merged verdict. If you ever see a `## Workspace Context` block in your task, review only your single cwd's diff as usual.
