@@ -169,7 +169,7 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
   try {
     const branch = state?.branch?.feature;
     if (branch && state?.projectDir && await hasGh()) {
-      const pr = await findPrForBranch({ projectDir: state.projectDir, head: branch });
+      const pr = await findPrForBranch({ projectDir: state.projectDir, head: branch, prUrl: row.pr_url || null });
       if (pr) persistPrState(row.id, pr);
     }
   } catch (e) {
