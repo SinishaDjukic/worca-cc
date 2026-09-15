@@ -14,16 +14,25 @@ project's working tree, so nothing is ever committed to your repo.
   worca-cc.db  (+ -wal, -shm)           ALL structured state (SQLite, WAL mode)
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/<projectKey>/
-    plans/      <DD-MM-YY>-<name>.md, -v2.md, ...   (plan markdown + refinements)
-    reviews/    <DD-MM-YY>-<name>-impl-review.md     (review markdown)
+    plans/      legacy only — runs before the run-folder layout kept plan markdown here
+    reviews/    legacy only — runs before the run-folder layout kept review markdown here
     pipelines/  <DD-MM-YY>-<slug>-<id>/              (one folder per run)
       prompt.md          the prompt text (or copied markdown brief)
       diff-patch.patch   the run's captured diff (written when the run completes)
-      extras/            any optional extra files you attached
                          Internal, line-anchored review comments on that diff are DB
                          rows (diff_comments), never files; ask_card_comments carries
                          a proposal's comment ids from propose_run through to launch.
                          Archiving a run deletes its comments with its artifacts.
+      extras/            any optional extra files you attached
+      steps/<node>-c<N>[-<slice>]/                   (one folder per execution)
+                         every file that execution produced: its allocated outputs
+                         (plan{vsuffix}.md, <kind>-review-cycleN.md, clarify.json,
+                         decomposition.json, manual-tests-checklist.md, combine.md),
+                         its verdict JSON, its tasks/ folder, and anything else the
+                         agent wrote there. Each file is indexed in the artifacts
+                         table with its node, cycle and step attribution, which is
+                         what the Artifacts tab, the per-node "Artifacts (N)" list
+                         and Ask Worca's artifact tools read.
   ask/<threadId>/att/<attachmentId>.<ext>  Ask Worca attachment bodies — .txt for text kinds,
                                         the sniffed type's extension for images/PDFs (threads, messages and
                                         run links live in the DB: ask_threads, ask_messages,
@@ -45,12 +54,16 @@ project's working tree, so nothing is ever committed to your repo.
   chat-context.json                     chat context cache
 ```
 
-Everything that used to be a per-run `.json`/`.md` control file —
-`clarify.json`, `clarify-answers.json`, `*-review-cycleN.json`, `state.json`,
-`pipeline.md`, plus `meta.json` and the per-project `config.json` and global
-`workflows/*.json` — is a **row in `worca-cc.db`** instead. Only the
-plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
-existence is indexed in the database).
+Everything that used to be a per-run control file — `clarify-answers.json`,
+`state.json`, `pipeline.md`, plus `meta.json` and the per-project `config.json`
+and global `workflows/*.json` — is a **row in `worca-cc.db`** instead. What an
+agent writes stays on disk: `prompt.md`, `extras/`, and every file under
+`steps/`, each indexed in the database rather than stored in it.
+
+`plans/` and `reviews/` are no longer created. A run that predates the
+run-folder layout keeps its markdown there and still opens from the UI — the
+read path tries the run folder first and the store root second — but no new file
+is ever written to either directory.
 
 ## Resolution rules
 

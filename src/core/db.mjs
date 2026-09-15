@@ -307,8 +307,10 @@ CREATE TABLE clarify (
   FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
 );
 
--- reviews: per-cycle review verdicts (was *-review-cycleN.json). kind is one of
--- refine|impl|plan|ws|webui (5-value open set, A2); verdict is JSON {issues:[...],summary}.
+-- reviews: per-cycle review verdicts (was *-review-cycleN.json). kind is free text
+-- (A2): a reviewKindOf stem (refine|impl|plan|ws|webui, or unknown verbatim), prefixed
+-- <nodeId>- / <sliceId>- when executions share an ordinal; verdict is JSON
+-- {issues:[...],summary}.
 CREATE TABLE reviews (
   pipeline_id TEXT NOT NULL,
   kind        TEXT NOT NULL,
@@ -752,10 +754,12 @@ const INCREMENTAL_COLUMNS = {
   workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT', archived_at: 'TEXT' },
   config_workflow_nodes:  { ask_questions: 'INTEGER', subagent_model: 'TEXT' },  // v25: sub-agent model policy
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
+  artifacts:              { step_key: 'TEXT', node_id: 'TEXT', cycle: 'INTEGER', created_at: 'TEXT' }, // per-step attribution
   ask_attachments:        { kind: "TEXT NOT NULL DEFAULT 'text'",  // v27: text | image | binary (#398)
                             mime: 'TEXT' },               // v27: sniffed mime; NULL on pre-v27 rows (= text)
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE' },  // v29: reply threads; NULL = thread root
+  artifacts:              { step_key: 'TEXT', node_id: 'TEXT', cycle: 'INTEGER', created_at: 'TEXT' }, // per-step attribution
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of

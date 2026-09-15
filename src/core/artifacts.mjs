@@ -8,8 +8,8 @@
 // timeline and machine state live in the DB (pipeline_events + the pipelines row),
 // which is the authoritative store (no more pipeline.md / state.json on disk).
 
-import { mkdir, writeFile, readFile, copyFile, readdir } from 'node:fs/promises';
-import { join, basename, resolve, isAbsolute } from 'node:path';
+import { mkdir, writeFile, readFile, copyFile, readdir, realpath, stat } from 'node:fs/promises';
+import { join, basename, resolve, isAbsolute, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { realpathSync, existsSync } from 'node:fs';
 import { hostname } from 'node:os';
@@ -18,6 +18,15 @@ import { listProjects } from './projects.mjs';
 import { branchExists, diffShortstat, hasGh, findPrForBranch } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
+import { mapWithCap } from './fanout.mjs';
+import { hasDotDot, scanKindFor } from './step-scan.mjs';
+import { BINARY_KINDS } from '../shared/artifact-kinds.mjs';
+
+/** The artifact read guard (run-folder-artifacts-design.md D11): the largest file
+ *  the artifact routes / Ask read as text, and the kinds never read as text at all
+ *  (BINARY_KINDS: the shared table the viewer derives its own set from). */
+export const ARTIFACT_READ_MAX_BYTES = 2 * 1024 * 1024;
+export { BINARY_KINDS };
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -82,19 +91,66 @@ export function deleteStoreMeta(key) {
  * in plans//reviews/, siblings of pipelines/). Idempotent (INSERT OR IGNORE on the
  * (pipeline_id, kind, rel_path) PK), best-effort: a logging failure never breaks a
  * run. A null/empty path is a no-op. The pipelines row must already exist (FK).
+ * Optional per-step attribution (step_key/node_id/cycle/created_at) is stamped on
+ * the FIRST insert only — the conflict behavior stays byte-for-byte INSERT OR
+ * IGNORE (first write wins), so a re-record never clobbers an existing row's
+ * attribution. The 3-arg form still works (attr defaults to {}, columns NULL).
  * @param {string} pipelineId
  * @param {string} kind
  * @param {string} relPath
+ * @param {{stepKey?:string, nodeId?:string, cycle?:number}} [attr]
  */
-export function recordArtifact(pipelineId, kind, relPath) {
+export function recordArtifact(pipelineId, kind, relPath, attr = {}) {
   if (!pipelineId || !kind || !relPath) return;
+  recordArtifacts(pipelineId, [{ kind, relPath, attr }]);
+}
+
+/**
+ * recordArtifact for MANY rows in ONE write transaction (one BEGIN IMMEDIATE /
+ * COMMIT, one timestamp) — the step-folder scan indexes up to SCAN_LIMITS.maxFiles
+ * files per execution on the UI server's event loop, so a tx per row would be
+ * 50 serial write-lock acquisitions. Same INSERT OR IGNORE, same best-effort
+ * contract; rows without pipelineId/kind/relPath are skipped. Returns true when
+ * the transaction committed (every kept row was written or already present) and
+ * false when it was swallowed — the caller decides whether that silence is
+ * worth a run-log line (the step-folder scan says so; single-row sites do not).
+ * @param {string} pipelineId
+ * @param {Array<{kind:string, relPath:string, attr?:{stepKey?:string, nodeId?:string, cycle?:number}}>} rows
+ * @returns {boolean}
+ */
+export function recordArtifacts(pipelineId, rows) {
+  if (!pipelineId || !Array.isArray(rows)) return false;
+  const kept = rows.filter((r) => r && r.kind && r.relPath);
+  if (!kept.length) return true;
+  const createdAt = new Date().toISOString();
   try {
     tx(() => {
-      getDb().prepare(
-        'INSERT OR IGNORE INTO artifacts (pipeline_id, kind, rel_path) VALUES (?, ?, ?)',
-      ).run(pipelineId, kind, relPath);
+      const ins = getDb().prepare(
+        'INSERT OR IGNORE INTO artifacts (pipeline_id, kind, rel_path, step_key, node_id, cycle, created_at) '
+        + 'VALUES (?, ?, ?, ?, ?, ?, ?)',
+      );
+      for (const r of kept) {
+        const a = r.attr || {};
+        ins.run(pipelineId, r.kind, r.relPath, a.stepKey ?? null, a.nodeId ?? null, a.cycle ?? null, createdAt);
+      }
     });
-  } catch { /* artifact indexing is best-effort; never break a run on it */ }
+    return true;
+  } catch { return false; /* best-effort */ }
+}
+
+/**
+ * True when ANY kind already indexes `relPath` for the run — the kind-agnostic
+ * "is this file known" probe. Sync (one PK-range lookup) so an event handler
+ * can decide before it emits. Fail-safe: a DB error reads as "not indexed".
+ * @param {string} pipelineId
+ * @param {string} relPath '/'-joined, exactly as recordArtifact stored it
+ */
+export function hasArtifactRow(pipelineId, relPath) {
+  if (!pipelineId || !relPath) return false;
+  try {
+    return !!getDb().prepare('SELECT 1 FROM artifacts WHERE pipeline_id = ? AND rel_path = ? LIMIT 1')
+      .get(pipelineId, relPath);
+  } catch { return false; }
 }
 
 /**
@@ -103,12 +159,126 @@ export function recordArtifact(pipelineId, kind, relPath) {
  * markdown/extras files instead of re-deriving names. rel_path scope is encoded by
  * the convention recordArtifact documents (dir-relative for pipeline-local files,
  * store-root-relative for the shared plan/review markdown).
+ * An optional `relPrefix` narrows the rows to one subtree (`steps/<dir>/`), so a
+ * caller that only cares about one folder does not pay for the whole run.
  * @param {string} pipelineId
+ * @param {{relPrefix?:string}} [opts]
  * @returns {Promise<Array<{kind:string, relPath:string}>>}
  */
-export async function listArtifacts(pipelineId) {
-  return getDb().prepare('SELECT kind, rel_path FROM artifacts WHERE pipeline_id = ?')
-    .all(pipelineId).map((r) => ({ kind: r.kind, relPath: r.rel_path }));
+export async function listArtifacts(pipelineId, opts = {}) {
+  let sql = 'SELECT kind, rel_path FROM artifacts WHERE pipeline_id = ?';
+  const args = [pipelineId];
+  if (opts.relPrefix) {
+    const prefix = String(opts.relPrefix);
+    sql += ' AND substr(rel_path, 1, ?) = ?';
+    args.push(prefix.length, prefix);
+  }
+  return getDb().prepare(sql).all(...args).map((r) => ({ kind: r.kind, relPath: r.rel_path }));
+}
+
+/**
+ * Drop one artifact row (every kind under that rel_path). Best-effort, like
+ * recordArtifact: the orchestrator calls it when it deletes a transient file it
+ * indexed a moment ago (the answered questions round), so the index never points
+ * at a file that is gone. A null/empty argument is a no-op.
+ * @param {string} pipelineId
+ * @param {string} relPath  '/'-joined, exactly as recordArtifact stored it
+ */
+export function deleteArtifactRow(pipelineId, relPath) {
+  if (!pipelineId || !relPath) return;
+  try {
+    getDb().prepare('DELETE FROM artifacts WHERE pipeline_id = ? AND rel_path = ?').run(pipelineId, relPath);
+  } catch { /* best-effort */ }
+}
+
+/**
+ * List a run's artifacts with step attribution and on-disk byte size, ordered
+ * created_at (NULLs first, so legacy rows bucket ahead) then rel_path. `bytes` is
+ * stat-ed run dir first, store root second (mirroring resolveIndexedArtifactForRow's
+ * base order); a missing file reports bytes: 0. Optional { stepKey, kind } filter.
+ * `excludeKinds` drops those kinds in SQL (so `limit` counts only kept rows — a
+ * caller offering readable artifacts passes ['questions'] to skip the transient
+ * scratch rows whose files the orchestrator deletes). An optional `limit` caps the
+ * SQL result so the per-row stat only runs on rows the caller keeps (pass
+ * limit+1 to detect truncation); omit it to size every row.
+ * @param {string} pipelineId
+ * @param {{stepKey?:string, kind?:string, excludeKinds?:string[], limit?:number}} [filter]
+ * @returns {Promise<Array<{kind:string, stepKey:string|null, nodeId:string|null, cycle:number|null, relPath:string, bytes:number, createdAt:string|null}>>}
+ */
+export async function listRunArtifacts(pipelineId, filter = {}) {
+  // Resolve the id once: findPipelineRowById accepts a run-dir basename/suffix
+  // (DIR_ID_RE), so `pipelineId` may not equal the stored `pipeline_id`.
+  const row = findPipelineRowById(pipelineId);
+  return row ? listRunArtifactsForRow(row, filter) : [];
+}
+
+/**
+ * The READABLE artifact page the artifact route and the Ask list tool both offer:
+ * `questions` rows index scratch files the orchestrator deletes once the round is
+ * answered (a follow-up read would 404), so they are excluded IN SQL — filtering
+ * post-LIMIT would let a transient row steal the look-ahead slot and under-report
+ * truncation. One extra row is fetched to detect truncation without sizing the
+ * whole table; only `limit` rows are sized and returned.
+ * @param {object} row the pipelines row
+ * @param {{stepKey?:string, kind?:string}} filter
+ * @param {number} limit  positive integer cap on the returned rows
+ * @returns {Promise<{artifacts:Array, truncated:boolean}>}
+ */
+export async function listReadableRunArtifacts(row, filter, limit) {
+  // A NaN/0 limit would silently answer an EMPTY page (`slice(0, NaN)`) after
+  // sizing the whole table — fail loudly instead.
+  if (!Number.isInteger(limit) || limit <= 0) throw new TypeError(`listReadableRunArtifacts: limit must be a positive integer, got ${limit}`);
+  const rows = await listRunArtifactsForRow(row, { ...(filter || {}), excludeKinds: ['questions'], limit: limit + 1 });
+  return { artifacts: rows.slice(0, limit), truncated: rows.length > limit };
+}
+
+/** The row-based form of listRunArtifacts for callers that already hold the
+ *  pipelines row (the artifact routes, the Ask tool deps) — no second lookup. */
+export async function listRunArtifactsForRow(row, filter = {}) {
+  if (!row) return [];
+  const clauses = ['pipeline_id = ?'];
+  const args = [row.id];
+  if (filter.stepKey) { clauses.push('step_key = ?'); args.push(filter.stepKey); }
+  if (filter.kind) { clauses.push('kind = ?'); args.push(filter.kind); }
+  if (Array.isArray(filter.excludeKinds) && filter.excludeKinds.length) {
+    clauses.push(`kind NOT IN (${filter.excludeKinds.map(() => '?').join(', ')})`);
+    args.push(...filter.excludeKinds);
+  }
+  const hasLimit = Number.isInteger(filter.limit) && filter.limit > 0;
+  const raw = getDb().prepare(
+    `SELECT kind, rel_path, step_key, node_id, cycle, created_at FROM artifacts
+     WHERE ${clauses.join(' AND ')}
+     ORDER BY (created_at IS NULL) DESC, created_at ASC, rel_path ASC${hasLimit ? ' LIMIT ?' : ''}`,
+  ).all(...args, ...(hasLimit ? [filter.limit] : []));
+  const { runDir, storeRoot } = await artifactBasesForRow(row);
+  // Async, with a bounded fan-out: this runs on the UI server's event loop (GET
+  // /api/runs/:id/artifacts) for up to ~200 rows, so a synchronous stat per row
+  // would stall every other request meanwhile, while an unbounded Promise.all
+  // would dump every stat job onto libuv's small thread pool at once and queue
+  // every other fs call behind them. ONE stat per row: the base is picked by the
+  // rel prefix (artifactAbsPath — the same layout rule pipeline-delete unlinks
+  // by: only the legacy plan/review markdown is store-root-relative, and a run
+  // dir never contains plans/ or reviews/). Sizes are informational —
+  // containment and the read cap are enforced again by the read path
+  // (resolveIndexedArtifactForRow), never trusted from here. Only a regular file
+  // reports a size; a directory, a missing file or an absolute row is 0.
+  const sizeOf = async (rel) => {
+    if (hasDotDot(rel) || isAbsolute(rel)) return 0;
+    try {
+      const st = await stat(artifactAbsPath(rel, runDir, storeRoot));
+      return st.isFile() ? st.size : 0;
+    } catch { return 0; }
+  };
+  const sizes = await mapWithCap(raw, 16, (r) => sizeOf(r.rel_path));
+  return raw.map((r, i) => ({
+    kind: r.kind,
+    stepKey: r.step_key ?? null,
+    nodeId: r.node_id ?? null,
+    cycle: r.cycle ?? null,
+    relPath: r.rel_path,
+    bytes: sizes[i],
+    createdAt: r.created_at ?? null,
+  }));
 }
 
 /**
@@ -230,8 +400,11 @@ const REVIEW_KIND = {
 export function reviewKindOf(base) { return REVIEW_KIND[base] || base; }
 
 /**
- * Upsert a per-cycle review verdict. `kind` ∈ refine|impl|plan|ws|webui (free text,
- * A2); `cycle` is the run cycle; `verdict` is the normalized { issues:[...], summary }
+ * Upsert a per-cycle review verdict. `kind` is free text (A2): the reviewKindOf
+ * stem (refine|impl|plan|ws|webui, or an unknown stem verbatim), prefixed by the
+ * orchestrator with `<nodeId>-` when two cards share one agent key and `<sliceId>-`
+ * for a composite slice, since (pipeline_id, kind, cycle) is the row key and those
+ * executions share an ordinal. `cycle` is the run cycle; `verdict` is the normalized { issues:[...], summary }
  * object protocol.readReview returns. The AUTHORITATIVE per-cycle verdict store. The
  * agent writes *-review-cycleN.json as transient scratch; the runner parses it once
  * and returns the verdict, which the orchestrator persists here (awaited). The live
@@ -539,6 +712,32 @@ export function updatePhaseStatus(pipelineId, ordinal, status, ts) {
 }
 
 /**
+ * Aggregate live run progress from the existing readers. Free-text fields
+ * (titles, review summaries, question/answer text) are redacted by the caller,
+ * not here — this is a pure data assembler. Returns null for an unknown run.
+ * @param {string} pipelineId
+ * @returns {Promise<null | {runId:string, phase:string|null, status:string|null, phases:Array, tasks:Array, clarify:object, reviews:Array, stepQuestions:Array}>}
+ */
+export async function readRunProgress(pipelineId) {
+  const row = findPipelineRowById(pipelineId);
+  if (!row) return null;
+  // Read against the RESOLVED id — `pipelineId` may be a run-dir basename/suffix
+  // (findPipelineRowById's DIR_ID_RE) that no downstream table keys on.
+  const id = row.id;
+  const extras = readPipelineExtras(id);
+  return {
+    runId: row.id,
+    phase: row.phase ?? null,
+    status: row.status ?? null,
+    phases: listPhases(id),
+    tasks: listTasks(id),
+    clarify: extras.clarify,
+    reviews: extras.reviews,
+    stepQuestions: extras.stepQuestions,
+  };
+}
+
+/**
  * Convert an arbitrary string to a safe kebab-case slug.
  * - Lowercases, replaces non-alphanumerics with hyphens, collapses repeats,
  *   trims leading/trailing hyphens.
@@ -660,15 +859,15 @@ async function ensureWorkspaceMeta(primaryProjectDir, workspaceKey, opts = {}) {
 }
 
 /**
- * Ensure the artifact directories (plans/reviews/pipelines) + meta.json exist.
- * When `workspaceKey` is set, routes to the workspace store and writes the
+ * Ensure the run store exists: `pipelines/` + the store meta. `plans/` and
+ * `reviews/` are NOT created any more — every run output lives inside its run
+ * folder (run-folder-artifacts-design.md D1/D12); `artifactPaths` still names them
+ * for the delete path and the legacy migrator, and existing directories are left
+ * alone. When `workspaceKey` is set, routes to the workspace store and writes the
  * workspace meta shape; `opts` carries {workspaceId, workspaceName, projects}.
- * Single-project callers (no second arg) are byte-identical.
  */
 export async function ensureArtifactDirs(projectDir, workspaceKey, opts = {}) {
   const p = artifactPaths(projectDir, workspaceKey);
-  await mkdir(p.plans, { recursive: true });
-  await mkdir(p.reviews, { recursive: true });
   await mkdir(p.pipelines, { recursive: true });
   const meta = workspaceKey
     ? await ensureWorkspaceMeta(projectDir, workspaceKey, opts)
@@ -677,6 +876,8 @@ export async function ensureArtifactDirs(projectDir, workspaceKey, opts = {}) {
 }
 
 /**
+ * Legacy: no engine caller since run-folder-artifacts; kept for the migrator,
+ * pipeline-delete and old tests (D12).
  * Path for a plan markdown file.
  * version 1 => <DD-MM-YY-baseName>.md ; version N>1 => <...>-vN.md
  *
@@ -700,6 +901,8 @@ export function planPath(projectDir, baseName, version = 1, datePrefix, workspac
 }
 
 /**
+ * Legacy: no engine caller since run-folder-artifacts; kept for the migrator,
+ * pipeline-delete and old tests (D12).
  * Path for an implementation review markdown file.
  * @param {string} projectDir
  * @param {string} baseName
@@ -2109,6 +2312,40 @@ export async function readRunLogText(key, id) {
   }
 }
 
+/** The store root a pipelines row lives under: the workspace store for
+ *  workspace rows (target==='workspace' / workspace_key), else the project store. */
+export function storeRootForRow(row) {
+  const isWs = row.target === 'workspace' || !!row.workspace_key;
+  return isWs ? workspaceStorePath(row.workspace_key) : projectStorePath(row.project_key);
+}
+
+/** The two bases an indexed rel_path can be rooted at, in read precedence: the
+ *  run dir (every new-engine output) first, the store root (the legacy plans/ and
+ *  reviews/ markdown) second. ONE derivation for the read path and the size path. */
+export async function artifactBasesForRow(row) {
+  return { runDir: await runDirForRow(row), storeRoot: storeRootForRow(row) };
+}
+
+/**
+ * Resolve an indexed artifact's absolute path. The artifacts index encodes scope by
+ * convention (recordArtifact / run-harness._artifact): plans/ and reviews/ are
+ * store-root-relative (the legacy shared markdown, a sibling of pipelines/);
+ * everything else (steps/…, prompt.md, extras/*) is pipeline-dir-relative. ONE
+ * layout rule for the size path here and pipeline-delete's unlink.
+ * @param {string} relPath as stored ('/'-joined; older Windows builds wrote '\\')
+ * @param {string} pipelineDir
+ * @param {string} storeRootDir
+ */
+export function artifactAbsPath(relPath, pipelineDir, storeRootDir) {
+  if (isAbsolute(relPath)) return relPath;
+  // Rows are indexed with '/' (see _artifact); rows written by earlier Windows
+  // builds carry '\\' — normalise before the layout check so those shared
+  // plan/review files are still re-rooted (sized, unlinked) correctly.
+  const rel = relPath.replace(/\\/g, '/');
+  if (rel.startsWith('plans/') || rel.startsWith('reviews/')) return join(storeRootDir, rel);
+  return join(pipelineDir, rel);
+}
+
 /**
  * Resolve a pipeline row's absolute on-disk run dir (mirrors readRunLogText).
  * Workspace rows (target==='workspace') live under the workspace store namespace,
@@ -2116,11 +2353,7 @@ export async function readRunLogText(key, id) {
  * @returns {Promise<string>}
  */
 export async function runDirForRow(row) {
-  const isWs = row.target === 'workspace' || !!row.workspace_key;
-  const storeRoot = isWs
-    ? workspaceStorePath(row.workspace_key)
-    : projectStorePath(row.project_key);
-  const pipelinesDir = join(storeRoot, 'pipelines');
+  const pipelinesDir = join(storeRootForRow(row), 'pipelines');
   const dirById = await runDirIndex(pipelinesDir);
   const indexed = dirById.get(row.id);
   if (indexed) return indexed;
@@ -2153,14 +2386,19 @@ export async function findRunDir(pipelinesDir, id) {
  * never matches a nested row. The path that is read is ALWAYS the stored one,
  * run dir first, store root second (plan/review markdown is store-root-relative);
  * a stored path with a `..` segment is refused outright. Null when the row, the
- * index row or the file is missing.
+ * index row or the file is missing. It stats before it reads; a realpath outside
+ * the base it reads from — a symlink, a traversal, an absolute stored row — is
+ * `null`, never a fall-through to the next base; `BINARY_KINDS` (by kind OR by
+ * file extension) answer `{ rel, bytes, binary: true }` and files above
+ * `ARTIFACT_READ_MAX_BYTES` answer `{ rel, bytes, tooLarge: true, cap }`; a
+ * directory is `null`.
  */
 export async function resolveIndexedArtifactForRow(row, rel) {
   const norm = (p) => String(p || '').replace(/\\/g, '/');
   const want = norm(rel);
   if (!row || !want) return null;
   const arts = (await listArtifacts(row.id))
-    .filter((a) => a && typeof a.relPath === 'string' && a.relPath && !a.relPath.split('/').includes('..'));
+    .filter((a) => a && typeof a.relPath === 'string' && a.relPath && !hasDotDot(a.relPath));
   // Exact first, then the LONGEST suffix — with rows `plan.md` and `a/plan.md`
   // a request for `/x/a/plan.md` ends with BOTH `/plan.md` and `/a/plan.md`, and a
   // first-match `find` would serve whichever row the table happens to list first.
@@ -2168,11 +2406,23 @@ export async function resolveIndexedArtifactForRow(row, rel) {
     || arts.filter((a) => want.endsWith(`/${a.relPath}`))
       .sort((x, y) => y.relPath.length - x.relPath.length)[0];
   if (!hit) return null;
-  const isWs = row.target === 'workspace' || !!row.workspace_key;
-  const storeRoot = isWs ? workspaceStorePath(row.workspace_key) : projectStorePath(row.project_key);
-  const runDir = await runDirForRow(row);
+  const { runDir, storeRoot } = await artifactBasesForRow(row);
+  // Binary by KIND or by EXTENSION: only the step-folder scan assigns image/binary
+  // kinds, while a run extra (`extras/shot.png`, kind 'extra') or a port whose
+  // artifactKind is free text can index the same bytes under any kind — those
+  // must never be read as utf8 either.
+  const binary = BINARY_KINDS.has(hit.kind) || BINARY_KINDS.has(scanKindFor(hit.relPath));
   for (const base of [runDir, storeRoot]) {
-    try { return { rel: hit.relPath, text: await readFile(join(base, hit.relPath), 'utf8') }; } catch { /* try the next base */ }
+    const abs = join(base, hit.relPath);
+    let real, root;
+    try { real = await realpath(abs); root = await realpath(base); } catch { continue; }   // missing here: try the next base
+    if (real !== root && !real.startsWith(root + sep)) return null;   // a symlink or traversal escapes the base
+    let st;
+    try { st = await stat(real); } catch { continue; }
+    if (!st.isFile()) return null;
+    if (binary) return { rel: hit.relPath, bytes: st.size, binary: true };
+    if (st.size > ARTIFACT_READ_MAX_BYTES) return { rel: hit.relPath, bytes: st.size, tooLarge: true, cap: ARTIFACT_READ_MAX_BYTES };
+    try { return { rel: hit.relPath, text: await readFile(real, 'utf8') }; } catch { continue; }
   }
   return null;
 }

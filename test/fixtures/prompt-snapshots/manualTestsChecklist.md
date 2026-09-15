@@ -23,10 +23,16 @@ Read the implementation plan and the implemented changes (via `git diff` in your
 
 ### Outputs
 
-- Write **checklist** to: <PIPELINE_DIR>/manual-tests-checklist.md
+- Write **checklist** to: <PIPELINE_DIR>/steps/n_manualTestsChecklist-c2/manual-tests-checklist.md
+
+### Step folder
+
+- Your step folder for this execution: <PIPELINE_DIR>/steps/n_manualTestsChecklist-c2
+- Put every additional artifact you produce (deviation notes, findings, scratch, screenshots, task files) inside it — never anywhere else in the run store. Files there are indexed and shown to the user after this step.
 
 MOCK_ROLE: manual-tests-checklist
 MOCK_CYCLE: 2
 MOCK_BASE: feature
-MOCK_OUT: <PIPELINE_DIR>/manual-tests-checklist.md
+MOCK_STEP_DIR: <PIPELINE_DIR>/steps/n_manualTestsChecklist-c2
+MOCK_OUT: <PIPELINE_DIR>/steps/n_manualTestsChecklist-c2/manual-tests-checklist.md
 MOCK_IN: /abs/plan.md

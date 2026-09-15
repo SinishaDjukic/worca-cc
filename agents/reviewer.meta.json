@@ -11,7 +11,7 @@
     { "id": "done", "type": "void", "required": false, "as": "worktree" }
   ],
   "outputs": [
-    { "id": "review", "type": "md", "when": "blocking", "filename": "{base}-impl-review.md", "store": "project" },
+    { "id": "review", "type": "md", "when": "blocking", "filename": "impl-review-cycle{cycle}.md" },
     { "id": "pass", "type": "void", "when": "clean" }
   ],
   "domain": "coding",
