@@ -501,7 +501,13 @@ if (railAtBoot) {
 // compact topnav amount, and the New-view creation gate. Refreshed at boot, on
 // every `hello`, on `budget-changed`/`pipelines-changed`, and on a slow tick.
 // ---------------------------------------------------------------------------
-const budgetState = { budget: null, timer: null, fetching: false };
+const budgetState = { budget: null, timer: null, fetching: false, pending: false, lastFetchMs: 0 };
+
+// How long an idle tab may keep painting the snapshot it last fetched. The tick
+// below runs every `interval` and deliberately does NOT fetch while idle; this
+// is the slow cadence layered on top of it, so a limit raised or cleared
+// elsewhere (a broadcast this tab never saw) cannot outlive the tab.
+const BUDGET_IDLE_REFETCH_MS = 5 * 60000;    // 5 min = every 5th tick at the 60s default
 
 // True between "Start clicked" and the POST /api/run settling. Any budget repaint
 // landing inside that window — a `budget-changed` broadcast, an archive's
@@ -511,14 +517,27 @@ const budgetState = { budget: null, timer: null, fetching: false };
 // the same run twice.
 let startSubmitInFlight = false;
 
+// A refresh asked for mid-flight used to be DROPPED: two broadcasts close
+// together (a total limit set, then cleared; `pipelines-changed` + a run's
+// `done`) collapsed into ONE fetch and the OLDER snapshot stayed latched in
+// budgetState.budget until a reload. Record the request instead and run one
+// trailing fetch per in-flight window — any number of requests made during a
+// fetch collapse into that single trailing fetch.
 async function refreshBudget() {
-  if (budgetState.fetching) return;
+  if (budgetState.fetching) { budgetState.pending = true; return; }
   budgetState.fetching = true;
   try {
-    const res = await fetch('/api/budget');
-    const data = await safeJson(res);
-    if (res.ok) { budgetState.budget = data; paintBudget(); }
-  } catch { /* transient */ } finally { budgetState.fetching = false; }
+    do {
+      budgetState.pending = false;
+      budgetState.lastFetchMs = Date.now();   // also feeds the idle re-verify cadence
+      // Per-attempt, so a transient failure still lets a pending request through.
+      try {
+        const res = await fetch('/api/budget');
+        const data = await safeJson(res);
+        if (res.ok) { budgetState.budget = data; paintBudget(); }
+      } catch { /* transient */ }
+    } while (budgetState.pending);
+  } finally { budgetState.fetching = false; budgetState.pending = false; }
 }
 
 function paintBudget() {
@@ -575,6 +594,8 @@ function fmtResetAtLocal(ms) {
 function startBudgetTick() {
   if (budgetState.timer) return;
   const interval = typeof window.__budgetTickMs === 'number' ? window.__budgetTickMs : 60000;
+  const idleRefetchMs = typeof window.__budgetIdleRefetchMs === 'number'
+    ? window.__budgetIdleRefetchMs : BUDGET_IDLE_REFETCH_MS;
   budgetState.timer = setInterval(() => {
     const b = budgetState.budget;
     if (!b) return;
@@ -582,6 +603,12 @@ function startBudgetTick() {
     // over (spend resets to $0 and blocked must clear server-side — repainting
     // the pre-reset snapshot would keep the UI "blocked" forever while idle).
     if (liveRuns().length || Date.now() >= b.windowEndMs) { refreshBudget(); return; }
+    // Idle re-verify, minutes apart — NOT every tick. Limits change outside this
+    // tab too, and a broadcast can be missed (socket drop, another window), so
+    // the snapshot gets re-derived server-side on a slow cadence rather than
+    // being painted from cache until a reload. Any other refresh (a broadcast, a
+    // run ending) pushes lastFetchMs forward, so this only fires while genuinely idle.
+    if (Date.now() - budgetState.lastFetchMs >= idleRefetchMs) { refreshBudget(); return; }
     // Idle countdown: windowEndMs is the fixed anchor; the fetched msUntilReset
     // is stale by definition. Recompute the remainder, then repaint — no fetch.
     b.msUntilReset = Math.max(0, b.windowEndMs - Date.now());

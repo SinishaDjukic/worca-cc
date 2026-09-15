@@ -39,7 +39,7 @@ const statsFixture = (budget) => ({
   series: [{ bucketStartMs: Date.now() - 2 * DAY, spentUsd: 3.5, finished: 2, stopped: 1, failed: 0 }],
 });
 
-async function boot({ budget = okBudget(), tickMs } = {}) {
+async function boot({ budget = okBudget(), tickMs, idleRefetchMs } = {}) {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -54,7 +54,9 @@ async function boot({ budget = okBudget(), tickMs } = {}) {
   // client with a `budget-changed` frame.
   // `runResponse` lets a test hold POST /api/run open and drive events into the
   // in-flight window between "Start disabled" and the response landing.
-  const box = { budget, runResponse: null };
+  // `budgetGate` does the same for one GET /api/budget: a held fetch is what a
+  // second refresh request has to coalesce behind.
+  const box = { budget, runResponse: null, budgetGate: null };
   const counts = { budget: 0, stats: 0 };
   const statsCalls = [];
   window.fetch = (url, opts) => {
@@ -65,7 +67,14 @@ async function boot({ budget = okBudget(), tickMs } = {}) {
     }
     if (u.includes('/api/budget')) {
       counts.budget += 1;
-      return Promise.resolve({ ok: true, status: 200, json: async () => box.budget });
+      // The server answers with the budget as it was when the request arrived —
+      // snapshot it here so a held response cannot silently report a LATER
+      // server state than the one it was issued against.
+      const snap = box.budget;
+      const gate = box.budgetGate;
+      box.budgetGate = null;                     // one-shot: gates the next fetch only
+      const res = { ok: true, status: 200, json: async () => snap };
+      return gate ? gate.then(() => res) : Promise.resolve(res);
     }
     if (u.includes('/api/stats')) {
       counts.stats += 1; statsCalls.push(u);
@@ -86,10 +95,22 @@ async function boot({ budget = okBudget(), tickMs } = {}) {
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch { /* keep */ }
   }
   globalThis.window = window; globalThis.document = window.document;
-  // The tick seam is read ONCE inside startBudgetTick() at boot, so it has to
-  // be on `window` between JSDOM creation and the cache-busted app.js import.
+  // The tick seams are read ONCE inside startBudgetTick() at boot, so they have
+  // to be on `window` between JSDOM creation and the cache-busted app.js import.
   if (tickMs != null) window.__budgetTickMs = tickMs;
-  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
+  if (idleRefetchMs != null) window.__budgetIdleRefetchMs = idleRefetchMs;
+  // app.js starts its budget tick at import time against the REAL global
+  // setInterval (jsdom's is never installed on globalThis here). Capture the
+  // ids so a fast-tick suite can stop its own timer: a leaked one repaints —
+  // and, now that an idle tab re-verifies, refetches — into whatever document
+  // and fetch stub happen to be global by the time the next suite runs.
+  const timers = [];
+  const realSetInterval = globalThis.setInterval;
+  globalThis.setInterval = (...a) => { const t = realSetInterval(...a); timers.push(t); return t; };
+  try {
+    await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
+  } finally { globalThis.setInterval = realSetInterval; }
+  const stopTimers = () => { timers.forEach((t) => clearInterval(t)); timers.length = 0; };
   await new Promise((r) => setTimeout(r, 0));
   const tick = () => new Promise((r) => setTimeout(r, 0));
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -102,7 +123,7 @@ async function boot({ budget = okBudget(), tickMs } = {}) {
     window.dispatchEvent(new window.Event('hashchange'));
     await tick();
   };
-  return { window, box, counts, statsCalls, wsBox, tick, wait, pushBudgetChanged, showView };
+  return { window, box, counts, statsCalls, wsBox, tick, wait, pushBudgetChanged, showView, stopTimers };
 }
 
 test('boot paints the sidebar indicator and topnav amount', async () => {
@@ -204,6 +225,41 @@ test('a run finishing refetches the budget so the final delta lands without a re
   assert.equal(doc.querySelector('#start-btn').disabled, true, 'and the creation gate flips closed');
 });
 
+// refreshBudget used to DROP any refresh asked for while one was in flight. Two
+// broadcasts close together (a total limit set, then cleared) therefore left the
+// FIRST, older snapshot latched in budgetState.budget — the spend card kept
+// saying "new runs blocked" and Start stayed disabled until a reload.
+test('a refresh asked for mid-flight runs a trailing fetch and the newer snapshot wins', async () => {
+  const ctx = await boot();
+  const doc = ctx.window.document;
+  const before = ctx.counts.budget;
+
+  let releaseBudget;
+  ctx.box.budgetGate = new Promise((r) => { releaseBudget = r; });
+  ctx.box.budget = blockedBudget();
+  await ctx.pushBudgetChanged();               // fetch #1: held, carries `blocked`
+  assert.equal(ctx.counts.budget, before + 1, 'the first refresh is in flight');
+
+  // The limit is cleared server-side while that fetch hangs; every request made
+  // inside the in-flight window collapses into ONE trailing fetch.
+  ctx.box.budget = okBudget();
+  await ctx.pushBudgetChanged();
+  await ctx.pushBudgetChanged();
+  await ctx.pushBudgetChanged();
+  assert.equal(ctx.counts.budget, before + 1, 'requests made mid-flight do not each fetch');
+
+  releaseBudget();
+  for (let i = 0; i < 6; i += 1) await ctx.tick();
+
+  assert.equal(ctx.counts.budget, before + 2,
+    'exactly one trailing fetch runs once the in-flight one settles');
+  assert.equal(doc.querySelector('#start-btn').disabled, false,
+    'the newer, unblocked snapshot is painted — the stale blocked one must not latch');
+  assert.equal(doc.querySelector('#newBlockedNote').hidden, true);
+  assert.equal(doc.querySelector('#topnav-spend').classList.contains('over'), false);
+  assert.equal(doc.querySelector('#topnav-spend').textContent, '$41.23');
+});
+
 // ---- collapsed-rail budget ring ----
 // Pure renderer: its own bare document, no app.js boot.
 const pureDoc = () => new JSDOM('<!doctype html><body></body>').window.document;
@@ -276,10 +332,10 @@ test('compact amounts stay within four glyphs', () => {
   assert.equal(val(12400), '$12k');
 });
 
-// The two tick suites run last: their fast interval outlives the test, and a
-// leaked tick repaints whatever document is global at the time. Neither leaked
-// timer can refetch (both boot inside their window), so a later suite's
-// /api/budget call count stays honest.
+// The tick suites run last and each stops its own interval: a fast tick that
+// outlives its test repaints — and, on the slow idle cadence, refetches — into
+// whatever document and fetch stub are global by then, which would make a later
+// suite's DOM and /api/budget call count nonsense.
 test('idle tick recomputes the countdown from windowEndMs without fetching', async () => {
   const ctx = await boot({
     tickMs: 5,
@@ -291,6 +347,7 @@ test('idle tick recomputes the countdown from windowEndMs without fetching', asy
   await ctx.showView('settings');
   const before = ctx.counts.budget;
   await ctx.wait(20);
+  ctx.stopTimers();
   const readout = ctx.window.document.querySelector('#budgetReadout');
   assert.doesNotMatch(readout.textContent, /999d/, 'the stale fetched msUntilReset must never be repainted as-is');
   assert.match(readout.textContent, /resets in [12]h/, `countdown recomputed from windowEndMs, got "${readout.textContent}"`);
@@ -304,6 +361,7 @@ test('tick past windowEndMs refetches (rolled-over window must not stay blocked)
   });
   const before = ctx.counts.budget;
   await ctx.wait(20);
+  ctx.stopTimers();
   assert.ok(ctx.counts.budget > before,
     'once the boundary passes the client must re-derive spend/blocked server-side');
 });
@@ -317,4 +375,30 @@ test('an ask-done frame refetches the budget (D12 sidebar half)', async () => {
   await ctx.tick();
   await ctx.tick();
   assert.ok(ctx.counts.budget > before, 'the sidebar indicator repaints on chat spend');
+});
+
+// An idle tab saw no `budget-changed` for a limit cleared elsewhere and the tick
+// only refetched while runs were live or past windowEndMs — so whatever snapshot
+// the tab last saw outlived the truth until a reload. The slow idle cadence
+// re-verifies it.
+test('an idle tab refetches on the slow cadence and clears a stale blocked snapshot', async () => {
+  const ctx = await boot({
+    tickMs: 5,
+    idleRefetchMs: 12,
+    budget: { ...blockedBudget(), windowEndMs: Date.now() + 2 * HOUR, msUntilReset: 2 * HOUR },
+  });
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelector('#start-btn').disabled, true, 'the tab booted blocked');
+  const before = ctx.counts.budget;
+
+  ctx.box.budget = { ...okBudget(), windowEndMs: Date.now() + 2 * HOUR, msUntilReset: 2 * HOUR };
+  await ctx.wait(60);                            // no live runs, window not rolled over
+  ctx.stopTimers();
+
+  assert.ok(ctx.counts.budget > before,
+    'an idle tab must re-verify the snapshot on the slow cadence');
+  assert.equal(doc.querySelector('#start-btn').disabled, false,
+    'the cleared limit reaches the creation gate without a reload');
+  assert.equal(doc.querySelector('#newBlockedNote').hidden, true);
+  assert.equal(doc.querySelector('#side-spend .spend-ind').classList.contains('over'), false);
 });
