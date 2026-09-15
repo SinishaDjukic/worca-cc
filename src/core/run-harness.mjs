@@ -557,6 +557,11 @@ export function normalizeClarifyAnswer(payload, questions) {
   }));
 }
 
+// Upper bound for one RunHarness._git call. Matches worktree.mjs's slow-git
+// budget (SLOW_GIT_TIMEOUT_MS): `diff --cached` on a large agent change is the
+// slowest command issued here, and it legitimately takes seconds, never minutes.
+const HARNESS_GIT_TIMEOUT_MS = 120_000;
+
 export class RunHarness extends EventEmitter {
   constructor(opts) {
     super();
@@ -2948,9 +2953,17 @@ export class RunHarness extends EventEmitter {
 
   /**
    * Run a git command in the project dir. Never throws; returns
-   * { ok, code, stdout, stderr }. Honors the abort signal.
+   * { ok, code, stdout, stderr }. Honors the abort signal. Bounded by
+   * `timeoutMs` (default HARNESS_GIT_TIMEOUT_MS): the commands issued here are
+   * local (init/add/status/rev-parse/commit/diff --cached), and a git that does
+   * not come back in that time is stuck, not working — it is SIGKILLed and
+   * reported as `{ ok: false, stderr: 'git timed out' }`, which every caller
+   * already handles as a failed git step. Without this bound a wedged git on
+   * the stop/teardown path (which deliberately ignores the abort signal) held
+   * the whole process, and under `npm test` the runner, until the CI job's
+   * 30-minute limit killed it.
    */
-  _git(args, { cwd, ignoreAbort = false } = {}) {
+  _git(args, { cwd, ignoreAbort = false, timeoutMs = HARNESS_GIT_TIMEOUT_MS } = {}) {
     return new Promise((resolveP) => {
       let child;
       try {
@@ -2968,12 +2981,26 @@ export class RunHarness extends EventEmitter {
       }
       let stdout = '';
       let stderr = '';
+      let settled = false;
+      const done = (val) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolveP(val);
+      };
+      const timer = timeoutMs > 0
+        ? setTimeout(() => {
+          try { child.kill('SIGKILL'); } catch { /* already gone */ }
+          // A grandchild (hook, alias, pager) that inherited the pipes would keep
+          // them — and this process's event loop — open after git itself is dead.
+          try { child.stdout?.destroy(); child.stderr?.destroy(); } catch { /* best effort */ }
+          done({ ok: false, code: -1, stdout, stderr: stderr ? `git timed out: ${stderr}` : 'git timed out' });
+        }, timeoutMs)
+        : null;
       child.stdout?.on('data', (d) => (stdout += d.toString()));
       child.stderr?.on('data', (d) => (stderr += d.toString()));
-      child.on('error', (err) =>
-        resolveP({ ok: false, code: -1, stdout, stderr: stderr || err.message }),
-      );
-      child.on('close', (code) => resolveP({ ok: code === 0, code: code ?? -1, stdout, stderr }));
+      child.on('error', (err) => done({ ok: false, code: -1, stdout, stderr: stderr || err.message }));
+      child.on('close', (code) => done({ ok: code === 0, code: code ?? -1, stdout, stderr }));
     });
   }
 

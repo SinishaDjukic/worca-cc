@@ -28,11 +28,11 @@ after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
   delete process.env.WORCA_MOCK;
-  await rm(homeDir, { recursive: true, force: true });
+  await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 const projects = [];
 const runDir = async () => { const d = await mkdtemp(join(tmpdir(), 'worca-cc-runauto-proj-')); projects.push(d); return d; };
-after(() => Promise.all(projects.map((d) => rm(d, { recursive: true, force: true }))));
+after(() => Promise.all(projects.map((d) => rm(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }))));
 const api = async (method, path, body) => {
   const res = await fetch(`${base}${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   return { status: res.status, body: await res.json().catch(() => null) };

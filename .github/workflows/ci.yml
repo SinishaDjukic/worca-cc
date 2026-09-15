@@ -38,11 +38,13 @@ jobs:
       # No build step: plain Node ESM plus a vanilla HTML/CSS/JS frontend.
       # The script points WORCA_HOME at ./.worca-cc-test, so nothing touches a
       # real home directory, and no test may spawn a live `claude`.
-      # ONE retry, for the known ENOTEMPTY teardown race (test/api-sources and
-      # test/orchestrator-graph occasionally lose a rmdir to a still-open handle;
-      # see the notes beside `test` in package.json). A second failure is real.
+      # No retry: the ENOTEMPTY teardown race this step used to re-run for was
+      # a test waiting on a stale "newest row" and leaving its run alive
+      # (test/api-run-auto, fixed), and every home/sandbox rm in the suite now
+      # retries the rmdir itself (maxRetries, like test/helpers/temp-home.mjs).
+      # A failure here is real on the first attempt.
       - name: Run tests
-        run: npm test || (echo "::warning::npm test failed once — retrying for the known ENOTEMPTY teardown flake (see package.json test notes)" && npm test)
+        run: npm test
 
   cdp:
     name: headless-Chrome UI proofs
