@@ -269,7 +269,9 @@ export const RULES = [
       if (n.kind !== 'agent' || !metaOf(n.id)) continue;               // V3/V4 own an unresolved node
       for (const inp of inputsOf(n.id)) {
         if (!inp?.required || inp.loop || isLoopInput(n.id, inp.id)) continue;
-        if (!isWired(n.id, inp.id)) add(`required input '${n.id}.${inp.id}' is unwired`, { nodeId: n.id, portId: inp.id });
+        // `incomplete`: the graph is UNFINISHED here, not wrong — the composer shows
+        // these as work to do rather than as errors (Save stays gated either way).
+        if (!isWired(n.id, inp.id)) add(`required input '${n.id}.${inp.id}' is unwired`, { nodeId: n.id, portId: inp.id, incomplete: true });
       }
     }
   } },
@@ -474,7 +476,7 @@ export const RULES = [
       if (!metaOf(t.id)) continue;
       if (inputsOf(t.id).length) add(`task node '${t.id}' must declare zero inputs`, { nodeId: t.id });
       if (!liveWires.some((w) => w.from.node === t.id && w.from.port === 'task')) {
-        add(`task node '${t.id}' output 'task' must have at least one wire`, { nodeId: t.id });
+        add(`task node '${t.id}' output 'task' must have at least one wire`, { nodeId: t.id, incomplete: true });
       }
     }
   } },
@@ -485,7 +487,7 @@ export const RULES = [
     for (const e of endNodes) {
       if (!metaOf(e.id)) continue;
       if (outputsOf(e.id).length) add(`end node '${e.id}' must declare zero outputs`, { nodeId: e.id });
-      if (!isWired(e.id, 'result')) add(`end node '${e.id}' input 'result' must be wired`, { nodeId: e.id });
+      if (!isWired(e.id, 'result')) add(`end node '${e.id}' input 'result' must be wired`, { nodeId: e.id, incomplete: true });
     }
   } },
 ];

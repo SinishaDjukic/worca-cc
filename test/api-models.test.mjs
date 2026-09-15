@@ -442,3 +442,70 @@ test('a plugin model\'s manifest price reaches GET /api/models and Edit-a-copy',
   assert.deepEqual(copy.body.cost, { perMtok: { input: 1, output: 3 } });
   assert.equal((await jfetch(`/api/plugins/priced-plug/model-env?${q({ id: 'pp-plain' })}`)).body.cost, undefined);
 });
+
+// ── #422: hidden built-ins over HTTP, the title-model setting, a testable built-in ──
+
+test('#422: hideBuiltinModels flags built-ins in /api/config, is echoed by /api/models, and the ask default skips them', async () => {
+  const on = await post('/api/settings', { hideBuiltinModels: true });
+  assert.equal(on.status, 200, JSON.stringify(on.body));
+  assert.equal(on.body.hideBuiltinModels, true);
+  try {
+    const cfg = await jfetch('/api/config');
+    const builtins = cfg.body.models.filter((m) => m.custom === false);
+    assert.ok(builtins.length > 0 && builtins.every((m) => m.hidden === true), 'unshadowed built-ins carry hidden:true');
+    assert.ok(cfg.body.models.filter((m) => m.custom).every((m) => m.hidden === undefined), 'owned entries never hidden');
+    const models = await jfetch('/api/models');
+    assert.equal(models.body.hideBuiltinModels, true);
+    assert.ok(models.body.predefined.length > 0, 'predefined still shipped — the view collapses it, the id still resolves');
+    const ask = await jfetch('/api/ask/models');
+    assert.ok(ask.body.default && !ask.body.models.find((m) => m.id === ask.body.default.model).hidden, 'default is a visible model');
+  } finally {
+    const off = await post('/api/settings', { hideBuiltinModels: false });
+    assert.equal(off.status, 200);
+    assert.equal(off.body.hideBuiltinModels, false);
+  }
+  const cfg = await jfetch('/api/config');
+  assert.ok(cfg.body.models.every((m) => m.hidden === undefined), 'flag gone once unset');
+  const bad = await post('/api/settings', { hideBuiltinModels: 'yes' });
+  assert.equal(bad.status, 400);
+  assert.match(bad.body.error, /true or false/);
+});
+
+test('#422: POST /api/settings titleModel — catalog member stored, unknown id refused, "" clears; stale id reported', async () => {
+  const { PREDEFINED_MODELS } = await import('../src/core/config.mjs');
+  const unknown = await post('/api/settings', { titleModel: 'no-such-model' });
+  assert.equal(unknown.status, 400);
+  assert.match(unknown.body.error, /unknown model "no-such-model"/);
+  const builtin = await post('/api/settings', { titleModel: PREDEFINED_MODELS[0].id });
+  assert.equal(builtin.status, 200, JSON.stringify(builtin.body));
+  assert.equal(builtin.body.titleModel, PREDEFINED_MODELS[0].id);
+  assert.deepEqual(builtin.body.titleModelEffective, { model: PREDEFINED_MODELS[0].id, source: 'settings', stale: null });
+  // A global entry picked, then deleted → the setting is stale and says so.
+  const add = await post('/api/models', { id: 'title-only-model', label: 'T', efforts: [], env: {} });
+  assert.equal(add.status, 200, JSON.stringify(add.body));
+  const pick = await post('/api/settings', { titleModel: 'title-only-model' });
+  assert.equal(pick.status, 200);
+  const del = await jfetch('/api/models/title-only-model', { method: 'DELETE' });
+  assert.equal(del.status, 200, JSON.stringify(del.body));
+  const stale = await jfetch('/api/settings');
+  assert.equal(stale.body.titleModel, 'title-only-model', 'stored id kept verbatim');
+  assert.deepEqual(stale.body.titleModelEffective, { model: null, source: 'run', stale: 'title-only-model' });
+  const clear = await post('/api/settings', { titleModel: '' });
+  assert.equal(clear.status, 200);
+  assert.equal(clear.body.titleModel, null);
+  assert.deepEqual(clear.body.titleModelEffective, { model: null, source: 'run', stale: null });
+});
+
+test('#422: POST /api/models/:id/test accepts a BUILT-IN id (the Title-generation card offers them)', async () => {
+  const { PREDEFINED_MODELS } = await import('../src/core/config.mjs');
+  const prev = process.env.WORCA_MOCK;
+  process.env.WORCA_MOCK = '1';           // never a real spawn under the test PATH guard
+  try {
+    const r = await post(`/api/models/${PREDEFINED_MODELS[0].id}/test`, {});
+    assert.notEqual(r.status, 404, JSON.stringify(r.body));
+    assert.equal(r.status, 200);
+    assert.equal(typeof r.body.ok, 'boolean');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prev;
+  }
+});

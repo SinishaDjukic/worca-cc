@@ -166,6 +166,7 @@ test('labelForTool table', () => {
   assert.equal(labelForTool('mcp__worca__add_diff_comment', {}), 'Writing a diff comment');
   assert.equal(labelForTool('mcp__worca__resolve_diff_comment', {}), 'Updating a diff comment');
   assert.equal(labelForTool('mcp__worca__delete_diff_comment', {}), 'Deleting a diff comment');
+  assert.equal(labelForTool('mcp__worca__reply_to_diff_comment', {}), 'Replying to a diff comment');
 
   assert.equal(labelForTool('Task', {}), null);
   assert.equal(labelForTool('Agent', {}), null);
@@ -182,6 +183,14 @@ test('a successful comment write calls onCommentMutation; an error result does n
   h.push(atool('msg_1', 'toolu_3', 'mcp__worca__list_diff_comments', { id: '4e1f2a9b' }));
   h.push(uresult('toolu_3', JSON.stringify({ runId: '4e1f2a9b', comments: [] })));
   assert.deepEqual(seen, [{ runId: '4e1f2a9b' }], 'writes only, successes only');
+});
+
+test('a successful reply_to_diff_comment calls onCommentMutation like the other comment writes', () => {
+  const seen = [];
+  const h = harness({ onCommentMutation: (e) => seen.push(e) });
+  h.push(atool('msg_r', 'toolu_r', 'mcp__worca__reply_to_diff_comment', { commentId: 'dc_00000001', body: 'x' }));
+  h.push(uresult('toolu_r', JSON.stringify({ comment: { id: 'dc_00000002', runId: 'abcdef12', storeKey: 'p-1' } })));
+  assert.deepEqual(seen, [{ runId: 'abcdef12' }]);
 });
 
 test('an unparseable comment-write result pokes nothing and does not throw', () => {
@@ -578,4 +587,38 @@ test('onWorktreeMutation: a throwing sink is contained', () => {
   h.push(atool('msg_1', 'toolu_1', 'mcp__worca__open_worktree', { projectKey: 'p', ref: 'main' }));
   assert.doesNotThrow(() => h.push(uresult('toolu_1', JSON.stringify({ worktreeId: 'wt_00000001' }))));
   assert.equal(h.frames.filter((f) => f.type === 'ask-block').at(-1).block.status, 'done', 'the block still completed');
+});
+
+test('propose_workflow: label, START hook with the full input, RESULT hook with the raw text + isError; sub-agent calls never fire the hooks', () => {
+  assert.equal(labelForTool('mcp__worca__propose_workflow', {}), 'Building a workflow');
+  const starts = []; const results = [];
+  const h = harness({ onWorkflowStart: (e) => starts.push(e), onWorkflowResult: (e) => { results.push(e); return Promise.resolve(); } });
+  const input = { task: 'make it', projectKey: 'p-1', thenRun: true };
+  h.push(session(), init(), mstart('msg_1'), atool('msg_1', 'toolu_wf', 'mcp__worca__propose_workflow', input));
+  assert.deepEqual(starts, [{ toolUseId: 'toolu_wf', input }], 'START fires synchronously at the tool_use, with the UNCLIPPED input');
+  assert.ok(h.frames.some((f) => f.type === 'ask-label' && f.label === 'Building a workflow'));
+  h.push(uresult('toolu_wf', '{"ok":true,"shape":{}}'));
+  assert.deepEqual(results, [{ toolUseId: 'toolu_wf', input, text: '{"ok":true,"shape":{}}', isError: false }]);
+  // A sub-agent's call (parent_tool_use_id set): logged on the agent block if one exists, never intercepted.
+  h.push(atool('msg_1', 'toolu_task', 'Agent', { description: 'helper', subagent_type: 'general-purpose', prompt: 'x' }));
+  h.push(atool('msg_c', 'toolu_wf2', 'mcp__worca__propose_workflow', {}, 'toolu_task'));
+  h.push(uresult('toolu_wf2', 'error: nope', { isError: true, ptu: 'toolu_task' }));
+  assert.equal(starts.length, 1); assert.equal(results.length, 1, 'child-stream calls are logged, never intercepted');
+  h.push(atool('msg_1', 'toolu_wf3', 'mcp__worca__propose_workflow', {}));
+  h.push(uresult('toolu_wf3', 'error: propose_workflow: boom', { isError: true }));
+  assert.deepEqual(results.at(-1), { toolUseId: 'toolu_wf3', input: {}, text: 'error: propose_workflow: boom', isError: true });
+});
+
+test('onTrackRun fires on the MAIN-stream track_run tool_result with the full input, the text and isError; never for a sub-agent', () => {
+  const calls = [];
+  const h = harness({ onTrackRun: (e) => calls.push(e) });
+  h.push(session(), init(), atool('msg_1', 't1', 'mcp__worca__track_run', { id: 'abcd1234' }), uresult('t1', '{"ok":true}'));
+  assert.deepEqual(calls, [{ toolUseId: 't1', input: { id: 'abcd1234' }, text: '{"ok":true}', isError: false }]);
+  assert.ok(h.frames.some((f) => f.type === 'ask-label' && f.label === 'Tracking a run'), 'the activity label has its own arm (the FIRST ask-label frame is the turn\'s own Thinking)');
+  h.push(atool('msg_2', 't2', 'mcp__worca__track_run', { id: 'zz' }), uresult('t2', 'error: track_run: run not found', { isError: true }));
+  assert.equal(calls[1].isError, true);
+  assert.equal(calls[1].text, 'error: track_run: run not found');
+  // a sub-agent's call (parent_tool_use_id set) is logged on the agent block, never hooked (D16)
+  h.push(atool('msg_3', 'agent-1', 'Task', { prompt: 'x' }), atool('msg_4', 't3', 'mcp__worca__track_run', { id: 'abcd1234' }, 'agent-1'), uresult('t3', '{"ok":true}', { ptu: 'agent-1' }));
+  assert.equal(calls.length, 2);
 });

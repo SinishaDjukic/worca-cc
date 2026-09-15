@@ -13,6 +13,7 @@ import * as layout from '../src/shared/graph/layout.mjs';
 import * as thumbnail from '../src/shared/graph/thumbnail.mjs';
 import * as agentMeta from '../src/shared/graph/agent-meta.mjs';
 import * as manifest from '../src/shared/graph/manifest.mjs';
+import * as flow from '../src/shared/graph/flow-layout.mjs';
 
 test('ui/public/graph/model.mjs re-exports the SHARED functions — same identity, no copy', () => {
   assert.equal(uiModel.validateGraph, validate.validateGraph);
@@ -35,6 +36,9 @@ test('ui/public/graph/model.mjs re-exports the SHARED functions — same identit
   assert.equal(uiModel.thumbnailSvg, thumbnail.thumbnailSvg);
   assert.equal(uiModel.indexByKey, agentMeta.indexByKey);
   assert.equal(uiModel.manifestPortsFn, manifest.manifestPortsFn);
+  // The flow layout/router (auto-proposal hosts) is shared too — never a UI copy.
+  assert.equal(uiModel.flowLayout, flow.flowLayout);
+  assert.equal(uiModel.routeFlow, flow.routeFlow);
   // C-2: the icon allowlist is shared by the run monitor (manifest cells) and the
   // composer canvas (view.mjs safeAgentIcon) — one function, never a second copy.
   assert.equal(typeof manifest.sanitizeIcon, 'function', 'manifest exports sanitizeIcon');

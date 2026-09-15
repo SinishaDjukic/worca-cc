@@ -56,7 +56,7 @@ test('every id the editor binds exists exactly once', () => {
   for (const id of ['gv-head', 'gv-name', 'gv-new', 'gv-autolayout', 'gv-save', 'gv-errors',
     'gv-canvas', 'gv-chip', 'gv-ins-rail', 'gv-ins-body', 'gv-ins-toggle', 'gv-ins-tabs', 'gv-agents-pane',
     'gv-agent-filter', 'gv-palette', 'gv-legend', 'gv-saved-list', 'gv-saved-count', 'gv-archived',
-    'gv-dialog-host']) {
+    'gv-dialog-host', 'gv-nav', 'gv-zoom-in', 'gv-zoom-out', 'gv-center']) {
     assert.equal(html.split(`id="${id}"`).length - 1, 1, `#${id} appears exactly once`);
   }
   assert.equal(doc.getElementById('gv-legend').textContent.trim(),
@@ -66,5 +66,23 @@ test('every id the editor binds exists exactly once', () => {
 test('the v1 composer markup is gone', () => {
   for (const id of ['composer-flow', 'composer-wires', 'composer-palette', 'composer-saved-list']) {
     assert.ok(!html.includes(`id="${id}"`), `v1 #${id} removed`);
+  }
+});
+
+test('the canvas nav cluster is the stage’s sibling and follows the rail in the markup', () => {
+  const canvas = view.querySelector('#gv-canvas');
+  const nav = canvas.querySelector(':scope > #gv-nav');
+  assert.ok(nav, '#gv-nav is the canvas host’s own child, like the chip and the rail');
+  // Load-bearing ORDER: style.css offsets the cluster with
+  // `.gv-ins-rail[data-open="collapsed"] ~ .gv-nav`, and `~` only looks FORWARD.
+  assert.equal(nav.previousElementSibling.id, 'gv-ins-rail', '#gv-nav comes after the rail');
+  const btns = [...nav.querySelectorAll('button')];
+  assert.deepEqual(btns.map((b) => b.id), ['gv-zoom-in', 'gv-zoom-out', 'gv-center']);
+  for (const b of btns) {
+    assert.equal(b.type, 'button', `${b.id} is type=button (never a form submit)`);
+    assert.ok(b.classList.contains('gv-nav-btn'), `${b.id} carries .gv-nav-btn`);
+    assert.ok(b.getAttribute('aria-label'), `${b.id} carries an aria-label (icon-only button)`);
+    assert.ok(b.getAttribute('title'), `${b.id} carries a title`);
+    assert.equal(b.querySelector('svg').getAttribute('aria-hidden'), 'true', `${b.id}'s glyph is decorative`);
   }
 });

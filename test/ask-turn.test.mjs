@@ -13,6 +13,7 @@ import {
   createThread, appendMessage, getMessage, getThread,
   updateThread, setThreadTitle, deleteThread,
 } from '../src/core/ask/store.mjs';
+import { proposalFor } from './helpers/auto-proposal-fixture.mjs';
 
 useTempHome(after);
 
@@ -380,6 +381,8 @@ test('title: fires on the first turn with the R-D + dontAsk option set; rename g
   assert.equal(o.envScrub, true);
   assert.deepEqual(o.envAllowlist, []);
   assert.equal(o.permissionMode, 'dontAsk');
+  assert.equal(o.runModel, 'claude-opus-5', '#422: the chat\'s own model is the title default');
+  assert.equal(typeof o.onError, 'function', '#422: a failed title is reported, not swallowed');
   assert.equal(o.signal, undefined, 'no signal — fires after ANY terminal, incl. a stop that aborted the controller');
   assert.equal(getThread(s.thread.id).title, 'Fable Title');
   assert.deepEqual(outOfTurn, [{ type: 'ask-title', title: 'Fable Title' }]);
@@ -822,4 +825,194 @@ test('title: a scratch-dir failure still titles the first turn exactly once (the
   assert.equal(frames.at(-1).type, 'ask-error', 'the deps failure is an error completion');
   assert.equal(calls.length, 1);
   assert.deepEqual(outOfTurn, [{ type: 'ask-title', title: 'Backstop Title' }]);
+});
+
+const WF_TOOL = 'mcp__worca__propose_workflow';
+const wfStart = (onEvent, id, input) => push(onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id, name: WF_TOOL, input }] } });
+const wfResult = (onEvent, id, text, isError = false) => push(onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: id, content: text, ...(isError ? { is_error: true } : {}) }] } });
+const drain = async () => { for (let i = 0; i < 3; i++) await new Promise((r) => setImmediate(r)); };
+const BUILDING_KEYS = ['mode', 'name', 'note', 'projectKey', 'projectName', 'task', 'thenRun', 'trace', 'type'];
+const PROPOSED_KEYS = ['costUsd', 'fingerprint', 'ignoredProjectOverrides', 'manifest', 'match', 'mode', 'models', 'name', 'nodes', 'note', 'order',
+  'projectKey', 'projectName', 'reasoning', 'round', 'shape', 'signals', 'size', 'summary', 'taskKind', 'thenRun', 'type', 'warnings'];
+
+test('workflow card: building at tool_use START (persisted), proposed at RESULT from the re-validated shape; cost booked on the turn', async () => {
+  const s = seed();
+  const fixture = proposalFor();
+  let midBlocks = null; let revalArgs = null;
+  const { turn, frames } = makeTurn(s, { pinnedScope: { projectKey: 'demo-00000001' } }, {
+    // v4: the stub resolves the project the way the real revalidate does; the tool result below carries projectName:null
+    // (what the MOCK child returns), so the card's name must come from r.project.
+    revalidateWorkflow: async (o) => { revalArgs = o; return { proposal: fixture, template: {}, match: null, tunables: {}, shape: o.shape, summary: 'stages: x', project: { key: 'demo-00000001', name: 'Demo', path: '/tmp/demo' } }; },
+    runClaudeImpl: async (opts) => {
+      wfStart(opts.onEvent, 'toolu_wf', { task: 'Add a settings page', note: 'A note', thenRun: true });
+      await drain();
+      midBlocks = getMessage(s.asst.id).blocks;
+      wfResult(opts.onEvent, 'toolu_wf', JSON.stringify({ ok: true, mode: 'task', projectKey: 'demo-00000001', projectName: null, name: 'N', match: null, warnings: ['w1'],
+        summary: 'stages: x', shape: { name: 'N', stages: [] }, costUsd: 0.02, fingerprint: 'top-level: src/', note: 'A note', thenRun: true }));
+      await drain();
+      push(opts.onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  const building = (midBlocks || []).find((b) => b.kind === 'card');
+  assert.ok(building && building.state === 'building', 'the card exists from the tool_use on');
+  assert.match(building.id, /^card_[0-9a-f]{8}$/);
+  assert.deepEqual(Object.keys(building.card).sort(), BUILDING_KEYS);
+  assert.equal(building.card.type, 'workflow'); assert.equal(building.card.mode, 'task'); assert.equal(building.card.projectKey, 'demo-00000001', 'the pinned project is the default target');
+  assert.equal(building.card.note, 'A note'); assert.equal(building.card.trace.step, 1); assert.equal(building.card.thenRun, true);
+  assert.deepEqual(revalArgs, { shape: { name: 'N', stages: [] }, projectKey: 'demo-00000001', warnings: ['w1'], costUsd: 0.02, fingerprint: 'top-level: src/' });
+  const final = getMessage(s.asst.id);
+  const card = final.blocks.find((b) => b.kind === 'card');
+  assert.equal(card.id, building.id, 'same block, flipped in place');
+  assert.equal(card.state, 'proposed');
+  assert.deepEqual(Object.keys(card.card).sort(), PROPOSED_KEYS);
+  assert.equal(card.card.manifest.graph.nodes.length, fixture.manifest.graph.nodes.length, 'the card mounts the REAL manifest');
+  assert.equal(card.card.summary, 'stages: x'); assert.equal(card.card.projectName, 'Demo', 'projectName: the tool\'s value, else the parent\'s lookup (v4)');
+  const states = frames.filter((f) => f.type === 'ask-card').map((f) => f.block.state);
+  assert.deepEqual(states, ['building', 'proposed']);
+  const done = frames.find((f) => f.type === 'ask-done');
+  assert.equal(done.costUsd, 0.07, 'RESULT() bills 0.05 (test/ask-turn.test.mjs:20) + the classifier\'s 0.02 ride the turn\'s four sinks (PD2)');
+  assert.equal(final.costUsd, 0.07);
+});
+
+test('workflow card: a tool error, an unassemblable shape or an {ok:false} classifier result flips the card to failed with the reason (the failed classifier\'s spend is still booked); a turn that ends mid-build fails it', async () => {
+  const s = seed();
+  const { turn, frames } = makeTurn(s, {}, {
+    revalidateWorkflow: async () => { throw new Error('invalid workflow shape: stage "s1": unknown agent "e2e-tester"'); },
+    runClaudeImpl: async (opts) => {
+      wfStart(opts.onEvent, 'toolu_a', { shape: { stages: [] }, projectKey: 'p' });
+      wfResult(opts.onEvent, 'toolu_a', 'error: propose_workflow: the workflow classifier timed out: no reply after 90s', true);
+      wfStart(opts.onEvent, 'toolu_b', { shape: { stages: [] }, projectKey: 'p' });
+      wfResult(opts.onEvent, 'toolu_b', JSON.stringify({ ok: true, shape: { stages: [] }, projectKey: 'p' }));
+      // v7 (PD2): the child's {ok:false} carries what the failed classifier attempts already cost — real money, booked like a success's.
+      wfStart(opts.onEvent, 'toolu_d', { task: 'classifier gives up', projectKey: 'p' });
+      wfResult(opts.onEvent, 'toolu_d', JSON.stringify({ ok: false, mode: 'task', projectKey: 'p', projectName: 'P', error: 'the workflow classifier failed: unusable shape after 2 attempts: stage "s1": unknown agent "x"', costUsd: 0.03 }));
+      wfStart(opts.onEvent, 'toolu_c', { task: 'never answered', projectKey: 'p' });
+      await drain();
+      push(opts.onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  const cards = getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card');
+  assert.deepEqual(cards.map((c) => [c.state, c.error]), [
+    ['failed', 'propose_workflow: the workflow classifier timed out: no reply after 90s'],
+    ['failed', 'invalid workflow shape: stage "s1": unknown agent "e2e-tester"'],
+    ['failed', 'the workflow classifier failed: unusable shape after 2 attempts: stage "s1": unknown agent "x"'],
+    ['failed', 'the reply ended before the proposal was ready'],
+  ]);
+  assert.equal(cards[0].card.mode, 'shape', 'the building payload stays under the error');
+  assert.equal(frames.find((f) => f.type === 'ask-done').costUsd, 0.08, 'RESULT() 0.05 + the failed classifier\'s 0.03 (PD2, v7)');
+});
+
+test('mock ask: the word "workflow" fabricates a propose_workflow pair from mockShapeFor; a "[worca event] … saved … thenRun=true" prompt proposes a run with that workflowId', async () => {
+  // runClaude takes the mock branch only under mockEnabled(): the turn passes MARKERS, not a mock flag (spawn.mjs:104).
+  const prevMock = process.env.WORCA_MOCK; process.env.WORCA_MOCK = '1';
+  try {
+  const s = seed();
+  const reval = async (o) => ({ proposal: proposalFor(), template: {}, match: null, tunables: {}, shape: o.shape, summary: 's' });
+  const a = makeTurn(s, { prompt: 'make me an auto workflow for this plan:\n# Rename\nrename pauseReason to pauseCause', mock: { card: { projectKey: 'demo-00000001', workflowId: 'wf_default', guardrailsId: 'normal', brief: 'b' } } },
+    { revalidateWorkflow: reval, validateProposal: async () => ({ ok: true, card: {} }) });
+  await a.turn.run();
+  const cards = getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card');
+  assert.equal(cards.length, 1); assert.equal(cards[0].card.type, 'workflow'); assert.equal(cards[0].state, 'proposed');
+  assert.equal(cards[0].card.shape.taskKind, 'plan-complete-small', 'the heading text picks the implement-only recipe');
+  const s2 = seed();
+  let proposed = null;
+  const b = makeTurn(s2, { prompt: '[worca event] workflow card card_0000aa01 saved as wf_rename "Rename"; thenRun=true; project=demo-00000001', mock: { card: { projectKey: 'demo-00000001', workflowId: 'wf_default', guardrailsId: 'normal', brief: 'b' } } },
+    { validateProposal: async (input) => { proposed = input; return { ok: true, card: { ...input } }; } });
+  await b.turn.run();
+  assert.equal(proposed.workflowId, 'wf_rename', 'the event arm proposes the run WITH the saved workflow');
+  assert.equal(proposed.brief, 'Run with "Rename"', 'the brief names the workflow, not the event line');
+  assert.equal(getMessage(s2.asst.id).blocks.filter((x) => x.kind === 'card' && !x.card.type).length, 1);
+  const s3 = seed();
+  const c = makeTurn(s3, { prompt: '[worca event] workflow card card_0000aa01 declined; project=demo-00000001', mock: { card: {} } }, {});
+  await c.turn.run();
+  assert.match(getMessage(s3.asst.id).text, /another auto workflow|what to change|saved workflow/i);
+  assert.equal(getMessage(s3.asst.id).blocks.filter((x) => x.kind === 'card').length, 0, 'the word "workflow" inside an EVENT never builds a card');
+  } finally { if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock; }
+});
+
+// ── The authoritative re-validation gets the thread's attachment ledger ───────
+
+test('propose_run re-validation hands the thread\'s attachment ledger + cardId to the validator', async () => {
+  const s = seed();
+  let seenOpts = null;
+  let seenTid = null;   // asserted OUTSIDE the fake: _onProposal wraps the ledger call in try/catch, so a throw in here would be swallowed
+  const rows = [{ id: 'att_00000001', threadId: s.thread.id, messageId: null, name: 'a.md', bytes: 1, kind: 'text', mime: null, createdAt: 't' }];
+  const { turn } = makeTurn(s, {}, {
+    store: { listAttachments: (tid) => { seenTid = tid; return rows; } },
+    validateProposal: async (input, o) => { seenOpts = o; return { ok: true, card: { target: 'project', projectKey: 'demo-00000001', workspaceId: null } }; },
+    runClaudeImpl: proposeRun({ projectKey: 'demo-00000001', brief: 'x', attachmentIds: ['att_00000001'] }),
+  });
+  await turn.run();
+  assert.ok(seenOpts, 'the validator ran');
+  assert.equal(seenTid, s.thread.id, 'the OWNING thread\'s ledger');
+  assert.match(seenOpts.cardId, /^card_[0-9a-f]{8}$/);
+  assert.deepEqual(seenOpts.attachments, rows);
+});
+
+test('propose_run re-validation survives a throwing ledger (empty attachments, card still lands)', async () => {
+  const s = seed();
+  let seenOpts = null;
+  const { turn } = makeTurn(s, {}, {
+    store: { listAttachments: () => { throw new Error('db gone'); } },
+    validateProposal: async (input, o) => { seenOpts = o; return { ok: true, card: { target: 'project', projectKey: 'demo-00000001', workspaceId: null } }; },
+    runClaudeImpl: proposeRun({ projectKey: 'demo-00000001', brief: 'x' }),
+  });
+  await turn.run();
+  assert.deepEqual(seenOpts.attachments, []);
+  assert.ok(getMessage(s.asst.id).blocks.some((b) => b.kind === 'card'), 'the card still landed');
+});
+
+test('track_run: the parent links through deps.trackRun and mints ONE progress card per pipeline per reply; a failure is a notice', async () => {
+  const s = seed();
+  const tracked = [];
+  let midBlocks = null;
+  const CARD = { type: 'progress', pipelineId: 'abcd1234', runId: null, projectKey: 'demo-00000001', workspaceId: null, title: 'T', label: 'demo', status: 'done' };
+  const call = (onEvent, n, id) => {
+    push(onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: `msg_${n}`, content: [{ type: 'tool_use', id: `toolu_${n}`, name: 'mcp__worca__track_run', input: { id } }] } });
+    push(onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: `toolu_${n}`, content: '{"ok":true}' }] } });
+  };
+  const { turn, frames } = makeTurn(s, { pinnedScope: { projectKey: 'demo-00000001' } }, {
+    trackRun: async (input, { threadId, pin }) => { tracked.push({ input, threadId, pin }); return input.id === 'bad' ? { ok: false, error: 'run not found' } : { ok: true, card: CARD }; },
+    runClaudeImpl: async (opts) => {
+      call(opts.onEvent, 1, 'abcd1234'); call(opts.onEvent, 2, 'abcd1234'); call(opts.onEvent, 3, 'bad');
+      for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+      midBlocks = getMessage(s.asst.id).blocks;
+      push(opts.onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  assert.equal(tracked.length, 3);
+  assert.deepEqual(tracked[0], { input: { id: 'abcd1234' }, threadId: s.thread.id, pin: { projectKey: 'demo-00000001' } });
+  const cards = (midBlocks || []).filter((b) => b.kind === 'card');
+  assert.equal(cards.length, 1, 'the second track of the same pipeline mints nothing');
+  assert.equal(cards[0].state, 'tracked');
+  assert.match(cards[0].id, /^card_[0-9a-f]{8}$/);
+  assert.deepEqual(cards[0].card, CARD);
+  assert.deepEqual(Object.keys(cards[0]).sort(), ['card', 'id', 'kind', 'state']);
+  assert.ok(midBlocks.some((b) => b.kind === 'notice' && b.text === 'Could not track the run: run not found'));
+  const iCard = frames.findIndex((f) => f.type === 'ask-card');
+  assert.ok(iCard !== -1 && iCard < frames.findIndex((f) => f.type === 'ask-done'));
+});
+
+test('track_run: an isError tool result mints nothing (the child already told the model why)', async () => {
+  const s = seed();
+  let calls = 0;
+  const { turn } = makeTurn(s, {}, {
+    trackRun: async () => { calls += 1; return { ok: true, card: {} }; },
+    runClaudeImpl: async (opts) => {
+      push(opts.onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id: 'toolu_1', name: 'mcp__worca__track_run', input: { id: 'zz' } }] } });
+      push(opts.onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'error: track_run: run not found', is_error: true }] } });
+      await new Promise((r) => setImmediate(r));
+      push(opts.onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  assert.equal(calls, 0);
+  assert.ok(!getMessage(s.asst.id).blocks.some((b) => b.kind === 'card'));
 });

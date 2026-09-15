@@ -8,6 +8,12 @@ import { createThreadModel } from './ask-model.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
 import { createThinkingOrb } from './thinking-orb.mjs';
 import { workflowPickerLabel } from './results-view.mjs';
+import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mjs';
+import { createRunProgressCard, snapshotFromState, PROGRESS_CARD_TYPE } from './ask-run-card.mjs';
+import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
+import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf } from './node-tunables.mjs';
+import { classifyLoops } from '../../src/shared/graph/loops.mjs';
+import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 
 /**
  * Cold-start pick, used ONLY until GET /api/ask/models resolves — and afterwards
@@ -85,7 +91,53 @@ export function shortcutLabel(win) {
   return /mac|iphone|ipad|ipod/i.test(platform) ? '⌘K' : 'Ctrl K';
 }
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, loadMarkdown, hljsLoader, storage, raf, now }) {
+/**
+ * Sheet geometry shared with style.css: .ask-dock{padding:0 28px 26px} and
+ * .ask-sheet{width:min(821px,100%);height:min(669px,calc(100% - 20px))}. The
+ * user's size is clamped to [minW×minH, dock inner box]. The floor IS the
+ * stylesheet default: the sheet grows from what it always was and never shrinks
+ * below it, so every layout the fixed-size sheet was designed around (the
+ * non-wrapping composer row, the popovers written in 100vh terms) still holds.
+ * Border-box px throughout — the sheet has no padding.
+ */
+export const ASK_SHEET_SIZE = Object.freeze({
+  defaultW: 821, defaultH: 669,
+  minW: 821, minH: 669,
+  dockPadX: 28, dockPadBottom: 26, topGap: 20,
+});
+/**
+ * Where the chip picker's panel sits inside the sheet (sheet-relative px, from
+ * sheet-relative chip edges). Every other .ask-pop is CSS-anchored (the header
+ * corner, or the composer box's inset — style.css --ask-col-inset); a band chip
+ * sits wherever the transcript scrolled it, and .ask-sheet
+ * clips (overflow:hidden), so a downward-only anchor chops the menu's Effort row
+ * off with no way to reach it. Prefer the space under the chip, flip above it
+ * when the menu would not fit, and clamp into the sheet when neither side has
+ * room — .ask-pop-chip's own max-height/overflow-y makes the rest reachable.
+ * A sheetH of 0 (jsdom measures nothing) skips the clamp: no fake geometry.
+ */
+export function chipPickerTop({ top, bottom, panelH, sheetH, gap = 6 }) {
+  const below = bottom + gap;
+  const above = top - gap - panelH;
+  let t = (below + panelH <= sheetH - gap) || above < gap ? below : above;
+  if (sheetH > 0 && t + panelH > sheetH - gap) t = sheetH - panelH - gap;
+  return Math.max(0, t);
+}
+
+const SIZE_KEY = 'worca-cc.ask.size';
+/** Out-of-turn / other-thread frames that can move a History row's dots: a run a
+ *  chat follows changed (tracking) or a turn started/ended there (thinking). */
+const THREADS_REFRESH_FRAMES = new Set(['ask-run-status', 'ask-start', 'ask-done', 'ask-error']);
+const THREADS_REFRESH_MS = 250;
+/** The pill's mark ↔ orb morph: the canvas tween (thinking-orb morphTo) runs on
+ *  the same clocks as the CSS transitions on the two layers — .52s in, .8s out
+ *  (style.css .ask-pill-mark rules). The settle fallback outlives the fade-out,
+ *  for the case the transitionend never arrives. */
+const PILL_MORPH_IN_MS = 520;
+const PILL_MORPH_OUT_MS = 800;
+const PILL_SETTLE_FALLBACK_MS = PILL_MORPH_OUT_MS + 150;
+
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null }) {
   const storedPick = readStoredModel();   // hoisted declaration (defined below); null when nothing is stored
   const st = {
     open: false,
@@ -104,16 +156,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // #397: the thread's project/workspace scope. pinned:false = Auto (follow the
     // page — today's behaviour). label caches the display name once resolved.
     scope: { pinned: false, projectKey: null, workspaceId: null, label: null },
-    popover: null,            // {panel, trigger, onClose, build, refreshOn}
+    popover: null,            // {panel, trigger, onClose, build, refreshOn, refresh}
+    threadsRefresh: null,     // the debounce timer behind the History popover's ask-run-status refetch
     expandedAgents: new Set(),
     worktrees: [],            // P4 §10: the chat's open worktrees (snapshot-fed)
     pinned: true,
     prevFocus: null,
+    size: readStoredSize(),   // {w,h} the user's persisted sheet size (hoisted reader); null = stylesheet default
+    applied: null,            // {w,h} the inline size currently on the sheet (clamped); null = default
+    drag: null,               // the active resize gesture — see startResize()
     pendingFiles: [],
     sending: false,
     subscribedFor: null,
     elapsedTimer: null,
     elapsedStart: null,
+    pillOrbLive: false,       // what the pill orb was last told — see syncPillOrb()
+    pillOrbSettle: null,      // the morph-back's fallback timer, while one runs
     flushArmed: false,
     resyncing: false,
     firstOpenDone: false,
@@ -126,6 +184,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     mdKicked: false,
     answerPending: null,
     rowPending: null,
+    progress: null,           // Map<cardId, {ident, handle, rest, hydrating, nextHydrateAt}> — the live run cards
+    runTick: null,
+    runUnsub: null,
+    runPoked: false,
   };
   const el = {}; // element refs, filled by the builders
   const renderer = createMarkdownRenderer({ doc, load: loadMarkdown, hljsLoader });
@@ -160,6 +222,32 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (id) storage.setItem('worca-cc.ask.thread', id);
       else storage.removeItem('worca-cc.ask.thread');
     } catch { /* ignore */ }
+  }
+  /** The persisted sheet size, or null when nothing usable is stored. Clamped later, against a live dock. */
+  function readStoredSize() {
+    try {
+      const raw = storage.getItem(SIZE_KEY);
+      const v = raw ? JSON.parse(raw) : null;
+      if (v && Number.isFinite(v.w) && Number.isFinite(v.h)) return { w: Math.round(v.w), h: Math.round(v.h) };
+    } catch { /* storage unavailable */ }
+    return null;
+  }
+  function storeSize(size) {
+    try {
+      if (size) storage.setItem(SIZE_KEY, JSON.stringify({ w: size.w, h: size.h }));
+      else storage.removeItem(SIZE_KEY);
+    } catch { /* ignore */ }
+  }
+
+  /**
+   * Size the composer textarea to its content, one line minimum, 120px maximum.
+   * Bound to the input event; every programmatic write to el.input.value (the
+   * post-send clear, appendToComposer) must call it too, since assignment
+   * fires no input event and the box would keep the previous draft's height.
+   */
+  function fitInput() {
+    el.input.style.height = 'auto';
+    el.input.style.height = `${Math.min(el.input.scrollHeight || 0, 120)}px`;
   }
 
   // ---- tiny DOM helpers -----------------------------------------------------
@@ -203,11 +291,28 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     const pill = make('button', 'ask-pill');
     pill.type = 'button';
-    const pillLogo = doc.createElement('img');
-    pillLogo.className = 'ask-pill-logo';
-    pillLogo.src = '/assets/worca-favicon.png';
-    pillLogo.alt = '';
-    pill.appendChild(pillLogo);
+    // The mark slot: the masked logo and the pill's OWN thinking orb stacked in
+    // one 22px host (a CSS mask clips children, so the orb cannot live under
+    // the masked span). Both exist from birth — .is-live morphs one into the
+    // other in CSS and syncPillOrb() runs the canvas only while there is
+    // something to paint. Its own instance on purpose: the transcript's orb
+    // (ensureThinking) is re-parented into each live row and cannot be shared.
+    const mark = make('span', 'ask-pill-mark');
+    mark.setAttribute('aria-hidden', 'true');
+    const pillLogo = make('span', 'ask-pill-logo');
+    pillLogo.setAttribute('aria-hidden', 'true');
+    mark.appendChild(pillLogo);
+    el.pillOrb = createThinkingOrb({ doc, win, size: 22 });
+    el.pillOrb.stop();                 // the factory arms its loop; nothing is lit yet
+    el.pillOrb.morphTo(0, 0);          // the dots wait on the centre for the first morph-in
+    // The morph-back ends when the orb layer's opacity fade does (the transform
+    // fade shares the clock, so one of the two is enough); a late event from a
+    // fade that a new turn aborted must not cut a live loop — hence the guard.
+    el.pillOrb.el.addEventListener('transitionend', (e) => {
+      if (e.target === el.pillOrb.el && e.propertyName === 'opacity' && !st.pillOrbLive) settlePillOrb();
+    });
+    mark.appendChild(el.pillOrb.el);
+    pill.appendChild(mark);
     pill.appendChild(make('span', 'ask-pill-label', 'Ask Worca'));
     pill.appendChild(make('span', 'ask-kbd', shortcutLabel(win)));
     pill.addEventListener('click', openSheet);
@@ -219,10 +324,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     sheet.setAttribute('aria-label', 'Ask Worca');
 
     const header = make('header', 'ask-header');
-    const logo = doc.createElement('img');
-    logo.className = 'ask-header-logo';
-    logo.src = '/assets/worca-favicon.png';
-    logo.alt = '';
+    const logo = make('span', 'ask-header-logo');
+    logo.setAttribute('aria-hidden', 'true');
     header.appendChild(logo);
     el.title = make('div', 'ask-title', 'Ask Worca');
     // Header is logo → title → spacer → icon buttons. The #397 scope selector
@@ -242,6 +345,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.transcript = make('div', 'ask-transcript');
     el.transcript.setAttribute('data-ask-scroll', '');
     el.transcript.addEventListener('scroll', updatePinFromScroll);
+    // The transcript is only the scrollport; every row lands in this column,
+    // which style.css caps (--ask-col-max) and centres once the sheet is
+    // dragged wider than the cap. Scroll/pin logic keeps reading el.transcript.
+    el.transcriptCol = make('div', 'ask-transcript-col');
+    el.transcript.appendChild(el.transcriptCol);
     sheet.appendChild(el.transcript);
 
     sheet.appendChild(buildComposer());
@@ -257,10 +365,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.jump.hidden = true;
     el.jump.addEventListener('click', jumpToLatest);
     sheet.appendChild(el.jump);
+    for (const edge of ['n', 'e', 'w', 'ne', 'nw']) sheet.appendChild(buildResizeHandle(edge));
     dock.appendChild(sheet);
     dock.appendChild(pill);
     el.pill = pill;
     el.sheet = sheet;
+    el.dock = dock;           // measured by dockInner(); `root` is TDZ here
     return dock;
   }
 
@@ -343,6 +453,50 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const streaming = !!(st.model && st.model.live());
     el.send.hidden = streaming;
     el.stop.hidden = !streaming;
+    // The collapsed launcher pill mirrors "Ask Worca is working": a live turn, a
+    // snapshot that reports one in flight (load() nulls live until a frame is
+    // adopted, so Stop alone would stay dark on a collapsed reload), or the
+    // POST→ask-start window (st.sending). The label shimmer and the mark↔orb
+    // morph are pure CSS on this class (.ask-pill.is-live .ask-pill-label and
+    // .ask-pill.is-live .ask-pill-mark), so a boundary costs one classList
+    // write plus syncPillOrb() — local rAF bookkeeping for the pill's canvas,
+    // idle when nothing changed. Keep every OTHER side effect out of here, see
+    // afterFrame()'s refreshWorktrees() note.
+    const inFlight = !!(st.model && st.model.inFlight && st.model.inFlight());
+    if (el.pill) { el.pill.classList.toggle('is-live', streaming || inFlight || !!st.sending); syncPillOrb(); }
+  }
+
+  /**
+   * The pill's mark ↔ orb morph, canvas half. CSS cross-fades and scales the
+   * two layers off .is-live; this runs the orb's rAF loop only while there is
+   * something to paint — live AND the pill visible — and drives the canvas
+   * tween (dots grow out of the centre on lighting, sink back on rest) on the
+   * same clocks. Hidden behind the open sheet the layers snap (display:none
+   * skips transitions), so the factor snaps with them: nothing replays when
+   * closeSheet() shows the pill again. The morph-back keeps painting until the
+   * opacity transitionend (fallback: a timer), then the loop is cut.
+   */
+  function syncPillOrb() {
+    if (!el.pillOrb) return;
+    const live = el.pill.classList.contains('is-live');
+    if (live !== st.pillOrbLive) {
+      st.pillOrbLive = live;
+      clearPillOrbSettle();
+      el.pillOrb.morphTo(live ? 1 : 0, el.pill.hidden ? 0 : (live ? PILL_MORPH_IN_MS : PILL_MORPH_OUT_MS));
+      if (!live && !el.pill.hidden) {
+        st.pillOrbSettle = setTimeout(settlePillOrb, PILL_SETTLE_FALLBACK_MS);
+        if (st.pillOrbSettle && typeof st.pillOrbSettle.unref === 'function') st.pillOrbSettle.unref();
+      }
+    }
+    if (!el.pill.hidden && (live || st.pillOrbSettle)) el.pillOrb.start();
+    else settlePillOrb();
+  }
+  function clearPillOrbSettle() {
+    if (st.pillOrbSettle) { clearTimeout(st.pillOrbSettle); st.pillOrbSettle = null; }
+  }
+  function settlePillOrb() {
+    clearPillOrbSettle();
+    if (el.pillOrb) el.pillOrb.stop();
   }
 
   function updateMeters() {
@@ -380,6 +534,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!text) return;
     st.sending = true;
     setComposerMsg(null);
+    updateSendStop();      // the pill lights the moment the user sends; Send/Stop do not move (nothing streams yet)
     try {
       let id = st.threadId;
       if (!id) {
@@ -430,6 +585,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // No provisional title from the prompt: the header keeps "Ask Worca" until
       // the ask-title frame lands (ask-model marks title dirty, flushExtra repaints).
       el.input.value = '';
+      fitInput();                                    // a programmatic clear fires no input event
       st.pendingFiles = [];
       renderChips();
       subscribe(id);
@@ -443,10 +599,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function buildComposer() {
     const wrap = make('div', 'ask-composer');
+    // The band is the padded outer strip; the rounded, bordered box inside it
+    // holds chips → textarea → msg → row and shares the transcript column's cap
+    // (style.css .ask-composer-box), so both centre together in a wide sheet.
+    const box = make('div', 'ask-composer-box');
+    el.composerBox = box;
+    wrap.appendChild(box);
 
     el.chips = make('div', 'ask-chips');
     el.chips.hidden = true;
-    wrap.appendChild(el.chips);
+    box.appendChild(el.chips);
 
     el.input = doc.createElement('textarea');
     el.input.className = 'ask-input';
@@ -455,15 +617,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMessage(); }
     });
-    el.input.addEventListener('input', () => {
-      el.input.style.height = 'auto';
-      el.input.style.height = `${Math.min(el.input.scrollHeight || 0, 120)}px`;
-    });
-    wrap.appendChild(el.input);
+    el.input.addEventListener('input', fitInput);
+    box.appendChild(el.input);
 
     el.composerMsg = make('div', 'ask-composer-msg');
     el.composerMsg.hidden = true;
-    wrap.appendChild(el.composerMsg);
+    box.appendChild(el.composerMsg);
 
     const row = make('div', 'ask-composer-row');
 
@@ -482,7 +641,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // independent of the page behind the sheet. It sits right after "+"
     // (attach → scope → spacer → meter …): the pill keeps its width (style.css
     // .ask-scope-btn flex:none), the spacer absorbs the slack. Its popover
-    // (.ask-pop-scope) opens upward from the sheet's bottom-left.
+    // (.ask-pop-scope) opens above the composer box, flush with its left edge.
     const scopeBtn = make('button', 'ask-scope-btn');
     scopeBtn.type = 'button';
     scopeBtn.setAttribute('data-ask-scope-btn', '');
@@ -500,10 +659,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     meter.setAttribute('data-ask-meter', '');
     el.meterTokens = make('span', 'ask-meter-tokens', '0 ctx');
     meter.appendChild(el.meterTokens);
-    meter.appendChild(make('span', 'ask-meter-sep', '|'));
+    { const sep = make('span', 'ask-meter-sep', '|'); sep.setAttribute('aria-hidden', 'true'); meter.appendChild(sep); }
     el.meterCost = make('span', 'ask-meter-cost', '');
     meter.appendChild(el.meterCost);
-    meter.appendChild(make('span', 'ask-meter-sep', '|'));
+    { const sep = make('span', 'ask-meter-sep', '|'); sep.setAttribute('aria-hidden', 'true'); meter.appendChild(sep); }
     row.appendChild(meter);
 
     const wtBtn = make('button', 'ask-agents-btn ask-wt-btn');
@@ -565,7 +724,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.stop.addEventListener('click', stopTurn);
     row.appendChild(el.stop);
 
-    wrap.appendChild(row);
+    box.appendChild(row);
     return wrap;
   }
 
@@ -580,11 +739,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.open = true;
     st.prevFocus = doc.activeElement;
     el.pill.hidden = true;
+    syncPillOrb();                                 // nothing to paint behind the sheet
     el.sheet.hidden = false;
+    restoreSize();                                 // the sheet has a box now — clamp the stored size to the dock
     st.pinned = true;
     ensureFirstOpen();
     focusComposer();
     scheduleFlush();
+    repaintProgressCards({ hydrate: true });
   }
 
   /**
@@ -598,8 +760,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     openSheet();                                   // no-op when already open…
     const cur = el.input.value;
     el.input.value = cur ? `${cur.replace(/\s*$/, '')}\n${add}` : add;
-    // …so the autosize listener and the focus have to be driven here.
-    el.input.dispatchEvent(new win.Event('input'));
+    // …so the autosize and the focus have to be driven here.
+    fitInput();
     focusComposer();
     try { el.input.selectionStart = el.input.selectionEnd = el.input.value.length; } catch { /* jsdom */ }
     return true;
@@ -611,6 +773,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.open = false;
     el.sheet.hidden = true;
     el.pill.hidden = false;
+    syncPillOrb();                                 // still live? the orb loop comes back, whole
     const prev = st.prevFocus;
     st.prevFocus = null;
     if (prev && prev.isConnected && typeof prev.focus === 'function') { try { prev.focus(); return; } catch { /* fall through */ } }
@@ -618,6 +781,182 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   function toggleSheet() { (st.open ? closeSheet : openSheet)(); }
+
+  // ---- resize ---------------------------------------------------------------
+  // The sheet is a bottom-anchored, horizontally centred flex child of the dock,
+  // so a top-edge drag is a pure height change and a side drag grows the width
+  // symmetrically about the centre (each edge moves half the delta, which keeps
+  // the grabbed edge under the cursor). Sizes are border-box px applied as
+  // inline width/height, so the stylesheet's default rule stays byte-identical
+  // and its max-width/max-height backstop still bounds a stale inline size.
+  //
+  // A gesture ends on pointerup/pointercancel, and — like graph/composer.mjs —
+  // on window blur, lostpointercapture (the sheet was hidden, the capture was
+  // taken) and a pointermove that reports no button held (the release landed
+  // outside the window and never reached us). All of those COMMIT: a half-done
+  // resize is still a size the user chose, unlike a half-drawn wire. Escape is
+  // the one CANCEL: the pre-drag size comes back and nothing is stored. Only a
+  // gesture that actually moved persists, and only the axis it dragged — the
+  // other axis keeps the stored preference, so a click on a dock-clamped sheet
+  // can never write the clamp back over a larger preference.
+  function buildResizeHandle(edge) {
+    const h = make('div', `ask-resize ask-resize-${edge}`);
+    h.setAttribute('data-ask-resize', edge);
+    h.setAttribute('aria-hidden', 'true');
+    h.addEventListener('pointerdown', (e) => startResize(e, edge, h));
+    h.addEventListener('lostpointercapture', () => { if (st.drag && st.drag.handle === h) finishResize(); });
+    h.addEventListener('dblclick', (e) => { e.preventDefault(); resetSize(); });
+    return h;
+  }
+
+  /** The dock's content box in px; zeros when there is no layout (hidden, detached, jsdom). */
+  function dockInner() {
+    const d = el.dock;
+    const w = d ? d.clientWidth : 0;
+    const h = d ? d.clientHeight : 0;
+    return {
+      w: w > 0 ? w - 2 * ASK_SHEET_SIZE.dockPadX : 0,
+      h: h > 0 ? h - ASK_SHEET_SIZE.dockPadBottom - ASK_SHEET_SIZE.topGap : 0,
+    };
+  }
+
+  /** Clamp to [min, dock inner]. The dock bound wins when the two conflict (a narrow viewport). */
+  function clampSize(size) {
+    const inner = dockInner();
+    const maxW = inner.w > 0 ? inner.w : Infinity;
+    const maxH = inner.h > 0 ? inner.h : Infinity;
+    return {
+      w: Math.round(Math.min(Math.max(size.w, ASK_SHEET_SIZE.minW), maxW)),
+      h: Math.round(Math.min(Math.max(size.h, ASK_SHEET_SIZE.minH), maxH)),
+    };
+  }
+
+  /** Write the inline size, or clear it (null) so min(821px,100%) rules again. */
+  function applySize(size) {
+    if (size) {
+      el.sheet.style.width = `${size.w}px`;
+      el.sheet.style.height = `${size.h}px`;
+    } else {
+      el.sheet.style.removeProperty('width');
+      el.sheet.style.removeProperty('height');
+    }
+    st.applied = size;
+  }
+
+  /** Re-apply the persisted preference against the current dock — on open and on window resize. */
+  function restoreSize() {
+    applySize(st.size ? clampSize(st.size) : null);
+  }
+
+  /** The sheet's live border-box size; the applied/default size when there is no layout. */
+  function currentSize() {
+    const w = el.sheet.offsetWidth;
+    const h = el.sheet.offsetHeight;
+    if (w > 0 && h > 0) return { w, h };
+    return st.applied ? { w: st.applied.w, h: st.applied.h } : { w: ASK_SHEET_SIZE.defaultW, h: ASK_SHEET_SIZE.defaultH };
+  }
+
+  function startResize(e, edge, handle) {
+    if (st.drag || st.destroyed || (e.button != null && e.button !== 0)) return;
+    const start = currentSize();
+    st.drag = {
+      edge, handle, pointerId: e.pointerId, x: e.clientX, y: e.clientY, w: start.w, h: start.h,
+      moved: false,                                  // set by the first pointermove that applies a size
+      before: st.applied ? { w: st.applied.w, h: st.applied.h } : null,   // what Escape restores
+    };
+    handle.classList.add('is-active');
+    el.sheet.classList.add('is-resizing');
+    // Capture is a bonus, never a precondition (Chrome throws for a synthetic
+    // pointerId; jsdom has no such method) — the document listeners carry the
+    // gesture either way, exactly like graph/composer.mjs.
+    try { handle.setPointerCapture?.(e.pointerId); } catch { /* synthetic pointer */ }
+    doc.addEventListener('pointermove', onResizeMove);
+    doc.addEventListener('pointerup', onResizeEnd);
+    doc.addEventListener('pointercancel', onResizeEnd);
+    win.addEventListener('blur', onResizeBlur);
+    e.preventDefault();                              // no text selection / focus steal mid-drag
+  }
+
+  function samePointer(g, e) {
+    return g.pointerId == null || e.pointerId == null || e.pointerId === g.pointerId;
+  }
+
+  function onResizeMove(e) {
+    const g = st.drag;
+    if (!g || !samePointer(g, e)) return;
+    if (e.buttons === 0) { finishResize(); return; }   // the release never reached us
+    g.moved = true;
+    const dx = e.clientX - g.x;
+    const dy = e.clientY - g.y;
+    let w = g.w;
+    let h = g.h;
+    if (g.edge === 'w' || g.edge === 'nw') w = g.w - 2 * dx;                  // left edge: leftwards grows
+    if (g.edge === 'e' || g.edge === 'ne') w = g.w + 2 * dx;                  // right edge: rightwards grows
+    if (g.edge === 'n' || g.edge === 'ne' || g.edge === 'nw') h = g.h - dy;   // top edge: upwards grows
+    applySize(clampSize({ w, h }));
+  }
+
+  function onResizeEnd(e) {
+    const g = st.drag;
+    if (!g || !samePointer(g, e)) return;
+    finishResize();
+  }
+
+  function onResizeBlur() { finishResize(); }
+
+  /** Idempotent; also run from destroy() so a mid-drag unmount leaves no document listeners. */
+  function finishResize() {
+    const g = endResize();
+    if (!g || !g.moved || !st.applied) return;
+    // Persist the dragged axis only; the other keeps the stored preference (or,
+    // with none stored, the size it had) — the clamp is never written back.
+    const movesW = g.edge !== 'n';
+    const movesH = g.edge !== 'e' && g.edge !== 'w';
+    const prev = st.size;
+    st.size = {
+      w: movesW || !prev ? st.applied.w : prev.w,
+      h: movesH || !prev ? st.applied.h : prev.h,
+    };
+    storeSize(st.size);
+  }
+
+  /** Escape: the pre-drag size comes back and nothing is stored. */
+  function cancelResize() {
+    const g = endResize();
+    if (!g) return;
+    applySize(g.before);
+  }
+
+  /** Tear the gesture down (listeners, classes, capture) and hand it back; null when none. */
+  function endResize() {
+    const g = st.drag;
+    if (!g) return null;
+    st.drag = null;
+    doc.removeEventListener('pointermove', onResizeMove);
+    doc.removeEventListener('pointerup', onResizeEnd);
+    doc.removeEventListener('pointercancel', onResizeEnd);
+    win.removeEventListener('blur', onResizeBlur);
+    g.handle.classList.remove('is-active');
+    el.sheet.classList.remove('is-resizing');
+    try { if (g.handle.hasPointerCapture?.(g.pointerId)) g.handle.releasePointerCapture(g.pointerId); } catch { /* already gone */ }
+    return g;
+  }
+
+  /** Double-click on any grip: back to the stylesheet default and forget the stored size. */
+  function resetSize() {
+    finishResize();
+    st.size = null;
+    applySize(null);
+    storeSize(null);
+  }
+
+  /** Window resize or dock resize (the rail toggling, the dock's slide): re-clamp — never under a held pointer.
+   *  A card graph re-measures on EVERY such change, not only when a stored size is being re-clamped. */
+  function onWinResize() {
+    if (st.destroyed || !st.open || st.drag) return;
+    if (st.size) restoreSize();
+    relayoutCards();
+  }
 
   // ---- keyboard + pointer routing ------------------------------------------
   function containsNode(rootEl, t) { return !!(t && t.nodeType && rootEl.contains(t)); }
@@ -633,6 +972,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function onDocKeydown(e) {
     if (st.destroyed) return;
+    if (st.drag && e.key === 'Escape') { e.preventDefault(); cancelResize(); return; }
     if (isToggleCombo(e)) {
       if (e.repeat || e.isComposing) return;
       e.preventDefault();
@@ -665,6 +1005,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const p = st.popover;
     if (!p) return;
     st.popover = null;
+    if (st.threadsRefresh) { clearTimeout(st.threadsRefresh); st.threadsRefresh = null; }
     p.panel.remove();
     if (p.onClose) { try { p.onClose(); } catch { /* ignore */ } }
     if (focusTrigger) { try { p.trigger.focus(); } catch { /* ignore */ } }
@@ -686,7 +1027,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     else if ((e.key === 'Enter' || e.key === ' ') && idx >= 0) { e.preventDefault(); items[idx].click(); }
   }
 
-  function openPopover({ panelClass, trigger, build, onClose, refreshOn }) {
+  function openPopover({ panelClass, trigger, build, onClose, refreshOn, refresh }) {
     if (st.popover && st.popover.trigger === trigger) { closePopover({ focusTrigger: false }); return null; }
     closePopover({ focusTrigger: false });
     const panel = make('div', `ask-pop ${panelClass}`);
@@ -696,7 +1037,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.sheet.appendChild(panel);
     // refreshOn(dirty) → true re-runs build() on that flush (flushExtra), so an
     // OPEN popover follows the live meters / worktrees instead of freezing at open.
-    st.popover = { panel, trigger, onClose: onClose || null, build, refreshOn: refreshOn || null };
+    // refresh(panel) is the server-fed twin: scheduleThreadsRefresh calls it
+    // (debounced) on out-of-turn frames the model never sees.
+    st.popover = { panel, trigger, onClose: onClose || null, build, refreshOn: refreshOn || null, refresh: refresh || null };
     const first = menuItems(panel)[0];
     if (first) { first.tabIndex = 0; try { first.focus(); } catch { /* ignore */ } }
     return panel;
@@ -745,8 +1088,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         head.appendChild(meter);
         p.appendChild(head);
       },
+      refresh: (p) => loadThreadRows(p, meter),
     });
     if (!panel) return;
+    loadThreadRows(panel, meter);
+  }
+
+  /** Fetch the list and (re)render the rows under the pinned caption. On a
+   *  refresh the old rows are replaced in place — same panel node, the focused
+   *  row keeps focus by index — so the dots follow the server while it is open. */
+  function loadThreadRows(panel, meter) {
     Promise.resolve()
       .then(() => fetch('/api/ask/threads?limit=50'))
       .then((r) => (r && r.ok ? r.json() : { threads: [] }))
@@ -757,11 +1108,34 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         // `total` is EVERY saved chat (the route caps rows at limit); an older
         // server without it degrades to the page size.
         if (meter) meter.textContent = fmtChats(Number.isInteger(total) && total >= 0 ? total : rows.length);
-        renderThreadRows(panel, rows);
+        const stale = panel.querySelectorAll(':scope > .ask-threads-list, :scope > .ask-pop-empty');
+        const refreshing = stale.length > 0;
+        // First load focuses the first row (menu semantics). A refresh keeps the
+        // focused row by index, and leaves focus alone when it sits elsewhere.
+        let focusIndex = 0;
+        if (refreshing) focusIndex = panel.contains(doc.activeElement) ? Math.max(0, menuItems(panel).indexOf(doc.activeElement)) : null;
+        for (const n of stale) n.remove();
+        renderThreadRows(panel, rows, focusIndex);
       });
   }
 
-  function renderThreadRows(panel, threads) {
+  /** The History popover is open and a run some chat follows just moved: refetch
+   *  the list (debounced — a run transition fans out one frame per linked thread,
+   *  and a chat may follow several runs, so a single terminal status never flips a
+   *  dot directly). Sits BEFORE pushServerFrame's threadId filter: the frame is
+   *  usually for ANOTHER chat. A turn starting/ending elsewhere arms the thinking
+   *  dot the same way. */
+  function scheduleThreadsRefresh() {
+    const pop = st.popover;
+    if (!pop || typeof pop.refresh !== 'function' || st.threadsRefresh) return;
+    st.threadsRefresh = setTimeout(() => {
+      st.threadsRefresh = null;
+      if (st.popover === pop) pop.refresh(pop.panel);
+    }, THREADS_REFRESH_MS);
+  }
+
+  /** @param {number|null} focusIndex row to focus after the render; null leaves focus alone */
+  function renderThreadRows(panel, threads, focusIndex = 0) {
     if (!threads.length) {
       panel.appendChild(make('div', 'ask-pop-empty', 'No saved chats.'));
       return;
@@ -773,11 +1147,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     for (const t of threads) {
       const row = make('div', 'ask-thread-row');
       const pick = menuItem('ask-thread-pick', () => { closePopover({ focusTrigger: false }); switchThread(t.id); });
-      // The dot leads the row, sitting against the title where it reads as "this
-      // chat is live" -- .ask-thread-dot collapses it (display:none) unless the
-      // live arm joins it, so an idle row leaves no empty gutter and its title
+      // Two dots lead the row, sitting against the title: green = the chat's own
+      // turn is thinking, violet = the chat follows a live run. Each span is
+      // always emitted and .ask-thread-dot collapses it (display:none) unless
+      // its arm joins it, so an idle row leaves no empty gutter and its title
       // starts at the left edge. The date rides the meter line under the title.
       pick.appendChild(make('span', `ask-dot ask-thread-dot${t.inFlight ? ' ask-dot-live' : ''}`));
+      pick.appendChild(make('span', `ask-dot ask-thread-dot${t.tracking ? ' ask-dot-track' : ''}`));
       const col = make('span', 'ask-thread-col');
       // A null title = the haiku title has not landed yet (the message route
       // stamps nothing); "New chat" is the same label the turn falls back to.
@@ -789,8 +1165,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       list.appendChild(row);
     }
     panel.appendChild(list);
-    const first = menuItems(panel)[0];
-    if (first) { first.tabIndex = 0; try { first.focus(); } catch { /* ignore */ } }
+    if (focusIndex === null) return;
+    const items = menuItems(panel);
+    const target = items[Math.min(focusIndex, items.length - 1)];
+    if (target) { target.tabIndex = 0; try { target.focus(); } catch { /* ignore */ } }
   }
 
   // ---- catalog + picker (D8) ------------------------------------------------
@@ -829,8 +1207,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
     const list = st.catalog && Array.isArray(st.catalog.models) ? st.catalog.models : [];
     const wantedEntry = catalogEntry(wanted.model);
-    // Unknown stored/default id -> the backend default -> the first model we do have.
-    const entry = wantedEntry || catalogEntry(fallback.model) || list[0] || null;
+    // Unknown stored/default id -> the backend default -> the first model we do
+    // have that is not a hidden built-in (#422; a hidden id is still a valid pick).
+    const entry = wantedEntry || catalogEntry(fallback.model) || list.find((m) => m && !m.hidden) || list[0] || null;
     if (!entry) { updatePickerButton(); return; }  // empty catalog: keep what we have
     const effort = wantedEntry ? wanted.effort : fallback.effort;
     const next = { model: entry.id, effort: coerceEffort(entry, effort) };
@@ -885,6 +1264,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const seen = new Set();
     for (const m of st.catalog ? st.catalog.models : []) {
       if (!m || typeof m.id !== 'string') continue;
+      if (m.hidden && m.id !== st.picker.model) continue;         // hidden built-in (#422); the current pick stays
       if (m.custom === 'global') { primary.push(m); continue; }   // user models are never demoted
       const fam = familyKey(m);
       // The picked model always shows up front so its ✓ is visible and it is one click away.
@@ -1221,6 +1601,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     storeThread(null);
     el.title.textContent = 'Ask Worca';
     applyThreadScope(null);             // #397: a brand-new chat starts on Auto
+    pruneCardEls();                     // st.model is already null — renderTranscript's keep set cannot see the old ids
     renderTranscript();
     updateMeters();
     setWorktrees([]);
@@ -1295,8 +1676,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // by card id and REUSED across message re-renders, so streaming updates and
   // proposed re-emits never clobber what the user typed. Only a STATE change
   // (started/dismissed/failed) builds a fresh terminal element.
-  function loadCardOptions() {
-    if (st.cardOptions) return st.cardOptions;
+  // The four lists are cached for the panel's lifetime (the scope label / popover read
+  // them on every open). `fresh: true` refetches and REPLACES the cache — the run card
+  // builds with it, because a workflow saved seconds earlier in this chat is not in the
+  // cached list and fillSelect would silently leave the select on another row.
+  function loadCardOptions({ fresh = false } = {}) {
+    if (st.cardOptions && !fresh) return st.cardOptions;
     const grab = (url, key) => Promise.resolve()
       .then(() => fetch(url))
       .then((r) => (r && r.ok ? r.json() : null))
@@ -1330,10 +1715,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (value != null && [...select.options].some((o) => o.value === value)) select.value = value;
   }
 
+  /** Returns the fill promise so a caller can re-read the select once the list lands. */
   function loadBranchesInto(select, projectDir, want) {
     fillSelect(select, [{ value: '', label: 'current branch (auto)' }], '');
-    if (!projectDir) return;
-    Promise.resolve()
+    if (!projectDir) return Promise.resolve();
+    return Promise.resolve()
       .then(() => fetch(`/api/branches?projectDir=${encodeURIComponent(projectDir)}`))
       .then((r) => (r && r.ok ? r.json() : null))
       .catch(() => null)
@@ -1347,28 +1733,466 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function wsBasename(p) { return String(p || '').replace(/\/+$/, '').split('/').pop() || String(p || ''); }
 
+  // ---- Run proposal card v2 (spec 2026-09-06-ask-run-card-v2 §7.3) --------------------------------------------------
+  const RP_ACC = new Set(['violet', 'blue', 'green', 'peach', 'red', 'amber']);
+  function rpField(labelText, control, hint) {
+    const f = make('div', 'ask-rp-field');
+    const l = make('span', 'ask-rp-label', labelText);
+    if (hint) l.appendChild(make('span', 'ask-rp-hint', ` · ${hint}`));
+    f.append(l, control);
+    return f;
+  }
+  function rpSelect(className, ariaLabel) {
+    const s = doc.createElement('select');
+    s.className = className;
+    s.setAttribute('aria-label', ariaLabel);
+    return s;
+  }
+  /** "3 agents · 1 loop · Review → Implement, max 3 cycles" from a v2 template + registry (v1: agents only).
+   *  Loop wires and the cycle budget follow New Pipeline's buildGraphWireRows: classifyLoops decides what is a
+   *  loop (needs the registry's ported metas), runConfig.wires[id].maxCycles beats the template's config. */
+  function workflowDesc(wf, registry, runConfig) {
+    if (!wf) return '';
+    if (Array.isArray(wf.nodes)) {
+      const agents = wf.nodes.filter((n) => n && n.kind === 'agent');
+      const label = (id) => { const n = agents.find((a) => a.id === id); const m = n && registry && registry[n.key]; return (m && m.displayName) || (n && n.key) || id; };
+      const { loopWireIds } = classifyLoops(wf, portsFnFor(registry || {}));
+      const savedWires = (runConfig && runConfig.wires) || {};
+      const loops = (wf.wires || []).filter((w) => w && loopWireIds.has(w.id));
+      const parts = [`${agents.length} agent${agents.length === 1 ? '' : 's'}`, `${loops.length} loop${loops.length === 1 ? '' : 's'}`];
+      for (const w of loops) {
+        const n = Number((savedWires[w.id] || {}).maxCycles);
+        const cfg = Number(w.config && w.config.maxCycles);
+        const max = Number.isFinite(n) && n >= 1 ? n : (Number.isFinite(cfg) && cfg >= 1 ? cfg : 3);
+        parts.push(`${label(w.from.node)} → ${label(w.to.node)}, max ${max} cycles`);
+      }
+      return parts.join(' · ');
+    }
+    const n = (wf.steps || []).flat().length;
+    return `${n} agent${n === 1 ? '' : 's'}`;
+  }
+
+  async function fetchJsonOk(url) {
+    try { const r = await fetch(url); return r && r.ok ? await r.json() : null; } catch { return null; }
+  }
+  /** The lane's three sources (spec D5): workflow template, registry, per-project config. null = unusable. */
+  async function loadLane(workflowId, projectDir) {
+    const qs = projectDir ? `?projectDir=${encodeURIComponent(projectDir)}` : '';
+    const [wf, agents, cfg] = await Promise.all([
+      fetchJsonOk(`/api/workflows/${encodeURIComponent(workflowId)}`), fetchJsonOk('/api/agents'), fetchJsonOk(`/api/config${qs}`),
+    ]);
+    const registry = agents && Array.isArray(agents.agents) ? Object.fromEntries(agents.agents.map((a) => [a.key, a])) : {};
+    if (!wf || !(Array.isArray(wf.nodes) || Array.isArray(wf.steps)) || !Object.keys(registry).length || !cfg) return null;
+    const config = (cfg.config && typeof cfg.config === 'object') ? cfg.config : { steps: {}, customModels: [] };
+    const runConfig = (config.workflows && config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
+    const rows = buildNodeConfigRows(wf, registry, runConfig, workflowId === 'wf_default' ? { legacySteps: config.steps || {} } : {});
+    return { wf, registry, runConfig, rows, edits: {}, editable: !!projectDir,
+      models: Array.isArray(cfg.models) ? cfg.models : [], efforts: Array.isArray(cfg.efforts) ? cfg.efforts : [],
+      subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
+  }
+  const laneEffective = (lane, row) => ({ ...row, ...(lane.edits[row.nodeId] || {}) });
+  const laneCaps = (row) => ({ asksQuestions: row.askQuestions !== null, questionsLocked: row.questionsLocked });
+  const laneEditedRows = (lane) => lane.rows.filter((r) => lane.edits[r.nodeId]);
+  const laneOverrideCount = (lane) => lane.rows.filter((r) => modifiedFieldsOf(laneEffective(lane, r), r.def, laneCaps(r)).length).length;
+  const modelLabel = (lane, id) => { const m = lane.models.find((x) => x.id === id); return m ? (m.label || m.id).replace(' (1M)', '') : id; };
+  function laneSummary(lane) {
+    const counts = new Map();
+    let fan = 0;
+    for (const r of lane.rows) {
+      const c = laneEffective(lane, r);
+      const k = c.model ? modelLabel(lane, c.model) : 'inherit';
+      counts.set(k, (counts.get(k) || 0) + 1);
+      if (c.fanOut) fan++;
+    }
+    return `${lane.rows.length} agents · ${[...counts].map(([k, v]) => `${k} ×${v}`).join(' · ')}${fan ? ` · ${fan} fan-out` : ''}`;
+  }
+  function laneSet(lane, row, patch) {
+    const next = { ...(lane.edits[row.nodeId] || {}), ...patch };
+    for (const k of Object.keys(next)) if (next[k] === row[k]) delete next[k];   // back to the proposal = no edit
+    if (Object.keys(next).length) lane.edits[row.nodeId] = next; else delete lane.edits[row.nodeId];
+  }
+  /** D1: persist every edited row through the New Pipeline writers' bodies (app.js saveStep / saveNode), pruned to
+   *  inherit. Returns an error line or null. Nothing is written for a workspace target or an unloaded lane. */
+  async function saveLaneEdits(local) {
+    const lane = local.lane;
+    const projectDir = local.projectDir();
+    if (!lane || !lane.editable || !projectDir) return null;
+    const workflowId = local.workflowId();
+    for (const row of laneEditedRows(lane)) {
+      const patch = pruneNodeSelection(row, lane.edits[row.nodeId]);
+      const body = row.role
+        ? { projectDir, step: row.role, ...patch }
+        : { projectDir, workflowId, nodes: { [row.nodeId]: patch } };
+      let res = null;
+      try {
+        res = await fetch('/api/config', { method: row.role ? 'POST' : 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      } catch { return `network error saving ${row.label}`; }
+      if (!res || !res.ok) {
+        let msg = `request failed (${res ? res.status : '?'})`;
+        try { const b = await res.json(); if (b && b.error) msg = b.error; } catch { /* keep */ }
+        return `could not save ${row.label}: ${msg}`;
+      }
+    }
+    return null;
+  }
+  const lanePending = (local) => !!(local.lane && local.lane.editable && laneEditedRows(local.lane).length);
+  const RP_EXTRAS_MAX_BYTES = 5 * 1024 * 1024;   // D3: the JSON body cap is 8 MB and base64 grows by a third
+  /** The pills as /api/run extras. {extras} or {error}. */
+  async function collectCardExtras(local) {
+    const pills = local.pills || [];
+    if (!pills.length) return { extras: [] };
+    if (pills.reduce((n, p) => n + (p.bytes || 0), 0) > RP_EXTRAS_MAX_BYTES) return { error: 'attachments exceed 5 MB — remove one' };
+    const extras = [];
+    for (const p of pills) {
+      let res = null;
+      try { res = await fetch(`/api/ask/threads/${st.threadId}/attachments/${p.id}`); } catch { res = null; }
+      if (!res || !res.ok || typeof res.arrayBuffer !== 'function') return { error: `could not read attachment ${p.name}` };
+      let buf = null;
+      try { buf = await res.arrayBuffer(); } catch { return { error: `could not read attachment ${p.name}` }; }
+      extras.push({ name: p.name, dataBase64: bytesToBase64(new Uint8Array(buf)) });   // the composer's helper (:345) takes a view
+    }
+    return { extras };
+  }
+  const cardPending = (local) => lanePending(local) || !!(local.pills && local.pills.length);
+  function rpSwitch(ctl, label, on, locked, onChange, editable) {
+    const wrap = make('label', 'ask-rp-ctl');
+    wrap.appendChild(make('span', null, label));
+    const sw = make('span', 'ask-rp-sw');
+    const cb = doc.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!on;
+    cb.disabled = !!locked || !editable;
+    cb.setAttribute('data-ctl', ctl);
+    cb.setAttribute('aria-label', label);
+    cb.addEventListener('change', () => onChange(cb.checked));
+    sw.append(cb, make('span', 'ask-rp-knob'));
+    if (locked) wrap.title = 'Fixed for this agent';
+    wrap.appendChild(sw);
+    return wrap;
+  }
+  /** Paint the lane section: header (sub-line + Reset), tiles, footer. Re-run on every edit.
+   *  `lc` = { summary: <span>, workflowId(): string }. lane === null → the unusable state. */
+  function renderLane(laneSec, lane, lc, loadingText = null) {
+    laneSec.replaceChildren();
+    const head = make('div', 'ask-rp-sec-head');
+    const sub = make('span', 'ask-rp-sec-sub');
+    const reset = make('button', 'ask-rp-mini', 'Reset to proposal');
+    reset.type = 'button';
+    head.append(make('span', 'ask-rp-sec-title', 'Agents'), sub, reset);
+    laneSec.appendChild(head);
+    if (!lane) {
+      sub.textContent = '';
+      reset.hidden = true;
+      laneSec.appendChild(make('div', 'ask-rp-lane-msg', loadingText || 'Could not load agent settings.'));
+      lc.summary.textContent = '';
+      return;
+    }
+    const edited = laneEditedRows(lane).length;
+    const over = laneOverrideCount(lane);
+    sub.textContent = edited
+      ? `you changed ${edited} agent${edited > 1 ? 's' : ''} · ${over} override${over === 1 ? '' : 's'} of the workflow defaults`
+      : `proposed by Worca · ${over} override${over === 1 ? '' : 's'} of the workflow defaults`;
+    reset.hidden = !edited;
+    reset.addEventListener('click', () => { lane.edits = {}; renderLane(laneSec, lane, lc); });
+    const box = make('div', 'ask-rp-agents');
+    const opt = (v, t) => { const o = doc.createElement('option'); o.value = v; o.textContent = t; return o; };
+    lane.rows.forEach((row, i) => {
+      const c = laneEffective(lane, row);
+      const changed = !!lane.edits[row.nodeId];
+      const tile = make('div', `ask-rp-tile${changed ? ' mod' : ''}`);
+      tile.dataset.nodeId = row.nodeId;
+      const l1 = make('div', 'ask-rp-tile-l1');
+      l1.appendChild(make('span', `ask-rp-acc${RP_ACC.has(row.color) ? ` ${row.color}` : ''}`));
+      const name = make('div', 'ask-rp-name');
+      name.appendChild(make('b', null, row.label));
+      const small = make('small');
+      // "step N" = position in the lane (launch order); row.stepIndex ranks the task card as 0.
+      if (changed) { small.appendChild(make('span', 'ask-rp-m', 'edited')); small.appendChild(doc.createTextNode(` · step ${i + 1}`)); }
+      else small.textContent = `step ${i + 1} · ${row.modified ? 'project override' : 'workflow default'}`;
+      name.appendChild(small);
+      l1.appendChild(name);
+      // model
+      const sel = rpSelect('ask-rp-model', `Model for ${row.label}`);
+      sel.appendChild(opt('', 'inherit (workflow default)'));
+      for (const m of lane.models) if (!m.hidden || m.id === c.model) sel.appendChild(opt(m.id, m.label || m.id));
+      sel.value = c.model || '';
+      sel.disabled = !lane.editable;
+      sel.addEventListener('change', () => {
+        const mid = sel.value;
+        const list = (lane.models.find((m) => m.id === mid) || {}).efforts || [];
+        const keep = list.includes(c.effort) ? c.effort : (list[1] || list[0] || '');   // the qpanel's rule (app.js buildTunablesTable)
+        laneSet(lane, row, { model: mid, effort: mid ? keep : '' });
+        renderLane(laneSec, lane, lc);
+      });
+      l1.appendChild(sel);
+      // effort pills
+      const eff = make('div', `ask-rp-eff${c.model ? '' : ' unset'}`);
+      eff.setAttribute('role', 'radiogroup');
+      eff.setAttribute('aria-label', `Effort for ${row.label}`);
+      const offered = (lane.models.find((m) => m.id === c.model) || {}).efforts || [];
+      for (const e of lane.efforts) {
+        const b = make('button', `ask-rp-effbtn${e === c.effort ? ' on' : ''}`, e);
+        b.type = 'button';
+        b.setAttribute('role', 'radio');
+        b.setAttribute('aria-checked', String(e === c.effort));
+        b.disabled = !lane.editable || !offered.includes(e);
+        if (!offered.includes(e) && c.model) b.title = `Not offered by ${modelLabel(lane, c.model)}`;
+        b.addEventListener('click', () => { laneSet(lane, row, { effort: e }); renderLane(laneSec, lane, lc); });
+        eff.appendChild(b);
+      }
+      l1.appendChild(eff);
+      tile.appendChild(l1);
+      // line 2
+      const l2 = make('div', 'ask-rp-tile-l2');
+      l2.appendChild(rpSwitch('fanOut', 'fan-out', c.fanOut, false, (v) => { laneSet(lane, row, { fanOut: v }); renderLane(laneSec, lane, lc); }, lane.editable));
+      const subWrap = make('label', 'ask-rp-ctl');
+      subWrap.appendChild(make('span', null, 'sub-agents'));
+      const subSel = rpSelect('ask-rp-subagent', `Sub-agent model for ${row.label}`);
+      subSel.appendChild(opt('', 'subs: default (agent picks)'));
+      for (const v of lane.subagentModels) subSel.appendChild(opt(v, v === 'auto' ? 'subs: agent picks' : `subs: ${v}`));
+      subSel.value = lane.subagentModels.includes(c.subagentModel) ? c.subagentModel : '';
+      subSel.disabled = !lane.editable;
+      subSel.title = 'Model for the sub-agents this node spawns (needs fan-out)';
+      subSel.addEventListener('change', () => { laneSet(lane, row, { subagentModel: subSel.value }); renderLane(laneSec, lane, lc); });
+      subWrap.appendChild(subSel);
+      l2.appendChild(subWrap);
+      if (row.askQuestions !== null) {
+        l2.appendChild(rpSwitch('questions', 'questions', c.askQuestions, row.questionsLocked, (v) => { laneSet(lane, row, { askQuestions: v }); renderLane(laneSec, lane, lc); }, lane.editable));
+      }
+      tile.appendChild(l2);
+      box.appendChild(tile);
+    });
+    const foot = make('div', 'ask-rp-agents-foot');
+    foot.textContent = !lane.editable
+      ? 'Agent settings are per project — pick a project target to edit them.'
+      : edited ? `Edits become this project's defaults for ${lane.wf.name || lc.workflowId()}` : 'Everything at the workflow default';
+    box.appendChild(foot);
+    laneSec.appendChild(box);
+    lc.summary.textContent = laneSummary(lane);
+  }
+
+  /** The stub states. A `started` run — and a `failed` one that HAS a runId — renders the live progress
+   *  card instead (buildProgressCard), so neither reaches here. */
   function buildCardTerminal(block) {
     const card = block.card || {};
-    if (block.state === 'started') {
-      const n = make('div', 'ask-card ask-card-started');
-      n.appendChild(make('span', null, `Run started — ${card.title || card.brief || 'run'} `));
-      const a = make('a', 'ask-card-link', 'open');
-      a.setAttribute('href', `#running/${block.runId || ''}`);
-      n.appendChild(a);
-      return n;
-    }
     if (block.state === 'failed') {
       return make('div', 'ask-card-stub ask-card-failed', `Run failed${block.error ? `: ${block.error}` : ''} — ${card.title || card.brief || ''}`);
     }
     return make('div', 'ask-card-stub', `Not now — ${card.title || card.brief || 'run proposal'}`);
   }
 
+  // ---- Workflow card (spec §8.3, mockup 2026-09-05 §A-§C, plan PD4/PD7/PD12-15) ---------------------------------
+  const WF_ICO = { check: 'M5 13l4 4L19 7', save: 'M5 12l5 5L20 7' };
+  const TUNABLE_KEYS = ['model', 'effort', 'fanOut', 'askQuestions'];
+  /** The answer's `nodes`: a DIFF against the proposal (the qpanel's rule, app.js renderWorkflowBody). */
+  function diffNodes(base, edits) {
+    const nodes = {};
+    for (const [id, sel] of Object.entries(edits || {})) {
+      const diff = {};
+      for (const k of TUNABLE_KEYS) if (sel[k] !== undefined && sel[k] !== ((base || {})[id] || {})[k]) diff[k] = sel[k];
+      if (Object.keys(diff).length) nodes[id] = diff;
+    }
+    return nodes;
+  }
+
+  function buildWorkflowCard(block, prev) {
+    const card = block.card || {};
+    const name = card.name || '';
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${name || 'workflow proposal'}`) };
+    if (block.state === 'failed') return { el: make('div', 'ask-card-stub ask-card-failed', `Proposal failed: ${block.error || 'unknown error'}`) };
+    // State modifier = `is-<state>` (v6): `ask-wfcard-${state}` would make the SAVED root carry the same class as the check line below.
+    const rootEl = make('div', `ask-card ask-wfcard is-${block.state}`);
+    rootEl.setAttribute('data-ask-wfcard', block.state);
+    const head = make('div', 'ask-wfcard-head');
+    head.appendChild(make('span', 'ask-wfcard-title', block.state === 'saved' ? 'Saved workflow' : 'Proposed workflow'));
+    head.appendChild(make('span', 'ask-wfcard-round', `round ${card.round || 1}`));
+    if (block.state === 'saved') { head.appendChild(make('span', 'ask-wfcard-spacer')); head.appendChild(make('span', 'ask-wfcard-tag', 'Auto')); }
+    rootEl.appendChild(head);
+    if (block.state === 'building') {
+      const trace = buildTrace(doc, { mode: card.mode });
+      rootEl.appendChild(trace.el);
+      const stop = scheduleTrace(trace, { win, mode: card.mode });
+      return { el: rootEl, dispose: stop };
+    }
+    const proposed = block.state === 'proposed';
+    const matched = !!(card.match && card.match.id);
+    const editable = proposed && !matched;                       // PD4: only a NEW row takes a name and chip edits
+    const wf = { nodes: {}, name };
+    const handle = renderAutoProposal({ ...card, reasoning: card.reasoning || card.note || '' }, {
+      doc, order: proposed ? AUTO_PROPOSAL_ORDER_CARD : ['name', 'graph', 'loops'],
+      editableName: editable, pick: editable, onName: (v) => { wf.name = v; },
+    });
+    if (!proposed) {
+      const saved = make('div', 'ask-wfcard-saved');
+      saved.appendChild(svgIcon(WF_ICO.check, 15, 2.4));
+      saved.appendChild(make('span', null, name));
+      const line = make('div', 'ask-wfcard-savedline', card.adopted ? 'Uses your saved workflow' : 'Saved as a new workflow, tagged Auto');
+      handle.parts.name.replaceWith(saved);
+      saved.after(line);
+    } else if (matched) {
+      const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow — edit them in the composer.');
+      handle.parts.match.after(hint);
+    }
+    rootEl.appendChild(handle.el);
+    rootEl.appendChild(make('div', 'ask-card-err'));
+    const actions = make('div', 'ask-wfcard-actions');
+    const btn = (cls, text, attr, icon) => {
+      const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, '');
+      if (icon) b.prepend(svgIcon(icon, 12, 2.2));
+      return b;
+    };
+    if (proposed) {
+      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-wf-decline');
+      decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
+      const save = btn('ask-card-start', card.thenRun ? 'Save & propose run' : 'Save as workflow', 'data-ask-wf-save', WF_ICO.save);
+      // A 200 means the row exists now: drop the cached option lists so every later consumer sees it.
+      save.addEventListener('click', () => postCard(block, rootEl, { state: 'saved', name: handle.getName(), nodes: diffNodes(card.nodes, wf.nodes) }, save)
+        .then((out) => { if (out) st.cardOptions = null; }));
+      actions.append(make('span', 'ask-card-actions-spacer'), decline, save);
+    } else {
+      const open = btn('ask-card-open-np', 'Open in composer', 'data-ask-wf-open');
+      open.disabled = !(typeof openComposer === 'function' && block.workflowId);   // v7: an inert button beats a dead click
+      open.addEventListener('click', () => { if (typeof openComposer === 'function' && block.workflowId) openComposer(block.workflowId); });
+      // No "Run with this": the save already fired the event turn, which proposes the run
+      // itself (thenRun) or offers one in chat — a card verb would only queue a second paid turn.
+      actions.append(open);
+    }
+    rootEl.appendChild(actions);
+    if (editable) {
+      // PD12: paintBand re-creates the chips on every repaint, so the click is delegated from the card root.
+      rootEl.addEventListener('click', (e) => {
+        const chip = e.target && e.target.closest ? e.target.closest('.bchip[data-chip]') : null;
+        if (!chip) return;
+        const nodeEl = chip.closest('[data-node-id]');
+        if (!nodeEl) return;
+        e.stopPropagation();
+        openChipPicker(chip, nodeEl.dataset.nodeId, card, wf, handle);
+      });
+    }
+    rootEl.__wf = { handle, wf };                                  // tests (like the qpanel's panel.__wf)
+    return { el: rootEl, handle, dispose: () => handle.destroy(), animate: proposed && !!prev && prev.state === 'building' };
+  }
+
+  /** The model · effort picker (mockup §C): the panel's popover chrome, anchored under the chip. Rows are menuitems (PD28). */
+  function openChipPicker(chip, nodeId, card, wf, handle) {
+    const node = card.nodes && card.nodes[nodeId];
+    if (!node) return;
+    const models = Array.isArray(card.models) ? card.models : [];
+    const cur = () => ({ ...node, ...(wf.nodes[nodeId] || {}) });
+    const effortsOf = (mid) => (models.find((m) => m.id === mid) || {}).efforts || [];
+    const set = (patch) => { wf.nodes[nodeId] = { ...(wf.nodes[nodeId] || {}), ...patch }; handle.setNodeTunables(nodeId, patch); };
+    const panel = openPopover({
+      panelClass: 'ask-pop-chip', trigger: chip,
+      onClose: () => chip.setAttribute('aria-expanded', 'false'),
+      build: (p) => {
+        p.appendChild(make('div', 'ask-pop-cap', `Model · ${node.label || nodeId}`));
+        for (const m of models) {
+          const item = menuItem(`ask-model-item${m.id === cur().model ? ' on' : ''}`, () => {
+            const list = effortsOf(m.id);
+            const keep = list.includes(cur().effort) ? cur().effort : (list[1] || list[0] || '');   // the qpanel's rule (app.js buildTunablesTable)
+            set({ model: m.id, effort: keep });
+            closePopover({ focusTrigger: true });
+          });
+          item.appendChild(make('span', 'ask-model-name', m.label || m.id));
+          if (m.id === cur().model) item.appendChild(make('span', 'ask-model-check', '✓'));
+          p.appendChild(item);
+        }
+        p.appendChild(make('div', 'ask-pop-divider'));
+        const row = make('div', 'ask-pop-effort');
+        row.appendChild(make('span', 'ask-pop-effort-label', 'Effort'));
+        for (const e of effortsOf(cur().model)) {
+          const b = menuItem(`ask-effort-pill${e === cur().effort ? ' on' : ''}`, () => { set({ effort: e }); closePopover({ focusTrigger: true }); });
+          b.textContent = e;
+          row.appendChild(b);
+        }
+        if (!cur().model) row.appendChild(make('span', 'ask-pop-effort-none', 'pick a model first'));
+        p.appendChild(row);
+      },
+    });
+    if (!panel) return;                                             // same chip toggled the open picker shut
+    // Anchor under the chip (the composer's popovers are CSS-anchored; a chip lives anywhere in the transcript).
+    const cr = chip.getBoundingClientRect();
+    const sr = el.sheet.getBoundingClientRect();
+    const width = 288;
+    let left = cr.left - sr.left;
+    if (left + width > el.sheet.clientWidth - 6) left = Math.max(6, el.sheet.clientWidth - width - 6);
+    panel.style.left = `${Math.max(0, left)}px`;
+    // Vertical: measured, then flipped/clamped — the sheet chops whatever hangs out of it.
+    panel.style.top = `${chipPickerTop({
+      top: cr.top - sr.top, bottom: cr.bottom - sr.top, panelH: panel.offsetHeight || 0, sheetH: el.sheet.clientHeight,
+    })}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    chip.setAttribute('aria-expanded', 'true');
+  }
+
+  /** D9: the `@` popover — the thread's attachments not yet pilled; picking inserts the name at the caret
+   *  (right after the `@` the user typed) and adds the pill. Closes a same-trigger popover first:
+   *  openPopover toggles SHUT on the same trigger, so a second `@` would otherwise close it.
+   *  Focus: openPopover (:949-950) moves focus to the first menu item — right for a click-opened menu, wrong for
+   *  a picker opened by a keystroke — so the brief takes it back and keeps its caret; ArrowDown in the brief
+   *  enters the list (buildCardForm), Escape (onDocKeydown :891) and a pointerdown elsewhere close it. `pos` is
+   *  the `@` position at open time; the caret cannot move by typing while the picker is open (typing closes it),
+   *  only by mouse/arrow keys — the name still lands right after the `@`, which is what the user meant. */
+  function openAtPopover(brief, pos, local, renderPills) {
+    const have = new Set((local.pills || []).map((p) => p.id));
+    const list = (st.model ? st.model.attachments() : []).filter((a) => a && a.id && !have.has(a.id));
+    if (st.popover && st.popover.trigger === brief) closePopover({ focusTrigger: false });
+    if (!list.length) return;
+    const panel = openPopover({
+      panelClass: 'ask-pop-at', trigger: brief,
+      build: (p) => {
+        p.appendChild(make('div', 'ask-pop-cap', 'Attach to the run'));
+        for (const a of list) {
+          const item = menuItem('ask-at-item', () => {
+            brief.setRangeText(a.name, pos, pos, 'end');
+            local.pills = [...local.pills, { id: a.id, name: a.name, bytes: a.bytes || 0, kind: a.kind || 'text' }];
+            renderPills();
+            closePopover({ focusTrigger: true });
+            brief.dispatchEvent(new win.Event('input', { bubbles: true }));   // count + autosize; the char before the caret is now a letter, so no reopen
+          });
+          item.textContent = a.name;
+          p.appendChild(item);
+        }
+      },
+    });
+    if (!panel) return;
+    const br = brief.getBoundingClientRect();
+    const sr = el.sheet.getBoundingClientRect();
+    panel.style.left = `${Math.max(0, br.left - sr.left + 12)}px`;
+    // Same flip/clamp as the chip picker: the brief is the LAST section of the card, so under a
+    // tall card the list would hang out of the overflow:hidden sheet and be chopped or invisible.
+    panel.style.top = `${chipPickerTop({
+      top: br.top - sr.top, bottom: br.bottom - sr.top,
+      panelH: panel.offsetHeight || 0, sheetH: el.sheet.clientHeight,
+    })}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    // Take the caret back from the first menu item (openPopover focused it) — the user is still typing.
+    try { brief.focus(); brief.setSelectionRange(pos, pos); } catch { /* ignore */ }
+  }
+
   function buildCardForm(block) {
     const card = block.card || {};
-    const rootEl = make('div', 'ask-card');
-    const local = { target: card.target === 'workspace' ? 'workspace' : 'project', options: null };
+    const rootEl = make('div', 'ask-card ask-rp');
+    const local = { target: card.target === 'workspace' ? 'workspace' : 'project', options: null, lane: null, pills: [], projectDir: () => '', workflowId: () => '' };
+    const summary = make('span', 'ask-rp-summary');   // footer; renderLane paints it from the loaded lane
 
-    rootEl.appendChild(make('div', 'ask-card-title', card.title || 'Run proposal'));
+    // head
+    const head = make('header', 'ask-rp-head');
+    const eyebrow = make('div', 'ask-rp-eyebrow');
+    eyebrow.append(make('span', 'ask-rp-kicker', 'Run proposal'), make('span', 'ask-rp-from', 'from this chat'));
+    head.appendChild(eyebrow);
+    const titleRow = make('div', 'ask-rp-title');
+    const titleInput = doc.createElement('input');
+    titleInput.type = 'text';
+    titleInput.value = card.title || '';
+    titleInput.setAttribute('aria-label', 'Run title');
+    titleInput.placeholder = 'Run title';
+    titleRow.append(titleInput, make('span', 'ask-rp-edit', '✎ click to rename'));
+    head.appendChild(titleRow);
+    if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
+    rootEl.appendChild(head);
 
     // #397 guardrail: the model proposed a different target than the chat's pin.
     if (block.scopeMismatch) {
@@ -1376,147 +2200,275 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         'This proposal targets a different project or workspace than the one pinned for this chat — check the target before starting.'));
     }
 
+    // target section
+    const targetSec = make('div', 'ask-rp-sec');
+    const targetHead = make('div', 'ask-rp-sec-head');
+    const targetSub = make('span', 'ask-rp-sec-sub');
+    targetHead.append(make('span', 'ask-rp-sec-title', 'Where it runs'), targetSub);
     const seg = make('div', 'ask-card-seg');
+    seg.setAttribute('role', 'tablist');
     const segBtns = {};
     for (const [t, label] of [['project', 'Project'], ['workspace', 'Workspace']]) {
       const b = make('button', 'ask-card-seg-btn', label);
       b.type = 'button';
+      b.setAttribute('role', 'tab');
       b.setAttribute('data-ask-card-seg', t);
       b.addEventListener('click', () => {
         if (local.target === t) return;
         local.target = t;
-        for (const k of Object.keys(segBtns)) segBtns[k].classList.toggle('on', k === local.target);
+        paintSeg();
         renderTarget();
+        reloadLane();
       });
       segBtns[t] = b;
       seg.appendChild(b);
     }
-    segBtns[local.target].classList.add('on');
-    rootEl.appendChild(seg);
-
+    // Both tabs carry aria-selected from the first paint (not only the active one).
+    function paintSeg() { for (const k of Object.keys(segBtns)) { segBtns[k].classList.toggle('on', k === local.target); segBtns[k].setAttribute('aria-selected', String(k === local.target)); } }
+    paintSeg();
+    targetHead.appendChild(seg);
+    targetSec.appendChild(targetHead);
     const targetHost = make('div', 'ask-card-target');
-    rootEl.appendChild(targetHost);
+    targetSec.appendChild(targetHost);
 
-    const field = (label, control) => {
-      const f = make('div', 'ask-card-field');
-      f.appendChild(make('label', 'ask-card-label', label));
-      f.appendChild(control);
-      return f;
-    };
-
-    const workflowSel = doc.createElement('select');
-    workflowSel.className = 'ask-card-workflow';
-    rootEl.appendChild(field('Workflow', workflowSel));
-
-    const guardSel = doc.createElement('select');
-    guardSel.className = 'ask-card-guardrails';
-    rootEl.appendChild(field('Guardrails', guardSel));
-
-    const brief = doc.createElement('textarea');
-    brief.className = 'ask-card-brief';
-    brief.value = card.brief || '';
-    brief.addEventListener('input', () => {
-      brief.style.height = 'auto';
-      brief.style.height = `${Math.min(brief.scrollHeight || 0, 160)}px`;
+    const wfRow = make('div', 'ask-rp-grid two');
+    const workflowSel = rpSelect('ask-card-workflow', 'Workflow');
+    const wfDesc = make('span', 'ask-rp-wfdesc', '');
+    wfDesc.setAttribute('data-for', 'workflow');
+    const wfField = rpField('Workflow', workflowSel);
+    wfField.appendChild(wfDesc);
+    const guardSel = rpSelect('ask-card-guardrails', 'Guardrails');
+    const guardDesc = make('span', 'ask-rp-wfdesc', 'Applies to every agent in this run');
+    guardDesc.setAttribute('data-for', 'guardrails');
+    const guardField = rpField('Guardrails', guardSel);
+    guardField.appendChild(guardDesc);
+    wfRow.append(wfField, guardField);
+    targetSec.appendChild(wfRow);
+    rootEl.appendChild(targetSec);
+    workflowSel.addEventListener('change', () => {
+      if (local.workflowUnavailable) { local.workflowUnavailable = false; err.textContent = ''; startBtn.disabled = false; }
+      reloadLane();
     });
-    rootEl.appendChild(field('Task brief', brief));
 
+    // agents lane (reloadLane → renderLane fills laneSec)
+    const laneSec = make('div', 'ask-rp-sec ask-rp-lane');
+    rootEl.appendChild(laneSec);
+
+    const briefSec = make('div', 'ask-rp-sec ask-rp-brief-host');
+    const briefHead = make('div', 'ask-rp-sec-head');
+    briefHead.append(make('span', 'ask-rp-sec-title', 'Task brief'), make('span', 'ask-rp-sec-sub', 'what the first agent reads · Markdown ok'));
+    const pillRow = make('div', 'ask-rp-pills');
+    briefHead.appendChild(pillRow);
+    briefSec.appendChild(briefHead);
+    const brief = doc.createElement('textarea');
+    brief.className = 'ask-card-brief ask-rp-brief';
+    brief.value = card.brief || '';
+    brief.setAttribute('aria-label', 'Task brief');
+    briefSec.appendChild(brief);
+    const briefFoot = make('div', 'ask-rp-brief-foot');
+    const hint = make('span');
+    hint.appendChild(make('kbd', null, '@'));
+    hint.appendChild(doc.createTextNode(' mention an attached file'));
+    const count = make('span', 'ask-rp-count');
+    briefFoot.append(hint, count);
+    briefSec.appendChild(briefFoot);
+    rootEl.appendChild(briefSec);
+    local.pills = Array.isArray(card.attachments) ? card.attachments.filter((a) => a && a.id).map((a) => ({ ...a })) : [];
+    function renderPills() {
+      pillRow.replaceChildren();
+      for (const p of local.pills) {
+        const pill = make('span', 'ask-rp-pill', `@${p.name} `);
+        const x = make('button', null, '×');
+        x.type = 'button';
+        x.setAttribute('aria-label', `Remove ${p.name}`);
+        x.addEventListener('click', () => { local.pills = local.pills.filter((q) => q.id !== p.id); renderPills(); });   // the text stays (D9)
+        pill.appendChild(x);
+        pillRow.appendChild(pill);
+      }
+    }
+    const grow = () => {
+      brief.style.height = 'auto';
+      brief.style.height = `${Math.min((brief.scrollHeight || 0) + 2, 420)}px`;   // jsdom: scrollHeight 0 → 2px, harmless (CSS min-height wins)
+      count.textContent = `${brief.value.length.toLocaleString('en-US')} chars`;
+    };
+    brief.addEventListener('input', () => {
+      grow();
+      const pos = typeof brief.selectionStart === 'number' ? brief.selectionStart : brief.value.length;
+      if (brief.value[pos - 1] === '@') openAtPopover(brief, pos, local, renderPills);
+      else if (st.popover && st.popover.trigger === brief) closePopover({ focusTrigger: false });   // typed past the @: the picker never filters, so it goes
+    });
+    // The caret stays in the brief while the picker is open (see openAtPopover); ArrowDown hands focus to the
+    // list, where the popover's own keydown handler (arrows / Enter / Escape → back to the brief) takes over.
+    brief.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowDown' || !st.popover || st.popover.trigger !== brief) return;
+      const first = st.popover.panel.querySelector('[role="menuitem"]');
+      if (!first) return;
+      e.preventDefault();
+      first.tabIndex = 0;
+      try { first.focus(); } catch { /* ignore */ }
+    });
+    renderPills();
+    grow();
+
+    // ONE feature-branch input for both targets; renderTarget moves it into the current grid.
     const feature = doc.createElement('input');
     feature.type = 'text';
     feature.className = 'ask-card-feature';
     feature.value = card.featureBranch || '';
-    rootEl.appendChild(field('Feature branch', feature));
+    feature.setAttribute('aria-label', 'Feature branch');
 
     const err = make('div', 'ask-card-err');
     rootEl.appendChild(err);
 
-    const actions = make('div', 'ask-card-actions');
-    const openNp = make('button', 'ask-card-open-np', 'Open in New Pipeline');
+    // footer
+    const foot = make('footer', 'ask-rp-foot');
+    const openNp = make('button', 'ask-card-open-np', '↗ Open in New Pipeline');
     openNp.type = 'button';
     openNp.setAttribute('data-ask-card-open-np', '');
     openNp.addEventListener('click', () => prefillFromCard(block, rootEl, local));
-    actions.appendChild(openNp);
-    actions.appendChild(make('span', 'ask-card-actions-spacer'));
     const dismissBtn = make('button', 'ask-card-not-now', 'Not now');
     dismissBtn.type = 'button';
     dismissBtn.setAttribute('data-ask-card-dismiss', '');
     dismissBtn.addEventListener('click', () => dismissCard(block, rootEl));
-    actions.appendChild(dismissBtn);
-    const startBtn = make('button', 'ask-card-start', 'Start');
+    const startBtn = make('button', 'ask-card-start');
     startBtn.type = 'button';
     startBtn.setAttribute('data-ask-card-start', '');
+    const play = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');   // filled, unlike svgIcon's stroked glyphs
+    play.setAttribute('viewBox', '0 0 24 24'); play.setAttribute('fill', 'currentColor'); play.setAttribute('aria-hidden', 'true');
+    const playPath = doc.createElementNS('http://www.w3.org/2000/svg', 'path'); playPath.setAttribute('d', 'M6 4l14 8-14 8V4Z');
+    play.appendChild(playPath); startBtn.appendChild(play);
+    startBtn.appendChild(doc.createTextNode('Start run'));
     startBtn.addEventListener('click', () => startCard(block, rootEl, local));
-    actions.appendChild(startBtn);
-    rootEl.appendChild(actions);
+    foot.append(openNp, summary, dismissBtn, startBtn);
+    rootEl.appendChild(foot);
+
+    local.projectDir = () => (local.target === 'project' ? ((rootEl.querySelector('.ask-card-project-select') || {}).value || '') : '');
+    local.workflowId = () => workflowSel.value || card.workflowId || 'wf_default';
+
+    function updateTargetSub() {
+      const opts = local.options;
+      if (local.target === 'project') {
+        const projSel = rootEl.querySelector('.ask-card-project-select');
+        const srcSel = rootEl.querySelector('.ask-card-source');
+        const name = projSel && projSel.selectedOptions[0] ? projSel.selectedOptions[0].textContent : (card.projectName || '');
+        targetSub.textContent = `${name} · branch ${(srcSel && srcSel.value) || 'current'} · feature ${feature.value.trim() || 'auto'}`;
+      } else {
+        const wsSel = rootEl.querySelector('.ask-card-workspace-select');
+        const row = opts && wsSel && opts.workspaces.find((w) => w && w.id === wsSel.value);
+        const n = row && Array.isArray(row.projectKeys) ? row.projectKeys.length : (Array.isArray(card.members) ? card.members.length : 0);
+        targetSub.textContent = `${(row && row.name) || card.workspaceName || 'workspace'} · ${n} member${n === 1 ? '' : 's'} · feature ${feature.value.trim() || 'auto'}`;
+      }
+    }
+    feature.addEventListener('input', updateTargetSub);
 
     function renderTarget() {
       targetHost.replaceChildren();
       const opts = local.options;
+      const grid = make('div', 'ask-rp-grid');
       if (local.target === 'project') {
-        const projSel = doc.createElement('select');
-        projSel.className = 'ask-card-project-select';
-        const srcSel = doc.createElement('select');
-        srcSel.className = 'ask-card-source';
+        const projSel = rpSelect('ask-card-project-select', 'Project');
+        const srcSel = rpSelect('ask-card-source', 'Source branch');
         if (opts) {
           fillSelect(projSel, opts.projects.map((p) => ({ value: p.path, label: p.exists === false ? `${p.name} (missing)` : p.name })), card.projectDir || (opts.projects[0] && opts.projects[0].path) || '');
-          loadBranchesInto(srcSel, projSel.value, card.sourceBranch || '');
+          // The fill is async: the sub-line reads the select again when the branches land,
+          // or a proposed sourceBranch would read "branch current" until the user touches it.
+          loadBranchesInto(srcSel, projSel.value, card.sourceBranch || '').then(updateTargetSub);
         }
-        projSel.addEventListener('change', () => loadBranchesInto(srcSel, projSel.value, ''));
-        targetHost.appendChild(field('Project', projSel));
-        targetHost.appendChild(field('Source branch', srcSel));
-      } else {
-        const wsSel = doc.createElement('select');
-        wsSel.className = 'ask-card-workspace-select';
-        const members = make('div', 'ask-card-members');
-        const srcInput = doc.createElement('input');
-        srcInput.type = 'text';
-        srcInput.className = 'ask-card-source-input';
-        srcInput.placeholder = 'auto';
-        srcInput.value = card.sourceBranch || '';
-        const details = doc.createElement('details');
-        // .disclosure swaps the OS triangle for the app's own chevron
-        details.className = 'ask-card-members-src disclosure';
-        details.appendChild(make('summary', null, 'Per-member source branches'));
-        const memberHost = make('div', 'ask-card-members-src-list');
-        details.appendChild(memberHost);
-        const renderMembers = () => {
-          members.replaceChildren();
-          memberHost.replaceChildren();
-          const row = opts && opts.workspaces.find((w) => w && w.id === wsSel.value);
-          const list = row && Array.isArray(row.projectKeys)
-            ? row.projectKeys.map((k, i) => ({ projectKey: k, name: wsBasename(row.projectPaths && row.projectPaths[i]) }))
-            : Array.isArray(card.members) ? card.members.map((m) => ({ projectKey: m.projectKey, name: m.projectName })) : [];
-          members.textContent = list.map((m) => m.name).join(', ');
-          for (const m of list) {
-            const inp = doc.createElement('input');
-            inp.type = 'text';
-            inp.className = 'ask-card-member-src';
-            inp.placeholder = 'auto';
-            inp.setAttribute('data-project-key', m.projectKey);
-            if (card.sourceBranchByKey && card.sourceBranchByKey[m.projectKey]) inp.value = card.sourceBranchByKey[m.projectKey];
-            memberHost.appendChild(field(m.name, inp));
-          }
-        };
-        if (opts) {
-          fillSelect(wsSel, opts.workspaces.map((w) => ({ value: w.id, label: w.name || w.id })), card.workspaceId || (opts.workspaces[0] && opts.workspaces[0].id) || '');
-          renderMembers();
-        }
-        wsSel.addEventListener('change', renderMembers);
-        targetHost.appendChild(field('Workspace', wsSel));
-        targetHost.appendChild(members);
-        targetHost.appendChild(field('Source branch (default)', srcInput));
-        targetHost.appendChild(details);
+        projSel.addEventListener('change', () => { loadBranchesInto(srcSel, projSel.value, '').then(updateTargetSub); updateTargetSub(); reloadLane(); });
+        srcSel.addEventListener('change', updateTargetSub);
+        grid.append(rpField('Project', projSel), rpField('Source branch', srcSel), rpField('Feature branch', feature, 'created for the run'));
+        targetHost.appendChild(grid);
+        updateTargetSub();
+        return;
       }
+      const wsSel = rpSelect('ask-card-workspace-select', 'Workspace');
+      const members = make('div', 'ask-card-members');
+      const srcInput = doc.createElement('input');
+      srcInput.type = 'text';
+      srcInput.className = 'ask-card-source-input';
+      srcInput.placeholder = 'auto';
+      srcInput.value = card.sourceBranch || '';
+      srcInput.setAttribute('aria-label', 'Source branch default');
+      const details = doc.createElement('details');
+      details.className = 'ask-card-members-src disclosure';   // .disclosure swaps the OS triangle for the app's chevron
+      details.appendChild(make('summary', null, 'Per-member source branches'));
+      const memberHost = make('div', 'ask-card-members-src-list');
+      details.appendChild(memberHost);
+      const renderMembers = () => {
+        members.replaceChildren();
+        memberHost.replaceChildren();
+        const row = opts && opts.workspaces.find((w) => w && w.id === wsSel.value);
+        const list = row && Array.isArray(row.projectKeys)
+          ? row.projectKeys.map((k, i) => ({ projectKey: k, name: wsBasename(row.projectPaths && row.projectPaths[i]) }))
+          : Array.isArray(card.members) ? card.members.map((m) => ({ projectKey: m.projectKey, name: m.projectName })) : [];
+        members.textContent = list.map((m) => m.name).join(', ');
+        for (const m of list) {
+          const inp = doc.createElement('input');
+          inp.type = 'text';
+          inp.className = 'ask-card-member-src';
+          inp.placeholder = 'auto';
+          inp.setAttribute('data-project-key', m.projectKey);
+          if (card.sourceBranchByKey && card.sourceBranchByKey[m.projectKey]) inp.value = card.sourceBranchByKey[m.projectKey];
+          memberHost.appendChild(rpField(m.name, inp));
+        }
+        updateTargetSub();
+      };
+      wsSel.addEventListener('change', renderMembers);
+      const wsField = rpField('Workspace', wsSel);
+      wsField.appendChild(members);
+      grid.append(wsField, rpField('Source branch', srcInput, 'default for members'), rpField('Feature branch', feature));
+      targetHost.appendChild(grid);      // attach BEFORE filling: renderMembers → updateTargetSub finds the select through rootEl
+      targetHost.appendChild(details);
+      if (opts) {
+        fillSelect(wsSel, opts.workspaces.map((w) => ({ value: w.id, label: w.name || w.id })), card.workspaceId || (opts.workspaces[0] && opts.workspaces[0].id) || '');
+        renderMembers();
+      }
+      updateTargetSub();
+    }
+
+    // A reload (workflow / project / target change) rebuilds the lane from scratch:
+    // `edits` are per workflow-and-project and are DISCARDED, silently.
+    const laneCtx = { summary, workflowId: () => local.workflowId() };
+    let laneSeq = 0;
+    function reloadLane() {
+      const seq = ++laneSeq;
+      const workflowId = local.workflowId();
+      const projectDir = local.projectDir();
+      local.lane = null;
+      renderLane(laneSec, null, laneCtx, 'Loading agent settings…');
+      loadLane(workflowId, projectDir).then((lane) => {
+        if (st.destroyed || seq !== laneSeq) return;            // a later reload won
+        local.lane = lane;
+        wfDesc.textContent = lane ? workflowDesc(lane.wf, lane.registry, lane.runConfig) : '';
+        renderLane(laneSec, lane, laneCtx);
+      });
+    }
+    local.reloadLane = reloadLane;   // after a successful save the lane re-reads the persisted config
+    renderLane(laneSec, null, laneCtx, 'Loading agent settings…');   // until the option lists arrive
+
+    // Fail loudly, never substitute: the proposed id is in no list, so the select shows
+    // nothing, the error says which id is missing and Start stays inert until the user
+    // picks a row (the change handler above lifts all three). local.workflowId() keeps
+    // reporting the proposed id meanwhile, so the lane shows its unusable state instead
+    // of another workflow's agents.
+    function markWorkflowUnavailable() {
+      workflowSel.selectedIndex = -1;
+      err.textContent = `Workflow ${card.workflowId} is not available — pick one`;
+      startBtn.disabled = true;
+      local.workflowUnavailable = true;
     }
 
     renderTarget();
-    loadCardOptions().then((opts) => {
+    loadCardOptions({ fresh: true }).then((opts) => {
       if (st.destroyed) return;
       local.options = opts;
       fillSelect(workflowSel, opts.workflows.map((w) => ({ value: w.id, label: workflowPickerLabel(w, null) || w.name || w.id })), card.workflowId || 'wf_default');
+      if (card.workflowId && workflowSel.value !== card.workflowId) markWorkflowUnavailable();
       fillSelect(guardSel, opts.guardrails.map((g) => ({ value: g.id, label: g.id === 'permissive' ? 'Permissive' : (g.name || g.id) })), card.guardrailsId || 'normal');
       renderTarget();
+      reloadLane();
     });
+    rootEl.__rp = { local, wfDesc, summary, laneSec, briefSec, brief, titleInput, lane: () => local.lane };   // consumed by later tasks + tests
     return rootEl;
   }
 
@@ -1525,7 +2477,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       prompt: rootEl.querySelector('.ask-card-brief').value,
       workflowId: rootEl.querySelector('.ask-card-workflow').value,
       guardrailsId: rootEl.querySelector('.ask-card-guardrails').value, // ALWAYS sent (spec §9.4)
-      title: card.title || undefined,
+      title: ((rootEl.querySelector('.ask-rp-title input') || {}).value || '').trim() || card.title || undefined,
       mock: false,
     };
     const feature = rootEl.querySelector('.ask-card-feature').value.trim();
@@ -1549,13 +2501,29 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return body;
   }
 
+  /** Freeze the controls Start's two awaits straddle. A workflow or target change mid-flight
+   *  repoints the lane (reloadLane nulls local.lane) while saveLaneEdits still holds the old
+   *  one, so the config written and the body posted would describe different runs. */
+  function freezeTargetInputs(rootEl, on) {
+    for (const sel of ['.ask-card-workflow', '.ask-card-project-select', '.ask-card-workspace-select', '[data-ask-card-seg]']) {
+      for (const node of rootEl.querySelectorAll(sel)) node.disabled = on;
+    }
+  }
+
   async function startCard(block, rootEl, local) {
     const err = rootEl.querySelector('.ask-card-err');
     const startBtn = rootEl.querySelector('[data-ask-card-start]');
     err.textContent = '';
     startBtn.disabled = true;
+    freezeTargetInputs(rootEl, true);
     try {
+      // D3: read-only, so it runs BEFORE saveLaneEdits — a refusal here must not leave the config already written.
+      const ex = await collectCardExtras(local);
+      if (ex.error) { err.textContent = ex.error; return; }
+      const saveErr = await saveLaneEdits(local);            // the previous phase's guard, now second
+      if (saveErr) { err.textContent = saveErr; return; }
       const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id };
+      if (ex.extras.length) body.extras = ex.extras;
       let res = null;
       try {
         res = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -1571,23 +2539,43 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // (beginRun is NEVER called — spec §10.5).
     } finally {
       startBtn.disabled = false;
+      freezeTargetInputs(rootEl, false);
     }
   }
 
-  async function dismissCard(block, rootEl) {
+  /** POST the card endpoint; the flip FRAME renders the next state (never a local flip). Returns the body or null. */
+  async function postCard(block, rootEl, body, btn = null) {
     const err = rootEl.querySelector('.ask-card-err');
-    err.textContent = '';
+    if (err) err.textContent = '';
+    // `posting` marks OUR disable so the per-flush run-button sync leaves it alone.
+    if (btn) { btn.disabled = true; btn.dataset.posting = '1'; }
+    const release = () => { if (btn) { btn.disabled = false; delete btn.dataset.posting; } };
     let res = null;
     try {
-      res = await fetch(`/api/ask/threads/${st.threadId}/cards/${block.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state: 'dismissed' }) });
-    } catch { err.textContent = 'network error'; return; }
+      res = await fetch(`/api/ask/threads/${st.threadId}/cards/${block.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    } catch { if (err) err.textContent = 'network error'; release(); return null; }
     if (!res.ok) {
       let msg = `request failed (${res.status})`;
       try { const b = await res.json(); if (b && b.error) msg = b.error; } catch { /* keep */ }
-      err.textContent = msg;
+      // One turn per thread: the route refuses every card verb that starts one while a
+      // reply streams. Say what to do instead of echoing the wire's `turn in flight`.
+      if (res.status === 409 && msg === 'turn in flight') msg = 'Ask Worca is still replying — try again once the answer lands.';
+      if (err) err.textContent = msg;
+      release();
+      return null;
     }
-    // the flip frame renders the stub
+    let out = null;
+    try { out = await res.json(); } catch { out = null; }
+    // v6: re-enable on success for EVERY verb. For save/decline the flip frame replaces this element within milliseconds anyway;
+    // a click landing in that window is answered 409 by the route's state check (+ askCardBusy) — harmless.
+    release();
+    // A failed event turn ALSO posts a system notice row (the server's failedEventTurn):
+    // for save/decline the flip has already rebuilt this element, so the row is the only
+    // message that survives. This line is what the run verb — which never flips — shows.
+    if (out && out.turn && out.turn.error && err) err.textContent = `Ask Worca could not reply: ${out.turn.error}`;
+    return out;
   }
+  function dismissCard(block, rootEl) { return postCard(block, rootEl, { state: 'dismissed' }); }
 
   function prefillFromCard(block, rootEl, local) {
     const card = block.card || {};
@@ -1596,7 +2584,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       workflowId: rootEl.querySelector('.ask-card-workflow').value,
       guardrailsId: rootEl.querySelector('.ask-card-guardrails').value,
       prompt: rootEl.querySelector('.ask-card-brief').value,
-      title: card.title || '',
+      title: ((rootEl.querySelector('.ask-rp-title input') || {}).value || '').trim() || card.title || '',
       featureBranch: rootEl.querySelector('.ask-card-feature').value.trim(),
     };
     if (local.target === 'workspace') {
@@ -1615,16 +2603,193 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const src = rootEl.querySelector('.ask-card-source');
       p.sourceBranch = src ? src.value : '';
     }
-    openNewPipeline(p);
+    // Nothing to save or fetch → hand over synchronously (the caller may not await).
+    const pending = cardPending(local);
+    if (!pending) { openNewPipeline(p); return; }
+    const err = rootEl.querySelector('.ask-card-err');
+    if (err) err.textContent = '';
+    // Same guard Start has: without it two quick clicks run two extras fetches, two save
+    // rounds and two handovers. Released on every exit of the continuation.
+    const openNp = rootEl.querySelector('[data-ask-card-open-np]');
+    if (openNp) openNp.disabled = true;
+    collectCardExtras(local).then(async (ex) => {
+      if (st.destroyed) return;
+      if (ex.error) { if (err) err.textContent = ex.error; return; }
+      const saveErr = await saveLaneEdits(local);
+      if (st.destroyed) return;
+      if (saveErr) { if (err) err.textContent = saveErr; return; }
+      if (ex.extras.length) p.extras = ex.extras;
+      if (typeof local.reloadLane === 'function') local.reloadLane();   // the card stays proposed: show the persisted state, not stale edits
+      openNewPipeline(p);
+    }).finally(() => { if (openNp) openNp.disabled = false; });
   }
 
+  // ---- card cache: ONE element per card id, rebuilt only on a STATE change (V7 for run cards; every state for
+  // workflow cards AND run progress cards, whose graph mount + ResizeObserver must not be re-created on each
+  // streaming re-render, PD15 / D10).
+  /** A block that renders as the live run progress card: a track_run card, or a run proposal the user started.
+   *  A `failed` proposal WITH a runId is a run that errored after launch — still the card; without one it is a
+   *  rejected proposal and stays the stub. */
+  function isProgressBlock(block) {
+    const card = block.card || {};
+    if (card.type === PROGRESS_CARD_TYPE) return true;
+    if (card.type === 'workflow') return false;
+    return block.state === 'started' || (block.state === 'failed' && !!block.runId);
+  }
   function buildCard(block) {
     if (!st.cardEls) st.cardEls = new Map();
     const cached = st.cardEls.get(block.id);
-    if (cached && cached.state === block.state && block.state === 'proposed') return cached.el;
-    const built = block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block);
-    st.cardEls.set(block.id, { el: built, state: block.state });
-    return built;
+    const isWorkflow = !!(block.card && block.card.type === 'workflow');
+    const isProgress = isProgressBlock(block);
+    if (cached && cached.state === block.state && (isWorkflow || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached) disposeCardEntry(cached);
+    const built = isWorkflow ? buildWorkflowCard(block, cached)
+      : isProgress ? buildProgressCard(block)
+        : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
+    st.cardEls.set(block.id, { el: built.el, state: block.state, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1 });
+    return built.el;
+  }
+  function disposeCardEntry(c) {
+    try { if (c.cancelAnim) c.cancelAnim(); } catch { /* ignore */ }
+    try { if (c.dispose) c.dispose(); } catch { /* a dead mount never breaks a render */ }
+  }
+  /** Drop cached card elements whose block is gone (keep = the live ids), or every one. */
+  function pruneCardEls(keep = null) {
+    if (!st.cardEls) return;
+    for (const [id, c] of st.cardEls) {
+      if (keep && keep.has(id)) continue;
+      disposeCardEntry(c);
+      st.cardEls.delete(id);
+    }
+  }
+  /** After a flush: measure the attached graph hosts once per width (jsdom: 0 ⇒ the 702 default) and start a pending build animation.
+   *  A width change DURING a build lands it first (v5): view.relayout re-creates the wire paths, which would drop their `is-hid`
+   *  mid-choreography (measured) — so cancel() (which lands everything) runs before the relayout. */
+  function relayoutCards() {
+    if (!st.cardEls) return;
+    for (const c of st.cardEls.values()) {
+      if (!c.handle || !c.el.isConnected) continue;
+      const w = (c.handle.parts.graph && c.handle.parts.graph.clientWidth) || 0;
+      if (w !== c.lastW) {
+        if (c.cancelAnim) { try { c.cancelAnim(); } catch { /* ignore */ } c.cancelAnim = null; }
+        c.lastW = w;
+        c.handle.relayout(w);
+      }
+      if (c.animate) { c.animate = false; c.cancelAnim = playAssembly(c.handle, { win, onDone: () => { c.cancelAnim = null; } }); }
+    }
+  }
+
+  // ---- run progress cards (ui/public/ask-run-card.mjs; D1 runStore seam, D9 REST hydration, D11 cadence) ------------
+  const PROGRESS_TICK_MS = 1000, PROGRESS_REHYDRATE_MS = 30_000;
+  const PIPELINE_ID_RE = /^[0-9a-f]{8}$/;
+
+  /** The persisted identity a card starts from (§4.2). The pipeline id of a started proposal arrives later
+   *  (run store, then the thread's run links — keyed by the card, so a resume cannot orphan it). */
+  function progressIdent(block) {
+    const card = block.card || {};
+    if (card.type === PROGRESS_CARD_TYPE) {
+      return { cardId: block.id, pipelineId: card.pipelineId || null, runId: card.runId || null, projectKey: card.projectKey || null,
+        workspaceId: card.workspaceId || null, title: card.title || '', label: card.label || '' };
+    }
+    return { cardId: block.id, pipelineId: null, runId: block.runId || null, projectKey: card.projectKey || null, workspaceId: card.workspaceId || null,
+      title: card.title || card.brief || 'run', label: card.workspaceName || card.projectName || '' };
+  }
+  /** Fold the thread's run links into the identity: the first `state` reveals the pipeline id; a resume moves the runId. */
+  function refreshProgressIdent(ident) {
+    if (!st.model) return;
+    const link = (ident.pipelineId && st.model.runLinkByPipeline(ident.pipelineId)) || st.model.runLinkForCard(ident.cardId)
+      || (ident.runId ? (() => { const l = st.model.runLinks().get(ident.runId); return l ? { runId: ident.runId, ...l } : null; })() : null);
+    if (!link) return;
+    if (link.pipelineId) ident.pipelineId = link.pipelineId;
+    if (link.runId && !PIPELINE_ID_RE.test(link.runId)) ident.runId = link.runId;   // a pipeline-id-keyed link has no live UUID (D5)
+  }
+  function progressSnapshot(entry) {
+    const ident = entry.ident;
+    let snap = null;
+    // D23: the pipeline id is the stable key; byPipeline resolves the LIVE lineage when a superseded twin shares it.
+    if (runStore) {
+      if (ident.pipelineId) snap = runStore.byPipeline(ident.pipelineId);
+      if (!snap && ident.runId) snap = runStore.get(ident.runId);
+    }
+    if (snap) {
+      if (snap.pipelineId && !ident.pipelineId) ident.pipelineId = snap.pipelineId;
+      if (snap.runId) ident.runId = snap.runId;
+      return snap;
+    }
+    return entry.rest;
+  }
+  function buildProgressCard(block) {
+    if (!st.progress) st.progress = new Map();
+    const ident = progressIdent(block);
+    const handle = createRunProgressCard({ doc, ident, onOpen: (href) => {
+      closeSheet();                                            // openNewPipeline precedent: close, then route
+      if (href && href.startsWith('#') && win.location.hash !== href) win.location.hash = href.slice(1);
+    } });
+    const entry = { ident, handle, rest: null, hydrating: false, nextHydrateAt: 0 };
+    st.progress.set(block.id, entry);
+    if (block.state === 'failed' && block.error) handle.setReason(`Run failed: ${block.error}`);
+    repaintProgress(entry, { hydrate: true });
+    ensureRunTick();
+    return { el: handle.el, handle, dispose: () => { if (st.progress && st.progress.get(block.id) === entry) st.progress.delete(block.id); handle.destroy(); } };
+  }
+  function repaintProgress(entry, { hydrate = false } = {}) {
+    refreshProgressIdent(entry.ident);
+    const snap = progressSnapshot(entry);
+    // D24: a lineage this tab just dropped (the acting tab's resume evicts the superseded entry) must not regress the
+    // card to "Starting" — keep the last paint until the new lineage's first state or REST lands.
+    entry.handle.update(snap || entry.handle.snapshot, now());
+    if (hydrate && !(snap && snap.source === 'live') && entry.ident.pipelineId) hydrateProgress(entry);
+  }
+  /** Repaint every attached progress card; `hydrate` re-reads REST for the ones the live map does not hold. */
+  function repaintProgressCards({ hydrate = false } = {}) {
+    st.runPoked = false;
+    if (!st.progress || !st.progress.size) return;
+    for (const entry of st.progress.values()) if (entry.handle.el.isConnected) repaintProgress(entry, { hydrate });
+  }
+  async function hydrateProgress(entry) {
+    if (entry.hydrating || st.destroyed) return;
+    entry.hydrating = true;
+    const id = entry.ident.pipelineId;
+    try {
+      const res = await fetch(`/api/ask/runs/${id}`);
+      if (res && res.ok) {
+        const body = await res.json();
+        // The envelope, not any 200: a stub that answers every URL must never paint a run (test/ui-ask-card.test.mjs boot stub).
+        if (body && body.state && typeof body.state.status === 'string' && body.state.id === id) {
+          entry.rest = snapshotFromState(body.state, { now: now() });
+          if (body.live && body.live.runId) entry.ident.runId = body.live.runId;
+        }
+      }
+    } catch { /* offline: the card keeps its last paint */ }
+    entry.hydrating = false;
+    entry.nextHydrateAt = now() + PROGRESS_REHYDRATE_MS;
+    if (st.destroyed || !st.progress || st.progress.get(entry.ident.cardId) !== entry) return;
+    entry.handle.update(progressSnapshot(entry) || entry.handle.snapshot, now());   // D24: a failed/junk hydrate keeps the last paint
+  }
+  function ensureRunTick() {
+    if (st.runTick || st.destroyed) return;
+    // Bare setInterval, unref'd — the startElapsed() precedent (a jsdom window timer has no unref()).
+    st.runTick = setInterval(onRunTick, PROGRESS_TICK_MS);
+    if (st.runTick && typeof st.runTick.unref === 'function') st.runTick.unref();
+  }
+  function onRunTick() {
+    if (st.destroyed || !st.progress || !st.progress.size) { if (st.runTick) { clearInterval(st.runTick); st.runTick = null; } return; }
+    if (!st.open) return;                                       // the tick idles behind a closed sheet (a frame-driven flush may still patch the hidden DOM — harmless); openSheet() catches up
+    const t = now();
+    for (const entry of st.progress.values()) {
+      if (!entry.handle.el.isConnected) continue;
+      const snap = entry.handle.snapshot;
+      if (!snap || snap.terminal) continue;
+      if (snap.source === 'live') entry.handle.update(progressSnapshot(entry) || snap, t); // fresh elapsed + cost from the store (D24: never null)
+      else if (t >= entry.nextHydrateAt) hydrateProgress(entry);                            // a run this tab gets no frames for
+    }
+  }
+  if (runStore && typeof runStore.subscribe === 'function') {
+    st.runUnsub = runStore.subscribe((runId, type) => {
+      if (st.destroyed || type === 'log' || !st.progress || !st.progress.size) return;
+      st.runPoked = true;
+      if (st.open) scheduleFlush();
+    });
   }
 
   function toolRow(block) {
@@ -1789,13 +2954,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const wrap = make('div', `ask-msg ask-msg-${row.role}`);
     let renderAnswer = null;
     if (row.role === 'user') {
-      const bubble = make('div', 'ask-user-bubble', row.text || '');
-      wrap.appendChild(bubble);
-      const atts = (row.blocks || []).filter((b) => b && b.kind === 'attachment');
-      if (atts.length) {
-        const pills = make('div', 'extras-pills ask-user-pills');
-        for (const b of atts) pills.appendChild(buildAttachmentPill(b));
-        wrap.appendChild(pills);
+      // PD6: a synthetic row (a workflow-card event) is a notice, never a bubble — its text is the model-facing event line.
+      const synthetic = (row.blocks || []).filter((b) => b && b.kind === 'notice' && b.synthetic);
+      if (synthetic.length) {
+        for (const b of synthetic) wrap.appendChild(buildNotice(b));
+      } else {
+        const bubble = make('div', 'ask-user-bubble', row.text || '');
+        wrap.appendChild(bubble);
+        const atts = (row.blocks || []).filter((b) => b && b.kind === 'attachment');
+        if (atts.length) {
+          const pills = make('div', 'extras-pills ask-user-pills');
+          for (const b of atts) pills.appendChild(buildAttachmentPill(b));
+          wrap.appendChild(pills);
+        }
       }
     } else if (row.role === 'system') {
       const notices = (row.blocks || []).filter((b) => b && b.kind === 'notice');
@@ -1840,13 +3011,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   function renderTranscript() {
+    // A card element outlives its row entry (it is cached by card id): drop — and dispose — the ones no row carries any more.
+    const keep = new Set();
+    if (st.model) for (const row of st.model.messages()) for (const b of row.blocks || []) if (b && b.kind === 'card' && b.id != null) keep.add(b.id);
+    pruneCardEls(keep);
     st.rowEls = new Map();
-    el.transcript.replaceChildren();
+    el.transcriptCol.replaceChildren();
     if (!st.model) return;
     for (const row of st.model.messages()) {
       const entry = buildMessage(row);
       st.rowEls.set(row.id, entry);
-      el.transcript.appendChild(entry.el);
+      el.transcriptCol.appendChild(entry.el);
     }
   }
 
@@ -1882,6 +3057,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     stopElapsed();      // a mid-stream thread switch must not leave the old
     updateSendStop();   // turn's timer or stop button behind (V3/D2 reset)
     if (snap.inFlight) { subscribe(id); startElapsed(); }
+    repaintProgressCards({ hydrate: true });   // thread load + reconnect (onHello → resync → loadThread): re-resolve + re-hydrate every card
     return snap;
   }
 
@@ -1983,6 +3159,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function pushServerFrame(frame) {
     if (st.destroyed || !frame) return;
     if (frame.type === 'ask-history-cleared') { onHistoryCleared(); return; }
+    if (THREADS_REFRESH_FRAMES.has(frame.type)) scheduleThreadsRefresh();
     // Defence-in-depth: the model's own threadId filter is the real router — this early return only saves an apply() call and cannot be observed from tests (the model would drop the frame identically).
     if (!st.model || frame.threadId !== st.threadId) return;
     const r = st.model.apply(frame);
@@ -2059,6 +3236,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     if (d.meters) updateMeters();
     if (d.worktrees) setWorktrees(st.model.worktrees());
+    if (d.runLinks) st.runPoked = true;   // D13: a first `state` reveals the pipeline id; a resume moves the runId
     // An open popover that subscribed to this flush's dirt is rebuilt in place
     // (same node — never reopened, never refocused). Runs AFTER the mirror and
     // the meters above: the worktrees build() reads st.worktrees.
@@ -2077,6 +3255,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function flush() {
     if (st.destroyed) return;
     flushExtra();
+    if (st.runPoked) repaintProgressCards();
+    relayoutCards();
     applyPin();
   }
 
@@ -2102,15 +3282,30 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   const root = buildRoot();
   doc.addEventListener('keydown', onDocKeydown, true);
   doc.addEventListener('pointerdown', onDocPointerdown, true);
+  win.addEventListener('resize', onWinResize);
+  // The rail collapsing changes the dock width by 222px with no window resize;
+  // observe the dock itself (guarded: jsdom has no ResizeObserver — P5's idiom).
+  let dockRo = null;
+  if (typeof win.ResizeObserver === 'function') {
+    dockRo = new win.ResizeObserver(onWinResize);
+    dockRo.observe(el.dock);
+  }
 
   function destroy() {
     if (st.destroyed) return;
     st.destroyed = true;
+    finishResize();                                  // a mid-drag unmount leaves no document listeners
     closePopover({ focusTrigger: false });
     if (st.elapsedTimer) { clearInterval(st.elapsedTimer); st.elapsedTimer = null; }
     if (el.orb) el.orb.stop();
+    settlePillOrb();
     doc.removeEventListener('keydown', onDocKeydown, true);
     doc.removeEventListener('pointerdown', onDocPointerdown, true);
+    win.removeEventListener('resize', onWinResize);
+    if (dockRo) { dockRo.disconnect(); dockRo = null; }
+    if (st.runTick) { clearInterval(st.runTick); st.runTick = null; }
+    if (st.runUnsub) { try { st.runUnsub(); } catch { /* ignore */ } st.runUnsub = null; }
+    pruneCardEls();                                  // every card graph mount and its ResizeObserver goes with the sheet
     root.remove();
   }
 

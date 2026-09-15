@@ -5,6 +5,7 @@
 
 import { readFileSync, readdirSync, readlinkSync, existsSync } from 'node:fs';
 import { join, resolve, dirname, sep, isAbsolute } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS } from './plugin-api.mjs';
 import { EFFORTS, isReservedModelEnvKey, assertModelCost } from './model-env.mjs';
 import { validateMetaV2, normalizeAgentMeta, indexByKey } from '../shared/graph/agent-meta.mjs';
@@ -19,7 +20,37 @@ const KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const SOURCE_ID_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const FIELD_TYPES = new Set(['text', 'select']);
 const INPUT_TYPES = new Set(['text', 'select', 'remote-select', 'task-browser']);
-const KNOWN_TOP = new Set(['name', 'version', 'description', 'author', 'homepage', 'license', 'engines', 'taskSources', 'chatChannels', 'setup', 'models', 'modelSecrets']);
+// `worca` is a free-form tool-metadata block (the workflow exporter records
+// `worca.exports` there — issue #421); the loader never reads it.
+const KNOWN_TOP = new Set(['name', 'version', 'description', 'author', 'homepage', 'license', 'engines', 'taskSources', 'chatChannels', 'setup', 'models', 'modelSecrets', 'worca']);
+
+/** The built-in agent layer (repo agents/). Same URL math as agent-registry's
+ *  DEFAULT_AGENTS_DIR, duplicated because agent-registry imports THIS module
+ *  (declaredApi) and a back-import would be a cycle. */
+const BUILTIN_AGENTS_DIR = fileURLToPath(new URL('../../agents/', import.meta.url));
+
+/**
+ * Normalized meta v2 sidecars of the built-in layer, for the plugin-template
+ * isolation rule (#421): a template may reference built-ins (immutable, always
+ * present on every host) plus the plugin's own agents — never the user layer
+ * or another plugin. A sidecar that fails the v2 gate is skipped: it ships no
+ * ports, so a template naming it gets the same V4 the runtime would raise.
+ * @param {string} [dir]
+ * @returns {object[]}
+ */
+export function builtinAgentMetas(dir = BUILTIN_AGENTS_DIR) {
+  const out = [];
+  let files = [];
+  try { files = readdirSync(dir).filter((f) => f.endsWith('.meta.json')); } catch { return out; }
+  for (const f of files.sort()) {
+    let meta = null;
+    try { meta = JSON.parse(readFileSync(join(dir, f), 'utf8')); } catch { continue; }
+    if (Number(meta?.metaVersion) !== 2 || !KEY_RE.test(String(meta.key || ''))) continue;
+    if (validateMetaV2(meta).errors.length) continue;
+    out.push(normalizeAgentMeta(meta).meta);
+  }
+  return out;
+}
 const KNOWN_SOURCE = new Set(['id', 'displayName', 'module', 'configSchema', 'inputs', 'multiProfile']);
 const KNOWN_CHANNEL = new Set(['id', 'displayName', 'platform', 'module', 'ingress', 'capabilities', 'configSchema']);
 const CHANNEL_INGRESS = new Set(['connect', 'webhook']);
@@ -497,7 +528,7 @@ export function findEscapingSymlinks(root) {
  * strict: unknown-field warnings become errors.
  * @returns {{ok:boolean, manifest:object|null, problems:Array<{level:'error'|'warn', message:string}>}}
  */
-export function validatePluginDir(absDir, { strict = false } = {}) {
+export function validatePluginDir(absDir, { strict = false, builtinMetas } = {}) {
   const problems = [];
   const push = (level, message) => problems.push({ level, message });
 
@@ -592,12 +623,18 @@ export function validatePluginDir(absDir, { strict = false } = {}) {
 
   // workflows/*.json are v2 GRAPHS (API 3), validated by the SAME shared
   // validator the composer and POST /api/workflows use, over a ports function
-  // built from this plugin's OWN sidecars plus the engine's flow-card ports.
-  // The isolation rule stays: a template may reference only keys this plugin
-  // ships, so a host rename or a deleted user agent can never break it.
+  // built from the BUILT-IN sidecars plus this plugin's OWN, plus the engine's
+  // flow-card ports. The isolation rule (#421): a template may reference
+  // built-ins (immutable, present on every host) and keys this plugin ships —
+  // never the user layer or another plugin — so a host rename or a deleted
+  // user agent can never break it. The plugin's own sidecar wins the index on
+  // a key it shares with a built-in (the registry drops such a plugin agent at
+  // load; the template still validates against the ports it will run with).
   const wfDir = join(absDir, 'workflows');
   if (existsSync(wfDir)) {
-    const portsFn = portsFnFor(indexByKey(ownMetas));
+    const hostMetas = Array.isArray(builtinMetas) ? builtinMetas : builtinAgentMetas();
+    const hostKeys = new Set(hostMetas.map((m) => m.key));
+    const portsFn = portsFnFor(indexByKey([...hostMetas, ...ownMetas]));
     for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.json'))) {
       let tpl = null;
       try { tpl = JSON.parse(readFileSync(join(wfDir, f), 'utf8')); }
@@ -607,14 +644,14 @@ export function validatePluginDir(absDir, { strict = false } = {}) {
       const keys = nodes.filter((n) => n && n.kind === 'agent').map((n) => n.key).filter(Boolean);
       let unresolved = false;
       for (const k of new Set(keys)) {
-        if (agentKeys.has(k)) continue;
+        if (agentKeys.has(k) || hostKeys.has(k)) continue;
         if (ungatedKeys.has(k)) {
           // The sidecar is this plugin's, it just did not pass. Report at the
           // DATA level so an API-1 plugin keeps installing (spec §9) instead of
           // being refused for a template that is fine.
           push(dataLevel, `workflows/${f}: references agent key "${k}" whose sidecar is not a valid meta v2 sidecar`);
         } else {
-          push('error', `workflows/${f}: references agent key "${k}" which this plugin does not ship`);
+          push('error', `workflows/${f}: references agent key "${k}" which is neither a built-in nor shipped by this plugin`);
         }
         unresolved = true;
       }

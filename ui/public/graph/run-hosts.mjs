@@ -12,12 +12,24 @@
 // with the footer rows the view actually painted (never a second band count).
 import { createGraphView } from './view.mjs';
 import { applyDecor, manifestAgents, manifestNodes, manifestPortsFn, manifestTemplate } from './run-decor.mjs';
-import { fitBounds } from '../../../src/shared/graph/geometry.mjs';
+import { fitBounds, ZOOM_STEP } from '../../../src/shared/graph/geometry.mjs';
 
 export const STATIC_HOST_H = 300;      // D5: the Running list card's graph height
 export const STATIC_INSET = 32;        // wrap padding allowance on both axes (16 each side)
 export const DETAIL_MIN_H = 360, DETAIL_MAX_H = 600, DETAIL_PAD_H = 48;
-export const HINT_TEXT = 'click to pan · ⌘+scroll to zoom';
+export const HINT_TEXT = 'drag to pan · ⌘/ctrl+scroll to zoom';
+/** px of monitor canvas the nav cluster owns: 30px button + 12px inset + 12px air.
+ *  The composer reserves `insetRight` for its rail for exactly this reason — the
+ *  cluster is opaque and clickable, and an auto-fit that ignores it parks the
+ *  bottom-right card's .xtoggle strip underneath. */
+export const NAV_INSET = 54;
+/** The cluster's three buttons: [data-nav, label, glyph]. The glyphs are the
+ *  composer's (ui/public/index.html #gv-nav) so both canvases read identically. */
+const NAV_BTNS = [
+  ['in', 'Zoom in', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"></path></svg>'],
+  ['out', 'Zoom out', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12h14" stroke-linecap="round"></path></svg>'],
+  ['center', 'Fit graph to view', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="2.5"></rect><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"></circle></svg>'],
+];
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 /** Centre `b` (already padded) in a vw×vh viewport through the SHARED `fitBounds`;
@@ -39,7 +51,7 @@ export function mountRunGraph(hostEl, opts = {}) {
   const isStatic = mode === 'static';
   const zoomMin = 0.3, zoomMax = isStatic ? 1 : 1.6;
 
-  let view = null, stepper = null, decor = null, runId = null, expanded = null, ro = null, lastFit = null, bound = false;
+  let view = null, stepper = null, decor = null, runId = null, expanded = null, ro = null, lastFit = null, bound = false, nav = null;
   // The last width `view.readRect()` reported. A host inside a `display:none`
   // subtree (compact density, a closed detail) measures 0×0, and both fitters
   // BAIL on that rather than poison the transform / --run-host-h with it; the
@@ -92,17 +104,64 @@ export function mountRunGraph(hostEl, opts = {}) {
     if (!(r.width > 0)) return;                 // hidden host (0×0): a 0-width fit would
     const b = view.bounds(24);                  // pin --run-host-h at the 360px floor and
     if (!b) return;                             // zoom to the 0.3 clamp for good.
-    const vw = Math.max(1, r.width);
+    const vw = Math.max(1, r.width - NAV_INSET);   // the cluster is opaque and clickable
     const zw = clamp(Math.min(vw / b.w, 1), zoomMin, 1);
     const hostH = clamp(Math.round((b.h - 48) * zw + DETAIL_PAD_H), DETAIL_MIN_H, DETAIL_MAX_H);   // b is padded 24 each side
     wrap.style.setProperty('--run-host-h', `${hostH}px`);
     if (applyTransform) view.setTransform(fitInto(b, vw, hostH, { zoomMin }));
   }
 
+  /** Stage-local centre of the host box — the point the buttons zoom about.
+   *  Reads the rect itself: the host may have resized since the last fit. */
+  function hostCenter() {
+    const r = view.readRect();
+    return { x: (r.width || 0) / 2, y: (r.height || 0) / 2 };
+  }
+  /** One discrete zoom press; view.zoomAbout owns the zoomMin..zoomMax clamp. */
+  function zoomStep(mult) {
+    if (!view) return;
+    const c = hostCenter();
+    view.zoomAbout(view.getTransform().z * mult, c.x, c.y);
+    paintNav();
+  }
+  /** The cluster's only state: a button that cannot move is disabled. Guarded —
+   *  a static host never builds a cluster, and destroy() drops it. */
+  function paintNav() {
+    if (!nav || !view) return;
+    const z = view.getTransform().z;
+    nav.querySelector('[data-nav="in"]').disabled = z >= zoomMax - 1e-9;
+    nav.querySelector('[data-nav="out"]').disabled = z <= zoomMin + 1e-9;
+  }
+  function buildNav() {
+    nav = doc.createElement('div');
+    nav.className = 'gv-nav';
+    for (const [key, label, glyph] of NAV_BTNS) {
+      const b = doc.createElement('button');
+      b.type = 'button';
+      b.className = 'gv-nav-btn';
+      b.dataset.nav = key;
+      b.setAttribute('aria-label', label);
+      b.title = label;
+      b.innerHTML = glyph;                        // a literal from this module, never run data
+      nav.appendChild(b);
+    }
+    // A SIBLING of the stage, like .rg-hint: a press on a button can never reach
+    // the drag pipeline (the rule the composer's own cluster follows).
+    wrap.appendChild(nav);
+    on(nav, 'click', (e) => {
+      const btn = e.target.closest && e.target.closest('.gv-nav-btn');
+      if (!btn) return;
+      if (btn.dataset.nav === 'in') zoomStep(ZOOM_STEP);
+      else if (btn.dataset.nav === 'out') zoomStep(1 / ZOOM_STEP);
+      else fit();                                 // Center = zoom-to-fit, and it re-arms the auto re-fit
+    });
+  }
+
   function fit() {
     if (!view || !stepper) return;
     if (isStatic) fitStatic(); else fitMonitor(true);
     lastFit = view.getTransform();
+    paintNav();
   }
   /** The size pass without the transform (monitor only; static hosts never grow). */
   function sizeHost() {
@@ -124,12 +183,11 @@ export function mountRunGraph(hostEl, opts = {}) {
     hostEl.classList.add('gv-host');
     wrap.classList.add('gv-wrap', isStatic ? 'gv-wrap-static' : 'gv-wrap-monitor');
     view = createGraphView(hostEl, { mode, doc, raf, viewport,
-      portsFn: manifestPortsFn(stepper), agents: manifestAgents(stepper), zoomMin, zoomMax,
-      wheelPan: isStatic ? 'always' : 'engaged' });
-    // The view never auto-binds a nav: monitor hosts ask for one (D8 engaged-only)
-    // and learn engagement from it — run-hosts keeps NO engagement state of its own,
-    // and view.destroy() destroys every nav, so the handle is not kept.
-    if (!isStatic) view.createNav({ wheelPan: 'engaged', onEngaged: (engaged) => wrap.classList.toggle('rg-engaged', engaged) });
+      portsFn: manifestPortsFn(stepper), agents: manifestAgents(stepper), zoomMin, zoomMax });
+    // The view never auto-binds a nav: monitor hosts ask for one. There is no
+    // engagement state any more — a plain wheel is always the page's (D2) — and
+    // onTransform is how a wheel zoom or a drag repaints the cluster.
+    if (!isStatic) view.createNav({ onTransform: paintNav });
   }
 
   function update(nextRunId, nextStepper, nextDecor) {
@@ -158,7 +216,9 @@ export function mountRunGraph(hostEl, opts = {}) {
       hint.className = 'rg-hint';
       hint.textContent = HINT_TEXT;
       wrap.appendChild(hint);
-      // (engage/disengage listeners live in the view's nav — see mount() above)
+      buildNav();
+      paintNav();
+      // (the wheel + drag gestures live in the view's nav — see mount() above)
       on(hostEl, 'click', (e) => {
         const toggle = e.target.closest && e.target.closest('.xtoggle');
         if (toggle) { expanded = expanded === toggle.dataset.nodeId ? null : toggle.dataset.nodeId; paint(); refit(); return; }
@@ -183,9 +243,10 @@ export function mountRunGraph(hostEl, opts = {}) {
     if (ro) { try { ro.disconnect(); } catch { /* jsdom */ } ro = null; }
     const hint = wrap.querySelector(':scope > .rg-hint');
     if (hint) hint.remove();
+    if (nav) { nav.remove(); nav = null; }
     if (view) { view.destroy(); view = null; }   // view.destroy() tears every nav down
     hostEl.classList.remove('gv-host');
-    wrap.classList.remove('gv-wrap', 'gv-wrap-static', 'gv-wrap-monitor', 'rg-engaged');
+    wrap.classList.remove('gv-wrap', 'gv-wrap-static', 'gv-wrap-monitor');
     wrap.style.removeProperty('--run-host-h');
     hostEl.style.width = '';
     hostEl.innerHTML = '';

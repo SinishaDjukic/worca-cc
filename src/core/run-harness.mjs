@@ -612,6 +612,10 @@ export class RunHarness extends EventEmitter {
     }
     this.agentsDir = this.opts.agentsDir || DEFAULT_AGENTS_DIR;
     this.auto = !!this.opts.auto;
+    // Auto workflow (spec D3/D15): the human-in-the-loop switch. `--yes` (auto
+    // mode) implies it is off. It changes nothing on a saved workflow — only an
+    // Auto run reads it (proposal question, clarifier stage, agent questions).
+    this.humanInLoop = !this.auto && this.opts.humanInLoop !== false;
     this.stepModels = null; // { planner:{model,effort}, refiner:{...}, ... } | null until run()
     // Guardrails: resolved by _resolveGuardrails() from run() AND resume(); null
     // until then, so dispatcher tests that bypass run() get claudeOpts without
@@ -742,6 +746,18 @@ export class RunHarness extends EventEmitter {
     if (!pq || pq.id !== id) {
       this._log('orchestrator', 'warn', `answer() ignored: no pending question with id ${id}`);
       return false;
+    }
+    if (pq.validate) {
+      // A question that carries a validator (the Auto proposal) stays OPEN on a
+      // malformed payload (spec §5.4); the awaiting code receives the CLEAN value.
+      const clean = pq.validate(payload);
+      if (clean == null) {
+        this._log('orchestrator', 'warn', `answer() ignored: malformed payload for ${id} — the question stays open`);
+        return false;
+      }
+      this.pendingQuestion = null;
+      pq.resolve(clean);
+      return true;
     }
     this.pendingQuestion = null;
     pq.resolve(payload);
@@ -891,7 +907,7 @@ export class RunHarness extends EventEmitter {
       // fan-out forcing + the v1 stepper manifest; v2 = resolveGraph +
       // buildGraphManifest. It yields the manifest the UI renders, the agent-key
       // set the preflight and skills gates walk, and the workflow's id/name.
-      const topology = await this._resolveTopology(registry);
+      let topology = await this._resolveTopology(registry);
       if (!topology?.manifest || !topology.agentKeys || !topology.workflow?.id) throw new Error('engine hook contract: _resolveTopology must return { manifest, agentKeys, workflow:{id,name} }');
       // §9.4: hard-fail BEFORE the stepper is STAMPED / createPipeline / worktree
       // (the manifest is built inside the hook, which tolerates unknown keys) —
@@ -1038,6 +1054,15 @@ export class RunHarness extends EventEmitter {
       // this.opts.resume) is the resume signal; resume() never reaches this run()
       // site anyway (belt-and-suspenders).
       if (!this.resumeOpts) this._kickoffTitleGeneration();
+      this._checkAbort();
+
+      // 3b') Auto workflow (spec §5.3): the run row and the run root exist, so the
+      // engine may now DECIDE the graph (classifier call, proposal question, reuse
+      // or create) and re-stamp the manifest. Returns null for a saved workflow.
+      // `topology` is consumed AFTER this point (collectRequiredSkills, the workflow
+      // audit line), so the adopted graph is what they see.
+      const decided = await this._decideTopology();
+      if (decided) topology = decided;
       this._checkAbort();
 
       // 3c) Build the knowledge graph INSIDE each worktree so agents can query it.
@@ -1377,6 +1402,14 @@ export class RunHarness extends EventEmitter {
       await appendAudit(this.pipeline.dir, rehydrated.audit);
       this._emit('state', this.getState());
       this._rehydrated = true;
+
+      // 3a') Auto workflow (spec §5.6): a run that paused BEFORE its graph was
+      // decided re-enters the decision HERE — before the setup replay, so the
+      // skills gate and the context assembly below see the ADOPTED agent keys, not
+      // the bootstrap's empty set. null for a saved workflow and for an Auto run
+      // that already adopted (rp.workflowId is then the real id).
+      await this._decideTopology({ resume: rp });
+      this._checkAbort();
 
       // ── setup replay (D7): a converted setup failure paused this run before its
       //    checkout / graph / skills gate existed. Re-run exactly what run() never
@@ -2556,7 +2589,7 @@ export class RunHarness extends EventEmitter {
    * Freezes the active-time clock while blocked on the user (active-time-only).
    * @returns {Promise<any>} the answer payload
    */
-  async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo }) {
+  async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow, validate }) {
     this._checkAbort();
     // No interactive prompt may OPEN on a pausing run. pause() rejects only the
     // prompt that is currently open; a queued ask (a parallel sibling's questions
@@ -2587,6 +2620,7 @@ export class RunHarness extends EventEmitter {
       // trail — reads these fields instead of parsing the id (MAJ-11).
       ...(deliveryNo != null ? { deliveryNo } : {}),
       ...(holdNo != null ? { holdNo } : {}),
+      ...(workflow !== undefined ? { workflow } : {}),
     });
 
     try {
@@ -2596,6 +2630,11 @@ export class RunHarness extends EventEmitter {
           // this is a defensive fallback so an auto run can never hang. Giving up
           // pauses the run (errors never end one), so 'pause' is the answer.
           return { decision: 'pause' };
+        }
+        if (kind === 'workflow') {
+          // Auto workflow under --yes: the proposal is accepted as proposed (spec D3).
+          this._log('orchestrator', 'info', `auto-accepting workflow proposal ${id}`);
+          return { decision: 'accept' };
         }
         if (kind === 'clarify' || kind === 'questions') {
           this._log('orchestrator', 'info', `auto-answering ${kind} ${id}`);
@@ -2610,7 +2649,7 @@ export class RunHarness extends EventEmitter {
         return { decision: 'continue' };
       }
       return await new Promise((resolveP, rejectP) => {
-        this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP };
+        this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP, validate: typeof validate === 'function' ? validate : null };
       });
     } finally {
       // Resume only the rows that are STILL running AND only while the run has not
@@ -3649,6 +3688,13 @@ export class RunHarness extends EventEmitter {
       signal: this.abort.signal,
       bin: this.claude.bin,
       mock: this.claude.mock,
+      // The run's own model is the title default (#422, title.mjs#resolveTitleModel):
+      // an install with no first-party model titles its runs with no setup.
+      runModel: this.claude.model,
+      // A failed title used to vanish into a kept provisional title. Say so in
+      // the run log — once per run, there is only ever one title call.
+      onError: ({ model, error }) => this._log('orchestrator', 'warn',
+        `title generation failed (model ${model}): ${clipMiddle(error?.message || error, 300)} — keeping the provisional title`),
       // Same env policy as the pipeline nodes. Both undefined on an unconfigured
       // project ⇒ byte-identical spawn env (legacy parity).
       envScrub: this.guardrails?.envScrub || undefined,
@@ -3878,6 +3924,13 @@ export class RunHarness extends EventEmitter {
    *  snapshot); agentKeys -> the §9.4 preflight gate + the skills gate;
    *  workflow -> the run's audit line. */
   async _resolveTopology(_registry) { throw new Error('engine hook not implemented: _resolveTopology'); }
+
+  /** Decide the run's topology AFTER the run row + run root exist (the Auto
+   *  workflow). run() calls it with no argument and REPLACES the bootstrap
+   *  manifest with a non-null return (the same bag as _resolveTopology); resume()
+   *  calls it with `{ resume: rp }` before the setup replay. null keeps what
+   *  _resolveTopology produced (every saved workflow). */
+  async _decideTopology(_o = {}) { return null; }
 
   /** Run the pipeline to completion or to a pause.
    *  @param {{resume?:object|null, rehydrated?:object|null}} _args resume point + _engineRehydrate's bag

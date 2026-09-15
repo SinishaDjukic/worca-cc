@@ -1,8 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="system">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>Worca CC</title>
     <link rel="stylesheet" href="/style.css" />
     <meta name="theme-color" content="#ffffff" />
@@ -13,13 +14,8 @@
       <!-- ===================== Sidebar ===================== -->
       <aside class="sidebar" id="side-rail">
         <div class="brand">
-          <img class="logo" src="/assets/worca-logo.png" alt="Worca" />
-          <img class="logo-mark" src="/assets/worca-favicon.png" alt="Worca" />
-          <button type="button" class="side-toggle" id="side-toggle"
-                  aria-expanded="true" aria-controls="side-rail"
-                  title="Collapse menu" aria-label="Collapse menu">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5"></rect><path d="M9 3v18"></path><path class="chev" d="M16 15l-3-3 3-3"></path></svg>
-          </button>
+          <span class="logo" role="img" aria-label="Worca"></span>
+          <span class="logo-mark" role="img" aria-label="Worca"></span>
         </div>
 
         <nav class="nav" aria-label="Primary">
@@ -80,6 +76,11 @@
 
         <div class="side-foot">
           <div id="side-spend"></div>
+          <button type="button" class="side-toggle" id="side-toggle"
+                  aria-expanded="true" aria-controls="side-rail"
+                  title="Collapse menu" aria-label="Collapse menu">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path class="chev" d="M15 6l-6 6 6 6"></path></svg>
+          </button>
         </div>
       </aside>
 
@@ -296,6 +297,15 @@
                   </div>
                 </div>
 
+                    <!-- Auto only (spec §7.2 / D20): the ONE agent-level option. The .sw-input bridge
+                         (style.css:3370) paints the same switch as #mock-switch from a REAL checkbox — no JS mirror. -->
+                    <label class="switch-row" id="hitl-row" hidden>
+                      <input id="humanInLoop" class="sw-input" type="checkbox" checked aria-describedby="hitlHint">
+                      <span class="switch"></span>
+                      <span class="txt">Human in the loop — Auto shows its proposal, clarifies, and agents may ask</span>
+                    </label>
+                    <small class="hint" id="hitlHint">Off: the proposal is accepted as proposed, no clarify card, no agent questions. A loop that runs out of cycles, a recovery prompt, a cost cap or an error still pause the run.</small>
+
                     <!-- Guardrails picker (built-ins + named sets; the selection IS the
                          run's policy, applied uniformly to every member). app.js populates
                          from GET /api/guardrails. Applies to Project and Workspace targets
@@ -399,6 +409,7 @@
                   </span>
                 </div>
                 <div class="rc-acts">
+                  <span class="auto-badge" hidden></span>
                   <span class="rc-qpill" hidden></span>
                   <button type="button" class="btn-resume" title="Resume — restart this paused pipeline where it left off" aria-label="Resume" hidden><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg></button>
                   <button type="button" class="btn-pause" title="Pause — gracefully stop the session so it can be resumed" aria-label="Pause"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg></button>
@@ -436,6 +447,7 @@
                     Back
                   </button>
                   <h1 class="rd-title"></h1>
+                  <span class="auto-badge" hidden></span>
                   <span class="rd-status pill-run"><span class="pdot"></span><span class="rd-status-word"></span></span>
                 </div>
                 <div class="rd-meta mono"></div>
@@ -583,6 +595,7 @@
                     Back
                   </button>
                   <h1 class="hd-title"></h1>
+                  <span class="auto-badge" hidden></span>
                   <span class="hist-merge" hidden></span>
                   <button type="button" class="hd-pr" hidden>Create PR</button>
                   <a class="hd-pr-link" hidden target="_blank" rel="noopener"></a>
@@ -964,6 +977,18 @@
                 </div>
                 <div class="gv-ins-pane gv-ins-body" id="gv-ins-body"></div>
               </div>
+              <!-- The canvas nav cluster: the ONLY on-canvas controls (the
+                   rebuild spec's "gestures only" line was reversed by the user
+                   on 2026-09-10). A SIBLING of the stage, like the chip and the
+                   rail, so a pointerdown on a button can never reach the stage's
+                   gesture pipeline. It must come AFTER #gv-ins-rail: the
+                   collapsed-rail offset in style.css is a `~` sibling selector,
+                   which only looks forward. -->
+              <div class="gv-nav" id="gv-nav">
+                <button type="button" class="gv-nav-btn" id="gv-zoom-in" aria-label="Zoom in" title="Zoom in"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"></path></svg></button>
+                <button type="button" class="gv-nav-btn" id="gv-zoom-out" aria-label="Zoom out" title="Zoom out"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12h14" stroke-linecap="round"></path></svg></button>
+                <button type="button" class="gv-nav-btn" id="gv-center" aria-label="Fit graph to view" title="Fit graph to view"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="2.5"></rect><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"></circle></svg></button>
+              </div>
             </div>
             <!-- The key belongs to the whole editor, canvas AND rail — not to a
                  palette card that no longer exists. -->
@@ -975,7 +1000,17 @@
           <section class="card gv-saved">
             <div class="saved-head">
               <div><b>Saved pipelines</b><span class="cnt" id="gv-saved-count"></span></div>
+              <!-- Import a workflow another Worca user shared as JSON (#421): the
+                   file goes through POST /api/workflows/import-json — the same validator
+                   the composer's Save uses; a taken name gets a " (2)" suffix. -->
+              <div class="saved-head-actions">
+                <button type="button" id="gv-import-btn" class="btn btn-ghost btn-mini" title="Import a pipeline shared as a JSON file">Import…</button>
+                <input id="gv-import-file" type="file" accept=".json,application/json" hidden />
+              </div>
             </div>
+            <!-- One tab per domain; the row itself no longer repeats the domain.
+                 Rendered by gvRenderSaved(); hidden while the library is empty. -->
+            <div class="gv-saved-tabs" id="gv-saved-tabs" role="tablist" aria-label="Pipeline domains" hidden></div>
             <div class="saved-list" id="gv-saved-list"></div>
             <div class="gv-archived" id="gv-archived" hidden></div>
             <!-- A refused DELETE (the built-in, a 404, a 500) has to land
@@ -1011,15 +1046,32 @@
               </div>
             </div>
 
+            <section class="card settings-card" id="appearance-card">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Appearance</h2>
+                  <button type="button" class="info-tip" aria-label="About appearance">i<span class="tip-content hidden">
+                    System follows your operating system. The choice applies to every browser that opens this Worca.
+                  </span></button>
+                </div>
+              </div>
+              <div class="seg" id="theme-seg" role="group" aria-label="Theme">
+                <button type="button" data-theme-mode="system" class="on" aria-pressed="true">System</button>
+                <button type="button" data-theme-mode="light" aria-pressed="false">Light</button>
+                <button type="button" data-theme-mode="dark" aria-pressed="false">Dark</button>
+              </div>
+              <small class="hint" id="themeMsg"></small>
+            </section>
+
             <section class="card settings-card">
               <div class="field">
                 <div class="label-row">
-                  <label for="settingsRoot">Worca CC root folder</label>
-                  <button type="button" class="info-tip" aria-label="About Worca CC root folder">i<span class="tip-content hidden">
-                    The folder under which Worca CC keeps its data &mdash; a <code>.worca-cc/</code> directory holding the
+                  <label for="settingsRoot">Worca root folder</label>
+                  <button type="button" class="info-tip" aria-label="About Worca root folder">i<span class="tip-content hidden">
+                    The folder under which Worca keeps its data &mdash; a <code>.worca-cc/</code> directory holding the
                     history store, the project list, and saved workflows. Leave empty to use the default.
                     Changes apply to new runs immediately. Changing the root does <b>not</b> move existing
-                    data: Worca CC starts a fresh <code>.worca-cc/</code> under the new folder; history under
+                    data: Worca starts a fresh <code>.worca-cc/</code> under the new folder; history under
                     the old root is left in place.
                   </span></button>
                 </div>
@@ -1146,6 +1198,66 @@
               </div>
             </section>
 
+            <!-- Title generation (#422): which model writes run/chat titles.
+                 Empty = the model of the run or chat itself (title.mjs
+                 resolveTitleModel), so a first-party-free install needs no setup.
+                 The select is built from the project-less catalog; a stored id
+                 that left the catalog paints disabled + "not installed". -->
+            <section class="card settings-card" id="title-model-settings-card">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Title generation</h2>
+                  <button type="button" class="info-tip" aria-label="About title generation">i<span class="tip-content hidden">
+                    Every run and chat gets a short LLM-written title. By default it is written by the
+                    model the run or chat itself uses, so an install without a first-party Anthropic
+                    account needs no setup here. Pick a model to write every title with it instead;
+                    the change applies to the next title, no restart. A non-empty
+                    <code>WORCA_TITLE_MODEL</code> in the environment overrides this setting.
+                  </span></button>
+                </div>
+              </div>
+              <div class="field">
+                <div class="label-row">
+                  <label for="titleModel">Model</label>
+                </div>
+                <select id="titleModel" class="select" aria-label="Title model"></select>
+              </div>
+              <small class="hint" id="titleModelEnvNote"></small>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="titleModelTest" class="btn btn-ghost btn-mini" title="Send one tiny prompt to the selected model">Test</button>
+                <button type="button" id="titleModelReset" class="btn btn-ghost btn-mini">Use default</button>
+                <button type="button" id="titleModelSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="titleModelMsg"></small>
+            </section>
+
+            <!-- Auto workflow model (spec D14 / §7.7): which model classifies a task into a workflow.
+                 Empty = the Sonnet-class default; WORCA_AUTO_MODEL in the environment wins. -->
+            <section class="card settings-card" id="auto-model-settings-card">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Auto workflow model</h2>
+                  <button type="button" class="info-tip" aria-label="About the Auto workflow model">i<span class="tip-content hidden">
+                    When a run starts on <b>Auto</b>, one short model call reads the task and picks the workflow.
+                    Pick the model that makes that call; empty means the Sonnet-class default. A non-empty
+                    <code>WORCA_AUTO_MODEL</code> in the environment overrides this setting. Each call is billed to the
+                    run as a sub-agent row named "Auto workflow (round n)".
+                  </span></button>
+                </div>
+              </div>
+              <div class="field">
+                <div class="label-row"><label for="autoModel">Model</label></div>
+                <select id="autoModel" class="select" aria-label="Auto workflow model"></select>
+              </div>
+              <small class="hint" id="autoModelEnvNote"></small>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="autoModelTest" class="btn btn-ghost btn-mini" title="Send one tiny prompt to the selected model">Test</button>
+                <button type="button" id="autoModelReset" class="btn btn-ghost btn-mini">Use default</button>
+                <button type="button" id="autoModelSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="autoModelMsg"></small>
+            </section>
+
             <!-- Spawn-debug diagnostics: the stored side of WORCA_DEBUG_SPAWN.
                  claude-runner.mjs reads the setting per spawn (UI server AND CLI);
                  a non-empty env var overrides it. This card only flips the gate —
@@ -1187,6 +1299,26 @@
                 <button id="chatSettingsSave" class="btn btn-primary btn-mini" type="button">Save</button>
               </div>
               <small class="hint" id="chatSettingsMsg"></small>
+            </section>
+
+            <!-- About: intentionally no info-tip and no .hint (test/ui-settings-tooltips.test.mjs pins both). -->
+            <section class="card settings-card" id="about-card">
+              <div class="label-row">
+                <h2>About</h2>
+              </div>
+              <div class="about-row">
+                <span class="about-key">Version</span>
+                <!-- href is painted from app.releaseUrl (the worca-app-v<version> tag);
+                     without one the anchor is plain text, so the placeholder never links. -->
+                <a class="about-val about-version" id="aboutVersion"
+                   target="_blank" rel="noopener noreferrer">&mdash;</a>
+              </div>
+              <div class="about-row">
+                <span class="about-key">Repository</span>
+                <a class="about-val about-link" id="aboutRepoLink"
+                   href="https://github.com/SinishaDjukic/worca-cc"
+                   target="_blank" rel="noopener noreferrer">github.com/SinishaDjukic/worca-cc</a>
+              </div>
             </section>
           </section>
           <!-- /pane general -->
@@ -1243,7 +1375,7 @@
             <p id="plugins-msg" class="form-msg" aria-live="polite"></p>
             <div class="card hidden" id="marketplace-add-row" style="padding:16px 20px;margin-bottom:14px">
               <div class="path-row">
-                <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo" spellcheck="false" />
+                <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo · /path/to/a/plugin-folder" spellcheck="false" />
                 <button type="button" id="marketplace-add" class="btn btn-primary btn-mini">Add</button>
               </div>
             </div>
@@ -1315,38 +1447,81 @@
     <div id="export-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="export-title">
       <div class="card">
         <div class="card-head">
-          <h2 id="export-title">Export to Claude Code</h2>
+          <h2 id="export-title">Export pipeline</h2>
         </div>
         <p id="export-subtitle" class="confirm-message"></p>
+        <!-- The form; swapped for #export-done after a successful export. -->
+        <div id="export-form">
+        <!-- ONE Export… entry point per row; the dialog asks for the format first.
+             json = the saved graph as a file another Worca user imports (#421);
+             skill = a runnable Claude Code skill under .claude/ (#403);
+             plugin = a Worca plugin folder bundling agents + skills (#421). -->
         <div class="export-field">
-          <span class="export-label">Destination</span>
-          <div id="export-dest" class="seg" role="group" aria-label="Export destination">
+          <span class="export-label">Format</span>
+          <div id="export-format" class="seg" role="group" aria-label="Export format">
+            <button type="button" class="seg-btn on" data-format="json">JSON file</button>
+            <button type="button" class="seg-btn" data-format="skill">Claude Code skill</button>
+            <button type="button" class="seg-btn" data-format="plugin">Worca plugin</button>
+          </div>
+          <span id="export-format-hint" class="hint"></span>
+        </div>
+        <div id="export-dest-field" class="export-field hidden">
+          <span class="export-label">Location</span>
+          <div id="export-dest" class="seg" role="group" aria-label="Skill location">
             <button type="button" class="seg-btn on" data-dest="global">Global (~/.claude)</button>
             <button type="button" class="seg-btn" data-dest="project">Project folder</button>
           </div>
         </div>
         <div id="export-folder-field" class="export-field hidden">
-          <span class="export-label">Folder</span>
+          <span class="export-label" id="export-folder-label">Folder</span>
           <div class="export-folder-row">
             <input type="text" id="export-folder" class="input" placeholder="/path/to/repo" />
             <button type="button" id="export-browse" class="btn btn-ghost btn-mini">Browse…</button>
           </div>
         </div>
-        <div class="export-field">
+        <div id="export-plugin-field" class="export-field hidden">
+          <span class="export-label">Plugin name</span>
+          <input type="text" id="export-plugin-name" class="input" placeholder="(defaults to the folder name)" />
+          <!-- Live: what the manifest will actually be called — kebab-case, derived
+               from the typed name or, when blank, from the folder's basename. -->
+          <span id="export-plugin-name-preview" class="hint"></span>
+          <!-- Re-export only: a changed export into an existing plugin folder bumps
+               the manifest's patch version (0.1.0 → 0.1.1) so the recipient's
+               `worca plugin update` sees it. A first export is always 0.1.0. -->
+          <label class="confirm-checkbox">
+            <input type="checkbox" id="export-keep-version" />
+            <span>Don't bump the plugin version when updating an existing plugin folder<br><span class="hint">A changed re-export normally goes 0.1.0 → 0.1.1 so recipients see an update. A first export is always 0.1.0.</span></span>
+          </label>
+        </div>
+        <div class="export-field" id="export-slug-field">
           <span class="export-label">Slug</span>
           <input type="text" id="export-slug" class="input" placeholder="(defaults to the workflow name)" />
           <span id="export-slug-preview" class="hint"></span>
         </div>
-        <label class="confirm-checkbox">
+        <label class="confirm-checkbox" id="export-agents-field">
           <input type="checkbox" id="export-include-agents" checked />
           <span>Include referenced agents (recommended)</span>
         </label>
         <div id="export-plan" class="export-plan hidden"></div>
         <p id="export-msg" class="confirm-message"></p>
+        </div>
+        <!-- Result view: what was written, where, and the next step for the format.
+             Replaces the form (not a second dialog) once an export succeeded. -->
+        <div id="export-done" class="export-done hidden" role="status" aria-live="polite">
+          <div class="export-done-head">
+            <span class="export-done-check" aria-hidden="true">✓</span>
+            <b id="export-done-title"></b>
+          </div>
+          <dl id="export-done-lines" class="export-done-lines"></dl>
+          <p id="export-done-next" class="export-done-next"></p>
+        </div>
         <div class="confirm-actions">
           <button type="button" id="export-cancel" class="btn btn-ghost btn-mini">Cancel</button>
-          <button type="button" id="export-plan-btn" class="btn btn-ghost btn-mini">Plan</button>
-          <button type="button" id="export-apply-btn" class="btn btn-primary btn-mini" disabled>Apply</button>
+          <!-- Preview = dry run (optional). Export runs the dry run itself and writes
+               unless it hits a conflict, which it then shows for per-file resolution. -->
+          <button type="button" id="export-plan-btn" class="btn btn-ghost btn-mini">Preview</button>
+          <button type="button" id="export-apply-btn" class="btn btn-primary btn-mini">Export</button>
+          <button type="button" id="export-done-close" class="btn btn-primary btn-mini hidden">Done</button>
         </div>
       </div>
     </div>

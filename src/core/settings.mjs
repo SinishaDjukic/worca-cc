@@ -543,7 +543,138 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod',
   'askMaxTurns', 'askMaxBudgetUsd',
   'debugSpawnEnabled',
+  'titleModel', 'hideBuiltinModels',
+  'theme',
+  'autoWorkflowModel',                       // auto-workflow spec D14
 ]);
+
+// ── Title-generation model + hidden built-ins (#422) ─────────────────────────
+// `titleModel` is the catalog id every run/chat title is written with; absent
+// means "the model of the run or chat that asked for the title" (title.mjs owns
+// that precedence, and the catalog check — settings.mjs cannot import config.mjs).
+// `hideBuiltinModels` drops the first-party built-ins from every model picker
+// for an install with no first-party account; it is cosmetic + defaults only,
+// a hidden id still resolves (config.mjs#composeCatalog). Both are read at use
+// time like every other stored setting — a UI save reaches the next title call.
+export const DEFAULT_HIDE_BUILTIN_MODELS = false;
+const TITLE_MODEL_MAX_LEN = 200;
+
+const isTitleModelId = (v) => typeof v === 'string' && v.trim().length > 0 && v.length <= TITLE_MODEL_MAX_LEN;
+
+/** The STORED title model id (trimmed), or null when unset/invalid (loudly). */
+export function titleModel() {
+  const v = readSettings().titleModel;
+  if (v === undefined) return null;
+  if (isTitleModelId(v)) return v.trim();
+  console.warn(`[worca] invalid titleModel ${JSON.stringify(v)} — titles use the run's model`);
+  return null;
+}
+
+/** @throws {Error} unless `input` is a non-empty model id (or empty, which clears). */
+export function assertTitleModelInput(input) {
+  if (isClearInput(input)) return;
+  if (!isTitleModelId(input)) throw new Error(`titleModel must be a model id of at most ${TITLE_MODEL_MAX_LEN} characters, or empty to use the run's model`);
+}
+
+export async function setTitleModel(input) {
+  assertTitleModelInput(input);
+  const settings = readSettings();
+  if (isClearInput(input)) delete settings.titleModel;
+  else settings.titleModel = input.trim();
+  await persistSettings(settings);
+  return { titleModel: titleModel() };
+}
+
+/** Whether built-in (first-party) models are hidden from every picker. */
+export function hideBuiltinModels() {
+  const v = readSettings().hideBuiltinModels;
+  if (v === undefined) return DEFAULT_HIDE_BUILTIN_MODELS;
+  if (typeof v === 'boolean') return v;
+  console.warn(`[worca] invalid hideBuiltinModels ${JSON.stringify(v)} — using the default (${DEFAULT_HIDE_BUILTIN_MODELS})`);
+  return DEFAULT_HIDE_BUILTIN_MODELS;
+}
+
+/** @throws {Error} unless `input` is a boolean. */
+export function assertHideBuiltinModelsInput(input) {
+  if (typeof input !== 'boolean') throw new Error('hideBuiltinModels must be true or false');
+}
+
+export async function setHideBuiltinModels(input) {
+  assertHideBuiltinModelsInput(input);
+  const settings = readSettings();
+  if (input === DEFAULT_HIDE_BUILTIN_MODELS) delete settings.hideBuiltinModels;
+  else settings.hideBuiltinModels = input;
+  await persistSettings(settings);
+  return { hideBuiltinModels: hideBuiltinModels() };
+}
+
+// ── Theme mode (2026-09-04 dark-mode design §6.1) ────────────────────────────
+// One machine-wide preference: `system` follows the OS, `light`/`dark` force a
+// scheme. The server writes it into the shell's <html data-theme> at serve time
+// (ui/server.mjs sendIndex) and the client keeps it live; the value is read at
+// use time like every other stored setting, so a save reaches the next request.
+export const THEME_MODES = Object.freeze(['system', 'light', 'dark']);
+export const DEFAULT_THEME = 'system';
+const isThemeMode = (v) => THEME_MODES.includes(v);
+
+/** STORED theme mode; an absent key is the default, an invalid value is the default (loudly). */
+export function theme() {
+  const v = readSettings().theme;
+  if (v === undefined) return DEFAULT_THEME;
+  if (isThemeMode(v)) return v;
+  console.warn(`[worca] invalid theme ${JSON.stringify(v)} — using the default (${DEFAULT_THEME})`);
+  return DEFAULT_THEME;
+}
+
+/** @throws {Error} unless `input` is system|light|dark, or empty/null (a clear). */
+export function assertThemeInput(input) {
+  if (isClearInput(input)) return;
+  if (!isThemeMode(input)) throw new Error('theme must be system, light or dark');
+}
+
+export async function setTheme(input) {
+  assertThemeInput(input);
+  const settings = readSettings();
+  if (isClearInput(input) || input === DEFAULT_THEME) delete settings.theme;
+  else settings.theme = input;
+  await persistSettings(settings);
+  return { theme: theme() };
+}
+
+// ── Auto workflow classifier model (auto-workflow spec D14) ─────────────────
+// '' = unset: the runtime resolves a default from the catalog
+// (src/core/auto/model.mjs). Read at use time like every other stored setting.
+
+/** The configured classifier model id, or '' when unset. */
+export function autoWorkflowModel() {
+  const v = readSettings().autoWorkflowModel;
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+/**
+ * Validate a POST value. With `models` (the effective catalog) the id must name an
+ * entry and comes back in the catalog's casing; without it the id is returned as
+ * given (CLI, tests). Empty/null/undefined means "clear".
+ * @returns {string|null} the canonical id to store, null to clear
+ * @throws {Error} on a non-string or an id the catalog does not carry
+ */
+export function assertAutoWorkflowModelInput(input, models = null) {
+  if (input === '' || input === null || input === undefined) return null;
+  if (typeof input !== 'string' || !input.trim()) throw new Error('autoWorkflowModel must be a catalog model id');
+  const id = input.trim();
+  if (!Array.isArray(models)) return id;
+  const hit = models.find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === id.toLowerCase());
+  if (!hit) throw new Error(`unknown model "${id}" — add it to the catalog first`);
+  return hit.id;
+}
+
+export async function setAutoWorkflowModel(input, { models = null } = {}) {
+  const id = assertAutoWorkflowModelInput(input, models);
+  const settings = readSettings();
+  if (id === null) delete settings.autoWorkflowModel; else settings.autoWorkflowModel = id;
+  await persistSettings(settings);
+  return { autoWorkflowModel: autoWorkflowModel() };
+}
 
 // ── Spawn-debug diagnostics toggle (the stored side of WORCA_DEBUG_SPAWN) ────
 // Like every other stored setting (skillMount, the cost caps, the ask caps) this

@@ -17,9 +17,10 @@
 // graphBounds/fitBounds are imported HERE even though only Task 3 calls them:
 // this is the file's one geometry import and Task 3 appends code, not imports.
 import {
-  NODE_W, ZOOM_MIN, ZOOM_MAX,
+  ZOOM_MIN, ZOOM_MAX, ZOOM_K,
   injectGeometry, nodeSize, portAnchor, graphBounds, fitBounds,
 } from '../../../src/shared/graph/geometry.mjs';
+import { flowLayout, flowAnchors, routeFlow, FLOW_DEFAULT_WIDTH, FLOW_RADIUS } from '../../../src/shared/graph/flow-layout.mjs';
 import { routeAll, routeWire, routePathD, routeMid } from '../../../src/shared/graph/route.mjs';
 import { portsOf, resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
 import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
@@ -31,6 +32,10 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 /** Legend copy is NORMATIVE (spec §7.1); the agents card header row renders it. */
 export const LEGEND_TEXT = 'grey = data · amber = loop · ◆ = conditional · ○ = gate · ⤫N = fan-out';
 export const FANOUT_GLYPH = '⤫';
+/** px a press must travel before it becomes a PAN rather than a click. The run
+ *  canvas delegates row/gate/result clicks off the same stage, so the threshold
+ *  is what keeps a shaky click from stealing them. */
+export const DRAG_PX = 4;
 
 /** Per-mode zoom clamps (§7.6). `edit` uses the geometry defaults. */
 export const MODE_ZOOM = {
@@ -84,7 +89,10 @@ export function createGraphView(host, {
   viewport = null,
   zoomMin = null,
   zoomMax = null,
-  wheelPan = 'always',
+  scale = 1,             // geometry multiplier (A1): every --gv-* length × scale, fonts floor at 9px in CSS
+  layout = 'auto',       // 'auto' = the template's x/y (today) · 'flow' = rows in dispatch order (flow-layout.mjs)
+  band = null,           // (node) => {model, effort, flags:[{text, cls?, title?}]} | null — the chip band under agent heads
+  order = null,          // flow only: agent ids in dispatch order (a host may pass the proposal's `order[]`)
 } = {}) {
   const win = doc.defaultView || globalThis;
   const clamps = MODE_ZOOM[mode] || MODE_ZOOM.edit;
@@ -92,9 +100,16 @@ export function createGraphView(host, {
   const zMax = zoomMax == null ? clamps.max : zoomMax;
   const schedule = raf || ((fn) => (win.requestAnimationFrame ? win.requestAnimationFrame(fn) : setTimeout(fn, 16)));
   let agents = agentsIn || {};
+  const S = Number(scale) > 0 ? Number(scale) : 1;
+  const isFlow = layout === 'flow';
+  const hasBand = typeof band === 'function';
+  let bandOverride = null;          // Map(nodeId -> band data) set by setBands(); wins over band(node)
+  let source = null;                // the caller's template (flow re-lays it out on every render; never mutated)
+  let flowLay = null;               // last flowLayout() result (flow only)
+  let flowWidth = 0;                // last known host width (flow only; 0 => FLOW_DEFAULT_WIDTH)
 
   const stage = doc.createElement('div');
-  stage.className = `gv-stage gv-${mode}`;
+  stage.className = `gv-stage gv-${mode}${isFlow ? ' gv-flow' : ''}`;
   stage.setAttribute('tabindex', '0');
   stage.setAttribute('aria-label', 'pipeline canvas');
   const world = doc.createElement('div');
@@ -112,7 +127,8 @@ export function createGraphView(host, {
   // Never replaceChildren(host): `.gv-chip` and `.gv-ins-rail` are the stage's
   // SIBLINGS inside the same canvas host and must survive a (re)mount.
   host.prepend(stage);
-  injectGeometry(stage);
+  injectGeometry(stage, S);
+  const geo = { band: hasBand, scale: S };
 
   const nodeEls = new Map();      // nodeId  -> card element
   const wireEls = new Map();      // wireId  -> path element
@@ -140,7 +156,7 @@ export function createGraphView(host, {
     return n;
   };
   const portsAt = (node) => portsOf(portsFn, node) || { inputs: [], outputs: [] };
-  const sizeOf = (node) => nodeSize(node, portsAt(node), { footerRows: footers.get(node.id) || 0 });
+  const sizeOf = (node) => nodeSize(node, portsAt(node), { footerRows: footers.get(node.id) || 0, ...geo });
 
   // ------------------------------------------------------------ wire routing
   // Cards are the router's OBSTACLES, so every repaint derives the wire shapes
@@ -159,6 +175,12 @@ export function createGraphView(host, {
    *  the canonical full pass (D15). Also refreshes lastRect for every node. */
   function reroute(dirty = null) {
     if (!ctx || !current) return;
+    if (isFlow) {
+      // The flow router only needs the laid-out rows — no obstacles, no A*. Raw portsFn (A27).
+      routesBag = routeFlow(flowAnchors(current, portsFn, flowLay), flowLay);
+      for (const n of current.nodes) if (isNodeObj(n)) lastRect.set(n.id, rectOf(n));
+      return;
+    }
     const list = [];
     for (const w of current.wires) {
       if (!w || !w.from || !w.to) continue;
@@ -291,7 +313,9 @@ export function createGraphView(host, {
     const res = h('div', 'xresult');           // kind: 'result'
     if (!band.path) { res.textContent = band.text || ''; return res; }
     const a = h('a', null, band.text || '');
-    a.href = '#'; a.dataset.path = band.path; a.title = band.path;
+    // draggable=false: Chrome drags an <a href> natively, which pointercancels a
+    // pan that started on it (D16). The click stays delegated to run-hosts.
+    a.href = '#'; a.draggable = false; a.dataset.path = band.path; a.title = band.path;
     res.appendChild(a);
     return res;
   }
@@ -359,6 +383,34 @@ export function createGraphView(host, {
     return true;
   }
 
+  const bandDataOf = (node) => (bandOverride && bandOverride.has(node.id) ? bandOverride.get(node.id) : (hasBand ? band(node) : null));
+  // Separated: an unseparated join lets {model:'Opus', effort:'5'} and {model:'Opus5', effort:''}
+  // share a signature, and paintBand early-returns on an equal one — stale chips after setBands.
+  const bandSig = (b) => (b ? [b.model || '', b.effort || '', b.pick ? 'pick' : '', ...(b.flags || []).map((f) => `${f.text}|${f.cls || ''}`)].join('\u0001') : '');
+  /** The chip band: model · effort · flags, one BAND_H×s row between .nhead and .nbody (agents only).
+   *  `pick` (the chat card's proposed state, P3) makes the model/effort chips real buttons the host's delegated
+   *  click opens a picker for; flags stay inert. Listeners never live here: replaceChildren would drop them. */
+  function paintBand(el, node) {
+    let nb = el.querySelector(':scope > .nband');
+    if (!hasBand || node.kind !== 'agent') { if (nb) nb.remove(); return; }
+    const data = bandDataOf(node) || { model: '', effort: '', flags: [] };
+    const sig = bandSig(data);
+    if (nb && nb.dataset.sig === sig) return;
+    if (!nb) { nb = h('div', 'nband'); el.insertBefore(nb, el.querySelector(':scope > .nbody')); }
+    nb.dataset.sig = sig;
+    const pick = !!data.pick;
+    const chip = (cls, text, which, title) => {
+      const c = h(pick ? 'button' : 'span', cls, text);
+      c.title = title;
+      if (pick) { c.type = 'button'; c.dataset.chip = which; c.setAttribute('aria-haspopup', 'menu'); c.setAttribute('aria-expanded', 'false'); }
+      return c;
+    };
+    const kids = [chip(`bchip model${data.model ? '' : ' is-unset'}`, data.model || 'default', 'model', data.model ? `model: ${data.model}` : 'model: the CLI default')];
+    if (data.effort || pick) kids.push(chip('bchip effort', data.effort || 'effort', 'effort', data.effort ? `effort: ${data.effort}` : 'effort: pick one'));
+    for (const f of data.flags || []) { const c = h('span', `bchip flag${f.cls ? ` ${f.cls}` : ''}`, f.text); c.title = f.title || f.text; kids.push(c); }
+    nb.replaceChildren(...kids);
+  }
+
   function paintCard(el, node) {
     const p = portsAt(node);
     const orType = node.kind === 'or' ? resolveOrOutType(current, portsFn, node.id, new Set()) : null;
@@ -370,8 +422,9 @@ export function createGraphView(host, {
       el.classList.add('node', `node-${node.kind}`);
       el.dataset.kind = node.kind;
     }
-    el.style.width = `${NODE_W}px`;
-    el.style.height = `${sizeOf(node).h}px`;
+    const box = sizeOf(node);
+    el.style.width = `${box.w}px`;                 // inline width beats the CSS var (a scaled host)
+    el.style.height = `${box.h}px`;
     const head = el.querySelector(':scope > .nhead');
     const hd = headerOf(node);
     const sig = `${hd.cls}|${hd.title}|${hd.icon}`;
@@ -383,8 +436,11 @@ export function createGraphView(host, {
       icon.setAttribute('fill', 'none');
       icon.setAttribute('stroke', 'currentColor');
       icon.innerHTML = hd.icon;
-      head.replaceChildren(icon, h('span', 'tt', hd.title));
+      const tt = h('span', 'tt', hd.title);
+      tt.title = hd.title;                          // A35: an ellipsised name keeps its tooltip
+      head.replaceChildren(icon, tt);
     }
+    paintBand(el, node);
     paintBody(el, node, p, orType, awaitWired);
     placeCard(node);
   }
@@ -400,7 +456,7 @@ export function createGraphView(host, {
 
   const anchorOf = (end, dir) => {
     const node = ctx.byId.get(end.node);
-    return node ? portAnchor(node, portsAt(node), end.port, dir) : null;
+    return node ? portAnchor(node, portsAt(node), end.port, dir, geo) : null;
   };
 
   /** Writes `d` only when the cached string differs — the whole point of the cache. */
@@ -409,7 +465,7 @@ export function createGraphView(host, {
     if (!path) return;
     const pts = routesBag.routes.get(wireId);
     if (!pts) return;                           // dangling endpoint paints nothing, never NaN
-    const d = routePathD(pts);
+    const d = routePathD(pts, isFlow ? FLOW_RADIUS : undefined);
     if (dCache.get(wireId) !== d) {
       dCache.set(wireId, d);
       path.setAttribute('d', d);
@@ -417,7 +473,7 @@ export function createGraphView(host, {
     }
     const badge = badgeEls.get(wireId);
     if (badge) {
-      const mid = routeMid(pts);
+      const mid = (isFlow && routesBag.badges && routesBag.badges.get(wireId)) || routeMid(pts);
       badge.style.left = `${mid.x}px`;
       badge.style.top = `${mid.y}px`;
     }
@@ -463,7 +519,7 @@ export function createGraphView(host, {
         seenB.add(w.id);
         let badge = badgeEls.get(w.id);
         if (!badge) { badge = h('div', 'wbadge'); badge.dataset.wireId = w.id; badgeEls.set(w.id, badge); world.appendChild(badge); }
-        badge.textContent = `≤${budget}`;
+        badge.textContent = isFlow ? `${budget}×` : `≤${budget}`;
       }
       dCache.delete(w.id);                      // geometry may have moved: force one write
       paintWire(w.id);
@@ -490,13 +546,22 @@ export function createGraphView(host, {
     for (const [id, el] of wireEls) el.classList.toggle('bad', badWires.has(id));
   }
 
+  /** flow: lay the caller's template out in rows and return a POSITIONED COPY (never mutate the caller's). */
+  function layoutFlow(template) {
+    flowLay = flowLayout(template, portsFn, { width: flowWidth || FLOW_DEFAULT_WIDTH, scale: S, band: hasBand, agentOrder: order });
+    stage.style.height = `${flowLay.height}px`;
+    return { ...template, nodes: template.nodes.map((n) => (isNodeObj(n) && flowLay.positions[n.id] ? { ...n, ...flowLay.positions[n.id] } : n)) };
+  }
+
   function render(template, state = {}) {
-    current = template;
+    source = template;
+    current = isFlow ? layoutFlow(template) : template;
+    // ALL FOUR ctx fields read `current`: in flow mode `template` still carries the caller's x/y.
     ctx = {
-      byId: new Map(template.nodes.map((n) => [n.id, n])),
-      wireById: new Map(template.wires.map((w) => [w.id, w])),
-      wiredInputs: new Set(template.wires.filter((w) => w && w.to).map((w) => `${w.to.node}.${w.to.port}`)),
-      loopWireIds: classifyLoops(template, portsFn).loopWireIds,
+      byId: new Map(current.nodes.map((n) => [n.id, n])),
+      wireById: new Map(current.wires.map((w) => [w.id, w])),
+      wiredInputs: new Set(current.wires.filter((w) => w && w.to).map((w) => `${w.to.node}.${w.to.port}`)),
+      loopWireIds: classifyLoops(current, portsFn).loopWireIds,
     };
     renderNodes();
     renderWires();
@@ -521,7 +586,7 @@ export function createGraphView(host, {
    *  the card union, and a fit must never clip it (D9). */
   function bounds(pad = 0) {
     if (!current || !current.nodes.length) return null;
-    const base = graphBounds(current, portsAt, { pad: 0, footerRowsOf: (n) => footers.get(n.id) || 0 });
+    const base = graphBounds(current, portsAt, { pad: 0, footerRowsOf: (n) => footers.get(n.id) || 0, ...geo });
     if (!base) return null;
     let x0 = base.x; let y0 = base.y; let x1 = base.x + base.w; let y1 = base.y + base.h;
     for (const pts of routesBag.routes.values()) {
@@ -556,7 +621,7 @@ export function createGraphView(host, {
   const toScreen = (wx, wy) => ({ x: wx * T.z + T.x, y: wy * T.z + T.y });
 
   const view = {
-    stage, world, wiresEl, ghostEl: ghost, mode, stats, schedule, wheelPan,
+    stage, world, wiresEl, ghostEl: ghost, mode, stats, schedule,
     zoomMin: zMin, zoomMax: zMax,
     render,
     setTransform,
@@ -566,7 +631,22 @@ export function createGraphView(host, {
     template: () => current,
     ports: (node) => portsAt(node),
     size: (node) => sizeOf(node),
-    anchor: (node, portId, dir) => portAnchor(node, portsAt(node), portId, dir),
+    anchor: (node, portId, dir) => portAnchor(node, portsAt(node), portId, dir, geo),
+    layout,
+    /** flow: re-lay out for a host width (px) and repaint; returns the layout (null outside flow mode). */
+    relayout(width) {
+      if (!isFlow || !source) return flowLay;
+      flowWidth = Math.max(0, Number(width) || 0);
+      render(source, {});
+      setTransform({ x: 0, y: 0, z: 1 });
+      return flowLay;
+    },
+    flowLayout: () => flowLay,
+    /** Replace the band data for some nodes (the tunables table drives this); geometry never moves. */
+    setBands(map) {
+      bandOverride = map ? new Map(Object.entries(map)) : null;
+      for (const [id, el] of nodeEls) { const node = ctx && ctx.byId.get(id); if (node) paintBand(el, node); }
+    },
     incidentOf: (nodeId) => incident.get(nodeId) || new Set(),
     isLoopWire: (wireId) => Boolean(ctx && ctx.loopWireIds.has(wireId)),
     setSelection(sel) {
@@ -765,6 +845,7 @@ export function createGraphView(host, {
     },
     /** Static hosts: fit the graph into a card of width `w` (ResizeObserver-driven). */
     fitToWidth(w) {
+      if (isFlow) return view.relayout(w);
       const r = view.readRect();
       const b = bounds(60);
       if (!b) return;
@@ -772,37 +853,110 @@ export function createGraphView(host, {
       const f = fitBounds(b, { width: vw, height: Number.MAX_SAFE_INTEGER }, { zoomMin: zMin, zoomMax: 1 });   // width decides z
       setTransform({ x: f.tx, y: (Math.max(1, r.height || 0) - b.h * f.z) / 2 - b.y * f.z, z: f.z });
     },
-    /** Wheel/zoom nav for `monitor` hosts. `static` gets nothing; `edit` binds its
-     *  own richer pipeline in composer.mjs and does NOT call this. */
-    createNav({ wheelPan: pan = wheelPan, onEngaged = null } = {}) {
+    /** Wheel zoom + (Task 2) left-drag pan for `monitor` hosts. `static` gets
+     *  nothing; `edit` binds its own richer pipeline in composer.mjs and does NOT
+     *  call this. POLICY (2026-09-10): a modifier-less wheel is the PAGE's — this
+     *  canvas never traps a scroll — and ⌘/ctrl+wheel zooms about the cursor.
+     *  The trackpad pinch arrives as ctrl+wheel on macOS, Windows and Linux alike.
+     *  `onTransform` fires after every transform the NAV writes (the host repaints
+     *  its zoom buttons off it); a programmatic setTransform/fit never calls it. */
+    createNav({ onTransform = null } = {}) {
       if (mode === 'static') return { destroy() {} };
-      let engaged = pan === 'always';
-      const setEngaged = (v) => { if (engaged !== v) { engaged = v; if (onEngaged) onEngaged(v); } };
+      const emit = () => { if (onTransform) onTransform({ ...T }); };
       const onWheel = (ev) => {
-        const zoom = ev.ctrlKey || ev.metaKey;
-        if (!zoom && !engaged) return;                   // engaged-only: let the PAGE scroll
+        if (!(ev.ctrlKey || ev.metaKey)) return;         // the page keeps its scroll
         ev.preventDefault();
+        readRect();                                      // the page may have scrolled since the last fit
         const m = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? (R.height || 560) : 1;
-        if (zoom) { zoomAbout(T.z * Math.exp(-ev.deltaY * m * 0.002), ev.clientX - R.left, ev.clientY - R.top); return; }
-        setTransform({ x: T.x - ev.deltaX * m, y: T.y - ev.deltaY * m, z: T.z });
+        zoomAbout(T.z * Math.exp(-ev.deltaY * m * ZOOM_K), ev.clientX - R.left, ev.clientY - R.top);
+        emit();
       };
-      const engage = () => setEngaged(true);
-      const disengage = (ev) => { if (pan !== 'always' && !stage.contains(ev.target)) setEngaged(false); };
-      const onKey = (ev) => { if (ev.key === 'Escape' && pan !== 'always') setEngaged(false); };
-      view.readRect();
+      // ---- left-drag pan ---------------------------------------------------
+      // The press is NOT preventDefault'ed: the run host delegates .xrow /
+      // .xtoggle / .ngate / .xresult clicks off this very stage, so a press that
+      // never crosses DRAG_PX has to stay a click. Past the threshold the gesture
+      // is a pan, and the click the browser fires at the end of it is swallowed.
+      let drag = null;
+      let swallowT = 0;
+      function swallow(ev) { ev.stopPropagation(); ev.preventDefault(); disarm(); }
+      function disarm() {
+        doc.removeEventListener('click', swallow, true);
+        if (swallowT) { win.clearTimeout(swallowT); swallowT = 0; }
+      }
+      function armSwallow() {
+        disarm();
+        doc.addEventListener('click', swallow, true);
+        swallowT = win.setTimeout(disarm, 0);
+      }
+      function settle() {
+        if (!drag) return;
+        setTransform({ x: drag.ox + (drag.px - drag.sx), y: drag.oy + (drag.py - drag.sy), z: T.z });
+        emit();
+      }
+      function pump() {
+        if (!drag || drag.pending) return;
+        drag.pending = true;
+        schedule(() => { if (drag) { drag.pending = false; settle(); } });
+      }
+      /** Drop the gesture WITHOUT settling. Chrome reports pointercancel at
+       *  client (0,0), so settling off it would teleport the graph by the whole
+       *  press offset — and leave untouched() false, killing the auto re-fit.
+       *  The last rAF settle already left the pan where the user saw it. */
+      function onCancel() { endDrag(); }
+      function endDrag() {
+        if (!drag) return;
+        const id = drag.id;
+        drag = null;                                   // FIRST: releasePointerCapture below
+        stage.classList.remove('panning');             // can re-enter through lostpointercapture
+        doc.removeEventListener('pointermove', onMove);
+        doc.removeEventListener('pointerup', onEnd);
+        doc.removeEventListener('pointercancel', onCancel);
+        stage.removeEventListener('lostpointercapture', onCancel);
+        win.removeEventListener('blur', onCancel);
+        try { if (stage.hasPointerCapture?.(id)) stage.releasePointerCapture(id); } catch { /* already gone */ }
+      }
+      function onDown(ev) {
+        if (drag || ev.button !== 0) return;
+        if (ev.pointerType && ev.pointerType !== 'mouse') return;
+        readRect();
+        drag = { id: ev.pointerId, sx: ev.clientX, sy: ev.clientY, px: ev.clientX, py: ev.clientY,
+          ox: T.x, oy: T.y, moved: false, pending: false };
+        doc.addEventListener('pointermove', onMove);
+        doc.addEventListener('pointerup', onEnd);
+        doc.addEventListener('pointercancel', onCancel);
+        stage.addEventListener('lostpointercapture', onCancel);
+        win.addEventListener('blur', onCancel);
+      }
+      function onMove(ev) {
+        if (!drag || ev.pointerId !== drag.id) return;
+        if (!ev.buttons) { endDrag(); return; }          // a release this document never saw
+        drag.px = ev.clientX; drag.py = ev.clientY;
+        if (!drag.moved) {
+          if (Math.abs(drag.px - drag.sx) < DRAG_PX && Math.abs(drag.py - drag.sy) < DRAG_PX) return;
+          drag.moved = true;
+          drag.ox = T.x; drag.oy = T.y;                  // a re-fit may have landed since the press
+          stage.classList.add('panning');
+          try { stage.setPointerCapture?.(drag.id); } catch { /* synthetic pointer */ }
+        }
+        ev.preventDefault();
+        pump();
+      }
+      function onEnd(ev) {
+        if (!drag || (ev.pointerId != null && ev.pointerId !== drag.id)) return;
+        const moved = drag.moved;
+        if (moved) { drag.px = ev.clientX; drag.py = ev.clientY; settle(); }
+        endDrag();
+        if (moved) armSwallow();
+      }
+      readRect();
       stage.addEventListener('wheel', onWheel, { passive: false });
-      stage.addEventListener('pointerdown', engage);
-      stage.addEventListener('focus', engage);
-      doc.addEventListener('pointerdown', disengage, true);
-      doc.addEventListener('keydown', onKey);
+      stage.addEventListener('pointerdown', onDown);
       const nav = {
-        isEngaged: () => engaged,
         destroy() {
           stage.removeEventListener('wheel', onWheel);
-          stage.removeEventListener('pointerdown', engage);
-          stage.removeEventListener('focus', engage);
-          doc.removeEventListener('pointerdown', disengage, true);
-          doc.removeEventListener('keydown', onKey);
+          stage.removeEventListener('pointerdown', onDown);
+          endDrag();
+          disarm();
         },
       };
       navs.push(nav);
@@ -818,13 +972,14 @@ export function createGraphView(host, {
         const head = el.querySelector(':scope > .nhead');
         if (head) delete head.dataset.sig;
       }
-      if (current) render(current, {});
+      if (current) render(source || current, {});
     },
     destroy() {
       for (const n of navs.splice(0)) n.destroy();
       stage.remove();
       nodeEls.clear(); wireEls.clear(); badgeEls.clear(); incident.clear(); dCache.clear(); footers.clear();
       current = null; ctx = null;
+      source = null; flowLay = null; bandOverride = null;
     },
   };
   // Internals the later tasks' fast paths close over.
@@ -842,17 +997,30 @@ export function thumbnailFor(template, portsFn, { width = 240, height = 96 } = {
 /** A non-interactive graph for a fixed-width card (saved rows, Running list).
  *  NO listeners: the card's own click handler must keep working, which is why
  *  `.gv-static .node` is pointer-events:none in style.css. */
-export function mountStaticGraph(host, template, { doc = globalThis.document, portsFn, agents = {}, width = 0, viewport = null } = {}) {
-  const view = createGraphView(host, { doc, mode: 'static', portsFn, agents, viewport });
+export function mountStaticGraph(host, template, {
+  doc = globalThis.document, portsFn, agents = {}, width = 0, viewport = null,
+  scale = 1, layout = 'auto', band = null, order = null, onLayout = null,
+} = {}) {
+  const view = createGraphView(host, { doc, mode: 'static', portsFn, agents, viewport, scale, layout, band, order });
   view.render(template, {});
-  const paint = () => view.fitToWidth(width || host.clientWidth || 0);
+  const isFlow = layout === 'flow';
+  const widthOf = () => host.clientWidth || width || 0;
+  const paint = () => {
+    if (!isFlow) { view.fitToWidth(width || host.clientWidth || 0); return; }
+    const lay = view.relayout(widthOf());          // 0 → FLOW_DEFAULT_WIDTH inside the view
+    host.style.height = `${lay.height}px`;         // the host grows with the rows (min 120)
+    if (onLayout) onLayout(lay);
+  };
   paint();
   const win = doc.defaultView || globalThis;
+  const inner = view.destroy;
+  let ro = null;
   if (typeof win.ResizeObserver === 'function') {
-    const ro = new win.ResizeObserver(() => view.fitToWidth(host.clientWidth || width || 0));
+    let lastW = host.clientWidth;
+    ro = new win.ResizeObserver(() => { const w = host.clientWidth; if (isFlow && w === lastW) return; lastW = w; paint(); });
     ro.observe(host);
-    const inner = view.destroy;
-    view.destroy = () => { ro.disconnect(); inner(); };
   }
+  let dead = false;
+  view.destroy = () => { if (dead) return; dead = true; if (ro) ro.disconnect(); inner(); if (isFlow) host.style.removeProperty('height'); };
   return view;
 }

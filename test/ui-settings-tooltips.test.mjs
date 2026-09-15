@@ -17,10 +17,10 @@ const settingsView = () => {
   return dom.window.document.querySelector('.view[data-view="settings"]');
 };
 
-test('settings: eleven info-tip icons, each with non-empty tip content', () => {
+test('settings: fourteen info-tip icons, each with non-empty tip content', () => {
   const view = settingsView();
   const tips = [...view.querySelectorAll('button.info-tip')];
-  assert.equal(tips.length, 11, 'eleven ⓘ icons (2 folder fields, budget heading, 3 budget fields, ask heading, 2 ask fields, chat history, spawn diagnostics)');
+  assert.equal(tips.length, 14, 'fourteen ⓘ icons (appearance, 2 folder fields, budget heading, 3 budget fields, ask heading, 2 ask fields, chat history, title generation, auto workflow model, spawn diagnostics)');
   for (const tip of tips) {
     assert.equal(tip.getAttribute('type'), 'button', 'icon must not submit anything');
     assert.match(tip.getAttribute('aria-label') || '', /^About /, 'icon names its setting');
@@ -35,7 +35,7 @@ test('settings: tooltip contents carry the old hint texts (incl. merged root not
   const byLabel = (label) =>
     view.querySelector(`button.info-tip[aria-label="${label}"] .tip-content`);
 
-  const root = byLabel('About Worca CC root folder');
+  const root = byLabel('About Worca root folder');
   assert.ok(root, 'root-folder icon exists');
   assert.match(root.textContent.replace(/\s+/g, ' '), /history store, the project list, and saved workflows/);
   assert.match(root.textContent.replace(/\s+/g, ' '), /does not move existing data/, 'migration note merged in');
@@ -118,7 +118,7 @@ test('hovering an info icon shows the shared bubble with that icon HTML; leaving
 
   assert.equal(doc.querySelector('.info-bubble'), null, 'no bubble until first hover');
 
-  const rootTip = doc.querySelector('button.info-tip[aria-label="About Worca CC root folder"]');
+  const rootTip = doc.querySelector('button.info-tip[aria-label="About Worca root folder"]');
   fire(window, rootTip, 'mouseover');
   let bubble = doc.querySelector('.info-bubble');
   assert.ok(bubble, 'bubble created on hover');
@@ -167,7 +167,7 @@ test('focusin associates the icon with the bubble via aria-describedby; Escape/f
   window.dispatchEvent(new window.Event('hashchange'));
   await new Promise((r) => setTimeout(r, 0));
 
-  const rootTip = doc.querySelector('button.info-tip[aria-label="About Worca CC root folder"]');
+  const rootTip = doc.querySelector('button.info-tip[aria-label="About Worca root folder"]');
   assert.ok(!rootTip.hasAttribute('aria-describedby'), 'no association before focus');
 
   fire(window, rootTip, 'focusin');
@@ -200,7 +200,7 @@ test('navigating away from Settings hides the info bubble (showView leave-guard)
   window.dispatchEvent(new window.Event('hashchange'));
   await new Promise((r) => setTimeout(r, 0));
 
-  const rootTip = doc.querySelector('button.info-tip[aria-label="About Worca CC root folder"]');
+  const rootTip = doc.querySelector('button.info-tip[aria-label="About Worca root folder"]');
   fire(window, rootTip, 'focusin');
   const bubble = doc.querySelector('.info-bubble');
   assert.ok(bubble && !bubble.classList.contains('hidden'), 'bubble visible while still on Settings');

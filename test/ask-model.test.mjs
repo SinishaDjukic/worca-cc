@@ -419,3 +419,16 @@ test('ask-model: estimatedCostUsd rides the live row; absent or non-finite → n
   m.apply(frames[3]);
   assert.equal(m.totals().live.estimatedCostUsd, null, 'garbage is not a number');
 });
+
+test('ask-model: runLinkByPipeline / runLinkForCard find a link by its stable ids and carry the runId', () => {
+  const m = createThreadModel({ threadId: TID });
+  m.load(snapshot());
+  m.apply({ type: 'ask-run-status', threadId: TID, runId: 'r1', pipelineId: 'abcd1234', cardId: 'card_00000001', status: 'running', phase: 'plan' });
+  assert.deepEqual(m.runLinkByPipeline('abcd1234'), { runId: 'r1', pipelineId: 'abcd1234', cardId: 'card_00000001', status: 'running', phase: 'plan' });
+  assert.deepEqual(m.runLinkForCard('card_00000001').runId, 'r1');
+  assert.equal(m.runLinkByPipeline('nope'), null);
+  assert.equal(m.runLinkForCard(null), null);
+  // a resume: the SAME pipeline under a new runId wins by recency (the newer frame lands later)
+  m.apply({ type: 'ask-run-status', threadId: TID, runId: 'r2', pipelineId: 'abcd1234', cardId: 'card_00000001', status: 'running', phase: null });
+  assert.equal(m.runLinkByPipeline('abcd1234').runId, 'r2');
+});

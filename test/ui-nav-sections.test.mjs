@@ -124,12 +124,31 @@ test('.nav fills the sidebar column so margin-top:auto can pin Settings', () => 
   assert.match(nav, /flex:\s*1 1 auto/);
 });
 
-test('.nav-sect is a quiet uppercase label, not a button lookalike', () => {
+test('.nav-sect is a quiet sentence-case label, not a button lookalike', () => {
   const sect = ruleBody('.nav-sect');
   assert.ok(sect, '.nav-sect rule must exist');
-  assert.match(sect, /text-transform:\s*uppercase/);
+  // The heading reads exactly as the markup writes it — "Activity", not
+  // "ACTIVITY". `text-transform:none` has to be STATED, not merely absent: the
+  // rule is the only place a future caps revert would land.
+  assert.match(sect, /text-transform:\s*none/);
+  assert.doesNotMatch(sect, /text-transform:\s*uppercase/);
   assert.match(sect, /letter-spacing/);
   assert.match(sect, /color:\s*var\(--ink-3\)/);
+});
+
+test('items sit tight; the air goes BETWEEN groups, not inside them', () => {
+  // Measured in Chrome: adjacent item pills are 2px apart (.nav gap), while a
+  // heading's own box adds 24px above it and 5px below. So item->item is 2px,
+  // item->next heading is 26px, and heading->its first item is 7px. Flip the
+  // heading's padding and the groups read as belonging to the row above them.
+  assert.match(ruleBody('.nav'), /gap:\s*2px/);
+  assert.match(ruleBody('.nav button'), /padding:\s*8px 13px/);
+  const sect = ruleBody('.nav-sect');
+  const pad = sect.match(/padding:\s*(\d+)px 13px (\d+)px/);
+  assert.ok(pad, '.nav-sect needs an explicit top/bottom padding pair');
+  const [top, bottom] = [Number(pad[1]), Number(pad[2])];
+  assert.ok(top >= 3 * bottom,
+    `the gap above a heading (${top}px) must dwarf the one below it (${bottom}px)`);
 });
 
 test('.nav-sep pins the tail: pushes to the bottom and draws the divider', () => {
@@ -143,7 +162,9 @@ test('CTA is outlined at rest and compensates the border in its padding', () => 
   const cta = ruleBody('.nav button.nav-cta');
   assert.ok(cta, '.nav button.nav-cta rule must exist');
   assert.match(cta, /border:\s*1\.5px solid var\(--ink\)/);
-  assert.match(cta, /padding:\s*9\.5px 11\.5px/);
+  // 6.5 + the 1.5px border = the 8px the plain rows pad with, so the CTA does
+  // not stand taller than the list it heads.
+  assert.match(cta, /padding:\s*6\.5px 11\.5px/);
   const active = ruleBody('.nav button.nav-cta.active');
   assert.ok(active, 'active CTA keeps the dark current-view fill');
   assert.match(active, /background:\s*var\(--ink\)/);
@@ -181,11 +202,48 @@ test('.topnav-sep is a hairline that cannot flex-grow', () => {
   assert.match(topnavBlock, /\.topnav-sep\{/, '.topnav-sep must be defined inside that media block');
 });
 
-test('pinned Settings gets breathing room above the footer cards', () => {
+test('the toggle hangs off the spend card exactly as Settings hangs off the divider', () => {
+  // Measured in Chrome, expanded: 10px above Settings, 10px below it, 10px above
+  // the toggle, 10px below it. Three declarations produce those four gaps —
+  // .side-foot's padding-top and gap, and .sidebar's padding-bottom — so they
+  // are asserted as one number rather than three literals.
+  const foot = ruleBody('.side-foot');
+  const padTop = Number(foot.match(/padding-top:\s*(\d+)px/)[1]);
+  const gap = Number(foot.match(/gap:\s*(\d+)px/)[1]);
+  const bottom = Number(ruleBody('.sidebar').match(/padding:\s*\d+px \d+px (\d+)px/)[1]);
+  assert.equal(gap, padTop, 'the gap above the toggle must match the one above Settings');
+  assert.equal(bottom, padTop, 'the rail must end the same distance below the toggle');
+  // Collapsed, the same four 10px gaps are rebuilt from different parts: the
+  // foot's 1px border-top eats into its padding, and the divider's margin sits
+  // on top of the 6px collapsed .nav gap. Measured in Chrome: 10/10/10/10.
+  const cFoot = ruleBody('.sidebar.collapsed .side-foot');
+  const cSep = ruleBody('.sidebar.collapsed .nav-sep');
+  const cNav = ruleBody('.sidebar.collapsed .nav');
+  assert.equal(Number(cFoot.match(/padding-top:\s*(\d+)px/)[1]) + 1, padTop,
+    'foot padding-top + its 1px border must equal the expanded gap');
+  assert.equal(Number(cFoot.match(/gap:\s*(\d+)px/)[1]), padTop);
+  assert.equal(Number(cSep.match(/margin-bottom:\s*(\d+)px/)[1])
+    + Number(cNav.match(/gap:\s*(\d+)px/)[1]), padTop,
+    'divider margin + the rail nav gap must equal the expanded gap');
+  assert.equal(Number(ruleBody('.sidebar.collapsed')
+    .match(/padding:\s*\d+px \d+px (\d+)px/)[1]), padTop);
+});
+
+test('Settings sits the same distance from the divider as from the spend card', () => {
+  // Measured in Chrome: the divider's 8px margin-bottom plus the 2px `.nav` gap
+  // is the 10px the foot pads with, so the row is centred between the two edges
+  // it hangs from. Change one number and the row visibly belongs to the half it
+  // moved toward.
   const foot = ruleBody('.side-foot');
   assert.ok(foot, '.side-foot rule must exist');
-  assert.match(foot, /padding-top:\s*14px/,
-    'footer needs padding-top so Settings does not sit flush on the spend card');
+  const pad = foot.match(/padding-top:\s*(\d+)px/);
+  assert.ok(pad, 'footer needs padding-top so Settings does not sit flush on the spend card');
+  const sep = ruleBody('.nav-sep');
+  const below = sep.match(/margin-bottom:\s*(\d+)px/);
+  assert.ok(below, '.nav-sep must own the gap under the divider');
+  const gap = ruleBody('.nav').match(/gap:\s*(\d+)px/);
+  assert.equal(Number(below[1]) + Number(gap[1]), Number(pad[1]),
+    'divider gap + .nav gap must equal the footer padding');
 });
 
 test('compact topnav wraps instead of spilling past its rounded box', () => {

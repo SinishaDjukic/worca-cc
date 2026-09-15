@@ -82,6 +82,7 @@ export const SANDBOX_NOTE =
   'the worca MCP tools (mcp__worca__*). You cannot run commands, edit files or use the network — do not try. ' +
   "The only view into a repository is this chat's read-only detached worktrees: list_worktrees/open_worktree give the path; Read, Grep and Glob work under that path, and the worca `git` tool serves history and diffs. " +
   'The one other place Read may go is the file path read_attachment returns for an image or PDF attachment of this chat; never read anywhere else on disk. ' +
+  "Never call propose_workflow or propose_run yourself: proposals belong to the assistant's own turn (a sub-agent's call produces no card). " +
   'Answer from tool results only; never invent run data; return a short report.';
 
 /** System-prompt-only mock markers (the runner parses the ask role from the SYSTEM prompt, Task 16). */
@@ -133,23 +134,29 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
   };
 }
 
+/** Server-side knobs the MCP child's NESTED classifier spawn needs (P3 propose_workflow, task mode). The chat's claude is
+ *  spawned env-scrubbed, so nothing WORCA_* reaches the child unless it rides mcpServers.env. Forwarded only when set. */
+export const MCP_FORWARD_ENV = Object.freeze(['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL']);
+
 /**
  * The per-turn --mcp-config document (spec §6.4). `homeBase` is the RAW base
  * (path.resolve(process.env.WORCA_HOME) or dirname(worcaHome())) — never
  * worcaHome() itself. The argv twins make the child independent of env forwarding.
  */
-export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath }) {
+export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env }) {
   if (!serverPath) throw new Error('buildMcpConfig: serverPath is required');
   if (typeof homeBase !== 'string' || !homeBase.trim()) throw new Error('buildMcpConfig: homeBase is required');
   const base = resolvePath(homeBase);
   const thread = String(threadId ?? '');
+  const forwarded = {};
+  for (const k of MCP_FORWARD_ENV) if (env && typeof env[k] === 'string' && env[k] !== '') forwarded[k] = env[k];
   return {
     mcpServers: {
       worca: {
         type: 'stdio',
         command: execPath,
         args: ['--disable-warning=ExperimentalWarning', serverPath, '--home', base, '--thread', thread],
-        env: { WORCA_HOME: base, WORCA_ASK_THREAD_ID: thread },
+        env: { WORCA_HOME: base, WORCA_ASK_THREAD_ID: thread, ...forwarded },
       },
     },
   };

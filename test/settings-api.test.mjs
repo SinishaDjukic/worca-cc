@@ -3,6 +3,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -131,6 +132,8 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     const probes = {
       projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '',
       askMaxTurns: '', askMaxBudgetUsd: '', debugSpawnEnabled: false,
+      titleModel: '', hideBuiltinModels: false, theme: '',
+      autoWorkflowModel: '',
     };
     for (const k of SETTINGS_POST_KEYS) {
       if (k === 'root') continue;
@@ -143,4 +146,72 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     await post('');
     await rm(target, { recursive: true, force: true });
   }
+});
+
+// The Settings ▸ About card reads these two fields. They are derived from
+// package.json at module load, so a release bump needs no code change; the
+// assertion below is what stops anyone hardcoding a version string.
+test('GET /api/settings carries app identity: version + a browsable repo URL', async () => {
+  const pkg = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'));
+  const j = await (await fetch(`${base}/api/settings`)).json();
+
+  assert.ok(j.app && typeof j.app === 'object', 'GET carries an `app` block');
+  assert.deepEqual(Object.keys(j.app).sort(), ['releaseUrl', 'repoUrl', 'version'], 'exactly the three About fields');
+  assert.equal(j.app.version, pkg.version, 'straight from package.json — never a literal');
+  // Derived, not hardcoded: this stays true if the repo is ever moved or renamed.
+  assert.equal(j.app.repoUrl, pkg.repository.url.replace(/^git\+/, '').replace(/\.git$/, ''),
+    'the npm git URL normalised to its browsable form');
+  assert.match(j.app.repoUrl, /^https:\/\//, 'browsable, not a git:// or git+ URL');
+  // The tag the release workflow publishes from (.github/workflows/release-npm-app.yml).
+  assert.equal(j.app.releaseUrl, `${j.app.repoUrl}/releases/tag/worca-app-v${pkg.version}`,
+    'version links to its worca-app-v<version> release tag');
+});
+
+test('POST /api/settings does NOT echo app identity (it is not a setting)', async () => {
+  const posted = await (await post('')).json();       // resets root to '', as the suite already does above
+  assert.equal(posted.app, undefined, 'app identity is GET-only; POST echoes settings state only');
+  assert.equal(posted.root, '', 'the reset itself still works');
+});
+
+test('GET /api/settings: theme defaults to "system"', async () => {
+  const j = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(j.theme, 'system');
+});
+
+test('POST { theme } stores the mode, answers the full shape, does not touch root; the default deletes the key', async () => {
+  const target = await mkdtemp(join(tmpdir(), 'worca-cc-setapi-themeroot-'));
+  try {
+    const first = await (await post(target)).json();   // not `before`: that name is the node:test hook imported above
+    assert.equal(first.root, target);
+    const after = await (await postJson({ theme: 'dark' })).json();
+    assert.equal(after.theme, 'dark');
+    assert.equal(after.root, target, 'a theme-only POST must not clear root');
+    const refetched = await (await fetch(`${base}/api/settings`)).json();
+    assert.equal(refetched.theme, 'dark');
+    const file = JSON.parse(readFileSync(join(home, '.worca-cc', 'settings.json'), 'utf8'));
+    assert.equal(file.theme, 'dark');
+    const back = await (await postJson({ theme: 'system' })).json();
+    assert.equal(back.theme, 'system');
+    assert.equal('theme' in JSON.parse(readFileSync(join(home, '.worca-cc', 'settings.json'), 'utf8')), false);
+  } finally {
+    await postJson({ theme: 'system' });
+    await post('');
+    await rm(target, { recursive: true, force: true });
+  }
+});
+
+test('POST rejects an unknown theme → 400, nothing written', async () => {
+  const r = await postJson({ theme: 'blue' });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /theme must be system, light or dark/);
+  const j = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(j.theme, 'system');
+});
+
+test('a mixed POST whose root is unusable answers 400 with the theme NOT applied', async () => {
+  const filePath = fileURLToPath(import.meta.url);
+  const r = await postJson({ theme: 'dark', root: filePath });
+  assert.equal(r.status, 400);
+  const j = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(j.theme, 'system', 'the theme write must come after the root write, which failed');
 });

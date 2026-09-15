@@ -427,3 +427,31 @@ test('sweepEmptyThreads removes only message-less threads older than the cutoff'
   assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM ask_cost_ledger WHERE thread_id = ?').get(stray.id).n, 1,
     'nor does the sweep touch the ledger (D1)');
 });
+
+test('workflow card: updateCardBlock keeps workflowId and shallow-merges a `card` sub-patch; run cards stay immutable; unknown keys dropped', () => {
+  const t = createThread();
+  const m = appendMessage(t.id, { role: 'assistant', text: '', status: 'done' });
+  setMessageBlocks(m.id, [
+    { kind: 'card', id: 'card_0000aa01', state: 'proposed', card: { type: 'workflow', name: 'Old', match: null, nodes: { n1: { model: 'a' } }, thenRun: false } },
+    { kind: 'card', id: 'card_0000aa09', state: 'proposed', card: { target: 'project', projectKey: 'p-00000001', workflowId: 'wf_default', guardrailsId: 'normal', brief: 'b', title: 't' } },
+  ]);
+  const b = updateCardBlock(t.id, 'card_0000aa01', { state: 'saved', workflowId: 'wf_new', bogus: 1, card: { name: 'New', match: { id: 'wf_new', name: 'New' }, adopted: false } });
+  assert.equal(b.state, 'saved');
+  assert.equal(b.workflowId, 'wf_new');
+  assert.equal(b.bogus, undefined, 'unknown block keys are dropped');
+  assert.deepEqual(b.card, { type: 'workflow', name: 'New', match: { id: 'wf_new', name: 'New' }, nodes: { n1: { model: 'a' } }, thenRun: false, adopted: false }, 'the card sub-patch is SHALLOW-merged');
+  assert.deepEqual(findCard(t.id, 'card_0000aa01').block, b, 'persisted');
+  assert.equal(updateCardBlock(t.id, 'card_0000aa01', { card: 'nope' }).card.name, 'New', 'a non-object card patch is ignored');
+  const run = updateCardBlock(t.id, 'card_0000aa09', { state: 'started', runId: 'run-1', workflowId: 'wf_x', card: { brief: 'hacked' } });
+  assert.equal(run.card.brief, 'b', 'a RUN card never takes a card sub-patch');
+  assert.equal(run.workflowId, 'wf_x', 'workflowId is a block key for both kinds (harmless on a run card)');
+});
+
+test('boot sweep: a streaming row\'s building workflow card turns failed with the sweep text', () => {
+  const t = createThread();
+  const m = appendMessage(t.id, { role: 'assistant', text: '', status: 'streaming' });
+  setMessageBlocks(m.id, [{ kind: 'card', id: 'card_0000aa02', state: 'building', card: { type: 'workflow', mode: 'task' } }, { kind: 'card', id: 'card_0000aa03', state: 'proposed', card: { type: 'workflow' } }]);
+  assert.equal(sweepStreamingMessages(), 1);
+  const blocks = getMessage(m.id).blocks;
+  assert.deepEqual(blocks.map((b) => [b.kind, b.state ?? null, b.error ?? null]), [['card', 'failed', 'interrupted by restart'], ['card', 'proposed', null], ['notice', null, null]]);
+});

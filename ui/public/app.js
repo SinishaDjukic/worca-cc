@@ -3,6 +3,11 @@
 const $ = (sel, root = document) => (root || document).querySelector(sel);
 const $$ = (sel, root = document) => [...(root || document).querySelectorAll(sel)];
 
+// The client-side Auto entry (D24): /api/workflows never lists wf_auto and the
+// row stub has no graph, so the picker owns this one constant.
+const AUTO_WORKFLOW = Object.freeze({ id: 'wf_auto', name: 'Auto' });
+const AUTO_WORKFLOW_ID = AUTO_WORKFLOW.id;
+
 // ---------------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------------
@@ -72,6 +77,8 @@ import { artifactsByNodeCycle, viewerKindFor, renderArtifact } from './artifact-
 import {
   buildFileTree, renderFileTree, firstFile,
 } from './file-tree.mjs';
+import { groupCommentThreads, commentWhen } from './comment-thread.mjs';
+import { createMarkdownRenderer } from './ask-markdown.mjs';
 import { exportSlugPreview } from './export-slug.mjs';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
@@ -99,11 +106,23 @@ import { createComposer, RESERVED_WORKFLOW_ID, pluginOriginName } from './graph/
 // lived in the composer's saved list, retired in P5 Task 8). P6's Running list is
 // its first caller.
 import { thumbnailFor } from './graph/view.mjs';
+import { createThinkingOrb } from './thinking-orb.mjs';
+import { renderAutoProposal, AUTO_PROPOSAL_ORDER_QPANEL } from './auto-proposal.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
+import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
+
+// One markdown pipeline for the whole page — Ask answers AND diff-comment bodies
+// (D15): marked + DOMPurify from the vendor routes, the test hook first. This is
+// the exact loader the Ask panel construction used to build inline; it is hoisted
+// so the comment layer can share it, and createAskPanel now receives it by name.
+const loadAskMarkdown = window.__worcaTestHooks?.askMarkdown
+  ?? (() => Promise.all([import('/vendor/marked/marked.esm.js'), import('/vendor/dompurify/purify.es.mjs')])
+    .then(([m, d]) => ({ marked: m.marked, createDOMPurify: d.default })));
+const hdMarkdown = createMarkdownRenderer({ doc: document, load: loadAskMarkdown, hljsLoader: diffHljsLoader });
 
 let askPanel = null;           // Ask Worca panel — assigned by the boot mount; every seam uses askPanel?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
@@ -156,6 +175,8 @@ const el = {
   guardrailsHint: $('#guardrailsHint'),
   agentsConfig: $('#agents-config'),
   agentRows: $('#agents-rows'),
+  hitlRow: $('#hitl-row'),
+  humanInLoop: $('#humanInLoop'),
   agentsWorkflow: $('#agentsWorkflow'),
   agentsSummary: $('#agentsSummary'),
   agentsPromote: $('#agentsPromote'),
@@ -297,6 +318,10 @@ const el = {
   chatSettingsMsg: $('#chatSettingsMsg'),
   settingsTabs: $('#settings-tabs'),
 
+  // About (Settings card): read-only app identity, painted from /api/settings
+  aboutVersion: $('#aboutVersion'),
+  aboutRepoLink: $('#aboutRepoLink'),
+
   // Guardrails view
   guardrailsList: $('#guardrails-list'),
   guardrailsMsg: $('#guardrails-msg'),
@@ -395,11 +420,12 @@ function applySidebarCollapsed() {
     const label = sidebarCollapsed ? 'Expand menu' : 'Collapse menu';
     btn.title = label;
     btn.setAttribute('aria-label', label);
-    // The panel box and its divider never move; only the chevron turns round.
-    // Mirroring the whole glyph in CSS would swing the divider to the right
-    // edge, which reads as "the panel lives on the right" — the wrong claim.
+    // The glyph is one bare chevron pointing the way the rail will move: "<"
+    // while expanded (click to pull it in), ">" while collapsed (click to push
+    // it back out). Rewriting `d` rather than mirroring in CSS keeps the arrow
+    // optically centred — scaleX(-1) on a chevron shifts its visual mass.
     const chev = btn.querySelector('svg .chev');
-    if (chev) chev.setAttribute('d', sidebarCollapsed ? 'M14 9l3 3-3 3' : 'M16 15l-3-3 3-3');
+    if (chev) chev.setAttribute('d', sidebarCollapsed ? 'M9 6l6 6-6 6' : 'M15 6l-6 6 6 6');
   }
   // The rail has no visible labels, so mirror each button's label into a native
   // tooltip while collapsed (the mock does this on all twelve). Written by JS,
@@ -680,6 +706,7 @@ function handleServerMessage(msg) {
     updateNavCounts();
     renderPipelineTabs();
     renderRunningView();
+    pokeAskRuns(msg.runId, 'run-created');
     return;
   }
   // A 'subagent' delta attaches to an existing run; it must never MATERIALIZE one.
@@ -740,6 +767,7 @@ function handleServerMessage(msg) {
   // render a card until the user navigated away and back. renderRunningView
   // diffs by data-run-id and reuses r.el, so this is cheap + idempotent.
   renderPipelineTabs();            // keep sidebar child rows + roll-up live from ANY view
+  pokeAskRuns(msg.runId, msg.type);
   // §5.9. Every frame repaints the open detail through the ONE entry point
   // renderRunningView owns (C11) — except `log`, which arrives at log speed and
   // has already been handled line-by-line by onLog's mirror above. Without
@@ -807,6 +835,7 @@ function onHello(msg) {
     // Terminal runs (done|error|stopped) are simply excluded from liveRuns().
   }
 
+  pokeAskRuns(null, 'hello');
   askPanel?.onHello(msg.ask);
 
   // diff-comments-changed is a plain global broadcast with no per-socket buffer
@@ -860,7 +889,7 @@ async function ensureAgentMeta(onReady) {
 }
 
 // The palette the graph cards and the frozen-v1 chip strip read for --c.
-const COMPOSER_COLORS = { green: '#5BAE5B', peach: '#EFA63C', red: '#E76A5A', blue: '#5BA6CC', violet: '#8C7FD6', amber: '#E6962A' };
+const COMPOSER_COLORS = { green: 'var(--green)', peach: 'var(--peach)', red: 'var(--red)', blue: 'var(--blue)', violet: 'var(--violet)', amber: 'var(--amber)' };
 
 // Pick the manifest to render. A v2 run always carries one; a run with no
 // manifest at all (pre-stepper history) renders NOTHING rather than the v1
@@ -1683,6 +1712,18 @@ const gvApi = {
     const d = await safeJson(res);
     return { ok: false, status: res.status, error: (d && d.error) || `delete failed (${res.status})` };
   },
+  // Import a JSON export (#421). 422 carries the shared validator's issues plus
+  // `summary` (the one-line "agents you do not have" fold) when that is the cause.
+  importWorkflow: async (workflow) => {
+    const res = await fetch('/api/workflows/import-json', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workflow }),
+    });
+    const d = await safeJson(res);
+    if (!res.ok) {
+      return { ok: false, status: res.status, error: (d && d.error) || `import failed (${res.status})`, summary: d && d.summary, issues: d && d.errors };
+    }
+    return { ok: true, workflow: d.workflow, renamed: !!d.renamed, requestedName: d.requestedName, warnings: d.warnings || [] };
+  },
 };
 
 function gvEls() {
@@ -1692,6 +1733,7 @@ function gvEls() {
     errors: g('gv-errors'), newBtn: g('gv-new'), autoBtn: g('gv-autolayout'), saveBtn: g('gv-save'),
     insRail: g('gv-ins-rail'), insBody: g('gv-ins-body'), insToggle: g('gv-ins-toggle'),
     insTabs: g('gv-ins-tabs'), palette: g('gv-palette'), filter: g('gv-agent-filter'),
+    zoomIn: g('gv-zoom-in'), zoomOut: g('gv-zoom-out'), centerBtn: g('gv-center'),
     savedList: g('gv-saved-list'), savedCount: g('gv-saved-count'), archived: g('gv-archived'),
     savedMsg: g('gv-saved-msg'), dialogHost: g('gv-dialog-host'),
   };
@@ -1777,13 +1819,57 @@ function composerExit() {
   if (gvComposer) gvComposer.suspend();
 }
 
+// Saved-list state that lives for the PAGE SESSION (not persisted): the selected
+// domain tab, the last fetched rows (tab switches re-render without a fetch),
+// and the ids imported since load — those carry a NEW pill until reload.
+let gvSavedTab = null;
+let gvSavedRows = [];
+const gvNewIds = new Set();
+const gvDomainOf = (wf) => wf.domain || 'general';
+
+/** Scroll the page to its top so the Workflow Composer title AND the canvas are in
+ *  view after a row is opened (the saved list sits below the fold). */
+function gvScrollToTop() {
+  const main = document.querySelector('.main');
+  try { if (main && typeof main.scrollTo === 'function') main.scrollTo({ top: 0, behavior: 'smooth' }); } catch { /* jsdom */ }
+  try { if (typeof window.scrollTo === 'function') window.scrollTo({ top: 0, behavior: 'smooth' }); } catch { /* jsdom */ }
+}
+
 async function gvRefreshSaved() {
+  gvSavedRows = await gvApi.listWorkflows();
+  gvRenderSaved();
+  await gvRefreshArchived();
+}
+
+function gvRenderSaved() {
   const els = gvEls();
-  const list = await gvApi.listWorkflows();
+  const list = gvSavedRows;
   els.savedCount.textContent = list.length ? `· ${list.length}` : '';
-  gvComposer.setSavedDomains([...new Set(list.map((w) => w.domain).filter(Boolean))]);
+  const domains = [...new Set(list.map(gvDomainOf))].sort();
+  gvComposer.setSavedDomains(domains);
+  if (!domains.includes(gvSavedTab)) gvSavedTab = domains[0] || null;
+  // ── One tab per domain (the row no longer repeats the domain) ──
+  const tabs = document.getElementById('gv-saved-tabs');
+  tabs.replaceChildren();
+  tabs.hidden = domains.length === 0;
+  for (const d of domains) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'gv-saved-tab' + (d === gvSavedTab ? ' active' : '');
+    b.dataset.domain = d;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', d === gvSavedTab ? 'true' : 'false');
+    b.appendChild(document.createTextNode(d));
+    const badge = document.createElement('span');
+    badge.className = 'gv-saved-tab-badge';
+    badge.textContent = String(list.filter((w) => gvDomainOf(w) === d).length);
+    b.appendChild(badge);
+    b.addEventListener('click', () => { gvSavedTab = d; gvRenderSaved(); });
+    tabs.appendChild(b);
+  }
   els.savedList.replaceChildren();
   for (const wf of list) {
+    if (gvDomainOf(wf) !== gvSavedTab) continue;
     const item = document.createElement('div');
     item.className = 'pl-item';
     item.dataset.id = wf.id;
@@ -1804,10 +1890,15 @@ async function gvRefreshSaved() {
     const name = document.createElement('div');
     name.className = 'pl-name';
     name.textContent = wf.name || wf.id;
-    const meta = document.createElement('div');
-    meta.className = 'pl-meta';
-    meta.textContent = wf.domain || 'general';
-    main.append(name, meta);
+    // Imported this page session: a NEW pill until the next reload (gvNewIds is
+    // module state, so a reload clears it by construction).
+    if (gvNewIds.has(wf.id)) {
+      const pill = document.createElement('span');
+      pill.className = 'pl-new';
+      pill.textContent = 'NEW';
+      name.appendChild(pill);
+    }
+    main.append(name);
     row.appendChild(main);
     // A plugin-owned row is replaced wholesale by the next `worca plugin update`
     // (src/core/plugin-workflows.mjs upserts ON CONFLICT), so say so BEFORE the
@@ -1820,30 +1911,55 @@ async function gvRefreshSaved() {
       tag.title = `Provided by plugin "${plugin}" — replaced on plugin update`;
       row.appendChild(tag);
     }
+    if (wf.origin === 'auto') {
+      // Spec §7.6 / D10: an Auto-created row is an ordinary workflow that Auto will match next time.
+      const tag = document.createElement('span');
+      tag.className = 'pl-origin pl-auto';
+      tag.textContent = 'Auto';
+      tag.title = 'Created by Auto — an ordinary workflow you can open, edit and delete';
+      row.appendChild(tag);
+    }
     if (wf.version === 2) {
-      const open = document.createElement('button');
-      open.type = 'button'; open.className = 'btn-ghost pl-open'; open.textContent = 'Open';
-      open.addEventListener('click', async () => {
+      // The ROW is the Open action (no Open button): click or Enter/Space on the
+      // card loads it. openTemplate asks before discarding unsaved edits (MAJ-6)
+      // and resolves null when refused — the canvas and the undo ring must then
+      // be left exactly as they were. On success the page scrolls to its top so
+      // the Composer title and the loaded canvas are both in view.
+      row.classList.add('pl-openable');
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      row.title = `Open "${wf.name || wf.id}"`;
+      const open = async () => {
         const full = await gvApi.readWorkflow(wf.id);
         if (!full) return;
-        // openTemplate resolves null when the discard guard was refused — the
-        // canvas (and the undo ring) must then be left exactly as they were.
-        if (await gvComposer.openTemplate(full)) gvComposer.fit();
+        if (await gvComposer.openTemplate(full)) { gvComposer.fit(); gvScrollToTop(); }
+      };
+      row.addEventListener('click', (e) => {
+        if (e.target && e.target.closest && e.target.closest('button, a, input')) return;   // the row's own actions
+        open();
       });
-      row.appendChild(open);
-      // Export to Claude Code — available for every v2 row incl. the built-in (you can
-      // export the default). Opens the plan/apply modal; the server resolves the graph.
+      row.addEventListener('keydown', (e) => {
+        if (e.target !== row) return;
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+      });
+      // ONE Export… entry point (JSON file / Claude Code skill / Worca plugin): the
+      // dialog asks for the format. Available for every v2 row incl. the built-in.
       const exportBtn = document.createElement('button');
-      exportBtn.type = 'button'; exportBtn.className = 'pl-export'; exportBtn.title = 'Export to Claude Code';
-      exportBtn.textContent = '⇪';
+      exportBtn.type = 'button'; exportBtn.className = 'btn-ghost pl-export';
+      exportBtn.title = 'Export as a JSON file, a Claude Code skill or a Worca plugin';
+      exportBtn.textContent = 'Export…';
       exportBtn.addEventListener('click', () => openExportModal({ id: wf.id, name: wf.name || wf.id }));
-      row.appendChild(exportBtn);
-      // No × on the built-in: DELETE /api/workflows/wf_default always answers
-      // 400 (ui/server.mjs), so the button could only ever fail. Open stays —
+      // Appended AFTER delete (below): Export… is the last element of every row, so
+      // it sits on the same right edge whether or not the row has a delete.
+      // No delete on the built-in: DELETE /api/workflows/wf_default always answers
+      // 400 (ui/server.mjs), so the button could only ever fail. Opening stays —
       // the built-in is meant to be opened and saved as a copy.
       if (wf.id !== RESERVED_WORKFLOW_ID) {
         const del = document.createElement('button');
-        del.type = 'button'; del.className = 'pl-del'; del.textContent = '×';
+        del.type = 'button'; del.className = 'pl-del';
+        del.title = `Delete "${wf.name || wf.id}"`;
+        del.setAttribute('aria-label', `Delete "${wf.name || wf.id}"`);
+        del.innerHTML = TRASH_SVG;                          // the one bin icon (static markup)
         // A delete is destructive and unrecoverable: it asks first, in red — the
         // guard the v1 composer's saved list owned before it was retired.
         del.addEventListener('click', async () => {
@@ -1859,6 +1975,7 @@ async function gvRefreshSaved() {
         });
         row.appendChild(del);
       }
+      row.appendChild(exportBtn);
     } else {
       const tag = document.createElement('span');
       tag.className = 'pl-legacy';
@@ -1868,7 +1985,6 @@ async function gvRefreshSaved() {
     item.appendChild(row);
     els.savedList.appendChild(item);
   }
-  await gvRefreshArchived();
 }
 
 // The Archived footer only exists once V24 (P8) archives rows: it is rendered
@@ -1928,122 +2044,15 @@ function panelPortsFn(registry) {
   };
 }
 
-// Flatten workflow.steps[][] into an ordered list of node rows, joining each
-// node's role `key` to its registry metadata (label/color) and resolving every
-// setting through the four layers (newpipeline-ux-design.md §4.3):
-//   1. the per-project override — run-config nodes[nodeId], or, for the built-in
-//      Default workflow, the legacy per-role opts.legacySteps[key];
-//   2. the workflow's own node.defaults;
-//   3. the agent-registry sidecar (fanOut / questionsDefault);
-//   4. nothing configured — the CLI default.
-// Order = outer (sequential) then inner (parallel) — exactly the dispatch order.
-//
-// model/effort/fanOut/askQuestions on the returned row are the EFFECTIVE values
-// (what the run will use). `def` carries the same four resolved WITHOUT layer 1,
-// so the renderer can mark deviation and the writer can prune a redundant save
-// back to "inherit". `override` is layer 1 verbatim.
+// Thin wrappers: the resolution lives in node-tunables.mjs (shared with the Ask
+// Worca run card); this panel only adds its own ports source (panelPortsFn,
+// which can fall back to the Composer index for agents the palette omits).
+function buildGraphNodeRows(tpl, registry, runConfig, opts = {}) {
+  return ntBuildGraphNodeRows(tpl, registry, runConfig, { ...opts, portsFn: panelPortsFn(registry || {}) });
+}
 function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
   if (workflow && workflow.version === 2) return buildGraphNodeRows(workflow, registry, runConfig, opts);
-  const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
-  const reg = registry || {};
-  const nodes = (runConfig && runConfig.nodes) || {};
-  const legacySteps = opts.legacySteps || null; // wf_default only: per-ROLE storage
-  const rows = [];
-  steps.forEach((group, stepIndex) => {
-    const members = Array.isArray(group) ? group : [];
-    members.forEach((node) => {
-      if (!node || !node.id) return;
-      const meta = reg[node.key] || null;
-      // The Default workflow's overrides live under the role key; a saved
-      // workflow's under the node-instance id. Both can exist for wf_default
-      // (a node write wins, mirroring resolveWorkflow's firstDefined order).
-      const role = legacySteps ? node.key : null;
-      const saved = { ...(role ? legacySteps[role] : null), ...nodes[node.id] };
-      const wfDef = (node.defaults && typeof node.defaults === 'object') ? node.defaults : {};
-      const metaFan = meta && typeof meta.fanOut === 'boolean' ? meta.fanOut : false;
-      const metaAsks = !!(meta && meta.asksQuestions);
-      const metaLocked = !!(meta && meta.questionsLocked);
-      const metaQDefault = !!(meta && meta.questionsDefault);
-
-      const t = resolveNodeTunables(saved, wfDef, { fanOut: metaFan, questionsDefault: metaQDefault });
-
-      rows.push({
-        nodeId: node.id,
-        key: node.key,
-        role, // non-null => persist via the legacy per-role path (saveStep)
-        label: (meta && meta.displayName) || node.key || node.id,
-        color: (meta && meta.color) || '',
-        description: (meta && meta.description) || '',
-        stepIndex,
-        parallel: members.length > 1,
-        model: t.model,
-        effort: t.effort,
-        fanOut: t.fanOut,
-        subagentModel: t.subagentModel,
-        // null => the agent has no questions capability (no checkbox rendered).
-        askQuestions: !metaAsks ? null : (metaLocked ? metaQDefault : t.askQuestions),
-        questionsLocked: metaAsks && metaLocked,
-        def: t.def,
-        override: t.override,
-        // A locked questions toggle is never the user's doing, so it never counts
-        // as a modification (it cannot be reset either).
-        modified: modifiedFieldsOf(t, t.def,
-          { asksQuestions: metaAsks, questionsLocked: metaLocked }).length > 0,
-      });
-    });
-  });
-  return rows;
-}
-
-// ONE resolution rule for a node's five tunables, shared verbatim by the v1
-// (buildNodeConfigRows) and v2 (buildGraphNodeRows) row builders — the two
-// panels must never drift (the v2 path is the one every live workflow uses).
-// `saved` = the per-project override entry (role + node merged), `wfDef` = the
-// workflow's own defaults block (node.defaults in v1, node.config in v2),
-// `caps` = the registry meta's capability booleans.
-function resolveNodeTunables(saved, wfDef, caps = {}) {
-  const override = {};
-  if (typeof saved.model === 'string' && saved.model) override.model = saved.model;
-  if (typeof saved.effort === 'string' && saved.effort) override.effort = saved.effort;
-  if (typeof saved.fanOut === 'boolean') override.fanOut = saved.fanOut;
-  if (typeof saved.askQuestions === 'boolean') override.askQuestions = saved.askQuestions;
-  if (typeof saved.subagentModel === 'string' && saved.subagentModel) override.subagentModel = saved.subagentModel;
-
-  // Layers 2-4 alone: what this row falls back to once its override is gone.
-  const def = {
-    model: typeof wfDef.model === 'string' ? wfDef.model : '',
-    effort: typeof wfDef.model === 'string' && typeof wfDef.effort === 'string' ? wfDef.effort : '',
-    fanOut: typeof wfDef.fanOut === 'boolean' ? wfDef.fanOut : !!caps.fanOut,
-    askQuestions: typeof wfDef.askQuestions === 'boolean' ? wfDef.askQuestions : !!caps.questionsDefault,
-    // No sidecar layer: an agent manifest declares whether a node CAN fan out,
-    // never what its children run on. '' = unset (the run resolves auto).
-    subagentModel: typeof wfDef.subagentModel === 'string' ? wfDef.subagentModel : '',
-  };
-
-  // An effort is only meaningful for the model that advertises it, so an
-  // override naming its own model does not inherit the default's effort.
-  const model = override.model !== undefined ? override.model : def.model;
-  const effort = override.effort !== undefined
-    ? override.effort
-    : (override.model !== undefined ? '' : def.effort);
-  const fanOut = override.fanOut !== undefined ? override.fanOut : def.fanOut;
-  const askQuestions = override.askQuestions !== undefined ? override.askQuestions : def.askQuestions;
-  const subagentModel = override.subagentModel !== undefined ? override.subagentModel : def.subagentModel;
-  return { override, def, model, effort, fanOut, askQuestions, subagentModel };
-}
-
-// Which of the five settings deviate from the row's resolved default. Pure; the
-// single definition of "modified" for both the row dot and the header count.
-function modifiedFieldsOf(effective, def, caps = {}) {
-  const out = [];
-  if ((effective.model || '') !== (def.model || '')) out.push('model');
-  if ((effective.effort || '') !== (def.effort || '')) out.push('effort');
-  if (!!effective.fanOut !== !!def.fanOut) out.push('fanOut');
-  if ((effective.subagentModel || '') !== (def.subagentModel || '')) out.push('subagentModel');
-  if (caps.asksQuestions && !caps.questionsLocked && !!effective.askQuestions !== !!def.askQuestions) {
-    out.push('askQuestions');
-  }
-  return out;
+  return ntBuildNodeConfigRows(workflow, registry, runConfig, opts);
 }
 
 // One row's collapsed caption: the effective config in one line. "default" when
@@ -2077,37 +2086,6 @@ function agentsHeaderText(rows) {
   return n === 0 ? 'all defaults' : `${n} modified`;
 }
 
-// Prune a row's would-be selection against its resolved default (§4.5): a value
-// equal to the default is stored as "inherit" instead — '' clears a model/effort,
-// null clears a boolean toggle (config.mjs#inheritOr). Returns the patch to send.
-// `next` carries only the fields the caller is changing; the rest ride along at
-// their current effective value so the setters' replace semantics cannot wipe them.
-function pruneNodeSelection(row, next = {}) {
-  const eff = {
-    model: next.model !== undefined ? next.model : row.model,
-    effort: next.effort !== undefined ? next.effort : row.effort,
-    fanOut: next.fanOut !== undefined ? next.fanOut : row.fanOut,
-    askQuestions: next.askQuestions !== undefined ? next.askQuestions : row.askQuestions,
-    subagentModel: next.subagentModel !== undefined ? next.subagentModel : row.subagentModel,
-  };
-  // model+effort prune as a PAIR: an effort is only interpretable against the
-  // model that advertises it, so storing one without the other is rejected by
-  // the setters ("select a model before choosing an effort").
-  const inheritPair = (eff.model || '') === (row.def.model || '')
-    && (eff.effort || '') === (row.def.effort || '');
-  return {
-    model: inheritPair ? '' : (eff.model || ''),
-    effort: inheritPair || !eff.model ? '' : eff.effort,
-    fanOut: !!eff.fanOut === !!row.def.fanOut ? null : !!eff.fanOut,
-    askQuestions: row.askQuestions === null || row.questionsLocked
-      ? undefined // no capability / locked: never persist a value for it
-      : (!!eff.askQuestions === !!row.def.askQuestions ? null : !!eff.askQuestions),
-    // '' IS the clear for a string tunable (config.mjs#inheritOrSubagentModel), so
-    // a value equal to the default prunes to inherit exactly like model/effort.
-    subagentModel: (eff.subagentModel || '') === (row.def.subagentModel || '') ? '' : (eff.subagentModel || ''),
-  };
-}
-
 // Flatten workflow.feedbacks into row data for the per-loop cycle-count inputs,
 // overlaying the run-config's saved maxCycles (default 3 when unset). Resolves each
 // loop's endpoints (node ids like "s2_0") to human agent names via the registry +
@@ -2116,47 +2094,6 @@ function pruneNodeSelection(row, next = {}) {
 //   - self loop:    "<name> ↺ (self loop)"    (from === to)
 // A "(step N)" suffix (1-based) disambiguates an endpoint whose display name is shared
 // by more than one node in the workflow. Unknown ids fall back to the raw id.
-// v2: agent nodes only, in condensation-topo launch order (loop wires excluded
-// from the ranking, exactly as the scheduler orders launches). The four config
-// layers are the same as v1: run-config nodes[nodeId] -> template node.config ->
-// sidecar -> hard default.
-function buildGraphNodeRows(tpl, registry, runConfig, opts = {}) {
-  const reg = registry || {};
-  const nodes = (runConfig && runConfig.nodes) || {};
-  // wf_default only: the legacy per-ROLE storage, layered under the per-node one
-  // exactly as resolveGraph does (sel -> legacy -> node config).
-  const legacySteps = opts.legacySteps || null;
-  const order = classifyLoops(tpl, panelPortsFn(reg)).launchOrder;
-  const byId = new Map(tpl.nodes.map((n) => [n.id, n]));
-  const rank = new Map(order.map((id, i) => [id, i]));
-  const agentNodes = order.map((id) => byId.get(id)).filter((n) => n && n.kind === 'agent');
-  const rows = [];
-  for (const node of agentNodes) {
-    const meta = reg[node.key] || null;
-    const role = legacySteps ? node.key : null;
-    const saved = { ...(role ? legacySteps[role] : null), ...nodes[node.id] };
-    const wfDef = (node.config && typeof node.config === 'object') ? node.config : {};
-    const metaFan = meta && typeof meta.fanOut === 'boolean' ? meta.fanOut : false;
-    const metaAsks = !!(meta && meta.asksQuestions);
-    const metaLocked = !!(meta && meta.questionsLocked);
-    const metaQDefault = !!(meta && meta.questionsDefault);
-    const t = resolveNodeTunables(saved, wfDef, { fanOut: metaFan, questionsDefault: metaQDefault });
-    rows.push({
-      nodeId: node.id, key: node.key, role, // non-null => persist via saveStep (wf_default)
-      label: (meta && meta.displayName) || node.key || node.id,
-      color: (meta && meta.color) || '', description: (meta && meta.description) || '',
-      stepIndex: rank.get(node.id) || 0,
-      parallel: false,
-      model: t.model, effort: t.effort, fanOut: t.fanOut, subagentModel: t.subagentModel,
-      askQuestions: !metaAsks ? null : (metaLocked ? metaQDefault : t.askQuestions),
-      questionsLocked: metaAsks && metaLocked,
-      def: t.def, override: t.override,
-      modified: modifiedFieldsOf(t, t.def,
-        { asksQuestions: metaAsks, questionsLocked: metaLocked }).length > 0,
-    });
-  }
-  return rows;
-}
 
 // v2: one row per LOOP wire (a plain wire has no budget — V13). Labels reuse the
 // v1 vocabulary: "<toName> ← <fromName>", "(step N)" only when a name repeats.
@@ -2423,7 +2360,9 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   };
   optgroup('Your models', state.models.filter((m) => m.custom && m.custom !== 'plugin').sort(byLabel));
   optgroup('Plugins', state.models.filter((m) => m.custom === 'plugin').sort(byLabel));
-  optgroup('Built-in', state.models.filter((m) => !m.custom).sort(byLabel));
+  // "Hide built-in models" (#422): a hidden built-in leaves the list — unless
+  // it is THIS selection, which still resolves and must stay visible.
+  optgroup('Built-in', state.models.filter((m) => !m.custom && (!m.hidden || m.id === sel.model)).sort(byLabel));
   modelSel.appendChild(option('__add__', '+ Add model…'));
   modelSel.value = sel.model || '';
 
@@ -2563,12 +2502,20 @@ async function loadWorkflowsInto(selectId) {
     await renderWorkflowConfig(state.workflowId);
     return;
   }
-  const list = workflows.length ? workflows : [{ id: 'wf_default', name: 'Default' }];
-  const want = selectId || state.workflowId || 'wf_default';
+  const isWorkspace = state.runTarget === 'workspace';
+  // Auto is a client-side constant (D24): /api/workflows never lists wf_auto and the row stub has no graph.
+  const list = [AUTO_WORKFLOW, ...(workflows.length ? workflows : [{ id: 'wf_default', name: 'Default' }])];
+  const want = selectId || state.workflowId || AUTO_WORKFLOW_ID;
   sel.innerHTML = '';
-  list.forEach((wf) => sel.appendChild(option(wf.id, workflowPickerLabel(wf, enabledPluginNames) || wf.id)));
-  // Fall back to default if the wanted id is gone (e.g. a deleted workflow).
-  state.workflowId = list.some((wf) => wf.id === want) ? want : 'wf_default';
+  list.forEach((wf) => {
+    const o = option(wf.id, wf.id === AUTO_WORKFLOW_ID ? wf.name : (workflowPickerLabel(wf, enabledPluginNames) || wf.id));
+    if (wf.id === AUTO_WORKFLOW_ID && isWorkspace) { o.disabled = true; o.title = 'Auto is not available for workspaces yet'; }
+    sel.appendChild(o);
+  });
+  // Fall back to default if the wanted id is gone (e.g. a deleted workflow). D19: a workspace
+  // target SHOWS Default in Auto's place but never persists it — the project keeps its choice.
+  const known = list.some((wf) => wf.id === want);
+  state.workflowId = !known || (isWorkspace && want === AUTO_WORKFLOW_ID) ? 'wf_default' : want;
   sel.value = state.workflowId;
   await renderWorkflowConfig(state.workflowId);
 }
@@ -2644,6 +2591,25 @@ async function loadGuardrailsInto(selectId) {
 // and hide the dynamic containers. Saved -> fetch topology + registry, render a
 // node row per node and a cycle input per feedback.
 async function renderWorkflowConfig(workflowId) {
+  const isAuto = workflowId === AUTO_WORKFLOW_ID;
+  if (el.agentsConfig) el.agentsConfig.hidden = isAuto;
+  if (el.hitlRow) el.hitlRow.hidden = !isAuto;
+  if (isAuto) {
+    // Auto picks the agents per run (spec §7.2 / D20): no accordion, one switch, read from the project config.
+    // The switch is per PROJECT like the accordion's rows, and saveHumanInLoop drops the
+    // write with no project selected — so disable it there instead of accepting a flip
+    // the save discards (.sw-input:disabled + .switch is already styled).
+    if (el.humanInLoop) {
+      el.humanInLoop.checked = state.config.humanInLoop !== false;   // readRunConfig echoes only `false`
+      el.humanInLoop.disabled = !agentsEditable();
+    }
+    // Reset what the failed-fetch arm resets, so nothing from the previous workflow lingers inside the
+    // hidden accordion (#wf-feedback-config and the agents header live INSIDE #agents-config).
+    if (el.agentRows) el.agentRows.innerHTML = '';
+    if (el.wfFeedbackConfig) { el.wfFeedbackConfig.innerHTML = ''; el.wfFeedbackConfig.hidden = true; }
+    setAgentsHeader(null, '');
+    return;
+  }
   const isDefault = !workflowId || workflowId === 'wf_default';
   const [fetchedWf, fetchedReg] = await Promise.all([getWorkflowApi(workflowId), getAgentsApi()]);
   // The Default workflow has offline fallbacks for both halves (topology + the
@@ -3148,6 +3114,19 @@ async function saveActiveWorkflow(workflowId) {
     /* selection is best-effort; ignore transient errors */
   }
 }
+
+// Persist the Auto "Human in the loop" switch: PATCH /api/config { projectDir, humanInLoop }.
+async function saveHumanInLoop(on) {
+  const projectDir = selectedProjectPath();
+  if (!projectDir) return;
+  try {
+    const res = await fetch('/api/config', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectDir, humanInLoop: !!on }) });
+    const data = await safeJson(res);
+    if (!res.ok) appendLog({ source: 'ui', level: 'error', text: `human in the loop: ${data.error || res.status}`, ts: Date.now() });
+    else if (data.config) state.config = data.config;
+  } catch { /* best-effort, like saveActiveWorkflow */ }
+}
+if (el.humanInLoop) el.humanInLoop.addEventListener('change', () => saveHumanInLoop(el.humanInLoop.checked));
 
 // "+ Add model…" in any model dropdown: restore the selection and jump to the
 // global Models view with the create editor open (models are added GLOBALLY —
@@ -3812,6 +3791,21 @@ function questionIcon() {
   return svg;
 }
 
+// The 14px play triangle both primary panel buttons carry (clarify Submit,
+// workflow Accept & run). Built fresh each call, like questionIcon().
+function playIcon() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const play = document.createElementNS(NS, 'svg');
+  play.setAttribute('width', '14');
+  play.setAttribute('height', '14');
+  play.setAttribute('viewBox', '0 0 24 24');
+  play.setAttribute('fill', 'currentColor');
+  const tri = document.createElementNS(NS, 'path');
+  tri.setAttribute('d', 'M6 4l14 8-14 8V4Z');
+  play.appendChild(tri);
+  return play;
+}
+
 // Filter a clarify question's options down to the real ones (the contract pads
 // to 3 slots with '' — drop empty/whitespace).
 function realOptions(q) {
@@ -3828,22 +3822,27 @@ function renderQpanel(r, root = r.el) {
   if (!root) return;
   const panel = root.querySelector('.qpanel');
   if (!panel) return;
+  disposeQpanel(panel);                       // a workflow body owns a graph mount + ResizeObserver
   const pq = r.pendingQuestion;
   panel.innerHTML = '';
+  panel.classList.toggle('qpanel-workflow', !!(pq && pq.kind === 'workflow'));
   if (!pq) {
     panel.classList.add('hidden');
     return;
   }
 
+  const isWorkflow = pq.kind === 'workflow';
   const isRecovery = pq.kind === 'recovery';
-  const isGate = !isRecovery && (pq.kind === 'gate' || Array.isArray(pq.issues));
+  const isGate = !isRecovery && !isWorkflow && (pq.kind === 'gate' || Array.isArray(pq.issues));
 
   // ----- head -----
   const head = document.createElement('div');
   head.className = 'qpanel-head';
   head.appendChild(questionIcon());
   const title = document.createElement('b');
-  if (isRecovery) {
+  if (isWorkflow) {
+    title.textContent = `Auto proposes a workflow · round ${(pq.workflow && pq.workflow.round) || 1}`;
+  } else if (isRecovery) {
     const cls = (pq.recovery && pq.recovery.cls) || 'recoverable';
     title.textContent = `${cls.replace('_', ' ')} error — action needed`;
   } else if (isGate) {
@@ -3856,7 +3855,12 @@ function renderQpanel(r, root = r.el) {
     title.textContent = `${label} needs your input`;
   }
   head.appendChild(title);
-  if (!isGate && !isRecovery) {
+  if (isWorkflow) {
+    const count = document.createElement('span');
+    count.className = 'qcount';
+    count.textContent = 'workflow';
+    head.appendChild(count);
+  } else if (!isGate && !isRecovery) {
     const n = realQuestions(pq).length;
     const count = document.createElement('span');
     count.className = 'qcount';
@@ -3865,11 +3869,25 @@ function renderQpanel(r, root = r.el) {
   }
   panel.appendChild(head);
 
-  if (isRecovery) renderRecoveryBody(r, panel, pq);
+  // Un-hide BEFORE the workflow body measures: a hidden host has no layout width in a browser.
+  if (isWorkflow) { panel.classList.remove('hidden'); renderWorkflowBody(r, panel, pq); }
+  else if (isRecovery) renderRecoveryBody(r, panel, pq);
   else if (isGate) renderGateBody(r, panel, pq);
   else renderClarifyBody(r, panel, pq);
 
   panel.classList.remove('hidden');
+}
+
+/** A panel body that owns resources (the workflow graph) registers panel.__dispose; run it before any rebuild. */
+function disposeQpanel(panel) {
+  if (panel && typeof panel.__dispose === 'function') { try { panel.__dispose(); } catch { /* never block a repaint */ } }
+  if (panel) panel.__dispose = null;
+}
+/** A34: the paths that destroy panel DOM WITHOUT renderQpanel/clearQpanel (openRunDetail,
+ *  closeRunDetail, paintRunList's sweep) all go through destroyGraphMounts — dispose there. */
+function disposeQpanelsIn(root) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+  for (const p of root.querySelectorAll('.qpanel')) disposeQpanel(p);
 }
 
 // Clarify questions with at least a question string. (questions may be [] when
@@ -4014,16 +4032,7 @@ function renderClarifyBody(r, panel, pq) {
   const submit = document.createElement('button');
   submit.type = 'button';
   submit.className = 'btn-go';
-  const NS = 'http://www.w3.org/2000/svg';
-  const play = document.createElementNS(NS, 'svg');
-  play.setAttribute('width', '14');
-  play.setAttribute('height', '14');
-  play.setAttribute('viewBox', '0 0 24 24');
-  play.setAttribute('fill', 'currentColor');
-  const tri = document.createElementNS(NS, 'path');
-  tri.setAttribute('d', 'M6 4l14 8-14 8V4Z');
-  play.appendChild(tri);
-  submit.appendChild(play);
+  submit.appendChild(playIcon());
   submit.appendChild(document.createTextNode('Submit answers & resume'));
   foot.appendChild(submit);
   panel.appendChild(foot);
@@ -4127,6 +4136,150 @@ function renderRecoveryBody(r, panel, pq) {
   panel.appendChild(foot);
 }
 
+// ---- the `workflow` arm (spec §7.4): Auto's proposal, the shared body plus this host's
+// tunables table and buttons. Both mounted panels (card + detail) keep their own renderer
+// and their own edit state on the panel node (panel.__wf), like panel.__answers.
+function renderWorkflowBody(r, panel, pq) {
+  const w = pq.workflow || {};
+  const base = w.nodes || {};
+  const wf = { name: w.name || '', nodes: {}, handle: null };   // nodes: edits only (diff against `base`)
+  panel.__wf = wf;
+  const classifyRows = (r.subAgents || []).filter((s) => s && s.subagentType === 'auto-classify');
+  // B5: resume() does not rehydrate sub-agent rows, so after a resume the rows undercount; the
+  // proposal's own costUsd (restored from the resume point) is the floor.
+  const costUsd = Math.max(classifyRows.reduce((sum, s) => sum + (Number(s.costUsd) || 0), 0), Number(w.costUsd) || 0);
+  const body = document.createElement('div');
+  body.className = 'qbody';
+  const handle = renderAutoProposal(w, { doc: document, order: AUTO_PROPOSAL_ORDER_QPANEL, costUsd, rounds: w.round, onName: (v) => { wf.name = v; } });
+  wf.handle = handle;
+  panel.__dispose = () => { handle.destroy(); wf.handle = null; };
+  body.appendChild(handle.el);
+  // A23: what the user asked for last round, from this client's memory (the payload carries no echo).
+  if (r._autoRevise && (w.round || 1) > 1) {
+    const note = document.createElement('div'); note.className = 'qnote';
+    const b = document.createElement('b'); b.textContent = `Round ${w.round - 1} revised: `;
+    note.append(b, document.createTextNode(`\u201c${r._autoRevise}\u201d`));
+    handle.el.insertBefore(note, handle.parts.name);
+  }
+  // ---- tunables table, between the match line and the meta line (mockup §D)
+  const table = buildTunablesTable(w, wf, handle);
+  handle.el.insertBefore(table, handle.parts.warnings || handle.parts.meta);
+  // ---- revise box + foot
+  const ta = document.createElement('textarea');
+  ta.className = 'qfree qfree-area'; ta.rows = 3; ta.hidden = true;
+  ta.placeholder = 'What should change? e.g. "drop the manual web check, add a plan review"';
+  ta.setAttribute('aria-label', 'Revision request');
+  body.appendChild(ta);
+  const foot = document.createElement('div'); foot.className = 'qpanel-foot';
+  const mk = (cls, text) => { const b = document.createElement('button'); b.type = 'button'; b.className = cls; b.textContent = text; return b; };
+  const cancel = mk('qcancel wf-cancel', 'Cancel run');
+  const revise = mk('qopen wf-revise', 'Revise');
+  const send = mk('qopen wf-send', 'Send'); send.hidden = true;
+  const accept = mk('btn-go wf-accept', 'Accept & run');
+  accept.dataset.busyLabel = 'Starting…';                 // A31: setPanelBusy's primary swap reads it
+  accept.prepend(playIcon());
+  const stop = (fn) => (e) => { e.stopPropagation(); fn(); };   // the #run-list / #run-detail delegates sit above this node
+  cancel.addEventListener('click', stop(async () => {
+    const ok = await confirmModal({ title: 'Cancel this run?', message: 'The run stops now. Nothing is saved — no workflow row is written.', confirmLabel: 'Cancel run', cancelLabel: 'Keep', danger: true });
+    if (ok) postAnswer(r, { decision: 'cancel' });
+  }));
+  revise.addEventListener('click', stop(() => { ta.hidden = !ta.hidden; send.hidden = ta.hidden; if (!ta.hidden) ta.focus(); }));
+  send.addEventListener('click', stop(async () => {
+    const text = ta.value.trim().slice(0, 4096);
+    if (!text) { ta.classList.add('qfree-err'); ta.focus(); return; }
+    // Record the echo only once the server has it: a failed POST leaves the panel
+    // usable, and the next round must not quote text that never arrived (A23).
+    if (await postAnswer(r, { decision: 'revise', text })) r._autoRevise = text;
+  }));
+  ta.addEventListener('input', () => ta.classList.remove('qfree-err'));
+  accept.addEventListener('click', stop(() => {
+    const nodes = {};
+    for (const [id, sel] of Object.entries(wf.nodes)) {
+      const diff = {};
+      for (const k of ['model', 'effort', 'fanOut', 'askQuestions']) if (sel[k] !== undefined && sel[k] !== (base[id] || {})[k]) diff[k] = sel[k];
+      // A model change carries its effort even when it equals the base's: the resolver drops a
+      // row's authored effort whenever the overlay names a model without one (workflows.mjs:664),
+      // so `{model}` alone would run with NO effort while this table showed one (B1). The model
+      // `change` handler always writes `sel.effort` next to `sel.model` (buildTunablesTable).
+      if (diff.model !== undefined && sel.effort !== undefined) diff.effort = sel.effort;
+      if (Object.keys(diff).length) nodes[id] = diff;
+    }
+    postAnswer(r, { decision: 'accept', name: handle.getName(), nodes });
+  }));
+  foot.append(cancel, revise, send, accept);
+  body.appendChild(foot);
+  panel.appendChild(body);
+  handle.relayout();                                        // measure now that the body is attached (0 => 702 default)
+}
+
+// The tunables table: one row per dispatch-ordered agent. Columns 1fr · 160 · 160 · 90 · 100.
+function buildTunablesTable(w, wf, handle) {
+  const models = Array.isArray(w.models) ? w.models : [];
+  const table = document.createElement('table');
+  table.className = 'qtune';
+  table.innerHTML = '<colgroup><col><col style="width:160px"><col style="width:160px"><col style="width:90px"><col style="width:100px"></colgroup>'
+    + '<thead><tr><th>agent</th><th>model</th><th>effort</th><th>fan-out</th><th>questions</th></tr></thead>';
+  const tb = document.createElement('tbody');
+  const cur = (id) => ({ ...(w.nodes[id] || {}), ...(wf.nodes[id] || {}) });
+  const set = (id, patch) => { wf.nodes[id] = { ...(wf.nodes[id] || {}), ...patch }; handle.setNodeTunables(id, patch); };
+  const sel = (label, opts, value) => {
+    const wrap = document.createElement('span'); wrap.className = 'select-wrap';
+    const s = document.createElement('select'); s.setAttribute('aria-label', label);
+    for (const [v, t] of opts) s.appendChild(option(v, t));
+    s.value = value; wrap.appendChild(s); return { wrap, s };
+  };
+  // `locked` = disabled for good (A34): data-locked="1" keeps setPanelBusy's restore from re-enabling it.
+  const sw = (label, on, locked, onChange) => {
+    const l = document.createElement('label'); l.className = 'qtune-sw';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'sw-input'; cb.checked = !!on; cb.setAttribute('aria-label', label);
+    if (locked) { cb.disabled = true; cb.dataset.locked = '1'; }
+    cb.addEventListener('change', () => onChange(cb.checked));
+    const knob = document.createElement('span'); knob.className = 'switch switch-sm';
+    l.append(cb, knob); return l;
+  };
+  const lockEffort = (s, locked) => { s.disabled = locked; if (locked) s.dataset.locked = '1'; else delete s.dataset.locked; };
+  const effortsOf = (mid) => models.find((m) => m.id === mid)?.efforts || [];
+  // Only a model's OWN efforts are selectable: sanitizeProposalAnswer keeps `effort` only when the
+  // resolved model lists it — `effort: ''` on a set model is silently dropped, so a choosable
+  // "default" would lie. A node whose effort is unset shows a DISABLED `default` placeholder.
+  const fillEffort = (s, mid, value) => {
+    const list = effortsOf(mid);
+    const kids = list.map((e) => option(e, e));
+    const picked = mid && list.includes(value) ? value : '';
+    if (mid && !picked) { const ph = option('', 'default'); ph.disabled = true; kids.unshift(ph); }
+    s.replaceChildren(...kids); s.value = picked;              // '' selects the placeholder
+    lockEffort(s, !mid);
+  };
+  for (const id of Array.isArray(w.order) ? w.order : Object.keys(w.nodes || {})) {
+    const n = w.nodes[id]; if (!n) continue;
+    const tr = document.createElement('tr'); tr.dataset.nodeId = id;
+    const name = document.createElement('td'); name.textContent = n.label || n.key || id; name.title = name.textContent; tr.appendChild(name);
+    const tdModel = document.createElement('td'); const tdEffort = document.createElement('td');
+    const model = sel(`Model for ${name.textContent}`, [['', 'default'], ...models.map((m) => [m.id, m.label || m.id])], n.model || '');
+    const effort = sel(`Effort for ${name.textContent}`, [], '');
+    fillEffort(effort.s, n.model || '', n.effort || '');
+    model.s.addEventListener('change', () => {
+      const mid = model.s.value;
+      // the mockup's rule over the model's REAL efforts: keep the current one if offered, else its
+      // second, else its first — so a set model always posts a valid effort, never the placeholder
+      const list = effortsOf(mid);
+      const keep = list.includes(cur(id).effort) ? cur(id).effort : (list[1] || list[0] || '');
+      fillEffort(effort.s, mid, keep);
+      set(id, { model: mid, effort: mid ? keep : '' });
+    });
+    effort.s.addEventListener('change', () => set(id, { effort: effort.s.value }));
+    tdModel.appendChild(model.wrap); tdEffort.appendChild(effort.wrap); tr.append(tdModel, tdEffort);
+    const tdFan = document.createElement('td'); tdFan.appendChild(sw(`Fan-out for ${name.textContent}`, n.fanOut, !n.canFanOut, (on) => set(id, { fanOut: on }))); tr.appendChild(tdFan);
+    const tdQ = document.createElement('td');
+    if (n.asksQuestions) tdQ.appendChild(sw(`Questions for ${name.textContent}`, n.askQuestions, n.questionsLocked, (on) => set(id, { askQuestions: on })));
+    else tdQ.textContent = '\u2014';
+    tr.appendChild(tdQ);
+    tb.appendChild(tr);
+  }
+  table.appendChild(tb);
+  return table;
+}
+
 // Gather the clarify answers from the slots of the panel that was submitted and
 // POST them. `panel` is null only for a caller that has no panel node.
 function submitAnswer(r, panel = null) {
@@ -4144,14 +4297,17 @@ function submitAnswer(r, panel = null) {
 // resumed (the server returns 200 even for a stale id) — we disable the panel,
 // show a "Resuming…" affordance, set r._answering, and KEEP r.pendingQuestion.
 // The panel is cleared only when the next phase/state event confirms resume.
+// Returns TRUE only when the POST came back 200 — the workflow panel's Revise
+// echo is recorded off that, so a failed send never claims a round the server
+// never saw. Every other caller ignores the return.
 async function postAnswer(r, payload) {
-  if (!r || !r.pendingQuestion) return;
+  if (!r || !r.pendingQuestion) return false;
   // Re-entrancy guard: an answer is already in flight for this run. Without
   // this a synthetic/double click (or a re-triggered handler) could fire a
   // second POST before maybeResume clears _answering.
-  if (r._answering) return;
+  if (r._answering) return false;
   // Never post for a dead run.
-  if (r._finished || isTerminalStatus(r.status)) return;
+  if (r._finished || isTerminalStatus(r.status)) return false;
   const id = r.pendingQuestion.id;
   const runId = r.runId;
 
@@ -4169,13 +4325,15 @@ async function postAnswer(r, payload) {
       r._answering = false;
       setPanelBusy(r, false);
       onLog(r, { source: 'ui', level: 'error', text: `answer failed: ${err.error || res.status}`, ts: Date.now() });
-      return;
+      return false;
     }
     // 200: keep pendingQuestion; wait for the next phase/state to confirm resume.
+    return true;
   } catch (e) {
     r._answering = false;
     setPanelBusy(r, false);
     onLog(r, { source: 'ui', level: 'error', text: `answer error: ${e.message}`, ts: Date.now() });
+    return false;
   }
 }
 
@@ -4207,11 +4365,13 @@ function qpanelsFor(r) {
 // state on the primary button while an answer is in flight / awaiting resume.
 function setPanelBusy(r, busy) {
   for (const panel of qpanelsFor(r)) {
-    panel.querySelectorAll('button, input').forEach((node) => { node.disabled = busy; });
+    // A25: the workflow arm's table has selects and its revise box is a textarea.
+    // A34: a control locked for good (data-locked) stays disabled through the busy -> idle restore.
+    panel.querySelectorAll('button, input, select, textarea').forEach((node) => { node.disabled = busy || node.dataset.locked === '1'; });
     const primary = panel.querySelector('.btn-go, .gate-another');
     if (primary && busy && !primary.dataset.label) {
       primary.dataset.label = primary.textContent;
-      primary.textContent = 'Resuming…';
+      primary.textContent = primary.dataset.busyLabel || 'Resuming…';
     } else if (primary && !busy && primary.dataset.label) {
       primary.textContent = primary.dataset.label;
       delete primary.dataset.label;
@@ -4223,6 +4383,10 @@ function setPanelBusy(r, busy) {
 // from finishRun's terminal path.
 function clearQpanel(r) {
   for (const panel of qpanelsFor(r)) {
+    disposeQpanel(panel);
+    // A stale `.qpanel-workflow` would make the delegates swallow a later clarify Submit in this node.
+    panel.classList.remove('qpanel-workflow');
+    panel.__wf = null;
     panel.innerHTML = '';
     panel.classList.add('hidden');
     // The identity stamp paintRdQuestions keys its rebuild on. Emptying the panel
@@ -7031,9 +7195,11 @@ function basenameOf(p) {
 }
 
 // Thin wrapper over the native picker endpoint; never throws.
-async function pickFolder() {
+async function pickFolder(purpose = 'project') {
   try {
-    const res = await fetch('/api/fs/pick-folder', { method: 'POST' });
+    const res = await fetch('/api/fs/pick-folder', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ purpose }),
+    });
     return await safeJson(res); // {status:'picked',path} | {status:'canceled'} | {status:'unsupported'} | {status:'busy'}
   } catch {
     return { status: 'unsupported' };
@@ -7563,6 +7729,9 @@ el.form.addEventListener('submit', async (e) => {
     mock: el.mock.checked,
     sourceBranch: (el.sourceBranch && el.sourceBranch.value) || undefined,
     featureBranch: (el.featureBranch && el.featureBranch.value.trim()) || undefined,
+    // Auto only (spec §7.2): this run's switch; the server falls back to the project setting
+    // when absent. JSON.stringify drops an own key whose value is `undefined`.
+    humanInLoop: state.workflowId === AUTO_WORKFLOW_ID ? !!(el.humanInLoop && el.humanInLoop.checked) : undefined,
   };
   if (target === 'workspace') {
     body.workspaceId = workspaceId;
@@ -7689,7 +7858,7 @@ function setFormMsg(text, kind) {
 }
 
 // ---------------------------------------------------------------------------
-// Settings view: the machine-wide Worca CC root folder + the projects root
+// Settings view: the machine-wide Worca root folder + the projects root
 // (§5.1) whose CLAUDE.md / .claude/skills / .mcp.json every pipeline agent sees.
 // ---------------------------------------------------------------------------
 function setSettingsMsg(text, kind) {
@@ -7717,6 +7886,22 @@ function paintSettings(data) {
 // fallback so an older/partial response still fills the placeholder.
 const projectsRootFallback = (data) => data.projectsRootDefault || data.default || '';
 
+// About card: painted from the `app` block of GET /api/settings. A missing or
+// malformed payload leaves the static markup (including target/rel) untouched.
+function paintAbout(info) {
+  if (!info) return;
+  if (el.aboutVersion && info.version) {
+    el.aboutVersion.textContent = info.version;
+    // Links the version to its release tag; a missing/malformed URL leaves the
+    // anchor href-less, i.e. plain text.
+    if (typeof info.releaseUrl === 'string' && info.releaseUrl) el.aboutVersion.href = info.releaseUrl;
+  }
+  if (el.aboutRepoLink && typeof info.repoUrl === 'string' && info.repoUrl) {
+    el.aboutRepoLink.href = info.repoUrl;
+    el.aboutRepoLink.textContent = info.repoUrl.replace(/^https?:\/\//, '');
+  }
+}
+
 async function loadSettings() {
   if (!el.settingsRoot) return;
   try {
@@ -7724,9 +7909,13 @@ async function loadSettings() {
     const data = await safeJson(res);
     if (!res.ok) { setSettingsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     paintSettings(data);
+    paintTheme(data.theme);
+    paintAbout(data.app);
     paintBudgetSettings(data);
     paintAskSettings(data);
     paintDebugSpawnSettings(data);
+    await paintTitleModelSettings(data);
+    await paintAutoModelSettings(data);
     paintBudgetReadout();
     refreshBudget();
     paintChatSettings(data.chat);
@@ -8028,6 +8217,86 @@ async function postSettingsCard(body, { setMsg, paint, savedText = 'Saved.' }) {
   if (Object.keys(data).length) paint(data);
   setMsg(savedText);
 }
+
+// ── Appearance (dark-mode design §5.3) ──────────────────────────────────────
+// The mode lives in settings.json and is server-rendered into <html data-theme>
+// for the first paint; this block keeps it live: the segmented control, the
+// theme-color meta, the `worca:theme` event the thinking orb listens to, and
+// the OS-change listener for system mode. Nothing is stored in this browser.
+const THEME_MODES = ['system', 'light', 'dark'];
+function syncThemeColorMeta() {
+  const meta = document.querySelector('meta[name="theme-color"]');
+  // Resolved by the browser; never getPropertyValue('--bg'), which is the raw light-dark() text.
+  // `window.` — the bare global is not the jsdom window's under the test boots (house rule, app.js:5115).
+  let bg = '';
+  try { bg = window.getComputedStyle(document.body).backgroundColor || ''; } catch { bg = ''; }
+  // A fully transparent background is "no colour": read the alpha rather than comparing
+  // against a literal — test/ui-js-colors forbids `rgba(` followed by a digit in browser JS.
+  const alpha = Number((/^rgba\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*([\d.]+)\s*\)$/.exec(bg) || [])[1] ?? '1');
+  if (meta && bg && alpha > 0) meta.setAttribute('content', bg);
+}
+function applyTheme(mode) {
+  const m = THEME_MODES.includes(mode) ? mode : 'system';
+  document.documentElement.dataset.theme = m;
+  syncThemeColorMeta();
+  document.dispatchEvent(new window.CustomEvent('worca:theme', { detail: { mode: m } }));   // window.CustomEvent: jsdom rejects Node's
+  return m;
+}
+function setThemeMsg(text, kind) { setHintMsg('themeMsg', text, kind); }
+let confirmedTheme = 'system';       // the last SERVER-confirmed mode (GET, POST 200, settings-changed)
+let themeSeq = 0;                    // out-of-order POST resolutions never repaint a stale answer
+function paintTheme(mode) {
+  const m = applyTheme(mode);
+  confirmedTheme = m;
+  for (const b of document.querySelectorAll('#theme-seg button[data-theme-mode]')) {
+    const on = b.dataset.themeMode === m;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+}
+async function chooseTheme(mode) {
+  const mine = ++themeSeq;
+  const previous = confirmedTheme;
+  applyTheme(mode);                                                        // optimistic (not a confirmation)
+  for (const b of document.querySelectorAll('#theme-seg button[data-theme-mode]')) {
+    b.classList.toggle('on', b.dataset.themeMode === mode); b.setAttribute('aria-pressed', b.dataset.themeMode === mode ? 'true' : 'false');
+  }
+  setThemeMsg('');
+  let res; let data;
+  try {
+    res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ theme: mode }) });
+    data = await safeJson(res);
+  } catch (e) { if (mine === themeSeq) { paintTheme(previous); setThemeMsg(e.message || 'network error', 'err'); } return; }
+  if (mine !== themeSeq) return;                                           // a later click owns the paint now
+  if (!res.ok) {
+    setThemeMsg(data.error || `HTTP ${res.status}`, 'err');
+    // Spec §5.3: paint what the SERVER holds, not what this tab guessed.
+    // A non-2xx on that re-fetch yields {error} (safeJson never throws): fall back to the last
+    // CONFIRMED mode, never to an undefined theme (applyTheme would normalise it to 'system').
+    try { const d2 = await safeJson(await fetch('/api/settings')); if (mine === themeSeq) paintTheme(THEME_MODES.includes(d2.theme) ? d2.theme : previous); }
+    catch { if (mine === themeSeq) paintTheme(previous); }
+    return;
+  }
+  paintTheme(data.theme);
+}
+document.getElementById('theme-seg')?.addEventListener('click', (e) => {
+  const btn = e.target.closest && e.target.closest('button[data-theme-mode]');
+  if (btn) chooseTheme(btn.dataset.themeMode);
+});
+// Boot: the shell arrived with the stored mode on <html>; normalise it, sync the
+// meta, tell the orb, and seed `confirmedTheme` + the seg buttons from it (paintTheme,
+// not applyTheme: otherwise a click before the General GET resolves would remember
+// 'system' as `previous`). No fetch — the server already rendered the right attribute.
+// One worca:theme event fires here and none elsewhere at boot (boot routes to 'new';
+// loadSettings runs only on the General tab and on settings-changed).
+paintTheme(document.documentElement.dataset.theme);
+// System mode: the OS can flip underneath; the CSS follows on its own, the meta
+// and the orb need a nudge. Guarded — jsdom has no matchMedia.
+try {
+  const mq = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  if (mq && typeof mq.addEventListener === 'function') mq.addEventListener('change', () => applyTheme(document.documentElement.dataset.theme));
+} catch { /* no media queries here */ }
+
 function setAskLimitsMsg(text, kind) { setHintMsg('askLimitsMsg', text, kind); }
 function paintAskSettings(data) {
   const turns = document.getElementById('askMaxTurns');
@@ -8170,6 +8439,166 @@ function saveDebugSpawn() {
 document.getElementById('debugSpawnSave')?.addEventListener('click', saveDebugSpawn);
 document.getElementById('debugSpawnReset')?.addEventListener('click', () => postDebugSpawn({ debugSpawnEnabled: false }));
 
+// ---- Title generation card (#422) ----
+// A SELECT over the project-less catalog, never a text field: free text could
+// store an id resolveModelEnv cannot route, and the failure would only show up
+// as a missing title minutes into a run. Same optgroups + order as the New
+// Pipeline picker. `titleModelCatalog` is fetched on every Settings paint so the
+// options track catalog edits without a reload.
+const TITLE_MODEL_DEFAULT_LABEL = "Same as the run's model";
+let titleModelCatalog = [];
+function setTitleModelMsg(text, kind) { setHintMsg('titleModelMsg', text, kind); }
+async function fetchTitleModelCatalog() {
+  try {
+    const res = await fetch('/api/config');
+    const data = await safeJson(res);
+    return res.ok && Array.isArray(data.models) ? data.models : [];
+  } catch { return []; }
+}
+function buildTitleModelOptions(sel, stored) {
+  sel.innerHTML = '';
+  sel.appendChild(option('', TITLE_MODEL_DEFAULT_LABEL));
+  const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
+  // Legacy per-project entries are not global — titles are; hidden built-ins
+  // stay out unless one IS the stored pick (it still resolves).
+  const models = titleModelCatalog.filter((m) => m && m.custom !== 'project' && (!m.hidden || m.id === stored));
+  const group = (label, xs) => {
+    if (!xs.length) return;
+    const og = document.createElement('optgroup');
+    og.label = label;
+    for (const m of xs) og.appendChild(option(m.id, (m.label || m.id) + (m.custom === 'plugin' && m.plugin ? ` (${m.plugin})` : '')));
+    sel.appendChild(og);
+  };
+  group('Your models', models.filter((m) => m.custom && m.custom !== 'plugin').sort(byLabel));
+  group('From plugins', models.filter((m) => m.custom === 'plugin').sort(byLabel));
+  group('Built-in', models.filter((m) => !m.custom).sort(byLabel));
+  if (stored && !models.some((m) => m.id === stored)) {
+    // Loud degrade: the stored id left the catalog (plugin removed, entry deleted).
+    const o = option(stored, `${stored} — not installed`);
+    o.disabled = true;
+    sel.appendChild(o);
+  }
+  sel.value = stored;
+}
+async function paintTitleModelSettings(data) {
+  const sel = document.getElementById('titleModel');
+  if (!sel) return;
+  titleModelCatalog = await fetchTitleModelCatalog();
+  const stored = typeof data.titleModel === 'string' ? data.titleModel : '';
+  buildTitleModelOptions(sel, stored);
+  const eff = data.titleModelEffective || {};
+  let note = '', kind = '';
+  if (eff.source === 'env') {
+    note = `WORCA_TITLE_MODEL is set in the environment: titles use ${eff.model} regardless of this setting.`; kind = 'warn';
+  } else if (eff.stale) {
+    note = `Model "${eff.stale}" is no longer in the catalog — titles fall back to the run's model.`; kind = 'warn';
+  }
+  setHintMsg('titleModelEnvNote', note, kind);
+  const testBtn = document.getElementById('titleModelTest');
+  if (testBtn) testBtn.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled;
+}
+function postTitleModel(body) {
+  return postSettingsCard(body, {
+    setMsg: setTitleModelMsg, paint: paintTitleModelSettings,
+    savedText: 'Saved. Applies to the next title — no restart needed.',
+  });
+}
+document.getElementById('titleModelSave')?.addEventListener('click', () => {
+  const sel = document.getElementById('titleModel');
+  const opt = sel.options[sel.selectedIndex];
+  if (opt && opt.disabled) { setTitleModelMsg('that model is no longer installed — pick another or use the default', 'err'); return; }
+  postTitleModel({ titleModel: sel.value || '' });
+});
+document.getElementById('titleModelReset')?.addEventListener('click', () => postTitleModel({ titleModel: '' }));
+document.getElementById('titleModel')?.addEventListener('change', () => {
+  const sel = document.getElementById('titleModel');
+  const testBtn = document.getElementById('titleModelTest');
+  if (testBtn) testBtn.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled;
+});
+// Test = the Models-view Test button verbatim (POST /api/models/:id/test): one
+// tiny spawn through the id's catalog routing. Without it the first evidence of
+// a bad pick is a missing title three minutes into a run. Shared by BOTH model
+// cards (title generation and the Auto workflow model) — one implementation.
+async function testModelFromSettings(selectId, buttonId, setMsg) {
+  const sel = document.getElementById(selectId);
+  const btn = document.getElementById(buttonId);
+  const id = sel.value;
+  if (!id) return;
+  btn.disabled = true;
+  setMsg(`Testing ${id}…`);
+  try {
+    const res = await fetch(`/api/models/${encodeURIComponent(id)}/test`, { method: 'POST' });
+    const data = await safeJson(res);
+    if (!res.ok) setMsg(`✗ ${data.error || `HTTP ${res.status}`}`, 'err');
+    else if (data.ok) setMsg(`✓ ${id} replied: ${data.text}`);
+    else setMsg(`✗ ${data.hint || data.message}`, 'err');
+  } catch (e) {
+    setMsg(`✗ ${e.message}`, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+document.getElementById('titleModelTest')?.addEventListener('click', () => testModelFromSettings('titleModel', 'titleModelTest', setTitleModelMsg));
+
+// ---- Auto workflow model (spec D14 / §7.7): the model that classifies a task into a workflow.
+// Reuses fetchTitleModelCatalog (the project-less /api/config catalog), setHintMsg and
+// postSettingsCard. The option list is FLAT on purpose (no optgroups): one plain list.
+const AUTO_MODEL_DEFAULT_LABEL = 'Default (Sonnet-class)';
+function setAutoModelMsg(text, kind) { setHintMsg('autoModelMsg', text, kind); }
+function buildAutoModelOptions(sel, stored, catalog, stale = false) {
+  sel.innerHTML = '';
+  sel.appendChild(option('', AUTO_MODEL_DEFAULT_LABEL));
+  const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
+  const models = catalog.filter((m) => m && m.custom !== 'project' && (!m.hidden || m.id === stored)).sort(byLabel);
+  for (const m of models) sel.appendChild(option(m.id, (m.label || m.id) + (m.custom === 'plugin' && m.plugin ? ` (${m.plugin})` : '')));
+  // Only a MISSING model is condemned. fetchTitleModelCatalog returns [] on any
+  // non-OK/throw, so an unreachable catalog would otherwise disable Save and Test on
+  // a perfectly good setting — `stale` is the caller's verdict, not this list's.
+  if (stored && !models.some((m) => m.id === stored)) {
+    const o = option(stored, stale ? `${stored} — not installed` : stored);
+    o.disabled = stale;
+    sel.appendChild(o);
+  }
+  sel.value = stored;
+}
+async function paintAutoModelSettings(data) {
+  const sel = document.getElementById('autoModel');
+  if (!sel) return;
+  const catalog = await fetchTitleModelCatalog();                     // the same project-less /api/config catalog
+  const stored = typeof data.autoWorkflowModel === 'string' ? data.autoWorkflowModel : '';
+  // autoWorkflowModelEffective is {model, source} only (no `stale`, unlike titleModelEffective).
+  const eff = data.autoWorkflowModelEffective || {};
+  // The SERVER decides staleness: autoModelState() reports source 'settings' only when the
+  // stored id resolved against the real catalog, so anything else with an id stored means it
+  // did not. An older server sends no `source` at all — there the client catalog is the only
+  // evidence, and an EMPTY one is a failed GET, not an empty catalog, so it condemns nothing.
+  const stale = !!stored && (eff.source
+    ? (eff.source !== 'settings' && eff.source !== 'env')
+    : (catalog.length > 0 && !catalog.some((m) => m && m.id === stored)));
+  buildAutoModelOptions(sel, stored, catalog, stale);
+  const effModel = eff.model || 'the default model';
+  let note = '', kind = '';
+  if (eff.source === 'env') { note = `WORCA_AUTO_MODEL is set in the environment: Auto uses ${effModel} regardless of this setting.`; kind = 'warn'; }
+  else if (stale) { note = `Model "${stored}" is no longer in the catalog — Auto uses ${effModel} (the default).`; kind = 'warn'; }
+  else if (eff.source === 'settings') note = `Auto classifies with ${effModel}.`;
+  else note = `Auto classifies with ${effModel} (the default).`;
+  setHintMsg('autoModelEnvNote', note, kind);
+  const testBtn = document.getElementById('autoModelTest');
+  if (testBtn) testBtn.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled;
+}
+function postAutoModel(body) {
+  return postSettingsCard(body, { setMsg: setAutoModelMsg, paint: paintAutoModelSettings, savedText: 'Saved. Applies to the next Auto run — no restart needed.' });
+}
+document.getElementById('autoModelSave')?.addEventListener('click', () => {
+  const sel = document.getElementById('autoModel');
+  const opt = sel.options[sel.selectedIndex];
+  if (opt && opt.disabled) { setAutoModelMsg('that model is no longer installed — pick another or use the default', 'err'); return; }
+  postAutoModel({ autoWorkflowModel: sel.value || '' });
+});
+document.getElementById('autoModelReset')?.addEventListener('click', () => postAutoModel({ autoWorkflowModel: '' }));
+document.getElementById('autoModel')?.addEventListener('change', () => { const sel = document.getElementById('autoModel'); const b = document.getElementById('autoModelTest'); if (b) b.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled; });
+document.getElementById('autoModelTest')?.addEventListener('click', () => testModelFromSettings('autoModel', 'autoModelTest', setAutoModelMsg));
+
 // Browse… for the projects root: native OS dialog, in-app modal fallback —
 // the same two endpoints the add-project Browse button uses (app.js:3793).
 if (el.settingsProjectsRootBrowse) {
@@ -8292,8 +8721,17 @@ async function addMarketplaceFromInput() {
   if (!ok) return setPluginsMsg(data.error || 'add failed', 'err');
   el.marketplaceUrl.value = '';
   el.marketplaceAddRow.classList.add('hidden');
-  setPluginsMsg(`Added ${data.marketplace.name} (${data.marketplace.plugins.length} plugins).`, 'ok');
-  loadPluginsView();
+  // Reload FIRST: loadPluginsView() clears the message line as it starts, so a
+  // message set before it never survived.
+  await loadPluginsView();
+  if (data.linked) {
+    // The path was a single plugin folder (an Export… → Worca plugin result):
+    // the server linked it instead of registering a marketplace.
+    const n = (data.plugin.workflows?.imported || []).length;
+    setPluginsMsg(`Linked plugin "${data.plugin.name}" from ${data.plugin.dir} — ${n} pipeline template${n === 1 ? '' : 's'} added to your saved pipelines.`, 'ok');
+  } else {
+    setPluginsMsg(`Added ${data.marketplace.name} (${data.marketplace.plugins.length} plugins).`, 'ok');
+  }
 }
 
 function openInstallConsent(entry) {
@@ -8817,9 +9255,32 @@ function renderModelsViewBody() {
     plugins: d.plugin || [],
     predefined: d.predefined || [],
     efforts: d.efforts || [],
+    hideBuiltin: !!d.hideBuiltinModels,
     projectName: pp ? pp.split('/').pop() : '',
   }));
   el.modelsList.replaceChildren(frag);
+}
+
+// "Hide built-in models" (#422): one settings key, saved on change. Every picker
+// reads the flag off /api/config, so the refresh below repaints them all.
+async function saveHideBuiltinModels(cb) {
+  const wanted = cb.checked;
+  cb.disabled = true;
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hideBuiltinModels: wanted }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) { cb.checked = !wanted; return setModelsMsg(data.error || `HTTP ${res.status}`, 'err'); }
+    setModelsMsg(wanted ? 'Built-in models hidden from every picker. Runs that already use one keep working.' : 'Built-in models shown again.');
+    await refreshModelsEverywhere();
+  } catch (e) {
+    cb.checked = !wanted;
+    setModelsMsg(e.message, 'err');
+  } finally {
+    cb.disabled = false;
+  }
 }
 
 // "Edit a copy" prefill (design §9.6): create-mode editor seeded from a plugin
@@ -9125,6 +9586,10 @@ async function testModelFlow(btn) {
 }
 
 if (el.modelsList) {
+  el.modelsList.addEventListener('change', (ev) => {
+    const t = ev.target;
+    if (t && t.classList && t.classList.contains('mv-hide-builtin')) saveHideBuiltinModels(t);
+  });
   el.modelsList.addEventListener('click', (ev) => {
     const t = ev.target.closest('button');
     if (!t) return;
@@ -9593,6 +10058,7 @@ if (runListEl) {
     // delegation works for any dynamically-built card.
     const qbtn = e.target.closest && e.target.closest('.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort');
     if (qbtn) {
+      if (qbtn.closest('.qpanel-workflow')) return;        // workflow buttons bind directly (renderWorkflowBody)
       const card = qbtn.closest('.run-card');
       const runId = card && card.dataset.runId;
       const r = runId && runs.get(runId);
@@ -11434,6 +11900,7 @@ function hdDot() {
 
 function paintHdHeaderMeta(screen, record, data) {
   const st = data.state;
+  paintAutoBadge(screen.querySelector('.hd-row1 .auto-badge'), st && st.stepper);
   const meta = screen.querySelector('.hd-meta');
   meta.innerHTML = '';
   const { family, word } = histStatusMeta({ status: st.status });
@@ -12193,7 +12660,7 @@ function hdCommentIndex(list) {
   return byFile;
 }
 
-const hdUnresolved = (list) => (list || []).filter((c) => !c.resolved).length;
+const hdUnresolved = (list) => (list || []).filter((c) => !c.resolved && !c.parentId).length;   // threads, not rows (D4)
 
 function hdCmtStamp(iso) {
   const d = new Date(iso);
@@ -12211,29 +12678,105 @@ function hdRowFor(body, comment) {
   return body.querySelector(`.hd-dl-row[${attr}="${cssEscape(String(comment.line))}"]`);
 }
 
-// One comment card. Actions are wired to `ctx` (the per-tab controller) rather than
-// to captured DOM, so a repaint after a WS poke rebuilds them cleanly.
-function hdCommentCard(doc, comment, ctx, { detached = false } = {}) {
+const HD_CMT_SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** The three 14px stroke icons of the component: circle-minus / circle-plus for the
+ *  replies toggle, a speech bubble for Reply. currentColor, so they follow the button. */
+function hdCmtIcon(doc, kind) {
+  const svg = doc.createElementNS(HD_CMT_SVG_NS, 'svg');
+  for (const [k, v] of [['viewBox', '0 0 16 16'], ['width', '14'], ['height', '14'], ['fill', 'none'],
+    ['stroke', 'currentColor'], ['stroke-width', '1.5'], ['stroke-linecap', 'round'], ['stroke-linejoin', 'round'],
+    ['aria-hidden', 'true']]) svg.setAttribute(k, v);
+  const paths = kind === 'reply'
+    ? ['M3 3.75h10a1.25 1.25 0 0 1 1.25 1.25v5.5A1.25 1.25 0 0 1 13 11.75H7.5L4.5 14v-2.25H3A1.25 1.25 0 0 1 1.75 10.5V5A1.25 1.25 0 0 1 3 3.75Z', 'M5 7h6M5 9.25h4']
+    : ['M5.5 8h5', ...(kind === 'plus' ? ['M8 5.5v5'] : [])];
+  if (kind !== 'reply') {
+    const c = doc.createElementNS(HD_CMT_SVG_NS, 'circle');
+    c.setAttribute('cx', '8'); c.setAttribute('cy', '8'); c.setAttribute('r', '6.25');
+    svg.appendChild(c);
+  }
+  for (const d of paths) {
+    const p = doc.createElementNS(HD_CMT_SVG_NS, 'path');
+    p.setAttribute('d', d);
+    svg.appendChild(p);
+  }
+  return svg;
+}
+
+/** "Hide replies (2)" / "Show replies (2)" with the matching icon (D16). */
+function hdCmtToggleLabel(doc, btn, collapsed, n) {
+  btn.replaceChildren(hdCmtIcon(doc, collapsed ? 'plus' : 'minus'),
+    doc.createTextNode(`${collapsed ? 'Show' : 'Hide'} replies (${n})`));
+  btn.setAttribute('aria-expanded', String(!collapsed));
+}
+
+// A body is markdown (D15), rendered through the SAME sanitized pipeline as an Ask
+// answer — marked, then DOMPurify's allow-list — so a comment can never inject
+// markup. Until the renderer is ready (or if it failed to load) the body is plain
+// text: same words, no styling; buildHdDiff repaints once it is.
+function hdCmtBody(doc, text, cls = 'hd-cmt-body') {
+  const el = doc.createElement('div');
+  const out = hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' };
+  if (out.kind === 'md') {
+    el.className = `${cls} ask-md`;
+    el.appendChild(out.frag);
+    void hdMarkdown.highlight(el);
+  } else {
+    el.className = cls;
+    el.textContent = String(text ?? '');
+  }
+  return el;
+}
+
+/** The composer's inline-error idiom (`.hd-cmt-err`, hidden while `:empty`), reused
+ *  on a CARD when the server refuses one of its actions. Created lazily, above the
+ *  action row, so an ordinary card carries no extra node. */
+function hdCmtCardError(card, text) {
+  if (!card) return;
+  let el = card.querySelector(':scope > .hd-cmt-err');
+  if (!el) {
+    el = card.ownerDocument.createElement('div');
+    el.className = 'hd-cmt-err';
+    card.insertBefore(el, card.querySelector(':scope > .hd-cmt-foot'));
+  }
+  el.textContent = text;
+}
+
+// One comment card (D12): the thread's ROOT (tags, the detached anchor, the toggle
+// and the full action row) or a REPLY (`reply: true` — Delete, plus Reply on the
+// LAST one). Actions are wired to `ctx` (the per-tab controller) rather than to
+// captured DOM, so a repaint after a WS poke rebuilds them cleanly. `root` is the
+// thread's first comment (what Reply posts to); `threadEl` the thread element.
+function hdCommentCard(doc, comment, ctx, { detached = false, reply = false, last = false, replyCount = 0, root = null, threadEl = null } = {}) {
   const card = doc.createElement('div');
-  card.className = `hd-cmt-card${comment.resolved ? ' resolved' : ''}${detached ? ' detached' : ''}`;
+  card.className = `hd-cmt-card ${reply ? 'reply' : 'root'}${detached ? ' detached' : ''}`;
   card.dataset.commentId = comment.id;
 
   const head = doc.createElement('div');
   head.className = 'hd-cmt-head';
+  if (comment.author === 'ask') {
+    // The Worca mark, inline left of the name (D14). The user has no picture.
+    const mark = doc.createElement('span');
+    mark.className = 'hd-cmt-mark';
+    mark.setAttribute('aria-hidden', 'true');
+    head.appendChild(mark);
+  }
   const who = doc.createElement('span');
-  who.className = `hd-cmt-author ${comment.author === 'ask' ? 'ask' : 'user'}`;
-  who.textContent = comment.author === 'ask' ? 'Ask' : 'User';
-  const when = doc.createElement('span');
+  who.className = 'hd-cmt-author';
+  who.textContent = comment.author === 'ask' ? 'Worca' : 'You';
+  const when = doc.createElement('time');
   when.className = 'hd-cmt-time';
-  when.textContent = hdCmtStamp(comment.createdAt);
+  when.dateTime = comment.createdAt || '';
+  when.title = hdCmtStamp(comment.createdAt);
+  when.textContent = commentWhen(comment.createdAt);
   head.append(who, when);
-  if (comment.resolved) {
+  if (!reply && comment.resolved) {
     const tag = doc.createElement('span');
     tag.className = 'hd-cmt-tag';
     tag.textContent = 'Resolved';
     head.appendChild(tag);
   }
-  if (comment.sentRunId) {
+  if (!reply && comment.sentRunId) {
     const sent = doc.createElement('span');
     sent.className = 'hd-cmt-sent';
     sent.textContent = `sent to #${comment.sentRunId}`;
@@ -12241,7 +12784,7 @@ function hdCommentCard(doc, comment, ctx, { detached = false } = {}) {
   }
   card.appendChild(head);
 
-  if (detached) {
+  if (detached && !reply) {
     // The anchor could not be rendered (cut by the parse cap, a binary section, or
     // a path that is not in the patch at all). The comment is NEVER dropped — the
     // line_text snapshot is exactly what this case exists for. Anchoring is
@@ -12255,39 +12798,112 @@ function hdCommentCard(doc, comment, ctx, { detached = false } = {}) {
     card.append(where, quoted);
   }
 
-  const bodyEl = doc.createElement('div');
-  bodyEl.className = 'hd-cmt-body';
-  bodyEl.textContent = comment.body;        // textContent: comment bodies are never markup
-  card.appendChild(bodyEl);
+  card.appendChild(hdCmtBody(doc, comment.body));
 
-  const actions = doc.createElement('div');
-  actions.className = 'hd-cmt-actions';
-  const act = (cls, text, fn) => {
+  const foot = doc.createElement('div');
+  foot.className = 'hd-cmt-foot';
+  const act = (cls, text, fn, icon = null) => {
     const b = doc.createElement('button');
     b.type = 'button';
     b.className = `hd-cmt-btn ${cls}`;
-    b.textContent = text;
+    if (icon) b.appendChild(hdCmtIcon(doc, icon));
+    if (text) b.appendChild(doc.createTextNode(text));
     b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
     return b;
   };
-  actions.append(
-    act('hd-cmt-resolve', comment.resolved ? 'Reopen' : 'Resolve', () => { void ctx.setResolved(comment, !comment.resolved); }),
-    act('hd-cmt-delete', 'Delete', () => { void ctx.remove(comment); }),
-    act('hd-cmt-ask', 'Ask Worca', () => ctx.toAsk(comment)),
-  );
-  card.appendChild(actions);
+  const actions = doc.createElement('div');
+  actions.className = 'hd-cmt-actions';
+  // A thread root that carries a parentId is a STRAY — groupCommentThreads promotes
+  // a reply whose root is missing rather than drop it. It is still a reply to the
+  // store, which refuses Resolve on one (D2) and has no thread for Reply or Ask
+  // Worca to address, so it gets the reply foot: Delete and nothing else.
+  if (reply || comment.parentId) {
+    foot.appendChild(act('hd-cmt-delete', 'Delete', () => { void ctx.remove(comment); }));
+    if (reply && last) actions.appendChild(act('hd-cmt-reply', 'Reply', () => ctx.openReply(root, threadEl), 'reply'));
+  } else {
+    if (replyCount) {
+      const toggle = act('hd-cmt-toggle', '', () => ctx.toggleCollapsed(comment, threadEl, toggle));
+      hdCmtToggleLabel(doc, toggle, ctx.isCollapsed(comment.id), replyCount);
+      foot.appendChild(toggle);
+    } else {
+      foot.appendChild(doc.createElement('span'));   // keeps the actions on the right
+    }
+    actions.append(
+      act('hd-cmt-resolve', comment.resolved ? 'Reopen' : 'Resolve', () => { void ctx.setResolved(comment, !comment.resolved, card); }),
+      act('hd-cmt-ask', 'Ask Worca', () => ctx.toAsk(comment)),
+      act('hd-cmt-delete', 'Delete', () => { void ctx.remove(comment); }),
+      act('hd-cmt-reply', 'Reply', () => ctx.openReply(comment, threadEl), 'reply'),
+    );
+  }
+  if (actions.childElementCount) foot.appendChild(actions);
+  card.appendChild(foot);
   return card;
 }
 
-/** The inline composer, opened from a row's + button. */
-function hdCommentComposer(doc, anchor, ctx, onClose) {
+/** One row of the reply column: draws its own elbow off the rail (CSS), holds the card. */
+function hdReplyRow(doc, comment, ctx, { last, root, threadEl }) {
+  const row = doc.createElement('div');
+  row.className = `hd-cmt-reply-row ${comment.author === 'ask' ? 'ask' : 'user'}`;
+  row.appendChild(hdCommentCard(doc, comment, ctx, { reply: true, last, root, threadEl }));
+  return row;
+}
+
+/** One thread (D12): the root card, then — when there are replies — the reply
+ *  column. ctx.openReply appends the composing row to that column (creating it
+ *  for a thread without replies) and marks the thread data-draft. */
+function hdCommentThread(doc, thread, ctx, { detached = false } = {}) {
+  const { root, replies } = thread;
+  const el = doc.createElement('div');
+  el.className = `hd-cmt-thread${root.resolved ? ' resolved' : ''}${replies.length && ctx.isCollapsed(root.id) ? ' collapsed' : ''}`;
+  el.dataset.threadId = root.id;
+  el.appendChild(hdCommentCard(doc, root, ctx, { detached, replyCount: replies.length, threadEl: el }));
+  if (replies.length) {
+    const col = doc.createElement('div');
+    col.className = 'hd-cmt-replies';
+    replies.forEach((r, i) => col.appendChild(hdReplyRow(doc, r, ctx, { last: i === replies.length - 1, root, threadEl: el })));
+    el.appendChild(col);
+  }
+  return el;
+}
+
+/** The composer card (D15): a NEW comment from a row's + button (`anchor`), or a
+ *  REPLY at the end of a thread (`mode:'reply'`, `root`). Titled, with a Text /
+ *  Preview segmented control; the card itself carries the focus ring (CSS). */
+function hdCommentComposer(doc, anchor, ctx, onClose, { mode = 'comment', root = null } = {}) {
+  const isReply = mode === 'reply';
   const wrap = doc.createElement('div');
-  wrap.className = 'hd-cmt-composer';
+  wrap.className = `hd-cmt-card hd-cmt-composer${isReply ? ' reply' : ''}`;
+
+  const title = doc.createElement('div');
+  title.className = 'hd-cmt-composer-title';
+  const label = doc.createElement('span');
+  label.textContent = isReply ? 'Your reply' : 'New comment';
+  const tabs = doc.createElement('div');
+  tabs.className = 'hd-cmt-tabs';
+  tabs.setAttribute('role', 'tablist');
+  const tab = (text) => {
+    const b = doc.createElement('button');
+    b.type = 'button';
+    b.className = 'hd-cmt-tab';
+    b.setAttribute('role', 'tab');
+    b.textContent = text;
+    return b;
+  };
+  const tabText = tab('Text');
+  const tabPreview = tab('Preview');
+  tabs.append(tabText, tabPreview);
+  title.append(label, tabs);
+
   const ta = doc.createElement('textarea');
   ta.className = 'hd-cmt-input';
-  ta.rows = 3;
-  ta.placeholder = 'Leave a note on this line…';
-  ta.setAttribute('aria-label', `Comment on ${anchor.path} line ${anchor.line}`);
+  ta.rows = isReply ? 2 : 3;
+  ta.placeholder = isReply ? 'Reply…' : 'Leave a note on this line…';
+  ta.setAttribute('aria-label', isReply
+    ? `Reply to the comment on ${root.path} line ${root.line}`
+    : `Comment on ${anchor.path} line ${anchor.line}`);
+  const pv = doc.createElement('div');
+  pv.className = 'hd-cmt-preview hd-cmt-body';
+  pv.hidden = true;
   const msg = doc.createElement('div');
   msg.className = 'hd-cmt-err';
   const actions = doc.createElement('div');
@@ -12295,20 +12911,52 @@ function hdCommentComposer(doc, anchor, ctx, onClose) {
   const save = doc.createElement('button');
   save.type = 'button';
   save.className = 'hd-cmt-btn hd-cmt-save';
-  save.textContent = 'Comment';
+  save.textContent = isReply ? 'Reply' : 'Comment';
   const cancel = doc.createElement('button');
   cancel.type = 'button';
   cancel.className = 'hd-cmt-btn hd-cmt-cancel';
   cancel.textContent = 'Cancel';
-  actions.append(save, cancel);
-  wrap.append(ta, msg, actions);
+  actions.append(cancel, save);          // primary on the right
+  wrap.append(title, ta, pv, msg, actions);
 
+  const focus = () => { try { ta.focus(); } catch { /* detached */ } };
+  // Text / Preview. Preview renders the CURRENT draft through the same sanitized
+  // pipeline as a saved body; the textarea keeps the raw markdown, so Text loses
+  // nothing and Cmd+Enter (on `wrap`) saves from either tab.
+  const setMode = (preview) => {
+    tabText.setAttribute('aria-selected', String(!preview));
+    tabPreview.setAttribute('aria-selected', String(preview));
+    ta.hidden = preview;
+    pv.hidden = !preview;
+    if (!preview) { if (wrap.isConnected) focus(); return; }
+    // Preview hides the textarea, which is usually the focused element. Not every
+    // browser focuses a clicked button, and once focus leaves the card entirely
+    // `.hd-cmt-composer:focus-within` drops the ring AND the keydown listener on
+    // `wrap` stops receiving Cmd+Enter — so put it on the tab explicitly.
+    if (wrap.isConnected) { try { tabPreview.focus(); } catch { /* detached */ } }
+    const text = ta.value.trim();
+    const out = text && hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' };
+    pv.className = `hd-cmt-preview hd-cmt-body${out.kind === 'md' ? ' ask-md' : ''}`;
+    if (out.kind === 'md') { pv.replaceChildren(out.frag); void hdMarkdown.highlight(pv); }
+    else pv.textContent = text;          // '' leaves it :empty → the CSS "Nothing to preview yet" hint
+  };
+  setMode(false);
+  tabText.addEventListener('click', (e) => { e.stopPropagation(); setMode(false); });
+  tabPreview.addEventListener('click', (e) => { e.stopPropagation(); setMode(true); });
+
+  // `save.disabled` gates the BUTTON only — the Cmd+Enter listener lives on `wrap`
+  // and fires whatever the button's state — so an impatient second press posted the
+  // same body twice. One flag in this closure covers both paths; the finally clears
+  // it even when the request throws, so a failed save is still retryable.
+  let busy = false;
   const submit = async () => {
     const text = ta.value.trim();
-    if (!text) return;
+    if (!text || busy) return;
+    busy = true;
     save.disabled = true;
-    const err = await ctx.create(anchor, text);
-    save.disabled = false;
+    let err;
+    try { err = isReply ? await ctx.reply(root, text) : await ctx.create(anchor, text); }
+    finally { busy = false; save.disabled = false; }
     if (err) { msg.textContent = err; return; }
     onClose();
   };
@@ -12331,7 +12979,7 @@ function hdCommentComposer(doc, anchor, ctx, onClose) {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.isComposing) { e.preventDefault(); void submit(); }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); }
   });
-  return { wrap, focus: () => { try { ta.focus(); } catch { /* detached */ } } };
+  return { wrap, focus };
 }
 
 // File rows for the Diff tab. Single-project: results.newFiles + changedFiles.
@@ -12665,7 +13313,8 @@ function buildHdDiff(sec, record, data) {
   // ---- the comment layer ---------------------------------------------------
   const cstate = { comments: [], byFile: new Map(), patchAvailable: false, treeSig: null,
     guarded: new Set(),      // section keys the protected-path floor always refuses (m16)
-    collapsed: new Set() };  // dir keys the user collapsed; survives a tree re-render (m11)
+    collapsed: new Set(),       // dir keys the user collapsed; survives a tree re-render (m11)
+    collapsedThreads: new Set() };   // thread root ids the user folded (D16); local, survives a poke repaint
   let commentsPromise = null;
   let lastPick = null;   // { entry, key } — the file currently selected
   let lastMeta = null;   // diffSectionMeta of the body currently in the pane
@@ -12725,19 +13374,91 @@ function buildHdDiff(sec, record, data) {
       await reload();
       return null;
     },
-    async setResolved(comment, resolved) {
+    /** @returns {Promise<string|null>} an error message to show inline, or null */
+    async reply(root, body) {
       try {
-        await fetch(historyCommentsUrl(record.id, record, `/${comment.id}`), {
+        const res = await fetch(historyCommentsUrl(record.id, record, `/${root.id}/replies`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ body }),
+        });
+        if (!res.ok) {
+          let m = `could not save (${res.status})`;
+          try { const b = await res.json(); if (b && b.error) m = b.error; } catch { /* keep the fallback */ }
+          return m;
+        }
+      } catch { return 'network error — the reply was not saved'; }
+      await reload();
+      return null;
+    },
+    replyCountOf: (root) => ctx.for(root.projectKey, root.path).filter((c) => c.parentId === root.id).length,
+    isCollapsed: (rootId) => cstate.collapsedThreads.has(rootId),
+    /** Local only (D16): the choice lives in this tab's state, so a poke repaint keeps it. */
+    toggleCollapsed(root, threadEl, btn) {
+      const on = !cstate.collapsedThreads.has(root.id);
+      if (on) cstate.collapsedThreads.add(root.id); else cstate.collapsedThreads.delete(root.id);
+      threadEl?.classList.toggle('collapsed', on);
+      if (btn) hdCmtToggleLabel(document, btn, on, ctx.replyCountOf(root));
+    },
+    /** Open the reply composer as the last row of `threadEl`'s column — one open
+     *  draft per pane (D13). The thread is marked data-draft so a poke leaves it
+     *  alone until the draft closes, at which point the thread catches up. */
+    openReply(root, threadEl) {
+      if (!threadEl) return;
+      const body = threadEl.closest('.hd-diff-body');
+      for (const open of body ? body.querySelectorAll('.hd-cmt-thread[data-draft="1"]') : []) {
+        if (open === threadEl) continue;
+        const col = open.querySelector(':scope > .hd-cmt-replies');
+        col?.querySelector(':scope > .hd-cmt-reply-row.composing')?.remove();
+        if (col && !col.childElementCount) col.remove();
+        delete open.dataset.draft;
+      }
+      if (threadEl.dataset.draft === '1') { threadEl.querySelector('.hd-cmt-input')?.focus(); return; }
+      // A folded thread opens so the draft is visible; the fold is forgotten.
+      cstate.collapsedThreads.delete(root.id);
+      threadEl.classList.remove('collapsed');
+      const toggle = threadEl.querySelector(':scope > .hd-cmt-card > .hd-cmt-foot > .hd-cmt-toggle');
+      if (toggle) hdCmtToggleLabel(document, toggle, false, ctx.replyCountOf(root));
+      let col = threadEl.querySelector(':scope > .hd-cmt-replies');
+      if (!col) { col = document.createElement('div'); col.className = 'hd-cmt-replies'; threadEl.appendChild(col); }
+      threadEl.dataset.draft = '1';
+      const row = document.createElement('div');
+      row.className = 'hd-cmt-reply-row composing';
+      const { wrap, focus } = hdCommentComposer(document, null, ctx, () => {
+        row.remove();
+        if (!col.childElementCount) col.remove();
+        delete threadEl.dataset.draft;
+        repaintCards();      // anything a poke brought while drafting lands now
+      }, { mode: 'reply', root });
+      row.appendChild(wrap);
+      col.appendChild(row);
+      focus();
+    },
+    async setResolved(comment, resolved, card = null) {
+      try {
+        const res = await fetch(historyCommentsUrl(record.id, record, `/${comment.id}`), {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ resolved }),
         });
+        // A refusal used to be swallowed whole: the button did nothing and said
+        // nothing. Same inline idiom as a failed save in the composer — and no
+        // reload(), which would rebuild the card and wipe the message off it.
+        if (!res.ok) {
+          let m = `could not update (${res.status})`;
+          try { const b = await res.json(); if (b && b.error) m = b.error; } catch { /* keep the fallback */ }
+          hdCmtCardError(card, m);
+          return;
+        }
       } catch { /* the WS poke or the next open corrects it */ }
       await reload();
     },
     async remove(comment) {
+      const replies = comment.parentId ? 0 : ctx.replyCountOf(comment);
       const ok = await confirmModal({
-        title: 'Delete this comment?',
-        message: 'Comments cannot be recovered. This does not change the diff or the run.',
+        title: comment.parentId ? 'Delete this reply?' : 'Delete this comment?',
+        message: `${replies
+          ? `This comment and its ${replies} ${replies === 1 ? 'reply' : 'replies'} cannot`
+          : 'Comments cannot'} be recovered. This does not change the diff or the run.`,
         confirmLabel: 'Delete',
         danger: true,
       });
@@ -12747,7 +13468,7 @@ function buildHdDiff(sec, record, data) {
       } catch { /* as above */ }
       await reload();
     },
-    toAsk(comment) { askAboutDiffComment(comment); },
+    toAsk(comment) { askAboutDiffComment(comment, ctx.replyCountOf(comment)); },
   };
 
   // A comment can name a path the patch does not contain (or the patch may be gone
@@ -12822,18 +13543,33 @@ function buildHdDiff(sec, record, data) {
     return firstNode;
   }
 
-  // Cards for every comment of this file: under its row when that row is in the
-  // CURRENT window, in the detached block otherwise. Idempotent — a later window
-  // never doubles a card, and a comment whose window has just materialised loses
-  // its detached copy in the same pass.
+  // Threads for every comment of this file: under the root's row when that row is
+  // in the CURRENT window, in the detached block otherwise. Idempotent — a later
+  // window never doubles a thread, a thread already on screen is refreshed IN PLACE
+  // (its replies may have grown), and a thread with an open reply draft is left
+  // exactly as it is (D13).
   function attachComments(body, meta) {
-    const list = ctx.for(meta.project, meta.path);
+    const threads = groupCommentThreads(ctx.for(meta.project, meta.path));
+    const live = new Set(threads.map((t) => t.root.id));
     const orphans = [];
-    for (const comment of list) {
-      const row = hdRowFor(body, comment);
-      if (!row) { orphans.push(comment); continue; }
-      body.querySelector(`.hd-cmt-detached [data-comment-id="${cssEscape(comment.id)}"]`)?.remove();
-      if (body.querySelector(`.hd-cmt-block [data-comment-id="${cssEscape(comment.id)}"]`)) continue;
+    for (const thread of threads) {
+      const { root } = thread;
+      const row = hdRowFor(body, root);
+      if (!row) { orphans.push(thread); continue; }
+      // The row is in the window now, so this thread belongs under it — UNLESS the
+      // detached copy has an open reply draft (D13): re-homing it would delete the
+      // composer and the typed text with it. Leave it detached (orphans keeps the
+      // block alive and paintDetached refuses to rebuild a drafting thread) and do
+      // NOT also render it under the row, which would show one thread twice. The
+      // draft's own close calls repaintCards(), and that pass re-homes it.
+      const away = body.querySelector(`.hd-cmt-detached [data-thread-id="${cssEscape(root.id)}"]`);
+      if (away && away.dataset.draft === '1') { orphans.push(thread); continue; }
+      away?.remove();
+      const existing = body.querySelector(`.hd-cmt-block [data-thread-id="${cssEscape(root.id)}"]`);
+      if (existing) {
+        if (existing.dataset.draft !== '1') existing.replaceWith(hdCommentThread(document, thread, ctx));
+        continue;
+      }
       // A context row carries BOTH numbers, so one row can host an old-side and a
       // new-side block: match on line AND side, and scan the whole run of blocks
       // already following the row rather than only its immediate sibling. A new
@@ -12846,23 +13582,30 @@ function buildHdDiff(sec, record, data) {
         n && n.classList.contains(HD_CMT_BLOCK); n = n.nextElementSibling) {
         tail = n;
         if (n.dataset.composer !== '1'
-          && n.dataset.line === String(comment.line)
-          && n.dataset.side === comment.side) { block = n; break; }
+          && n.dataset.line === String(root.line)
+          && n.dataset.side === root.side) { block = n; break; }
       }
       if (!block) {
         block = document.createElement('div');
         block.className = HD_CMT_BLOCK;
-        block.dataset.line = String(comment.line);
-        block.dataset.side = comment.side;
+        block.dataset.line = String(root.line);
+        block.dataset.side = root.side;
         tail.after(block);
       }
-      block.appendChild(hdCommentCard(document, comment, ctx));
+      block.appendChild(hdCommentThread(document, thread, ctx));
+    }
+    // A thread deleted elsewhere (another tab, Ask) leaves; a block left empty goes too.
+    for (const stale of body.querySelectorAll('.hd-cmt-block [data-thread-id]')) {
+      if (!live.has(stale.dataset.threadId) && stale.dataset.draft !== '1') stale.remove();
+    }
+    for (const b of body.querySelectorAll(':scope > .hd-cmt-block')) {
+      if (b.dataset.composer !== '1' && !b.childElementCount) b.remove();
     }
     paintDetached(body, orphans);
   }
 
-  // A comment whose anchor is not renderable still shows — as a detached card at
-  // the BOTTOM of the pane, below the truncation / no-textual-diff note.
+  // A thread whose root anchor is not renderable still shows — at the BOTTOM of the
+  // pane, below the truncation / no-textual-diff note.
   //
   // The block is re-appended on EVERY call, not only when it is created: `tail` is
   // null for any file that is not truncated, and hdDiffAppendWindow's
@@ -12883,13 +13626,17 @@ function buildHdDiff(sec, record, data) {
       block.appendChild(head);
     }
     body.appendChild(block);   // create OR re-home: always the last child
-    const keep = new Set(orphans.map((c) => c.id));
-    for (const card of block.querySelectorAll('[data-comment-id]')) {
-      if (!keep.has(card.dataset.commentId)) card.remove();
+    const keep = new Set(orphans.map((t) => t.root.id));
+    for (const el of block.querySelectorAll('[data-thread-id]')) {
+      if (!keep.has(el.dataset.threadId) && el.dataset.draft !== '1') el.remove();
     }
-    for (const comment of orphans) {
-      if (block.querySelector(`[data-comment-id="${cssEscape(comment.id)}"]`)) continue;
-      block.appendChild(hdCommentCard(document, comment, ctx, { detached: true }));
+    for (const thread of orphans) {
+      const existing = block.querySelector(`[data-thread-id="${cssEscape(thread.root.id)}"]`);
+      if (existing) {
+        if (existing.dataset.draft !== '1') existing.replaceWith(hdCommentThread(document, thread, ctx, { detached: true }));
+        continue;
+      }
+      block.appendChild(hdCommentThread(document, thread, ctx, { detached: true }));
     }
   }
 
@@ -12900,7 +13647,8 @@ function buildHdDiff(sec, record, data) {
     const body = pane.querySelector('.hd-diff-body');
     if (!body || !lastMeta) return;
     for (const el of body.querySelectorAll(':scope > .hd-cmt-block, :scope > .hd-cmt-detached')) {
-      if (el.dataset.composer === '1') continue;   // never destroy an open draft
+      if (el.dataset.composer === '1') continue;                          // never destroy an open draft
+      if (el.querySelector('.hd-cmt-thread[data-draft="1"]')) continue;   // nor an open reply draft — attachComments refreshes its siblings in place (D13)
       el.remove();
     }
     attachComments(body, lastMeta);
@@ -13103,6 +13851,10 @@ function buildHdDiff(sec, record, data) {
   // Publish the poke target BEFORE the first fetch settles: a mutation from another
   // tab can land while this one is still loading.
   hdCommentState = { key: hdStoreKey(record), id: record.id, reload };
+  // Bodies are markdown (D15). The renderer loads lazily, so the first paint may be
+  // plain text; repaint the cards once it is ready (a no-op when it already was,
+  // and nothing happens when it failed — plain text is the fallback, not an error).
+  void hdMarkdown.ensure().then((ok) => { if (ok && hdPaneLive()) repaintCards(); });
   void ensureComments().then(() => {
     if (!hdPaneLive()) return;
     // Synthetic rows may appear now (a comment on a path the patch never had, or a
@@ -14461,6 +15213,49 @@ function progressText(r) {
   return `${done}/${total} done`;
 }
 
+// ---- Ask Worca run store (spec seam 2): the chat's progress cards read the SAME run models the Running list
+// paints, through one snapshot shape (ui/public/ask-run-card.mjs). Snapshots are plain data built on demand;
+// `decor` is the memoised static bag, so a card can skip the graph pass on an unchanged generation. ----
+const askRunListeners = new Set();
+function askRunSnapshot(r) {
+  const graph = isGraphRun(r);
+  const decor = graph ? runDecorFor(r, 'static') : null;
+  return {
+    source: 'live', runId: r.runId, pipelineId: r.pipelineId || null, kind: r.kind || 'run',
+    title: r.title || '', projectKey: null, workspaceId: r.workspaceId || null, projectDir: r.projectDir || '',
+    projectNames: Array.isArray(r.projectNames) ? r.projectNames : null,
+    status: r.status, pauseReason: r.pauseReason || null, pendingQuestion: r.pendingQuestion || null,
+    live: isLive(r), terminal: !!r._finished || isTerminalStatus(r.status),
+    startedAt: r.startedAt || null, elapsedMs: liveTotalMs(r.steps, Date.now()), costUsd: r.totalCostUsd || 0,
+    progress: decor ? decor.progress : null, active: graph ? activeNodes(r) : [],
+    stepper: graph ? r.stepper : null, decor,
+  };
+}
+const askRunStore = Object.freeze({
+  get(runId) { const r = runId ? runs.get(runId) : null; return r && isPipelineRun(r) ? askRunSnapshot(r) : null; },
+  byPipeline(pipelineId) {
+    if (!pipelineId) return null;
+    // D23: a resumed pipeline can leave its superseded lineage in this Map — another tab's paused entry (only the
+    // acting tab deletes it, resumeRunFromCard/resumePipeline), a History resume whose paused run had no log lines
+    // to match — and Map order lists that dead entry FIRST. The lineage still live wins; among settled ones the
+    // newest (orderKey, minted once per runId) does.
+    let best = null;
+    for (const r of runs.values()) {
+      if (!isPipelineRun(r) || r.pipelineId !== pipelineId) continue;
+      if (!best || (isLive(r) && !isLive(best)) || (isLive(r) === isLive(best) && (r.orderKey || 0) > (best.orderKey || 0))) best = r;
+    }
+    return best ? askRunSnapshot(best) : null;
+  },
+  subscribe(fn) { askRunListeners.add(fn); return () => { askRunListeners.delete(fn); }; },
+});
+// Test hook — assigned HERE, after the const, never inside the window.__np literal at :2183: that literal is built
+// at module evaluation, when this const is still in its temporal dead zone (the trap app.js:2176-2178 documents).
+if (typeof window !== 'undefined' && window.__np) window.__np.askRunStore = askRunStore;
+/** Every per-run frame ends here (the dispatcher tail, run-created, the hello merge): the chat's cards decide what to repaint. */
+function pokeAskRuns(runId, type) {
+  for (const fn of askRunListeners) { try { fn(runId, type); } catch { /* a chat listener never breaks a frame */ } }
+}
+
 /** History Overview DURATION sub-line: `9 executions · 2 loop deliveries`. */
 function histCountsLine(st) {
   const d = decorFromState(st, { live: false, now: 0 });
@@ -14512,6 +15307,21 @@ function startedLabel(startedAt) {
   return String(startedAt);
 }
 
+/** Spec §7.5 / A11: the Auto badge. `Auto` while deciding, `Auto → ‹adopted name›` after adoption
+ *  (the adopted manifest is rebuilt from the workflow row, so template.name IS the workflow name). */
+function paintAutoBadge(el, stepper) {
+  if (!el) return;
+  const auto = stepper && stepper.auto;
+  if (!auto) { el.hidden = true; el.textContent = ''; el.title = ''; return; }
+  const name = (stepper.template && stepper.template.name) || '';
+  const decided = auto.status === 'decided' && name;
+  el.hidden = false;
+  el.textContent = decided ? `Auto → ${name}` : 'Auto';
+  el.title = !decided ? 'Auto is deciding the workflow'
+    : auto.via === 'reused' ? `Auto reused the saved workflow "${name}"` : `Auto created the workflow "${name}"`;
+  el.classList.toggle('is-deciding', !decided);
+}
+
 // Status-pill copy map (committed — no '?'). Returns { family, text }.
 // pausing/paused are checked BEFORE the pendingQuestion state so an in-flight
 // pause is never mislabeled "awaiting answers".
@@ -14530,7 +15340,7 @@ function statusPill(r) {
   // Same family as `paused`: an interrupted run is parked and resumable, and
   // PAUSED_STATUSES (app.js:10286) already treats it that way.
   if (r.status === 'interrupted') return { family: 'amber', text: 'Interrupted' };
-  if (r.pendingQuestion != null) return { family: 'amber', text: 'Paused · awaiting answers' };
+  if (r.pendingQuestion != null) return { family: 'amber', text: r.pendingQuestion.kind === 'workflow' ? 'Paused · your decision' : 'Paused · awaiting answers' };
   if (r.status === 'starting') return { family: 'peach', text: 'Starting' };
   if (r.status === 'done') return { family: 'green', text: 'Done' };
   if (r.status === 'stopped') return { family: 'red', text: 'Stopped' };
@@ -14595,7 +15405,7 @@ function renderRunMeta(r, root = r.el) {
   const prog = root.querySelector('.rc-prog');
   if (prog) {
     const d = isGraphRun(r) ? runDecorFor(r).progress : null;
-    prog.hidden = !d;
+    prog.hidden = !d || !d.total;        // a deciding Auto run has 0 agent nodes: no "0/0" (A33)
     if (d) prog.querySelector('.rc-prog-text').textContent = `${d.done}/${d.total}`;
   }
 
@@ -14813,6 +15623,9 @@ function nodeLabelLookup(stepper) {
   if (isGraphManifest(stepper)) {
     const g = {};
     for (const n of stepper.graph.nodes) { if (n && n.id) g[n.id] = n.label || n.id; }
+    // The bookend cells (preflight/done) are NOT in graph.nodes, and a sub-agent group can be keyed by one
+    // (Auto's classifier rows sit under `preflight`) — without this the head would read the raw id.
+    for (const cell of Array.isArray(stepper.steps) ? stepper.steps : []) for (const n of cell.nodes || []) if (n && n.id && !g[n.id]) g[n.id] = n.label || n.id;
     return (id) => g[id] || id;
   }
   const m = manifestFor(stepper);
@@ -14868,7 +15681,7 @@ function paintLegacyStrip(host, manifest, steps) {
     const el = document.createElement('span');
     el.className = `rchip is-${chip.status}`;
     el.dataset.id = chip.id;
-    if (chip.color) el.style.setProperty('--c', COMPOSER_COLORS[chip.color] || '#ccc');
+    if (chip.color) el.style.setProperty('--c', COMPOSER_COLORS[chip.color] || 'var(--ink-3)');
     el.textContent = chip.text;
     strip.appendChild(el);
   }
@@ -14881,7 +15694,65 @@ function paintLegacyStrip(host, manifest, steps) {
 // the v1 arm needs and `decor` cannot carry: every caller passes decor = null on
 // the v1 path, so the strip takes its rows explicitly.
 const GRAPH_MOUNTS = new WeakMap();   // .run-flow element -> { m, ctx }
+const AUTO_PLACEHOLDERS = new WeakMap();   // .run-flow element -> { box, label, orb }
+/** Spec §7.3: the Auto bootstrap manifest IS a v2 manifest with zero nodes (isGraphManifest is
+ *  true), so this branch runs BEFORE the mount. Live: orb + "Auto is deciding…" / "Waiting for your
+ *  decision"; parked mid-decision: a still "Paused before deciding" (resume re-decides); frozen
+ *  (decor.live === false and not parked): a still line — an orb on a dead run would lie (A24). */
+function paintAutoDeciding(host, decor) {
+  const run = decor && decor.run;
+  const live = !(decor && decor.live === false);
+  // A24 belongs to a run that can never decide again. A run PARKED mid-decision can:
+  // the resume point keeps `auto.status` at 'deciding' and `resume()` re-enters
+  // `_decideTopology` (src/core/orchestrator.mjs:147-157), and a parked run is
+  // resumable from the Running card AND from History. So the frozen line is reserved
+  // for a non-live run that is not parked; a park says so. PAUSED_STATUSES (:11022) is
+  // the app's own parked set — deliberately not isTerminalStatus, which counts
+  // 'interrupted' as over.
+  const parked = PAUSED_STATUSES.includes(String((run && run.status) || '').toLowerCase());
+  const frozen = !live && !parked;
+  const waiting = !!(run && run.pendingQuestion && run.pendingQuestion.kind === 'workflow');
+  const text = frozen ? 'Auto did not decide a workflow'
+    : !live ? 'Paused before deciding'
+      : waiting ? 'Waiting for your decision' : 'Auto is deciding the workflow…';
+  let slot = AUTO_PLACEHOLDERS.get(host);
+  if (!slot) {
+    const mounted = GRAPH_MOUNTS.get(host);
+    if (mounted) { mounted.m.destroy(); GRAPH_MOUNTS.delete(host); }   // a resumed run re-entering `deciding` (A28)
+    host.classList.remove('gv-host');                                   // mountRunGraph's absolute-position class
+    host.replaceChildren();
+    host.classList.add('auto-deciding-host');
+    const box = document.createElement('div');
+    box.className = 'auto-deciding ask-thinking';
+    const label = document.createElement('span');
+    label.className = 'ask-thinking-label auto-deciding-label';
+    box.appendChild(label);
+    host.appendChild(box);
+    slot = { box, label, orb: null };
+    AUTO_PLACEHOLDERS.set(host, slot);
+  }
+  // The orb follows `live` on EVERY repaint, not just on construction: the same host
+  // survives the run pausing, stopping or resuming while Auto is still deciding, and a
+  // canvas that keeps spinning on a parked run is the lie A24 was written to prevent.
+  // createThinkingOrb starts its own RAF loop at construction, honours prefers-reduced-motion
+  // itself, and registers a `worca:theme` document listener that `stop()` does not remove
+  // (module limitation shared with the Ask panel) — so build it only while live.
+  if (slot.orb && !live) { slot.orb.stop(); slot.orb.el.remove(); slot.orb = null; }
+  else if (!slot.orb && live) { slot.orb = createThinkingOrb({ doc: document, win: window, size: 22 }); slot.box.prepend(slot.orb.el); }
+  if (slot.label.textContent !== text) slot.label.textContent = text;
+  slot.box.classList.toggle('is-waiting', waiting);
+}
+function dropAutoPlaceholder(host) {
+  const slot = AUTO_PLACEHOLDERS.get(host);
+  if (!slot) return;
+  if (slot.orb) slot.orb.stop();
+  slot.box.remove();
+  host.classList.remove('auto-deciding-host');
+  AUTO_PLACEHOLDERS.delete(host);
+}
 function paintGraphFor(host, stepper, decor, legacySteps) {
+  if (host && stepper && stepper.auto && stepper.auto.status === 'deciding') { paintAutoDeciding(host, decor); return; }
+  if (host) dropAutoPlaceholder(host);
   if (!isGraphManifest(stepper)) {
     if (host && stepper) paintLegacyStrip(host, stepper, legacySteps);
     else if (host) host.replaceChildren();
@@ -14909,10 +15780,12 @@ function paintGraphFor(host, stepper, decor, legacySteps) {
  *  ResizeObserver, which `host.innerHTML = ''` alone would leak. */
 function destroyGraphMounts(root) {
   if (!root || typeof root.querySelectorAll !== 'function') return;
+  disposeQpanelsIn(root);
   for (const host of root.querySelectorAll('.run-flow.gv-host')) {
     const slot = GRAPH_MOUNTS.get(host);
     if (slot) { slot.m.destroy(); GRAPH_MOUNTS.delete(host); }
   }
+  for (const host of root.querySelectorAll('.run-flow.auto-deciding-host')) dropAutoPlaceholder(host);
 }
 
 /** The ONE writer of a run's log filter from outside its own bar (footer rows;
@@ -15216,7 +16089,9 @@ function paintStepper(r) {
   if (!r.el) return;
   const host = r.el.querySelector('.run-flow');
   if (!host) return;
-  if (isGraphRun(r) && r.el.dataset.density === 'compact') return;   // locked: compact density renders NO graph
+  // locked: compact density renders NO graph — but release the deciding placeholder
+  // first, or its orb keeps its RAF canvas alive behind a `display:none` card body.
+  if (isGraphRun(r) && r.el.dataset.density === 'compact') { dropAutoPlaceholder(host); return; }
   paintGraphFor(host, r.stepper, isGraphRun(r) ? runDecorFor(r, 'static') : null, r.steps);
 }
 
@@ -15261,14 +16136,16 @@ function paintRunCard(r) {
     wordEl.textContent = text;
     wordEl.className = `rc-status-word st-${family}`;
   }
+  paintAutoBadge(r.el.querySelector('.rc-acts .auto-badge'), r.stepper);
 
   // Question-count pill in the action cluster (replaces the foot chip's
   // "<phase> paused · N questions" copy).
   const qpill = r.el.querySelector('.rc-qpill');
   if (qpill) {
-    const n = r.pendingQuestion != null ? questionCount(r.pendingQuestion) : 0;
+    const pq = r.pendingQuestion;
+    const n = pq != null ? questionCount(pq) : 0;
     qpill.hidden = n === 0;
-    qpill.textContent = n ? `${n} question${n === 1 ? '' : 's'}` : '';
+    qpill.textContent = !n ? '' : pq.kind === 'workflow' ? 'proposal' : `${n} question${n === 1 ? '' : 's'}`;
   }
 
   // Density: the root attribute selects which body the stylesheet shows.
@@ -15433,7 +16310,8 @@ function paintRunList(list, rlist, emptyMsg) {
     prev = r.el;
   }
   [...list.children].forEach((c) => {
-    if (c.dataset && c.dataset.runId && !seen.has(c.dataset.runId)) c.remove();
+    // Release the leaving card's mounts, orbs and panel resources before dropping its DOM (A34).
+    if (c.dataset && c.dataset.runId && !seen.has(c.dataset.runId)) { destroyGraphMounts(c); c.remove(); }
   });
   if (!rlist.length) list.innerHTML = `<div class="run-empty">${emptyMsg}</div>`;
 }
@@ -15668,6 +16546,12 @@ function paintRdQuestions(screen, r) {
   const key = pq
     ? `${pq.id || 'pending'}|${pq.kind || ''}|${Array.isArray(pq.questions) ? pq.questions.length : (Array.isArray(pq.issues) ? pq.issues.length : 0)}`
     : '';
+  // Un-hide BEFORE the rebuild: index.html ships .rd-questions hidden, and a workflow
+  // body measures its graph host the moment it is attached (renderWorkflowBody's
+  // handle.relayout()). Inside a hidden host clientWidth is 0, so the flow would lay
+  // out at the 702 default and the ResizeObserver would re-lay it a frame later — a
+  // visible flash on top of the wr-rise entry. The card path already un-hides first.
+  host.hidden = pq == null;                    // drives the wr-rise entry
   if (panel && panel.dataset.qid !== key) {
     renderQpanel(r, host);                     // host contains the .qpanel node
     // Stamp '' rather than deleting: `clearQpanel` already removed the attribute,
@@ -15682,7 +16566,6 @@ function paintRdQuestions(screen, r) {
     // `if (r._answering) return;` and die silently. Re-apply from the model.
     if (r._answering) setPanelBusy(r, true);
   }
-  host.hidden = pq == null;                    // drives the wr-rise entry
 }
 
 // { screen, runId } the detail's Discard-worktree listener is currently bound to.
@@ -15814,6 +16697,7 @@ el.runDetail?.addEventListener('click', (e) => {
   const qbtn = e.target.closest && e.target.closest(
     '.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort');
   if (!qbtn) return;
+  if (qbtn.closest('.qpanel-workflow')) return;            // same guard, early-return shape
   if (qbtn.classList.contains('gate-continue')) postAnswer(r, { decision: 'continue' });
   else if (qbtn.classList.contains('gate-another')) postAnswer(r, { decision: 'another' });
   else if (qbtn.classList.contains('recovery-retry')) postAnswer(r, { decision: 'retry' });
@@ -15838,6 +16722,7 @@ function rdDot() {
 
 function paintRdHeader(screen, r) {
   screen.querySelector('.rd-title').textContent = r.title || r.runId;
+  paintAutoBadge(screen.querySelector('.rd-row1 .auto-badge'), r.stepper);
 
   // Status pill: statusPill's family + word (spec §4.3 pins it as the source).
   const { family, text } = statusPill(r);
@@ -16495,10 +17380,13 @@ if (_timerTick && typeof _timerTick.unref === 'function') _timerTick.unref();
 
 // Append a reference to the chat composer WITHOUT sending, so several comments can
 // stack and the user presses send once. Plain text: the [worca context] block is
-// server-built and any attempt to forge one here is flattened server-side.
-function askAboutDiffComment(comment) {
+// server-built and any attempt to forge one here is flattened server-side. A thread
+// that already has replies says so, so the model reads them (list_diff_comments
+// nests them) before it answers in the thread.
+function askAboutDiffComment(comment, replyCount = 0) {
   const where = `${comment.path}:${comment.line} (${comment.side})`;
-  askPanel?.appendToComposer(`[diff comment ${comment.id} — ${where}] "${comment.body}"`);
+  const thread = replyCount ? `, ${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}` : '';
+  askPanel?.appendToComposer(`[diff comment ${comment.id} — ${where}${thread}] "${comment.body}"`);
 }
 
 // Server-resolvable page context only (§6.5 keys); the server re-validates and
@@ -16561,6 +17449,21 @@ function openNewPipeline(prefill) {
   else location.hash = 'new';
 }
 
+/** Ask Worca's "Open in composer" (spec §8.3, plan PD14): the composer must EXIST before showView fires its own
+ *  un-awaited initComposer(); showView('composer') sets #composer itself; openTemplate asks before discarding an
+ *  unsaved canvas and may resolve null. */
+async function openComposerFromAsk(workflowId) {
+  askPanel?.close();
+  try {
+    await initComposer();
+    showView('composer');
+    const full = await gvApi.readWorkflow(workflowId);
+    if (!full || !gvComposer) return false;
+    if (await gvComposer.openTemplate(full)) { gvComposer.fit(); gvScrollToTop(); return true; }
+  } catch (err) { console.error('[worca] open in composer failed:', err && err.message ? err.message : err); }
+  return false;
+}
+
 // Apply a card handoff to the New Pipeline form (§10.2 seam 7). One-shot; runs
 // at the end of showView('new'). Async — the pickers and branch lists load
 // through their normal async loaders; every await keeps the user-visible form
@@ -16599,6 +17502,17 @@ async function applyAskPrefill() {
   refreshMentionHighlights();
   const titleInput = document.getElementById('title');
   if (titleInput) titleInput.value = p.title || '';
+  // Run-card attachment pills (spec D3): the card fetched the bytes; they land in
+  // the same list the file picker fills, so submit uploads them as extras. The
+  // handoff OWNS that list, like every other field here: a card with no pills must
+  // clear whatever the user (or a previous card) left in it, never upload it.
+  extrasFiles = [];
+  renderExtrasPills();
+  if (Array.isArray(p.extras) && p.extras.length) {
+    const toBytes = (b64) => Uint8Array.from(window.atob(String(b64 || '')), (c) => c.charCodeAt(0));
+    extrasFiles = p.extras.filter((e) => e && e.name).map((e) => new window.File([toBytes(e.dataBase64)], String(e.name)));
+    renderExtrasPills();
+  }
   await loadWorkflowsInto(p.workflowId);
   await loadGuardrailsInto(p.guardrailsId);
   if (el.advancedConfig) el.advancedConfig.open = true;
@@ -16663,13 +17577,13 @@ askPanel = createAskPanel({
   confirm: confirmModal,
   getPageContext,
   openNewPipeline,
-  loadMarkdown: window.__worcaTestHooks?.askMarkdown
-    ?? (() => Promise.all([import('/vendor/marked/marked.esm.js'), import('/vendor/dompurify/purify.es.mjs')])
-      .then(([m, d]) => ({ marked: m.marked, createDOMPurify: d.default }))),
+  openComposer: (id) => { openComposerFromAsk(id); },
+  loadMarkdown: loadAskMarkdown,
   hljsLoader: diffHljsLoader,
   storage: window.localStorage,
   raf: window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : ((fn) => setTimeout(fn, 0)),
   now: () => Date.now(),
+  runStore: askRunStore,
 });
 document.body.appendChild(askPanel.root);
 
@@ -16691,36 +17605,133 @@ async function exportCall(id, opts) {
 async function exportPlan(id, opts) { return exportCall(id, { ...opts, dryRun: true }); }
 async function exportApply(id, opts) { return exportCall(id, opts); }
 
-const exportModalState = { item: null, destination: 'global', conflicts: [] };
+// format: 'json' (download the saved graph) | 'skill' (Claude Code skill; destination
+// global|project) | 'plugin' (Worca plugin folder). The dialog asks for the format
+// first — one Export… per row instead of one button per format.
+// `planned`: a Preview (dry run) for the CURRENT inputs is on screen. Export runs
+// its own dry run when there is none, so the primary button is never dead.
+const exportModalState = { item: null, format: 'json', destination: 'global', conflicts: [], planned: false };
 
 function openExportModal(item) {
   const modal = document.getElementById('export-modal');
   if (!modal) return;
   exportModalState.item = item;
+  exportModalState.format = 'json';
   exportModalState.destination = 'global';
   exportModalState.conflicts = [];
-  document.getElementById('export-subtitle').textContent = `Export "${item.name}" as a runnable /command skill.`;
+  exportModalState.planned = false;
   document.getElementById('export-slug').value = '';
   document.getElementById('export-folder').value = '';
+  document.getElementById('export-plugin-name').value = '';
+  document.getElementById('export-keep-version').checked = false;
   document.getElementById('export-include-agents').checked = true;
   document.getElementById('export-msg').textContent = '';
   const planEl = document.getElementById('export-plan');
   planEl.textContent = ''; planEl.classList.add('hidden');
-  document.getElementById('export-apply-btn').disabled = true;
-  exportSyncDest();
+  exportSetDone(false);
+  exportSyncFormat();
   exportSyncSlugPreview();
   modal.classList.remove('hidden');
 }
 function closeExportModal() {
   const modal = document.getElementById('export-modal');
   if (modal) modal.classList.add('hidden');
+  exportSetDone(false);
 }
-function exportSyncDest() {
-  const dest = exportModalState.destination;
-  for (const b of document.querySelectorAll('#export-dest .seg-btn')) {
-    b.classList.toggle('on', b.dataset.dest === dest);
+/** Swap the form for the result view (or back). The dialog stays open so the
+ *  user reads where the export went and what to do next, then clicks Done. */
+function exportSetDone(done) {
+  const g = (id) => document.getElementById(id);
+  g('export-form').classList.toggle('hidden', done);
+  g('export-done').classList.toggle('hidden', !done);
+  for (const id of ['export-cancel', 'export-plan-btn', 'export-apply-btn']) g(id).classList.toggle('hidden', done);
+  if (!done && exportModalState.item) exportSyncFormat();          // Preview visibility is format-driven
+  g('export-done-close').classList.toggle('hidden', !done);
+  if (done) g('export-done-close').focus();
+}
+/** @param {{title:string, lines:Array<[string, string|Node]>, next?:string|Node}} r */
+function exportShowDone(r) {
+  const g = (id) => document.getElementById(id);
+  g('export-subtitle').textContent = '';
+  g('export-done-title').textContent = r.title;
+  const dl = g('export-done-lines');
+  dl.replaceChildren();
+  for (const [k, v] of r.lines) {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd');
+    if (typeof v === 'string') dd.textContent = v; else dd.appendChild(v);
+    dl.append(dt, dd);
   }
-  document.getElementById('export-folder-field').classList.toggle('hidden', dest !== 'project');
+  const next = g('export-done-next');
+  next.replaceChildren();
+  if (typeof r.next === 'string') next.textContent = r.next; else if (r.next) next.appendChild(r.next);
+  next.classList.toggle('hidden', !r.next);
+  exportSetDone(true);
+}
+/** "Then run <code>x</code>": a text + code fragment for the next-step line. */
+function exportNextStep(before, code, after = '') {
+  const frag = document.createDocumentFragment();
+  frag.appendChild(document.createTextNode(before));
+  const c = document.createElement('code'); c.textContent = code;
+  frag.appendChild(c);
+  if (after) frag.appendChild(document.createTextNode(after));
+  return frag;
+}
+/** Mirrors src/core/workflow-share.mjs workflowFileSlug (the download's filename). */
+function exportJsonFilename(id) {
+  const stem = String(id || '').replace(/^wf_/, '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return `${stem || 'workflow'}.json`;
+}
+function exportSyncFormat() {
+  const { format, destination } = exportModalState;
+  const json = format === 'json', skill = format === 'skill', plugin = format === 'plugin';
+  const show = (id, on) => document.getElementById(id).classList.toggle('hidden', !on);
+  for (const b of document.querySelectorAll('#export-format .seg-btn')) b.classList.toggle('on', b.dataset.format === format);
+  for (const b of document.querySelectorAll('#export-dest .seg-btn')) b.classList.toggle('on', b.dataset.dest === destination);
+  show('export-dest-field', skill);
+  show('export-folder-field', (skill && destination === 'project') || plugin);
+  document.getElementById('export-folder-label').textContent = plugin ? 'Plugin folder' : 'Folder';
+  document.getElementById('export-folder').placeholder = plugin ? '/path/to/my-plugin' : '/path/to/repo';
+  show('export-plugin-field', plugin);
+  if (plugin) exportSyncPluginNamePreview();
+  show('export-slug-field', skill);
+  show('export-agents-field', skill);
+  // JSON downloads straight away. The other two formats offer an optional Preview
+  // (dry run); Export runs that dry run itself and writes unless it finds a
+  // conflict, which the user then resolves per file before exporting again.
+  document.getElementById('export-plan-btn').classList.toggle('hidden', json);
+  const apply = document.getElementById('export-apply-btn');
+  apply.textContent = json ? 'Download' : 'Export';
+  apply.disabled = false;
+  const name = exportModalState.item ? exportModalState.item.name : '';
+  document.getElementById('export-subtitle').textContent = json
+    ? `Download "${name}" as a JSON file another Worca user can import.`
+    : plugin
+      ? `Export "${name}" as a Worca plugin folder to share with other Worca users.`
+      : `Export "${name}" as a runnable /command skill.`;
+  document.getElementById('export-format-hint').textContent = json
+    ? 'The saved graph only — no agents or skills travel with it. The recipient uses Import… in their saved list.'
+    : plugin
+      ? 'Bundles the pipeline, your own agents it uses and the skills they need. Built-in agents are not copied. The recipient runs: worca plugin link <folder>'
+      : 'Writes a SKILL.md plus the agents it dispatches under .claude/, so the pipeline runs inside Claude Code without Worca.';
+}
+/** Plugin names are kebab-case (worca-cc-plugin.json `name`). Derive one from
+ *  what the user typed, else from the folder's basename, and say so under the
+ *  field — the same look-before-you-export the skill slug has. */
+function exportPluginName() {
+  const typed = document.getElementById('export-plugin-name').value.trim();
+  const folder = document.getElementById('export-folder').value.trim().replace(/[\\/]+$/, '');
+  const raw = typed || folder.split(/[\\/]/).pop() || '';
+  const name = raw.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+  return { raw, name, fromFolder: !typed };
+}
+function exportSyncPluginNamePreview() {
+  const { raw, name, fromFolder } = exportPluginName();
+  const el = document.getElementById('export-plugin-name-preview');
+  if (!raw) { el.textContent = 'Plugin name: (choose a folder first)'; return; }
+  el.textContent = name
+    ? `Plugin name: ${name}${fromFolder ? ' (from the folder name)' : ''}`
+    : 'Plugin name: needs at least one letter or digit';
 }
 function exportSyncSlugPreview() {
   const raw = document.getElementById('export-slug').value;
@@ -16730,6 +17741,18 @@ function exportSyncSlugPreview() {
 }
 function exportBuildOpts() {
   const dest = exportModalState.destination;
+  if (exportModalState.format === 'plugin') {
+    const opts = {
+      destination: 'plugin',
+      pluginDir: document.getElementById('export-folder').value.trim(),
+      keepVersion: document.getElementById('export-keep-version').checked,
+    };
+    // Always the NORMALIZED name (typed, else the folder's basename): the server
+    // refuses anything but kebab-case, and "Full-Special" is a typo, not a choice.
+    const { name } = exportPluginName();
+    if (name) opts.pluginName = name;
+    return opts;
+  }
   const rawSlug = document.getElementById('export-slug').value.trim();
   const opts = {
     destination: dest,
@@ -16752,6 +17775,9 @@ function exportRenderPlan(plan) {
   for (const p of plan.created) line('create', p);
   for (const p of plan.updated) line('update', p);
   for (const p of plan.noop) line('no-op', p);
+  // A plugin plan's `skipped` entries are {path, reason} (a Worca-shipped skill
+  // that is not bundled); the skill export's are plain paths.
+  for (const s of plan.skipped || []) line('skip', typeof s === 'string' ? s : `${s.path} — ${s.reason}`);
   for (const w of plan.warnings || []) {
     const row = document.createElement('div');
     row.className = 'export-row';
@@ -16760,6 +17786,7 @@ function exportRenderPlan(plan) {
   }
   for (const o of plan.orphans || []) line('orphan', o);
   exportModalState.conflicts = plan.conflicts || [];
+  exportModalState.planned = true;
   for (const cf of exportModalState.conflicts) {
     const row = document.createElement('div');
     row.className = 'export-row export-conflict-row';
@@ -16799,40 +17826,84 @@ function exportUpdateApplyEnabled() {
 // matches what Apply would do — drop it and re-disable Apply so the user must re-Plan.
 function exportInvalidatePlan() {
   exportModalState.conflicts = [];
+  exportModalState.planned = false;
   const planEl = document.getElementById('export-plan');
   if (planEl) { planEl.textContent = ''; planEl.classList.add('hidden'); }
+  // Export re-plans on its own, so a stale preview never leaves the button dead.
   const applyBtn = document.getElementById('export-apply-btn');
-  if (applyBtn) applyBtn.disabled = true;
+  if (applyBtn) applyBtn.disabled = false;
   const msg = document.getElementById('export-msg');
-  if (msg && msg.textContent) msg.textContent = 'Inputs changed — re-run Plan.';
+  if (msg) msg.textContent = '';
 }
 function bindExportModal() {
   const modal = document.getElementById('export-modal');
   if (!modal) return;
+  for (const b of document.querySelectorAll('#export-format .seg-btn')) {
+    b.addEventListener('click', () => { exportModalState.format = b.dataset.format; exportInvalidatePlan(); exportSyncFormat(); });
+  }
   for (const b of document.querySelectorAll('#export-dest .seg-btn')) {
-    b.addEventListener('click', () => { exportModalState.destination = b.dataset.dest; exportSyncDest(); exportInvalidatePlan(); });
+    b.addEventListener('click', () => { exportModalState.destination = b.dataset.dest; exportInvalidatePlan(); exportSyncFormat(); });
   }
   document.getElementById('export-slug').addEventListener('input', () => { exportSyncSlugPreview(); exportInvalidatePlan(); });
   document.getElementById('export-include-agents').addEventListener('change', exportInvalidatePlan);
   document.getElementById('export-folder').addEventListener('input', exportInvalidatePlan);
-  document.getElementById('export-browse').addEventListener('click', () => {
-    const seed = document.getElementById('export-folder').value.trim();
-    openFolderBrowser(seed, (p) => { document.getElementById('export-folder').value = p; exportInvalidatePlan(); });
+  document.getElementById('export-plugin-name').addEventListener('input', () => { exportSyncPluginNamePreview(); exportInvalidatePlan(); });
+  document.getElementById('export-folder').addEventListener('input', () => { if (exportModalState.format === 'plugin') exportSyncPluginNamePreview(); });
+  document.getElementById('export-keep-version').addEventListener('change', exportInvalidatePlan);
+  // Browse…: the native OS folder dialog (the server opens it — a web page never
+  // learns an absolute path from its own file picker), exactly like Add Project;
+  // the in-app browser is the fallback when the native one is unsupported.
+  document.getElementById('export-browse').addEventListener('click', async () => {
+    const folder = document.getElementById('export-folder');
+    const set = (p) => { folder.value = p; exportInvalidatePlan(); };
+    const data = await pickFolder(exportModalState.format === 'plugin' ? 'plugin' : 'export');
+    if (data && data.status === 'picked' && data.path) { set(data.path); return; }
+    if (data && data.status === 'canceled') return;
+    if (data && data.status === 'busy') { document.getElementById('export-msg').textContent = 'A folder dialog is already open — finish or cancel it first.'; return; }
+    openFolderBrowser(folder.value.trim(), set);
   });
   document.getElementById('export-cancel').addEventListener('click', closeExportModal);
+  document.getElementById('export-done-close').addEventListener('click', closeExportModal);
+  // Preview: the optional dry run — shows what Export would write, writes nothing.
   document.getElementById('export-plan-btn').addEventListener('click', async () => {
     const msg = document.getElementById('export-msg');
-    msg.textContent = 'Planning…';
+    msg.textContent = 'Previewing…';
     try {
       const plan = await exportPlan(exportModalState.item.id, exportBuildOpts());
       exportRenderPlan(plan);
-      msg.textContent = plan.conflicts.length ? 'Resolve each conflict below, then Apply.' : 'Ready to apply.';
-    } catch (err) { msg.textContent = `Plan failed: ${err.message}`; }
+      msg.textContent = plan.conflicts.length ? 'Resolve each conflict below, then Export.' : 'Preview only — nothing is written until you click Export.';
+    } catch (err) { msg.textContent = `Preview failed: ${err.message}`; }
   });
+  // Export: writes. Without a preview for the current inputs it runs the dry run
+  // itself first; a conflict (only the skill format can raise one) stops it and is
+  // shown for per-file resolution — nothing is ever written past an unresolved one.
   document.getElementById('export-apply-btn').addEventListener('click', async () => {
     const msg = document.getElementById('export-msg');
-    msg.textContent = 'Applying…';
+    if (exportModalState.format === 'json') {
+      // A plain download of the stored graph — the server sets Content-Disposition.
+      const a = document.createElement('a');
+      a.href = `/api/workflows/${encodeURIComponent(exportModalState.item.id)}/json`;
+      a.setAttribute('download', '');
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      exportShowDone({
+        title: 'JSON file downloaded',
+        lines: [['File', exportJsonFilename(exportModalState.item.id)], ['Pipeline', exportModalState.item.name]],
+        next: 'Send the file to another Worca user — they pick it up with Import… in their saved pipelines. Agents and skills do not travel with it; share a plugin for those.',
+      });
+      return;
+    }
+    msg.textContent = 'Exporting…';
     try {
+      if (!exportModalState.planned) {
+        const plan = await exportPlan(exportModalState.item.id, exportBuildOpts());
+        if ((plan.conflicts || []).length) {
+          exportRenderPlan(plan);
+          msg.textContent = 'Resolve each conflict below, then Export.';
+          return;
+        }
+      }
       const opts = { ...exportBuildOpts(), resolutions: exportGatherResolutions() };
       const applied = await exportApply(exportModalState.item.id, opts);
       // A conflict Apply left UNWRITTEN (e.g. a TOCTOU conflict between Plan and Apply that
@@ -16843,17 +17914,80 @@ function bindExportModal() {
       if (unwritten.length) {
         exportRenderPlan(applied);
         appendLog({ source: 'ui', level: 'error', text: `export of ${exportModalState.item.name} incomplete: ${applied.written.length} written, ${unwritten.length} conflict(s) left unwritten` });
-        msg.textContent = `${unwritten.length} unresolved conflict(s) were left unwritten — resolve below and Apply again.`;
+        msg.textContent = `${unwritten.length} unresolved conflict(s) were left unwritten — resolve below and Export again.`;
+        return;
+      }
+      // A plugin folder that does not validate stays open: the recipient's
+      // `worca plugin link` would refuse it, so the problems are the outcome.
+      if (applied.validation && !applied.validation.ok) {
+        exportRenderPlan(applied);
+        const problems = applied.validation.problems.filter((p) => p.level === 'error').map((p) => p.message);
+        appendLog({ source: 'ui', level: 'error', text: `plugin export of ${exportModalState.item.name} does not validate: ${problems.join('; ')}` });
+        msg.textContent = `Written, but the plugin folder does not validate: ${problems.join('; ')}`;
         return;
       }
       appendLog({ source: 'ui', level: 'info', text: `exported ${exportModalState.item.name}: ${applied.written.length} written, ${applied.skipped.length} skipped` });
-      closeExportModal();
+      const files = `${applied.written.length} written, ${(applied.noop || []).length} unchanged`;
+      if (applied.validation) {                                  // plugin
+        exportShowDone({
+          title: `Plugin "${applied.name}" v${applied.version} exported`,
+          lines: [['Folder', applied.dir], ['Files', files]],
+          next: exportNextStep('Share the folder. The recipient pastes its path into Plugins → Add marketplace, or runs ',
+            `worca plugin link ${applied.dir}`, ' — once; after a re-export they run worca plugin reimport.'),
+        });
+      } else {                                                    // Claude Code skill
+        const command = (document.getElementById('export-slug-preview').textContent.match(/\/[^\s]+/) || [''])[0];
+        const where = exportModalState.destination === 'project'
+          ? document.getElementById('export-folder').value.trim() : '~/.claude';
+        exportShowDone({
+          title: 'Claude Code skill exported',
+          lines: [['Skill', command || exportModalState.item.name], ['Location', where], ['Files', files]],
+          next: exportNextStep(exportModalState.destination === 'project' ? 'Open the project in Claude Code and run ' : 'In Claude Code, run ',
+            command || '/<skill>', ' — the pipeline runs there without Worca.'),
+        });
+      }
     } catch (err) {
       exportInvalidatePlan();
-      msg.textContent = `Apply failed: ${err.message}`;
+      msg.textContent = `Export failed: ${err.message}`;
     }
   });
   // Backdrop click (the overlay itself, not the inner card) closes the modal.
   modal.addEventListener('click', (e) => { if (e.target === modal) closeExportModal(); });
 }
 bindExportModal();
+
+// Import… (#421) — the saved list's header button. Parses the file in the
+// browser (so a non-JSON file says so without a round trip) and hands the object
+// to POST /api/workflows/import-json; the outcome lands on the list's message
+// line, like a refused delete. On success the imported row's domain tab is
+// selected and the row carries a NEW pill until reload.
+async function gvImportWorkflowObject(obj) {
+  const r = await gvApi.importWorkflow(obj);
+  if (!r.ok) {
+    const issues = (r.issues || []).slice(0, 5).map((i) => `${i.code}: ${i.message}`).join(' · ');
+    setGvSavedMsg(r.summary || (issues ? `${r.error} — ${issues}` : r.error), 'err');
+    return false;
+  }
+  gvSavedTab = gvDomainOf(r.workflow);
+  gvNewIds.add(r.workflow.id);
+  setGvSavedMsg(r.renamed
+    ? `Imported as "${r.workflow.name}" — "${r.requestedName}" was already taken.`
+    : `Imported "${r.workflow.name}".`, 'ok');
+  await gvRefreshSaved();
+  return true;
+}
+function bindGvImport() {
+  const btn = document.getElementById('gv-import-btn');
+  const input = document.getElementById('gv-import-file');
+  if (!btn || !input) return;
+  btn.addEventListener('click', () => { input.value = ''; input.click(); });
+  input.addEventListener('change', async () => {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    let obj;
+    try { obj = JSON.parse(await f.text()); }
+    catch (e) { setGvSavedMsg(`${f.name} is not valid JSON: ${e.message}`, 'err'); return; }
+    await gvImportWorkflowObject(obj);
+  });
+}
+bindGvImport();

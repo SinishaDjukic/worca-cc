@@ -54,7 +54,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 27;
+export const SCHEMA_VERSION = 29;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -755,6 +755,8 @@ const INCREMENTAL_COLUMNS = {
   artifacts:              { step_key: 'TEXT', node_id: 'TEXT', cycle: 'INTEGER', created_at: 'TEXT' }, // per-step attribution
   ask_attachments:        { kind: "TEXT NOT NULL DEFAULT 'text'",  // v27: text | image | binary (#398)
                             mime: 'TEXT' },               // v27: sniffed mime; NULL on pre-v27 rows (= text)
+  project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
+  diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE' },  // v29: reply threads; NULL = thread root
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -1115,6 +1117,30 @@ function applySchemaV26(db) {
  *  exactly 26), reconcileSchema covers the fast path. Existing rows keep the
  *  column DEFAULT 'text', which is exactly what every pre-v27 attachment is. */
 function applySchemaV27(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/** v28 (Auto workflow, spec §6.1 / D16): project_config.human_in_loop (additive,
+ *  declared in INCREMENTAL_COLUMNS — this repairSchemaGaps call CREATES it on the
+ *  ladder path; reconcileSchema covers a DB another build stamped past 28, adding
+ *  the column but NEVER repeating the flip) and the ONE-TIME flip of every project's
+ *  remembered New-pipeline choice to the Auto entry. The flip lives on the ladder
+ *  only: a later choice is never overwritten by a reopen. */
+function applySchemaV28(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+  if (hasSqliteTable(db, 'project_config')) {
+    db.prepare("UPDATE project_config SET active_workflow_id = 'wf_auto'").run();
+  }
+}
+
+/** v29 (diff-comment reply threads): diff_comments.parent_id — a plain additive
+ *  column declared in INCREMENTAL_COLUMNS, applySchemaV27's shape: this
+ *  repairSchemaGaps call CREATES it on the ladder path (a DB stamped exactly 28),
+ *  reconcileSchema covers the fast path. The type string carries the REFERENCES
+ *  clause verbatim into `ALTER TABLE … ADD COLUMN`, which SQLite accepts under
+ *  foreign_keys=ON because the default is NULL. Every existing row stays NULL = a
+ *  thread root; nothing is backfilled. */
+function applySchemaV29(db) {
   repairSchemaGaps(db, schemaGaps(db));
 }
 
@@ -1501,6 +1527,8 @@ export function migrate(db) {
     if (current < 25) applySchemaV25(db);            // sub-agent model policy + recorded child model
     if (current < 26) applySchemaV26(db);            // Fable 5 pins -> Fable 5.1 (catalog swap)
     if (current < 27) applySchemaV27(db);            // ask_attachments.kind/mime (#398)
+    if (current < 28) applySchemaV28(db);            // Auto workflow: human_in_loop + flip to wf_auto
+    if (current < 29) applySchemaV29(db);            // diff-comment reply threads: parent_id
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

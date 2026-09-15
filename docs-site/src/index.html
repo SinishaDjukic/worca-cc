@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Worca docs</title>
+  <meta name="description" content="Documentation for Worca 1.x is being written. Until then: the README, the what's-new changelog, the why-worca deck, and the architecture notes.">
+  <link rel="canonical" href="https://docs.worca.dev/">
+  <link rel="icon" type="image/png" href="/worca-favicon.png">
+  <meta property="og:title" content="Worca docs">
+  <meta property="og:description" content="Documentation for Worca 1.x is on the way. Start with the README, the changelog, and the why-worca deck.">
+  <meta property="og:url" content="https://docs.worca.dev/">
+  <meta name="color-scheme" content="light dark">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+  <style>
+    :root {
+      --bg:#ECEAE4; --card:#FFFFFF; --card-2:#F6F4EF;
+      --ink:#19191B; --ink-2:#56534C; --ink-3:#8B8780; --line:#E2DFD7;
+      --green:#5BAE5B; --green-bg:#E2F3DF; --green-ink:#2F7A38;
+      --peach:#EFA63C; --peach-bg:#FCEEDA; --peach-ink:#B5751A;
+      --blue:#5BA6CC;  --blue-bg:#DEEFF7;  --blue-ink:#3782A8;
+      --violet:#8C7FD6;--violet-bg:#EAE6F8;--violet-ink:#6353B8;
+      --amber:#E6962A; --amber-bg:#FCE8C8; --amber-ink:#A66510;
+      --dark:#141419; --on-dark:#F4F3EE; --on-dark-2:#9EA0AC;
+      --r-lg:28px; --r-md:18px; --r-sm:12px;
+      --shadow-soft:0 6px 28px rgba(25,25,27,.06), 0 1px 2px rgba(25,25,27,.05);
+      --hero-bg:linear-gradient(135deg,var(--violet-bg) 0%,#EFEDFA 45%,var(--blue-bg) 100%);
+      --logo-invert:0; --logo-blend:multiply;
+      --sans:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:#0F0F13; --card:#17171D; --card-2:#1F1F26;
+        --ink:#F4F3EE; --ink-2:#A8A6B0; --ink-3:#6E6C77; --line:#2A2A34;
+        --green-bg:#1E2E1E; --green-ink:#8FC98F;
+        --peach-bg:#322818; --peach-ink:#E8C983;
+        --blue-bg:#182831;  --blue-ink:#8FC3E0;
+        --violet-bg:#252138;--violet-ink:#B3A7EC;
+        --amber-bg:#322715; --amber-ink:#E5B36A;
+        --shadow-soft:0 6px 28px rgba(0,0,0,.35), 0 1px 2px rgba(0,0,0,.3);
+        --hero-bg:linear-gradient(135deg,#26223B 0%,#1A1A28 45%,#16222B 100%);
+        --logo-invert:1; --logo-blend:screen;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 400 16px/1.6 var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: inherit; text-decoration: none; }
+    a:focus-visible, button:focus-visible { outline: 2px solid var(--violet); outline-offset: 3px; border-radius: 6px; }
+    code, .mono { font-family: var(--mono); }
+
+    .wrap { width: min(1080px, calc(100% - 40px)); margin: 0 auto; }
+
+    /* header */
+    .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 0; }
+    .brand { display: inline-flex; align-items: center; gap: 12px; }
+    .brand img { height: 30px; width: auto; filter: invert(var(--logo-invert)); mix-blend-mode: var(--logo-blend); }
+    .brand span { font: 600 13px/1 var(--mono); letter-spacing: .04em; color: var(--ink-3); text-transform: uppercase; padding-top: 2px; }
+    nav { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px; padding: 7px 13px;
+      border: 1px solid var(--line); border-radius: 999px; background: var(--card);
+      font-size: 13px; font-weight: 500; color: var(--ink-2); transition: border-color .15s, color .15s;
+    }
+    .chip:hover { border-color: var(--ink-3); color: var(--ink); }
+
+    /* hero */
+    .hero {
+      background: var(--hero-bg); border-radius: var(--r-lg); padding: clamp(36px, 6vw, 64px) clamp(24px, 5vw, 56px);
+      box-shadow: var(--shadow-soft); margin-top: 8px;
+    }
+    .kicker { font: 600 12px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--violet-ink); margin: 0 0 18px; }
+    h1 { font-size: clamp(30px, 4.6vw, 48px); line-height: 1.12; letter-spacing: -.02em; margin: 0 0 18px; font-weight: 600; max-width: 18ch; }
+    .lede { font-size: clamp(16px, 1.6vw, 18px); color: var(--ink-2); max-width: 60ch; margin: 0; }
+    .lede + .lede { margin-top: 12px; }
+    .facts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; align-items: center; }
+    .fact {
+      display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px;
+      background: var(--card); border: 1px solid var(--line); font-size: 13px; color: var(--ink-2);
+    }
+    .fact b { font-family: var(--mono); font-weight: 600; color: var(--ink); }
+    .fact .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex: none; }
+    .fact.rc .dot { background: var(--amber); }
+    .fact:hover { border-color: var(--ink-3); }
+
+    .install {
+      margin: 28px 0 0; padding: 18px 22px; border-radius: var(--r-md);
+      background: var(--dark); color: var(--on-dark); font: 500 14px/1.9 var(--mono);
+      overflow-x: auto; white-space: pre; box-shadow: var(--shadow-soft);
+    }
+    .install .c { color: var(--on-dark-2); }
+    .install .p { color: var(--violet); user-select: none; }
+
+    /* cards */
+    h2 { font-size: 14px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin: 44px 0 14px; font-family: var(--mono); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+    .card {
+      display: flex; flex-direction: column; gap: 8px; padding: 22px 22px 20px; border-radius: var(--r-md);
+      background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow-soft);
+      transition: transform .15s, border-color .15s;
+    }
+    .card:hover { transform: translateY(-2px); border-color: var(--ink-3); }
+    .card .tag { font: 600 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; padding: 5px 9px; border-radius: 999px; align-self: flex-start; }
+    .tag.violet { background: var(--violet-bg); color: var(--violet-ink); }
+    .tag.blue   { background: var(--blue-bg);   color: var(--blue-ink); }
+    .tag.green  { background: var(--green-bg);  color: var(--green-ink); }
+    .tag.amber  { background: var(--amber-bg);  color: var(--amber-ink); }
+    .tag.peach  { background: var(--peach-bg);  color: var(--peach-ink); }
+    .card h3 { margin: 6px 0 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+    .card p { margin: 0; color: var(--ink-2); font-size: 14px; flex: 1; }
+    .card .go { font-size: 13px; font-weight: 500; color: var(--ink-3); margin-top: 6px; }
+    .card:hover .go { color: var(--ink); }
+
+    /* footer */
+    footer { margin: 56px 0 40px; padding-top: 22px; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 13px; display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; }
+    footer a { color: var(--ink-2); border-bottom: 1px solid var(--line); }
+    footer a:hover { color: var(--ink); border-color: var(--ink-3); }
+
+    @media (max-width: 640px) {
+      .wrap { width: calc(100% - 28px); }
+      .top { padding: 16px 0; }
+      .brand span { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .card, .card:hover { transition: none; transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <a class="brand" href="https://worca.dev" aria-label="Worca">
+        <img src="/worca-logo.png" alt="Worca" width="512" height="190">
+        <span>Docs</span>
+      </a>
+      <nav aria-label="Worca links">
+        <a class="chip" href="https://worca.dev">worca.dev</a>
+        <a class="chip" href="{{REPO_URL}}">GitHub</a>
+        <a class="chip" href="https://www.npmjs.com/package/@worca/app">npm</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <p class="kicker">Documentation</p>
+        <h1>Docs for Worca 1.x are on the way.</h1>
+        <p class="lede">
+          The site that used to live here described the 0.x line and no longer matches
+          what ships. Rather than mislead you, it has been taken down while the new
+          docs are written.
+        </p>
+        <p class="lede">
+          Until they land, everything you need is one link away: the README covers
+          install and quick start, the changelog shows what shipped, and the deck
+          explains why Worca works the way it does.
+        </p>
+        <div class="facts">
+          <a class="fact {{VERSION_CLASS}}" href="{{RELEASE_URL}}" title="Release notes on GitHub">
+            <span class="dot"></span>{{VERSION_LABEL}} <b>@worca/app {{VERSION}}</b>
+          </a>
+          <span class="fact">Node <b>&ge; 22.13</b></span>
+          <span class="fact">Requires <b>Claude Code</b> for real runs</span>
+        </div>
+        <pre class="install"><span class="c"># install</span>
+<span class="p">$ </span>npm install -g @worca/app
+<span class="c"># start the web UI (default http://localhost:4317)</span>
+<span class="p">$ </span>worca ui</pre>
+      </section>
+
+      <h2>Start here</h2>
+      <div class="grid">
+        <a class="card" href="{{REPO_URL}}#readme">
+          <span class="tag violet">README</span>
+          <h3>Install &amp; quick start</h3>
+          <p>How a run works, the feature tour, install requirements, and the web UI, CLI, and Claude Code skill quick starts.</p>
+          <span class="go">Read on GitHub &rarr;</span>
+        </a>
+        <a class="card" href="{{CHANGELOG_HREF}}">
+          <span class="tag green">What's new</span>
+          <h3>Changelog for {{CHANGELOG_VERSION}}</h3>
+          <p>The ship log: every feature that landed since the last release, with screenshots and the PRs behind them.</p>
+          <span class="go">Open the changelog &rarr;</span>
+        </a>
+        <a class="card" href="{{DECK_HREF}}">
+          <span class="tag blue">Deck</span>
+          <h3>Why Worca</h3>
+          <p>A short narrated deck on the problem Worca solves: deterministic pipelines, hard guardrails, and runs that leave a record.</p>
+          <span class="go">Watch the deck &rarr;</span>
+        </a>
+      </div>
+
+      <h2>Reference notes</h2>
+      <div class="grid">
+        <a class="card" href="{{REPO_URL}}/blob/dev/docs/ARCHITECTURE.md">
+          <span class="tag amber">Architecture</span>
+          <h3>The whole stack in one picture</h3>
+          <p>Clients, the engine, the headless Claude Code harness, and model endpoints, and how a run flows through them.</p>
+          <span class="go">Read on GitHub &rarr;</span>
+        </a>
+        <a class="card" href="{{REPO_URL}}/blob/dev/docs/guardrails.md">
+          <span class="tag peach">Guardrails</span>
+          <h3>Policy model &amp; enforcement</h3>
+          <p>What a run may and may not do, how the limits are enforced at the harness, and where the known gaps are.</p>
+          <span class="go">Read on GitHub &rarr;</span>
+        </a>
+        <a class="card" href="{{REPO_URL}}/blob/dev/docs/storage.md">
+          <span class="tag blue">Storage</span>
+          <h3>Where state lives</h3>
+          <p>The Worca home folder, project keys, the SQLite store, and how state migrates between versions.</p>
+          <span class="go">Read on GitHub &rarr;</span>
+        </a>
+        <a class="card" href="{{REPO_URL}}/blob/dev/CONTRIBUTING.md">
+          <span class="tag violet">Contributing</span>
+          <h3>Developing Worca from source</h3>
+          <p>Cloning the repo, running the tests and the mock smoke, and how changes get proposed and merged.</p>
+          <span class="go">Read on GitHub &rarr;</span>
+        </a>
+        <a class="card" href="{{REPO_URL}}/blob/dev/docs/RELEASING.md">
+          <span class="tag green">Releasing</span>
+          <h3>How versions are published</h3>
+          <p>Release candidates, stable releases, tags, and what CI publishes to npm for each.</p>
+          <span class="go">Read on GitHub &rarr;</span>
+        </a>
+        <a class="card" href="{{REPO_URL}}/issues">
+          <span class="tag amber">Questions</span>
+          <h3>Ask on GitHub issues</h3>
+          <p>Found a gap, a bug, or something the README does not answer? Open an issue and it gets a reply.</p>
+          <span class="go">Open issues &rarr;</span>
+        </a>
+      </div>
+    </main>
+
+    <footer>
+      <span>Built {{BUILD_DATE}} from the <a href="{{REPO_URL}}/tree/dev/docs-site">dev branch</a>.</span>
+      <span>Worca is <a href="{{REPO_URL}}/blob/dev/LICENSE">MIT licensed</a>.</span>
+    </footer>
+  </div>
+</body>
+</html>

@@ -35,3 +35,4 @@ export {
   TEMPLATE_VERSION, KINDS, FLOW_KINDS, PORT_TYPES, AWAIT_PORT, TASK_PORTS, END_PORTS,
   gatePorts, DEFAULT_MAX_CYCLES, MAX_PORTS_PER_SIDE, LIMITS, NODE_ID_RE, WIRE_ID_RE, PORT_ID_RE,
 } from '../../../src/shared/graph/constants.mjs';
+export { flowOrder, flowPerRow, flowLayout, flowAnchors, routeFlow, simplifyOrtho, FLOW_SCALE, FLOW_DEFAULT_WIDTH, FLOW_RADIUS } from '../../../src/shared/graph/flow-layout.mjs';

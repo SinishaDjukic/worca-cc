@@ -4,7 +4,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { createCatalog, shapeWorkflow, buildCatalog } from '../src/core/ask/catalog.mjs';
+import { createCatalog, shapeWorkflow, buildCatalog, shapeAgents } from '../src/core/ask/catalog.mjs';
 import { GRAPH_DEFAULT_WORKFLOW } from '../src/core/workflows.mjs';
 
 useTempHome(after);
@@ -72,4 +72,34 @@ test('bound buildCatalog on a temp home: empty registry lists, wf_default with r
   for (const group of cat.workflows[0].steps) {
     for (const n of group) assert.ok(typeof n.displayName === 'string' && n.displayName.length > 0, `${n.key} has a display name`);
   }
+});
+
+test('buildCatalog exposes the placeable coding agents as `agents` (key, name, purpose, ports, flags), sorted by key; selfLoop follows the assembler', async () => {
+  const cat = await createCatalog({ listProjects: async () => [], listWorkspaces: async () => [], listWorkflows: async () => [] }).buildCatalog();
+  assert.ok(Array.isArray(cat.agents) && cat.agents.length >= 5);
+  assert.deepEqual(cat.agents.map((a) => a.key), [...cat.agents.map((a) => a.key)].sort(), 'sorted by key');
+  for (const a of cat.agents) {
+    assert.deepEqual(Object.keys(a).sort(), ['asksQuestions', 'clarifier', 'displayName', 'fanOut', 'inputs', 'key', 'outputs', 'purpose', 'selfLoop', 'verifier']);
+    assert.equal(typeof a.inputs, 'string'); assert.equal(typeof a.outputs, 'string');
+  }
+  assert.ok(cat.agents.some((a) => a.verifier), 'a verdict-bearing agent is flagged');
+  // Measured at af39f7bd over the real registry: the refiner (revise:md loop input, revise:md/blocking output) is the ONLY
+  // self-looper. The planner has a revise:md loop input too, but its plan:md output is when:always — the assembler
+  // (BAD_SELF_LOOP) refuses a planner self-loop, so the prompt must not advertise one (PD27, v4).
+  assert.deepEqual(cat.agents.filter((a) => a.selfLoop).map((a) => a.key), ['refiner'], 'selfLoop = a when:blocking output whose type a loop input accepts');
+});
+
+test('shapeAgents: selfLoop needs a BLOCKING output whose type a loop input accepts (any matches everything); non-placeable / port-less entries are skipped', () => {
+  // v5: every entry carries `domain: 'coding'` — shapeAgents asks agentVocabulary for the coding domain, and its
+  // domainOk filter (classify.mjs:64) drops entries whose domain is not coding/shared/general. Measured: without the
+  // field the whole fixture is filtered out and shapeAgents(reg) is [] (v4's fixture was red).
+  const reg = {
+    a: { key: 'a', displayName: 'A', description: 'd', domain: 'coding', inputs: [{ id: 'in', type: 'md', required: true }, { id: 'again', type: 'md', loop: true }], outputs: [{ id: 'out', type: 'md', when: 'always' }] },
+    b: { key: 'b', displayName: 'B', description: 'd', domain: 'coding', inputs: [{ id: 'again', type: 'md', loop: true }], outputs: [{ id: 'fix', type: 'md', when: 'blocking' }, { id: 'ok', type: 'void', when: 'clean' }], verdict: {} },
+    c: { key: 'c', displayName: 'C', description: 'd', domain: 'coding', inputs: [{ id: 'again', type: 'any', loop: true }], outputs: [{ id: 'fix', type: 'json', when: 'blocking' }], verdict: {} },
+    d: { key: 'd', displayName: 'D', description: 'd', domain: 'coding', inputs: [{ id: 'again', type: 'md', loop: true }], outputs: [{ id: 'fix', type: 'json', when: 'blocking' }], verdict: {} },
+    e: { key: 'e', displayName: 'E', description: 'd', domain: 'coding', placeable: false, inputs: [], outputs: [] },
+    f: { key: 'f', displayName: 'F', description: 'd', domain: 'coding' },
+  };
+  assert.deepEqual(shapeAgents(reg).map((a) => [a.key, a.selfLoop, a.verifier]), [['a', false, false], ['b', true, true], ['c', true, true], ['d', false, true]]);
 });

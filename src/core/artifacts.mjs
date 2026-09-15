@@ -1978,6 +1978,13 @@ export function findPipelineRowById(id) {
   return row || null;
 }
 
+/** The detail `state` of ONE pipeline by id alone — any store key, archived included (the Ask Worca progress
+ *  card's hydration read). The keyed History routes keep their full payload; this is the bare rowToState. */
+export function readPipelineStateById(id) {
+  const row = findPipelineRowById(id);
+  return row ? rowToState(row) : null;
+}
+
 /**
  * The DB-backed lookups `sweepRunRoots` (worktree.mjs) needs, in ONE place shared by
  * both callers — `ui/server.mjs`'s boot sweep and the `worca doctor` subcommand.

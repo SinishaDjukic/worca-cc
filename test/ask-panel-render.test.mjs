@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { makePanel } from './helpers/ask-panel-harness.mjs';
+import { makePanel, sizeDock } from './helpers/ask-panel-harness.mjs';
 
 const TID = 'ask_00000001';
 
@@ -247,4 +247,53 @@ test('ask-panel-render: an agent block with ctx shows the fill; without ctx it f
   assert.match(rows[0].textContent, /11\.6k ctx/, 'ctx wins over the cumulative figure');
   assert.ok(!/25\.3k tok/.test(rows[0].textContent));
   assert.match(rows[1].textContent, /5\.3k tok/, 'a legacy block keeps the cumulative fallback');
+});
+
+test('ask-panel-render: a window resize re-clamps the open sheet; close/reopen restores the preference', () => {
+  const seed = makePanel();
+  seed.storage.setItem('worca-cc.ask.size', JSON.stringify({ w: 900, h: 700 }));
+  const ctx = makePanel({ storage: seed.storage });
+  const sheet = ctx.doc.querySelector('.ask-sheet');
+  sizeDock(ctx.doc, 1200, 900);
+  ctx.panel.open();
+  assert.equal(sheet.style.width, '900px');
+  sizeDock(ctx.doc, 800, 600);                          // the window shrank: inner 744 × 554
+  ctx.window.dispatchEvent(new ctx.window.Event('resize'));
+  assert.equal(sheet.style.width, '744px');
+  assert.equal(sheet.style.height, '554px');
+  sizeDock(ctx.doc, 1200, 900);
+  ctx.window.dispatchEvent(new ctx.window.Event('resize'));
+  assert.equal(sheet.style.width, '900px', 'the stored preference comes back when there is room again');
+  ctx.panel.close();
+  sizeDock(ctx.doc, 1000, 700);                         // inner 944 × 654
+  ctx.window.dispatchEvent(new ctx.window.Event('resize'));
+  assert.equal(sheet.style.width, '900px', 'a hidden sheet is left alone — nothing to clamp against');
+  ctx.panel.open();
+  assert.equal(sheet.style.width, '900px');
+  assert.equal(sheet.style.height, '654px', 'reopen re-clamps against the current dock');
+  assert.deepEqual(JSON.parse(seed.storage.getItem('worca-cc.ask.size')), { w: 900, h: 700 });
+});
+
+test('ask-panel-render: scroll pinning still drives the jump pill inside a resized sheet; destroy unbinds resize', async () => {
+  const snap = snapBody([asstRow('askm_00000001', 1)]);
+  const ctx = makePanel({ fetchHandler: handlerFor(snap) });
+  ctx.storage.setItem('worca-cc.ask.size', JSON.stringify({ w: 1000, h: 800 }));
+  const ctx2 = makePanel({ fetchHandler: handlerFor(snap), storage: ctx.storage });
+  sizeDock(ctx2.doc, 1400, 1000);
+  await openThread(ctx2);
+  const sheet = ctx2.doc.querySelector('.ask-sheet');
+  assert.equal(sheet.style.height, '800px', 'the stored size survives the thread load');
+  const t = ctx2.doc.querySelector('.ask-transcript');
+  Object.defineProperty(t, 'scrollHeight', { value: 2000, configurable: true });
+  Object.defineProperty(t, 'clientHeight', { value: 700, configurable: true });
+  t.scrollTop = 0;
+  t.dispatchEvent(new ctx2.window.Event('scroll'));
+  assert.equal(ctx2.doc.querySelector('.ask-jump').hidden, false, 'the transcript is still the scrollport');
+  const removed = [];
+  const orig = ctx2.window.removeEventListener;
+  ctx2.window.removeEventListener = function (type, fn, opts) { removed.push(type); return orig.call(this, type, fn, opts); };
+  ctx2.panel.destroy();
+  assert.ok(removed.includes('resize'), 'destroy() unbinds the window resize listener');
+  ctx2.window.dispatchEvent(new ctx2.window.Event('resize'));
+  assert.equal(sheet.style.height, '800px', 'nothing runs after destroy');
 });

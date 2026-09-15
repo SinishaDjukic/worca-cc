@@ -31,7 +31,9 @@ function select(doc, cls, name, label, items, value, { disabled = false, title =
     if (opt.value === (value == null ? '' : String(value))) o.selected = true;
     sel.appendChild(o);
   }
-  wrap.appendChild(sel);
+  const shell = h(doc, 'span', 'ins-select-wrap');   // the product's .select-wrap idea: the chevron is a token-coloured ::after on a wrapper
+  shell.appendChild(sel);
+  wrap.appendChild(shell);
   return wrap;
 }
 function toggle(doc, cls, name, label, hint, { checked = false, disabled = false, title = '' } = {}) {
@@ -93,8 +95,11 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
 
   if (node.kind === 'agent') {
     root.appendChild(head(doc, (meta && meta.displayName) || node.key || node.id, `${node.key} · ${node.id}`));
+    // Hidden built-ins (#422) leave the list unless one is THIS node's stored
+    // pick — it still resolves at run time and must stay visible here.
+    const offered = models.filter((m) => m && (!m.hidden || m.id === node.config.model));
     body.appendChild(select(doc, 'ins-model', 'model', 'Model',
-      [{ value: '', text: 'inherit' }, ...models.map((m) => ({ value: m.id, text: m.label || m.id }))], node.config.model));
+      [{ value: '', text: 'inherit' }, ...offered.map((m) => ({ value: m.id, text: m.label || m.id }))], node.config.model));
     body.appendChild(select(doc, 'ins-effort', 'effort', 'Effort',
       [{ value: '', text: 'default' }, ...efforts.map((e) => ({ value: e, text: e }))], node.config.effort));
     if (meta && meta.fanOut) {

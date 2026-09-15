@@ -493,3 +493,48 @@ test('ask-panel-pickers: ask-history-cleared closes the popover and resets the a
   assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Ask Worca');
   assert.equal(ctx.fetchCalls.length, fetchesBefore);
 });
+
+test('ask-panel-pickers (#422): hidden built-ins leave the list; the default falls to the first visible model', async () => {
+  const hiddenCatalog = {
+    models: [
+      { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high'], custom: false, hidden: true },
+      { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false, hidden: true },
+      { id: 'my-corp-model', label: 'Corp', efforts: ['high'], custom: 'global' },
+    ],
+    efforts: ['medium', 'high', 'xhigh', 'max'],
+    default: { model: 'my-corp-model', effort: 'high' },
+  };
+  const base = handler();
+  const ctx = makePanel({ fetchHandler: (url, opts) => (url === '/api/ask/models' ? { ok: true, status: 200, json: async () => hiddenCatalog } : base(url, opts)) });
+  ctx.panel.open();
+  await ctx.tick(); await ctx.tick();
+  assert.match(ctx.doc.querySelector('[data-ask-model-btn]').textContent, /Corp/, 'initial pick is a model the user owns');
+  ctx.doc.querySelector('[data-ask-model-btn]').click();
+  await ctx.tick();
+  const names = [...ctx.doc.querySelectorAll('.ask-pop-model .ask-model-name')].map((n) => n.textContent);
+  assert.deepEqual(names, ['Corp']);
+});
+
+test('ask-panel-pickers (#422): a STORED pick on a hidden built-in stays visible and selected (it still resolves)', async () => {
+  const hiddenCatalog = {
+    models: [
+      { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high'], custom: false, hidden: true },
+      { id: 'my-corp-model', label: 'Corp', efforts: ['high'], custom: 'global' },
+    ],
+    efforts: ['medium', 'high', 'xhigh', 'max'],
+    default: { model: 'my-corp-model', effort: 'high' },
+  };
+  const base = handler();
+  // The stored pick is read when the panel is BUILT — seed storage first.
+  const storage = new Map();
+  const storageApi = { getItem: (k) => (storage.has(k) ? storage.get(k) : null), setItem: (k, v) => storage.set(k, String(v)), removeItem: (k) => storage.delete(k) };
+  storageApi.setItem('worca-cc.ask.model', JSON.stringify({ model: 'claude-opus-5', effort: 'high' }));
+  const ctx = makePanel({ storage: storageApi, fetchHandler: (url, opts) => (url === '/api/ask/models' ? { ok: true, status: 200, json: async () => hiddenCatalog } : base(url, opts)) });
+  ctx.panel.open();
+  await ctx.tick(); await ctx.tick();
+  assert.match(ctx.doc.querySelector('[data-ask-model-btn]').textContent, /Opus 5/);
+  ctx.doc.querySelector('[data-ask-model-btn]').click();
+  await ctx.tick();
+  const names = [...ctx.doc.querySelectorAll('.ask-pop-model .ask-model-name')].map((n) => n.textContent);
+  assert.deepEqual(names, ['Opus 5', 'Corp']);
+});

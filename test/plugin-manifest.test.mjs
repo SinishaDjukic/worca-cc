@@ -277,7 +277,7 @@ test('validatePluginDir: workflow referencing an unshipped agent key = error', (
   assert.equal(v.ok, false);
   assert.match(
     v.problems.map((p) => p.message).join('\n'),
-    /alien\.json: references agent key "notMine" which this plugin does not ship/,
+    /alien\.json: references agent key "notMine" which is neither a built-in nor shipped by this plugin/,
   );
 });
 
@@ -583,19 +583,46 @@ test('a v2 template is validated V1-V21 against the PLUGIN\'S OWN ports', () => 
   assert.equal(v.ok, false);
 });
 
-test('a v2 template may reference ONLY the plugin\'s own agent keys', () => {
-  const dir = mkPluginDir({
+test('a v2 template may reference built-ins and the plugin\'s own keys — never a foreign one (#421)', () => {
+  // Built-in `planner` is present on every host, so a plugin template may run it
+  // (the ports come from the built-in sidecar: task in, plan out).
+  const withBuiltin = mkPluginDir({
     'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
     'agents/helper.meta.json': V2_META('helper'),
     'agents/helper.md': '# helper\n',
-    'workflows/foreign.json': V2_GRAPH('planner'),
+    'workflows/builtin.json': JSON.stringify({
+      name: 'Builtin Flow', version: 2, domain: 'general',
+      nodes: [
+        { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+        { id: 'n_a', kind: 'agent', key: 'planner', x: 1, y: 0, config: {} },
+        { id: 'n_end', kind: 'end', x: 2, y: 0, config: {} },
+      ],
+      wires: [
+        { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_a', port: 'task' } },
+        { id: 'w2', from: { node: 'n_a', port: 'plan' }, to: { node: 'n_end', port: 'result' } },
+      ],
+    }),
   });
-  // deepEqual, not includes: a foreign key SHORT-CIRCUITS the template (the
-  // `continue`), so exactly ONE clear cause is reported. Without the
-  // short-circuit the same template also fires V4/V5 for every wire touching
-  // the unknown node, and `.includes` would never notice.
-  assert.deepEqual(errs(validatePluginDir(dir)), [
-    'workflows/foreign.json: references agent key "planner" which this plugin does not ship',
+  assert.deepEqual(errs(validatePluginDir(withBuiltin)), []);
+
+  // A key that is neither built-in nor shipped (a user-layer agent, another
+  // plugin's) is refused. deepEqual, not includes: a foreign key SHORT-CIRCUITS
+  // the template (the `continue`), so exactly ONE clear cause is reported.
+  // Without the short-circuit the same template also fires V4/V5 for every wire
+  // touching the unknown node, and `.includes` would never notice.
+  const foreign = mkPluginDir({
+    'worca-cc-plugin.json': JSON.stringify({ name: 'p', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'agents/helper.meta.json': V2_META('helper'),
+    'agents/helper.md': '# helper\n',
+    'workflows/foreign.json': V2_GRAPH('someUserAgent'),
+  });
+  assert.deepEqual(errs(validatePluginDir(foreign)), [
+    'workflows/foreign.json: references agent key "someUserAgent" which is neither a built-in nor shipped by this plugin',
+  ]);
+
+  // The built-in set is injectable, so a caller can pin what "built-in" means.
+  assert.deepEqual(errs(validatePluginDir(withBuiltin, { builtinMetas: [] })), [
+    'workflows/builtin.json: references agent key "planner" which is neither a built-in nor shipped by this plugin',
   ]);
 });
 
@@ -730,7 +757,7 @@ test('a template referencing a GATED-OUT sidecar reports ONE cause at the data l
     'workflows/flow.json': V2_GRAPH('notMine'),
   }));
   assert.ok(errs(alien).includes(
-    'workflows/flow.json: references agent key "notMine" which this plugin does not ship'));
+    'workflows/flow.json: references agent key "notMine" which is neither a built-in nor shipped by this plugin'));
 });
 
 test('models: `cost` is validated and normalized exactly like a global catalog entry', () => {

@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import {
-  addDiffComment, listDiffComments, getDiffComment, setDiffCommentResolved,
+  addDiffComment, addDiffCommentReply, listDiffComments, getDiffComment, setDiffCommentResolved,
   deleteDiffComment, unresolvedCounts, onDiffCommentsChanged, stampSentRunId,
   DiffCommentError, COMMENT_BODY_MAX,
 } from '../src/core/diff-comments.mjs';
@@ -217,4 +217,65 @@ test('deleting a thread removes its proposal cards\' pending comment ids (no orp
   assert.equal(deleteThread(t.id), true);
   assert.deepEqual(peekPendingCardComments('card_0000abcd'), [], 'no orphan rows');
   assert.equal(getDiffComment(c.id).id, c.id, 'the comment itself is untouched');
+});
+
+test('addDiffCommentReply: inherits the anchor, one level only, validates like a comment, notifies', async () => {
+  const run = await seedRun();
+  const root = mk(run, 'src/a.js', 'new', 3, 'root');
+  const pokes = [];
+  const off = onDiffCommentsChanged((e) => pokes.push(e));
+  const reply = addDiffCommentReply({ parentId: root.id, body: '  answer  ', author: 'ask' });
+  off();
+  assert.match(reply.id, /^dc_[0-9a-f]{8}$/);
+  assert.equal(reply.parentId, root.id);
+  assert.equal(root.parentId, null, 'roots say so explicitly');
+  assert.equal(reply.body, 'answer', 'trimmed');
+  assert.equal(reply.author, 'ask');
+  assert.deepEqual(
+    [reply.storeKey, reply.pipelineId, reply.projectKey, reply.path, reply.oldPath, reply.side, reply.line, reply.lineText],
+    [root.storeKey, root.pipelineId, root.projectKey, root.path, root.oldPath, root.side, root.line, root.lineText],
+    'the anchor is the root\'s — the caller never supplies one');
+  assert.deepEqual(pokes, [{ storeKey: run.key, pipelineId: run.id }]);
+  assert.deepEqual(listDiffComments(run.key, run.id).map((c) => c.id), [root.id, reply.id], 'same line, creation order');
+  assert.throws(() => addDiffCommentReply({ parentId: reply.id, body: 'x', author: 'user' }),
+    { name: 'DiffCommentError', message: /replies cannot be nested/ });
+  assert.throws(() => addDiffCommentReply({ parentId: 'dc_00000000', body: 'x', author: 'user' }), { message: 'comment not found' });
+  assert.throws(() => addDiffCommentReply({ parentId: 'nope', body: 'x', author: 'user' }), { message: 'comment not found' });
+  assert.throws(() => addDiffCommentReply({ parentId: root.id, body: '   ', author: 'user' }), { message: 'body is required' });
+  assert.throws(() => addDiffCommentReply({ parentId: root.id, body: 'x'.repeat(COMMENT_BODY_MAX + 1), author: 'user' }),
+    { message: `body exceeds ${COMMENT_BODY_MAX} characters` });
+  assert.throws(() => addDiffCommentReply({ parentId: root.id, body: 'x', author: 'nobody' }), { message: 'author must be "user" or "ask"' });
+});
+
+test('resolve is thread-level: the root toggles its replies, a reply refuses, counts see roots only', async () => {
+  const run = await seedRun();
+  const root = mk(run, 'src/a.js', 'new', 1, 'root');
+  const r1 = addDiffCommentReply({ parentId: root.id, body: 'one', author: 'user' });
+  assert.equal(unresolvedCounts()[`${run.key}/${run.id}`], 1, 'a reply is not an unresolved item of its own');
+  assert.throws(() => setDiffCommentResolved(r1.id, true), { name: 'DiffCommentError', message: /resolve the thread/ });
+  assert.equal(getDiffComment(r1.id).resolved, false, 'and nothing moved');
+  setDiffCommentResolved(root.id, true);
+  assert.equal(getDiffComment(r1.id).resolved, true, 'mirrored from the root');
+  assert.ok(getDiffComment(r1.id).resolvedAt);
+  assert.deepEqual(listDiffComments(run.key, run.id, { status: 'unresolved' }), []);
+  assert.equal(listDiffComments(run.key, run.id, { status: 'resolved' }).length, 2);
+  assert.equal(unresolvedCounts()[`${run.key}/${run.id}`], undefined);
+  const r2 = addDiffCommentReply({ parentId: root.id, body: 'late', author: 'ask' });
+  assert.equal(r2.resolved, true, 'a reply written into a resolved thread is born resolved');
+  setDiffCommentResolved(root.id, false);
+  assert.equal(getDiffComment(r2.id).resolved, false);
+  assert.equal(getDiffComment(r2.id).resolvedAt, null);
+  assert.equal(unresolvedCounts()[`${run.key}/${run.id}`], 1);
+});
+
+test('deleting a root removes its replies (FK cascade); deleting a reply leaves the root', async () => {
+  const run = await seedRun();
+  const root = mk(run, 'src/a.js', 'new', 2, 'root');
+  const r1 = addDiffCommentReply({ parentId: root.id, body: 'one', author: 'user' });
+  const r2 = addDiffCommentReply({ parentId: root.id, body: 'two', author: 'ask' });
+  assert.equal(deleteDiffComment(r1.id), true);
+  assert.ok(getDiffComment(root.id), 'the root stays');
+  assert.equal(deleteDiffComment(root.id), true);
+  assert.equal(getDiffComment(r2.id), null, 'cascaded with the root');
+  assert.deepEqual(listDiffComments(run.key, run.id), []);
 });

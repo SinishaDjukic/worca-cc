@@ -6,7 +6,7 @@ import { mkdtemp, writeFile, readFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, isAbsolute } from 'node:path';
 import {
-  buildAskSpawnOptions, buildMcpConfig, buildMockMarkers,
+  buildAskSpawnOptions, buildMcpConfig, buildMockMarkers, MCP_FORWARD_ENV,
   ASK_DENY_RULES, ASK_SPAWN_ENV, SANDBOX_NOTE, ASK_PERMISSION_MODE, ASK_MCP_SERVER_PATH,
   ASK_BUILTIN_TOOLS, askWorktreeAllowRules,
 } from '../src/core/ask/spawn.mjs';
@@ -183,7 +183,7 @@ test('fake bin: the whole recipe reaches the spawned argv through runClaude (fiv
 });
 
 test('buildMcpConfig: resolved base, argv twins of the env, execPath default', () => {
-  const cfg = buildMcpConfig({ homeBase: '.worca-cc-test', threadId: 'ask_00000001', serverPath: '/repo/src/core/ask/mcp-stdio.mjs' });
+  const cfg = buildMcpConfig({ homeBase: '.worca-cc-test', threadId: 'ask_00000001', serverPath: '/repo/src/core/ask/mcp-stdio.mjs', env: {} });
   const b = resolve('.worca-cc-test');
   assert.deepEqual(cfg, { mcpServers: { worca: {
     type: 'stdio', command: process.execPath,
@@ -195,6 +195,10 @@ test('buildMcpConfig: resolved base, argv twins of the env, execPath default', (
   assert.throws(() => buildMcpConfig({ homeBase: '/b', threadId: 't' }), /serverPath/);
   assert.throws(() => buildMcpConfig({ homeBase: '', threadId: 't', serverPath: '/s.mjs' }), /homeBase/, 'an empty base would silently resolve to process.cwd()');
   assert.ok(ASK_MCP_SERVER_PATH.endsWith(join('src', 'core', 'ask', 'mcp-stdio.mjs')) && isAbsolute(ASK_MCP_SERVER_PATH));
+  // v7: the chat's claude is env-scrubbed (envScrub:true above), so the nested classifier's knobs must ride mcpServers.env — only when set.
+  const fwd = buildMcpConfig({ homeBase: '/b', threadId: 't', serverPath: '/s.mjs', env: { WORCA_CLAUDE_BIN: '/x/claude.exe', WORCA_AUTO_MODEL: 'claude-sonnet-5', HOME: '/h', WORCA_MOCK: '1' } });
+  assert.deepEqual(fwd.mcpServers.worca.env, { WORCA_HOME: resolve('/b'), WORCA_ASK_THREAD_ID: 't', WORCA_CLAUDE_BIN: '/x/claude.exe', WORCA_AUTO_MODEL: 'claude-sonnet-5' }, 'HOME / WORCA_MOCK are not forwarded');
+  assert.deepEqual(MCP_FORWARD_ENV, ['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL']);
   assert.throws(() => buildAskSpawnOptions({ ...base(), scratchDir: '' }), /scratchDir/);
   assert.throws(() => buildAskSpawnOptions({ ...base(), mcpConfigPath: undefined }), /mcpConfigPath/);
 });

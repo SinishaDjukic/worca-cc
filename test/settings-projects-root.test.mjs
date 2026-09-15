@@ -306,11 +306,18 @@ const postApi = (body) => fetch(`${apiBase}/api/settings`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 });
 
-test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, default} + the budget keys', async () => {
+test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, default} + the budget keys + app identity', async () => {
   await withEnv(undefined, async () => {
     const j = await getApi();
-    assert.deepEqual(Object.keys(j).sort(), ['askMaxBudgetUsd', 'askMaxTurns', 'chat', 'costLimitResetPeriod',
-      'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'pipelineCostLimitUsd', 'projectsRoot', 'projectsRootDefault', 'root', 'totalCostLimitUsd']);
+    // `app` = static identity for the Settings ▸ About card (version, repo URL,
+    // release-tag URL — read from package.json). GET-only: POST still echoes settingsState() + chat.
+    assert.deepEqual(Object.keys(j).sort(), ['app', 'askMaxBudgetUsd', 'askMaxTurns', 'autoWorkflowModel', 'autoWorkflowModelEffective', 'chat', 'costLimitResetPeriod',
+      'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'hideBuiltinModels', 'pipelineCostLimitUsd', 'projectsRoot', 'projectsRootDefault', 'root',
+      'theme', 'titleModel', 'titleModelEffective', 'totalCostLimitUsd']);
+    assert.equal(j.autoWorkflowModel, '', 'no classifier model stored -> the catalog default applies');
+    assert.equal(j.titleModel, null, 'no title model stored -> the run\'s model');
+    assert.deepEqual(j.titleModelEffective, { model: null, source: 'run', stale: null });
+    assert.equal(j.hideBuiltinModels, false);
     assert.equal(j.root, '', 'nothing set yet');
     assert.equal(j.projectsRoot, '', 'the RAW setting — "" when unset, exactly like root');
     assert.equal(j.projectsRootDefault, defaultRoot(), 'what applies while it is blank');

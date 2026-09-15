@@ -42,7 +42,9 @@ test('runOpts resolves modelEnv from the dispatched model id', async () => {
   await addGlobalModel({ id: 'routed-model', env: { ANTHROPIC_BASE_URL: 'https://proxy.test/v1' } });
   const opts = runOpts({ ...CTX_BASE, claudeOpts: { model: 'routed-model' } }, CALL);
   assert.equal(opts.model, 'routed-model');
-  assert.deepEqual(opts.modelEnv, { ANTHROPIC_BASE_URL: 'https://proxy.test/v1' });
+  assert.equal(opts.modelEnv.ANTHROPIC_BASE_URL, 'https://proxy.test/v1');
+  // #422: a routed env also carries the CLI tier keys pointed at this id.
+  assert.equal(opts.modelEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'routed-model');
 });
 
 test('runOpts leaves modelEnv undefined for env-less and unconfigured models', async () => {

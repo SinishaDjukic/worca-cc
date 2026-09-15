@@ -461,3 +461,32 @@ test('list: only global cards get Duplicate — plugin cards already have Edit a
   assert.equal(el.querySelector('.mv-legacy .mv-duplicate'), null);
   assert.equal(el.querySelector('.mv-builtin .mv-duplicate'), null);
 });
+
+// ── #422: hide-built-ins checkbox, collapsed built-ins, endpoint-routed badge ──
+
+test('list (#422): the hide-built-ins checkbox sits at the top and mirrors the flag; built-ins collapse when hidden', () => {
+  const shown = renderModelsList({ globals: [GLOBAL], plugins: [], predefined: PREDEFINED, efforts: EFFORTS, hideBuiltin: false }, { doc });
+  const cb = shown.querySelector('.mv-hide-builtin');
+  assert.ok(cb && cb.type === 'checkbox' && cb.checked === false);
+  assert.equal(shown.firstElementChild.className, 'mv-hide-builtin-row', 'top of the pane, above Your models');
+  assert.equal(shown.querySelectorAll('.mv-builtin').length, PREDEFINED.length);
+  assert.ok(shown.querySelector('.mv-section.mv-builtins-shown'));
+
+  const hidden = renderModelsList({ globals: [GLOBAL], plugins: [], predefined: PREDEFINED, efforts: EFFORTS, hideBuiltin: true }, { doc });
+  assert.equal(hidden.querySelector('.mv-hide-builtin').checked, true);
+  assert.equal(hidden.querySelectorAll('.mv-builtin').length, 0, 'no built-in rows');
+  const sec = hidden.querySelector('.mv-section.mv-builtins-hidden');
+  assert.ok(sec, 'the section stays, collapsed');
+  assert.match(sec.textContent, /Hidden from every picker \(2 built-ins\)/);
+});
+
+test('list (#422): endpoint-routed badge on global + plugin cards whose env carries ANTHROPIC_BASE_URL, and only those', () => {
+  const plain = { id: 'plain', label: 'Plain', efforts: [], env: { ANTHROPIC_AUTH_TOKEN: '••••' } };
+  const plug = { id: 'pm', label: 'PM', efforts: [], plugin: 'p', env: { ANTHROPIC_BASE_URL: '••••' }, secrets: [] };
+  const root = renderModelsList({ globals: [GLOBAL, plain], plugins: [plug], predefined: PREDEFINED, efforts: EFFORTS }, { doc });
+  const badgeOf = (id) => root.querySelector(`.mv-card[data-id="${id}"] .mv-routed`);
+  assert.ok(badgeOf('glm-4.7'), 'routed global');
+  assert.equal(badgeOf('plain'), null, 'no base url → no badge');
+  assert.ok(badgeOf('pm'), 'routed plugin');
+  assert.match(badgeOf('glm-4.7').title, /haiku\/sonnet\/opus\/fable/);
+});

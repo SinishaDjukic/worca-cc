@@ -2,9 +2,9 @@
 // scripts/verify-run-monitor-cdp.mjs — headless-Chrome proof of the RUN MONITOR
 // (spec §8 / node-graph v2 P6): the `.run-flow.gv-host` reset on all three
 // hosts, the Running card's 300px band, the footer bands against the SHARED
-// nodeSize, the marching ants, the `N×` loop badge, the engaged-wheel nav, the
-// chrome that must never cover a card title, the History End chip and the
-// log-filter node axis. NOT part of `npm test`: it needs Chrome and a live
+// nodeSize, the marching ants, the `N×` loop badge, the canvas nav (drag-pan,
+// ⌘/ctrl zoom, the button cluster), the chrome that must never cover a card
+// title, the History End chip and the log-filter node axis. NOT part of `npm test`: it needs Chrome and a live
 // server, and it drives a REAL mock pipeline end to end.
 // Run: node scripts/verify-run-monitor-cdp.mjs   (or: npm run verify:run-monitor)
 //
@@ -18,7 +18,9 @@
 //     (3)       the 26/22px footer bands and offsetHeight === nodeSize()
 //     (4a)(4b)  computed animationName on a live wire, live and under .settled
 //     (5)       the COMPUTED font-size that hides the composer's <=N pill
-//     (6)       stage-box stability across the wheel sequence
+//     (6)       stage-box stability across the wheel + drag sequence, the
+//               measured cluster box, and the computed `grabbing` cursor on
+//               the CARD the drag started from
 //     (7)       the measured .nrun / .ngate clearance of the title's em box
 //     (console) the no-page-error gate
 //   NOW ALSO IN test/
@@ -27,7 +29,8 @@
 //     (6) the wheel preventDefault policy + the pan delta,
 //     (7) both ornaments outside .nhead + their negative absolute offsets
 //                                               -> test/ui-graph-interactions.test.mjs
-//     (6) engage / disengage, (8)(8b) the End chip and the quiescence copy,
+//     (6) the wheel policy, the drag threshold + pan delta and the cluster's
+//         clamps, (8)(8b) the End chip and the quiescence copy,
 //     (9b) the .xrow log narrowing, and the (1*)(2)(3)(4a) CSS text and
 //          band-count math                      -> test/ui-run-hosts.test.mjs
 //     (9a) the node axis on the card bar        -> test/ui-log-filter-node-axis.test.mjs
@@ -174,8 +177,11 @@ function pumped(promise) {
 const press = (x, y) => pumped(cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 }));
 const mup = (x, y) => pumped(cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 }));
 const mmove = (x, y) => pumped(cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0, clickCount: 0 }));
+// A move WITH the left button down: `mmove` reports buttons:0, which Chrome
+// delivers as a hover, not as part of a drag. (Same shape as the composer
+// script's own `mmove(x, y, buttons = 1, button = 'left')`.)
+const mdrag = (x, y) => pumped(cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'left', buttons: 1, clickCount: 0 }));
 const click = async (x, y) => { await press(x, y); await mup(x, y); };
-const keyEv = (type, k, code, vk) => cdp('Input.dispatchKeyEvent', { type, key: k, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
 const wheelRaw = (x, y, dx, dy, modifiers = 0) => pumped(cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: dx, deltaY: dy, modifiers, button: 'none' }));
 
 // Wheel delivery, PROBED once (the composer script's idiom, extended). Measured
@@ -365,10 +371,11 @@ try {
     !ants.none && !ants2.none && ants.animationName === 'wireDash' && ants.clock === 'none'
     && ants.strokeDashoffset !== ants2.strokeDashoffset && ants.settled === false, { ants, ants2 });
 
-  // (6) the engaged wheel (D8). FIRST on this screen, while nothing has scrolled
-  // or clicked: `createNav` zooms about `view`'s ONE cached rect, which is
-  // re-read on fit and on the wrap's ResizeObserver — never on a scroll — so a
-  // measurement taken after a scrollIntoView would read a stale origin as drift.
+  // (6) the canvas gestures (D2-D8). FIRST on this screen, while nothing has
+  // scrolled or clicked: `createNav` zooms about `view`'s ONE cached rect, which
+  // is re-read on a fit, on the wrap's ResizeObserver and at the start of every
+  // gesture — never on a scroll — so a measurement taken after a scrollIntoView
+  // would read a stale origin as drift.
   const S = () => ev(`(()=>{const b=document.querySelector('${RD} .gv-stage').getBoundingClientRect();
     const m=new DOMMatrixReadOnly(getComputedStyle(document.querySelector('${RD} .gv-world')).transform);
     return {l:+b.left.toFixed(2),t:+b.top.toFixed(2),w:+b.width.toFixed(2),h:+b.height.toFixed(2),
@@ -376,50 +383,118 @@ try {
   const worldAt = (cx, cy) => ev(`(()=>{const st=document.querySelector('${RD} .gv-stage').getBoundingClientRect();
     const m=new DOMMatrixReadOnly(getComputedStyle(document.querySelector('${RD} .gv-world')).transform);
     return {x:+((${cx}-st.left-m.e)/m.a).toFixed(4),y:+((${cy}-st.top-m.f)/m.a).toFixed(4)};})()`);
-  const engagedNow = () => ev(`document.querySelector('${RD}').classList.contains('rg-engaged')`);
   const s0 = await S();
   const wx = Math.round(s0.l + s0.w / 2);
   const wy = Math.round(s0.t + s0.h / 2);
   await probeWheel(`${RD} .gv-stage`, wx, wy);
-  // (a) ⌘/Ctrl+wheel zooms about the cursor with NO click at all
-  const engagedA = await engagedNow();
   const w0 = await worldAt(wx, wy);
   const preventedZ = await wheel(`${RD} .gv-stage`, wx, wy, 0, -120, true);
   const sZoom = await S();
   const w1 = await worldAt(wx, wy);
-  // (b) a plain wheel while disengaged is left to the PAGE
   const prevented0 = await wheel(`${RD} .gv-stage`, wx, wy, 0, 120, false);
   const sIdle = await S();
-  const engagedB = await engagedNow();
-  // (c) a TRUSTED press on empty canvas engages the nav; the plain wheel then pans
+  // The cluster is a sibling of the HOST, so it is not in `.gv-stage`'s subtree and
+  // no `.node` box covers it: a bare empty-point scan can hand back a nav button,
+  // whose click would zoom or fit and break the stability assertion below.
   const emptyPt = await ev(`(()=>{const st=document.querySelector('${RD} .gv-stage');const s=st.getBoundingClientRect();
     const boxes=[...st.querySelectorAll('.gv-world .node')].map((e)=>e.getBoundingClientRect());
+    const nav=document.querySelector('${RD} > .gv-nav');
+    if(nav)boxes.push(nav.getBoundingClientRect());
     for(let y=s.bottom-12;y>s.top;y-=6){for(let x=s.left+8;x<s.right-8;x+=13){
       if(boxes.every((b)=>x<b.left-2||x>b.right+2||y<b.top-2||y>b.bottom+2))return {x:Math.round(x),y:Math.round(y)};}}
     return null;})()`);
   if (!emptyPt) throw new Error('no empty point inside the monitor stage');
-  await click(emptyPt.x, emptyPt.y); await settle('engage');
-  const engagedC = await engagedNow();
-  const sEngaged = await S();
+  await click(emptyPt.x, emptyPt.y); await settle('press');
   const prevented1 = await wheel(`${RD} .gv-stage`, wx, wy, 40, -25, false);
-  const sPan = await S();
-  // (d) Escape releases the engagement
-  await keyEv('rawKeyDown', 'Escape', 'Escape', 27); await keyEv('keyUp', 'Escape', 'Escape', 27);
-  await settle('escape');
-  const engagedD = await engagedNow();
-  const stable = [sZoom, sIdle, sEngaged, sPan].every((s) => Math.abs(s.l - s0.l) < 0.6 && Math.abs(s.t - s0.t) < 0.6);
-  check(6, `engaged wheel: ⌘/Ctrl+wheel zooms about the cursor with no click, a plain wheel is left to the page until a trusted press engages the stage, then pans by (−dx,−dy); Escape releases [${wheelMode} wheels]`,
+  const sAfterClick = await S();
+  // A card point that is REALLY under the pointer: the stage is overflow:hidden and
+  // the graph is panned/zoomed, so the first .node's rect can sit outside it entirely
+  // (it did — the press landed on the sidebar). Intersect the card with the stage,
+  // leave room for the +90/+45 drag, and confirm with elementFromPoint.
+  // The drag's END point is excluded from the CLUSTER's box as well: the nav is a
+  // sibling of the host, so the `.gv-stage.panning *` grabbing blanket never reaches
+  // it and `.gv-nav-btn` keeps `cursor:pointer` — an endpoint landing there would
+  // fail the cursor assertion on any layout whose first qualifying card is clipped
+  // into that corner. This view is ctrl+wheel-zoomed, not fitted, so NAV_INSET does
+  // not protect it, and the macOS and CI layouts are known to diverge.
+  const cardPt = await ev(`(()=>{const wrap=document.querySelector('${RD}');
+    const st=wrap.querySelector('.gv-stage').getBoundingClientRect();
+    const nav=wrap.querySelector(':scope > .gv-nav');
+    const nb=nav?nav.getBoundingClientRect():null;
+    const inNav=(x,y)=>!!nb&&x>=nb.left-2&&x<=nb.right+2&&y>=nb.top-2&&y<=nb.bottom+2;
+    for(const n of document.querySelectorAll('${RD} .gv-world .node')){const b=n.getBoundingClientRect();
+      const l=Math.max(b.left,st.left)+4,r=Math.min(b.right,st.right)-4;
+      const tp=Math.max(b.top,st.top)+4,bt=Math.min(b.bottom,st.bottom)-4;
+      if(r-l<12||bt-tp<12)continue;
+      const x=Math.round((l+r)/2),y=Math.round((tp+bt)/2);
+      if(x+90>st.right-4||y+45>st.bottom-4)continue;
+      if(inNav(x,y)||inNav(x+90,y+45))continue;
+      const hit=document.elementFromPoint(x,y);
+      if(hit&&n.contains(hit))return {x,y};}
+    return null;})()`);
+  if (!cardPt) throw new Error('no visible card point inside the monitor stage');
+  const sBefore = await S();
+  await press(cardPt.x, cardPt.y);
+  await mdrag(cardPt.x + 3, cardPt.y);
+  await settle('under-threshold');
+  const sUnder = await S();
+  await mdrag(cardPt.x + 60, cardPt.y + 30);
+  await mdrag(cardPt.x + 90, cardPt.y + 45);
+  await settle('drag');
+  // No `||stage` fallback on the hit probe: the stage itself reads `grabbing`, so
+  // falling back to it would let a null elementFromPoint satisfy the assertion.
+  const cursor = await ev(`(()=>{const st=document.querySelector('${RD} .gv-stage');
+    const card=document.querySelector('${RD} .gv-world .node');
+    const hit=document.elementFromPoint(${cardPt.x} + 90, ${cardPt.y} + 45);
+    return {stage:getComputedStyle(st).cursor,card:getComputedStyle(card).cursor,
+      hit:hit?getComputedStyle(hit).cursor:null};})()`);
+  await mup(cardPt.x + 90, cardPt.y + 45);
+  await settle('drop');
+  const sDrag = await S();
+  const NAV = () => ev(`(()=>{const r=(e)=>{const b=e.getBoundingClientRect();
+      return {l:b.left,t:b.top,r:b.right,b:b.bottom,w:b.width,h:b.height};};
+    const wrap=document.querySelector('${RD}');const nav=wrap.querySelector(':scope > .gv-nav');
+    const m=new DOMMatrixReadOnly(getComputedStyle(wrap.querySelector('.gv-world')).transform);
+    return {nav:r(nav),wrap:r(wrap),hint:r(wrap.querySelector(':scope > .rg-hint')),z:+m.a.toFixed(6),
+      btns:[...nav.querySelectorAll('button')].map((b)=>({k:b.dataset.nav,dis:b.disabled,...r(b)})),
+      hits:[...wrap.querySelectorAll('.gv-world .node')].filter((e)=>{const q=e.getBoundingClientRect();
+        return q.right>nav.getBoundingClientRect().left&&q.left<nav.getBoundingClientRect().right
+          &&q.bottom>nav.getBoundingClientRect().top&&q.top<nav.getBoundingClientRect().bottom;}).length};})()`);
+  const nav0 = await NAV();
+  const zin = nav0.btns.find((b) => b.k === 'in');
+  await click(Math.round(zin.l + zin.w / 2), Math.round(zin.t + zin.h / 2));
+  await settle('nav-zoom-in');
+  const nav1 = await NAV();
+  const ctr = nav0.btns.find((b) => b.k === 'center');
+  await click(Math.round(ctr.l + ctr.w / 2), Math.round(ctr.t + ctr.h / 2));
+  await settle('nav-center');
+  const nav2 = await NAV();
+  const fitted = await ev(`(()=>{const wrap=document.querySelector('${RD}');
+    const st=wrap.querySelector('.gv-stage').getBoundingClientRect();
+    const n=[...wrap.querySelectorAll('.gv-world .node')].map((e)=>e.getBoundingClientRect());
+    return {n:n.length,inside:n.every((b)=>b.left>=st.left-0.6&&b.right<=st.right+0.6
+      &&b.top>=st.top-0.6&&b.bottom<=st.bottom+0.6)};})()`);
+  const stable = [sZoom, sIdle, sAfterClick, sDrag].every((s) => Math.abs(s.l - s0.l) < 0.6 && Math.abs(s.t - s0.t) < 0.6);
+  check(6, `canvas nav: a plain wheel stays the page's (before and after a press), ⌘/Ctrl+wheel zooms about the cursor, a left-drag from a CARD pans past the 4px threshold, and the cluster zooms and fits [${wheelMode} wheels]`,
     stable
-    && engagedA === false && preventedZ === true && sZoom.T.z > s0.T.z
+    && preventedZ === true && sZoom.T.z > s0.T.z
     && Math.abs(w1.x - w0.x) < 0.01 && Math.abs(w1.y - w0.y) < 0.01
-    && prevented0 === false && engagedB === false
+    && prevented0 === false && prevented1 === false
     && Math.abs(sIdle.T.x - sZoom.T.x) < 1e-6 && Math.abs(sIdle.T.y - sZoom.T.y) < 1e-6
-    && engagedC === true
-    && prevented1 === true && Math.abs(sPan.T.x - sEngaged.T.x + 40) < 1e-6
-    && Math.abs(sPan.T.y - sEngaged.T.y - 25) < 1e-6 && Math.abs(sPan.T.z - sEngaged.T.z) < 1e-9
-    && engagedD === false,
-    { stage: [s0, sZoom, sIdle, sEngaged, sPan], world: [w0, w1],
-      engaged: [engagedA, engagedB, engagedC, engagedD], prevented: [preventedZ, prevented0, prevented1] });
+    && Math.abs(sAfterClick.T.x - sZoom.T.x) < 1e-6 && Math.abs(sAfterClick.T.y - sZoom.T.y) < 1e-6
+    && Math.abs(sUnder.T.x - sBefore.T.x) < 1e-6 && Math.abs(sUnder.T.y - sBefore.T.y) < 1e-6
+    && Math.abs(sDrag.T.x - sBefore.T.x - 90) < 0.6 && Math.abs(sDrag.T.y - sBefore.T.y - 45) < 0.6
+    && Math.abs(sDrag.T.z - sBefore.T.z) < 1e-9
+    && cursor.stage === 'grabbing' && cursor.card === 'grabbing' && cursor.hit === 'grabbing'
+    && nav0.btns.length === 3 && nav0.nav.r <= nav0.wrap.r - 0.6 && nav0.nav.b <= nav0.wrap.b - 0.6
+    && nav0.nav.t > nav0.wrap.t && nav0.hint.r <= nav0.nav.l
+    && nav0.btns.every((b) => b.w >= 24 && b.h >= 24)
+    && nav2.hits === 0                      // NAV_INSET keeps the FIT clear of the cluster
+                                            // (nav0/nav1 are a user-panned view: anything may sit anywhere)
+    && Math.abs(nav1.z - Math.min(1.6, nav0.z * 1.2)) < 1e-4
+    && nav2.z <= 1 + 1e-9 && fitted.n > 1 && fitted.inside,
+    { stage: [s0, sZoom, sIdle, sAfterClick, sBefore, sUnder, sDrag], world: [w0, w1], cursor,
+      prevented: [preventedZ, prevented0, prevented1], nav: [nav0, nav1, nav2], fitted });
 
   // (9b) a footer-row click narrows the log to ONE execution, on BOTH bars.
   // Reload first: check (6) left the view panned and zoomed, and the Escape leg

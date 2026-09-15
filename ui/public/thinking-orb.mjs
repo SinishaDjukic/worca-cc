@@ -39,10 +39,11 @@ export function orbFrame(pts, t, { speed = ORB_SPEED, tilt = ORB_TILT } = {}) {
 }
 
 /**
- * @returns {{el: Element, start: () => void, stop: () => void}} — `el` is a
- * bare inline-block span. It survives being re-parented (the panel moves the
- * one orb into each rebuilt live row) because the phase is `now - t0`, not a
- * frame counter, so a move never rewinds the spin.
+ * @returns {{el: Element, start: () => void, stop: () => void, morphTo: (f: number, ms?: number) => void, morph: () => number}}
+ * — `el` is a bare inline-block span. It survives being re-parented (the panel
+ * moves the one orb into each rebuilt live row) because the phase is `now - t0`,
+ * not a frame counter, so a move never rewinds the spin. `morphTo` drives the
+ * 0..1 morph factor the launcher pill uses to grow the sphere out of its mark.
  */
 export function createThinkingOrb({ doc, win, size = 28.5, ink = '25,25,27' }) {
   const el = doc.createElement('span');
@@ -72,6 +73,20 @@ export function createThinkingOrb({ doc, win, size = 28.5, ink = '25,25,27' }) {
     else cv.remove();
   }
 
+  // The ink follows the theme (spec D16): the resolved body colour is the --ink
+  // token in whatever scheme is active. Read on every start() and on the theme
+  // event app.js dispatches; keep the previous value whenever nothing parses
+  // (jsdom, a keyword, no stylesheet).
+  let inkRgb = ink;
+  function refreshInk() {
+    try {
+      const c = win.getComputedStyle ? win.getComputedStyle(doc.body).color : '';
+      const m = /^rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(c || '');
+      if (m) inkRgb = `${m[1]},${m[2]},${m[3]}`;
+    } catch { /* keep inkRgb */ }
+  }
+  if (typeof doc.addEventListener === 'function') doc.addEventListener('worca:theme', refreshInk);
+
   const pts = orbPoints();
   const R = size * 0.40;
   const c = size / 2;
@@ -81,22 +96,45 @@ export function createThinkingOrb({ doc, win, size = 28.5, ink = '25,25,27' }) {
   const t0 = clock();
   let handle = null;
 
+  // Morph factor 0..1, scaling the sphere radius and every dot's alpha: at 0
+  // the dots sit invisible on the centre, at 1 the sphere is whole. The
+  // launcher pill grows the orb out of its mark with morphTo(1, ms) and sinks
+  // it back with morphTo(0, ms); the tween runs on the draw clock (ease-out
+  // cubic, from wherever the factor is), so no caller ticks it. Reduced motion
+  // snaps — the CSS half of that morph is an instant swap there too. The
+  // transcript's orb never calls it and paints at 1.
+  let morph = { from: 1, to: 1, t0: 0, dur: 0 };
+  function morphFactor(t) {
+    if (morph.dur <= 0) return morph.to;
+    const p = Math.min(1, Math.max(0, (t - morph.t0) / morph.dur));
+    return morph.from + (morph.to - morph.from) * (1 - (1 - p) ** 3);
+  }
+  function morphTo(target, durationMs = 0) {
+    const t = clock();
+    const to = Math.min(1, Math.max(0, Number(target) || 0));
+    morph = { from: morphFactor(t), to, t0: t, dur: reduced ? 0 : Math.max(0, Number(durationMs) || 0) };
+  }
+
   function draw() {
     handle = raf(draw);
     if (doc.hidden) return;
     ctx.clearRect(0, 0, size, size);
-    const frame = orbFrame(pts, (clock() - t0) / 1000, { speed, tilt: ORB_TILT });
+    const t = clock();
+    const f = morphFactor(t);
+    const r = R * f;
+    const frame = orbFrame(pts, (t - t0) / 1000, { speed, tilt: ORB_TILT });
     for (let k = 0; k < frame.length; k++) {
       const [x, y, z] = frame[k];
       const d = (z + 1) / 2;                       // 0 back … 1 front
       ctx.beginPath();
-      ctx.arc(c + x * R, c - y * R, 0.5 + d * 1.05, 0, 6.2832);
-      ctx.fillStyle = `rgba(${ink},${(0.08 + d * 0.82).toFixed(3)})`;
+      ctx.arc(c + x * r, c - y * r, 0.5 + d * 1.05, 0, 6.2832);
+      ctx.fillStyle = `rgba(${inkRgb},${((0.08 + d * 0.82) * f).toFixed(3)})`;
       ctx.fill();
     }
   }
 
   function start() {
+    refreshInk();
     if (handle != null || !ctx || !raf) return;
     handle = raf(draw);
   }
@@ -106,5 +144,5 @@ export function createThinkingOrb({ doc, win, size = 28.5, ink = '25,25,27' }) {
   }
 
   start();
-  return { el, start, stop };
+  return { el, start, stop, ink: () => inkRgb, morphTo, morph: () => morphFactor(clock()) };
 }

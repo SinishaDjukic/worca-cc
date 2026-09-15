@@ -10,14 +10,15 @@
 // an ordinary execution, `x:<nodeId>:<ordinal>:<taskId>` for a composite slice.
 // state.steps[] IS the execution ledger: one row per execution, key ===
 // executionId. There is no separate executions[] array.
-import { join, isAbsolute } from 'node:path';
-import { rm } from 'node:fs/promises';
+import { join, isAbsolute, extname } from 'node:path';
+import { rm, readFile } from 'node:fs/promises';
 
 import {
   RunHarness, isAbort, isPause, pauseErr, firstLine, jsonClone,
   clipMiddle, sumStepActive, normalizeClarifyAnswer,
 } from './run-harness.mjs';
-import { resolveGraph, loadAgentFile, GRAPH_DEFAULT_WORKFLOW } from './workflows.mjs';
+import { resolveGraph, loadAgentFile, GRAPH_DEFAULT_WORKFLOW, writeGraphWorkflow, readWorkflow } from './workflows.mjs';
+import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME } from './graph/builtin-workflows.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
 import { DEFAULT_MAX_CYCLES } from '../shared/graph/constants.mjs';
@@ -25,7 +26,13 @@ import { registryPortsFn } from './graph/registry-ports.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition } from './graph/executor.mjs';
 import { renderPromptArtifact } from './phases.mjs';
-import { modelHasBaseUrlRouting } from './config.mjs';
+import { listModels, modelHasBaseUrlRouting, resolveRunConfig } from './config.mjs';
+import { assembleShape, ShapeError } from '../shared/graph/assemble.mjs';
+import { fingerprintProject } from './auto/fingerprint.mjs';
+import { classifyTask, ClassifierError } from './auto/classify.mjs';
+import { autoCandidates, findEquivalentWorkflow } from './auto/match.mjs';
+import { buildProposal, sanitizeProposalAnswer, remapTunables, mintAutoWorkflowId } from './auto/proposal.mjs';
+import { resolveAutoModel } from './auto/model.mjs';
 import {
   appendAudit, writeReview, reviewKindOf, writeDecomposition, updateTaskStatus,
   updatePhaseStatus, writeStepQuestions, readStepQuestions,
@@ -42,6 +49,12 @@ function abortError(msg = 'aborted') {
   e.name = 'AbortError';
   return e;
 }
+
+/** Token usage summed over the classifier's attempts (a retry is billed to the same round). */
+const sumUsage = (a, b) => ({
+  input_tokens: (Number(a?.input_tokens) || 0) + (Number(b?.input_tokens) || 0),
+  output_tokens: (Number(a?.output_tokens) || 0) + (Number(b?.output_tokens) || 0),
+});
 
 export function createOrchestrator(opts = {}) {
   return new GraphOrchestrator(opts);
@@ -62,6 +75,13 @@ export class GraphOrchestrator extends RunHarness {
     this._planVersion = 0;       // {vsuffix} ticks, carried across a resume
     this._taskArtifact = null;   // the pre-rendered task document
     this.extrasFiles = [];
+    // Auto workflow (spec §5): the decision loop's state. `feedback`/`round`/`prior`
+    // ride the resume point while the run is undecided; `costUsd` is the running
+    // classifier spend shown in the proposal. `pending` = the proposal that is OPEN
+    // (or the round a cost cap parked), replayed on resume without a classifier call.
+    // `classify` is the test seam.
+    this._auto = { feedback: [], round: 0, prior: null, costUsd: 0, pending: null };
+    this._classify = typeof opts?.classify === 'function' ? opts.classify : null;
     Object.assign(this.state, {
       engine: 2,
       active: [],                // [{nodeId, executionId}]
@@ -91,6 +111,7 @@ export class GraphOrchestrator extends RunHarness {
    * @returns {Promise<{manifest:object, agentKeys:Set<string>, workflow:{id:string,name:string}}>}
    */
   async _resolveTopology(registry) {
+    if (this.workflowId === AUTO_WORKFLOW_ID) return this._autoBootstrapTopology();
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
       isWorkspace: this.isWorkspace,
     });
@@ -106,6 +127,341 @@ export class GraphOrchestrator extends RunHarness {
       agentKeys: new Set(this.resolved.agentKeys),
       workflow: { id: this.workflowId, name: this.resolved.template.name || this.workflowId },
     };
+  }
+
+  /** The Auto entry before the decision: an EMPTY graph tagged `deciding`, so
+   *  the run row, the Running page and a pre-decision resume point all have a
+   *  manifest to carry (spec §5.2). */
+  _autoBootstrapTopology() {
+    const manifest = buildGraphManifest({ id: AUTO_WORKFLOW_ID, name: AUTO_WORKFLOW_NAME, version: 2, domain: 'coding', nodes: [], wires: [] }, {});
+    manifest.auto = { status: 'deciding', humanInLoop: this.humanInLoop };
+    return { manifest, agentKeys: new Set(), workflow: { id: AUTO_WORKFLOW_ID, name: AUTO_WORKFLOW_NAME } };
+  }
+
+  // ── Auto workflow: the decision loop (spec §5.3) ──────────────────────────
+  /**
+   * Classify → assemble → match → propose → (accept | revise | cancel) → adopt.
+   * run() calls it (no argument) AFTER createPipeline + the run root (the hook site
+   * in run-harness.mjs); resume() calls it with `{ resume: rp }` BEFORE the setup
+   * replay for a run that paused undecided. Returns the topology bag that replaces
+   * the bootstrap manifest, or null when there is nothing to decide.
+   */
+  async _decideTopology({ resume = null } = {}) {
+    if (this.workflowId !== AUTO_WORKFLOW_ID) return null;
+    if (resume) {
+      if (resume.manifest?.auto?.status !== 'deciding') return null;   // decided before the pause: the normal resume path
+      const saved = resume.auto || {};
+      this._auto = {
+        ...this._auto,
+        feedback: Array.isArray(saved.feedback) ? [...saved.feedback] : [],
+        round: Number(saved.round) || 0,
+        prior: saved.prior || null,
+        costUsd: Number.isFinite(Number(saved.costUsd)) ? Number(saved.costUsd) : 0,   // B5: the spend before the pause
+        // B4/B6: the proposal that was OPEN (or the round a cost cap parked) — replayed below without a classifier call
+        pending: saved.pending && saved.pending.shape && typeof saved.pending.shape === 'object' ? jsonClone(saved.pending) : null,
+      };
+      // resume() stamps titleProvisional only AFTER this hook (run-harness.mjs:1420); a point
+      // re-stamped while the replayed proposal is open must not lose the flag.
+      if (resume.titleProvisional === true) this.state.titleProvisional = true;
+      this.humanInLoop = typeof saved.humanInLoop === 'boolean' ? saved.humanInLoop : (resume.manifest.auto.humanInLoop ?? this.humanInLoop);
+    }
+    try {
+      return await this._decideTopologyInner();
+    } catch (err) {
+      // Whatever unwinds the decision (a cost cap, a classifier failure, the user's
+      // pause, a stop) leaves the CURRENT decision state on the row: both shells keep
+      // state.resumePoint when it is already set (run-harness.mjs :1150 / :1475 — a
+      // resume would otherwise re-arm the point it consumed, with a stale
+      // round/feedback), _pauseForFailure prefers it and restamps reason/detail, and
+      // the stop branch nulls it.
+      if (this.pipeline && this.workflowId === AUTO_WORKFLOW_ID) this.state.resumePoint = this._buildResumePoint(null);
+      throw err;
+    }
+  }
+
+  async _decideTopologyInner() {
+    const registry = this.registry;
+    const models = await listModels(this.projectDir);
+    const model = resolveAutoModel(models);
+    const fingerprint = await fingerprintProject(this.projectDir);
+    this._log('orchestrator', 'info', `auto: fingerprint ${Buffer.byteLength(fingerprint, 'utf8')} B`);
+    const extras = await this._autoExtras();
+    const taskText = this.pipeline?.promptText || this.opts.prompt || '';
+    const classify = this._classify || ((input) => classifyTask(input));
+    for (;;) {
+      this._checkAbort();
+      this._checkPause();
+      // B4/B6: a pending proposal (a pause with the question open, a cost cap inside the round, a
+      // server restart) is re-proposed AS-IS: the assembler and the matcher are deterministic and
+      // free, so the user sees the SAME proposal and pays no second classifier bill. Not a new round.
+      const pending = this._auto.pending;
+      let round;
+      let classifyFor;
+      if (pending) {
+        round = Number(pending.round) || this._auto.round || 1;
+        this._auto.round = round;
+        classifyFor = async (input) => ({
+          shape: jsonClone(pending.shape), warnings: Array.isArray(pending.warnings) ? [...pending.warnings] : [],
+          attempts: 0, costUsd: 0, usage: { input_tokens: 0, output_tokens: 0 }, raw: '', model: input.model || null, replayed: true,
+        });
+        this._log('orchestrator', 'info', `auto: re-proposing round ${round} from the saved point (no classifier call)`);
+      } else {
+        this._auto.round += 1;
+        round = this._auto.round;
+        classifyFor = classify;
+      }
+      let outcome;
+      try {
+        outcome = await this._autoRound({ registry, models, model, fingerprint, extras, taskText, classify: classifyFor, round });
+      } catch (err) {
+        if (isAbort(err) || isPause(err)) throw err;
+        if (pending && err instanceof ShapeError) {
+          // The saved shape no longer assembles (the registry changed while the run was parked):
+          // drop it and classify afresh in THIS resume instead of parking the run a second time.
+          this._log('orchestrator', 'warn', `auto: the saved proposal no longer assembles (${firstLine(err.message)}); classifying afresh`);
+          this._auto.pending = null;
+          continue;
+        }
+        if (err instanceof ClassifierError || err instanceof ShapeError) {
+          // spec D17 / §5.6: the shell's failure policy parks the run (setup site ⇒
+          // pause, reason 'error', detail = the message) and the resume point keeps
+          // auto.status 'deciding' + this loop's state, so resume() re-decides.
+          this._log('orchestrator', 'warn', `auto: classifier failed: ${firstLine(err.detail || err.message)}`);
+        }
+        throw err;
+      }
+      const { proposal, template, match, tunables, shape } = outcome;
+      this._checkPause();   // a pause requested while the classifier was out parks the run BEFORE any row is written
+      if (this.humanInLoop) {
+        // B6: the proposal may stay open for hours. Stamp the current decision state on the row
+        // NOW, so a server restart in this window reconciles to a RESUMABLE row that resumes
+        // into this very proposal. _autoAdopt nulls the point once decided; every throw below
+        // it goes through _decideTopology's catch, which rebuilds the point (pending included).
+        await this._stampDecisionPoint();
+      }
+      const answer = this.humanInLoop
+        ? await this._autoAsk(proposal, models, registry)
+        : { decision: 'accept', name: proposal.name, nodes: {} };
+      if (answer.decision === 'cancel') {
+        this._log('orchestrator', 'info', 'auto: cancelled by the user');
+        await appendAudit(this.pipeline.dir, 'Auto workflow **cancelled** by the user.').catch(() => {});
+        this.stop();
+        throw abortError('cancelled');
+      }
+      if (answer.decision === 'revise') {
+        this._auto.pending = null;                       // answered: the next round classifies afresh
+        this._auto.feedback.push(answer.text);
+        this._auto.prior = shape;
+        this._log('orchestrator', 'info', `auto: revise — ${clipMiddle(answer.text, 200)}`);
+        // PR #434 review, finding 2: until the NEXT round's own stamp the feedback lives only in
+        // memory, and that round opens with a 60–120 s classifier call. A hard kill in that
+        // window (ui/server.mjs shutdown() never pauses runs; the boot reconcile keeps the row's
+        // point) would resume into the stamp above and re-show the ORIGINAL proposal with the
+        // revise text gone. Persist the decision state now.
+        await this._stampDecisionPoint();
+        continue;
+      }
+      return await this._autoAdopt({ template, match, tunables, shape, answer, registry, round });
+    }
+  }
+
+  /** One round: classifier call (one assembler-driven retry), match, proposal. */
+  async _autoRound({ registry, models, model, fingerprint, extras, taskText, classify, round }) {
+    const input = {
+      taskText, extras, fingerprint, models, registry,
+      domain: 'coding',                                // the domain the assembler stamps: coding + shared + general agents are offered
+      humanInLoop: this.humanInLoop, feedback: [...this._auto.feedback], priorShape: this._auto.prior,
+      // D6 amendment (2026-09-07): the classifier may Grep/Glob/Read the RUN'S OWN checkout to
+      // size the change — this.runCwd is set by _setupRunRoot before the run() hook
+      // (run-harness.mjs:1641) and rehydrated before the resume() hook (:1360). It is never the
+      // user's live checkout. With no worktree (not a case a project run reaches today) it
+      // falls back to the scratch dir, text-only, exactly as before. (A detached WORKSPACE run's
+      // runCwd is the neutral run root whose repos/<key>/ checkouts sit below it — still readable.)
+      model, cwd: this.runCwd || this.pipeline.dir, repoLook: !!this.runCwd, bin: this.claude.bin, mock: this.claude.mock,
+      // Stop OR pause ends the call (the same composition every node spawn uses).
+      signal: AbortSignal.any([this.abort.signal, this.pauseAbort.signal]),
+      envScrub: this.guardrails?.envScrub || undefined,
+      envAllowlist: this.guardrails?.envScrub ? this.guardrails.envAllowlist : undefined,
+    };
+    const startedAt = new Date().toISOString();
+    let classified = null;
+    let assembled;
+    try {
+      classified = await classify(input);
+      try {
+        assembled = assembleShape(classified.shape, { registry, humanInLoop: this.humanInLoop });
+      } catch (err) {
+        // A REPLAYED shape (B4/B6 resume) gets no second round here: `classify` is then the replay
+        // stub, which would only hand the same stale shape back. Let the ShapeError escape to
+        // _decideTopologyInner, which drops the pending proposal and classifies afresh.
+        if (!(err instanceof ShapeError) || classified.replayed) throw err;
+        // ONE more classifier round with the assembler's issues as feedback (spec §5.3);
+        // a second ShapeError propagates and pauses the run.
+        const note = `The previous shape could not be assembled: ${err.issues.map((i) => i.message).join('; ')}. Fix it and reply with the full shape.`;
+        const again = await classify({ ...input, feedback: [...input.feedback, note], priorShape: classified.shape });
+        again.costUsd = (Number(again.costUsd) || 0) + (Number(classified.costUsd) || 0);
+        again.usage = sumUsage(classified.usage, again.usage);
+        classified = again;
+        assembled = assembleShape(classified.shape, { registry, humanInLoop: this.humanInLoop });
+      }
+    } catch (err) {
+      // A FAILED round still spent money (two billed replies behind CLASSIFIER_FAILED, a
+      // partial reply behind a timeout, the first shape behind a failed assembler retry):
+      // book it before the shell parks the run, or the caps never see it (D14). No cap
+      // check here — the error pause is happening anyway; the next round checks.
+      const spent = (Number(classified?.costUsd) || 0) + (Number(err?.costUsd) || 0);
+      if (spent > 0 || err?.usage) this._recordAutoCost(round, { costUsd: spent, usage: sumUsage(classified?.usage, err?.usage) }, startedAt, model, { checkCaps: false });
+      throw err;
+    }
+    // B4: keep this round's shape (and the classifier's warnings) from here on — a cost cap raised
+    // by _recordAutoCost below, or a pause while the proposal is open, resumes into it instead of
+    // paying for a new classification. Set BEFORE the cost row: the cap check lives inside it.
+    this._auto.pending = { round, shape: jsonClone(assembled.shape), warnings: [...(classified.warnings || [])] };
+    if (!classified.replayed) this._recordAutoCost(round, classified, startedAt, model);
+    const match = findEquivalentWorkflow(assembled.template, await autoCandidates());
+    let template = assembled.template;
+    let tunables = assembled.tunables;
+    let ignoredProjectOverrides = false;
+    if (match) {
+      tunables = remapTunables(tunables, match.nodeMap);
+      template = match.candidate;
+      // D7: Auto owns the tuning — a reused row's per-project node/wire overrides are
+      // NOT applied; the proposal says so, so the user is not surprised.
+      const rc = await resolveRunConfig(this.projectDir, match.candidate.id);
+      ignoredProjectOverrides = Object.keys(rc?.nodes || {}).length > 0 || Object.keys(rc?.wires || {}).length > 0;
+      // With human-in-the-loop OFF there is no proposal to say it (PR #434 review, finding 5):
+      // the run log is then the only place the user can learn why the run used models they
+      // never picked, so say it here regardless of the switch.
+      if (ignoredProjectOverrides) {
+        this._log('orchestrator', 'warn', `auto: this project's saved per-node/wire settings for "${match.candidate.name}" (${match.candidate.id}) are not applied — Auto owns the tuning`);
+      }
+    }
+    const proposal = buildProposal({
+      round, shape: assembled.shape, template,
+      match: match ? { id: match.candidate.id, name: match.candidate.name } : null,
+      tunables, registry, models,
+      warnings: [...(classified.warnings || []), ...assembled.warnings],
+      costUsd: this._auto.costUsd, fingerprint, ignoredProjectOverrides,
+    });
+    this._log('orchestrator', 'info',
+      `auto: round ${round} proposed "${proposal.name}" (${Object.keys(proposal.nodes).length} agents) — ${match ? `same shape as saved workflow "${match.candidate.name}" (${match.candidate.id})` : 'no saved workflow has this shape; Accept saves a new one'}`);
+    return { proposal, template, match, tunables, shape: assembled.shape };
+  }
+
+  /** Ask the proposal ONCE; the validator keeps the question OPEN on a malformed
+   *  answer (spec §5.4) and the awaiting code receives the sanitised payload. */
+  async _autoAsk(proposal, models, registry) {
+    const validate = (raw) => sanitizeProposalAnswer(raw, { proposal, models, registry });
+    const raw = await this._ask({ id: `auto-${proposal.round}`, kind: 'workflow', workflow: proposal, validate });
+    return raw && raw.decision ? raw : validate(raw);   // auto mode answers { decision: 'accept' } without the validator
+  }
+
+  /** Reuse the twin or save a new row, resolve it with the accepted tunables as the ONLY overlay, re-stamp the manifest. */
+  async _autoAdopt({ template, match, tunables, shape, answer, registry, round }) {
+    const name = answer.name || shape.name;
+    if (!match) {
+      // B3: the twin search ran at proposal time; another Auto run, the composer or the chat may
+      // have saved this exact topology while the proposal was open. Reuse it now rather than
+      // write a duplicate — remapping the classifier's tunables AND the user's table edits
+      // (both keyed by the assembled node ids) onto the twin's node ids.
+      const late = findEquivalentWorkflow(template, await autoCandidates());
+      if (late) {
+        this._log('orchestrator', 'info', `auto: saved workflow "${late.candidate.name}" (${late.candidate.id}) appeared while the proposal was open — reusing it`);
+        match = late;
+        tunables = remapTunables(tunables, late.nodeMap);
+        answer = { ...answer, nodes: remapTunables(answer.nodes || {}, late.nodeMap) };
+        template = late.candidate;
+      }
+    }
+    let workflowId;
+    let via;
+    if (match) {
+      workflowId = match.candidate.id;
+      via = 'reused';
+    } else {
+      workflowId = await mintAutoWorkflowId(name, async (id) => !!(await readWorkflow(id, { includeArchived: true })));
+      await writeGraphWorkflow({ ...template, id: workflowId, name, domain: 'coding', origin: 'auto' });
+      via = 'created';
+    }
+    const overlayNodes = {};
+    for (const [nodeId, sel] of Object.entries(tunables || {})) overlayNodes[nodeId] = { ...sel };
+    for (const [nodeId, sel] of Object.entries(answer.nodes || {})) overlayNodes[nodeId] = { ...(overlayNodes[nodeId] || {}), ...sel };
+    const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
+      isWorkspace: false, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true,
+    });
+    if (!this.humanInLoop) {
+      // spec D3: no agent may stop the run to ask (generic — every agent node).
+      for (const nc of Object.values(resolved.nodes)) if (nc.kind === 'agent') nc.askQuestions = false;
+    }
+    this.workflowId = workflowId;
+    this._adoptResolvedGraph(resolved);
+    const manifest = buildGraphManifest(this.resolved.template, this.resolved.agentsByKey, {
+      overlays: { nodes: this.resolved.nodeCtx, wires: this.resolved.wires },
+    });
+    manifest.auto = { status: 'decided', via, rounds: round, humanInLoop: this.humanInLoop, workflowId };
+    this._preflightAgentKeys(this.resolved.agentKeys);
+    this.state.stepper = manifest;
+    // PR #434 review, finding 3: the pending proposal is kept until HERE. A throw before the
+    // workflowId swap above (mintAutoWorkflowId, writeGraphWorkflow, resolveGraph) unwinds
+    // through _decideTopology's catch, which rebuilds the point WITH it, so the resume replays
+    // the same proposal for free instead of paying a second classifier round. (The answer
+    // itself is not persisted: with a proposal open the user answers the replay again. That
+    // catch is gated on workflowId === AUTO_WORKFLOW_ID: a throw after the swap leaves the
+    // point as it was — the B6 stamp when a proposal was open, none otherwise — and the steps
+    // between are bookkeeping over the graph resolveGraph just resolved.)
+    this._auto.pending = null;
+    this.state.resumePoint = null;                  // decided: the engine's onSnapshot owns the point from here
+    this._emit('state', this.getState());
+    await this._persist();
+    this._log('orchestrator', 'info', `auto: accepted → "${name}" (${workflowId}, ${via})`);
+    await appendAudit(this.pipeline.dir, `Auto workflow: **${name}** — ${via === 'reused' ? `reusing saved workflow ${workflowId}` : `saved as ${workflowId}`}.`).catch(() => {});
+    return { manifest, agentKeys: new Set(this.resolved.agentKeys), workflow: { id: workflowId, name: this.resolved.template.name || name } };
+  }
+
+  /** Attached files as the classifier sees them: names, plus the first 2 KB of text files. */
+  async _autoExtras() {
+    const out = [];
+    for (const f of await this._collectExtras()) {
+      const ext = extname(f.name).toLowerCase();
+      let text;
+      if (['.md', '.txt', '.json', '.yaml', '.yml', '.csv', '.toml'].includes(ext)) {
+        text = await readFile(f.path, 'utf8').then((t) => t.slice(0, 2048)).catch(() => undefined);
+      }
+      out.push(text !== undefined ? { name: f.name, text } : { name: f.name });
+    }
+    return out;
+  }
+
+  /** Cost of one classifier round: a sub-agent row (state list + table + delta) + the preflight ledger + the caps (spec §5.7).
+   *  `checkCaps: false` books the spend of a round that FAILED without raising a cost pause on top of the error pause. */
+  _recordAutoCost(round, classified, startedAt, model, { checkCaps = true } = {}) {
+    const costUsd = Number.isFinite(Number(classified?.costUsd)) ? Number(classified.costUsd) : 0;
+    const usage = classified?.usage || {};
+    this._auto.costUsd = Math.round((this._auto.costUsd + costUsd) * 1e6) / 1e6;
+    const rec = {
+      id: `auto-classify-${round}`, label: `Auto workflow (round ${round})`, status: 'finished',
+      startedAt, finishedAt: new Date().toISOString(), costUsd,
+      tokens: (Number(usage.input_tokens) || 0) + (Number(usage.output_tokens) || 0),
+      subagentType: 'auto-classify', uiPhase: 'preflight', nodeId: 'preflight', stepKey: 'x:preflight:1',
+      runModel: model || null,
+    };
+    // The pattern every sub-agent record follows (run-harness.mjs:3392-3394): the state
+    // list + the table + a delta, so the Running view and the CLI pill see the row
+    // without a reload; History reads the table. _subAgentTransition is a pure
+    // emitter (its first argument is the transition: 'spawn' | 'finish' | 'update');
+    // the row is born finished, so both deltas go out back to back and any consumer
+    // that balances spawns against finishes stays balanced.
+    if (!this.state.subAgents.some((s) => s.id === rec.id)) this.state.subAgents.push(rec);
+    this._upsertSubAgent(rec);
+    this._subAgentTransition('spawn', rec);
+    this._subAgentTransition('finish', rec);
+    // The preflight ledger row exists because _bookend('preflight','start') ran in
+    // run() (and resume() rehydrates state.steps before the hook). _recordCost only
+    // attributes a cost whose stepKey names a ledger row (state.steps + totalCostUsd —
+    // no else branch; the DB spend ledger is written regardless), and
+    // _checkCostLimits reads that total: without the row the pipeline cap could never trip.
+    this._recordCost(costUsd, 'x:preflight:1');
+    if (checkCaps) this._checkCostLimits();   // a cost cap pauses here (_capReached → pauseErr()); the resume re-enters the decision
   }
 
   /**
@@ -175,6 +531,10 @@ export class GraphOrchestrator extends RunHarness {
    * @returns {Promise<'done'|'paused'>}
    */
   async _engineRun({ resume = null } = {}) {
+    // An Auto run that paused BEFORE deciding was re-decided by resume() (before the
+    // setup replay, so the skills gate saw the adopted agents); its point holds the
+    // bootstrap manifest and no snapshot, so it starts from scratch like a fresh run.
+    if (resume?.manifest?.auto?.status === 'deciding') resume = null;
     if (resume) await this._restoreFromResumePoint(resume);   // Task 6 (hook-4 companion)
     const { ports, loops } = this.resolved;
     this.extrasFiles = await this._collectExtras();
@@ -251,6 +611,18 @@ export class GraphOrchestrator extends RunHarness {
     return 'done';
   }
 
+  /** Stamp the CURRENT decision state on the row as the setup-incomplete point every Auto
+   *  pause produces (run-harness.mjs _completePaused): a hard kill after this persist
+   *  reconciles to a RESUMABLE row that resumes into exactly this state. Used while a
+   *  proposal is open (B6) and right after a revise answer (PR #434 review, finding 2). */
+  async _stampDecisionPoint() {
+    const rp = this._buildResumePoint(null);
+    rp.setupIncomplete = true;
+    rp.titleProvisional = this.state.titleProvisional === true;
+    this.state.resumePoint = rp;
+    await this._persist();
+  }
+
   /**
    * Serialize the run position into a JSON-safe resume-v2 point. The scheduler
    * snapshot IS the position; the manifest freezes the topology (resume never
@@ -278,6 +650,16 @@ export class GraphOrchestrator extends RunHarness {
       planVersion: this._planVersion,
       stepModels: this.stepModels,
       workflowId: this.workflowId,
+      // Auto workflow: the decision state while UNDECIDED (spec §5.6); null once
+      // the graph is adopted (workflowId is then the real id) and on saved workflows.
+      auto: this.workflowId === AUTO_WORKFLOW_ID
+        ? {
+          humanInLoop: this.humanInLoop, feedback: [...this._auto.feedback], round: this._auto.round,
+          prior: this._auto.prior ? jsonClone(this._auto.prior) : null,
+          costUsd: this._auto.costUsd,                                                   // B5
+          pending: this._auto.pending ? jsonClone(this._auto.pending) : null,            // B4/B6
+        }
+        : null,
       guardrailsId: this.guardrailsId,
       checkpointRef: this.checkpointRef || null,
       checkpointRefs: { ...this.checkpointRefs },

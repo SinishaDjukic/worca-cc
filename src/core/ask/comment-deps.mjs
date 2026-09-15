@@ -12,7 +12,7 @@
 // imports at all); tools.mjs owns the protected-path filter and the redaction, so
 // the fail-closed read rules live next to get_run_diff's.
 import {
-  addDiffComment, listDiffComments, getDiffComment, setDiffCommentResolved, deleteDiffComment,
+  addDiffComment, addDiffCommentReply, listDiffComments, getDiffComment, setDiffCommentResolved, deleteDiffComment,
 } from '../diff-comments.mjs';
 import { hunkContext } from '../diff-anchor.mjs';
 
@@ -40,13 +40,16 @@ export function defaultCommentDeps() {
       list: (storeKey, pipelineId, { status = 'all', path = null, patchText = null, keep = null } = {}) => {
         const rows = listDiffComments(storeKey, pipelineId, { status, path });
         const kept = typeof keep === 'function' ? rows.filter(keep) : rows;
-        return kept.map((c) => (patchText == null ? c : {
+        // Context for ROOTS only: a reply shares its root's anchor, and parsing the
+        // whole patch once more per reply would buy the model nothing (D7).
+        return kept.map((c) => ((patchText == null || c.parentId) ? c : {
           ...c,
           context: hunkContext(patchText, { project: c.projectKey, path: c.path, side: c.side, line: c.line },
             COMMENT_CONTEXT_RADIUS),
         }));
       },
       add: (input) => addDiffComment({ ...input, author: 'ask' }),
+      reply: (input) => addDiffCommentReply({ ...input, author: 'ask' }),
       get: (id) => getDiffComment(id),
       setResolved: (id, resolved) => setDiffCommentResolved(id, resolved),
       remove: (id) => deleteDiffComment(id),

@@ -19,6 +19,19 @@ Claude Code — all running the same engine. See the
 
 ## How a run works
 
+Pick **Auto** (`--workflow auto` on the CLI; the web picker's Auto entry ships with
+the UI update) and worca picks the workflow for you: it classifies the task (a
+free-form prompt, a partial plan, or a complete plan; web feature or not; trivial or
+large) from the task text, the attached files and a small offline fingerprint of the
+repository, knowing every agent by its metadata and the front matter of its agent
+file (never the agent's full instructions), assembles a matching workflow from those
+agents, reuses a saved workflow when one has exactly that shape — otherwise the
+proposal is saved as a new workflow when you accept it — and, with *Human in the
+loop* on, shows you the proposal first so you can accept it, ask for changes in plain
+text, or cancel. Turn the switch off and the run decides on its own, asks no
+questions, and never stops for you. Pick any saved workflow instead to skip all of
+this.
+
 1. **Clarify** — instead of assuming, the planner turns hidden decisions into
    multiple-choice questions (2–4 options plus free text). Your answers are
    appended to the plan so reviewers see them.
@@ -90,6 +103,15 @@ and durations, the clarify Q&A, agent transcripts, and logs:
   runs out). Flow cards — **Task** (the run's request), **End** (the result),
   **AND**, **OR**, **Combine** — express joins, choices and merges without any
   code. Saved pipelines appear in the New Pipeline picker.
+- **Share a pipeline** — *Export…* on a saved pipeline offers three formats.
+  A *JSON file* passes it to another Worca user, who picks it up with
+  *Import…* (a taken name gets a ` (2)` suffix; nothing is ever overwritten).
+  A *Claude Code skill* turns it into a runnable `/command` under `.claude/`
+  so it runs without Worca. A *Worca plugin* folder bundles the pipeline with
+  your own agents it uses and the skills they need, so the recipient runs
+  `worca plugin link <folder>` and updates later with `worca plugin reimport`.
+  Built-in agents are never copied — a plugin pipeline may reference them
+  directly. The saved list is tabbed by domain; click a card to open it.
 
 ![Workflow Composer — drag agents into steps, groups, and feedback loops](docs/screenshots/composer.png)
 
@@ -143,6 +165,12 @@ and durations, the clarify Q&A, agent transcripts, and logs:
   per-model routing environment (e.g. `ANTHROPIC_BASE_URL`) that is merged
   into that model's agent spawns. Share a model catalog as a plugin, with
   secrets required at install time.
+- **No first-party account needed** — run and chat titles are written by the
+  model the run or chat itself uses (Settings › General › Title generation picks
+  a fixed one instead), endpoint-routed models carry Claude Code's internal
+  haiku/sonnet/opus/fable tier keys so nothing falls back to the Anthropic API,
+  and *Hide built-in models* (Settings › Models) drops the built-ins from every
+  picker.
 
 ### Storage
 
@@ -200,6 +228,12 @@ worca ui --port 4318 --open     # another port; open the browser when up
 `status` remember the port of the last started UI, so they usually need no
 flag. See `worca ui help`.
 
+**Appearance.** Settings › General › Appearance picks **System** (follow the
+operating system), **Light** or **Dark** — one setting for every browser that
+opens this Worca. The web UI relies on CSS `light-dark()` (and `::backdrop`
+inheriting the dialog's scheme), so it needs Chrome/Edge 123, Firefox 120 or
+Safari 17.5 (or newer).
+
 ### CLI
 
 ```bash
@@ -209,15 +243,26 @@ worca --project /path/to/your/project --prompt "Add a /search endpoint"
 # use a markdown brief as the prompt
 worca --project /path/to/your/project --file ./brief.md --title "Search feature"
 
+# let worca pick the workflow for the task (Auto), review the proposal first
+worca --project /path/to/your/project --prompt "Add a /search endpoint" --workflow auto
+
+# Auto run with no proposal and no questions (loop-budget, recovery, cost and error pauses still apply; add --yes when nothing can answer them, e.g. in CI)
+worca --project /path/to/your/project --prompt "Add a /search endpoint" --workflow auto --no-human
+
 # pause with Ctrl+C, continue later (survives restarts)
 worca resume <pipelineId>
 
 # offline demo — full pipeline, no tokens
 worca --project /path/to/your/project --prompt "demo task" --mock --yes
+
+# share a saved pipeline: as JSON, or as a plugin folder bundling your agents + skills
+worca workflow export wf_my-flow --format json --out my-flow.json
+worca workflow import my-flow.json
+worca workflow export wf_my-flow --format plugin --target ./my-flow-plugin
 ```
 
 Run `worca --help` for all subcommands (projects, plugins, marketplaces,
-config, doctor) and flags.
+workflows, config, doctor) and flags.
 
 Exit codes, for scripts and CI wrappers: `0` the run finished (or an
 interactive run paused and you can resume it); `1` a hard error, a stop, or an

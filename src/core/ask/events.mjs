@@ -32,11 +32,12 @@ const weight = (u) => u.input + 1.25 * u.cacheCreation + 0.1 * u.cacheRead + 5 *
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const short = (name) => String(name ?? '').replace(/^mcp__worca__/, '');
 const isAgentTool = (name) => name === 'Task' || name === 'Agent';
-// The three write tools whose success must reach the browser. The reducer runs in
+// The four write tools whose success must reach the browser. The reducer runs in
 // the PARENT process, so this is the only place a child-process write becomes a
 // broadcast (the MCP server cannot call broadcast()).
 const COMMENT_WRITE_TOOLS = new Set([
-  'mcp__worca__add_diff_comment', 'mcp__worca__resolve_diff_comment', 'mcp__worca__delete_diff_comment',
+  'mcp__worca__add_diff_comment', 'mcp__worca__reply_to_diff_comment',
+  'mcp__worca__resolve_diff_comment', 'mcp__worca__delete_diff_comment',
 ]);
 // The worktree-mutating tools (P4): the MCP child opens/removes checkouts and
 // moves HEAD (checkout/switch/fetch → tools.mjs noteNav) — invisible to this
@@ -118,9 +119,12 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'list_workflows': return 'Looking at workflows';
     case 'list_projects': return 'Looking at projects';
     case 'propose_run': return 'Preparing a run';
+    case 'propose_workflow': return 'Building a workflow';
+    case 'track_run': return 'Tracking a run';
     case 'read_attachment': return `Reading ${(attachmentNames && attachmentNames[id]) || 'attachment'}`;
     case 'list_diff_comments': return id ? `Reading comments on ${id.slice(0, 12)}` : 'Reading diff comments';
     case 'add_diff_comment': return 'Writing a diff comment';
+    case 'reply_to_diff_comment': return 'Replying to a diff comment';
     case 'resolve_diff_comment': return 'Updating a diff comment';
     case 'delete_diff_comment': return 'Deleting a diff comment';
     default: return `Using ${n}`;
@@ -159,6 +163,9 @@ export function createTurnReducer({
   setTimeout: setT = globalThis.setTimeout,
   clearTimeout: clearT = globalThis.clearTimeout,
   onProposal = null,
+  onWorkflowStart = null,
+  onWorkflowResult = null,
+  onTrackRun = null,
   onCommentMutation = null,
   onWorktreeMutation = null,
   estimateLiveCost = null,
@@ -348,6 +355,11 @@ export function createTurnReducer({
           fullInputs.set(c.id, input);
           label(labelForTool(c.name, input, attachmentNames));
           upsertBlock({ kind: 'tool', id: c.id, name: c.name, input: clipJson(input, limits.blockIoMaxChars), status: 'running', durationMs: null });
+          // P3: the workflow card exists from the tool_use on (state 'building' — the four-step trace), so the
+          // START is a hook too. Sync: the block must precede any frame the tool result produces.
+          if (c.name === 'mcp__worca__propose_workflow' && typeof onWorkflowStart === 'function') {
+            try { onWorkflowStart({ toolUseId: c.id, input }); } catch { reducerErrors += 1; }
+          }
         }
       } else {
         const agent = byId.get(ptu);
@@ -432,6 +444,21 @@ export function createTurnReducer({
         try { const parsed = JSON.parse(text); childOk = typeof parsed?.ok === 'boolean' ? parsed.ok : null; } catch { childOk = null; }
         try {
           const ret = onProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, childOk });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_workflow' && typeof onWorkflowResult === 'function') {
+        // The RAW result text: the parent re-validates from the returned shape (spec §8.2, PD1); an isError result
+        // carries "error: <message>" and flips the card to failed.
+        try {
+          const ret = onWorkflowResult({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__track_run' && typeof onTrackRun === 'function') {
+        // The parent owns the runs Map, the link rows and the followers: it re-resolves the id itself (D4).
+        try {
+          const ret = onTrackRun({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }

@@ -20,7 +20,14 @@
 
 import { spawn } from 'node:child_process';
 
-const PROMPT = 'Select a project folder';
+// The dialog title, by PURPOSE. A closed set, never caller text: the string is
+// interpolated into an osascript / PowerShell command line.
+const PROMPTS = Object.freeze({
+  project: 'Select a project folder',
+  export: 'Select the project folder to export into',
+  plugin: 'Select the plugin folder',
+});
+const promptFor = (purpose) => PROMPTS[purpose] || PROMPTS.project;
 // A dialog waits on a human; give it a long leash, then kill the process so a
 // forgotten dialog cannot pin server resources forever.
 const DIALOG_TIMEOUT_MS = 5 * 60 * 1000;
@@ -75,20 +82,22 @@ export const _testing = {
 /**
  * Open the platform's native folder picker and wait for the user.
  * Serialized: while one dialog is open, further calls resolve { status:'busy' }.
+ * @param {{purpose?: 'project'|'export'|'plugin'}} [opts] picks the dialog title
  * @returns {Promise<{status:'picked', path:string} | {status:'canceled'}
  *   | {status:'unsupported'} | {status:'busy'}>}
  */
-export async function pickFolderNative() {
+export async function pickFolderNative({ purpose } = {}) {
   if (_inFlight) return { status: 'busy' };
   _inFlight = true;
   try {
     const platform = _ov.platform || process.platform;
     const env = _ov.env || process.env;
     const run = _ov.runner || defaultRun;
+    const prompt = promptFor(purpose);
     if ((env.WORCA_NO_NATIVE_DIALOG || '') === '1') return { status: 'unsupported' };
-    if (platform === 'darwin') return await pickMac(run);
-    if (platform === 'win32') return await pickWindows(run);
-    if (platform === 'linux') return await pickLinux(run, env);
+    if (platform === 'darwin') return await pickMac(run, prompt);
+    if (platform === 'win32') return await pickWindows(run, prompt);
+    if (platform === 'linux') return await pickLinux(run, env, prompt);
     return { status: 'unsupported' };
   } finally {
     _inFlight = false;
@@ -101,10 +110,10 @@ function pickedOrCanceled(stdoutRaw) {
   return path ? { status: 'picked', path } : { status: 'canceled' };
 }
 
-async function pickMac(run) {
+async function pickMac(run, prompt) {
   const r = await run('osascript', [
     '-e', 'tell application "System Events" to activate',
-    '-e', `POSIX path of (choose folder with prompt "${PROMPT}")`,
+    '-e', `POSIX path of (choose folder with prompt "${prompt}")`,
   ]);
   if (r.ok) return pickedOrCanceled(r.stdout);
   // `choose folder` cancel: exit 1 + "execution error: User canceled. (-128)"
@@ -112,11 +121,11 @@ async function pickMac(run) {
   return { status: 'unsupported' }; // no GUI session, automation denied, ...
 }
 
-async function pickWindows(run) {
+async function pickWindows(run, prompt) {
   const script =
     'Add-Type -AssemblyName System.Windows.Forms | Out-Null; ' +
     '$d = New-Object System.Windows.Forms.FolderBrowserDialog; ' +
-    `$d.Description = '${PROMPT}'; $d.ShowNewFolderButton = $true; ` +
+    `$d.Description = '${prompt}'; $d.ShowNewFolderButton = $true; ` +
     "if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.WriteLine($d.SelectedPath) }";
   const r = await run('powershell.exe', ['-NoProfile', '-STA', '-Command', script]);
   if (!r.ok) return { status: 'unsupported' };
@@ -125,13 +134,13 @@ async function pickWindows(run) {
   return path ? { status: 'picked', path } : { status: 'canceled' };
 }
 
-async function pickLinux(run, env) {
+async function pickLinux(run, env, prompt) {
   if (!env.DISPLAY && !env.WAYLAND_DISPLAY) return { status: 'unsupported' };
-  const zen = await run('zenity', ['--file-selection', '--directory', `--title=${PROMPT}`]);
+  const zen = await run('zenity', ['--file-selection', '--directory', `--title=${prompt}`]);
   if (zen.ok) return pickedOrCanceled(zen.stdout);
   if (zen.code === 1 && !zen.timedOut) return { status: 'canceled' }; // user closed it
   // zenity missing (spawn error -> code -1) or broken: try kdialog.
-  const kd = await run('kdialog', ['--title', PROMPT, '--getexistingdirectory', env.HOME || '/']);
+  const kd = await run('kdialog', ['--title', prompt, '--getexistingdirectory', env.HOME || '/']);
   if (kd.ok) return pickedOrCanceled(kd.stdout);
   if (kd.code === 1 && !kd.timedOut) return { status: 'canceled' };
   return { status: 'unsupported' };

@@ -58,3 +58,22 @@ test('v2 cards neutralise the unscoped v1 .node rule', () => {
   }
   assert.ok(/\.gv-world\s+\.node::before\s*\{[^}]*content\s*:\s*none/.test(block), 'kills the v1 colour bar');
 });
+
+test('the canvas nav cluster floats clear of the rail in both rail states', () => {
+  const nav = css.match(/\.gv-nav\s*\{[^}]*\}/);
+  assert.ok(nav, '.gv-nav rule exists');
+  const body = nav[0].replace(/\s+/g, '');
+  assert.ok(body.includes('position:absolute'), 'absolutely placed inside the canvas host');
+  assert.ok(body.includes('bottom:12px'), '12px off the canvas floor');
+  assert.ok(body.includes('right:352px'), '340px open rail + the 12px gutter');
+  const collapsed = css.match(/\.gv-ins-rail\[data-open="collapsed"\]\s*~\s*\.gv-nav\s*\{[^}]*\}/);
+  assert.ok(collapsed, 'a collapsed rail pulls the cluster right, via a forward sibling selector');
+  assert.ok(collapsed[0].replace(/\s+/g, '').includes('right:40px'), '28px collapsed rail + the same gutter');
+  const btn = css.match(/\.gv-nav-btn\s*\{[^}]*\}/);
+  assert.ok(btn, '.gv-nav-btn rule exists');
+  assert.ok(/var\(--panel\)/.test(btn[0]), 'the button ground is a token, so dark mode is free');
+  assert.ok(!/#[0-9a-fA-F]{3,6}\b/.test(btn[0]), 'no literal colour in the button rule');
+  assert.ok(/\.gv-nav-btn:disabled\s*\{[^}]*opacity/.test(css), 'a clamped button reads as disabled');
+  // Placement matters: the canvas block above bans hard-coded geometry px.
+  assert.ok(!v2Block().includes('.gv-nav'), 'the cluster CSS lives in the composer-shell block');
+});

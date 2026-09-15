@@ -17,6 +17,9 @@ export const BORDER = 1.5;
 export const DOT = 10;
 export const FOOT_H = 26;
 export const EXEC_ROW_H = 22;
+/** The model·effort chip band under an AGENT head (auto-proposal hosts only; the
+ *  composer and the run monitor never enable it). Billed by nodeSize when `band`. */
+export const BAND_H = 24;
 /** Sub-agent fan squares per wrapped line. The squares are 7px + 3px gap, so a
  *  full line is 16·10 − 3 = 157px (--gv-fan-w), leaving the ×N tail its column. */
 export const FAN_PER_ROW = 16;
@@ -27,22 +30,34 @@ export const WIRE_HIT_TOL = 6;
 export const ZOOM_MIN = 0.4;
 export const ZOOM_MAX = 1.6;
 export const ZOOM_K = 0.002;
+/** Multiplier per zoom-BUTTON press — the discrete step both canvases use; the
+ *  wheel keeps its exponential ZOOM_K curve. */
+export const ZOOM_STEP = 1.2;
 /** First row centre from the top of the card: 1.5 + 34 + 8.5 + 12. */
 export const ROW0 = BORDER + HEAD_H + PAD_T + ROW_H / 2;
 
-/** Every CSS-visible number, as the custom properties style.css reads. */
-export const GEOMETRY_CSS_VARS = Object.freeze({
-  '--gv-node-w': `${NODE_W}px`, '--gv-head-h': `${HEAD_H}px`, '--gv-row-h': `${ROW_H}px`,
-  '--gv-sep-h': `${SEP_H}px`, '--gv-pad-t': `${PAD_T}px`, '--gv-pad-b': `${PAD_B}px`,
-  '--gv-border': `${BORDER}px`, '--gv-dot': `${DOT}px`, '--gv-foot-h': `${FOOT_H}px`,
-  '--gv-exec-row-h': `${EXEC_ROW_H}px`, '--gv-fan-w': `${FAN_ROW_W}px`,
-});
+const px3 = (v) => `${Math.round(v * 1000) / 1000}px`;
+/** Every CSS-visible number at `scale`, as the custom properties style.css reads.
+ *  `--gv-scale` is the multiplier the FONT rules apply (`max(9px, calc(13px * var(--gv-scale)))`),
+ *  so a 0.65 static host keeps its type at the 9px floor instead of 8.45px. */
+export function geometryCssVars(scale = 1) {
+  const s = Number(scale) > 0 ? Number(scale) : 1;
+  return Object.freeze({
+    '--gv-node-w': px3(NODE_W * s), '--gv-head-h': px3(HEAD_H * s), '--gv-row-h': px3(ROW_H * s),
+    '--gv-sep-h': px3(SEP_H * s), '--gv-pad-t': px3(PAD_T * s), '--gv-pad-b': px3(PAD_B * s),
+    '--gv-border': px3(BORDER * s), '--gv-dot': px3(DOT * s), '--gv-foot-h': px3(FOOT_H * s),
+    '--gv-exec-row-h': px3(EXEC_ROW_H * s), '--gv-fan-w': px3(FAN_ROW_W * s),
+    '--gv-band-h': px3(BAND_H * s), '--gv-scale': String(s),
+  });
+}
+/** Every CSS-visible number at 1×, as the custom properties style.css reads (frozen; tests import it). */
+export const GEOMETRY_CSS_VARS = geometryCssVars(1);
 
 /** Write the variables onto a host element at mount. Guarded: jsdom hosts and a
  *  missing element are both fine (the caller is a renderer, not a validator). */
-export function injectGeometry(el) {
+export function injectGeometry(el, scale = 1) {
   if (!el || !el.style || typeof el.style.setProperty !== 'function') return;
-  for (const [name, value] of Object.entries(GEOMETRY_CSS_VARS)) el.style.setProperty(name, value);
+  for (const [name, value] of Object.entries(geometryCssVars(scale))) el.style.setProperty(name, value);
 }
 
 const CAPTION_SET = new Set(['task', 'end', 'or']);
@@ -64,9 +79,12 @@ function zones(node, ports) {
   return z;
 }
 
-/** y offset of a zone's FIRST row centre, or null when the zone is not emitted. */
-function zoneTop(node, ports, kind) {
-  let y = ROW0;
+const bandOf = (node, band) => (band && node?.kind === 'agent' ? BAND_H : 0);
+
+/** y offset of a zone's FIRST row centre, or null when the zone is not emitted.
+ *  `band` (agents only) pushes every zone down by BAND_H — the chip band sits between the head and the body. */
+function zoneTop(node, ports, kind, band = false) {
+  let y = ROW0 + bandOf(node, band);
   for (const z of zones(node, ports)) {
     if (z.kind === kind) return y;
     y += z.n * ROW_H + SEP_H;
@@ -82,32 +100,34 @@ export function fanLines(n) {
 /**
  * @param {{kind:string}} node
  * @param {{inputs:Array, outputs:Array}} ports  RESOLVED ports (await included for agents)
- * @param {{footerRows?:number}} [opts]  footer LINES: 0 none · 1 collapsed executions
- *   strip · more for extra lines (a wrapped fan line, a stacked exec row's extra
- *   lines). The first line is FOOT_H tall, every further one EXEC_ROW_H.
+ * @param {{footerRows?:number, band?:boolean, scale?:number}} [opts]  footer LINES: 0 none · 1 collapsed
+ *   executions strip · more for extra lines (a wrapped fan line, a stacked exec row's extra
+ *   lines). The first line is FOOT_H tall, every further one EXEC_ROW_H. `band` bills BAND_H
+ *   under an agent head; `scale` multiplies the returned box (1 = today's numbers).
  */
-export function nodeSize(node, ports, { footerRows = 0 } = {}) {
+export function nodeSize(node, ports, { footerRows = 0, band = false, scale = 1 } = {}) {
   const zs = zones(node, ports);
   const rows = zs.reduce((s, z) => s + z.n, 0);
   const seps = Math.max(0, zs.length - 1);
   const footer = footerRows ? FOOT_H + (footerRows - 1) * EXEC_ROW_H : 0;
-  return { w: NODE_W, h: 2 * BORDER + HEAD_H + PAD_T + rows * ROW_H + seps * SEP_H + PAD_B + footer };
+  const h = 2 * BORDER + HEAD_H + bandOf(node, band) + PAD_T + rows * ROW_H + seps * SEP_H + PAD_B + footer;
+  return { w: NODE_W * scale, h: h * scale };
 }
 
 /** Inputs and the await gate anchor on the LEFT edge, outputs on the RIGHT.
- *  The footer is the bottom-most box, so no anchor depends on it. */
-export function portAnchor(node, ports, portId, dir) {
-  if (dir === 'in' && portId === 'await' && hasAwaitRow(ports)) {
-    return { x: node.x, y: node.y + zoneTop(node, ports, 'await') };
-  }
+ *  The footer is the bottom-most box, so no anchor depends on it.
+ *  Offsets scale; node.x/y do not. */
+export function portAnchor(node, ports, portId, dir, { band = false, scale = 1 } = {}) {
+  const at = (dx, dy) => ({ x: node.x + dx * scale, y: node.y + dy * scale });
+  if (dir === 'in' && portId === 'await' && hasAwaitRow(ports)) return at(0, zoneTop(node, ports, 'await', band));
   if (dir === 'in') {
     const i = metaInputs(ports).findIndex((p) => p?.id === portId);
-    const top = zoneTop(node, ports, 'in');
-    return i < 0 || top === null ? null : { x: node.x, y: node.y + top + ROW_H * i };
+    const top = zoneTop(node, ports, 'in', band);
+    return i < 0 || top === null ? null : at(0, top + ROW_H * i);
   }
   const j = outs(ports).findIndex((p) => p?.id === portId);
-  const top = zoneTop(node, ports, 'out');
-  return j < 0 || top === null ? null : { x: node.x + NODE_W, y: node.y + top + ROW_H * j };
+  const top = zoneTop(node, ports, 'out', band);
+  return j < 0 || top === null ? null : at(NODE_W, top + ROW_H * j);
 }
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -128,7 +148,7 @@ export function hitPort(anchor, pt, r = PORT_HIT_R) {
 
 /** The union of the card boxes, optionally padded. `footerRowsOf(node)` lets the
  *  run monitor fit an expanded executions footer. null when there is nothing. */
-export function graphBounds(tpl, portsFn, { pad = 0, footerRowsOf } = {}) {
+export function graphBounds(tpl, portsFn, { pad = 0, footerRowsOf, band = false, scale = 1 } = {}) {
   // OBJECTS only: `filter(Boolean)` kept a truthy non-object (`7`), sized it as a
   // card at the origin and stretched the bounds of every fit built from it.
   const nodes = (Array.isArray(tpl?.nodes) ? tpl.nodes : [])
@@ -137,7 +157,7 @@ export function graphBounds(tpl, portsFn, { pad = 0, footerRowsOf } = {}) {
   let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
   for (const node of nodes) {
     const ports = (typeof portsFn === 'function' ? portsFn(node) : null) || { inputs: [], outputs: [] };
-    const size = nodeSize(node, ports, { footerRows: footerRowsOf ? footerRowsOf(node) : 0 });
+    const size = nodeSize(node, ports, { footerRows: footerRowsOf ? footerRowsOf(node) : 0, band, scale });
     const x = Number(node.x) || 0;
     const y = Number(node.y) || 0;
     minX = Math.min(minX, x); minY = Math.min(minY, y);

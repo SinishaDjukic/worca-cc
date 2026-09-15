@@ -78,10 +78,11 @@ test('tree native controls hide groups explicitly and preserve visible focus', (
   assert.match(panePath, /font-weight:400/, 'the h3 must not keep the UA bold');
 });
 
-function hex(value) {
-  const match = css.match(new RegExp(`${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*(#[0-9A-Fa-f]{6})`));
+function hex(value, arm = 'light') {
+  const esc = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = css.match(new RegExp(`${esc}\\s*:\\s*(?:light-dark\\(\\s*(#[0-9A-Fa-f]{6})\\s*,\\s*(#[0-9A-Fa-f]{6})\\s*\\)|(#[0-9A-Fa-f]{6}))`));
   assert.ok(match, `missing color ${value}`);
-  return match[1];
+  return arm === 'dark' ? (match[2] || match[3]) : (match[1] || match[3]);
 }
 
 function rgb(value) {
@@ -107,15 +108,17 @@ test('small diff text palette clears 4.5:1 on every possible row background', ()
     '--hd-syntax-string', '--hd-syntax-literal', '--hd-syntax-title',
   ];
   const backgrounds = ['--panel', '--green-bg', '--red-bg'];
-  for (const fgName of foregrounds) {
-    for (const bgName of backgrounds) {
-      const ratio = contrast(hex(fgName), hex(bgName));
-      assert.ok(ratio >= 4.5, `${fgName} on ${bgName}: ${ratio.toFixed(2)}:1`);
+  for (const arm of ['light', 'dark']) {
+    for (const fgName of foregrounds) {
+      for (const bgName of backgrounds) {
+        const ratio = contrast(hex(fgName, arm), hex(bgName, arm));
+        assert.ok(ratio >= 4.5, `${fgName} on ${bgName} (${arm}): ${ratio.toFixed(2)}:1`);
+      }
     }
-  }
-  for (const count of ['--hd-count-add', '--hd-count-del']) {
-    const ratio = contrast(hex(count), hex('--field'));
-    assert.ok(ratio >= 4.5, `${count} on --field: ${ratio.toFixed(2)}:1`);
+    for (const count of ['--hd-count-add', '--hd-count-del']) {
+      const ratio = contrast(hex(count, arm), hex('--field', arm));
+      assert.ok(ratio >= 4.5, `${count} on --field (${arm}): ${ratio.toFixed(2)}:1`);
+    }
   }
 });
 
@@ -135,4 +138,59 @@ test('syntax selectors use only measured foreground variables and never token ba
   const diffStart = css.indexOf('/* ---------- History detail: Diff tab ---------- */');
   const diffEnd = css.indexOf('/* ---------- History detail: Overview tab ---------- */');
   assert.doesNotMatch(css.slice(diffStart, diffEnd), /color:var\(--ink-3\)/);
+});
+
+test('comment threads: surface cards, the sidebar rail recipe, quiet buttons, a ringed composer, tokens only', () => {
+  const card = bodyAfter('.hd-cmt-card{');
+  assert.match(card, /background:var\(--surface\)/);
+  assert.match(card, /border:1px solid var\(--line\)/);
+  assert.match(card, /border-radius:14px/);
+  assert.match(card, /box-shadow:var\(--shadow-soft\)/);
+  assert.match(bodyAfter('.hd-cmt-thread{'), /max-width:720px/);
+  // The rail is .nav-child's connector, card-sized: same stroke, token and radius.
+  const elbow = bodyAfter('.hd-cmt-replies>.hd-cmt-reply-row::before{');
+  assert.match(elbow, /border-left:1\.5px solid var\(--line-2\)/);
+  assert.match(elbow, /border-bottom:1\.5px solid var\(--line-2\)/);
+  assert.match(elbow, /border-bottom-left-radius:7px/);
+  assert.match(bodyAfter('.hd-cmt-replies>.hd-cmt-reply-row:not(:last-child)::after{'), /width:1\.5px/);
+  assert.match(bodyAfter('.hd-cmt-thread.collapsed .hd-cmt-replies{'), /display:none/);
+  // The row states display and all four padding sides itself: a bare `.user` in the
+  // sidebar section (display:flex; padding:6px 8px) also matches the reply row's D12
+  // modifier class `hd-cmt-reply-row user`, and would otherwise shrink-wrap the card.
+  const replyRow = bodyAfter('.hd-cmt-replies>.hd-cmt-reply-row{');
+  assert.match(replyRow, /display:block/);
+  assert.match(replyRow, /padding:0 0 0 52px/);
+  const mark = bodyAfter('.hd-cmt-mark{');
+  assert.match(mark, /worca-mark-mask\.png/);
+  assert.match(mark, /background:var\(--ink\)/, 'black on light, white on dark — never a coloured disc');
+  assert.match(bodyAfter('.hd-cmt-body{'), /font:400 13px\/1\.5 var\(--sans\)/);
+  assert.match(bodyAfter('.hd-cmt-body.ask-md{'), /white-space:normal/, 'marked emits newlines between blocks; pre-wrap would double-space them');
+  const btn = bodyAfter('.hd-cmt-btn{');
+  assert.match(btn, /height:26px/);
+  assert.match(btn, /border-radius:8px/);
+  assert.match(btn, /color:var\(--ink-2\)/);
+  assert.match(bodyAfter('.hd-cmt-btn:hover{'), /background:var\(--field\)/);
+  assert.match(bodyAfter('.hd-cmt-delete:hover{'), /color:var\(--red-ink\)/);
+  const reply = bodyAfter('.hd-cmt-btn.hd-cmt-reply{');
+  assert.match(reply, /border:1px solid var\(--line-2\)/);
+  assert.match(reply, /border-radius:999px/);
+  const save = bodyAfter('.hd-cmt-save{');
+  assert.match(save, /background:var\(--ink\)/);
+  assert.match(save, /border-radius:999px/);
+  const focus = bodyAfter('.hd-cmt-composer:focus-within{');
+  assert.match(focus, /box-shadow:0 0 0 3px var\(--selection\)/);
+  assert.match(focus, /border-color:var\(--ink\)/);
+  assert.match(bodyAfter('.hd-cmt-tab[aria-selected="true"]{'), /box-shadow:var\(--knob-shadow\)/);
+  assert.match(bodyAfter('.hd-cmt-preview:empty::before{'), /Nothing to preview yet/);
+  assert.match(bodyAfter('.hd-cmt-tag{'), /background:var\(--green-bg\)/);
+  assert.doesNotMatch(bodyAfter('.hd-cmt-thread.resolved .hd-cmt-body{'), /opacity/, 'resolved dims the text, never the card');
+  // The whole block is token-only, --ink-3-free, and guards its own animation.
+  const start = css.indexOf('/* ---------- History detail: diff comments ---------- */');
+  const end = css.indexOf('/* ---------- end diff comments ---------- */', start);
+  assert.ok(start > 0 && end > start);
+  const block = css.slice(start, end);
+  assert.doesNotMatch(block, /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(/i);
+  assert.doesNotMatch(block, /--ink-3/);
+  assert.match(block, /@media \(prefers-reduced-motion: reduce\)\{\.hd-cmt-thread\{animation:none;\}\}/);
+  assert.equal(css.indexOf('.hd-cmt-body{'), css.indexOf('.hd-cmt-body{', start), 'the base body rule is the first .hd-cmt-body{ in the file — bodyAfter depends on it');
 });

@@ -252,3 +252,32 @@ test('referencedPluginAgents ignores the plugin\'s OWN imported rows', async () 
   await importPluginWorkflows('demo', versionDir);
   assert.deepEqual(referencedPluginAgents('demo'), []);
 });
+
+// Disabling a plugin withdraws its agents/skills/sources; its workflow templates
+// follow (#421 review): hidden from the list (the composer, the New Pipeline
+// picker, Ask's catalog all read listWorkflows) and refused by the run gate with
+// a coded error naming the fix. Re-enabling brings them back untouched.
+test('a disabled plugin\'s workflows are hidden from the list and refused by the run gate; enabling restores them', async () => {
+  const versionDir = installFakePlugin('demo', { 'simple.json': TPL });
+  await importPluginWorkflows('demo', versionDir);
+  await writeGraphWorkflow({ ...graphTpl('Mine', 'demoAgent'), name: 'Mine' });   // a user row stays visible throughout
+  const { listWorkflows, assertRunnableWorkflow } = await import('../src/core/workflows.mjs');
+  assert.ok((await listWorkflows()).some((w) => w.id === 'wfp_demo_simple'), 'precondition: listed while enabled');
+
+  writePluginsLock({ ...readPluginsLock(), demo: { ...readPluginsLock().demo, enabled: false } });
+  const visible = (await listWorkflows()).map((w) => w.id);
+  assert.ok(!visible.includes('wfp_demo_simple'), 'hidden while the plugin is disabled');
+  assert.ok(visible.includes('wf_mine'), 'the user row is untouched');
+  assert.ok((await listWorkflows({ includeDisabled: true })).some((w) => w.id === 'wfp_demo_simple'), 'includeDisabled lifts the filter');
+  await assert.rejects(assertRunnableWorkflow('wfp_demo_simple'), (e) => {
+    assert.equal(e.code, 'PLUGIN_DISABLED');
+    assert.match(e.message, /plugin "demo", which is disabled/);
+    assert.match(e.message, /worca plugin enable demo/);
+    return true;
+  });
+  assert.ok(await readWorkflow('wfp_demo_simple'), 'the row itself is still there (nothing deleted)');
+
+  writePluginsLock({ ...readPluginsLock(), demo: { ...readPluginsLock().demo, enabled: true } });
+  assert.ok((await listWorkflows()).some((w) => w.id === 'wfp_demo_simple'), 'back after enabling');
+  assert.equal((await assertRunnableWorkflow('wfp_demo_simple', { checkGraph: false })).id, 'wfp_demo_simple');
+});

@@ -23,7 +23,7 @@ export function createThreadModel({ threadId }) {
   let worktrees = [];   // P4 §10: the chat's open worktrees (snapshot + ask-worktrees frames); the panel mirrors it
 
   function newDirty() {
-    // runLinks dirt is produced but not yet consumed — no v1 UI renders run links directly; the follower notices carry the visible state.
+    // runLinks dirt: the panel's progress cards re-resolve their run identity on it (ask-panel.mjs flushExtra).
     return { structure: false, messages: new Set(), blocks: new Map(), answer: new Set(), label: false, meters: false, title: false, runLinks: false, worktrees: false };
   }
 
@@ -285,12 +285,29 @@ export function createThreadModel({ threadId }) {
     inFlight() { return inFlight; },
     live() { return live; },
     runLinks() { return links; },
+    /** The link for a History pipeline id, with its runId (the Map key) folded in. The server keeps ONE row per
+     *  (thread, pipeline): POST /api/run inserts once, resumeRun MOVES the row to the new runId, track_run dedupes —
+     *  so "last hit wins" only ever matters for the live frame path, where the newer frame lands later. */
+    runLinkByPipeline(pipelineId) {
+      if (!pipelineId) return null;
+      let hit = null;
+      for (const [runId, l] of links) if (l.pipelineId === pipelineId) hit = { runId, ...l };
+      return hit;
+    },
+    /** The link a run-proposal card launched (ask_run_links.card_id) — stable across a resume. */
+    runLinkForCard(cardId) {
+      if (!cardId) return null;
+      let hit = null;
+      for (const [runId, l] of links) if (l.cardId === cardId) hit = { runId, ...l };
+      return hit;
+    },
     worktrees() { return worktrees; },
     setWorktrees(list) {   // the panel's heal (refreshWorktrees) feeds the same store the frames do
       worktrees = Array.isArray(list) ? list.slice() : [];
       dirty.worktrees = true;
     },
     attachmentsBytes() { return attachments.reduce((n, a) => n + (a && Number.isFinite(a.bytes) ? a.bytes : 0), 0); },
+    attachments() { return attachments.map((a) => ({ ...a })); },   // the run card's @-popover + pills
     findCard(cardId) {
       for (const r of rows) {
         const b = (r && Array.isArray(r.blocks) ? r.blocks : []).find((x) => x && x.kind === 'card' && x.id === cardId);

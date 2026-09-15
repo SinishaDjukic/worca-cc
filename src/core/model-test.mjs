@@ -7,6 +7,7 @@
 
 import { runClaude } from './claude-runner.mjs';
 import { resolveModelEnv } from './config.mjs';
+import { AUX_EFFORT } from './model-env.mjs';
 import { classifyError } from './recoverable-error.mjs';
 
 const TEST_TIMEOUT_MS = 60_000;
@@ -52,7 +53,7 @@ export async function testModel(id, { signal, bin, run = runClaude } = {}) {
       prompt: 'Reply with exactly OK.',
       model: id,
       modelEnv: resolveModelEnv(id),
-      effort: 'low',
+      effort: AUX_EFFORT,
       permissionMode: 'acceptEdits',
       allowedTools: [],          // empty → no --allowedTools flag; pure text gen
       signal: ctrl.signal,

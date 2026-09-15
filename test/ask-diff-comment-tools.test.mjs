@@ -12,7 +12,7 @@ import { seedPipeline } from './helpers/db-seed.mjs';
 import { createAskTools } from '../src/core/ask/tools.mjs';
 import { defaultToolDeps } from '../src/core/ask/tool-deps.mjs';
 import { defaultCommentDeps } from '../src/core/ask/comment-deps.mjs';
-import { addDiffComment, getDiffComment, listDiffComments } from '../src/core/diff-comments.mjs';
+import { addDiffComment, addDiffCommentReply, getDiffComment, listDiffComments } from '../src/core/diff-comments.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { GUARDRAIL_PRESETS } from '../src/core/guardrails.mjs';
 
@@ -59,10 +59,11 @@ test('list(): eighteen tools, the four comment tools in place, all with JSON-Sch
   const byName = (n) => tools.list().find((d) => d.name === n);
   assert.deepEqual(byName('add_diff_comment').inputSchema.required, ['id', 'path', 'side', 'line', 'body']);
   assert.deepEqual(byName('delete_diff_comment').inputSchema.required, ['commentId']);
+  assert.deepEqual(byName('reply_to_diff_comment').inputSchema.required, ['commentId', 'body']);
   assert.deepEqual(byName('list_diff_comments').inputSchema.required, ['id']);
   assert.equal(byName('resolve_diff_comment').inputSchema.properties.resolved.type, 'boolean');
   assert.equal(byName('propose_run').inputSchema.properties.commentIds.type, 'array');
-  for (const n of ['list_diff_comments', 'add_diff_comment', 'resolve_diff_comment', 'delete_diff_comment']) {
+  for (const n of ['list_diff_comments', 'add_diff_comment', 'reply_to_diff_comment', 'resolve_diff_comment', 'delete_diff_comment']) {
     assert.equal(byName(n).inputSchema.additionalProperties, false);
     assert.ok(byName(n).description.length > 20);
   }
@@ -262,4 +263,94 @@ test('list_diff_comments hands the protected filter DOWN, so a guarded row never
   const rows = real.comments.list(run.key, run.id, { patchText: PATCH, keep: (c) => c.path !== 'ok.txt' });
   assert.deepEqual(rows.map((r) => r.path), ['src/a.js']);
   assert.ok(Array.isArray(rows[0].context) && rows[0].context.length, 'the kept row still gets its context');
+});
+
+test('reply_to_diff_comment: replies as "ask" under a root, nests in list_diff_comments, one level, guarded by the read filter', async () => {
+  const { tools, run } = await realTools();
+  const root = (await tools.call('add_diff_comment', { id: run.id, path: 'src/a.js', side: 'new', line: 3, body: 'root' })).comment;
+  const r = await tools.call('reply_to_diff_comment', { commentId: root.id, body: '  on it  ' });
+  assert.equal(r.comment.parentId, root.id);
+  assert.equal(r.comment.author, 'ask');
+  assert.equal(r.comment.body, 'on it');
+  assert.equal(r.comment.runId, run.id, 'the reducer poke reads this');
+  assert.equal(r.comment.storeKey, run.key);
+  // The user answers through REST; the model sees it nested, never top-level.
+  addDiffCommentReply({ parentId: root.id, body: 'thanks', author: 'user' });
+  const listed = await tools.call('list_diff_comments', { id: run.id });
+  assert.deepEqual(listed.comments.map((c) => c.id), [root.id], 'roots only at the top');
+  assert.equal(listed.comments[0].parentId, null);
+  assert.deepEqual(listed.comments[0].replies.map((x) => [x.body, x.author]), [['on it', 'ask'], ['thanks', 'user']]);
+  assert.ok(Array.isArray(listed.comments[0].context) && listed.comments[0].context.length,
+    'the root keeps its hunk context');
+  assert.ok(!('context' in listed.comments[0].replies[0]), 'and a reply carries none');
+  // Where the roots-only skip can actually FAIL. shapeComment emits no `context`
+  // key at all, so the tool-level assertion above holds whatever comment-deps does;
+  // the BUNDLE's rows are where the whole-patch parse per reply would show up
+  // (comment-deps.mjs's COST NOTE is what the skip exists for).
+  const rows = defaultCommentDeps().comments.list(run.key, run.id, { patchText: PATCH });
+  const rootRow = rows.find((c) => c.id === root.id);
+  const replyRow = rows.find((c) => c.parentId === root.id);
+  assert.ok(Array.isArray(rootRow.context) && rootRow.context.length, 'the root row really was parsed');
+  assert.ok(!('context' in replyRow), 'a reply never costs a whole-patch parse');
+  await assert.rejects(() => tools.call('reply_to_diff_comment', { commentId: r.comment.id, body: 'nested' }),
+    { message: /reply_to_diff_comment: replies cannot be nested/ });
+  await assert.rejects(() => tools.call('reply_to_diff_comment', { commentId: root.id, body: '  ' }),
+    { message: 'reply_to_diff_comment: body is required' });
+  await assert.rejects(() => tools.call('reply_to_diff_comment', { commentId: '', body: 'x' }),
+    { message: 'reply_to_diff_comment: commentId is required' });
+  await assert.rejects(() => tools.call('reply_to_diff_comment', { commentId: 'dc_00000000', body: 'x' }),
+    { message: 'reply_to_diff_comment: comment not found' });
+  await assert.rejects(() => tools.call('resolve_diff_comment', { commentId: r.comment.id }),
+    { message: /resolve_diff_comment: replies cannot be resolved/ }, 'a reply id is refused, not crashed');
+  // The read filter (D5) covers the parent: a guarded thread takes no reply by id.
+  const hidden = addDiffComment({ storeKey: run.key, pipelineId: run.id, patchText: PATCH,
+    path: 'ok.txt', side: 'new', line: 1, body: 'later-protected', author: 'user' });
+  const narrowed = createAskTools({
+    ...defaultToolDeps({ threadId: 'ask_00000001' }), ...defaultCommentDeps(),
+    protectedPaths: [...GUARDRAIL_PRESETS.secure.protectedPaths, 'ok.txt'],
+  });
+  await assert.rejects(() => narrowed.call('reply_to_diff_comment', { commentId: hidden.id, body: 'x' }),
+    { message: 'reply_to_diff_comment: comment not found' });
+  assert.equal(listDiffComments(run.key, run.id).filter((c) => c.parentId === hidden.id).length, 0, 'and nothing was written');
+  // Ask deletes only what it wrote — a reply included.
+  assert.deepEqual(await tools.call('delete_diff_comment', { commentId: r.comment.id }),
+    { ok: true, commentId: r.comment.id, comment: { runId: run.id, storeKey: run.key } });
+});
+
+// The on-delete cascade (db.mjs, diff_comments.parent_id) means a ROOT delete takes
+// every reply under it. The author check reads only the row it was handed, so an
+// ask-authored root would have destroyed the USER's replies — the exact opposite of
+// the "own notes and nothing else" invariant the guard is written for.
+test('delete_diff_comment refuses an ask ROOT that carries a reply the user wrote, and deletes one whose replies are all its own', async () => {
+  const { tools, run } = await realTools();
+  const root = (await tools.call('add_diff_comment',
+    { id: run.id, path: 'src/a.js', side: 'new', line: 3, body: 'ask root' })).comment;
+  const theirs = addDiffCommentReply({ parentId: root.id, body: 'my answer', author: 'user' });
+  const ours = (await tools.call('reply_to_diff_comment', { commentId: root.id, body: 'and mine' })).comment;
+  await assert.rejects(() => tools.call('delete_diff_comment', { commentId: root.id }),
+    { message: 'delete_diff_comment: this comment has replies from the user — delete your own reply instead' });
+  assert.ok(getDiffComment(root.id), 'the root is still there');
+  assert.ok(getDiffComment(theirs.id), 'and so is the user\'s reply');
+  assert.ok(getDiffComment(ours.id), 'nothing at all was deleted');
+
+  // Its own reply still goes, which is what the refusal points the model at.
+  await tools.call('delete_diff_comment', { commentId: ours.id });
+  assert.equal(getDiffComment(ours.id), null);
+
+  // A thread whose replies are ALL ask-authored still deletes: the cascade then
+  // removes only rows the model wrote.
+  const mine = (await tools.call('add_diff_comment',
+    { id: run.id, path: 'src/a.js', side: 'new', line: 2, body: 'ask root 2' })).comment;
+  const kid = (await tools.call('reply_to_diff_comment', { commentId: mine.id, body: 'own reply' })).comment;
+  assert.deepEqual(await tools.call('delete_diff_comment', { commentId: mine.id }),
+    { ok: true, commentId: mine.id, comment: { runId: run.id, storeKey: run.key } });
+  assert.equal(getDiffComment(mine.id), null);
+  assert.equal(getDiffComment(kid.id), null, 'the cascade took its own reply with it');
+
+  // A user-authored root is still refused on authorship, before the reply check.
+  const userRoot = addDiffComment({ storeKey: run.key, pipelineId: run.id, patchText: PATCH,
+    path: 'src/a.js', side: 'new', line: 1, body: 'their note', author: 'user' });
+  await assert.rejects(() => tools.call('delete_diff_comment', { commentId: userRoot.id }),
+    /only comments Ask wrote can be deleted/);
+  assert.ok(getDiffComment(userRoot.id), 'still there');
 });

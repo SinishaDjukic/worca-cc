@@ -151,7 +151,15 @@ Per decision: keep the CLI-default fallback but make it observable. The CLI's st
 
 ### 4.8 Auxiliary call sites
 
-Title generation (`src/core/title.mjs:5-6`), overview, agent-gen, and workspace-scan keep their current model choices (hardcoded haiku + `WORCA_TITLE_MODEL`, or CLI default). The one change: each routes its chosen id through `resolveModelEnv` before spawning, so a catalog entry matching that id carries its routing env everywhere the id is used. No new configuration surface for these.
+Overview, agent-gen, and workspace-scan run on the caller's model (`this.claude.model`) and route it through `resolveModelEnv` before spawning, so a catalog entry matching that id carries its routing env everywhere the id is used.
+
+Title generation (`src/core/title.mjs`) used to hard-code a first-party Haiku id captured at import, which left an install with no first-party model unable to title anything (#422). It now decides its model **per call** (`resolveTitleModel`): an explicit `opts.model` → a non-empty `WORCA_TITLE_MODEL` (verbatim, an operator escape hatch) → the stored `titleModel` setting, only while it is still a catalog member (a stale id is reported and skipped) → **the model of the run or chat that asked** (`runModel`, passed by both callers) → the built-in `claude-haiku-4-5`. The default is therefore "same as the run's model", which makes a first-party-free install work with zero configuration. Aux calls run at `AUX_EFFORT` (`low`, a CLI-valid tier below `EFFORTS`, deliberately not clamped into it), and a failed title call reports once through `onError` so the run log / server log says why a provisional title stuck.
+
+The one configuration surface is **Settings › General › Title generation**: a select over the project-less catalog (never free text — an id `resolveModelEnv` cannot route would only surface as a missing title mid-run), a Test button reusing `POST /api/models/:id/test`, and a loud hint when the stored id has left the catalog. The Ask Worca picker's initial pick likewise degrades to the first model the user owns when the D8 default is hidden.
+
+**Tier keys.** Claude Code resolves its own internal calls (session titles, the `haiku|sonnet|opus|fable` alias tiers, quota probes) through `ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS,FABLE}_MODEL` and the older `ANTHROPIC_SMALL_FAST_MODEL`. An endpoint-routed entry (`ANTHROPIC_BASE_URL` set) that leaves them unset made the CLI fall back to first-party ids the endpoint never served (`unrecognized_model` in run logs). `resolveModelEnv` now fills every one the entry leaves unset with the entry's own wire id (`ANTHROPIC_MODEL`, else the catalog id; `model-env.mjs#withTierModelEnv`). Deliberately not user-configurable — keys the entry sets itself always win — and disclosed by the `endpoint-routed` badge on the Models view plus the Spawn diagnostics line.
+
+**Hide built-in models** (Settings › Models, one checkbox, stored as `hideBuiltinModels`): `composeCatalog` marks the unshadowed built-ins `hidden: true` and every picker (New Pipeline, composer inspector, Ask Worca, the Title select) skips them unless one is the current selection. Cosmetic + defaults only: a hidden id still resolves, so stored runs and plugin references keep working.
 
 ### 4.9 Migration and deprecation of per-project custom models
 
@@ -224,6 +232,10 @@ Each lands as its own PR against `dev`, tests first, per repo workflow.
 | Scrub interaction | Model env survives scrub, wins collisions, reserved keys excepted | Explicit config outranks ambient-env hygiene |
 | Unknown-id failure mode | Validate at write time; pass-through at runtime | Matches setStep precedent; CLI owns runtime resolution |
 | Cost reliability | Observed at runtime (zero/absent cost from an env-routed endpoint), not statically assumed | A proxy that reports real costs is not falsely badged; observation is derived state in the DB, auto-cleared on a positive-cost run |
+| Title model (#422) | Per-call precedence ending in **the run's model**; one optional `titleModel` select | Reverses the §4.8 "no configuration surface" call: a hard-coded first-party id cannot work on an install that has none, and the run's model is the one id guaranteed to route |
+| Aux effort | `AUX_EFFORT = 'low'`, kept outside `EFFORTS` | The CLI accepts `low`; clamping titles into the pipeline list would only make the cheapest call cost more |
+| Tier keys | Synthesized in `resolveModelEnv` for endpoint-routed entries, never user-edited | Three-to-five env rows per model in the editor would be documentation, not a feature; explicit keys still win |
+| Hidden built-ins | A `hidden` flag pickers skip, not a removal from the catalog | Hiding must never stop an id resolving — stored runs and plugin references name built-ins |
 
 ## 8. Out of scope / future
 

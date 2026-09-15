@@ -15,6 +15,14 @@ function ruleBody(selector) {
   return m ? m[1].replace(/\s+/g, ' ') : null;
 }
 
+const arms = (v) => { const m = /^light-dark\(([\s\S]*)\)$/.exec(v); if (!m) return null; let d = 0; const s = m[1];
+  for (let i = 0; i < s.length; i += 1) { if (s[i] === '(') d += 1; else if (s[i] === ')') d -= 1; else if (s[i] === ',' && d === 0) return [s.slice(0, i).trim(), s.slice(i + 1).trim()]; } return null; };
+const tokenValue = (name) => {
+  const m = css.match(new RegExp(`--${name}\\s*:\\s*([^;]+);`));
+  if (!m) return null;
+  const a = arms(m[1].trim()); return (a ? a[0] : m[1].trim()).toLowerCase();
+};
+
 test('ui-ask-style: the dock is a fixed, click-through layer at z-40 with the rail arms', () => {
   const dock = ruleBody('.ask-dock');
   assert.ok(dock, '.ask-dock rule exists');
@@ -43,7 +51,7 @@ test('ui-ask-style: the sheet uses wr-rise and the card radius token', () => {
   const sheet = ruleBody('.ask-sheet');
   assert.match(sheet, /animation:wr-rise/);
   assert.match(sheet, /var\(--r-card\)/);
-  assert.match(sheet, /width:min\(782px/);
+  assert.match(sheet, /width:min\(821px/);
   assert.match(sheet, /height:min\(669px/);
 });
 
@@ -76,8 +84,8 @@ test('ui-ask-style: the FINAL reduced-motion block neutralises the dock', () => 
 
 test('ui-ask-style: the hljs variable block now feeds .ask-md too', () => {
   assert.match(css, /\.hd-diff-pane,\.ask-md\{\s*--hd-syntax-comment/, 'selector widened without restating hexes');
-  const count = (css.match(/--hd-syntax-comment:#/g) || []).length;
-  assert.equal(count, 1, 'the six syntax hexes still appear exactly once');
+  const count = (css.match(/--hd-syntax-comment:light-dark\(#/g) || []).length;
+  assert.equal(count, 1, 'the six syntax pairs still appear exactly once');
 });
 
 test('ui-ask-style: dots reuse wr-pulse; the pill and popovers are tokened', () => {
@@ -140,6 +148,25 @@ test('ui-ask-style: the thread date leads the meter in bold; an idle dot collaps
   assert.ok(!/display:none/.test(ruleBody('.ask-dot') || ''), 'hiding is scoped to the threads rows');
 });
 
+test('ui-ask-style: the tracking dot is a second, violet arm of the thread dot, a few px behind the green one', () => {
+  const track = ruleBody('.ask-thread-dot.ask-dot-track');
+  assert.ok(track, 'the tracking arm exists');
+  assert.match(track, /display:block/, 'a chat following a live run gets its dot');
+  assert.match(track, /background:var\(--violet\)/, 'a different colour from the green thinking dot');
+  assert.match(track, /animation:wr-pulse/, 'it pulses like the sub-agent run dot');
+  assert.ok(!/var\(--green\)/.test(track), 'never green — the two dots must differ');
+  assert.match(ruleBody('.ask-thread-dot.ask-dot-live') || '', /display:block/, 'the thinking arm is kept as it was');
+  assert.ok(!/var\(--violet\)/.test(ruleBody('.ask-thread-dot.ask-dot-live') || ''), 'and stays green');
+  // Both armed: the two spans are siblings under the pick's 10px gap; the tracking
+  // dot pulls itself back so the pair sits 4px apart rather than a full slot.
+  const pair = ruleBody('.ask-thread-dot.ask-dot-live+.ask-thread-dot.ask-dot-track');
+  assert.ok(pair, 'the both-armed pair rule exists');
+  assert.match(pair, /margin-left:-6px/, '10px gap − 6px = 4px between the dots');
+  assert.ok(!/gap:/.test(ruleBody('.ask-thread-pick') || ''), 'the pick keeps the 10px .ask-pop-item gap');
+  // A tracking-only row still collapses the unarmed thinking span (display:none base rule).
+  assert.ok(!/ask-dot-track/.test(ruleBody('.ask-thread-dot') || ''), 'the base rule stays the collapse rule');
+});
+
 test('ui-ask-style: a model row survives an arbitrarily long plugin name', () => {
   // .ask-pop-model is a fixed 292px panel and plugin names are arbitrary, so the
   // origin is not in the row at all and the name is the only thing left that can
@@ -189,13 +216,332 @@ test('ui-ask-style: the composer-row scope pill never shrinks and its popover op
   assert.match(ruleBody('.ask-scope-btn') || '', /flex:none/, 'in the composer row next to "+" — the pill keeps its width, the spacer absorbs the slack');
   const pop = ruleBody('.ask-pop-scope') || '';
   assert.match(pop, /bottom:/, 'the scope popover is anchored to the bottom, above its composer-row trigger');
-  assert.match(pop, /left:16px/);
+  assert.match(pop, /left:var\(--ask-col-inset\)/, 'flush with the composer box\'s left edge, wherever the cap centres it');
   assert.doesNotMatch(pop, /top:46px/, 'no longer anchored to the header');
   assert.match(pop, /max-height:min\(420px,70%\)/);
   assert.match(pop, /overflow-y:auto/);
+  const chip = ruleBody('.ask-pop-chip') || '';
+  assert.match(chip, /width:288px/);
+  assert.match(chip, /max-height:min\(420px,70%\)/, 'the whole catalog is 12+ rows and .ask-sheet clips — without a cap the Effort row is unreachable');
+  assert.match(chip, /overflow-y:auto/);
+  assert.match(chip, /border-radius:14px/);
+  assert.ok(css.indexOf('.ask-pop-chip{') > css.indexOf('.ask-pop{'), '.ask-pop-chip and .ask-pop are both (0,1,0) on the same element — source order decides, so the chip rule must come last');
   const title = ruleBody('.ask-title') || '';
   assert.match(title, /min-width:0/);
   assert.match(title, /overflow:hidden/);
   assert.match(title, /text-overflow:ellipsis/);
   assert.match(title, /white-space:nowrap/);
+});
+
+test('ui-ask-style: resize grips are invisible edge zones that only set the cursor, with a tokened inset highlight', () => {
+  const base = ruleBody('.ask-resize');
+  assert.ok(base, '.ask-resize rule exists');
+  assert.match(base, /position:absolute/);
+  assert.match(base, /background:transparent/, 'invisible until hovered');
+  assert.match(base, /touch-action:none/, 'a touch drag resizes instead of scrolling the page');
+  assert.match(base, /--ask-grip:transparent/, 'idle: no highlight');
+  assert.match(base, /z-index:5/, 'above the popovers (3/4) so an edge stays grabbable');
+  assert.match(ruleBody('.ask-resize:hover') || '', /--ask-grip:var\(--ink-3\)/, 'hover: the section\'s hairline token');
+  assert.match(ruleBody('.ask-resize.is-active') || '', /--ask-grip:var\(--ink\)/, 'dragging: the section\'s hover-border token');
+  const cursors = { n: 'ns-resize', e: 'ew-resize', w: 'ew-resize', ne: 'nesw-resize', nw: 'nwse-resize' };
+  for (const [edge, cursor] of Object.entries(cursors)) {
+    const body = ruleBody(`.ask-resize-${edge}`);
+    assert.ok(body, `.ask-resize-${edge} rule exists`);
+    assert.match(body, new RegExp(`cursor:${cursor}`), `${edge} cursor`);
+    assert.match(body, /box-shadow:inset [^;]*var\(--ask-grip\)/, `${edge} highlight is a thin inset line, not a fill`);
+  }
+  assert.ok(!ruleBody('.ask-resize-s'), 'no bottom grip — the sheet is bottom-anchored');
+  assert.match(ruleBody('.ask-sheet.is-resizing') || '', /user-select:none/);
+  // The sheet clips at its rounded corner (r-card minus the 1px border): a corner
+  // grip is exactly one radius square and carries that radius, so its inset line
+  // bends along the arc instead of being clipped away; the straight grips start
+  // where the arc ends.
+  assert.match(base, /--ask-corner:calc\(var\(--r-card\) - 1px\)/, 'the corner size is the sheet\'s inner radius');
+  assert.match(ruleBody('.ask-resize-ne'), /width:var\(--ask-corner\);height:var\(--ask-corner\)/);
+  assert.match(ruleBody('.ask-resize-ne'), /border-top-right-radius:var\(--ask-corner\)/, 'ne bends along the arc');
+  assert.match(ruleBody('.ask-resize-nw'), /border-top-left-radius:var\(--ask-corner\)/, 'nw bends along the arc');
+  assert.match(ruleBody('.ask-resize-n'), /left:var\(--ask-corner\);right:var\(--ask-corner\)/, 'top grip spans between the arcs');
+  for (const edge of ['e', 'w']) {
+    assert.match(ruleBody(`.ask-resize-${edge}`), /top:var\(--ask-corner\)/, `${edge} starts below the top arc`);
+    assert.match(ruleBody(`.ask-resize-${edge}`), /bottom:var\(--ask-corner\)/, `${edge} stops above the bottom arc`);
+  }
+  // The header's icon buttons sit above the ne corner grip, so its hit box never
+  // swallows a click (or a double-click) on the last button.
+  assert.match(ruleBody('.ask-header .ask-icon-btn') || '', /position:relative;z-index:6/, 'header buttons above the grips');
+});
+
+test('ui-ask-style: an assistant answer spans the full transcript width — a table or code block ends at the same edge as the user bubble', () => {
+  const answer = ruleBody('.ask-answer');
+  assert.ok(answer, '.ask-answer rule exists');
+  assert.match(answer, /max-width:100%/, 'no 92% measure: the transcript padding is the only gutter, symmetric on both sides');
+});
+
+test('ui-ask-style: the sheet caps itself to the dock so an inline size can never overflow the viewport', () => {
+  const sheet = ruleBody('.ask-sheet');
+  assert.match(sheet, /max-width:100%/);
+  assert.match(sheet, /max-height:calc\(100% - 20px\)/, 'keeps the 20px top gap the default height leaves');
+  assert.ok(!/min-width|min-height/.test(sheet), 'the 821×669 floor lives in JS only — a CSS floor would overflow narrow viewports');
+  assert.match(sheet, /overflow:hidden/, 'the sheet still clips; .ask-transcript is the scrollport');
+  const t = ruleBody('.ask-transcript');
+  assert.match(t, /flex:1 1 auto/, 'the transcript absorbs every extra pixel of height');
+  assert.match(t, /min-height:0/);
+  assert.match(t, /overflow-y:auto/);
+});
+
+test('ui-ask-style: a wide sheet caps its content — the transcript column and the composer box share one max width, centred', () => {
+  // The cap is one token on the sheet so the column, the box and the popover
+  // insets can never drift apart. 880px: invisible at the default 821px sheet,
+  // it only bites once the sheet is dragged wider.
+  const sheet = ruleBody('.ask-sheet');
+  assert.match(sheet, /--ask-col-max:880px/, 'the cap lives on the sheet');
+  const col = ruleBody('.ask-transcript-col');
+  assert.ok(col, '.ask-transcript-col rule exists');
+  assert.match(col, /width:100%/);
+  assert.match(col, /max-width:var\(--ask-col-max\)/);
+  assert.match(col, /margin-inline:auto/, 'centred inside the scrollport');
+  assert.match(col, /display:flex;flex-direction:column;gap:16px/, 'the message stack moved here from .ask-transcript');
+  const t = ruleBody('.ask-transcript');
+  assert.doesNotMatch(t, /display:flex|gap:/, '.ask-transcript is only the scrollport now');
+  assert.match(t, /overscroll-behavior:contain/, 'still the scrollport');
+  assert.match(t, /position:relative/);
+  // the composer box: rounded, bordered, same cap, centred under the column
+  const box = ruleBody('.ask-composer-box');
+  assert.ok(box, '.ask-composer-box rule exists');
+  assert.match(box, /width:100%/);
+  assert.match(box, /max-width:var\(--ask-col-max\)/);
+  assert.match(box, /margin-inline:auto/);
+  assert.match(box, /border:1px solid var\(--line-2\)/);
+  assert.match(box, /border-radius:16px/);
+  assert.match(box, /background:var\(--panel\)/, 'panel, not field: the textarea keeps its contrast baseline');
+  assert.match(box, /display:flex;flex-direction:column;gap:4px/, 'chips → textarea → msg → row stack inside the box');
+  // No focus-within override: the box keeps the same --line-2 grey while typing,
+  // so with no state left to change the colour the transition is dead weight too.
+  assert.ok(!ruleBody('.ask-composer-box:focus-within'), 'the border stays grey when focused');
+  assert.doesNotMatch(box, /transition:border-color/, 'nothing animates a border-color that never changes');
+  const composer = ruleBody('.ask-composer');
+  assert.doesNotMatch(composer, /border-top/, 'the separation moved from the band to the box');
+  assert.match(composer, /padding:10px 16px 14px/, 'the band is the padded outer strip');
+  assert.match(composer, /position:relative/);
+});
+
+test('ui-ask-style: the composer popovers follow the box, not the sheet corners', () => {
+  // The popovers stay children of .ask-sheet (its height is what their
+  // max-height:70% means), so their horizontal anchor is the box\'s own inset:
+  // the band padding until the cap bites, then the centring remainder.
+  const sheet = ruleBody('.ask-sheet');
+  assert.match(sheet, /--ask-col-inset:max\(16px,calc\(50% - var\(--ask-col-max\) \/ 2\)\)/, 'inset = max(band padding, centring remainder)');
+  assert.match(sheet, /--ask-box-top:103px/, 'sheet bottom → box top with an empty one-line composer: 14px band + 1+8+36+4+31+8+1 box');
+  assert.match(ruleBody('.ask-pop-scope') || '', /left:var\(--ask-col-inset\);bottom:calc\(var\(--ask-box-top\) \+ 6px\)/, 'scope: box left edge, floats above the box');
+  assert.match(ruleBody('.ask-pop-model') || '', /right:var\(--ask-col-inset\);bottom:calc\(var\(--ask-box-top\) \+ 6px\)/, 'model: box right edge');
+  assert.match(ruleBody('.ask-pop-runinfo') || '', /right:calc\(var\(--ask-col-inset\) \+ 66px\);bottom:calc\(var\(--ask-box-top\) \+ 6px\)/, 'agents: the same 66px left of the model popover as before');
+  assert.match(ruleBody('.ask-pop-worktrees') || '', /right:calc\(var\(--ask-col-inset\) \+ 157px\)/, 'worktrees: the same 157px left of the model popover as before');
+  assert.match(ruleBody('.ask-jump') || '', /bottom:calc\(var\(--ask-box-top\) \+ 9px\)/, 'the jump pill floats just above the box');
+  // untouched: the threads popover hangs off the header, the chip picker is JS-positioned
+  assert.match(ruleBody('.ask-pop-threads') || '', /top:46px;right:76px/);
+  assert.doesNotMatch(ruleBody('.ask-pop-chip') || '', /--ask-col-inset|--ask-box-top/);
+  assert.doesNotMatch(ruleBody('.ask-pop-at') || '', /--ask-col-inset|--ask-box-top/);
+});
+
+test('ui-ask-style: the live pill shimmers its label, the same sweep the thinking row paints — no wave pseudo-elements', () => {
+  // the pill itself keeps its chrome; nothing about it moves while live
+  const pill = ruleBody('.ask-pill');
+  assert.ok(pill, '.ask-pill rule exists');
+  assert.match(pill, /border-radius:999px/);
+  assert.match(pill, /pointer-events:auto/);
+  assert.match(pill, /transition:border-color \.15s/, 'the hover transition survives');
+  assert.match(ruleBody('.ask-pill[hidden]'), /display:none/, 'hidden twin untouched');
+  assert.match(ruleBody('.ask-pill:focus-visible'), /outline:2px solid var\(--ink\)/, 'focus ring untouched');
+  // the wave is gone: no pseudo-element layers, no drift keyframes, no tokens
+  assert.equal(ruleBody('.ask-pill::before'), null, 'no .ask-pill::before layer');
+  assert.equal(ruleBody('.ask-pill::after'), null, 'no .ask-pill::after layer');
+  assert.equal(ruleBody('.ask-pill.is-live::before'), null, 'no live ::before arm');
+  assert.equal(ruleBody('.ask-pill.is-live::after'), null, 'no live ::after arm');
+  assert.doesNotMatch(css, /@keyframes\s+ask-pill-wave(?![-\w])/, 'ask-pill-wave keyframes removed');
+  assert.doesNotMatch(css, /@keyframes\s+ask-pill-swell(?![-\w])/, 'ask-pill-swell keyframes removed');
+  assert.doesNotMatch(css, /ask-pill-(?:wave|swell)/, 'no reference to either drift remains');
+  assert.doesNotMatch(css, /--ask-wave-/, 'the three wave tokens are gone with the glow');
+  // the label is painted THROUGH the text while live: the exact recipe of
+  // .ask-thinking-label (gradient, size, clip, transparent fill, one sweep)
+  const SHIMMER = 'background:linear-gradient(100deg,var(--ink-3) 0%,var(--ink-3) 34%,var(--ink) 50%,var(--ink-3) 66%,var(--ink-3) 100%);'
+    + 'background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:ask-shimmer 2.4s linear infinite;';
+  const label = ruleBody('.ask-pill.is-live .ask-pill-label');
+  assert.ok(label, '.ask-pill.is-live .ask-pill-label rule exists');
+  const tight = (t) => t.replace(/\s+/g, '');
+  assert.equal(tight(label), tight(SHIMMER), 'the live label carries exactly the thinking-row shimmer');
+  const row = ruleBody('.ask-thinking-label');
+  for (const decl of tight(SHIMMER).split(';').filter(Boolean)) assert.ok(tight(row).includes(decl + ';'), '.ask-thinking-label still has ' + decl);
+  assert.doesNotMatch(css, /(?:^|[}\n])\s*\.ask-pill-label\s*\{/, 'at rest the label needs no rule of its own: the pill\'s colour and weight paint it');
+  // one sweep for both: the keyframes are declared once and reused
+  assert.equal((css.match(/@keyframes\s+ask-shimmer(?![-\w])/g) || []).length, 1, 'ask-shimmer declared exactly once');
+  assert.ok(css.lastIndexOf('animation:ask-shimmer') < css.lastIndexOf('@media (prefers-reduced-motion: reduce)'), 'the animation use precedes the final guard');
+  // reduced motion: color:transparent with the sweep killed would blank the
+  // label, so a guard restores a plain fill — like the thinking row\'s own
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const guards = [];
+  for (let at = bare.indexOf('@media (prefers-reduced-motion'); at !== -1; at = bare.indexOf('@media (prefers-reduced-motion', at + 1)) {
+    let i = bare.indexOf('{', at); let depth = 0;
+    for (; i < bare.length; i += 1) { if (bare[i] === '{') depth += 1; else if (bare[i] === '}' && --depth === 0) break; }
+    guards.push(bare.slice(at, i + 1));
+  }
+  const m = guards.map((g) => /\.ask-pill\.is-live \.ask-pill-label\s*\{([^}]*)\}/.exec(g)).find(Boolean);
+  assert.ok(m, 'a reduced-motion guard names .ask-pill.is-live .ask-pill-label');
+  const guard = m[1].replace(/\s+/g, '');
+  assert.ok(guard.includes('background:none;'), 'guard drops the gradient');
+  assert.ok(guard.includes('-webkit-background-clip:border-box;background-clip:border-box;'), 'guard un-clips the text');
+  assert.match(guard, /color:var\(--ink(?:-2)?\);/, 'guard restores a real colour');
+  assert.ok(guards.every((g) => !/\.ask-pill(?:\.is-live)?::(?:before|after)/.test(g)), 'no guard still names the wave pseudo-elements');
+});
+
+test('ui-ask-style: the pill mark morphs into the orb on .is-live — transitions on two stacked layers, quicker in, slower and eased-out back', () => {
+  // the host is the flex item; the two layers stack on it and never size the row
+  const host = ruleBody('.ask-pill-mark');
+  assert.ok(host, '.ask-pill-mark rule exists');
+  assert.match(host, /position:relative;width:22px;height:22px;flex:0 0 auto/, 'a fixed 22px slot: no layout shift when the layers swap');
+  const logo = ruleBody('.ask-pill-mark>.ask-pill-logo');
+  const orb = ruleBody('.ask-pill-mark>.ask-orb');
+  assert.ok(logo && orb, 'both layers have a scoped rule');
+  for (const b of [logo, orb]) assert.match(b, /position:absolute;inset:0/, 'stacked on the host');
+  // rest state: the mark whole, the orb transparent; the way BACK is the slow,
+  // eased-out one (.8s — the label shimmer alongside it simply stops)
+  assert.match(orb, /opacity:0/, 'the orb is invisible at rest');
+  assert.doesNotMatch(logo, /opacity:0/, 'the mark is whole at rest');
+  assert.match(logo, /transition:opacity \.8s cubic-bezier\([^)]*\),transform \.8s cubic-bezier\([^)]*\)/, 'mark: opacity + scale, .8s eased out');
+  assert.match(orb, /transition:opacity \.8s cubic-bezier\([^)]*\)/, 'orb: opacity only, .8s eased out');
+  assert.doesNotMatch(orb, /transform/, 'no CSS scale on the canvas: the orb grows its dots out of the centre itself (thinking-orb morphTo), a scaled canvas would blur them');
+  // live state: the mark shrinks and fades while the orb fades in, quicker (.52s,
+  // the canvas tween's PILL_MORPH_IN_MS) — transitions read their timing from the
+  // AFTER-change style, so the live rule's duration governs the morph-in and
+  // the rest rule's the morph-back
+  const logoLive = ruleBody('.ask-pill.is-live .ask-pill-mark>.ask-pill-logo');
+  const orbLive = ruleBody('.ask-pill.is-live .ask-pill-mark>.ask-orb');
+  assert.ok(logoLive && orbLive, 'both live arms exist');
+  assert.match(logoLive, /opacity:0/);
+  assert.match(logoLive, /transform:scale\(\.\d+\)/, 'the mark shrinks away');
+  assert.match(logoLive, /transition-duration:\.52s/);
+  assert.match(orbLive, /opacity:1/);
+  assert.match(orbLive, /transition-duration:\.52s/);
+  assert.doesNotMatch(orbLive, /transform/);
+  // reduced motion: transitions are killed file-wide by the legacy blanket, so
+  // the morph becomes an instant swap with no rule of its own; the canvas tween
+  // snaps on its side (thinking-orb reads the same media query)
+  const blanket = css.indexOf('*{transition:none !important;}');
+  assert.ok(blanket !== -1, 'the *{transition:none} blanket exists');
+  const mediaAt = css.lastIndexOf('@media (prefers-reduced-motion: reduce)', blanket);
+  const between = css.slice(mediaAt, blanket);
+  assert.ok(mediaAt !== -1 && (between.split('{').length - between.split('}').length) > 0, 'the blanket sits inside a reduced-motion block');
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const reducedBlocks = [];
+  for (let at = bare.indexOf('@media (prefers-reduced-motion'); at !== -1; at = bare.indexOf('@media (prefers-reduced-motion', at + 1)) {
+    let i = bare.indexOf('{', at); let depth = 0;
+    for (; i < bare.length; i += 1) { if (bare[i] === '{') depth += 1; else if (bare[i] === '}' && --depth === 0) break; }
+    reducedBlocks.push(bare.slice(at, i + 1));
+  }
+  assert.ok(reducedBlocks.length > 0);
+  assert.ok(reducedBlocks.every((b) => !b.includes('ask-pill-mark')), 'no reduced-motion rule names the mark host — the blanket covers it');
+  // the pinned .ask-pill-logo rule (ui-logo-mask) is not restated here
+  assert.doesNotMatch(logo, /mask/);
+  assert.doesNotMatch(logoLive, /mask/);
+});
+
+test('ui-ask-style: run card v2 — violet wash token exists once, the block is tokened and inside the ask section', () => {
+  assert.equal((css.match(/--violet-wash:light-dark\(#/g) || []).length, 1, 'one definition in :root');
+  assert.match(ruleBody('.ask-rp-head') || '', /var\(--violet-wash\)/);
+  assert.match(ruleBody('.ask-card.ask-rp') || '', /animation:wr-rise/);
+  assert.match(ruleBody('.ask-rp-tile.mod') || '', /var\(--amber-wash\)/);
+  // (0,3,1): the textarea carries BOTH classes (`ask-card-brief ask-rp-brief`, collectCardBody reads the first),
+  // so the v1 rule `.ask-card textarea.ask-card-brief{max-height:160px;resize:none}` (0,2,1) applies to it too and must lose
+  const brief = ruleBody('.ask-card.ask-rp textarea.ask-rp-brief') || '';
+  assert.match(brief, /min-height:150px/);
+  assert.match(brief, /max-height:420px/);
+  assert.match(brief, /resize:vertical/);
+  assert.match(ruleBody('.ask-rp-tile-l2') || '', /flex-wrap:wrap/);
+  const start = css.indexOf('/* ---------- Ask Worca');
+  const guard = css.lastIndexOf('@media (prefers-reduced-motion: reduce)');
+  const at = css.indexOf('.ask-card.ask-rp{');
+  assert.ok(at > start && at < guard, '.ask-rp lives in the ask section, before the final reduced-motion guard');
+  assert.ok(at < css.indexOf('/* ---------- workflow card chrome'), 'right after the v1 card rules, before the workflow card');
+});
+
+test('ui-ask-style: run card v2 — the v1 card rules it replaced are deleted, the still-emitted spacer stays', () => {
+  // buildCardForm emits .ask-rp-* for all four; nothing in ui/ or test/ names them any more.
+  assert.equal(ruleBody('.ask-card-title'), null, 'v1 title rule is dead CSS');
+  assert.equal(ruleBody('.ask-card-field'), null, 'v1 field rule is dead CSS');
+  assert.equal(ruleBody('.ask-card-label'), null, 'v1 label rule is dead CSS');
+  assert.equal(/\.ask-card-actions\s*\{/.test(css), false, 'v1 actions container rule is dead CSS');
+  assert.ok(css.includes('.ask-card-actions-spacer'), 'the spacer buildWorkflowCard still emits keeps its rule');
+});
+
+test('ui-ask-style: the run progress card block is tokened, keeps the ask-card base, and restates the run-state ornaments for its host', () => {
+  assert.ok(ruleBody('.ask-card.ask-rc'), '.ask-card.ask-rc rule exists');
+  assert.match(ruleBody('.ask-card.ask-rc'), /animation:wr-rise/);
+  for (const fam of ['peach', 'blue', 'violet', 'green', 'red', 'amber']) assert.ok(ruleBody(`.ask-rc-pill.st-${fam}`), `pill family ${fam}`);
+  assert.match(ruleBody('.ask-rc.is-live .ask-rc-dot') || '', /animation:dotpulse/);
+  assert.match(ruleBody('.ask-rc-graph .gv-world .node.is-active') || '', /animation:nodeGlow 2\.2s/);
+  assert.match(ruleBody('.ask-rc-graph .gv-wires path.wire-live') || '', /animation:wireDash \.6s linear infinite/);
+  assert.ok(css.includes('.ask-rc-graph .wbadge:not(:has(> .wfired))'), 'the composer budget pill hides until a delivery fires');
+  const block = css.slice(css.indexOf('/* ---------- run progress card'), css.indexOf('/* ---------- Ask Worca dock clearance'));
+  assert.ok(block.length > 0 && !/@keyframes/.test(block), 'the block references keyframes, never re-declares one');
+  assert.ok(!/@media/.test(block), 'no media block of its own: the dock reduced-motion blanket already covers it');
+  assert.ok(!/\.run-flow/.test(block), 'never widens the pinned .run-flow.gv-host rules');
+  assert.match(ruleBody('.ask-rc-agent-dot') || '', /animation:dotpulse/, 'the agent pulse is a real element');
+  assert.ok(!/::(?:before|after)\{[^}]*animation/.test(block), 'no animated pseudo-element: the dock reduced-motion blanket cannot reach ::before/::after');
+  assert.ok(block.includes('calc(21px * var(--gv-scale))'), 'settled pips scale with the 0.65 flow card');
+});
+
+// The chat card restates ornaments the v2 canvas already styles LATER in the file, so a textual pin proves
+// nothing: an .ask-rc-graph rule only lands if it also out-specifies the base rule it restates. The badge pair
+// is the one that matters (a base pill left visible reads "3× 2×"), so resolve it the way a browser would.
+const RULE_RE = /([^{}]+)\{([^{}]*)\}/g;
+const cssNoComments = css.replace(/\/\*[\s\S]*?\*\//g, ' ');
+/** Every rule (selector arm, body, source order) whose arm is a plain descendant chain of classes. */
+function classRules() {
+  const out = [];
+  let m, i = 0;
+  RULE_RE.lastIndex = 0;
+  while ((m = RULE_RE.exec(cssNoComments))) {
+    const body = m[2];
+    for (const arm of m[1].split(',')) {
+      const sel = arm.trim();
+      i += 1;
+      if (!sel || !/^\.[-\w]+(?:\.[-\w]+)*(?:\s+\.[-\w]+(?:\.[-\w]+)*)*$/.test(sel)) continue;
+      const compounds = sel.split(/\s+/).map((c) => c.split('.').filter(Boolean));
+      out.push({ sel, body, order: i, compounds, spec: compounds.reduce((n, c) => n + c.length, 0) });
+    }
+  }
+  return out;
+}
+/** Does a descendant chain of class compounds match this element, given its ancestor chain (outermost first)? */
+function matches(rule, ancestors, target) {
+  const subset = (compound, classes) => compound.every((c) => classes.includes(c));
+  if (!subset(rule.compounds[rule.compounds.length - 1], target)) return false;
+  let a = ancestors.length - 1;
+  for (let k = rule.compounds.length - 2; k >= 0; k -= 1) {
+    while (a >= 0 && !subset(rule.compounds[k], ancestors[a])) a -= 1;
+    if (a < 0) return false;
+    a -= 1;
+  }
+  return true;
+}
+const declares = (body, prop) => new RegExp(`(?:^|;)\\s*${prop}\\s*:`).test(body);
+/** The rule a browser would let win for `prop`: highest specificity, then latest in source order. */
+function winner(ancestors, target, prop) {
+  return classRules().filter((r) => matches(r, ancestors, target) && declares(r.body, prop))
+    .sort((x, y) => (x.spec - y.spec) || (x.order - y.order)).pop() || null;
+}
+
+test('ui-ask-style: the chat card wins the cascade over the later v2-canvas badge rules (a fired loop wire reads "2×", never "3× 2×")', () => {
+  const CARD = ['ask-card ask-rc'.split(' '), ['ask-rc-graph'], 'gv-stage gv-static gv-flow'.split(' '), ['gv-world']];
+  // the base pill must be blanked out by the chat card's own rule, not painted by .gv-world .wbadge (style.css:3902)
+  for (const prop of ['font-size', 'line-height', 'padding', 'border', 'background']) {
+    const win = winner(CARD, ['wbadge'], prop);
+    assert.ok(win, `some rule sets ${prop} on a chat-card wire badge`);
+    assert.ok(win.sel.startsWith('.ask-rc-graph '), `${prop} on a chat-card wire badge resolves to "${win.sel}" — the .ask-rc-graph rule must out-specify the later .gv-world base rule`);
+  }
+  // and the fired overlay keeps its own pill geometry (the base adds margin-left:5px at style.css:3956)
+  for (const prop of ['margin', 'padding', 'background', 'font']) {
+    const win = winner([...CARD, ['wbadge']], ['wfired'], prop);
+    assert.ok(win && win.sel.startsWith('.ask-rc-graph '), `${prop} on the fired overlay resolves to "${win && win.sel}"`);
+  }
+  const block = css.slice(css.indexOf('/* ---------- run progress card'), css.indexOf('/* ---------- Ask Worca dock clearance'));
+  assert.ok(!block.includes('.ask-rc-graph .wbadge{'), 'the two-class form loses to .gv-world .wbadge: scope the badge rules through .gv-world');
 });

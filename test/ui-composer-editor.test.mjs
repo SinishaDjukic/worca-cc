@@ -23,6 +23,7 @@ const RECT = { left: 0, top: 0, width: 1280, height: 560 };
 
 const IDS = ['gv-canvas', 'gv-chip', 'gv-head', 'gv-name', 'gv-errors', 'gv-new', 'gv-autolayout',
   'gv-save', 'gv-ins-rail', 'gv-ins-body', 'gv-ins-toggle', 'gv-ins-tabs', 'gv-palette', 'gv-agent-filter',
+  'gv-nav', 'gv-zoom-in', 'gv-zoom-out', 'gv-center',
   'gv-saved-list', 'gv-saved-count', 'gv-archived', 'gv-dialog-host'];
 
 export function shell() {
@@ -33,13 +34,17 @@ export function shell() {
     // Anchored: a loose /save/ also matches gv-saved-list and gv-saved-count,
     // which are containers, not buttons.
     const tag = /^gv-(name|agent-filter)$/.test(id) ? 'input'
-      : (/^gv-(save|new|autolayout|errors|ins-toggle)$/.test(id) ? 'button' : 'div');
+      : (/^gv-(save|new|autolayout|errors|ins-toggle|zoom-in|zoom-out|center)$/.test(id) ? 'button' : 'div');
     const n = doc.createElement(tag);
     n.id = id;
     doc.body.appendChild(n);
   }
   // chip and rail are the stage's SIBLINGS inside the canvas host, exactly as in index.html
-  doc.getElementById('gv-canvas').append(doc.getElementById('gv-chip'), doc.getElementById('gv-ins-rail'));
+  // …and the nav cluster follows the rail, as the `~` offset selector requires.
+  doc.getElementById('gv-canvas').append(doc.getElementById('gv-chip'), doc.getElementById('gv-ins-rail'),
+    doc.getElementById('gv-nav'));
+  doc.getElementById('gv-nav').append(doc.getElementById('gv-zoom-in'),
+    doc.getElementById('gv-zoom-out'), doc.getElementById('gv-center'));
   // …and the tablist is the rail's own top row, mirroring index.html.
   for (const tab of ['agents', 'info']) {
     const b = doc.createElement('button');
@@ -54,6 +59,7 @@ export function shell() {
       canvas: el.canvas, chip: el.chip, head: el.head, name: el.name, errors: el.errors,
       newBtn: el.new, autoBtn: el.autolayout, saveBtn: el.save, insRail: el.insRail, insBody: el.insBody,
       insToggle: el.insToggle, insTabs: el.insTabs, palette: el.palette, filter: el.agentFilter, savedList: el.savedList,
+      zoomIn: el.zoomIn, zoomOut: el.zoomOut, centerBtn: el.center,
       savedCount: el.savedCount, archived: el.archived, dialogHost: el.dialogHost,
     },
     raf: (fn) => { q.push(fn); return q.length; },
@@ -207,6 +213,33 @@ test('ctrl+wheel zooms about the cursor (world point invariant) and clamps 0.4..
   assert.ok(s.c.view.getTransform().z >= 0.4 - 1e-12);
 });
 
+const click = (s, el) => el.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+// RECT is 1280x560 and INSET_OPEN is 340, so the open-rail band centre is the
+// stage-local (470, 280) — and RECT.left/top are 0, so it is also the client point.
+const BAND_CX = (1280 - 340) / 2;
+const BAND_CY = 560 / 2;
+
+test('the zoom buttons step by 1.2 about the band centre, clamp 0.4..1.6 and disable at the stops', async () => {
+  const s = await open();
+  s.c.view.setTransform({ x: 0, y: 0, z: 1 });
+  const before = s.c._internal.toWorld(BAND_CX, BAND_CY);
+  click(s, s.el.zoomIn);
+  assert.ok(Math.abs(s.c.view.getTransform().z - 1.2) < 1e-12, 'z x 1.2');
+  const after = s.c._internal.toWorld(BAND_CX, BAND_CY);
+  assert.ok(Math.abs(after.x - before.x) < 1e-6 && Math.abs(after.y - before.y) < 1e-6,
+    'the world point under the band centre never moves');
+  for (let i = 0; i < 6; i += 1) click(s, s.el.zoomIn);
+  assert.ok(Math.abs(s.c.view.getTransform().z - 1.6) < 1e-12, 'clamped at ZOOM_MAX');
+  assert.equal(s.el.zoomIn.disabled, true, 'a button that cannot move is disabled');
+  assert.equal(s.el.zoomOut.disabled, false);
+  for (let i = 0; i < 12; i += 1) click(s, s.el.zoomOut);
+  assert.ok(Math.abs(s.c.view.getTransform().z - 0.4) < 1e-12, 'clamped at ZOOM_MIN');
+  assert.equal(s.el.zoomOut.disabled, true);
+  assert.equal(s.el.zoomIn.disabled, false);
+  s.c.fit();
+  assert.equal(s.el.zoomOut.disabled, false, 'fit() repaints the cluster too');
+});
+
 test('plain wheel pans by exactly −delta; deltaMode 1 scales by 16', async () => {
   const s = await open();
   s.c.view.setTransform({ x: 0, y: 0, z: 1 });
@@ -293,6 +326,52 @@ test('errors disable Save, show the chip, pip the node, and centre it on click',
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(s2.el.errors.hidden, true);
   assert.equal(s2.el.save.disabled, false);
+});
+
+// Unfinished is not wrong: a fresh canvas shows NO chip (Save stays gated, with a
+// tooltip saying what is missing); once the user starts working, still-unwired
+// mandatory ports get a quiet "N ports to wire" chip; only real mistakes are red.
+test('a pristine canvas shows no error chip; unfinished wiring is a quiet to-do, not an error', async () => {
+  const s = await open();
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  s.c.loadTemplate(null);
+  await tick();
+  assert.equal(s.c.report().errors.length, 2, 'precondition: V20 + V21 fire on Task + End alone');
+  assert.ok(s.c.report().errors.every((e) => e.incomplete), 'both are flagged incomplete by the validator');
+  assert.equal(s.el.errors.hidden, true, 'no chip on a canvas nobody has touched');
+  assert.equal(s.el.save.disabled, true, 'Save is still gated');
+  assert.equal(s.el.save.title, 'Wire Task → … → End to save');
+
+  s.c.spawn({ key: 'planner' });
+  await tick();
+  assert.equal(s.el.errors.hidden, false, 'once the user works, the to-do shows');
+  assert.ok(s.el.errors.classList.contains('is-incomplete'), 'in the quiet dress');
+  assert.match(s.el.errors.textContent, /^\d+ ports to wire$/);
+  assert.equal(s.el.save.disabled, true);
+
+  // A REAL mistake (a second End) turns the chip red and counts only real errors.
+  s.c.commit('dup-end', () => { s.c.template().nodes.push({ id: 'n_end2', kind: 'end', x: 900, y: 400, config: {} }); });
+  await tick();
+  assert.equal(s.el.errors.classList.contains('is-incomplete'), false);
+  assert.match(s.el.errors.textContent, /^\d+ errors?$/);
+  assert.equal(s.el.save.title, 'Fix the errors to save');
+  s.c.undo();
+  await tick();
+
+  // Wiring Task → planner → End finishes the drawing: no chip, Save enabled.
+  const t = s.c.template();
+  const task = t.nodes.find((n) => n.kind === 'task'), end = t.nodes.find((n) => n.kind === 'end');
+  const agent = t.nodes.find((n) => n.kind === 'agent');
+  s.c.commit('wire', () => {
+    s.c.template().wires.push(
+      { id: 'w_a', from: { node: task.id, port: 'task' }, to: { node: agent.id, port: 'task' } },
+      { id: 'w_b', from: { node: agent.id, port: 'plan' }, to: { node: end.id, port: 'result' } },
+    );
+  });
+  await tick();
+  assert.equal(s.el.errors.hidden, true, JSON.stringify(s.c.report().errors));
+  assert.equal(s.el.save.disabled, false);
+  assert.equal(s.el.save.title, '');
 });
 
 test('validation runs ONCE per commit, never per frame', async () => {
@@ -920,4 +999,31 @@ test('a routed model locks the sub-agent select; a plain model keeps it editable
   assert.equal(free.disabled, false);
   assert.ok(free.options.length > 1, 'the alias/auto/inherit options are back');
   assert.equal(free.value, 'sonnet', 'the preserved pin is re-selected after unlocking');
+});
+
+test('Center is a zoom-to-FIT: it scales the graph into the band, never past 1x, and lands its centre on the band centre', async () => {
+  const s = await open();
+  s.c.view.setTransform({ x: 0, y: 0, z: 1.3 });
+  click(s, s.el.center);
+  const b = s.c.view.bounds(60);                       // fit() pads by 60
+  const expect = Math.max(0.4, Math.min(1, Math.min(BAND_CX * 2 / b.w, 560 / b.h)));
+  assert.ok(Math.abs(s.c.view.getTransform().z - expect) < 1e-9, 'the zoom is the fit zoom, clamped 0.4..1');
+  const c = s.c._internal.toWorld(BAND_CX, BAND_CY);
+  assert.ok(Math.abs(c.x - (b.x + b.w / 2)) < 1e-6, 'the padded bounds centre sits under the band centre');
+  assert.ok(Math.abs(c.y - (b.y + b.h / 2)) < 1e-6);
+  assert.equal(s.el.zoomIn.disabled, false, 'and the cluster repaints off the fit');
+});
+
+test('Center follows the rail: collapsing it fits into the wider band', async () => {
+  const s = await open();
+  click(s, s.el.center);
+  const withRail = s.c.view.getTransform();
+  s.el.insRail.dataset.open = 'collapsed';
+  click(s, s.el.center);
+  const collapsed = s.c.view.getTransform();
+  const b = s.c.view.bounds(60);
+  const bandW = 1280 - 28;                             // INSET_COLLAPSED
+  assert.ok(collapsed.z >= withRail.z - 1e-12, 'the freed rail can only widen the band');
+  const c = s.c._internal.toWorld(bandW / 2, BAND_CY);
+  assert.ok(Math.abs(c.x - (b.x + b.w / 2)) < 1e-6, 'and the fit centres on the NEW band centre');
 });

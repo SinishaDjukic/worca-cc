@@ -22,11 +22,13 @@ import { isSubagentModelValue } from './model-env.mjs';
 const validSubagentModel = (v) => (isSubagentModelValue(v) ? v : undefined);
 import { slugify } from './artifacts.mjs';
 import { DEFAULT_AGENTS_DIR, loadAgentRegistry } from './agent-registry.mjs'; // fileURLToPath-based (Windows-safe)
+import { readPluginsLock } from './plugins-lock.mjs';                 // a DISABLED plugin's rows are hidden
 import { validateGraph, formatIssue, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
-import { GRAPH_DEFAULT_WORKFLOW } from './graph/builtin-workflows.mjs';
-export { GRAPH_DEFAULT_WORKFLOW };
+import { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, AUTO_WORKFLOW_STUB } from './graph/builtin-workflows.mjs';
+export { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID };
 import { registryPortsFn } from './graph/registry-ports.mjs';
+import { parseFrontmatter } from './frontmatter.mjs';
 
 /**
  * Default feedback cycle count when run-config does not override it. Matches the
@@ -69,20 +71,7 @@ export async function loadAgentFile(agentsDir, agentFile, agentPath = null) {
   } catch {
     return { prompt: '', tools: [] };
   }
-  return { prompt: text, tools: parseFrontmatterTools(text) };
-}
-
-/** Extract a comma-separated `tools:` list from leading --- YAML frontmatter. */
-function parseFrontmatterTools(text) {
-  const m = /^---\s*\n([\s\S]*?)\n---/.exec(text);
-  if (!m) return [];
-  const line = m[1].split(/\r?\n/).find((l) => /^tools\s*:/.test(l));
-  if (!line) return [];
-  return line
-    .replace(/^tools\s*:/, '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  return { prompt: text, tools: parseFrontmatter(text)?.tools ?? [] };
 }
 
 /**
@@ -309,16 +298,18 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   // The ONE reserved id is the built-in default's; a save may never claim it,
   // so it falls back to the slug.
   const asked = tpl && typeof tpl.id === 'string' ? tpl.id.trim() : '';
-  const minted = !(asked && isSafeWorkflowId(asked) && asked !== GRAPH_DEFAULT_WORKFLOW.id);
+  const reserved = (id) => id === GRAPH_DEFAULT_WORKFLOW.id || id === AUTO_WORKFLOW_ID;
+  const minted = !(asked && isSafeWorkflowId(asked) && !reserved(asked));
   const id = minted ? `wf_${slugify(name)}` : asked;
   // C-3: the fallback re-mints the reserved id for ANY name slugging to
   // "default" ('Default', ' dEfAuLt ', 'default!!', 'Défault'…). That row is
   // filtered out of listWorkflows(), short-circuited past by readWorkflow() and
   // refused by DELETE — the user's pipeline would vanish behind a 201. Refuse
   // the WRITE instead; only the name is wrong, so the caller can rename.
-  if (id === GRAPH_DEFAULT_WORKFLOW.id) {
+  if (reserved(id)) {
+    const which = id === AUTO_WORKFLOW_ID ? AUTO_WORKFLOW_NAME : GRAPH_DEFAULT_WORKFLOW.name;
     throw Object.assign(
-      new Error(`the name "${GRAPH_DEFAULT_WORKFLOW.name}" is reserved — choose another name`),
+      new Error(`the name "${which}" is reserved — choose another name`),
       { code: 'RESERVED_NAME' });
   }
   const domain = normDomain(tpl && tpl.domain);
@@ -369,19 +360,40 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
 export async function readWorkflow(id, opts = {}) {
   // `wf_default` IS the graph: the v1 default died with the v1 engine.
   if (id === GRAPH_DEFAULT_WORKFLOW.id) return GRAPH_DEFAULT_WORKFLOW;
+  if (id === AUTO_WORKFLOW_ID) return AUTO_WORKFLOW_STUB;
   return readRaw(id, opts);
 }
 
 /**
+ * A row owned by a plugin that is DISABLED in the lock. Disabling a plugin already
+ * withdraws its agents, skills and task sources (agent-registry / skills /
+ * sources honour `enabled:false`); its workflow templates follow the same rule,
+ * or the composer would list a pipeline whose agents are gone.
+ * @param {string|null} origin  'plugin:<name>' | null
+ * @param {object} lock         readPluginsLock()
+ */
+function pluginDisabled(origin, lock) {
+  if (typeof origin !== 'string' || !origin.startsWith('plugin:')) return false;
+  const entry = lock[origin.slice('plugin:'.length)];
+  return !!entry && entry.enabled === false;
+}
+
+/**
  * List user templates (NOT GRAPH_DEFAULT_WORKFLOW — callers prepend it), newest first by
- * createdAt. Archived rows are hidden unless asked for. Empty store => [].
+ * createdAt. Archived rows are hidden unless asked for; so are the rows of a
+ * disabled plugin (`includeDisabled` lifts that — the plugin lifecycle's own
+ * guards need to see them). Empty store => [].
  * @returns {Promise<object[]>}
  */
-export async function listWorkflows({ includeArchived = false } = {}) {
+export async function listWorkflows({ includeArchived = false, includeDisabled = false } = {}) {
   getDb();
   const where = includeArchived ? '' : 'WHERE archived_at IS NULL';
   const rows = prepare(`SELECT ${ROW_COLS} FROM workflows ${where} ORDER BY created_at DESC, id`).all();
-  return rows.filter((r) => r.id !== GRAPH_DEFAULT_WORKFLOW.id).map(rowToTpl);
+  const lock = includeDisabled ? null : readPluginsLock();
+  return rows
+    .filter((r) => r.id !== GRAPH_DEFAULT_WORKFLOW.id && r.id !== AUTO_WORKFLOW_ID)
+    .filter((r) => includeDisabled || !pluginDisabled(r.origin, lock))
+    .map(rowToTpl);
 }
 
 /**
@@ -416,8 +428,18 @@ function assertValidGraph(tpl, registry) {
  */
 export async function assertRunnableWorkflow(id, { registry, checkGraph = true } = {}) {
   const wanted = typeof id === 'string' && id.trim() ? id.trim() : GRAPH_DEFAULT_WORKFLOW.id;
+  // The Auto entry has no graph to check: the run decides one (spec §5.1).
+  if (wanted === AUTO_WORKFLOW_ID) return AUTO_WORKFLOW_STUB;
   const live = await readWorkflow(wanted);
   if (live) {
+    // A disabled plugin's template is neither runnable nor openable: its agents
+    // are withdrawn with the plugin. Same posture as ARCHIVED — a coded refusal
+    // the callers map, with the fix in the message.
+    if (pluginDisabled(live.origin, readPluginsLock())) {
+      const plugin = live.origin.slice('plugin:'.length);
+      throw Object.assign(new Error(`workflow "${wanted}" belongs to plugin "${plugin}", which is disabled — `
+        + `enable the plugin (Plugins view, or: worca plugin enable ${plugin}) to use it`), { code: 'PLUGIN_DISABLED' });
+    }
     // A v1 row is not a graph: engine-select owns its refusal (V1_RUN_RETIRED).
     if (checkGraph && live.version === 2) assertValidGraph(live, registry);
     return live;
@@ -494,6 +516,7 @@ export async function setWorkflowNodeDefaults(id, map) {
  */
 export async function deleteWorkflow(id) {
   if (id === GRAPH_DEFAULT_WORKFLOW.id) return false; // built-in default is undeletable
+  if (id === AUTO_WORKFLOW_ID) return false;    // never a row
   if (!isSafeWorkflowId(id)) return false;      // SECURITY: reject unsafe ids
   getDb();
   let changed = 0;
@@ -519,7 +542,7 @@ export async function deleteWorkflow(id) {
  * @param {string} workflowId
  * @param {Record<string,object>} registry  loadAgentRegistry() output
  * @param {string} [agentsDir]  override for tests; defaults to ../../agents
- * @param {{ isWorkspace?: boolean }} [opts]  workspace-mode resolve options
+ * @param {{ isWorkspace?: boolean, overlay?: {nodes?: object, wires?: object}, ignoreProjectOverrides?: boolean }} [opts]  workspace-mode resolve options
  * @returns {Promise<object>} ExecutablePlan
  * @throws {Error} when the workflow id is unknown, or a node resolves the off-pipeline scanner
  */
@@ -562,6 +585,9 @@ export function workspaceVariants(registry) {
  * @throws {Error} unknown workflow, a v1 row, an unknown/un-ported/unplaceable agent
  */
 export async function resolveGraph(projectDir, workflowId, registry, agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
+  if (workflowId === AUTO_WORKFLOW_ID) {
+    throw new Error('the Auto workflow is decided per run — resolveGraph needs the adopted workflow id');
+  }
   const stored = await readWorkflow(workflowId);
   if (!stored) throw new Error(`unknown workflowId "${workflowId}"`);
   if (stored.version !== 2) throw new Error('template is not a graph — runs on the v1 engine');
@@ -571,12 +597,27 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   const reg = registry && typeof registry === 'object' ? registry : {};
   const isWorkspace = !!opts.isWorkspace;
   const variants = isWorkspace ? workspaceVariants(reg) : {};
-  const { nodes: nodeCfg, wires: wireCfg } = await resolveRunConfig(projectDir, workflowId);
+  // Per-project overlays. An Auto run owns its tuning (spec D7/D9): with
+  // `ignoreProjectOverrides` every per-project layer is skipped and `overlay`
+  // (the proposal the user accepted) is the ONLY overlay. Otherwise `overlay`
+  // merges PER NODE / PER WIRE over the project layer.
+  const ignore = !!opts.ignoreProjectOverrides;
+  const runCfg = ignore ? { nodes: {}, wires: {} } : await resolveRunConfig(projectDir, workflowId);
+  const over = opts.overlay && typeof opts.overlay === 'object' ? opts.overlay : {};
+  const mergeMaps = (base, extra) => {
+    const out = { ...base };
+    for (const [id, sel] of Object.entries(extra && typeof extra === 'object' ? extra : {})) {
+      if (sel && typeof sel === 'object') out[id] = { ...(out[id] || {}), ...sel };
+    }
+    return out;
+  };
+  const nodeCfg = mergeMaps(runCfg.nodes, over.nodes);
+  const wireCfg = mergeMaps(runCfg.wires, over.wires);
   // The legacy per-role layer is the Default workflow's storage only (saved rows
   // use nodeCfg); it is addressed by agent KEY, never by node id.
   // A defaults-only global export passes projectDir=null and must not touch the config
   // store (projectKey(null) throws); its legacy per-role layer is empty by definition.
-  const stepsCfg = (workflowId === GRAPH_DEFAULT_WORKFLOW.id && projectDir) ? (await readConfig(projectDir)).steps : {};
+  const stepsCfg = (!ignore && workflowId === GRAPH_DEFAULT_WORKFLOW.id && projectDir) ? (await readConfig(projectDir)).steps : {};
   const firstDefined = (...vals) => vals.find((v) => v !== undefined);
 
   const nodes = {};

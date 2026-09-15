@@ -1,0 +1,85 @@
+<section id="theme-kitchen" class="card" style="margin:24px 32px">
+  <div class="card-head"><div class="label-row"><h2>Theme kitchen sink</h2>
+    <button type="button" class="info-tip" aria-label="About">i</button></div></div>
+
+  <div class="log">
+    <div class="log-line lvl-phase"><span class="log-ts">12:00:01</span><span class="log-src">plan</span><span class="log-msg">Phase started</span></div>
+    <div class="log-line lvl-artifact"><span class="log-ts">12:00:02</span><span class="log-src">plan</span><span class="log-msg">wrote plan.md</span></div>
+    <div class="log-line lvl-error"><span class="log-ts">12:00:03</span><span class="log-src">impl</span><span class="log-msg">exit code 1</span></div>
+    <div class="log-line lvl-warn"><span class="log-ts">12:00:04</span><span class="log-src">impl</span><span class="log-msg">retrying</span></div>
+    <div class="log-line lvl-system"><span class="log-ts">12:00:05</span><span class="log-src">sys</span><span class="log-msg">paused by user</span></div>
+    <div class="log-line sub-agent"><span class="log-ts">12:00:06</span><span class="log-src">reviewer</span><span class="log-msg">sub-agent line</span></div>
+  </div>
+
+  <div class="log-filters"><select class="log-f"><option>all nodes</option></select><input class="log-f log-search" placeholder="Search log" /></div>
+
+  <p><span class="nav-count">3</span> <span class="nav-count n-amber">2</span> <span class="nav-count n-run">1</span> <span class="nav-count n-paused">1</span> <span class="n-amber">amber</span></p>
+
+  <p><span class="rc-sic st-green">done</span> <span class="rc-status-word st-green">Done</span> <span class="rc-step-chip st-peach">plan</span> <span class="rd-ov-chip st-red">error</span>
+     <span class="rc-sic st-blue">run</span> <span class="rc-status-word st-violet">Review</span> <span class="rc-step-chip st-amber">paused</span></p>
+
+  <p><span class="skill-pill">skill</span> <span class="skill-pill is-mcp">mcp</span> <span class="agent-type-pill">type</span> <span class="graphify-pill">graphify</span>
+     <span class="agent-chip prod">producer</span> <span class="agent-chip cons">consumer</span> <span class="agent-origin origin-user">user</span> <span class="issue-origin origin-review">review</span></p>
+
+  <div class="results-chips"><span class="results-chip">3 files</span></div>
+  <div class="results-narrative">Narrative text on the field wash.</div>
+  <div class="results-clean">No issues found</div>
+  <div class="results-trunc">truncated after 200 lines</div>
+
+  <div class="issues">
+    <div class="issue sev-critical"><div class="issue-head"><span class="issue-sev">critical</span><span class="issue-title">Title</span></div><div class="issue-loc">src/x.mjs:1</div><div class="issue-detail">Detail</div></div>
+    <div class="issue sev-major"><div class="issue-head"><span class="issue-sev">major</span><span class="issue-title">Title</span></div></div>
+    <div class="issue sev-minor"><div class="issue-head"><span class="issue-sev">minor</span><span class="issue-title">Title</span></div></div>
+    <div class="issue sev-suggestion"><div class="issue-head"><span class="issue-sev">suggestion</span><span class="issue-title">Title</span></div></div>
+  </div>
+
+  <div class="qpanel"><div class="qpanel-head">Question 1 of 2</div>
+    <div class="qblock qopen"><div class="qtext"><span class="qn">1</span>Which database?</div>
+      <div class="qopts"><label class="qopt sel">Postgres</label><label class="qopt">SQLite</label></div>
+      <input class="qfree input" placeholder="Or type your own" /></div>
+    <div class="qblock qanswered"><div class="qtext"><span class="qn">2</span>Answered</div></div>
+    <div class="qpanel-foot"><button type="button" class="btn btn-go">Answer</button></div></div>
+
+  <div class="run-ask-banner"><span class="rab-mark">?</span><span class="rab-text">A pipeline needs your input</span></div>
+  <p class="run-warn">Warning banner text</p>
+  <div class="retained-banner"><p>Retained</p><code>git worktree remove …</code></div>
+
+  <div class="export-choices"><label class="export-choice export-create">create</label><label class="export-choice export-update">update</label><label class="export-choice export-warn">warn</label><span class="export-tag">tag</span></div>
+
+  <div class="hd-diff"><div class="hd-diff-list"><div class="hd-diff-list-head">Files <span class="hd-diff-counts"><span class="diff-add">+12</span> <span class="diff-del">−3</span></span></div>
+      <div class="hd-diff-rows"><div class="hd-diff-path">src/a.mjs</div></div></div>
+    <div class="hd-diff-pane"><div class="hd-diff-pane-head">src/a.mjs</div><div class="hd-diff-body">
+      <div class="hd-dl-row hd-dl-hunk"><span class="hd-dl-n hd-dl-n-old">@@</span><span class="hd-dl-code">@@ -1,3 +1,4 @@</span></div>
+      <div class="hd-dl-row hd-dl-add"><span class="hd-dl-n hd-dl-n-new">2</span><span class="hd-dl-code"><span class="hljs-keyword">const</span> <span class="hljs-title">x</span> = <span class="hljs-string">'s'</span>; <span class="hljs-comment">// c</span></span></div>
+      <div class="hd-dl-row hd-dl-del"><span class="hd-dl-n hd-dl-n-old">2</span><span class="hd-dl-code"><span class="hljs-type">Type</span> <span class="hljs-literal">null</span></span></div>
+      <div class="hd-dl-row"><span class="hd-dl-n hd-dl-n-old">3</span><span class="hd-dl-code">context line</span></div>
+      <div class="hd-dl-more"><button type="button" class="hd-dl-more-btn">show 10 more</button></div>
+      <div class="hd-diff-trunc">truncated</div><div class="hd-diff-none">no diff</div><div class="hd-diff-note">note</div></div></div></div>
+
+  <div class="ask-sheet" style="position:static;display:block;width:auto;height:auto">
+    <div class="ask-answer"><div class="ask-md"><p>Answer with <code>inline</code> and a <a href="#">link</a>.</p>
+      <pre><code><span class="hljs-keyword">import</span> x <span class="hljs-keyword">from</span> <span class="hljs-string">'y'</span>; <span class="hljs-comment">// note</span></code></pre>
+      <blockquote>quoted</blockquote><table><thead><tr><th>a</th></tr></thead><tbody><tr><td>1</td></tr></tbody></table></div></div>
+    <div class="ask-answer-plain">plain answer</div>
+    <div class="ask-thinking"><span class="ask-orb"></span><span class="ask-thinking-label">Thinking…</span><span class="ask-thinking-meter">12s</span></div>
+  </div>
+
+  <pre class="viewer"># plan.md
+- item</pre>
+
+  <div class="switch-row"><span class="switch on"></span><span class="txt">on</span><span class="switch"></span><span class="txt">off</span></div>
+  <div class="seg"><button type="button" class="on">On</button><button type="button">Off</button></div>
+  <p><button type="button" class="btn">Ghost</button> <button type="button" class="btn btn-primary">Primary</button> <button type="button" class="btn btn-danger">Danger</button> <button type="button" class="btn-go">Go</button> <button type="button" class="btn btn-mini" disabled>Disabled</button> <button type="button" class="icon-btn" aria-label="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h16"/></svg></button></p>
+  <div class="field"><label>Field</label><input class="input" placeholder="Placeholder text" /><small class="hint">Hint text</small><small class="hint err">Error hint</small></div>
+
+  <div class="info-bubble" style="position:static">Tooltip body <code>code</code></div>
+  <div class="chart-tip" style="position:static">Chart tip</div>
+
+  <div class="gv-world" style="position:relative;height:auto">
+    <div class="node" style="position:static;margin:8px 0">
+      <div class="nhead h-blue">Blue head</div><div class="nbody"><div class="prow"><span class="dot any"></span><span class="pn">port</span></div><div class="prow"><span class="dot void"></span><span class="pn">empty</span></div><div class="prow gate wired"><span class="gdot"></span><span class="pn">gate</span></div></div></div>
+    <div class="node" style="position:static;margin:8px 0"><div class="nhead h-green">Green head</div></div>
+    <div class="node" style="position:static;margin:8px 0"><div class="nhead h-peach">Peach head</div></div>
+    <div class="node" style="position:static;margin:8px 0"><div class="nhead h-flow">Flow head</div><div class="nrun" style="position:static">$0.12</div></div>
+  </div>
+</section>

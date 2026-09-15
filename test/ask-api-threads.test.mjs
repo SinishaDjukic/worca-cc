@@ -62,6 +62,50 @@ test('POST creates a thread; the list shows it with runLinks count and inFlight:
   assert.equal(row.inFlight, false);
 });
 
+test('the list flags tracking from the follower map: undetached follower + live unsettled run, never the ask_run_links row', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const { EventEmitter } = await import('node:events');
+  const t = store.createThread();
+  const entry = { id: 'uuid-TRACK', orch: new EventEmitter(), projectDir: '/tmp/x', title: 't', status: 'running', startedAt: new Date().toISOString(), events: [], pendingQuestion: null, pipelineId: 'aaaa1111' };
+  const paused = { ...entry, id: 'uuid-PAUSED', pipelineId: 'bbbb2222', status: 'paused' };
+  mod.runs.set(entry.id, entry);
+  mod.runs.set(paused.id, paused);
+  const follower = (runId, detached = false) => ({ runId, detached, detach() {} });
+  const rowFor = async () => (await (await fetch(`${base}/api/ask/threads`)).json()).threads.find((x) => x.id === t.id);
+  try {
+    // no follower at all — even with a link row left `running` (the restart trap)
+    store.linkRun(t.id, { runId: 'uuid-GONE', pipelineId: 'cccc3333', status: 'running' });
+    let row = await rowFor();
+    assert.equal(row.tracking, false, 'ask_run_links.status is not the truth');
+    assert.equal(row.trackingRuns, 0);
+    // an undetached follower on a live, unsettled entry
+    mod._testing.askFollowers.set(t.id, new Set([follower('uuid-TRACK')]));
+    row = await rowFor();
+    assert.equal(row.tracking, true);
+    assert.equal(row.trackingRuns, 1);
+    assert.equal(row.inFlight, false, 'tracking is independent of the thinking flag');
+    // two followers: one live, one on a paused entry, one detached, one whose entry is gone
+    mod._testing.askFollowers.set(t.id, new Set([follower('uuid-TRACK'), follower('uuid-PAUSED'), follower('uuid-TRACK', true), follower('uuid-NOWHERE')]));
+    row = await rowFor();
+    assert.equal(row.tracking, true);
+    assert.equal(row.trackingRuns, 1, 'only the live undetached follower counts');
+    // paused / detached / missing alone → not tracking
+    mod._testing.askFollowers.set(t.id, new Set([follower('uuid-PAUSED'), follower('uuid-TRACK', true), follower('uuid-NOWHERE')]));
+    row = await rowFor();
+    assert.equal(row.tracking, false);
+    assert.equal(row.trackingRuns, 0);
+    // the entry settles under the follower (done arrives before onDetached) → not tracking
+    mod._testing.askFollowers.set(t.id, new Set([follower('uuid-TRACK')]));
+    entry.status = 'done';
+    row = await rowFor();
+    assert.equal(row.tracking, false, 'a settled entry no longer counts even while its follower lingers');
+  } finally {
+    mod._testing.askFollowers.delete(t.id);
+    mod.runs.delete(entry.id);
+    mod.runs.delete(paused.id);
+  }
+});
+
 test('POST with a title stores the trimmed title; over-long is a 400', async () => {
   const r = await post('/api/ask/threads', { title: '  My chat  ' });
   assert.equal(r.status, 201);

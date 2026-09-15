@@ -28,6 +28,7 @@ import { loadAgentRegistry } from './agent-registry.mjs';
 import { pluginModelSecretStatus } from './plugin-models.mjs';
 import { referencedPluginModels } from './config.mjs';
 import { clearBindingsForPlugin } from './source-bindings.mjs';
+import { parseFrontmatter } from './frontmatter.mjs';
 
 const execFileP = promisify(execFile);
 const defaultExec = (cmd, args, opts = {}) =>
@@ -55,15 +56,6 @@ function insideDir(dir, rel) {
   return resolve(root, rel).startsWith(root + sep);
 }
 
-/** Private copy of workflows.mjs:66-77 parseFrontmatterTools (module-private there). */
-function frontmatterTools(text) {
-  const m = /^---\s*\n([\s\S]*?)\n---/.exec(text);
-  if (!m) return [];
-  const line = m[1].split(/\r?\n/).find((l) => /^tools\s*:/.test(l));
-  if (!line) return [];
-  return line.replace(/^tools\s*:/, '').split(',').map((s) => s.trim()).filter(Boolean);
-}
-
 /** The "Will install" consent inventory (spec §6.1, design §9.4): agents +
  *  their frontmatter tools, sources + their secret fields, models with their
  *  base-URL value VERBATIM (a model env can redirect all API traffic — the
@@ -89,7 +81,7 @@ export function buildInstallInventory(versionDir) {
         if (typeof af === 'string' && af.trim() && insideDir(aDir, af.trim())) mdFile = af.trim();
       } catch { /* unreadable sidecar: fall back to the sibling */ }
       let tools = [];
-      try { tools = frontmatterTools(readFileSync(join(aDir, mdFile), 'utf8')); } catch { /* md missing */ }
+      try { tools = parseFrontmatter(readFileSync(join(aDir, mdFile), 'utf8'))?.tools ?? []; } catch { /* md missing */ }
       agents.push({ key, tools });
     }
   }

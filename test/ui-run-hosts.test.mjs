@@ -122,7 +122,12 @@ test('the run-monitor CSS block styles the hosts and states it ACTUALLY writes, 
   for (const sel of ['.run-flow.gv-host{', '.run-flow-wrap.gv-wrap-monitor{', '.rc-detailed .run-flow-wrap.gv-wrap-static{height:300px',
     '.run-flow.gv-host .gv-world .node.is-error', '.run-flow.gv-host .gv-world .node.is-skipped',
     '.run-flow.gv-host .gv-wires path.wire-live', '.rd-graph.settled .run-flow.gv-host .gv-wires path.wire-live{animation:none;stroke-dashoffset:0;}',
-    '.run-flow.gv-host .wbadge:not(:has(> .wfired))', '.run-flow.gv-host .gv-world .xfoot>.fan{', '--run-host-h', '.run-warn{', '.rg-hint{']) {
+    '.run-flow.gv-host .wbadge:not(:has(> .wfired))', '.run-flow.gv-host .gv-world .xfoot>.fan{', '--run-host-h', '.run-warn{', '.rg-hint{',
+    '.rg-hint{position:absolute;left:12px;',
+    '.gv-wrap-monitor .run-flow.gv-host .gv-world .node{cursor:grab;}',
+    '.gv-wrap-monitor .run-flow.gv-host .gv-stage{cursor:grab;}',
+    '.gv-wrap-monitor .run-flow.gv-host .gv-stage.panning,.gv-wrap-monitor .run-flow.gv-host .gv-stage.panning *{cursor:grabbing !important;}',
+    '.run-flow-wrap.gv-wrap-monitor > .gv-nav{right:12px;bottom:12px;}']) {
     assert.ok(css.includes(sel), `${sel} must be written`);
   }
   for (const kf of ['@keyframes wireDash', '@keyframes sqPulse', '@keyframes nodeGlow{', '@keyframes xqPulse']) {
@@ -143,6 +148,7 @@ test('the run-monitor CSS block styles the hosts and states it ACTUALLY writes, 
     'the is-error card must get its own border colour (the ::after pip rules are not it)');
   assert.match(css, /(^|\n)\.rg-hint\{[^}]*position:absolute[^}]*opacity:0[^}]*\}/,
     'the hint chip rule itself (the :hover / .rg-engaged arms only toggle its opacity)');
+  assert.equal(css.includes('rg-engaged'), false, 'the engagement arm is gone with the state machine');
   // The v1 `.run-flow .node .fan` rule (same specificity, earlier) leaks margin-top + border-top onto the 26px band.
   const fan = (css.match(/\.run-flow\.gv-host \.gv-world \.xfoot>\.fan\{[^}]*\}/) || [''])[0];
   assert.ok(/margin:0/.test(fan) && /border-top:0/.test(fan), 'the fan neutraliser resets margin + border');
@@ -406,7 +412,7 @@ test('the monitor host sizes itself clamp(360, fitted + 48, 600) through --run-h
   // bounds(24).h = 191.5, zw = 1 → round(191.5) = 192 → floor 360.
   assert.equal(wrap.style.getPropertyValue('--run-host-h'), '360px');
   assert.equal(wrap.querySelector('.rg-hint').textContent, HINT_TEXT);
-  assert.equal(wrap.classList.contains('rg-engaged'), false);
+  assert.equal(wrap.className.includes('rg-engaged'), false, 'there is no engagement state any more');
   assert.equal(host.classList.contains('gv-host'), true);
   assert.deepEqual([...wrap.classList], ['run-flow-wrap', 'gv-wrap', 'gv-wrap-monitor']);
   assert.equal(host.querySelector('[data-node-id="n_a"] .nhead .tt').textContent, 'Planner');
@@ -417,22 +423,85 @@ test('the monitor host sizes itself clamp(360, fitted + 48, 600) through --run-h
   assert.ok(zoomOf(tall.host.querySelector('.gv-world')) < 1, 'and fits both axes into (800, 600)');
 });
 
-test('engagement: pointerdown or focus on the STAGE engages; Escape and an outside pointerdown disengage', () => {
+test('the monitor canvas never captures the page scroll: no engagement class, and the hint chip says what the gestures are', () => {
   const { m, wrap, host, window } = mountHost('monitor');
   m.update('run1', MANIFEST, decorFromState(RUN()));
-  // P5's nav binds `pointerdown` + `focus` on view.stage (`.gv-stage`), which fills
-  // the wrap; an event on the WRAP is on an ancestor and never reaches the stage.
   const stage = m.view.stage;
-  assert.ok(host.contains(stage), 'the stage is the engagement surface');
-  const down = (id, target) => target.dispatchEvent(new window.PointerEvent('pointerdown', { pointerId: id, button: 0, bubbles: true }));
-  down(1, stage);
-  assert.equal(wrap.classList.contains('rg-engaged'), true);
-  window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  assert.equal(wrap.classList.contains('rg-engaged'), false);
+  assert.ok(host.contains(stage), 'the stage is the gesture surface');
+  stage.dispatchEvent(new window.PointerEvent('pointerdown', { pointerId: 1, button: 0, bubbles: true }));
   stage.dispatchEvent(new window.FocusEvent('focus'));
-  assert.equal(wrap.classList.contains('rg-engaged'), true, 'Tab onto the stage engages too');
-  down(3, window.document.body);
-  assert.equal(wrap.classList.contains('rg-engaged'), false, 'an outside pointerdown disengages');
+  assert.equal(wrap.className.includes('rg-engaged'), false, 'engagement is gone for good');
+  const plain = new window.WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true });
+  stage.dispatchEvent(plain);
+  assert.equal(plain.defaultPrevented, false, 'a plain wheel scrolls the PAGE, even after a press');
+  assert.equal(wrap.querySelector('.rg-hint').textContent, 'drag to pan · ⌘/ctrl+scroll to zoom');
+  assert.equal(wrap.querySelector('.rg-hint').textContent, HINT_TEXT);
+});
+
+test('the monitor host mounts the nav cluster: 1.2x steps about the host centre, clamped and disabled at the stops, Center = zoom-to-fit', () => {
+  calls = [];
+  const { m, wrap, host, window } = mountHost('monitor');
+  m.update('run1', MANIFEST, decorFromState(RUN()));
+  const nav = wrap.querySelector(':scope > .gv-nav');
+  assert.ok(nav, 'the cluster is a SIBLING of the stage, on the wrap');
+  assert.deepEqual([...nav.querySelectorAll('button')].map((b) => b.dataset.nav), ['in', 'out', 'center']);
+  assert.equal(nav.querySelector('[data-nav="center"]').title, 'Fit graph to view');
+  assert.equal(host.querySelector('.gv-nav'), null, 'and never inside the stage');
+  const btn = (k) => nav.querySelector(`[data-nav="${k}"]`);
+  const click = (el) => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const world = host.querySelector('.gv-world');
+  const fitted = xform(world);
+  // mountHost injects an 800x520 viewport, so the host centre is (400, 260).
+  const worldAt = (t, sx, sy) => ({ x: (sx - t.x) / t.z, y: (sy - t.y) / t.z });
+  const w0 = worldAt(fitted, 400, 260);
+  click(btn('in'));
+  near(zoomOf(world), fitted.z * 1.2, 'z x 1.2');
+  const w1 = worldAt(xform(world), 400, 260);
+  near(w1.x, w0.x, 'the world point under the host centre never moves');
+  near(w1.y, w0.y, 'nor on y');
+  click(btn('out'));
+  near(zoomOf(world), fitted.z, 'and back');
+  for (let i = 0; i < 12; i += 1) click(btn('in'));
+  near(zoomOf(world), 1.6, 'clamped at the monitor zoomMax');
+  assert.equal(btn('in').disabled, true, 'a button that cannot move is disabled');
+  assert.equal(btn('out').disabled, false);
+  for (let i = 0; i < 24; i += 1) click(btn('out'));
+  near(zoomOf(world), 0.3, 'clamped at the monitor zoomMin');
+  assert.equal(btn('out').disabled, true);
+  assert.equal(btn('in').disabled, false);
+  // Center is a zoom-to-FIT: it restores exactly what the auto-fit computes, and
+  // re-derives --run-host-h on the way (it runs the same two-pass fitMonitor).
+  m.view.setTransform({ x: 999, y: -400, z: 0.9 });
+  click(btn('center'));
+  assert.deepEqual(xform(world), fitted, 'Center restores the fit transform exactly');
+  assert.equal(btn('out').disabled, false, 'and the cluster repaints');
+  assert.equal(wrap.style.getPropertyValue('--run-host-h'), '360px', 'the host height survives the round trip');
+});
+
+test('a drag pans the monitor host, keeps its pan through a repaint, and Center hands the auto re-fit back', () => {
+  calls = [];
+  const { m, wrap, host, window } = mountHost('monitor');
+  const st = RUN({ steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'done', activeMs: 1000, costUsd: 0.1 }] });
+  m.update('run1', MANIFEST, decorFromState(st));
+  const world = host.querySelector('.gv-world');
+  const fitted = xform(world);
+  const stage = m.view.stage;
+  // `buttons: 1` is what a real drag reports on every move; a move with no button
+  // is a release this document never saw, and the nav drops the gesture (D17).
+  const pe = (type, o) => new window.PointerEvent(type, { pointerId: 4, buttons: 1, bubbles: true, cancelable: true, ...o });
+  stage.dispatchEvent(pe('pointerdown', { button: 0, clientX: 100, clientY: 100 }));
+  window.document.dispatchEvent(pe('pointermove', { clientX: 160, clientY: 130 }));
+  window.document.dispatchEvent(pe('pointerup', { clientX: 160, clientY: 130 }));
+  assert.deepEqual(xform(world), { x: fitted.x + 60, y: fitted.y + 30, z: fitted.z }, 'the drag panned by the delta');
+  // That drag swallows exactly one click (view.mjs): spend it before using the accordion.
+  stage.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  host.querySelector('.xtoggle').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.equal(host.querySelectorAll('.xrow').length, 1, 'the delegated accordion click survived the drag');
+  assert.equal(xform(world).x, fitted.x + 60, 'a touched view keeps its pan while the card grows');
+  wrap.querySelector(':scope > .gv-nav [data-nav="center"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const centred = xform(world);
+  m.fit();
+  assert.deepEqual(xform(world), centred, 'Center left the view exactly at the fit of the TALLER graph');
 });
 
 test('the footer accordion opens ONE node; row / gate / result clicks report out; the result link never navigates', () => {
@@ -517,7 +586,11 @@ test('destroy() unbinds everything and gives the host and the wrap back untouche
   assert.equal(mon.wrap.style.getPropertyValue('--run-host-h'), '', 'the host height is released');
   assert.deepEqual([...mon.wrap.classList], ['run-flow-wrap']);
   stage.dispatchEvent(new window.PointerEvent('pointerdown', { pointerId: 9, button: 0, bubbles: true }));
-  assert.equal(mon.wrap.classList.contains('rg-engaged'), false, 'the nav listeners are gone');
+  // `buttons: 1`: onMove drops a button-less move before it can ever add .panning
+  // (D17), so without it this would pass against a live, non-destroyed nav.
+  mon.window.document.dispatchEvent(new window.PointerEvent('pointermove', { pointerId: 9, buttons: 1, clientX: 200, clientY: 200, bubbles: true }));
+  assert.equal(stage.classList.contains('panning'), false, 'the nav listeners are gone');
+  assert.equal(mon.wrap.querySelector('.gv-nav'), null, 'the cluster is gone too');
 });
 
 // A host whose measured width TRACKS the inline width the static fit writes —

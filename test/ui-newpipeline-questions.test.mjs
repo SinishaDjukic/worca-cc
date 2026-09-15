@@ -150,7 +150,7 @@ test('GET /api/config failure still populates the workflow dropdown and hides qu
   await new Promise((r) => setTimeout(r, 0));
   const doc = window.document;
   const options = [...doc.querySelector('#workflowSelect').options].map((o) => o.textContent);
-  assert.deepEqual(options, ['Default', 'My Custom Pipeline'], 'dropdown populated despite config failure');
+  assert.deepEqual(options, ['Auto', 'Default', 'My Custom Pipeline'], 'dropdown populated despite config failure');
   for (const cb of doc.querySelectorAll('.step-questions[data-role]')) {
     assert.equal(cb.closest('.questions-toggle').hidden, true, `${cb.dataset.role} toggle hidden when capability unknown`);
   }
