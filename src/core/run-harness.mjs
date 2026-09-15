@@ -3150,16 +3150,18 @@ export class RunHarness extends EventEmitter {
     this._emit('artifact', evt);
     // ALSO index FS markdown/extra paths so pipeline-delete can unlink the EXACT
     // files later, per-step attribution rides along (best-effort; never blocks a
-    // run). Every kind with a resolvable on-disk relPath is recorded (clarify
-    // decision 2). Only 'pipeline' is skipped — it is the run DIR itself, with no
-    // single on-disk file. plan/review markdown live under <store>/<key>/{plans,
-    // reviews} (store-root-relative); prompt/checklist/webui/questions live in the
-    // pipeline dir (dir-relative).
-    if (!this.pipeline || !path || kind === 'pipeline') return;
+    // run). Every kind with a durable on-disk relPath is recorded. Skipped:
+    // 'pipeline' (the run DIR itself, no single file) and 'questions' (a scratch
+    // file the orchestrator deletes once the round is answered — the Q&A lives in
+    // the step_questions table, so an index row would only ever 404). The WS
+    // event above still carries 'questions' for the live view. plan/review
+    // markdown live under <store>/<key>/{plans,reviews} (store-root-relative);
+    // prompt/checklist/webui live in the pipeline dir (dir-relative).
+    if (!this.pipeline || !path || kind === 'pipeline' || kind === 'questions') return;
     let relPath = null;
     const pdir = this.pipeline.dir;
     if (path.startsWith(pdir + sep)) {
-      relPath = relative(pdir, path);                 // dir-relative (checklist, webui, questions)
+      relPath = relative(pdir, path);                 // dir-relative (checklist, webui)
     } else {
       const root = this.isWorkspace
         ? workspaceStorePath(this.workspaceKey)

@@ -126,13 +126,11 @@ export async function listArtifacts(pipelineId) {
  * created_at (NULLs first, so legacy rows bucket ahead) then rel_path. `bytes` is
  * stat-ed run dir first, store root second (mirroring resolveIndexedArtifactForRow's
  * base order); a missing file reports bytes: 0. Optional { stepKey, kind } filter.
- * `excludeKinds` drops those kinds in SQL (so `limit` counts only kept rows — a
- * caller offering readable artifacts passes ['questions'] to skip the transient
- * scratch rows whose files the orchestrator deletes). An optional `limit` caps the
- * SQL result so the per-row statSync only runs on rows the caller keeps (pass
- * limit+1 to detect truncation); omit it to size every row.
+ * An optional `limit` caps the SQL result so the per-row statSync only runs on
+ * rows the caller keeps (pass limit+1 to detect truncation); omit it to size
+ * every row.
  * @param {string} pipelineId
- * @param {{stepKey?:string, kind?:string, excludeKinds?:string[], limit?:number}} [filter]
+ * @param {{stepKey?:string, kind?:string, limit?:number}} [filter]
  * @returns {Promise<Array<{kind:string, stepKey:string|null, nodeId:string|null, cycle:number|null, relPath:string, bytes:number, createdAt:string|null}>>}
  */
 export async function listRunArtifacts(pipelineId, filter = {}) {
@@ -144,10 +142,6 @@ export async function listRunArtifacts(pipelineId, filter = {}) {
   const args = [row.id];
   if (filter.stepKey) { clauses.push('step_key = ?'); args.push(filter.stepKey); }
   if (filter.kind) { clauses.push('kind = ?'); args.push(filter.kind); }
-  if (Array.isArray(filter.excludeKinds) && filter.excludeKinds.length) {
-    clauses.push(`kind NOT IN (${filter.excludeKinds.map(() => '?').join(', ')})`);
-    args.push(...filter.excludeKinds);
-  }
   const hasLimit = Number.isInteger(filter.limit) && filter.limit > 0;
   const raw = getDb().prepare(
     `SELECT kind, rel_path, step_key, node_id, cycle, created_at FROM artifacts

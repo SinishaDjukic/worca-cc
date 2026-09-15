@@ -976,13 +976,10 @@ export function createAskTools(deps) {
       if (str(input.stepKey)) filter.stepKey = str(input.stepKey);
       if (str(input.kind)) filter.kind = str(input.kind);
       const limit = clampInt(input.limit, 1, L.artifactsListMaxLimit, L.artifactsListMaxLimit);
-      // 'questions' rows index scratch files the orchestrator deletes once the
-      // round is answered, so a follow-up read_run_artifact would 404. Exclude
-      // them in SQL (so LIMIT counts only readable rows — filtering post-LIMIT
-      // would let a transient row steal the look-ahead slot and under-report
-      // truncation) — the Q&A itself is exposed via get_run_progress.
       // Fetch one extra row to detect truncation without sizing the whole table.
-      const rows = await deps.listRunArtifacts(row, { ...filter, excludeKinds: ['questions'], limit: limit + 1 });
+      // (Transient 'questions' scratch files are never indexed — see
+      // RunHarness._artifact — so every row here is readable.)
+      const rows = await deps.listRunArtifacts(row, { ...filter, limit: limit + 1 });
       const artifacts = rows.slice(0, limit).map((a) => ({
         kind: a.kind, stepKey: a.stepKey, nodeId: a.nodeId, cycle: a.cycle,
         relPath: a.relPath, bytes: a.bytes, createdAt: a.createdAt,

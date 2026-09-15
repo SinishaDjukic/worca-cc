@@ -249,3 +249,13 @@ test('the Agents tab carries a per-node "Artifacts (N)" affordance that opens ro
   assert.deepEqual(names.sort(), ['plan.md', 'result.diff']);
   assert.ok(!names.includes('questions.json'), 'the transient questions file is not offered');
 });
+
+// The per-node list collapses via the `hidden` attribute, but `.artifact-list`
+// sets an author `display:flex`, which outranks the UA's `[hidden]{display:none}`.
+// Without an explicit `[hidden]` override the toggle could never close the list
+// (caught live: aria-expanded="false" with a computed display of flex).
+test('style.css restates display:none for a hidden .artifact-list so the toggle can collapse it', () => {
+  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  assert.match(css, /\.artifact-list\{display:flex/, 'the expanded rule is the author display:flex');
+  assert.match(css, /\.artifact-list\[hidden\]\{display:none;?\}/, 'the [hidden] override restates display:none');
+});

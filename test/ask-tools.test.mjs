@@ -365,10 +365,10 @@ const fake = {
 };
 const tools = createAskTools(fake);
 
-test('list(): eighteen tools with JSON-Schema inputs', () => {
+test('list(): twenty-one tools with JSON-Schema inputs', () => {
   const defs = tools.list();
-  assert.deepEqual(defs.map((d) => d.name), ['list_projects', 'list_workflows', 'list_runs', 'get_run', 'get_run_diff', 'propose_run', 'read_attachment',
-    'list_diff_comments', 'add_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
+  assert.deepEqual(defs.map((d) => d.name), ['list_projects', 'list_workflows', 'list_runs', 'get_run', 'get_run_diff', 'track_run', 'propose_run', 'propose_workflow', 'read_attachment',
+    'list_diff_comments', 'add_diff_comment', 'reply_to_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
     'open_worktree', 'list_worktrees', 'remove_worktree', 'git',
     'list_run_artifacts', 'read_run_artifact', 'get_run_progress']);
   for (const d of defs) {
@@ -776,9 +776,6 @@ test('list_run_artifacts / read_run_artifact / get_run_progress over real deps',
   writeFileSync(join(seeded.dir, 'extras', 'notes.txt'), 'hi');
   recordArtifact(seeded.id, 'plan', 'plan.md', { stepKey: 'exec-1', nodeId: 'planner', cycle: 0 });
   recordArtifact(seeded.id, 'extra', 'extras/notes.txt', { stepKey: 'exec-2', nodeId: 'refiner', cycle: 1 });
-  // A 'questions' row whose scratch file the orchestrator deletes once answered:
-  // indexed for bookkeeping but unreadable, so list_run_artifacts must drop it.
-  recordArtifact(seeded.id, 'questions', 'questions-x-planner-c0-r1.json', { stepKey: 'exec-1', nodeId: 'planner', cycle: 0 });
   writeDecomposition(seeded.id, [{ ordinal: 0, tasks: [{ id: 't1', title: 'leak ghp_abcdefghijklmnopqrstuvwxyz0123456789', file: 'x', nodeId: 'n' }] }]);
 
   const thread = createThread();
@@ -795,19 +792,8 @@ test('list_run_artifacts / read_run_artifact / get_run_progress over real deps',
   assert.ok('createdAt' in plan);
   assert.equal((await real.call('list_run_artifacts', { runId: seeded.id, kind: 'plan' })).artifacts.length, 1);
   assert.equal((await real.call('list_run_artifacts', { runId: seeded.id, stepKey: 'exec-2' })).artifacts.length, 1);
-  // The transient 'questions' row is never offered (read_run_artifact would 404).
-  assert.ok(!listed.artifacts.some((a) => a.kind === 'questions'), 'questions rows dropped from list_run_artifacts');
-  // excludeKinds drops in SQL so LIMIT counts only kept rows: the core reader keeps
-  // questions by default but honours excludeKinds, and a limit never lets the
-  // excluded row steal a slot from a readable artifact.
-  const allRows = await listRunArtifacts(seeded.id, {});
-  const keptRows = await listRunArtifacts(seeded.id, { excludeKinds: ['questions'] });
-  assert.ok(allRows.some((a) => a.kind === 'questions'), 'core reader keeps questions by default');
-  assert.ok(!keptRows.some((a) => a.kind === 'questions'), 'excludeKinds drops questions in SQL');
-  assert.equal(keptRows.length, allRows.length - 1, 'exactly the one questions row is dropped');
-  const oneKept = await listRunArtifacts(seeded.id, { excludeKinds: ['questions'], limit: 1 });
-  assert.equal(oneKept.length, 1);
-  assert.notEqual(oneKept[0].kind, 'questions', 'the limited row is a readable artifact, not the excluded one');
+  // plan + extra above, plus the prompt.md row seedPipeline indexes — nothing transient
+  assert.deepEqual(listed.artifacts.map((a) => a.kind).sort(), ['extra', 'plan', 'prompt']);
   const capped = await real.call('list_run_artifacts', { runId: seeded.id, limit: 1 });
   assert.equal(capped.artifacts.length, 1);
   assert.equal(capped.truncated, true);

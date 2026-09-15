@@ -15893,12 +15893,13 @@ function artifactRelOf(a) {
   return String((a && (a.relPath || a.path)) || '');
 }
 
-// Synthetic/transient markers are indexed for bookkeeping but are NOT user-facing
-// artifacts: 'pipeline' is the run DIR itself (never on-disk-resolvable, so its
-// viewer 404s), 'live-log' is the raw NDJSON transcript, and 'questions' is scratch
-// that the orchestrator deletes once the round is answered (the Q&A lives in the
-// step_questions table / get_run_progress) — a persisted questions row would 404
-// when clicked. All four detail gates (HD badge/visible, RD badge, grouped browser)
+// Synthetic/transient markers reach the UI (as live WS artifact events and, for
+// 'pipeline'/'live-log', as index rows) but are NOT user-facing artifacts:
+// 'pipeline' is the run DIR itself (never on-disk-resolvable, so its viewer 404s),
+// 'live-log' is the raw NDJSON transcript, and 'questions' is scratch that the
+// orchestrator deletes once the round is answered (never indexed; the Q&A lives
+// in the step_questions table / get_run_progress) — clicking it would 404.
+// All four detail gates (HD badge/visible, RD badge, grouped browser)
 // share THIS predicate so they can never drift; it also requires a resolvable path
 // so a row that carries no file is never offered.
 function isDisplayableArtifact(a) {

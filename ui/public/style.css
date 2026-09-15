@@ -4448,6 +4448,10 @@ input.gv-name:focus-visible{outline:none;}
 .artifact-toggle:hover{border-color:var(--blue);color:var(--blue-ink);}
 .artifact-toggle[aria-expanded="true"]{background:var(--blue-bg);color:var(--blue-ink);border-color:var(--blue);}
 .artifact-list{display:flex;flex-direction:column;gap:6px;margin-top:8px;}
+/* An author `display:flex` outranks the UA's `[hidden]{display:none}`, so the
+   collapsed state (`body.hidden = true` in buildNodeArtifactAffordance) must be
+   restated here or the toggle can never close the list. */
+.artifact-list[hidden]{display:none;}
 
 /* A single clickable artifact row (kind chip · name · byte size). */
 .artifact-group .artifact-row{border-top:1px solid var(--line);}
