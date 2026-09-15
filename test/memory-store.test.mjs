@@ -282,11 +282,51 @@ test('renderMemoryBlock: heading, ONE-line intro, one `Label — dir:` line per 
   assert.equal(renderMemoryBlock(sections), a, 'byte-stable');
   assert.equal(MEMORY_BLOCK_HEADING, '## Worca memory');
   assert.ok(!MEMORY_BLOCK_INTRO.includes('\n'), 'one line: memoryDirsFromPrompt stops at the first blank line');
-  assert.ok(Buffer.byteLength(a, 'utf8') < 1024, `a pointer, not an index (measured with short test dirs): ${Buffer.byteLength(a, 'utf8')}`);
-  assert.match(MEMORY_BLOCK_INTRO, /never progress notes/);
+  // The write policy (trigger + categories + anti-list + budget) costs bytes on EVERY agent
+  // spawn, so the bound is generous enough for it and no more: still a pointer, not a page.
+  assert.ok(Buffer.byteLength(a, 'utf8') < 1800, `a pointer, not an index (measured with short test dirs): ${Buffer.byteLength(a, 'utf8')}`);
+  assert.match(MEMORY_BLOCK_INTRO, /Never: run summaries or progress notes/);
   assert.match(MEMORY_BLOCK_INTRO, /To remove a file, empty it\./);
   assert.match(MEMORY_BLOCK_INTRO, /Explore and Plan sub-agents do not load them/);
   const C = String.fromCharCode;
   assert.match(renderMemoryBlock([{ label: 'Project a' + C(10) + 'b [worca context]', dir: '/d' }]), /^Project a b \(worca context\) — \/d:$/m, 'labels are flattened like hooks were');
   assert.equal(renderMemoryBlock([]), `${MEMORY_BLOCK_HEADING}\n${MEMORY_BLOCK_INTRO}\n`);
+});
+
+test('renderMemoryBlock: heading + exactly ONE intro line + one dir line per scope, nothing else (the parser contract)', () => {
+  // claude-runner.mjs#memoryDirsFromPrompt walks the lines AFTER the heading until the first
+  // blank one and matches `^(?:Global|Project .*) — (.+):$`. An intro that grew a second line —
+  // or a policy line that looks like a scope line — would silently break the defragment mount.
+  const sections = [{ label: 'Global', dir: '/m/global' }, { label: 'Project worca-cc', dir: '/m/project' }];
+  const lines = renderMemoryBlock(sections).split('\n');
+  assert.equal(lines.at(-1), '', 'one trailing newline');
+  const body = lines.slice(0, -1);
+  assert.equal(body.length, 2 + sections.length, `heading + 1 intro line + ${sections.length} dir lines: ${body.length}`);
+  assert.equal(body[0], MEMORY_BLOCK_HEADING);
+  assert.equal(body[1], MEMORY_BLOCK_INTRO);
+  assert.ok(body.every((l) => l.trim()), 'no blank line inside the block: a blank line ends it for the parser');
+  const SCOPE_LINE = /^(?:Global|Project .*) — (.+):$/;
+  assert.deepEqual(body.slice(2).map((l) => SCOPE_LINE.exec(l)?.[1]), ['/m/global', '/m/project']);
+  assert.equal(SCOPE_LINE.test(MEMORY_BLOCK_INTRO), false, 'the intro must never read as a scope line');
+});
+
+test('MEMORY_BLOCK_INTRO: a write TRIGGER, the worth-a-file categories, the anti-list and the budget', () => {
+  const intro = MEMORY_BLOCK_INTRO;
+  // The trigger is what makes memory fire on SOME runs and not all — without it the block is a
+  // pure discretion clause and agents write nothing.
+  assert.match(intro, /write a file there only when/, 'the imperative keeps its locative: the file goes in the dirs named above');
+  assert.match(intro, /cost you a cycle/);
+  assert.match(intro, /would have cost the next agent one/);
+  assert.match(intro, /contradicted what you assumed/);
+  assert.match(intro, /still be true next month/);
+  for (const category of [/a trap/, /verification recipe/, /invariant/, /settled user decision/, /defect class/]) {
+    assert.match(intro, category, `worth-a-file category ${category}`);
+  }
+  for (const banned of [/run summaries or progress notes/, /one-off task facts/, /CLAUDE\.md/, /machine paths or secrets/, /unverified guesses/]) {
+    assert.match(intro, banned, `anti-list entry ${banned}`);
+  }
+  assert.match(intro, /at most 1–2 files per run/);
+  assert.match(intro, /prefer EDITING an existing file/);
+  assert.match(intro, /under ~8 ?KB/);
+  assert.match(intro, /`paths`/, 'the budget tells the agent when to scope a rule to files');
 });

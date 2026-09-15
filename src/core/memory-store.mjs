@@ -341,7 +341,9 @@ export async function removeMemory(root, scope, name, { source, now, snapshot = 
 // ── the agent-facing pointer block (§4.2, native-rules revision) ─────
 // The bodies reach the agent through Claude Code's own `.claude/rules` loader (the
 // mount lives inside every spawn's cwd — memory-sync.mjs MEMORY_RULES_REL); this block
-// only says WHERE memory lives and WHAT belongs there. One `Label — /abs/dir:` line per
+// only says WHERE memory lives and WHAT belongs there — the WRITE TRIGGER, the worth-a-file
+// categories and the anti-list are what decide whether a run records anything at all, so they
+// live in the intro rather than in each agent body. One `Label — /abs/dir:` line per
 // mounted scope: claude-runner.mjs memoryDirsFromPrompt reads exactly those lines, so the
 // intro must stay ONE line and nothing may follow the dir lines inside the block.
 export const MEMORY_BLOCK_HEADING = '## Worca memory';
@@ -349,9 +351,17 @@ export const MEMORY_BLOCK_INTRO =
   'Durable rules, preferences and traps kept across runs and chats. Claude Code loads them into your context ' +
   'from the memory directories below (a file with `paths` loads when you read a matching file), so never search ' +
   'for them (the built-in Explore and Plan sub-agents do not load them — read the files there if you are one). ' +
-  'Write or edit a file there only for something worth keeping for future runs — a hard-won rule, a ' +
-  'user preference, a trap — never progress notes or a summary of this run. One topic per file (`<topic>.md`); ' +
-  'keep the frontmatter: `name` (the filename stem), `description` (one line: when the file is worth reading), ' +
+  'WRITE TRIGGER: write a file there only when what you learned (a) cost you a cycle, or would have cost the next agent one, ' +
+  'or (b) contradicted what you assumed when you started — AND will still be true next month. Worth a file: ' +
+  'a trap (behaves differently from how it reads); a verification recipe (the exact command / env var / ' +
+  'fixture-regeneration step that proves work here is correct); an invariant or contract the code depends ' +
+  'on but never states; a settled user decision with its reason, including approaches ruled out and why; a ' +
+  'defect class a review had to flag that will recur here. Never: run summaries or progress notes, restatements ' +
+  'of code or structure you can read, one-off task facts, anything already in CLAUDE.md / ' +
+  'CONTRIBUTING / README, machine paths or secrets, unverified guesses. Budget: at most 1–2 files per run; ' +
+  'prefer EDITING an existing file over adding one; give `paths` whenever the rule is file-specific; keep a file ' +
+  'under ~8 KB. One topic per file (`<topic>.md`); ' +
+  'keep the frontmatter: `name` (the filename stem), `description` (one line: when it is worth reading), ' +
   'optional `paths` (comma-separated globs); worca stamps `source` and `updated`. To remove a file, empty it.';
 
 /**

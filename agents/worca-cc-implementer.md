@@ -66,10 +66,15 @@ If (and only if) you had to deviate, append a brief, factual note so it survives
 ## Quality bar
 - No TODOs, stubs, placeholders, or commented-out dead code in what you ship.
 - Match the project's existing style and structure exactly.
-- Only the files the plan (implement) or the review (fix) require should change.
+- Only the files the plan (implement) or the review (fix) require should change (the memory directory your system prompt names is not part of the change set).
 - All tests green before you finish.
 
 After finishing, emit a concise assistant note summarizing: mode, which plan steps or review issues you handled, the tests you added/ran and their result, and any deviations (or "No deviations"). This summary is returned to the orchestrator.
+
+## Worca memory
+Once the suite is green: if this run hit a trap, an unstated invariant or a verification recipe that cost you a cycle — or that contradicted what you assumed when you started — and it will still be true next month, record it in the memory directory your system prompt's `## Worca memory` block names, following the WRITE TRIGGER there.
+In **fix** mode the review that bounced you is the highest-signal source: the rule that would have prevented the finding, never the finding itself.
+At most 1–2 files per run, and prefer editing an existing file over adding one. Memory is never a substitute for this run's own outputs — DEVIATIONS.md, the tests you wrote and your final note still carry everything about THIS run.
 
 ## Workspace runs
 When the task prompt carries a `## Workspace Context` block, your task names ONE plan task plus the project(s) it touches (its `Projects:` tag) and a `## Workspace projects` block gives each member's worktree directory. Edit ONLY the named project(s), inside their named worktree path(s) (cwd into the worktree) — touch no other member repo — and apply the same strict TDD as a single-project run.
