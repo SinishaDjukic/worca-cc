@@ -111,6 +111,8 @@ import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
+import { paintAboutInto } from './about-links.mjs';
+import { renderReasonOptions, renderOptIns, previewText, reportBlobParts } from './report-run.mjs';
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
 
@@ -335,6 +337,17 @@ const el = {
   // Statistics view
   statsBody: $('#stats-body'),
   statsRange: $('#stats-range'),
+
+  // Report this run
+  reportModal: $('#report-modal'),
+  reportClose: $('#report-close'),
+  reportReason: $('#report-reason'),
+  reportExpectation: $('#report-expectation'),
+  reportOptins: $('#report-optins'),
+  reportPreview: $('#report-preview'),
+  reportCopy: $('#report-copy'),
+  reportDownload: $('#report-download'),
+  reportIssue: $('#report-issue'),
 };
 
 // ---------------------------------------------------------------------------
@@ -7883,6 +7896,9 @@ function paintAbout(info) {
     el.aboutRepoLink.href = info.repoUrl;
     el.aboutRepoLink.textContent = info.repoUrl.replace(/^https?:\/\//, '');
   }
+  // The two feedback anchors (Task 8). Left alone when the server sends no bugsUrl,
+  // so the static hrefs in index.html keep working.
+  paintAboutInto(document, info);
 }
 
 async function loadSettings() {
@@ -11535,6 +11551,12 @@ function rafSafe(fn) {
 function closeHistDetail({ instant = false } = {}) {
   closeShipItModal();   // no-op when nothing is open; the modal is a TOP-LEVEL
                         // overlay, so emptying #hist-detail would not dismiss it
+  // Same class, same reason — and the detail->list hop inside History never reaches
+  // showView (the view name does not change), so this is the only call that covers it.
+  // Safe above the detail-open early return, like closeShipItModal: #report-modal
+  // opens ONLY from the detail screen, never from a list card (that is what keeps
+  // #stop-modal below closeRunDetail's guard).
+  closeReportModal();
   const shell = el.histShell;
   const host = el.histDetail;
   if (!shell || !host) return;
@@ -12294,6 +12316,24 @@ function setupHdActions(screen, record, data) {
       }
     });
   }
+
+  const reportBtn = screen.querySelector('.hd-report');
+  // `{ ...record, status: st.status }`, exactly like the .hd-archive gate above —
+  // NOT isDeletableEntry(record). That predicate is a DENY-list, so a deep link's
+  // minimal {id, projectKey} stub, which carries neither `status` nor `live`, reads
+  // as DELETABLE and would offer "Report this run" on a pipeline that is still
+  // going. `st` is the AUTHORITATIVE detail status.
+  if (isDeletableEntry({ ...record, status: st.status })) {
+    reportBtn.hidden = false;
+    reportBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // refreshHdFromRow REPLACES histDetailState.record, so resolve at CLICK time.
+      openReportModal(hdCurrentRecord(record).id);
+    });
+  }
+  // else: the template ships it `hidden`, and this screen is never re-set-up — a run
+  // that goes terminal while the screen is open offers the button on the next visit,
+  // exactly like Archive.
 
   paintHdPr(screen, record, data);
 }
@@ -14805,6 +14845,13 @@ function paintRdTerminal(screen, r) {
     if (stop) stop.hidden = true;
   }
 
+  // A mid-flight run has no totals worth reporting; the button appears at terminal.
+  // Placed HERE and not at the end of the function: everything below `if (!link)
+  // return;` is skipped on a screen without a `.rd-row3`, and a visibility rule must
+  // never be conditional on the history link existing.
+  const report = screen.querySelector('.rd-report');
+  if (report) report.hidden = !terminal || !r.pipelineId;
+
   const pill = screen.querySelector('.rd-status');
   // ADD only, never toggle off: paintRdHeader sets `.parked` for
   // `terminal || isPaused(r) || pausing || interrupted`, and this function runs
@@ -14851,6 +14898,7 @@ document.addEventListener('keydown', (e) => {
   if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
   if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
   if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
+  if (el.reportModal && !el.reportModal.classList.contains('hidden')) return;
   // An open diff-comment composer owns Escape: it cancels the draft (the textarea's
   // own keydown does that) instead of sending the whole detail screen back to the
   // list. Same shape as the modal guards above — this listener is CAPTURE phase, so
@@ -14877,10 +14925,175 @@ document.addEventListener('keydown', (e) => {
   if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
   if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
   if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
+  // This arm does NOT inherit the History arm's guards — every modal that can be up
+  // over the Running detail screen has to be listed here too.
+  if (el.reportModal && !el.reportModal.classList.contains('hidden')) return;
   const stop = document.getElementById('stop-modal');
   if (stop && !stop.classList.contains('hidden')) return;
   location.hash = 'running';
 }, true);
+
+// ---- Report this run --------------------------------------------------------
+// The modal renders the EXACT payload POST /api/pipelines/:id/report returns, and
+// nothing leaves the machine until the user presses Copy, Download, or the issue
+// link. Every reason/opt-in/expectation change re-asks the server, so the preview is
+// never a stale approximation of what would be sent.
+//
+// Two invariants make that true rather than aspirational (D24):
+//   * `token` — only the newest response is allowed to paint. Two quick checkbox
+//     toggles can land out of order, and the loser must not repaint the preview.
+//   * the issue link's `href` is STRIPPED while a rebuild is in flight. `expectation`
+//     is bound to `input` (debounced), not `change`: `change` fires on the blur that
+//     the mousedown on the link itself causes, so a `change` binding would navigate
+//     with the previous href and silently drop the text the user just typed.
+//
+// This section sits AFTER the two capture-phase route guards above on purpose. Both
+// they and the Escape closer below listen on `document`, and an Escape dispatched AT
+// `document` runs them in REGISTRATION order regardless of the capture flag. Register
+// this earlier and one Escape would both close the modal and send the detail screen
+// back to its list.
+
+const reportState = {
+  pipelineId: '', payload: null, issue: null, token: 0, debounce: 0,
+  include: { paths: false, prompt: false, names: false },
+};
+
+function reportError(message) {
+  const slot = el.reportModal.querySelector('.report-error');
+  if (!slot) return;
+  slot.hidden = !message;
+  slot.textContent = message || '';
+}
+
+/** Park the link + preview while a fresh payload is being built. */
+function reportPending() {
+  reportState.payload = null;
+  reportState.issue = null;
+  el.reportPreview.textContent = previewText(null);
+  el.reportIssue.removeAttribute('href');
+}
+
+async function refreshReport() {
+  const token = (reportState.token += 1);
+  reportError('');
+  reportPending();
+  try {
+    const res = await fetch(`/api/pipelines/${encodeURIComponent(reportState.pipelineId)}/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reason: el.reportReason.value,
+        expectation: el.reportExpectation.value,
+        include: reportState.include,
+      }),
+    });
+    const data = await safeJson(res);
+    if (token !== reportState.token) return;          // a newer request already won
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    reportState.payload = data.payload;
+    reportState.issue = data.issue;
+    el.reportPreview.textContent = previewText(data.payload);
+    if (data.issue && data.issue.url) el.reportIssue.href = data.issue.url;
+    el.reportIssue.title = data.issue && data.issue.truncated
+      ? 'The prefilled text was trimmed to fit a URL — paste the copied JSON into the issue'
+      : 'Opens GitHub with the report prefilled';
+  } catch (err) {
+    if (token !== reportState.token) return;
+    reportPending();
+    reportError(`Could not build the report: ${err.message}`);
+  }
+}
+
+function openReportModal(pipelineId) {
+  if (!pipelineId) return;
+  reportState.pipelineId = pipelineId;
+  reportState.include = { paths: false, prompt: false, names: false };
+  el.reportExpectation.value = '';
+  el.reportReason.replaceChildren(...renderReasonOptions({ doc: document }));
+  el.reportOptins.replaceChildren(renderOptIns({ doc: document, include: reportState.include }));
+  el.reportModal.classList.remove('hidden');
+  el.reportReason.focus();
+  refreshReport();
+}
+
+// A no-op when nothing is open, like closeStopModal/closeShipItModal: the teardown
+// paths (showView, closeHistDetail) call it unconditionally on every navigation.
+function closeReportModal() {
+  if (!el.reportModal || el.reportModal.classList.contains('hidden')) return;
+  clearTimeout(reportState.debounce);
+  reportState.token += 1;            // orphan any in-flight response
+  el.reportModal.classList.add('hidden');
+  reportState.payload = null;
+}
+
+/** Best-effort clipboard write; returns whether it landed. Mirrors copyLogToClipboard. */
+async function reportCopyText() {
+  const text = el.reportPreview.textContent;
+  try {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
+    return legacyCopy(text);
+  } catch {
+    return legacyCopy(text);
+  }
+}
+
+el.reportClose.addEventListener('click', closeReportModal);
+el.reportModal.addEventListener('click', (e) => { if (e.target === el.reportModal) closeReportModal(); });
+el.reportReason.addEventListener('change', refreshReport);
+el.reportExpectation.addEventListener('input', () => {
+  clearTimeout(reportState.debounce);
+  // Invalidate in the SAME TICK as the keystroke. D24's guarantee has to cover a
+  // rebuild that is merely PENDING behind the debounce as well as one in flight:
+  // otherwise mousedown on the link (or Tab+Enter) fires the href built from the
+  // previous text, and Copy JSON puts that same stale payload on the clipboard —
+  // the exact failure the `input` binding was chosen to avoid.
+  reportState.token += 1;   // orphan anything already in flight
+  reportPending();          // strips the href and nulls the payload NOW
+  reportState.debounce = setTimeout(refreshReport, 250);
+});
+el.reportOptins.addEventListener('change', (e) => {
+  const key = e.target && e.target.dataset ? e.target.dataset.optin : '';
+  if (!key || !(key in reportState.include)) return;
+  reportState.include[key] = !!e.target.checked;
+  refreshReport();
+});
+
+// Bubble-phase, like #viewer-card: the two capture-phase route guards bail while
+// this modal is open, then this closes it.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !el.reportModal.classList.contains('hidden')) closeReportModal();
+});
+
+el.reportCopy.addEventListener('click', async (e) => {
+  if (!reportState.payload) return flashCopyBtn(e.currentTarget, 'nothing to copy');
+  flashCopyBtn(e.currentTarget, (await reportCopyText()) ? 'copied' : 'copy failed');
+});
+
+// D23: the issue body ASKS the reporter to paste the full JSON, so put it on the
+// clipboard as part of this very click. Fire-and-forget — the anchor's default
+// navigation must not wait on a promise, or the browser drops the user gesture and
+// the popup blocker eats the new tab.
+el.reportIssue.addEventListener('click', () => {
+  if (!reportState.payload) return;
+  reportCopyText();
+});
+
+el.reportDownload.addEventListener('click', () => {
+  if (!reportState.payload) return;
+  // First Blob download in the UI: build it, click a detached anchor, revoke.
+  const blob = new Blob(reportBlobParts(reportState.payload), { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  // The server names the file (reportFilename, run-report.mjs) so the name has ONE
+  // definition; fall back only if an older server omitted it.
+  a.download = (reportState.issue && reportState.issue.filename)
+    || `worca-run-report-${reportState.pipelineId}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+});
 
 async function viewPipeline(projectDir, id, title, record) {
   if (!id) return;
@@ -16164,6 +16377,15 @@ function openRunDetail(runId, { instant = false } = {}) {
   screen.querySelector('.rd-stop').addEventListener('click', () => {
     openStopModal(runDetailState.runId);
   });
+  // Bound directly here, per clone — #run-detail's ONE delegated listener is
+  // reserved for controls that repaints rebuild. openRunDetail clones a fresh
+  // template on every open, so this can never double-bind.
+  screen.querySelector('.rd-report').addEventListener('click', (e) => {
+    e.stopPropagation();
+    // Resolve at CLICK time: a detail->detail hop replaces runDetailState.
+    const run = runs.get(runDetailState.runId);
+    if (run && run.pipelineId) openReportModal(run.pipelineId);
+  });
 
   const r = runs.get(runId);
   if (r) repaintRunDetail(r);
@@ -16872,6 +17094,14 @@ function legacyTabRoute(view, param = '') {
 let currentSettingsTab = null;
 
 function showView(name, param = '') {
+  // #report-modal is a top-level `position:fixed;inset:0` overlay with a live document
+  // keydown listener — the same class as #stop-modal below. It opens from the History
+  // detail screen AND the Running one, so no single per-view teardown covers it;
+  // leaving either with one up would float a dialog for a run the user has navigated
+  // away from over the next view, and its pending debounce could still POST /report
+  // for that run. Unconditional and first: closeReportModal is a no-op when nothing
+  // is open.
+  closeReportModal();
   // Same guard for the composer: unbind its keyboard and cancel any live gesture
   // so Delete/arrows/⌘Z can never edit the graph from another view.
   if (currentShownView === 'composer' && name !== 'composer') composerExit();

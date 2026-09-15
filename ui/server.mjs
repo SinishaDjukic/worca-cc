@@ -166,6 +166,10 @@ import { normalizeManifest, validatePluginDir, PLUGIN_NAME_RE as MANIFEST_PLUGIN
 import { listTaskSources, retryWriteback } from '../src/core/sources.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { resolveAutoModel, AUTO_MODEL_ENV } from '../src/core/auto/model.mjs';
+import {
+  buildRunReport, buildIssueUrl, reportFilename, BUGS_URL,
+} from '../src/core/run-report.mjs';
+import { REPORT_REASON_IDS } from '../src/shared/report-reasons.mjs';
 import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
@@ -208,6 +212,9 @@ const APP_INFO = Object.freeze({
   version: PKG_VERSION || '',
   repoUrl: APP_REPO_URL,
   releaseUrl: APP_REPO_URL && PKG_VERSION ? `${APP_REPO_URL}/releases/tag/worca-app-v${PKG_VERSION}` : '',
+  // package.json bugs.url, via run-report.mjs so the Settings links and the
+  // prefilled issue URL can never disagree. Falls back to <repo>/issues.
+  bugsUrl: BUGS_URL || (APP_REPO_URL ? `${APP_REPO_URL}/issues` : ''),
 });
 const HLJS_LANGUAGE_FILE_RE = /^[a-z0-9][a-z0-9-]{0,63}\.min\.js$/;
 // Primaries plus the sub-language grammars their instances register
@@ -5671,6 +5678,34 @@ app.post('/api/pipelines/:id/report-result', async (req, res) => {
       return res.status(404).json({ error: 'pipeline not found' });
     }
     res.json(await retryWriteback(req.params.id)); // { ok:true, skipped?:true } | { ok:false, error: string }
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// POST /api/pipelines/:id/report — the metadata-only run report a user can paste
+// into a GitHub issue. buildRunReport is a pure read-by-id (run-report.mjs) that
+// resolves BOTH project and workspace runs, so this one route covers both families
+// and needs no /api/workspaces twin. POST, not GET: the body carries the reporter's
+// free text and the three opt-in flags, which do not belong in a logged URL.
+// Worca makes NO network call here — it returns a URL the browser opens.
+// Like its report-result neighbour above, a malformed id 404s rather than 400s: a
+// stale bookmark must read as not-found (see resolveRunScope, :2006).
+app.post('/api/pipelines/:id/report', async (req, res) => {
+  const body = req.body || {};
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+  if (!REPORT_REASON_IDS.includes(reason)) {
+    return badRequest(res, `reason must be one of: ${REPORT_REASON_IDS.join(', ')}`);
+  }
+  try {
+    const payload = await buildRunReport(req.params.id, {
+      reason,
+      expectation: typeof body.expectation === 'string' ? body.expectation : '',
+      include: body.include,
+    });
+    if (!payload) return res.status(404).json({ error: 'pipeline not found' });
+    const issue = buildIssueUrl(payload, { bugsUrl: APP_INFO.bugsUrl });
+    res.json({ payload, issue: { ...issue, filename: reportFilename(payload) } });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
