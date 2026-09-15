@@ -32,6 +32,15 @@ after(async () => {
   await Promise.all(homes.map((d) => rm(d, { recursive: true, force: true })));
 });
 
+// ── Per-step artifacts — attribution columns self-heal ──────────────────────────
+
+test('artifacts table self-heals the step-attribution columns', () => {
+  const cols = getDb().prepare('PRAGMA table_info(artifacts)').all().map((c) => c.name);
+  for (const c of ['step_key', 'node_id', 'cycle', 'created_at']) {
+    assert.ok(cols.includes(c), `expected artifacts.${c} to exist`);
+  }
+});
+
 // ── Task 3.1 — store_meta read/write/delete ────────────────────────────────────
 
 test('store_meta: write then read round-trips the JSON payload', () => {

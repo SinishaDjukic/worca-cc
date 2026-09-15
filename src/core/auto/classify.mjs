@@ -272,8 +272,12 @@ export async function classifyTask(input, deps = {}) {
     let turnCap = false;                                   // an `error_max_turns` result frame was seen on THIS attempt
     const onOuterAbort = () => ctrl.abort();
     if (signal) { if (signal.aborted) ctrl.abort(); else signal.addEventListener('abort', onOuterAbort, { once: true }); }
+    // Deliberately NOT unref'd: this timer is what bounds the await below, and it
+    // is always cleared in `finally`, so it never outlives the call. An unref'd
+    // timer let the event loop drain mid-classification whenever the runner held
+    // no handle of its own (the fake runner in tests), and node:test then
+    // cancelled the remaining tests with "Promise resolution is still pending".
     const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeout);
-    timer.unref?.();
     let text = '';
     try {
       const res = await run({
