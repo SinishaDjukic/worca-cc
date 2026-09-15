@@ -2475,7 +2475,7 @@ app.post('/api/pr', async (req, res) => {
   }
 
   const mergeable = await prMergeable({ projectDir: repoDir, head: feature, repo, headOwner, prUrl: pr.url || null });
-  res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed, pushRemote, baseRemote, crossRepo });
+  res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed });
 });
 
 // ---------------------------------------------------------------------------

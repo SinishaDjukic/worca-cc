@@ -838,8 +838,9 @@ export async function readRunConfig(projectDir) {
   const extra = row ? parseJson(row.extra, {}) : {};
   if (extra.webUiTesting && typeof extra.webUiTesting === 'object') out.webUiTesting = extra.webUiTesting;
   // Forward any OTHER unknown keys verbatim too (future-proof, matches "preserve unknown").
+  // prRemotes is the ship-it dialog's own preference (readPrRemotePrefs), not run config.
   for (const [k, v] of Object.entries(extra)) {
-    if (k !== 'webUiTesting' && !(k in out)) out[k] = v;
+    if (k !== 'webUiTesting' && k !== PR_REMOTES_KEY && !(k in out)) out[k] = v;
   }
   const active = row && typeof row.active_workflow_id === 'string' ? row.active_workflow_id.trim() : '';
   if (active) out.activeWorkflowId = active;

@@ -23,6 +23,10 @@ test('parseRemoteUrl handles https, ssh://, scp-style and git:// forms', () => {
   assert.deepEqual(parseRemoteUrl('git@github.com:/o/r.git'), { host: 'github.com', owner: 'o', repo: 'r' }, 'scp-style with an absolute path');
   assert.deepEqual(parseRemoteUrl('github.com:o/r'), { host: 'github.com', owner: 'o', repo: 'r' }, 'scp-style without a user');
   assert.deepEqual(parseRemoteUrl('git://GitHub.com/o/r.git/'), { host: 'github.com', owner: 'o', repo: 'r' });
+  // GitHub's SSH-over-443 alias names the same repo; gh's --repo only accepts the real host.
+  assert.deepEqual(parseRemoteUrl('ssh://git@ssh.github.com:443/o/r.git'), { host: 'github.com', owner: 'o', repo: 'r' });
+  assert.equal(remoteRepoSlug(parseRemoteUrl('ssh://git@ssh.github.com:443/o/r.git')), 'o/r');
+  assert.ok(sameRepo(parseRemoteUrl('ssh://git@ssh.github.com:443/o/r.git'), parseRemoteUrl('https://github.com/o/r')));
 });
 
 test('parseRemoteUrl returns null for local paths and junk', () => {

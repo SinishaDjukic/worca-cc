@@ -261,9 +261,13 @@ test('PR remote prefs round-trip through project_config.extra without clobbering
   assert.deepEqual(readPrRemotePrefs(dir), { pushRemote: 'origin', baseRemote: 'upstream' });
   const raw = JSON.parse(getDb().prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key).extra);
   assert.deepEqual(raw, { webUiTesting: { enabled: true }, prRemotes: { pushRemote: 'origin', baseRemote: 'upstream' } });
-  // Sibling writers leave the blob alone; readRunConfig forwards it verbatim.
+  // Sibling writers leave the blob alone; the prefs stay out of the run-config view
+  // (they are the ship-it dialog's, read via readPrRemotePrefs), other extra keys still pass.
   await setActiveWorkflow(dir, 'wf_default');
-  assert.deepEqual((await readRunConfig(dir)).prRemotes, { pushRemote: 'origin', baseRemote: 'upstream' });
+  assert.deepEqual(readPrRemotePrefs(dir), { pushRemote: 'origin', baseRemote: 'upstream' });
+  const cfg = await readRunConfig(dir);
+  assert.equal('prRemotes' in cfg, false, 'prRemotes is not part of the run config');
+  assert.deepEqual(cfg.webUiTesting, { enabled: true });
   // A project with no row gets one; blanks are stored as null; all-blank reads back as null.
   const dir2 = await freshProject();
   await setPrRemotePrefs(dir2, { pushRemote: 'fork', baseRemote: '' });

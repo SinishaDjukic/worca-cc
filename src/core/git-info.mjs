@@ -283,8 +283,12 @@ export async function findPrForBranch({ projectDir, head, prUrl = null } = {}) {
  *   git@github.com:/owner/repo.git      host:owner/repo
  *   git://host/owner/repo.git
  * Trailing `.git` / `/` are dropped; owner/repo are the LAST two path segments.
+ * GitHub's SSH-over-443 alias host (`ssh.github.com`) is folded into `github.com`:
+ * it names the same repository, and gh's --repo form only knows the real host.
  * Pure; never throws.
  */
+const HOST_ALIASES = { 'ssh.github.com': 'github.com' };
+
 export function parseRemoteUrl(url) {
   const s = String(url || '').trim();
   if (!s) return null;
@@ -306,7 +310,8 @@ export function parseRemoteUrl(url) {
   const owner = segs[segs.length - 2];
   const repo = segs[segs.length - 1];
   if (!owner || !repo) return null;
-  return { host: host.toLowerCase(), owner, repo };
+  const h = host.toLowerCase();
+  return { host: HOST_ALIASES[h] || h, owner, repo };
 }
 
 /** gh's `[HOST/]OWNER/REPO` form for --repo; the host is omitted for github.com. */

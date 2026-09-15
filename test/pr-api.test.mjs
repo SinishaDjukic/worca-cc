@@ -249,7 +249,7 @@ test('POST /api/pr cross-repo: pushes to the fork, opens the PR in the base repo
   assert.equal(r.status, 200);
   const j = await r.json();
   assert.equal(j.url, 'https://github.com/up/repo/pull/7');
-  assert.deepEqual([j.pushRemote, j.baseRemote, j.crossRepo], ['origin', 'upstream', true]);
+  assert.deepEqual(Object.keys(j).sort(), ['existed', 'mergeable', 'ok', 'url'], 'the response shape is unchanged');
   assert.deepEqual(seen.find((c) => c[1] === 'push'), ['git', 'push', '-u', 'origin', FEATURE]);
   assert.deepEqual(seen.find((c) => c[2] === 'create'),
     ['gh', 'pr', 'create', '--repo', 'up/repo', '--base', 'main', '--head', `me:${FEATURE}`, '--title', 'My feature', '--body', 'My feature']);
@@ -267,7 +267,6 @@ test('POST /api/pr same-repo: still passes --repo, the head stays bare', async (
   stubForkRepo(seen);
   const r = await post({ projectKey: betaKey, id: betaId, pushRemote: 'upstream', baseRemote: 'upstream' });
   assert.equal(r.status, 200);
-  assert.equal((await r.json()).crossRepo, false);
   assert.deepEqual(seen.find((c) => c[1] === 'push'), ['git', 'push', '-u', 'upstream', FEATURE]);
   assert.deepEqual(seen.find((c) => c[2] === 'create').slice(0, 9),
     ['gh', 'pr', 'create', '--repo', 'up/repo', '--base', 'main', '--head', FEATURE]);
