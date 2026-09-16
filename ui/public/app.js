@@ -82,6 +82,7 @@ import {
   langForPath, canHighlightParsed, highlightParsed,
 } from './syntax-highlight.mjs';
 import { createHljsLoader } from './hljs-loader.mjs';
+import { artifactsByNodeCycle, viewerKindFor, renderArtifact } from './artifact-view.mjs';
 import {
   buildFileTree, renderFileTree, firstFile,
 } from './file-tree.mjs';
@@ -2387,6 +2388,16 @@ if (typeof window !== 'undefined') {
     initDetailTabs,
     detailTabsOf,
     openNewPipeline,
+    onArtifact,
+    artifactsByNodeCycle,
+    viewerKindFor,
+    renderArtifact,
+    renderRunArtifacts,
+    buildRdArtifacts,
+    buildHdArtifacts,
+    showArtifactViewer,
+    attachNodeArtifactAffordances,
+    buildNodeArtifactAffordance,
   });
 }
 
@@ -3814,7 +3825,13 @@ function repaintFilteredLog(r, root = r.el) {
 function onArtifact(r, msg) {
   if (msg && msg.kind) {
     if (!Array.isArray(r.artifacts)) r.artifacts = [];
-    r.artifacts.push({ kind: msg.kind, path: msg.path || '' });
+    r.artifacts.push({
+      kind: msg.kind,
+      path: msg.path || '',
+      nodeId: msg.nodeId ?? null,
+      stepKey: msg.executionId ?? null,   // stepKey := executionId (WS field name)
+      cycle: msg.cycle ?? null,
+    });
   }
   onLog(r, {
     source: 'artifact',
@@ -12469,6 +12486,74 @@ function paintHistStatusIcon(host, p) {
 let shipItClose = null;
 function closeShipItModal() { if (shipItClose) shipItClose(); }
 
+// Per-open generation for the remotes fetch. Cancel is never disabled, so a
+// response can land after the modal was closed and re-opened for a NEWER
+// generation; it must not repopulate selects it does not own. Same guard as
+// populateBranchSelect's `_branchGen` (:5204-5205).
+let shipItRemotesGen = 0;
+
+function remoteOptionLabel(r) { return r.slug ? `${r.name} — ${r.slug}` : r.name; }
+
+function fillRemoteSelect(select, remotes, chosen) {
+  select.innerHTML = '';
+  for (const r of remotes) select.appendChild(option(r.name, remoteOptionLabel(r)));
+  if (chosen && remotes.some((r) => r.name === chosen)) select.value = chosen;
+}
+
+// Hint under the selects: names the cross-repo head when the two remotes point at
+// different repositories ("me:branch → up/repo main"); empty otherwise.
+function paintShipItRemotesHint(modal, remotes, record) {
+  const byName = (sel) => remotes.find((r) => r.name === modal.querySelector(sel).value);
+  const push = byName('.shipit-push-remote');
+  const base = byName('.shipit-base-remote');
+  const cross = !!(push && base && push.slug && base.slug && push.slug.toLowerCase() !== base.slug.toLowerCase());
+  modal.querySelector('.shipit-remotes-hint').textContent = cross
+    ? `Cross-repo: ${push.owner}:${record.branch || ''} → ${base.slug} ${record.sourceBranch || ''}`
+    : '';
+}
+
+function setShipItRemotesDisabled(modal, on) {
+  for (const s of modal.querySelectorAll('.shipit-remotes select')) s.disabled = on;
+}
+
+// Load the project's remotes into the two selects. `isClosed` reports whether this
+// generation's modal was already torn down. On any failure (network, non-2xx, or a
+// body without a `remotes` array — safeJson answers `{}` for an unparseable body and
+// the UI test harness answers un-armed URLs with a generic config payload) the block
+// stays hidden and the POST simply omits the fields (the server applies its defaults).
+async function loadShipItRemotes(modal, record, gen, isClosed) {
+  const box = modal.querySelector('.shipit-remotes');
+  const pushSel = modal.querySelector('.shipit-push-remote');
+  const baseSel = modal.querySelector('.shipit-base-remote');
+  box.hidden = true;
+  pushSel.innerHTML = ''; baseSel.innerHTML = '';
+  setShipItRemotesDisabled(modal, true);
+  modal.querySelector('.shipit-remotes-hint').textContent = '';
+  const qs = new URLSearchParams({ id: record.id });
+  if (record.projectKey) qs.set('projectKey', record.projectKey);   // server prefers the key
+  if (record.projectDir) qs.set('projectDir', record.projectDir);   // deep-link stubs may lack it
+  try {
+    const res = await fetch(`/api/pr/remotes?${qs}`);
+    const data = await safeJson(res);
+    if (gen !== shipItRemotesGen || isClosed()) return;              // stale: cancelled or re-opened since
+    const remotes = res.ok && Array.isArray(data.remotes) ? data.remotes.filter((r) => r && r.name) : [];
+    if (!remotes.length) return;
+    const d = data.defaults || {};
+    fillRemoteSelect(pushSel, remotes, d.pushRemote);
+    fillRemoteSelect(baseSel, remotes, d.baseRemote);
+    // Confirm may already have been pressed (okBtn disabled = POST in flight, sent
+    // without the fields): paint the list, but keep it locked until that POST settles.
+    setShipItRemotesDisabled(modal, modal.querySelector('.shipit-ok').disabled);
+    box.hidden = false;
+    paintShipItRemotesHint(modal, remotes, record);
+    // Property assignment, not addEventListener: re-runs per open without stacking.
+    pushSel.onchange = () => paintShipItRemotesHint(modal, remotes, record);
+    baseSel.onchange = pushSel.onchange;
+  } catch {
+    /* remotes unavailable: block stays hidden, POST omits the fields */
+  }
+}
+
 function openShipItModal(record, data) {
   const modal = document.getElementById('shipit-modal');
   if (!modal) return;
@@ -12497,6 +12582,9 @@ function openShipItModal(record, data) {
   okBtn.disabled = false; okBtn.textContent = 'Open pull request';
   modal.classList.remove('hidden');
   okBtn.focus();
+  // The double-open guard above already returned for a second open, so the
+  // generation only advances for a real one.
+  const gen = ++shipItRemotesGen;
 
   // `closed` is load-bearing, not defensive noise. Cancel is NOT disabled while the
   // POST is in flight, so this sequence is reachable: confirm -> cancel mid-flight
@@ -12525,10 +12613,16 @@ function openShipItModal(record, data) {
   const onOk = async () => {
     okBtn.disabled = true;
     okBtn.textContent = 'Opening…';
+    setShipItRemotesDisabled(modal, true);
+    const payload = { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id };
+    if (!q('.shipit-remotes').hidden) {
+      payload.pushRemote = q('.shipit-push-remote').value;
+      payload.baseRemote = q('.shipit-base-remote').value;
+    }
     try {
       const res = await fetch('/api/pr', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id }),
+        body: JSON.stringify(payload),
       });
       const dd = await safeJson(res);
       if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
@@ -12564,6 +12658,7 @@ function openShipItModal(record, data) {
       if (closed) return;
       okBtn.disabled = false;
       okBtn.textContent = 'Open pull request';
+      if (!q('.shipit-remotes').hidden) setShipItRemotesDisabled(modal, false);
       err.hidden = false;
       err.textContent = `Could not open PR: ${e2.message}`;
     }
@@ -12572,6 +12667,7 @@ function openShipItModal(record, data) {
   q('.shipit-cancel').addEventListener('click', onCancel);
   modal.addEventListener('click', onBackdrop);
   document.addEventListener('keydown', onKey);
+  loadShipItRemotes(modal, record, gen, () => closed);
 }
 
 // THE single PR-eligibility predicate. Every caller uses it: paintHdPr (below),
@@ -13102,6 +13198,7 @@ const HD_TAB_ICONS = {
   agents: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8 6h5a3 3 0 0 1 3 3v0M8 18h5a3 3 0 0 0 3-3v0" stroke-linecap="round"/></svg>',
   clarify: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.9.4-1.5 1-1.5 2.2M12 17h.01" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   logs: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h16M4 18h10" stroke-linecap="round"/></svg>',
+  artifacts: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 8l9-4 9 4-9 4-9-4z" stroke-linejoin="round"/><path d="M3 8v8l9 4 9-4V8" stroke-linejoin="round"/><path d="M12 12v8" stroke-linecap="round"/></svg>',
 };
 
 // Per-screen tab state, keyed by the SCREEN element. The cells + activate() pair
@@ -13232,6 +13329,17 @@ const HD_TABS = [
   { key: 'logs', label: 'Logs', badge: () => null,
     visible: (d) => Array.isArray(d.artifacts) && d.artifacts.some((a) => a && a.kind === 'live-log'),
     build: (...a) => buildHdLogs(...a) },
+  // The saved detail payload's `artifacts` is listArtifacts' [{kind, relPath}] (no
+  // step attribution); it only gates VISIBILITY here — buildHdArtifacts fetches the
+  // attributed GET /api/runs/:id/artifacts before rendering. Hidden when a run has
+  // no indexed artifact beyond the transient live-log / run-dir markers.
+  { key: 'artifacts', label: 'Artifacts',
+    badge: (d) => {
+      const n = Array.isArray(d.artifacts) ? d.artifacts.filter(isDisplayableArtifact).length : 0;
+      return n ? String(n) : null;
+    },
+    visible: (d) => Array.isArray(d.artifacts) && d.artifacts.some(isDisplayableArtifact),
+    build: (...a) => buildHdArtifacts(...a) },
 ];
 
 function initHdTabs(screen, record, data) {
@@ -14983,6 +15091,16 @@ const RD_TABS = [
     visible: () => true,
     build: (sec, ctx) => buildRdAgents(sec, ctx),
   },
+  {
+    key: 'artifacts', label: 'Artifacts', icon: HD_TAB_ICONS.artifacts,
+    badge: (ctx) => {
+      const n = Array.isArray(ctx.run.artifacts)
+        ? ctx.run.artifacts.filter(isDisplayableArtifact).length : 0;
+      return n ? String(n) : null;
+    },
+    visible: () => true,
+    build: (sec, ctx) => buildRdArtifacts(sec, ctx),
+  },
 ];
 
 // Build the pill row + the three lazy panels into an open detail screen. Called
@@ -15392,6 +15510,7 @@ function rdAgentsBody(sec, r) {
   const graphifyByGroup = stepGraphifyFromSteps(r.steps);
   const statusOf = stepStatusByKey(r.steps, r.stepper);
   const modelByNode = stepModelByNode(r.stepper);
+  const cardsByNode = new Map();   // nodeId -> first group card, for the per-node artifact affordance
 
   for (const key of keys) {
     const list = Array.isArray(groups[key]) ? groups[key] : [];
@@ -15449,8 +15568,12 @@ function rdAgentsBody(sec, r) {
         skillPillsHtml(s && s.skills);
       card.appendChild(row);
     }
+    const nodeId = artifactNodeIdOf(key);
+    if (!cardsByNode.has(nodeId)) cardsByNode.set(nodeId, card);
     sec.appendChild(card);
   }
+  // Per-node "Artifacts (N)" affordance from the live, attributed r.artifacts.
+  attachNodeArtifactAffordances(cardsByNode, r.artifacts, r.pipelineId || r.id);
 }
 
 function buildRdAgents(sec, ctx) {
@@ -16630,6 +16753,229 @@ async function openRunArtifact(ctx, path) {
     if (!res.ok) { showViewer(name, `Error: ${data.error || res.status}`); return; }
     showViewer(data.rel || name, data.text || '');
   } catch (e) { showViewer(name, `Error: ${e.message}`); }
+}
+
+// ── Per-step artifact viewers (Phase 3 UI) ──────────────────────────────────
+// DOM glue for per-step artifacts. The pure primitives live in
+// ./artifact-view.mjs (artifactsByNodeCycle / viewerKindFor / renderArtifact);
+// this block lists a run's artifacts per node, opens one through the id-based
+// GET /api/runs/:id/artifact route, and renders it with the typed viewer. Content
+// is untrusted DATA — the markdown path reuses the vendored marked + DOMPurify.
+
+// The marked+DOMPurify seam, read at CALL time so a test harness can stub it via
+// window.__worcaTestHooks.askMarkdown — the SAME hook the Ask panel wires.
+function artifactViewerDeps() {
+  return {
+    loadMarkdown: window.__worcaTestHooks?.askMarkdown
+      ?? (() => Promise.all([import('/vendor/marked/marked.esm.js'), import('/vendor/dompurify/purify.es.mjs')])
+        .then(([m, d]) => ({ marked: m.marked, createDOMPurify: d.default }))),
+  };
+}
+
+// nodeId half of a `nodeId|executionId`/`nodeId|cycle` group key.
+function artifactNodeIdOf(key) {
+  const i = String(key).indexOf(CYCLE_KEY_SEP);
+  return i >= 0 ? String(key).slice(0, i) : String(key);
+}
+
+// The rel/path the artifact routes want. Live WS artifacts carry `path` (from the
+// artifact event); the plural endpoint / DB rows carry `relPath`. Both resolve
+// through the id-based GET /api/runs/:id/artifact route.
+function artifactRelOf(a) {
+  return String((a && (a.relPath || a.path)) || '');
+}
+
+// Synthetic/transient markers reach the UI (as live WS artifact events and, for
+// 'pipeline'/'live-log', as index rows) but are NOT user-facing artifacts:
+// 'pipeline' is the run DIR itself (never on-disk-resolvable, so its viewer 404s),
+// 'live-log' is the raw NDJSON transcript, and 'questions' is scratch that the
+// orchestrator deletes once the round is answered (never indexed; the Q&A lives
+// in the step_questions table / get_run_progress) — clicking it would 404.
+// All four detail gates (HD badge/visible, RD badge, grouped browser)
+// share THIS predicate so they can never drift; it also requires a resolvable path
+// so a row that carries no file is never offered.
+function isDisplayableArtifact(a) {
+  return !!a && !!(a.relPath || a.path)
+    && a.kind !== 'pipeline' && a.kind !== 'live-log' && a.kind !== 'questions';
+}
+
+// Compact human byte size for an artifact row (0 renders as "0 B").
+function fmtArtifactBytes(n) {
+  const b = Number(n) || 0;
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Fetch one artifact's text by the run's pipeline id and render it into the shared
+// viewer modal with the typed viewer. Resolved by id ALONE through
+// GET /api/runs/:id/artifact?rel= — the same gate openRunArtifact uses — so live
+// and History share one path.
+async function showArtifactViewer(pid, artifact) {
+  const rel = artifactRelOf(artifact);
+  const name = rel.split('/').filter(Boolean).pop() || (artifact && artifact.kind) || 'artifact';
+  el.viewerTitle.textContent = `Artifact: ${name}`;
+  // #viewer is a <pre> (white-space:pre); mount into a host div so the typed
+  // viewers own their own whitespace instead of inheriting the pre's.
+  const host = document.createElement('div');
+  host.className = 'artifact-view';
+  host.textContent = 'Loading…';
+  el.viewer.replaceChildren(host);
+  el.viewerCard.classList.remove('hidden');
+  el.viewerCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  try {
+    const res = await fetch(`/api/runs/${encodeURIComponent(pid)}/artifact?rel=${encodeURIComponent(rel)}`);
+    const data = await safeJson(res);
+    if (!res.ok) { host.textContent = `Error: ${data.error || res.status}`; return; }
+    await renderArtifact({ kind: artifact && artifact.kind, relPath: rel, text: data.text || '' }, host, artifactViewerDeps());
+  } catch (e) {
+    host.textContent = `Error: ${e.message}`;
+  }
+}
+
+// One clickable artifact row (kind chip · name · byte size) that opens the viewer.
+function buildArtifactRow(a, pid) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'artifact-row';
+  const name = artifactRelOf(a).split('/').filter(Boolean).pop() || a.kind || 'artifact';
+  row.innerHTML =
+    `<span class="artifact-kind mono">${escapeHtml(a.kind || '')}</span>`
+    + `<span class="artifact-name">${escapeHtml(name)}</span>`
+    + (a.bytes != null ? `<span class="artifact-bytes mono">${escapeHtml(fmtArtifactBytes(a.bytes))}</span>` : '');
+  row.addEventListener('click', () => { showArtifactViewer(pid, a); });
+  return row;
+}
+
+// A collapsed "Artifacts (N)" affordance for one node's artifacts, expanding to a
+// list of clickable rows. Returns null when the node produced none.
+function buildNodeArtifactAffordance(list, pid) {
+  if (!Array.isArray(list) || !list.length) return null;
+  const wrap = document.createElement('div');
+  wrap.className = 'node-artifacts';
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'artifact-toggle';
+  toggle.setAttribute('aria-expanded', 'false');
+  toggle.textContent = `Artifacts (${list.length})`;
+  const body = document.createElement('div');
+  body.className = 'artifact-list';
+  body.hidden = true;
+  for (const a of list) body.appendChild(buildArtifactRow(a, pid));
+  toggle.addEventListener('click', () => {
+    const open = body.hidden;
+    body.hidden = !open;
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  wrap.append(toggle, body);
+  return wrap;
+}
+
+// Append per-node "Artifacts (N)" affordances to already-built agent group cards.
+// `cardsByNode` is nodeId -> the first group card for that node; each node's
+// artifacts (flattened across its cycles) render once, on its first card. Legacy
+// artifacts with nodeId == null land in artifactsByNodeCycle's '__run__' bucket
+// and are surfaced by the run-level Artifacts tab, not here.
+function attachNodeArtifactAffordances(cardsByNode, artifacts, pid) {
+  if (!(cardsByNode instanceof Map) || !cardsByNode.size) return;
+  // Same display gate as the Artifacts tab (isDisplayableArtifact): transient
+  // markers (questions/live-log/pipeline) never become a clickable, 404-able row.
+  const groups = artifactsByNodeCycle((Array.isArray(artifacts) ? artifacts : []).filter(isDisplayableArtifact));
+  for (const [nodeId, card] of cardsByNode) {
+    const byCyc = groups.get(nodeId);
+    if (!byCyc) continue;
+    const list = [];
+    for (const arr of byCyc.values()) for (const a of arr) list.push(a);
+    const aff = buildNodeArtifactAffordance(list, pid);
+    if (aff) card.appendChild(aff);
+  }
+}
+
+// Run-level grouped artifact browser: one card per node (ordered to match the
+// Agents dropdown via subsGroupsForRender), each a step header + its artifact
+// rows, with a trailing "Run" bucket for legacy/unattributed artifacts
+// (nodeId == null -> the '__run__' bucket). Shared by the live Running detail and
+// History (which fetches the plural endpoint before calling this).
+function renderRunArtifacts(mount, artifacts, pid, stateLike = {}) {
+  mount.innerHTML = '';
+  const list = (Array.isArray(artifacts) ? artifacts : []).filter(isDisplayableArtifact);
+  if (!list.length) {
+    const empty = document.createElement('div');
+    empty.className = 'hint artifact-empty';
+    empty.textContent = '(no artifacts recorded)';
+    mount.appendChild(empty);
+    return;
+  }
+  const groups = artifactsByNodeCycle(list);
+  const orderKeys = Object.keys(subsGroupsForRender(stateLike.subAgents, stateLike.steps, stateLike.stepper));
+  const ordered = [];
+  const seen = new Set();
+  for (const k of orderKeys) {
+    const nid = artifactNodeIdOf(k);
+    if (groups.has(nid) && !seen.has(nid)) { ordered.push(nid); seen.add(nid); }
+  }
+  for (const nid of groups.keys()) {
+    if (nid !== '__run__' && !seen.has(nid)) { ordered.push(nid); seen.add(nid); }
+  }
+  if (groups.has('__run__')) ordered.push('__run__');
+  const byId = nodeLabelLookup(stateLike.stepper);
+  for (const nid of ordered) {
+    const byCyc = groups.get(nid);
+    if (!byCyc) continue;
+    const card = document.createElement('div');
+    card.className = 'artifact-group';
+    const head = document.createElement('div');
+    head.className = 'artifact-group-head';
+    head.innerHTML = `<b>${escapeHtml(nid === '__run__' ? 'Run' : byId(nid))}</b>`;
+    card.appendChild(head);
+    const cycles = [...byCyc.keys()].sort((x, y) => x - y);
+    const multiCycle = cycles.length > 1;
+    for (const cyc of cycles) {
+      if (multiCycle) {
+        const cap = document.createElement('div');
+        cap.className = 'hint artifact-cycle';
+        cap.textContent = `cycle ${cyc}`;
+        card.appendChild(cap);
+      }
+      for (const a of byCyc.get(cyc)) card.appendChild(buildArtifactRow(a, pid));
+    }
+    mount.appendChild(card);
+  }
+}
+
+// Running-detail Artifacts tab: live r.artifacts, repainted in place on every
+// frame (like Overview/Agents) so newly-attributed artifacts appear as they land.
+function buildRdArtifacts(sec, ctx) {
+  const paint = (c) => {
+    const r = c.run;
+    renderRunArtifacts(sec, r.artifacts, r.pipelineId || r.id,
+      { subAgents: r.subAgents, steps: r.steps, stepper: r.stepper });
+  };
+  paint(ctx);
+  sec.__update = paint;
+}
+
+// History Artifacts tab: fetch the ATTRIBUTED list (GET /api/runs/:id/artifacts,
+// resolved by pipeline id alone) — the saved detail payload's `artifacts` carries
+// no step attribution — then render the same grouped view. Fire-and-forget like
+// buildHdLogs; a failed fetch re-arms via the empty render.
+function buildHdArtifacts(sec, record, data) {
+  sec.innerHTML = '';
+  const loading = document.createElement('div');
+  loading.className = 'hint artifact-empty';
+  loading.textContent = 'Loading artifacts…';
+  sec.appendChild(loading);
+  const pid = record && record.id;
+  const st = (data && data.state) || {};
+  const stateLike = { subAgents: st.subAgents, steps: st.steps, stepper: st.stepper };
+  if (!pid) { renderRunArtifacts(sec, [], null, stateLike); return; }
+  fetch(`/api/runs/${encodeURIComponent(pid)}/artifacts`)
+    .then((res) => (res.ok ? res.json() : null))
+    .then((body) => {
+      const arts = body && Array.isArray(body.artifacts) ? body.artifacts : [];
+      renderRunArtifacts(sec, arts, pid, stateLike);
+    })
+    .catch(() => { renderRunArtifacts(sec, [], pid, stateLike); });
 }
 
 function paintStepper(r) {

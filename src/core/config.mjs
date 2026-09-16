@@ -839,8 +839,9 @@ export async function readRunConfig(projectDir) {
   const extra = row ? parseJson(row.extra, {}) : {};
   if (extra.webUiTesting && typeof extra.webUiTesting === 'object') out.webUiTesting = extra.webUiTesting;
   // Forward any OTHER unknown keys verbatim too (future-proof, matches "preserve unknown").
+  // prRemotes is the ship-it dialog's own preference (readPrRemotePrefs), not run config.
   for (const [k, v] of Object.entries(extra)) {
-    if (k !== 'webUiTesting' && !(k in out)) out[k] = v;
+    if (k !== 'webUiTesting' && k !== PR_REMOTES_KEY && !(k in out)) out[k] = v;
   }
   const active = row && typeof row.active_workflow_id === 'string' ? row.active_workflow_id.trim() : '';
   // Spec §6.1 / D16: a project with no remembered New-pipeline choice starts on Auto.
@@ -1014,6 +1015,51 @@ export async function setActiveWorkflow(projectDir, workflowId) {
       VALUES (?, '{}', '[]', ?, '{}')
       ON CONFLICT(project_key) DO UPDATE SET active_workflow_id = excluded.active_workflow_id
     `).run(key, active);
+  });
+}
+
+// ── PR remote preferences (project_config.extra.prRemotes) ──────────────────
+// The History "Ship it?" dialog remembers which remote the branch was pushed to
+// and which repo the PR was opened in. Stored inside the free-form `extra` JSON
+// column — the FIRST runtime writer of that column: a read-modify-write of this
+// ONE key inside a tx, leaving every other top-level key of `extra` byte-identical
+// (test/config-db.test.mjs pins that for the sibling writers, which upsert only
+// their own columns and never touch `extra` on conflict).
+const PR_REMOTES_KEY = 'prRemotes';
+
+function sanitizeRemoteName(v) {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return s && s.length <= 200 ? s : null;
+}
+
+/**
+ * Remembered push/base remote names for a project, or null when none.
+ * @param {string} projectDir
+ * @returns {{ pushRemote:(string|null), baseRemote:(string|null) }|null}
+ */
+export function readPrRemotePrefs(projectDir) {
+  const row = readConfigRow(projectKey(projectDir));
+  const extra = row ? parseJson(row.extra, {}) : {};
+  const p = extra[PR_REMOTES_KEY];
+  if (!p || typeof p !== 'object') return null;
+  const pushRemote = sanitizeRemoteName(p.pushRemote);
+  const baseRemote = sanitizeRemoteName(p.baseRemote);
+  return pushRemote || baseRemote ? { pushRemote, baseRemote } : null;
+}
+
+/** Remember the dialog's choice. Only `extra.prRemotes` changes; every other column/key is preserved. */
+export async function setPrRemotePrefs(projectDir, { pushRemote, baseRemote } = {}) {
+  const key = projectKey(projectDir);
+  const next = { pushRemote: sanitizeRemoteName(pushRemote), baseRemote: sanitizeRemoteName(baseRemote) };
+  tx(() => {
+    const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+    const extra = row ? parseJson(row.extra, {}) : {};
+    extra[PR_REMOTES_KEY] = next;
+    prepare(`
+      INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
+      VALUES (?, '{}', '[]', NULL, ?)
+      ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
+    `).run(key, JSON.stringify(extra));
   });
 }
 
