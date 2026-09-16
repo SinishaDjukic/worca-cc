@@ -35,6 +35,9 @@ export const ASK_LIMITS = Object.freeze({
   worktreesGlobal: 15,                     // P4 D9
   attachmentReadDefaultBytes: 32_000,
   attachmentReadMaxBytes: 200_000,
+  artifactsListMaxLimit: 200,
+  artifactReadDefaultBytes: 60_000,
+  artifactReadMaxBytes: 200_000,
   briefMaxChars: 8000,
   workflowTaskMaxChars: 32_000,            // propose_workflow task text (= classify.mjs TASK_TEXT_CAP)
   workflowNoteMaxChars: 200,               // propose_workflow note shown on the card

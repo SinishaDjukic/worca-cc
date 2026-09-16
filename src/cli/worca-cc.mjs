@@ -97,6 +97,7 @@ function parseArgs(argv) {
     install: null,
     sourceBranch: undefined,
     featureBranch: undefined,
+    memoryScope: undefined,
     help: false,
     _: [],
   };
@@ -112,6 +113,7 @@ function parseArgs(argv) {
     '--install',
     '--source-branch',
     '--branch',
+    '--memory-scope',
   ]);
   const map = {
     '--project': 'project',
@@ -125,6 +127,7 @@ function parseArgs(argv) {
     '--install': 'install',
     '--source-branch': 'sourceBranch',
     '--branch': 'featureBranch',
+    '--memory-scope': 'memoryScope',
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -175,6 +178,8 @@ function parseArgs(argv) {
         // MOCK runner treats it as the Ask Worca recipe — that pair is refused below,
         // after --mock/WORCA_MOCK are known (review of PR #376).
         fail(`--permission-mode must be one of ${PERMISSION_MODES.join(', ')}, got: ${value}`);
+      } else if (key === 'memoryScope' && !['global', 'project'].includes(String(value))) {
+        fail(`--memory-scope must be one of global, project, got: ${value}`);
       } else {
         out[key] = value;
       }
@@ -246,6 +251,8 @@ Options:
   --workflow <id>          Saved pipeline template to run (default: wf_default — the built-in graph)
                            auto (= wf_auto) lets worca pick the workflow per task
   --no-human               Auto workflow only: no proposal, no clarify, no agent questions (loop-budget, recovery, cost and error pauses still apply)
+  --memory-scope <s>       Memory defragment workflow only: global | project — the scope the
+                           run restructures (--workflow wf_memory_defrag needs it; no --prompt needed)
   --source-branch <name>   Branch to fork the per-run worktree from (default: current HEAD)
   --branch <name>          Feature branch name (default: claude proposes one)
   --mock                   Offline mock mode (no claude, no tokens)
@@ -1927,9 +1934,9 @@ async function cmdWorkflow(argv) {
   try {
     switch (verb) {
       case 'list': {
-        // GRAPH_DEFAULT_WORKFLOW (the built-in default) is not in the user store, so
-        // prepend it — mirrors the server/UI, which always show it first.
-        const items = [wf.GRAPH_DEFAULT_WORKFLOW, ...(await wf.listWorkflows())];
+        // The built-ins (Default, Memory defragment) are not in the user store, so
+        // prepend them — mirrors the server/UI, which always show them first.
+        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(await wf.listWorkflows())];
         for (const w of items) out(`${w.id}\t${w.name}\t${(w.domain || 'general')}`);
         return 0;
       }
@@ -2141,6 +2148,10 @@ async function main() {
     fail('--permission-mode dontAsk cannot be combined with --mock: the mock runner reserves it for the Ask Worca assistant.');
   }
 
+  // A defragment run needs no task text: synthesise the same brief the UI wrapper sends.
+  if (flags.memoryScope && !flags.prompt && !flags.file && !flags._.length) {
+    flags.prompt = flags.memoryScope === 'global' ? 'Defragment global memory.' : 'Defragment the memory of this project.';
+  }
   if (!flags.prompt && !flags.file) {
     // Allow a bare positional prompt: `worca "do the thing"`. A lone token that
     // near-misses a subcommand is a typo, not a task — refuse it here, before a
@@ -2198,6 +2209,11 @@ async function main() {
     try { row = await assertRunnableWorkflow(flags.workflow); }
     catch (err) { fail(`${err && err.message ? err.message : String(err)}`); }
   }
+  {
+    const { validateMemoryScope } = await import('../core/memory-sync.mjs');
+    const reason = validateMemoryScope({ workflowId: flags.workflow || 'wf_default', memoryScope: flags.memoryScope, isWorkspace: false });
+    if (reason) fail(reason);
+  }
 
   const orch = await createOrchestratorFor({
     projectDir,
@@ -2207,6 +2223,7 @@ async function main() {
     extras,
     workflowId: flags.workflow || undefined,
     template: row,
+    memoryScope: flags.memoryScope || undefined,
     branch: { source: flags.sourceBranch, feature: flags.featureBranch },
     claude: {
       permissionMode: flags.permissionMode,

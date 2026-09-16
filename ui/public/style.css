@@ -291,12 +291,12 @@ body{
    The compact top-nav (<1080px) is a SIBLING above the views inside .main, so a
    plain height:100% here would push the track past the viewport and
    overflow:hidden would clip both screens' bottoms off-screen. */
-body.view-history .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
+body.view-history .main,body.view-projects .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
 /* .main's 32px gutter goes with padding:0, so the compact top-nav (<1080px, a
    SIBLING of the views inside .main) must re-apply it or it lands 20px left of
    the list content, which keeps its own 32px on .hist-screen. flex:0 0 auto
    stops the wrapped 9-button nav from being squeezed once .main is a column. */
-body.view-history .topnav{margin:12px 32px 0;flex:0 0 auto;}
+body.view-history .topnav,body.view-projects .topnav{margin:12px 32px 0;flex:0 0 auto;}
 .topbar{display:flex;align-items:flex-start;justify-content:space-between;
   gap:24px;margin-bottom:22px;}
 .topbar h1{font-size:26px;font-weight:700;letter-spacing:-.025em;margin:0 0 4px;}
@@ -1413,7 +1413,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    .pl-main/.pl-name), but the composer's copies of those rules are scoped under
    .gv-saved, so this view owns its own layout: card padding 0 so the head and the
    rows share one left edge; flex rows so the bin button sits on the right.
-   Static rows (no expand) — default cursor, no hover tint. */
+   A keyed row is the control (see the shell block below); a keyless row keeps the default cursor. */
 #projects-list .saved-card{padding:0;overflow:hidden;}
 #projects-list .pl-item{border-bottom:1px solid var(--line);}
 #projects-list .pl-item:last-child{border-bottom:none;}
@@ -1429,15 +1429,41 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
   font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
   color:var(--ink-3);border:1px solid var(--line-2);border-radius:6px;padding:1px 6px;
 }
-/* Neutral bin button — same size/shape as .pl-del but stays neutral on hover (no red, ever). */
-.proj-del{
-  flex:0 0 auto;width:34px;height:34px;border-radius:10px;
-  border:1.5px solid var(--line-2);background:var(--surface);display:grid;place-items:center;
-  cursor:pointer;color:var(--ink-3);transition:.12s;align-self:center;
-}
-.proj-del:hover{border-color:var(--ink-3);color:var(--ink);background:var(--field);}
-.proj-del:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.proj-del svg{width:16px;height:16px;stroke-width:1.9;}
+/* ---------- Projects two-screen shell (twin of the History track) ---------- */
+.view[data-view="projects"]{flex:1 1 auto;min-height:0;padding:0;position:relative;}
+.proj-shell{position:relative;height:100%;overflow:hidden;}
+/* NO top padding on the scroller: the detail's sticky .pd-tabs must pin flush, as .hd-tabs does. */
+.proj-screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding:0 32px 40px;
+  transition:transform .46s cubic-bezier(.65,.02,.28,1);}
+.proj-screen-list .topbar{padding-top:26px;}
+.proj-screen-list{transform:translateX(0);}
+.proj-screen-detail{transform:translateX(100%);padding:0;background:var(--bg);}
+.proj-shell.detail-open .proj-screen-list{transform:translateX(-100%);}
+.proj-shell.detail-open .proj-screen-detail{transform:translateX(0);}
+.proj-shell.no-anim .proj-screen{transition:none;}
+/* A keyed row IS the control (role=button): pointer + hover tint, the .hist-head idiom. The
+   keyless row keeps #projects-list .pl-row's default cursor. */
+#projects-list .pl-row[role="button"]{cursor:pointer;transition:background .12s;}
+#projects-list .pl-row[role="button"]:hover{background:var(--field);}
+#projects-list .pl-row[role="button"]:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.proj-open{flex:0 0 auto;display:flex;align-items:center;justify-content:center;width:30px;height:30px;
+  border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink-2);cursor:pointer;}
+.proj-open:hover{background:var(--ink);color:var(--on-ink);border-color:var(--ink);}
+/* Project page header: the card, title and Back ride the hd- rules; these are its own lines. */
+.pd-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0;margin-top:10px;
+  font-size:12.5px;color:var(--ink-2);overflow-wrap:anywhere;}
+.pd-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:14px;}
+.pd-spacer{flex:1 1 24px;}
+.pd-error{margin-top:12px;color:var(--red-ink);font-size:12.5px;}
+.pd-error[hidden]{display:none;}
+/* Overview: a path is long with no natural break, so its value wraps at body size; the LAST RUN
+   card is a real <button> — reset the UA look so it reads like its siblings. */
+.pd-ov-value.pd-ov-wrap{font-size:13px;overflow-wrap:anywhere;}
+.pd-ov-missing{color:var(--red-ink);}
+button.pd-ov-card{text-align:left;font:inherit;color:inherit;cursor:pointer;width:100%;}
+button.pd-ov-card:hover{border-color:var(--ink-3);}
+/* Memory tab: the same grid Settings → Memory paints (.mem-host); its message line sits above. */
+.pd-sec-memory .form-msg{margin:0 0 10px;}
 
 /* Guardrails row editors (used by the Guardrails view) */
 .gr-list{display:flex;flex-direction:column;margin-bottom:8px;}
@@ -1798,19 +1824,19 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* style.css has NO base .mono rule (only ancestor-scoped ones), so class="mono"
    alone renders in Poppins. Scope a base rule to the new subtrees only — a
    global one would touch every other view. */
-.hd .mono,.hist-card .mono,#shipit-modal .mono{font-family:var(--mono);}
+.hd .mono,.pd .mono,.hist-card .mono,#shipit-modal .mono{font-family:var(--mono);}
 
 /* Card, not a full-bleed band: same border/radius/shadow language as `.card`, and
    its own 20px/32px margin box supplies the inset the screen itself cannot —
    `.hist-screen-detail` keeps `padding:0` so the sticky `.hd-tabs` can still pin
    flush to the scrollport top. Inner padding drops 32 -> 24 so the title lands a
    card-like distance from the border instead of 56px from the viewport edge. */
-.hd-header{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);
+.hd-header,.pd-header{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);
   box-shadow:var(--shadow);margin:20px 32px 0;padding:20px 24px 18px;}
-.hd-row1{display:flex;align-items:center;gap:14px;}
-.hd-title{margin:0;min-width:0;flex:1;font:700 22px/1.25 var(--sans);letter-spacing:-.02em;
+.hd-row1,.pd-row1{display:flex;align-items:center;gap:14px;}
+.hd-title,.pd-title{margin:0;min-width:0;flex:1;font:700 22px/1.25 var(--sans);letter-spacing:-.02em;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.hd-body{padding:0 32px 40px;}
+.hd-body,.pd-body{padding:0 32px 40px;}
 .hd-graph{margin-top:18px;}
 /* History detail only: a run-graph node is a link into the Logs tab's `source`
    filter (wireHdGraphLogLinks). `.linked` is added only when the run HAS a Logs
@@ -1886,17 +1912,17 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    row mixes heights. Every other place this file pairs .btn-ghost with compact
    controls does the same override (.hist-pr, .ws-actions, .pl-actions,
    .grv-actions, .mv-card). */
-.hd-back,.hd-resume{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;}
+.hd-back,.hd-resume,.pd-back,.pd-new,.pd-history{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;}
 .hd-resume[hidden]{display:none;}
 /* 9px, not the 8px its siblings use: this one is 12.5px type against .hd-back's
    13.5px, so equal padding renders it 36px tall in a row of 38px buttons
    (measured in headless Chrome). The extra pixel per side matches .hd-pr, which
    is the same type size and already pays it. */
-.hd-archive{display:flex;align-items:center;gap:8px;padding:9px 15px;border:1.5px solid var(--red-bg);
+.hd-archive,.pd-remove{display:flex;align-items:center;gap:8px;padding:9px 15px;border:1.5px solid var(--red-bg);
   border-radius:999px;background:var(--panel);font:600 12.5px var(--sans);color:var(--red-ink);cursor:pointer;}
 .hd-archive[hidden]{display:none;}
-.hd-archive:hover:not([disabled]){background:var(--red-bg);border-color:var(--red);}
-.hd-archive[disabled]{opacity:.55;cursor:not-allowed;}
+.hd-archive:hover:not([disabled]),.pd-remove:hover:not([disabled]){background:var(--red-bg);border-color:var(--red);}
+.hd-archive[disabled],.pd-remove[disabled]{opacity:.55;cursor:not-allowed;}
 /* align-items:flex-start, NOT the default stretch: `.badge.hist-retained-badge`
    (696) and `.hist-discard` (856) are inline-flex with no width, so a stretching
    column blows both up to the full body width. Only the two BANNERS want the full
@@ -1921,20 +1947,20 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 #confirm-ok.danger{background:var(--red-ink);border-color:var(--red-ink);color:var(--on-status);}
 
 /* ---------- History detail: section tabs ---------- */
-.hd-tabs{position:sticky;top:0;z-index:5;display:flex;align-items:center;flex-wrap:wrap;gap:8px;
+.hd-tabs,.pd-tabs{position:sticky;top:0;z-index:5;display:flex;align-items:center;flex-wrap:wrap;gap:8px;
   padding:18px 0 14px;background:var(--bg);}
-.hd-tab{display:flex;align-items:center;gap:9px;padding:10px 17px;border:1.5px solid var(--line);
+.hd-tab,.pd-tab{display:flex;align-items:center;gap:9px;padding:10px 17px;border:1.5px solid var(--line);
   border-radius:999px;background:var(--panel);font:600 13.5px var(--sans);color:var(--ink-2);cursor:pointer;}
-.hd-tab:hover{border-color:var(--ink-3);color:var(--ink);}
-.hd-tab.active{background:var(--ink);color:var(--on-ink);border-color:var(--ink);}
-.hd-tab-badge{padding:2px 8px;border-radius:999px;background:var(--field);color:var(--ink-3);
+.hd-tab:hover,.pd-tab:hover{border-color:var(--ink-3);color:var(--ink);}
+.hd-tab.active,.pd-tab.active{background:var(--ink);color:var(--on-ink);border-color:var(--ink);}
+.hd-tab-badge,.pd-tab-badge{padding:2px 8px;border-radius:999px;background:var(--field);color:var(--ink-3);
   font:600 10.5px var(--mono);}
-.hd-tab.active .hd-tab-badge{background:var(--blue-bg);color:var(--blue-ink);}
-.hd-sec{margin-top:4px;}
+.hd-tab.active .hd-tab-badge,.pd-tab.active .pd-tab-badge{background:var(--blue-bg);color:var(--blue-ink);}
+.hd-sec,.pd-sec{margin-top:4px;}
 /* Explicit twin, not redundancy insurance: the UA [hidden] rule is (0,0,0) and
    loses to any author `display`, so the moment a later task gives .hd-sec (or a
    .hd-sec-* body) a display value, the inactive panels would all render at once. */
-.hd-sec[hidden]{display:none;}
+.hd-sec[hidden],.pd-sec[hidden]{display:none;}
 
 /* ---------- History detail: Diff tab ---------- */
 .hd-diff{display:grid;grid-template-columns:minmax(280px,340px) 1fr;gap:18px;align-items:start;}
@@ -2207,11 +2233,27 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hd-ov-chip.clean,.hd-ov-chip.st-done{background:var(--green-bg);color:var(--green-ink);}
 .hd-ov-chip.warn,.hd-ov-chip.st-paused{background:var(--amber-bg);color:var(--amber-ink);}
 .hd-ov-chip.st-stopped,.hd-ov-chip.st-error{background:var(--red-bg);color:var(--red-ink);}
-.hd-ov-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;}
-.hd-ov-card{padding:20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
-.hd-ov-label{font:600 10.5px var(--sans);letter-spacing:.14em;color:var(--ink-3);}
-.hd-ov-value{margin-top:10px;font-size:22px;color:var(--ink);}
-.hd-ov-sub{margin-top:6px;font-size:11.5px;color:var(--ink-3);overflow-wrap:anywhere;}
+.hd-ov-grid,.pd-ov-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;}
+.hd-ov-card,.pd-ov-card{padding:20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+/* Agent memory (agent-memory-design.md §6): what this run wrote into worca's memory. */
+.hd-ov-mem{padding:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);display:flex;flex-direction:column;gap:8px;}
+.hd-ov-mem .mono{font-family:var(--mono);}
+.hd-mem-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+.hd-mem-node{color:var(--ink-3);min-width:90px;}
+/* A linked chip is a real <button> (B6): reset the UA look so it reads as the span next to it. The
+   kind colour rules below are compound (.hd-mem-chip.hd-mem-*, 0,2,0) so they outrank
+   button.hd-mem-chip's color reset (0,1,1) — source order alone would not. */
+.hd-mem-chip{padding:2px 8px;border-radius:999px;border:1px solid var(--line);font-size:12px;}
+button.hd-mem-chip{background:transparent;font:inherit;font-family:var(--mono);font-size:12px;line-height:inherit;color:inherit;cursor:pointer;}
+button.hd-mem-chip:hover{background:var(--field);}
+button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.hd-mem-chip.hd-mem-add{color:var(--green-ink);}
+.hd-mem-chip.hd-mem-mod{color:var(--blue-ink);}
+.hd-mem-chip.hd-mem-del{color:var(--ink-3);text-decoration:line-through;}
+.hd-mem-chip.hd-mem-rej{color:var(--red-ink);}
+.hd-ov-label,.pd-ov-label{font:600 10.5px var(--sans);letter-spacing:.14em;color:var(--ink-3);}
+.hd-ov-value,.pd-ov-value{margin-top:10px;font-size:22px;color:var(--ink);}
+.hd-ov-sub,.pd-ov-sub{margin-top:6px;font-size:11.5px;color:var(--ink-3);overflow-wrap:anywhere;}
 .hd-ov-task{padding:22px 24px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
 .hd-ov-task-h{font:600 13px var(--sans);}
 /* overflow-wrap:anywhere like its sibling .hd-ov-sub — prompts routinely carry
@@ -2222,6 +2264,37 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .hd-ov-more{margin-top:8px;border:none;background:none;color:var(--blue-ink);font:500 12.5px var(--sans);cursor:pointer;padding:0;}
 .hd-ov-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px;}
 .hd-ov-tag{padding:6px 12px;border:1px solid var(--line);border-radius:999px;font-size:11.5px;color:var(--ink-2);}
+
+/* Settings → Memory and the project page's Memory tab (agent-memory-design.md §10).
+   The namespace is `mem-*`: `mv-*` is Settings → Models. */
+.mem-host{display:grid;grid-template-columns:minmax(260px,1fr) minmax(0,2fr);gap:18px;align-items:start;}
+.mem-host > .mem-health{grid-column:1 / -1;}
+.mem-health-head{display:flex;flex-wrap:wrap;align-items:center;gap:12px;}
+.mem-counters{font-size:12.5px;color:var(--ink-3);}
+.mem-reasons{margin:12px 0 0 18px;padding:0;font-size:13px;color:var(--ink-2);}
+.mem-reasons li{margin:4px 0;}
+.mem-actions{margin-top:12px;align-items:center;gap:10px;}
+.mem-health-head .mem-defrag{margin-left:auto;}
+.mem-defrag svg{display:block;flex:none;}
+.mem-host-hint{display:block;margin-top:8px;}
+.mem-list,.mem-history{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:14px 16px;}
+.mem-list-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.mem-list-title{font:600 10.5px var(--sans);letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase;}
+.mem-row{display:flex;align-items:center;gap:12px;padding:10px 8px;border-radius:var(--r-ctrl);cursor:pointer;}
+.mem-row:hover{background:var(--field);}
+.mem-row.on{background:var(--field);box-shadow:inset 0 0 0 1px var(--line-2);}
+.mem-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.mem-row-main{min-width:0;flex:1;}
+.mem-row-name{font-size:13px;color:var(--ink);}
+.mem-row-hook{font-size:12.5px;color:var(--ink-2);overflow-wrap:anywhere;}
+.mem-row-meta{font-size:11.5px;color:var(--ink-3);margin-top:2px;}
+.mem-editor{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:16px;margin-bottom:18px;}
+.mem-editor .mem-text{min-height:260px;}
+.mem-snap{display:flex;align-items:center;gap:12px;padding:6px 8px;font-size:12.5px;}
+.mem-snap-id{color:var(--ink-2);}
+.mem-snap-count{color:var(--ink-3);flex:1;}
+.mem-host .mono{font-family:var(--mono);}
+@media (max-width:900px){.mem-host{grid-template-columns:1fr;}}
 
 /* ---------- History detail: Agents tab ---------- */
 .hd-ag-group{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);
@@ -2318,6 +2391,19 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    stray node in the a11y tree). */
 .shipit-err[hidden]{display:none;}
 
+/* Fork support: push-remote + base-repo selects. Left-aligned inside the centered
+   card; the global select{width:100%} fills each grid cell. */
+.shipit-remotes{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px;margin-top:14px;text-align:left;}
+.shipit-remotes[hidden]{display:none;}
+.shipit-remote-field label{display:block;margin:0 0 6px 2px;font:600 11.5px/1.2 var(--sans);color:var(--ink-2);
+  text-transform:uppercase;letter-spacing:.04em;}
+.shipit-remotes .select{padding:10px 36px 10px 12px;font-size:13px;}
+.shipit-remotes .select-wrap::after{right:13px;}
+.shipit-remotes select:disabled{opacity:.55;cursor:not-allowed;}
+.shipit-remotes-hint{grid-column:1/-1;margin:0;font-size:12px;color:var(--ink-3);word-break:break-all;}
+.shipit-remotes-hint:empty{display:none;}
+@media (max-width:520px){.shipit-remotes{grid-template-columns:1fr;}}
+
 /* Reduced motion for the three ship-it animations. This block MUST sit AFTER the
    rules that declare them: `@media` contributes no specificity, so naming
    `.shipit-card` in the kill list at :763 would tie at (0,1,0) and LOSE on source
@@ -2370,12 +2456,12 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* ---------- focus visibility (History redesign) ----------
    Every other interactive control in this stylesheet carries a ring (.btn,
    .btn-go, .btn-stop, .nav button, .hist-head, .seg button, .info-tip, .ws-head,
-   .proj-del, .ch-hit); none of the new controls did. `.btn-ghost` declares no
+   .ch-hit); none of the new controls did. `.btn-ghost` declares no
    ring to inherit and carries no `btn` class, so `.hd-back`, `.hd-resume` and
    `.shipit-cancel` had nothing at all — which matters most for `.hd-back`, the
    node openHistDetail focuses programmatically, and for the `.hd-tab` tablist.
    `.hd-diff-file` already has its own (inset) ring and is not repeated here. */
-.hd-tab:focus-visible,.hd-back:focus-visible,.hd-resume:focus-visible,
+.hd-tab:focus-visible,.hd-back:focus-visible,.hd-resume:focus-visible,.pd-tab:focus-visible,.pd-back:focus-visible,.pd-new:focus-visible,.pd-history:focus-visible,.pd-remove:focus-visible,.pd-sec:focus-visible,.proj-open:focus-visible,.pd-ov-link:focus-visible,
 .hd-archive:focus-visible,.hd-pr:focus-visible,.hd-pr-link:focus-visible,
 .hd-branch-copy:focus-visible,.hd-sec:focus-visible,.hist-open:focus-visible,
 .hist-branch-copy:focus-visible,.shipit-ok:focus-visible,.shipit-cancel:focus-visible{
@@ -3102,12 +3188,23 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-icon-btn:hover{background:var(--field);color:var(--ink);}
 .ask-icon-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
+/* `overflow-anchor:auto` is the UA default, stated here on purpose: it is the
+   only thing that keeps the text being read still while the activity block above
+   it grows a tool row mid-turn, and a later `overflow-anchor:none` anywhere up
+   the chain would silently switch it off. */
 .ask-transcript{position:relative;flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
-  padding:18px 20px 8px;}
+  padding:18px 20px 8px;overflow-anchor:auto;}
 /* .ask-transcript is only the scrollport; every message lands in this column
    (ask-panel.mjs renderTranscript), which carries the stack + gap and the cap. */
 .ask-transcript-col{width:100%;max-width:var(--ask-col-max);margin-inline:auto;display:flex;flex-direction:column;gap:16px;}
-.ask-msg{display:flex;flex-direction:column;gap:6px;animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
+.ask-msg{display:flex;flex-direction:column;gap:6px;}
+/* The entry rise is OPT-IN, per message. A live row is patched in place, but a
+   structural flush (ask-start, ask-done, a new message) still rebuilds the whole
+   column — so an `animation` on the bare `.ask-msg` replayed the 10px rise and
+   the fade on every message already on screen. ask-panel.mjs stamps the
+   attribute from its ledger of rows the transcript has shown before, and on
+   nothing else. */
+.ask-msg[data-ask-enter]{animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
 .ask-user-bubble{align-self:flex-end;max-width:78%;padding:10px 14px;border-radius:16px 16px 4px 16px;
   background:var(--field);color:var(--ink);font-size:13.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}
 .ask-user-pills{justify-content:flex-end;margin-top:0;}
@@ -3665,14 +3762,15 @@ body.rail-collapsed .ask-dock{left:76px;}
 /* ---------- Ask Worca dock clearance ---------- */
 /* The dock is a fixed overlay -- .ask-dock above: 26px dock padding-bottom plus the
    ~47px pill occludes a ~73px strip at the bottom of every scrollport, while the page
-   gutters reserve only 40px. One late override lifts the BOTTOM padding of all five
+   gutters reserve only 40px. One late override lifts the BOTTOM padding of all seven
    scroll gutters to --ask-dock-clearance: 96px = 73px strip + breathing room. Source
-   order is load-bearing -- this must follow the base rules at :234, :1718, :1742,
-   :2312, :2335 and precede the reduced-motion block below. The -list screen classes
-   are targeted, NOT .run-screen/.hist-screen, so the -detail scrollports keep
-   padding:0 for their sticky tab bars and take clearance via .rd-body/.hd-body
-   instead; body.view-history/.view-running .main keep padding:0 by specificity. */
-.main,.run-screen-list,.hist-screen-list,.rd-body,.hd-body{padding-bottom:var(--ask-dock-clearance);}
+   order is load-bearing -- this must follow the .main, .run-screen/.rd-body,
+   .hist-screen/.hd-body and .proj-screen/.pd-body base rules and precede the
+   reduced-motion block below. The -list screen classes are targeted, NOT
+   .run-screen/.hist-screen/.proj-screen, so the -detail scrollports keep padding:0 for
+   their sticky tab bars and take clearance via .rd-body/.hd-body/.pd-body instead;
+   body.view-history/.view-running/.view-projects .main keep padding:0 by specificity. */
+.main,.run-screen-list,.hist-screen-list,.proj-screen-list,.rd-body,.hd-body,.pd-body{padding-bottom:var(--ask-dock-clearance);}
 
 /* ---------- native control skins (checkbox / radio / switch / rows) -------- */
 /* Everything the browser used to draw for itself. The mark is the one .qopt
@@ -3849,6 +3947,7 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
      .run-shell one below. */
   .ask-dock *{animation:none !important;}
   .run-shell *{animation:none !important;}
+  .proj-shell *{animation:none !important;}
 }
 
 /* ========================================================================== */
@@ -4429,6 +4528,64 @@ input.gv-name:focus-visible{outline:none;}
 .run-strip .rchip.is-active{color:var(--c);}
 .run-strip .rchip.is-paused{color:var(--amber-ink);}
 .run-strip .rchip.is-error,.run-strip .rchip.is-stopped{color:var(--red-ink);}
+
+/* ---------- per-step artifacts (Phase 3 UI) ---------- */
+/* Run-level grouped browser (Running + History "Artifacts" tab): one card per
+   node, a step header, and clickable artifact rows. Mirrors the .rd-ag-group card
+   shell so the two detail tabs read as one system. */
+.artifact-group{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;}
+.artifact-group + .artifact-group{margin-top:14px;}
+.artifact-group-head{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:15px 20px;border-bottom:1px solid var(--line);}
+.artifact-group-head b{font-size:13.5px;font-weight:600;letter-spacing:-.01em;}
+.artifact-cycle{padding:8px 20px 0;font-size:10.5px;letter-spacing:.02em;text-transform:uppercase;color:var(--ink-3);}
+.artifact-empty{padding:18px 20px;color:var(--ink-2);}
+
+/* Per-node affordance inside an Agents-tab group card. */
+.node-artifacts{flex:0 0 100%;margin-top:8px;padding-top:8px;border-top:1px solid var(--line);}
+.artifact-toggle{appearance:none;border:1px solid var(--line-2);background:var(--field);color:var(--ink);
+  font:600 11.5px var(--sans);padding:4px 12px;border-radius:999px;cursor:pointer;}
+.artifact-toggle:hover{border-color:var(--blue);color:var(--blue-ink);}
+.artifact-toggle[aria-expanded="true"]{background:var(--blue-bg);color:var(--blue-ink);border-color:var(--blue);}
+.artifact-list{display:flex;flex-direction:column;gap:6px;margin-top:8px;}
+/* An author `display:flex` outranks the UA's `[hidden]{display:none}`, so the
+   collapsed state (`body.hidden = true` in buildNodeArtifactAffordance) must be
+   restated here or the toggle can never close the list. */
+.artifact-list[hidden]{display:none;}
+
+/* A single clickable artifact row (kind chip · name · byte size). */
+.artifact-group .artifact-row{border-top:1px solid var(--line);}
+.artifact-group-head + .artifact-row,.artifact-cycle + .artifact-row{border-top:none;}
+.artifact-row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+  appearance:none;border:none;background:transparent;cursor:pointer;
+  padding:11px 20px;font:500 12.5px var(--sans);color:var(--ink);}
+.artifact-list .artifact-row{padding:8px 12px;border:1px solid var(--line-2);border-radius:10px;background:var(--field);}
+.artifact-row:hover{background:var(--field);}
+.artifact-list .artifact-row:hover{border-color:var(--blue);}
+.artifact-kind{flex:0 0 auto;font-size:10px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;
+  padding:2px 8px;border-radius:6px;background:var(--violet-bg);color:var(--violet-ink);}
+.artifact-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.artifact-bytes{margin-left:auto;flex:0 0 auto;font-size:11px;color:var(--ink-3);}
+
+/* Typed viewers rendered into the shared #viewer modal by renderArtifact. The
+   host resets the enclosing <pre>'s white-space:pre so each viewer owns its own. */
+.artifact-view{white-space:normal;}
+.artifact-text,.artifact-json,.artifact-diff{margin:0;font-family:var(--mono);font-size:12px;line-height:1.55;
+  white-space:pre-wrap;word-break:break-word;color:var(--ink);}
+.artifact-diff{white-space:pre;overflow-x:auto;}
+.artifact-diff-line{display:block;}
+.artifact-diff-line.add{background:var(--green-bg);color:var(--green-ink);}
+.artifact-diff-line.del{background:var(--red-bg);color:var(--red-ink);}
+.artifact-diff-line.hunk{color:var(--blue-ink);background:var(--field);}
+.artifact-diff-line.meta{color:var(--ink-3);}
+.artifact-markdown{font-family:var(--sans);font-size:13.5px;line-height:1.6;color:var(--ink);}
+.artifact-markdown h1,.artifact-markdown h2,.artifact-markdown h3{line-height:1.3;margin:1em 0 .5em;}
+.artifact-markdown pre{background:var(--field);border:1px solid var(--line);border-radius:10px;
+  padding:12px;overflow-x:auto;font-family:var(--mono);font-size:12px;}
+.artifact-markdown code{font-family:var(--mono);font-size:.92em;}
+.artifact-markdown :not(pre) > code{background:var(--field);border-radius:5px;padding:1px 5px;}
+.artifact-markdown a{color:var(--blue-ink);}
+.artifact-markdown table{border-collapse:collapse;}
+.artifact-markdown th,.artifact-markdown td{border:1px solid var(--line-2);padding:5px 9px;}
 
 /* ---- Report this run modal ---- */
 /* Wider than a confirm (it carries a JSON preview), narrower than the viewer. */

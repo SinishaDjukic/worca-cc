@@ -11,13 +11,14 @@
 import { mkdir, writeFile, readFile, copyFile, readdir } from 'node:fs/promises';
 import { join, basename, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { realpathSync, existsSync } from 'node:fs';
+import { realpathSync, existsSync, statSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { projectKey, projectStorePath, canonicalProjectRoot, workspaceStorePath } from './store.mjs';
 import { listProjects } from './projects.mjs';
 import { branchExists, diffShortstat, hasGh, findPrForBranch } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
+import { memoryTotals } from './memory-sync.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -82,17 +83,27 @@ export function deleteStoreMeta(key) {
  * in plans//reviews/, siblings of pipelines/). Idempotent (INSERT OR IGNORE on the
  * (pipeline_id, kind, rel_path) PK), best-effort: a logging failure never breaks a
  * run. A null/empty path is a no-op. The pipelines row must already exist (FK).
+ * Optional per-step attribution (step_key/node_id/cycle/created_at) is stamped on
+ * the FIRST insert only — the conflict behavior stays byte-for-byte INSERT OR
+ * IGNORE (first write wins), so a re-record never clobbers an existing row's
+ * attribution. The 3-arg form still works (attr defaults to {}, columns NULL).
  * @param {string} pipelineId
  * @param {string} kind
  * @param {string} relPath
+ * @param {{stepKey?:string, nodeId?:string, cycle?:number}} [attr]
  */
-export function recordArtifact(pipelineId, kind, relPath) {
+export function recordArtifact(pipelineId, kind, relPath, attr = {}) {
   if (!pipelineId || !kind || !relPath) return;
+  const stepKey = attr.stepKey ?? null;
+  const nodeId = attr.nodeId ?? null;
+  const cycle = attr.cycle ?? null;
+  const createdAt = new Date().toISOString();
   try {
     tx(() => {
       getDb().prepare(
-        'INSERT OR IGNORE INTO artifacts (pipeline_id, kind, rel_path) VALUES (?, ?, ?)',
-      ).run(pipelineId, kind, relPath);
+        'INSERT OR IGNORE INTO artifacts (pipeline_id, kind, rel_path, step_key, node_id, cycle, created_at) '
+        + 'VALUES (?, ?, ?, ?, ?, ?, ?)',
+      ).run(pipelineId, kind, relPath, stepKey, nodeId, cycle, createdAt);
     });
   } catch { /* artifact indexing is best-effort; never break a run on it */ }
 }
@@ -109,6 +120,53 @@ export function recordArtifact(pipelineId, kind, relPath) {
 export async function listArtifacts(pipelineId) {
   return getDb().prepare('SELECT kind, rel_path FROM artifacts WHERE pipeline_id = ?')
     .all(pipelineId).map((r) => ({ kind: r.kind, relPath: r.rel_path }));
+}
+
+/**
+ * List a run's artifacts with step attribution and on-disk byte size, ordered
+ * created_at (NULLs first, so legacy rows bucket ahead) then rel_path. `bytes` is
+ * stat-ed run dir first, store root second (mirroring resolveIndexedArtifactForRow's
+ * base order); a missing file reports bytes: 0. Optional { stepKey, kind } filter.
+ * An optional `limit` caps the SQL result so the per-row statSync only runs on
+ * rows the caller keeps (pass limit+1 to detect truncation); omit it to size
+ * every row.
+ * @param {string} pipelineId
+ * @param {{stepKey?:string, kind?:string, limit?:number}} [filter]
+ * @returns {Promise<Array<{kind:string, stepKey:string|null, nodeId:string|null, cycle:number|null, relPath:string, bytes:number, createdAt:string|null}>>}
+ */
+export async function listRunArtifacts(pipelineId, filter = {}) {
+  const row = findPipelineRowById(pipelineId);
+  if (!row) return [];
+  // Query the RESOLVED id: findPipelineRowById accepts a run-dir basename/suffix
+  // (DIR_ID_RE), so `pipelineId` may not equal the stored `pipeline_id`.
+  const clauses = ['pipeline_id = ?'];
+  const args = [row.id];
+  if (filter.stepKey) { clauses.push('step_key = ?'); args.push(filter.stepKey); }
+  if (filter.kind) { clauses.push('kind = ?'); args.push(filter.kind); }
+  const hasLimit = Number.isInteger(filter.limit) && filter.limit > 0;
+  const raw = getDb().prepare(
+    `SELECT kind, rel_path, step_key, node_id, cycle, created_at FROM artifacts
+     WHERE ${clauses.join(' AND ')}
+     ORDER BY (created_at IS NULL) DESC, created_at ASC, rel_path ASC${hasLimit ? ' LIMIT ?' : ''}`,
+  ).all(...args, ...(hasLimit ? [filter.limit] : []));
+  const isWs = row.target === 'workspace' || !!row.workspace_key;
+  const storeRoot = isWs ? workspaceStorePath(row.workspace_key) : projectStorePath(row.project_key);
+  const runDir = await runDirForRow(row);
+  const sizeOf = (rel) => {
+    for (const base of [runDir, storeRoot]) {
+      try { return statSync(join(base, rel)).size; } catch { /* try next base */ }
+    }
+    return 0;
+  };
+  return raw.map((r) => ({
+    kind: r.kind,
+    stepKey: r.step_key ?? null,
+    nodeId: r.node_id ?? null,
+    cycle: r.cycle ?? null,
+    relPath: r.rel_path,
+    bytes: sizeOf(r.rel_path),
+    createdAt: r.created_at ?? null,
+  }));
 }
 
 /**
@@ -536,6 +594,32 @@ export function updatePhaseStatus(pipelineId, ordinal, status, ts) {
       `).run(status, startedCol, finishedCol, pipelineId, Number(ordinal));
     });
   } catch { /* best-effort */ }
+}
+
+/**
+ * Aggregate live run progress from the existing readers. Free-text fields
+ * (titles, review summaries, question/answer text) are redacted by the caller,
+ * not here — this is a pure data assembler. Returns null for an unknown run.
+ * @param {string} pipelineId
+ * @returns {Promise<null | {runId:string, phase:string|null, status:string|null, phases:Array, tasks:Array, clarify:object, reviews:Array, stepQuestions:Array}>}
+ */
+export async function readRunProgress(pipelineId) {
+  const row = findPipelineRowById(pipelineId);
+  if (!row) return null;
+  // Read against the RESOLVED id — `pipelineId` may be a run-dir basename/suffix
+  // (findPipelineRowById's DIR_ID_RE) that no downstream table keys on.
+  const id = row.id;
+  const extras = readPipelineExtras(id);
+  return {
+    runId: row.id,
+    phase: row.phase ?? null,
+    status: row.status ?? null,
+    phases: listPhases(id),
+    tasks: listTasks(id),
+    clarify: extras.clarify,
+    reviews: extras.reviews,
+    stepQuestions: extras.stepQuestions,
+  };
 }
 
 /**
@@ -1139,6 +1223,22 @@ export function persistPrState(pipelineId, pr) {
 }
 
 /**
+ * Last persisted PR facts for a pipeline (spec §6.8), or null when none were
+ * ever observed. Read by the later PR lookups so a cross-repo PR (which lives in
+ * the base repo, not the cwd's default) is resolved by URL instead of by branch.
+ * The resolved `state` (rowToState) deliberately omits pr_* — use this instead.
+ * @param {string} pipelineId
+ * @returns {{ url:string, number:(number|null), state:string }|null}
+ */
+export function readPrState(pipelineId) {
+  if (!pipelineId) return null;
+  try {
+    const row = getDb().prepare('SELECT pr_url, pr_number, pr_state FROM pipelines WHERE id = ?').get(pipelineId);
+    return row && row.pr_url ? { url: row.pr_url, number: row.pr_number ?? null, state: row.pr_state ?? 'OPEN' } : null;
+  } catch { return null; }
+}
+
+/**
  * The status a stale (crashed/killed) run is reconciled to. Distinct from a user
  * 'stopped' and a real 'error': the owning process died before Orchestrator.run()'s
  * catch/finally could write a terminal status, so the row was frozen at 'running'.
@@ -1532,7 +1632,10 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
   // unavailable we still set pr:null (the field is present whenever requested), so
   // callers can distinguish "looked, none" from "did not look".
   if (opts.withPr && repoDir && feature) {
-    entry.pr = (await hasGh()) ? await findPrForBranch({ projectDir: repoDir, head: feature }) : null;
+    // pr_url first (repo-agnostic view); the branch search only for rows with no PR yet.
+    entry.pr = (await hasGh())
+      ? await findPrForBranch({ projectDir: repoDir, head: feature, prUrl: row.pr_url || null })
+      : null;
   }
   return entry;
 }
@@ -1574,7 +1677,7 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
     SELECT id, project_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
-           branch, workspace_meta, guardrails_id,
+           branch, workspace_meta, guardrails_id, pr_url,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail
     FROM pipelines
@@ -1603,7 +1706,7 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
 export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
-           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id,
+           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, pr_url,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail
     FROM pipelines
@@ -1700,7 +1803,8 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
   for (let i = 0; i < targets.length; i += batchSize) {
     const slice = targets.slice(i, i + batchSize);
     const items = await Promise.all(slice.map(async (r) => {
-      const pr = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch })) || null;
+      const prUrl = readPrState(r.id)?.url || null;
+      const pr = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl })) || null;
       if (pr) persistPrState(r.id, pr);   // positive observations only (null never clears)
       return { projectKey: r.projectKey, id: r.id, pr };
     }));
@@ -2055,8 +2159,19 @@ export async function readPipelineByKey(key, id) {
     artifacts: await listArtifacts(row.id), // [{kind, relPath}] — drives the Live-logs dropdown (project + workspace)
     results,
     overview,
+    memory: await readMemoryLedger(dir),
     ...readPipelineExtras(row.id),
   };
+}
+
+/** A run's memory ledger (<runDir>/memory.json, agent-memory P1 amendment A2) as
+ *  { mount, changes, totals }, or null when the run wrote none. The ONE reader: the History
+ *  detail above serves it whole, ask/tool-deps.mjs' readRunMemory serves get_run the
+ *  changes + totals (never the mount path). Read-only, null on any failure. */
+export async function readMemoryLedger(dir) {
+  const ledger = await readJsonFile(join(dir, 'memory.json'));
+  if (!ledger || !Array.isArray(ledger.changes)) return null;
+  return { mount: ledger.mount || null, changes: ledger.changes, totals: memoryTotals(ledger.changes) };
 }
 
 /** Local helper: read + JSON-parse a file, null on any failure. */

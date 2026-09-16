@@ -30,7 +30,7 @@ const base = (over = {}) => ({ taskText: 'Build the thing', models: MODELS, regi
 
 test('agentVocabulary: placeable project agents in registry order; sidecar + frontmatter both labelled; tools folded; body never read', () => {
   const v = agentVocabulary(REG);
-  assert.deepEqual(v.map((a) => a.key), ['clarify', 'planner', 'refiner', 'decomposer', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer']);
+  assert.deepEqual(v.map((a) => a.key), ['clarify', 'planner', 'refiner', 'decomposer', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer', 'memoryDefragmenter']);
   assert.ok(!v.some((a) => a.key === 'workspaceScanner' || a.key === 'workspaceReviewer'), 'placeable:false and workspace-only are out');
   const web = v.find((a) => a.key === 'manualWebUiTesting');
   assert.equal(web.verifier, true);

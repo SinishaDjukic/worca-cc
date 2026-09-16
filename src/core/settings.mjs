@@ -277,6 +277,67 @@ export function contextMaxBytesTotal() {
   return readByteCap('contextMaxBytesTotal', DEFAULT_CONTEXT_MAX_BYTES_TOTAL);
 }
 
+// ── Agent memory caps (agent-memory-design.md §2 / §12) ─────────────────────
+export const DEFAULT_MEMORY_SOFT_BYTES_PER_FILE = 8192;    // flagged in health above this
+export const DEFAULT_MEMORY_HARD_BYTES_PER_FILE = 32768;   // rejected at sync-back / write above this
+export const DEFAULT_MEMORY_MAX_FILES_PER_SCOPE = 50;
+export const DEFAULT_MEMORY_HOOK_MAX_CHARS = 160;
+
+export const DEFAULT_MEMORY_DEFRAG_WRITES = 10;     // writesSinceDefrag at which a scope is "due"
+export const DEFAULT_MEMORY_DEFRAG_FILES = 30;      // file count at which a scope is "due"
+export const DEFAULT_MEMORY_DEFRAG_BYTES_PCT = 60;  // % of (maxFilesPerScope × softBytesPerFile) at which a scope is "due"
+export const DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES = 16384;  // bytes of path-less memory (loaded into EVERY agent's context) at which a scope is "due"
+
+/** settings.json → { memory: { maxBytesPerFile, softBytesPerFile, maxFilesPerScope, hookMaxChars,
+ *  defrag: { writes, files, bytesPct, alwaysOnBytes } } }. Every key optional; a bad value warns (naming the full key) and falls back. */
+function memoryBlock() {
+  const block = readSettings().memory;
+  return block && typeof block === 'object' && !Array.isArray(block) ? block : {};
+}
+function readMemoryCap(key, fallback) {
+  const v = memoryBlock()[key];
+  if (v === undefined) return fallback;
+  if (isByteCap(v)) return v;
+  console.warn(`[worca] invalid memory.${key} ${JSON.stringify(v)} — using ${fallback}`);
+  return fallback;
+}
+let warnedDefragBlock = false;   // module-level: the reader runs once per threshold key, the block is one mistake
+/** `memory.defrag.<key>`: a positive integer; `bytesPct` additionally ≤ 100 (it is a share).
+ *  A `defrag` that is not a plain object is one mistake, not three: warn ONCE and fall back. */
+function readDefragThreshold(key, fallback, { pct = false } = {}) {
+  const d = memoryBlock().defrag;
+  const isBlock = Boolean(d) && typeof d === 'object' && !Array.isArray(d);
+  if (d !== undefined && !isBlock) {
+    if (!warnedDefragBlock) {
+      warnedDefragBlock = true;
+      console.warn(`[worca] invalid memory.defrag ${JSON.stringify(d)} — using the defaults`);
+    }
+    return fallback;
+  }
+  const v = isBlock ? d[key] : undefined;
+  if (v === undefined) return fallback;
+  if (isByteCap(v) && (!pct || v <= 100)) return v;
+  console.warn(`[worca] invalid memory.defrag.${key} ${JSON.stringify(v)} — using ${fallback}`);
+  return fallback;
+}
+
+/** The caps every memory reader/writer takes (memory-store.mjs, memory-sync.mjs). Read fresh per call.
+ *  `defrag` is the health threshold block (agent-memory-design.md §8 / §12). */
+export function memoryCaps() {
+  return {
+    softBytesPerFile: readMemoryCap('softBytesPerFile', DEFAULT_MEMORY_SOFT_BYTES_PER_FILE),
+    hardBytesPerFile: readMemoryCap('maxBytesPerFile', DEFAULT_MEMORY_HARD_BYTES_PER_FILE),
+    maxFilesPerScope: readMemoryCap('maxFilesPerScope', DEFAULT_MEMORY_MAX_FILES_PER_SCOPE),
+    hookMaxChars: readMemoryCap('hookMaxChars', DEFAULT_MEMORY_HOOK_MAX_CHARS),
+    defrag: {
+      writes: readDefragThreshold('writes', DEFAULT_MEMORY_DEFRAG_WRITES),
+      files: readDefragThreshold('files', DEFAULT_MEMORY_DEFRAG_FILES),
+      bytesPct: readDefragThreshold('bytesPct', DEFAULT_MEMORY_DEFRAG_BYTES_PCT, { pct: true }),
+      alwaysOnBytes: readDefragThreshold('alwaysOnBytes', DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES),
+    },
+  };
+}
+
 /** Skill delivery mechanism (§5.6): 'copy' (default, isolated) | 'symlink' (write-through). */
 export function skillMount() {
   const v = readSettings().skillMount;

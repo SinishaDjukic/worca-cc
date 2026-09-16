@@ -365,11 +365,13 @@ const fake = {
 };
 const tools = createAskTools(fake);
 
-test('list(): eighteen tools with JSON-Schema inputs', () => {
+test('list(): twenty-five tools with JSON-Schema inputs', () => {
   const defs = tools.list();
   assert.deepEqual(defs.map((d) => d.name), ['list_projects', 'list_workflows', 'list_runs', 'get_run', 'get_run_diff', 'track_run', 'propose_run', 'propose_workflow', 'read_attachment',
     'list_diff_comments', 'add_diff_comment', 'reply_to_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
-    'open_worktree', 'list_worktrees', 'remove_worktree', 'git']);
+    'open_worktree', 'list_worktrees', 'remove_worktree', 'git',
+    'list_run_artifacts', 'read_run_artifact', 'get_run_progress',
+    'list_memory', 'read_memory', 'remember', 'forget']);
   for (const d of defs) {
     assert.ok(typeof d.description === 'string' && d.description.length > 20, `${d.name} description`);
     assert.equal(d.inputSchema.type, 'object');
@@ -702,6 +704,14 @@ test('propose_run refuses commentIds from another project and says so', async ()
     'unknown ids stay tolerated — only a WRONG-target id is an error');
 });
 
+test('get_run: carries memory only when the run has a ledger with changes', async () => {
+  const withMem = createAskTools({ ...fake, readRunMemory: async (row) => (row.id === '4e1f2a9b' ? { changes: [{ nodeId: 'n', added: [{ scope: 'global', name: 'x' }], modified: [], deleted: [], rejected: [] }], totals: { added: 1, modified: 0, deleted: 0, rejected: 0 } } : null) });
+  const a = await withMem.call('get_run', { id: '4e1f2a9b', projectKey: 'demo-00000001' });
+  assert.deepEqual(a.memory.totals, { added: 1, modified: 0, deleted: 0, rejected: 0 });
+  const b = await withMem.call('get_run', { id: '8c3d12ab' });
+  assert.equal('memory' in b, false, 'no ledger ⇒ no key (the row-only shape is unchanged)');
+});
+
 // ── real readers on a temp home ──────────────────────────────────────────────
 test('temp home: a seeded project run and a seeded workspace run round-trip through the real deps', async () => {
   const projectDir = mkdtempSync(join(tmpdir(), 'worca-ask-tools-proj-'));
@@ -735,6 +745,17 @@ test('temp home: a seeded project run and a seeded workspace run round-trip thro
   assert.equal(run.branch, 'worca-cc/seeded');
   assert.equal(run.sourceBranch, 'main');
   assert.equal(run.hasDiff, true);
+  // Agent memory (§6): the REAL readRunMemory over the run dir's memory.json, through the ONE
+  // ledger reader artifacts.mjs exports. No file, and a ledger with no changes, both mean "no key".
+  assert.equal('memory' in run, false, 'no ledger ⇒ the row-only shape is unchanged');
+  await writeFile(join(seeded.dir, 'memory.json'), JSON.stringify({ mount: '/tmp/x/memory', dirs: [], baseline: {}, changes: [] }), 'utf8');
+  assert.equal('memory' in (await real.call('get_run', { id: seeded.id })), false, 'an empty ledger is not a memory section');
+  await writeFile(join(seeded.dir, 'memory.json'), JSON.stringify({ mount: '/tmp/x/memory', dirs: [], baseline: {},
+    changes: [{ nodeId: 'n_defrag', added: [{ scope: 'global', name: 'style' }], modified: [{ scope: 'project', name: 'conventions' }], deleted: [], rejected: [] }] }), 'utf8');
+  const withMemory = await real.call('get_run', { id: seeded.id });
+  assert.deepEqual(withMemory.memory.totals, { added: 1, modified: 1, deleted: 0, rejected: 0 });
+  assert.deepEqual(withMemory.memory.changes[0].added, [{ scope: 'global', name: 'style' }]);
+  assert.equal('mount' in withMemory.memory, false, 'the mount path never reaches the model');
   const diff = await real.call('get_run_diff', { id: seeded.id, projectKey: project.key });
   assert.deepEqual(diff.files.map((f) => f.path), ['src/app.js', 'docs/notes.md']);
   const wsRun = await real.call('get_run', { id: wsSeed.id, workspaceId: 'wks-team-0000abcd' });
@@ -761,6 +782,59 @@ test('temp home: a seeded project run and a seeded workspace run round-trip thro
   const proposal = await real.call('propose_run', { projectKey: project.key, brief: 'Add a badge' });
   assert.equal(proposal.ok, true);
   assert.equal(proposal.card.projectKey, project.key);
+});
+
+// ── run-artifact + progress tools over the real readers ──────────────────────
+test('list_run_artifacts / read_run_artifact / get_run_progress over real deps', async () => {
+  const { recordArtifact, writeDecomposition, listRunArtifacts } = await import('../src/core/artifacts.mjs');
+  const { writeFileSync, mkdirSync } = await import('node:fs');
+  const projectDir = mkdtempSync(join(tmpdir(), 'worca-ask-art-proj-'));
+  await addProject({ name: 'artdemo', path: projectDir });
+  const seeded = await seedPipeline(projectDir, { title: 'Art run', status: 'done', phase: 'review' });
+  writeFileSync(join(seeded.dir, 'plan.md'), '# Plan\ncover feature X\n');
+  mkdirSync(join(seeded.dir, 'extras'), { recursive: true });
+  writeFileSync(join(seeded.dir, 'extras', 'notes.txt'), 'hi');
+  recordArtifact(seeded.id, 'plan', 'plan.md', { stepKey: 'exec-1', nodeId: 'planner', cycle: 0 });
+  recordArtifact(seeded.id, 'extra', 'extras/notes.txt', { stepKey: 'exec-2', nodeId: 'refiner', cycle: 1 });
+  writeDecomposition(seeded.id, [{ ordinal: 0, tasks: [{ id: 't1', title: 'leak ghp_abcdefghijklmnopqrstuvwxyz0123456789', file: 'x', nodeId: 'n' }] }]);
+
+  const thread = createThread();
+  const real = createAskTools(defaultToolDeps({ threadId: thread.id }));
+
+  // list_run_artifacts: shape, filter, limit
+  const listed = await real.call('list_run_artifacts', { runId: seeded.id });
+  const plan = listed.artifacts.find((a) => a.relPath === 'plan.md');
+  assert.ok(plan, 'plan.md listed');
+  assert.equal(plan.stepKey, 'exec-1');
+  assert.equal(plan.nodeId, 'planner');
+  assert.equal(plan.cycle, 0);
+  assert.equal(typeof plan.bytes, 'number');
+  assert.ok('createdAt' in plan);
+  assert.equal((await real.call('list_run_artifacts', { runId: seeded.id, kind: 'plan' })).artifacts.length, 1);
+  assert.equal((await real.call('list_run_artifacts', { runId: seeded.id, stepKey: 'exec-2' })).artifacts.length, 1);
+  // plan + extra above, plus the prompt.md row seedPipeline indexes — nothing transient
+  assert.deepEqual(listed.artifacts.map((a) => a.kind).sort(), ['extra', 'plan', 'prompt']);
+  const capped = await real.call('list_run_artifacts', { runId: seeded.id, limit: 1 });
+  assert.equal(capped.artifacts.length, 1);
+  assert.equal(capped.truncated, true);
+
+  // read_run_artifact: indexed read, plus refusal of unindexed / traversing paths
+  const read = await real.call('read_run_artifact', { runId: seeded.id, relPath: 'plan.md' });
+  assert.match(read.text, /cover feature X/);
+  assert.equal(read.relPath, 'plan.md');
+  await assert.rejects(() => real.call('read_run_artifact', { runId: seeded.id, relPath: '../escape.md' }),
+    { message: 'read_run_artifact: artifact not found' });
+  await assert.rejects(() => real.call('read_run_artifact', { runId: seeded.id, relPath: 'nope.md' }),
+    { message: 'read_run_artifact: artifact not found' });
+
+  // get_run_progress: shape + free-text redaction of a task title
+  const prog = await real.call('get_run_progress', { runId: seeded.id });
+  assert.equal(prog.runId, seeded.id);
+  assert.equal(prog.status, 'done');
+  assert.ok(Array.isArray(prog.phases) && Array.isArray(prog.tasks));
+  assert.ok(prog.clarify && Array.isArray(prog.reviews) && Array.isArray(prog.stepQuestions));
+  const t1 = prog.tasks.find((t) => t.id === 't1');
+  assert.doesNotMatch(t1.title, /ghp_abcdefghijklmnopqrstuvwxyz0123456789/, 'task title redacted');
 });
 
 test('source scan: tools.mjs issues no writes and never touches db.mjs; tool-deps.mjs only reads', () => {

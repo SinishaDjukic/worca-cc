@@ -381,7 +381,8 @@ test('buildRestoredPrompt: newest messages first within the cap, chronological o
 // are pinned by substring here so a future edit cannot drop them.
 test('the prompt advertises the worktree tools and the native file tools, and the sandbox note names both', () => {
   for (const t of ['open_worktree', 'list_worktrees', 'remove_worktree', 'propose_run',
-    'list_diff_comments', 'add_diff_comment', 'reply_to_diff_comment', 'resolve_diff_comment', 'delete_diff_comment']) {
+    'list_diff_comments', 'add_diff_comment', 'reply_to_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
+    'list_memory', 'read_memory', 'remember', 'forget']) {
     assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 1 enumerates ${t}`);
   }
   // Rule 9 itself, not the whole blob: the loop above already guarantees the tool
@@ -406,6 +407,7 @@ test('the prompt advertises the worktree tools and the native file tools, and th
   assert.ok(SANDBOX_NOTE.includes('read_attachment'), '#398: sub-agents learn the one Read target outside a worktree');
   assert.ok(!SANDBOX_NOTE.includes('never elsewhere on disk'), 'the worktree-only wording that contradicted rules 6/7 is gone');
   assert.ok(!SANDBOX_NOTE.includes('cannot read files'), 'the git-only wording is gone');
+  assert.ok(SANDBOX_NOTE.includes('Never call remember or forget'), 'sub-agents never write memory');
 });
 
 // The workflow pick is the assistant's one real decision before propose_run, and the
@@ -440,7 +442,7 @@ test('rule 4 asks the four sizing questions, answers with the smallest workflow,
   assert.ok(!ASK_SYSTEM_RULES.includes('over- or under-powered'), 'the "propose the closest one" fallback is gone');
   assert.ok(!ASK_SYSTEM_RULES.includes('propose the closest one'), 'the "propose the closest one" fallback is gone');
   assert.ok(ASK_SYSTEM_RULES.includes('why this workflow fits the work (rule 4)'), 'rule 3 still points at rule 4 for the note');
-  assert.ok(!/\n\s*13\./.test(ASK_SYSTEM_RULES), 'the rules still stop at 12');
+  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*14\./.test(ASK_SYSTEM_RULES), 'the rules stop at 13');
 });
 
 // The chat often explores before it proposes (a worktree, a run diff, comments), but
@@ -456,7 +458,7 @@ test('rule 10 distils exploration findings into the brief, anchored and marked',
     assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 10 states "${t}"`);
   }
   assert.ok(ASK_SYSTEM_RULES.includes('(rule 10)'), 'rule 3 points at it where the brief is written');
-  assert.ok(!/\n\s*13\./.test(ASK_SYSTEM_RULES), 'the rules stop at 12 (renumbering would break these pins)');
+  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*14\./.test(ASK_SYSTEM_RULES), 'the rules stop at 13');
 });
 
 // ── #397: the explicit project selector ──────────────────────────────────────
@@ -521,15 +523,36 @@ test('#397: a pinned scope renders the [pinned by the user] marker on the scope 
   assert.ok(!buildContextHeader({ ...CTX, pinned: false }).includes('[pinned by the user]'), 'explicit Auto is unchanged too');
 });
 
-test('rule 3 asks for the note and the attachmentIds hand-off; rules still stop at 12', () => {
+test('rule 3 asks for the note and the attachmentIds hand-off; rules still stop at 13', () => {
   for (const t of ['one-line note', 'attachmentIds', 'extra files', '(rule 10)']) assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 3 states "${t}"`);
-  assert.ok(!/\n\s*13\./.test(ASK_SYSTEM_RULES));
+  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*14\./.test(ASK_SYSTEM_RULES), 'the rules stop at 13');
 });
 
-test('track_run: named in rule 1, guided in rule 5, and the rules still stop at 12', () => {
+test('track_run: named in rule 1, guided in rule 5, and the rules still stop at 13', () => {
   const rule1 = ASK_SYSTEM_RULES.slice(ASK_SYSTEM_RULES.indexOf('\n1. '), ASK_SYSTEM_RULES.indexOf('\n2. '));
   assert.ok(rule1.includes('get_run_diff, track_run, read_attachment'), 'listed among the read tools');
   const rule5 = ASK_SYSTEM_RULES.slice(ASK_SYSTEM_RULES.indexOf('\n5. '), ASK_SYSTEM_RULES.indexOf('\n6. '));
   for (const t of ['call track_run once', 'live progress card', 'do not restate']) assert.ok(rule5.includes(t), t);
-  assert.ok(!/\n\s*13\./.test(ASK_SYSTEM_RULES));
+  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*14\./.test(ASK_SYSTEM_RULES), 'the rules stop at 13');
+});
+
+test('rule 13 (memory): the files are loaded as rules, saves only durable preferences, never an agent key, never the context tags', () => {
+  const rule13 = ASK_SYSTEM_RULES.slice(ASK_SYSTEM_RULES.indexOf('\n13. '));
+  for (const t of ['loaded into this session as rules', 'read_memory', 'remember', 'forget', 'one file per topic', 'global for how the user works', 'project for facts about one repository',
+    'say in one line what you saved', 'Never store secrets', 'run-specific progress', 'forget only when the user asks', 'Memory defragment',
+    'loads from the next turn on', 'propose it only when the user asks to clean up, merge or defragment memory']) {
+    assert.ok(rule13.includes(t), `rule 13 states "${t}"`);
+  }
+  assert.ok(!rule13.includes('[worca context]'));
+  for (const key of ['implementer', 'planner', 'refiner', 'reviewer', 'clarify', 'decomposer']) assert.ok(!rule13.includes(key), key);
+  const rule1 = ASK_SYSTEM_RULES.slice(ASK_SYSTEM_RULES.indexOf('\n1. '), ASK_SYSTEM_RULES.indexOf('\n2. '));
+  assert.ok(rule1.includes('git, list_memory, read_memory, remember, forget)'), 'the memory tools close rule 1\'s list');
+  assert.ok(rule1.includes('get_run_diff, track_run, read_attachment'), 'the pinned substring survives');
+});
+
+test('buildSystemPrompt: rules + catalog only — no memory block, byte-stable under permutation', () => {
+  const plain = buildSystemPrompt(CATALOG);
+  assert.ok(plain.startsWith(ASK_SYSTEM_RULES));
+  assert.ok(!plain.includes('## Worca memory'), 'the prompt carries no memory block — the files load natively');
+  assert.equal(buildSystemPrompt({ ...CATALOG, workflows: [...CATALOG.workflows].reverse() }), plain);
 });

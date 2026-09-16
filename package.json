@@ -51,7 +51,8 @@
     "verify:composer": "node --disable-warning=ExperimentalWarning scripts/verify-composer-cdp.mjs",
     "verify:run-monitor": "node --disable-warning=ExperimentalWarning scripts/verify-run-monitor-cdp.mjs",
     "verify:theme": "node --disable-warning=ExperimentalWarning scripts/verify-theme-cdp.mjs",
-    "test": "rm -rf .worca-cc-test && PATH=\"$PWD/test/helpers/no-real-claude:$PATH\" WORCA_HOME=.worca-cc-test node --disable-warning=ExperimentalWarning --test test/*.mjs; s=$?; node test/helpers/no-real-claude/assert-none.mjs || s=1; exit $s"
+    "verify:memory": "node --disable-warning=ExperimentalWarning scripts/verify-memory-cdp.mjs",
+    "test": "rm -rf .worca-cc-test && PATH=\"$PWD/test/helpers/no-real-claude:$PATH\" WORCA_HOME=.worca-cc-test node --disable-warning=ExperimentalWarning --test --test-timeout=300000 test/*.mjs; s=$?; node test/helpers/no-real-claude/assert-none.mjs || s=1; exit $s"
   },
   "dependencies": {
     "@highlightjs/cdn-assets": "11.12.0",

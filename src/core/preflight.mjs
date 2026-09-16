@@ -322,9 +322,8 @@ export async function detectToolsPerProject(projectDirs) {
  * required version >= 2.1.220) rather than failing the run: R1(a)/(c) still hold via
  * the cwd and ancestor mechanisms, and R1(b) is reported as DEGRADED.
  *
- * Deliberately NO `addDir` field: `--add-dir` is not probed because no shipped
- * feature uses it (§5.3 — it needs `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`
- * to carry memory at all, E2), and a probe field no consumer reads is dead weight.
+ * No `addDir` preflight probe: Ask Worca's memory mount passes `--add-dir`
+ * (claude-runner `addDirs`), verified by the 2026-09-13 rules probe, not by preflight.
  *
  * Never throws: a missing binary / hung process resolves to
  * `{ mcpConfig: false, version: null }`, which the caller treats the same as an old

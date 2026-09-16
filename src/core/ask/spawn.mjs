@@ -10,6 +10,9 @@
 //    `result` frames); CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 restores the
 //    foreground shape. It rides modelEnv: merged last over the scrubbed env,
 //    CLAUDE_-prefixed (survives scrub), not a reserved key.
+//  - --add-dir <base> + CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 loads <base>/.claude/rules/**
+//    (2.1.270, 2026-09-13); without the override the CLI loaded them under `--setting-sources project`
+//    alone (V1) but not under the default sources (V2/V4) — keep the documented override.
 //  - `--tools <list>` keeps ONLY the named built-ins (Task,Read,Grep,Glob — no
 //    Bash/Write/Edit exist); MCP tools survive; `--allowedTools <list>,mcp__worca`
 //    under dontAsk runs them without prompting; a deny rule wins over everything.
@@ -58,6 +61,10 @@ export const ASK_DENY_RULES = Object.freeze([
   'Read(~/.config/gh/**)',
 ]);
 export const ASK_SPAWN_ENV = Object.freeze({ CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' });
+// Native-rules revision: the CLI loads `<dir>/.claude/rules` from an --add-dir only under this
+// override (probes J/J2, 2.1.270; the E2 note in claude-runner.mjs). CLAUDE_-prefixed ⇒ survives
+// the scrub, not a reserved key.
+export const ASK_MEMORY_ENV = Object.freeze({ CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1' });
 
 /**
  * The per-thread Read allow rules: the chat's worktrees (P4 §6) and its stored
@@ -83,6 +90,7 @@ export const SANDBOX_NOTE =
   "The only view into a repository is this chat's read-only detached worktrees: list_worktrees/open_worktree give the path; Read, Grep and Glob work under that path, and the worca `git` tool serves history and diffs. " +
   'The one other place Read may go is the file path read_attachment returns for an image or PDF attachment of this chat; never read anywhere else on disk. ' +
   "Never call propose_workflow or propose_run yourself: proposals belong to the assistant's own turn (a sub-agent's call produces no card). " +
+  "Never call remember or forget yourself: saving or removing memory belongs to the assistant's own turn (list_memory and read_memory are fine). " +
   'Answer from tool results only; never invent run data; return a short report.';
 
 /** System-prompt-only mock markers (the runner parses the ask role from the SYSTEM prompt, Task 16). */
@@ -97,9 +105,10 @@ export function buildMockMarkers(card) {
  * @param {{maxTurns:number, maxBudgetUsd:number|null}} o.limits   from askLimits()
  * @param {string} o.mcpConfigPath   the per-turn mcp-<assistantMessageId>.json
  * @param {string} o.scratchDir      join(worcaHome(), 'tmp', 'ask') — ONE empty dir for all threads, never the home
+ * @param {string|null} [o.memoryDir]  refreshAskMemoryMount's base for this turn's scope set; null ⇒ no memory (empty store)
  * @returns {object} runClaude options
  */
-export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpConfigPath, scratchDir } = {}) {
+export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpConfigPath, scratchDir, memoryDir = null } = {}) {
   if (!scratchDir) throw new Error('buildAskSpawnOptions: scratchDir is required');
   if (!mcpConfigPath) throw new Error('buildAskSpawnOptions: mcpConfigPath is required');
   const systemPrompt = String(turn.systemPrompt ?? '') + (turn.mock ? buildMockMarkers(turn.mock.card) : '');
@@ -109,7 +118,7 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
     systemPrompt,
     model: turn.model,
     effort: turn.effort,
-    modelEnv: { ...(turn.modelEnv || {}), ...ASK_SPAWN_ENV },
+    modelEnv: { ...(turn.modelEnv || {}), ...ASK_SPAWN_ENV, ...(memoryDir ? ASK_MEMORY_ENV : {}) },
     permissionMode: ASK_PERMISSION_MODE,
     allowedTools: [...ASK_BUILTIN_TOOLS],
     mcpServerGrants: [...ASK_MCP_GRANTS],
@@ -129,6 +138,7 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
     maxTurns: limits.maxTurns,
     maxBudgetUsd: limits.maxBudgetUsd ?? null,
     appendSubagentSystemPrompt: SANDBOX_NOTE,
+    addDirs: memoryDir ? [memoryDir] : undefined,
     signal: turn.signal,
     onEvent: turn.onEvent,
   };

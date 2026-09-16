@@ -661,6 +661,7 @@ export class GraphOrchestrator extends RunHarness {
         }
         : null,
       guardrailsId: this.guardrailsId,
+      memoryScope: this.memoryScope || null,   // agent memory §7.3: a paused defrag resumes with ONE scope (B10)
       checkpointRef: this.checkpointRef || null,
       checkpointRefs: { ...this.checkpointRefs },
       workspace: this.isWorkspace ? { projects: this._workspaceProjects() } : null,
@@ -750,7 +751,7 @@ export class GraphOrchestrator extends RunHarness {
       // in P6 serves exactly what listArtifacts() carries).
       if (payload.result?.path) {
         this._artifact('result', payload.result.path, {
-          nodeId: payload.nodeId, executionId: payload.executionId, port: null,
+          nodeId: payload.nodeId, executionId: payload.executionId, port: null, cycle: null,
         });
       }
     }
@@ -1006,6 +1007,8 @@ export class GraphOrchestrator extends RunHarness {
       pipelineId: this.pipeline.id,
       taskPrompt: this.pipeline.promptText,
       toolInstruction: this.toolInstruction,
+      memoryBlock: this.memoryBlock || '',              // §4.3: the pointer block, rendered once per mount
+      memoryMount: this.memory?.mount || null,          // absolute mount dir: <runCwd>/.claude/rules/worca (tests + the defrag mock read it)
       agentPrompts: this.agentPrompts,
       checkpointRef: this.checkpointRef,
       workspace: this.isWorkspace ? this._workspaceChannel() : undefined,
@@ -1235,9 +1238,11 @@ export class GraphOrchestrator extends RunHarness {
       if (!path || seen.has(path)) continue;
       seen.add(path);
       this._artifact(port.artifactKind || port.id, path, {
-        nodeId: ctx.nodeId, executionId: ctx.executionId, port: port.id,
+        nodeId: ctx.nodeId, executionId: ctx.executionId, port: port.id, cycle: ctx.ordinal,
       });
     }
+    // Agent memory (§5): sync the mount back after EVERY execution, slices included.
+    await this._syncMemory(nc, ctx);
     if (nc.meta?.sideEffect === 'code' && !ctx.slice) await this._stageWorkingTree();
   }
 
@@ -1313,7 +1318,7 @@ export class GraphOrchestrator extends RunHarness {
       await writeStepQuestions(this.pipeline.id, stepKey, round, {
         agentKey: nc.key, nodeId: ctx.nodeId, questions: { questions },
       });
-      this._artifact('questions', qPath, { nodeId: ctx.nodeId, executionId: ctx.executionId, port: null });
+      this._artifact('questions', qPath, { nodeId: ctx.nodeId, executionId: ctx.executionId, port: null, cycle: ctx.ordinal });
       await appendAudit(this.pipeline.dir, `${agentLabel} asked ${questions.length} question(s) (round ${round}).`).catch(() => {});
       const payload = await this._enqueueAsk(() => this._ask({
         id: `questions-${stepKey}-r${round}`,
