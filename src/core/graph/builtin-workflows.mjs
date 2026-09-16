@@ -67,3 +67,35 @@ export const AUTO_WORKFLOW_STUB = deepFreeze({
   createdAt: '1970-01-01T00:00:00.000Z',
   updatedAt: '1970-01-01T00:00:00.000Z',
 });
+
+/** The Memory defragment workflow (agent-memory-design.md §7.2): one agent node between the
+ *  task and End. Reserved like wf_default — never a row, read through readWorkflow, hidden
+ *  from listWorkflows, undeletable, opened read-only in the composer. A run of it needs the
+ *  `memoryScope` option (memory-sync.mjs validateMemoryScope). */
+export const MEMORY_DEFRAG_WORKFLOW_ID = 'wf_memory_defrag';
+export const MEMORY_DEFRAG_WORKFLOW_NAME = 'Memory defragment';
+export const GRAPH_MEMORY_DEFRAG_WORKFLOW = deepFreeze({
+  id: MEMORY_DEFRAG_WORKFLOW_ID,
+  name: MEMORY_DEFRAG_WORKFLOW_NAME,
+  version: 2,
+  domain: 'shared',
+  createdAt: '1970-01-01T00:00:00.000Z',
+  updatedAt: '1970-01-01T00:00:00.000Z',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+    { id: 'n_defrag', kind: 'agent', key: 'memoryDefragmenter', x: 320, y: 200, config: {} },
+    { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_defrag', port: 'task' } },
+    { id: 'w2', from: { node: 'n_defrag', port: 'report' }, to: { node: 'n_end', port: 'result' } },
+  ],
+});
+
+/** The ids no saved row may claim: writeGraphWorkflow re-mints them, listWorkflows hides them,
+ *  DELETE refuses them. Order is NOT significant — GET /api/workflows and the Ask catalog list
+ *  the graph built-ins in their own fixed order (Default, then Memory defragment).
+ *  NOTE: `ui/public/graph/composer.mjs` keeps a twin of this list as a `Set` (`.has`), not an
+ *  Array (`.includes`) — the two are not interchangeable. */
+export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID]);
+export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id); }

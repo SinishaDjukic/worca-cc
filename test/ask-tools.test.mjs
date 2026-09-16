@@ -365,12 +365,13 @@ const fake = {
 };
 const tools = createAskTools(fake);
 
-test('list(): twenty-one tools with JSON-Schema inputs', () => {
+test('list(): twenty-five tools with JSON-Schema inputs', () => {
   const defs = tools.list();
   assert.deepEqual(defs.map((d) => d.name), ['list_projects', 'list_workflows', 'list_runs', 'get_run', 'get_run_diff', 'track_run', 'propose_run', 'propose_workflow', 'read_attachment',
     'list_diff_comments', 'add_diff_comment', 'reply_to_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
     'open_worktree', 'list_worktrees', 'remove_worktree', 'git',
-    'list_run_artifacts', 'read_run_artifact', 'get_run_progress']);
+    'list_run_artifacts', 'read_run_artifact', 'get_run_progress',
+    'list_memory', 'read_memory', 'remember', 'forget']);
   for (const d of defs) {
     assert.ok(typeof d.description === 'string' && d.description.length > 20, `${d.name} description`);
     assert.equal(d.inputSchema.type, 'object');
@@ -703,6 +704,14 @@ test('propose_run refuses commentIds from another project and says so', async ()
     'unknown ids stay tolerated — only a WRONG-target id is an error');
 });
 
+test('get_run: carries memory only when the run has a ledger with changes', async () => {
+  const withMem = createAskTools({ ...fake, readRunMemory: async (row) => (row.id === '4e1f2a9b' ? { changes: [{ nodeId: 'n', added: [{ scope: 'global', name: 'x' }], modified: [], deleted: [], rejected: [] }], totals: { added: 1, modified: 0, deleted: 0, rejected: 0 } } : null) });
+  const a = await withMem.call('get_run', { id: '4e1f2a9b', projectKey: 'demo-00000001' });
+  assert.deepEqual(a.memory.totals, { added: 1, modified: 0, deleted: 0, rejected: 0 });
+  const b = await withMem.call('get_run', { id: '8c3d12ab' });
+  assert.equal('memory' in b, false, 'no ledger ⇒ no key (the row-only shape is unchanged)');
+});
+
 // ── real readers on a temp home ──────────────────────────────────────────────
 test('temp home: a seeded project run and a seeded workspace run round-trip through the real deps', async () => {
   const projectDir = mkdtempSync(join(tmpdir(), 'worca-ask-tools-proj-'));
@@ -736,6 +745,17 @@ test('temp home: a seeded project run and a seeded workspace run round-trip thro
   assert.equal(run.branch, 'worca-cc/seeded');
   assert.equal(run.sourceBranch, 'main');
   assert.equal(run.hasDiff, true);
+  // Agent memory (§6): the REAL readRunMemory over the run dir's memory.json, through the ONE
+  // ledger reader artifacts.mjs exports. No file, and a ledger with no changes, both mean "no key".
+  assert.equal('memory' in run, false, 'no ledger ⇒ the row-only shape is unchanged');
+  await writeFile(join(seeded.dir, 'memory.json'), JSON.stringify({ mount: '/tmp/x/memory', dirs: [], baseline: {}, changes: [] }), 'utf8');
+  assert.equal('memory' in (await real.call('get_run', { id: seeded.id })), false, 'an empty ledger is not a memory section');
+  await writeFile(join(seeded.dir, 'memory.json'), JSON.stringify({ mount: '/tmp/x/memory', dirs: [], baseline: {},
+    changes: [{ nodeId: 'n_defrag', added: [{ scope: 'global', name: 'style' }], modified: [{ scope: 'project', name: 'conventions' }], deleted: [], rejected: [] }] }), 'utf8');
+  const withMemory = await real.call('get_run', { id: seeded.id });
+  assert.deepEqual(withMemory.memory.totals, { added: 1, modified: 1, deleted: 0, rejected: 0 });
+  assert.deepEqual(withMemory.memory.changes[0].added, [{ scope: 'global', name: 'style' }]);
+  assert.equal('mount' in withMemory.memory, false, 'the mount path never reaches the model');
   const diff = await real.call('get_run_diff', { id: seeded.id, projectKey: project.key });
   assert.deepEqual(diff.files.map((f) => f.path), ['src/app.js', 'docs/notes.md']);
   const wsRun = await real.call('get_run', { id: wsSeed.id, workspaceId: 'wks-team-0000abcd' });

@@ -765,3 +765,21 @@ test('WORCA_DEBUG_SPAWN on, no model env: routingEnv=[(none)]', POSIX_SHIM, asyn
   assert.ok(debug, 'spawn-debug event present');
   assert.ok(debug.text.includes('routingEnv=[(none)]'), debug.text);
 });
+
+test('runClaude FORWARDS addDirs to runReal (--add-dir reaches the spawn)', POSIX_SHIM, async () => {
+  const dir = await tmp();
+  const out = join(dir, 'argv.txt');
+  const bin = await fakeBin(dir, out);
+  const prevMock = process.env.WORCA_MOCK;
+  delete process.env.WORCA_MOCK;
+  try {
+    await runClaude({ cwd: dir, bin, prompt: 'p', allowedTools: ['Read'], addDirs: [join(dir, 'mount')] });
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
+  }
+  const argv = (await readFile(out, 'utf8')).split('\0').filter(Boolean);
+  const i = argv.indexOf('--add-dir');
+  assert.ok(i > -1, `--add-dir reached the spawn: ${JSON.stringify(argv)}`);
+  assert.equal(argv[i + 1], join(dir, 'mount'));
+  assert.equal(argv.lastIndexOf('--add-dir'), i, 'one dir ⇒ one flag');
+});

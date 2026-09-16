@@ -222,3 +222,30 @@ test('MIN-51: a typo of `help` itself is refused, not run as a prompt', () => {
   assert.equal(pipelineCount(), before, 'no pipeline row');
   assert.equal(branchesOf(repo).trim(), 'main', 'no feature branch');
 });
+
+test('--memory-scope: enum-checked, workflow-checked, documented; the prompt is synthesised so no --prompt is needed', () => {
+  const repo = freshRepo();
+  const before = pipelineCount();
+  let r = runCli(['--memory-scope', 'both', '--workflow', 'wf_memory_defrag'], repo);
+  assert.equal(r.status, 2, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stderr, /--memory-scope must be one of global, project, got: both/);
+  r = runCli(['--memory-scope', 'global', '--prompt', 'x'], repo);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /memoryScope is only valid with the Memory defragment workflow/);
+  r = runCli(['--workflow', 'wf_memory_defrag', '--prompt', 'x'], repo);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /needs memoryScope/);
+  assert.equal(pipelineCount(), before, 'no pipeline row for any refusal');
+  const help = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
+  assert.match(help.stdout, /--memory-scope <s>\s+Memory defragment workflow only: global \| project/);
+});
+
+test('--memory-scope global with --workflow wf_memory_defrag runs a mock defragment to done without a prompt', () => {
+  const repo = freshRepo();
+  const r = runCli(['--project', repo, '--workflow', 'wf_memory_defrag', '--memory-scope', 'global', '--mock', '--yes'], repo);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /Memory mounted at .*[\\/]\.claude[\\/]rules[\\/]worca: \d+ file\(s\) across 1 scope\(s\)/, 'one scope mounted');
+  const row = getDb().prepare('SELECT prompt, status FROM pipelines ORDER BY started_at DESC LIMIT 1').get();
+  assert.equal(row.prompt, 'Defragment global memory.');
+  assert.equal(row.status, 'done');
+});

@@ -7,6 +7,9 @@ const $$ = (sel, root = document) => [...(root || document).querySelectorAll(sel
 // row stub has no graph, so the picker owns this one constant.
 const AUTO_WORKFLOW = Object.freeze({ id: 'wf_auto', name: 'Auto' });
 const AUTO_WORKFLOW_ID = AUTO_WORKFLOW.id;
+// The reserved Memory defragment workflow (agent-memory-design.md §7.2): the picker shows a
+// Memory scope control for it and the run body carries `memoryScope`. Built-in, never a saved row.
+const MEMORY_DEFRAG_WORKFLOW_ID = 'wf_memory_defrag';
 
 // ---------------------------------------------------------------------------
 // App state
@@ -26,6 +29,7 @@ const state = {
   subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'],
   workflowId: 'wf_default', // currently selected workflow in New Pipeline
   guardrailsId: 'permissive', // the guardrail set the next run applies ('permissive' = unrestricted default)
+  memoryScope: 'global', // Memory defragment only: the scope the next run restructures
   guardrailSets: [], // GET /api/guardrails cache for the picker + hint
   agents: {}, // registry { [key]: AgentMeta }, lazily loaded from /api/agents
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
@@ -64,7 +68,12 @@ import { mountRunGraph } from './graph/run-hosts.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion. They stay EXPORTED
 // from results-view.mjs (test/results-view-helpers.test.mjs imports four of them).
-import { sourceBadge, workflowPickerLabel } from './results-view.mjs';
+import { sourceBadge, workflowPickerLabel, memoryChangesRows } from './results-view.mjs';
+// `renderHistory` is taken in this file (the History list painter), so the memory one is aliased.
+import {
+  memoryRoute, renderHealthCard, renderFileList, renderEditor, collectEditor,
+  renderMemoryHistory, MEMORY_NAME_HELP,
+} from './memory-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
 import {
   splitPatchSections, parseFileSection, patchIndex, sectionKey,
@@ -100,7 +109,7 @@ import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
 import { renderStatsBody, renderBudgetIndicator, renderBudgetRing, renderBudgetReadout, renderCostPauseBanner, BUDGET_WARN_AT } from './stats-view.mjs';
-import { createComposer, RESERVED_WORKFLOW_ID, pluginOriginName } from './graph/composer.mjs';
+import { createComposer, isReservedWorkflowId, pluginOriginName } from './graph/composer.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
 // bare <select> with no preview host on this branch (the v1 read-only mini-graph
 // lived in the composer's saved list, retired in P5 Task 8). P6's Running list is
@@ -177,6 +186,8 @@ const el = {
   agentRows: $('#agents-rows'),
   hitlRow: $('#hitl-row'),
   humanInLoop: $('#humanInLoop'),
+  memoryScopeRow: $('#memory-scope-row'),
+  memoryScopeSeg: $('#memory-scope-seg'),
   agentsWorkflow: $('#agentsWorkflow'),
   agentsSummary: $('#agentsSummary'),
   agentsPromote: $('#agentsPromote'),
@@ -258,6 +269,8 @@ const el = {
   projectsMsg: $('#projects-msg'),
   projectAddBtn: $('#project-add-btn'),
   navProjectsCount: $('#nav-projects-count'),
+  projShell: $('#proj-shell'),
+  projDetail: $('#proj-detail'),
 
   // Reusable confirm modal
   confirmModal: $('#confirm-modal'),
@@ -326,6 +339,10 @@ const el = {
   guardrailsList: $('#guardrails-list'),
   guardrailsMsg: $('#guardrails-msg'),
   guardrailCreateBtn: $('#guardrail-create-btn'),
+
+  // Memory view (Settings tab; the Projects expanders mount their own hosts)
+  memoryHost: $('#memory-host'),
+  memoryMsg: $('#memory-msg'),
 
   // Models view
   modelsList: $('#models-list'),
@@ -485,7 +502,13 @@ if (railAtBoot) {
 // compact topnav amount, and the New-view creation gate. Refreshed at boot, on
 // every `hello`, on `budget-changed`/`pipelines-changed`, and on a slow tick.
 // ---------------------------------------------------------------------------
-const budgetState = { budget: null, timer: null, fetching: false };
+const budgetState = { budget: null, timer: null, fetching: false, pending: false, lastFetchMs: 0 };
+
+// How long an idle tab may keep painting the snapshot it last fetched. The tick
+// below runs every `interval` and deliberately does NOT fetch while idle; this
+// is the slow cadence layered on top of it, so a limit raised or cleared
+// elsewhere (a broadcast this tab never saw) cannot outlive the tab.
+const BUDGET_IDLE_REFETCH_MS = 5 * 60000;    // 5 min = every 5th tick at the 60s default
 
 // True between "Start clicked" and the POST /api/run settling. Any budget repaint
 // landing inside that window — a `budget-changed` broadcast, an archive's
@@ -495,14 +518,27 @@ const budgetState = { budget: null, timer: null, fetching: false };
 // the same run twice.
 let startSubmitInFlight = false;
 
+// A refresh asked for mid-flight used to be DROPPED: two broadcasts close
+// together (a total limit set, then cleared; `pipelines-changed` + a run's
+// `done`) collapsed into ONE fetch and the OLDER snapshot stayed latched in
+// budgetState.budget until a reload. Record the request instead and run one
+// trailing fetch per in-flight window — any number of requests made during a
+// fetch collapse into that single trailing fetch.
 async function refreshBudget() {
-  if (budgetState.fetching) return;
+  if (budgetState.fetching) { budgetState.pending = true; return; }
   budgetState.fetching = true;
   try {
-    const res = await fetch('/api/budget');
-    const data = await safeJson(res);
-    if (res.ok) { budgetState.budget = data; paintBudget(); }
-  } catch { /* transient */ } finally { budgetState.fetching = false; }
+    do {
+      budgetState.pending = false;
+      budgetState.lastFetchMs = Date.now();   // also feeds the idle re-verify cadence
+      // Per-attempt, so a transient failure still lets a pending request through.
+      try {
+        const res = await fetch('/api/budget');
+        const data = await safeJson(res);
+        if (res.ok) { budgetState.budget = data; paintBudget(); }
+      } catch { /* transient */ }
+    } while (budgetState.pending);
+  } finally { budgetState.fetching = false; budgetState.pending = false; }
 }
 
 function paintBudget() {
@@ -559,6 +595,8 @@ function fmtResetAtLocal(ms) {
 function startBudgetTick() {
   if (budgetState.timer) return;
   const interval = typeof window.__budgetTickMs === 'number' ? window.__budgetTickMs : 60000;
+  const idleRefetchMs = typeof window.__budgetIdleRefetchMs === 'number'
+    ? window.__budgetIdleRefetchMs : BUDGET_IDLE_REFETCH_MS;
   budgetState.timer = setInterval(() => {
     const b = budgetState.budget;
     if (!b) return;
@@ -566,6 +604,12 @@ function startBudgetTick() {
     // over (spend resets to $0 and blocked must clear server-side — repainting
     // the pre-reset snapshot would keep the UI "blocked" forever while idle).
     if (liveRuns().length || Date.now() >= b.windowEndMs) { refreshBudget(); return; }
+    // Idle re-verify, minutes apart — NOT every tick. Limits change outside this
+    // tab too, and a broadcast can be missed (socket drop, another window), so
+    // the snapshot gets re-derived server-side on a slow cadence rather than
+    // being painted from cache until a reload. Any other refresh (a broadcast, a
+    // run ending) pushes lastFetchMs forward, so this only fires while genuinely idle.
+    if (Date.now() - budgetState.lastFetchMs >= idleRefetchMs) { refreshBudget(); return; }
     // Idle countdown: windowEndMs is the fixed anchor; the fetched msUntilReset
     // is stale by definition. Recompute the remainder, then repaint — no fetch.
     b.msUntilReset = Math.max(0, b.windowEndMs - Date.now());
@@ -662,12 +706,24 @@ function handleServerMessage(msg) {
   }
   if (msg.type === 'projects-changed') {
     refreshAllCounts();
-    if (currentView() === 'projects') loadProjectsView();
+    if (currentView() === 'projects') void refreshProjectsPage();
     return;
   }
   if (msg.type === 'workspaces-changed') {
     refreshAllCounts();
     if (currentView() === 'workspaces') loadWorkspacesView();
+    return;
+  }
+
+  // Agent memory (§10, B29): an Ask tool, a REST write or a run that mounted memory changed a
+  // scope — the frame means "refetch this scope's view". It is thread-less and seq-less, so it is
+  // handled HERE and never reaches the Ask panel (the shell routes only `ask-*` types there). Only
+  // an OPEN view of that scope refetches; a closed one reloads on entry anyway. Bursts (an Ask turn
+  // remembering five things) are coalesced per scope, and a dirty editor is never clobbered.
+  if (msg.type === 'memory-changed') {
+    const scope = String(msg.scope || '');
+    if (scope === 'global' && currentView() === 'settings' && currentSettingsTab === 'memory' && memoryTabCtl) pokeGlobalMemory();
+    else if (scope && currentView() === 'projects' && projDetail && projDetail.memCtl && projDetail.memCtl.scopeKey === scope) pokeProjectMemory();
     return;
   }
 
@@ -1554,13 +1610,27 @@ function setConfigError(text) {
   el.configError.hidden = !text;
 }
 
+// Per-target request generation (the populateBranchSelect idiom, :5485): bump on every rebuild
+// issued for `node`; the returned stale() tells the caller's awaits whether a NEWER rebuild has
+// been issued since. The LAST one issued wins, whatever order the replies land in.
+function bumpGen(node, key = '_gen') {
+  const gen = (node[key] = (node[key] || 0) + 1);
+  return () => node[key] !== gen;
+}
+// loadConfig's own generation: two chains in flight (a target flip + a project pick, a fast
+// project switch) must never paint state.config / the pickers out of order.
+let configGen = 0;
+
 async function loadConfig(projectDir) {
+  const gen = ++configGen;
+  const stale = () => gen !== configGen;   // a newer loadConfig owns state.config now
   try {
     // No project => omit projectDir; the server replies with the built-in models
     // so the picker always shows Opus/Sonnet/Haiku, even on a fresh clone.
     const qs = projectDir ? `?projectDir=${encodeURIComponent(projectDir)}` : '';
     const res = await fetch(`/api/config${qs}`);
     const data = await safeJson(res);
+    if (stale()) return;
     if (res.ok) {
       state.config = data.config || { steps: {}, customModels: [] };
       state.models = Array.isArray(data.models) ? data.models : [];
@@ -1590,6 +1660,7 @@ async function loadConfig(projectDir) {
       setConfigError(`Could not load saved config (${data.error || `HTTP ${res.status}`}) — showing defaults.`);
     }
   } catch {
+    if (stale()) return;
     // Network-level failure: same reset as the non-ok branch (a previous
     // project's config must not linger), but keep last-known models/efforts.
     state.config = { steps: {}, customModels: [] };
@@ -1602,6 +1673,7 @@ async function loadConfig(projectDir) {
   // storage differs (legacy per-role steps, resolved in buildNodeConfigRows).
   if (state.config.activeWorkflowId) state.workflowId = state.config.activeWorkflowId;
   await loadWorkflowsInto(state.workflowId);
+  if (stale()) return;                     // the newer chain repaints guardrails itself
   await loadGuardrailsInto(state.guardrailsId);
 }
 
@@ -1954,7 +2026,7 @@ function gvRenderSaved() {
       // No delete on the built-in: DELETE /api/workflows/wf_default always answers
       // 400 (ui/server.mjs), so the button could only ever fail. Opening stays —
       // the built-in is meant to be opened and saved as a copy.
-      if (wf.id !== RESERVED_WORKFLOW_ID) {
+      if (!isReservedWorkflowId(wf.id)) {
         const del = document.createElement('button');
         del.type = 'button'; del.className = 'pl-del';
         del.title = `Delete "${wf.name || wf.id}"`;
@@ -2315,6 +2387,7 @@ if (typeof window !== 'undefined') {
     rdMaybePaintLogFilters,
     initDetailTabs,
     detailTabsOf,
+    openNewPipeline,
     onArtifact,
     artifactsByNodeCycle,
     viewerKindFor,
@@ -2492,8 +2565,10 @@ async function loadEnabledPluginNames() {
 async function loadWorkflowsInto(selectId) {
   const sel = el.workflowSelect;
   if (!sel) return;
+  const stale = bumpGen(sel);
   await loadEnabledPluginNames();
   const workflows = await listWorkflowsApi();
+  if (stale()) return;                     // a newer rebuild of this picker was issued meanwhile
   if (workflows === null) {
     // List fetch failed: keep whatever the dropdown already shows (do NOT
     // rebuild to Default-only — that would silently reroute the next run) and
@@ -2510,12 +2585,15 @@ async function loadWorkflowsInto(selectId) {
   list.forEach((wf) => {
     const o = option(wf.id, wf.id === AUTO_WORKFLOW_ID ? wf.name : (workflowPickerLabel(wf, enabledPluginNames) || wf.id));
     if (wf.id === AUTO_WORKFLOW_ID && isWorkspace) { o.disabled = true; o.title = 'Auto is not available for workspaces yet'; }
+    // Memory defragment holds exactly one scope, and a workspace run has no single project to
+    // resolve `project` against (the server 400s) — same treatment as Auto.
+    if (wf.id === MEMORY_DEFRAG_WORKFLOW_ID && isWorkspace) { o.disabled = true; o.title = 'Memory defragment runs on one project'; }
     sel.appendChild(o);
   });
   // Fall back to default if the wanted id is gone (e.g. a deleted workflow). D19: a workspace
   // target SHOWS Default in Auto's place but never persists it — the project keeps its choice.
   const known = list.some((wf) => wf.id === want);
-  state.workflowId = !known || (isWorkspace && want === AUTO_WORKFLOW_ID) ? 'wf_default' : want;
+  state.workflowId = !known || (isWorkspace && (want === AUTO_WORKFLOW_ID || want === MEMORY_DEFRAG_WORKFLOW_ID)) ? 'wf_default' : want;
   sel.value = state.workflowId;
   await renderWorkflowConfig(state.workflowId);
 }
@@ -2561,7 +2639,9 @@ function updateGuardrailsHint() {
 async function loadGuardrailsInto(selectId) {
   const sel = el.guardrailsSelect;
   if (!sel) return;
+  const stale = bumpGen(sel);
   const sets = await listGuardrailsApi();
+  if (stale()) return;                     // a newer rebuild of this picker was issued meanwhile
   if (sets === null) {
     // List fetch failed: keep whatever the dropdown already shows (do NOT
     // rebuild to Permissive-only — that would silently reroute the next run's
@@ -2594,6 +2674,9 @@ async function renderWorkflowConfig(workflowId) {
   const isAuto = workflowId === AUTO_WORKFLOW_ID;
   if (el.agentsConfig) el.agentsConfig.hidden = isAuto;
   if (el.hitlRow) el.hitlRow.hidden = !isAuto;
+  // Memory defragment (agent memory §7.3 / B11): the ONE run option that workflow needs. Every
+  // path that changes the picker ends here, so this single line covers them all.
+  if (el.memoryScopeRow) el.memoryScopeRow.hidden = workflowId !== MEMORY_DEFRAG_WORKFLOW_ID;
   if (isAuto) {
     // Auto picks the agents per run (spec §7.2 / D20): no accordion, one switch, read from the project config.
     // The switch is per PROJECT like the accordion's rows, and saveHumanInLoop drops the
@@ -2679,9 +2762,9 @@ function setAgentsHeader(rows, workflowName) {
   const anyModified = editable && !!rows && rows.some((r) => r.modified);
   if (el.agentsReset) el.agentsReset.hidden = !anyModified;
   if (el.agentsPromote) {
-    // The built-in Default is frozen and never persisted, so it has no row to
-    // carry defaults (design D6) — offering the button there would only fail.
-    const canPromote = anyModified && state.workflowId && state.workflowId !== 'wf_default';
+    // A graph BUILT-IN is frozen and never persisted, so it has no row to carry defaults
+    // (design D6) — offering the button there would only fail (setWorkflowNodeDefaults throws).
+    const canPromote = anyModified && state.workflowId && !isReservedWorkflowId(state.workflowId);
     el.agentsPromote.hidden = !canPromote;
   }
 }
@@ -2955,6 +3038,26 @@ if (el.workflowSelect) {
     state.workflowId = el.workflowSelect.value || 'wf_default';
     saveActiveWorkflow(state.workflowId);
     await renderWorkflowConfig(state.workflowId);
+  });
+}
+
+/** Write the picker's Memory scope into state AND the segmented control. Used by the seg itself and
+ *  by the Ask card handoff, whose proposal carries the scope it wants restructured (B17). */
+function setMemoryScope(scope) {
+  state.memoryScope = scope === 'project' ? 'project' : 'global';
+  for (const b of el.memoryScopeSeg ? el.memoryScopeSeg.querySelectorAll('button[data-scope]') : []) {
+    const on = b.dataset.scope === state.memoryScope;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+}
+
+// Memory scope (Memory defragment only): a two-way segmented control, remembered per session.
+if (el.memoryScopeSeg) {
+  el.memoryScopeSeg.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('button[data-scope]');
+    if (!btn) return;
+    setMemoryScope(btn.dataset.scope);
   });
 }
 
@@ -3242,7 +3345,7 @@ if (el.agentsPromote) {
   el.agentsPromote.addEventListener('click', async () => {
     const projectDir = selectedProjectPath();
     const workflowId = state.workflowId;
-    if (!projectDir || !workflowId || workflowId === 'wf_default') return;
+    if (!projectDir || !workflowId || isReservedWorkflowId(workflowId)) return;
     const rows = Object.values(agentRowsById);
     if (!rows.length) return;
     const defaults = Object.fromEntries(rows.map((r) => [r.nodeId, effectiveDefaultsOf(r)]));
@@ -6909,11 +7012,17 @@ function agentFormRender(host, meta, opts = {}) {
     fmCheck('agent-f-questions', 'Asks questions', m.asksQuestions),
     fmCheck('agent-f-questions-locked', 'Questions locked', m.questionsLocked),
     fmCheck('agent-f-questions-default', 'Questions on by default', m.questionsDefault),
-    fmCheck('agent-f-sideeffect', 'Writes code (sideEffect)', m.sideEffect === 'code'),
     fmCheck('agent-f-wantsrequest', 'Carries the original request', m.wantsRequest === true),
     fmCheck('agent-f-placeable', 'Placeable on a canvas', m.placeable !== false),
   );
   frag.appendChild(caps);
+  // sideEffect is a three-way value (agent-meta.mjs SIDE_EFFECTS): a checkbox could only write
+  // 'code' and would silently drop 'memory' on the next save.
+  frag.appendChild(fmField('Side effect', fmSelect('agent-f-sideeffect', [
+    { value: '', text: 'none — writes only its output ports' },
+    { value: 'code', text: 'code — edits the worktree (implementer tool set)' },
+    { value: 'memory', text: 'memory — edits worca memory only (no Bash)' },
+  ], m.sideEffect || '')));
 
   const row4 = document.createElement('div');
   row4.className = 'row-2';
@@ -7079,7 +7188,8 @@ function agentFormRead(host) {
   if (val('agent-f-scope') === 'workspace-only') meta.scope = 'workspace-only';
   const icon = val('agent-f-icon').trim();
   if (icon) meta.icon = icon;
-  if (on('agent-f-sideeffect')) meta.sideEffect = 'code';
+  const sideEffect = val('agent-f-sideeffect');
+  if (sideEffect) meta.sideEffect = sideEffect;
   const mockRole = val('agent-f-mockrole');
   if (mockRole) meta.mockRole = mockRole;
   if (on('agent-f-wantsrequest')) meta.wantsRequest = true;
@@ -7206,22 +7316,56 @@ async function pickFolder(purpose = 'project') {
   }
 }
 
+// #projects entry: refetch the registry, paint the list, then route the detail half of the hash
+// (#projects/<key>[/memory[/<name>]]). In-view hops (list <-> page, tab <-> tab, the hashchange
+// echo of a route the page itself wrote) skip the fetch — showView calls routeProjectDetail
+// directly for those. The user may leave the view or hop within it while /api/projects is in
+// flight: a superseded entry paints nothing (loadHistoryView's historyLoadToken idiom), a reply
+// landing behind another view paints nothing, and the route half follows the hash as it is NOW,
+// not the param captured at entry — an in-view hop already routed that one, and re-routing the
+// same key is a no-op.
+let projectsLoadToken = 0;
 async function loadProjectsView() {
+  const token = ++projectsLoadToken;
   await loadProjects();      // refresh shared state.projects from /api/projects
+  if (token !== projectsLoadToken || currentShownView !== 'projects') return;
   renderProjectsList();
+  const [view, param] = parseHash();
+  if (view === 'projects') routeProjectDetail(param, { instant: true });
 }
+
+// A projects-changed frame while the page is open: rebuild the list under the user and keep
+// the open page — unless its project left the registry, which closes it with a note. The
+// header repaints from the NEW row (`exists` can flip). showView('projects', '') is called
+// directly (not via the hash) so its own setProjectsMsg('') runs BEFORE the note is set.
+// No entry token here: a frame reply that outlived a view entry must not cancel that entry's
+// route, and everything below reads live state (never the reply), so a late one is harmless.
+async function refreshProjectsPage() {
+  await loadProjects();
+  if (currentShownView !== 'projects') return;
+  renderProjectsList();
+  if (!projDetail) return;
+  const p = projectByKey(projDetail.key);
+  if (p) { paintProjHeader(projDetail.screen, p); refreshProjOverview(); return; }
+  const name = projDetail.name;
+  showView('projects', '');
+  setProjectsMsg(`project "${name}" was removed`, 'err');
+}
+
+const CHEVRON_RIGHT_SVG =
+  '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
 
 function buildProjectRow(p) {
   const item = document.createElement('div');
   item.className = 'pl-item';
   item.dataset.name = p.name;
+  if (p.key) item.dataset.key = p.key;
 
   const row = document.createElement('div');
   row.className = 'pl-row';
 
   const main = document.createElement('div');
   main.className = 'pl-main';
-
   const name = document.createElement('div');
   name.className = 'pl-name';
   name.textContent = p.name;
@@ -7231,23 +7375,28 @@ function buildProjectRow(p) {
     miss.textContent = 'missing';
     name.append(' ', miss);
   }
-
   const path = document.createElement('div');
   path.className = 'proj-path';
   path.textContent = p.path;
   path.title = p.path;
-
   main.append(name, path);
+  row.appendChild(main);
 
-  const del = document.createElement('button');
-  del.type = 'button';
-  del.className = 'proj-del';
-  del.title = `Delete ${p.name}`;
-  del.setAttribute('aria-label', `Delete ${p.name}`);
-  del.innerHTML = TRASH_SVG;
-
-  row.append(main, del);
-  item.append(row);
+  // A keyed row IS the control (click / Enter / Space open the project page — the History
+  // card's .hist-head idiom) and carries the chevron. A keyless row (a project registered
+  // outside worca's store) has no page: no role, no chevron, default cursor.
+  if (p.key) {
+    row.setAttribute('role', 'button');
+    row.tabIndex = 0;
+    row.setAttribute('aria-label', `Open ${p.name}`);
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'proj-open';
+    open.setAttribute('aria-label', 'Open project details');
+    open.innerHTML = CHEVRON_RIGHT_SVG;   // static markup
+    row.appendChild(open);
+  }
+  item.appendChild(row);
   return item;
 }
 
@@ -7278,6 +7427,357 @@ function renderProjectsList() {
 
   card.append(head, list);
   host.appendChild(card);
+}
+
+// ---------------------------------------------------------------------------
+// Project page (#projects/<key>[/memory[/<name>]]) — spec 2026-09-13-project-detail-design.md
+// ---------------------------------------------------------------------------
+// The param after "projects/" is "<key>" (Overview), "<key>/memory" (Memory tab) or
+// "<key>/memory/<enc name>" (that file open). Keys are `<slug>-<8hex>` (store.mjs#projectKey)
+// and never contain "/", so the first slash splits key from tab. An unknown tab word reads as
+// Overview (the hash is left alone, as History leaves an odd param alone).
+const PROJ_TABS = ['overview', 'memory'];
+function parseProjParam(param = '') {
+  const s = String(param || '');
+  if (!s) return null;
+  const i = s.indexOf('/');
+  const key = i === -1 ? s : s.slice(0, i);
+  const rest = i === -1 ? '' : s.slice(i + 1);
+  const j = rest.indexOf('/');
+  const tab = j === -1 ? rest : rest.slice(0, j);
+  const sub = j === -1 ? '' : rest.slice(j + 1);
+  return PROJ_TABS.includes(tab) && tab === 'memory' ? { key, tab, sub } : { key, tab: 'overview', sub: '' };
+}
+// The canonical param for a tab: Overview is plain '<key>', never '<key>/overview'.
+function projParamFor(key, tab = 'overview', sub = '') {
+  if (tab !== 'memory') return key;
+  return sub ? `${key}/memory/${encodeURIComponent(sub)}` : `${key}/memory`;
+}
+const projectByKey = (key) => state.projects.find((x) => x && x.key === key) || null;
+const projectHistoryRows = (key) => (state.historyAll || []).filter((r) => r && r.projectKey === key);
+
+let projDetail = null;      // { key, name, screen, memCtl } while a page is open
+let projReturnFocus = '';   // the key of the row that opened the page; closeProjDetail hands focus back
+
+function routeProjectDetail(param, { instant = false } = {}) {
+  const parsed = parseProjParam(param);
+  if (!parsed) { closeProjDetail({ instant }); return; }
+  const p = projectByKey(parsed.key);
+  if (!p) {
+    closeProjDetail({ instant });
+    setProjectsMsg(`project "${parsed.key}" is not registered here`, 'err');
+    return;
+  }
+  // The same project is already open: a tab hop, or the hashchange echo of a route the page
+  // itself wrote (a pill click, a memory Save). Never remount — that would drop the editor.
+  if (projDetail && projDetail.key === parsed.key) { activateProjTab(parsed.tab, parsed.sub); return; }
+  openProjDetail(p, parsed, { instant });
+}
+
+function openProjDetail(p, parsed, { instant = false } = {}) {
+  const host = el.projDetail;
+  const shell = el.projShell;
+  if (!host || !shell) return;
+  teardownProjDetail();                     // a page->page hop never passes closeProjDetail
+  host.innerHTML = '';
+  host.scrollTop = 0;                       // a prior visit's scroll must not carry over
+  const screen = $('#proj-detail-tpl').content.firstElementChild.cloneNode(true);
+  host.appendChild(screen);
+  projDetail = { key: p.key, name: p.name, screen, memCtl: null };
+
+  // Handlers close over the KEY and re-resolve the row at click time: a projects-changed
+  // rebuild replaces the object in state.projects.
+  screen.querySelector('.pd-back').addEventListener('click', () => { void leaveProjDetail(); });
+  screen.querySelector('.pd-new').addEventListener('click', () => { newPipelineForProject(p.key); });
+  screen.querySelector('.pd-history').addEventListener('click', () => { openHistoryForProject(p.key); });
+  screen.querySelector('.pd-remove').addEventListener('click', () => { void removeProjectFromPage(p.key); });
+  paintProjHeader(screen, p);
+  initPdTabs(screen, p);
+  activateProjTab(parsed.tab, parsed.sub);
+
+  if (instant) shell.classList.add('no-anim');
+  shell.classList.add('detail-open');
+  host.setAttribute('aria-hidden', 'false');
+  host.removeAttribute('inert');   // the previous close left it inert for the slide
+  // `aria-hidden` alone does NOT remove focusability — only `inert` does, so set BOTH.
+  const list = shell.querySelector('.proj-screen-list');
+  if (list) { list.setAttribute('aria-hidden', 'true'); list.setAttribute('inert', ''); }
+  // AFTER the mount and AFTER the list went inert; `.pd-back` is always present.
+  screen.querySelector('.pd-back').focus({ preventScroll: true });
+  if (instant) rafSafe(() => shell.classList.remove('no-anim'));
+}
+
+function paintProjHeader(screen, p) {
+  const title = screen.querySelector('.pd-title');
+  title.textContent = p.name;
+  if (!p.exists) {
+    const miss = document.createElement('span');
+    miss.className = 'proj-missing';
+    miss.textContent = 'missing';
+    title.append(' ', miss);
+  }
+  const path = screen.querySelector('.pd-path');
+  path.textContent = p.path;
+  path.title = p.path;
+  const fresh = screen.querySelector('.pd-new');
+  fresh.disabled = !p.exists;
+  fresh.title = p.exists ? 'Start a pipeline in this project' : 'The folder is missing on disk';
+  syncProjHistoryButton(screen, p.key);
+}
+
+// "Open in History" is live only while History has rows for this project: restoreHistoryFilter
+// keeps a remembered key only when rows exist, so without rows the hop would land on All Projects.
+function syncProjHistoryButton(screen, key) {
+  const btn = screen.querySelector('.pd-history');
+  if (!btn) return;
+  const n = projectHistoryRows(key).length;
+  btn.disabled = n === 0;
+  btn.title = n === 0 ? 'No runs yet' : `${n} run${n === 1 ? '' : 's'} in History`;
+}
+
+function teardownProjDetail() {
+  if (projDetail && projDetail.memCtl) projDetail.memCtl.destroy();
+  projDetail = null;
+}
+
+// Back / Escape from a page whose Memory editor holds an unsaved draft asks first. Only the two
+// exits the page itself owns pass through here — browser Back and a typed hash cannot be
+// intercepted and leave without asking, exactly as the retired list expander did.
+async function leaveProjDetail() {
+  const ctl = projDetail && projDetail.memCtl;
+  if (ctl && ctl.dirty()) {
+    // One macrotask later, past the keystroke that got us here: the modal registers its own
+    // document keydown listener while opening, and the Escape arm below runs in the CAPTURE pass
+    // of that same keydown — the bubble pass at document would hand the key to the fresh listener
+    // and close the prompt before it was seen. A click never reaches the modal's listeners.
+    await new Promise((r) => setTimeout(r, 0));
+    if (!projDetail || projDetail.memCtl !== ctl) return;   // the page went away meanwhile
+    const ok = await confirmModal({
+      title: 'Discard changes',
+      message: 'The memory editor has unsaved changes. Leave the page and discard them?',
+      confirmLabel: 'Discard', danger: true,
+    });
+    if (!ok || !projDetail) return;   // cancelled, or the page went away while the modal was up
+  }
+  location.hash = 'projects';
+}
+
+function closeProjDetail({ instant = false } = {}) {
+  const shell = el.projShell;
+  const host = el.projDetail;
+  if (!shell || !host) return;
+  if (!shell.classList.contains('detail-open')) { projReturnFocus = ''; teardownProjDetail(); return; }
+  // The Memory controller stays mounted for the slide: the page must slide out showing its
+  // content, not a blank body (closeHistDetail keeps its graph mounts the same way). `clear`
+  // below destroys it; the state is dropped NOW so a frame poke paints nothing meanwhile.
+  const ctl = projDetail && projDetail.memCtl;
+  projDetail = null;
+  host.setAttribute('aria-hidden', 'true');
+  // Un-inert the list FIRST — focus() is a no-op inside an inert subtree.
+  const list = shell.querySelector('.proj-screen-list');
+  if (list) { list.removeAttribute('aria-hidden'); list.removeAttribute('inert'); }
+  // Hand focus back to the row the page was opened from (re-queried: a rebuild may have replaced
+  // the node). One-shot, and NOT on the instant path — that one runs from showView, which hides
+  // the whole section a few lines later.
+  const back = projReturnFocus;
+  projReturnFocus = '';
+  if (back && el.projectsList && !instant) {
+    const row = el.projectsList.querySelector(`.pl-item[data-key="${cssEscape(back)}"] .pl-row`);
+    if (row) row.focus({ preventScroll: true });
+  }
+  host.setAttribute('inert', '');
+  if (instant) {
+    shell.classList.add('no-anim');
+    shell.classList.remove('detail-open');
+    if (ctl) ctl.destroy();
+    host.innerHTML = '';
+    rafSafe(() => shell.classList.remove('no-anim'));
+    return;
+  }
+  shell.classList.remove('detail-open');
+  // Empty the screen after the slide (or via the timeout under reduced motion / jsdom). The
+  // closed page's controller is destroyed either way; the host is emptied only if no NEW page
+  // was mounted meanwhile (a page->page hop replaces the screen itself).
+  const clear = () => { if (ctl) ctl.destroy(); if (!projDetail) host.innerHTML = ''; };
+  const onEnd = (e) => {
+    if (e.target !== host || e.propertyName !== 'transform') return;
+    host.removeEventListener('transitionend', onEnd);
+    clear();
+  };
+  host.addEventListener('transitionend', onEnd);
+  const t = setTimeout(() => { host.removeEventListener('transitionend', onEnd); clear(); }, 600);
+  if (t && typeof t.unref === 'function') t.unref();
+}
+
+// ---- header actions ----
+// "New pipeline": pick the project in the New-pipeline select (it persists across views;
+// renderProjectOptions -> onProjectChanged loads its config + branches and remembers it as the
+// last project), make sure the target is a project, then go there. The target is flipped only
+// when it is not already a project: setRunTarget('project') re-resolves the CURRENTLY selected
+// project (a second config chain for the wrong project); the loaders' generation guards make a
+// superseded chain a no-op, but there is no reason to issue it.
+function newPipelineForProject(key) {
+  const p = projectByKey(key);
+  if (!p) return;
+  if (state.runTarget !== 'project') setRunTarget('project');
+  renderProjectOptions(p.name);
+  location.hash = 'new';
+}
+// "Open in History": the History project filter, pre-set. restoreHistoryFilter reads the key on
+// the way in (the button is disabled while the project has no rows — see syncProjHistoryButton).
+function openHistoryForProject(key) {
+  state.historyFilter = key;
+  localStorage.setItem(HISTORY_FILTER_KEY, key);
+  location.hash = 'history';
+}
+async function removeProjectFromPage(key) {
+  const p = projectByKey(key);
+  if (!p || !projDetail) return;
+  const screen = projDetail.screen;
+  const btn = screen.querySelector('.pd-remove');
+  btn.disabled = true;
+  try {
+    const removed = await deleteProject(p, screen.querySelector('.pd-error'));
+    if (removed) location.hash = 'projects';
+  } finally {
+    if (btn.isConnected) btn.disabled = false;
+  }
+}
+
+// ---- tabs ----
+const PD_TAB_ICONS = {
+  overview: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>',
+  memory: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"></path><path d="M4 20.5V5.5M8 7h8M8 10.5h6"></path></svg>',
+};
+// Table-driven, like HD_TABS. `build(sec, key)` takes the KEY (buildArgs), never the project object.
+const PD_TABS = [
+  { key: 'overview', label: 'Overview', badge: () => null, visible: () => true, build: (sec, key) => buildPdOverview(sec, key) },
+  { key: 'memory', label: 'Memory', badge: () => null, visible: () => true, build: (sec, key) => buildPdMemory(sec, key) },
+];
+function initPdTabs(screen, p) {
+  initDetailTabs(screen, PD_TABS.map((t) => ({ ...t, icon: PD_TAB_ICONS[t.key] })), p, {
+    tabsSel: '.pd-tabs', secsSel: '.pd-sections',
+    tabClass: 'pd-tab', secClass: 'pd-sec', badgeClass: 'pd-tab-badge',
+    idPrefix: 'pd',
+    buildArgs: () => [p.key],
+    initial: () => 'overview',
+  });
+  // Hash-first pills (the Settings-tabs idiom): the engine's own click listener has already lit
+  // the pill and built the section; this one puts the tab in the URL so Back and deep links agree
+  // with the screen. The Memory pill names the file the controller shows, so a hop back lands on
+  // it (and keeps a draft there — see activateProjTab). The hashchange echo lands in
+  // routeProjectDetail -> activateProjTab. An unchanged hash fires no hashchange, and there is
+  // nothing left to do in that case.
+  screen.querySelector('.pd-tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('button[data-sec]');
+    if (!btn || !projDetail) return;
+    const sub = btn.dataset.sec === 'memory' && projDetail.memCtl ? projDetail.memCtl.selectedName() : '';
+    const target = `projects/${projParamFor(projDetail.key, btn.dataset.sec, sub)}`;
+    if (location.hash.slice(1) !== target) location.hash = target;
+  });
+}
+// Every route into the Memory tab loads what the hash names — the same contract loadMemoryTab(sub)
+// keeps for Settings, which is what lets the controller's own routes (Save, Delete, Cancel, a row)
+// repaint on their hashchange echo. A route to the file the controller ALREADY shows (a tab hop
+// back, the echo of a route the controller wrote) is a keepDraft reload: the card, list and
+// history refresh, an unsaved draft or NEW file stays. The section (and so memCtl) exists by the
+// time load() runs: activate() builds synchronously.
+function activateProjTab(tab, sub = '') {
+  const tabs = detailTabsOf(projDetail && projDetail.screen);
+  if (!tabs) return;
+  tabs.activate(tabs.cells.has(tab) ? tab : 'overview');
+  if (tab !== 'memory' || !projDetail.memCtl) return;
+  const ctl = projDetail.memCtl;
+  const name = sub ? safeDecode(sub) : '';
+  void ctl.load(name, { keepDraft: ctl.loaded() && name === ctl.selectedName() });
+}
+
+// ---- Overview tab ----
+function pdStatCard(kind, label, value, sub, { tag = 'div' } = {}) {
+  const card = document.createElement(tag);
+  card.className = `pd-ov-card pd-ov-card-${kind}`;
+  if (tag === 'button') card.type = 'button';
+  const l = document.createElement('div'); l.className = 'pd-ov-label'; l.textContent = label;
+  const v = document.createElement('div'); v.className = 'pd-ov-value mono'; v.textContent = value;
+  card.append(l, v);
+  if (sub) { const s = document.createElement('div'); s.className = 'pd-ov-sub'; s.textContent = sub; card.appendChild(s); }
+  return card;
+}
+const histTs = (v) => (typeof v === 'number' ? v : (Date.parse(String(v || '')) || 0));
+
+function buildPdOverview(sec, key) {
+  sec.innerHTML = '';
+  sec.classList.add('pd-sec-overview');
+  const p = projectByKey(key);
+  if (!p) return;
+  const grid = document.createElement('div');
+  grid.className = 'pd-ov-grid';
+
+  const pathCard = pdStatCard('path', 'PATH', p.path, p.exists ? 'On disk' : 'Missing on disk');
+  pathCard.querySelector('.pd-ov-value').classList.add('pd-ov-wrap');
+  if (!p.exists) pathCard.querySelector('.pd-ov-sub').classList.add('pd-ov-missing');
+  grid.appendChild(pathCard);
+
+  const rows = projectHistoryRows(key);
+  const fam = { done: 0, paused: 0, stopped: 0, error: 0 };
+  for (const r of rows) { const f = histStatusMeta(r).family; if (f in fam) fam[f] += 1; }
+  const live = [...runs.values()].filter((r) => r && r.projectDir === p.path && (r.status === 'running' || r.status === 'starting')).length;
+  const parts = [`${fam.done} done`, `${fam.paused} paused`, `${fam.stopped} stopped`, `${fam.error} error`];
+  if (live) parts.push(`${live} running now`);
+  grid.appendChild(pdStatCard('runs', 'RUNS', String(rows.length), parts.join(' · ')));
+
+  let last = null;
+  for (const r of rows) { const t = histTs(r.startedAt || r.mtime); if (!last || t > last.t) last = { t, r }; }
+  if (last) {
+    const card = pdStatCard('last', 'LAST RUN', fmtDate(last.r.startedAt || last.r.mtime), last.r.title || last.r.id, { tag: 'button' });
+    card.classList.add('pd-ov-link');
+    card.title = 'Open in History';
+    card.addEventListener('click', () => { location.hash = `history/${histDetailParam(last.r)}`; });
+    grid.appendChild(card);
+  } else {
+    grid.appendChild(pdStatCard('last', 'LAST RUN', '—', 'No runs yet'));
+  }
+  grid.appendChild(pdStatCard('key', 'KEY', p.key, `memory scope projects/${p.key}`));
+  sec.appendChild(grid);
+  ensureHistoryLoaded();
+}
+
+// A deep link into a project page can land before the socket's `hello` background-loads History;
+// load it once here so the counts are real, not a permanent "0 runs". onHello's own
+// `!historyBooted` guard then skips its load. `historyBooted` is declared with loadHistoryView.
+function ensureHistoryLoaded() {
+  if (historyBooted) return;
+  historyBooted = true;
+  void loadHistoryView();
+}
+
+// The Overview reads the History dataset; repaint it (and the header's History button) whenever
+// that dataset changes. paintHistory() is the one funnel every history load/patch ends in.
+function refreshProjOverview() {
+  if (!projDetail || !projDetail.screen) return;
+  const p = projectByKey(projDetail.key);
+  if (!p) return;
+  syncProjHistoryButton(projDetail.screen, p.key);
+  const sec = projDetail.screen.querySelector('.pd-sec[data-sec="overview"]');
+  if (sec && sec.dataset.loaded === '1') buildPdOverview(sec, p.key);
+}
+
+// ---- Memory tab ----
+// The same grid Settings → Memory paints, for scope 'projects/<key>', hash-first (navigate: true):
+// memoryRoute() yields 'projects/<key>/memory[/<name>]', so the controller's routes are this page's
+// own routes. No load here — activateProjTab loads what the hash names.
+function buildPdMemory(sec, key) {
+  sec.innerHTML = '';
+  sec.classList.add('pd-sec-memory');
+  const msg = document.createElement('p');
+  msg.className = 'form-msg';
+  msg.setAttribute('aria-live', 'polite');
+  const host = document.createElement('div');
+  host.className = 'mem-host';
+  sec.append(msg, host);
+  if (!projDetail) return;
+  if (projDetail.memCtl) projDetail.memCtl.destroy();
+  projDetail.memCtl = createMemoryController({ host, msgEl: msg, scopeKey: `projects/${key}`, navigate: true });
 }
 
 // ---- Reusable confirm / prompt modal ---------------------------------------
@@ -7390,24 +7890,32 @@ function promptModal({ confirmLabel = 'Save', fields = [], ...rest } = {}) {
   return modalShell({ ...rest, confirmLabel, fields });
 }
 
-async function deleteProject(p) {
+// Remove a project. Returns true when the registry changed, false on cancel or failure. `errEl`
+// (the project page's .pd-error) takes the failure text when given; the list message otherwise.
+async function deleteProject(p, errEl = null) {
   const ok = await confirmModal({
     title: 'Remove project',
     message: `Remove “${p.name}” from the list?\nThe folder on disk and its run history are left untouched.`,
     confirmLabel: 'Remove project',
   });
-  if (!ok) return;
-  setProjectsMsg('');
+  if (!ok) return false;
+  const say = (text) => {
+    if (errEl) { errEl.hidden = !text; errEl.textContent = text || ''; }
+    else setProjectsMsg(text, text ? 'err' : '');
+  };
+  say('');
   try {
     const res = await fetch(`/api/projects?name=${encodeURIComponent(p.name)}`, { method: 'DELETE' });
     const data = await safeJson(res);
-    if (!res.ok) { setProjectsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    if (!res.ok) { say(data.error || `HTTP ${res.status}`); return false; }
     state.projects = Array.isArray(data.projects) ? data.projects : [];
     if (localStorage.getItem(LAST_PROJECT_KEY) === p.name) localStorage.removeItem(LAST_PROJECT_KEY);
     renderProjectsList();
     renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || ''); // keep New-pipeline dropdown in sync
+    return true;
   } catch (e) {
-    setProjectsMsg(e.message, 'err');
+    say(e.message);
+    return false;
   }
 }
 
@@ -7472,13 +7980,22 @@ async function saveProjectAdd() {
 
 // ---- Event wiring (guarded so non-UI test imports don't throw) --------------
 if (el.projectsList) {
+  const openRow = (row) => {
+    const item = row.closest('.pl-item');
+    if (!item || !item.dataset.key) return;
+    projReturnFocus = item.dataset.key;                 // Back / Esc come home to this row
+    location.hash = `projects/${item.dataset.key}`;
+  };
   el.projectsList.addEventListener('click', (e) => {
-    const del = e.target.closest && e.target.closest('.proj-del');
-    if (!del) return;
-    const item = del.closest('.pl-item');
-    if (!item) return;
-    const p = state.projects.find((x) => x.name === item.dataset.name);
-    if (p) deleteProject(p);
+    const row = e.target.closest && e.target.closest('.pl-row[role="button"]');
+    if (row) openRow(row);                              // a chevron click bubbles here too — one open
+  });
+  el.projectsList.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    const row = e.target.closest && e.target.closest('.pl-row[role="button"]');
+    if (!row || e.target !== row) return;               // the chevron's own Enter/Space arrives as a click
+    e.preventDefault();
+    openRow(row);
   });
 }
 if (el.projectAddBtn) el.projectAddBtn.addEventListener('click', addProjectFlow);
@@ -7718,6 +8235,10 @@ el.form.addEventListener('submit', async (e) => {
   const mdText = el.promptMarkdown.value.trim();
   const title = el.title.value.trim();
 
+  // Memory defragment (agent memory §7.3): one scope, a synthesised brief, and the `normal`
+  // guardrails the API wrappers use unless the user deliberately picked another set.
+  const isDefragRun = state.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
+
   const body = {
     title: title || undefined,
     workflowId: state.workflowId || 'wf_default',
@@ -7725,13 +8246,16 @@ el.form.addEventListener('submit', async (e) => {
     // absent on default runs — byte-identical legacy request bodies. (The
     // server normalizes omitted/''/null to 'permissive'; always-sending would
     // be equivalent but would change every legacy-shaped request for no gain.)
-    guardrailsId: state.guardrailsId !== 'permissive' ? state.guardrailsId : undefined,
+    guardrailsId: isDefragRun && state.guardrailsId === 'permissive' ? 'normal'
+      : (state.guardrailsId !== 'permissive' ? state.guardrailsId : undefined),
     mock: el.mock.checked,
     sourceBranch: (el.sourceBranch && el.sourceBranch.value) || undefined,
     featureBranch: (el.featureBranch && el.featureBranch.value.trim()) || undefined,
     // Auto only (spec §7.2): this run's switch; the server falls back to the project setting
     // when absent. JSON.stringify drops an own key whose value is `undefined`.
     humanInLoop: state.workflowId === AUTO_WORKFLOW_ID ? !!(el.humanInLoop && el.humanInLoop.checked) : undefined,
+    // Only this workflow carries it: every other run body stays byte-identical to the legacy one.
+    memoryScope: isDefragRun ? state.memoryScope : undefined,
   };
   if (target === 'workspace') {
     body.workspaceId = workspaceId;
@@ -7755,7 +8279,14 @@ el.form.addEventListener('submit', async (e) => {
   }
 
   const psrc = state.activePluginSource;
-  if (psrc) {
+  if (isDefragRun) {
+    // A defragment run needs no task text: synthesise the same brief and title the API wrapper
+    // sends, whatever the shared source switch says (the markdown / plugin panes are skipped).
+    const pn = selectedProjectName();
+    body.prompt = promptText || (state.memoryScope === 'project'
+      ? `Defragment the memory of project ${pn}.` : 'Defragment global memory.');
+    if (!title) body.title = state.memoryScope === 'project' ? `Memory defragment: ${pn}` : 'Memory defragment (global)';
+  } else if (psrc) {
     const picked = collectSourcePane(el.pluginSourcePane);
     if (picked.error) return setFormMsg(picked.error, 'err');
     // The profile travels with the run and is pinned onto the row, so a result
@@ -9197,6 +9728,226 @@ async function grvSave(rootEl) {
   }
 }
 
+// ── Settings → Memory / the project page's Memory tab (agent-memory-design.md §10) ──
+// One controller per mounted scope: the Settings tab owns `memoryTabCtl` (global); the project
+// page owns `projDetail.memCtl` for the open project ('projects/<key>'). Pure renderers live in
+// memory-view.mjs; this owns the endpoint calls and ONE delegated listener pair.
+let memoryTabCtl = null;
+
+function memoryApiBase(scopeKey) { return scopeKey === 'global' ? '/api/memory/global' : `/api/memory/${scopeKey}`; }
+/** A body-less request sends no content-type — the request shapes stay identical to every other fetch here. */
+async function memoryApi(method, url, body) {
+  const init = { method };
+  if (body !== undefined) { init.headers = { 'Content-Type': 'application/json' }; init.body = JSON.stringify(body); }
+  const res = await fetch(url, init);
+  return { ok: res.ok, status: res.status, data: await safeJson(res) };
+}
+// Instant feedback only: isValidMemoryName on the server is the authority (it also knows the Win32
+// reserved stems), and both spell the rule with the SAME string.
+const MEMORY_NAME_RE = /^[A-Za-z0-9._-]+$/;
+const memoryNameOk = (n) => MEMORY_NAME_RE.test(n) && n !== '.' && n !== '..' && !n.startsWith('.') && !n.endsWith('.') && !/\.md$/i.test(n);
+/** decodeURIComponent that never throws: a hand-typed hash can hold a truncated escape. */
+const safeDecode = (s) => { try { return decodeURIComponent(s); } catch { return String(s); } };
+
+function createMemoryController({ host, msgEl, scopeKey, hostProject = null, navigate = true }) {
+  const base = memoryApiBase(scopeKey);
+  // `editor.loaded` is the text the editor was LOADED from — the dirty baseline. It has to survive
+  // a frame refresh (a draft is not a baseline), or the next frame reads the editor as clean and
+  // refetches over the unsaved text. `flash` carries a success message across the reload a write
+  // triggers: load() clears the message as its first act, so say() before it would never be seen.
+  const st = { report: null, selected: '', editor: null, isNew: false, snapshots: [], flash: null };
+  // Request token: a frame poke, a save and a route change can all be in flight at once, and the
+  // LAST one issued must win however the responses land.
+  let seq = 0;
+  const say = (text, kind) => { if (msgEl) { msgEl.textContent = text || ''; msgEl.className = 'form-msg' + (kind ? ' ' + kind : ''); } };
+  const route = (name) => { if (navigate) location.hash = memoryRoute(scopeKey, name); };
+  const hostRef = () => (typeof hostProject === 'function' ? hostProject() : hostProject);
+
+  function paint() {
+    const active = document.activeElement;
+    const hadFocus = !!active && host.contains(active);
+    // Remember WHICH editor control had focus, with its caret/selection and scroll: a frame repaint
+    // while the user types must hand the keyboard back to the same field. Focus on a file row
+    // instead would swallow the typing, and the next Space/Enter would reload the file over the draft.
+    const field = hadFocus && active.classList ? ['mem-text', 'mem-name'].find((c) => active.classList.contains(c)) : null;
+    const caret = field ? { start: active.selectionStart, end: active.selectionEnd, dir: active.selectionDirection, top: active.scrollTop } : null;
+    host.replaceChildren();
+    if (!st.report) return;
+    // A live defragment run owns the scope: Save / Delete / Restore resume when it finishes (B23).
+    const locked = !!st.report.defragRunId;
+    host.appendChild(renderHealthCard(st.report, { host: hostRef() }));
+    host.appendChild(renderFileList(st.report.files, { selected: st.selected }));
+    const right = document.createElement('div');
+    right.className = 'mem-right';
+    if (st.editor) right.appendChild(renderEditor(st.editor, { isNew: st.isNew, msg: st.editor.msg || '', msgErr: !!st.editor.msgErr, locked }));
+    right.appendChild(renderMemoryHistory(st.snapshots, { locked }));
+    host.appendChild(right);
+    // replaceChildren drops focus to <body>; put it back where the user was.
+    if (!hadFocus) return;
+    const same = field ? host.querySelector(`.mem-editor .${field}`) : null;
+    if (same && typeof same.focus === 'function') {
+      same.focus({ preventScroll: true });
+      try { same.setSelectionRange(caret.start, caret.end, caret.dir || 'none'); } catch { /* not a text control */ }
+      same.scrollTop = caret.top;
+      return;
+    }
+    const back = st.isNew ? host.querySelector('.mem-name')
+      : (st.selected ? [...host.querySelectorAll('.mem-row')].find((r) => r.dataset.name === st.selected) : null);
+    if (back && typeof back.focus === 'function') back.focus({ preventScroll: true });
+  }
+
+  // An editor whose text differs from what it was LOADED from, or a New file (never saved).
+  const isDirty = () => !!st.editor && (st.isNew || collectEditor(host).text !== st.editor.loaded);
+
+  /** `fromFrame`: a memory-changed refetch. `keepDraft`: a reload the user's own action triggered
+   *  (Defragment, a 409, a route back to the file already shown) — it keeps a dirty editor like a
+   *  frame does, without the conflict warning, and it keeps the message the caller already said. */
+  async function load(name = '', { fromFrame = false, keepDraft = false } = {}) {
+    const my = ++seq;
+    if (!fromFrame && !keepDraft && !st.flash) say('');
+    const dirty = isDirty();
+    const r = await memoryApi('GET', base);
+    if (my !== seq) return;
+    if (!r.ok) { say(r.data.error || `HTTP ${r.status}`, 'err'); st.report = null; paint(); return; }
+    const report = r.data;
+    const hist = await memoryApi('GET', `${base}/history`);
+    if (my !== seq) return;
+    st.report = report;
+    st.snapshots = hist.ok && Array.isArray(hist.data.snapshots) ? hist.data.snapshots : [];
+    if ((fromFrame || keepDraft) && dirty) {
+      // Someone else wrote this scope while the user was typing (or the user's own action reloads
+      // it): refresh the card, the list and the history, keep every unsaved byte, and — for a frame —
+      // say what the two exits do.
+      const cur = collectEditor(host);
+      st.editor = { ...st.editor, name: st.isNew ? cur.name : st.editor.name, text: cur.text };
+      paint();
+      if (st.flash) { say(...st.flash); st.flash = null; }
+      else if (fromFrame) say('This scope changed on disk while you were editing — Save overwrites, Cancel reloads.', 'warn');
+      return;
+    }
+    st.selected = ''; st.editor = null; st.isNew = false;
+    if (name) {
+      const f = await memoryApi('GET', `${base}/files/${encodeURIComponent(name)}`);
+      if (my !== seq) return;
+      if (f.ok) { st.selected = name; st.editor = { name, text: f.data.text, loaded: f.data.text }; }
+      else say(f.data.error || `memory file "${name}" not found`, 'err');
+    }
+    paint();
+    if (st.flash) { say(...st.flash); st.flash = null; }
+  }
+
+  async function save() {
+    const ed = host.querySelector('.mem-editor');
+    if (!ed) return;
+    const { name, text } = collectEditor(ed);
+    if (!memoryNameOk(name)) { st.editor = { ...st.editor, name, text, msg: `Name: ${MEMORY_NAME_HELP}.`, msgErr: true }; paint(); return; }
+    const r = await memoryApi('PUT', `${base}/files/${encodeURIComponent(name)}`, { text });
+    if (!r.ok) { st.editor = { ...st.editor, name, text, msg: r.data.error || `HTTP ${r.status}`, msgErr: true }; paint(); return; }
+    st.flash = [`Saved ${name}.md`, 'ok'];
+    st.selected = name; st.isNew = false;
+    st.editor = { ...st.editor, name, text, loaded: text, msg: '', msgErr: false };
+    // Route only when the hash would actually change: an unchanged hash fires no hashchange, so the
+    // repaint would never happen.
+    if (navigate && location.hash.slice(1) !== memoryRoute(scopeKey, name)) route(name);
+    else await load(name);
+  }
+
+  async function remove() {
+    const name = st.selected;
+    if (!name) return;
+    const ok = await confirmModal({
+      title: 'Delete memory file',
+      message: `Delete “${name}.md”? A snapshot stays in this scope's History, so it can be restored.`,
+      confirmLabel: 'Delete', danger: true,
+    });
+    if (!ok) return;
+    const r = await memoryApi('DELETE', `${base}/files/${encodeURIComponent(name)}`);
+    if (!r.ok) { say(r.data.error || `HTTP ${r.status}`, 'err'); return; }
+    st.flash = [`Deleted ${name}.md`, 'ok'];
+    st.selected = ''; st.isNew = false; st.editor = null;
+    if (navigate && location.hash.slice(1) !== memoryRoute(scopeKey)) route('');
+    else await load('');
+  }
+
+  async function restore(id) {
+    const ok = await confirmModal({
+      title: 'Restore snapshot',
+      message: `Replace every file of this scope with snapshot ${id}? The current files are snapshotted first.`,
+      confirmLabel: 'Restore',
+    });
+    if (!ok) return;
+    const r = await memoryApi('POST', `${base}/history/${encodeURIComponent(id)}/restore`);
+    if (!r.ok) { say(r.data.error || `HTTP ${r.status}`, 'err'); if (r.status === 409) await load(st.selected, { keepDraft: true }); return; }
+    st.flash = [`Restored ${id}`, 'ok'];
+    await load('');
+  }
+
+  async function defragment(runId) {
+    // ONE control (spec §10): while a run is live the same button opens it instead of starting a second.
+    if (runId) { location.hash = `running/${runId}`; return; }
+    const h = hostRef();
+    const r = await memoryApi('POST', `${base}/defragment`, scopeKey === 'global' ? { projectKey: h ? h.key : '' } : undefined);
+    if (!r.ok) { say(r.data.error || `HTTP ${r.status}`, 'err'); if (r.status === 409) await load(st.selected, { keepDraft: true }); return; }
+    st.flash = ['Defragment run started.', 'ok'];
+    await load(st.selected, { keepDraft: true });
+  }
+
+  const open = (name) => {
+    if (navigate && location.hash.slice(1) !== memoryRoute(scopeKey, name)) route(name);
+    else void load(name);
+  };
+  const onClick = (e) => {
+    const t = e.target;
+    const hit = (cls) => (t.closest ? t.closest(`.${cls}`) : null);
+    if (hit('mem-new')) { st.selected = ''; st.isNew = true; st.editor = { name: '', text: '' }; paint(); return; }
+    if (hit('mem-cancel')) {
+      st.selected = ''; st.isNew = false; st.editor = null; paint();
+      if (navigate && location.hash.slice(1) !== memoryRoute(scopeKey)) route('');
+      return;
+    }
+    if (hit('mem-save')) { void save(); return; }
+    if (hit('mem-delete')) { void remove(); return; }
+    if (hit('mem-restore')) { void restore(hit('mem-restore').dataset.id); return; }
+    if (hit('mem-defrag')) { void defragment(hit('mem-defrag').dataset.runId || ''); return; }
+    const row = hit('mem-row');
+    if (row) open(row.dataset.name);
+  };
+  const onKey = (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    const row = e.target.closest && e.target.closest('.mem-row');
+    if (!row) return;
+    e.preventDefault();
+    open(row.dataset.name);
+  };
+  host.addEventListener('click', onClick);
+  host.addEventListener('keydown', onKey);
+  return {
+    scopeKey,
+    load,
+    selectedName: () => st.selected,
+    loaded: () => !!st.report,
+    dirty: isDirty,
+    destroy() { host.removeEventListener('click', onClick); host.removeEventListener('keydown', onKey); host.replaceChildren(); },
+  };
+}
+
+/** The project that hosts a GLOBAL defragment run (B32): the one picked on New pipeline, else the
+ *  first registered project that exists. Disabled only when NO project is registered (spec §7.3). */
+function globalDefragHost() {
+  const path = selectedProjectPath();
+  const picked = path ? state.projects.find((x) => x && x.path === path) : null;
+  const p = picked || state.projects.find((x) => x && x.exists && x.key) || null;
+  return p && p.key ? { key: p.key, name: p.name } : null;
+}
+
+async function loadMemoryTab(sub = '') {
+  if (!el.memoryHost) return;
+  if (!memoryTabCtl) {
+    memoryTabCtl = createMemoryController({ host: el.memoryHost, msgEl: el.memoryMsg, scopeKey: 'global', hostProject: globalDefragHost });
+  }
+  await memoryTabCtl.load(sub ? safeDecode(sub) : '');
+}
+
 // Final routing: render the list and, when `param` names a set, open the wizard in
 // 'edit' (user) or 'view' (built-in). Resets a stale wizard on any path that does not
 // open a fresh one (browser Back to the bare list, or a bad deep-link).
@@ -10610,6 +11361,7 @@ function paintHistory() {
   // An open detail screen re-reads its (possibly late-arriving, possibly mutated)
   // list row from the same dataset. No-op when no detail is open.
   refreshHdFromRow();
+  refreshProjOverview();
 }
 
 // Render #history from state.historyAll filtered by state.historyFilter.
@@ -11151,6 +11903,19 @@ function coalesce(fn, ms) {
 }
 const pokeCommentCounts = coalesce(() => { void refreshCommentCounts(); }, COMMENT_POKE_MS);
 const pokeOpenDiffTab = coalesce(() => { if (hdCommentState) void hdCommentState.reload(); }, COMMENT_POKE_MS);
+
+// Agent memory (§10 / A11): a burst of `memory-changed` frames (an Ask turn remembering five
+// things) costs ONE refetch per scope. Declared HERE, after `coalesce` and after the controllers
+// they poke; `handleServerMessage` only ever runs them at socket time.
+const pokeGlobalMemory = coalesce(() => {
+  if (memoryTabCtl) void memoryTabCtl.load(memoryTabCtl.selectedName(), { fromFrame: true });
+}, COMMENT_POKE_MS);
+// One coalescer is enough now: there is at most one project page open. It reads the controller
+// at FIRE time, so a page swapped inside the window refetches the new scope — a harmless reload.
+const pokeProjectMemory = coalesce(() => {
+  const ctl = projDetail && projDetail.memCtl;
+  if (ctl) void ctl.load(ctl.selectedName(), { fromFrame: true });
+}, COMMENT_POKE_MS);
 
 function renderHistCommentPill(pill, p) {
   if (!pill) return;
@@ -14044,6 +14809,39 @@ function buildHdOverview(sec, record, data) {
   // not, so without it the card would read `released` for the life of the screen.)
   grid.appendChild(hdStatCard('worktree', 'WORKTREE', retained ? 'retained' : 'released', wt.worktreeDir || ''));
   wrap.appendChild(grid);
+  // Agent memory (§6): what this run wrote into worca's memory, per execution.
+  const memRows = memoryChangesRows(data.memory || (results && results.memory));
+  if (memRows.length) {
+    const box = document.createElement('div');
+    box.className = 'hd-ov-mem';
+    const l = document.createElement('div'); l.className = 'hd-ov-label'; l.textContent = 'MEMORY CHANGES';
+    box.appendChild(l);
+    for (const row of memRows) {
+      const line = document.createElement('div'); line.className = 'hd-mem-row';
+      const who = document.createElement('span'); who.className = 'hd-mem-node mono'; who.textContent = row.node;
+      line.appendChild(who);
+      for (const c of row.chips) {
+        // A chip opens the file in its Memory view (B6): `global` under Settings, a project scope on
+        // its project page's Memory tab. The mount-relative `project` is THIS run's project (the History record's
+        // key); a workspace run's `projects/<key>` passes straight through. A deleted file has
+        // nothing to open, and neither has a `project` chip on a record with no key.
+        const scopeKey = c.scope === 'global' ? 'global'
+          : c.scope === 'project' ? (hdStoreKey(record) ? `projects/${hdStoreKey(record)}` : '') : c.scope;
+        const linked = !!scopeKey && c.kind !== 'del';
+        const chip = document.createElement(linked ? 'button' : 'span');
+        chip.className = `hd-mem-chip hd-mem-${c.kind} mono`;
+        chip.textContent = c.text;
+        if (c.title) chip.title = c.title;
+        if (linked) {
+          chip.type = 'button';
+          chip.addEventListener('click', () => { location.hash = memoryRoute(scopeKey, c.name); });
+        }
+        line.appendChild(chip);
+      }
+      box.appendChild(line);
+    }
+    wrap.appendChild(box);
+  }
   // spec §8: the one-line quiescence note, under the stat grid, v2 runs only.
   if (isGraphManifest(st.stepper) && decorFromState(st, { live: false, now: 0 }).quiescent) {
     const note = document.createElement('div');
@@ -15003,6 +15801,21 @@ document.addEventListener('keydown', (e) => {
   const stop = document.getElementById('stop-modal');
   if (stop && !stop.classList.contains('hidden')) return;
   location.hash = 'running';
+}, true);
+
+// Escape on a project page navigates back to the list — never while an overlay modal is open,
+// and never from inside the Memory editor (Escape there is the textarea's). Capture phase, like
+// the two arms above.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (askPanel?.ownsKey(e)) return;
+  if (currentView() !== 'projects') return;
+  if (!el.projShell || !el.projShell.classList.contains('detail-open')) return;
+  if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
+  if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
+  if (el.projectAddModal && !el.projectAddModal.classList.contains('hidden')) return;
+  if (e.target && typeof e.target.closest === 'function' && e.target.closest('.mem-editor')) return;
+  void leaveProjDetail();
 }, true);
 
 async function viewPipeline(projectDir, id, title, record) {
@@ -17189,7 +18002,7 @@ const VIEW_NAMES = ['new', 'running', 'history', 'stats', 'composer', 'workspace
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
 // behind it (#settings/guardrails/<id>). parseHash splits on the FIRST '/' only,
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
-const SETTINGS_TABS = ['general', 'guardrails', 'models', 'plugins'];
+const SETTINGS_TABS = ['general', 'guardrails', 'models', 'plugins', 'memory'];
 const settingsPanes = $$('[data-view="settings"] .settings-pane');
 // Old top-level hashes keep working. The hashchange listener DROPS any view it
 // does not know, so without this map a bookmark or an old in-app link would
@@ -17244,10 +18057,16 @@ function showView(name, param = '') {
     if (currentSettingsTab === 'guardrails' && grvState.wizard) {
       grvState.wizard = null; grvState.editing = null; closePluginModal();
     }
+    // The Memory controller owns two delegated listeners and a painted host; a tab switch tears it
+    // down so the next entry mounts a fresh one (and a stray frame paints nothing).
+    if (currentSettingsTab === 'memory' && memoryTabCtl) { memoryTabCtl.destroy(); memoryTabCtl = null; }
   }
   // Leaving History resets the two-screen track, so the next visit lands on the
   // list instead of a stale detail screen sliding in behind the new view.
   if (currentShownView === 'history' && name !== 'history') closeHistDetail({ instant: true });
+  // Same for the Projects track: leaving must not park a project page mid-slide behind the next
+  // view, and its Memory controller must not outlive the view.
+  if (currentShownView === 'projects' && name !== 'projects') closeProjDetail({ instant: true });
   // Same for Running's two-screen track (spec §5.1): leaving must not park a
   // detail screen mid-slide behind the next view.
   //
@@ -17297,6 +18116,7 @@ function showView(name, param = '') {
   // letting the sticky pills toolbar + project headers pin flush to the top.
   document.body.classList.toggle('view-history', name === 'history');
   document.body.classList.toggle('view-running', name === 'running');
+  document.body.classList.toggle('view-projects', name === 'projects');
   if (name === 'running') {
     renderRunningView();
     routeRunDetail(param, { instant: prevView !== 'running' });
@@ -17325,7 +18145,16 @@ function showView(name, param = '') {
   if (name === 'workspace-create') enterWizard();
   if (name === 'agents') loadAgentsView();
   if (name === 'agent-create') enterAgentWizard();
-  if (name === 'projects') loadProjectsView();
+  // A route entry starts clean: a previous "not registered here" error must not linger (a
+  // projects-changed rebuild calls refreshProjectsPage directly and keeps the message).
+  if (name === 'projects') {
+    setProjectsMsg('');
+    // A view entry refetches the registry and then routes the page half of the hash; an in-view
+    // hop (list <-> page, tab <-> tab, a controller's route echo) only routes — the History arm
+    // above skips its reload on hops for the same reason.
+    if (prevView !== 'projects') void loadProjectsView();   // routes the LIVE hash after its fetch
+    else routeProjectDetail(param);
+  }
   if (name === 'composer') initComposer();
   if (name === 'settings') showSettingsTab(param);
   if (name === 'new') {
@@ -17368,6 +18197,7 @@ function showSettingsTab(param = '') {
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'models') loadModelsView();
   if (tab === 'plugins') loadPluginsView({ refresh: true });
+  if (tab === 'memory') loadMemoryTab(sub);
 }
 
 // Tracks the currently shown view so the leave-guard can fire on transition.
@@ -17511,6 +18341,12 @@ function getPageContext() {
       return ctx;
     }
   }
+  // A project page names its project (spec D12): the context header carries it and the Ask memory
+  // tools' page-following project resolves to it.
+  if (ctx.view === 'projects' && param) {
+    const parsed = parseProjParam(param);
+    if (parsed && projectByKey(parsed.key)) { ctx.view = 'project-detail'; ctx.projectKey = parsed.key; return ctx; }
+  }
   if (ctx.view === 'new' && state.runTarget === 'workspace' && state.selectedWorkspaceId) {
     ctx.workspaceId = state.selectedWorkspaceId;
     return ctx;
@@ -17593,6 +18429,9 @@ async function applyAskPrefill() {
     extrasFiles = p.extras.filter((e) => e && e.name).map((e) => new window.File([toBytes(e.dataBase64)], String(e.name)));
     renderExtrasPills();
   }
+  // BEFORE loadWorkflowsInto: that call renders the workflow config, which reveals the Memory
+  // scope row — a `project` proposal must not land on the row's default `global` (B17).
+  setMemoryScope(p.memoryScope);
   await loadWorkflowsInto(p.workflowId);
   await loadGuardrailsInto(p.guardrailsId);
   if (el.advancedConfig) el.advancedConfig.open = true;

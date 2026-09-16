@@ -28,6 +28,10 @@ export const UNDO_LIMIT = 50;
  *  the composer and app.js share one literal (the saved list hides the ×, the
  *  Save dialog prefills a copy name). */
 export const RESERVED_WORKFLOW_ID = 'wf_default';
+/** Every built-in the server lists and refuses to delete: wf_default + the Memory defragment
+ *  workflow. Both open read-only here (Save is Save-a-copy). wf_auto never reaches the composer. */
+export const RESERVED_WORKFLOW_IDS = new Set([RESERVED_WORKFLOW_ID, 'wf_memory_defrag']);
+export const isReservedWorkflowId = (id) => RESERVED_WORKFLOW_IDS.has(id);
 export const INSPECTOR_KEY = 'worca.composer.inspector';
 export const TAB_KEY = 'worca.composer.tab';
 export const TABS = Object.freeze(['agents', 'info']);
@@ -702,7 +706,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
    *  @returns {{copy: boolean, plugin: string}} */
   function saveMode(saveAs) {
     const plugin = pluginOriginName(tplOrigin);
-    return { copy: Boolean(saveAs) || tpl.id === RESERVED_WORKFLOW_ID || Boolean(plugin), plugin };
+    return { copy: Boolean(saveAs) || isReservedWorkflowId(tpl.id) || Boolean(plugin), plugin };
   }
 
   function openSaveDialog({ saveAs = false } = {}) {
@@ -738,7 +742,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     // Save on a LOADED row sends its id; a copy omits it so the server mints
     // wf_${slugify(name)}. `dataset.saveAs` already carries saveMode()'s verdict,
     // so the reserved built-in and every plugin-owned row land here as copies.
-    if (!saveAs && tpl.id && tpl.id !== RESERVED_WORKFLOW_ID) body.id = tpl.id;
+    if (!saveAs && tpl.id && !isReservedWorkflowId(tpl.id)) body.id = tpl.id;
     else delete body.id;
     try {
       const res = await api.saveWorkflow(body);

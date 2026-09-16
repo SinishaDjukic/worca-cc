@@ -16,7 +16,7 @@ test('registryPortsFn resolves builtin ports and synthesizes the await gate', ()
 
 test('the real-sidecar helper mirrors the registry', () => {
   const metas = realAgentMetas();
-  assert.equal(metas.length, 11);
+  assert.equal(metas.length, 12);
   const a = realPortsFn()({ id: 'n', kind: 'agent', key: 'reviewer', x: 0, y: 0, config: {} });
   const b = registryPortsFn(loadAgentRegistry(undefined, { userAgentsDir: null }))(
     { id: 'n', kind: 'agent', key: 'reviewer', x: 0, y: 0, config: {} });

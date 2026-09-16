@@ -130,17 +130,19 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
     { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'get_run', arguments: { id: 'zzzzzzzz' } } },
     { jsonrpc: '2.0', id: 8, method: 'foo/bar' },
     { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'propose_workflow', arguments: { projectKey: project.key, shape: { name: 'Two step', taskKind: 'plan-complete-small', stages: [{ agent: 'implementer' }] } } } },
+    { jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'list_memory', arguments: {} } },
   ];
   // argv wins over env: env points at a bogus base, argv at the real one
   const r = await runChild(['--home', home, '--thread', thread.id], calls, { env: { WORCA_HOME: '/nonexistent/base', WORCA_ASK_THREAD_ID: other.id } });
   assert.equal(r.code, 0, `exit 0 (stderr: ${r.err})`);
   const msgs = r.out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  assert.deepEqual(msgs.map((m) => m.id), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.deepEqual(msgs.map((m) => m.id), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   assert.equal(msgs[0].result.protocolVersion, '2025-11-25');
   assert.deepEqual(msgs[1].result.tools.map((t) => t.name), ['list_projects', 'list_workflows', 'list_runs', 'get_run', 'get_run_diff', 'track_run', 'propose_run', 'propose_workflow', 'read_attachment',
     'list_diff_comments', 'add_diff_comment', 'reply_to_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
     'open_worktree', 'list_worktrees', 'remove_worktree', 'git',
-    'list_run_artifacts', 'read_run_artifact', 'get_run_progress']);
+    'list_run_artifacts', 'read_run_artifact', 'get_run_progress',
+    'list_memory', 'read_memory', 'remember', 'forget']);
   const projects = JSON.parse(msgs[2].result.content[0].text);
   assert.equal(projects.projects[0].key, project.key);
   const run = JSON.parse(msgs[3].result.content[0].text);
@@ -151,6 +153,10 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
   assert.equal(diff.available, true);
   assert.deepEqual(diff.files, [{ path: 'a.txt', added: 1, removed: 0 }]);
   assert.equal(JSON.parse(msgs[5].result.content[0].text).text, 'attached text', 'argv thread wins over the env thread');
+  // The memory bundle really reaches the child: this thread has no pinned scope and no page
+  // context, so `project` is null (I2-#9: pin the value, not just the shape) and the temp home's
+  // global scope is empty.
+  assert.deepEqual(JSON.parse(msgs[10].result.content[0].text), { global: [], project: null });
   const proposal = JSON.parse(msgs[6].result.content[0].text);
   assert.equal(proposal.ok, true);
   assert.equal(proposal.card.projectKey, project.key);

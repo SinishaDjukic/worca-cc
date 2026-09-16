@@ -25,8 +25,11 @@ import { DEFAULT_AGENTS_DIR, loadAgentRegistry } from './agent-registry.mjs'; //
 import { readPluginsLock } from './plugins-lock.mjs';                 // a DISABLED plugin's rows are hidden
 import { validateGraph, formatIssue, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
-import { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, AUTO_WORKFLOW_STUB } from './graph/builtin-workflows.mjs';
-export { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID };
+import {
+  GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, AUTO_WORKFLOW_STUB,
+  GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_NAME, isReservedWorkflowId,
+} from './graph/builtin-workflows.mjs';
+export { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, isReservedWorkflowId };
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
 
@@ -298,7 +301,7 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   // The ONE reserved id is the built-in default's; a save may never claim it,
   // so it falls back to the slug.
   const asked = tpl && typeof tpl.id === 'string' ? tpl.id.trim() : '';
-  const reserved = (id) => id === GRAPH_DEFAULT_WORKFLOW.id || id === AUTO_WORKFLOW_ID;
+  const reserved = (id) => isReservedWorkflowId(id);
   const minted = !(asked && isSafeWorkflowId(asked) && !reserved(asked));
   const id = minted ? `wf_${slugify(name)}` : asked;
   // C-3: the fallback re-mints the reserved id for ANY name slugging to
@@ -307,7 +310,7 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   // refused by DELETE — the user's pipeline would vanish behind a 201. Refuse
   // the WRITE instead; only the name is wrong, so the caller can rename.
   if (reserved(id)) {
-    const which = id === AUTO_WORKFLOW_ID ? AUTO_WORKFLOW_NAME : GRAPH_DEFAULT_WORKFLOW.name;
+    const which = id === AUTO_WORKFLOW_ID ? AUTO_WORKFLOW_NAME : id === MEMORY_DEFRAG_WORKFLOW_ID ? MEMORY_DEFRAG_WORKFLOW_NAME : GRAPH_DEFAULT_WORKFLOW.name;
     throw Object.assign(
       new Error(`the name "${which}" is reserved — choose another name`),
       { code: 'RESERVED_NAME' });
@@ -361,6 +364,7 @@ export async function readWorkflow(id, opts = {}) {
   // `wf_default` IS the graph: the v1 default died with the v1 engine.
   if (id === GRAPH_DEFAULT_WORKFLOW.id) return GRAPH_DEFAULT_WORKFLOW;
   if (id === AUTO_WORKFLOW_ID) return AUTO_WORKFLOW_STUB;
+  if (id === MEMORY_DEFRAG_WORKFLOW_ID) return GRAPH_MEMORY_DEFRAG_WORKFLOW;
   return readRaw(id, opts);
 }
 
@@ -391,7 +395,7 @@ export async function listWorkflows({ includeArchived = false, includeDisabled =
   const rows = prepare(`SELECT ${ROW_COLS} FROM workflows ${where} ORDER BY created_at DESC, id`).all();
   const lock = includeDisabled ? null : readPluginsLock();
   return rows
-    .filter((r) => r.id !== GRAPH_DEFAULT_WORKFLOW.id && r.id !== AUTO_WORKFLOW_ID)
+    .filter((r) => !isReservedWorkflowId(r.id))
     .filter((r) => includeDisabled || !pluginDisabled(r.origin, lock))
     .map(rowToTpl);
 }
@@ -472,6 +476,9 @@ export async function setWorkflowNodeDefaults(id, map) {
   if (id === GRAPH_DEFAULT_WORKFLOW.id) {
     throw new Error('the built-in Default workflow cannot store defaults — save a copy in Composer first');
   }
+  if (id === MEMORY_DEFRAG_WORKFLOW_ID) {
+    throw new Error('the built-in Memory defragment workflow cannot store defaults — save a copy in Composer first');
+  }
   const tpl = readRaw(id);
   if (!tpl) throw new Error(`workflow not found: ${id}`);
   const patch = map && typeof map === 'object' ? map : {};
@@ -517,6 +524,7 @@ export async function setWorkflowNodeDefaults(id, map) {
 export async function deleteWorkflow(id) {
   if (id === GRAPH_DEFAULT_WORKFLOW.id) return false; // built-in default is undeletable
   if (id === AUTO_WORKFLOW_ID) return false;    // never a row
+  if (id === MEMORY_DEFRAG_WORKFLOW_ID) return false; // a constant, never a row
   if (!isSafeWorkflowId(id)) return false;      // SECURITY: reject unsafe ids
   getDb();
   let changed = 0;

@@ -5,7 +5,7 @@
 import { readFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  listAllPipelines, lookupPipelineRow, findPipelineRowById, totalsFor, readStoreMeta, runDirForRow,
+  listAllPipelines, lookupPipelineRow, findPipelineRowById, totalsFor, readStoreMeta, runDirForRow, readMemoryLedger,
   listRunArtifacts, readRunProgress, resolveIndexedArtifactForRow,
 } from '../artifacts.mjs';
 import { DIFF_PATCH_FILE } from '../results.mjs';
@@ -36,6 +36,17 @@ export async function hasDiffPatch(row) {
   }
 }
 
+/** The run's memory changes from its ledger (artifacts.mjs#readMemoryLedger) as { changes, totals },
+ *  or null when the run has none — get_run then carries no `memory` key at all. The mount path is
+ *  dropped: it is a directory of THIS machine, never something the model should see. Read-only. */
+export async function readRunMemory(row) {
+  try {
+    const ledger = await readMemoryLedger(await runDirForRow(row));
+    if (!ledger || !ledger.changes.length) return null;
+    return { changes: ledger.changes, totals: ledger.totals };
+  } catch { return null; }
+}
+
 /**
  * @param {{threadId:string}} opts  attachments are readable only for this thread (spec §6.4 read_attachment)
  */
@@ -49,6 +60,7 @@ export function defaultToolDeps({ threadId }) {
     readStoreMeta,
     readDiffPatch,
     hasDiffPatch,
+    readRunMemory,
     listRunArtifacts: (row, filter) => listRunArtifacts(row.id, filter),
     readRunArtifact: (row, rel) => resolveIndexedArtifactForRow(row, rel), // {rel, text}|null
     readRunProgress: (row) => readRunProgress(row.id),
