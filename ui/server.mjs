@@ -126,7 +126,7 @@ import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
 } from '../src/core/worktree.mjs';
-import { hasGh, pushBranch, createPr, prMergeable, listRemotes, sameRepo } from '../src/core/git-info.mjs';
+import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, sameRepo } from '../src/core/git-info.mjs';
 import { archivePipeline, discardRetainedWorktrees } from '../src/core/pipeline-delete.mjs';
 import {
   listWorkspaces, readWorkspace, createWorkspace,
@@ -174,7 +174,8 @@ import { listTaskSources, retryWriteback } from '../src/core/sources.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { resolveAutoModel, AUTO_MODEL_ENV } from '../src/core/auto/model.mjs';
 import {
-  buildRunReport, buildIssueUrl, reportFilename, BUGS_URL,
+  buildRunReport, buildIssueUrl, reportFilename, renderIssueBodyFull, issueTitle,
+  repoSlugFromBugsUrl, BUGS_URL,
 } from '../src/core/run-report.mjs';
 import { REPORT_REASON_IDS } from '../src/shared/report-reasons.mjs';
 import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
@@ -6019,21 +6020,73 @@ app.post('/api/pipelines/:id/report-result', async (req, res) => {
 // Worca makes NO network call here — it returns a URL the browser opens.
 // Like its report-result neighbour above, a malformed id 404s rather than 400s: a
 // stale bookmark must read as not-found (see resolveRunScope, :2006).
-app.post('/api/pipelines/:id/report', async (req, res) => {
+
+// The repo `gh issue create` targets, from the SAME bugs.url the prefilled link uses
+// (APP_INFO.bugsUrl, which falls back to <repo>/issues). Empty for a non-github.com
+// bugs.url, which makes /report-issue degrade to the browser link.
+const BUGS_SLUG = repoSlugFromBugsUrl(APP_INFO.bugsUrl);
+
+/**
+ * The preamble both report routes share: validate the reason, build the payload.
+ * Returns null after ALREADY answering `res` (400 or 404), so callers just bail.
+ */
+async function reportPayloadOr(res, req) {
   const body = req.body || {};
   const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
   if (!REPORT_REASON_IDS.includes(reason)) {
-    return badRequest(res, `reason must be one of: ${REPORT_REASON_IDS.join(', ')}`);
+    badRequest(res, `reason must be one of: ${REPORT_REASON_IDS.join(', ')}`);
+    return null;
   }
+  const payload = await buildRunReport(req.params.id, {
+    reason,
+    expectation: typeof body.expectation === 'string' ? body.expectation : '',
+    include: body.include,
+  });
+  if (!payload) {
+    res.status(404).json({ error: 'pipeline not found' });
+    return null;
+  }
+  return payload;
+}
+
+/** The browser fallback: a prefilled issues/new URL plus the download filename. */
+function prefilledIssue(payload) {
+  return { ...buildIssueUrl(payload, { bugsUrl: APP_INFO.bugsUrl }), filename: reportFilename(payload) };
+}
+
+app.post('/api/pipelines/:id/report', async (req, res) => {
   try {
-    const payload = await buildRunReport(req.params.id, {
-      reason,
-      expectation: typeof body.expectation === 'string' ? body.expectation : '',
-      include: body.include,
+    const payload = await reportPayloadOr(res, req);
+    if (!payload) return;
+    res.json({ payload, issue: prefilledIssue(payload) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// POST /api/pipelines/:id/report-issue — the same report, but worca FILES it through
+// `gh issue create` instead of handing the browser a prefilled link. That exists
+// because the link cannot carry the report: a prefilled `body=` dies at ~8 KB encoded
+// and half of all real runs serialize larger than that, so the browser path can only
+// ever ask the reporter to paste the JSON in by hand. A --body-file has no such cap.
+//
+// The payload is REBUILT here from the run id; the client's copy is never accepted.
+// The redaction contract (run-report.mjs) has exactly one enforcement point, and a
+// route that trusted a posted payload would be a second, weaker one.
+//
+// A gh failure is a 200 with ok:false, not a 5xx: the response carries the prefilled
+// link so the modal can degrade to today's copy-and-paste flow in one round trip.
+app.post('/api/pipelines/:id/report-issue', async (req, res) => {
+  try {
+    const payload = await reportPayloadOr(res, req);
+    if (!payload) return;
+    const filed = await createIssue({
+      repo: BUGS_SLUG,
+      title: issueTitle(payload),
+      body: renderIssueBodyFull(payload),
     });
-    if (!payload) return res.status(404).json({ error: 'pipeline not found' });
-    const issue = buildIssueUrl(payload, { bugsUrl: APP_INFO.bugsUrl });
-    res.json({ payload, issue: { ...issue, filename: reportFilename(payload) } });
+    if (filed.ok) return res.json({ ok: true, url: filed.url, labeled: filed.labeled });
+    res.json({ ok: false, kind: filed.kind, error: filed.error, issue: prefilledIssue(payload) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

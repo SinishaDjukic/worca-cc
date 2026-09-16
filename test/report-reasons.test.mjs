@@ -19,11 +19,13 @@ test('the six reasons are fixed, ordered and frozen', () => {
 });
 
 test('exactly three opt-in classes; the diff and log lines are not among them', () => {
-  assert.deepEqual(OPT_IN_KEYS, ['paths', 'prompt', 'names'], 'three classes, in modal order');
+  assert.deepEqual(OPT_IN_KEYS, ['paths', 'prompt'], 'two classes, in modal order');
+  assert.equal(OPT_IN_KEYS.includes('names'), false,
+    'the run title, project key, branch and workspace names are ALWAYS in the report,\n     so there is nothing to opt into');
   for (const forbidden of ['diff', 'logs', 'log', 'patch']) {
     assert.equal(OPT_IN_KEYS.includes(forbidden), false, `"${forbidden}" must never be offerable`);
   }
-  assert.equal(OPT_IN_CLASSES.length, 3, 'one descriptor per class');
+  assert.equal(OPT_IN_CLASSES.length, 2, 'one descriptor per class');
 });
 
 test('reasonById resolves a known id and rejects an unknown one', () => {
@@ -31,12 +33,12 @@ test('reasonById resolves a known id and rejects an unknown one', () => {
   assert.equal(reasonById('nope'), null, 'an unknown id resolves to null, never a default');
 });
 
-test('normalizeInclude coerces an untrusted bag to exactly the three booleans', () => {
+test('normalizeInclude coerces an untrusted bag to exactly the two booleans', () => {
   assert.deepEqual(normalizeInclude({ paths: 'yes', names: true, diff: true }),
-    { paths: false, prompt: false, names: true },
+    { paths: false, prompt: false },
     'only a literal true opts in, and an unknown key cannot smuggle a class');
   for (const junk of [null, undefined, 'x', 42, []]) {
-    assert.deepEqual(normalizeInclude(junk), { paths: false, prompt: false, names: false },
+    assert.deepEqual(normalizeInclude(junk), { paths: false, prompt: false },
       `${JSON.stringify(junk)} defaults to metadata-only`);
   }
 });

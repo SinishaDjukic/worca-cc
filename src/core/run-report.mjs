@@ -9,9 +9,9 @@
 // One builder, two callers — keep it that way.
 //
 // ── The redaction contract ───────────────────────────────────────────────────
-// DEFAULT = metadata only. Three classes can be opted back in (paths / prompt /
-// names, see src/shared/report-reasons.mjs). The unified diff and the run's log
-// lines are NOT opt-in-able: there is no code path here that reads either one.
+// DEFAULT = metadata and NAMES. Two classes can be opted back in (paths / prompt,
+// see src/shared/report-reasons.mjs). The unified diff and the run's log lines are
+// NOT opt-in-able: there is no code path here that reads either one.
 //
 // Fields are ADDED for an opt-in, never nulled — so `'prompt' in payload.run` is a
 // true test of whether the prompt is present.
@@ -24,9 +24,10 @@
 //      WHITELIST so a future manifest key cannot leak by default.
 //   3. outcome.tokens[*].path and branch.worktreeDir are absolute filesystem paths
 //      (verified in live data). Neither is ever read.
-//   4. workflow.template.name/.id are PROMPT-DERIVED on an Auto run — the classifier
-//      writes the name from the task text and the id is a slug of it — so the
-//      template's identity rides `names`. See templateShape below.
+//   4. workflow.template.name on a STOCK recipe is read from the shipped constants,
+//      never from the manifest: the manifest copies the workflow ROW's name and a
+//      seed row is renameable, so a user's typed name would ride a "builtin" field.
+//      See templateShape below.
 //
 // NOT used: readRunContextBundle (results.mjs:179). Its line 183 is
 // `diffPatch: await read(DIFF_PATCH_FILE)` — it eagerly loads the diff, which is
@@ -69,11 +70,10 @@ const NODE_STRINGS = ['model', 'effort', 'subagentModel'];
 const NODE_BOOLS = ['fanOut', 'askQuestions', 'awaitAll'];
 
 // Every workflow id worca itself ships: wf_default, wf_auto and the seven V17 seed
-// recipes, mapped to the name worca ships it under. FIXED vocabulary, zero user text —
-// so those ids and names ship by default. Every other id is `wf_<slug of a name>`
-// (workflows.mjs:303, auto/proposal.mjs:127), which is why the identity of anything
-// else waits for `names`. Read from the constants, not copied, so a new shipped recipe
-// classifies itself.
+// recipes, mapped to the name worca ships it under. FIXED vocabulary, zero user text.
+// Every other id is `wf_<slug of a name>` (workflows.mjs:303, auto/proposal.mjs:127)
+// and reports as non-builtin. Read from the constants, not copied, so a new shipped
+// recipe classifies itself.
 //
 // The NAME must come from here too, never from the manifest. writeGraphWorkflow
 // reserves only wf_default and wf_auto (workflows.mjs:295-345) — the seven seed ids are
@@ -140,15 +140,15 @@ function pickWire(wire) {
 }
 
 /**
- * The template block: a default-safe CLASS, with the identity behind `names`.
+ * The template block: a CLASS discriminator plus the template's identity.
  *
  * D2 ships node keys and labels verbatim as workflow design, but it does NOT cover
  * this field. On an Auto run the classifier WRITES the template name from the task
  * text (auto/classify.mjs:156 -> orchestrator.mjs:361) and the id is a slug of that
- * same name (auto/proposal.mjs:127), so both are a paraphrase of the prompt — the
- * one class that must never ship unasked. Only a STOCK id is fixed vocabulary; a
- * user-saved `wf_<slug of the name the user typed>` waits for `names`, exactly as
- * guardrailFacts withholds `gr_<slug>` (D14).
+ * same name (auto/proposal.mjs:127) — a paraphrase of the prompt, and it ships, on
+ * the same footing as the run title, which is prompt-derived in exactly that way.
+ * `builtin` is still computed rather than inferred from the string, because it is
+ * the fact a maintainer needs: did this run use a recipe worca ships?
  *
  * On the builtin arm the name is looked up by id in STOCK_WORKFLOW_NAMES rather than
  * read off the manifest, because `template.name` is a copy of the workflow ROW's name
@@ -160,14 +160,14 @@ function pickWire(wire) {
  * (db.mjs:1311 seeds pre-existing DBs only), so a minted id CAN slug onto a stock
  * one. What the run did is authoritative over what the string looks like.
  */
-function templateShape(template, auto, include) {
+function templateShape(template, auto) {
   if (!template) return null;
   const id = template.id || '';
   const name = template.name || '';
   const builtin = STOCK_WORKFLOW_NAMES.has(id) && auto?.via !== 'created';
   const out = { builtin, id: builtin ? id : null };
   if (builtin) out.name = STOCK_WORKFLOW_NAMES.get(id) ?? '';
-  else if (include.names) { out.id = id; out.name = name; }
+  else { out.id = id; out.name = name; }
   return out;
 }
 
@@ -177,7 +177,7 @@ function templateShape(template, auto, include) {
  * only `{version, steps, feedbacks}`. The v2 guard mirrors
  * ui/public/graph/run-decor.mjs:58.
  */
-export function workflowShape(stepper, cyclesUsed = {}, include = {}) {
+export function workflowShape(stepper, cyclesUsed = {}) {
   if (!stepper || typeof stepper !== 'object') return null;
   const isV2 = stepper.version === 2 && stepper.graph && Array.isArray(stepper.graph.nodes);
   const hasV1 = Array.isArray(stepper.steps) && stepper.steps.length > 0;
@@ -197,7 +197,7 @@ export function workflowShape(stepper, cyclesUsed = {}, include = {}) {
 
   return {
     manifestVersion: Number(stepper.version) || 1,
-    template: isV2 ? templateShape(stepper.template, stepper.auto, include) : null,
+    template: isV2 ? templateShape(stepper.template, stepper.auto) : null,
     auto: stepper.auto
       ? { status: stepper.auto.status || '', via: stepper.auto.via || '',
           rounds: stepper.auto.rounds ?? null, humanInLoop: !!stepper.auto.humanInLoop }
@@ -306,12 +306,12 @@ function toolFacts(tools) {
 }
 
 /**
- * Guardrails as counts, not contents: protectedPaths are user globs and
- * envAllowlist are env var names. A custom set's id is gr_<slug-of-user-name>,
- * so it ships only behind the `names` opt-in (D14). readGuardrailSet is async and
- * never throws for a bad id — it returns null (guardrail-store.mjs:66).
+ * Guardrails as COUNTS, not contents: protectedPaths are user globs and envAllowlist
+ * are env var names, and neither ever ships. The set's own id and name do — they are
+ * names, and the contents stay behind either way. readGuardrailSet is async and never
+ * throws for a bad id — it returns null (guardrail-store.mjs:66).
  */
-async function guardrailFacts(guardrailsId, include) {
+async function guardrailFacts(guardrailsId) {
   if (!guardrailsId) return { legacy: true, id: null, builtin: null, origin: null };
   const builtin = isBuiltinGuardrailSetId(guardrailsId);
   const set = await readGuardrailSet(guardrailsId);
@@ -333,7 +333,7 @@ async function guardrailFacts(guardrailsId, include) {
     protectedPathCount: s ? (s.protectedPaths || []).length : null,
     envAllowlistCount: s ? (s.envAllowlist || []).length : null,
   };
-  if (include.names && !builtin) {
+  if (!builtin) {
     facts.id = guardrailsId;
     facts.name = set ? (set.name ?? null) : null;
   }
@@ -466,7 +466,7 @@ function parseJson(value) {
  * @param {object} [opts]
  * @param {string} [opts.reason]        one of REPORT_REASON_IDS (unknown -> 'something-else')
  * @param {string} [opts.expectation]   the reporter's free text, clamped to EXPECTATION_MAX
- * @param {object} [opts.include]       { paths?, prompt?, names? } — all default false
+ * @param {object} [opts.include]       { paths?, prompt? } — both default false
  * @param {Date}   [opts.now]           injectable clock, for deterministic tests
  * @returns {Promise<object|null>} the payload, or null when the id is unknown
  */
@@ -496,7 +496,7 @@ export async function buildRunReport(pipelineId, opts = {}) {
   const endedMs = Date.parse(row.updated_at || row.started_at || '') || null;
   const wallClockMs = (startedMs && endedMs) ? Math.max(0, endedMs - startedMs) : null;
 
-  const workflow = workflowShape(parseJson(row.stepper), cyclesByNode(steps), include);
+  const workflow = workflowShape(parseJson(row.stepper), cyclesByNode(steps));
   const tools = toolFacts(parseJson(row.tools));
   const review = reviewFacts(extras.reviews);
   const files = fileFacts(results);
@@ -550,7 +550,7 @@ export async function buildRunReport(pipelineId, opts = {}) {
       payload.evidence = { ...review, cyclesUsed: cyclesByNode(steps), files: files ? { ...files } : null };
       break;
     case 'wrong-or-unsafe':
-      payload.evidence = { guardrails: await guardrailFacts(row.guardrails_id, include), tools };
+      payload.evidence = { guardrails: await guardrailFacts(row.guardrails_id), tools };
       break;
     case 'failed-or-stuck':
       payload.evidence = failureEvidence({ row, state, steps });
@@ -582,21 +582,23 @@ export async function buildRunReport(pipelineId, opts = {}) {
 
   if (include.prompt && row.prompt) payload.run.prompt = row.prompt;
 
-  if (include.names) {
-    if (row.title) payload.run.title = row.title;
-    if (row.project_key) payload.run.projectKey = row.project_key;
-    const branch = parseJson(row.branch);
-    if (branch) {
-      // worktreeDir is an absolute path — NEVER, under any opt-in.
-      payload.run.branch = { source: branch.source ?? null, feature: branch.feature ?? null };
-    }
-    const meta = parseJson(row.workspace_meta);
-    if (row.target === 'workspace' && meta) {
-      payload.run.workspace = {
-        name: meta.workspaceName ?? null,
-        projectKeys: Array.isArray(meta.projectKeys) ? meta.projectKeys : [],
-      };
-    }
+  // ── names: unconditional ────────────────────────────────────────────────────
+  // Identity is what makes a report actionable. Still ADDED, never nulled, so
+  // `'title' in payload.run` keeps meaning "this run had one".
+  if (row.title) payload.run.title = row.title;
+  if (row.project_key) payload.run.projectKey = row.project_key;
+  const branch = parseJson(row.branch);
+  if (branch) {
+    // worktreeDir is an absolute path — NEVER, under any option. This whitelist is
+    // the only reason it stays out, so do not spread `branch` here.
+    payload.run.branch = { source: branch.source ?? null, feature: branch.feature ?? null };
+  }
+  const meta = parseJson(row.workspace_meta);
+  if (row.target === 'workspace' && meta) {
+    payload.run.workspace = {
+      name: meta.workspaceName ?? null,
+      projectKeys: Array.isArray(meta.projectKeys) ? meta.projectKeys : [],
+    };
   }
 
   return payload;
@@ -605,14 +607,24 @@ export async function buildRunReport(pipelineId, opts = {}) {
 export { reasonById };
 
 // ── the GitHub issue body + URL ───────────────────────────────────────────────
-// Worca makes NO network call and needs no token: it hands the browser a prefilled
-// issues/new URL and the user presses the button.
+// TWO bodies, because there are two ways an issue gets filed:
 //
-// THE CAP. A prefilled `body=` is truncated by browser and server URL limits at
-// roughly 8 KB. So the body is a SHORT narrative plus a compact metrics table, and
-// the FULL JSON goes on the clipboard with the body ASKING for the paste. Over the
-// cap we trim by binary-searching the longest fitting prefix (exact and O(log n); a
-// fixed-step shrink loop is O(n) on a long body and can overshoot).
+//   * renderIssueBodyFull + `gh issue create --body-file` (the normal path) — no URL
+//     and so no cap worth speaking of, and the whole JSON report ships inside the
+//     issue. That call lives in git-info.mjs#createIssue; nothing here spawns.
+//   * renderIssueBody + buildIssueUrl (the fallback, when gh cannot file it) — a
+//     prefilled issues/new URL, which browser and server URL limits truncate at
+//     roughly 8 KB. Measured across 152 real runs, a metadata-only report is a
+//     median 6.3 KB and a p90 of 20 KB once encoded, so the URL cannot carry the
+//     report at all: the body is a SHORT narrative plus a compact metrics table, and
+//     the FULL JSON goes on the clipboard with the body ASKING for the paste.
+//
+// Either way worca needs no GitHub token of its own — the fallback opens a URL, and
+// the normal path borrows the gh CLI's login.
+//
+// THE CAP (fallback path). Over it we trim by binary-searching the longest fitting
+// prefix (exact and O(log n); a fixed-step shrink loop is O(n) on a long body and
+// can overshoot).
 
 export const ISSUE_URL_MAX = 8000;
 
@@ -666,8 +678,8 @@ function metricRows(p) {
     ['steps / sub-agents', `${p.steps.length} / ${p.subAgents.length}`],
   ];
   if (p.workflow) {
-    // `name` is present only for a stock template or under `names` (templateShape),
-    // and a v1 manifest has no template block at all — both read as 'custom' here.
+    // Every v2 template names itself (templateShape); a v1 manifest has no template
+    // block at all, and only that reads as 'custom' here.
     const tpl = p.workflow.template;
     rows.push(['workflow', `${(tpl && tpl.name) || 'custom'} ` +
       `(manifest v${p.workflow.manifestVersion}, ${p.workflow.nodes.length} nodes)`]);
@@ -705,14 +717,11 @@ export function issueTitle(payload) {
 }
 
 /**
- * The prefilled issue body: a short narrative + a compact metrics table.
- *
- * The closing paragraph ASKS for the paste (D23). v1 asserted the JSON was already
- * on the clipboard, which was a lie for anyone who clicked the issue link without
- * pressing Copy JSON first; the modal now copies on that click, and this wording
- * still reads correctly when the copy was blocked.
+ * The narrative + metrics table both bodies open with. Shared so the prefilled-URL
+ * body and the `gh`-created body can never disagree about the facts — they differ
+ * only in how the full JSON reaches the issue (a paste-ask vs. an embedded block).
  */
-export function renderIssueBody(payload) {
+function bodyHead(payload) {
   const reason = reasonById(payload.reason);
   const lines = [
     `**What went wrong:** ${reason ? reason.label : payload.reason}`,
@@ -727,7 +736,12 @@ export function renderIssueBody(payload) {
   if (payload.narrative) {
     lines.push('', '**What this run did** (from its cached overview):', '', payload.narrative);
   }
-  lines.push(
+  return lines;
+}
+
+/** The closing paragraph for a body that could NOT carry the JSON itself. */
+function pasteTail(payload) {
+  return [
     '',
     '---',
     '',
@@ -736,9 +750,94 @@ export function renderIssueBody(payload) {
     '**Copy JSON** in the Worca report dialog and try again.',
     '',
     '<!-- paste the copied JSON here -->',
-  );
-  return lines.join('\n');
+  ];
 }
+
+/**
+ * The prefilled issue body: a short narrative + a compact metrics table.
+ *
+ * The closing paragraph ASKS for the paste (D23). v1 asserted the JSON was already
+ * on the clipboard, which was a lie for anyone who clicked the issue link without
+ * pressing Copy JSON first; the modal now copies on that click, and this wording
+ * still reads correctly when the copy was blocked.
+ *
+ * This is the FALLBACK body now: it ships only when `gh` cannot create the issue for
+ * us (renderIssueBodyFull below is the normal path).
+ */
+export function renderIssueBody(payload) {
+  return [...bodyHead(payload), ...pasteTail(payload)].join('\n');
+}
+
+// ── the full body, for `gh issue create --body-file` ──────────────────────────
+// No URL, so no 8 KB cap: the only ceiling is GitHub's own issue-body limit. A
+// measured worst case across 152 real runs was 40 007 chars pretty-printed, so the
+// pretty form nearly always fits; the two degradations below exist for the tail.
+
+/** GitHub rejects an issue body longer than this many characters. */
+export const ISSUE_BODY_MAX = 65536;
+
+/**
+ * A fence long enough to survive the payload. JSON strings carry the reporter's own
+ * text under the `prompt` opt-in, and that text routinely contains ``` — a fixed
+ * three-backtick fence would be closed early and the rest of the report would land
+ * as prose outside the collapsed block.
+ */
+function fenceFor(json) {
+  let longest = 0;
+  for (const run of json.match(/`+/g) || []) longest = Math.max(longest, run.length);
+  return '`'.repeat(Math.max(3, longest + 1));
+}
+
+function plural(n, word) { return `${n} ${word}${n === 1 ? '' : 's'}`; }
+
+function detailsBlock(payload, json) {
+  const fence = fenceFor(json);
+  const counts = `${plural((payload.steps || []).length, 'step')}, ` +
+    `${plural((payload.subAgents || []).length, 'sub-agent')}`;
+  return [
+    '',
+    '---',
+    '',
+    '<details>',
+    `<summary>Full JSON report (schema v${payload.schemaVersion} — ${counts})</summary>`,
+    '',
+    `${fence}json`,
+    json,
+    fence,
+    '',
+    '</details>',
+  ];
+}
+
+/**
+ * The issue body Worca writes to a file and hands to `gh issue create`.
+ *
+ * Pretty first (a maintainer reads this in a browser), minified if indentation is
+ * the only thing pushing it over, and the paste-ask as the last resort — a report
+ * too big for a GitHub issue at all still opens a usable issue.
+ */
+export function renderIssueBodyFull(payload) {
+  const head = bodyHead(payload);
+  for (const json of [JSON.stringify(payload, null, 2), JSON.stringify(payload)]) {
+    const body = [...head, ...detailsBlock(payload, json)].join('\n');
+    if (body.length <= ISSUE_BODY_MAX) return body;
+  }
+  return [...head, ...pasteTail(payload)].join('\n');
+}
+
+/**
+ * `https://github.com/OWNER/REPO/issues` -> `OWNER/REPO`, for `gh --repo`.
+ * Empty for anything that is not a github.com URL: `gh` addresses nothing else, and
+ * a wrong slug would file the report in a stranger's repo.
+ */
+export function repoSlugFromBugsUrl(bugsUrl) {
+  const m = /^https?:\/\/(?:www\.)?github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?(?:\/(?:issues|pulls)?\/?)?$/
+    .exec(String(bugsUrl || '').trim());
+  return m ? `${m[1]}/${m[2]}` : '';
+}
+
+/** The repo `gh issue create` targets, derived once from package.json bugs.url. */
+export const BUGS_REPO = repoSlugFromBugsUrl(BUGS_URL);
 
 /**
  * The prefilled issues/new URL, capped.

@@ -34,11 +34,14 @@ afterEach(() => {
 
 const REPORT = {
   payload: { schemaVersion: 1, reason: 'too-slow', run: { id: PID },
-             included: { paths: false, prompt: false, names: false },
+             included: { paths: false, prompt: false },
              app: { worca: '1.2.0' }, steps: [], subAgents: [] },
   issue: { url: 'https://github.com/SinishaDjukic/worca-cc/issues/new?labels=too-slow',
            truncated: false, filename: `worca-run-report-${PID}-too-slow.json` },
 };
+
+const FILED_URL = 'https://github.com/SinishaDjukic/worca-cc/issues/512';
+const FILED = { ok: true, url: FILED_URL, labeled: true };
 
 // ── boot(): test/ui-running-stop-modal.test.mjs:22-82, plus _openDoms and clipboard ──
 async function boot({ fetchHandler, clipboard } = {}) {
@@ -108,6 +111,7 @@ const esc = (w) => w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key
 const settle = async (w, n = 4) => { for (let i = 0; i < n; i += 1) await new Promise((r) => w.setTimeout(r, 0)); };
 const go = (w, hash) => { w.location.hash = hash; w.dispatchEvent(new w.Event('hashchange')); };
 const reportPosts = (ctx) => ctx.calls.filter((c) => /\/report$/.test(c.url) && c.opts.method === 'POST');
+const issuePosts = (ctx) => ctx.calls.filter((c) => /\/report-issue$/.test(c.url) && c.opts.method === 'POST');
 
 const jsonRes = (status, body) => Promise.resolve({
   ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body),
@@ -152,8 +156,12 @@ const BUDGET = {
  * never paints, so `.hd-report` is null and every assertion below reads off nothing.
  * The report endpoint is matched first because it is the only POST here.
  */
-function arms({ report = REPORT, reportStatus = 200, rows = [ROW], detail = DETAIL } = {}) {
+function arms({ report = REPORT, reportStatus = 200, filed = FILED, filedStatus = 200,
+                rows = [ROW], detail = DETAIL } = {}) {
   return (url) => {
+    // BEFORE the '/report' arm: that one matches with endsWith too, and
+    // '/report-issue' would otherwise be answered by it if the order ever flipped.
+    if (url.endsWith('/report-issue')) return jsonRes(filedStatus, filed);
     if (url.endsWith('/report')) return jsonRes(reportStatus, report);
     if (url.endsWith('/api/history/pr')) return jsonRes(200, { ok: true });
     if (url.endsWith('/diff')) return jsonRes(404, { error: 'no diff' });
@@ -211,7 +219,7 @@ test('History detail shows "Report this run" and opens the preview modal', async
 
   const modal = ctx.window.document.getElementById('report-modal');
   assert.equal(modal.classList.contains('hidden'), false, 'the preview opens');
-  assert.equal(modal.querySelectorAll('#report-optins input[type="checkbox"]').length, 3);
+  assert.equal(modal.querySelectorAll('#report-optins input[type="checkbox"]').length, 2);
   assert.equal(modal.querySelector('#report-reason').options.length, 6);
 });
 
@@ -262,7 +270,7 @@ test('ticking an opt-in re-requests the payload and repaints the preview', async
   box.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
   await settle(ctx.window, 8);
   const last = reportPosts(ctx).at(-1);
-  assert.deepEqual(JSON.parse(last.opts.body).include, { paths: false, prompt: true, names: false },
+  assert.deepEqual(JSON.parse(last.opts.body).include, { paths: false, prompt: true },
     'the opt-in state rides the next request');
 });
 
@@ -443,4 +451,157 @@ test('a failed build shows an inline error and leaves the modal usable', async (
   assert.match(err.textContent, /boom/, 'the server message is surfaced');
   assert.equal(ctx.window.document.getElementById('report-issue').hasAttribute('href'), false,
     'and the link stays inert');
+});
+
+// ── "Create GitHub issue" ─────────────────────────────────────────────────────
+// The primary action files the issue through the server (`gh issue create`), so the
+// full JSON report rides along instead of being pasted by hand. #report-issue — the
+// prefilled browser link — survives as the fallback, revealed only when gh fails.
+
+/** A stand-in for the tab the click opens; jsdom implements no real window.open. */
+function stubTab(window) {
+  const tab = { location: null, closed: false, close() { this.closed = true; } };
+  window.open = () => tab;
+  return tab;
+}
+
+const createBtn = (w) => w.document.getElementById('report-create-issue');
+
+test('the primary action files the issue and points the opened tab at it', async () => {
+  const ctx = await boot({ fetchHandler: arms() });
+  await openHistoryReport(ctx);
+  const tab = stubTab(ctx.window);
+
+  click(ctx.window, createBtn(ctx.window));
+  await settle(ctx.window, 8);
+
+  assert.equal(issuePosts(ctx).length, 1, 'exactly one create call');
+  const sent = JSON.parse(issuePosts(ctx)[0].opts.body);
+  assert.equal(sent.reason, 'poor-quality', 'the reason the select is showing');
+  assert.deepEqual(sent.include, { paths: false, prompt: false });
+  assert.equal(tab.location, FILED_URL, 'the tab opened by the click lands on the new issue');
+  assert.equal(tab.closed, false);
+  assert.equal(ctx.calls.some((c) => c.url.includes('github.com')), false,
+    'the browser still never talks to GitHub — the server holds the gh login');
+});
+
+test('the tab is opened synchronously, before the request is awaited', async () => {
+  // A popup blocker only honours window.open inside the user gesture. Opening it
+  // after `await fetch` loses the gesture and the new tab is silently eaten.
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const base = arms();
+  const ctx = await boot({ fetchHandler: (url, opts) => (url.endsWith('/report-issue')
+    ? gate.then(() => jsonRes(200, FILED)) : base(url, opts)) });
+  await openHistoryReport(ctx);
+
+  let openedAt = 0;
+  let calls = 0;
+  ctx.window.open = () => { openedAt = ++calls; return { location: null, close() {} }; };
+
+  click(ctx.window, createBtn(ctx.window));
+  assert.equal(openedAt, 1, 'the tab exists the moment the click handler runs');
+  release();
+  await settle(ctx.window, 8);
+});
+
+test('a gh failure reveals the prefilled link and closes the empty tab', async () => {
+  const ctx = await boot({ fetchHandler: arms({
+    filed: { ok: false, kind: 'auth', error: 'gh auth login',
+             issue: { url: REPORT.issue.url, truncated: false, filename: REPORT.issue.filename } },
+  }) });
+  await openHistoryReport(ctx);
+  const link = ctx.window.document.getElementById('report-issue');
+  assert.equal(link.hidden, true, 'the fallback link is out of the way while gh is presumed to work');
+
+  const tab = stubTab(ctx.window);
+  click(ctx.window, createBtn(ctx.window));
+  await settle(ctx.window, 8);
+
+  const err = ctx.window.document.querySelector('#report-modal .report-error');
+  assert.equal(err.hidden, false);
+  assert.match(err.textContent, /gh auth login/, 'the reporter is told how to fix it');
+  assert.equal(tab.closed, true, 'no orphan blank tab is left behind');
+  assert.equal(link.hidden, false, 'and the browser path is offered instead');
+  assert.equal(link.getAttribute('href'), REPORT.issue.url);
+});
+
+test('a 500 from the create route is surfaced without losing the modal', async () => {
+  const ctx = await boot({ fetchHandler: arms({ filed: { error: 'boom' }, filedStatus: 500 }) });
+  await openHistoryReport(ctx);
+  const tab = stubTab(ctx.window);
+  click(ctx.window, createBtn(ctx.window));
+  await settle(ctx.window, 8);
+
+  const err = ctx.window.document.querySelector('#report-modal .report-error');
+  assert.match(err.textContent, /boom/);
+  assert.equal(tab.closed, true);
+  assert.equal(createBtn(ctx.window).disabled, false, 'the button is usable again');
+  assert.equal(ctx.window.document.getElementById('report-modal').classList.contains('hidden'), false);
+});
+
+test('a pending rebuild makes the create button inert, like the link (D24)', async () => {
+  const ctx = await boot({ fetchHandler: arms() });
+  await openHistoryReport(ctx);
+
+  const box = ctx.window.document.getElementById('report-expectation');
+  box.value = 'it looped forever';
+  box.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+
+  stubTab(ctx.window);
+  click(ctx.window, createBtn(ctx.window));
+  await settle(ctx.window, 4);
+  assert.equal(issuePosts(ctx).length, 0,
+    'a report cannot be filed from a payload the preview is not showing');
+
+  await new Promise((r) => ctx.window.setTimeout(r, 300));
+  await settle(ctx.window, 8);
+  click(ctx.window, createBtn(ctx.window));
+  await settle(ctx.window, 8);
+  assert.equal(JSON.parse(issuePosts(ctx)[0].opts.body).expectation, 'it looped forever',
+    'once the rebuild lands, the filed report carries the typed text');
+});
+
+test('a blocked popup still hands the reporter the created issue', async () => {
+  const ctx = await boot({ fetchHandler: arms() });
+  await openHistoryReport(ctx);
+  ctx.window.open = () => null;   // what a popup blocker returns
+
+  click(ctx.window, createBtn(ctx.window));
+  await settle(ctx.window, 8);
+
+  const filed = ctx.window.document.getElementById('report-filed');
+  assert.equal(filed.hidden, false, 'the created issue is surfaced in the modal');
+  const a = filed.querySelector('a');
+  assert.equal(a.getAttribute('href'), FILED_URL, 'as a link the reporter can click');
+});
+
+test('the actions sit in a sticky header above the form, not below the preview', async () => {
+  const ctx = await boot({ fetchHandler: arms() });
+  await openHistoryReport(ctx);
+  const { document: doc } = ctx.window;
+
+  const top = doc.querySelector('#report-modal .report-top');
+  assert.ok(top, 'the modal card opens with a .report-top block');
+  assert.equal(top, doc.querySelector('#report-modal .card').firstElementChild,
+    'and it is the first thing in the card, so `position:sticky; top:0` has nothing above it');
+
+  // Only the primary action rides the header, beside Close; the rest go to the foot.
+  for (const id of ['report-close', 'report-create-issue', 'report-filed']) {
+    assert.ok(top.contains(doc.getElementById(id)), `#${id} rides the sticky header`);
+  }
+  assert.ok(top.contains(doc.querySelector('#report-modal .report-error')),
+    'so does the error slot — a failure must be readable without scrolling back up');
+  for (const id of ['report-copy', 'report-download', 'report-issue']) {
+    assert.equal(top.contains(doc.getElementById(id)), false, `#${id} sits at the foot`);
+    // DOCUMENT_POSITION_FOLLOWING (4): the secondary actions come AFTER the preview.
+    assert.equal(doc.getElementById('report-preview').compareDocumentPosition(doc.getElementById(id)) & 4,
+      4, `#${id} follows the JSON preview`);
+  }
+
+  const head = doc.querySelector('#report-modal .card-head');
+  assert.ok(head.contains(doc.getElementById('report-create-issue')), 'Create is in the title row');
+  assert.equal(
+    doc.getElementById('report-create-issue').compareDocumentPosition(doc.getElementById('report-close')) & 4,
+    4, 'and sits to the LEFT of Close');
 });

@@ -146,19 +146,21 @@ before(async () => {
 });
 
 // ── the contract that matters most ────────────────────────────────────────────
-test('the DEFAULT payload is metadata only: no prompt, no paths, no names, no diff', async () => {
+test('the DEFAULT payload is metadata + names only: no prompt, no paths, no diff', async () => {
   const p = await buildRunReport(id, { reason: 'poor-quality' });
   const blob = JSON.stringify(p);
 
   assert.equal(p.schemaVersion, 1, 'the payload is versioned');
-  assert.deepEqual(p.included, { paths: false, prompt: false, names: false },
+  assert.deepEqual(p.included, { paths: false, prompt: false },
     'the receipt says nothing was opted in');
 
   // Each excluded class, asserted by the very string that would leak it.
   assert.doesNotMatch(blob, /rewrite the billing module/, 'the prompt text is absent');
   assert.doesNotMatch(blob, /src\/acme\/billing\.mjs/, 'no file path leaks (incl. an issue location)');
-  assert.doesNotMatch(blob, /feat\/acme-billing/, 'no branch name leaks');
-  assert.doesNotMatch(blob, /Secret Project rework/, 'no run title leaks');
+  // Identity is ALWAYS in the report — it is what makes a bug report actionable —
+  // so the branch and title are asserted PRESENT here, not absent.
+  assert.equal(p.run.branch.feature, 'feat/acme-billing', 'the branch name always ships');
+  assert.equal(p.run.title, 'Secret Project rework', 'so does the run title');
   assert.doesNotMatch(blob, /secret\/wt/, 'the worktree path never leaks, under any option');
   assert.doesNotMatch(blob, /ddprinov@gmail\.com/, 'the authored node config is never embedded');
   assert.doesNotMatch(blob, /internal\.acme/, 'no unknown config key rides along either');
@@ -334,7 +336,7 @@ test('a legacy row with NULL guardrails_id reports "not recorded", it does not t
 // This is the block that turns a custom set into counts: protectedPaths are user
 // globs, envAllowlist is env var names, and the set id is gr_<slug of the user's own
 // name for it> (D14). None of the three may appear in a public issue.
-test('a CUSTOM guardrail set ships as COUNTS — the globs, env names and set id do not', async () => {
+test('a CUSTOM guardrail set ships its NAME and COUNTS — never its globs or env names', async () => {
   const set = await writeGuardrailSet({
     name: 'ACME internal policy',
     settings: {
@@ -364,21 +366,13 @@ test('a CUSTOM guardrail set ships as COUNTS — the globs, env names and set id
   assert.equal(g.envAllowlistCount, 2);
   assert.equal(g.envScrub, true, 'the two booleans are policy, not content');
   assert.equal(g.honorProjectSettings, false);
-  assert.equal(g.id, null, 'a custom id is a slug of the set NAME, so it waits for `names`');
+  assert.equal(g.id, 'gr_acme-internal-policy', 'the set is named, like every other identity');
+  assert.equal(g.name, 'ACME internal policy');
 
   const blob = JSON.stringify(p);
   assert.doesNotMatch(blob, /secrets/, 'a protectedPaths entry is a user glob — counted, never quoted');
   assert.doesNotMatch(blob, /ACME_TOKEN/, 'an envAllowlist entry is an env var NAME');
   assert.doesNotMatch(blob, /Bash\(curl/, 'nor do the deny rules themselves ship');
-  assert.doesNotMatch(blob, /acme-internal-policy/, 'nor the set id');
-  assert.doesNotMatch(blob, /ACME internal policy/, 'nor the name the user gave it');
-
-  const named = await buildRunReport(guarded.id,
-    { reason: 'wrong-or-unsafe', include: { names: true } });
-  assert.equal(named.evidence.guardrails.id, 'gr_acme-internal-policy');
-  assert.equal(named.evidence.guardrails.name, 'ACME internal policy');
-  assert.doesNotMatch(JSON.stringify(named), /secrets/,
-    '`names` unlocks the set\'s identity — never its contents');
 });
 
 test('opting in adds exactly its own class and nothing else', async () => {
@@ -391,26 +385,34 @@ test('opting in adds exactly its own class and nothing else', async () => {
   assert.doesNotMatch(JSON.stringify(paths), /unchecked write to billing/,
     'but the rest of the overview stays behind — the narrative is the only field read');
   assert.doesNotMatch(JSON.stringify(paths), /rewrite the billing module/, 'paths does not unlock the prompt');
-  assert.doesNotMatch(JSON.stringify(paths), /feat\/acme-billing/, 'paths does not unlock branch names');
   assert.equal('newFiles' in paths.evidence.files, false,
     'the quality evidence keeps its own copy of the counts — the opt-in does not bleed into it');
 
   const prompt = await buildRunReport(id, { reason: 'poor-quality', include: { prompt: true } });
   assert.equal(prompt.run.prompt, 'rewrite the billing module for ACME Corp');
   assert.doesNotMatch(JSON.stringify(prompt), /src\/acme\/billing\.mjs/, 'prompt does not unlock paths');
-
-  const names = await buildRunReport(id, { reason: 'poor-quality', include: { names: true } });
-  assert.equal(names.run.title, 'Secret Project rework');
-  assert.equal(names.run.branch.feature, 'feat/acme-billing');
-  assert.doesNotMatch(JSON.stringify(names), /secret\/wt/, 'names NEVER unlocks the worktree path');
 });
 
-// Every other fixture in this file hands `template` a hand-written safe name, which is
-// how this leak survived three review cycles. On an AUTO run that field is written by
-// the classifier FROM the task text (auto/classify.mjs:156 -> orchestrator.mjs:361) and
-// the id is a slug of the same name (auto/proposal.mjs:127) — the `prompt` class, so it
-// waits for `names` exactly as a gr_<slug> guardrail id does (D14).
-test('an AUTO-minted workflow name and id wait for `names` — in the payload AND the issue body', async () => {
+test('the run identity is unconditional, but the worktree path still never ships', async () => {
+  // There is no opt-in to turn these off, so the only way they can regress is by
+  // going missing — and the absolute worktree path must stay out regardless.
+  for (const include of [{}, { paths: true }, { prompt: true }]) {
+    const p = await buildRunReport(id, { reason: 'poor-quality', include });
+    assert.equal(p.run.title, 'Secret Project rework');
+    assert.equal(p.run.branch.feature, 'feat/acme-billing');
+    assert.equal(p.run.branch.source, 'dev');
+    assert.ok(p.run.projectKey, 'the project key identifies which project reported');
+    assert.doesNotMatch(JSON.stringify(p), /secret\/wt/,
+      'branch.worktreeDir is an absolute path and is never copied across');
+  }
+});
+
+// On an AUTO run the template name is written by the classifier FROM the task text
+// (auto/classify.mjs:156 -> orchestrator.mjs:361) and the id is a slug of that same
+// name (auto/proposal.mjs:127). It is a NAME, and names are unconditional — so it
+// ships, in the payload and in the issue body, exactly like the run title (which is
+// prompt-derived in the same way).
+test('an AUTO-minted workflow name and id ship — in the payload AND the issue body', async () => {
   const auto = await seedPipeline(join(home, 'auto'), {
     status: 'done', phase: 'done', title: 'ACME billing webhook fix',
     prompt: 'fix the ACME billing webhook that drops Stripe refunds',
@@ -422,47 +424,29 @@ test('an AUTO-minted workflow name and id wait for `names` — in the payload AN
   });
 
   const p = await buildRunReport(auto.id, { reason: 'something-else' });
-  const blob = JSON.stringify(p);
-  assert.doesNotMatch(blob, /ACME billing webhook fix/,
-    'a classifier-written workflow name is a paraphrase of the prompt');
-  assert.doesNotMatch(blob, /acme-billing-webhook-fix/, 'and the minted id is a slug of that name');
-  assert.deepEqual(p.workflow.template, { builtin: false, id: null },
-    'the default ships the CLASS of the template, never its identity');
-  assert.equal('name' in p.workflow.template, false, 'name is ADDED by `names`, never nulled');
+  assert.deepEqual(p.workflow.template,
+    { builtin: false, id: 'wf_acme-billing-webhook-fix', name: 'ACME billing webhook fix' },
+    'the minted identity ships alongside the CLASS discriminator');
   assert.deepEqual(p.workflow.auto,
     { status: 'decided', via: 'created', rounds: 1, humanInLoop: false },
     'the auto block itself is workflow vocabulary and still ships');
 
-  // metricRows puts the template in the prefilled issue BODY too — the leak had two mouths.
-  const body = renderIssueBody(p);
-  assert.doesNotMatch(body, /ACME billing webhook fix/, 'the issue body names no workflow either');
-  assert.match(body, /\| workflow \| custom \(manifest v2, 1 nodes\) \|/,
-    'the body reports the class and the topology size instead');
-
-  const named = await buildRunReport(auto.id,
-    { reason: 'something-else', include: { names: true } });
-  assert.equal(named.workflow.template.id, 'wf_acme-billing-webhook-fix');
-  assert.equal(named.workflow.template.name, 'ACME billing webhook fix');
-  assert.equal(named.workflow.template.builtin, false, 'the discriminator stays put under the opt-in');
-  assert.match(renderIssueBody(named), /\| workflow \| ACME billing webhook fix \(manifest v2, 1 nodes\) \|/,
-    '`names` unlocks the workflow identity in the body as well');
+  // metricRows puts the template in the issue BODY too — both mouths say the same thing.
+  assert.match(renderIssueBody(p), /\| workflow \| ACME billing webhook fix \(manifest v2, 1 nodes\) \|/,
+    'the body names the recipe rather than calling every custom run "custom"');
+  assert.doesNotMatch(JSON.stringify(p), /drops Stripe refunds/,
+    'the PROMPT itself is still a separate opt-in — a name is not the task text');
 });
 
-test('a WORKSPACE run reports a project COUNT, and names only behind the opt-in', async () => {
+test('a WORKSPACE run reports a project COUNT, and always its names', async () => {
   const p = await buildRunReport(wsId, { reason: 'poor-quality' });
   assert.equal(p.run.target, 'workspace');
   assert.equal(p.files.filesChanged, 4, 'the roll-up summary is read, not the per-project map');
   assert.equal(p.files.projectCount, 2, 'the member count ships; the member KEYS do not (D9)');
-  const blob = JSON.stringify(p);
-  assert.doesNotMatch(blob, /alpha-11111111/, 'a perProject key is a project key — never by default');
-  assert.doesNotMatch(blob, /Acme Platform/, 'nor the workspace name');
-  assert.equal('workspace' in p.run, false, 'run.workspace is absent without `names`');
-
-  const named = await buildRunReport(wsId, { reason: 'poor-quality', include: { names: true } });
-  assert.equal(named.run.workspace.name, 'Acme Platform');
-  assert.deepEqual(named.run.workspace.projectKeys, ['alpha-11111111', 'beta-22222222']);
-  assert.equal('perProject' in named.files, false,
-    'even under `names`, the per-project breakdown is not shipped at v1');
+  assert.equal(p.run.workspace.name, 'Acme Platform', 'the workspace names itself');
+  assert.deepEqual(p.run.workspace.projectKeys, ['alpha-11111111', 'beta-22222222']);
+  assert.equal('perProject' in p.files, false,
+    'the per-project file breakdown is still not shipped at v1 — that is a COUNT decision, not a name one');
 });
 
 test('an unknown pipeline id returns null, so the route can 404 cleanly', async () => {
@@ -512,24 +496,24 @@ test('workflowShape reads a LEGACY v1 stepper without a graph key', () => {
 });
 
 test('workflowShape classifies the template id: stock ships, minted and user-saved wait', () => {
-  const shape = (template, auto, include) => workflowShape(
+  const shape = (template, auto) => workflowShape(
     { version: 2, template, auto, graph: { nodes: [{ id: 'n', kind: 'agent', key: 'planner' }], wires: [] } },
-    {}, include).template;
+    {}).template;
 
   assert.deepEqual(shape({ id: 'wf_default', name: 'Default' }),
     { builtin: true, id: 'wf_default', name: 'Default' }, 'the shipping builtin');
   assert.deepEqual(shape({ id: 'wf_quick-fix', name: 'Quick Fix' }),
     { builtin: true, id: 'wf_quick-fix', name: 'Quick Fix' }, 'a V17 seed recipe is stock too');
   assert.deepEqual(shape({ id: 'wf_acme-secrets', name: 'ACME secrets' }),
-    { builtin: false, id: null }, 'a user-saved id is a slug of the name the user typed');
+    { builtin: false, id: 'wf_acme-secrets', name: 'ACME secrets' },
+    'a user-saved template names itself; only the builtin DISCRIMINATOR is derived');
   // mintAutoWorkflowId avoids the two reserved ids but not a seed id, and on a fresh
   // home no seed row exists at all — so `via: 'created'` is the authority, not the slug.
   assert.deepEqual(shape({ id: 'wf_quick-fix', name: 'Quick Fix' }, { status: 'decided', via: 'created' }),
-    { builtin: false, id: null }, 'a template minted THIS run is never stock, whatever it slugs to');
+    { builtin: false, id: 'wf_quick-fix', name: 'Quick Fix' },
+    'a template minted THIS run is never stock, whatever it slugs to');
   assert.deepEqual(shape({ id: 'wf_quick-fix', name: 'Quick Fix' }, { status: 'decided', via: 'reused' }),
     { builtin: true, id: 'wf_quick-fix', name: 'Quick Fix' }, 'Auto REUSING a stock recipe still names it');
-  assert.deepEqual(shape({ id: 'wf_acme-secrets', name: 'ACME secrets' }, null, { names: true }),
-    { builtin: false, id: 'wf_acme-secrets', name: 'ACME secrets' }, '`names` adds both fields back');
 });
 
 // Only the stock IDS are fixed vocabulary. The NAMES on the manifest are the workflow
@@ -538,9 +522,9 @@ test('workflowShape classifies the template id: stock ships, minted and user-sav
 // (workflows.mjs:295-345). So a composer Save over `wf_full` keeps the id and replaces
 // the name with whatever the user typed.
 test('a RENAMED stock workflow ships its canonical name, never the one the user typed', () => {
-  const shape = (template, auto, include) => workflowShape(
+  const shape = (template, auto) => workflowShape(
     { version: 2, template, auto, graph: { nodes: [{ id: 'n', kind: 'agent', key: 'planner' }], wires: [] } },
-    {}, include).template;
+    {}).template;
 
   assert.deepEqual(shape({ id: 'wf_full', name: 'PZ_RENAMED_BY_USER' }),
     { builtin: true, id: 'wf_full', name: 'Full' },
@@ -551,10 +535,6 @@ test('a RENAMED stock workflow ships its canonical name, never the one the user 
     shape({ id: 'wf_quick-fix', name: 'ACME internal pipeline' }, { status: 'decided', via: 'reused' }),
     { builtin: true, id: 'wf_quick-fix', name: 'Quick Fix' },
     'the auto REUSED path reads the same constants');
-  // …and under `names` the builtin arm still reports the canonical name: the typed one
-  // is the workflow row's, which `names` unlocks for a CUSTOM template only.
-  assert.deepEqual(shape({ id: 'wf_full', name: 'PZ_RENAMED_BY_USER' }, null, { names: true }),
-    { builtin: true, id: 'wf_full', name: 'Full' });
 });
 
 test('a renamed stock workflow does not leak through the payload or the issue body', async () => {

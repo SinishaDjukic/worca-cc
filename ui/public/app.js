@@ -366,6 +366,8 @@ const el = {
   reportCopy: $('#report-copy'),
   reportDownload: $('#report-download'),
   reportIssue: $('#report-issue'),
+  reportCreate: $('#report-create-issue'),
+  reportFiled: $('#report-filed'),
 };
 
 // ---------------------------------------------------------------------------
@@ -13196,6 +13198,17 @@ function setupHdActions(screen, record, data) {
   // that goes terminal while the screen is open offers the button on the next visit,
   // exactly like Archive.
 
+  // The ⋯ trigger, gated on its own contents: a live run can be neither archived nor
+  // reported, and a trigger that opens onto an empty menu is worse than no trigger.
+  const moreBtn = screen.querySelector('.hd-more');
+  const moreMenu = screen.querySelector('.hd-menu');
+  moreBtn.hidden = archiveBtn.hidden && reportBtn.hidden;
+  moreBtn.addEventListener('click', () => {
+    const opening = moreMenu.hidden;
+    moreMenu.hidden = !opening;
+    moreBtn.setAttribute('aria-expanded', opening ? 'true' : 'false');
+  });
+
   paintHdPr(screen, record, data);
 }
 
@@ -13215,6 +13228,35 @@ function setupHdActions(screen, record, data) {
 // setupHdActions installed must resolve the record through hdCurrentRecord() at
 // click time — do NOT "fix" a stale-record symptom by calling setupHdActions from
 // here; that double-binds both buttons.
+// ---- the History detail header's ⋯ menu -------------------------------------
+// One module-level pair of listeners, not per-screen ones: the detail screen is
+// rebuilt on every visit, so per-screen document listeners would accumulate. These
+// read whatever .hd-menu is in the DOM right now, and no-op when there is none.
+
+/** Close the header menu if it is open. @returns whether it actually closed one. */
+function closeHdMenu({ focusTrigger = false } = {}) {
+  const menu = document.querySelector('#hist-detail .hd-menu');
+  if (!menu || menu.hidden) return false;
+  menu.hidden = true;
+  const trigger = document.querySelector('#hist-detail .hd-more');
+  if (trigger) {
+    trigger.setAttribute('aria-expanded', 'false');
+    if (focusTrigger) trigger.focus();
+  }
+  return true;
+}
+
+// CAPTURE phase, deliberately. .hd-report's own handler calls stopPropagation(), so a
+// bubble-phase closer would never see a click on it and the menu would stay open
+// behind the report modal. Capture runs BEFORE the target's handler, so the menu is
+// closed first and the item still does its job. The trigger is excluded: its own
+// listener toggles, and closing here would make every second click a no-op.
+document.addEventListener('click', (e) => {
+  const t = e.target;
+  if (t && typeof t.closest === 'function' && t.closest('#hist-detail .hd-more')) return;
+  closeHdMenu();
+}, true);
+
 function refreshHdFromRow() {
   if (!histDetailState || !histDetailState.screen || !histDetailState.data) return;
   const row = (state.historyAll || []).find(
@@ -15832,6 +15874,10 @@ document.addEventListener('keydown', (e) => {
   // one Escape would both close it and send History's detail back.
   const stopUp = document.getElementById('stop-modal');
   if (stopUp && !stopUp.classList.contains('hidden')) return;
+  // The header's ⋯ menu owns Escape while it is open: dismiss it and stay on the
+  // screen. Handled HERE rather than in its own listener because this one is capture
+  // phase — a separate listener would fire after the navigation had already run.
+  if (closeHdMenu({ focusTrigger: true })) return;
   location.hash = 'history';
 }, true);
 
@@ -15891,7 +15937,7 @@ document.addEventListener('keydown', (e) => {
 
 const reportState = {
   pipelineId: '', payload: null, issue: null, token: 0, debounce: 0,
-  include: { paths: false, prompt: false, names: false },
+  include: { paths: false, prompt: false },
 };
 
 function reportError(message) {
@@ -15907,6 +15953,10 @@ function reportPending() {
   reportState.issue = null;
   el.reportPreview.textContent = previewText(null);
   el.reportIssue.removeAttribute('href');
+  // A previously filed issue describes the OLD payload. The link stays reachable in
+  // the new tab it opened; leaving it under a preview it no longer matches would not.
+  el.reportFiled.hidden = true;
+  el.reportFiled.replaceChildren();
 }
 
 async function refreshReport() {
@@ -15943,8 +15993,10 @@ async function refreshReport() {
 function openReportModal(pipelineId) {
   if (!pipelineId) return;
   reportState.pipelineId = pipelineId;
-  reportState.include = { paths: false, prompt: false, names: false };
+  reportState.include = { paths: false, prompt: false };
   el.reportExpectation.value = '';
+  // The browser fallback is offered only once the server has told us gh cannot do it.
+  el.reportIssue.hidden = true;
   el.reportReason.replaceChildren(...renderReasonOptions({ doc: document }));
   el.reportOptins.replaceChildren(renderOptIns({ doc: document, include: reportState.include }));
   el.reportModal.classList.remove('hidden');
@@ -16012,6 +16064,88 @@ el.reportCopy.addEventListener('click', async (e) => {
 el.reportIssue.addEventListener('click', () => {
   if (!reportState.payload) return;
   reportCopyText();
+});
+
+// ---- Create GitHub issue ----------------------------------------------------
+// The primary action. Worca files the issue server-side with `gh issue create`,
+// which is the only way the FULL report gets in: a prefilled issues/new URL dies at
+// ~8 KB encoded and half of all real runs serialize larger than that, so the browser
+// path can never do better than ask the reporter to paste the JSON in by hand.
+//
+// The payload is rebuilt server-side from the run id — this click sends the same
+// reason/expectation/opt-ins the preview was built from, never the preview itself.
+
+/** What the reporter can DO about each failure kind the route reports. */
+const GH_ISSUE_HINTS = {
+  'no-gh': 'The GitHub CLI (gh) is not installed, so worca could not file the issue.',
+  auth: 'gh is not logged in — run `gh auth login` — so worca could not file the issue.',
+  'no-repo': 'No GitHub repository is configured to report to.',
+  failed: 'GitHub refused the issue.',
+};
+
+/** Show the filed issue in the modal: the new tab may have been blocked. */
+function showFiledIssue(url) {
+  el.reportFiled.replaceChildren();
+  if (!url) return;
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.textContent = url.replace(/^https?:\/\/(?:www\.)?github\.com\//, '');
+  el.reportFiled.append(document.createTextNode('Issue filed: '), a);
+  el.reportFiled.hidden = false;
+}
+
+el.reportCreate.addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  // Same gate as the link's href (D24): never file a payload the preview is not showing.
+  if (!reportState.payload) return flashCopyBtn(btn, 'not ready yet');
+
+  // Open the tab INSIDE the user gesture. A popup blocker only honours a synchronous
+  // window.open, and filing is a network round-trip away; the tab is parked on blank
+  // and either redirected to the new issue or closed. `null` means blocked — the
+  // issue still gets filed, and showFiledIssue hands over the link instead.
+  let tab = null;
+  try { tab = window.open('', '_blank'); } catch { tab = null; }
+
+  // dataset.label is flashCopyBtn's convention: read it so a flash still in flight
+  // cannot become the restored label, and kill its timer so it cannot fire over us.
+  const label = btn.dataset.label || btn.textContent;
+  btn.dataset.label = label;
+  clearTimeout(btn._copyTimer);
+  btn.disabled = true;
+  btn.textContent = 'Filing…';
+  reportError('');
+  try {
+    const res = await fetch(`/api/pipelines/${encodeURIComponent(reportState.pipelineId)}/report-issue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reason: el.reportReason.value,
+        expectation: el.reportExpectation.value,
+        include: reportState.include,
+      }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    if (data.ok) {
+      if (tab) tab.location = data.url;
+      showFiledIssue(data.url);
+      return;
+    }
+    // gh could not do it: fall back to the browser link, which the route sent along.
+    if (tab) tab.close();
+    reportError(`${GH_ISSUE_HINTS[data.kind] || GH_ISSUE_HINTS.failed} ${data.error || ''}`.trim());
+    if (data.issue && data.issue.url) el.reportIssue.href = data.issue.url;
+    el.reportIssue.hidden = false;
+  } catch (err) {
+    if (tab) tab.close();
+    reportError(`Could not file the issue: ${err.message}`);
+  } finally {
+    clearTimeout(btn._copyTimer);
+    btn.disabled = false;
+    btn.textContent = label;
+  }
 });
 
 el.reportDownload.addEventListener('click', () => {

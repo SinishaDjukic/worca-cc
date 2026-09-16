@@ -17,10 +17,10 @@ test('the reason select lists all six, in order, with poor-quality first', () =>
   assert.equal(opts[0].textContent, 'Poor quality', 'human labels, not ids');
 });
 
-test('the opt-ins are exactly three checkboxes; the diff and logs are not offered', () => {
-  const wrap = renderOptIns({ doc, include: { paths: true, prompt: false, names: false } });
+test('the opt-ins are exactly two checkboxes; names, the diff and logs are not offered', () => {
+  const wrap = renderOptIns({ doc, include: { paths: true, prompt: false } });
   const boxes = [...wrap.querySelectorAll('input[type="checkbox"]')];
-  assert.equal(boxes.length, 3, 'three classes, no more');
+  assert.equal(boxes.length, 2, 'two classes, no more');
   assert.deepEqual(boxes.map((b) => b.dataset.optin), OPT_IN_KEYS);
   assert.equal(boxes[0].checked, true, 'current state is reflected');
   assert.equal(boxes[1].checked, false);
@@ -28,6 +28,8 @@ test('the opt-ins are exactly three checkboxes; the diff and logs are not offere
     'the unified diff is never offered');
   assert.doesNotMatch(wrap.textContent.toLowerCase(), /\blog lines\b/,
     'log lines are never offered');
+  assert.doesNotMatch(wrap.textContent.toLowerCase(), /workspace names/,
+    'names are unconditional now — offering them as a choice would imply they can be withheld');
   assert.equal(wrap.querySelector('.hint'), null,
     'hints use .report-optin-hint — .hint is asserted empty across the settings view');
 });

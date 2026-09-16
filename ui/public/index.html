@@ -649,15 +649,28 @@
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg>
                     <span class="hd-btn-label">Resume</span>
                   </button>
-                  <button type="button" class="hd-archive" hidden>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-                    <span class="hd-btn-label">Archive</span>
-                  </button>
-                  <!-- Report this run: a History row is finished by definition, but a
-                       still-live row also appears here, so setupHdActions unhides it
-                       only for a deletable entry — the same gate .hd-archive uses.
-                       Ships `hidden`; nothing else ever re-hides it. -->
-                  <button type="button" class="hd-report btn-ghost" hidden>Report this run</button>
+                  <!-- Archive and Report live behind one ⋯ trigger, but keep their own
+                       classes: every gate, the busy-label swap and hdSetArchiveGate all
+                       address them directly, and only their PLACEMENT moved here.
+                       Report this run: a History row is finished by definition, but a
+                       still-live row also appears here, so setupHdActions unhides both
+                       only for a deletable entry, and hides the trigger when neither is
+                       offered rather than opening onto an empty menu. -->
+                  <span class="hd-more-wrap">
+                    <button type="button" class="hd-more" hidden aria-haspopup="menu" aria-expanded="false" title="More actions" aria-label="More actions">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
+                    </button>
+                    <div class="hd-menu" role="menu" hidden>
+                      <button type="button" class="hd-archive" role="menuitem" hidden>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                        <span class="hd-btn-label">Archive</span>
+                      </button>
+                      <button type="button" class="hd-report" role="menuitem" hidden>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path><path d="M12 9v4.5"></path><path d="M12 17h.01"></path></svg>
+                        <span class="hd-btn-label">Report this run</span>
+                      </button>
+                    </div>
+                  </span>
                 </div>
                 <!-- The inline error lives on the HEADER, not in .hd-body, so an archive
                      failure is not pushed below the fold by a long Diff or Logs tab.
@@ -1549,11 +1562,22 @@
          the detail screen back to its list. -->
     <div id="report-modal" class="viewer-modal report-modal hidden" role="dialog" aria-modal="true" aria-labelledby="report-title">
       <div class="card">
-        <div class="card-head">
-          <h2 id="report-title">Report this run</h2>
-          <button type="button" id="report-close" class="btn btn-mini">Close</button>
+        <!-- Sticky header: title, Close, and every action. The card is the scroll
+             container (.viewer-modal .card{overflow:auto}), so the actions stay
+             reachable while the reporter is reading the JSON preview, and an error
+             or a filed-issue link lands where they are already looking. -->
+        <div class="report-top">
+          <div class="card-head">
+            <h2 id="report-title">Report this run</h2>
+            <div class="report-head-actions">
+              <button type="button" id="report-create-issue" class="btn btn-primary btn-mini">Create GitHub issue</button>
+              <button type="button" id="report-close" class="btn btn-mini">Close</button>
+            </div>
+          </div>
+          <!-- Both outcomes of the button above them, so neither needs a scroll to read. -->
+          <div class="report-error" hidden></div>
+          <p id="report-filed" class="report-filed" hidden></p>
         </div>
-        <p class="confirm-message">Worca sends nothing on its own. Everything below stays on this machine until you press a button.</p>
         <div class="report-field">
           <label for="report-reason">What went wrong?</label>
           <select id="report-reason" class="select"></select>
@@ -1567,15 +1591,16 @@
           <label for="report-preview">This is exactly what will be sent</label>
           <pre id="report-preview" class="viewer"></pre>
         </div>
-        <div class="report-error" hidden></div>
         <div class="confirm-actions">
           <button type="button" id="report-copy" class="btn btn-ghost btn-mini">Copy JSON</button>
           <button type="button" id="report-download" class="btn btn-ghost btn-mini">Download JSON</button>
-          <!-- An <a>, not a button: there is no window.open anywhere in ui/public,
-               and a real anchor gives the browser a genuine user-gesture new tab.
-               app.js strips the href while a rebuild is in flight, so the link can
-               never fire with a payload that disagrees with the preview. -->
-          <a id="report-issue" class="btn btn-primary btn-mini" target="_blank" rel="noopener noreferrer">Open a GitHub issue</a>
+          <!-- The FALLBACK, hidden until the server says it could not file the issue
+               itself. An <a>, not a button: a real anchor gives the browser a genuine
+               user-gesture new tab. app.js strips the href while a rebuild is in
+               flight, so the link can never fire with a payload that disagrees with
+               the preview. Its prefilled body can only ASK for the JSON to be pasted
+               — a URL dies at ~8 KB and half of all runs serialize larger. -->
+          <a id="report-issue" class="btn btn-ghost btn-mini" target="_blank" rel="noopener noreferrer" hidden>Open a prefilled issue</a>
         </div>
       </div>
     </div>

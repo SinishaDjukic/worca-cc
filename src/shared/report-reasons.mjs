@@ -4,7 +4,7 @@
 // imports. Kept here — not in src/core — because ui/public cannot import src/core
 // but src/shared/** is served at /src/shared, so both sides read the SAME module.
 //
-// The six reasons and the three opt-in classes are a product contract, not an
+// The six reasons and the two opt-in classes are a product contract, not an
 // implementation detail: the reason id is also the GitHub issue LABEL, so renaming
 // one silently re-labels every future issue.
 
@@ -25,9 +25,15 @@ export function reasonById(id) {
   return REPORT_REASONS.find((r) => r.id === id) || null;
 }
 
-// The three excluded classes a reporter may opt back IN. The unified diff and the
+// The two excluded classes a reporter may opt back IN. The unified diff and the
 // run's log lines are deliberately absent and must never be added here: they are
 // not offered anywhere in the UI and the builder has no code path for them.
+//
+// NAMES ARE NOT AMONG THEM. The run title, project key, branch names, workspace name,
+// workflow template name and guardrail set name are ALWAYS in the report: they are
+// what makes a bug report actionable, and a maintainer reading "some custom workflow
+// on some branch" can do nothing with it. The one thing that stayed out is the
+// absolute worktree path, which no option has ever unlocked.
 export const OPT_IN_CLASSES = Object.freeze([
   Object.freeze({
     key: 'paths',
@@ -39,16 +45,11 @@ export const OPT_IN_CLASSES = Object.freeze([
     label: 'The task prompt',
     hint: 'Adds the prompt text you gave this run, verbatim.',
   }),
-  Object.freeze({
-    key: 'names',
-    label: 'Project, branch and workspace names',
-    hint: 'Adds the run title, project key, branch names and workspace name. Never the worktree path.',
-  }),
 ]);
 
 export const OPT_IN_KEYS = Object.freeze(OPT_IN_CLASSES.map((c) => c.key));
 
-/** Coerce an untrusted `include` bag to exactly the three booleans. */
+/** Coerce an untrusted `include` bag to exactly the two booleans. */
 export function normalizeInclude(raw) {
   const src = raw && typeof raw === 'object' ? raw : {};
   const out = {};

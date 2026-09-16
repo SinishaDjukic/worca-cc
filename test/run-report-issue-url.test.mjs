@@ -17,7 +17,7 @@ function payload(over = {}) {
   return {
     schemaVersion: 1, generatedAt: '2026-09-15T10:00:00.000Z',
     reason: 'too-expensive', expectation: 'I expected under a dollar',
-    included: { paths: true, prompt: true, names: true },
+    included: { paths: true, prompt: true },
     app: { worca: '1.2.0', node: 'v22.13.0', platform: 'darwin', arch: 'arm64' },
     run: { id: '62132be1', target: 'project', status: 'done', phase: 'done', cycle: 2,
            sourceType: 'prompt', engine: 2, startedAt: null, updatedAt: null,
