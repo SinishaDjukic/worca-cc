@@ -44,6 +44,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 20v-7M12 20V4M19 20v-11"></path></svg>
             <span>Statistics</span>
           </button>
+          <button type="button" data-nav="team-metrics">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h16"></path><path d="M6 15l4-5 4 3 4-6"></path><circle cx="6" cy="15" r="1.2"></circle><circle cx="10" cy="10" r="1.2"></circle><circle cx="14" cy="13" r="1.2"></circle><circle cx="18" cy="7" r="1.2"></circle></svg>
+            <span>Team metrics</span>
+          </button>
 
           <div class="nav-sect">Build</div>
           <button type="button" data-nav="composer">
@@ -93,6 +97,7 @@
           <button type="button" data-nav="running">Running<span class="nav-rollup" id="topnav-running-rollup" hidden></span></button>
           <button type="button" data-nav="history">History</button>
           <button type="button" data-nav="stats">Stats<span class="topnav-amt mono" id="topnav-spend" hidden></span></button>
+          <button type="button" data-nav="team-metrics">Team metrics</button>
           <span class="topnav-sep" aria-hidden="true"></span>
           <button type="button" data-nav="composer">Composer</button>
           <button type="button" data-nav="agents">Agents</button>
@@ -711,8 +716,38 @@
           </div>
           <div id="stats-body"><small class="hint">Loading…</small></div>
           <div id="stats-tip" class="chart-tip" hidden></div>
+          <a class="hint tm-stats-hint" id="stats-tm-hint" href="#team-metrics" hidden>Team-wide view →</a>
         </section>
         <!-- /view stats -->
+
+        <!-- ===== VIEW: TEAM METRICS ===== -->
+        <section class="view hidden" data-view="team-metrics">
+          <div class="topbar">
+            <div>
+              <h1>Team metrics</h1>
+              <div class="sub">Shared across the team from the <code>worca-metrics</code> branch · costs are Claude Code estimates, not billing</div>
+            </div>
+            <div class="sync-chip" id="tm-sync" hidden></div>
+          </div>
+          <div class="tm-filter">
+            <div class="select-wrap tm-scope-wrap"><select id="tm-scope" class="select" aria-label="Scope"></select></div>
+            <div class="seg" id="tm-range" role="group" aria-label="Time range">
+              <button type="button" data-range="this-month">This month</button>
+              <button type="button" data-range="last-month">Last month</button>
+              <button type="button" data-range="quarter">Quarter</button>
+              <button type="button" data-range="year">Year</button>
+              <button type="button" data-range="all">All time</button>
+              <button type="button" data-range="custom">Custom</button>
+            </div>
+            <span class="tm-custom" id="tm-custom" hidden>
+              <input type="date" id="tm-from" class="input" aria-label="From" /> – <input type="date" id="tm-to" class="input" aria-label="To" />
+            </span>
+          </div>
+          <div class="tm-active-filters" id="tm-filters" hidden></div>
+          <div id="tm-body"><small class="hint">Loading…</small></div>
+          <div id="tm-tip" class="chart-tip" hidden></div>
+        </section>
+        <!-- /view team-metrics -->
 
         <!-- ===== VIEW: WORKSPACES ===== -->
         <section class="view hidden" data-view="workspaces">
@@ -745,12 +780,22 @@
                   <button type="button" class="ws-rescan btn-ghost" title="Re-scan the project set">Re-scan</button>
                   <button type="button" class="ws-delete btn-danger" title="Delete workspace">Delete</button>
                 </div>
-                <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
               </div>
               <div class="ws-detail" hidden>
-                <pre class="ws-desc-view viewer"></pre>
+                <div class="ws-home" hidden></div>
+                <div class="ws-desc">
+                  <span class="tm-label">Description</span>
+                  <!-- Markdown by contract (the scanner template): rendered through the page's
+                       sanitized pipeline once it is ready, the same words as plain text before. -->
+                  <div class="ws-desc-view viewer"></div>
+                </div>
                 <div class="ws-desc-edit" hidden>
+                  <div class="md-tabs" role="tablist" aria-label="Description editor">
+                    <button type="button" class="md-tab ws-desc-tab" role="tab" data-mode="text" aria-selected="true">Text</button>
+                    <button type="button" class="md-tab ws-desc-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button>
+                  </div>
                   <textarea class="ws-desc-input textarea" rows="10" spellcheck="false"></textarea>
+                  <div class="ws-desc-preview md-preview viewer" hidden></div>
                   <div class="actions" style="justify-content:flex-end;margin-top:10px">
                     <button type="button" class="ws-desc-cancel btn btn-ghost btn-mini">Cancel</button>
                     <button type="button" class="ws-desc-save btn btn-primary btn-mini">Save</button>
@@ -773,6 +818,11 @@
           </div>
 
           <section class="card" style="max-width:820px">
+            <ol class="wiz-track" id="wiz-track" aria-label="Create workspace steps">
+              <li data-track="1"><span>1</span> Projects</li>
+              <li data-track="2"><span>2</span> Scan</li>
+              <li data-track="3"><span>3</span> Description</li>
+            </ol>
             <!-- Step 1: name + project multi-select -->
             <div class="wiz-step" id="wiz-step-1">
               <div class="field">
@@ -791,6 +841,10 @@
                 </button>
               </div>
             </div>
+
+            <!-- Team metrics is NOT a wizard step any more: the home is adopted automatically when
+                 exactly one member already records (POST /api/workspaces), otherwise chosen on the
+                 workspace card ("Choose…"). -->
 
             <!-- Step 2: live scan loader -->
             <div class="wiz-step hidden" id="wiz-step-2">
@@ -812,8 +866,15 @@
             <!-- Step 3: editable description -->
             <div class="wiz-step hidden" id="wiz-step-3">
               <div class="field">
-                <label for="wiz-desc">Interconnection description <span class="opt">(editable)</span></label>
+                <div class="label-row">
+                  <label for="wiz-desc">Interconnection description <span class="opt">(editable)</span></label>
+                  <div class="md-tabs" id="wiz-desc-tabs" role="tablist" aria-label="Description editor">
+                    <button type="button" class="md-tab" role="tab" data-mode="text" aria-selected="true">Text</button>
+                    <button type="button" class="md-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button>
+                  </div>
+                </div>
                 <textarea id="wiz-desc" class="textarea" rows="16" spellcheck="false" placeholder="# Workspace: ..."></textarea>
+                <div id="wiz-desc-preview" class="md-preview viewer" hidden></div>
                 <small class="hint" id="wiz-graphify-note"></small>
               </div>
               <p id="wiz-msg" class="form-msg" aria-live="polite"></p>

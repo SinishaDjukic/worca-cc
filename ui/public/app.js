@@ -121,6 +121,10 @@ import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
+import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmptyState, renderTmSkeleton } from './team-metrics-view.mjs';
+import { aggregate, toCsv } from '../../src/shared/team-metrics/aggregate.mjs';
+import {
+  renderProjectTmCell, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
 import { paintAboutInto } from './about-links.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts } from './report-run.mjs';
 
@@ -134,6 +138,29 @@ const loadAskMarkdown = window.__worcaTestHooks?.askMarkdown
   ?? (() => Promise.all([import('/vendor/marked/marked.esm.js'), import('/vendor/dompurify/purify.es.mjs')])
     .then(([m, d]) => ({ marked: m.marked, createDOMPurify: d.default })));
 const hdMarkdown = createMarkdownRenderer({ doc: document, load: loadAskMarkdown, hljsLoader: diffHljsLoader });
+
+// Bind markdown-by-contract text (a workspace description, an edit preview, a task
+// body) into `el`: rendered through the page's sanitized pipeline when the bundle is
+// ready, the same words as plain text otherwise. The document class rides only on a
+// rendered body, so the plain fallback keeps the host's own pre-like look. Returns
+// true when it rendered; callers that paint before the bundle is ready repaint once
+// bindMarkdownReady resolves.
+function bindMarkdown(el, text) {
+  const out = hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' };
+  el.classList.toggle('artifact-markdown', out.kind === 'md');
+  if (out.kind === 'md') { el.replaceChildren(out.frag); void hdMarkdown.highlight(el); }
+  else el.textContent = String(text ?? '');
+  return out.kind === 'md';
+}
+// Kick the lazy bundle for a surface that binds markdown; resolves true once it can
+// render (immediately when it already can), false when it failed to load.
+function bindMarkdownReady() {
+  if (hdMarkdown.isReady()) return Promise.resolve(true);
+  if (hdMarkdown.isFailed()) return Promise.resolve(false);
+  return hdMarkdown.ensure();
+}
+// The renderer as the injectable seam a pure module takes (source-pane.mjs).
+const pageMarkdown = (text) => (hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' });
 
 let askPanel = null;           // Ask Worca panel — assigned by the boot mount; every seam uses askPanel?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
@@ -721,12 +748,25 @@ function handleServerMessage(msg) {
   }
   if (msg.type === 'projects-changed') {
     refreshAllCounts();
+    tmCache.at = 0;
     if (currentView() === 'projects') void refreshProjectsPage();
     return;
   }
   if (msg.type === 'workspaces-changed') {
     refreshAllCounts();
+    tmCache.at = 0;
     if (currentView() === 'workspaces') loadWorkspacesView();
+    return;
+  }
+  if (msg.type === 'team-metrics-changed') {
+    tmCache.at = 0;
+    // The Projects / Workspaces surfaces only call /scopes, which never flushes: repaint them on
+    // every action, flush-failed included (§4.7 "surfaced, never swallowed").
+    if (currentView() === 'projects') paintProjectTmCells(true);
+    if (currentView() === 'workspaces') paintWsMetricsRows(true);
+    // Only the page GET schedules a flush: reloading it on flush-failed would loop
+    // (GET → page-open flush → flush-failed → reload). The chip shows the error from the last load.
+    if (msg.action !== 'flush-failed' && currentView() === 'team-metrics') loadTeamMetricsView();
     return;
   }
 
@@ -4893,7 +4933,8 @@ async function mountPluginSourcePane(src) {
     show(failBox(`${src.displayName} is not connected: ${detail}`));
     return;
   }
-  show(renderSourcePane(src, { call }));
+  void bindMarkdownReady();                    // a task body is markdown; have the bundle ready for the preview
+  show(renderSourcePane(src, { call, renderMarkdown: pageMarkdown }));
 }
 
 // ---------------------------------------------------------------------------
@@ -6019,12 +6060,126 @@ function renderWorkspaces() {
     host.appendChild(histEmpty('No workspaces yet — create one to scan a set of projects.'));
     return;
   }
-  for (const w of state.workspaces) host.appendChild(buildWorkspaceCard(w));
+  // What is known before /scopes answers: this session's payload or the persisted copy paints the
+  // metrics block at once; a workspace neither knows gets the pending block (shimmer cells,
+  // "checking metrics…") rather than a hidden slot and a summary that reads as final.
+  const known = peekTmScopes();
+  const knownById = new Map(((known && known.workspaces) || []).map((w) => [w.id, w]));
+  for (const w of state.workspaces) {
+    const card = buildWorkspaceCard(w);
+    host.appendChild(card);
+    const k = knownById.get(w.id);
+    if (k) paintWsMetricsCard(card, k);
+    else {
+      const slot = card.querySelector('.ws-home');
+      if (slot) { slot.hidden = false; slot.replaceChildren(renderWsMetricsPending(w, { doc: document })); }
+      const sum = card.querySelector('.ws-projects');
+      if (sum) sum.replaceChildren(renderWsSummary(w, { doc: document, pending: true }));
+    }
+    card.setAttribute('aria-busy', 'true');
+    // A lone workspace opens by itself; otherwise the last toggle per card is remembered.
+    if (wsCardOpen(w.id, state.workspaces.length === 1)) toggleWsDetail(card, true);
+  }
+  paintWsMetricsRows();
+  // Descriptions are markdown; the bundle loads lazily, so the first paint may be plain.
+  // Repaint the description nodes alone once it is ready — not the cards, so open/edit
+  // state survives — and do nothing when it failed (plain text is the fallback).
+  if (!hdMarkdown.isReady()) void bindMarkdownReady().then((ok) => { if (ok) repaintWsDescriptions(); });
+}
+function repaintWsDescriptions() {
+  if (!el.wsList) return;
+  for (const card of el.wsList.querySelectorAll('.ws-card')) {
+    const w = state.workspaces.find((x) => x && x.id === card.dataset.workspaceId);
+    const view = card.querySelector('.ws-desc-view');
+    if (w && w.description && view && !view.classList.contains('artifact-markdown')) bindMarkdown(view, w.description);
+  }
+}
+const WS_OPEN_KEY = (id) => `worca.ws.open.${id}`;
+function wsCardOpen(id, fallback) {
+  try { const v = localStorage.getItem(WS_OPEN_KEY(id)); return v == null ? fallback : v === '1'; } catch { return fallback; }
 }
 
-// Build one workspace card from the template. The description is markdown shown
-// VERBATIM in a <pre> (no renderer — matches the #viewer pattern; .textContent
-// only, never innerHTML).
+// workspaceId → last "Route all members" payload. Routing emits one team-metrics-changed per
+// member, and each repaint rebuilds .ws-home — the per-member result list (the only place push
+// failures are named, §4.6b) must survive those repaints.
+const wsRouteResults = new Map();
+
+async function paintWsMetricsRows(force = false) {
+  const data = await loadTmScopes({ force });
+  const byId = new Map(data.workspaces.map((w) => [w.id, w]));
+  for (const card of document.querySelectorAll('#ws-list .ws-card')) {
+    const w = byId.get(card.dataset.workspaceId);
+    if (w) paintWsMetricsCard(card, w);
+    else {
+      // Not in the payload (nothing enabled anywhere, or the call failed): the plain summary, no block.
+      const slot = card.querySelector('.ws-home');
+      if (slot) { slot.hidden = true; slot.replaceChildren(); }
+      const sum = card.querySelector('.ws-projects');
+      const own = state.workspaces.find((x) => x && x.id === card.dataset.workspaceId);
+      if (sum) sum.replaceChildren(renderWsSummary({ projectPaths: (own && own.projectPaths) || [], home: { state: 'unset' }, members: [] }, { doc: document }));
+    }
+    card.removeAttribute('aria-busy');
+  }
+}
+// One card's metrics block + header summary from a /scopes workspace entry.
+function paintWsMetricsCard(card, w) {
+  const slot = card.querySelector('.ws-home');
+  if (!slot) return;
+  slot.hidden = false;
+  slot.replaceChildren(renderWsMetricsRow(w, { doc: document }));
+  const sum = card.querySelector('.ws-projects');
+  if (sum) sum.replaceChildren(renderWsSummary(w, { doc: document }));
+  const saved = wsRouteResults.get(w.id);
+  const out = slot.querySelector('.ws-route-results');
+  if (saved && out) {
+    out.replaceChildren(saved.error
+      ? Object.assign(document.createElement('small'), { className: 'hint err', textContent: saved.error })
+      : renderRouteResults(saved, { doc: document }));
+  }
+}
+
+async function openWsHomeSheet(workspaceId) {
+  const w = (await loadTmScopes({ force: true })).workspaces.find((x) => x.id === workspaceId);
+  if (!w) return;
+  // metrics-scan answers 400 when a member folder is missing — exactly when the card shows
+  // "missing projects" — so an unchecked r.ok opened an empty picker with no explanation.
+  const r = await fetch('/api/workspaces/metrics-scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectPaths: w.projectPaths }) }).catch(() => null);
+  const j = r ? await safeJson(r) : null;
+  // Same defence renderWsMetricsRow applies (`const home = ws.home || { state: 'unset' }`): a
+  // workspace with no home at all has no `home` object, and `w.home.path` would throw here.
+  const home = w.home || { state: 'unset', path: null };
+  const body = renderMetricsHomePicker(Array.isArray(j?.members) ? j.members : [], { selectedPath: home.path ?? null, doc: document });
+  if (!r || !r.ok) {
+    body.prepend(Object.assign(document.createElement('small'), { className: 'hint err', textContent: j?.error || 'Could not check the members' }));
+  }
+  let chosen = home.path ?? null;
+  body.addEventListener('change', (e) => { if (e.target.name === 'tm-home') chosen = e.target.value; });
+  // "Enable now…" inside the sheet: enable, then reopen the sheet with fresh scan results.
+  body.addEventListener('click', (e) => {
+    const b = e.target.closest('.tm-enable-now');
+    if (!b) return;
+    const proj = state.projects.find((p) => p.path === b.closest('.wiz-row').dataset.path);
+    if (!proj) { b.replaceWith(Object.assign(document.createElement('small'), { className: 'hint', textContent: 'Add this project on the Projects page to enable it' })); return; }
+    closePluginModal();
+    openTmEnableDialog(proj.key, { mode: 'here', onDone: () => openWsHomeSheet(workspaceId) });
+  });
+  pluginModal('Metrics home', body, [
+    ['Clear home', 'btn btn-ghost btn-mini', async () => { await patchWsHome(workspaceId, null); }],
+    ['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()],
+    ['Save', 'btn btn-primary btn-mini', async () => { await patchWsHome(workspaceId, chosen); }],
+  ]);
+}
+async function patchWsHome(id, metricsProject) {
+  const r = await fetch(`/api/workspaces/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ metricsProject }) }).catch(() => null);
+  if (r && r.ok) { closePluginModal(); await paintWsMetricsRows(true); return; }
+  const j = r ? await safeJson(r) : null;
+  const modalBody = document.querySelector('#plugin-modal .tm-home-list');
+  modalBody?.after(Object.assign(document.createElement('small'), { className: 'hint err', textContent: j?.error || 'Could not save the metrics home' }));
+}
+
+// Build one workspace card from the template. The description is markdown by
+// contract (the scanner template), bound through bindMarkdown: the sanitized page
+// pipeline when it is ready, plain text (.textContent, never innerHTML) otherwise.
 function buildWorkspaceCard(w) {
   const tpl = $('#ws-card-tpl');
   const node = tpl.content.firstElementChild.cloneNode(true);
@@ -6033,27 +6188,52 @@ function buildWorkspaceCard(w) {
   const nameEl = node.querySelector('.ws-name');
   if (nameEl) nameEl.textContent = w.name || w.id || '(unnamed)';
 
+  // Summary, not the member list: the projects table inside the card names every member once.
+  // The metrics part of the line arrives with paintWsMetricsRows.
   const projEl = node.querySelector('.ws-projects');
-  if (projEl) projEl.textContent = (Array.isArray(w.projectPaths) ? w.projectPaths.map(wsBasename) : []).join(' · ');
+  if (projEl) projEl.replaceChildren(renderWsSummary({ projectPaths: w.projectPaths || [], home: { state: 'unset' }, members: [] }, { doc: document }));
 
   const stale = node.querySelector('.ws-stale');
   if (stale) stale.hidden = !(Array.isArray(w.exists) && w.exists.some((e) => !e));
 
   const descView = node.querySelector('.ws-desc-view');
-  if (descView) descView.textContent = w.description || '(no description yet — re-scan to generate one)';
+  if (descView) {
+    if (w.description) bindMarkdown(descView, w.description);
+    else { descView.classList.remove('artifact-markdown'); descView.textContent = '(no description yet — re-scan to generate one)'; }
+  }
 
   return node;
 }
 
 // Delegated actions on the workspaces list.
 if (el.wsList) {
-  el.wsList.addEventListener('click', (e) => {
+  el.wsList.addEventListener('click', async (e) => {
     const card = e.target.closest && e.target.closest('.ws-card');
     if (!card) return;
     const id = card.dataset.workspaceId;
     const w = state.workspaces.find((x) => x && x.id === id);
 
+    if (e.target.closest('.ws-home-change')) { e.stopPropagation(); return void openWsHomeSheet(card.dataset.workspaceId); }
+    if (e.target.closest('.ws-route')) {
+      e.stopPropagation();
+      const wsId = card.dataset.workspaceId;
+      const b = e.target.closest('.ws-route'); b.disabled = true;
+      try {
+        const r = await fetch(`/api/workspaces/${encodeURIComponent(wsId)}/metrics-route`, { method: 'POST' });
+        const j = await safeJson(r);
+        wsRouteResults.set(wsId, r.ok && j ? j : { error: j?.error || 'routing failed' });
+      } catch (err) {
+        wsRouteResults.set(wsId, { error: err?.message || 'routing failed' });
+      } finally {
+        b.disabled = false;
+      }
+      await paintWsMetricsRows(true); // fresh counts + the saved result list
+      return;
+    }
+
     if (e.target.closest('.ws-edit')) { e.stopPropagation(); openWsEdit(card, w); return; }
+    const tab = e.target.closest('.ws-desc-tab');
+    if (tab) { e.stopPropagation(); setMdEditMode(card.querySelector('.ws-desc-edit'), tab.dataset.mode === 'preview'); return; }
     if (e.target.closest('.ws-desc-cancel')) { e.stopPropagation(); closeWsEdit(card, w); return; }
     if (e.target.closest('.ws-desc-save')) { e.stopPropagation(); saveWsDescription(card, w); return; }
     if (e.target.closest('.ws-rescan')) { e.stopPropagation(); rescanWorkspace(w); return; }
@@ -6071,14 +6251,16 @@ if (el.wsList) {
   });
 }
 
-function toggleWsDetail(card) {
+function toggleWsDetail(card, force) {
   if (!card) return;
   const head = card.querySelector('.ws-head');
   const detail = card.querySelector('.ws-detail');
   if (!head || !detail) return;
   const open = head.getAttribute('aria-expanded') === 'true';
-  head.setAttribute('aria-expanded', String(!open));
-  detail.hidden = open;
+  const next = typeof force === 'boolean' ? force : !open;
+  head.setAttribute('aria-expanded', String(next));
+  detail.hidden = !next;
+  if (typeof force !== 'boolean') { try { localStorage.setItem(WS_OPEN_KEY(card.dataset.workspaceId), next ? '1' : '0'); } catch { /* private mode */ } }
 }
 
 function openWsEdit(card, w) {
@@ -6089,8 +6271,27 @@ function openWsEdit(card, w) {
   const pane = card.querySelector('.ws-desc-edit');
   const input = card.querySelector('.ws-desc-input');
   if (input) input.value = w.description || '';
-  if (pane) pane.hidden = false;
+  if (pane) { pane.hidden = false; setMdEditMode(pane, false); }
   if (input) input.focus();
+}
+
+// Text / Preview for a markdown editor (`host` holds the tabs, a textarea and a
+// .md-preview). Preview renders the CURRENT draft through the same sanitized pipeline
+// as the saved body; the textarea keeps the raw markdown, so Text loses nothing. The
+// comment composer (buildHdComposer) is the same idiom, with its own classes.
+function setMdEditMode(host, preview) {
+  if (!host) return;
+  const ta = host.querySelector('textarea');
+  const pv = host.querySelector('.md-preview');
+  for (const b of host.querySelectorAll('.md-tab')) b.setAttribute('aria-selected', String((b.dataset.mode === 'preview') === preview));
+  if (ta) ta.hidden = preview;
+  if (pv) pv.hidden = !preview;
+  if (!preview) { if (ta) { try { ta.focus(); } catch { /* detached */ } } return; }
+  if (pv) {
+    const text = ta ? ta.value.trim() : '';
+    bindMarkdown(pv, text);            // '' leaves it :empty → the CSS "Nothing to preview yet" hint
+    void bindMarkdownReady().then((ok) => { if (ok && !pv.hidden && !pv.classList.contains('artifact-markdown') && text) bindMarkdown(pv, text); });
+  }
 }
 
 function closeWsEdit(card) {
@@ -6134,6 +6335,11 @@ async function rescanWorkspace(w) {
   state.wizard.name = w.name || '';
   state.wizard.selectedPaths = Array.isArray(w.projectPaths) ? [...w.projectPaths] : [];
   location.hash = 'workspace-create';
+  // Re-scan also refreshes member discovery (§4.8) — the card's home is changed via the card
+  // row (decision 23), not the wizard, so this fires-and-continues straight into the scan.
+  await fetch('/api/workspaces/metrics-scan', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectPaths: state.wizard.selectedPaths }),
+  }).catch(() => {});
   // showView('workspace-create') runs enterWizard(); kick off the scan after.
   await startWizardScan();
 }
@@ -6201,14 +6407,24 @@ async function enterWizard() {
   showWizardStep(state.wizard.step || 1);
 }
 
-// Toggle the three wizard step panes.
+const WIZ_PANES = { 1: 'wiz-step-1', 2: 'wiz-step-2', 3: 'wiz-step-3' };
+const WIZ_TRACK = { 1: 0, 2: 1, 3: 2 };
+// Toggle the three wizard step panes (+ the tracker above them).
 function showWizardStep(step) {
   state.wizard.step = step;
-  for (let i = 1; i <= 3; i++) {
-    const pane = document.getElementById(`wiz-step-${i}`);
-    if (pane) pane.classList.toggle('hidden', i !== step);
+  if (String(step) === '3') setMdEditMode(document.getElementById('wiz-step-3'), false);
+  for (const [k, id] of Object.entries(WIZ_PANES)) {
+    const pane = document.getElementById(id);
+    if (pane) pane.classList.toggle('hidden', String(k) !== String(step));
   }
+  const items = document.querySelectorAll('#wiz-track li');
+  items.forEach((li, i) => { li.classList.toggle('on', i === WIZ_TRACK[step]); li.classList.toggle('done', i < WIZ_TRACK[step]); });
 }
+
+// Step 3's Text / Preview tabs: the same editor idiom as the workspace card.
+document.querySelectorAll('#wiz-desc-tabs .md-tab').forEach((b) => {
+  b.addEventListener('click', () => setMdEditMode(document.getElementById('wiz-step-3'), b.dataset.mode === 'preview'));
+});
 
 // Render one checkbox per onboarded project (disabled for !exists). Pre-checks
 // anything already in selectedPaths (re-scan). Enables Start only at 2+.
@@ -6266,8 +6482,14 @@ function renderWizardProjects() {
 }
 
 function syncWizardStartEnabled() {
-  if (el.wizStartScan) el.wizStartScan.disabled = state.wizard.selectedPaths.length < 2;
+  const next = document.getElementById('wiz-start-scan');
+  if (next) next.disabled = state.wizard.selectedPaths.length < 2;
 }
+
+// The team-metrics home is no longer a wizard step: POST /api/workspaces adopts the one
+// member that already records (autoMetricsHome), and every other case is "Choose…" on the
+// workspace card — so creating a workspace never blocks on a feature most users have not
+// turned on, and a member that is not a git repository no longer fails the flow.
 
 // Start (or restart) the scan. Validates name + 2+ projects, shows Step 2,
 // creates an AbortController, POSTs (pre-persist for new / :id/scan for re-scan),
@@ -6344,7 +6566,10 @@ async function saveWorkspace() {
   const method = editing ? 'PATCH' : 'POST';
   const body = editing
     ? { description }
-    : { name: state.wizard.name, projectPaths: state.wizard.selectedPaths, description };
+    : {
+        name: state.wizard.name, projectPaths: state.wizard.selectedPaths, description,
+        // No metricsProject: the server adopts the single recording member, if any.
+      };
 
   try {
     const res = await fetch(url, {
@@ -7397,6 +7622,12 @@ function buildProjectRow(p) {
   main.append(name, path);
   row.appendChild(main);
 
+  // The team-metrics status cell (filled by paintProjectTmCells) sits between the name and the
+  // chevron; its own controls stop propagation so they never open the project page.
+  const tmSlot = document.createElement('div');
+  tmSlot.className = 'tm-slot';
+  tmSlot.dataset.key = p.key;
+  row.appendChild(tmSlot);
   // A keyed row IS the control (click / Enter / Space open the project page — the History
   // card's .hist-head idiom) and carries the chevron. A keyless row (a project registered
   // outside worca's store) has no page: no role, no chevron, default cursor.
@@ -7442,6 +7673,18 @@ function renderProjectsList() {
 
   card.append(head, list);
   host.appendChild(card);
+  paintProjectTmCells();
+}
+
+// Fills the .tm-slot placeholders left by buildProjectRow. Called from renderProjectsList()
+// (NOT loadProjectsView()): deleteProject and saveProjectAdd both repaint via renderProjectsList().
+async function paintProjectTmCells(force = false) {
+  const data = await loadTmScopes({ force });
+  const byKey = new Map(data.projects.map((s) => [s.key, s]));
+  for (const slot of document.querySelectorAll('#projects-list .tm-slot')) {
+    const s = byKey.get(slot.dataset.key);
+    slot.replaceChildren(s ? renderProjectTmCell(s, { doc: document }) : '');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -8001,7 +8244,21 @@ if (el.projectsList) {
     projReturnFocus = item.dataset.key;                 // Back / Esc come home to this row
     location.hash = `projects/${item.dataset.key}`;
   };
-  el.projectsList.addEventListener('click', (e) => {
+  el.projectsList.addEventListener('click', async (e) => {
+    const tmCell = e.target.closest('.tm-cell');
+    if (tmCell) {
+      const key = tmCell.dataset.key;
+      if (e.target.closest('.tm-enable')) { e.stopPropagation(); return void openTmEnableDialog(key, { mode: 'here' }); }
+      if (e.target.closest('.tm-change')) { e.stopPropagation(); return void openTmEnableDialog(key, { mode: 'delegate', change: true }); }
+      if (e.target.closest('.tm-push')) {
+        e.stopPropagation();
+        const s = tmCache.data?.projects.find((x) => x.key === key);
+        const btnEl = e.target.closest('.tm-push'); btnEl.disabled = true;
+        await fetch('/api/team-metrics/flush', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s?.sinkSlug ? { slug: s.sinkSlug } : { scope: `project:${key}` }) }).catch(() => {});
+        return void paintProjectTmCells(true);
+      }
+      return; // clicks elsewhere in the cell (labels, the switch) are handled by 'change'
+    }
     const row = e.target.closest && e.target.closest('.pl-row[role="button"]');
     if (row) openRow(row);                              // a chevron click bubbles here too — one open
   });
@@ -8011,6 +8268,19 @@ if (el.projectsList) {
     if (!row || e.target !== row) return;               // the chevron's own Enter/Space arrives as a click
     e.preventDefault();
     openRow(row);
+  });
+
+  // Second listener, same guard. 'change' (not click) for the switch — a checkbox inside a <label>.
+  el.projectsList.addEventListener('change', async (e) => {
+    const cb = e.target.closest('input.tm-record');
+    if (!cb) return;
+    cb.disabled = true;
+    const r = await fetch(`/api/projects/${encodeURIComponent(cb.dataset.key)}/team-metrics`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ record: cb.checked }),
+    }).catch(() => null);
+    if (!r || !r.ok) cb.checked = !cb.checked;      // revert on failure
+    cb.disabled = false;
+    paintProjectTmCells(true);
   });
 }
 if (el.projectAddBtn) el.projectAddBtn.addEventListener('click', addProjectFlow);
@@ -9189,6 +9459,81 @@ function pluginModal(title, bodyEl, actions = []) {
   el.pluginModal.classList.remove('hidden');
 }
 function closePluginModal() { el.pluginModal.classList.add('hidden'); }
+
+// Team metrics "Enable" dialog. Reuses the generic slot modal above; the body re-renders
+// when the "Where to record" radio changes.
+async function openTmEnableDialog(projectKeyStr, { mode = 'here', change = false, onDone = null } = {}) {
+  const data = await loadTmScopes({ force: true });
+  const s = data.projects.find((x) => x.key === projectKeyStr);
+  if (!s) return;
+  const homesByslug = new Map();
+  for (const w of data.workspaces) if (w.home.state === 'ok') homesByslug.set(w.home.slug, w.name);
+  const candidates = data.projects
+    .filter((x) => x.key !== s.key && x.recordsLocally)
+    .map((x) => ({ slug: x.slug, label: `${x.slug}${homesByslug.has(x.slug) ? ` · metrics home of ${homesByslug.get(x.slug)}` : ''}${x.runs == null ? '' : ` · ${x.runs} runs`}` }));
+  const view = { project: s, origin: s.origin || s.slug, candidates, mode, attribution: 'git-user', change };
+  const holder = document.createElement('div');
+  const errEl = document.createElement('small'); errEl.className = 'hint err tm-enable-err'; errEl.hidden = true;
+  const showTmEnableErr = (msg) => { errEl.textContent = msg; errEl.hidden = !msg; };
+  const paint = () => holder.replaceChildren(renderEnableDialogBody(view, { doc: document }), errEl);
+  paint();
+  holder.addEventListener('change', (e) => {
+    if (e.target.name === 'tm-where') {
+      view.mode = e.target.value;
+      paint();
+      // The body re-renders: keep keyboard focus on the radio the user is arrowing through.
+      holder.querySelector(`input[name="tm-where"][value="${view.mode}"]`)?.focus();
+    }
+    if (e.target.name === 'tm-attribution') view.attribution = e.target.value;
+  });
+  let submitting = false;
+  const submit = async () => {
+    if (submitting) return false;                         // enable pushes to origin: never twice
+    submitting = true;
+    const btnEl = document.querySelector('#plugin-modal .tm-enable-submit');
+    if (btnEl) btnEl.disabled = true;
+    const done = (v) => { submitting = false; if (btnEl) btnEl.disabled = false; return v; };
+    const target = holder.querySelector('select.tm-delegate-target');
+    // With no candidates the select renders empty and `target.value` is ''. POSTing
+    // { mode:'delegate', delegateTo:'' } round-trips to a 400 that reads like a server fault;
+    // refuse locally and say why instead.
+    if (view.mode === 'delegate' && !(target && target.value)) {
+      showTmEnableErr('No project on this machine records team metrics yet — enable one first, then delegate to it.');
+      return done(false);
+    }
+    const body = view.mode === 'delegate'
+      ? { mode: 'delegate', delegateTo: target.value, change }
+      : { mode: 'here', attribution: view.attribution };
+    let r; let j = null;
+    try {
+      r = await fetch(`/api/projects/${encodeURIComponent(s.key)}/team-metrics/enable`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      j = await safeJson(r);
+    } catch (err) {
+      errEl.hidden = false;
+      errEl.textContent = err?.message || 'Could not reach the Worca server';
+      return done(false);
+    }
+    if (!r.ok) {
+      errEl.hidden = false;
+      errEl.textContent = [j?.error, j?.stderr && j.stderr.trim(), j?.hint].filter(Boolean).join(' · ');
+      return done(false);                                 // keep the modal open
+    }
+    closePluginModal();
+    await Promise.all([paintProjectTmCells(true), onDone ? onDone(j) : null]);
+    return done(true);
+  };
+  pluginModal('Set up team metrics', holder, [
+    ['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()],
+    [view.mode === 'delegate' ? 'Create marker and enable' : 'Create branch and enable', 'btn btn-primary btn-mini tm-enable-submit', submit],
+  ]);
+  // Re-label the primary action when the mode flips (pluginModal renders actions once).
+  holder.addEventListener('change', () => {
+    const b = document.querySelector('#plugin-modal .tm-enable-submit');
+    if (b) b.textContent = view.mode === 'delegate' ? 'Create marker and enable' : 'Create branch and enable';
+  });
+}
 
 // JSON fetch helper: { ok, status, data } — body omitted when undefined.
 async function pluginApi(method, url, body) {
@@ -10465,6 +10810,7 @@ async function loadStatsView() {
   }
   body.replaceChildren(renderStatsBody(data, {
     fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } }));
+  loadTmScopes().then((d) => { const a = document.getElementById('stats-tm-hint'); if (a) a.hidden = !d.anyEnabled; });
 }
 
 async function deleteGuardrailSetFlow(id) {
@@ -11038,32 +11384,285 @@ el.statsRange.addEventListener('click', (e) => {
 
 const statsSection = document.querySelector('section[data-view="stats"]');
 const statsTip = document.getElementById('stats-tip');
-function showChartTip(target) {
-  const tipText = target.dataset.tip || '';
-  if (!tipText) return;
-  statsTip.replaceChildren(...tipText.split('\n').map((line, i) =>
-    Object.assign(document.createElement('div'),
-      { className: i === 0 ? 'tip-head' : 'tip-val', textContent: line })));
-  const r = target.getBoundingClientRect();
-  statsTip.style.left = `${Math.round(r.left + r.width / 2)}px`;
-  statsTip.style.top = `${Math.round(r.top - 8)}px`;
-  statsTip.style.transform = 'translate(-50%, -100%)';
-  statsTip.hidden = false;
+// Chart tooltip: pointerover/focusin on a .ch-hit fills and shows the section's own
+// tip element; pointerout/focusout hides it. Shared by Stats (#stats-tip) and Team
+// metrics (#tm-tip) — behaviour must stay byte-for-byte equivalent for both.
+function bindChartTips(section, tipEl) {
+  function showChartTip(target) {
+    const tipText = target.dataset.tip || '';
+    if (!tipText) return;
+    tipEl.replaceChildren(...tipText.split('\n').map((line, i) =>
+      Object.assign(document.createElement('div'),
+        { className: i === 0 ? 'tip-head' : 'tip-val', textContent: line })));
+    const r = target.getBoundingClientRect();
+    tipEl.style.left = `${Math.round(r.left + r.width / 2)}px`;
+    tipEl.style.top = `${Math.round(r.top - 8)}px`;
+    tipEl.style.transform = 'translate(-50%, -100%)';
+    tipEl.hidden = false;
+  }
+  section.addEventListener('pointerover', (e) => {
+    const hit = e.target.closest('.ch-hit');
+    if (hit) showChartTip(hit);
+  });
+  section.addEventListener('pointerout', (e) => {
+    if (e.target.closest('.ch-hit')) tipEl.hidden = true;
+  });
+  section.addEventListener('focusin', (e) => {
+    const hit = e.target.closest('.ch-hit');
+    if (hit) showChartTip(hit);
+  });
+  section.addEventListener('focusout', (e) => {
+    if (e.target.closest('.ch-hit')) tipEl.hidden = true;
+  });
 }
-statsSection.addEventListener('pointerover', (e) => {
-  const hit = e.target.closest('.ch-hit');
-  if (hit) showChartTip(hit);
-});
-statsSection.addEventListener('pointerout', (e) => {
-  if (e.target.closest('.ch-hit')) statsTip.hidden = true;
-});
-statsSection.addEventListener('focusin', (e) => {
-  const hit = e.target.closest('.ch-hit');
-  if (hit) showChartTip(hit);
-});
-statsSection.addEventListener('focusout', (e) => {
-  if (e.target.closest('.ch-hit')) statsTip.hidden = true;
-});
+bindChartTips(statsSection, statsTip);
+
+// ---- Team metrics: shared status cache ---------------------------------------------------
+const tmCache = { data: null, at: 0, inflight: null, gen: 0 };
+const TM_EMPTY = () => ({ projects: [], workspaces: [], scopes: { projects: [], workspaces: [] }, anyEnabled: false });
+// The last /scopes payload also lives in localStorage (the History skeleton-cache idiom): the
+// Workspaces and Projects surfaces paint their metrics columns from it at once and revalidate.
+// It is small (statuses, no records) and never authoritative — `at: 0` marks it stale.
+const TM_SCOPES_CACHE_KEY = 'worca-cc.tm.scopes.v1';
+function readTmScopesCache() {
+  try {
+    const c = JSON.parse(localStorage.getItem(TM_SCOPES_CACHE_KEY) || 'null');
+    if (!c || c.v !== 1 || !c.data || !Array.isArray(c.data.projects) || !Array.isArray(c.data.workspaces)) { localStorage.removeItem(TM_SCOPES_CACHE_KEY); return null; }
+    return c.data;
+  } catch { try { localStorage.removeItem(TM_SCOPES_CACHE_KEY); } catch { /* private mode */ } return null; }
+}
+function writeTmScopesCache(data) {
+  try { localStorage.setItem(TM_SCOPES_CACHE_KEY, JSON.stringify({ v: 1, ts: Date.now(), data })); } catch { /* quota / private mode */ }
+}
+/** What is known right now without a request: this session's payload, else the persisted one (stale). */
+function peekTmScopes() {
+  if (tmCache.data) return tmCache.data;
+  const c = readTmScopesCache();
+  if (c) { tmCache.data = c; tmCache.at = 0; }
+  return c;
+}
+async function loadTmScopes({ force = false } = {}) {
+  if (!force && tmCache.data && Date.now() - tmCache.at < 15_000) return tmCache.data;
+  if (!force && tmCache.inflight) return tmCache.inflight;
+  // A forced load never joins a request that started before the change it is reacting to, and an
+  // older response never overwrites a newer one.
+  const gen = ++tmCache.gen;
+  const p = fetch('/api/team-metrics/scopes')
+    .then((r) => safeJson(r))
+    .then((d) => {
+      const v = d && Array.isArray(d.projects) ? d : TM_EMPTY();
+      if (gen === tmCache.gen) { tmCache.data = v; tmCache.at = Date.now(); if (d && Array.isArray(d.projects)) writeTmScopesCache(v); }
+      return v;
+    })
+    .catch(() => tmCache.data || TM_EMPTY())
+    .finally(() => { if (tmCache.inflight === p) tmCache.inflight = null; });
+  tmCache.inflight = p;
+  return p;
+}
+
+// ---- Team metrics page (team-metrics-design.md §4.10) ------------------------------------
+/** First paint caps the run table for layout; "Show all" lifts it (§4.9). Declared BEFORE
+ *  tmState: tmState's initialiser reads it, and a const read above its declaration throws. */
+const TM_RUN_PAGE = 50;
+const tmState = {
+  scopeId: localStorage.getItem('worca.teamMetrics.scope') || '',
+  range: 'this-month', from: '', to: '', groupBy: 'workflow',
+  filter: {}, sort: {}, data: null, loading: false, loadSeq: 0,
+  runLimit: TM_RUN_PAGE,            // raised by "Show all N runs" (§4.9 "every record in range")
+  cache: new Map(),                 // scopeId → last payload this session: switching back paints at once
+};
+
+// The chip while a load is out: hold Refresh and spin, keep the words. Cleared by the next
+// renderSyncChip (which reads refresh.pending for the deferred fetch that may still be running).
+function setTmChipBusy(on) {
+  const inner = document.querySelector('#tm-sync .sync-chip-inner');
+  if (!inner) return;
+  inner.classList.toggle('is-busy', !!on);
+  if (on) inner.setAttribute('aria-busy', 'true'); else inner.removeAttribute('aria-busy');
+  const btn = inner.querySelector('.tm-refresh');
+  if (btn) { btn.classList.toggle('busy', !!on); btn.disabled = !!on; }
+}
+
+/**
+ * Loads take a sequence number and drop their own result once a newer load has started
+ * (decision 36). Verified without it: delaying scope A's response by 150 ms and switching to
+ * B left the select on B while the body — and "Export CSV" — showed A's runs.
+ */
+async function loadTeamMetricsView({ refresh = false } = {}) {
+  const body = document.getElementById('tm-body');
+  const chip = document.getElementById('tm-sync');
+  const scopeSel = document.getElementById('tm-scope');
+  // All three are guarded together: a partially-rendered shell (or a test that mounts only part
+  // of index.html) must not throw out of the loader the way an unguarded chip.hidden would.
+  if (!body || !chip || !scopeSel) return;
+  const seq = ++tmState.loadSeq;
+  body.classList.add('is-loading');
+  body.setAttribute('aria-busy', 'true');
+  setTmChipBusy(true);
+  $$('#tm-range button').forEach((b) => b.classList.toggle('on', b.dataset.range === tmState.range));
+  const custom = document.getElementById('tm-custom');
+  if (custom) custom.hidden = tmState.range !== 'custom';
+  const scopesData = await loadTmScopes({ force: true });
+  if (seq !== tmState.loadSeq) return;                    // a newer load owns the page now
+  const ids = [...scopesData.scopes.projects, ...scopesData.scopes.workspaces].map((x) => x.id);
+  if (!ids.includes(tmState.scopeId)) tmState.scopeId = ids[0] || '';
+  renderScopeOptions(scopeSel, scopesData.scopes, tmState.scopeId, { doc: document });
+  if (!ids.length) {
+    tmState.data = null;
+    chip.hidden = true;
+    body.classList.remove('is-loading');
+    body.removeAttribute('aria-busy');
+    body.replaceChildren(renderTmEmptyState({ doc: document }));
+    return;
+  }
+  // Instant paint (docs/team-metrics.md "Loading"): this scope's last payload of the session when
+  // there is one, dimmed as stale; otherwise the page's skeleton — never the old scope's numbers,
+  // and never a bare "Loading…" that makes the layout jump.
+  const cached = tmState.cache.get(tmState.scopeId);
+  if (!tmState.data && cached) {
+    tmState.data = cached;
+    renderTeamMetrics();
+    body.classList.add('is-loading');
+    body.setAttribute('aria-busy', 'true');
+  } else if (!tmState.data) {
+    body.replaceChildren(renderTmSkeleton({ doc: document, scopeKind: tmState.scopeId.startsWith('workspace:') ? 'workspace' : 'project' }));
+  }
+  // aggregate=0: this page always re-aggregates the records itself (range/group/filter are local).
+  // defer=1: the worktree answers now; a due fetch runs after the response and its `changed`
+  // event reloads the page — the chip says "Checking origin…" meanwhile.
+  const qs = new URLSearchParams({ scope: tmState.scopeId, range: 'all', aggregate: '0', defer: '1' });
+  if (refresh) qs.set('refresh', '1');
+  let data = null;
+  try {
+    const res = await fetch(`/api/team-metrics?${qs}`);
+    data = await safeJson(res);
+    if (seq !== tmState.loadSeq) return;
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+  } catch (err) {
+    if (seq !== tmState.loadSeq) return;                  // a stale failure must not blank a newer scope
+    // Never keep the previous scope's records: a later range/group click would repaint scope A under scope B's name.
+    tmState.data = null;
+    tmState.lastAgg = null;
+    tmState.cache.delete(tmState.scopeId);
+    chip.hidden = true;
+    body.classList.remove('is-loading');
+    body.removeAttribute('aria-busy');
+    body.replaceChildren(Object.assign(document.createElement('small'), { className: 'hint err', textContent: `Could not load team metrics: ${err.message}` }));
+    return;
+  }
+  tmState.data = data;
+  tmState.cache.set(tmState.scopeId, data);
+  chip.hidden = false;
+  chip.replaceChildren(renderSyncChip(data, { doc: document, now: Date.now() }));
+  renderTeamMetrics();
+  body.removeAttribute('aria-busy');
+}
+
+function renderTeamMetrics() {
+  const body = document.getElementById('tm-body');
+  const data = tmState.data;
+  if (!body || !data) return;
+  let agg;
+  try {
+    agg = aggregate(data.records, { range: tmState.range, from: tmState.from || null, to: tmState.to || null, groupBy: tmState.groupBy, filter: tmState.filter, now: Date.now() });
+  } catch (err) {
+    body.classList.remove('is-loading');
+    body.replaceChildren(Object.assign(document.createElement('small'), { className: 'hint err', textContent: err.message }));
+    return;
+  }
+  agg.homeSlug = data.scope?.home ?? null;
+  let homeHint = null;
+  if (data.scope?.kind === 'workspace') {
+    homeHint = document.createElement('small');
+    homeHint.className = 'hint tm-home-hint';
+    homeHint.append('Metrics home ', Object.assign(document.createElement('code'), { className: 'mono', textContent: data.scope.home || '—' }),
+      ` · records from ${(data.scope.sources || []).length} member repositor${(data.scope.sources || []).length === 1 ? 'y' : 'ies'}, grouped by workspace name`);
+  }
+  body.classList.remove('is-loading');
+  body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit }));
+  tmState.lastAgg = agg;
+  const chips = document.getElementById('tm-filters');
+  const active = Object.entries(tmState.filter).filter(([, v]) => v != null);
+  chips.hidden = !active.length;
+  chips.replaceChildren(...active.map(([dim, key]) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip tm-filter-chip'; b.dataset.dim = dim;
+    // Show the breakdown row's label (e.g. "Bugfix", "#412 Idempotency"), not the raw key (wf_bug, github-issues:#412).
+    const row = (agg.breakdowns[dim === 'models' ? 'models' : dim] || []).find((r) => r.key === key);
+    b.textContent = `${dim}: ${row ? row.label : key === '__none__' ? 'none' : key} ×`;
+    return b;
+  }));
+}
+
+// Delegated events on the view section.
+const tmSection = document.querySelector('section[data-view="team-metrics"]');
+if (tmSection) {
+  tmSection.addEventListener('change', (e) => {
+    if (e.target.id === 'tm-scope') {
+      tmState.scopeId = e.target.value;
+      tmState.filter = {};
+      tmState.sort = {};                                  // column sorts belong to the old scope's rows
+      tmState.runLimit = TM_RUN_PAGE;                     // a new scope starts capped again
+      tmState.data = null; tmState.lastAgg = null;        // never render the old scope under the new name
+      // Group by carries over: every choice applies to both scope kinds (spend is never stacked by project).
+      localStorage.setItem('worca.teamMetrics.scope', tmState.scopeId);
+      loadTeamMetricsView();
+    }
+    else if (e.target.id === 'tm-group') { tmState.groupBy = e.target.value; renderTeamMetrics(); }
+    else if (e.target.id === 'tm-from' || e.target.id === 'tm-to') { tmState[e.target.id === 'tm-from' ? 'from' : 'to'] = e.target.value; if (tmState.from && tmState.to) renderTeamMetrics(); }
+  });
+  tmSection.addEventListener('click', async (e) => {
+    const rangeBtn = e.target.closest('#tm-range button');
+    if (rangeBtn) {
+      tmState.range = rangeBtn.dataset.range;
+      $$('#tm-range button').forEach((b) => b.classList.toggle('on', b === rangeBtn));
+      document.getElementById('tm-custom').hidden = tmState.range !== 'custom';
+      if (tmState.range !== 'custom' || (tmState.from && tmState.to)) renderTeamMetrics();
+      return;
+    }
+    const sortTh = e.target.closest('table.tm-tbl th[data-sort]');
+    if (sortTh) {
+      const dim = sortTh.closest('table').dataset.dim;
+      const cur = tmState.sort[dim];
+      tmState.sort[dim] = { key: sortTh.dataset.sort, dir: cur && cur.key === sortTh.dataset.sort && cur.dir === 'desc' ? 'asc' : 'desc' };
+      return renderTeamMetrics();
+    }
+    const row = e.target.closest('tr[data-filter-dim]');
+    if (row) {
+      const { filterDim, filterKey } = row.dataset;
+      tmState.filter = { ...tmState.filter, [filterDim]: tmState.filter[filterDim] === filterKey ? null : filterKey };
+      return renderTeamMetrics();
+    }
+    if (e.target.closest('.tm-show-all')) { tmState.runLimit = Infinity; return renderTeamMetrics(); }
+    const chipBtn = e.target.closest('.tm-filter-chip');
+    if (chipBtn) { tmState.filter = { ...tmState.filter, [chipBtn.dataset.dim]: null }; return renderTeamMetrics(); }
+    if (e.target.closest('.tm-export')) {
+      const csv = toCsv(tmState.lastAgg ? tmState.lastAgg.runs : []);
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      const a = Object.assign(document.createElement('a'), { href: url, download: `team-metrics-${tmState.scopeId.replace(/[^a-z0-9-]+/gi, '-')}-${tmState.range}.csv` });
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return;
+    }
+    if (e.target.closest('.tm-refresh')) return loadTeamMetricsView({ refresh: true });
+    if (e.target.closest('.tm-push-now')) {
+      e.target.closest('.tm-push-now').disabled = true;
+      await fetch('/api/team-metrics/flush', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope: tmState.scopeId }) }).catch(() => {});
+      return loadTeamMetricsView();
+    }
+    if (e.target.closest('.tm-check-now')) {
+      await fetch('/api/team-metrics/discover', { method: 'POST' }).catch(() => {});
+      return loadTeamMetricsView();
+    }
+  });
+  tmSection.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const t = e.target.closest('tr[data-filter-dim], table.tm-tbl th[data-sort]');
+    if (t) { e.preventDefault(); t.click(); }
+  });
+  // Chart tooltip: reuse the Stats pattern (pointerover/focusin on .ch-hit → #tm-tip).
+  bindChartTips(tmSection, document.getElementById('tm-tip'));
+}
 
 // ---------------------------------------------------------------------------
 // History
@@ -12827,6 +13426,19 @@ function paintHdHeaderMeta(screen, record, data) {
     const r = document.createElement('span'); r.className = 'diff-del'; r.textContent = `−${removed}`; // U+2212
     counts.append(a, r);
     meta.appendChild(counts);
+  }
+  // readRunLedger returns {state:'not-enabled'}, but older payloads / fixtures may omit the field.
+  const tm = (data && data.teamMetrics) || { state: 'not-enabled' };
+  const terminal = ['done', 'error', 'stopped'].includes(st.status);
+  if (terminal) {
+    const TM_TEXT = {
+      recorded: ['recorded to team metrics ✓', 'st-ok'],
+      pending: ['team metrics · pending push', 'st-warn'],
+      skipped: [`team metrics · not recorded${tm.reason ? ` (${tm.reason.replace(/-/g, ' ')})` : ''}`, 'st-err'],
+      'not-enabled': ['team metrics · not enabled', 'st-muted'],
+    };
+    const [text, cls] = TM_TEXT[tm.state] || TM_TEXT['not-enabled'];
+    meta.append(hdDot(), Object.assign(document.createElement('span'), { className: `hd-tm ${cls}`, textContent: text, title: tm.slug ? `worca-metrics branch of ${tm.slug}` : '' }));
   }
   // Branch row.
   const base = screen.querySelector('.hd-base');
@@ -16176,17 +16788,34 @@ async function viewPipeline(projectDir, id, title, record) {
       return;
     }
     const md = data.auditMarkdown || '(no saved markdown)';
-    showViewer(title || id, md);
+    await showViewerTyped(title || id, { kind: 'audit', relPath: 'audit.md', text: md });
   } catch (e) {
     showViewer(title || id, `Error: ${e.message}`);
   }
 }
 
+// The shared viewer with a plain string: errors, notices, anything that is text.
 function showViewer(title, text) {
   el.viewerTitle.textContent = title ? `Saved: ${title}` : 'Saved pipeline';
   el.viewer.textContent = text;
   el.viewerCard.classList.remove('hidden');
   el.viewerCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// The shared viewer with a typed payload — the SAME dispatch the per-step artifact
+// browser uses (viewerKindFor: .md → sanitized markdown, .diff/.patch, .json, else
+// text), so the saved-pipeline audit and the end-result chip render a markdown file
+// the way the artifact list does. Mounted in a host div so the typed viewers own
+// their whitespace instead of inheriting the pre's. Resolves once rendered.
+async function showViewerTyped(title, artifact) {
+  el.viewerTitle.textContent = title ? `Saved: ${title}` : 'Saved pipeline';
+  const host = document.createElement('div');
+  host.className = 'artifact-view';
+  host.textContent = 'Loading…';
+  el.viewer.replaceChildren(host);
+  el.viewerCard.classList.remove('hidden');
+  el.viewerCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  try { await renderArtifact(artifact, host, artifactViewerDeps()); } catch (e) { host.textContent = `Error: ${e.message}`; }
 }
 function hideViewer() {
   el.viewerCard.classList.add('hidden');
@@ -17098,7 +17727,7 @@ async function openRunArtifact(ctx, path) {
     const res = await fetch(url);
     const data = await safeJson(res);
     if (!res.ok) { showViewer(name, `Error: ${data.error || res.status}`); return; }
-    showViewer(data.rel || name, data.text || '');
+    await showViewerTyped(data.rel || name, { kind: undefined, relPath: data.rel || String(path), text: data.text || '' });
   } catch (e) { showViewer(name, `Error: ${e.message}`); }
 }
 
@@ -18352,7 +18981,7 @@ const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
 // plugins/guardrails/models LEFT this array: they are Settings tabs now, reached
 // as #settings/<tab> (legacy bare hashes redirect — see LEGACY_TAB_VIEWS).
-const VIEW_NAMES = ['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
+const VIEW_NAMES = ['new', 'running', 'history', 'stats', 'team-metrics', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
 
 // ── Settings tabs ───────────────────────────────────────────────────────────
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
@@ -18505,6 +19134,7 @@ function showView(name, param = '') {
     routeHistoryDetail(param, { instant: prevView !== 'history' });
   }
   if (name === 'stats') loadStatsView();
+  if (name === 'team-metrics') loadTeamMetricsView();
   if (name === 'workspaces') loadWorkspacesView();
   if (name === 'workspace-create') enterWizard();
   if (name === 'agents') loadAgentsView();
@@ -18713,6 +19343,17 @@ function getPageContext() {
   }
   if (ctx.view === 'new' && state.runTarget === 'workspace' && state.selectedWorkspaceId) {
     ctx.workspaceId = state.selectedWorkspaceId;
+    return ctx;
+  }
+  // The Team metrics page's selection: scope id, range, group-by and the active filters, so
+  // "why did spend jump?" refers to the chart on screen. Ids and enum slugs only — the server
+  // validates each and resolves the scope name itself.
+  if (ctx.view === 'team-metrics') {
+    if (tmState.scopeId) ctx.tmScope = tmState.scopeId;
+    ctx.tmRange = tmState.range;
+    ctx.tmGroupBy = tmState.groupBy;
+    const f = Object.entries(tmState.filter || {}).filter(([, v]) => v != null && v !== '').map(([k, v]) => `${k}=${v}`).join(';');
+    if (f) ctx.tmFilter = f.slice(0, 200);
     return ctx;
   }
   const dir = selectedProjectPath();

@@ -18,6 +18,7 @@ import { listProjects } from './projects.mjs';
 import { branchExists, diffShortstat, hasGh, findPrForBranch } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
+import { readRunLedger } from './metrics/ledger.mjs';
 import { memoryTotals } from './memory-sync.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
@@ -2159,6 +2160,7 @@ export async function readPipelineByKey(key, id) {
     artifacts: await listArtifacts(row.id), // [{kind, relPath}] — drives the Live-logs dropdown (project + workspace)
     results,
     overview,
+    teamMetrics: readRunLedger(row.id),
     memory: await readMemoryLedger(dir),
     ...readPipelineExtras(row.id),
   };

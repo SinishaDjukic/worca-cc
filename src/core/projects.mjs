@@ -144,16 +144,31 @@ export async function addProject(input) {
 }
 
 /**
- * Remove a project by name (case-insensitive). Absent name is a no-op.
+ * Remove a project by name (case-insensitive). Absent name is a no-op. Also prunes any metrics
+ * worktree that belonged to this project's repository, waiting up to ~10s for it: the wait is
+ * best-effort — a worktree still held by a running flush is skipped and swept on the next start.
  * @param {string} name
  * @returns {Promise<Array<{key:string, name:string, path:string, exists:boolean}>>}
  */
 export async function removeProject(name) {
   const key = (typeof name === 'string' ? name : '').trim();
+  let removedPath = null;
   if (key) {
     tx(() => {
+      const row = prepare('SELECT path FROM projects WHERE name = ? COLLATE NOCASE').get(key);
+      removedPath = row ? row.path : null;
       prepare('DELETE FROM projects WHERE name = ? COLLATE NOCASE').run(key);
     });
+  }
+  if (removedPath) {
+    // Dynamic import: metrics/sync.mjs imports this module (worcaHome, listProjects).
+    try {
+      const { pruneMetricsWorktreesFor } = await import('./metrics/sync.mjs');
+      // Bounded: each removal waits for the slug lock, and a running flush can hold it for minutes.
+      // The DELETE request must not hang on that; the prune finishes in the background.
+      const prune = pruneMetricsWorktreesFor(removedPath).catch(() => []);
+      await Promise.race([prune, new Promise((r) => setTimeout(r, 10_000).unref?.())]);
+    } catch { /* best-effort: a leftover worktree is harmless and re-pruned by git */ }
   }
   return listProjects();
 }

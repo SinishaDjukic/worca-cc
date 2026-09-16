@@ -77,6 +77,16 @@ test('propose scenario: a propose_run tool_use carrying MOCK_ASK_CARD, then the 
   assert.equal(noCard.exitCode, 0, 'a missing / invalid MOCK_ASK_CARD falls back to {}');
 });
 
+test('metrics arm: "metrics" plus a verb of intent proposes a metrics card; a bare metrics QUESTION gets the echo answer', async () => {
+  const change = await run('stop recording my metrics on this project');
+  const tool = change.summary.blocks.find((b) => b.kind === 'tool');
+  assert.equal(tool.name, 'mcp__worca__propose_metrics_change');
+  assert.equal(tool.input.kind, 'record');
+  const question = await run('which workspaces use team metrics?');
+  assert.equal(question.summary.blocks.find((b) => b.kind === 'tool'), undefined, 'no tool call for a question');
+  assert.equal(question.summary.text, '[mock] which workspaces use team metrics?');
+});
+
 test('agents scenario: one foreground Agent with a child tool call, the finishing tool_use_result object, modelUsage for the estimate', async () => {
   const r = await run('use agents to count runs');
   const agent = r.summary.blocks.find((b) => b.kind === 'agent');

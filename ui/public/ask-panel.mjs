@@ -2075,6 +2075,69 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return { el: rootEl, handle, dispose: () => handle.destroy(), animate: proposed && !!prev && prev.state === 'building' };
   }
 
+  // ---- Metrics card (docs/team-metrics.md "Ask Worca"): a proposed team-metrics configuration change --------------
+  const MC_KIND_LABEL = { enable: 'Enable team metrics', record: 'Include my runs', workspace_home: 'Metrics home', route_members: 'Route members' };
+  const MC_APPLY_LABEL = { enable: 'Enable', record: 'Apply', workspace_home: 'Set home', route_members: 'Route members' };
+  function buildMetricsCard(block) {
+    const card = block.card || {};
+    const summary = card.summary || 'metrics change';
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    const rootEl = make('div', `ask-card ask-mcard is-${block.state}`);
+    rootEl.setAttribute('data-ask-mcard', block.state);
+    const head = make('div', 'ask-mcard-head');
+    head.appendChild(make('span', 'ask-mcard-title', block.state === 'applied' ? 'Applied metrics change' : block.state === 'failed' ? 'Metrics change failed' : 'Proposed metrics change'));
+    head.appendChild(make('span', 'ask-mcard-kind', MC_KIND_LABEL[card.kind] || card.kind || ''));
+    rootEl.appendChild(head);
+    const body = make('div', 'ask-mcard-body');
+    const target = card.workspaceName ? `workspace ${card.workspaceName}` : card.projectName ? `project ${card.projectName}` : '';
+    const sum = make('div', 'ask-mcard-summary');
+    if (block.state === 'applied') sum.appendChild(svgIcon(WF_ICO.check, 15, 2.4));
+    sum.appendChild(make('span', null, summary));
+    body.appendChild(sum);
+    if (target) body.appendChild(make('div', 'ask-mcard-target', target));
+    if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
+    if (Array.isArray(card.effects) && card.effects.length && block.state === 'proposed') {
+      const ul = make('ul', 'ask-mcard-effects');
+      for (const e of card.effects) ul.appendChild(make('li', null, e));
+      body.appendChild(ul);
+    }
+    const result = card.result || null;
+    if (block.state === 'failed') {
+      body.appendChild(make('div', 'ask-mcard-failed', `Could not apply: ${block.error || (result && result.error) || 'unknown error'}`));
+      if (result && result.hint) body.appendChild(make('div', 'ask-mcard-hint', result.hint));
+    } else if (block.state === 'applied' && result) {
+      if (result.detail) body.appendChild(make('div', 'ask-mcard-detail', result.detail));
+      if (Array.isArray(result.results) && result.results.length) {
+        const ul = make('ul', 'ask-mcard-results');
+        for (const r of result.results) {
+          const li = make('li', `is-${r.result || 'unknown'}`);
+          li.appendChild(make('span', 'mono', r.slug || r.path || ''));
+          li.appendChild(make('span', null, ` · ${r.result || ''}${r.reason ? ` · ${r.reason}` : ''}${r.error ? ` · ${r.error}` : ''}`));
+          if (r.hint) li.appendChild(make('div', 'ask-mcard-hint', r.hint));
+          ul.appendChild(li);
+        }
+        body.appendChild(ul);
+      }
+    }
+    rootEl.appendChild(body);
+    rootEl.appendChild(make('div', 'ask-card-err'));
+    if (block.state === 'proposed') {
+      const actions = make('div', 'ask-mcard-actions');
+      const btn = (cls, text, attr, icon) => {
+        const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, '');
+        if (icon) b.prepend(svgIcon(icon, 12, 2.2));
+        return b;
+      };
+      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-mc-decline');
+      decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
+      const apply = btn('ask-card-start', MC_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-mc-apply', WF_ICO.save);
+      apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
+      actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
+      rootEl.appendChild(actions);
+    }
+    return { el: rootEl };
+  }
+
   /** The model · effort picker (mockup §C): the panel's popover chrome, anchored under the chip. Rows are menuitems (PD28). */
   function openChipPicker(chip, nodeId, card, wf, handle) {
     const node = card.nodes && card.nodes[nodeId];
@@ -2641,17 +2704,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function isProgressBlock(block) {
     const card = block.card || {};
     if (card.type === PROGRESS_CARD_TYPE) return true;
-    if (card.type === 'workflow') return false;
+    if (card.type === 'workflow' || card.type === 'metrics') return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   function buildCard(block) {
     if (!st.cardEls) st.cardEls = new Map();
     const cached = st.cardEls.get(block.id);
     const isWorkflow = !!(block.card && block.card.type === 'workflow');
+    const isMetrics = !!(block.card && block.card.type === 'metrics');
     const isProgress = isProgressBlock(block);
-    if (cached && cached.state === block.state && (isWorkflow || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && cached.state === block.state && (isWorkflow || isMetrics || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
+      : isMetrics ? buildMetricsCard(block)
       : isProgress ? buildProgressCard(block)
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
     st.cardEls.set(block.id, { el: built.el, state: block.state, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1 });

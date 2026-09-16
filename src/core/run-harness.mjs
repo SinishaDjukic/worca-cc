@@ -70,6 +70,7 @@ import {
   resolveFailure, isTerminal, markTerminal, answerFromDecision,
   REASON, pauseConsequences, describePauseReason,
 } from './failure-policy.mjs';
+import { recordRunMetrics } from './metrics/record.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
@@ -674,6 +675,10 @@ export class RunHarness extends EventEmitter {
     this.pauseAbort = new AbortController(); // aborts ONLY node children on pause
     this.pauseReason = null;                 // WHY the run paused: 'cost_pipeline'|'cost_total'|'error'|<usage-limit line>|null
     this.pauseDetail = null;                 // the human detail behind pauseReason ('error': the clipped message)
+    // Team metrics (§4.4 interventions). Resume runs on a NEW instance, so the counters are
+    // stamped into the persisted resume point at every pause and re-seeded in resume().
+    this._metricsIv = { questions: 0, pauses: 0, resumes: 0, lastPauseReason: null, lastPauseDetail: null };
+    this._metricsRecorded = false;
     this._setupDone = false;                 // run()/resume() flip this right before _engineRun (setup replay)
     this._rehydrated = true;                 // resume() clears this until the paused run is rehydrated (the 'resume' site)
     this._modeRecorded = false;              // resume(): the row recorded a run-root mode (a setup-incomplete point may not)
@@ -1167,6 +1172,7 @@ export class RunHarness extends EventEmitter {
       await this._buildResults();          // refs + worktree still live here
       await this._stampDefrag();           // AFTER the final sync inside _buildResults counted the defragmenter's writes
       await this._reportToSource();        // task-source write-back (never throws, spec §7.5)
+      await this._recordRunMetrics('done');
       this._emit('done', { status: 'done', pipelineDir: this.pipeline.dir });
       return { status: 'done', pipelineDir: this.pipeline.dir };
     } catch (err) {
@@ -1209,6 +1215,7 @@ export class RunHarness extends EventEmitter {
           await this._buildResults({ stage: true });
           await this._reportToSource(); // statusToResult('stopped') -> 'failed' (design PR12: no longer success-only)
         }
+        await this._recordRunMetrics('stopped');
         this._emit('done', {
           status: 'stopped',
           pipelineDir: this.pipeline?.dir || null,
@@ -1249,6 +1256,7 @@ export class RunHarness extends EventEmitter {
         await this._buildResults({ stage: true });
         await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
       }
+      await this._recordRunMetrics('error', err);
       this._emit('done', {
         status: 'error',
         pipelineDir: this.pipeline?.dir || null,
@@ -1316,6 +1324,13 @@ export class RunHarness extends EventEmitter {
       recordArtifact(row.id, RUN_LOG_KIND, RUN_LOG_FILE);
       this.stepModels = rp.stepModels || null;
       this.workflowId = rp.workflowId || this.workflowId;
+      // Pauses are counted only in _completePaused, so a crash-resume of an `interrupted`
+      // run adds a resume but no pause (§4.4 decision 6).
+      const iv = rp.interventions && typeof rp.interventions === 'object' ? rp.interventions : {};
+      this._metricsIv = {
+        questions: iv.questions | 0, pauses: iv.pauses | 0, resumes: (iv.resumes | 0) + 1,
+        lastPauseReason: iv.lastPauseReason ?? null, lastPauseDetail: iv.lastPauseDetail ?? null,
+      };
       // The saved point carries the pause that produced it; a resumed run is running.
       this._clearPauseReason();
       // Rehydrate the run's selection BEFORE re-resolving so resume enforces the
@@ -1433,6 +1448,10 @@ export class RunHarness extends EventEmitter {
       await appendAudit(this.pipeline.dir, rehydrated.audit);
       this._emit('state', this.getState());
       this._rehydrated = true;
+      // The pause that parked this run is over; it must not colour a later failure
+      // or stop (§4.4 decision 2).
+      this._metricsIv.lastPauseReason = null;
+      this._metricsIv.lastPauseDetail = null;
 
       // 3a') Auto workflow (spec §5.6): a run that paused BEFORE its graph was
       // decided re-enters the decision HERE — before the setup replay, so the
@@ -1497,6 +1516,7 @@ export class RunHarness extends EventEmitter {
       await this._buildResults();          // refs + worktree still live here
       await this._stampDefrag();           // AFTER the final sync inside _buildResults counted the defragmenter's writes
       await this._reportToSource();        // task-source write-back (never throws, spec §7.5)
+      await this._recordRunMetrics('done');
       this._emit('done', { status: 'done', pipelineDir: this.pipeline.dir });
       return { status: 'done', pipelineDir: this.pipeline.dir };
     } catch (err) {
@@ -1531,6 +1551,7 @@ export class RunHarness extends EventEmitter {
           await this._buildResults({ stage: true });
           await this._reportToSource(); // statusToResult('stopped') -> 'failed' (design PR12: no longer success-only)
         }
+        await this._recordRunMetrics('stopped');
         this._emit('done', { status: 'stopped', pipelineDir: this.pipeline?.dir || null });
         return { status: 'stopped', pipelineDir: this.pipeline?.dir || null };
       }
@@ -1566,6 +1587,7 @@ export class RunHarness extends EventEmitter {
         await this._buildResults({ stage: true });
         await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
       }
+      await this._recordRunMetrics('error', err);
       this._emit('done', { status: 'error', pipelineDir: this.pipeline?.dir || null });
       return { status: 'error', pipelineDir: this.pipeline?.dir || null, error: message };
     } finally {
@@ -2919,6 +2941,7 @@ export class RunHarness extends EventEmitter {
       ...(holdNo != null ? { holdNo } : {}),
       ...(workflow !== undefined ? { workflow } : {}),
     });
+    this._metricsIv.questions += 1;
 
     try {
       if (this.auto) {
@@ -3148,6 +3171,19 @@ export class RunHarness extends EventEmitter {
       }
     } catch (err) {
       this._log('writeback', 'warn', `task-source write-back failed: ${err?.message || err}`);
+    }
+  }
+
+  /** Team metrics (team-metrics-design.md §4.5): one record per terminal run. Idempotent per
+   *  instance and fail-soft — a metrics failure is a log line, never a run failure. */
+  async _recordRunMetrics(status, error = null) {
+    if (this._metricsRecorded) return null;
+    this._metricsRecorded = true;
+    try {
+      return await recordRunMetrics(this, { status, error });
+    } catch (err) {
+      try { this._log('metrics', 'warn', `team metrics: ${err?.message || err}`); } catch { /* never */ }
+      return null;
     }
   }
 
@@ -4055,6 +4091,8 @@ export class RunHarness extends EventEmitter {
   }
 
   async _persist() {
+    const rpNow = this.state.resumePoint;
+    if (rpNow && typeof rpNow === 'object' && this._metricsIv) rpNow.interventions = { ...this._metricsIv };
     if (!this.pipeline) return;
     try {
       await writeState(this.pipeline.dir, this.state);
@@ -4093,6 +4131,11 @@ export class RunHarness extends EventEmitter {
     // 'pausing') must replay that setup on resume; a completed setup never leaves a
     // stale stamp behind (resume() re-arms the consumed point, which may carry one).
     const rp = this.state.resumePoint;
+    // ABOVE the `if (rp …)` — a pause counts whether or not the engine produced a resume point.
+    this._metricsIv.pauses += 1;
+    this._metricsIv.lastPauseReason = this.pauseReason || null;
+    // _setPauseReason (run-harness.mjs:820) always stores a string or null.
+    this._metricsIv.lastPauseDetail = this.pauseDetail == null ? null : String(this.pauseDetail).slice(0, 400);
     if (rp && typeof rp === 'object') {
       if (this._setupDone) { delete rp.setupIncomplete; delete rp.titleProvisional; }
       else {
@@ -4102,6 +4145,7 @@ export class RunHarness extends EventEmitter {
         // not a row column.
         rp.titleProvisional = this.state.titleProvisional === true;
       }
+      rp.interventions = { ...this._metricsIv };
     }
     this._setStatus('paused');
     await this._persist();

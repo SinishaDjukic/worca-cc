@@ -447,6 +447,16 @@ test('workflow card: updateCardBlock keeps workflowId and shallow-merges a `card
   assert.equal(run.workflowId, 'wf_x', 'workflowId is a block key for both kinds (harmless on a run card)');
 });
 
+test('metrics card: updateCardBlock shallow-merges a `card` sub-patch (the apply result lands there)', () => {
+  const t = createThread();
+  const m = appendMessage(t.id, { role: 'assistant', text: '', status: 'done' });
+  setMessageBlocks(m.id, [{ kind: 'card', id: 'card_0000bb01', state: 'proposed', card: { type: 'metrics', kind: 'record', projectKey: 'p-00000001', record: false, summary: 'Turn "Include my runs" off for p', effects: ['x'] } }]);
+  const b = updateCardBlock(t.id, 'card_0000bb01', { state: 'applied', card: { result: { ok: true, detail: '"Include my runs" is now off' } } });
+  assert.equal(b.state, 'applied');
+  assert.deepEqual(b.card, { type: 'metrics', kind: 'record', projectKey: 'p-00000001', record: false, summary: 'Turn "Include my runs" off for p', effects: ['x'], result: { ok: true, detail: '"Include my runs" is now off' } });
+  assert.deepEqual(findCard(t.id, 'card_0000bb01').block, b, 'persisted');
+});
+
 test('boot sweep: a streaming row\'s building workflow card turns failed with the sweep text', () => {
   const t = createThread();
   const m = appendMessage(t.id, { role: 'assistant', text: '', status: 'streaming' });

@@ -158,6 +158,18 @@ and durations, the clarify Q&A, agent transcripts, and logs:
 
 ![Statistics — spend, time worked, outcomes, and per-day charts](docs/screenshots/stats.png)
 
+### Team metrics
+
+- **A shared, git-backed record** — every finished run is pushed as one file to an orphan
+  `worca-metrics` branch on the project's own `origin`; there is no separate metrics server.
+- **Opt-in per project, with delegation** — enable it on the repository itself, or delegate to
+  another project (or a workspace's metrics home) that already records.
+- **A Team metrics page** — project and workspace scope, spend/runs/duration/autonomy/review
+  KPIs, breakdowns and a CSV export.
+- **`worca metrics push`** — flush pending run records from the CLI, e.g. on a headless machine.
+
+See [`docs/team-metrics.md`](docs/team-metrics.md).
+
 ### Models
 
 - **Bring your own models** — register any model id (a proxy, a fine-tune, an
@@ -255,6 +267,9 @@ worca resume <pipelineId>
 # offline demo — full pipeline, no tokens
 worca --project /path/to/your/project --prompt "demo task" --mock --yes
 
+# flush pending team-metrics run records (headless machines with no UI server)
+worca metrics push
+
 # share a saved pipeline: as JSON, or as a plugin folder bundling your agents + skills
 worca workflow export wf_my-flow --format json --out my-flow.json
 worca workflow import my-flow.json
@@ -290,6 +305,7 @@ The skill starts the same deterministic orchestrator.
 
 - [Architecture](docs/ARCHITECTURE.md) — the whole stack in one picture
 - [Guardrails](docs/guardrails.md) — policy model, enforcement, limitations
+- [Team metrics](docs/team-metrics.md) — git-backed, team-wide run records
 - [Storage](docs/storage.md) — where state lives, project keys, migration
 - [Releasing](docs/RELEASING.md) — how `@worca/app` versions are published
 - [Contributing](CONTRIBUTING.md) — developing Worca from source

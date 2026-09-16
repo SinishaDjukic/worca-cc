@@ -37,6 +37,12 @@ project's working tree, so nothing is ever committed to your repo.
   tmp/ask/                              the Ask Worca assistant's scratch cwd + per-turn
                                         mcp-<messageId>.json (never a project folder)
   runs/<pipelineId>/                    detached run roots: run.json, repos/<projectKey>/ worktrees
+  metrics/
+    repos/<owner~repo>/                  git worktree of the project repo, detached at origin/worca-metrics
+    outbox/<owner~repo>/*.jsonl  .lock   pending run records (durability point) + cross-process lock
+    no-hooks/                            empty core.hooksPath for metrics git commands
+    ledger/<runId>.json                  per-run team-metrics status for the History header (swept after 180 d)
+    tmp/enable-*                         transient staging for the orphan root commit
   plugins/                              installed plugin checkouts
   agents/                               installed agent registry checkouts
   workflows/                            saved workflow templates

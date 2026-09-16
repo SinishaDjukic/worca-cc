@@ -15,6 +15,7 @@ import {
   setStep, addCustomModel, removeCustomModel,
   setNodeModel, setFeedbackCycles, setActiveWorkflow, resolveRunConfig,
   readPrRemotePrefs, setPrRemotePrefs,
+  readTeamMetricsPrefs, writeTeamMetricsPrefs,
 } from '../src/core/config.mjs';
 import { PREDEFINED_MODELS } from '../src/core/config.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
@@ -274,4 +275,41 @@ test('PR remote prefs round-trip through project_config.extra without clobbering
   assert.deepEqual(readPrRemotePrefs(dir2), { pushRemote: 'fork', baseRemote: null });
   await setPrRemotePrefs(dir2, {});
   assert.equal(readPrRemotePrefs(dir2), null, 'clearing = remembering nothing');
+});
+
+test('team-metrics prefs round-trip through project_config.extra, hidden from readRunConfig, and coexist with prRemotes', async () => {
+  const dir = await freshProject();
+  const key = projectKey(dir);
+  assert.equal(readTeamMetricsPrefs(key), null, 'fresh project: nothing cached');
+
+  // assertProjectKey rejects a directory path — this used to silently write to no row.
+  assert.throws(() => readTeamMetricsPrefs(dir), TypeError);
+  assert.throws(() => writeTeamMetricsPrefs(dir, { enabled: true }), TypeError);
+
+  const merged = writeTeamMetricsPrefs(key, { enabled: true, remote: 'origin' });
+  assert.deepEqual(merged, { enabled: true, remote: 'origin' });
+  assert.deepEqual(readTeamMetricsPrefs(key), { enabled: true, remote: 'origin' });
+
+  // Shallow-merge: a later patch only overwrites the keys it names.
+  const merged2 = writeTeamMetricsPrefs(key, { headSha: 'abc123' });
+  assert.deepEqual(merged2, { enabled: true, remote: 'origin', headSha: 'abc123' });
+
+  // Never leaks into run config.
+  const cfg = await readRunConfig(dir);
+  assert.equal('teamMetrics' in cfg, false, 'teamMetrics is not part of the run config');
+
+  // setPrRemotePrefs (read-modify-write on the same `extra` blob) must not clobber it.
+  await setPrRemotePrefs(dir, { pushRemote: 'origin', baseRemote: 'upstream' });
+  assert.deepEqual(readTeamMetricsPrefs(key), { enabled: true, remote: 'origin', headSha: 'abc123' });
+  assert.deepEqual(readPrRemotePrefs(dir), { pushRemote: 'origin', baseRemote: 'upstream' });
+
+  // And vice versa: writeTeamMetricsPrefs must not clobber prRemotes.
+  writeTeamMetricsPrefs(key, { disabledAt: '2026-09-16T00:00:00Z' });
+  assert.deepEqual(readPrRemotePrefs(dir), { pushRemote: 'origin', baseRemote: 'upstream' });
+
+  const raw = JSON.parse(getDb().prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key).extra);
+  assert.deepEqual(raw, {
+    teamMetrics: { enabled: true, remote: 'origin', headSha: 'abc123', disabledAt: '2026-09-16T00:00:00Z' },
+    prRemotes: { pushRemote: 'origin', baseRemote: 'upstream' },
+  });
 });

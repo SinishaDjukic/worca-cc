@@ -161,6 +161,37 @@ test('R-A: valid proposal → card persisted mid-turn and ask-card precedes ask-
   assert.ok(final.blocks.some((b) => b.kind === 'card' && b.state === 'proposed'));
 });
 
+test('propose_metrics_change: the parent re-validates the INPUT (pinned default replayed) and mints the card; a refusal is a notice; a child error is nothing', async () => {
+  const s = seed();
+  const seen = [];
+  const runner = (frames) => async (opts) => {
+    for (const [id, name, input, text, isError] of frames) {
+      push(opts.onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id, name, input }] } });
+      push(opts.onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: id, content: text, ...(isError ? { is_error: true } : {}) }] } });
+    }
+    await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
+    push(opts.onEvent, RESULT());
+    return { text: '', exitCode: 0 };
+  };
+  const card = { type: 'metrics', kind: 'record', projectKey: 'demo-00000001', projectName: 'Demo', record: false, summary: 'Turn "Include my runs" off for Demo', effects: [] };
+  const { turn, frames } = makeTurn(s, { pinnedScope: { projectKey: 'demo-00000001' } }, {
+    validateMetricsChange: async (input) => { seen.push(input); return input.kind === 'record' ? { ok: true, card } : { ok: false, errors: ['gateway already records team metrics on its own branch'] }; },
+    runClaudeImpl: runner([
+      ['toolu_1', 'mcp__worca__propose_metrics_change', { kind: 'record', record: false }, '{"ok":true,"card":{}}', false],
+      ['toolu_2', 'mcp__worca__propose_metrics_change', { kind: 'enable', projectKey: 'gw-00000002' }, '{"ok":true,"card":{}}', false],
+      ['toolu_3', 'mcp__worca__propose_metrics_change', { kind: 'record' }, 'error: propose_metrics_change: unavailable', true],
+      ['toolu_4', 'mcp__worca__propose_metrics_change', { kind: 'record' }, '{"ok":false,"errors":["x"]}', false],
+    ]),
+  });
+  await turn.run();
+  assert.deepEqual(seen, [{ kind: 'record', record: false, projectKey: 'demo-00000001' }, { kind: 'enable', projectKey: 'gw-00000002' }], 'the pin fills the target; child refusals and errors never reach the validator');
+  const final = getMessage(s.asst.id);
+  const cards = final.blocks.filter((b) => b.kind === 'card');
+  assert.equal(cards.length, 1); assert.equal(cards[0].state, 'proposed'); assert.deepEqual(cards[0].card, card);
+  assert.ok(final.blocks.some((b) => b.kind === 'notice' && b.text === 'Metrics change rejected: gateway already records team metrics on its own branch'));
+  assert.ok(frames.some((f) => f.type === 'ask-card' && f.block.card.type === 'metrics'), 'the card was broadcast mid-turn');
+});
+
 test('invalid proposal → "Proposal rejected" notice, no card', async () => {
   const s = seed();
   const { turn, frames } = makeTurn(s, {}, {

@@ -235,6 +235,7 @@ Subcommands:
   ui [start|stop|restart|status]
                               Run the web UI (default http://localhost:4317). See: worca ui help
   workflow <cmd> [...]        Export a workflow (Claude Code skill, JSON, or plugin) / import JSON: list|export|import. See: worca workflow help
+  metrics push [--project <path>]   Push pending team-metrics run records (headless flush)
   help                        Print this help (same as --help).
   version                     Print the version (same as --version).
 
@@ -899,6 +900,12 @@ async function cmdAdd(argv) {
   try {
     await addProject({ name, path: target });
     out(`Added project "${name}" -> ${target}`);
+    // CLI-only machines have no hourly loop (decision 25): warm the discovery cache now
+    // so a teammate's team-metrics branch is seen without waiting on the UI server.
+    try {
+      const m = await import('../core/metrics/sync.mjs');
+      await m.discoverProject(target, { force: true });
+    } catch { /* metrics never block `worca add` */ }
     return 0;
   } catch (err) {
     process.stderr.write(`worca: ${err?.message || err}\n`);
@@ -1203,7 +1210,9 @@ async function cmdResume(argv) {
     auto,
     resume: saved,
   });
-  return attachAndDrive(orch, { auto }, () => orch.resume());
+  const code = await attachAndDrive(orch, { auto }, () => orch.resume());
+  await drainMetricsFlushes();
+  return code;
 }
 
 // ── plugin subcommands ─────────────────────────────────────────────────────────
@@ -2055,9 +2064,67 @@ async function cmdWorkflow(argv) {
   }
 }
 
+// ── metrics subcommand ───────────────────────────────────────────────────────────
+
+const METRICS_HELP = `worca metrics — team metrics (git-backed, team-wide run records)
+
+Usage:
+  worca metrics push [--project <path>]   Flush pending run records to their worca-metrics branch.
+                                          Without --project, every outbox on this machine is flushed.
+  worca metrics help
+
+Exit codes: 0 all pushed (or nothing pending) · 1 at least one outbox could not be pushed.
+`;
+
+async function cmdMetrics(argv) {
+  const verb = argv[0];
+  const rest = argv.slice(1);
+  if (!verb || verb === 'help') { process.stdout.write(METRICS_HELP); return 0; }
+  const sync = await import('../core/metrics/sync.mjs');
+  try {
+    switch (verb) {
+      case 'push': {
+        const a = pluginArgs(rest, ['--project'], []);
+        if (a._.length) fail(`unexpected argument "${a._[0]}" — see: worca metrics help`);
+        // CLI-only machines have no hourly loop: refresh stale discovery caches (TTL-respecting) so a
+        // branch a teammate enabled is seen here too. Best-effort; offline keeps the cached verdicts.
+        await sync.discoverAll().catch(() => {});
+        const results = a.project ? [await sync.flushProject(resolve(a.project))] : await sync.flushAll();
+        if (!results.length) { out('worca metrics push: nothing pending'); return 0; }
+        let failed = 0;
+        for (const r of results) {
+          if (r.ok) {
+            out(`${c('green', '✓')} ${r.slug}: ${r.pushed ? `pushed ${r.pushed} run(s)` : 'nothing pending'}`);
+          } else {
+            failed += 1;
+            out(`${c('red', '✗')} ${r.slug ?? '(project)'}: ${r.code}${r.pending ? ` — ${r.pending} run(s) still pending` : ''}`);
+            if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);
+            if (r.hint) out(`  hint: ${r.hint}`);
+          }
+        }
+        return failed ? 1 : 0;
+      }
+      default:
+        fail(`unknown metrics verb "${verb}" — see: worca metrics help`);
+    }
+  } catch (err) {
+    process.stderr.write(`worca metrics ${verb}: ${err?.message || err}\n`);
+    return 1;
+  }
+}
+
+/** Await in-flight metrics pushes before the CLI exits (decision 24). Never blocks past its
+ *  own budget and never changes the run's exit code — metrics must not gate the CLI. */
+async function drainMetricsFlushes() {
+  try {
+    const { drainFlushes } = await import('../core/metrics/sync.mjs');
+    await drainFlushes({ timeoutMs: 30_000 });
+  } catch { /* metrics never block the CLI exit */ }
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow', 'metrics']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -2117,6 +2184,7 @@ async function main() {
     if (sub === 'config') return cmdConfig(rest);
     if (sub === 'ui') return cmdUi(rest);
     if (sub === 'workflow') return cmdWorkflow(rest);
+    if (sub === 'metrics') return cmdMetrics(rest);
   }
   // `worca --ui [...]` is the historical spelling of `worca ui start [...]`; hand the
   // remaining tokens to the ui parser so --port/--open/--mock work with either.
@@ -2237,7 +2305,9 @@ async function main() {
   out(c('bold', `orchestrator — project: ${projectDir}`));
   if (flags.mock) out(c('yellow', 'mock mode: no claude will be spawned'));
 
-  return attachAndDrive(orch, flags, () => orch.run());
+  const code = await attachAndDrive(orch, flags, () => orch.run());
+  await drainMetricsFlushes();
+  return code;
 }
 
 main()

@@ -57,8 +57,8 @@ test('sidebar and topnav menus contain buttons, not links', () => {
   for (const [name, block] of [['sidebar', sidebar], ['topnav', topnav]]) {
     assert.ok(!/<a[\s>]/.test(block), `${name} still contains an <a> (browser shows a link preview on hover)`);
     assert.ok(!/href="#/.test(block), `${name} still carries hash hrefs`);
-    assert.equal((block.match(/<button type="button"/g) || []).length, 9,
-      `${name} should have exactly 9 menu buttons`);
+    assert.equal((block.match(/<button type="button"/g) || []).length, 10,
+      `${name} should have exactly 10 menu buttons`);
   }
 });
 

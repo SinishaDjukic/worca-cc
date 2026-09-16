@@ -37,8 +37,12 @@ test('ws-card template carries the classes buildWorkspaceCard/delegation use', (
     'ws-detail', 'ws-desc-view', 'ws-desc-edit', 'ws-desc-input', 'ws-desc-save', 'ws-desc-cancel',
   ])
     assert.ok(tpl.includes(cls), `ws-card-tpl missing .${cls}`);
-  // The description view is a <pre> (verbatim markdown; #viewer pattern).
-  assert.ok(/class="ws-desc-view viewer"/.test(tpl), 'ws-desc-view should reuse the .viewer <pre> pattern');
+  // The description view is a <div> in the .viewer frame: markdown by contract, bound
+  // through bindMarkdown (rendered when the bundle is ready, plain text before).
+  assert.ok(/<div class="ws-desc-view viewer">/.test(tpl), 'ws-desc-view should be a div in the .viewer frame');
+  // The edit pane carries the Text / Preview tabs and the preview host setMdEditMode drives.
+  for (const cls of ['md-tabs', 'ws-desc-tab', 'ws-desc-preview', 'md-preview']) assert.ok(tpl.includes(cls), `ws-card-tpl missing .${cls}`);
+  assert.ok(/id="wiz-desc-tabs"/.test(html) && /id="wiz-desc-preview"/.test(html), 'wizard step 3 carries the same editor tabs + preview');
 });
 
 test('target segmented control uses the .seg button[data-target] + hidden-radio idiom', () => {
@@ -60,8 +64,8 @@ test('beginRun is positional with an opts 4th arg (C2), single legacy call site 
   assert.match(js, /beginRun\(data\.runId, projectDir, title,\s*target === 'workspace' \? \{ workspaceId, workspaceName, projectNames: workspaceProjectNames \} : \{\}\)/);
 });
 
-test('VIEW_NAMES is the 11-entry array with composer preserved + projects + stats (plugins/guardrails/models are Settings tabs)', () => {
-  assert.match(js, /const VIEW_NAMES = \['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'\];/);
+test('VIEW_NAMES is the 12-entry array with composer preserved + projects + stats + team-metrics (plugins/guardrails/models are Settings tabs)', () => {
+  assert.match(js, /const VIEW_NAMES = \['new', 'running', 'history', 'stats', 'team-metrics', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'\];/);
 });
 
 test('the v1 composer is gone: no composer-core module, no composer-core script tag', () => {

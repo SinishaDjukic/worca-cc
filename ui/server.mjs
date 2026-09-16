@@ -87,6 +87,12 @@ import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
 import { getStats } from '../src/core/stats.mjs';
+import {
+  enableTeamMetrics, setRecordMyRuns, flushSlug, flushAll, flushProject, scheduleFlush, discoverProject,
+  discoverAll, scanMembers, routeWorkspaceMembers, projectMetricsStatus, startTeamMetricsBackground,
+  metricsEvents, slugDirName, autoMetricsHome,
+} from '../src/core/metrics/sync.mjs';
+import { readScope, listScopes, parseScopeParam, aggregate, resolveRange, GROUP_BYS, PROJECT_KEY_RE as TM_PROJECT_KEY_RE } from '../src/core/metrics/read.mjs';
 import { pickFolderNative } from '../src/core/folder-dialog.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import {
@@ -116,6 +122,8 @@ import { mintAutoWorkflowId, sanitizeProposalAnswer } from '../src/core/auto/pro
 import {
   revalidateWorkflowProposal, applyTunables, workflowEventPrompt, workflowNoticeText,
 } from '../src/core/ask/workflow-deps.mjs';
+import { applyMetricsChange } from '../src/core/ask/metrics-deps.mjs';
+import { metricsEventPrompt, metricsNoticeText } from '../src/core/ask/metrics-proposal.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
@@ -478,6 +486,8 @@ function broadcast(obj) {
 function emitChanged(type, action) {
   broadcast({ type, action: action || null });
 }
+
+metricsEvents.on('changed', (e) => emitChanged('team-metrics-changed', e && e.action ? e.action : null));
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
@@ -2202,6 +2212,154 @@ app.get('/api/stats', (req, res) => {
   }
 });
 
+// ---- Team metrics (team-metrics-design.md §4.6–§4.10) ----------------------------------
+function metricsErrorStatus(code) {
+  switch (code) {
+    case 'BAD_REQUEST': case 'NO_ORIGIN': return 400;
+    case 'DELEGATE_INVALID': return 409;                 // a configuration state, not a malformed request
+    case 'NOT_FOUND': case 'NOT_ENABLED': return 404;
+    case 'PUSH_REJECTED': case 'FETCH_FAILED': case 'REMOTE_UNREACHABLE': case 'PUSH_RETRIES_EXHAUSTED': return 502;
+    case 'LOCK_TIMEOUT': return 503;
+    default: return 500;
+  }
+}
+function sendMetricsError(res, err) {
+  const code = (err && err.code) || 'INTERNAL';
+  res.status(metricsErrorStatus(code)).json({
+    error: err && err.message ? err.message : String(err), code,
+    ...(err && err.stderr ? { stderr: err.stderr } : {}),
+    ...(err && err.hint ? { hint: err.hint } : {}),
+  });
+}
+async function tmProject(req, res) {
+  if (!TM_PROJECT_KEY_RE.test(req.params.key)) { badRequest(res, 'invalid project key'); return null; }
+  const p = (await listProjects()).find((x) => x.key === req.params.key);
+  if (!p) { res.status(404).json({ error: 'project not found', code: 'NOT_FOUND' }); return null; }
+  return p;
+}
+
+app.get('/api/team-metrics/scopes', async (req, res) => {
+  try { res.json(await listScopes({ discover: req.query.discover === '1' })); }
+  catch (err) { sendMetricsError(res, err); }
+});
+
+app.get('/api/team-metrics', async (req, res) => {
+  const scope = parseScopeParam(req.query.scope);
+  if (!scope) return badRequest(res, 'scope must be project:<projectKey> or workspace:<workspaceId>');
+  const range = typeof req.query.range === 'string' && req.query.range ? req.query.range : 'this-month';
+  const groupBy = typeof req.query.groupBy === 'string' && req.query.groupBy ? req.query.groupBy : 'workflow';
+  const from = typeof req.query.from === 'string' ? req.query.from : null;
+  const to = typeof req.query.to === 'string' ? req.query.to : null;
+  try {
+    resolveRange(range, { from, to });                       // 400 before touching git
+    if (!GROUP_BYS.includes(groupBy)) throw new RangeError(`unknown groupBy "${groupBy}"`);
+  } catch (err) { return badRequest(res, err.message); }
+  try {
+    // defer=1 (the page): serve the worktree now and run a due fetch afterwards; the fetch's
+    // `changed` event tells the page to reload. Other clients (Ask tools, CLI, tests) keep the
+    // inline fetch and get fresh data in one round trip.
+    const read = await readScope(scope, { refresh: req.query.refresh === '1', defer: req.query.defer === '1' });
+    // Flush trigger: page open (§4.5). reason:'page-open' backs off for 60 s after a failed flush,
+    // so a failing push cannot loop through flush-failed → WS → page reload → GET → flush.
+    for (const s of read.sync) if (s.pending > 0) scheduleFlush(s.slug, { reason: 'page-open' });
+    res.json({
+      scope: read.scope,
+      records: read.records,
+      // The page re-aggregates client-side (§4.9 "one fetch serves the session") and asks with
+      // aggregate=0: at 12k records the unused aggregate added ~3.9 MB to a ~9.9 MB response.
+      // Other clients (and the API tests) still get it by default.
+      aggregate: req.query.aggregate === '0' ? null : aggregate(read.records, { range, from, to, groupBy }),
+      stats: read.stats,
+      sync: read.sync,
+      refresh: read.refresh,
+      fetchError: read.fetchError,
+    });
+  } catch (err) { sendMetricsError(res, err); }
+});
+
+// "Push now" / "Retry": body { slug } flushes one outbox, { scope } flushes that scope's sinks,
+// an empty body flushes every outbox on this machine (same as `worca metrics push`).
+app.post('/api/team-metrics/flush', async (req, res) => {
+  const body = req.body || {};
+  try {
+    let results;
+    if (typeof body.slug === 'string' && body.slug) {
+      // slugDirName throws BAD_REQUEST inside flushSlug, which would answer 200 with ok:false.
+      try { slugDirName(body.slug); } catch { return badRequest(res, 'invalid slug'); }
+      results = [await flushSlug(body.slug)];
+    }
+    else if (typeof body.scope === 'string' && body.scope) {
+      const scope = parseScopeParam(body.scope);
+      if (!scope) return badRequest(res, 'invalid scope');
+      if (scope.kind === 'project') {
+        const p = (await listProjects()).find((x) => x.key === scope.id);
+        if (!p) return res.status(404).json({ error: 'project not found', code: 'NOT_FOUND' });
+        results = [await flushProject(p.path)];
+      } else {
+        const sinks = (await readScope(scope)).sinks;
+        results = [];
+        for (const slug of sinks) results.push(await flushSlug(slug));
+      }
+    } else results = await flushAll();
+    res.json({ results });
+  } catch (err) { sendMetricsError(res, err); }
+});
+
+// Empty state "Check now" (§4.10): force discovery everywhere.
+app.post('/api/team-metrics/discover', async (_req, res) => {
+  try { await discoverAll({ force: true }); res.json(await listScopes()); }
+  catch (err) { sendMetricsError(res, err); }
+});
+
+app.get('/api/projects/:key/team-metrics', async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  try { res.json({ status: await projectMetricsStatus(p, { discover: req.query.discover === '1' }) }); }
+  catch (err) { sendMetricsError(res, err); }
+});
+
+app.patch('/api/projects/:key/team-metrics', async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  const body = req.body || {};
+  if (typeof body.record !== 'boolean') return badRequest(res, 'record must be a boolean');
+  try { setRecordMyRuns(p.path, body.record); res.json({ status: await projectMetricsStatus(p) }); }
+  catch (err) { sendMetricsError(res, err); }
+});
+
+app.post('/api/projects/:key/team-metrics/enable', async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  const body = req.body || {};
+  const mode = body.mode === 'delegate' ? 'delegate' : body.mode === 'here' || body.mode == null ? 'here' : null;
+  if (!mode) return badRequest(res, 'mode must be "here" or "delegate"');
+  if (mode === 'here' && body.attribution != null && body.attribution !== 'git-user' && body.attribution !== 'none') {
+    return badRequest(res, 'attribution must be "git-user" or "none"');
+  }
+  try {
+    const result = await enableTeamMetrics(p.path, { mode, attribution: body.attribution || 'git-user', delegateTo: body.delegateTo || null, change: body.change === true });
+    res.json({ ...result, status: await projectMetricsStatus(p) });
+  } catch (err) { sendMetricsError(res, err); }
+});
+
+// Wizard step (§4.8). No POST /api/workspaces/:id route exists, so nothing shadows this path.
+app.post('/api/workspaces/metrics-scan', async (req, res) => {
+  const paths = req.body && Array.isArray(req.body.projectPaths) ? req.body.projectPaths.filter((p) => typeof p === 'string' && p) : null;
+  if (!paths || !paths.length) return badRequest(res, 'projectPaths must be a non-empty array of paths');
+  if (paths.length > 50) return badRequest(res, 'at most 50 projectPaths');
+  const normalized = paths.map((p) => resolveProjectDir(p)).filter(Boolean);
+  // Same checks as POST /api/workspaces/scan (:~2948): never discover (and write a config row for) a junk path.
+  for (const p of normalized) {
+    if (!fs.existsSync(p)) return badRequest(res, `member path is missing: ${p}`);
+    if (!isGitRepo(p)) return badRequest(res, `member is not a git repository: ${p}`);
+  }
+  try { res.json(await scanMembers(normalized)); }
+  catch (err) { sendMetricsError(res, err); }
+});
+
+app.post('/api/workspaces/:id/metrics-route', async (req, res) => {
+  if (!WORKSPACE_KEY_RE.test(req.params.id)) return res.status(404).json({ error: 'workspace not found', code: 'NOT_FOUND' });
+  try { res.json(await routeWorkspaceMembers(req.params.id)); }
+  catch (err) { sendMetricsError(res, err); }
+});
+
 // ---------------------------------------------------------------------------
 // POST /api/history/pr  -> enrich the skeleton with live PR state, pushed back
 // over the WS as batched `history-pr` events (reuses broadcast(), the same
@@ -2809,6 +2967,9 @@ app.post('/api/projects', async (req, res) => {
   try {
     const projects = await addProject({ name: body.name, path: body.path });
     emitChanged('projects-changed', 'created');
+    discoverProject(normalizeProjectPath(body.path), { force: true })
+      .then(() => emitChanged('team-metrics-changed', 'discovered'))
+      .catch(() => { /* offline or not a git repo: discovery retries hourly */ });
     res.json({ projects });
   } catch (err) {
     // addProject only throws on validation (empty/duplicate/not-a-directory), so
@@ -3041,9 +3202,13 @@ app.post('/api/workspaces', async (req, res) => {
     : [];
   if (projectPaths.length < 2) return badRequest(res, 'a workspace needs at least 2 member projects');
   try {
-    const workspace = await createWorkspace({ name: body.name, projectPaths, description: body.description });
+    // No explicit home (the create wizard no longer asks): adopt the one member that already
+    // records, if there is exactly one; every other case is "Choose…" on the workspace card.
+    const explicit = typeof body.metricsProject === 'string' && body.metricsProject ? body.metricsProject : null;
+    const metricsProject = explicit ?? await autoMetricsHome(projectPaths);
+    const workspace = await createWorkspace({ name: body.name, projectPaths, description: body.description, metricsProject });
     emitChanged('workspaces-changed', 'created');
-    res.status(201).json({ workspace });
+    res.status(201).json({ workspace, metricsHomeAuto: !explicit && !!metricsProject });
   } catch (err) {
     const status = workspaceErrorStatus(err && err.code);
     return res.status(status).json({ error: err && err.message ? err.message : String(err) });
@@ -3056,14 +3221,21 @@ app.patch('/api/workspaces/:id', async (req, res) => {
   const body = req.body || {};
   // Immutability (defense-in-depth, §2.3): the project set never changes via PATCH.
   if ('projectPaths' in body || 'projectKeys' in body) {
-    return badRequest(res, 'a workspace project set is immutable; PATCH accepts only name/description');
+    return badRequest(res, 'a workspace project set is immutable; PATCH accepts only name/description/metricsProject');
   }
   // Pass through only the editable fields.
   const patch = {};
   if (typeof body.name === 'string') patch.name = body.name;
   if (typeof body.description === 'string') patch.description = body.description;
+  if ('metricsProject' in body) {
+    if (body.metricsProject !== null && typeof body.metricsProject !== 'string') {
+      return badRequest(res, 'metricsProject must be a member project path or null');
+    }
+    patch.metricsProject = body.metricsProject;
+  }
   try {
     const workspace = await updateWorkspace(id, patch);
+    if ('metricsProject' in patch) emitChanged('workspaces-changed', 'metrics-home');
     res.json({ workspace });
   } catch (err) {
     const status = workspaceErrorStatus(err && err.code);
@@ -4730,6 +4902,18 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
       }
     }
   } catch { /* absent line */ }
+  // The Team metrics page's selection (validated slugs); only the scope NAME is resolved here.
+  try {
+    if (ctx.tmScope) {
+      const [kind, tmId] = ctx.tmScope.split(':');
+      let name = null;
+      if (kind === 'project') name = (await listProjects()).find((x) => x.key === tmId)?.name ?? null;
+      else if (kind === 'workspace') name = (await readWorkspace(tmId))?.name ?? null;
+      if (name != null) {
+        out.teamMetrics = { kind, id: tmId, name, range: ctx.tmRange || 'this-month', groupBy: ctx.tmGroupBy || null, filter: ctx.tmFilter || null };
+      }
+    }
+  } catch { /* absent line */ }
   try {
     if (ctx.pipelineId) {
       const key = ctx.workspaceId ? `workspaces/${ctx.workspaceId}` : out.project?.key;
@@ -4764,6 +4948,10 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // workflowId once the user saved it; a run card keeps its pre-P3 line byte for byte.
         const wf = !!(b.card && b.card.type === 'workflow');
         if (wf && b.state === 'building') continue;   // transient (no name yet) — never worth a header line
+        if (b.card && b.card.type === 'metrics') {
+          cards.push({ id: b.id, type: 'metrics', state: b.state, summary: b.card.summary || '' });
+          continue;
+        }
         cards.push(wf
           ? {
             id: b.id, type: 'workflow', state: b.state, name: (b.card && b.card.name) || '',
@@ -5170,6 +5358,35 @@ async function startWorkflowEventTurn(threadId, block, { declined = false, thenR
   return failedEventTurn(threadId, { error: r.error, status: r.status, ...(r.budget ? { budget: r.budget } : {}) });
 }
 
+/** The metrics card's event turn: the synthetic notice row + the "[worca event] metrics card …" prompt (same queueing as workflow cards). */
+async function startMetricsEventTurn(threadId, block) {
+  const thread = askGetThread(threadId);
+  if (!thread) return null;
+  const card = block.card || {};
+  const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
+  const result = card.result || null;
+  const text = metricsEventPrompt({ cardId: block.id, state, card, result });
+  const notice = metricsNoticeText({ state, card, result });
+  let mv = await validateModelEffort(thread.model, thread.effort);
+  if (!mv.ok) {
+    const d = (await askCatalog({ withSecrets: false })).default;
+    if (!d) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
+    mv = { ok: true, ...d };
+  }
+  const start = () => startAskTurn({
+    threadId, thread: askGetThread(threadId) || thread, ctx: thread.context || {},
+    model: mv.model, effort: mv.effort, text, synthetic: { notice },
+  });
+  if (askInFlight(threadId)) {
+    if (!askDeferred.has(threadId)) askDeferred.set(threadId, []);
+    askDeferred.get(threadId).push(start);
+    return { deferred: true };
+  }
+  const r = await start();
+  if (r.ok) return { assistantMessageId: r.assistantMessageId };
+  return failedEventTurn(threadId, { error: r.error, status: r.status, ...(r.budget ? { budget: r.budget } : {}) });
+}
+
 // D14 dismiss ("Not now" keeps a stub — the client renders state:'dismissed') for a RUN card;
 // the workflow-card state machine (spec §8.4) for a workflow one. The card is looked up BEFORE
 // the body is validated because the legal verb set depends on the card's type.
@@ -5183,6 +5400,33 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
     const body = req.body || {};
     const found = askFindCard(id, cardId);
     if (!found) return res.status(404).json({ error: 'card not found' });
+    if (found.block.card && found.block.card.type === 'metrics') {
+      // Metrics card (docs/team-metrics.md "Ask Worca"): proposed → applied | failed | declined. The change is
+      // the outward-facing part — a branch on origin, a marker on another repo, this machine's switch, the
+      // workspace's home — so it happens HERE, behind the click, never in the model's tool.
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const turn = await startMetricsEventTurn(id, block);
+        return res.json({ block, turn });
+      }
+      askCardBusy.add(cardId);
+      let block;
+      try {
+        let result;
+        try { result = await applyMetricsChange(found.block.card); }
+        catch (err) {
+          result = { ok: false, error: err && err.message ? err.message : String(err), code: (err && err.code) || 'ERROR', ...(err && err.hint ? { hint: err.hint } : {}), ...(err && err.stderr ? { stderr: String(err.stderr).slice(0, 2000) } : {}) };
+        }
+        block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      const turn = await startMetricsEventTurn(id, block);
+      return res.json({ block, turn });
+    }
     if (!(found.block.card && found.block.card.type === 'workflow')) {
       if (body.state !== 'dismissed') return badRequest(res, 'state must be "dismissed"');
       if (found.block.state !== 'proposed') {
@@ -6444,6 +6688,8 @@ if (isMain) {
     try { channelHost.start(); } catch (err) {
       console.error(`[worca-ui] chat channel host failed to start: ${err && err.message ? err.message : err}`);
     }
+    try { startTeamMetricsBackground({ log: (m) => console.warn(m) }); }
+    catch (err) { console.warn(`[worca-ui] team metrics background: ${err?.message || err}`); }
   });
 }
 

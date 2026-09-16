@@ -26,6 +26,17 @@ const HISTORY = [
   { id: 'p-b', projectKey: 'beta-00000002', projectName: 'beta', title: 'Beta run', status: 'done', startedAt: '2026-09-05T08:00:00.000Z' },
 ];
 
+const nowIso = new Date().toISOString();
+const TM_SCOPES = {
+  projects: [
+    { key: 'alpha-00000001', name: 'alpha', slug: 'me/alpha', hasOrigin: true, enabled: false },
+    { key: 'beta-00000002', name: 'beta', slug: 'me/beta', hasOrigin: true, enabled: true, recordsLocally: true, enabledAt: nowIso, record: true, runs: 3, pending: 0 },
+  ],
+  workspaces: [],
+  scopes: { projects: [], workspaces: [] },
+  anyEnabled: true,
+};
+
 async function boot({ fetchHandler } = {}) {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4321/' });
   const { window } = dom;
@@ -629,7 +640,7 @@ test('index.html: the Projects view is a two-screen shell with a detail template
   }
   // The list still lives at the same ids (the controller and every older test read them).
   assert.match(htmlText, /<p id="projects-msg" class="form-msg" aria-live="polite"><\/p>\s*<div class="run-list" id="projects-list"><\/div>/);
-  assert.equal((htmlText.match(/data-view/g) || []).length, 11, 'a screen inside the projects view, not a view');
+  assert.equal((htmlText.match(/data-view/g) || []).length, 12, 'a screen inside the projects view, not a view (the Team metrics page is its own view)');
 });
 
 test('style.css: the projects shell is a twin of the History track', () => {
@@ -653,4 +664,39 @@ test('style.css: the projects shell is a twin of the History track', () => {
     assert.ok(i >= 0, `${head} — the pd- selector rides the hd- rule`);
     assert.match(cssText.slice(i, cssText.indexOf('}', i)), re);
   }
+});
+
+test('rows show a .tm-cell; .tm-enable opens the enable dialog; toggling .tm-record PATCHes', async () => {
+  const patches = [];
+  const { window } = await boot({
+    fetchHandler: (u, opts) => {
+      if (u.includes('/api/team-metrics/scopes')) return Promise.resolve({ ok: true, status: 200, json: async () => TM_SCOPES });
+      if (/\/api\/projects\/beta-00000002\/team-metrics$/.test(u) && opts.method === 'PATCH') {
+        patches.push(JSON.parse(opts.body));
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) });
+      }
+      return null;
+    },
+  });
+  await goProjects(window);
+  await tick(); await tick();
+  const doc = window.document;
+  const cells = [...doc.querySelectorAll('#projects-list .tm-cell')];
+  assert.equal(cells.length, 2);
+  const offCell = cells.find((c) => c.dataset.key === 'alpha-00000001');
+  const onCell = cells.find((c) => c.dataset.key === 'beta-00000002');
+  assert.ok(offCell, 'off project has a .tm-cell');
+  assert.ok(onCell, 'on project has a .tm-cell');
+
+  click(window, offCell.querySelector('.tm-enable'));
+  await tick(); await tick();
+  assert.equal(doc.getElementById('plugin-modal').classList.contains('hidden'), false, 'enable dialog opened');
+  assert.ok(doc.querySelector('input[name="tm-where"]'), 'dialog has the "where to record" radios');
+
+  const cb = onCell.querySelector('input.tm-record');
+  cb.checked = false;
+  cb.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await tick(); await tick();
+  assert.equal(patches.length, 1);
+  assert.deepEqual(patches[0], { record: false });
 });

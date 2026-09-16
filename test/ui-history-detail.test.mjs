@@ -276,6 +276,48 @@ test('meta omits day/clock when nothing carries a timestamp (deep link)', async 
   assert.match(meta.textContent, /Done/, 'the status word still paints');
 });
 
+test('a terminal run with a recorded team-metrics entry shows the "recorded" line', async () => {
+  const ctx = await bootDetail({ detail: { ...DETAIL, teamMetrics: { state: 'recorded', slug: 'acme/billing-api' } } });
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+  const tm = doc.querySelector('#hist-detail .hd-tm');
+  assert.ok(tm, 'the .hd-tm span renders for a terminal run');
+  assert.equal(tm.textContent, 'recorded to team metrics ✓');
+  assert.ok(tm.classList.contains('st-ok'));
+});
+
+test('a pending team-metrics entry shows the pending-push wording', async () => {
+  const ctx = await bootDetail({ detail: { ...DETAIL, teamMetrics: { state: 'pending', slug: 'acme/billing-api' } } });
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+  const tm = doc.querySelector('#hist-detail .hd-tm');
+  assert.ok(tm, 'the .hd-tm span renders for a terminal run');
+  assert.equal(tm.textContent, 'team metrics · pending push');
+  assert.ok(tm.classList.contains('st-warn'));
+});
+
+test('omitting teamMetrics entirely renders "not enabled"', async () => {
+  const detail = { ...DETAIL };
+  delete detail.teamMetrics;
+  const ctx = await bootDetail({ detail });
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+  const tm = doc.querySelector('#hist-detail .hd-tm');
+  assert.ok(tm, 'the .hd-tm span renders for a terminal run even with no teamMetrics field');
+  assert.equal(tm.textContent, 'team metrics · not enabled');
+  assert.ok(tm.classList.contains('st-muted'));
+});
+
+test('a non-terminal (paused) run renders no .hd-tm line', async () => {
+  const ctx = await bootDetail({
+    rows: [{ ...ROW, status: 'paused' }],
+    detail: { ...PAUSED_DETAIL, teamMetrics: { state: 'recorded', slug: 'acme/billing-api' } },
+  });
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelector('#hist-detail .hd-tm'), null);
+});
+
 test('branch row copies the feature branch and flags .copied', async () => {
   const ctx = await bootDetail();
   await openDetail(ctx);

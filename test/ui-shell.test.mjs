@@ -4,11 +4,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
 
-test('exactly eleven routed views', () => {
-  assert.equal((html.match(/data-view/g) || []).length, 11);
+test('exactly twelve routed views', () => {
+  assert.equal((html.match(/data-view/g) || []).length, 12);
 });
-test('eleven views include composer + the two workspace views + the two agent views + projects + stats (plugins/guardrails/models are Settings tabs now)', () => {
-  for (const v of ['new', 'running', 'history', 'stats', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'])
+test('twelve views include composer + the two workspace views + the two agent views + projects + stats + team-metrics (plugins/guardrails/models are Settings tabs now)', () => {
+  for (const v of ['new', 'running', 'history', 'stats', 'team-metrics', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'])
     assert.ok(html.includes(`data-view="${v}"`), `missing data-view=${v}`);
   // Folded into Settings: a pane, not a routed view (see .settings-pane below).
   for (const v of ['plugins', 'guardrails', 'models'])

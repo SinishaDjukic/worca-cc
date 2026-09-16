@@ -419,6 +419,7 @@ const states = [
   ['workspaces', async () => { await go('workspaces'); }],
   ['workspace-create', async () => { await go('workspace-create'); }],
   ['stats', async () => { await go('stats'); }],
+  ['team-metrics', async () => { await go('team-metrics'); }],
   ['settings-general', async () => { await go('settings'); await until(`document.querySelector('.settings-pane[data-tab="general"]:not(.hidden) .card')`, 'general pane'); }],
   // Tooltips open on mouseover / focusin (app.js TIP_SELECTOR handlers), not on click: a bubbling
   // synthetic mouseover reaches the document listener whatever the page's focus state.

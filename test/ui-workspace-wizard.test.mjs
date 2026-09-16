@@ -1,7 +1,8 @@
-// test/ui-workspace-wizard.test.mjs — jsdom boot tests for the 3-step creation
-// wizard: step gating, scan POST (pre-persist), live changing status text,
-// scan-done/scan-error, save (create + 409-preserve), abort + leave-guard, and
-// the JSON-safety regression guard (.value/.textContent only; never innerHTML).
+// test/ui-workspace-wizard.test.mjs — jsdom boot tests for the 4-step creation
+// wizard: step gating, the team-metrics home step, scan POST (pre-persist),
+// live changing status text, scan-done/scan-error, save (create + 409-preserve),
+// abort + leave-guard, and the JSON-safety regression guard (.value/.textContent
+// only; never innerHTML).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -14,8 +15,24 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECTS = [
   { name: 'svc-iam', path: '/a/svc-iam', exists: true },
   { name: 'svc-ui', path: '/a/svc-ui', exists: true },
+  { name: 'svc-pay', path: '/a/svc-pay', exists: true },
   { name: 'gone', path: '/a/gone', exists: false },
 ];
+
+// Metrics-scan fixtures (§8.6 board 7). Paths line up with PROJECTS so the auto-picked
+// "single recording member" and the create-POST metricsProject guard both resolve for real.
+const WIZ_MEMBERS = { members: [
+  { path: '/a/svc-iam', key: 'svc-iam-1', slug: 'me/svc-iam', hasOrigin: true, enabled: true, recordsLocally: true, enabledAt: '2026-08-12T00:00:00Z' },
+  { path: '/a/svc-ui', key: 'svc-ui-1', slug: 'me/svc-ui', hasOrigin: true, enabled: false, recordsLocally: false },
+] };
+const MEMBERS_ROUND1 = { members: [
+  { path: '/a/svc-iam', key: 'svc-iam-1', slug: 'me/svc-iam', hasOrigin: true, enabled: true, recordsLocally: true, enabledAt: '2026-08-12T00:00:00Z' },
+  { path: '/a/svc-ui', key: 'svc-ui-1', slug: 'me/svc-ui', hasOrigin: true, enabled: true, recordsLocally: true, enabledAt: '2026-08-12T00:00:00Z' },
+] };
+const MEMBERS_ROUND2 = { members: [
+  { path: '/a/svc-ui', key: 'svc-ui-1', slug: 'me/svc-ui', hasOrigin: true, enabled: false, recordsLocally: false },
+  { path: '/a/svc-pay', key: 'svc-pay-1', slug: 'me/svc-pay', hasOrigin: true, enabled: true, recordsLocally: true, enabledAt: '2026-08-12T00:00:00Z' },
+] };
 
 // A WebSocket stub that records sent frames and exposes a way to deliver a
 // server message into app.js's 'message' listener.
@@ -38,6 +55,9 @@ async function boot({ fetchHandler } = {}) {
     const u = String(url);
     if (fetchHandler) { const r = fetchHandler(u, opts || {}); if (r) return r; }
     if (u.includes('/api/projects')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: PROJECTS }) });
+    // Must be checked before the generic '/api/workspaces' branch below, which would
+    // otherwise swallow this more specific URL first.
+    if (u.includes('/api/workspaces/metrics-scan')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ members: [] }) });
     if (u.includes('/api/workspaces')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ workspaces: [] }) });
     if (u.includes('/api/branches')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ branches: [], current: '' }) });
     return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [] }) });
@@ -349,4 +369,42 @@ test('#wiz-abort button returns to Step 1 and unsubscribes', async () => {
   await new Promise((r) => setTimeout(r, 0));
   assert.ok(stepVisible(doc, 1), 'abort returns to step 1');
   assert.ok(ws().sent.some((m) => m.type === 'unsubscribe' && m.scanId === 'scan_btn'), 'unsubscribed on abort');
+});
+
+// ---- Team metrics is not a wizard step (the server adopts the single recording member) ----
+
+test('the wizard has no team-metrics step: Projects → Scan → Description, and Save posts no metricsProject', async () => {
+  const posts = [];
+  const { window, ws } = await boot({
+    fetchHandler: (u, opts) => {
+      if (u.endsWith('/api/workspaces/scan') && opts.method === 'POST') return Promise.resolve({ ok: true, status: 200, json: async () => ({ scanId: 'scan_nostep' }) });
+      if (u.endsWith('/api/workspaces') && opts.method === 'POST') {
+        posts.push(JSON.parse(opts.body));
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ workspace: { id: 'wks-ns', name: 'N', description: '', projectPaths: ['/a/svc-iam', '/a/svc-ui'], projectKeys: [], exists: [true, true] }, metricsHomeAuto: true }) });
+      }
+      return null;
+    },
+  });
+  goCreate(window);
+  await new Promise((r) => setTimeout(r, 0));
+  const doc = window.document;
+  assert.equal(doc.getElementById('wiz-step-metrics'), null, 'no metrics pane in the DOM');
+  assert.deepEqual([...doc.querySelectorAll('#wiz-track li')].map((li) => li.textContent.trim().replace(/^\d\s*/, '')), ['Projects', 'Scan', 'Description']);
+  doc.querySelector('#wiz-name').value = 'N';
+  doc.querySelector('#wiz-name').dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(doc.getElementById('wiz-start-scan').disabled, true, 'Scan is the step-1 action and gates on 2 picks');
+  for (const v of ['/a/svc-iam', '/a/svc-ui']) {
+    const cb = [...doc.querySelectorAll('#wiz-projects .wiz-proj-cb')].find((c) => c.value === v);
+    cb.checked = true; cb.dispatchEvent(new window.Event('change', { bubbles: true }));
+  }
+  assert.equal(doc.getElementById('wiz-start-scan').disabled, false);
+  click(window, doc.getElementById('wiz-start-scan'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(stepVisible(doc, 2), 'straight to the scan loader');
+  ws().deliver({ type: 'scan-done', scanId: 'scan_nostep', description: '# Workspace: N', projects: [], graphify: { used: false } });
+  await new Promise((r) => setTimeout(r, 0));
+  click(window, doc.querySelector('#wiz-save'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(posts.length, 1);
+  assert.equal('metricsProject' in posts[0], false, 'the client never picks a home; the server adopts the single recording member');
 });
