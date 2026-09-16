@@ -751,7 +751,7 @@ export class GraphOrchestrator extends RunHarness {
       // in P6 serves exactly what listArtifacts() carries).
       if (payload.result?.path) {
         this._artifact('result', payload.result.path, {
-          nodeId: payload.nodeId, executionId: payload.executionId, port: null,
+          nodeId: payload.nodeId, executionId: payload.executionId, port: null, cycle: null,
         });
       }
     }
@@ -1238,7 +1238,7 @@ export class GraphOrchestrator extends RunHarness {
       if (!path || seen.has(path)) continue;
       seen.add(path);
       this._artifact(port.artifactKind || port.id, path, {
-        nodeId: ctx.nodeId, executionId: ctx.executionId, port: port.id,
+        nodeId: ctx.nodeId, executionId: ctx.executionId, port: port.id, cycle: ctx.ordinal,
       });
     }
     // Agent memory (§5): sync the mount back after EVERY execution, slices included.
@@ -1318,7 +1318,7 @@ export class GraphOrchestrator extends RunHarness {
       await writeStepQuestions(this.pipeline.id, stepKey, round, {
         agentKey: nc.key, nodeId: ctx.nodeId, questions: { questions },
       });
-      this._artifact('questions', qPath, { nodeId: ctx.nodeId, executionId: ctx.executionId, port: null });
+      this._artifact('questions', qPath, { nodeId: ctx.nodeId, executionId: ctx.executionId, port: null, cycle: ctx.ordinal });
       await appendAudit(this.pipeline.dir, `${agentLabel} asked ${questions.length} question(s) (round ${round}).`).catch(() => {});
       const payload = await this._enqueueAsk(() => this._ask({
         id: `questions-${stepKey}-r${round}`,
