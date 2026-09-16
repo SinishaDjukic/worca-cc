@@ -113,16 +113,26 @@ test('weekly series start Monday UTC; spend stacked by group, runs by result', (
 
 test('breakdowns: workflow, source (No ticket last), actor only when present, project touched counts in both, row filter', () => {
   const recs = [
-    makeRecord({ id: '1', usd: 10, source: { type: 'github-issues', ref: '#412', title: 'Idempotency' }, actor: 'Mara K.', kind: 'workspace', touched: ['acme/gateway', 'acme/console'], files: 4 }),
-    makeRecord({ id: '2', usd: 5, kind: 'workspace', touched: ['acme/gateway'], files: 1 }),
+    makeRecord({ id: '1', usd: 10, source: { type: 'github-issues', ref: '#412', title: 'Idempotency' }, actor: 'Mara K.', kind: 'workspace', touched: ['acme/gateway', 'acme/console'], files: 4, touchedFiles: { 'acme/gateway': 3, 'acme/console': 1 } }),
+    makeRecord({ id: '2', usd: 5, kind: 'workspace', touched: ['acme/gateway'], files: 1, touchedFiles: { 'acme/gateway': 1 } }),
   ];
-  const agg = aggregate(recs, { range: 'all', groupBy: 'project', now: NOW });
+  assert.throws(() => aggregate(recs, { range: 'all', groupBy: 'project', now: NOW }), RangeError, 'spend is never stacked by project: a run\'s cost is one number');
+  const agg = aggregate(recs, { range: 'all', now: NOW });
   assert.deepEqual(agg.breakdowns.source.map((r) => r.label), ['#412 Idempotency', 'No ticket']);
   assert.ok(agg.breakdowns.actor);
   const gw = agg.breakdowns.project.find((r) => r.key === 'acme/gateway');
-  assert.deepEqual([gw.runs, gw.usd, gw.filesChanged], [2, 15, 5]);
+  assert.deepEqual([gw.runs, gw.usd, gw.filesChanged, gw.filesUnknown], [2, 15, 4, 0], 'files per PROJECT (3 + 1), not the runs\' totals (4 + 1)');
+  assert.equal(agg.breakdowns.project.find((r) => r.key === 'acme/console').filesChanged, 1);
+  assert.deepEqual(agg.breakdowns.project.map((r) => [r.key, r.runShare]), [['acme/gateway', 1], ['acme/console', 0.5]], 'share of runs touched; ordered by runs touched, not spend');
+  assert.equal(agg.breakdowns.workflow[0].runShare, 1, 'every dimension carries it; only the project table shows it');
+  assert.equal(agg.breakdowns.workflow[0].filesChanged, 5, 'a whole-run dimension still sums the runs\' totals');
+  // Records that predate target.touchedFiles: the count is unknown, never the run's total.
+  const old = aggregate([makeRecord({ id: '3', kind: 'workspace', touched: ['acme/gateway', 'acme/console'], files: 9 })], { range: 'all', now: NOW });
+  assert.deepEqual(old.breakdowns.project.map((r) => [r.key, r.filesChanged, r.filesUnknown]), [['acme/console', null, 1], ['acme/gateway', null, 1]], 'a tie on runs and files falls back to the name');
+  const mixed = aggregate([...recs, makeRecord({ id: '3', kind: 'workspace', touched: ['acme/gateway'], files: 9 })], { range: 'all', now: NOW });
+  assert.deepEqual([mixed.breakdowns.project.find((r) => r.key === 'acme/gateway').filesChanged, mixed.breakdowns.project.find((r) => r.key === 'acme/gateway').filesUnknown], [4, 1], 'a mixed row counts what it knows and says how many it does not');
   const spendStacks = agg.series.spend.find((p) => p.totalUsd > 0).stacks;
-  assert.equal(spendStacks['acme/console'], 5);            // 10 split evenly across two touched
+  assert.deepEqual(Object.values(spendStacks), [15], 'one workflow stack carrying the full spend — nothing is divided');
   const filtered = aggregate(recs, { range: 'all', filter: { source: 'github-issues:#412' }, now: NOW });
   assert.equal(filtered.kpis.runs, 1);
   assert.equal(aggregate([makeRecord({ id: 'x', actor: null })], { range: 'all', now: NOW }).breakdowns.actor, null);

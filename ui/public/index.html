@@ -708,12 +708,6 @@
             <span class="tm-custom" id="tm-custom" hidden>
               <input type="date" id="tm-from" class="input" aria-label="From" /> – <input type="date" id="tm-to" class="input" aria-label="To" />
             </span>
-            <label class="tm-group">Group by
-              <span class="select-wrap"><select id="tm-group" class="select">
-                <option value="workflow">workflow</option><option value="result">result</option>
-                <option value="actor">actor</option><option value="project">project</option>
-              </select></span>
-            </label>
           </div>
           <div class="tm-active-filters" id="tm-filters" hidden></div>
           <div id="tm-body"><small class="hint">Loading…</small></div>
@@ -752,13 +746,22 @@
                   <button type="button" class="ws-rescan btn-ghost" title="Re-scan the project set">Re-scan</button>
                   <button type="button" class="ws-delete btn-danger" title="Delete workspace">Delete</button>
                 </div>
-                <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
               </div>
-              <div class="ws-home" hidden></div>
               <div class="ws-detail" hidden>
-                <pre class="ws-desc-view viewer"></pre>
+                <div class="ws-home" hidden></div>
+                <div class="ws-desc">
+                  <span class="tm-label">Description</span>
+                  <!-- Markdown by contract (the scanner template): rendered through the page's
+                       sanitized pipeline once it is ready, the same words as plain text before. -->
+                  <div class="ws-desc-view viewer"></div>
+                </div>
                 <div class="ws-desc-edit" hidden>
+                  <div class="md-tabs" role="tablist" aria-label="Description editor">
+                    <button type="button" class="md-tab ws-desc-tab" role="tab" data-mode="text" aria-selected="true">Text</button>
+                    <button type="button" class="md-tab ws-desc-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button>
+                  </div>
                   <textarea class="ws-desc-input textarea" rows="10" spellcheck="false"></textarea>
+                  <div class="ws-desc-preview md-preview viewer" hidden></div>
                   <div class="actions" style="justify-content:flex-end;margin-top:10px">
                     <button type="button" class="ws-desc-cancel btn btn-ghost btn-mini">Cancel</button>
                     <button type="button" class="ws-desc-save btn btn-primary btn-mini">Save</button>
@@ -775,7 +778,7 @@
           <div class="topbar">
             <div>
               <h1 id="wiz-title">Create workspace</h1>
-              <div class="sub">Pick 2+ projects, choose where team metrics go, scan their interconnections, then save</div>
+              <div class="sub">Pick 2+ projects, scan their interconnections, then save</div>
             </div>
             <button type="button" id="wiz-close" class="btn-ghost" style="padding:11px 20px">Cancel</button>
           </div>
@@ -783,9 +786,8 @@
           <section class="card" style="max-width:820px">
             <ol class="wiz-track" id="wiz-track" aria-label="Create workspace steps">
               <li data-track="1"><span>1</span> Projects</li>
-              <li data-track="metrics"><span>2</span> Team metrics</li>
-              <li data-track="2"><span>3</span> Scan</li>
-              <li data-track="3"><span>4</span> Description</li>
+              <li data-track="2"><span>2</span> Scan</li>
+              <li data-track="3"><span>3</span> Description</li>
             </ol>
             <!-- Step 1: name + project multi-select -->
             <div class="wiz-step" id="wiz-step-1">
@@ -799,30 +801,16 @@
                 <small class="hint" id="wiz-step1-hint">Onboard at least two projects to create a workspace.</small>
               </div>
               <div class="actions" style="justify-content:flex-end">
-                <button type="button" id="wiz-next-metrics" class="btn-go" disabled>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
-                  Next: team metrics
-                </button>
-              </div>
-            </div>
-
-            <!-- Step "metrics": where workspace runs are recorded (team-metrics-design.md §4.8) -->
-            <div class="wiz-step hidden" id="wiz-step-metrics">
-              <div class="field">
-                <label>Metrics home <span class="opt">(where workspace runs are recorded)</span></label>
-                <div id="wiz-metrics-list"><small class="hint">Checking each project's origin…</small></div>
-                <small class="hint" id="wiz-metrics-hint">Workspace runs alter several repositories, so their cost is attributed to the workspace as a whole and written to this one member.<span id="wiz-metrics-pre" hidden> Pre-selected because it is the only member already recording.</span> The choice is stored on this machine; change it any time on the workspace card.</small>
-              </div>
-              <div class="actions wiz-metrics-actions">
-                <button type="button" id="wiz-metrics-skip" class="btn btn-ghost btn-mini">Skip — don't record workspace runs</button>
-                <span class="hd-spacer"></span>
-                <button type="button" id="wiz-metrics-back" class="btn btn-ghost btn-mini">Back</button>
-                <button type="button" id="wiz-start-scan" class="btn-go">
+                <button type="button" id="wiz-start-scan" class="btn-go" disabled>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
                   Scan interconnections
                 </button>
               </div>
             </div>
+
+            <!-- Team metrics is NOT a wizard step any more: the home is adopted automatically when
+                 exactly one member already records (POST /api/workspaces), otherwise chosen on the
+                 workspace card ("Choose…"). -->
 
             <!-- Step 2: live scan loader -->
             <div class="wiz-step hidden" id="wiz-step-2">
@@ -844,8 +832,15 @@
             <!-- Step 3: editable description -->
             <div class="wiz-step hidden" id="wiz-step-3">
               <div class="field">
-                <label for="wiz-desc">Interconnection description <span class="opt">(editable)</span></label>
+                <div class="label-row">
+                  <label for="wiz-desc">Interconnection description <span class="opt">(editable)</span></label>
+                  <div class="md-tabs" id="wiz-desc-tabs" role="tablist" aria-label="Description editor">
+                    <button type="button" class="md-tab" role="tab" data-mode="text" aria-selected="true">Text</button>
+                    <button type="button" class="md-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button>
+                  </div>
+                </div>
                 <textarea id="wiz-desc" class="textarea" rows="16" spellcheck="false" placeholder="# Workspace: ..."></textarea>
+                <div id="wiz-desc-preview" class="md-preview viewer" hidden></div>
                 <small class="hint" id="wiz-graphify-note"></small>
               </div>
               <p id="wiz-msg" class="form-msg" aria-live="polite"></p>

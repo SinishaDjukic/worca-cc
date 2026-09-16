@@ -609,6 +609,28 @@ test('propose_workflow: label, START hook with the full input, RESULT hook with 
   assert.deepEqual(results.at(-1), { toolUseId: 'toolu_wf3', input: {}, text: 'error: propose_workflow: boom', isError: true });
 });
 
+test('propose_metrics_change: label, RESULT hook with the full input + raw text + isError; never for a sub-agent', () => {
+  assert.equal(labelForTool('mcp__worca__propose_metrics_change', {}), 'Proposing a metrics change');
+  assert.equal(labelForTool('mcp__worca__get_team_metrics', {}), 'Reading team metrics');
+  const results = [];
+  const h = harness({ onMetricsProposal: (e) => { results.push(e); return Promise.resolve(); } });
+  const input = { kind: 'record', projectKey: 'p-00000001', record: false };
+  h.push(session(), init(), mstart('msg_1'), atool('msg_1', 'toolu_tm', 'mcp__worca__propose_metrics_change', input));
+  assert.deepEqual(results, [], 'no START hook: the card is minted at RESULT, from the input');
+  h.push(uresult('toolu_tm', '{"ok":true,"card":{}}'));
+  assert.deepEqual(results, [{ toolUseId: 'toolu_tm', input, text: '{"ok":true,"card":{}}', isError: false }]);
+  h.push(atool('msg_1', 'toolu_task', 'Agent', { description: 'helper', subagent_type: 'general-purpose', prompt: 'x' }));
+  h.push(atool('msg_c', 'toolu_tm2', 'mcp__worca__propose_metrics_change', input, 'toolu_task'));
+  h.push(uresult('toolu_tm2', '{"ok":true}', { ptu: 'toolu_task' }));
+  assert.equal(results.length, 1, 'child-stream calls are logged, never intercepted');
+  h.push(atool('msg_1', 'toolu_tm3', 'mcp__worca__propose_metrics_change', {}));
+  h.push(uresult('toolu_tm3', 'error: propose_metrics_change: boom', { isError: true }));
+  assert.deepEqual(results.at(-1), { toolUseId: 'toolu_tm3', input: {}, text: 'error: propose_metrics_change: boom', isError: true });
+  const throwing = harness({ onMetricsProposal: () => { throw new Error('hook'); } });
+  throwing.push(atool('msg_1', 'toolu_x', 'mcp__worca__propose_metrics_change', input));
+  assert.doesNotThrow(() => throwing.push(uresult('toolu_x', '{"ok":true}')));
+});
+
 test('onTrackRun fires on the MAIN-stream track_run tool_result with the full input, the text and isError; never for a sub-agent', () => {
   const calls = [];
   const h = harness({ onTrackRun: (e) => calls.push(e) });

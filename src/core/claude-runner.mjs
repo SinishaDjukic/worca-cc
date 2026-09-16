@@ -1072,16 +1072,23 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   // P3 (PD11): a workflow-card EVENT is matched first — it contains the words "workflow" and, when thenRun, "run",
   // which would otherwise trip the two arms below. Then the workflow trigger, then the run proposal.
   const wfEvent = /^\s*\[worca event\] workflow card (card_[0-9a-f]{8}) (?:(declined)|saved as (\S+) "([^"]*)"; thenRun=(true|false))/.exec(userText);
-  const workflow = !wfEvent && /\bworkflow\b/i.test(userText);
-  const agents = !wfEvent && /\bagents?\b/i.test(userText);
-  const propose = !wfEvent && !workflow && /\b(propose|start|run)\b/i.test(userText);
+  // A metrics-card EVENT, then the metrics trigger — both before the run arm, whose \brun\b would otherwise fire on
+  // "include my runs"-style prose (it does not, \b stops at the s, but "propose" would).
+  const tmEvent = /^\s*\[worca event\] metrics card (card_[0-9a-f]{8}) (applied|declined|failed)/.exec(userText);
+  // The metrics arm wants a CHANGE, not a question: "metrics" plus a verb of intent ("stop recording my metrics",
+  // "route ... to the metrics home"). A bare "which workspaces use team metrics?" gets the generic echo answer.
+  const metrics = !wfEvent && !tmEvent && /\bmetrics\b/i.test(userText)
+    && /\b(?:stop|start|turn|toggle|switch|record\w*|route|change|enable|disable|set)\b/i.test(userText);
+  const workflow = !wfEvent && !tmEvent && !metrics && /\bworkflow\b/i.test(userText);
+  const agents = !wfEvent && !tmEvent && /\bagents?\b/i.test(userText);
+  const propose = !wfEvent && !tmEvent && !workflow && !metrics && /\b(propose|start|run)\b/i.test(userText);
 
   const SID = resumeSessionId || 'mock-session-ask-1';
   const USAGE = { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   const firstLine = userText.split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
   const ANSWER = `[mock] ${firstLine.slice(0, 200)}`;
   const init = { type: 'system', subtype: 'init', session_id: SID, cwd, model: 'mock', permissionMode: 'dontAsk',
-    tools: ['Task', 'mcp__worca__list_runs', 'mcp__worca__get_run', 'mcp__worca__propose_run', 'mcp__worca__propose_workflow'],
+    tools: ['Task', 'mcp__worca__list_runs', 'mcp__worca__get_run', 'mcp__worca__propose_run', 'mcp__worca__propose_workflow', 'mcp__worca__propose_metrics_change'],
     mcp_servers: [{ name: 'worca', status: 'connected' }], plugins: [], skills: [], slash_commands: [], agents: [], uuid: 'mock-uuid-init' };
   const mstart = (id) => ({ type: 'stream_event', event: { type: 'message_start', message: { id, model: 'mock', role: 'assistant', content: [], usage: USAGE } }, parent_tool_use_id: null, session_id: SID });
   const delta = (t) => ({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: t } }, parent_tool_use_id: null, session_id: SID });
@@ -1126,6 +1133,20 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
         atool(MSG1, 'toolu_mock_workflow', 'mcp__worca__propose_workflow', wfInput),
         uresult('toolu_mock_workflow', JSON.stringify({ ok: true, mode: 'task', projectKey: card.projectKey || null, projectName: null, name: shape.name, match: null,
           warnings: [], summary: '', shape, costUsd: 0, fingerprint: 'top-level: (mock)\nhints: mock', note: '', thenRun: wfInput.thenRun })));
+      answerMsg = MSG2;
+    }
+    if (metrics) {
+      // The MCP child's validation result (metrics-proposal.mjs): the parent re-validates the INPUT and mints the card,
+      // so a mock card always targets the context project's "Include my runs" switch (no git involved when applied).
+      const tmInput = { kind: 'record', projectKey: card.projectKey || null, record: false, note: 'mock: stop recording my runs here' };
+      frames.push(delta('[mock] '), delta('proposing '), delta('a metrics change'), atext(MSG1, 'Proposing a metrics change card.'),
+        atool(MSG1, 'toolu_mock_metrics', 'mcp__worca__propose_metrics_change', tmInput),
+        uresult('toolu_mock_metrics', JSON.stringify({ ok: true, card: { type: 'metrics', ...tmInput } })));
+      answerMsg = MSG2;
+    }
+    if (tmEvent) {
+      const line = tmEvent[2] === 'declined' ? 'Declined — nothing changed.' : tmEvent[2] === 'failed' ? 'The change failed; check the error and try again.' : 'Applied.';
+      frames.push(delta('[mock] '), delta(tmEvent[2]), atext(MSG1, line));
       answerMsg = MSG2;
     }
     if (wfEvent) {

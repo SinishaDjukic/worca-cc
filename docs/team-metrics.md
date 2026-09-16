@@ -12,7 +12,7 @@ Nothing about a run's own branch or history changes — `worca-metrics` carries 
 
 ## Enable and join
 
-A project turns team metrics on from its **Projects** cell (`Enable…`), in one of two modes:
+A project turns team metrics on from its **Projects** cell (`Set up team metrics…`), in one of two modes:
 
 - **Here, on this repository** — Worca creates the orphan branch `worca-metrics` on `origin`,
   holding only `.worca-metrics/`, and pushes it. Every finished run — done, failed or stopped —
@@ -23,7 +23,7 @@ A project turns team metrics on from its **Projects** cell (`Enable…`), in one
   name. A delegate must be a project (or workspace member/home) Worca already knows about on
   this machine; delegating to a project that itself delegates ("chains") is rejected.
 
-If a teammate has already enabled the branch on `origin` before you do, clicking **Enable…**
+If a teammate has already enabled the branch on `origin` before you do, clicking **Set up team metrics…**
 here **joins** it instead of creating a second orphan history — the push-not-fast-forward from
 a race is exactly this case, handled the same way.
 
@@ -35,9 +35,9 @@ Discovery keeps each project's local view of the branch current: the web server 
 a schedule and on demand ("Check now" on the workspace card), and a CLI-only machine — no UI
 server running — refreshes it only when you run `worca add` or `worca metrics push`.
 
-## "Record my runs"
+## "Include my runs"
 
-Once a project is enabled (or delegating), its own switch — "Record my runs" — controls whether
+Once a project is enabled (or delegating), its own switch — "Include my runs" — controls whether
 *your* runs on that project are recorded at all. Turning it off does not touch the branch or
 anyone else's records; it only stops your own machine from pushing new ones for that project.
 For a workspace run, this checks the workspace's **metrics home** project's toggle, not the
@@ -46,14 +46,76 @@ run's own member projects.
 ## Workspace metrics home, delegation and "Route all members"
 
 A workspace records through one designated **metrics home**: a member project (or any project
-Worca knows locally) that already records. The workspace card shows the home's slug, status dot
-and run count, with a **Choose…** / **Change…** action that opens the same picker used during
-enable.
+Worca knows locally) that already records. Creating a workspace never asks about it: when exactly
+one member already records, it becomes the home automatically; otherwise the home stays unset
+until you pick one. The home is a per-machine choice (teammates pick their own); the Team metrics
+page reads every recording member, so a workspace's runs are aggregated wherever they were
+written. Records are matched to a workspace by its id, so renaming a workspace keeps its history.
 
-Once a home is set, the workspace card's **Members** row offers **Route all members here**:
-every member project that is not already recording gets set up to delegate to the home in one
-action, and the row reports how many records locally, how many are now routed to the home, and
-how many still aren't recording (with each one's reason, e.g. "no origin remote").
+The workspace card names every member exactly once. Collapsed, its header carries a one-line
+summary — "3 projects · ⌇ acme/gateway · 12 workspace runs · 2 not recording" — where the Team
+metrics icon marks the metrics home (the project is never labelled "home"), the run count is the
+workspace's own, and "N not recording" appears only when a member has no metrics at all. Clicking the
+header opens the card; a lone workspace opens by itself and the toggle is remembered per card.
+Open, the card shows one **Projects** table with four columns — the status first (is it recording?), then the branch (where), then the run count on the right edge (no icon in the project column, so every name lines up; the home is told by its status, and **Workspace runs** is filled on the home row only):
+
+| Project | Metrics status | Metrics branch | Workspace runs |
+|---|---|---|---|
+| acme/gateway | ✓ Workspace metrics<br>✓ Project metrics | `origin/worca-metrics` | 12 |
+| acme/billing | ✓ Project metrics | `worca-metrics` on `acme/gateway` | – |
+| acme/legacy | ✓ Project metrics | `origin/worca-metrics` | – |
+| acme/edge | ✓ Project metrics | `worca-metrics` on `acme/other` | – |
+| acme/new | – | not set | – |
+| acme/scratch | – | no origin remote | – |
+
+**Metrics status** says which metrics exist for a project: none ("–"), project metrics (its
+single-project runs are recorded, on its own branch or wherever it delegates), workspace metrics
+(it is the home, so the workspace's runs are recorded there), or both. Routing is a consolidation
+detail — the **Metrics branch** column says where each project's runs land — not a status.
+
+The home comes first, then members that need attention, then the routed ones; past six members
+the table collapses behind **Show N more** and the table head sums up the rest ("44 routed · 5
+not routed"). The table head also holds the actions: **Choose metrics home…** / **Change metrics
+home…** opens the picker, and **Route all to metrics home** sets up every member that has no
+`worca-metrics` branch yet to delegate to the home in one action. Members that already record on
+their own branch or delegate elsewhere are left alone, so that button is hidden when there is
+nothing it could change. A sentence appears under the table only when it matters: no home chosen
+yet, a stale home, or the home's "Include my runs" switch turned off on this machine (your
+workspace runs follow that switch).
+
+## Ask Worca
+
+The chat reads team metrics and can propose configuration changes, through four tools. It is
+gnostic about the domain — scopes, ranges, the metrics home, routing, attribution, "Include my
+runs" — and agnostic about the mechanics: it never sees slug directories, the outbox, worktrees
+or the fetch schedule.
+
+- **`get_team_metrics`** (a project or a workspace, or the scope pinned for the chat; a range,
+  a group-by and a filter as on the page) returns the KPIs, the previous period and deltas, the
+  breakdowns, spend and runs per week, and the sync state (pending pushes, fetch errors, skipped
+  records). The rules make the model state the scope and the range with every figure and say
+  when the numbers rest on pending or failed pushes.
+- **`list_team_metrics_runs`** returns the run rows behind those numbers, newest first and
+  paged. Each row says whether the run is `local` — then `get_run`, `get_run_diff` and the
+  artifact tools open it; a teammate's run is a row only.
+- **`list_projects`** carries each project's metrics state (`on`, `off`, `delegated`,
+  `no-origin`, `not-git`, `blocked`, `delegate-invalid`, plus its "Include my runs" switch,
+  pending pushes and last error) and each workspace's home and members, so "why is this project
+  missing from the numbers" needs no second tool.
+- **`push_team_metrics`** is the page's "Push now" for a scope or for everything pending on this
+  machine.
+- **`propose_metrics_change`** never changes anything: it validates a change and the chat shows
+  a card the user applies or declines. Four kinds — `enable` (here, or delegating to another
+  project), `record` (this machine's "Include my runs"), `workspace_home` (set or clear a
+  workspace's metrics home) and `route_members` — cover everything the Projects cells and the
+  workspace card can do. Enabling creates a branch on the team's origin, attribution is a team
+  decision made once and routing pushes marker branches to other repositories, which is why none
+  of them is a direct tool. Applying happens in the UI server behind the click; the card then
+  shows the result (per member, for routing), and the chat receives a `[worca event] metrics
+  card … applied | declined | failed` message it confirms in one line.
+
+When the Team metrics page is open, the chat's context carries the selected scope, range,
+group-by and filters, so "why did spend jump?" refers to the chart on screen.
 
 ## The sync chip and push failures
 
@@ -62,12 +124,12 @@ its outbox and its last push, not just whether the toggle is on:
 
 | Chip state | Meaning | Action shown |
 |---|---|---|
-| Off | Not enabled | `Enable…` |
+| Off ("runs stay on this machine") | Not enabled | `Set up team metrics…` |
 | Not available | No `origin` remote on this repository | none |
 | On (green) | Enabled, nothing pending, last push (if any) succeeded | — |
 | On · N pending (amber) | Runs are queued in the local outbox, not yet pushed | `Push now` |
 | Push failed / Push rejected · branch protection (red) | The last push attempt failed; runs stay queued | `Retry` |
-| Delegated (green, "recorded in `<slug>`") | Enabled via delegation, sink resolves | "Record my runs" switch |
+| Delegated (green, "recorded in `<slug>`") | Enabled via delegation, sink resolves | "Include my runs" switch |
 | Delegate invalid (red) | The delegation marker points at a target that no longer records, chains to another delegate, or is not a project Worca knows on this machine | `Change…` |
 | Blocked (amber, "branch not read yet") | Enabled, but the branch's config has never been successfully read (`configKnown:false`) — runs are being skipped until the next successful fetch | none |
 
@@ -75,6 +137,30 @@ A push failure never loses a run: the file stays in the local outbox and is retr
 flush (scheduled, `Push now`, or `worca metrics push`), up to 5 attempts before it is reported as
 failed in the UI. The most common rejection is a branch-protection rule on `worca-metrics`
 itself — see the next section.
+
+## Loading
+
+Both metrics surfaces wait on git, so neither blocks on it:
+
+- **The Team metrics page** reads with `defer=1`: the server answers from the local metrics
+  worktree at once and, when a fetch from origin is due (implicit, at most once a minute per
+  repository, or forced by Refresh), runs it *after* the response under the repository's lock.
+  Meanwhile the chip shows a spinner and "Checking origin…", Refresh is held, and the body
+  carries `aria-busy`. When the fetch settles — new commits or not, failure included — one
+  `team-metrics-changed` event (`fetched` / `fetch-failed`) reaches the page, which reloads and
+  repaints the chip ("Synced just now", or the fetch's stderr). A repository whose branch has
+  never been fetched on this machine answers "pending" with no records; the clone happens in the
+  background the same way. Ask Worca's tools, the CLI and other API clients keep the inline
+  fetch and get fresh data in one round trip.
+- **First paint** is a skeleton of the page (six KPI tiles, two charts, the breakdown grid and
+  the runs card, as shimmer bars), never a "Loading…" line, so the layout lands once. Each scope's
+  last payload is kept for the session: switching back paints it at once, dimmed, while the read
+  is out. A different scope always gets the skeleton — never the previous scope's numbers.
+- **Workspace and project cards** paint their metrics columns from the last `/scopes` payload,
+  which also lives in `localStorage` (small: statuses only), and revalidate. A workspace the
+  copy does not know shows the same table with shimmer cells and "checking metrics…" in its
+  summary until the statuses arrive; the card is `aria-busy` meanwhile. The statuses themselves
+  are built a few projects at a time rather than one after another.
 
 ## Branch-protection exemption
 

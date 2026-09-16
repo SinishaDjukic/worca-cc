@@ -39,6 +39,9 @@ export const ASK_LIMITS = Object.freeze({
   artifactReadDefaultBytes: 60_000,
   artifactReadMaxBytes: 200_000,
   briefMaxChars: 8000,
+  metricsRunsDefaultLimit: 20,             // list_team_metrics_runs page (= listRunsDefaultLimit)
+  metricsRunsMaxLimit: 100,                // list_team_metrics_runs page cap (= listRunsMaxLimit)
+  metricsBreakdownMaxRows: 20,             // get_team_metrics rows per breakdown dimension
   workflowTaskMaxChars: 32_000,            // propose_workflow task text (= classify.mjs TASK_TEXT_CAP)
   workflowNoteMaxChars: 200,               // propose_workflow note shown on the card
   proposalNoteMaxChars: 200,               // propose_run note ("why this shape") shown on the run card

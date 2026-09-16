@@ -4,7 +4,10 @@
 
 export const SUPPORTED_RECORD_VERSION = 1;
 export const RANGES = Object.freeze(['this-month', 'last-month', 'quarter', 'year', 'all', 'custom']);
-export const GROUP_BYS = Object.freeze(['workflow', 'result', 'actor', 'project']);
+// Only dimensions where a run has exactly ONE key: a run's cost is one number for the whole
+// pipeline, so it is never split across the projects it touched (`project` stays a breakdown and
+// a filter — "runs that touched X" — but not a stack).
+export const GROUP_BYS = Object.freeze(['workflow', 'result', 'actor']);
 export const FILTER_DIMS = Object.freeze(['workflow', 'source', 'actor', 'project', 'models', 'result']);
 const DAY = 86_400_000;
 const WEEK = 7 * DAY;
@@ -90,7 +93,7 @@ function percentile(values, p) {
 
 const NONE = '__none__';
 
-/** Dimension keys for filtering/breakdowns. Each returns [{key,label,sub?,weight}] (a run may touch several projects). */
+/** Dimension keys for filtering/breakdowns. Each returns [{key,label,sub?}] (a run may touch several projects). */
 export const DIMENSIONS = {
   workflow: (r) => [{ key: r.workflow?.id || r.workflow?.name || NONE, label: r.workflow?.name || r.workflow?.id || 'Unknown workflow' }],
   // A hand-written or future record may carry no `result`: without the guard it became the stack
@@ -107,9 +110,14 @@ export const DIMENSIONS = {
   project: (r) => {
     if (r.target?.kind === 'workspace') {
       const t = Array.isArray(r.target.touched) ? r.target.touched : [];
-      return t.length ? t.map((p) => ({ key: p, label: p, weight: 1 / t.length })) : [{ key: NONE, label: 'No project touched', weight: 1 }];
+      // `files`: this member's own changed-file count (target.touchedFiles, additive); null on a
+      // record that predates it — the run's total is NOT this project's, so the row says "–".
+      const tf = r.target.touchedFiles && typeof r.target.touchedFiles === 'object' ? r.target.touchedFiles : null;
+      return t.length
+        ? t.map((p) => ({ key: p, label: p, files: tf && Number.isInteger(tf[p]) ? tf[p] : null }))
+        : [{ key: NONE, label: 'No project touched', files: null }];
     }
-    return [{ key: r.target?.project || NONE, label: r.target?.project || 'Unknown project', weight: 1 }];
+    return [{ key: r.target?.project || NONE, label: r.target?.project || 'Unknown project' }];
   },
 };
 
@@ -167,33 +175,44 @@ function breakdown(rs, dim) {
   const rows = new Map();
   for (const r of rs) {
     for (const k of DIMENSIONS[dim](r)) {
-      const row = rows.get(k.key) || { key: k.key, label: k.label, sub: k.sub ?? null, runs: 0, usd: 0, done: 0, reviews: [], filesChanged: 0 };
+      const row = rows.get(k.key) || { key: k.key, label: k.label, sub: k.sub ?? null, runs: 0, usd: 0, done: 0, reviews: [], filesChanged: 0, filesUnknown: 0 };
       row.runs += 1;
       row.usd += usdOf(r);                       // "a run touching two projects counts in both"
       if (r.result === 'done') row.done += 1;
       if (isNum(r.cycles?.review)) row.reviews.push(r.cycles.review);
-      if (isNum(r.git?.filesChanged)) row.filesChanged += r.git.filesChanged;
+      // A key that carries its own count (a touched member) uses it; every other dimension is
+      // whole-run, so the run's total applies. A member without a count is counted as unknown.
+      const files = 'files' in k ? k.files : (isNum(r.git?.filesChanged) ? r.git.filesChanged : null);
+      if (isNum(files)) row.filesChanged += files; else row.filesUnknown += 1;
       rows.set(k.key, row);
     }
   }
   // `share` is normalised against THIS column's own sum, not against the run total. For every
   // single-key dimension the two are equal; for `project` on a workspace scope a run touching two
   // projects deliberately counts its full spend in BOTH rows (decision 19, the mockup subtitle),
-  // so dividing by the run total made the bars sum to 200%. The weekly stacked chart keeps the
-  // 1/n weight instead, so its column heights still add up to the real spend — the table answers
-  // "how much did work on this project cost", the chart answers "where did the money go".
+  // so dividing by the run total made the bars sum to 200%. The table answers "what did the runs
+  // that touched this project cost"; no chart splits a run's cost across projects (GROUP_BYS).
   const colTotal = [...rows.values()].reduce((a, r) => a + r.usd, 0);
+  // `runShare`: the fraction of the runs in range that touched this key — the per-project bar
+  // (spend is not a per-project fact, so the project table shows this instead of a spend share).
+  const runTotal = rs.length;
   return [...rows.values()]
     .map((row) => ({
       key: row.key, label: row.label, sub: row.sub, runs: row.runs, usd: round2(row.usd),
+      runShare: runTotal > 0 ? row.runs / runTotal : 0,
       perRunUsd: row.runs ? round2(row.usd / row.runs) : null,
       successRate: row.runs ? row.done / row.runs : null,
       cyclesMean: row.reviews.length ? round1(sum(row.reviews) / row.reviews.length) : null,
       share: colTotal > 0 ? row.usd / colTotal : 0,
-      filesChanged: row.filesChanged,
+      // null when no run in the row carries a count: the cell shows "–", never a wrong number.
+      filesChanged: row.filesUnknown === row.runs ? null : row.filesChanged,
+      filesUnknown: row.filesUnknown,
       isNone: row.key === NONE,
     }))
-    .sort((a, b) => (a.isNone - b.isNone) || b.usd - a.usd || b.runs - a.runs);
+    // Projects order by what the table shows (runs touched, then files); every other dimension by spend.
+    .sort((a, b) => (a.isNone - b.isNone) || (dim === 'project'
+      ? (b.runs - a.runs) || ((b.filesChanged ?? -1) - (a.filesChanged ?? -1)) || a.label.localeCompare(b.label)
+      : (b.usd - a.usd) || (b.runs - a.runs)));
 }
 
 function weekSpan(rs, win, now) {
@@ -229,7 +248,7 @@ function series(rs, win, groupBy, now) {
     if (r.result === 'done' || r.result === 'failed' || r.result === 'stopped') runs[i][r.result] += 1;
     spend[i].totalUsd += usdOf(r);
     for (const k of DIMENSIONS[groupBy](r)) {
-      const v = usdOf(r) * (k.weight ?? 1);       // stacked by project touched: split evenly
+      const v = usdOf(r);                          // one key per run for every GROUP_BYS dimension
       spend[i].stacks[k.key] = (spend[i].stacks[k.key] || 0) + v;
       totals[k.key] = (totals[k.key] || 0) + v;
       labels[k.key] = k.label;

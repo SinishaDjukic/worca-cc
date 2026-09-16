@@ -83,11 +83,23 @@ function buildTarget(t) {
     return {
       kind: 'workspace',
       workspace: cleanText(t.workspace),
+      // Stable identity for the reader (workspace-match.mjs); the name above stays for display.
+      workspaceId: typeof t.workspaceId === 'string' && t.workspaceId ? t.workspaceId : null,
       projects: unique(t.projects || []),
       touched: unique(t.touched || []),
+      // Files changed per touched member (additive; older records lack it → the reader shows
+      // "–" rather than attributing the run's total to every project it touched).
+      touchedFiles: touchedFilesOf(t.touchedFiles),
     };
   }
   return { kind: 'project', project: t?.project ?? null };
+}
+
+function touchedFilesOf(m) {
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return {};
+  const out = {};
+  for (const [slug, n] of Object.entries(m)) if (typeof slug === 'string' && slug && Number.isInteger(n) && n >= 0) out[slug] = n;
+  return out;
 }
 
 function buildSource(src) {
@@ -263,10 +275,15 @@ export async function snapshotFromHarness(harness, { status, error = null } = {}
     ? {
       kind: 'workspace',
       workspace: harness.workspace?.name ?? st.workspaceName ?? null,
+      workspaceId: harness.workspace?.id ?? st.workspaceId ?? null,
       projects: [...slugOf.values()].sort(),
       touched: Object.entries(results?.perProject || {})
         .filter(([, r]) => changedFiles(r?.summary) > 0)
         .map(([key]) => slugOf.get(key)).filter(Boolean).sort(),
+      // The same per-member summaries, as counts: what "Files changed" per project is made of.
+      touchedFiles: Object.fromEntries(Object.entries(results?.perProject || {})
+        .filter(([key, r]) => slugOf.has(key) && changedFiles(r?.summary) > 0)
+        .map(([key, r]) => [slugOf.get(key), changedFiles(r.summary)])),
     }
     : { kind: 'project', project: slugOf.values().next().value };
   return {

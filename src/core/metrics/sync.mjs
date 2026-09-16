@@ -10,9 +10,10 @@ import { worcaHome, listProjects } from '../projects.mjs';
 import { projectKey, canonicalProjectRoot } from '../store.mjs';
 import { listRemotes, parseRemoteUrl } from '../git-info.mjs';
 import { readTeamMetricsPrefs, writeTeamMetricsPrefs } from '../config.mjs';
-import { readWorkspace, listWorkspaces } from '../workspaces.mjs';
+import { readWorkspace, listWorkspaces, isGitRepo } from '../workspaces.mjs';
 import { withLock } from './lock.mjs';
 import { writeRunLedger, readRunLedger, sweepRunLedger } from './ledger.mjs';
+import { matchesWorkspace } from '../../shared/team-metrics/workspace-match.mjs';
 
 export const METRICS_BRANCH = 'worca-metrics';
 export const METRICS_DIR = '.worca-metrics';
@@ -936,6 +937,20 @@ export async function projectMetricsStatus(p, { discover = false, recordsBySink 
     lastErrorHint: prefs.lastErrorCode === 'PUSH_REJECTED' ? pushHint(prefs.lastError) : null,
     checkedAt: prefs.checkedAt ?? null, sinkSlug: null,
   };
+  // Undiscovered project (no prefs row yet): settle `hasOrigin` now rather than leaving
+  // it null, which made the cell read "Off" and offer "Set up team metrics…" to folders
+  // that can never record — a non-git folder (no origin to push to; the workspace scan
+  // refuses it) or a git repo without an origin remote (setup would fail NO_ORIGIN).
+  // Only undiscovered projects pay for these git spawns; discovered ones carry the
+  // answer in prefs.
+  if (status.hasOrigin == null && p.exists) {
+    if (!isGitRepo(p.path)) { status.hasOrigin = false; status.noGit = true; }
+    else {
+      const { hasOrigin, slug } = await projectSlug(p.path);
+      status.hasOrigin = hasOrigin;
+      if (status.slug == null) status.slug = slug;
+    }
+  }
   if (!status.enabled || !p.exists) return status;
   const sink = await resolveProjectSink(p.path, { discover });
   if (!sink.ok) {
@@ -952,8 +967,10 @@ export async function projectMetricsStatus(p, { discover = false, recordsBySink 
   if (sink.delegated) status.delegateState = 'ok';
   status.sinkSlug = sink.slug;
   status.pending = (await listOutbox(sink.slug)).length;
-  if (!recordsBySink.has(sink.slug)) recordsBySink.set(sink.slug, await countRuns(sink.slug));
-  const recs = recordsBySink.get(sink.slug);
+  // A promise in the memo: statuses are built a few at a time (listScopes), and two projects on
+  // one sink must share a single read of its worktree.
+  if (!recordsBySink.has(sink.slug)) recordsBySink.set(sink.slug, countRuns(sink.slug));
+  const recs = await recordsBySink.get(sink.slug);
   status.runs = recs ? recs.filter((r) => r.target?.kind === 'project' && r.target.project === status.slug).length : null;
   if (sink.delegated) {
     const t = readTeamMetricsPrefs(projectKey(sink.projectDir));
@@ -982,6 +999,19 @@ export async function scanMembers(projectPaths) {
   return { members };
 }
 
+/**
+ * The metrics home a new workspace gets without being asked: the ONE member that already
+ * records locally, or null (none, several, or the scan could not run — e.g. a member that
+ * is not a git repository). The workspace card's "Choose…" covers every other case, so the
+ * create wizard no longer carries a team-metrics step. `scan` is injectable for tests.
+ */
+export async function autoMetricsHome(projectPaths, { scan = scanMembers } = {}) {
+  let members;
+  try { ({ members } = await scan(projectPaths)); } catch { return null; }
+  const recording = (members || []).filter((m) => m.hasOrigin && m.recordsLocally && !m.error);
+  return recording.length === 1 ? recording[0].path : null;
+}
+
 /** Workspace card status: home state + member routing summary (§4.8, §4.6b). */
 export async function workspaceMetricsStatus(ws, { discover = false } = {}) {
   const members = [];
@@ -990,20 +1020,26 @@ export async function workspaceMetricsStatus(ws, { discover = false } = {}) {
     const prefs = await prefsFor(path, { discover }) || {};
     const isHome = !!ws.metricsProject && samePath(path, ws.metricsProject);
     let state; let reason = null;
-    if (isHome) state = 'home';
+    // recordsOn: the repository whose worca-metrics branch receives this project's runs (its
+    // own slug, the home's, or a delegation target); null when nothing is recorded.
+    let recordsOn = null;
+    if (isHome) { state = 'home'; recordsOn = prefs.slug ?? null; }
     else if (prefs.hasOrigin === false) { state = 'not-recording'; reason = 'no origin remote'; }
-    else if (prefs.config?.delegateTo && prefs.config.delegateTo.toLowerCase() === homeSlug) state = 'routed';
-    else if (prefs.enabled) { state = 'records-elsewhere'; reason = prefs.config?.delegateTo ? `delegates to ${prefs.config.delegateTo}` : 'records on its own branch'; }
+    else if (prefs.config?.delegateTo && prefs.config.delegateTo.toLowerCase() === homeSlug) { state = 'routed'; recordsOn = homeSlug; }
+    else if (prefs.enabled) { state = 'records-elsewhere'; reason = prefs.config?.delegateTo ? `delegates to ${prefs.config.delegateTo}` : 'records on its own branch'; recordsOn = prefs.config?.delegateTo ?? prefs.slug ?? null; }
     else { state = 'not-recording'; reason = 'no worca-metrics branch'; }
-    members.push({ path, slug: prefs.slug ?? basename(path), state, reason });
+    members.push({ path, slug: prefs.slug ?? basename(path), state, reason, recordsOn });
   }
   let home = { state: 'unset', path: null, slug: null, runs: null, detail: null };
   if (ws.metricsProject) {
     const sink = await resolveWorkspaceSink(ws.id, { discover });
-    home = { path: ws.metricsProject, slug: homeSlug ?? basename(ws.metricsProject), runs: null, detail: sink.ok ? null : sink.detail, state: sink.ok ? 'ok' : 'stale', code: sink.ok ? null : sink.code };
+    // `record`: the home project's own "Include my runs" switch — it is what decides whether
+    // THIS machine's workspace runs are written (docs/team-metrics.md, "Include my runs").
+    home = { path: ws.metricsProject, slug: homeSlug ?? basename(ws.metricsProject), runs: null, detail: sink.ok ? null : sink.detail, state: sink.ok ? 'ok' : 'stale', code: sink.ok ? null : sink.code,
+      record: readTeamMetricsPrefs(projectKey(ws.metricsProject))?.record !== false };
     if (sink.ok) {
       const recs = await countRuns(sink.slug);
-      home.runs = recs ? recs.filter((r) => r.target?.kind === 'workspace' && String(r.target.workspace).toLowerCase() === ws.name.toLowerCase()).length : null;
+      home.runs = recs ? recs.filter((r) => matchesWorkspace(r.target, ws)).length : null;
       home.pending = (await listOutbox(sink.slug)).length;
     }
   }

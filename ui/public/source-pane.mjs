@@ -23,6 +23,20 @@ export function debounce(fn, ms, timers = {}) {
   };
 }
 
+// A task body is markdown (sources.mjs writes it under `# title` into the prompt).
+// `renderMarkdown(text)` — injected by app.js, the page's sanitized pipeline — returns
+// { kind: 'md', frag } or { kind: 'plain' }; without it, or before it is ready, the
+// body is a verbatim <pre>.
+function taskBody(doc, text, renderMarkdown) {
+  const out = text && typeof renderMarkdown === 'function' ? renderMarkdown(text) : null;
+  if (out && out.kind === 'md' && out.frag) {
+    const box = h(doc, 'div', 'sp-prev-body artifact-markdown');
+    box.appendChild(out.frag);
+    return box;
+  }
+  return h(doc, 'pre', 'sp-prev-body', text);
+}
+
 // Values of every non-task-browser input in the pane, keyed by input key —
 // these travel as `inputs` to connector ops and into body.source at submit.
 function collectInputs(pane) {
@@ -100,7 +114,7 @@ function taskRow(doc, t, now) {
 // dropdown populated ONCE on first focus via call(optionsFrom) (promise kept on
 // ._load for deterministic tests); task-browser -> debounced (300ms) search +
 // result list + preview (call getTask on pick) + hidden selected taskId.
-export function renderSourcePane(source, { call, doc = globalThis.document, timers, now } = {}) {
+export function renderSourcePane(source, { call, doc = globalThis.document, timers, now, renderMarkdown } = {}) {
   const clock = typeof now === 'function' ? now : () => Date.now();
   const pane = h(doc, 'div', 'sp-pane');
   pane.dataset.plugin = source.plugin;
@@ -207,7 +221,7 @@ export function renderSourcePane(source, { call, doc = globalThis.document, time
           const task = await call('getTask', { id: row.dataset.taskId });
           preview.replaceChildren(
             h(doc, 'b', 'sp-prev-title', (task && task.title) || row.dataset.taskId),
-            h(doc, 'pre', 'sp-prev-body', (task && task.body) || ''),
+            taskBody(doc, (task && task.body) || '', renderMarkdown),
           );
         })().catch((e) => { preview.textContent = `preview failed: ${e.message}`; });
       });

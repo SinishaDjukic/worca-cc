@@ -263,9 +263,9 @@ export function findCard(threadId, cardId) {
 
 const CARD_PATCH_KEYS = ['state', 'runId', 'error', 'workflowId'];
 
-/** Patch ⊆ {state, runId, error, workflowId} on one card block. A WORKFLOW card (card.type === 'workflow') also takes a
- *  SHALLOW `card` sub-patch (its name / match / nodes / adopted refresh at Save); a run card's `card` is never touched
- *  (its key set is pinned). The 'proposed' precondition is the caller's (route) business. */
+/** Patch ⊆ {state, runId, error, workflowId} on one card block. A WORKFLOW card (card.type === 'workflow') and a
+ *  METRICS card (card.type === 'metrics', whose `result` lands at Apply) also take a SHALLOW `card` sub-patch; a run
+ *  card's `card` is never touched (its key set is pinned). The 'proposed' precondition is the caller's (route) business. */
 export function updateCardBlock(threadId, cardId, patch = {}) {
   return tx(() => {
     const found = findCard(threadId, cardId);
@@ -275,8 +275,8 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
     const sub = patch.card && typeof patch.card === 'object' && !Array.isArray(patch.card) ? patch.card : null;
     const blocks = found.message.blocks.map((b) => {
       if (!(b && b.kind === 'card' && b.id === cardId)) return b;
-      const isWorkflow = !!(b.card && b.card.type === 'workflow');
-      return { ...b, ...allowed, ...(sub && isWorkflow ? { card: { ...(b.card || {}), ...sub } } : {}) };
+      const subPatchable = !!(b.card && (b.card.type === 'workflow' || b.card.type === 'metrics'));
+      return { ...b, ...allowed, ...(sub && subPatchable ? { card: { ...(b.card || {}), ...sub } } : {}) };
     });
     prepare('UPDATE ask_messages SET blocks = ? WHERE id = ?').run(JSON.stringify(blocks), found.message.id);
     return blocks.find((b) => b && b.kind === 'card' && b.id === cardId);

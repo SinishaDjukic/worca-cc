@@ -1182,7 +1182,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .export-warn,.export-conflict{background:var(--red-bg);color:var(--red-ink);}
 .export-orphan{background:var(--field);color:var(--ink-3);}
 .export-choices{display:flex;gap:12px;margin:4px 0 2px 64px;}
-.export-choice{font-size:12.5px;color:var(--ink-2);cursor:pointer;}
+.export-choice{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);cursor:pointer;}
+.export-choice input[type="radio"]{margin:0;}
 /* Per-agent fan-out toggle in the New Pipeline rows. */
 .fanout-toggle {
   display: inline-flex;
@@ -1226,15 +1227,36 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .ws-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .ws-h-meta{flex:1;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
 .ws-h-meta .ws-name{font-weight:600;font-size:15px;letter-spacing:-.01em;color:var(--ink);}
-.ws-h-meta .ws-projects{display:block;width:100%;font-family:var(--mono);font-size:12px;color:var(--ink-3);}
+.ws-h-meta .ws-projects{display:block;width:100%;font-size:12.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ws-projects .mono{font-size:12px;color:var(--ink-2);}
+.ws-projects .tm-home-mark{margin-right:5px;}
+.ws-sum-warn{color:var(--amber-ink);} .ws-sum-bad{color:var(--red-ink);}
+.tm-icon{width:14px;height:14px;color:var(--ink-2);flex:0 0 auto;}
 .ws-stale[hidden]{display:none;}
 .ws-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto;}
 .ws-actions .btn-ghost{padding:7px 12px;font-size:12px;}
-.ws-card .chev{width:15px;height:15px;flex:0 0 auto;color:var(--ink-3);}
 .ws-detail{padding:0 20px 18px;border-top:1px dashed var(--line-2);}
 .ws-detail[hidden]{display:none;}
-.ws-desc-view{margin-top:14px;}
+.ws-desc{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);}
+.ws-desc-view{margin-top:8px;}
 .ws-desc-edit[hidden]{display:none;}
+.ws-desc-edit .md-tabs{margin-bottom:8px;}
+.ws-desc-preview[hidden]{display:none;}
+/* A markdown-by-contract body (workspace description, its edit preview, a task-source
+   body) keeps the .viewer frame but drops the pre look once it actually rendered:
+   sans type, normal flow (marked emits its own breaks) and no stray outer margins. */
+.viewer.artifact-markdown,.sp-prev-body.artifact-markdown{white-space:normal;font-family:var(--sans);font-size:13px;line-height:1.55;}
+.artifact-markdown>:first-child{margin-top:0;}
+.artifact-markdown>:last-child{margin-bottom:0;}
+.artifact-markdown :is(h1,h2,h3){font-size:14px;font-weight:600;}
+.artifact-markdown h1{font-size:15px;}
+.artifact-markdown :is(ul,ol){padding-left:22px;margin:6px 0;}
+.artifact-markdown li{margin:2px 0;}
+.artifact-markdown p{margin:6px 0;}
+.md-preview{min-height:72px;}
+.md-preview:empty::before{content:'Nothing to preview yet';color:var(--ink-2);}
+#wiz-desc-tabs{margin-left:auto;}
+#wiz-desc-preview[hidden]{display:none;}
 .ws-delete{display:inline-flex;align-items:center;gap:6px;background:var(--red-ink);border:1.5px solid var(--red-ink);color:var(--on-status);font-family:inherit;font-weight:600;font-size:12px;padding:7px 12px;border-radius:8px;cursor:pointer;}
 .ws-delete:hover:not(:disabled){filter:brightness(0.95);}
 .ws-delete:disabled{opacity:.6;cursor:default;}
@@ -1620,6 +1642,9 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .stat-meter{display:block;height:6px;border-radius:999px;background:var(--blue-bg);margin-top:10px;overflow:hidden;}
 .stat-meter .stat-meter-fill{display:block;height:100%;border-radius:999px;background:var(--blue-ink);}
 .charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+/* Team metrics stacks two charts-grids (weekly charts, then the breakdown tables);
+   without this the rows touch while every other gap is 14px. */
+.charts-grid + .charts-grid{margin-top:14px;}
 .chart-card{padding:20px 22px;}
 .chart-fig{margin:0;}
 .chart-svg{display:block;width:100%;height:auto;}
@@ -1661,6 +1686,27 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .tm-home-hint{display:block;margin:-8px 0 14px;}
 .tm-stats-hint{margin-left:auto;align-self:center;}
 #tm-body.is-loading{opacity:.6;}
+/* Loading affordances (docs/team-metrics.md "Loading"): a shimmer bar for skeleton cells — the
+   Ask panel's sweep, on a block — and the History Refresh spinner recipe on the chip's button. */
+.skel{display:inline-block;height:11px;width:60%;border-radius:6px;vertical-align:middle;
+  background:linear-gradient(90deg,var(--field) 25%,var(--line) 50%,var(--field) 75%);background-size:220% 100%;
+  animation:ask-shimmer 1.6s linear infinite;}
+.skel.w25{width:25%;}.skel.w40{width:40%;}.skel.w60{width:60%;}.skel.w70{width:70%;}
+.skel.skel-lg{height:22px;margin:6px 0;}
+.skel.skel-block{display:block;width:100%;height:150px;border-radius:10px;margin-top:10px;}
+.skel-row{display:flex;gap:14px;padding:9px 0;border-bottom:1px solid var(--line);}
+.skel-row:last-child{border-bottom:0;}
+.tm-skeleton .card-head{margin-bottom:6px;}
+.tm-skeleton .stat-sub .skel{margin-top:6px;}
+.tm-busy-spin{width:12px;height:12px;flex:0 0 auto;border-radius:50%;border:2px solid var(--line-2);border-top-color:var(--ink);animation:ws-spin .9s linear infinite;}
+.sync-chip-inner .tm-checking{color:var(--ink-2);}
+.tm-refresh.busy{position:relative;color:transparent;pointer-events:none;}
+.tm-refresh.busy::after{content:"";position:absolute;inset:0;margin:auto;width:12px;height:12px;border-radius:50%;
+  border:2px solid var(--line-2);border-top-color:var(--ink);animation:ws-spin .9s linear infinite;}
+/* Workspace card while /scopes is out: the same table, shimmer cells, and a "checking metrics…" summary. */
+.ws-sum-pending{background:linear-gradient(90deg,var(--ink-3) 0%,var(--ink) 50%,var(--ink-3) 100%);background-size:220% 100%;
+  -webkit-background-clip:text;background-clip:text;color:transparent;animation:ask-shimmer 2.4s linear infinite;}
+.ws-home-inner.is-pending .ws-projects-tbl td{padding-top:9px;padding-bottom:9px;}
 .tm-tbl{width:100%;border-collapse:collapse;font-size:12.5px;}
 .tm-tbl th{text-align:left;font-weight:600;color:var(--ink-3);padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;}
 .tm-tbl th[data-sort]{cursor:pointer;} .tm-tbl th.num,.tm-tbl td.num{text-align:right;}
@@ -1685,18 +1731,31 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 /* border-left + padding-left are board 4's divider between the project row and the cell
    (mockup `.tm-cell{border-left:1px solid var(--line);padding-left:18px;min-width:420px}`);
    the 420px sizing lives on .tm-slot above so the cell itself can still wrap. */
-.tm-cell{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;font-size:12.5px;
+/* Two fixed rows (title / status) in column 1, the control column spanning both
+   rows in column 2, and any hint on a full-width third row. A grid, not a
+   wrapping flex line: the control used to fall under the status text whenever
+   the 420px slot got tight, reading as detached from the "Team metrics" title. */
+.tm-cell{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;
+  column-gap:14px;row-gap:3px;align-items:center;font-size:12.5px;
   padding-left:18px;border-left:1px solid var(--line);}
-.tm-cell .tm-line{display:flex;align-items:center;gap:8px;min-width:0;}
+.tm-cell .tm-line{grid-column:1;grid-row:2;display:flex;align-items:center;gap:8px;min-width:0;}
+/* One line, always: the dot never shrinks and a long status ellipsizes rather than
+   wrapping under itself (the row's two-line shape is the whole point of the grid). */
+.tm-cell .tm-line .tm-dot{flex:0 0 auto;}
+.tm-cell .tm-status{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .tm-cell .muted,.ws-home .muted{color:var(--ink-3);}   /* scoped: a global .muted would recolour .agents-summary.muted (:599) */
-.tm-cell .tm-label{font-weight:600;color:var(--ink-2);margin-right:4px;}
+.tm-cell .tm-label{grid-column:1;grid-row:1;font-weight:600;color:var(--ink-2);}
 /* board 8 aligns "Metrics home" and "Members" on one column (mockup `.ws-home .lbl{width:96px}`) */
 .ws-home .tm-label{width:96px;flex:0 0 auto;font-size:11.5px;font-weight:600;color:var(--ink-3);}
-.tm-cell .tm-hint{flex-basis:100%;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.tm-cell .tm-actions{display:flex;align-items:center;gap:10px;margin-left:auto;}
+.tm-cell .tm-hint{grid-column:1 / -1;grid-row:3;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* The home note is explanatory, not a raw stderr line: let it wrap instead of truncating. */
+.tm-cell .tm-home-for{white-space:normal;line-height:1.4;}
+.tm-cell .tm-actions{grid-column:2;grid-row:1 / span 2;display:flex;align-items:center;gap:10px;justify-self:end;}
 .tm-dot.green{background:var(--green);} .tm-dot.amber{background:var(--amber);} .tm-dot.red{background:var(--red);} .tm-dot.grey{background:var(--ink-3);}
 /* Enable dialog (boards 5/6) */
-.radio-card{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border:1.5px solid var(--line-2);border-radius:var(--r-ctrl,14px);margin-top:8px;cursor:pointer;}
+/* `.field > label` (display:block, margin-bottom) would otherwise beat this and stack the radio above the title */
+.radio-card,.field > label.radio-card{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border:1.5px solid var(--line-2);border-radius:var(--r-ctrl,14px);margin:8px 0 0;cursor:pointer;font-weight:500;font-size:13px;}
+.radio-card input[type="radio"]{flex:0 0 auto;margin:2px 0 0;}
 /* :has(), not a render-time .on class: changing the Attribution radio does not re-render the body */
 .radio-card:has(> input:checked){border-color:var(--ink);background:var(--field);}
 .radio-card.disabled{opacity:.55;cursor:not-allowed;}
@@ -1709,14 +1768,53 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .wiz-track li.on{color:var(--ink);font-weight:600;} .wiz-track li.on span{background:var(--ink);color:var(--on-ink);}
 .wiz-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:14px;}
 .wiz-row{display:flex;align-items:center;gap:14px;padding:12px 14px;border-top:1px solid var(--line);}
+/* The metrics-home picker's radio + slug: the label had no rule, so the radio touched the text. */
+.wiz-row-pick{display:flex;align-items:center;gap:10px;min-width:0;cursor:pointer;}
+.wiz-row-pick input[type="radio"]{flex:0 0 auto;margin:0;}
+/* In the 600px sheet the slug must not break mid-word, and a wrapped status keeps its dot on
+   the first line instead of floating between the two. */
+.tm-home-list .wiz-row-pick{flex:1 1 auto;}
+.tm-home-list .wiz-row-name{white-space:nowrap;}
+/* fixed column: "On · since …" lines up across rows whether or not a second line follows */
+.tm-home-list .wiz-row-status{flex:0 0 200px;width:200px;align-items:flex-start;line-height:1.4;}
+.tm-home-list .wiz-row-status .tm-dot{flex:0 0 auto;margin-top:5px;}
+.wiz-row-status-lines{display:flex;flex-direction:column;min-width:0;}
+.wiz-row-status-sub{color:var(--ink-3);}
 .wiz-row:first-child{border-top:0;} .wiz-row.off{opacity:.55;}
 .wiz-row-status{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:12.5px;margin-left:auto;}
 .wiz-metrics-actions{display:flex;align-items:center;gap:10px;}
-/* Workspace card (board 8) */
-.ws-home{padding:10px 20px 14px;border-top:1px dashed var(--line-2);font-size:12.5px;}
-.ws-home-row,.ws-home-members{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
-.ws-home-row .btn-ghost,.ws-home-members .btn-ghost{margin-left:auto;}
-.ws-home-members{margin-top:10px;padding-top:10px;border-top:1px solid var(--line);color:var(--ink-2);}
+/* Workspace card (board 8): one projects table with the metrics home marked by the Team metrics icon */
+.ws-home{padding:12px 0 0;font-size:12.5px;}
+.ws-home[hidden]{display:none;}
+.ws-tbl-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.ws-tbl-actions{margin-left:auto;display:flex;align-items:center;gap:8px;}
+.ws-members-summary{color:var(--ink-3);font-size:12.5px;}
+.ws-projects-tbl{width:100%;border-collapse:collapse;margin-top:8px;font-size:12.5px;}
+.ws-projects-tbl th{text-align:left;font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);padding:6px 14px 6px 0;border-bottom:1px solid var(--line);}
+.ws-projects-tbl td{padding:7px 14px 7px 0;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink-2);line-height:1.5;}
+.ws-projects-tbl tr:last-child td{border-bottom:0;}
+.ws-projects-tbl tr[hidden]{display:none;}
+.ws-col-project{white-space:nowrap;color:var(--ink);}
+.tm-home-mark{display:inline-flex;align-items:center;vertical-align:-3px;}
+.ws-col-branch{white-space:normal;overflow-wrap:anywhere;}
+/* fixed proportions so the centred runs column sits between branch and status, not against status */
+.ws-projects-tbl{table-layout:fixed;}
+.ws-projects-tbl th:nth-child(1){width:31%;} .ws-projects-tbl th:nth-child(2){width:26%;} .ws-projects-tbl th:nth-child(3){width:27%;} .ws-projects-tbl th:nth-child(4){width:16%;}
+.ws-col-runs{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}
+.ws-projects-tbl th.ws-col-runs{text-align:right;}
+.ws-col-status{white-space:nowrap;}
+.ws-metric{display:flex;align-items:center;gap:7px;line-height:1.5;}
+.ws-mark{width:14px;height:14px;flex:0 0 auto;}
+.ws-mark.ok{color:var(--green);} .ws-mark.bad{color:var(--red-ink);}
+.ws-metric.bad{color:var(--red-ink);}
+.ws-member.home td{color:var(--ink);}
+.ws-members-more{margin-top:8px;}
+.ws-home-hint{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:var(--ink-3);line-height:1.45;}
+.ws-home-hint.warn{color:var(--amber-ink);}
+.ws-home-hint .tm-dot{flex:0 0 auto;}
+/* Group by, now in the Spend per week card head: compact, right-aligned by .card-head's space-between. */
+.chart-card .card-head .tm-group{margin:0;}
+.chart-card .card-head .select-sm{padding:5px 30px 5px 10px;font-size:12px;line-height:1.3;}
 .tm-route-list{list-style:none;padding:0;margin:8px 0 0;} .tm-route-list li.failed{color:var(--red-ink);}
 .tm-route-list .tm-stderr{white-space:pre-wrap;margin:4px 0 0;}
 
@@ -2173,6 +2271,11 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .hd-cmt-tab{height:22px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:var(--ink-2);
   font:500 11.5px var(--sans);cursor:pointer;}
 .hd-cmt-tab[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:var(--knob-shadow);}
+/* The same Text / Preview tab recipe for the other markdown editors (workspace description, wizard step 3). */
+.md-tabs{display:inline-flex;gap:2px;padding:2px;border-radius:8px;background:var(--field);}
+.md-tab{height:22px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:var(--ink-2);
+  font:500 11.5px var(--sans);cursor:pointer;}
+.md-tab[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:var(--knob-shadow);}
 .hd-cmt-input{width:100%;min-height:72px;padding:12px 14px;border:0;background:transparent;color:var(--ink);
   font:400 13px/1.5 var(--sans);resize:vertical;}
 .hd-cmt-input::placeholder{color:var(--ink-2);}
@@ -3444,6 +3547,29 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-pop-effort .ask-effort-pill.on{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
 .ask-pop-effort-none{font-size:11px;color:var(--ink-3);}
 @media (prefers-reduced-motion: reduce){.ask-card.ask-wfcard{animation:none;}}
+
+/* ---------- metrics card chrome (ui/public/ask-panel.mjs buildMetricsCard; docs/team-metrics.md "Ask Worca") ---------- */
+.ask-card.ask-mcard{gap:0;padding:16px 18px;border-width:1px;}
+.ask-mcard>*{min-width:0;}
+.ask-mcard-head{display:flex;align-items:center;gap:8px;height:24px;}
+.ask-mcard-title{font-weight:600;font-size:15px;line-height:1.35;color:var(--ink);white-space:nowrap;}
+.ask-mcard-kind{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;background:var(--field);color:var(--ink-2);font-family:var(--mono);font-size:10.5px;white-space:nowrap;}
+.ask-mcard-body{margin-top:12px;display:flex;flex-direction:column;gap:6px;font-size:13px;line-height:1.5;color:var(--ink-2);}
+.ask-mcard-summary{display:flex;align-items:flex-start;gap:8px;font-weight:600;color:var(--ink);}
+.ask-mcard-summary svg{flex:0 0 auto;margin-top:3px;stroke:var(--green);}
+.ask-mcard-target{font-size:12.5px;color:var(--ink-3);}
+.ask-mcard-note{font-size:12.5px;color:var(--ink-3);font-style:italic;}
+.ask-mcard-effects{margin:4px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink-2);}
+.ask-mcard-effects li{margin:2px 0;}
+.ask-mcard-detail{font-size:12.5px;color:var(--ink-2);}
+.ask-mcard-failed{font-size:12.5px;color:var(--red-ink);}
+.ask-mcard-hint{font-size:12px;color:var(--ink-3);}
+.ask-mcard-results{list-style:none;margin:4px 0 0;padding:0;font-size:12.5px;}
+.ask-mcard-results li{padding:3px 0;}
+.ask-mcard-results li.is-failed{color:var(--red-ink);}
+.ask-mcard-results li.is-skipped{color:var(--ink-3);}
+.ask-mcard-actions{display:flex;align-items:center;gap:8px;margin-top:14px;}
+.ask-mcard.is-applied .ask-mcard-head{opacity:.9;}
 
 /* ---------- Auto proposal body (ui/public/auto-proposal.mjs) — one body, two hosts (mockup §D/§F) ----------
    Rhythm top→bottom: name → 8 → reasoning → 16 → chips → 8 → fingerprint → 16 → graph → 12 → loops → 16 → match → 8 → meta.

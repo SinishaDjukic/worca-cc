@@ -90,7 +90,7 @@ import { getStats } from '../src/core/stats.mjs';
 import {
   enableTeamMetrics, setRecordMyRuns, flushSlug, flushAll, flushProject, scheduleFlush, discoverProject,
   discoverAll, scanMembers, routeWorkspaceMembers, projectMetricsStatus, startTeamMetricsBackground,
-  metricsEvents, slugDirName,
+  metricsEvents, slugDirName, autoMetricsHome,
 } from '../src/core/metrics/sync.mjs';
 import { readScope, listScopes, parseScopeParam, aggregate, resolveRange, GROUP_BYS, PROJECT_KEY_RE as TM_PROJECT_KEY_RE } from '../src/core/metrics/read.mjs';
 import { pickFolderNative } from '../src/core/folder-dialog.mjs';
@@ -122,6 +122,8 @@ import { mintAutoWorkflowId, sanitizeProposalAnswer } from '../src/core/auto/pro
 import {
   revalidateWorkflowProposal, applyTunables, workflowEventPrompt, workflowNoticeText,
 } from '../src/core/ask/workflow-deps.mjs';
+import { applyMetricsChange } from '../src/core/ask/metrics-deps.mjs';
+import { metricsEventPrompt, metricsNoticeText } from '../src/core/ask/metrics-proposal.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
@@ -2190,7 +2192,10 @@ app.get('/api/team-metrics', async (req, res) => {
     if (!GROUP_BYS.includes(groupBy)) throw new RangeError(`unknown groupBy "${groupBy}"`);
   } catch (err) { return badRequest(res, err.message); }
   try {
-    const read = await readScope(scope, { refresh: req.query.refresh === '1' });
+    // defer=1 (the page): serve the worktree now and run a due fetch afterwards; the fetch's
+    // `changed` event tells the page to reload. Other clients (Ask tools, CLI, tests) keep the
+    // inline fetch and get fresh data in one round trip.
+    const read = await readScope(scope, { refresh: req.query.refresh === '1', defer: req.query.defer === '1' });
     // Flush trigger: page open (§4.5). reason:'page-open' backs off for 60 s after a failed flush,
     // so a failing push cannot loop through flush-failed → WS → page reload → GET → flush.
     for (const s of read.sync) if (s.pending > 0) scheduleFlush(s.slug, { reason: 'page-open' });
@@ -2985,9 +2990,13 @@ app.post('/api/workspaces', async (req, res) => {
     : [];
   if (projectPaths.length < 2) return badRequest(res, 'a workspace needs at least 2 member projects');
   try {
-    const workspace = await createWorkspace({ name: body.name, projectPaths, description: body.description, metricsProject: body.metricsProject ?? null });
+    // No explicit home (the create wizard no longer asks): adopt the one member that already
+    // records, if there is exactly one; every other case is "Choose…" on the workspace card.
+    const explicit = typeof body.metricsProject === 'string' && body.metricsProject ? body.metricsProject : null;
+    const metricsProject = explicit ?? await autoMetricsHome(projectPaths);
+    const workspace = await createWorkspace({ name: body.name, projectPaths, description: body.description, metricsProject });
     emitChanged('workspaces-changed', 'created');
-    res.status(201).json({ workspace });
+    res.status(201).json({ workspace, metricsHomeAuto: !explicit && !!metricsProject });
   } catch (err) {
     const status = workspaceErrorStatus(err && err.code);
     return res.status(status).json({ error: err && err.message ? err.message : String(err) });
@@ -4674,6 +4683,18 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
       }
     }
   } catch { /* absent line */ }
+  // The Team metrics page's selection (validated slugs); only the scope NAME is resolved here.
+  try {
+    if (ctx.tmScope) {
+      const [kind, tmId] = ctx.tmScope.split(':');
+      let name = null;
+      if (kind === 'project') name = (await listProjects()).find((x) => x.key === tmId)?.name ?? null;
+      else if (kind === 'workspace') name = (await readWorkspace(tmId))?.name ?? null;
+      if (name != null) {
+        out.teamMetrics = { kind, id: tmId, name, range: ctx.tmRange || 'this-month', groupBy: ctx.tmGroupBy || null, filter: ctx.tmFilter || null };
+      }
+    }
+  } catch { /* absent line */ }
   try {
     if (ctx.pipelineId) {
       const key = ctx.workspaceId ? `workspaces/${ctx.workspaceId}` : out.project?.key;
@@ -4708,6 +4729,10 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // workflowId once the user saved it; a run card keeps its pre-P3 line byte for byte.
         const wf = !!(b.card && b.card.type === 'workflow');
         if (wf && b.state === 'building') continue;   // transient (no name yet) — never worth a header line
+        if (b.card && b.card.type === 'metrics') {
+          cards.push({ id: b.id, type: 'metrics', state: b.state, summary: b.card.summary || '' });
+          continue;
+        }
         cards.push(wf
           ? {
             id: b.id, type: 'workflow', state: b.state, name: (b.card && b.card.name) || '',
@@ -5106,6 +5131,35 @@ async function startWorkflowEventTurn(threadId, block, { declined = false, thenR
   return failedEventTurn(threadId, { error: r.error, status: r.status, ...(r.budget ? { budget: r.budget } : {}) });
 }
 
+/** The metrics card's event turn: the synthetic notice row + the "[worca event] metrics card …" prompt (same queueing as workflow cards). */
+async function startMetricsEventTurn(threadId, block) {
+  const thread = askGetThread(threadId);
+  if (!thread) return null;
+  const card = block.card || {};
+  const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
+  const result = card.result || null;
+  const text = metricsEventPrompt({ cardId: block.id, state, card, result });
+  const notice = metricsNoticeText({ state, card, result });
+  let mv = await validateModelEffort(thread.model, thread.effort);
+  if (!mv.ok) {
+    const d = (await askCatalog({ withSecrets: false })).default;
+    if (!d) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
+    mv = { ok: true, ...d };
+  }
+  const start = () => startAskTurn({
+    threadId, thread: askGetThread(threadId) || thread, ctx: thread.context || {},
+    model: mv.model, effort: mv.effort, text, synthetic: { notice },
+  });
+  if (askInFlight(threadId)) {
+    if (!askDeferred.has(threadId)) askDeferred.set(threadId, []);
+    askDeferred.get(threadId).push(start);
+    return { deferred: true };
+  }
+  const r = await start();
+  if (r.ok) return { assistantMessageId: r.assistantMessageId };
+  return failedEventTurn(threadId, { error: r.error, status: r.status, ...(r.budget ? { budget: r.budget } : {}) });
+}
+
 // D14 dismiss ("Not now" keeps a stub — the client renders state:'dismissed') for a RUN card;
 // the workflow-card state machine (spec §8.4) for a workflow one. The card is looked up BEFORE
 // the body is validated because the legal verb set depends on the card's type.
@@ -5119,6 +5173,33 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
     const body = req.body || {};
     const found = askFindCard(id, cardId);
     if (!found) return res.status(404).json({ error: 'card not found' });
+    if (found.block.card && found.block.card.type === 'metrics') {
+      // Metrics card (docs/team-metrics.md "Ask Worca"): proposed → applied | failed | declined. The change is
+      // the outward-facing part — a branch on origin, a marker on another repo, this machine's switch, the
+      // workspace's home — so it happens HERE, behind the click, never in the model's tool.
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const turn = await startMetricsEventTurn(id, block);
+        return res.json({ block, turn });
+      }
+      askCardBusy.add(cardId);
+      let block;
+      try {
+        let result;
+        try { result = await applyMetricsChange(found.block.card); }
+        catch (err) {
+          result = { ok: false, error: err && err.message ? err.message : String(err), code: (err && err.code) || 'ERROR', ...(err && err.hint ? { hint: err.hint } : {}), ...(err && err.stderr ? { stderr: String(err.stderr).slice(0, 2000) } : {}) };
+        }
+        block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      const turn = await startMetricsEventTurn(id, block);
+      return res.json({ block, turn });
+    }
     if (!(found.block.card && found.block.card.type === 'workflow')) {
       if (body.state !== 'dismissed') return badRequest(res, 'state must be "dismissed"');
       if (found.block.state !== 'proposed') {

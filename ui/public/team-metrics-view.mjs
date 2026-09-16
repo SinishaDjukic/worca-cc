@@ -76,8 +76,14 @@ function ago(iso, now) {
 }
 
 /** Topbar right slot: "Synced 2 min ago | 3 runs pending push | Refresh | Push now". */
-export function renderSyncChip({ sync = [], stats = {}, refresh = null, fetchError = null }, { doc = globalThis.document, now = Date.now() } = {}) {
-  const chip = h(doc, 'div', 'sync-chip-inner');
+/**
+ * `busy` (or refresh.pending from a deferred read): a fetch from origin is running after the
+ * response — the dot becomes a small spinner, the text leads with "Checking origin…" and Refresh
+ * is held, until the fetch's `changed` event reloads the page (docs/team-metrics.md "Loading").
+ */
+export function renderSyncChip({ sync = [], stats = {}, refresh = null, fetchError = null }, { doc = globalThis.document, now = Date.now(), busy = false } = {}) {
+  const checking = !!busy || !!refresh?.pending;
+  const chip = h(doc, 'div', `sync-chip-inner${checking ? ' is-busy' : ''}`);
   const pending = sync.reduce((a, x) => a + (x.pending || 0), 0);
   const lastError = sync.map((x) => x.lastError).find(Boolean) || null;
   const pushHintText = sync.map((x) => x.hint).find(Boolean) || null;
@@ -85,9 +91,13 @@ export function renderSyncChip({ sync = [], stats = {}, refresh = null, fetchErr
   // had just run, so the chip could claim "Synced 2 h ago" right after a successful refresh.
   const synced = sync.flatMap((x) => [x.lastSyncAt, x.fetchedAt]).filter(Boolean).sort().pop() || null;
   const tone = lastError || fetchError ? 'red' : pending ? 'amber' : 'green';
-  chip.append(h(doc, 'span', `dot ${tone}`));
+  if (checking) { const sp = h(doc, 'span', 'tm-busy-spin'); sp.setAttribute('aria-hidden', 'true'); chip.append(sp); }
+  else chip.append(h(doc, 'span', `dot ${tone}`));
   const txt = h(doc, 'span', 'sync-text');
-  txt.append(synced ? 'Synced ' : 'Not synced yet');
+  if (checking) chip.setAttribute('aria-busy', 'true');
+  if (checking) txt.append(h(doc, 'span', 'tm-checking', 'Checking origin…'), synced ? ' · ' : '');
+  if (checking && !synced) { /* the first fetch: nothing older to date */ }
+  else txt.append(synced ? (checking ? 'synced ' : 'Synced ') : 'Not synced yet');
   if (synced) txt.append(h(doc, 'b', null, ago(synced, now)));
   if (pending) { txt.append(' | '); txt.append(h(doc, 'b', null, String(pending)), ` run${pending === 1 ? '' : 's'} pending push`); }
   if (stats.unknownV) txt.append(` | ${stats.unknownV} records need a newer Worca`);
@@ -95,10 +105,16 @@ export function renderSyncChip({ sync = [], stats = {}, refresh = null, fetchErr
   // regular 60 s fetch serves fresh data, and "refresh again in N s" would be a lie.
   if (refresh?.limited && !refresh.fetched) txt.append(` | refresh again in ${Math.ceil(refresh.retryInMs / 1000)} s`);
   chip.append(txt);
-  const refreshBtn = h(doc, 'button', 'btn-ghost btn-mini tm-refresh', 'Refresh'); refreshBtn.type = 'button';
-  const pushBtn = h(doc, 'button', 'btn-ghost btn-mini tm-push-now', 'Push now'); pushBtn.type = 'button';
-  pushBtn.disabled = pending === 0;
-  chip.append(refreshBtn, pushBtn);
+  const refreshBtn = h(doc, 'button', `btn-ghost btn-mini tm-refresh${checking ? ' busy' : ''}`, 'Refresh'); refreshBtn.type = 'button';
+  if (checking) refreshBtn.disabled = true;
+  chip.append(refreshBtn);
+  // "Push now" exists only while there is something to push: with an empty outbox
+  // the flush is a no-op, and a permanently visible (disabled) button read as an
+  // action that was somehow unavailable rather than one that was not needed.
+  if (pending > 0) {
+    const pushBtn = h(doc, 'button', 'btn-ghost btn-mini tm-push-now', 'Push now'); pushBtn.type = 'button';
+    chip.append(pushBtn);
+  }
   const err = lastError || fetchError;
   if (err) {
     // §4.7: the stderr verbatim. <pre> + white-space:pre-wrap, so a multi-line remote: block is
@@ -202,10 +218,11 @@ const CW = 560, CH = 240, L = 44, R = 12, T = 18, B = 26;
 const PW = CW - L - R, PH = CH - T - B;
 
 /** Stacked weekly column chart. stacks: [{key,label,color}], valueOf(pt,key) → number. */
-export function renderStackedWeekChart({ title, weeks, stacks, valueOf, yFmt, tipFmt = yFmt, legendValue, hint = null, integer = false }, { doc = globalThis.document } = {}) {
+export function renderStackedWeekChart({ title, weeks, stacks, valueOf, yFmt, tipFmt = yFmt, legendValue, hint = null, integer = false, headExtra = null }, { doc = globalThis.document } = {}) {
   const card = h(doc, 'section', 'card chart-card');
   const head = h(doc, 'div', 'card-head');
   head.append(h(doc, 'h2', null, title));
+  if (headExtra) head.append(headExtra);   // a control that belongs to THIS chart (e.g. Group by)
   card.append(head);
   const legend = h(doc, 'div', 'chart-legend');
   for (const st of stacks) {
@@ -277,7 +294,10 @@ const BREAKDOWN_SPECS = {
   workflow: { title: 'By workflow', sub: 'share of spend', cols: [['label', 'Workflow'], ['runs', 'Runs'], ['usd', 'Spend'], ['perRunUsd', 'Per run'], ['successRate', 'Success'], ['share', '']] },
   source: { title: 'By ticket', sub: 'task source · top 5', limit: 5, cols: [['label', 'Source'], ['runs', 'Runs'], ['usd', 'Spend'], ['perRunUsd', 'Per run'], ['cyclesMean', 'Cycles']] },
   actor: { title: 'By actor', sub: 'who ran it', cols: [['label', 'Actor'], ['runs', 'Runs'], ['usd', 'Spend'], ['perRunUsd', 'Per run'], ['successRate', 'Success']] },
-  project: { title: 'By project touched', sub: 'a run touching two projects counts in both', cols: [['label', 'Project'], ['runs', 'Runs touched'], ['usd', 'Spend of those runs'], ['filesChanged', 'Files changed']] },
+  // No spend column: a run's cost is not a per-project fact. Runs touched and files changed are;
+  // the bar is the share of runs in range that touched the project. Cost questions go through
+  // the row filter, which narrows every panel to the runs that touched it.
+  project: { title: 'By project touched', sub: 'click a project to see only the runs that touched it', cols: [['label', 'Project'], ['runs', 'Runs touched'], ['filesChanged', 'Files changed'], ['runShare', '']] },
   models: { title: 'By model mix', sub: 'models seen in the run', cols: [['label', 'Models'], ['runs', 'Runs'], ['usd', 'Spend'], ['perRunUsd', 'Per run']] },
 };
 
@@ -285,7 +305,7 @@ function cellText(key, row) {
   switch (key) {
     case 'usd': case 'perRunUsd': return row[key] == null ? '—' : TM_FMT.usd(row[key]);
     case 'successRate': return TM_FMT.pct(row[key]);
-    case 'cyclesMean': return row[key] == null ? '—' : String(row[key]);
+    case 'cyclesMean': case 'filesChanged': return row[key] == null ? '—' : String(row[key]);
     default: return String(row[key] ?? '—');
   }
 }
@@ -326,10 +346,13 @@ export function renderBreakdownTable(dim, rows, { doc = globalThis.document, sor
         td.append(h(doc, 'span', null, r.label));
         if (r.sub) td.append(' ', h(doc, 'small', 'hint', r.sub));
         if (dim === 'project' && homeSlug && r.key === homeSlug) td.append(' ', h(doc, 'span', 'badge violet', 'metrics home'));
-      } else if (key === 'share') {
+      } else if (key === 'share' || key === 'runShare') {
         const bar = h(doc, 'span', 'tm-share'); const fill = h(doc, 'span', 'tm-share-fill');
-        fill.style.width = `${Math.round(r.share * 100)}%`; bar.append(fill); td.append(bar);
+        fill.style.width = `${Math.round((r[key] || 0) * 100)}%`; bar.append(fill); td.append(bar);
+        if (key === 'runShare') td.title = `${Math.round((r[key] || 0) * 100)}% of the runs in range touched it`;
       } else td.textContent = cellText(key, r);
+      // Some runs in the row predate per-project file counts: the number covers the others.
+      if (key === 'filesChanged' && r.filesUnknown > 0 && r.filesChanged != null) td.title = `${r.filesUnknown} older run${r.filesUnknown === 1 ? '' : 's'} without per-project file counts not included`;
       tr.append(td);
     }
     tbody.append(tr);
@@ -391,6 +414,28 @@ export function renderRunsTable(runs, { doc = globalThis.document, total = runs.
   return card;
 }
 
+/**
+ * "Group by" lives in the Spend per week card head, not the page filter bar: it only
+ * changes that chart's stacking (Runs per week always stacks by result, the breakdown
+ * tables have fixed dimensions), so next to scope and range it read as a page setting
+ * it is not. `project` is offered for workspace scopes only — on a single project it is
+ * always one bar.
+ */
+export function renderGroupBySelect(groupBy, scopeKind, { doc = globalThis.document } = {}) {
+  const label = h(doc, 'label', 'tm-group');
+  label.append('Group by ');
+  const wrap = h(doc, 'span', 'select-wrap');
+  const sel = h(doc, 'select', 'select select-sm');
+  sel.id = 'tm-group';
+  sel.setAttribute('aria-label', 'Stack Spend per week by');
+  // The same three for both scope kinds: spend is never split across the projects a run touched.
+  const opts = ['workflow', 'result', 'actor'];
+  for (const v of opts) { const o = h(doc, 'option', null, v); o.value = v; o.selected = v === groupBy; sel.append(o); }
+  wrap.append(sel);
+  label.append(wrap);
+  return label;
+}
+
 export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Date.now(), scopeKind = 'project', sort = {}, filter = {}, homeHint = null, runLimit = 50 } = {}) {
   const wrap = h(doc, 'div', 'tm-body');
   if (homeHint) wrap.append(homeHint);
@@ -400,7 +445,7 @@ export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Da
   charts.append(renderStackedWeekChart({
     title: 'Spend per week', weeks: agg.series.spend, stacks, valueOf: (pt, key) => pt.stacks[key],
     yFmt: (v) => (v >= 1000 ? `$${(v / 1000).toFixed(1)}k` : `$${Math.round(v)}`), tipFmt: TM_FMT.usd, legendValue: (st) => TM_FMT.usd(st.totalUsd),
-    hint: agg.groupBy === 'project' && scopeKind === 'workspace' ? 'Stacked by project touched · a run touching two projects is split evenly here' : null,
+    headExtra: renderGroupBySelect(agg.groupBy, scopeKind, { doc }),
   }, { doc }));
   const runTotals = Object.fromEntries(RESULT_STACKS.map((r) => [r.key, agg.series.runs.reduce((a, p) => a + (p[r.key] || 0), 0)]));
   charts.append(renderStackedWeekChart({
@@ -417,6 +462,48 @@ export function renderTeamMetricsBody(agg, { doc = globalThis.document, now = Da
   }
   wrap.append(tables);
   wrap.append(renderRunsTable(agg.runs, { doc, total: agg.runs.length, limit: runLimit }));
+  return wrap;
+}
+
+/**
+ * The page's shape while its first payload loads: six KPI tiles, two chart cards, a breakdown
+ * grid and the runs card, each filled with shimmer bars instead of "Loading…", so the layout
+ * lands once and nothing jumps when the data arrives. Purely decorative (aria-hidden); the
+ * live region is #tm-body's aria-busy.
+ */
+export function renderTmSkeleton({ doc = globalThis.document, scopeKind = 'project' } = {}) {
+  const wrap = h(doc, 'div', 'tm-body tm-skeleton');
+  wrap.setAttribute('aria-hidden', 'true');
+  const bar = (w, extra = '') => h(doc, 'span', `skel${w ? ` ${w}` : ''}${extra ? ` ${extra}` : ''}`);
+  const row = h(doc, 'div', 'stat-row tm-kpis');
+  for (let i = 0; i < 6; i++) {
+    const t = h(doc, 'section', 'card stat-tile');
+    t.append(h(doc, 'div', 'stat-label').appendChild(bar('w40')).parentNode, h(doc, 'div', 'stat-value').appendChild(bar('w70', 'skel-lg')).parentNode, h(doc, 'small', 'stat-sub').appendChild(bar('w60')).parentNode);
+    row.append(t);
+  }
+  wrap.append(row);
+  const charts = h(doc, 'div', 'charts-grid');
+  for (let i = 0; i < 2; i++) {
+    const c = h(doc, 'section', 'card chart-card');
+    const head = h(doc, 'div', 'card-head'); head.append(h(doc, 'h2').appendChild(bar('w25')).parentNode);
+    c.append(head, h(doc, 'div', 'skel skel-block'));
+    charts.append(c);
+  }
+  wrap.append(charts);
+  const tables = h(doc, 'div', 'charts-grid tm-breakdowns');
+  for (let i = 0; i < (scopeKind === 'workspace' ? 5 : 4); i++) {
+    const c = h(doc, 'section', 'card');
+    const head = h(doc, 'div', 'card-head'); head.append(h(doc, 'h2').appendChild(bar('w25')).parentNode);
+    c.append(head);
+    for (let r = 0; r < 3; r++) { const line = h(doc, 'div', 'skel-row'); line.append(bar('w60'), bar('w25')); c.append(line); }
+    tables.append(c);
+  }
+  wrap.append(tables);
+  const runs = h(doc, 'section', 'card tm-runs');
+  const rh = h(doc, 'div', 'card-head tm-runs-head'); rh.append(h(doc, 'h2').appendChild(bar('w25')).parentNode);
+  runs.append(rh);
+  for (let r = 0; r < 5; r++) { const line = h(doc, 'div', 'skel-row'); line.append(bar('w25'), bar('w40'), bar('w25')); runs.append(line); }
+  wrap.append(runs);
   return wrap;
 }
 

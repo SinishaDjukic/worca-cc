@@ -140,7 +140,8 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
   assert.deepEqual(msgs[1].result.tools.map((t) => t.name), ['list_projects', 'list_workflows', 'list_runs', 'get_run', 'get_run_diff', 'track_run', 'propose_run', 'propose_workflow', 'read_attachment',
     'list_diff_comments', 'add_diff_comment', 'reply_to_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
     'open_worktree', 'list_worktrees', 'remove_worktree', 'git',
-    'list_run_artifacts', 'read_run_artifact', 'get_run_progress']);
+    'list_run_artifacts', 'read_run_artifact', 'get_run_progress',
+    'get_team_metrics', 'list_team_metrics_runs', 'push_team_metrics', 'propose_metrics_change']);
   const projects = JSON.parse(msgs[2].result.content[0].text);
   assert.equal(projects.projects[0].key, project.key);
   const run = JSON.parse(msgs[3].result.content[0].text);

@@ -195,3 +195,66 @@ test('Stats shows "Team-wide view →" when a scope is enabled', async () => {
   window.location.hash = 'stats'; window.dispatchEvent(new window.Event('hashchange')); await tick(); await tick();
   assert.equal(window.document.getElementById('stats-tm-hint').hidden, false);
 });
+
+test('loading: the skeleton paints before the data, the read is deferred, the chip says "Checking origin…" while the fetch runs, and its fetched frame reloads', async () => {
+  let release; const gate = new Promise((r) => { release = r; });
+  const tmCalls = [];
+  const { window, wsBox, tick } = await boot({
+    fetchHandler: (u) => {
+      if (u.includes('/api/team-metrics')) tmCalls.push(u);
+      if (u.includes('/api/team-metrics/scopes')) return respond(SCOPES_ON);
+      if (u.includes('/api/team-metrics?')) return gate.then(() => respond({ ...TM_DATA, refresh: { ...TM_DATA.refresh, pending: true } }));
+      return null;
+    },
+  });
+  const doc = window.document;
+  window.location.hash = 'team-metrics'; window.dispatchEvent(new window.Event('hashchange'));
+  await tick(); await tick(); await tick();
+  const body = doc.getElementById('tm-body');
+  assert.ok(body.querySelector('.tm-skeleton'), 'the page shape, not "Loading…"');
+  assert.equal(body.querySelectorAll('.tm-skeleton .stat-tile').length, 6);
+  assert.equal(body.getAttribute('aria-busy'), 'true');
+  assert.match(tmCalls.find((u) => u.includes('/api/team-metrics?')), /defer=1/, 'the page asks for the two-phase read');
+  release(); await tick(); await tick(); await tick();
+  assert.equal(body.querySelector('.tm-skeleton'), null);
+  assert.equal(body.querySelectorAll('.stat-tile').length, 6);
+  assert.equal(body.getAttribute('aria-busy'), null);
+  const chip = doc.getElementById('tm-sync');
+  assert.ok(chip.querySelector('.sync-chip-inner.is-busy'), 'refresh.pending: the deferred fetch is still running');
+  assert.match(chip.textContent, /Checking origin…/);
+  assert.equal(chip.querySelector('.tm-refresh').disabled, true);
+  const reads = () => tmCalls.filter((u) => u.includes('/api/team-metrics?')).length;
+  const before = reads();
+  wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'team-metrics-changed', action: 'fetched' }) });
+  await tick(); await tick(); await tick();
+  assert.equal(reads(), before + 1, 'the fetched frame reloads the page');
+});
+
+test('switching back to a scope paints its cached payload at once, dimmed, while the read is out; a new scope gets the skeleton', async () => {
+  const { window, tick } = await boot({
+    fetchHandler: (u) => {
+      if (u.includes('/api/team-metrics/scopes')) return respond(SCOPES_ON);
+      if (u.includes('/api/team-metrics?')) return new Promise((res) => setTimeout(() => res(respond(u.includes('scope=workspace') ? WS_DATA : TM_DATA)), 60));
+      return null;
+    },
+  });
+  const doc = window.document;
+  const body = doc.getElementById('tm-body');
+  const settle = async () => { await new Promise((r) => setTimeout(r, 100)); await tick(); await tick(); };
+  window.location.hash = 'team-metrics'; window.dispatchEvent(new window.Event('hashchange'));
+  await settle();
+  assert.equal(body.querySelectorAll('.stat-tile').length, 6);
+  const sel = doc.getElementById('tm-scope');
+  const pick = (v) => { sel.value = v; sel.dispatchEvent(new window.Event('change', { bubbles: true })); };
+  pick('workspace:wks-iot-sp-platform-0123abcd'); await tick(); await tick();
+  assert.ok(body.querySelector('.tm-skeleton'), 'never seen: the skeleton, not the project scope\'s numbers');
+  await settle();
+  assert.ok(doc.querySelector('.tm-home-hint'), 'the workspace payload landed');
+  pick('project:billing-api-0123abcd'); await tick(); await tick();
+  assert.equal(body.querySelector('.tm-skeleton'), null);
+  assert.equal(body.querySelectorAll('.stat-tile').length, 6, 'the project scope\'s cached payload paints at once');
+  assert.equal(doc.querySelector('.tm-home-hint'), null, 'and it is that scope\'s payload');
+  assert.ok(body.classList.contains('is-loading')); assert.equal(body.getAttribute('aria-busy'), 'true');
+  await settle();
+  assert.equal(body.classList.contains('is-loading'), false); assert.equal(body.getAttribute('aria-busy'), null);
+});

@@ -23,6 +23,7 @@ import { cleanText } from '../../shared/graph/assemble.mjs';
 import { createTurnReducer } from './events.mjs';
 import { buildAskSpawnOptions, buildMcpConfig, ASK_MCP_SERVER_PATH } from './spawn.mjs';
 import { validateProposal } from './proposal.mjs';
+import { validateMetricsChange } from './metrics-deps.mjs';
 import { revalidateWorkflowProposal } from './workflow-deps.mjs';
 import { askLimits, ASK_LIMITS } from './limits.mjs';
 import {
@@ -73,6 +74,7 @@ class AskTurn extends EventEmitter {
       },
       validateProposal: deps.validateProposal ?? validateProposal,
       revalidateWorkflow: deps.revalidateWorkflow ?? revalidateWorkflowProposal,
+      validateMetricsChange: deps.validateMetricsChange ?? validateMetricsChange,
       trackRun: deps.trackRun ?? null,
       generateTitle: deps.generateTitle ?? generateTitle,
       askLimits: deps.askLimits ?? askLimits,
@@ -203,6 +205,39 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();                                       // a store write; the browser gets the reducer's ask-card frame
   }
 
+  /**
+   * propose_metrics_change RESULT: the child validated for the model's self-correction; the parent re-validates the
+   * same INPUT authoritatively (metrics-proposal.mjs is pure over the real readers) and mints the card. An isError
+   * result or a child {ok:false} already reached the model as text — no card, no notice.
+   */
+  async _onMetricsProposal(input, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const d = this.deps;
+    const raw = input && typeof input === 'object' ? input : {};
+    // The child's pinned-scope default, replayed (tools.mjs propose_metrics_change): the card matches what the model saw.
+    const pin = this.pinnedScope;
+    const kind = typeof raw.kind === 'string' ? raw.kind.trim() : '';
+    let inp = raw;
+    if (pin && !(typeof raw.projectKey === 'string' && raw.projectKey.trim()) && !(typeof raw.workspaceId === 'string' && raw.workspaceId.trim())) {
+      if (pin.projectKey && (kind === 'enable' || kind === 'record')) inp = { ...raw, projectKey: pin.projectKey };
+      if (pin.workspaceId && (kind === 'workspace_home' || kind === 'route_members')) inp = { ...raw, workspaceId: pin.workspaceId };
+    }
+    try {
+      const r = await d.validateMetricsChange(inp);
+      if (r && r.ok) this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'proposed', card: r.card });
+      else {
+        const errors = (r && Array.isArray(r.errors) && r.errors.length) ? r.errors : ['invalid proposal'];
+        this.reducer.addBlock({ kind: 'notice', text: `Metrics change rejected: ${errors.join('; ')}` });
+      }
+    } catch (err) {
+      this.reducer.addBlock({ kind: 'notice', text: `Metrics change rejected: ${err?.message || err}` });
+    }
+    this._persistBlocks();
+  }
+
   /** The card exists from the tool_use on (spec §8.2, PD7): a building block with the four-step trace, persisted. */
   _onWorkflowStart(toolUseId, input) {
     const d = this.deps;
@@ -286,6 +321,7 @@ class AskTurn extends EventEmitter {
       onWorkflowStart: ({ toolUseId, input }) => this._onWorkflowStart(toolUseId, input),
       onWorkflowResult: ({ toolUseId, text, isError }) => this._onWorkflowResult(toolUseId, text, isError),   // the hook's `input` is not needed here: the card is rebuilt from `out`
       onTrackRun: ({ input, isError }) => this._onTrackRun(input, isError),
+      onMetricsProposal: ({ input, text, isError }) => this._onMetricsProposal(input, text, isError),
       // The MCP child cannot broadcast; the parent turns its comment writes into
       // the same poke the REST routes emit.
       onCommentMutation: (e) => { try { this.deps.onCommentMutation(e); } catch { /* a broken sink never breaks the turn */ } },

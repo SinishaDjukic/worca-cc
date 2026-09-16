@@ -57,7 +57,7 @@ alongside `RECORD_VERSION`, `TEXT_MAX`, `RECORD_FIELDS`, `redactPaths` and `clea
 | `result` | `done\|failed\|stopped` | mapped from harness status `done\|error\|stopped` | harness terminal status |
 | `failure` | object\|null | see "Failure" below | derived |
 | `workflow` | object\|null | `{id,name,version,rev}` | `harness.resolved.template`, stepper fallback; `rev` is additive (see below) |
-| `target` | object | `{kind:'project',project}` or `{kind:'workspace',workspace,projects,touched}` | run target / workspace membership |
+| `target` | object | `{kind:'project',project}` or `{kind:'workspace',workspace,workspaceId,projects,touched,touchedFiles}` | run target / workspace membership |
 | `title` | string\|null | cleaned, ≤200 chars | pipeline title |
 | `source` | object\|null | `{type,ref,url,title}` | `pipelines.source_type`/`source_ref`, `sourceMeta` |
 | `cost` | object | `{usd, byPhase}` | `state.totalCostUsd`, summed/step-derived; `roundUsd` |
@@ -146,12 +146,22 @@ two records of a run stay readable; it is not itself part of the semantic schema
 For a workspace run, `target` is:
 
 ```json
-{ "kind": "workspace", "workspace": "IoT SP Platform", "projects": ["acme/device-registry", "acme/gateway"], "touched": ["acme/gateway"] }
+{ "kind": "workspace", "workspace": "IoT SP Platform", "workspaceId": "wks-iot-sp-0123abcd", "projects": ["acme/device-registry", "acme/gateway"], "touched": ["acme/gateway"] }
 ```
+
+`workspaceId` is the workspace's stable id on the machine that ran it (additive since 1.x; `null` in older records). The reader matches a record to a workspace by this id first and only falls back to a case-insensitive `workspace` name match when it is absent, so renaming a workspace no longer orphans its history.
 
 `projects` is the full workspace member set; `touched` is the subset whose `results.json`
 `perProject[key].summary` shows any changed file. `touched` is `[]`, never omitted, when no
 member was touched.
+
+`touchedFiles` (additive since 1.x) maps each touched member to *its own* changed-file count
+(`filesNew + filesChanged` of that member's summary — the per-member share of `git.filesChanged`).
+The Team metrics page's "By project touched" table sums it per project; a record without it
+counts as unknown there, so the table shows "–" rather than attributing the run's total to every
+project it touched. Spend has no per-project equivalent: a run's cost is not attributable to one
+member, so that table shows no spend at all (runs touched, files changed and the share of runs
+that touched the project); clicking a project filters every panel to the runs that touched it.
 
 ## Exclusions
 

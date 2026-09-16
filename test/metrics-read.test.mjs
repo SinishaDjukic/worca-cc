@@ -8,7 +8,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { makeOrigin, cloneAs, useGitSandbox } from './helpers/metrics-git.mjs';   // `git` is unused here
 import { addProject, listProjects } from '../src/core/projects.mjs';
 import { createWorkspace, updateWorkspace } from '../src/core/workspaces.mjs';
-import { enableTeamMetrics, writeOutbox, flushSlug, _testing as syncTesting } from '../src/core/metrics/sync.mjs';
+import { enableTeamMetrics, writeOutbox, flushSlug, worktreePath, metricsEvents, _testing as syncTesting } from '../src/core/metrics/sync.mjs';
 import { readScope, readRecordsFromDir, fetchDecision, noteFetch, parseScopeParam, _testing as readTesting } from '../src/core/metrics/read.mjs';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 
@@ -77,6 +77,22 @@ test('workspace scope groups by name across two homes (split choice tolerated)',
   assert.deepEqual(pr.records.map((x) => x.id), ['p1'], 'project scope filters by slug; hosted workspace runs excluded');
 });
 
+test('workspace scope matches by workspaceId first: a rename keeps its history, a same-named stranger stays out', { skip }, async () => {
+  const gwBare = makeOrigin(root, 'gateway-id'); const gw = cloneAs(root, 'm', gwBare, 'gateway-id');
+  const drBare = makeOrigin(root, 'dr-id'); const dr = cloneAs(root, 'm', drBare, 'dr-id');
+  await addProject({ name: 'gateway-id', path: gw }); await addProject({ name: 'dr-id', path: dr });
+  await enableTeamMetrics(gw, { mode: 'here' });
+  const ws = await createWorkspace({ name: 'Platform', projectPaths: [gw, dr] });
+  await updateWorkspace(ws.id, { metricsProject: gw });
+  await writeOutbox('gateway-id', makeRecord({ id: 'byId', kind: 'workspace', workspaceId: ws.id, workspace: 'Old Name', touched: ['gateway-id'] }));
+  await writeOutbox('gateway-id', makeRecord({ id: 'stranger', kind: 'workspace', workspaceId: 'wks-someone-0000ffff', workspace: 'Platform' }));
+  await writeOutbox('gateway-id', makeRecord({ id: 'legacy', kind: 'workspace', workspace: 'platform' }));
+  await flushSlug('gateway-id');
+  const r = await readScope({ kind: 'workspace', id: ws.id });
+  assert.deepEqual(r.records.map((x) => x.id).sort(), ['byId', 'legacy'],
+    'the renamed record (id match) and the pre-id record (name match) are in; the same-named other workspace is out');
+});
+
 test('refresh=1 is rate limited to one forced fetch per 60 s', { skip }, async () => {
   let t = 1_000_000;
   readTesting.setNow(() => t);
@@ -96,4 +112,50 @@ test('refresh=1 is rate limited to one forced fetch per 60 s', { skip }, async (
   const c = await readScope({ kind: 'project', id: p.key }, { refresh: true });
   assert.equal(c.refresh.limited, false);
   assert.ok(fetches - before >= 2);
+});
+
+test('defer: no worktree → "pending" now and the clone afterwards; a due fetch runs after the response; every settle emits one changed event; a failed one is reported by the next deferred read', { skip }, async () => {
+  let t = 5_000_000;
+  readTesting.setNow(() => t);
+  const bare = makeOrigin(root, 'deferred'); const dir = cloneAs(root, 'm', bare, 'deferred');
+  await addProject({ name: 'deferred', path: dir });
+  await enableTeamMetrics(dir, { mode: 'here' });
+  await writeOutbox('deferred', makeRecord({ id: 'd1', kind: 'project', project: 'deferred' }));
+  await flushSlug('deferred');
+  rmSync(worktreePath('deferred'), { recursive: true, force: true });   // as on a machine that only ever pushed
+  const events = [];
+  const onChanged = (e) => { if (e.slug === 'deferred') events.push(e); };
+  metricsEvents.on('changed', onChanged);
+  try {
+    const p = (await listProjects()).find((x) => x.name === 'deferred');
+    const scope = { kind: 'project', id: p.key };
+    const first = await readScope(scope, { defer: true });
+    assert.deepEqual([first.records.length, first.refresh.pending, first.fetchError], [0, true, null], 'nothing to serve yet: pending, no records, no error');
+    await readTesting.settleDeferred();
+    assert.deepEqual(events.map((e) => [e.action, e.updated]), [['fetched', true]], 'the clone settled: one event, updated');
+    const second = await readScope(scope, { defer: true });
+    assert.deepEqual([second.records.map((r) => r.id), second.refresh.pending], [['d1'], false], 'served from the worktree, no fetch due (< 60 s)');
+
+    t += 60_001;
+    const third = await readScope(scope, { defer: true });
+    assert.deepEqual([third.records.map((r) => r.id), third.refresh.pending], [['d1'], true], 'a due fetch is deferred: the records come back at once');
+    const again = await readScope(scope, { defer: true });
+    assert.equal(again.refresh.pending, false, 'a read queued behind the deferred fetch (same slug lock) already sees its result');
+    await readTesting.settleDeferred();
+    assert.deepEqual(events.slice(1).map((e) => [e.action, e.updated]), [['fetched', false]], 'nothing new on origin: still one event, not updated');
+
+    // Offline: the deferred fetch fails; the event says so and the next deferred read carries the stderr.
+    syncTesting.setGit(async (cwd, args, opts) => (args[0] === 'fetch' ? { ok: false, stdout: '', stderr: 'fatal: unable to access origin: offline' } : syncTesting.defaultGit(cwd, args, opts)));
+    t += 60_001;
+    const fourth = await readScope(scope, { defer: true });
+    assert.deepEqual([fourth.records.map((r) => r.id), fourth.refresh.pending], [['d1'], true]);
+    await readTesting.settleDeferred();
+    assert.deepEqual(events.at(-1).action, 'fetch-failed');
+    t += 1_000;
+    const fifth = await readScope(scope, { defer: true });
+    assert.equal(fifth.refresh.pending, false, 'the failed-fetch TTL skips the retry');
+    assert.match(fifth.fetchError, /offline/, 'the last deferred failure is reported, as the inline path reports its own');
+    const inline = await readScope(scope);
+    assert.equal(inline.fetchError, null, 'an inline read (Ask tools, CLI) only reports its own fetch');
+  } finally { metricsEvents.off('changed', onChanged); }
 });

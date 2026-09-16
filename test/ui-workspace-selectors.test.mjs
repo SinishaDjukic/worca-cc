@@ -37,8 +37,12 @@ test('ws-card template carries the classes buildWorkspaceCard/delegation use', (
     'ws-detail', 'ws-desc-view', 'ws-desc-edit', 'ws-desc-input', 'ws-desc-save', 'ws-desc-cancel',
   ])
     assert.ok(tpl.includes(cls), `ws-card-tpl missing .${cls}`);
-  // The description view is a <pre> (verbatim markdown; #viewer pattern).
-  assert.ok(/class="ws-desc-view viewer"/.test(tpl), 'ws-desc-view should reuse the .viewer <pre> pattern');
+  // The description view is a <div> in the .viewer frame: markdown by contract, bound
+  // through bindMarkdown (rendered when the bundle is ready, plain text before).
+  assert.ok(/<div class="ws-desc-view viewer">/.test(tpl), 'ws-desc-view should be a div in the .viewer frame');
+  // The edit pane carries the Text / Preview tabs and the preview host setMdEditMode drives.
+  for (const cls of ['md-tabs', 'ws-desc-tab', 'ws-desc-preview', 'md-preview']) assert.ok(tpl.includes(cls), `ws-card-tpl missing .${cls}`);
+  assert.ok(/id="wiz-desc-tabs"/.test(html) && /id="wiz-desc-preview"/.test(html), 'wizard step 3 carries the same editor tabs + preview');
 });
 
 test('target segmented control uses the .seg button[data-target] + hidden-radio idiom', () => {

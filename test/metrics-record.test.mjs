@@ -111,9 +111,18 @@ test('resumed run carries pause/resume interventions', () => {
 
 test('workspace target: projects = member set, touched = changed subset (touched / untouched)', () => {
   const t = buildRunRecord(workspaceTouched, { now: new Date(NOW) });
-  assert.deepEqual(t.target, { kind: 'workspace', workspace: 'IoT SP Platform', projects: ['acme/device-registry', 'acme/gateway'], touched: ['acme/gateway'] });
+  assert.deepEqual(t.target, { kind: 'workspace', workspace: 'IoT SP Platform', workspaceId: null, projects: ['acme/device-registry', 'acme/gateway'], touched: ['acme/gateway'], touchedFiles: {} });
   const u = buildRunRecord(workspaceUntouched, { now: new Date(NOW) });
   assert.deepEqual(u.target.touched, []);
+  // Per-member file counts (additive): kept when they are non-negative integers keyed by slug, anything else dropped.
+  const counted = buildRunRecord({ ...workspaceTouched, target: { ...workspaceTouched.target, touchedFiles: { 'acme/gateway': 7, 'acme/device-registry': -1, 'acme/x': 'many', '': 3 } } }, { now: new Date(NOW) });
+  assert.deepEqual(counted.target.touchedFiles, { 'acme/gateway': 7 });
+  assert.deepEqual(buildRunRecord({ ...workspaceTouched, target: { ...workspaceTouched.target, touchedFiles: ['nope'] } }, { now: new Date(NOW) }).target.touchedFiles, {});
+  // The stable identity travels when the harness knows it (additive v1 field; the reader
+  // matches on it first and falls back to the name for older records).
+  const withId = buildRunRecord({ ...workspaceTouched, target: { ...workspaceTouched.target, workspaceId: 'wks-iot-sp-0123abcd' } }, { now: new Date(NOW) });
+  assert.equal(withId.target.workspaceId, 'wks-iot-sp-0123abcd');
+  assert.equal(withId.target.workspace, 'IoT SP Platform', 'the display name stays alongside the id');
 });
 
 test('non-terminal status is rejected', () => {

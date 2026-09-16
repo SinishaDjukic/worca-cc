@@ -88,6 +88,24 @@ test('enable (here) → scopes lists the project → GET /api/team-metrics shape
   assert.equal(j.sync[0].pending, 0);
 });
 
+test('defer=1: the page read answers from the worktree and reports refresh.pending for the fetch it left running', { skip }, async () => {
+  const readTesting = (await import('../src/core/metrics/read.mjs'))._testing;
+  let t = Date.now() + 120_000;                     // a fetch is due again (> 60 s since the inline one above)
+  readTesting.setNow(() => t);
+  try {
+    const r = await get(`/api/team-metrics?scope=project:${gwKey}&range=this-month&defer=1`);
+    assert.equal(r.status, 200);
+    const j = await r.json();
+    assert.equal(j.records.length, 1, 'the worktree\'s records, at once');
+    assert.equal(j.refresh.pending, true, 'the fetch runs after the response');
+    await readTesting.settleDeferred();
+    const again = await (await get(`/api/team-metrics?scope=project:${gwKey}&range=this-month&defer=1`)).json();
+    assert.equal(again.refresh.pending, false, 'settled: nothing due within 60 s');
+    const inline = await (await get(`/api/team-metrics?scope=project:${gwKey}&range=this-month`)).json();
+    assert.equal(inline.refresh.pending, false, 'an inline read never reports pending');
+  } finally { readTesting.reset(); }
+});
+
 test('GET /api/history/:key/:id surfaces the run ledger state (§6.5)', { skip }, async () => {
   const { id, key } = await seedPipeline(gw, { title: 'ledger run', status: 'done' });
   writeRunLedger(id, { state: 'pending' });
@@ -148,7 +166,8 @@ test('GET /api/team-metrics in workspace scope groups by workspace name', { skip
   await patch(`/api/workspaces/${wsId}`, { metricsProject: gw });
   await sync.writeOutbox('gateway', makeRecord({ id: 'ws1', kind: 'workspace', workspace: 'IoT SP Platform', touched: ['gateway'], startedAt: new Date().toISOString() }));
   await sync.flushSlug('gateway');
-  const j = await (await get(`/api/team-metrics?scope=workspace:${wsId}&range=this-month&groupBy=project`)).json();
+  assert.equal((await get(`/api/team-metrics?scope=workspace:${wsId}&range=this-month&groupBy=project`)).status, 400, 'spend is never stacked by project');
+  const j = await (await get(`/api/team-metrics?scope=workspace:${wsId}&range=this-month`)).json();
   assert.equal(j.scope.kind, 'workspace'); assert.equal(j.scope.home, 'gateway');
   assert.deepEqual(j.records.map((r) => r.id), ['ws1']);
   assert.ok(j.aggregate.breakdowns.project.some((r) => r.key === 'gateway'));

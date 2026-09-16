@@ -2,16 +2,18 @@
 // Team metrics read side (§4.9): fetch (rate-limited) → reset --hard → glob → parse → filter.
 import { readdir, readFile, lstat, realpath } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { join, sep, resolve } from 'node:path';
 import { listProjects } from '../projects.mjs';
 import { listWorkspaces, readWorkspace, WORKSPACE_KEY_RE } from '../workspaces.mjs';
 import {
   METRICS_DIR, REMOTE_REF, ensureWorktree, fetchMetricsBranch, runGit, withSlugLock, worktreePath, pushHint,
   resolveProjectSink, discoverProject, listOutbox, projectMetricsStatus, workspaceMetricsStatus, recordsLocally,
+  metricsEvents,
 } from './sync.mjs';
 import { readTeamMetricsPrefs } from '../config.mjs';
 import { projectKey } from '../store.mjs';
 import { parseRecordLine } from '../../shared/team-metrics/aggregate.mjs';
+import { matchesWorkspace } from '../../shared/team-metrics/workspace-match.mjs';
 
 export {
   aggregate, resolveRange, weekStartMs, parseRecordLine, toCsv, safeHttpUrl, RANGES, GROUP_BYS, CSV_COLUMNS,
@@ -26,6 +28,8 @@ let _now = () => Date.now();
 const _lastFetch = new Map();   // slug → ms of the last successful fetch (implicit or forced)
 const _lastForced = new Map();  // slug → ms of the last refresh=1 fetch
 const _lastFetchFail = new Map(); // slug → ms of the last failed fetch
+const _lastFetchError = new Map(); // slug → stderr of the last failed DEFERRED fetch (a later deferred read reports it)
+const _deferred = new Map();       // slug → Promise of the deferred fetch in flight (one per slug, never stacked)
 
 /** "project:<projectKey>" | "workspace:<wks-…>" → {kind, id} | null */
 export function parseScopeParam(s) {
@@ -93,7 +97,51 @@ export function noteFetch(slug, { forced = false, ok = true, now = _now() } = {}
   if (ok) { _lastFetch.set(slug, now); _lastFetchFail.delete(slug); } else _lastFetchFail.set(slug, now);
 }
 
-async function readSink(slug, projectDir, { refresh }) {
+/**
+ * The page's two-phase read (docs/team-metrics.md "Loading"): a deferred read serves what the
+ * worktree holds NOW and runs the due fetch here, after the request, under the slug lock. When
+ * it settles — new commits or not, failure included — one `changed` event ({ action: 'fetched'
+ * | 'fetch-failed', updated }) reaches the UI, which reloads the page and repaints its chip. One
+ * deferred fetch per slug: a second deferred read while one is in flight joins it. `create`
+ * builds the worktree (first read ever), which ensureWorktree fetches on its own.
+ */
+function scheduleDeferredFetch(slug, projectDir, { forced = false, create = false } = {}) {
+  if (_deferred.has(slug)) return _deferred.get(slug);
+  const p = withSlugLock(slug, async () => {
+    let ok = false; let stderr = ''; let before = null; let after = null;
+    try {
+      if (create) { await ensureWorktree(slug, projectDir); ok = true; }
+      else {
+        const dir = worktreePath(slug);
+        before = (await runGit(dir, ['rev-parse', REMOTE_REF], { timeoutMs: 10_000 })).stdout.trim();
+        const f = await fetchMetricsBranch(dir);
+        ok = f.ok; stderr = String(f.stderr || '').trim();
+        if (ok) {
+          await runGit(dir, ['reset', '--hard', REMOTE_REF]);
+          await runGit(dir, ['clean', '-fdq']);
+          after = (await runGit(dir, ['rev-parse', REMOTE_REF], { timeoutMs: 10_000 })).stdout.trim();
+        }
+      }
+    } catch (err) { ok = false; stderr = String(err?.stderr || err?.message || err).trim(); }
+    noteFetch(slug, { forced, ok, now: _now() });
+    if (ok) _lastFetchError.delete(slug); else _lastFetchError.set(slug, stderr || 'git fetch failed');
+    metricsEvents.emit('changed', { slug, action: ok ? 'fetched' : 'fetch-failed', updated: ok && (create || after !== before) });
+  }).catch(() => {});
+  const tail = p.finally(() => { if (_deferred.get(slug) === tail) _deferred.delete(slug); });
+  _deferred.set(slug, tail);
+  return tail;
+}
+
+/** Promise.all with at most `limit` in flight, results in input order. */
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => { for (let i = next++; i < items.length; i = next++) out[i] = await fn(items[i], i); };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+async function readSink(slug, projectDir, { refresh, defer = false }) {
   return withSlugLock(slug, async () => {
     // ensureWorktree runs its OWN fetch (≤120 s) when the worktree does not exist yet, before
     // fetchDecision is consulted. Offline that made every GET — and every throttled refresh=1 —
@@ -102,6 +150,12 @@ async function readSink(slug, projectDir, { refresh }) {
     const hadWorktree = existsSync(worktreePath(slug));
     if (!hadWorktree && !pre.fetch) {
       throw Object.assign(new Error(`the ${slug} metrics branch has not been fetched yet; retrying shortly`), { code: 'FETCH_FAILED' });
+    }
+    if (!hadWorktree && defer) {
+      // Nothing to serve yet: build the worktree after this request and answer "pending" now,
+      // so the page shows its skeleton with "checking origin" instead of blocking on a clone.
+      scheduleDeferredFetch(slug, projectDir, { forced: !!pre.forced, create: true });
+      return { records: [], files: 0, malformed: 0, unknownV: 0, decision: { ...pre, fetch: false, deferred: true }, pending: true, fetchError: null, fetchedAt: null };
     }
     let dir;
     try { dir = await ensureWorktree(slug, projectDir); }
@@ -114,7 +168,17 @@ async function readSink(slug, projectDir, { refresh }) {
     if (!hadWorktree) noteFetch(slug, { forced: !!pre.forced, ok: true, now });
     const decision = fetchDecision(slug, { refresh, now });
     let fetchError = null;
-    if (decision.fetch) {
+    let pending = false;
+    if (decision.fetch && defer) {
+      scheduleDeferredFetch(slug, projectDir, { forced: !!decision.forced });
+      pending = true;
+      decision.deferred = true;
+    } else if (defer && _lastFetchError.has(slug)) {
+      // The last deferred fetch failed and the throttle skips this one: say so, as the inline
+      // path would have on its own request (the chip's "offline" state).
+      fetchError = _lastFetchError.get(slug);
+    }
+    if (decision.fetch && !defer) {
       const f = await fetchMetricsBranch(dir);
       // A forced attempt counts even if it fails (flood guard).
       noteFetch(slug, { forced: !!decision.forced, ok: f.ok, now });
@@ -126,7 +190,7 @@ async function readSink(slug, projectDir, { refresh }) {
       }
     }
     const parsed = await readRecordsFromDir(dir);
-    return { ...parsed, decision, fetchError, fetchedAt: _lastFetch.has(slug) ? new Date(_lastFetch.get(slug)).toISOString() : null };
+    return { ...parsed, decision, pending, fetchError, fetchedAt: _lastFetch.has(slug) ? new Date(_lastFetch.get(slug)).toISOString() : null };
   });
 }
 
@@ -147,7 +211,7 @@ function syncFor(slug, prefs, pending) {
  * @returns {Promise<{scope, records, stats:{files,malformed,unknownV}, sinks:string[], sync:object[],
  *                    refresh:{requested,fetched,limited,retryInMs}, fetchError:string|null}>}
  */
-export async function readScope(scope, { refresh = false } = {}) {
+export async function readScope(scope, { refresh = false, defer = false } = {}) {
   const sources = [];
   let meta;
   if (scope.kind === 'project') {
@@ -168,7 +232,7 @@ export async function readScope(scope, { refresh = false } = {}) {
     for (const path of ws.projectPaths) {
       const prefs = (await discoverProject(path).catch(() => null)) || readTeamMetricsPrefs(projectKey(path));
       if (!recordsLocally(prefs)) continue;      // only members that record locally (config read, not a marker)
-      sources.push({ slug: prefs.slug, projectDir: path, keep: (r) => r.target?.kind === 'workspace' && String(r.target.workspace || '').toLowerCase() === name });
+      sources.push({ slug: prefs.slug, projectDir: path, keep: (r) => matchesWorkspace(r.target, ws) });
     }
     if (!sources.length) throw Object.assign(new Error(`no member of ${ws.name} records team metrics`), { code: 'NOT_ENABLED' });
     const homePrefs = ws.metricsProject ? readTeamMetricsPrefs(projectKey(ws.metricsProject)) : null;
@@ -178,13 +242,14 @@ export async function readScope(scope, { refresh = false } = {}) {
   const records = [];
   const stats = { files: 0, malformed: 0, unknownV: 0 };
   const sync = [];
-  const refreshInfo = { requested: !!refresh, fetched: false, limited: false, retryInMs: 0 };
+  const refreshInfo = { requested: !!refresh, fetched: false, limited: false, retryInMs: 0, pending: false };
   let fetchError = null;
-  for (const src of sources) {
-    let r;
-    try {
-      r = await readSink(src.slug, src.projectDir, { refresh });
-    } catch (err) {
+  // Every source has its own slug lock, so the sinks are read side by side; the results are
+  // folded in source order below, so the chip's sync rows and the first error stay deterministic.
+  const settled = await Promise.all(sources.map((src) => readSink(src.slug, src.projectDir, { refresh, defer }).then((r) => ({ r }), (err) => ({ err }))));
+  for (const [i, src] of sources.entries()) {
+    const { r, err } = settled[i];
+    if (err) {
       // One unreachable member (no worktree yet + offline, lock timeout) must not fail the whole
       // workspace page: report it in the chip and keep reading the others. A project scope has a
       // single source, so it still surfaces the error.
@@ -195,6 +260,7 @@ export async function readScope(scope, { refresh = false } = {}) {
     }
     stats.files += r.files; stats.malformed += r.malformed; stats.unknownV += r.unknownV;
     refreshInfo.fetched ||= r.decision.fetch;
+    refreshInfo.pending ||= !!r.pending;
     if (r.decision.limited) { refreshInfo.limited = true; refreshInfo.retryInMs = Math.max(refreshInfo.retryInMs, r.decision.retryInMs); }
     fetchError ||= r.fetchError;
     for (const rec of r.records) {
@@ -210,10 +276,16 @@ export async function readScope(scope, { refresh = false } = {}) {
 /** Scope list + Projects/Workspaces status in one call (Scope select, Projects cells, ws cards, Stats hint). */
 export async function listScopes({ discover = false } = {}) {
   const recordsBySink = new Map();
-  const projects = [];
-  for (const p of await listProjects()) projects.push(await projectMetricsStatus(p, { discover, recordsBySink }));
-  const workspaces = [];
-  for (const w of await listWorkspaces()) workspaces.push(await workspaceMetricsStatus(w, { discover }));
+  // A few at a time, not one after another: an undiscovered or stale project pays git spawns, and
+  // the Workspaces page waits for the whole list before its cards get their metrics columns.
+  const projects = await mapLimit(await listProjects(), 4, (p) => projectMetricsStatus(p, { discover, recordsBySink }));
+  const workspaces = await mapLimit(await listWorkspaces(), 4, (w) => workspaceMetricsStatus(w, { discover }));
+  // A project that is some workspace's metrics home also carries THAT workspace's runs, and
+  // its "Include my runs" switch governs them too — the Projects cell says so (`homeFor`).
+  const norm = (p) => (typeof p === 'string' && p ? resolve(p) : null);
+  for (const s of projects) {
+    s.homeFor = workspaces.filter((w) => w.home?.path && norm(w.home.path) === norm(s.path)).map((w) => w.name);
+  }
   const scopes = {
     projects: projects.filter((s) => s.enabled && s.delegateState !== 'invalid' && !s.blocked)
       .map((s) => ({ id: `project:${s.key}`, label: s.slug, name: s.name, recordedIn: s.delegateState === 'ok' ? s.sinkSlug : null })),
@@ -225,5 +297,7 @@ export async function listScopes({ discover = false } = {}) {
 
 export const _testing = {
   setNow(fn) { _now = fn; },
-  reset() { _now = () => Date.now(); _lastFetch.clear(); _lastForced.clear(); _lastFetchFail.clear(); },
+  reset() { _now = () => Date.now(); _lastFetch.clear(); _lastForced.clear(); _lastFetchFail.clear(); _lastFetchError.clear(); },
+  /** Resolves once every deferred fetch in flight has settled (tests await the event they emit). */
+  settleDeferred() { return Promise.all([..._deferred.values()]); },
 };
