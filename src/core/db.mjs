@@ -54,7 +54,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 29;
+export const SCHEMA_VERSION = 30;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -166,6 +166,9 @@ CREATE UNIQUE INDEX idx_projects_name ON projects (name COLLATE NOCASE);
 
 -- workspaces: named sets of 2+ projects (was workspaces.json header fields).
 -- id is the frozen workspaceKey (wks-<slug>-<sha1[:8]>). name is CI-unique.
+-- metrics_project (v30, added via INCREMENTAL_COLUMNS/ladder, NOT in this base
+-- DDL — matches diff_comments.parent_id) holds the team-metrics home: one
+-- member's absolute path, or NULL for no home configured.
 CREATE TABLE workspaces (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL COLLATE NOCASE,
@@ -757,6 +760,7 @@ const INCREMENTAL_COLUMNS = {
                             mime: 'TEXT' },               // v27: sniffed mime; NULL on pre-v27 rows (= text)
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE' },  // v29: reply threads; NULL = thread root
+  workspaces:             { metrics_project: 'TEXT' },  // v30: team-metrics home (member absolute path); NULL = no home
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -1141,6 +1145,15 @@ function applySchemaV28(db) {
  *  foreign_keys=ON because the default is NULL. Every existing row stays NULL = a
  *  thread root; nothing is backfilled. */
 function applySchemaV29(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/** v30 (team metrics home): workspaces.metrics_project — a plain additive column
+ *  declared in INCREMENTAL_COLUMNS, applySchemaV29's shape: this repairSchemaGaps
+ *  call CREATES it on the ladder path (a DB stamped exactly 29), reconcileSchema
+ *  covers the fast path (a DB already stamped >= 30 by a divergent ladder). NULL
+ *  on every existing row = no team-metrics home configured yet. */
+function applySchemaV30(db) {
   repairSchemaGaps(db, schemaGaps(db));
 }
 
@@ -1529,6 +1542,7 @@ export function migrate(db) {
     if (current < 27) applySchemaV27(db);            // ask_attachments.kind/mime (#398)
     if (current < 28) applySchemaV28(db);            // Auto workflow: human_in_loop + flip to wf_auto
     if (current < 29) applySchemaV29(db);            // diff-comment reply threads: parent_id
+    if (current < 30) applySchemaV30(db);            // team metrics: workspaces.metrics_project
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

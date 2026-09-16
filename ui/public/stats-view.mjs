@@ -373,7 +373,7 @@ const PW = CW - L - R, PH = CH - T - B;
  *  integer=true (runs chart) keeps ticks on whole numbers — a sub-1 or ×2.5
  *  step on tiny count maxima would render duplicate rounded labels ("0, 1, 1"
  *  for a 1-run day) or off-grid labels ("3" at the 2.5 line). */
-function niceScale(maxVal, integer = false) {
+export function niceScale(maxVal, integer = false) {
   const m = maxVal > 0 ? maxVal : 1;
   const raw = m / 3;                                   // aim for ~3-4 ticks
   const pow = 10 ** Math.floor(Math.log10(raw));
@@ -384,7 +384,7 @@ function niceScale(maxVal, integer = false) {
 }
 
 /** Column path with a rounded TOP only (square baseline). r clamps to h/2. */
-function roundedTopBar(x, y, w, hgt, r = 4) {
+export function roundedTopBar(x, y, w, hgt, r = 4) {
   const rr = Math.max(0, Math.min(r, hgt / 2, w / 2));
   return `M${x},${y + hgt} L${x},${y + rr} Q${x},${y} ${x + rr},${y} L${x + w - rr},${y} ` +
     `Q${x + w},${y} ${x + w},${y + rr} L${x + w},${y + hgt} Z`;

@@ -841,7 +841,7 @@ export async function readRunConfig(projectDir) {
   // Forward any OTHER unknown keys verbatim too (future-proof, matches "preserve unknown").
   // prRemotes is the ship-it dialog's own preference (readPrRemotePrefs), not run config.
   for (const [k, v] of Object.entries(extra)) {
-    if (k !== 'webUiTesting' && k !== PR_REMOTES_KEY && !(k in out)) out[k] = v;
+    if (k !== 'webUiTesting' && k !== PR_REMOTES_KEY && k !== TEAM_METRICS_KEY && !(k in out)) out[k] = v;
   }
   const active = row && typeof row.active_workflow_id === 'string' ? row.active_workflow_id.trim() : '';
   // Spec §6.1 / D16: a project with no remembered New-pipeline choice starts on Auto.
@@ -1061,6 +1061,53 @@ export async function setPrRemotePrefs(projectDir, { pushRemote, baseRemote } = 
       ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
     `).run(key, JSON.stringify(extra));
   });
+}
+
+// ── Team-metrics preferences (project_config.extra.teamMetrics) ────────────
+// The discovery cache + local enable state for the team-metrics feature (§4.6).
+// Same read-modify-write pattern as prRemotes above, one key of the same `extra` blob.
+export const TEAM_METRICS_KEY = 'teamMetrics';
+
+/**
+ * NOTE THE PARAMETER. Unlike its siblings `readPrRemotePrefs(projectDir)` /
+ * `setPrRemotePrefs(projectDir, …)` above, which take a DIRECTORY and call
+ * `projectKey()` themselves, these two take the KEY. Passing a path is not a type error — it is a
+ * valid SQL parameter that matches no row, so the call silently returns null, which reads as
+ * "not enabled" and drops every record. `assertProjectKey` makes that a loud failure instead.
+ */
+function assertProjectKey(key) {
+  if (typeof key !== 'string' || !/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(key)) {
+    throw new TypeError(`team metrics prefs take a projectKey(), not ${JSON.stringify(key)} — did you pass a directory?`);
+  }
+  return key;
+}
+
+/** @returns {object|null} the cached team-metrics state for a project key */
+export function readTeamMetricsPrefs(key) {
+  assertProjectKey(key);
+  const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+  const extra = row ? parseJson(row.extra, {}) : {};
+  const v = extra[TEAM_METRICS_KEY];
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+}
+
+/** Shallow-merge `patch` into extra.teamMetrics; returns the merged object. */
+export function writeTeamMetricsPrefs(key, patch) {
+  assertProjectKey(key);
+  let next = null;
+  tx(() => {
+    const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+    const extra = row ? parseJson(row.extra, {}) : {};
+    const cur = extra[TEAM_METRICS_KEY] && typeof extra[TEAM_METRICS_KEY] === 'object' ? extra[TEAM_METRICS_KEY] : {};
+    next = { ...cur, ...patch };
+    extra[TEAM_METRICS_KEY] = next;
+    prepare(`
+      INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
+      VALUES (?, '{}', '[]', NULL, ?)
+      ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
+    `).run(key, JSON.stringify(extra));
+  });
+  return next;
 }
 
 /**

@@ -16,11 +16,30 @@ const WS = [
   { id: 'wks-beta-00000002', name: 'Beta WS', description: '', projectPaths: ['/b/api', '/b/web'], projectKeys: ['k3', 'k4'], exists: [true, false], createdAt: 'x', updatedAt: 'x' },
 ];
 
+// A WebSocket stub that actually stores listeners (unlike the bare no-op below), so a test
+// can deliver a 'team-metrics-changed' server frame into app.js's 'message' listener.
+class WSStub {
+  constructor() { this.readyState = 1; this._listeners = {}; WSStub.last = this; }
+  send() {} close() {}
+  addEventListener(type, fn) { (this._listeners[type] = this._listeners[type] || []).push(fn); }
+  deliver(obj) { (this._listeners.message || []).forEach((fn) => fn({ data: JSON.stringify(obj) })); }
+}
+
+const TM_SCOPES = {
+  projects: [],
+  workspaces: [
+    { id: 'wks-alpha-00000001', name: 'Alpha WS', projectPaths: WS[0].projectPaths, home: { state: 'ok', slug: 'acme/gateway', runs: 12 }, members: [], counts: { recordsHere: 1, routed: 0, notRecording: 1 } },
+    { id: 'wks-beta-00000002', name: 'Beta WS', projectPaths: WS[1].projectPaths, home: { state: 'unset' }, members: [], counts: {} },
+  ],
+  scopes: { projects: [], workspaces: [] },
+  anyEnabled: true,
+};
+
 async function boot({ fetchHandler, workspaces = WS } = {}) {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
-  window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
+  window.WebSocket = WSStub;
   window.fetch = (url, opts) => {
     const u = String(url);
     if (fetchHandler) { const r = fetchHandler(u, opts || {}); if (r) return r; }
@@ -35,9 +54,10 @@ async function boot({ fetchHandler, workspaces = WS } = {}) {
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   const show = () => { window.location.hash = 'workspaces'; window.dispatchEvent(new window.Event('hashchange')); };
-  return { window, show };
+  return { window, show, ws: () => WSStub.last };
 }
 const click = (window, node) => node.dispatchEvent(new window.Event('click', { bubbles: true }));
+const tick = () => new Promise((r) => setTimeout(r, 0));
 
 test('renders one card per workspace + the nav count, with read-only projectPaths', async () => {
   const { window, show } = await boot();
@@ -163,8 +183,13 @@ test('Create workspace button routes to the wizard (#workspace-create)', async (
 
 test('Re-scan enters the wizard at Step 2 with editingId set (Save will PATCH)', async () => {
   const posts = [];
+  const metricsScans = [];
   const { window, show } = await boot({
     fetchHandler: (u, opts) => {
+      if (/\/api\/workspaces\/metrics-scan$/.test(u) && opts.method === 'POST') {
+        metricsScans.push(JSON.parse(opts.body || '{}'));
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ members: [] }) });
+      }
       if (/\/api\/workspaces\/wks-alpha-00000001\/scan$/.test(u) && opts.method === 'POST') {
         posts.push(JSON.parse(opts.body || '{}'));
         return Promise.resolve({ ok: true, status: 200, json: async () => ({ scanId: 'scan_rescan' }) });
@@ -178,10 +203,56 @@ test('Re-scan enters the wizard at Step 2 with editingId set (Save will PATCH)',
   const alpha = [...doc.querySelectorAll('#ws-list .ws-card')].find((c) => c.dataset.workspaceId === 'wks-alpha-00000001');
   click(window, alpha.querySelector('.ws-rescan'));
   await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
   assert.equal(window.location.hash, '#workspace-create', 'navigated to the wizard');
   assert.equal(doc.querySelector('#wiz-step-2').classList.contains('hidden'), false, 'on Step 2 (scanning)');
   assert.equal(posts.length, 1, 're-scan POSTed to :id/scan');
   assert.deepEqual(posts[0], {}, 're-scan body is empty (server reads the persisted set)');
+  assert.equal(metricsScans.length, 1, 're-scan also refreshes member discovery');
+  assert.deepEqual(metricsScans[0], { projectPaths: WS[0].projectPaths });
   // Name input is disabled on re-scan (name immutable here; edit name in the card path).
   assert.equal(doc.querySelector('#wiz-name').disabled, true);
+});
+
+test('.ws-home shows the metrics home when scopes reports one', async () => {
+  const { window, show } = await boot({
+    fetchHandler: (u) => (u.includes('/api/team-metrics/scopes') ? Promise.resolve({ ok: true, status: 200, json: async () => TM_SCOPES }) : null),
+  });
+  show();
+  await tick(); await tick(); await tick();
+  const doc = window.document;
+  const alpha = [...doc.querySelectorAll('#ws-list .ws-card')].find((c) => c.dataset.workspaceId === 'wks-alpha-00000001');
+  assert.equal(alpha.querySelector('.ws-home').hidden, false, 'the slot is un-hidden');
+  assert.match(alpha.querySelector('.ws-home').textContent, /acme\/gateway/);
+});
+
+test('.ws-route POSTs /api/workspaces/:id/metrics-route and renders results; they survive a team-metrics-changed repaint', async () => {
+  const routePosts = [];
+  const { window, show, ws } = await boot({
+    fetchHandler: (u, opts) => {
+      if (u.includes('/api/team-metrics/scopes')) return Promise.resolve({ ok: true, status: 200, json: async () => TM_SCOPES });
+      if (/\/api\/workspaces\/wks-alpha-00000001\/metrics-route$/.test(u) && opts.method === 'POST') {
+        routePosts.push(u);
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: async () => ({ results: [{ slug: 'acme/svc-iam', result: 'routed' }, { slug: 'acme/svc-ui', result: 'failed', error: 'push rejected' }] }),
+        });
+      }
+      return null;
+    },
+  });
+  show();
+  await tick(); await tick(); await tick();
+  const doc = window.document;
+  const alpha = [...doc.querySelectorAll('#ws-list .ws-card')].find((c) => c.dataset.workspaceId === 'wks-alpha-00000001');
+  click(window, alpha.querySelector('.ws-route'));
+  await tick(); await tick(); await tick();
+  assert.equal(routePosts.length, 1);
+  assert.equal([...alpha.querySelectorAll('.ws-route-results li')].length, 2, 'route results rendered');
+
+  // A subsequent team-metrics-changed frame (any action, including flush-failed) repaints
+  // the .ws-home row in place — the saved result list must survive that repaint.
+  ws().deliver({ type: 'team-metrics-changed', action: 'flush-failed' });
+  await tick(); await tick();
+  assert.equal([...alpha.querySelectorAll('.ws-route-results li')].length, 2, 'route results survive the repaint');
 });

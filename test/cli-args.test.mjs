@@ -113,6 +113,18 @@ test('MIN-51: a strict prefix of a subcommand is refused too', () => {
   );
 });
 
+test('MIN-51: a typo of `metrics` is refused, not run as a prompt', () => {
+  const repo = freshRepo();
+  const before = pipelineCount();
+  const r = runCli(['metrcs'], repo);
+  assert.equal(r.status, 2, `expected the fail() exit code\n${r.stdout}\n${r.stderr}`);
+  assert.equal(
+    r.stderr.trim(),
+    'worca: unknown subcommand "metrcs" — did you mean "metrics"? (to run a prompt, use --prompt "…")',
+  );
+  assert.equal(pipelineCount(), before, 'no pipeline row');
+});
+
 test('MIN-51: a multi-word bare positional is still a prompt', () => {
   const repo = freshRepo();
   const r = runCli(['fix the login bug', '--yes'], repo);

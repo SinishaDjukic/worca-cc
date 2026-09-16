@@ -16,9 +16,20 @@ class WSStub {
 }
 
 const PROJECTS = [
-  { name: 'alpha', path: '/Users/me/dev/alpha', exists: true },
-  { name: 'beta', path: '/Users/me/dev/beta', exists: false },
+  { key: 'alpha-key', name: 'alpha', path: '/Users/me/dev/alpha', exists: true },
+  { key: 'beta-key', name: 'beta', path: '/Users/me/dev/beta', exists: false },
 ];
+
+const nowIso = new Date().toISOString();
+const TM_SCOPES = {
+  projects: [
+    { key: 'alpha-key', name: 'alpha', slug: 'me/alpha', hasOrigin: true, enabled: false },
+    { key: 'beta-key', name: 'beta', slug: 'me/beta', hasOrigin: true, enabled: true, recordsLocally: true, enabledAt: nowIso, record: true, runs: 3, pending: 0 },
+  ],
+  workspaces: [],
+  scopes: { projects: [], workspaces: [] },
+  anyEnabled: true,
+};
 
 async function boot({ fetchHandler } = {}) {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4321/' });
@@ -132,4 +143,39 @@ test('add: + picks a folder, prefills the basename, and POSTs the project', asyn
   assert.equal(posts.length, 1);
   assert.deepEqual(posts[0], { name: 'cool-app', path: '/Users/me/dev/cool-app' });
   assert.equal([...doc.querySelectorAll('#projects-list .pl-item')].length, 3);
+});
+
+test('rows show a .tm-cell; .tm-enable opens the enable dialog; toggling .tm-record PATCHes', async () => {
+  const patches = [];
+  const { window } = await boot({
+    fetchHandler: (u, opts) => {
+      if (u.includes('/api/team-metrics/scopes')) return Promise.resolve({ ok: true, status: 200, json: async () => TM_SCOPES });
+      if (/\/api\/projects\/beta-key\/team-metrics$/.test(u) && opts.method === 'PATCH') {
+        patches.push(JSON.parse(opts.body));
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) });
+      }
+      return null;
+    },
+  });
+  await goProjects(window);
+  await tick(); await tick();
+  const doc = window.document;
+  const cells = [...doc.querySelectorAll('#projects-list .tm-cell')];
+  assert.equal(cells.length, 2);
+  const offCell = cells.find((c) => c.dataset.key === 'alpha-key');
+  const onCell = cells.find((c) => c.dataset.key === 'beta-key');
+  assert.ok(offCell, 'off project has a .tm-cell');
+  assert.ok(onCell, 'on project has a .tm-cell');
+
+  click(window, offCell.querySelector('.tm-enable'));
+  await tick(); await tick();
+  assert.equal(doc.getElementById('plugin-modal').classList.contains('hidden'), false, 'enable dialog opened');
+  assert.ok(doc.querySelector('input[name="tm-where"]'), 'dialog has the "where to record" radios');
+
+  const cb = onCell.querySelector('input.tm-record');
+  cb.checked = false;
+  cb.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await tick(); await tick();
+  assert.equal(patches.length, 1);
+  assert.deepEqual(patches[0], { record: false });
 });

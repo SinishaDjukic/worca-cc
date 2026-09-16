@@ -87,6 +87,12 @@ import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
 import { getStats } from '../src/core/stats.mjs';
+import {
+  enableTeamMetrics, setRecordMyRuns, flushSlug, flushAll, flushProject, scheduleFlush, discoverProject,
+  discoverAll, scanMembers, routeWorkspaceMembers, projectMetricsStatus, startTeamMetricsBackground,
+  metricsEvents, slugDirName,
+} from '../src/core/metrics/sync.mjs';
+import { readScope, listScopes, parseScopeParam, aggregate, resolveRange, GROUP_BYS, PROJECT_KEY_RE as TM_PROJECT_KEY_RE } from '../src/core/metrics/read.mjs';
 import { pickFolderNative } from '../src/core/folder-dialog.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import {
@@ -464,6 +470,8 @@ function broadcast(obj) {
 function emitChanged(type, action) {
   broadcast({ type, action: action || null });
 }
+
+metricsEvents.on('changed', (e) => emitChanged('team-metrics-changed', e && e.action ? e.action : null));
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
@@ -2139,6 +2147,151 @@ app.get('/api/stats', (req, res) => {
   }
 });
 
+// ---- Team metrics (team-metrics-design.md §4.6–§4.10) ----------------------------------
+function metricsErrorStatus(code) {
+  switch (code) {
+    case 'BAD_REQUEST': case 'NO_ORIGIN': return 400;
+    case 'DELEGATE_INVALID': return 409;                 // a configuration state, not a malformed request
+    case 'NOT_FOUND': case 'NOT_ENABLED': return 404;
+    case 'PUSH_REJECTED': case 'FETCH_FAILED': case 'REMOTE_UNREACHABLE': case 'PUSH_RETRIES_EXHAUSTED': return 502;
+    case 'LOCK_TIMEOUT': return 503;
+    default: return 500;
+  }
+}
+function sendMetricsError(res, err) {
+  const code = (err && err.code) || 'INTERNAL';
+  res.status(metricsErrorStatus(code)).json({
+    error: err && err.message ? err.message : String(err), code,
+    ...(err && err.stderr ? { stderr: err.stderr } : {}),
+    ...(err && err.hint ? { hint: err.hint } : {}),
+  });
+}
+async function tmProject(req, res) {
+  if (!TM_PROJECT_KEY_RE.test(req.params.key)) { badRequest(res, 'invalid project key'); return null; }
+  const p = (await listProjects()).find((x) => x.key === req.params.key);
+  if (!p) { res.status(404).json({ error: 'project not found', code: 'NOT_FOUND' }); return null; }
+  return p;
+}
+
+app.get('/api/team-metrics/scopes', async (req, res) => {
+  try { res.json(await listScopes({ discover: req.query.discover === '1' })); }
+  catch (err) { sendMetricsError(res, err); }
+});
+
+app.get('/api/team-metrics', async (req, res) => {
+  const scope = parseScopeParam(req.query.scope);
+  if (!scope) return badRequest(res, 'scope must be project:<projectKey> or workspace:<workspaceId>');
+  const range = typeof req.query.range === 'string' && req.query.range ? req.query.range : 'this-month';
+  const groupBy = typeof req.query.groupBy === 'string' && req.query.groupBy ? req.query.groupBy : 'workflow';
+  const from = typeof req.query.from === 'string' ? req.query.from : null;
+  const to = typeof req.query.to === 'string' ? req.query.to : null;
+  try {
+    resolveRange(range, { from, to });                       // 400 before touching git
+    if (!GROUP_BYS.includes(groupBy)) throw new RangeError(`unknown groupBy "${groupBy}"`);
+  } catch (err) { return badRequest(res, err.message); }
+  try {
+    const read = await readScope(scope, { refresh: req.query.refresh === '1' });
+    // Flush trigger: page open (§4.5). reason:'page-open' backs off for 60 s after a failed flush,
+    // so a failing push cannot loop through flush-failed → WS → page reload → GET → flush.
+    for (const s of read.sync) if (s.pending > 0) scheduleFlush(s.slug, { reason: 'page-open' });
+    res.json({
+      scope: read.scope,
+      records: read.records,
+      // The page re-aggregates client-side (§4.9 "one fetch serves the session") and asks with
+      // aggregate=0: at 12k records the unused aggregate added ~3.9 MB to a ~9.9 MB response.
+      // Other clients (and the API tests) still get it by default.
+      aggregate: req.query.aggregate === '0' ? null : aggregate(read.records, { range, from, to, groupBy }),
+      stats: read.stats,
+      sync: read.sync,
+      refresh: read.refresh,
+      fetchError: read.fetchError,
+    });
+  } catch (err) { sendMetricsError(res, err); }
+});
+
+// "Push now" / "Retry": body { slug } flushes one outbox, { scope } flushes that scope's sinks,
+// an empty body flushes every outbox on this machine (same as `worca metrics push`).
+app.post('/api/team-metrics/flush', async (req, res) => {
+  const body = req.body || {};
+  try {
+    let results;
+    if (typeof body.slug === 'string' && body.slug) {
+      // slugDirName throws BAD_REQUEST inside flushSlug, which would answer 200 with ok:false.
+      try { slugDirName(body.slug); } catch { return badRequest(res, 'invalid slug'); }
+      results = [await flushSlug(body.slug)];
+    }
+    else if (typeof body.scope === 'string' && body.scope) {
+      const scope = parseScopeParam(body.scope);
+      if (!scope) return badRequest(res, 'invalid scope');
+      if (scope.kind === 'project') {
+        const p = (await listProjects()).find((x) => x.key === scope.id);
+        if (!p) return res.status(404).json({ error: 'project not found', code: 'NOT_FOUND' });
+        results = [await flushProject(p.path)];
+      } else {
+        const sinks = (await readScope(scope)).sinks;
+        results = [];
+        for (const slug of sinks) results.push(await flushSlug(slug));
+      }
+    } else results = await flushAll();
+    res.json({ results });
+  } catch (err) { sendMetricsError(res, err); }
+});
+
+// Empty state "Check now" (§4.10): force discovery everywhere.
+app.post('/api/team-metrics/discover', async (_req, res) => {
+  try { await discoverAll({ force: true }); res.json(await listScopes()); }
+  catch (err) { sendMetricsError(res, err); }
+});
+
+app.get('/api/projects/:key/team-metrics', async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  try { res.json({ status: await projectMetricsStatus(p, { discover: req.query.discover === '1' }) }); }
+  catch (err) { sendMetricsError(res, err); }
+});
+
+app.patch('/api/projects/:key/team-metrics', async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  const body = req.body || {};
+  if (typeof body.record !== 'boolean') return badRequest(res, 'record must be a boolean');
+  try { setRecordMyRuns(p.path, body.record); res.json({ status: await projectMetricsStatus(p) }); }
+  catch (err) { sendMetricsError(res, err); }
+});
+
+app.post('/api/projects/:key/team-metrics/enable', async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  const body = req.body || {};
+  const mode = body.mode === 'delegate' ? 'delegate' : body.mode === 'here' || body.mode == null ? 'here' : null;
+  if (!mode) return badRequest(res, 'mode must be "here" or "delegate"');
+  if (mode === 'here' && body.attribution != null && body.attribution !== 'git-user' && body.attribution !== 'none') {
+    return badRequest(res, 'attribution must be "git-user" or "none"');
+  }
+  try {
+    const result = await enableTeamMetrics(p.path, { mode, attribution: body.attribution || 'git-user', delegateTo: body.delegateTo || null, change: body.change === true });
+    res.json({ ...result, status: await projectMetricsStatus(p) });
+  } catch (err) { sendMetricsError(res, err); }
+});
+
+// Wizard step (§4.8). No POST /api/workspaces/:id route exists, so nothing shadows this path.
+app.post('/api/workspaces/metrics-scan', async (req, res) => {
+  const paths = req.body && Array.isArray(req.body.projectPaths) ? req.body.projectPaths.filter((p) => typeof p === 'string' && p) : null;
+  if (!paths || !paths.length) return badRequest(res, 'projectPaths must be a non-empty array of paths');
+  if (paths.length > 50) return badRequest(res, 'at most 50 projectPaths');
+  const normalized = paths.map((p) => resolveProjectDir(p)).filter(Boolean);
+  // Same checks as POST /api/workspaces/scan (:~2948): never discover (and write a config row for) a junk path.
+  for (const p of normalized) {
+    if (!fs.existsSync(p)) return badRequest(res, `member path is missing: ${p}`);
+    if (!isGitRepo(p)) return badRequest(res, `member is not a git repository: ${p}`);
+  }
+  try { res.json(await scanMembers(normalized)); }
+  catch (err) { sendMetricsError(res, err); }
+});
+
+app.post('/api/workspaces/:id/metrics-route', async (req, res) => {
+  if (!WORKSPACE_KEY_RE.test(req.params.id)) return res.status(404).json({ error: 'workspace not found', code: 'NOT_FOUND' });
+  try { res.json(await routeWorkspaceMembers(req.params.id)); }
+  catch (err) { sendMetricsError(res, err); }
+});
+
 // ---------------------------------------------------------------------------
 // POST /api/history/pr  -> enrich the skeleton with live PR state, pushed back
 // over the WS as batched `history-pr` events (reuses broadcast(), the same
@@ -2746,6 +2899,9 @@ app.post('/api/projects', async (req, res) => {
   try {
     const projects = await addProject({ name: body.name, path: body.path });
     emitChanged('projects-changed', 'created');
+    discoverProject(normalizeProjectPath(body.path), { force: true })
+      .then(() => emitChanged('team-metrics-changed', 'discovered'))
+      .catch(() => { /* offline or not a git repo: discovery retries hourly */ });
     res.json({ projects });
   } catch (err) {
     // addProject only throws on validation (empty/duplicate/not-a-directory), so
@@ -2829,7 +2985,7 @@ app.post('/api/workspaces', async (req, res) => {
     : [];
   if (projectPaths.length < 2) return badRequest(res, 'a workspace needs at least 2 member projects');
   try {
-    const workspace = await createWorkspace({ name: body.name, projectPaths, description: body.description });
+    const workspace = await createWorkspace({ name: body.name, projectPaths, description: body.description, metricsProject: body.metricsProject ?? null });
     emitChanged('workspaces-changed', 'created');
     res.status(201).json({ workspace });
   } catch (err) {
@@ -2844,14 +3000,21 @@ app.patch('/api/workspaces/:id', async (req, res) => {
   const body = req.body || {};
   // Immutability (defense-in-depth, §2.3): the project set never changes via PATCH.
   if ('projectPaths' in body || 'projectKeys' in body) {
-    return badRequest(res, 'a workspace project set is immutable; PATCH accepts only name/description');
+    return badRequest(res, 'a workspace project set is immutable; PATCH accepts only name/description/metricsProject');
   }
   // Pass through only the editable fields.
   const patch = {};
   if (typeof body.name === 'string') patch.name = body.name;
   if (typeof body.description === 'string') patch.description = body.description;
+  if ('metricsProject' in body) {
+    if (body.metricsProject !== null && typeof body.metricsProject !== 'string') {
+      return badRequest(res, 'metricsProject must be a member project path or null');
+    }
+    patch.metricsProject = body.metricsProject;
+  }
   try {
     const workspace = await updateWorkspace(id, patch);
+    if ('metricsProject' in patch) emitChanged('workspaces-changed', 'metrics-home');
     res.json({ workspace });
   } catch (err) {
     const status = workspaceErrorStatus(err && err.code);
@@ -6137,6 +6300,8 @@ if (isMain) {
     try { channelHost.start(); } catch (err) {
       console.error(`[worca-ui] chat channel host failed to start: ${err && err.message ? err.message : err}`);
     }
+    try { startTeamMetricsBackground({ log: (m) => console.warn(m) }); }
+    catch (err) { console.warn(`[worca-ui] team metrics background: ${err?.message || err}`); }
   });
 }
 
