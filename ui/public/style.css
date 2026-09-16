@@ -34,6 +34,7 @@
   --peach-bg:light-dark(#FCEEDA,#33261A);  --peach:#EFA63C;  --peach-ink:light-dark(#B5751A,#F2B96A);
   --red-bg:light-dark(#FBE3E0,#34201D);    --red:#E76A5A;    --red-ink:light-dark(#C5483A,#F08C7E);
   --blue-bg:light-dark(#DEEFF7,#1A2A33);   --blue:#5BA6CC;   --blue-ink:light-dark(#3782A8,#86C4E3);
+  --blue-ink-strong:light-dark(#2B6A8C,#86C4E3);   /* inline link text at small sizes: 5.9:1 on white (--blue-ink is 3.8:1) */
   --violet-bg:light-dark(#EAE6F8,#262336); --violet:#8C7FD6; --violet-ink:light-dark(#6353B8,#B3A8EE);
   --amber-bg:light-dark(#FCE8C8,#332715);  --amber:#E6962A;  --amber-ink:light-dark(#A66510,#F0B45A);
   --seq:light-dark(#B7B7BC,#8E8E92);   /* text role too (.ask-thinking-meter): 4.85:1 on panel */
@@ -1720,11 +1721,15 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .tm-run-tbl .tm-title{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .badge.grey{background:var(--field);color:var(--ink-2);}
 .tm-empty{display:grid;grid-template-columns:1fr 1fr;gap:14px;} .tm-empty .card{padding:22px;}
-.tm-step{font-size:11px;letter-spacing:.08em;font-weight:700;color:var(--ink-3);}
+.tm-step{font-size:11px;letter-spacing:.08em;font-weight:700;color:var(--ink-2);}
 .tm-empty-foot{display:block;margin-top:14px;}
-.linkish{background:none;border:0;padding:0;color:var(--blue-ink);font:inherit;cursor:pointer;text-decoration:underline;}
+/* New light-theme text must clear 4.5:1 (the contrast proof's baseline shrinks, never grows):
+   the empty state's hints and the muted history line use --ink-2, not --ink-3, and the inline
+   link is a darker blue than --blue-ink (3.8:1 on white). */
+.tm-empty .hint,.tm-empty-foot{color:var(--ink-2);}
+.linkish{background:none;border:0;padding:0;color:var(--blue-ink-strong);font:inherit;cursor:pointer;text-decoration:underline;}
 @media (max-width:1080px){ .tm-empty{grid-template-columns:1fr;} .tm-group{margin-left:0;} }
-.hd-tm.st-ok{color:var(--green-ink)} .hd-tm.st-warn{color:var(--amber-ink)} .hd-tm.st-err{color:var(--red-ink)} .hd-tm.st-muted{color:var(--ink-3)}
+.hd-tm.st-ok{color:var(--green-ink)} .hd-tm.st-warn{color:var(--amber-ink)} .hd-tm.st-err{color:var(--red-ink)} .hd-tm.st-muted{color:var(--ink-2)}
 
 /* Team metrics — Projects cell (board 4) */
 #projects-list .tm-slot{flex:0 1 420px;min-width:0;}
@@ -1763,7 +1768,7 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .tm-warn{margin-top:14px;padding:10px 12px;border-radius:12px;background:var(--amber-bg);color:var(--amber-ink);}
 .tm-delegate-wrap{margin-top:8px;}
 /* Wizard (board 7) */
-.wiz-track{display:flex;gap:18px;list-style:none;padding:0;margin:0 0 18px;font-size:12.5px;color:var(--ink-3);}
+.wiz-track{display:flex;gap:18px;list-style:none;padding:0;margin:0 0 18px;font-size:12.5px;color:var(--ink-2);}
 .wiz-track li span{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--field);margin-right:6px;font-weight:700;}
 .wiz-track li.on{color:var(--ink);font-weight:600;} .wiz-track li.on span{background:var(--ink);color:var(--on-ink);}
 .wiz-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:14px;}
