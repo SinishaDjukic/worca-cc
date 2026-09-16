@@ -6,6 +6,9 @@
 // never shell out to real git/gh/GitHub. Nothing here ever throws.
 
 import { spawn } from 'node:child_process';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 /** Default runner: spawn `cmd args` in `cwd`, resolve { ok, stdout, stderr, code }. */
 function defaultRun(cmd, args, { cwd, timeout = 0 } = {}) {
@@ -194,6 +197,75 @@ export async function createPr({ projectDir, base, head, title, body = '', repo 
     if (m) return { ok: true, url: m[0], existed: true };
   }
   return { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+}
+
+// ── gh issue create ───────────────────────────────────────────────────────────
+// The run reporter's one write to GitHub. The body is a whole JSON report (40 KB on
+// the largest run measured), so it rides a FILE: --body argv would be at the mercy of
+// the platform's argument limit, and every backtick and newline in it would depend on
+// spawn's quoting. --body-file has neither problem and is byte-exact.
+
+/** Applied to every filed report. `bug` exists upstream; `ai` marks the filer. */
+export const ISSUE_LABELS = Object.freeze(['bug', 'ai']);
+
+// gh resolves label NAMES through the API and fails the whole create when one is
+// missing — and a reporter with no triage permission on the target repo cannot add
+// labels at all. Both read like this, and both are recoverable by dropping them.
+const LABEL_REJECTED = /could not add label|label .*not found|must have (?:admin|push|triage)/i;
+
+/** gh's own failures, split so the UI can say something actionable. */
+function ghFailureKind(stderr) {
+  const s = String(stderr || '');
+  if (/gh auth login|not logged in|authentication|HTTP 401|bad credentials/i.test(s)) return 'auth';
+  return 'failed';
+}
+
+/**
+ * Open a GitHub issue with `gh issue create`. `repo` (OWNER/REPO) is REQUIRED and
+ * always explicit: gh would otherwise resolve the target from the cwd's remotes and
+ * file a worca bug report in whatever repository the user happens to be standing in.
+ *
+ * Labels are best effort — on a label rejection the issue is filed again without
+ * them rather than lost. Any OTHER failure is returned as-is and never retried: a
+ * retried create that actually succeeded the first time files the report twice.
+ *
+ * @returns {{ok:true, url:string, labeled:boolean} | {ok:false, kind:'no-repo'|'no-gh'|'auth'|'failed', error:string}}
+ */
+export async function createIssue({ repo, title, body = '', labels = ISSUE_LABELS }) {
+  if (!repo) return { ok: false, kind: 'no-repo', error: 'no GitHub repository is configured' };
+  if (!(await hasGh())) {
+    return { ok: false, kind: 'no-gh', error: 'the GitHub CLI (gh) is not installed' };
+  }
+
+  let dir = null;
+  try {
+    dir = await mkdtemp(join(tmpdir(), 'worca-issue-'));
+    const file = join(dir, 'body.md');
+    await writeFile(file, String(body), 'utf8');
+
+    const base = ['issue', 'create', '--repo', repo, '--title', title || 'Run report',
+      '--body-file', file];
+    const withLabels = [...base, ...labels.flatMap((l) => ['--label', l])];
+
+    let labeled = labels.length > 0;
+    let r = labeled ? await _run('gh', withLabels) : await _run('gh', base);
+    if (!r.ok && labeled && LABEL_REJECTED.test(r.stderr || '')) {
+      labeled = false;
+      r = await _run('gh', base);
+    }
+    if (r.ok) {
+      // gh prints the issue URL as the last stdout line, after its progress chatter.
+      const url = ((r.stdout || '').trim().split(/\r?\n/).pop() || '').trim();
+      return { ok: true, url, labeled };
+    }
+    return { ok: false, kind: ghFailureKind(r.stderr),
+             error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+  } catch (err) {
+    // mkdtemp/writeFile only: a read-only temp dir must not throw through the route.
+    return { ok: false, kind: 'failed', error: err && err.message ? err.message : String(err) };
+  } finally {
+    if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /** Normalize gh's `mergeable` / `mergeStateStatus` to MERGEABLE | CONFLICTING | UNKNOWN. */

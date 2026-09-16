@@ -1906,14 +1906,46 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .hd-branch-copy.copied + .hd-copied{display:inline;}
 .hd-spacer{flex:1 1 24px;}
 /* .btn-ghost (388-389) sets no `display` and already gives border-radius:999px —
-   these two icon+label buttons need the flex row themselves or their SVG lands on
+   the icon+label buttons here need the flex row themselves or their SVG lands on
    the text baseline with no gap (unlike .hd-archive below, which ships its own).
    They also need .btn-ghost's `padding:13px 20px` cut to the compact scale, or the
    row mixes heights. Every other place this file pairs .btn-ghost with compact
    controls does the same override (.hist-pr, .ws-actions, .pl-actions,
-   .grv-actions, .mv-card). */
-.hd-back,.hd-resume,.pd-back,.pd-new,.pd-history{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;}
+   .grv-actions, .mv-card).
+   .hd-report has no icon, but it stands in the SAME row as .hd-archive and needs the
+   same padding for the same reason: on .btn-ghost's own 13px it measured 48px beside
+   a 38px Archive (headless Chrome, both themes). */
+.hd-back,.hd-resume,.hd-report,.pd-back,.pd-new,.pd-history{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;}
 .hd-resume[hidden]{display:none;}
+/* Same trap as the fallback issue link in the report modal: the author `display`
+   above beats the UA's `[hidden]{display:none}`, and this button ships hidden. */
+.hd-report[hidden]{display:none;}
+
+/* ---- the header's ⋯ overflow menu (Archive + Report this run) ---- */
+/* The wrapper is the positioning context; the menu hangs off its right edge so it
+   cannot push the row wider or escape the card on a narrow window. */
+.hd-more-wrap{position:relative;display:inline-flex;}
+.hd-more{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;padding:0;
+  border:1.5px solid var(--line-2);border-radius:999px;background:var(--surface);color:var(--ink);
+  cursor:pointer;transition:background .15s,border-color .15s;}
+.hd-more[hidden]{display:none;}
+.hd-more:hover,.hd-more[aria-expanded="true"]{background:var(--field);border-color:var(--ink-3);}
+.hd-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:5;min-width:214px;
+  display:flex;flex-direction:column;gap:2px;padding:6px;background:var(--panel);
+  border:1px solid var(--line-2);border-radius:16px;box-shadow:var(--shadow-menu);}
+.hd-menu[hidden]{display:none;}
+/* Both items shed their pill dressing in here and become full-width rows. Higher
+   specificity than the standalone rules above, which still hold nowhere else. */
+.hd-menu .hd-archive,.hd-menu .hd-report{width:100%;justify-content:flex-start;gap:10px;
+  padding:9px 11px;border:0;border-radius:12px;background:transparent;
+  font:600 13px var(--sans);text-align:left;}
+.hd-menu .hd-archive{color:var(--red-ink);}
+.hd-menu .hd-archive:hover:not([disabled]){background:var(--red-bg);border-color:transparent;}
+/* Amber, the exact twin of Archive's red: both rows report a problem, and reporting
+   a run is a lighter act than destroying it. --amber-ink is the readable text tone in
+   both themes (--amber itself is the solid chip colour). */
+.hd-menu .hd-report{color:var(--amber-ink);}
+.hd-menu .hd-report:hover{background:var(--amber-bg);}
 /* 9px, not the 8px its siblings use: this one is 12.5px type against .hd-back's
    13.5px, so equal padding renders it 36px tall in a row of 38px buttons
    (measured in headless Chrome). The extra pixel per side matches .hd-pr, which
@@ -2462,6 +2494,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    node openHistDetail focuses programmatically, and for the `.hd-tab` tablist.
    `.hd-diff-file` already has its own (inset) ring and is not repeated here. */
 .hd-tab:focus-visible,.hd-back:focus-visible,.hd-resume:focus-visible,.pd-tab:focus-visible,.pd-back:focus-visible,.pd-new:focus-visible,.pd-history:focus-visible,.pd-remove:focus-visible,.pd-sec:focus-visible,.proj-open:focus-visible,.pd-ov-link:focus-visible,
+.hd-more:focus-visible,.hd-report:focus-visible,
 .hd-archive:focus-visible,.hd-pr:focus-visible,.hd-pr-link:focus-visible,
 .hd-branch-copy:focus-visible,.hd-sec:focus-visible,.hist-open:focus-visible,
 .hist-branch-copy:focus-visible,.shipit-ok:focus-visible,.shipit-cancel:focus-visible{
@@ -4586,3 +4619,51 @@ input.gv-name:focus-visible{outline:none;}
 .artifact-markdown a{color:var(--blue-ink);}
 .artifact-markdown table{border-collapse:collapse;}
 .artifact-markdown th,.artifact-markdown td{border:1px solid var(--line-2);padding:5px 9px;}
+
+/* ---- Report this run modal ---- */
+/* Wider than a confirm (it carries a JSON preview), narrower than the viewer. */
+.report-modal .card{width:min(680px,100%);}
+/* Every action lives in a sticky header instead of at the foot of a scrolling card.
+   The card is the scroll container (.viewer-modal .card{overflow:auto}), so `top:0`
+   sticks to its padding edge; the negative margins pull the block out over the card's
+   24px padding so its opaque background covers the full width AND the strip above it,
+   which the JSON preview would otherwise scroll through. The radius keeps it from
+   painting square corners over the card's rounded ones. */
+/* top:-24px, not 0. A sticky element clamps at the SCROLLPORT's top inset, which for
+   this card is its padding edge — 24px below the border. At top:0 the block pins there
+   and the 24px strip above it stays transparent, so the form scrolls through it in
+   plain sight (measured over CDP: the opt-in labels showed above the title). Pulling
+   the inset up by exactly the card's padding pins the block flush to the border edge
+   instead, where its own background covers the strip. */
+.report-modal .report-top{position:sticky;top:-24px;z-index:2;background:var(--panel);
+  margin:-24px -24px 16px;padding:24px 24px 14px;border-bottom:1px solid var(--line);
+  border-radius:var(--r-card) var(--r-card) 0 0;}
+/* The error/filed slots carry their own top margin, and the header's padding closes
+   the block — a margin here would only add a gap when both are hidden, which is most
+   of the time. */
+.report-modal .report-top .card-head{margin-bottom:0;}
+.report-head-actions{display:flex;align-items:center;gap:9px;}
+/* Wrap rather than overflow the 680px card on a narrow window. */
+.report-modal .confirm-actions{flex-wrap:wrap;}
+.report-field{margin-bottom:14px;}
+.report-field > label{display:block;font-weight:600;font-size:12.5px;margin-bottom:6px;}
+.report-field textarea.textarea{resize:vertical;min-height:64px;font-size:13.5px;}
+.report-modal #report-preview{max-height:300px;margin:0;font-size:12px;}
+.report-optins .confirm-checkbox + .confirm-checkbox{margin-top:8px;}
+.report-optin-hint{display:block;margin-top:3px;color:var(--ink-2);font-size:11.5px;line-height:1.4;}
+.report-error{margin:10px 0 0;color:var(--red-ink);font-size:12.5px;}
+.report-error[hidden]{display:none;}
+.report-filed{margin:10px 0 0;font-size:12.5px;}
+.report-filed[hidden]{display:none;}
+/* The issue link is an <a> so it opens in a real new tab; keep it button-shaped.
+   SCOPED to .report-modal: an unscoped `.confirm-actions a.btn` would reach into every
+   confirm/export/stop dialog in the app, and the :not([href]) rule below would silently
+   grey out any future anchor another modal adds before it has an href. */
+.report-modal .confirm-actions a.btn{display:inline-flex;align-items:center;text-decoration:none;}
+/* …but an author `display` beats the UA's `[hidden]{display:none}` at any specificity,
+   so the rule above would render the fallback link while app.js believes it is hidden.
+   (`el.hidden` is true, the element is on screen — jsdom cannot see this, CDP can.) */
+.report-modal .confirm-actions a.btn[hidden]{display:none;}
+/* No href => the preview is still building. Make that legible rather than letting a
+   dead-looking button sit there (D24). */
+.report-modal .confirm-actions a.btn:not([href]){opacity:.5;pointer-events:none;}
