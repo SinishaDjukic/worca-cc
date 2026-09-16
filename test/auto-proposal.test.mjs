@@ -128,4 +128,5 @@ test('mintAutoWorkflowId slugs the name, avoids reserved ids and bumps on collis
   assert.equal(await mintAutoWorkflowId('Default', exists), 'wf_auto-workflow');
   assert.equal(await mintAutoWorkflowId('auto', exists), 'wf_auto-workflow');
   assert.equal(await mintAutoWorkflowId('', exists), 'wf_auto-workflow');
+  assert.equal(await mintAutoWorkflowId('memory_defrag', exists), 'wf_memory-defrag');
 });

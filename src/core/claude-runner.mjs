@@ -43,7 +43,7 @@ import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from './h
 // propose_workflow with — both pure (no DB, no spawn).
 import { mockShapeFor } from './auto/recipes.mjs';
 import { normalizeShape } from '../shared/graph/assemble.mjs';
-import { writeFile, mkdir, appendFile, readFile, access } from 'node:fs/promises';
+import { writeFile, mkdir, appendFile, readFile, access, readdir } from 'node:fs/promises';
 import { constants as FS, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -346,7 +346,8 @@ export function mockEnabled(opts) {
  * @param {number} [o.maxTurns]             --max-turns <n> (positive safe integer; else omitted)
  * @param {number|null} [o.maxBudgetUsd]    --max-budget-usd <n> (finite > 0; null/else omitted)
  * @param {string} [o.appendSubagentSystemPrompt] --append-subagent-system-prompt <text> (Task children only)
- *   All eight are Ask Worca sandbox options (ask-worca-design.md §6.3) and default-off.
+ * @param {string[]} [o.addDirs]            --add-dir <dir> per entry (Ask Worca's memory mount; the CLI loads <dir>/.claude/rules only with CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 in the env — memory-deps.mjs / spawn.mjs set it)
+ *   All nine are Ask Worca sandbox options (ask-worca-design.md §6.3) and default-off.
  * @param {number} [o.argvInlineLimit]     override ARGV_INLINE_LIMIT (GH #380; tests force the staged path)
  * @returns {Promise<{text:string, exitCode:number}>}
  */
@@ -384,6 +385,7 @@ export async function runClaude(o = {}) {
     maxTurns,
     maxBudgetUsd,
     appendSubagentSystemPrompt,
+    addDirs,
     argvInlineLimit,
     bin = DEFAULT_BIN,
   } = o;
@@ -428,6 +430,7 @@ export async function runClaude(o = {}) {
     maxTurns,
     maxBudgetUsd,
     appendSubagentSystemPrompt,
+    addDirs,
     argvInlineLimit,
   });
 }
@@ -450,8 +453,9 @@ export async function runClaude(o = {}) {
  *                        (docs/run-root-verification.md, branch (a); argv-attested
  *                        transcript phase0/out/v1a-rerun.jsonl, with a no-grant
  *                        negative control proving the grant is load-bearing).
- *  `--add-dir` is deliberately absent: it needs an env override to carry memory at
- *  all (E2) and no shipped feature uses it (§5.3 / §8.18). */
+ *  `--add-dir` carries Ask Worca's memory mount ONLY (`addDirs`): it needs the
+ *  CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 env override to load memory at all
+ *  (E2, re-probed 2026-09-13 on 2.1.270), and no pipeline path passes it (§5.3 / §8.18 unchanged). */
 export function buildClaudeArgs({
   prompt, systemPrompt, permissionMode, model, effort, allowedTools, resumeSessionId,
   mcpConfigPath, mcpServerGrants, permissionRules,
@@ -459,7 +463,7 @@ export function buildClaudeArgs({
   // way in because the legacy body below already owns a local `tools` (the
   // --allowedTools union).
   tools: builtinTools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
-  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard,
+  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard, addDirs,
 }, delivery = {}) {
   // delivery (GH #380, set only by planClaudeInvocation's staged branch):
   //   promptViaStdin   -> bare `-p`; the prompt is written to the child's stdin
@@ -520,6 +524,9 @@ export function buildClaudeArgs({
   if (typeof appendSubagentSystemPrompt === 'string' && appendSubagentSystemPrompt) {
     args.push('--append-subagent-system-prompt', appendSubagentSystemPrompt);
   }
+  // Native-rules revision (2026-09-13): Ask Worca's memory mount. LAST, so every earlier argv
+  // stays a prefix; absent / [] / non-strings ⇒ nothing (the `names` filter above).
+  for (const d of names(addDirs)) args.push('--add-dir', d);
   return args;
 }
 
@@ -572,7 +579,7 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
   return { ...plan, dir };
 }
 
-function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, argvInlineLimit }) {
+function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, argvInlineLimit }) {
   return new Promise((resolveP, rejectP) => {
     // Per-model routing env (design §4.4), prepared BEFORE argv: reserved keys
     // are re-dropped here defensively — the write path already rejects them, so
@@ -651,7 +658,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         permissionMode, model: wireModel, effort, allowedTools, resumeSessionId,
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
-        maxTurns, maxBudgetUsd, appendSubagentSystemPrompt,
+        maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs,
       }, { bin: resolved.bin, limit });
     } catch (err) {
       rejectP(new Error(`Failed to stage the claude prompt files: ${err.message}`));
@@ -969,13 +976,17 @@ async function emitLog(onEvent, text) {
  */
 export const MOCK_WRITER_ROLES = new Set([
   'clarify', 'planner-plan', 'refiner', 'decomposer', 'implementer', 'reviewer', 'plan-review',
-  'workspace-scan', 'agent-gen', 'workspace-reviewer', 'manual-tests-checklist', 'manual-web-ui-testing',
+  'workspace-scan', 'agent-gen', 'workspace-reviewer', 'manual-tests-checklist', 'manual-web-ui-testing', 'memory-defrag',
   'generic-producer', 'generic-verifier',
 ]);
 
 /** Named so the executor's mock-role chain and the switch cannot drift apart. */
 export const MOCK_ROLE_CLARIFY = 'clarify';
 export const MOCK_ROLE_DECOMPOSER = 'decomposer';
+
+/** The memory defragmenter's role, exported like the other two named roles (the switch below
+ *  still uses the literal string: mock-writer-roles.test.mjs parses the switch arms). */
+export const MOCK_ROLE_MEMORY_DEFRAG = 'memory-defrag';
 
 /**
  * The mock-fan-out roles (mirror the orchestrator's FANOUT_ELIGIBLE intent): the
@@ -1282,6 +1293,9 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessi
     case 'manual-web-ui-testing':
       text = await mockManualWebUiTesting(m, cycle, onEvent);
       break;
+    case 'memory-defrag':
+      text = await mockMemoryDefrag(m, systemPrompt, onEvent);
+      break;
     case 'generic-producer':
       text = await mockGenericProducer(m, onEvent);
       break;
@@ -1381,6 +1395,61 @@ async function mockGenericProducer(m, onEvent) {
   await writeFile(out, body, 'utf8');
   safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
   return `[mock] generic artifact written to ${out}`;
+}
+
+/** The scope dirs the `## Worca memory` block of a system prompt names (memory-store.mjs
+ *  renderMemoryBlock: `<label> — <abs dir>:` lines under the heading; the block is contiguous,
+ *  so the first blank line ends it). The mock defragmenter finds its mount exactly the way the
+ *  real agent is told to — from its system prompt — so no MOCK marker is needed. Exported for
+ *  the parity test against a real renderMemoryBlock output. Both captures are greedy: a project
+ *  LABEL may itself contain ` — ` (the renderer's separator is the last one on the line), and a
+ *  Windows dir carries a drive colon while the line still ends with `:`. */
+export function memoryDirsFromPrompt(systemPrompt) {
+  const text = String(systemPrompt || '');
+  const at = text.indexOf('## Worca memory');
+  if (at === -1) return [];
+  const out = [];
+  for (const line of text.slice(at).split(/\r?\n/).slice(1)) {
+    if (!line.trim()) break;
+    const m = line.match(/^(?:Global|Project .*) — (.+):$/);
+    if (m) out.push(m[1]);
+  }
+  return out;
+}
+
+/** Memory defragment mock (agent-memory-design.md §7.1): in the FIRST scope dir the system
+ *  prompt names, fold the second (sorted) file's body into the first and EMPTY it (amendment
+ *  B19 — the memory tool set cannot unlink, so this is the path the real agent takes), then
+ *  write the report to MOCK_OUT. A defrag run mounts exactly ONE scope dir. */
+async function mockMemoryDefrag(m, systemPrompt, onEvent) {
+  const out = m.MOCK_OUT;
+  const dir = memoryDirsFromPrompt(systemPrompt)[0] || null;
+  await emitLog(onEvent, '[mock] memory defragmenter restructuring the mounted scope');
+  const lines = ['# Memory defragment report', ''];
+  let merged = null;
+  if (dir) {
+    const files = (await readdir(dir, { withFileTypes: true })).filter((e) => e.isFile() && e.name.endsWith('.md')).map((e) => e.name).sort();
+    if (files.length < 2) {
+      lines.push(`- ${dir}: ${files.length} file(s), nothing to merge`);
+    } else {
+      const [a, b] = files;
+      const bodyB = (await readFile(join(dir, b), 'utf8')).replace(/^---\n[\s\S]*?\n---\n/, '');
+      const text = `${await readFile(join(dir, a), 'utf8')}\n## Merged from ${b.slice(0, -3)}\n\n${bodyB}`;
+      await writeFile(join(dir, a), text, 'utf8');
+      await writeFile(join(dir, b), '', 'utf8');            // B19: an EMPTIED mount file is a deletion request
+      merged = [a, b];
+      lines.push(`- ${dir}: merged ${b} into ${a}; emptied ${b} (worca removes it at sync-back)`);
+      safeEmit(onEvent, { type: 'tool_use', text: `merged ${join(dir, b)} into ${join(dir, a)}`, raw: { mock: true, file: join(dir, a) } });
+    }
+  } else {
+    lines.push('- no memory scope in the system prompt: nothing to defragment');
+  }
+  if (out) {
+    await ensureDir(out);
+    await writeFile(out, `${lines.join('\n')}\n`, 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
+  }
+  return merged ? `[mock] memory defragment: merged ${merged[1]} into ${merged[0]}` : '[mock] memory defragment: nothing to merge';
 }
 
 async function mockPlannerPlan(m, onEvent) {

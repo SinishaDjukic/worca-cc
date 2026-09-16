@@ -34,7 +34,9 @@ after(async () => {
   for (const k of ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK']) {
     if (prevEnv[k] === undefined) delete process.env[k]; else process.env[k] = prevEnv[k];
   }
-  await rm(sandboxHome, { recursive: true, force: true });
+  // Retry the rmdir: a just-closed sqlite handle or a late audit write can
+  // ENOTEMPTY/EBUSY the first attempt (the same guard temp-home.mjs uses).
+  await rm(sandboxHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 /** Persist the 7 seeds so readWorkflow can serve them (V24 does this for real

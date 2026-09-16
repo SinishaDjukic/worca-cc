@@ -20,19 +20,19 @@ test('the three nav entries are gone from BOTH menus', () => {
     assert.equal(html.includes(`data-nav="${v}"`), false, `data-nav=${v} still present`);
 });
 
-test('settings holds a .seg tab strip with the four tabs, General preselected', () => {
+test('settings holds a .seg tab strip with the five tabs, General preselected', () => {
   const seg = settingsView().querySelector('#settings-tabs');
   assert.ok(seg, '#settings-tabs missing');
   assert.ok(seg.classList.contains('seg'), 'reuses the .seg segmented control');
   const btns = [...seg.querySelectorAll('button[data-tab]')];
-  assert.deepEqual(btns.map((b) => b.dataset.tab), ['general', 'guardrails', 'models', 'plugins']);
-  assert.deepEqual(btns.map((b) => b.classList.contains('on')), [true, false, false, false]);
+  assert.deepEqual(btns.map((b) => b.dataset.tab), ['general', 'guardrails', 'models', 'plugins', 'memory']);
+  assert.deepEqual(btns.map((b) => b.classList.contains('on')), [true, false, false, false, false]);
 });
 
-test('four panes live inside settings; only General starts visible', () => {
+test('five panes live inside settings; only General starts visible', () => {
   const panes = [...settingsView().querySelectorAll('.settings-pane')];
-  assert.deepEqual(panes.map((p) => p.dataset.tab), ['general', 'guardrails', 'models', 'plugins']);
-  assert.deepEqual(panes.map((p) => p.classList.contains('hidden')), [false, true, true, true]);
+  assert.deepEqual(panes.map((p) => p.dataset.tab), ['general', 'guardrails', 'models', 'plugins', 'memory']);
+  assert.deepEqual(panes.map((p) => p.classList.contains('hidden')), [false, true, true, true, true]);
   // A pane must NOT be a routed view: showView's views.forEach would force
   // .hidden back on it at every navigation.
   for (const p of panes) {
@@ -54,7 +54,7 @@ test('every relocated id and action button survives the move, inside settings', 
 
 test('each tab keeps its own heading + sub-title in its own topbar', () => {
   const view = settingsView();
-  for (const [tab, h1] of [['general', 'Settings'], ['guardrails', 'Guardrails'], ['models', 'Models'], ['plugins', 'Plugins']]) {
+  for (const [tab, h1] of [['general', 'Settings'], ['guardrails', 'Guardrails'], ['models', 'Models'], ['plugins', 'Plugins'], ['memory', 'Memory']]) {
     const bar = view.querySelector(`.settings-pane[data-tab="${tab}"] > .topbar`);
     assert.ok(bar, `${tab} pane has no .topbar`);
     assert.equal(bar.querySelector('h1').textContent.trim(), h1);
@@ -120,8 +120,8 @@ test('bare #settings shows General and nothing else', async () => {
   const { window } = await boot();
   await go(window, 'settings');
   assert.equal(window.document.querySelector('[data-view="settings"]').classList.contains('hidden'), false);
-  assert.deepEqual(['general', 'guardrails', 'models', 'plugins'].map((t) => shown(window, t)),
-    [true, false, false, false]);
+  assert.deepEqual(['general', 'guardrails', 'models', 'plugins', 'memory'].map((t) => shown(window, t)),
+    [true, false, false, false, false]);
   assert.ok(window.document.querySelector('#settings-tabs button[data-tab="general"]').classList.contains('on'));
   assert.ok(window.document.querySelector('#settingsRoot'), 'General still owns #settingsRoot');
 });

@@ -19,6 +19,7 @@ import { branchExists, diffShortstat, hasGh, findPrForBranch } from './git-info.
 import { getDb, tx } from './db.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
 import { readRunLedger } from './metrics/ledger.mjs';
+import { memoryTotals } from './memory-sync.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -2160,8 +2161,19 @@ export async function readPipelineByKey(key, id) {
     results,
     overview,
     teamMetrics: readRunLedger(row.id),
+    memory: await readMemoryLedger(dir),
     ...readPipelineExtras(row.id),
   };
+}
+
+/** A run's memory ledger (<runDir>/memory.json, agent-memory P1 amendment A2) as
+ *  { mount, changes, totals }, or null when the run wrote none. The ONE reader: the History
+ *  detail above serves it whole, ask/tool-deps.mjs' readRunMemory serves get_run the
+ *  changes + totals (never the mount path). Read-only, null on any failure. */
+export async function readMemoryLedger(dir) {
+  const ledger = await readJsonFile(join(dir, 'memory.json'));
+  if (!ledger || !Array.isArray(ledger.changes)) return null;
+  return { mount: ledger.mount || null, changes: ledger.changes, totals: memoryTotals(ledger.changes) };
 }
 
 /** Local helper: read + JSON-parse a file, null on any failure. */

@@ -24,6 +24,7 @@ import { pathToFileURL } from 'node:url';
 import { createAskTools, AskToolError } from './tools.mjs';
 import { defaultToolDeps } from './tool-deps.mjs';
 import { defaultWorktreeDeps } from './worktree-deps.mjs';
+import { defaultMemoryDeps } from './memory-deps.mjs';
 import { defaultCommentDeps } from './comment-deps.mjs';
 import { defaultWorkflowDeps } from './workflow-deps.mjs';
 import { defaultMetricsDeps } from './metrics-deps.mjs';
@@ -121,6 +122,7 @@ export async function main({ argv = process.argv.slice(2), env = process.env, st
     tools: createAskTools({
       ...defaultToolDeps({ threadId }),
       ...defaultWorktreeDeps({ threadId }),
+      ...defaultMemoryDeps({ threadId }),
       ...defaultCommentDeps(),
       ...defaultWorkflowDeps({ threadId, signal: life.signal }),
       ...defaultMetricsDeps({ threadId }),

@@ -2530,3 +2530,90 @@ test('a History run frozen while Auto was still deciding: the still line, no orb
   assert.equal(host.querySelector('.auto-deciding-label').textContent, 'Auto did not decide a workflow');
   assert.equal(host.querySelector('.ask-orb'), null, 'no orb on a frozen run');
 });
+
+// ---------------------------------------------------------------------------
+// The overflow menu — Archive + Report this run live behind one ⋯ trigger
+// ---------------------------------------------------------------------------
+// The two buttons keep their own classes inside it, so every gate, busy-label swap
+// and assertion above still addresses them directly; only their PLACEMENT moved.
+
+const hdMore = (doc) => doc.querySelector('#hist-detail .hd-more');
+const hdMenu = (doc) => doc.querySelector('#hist-detail .hd-menu');
+
+test('the ⋯ trigger opens and closes the header menu', async () => {
+  const ctx = await bootDetail();
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+
+  const more = hdMore(doc);
+  const menu = hdMenu(doc);
+  assert.ok(more && menu, 'the trigger and its menu are in the detail template');
+  assert.equal(menu.hidden, true, 'the menu starts closed');
+  assert.equal(more.getAttribute('aria-expanded'), 'false');
+  assert.equal(more.getAttribute('aria-haspopup'), 'menu');
+
+  click(ctx.window, more);
+  await settle(ctx.window);
+  assert.equal(menu.hidden, false, 'clicking opens it');
+  assert.equal(more.getAttribute('aria-expanded'), 'true');
+  assert.ok(menu.contains(doc.querySelector('#hist-detail .hd-archive')), 'Archive lives inside');
+  const report = doc.querySelector('#hist-detail .hd-report');
+  assert.ok(menu.contains(report), 'so does Report this run');
+  assert.ok(report.querySelector('svg'), 'Report carries a warning-triangle icon, like Archive carries a bin');
+  assert.equal(report.querySelector('.hd-btn-label').textContent, 'Report this run',
+    'and its label lives in the same span Archive uses, so the two rows line up');
+  assert.equal(menu.contains(doc.querySelector('#hist-detail .hd-resume')), false,
+    'Resume is the primary action and stays in the row');
+
+  click(ctx.window, more);
+  await settle(ctx.window);
+  assert.equal(menu.hidden, true, 'clicking again closes it');
+});
+
+test('the menu closes on an outside click, on Escape, and on choosing an item', async () => {
+  const ctx = await bootDetail();
+  await openDetail(ctx);
+  const { window: w } = ctx;
+  const doc = w.document;
+  const open = async () => { click(w, hdMore(doc)); await settle(w); };
+
+  await open();
+  click(w, doc.querySelector('#hist-detail .hd-meta'));
+  await settle(w);
+  assert.equal(hdMenu(doc).hidden, true, 'a click anywhere else dismisses it');
+
+  await open();
+  doc.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await settle(w);
+  assert.equal(hdMenu(doc).hidden, true, 'Escape dismisses it');
+  assert.equal(doc.activeElement, hdMore(doc), 'and hands focus back to the trigger');
+
+  await open();
+  click(w, doc.querySelector('#hist-detail .hd-report'));
+  await settle(w);
+  assert.equal(hdMenu(doc).hidden, true, 'choosing an item dismisses it');
+  assert.equal(doc.getElementById('report-modal').classList.contains('hidden'), false,
+    'and the item still does its job');
+});
+
+test('the ⋯ trigger hides when it would open an empty menu', async () => {
+  // A live run can be neither archived nor reported. An always-present trigger that
+  // opens onto nothing is worse than no trigger.
+  const live = { ...ROW, status: 'running', survived: false };
+  const ctx = await bootDetail({ rows: [live],
+    detail: { ...DETAIL, state: { ...DETAIL.state, status: 'running' } } });
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+
+  assert.equal(doc.querySelector('#hist-detail .hd-archive').hidden, true);
+  assert.equal(doc.querySelector('#hist-detail .hd-report').hidden, true);
+  assert.equal(hdMore(doc).hidden, true, 'so the trigger goes too');
+
+  // The gate is set once per visit (setupHdActions) — refreshHdFromRow re-runs only
+  // the DISABLED gate, so a run going terminal under an open screen offers the
+  // trigger on the next visit, exactly as Archive and Report already do.
+  const done = await bootDetail();
+  await openDetail(done);
+  assert.equal(hdMore(done.window.document).hidden, false,
+    'a finished run opens the screen with the trigger in place');
+});

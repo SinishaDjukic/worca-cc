@@ -115,7 +115,7 @@ import {
   writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
 } from '../src/core/guardrail-store.mjs';
 import {
-  GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, listWorkflows, deleteWorkflow, isSafeWorkflowId,
+  GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, listWorkflows, deleteWorkflow, isSafeWorkflowId,
   setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow, readWorkflow,
 } from '../src/core/workflows.mjs';
 import { mintAutoWorkflowId, sanitizeProposalAnswer } from '../src/core/auto/proposal.mjs';
@@ -134,7 +134,7 @@ import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
 } from '../src/core/worktree.mjs';
-import { hasGh, pushBranch, createPr, prMergeable, listRemotes, sameRepo } from '../src/core/git-info.mjs';
+import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, sameRepo } from '../src/core/git-info.mjs';
 import { archivePipeline, discardRetainedWorktrees } from '../src/core/pipeline-delete.mjs';
 import {
   listWorkspaces, readWorkspace, createWorkspace,
@@ -142,7 +142,13 @@ import {
 } from '../src/core/workspaces.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline } from '../src/core/artifacts.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
-import { projectKey } from '../src/core/store.mjs';
+import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
+import { validateMemoryScope, withStoreLock } from '../src/core/memory-sync.mjs';
+import {
+  memoryRoot, GLOBAL_SCOPE, projectScope, scopeKey, isValidMemoryName, MEMORY_NAME_HELP, memoryScopeReport,
+  readMemory, writeMemory, removeMemory, listSnapshots, restoreSnapshot,
+} from '../src/core/memory-store.mjs';
+import { memoryCaps } from '../src/core/settings.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
 import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
 import { createAgentGen } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
@@ -175,6 +181,11 @@ import { normalizeManifest, validatePluginDir, PLUGIN_NAME_RE as MANIFEST_PLUGIN
 import { listTaskSources, retryWriteback } from '../src/core/sources.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { resolveAutoModel, AUTO_MODEL_ENV } from '../src/core/auto/model.mjs';
+import {
+  buildRunReport, buildIssueUrl, reportFilename, renderIssueBodyFull, issueTitle,
+  repoSlugFromBugsUrl, BUGS_URL,
+} from '../src/core/run-report.mjs';
+import { REPORT_REASON_IDS } from '../src/shared/report-reasons.mjs';
 import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
@@ -217,6 +228,9 @@ const APP_INFO = Object.freeze({
   version: PKG_VERSION || '',
   repoUrl: APP_REPO_URL,
   releaseUrl: APP_REPO_URL && PKG_VERSION ? `${APP_REPO_URL}/releases/tag/worca-app-v${PKG_VERSION}` : '',
+  // package.json bugs.url, via run-report.mjs so the Settings links and the
+  // prefilled issue URL can never disagree. Falls back to <repo>/issues.
+  bugsUrl: BUGS_URL || (APP_REPO_URL ? `${APP_REPO_URL}/issues` : ''),
 });
 const HLJS_LANGUAGE_FILE_RE = /^[a-z0-9][a-z0-9-]{0,63}\.min\.js$/;
 // Primaries plus the sub-language grammars their instances register
@@ -545,6 +559,26 @@ function liveRunEntry(id) {
   return best;
 }
 
+/** 'global' | 'projects/<key>' — the store scope key a defragment run works on (memory-store.mjs scopeKey). */
+function memoryScopeKey(memoryScope, projectDir) {
+  return memoryScope === 'global' ? 'global' : `projects/${projectKey(projectDir)}`;
+}
+/** The live (i.e. not SETTLED_RUN) defragment run on that scope key, or null. A paused defrag is
+ *  NOT live — resumeRun refuses to resume it while another one runs.
+ *  Amendment B20: "one live defragment run per scope" is enforced by THIS server process over ITS
+ *  runs Map. A CLI-started defragment, or a second `worca ui` process on the same home, is not
+ *  registered here; such a collision resolves like any two runs today — last sync wins and the
+ *  loser's store copy is in `.history` (spec §5 concurrency). A DB-level check is impossible: the
+ *  pipelines row carries no memoryScope. */
+function liveDefragRun(scopeKeyStr) {
+  for (const e of runs.values()) {
+    if ((e.kind || 'run') !== 'run' || !e.orch?.memoryScope) continue;
+    if (SETTLED_RUN.has(String(e.status || ''))) continue;
+    if (memoryScopeKey(e.orch.memoryScope, e.projectDir) === scopeKeyStr) return e;
+  }
+  return null;
+}
+
 function summarizeRuns() {
   return [...runs.values()].map((r) => ({
     runId: r.id,
@@ -645,6 +679,14 @@ function wireRun(entry) {
         // ...and WHAT went wrong for an error-pause, reset alongside it.
         entry.pauseDetail = (payload && payload.detail) || null;
         resolvePending(entry, { reason: entry.status });
+        // B29: ANY run that mounted memory may have synced into its scopes (P1 syncs the mount back
+        // at the run end on done, error, stopped and paused alike) — poke every mounted scope so open
+        // Memory views refetch. Never gated on `entry.status`: it is mirrored from the earlier `state`
+        // frame and already reads 'done' BEFORE _buildResults()/_stampDefrag() have run, while THIS
+        // event fires after both (so a defragment frame always follows its stamp).
+        if (orch.memory?.dirs?.length) {
+          for (const d of orch.memory.dirs) emitMemoryChanged(scopeKey(d.scope));
+        }
         if (payload?.reason === 'cost_pipeline' || payload?.reason === 'cost_total') {
           emitChanged('budget-changed');
         }
@@ -1217,7 +1259,7 @@ function askTrackRun(threadId, input, pin) {
 // body (workspace):      { workspaceId, prompt?, ... } — mutually exclusive with
 //                        projectDir (§2.6). Single-project behavior is byte-identical.
 // ---------------------------------------------------------------------------
-app.post('/api/run', async (req, res) => {
+const startRunHandler = async (req, res) => {
   try {
     const body = req.body || {};
 
@@ -1323,6 +1365,12 @@ app.post('/api/run', async (req, res) => {
     if (workflowId === AUTO_WORKFLOW_ID && hasWorkspace) {
       return badRequest(res, 'Auto workflow is not available for workspace targets yet');
     }
+    // Agent memory (§7.3): the defragment run option — ONE gate for every entry point (the CLI
+    // and Ask's proposal validator call the same helper). Before the target lookup, like Auto.
+    if (body.memoryScope != null && typeof body.memoryScope !== 'string') return badRequest(res, 'memoryScope must be "global" or "project"');
+    const memoryScope = typeof body.memoryScope === 'string' && body.memoryScope.trim() ? body.memoryScope.trim() : null;
+    const scopeReason = validateMemoryScope({ workflowId, memoryScope, isWorkspace: !!hasWorkspace });
+    if (scopeReason) return badRequest(res, scopeReason);
     // Human in the loop (spec D15): the body wins, else the project's stored
     // switch, else on. Resolved per target below (it needs the project dir).
     const bodyHumanInLoop = typeof body.humanInLoop === 'boolean' ? body.humanInLoop : null;
@@ -1472,6 +1520,11 @@ app.post('/api/run', async (req, res) => {
 
       const fileProblem = await promptFileProblem(effectiveSource, projectDir);
       if (fileProblem) return badRequest(res, fileProblem);
+      // One live defragment run per scope (§7.3, amendment B20: this server process only).
+      if (memoryScope) {
+        const live = liveDefragRun(memoryScopeKey(memoryScope, projectDir));
+        if (live) return res.status(409).json({ error: 'a defragment run for this memory scope is already live', runId: live.id });
+      }
 
       const humanInLoop = bodyHumanInLoop ?? ((await readRunConfig(projectDir)).humanInLoop !== false);
 
@@ -1487,6 +1540,7 @@ app.post('/api/run', async (req, res) => {
         guardrailsId,
         branch,
         humanInLoop,
+        ...(memoryScope ? { memoryScope } : {}),
         claude: { permissionMode: 'acceptEdits', mock },
       });
 
@@ -1563,7 +1617,8 @@ app.post('/api/run', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
-});
+};
+app.post('/api/run', startRunHandler);
 
 // ---------------------------------------------------------------------------
 // Chat connectivity (chat-connectivity-design.md): persistent channel workers
@@ -1840,7 +1895,15 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false } = {
     if (!projectDir) throw new ResumeError(400, { error: 'project for this pipeline is not onboarded on this machine' });
   }
 
-  const effMock = mock || isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK);
+  // A paused defragment run is not live; another one on the same scope may have started since.
+  // Resuming the first would sync its stale mount over the second's work (spec §5 concurrency).
+  const rpScope = saved.resumePoint?.memoryScope || null;
+  if (rpScope && !workspace) {
+    const live = liveDefragRun(memoryScopeKey(rpScope, projectDir));
+    if (live) throw new ResumeError(409, { error: 'a defragment run for this memory scope is already live', runId: live.id });
+  }
+
+  const effMock = mock ||isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK);
   const runId = randomUUID();
   const orch = await createOrchestratorFor({
     projectDir,
@@ -2929,6 +2992,155 @@ app.delete('/api/projects', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// /api/memory/* -> worca's agent memory store (agent-memory-design.md §11). Thin
+// handlers over src/core/memory-store.mjs: names are validated BEFORE any fs call,
+// MemoryError codes map to statuses, every write snapshots (the store does it) and
+// broadcasts `memory-changed`. Two route families — `global` and `projects/:key` —
+// share ONE handler set through resolveMemoryScope().
+// ---------------------------------------------------------------------------
+function memoryHttpStatus(err) {
+  const code = err && err.code;
+  if (code === 'ENAME') return 400;
+  if (code === 'ECASE' || code === 'EFULL') return 409;
+  if (code === 'ETOOBIG') return 413;
+  if (code === 'ENOSCOPE') return 404;
+  return 500;
+}
+function memoryError(res, err) {
+  const status = memoryHttpStatus(err);
+  const message = String(err && err.message ? err.message : err).replace(/^memory: /, '');
+  if (status === 500) console.error(`[worca-ui] memory: ${err && err.stack ? err.stack : message}`);
+  return res.status(status).json({ error: status === 500 ? 'memory store error' : message });
+}
+
+/** Thread-less, seq-less frame (B5): an Ask tool, a REST write or a run that mounted memory
+ *  changed a scope; open Memory views refetch. Best effort. Exported through _testing. */
+function emitMemoryChanged(scopeKeyStr) {
+  try { broadcast({ type: 'memory-changed', scope: scopeKeyStr }); return true; } catch { return false; }
+}
+
+/** { scope, key, project } for the global family or a REGISTERED project key; null ⇒ 404.
+ *  `family` is passed by registerMemoryRoutes rather than inferred (I2-#19): express populates
+ *  `req.params.key` only for the `projects/:key` prefix, so `req.params.key === undefined` WOULD
+ *  separate the two registrations — an implicit path-shape coincidence where one named argument
+ *  reads as intent. The two prefixes never collide: every second segment is a literal. */
+async function resolveMemoryScope(req, family) {
+  if (family === 'global') return { scope: GLOBAL_SCOPE, key: 'global', project: null };
+  const key = String(req.params.key || '');
+  if (!PROJECT_KEY_RE.test(key)) return null;           // the shape store.mjs#projectKey produces
+  const p = (await listProjects()).find((x) => x.key === key);
+  if (!p) return null;
+  return { scope: projectScope(key), key: `projects/${key}`, project: { key: p.key, name: p.name, path: p.path } };
+}
+
+/** Start a defragment run through the ONE run handler (§7.3): the wrapper only builds the body.
+ *  startRunHandler reads `req.body` exactly once, at its top, so rewriting it here is sound. */
+async function defragRequest(req, res, { memoryScope, projectKey: key }) {
+  if (!PROJECT_KEY_RE.test(String(key || ''))) return res.status(404).json({ error: 'project not found' });
+  const p = (await listProjects()).find((x) => x.key === key);
+  if (!p) return res.status(404).json({ error: 'project not found' });
+  if (!p.exists) return badRequest(res, `project path is missing: ${p.path}`);   // else startRunHandler would mkdir it
+  req.body = {
+    projectDir: p.path,
+    prompt: memoryScope === 'global' ? 'Defragment global memory.' : `Defragment the memory of project ${p.name}.`,
+    title: memoryScope === 'global' ? 'Memory defragment (global)' : `Memory defragment: ${p.name}`,
+    workflowId: MEMORY_DEFRAG_WORKFLOW_ID,
+    guardrailsId: 'normal',
+    memoryScope,
+    ...(req.body && req.body.mock === true ? { mock: true } : {}),
+  };
+  return startRunHandler(req, res);
+}
+
+function registerMemoryRoutes(prefix, { family }) {
+  const scoped = (handler) => async (req, res) => {
+    try {
+      const ctx = await resolveMemoryScope(req, family);
+      if (!ctx) return res.status(404).json({ error: 'project not found' });
+      return await handler(req, res, ctx);
+    } catch (err) { return memoryError(res, err); }
+  };
+  const named = (req, res) => {
+    const name = String(req.params.name || '');
+    if (!isValidMemoryName(name)) { badRequest(res, `invalid memory name — ${MEMORY_NAME_HELP}`); return null; }
+    return name;
+  };
+  /** B23: while a defragment run is live on this scope, that run's final sync would silently
+   *  overwrite a REST write ("the run's version wins", memory-sync.mjs) — refuse instead. */
+  const defragLocked = (res, key) => {
+    const live = liveDefragRun(key);
+    if (!live) return false;
+    res.status(409).json({ error: 'a defragment run is live on this memory scope — wait for it to finish', runId: live.id });
+    return true;
+  };
+  const onError = (p, err) => console.warn(`[worca-ui] memory: ${p}: ${err && err.message ? err.message : err}`);
+
+  app.get(prefix, scoped(async (_req, res, { scope, key, project }) => {
+    const report = await memoryScopeReport(memoryRoot(), scope, memoryCaps(), { onError });
+    res.json({ scope: key, project, files: report.entries, state: report.state, health: report.health, defragRunId: liveDefragRun(key)?.id || null });
+  }));
+  app.get(`${prefix}/files/:name`, scoped(async (req, res, { scope }) => {
+    const name = named(req, res); if (name === null) return;
+    const f = await readMemory(memoryRoot(), scope, name);
+    if (!f) return res.status(404).json({ error: 'memory file not found' });
+    res.json({ name, text: f.text, meta: f.meta, body: f.body });
+  }));
+  app.put(`${prefix}/files/:name`, scoped(async (req, res, { scope, key }) => {
+    const name = named(req, res); if (name === null) return;
+    const text = req.body && typeof req.body.text === 'string' ? req.body.text : null;
+    if (text === null) return badRequest(res, 'text (string) is required');
+    if (defragLocked(res, key)) return;
+    const r = await withStoreLock(memoryRoot(), () => writeMemory(memoryRoot(), scope, name, text, { source: 'user', caps: memoryCaps() }));
+    emitMemoryChanged(key);
+    res.json({ ok: true, name, created: r.created, bytes: r.bytes });
+  }));
+  app.delete(`${prefix}/files/:name`, scoped(async (req, res, { scope, key }) => {
+    const name = named(req, res); if (name === null) return;
+    if (defragLocked(res, key)) return;
+    const removed = await withStoreLock(memoryRoot(), () => removeMemory(memoryRoot(), scope, name, { source: 'user' }));
+    if (!removed) return res.status(404).json({ error: 'memory file not found' });
+    emitMemoryChanged(key);
+    res.json({ ok: true });
+  }));
+  app.get(`${prefix}/history`, scoped(async (_req, res, { scope }) => {
+    const snapshots = (await listSnapshots(memoryRoot(), scope)).map((s) => ({ id: s.id, files: s.files }));
+    res.json({ snapshots });
+  }));
+  app.post(`${prefix}/history/:id/restore`, scoped(async (req, res, { scope, key }) => {
+    if (defragLocked(res, key)) return;
+    await withStoreLock(memoryRoot(), () => restoreSnapshot(memoryRoot(), scope, String(req.params.id || ''), { source: 'user' }));   // ENAME -> 400, ENOSCOPE -> 404
+    emitMemoryChanged(key);
+    res.json({ ok: true });
+  }));
+  app.post(`${prefix}/defragment`, async (req, res) => {
+    try {
+      if (family === 'projects') return await defragRequest(req, res, { memoryScope: 'project', projectKey: String(req.params.key || '') });
+      const key = req.body && typeof req.body.projectKey === 'string' ? req.body.projectKey.trim() : '';
+      if (!key) return badRequest(res, 'projectKey is required — a global defragment run is hosted by a project');
+      return await defragRequest(req, res, { memoryScope: 'global', projectKey: key });
+    } catch (err) { return memoryError(res, err); }
+  });
+}
+
+// Every scope's health in one read. Fetched ON DEMAND — when the Memory tab or a Projects
+// expander opens, and on a `memory-changed` frame — never on a timer: each call reads and
+// hashes every file of every registered project's scope (I2-#16).
+app.get('/api/memory/health', async (_req, res) => {
+  try {
+    const caps = memoryCaps();
+    const g = await memoryScopeReport(memoryRoot(), GLOBAL_SCOPE, caps);
+    const projects = [];
+    for (const p of await listProjects()) {
+      const r = await memoryScopeReport(memoryRoot(), projectScope(p.key), caps);
+      projects.push({ key: p.key, name: p.name, health: r.health, defragRunId: liveDefragRun(`projects/${p.key}`)?.id || null });
+    }
+    res.json({ global: { health: g.health, defragRunId: liveDefragRun('global')?.id || null }, projects });
+  } catch (err) { return memoryError(res, err); }
+});
+registerMemoryRoutes('/api/memory/global', { family: 'global' });
+registerMemoryRoutes('/api/memory/projects/:key', { family: 'projects' });
+
+// ---------------------------------------------------------------------------
 // Filesystem browsing for the add-project folder selector. Hybrid picker:
 // POST /api/fs/pick-folder opens the native OS dialog (the server runs on the
 // user's machine); when it reports `unsupported` the UI falls back to an
@@ -3902,9 +4114,9 @@ app.get('/api/workflows', async (req, res) => {
       const all = await listWorkflows({ includeArchived: true });
       return res.json({ workflows: all.filter((w) => w.archivedAt) });
     }
-    // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, ...listWorkflows() ]. The built-in is
-    // never a persisted row (listWorkflows filters its id), so it cannot appear twice.
-    res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, ...(await listWorkflows())] });
+    // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, ...listWorkflows() ]. The
+    // built-ins are never persisted rows (listWorkflows filters their ids), so none appears twice.
+    res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(await listWorkflows())] });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -4015,6 +4227,7 @@ app.delete('/api/workflows/:id', async (req, res) => {
   const id = req.params.id;
   // The built-in default is not in the user store and must never be deleted.
   if (id === 'wf_default') return badRequest(res, 'the default workflow cannot be deleted');
+  if (id === MEMORY_DEFRAG_WORKFLOW_ID) return badRequest(res, 'the Memory defragment workflow cannot be deleted');
   try {
     const removed = await deleteWorkflow(id); // CONV-1: await
     if (!removed) return res.status(404).json({ error: 'workflow not found' });
@@ -4651,6 +4864,12 @@ function askValidateScope(raw) {
   return { ok: true, scope: { pinned: true, [keys[0]]: cv.context[keys[0]] } };
 }
 
+/** The system prompt of ONE Ask turn: the rules and the catalog, byte-stable. Memory is mounted,
+ *  not rendered (native-rules revision) — see createAskTurn's memoryProject. */
+async function askSystemPromptFor(catalog) {
+  return askBuildSystemPrompt(catalog);
+}
+
 /** Resolve the VALIDATED client context into the server-side shape
  *  buildContextHeader consumes (§6.5: server-resolved rows only — never
  *  client-supplied titles or paths). Every lookup is individually guarded:
@@ -4848,12 +5067,13 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     asstMsg = askAppendMessage(id, { role: 'assistant', text: '', status: 'streaming', model, effort });
     job.messageId = asstMsg.id;
 
-    // Prompt assembly (§6.5) — the route owns it; the turn only spawns.
+    // Prompt assembly (§6.5) — the route owns it; the turn only spawns. The header context
+    // resolves the project FIRST so the turn can mount its memory (native rules).
     const catalog = await askBuildCatalog();
-    const systemPrompt = askBuildSystemPrompt(catalog);
     const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime, text: files[i].text }));
     const { inline, listed } = askSelectInlineAttachments(withText);
     const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id);
+    const systemPrompt = await askSystemPromptFor(catalog);
     const header = askBuildContextHeader(headerCtx);
     const prompt = askBuildTurnPrompt(header, text, inline);
     const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
@@ -4870,6 +5090,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       firstText: text,
       deterministicTitle,
       pinnedScope: askPinnedScope(ctx),             // #397: proposal defaulting + mismatch flag
+      memoryProject: headerCtx.project ? { key: headerCtx.project.key, name: headerCtx.project.name || '' } : null,   // native-rules revision: the turn mounts global + this project through --add-dir
       mock: mockEnabled({}) ? { card: mockAskCard(ctx, text) } : null, // R-F
       attachmentNames,
       deps: {
@@ -4877,6 +5098,12 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
         onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
         onWorktreeMutation: () => { emitAskWorktrees(id); },
+        // A remember/forget in the MCP child is the same scope change a REST write makes (B29).
+        // The key is parsed out of worca's OWN tool result, never written by the model; shape-check
+        // it anyway before it rides a broadcast (I2-#22).
+        onMemoryMutation: ({ scope }) => {
+          if (scope === 'global' || (typeof scope === 'string' && scope.startsWith('projects/') && PROJECT_KEY_RE.test(scope.slice('projects/'.length)))) emitMemoryChanged(scope);
+        },
         trackRun: (input, { pin } = {}) => askTrackRun(id, input, pin ?? null),
       },
     });
@@ -6029,6 +6256,86 @@ app.post('/api/pipelines/:id/report-result', async (req, res) => {
   }
 });
 
+// POST /api/pipelines/:id/report — the metadata-only run report a user can paste
+// into a GitHub issue. buildRunReport is a pure read-by-id (run-report.mjs) that
+// resolves BOTH project and workspace runs, so this one route covers both families
+// and needs no /api/workspaces twin. POST, not GET: the body carries the reporter's
+// free text and the three opt-in flags, which do not belong in a logged URL.
+// Worca makes NO network call here — it returns a URL the browser opens.
+// Like its report-result neighbour above, a malformed id 404s rather than 400s: a
+// stale bookmark must read as not-found (see resolveRunScope, :2006).
+
+// The repo `gh issue create` targets, from the SAME bugs.url the prefilled link uses
+// (APP_INFO.bugsUrl, which falls back to <repo>/issues). Empty for a non-github.com
+// bugs.url, which makes /report-issue degrade to the browser link.
+const BUGS_SLUG = repoSlugFromBugsUrl(APP_INFO.bugsUrl);
+
+/**
+ * The preamble both report routes share: validate the reason, build the payload.
+ * Returns null after ALREADY answering `res` (400 or 404), so callers just bail.
+ */
+async function reportPayloadOr(res, req) {
+  const body = req.body || {};
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+  if (!REPORT_REASON_IDS.includes(reason)) {
+    badRequest(res, `reason must be one of: ${REPORT_REASON_IDS.join(', ')}`);
+    return null;
+  }
+  const payload = await buildRunReport(req.params.id, {
+    reason,
+    expectation: typeof body.expectation === 'string' ? body.expectation : '',
+    include: body.include,
+  });
+  if (!payload) {
+    res.status(404).json({ error: 'pipeline not found' });
+    return null;
+  }
+  return payload;
+}
+
+/** The browser fallback: a prefilled issues/new URL plus the download filename. */
+function prefilledIssue(payload) {
+  return { ...buildIssueUrl(payload, { bugsUrl: APP_INFO.bugsUrl }), filename: reportFilename(payload) };
+}
+
+app.post('/api/pipelines/:id/report', async (req, res) => {
+  try {
+    const payload = await reportPayloadOr(res, req);
+    if (!payload) return;
+    res.json({ payload, issue: prefilledIssue(payload) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// POST /api/pipelines/:id/report-issue — the same report, but worca FILES it through
+// `gh issue create` instead of handing the browser a prefilled link. That exists
+// because the link cannot carry the report: a prefilled `body=` dies at ~8 KB encoded
+// and half of all real runs serialize larger than that, so the browser path can only
+// ever ask the reporter to paste the JSON in by hand. A --body-file has no such cap.
+//
+// The payload is REBUILT here from the run id; the client's copy is never accepted.
+// The redaction contract (run-report.mjs) has exactly one enforcement point, and a
+// route that trusted a posted payload would be a second, weaker one.
+//
+// A gh failure is a 200 with ok:false, not a 5xx: the response carries the prefilled
+// link so the modal can degrade to today's copy-and-paste flow in one round trip.
+app.post('/api/pipelines/:id/report-issue', async (req, res) => {
+  try {
+    const payload = await reportPayloadOr(res, req);
+    if (!payload) return;
+    const filed = await createIssue({
+      repo: BUGS_SLUG,
+      title: issueTitle(payload),
+      body: renderIssueBodyFull(payload),
+    });
+    if (filed.ok) return res.json({ ok: true, url: filed.url, labeled: filed.labeled });
+    res.json({ ok: false, kind: filed.kind, error: filed.error, issue: prefilledIssue(payload) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Install logic (mirrors scripts/install.mjs): copy agents/*.md and
 // skills/worca/** into <projectDir>/.claude/...
@@ -6392,6 +6699,6 @@ export const _testing = {
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
-  askTrackRun, liveRunEntry,
+  askTrackRun, liveRunEntry, liveDefragRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
   uiControl, bearerMatches,
 };

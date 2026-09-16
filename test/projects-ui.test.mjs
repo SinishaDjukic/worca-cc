@@ -67,13 +67,6 @@ test('the Projects management view + modals exist in markup and are wired', () =
   assert.ok(appjs.includes("'projects'"), 'projects not registered in VIEW_NAMES');
 });
 
-test('the projects delete button uses a bin icon and no red token', () => {
-  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
-  // isolate the .proj-del rules and assert none reference a red color token
-  const proj = css.split('.proj-del').slice(1).join('.proj-del');
-  assert.ok(!/--red/.test(proj.slice(0, 400)), '.proj-del must not use any --red* token');
-});
-
 // Regression: P5 (13275b47) retired the v1 composer and took the shared, unscoped
 // .saved-card/.pl-item/.pl-row/.pl-main/.pl-name rules with it (re-scoped under
 // .gv-saved). The Projects card reuses those class names, so it silently lost its

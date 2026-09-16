@@ -1,0 +1,24 @@
+{
+  "key": "memoryDefragmenter",
+  "metaVersion": 2,
+  "mockRole": "memory-defrag",
+  "sideEffect": "memory",
+  "inputs": [
+    { "id": "task", "type": "md", "required": true,
+      "directive": "Defragment the memory scope named below. Work only inside the mounted memory directory given in your system prompt (the `## Worca memory` block) \u2014 it sits under the project directory at .claude/rules/worca/; never touch anything else in the project directory." }
+  ],
+  "outputs": [
+    { "id": "report", "type": "md", "filename": "defrag-report.md" },
+    { "id": "done", "type": "void" }
+  ],
+  "domain": "shared",
+  "displayName": "Memory defragment",
+  "description": "Restructures one memory scope: merges duplicates, splits overgrown topics, drops stale rules, tightens hooks.",
+  "color": "violet",
+  "icon": "<path d=\"M4 6h16M4 12h16M4 18h10\" stroke-linecap=\"round\"/><path d=\"M17 15l2 2 4-4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+  "agentFile": "worca-cc-memory-defragmenter.md",
+  "runnerType": "producer",
+  "fanOut": false,
+  "asksQuestions": false,
+  "order": 8
+}

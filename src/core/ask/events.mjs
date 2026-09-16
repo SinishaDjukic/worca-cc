@@ -46,6 +46,10 @@ const COMMENT_WRITE_TOOLS = new Set([
 // only when its subcommand is one noteNav acts on; a `log`/`status` never pokes.
 const WORKTREE_TOOLS = new Set(['mcp__worca__open_worktree', 'mcp__worca__remove_worktree', 'mcp__worca__git']);
 const GIT_NAV_SUBCOMMANDS = new Set(['checkout', 'switch', 'fetch']);
+// The memory writers (agent-memory-design.md §9.1): a successful remember/forget in the CHILD
+// becomes the same `memory-changed` broadcast the REST routes emit (ui/server.mjs emitMemoryChanged).
+// The scope key rides the tool RESULT (`scopeKey`), like pokeCommentWrite reads `comment.runId`.
+const MEMORY_WRITE_TOOLS = new Set(['mcp__worca__remember', 'mcp__worca__forget']);
 /** True when a SUCCESSFUL call of `name` with `input` changed this thread's worktree rows. */
 export function worktreeMutatingCall(name, input) {
   if (!WORKTREE_TOOLS.has(name)) return false;
@@ -131,6 +135,10 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'reply_to_diff_comment': return 'Replying to a diff comment';
     case 'resolve_diff_comment': return 'Updating a diff comment';
     case 'delete_diff_comment': return 'Deleting a diff comment';
+    case 'list_memory': return 'Reading memory';
+    case 'read_memory': return input?.name ? `Reading memory: ${input.name}` : 'Reading memory';
+    case 'remember': return input?.name ? `Saving memory: ${input.name}` : 'Saving memory';
+    case 'forget': return input?.name ? `Removing memory: ${input.name}` : 'Removing memory';
     default: return `Using ${n}`;
   }
 }
@@ -173,6 +181,7 @@ export function createTurnReducer({
   onTrackRun = null,
   onCommentMutation = null,
   onWorktreeMutation = null,
+  onMemoryMutation = null,
   estimateLiveCost = null,
   attachmentNames = {},
   resolveCost = null,
@@ -404,6 +413,18 @@ export function createTurnReducer({
     try { onWorktreeMutation({ tool: short(name) }); } catch { /* a broken sink never breaks the stream */ }
   }
 
+  // And for memory: a remember/forget succeeded in the CHILD, so the parent broadcasts the same
+  // `memory-changed` frame the REST writes emit. Note the asymmetry with the worktree poke — that
+  // one reads the call INPUT, this one the result TEXT, because the scope key rides the result.
+  function pokeMemoryWrite(name, text, isError) {
+    if (isError || !MEMORY_WRITE_TOOLS.has(name) || typeof onMemoryMutation !== 'function') return;
+    try {
+      const parsed = JSON.parse(text);
+      const scope = typeof parsed?.scopeKey === 'string' ? parsed.scopeKey : null;
+      if (scope) onMemoryMutation({ scope, tool: short(name) });
+    } catch { /* unparseable result — no poke; the next open refetches anyway */ }
+  }
+
   function onUser(raw, ptu, isMain) {
     const content = Array.isArray(raw.message?.content) ? raw.message.content : [];
     for (const c of content) {
@@ -417,6 +438,7 @@ export function createTurnReducer({
         if (agent) appendLog(agent, c.is_error ? `← error: ${clipStr(text, 120)}` : `← ok ${((now() - ct.t0) / 1000).toFixed(1)}s`);
         pokeCommentWrite(ct.name, text, c.is_error);
         pokeWorktreeMutation(ct.name, ct.input, c.is_error);
+        pokeMemoryWrite(ct.name, text, c.is_error);
         continue;
       }
       const b = byId.get(c.tool_use_id);
@@ -477,6 +499,7 @@ export function createTurnReducer({
       }
       pokeCommentWrite(b.name, text, c.is_error);
       pokeWorktreeMutation(b.name, fullInputs.get(b.id), c.is_error);
+      pokeMemoryWrite(b.name, text, c.is_error);
     }
   }
 

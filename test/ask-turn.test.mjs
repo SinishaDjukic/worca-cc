@@ -761,6 +761,22 @@ test('onWorktreeMutation dep: a worktree write in the stream reaches the injecte
   assert.equal(frames.at(-1).status, 'done', 'a broken sink never breaks the turn');
 });
 
+test('onMemoryMutation dep: a remember in the stream reaches the injected sink with its scope key', async () => {
+  const s = seed(); const pokes = [];
+  const { turn } = makeTurn(s, {}, {
+    onMemoryMutation: (e) => pokes.push(e),
+    runClaudeImpl: async ({ onEvent }) => {
+      toolUse(onEvent, 'm1', 'toolu_1', 'mcp__worca__remember', { scope: 'global', name: 'style', body: 'x' });
+      toolResult(onEvent, 'toolu_1', JSON.stringify({ scope: 'global', projectKey: null, scopeKey: 'global', name: 'style', bytes: 1, created: true, mode: 'replace' }));
+      say(onEvent, 'm2', 'saved');
+      push(onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  assert.deepEqual(pokes, [{ scope: 'global', tool: 'remember' }]);
+});
+
 test('liveCostRates dep: ask-usage frames carry a display estimate before the result and null after; no sink sees it', async () => {
   clearAskLedger();
   const s = seed(); const costs = [];
@@ -1046,4 +1062,38 @@ test('track_run: an isError tool result mints nothing (the child already told th
   await turn.run();
   assert.equal(calls, 0);
   assert.ok(!getMessage(s.asst.id).blocks.some((b) => b.kind === 'card'));
+});
+
+test('memory: the turn refreshes the mount for its project before spawning and hands it to the spawn as --add-dir + the env override; a failing refresh proceeds without memory', async () => {
+  const s = seed();
+  const calls = [];
+  let seenOpts = null;
+  const impl = async (opts) => {
+    seenOpts = opts;
+    opts.onEvent({ type: 'session', sessionId: 'sess-mem' });
+    say(opts.onEvent, 'msg_1', 'ok');
+    push(opts.onEvent, RESULT());
+    return { text: 'ok', exitCode: 0 };
+  };
+  const { turn } = makeTurn(s, { memoryProject: { key: 'proj-00000001', name: 'Proj' } }, {
+    runClaudeImpl: impl,
+    memoryMount: async (arg) => { calls.push(arg); return '/m/proj-00000001'; },
+  });
+  assert.equal((await turn.run()).status, 'done');
+  assert.deepEqual(calls, [{ projectKey: 'proj-00000001', projectName: 'Proj' }]);
+  assert.equal(turn.memoryDir, '/m/proj-00000001');
+  assert.deepEqual(seenOpts.addDirs, ['/m/proj-00000001']);
+  assert.equal(seenOpts.modelEnv.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD, '1');
+  // No project in the context ⇒ the global-only mount is still refreshed; null ⇒ no flag, no override.
+  const calls2 = [];
+  const { turn: global } = makeTurn(seed(), {}, { runClaudeImpl: impl, memoryMount: async (arg) => { calls2.push(arg); return null; } });
+  assert.equal((await global.run()).status, 'done');
+  assert.deepEqual(calls2, [{ projectKey: null, projectName: null }]);
+  assert.equal(seenOpts.addDirs, undefined, 'null ⇒ no --add-dir');
+  assert.equal('CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD' in seenOpts.modelEnv, false, 'and no override');
+  // A store failure never breaks a turn.
+  const { turn: broken } = makeTurn(seed(), {}, { runClaudeImpl: impl, memoryMount: async () => { throw new Error('store down'); } });
+  assert.equal((await broken.run()).status, 'done');
+  assert.equal(broken.memoryDir, null);
+  assert.equal(seenOpts.addDirs, undefined);
 });

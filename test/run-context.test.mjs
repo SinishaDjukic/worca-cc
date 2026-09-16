@@ -30,7 +30,7 @@ import {
   mergeMcpConfigs,
   auditAncestors,
 } from '../src/core/run-context.mjs';
-import { readRunManifest } from '../src/core/run-manifest.mjs';
+import { readRunManifest, rescueModifiedMounts, removeInjectedPaths } from '../src/core/run-manifest.mjs';
 
 const WIN_SYMLINK = { skip: process.platform === 'win32' ? 'creating symlinks needs a privilege (Developer Mode / admin) on Windows' : false };
 
@@ -1407,4 +1407,28 @@ test('an unreadable source warns ONCE per file per assembly, and a missing one s
     members: [{ projectKey: 'o-1', projectName: 'O', projectDir: under, worktreeDir: join(rr, 'repos', 'o-1') }],
   });
   assert.deepEqual(plain.warnings, [], `absence is silent: ${JSON.stringify(plain.warnings)}`);
+});
+
+test('kind:"memory" injected entry — never rescued (sync-back is its rescue), removed at teardown with an emptied .claude/rules pruned but a project\'s own rules kept', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'worca-rc-mem-'));
+  const pipelineDir = await mkdtemp(join(tmpdir(), 'worca-rc-mem-p-'));
+  try {
+    await mkdir(join(base, '.claude', 'rules', 'worca', 'global'), { recursive: true });
+    await writeFile(join(base, '.claude', 'rules', 'worca', 'global', 'x.md'), 'edited by the agent\n');
+    const entry = { path: '.claude/rules/worca', kind: 'memory', source: null };
+    const w = await rescueModifiedMounts({ baseDir: base, entries: [entry], pipelineDir, scope: 'k', pipelineId: 'p1' });
+    assert.deepEqual(w, [], 'no warning, no stray copy');
+    assert.equal(existsSync(join(pipelineDir, 'stray')), false);
+    // removal prunes .claude/rules and .claude when they end up empty …
+    await removeInjectedPaths(base, [entry]);
+    assert.equal(existsSync(join(base, '.claude')), false);
+    // … and keeps them when the project has its own rules.
+    await mkdir(join(base, '.claude', 'rules', 'worca', 'global'), { recursive: true });
+    await writeFile(join(base, '.claude', 'rules', 'own.md'), 'committed\n');
+    await removeInjectedPaths(base, [entry]);
+    assert.equal(existsSync(join(base, '.claude', 'rules', 'worca')), false);
+    assert.equal(await readFile(join(base, '.claude', 'rules', 'own.md'), 'utf8'), 'committed\n');
+  } finally {
+    await rm(base, { recursive: true, force: true }); await rm(pipelineDir, { recursive: true, force: true });
+  }
 });

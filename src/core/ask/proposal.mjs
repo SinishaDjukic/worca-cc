@@ -8,6 +8,7 @@ import { listProjects as realListProjects } from '../projects.mjs';
 import { readWorkspace as realReadWorkspace, isGitRepo as realIsGitRepo, WORKSPACE_KEY_RE } from '../workspaces.mjs';
 import { readWorkflow as realReadWorkflow, assertRunnableWorkflow as realAssertRunnableWorkflow } from '../workflows.mjs';
 import { readGuardrailSet as realReadGuardrailSet } from '../guardrail-store.mjs';
+import { validateMemoryScope } from '../memory-sync.mjs';
 import { sanitizeBranchName, suggestBranchName } from '../worktree.mjs';
 import { sanitizeTitle } from '../title.mjs';
 import { ASK_LIMITS } from './limits.mjs';
@@ -21,6 +22,7 @@ export const PROPOSAL_ERRORS = Object.freeze({
   memberPathMissing: 'workspace member path is missing',
   memberNotGit: (dir) => `workspace member is not a git repository: ${dir}`,
   unknownWorkflow: (id) => `unknown workflowId "${id}"`,
+  memoryScopeType: 'memoryScope must be "global" or "project"',
   guardrailsType: 'guardrailsId must be a string',
   unknownGuardrails: (id) => `unknown guardrailsId "${id}"`,
   permissive: 'guardrailsId "permissive" is not allowed for proposed runs — use "normal" or a stricter set',
@@ -138,6 +140,20 @@ export function createProposalValidator({
     try { wf = await assertRunnableWorkflow(workflowId); }
     catch (err) { errors.push(err && err.message ? err.message : PROPOSAL_ERRORS.unknownWorkflow(workflowId)); }
 
+    // ── memoryScope (agent memory §7.3): the same gate as POST /api/run ──────
+    let memoryScope = null;
+    let scopeTypeBad = false;
+    if (inp.memoryScope !== undefined && inp.memoryScope !== null && inp.memoryScope !== '') {
+      if (typeof inp.memoryScope !== 'string') { errors.push(PROPOSAL_ERRORS.memoryScopeType); scopeTypeBad = true; }
+      else memoryScope = inp.memoryScope.trim() || null;
+    }
+    // Only when the workflow resolved (I2-#8): an unknown id has already pushed its own error and
+    // `wf` is null, so checking here would add a second, misleading one for a typo of the defrag id.
+    if (!scopeTypeBad && wf) {
+      const reason = validateMemoryScope({ workflowId: wf.id, memoryScope, isWorkspace: target.target === 'workspace' });
+      if (reason) errors.push(reason);
+    }
+
     // ── guardrails: default normal, permissive refused (D3) ────────────────
     let guardrailsId = 'normal';
     if (inp.guardrailsId !== undefined && inp.guardrailsId !== null && inp.guardrailsId !== '') {
@@ -190,7 +206,7 @@ export function createProposalValidator({
     if (errors.length) return fail();
     return {
       ok: true,
-      card: { ...target, workflowId: wf.id, workflowName: wf.name, guardrailsId, brief, title, sourceBranch, featureBranch, sourceBranchByKey,
+      card: { ...target, workflowId: wf.id, workflowName: wf.name, guardrailsId, memoryScope, brief, title, sourceBranch, featureBranch, sourceBranchByKey,
         note: cleanNote(inp.note), attachments: pickCardAttachments(inp.attachmentIds, attachments) },
     };
   }
