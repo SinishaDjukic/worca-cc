@@ -35,7 +35,7 @@ test('About carries a bug link and a suggestion link, both safe new tabs', () =>
 test('the existing About invariants still hold with the new rows', () => {
   const view = settingsView();
   const cards = [...view.querySelectorAll('section.card.settings-card')];
-  assert.equal(cards.length, 9, 'the new links are ROWS in About, not a tenth card');
+  assert.equal(cards.length, 10, 'the new links are ROWS in About, not an eleventh card');
   const about = cards[cards.length - 1];
   assert.equal(about.id, 'about-card', 'About is still last');
   assert.equal(about.querySelector('input, select, textarea, button'), null, 'still no controls');

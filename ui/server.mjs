@@ -148,7 +148,9 @@ import {
   memoryRoot, GLOBAL_SCOPE, projectScope, scopeKey, isValidMemoryName, MEMORY_NAME_HELP, memoryScopeReport,
   readMemory, writeMemory, removeMemory, listSnapshots, restoreSnapshot,
 } from '../src/core/memory-store.mjs';
-import { memoryCaps } from '../src/core/settings.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
+import { memoryCaps } from '../src/core/settings.mjs';
+import { onboardingPrefs, setOnboardingPrefs } from '../src/core/settings.mjs';
+import { onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
 import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
 import { createAgentGen } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
@@ -2186,6 +2188,24 @@ app.get('/api/history', async (_req, res) => {
 // machine-wide history just to update a badge. Running is derived client-side from the
 // in-memory runs map (live via WS), so it is not included here. Synchronous: the three
 // helpers are sync getDb().prepare(...).get() calls.
+// ---------------------------------------------------------------------------
+// Getting started (docs/getting-started.md). GET is the derived checklist —
+// eight ticks computed from the store + PATH, never stored — plus the two flags.
+// POST writes ONLY those flags ({hidden?, welcomeSeen?}; booleans; unknown keys
+// 400) and answers with the same full payload, so one round trip repaints.
+// ---------------------------------------------------------------------------
+app.get('/api/onboarding', async (_req, res) => {
+  try { res.json(await onboardingStatus()); }
+  catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
+});
+app.post('/api/onboarding', async (req, res) => {
+  try { await setOnboardingPrefs(req.body || {}); }
+  catch (err) { return badRequest(res, err && err.message ? err.message : String(err)); }
+  emitChanged('onboarding-changed');
+  try { res.json(await onboardingStatus()); }
+  catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err), ...onboardingPrefs() }); }
+});
+
 app.get('/api/counts', (_req, res) => {
   try {
     res.json({

@@ -80,8 +80,8 @@ test('About is the LAST settings card, read-only, with no version baked into the
   const view = settingsView();
   const cards = [...view.querySelectorAll('section.card.settings-card')];
   const about = cards[cards.length - 1];
-  assert.equal(cards.length, 9, 'Appearance + the seven cards plus About');
-  assert.equal(about.id, 'about-card', 'About sits after the Chat notifications card');
+  assert.equal(cards.length, 10, 'Appearance + the seven cards, Getting started, then About');
+  assert.equal(about.id, 'about-card', 'About sits after the Getting started card');
   assert.equal(about.querySelector('.label-row > h2').textContent.trim(), 'About');
 
   assert.equal(about.querySelector('input, select, textarea, button'), null, 'no controls');
