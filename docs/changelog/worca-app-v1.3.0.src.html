@@ -1,0 +1,552 @@
+<title>Worca — What's new in 1.3.0</title>
+<!--
+  Ship-log changelog entry for @worca/app 1.3.0 (since 1.2.0). Built from
+  .claude/skills/worca-changelog/template.html — see DESIGN.md. This is the
+  editable source; inline-assets.mjs turns it into the single-file page.
+-->
+<style>
+  :root{
+    --bg:#ECEAE4; --card:#FFFFFF; --card-2:#F6F4EF;
+    --ink:#14151A; --ink-2:#56534C; --ink-3:#8B8780; --line:#E2DFD7;
+    --ocean:#4B5ED2; --ocean-deep:#3A49AC; --wash:#DDE3F7; --wash-2:#EBEEFA;
+    --coral:#EEA47D; --coral-soft:#F8E3D5; --lime:#DEEFC4; --lime-2:#EDF6DC;
+    --dark:#131419; --dark-2:#1C1D25; --on-dark:#F4F3EE; --on-dark-2:#9EA0AC;
+    --ok:#38854F; --warn:#DFA23F; --bad:#C9524A; --info:#5B94C8;
+    --r-lg:28px; --r-md:18px; --r-sm:12px;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --shadow:0 18px 50px -22px rgba(20,21,26,.28);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  img{max-width:100%;display:block}
+  .wrap{max-width:1280px;margin:0 auto;padding:18px 22px 90px}
+
+  /* ---------- shared bits ---------- */
+  .kicker{display:inline-flex;align-items:center;gap:8px;background:var(--card);
+    border:1px solid var(--line);border-radius:999px;padding:7px 15px;
+    font-size:11.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2)}
+  .kicker .dot{width:8px;height:8px;border-radius:50%;background:var(--ocean)}
+  h1,h2{margin:0;letter-spacing:-.035em;line-height:1.02;text-wrap:balance;font-weight:800}
+  h1{font-size:clamp(44px,7vw,92px)}
+  h2{font-size:clamp(34px,4.6vw,58px)}
+  .sub b{color:var(--ink);font-weight:700}
+  .sub{color:var(--ink-2);font-size:clamp(16px,1.6vw,19px);max-width:52ch;margin:0}
+  .chips{display:flex;flex-wrap:wrap;gap:10px}
+  .chip{background:var(--card);border:1px solid var(--line);border-radius:999px;
+    padding:8px 16px;font-size:13.5px;font-weight:600;color:var(--ink-2);white-space:nowrap}
+  .chip b{color:var(--ink);font-family:var(--mono);font-weight:700}
+  .chip.acc{background:var(--ink);border-color:var(--ink);color:#fff}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  .sec{border-radius:var(--r-lg);background:var(--card);margin-top:26px;
+    padding:clamp(28px,4.4vw,64px);position:relative;overflow:hidden}
+  .sec-head{display:flex;flex-direction:column;align-items:flex-start;gap:18px;max-width:900px;position:relative;z-index:2}
+  .grid2{display:grid;grid-template-columns:5fr 6fr;gap:clamp(22px,3vw,44px);align-items:center;margin-top:38px}
+  .grid2.flip{grid-template-columns:6fr 5fr}
+  .grid2>*{min-width:0}
+  @media (max-width:920px){.grid2,.grid2.flip{grid-template-columns:minmax(0,1fr)}}
+
+  /* screenshot frame */
+  .shot{border-radius:var(--r-md);overflow:hidden;background:var(--card);
+    border:1px solid var(--line);box-shadow:var(--shadow)}
+  .shot .bar{height:32px;background:var(--card-2);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:6px;padding:0 14px}
+  .shot .bar i{width:10px;height:10px;border-radius:50%;background:#DDD9CF;display:block}
+  .shot .bar i:first-child{background:#E8B4AC}.shot .bar i:nth-child(2){background:#EAD3A2}.shot .bar i:nth-child(3){background:#BCD8B4}
+  .shot .crop{overflow:hidden;position:relative}
+  .shot img{height:auto}
+  .shot-cap{margin:12px 4px 0;font-size:13px;color:var(--ink-3);font-weight:600}
+
+  /* reveals */
+  .rv{opacity:0;transform:translateY(26px);transition:opacity .7s ease,transform .7s cubic-bezier(.2,.7,.2,1)}
+  .rv.in{opacity:1;transform:none}
+  .rv.d1{transition-delay:.08s}.rv.d2{transition-delay:.16s}.rv.d3{transition-delay:.24s}
+
+  /* ---------- topbar ---------- */
+  .top{display:flex;justify-content:space-between;align-items:center;padding:10px 6px 4px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.02em;font-size:18px}
+  .top .chip{background:transparent}
+
+  /* ---------- hero ---------- */
+  .hero{background:linear-gradient(135deg,var(--wash) 0%,var(--wash-2) 60%,#F2EFFA 100%)}
+  .hero-grid{display:grid;grid-template-columns:6fr 5fr;gap:clamp(24px,3vw,48px);align-items:center;position:relative;z-index:2}
+  .hero-grid>*{min-width:0}
+  @media (max-width:920px){.hero-grid{grid-template-columns:minmax(0,1fr)}}
+  .hero .shot{transform:rotate(1.6deg)}
+  .hero .sec-head{position:relative;z-index:4}
+  .ribbon{position:absolute;inset:0;z-index:3;pointer-events:none}
+  @media (max-width:920px){.ribbon{display:none}}
+  .ribbon text{font-family:var(--mono);font-size:15px;font-weight:700;letter-spacing:.30em;fill:#fff}
+  .float-chip{position:absolute;z-index:3;background:var(--card);border-radius:14px;box-shadow:var(--shadow);
+    border:1px solid var(--line);padding:10px 16px;font-size:13px;font-weight:700}
+  .float-chip small{display:block;font-weight:600;color:var(--ink-3);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase}
+
+  /* ---------- demo cards ---------- */
+  .demo{border-radius:var(--r-md);background:var(--card-2);border:1px solid var(--line);padding:26px;position:relative}
+  .demo .dlabel{font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-bottom:18px}
+  .env-note{margin:14px 2px 0;font-size:12.5px;color:var(--ink-3);font-weight:600}
+  .badge{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-radius:6px;padding:3px 7px;white-space:nowrap}
+  .badge.violet{background:#E7E4F8;color:#4A3E9E}
+  .badge.grey{background:var(--card-2);color:var(--ink-3);border:1px solid var(--line)}
+  .badge.amber{background:#FBEEDC;color:#9A6A17}
+  .badge.red{background:#FCE9E4;color:#A03A31}
+  .badge.green{background:#E4F0E7;color:var(--ok)}
+  .pill{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:4px 10px}
+  .pill.run{background:#E4F0E7;color:var(--ok)}
+  .pill.flag{background:#FBEEDC;color:#9A6A17}
+  .ghost-btn{border:1.5px solid var(--ink);border-radius:999px;background:var(--card);
+    padding:7px 14px;font-size:12px;font-weight:700;white-space:nowrap;transition:.3s;display:inline-block}
+  .ghost-btn.pulse{transform:scale(1.06);box-shadow:0 0 0 6px rgba(75,94,210,.18)}
+
+  /* recipe: rows (precedence / listing) */
+  .cat-demo{display:flex;flex-direction:column;gap:10px}
+  .cat-row{border-radius:var(--r-sm);border:1px solid var(--line);background:var(--card);padding:13px 16px;
+    display:flex;align-items:center;gap:12px;transition:.35s ease}
+  .cat-row .t{font-weight:700;font-size:13.5px;flex:1;min-width:0}
+  .cat-row .t small{display:block;font-weight:600;font-size:11.5px;color:var(--ink-3)}
+  .cat-row .src{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);white-space:nowrap}
+  .cat-row.dim{opacity:.45}
+  .cat-row.win{border-color:var(--ink);box-shadow:var(--shadow)}
+
+  /* recipe: meter + flag pieces (banner + numbered steps) */
+  .cost-banner{margin-top:14px;border-radius:var(--r-sm);background:#FBF3E4;border:1px solid #EDD9AE;
+    padding:13px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;
+    opacity:.22;transform:translateY(-4px);transition:.45s ease}
+  .cost-banner.show{opacity:1;transform:none}
+  .cost-banner .msg{font-size:13px;font-weight:600;color:#7A5A1A}
+  .cap-steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px}
+  .cap-steps li{display:flex;gap:11px;align-items:center;font-size:13.5px;font-weight:600;color:var(--ink-3);transition:.35s}
+  .cap-steps .n{width:23px;height:23px;border-radius:50%;background:var(--card);border:1px solid var(--line);flex:none;
+    display:grid;place-items:center;font-family:var(--mono);font-size:11px;font-weight:700;transition:.35s}
+  .cap-steps li.on{color:var(--ink)}
+  .cap-steps li.on .n{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .cap-steps li small{font-family:var(--mono);font-weight:600;font-size:11.5px;color:var(--ink-3);margin-left:auto;white-space:nowrap}
+
+  /* recipe: spotlight — one row ringed, a balloon under it */
+  .spot-demo{position:relative;display:flex;flex-direction:column;gap:8px;padding-bottom:58px}
+  .spot-demo .srow{border-radius:10px;border:1px solid var(--line);background:var(--card);padding:10px 14px;
+    font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:10px;transition:.4s;opacity:.55}
+  .spot-demo .srow .k{width:14px;height:14px;border-radius:4px;background:var(--line);flex:none}
+  .spot-demo .srow.ring{opacity:1;border-color:#7B6CE0;box-shadow:0 0 0 3px rgba(123,108,224,.28),0 0 0 9px rgba(123,108,224,.10)}
+  .spot-demo .balloon{position:absolute;left:14px;bottom:0;background:var(--card);border:1px solid var(--line);border-radius:12px;
+    box-shadow:var(--shadow);padding:9px 14px;font-size:12.5px;font-weight:600;transition:.4s;white-space:nowrap}
+  .spot-demo .balloon u{color:var(--ink-3);margin-left:10px;font-weight:600}
+
+  /* recipe: thread — a root card, then a reply slides in */
+  .thr .tcard{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:12px 14px;font-size:13px}
+  .thr .who{font-weight:800;font-size:12.5px;display:flex;align-items:center;gap:8px;margin-bottom:5px}
+  .thr .who span{font-weight:600;color:var(--ink-3);font-size:11.5px}
+  .thr .who .w{width:16px;height:16px;border-radius:50%;background:var(--ink);color:#fff;display:grid;place-items:center;font-size:9px;font-weight:800}
+  .thr .reply{margin:10px 0 0 22px;border-left:2px solid var(--line);padding-left:12px;opacity:0;transform:translateY(8px);transition:.5s ease}
+  .thr.in .reply{opacity:1;transform:none}
+  .thr code{font-family:var(--mono);font-size:11.5px;background:var(--card-2);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+  .thr .tact{margin-top:8px;display:flex;gap:12px;font-size:11.5px;font-weight:700;color:var(--ink-3)}
+
+  /* recipe: mount — a file appears where Claude reads rules */
+  .mount .mrow{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:11px 14px;margin-bottom:8px;
+    display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;color:var(--ink-2);transition:.4s}
+  .mount .mrow .badge{margin-left:auto}
+  .mount .mrow.new{opacity:.25;transform:translateY(4px)}
+  .mount.sync .mrow.new{opacity:1;transform:none;border-color:var(--ink);box-shadow:var(--shadow)}
+  .mount .arrow{text-align:center;color:var(--ink-3);font-size:12px;font-weight:700;margin:2px 0 10px}
+
+  /* ---------- receipts section ---------- */
+  .polish{background:linear-gradient(160deg,#F7EFE7,#FBF6EF)}
+  .p-ribbon{position:absolute;inset:0;pointer-events:none;z-index:1}
+  .p-ribbon text{font-family:var(--mono);font-size:14px;font-weight:700;letter-spacing:.28em;fill:#fff}
+  .bubs{position:relative;z-index:2;display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:40px}
+  @media (max-width:920px){.bubs{grid-template-columns:1fr 1fr}}
+  @media (max-width:560px){.bubs{grid-template-columns:1fr}}
+  .bub{background:var(--card);border-radius:20px;border:1px solid var(--line);padding:18px;display:flex;gap:16px;align-items:center}
+  .bub .im{width:86px;height:86px;border-radius:50%;overflow:hidden;flex:none;border:1px solid var(--line);position:relative;
+    display:grid;place-items:center;background:var(--card-2)}
+  .bub .im img{width:300%;max-width:none;position:absolute}
+  .bub .im .big{font-family:var(--mono);font-weight:800;font-size:19px;letter-spacing:-.02em}
+  .bub .tx b{display:block;font-size:14.5px;letter-spacing:-.01em}
+  .bub .tx span{font-size:12.5px;color:var(--ink-2)}
+
+  .foot{display:flex;justify-content:space-between;align-items:center;padding:34px 8px 0;color:var(--ink-3);font-size:13px}
+
+  /* dot rail */
+  .rail{position:fixed;right:16px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:9px;z-index:50}
+  .rail a{width:8px;height:8px;border-radius:50%;background:var(--ink-3);opacity:.35;transition:.25s}
+  .rail a.on{opacity:1;background:var(--ocean);transform:scale(1.35)}
+  @media (max-width:1360px){.rail{display:none}}
+
+  a{color:inherit}
+  :focus-visible{outline:2.5px solid var(--ocean);outline-offset:2px;border-radius:4px}
+
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+    html{scroll-behavior:auto}
+    .rv{opacity:1;transform:none}
+    .cost-banner{opacity:1;transform:none}
+    .thr .reply{opacity:1;transform:none}
+    .mount .mrow.new{opacity:1;transform:none}
+    .spot-demo .srow{opacity:1}
+  }
+</style>
+
+<div class="wrap">
+
+  <!-- top -->
+  <div class="top">
+    <div class="brand">
+      <img src="ui/public/assets/worca-logo.png" alt="Worca" style="height:34px;width:auto;mix-blend-mode:multiply">
+    </div>
+    <span class="chip mono">changelog · v1.2.0 → v1.3.0</span>
+  </div>
+
+  <!-- ================= HERO ================= -->
+  <section class="sec hero" id="s0">
+    <svg class="ribbon" viewBox="0 0 1280 640" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <path id="rb" d="M -120 690 C 300 640, 540 530, 750 400 S 1120 150, 1400 160" fill="none" stroke="#4B5ED2" stroke-width="42" stroke-linecap="round" opacity=".92"></path>
+      <text><textPath id="rbt" href="#rb" startOffset="-12%">AUTO WORKFLOW · GETTING STARTED · AGENT MEMORY · TEAM METRICS · ARTIFACTS · DIFF THREADS · POLISH · AUTO WORKFLOW · GETTING STARTED · AGENT MEMORY · TEAM METRICS · ARTIFACTS · DIFF THREADS · POLISH · </textPath></text>
+    </svg>
+    <div class="hero-grid">
+      <div class="sec-head rv in">
+        <span class="kicker"><span class="dot"></span>What's new · v1.3.0</span>
+        <h1>What's new<br>in Worca.</h1>
+        <p class="sub">Since 1.2.0 — a workflow that picks itself, a guided first hour, agents that remember your repo, team-wide metrics on a git branch, and diffs you can talk about in place.</p>
+        <div class="chips">
+          <span class="chip acc">auto workflow</span><span class="chip">getting started</span><span class="chip">agent memory</span><span class="chip">team metrics</span><span class="chip">per-step artifacts</span><span class="chip">diff threads</span><span class="chip">dark theme</span>
+        </div>
+      </div>
+      <div class="rv d1 in" style="position:relative;z-index:2">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:560px"><img src="docs/changelog/shots/1.3.0/s0.png" alt="New pipeline — the one-time welcome dialog with three doors, the Getting started pill at 6 of 8 in the sidebar" style="width:132%;max-width:none;margin:-9% 0 0 -17%"></div></div>
+        <div class="float-chip" style="right:-8px;top:-16px"><small>New</small><span>Welcome, once</span></div>
+        <div class="float-chip" style="right:24px;bottom:-18px"><small>New</small><span>Getting started · 6/8</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S1 · AUTO WORKFLOW ================= -->
+  <section class="sec" id="s1">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Auto workflow</span>
+      <h2>The workflow picks itself.</h2>
+      <p class="sub"><b>Ever wondered which workflow to pick for a task?</b><br>Now Worca can pick one for you. Start a run on <span class="mono">Auto</span>: Worca reads your task, takes a quick look at the repo, and proposes a workflow that fits. Review the proposal first, or let the run go ahead on its own.</p>
+      <div class="chips">
+        <span class="chip">one look at the task and the repo</span><span class="chip">accept it or edit it</span><span class="chip">works from the CLI too</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv">
+        <div class="dlabel">What Worca does before it proposes</div>
+        <ol class="cap-steps" id="autoSteps">
+          <li><span class="n">1</span>Reads your task and attachments<small>prompt · medium</small></li>
+          <li><span class="n">2</span>Takes a quick look at the repo<small>web app · express</small></li>
+          <li><span class="n">3</span>Picks the agents that fit<small>10 agents considered</small></li>
+          <li><span class="n">4</span>Assembles the workflow<small>5 agents</small></li>
+        </ol>
+        <div class="cost-banner" id="autoBanner">
+          <span class="msg">Proposes “Clarify, plan, refine, implement + review” — the same as your saved <span class="mono">Default</span></span>
+          <span class="ghost-btn" id="autoBtn">Accept</span>
+        </div>
+        <p class="env-note">Accept it, edit it, or let Worca run without asking. The cost and error safeguards stay on either way.</p>
+      </div>
+      <div class="rv d1">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:500px"><img src="docs/changelog/shots/1.3.0/s1.png" alt="Running — Auto's proposal: what it read, what it found in the repo, and the workflow it built, waiting for Accept" style="width:132%;max-width:none;margin:-3% 0 0 -30%"></div></div>
+        <p class="shot-cap">Running — the proposal: what Auto read, what it found in the repo, and the workflow it built, waiting for you.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S2 · GETTING STARTED ================= -->
+  <section class="sec" id="s2">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Onboarding</span>
+      <h2>New to Worca? Follow the checklist.</h2>
+      <p class="sub"><b>Just installed Worca and not sure where to start?</b><br>Now a Getting started page lists the first eight things to do, from connecting Claude Code to turning on team metrics. Click a step and Worca highlights the exact button to press, on the real screen, until you have done it.</p>
+      <div class="chips">
+        <span class="chip"><b>8</b> steps, in order</span><span class="chip">highlights the real button</span><span class="chip">ticks off what you have done</span>
+      </div>
+    </div>
+    <div class="grid2 flip">
+      <div class="rv">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:470px"><img src="docs/changelog/shots/1.3.0/s2b.png" alt="Getting started — six of eight tiles done; the guide for 'Group projects into a workspace' rings the Workspaces entry in the sidebar" style="width:112%;max-width:none;margin:0 0 0 0"></div></div>
+        <p class="shot-cap">Getting started — 6 of 8 done. The workspace step highlights <span class="mono">Workspaces</span> in the sidebar and waits for your click.</p>
+      </div>
+      <div class="demo rv d1">
+        <div class="dlabel">Click a step, Worca points at the button</div>
+        <div class="spot-demo" id="spotDemo">
+          <div class="srow" data-i="0"><span class="k"></span>Projects</div>
+          <div class="srow" data-i="1"><span class="k"></span>New pipeline</div>
+          <div class="srow" data-i="2"><span class="k"></span>Running</div>
+          <div class="balloon" id="spotBalloon">Projects live here.<u>Skip</u></div>
+        </div>
+        <p class="env-note">Already on the right screen? Worca skips that part. Press Esc or Skip to leave a guide at any time.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S3 · AGENT MEMORY ================= -->
+  <section class="sec" id="s3">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--info)"></span>Memory</span>
+      <h2>Agents that remember the repo.</h2>
+      <p class="sub"><b>Tired of agents relearning your repo on every run?</b><br>Now Worca keeps a memory: short Markdown notes, per project and global, that every agent reads before it starts and can add to when it learns something. You read and edit the notes on the new project page, and a built-in workflow tidies them up.</p>
+      <div class="chips">
+        <span class="chip">per project and global</span><span class="chip">agents read it and add to it</span><span class="chip">edit it yourself</span><span class="chip">one-click tidy-up</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv">
+        <div class="dlabel">Loaded for the run, saved back after the step</div>
+        <div class="mount" id="memDemo">
+          <div class="mrow">memory/projects/nimbus-crm/api-conventions.md<span class="badge grey">loaded</span></div>
+          <div class="mrow">memory/global/testing-conventions.md<span class="badge grey">loaded</span></div>
+          <div class="arrow">↓ the implementer learns something ↓</div>
+          <div class="mrow new">memory/projects/nimbus-crm/review-findings.md<span class="badge green">saved</span></div>
+        </div>
+        <p class="env-note">Memory never ends up in your branch: the run keeps it out of git and out of every commit it makes.</p>
+      </div>
+      <div class="rv d1">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:520px"><img src="docs/changelog/shots/1.3.0/s3.png" alt="Project detail — Memory tab: health line, three files with their source run, and api-conventions.md open in the editor" style="width:126%;max-width:none;margin:-2% 0 0 -26%"></div></div>
+        <p class="shot-cap">The project page, Memory tab — health at a glance, every file with the run that wrote it, and the editor.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S4 · TEAM METRICS ================= -->
+  <section class="sec" id="s4">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--bad)"></span>Team</span>
+      <h2>Team metrics &amp; spend dashboard.</h2>
+      <p class="sub"><b>Want to know what your whole team spends on runs, not just your own machine?</b><br>Now every finished run is recorded to a small <span class="mono">worca-metrics</span> branch in the project's own git remote, and a new Team metrics page adds it all up: spend, runs, duration, autonomy and review cycles, per project or per workspace. No extra server, and Ask Worca can answer questions about it.</p>
+      <div class="chips">
+        <span class="chip">stored in your git remote</span><span class="chip">no extra server</span><span class="chip">per project or per workspace</span><span class="chip">ask Worca about it</span>
+      </div>
+    </div>
+    <div class="grid2 flip">
+      <div class="rv">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:520px"><img src="docs/changelog/shots/1.3.0/s4.png" alt="Team metrics — nimbus-crm this month: spend, runs, cost per run, duration, autonomy and review cycles, with spend and runs per week" style="width:120%;max-width:none;margin:-1% 0 0 -20%"></div></div>
+        <p class="shot-cap">Team metrics — one project, this month: six numbers and the weekly charts, read straight from the git branch.</p>
+      </div>
+      <div class="demo rv d1">
+        <div class="dlabel">From a finished run to a teammate's screen</div>
+        <ol class="cap-steps" id="tmSteps">
+          <li><span class="n">1</span>A run finishes<small>done · failed · stopped</small></li>
+          <li><span class="n">2</span>Worca writes one small record<small>6a970cef.jsonl</small></li>
+          <li><span class="n">3</span>Pushes it to the metrics branch<small>origin/worca-metrics</small></li>
+          <li><span class="n">4</span>Teammates fetch it<small>Synced just now</small></li>
+        </ol>
+        <p class="env-note">Turn it on once per project from the Projects page. A workspace records through one of its projects.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S5 · ARTIFACTS ================= -->
+  <section class="sec" id="s5">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Runs</span>
+      <h2>Every step leaves a paper trail.</h2>
+      <p class="sub"><b>Ever wanted to see exactly what the planner or the reviewer wrote in a given cycle?</b><br>Now every file a run produces is filed under the step that produced it. An Artifacts tab on the run lists the plans, reviews, patch and results with a viewer for each, and Ask Worca can read the same files while a run is still going.</p>
+      <div class="chips">
+        <span class="chip">filed by step and cycle</span><span class="chip">a viewer for every file</span><span class="chip">ask Worca about a running pipeline</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv">
+        <div class="dlabel">Filed by step, not just listed</div>
+        <div class="cat-demo" id="artDemo">
+          <div class="cat-row" data-i="0"><span class="t">contact-deduplication.md<small>Plan · cycle 1</small></span><span class="badge violet">plan</span></div>
+          <div class="cat-row" data-i="1"><span class="t">contact-deduplication-v3.md<small>Refine Plan · cycle 2</small></span><span class="badge violet">plan</span></div>
+          <div class="cat-row" data-i="2"><span class="t">impl-review.md<small>Review Implementation · cycle 2</small></span><span class="badge amber">review</span></div>
+          <div class="cat-row" data-i="3"><span class="t">diff-patch.patch<small>Run · +54 −0</small></span><span class="badge green">diff-patch</span></div>
+        </div>
+        <p class="env-note">Ask “what did the reviewer flag in cycle 2?” and Worca reads the review file, not the log.</p>
+      </div>
+      <div class="rv d1">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:520px"><img src="docs/changelog/shots/1.3.0/s5.png" alt="History detail — Artifacts tab: plans grouped by step and cycle, the review, and the run-level prompt, patch and results" style="width:120%;max-width:none;margin:-6% 0 0 -20%"></div></div>
+        <p class="shot-cap">History — the Artifacts tab: seven files grouped by the step that wrote them, cycle by cycle.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S6 · DIFF THREADS ================= -->
+  <section class="sec" id="s6">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--ok)"></span>Review</span>
+      <h2>Talk about the diff, on the diff.</h2>
+      <p class="sub"><b>Left a comment on a diff and lost the answer somewhere in the chat?</b><br>Now a comment is a thread. Reply to it right in the Diff tab, or ask Worca and its answer lands under your comment, next to the code. Comments render markdown, with a preview before you post.</p>
+      <div class="chips">
+        <span class="chip">replies next to the code</span><span class="chip">Worca answers in the thread</span><span class="chip">markdown, with preview</span>
+      </div>
+    </div>
+    <div class="grid2 flip">
+      <div class="rv">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:520px"><img src="docs/changelog/shots/1.3.0/s6.png" alt="Diff tab — a thread under line 19 of dedupe.mjs: your question, then Worca's reply with a code block, both rendered as markdown" style="width:132%;max-width:none;margin:-4% 0 0 -32%"></div></div>
+        <p class="shot-cap">The Diff tab — your question under line 19, Worca's reply beneath it with a code block, both markdown.</p>
+      </div>
+      <div class="demo rv d1">
+        <div class="dlabel">Your question and Worca's answer, on the same line of code</div>
+        <div class="thr" id="thrDemo">
+          <div class="tcard">
+            <div class="who">You <span>src/lib/dedupe.mjs : 19</span></div>
+            Sorting by <code>Number(id)</code> assumes ids are numeric strings. Should the merge keep the oldest row by <code>createdAt</code> instead?
+            <div class="tact"><span>Resolve</span><span>Ask Worca</span><span>Reply</span></div>
+          </div>
+          <div class="reply"><div class="tcard">
+            <div class="who"><span class="w">W</span>Worca <span>reply · same line</span></div>
+            Nothing enforces numeric ids. <code>createdAt</code> is the safer key — switching the sort in the fix pass, with a test.
+          </div></div>
+        </div>
+        <p class="env-note">Resolving a thread resolves the whole conversation. Worca may delete its own reply, never yours.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S7 · POLISH (no single surface: two demo cards) ================= -->
+  <section class="sec" id="s7">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--warn)"></span>Polish</span>
+      <h2>Smaller things that add up.</h2>
+      <p class="sub"><b>A few things that were in the way, fixed.</b><br>The run canvases pan and zoom like the composer, the whole UI has a dark theme, shipping from a fork works, and a finished pipeline reports back to the GitHub issue it came from.</p>
+      <div class="chips">
+        <span class="chip">drag to pan, ctrl+scroll to zoom</span><span class="chip">light and dark theme</span><span class="chip">ship from a fork</span><span class="chip">reports back to the issue</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv">
+        <div class="dlabel">Run canvases now move like the composer</div>
+        <div class="cat-demo">
+          <div class="cat-row"><span class="t">Drag to pan<small>hold and drag anywhere on the canvas</small></span><span class="badge grey">mouse</span></div>
+          <div class="cat-row"><span class="t">Zoom where your cursor is<small>or pinch on a trackpad</small></span><span class="src">⌘ / ctrl + scroll</span></div>
+          <div class="cat-row"><span class="t">Plain scrolling scrolls the page<small>the canvas never grabs your wheel</small></span><span class="badge green">always</span></div>
+          <div class="cat-row win"><span class="t">Zoom buttons<small>in, out and fit — on run canvases too</small></span><span class="badge violet">new</span></div>
+        </div>
+      </div>
+      <div class="demo rv d1">
+        <div class="dlabel">Also in 1.3.0</div>
+        <div class="cat-demo">
+          <div class="cat-row"><span class="t">Light and dark theme<small>Settings › Appearance: System, Light or Dark</small></span><span class="badge grey">theme</span></div>
+          <div class="cat-row"><span class="t">Ship it from a fork<small>Create PR works when your remote is a fork</small></span><span class="badge grey">pull requests</span></div>
+          <div class="cat-row"><span class="t">Reports back to the issue<small>a finished pipeline comments on the GitHub issue it started from</small></span><span class="badge grey">github</span></div>
+          <div class="cat-row"><span class="t">Ask Worca proposes workflows<small>describe a task in the chat and get a workflow you can save</small></span><span class="badge grey">ask worca</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= RECEIPTS ================= -->
+  <section class="sec polish" id="s8">
+    <svg class="p-ribbon" viewBox="0 0 1280 760" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <path id="pb" d="M -60 78 C 260 8, 520 140, 760 92 S 1160 6, 1360 96" fill="none" stroke="#EEA47D" stroke-width="34" stroke-linecap="round" opacity=".9"></path>
+      <text><textPath id="pbt" href="#pb" startOffset="-10%">TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · </textPath></text>
+    </svg>
+    <div class="sec-head rv" style="margin-top:110px">
+      <span class="kicker"><span class="dot" style="background:var(--coral)"></span>And the receipts</span>
+      <h2>Shipped, tested, verified live.</h2>
+    </div>
+    <div class="bubs">
+      <div class="bub rv"><span class="im"><span class="big">5,743</span></span><div class="tx"><b>Tests green</b><span>+23,215 test lines · 121 new test files</span></div></div>
+      <div class="bub rv d1"><span class="im"><span class="big">+57,436</span></span><div class="tx"><b>Lines landed</b><span>342 files · 19 commits on dev</span></div></div>
+      <div class="bub rv d2"><span class="im"><span class="big">12</span></span><div class="tx"><b>PRs merged</b><span>Sep 4 – 17 · two release candidates cut</span></div></div>
+      <div class="bub rv"><span class="im"><img src="docs/changelog/shots/1.3.0/r1.png" style="width:420%;left:-118%;top:-42%" alt="History detail in the dark theme"></span><div class="tx"><b>Dark theme</b><span>served with the stored mode · no flash</span></div></div>
+      <div class="bub rv d1"><span class="im"><img src="docs/changelog/shots/1.3.0/r1.png" style="width:760%;left:-178%;top:-232%" alt="The run canvas hint chip: drag to pan, ⌘/ctrl+scroll to zoom"></span><div class="tx"><b>Canvas navigation</b><span>drag to pan · ⌘/ctrl+scroll · fit</span></div></div>
+      <div class="bub rv d2"><span class="im"><span class="big">v29</span></span><div class="tx"><b>Schema forward</b><span>v27 → v29 · human_in_loop · parent_id · step-attributed artifacts</span></div></div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <span>WORCA · changelog · <span class="mono">v1.2.0 → v1.3.0</span></span>
+    <span class="mono">Sep 4 – 17, 2026</span>
+  </div>
+</div>
+
+<nav class="rail" id="rail" aria-label="Sections">
+  <a href="#s0" aria-label="What's new" class="on"></a><a href="#s1" aria-label="Auto workflow"></a><a href="#s2" aria-label="Getting started"></a><a href="#s3" aria-label="Agent memory"></a><a href="#s4" aria-label="Team metrics"></a><a href="#s5" aria-label="Artifacts"></a><a href="#s6" aria-label="Diff threads"></a><a href="#s7" aria-label="Polish"></a><a href="#s8" aria-label="Receipts"></a>
+</nav>
+
+<script>
+(function () {
+  var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var $ = function (id) { return document.getElementById(id); };
+
+  // scroll reveals
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.18 });
+  document.querySelectorAll('.rv').forEach(function (el) { io.observe(el); });
+
+  // dot rail follows the section in the middle of the viewport
+  var secs = [].slice.call(document.querySelectorAll('.sec'));
+  var dots = [].slice.call(document.querySelectorAll('.rail a'));
+  var so = new IntersectionObserver(function (es) {
+    es.forEach(function (e) {
+      if (e.isIntersecting) {
+        var i = secs.indexOf(e.target);
+        dots.forEach(function (d, j) { d.classList.toggle('on', j === i); });
+      }
+    });
+  }, { rootMargin: '-45% 0px -45% 0px' });
+  secs.forEach(function (s) { so.observe(s); });
+
+  // ribbons drift with scroll position
+  var rbt = $('rbt'), pbt = $('pbt');
+  if (!reduced) addEventListener('scroll', function () {
+    var p = scrollY / Math.max(1, document.body.scrollHeight - innerHeight);
+    if (rbt) rbt.setAttribute('startOffset', (-12 + p * 30) + '%');
+    if (pbt) pbt.setAttribute('startOffset', (-10 + p * 26) + '%');
+  }, { passive: true });
+
+  var autoSteps = [].slice.call(document.querySelectorAll('#autoSteps li'));
+  var tmSteps = [].slice.call(document.querySelectorAll('#tmSteps li'));
+  var spotRows = [].slice.call(document.querySelectorAll('#spotDemo .srow'));
+  var artRows = [].slice.call(document.querySelectorAll('#artDemo .cat-row'));
+  var spotWords = ['Projects live here.', 'Describe the task here.', 'Watch it run here.'];
+
+  // Reduced motion: every demo in its final state, no timers.
+  if (reduced) {
+    autoSteps.forEach(function (li) { li.classList.add('on'); });
+    $('autoBanner').classList.add('show');
+    tmSteps.forEach(function (li) { li.classList.add('on'); });
+    spotRows[2].classList.add('ring'); $('spotBalloon').firstChild.textContent = spotWords[2];
+    $('memDemo').classList.add('sync');
+    artRows[2].classList.add('win');
+    $('thrDemo').classList.add('in');
+    return;
+  }
+
+  // auto: four reads, then the proposal banner with a pulsing Accept
+  var ap = -1;
+  setInterval(function () {
+    ap = (ap + 1) % 6;
+    autoSteps.forEach(function (li, i) { li.classList.toggle('on', i <= ap && ap < 4 || ap >= 4 && i === 3); });
+    $('autoBanner').classList.toggle('show', ap >= 4);
+    $('autoBtn').classList.toggle('pulse', ap === 5);
+  }, 1500);
+
+  // spotlight: the ring hops across three controls, the balloon follows
+  var sp = 0;
+  setInterval(function () {
+    sp = (sp + 1) % 3;
+    spotRows.forEach(function (r, i) { r.classList.toggle('ring', i === sp); });
+    $('spotBalloon').firstChild.textContent = spotWords[sp];
+  }, 1700);
+
+  // memory: a new file syncs back
+  setInterval(function () { $('memDemo').classList.toggle('sync'); }, 2400);
+
+  // team metrics: run → outbox → push → fetched
+  var tp = -1;
+  setInterval(function () {
+    tp = (tp + 1) % 5;
+    tmSteps.forEach(function (li, i) { li.classList.toggle('on', i <= tp - 1 && tp > 0); });
+  }, 1400);
+
+  // artifacts: the highlight walks the list
+  var ar = -1;
+  setInterval(function () {
+    ar = (ar + 1) % 4;
+    artRows.forEach(function (r, i) { r.classList.toggle('win', i === ar); });
+  }, 1500);
+
+  // thread: the reply arrives
+  setInterval(function () { $('thrDemo').classList.toggle('in'); }, 2600);
+})();
+</script>
