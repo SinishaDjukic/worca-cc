@@ -1,6 +1,6 @@
 // The per-run memory MOUNT (agent-memory-design.md §4.1, amendment A1) and the
 // hash-baselined SYNC-BACK (§5). Pure over injected paths: `root` is the store
-// (memory-store.mjs' layout), `mount` is `<runCwd>/.claude/rules/worca` (memoryMountPath). No DB, no
+// (memory-store.mjs' layout), `mount` is the WRITABLE copy `<pipeline.dir>/memory` (memoryWorkPath); the read-only rules copy is memoryRulesPath(cwd). No DB, no
 // orchestrator state, no settings reads — the harness passes caps and paths.
 import { mkdir, rm, cp, readFile, writeFile, stat, rename, unlink, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -11,16 +11,25 @@ import {
 import { MEMORY_DEFRAG_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 
 /**
- * Where the mount lives INSIDE a run's cwd (native-rules revision, 2026-09-13): Claude Code
- * discovers `<cwd>/.claude/rules/**` recursively, honours `paths:` frontmatter (comma-separated
- * string included) and hands the files to Task sub-agents — probed on claude 2.1.270 from a git
- * worktree cwd and from a non-git run root. `worca/` namespaces the mount away from a project's
- * own committed rules. Forward slashes on purpose: the string is also the git pathspec of the
- * §8.8 exclusion set (`:(exclude).claude/rules/worca`).
+ * Two copies of the store per run (memory-write-split design, 2026-09-17):
+ *  - the READ-ONLY rules copy INSIDE a run's cwd — Claude Code discovers `<cwd>/.claude/rules/**`
+ *    recursively, honours `paths:` frontmatter and hands the files to Task sub-agents (probed on
+ *    claude 2.1.270). `.claude` is one of Claude Code's PROTECTED paths: a Write/Edit there is refused
+ *    under `-p` whatever the allow rules or hooks say (probed 2.1.273), so nothing is ever written here
+ *    by an agent; worca refreshes it from the store after every sync that changed the store.
+ *  - the WRITABLE copy = the sync-back mount, `<pipeline.dir>/memory/`, outside every checkout and
+ *    cwd (no git hygiene, no tracked guard, survives a pause for the resume sync), passed to every
+ *    spawn as `--add-dir` so acceptEdits auto-approves edits there by the documented rule.
+ * `worca/` namespaces the rules copy away from a project's own committed rules. Forward slashes on
+ * purpose: MEMORY_RULES_REL is also the git pathspec of the §8.8 exclusion set.
  */
 export const MEMORY_RULES_REL = '.claude/rules/worca';
-/** `<cwd>/.claude/rules/worca` with the platform separator. */
-export function memoryMountPath(cwd) { return join(cwd, ...MEMORY_RULES_REL.split('/')); }
+/** `<cwd>/.claude/rules/worca` with the platform separator — the read-only copy. */
+export function memoryRulesPath(cwd) { return join(cwd, ...MEMORY_RULES_REL.split('/')); }
+/** The writable copy's name under the pipeline dir. */
+export const MEMORY_WORK_REL = 'memory';
+/** `<pipelineDir>/memory` — the writable copy = the sync-back mount. */
+export function memoryWorkPath(pipelineDir) { return join(pipelineDir, MEMORY_WORK_REL); }
 /**
  * The §8.8 injected-path record of the mount. `kind: 'memory'` is EXCLUDED from every commit,
  * intent-to-add staging and result diff (run-harness `_excludePathspecs`), REMOVED at teardown
@@ -179,9 +188,11 @@ const isHash = (v) => typeof v === 'string' && !v.startsWith('rejected:');
  *  `rejected:invalid` and for P1's two-part `rejected:<mountHash>` (the store never vouched). */
 const storeHashOf = (v) => (isHash(v) ? v : ((typeof v === 'string' && v.split(':')[2]) || null));
 
-/** Totals over a list of Change entries — one shape for results.json and the History detail. */
+/** Totals over a list of Change entries — one shape for results.json, the History detail and Ask's
+ *  get_run. `failed` = writes the agent attempted that never reached the mount (a refused tool call);
+ *  a record written before the write split has no `failed` array and counts as 0. */
 export function memoryTotals(changes) {
-  const totals = { added: 0, modified: 0, deleted: 0, rejected: 0 };
+  const totals = { added: 0, modified: 0, deleted: 0, rejected: 0, failed: 0 };
   for (const c of Array.isArray(changes) ? changes : []) for (const k of Object.keys(totals)) totals[k] += Array.isArray(c[k]) ? c[k].length : 0;
   return totals;
 }

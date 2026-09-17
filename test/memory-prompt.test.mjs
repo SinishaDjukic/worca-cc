@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildSystemPrompt, _runOptsForTests as runOpts } from '../src/core/phases.mjs';
+import { buildClaudeArgs, memoryDirsFromPrompt } from '../src/core/claude-runner.mjs';
 
 const BLOCK = '## Worca memory\nintro\nGlobal — /m/global:\n';
 
@@ -21,13 +22,20 @@ test('buildSystemPrompt: no block ⇒ byte-identical to the four-argument call (
   assert.equal(buildSystemPrompt('', 'B', 'r', undefined, '   '), 'B', 'whitespace-only block is no block');
 });
 
-test('runOpts: ctx.memoryBlock becomes appendSubagentSystemPrompt; absent ⇒ undefined (argv unchanged)', () => {
+test('runOpts: ctx.memoryBlock becomes appendSubagentSystemPrompt and ctx.memoryMount becomes addDirs; absent ⇒ both undefined (argv unchanged)', () => {
   const base = { projectDir: '/w', claudeOpts: {}, node: { key: 'planner', tools: [] } };
-  const withBlock = runOpts({ ...base, memoryBlock: BLOCK }, { role: 'planner', prompt: 'p', systemPrompt: 's', allowedTools: ['Read'] });
+  const withBlock = runOpts({ ...base, memoryBlock: BLOCK, memoryMount: '/p/pipe/memory' }, { role: 'planner', prompt: 'p', systemPrompt: 's', allowedTools: ['Read'] });
   assert.equal(withBlock.appendSubagentSystemPrompt, BLOCK);
+  assert.deepEqual(withBlock.addDirs, ['/p/pipe/memory'], 'the writable copy is outside the cwd: acceptEdits auto-approves edits only in the working directory and additionalDirectories');
   const without = runOpts(base, { role: 'planner', prompt: 'p', systemPrompt: 's', allowedTools: ['Read'] });
   assert.equal(without.appendSubagentSystemPrompt, undefined);
-  assert.equal(runOpts({ ...base, memoryBlock: '' }, { role: 'planner', prompt: 'p', systemPrompt: 's', allowedTools: ['Read'] }).appendSubagentSystemPrompt, undefined);
+  assert.equal(without.addDirs, undefined);
+  const empty = runOpts({ ...base, memoryBlock: '', memoryMount: null }, { role: 'planner', prompt: 'p', systemPrompt: 's', allowedTools: ['Read'] });
+  assert.equal(empty.appendSubagentSystemPrompt, undefined);
+  assert.equal(empty.addDirs, undefined);
+  // The argv end-to-end: the dir rides --add-dir, last.
+  const argv = buildClaudeArgs({ ...withBlock, permissionMode: 'acceptEdits' });
+  assert.deepEqual(argv.slice(-2), ['--add-dir', '/p/pipe/memory']);
 });
 
 // The write policy also lands in the three agent bodies that actually hold the knowledge.
@@ -91,8 +99,18 @@ test('no other builtin agent body grows a memory section', () => {
   }
 });
 
+// The defragmenter's sidecar directive lands in its TASK prompt, beside the body's own location
+// sentence. Both must name the writable copy: the rules copy under the cwd refuses every write.
+test('the defragmenter directive points at the writable copy outside the checkout, never at the rules copy', () => {
+  const meta = JSON.parse(agentBody('memoryDefragmenter.meta.json'));
+  const directive = meta.inputs.find((i) => i.id === 'task').directive;
+  assert.doesNotMatch(directive, /under the project directory at \.claude\/rules\/worca/, 'the old location sentence is gone');
+  assert.match(directive, /outside the project checkout/, 'the directive names the writable copy');
+  assert.match(directive, /\.claude\/rules\/worca\/[^.]*read-only/, 'the rules copy is named as read-only');
+  assert.match(directive, /never write there/, 'and the agent is told not to write to it');
+});
+
 // §15: the block reaches Task-tool sub-agents by exact byte, or not at all.
-import { buildClaudeArgs, memoryDirsFromPrompt } from '../src/core/claude-runner.mjs';
 import { renderMemoryBlock } from '../src/core/memory-store.mjs';
 
 test('an agent body that carries its own `## Worca memory` heading never confuses memoryDirsFromPrompt', () => {

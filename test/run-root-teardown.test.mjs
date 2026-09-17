@@ -787,16 +787,17 @@ test('the retention stamp is durable in the DB before _recordCommitFailure retur
     'the row is durable before any caller-side persist runs');
 });
 
-test('detached workspace: the memory mount sits at <runRoot>/.claude/rules/worca, is never a stray, and goes with the run root', async () => {
+test('detached workspace: the rules copy sits at <runRoot>/.claude/rules/worca (never a stray, goes with the run root); the writable copy sits under the pipeline dir', async () => {
   const a = await freshRepo('worca-cc-rrt-a-'); const b = await freshRepo('worca-cc-rrt-b-');
   await withMode('detached', async () => {
-    let seenMount = null;
+    let seenRules = null; let seenMount = null;
     const orch = createOrchestrator({ projectDir: a, prompt: 'x', auto: true, claude: { mock: true }, ...workspaceOpts([a, b]) });
-    orch.on('state', (s) => { if (!seenMount && s.memoryMount) seenMount = s.memoryMount; });   // captured live: the run root is gone after teardown
+    orch.on('state', (s) => { if (!seenRules && s.memoryRules) seenRules = s.memoryRules; if (!seenMount && s.memoryMount) seenMount = s.memoryMount; });   // captured live: the run root is gone after teardown
     const res = await orch.run();
     assert.equal(res.status, 'done', JSON.stringify(res));
     const runRoot = join(worcaHome(), 'runs', orch.getState().id);
-    assert.equal(seenMount, join(runRoot, '.claude', 'rules', 'worca'));
+    assert.equal(seenRules, join(runRoot, '.claude', 'rules', 'worca'));
+    assert.equal(seenMount, join(orch.getState().pipelineDir, 'memory'), 'the writable copy is never at the run root');
     assert.ok(!existsSync(runRoot), 'the run root is gone');
     assert.ok(!existsSync(join(orch.getState().pipelineDir, 'stray')), 'the mount was never rescued as a stray (.claude is in the known set)');
     for (const repo of [a, b]) for (const br of branchList(repo).filter((x) => x !== 'main')) assert.ok(!treeOf(repo, br).some((p) => p.startsWith('.claude/')), `${repo}: no mount in the commit`);

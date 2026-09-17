@@ -754,7 +754,7 @@ test('temp home: a seeded project run and a seeded workspace run round-trip thro
   await writeFile(join(seeded.dir, 'memory.json'), JSON.stringify({ mount: '/tmp/x/memory', dirs: [], baseline: {},
     changes: [{ nodeId: 'n_defrag', added: [{ scope: 'global', name: 'style' }], modified: [{ scope: 'project', name: 'conventions' }], deleted: [], rejected: [] }] }), 'utf8');
   const withMemory = await real.call('get_run', { id: seeded.id });
-  assert.deepEqual(withMemory.memory.totals, { added: 1, modified: 1, deleted: 0, rejected: 0 });
+  assert.deepEqual(withMemory.memory.totals, { added: 1, modified: 1, deleted: 0, rejected: 0, failed: 0 });
   assert.deepEqual(withMemory.memory.changes[0].added, [{ scope: 'global', name: 'style' }]);
   assert.equal('mount' in withMemory.memory, false, 'the mount path never reaches the model');
   const diff = await real.call('get_run_diff', { id: seeded.id, projectKey: project.key });

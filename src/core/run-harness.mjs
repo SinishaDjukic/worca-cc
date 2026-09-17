@@ -17,7 +17,7 @@ import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { join, basename, resolve, sep, relative } from 'node:path';
+import { join, basename, dirname, resolve, sep, relative } from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile, writeFile, readdir, mkdir, realpath, rename } from 'node:fs/promises';
 
@@ -40,8 +40,8 @@ import {
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   memoryCaps,
 } from './settings.mjs';
-import { mountDirs, mountMemory, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryMountPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY } from './memory-sync.mjs';
-import { memoryRoot, renderMemoryBlock, bumpScopeState } from './memory-store.mjs';
+import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY } from './memory-sync.mjs';
+import { memoryRoot, renderMemoryBlock, bumpScopeState, readScopeState } from './memory-store.mjs';
 import { readCostCapOverride, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
@@ -316,6 +316,18 @@ function describeToolResults(raw) {
     lines.push(`result ${b.is_error ? 'error' : 'ok'} ${id}`);
   }
   return lines;
+}
+
+/** The tools whose `file_path` can be a memory write. */
+const MEMORY_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+
+/** The human text of a tool_result block: a string, or the first text block; `<tool_use_error>`
+ *  tags stripped (the CLI wraps some errors in them). '' when there is none. */
+function toolResultText(block) {
+  const c = block?.content;
+  const raw = typeof c === 'string' ? c
+    : Array.isArray(c) ? (c.find((x) => x?.type === 'text' && typeof x.text === 'string')?.text || '') : '';
+  return raw.replace(/<\/?tool_use_error>/g, '').trim();
 }
 
 /** A short, human-readable target for a tool call (file, command, pattern…). */
@@ -699,11 +711,15 @@ export class RunHarness extends EventEmitter {
     this._askTail = null;       // serializes _ask: ONE prompt open at a time (recovery + step questions)
     this._recoverySeq = 0;      // monotonic id source for recovery prompts (determinism-safe)
     this.agentPrompts = null;
-    this.memory = null;          // { root, mount, dirs, baseline } after _mountMemory
+    this.memory = null;          // { root, mount, rules, dirs, baseline } after _mountMemory — mount = the WRITABLE copy (<pipeline.dir>/memory), rules = the read-only copy (<runCwd>/.claude/rules/worca)
     this.memoryBlock = '';       // the ## Worca memory pointer block, rendered once per mount (files load natively — no per-spawn re-render)
     this.memoryChanges = [];     // Change[] — the durable ledger's `changes`
     this._memoryWarned = new Set();
     this._memoryTail = null;     // per-run sync chain: one syncBack at a time (F1)
+    // Failed-write bookkeeping (memory-write-split design §4): executionId -> { calls: Map<toolUseId, key>,
+    // last: Map<key.id, { ...key, ok, reason }> }. Filled by _trackMemoryWrites from every stream frame,
+    // drained by _takeFailedMemoryWrites at sync time.
+    this._memoryWrites = new Map();
     this._ledgerSeq = 0;         // monotonic: two ledger writes must never share a temp name
     this.toolInstruction = '';
     // Cap for the in-worktree graphify build (macOS has no timeout(1)).
@@ -749,7 +765,8 @@ export class RunHarness extends EventEmitter {
       // detached run throws TypeError on the first this.state.branches[key] = … .
       branches: {},
       checkpointRefs: {},
-      memoryMount: null, // <runCwd>/.claude/rules/worca after _mountMemory (native rules: inside every spawn's cwd)
+      memoryMount: null, // <pipeline.dir>/memory after _mountMemory — the WRITABLE copy agents edit (--add-dir on every spawn)
+      memoryRules: null, // <runCwd>/.claude/rules/worca — the read-only copy the CLI loads natively
       pauseReason: null,   // mirrors this.pauseReason so getState() (a deep clone of state) carries it live
       pauseDetail: null,   // mirrors this.pauseDetail
       // Sub-agent lifecycle records (rides the existing `state` snapshot; mirrored to
@@ -1141,8 +1158,10 @@ export class RunHarness extends EventEmitter {
         await this._assembleContext(resolvedSkills);
       }
       this._checkAbort();
-      // 3f) Agent memory: mount the store into <runCwd>/.claude/rules/worca — the CLI loads it
-      // natively — and render the pointer block every spawn carries. Pure fs work, both modes,
+      // 3f) Agent memory: mount the store twice — the read-only rules copy into
+      // <runCwd>/.claude/rules/worca (the CLI loads it natively) and the writable copy into
+      // <pipeline.dir>/memory (every spawn's --add-dir; the sync-back reads it) — and render the
+      // pointer block every spawn carries, naming the writable copy. Pure fs work, both modes,
       // mock included. AFTER 3e: the assembly rewrites injectedPaths and the mount registers
       // itself into that map.
       await this._mountMemory();
@@ -1858,7 +1877,7 @@ export class RunHarness extends EventEmitter {
     if (!this.pipeline?.dir) return;
     try { await this._mountMemoryUnguarded({ resume }); }
     catch (err) {
-      this.memory = null; this.memoryBlock = ''; this.state.memoryMount = null;
+      this.memory = null; this.memoryBlock = ''; this.state.memoryMount = null; this.state.memoryRules = null;
       if (existsSync(this._memoryLedgerPath())) await this._writeMemoryLedger({ neutralised: true });
       const why = String(err?.message || err).split('\n')[0];
       // A defragment run IS its mount (B8): rethrow, and run()'s setup failure policy parks the run
@@ -1874,9 +1893,11 @@ export class RunHarness extends EventEmitter {
   }
 
   /**
-   * Mount the memory store into this run at `<runCwd>/.claude/rules/worca` — INSIDE the cwd of
-   * every spawn, where Claude Code discovers rules natively (run root on a detached workspace
-   * run, the primary worktree otherwise). Always recomputed, never the ledger's absolute path.
+   * Mount the memory store into this run twice: the read-only rules copy at
+   * `<runCwd>/.claude/rules/worca` (where Claude Code discovers rules natively — run root on a
+   * detached workspace run, the primary worktree otherwise) and the writable copy at
+   * `<pipeline.dir>/memory` (the sync-back mount, outside every checkout). Always recomputed,
+   * never the ledger's absolute paths.
    * On resume, the previous segment's ledger is read first and its mount is synced back BEFORE
    * anything else (§5 "resume of a paused run"): the sync is pure fs and needs neither git nor
    * the tracked guard, so a guard that fails only NOW (git broken, the previous segment's agent
@@ -1884,10 +1905,15 @@ export class RunHarness extends EventEmitter {
    */
   async _mountMemoryUnguarded({ resume }) {
     const root = memoryRoot();
-    // Pre-setup there is no run cwd, and the LIVE checkout must never take a mount.
+    // Pre-setup there is no run cwd, and the LIVE checkout must never take a rules copy.
     const cwd = this.runCwd || null;
     if (!cwd || cwd === this.projectDir) throw new Error('no run cwd to mount into');
-    const mount = memoryMountPath(cwd);
+    if (!this.pipeline?.dir) throw new Error('no pipeline dir for the writable memory copy');
+    // Two copies (memory-write-split design D1): the READ-ONLY rules copy inside the cwd, where Claude
+    // Code loads it and refuses every write (`.claude` is a protected path); the WRITABLE copy — the
+    // sync-back mount — under the pipeline dir, outside every checkout, reached by --add-dir.
+    const rules = memoryRulesPath(cwd);
+    const mount = memoryWorkPath(this.pipeline.dir);
     // §8.8 scope of the record: 'runRoot' when the cwd IS the run root, else the member whose
     // checkout is the cwd (the primary member on single and legacy-workspace runs).
     const scope = (this.runRoot && cwd === this.runRoot) ? 'runRoot'
@@ -1900,9 +1926,9 @@ export class RunHarness extends EventEmitter {
       try { ledger = JSON.parse(await readFile(this._memoryLedgerPath(), 'utf8')); } catch { ledger = null; }
       if (ledger && ledger.baseline && Array.isArray(ledger.dirs)) {
         this.memoryChanges = Array.isArray(ledger.changes) ? ledger.changes : [];
-        // A run paused BEFORE the native-rules revision still has its files at the ledger's
-        // old path (<pipeline.dir>/memory): sync THAT dir once, so nothing the interrupted
-        // execution wrote is lost; the recomputed path is used from here on.
+        // The interrupted segment's writes live at the LEDGER's mount: this dir since the write
+        // split, the in-checkout `.claude/rules/worca` for a run paused before it (a pause keeps the
+        // checkout, so that dir is still there). Sync whichever exists; the recomputed paths are used from here on.
         const prev = (typeof ledger.mount === 'string' && ledger.mount !== mount && existsSync(ledger.mount)) ? ledger.mount : mount;
         try {
           await this._syncMemoryWith({ mount: prev, dirs: ledger.dirs, baseline: ledger.baseline, nodeId: 'resume', executionId: null, agentKey: null, label: 'the interrupted execution' });
@@ -1911,12 +1937,11 @@ export class RunHarness extends EventEmitter {
           // through onError). If it ever does: do NOT remount over unsynced writes; keep the
           // PREVIOUS mount + baseline so the next execution's sync retries them.
           this._log('memory', 'warn', `memory: the interrupted execution's writes could not be synced (${err?.message || err}); keeping the previous mount`);
-          this.memory = { root, mount: prev, dirs: ledger.dirs, baseline: ledger.baseline };
-          this.state.memoryMount = prev;
-          // Register ONLY when the kept mount is the one inside this run's cwd: a mount there must
-          // stay excluded from the commit and removed at teardown, while the pre-revision
-          // <pipeline.dir>/memory path is outside every checkout and needs no §8.8 record.
-          if (prev === mount) await this._registerMemoryMount(scope);
+          this.memory = { root, mount: prev, rules: null, dirs: ledger.dirs, baseline: ledger.baseline };
+          this.state.memoryMount = prev; this.state.memoryRules = null;
+          // Register in every case: the rules copy of the interrupted segment (if any) is still inside
+          // the checkout and must stay excluded from the commit and removed at teardown. Idempotent.
+          await this._registerMemoryMount(scope);
           this._refreshMemoryBlock();
           return;
         }
@@ -1938,16 +1963,20 @@ export class RunHarness extends EventEmitter {
     // EBUSY past the retries) leaves files under the cwd, and only the §8.8 entry keeps them out
     // of the commit and gets them removed at teardown. Idempotent, harmless on failure.
     await this._registerMemoryMount(scope);
-    // gitIgnore: the mount now lives INSIDE a checkout an AGENT runs git in. `<mount>/.gitignore`
-    // = `*` makes it invisible to an agent's own `git add -A`, to a staging pre-commit hook, to
-    // snapshotWorktreePatch's bare `git add -A` and to the reviewer's `git status`. The §8.8
-    // `:(exclude)` pathspec stays as defence in depth. Harmless at a non-git run root.
-    const m = await mountMemory({ root, mount, dirs, onError, gitIgnore: true });
-    this.memory = { root, mount, dirs, baseline: m.baseline };
+    // The WRITABLE copy: a full copy of the mounted scopes (agents edit existing files in place;
+    // syncBack diffs it against this baseline). Outside git — no sentinel.
+    const m = await mountMemory({ root, mount, dirs, onError });
+    // The READ-ONLY rules copy: the same files where the CLI discovers them. Its baseline is
+    // irrelevant (nothing syncs back from it). `<rules>/.gitignore` = `*` keeps it out of an agent's
+    // own `git add -A`, a staging pre-commit hook, snapshotWorktreePatch's bare `git add -A` and the
+    // reviewer's `git status`; the §8.8 `:(exclude)` pathspec stays as defence in depth.
+    await mountMemory({ root, mount: rules, dirs, onError, gitIgnore: true });
+    this.memory = { root, mount, rules, dirs, baseline: m.baseline };
     this.state.memoryMount = mount;
+    this.state.memoryRules = rules;
     this._refreshMemoryBlock();
     await this._writeMemoryLedger();
-    this._log('memory', 'info', `Memory mounted at ${mount}: ${m.files} file(s) across ${dirs.length} scope(s)`);
+    this._log('memory', 'info', `Memory mounted: ${m.files} file(s) across ${dirs.length} scope(s) — loaded from ${rules}, written to ${mount}`);
   }
 
   /**
@@ -1996,8 +2025,11 @@ export class RunHarness extends EventEmitter {
     if (!this.memory) return Promise.resolve(null);
     const job = async () => {
       if (!this.memory) return null;
+      // Every frame of the execution has arrived (the runner resolved before _afterExecution); a
+      // null executionId is the run-end sync and drains what unfinished executions left behind.
+      const failed = this._takeFailedMemoryWrites(ctx.executionId ?? null);
       try {
-        return await this._syncMemoryWith({ ...this.memory, nodeId: ctx.nodeId, executionId: ctx.executionId, agentKey: nc?.key ?? null, label: nc?.key || ctx.label || ctx.nodeId });
+        return await this._syncMemoryWith({ ...this.memory, nodeId: ctx.nodeId, executionId: ctx.executionId, agentKey: nc?.key ?? null, label: nc?.key || ctx.label || ctx.nodeId, failed });
       } catch (err) {
         this._log('memory', 'warn', `memory sync failed after ${ctx.executionId}: ${err?.message || err}`);
         return null;
@@ -2007,7 +2039,7 @@ export class RunHarness extends EventEmitter {
     return this._memoryTail;
   }
 
-  async _syncMemoryWith({ mount, dirs, baseline, nodeId, executionId, agentKey, label }) {
+  async _syncMemoryWith({ mount, dirs, baseline, nodeId, executionId, agentKey, label, failed = [] }) {
     const now = new Date().toISOString();
     const res = await syncBack({
       root: memoryRoot(), mount, dirs, baseline, source: `${this.memoryScope ? 'defrag' : 'run'}:${this.pipeline.id}`, now,
@@ -2018,26 +2050,119 @@ export class RunHarness extends EventEmitter {
     // an OLD instance can never race a resumed one because the scheduler drains in-flight
     // executions before the run reports 'paused' (scheduler.mjs, the pause drain).
     if (this.memory && this.memory.mount === mount) this.memory.baseline = res.baseline;
-    if (res.total || res.rejected.length) {
+    if (res.total || res.rejected.length || failed.length) {
       this.memoryChanges.push({
         executionId, nodeId, agentKey, at: now,
-        added: res.added, modified: res.modified, deleted: res.deleted, rejected: res.rejected,
+        added: res.added, modified: res.modified, deleted: res.deleted, rejected: res.rejected, failed,
       });
       const head = `Memory: +${res.added.length} ~${res.modified.length} -${res.deleted.length}` +
-        `${res.rejected.length ? ` (${res.rejected.length} rejected)` : ''} by ${label}`;
-      const name = (r) => `${r.scope}/${r.name}.md`;
+        `${res.rejected.length ? ` (${res.rejected.length} rejected)` : ''}${failed.length ? ` (${failed.length} failed)` : ''} by ${label}`;
+      const name = (r) => `${r.scope ? `${r.scope}/` : ''}${r.name}.md`;
       const details = [
         ...res.added.map((r) => `added ${name(r)}`), ...res.modified.map((r) => `updated ${name(r)}`),
         ...res.deleted.map((r) => `deleted ${name(r)}`), ...res.rejected.map((r) => `rejected ${name(r)} — ${r.reason}`),
+        ...failed.map((r) => `failed ${name(r)} — ${r.reason}`),
       ];
       this._log('memory', 'info', `${head}: ${details.join('; ')}`, { nodeId, executionId });
+      // A failed write is the one memory outcome nobody asked for: warn, per file, so it is visible in
+      // the run log without opening the 300 KB transcript.
+      for (const r of failed) this._log('memory', 'warn', `memory: ${name(r)} written by ${label} never reached the store — ${r.reason}`, { nodeId, executionId });
       await appendAudit(this.pipeline.dir, `${head}: ${details.join('; ')}`).catch(() => {});
+      await this._recordFailedWrites(failed, now);
+    }
+    // The rules copy the NEXT execution loads must carry what this sync stored (the store is the
+    // authority: it also holds Ask/UI writes made mid-run). Non-destructive and per-file atomic, so
+    // a Task sub-agent spawning right now never reads a torn file; never touches the sentinel.
+    if (res.total && this.memory && this.memory.mount === mount && this.memory.rules) {
+      try {
+        const { failed: stale } = await withStoreLock(memoryRoot(), () => refreshMount({ root: memoryRoot(), mount: this.memory.rules, dirs, onError: (p, err) => this._memoryReadWarn(p, err) }));
+        if (stale.length) this._log('memory', 'warn', `memory: the rules copy could not be refreshed for ${stale.join(', ')} — the next agent loads the previous text`);
+      } catch (err) {
+        this._log('memory', 'warn', `memory: the rules copy could not be refreshed: ${err?.message || err}`);
+      }
     }
     if (this.memory && this.memory.mount === mount) await this._writeMemoryLedger();
     return res;
   }
 
-  /** `{ mount, dirs, baseline, changes }` — best-effort, atomic via temp + rename. */
+  /** Bump the `.state` counters of every scope a failed write named (memory-write-split design D9).
+   *  A write beside the scope dirs (`scope: ''`, or a rel that is not mounted) is reported but counted
+   *  against no scope. Best-effort: a counter that cannot be written is a warn line, never a throw. */
+  async _recordFailedWrites(failed, now) {
+    if (!failed.length || !this.memory) return;
+    const byRel = new Map();
+    for (const f of failed) if (f.scope) byRel.set(f.scope, (byRel.get(f.scope) || 0) + 1);
+    for (const [rel, n] of byRel) {
+      const d = this.memory.dirs.find((x) => x.rel === rel);
+      if (!d) continue;
+      try {
+        await withStoreLock(memoryRoot(), async () => {
+          const st = await readScopeState(memoryRoot(), d.scope);
+          await bumpScopeState(memoryRoot(), d.scope, { failedWrites: (Number(st.failedWrites) || 0) + n, lastFailedAt: now, lastFailedRunId: this.pipeline.id });
+        });
+      } catch (err) {
+        this._log('memory', 'warn', `memory: failed-write counter not updated for ${rel}: ${err?.message || err}`);
+      }
+    }
+  }
+
+  /** Classify a tool call's target: `{ id, where, scope, name }` when it sits under the writable copy
+   *  (`where: 'memory'`) or the read-only rules copy (`where: 'rules'`), else null. `scope` is the
+   *  mounted rel the path starts with, else its dirname inside the copy ('' at the copy's root) — a
+   *  write beside the scope dirs is still reported. Relative paths resolve against the run cwd, which
+   *  is every spawn's cwd. */
+  _memoryWriteKey(p) {
+    if (typeof p !== 'string' || !p || !this.memory) return null;
+    const abs = resolve(this.runCwd || this.workDir || this.projectDir, p);
+    for (const [where, base] of [['memory', this.memory.mount], ['rules', this.memory.rules]]) {
+      if (!base || !(abs === base || abs.startsWith(base + sep))) continue;
+      const rel = relative(base, abs).split(sep).join('/');
+      const d = this.memory.dirs.find((x) => rel === x.rel || rel.startsWith(`${x.rel}/`));
+      const dn = dirname(rel);
+      return { id: `${where}:${rel}`, where, scope: d ? d.rel : (dn === '.' ? '' : dn), name: basename(rel).replace(/\.md$/i, '') };
+    }
+    return null;
+  }
+
+  _trackMemoryWrites(raw, attr) {
+    if (!this.memory) return;
+    const content = raw?.message?.content;
+    if (!Array.isArray(content)) return;
+    const exec = attr?.executionId ?? '(no execution)';
+    for (const b of content) {
+      if (b?.type === 'tool_use' && MEMORY_WRITE_TOOLS.has(b.name) && typeof b.id === 'string') {
+        const key = this._memoryWriteKey(b.input?.file_path || b.input?.path || b.input?.notebook_path);
+        if (!key) continue;
+        const rec = this._memoryWrites.get(exec) || { calls: new Map(), last: new Map() };
+        rec.calls.set(b.id, key);
+        this._memoryWrites.set(exec, rec);
+      } else if (b?.type === 'tool_result' && typeof b.tool_use_id === 'string') {
+        const rec = this._memoryWrites.get(exec);
+        const key = rec?.calls.get(b.tool_use_id);
+        if (!key) continue;
+        // 400: the CLI's refusal quotes the absolute path and ends with the cause ("… which is a
+        // sensitive file.") — a deep run-root path must not clip the cause away.
+        rec.last.set(key.id, { ...key, ok: !b.is_error, reason: b.is_error ? clip(toolResultText(b), 400) : '' });
+      }
+    }
+  }
+
+  /** The keys whose LAST write outcome in `executionId` was an error, as `[{ scope, name, reason }]`
+   *  (a retry that succeeded clears the failure); that execution's bookkeeping is dropped. `null`
+   *  drains EVERY pending execution — the run-end sync, so an execution the run never finished
+   *  (stop, error) still reports (design D13). A rules-copy write names its own cause first. */
+  _takeFailedMemoryWrites(executionId) {
+    const recs = executionId == null ? [...this._memoryWrites.values()] : [this._memoryWrites.get(executionId)].filter(Boolean);
+    if (executionId == null) this._memoryWrites.clear(); else this._memoryWrites.delete(executionId);
+    const out = [];
+    for (const rec of recs) for (const v of rec.last.values()) {
+      if (v.ok) continue;
+      out.push({ scope: v.scope, name: v.name, reason: v.where === 'rules' ? `written into the read-only rules copy — ${v.reason}` : v.reason });
+    }
+    return out;
+  }
+
+  /** `{ mount, rules, dirs, baseline, changes }` — best-effort, atomic via temp + rename. */
   async _writeMemoryLedger({ neutralised = false } = {}) {
     if (!this.pipeline?.dir || (!this.memory && !neutralised)) return;
     const file = this._memoryLedgerPath();
@@ -2045,8 +2170,8 @@ export class RunHarness extends EventEmitter {
     // no baseline, so a later resume has nothing stale to diff against (a missing mount dir
     // must never read as "the run deleted every file").
     const payload = neutralised
-      ? { mount: null, dirs: [], baseline: {}, changes: this.memoryChanges }
-      : { mount: this.memory.mount, dirs: this.memory.dirs, baseline: this.memory.baseline, changes: this.memoryChanges };
+      ? { mount: null, rules: null, dirs: [], baseline: {}, changes: this.memoryChanges }
+      : { mount: this.memory.mount, rules: this.memory.rules, dirs: this.memory.dirs, baseline: this.memory.baseline, changes: this.memoryChanges };
     const tmp = `${file}.tmp-${process.pid}-${++this._ledgerSeq}`;
     try { await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8'); await rename(tmp, file); }
     catch (err) { this._log('memory', 'warn', `memory ledger not written: ${err?.message || err}`); }
@@ -2069,7 +2194,7 @@ export class RunHarness extends EventEmitter {
     }
     const now = new Date().toISOString();
     try {
-      await withStoreLock(memoryRoot(), () => bumpScopeState(memoryRoot(), d.scope, { lastDefragAt: now, lastDefragRunId: this.pipeline.id, writesSinceDefrag: 0 }));
+      await withStoreLock(memoryRoot(), () => bumpScopeState(memoryRoot(), d.scope, { lastDefragAt: now, lastDefragRunId: this.pipeline.id, writesSinceDefrag: 0, failedWrites: 0, lastFailedAt: null, lastFailedRunId: null }));
       this._log('memory', 'info', `Memory: ${d.label} defragmented — write counter reset`);
       await appendAudit(this.pipeline.dir, `Memory: ${d.label} defragmented by this run.`).catch(() => {});
     } catch (err) {
@@ -3628,6 +3753,12 @@ export class RunHarness extends EventEmitter {
         }
       } catch { /* derived state — never fail the run over it */ }
     }
+
+    // Agent memory (memory-write-split design §4): pair every Write/Edit aimed at a memory directory
+    // with its tool_result, main stream and sub-agent frames alike (same cwd, same dirs), so a write
+    // the CLI refused — or that failed for any other reason — is reported at sync time instead of
+    // vanishing. Never throws; never mutates run state.
+    this._trackMemoryWrites(e.raw, attr);
 
     // Sub-agent attribution. A child (Task/Agent) event carries parent_tool_use_id
     // = the id of the parent's Task tool_use block; main-agent events carry null/

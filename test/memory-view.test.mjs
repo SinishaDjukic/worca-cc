@@ -27,6 +27,7 @@ test('healthBadge + formatWhen (LOCAL time, like every other date in the app)', 
   assert.deepEqual(healthBadge('ok'), { text: 'Healthy', cls: 'green' });
   assert.deepEqual(healthBadge('due'), { text: 'Defragment due', cls: 'amber' });
   assert.deepEqual(healthBadge('overdue'), { text: 'Defragment overdue', cls: 'red' });
+  assert.deepEqual(healthBadge('failing'), { text: 'Writes failing', cls: 'red' });
   assert.deepEqual(healthBadge('bogus'), { text: 'No memory yet', cls: '' });
   const iso = '2026-09-09T10:05:00.000Z';
   const d = new Date(iso);
@@ -56,6 +57,11 @@ test('renderHealthCard: badge, reasons, counters, and the Defragment control in 
   assert.equal(liveBtn.dataset.runId, 'abc-123');
   assert.match(liveBtn.textContent, /Defragmenting/);
   assert.equal(live.querySelector('.mem-run'), null, 'no second control');
+  const failing = renderHealthCard({ ...REPORT, health: { ...HEALTH, level: 'failing', failedWrites: 2, reasons: ['2 memory writes by runs failed since the last defragment — last in run abc12345; that run\'s History detail carries the reason'] } }, { doc, host: HOST });
+  assert.equal(failing.querySelector('.badge').textContent, 'Writes failing');
+  assert.ok(failing.querySelector('.badge').classList.contains('red'));
+  assert.match(failing.querySelector('.mem-counters').textContent, / · 2 failed writes$/);
+  assert.ok(!/failed write/.test(ok.querySelector('.mem-counters').textContent), 'no failed-write counter when there are none');
   const hostile = renderHealthCard({ ...REPORT, health: { ...HEALTH, level: 'due', reasons: ['<img src=x onerror=1>'] } }, { doc, host: HOST });
   assert.equal(hostile.querySelector('img'), null, 'reasons are text, never markup');
 });
