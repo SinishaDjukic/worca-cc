@@ -4184,8 +4184,8 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .gs-card{padding:20px 22px 22px;}
 .gs-head{display:flex;align-items:baseline;gap:12px;margin-bottom:14px;}
 .gs-head h2{margin:0;flex:1;font-size:16px;font-weight:600;}
-.gs-progress{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);}
-.gs-hide{background:none;border:0;padding:0;font:inherit;font-size:12.5px;color:var(--ink-3);cursor:pointer;
+.gs-progress{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);}
+.gs-hide{background:none;border:0;padding:0;font:inherit;font-size:12.5px;color:var(--ink-2);cursor:pointer;
   text-decoration:underline;text-underline-offset:3px;}
 .gs-hide:hover{color:var(--ink);}
 /* Equal tiles that fill the row and wrap 4 -> 2 -> 1: symmetric, never a 3+1 orphan. */
@@ -4212,7 +4212,7 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
    label mutes and strikes, the drawing loses its colour. What is still to do
    keeps full ink and its accent — the shelf IS a progress meter. */
 .gs-tile.done .gs-mark{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
-.gs-tile.done .gs-label{color:var(--ink-3);font-weight:500;text-decoration:line-through;text-decoration-thickness:1px;}
+.gs-tile.done .gs-label{color:var(--ink-2);font-weight:500;text-decoration:line-through;text-decoration-thickness:1px;}
 .gs-tile.done .gs-vig{opacity:.45;filter:saturate(.3);}
 
 /* Vignette vocabulary: hollow nodes, wires, frames; ONE accent (violet) per scene. */
@@ -4243,11 +4243,12 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .nav button.gs-pill{font-weight:600;color:var(--violet-ink);border:1.5px solid var(--violet);padding:6.5px 11.5px;
   animation:gs-pill-glow 2.4s ease-out infinite;}
 .nav button.gs-pill:hover{background:var(--violet-bg);color:var(--violet-ink);}
-.nav button.gs-pill.active{background:var(--violet);border-color:var(--violet);color:var(--on-status);animation:none;}
-.nav button.gs-pill.active svg{stroke:var(--on-status);}
-.nav button.gs-pill.active .gs-pill-count{background:var(--on-ink-wash-2);color:var(--on-status);}
+.nav button.gs-pill.active{background:var(--violet-bg);border-color:var(--violet);color:var(--violet-ink);animation:none;}
+.nav button.gs-pill.active svg{stroke:var(--violet-ink);}
+.nav button.gs-pill.active .gs-pill-count{background:var(--panel);color:var(--violet-ink);}
 .nav button.gs-pill svg{stroke:var(--violet-ink);}
-.nav button.gs-pill .gs-pill-count{background:var(--violet);color:var(--on-status);font-family:var(--mono);font-size:11px;}
+/* Violet ink on the violet wash (not white on solid violet: 3.4:1 at 11px fails the light gate). */
+.nav button.gs-pill .gs-pill-count{background:var(--violet-bg);color:var(--violet-ink);font-family:var(--mono);font-size:11px;}
 @keyframes gs-pill-glow{
   0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--violet) 50%,transparent);}
   70%{box-shadow:0 0 0 9px color-mix(in srgb,var(--violet) 0%,transparent);}
@@ -4261,7 +4262,7 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 
 /* ---------- Welcome + Connect Claude Code dialogs ---------- */
 .ob-welcome{width:min(92vw,600px);padding:30px 34px 26px;animation:wr-rise .28s cubic-bezier(.2,.7,.3,1) both;}
-.ob-eyebrow{margin:0 0 6px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);}
+.ob-eyebrow{margin:0 0 6px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2);}
 .ob-headline{margin:0;font-size:27px;font-weight:600;letter-spacing:-.01em;line-height:1.2;}
 .ob-headline em{font-style:italic;color:var(--violet-ink);}
 .ob-hero{display:block;width:100%;height:auto;margin:10px 0 12px;}
@@ -4275,8 +4276,8 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .ob-door:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .ob-door-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:var(--violet-bg);color:var(--violet-ink);flex:0 0 auto;}
 .ob-door-icon svg{width:19px;height:19px;}
-.ob-door-arrow{margin-left:auto;color:var(--ink-3);font-size:18px;line-height:1;}
-.ob-skip{display:block;margin:16px auto 0;background:none;border:0;padding:0;font:inherit;font-size:13px;color:var(--ink-3);
+.ob-door-arrow{margin-left:auto;color:var(--ink-2);font-size:18px;line-height:1;}
+.ob-skip{display:block;margin:16px auto 0;background:none;border:0;padding:0;font:inherit;font-size:13px;color:var(--ink-2);
   cursor:pointer;text-decoration:underline;text-underline-offset:3px;}
 .ob-skip:hover{color:var(--ink);}
 .ob-claude{width:min(92vw,560px);padding:24px;}
@@ -4320,7 +4321,7 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .guide-balloon::before{content:'';position:absolute;top:-6px;left:calc(var(--arrow-x,20px) - 5px);width:10px;height:10px;
   background:var(--panel);border-left:1px solid var(--line-2);border-top:1px solid var(--line-2);transform:rotate(45deg);}
 .guide-balloon.above::before{top:auto;bottom:-6px;transform:rotate(225deg);}
-.guide-skip{background:none;border:0;padding:0;font:inherit;font-size:12px;color:var(--ink-3);cursor:pointer;
+.guide-skip{background:none;border:0;padding:0;font:inherit;font-size:12px;color:var(--ink-2);cursor:pointer;
   text-decoration:underline;text-underline-offset:3px;}
 .guide-skip:hover{color:var(--ink);}
 .guide-ring[hidden],.guide-balloon[hidden]{display:none;}

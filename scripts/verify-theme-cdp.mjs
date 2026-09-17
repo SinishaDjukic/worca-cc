@@ -109,6 +109,11 @@ const api = async (p, opt) => {
   const t = await r.text();
   try { return { status: r.status, body: JSON.parse(t) }; } catch { return { status: r.status, body: t }; }
 };
+// The one-time welcome dialog (docs/getting-started.md) would otherwise open over the first
+// New pipeline sample and sit on top of every state after it — it is a dialog, not a state.
+// Marking it seen is the only onboarding flag the proof touches; the sidebar pill stays and
+// is sampled with the rail like any other row.
+await api('/api/onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ welcomeSeen: true }) });
 
 // ---- chrome + cdp ------------------------------------------------------------
 profile = await mkdtemp(path.join(tmpdir(), 'worca-theme-profile-'));
