@@ -4175,7 +4175,166 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
    (0,1,0) `animation:none` here would LOSE the source-order tie against any
    `animation:wr-*` rule appended after it — exactly the trap documented at
    :748-763 for the four legacy names and at :1927-1940 for the ship-it set. */
+/* ---------- Getting started (docs/getting-started.md) ---------- */
+/* The shelf sits ABOVE the New pipeline form at the form's own width (.grid.single
+   caps the card at 864px, centred), so it reads as the page's first card, not a
+   side panel. Painted by getting-started.mjs; [hidden] when hidden or unknown. */
+.gs-host{max-width:960px;margin:0 auto;}
+.gs-host[hidden]{display:none;}
+.gs-card{padding:20px 22px 22px;}
+.gs-head{display:flex;align-items:baseline;gap:12px;margin-bottom:14px;}
+.gs-head h2{margin:0;flex:1;font-size:16px;font-weight:600;}
+.gs-progress{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2);}
+.gs-hide{background:none;border:0;padding:0;font:inherit;font-size:12.5px;color:var(--ink-2);cursor:pointer;
+  text-decoration:underline;text-underline-offset:3px;}
+.gs-hide:hover{color:var(--ink);}
+/* Equal tiles that fill the row and wrap 4 -> 2 -> 1: symmetric, never a 3+1 orphan. */
+.gs-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;}
+@media (max-width:760px){.gs-tiles{grid-template-columns:repeat(2,minmax(0,1fr));}}
+@media (max-width:440px){.gs-tiles{grid-template-columns:1fr;}}
+.gs-tile{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:6px;
+  border:1.5px solid var(--line);border-radius:var(--r-ctrl);background:var(--surface);
+  padding:12px 14px 13px;font:inherit;font-size:13px;line-height:1.35;color:var(--ink);text-align:left;cursor:pointer;
+  transition:border-color .2s,transform .15s;}
+.gs-tile:hover{border-color:var(--violet);transform:translateY(-1px);}
+.gs-tile:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* Unfinished tiles arrive in sequence — the tile lands, then its drawing paints
+   (backwards fill keeps it invisible until its turn). */
+.gs-tile.reveal{animation:gs-tile-in .4s ease-out backwards;animation-delay:var(--tile-delay,0s);}
+@keyframes gs-tile-in{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+.gs-vig{width:96px;margin:2px 0 0;}
+.gs-vig svg{width:100%;height:auto;display:block;}
+.gs-label{font-weight:600;}
+.gs-mark{position:absolute;top:10px;right:10px;width:20px;height:20px;border-radius:50%;
+  border:1.5px solid var(--line-2);display:grid;place-items:center;color:transparent;font-size:11px;font-weight:700;
+  transition:background .3s,border-color .3s,color .3s;}
+/* Done recedes: the mark fills with ink (the wizard tracker's own idiom), the
+   label mutes and strikes, the drawing loses its colour. What is still to do
+   keeps full ink and its accent — the shelf IS a progress meter. */
+.gs-tile.done .gs-mark{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
+.gs-tile.done .gs-label{color:var(--ink-2);font-weight:500;text-decoration:line-through;text-decoration-thickness:1px;}
+.gs-tile.done .gs-vig{opacity:.45;filter:saturate(.3);}
+
+/* Vignette vocabulary: hollow nodes, wires, frames; ONE accent (violet) per scene. */
+.gs-node{fill:var(--panel);stroke:var(--ink-3);stroke-width:2;}
+.gs-node.gs-accent{fill:var(--violet);stroke:var(--violet);}
+.gs-wire{fill:none;stroke:var(--ink-3);stroke-width:2.2;stroke-linecap:round;}
+.gs-wire.gs-accent{stroke:var(--violet);}
+.gs-frame{fill:var(--field);stroke:var(--ink-3);stroke-width:2;}
+.gs-glyph{fill:none;stroke:var(--ink);stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;}
+.gs-spark.gs-accent{fill:var(--violet);stroke:none;}
+.gs-chart{fill:none;stroke:var(--violet);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;}
+.gs-ring-mark{fill:none;stroke:var(--violet);stroke-width:2;opacity:.45;}
+/* Motion grammar: pop (overshoot) for marks, a slow draw for wires. Every element's
+   delay is its own slot plus the tile's slot, so one vignette finishes before the
+   next begins. `.static` (a done tile) paints the finished picture, no motion. */
+.play .gs-pop{transform-box:fill-box;transform-origin:center;
+  animation:gs-pop .45s cubic-bezier(.2,1.6,.4,1) both;animation-delay:calc(var(--tile-delay,0s) + var(--d,0s));}
+@keyframes gs-pop{from{opacity:0;transform:scale(.2);}to{opacity:1;transform:none;}}
+.play .gs-draw{stroke-dasharray:1;stroke-dashoffset:1;
+  animation:gs-draw var(--t,.6s) cubic-bezier(.45,0,.3,1) both;animation-delay:calc(var(--tile-delay,0s) + var(--d,0s));}
+@keyframes gs-draw{to{stroke-dashoffset:0;}}
+
+/* Sidebar pill under New pipeline: mounted by app.js (not in the shell — the 10-button
+   nav census stays), styled by .nav button; the count wears the accent. */
+.gs-pill-host[hidden]{display:none;}
+/* The pill wears the guide's own violet and its halo, so it reads as "the tour is
+   here" from any view — the one animated thing in the rail. */
+.nav button.gs-pill{font-weight:600;color:var(--violet-ink);border:1.5px solid var(--violet);padding:6.5px 11.5px;
+  animation:gs-pill-glow 2.4s ease-out infinite;}
+.nav button.gs-pill:hover{background:var(--violet-bg);color:var(--violet-ink);}
+.nav button.gs-pill.active{background:var(--violet-bg);border-color:var(--violet);color:var(--violet-ink);animation:none;}
+.nav button.gs-pill.active svg{stroke:var(--violet-ink);}
+.nav button.gs-pill.active .gs-pill-count{background:var(--panel);color:var(--violet-ink);}
+.nav button.gs-pill svg{stroke:var(--violet-ink);}
+/* Violet ink on the violet wash (not white on solid violet: 3.4:1 at 11px fails the light gate). */
+.nav button.gs-pill .gs-pill-count{background:var(--violet-bg);color:var(--violet-ink);font-family:var(--mono);font-size:11px;}
+@keyframes gs-pill-glow{
+  0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--violet) 50%,transparent);}
+  70%{box-shadow:0 0 0 9px color-mix(in srgb,var(--violet) 0%,transparent);}
+  100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--violet) 0%,transparent);}
+}
+
+/* Settings › General › Getting started */
+.gs-settings-row{display:flex;align-items:center;gap:16px;justify-content:space-between;}
+.gs-settings-row .btn{white-space:nowrap;flex:0 0 auto;}
+.gs-settings-text{margin:0;color:var(--ink-2);font-size:13px;line-height:1.5;}
+
+/* ---------- Welcome + Connect Claude Code dialogs ---------- */
+.ob-welcome{width:min(92vw,600px);padding:30px 34px 26px;animation:wr-rise .28s cubic-bezier(.2,.7,.3,1) both;}
+.ob-eyebrow{margin:0 0 6px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2);}
+.ob-headline{margin:0;font-size:27px;font-weight:600;letter-spacing:-.01em;line-height:1.2;}
+.ob-headline em{font-style:italic;color:var(--violet-ink);}
+.ob-hero{display:block;width:100%;height:auto;margin:10px 0 12px;}
+.ob-thread{stroke-width:2.5;}
+.ob-loop{stroke:var(--ink-3);stroke-dasharray:1;}
+.ob-doors{display:flex;flex-direction:column;gap:8px;}
+.ob-door{display:flex;align-items:center;gap:12px;width:100%;padding:12px 14px;
+  border:1.5px solid var(--line-2);border-radius:var(--r-ctrl);background:var(--surface);color:var(--ink);
+  font:inherit;font-weight:600;font-size:14px;text-align:left;cursor:pointer;transition:border-color .15s,background .15s;}
+.ob-door:hover{border-color:var(--ink);background:var(--field);}
+.ob-door:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ob-door-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:var(--violet-bg);color:var(--violet-ink);flex:0 0 auto;}
+.ob-door-icon svg{width:19px;height:19px;}
+.ob-door-arrow{margin-left:auto;color:var(--ink-2);font-size:18px;line-height:1;}
+.ob-skip{display:block;margin:16px auto 0;background:none;border:0;padding:0;font:inherit;font-size:13px;color:var(--ink-2);
+  cursor:pointer;text-decoration:underline;text-underline-offset:3px;}
+.ob-skip:hover{color:var(--ink);}
+.ob-claude{width:min(92vw,560px);padding:24px;}
+.ob-claude-lead,.ob-claude-note{margin:0;font-size:13.5px;line-height:1.5;color:var(--ink-2);}
+.ob-claude-lead strong{color:var(--ink);}
+.ob-claude code{font-family:var(--mono);font-size:12px;background:var(--field);padding:1px 5px;border-radius:6px;}
+.ob-claude-cmd{margin:12px 0;padding:12px 14px;background:var(--field);border-radius:12px;overflow:auto;}
+.ob-claude-cmd code{background:none;padding:0;font-size:12.5px;}
+.ob-claude-note a{color:var(--blue-ink-strong);}
+.ob-claude-status{min-height:18px;margin-top:12px;font-size:13px;line-height:1.45;}
+.ob-claude-status.ok{color:var(--green-ink);}
+.ob-claude-status.err{color:var(--red-ink);}
+
+/* ---------- Spotlight guide (guide-spot.mjs) ---------- */
+/* Layering: spotlight ABOVE the Ask dock (40) and BELOW every .viewer-modal (50),
+   so a dialog the target opens simply covers it. The target is elevated over the
+   scrim by z-index (no cutout mask) and stays fully interactive; `.guide-lift`
+   raises an ancestor that owns a stacking context the target cannot escape.
+   `pointer` (a target inside an open dialog) drops the scrim and rides above the
+   modal layer instead. */
+.guide-scrim{position:fixed;inset:0;z-index:44;background:var(--scrim);}
+/* !important: a control may carry its own id-level position/z-index (#prompt has z-index:1) that
+   would otherwise beat this transient class and leave the ringed control UNDER the scrim. */
+.guide-target{position:relative !important;z-index:45 !important;}
+.guide-lift{z-index:45 !important;}
+.guide-lift-static{position:relative;}
+/* A lifted select wrapper keeps its chevron ON TOP of the elevated select (the
+   pseudo-element would otherwise paint under the child's z-index). */
+.select-wrap.guide-lift::after{z-index:46;}
+/* The ring never fades — it is the answer to "which control?". The pulse is a
+   halo radiating OUT of it, so the mark stays solid and the motion draws the eye. */
+.guide-ring{position:fixed;z-index:46;pointer-events:none;border:2.5px solid var(--violet);border-radius:18px;
+  animation:guide-pulse 1.8s ease-out infinite;}
+@keyframes guide-pulse{
+  0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--violet) 55%,transparent);}
+  100%{box-shadow:0 0 0 14px color-mix(in srgb,var(--violet) 0%,transparent);}
+}
+.guide-balloon{position:fixed;z-index:47;display:flex;flex-direction:column;align-items:flex-start;gap:6px;
+  max-width:300px;padding:11px 14px 10px;background:var(--panel);border:1px solid var(--line-2);border-radius:var(--r-ctrl);
+  box-shadow:var(--shadow-pop);color:var(--ink);font-size:13px;line-height:1.45;}
+.guide-balloon::before{content:'';position:absolute;top:-6px;left:calc(var(--arrow-x,20px) - 5px);width:10px;height:10px;
+  background:var(--panel);border-left:1px solid var(--line-2);border-top:1px solid var(--line-2);transform:rotate(45deg);}
+.guide-balloon.above::before{top:auto;bottom:-6px;transform:rotate(225deg);}
+.guide-skip{background:none;border:0;padding:0;font:inherit;font-size:12px;color:var(--ink-2);cursor:pointer;
+  text-decoration:underline;text-underline-offset:3px;}
+.guide-skip:hover{color:var(--ink);}
+.guide-ring[hidden],.guide-balloon[hidden]{display:none;}
+.guide-layer.pointer .guide-ring{z-index:72;}
+.guide-layer.pointer .guide-balloon{z-index:73;}
+
+
 @media (prefers-reduced-motion: reduce){
+  /* Getting started: tiles land drawn, vignettes paint finished, the guide ring holds a still halo. */
+  .gs-tile.reveal,.play .gs-pop,.play .gs-draw,.ob-welcome,.guide-ring,.nav button.gs-pill{animation:none;}
+  .nav button.gs-pill{box-shadow:0 0 0 3px color-mix(in srgb,var(--violet) 25%,transparent);}
+  .play .gs-draw{stroke-dashoffset:0;}
+  .guide-ring{box-shadow:0 0 0 6px color-mix(in srgb,var(--violet) 30%,transparent);}
   /* #stop-modal is a top-level overlay, outside the shell — named explicitly. */
   #stop-modal .card{animation:none;}
   /* PSEUDO-ELEMENTS DO NOT INHERIT `animation`, so the `*` blanket below cannot

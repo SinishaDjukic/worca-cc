@@ -75,6 +75,8 @@ import {
   renderMemoryHistory, MEMORY_NAME_HELP,
 } from './memory-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
+import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, GETTING_STARTED_STEPS } from './getting-started.mjs';
+import { createGuideSpot } from './guide-spot.mjs';
 import {
   splitPatchSections, parseFileSection, patchIndex, sectionKey,
 } from './diff-view.mjs';
@@ -710,6 +712,7 @@ function handleServerMessage(msg) {
     // here is REQUIRED, not a nicety — the budget tick only refetches while
     // pipelines are live, so chat-only spend would otherwise stay stale.
     if (msg.type === 'ask-done' || msg.type === 'ask-error') {
+      scheduleOnboardingRefresh();   // the first thread ticks "Ask Worca about a run"
       refreshBudget();
       if (currentView() === 'stats') loadStatsView();
     }
@@ -728,6 +731,7 @@ function handleServerMessage(msg) {
   // view is open, also reload it so its rows reflect the change. Handle BEFORE the
   // !msg.runId early-return below.
   if (msg.type === 'pipelines-changed') {
+    scheduleOnboardingRefresh();
     refreshAllCounts();
     refreshBudget();
     if (currentView() === 'history') loadHistoryView({ force: true });
@@ -746,19 +750,26 @@ function handleServerMessage(msg) {
     loadSettings();
     return;
   }
+  if (msg.type === 'onboarding-changed') {
+    scheduleOnboardingRefresh();
+    return;
+  }
   if (msg.type === 'projects-changed') {
+    scheduleOnboardingRefresh();
     refreshAllCounts();
     tmCache.at = 0;
     if (currentView() === 'projects') void refreshProjectsPage();
     return;
   }
   if (msg.type === 'workspaces-changed') {
+    scheduleOnboardingRefresh();
     refreshAllCounts();
     tmCache.at = 0;
     if (currentView() === 'workspaces') loadWorkspacesView();
     return;
   }
   if (msg.type === 'team-metrics-changed') {
+    scheduleOnboardingRefresh();
     tmCache.at = 0;
     // The Projects / Workspaces surfaces only call /scopes, which never flushes: repaint them on
     // every action, flush-failed included (§4.7 "surfaced, never swallowed").
@@ -1963,6 +1974,7 @@ function gvScrollToTop() {
 }
 
 async function gvRefreshSaved() {
+  scheduleOnboardingRefresh();   // a user-saved workflow ticks "Shape your own workflow"
   gvSavedRows = await gvApi.listWorkflows();
   gvRenderSaved();
   await gvRefreshArchived();
@@ -3268,6 +3280,7 @@ async function saveActiveWorkflow(workflowId) {
     });
     const data = await safeJson(res);
     if (res.ok && data.config) state.config = data.config;
+    scheduleOnboardingRefresh();   // a picked workflow ticks "Explore the built-in workflows"
   } catch {
     /* selection is best-effort; ignore transient errors */
   }
@@ -4573,6 +4586,7 @@ function clearQpanel(r) {
 function finishRun(r, status) {
   if (r._finished) return;
   r._finished = true;
+  scheduleOnboardingRefresh();
   r._decorSeq = (r._decorSeq || 0) + 1;   // isLive(r) reads _finished/status/pendingQuestion
   r.status = status;
   r.pendingQuestion = null;
@@ -18975,13 +18989,367 @@ async function refreshAllCounts() {
 // ---------------------------------------------------------------------------
 // Router: sidebar nav (+ responsive top-nav) toggle between the views.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Getting started (docs/getting-started.md): the checklist shelf on New
+// pipeline, the sidebar pill, the one-time welcome, and the spotlight guides.
+// Completion is the SERVER's word (GET /api/onboarding, derived from the store
+// and PATH — never written here); this block only paints it and runs guides.
+// A guide is transient state: a reload clears it, the shelf re-summons it.
+// ---------------------------------------------------------------------------
+const gs = { status: null, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, refreshTimer: 0, poll: 0 };
+let gsPillHost = null;
+let gsWelcomeUnbind = null;
+
+function gsShelfHost() { return document.getElementById('getting-started-host'); }
+/** The pill lives under the New pipeline CTA. Mounted here, not in the shell, so
+ *  the sidebar's static 10-button census (ui-nav-*.test.mjs) is untouched. */
+function gsEnsurePillHost() {
+  if (gsPillHost && gsPillHost.isConnected) return gsPillHost;
+  const cta = document.querySelector('.nav button.nav-cta');
+  if (!cta) return null;
+  gsPillHost = document.createElement('div');
+  gsPillHost.className = 'gs-pill-host';
+  gsPillHost.hidden = true;
+  cta.insertAdjacentElement('afterend', gsPillHost);
+  return gsPillHost;
+}
+
+async function loadOnboarding() {
+  let data;
+  try {
+    const res = await fetch('/api/onboarding');
+    data = await safeJson(res);
+    if (!res.ok) return;
+  } catch { return; }
+  // The boot tests stub fetch with one generic payload: anything without a
+  // `steps` object is not ours and paints nothing.
+  if (!data || !data.steps || typeof data.steps !== 'object') return;
+  gs.status = data;
+  paintOnboarding();
+  maybeWelcome();
+}
+/** Coalesce the change broadcasts (a finished run fires several) into one refetch. */
+function scheduleOnboardingRefresh() {
+  clearTimeout(gs.refreshTimer);
+  gs.refreshTimer = setTimeout(() => { gs.refreshTimer = 0; loadOnboarding(); }, 250);
+}
+
+function paintOnboarding() {
+  paintShelf();
+  const pill = gsEnsurePillHost();
+  if (pill) {
+    renderGettingStartedPill(pill, gs.status, () => showView('getting-started'));
+    pill.querySelector('.gs-pill')?.classList.toggle('active', currentShownView === 'getting-started');
+  }
+  paintGsSettings();
+  paintClaudeSetupStatus();
+}
+/** The shelf lives on its own page and is painted on entry (the reveal plays then)
+ *  and on every status change while the page is open; a hidden checklist still
+ *  paints here — this page IS the checklist, Hide only takes the pill out of the rail. */
+function paintShelf({ entering = false } = {}) {
+  const host = gsShelfHost();
+  if (!host || !gs.status) return;
+  if (currentShownView !== 'getting-started') return;
+  if (entering) host.replaceChildren();
+  const appearing = entering || !host.firstElementChild;
+  renderGettingStarted(host, { ...gs.status, hidden: false }, {
+    onStep: startGuide,
+    onHide: () => setOnboardingPrefs({ hidden: !gs.status.hidden }),
+    hideLabel: gs.status.hidden ? 'Show in sidebar' : 'Hide from sidebar',
+    animate: appearing,
+  });
+}
+
+async function setOnboardingPrefs(patch) {
+  let res; let data;
+  try {
+    res = await fetch('/api/onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+    data = await safeJson(res);
+  } catch (e) { setGsSettingsMsg(e.message || 'network error', 'err'); return false; }
+  if (!res.ok) { setGsSettingsMsg(data.error || `HTTP ${res.status}`, 'err'); return false; }
+  if (data && data.steps) { gs.status = data; paintOnboarding(); }
+  return true;
+}
+
+// ── Settings › General › Getting started ────────────────────────────────────
+function setGsSettingsMsg(text, cls) {
+  const m = document.getElementById('gsSettingsMsg');
+  if (!m) return;
+  m.textContent = text || '';
+  m.className = `hint${cls ? ` ${cls}` : ''}`;
+}
+function paintGsSettings() {
+  const btn = document.getElementById('gsShowAgain');
+  if (!btn || !gs.status) return;
+  const { done, total } = { done: doneCount(gs.status), total: GETTING_STARTED_STEPS.length };
+  btn.textContent = gs.status.hidden ? 'Show again' : 'Open checklist';
+  setGsSettingsMsg(gs.status.hidden
+    ? `Hidden from the sidebar · ${done} of ${total} done`
+    : `In the sidebar · ${done} of ${total} done`);
+}
+document.getElementById('gsShowAgain')?.addEventListener('click', async () => {
+  if (gs.status && gs.status.hidden) {
+    if (!(await setOnboardingPrefs({ hidden: false }))) return;
+  }
+  showView('getting-started');
+});
+
+// ── Welcome (one-time) ──────────────────────────────────────────────────────
+function maybeWelcome() {
+  const s = gs.status;
+  if (!s || s.welcomeSeen || gs.welcomeShown || currentShownView !== 'new') return;
+  // Nothing left to teach: an install that has done everything skips the welcome.
+  if (allStepsDone(s)) { gs.welcomeShown = true; setOnboardingPrefs({ welcomeSeen: true }); return; }
+  const modal = document.getElementById('welcome-modal');
+  if (!modal) return;
+  gs.welcomeShown = true;
+  const close = () => { modal.classList.add('hidden'); if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; } };
+  gsWelcomeUnbind = bindWelcome(modal, {
+    win: window,
+    onDoor: (step) => { close(); setOnboardingPrefs({ welcomeSeen: true }); startGuide(step); },
+    onSkip: () => { close(); setOnboardingPrefs({ welcomeSeen: true }); },
+  });
+  // Restart the hero's entrance each time the dialog opens (the SVG is static markup).
+  const hero = modal.querySelector('.ob-hero');
+  if (hero) { hero.classList.remove('play'); void hero.getBoundingClientRect(); hero.classList.add('play'); }
+  modal.classList.remove('hidden');
+  modal.querySelector('[data-door]')?.focus?.();
+}
+
+// ── Connect Claude Code (the one step with no control to ring) ──────────────
+function paintClaudeSetupStatus() {
+  const box = document.getElementById('claude-setup-status');
+  if (!box || !gs.status) return;
+  const c = gs.status.claude || {};
+  const ok = !!gs.status.steps.claude;
+  box.className = `ob-claude-status ${ok ? 'ok' : 'err'}`;
+  box.textContent = ok
+    ? `Found ${c.bin || 'claude'} — you're set.`
+    : (c.hint || `"${c.bin || 'claude'}" is not on the PATH of the Worca server. Install it, then check again (restart the UI if PATH changed).`);
+}
+function openClaudeSetup() {
+  const modal = document.getElementById('claude-setup-modal');
+  if (!modal) return;
+  paintClaudeSetupStatus();
+  modal.classList.remove('hidden');
+  document.getElementById('claude-setup-check')?.focus?.();
+}
+function closeClaudeSetup() { document.getElementById('claude-setup-modal')?.classList.add('hidden'); }
+document.getElementById('claude-setup-close')?.addEventListener('click', closeClaudeSetup);
+document.getElementById('claude-setup-modal')?.addEventListener('click', (e) => { if (e.target === e.currentTarget) closeClaudeSetup(); });
+document.getElementById('claude-setup-check')?.addEventListener('click', async () => {
+  const btn = document.getElementById('claude-setup-check');
+  btn.disabled = true;
+  try { await loadOnboarding(); } finally { btn.disabled = false; }
+  paintClaudeSetupStatus();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const m = document.getElementById('claude-setup-modal');
+  if (m && !m.classList.contains('hidden')) closeClaudeSetup();
+});
+
+// ── Guides ──────────────────────────────────────────────────────────────────
+// Each hop is derived from REAL UI state at the moment it is needed (which view
+// is open? is the Advanced disclosure open? is Mock on?), never from a step
+// counter, so a guide can never desync from the page. Getting to another view
+// is itself a hop: the sidebar entry is ringed and the user's own click routes,
+// so they learn where things live. `final` hops end the guide on the click.
+const onView = (v) => currentShownView === v;
+/** Ring the sidebar entry for `view` (the compact top-nav twin below 1080px). */
+const NAV = (view, text) => ({
+  nav: view, text,
+  target: [`.nav button[data-nav="${view}"]`, `.topnav button[data-nav="${view}"]`],
+  lift: ['.topnav'],
+});
+const noProjectPicked = () => {
+  const sel = document.getElementById('projectSelect');
+  const targetIsProject = !document.querySelector('#target-seg [data-target="workspace"].on');
+  return !!(sel && targetIsProject && !sel.hidden && !(sel.value || '').trim());
+};
+/** The start-run hop shared by the two run steps: nav → project → prompt → (mock) → Start → Running. */
+function gsRunHops(g, mock) {
+  const prompt = document.getElementById('prompt');
+  const details = document.getElementById('advanced-config');
+  const mockOn = !!(el.mock && el.mock.checked);
+  const formErr = (document.getElementById('form-msg')?.textContent || '').trim();
+  if (g.started && onView('running')) return null;                       // the point of the step: seen
+  if (g.started && !(onView('new') && formErr)) {                        // a refused form keeps ringing Start
+    return NAV('running', mock
+      ? 'Follow the agents here. Questions and gates land in this list too.'
+      : 'Follow it here. When it finishes it moves to History.');
+  }
+  if (!onView('new')) return NAV('new', 'Every run starts here.');
+  if (noProjectPicked()) return { target: '#projectSelect', lift: ['.select-wrap'], text: 'Pick the project the run happens in.' };
+  const wf = document.getElementById('workflowSelect');
+  if (!mock && wf && !wf.hidden && (wf.value || '') === AUTO_WORKFLOW_ID) {
+    return { target: '#workflowSelect', lift: ['.select-wrap'],
+      text: 'Choose a built-in workflow for this run — Default is the loop you saw in the Composer. Auto would pick one for you.' };
+  }
+  if (prompt && !prompt.hidden && !prompt.value.trim()) {
+    return { target: '#prompt', text: mock
+      ? 'Describe any task. A mock run never reads it, so one line will do.'
+      : 'Describe the task in a sentence or two. The planner asks when something matters.' };
+  }
+  if (mock) {
+    if (details && !details.open) return { target: '#advanced-config summary', text: 'Mock mode lives under Advanced.' };
+    if (!mockOn) return { target: '#mock-switch', text: 'Mock mode runs the whole pipeline offline: no Claude calls, no tokens.' };
+    return { target: '#start-btn', start: true, text: 'Start it. The run appears under Running in the sidebar.' };
+  }
+  if (mockOn && details && !details.open) return { target: '#advanced-config summary', text: 'Mock mode is still on, under Advanced.' };
+  if (mockOn) return { target: '#mock-switch', text: 'Turn Mock mode off for a real run.' };
+  return { target: '#start-btn', start: true, text: 'Start the run. Worca answers loop gates itself and pauses only for the questions that matter.' };
+}
+function gsNextHop(step, g = gs.guide || {}) {
+  const projects = Array.isArray(state.projects) ? state.projects.length : 0;
+  const addProject = (navText, addText) => (onView('projects')
+    ? { target: '#project-add-btn', text: addText, final: true }
+    : NAV('projects', navText));
+  switch (step) {
+    case 'project':
+      return addProject('Projects live here: every run happens inside one of these folders.',
+        'Register a folder. Files on disk are never touched.');
+    case 'run':
+      if (!projects) return addProject('A run needs a project first.', 'Add one here.');
+      return gsRunHops(g, true);
+    case 'realRun':
+      if (!projects) return addProject('A run needs a project first.', 'Add one here.');
+      return gsRunHops(g, false);
+    case 'ask': {
+      // The pill hides while the sheet is open (ask-panel.mjs), so it doubles as the "sheet open" signal.
+      const pill = document.querySelector('.ask-pill');
+      const input = document.querySelector('.ask-input');
+      if (!pill || !pill.hidden) return { target: '.ask-pill', lift: ['.ask-dock'], text: 'Ask Worca answers questions about any run in plain language. It is on every view.' };
+      if (input && !input.value.trim()) return { target: '.ask-input', lift: ['.ask-dock'], text: 'Try “What did my last run change?” — or anything about a run, an agent or a project.' };
+      return { target: '.ask-send', lift: ['.ask-dock'], text: 'Send it. Worca reads the run itself before answering.', final: true };
+    }
+    case 'workflows': {
+      // Look at one, then pick one: the step ends on a pick in the New pipeline
+      // picker (which persists it — that is the derived tick).
+      const wf = document.getElementById('workflowSelect');
+      if (wf && g.wfInitial !== undefined && (wf.value || '') !== g.wfInitial) return null;
+      const opened = (document.getElementById('gv-name')?.value || '').trim();
+      if (onView('composer') && opened) g.wfSeen = true;   // a workflow is on the canvas: seen
+      if (!g.wfSeen && !onView('composer')) return NAV('composer', 'Workflows are the agent chains Worca runs. The built-in ones live here.');
+      if (!g.wfSeen && !opened) {
+        return { target: ['#gv-saved-list .pl-item[data-id="wf_default"] .pl-row', '#gv-saved-list .pl-row'],
+          text: 'Open Default: the full Plan → Refine → Implement → Review loop. Each card is an agent; the wires carry plans, code and reviews.' };
+      }
+      if (!onView('new')) return NAV('new', 'Now pick one for a run.');
+      if (g.wfInitial === undefined) g.wfInitial = wf ? (wf.value || '') : '';
+      return { target: '#workflowSelect', lift: ['.select-wrap'], text: 'Every run picks its workflow here. Auto lets Worca choose; Default is the loop you just saw. Pick one.' };
+    }
+    case 'workspace':
+      if (projects < 2) return addProject('A workspace needs at least two projects.', 'Add another one here.');
+      if (!onView('workspaces')) return NAV('workspaces', 'Workspaces live here.');
+      return { target: '#ws-create-btn', text: 'A workspace runs one task across several projects at once.', final: true };
+    case 'teamMetrics':
+      if (!projects) return addProject('Team metrics is enabled per project.', 'Add one here first.');
+      if (!onView('projects')) return NAV('projects', 'Team metrics is switched on per project, from its row here.');
+      // The enable control exists only for a project with an origin remote; otherwise
+      // ring the cell that explains why, so the guide never lights nothing.
+      return {
+        final: true,
+        target: ['#projects-list .tm-enable', '#projects-list .tm-cell'],
+        text: ['Team metrics records every finished run on a shared git branch, for the whole team.',
+          'Team metrics lives on a git remote. This project has none yet — push it to one and “Set up team metrics…” appears here.'],
+      };
+    default:
+      return null;
+  }
+}
+
+function gsDestroySpot() { if (gs.spot) { gs.spot.destroy(); gs.spot = null; } }
+function endGuide() {
+  gsDestroySpot();
+  gs.guide = null;
+  clearInterval(gs.poll); gs.poll = 0;
+  for (const t of GS_WATCH_EVENTS) document.removeEventListener(t, gsOnPageChange, true);
+}
+// A guide's next hop is a pure function of the page, so ANY interaction the user
+// makes (typing the prompt, opening Advanced, flipping Mock, a nav click) can
+// move it on: after each one, re-derive the hop and re-light if it changed.
+// Capture phase, because `toggle` does not bubble. A final hop ends on the
+// target's own click instead.
+const GS_WATCH_EVENTS = ['input', 'change', 'toggle', 'click'];
+function gsOnPageChange() {
+  const g = gs.guide;
+  if (!g || g.final) return;
+  const mine = g.seq;
+  setTimeout(() => gsReconsider(mine), 0);
+}
+function gsReconsider(seq) {
+  const cur = gs.guide;
+  if (!cur || cur.seq !== seq) return;
+  const next = gsNextHop(cur.step, cur);
+  if (!next) { endGuide(); return; }
+  if (String(next.target) !== String(cur.target)) runGuide();
+}
+/** The main column's scrollport: a guide arriving on a view starts at its top,
+ *  then glides down to the ringed control (guide-spot scrolls it into view). */
+function gsScrollTop() {
+  const main = document.querySelector('.main');
+  if (main) main.scrollTop = 0;
+}
+
+function startGuide(step) {
+  endGuide();
+  if (step === 'claude') { openClaudeSetup(); return; }
+  gs.guide = { step, seq: ++gs.seq, target: null, final: false, started: false, view: currentShownView };
+  for (const t of GS_WATCH_EVENTS) document.addEventListener(t, gsOnPageChange, true);
+  // Some outcomes arrive after the click's own tick (a workflow loading onto the
+  // canvas, a list fetching): a slow poll catches those — a few DOM reads, only
+  // while a guide is up.
+  const seq = gs.guide.seq;
+  gs.poll = setInterval(() => gsReconsider(seq), 500);
+  gsScrollTop();
+  runGuide();
+}
+function runGuide() {
+  const g = gs.guide;
+  if (!g) return;
+  const hop = gsNextHop(g.step, g);
+  if (!hop) { endGuide(); return; }
+  g.target = hop.target; g.final = !!hop.final;
+  const mine = g.seq;
+  gsDestroySpot();
+  gs.spot = createGuideSpot({
+    target: hop.target, text: hop.text, lift: hop.lift || [], tries: 300,   // ~5 s: a list may still be fetching
+    onDismiss: () => { if (gs.guide && gs.guide.seq === mine) endGuide(); },
+    onTargetClick: () => {
+      if (!gs.guide || gs.guide.seq !== mine) return;
+      // The real action happened: a final hop is the whole guide; Start run is
+      // remembered so the closing hop can point at Running; every other hop
+      // hands over to the page watcher above, which re-lights the next control.
+      if (hop.start) gs.guide.started = true;
+      if (hop.final) endGuide();
+    },
+  });
+}
+/** A view switch while a guide runs (the ringed nav entry, or the app routing
+ *  after Start run): the page starts at the top and the hop is re-derived. */
+function onboardingViewChanged(name) {
+  if (gs.guide) {
+    gs.guide.view = name;
+    gsScrollTop();
+    const mine = gs.guide.seq;
+    setTimeout(() => gsReconsider(mine), 0);
+  }
+  if (name === 'new') { maybeWelcome(); if (gs.status === null) loadOnboarding(); }
+  if (name === 'getting-started') { if (gs.status) paintShelf({ entering: true }); else loadOnboarding(); }
+  document.querySelector('.gs-pill')?.classList.toggle('active', name === 'getting-started');
+}
+
+loadOnboarding();
+
 const views = $$('.view');
 const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 // [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
 // plugins/guardrails/models LEFT this array: they are Settings tabs now, reached
 // as #settings/<tab> (legacy bare hashes redirect — see LEGACY_TAB_VIEWS).
-const VIEW_NAMES = ['new', 'running', 'history', 'stats', 'team-metrics', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
+const VIEW_NAMES = ['new', 'getting-started', 'running', 'history', 'stats', 'team-metrics', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
 
 // ── Settings tabs ───────────────────────────────────────────────────────────
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
@@ -19084,6 +19452,9 @@ function showView(name, param = '') {
   }
   const prevView = currentShownView;
   currentShownView = name;
+  // The guide re-derives its hop on a tick, so it is told here — before a view's
+  // own loader runs — and never misses a switch because a loader threw.
+  onboardingViewChanged(name);
 
   // Focus selection lives only while on the Running view.
   state.selectedRunId = (name === 'running') ? (param || '') : '';

@@ -1043,3 +1043,34 @@ export async function removeGlobalModel(id) {
   if (!settings.models.length) delete settings.models;
   await persistSettings(settings);
 }
+
+// ── Getting started (onboarding) ─────────────────────────────────────────────
+// Two machine-wide flags, nothing more: which steps are DONE is derived from
+// product state by src/core/onboarding.mjs and never stored. `hidden` is the
+// checklist's Hide (Settings › General › Getting started shows it again);
+// `welcomeSeen` is the one-time welcome dialog. Both absent = both false.
+export function onboardingPrefs() {
+  const o = readSettings().onboarding;
+  const obj = o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+  return { hidden: obj.hidden === true, welcomeSeen: obj.welcomeSeen === true };
+}
+
+/** @throws {Error} unless every present key is a boolean. Unknown keys are refused. */
+export function assertOnboardingPrefsInput(patch) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('onboarding prefs must be an object');
+  for (const [k, v] of Object.entries(patch)) {
+    if (k !== 'hidden' && k !== 'welcomeSeen') throw new Error(`unknown onboarding key ${JSON.stringify(k)}`);
+    if (typeof v !== 'boolean') throw new Error(`onboarding.${k} must be true or false`);
+  }
+}
+
+/** Merge `patch` over the stored flags; a store with both flags false drops the key. */
+export async function setOnboardingPrefs(patch = {}) {
+  assertOnboardingPrefsInput(patch);
+  const settings = readSettings();
+  const next = { ...onboardingPrefs(), ...patch };
+  if (!next.hidden && !next.welcomeSeen) delete settings.onboarding;
+  else settings.onboarding = next;
+  await persistSettings(settings);
+  return onboardingPrefs();
+}

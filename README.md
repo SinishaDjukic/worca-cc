@@ -306,6 +306,7 @@ The skill starts the same deterministic orchestrator.
 - [Architecture](docs/ARCHITECTURE.md) — the whole stack in one picture
 - [Guardrails](docs/guardrails.md) — policy model, enforcement, limitations
 - [Team metrics](docs/team-metrics.md) — git-backed, team-wide run records
+- [Getting started](docs/getting-started.md) — the in-app checklist, welcome and spotlight guides
 - [Storage](docs/storage.md) — where state lives, project keys, migration
 - [Releasing](docs/RELEASING.md) — how `@worca/app` versions are published
 - [Contributing](CONTRIBUTING.md) — developing Worca from source

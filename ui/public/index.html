@@ -358,6 +358,20 @@
         </section>
         <!-- /view new -->
 
+        <!-- ===== VIEW: GETTING STARTED (docs/getting-started.md) ===== -->
+        <!-- Its own page: the sidebar pill (mounted by app.js under New pipeline) and
+             Settings › General › Getting started route here. The tile shelf is painted
+             into the host by getting-started.mjs on every entry. -->
+        <section class="view hidden" data-view="getting-started">
+          <div class="topbar">
+            <div>
+              <h1>Getting started</h1>
+              <div class="sub">Eight things to do with Worca, in order &middot; each tile opens a guided tour of the real controls</div>
+            </div>
+          </div>
+          <div id="getting-started-host" class="gs-host" hidden></div>
+        </section>
+
         <!-- ===== VIEW: RUNNING ===== -->
         <section class="view hidden" data-view="running">
           <div class="run-shell" id="run-shell">
@@ -1443,6 +1457,20 @@
               <small class="hint" id="chatSettingsMsg"></small>
             </section>
 
+            <!-- Getting started: the checklist's Hide is undone here. Only the checklist —
+                 the welcome dialog stays seen. No info-tip (the row explains itself);
+                 the .hint is painted by app.js like every other settings status line. -->
+            <section class="card settings-card" id="getting-started-card">
+              <div class="label-row">
+                <h2>Getting started</h2>
+              </div>
+              <div class="gs-settings-row">
+                <p class="gs-settings-text">The checklist on New pipeline walks through the first eight things to do with Worca. Hidden it, or want the guided tour back?</p>
+                <button type="button" id="gsShowAgain" class="btn btn-ghost btn-mini">Show again</button>
+              </div>
+              <small class="hint" id="gsSettingsMsg"></small>
+            </section>
+
             <!-- About: intentionally no info-tip and no .hint (test/ui-settings-tooltips.test.mjs pins both). -->
             <section class="card settings-card" id="about-card">
               <div class="label-row">
@@ -1816,6 +1844,65 @@
          twice, and no flow opens both. Do not "fix" this with a z-index of its
          own; the .cb-override confirm on the detail page depends on #confirm-modal
          staying on top. -->
+    <!-- Welcome (docs/getting-started.md): shown once, on the first visit to New
+         pipeline, until a door or Skip marks it seen. Three doors in cognitive-load
+         order; each hands its step id to the matching guide. -->
+    <div id="welcome-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+      <div class="card ob-welcome">
+        <p class="ob-eyebrow">Welcome to Worca</p>
+        <h2 id="welcome-title" class="ob-headline">Your pipelines, <em>on autopilot.</em></h2>
+        <svg class="ob-hero" viewBox="0 0 560 104" role="img" aria-label="A task becomes a chain of agents: plan, refine, implement, review — looping until the work clears its gates">
+          <circle class="gs-pop gs-node" style="--d:.1s" cx="40" cy="44" r="9"></circle>
+          <path class="gs-draw gs-wire ob-thread" pathLength="1" style="--d:.5s;--t:1.1s" d="M52 44 C 90 44, 110 44, 150 44"></path>
+          <circle class="gs-pop gs-node" style="--d:1.2s" cx="162" cy="44" r="9"></circle>
+          <path class="gs-draw gs-wire ob-thread" pathLength="1" style="--d:1.5s;--t:1s" d="M174 44 C 210 44, 230 44, 270 44"></path>
+          <circle class="gs-pop gs-node" style="--d:2.2s" cx="282" cy="44" r="9"></circle>
+          <path class="gs-draw gs-wire ob-thread" pathLength="1" style="--d:2.5s;--t:1s" d="M294 44 C 330 44, 350 44, 390 44"></path>
+          <circle class="gs-pop gs-node" style="--d:3.2s" cx="402" cy="44" r="9"></circle>
+          <path class="gs-draw gs-wire ob-loop" pathLength="1" style="--d:3.6s;--t:1.2s" d="M402 55 C 402 92, 282 92, 282 55"></path>
+          <path class="gs-draw gs-wire ob-thread gs-accent" pathLength="1" style="--d:4.4s;--t:.9s" d="M414 44 C 450 44, 470 44, 505 44"></path>
+          <circle class="gs-pop gs-ring-mark" style="--d:5s" cx="518" cy="44" r="16"></circle>
+          <circle class="gs-pop gs-node gs-accent" style="--d:5.1s" cx="518" cy="44" r="9"></circle>
+        </svg>
+        <div class="ob-doors">
+          <button type="button" class="ob-door" data-door="project">
+            <span class="ob-door-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg></span>
+            <span>Add your first project</span>
+            <span class="ob-door-arrow" aria-hidden="true">›</span>
+          </button>
+          <button type="button" class="ob-door" data-door="run">
+            <span class="ob-door-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M10 9l5 3-5 3z"></path></svg></span>
+            <span>Watch a run end to end, offline</span>
+            <span class="ob-door-arrow" aria-hidden="true">›</span>
+          </button>
+          <button type="button" class="ob-door" data-door="realRun">
+            <span class="ob-door-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7z"></path><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"></path></svg></span>
+            <span>Run a real pipeline</span>
+            <span class="ob-door-arrow" aria-hidden="true">›</span>
+          </button>
+        </div>
+        <button type="button" class="ob-skip">Skip</button>
+      </div>
+    </div>
+
+    <!-- Connect Claude Code: the one checklist step with no control to ring. The
+         tick is derived (the CLI resolves on PATH); "Check again" refetches it. -->
+    <div id="claude-setup-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="claude-setup-title">
+      <div class="card ob-claude">
+        <div class="card-head">
+          <h2 id="claude-setup-title">Connect Claude Code</h2>
+          <button type="button" id="claude-setup-close" class="btn btn-mini">Close</button>
+        </div>
+        <p class="ob-claude-lead">Worca drives the <strong>Claude Code</strong> CLI. Real runs need it on your <code>PATH</code>; mock runs need nothing.</p>
+        <pre class="ob-claude-cmd"><code>npm install -g @anthropic-ai/claude-code</code></pre>
+        <p class="ob-claude-note">On native Windows the <a href="https://docs.anthropic.com/en/docs/claude-code/setup" target="_blank" rel="noopener noreferrer">native installer</a> works too. A binary elsewhere: set <code>WORCA_CLAUDE_BIN</code> to its full path and restart the UI.</p>
+        <div class="ob-claude-status" id="claude-setup-status" aria-live="polite"></div>
+        <div class="stop-actions">
+          <button type="button" id="claude-setup-check" class="btn btn-primary btn-mini">Check again</button>
+        </div>
+      </div>
+    </div>
+
     <div id="stop-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="stop-title">
       <div class="card stop-card">
         <h2 id="stop-title" class="stop-title">Stop this pipeline?</h2>
