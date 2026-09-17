@@ -11,6 +11,18 @@ const CHILD = resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures/team-me
 const dir = mkdtempSync(join(tmpdir(), 'worca-lock-'));
 after(() => rmSync(dir, { recursive: true, force: true }));
 
+// The holder's heartbeat is a plain writeFile — truncate, then write — so a read can land on an
+// empty file mid-beat (CI: "Unexpected end of JSON input"). lock.mjs's inspect() tolerates exactly
+// that by judging an unparsable file by mtime; a test reading the raw file has to tolerate it too.
+async function readLock(file) {
+  for (let i = 0; ; i++) {
+    try { return JSON.parse(readFileSync(file, 'utf8')); } catch (e) {
+      if (i >= 20) throw e;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  }
+}
+
 function runChild(lock, log, tag) {
   return new Promise((res, rej) => {
     const c = spawn(process.execPath, [CHILD, lock, log, tag], { stdio: ['ignore', 'ignore', 'inherit'] });
@@ -48,9 +60,9 @@ test('a live foreign lock times out with LOCK_TIMEOUT', async () => {
 test('the holder heartbeats, so a long critical section is not judged stale', async () => {
   const lock = join(dir, 'beat.lock');
   const release = await acquireLock(lock, { heartbeatMs: 20 });
-  const first = JSON.parse(readFileSync(lock, 'utf8')).at;
+  const first = (await readLock(lock)).at;
   await new Promise((r) => setTimeout(r, 120));
-  assert.notEqual(JSON.parse(readFileSync(lock, 'utf8')).at, first);
+  assert.notEqual((await readLock(lock)).at, first);
   // staleMs must stay several heartbeats wide: at staleMs:60 with heartbeatMs:20 a single missed
   // tick under load flips this from LOCK_TIMEOUT to a successful acquire, i.e. a red test.
   await assert.rejects(acquireLock(lock, { staleMs: 250, timeoutMs: 150 }), { code: 'LOCK_TIMEOUT' });
