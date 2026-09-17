@@ -210,7 +210,7 @@ export async function readMemory(root, scope, name) {
 
 // ── .state counters ──────────────────────────────────────────────────────────
 const stateFile = (root, scope) => join(root, '.state', `${scopeKey(scope)}.json`);
-const EMPTY_STATE = Object.freeze({ writesSinceDefrag: 0, lastWriteAt: null, lastDefragAt: null, lastDefragRunId: null });
+const EMPTY_STATE = Object.freeze({ writesSinceDefrag: 0, lastWriteAt: null, lastDefragAt: null, lastDefragRunId: null, failedWrites: 0, lastFailedAt: null, lastFailedRunId: null });
 export async function readScopeState(root, scope) {
   const text = await readTextMaybe(stateFile(root, scope));
   if (text === null) return { ...EMPTY_STATE };
@@ -339,8 +339,9 @@ export async function removeMemory(root, scope, name, { source, now, snapshot = 
 }
 
 // ── the agent-facing pointer block (§4.2, native-rules revision) ─────
-// The bodies reach the agent through Claude Code's own `.claude/rules` loader (the
-// mount lives inside every spawn's cwd — memory-sync.mjs MEMORY_RULES_REL); this block
+// The bodies reach the agent through Claude Code's own `.claude/rules` loader (the rules copy
+// lives inside every spawn's cwd (memory-sync.mjs MEMORY_RULES_REL) and is READ-ONLY there; the
+// dir lines name the WRITABLE copy (memoryWorkPath)); this block
 // only says WHERE memory lives and WHAT belongs there — the WRITE TRIGGER, the worth-a-file
 // categories and the anti-list are what decide whether a run records anything at all, so they
 // live in the intro rather than in each agent body. One `Label — /abs/dir:` line per
@@ -348,10 +349,12 @@ export async function removeMemory(root, scope, name, { source, now, snapshot = 
 // intro must stay ONE line and nothing may follow the dir lines inside the block.
 export const MEMORY_BLOCK_HEADING = '## Worca memory';
 export const MEMORY_BLOCK_INTRO =
-  'Durable rules, preferences and traps kept across runs and chats. Claude Code loads them into your context ' +
-  'from the memory directories below (a file with `paths` loads when you read a matching file), so never search ' +
-  'for them (the built-in Explore and Plan sub-agents do not load them — read the files there if you are one). ' +
-  'WRITE TRIGGER: write a file there only when what you learned (a) cost you a cycle, or would have cost the next agent one, ' +
+  'Durable rules, preferences and traps kept across runs and chats. Claude Code has already loaded them into your context as rules ' +
+  '(a file with `paths` loads when you read a matching file), so never search for them (the built-in Explore and Plan sub-agents ' +
+  'do not load them — read the files in the directories below if you are one). The directories below hold the WRITABLE copy of ' +
+  'those files — worca syncs them back to its store after your turn; the read-only copy under the cwd\'s `.claude/rules/worca` is ' +
+  'Claude Code\'s own and a write there is refused as a sensitive path, so never write there. ' +
+  'WRITE TRIGGER: write a file into the directories below only when what you learned (a) cost you a cycle, or would have cost the next agent one, ' +
   'or (b) contradicted what you assumed when you started — AND will still be true next month. Worth a file: ' +
   'a trap (behaves differently from how it reads); a verification recipe (the exact command / env var / ' +
   'fixture-regeneration step that proves work here is correct); an invariant or contract the code depends ' +
@@ -375,7 +378,7 @@ export function renderMemoryBlock(sections) {
 }
 
 // ── health (§8) ──────────────────────────────────────────────────────────────
-export const MEMORY_LEVELS = Object.freeze(['fresh', 'ok', 'due', 'overdue']);
+export const MEMORY_LEVELS = Object.freeze(['fresh', 'ok', 'due', 'overdue', 'failing']);
 const DEFAULT_DEFRAG = Object.freeze({ writes: 10, files: 30, bytesPct: 60, alwaysOnBytes: 16384 });
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const names = (list) => `${list.slice(0, 3).map((e) => `${e.name}.md`).join(', ')}${list.length > 3 ? ', …' : ''}`;
@@ -390,6 +393,9 @@ const names = (list) => `${list.slice(0, 3).map((e) => `${e.name}.md`).join(', '
  * Native rules: every file WITHOUT `paths` is loaded into every agent's context at launch —
  * `alwaysOnBytes` is that cost (the figure the old 4 KB index cap used to bound). A path-scoped
  * file costs nothing until a matching file is read, so it is excluded from it.
+ * failing = the scope's last recorded write ATTEMPT by a run failed (failedWrites > 0 and no store
+ * write newer than lastFailedAt); it outranks every other level, fresh included, and a defragment
+ * resets the counters.
  */
 export function memoryHealth(entries, state, caps) {
   const list = Array.isArray(entries) ? entries : [];
@@ -412,23 +418,34 @@ export function memoryHealth(entries, state, caps) {
   const overBudget = budget > 0 && bytes * 100 >= T.bytesPct * budget;
   const pct = budget > 0 ? Math.floor((bytes * 100) / budget) : 0;
   const writes = Number(st.writesSinceDefrag) || 0;
-  const reasons = [];
+  const failedWrites = Number(st.failedWrites) || 0;
+  // A store write (any writer) newer than the last failure means the path works again; the COUNT
+  // stays as a reason until a defragment resets it. A count with no timestamp is still loud.
+  const failing = failedWrites > 0 && !(st.lastWriteAt && st.lastFailedAt && st.lastWriteAt > st.lastFailedAt);
+  const fileReasons = [];
   if (files > 0) {
-    if (writes >= T.writes) reasons.push(`${plural(writes, 'memory write')} since the last defragment (due at ${T.writes})`);
-    if (files >= T.files) reasons.push(`${plural(files, 'file')} in this scope (due at ${T.files})`);
-    if (overBudget) reasons.push(`${pct}% of the scope's byte budget in use (due at ${T.bytesPct}%)`);
-    if (oversized.length) reasons.push(`${plural(oversized.length, 'file')} over the ${soft}-byte soft cap: ${names(oversized)}`);
-    if (overHard.length) reasons.push(`${plural(overHard.length, 'file')} over the ${hard}-byte hard cap — runs cannot update them: ${names(overHard)}`);
-    if (invalid.length) reasons.push(`${plural(invalid.length, 'file')} without frontmatter — added by hand? worca still serves them; a defragment rewrites them: ${names(invalid)}`);
-    if (alwaysOnBytes >= T.alwaysOnBytes) reasons.push(`${alwaysOnBytes} bytes of memory load into the context of every agent that mounts this scope (${plural(alwaysOn.length, 'file')} without paths; due at ${T.alwaysOnBytes})`);
+    if (writes >= T.writes) fileReasons.push(`${plural(writes, 'memory write')} since the last defragment (due at ${T.writes})`);
+    if (files >= T.files) fileReasons.push(`${plural(files, 'file')} in this scope (due at ${T.files})`);
+    if (overBudget) fileReasons.push(`${pct}% of the scope's byte budget in use (due at ${T.bytesPct}%)`);
+    if (oversized.length) fileReasons.push(`${plural(oversized.length, 'file')} over the ${soft}-byte soft cap: ${names(oversized)}`);
+    if (overHard.length) fileReasons.push(`${plural(overHard.length, 'file')} over the ${hard}-byte hard cap — runs cannot update them: ${names(overHard)}`);
+    if (invalid.length) fileReasons.push(`${plural(invalid.length, 'file')} without frontmatter — added by hand? worca still serves them; a defragment rewrites them: ${names(invalid)}`);
+    if (alwaysOnBytes >= T.alwaysOnBytes) fileReasons.push(`${alwaysOnBytes} bytes of memory load into the context of every agent that mounts this scope (${plural(alwaysOn.length, 'file')} without paths; due at ${T.alwaysOnBytes})`);
   }
-  const level = files === 0 ? 'fresh'
+  const reasons = [...fileReasons];
+  if (failedWrites > 0) {
+    reasons.push(`${plural(failedWrites, 'memory write')} by runs failed since the last defragment` +
+      `${st.lastFailedRunId ? ` — last in run ${st.lastFailedRunId}` : ''}; that run's History detail carries the reason`);
+  }
+  const level = failing ? 'failing'
+    : files === 0 ? 'fresh'
     : (writes >= 2 * T.writes || overHard.length || alwaysOnBytes >= 2 * T.alwaysOnBytes) ? 'overdue'
-    : reasons.length ? 'due' : 'ok';
+    : fileReasons.length ? 'due' : 'ok';
   return {
     files, bytes, oversized: oversized.length, overHard: overHard.length, invalidFrontmatter: invalid.length,
     alwaysOnBytes, alwaysOnFiles: alwaysOn.length,
     writesSinceDefrag: writes, lastWriteAt: st.lastWriteAt, lastDefragAt: st.lastDefragAt, lastDefragRunId: st.lastDefragRunId,
+    failedWrites, lastFailedAt: st.lastFailedAt, lastFailedRunId: st.lastFailedRunId,
     level, reasons,
   };
 }

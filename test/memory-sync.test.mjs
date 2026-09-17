@@ -200,8 +200,8 @@ test('withStoreLock: two syncs on one root run one after the other, never interl
   assert.deepEqual([...refs(a.modified), ...refs(b.modified)], ['global/race'], 'the serialised second sync re-writes it as a modification');
   assert.deepEqual(memoryTotals([
     { added: [1], modified: [], deleted: [1, 2], rejected: [] },
-    { added: [], modified: [1], deleted: [], rejected: [1] },
-  ]), { added: 1, modified: 1, deleted: 2, rejected: 1 });
+    { added: [], modified: [1], deleted: [], rejected: [1], failed: [1, 2, 3] },
+  ]), { added: 1, modified: 1, deleted: 2, rejected: 1, failed: 3 }, 'a pre-split record without `failed` counts as 0');
 });
 
 test('syncBack: a mount dir that no longer exists is skipped — never read as "every file deleted"', async () => {
@@ -354,12 +354,14 @@ test('a file rejected, then accepted after a store edit, still warns that the ru
 
 import { spawnSync } from 'node:child_process';
 import { readdir } from 'node:fs/promises';
-import { MEMORY_RULES_REL, memoryMountPath, MEMORY_INJECTED_ENTRY, refreshMount } from '../src/core/memory-sync.mjs';
+import { MEMORY_RULES_REL, MEMORY_WORK_REL, memoryRulesPath, memoryWorkPath, MEMORY_INJECTED_ENTRY, refreshMount } from '../src/core/memory-sync.mjs';
 
-test('the mount lives at <cwd>/.claude/rules/worca — a namespaced, git-excludable subtree; the record never rescues', () => {
+test('two copies: the read-only rules copy at <cwd>/.claude/rules/worca (git-excludable), the writable copy at <pipelineDir>/memory (outside every checkout)', () => {
   assert.equal(MEMORY_RULES_REL, '.claude/rules/worca', 'forward slashes: this is also the git pathspec');
-  assert.equal(memoryMountPath('/w'), join('/w', '.claude', 'rules', 'worca'));
-  assert.deepEqual(MEMORY_INJECTED_ENTRY, { path: '.claude/rules/worca', kind: 'memory', source: null });
+  assert.equal(memoryRulesPath('/w'), join('/w', '.claude', 'rules', 'worca'));
+  assert.equal(MEMORY_WORK_REL, 'memory');
+  assert.equal(memoryWorkPath('/p/pipe'), join('/p/pipe', 'memory'));
+  assert.deepEqual(MEMORY_INJECTED_ENTRY, { path: '.claude/rules/worca', kind: 'memory', source: null }, 'only the rules copy is an injected path — the writable copy is outside git');
   assert.ok(Object.isFrozen(MEMORY_INJECTED_ENTRY));
 });
 
@@ -373,7 +375,7 @@ test('mountMemory at <wt>/.claude/rules/worca: a remount clears only the worca s
   await writeMemory(root, GLOBAL_SCOPE, 'testing', 'T', { source: 'user', now: NOW, caps: CAPS });
   await mkdir(join(wt, '.claude', 'rules'), { recursive: true });
   await writeFile(join(wt, '.claude', 'rules', 'own.md'), 'the project\'s committed rule\n');
-  const mount = memoryMountPath(wt);
+  const mount = memoryRulesPath(wt);
   const d = mountDirs({ members: [MEMBERS[0]], isWorkspace: false });
   await mountMemory({ root, mount, dirs: d, gitIgnore: true });
   await writeFile(join(mount, 'project', 'stale.md'), 'x');
@@ -456,7 +458,7 @@ test('mountMemory writes the .gitignore sentinel FIRST: a mount that dies half w
   const root = await tmp('worca-mem-root-');
   const wt = await tmp('worca-mem-wt-');
   await writeMemory(root, GLOBAL_SCOPE, 'testing', 'T', { source: 'user', now: NOW, caps: CAPS });
-  const mount = memoryMountPath(wt);
+  const mount = memoryRulesPath(wt);
   // The second dir's mkdir lands UNDER the file the first dir just copied (ENOTDIR on POSIX,
   // EEXIST/ENOTDIR on Windows): a mount that fails after some files were already written.
   const d = [

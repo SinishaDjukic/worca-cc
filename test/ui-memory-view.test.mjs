@@ -464,3 +464,20 @@ test('History memory chips: a rejected write links to the stored file; a project
   });
   assert.equal(sec2.querySelector('.hd-mem-chip').tagName, 'SPAN', 'no project key, nothing to open');
 });
+
+test('History memory chips: a FAILED write is an inert red chip with the reason as title — there is nothing in the store to open', async () => {
+  const { window } = await boot();
+  const doc = window.document;
+  const sec = doc.createElement('div');
+  window.__np.buildHdOverview(sec, { id: 'p1', projectKey: 'alpha-00000001', title: 't' }, {
+    state: HD_STATE, results: null,
+    memory: { changes: [{ nodeId: 'n', agentKey: 'implementer', added: [], modified: [], deleted: [], rejected: [],
+      failed: [{ scope: 'project', name: 'trap', reason: 'written into the read-only rules copy — Claude requested permissions to edit /x which is a sensitive file.' }] }] },
+  });
+  const chip = sec.querySelector('.hd-mem-chip[data-kind="fail"]');
+  assert.ok(chip, 'the failed chip renders');
+  assert.equal(chip.tagName, 'SPAN', 'never a button: no stored file to open');
+  assert.equal(chip.textContent, '⊘ project/trap.md');
+  assert.ok(chip.classList.contains('hd-mem-rej'), 'the rejected colour (no new CSS class, no new contrast-baseline signature)');
+  assert.match(chip.title, /read-only rules copy/);
+});

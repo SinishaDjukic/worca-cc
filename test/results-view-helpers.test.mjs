@@ -42,22 +42,26 @@ test('diffBadges always returns changed + removed, even at zero', () => {
 
 import { memoryChangesRows } from '../ui/public/results-view.mjs';
 
-test('memoryChangesRows: one row per change entry, chips per file, rejected chips carry the reason as title', () => {
+test('memoryChangesRows: one row per change entry, chips per file, rejected and failed chips carry the reason as title', () => {
   const rows = memoryChangesRows({ changes: [
     { executionId: 'x:n_impl:1', nodeId: 'n_impl', agentKey: 'implementer',
       added: [{ scope: 'project', name: 'lesson' }], modified: [{ scope: 'global', name: 'testing' }], deleted: [],
-      rejected: [{ scope: 'global', name: 'huge', reason: 'over the 32768-byte cap' }] },
+      rejected: [{ scope: 'global', name: 'huge', reason: 'over the 32768-byte cap' }],
+      failed: [{ scope: 'project', name: 'trap', reason: 'written into the read-only rules copy — Claude requested permissions to edit /x which is a sensitive file.' }] },
     { executionId: null, nodeId: 'resume', agentKey: null, added: [], modified: [], deleted: [{ scope: 'project', name: 'old' }], rejected: [] },
+    { executionId: null, nodeId: 'final', agentKey: null, added: [], modified: [], deleted: [], rejected: [], failed: [{ scope: '', name: 'notes', reason: 'disk full' }] },
   ] });
   assert.deepEqual(rows, [
     { node: 'implementer', chips: [
       { kind: 'add', text: '+ project/lesson.md', scope: 'project', name: 'lesson' },
       { kind: 'mod', text: '~ global/testing.md', scope: 'global', name: 'testing' },
       { kind: 'rej', text: '✕ global/huge.md', title: 'over the 32768-byte cap', scope: 'global', name: 'huge' },
+      { kind: 'fail', text: '⊘ project/trap.md', title: 'written into the read-only rules copy — Claude requested permissions to edit /x which is a sensitive file.', scope: 'project', name: 'trap' },
     ] },
     { node: 'resume', chips: [{ kind: 'del', text: '− project/old.md', scope: 'project', name: 'old' }] },
+    { node: 'final', chips: [{ kind: 'fail', text: '⊘ notes.md', title: 'disk full', scope: '', name: 'notes' }] },
   ]);
   assert.deepEqual(memoryChangesRows(null), []);
   assert.deepEqual(memoryChangesRows({ changes: [] }), []);
-  assert.deepEqual(memoryChangesRows({ changes: [{ nodeId: 'n', added: [], modified: [], deleted: [], rejected: [] }] }), [], 'an empty entry renders nothing');
+  assert.deepEqual(memoryChangesRows({ changes: [{ nodeId: 'n', added: [], modified: [], deleted: [], rejected: [] }] }), [], 'an empty (pre-split) entry renders nothing');
 });

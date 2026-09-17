@@ -27,7 +27,7 @@ export function memoryRoute(scopeKey, name = '') {
   return name ? `${base}/${encodeURIComponent(name)}` : base;
 }
 
-const BADGES = { fresh: ['No memory yet', ''], ok: ['Healthy', 'green'], due: ['Defragment due', 'amber'], overdue: ['Defragment overdue', 'red'] };
+const BADGES = { fresh: ['No memory yet', ''], ok: ['Healthy', 'green'], due: ['Defragment due', 'amber'], overdue: ['Defragment overdue', 'red'], failing: ['Writes failing', 'red'] };
 export function healthBadge(level) {
   const [text, cls] = BADGES[level] || BADGES.fresh;
   return { text, cls };
@@ -77,7 +77,8 @@ export function renderHealthCard(report, { doc = globalThis.document, host = nul
   head.appendChild(h(doc, 'span', `badge${cls ? ` ${cls}` : ''}`, text));
   head.appendChild(h(doc, 'span', 'mem-counters',
     `${plural(health.files || 0, 'file')} · ${health.bytes || 0} bytes · ${health.alwaysOnBytes || 0} bytes always loaded · ${plural(health.writesSinceDefrag || 0, 'write')} since the last defragment` +
-    (health.lastDefragAt ? ` · last defragmented ${formatWhen(health.lastDefragAt)}` : '')));
+    (health.lastDefragAt ? ` · last defragmented ${formatWhen(health.lastDefragAt)}` : '') +
+    (health.failedWrites ? ` · ${plural(health.failedWrites, 'failed write')}` : '')));
   // The ONE control sits at the head's right edge (margin-left:auto), styled like every other
   // secondary pill (btn-ghost) with the defragment glyph before its label.
   const runId = report?.defragRunId ? String(report.defragRunId) : '';

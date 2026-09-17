@@ -111,7 +111,7 @@ test('GET /api/memory/global on a fresh store: empty list, fresh health, no live
   assert.equal(j.health.level, 'fresh');
   assert.equal(j.health.alwaysOnBytes, 0);
   assert.equal('indexDropped' in j.health, false);
-  assert.deepEqual(j.state, { writesSinceDefrag: 0, lastWriteAt: null, lastDefragAt: null, lastDefragRunId: null });
+  assert.deepEqual(j.state, { writesSinceDefrag: 0, lastWriteAt: null, lastDefragAt: null, lastDefragRunId: null, failedWrites: 0, lastFailedAt: null, lastFailedRunId: null });
 });
 
 test('PUT / GET / DELETE a global file: repaired frontmatter, user source, one memory-changed frame per write, then gone', async () => {

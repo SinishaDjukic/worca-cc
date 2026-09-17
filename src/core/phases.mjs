@@ -515,6 +515,12 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // by the real runner (it is never a spawn flag).
     workspaceWriteTargets: workspaceWriteTargetsFor(ctx),
     permissionMode: c.permissionMode || 'acceptEdits',
+    // Agent memory (memory-write-split design D4): the writable copy lives OUTSIDE the cwd, so it
+    // rides --add-dir — acceptEdits auto-approves edits "inside your working directory or
+    // additionalDirectories" (documented), nothing else about the spawn changes, and the CLI loads
+    // nothing from that dir (CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD is never set here).
+    // undefined when the run has no mount ⇒ buildClaudeArgs emits nothing and the argv is byte-identical.
+    addDirs: typeof ctx.memoryMount === 'string' && ctx.memoryMount ? [ctx.memoryMount] : undefined,
     model: c.model,
     effort: c.effort,          // per-role effort from the orchestrator
     // Per-model routing env (design §4.4), resolved HERE — the one funnel every

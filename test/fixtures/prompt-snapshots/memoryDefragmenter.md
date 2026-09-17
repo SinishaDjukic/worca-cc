@@ -15,7 +15,7 @@ You are a pipeline agent. Read every input below, do your job exactly as your ro
 
 Mode: task
 
-Defragment the memory scope named below. Work only inside the mounted memory directory given in your system prompt (the `## Worca memory` block) — it sits under the project directory at .claude/rules/worca/; never touch anything else in the project directory.
+Defragment the memory scope named below. Work only inside the memory directory your system prompt names (the `## Worca memory` block) — it sits outside the project checkout, in the run's own memory directory; the copy under the cwd's `.claude/rules/worca/` is read-only, so never write there. Never touch anything in the project directory.
 
 task: /abs/task.md
 

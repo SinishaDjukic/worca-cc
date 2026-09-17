@@ -346,7 +346,7 @@ export function mockEnabled(opts) {
  * @param {number} [o.maxTurns]             --max-turns <n> (positive safe integer; else omitted)
  * @param {number|null} [o.maxBudgetUsd]    --max-budget-usd <n> (finite > 0; null/else omitted)
  * @param {string} [o.appendSubagentSystemPrompt] --append-subagent-system-prompt <text> (Task children only)
- * @param {string[]} [o.addDirs]            --add-dir <dir> per entry (Ask Worca's memory mount; the CLI loads <dir>/.claude/rules only with CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 in the env — memory-deps.mjs / spawn.mjs set it)
+ * @param {string[]} [o.addDirs]            --add-dir <dir> per entry (Ask Worca's memory mount and every pipeline spawn's writable memory copy; the CLI loads <dir>/.claude/rules only with CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 in the env — memory-deps.mjs / spawn.mjs set it)
  *   All nine are Ask Worca sandbox options (ask-worca-design.md §6.3) and default-off.
  * @param {number} [o.argvInlineLimit]     override ARGV_INLINE_LIMIT (GH #380; tests force the staged path)
  * @returns {Promise<{text:string, exitCode:number}>}
@@ -453,9 +453,10 @@ export async function runClaude(o = {}) {
  *                        (docs/run-root-verification.md, branch (a); argv-attested
  *                        transcript phase0/out/v1a-rerun.jsonl, with a no-grant
  *                        negative control proving the grant is load-bearing).
- *  `--add-dir` carries Ask Worca's memory mount ONLY (`addDirs`): it needs the
- *  CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 env override to load memory at all
- *  (E2, re-probed 2026-09-13 on 2.1.270), and no pipeline path passes it (§5.3 / §8.18 unchanged). */
+ *  `--add-dir` carries Ask Worca's memory mount (with the
+ *  CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 override, which is what makes the CLI LOAD rules
+ *  from it) and, since the memory write split, every pipeline spawn's writable memory copy (no
+ *  override: nothing is loaded from it, it is only made editable under acceptEdits). */
 export function buildClaudeArgs({
   prompt, systemPrompt, permissionMode, model, effort, allowedTools, resumeSessionId,
   mcpConfigPath, mcpServerGrants, permissionRules,

@@ -14,8 +14,8 @@ const NOW = '2026-09-09T10:00:00.000Z';
 const file = (name, bytes, over = {}) => ({ name, description: `Hook ${name}`, paths: [], source: 'user', updated: NOW, bytes, hasFrontmatter: true, hash: name, ...over });
 const STATE = { writesSinceDefrag: 0, lastWriteAt: null, lastDefragAt: null, lastDefragRunId: null };
 
-test('levels are the four the UI knows', () => {
-  assert.deepEqual([...MEMORY_LEVELS], ['fresh', 'ok', 'due', 'overdue']);
+test('levels are the five the UI knows', () => {
+  assert.deepEqual([...MEMORY_LEVELS], ['fresh', 'ok', 'due', 'overdue', 'failing']);
 });
 
 test('fresh: no files ⇒ fresh with no reasons, whatever the counters say', () => {
@@ -75,6 +75,22 @@ test('overdue: writes at twice the threshold, or any file over the hard cap (whi
   assert.ok(loud.reasons.some((s) => /630 bytes of memory load/.test(s)));
 });
 
+test('failing: a failed write with no newer store write outranks every level (even fresh); a newer store write or a defragment clears it; the reason names the run', () => {
+  const T1 = '2026-09-17T10:00:00.000Z'; const T2 = '2026-09-17T11:00:00.000Z';
+  const failed = { ...STATE, failedWrites: 2, lastFailedAt: T2, lastFailedRunId: 'abc12345' };
+  const empty = memoryHealth([], failed, CAPS);
+  assert.equal(empty.level, 'failing', 'an empty scope whose writes fail is not "fresh"');
+  assert.deepEqual(empty.reasons, ['2 memory writes by runs failed since the last defragment — last in run abc12345; that run\'s History detail carries the reason']);
+  assert.deepEqual({ failedWrites: empty.failedWrites, lastFailedAt: empty.lastFailedAt, lastFailedRunId: empty.lastFailedRunId }, { failedWrites: 2, lastFailedAt: T2, lastFailedRunId: 'abc12345' });
+  assert.equal(memoryHealth([file('a', 10)], { ...failed, writesSinceDefrag: 20 }, CAPS).level, 'failing', 'outranks overdue');
+  const cleared = memoryHealth([file('a', 10)], { ...failed, lastWriteAt: '2026-09-17T12:00:00.000Z' }, CAPS);
+  assert.equal(cleared.level, 'ok', 'a store write newer than the last failure clears the level');
+  assert.deepEqual(cleared.reasons, ['2 memory writes by runs failed since the last defragment — last in run abc12345; that run\'s History detail carries the reason'], 'the reason stays until a defragment resets the counter');
+  assert.equal(memoryHealth([file('a', 10)], { ...failed, lastWriteAt: T1 }, CAPS).level, 'failing', 'an OLDER store write does not clear it');
+  assert.equal(memoryHealth([], { ...STATE, failedWrites: 0 }, CAPS).level, 'fresh');
+  assert.equal(memoryHealth([file('a', 10)], { ...failed, failedWrites: 2, lastFailedAt: null }, CAPS).level, 'failing', 'a counter without a timestamp still counts (corrupt state is loud, not silent)');
+});
+
 test('names are capped at three, then an ellipsis; caps without a defrag block fall back to 10 / 30 / 60', () => {
   const many = ['a', 'b', 'c', 'd'].map((n) => file(n, 150));
   assert.equal(memoryHealth(many, STATE, CAPS).reasons.find((s) => /soft cap/.test(s)), '4 files over the 100-byte soft cap: a.md, b.md, c.md, …');
@@ -92,7 +108,7 @@ test('memoryScopeReport: entries + state + health from disk', async () => {
   const r = await root();
   const caps = { ...CAPS, hardBytesPerFile: 32768, softBytesPerFile: 8192 };
   const fresh = await memoryScopeReport(r, GLOBAL_SCOPE, caps);
-  assert.deepEqual(fresh, { scope: 'global', entries: [], state: { writesSinceDefrag: 0, lastWriteAt: null, lastDefragAt: null, lastDefragRunId: null }, health: fresh.health });
+  assert.deepEqual(fresh, { scope: 'global', entries: [], state: { writesSinceDefrag: 0, lastWriteAt: null, lastDefragAt: null, lastDefragRunId: null, failedWrites: 0, lastFailedAt: null, lastFailedRunId: null }, health: fresh.health });
   assert.equal(fresh.health.level, 'fresh');
   assert.equal(fresh.health.alwaysOnBytes, 0);
   // A 160-char hook: the index line must overflow a 450-byte cap even on a short tmpdir (Linux CI).

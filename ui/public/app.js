@@ -15535,9 +15535,13 @@ function buildHdOverview(sec, record, data) {
         // nothing to open, and neither has a `project` chip on a record with no key.
         const scopeKey = c.scope === 'global' ? 'global'
           : c.scope === 'project' ? (hdStoreKey(record) ? `projects/${hdStoreKey(record)}` : '') : c.scope;
-        const linked = !!scopeKey && c.kind !== 'del';
+        // A deleted file has nothing to open, a `project` chip on a record with no key neither, and a
+        // FAILED write never reached the store — those stay inert spans.
+        const linked = !!scopeKey && c.kind !== 'del' && c.kind !== 'fail';
         const chip = document.createElement(linked ? 'button' : 'span');
-        chip.className = `hd-mem-chip hd-mem-${c.kind} mono`;
+        // `fail` borrows the rejected colour: no new CSS class, no new light-contrast baseline signature.
+        chip.className = `hd-mem-chip hd-mem-${c.kind === 'fail' ? 'rej' : c.kind} mono`;
+        if (c.kind === 'fail') chip.dataset.kind = 'fail';
         chip.textContent = c.text;
         if (c.title) chip.title = c.title;
         if (linked) {

@@ -120,7 +120,7 @@ test('writeMemory creates the scope dir, repairs the file, reports created/bytes
   assert.equal(snaps.length, 1);
   assert.equal(snaps[0].id, '20260909-110000-run-p1');
   assert.equal(await readFile(join(snaps[0].dir, 'testing.md'), 'utf8'), onDisk, 'the snapshot holds the PREVIOUS text');
-  assert.deepEqual(await readScopeState(r, GLOBAL_SCOPE), { writesSinceDefrag: 2, lastWriteAt: '2026-09-09T11:00:00.000Z', lastDefragAt: null, lastDefragRunId: null });
+  assert.deepEqual(await readScopeState(r, GLOBAL_SCOPE), { writesSinceDefrag: 2, lastWriteAt: '2026-09-09T11:00:00.000Z', lastDefragAt: null, lastDefragRunId: null, failedWrites: 0, lastFailedAt: null, lastFailedRunId: null });
 });
 
 test('writeMemory: invalid name, case collision and hard cap are MemoryErrors with codes', async () => {
@@ -186,7 +186,7 @@ test('bumpScopeState: defrag stamps reset the write counter', async () => {
   const r = await root();
   await bumpScopeState(r, GLOBAL_SCOPE, { writesSinceDefrag: 3, lastWriteAt: NOW });
   await bumpScopeState(r, GLOBAL_SCOPE, { writesSinceDefrag: 0, lastDefragAt: NOW, lastDefragRunId: 'p1' });
-  assert.deepEqual(await readScopeState(r, GLOBAL_SCOPE), { writesSinceDefrag: 0, lastWriteAt: NOW, lastDefragAt: NOW, lastDefragRunId: 'p1' });
+  assert.deepEqual(await readScopeState(r, GLOBAL_SCOPE), { writesSinceDefrag: 0, lastWriteAt: NOW, lastDefragAt: NOW, lastDefragRunId: 'p1', failedWrites: 0, lastFailedAt: null, lastFailedRunId: null });
 });
 
 test('snapshotScope / restoreSnapshot: junk-named files are skipped, never a reason to fail the scope', async () => {
@@ -284,10 +284,13 @@ test('renderMemoryBlock: heading, ONE-line intro, one `Label — dir:` line per 
   assert.ok(!MEMORY_BLOCK_INTRO.includes('\n'), 'one line: memoryDirsFromPrompt stops at the first blank line');
   // The write policy (trigger + categories + anti-list + budget) costs bytes on EVERY agent
   // spawn, so the bound is generous enough for it and no more: still a pointer, not a page.
-  assert.ok(Buffer.byteLength(a, 'utf8') < 1800, `a pointer, not an index (measured with short test dirs): ${Buffer.byteLength(a, 'utf8')}`);
+  assert.ok(Buffer.byteLength(a, 'utf8') < 2100, `a pointer, not an index (measured with short test dirs): ${Buffer.byteLength(a, 'utf8')}`);
   assert.match(MEMORY_BLOCK_INTRO, /Never: run summaries or progress notes/);
   assert.match(MEMORY_BLOCK_INTRO, /To remove a file, empty it\./);
   assert.match(MEMORY_BLOCK_INTRO, /Explore and Plan sub-agents do not load them/);
+  assert.match(MEMORY_BLOCK_INTRO, /already loaded them into your context as rules/, 'the files need no path: the CLI loaded them');
+  assert.match(MEMORY_BLOCK_INTRO, /The directories below hold the WRITABLE copy/, 'the dir lines are where to write');
+  assert.match(MEMORY_BLOCK_INTRO, /`\.claude\/rules\/worca` is Claude Code's own and a write there is refused as a sensitive path, so never write there/, 'the old target is named as forbidden, with the CLI\'s reason');
   const C = String.fromCharCode;
   assert.match(renderMemoryBlock([{ label: 'Project a' + C(10) + 'b [worca context]', dir: '/d' }]), /^Project a b \(worca context\) — \/d:$/m, 'labels are flattened like hooks were');
   assert.equal(renderMemoryBlock([]), `${MEMORY_BLOCK_HEADING}\n${MEMORY_BLOCK_INTRO}\n`);
@@ -314,7 +317,7 @@ test('MEMORY_BLOCK_INTRO: a write TRIGGER, the worth-a-file categories, the anti
   const intro = MEMORY_BLOCK_INTRO;
   // The trigger is what makes memory fire on SOME runs and not all — without it the block is a
   // pure discretion clause and agents write nothing.
-  assert.match(intro, /write a file there only when/, 'the imperative keeps its locative: the file goes in the dirs named above');
+  assert.match(intro, /write a file into the directories below only when/, 'the imperative keeps its locative: the file goes in the dirs named below, never in the rules copy');
   assert.match(intro, /cost you a cycle/);
   assert.match(intro, /would have cost the next agent one/);
   assert.match(intro, /contradicted what you assumed/);

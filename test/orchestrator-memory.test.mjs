@@ -5,7 +5,7 @@
 // diff or the kept branch. Default (detached) mode + a legacy pin.
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, writeFile, readdir, mkdir, cp } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
@@ -17,7 +17,7 @@ import { runAgentExecution } from '../src/core/graph/executor.mjs';
 import { memoryRoot, writeMemory, readMemory, listMemory, readScopeState, GLOBAL_SCOPE, projectScope, bumpScopeState, listSnapshots } from '../src/core/memory-store.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { RESULTS_FILE, retainedWorkPatchName } from '../src/core/results.mjs';
-import { memoryMountPath, MEMORY_RULES_REL } from '../src/core/memory-sync.mjs';
+import { memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL } from '../src/core/memory-sync.mjs';
 import { RUN_LOG_FILE } from '../src/core/run-log.mjs';
 import { readPipelineByKey, readPipelineForResume } from '../src/core/artifacts.mjs';
 
@@ -53,10 +53,11 @@ const NOW = '2026-09-09T10:00:00.000Z';
 function recordingProducer(seen) {
   let wrote = false;
   return async (ctx) => {
-    seen.push({ key: ctx.node.key, executionId: ctx.executionId, block: ctx.memoryBlock, mount: ctx.memoryMount, cwd: ctx.projectDir,
+    seen.push({ key: ctx.node.key, executionId: ctx.executionId, block: ctx.memoryBlock, mount: ctx.memoryMount, rules: ctx.memoryRules, cwd: ctx.projectDir,
       projectScopeDir: ctx.memoryMount ? existsSync(join(ctx.memoryMount, 'project')) : null,
       junk: ctx.memoryMount ? existsSync(join(ctx.memoryMount, 'global', 'my notes.md')) : null,
-      sentinel: ctx.memoryMount ? existsSync(join(ctx.memoryMount, '.gitignore')) : null,
+      sentinel: ctx.memoryRules ? existsSync(join(ctx.memoryRules, '.gitignore')) : null,
+      rulesHasLesson: ctx.memoryRules ? existsSync(join(ctx.memoryRules, 'project', 'lesson.md')) : null,
       status: spawnSync('git', ['-C', ctx.projectDir, 'status', '--porcelain']).stdout.toString() });
     if (ctx.memoryMount && ctx.node.key === 'implementer' && !wrote) {
       wrote = true;
@@ -115,25 +116,32 @@ async function pausedRun({ seed = true, onPause } = {}) {
   return { dir, orch, mkRunners, setRef: (o) => { orchRef = o; } };
 }
 
-test('detached (default): mount at <worktree>/.claude/rules/worca, pointer block in every producer ctx, sync after the writing execution, summary + ledger, nothing memory in the commit', { timeout: 120000 }, async () => {
+test('detached (default): writable copy at <pipelineDir>/memory, rules copy at <worktree>/.claude/rules/worca, pointer block names the writable dirs, sync after the writing execution refreshes the rules copy, summary + ledger, nothing memory in the commit', { timeout: 120000 }, async () => {
   const { dir, orch, seen } = await runOnce();
   const st = orch.getState();
   const pipelineDir = st.pipelineDir;
-  assert.equal(st.memoryMount, memoryMountPath(st.branch.worktreeDir));
-  assert.ok(seen.every((s) => s.mount.startsWith(s.cwd + sep)), 'the mount is INSIDE every run cwd (native rules load from the cwd)');
+  assert.equal(st.memoryMount, memoryWorkPath(pipelineDir), 'the writable copy = the sync mount, under the pipeline dir');
+  assert.equal(st.memoryRules, memoryRulesPath(st.branch.worktreeDir), 'the rules copy is inside the cwd (native rules load from the cwd)');
+  assert.ok(seen.every((s) => !s.mount.startsWith(s.cwd + sep)), 'the writable copy is OUTSIDE every run cwd (never under the protected .claude tree)');
+  assert.ok(seen.every((s) => s.rules.startsWith(s.cwd + sep)), 'the rules copy is INSIDE every run cwd');
   assert.ok(seen.length >= 4, `producers ran: ${seen.length}`);
   for (const s of seen) {
     assert.ok(s.block.startsWith('## Worca memory\n'), `${s.key}: block present`);
-    assert.ok(s.block.includes(`Global — ${join(st.memoryMount, 'global')}:`), `${s.key}: the global dir is named`);
+    assert.ok(s.block.includes(`Global — ${join(st.memoryMount, 'global')}:`), `${s.key}: the WRITABLE global dir is named`);
+    assert.ok(!s.block.includes(st.memoryRules), `${s.key}: the rules copy is never named as a dir line`);
     assert.ok(!s.block.includes('`testing.md`'), `${s.key}: the block lists no files — the CLI loads them`);
     assert.equal(s.mount, st.memoryMount);
-    assert.equal(s.sentinel, true, `${s.key}: the .gitignore sentinel is in the mount`);
+    assert.equal(s.rules, st.memoryRules);
+    assert.equal(s.sentinel, true, `${s.key}: the .gitignore sentinel is in the RULES copy`);
+    assert.equal(existsSync(join(s.mount, '.gitignore')), false, `${s.key}: no sentinel in the writable copy (it is outside git)`);
   }
+  const impl = seen.filter((s) => s.key === 'implementer');
+  assert.ok(impl.length >= 2, 'wf_default under mock runs the implementer twice (review → fix)');
+  assert.equal(impl[0].rulesHasLesson, false, 'the first implementer spawned before lesson.md existed');
+  assert.equal(impl[1].rulesHasLesson, true, 'after the first implementer\'s sync the rules copy was refreshed from the store — the second execution loads lesson.md natively');
   // Captured INSIDE the first producer execution: with the sentinel the mount is invisible to
   // an agent's own `git add -A`, to a staging pre-commit hook and to the reviewer's `git status`.
   assert.equal(seen[0].status, '', `git status inside the live checkout: ${JSON.stringify(seen[0].status)}`);
-  const impl = seen.filter((s) => s.key === 'implementer');
-  assert.ok(impl.length >= 2, 'wf_default under mock runs the implementer twice (review → fix)');
   // Store: repaired frontmatter, run-stamped.
   const pk = orch.members[0].projectKey;
   const lesson = await readMemory(memoryRoot(), projectScope(pk), 'lesson');
@@ -146,7 +154,7 @@ test('detached (default): mount at <worktree>/.claude/rules/worca, pointer block
   const ch = results.memory.changes[0];
   assert.equal(ch.agentKey, 'implementer');
   assert.deepEqual(ch.added.map((r) => `${r.scope}/${r.name}`).sort(), ['global/style', 'project/lesson']);
-  assert.deepEqual(results.memory.totals, { added: 2, modified: 0, deleted: 0, rejected: 0 });
+  assert.deepEqual(results.memory.totals, { added: 2, modified: 0, deleted: 0, rejected: 0, failed: 0 });
   assert.ok(!(results.newFiles || []).some((f) => /lesson\.md|style\.md/.test(f.path || f)), 'memory files never enter the run diff');
   assert.equal(orch.injectedPaths[pk].filter((e) => e.kind === 'memory').length, 1, 'ONE memory entry in the §8.8 set');
   assert.deepEqual(orch.injectedPaths[pk].find((e) => e.kind === 'memory'), { path: MEMORY_RULES_REL, kind: 'memory', source: null });
@@ -155,6 +163,7 @@ test('detached (default): mount at <worktree>/.claude/rules/worca, pointer block
   assert.ok(!existsSync(st.branch.worktreeDir), 'the checkout (and the mount in it) is gone after teardown');
   const ledger = JSON.parse(await readFile(join(pipelineDir, 'memory.json'), 'utf8'));
   assert.equal(ledger.mount, st.memoryMount);
+  assert.equal(ledger.rules, st.memoryRules, 'the ledger records both copies');
   assert.ok(ledger.baseline['project/lesson.md']);
   const detail = await readPipelineByKey(pk, orch.pipeline.id);
   assert.equal(detail.memory.changes.length, 1);
@@ -169,7 +178,8 @@ test('legacy (pinned): mount in the legacy worktree, the ONE legacy exclusion pa
   try {
     const { dir, orch } = await runOnce();
     const st = orch.getState();
-    assert.equal(st.memoryMount, memoryMountPath(st.branch.worktreeDir));
+    assert.equal(st.memoryMount, memoryWorkPath(st.pipelineDir));
+    assert.equal(st.memoryRules, memoryRulesPath(st.branch.worktreeDir));
     assert.ok(st.branch.worktreeDir.includes(join('.worca-cc', 'worktrees')), 'legacy checkout');
     assert.ok(await readMemory(memoryRoot(), projectScope(orch.members[0].projectKey), 'lesson'));
     assert.deepEqual(orch._excludePathspecs(orch.members[0].projectKey), [`:(exclude)${MEMORY_RULES_REL}`]);
@@ -192,7 +202,7 @@ test('a checkout that TRACKS .claude/rules/worca is never mounted over: the run 
   orch._git = (args, o) => { if (args[0] === 'ls-files') calls.push(args); return realGit(args, o); };
   assert.equal((await orch.run()).status, 'done');
   assert.deepEqual(calls, [['ls-files', '--', ':(icase).claude/rules/worca']]);
-  assert.equal(orch.memory, null); assert.equal(orch.getState().memoryMount, null);
+  assert.equal(orch.memory, null); assert.equal(orch.getState().memoryMount, null); assert.equal(orch.getState().memoryRules, null);
   const detail = await readPipelineByKey(orch.members[0].projectKey, orch.pipeline.id);
   assert.match(detail.auditMarkdown, /Memory: not mounted \(the checkout tracks \.claude\/rules\/worca/);
   assert.match(detail.auditMarkdown, /untrack it/);
@@ -244,17 +254,18 @@ test('resume: the ledger sync runs BEFORE the tracked guard — a guard that fai
     'the interrupted execution\'s write was synced before the guard ran');
   assert.equal(orch.memory, null, 'and the run degraded to no memory');
   assert.equal(orch.getState().memoryMount, null);
+  assert.equal(orch.getState().memoryRules, null);
   assert.equal(orch.memoryBlock, '');
 });
 
-test('resume: a run paused BEFORE the native-rules revision keeps its files at the ledger\'s old mount — synced once, then remounted at the recomputed path', { timeout: 120000 }, async () => {
+test('resume: a run paused BEFORE the write split keeps its files at the ledger\'s in-checkout mount — synced once, then remounted at the writable path', { timeout: 120000 }, async () => {
   const { dir, orch: orch1, mkRunners, setRef } = await pausedRun();
   const pdir = orch1.getState().pipelineDir;
-  const oldMount = join(pdir, 'memory');
-  await cp(orch1.getState().memoryMount, oldMount, { recursive: true });
-  await writeFile(join(oldMount, 'project', 'legacy-paused.md'), 'Written under the old mount.\n');
+  const worktree = orch1.getState().branch.worktreeDir;
+  const oldMount = memoryRulesPath(worktree);                          // the previous revision's one-and-only mount
+  await writeFile(join(oldMount, 'project', 'legacy-paused.md'), 'Written under the old in-checkout mount.\n');
   const ledger = JSON.parse(await readFile(join(pdir, 'memory.json'), 'utf8'));
-  ledger.mount = oldMount;
+  ledger.mount = oldMount; delete ledger.rules;
   await writeFile(join(pdir, 'memory.json'), JSON.stringify(ledger, null, 2));
   const pk = orch1.members[0].projectKey;
   const saved = readPipelineForResume(orch1.state.id);
@@ -265,7 +276,8 @@ test('resume: a run paused BEFORE the native-rules revision keeps its files at t
   assert.equal((await orch2.resume()).status, 'done');
   assert.ok(await readMemory(memoryRoot(), projectScope(pk), 'legacy-paused'), 'the pre-revision mount was synced once');
   assert.ok(orch2.memoryChanges.some((c) => c.nodeId === 'resume' && c.added.some((r) => r.name === 'legacy-paused')), JSON.stringify(orch2.memoryChanges));
-  assert.equal(liveMount, memoryMountPath(liveWorktree), 'and the remount is at the RECOMPUTED path, never the ledger\'s');
+  assert.equal(liveMount, memoryWorkPath(pdir), 'and the remount is at the RECOMPUTED writable path, never the ledger\'s');
+  assert.equal(orch2.getState().memoryRules, memoryRulesPath(liveWorktree));
 });
 
 test('empty store: every scope dir exists in the mount and the block names it', { timeout: 120000 }, async () => {
@@ -287,7 +299,8 @@ test('resume: a file written by an interrupted execution is synced BEFORE the re
   assert.equal(orch.memoryChanges.at(-1).agentKey, null);
   assert.equal(orch.memoryChanges.at(-1).nodeId, 'resume');
   assert.ok(existsSync(join(mount, 'project', 'interrupted.md')), 'the fresh mount carries it (it is in the store now)');
-  assert.equal(await readFile(join(mount, '.gitignore'), 'utf8'), '*\n', 'the remount re-writes the sentinel');
+  assert.equal(await readFile(join(orch.getState().memoryRules, '.gitignore'), 'utf8'), '*\n', 'the remount re-writes the sentinel in the rules copy');
+  assert.equal(existsSync(join(orch.getState().memoryRules, 'project', 'interrupted.md')), true, 'and the rules copy carries the synced file');
   assert.ok(orch.memoryBlock.startsWith('## Worca memory\n'));
 });
 
@@ -392,8 +405,9 @@ test('a mount failure degrades to no memory; the run still finishes', { timeout:
   assert.equal(orch.memory, null, 'the run carries no memory');
   assert.equal(orch.memoryBlock, '');
   assert.equal(orch.getState().memoryMount, null);
+  assert.equal(orch.getState().memoryRules, null);
   assert.ok(seen.length >= 4, `producers ran: ${seen.length}`);
-  for (const s of seen) { assert.equal(s.block, '', `${s.key}: no block`); assert.equal(s.mount, null, `${s.key}: no mount`); assert.equal(s.sentinel, null); }
+  for (const s of seen) { assert.equal(s.block, '', `${s.key}: no block`); assert.equal(s.mount, null, `${s.key}: no mount`); assert.equal(s.rules, null, `${s.key}: no rules copy`); assert.equal(s.sentinel, null); }
   assert.equal(existsSync(join(orch.getState().pipelineDir, 'memory.json')), false, 'no ledger without a mount');
   const detail = await readPipelineByKey(orch.members[0].projectKey, orch.pipeline.id);
   assert.match(detail.auditMarkdown, /Memory: not mounted \(boom\)/);
@@ -416,7 +430,7 @@ test('junk in a store scope never blocks the run\'s memory writes, and is logged
   assert.ok(await readMemory(memoryRoot(), GLOBAL_SCOPE, 'style'), 'the agent write reached the store');
   assert.ok(await readMemory(memoryRoot(), projectScope(orch.members[0].projectKey), 'lesson'));
   const results = JSON.parse(await readFile(join(orch.getState().pipelineDir, RESULTS_FILE), 'utf8'));
-  assert.deepEqual(results.memory.totals, { added: 2, modified: 0, deleted: 0, rejected: 0 });
+  assert.deepEqual(results.memory.totals, { added: 2, modified: 0, deleted: 0, rejected: 0, failed: 0 });
   assert.ok(!(await listMemory(memoryRoot(), GLOBAL_SCOPE)).some((e) => e.name === 'my notes'), 'the junk file is never served');
   const log = await readFile(join(orch.getState().pipelineDir, RUN_LOG_FILE), 'utf8');
   assert.match(log, /memory: ignored [^"]*my notes\.md \(invalid name/, log.split('\n').filter((l) => /memory/.test(l)).join('\n'));
@@ -432,17 +446,18 @@ test('wf_memory_defrag + memoryScope global: one-scope mount, the mock merges, s
   await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'b', 'Rule B.\n', { source: 'user', now: NOW, caps: CAPS });
   await writeMemory(memoryRoot(), projectScope(pk), 'keep', 'Keep me.\n', { source: 'user', now: NOW, caps: CAPS });
   await bumpScopeState(memoryRoot(), GLOBAL_SCOPE, { writesSinceDefrag: 7 });
-  let mounted = null;
+  let mounted = null; let mountedRules = null;
   const orch = createOrchestrator({
     projectDir: dir, workflowId: 'wf_memory_defrag', memoryScope: 'global', prompt: 'Defragment global memory.', claude: { mock: true }, auto: true,
-    runners: { producer: async (ctx) => { if (ctx.node.key === 'memoryDefragmenter') mounted = (await readdir(ctx.memoryMount)).sort(); return runAgentExecution(ctx); } },
+    runners: { producer: async (ctx) => { if (ctx.node.key === 'memoryDefragmenter') { mounted = (await readdir(ctx.memoryMount)).sort(); mountedRules = (await readdir(ctx.memoryRules)).sort(); } return runAgentExecution(ctx); } },
   });
   assert.equal(orch.memoryScope, 'global');
   const res = await orch.run();
   assert.equal(res.status, 'done', JSON.stringify(res));
   const st = orch.getState();
   // Captured LIVE from the defragmenter's own ctx: teardown removes the checkout the mount is in.
-  assert.deepEqual(mounted, ['.gitignore', 'global'], 'ONE scope dir is mounted — never project/ (plus the git sentinel)');
+  assert.deepEqual(mounted, ['global'], 'ONE scope dir is mounted in the writable copy — never project/, and no git sentinel (it is outside git)');
+  assert.deepEqual(mountedRules, ['.gitignore', 'global'], 'the rules copy mirrors the one scope, plus the sentinel');
   assert.deepEqual((await listMemory(memoryRoot(), GLOBAL_SCOPE)).map((e) => e.name), ['a'], 'b was merged into a and removed');
   const a = await readMemory(memoryRoot(), GLOBAL_SCOPE, 'a');
   assert.equal(a.meta.source, `defrag:${orch.pipeline.id}`);
@@ -463,7 +478,7 @@ test('wf_memory_defrag + memoryScope global: one-scope mount, the mock merges, s
   assert.equal(results.memory.changes[0].agentKey, 'memoryDefragmenter');
   assert.deepEqual(results.memory.changes[0].modified, [{ scope: 'global', name: 'a' }]);
   assert.deepEqual(results.memory.changes[0].deleted, [{ scope: 'global', name: 'b' }]);
-  assert.deepEqual(results.memory.totals, { added: 0, modified: 1, deleted: 1, rejected: 0 });
+  assert.deepEqual(results.memory.totals, { added: 0, modified: 1, deleted: 1, rejected: 0, failed: 0 });
   assert.ok(existsSync(join(st.pipelineDir, 'defrag-report.md')), 'the report output landed in the pipeline dir');
   const detail = await readPipelineByKey(pk, orch.pipeline.id);
   assert.match(detail.auditMarkdown, /Memory: \+0 ~1 -1 by memoryDefragmenter/);
@@ -523,7 +538,7 @@ test('memoryScope rides the resume point: a paused defrag resumes with ONE scope
   orchRef = orch2;
   assert.equal(orch2.memoryScope, 'global', 'rehydrated from the point, not from opts');
   assert.equal((await orch2.resume()).status, 'done');
-  assert.deepEqual(mounted2, ['.gitignore', 'global'], 'the remount is still one scope (captured live)');
+  assert.deepEqual(mounted2, ['global'], 'ONE scope dir is mounted in the writable copy — never project/, and no git sentinel (it is outside git)');
   assert.deepEqual((await listMemory(memoryRoot(), GLOBAL_SCOPE)).map((e) => e.name), ['a']);
   assert.equal((await readScopeState(memoryRoot(), GLOBAL_SCOPE)).lastDefragRunId, orch2.pipeline.id);
 });
@@ -584,4 +599,103 @@ test('an agent that `git add -f`s the mount never gets it onto the kept branch: 
   const tree = spawnSync('git', ['-C', dir, 'ls-tree', '-r', '--name-only', orch.getState().branch.feature]).stdout.toString().split(/\r?\n/).filter(Boolean);
   assert.ok(!tree.some((q) => q.startsWith('.claude/rules/worca/')), `the kept branch carries no mount file: ${tree.join(',')}`);
   assert.ok(tree.includes('src/feature.mjs'), 'and the agent work was still committed');
+});
+
+// ── failed writes are reported, never silent (memory-write-split design D9/D10/D13) ──────────
+
+/** Feed the harness one Write tool_use + its tool_result through the REAL event translator, as the
+ *  stream-json runner would. `attr` is what orchestrator._nodeCtx hands every frame of an execution. */
+function feedWrite(orch, ctx, { file, ok, error = 'Claude requested permissions to edit ' + file + ' which is a sensitive file.', id = 'toolu_01' }) {
+  const attr = { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal };
+  orch._onAgentEvent('implementer', { type: 'assistant', text: '', raw: { type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Write', input: { file_path: file, content: 'x' } }] } } }, attr);
+  orch._onAgentEvent('implementer', { type: 'log', text: '', raw: { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: !ok, content: ok ? 'File created successfully' : `<tool_use_error>${error}</tool_use_error>` }] } } }, attr);
+}
+
+test('a refused write into the rules copy is reported: warn line, audit, results.json, ledger, .state counters, health "failing"', { timeout: 120000 }, async () => {
+  const dir = gitDir('mem');
+  await rm(memoryRoot(), { recursive: true, force: true });
+  let fed = false;
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo task', claude: { mock: true }, auto: true,
+    runners: { producer: async (ctx) => {
+      if (ctx.node.key === 'implementer' && !fed && ctx.memoryRules) {
+        fed = true;
+        feedWrite(orch, ctx, { file: join(ctx.memoryRules, 'project', 'trap.md'), ok: false });
+      }
+      return runAgentExecution(ctx);
+    } },
+  });
+  assert.equal((await orch.run()).status, 'done');
+  const pk = orch.members[0].projectKey;
+  const results = JSON.parse(await readFile(join(orch.getState().pipelineDir, RESULTS_FILE), 'utf8'));
+  assert.equal(results.memory.changes.length, 1);
+  const ch = results.memory.changes[0];
+  assert.equal(ch.agentKey, 'implementer');
+  assert.deepEqual({ added: ch.added, modified: ch.modified, deleted: ch.deleted, rejected: ch.rejected }, { added: [], modified: [], deleted: [], rejected: [] });
+  assert.equal(ch.failed.length, 1);
+  assert.equal(ch.failed[0].scope, 'project'); assert.equal(ch.failed[0].name, 'trap');
+  assert.match(ch.failed[0].reason, /^written into the read-only rules copy — Claude requested permissions to edit .* which is a sensitive file\.$/);
+  assert.deepEqual(results.memory.totals, { added: 0, modified: 0, deleted: 0, rejected: 0, failed: 1 });
+  const detail = await readPipelineByKey(pk, orch.pipeline.id);
+  assert.match(detail.auditMarkdown, /Memory: \+0 ~0 -0 \(1 failed\) by implementer: failed project\/trap\.md — written into the read-only rules copy/);
+  const log = await readFile(join(orch.getState().pipelineDir, RUN_LOG_FILE), 'utf8');
+  const warn = log.split('\n').filter((l) => /"level":"warn"/.test(l) && /never reached the store/.test(l));
+  assert.equal(warn.length, 1, log.split('\n').filter((l) => /memory/.test(l)).join('\n'));
+  assert.match(warn[0], /project\/trap\.md written by implementer never reached the store — written into the read-only rules copy — Claude requested permissions/);
+  const st = await readScopeState(memoryRoot(), projectScope(pk));
+  assert.equal(st.failedWrites, 1); assert.equal(st.lastFailedRunId, orch.pipeline.id); assert.ok(st.lastFailedAt);
+  assert.equal((await readScopeState(memoryRoot(), GLOBAL_SCOPE)).failedWrites, 0, 'only the scope that was written to');
+  const { memoryHealth } = await import('../src/core/memory-store.mjs');
+  assert.equal(memoryHealth(await listMemory(memoryRoot(), projectScope(pk)), st, {}).level, 'failing', 'an empty scope whose writes fail is not "fresh" (default caps: memoryCaps lives in settings.mjs and reads HOME)');
+});
+
+test('a failed write followed by a successful write of the SAME file is not reported; a write beside the scope dirs is', { timeout: 120000 }, async () => {
+  const dir = gitDir('mem');
+  await rm(memoryRoot(), { recursive: true, force: true });
+  let fed = false;
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo task', claude: { mock: true }, auto: true,
+    runners: { producer: async (ctx) => {
+      if (ctx.node.key === 'implementer' && !fed && ctx.memoryMount) {
+        fed = true;
+        const f = join(ctx.memoryMount, 'project', 'lesson.md');
+        feedWrite(orch, ctx, { file: f, ok: false, error: 'File has not been read yet.', id: 'toolu_a' });
+        await writeFile(f, 'Run npm ci before the suite.\n');
+        feedWrite(orch, ctx, { file: f, ok: true, id: 'toolu_b' });
+        feedWrite(orch, ctx, { file: join(ctx.memoryMount, 'notes.md'), ok: false, error: 'disk full', id: 'toolu_c' });
+      }
+      return runAgentExecution(ctx);
+    } },
+  });
+  assert.equal((await orch.run()).status, 'done');
+  const ch = orch.memoryChanges.find((c) => c.agentKey === 'implementer');
+  assert.deepEqual(ch.added.map((r) => r.name), ['lesson'], 'the successful retry landed');
+  assert.deepEqual(ch.failed, [{ scope: '', name: 'notes', reason: 'disk full' }], 'the retried key is clean; the stray write beside the scope dirs is reported with an empty scope');
+  const st = await readScopeState(memoryRoot(), projectScope(orch.members[0].projectKey));
+  assert.equal(st.failedWrites, 0, 'a write beside the scope dirs counts against no scope');
+});
+
+test('the run-end sync drains the bookkeeping of an execution that never finished (a stopped run)', { timeout: 120000 }, async () => {
+  const dir = gitDir('mem');
+  await rm(memoryRoot(), { recursive: true, force: true });
+  let tripped = false;
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_default', prompt: 'demo task', claude: { mock: true }, auto: true,
+    runners: { producer: async (ctx) => {
+      if (ctx.node.key === 'implementer' && !tripped && ctx.memoryRules) {
+        tripped = true;
+        feedWrite(orch, ctx, { file: join(ctx.memoryRules, 'global', 'trap.md'), ok: false });
+        await orch.stop();
+      }
+      return runAgentExecution(ctx);
+    } },
+  });
+  await orch.run();
+  // Whether the aborted execution still reached _afterExecution (its own sync) or not (the run-end
+  // sync drained it) depends on abort timing; what must hold is that the failure was reported ONCE.
+  const carriers = orch.memoryChanges.filter((c) => (c.failed || []).some((f) => f.name === 'trap'));
+  assert.equal(carriers.length, 1, JSON.stringify(orch.memoryChanges));
+  assert.deepEqual(carriers[0].failed.map((f) => `${f.scope}/${f.name}`), ['global/trap']);
+  assert.ok(['final', 'n_implementer'].includes(carriers[0].nodeId), carriers[0].nodeId);
+  assert.equal((await readScopeState(memoryRoot(), GLOBAL_SCOPE)).failedWrites, 1);
 });

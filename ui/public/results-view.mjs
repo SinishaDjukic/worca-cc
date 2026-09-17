@@ -124,14 +124,14 @@ export function workflowPickerLabel(wf, enabledPluginNames = []) {
  * Rows for the History Overview "Memory changes" block (agent-memory-design.md §6).
  * Pure: `memory` is results.json.memory / the detail's `memory` ({ changes }).
  * One row per change entry that carries at least one file; chips in the order
- * added, modified, deleted, rejected; a rejected chip's `title` is the reason.
+ * added, modified, deleted, rejected, failed; a rejected or failed chip's `title` is the reason.
  * Each chip also carries the ref it was built from — `scope` (mount-relative:
  * `global` | `project` | `projects/<key>`) and `name` — so History can link to
  * the file in its Memory view (B6).
  */
 export function memoryChangesRows(memory) {
   const changes = Array.isArray(memory?.changes) ? memory.changes : [];
-  const file = (r) => `${r.scope}/${r.name}.md`;
+  const file = (r) => `${r.scope ? `${r.scope}/` : ''}${r.name}.md`;
   const rows = [];
   for (const c of changes) {
     const chips = [
@@ -139,6 +139,8 @@ export function memoryChangesRows(memory) {
       ...(c.modified || []).map((r) => ({ kind: 'mod', text: `~ ${file(r)}`, scope: r.scope, name: r.name })),
       ...(c.deleted || []).map((r) => ({ kind: 'del', text: `− ${file(r)}`, scope: r.scope, name: r.name })),
       ...(c.rejected || []).map((r) => ({ kind: 'rej', text: `✕ ${file(r)}`, title: String(r.reason || ''), scope: r.scope, name: r.name })),
+      // A write that never reached the mount (a refused tool call): nothing in the store to open.
+      ...(c.failed || []).map((r) => ({ kind: 'fail', text: `⊘ ${file(r)}`, title: String(r.reason || ''), scope: r.scope, name: r.name })),
     ];
     if (chips.length) rows.push({ node: c.agentKey || c.nodeId || 'run', chips });
   }
