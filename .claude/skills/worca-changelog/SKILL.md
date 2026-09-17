@@ -159,10 +159,10 @@ fixed; only the words and the demo change:
 | Slot | Rule |
 | --- | --- |
 | kicker | 1–2 words naming the area: `Budget`, `Routing`, `Team`. Dot colour from the palette table. |
-| h2 | ≤ 7 words, a full sentence with a period, states the outcome not the feature: *Spend caps that pause, not kill.* |
-| sub | 1–2 sentences, ≤ 52ch measure. What changed, why it matters. No "we", no "now supports". |
-| chips | 3–4 facts. Numbers go in `<b>` (`<b>11</b> built-ins`). No sentences. |
-| demo | A 10–20 line CSS/JS loop that shows the *mechanism* — precedence, masking, a flag appearing. Reuse a recipe from `DESIGN.md` before inventing one. |
+| h2 | ≤ 7 words, a full sentence with a period. Obvious before clever: a reader must know what the feature is from the headline alone (*New to Worca? Follow the checklist.*), never a riddle that needs the sub to decode. |
+| sub | **Problem first, in bold, then the answer.** Line 1 is one plain question or pain the reader recognises, wrapped in `<b>…</b>` and followed by `<br>`. Line 2 starts with *Now …* and says what Worca does and how, in words a first-time user understands. ≤ 52ch measure, no "we". |
+| chips | 2–4 plain phrases a user understands at a glance, and only ones that matter (`highlights the real button`, `stored in your git remote`). Numbers go in `<b>`. No tool names, flags, schema versions, internal terms, or shorthand a reader would have to decode. |
+| demo | A 10–20 line CSS/JS loop that shows the *mechanism* — precedence, masking, a flag appearing. Reuse a recipe from `DESIGN.md` before inventing one. Its label, steps and note follow the same plain-words rule as the chips. |
 | shot | The screenshot in a `.shot` frame with a one-line `.shot-cap` that says what the reader is looking at. |
 
 Build the page:
