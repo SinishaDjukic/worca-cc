@@ -148,6 +148,11 @@ the caller's zone — and so is a time in the past.
   sentence and shows the next three dates; presets are Once, Every day, Weekdays,
   Weekly, Monthly, Custom. An Ask card that becomes a repeating schedule follows the
   series (Run now, Delete schedule) instead of one run.
+- **Schedules › Schedule a run** picks the time FIRST: it opens New pipeline with the
+  schedule sheet already up (`#new/schedule`); the pick then waits on the form
+  ("Scheduled · Starts Sat Sep 19, 02:00 · Change… · Start now instead") and *Start run*
+  reads as **Schedule**, so describing the task and one click schedules it. The pick is
+  never persisted — a reload is a plain form — and the menu's *Start run now* ignores it.
 - **Schedules** (sidebar): one-off runs and repeating schedules with Run now, Change
   time / Edit, Skip next, pause switch, Cancel / Delete — and the **Activity** feed.
   Problems (missed, failed, paused itself, run error) count towards the amber unread

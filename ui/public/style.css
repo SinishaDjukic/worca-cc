@@ -4469,6 +4469,11 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .ask-card-sched-text{color:var(--ink);font-weight:500;}
 .ask-card-sched-link{font:600 12px var(--sans);color:var(--blue-ink-strong);}
 .ask-card-sched .ask-card-err{flex-basis:100%;}
+/* New pipeline: the time picked before the task, left of the Start / Schedule button */
+.new-sched{margin-right:auto;padding:9px 12px;border-radius:12px;background:var(--canvas-2);border:1px solid var(--line);}
+.new-sched[hidden]{display:none;}
+.new-sched .link-btn{font-size:12px;}
+#start-btn-clock[hidden],#start-btn-play[hidden]{display:none;}
 /* a proposal Ask Worca scheduled (propose_run when / every): the line above the footer */
 .ask-card-sched-proposed{margin:0 18px 12px;padding:10px 12px;border-radius:12px;background:var(--canvas-2);border:1px solid var(--line);}
 .ask-card-sched-proposed .link-btn{font-size:12px;}

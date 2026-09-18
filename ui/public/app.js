@@ -129,7 +129,8 @@ import {
   renderProjectTmCell, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
 import { paintAboutInto } from './about-links.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts } from './report-run.mjs';
-import { openScheduleSheet, closeScheduleSheet } from './schedule-sheet.mjs';
+import { openScheduleSheet, closeScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
+import { describeRule, formatInstant } from '../../src/shared/schedule/recurrence.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 
@@ -213,6 +214,12 @@ const el = {
   startMenu: $('#start-menu'),
   startMenuNow: $('#start-menu-now'),
   startMenuSchedule: $('#start-menu-schedule'),
+  newSched: $('#new-sched'),
+  newSchedBadge: $('#new-sched-badge'),
+  newSchedText: $('#new-sched-text'),
+  newSchedChange: $('#new-sched-change'),
+  newSchedClear: $('#new-sched-clear'),
+  startBtnLabel: $('#start-btn-label'),
   navSchedulesCount: $('#nav-schedules-count'),
   navSchedulesUnread: $('#nav-schedules-unread'),
   formMsg: $('#form-msg'),
@@ -8712,17 +8719,17 @@ el.form.addEventListener('submit', async (e) => {
 
   // Schedule… (the split button): the form is VALID at this point, so ask for the time
   // now. Cancel leaves the form exactly as it was; the sheet's answer rides on the same
-  // POST /api/run body — `scheduledFor` (once) or `repeat` (recurring).
-  const scheduling = scheduleIntent;
+  // POST /api/run body — `scheduledFor` (once) or `repeat` (recurring). A time picked
+  // BEFORE the task (pendingSchedule) rides the same way without asking again.
+  const asking = scheduleIntent;
   scheduleIntent = false;
-  if (scheduling) {
-    const picked = await openScheduleSheet({
-      mode: 'create', runTitle: title, defaults: schedulesView.defaults,
-      warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer — chat notifications can reach you.',
-    });
+  if (asking) {
+    const picked = await openScheduleSheet({ ...newScheduleSheetOpts(title), initial: pendingScheduleInitial() });
     if (!picked) return;
-    Object.assign(body, picked);
+    setPendingSchedule(picked);
   }
+  const scheduling = !!pendingSchedule;
+  if (scheduling) Object.assign(body, pendingSchedule);
 
   // Guard the whole in-flight window: applyBudgetToNewView also drives
   // start.disabled, and this run's own creation event repaints it.
@@ -8758,6 +8765,7 @@ el.form.addEventListener('submit', async (e) => {
     if (data.status === 'scheduled') {
       startSubmitInFlight = false;
       el.startBtn.disabled = !!budgetState.budget?.blocked;
+      setPendingSchedule(null);   // the form is a plain Start run form again
       setFormMsg(data.budgetWarning ? `Scheduled. ${data.budgetWarning}` : 'Scheduled.', data.budgetWarning ? 'warn' : 'ok');
       showView('schedules');
       return;
@@ -8790,6 +8798,49 @@ el.form.addEventListener('submit', async (e) => {
 // The split Start button's menu. "Schedule…" submits the SAME form with an intent flag, so
 // every validation above runs first and the sheet only opens on a startable request.
 let scheduleIntent = false;
+// A time picked before the task — Schedules › Schedule a run lands here with the sheet already
+// open (#new/schedule), and Change… on the line re-opens it. The sheet's answer waits on the
+// form ({scheduledFor}|{repeat}, ifMissed, graceMin) and Start run reads as Schedule until it
+// is used or dropped. Never persisted: a reload is a plain form.
+let pendingSchedule = null;
+const newScheduleSheetOpts = (runTitle = '') => ({
+  mode: 'create', runTitle, defaults: schedulesView.defaults,
+  warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer — chat notifications can reach you.',
+});
+const pendingScheduleInitial = () => (pendingSchedule
+  ? (pendingSchedule.repeat
+    ? { rule: pendingSchedule.repeat.rule, overlap: pendingSchedule.repeat.overlap, maxFailures: pendingSchedule.repeat.maxFailures, ifMissed: pendingSchedule.ifMissed, graceMin: pendingSchedule.graceMin }
+    : { scheduledFor: pendingSchedule.scheduledFor, ifMissed: pendingSchedule.ifMissed, graceMin: pendingSchedule.graceMin })
+  : {});
+function setPendingSchedule(pick) {
+  pendingSchedule = pick || null;
+  if (!el.newSched) return;
+  el.newSched.hidden = !pendingSchedule;
+  if (el.startBtnLabel) el.startBtnLabel.textContent = pendingSchedule ? 'Schedule' : 'Start run';
+  const play = document.getElementById('start-btn-play');
+  const clock = document.getElementById('start-btn-clock');
+  // toggleAttribute, not .hidden: an <svg> is not an HTMLElement, so the property is a no-op on it.
+  if (play) play.toggleAttribute('hidden', !!pendingSchedule);
+  if (clock) clock.toggleAttribute('hidden', !pendingSchedule);
+  if (!pendingSchedule) return;
+  if (pendingSchedule.repeat) {
+    el.newSchedBadge.textContent = 'Repeats';
+    el.newSchedText.textContent = describeRule(pendingSchedule.repeat.rule);
+  } else {
+    const ms = Date.parse(pendingSchedule.scheduledFor);
+    el.newSchedBadge.textContent = 'Scheduled';
+    el.newSchedText.textContent = Number.isFinite(ms) ? `Starts ${formatInstant(ms, browserTimeZone())}` : 'Starts later';
+  }
+}
+/** Schedules › Schedule a run (#new/schedule): pick the time first, then describe the task. */
+async function openScheduleForNew() {
+  const el0 = el.prompt;
+  const picked = await openScheduleSheet({ ...newScheduleSheetOpts(''), initial: pendingScheduleInitial() });
+  if (picked) setPendingSchedule(picked);
+  try { el0?.focus(); } catch { /* jsdom */ }
+}
+el.newSchedChange?.addEventListener('click', () => { void openScheduleForNew(); });
+el.newSchedClear?.addEventListener('click', () => setPendingSchedule(null));
 function closeStartMenu() {
   if (!el.startMenu || el.startMenu.hidden) return;
   el.startMenu.hidden = true;
@@ -8803,7 +8854,7 @@ if (el.startMore && el.startMenu) {
     el.startMore.setAttribute('aria-expanded', open ? 'true' : 'false');
     if (open) el.startMenuSchedule?.focus();
   });
-  el.startMenuNow?.addEventListener('click', () => { closeStartMenu(); el.form.requestSubmit(el.startBtn); });
+  el.startMenuNow?.addEventListener('click', () => { closeStartMenu(); setPendingSchedule(null); el.form.requestSubmit(el.startBtn); });
   el.startMenuSchedule?.addEventListener('click', () => { closeStartMenu(); scheduleIntent = true; el.form.requestSubmit(); });
   document.addEventListener('click', (e) => { if (!e.target.closest('#start-split')) closeStartMenu(); });
   el.startMenu.addEventListener('keydown', (e) => {
@@ -19974,6 +20025,12 @@ function showView(name, param = '') {
     // Drop the per-id workflow memo on every (re-)entry so a workflow re-saved
     // in Composer repaints with its new topology rather than the cached one.
     state.workflowCache = {};
+    // #new/schedule (Schedules › Schedule a run): the sheet opens first, the task comes after.
+    // The hash is then plain #new, so Back and a reload never re-open it.
+    if (param === 'schedule') {
+      try { window.history.replaceState(null, '', '#new'); } catch { /* ignore */ }
+      setTimeout(() => { void openScheduleForNew(); }, 0);
+    }
     if (newPipelinePrefill) {
       // An Ask handoff reloads BOTH pickers itself (with the card's ids) at the
       // end of its own awaits — a second, un-awaited refresh here would race it

@@ -226,8 +226,8 @@ export function createSchedulesView({ listHost, feedHost, subEl = null, msgEl = 
     if (once.length) nodes.push(h('div', { class: 'sched-group-title', text: 'Once' }), ...once.map(ticketRow));
     if (series.length) nodes.push(h('div', { class: 'sched-group-title', text: 'Repeating' }), ...series.map(seriesRow));
     if (!nodes.length) {
-      nodes.push(h('div', { class: 'run-empty' }, 'Nothing is scheduled. Open ',
-        h('a', { href: '#new', text: 'New pipeline' }), ', describe the task, then pick Schedule… next to Start run.'));
+      nodes.push(h('div', { class: 'run-empty' }, 'Nothing is scheduled. Pick a time with ',
+        h('a', { href: '#new/schedule', text: 'Schedule a run' }), ', then describe the task — or use Schedule… next to Start run on New pipeline.'));
     }
     // Keep an open Details panel open across repaints (a tick or a broadcast must not slam it shut).
     const openIds = new Set([...listHost.querySelectorAll('.sched-item')].filter((c) => c.querySelector('.sched-more[aria-expanded="true"]')).map((c) => c.dataset.id));
