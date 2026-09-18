@@ -207,7 +207,7 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
       const lv = doc.createElement('span');
       lv.className = 'lv-pill gs-level';
       lv.dataset.lv = s.level;
-      lv.textContent = `${LEVEL_LABEL[s.level]} mode`;
+      lv.textContent = LEVEL_LABEL[s.level];
       tile.appendChild(lv);
       tile.setAttribute('aria-label', `${tile.getAttribute('aria-label')} — part of ${LEVEL_LABEL[s.level]} mode`);
     }

@@ -210,4 +210,4 @@ effect, mock role, workspace variants).
 | Ask: proposal cards themselves | all (rule 4) |
 | Ask: model picker, scope, ctx and cost meter, tool rows, branches, guardrails, "Open in New Pipeline" | A |
 | Ask: per-agent lane, worktrees, agents popover, sub-agent logs | E |
-| Getting started: all eight tiles show at every level; steps 5 and 7 wear "Advanced mode", step 8 "Expert mode" | S |
+| Getting started: all eight tiles show at every level; steps 5 and 7 wear "Advanced", step 8 "Expert" | S |

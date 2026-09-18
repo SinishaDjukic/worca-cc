@@ -195,7 +195,7 @@ test('the dialog: three radio cards, click applies at once and saves, a failed s
   await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(saved, ['expert']);
   assert.equal(doc.querySelector('#nav-mode .lv-name').textContent, 'Expert');
-  assert.equal(doc.querySelector('#modeSettingsName').textContent, 'Expert mode', 'the Settings card follows');
+  assert.equal(doc.querySelector('#modeSettingsName').textContent, 'Expert', 'the Settings card follows');
 
   fail = true;
   doc.querySelector('[data-level-choice="advanced"]').click();
@@ -288,7 +288,7 @@ test('Getting started: every tile shows at every level; higher steps wear their 
   const steps = Object.fromEntries(GETTING_STARTED_STEPS.map((s) => [s.id, false]));
   renderGettingStarted(host, { steps }, { level: 'simple', animate: false });
   assert.equal(host.querySelectorAll('.gs-tile').length, 8);
-  assert.deepEqual([...host.querySelectorAll('.gs-level')].map((e) => e.textContent), ['Advanced mode', 'Advanced mode', 'Expert mode']);
+  assert.deepEqual([...host.querySelectorAll('.gs-level')].map((e) => e.textContent), ['Advanced', 'Advanced', 'Expert']);
   renderGettingStarted(host, { steps }, { level: 'expert', animate: false });
   assert.equal(host.querySelectorAll('.gs-level').length, 0);
 });

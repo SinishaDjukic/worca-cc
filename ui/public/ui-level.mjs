@@ -148,10 +148,10 @@ export function createLevelController({ doc, save } = {}) {
       const name = b.querySelector('.lv-name');
       if (name) name.textContent = info.label;              // just the level: the icon says what it is
       b.setAttribute('aria-label', `Interface mode: ${info.label}. Change how much of Worca is shown`);
-      b.title = `${info.label} mode — change how much of Worca is shown`;   // the collapsed rail's only label
+      b.title = `${info.label} — change how much of Worca is shown`;   // the collapsed rail's only label
     }
     const sIcon = $('#modeSettingsIcon'); if (sIcon) sIcon.innerHTML = levelIconSvg(lvl);
-    const sName = $('#modeSettingsName'); if (sName) sName.textContent = `${info.label} mode`;
+    const sName = $('#modeSettingsName'); if (sName) sName.textContent = info.label;
     const sDesc = $('#modeSettingsDesc'); if (sDesc) sDesc.textContent = info.desc;
     if (cards && modal && !modal.classList.contains('hidden')) {
       const had = d.activeElement && d.activeElement.closest && d.activeElement.closest('#mode-cards');

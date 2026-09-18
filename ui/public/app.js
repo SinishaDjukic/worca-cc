@@ -2872,7 +2872,7 @@ function paintHiddenSettings() {
   b.textContent = items.join(' · ');
   text.append('Set in Advanced mode and still applied to this run: ', b, '.');
   const sw = document.getElementById('level-hidden-show');
-  sw.textContent = 'Show in Advanced mode'; sw.dataset.modeSet = 'advanced';
+  sw.textContent = 'Switch to Advanced'; sw.dataset.modeSet = 'advanced';   // same words as the page banner
 }
 
 // Build the agents accordion into #agents-rows: one collapsed .agent-row per node
