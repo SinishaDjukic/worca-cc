@@ -100,6 +100,7 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
       const b = h(doc, 'button', `btn-ghost ${cls}`, label);
       b.type = 'button';
       b.dataset.name = p.name;
+      if (cls === 'pl-doctor') b.dataset.minLevel = 'expert';   // diagnostics (docs/ui-levels.md)
       actions.appendChild(b);
     }
     card.appendChild(actions);
@@ -126,6 +127,7 @@ export function channelBadge(doc, c) {
 // listener. Empty/nullish input -> childless container (app.js skips mounting).
 export function renderOrphanList(orphans, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'pl-orphans');
+  root.dataset.minLevel = 'expert';                       // purge of leftover data (docs/ui-levels.md)
   if (!orphans || !orphans.length) return root;
   root.appendChild(h(doc, 'h3', 'pl-orphans-title', 'Leftover data'));
   for (const o of orphans) {

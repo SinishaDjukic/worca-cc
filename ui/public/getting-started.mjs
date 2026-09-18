@@ -13,11 +13,17 @@ export const GETTING_STARTED_STEPS = Object.freeze([
   { id: 'project',     label: 'Add your first project',          vig: 'project' },
   { id: 'run',         label: 'Watch a run end to end',          vig: 'run' },
   { id: 'ask',         label: 'Ask Worca about a run',           vig: 'ask' },
-  { id: 'workflows',   label: 'Explore the built-in workflows',  vig: 'workflow' },
+  { id: 'workflows',   label: 'Explore the built-in workflows',  vig: 'workflow',    level: 'advanced' },
   { id: 'realRun',     label: 'Run a real pipeline',             vig: 'realRun' },
-  { id: 'workspace',   label: 'Group projects into a workspace', vig: 'workspace' },
-  { id: 'teamMetrics', label: 'Turn on team metrics',            vig: 'teamMetrics' },
+  { id: 'workspace',   label: 'Group projects into a workspace', vig: 'workspace',   level: 'advanced' },
+  { id: 'teamMetrics', label: 'Turn on team metrics',            vig: 'teamMetrics', level: 'expert' },
 ]);
+
+// `level` (docs/ui-levels.md) is the interface mode a step's controls live in; absent = simple.
+// Every tile shows at every mode — the count stays "n of 8" — but a step above the current mode
+// wears its level, and its guide opens by ringing the mode switch.
+const LEVEL_ORDER = ['simple', 'advanced', 'expert'];
+const LEVEL_LABEL = { advanced: 'Advanced', expert: 'Expert' };
 
 /** Seconds a tile holds the reveal sequence before the next arrives: an
  *  unfinished tile paints its drawing first, a finished one arrives already
@@ -138,9 +144,9 @@ export function vignette(doc, id, { animate = true, delay = 0 } = {}) {
  * they are done, so any guide can be replayed.
  * @param {Element} host
  * @param {{steps?:Record<string,boolean>, hidden?:boolean}|null} status
- * @param {{onStep?:(id:string)=>void, onHide?:()=>void, animate?:boolean, hideLabel?:string}} [handlers]
+ * @param {{onStep?:(id:string)=>void, onHide?:()=>void, animate?:boolean, hideLabel?:string, level?:string}} [handlers]  `level`: the current interface mode
  */
-export function renderGettingStarted(host, status, { onStep, onHide, animate = true, hideLabel = 'Hide' } = {}) {
+export function renderGettingStarted(host, status, { onStep, onHide, animate = true, hideLabel = 'Hide', level = 'expert' } = {}) {
   if (!host) return;
   const doc = host.ownerDocument;
   host.replaceChildren();
@@ -197,6 +203,14 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
     label.className = 'gs-label';
     label.textContent = s.label;
     tile.append(mark, vig, label);
+    if (s.level && LEVEL_ORDER.indexOf(s.level) > LEVEL_ORDER.indexOf(level)) {
+      const lv = doc.createElement('span');
+      lv.className = 'lv-pill gs-level';
+      lv.dataset.lv = s.level;
+      lv.textContent = `${LEVEL_LABEL[s.level]} mode`;
+      tile.appendChild(lv);
+      tile.setAttribute('aria-label', `${tile.getAttribute('aria-label')} — part of ${LEVEL_LABEL[s.level]} mode`);
+    }
     tile.addEventListener('click', () => onStep && onStep(s.id));
     tiles.appendChild(tile);
   }

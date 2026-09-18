@@ -12,7 +12,7 @@ const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', impor
 // returns the FIRST match in document order — the sidebar link comes first AND is the
 // only one followed by <svg>, so this matches only the icon-bearing sidebar link.
 function settingsNavSvg() {
-  const m = html.match(/data-nav="settings">\s*<svg[\s\S]*?<\/svg>/);
+  const m = html.match(/data-nav="settings"[^>]*>\s*<svg[\s\S]*?<\/svg>/);
   assert.ok(m, 'sidebar Settings nav link with an <svg> not found');
   return m[0];
 }
@@ -47,6 +47,6 @@ test('Settings nav icon is a gear, not a sun', () => {
 test('topnav Settings link stays text-only (icon not duplicated there)', () => {
   // The compact topnav Settings link is text-only by design; guard against
   // accidentally adding an <svg> to it during the swap.
-  assert.ok(/data-nav="settings">Settings<\/button>/.test(html),
+  assert.ok(/data-nav="settings"[^>]*>Settings<\/button>/.test(html),
     'topnav text-only Settings button should remain unchanged');
 });

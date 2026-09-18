@@ -41,6 +41,7 @@ export function renderGuardrailList(sets, { doc = globalThis.document } = {}) {
     card.appendChild(body);
     if (s.origin !== 'builtin') {
       const del = h(doc, 'button', 'btn-ghost grv-delete', 'Delete');
+      del.dataset.minLevel = 'expert';                    // authoring sets is expert (docs/ui-levels.md)
       del.type = 'button';
       del.dataset.id = s.id;
       card.appendChild(del);

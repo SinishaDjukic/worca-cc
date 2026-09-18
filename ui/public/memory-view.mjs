@@ -72,6 +72,10 @@ export function renderHealthCard(report, { doc = globalThis.document, host = nul
   const health = report?.health || {};
   const isGlobal = String(report?.scope || 'global') === 'global';
   const card = h(doc, 'div', 'card mem-health');
+  // Interface mode (docs/ui-levels.md): byte counters and Defragment are expert upkeep — until the
+  // store needs it. An overdue or failing store is a problem the owner must see at any mode.
+  card.dataset.minLevel = 'expert';
+  if (health.level === 'overdue' || health.level === 'failing') card.dataset.levelKeep = '1';
   const head = h(doc, 'div', 'mem-health-head');
   const { text, cls } = healthBadge(health.level);
   head.appendChild(h(doc, 'span', `badge${cls ? ` ${cls}` : ''}`, text));
@@ -176,6 +180,7 @@ export function collectEditor(rootEl) {
 /** The snapshot ring, newest first, one Restore per row (disabled while a defragment run is live). */
 export function renderMemoryHistory(snapshots, { doc = globalThis.document, locked = false } = {}) {
   const wrap = h(doc, 'div', 'mem-history');
+  wrap.dataset.minLevel = 'expert';             // snapshot restore: expert (docs/ui-levels.md)
   wrap.appendChild(h(doc, 'div', 'mem-list-title', 'History'));
   const list = Array.isArray(snapshots) ? [...snapshots].reverse() : [];
   if (!list.length) { wrap.appendChild(h(doc, 'div', 'hist-empty', 'No snapshots yet — every write takes one.')); return wrap; }
