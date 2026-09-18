@@ -19,7 +19,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async (n = 6) => { for (let i = 0; i < n; i++) await tick(); };
 const click = (window, node) => node.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
 
-const STEPS = ['claude', 'project', 'run', 'ask', 'workflows', 'realRun', 'workspace', 'teamMetrics'];
+const STEPS = ['claude', 'project', 'run', 'ask', 'realRun', 'workflows', 'workspace', 'teamMetrics'];
 const status = (done = [], flags = {}) => ({
   steps: Object.fromEntries(STEPS.map((id) => [id, done.includes(id)])),
   done: done.length, total: 8, claude: { bin: 'claude', hint: null }, hidden: false, welcomeSeen: false, ...flags,

@@ -47,7 +47,7 @@ test('the shelf: eight tiles in arc order, progress, Hide; done tiles marked and
   assert.ok(delays[2] - delays[1] < delays[3] - delays[2], 'a done tile holds the sequence for less than an unfinished one');
 
   click(window, tiles[0]);
-  click(window, tiles[5]);
+  click(window, tiles[4]);
   assert.deepEqual(stepped, ['claude', 'realRun'], 'done or not, a tile re-summons its guide');
   click(window, card.querySelector('.gs-hide'));
   assert.equal(hid, 1);

@@ -13,10 +13,10 @@ state, never stored.
 |---|---|---|---|
 | 1 | Connect Claude Code | the configured `claude` binary resolves on the server's `PATH` (`WORCA_CLAUDE_BIN` honoured; the Windows npm-shim case uses preflight's probe) | a dialog with the install command and **Check again** |
 | 2 | Add your first project | one project is registered | sidebar › **Projects** → **Add project** |
-| 3 | Watch a run end to end | any pipeline reached `done` | (no project: sidebar › Projects → Add project) → sidebar › **New pipeline** → project select → prompt → **Advanced** → **Mock mode** → **Start run** → sidebar › **Running** (skipped when the app already routed there) |
+| 3 | Watch a run end to end | any pipeline reached `done` | (no project: sidebar › Projects → Add project) → sidebar › **New pipeline** → project select → prompt → **Mock mode** → **Start run** → sidebar › **Running** (skipped when the app already routed there) |
 | 4 | Ask Worca about a run | one Ask thread exists | the **Ask Worca** dock pill → the input box (suggests a question) → **Send** |
-| 5 | Explore the built-in workflows | a project has a persisted picker choice (`project_config.active_workflow_id`, Auto included) | sidebar › **Workflow Composer** → the **Default** row in Saved pipelines (opens it on the canvas) → sidebar › **New pipeline** → the **Workflow** picker; a pick ends the guide |
-| 6 | Run a real pipeline | any pipeline with spend above zero | as 3, but after the project: the **Workflow** picker while it says Auto ("choose a built-in workflow"), then prompt → Mock off → **Start run** → Running |
+| 5 | Run a real pipeline | any pipeline with spend above zero | as 3, but after the project: the **Workflow** picker while it says Auto ("choose a built-in workflow"), then prompt → Mock off → **Start run** → Running |
+| 6 | Explore the built-in workflows | a project has a persisted picker choice (`project_config.active_workflow_id`, Auto included) | sidebar › **Workflow Composer** → the **Default** row in Saved pipelines (opens it on the canvas) → sidebar › **New pipeline** → the **Workflow** picker; a pick ends the guide |
 | 7 | Group projects into a workspace | one workspace exists | (fewer than two projects: sidebar › Projects → Add project) → sidebar › **Workspaces** → **Create workspace** |
 | 8 | Turn on team metrics | any project or workspace records (`listScopes().anyEnabled`) | (no project: sidebar › Projects → Add project) → sidebar › **Projects** → the first **Set up team metrics…** (a project with no origin remote gets its Team metrics cell ringed with the reason instead) |
 

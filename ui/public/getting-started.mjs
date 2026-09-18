@@ -13,8 +13,8 @@ export const GETTING_STARTED_STEPS = Object.freeze([
   { id: 'project',     label: 'Add your first project',          vig: 'project' },
   { id: 'run',         label: 'Watch a run end to end',          vig: 'run' },
   { id: 'ask',         label: 'Ask Worca about a run',           vig: 'ask' },
-  { id: 'workflows',   label: 'Explore the built-in workflows',  vig: 'workflow',    level: 'advanced' },
   { id: 'realRun',     label: 'Run a real pipeline',             vig: 'realRun' },
+  { id: 'workflows',   label: 'Explore the built-in workflows',  vig: 'workflow',    level: 'advanced' },
   { id: 'workspace',   label: 'Group projects into a workspace', vig: 'workspace',   level: 'advanced' },
   { id: 'teamMetrics', label: 'Turn on team metrics',            vig: 'teamMetrics', level: 'expert' },
 ]);

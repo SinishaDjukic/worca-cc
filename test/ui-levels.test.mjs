@@ -280,9 +280,13 @@ test('a detail screen never opens on a tab the mode hides', () => {
   assert.match(init, /showsTab\(want\)/);
 });
 
-test('Getting started: every tile shows at every level; higher steps wear their mode', () => {
+test('Getting started: every tile shows at every level; higher steps wear their mode', async () => {
+  const { ONBOARDING_STEPS } = await import('../src/core/onboarding.mjs');
   assert.deepEqual(GETTING_STARTED_STEPS.filter((s) => s.level).map((s) => [s.id, s.level]),
     [['workflows', 'advanced'], ['workspace', 'advanced'], ['teamMetrics', 'expert']]);
+  const ranks = GETTING_STARTED_STEPS.map((s) => UI_LEVELS.indexOf(s.level || 'simple'));
+  assert.deepEqual(ranks, [...ranks].sort((a, b) => a - b), 'tiles run Simple → Advanced → Expert');
+  assert.deepEqual(ONBOARDING_STEPS, GETTING_STARTED_STEPS.map((s) => s.id), 'the server shelf order matches the UI');
   const doc = new JSDOM('<div id="h"></div>').window.document;
   const host = doc.getElementById('h');
   const steps = Object.fromEntries(GETTING_STARTED_STEPS.map((s) => [s.id, false]));
