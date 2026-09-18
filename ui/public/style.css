@@ -5165,3 +5165,10 @@ input.gv-name:focus-visible{outline:none;}
 /* Ask run card: the scheduled state line */
 .ask-card-sched{display:flex;flex-wrap:wrap;align-items:center;gap:9px;font-size:12.5px;color:var(--ink-2);}
 .ask-card-sched .badge{letter-spacing:.04em;}
+.ask-card-sched-text{color:var(--ink);font-weight:500;}
+.ask-card-sched-link{font:600 12px var(--sans);color:var(--blue-ink-strong);}
+.ask-card-sched .ask-card-err{flex-basis:100%;}
+
+/* History detail: the scheduled-run provenance link in the header meta */
+.hd-sched{color:var(--ink-2);text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px;}
+.hd-sched:hover{color:var(--ink);}

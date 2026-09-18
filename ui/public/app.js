@@ -2122,9 +2122,10 @@ function gvRenderSaved() {
         // A delete is destructive and unrecoverable: it asks first, in red — the
         // guard the v1 composer's saved list owned before it was retired.
         del.addEventListener('click', async () => {
+          const schedNote = await scheduleDependentsNote(`workflowId=${encodeURIComponent(wf.id)}`, 'They will fail to start until you point them at another pipeline.');
           const ok = await confirmModal({
             title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
-            message: `Delete "${wf.name || wf.id}"?\n\nThis cannot be undone.`,
+            message: `Delete "${wf.name || wf.id}"?\n\nThis cannot be undone.${schedNote}`,
           });
           if (!ok) return;
           const r = await gvApi.deleteWorkflow(wf.id);
@@ -6382,9 +6383,10 @@ async function rescanWorkspace(w) {
 // (live run/scan) keeps the card + surfaces data.error.
 async function deleteWorkspaceCard(card, w) {
   if (!card || !w) return;
+  const schedNote = await scheduleDependentsNote(`workspaceId=${encodeURIComponent(w.id)}`, 'Deleting the workspace cancels them.');
   const ok = await confirmModal({
     title: 'Delete workspace', danger: true, confirmLabel: 'Delete',
-    message: `Delete workspace "${w.name || w.id}"?\n\nThis removes its history store and best-effort branch cleanup. This cannot be undone.`,
+    message: `Delete workspace "${w.name || w.id}"?\n\nThis removes its history store and best-effort branch cleanup. This cannot be undone.${schedNote}`,
   });
   if (!ok) return;
   const btn = card.querySelector('.ws-delete');
@@ -8182,12 +8184,28 @@ function promptModal({ confirmLabel = 'Save', fields = [], ...rest } = {}) {
   return modalShell({ ...rest, confirmLabel, fields });
 }
 
+// Scheduled runs that depend on something about to be removed — so the confirmation can NAME
+// them. `query` is one of workflowId= / projectDir= / workspaceId=. Never blocks the removal:
+// a failed lookup just omits the note.
+async function scheduleDependentsNote(query, consequence) {
+  try {
+    const res = await fetch(`/api/schedules/dependents?${query}`);
+    if (!res.ok) return '';
+    const { dependents } = await safeJson(res);
+    if (!Array.isArray(dependents) || !dependents.length) return '';
+    const names = dependents.slice(0, 4).map((d) => `“${d.title || (d.kind === 'recurring' ? 'repeating schedule' : 'scheduled run')}”`).join(', ');
+    const more = dependents.length > 4 ? ` and ${dependents.length - 4} more` : '';
+    return `\n\n${dependents.length === 1 ? 'A scheduled run depends' : `${dependents.length} scheduled runs depend`} on it: ${names}${more}. ${consequence}`;
+  } catch { return ''; }
+}
+
 // Remove a project. Returns true when the registry changed, false on cancel or failure. `errEl`
 // (the project page's .pd-error) takes the failure text when given; the list message otherwise.
 async function deleteProject(p, errEl = null) {
+  const schedNote = await scheduleDependentsNote(`projectDir=${encodeURIComponent(p.path || '')}`, 'Removing the project cancels them.');
   const ok = await confirmModal({
     title: 'Remove project',
-    message: `Remove “${p.name}” from the list?\nThe folder on disk and its run history are left untouched.`,
+    message: `Remove “${p.name}” from the list?\nThe folder on disk and its run history are left untouched.${schedNote}`,
     confirmLabel: 'Remove project',
   });
   if (!ok) return false;
@@ -8821,6 +8839,7 @@ async function loadSettings() {
     paintAbout(data.app);
     paintBudgetSettings(data);
     paintAskSettings(data);
+    paintScheduleSettings(data);
     paintDebugSpawnSettings(data);
     await paintTitleModelSettings(data);
     await paintAutoModelSettings(data);
@@ -9204,6 +9223,36 @@ try {
   const mq = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
   if (mq && typeof mq.addEventListener === 'function') mq.addEventListener('change', () => applyTheme(document.documentElement.dataset.theme));
 } catch { /* no media queries here */ }
+
+// Settings › General › Scheduled runs: the defaults a new schedule inherits.
+function setSchedDefaultsMsg(text, kind) { setHintMsg('schedDefaultsMsg', text, kind); }
+function paintScheduleSettings(data) {
+  const d = data && data.schedule;
+  const missed = document.getElementById('schedIfMissed');
+  const grace = document.getElementById('schedGraceMin');
+  const fails = document.getElementById('schedMaxFailures');
+  if (!d || !missed || !grace || !fails) return;
+  missed.value = d.ifMissed;
+  if (![...grace.options].some((o) => o.value === String(d.graceMin))) grace.add(new Option(`${d.graceMin} minutes`, String(d.graceMin)));
+  grace.value = String(d.graceMin);
+  grace.disabled = d.ifMissed !== 'run';
+  fails.value = String(d.maxFailures);
+}
+function saveScheduleDefaults() {
+  const raw = document.getElementById('schedMaxFailures').value.trim();
+  const n = raw === '' ? '' : Number(raw);
+  if (n !== '' && (!Number.isInteger(n) || n < 0 || n > 100)) { setSchedDefaultsMsg('enter a whole number from 0 to 100', 'err'); return; }
+  postSettingsCard({
+    schedule: { ifMissed: document.getElementById('schedIfMissed').value, graceMin: Number(document.getElementById('schedGraceMin').value), maxFailures: n },
+  }, { setMsg: setSchedDefaultsMsg, paint: paintScheduleSettings });
+}
+document.getElementById('schedDefaultsSave')?.addEventListener('click', saveScheduleDefaults);
+document.getElementById('schedDefaultsReset')?.addEventListener('click', () => postSettingsCard(
+  { schedule: { ifMissed: '', graceMin: '', maxFailures: '' } }, { setMsg: setSchedDefaultsMsg, paint: paintScheduleSettings }));
+document.getElementById('schedIfMissed')?.addEventListener('change', (e) => {
+  const grace = document.getElementById('schedGraceMin');
+  if (grace) grace.disabled = e.target.value !== 'run';
+});
 
 function setAskLimitsMsg(text, kind) { setHintMsg('askLimitsMsg', text, kind); }
 function paintAskSettings(data) {
@@ -13478,6 +13527,16 @@ function paintHdHeaderMeta(screen, record, data) {
     seg.textContent = text;
     if (cls === 'hd-cost') seg.title = estTitle(st.totalCostUsd);
     meta.appendChild(seg);
+  }
+  // Scheduled runs: say HOW this run started — "by schedule" links to the Schedules view.
+  if (st.scheduledFor) {
+    meta.appendChild(hdDot());
+    const a = document.createElement('a');
+    a.className = 'hd-sched';
+    a.href = '#schedules';
+    a.textContent = st.scheduleId ? 'Started by a repeating schedule' : 'Started by schedule';
+    a.title = `Scheduled for ${fmtDate(st.scheduledFor)}`;
+    meta.appendChild(a);
   }
   // spec §8: the End card's result chip, repeated in the header meta (History D5
   // untouched — no model/effort). A path links through the keyed artifact route.

@@ -495,3 +495,51 @@ test('double Start for one card launches exactly one run: the loser is 409 with 
     w.ws.close();
   }
 });
+
+// Scheduled runs: a proposal card can be scheduled instead of started. The card waits in
+// state `scheduled` (runId = the ticket id), goes back to `proposed` when the ticket is
+// canceled, and flips to `started` — through the ordinary start path — when it fires.
+test('project card: Schedule → scheduled flip; cancel → proposed again; schedule + run-now → started', async () => {
+  const { thread, card } = await proposeCard({ projectKey }, 'propose a run for this project');
+  const findCard = async () => (await snapshot(thread.id)).messages.flatMap((m) => m.blocks || []).find((b) => b.kind === 'card' && b.id === card.id);
+  const body = (extra) => ({
+    projectDir, prompt: card.card.brief, workflowId: card.card.workflowId, guardrailsId: card.card.guardrailsId,
+    title: card.card.title, askThreadId: thread.id, askCardId: card.id, ...extra,
+  });
+  const at = new Date(Date.now() + 3600_000).toISOString();
+
+  // A card runs once: a repeating schedule is refused before anything is stored.
+  const rep = await post('/api/run', body({ repeat: { rule: { freq: 'daily', time: '02:00', tz: 'UTC' } } }));
+  assert.equal(rep.status, 400);
+  assert.match((await rep.json()).error, /runs once/);
+
+  const made = await post('/api/run', body({ scheduledFor: at }));
+  assert.equal(made.status, 202);
+  const { runId } = await made.json();
+  let block = await findCard();
+  assert.equal(block.state, 'scheduled');
+  assert.equal(block.runId, runId);
+  assert.equal(block.scheduledFor, at);
+  assert.equal((await snapshot(thread.id)).runLinks.length, 0, 'nothing is linked until the run exists');
+  // A second Start on a scheduled card is refused like any non-proposed card.
+  assert.equal((await post('/api/run', body({}))).status, 409);
+
+  const del = await fetch(`${base}/api/schedules/${runId}`, { method: 'DELETE' });
+  assert.equal(del.status, 200);
+  block = await findCard();
+  assert.equal(block.state, 'proposed', 'canceling the ticket hands the card back');
+  assert.equal(block.runId ?? null, null);
+
+  const again = await (await post('/api/run', body({ scheduledFor: at }))).json();
+  const now = await post(`/api/schedules/${again.runId}/run-now`, {});
+  assert.equal((await now.json()).status, 'fired');
+  const stopPump = autoAnswerRun(again.runId);
+  block = await findCard();
+  assert.equal(block.state, 'started');
+  assert.equal(block.runId, again.runId, 'the ticket id IS the runId, so the card link made at scheduling time holds');
+  const snap = await snapshot(thread.id);
+  assert.equal(snap.runLinks[0].runId, again.runId);
+  assert.ok(snap.messages.some((m) => m.role === 'system' && /^Run started/.test(m.text)));
+  await waitFor(() => mod.runs.get(again.runId) && ['done', 'error', 'stopped'].includes(mod.runs.get(again.runId).status), 60000);
+  stopPump();
+});

@@ -1402,6 +1402,57 @@
               </div>
             </section>
 
+            <!-- Scheduled runs: the defaults a NEW schedule inherits. Each schedule keeps
+                 its own copy, so a change here never rewrites an existing one. -->
+            <section class="card settings-card">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Scheduled runs</h2>
+                  <button type="button" class="info-tip" aria-label="About scheduled run defaults">i<span class="tip-content hidden">
+                    Defaults for new schedules. A scheduled run starts only while Worca is running and this computer is awake; these settings decide what happens when it was not.
+                  </span></button>
+                </div>
+              </div>
+              <div class="field-grid-2">
+                <div class="field">
+                  <label for="schedIfMissed">If Worca is not running at that time</label>
+                  <div class="select-wrap">
+                    <select id="schedIfMissed" class="select">
+                      <option value="run">Start it late</option>
+                      <option value="skip">Skip it</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="schedGraceMin">At most this late</label>
+                  <div class="select-wrap">
+                    <select id="schedGraceMin" class="select">
+                      <option value="30">30 minutes</option>
+                      <option value="60">1 hour</option>
+                      <option value="120">2 hours</option>
+                      <option value="360">6 hours</option>
+                      <option value="720">12 hours</option>
+                      <option value="1440">24 hours</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="field">
+                <div class="label-row">
+                  <label for="schedMaxFailures">Pause a repeating schedule after failures in a row</label>
+                  <button type="button" class="info-tip" aria-label="About pausing after failures">i<span class="tip-content hidden">
+                    A run that could not start, a missed slot, or a run that ended in an error each count. A successful run resets the count. 0 never pauses a schedule. Every failure is reported in Schedules either way.
+                  </span></button>
+                </div>
+                <input id="schedMaxFailures" class="input" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="3" autocomplete="off" />
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="schedDefaultsReset" class="btn btn-ghost btn-mini">Use defaults</button>
+                <button type="button" id="schedDefaultsSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="schedDefaultsMsg"></small>
+            </section>
+
             <!-- Title generation (#422): which model writes run/chat titles.
                  Empty = the model of the run or chat itself (title.mjs
                  resolveTitleModel), so a first-party-free install needs no setup.

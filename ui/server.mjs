@@ -1346,6 +1346,7 @@ const startRunHandler = async (req, res) => {
     if (!internal && (body.scheduledFor != null || body.repeat != null)) {
       const parsed = parseScheduleRequest(body);
       if (!parsed.ok) return badRequest(res, parsed.error);
+      if (parsed.repeat && askLink) return badRequest(res, 'an Ask card runs once — make a repeating schedule from New pipeline');
       sched = parsed;
     }
 

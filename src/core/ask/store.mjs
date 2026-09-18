@@ -261,7 +261,7 @@ export function findCard(threadId, cardId) {
   return null;
 }
 
-const CARD_PATCH_KEYS = ['state', 'runId', 'error', 'workflowId'];
+const CARD_PATCH_KEYS = ['state', 'runId', 'error', 'workflowId', 'scheduledFor'];   // scheduledFor: a run card the user scheduled (state 'scheduled')
 
 /** Patch ⊆ {state, runId, error, workflowId} on one card block. A WORKFLOW card (card.type === 'workflow') and a
  *  METRICS card (card.type === 'metrics', whose `result` lands at Apply) also take a SHALLOW `card` sub-patch; a run

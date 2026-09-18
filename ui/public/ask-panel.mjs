@@ -4,6 +4,8 @@
 // holds no state. All markup is built with DOM APIs and textContent — no
 // innerHTML for content anywhere in this file (the markdown renderer owns the
 // only sanitized-HTML path).
+import { openScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
+import { formatInstant } from '../../src/shared/schedule/recurrence.mjs';
 import { createThreadModel } from './ask-model.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
 import { createThinkingOrb } from './thinking-orb.mjs';
@@ -1980,7 +1982,39 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (block.state === 'failed') {
       return make('div', 'ask-card-stub ask-card-failed', `Run failed${block.error ? `: ${block.error}` : ''} — ${card.title || card.brief || ''}`);
     }
+    if (block.state === 'scheduled') return buildCardScheduled(block);
     return make('div', 'ask-card-stub', `Not now — ${card.title || card.brief || 'run proposal'}`);
+  }
+
+  /** A proposal the user scheduled: it waits as a ticket (block.runId) until the server starts it. */
+  function buildCardScheduled(block) {
+    const card = block.card || {};
+    const rootEl = make('div', 'ask-card-stub ask-card-sched');
+    rootEl.setAttribute('data-ask-card-scheduled', '');
+    const at = block.scheduledFor ? Date.parse(block.scheduledFor) : NaN;
+    const whenText = Number.isFinite(at) ? formatInstant(at, browserTimeZone(), { withYear: false }) : 'later';
+    rootEl.append(make('span', 'badge grey', 'Scheduled'), make('span', 'ask-card-sched-text', `${card.title || card.brief || 'Run'} — starts ${whenText}`));
+    const err = make('span', 'ask-card-err');
+    const call = async (method, path, btn) => {
+      err.textContent = ''; btn.disabled = true;
+      try {
+        const res = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body: method === 'POST' ? '{}' : undefined });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) err.textContent = data.error || `request failed (${res.status})`;
+        else if (data.status === 'failed') err.textContent = data.failReason || 'The run could not be started.';
+      } catch { err.textContent = 'network error'; }
+      btn.disabled = false;   // the flip frame re-renders the card on success
+    };
+    const runNow = make('button', 'ask-card-not-now', 'Run now');
+    runNow.type = 'button';
+    runNow.addEventListener('click', () => call('POST', `/api/schedules/${block.runId}/run-now`, runNow));
+    const cancel = make('button', 'ask-card-not-now', 'Cancel schedule');
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => call('DELETE', `/api/schedules/${block.runId}`, cancel));
+    const open = make('a', 'ask-card-sched-link', 'Schedules');
+    open.href = '#schedules';
+    rootEl.append(runNow, cancel, open, err);
+    return rootEl;
   }
 
   // ---- Workflow card (spec §8.3, mockup 2026-09-05 §A-§C, plan PD4/PD7/PD12-15) ---------------------------------
@@ -2404,7 +2438,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     play.appendChild(playPath); startBtn.appendChild(play);
     startBtn.appendChild(doc.createTextNode('Start run'));
     startBtn.addEventListener('click', () => startCard(block, rootEl, local));
-    foot.append(openNp, summary, dismissBtn, startBtn);
+    // Schedule…: the same request, started later. A card runs ONCE — a repeating schedule
+    // is made from New pipeline, where the whole request is on screen.
+    const laterBtn = make('button', 'ask-card-not-now ask-card-later', 'Schedule…');
+    laterBtn.type = 'button';
+    laterBtn.setAttribute('data-ask-card-schedule', '');
+    laterBtn.title = 'Start this run later';
+    laterBtn.addEventListener('click', async () => {
+      const picked = await openScheduleSheet({
+        mode: 'create', allowRepeat: false, runTitle: (block.card && (block.card.title || block.card.brief)) || '',
+        warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer — chat notifications can reach you.',
+      });
+      if (picked) startCard(block, rootEl, local, picked);
+    });
+    foot.append(openNp, summary, dismissBtn, laterBtn, startBtn);
     rootEl.appendChild(foot);
 
     local.projectDir = () => (local.target === 'project' ? ((rootEl.querySelector('.ask-card-project-select') || {}).value || '') : '');
@@ -2578,7 +2625,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
   }
 
-  async function startCard(block, rootEl, local) {
+  async function startCard(block, rootEl, local, schedule = null) {
     const err = rootEl.querySelector('.ask-card-err');
     const startBtn = rootEl.querySelector('[data-ask-card-start]');
     err.textContent = '';
@@ -2590,7 +2637,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (ex.error) { err.textContent = ex.error; return; }
       const saveErr = await saveLaneEdits(local);            // the previous phase's guard, now second
       if (saveErr) { err.textContent = saveErr; return; }
-      const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id };
+      const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id, ...(schedule || {}) };
       if (ex.extras.length) body.extras = ex.extras;
       let res = null;
       try {
