@@ -212,11 +212,14 @@ export function openScheduleSheet({
       };
       const inHour = zonedParts(Date.now() + 3600000, tz);
       const out = [['In 1 hour', { date: `${inHour.y}-${pad(inHour.m)}-${pad(inHour.d)}`, time: `${pad(inHour.hh)}:${pad(inHour.mm)}` }]];
-      if (p.hh < 22) out.push(['Tonight 22:00', at(0, 22)]);
+      // 22:00 is always offered: today's while it is still ahead, else tomorrow's.
+      out.push(p.hh < 22 ? ['Today 22:00', at(0, 22)] : ['Tomorrow 22:00', at(1, 22)]);
       out.push(['Tomorrow 02:00', at(1, 2)]);
       const dow = (new Date(Date.UTC(p.y, p.m - 1, p.d)).getUTCDay() + 6) % 7; // Monday = 0
       out.push(['Monday 06:00', at(((7 - dow) % 7) || 7, 6)]);
-      return out;
+      // Chronological, whatever the hour: after 21:00 "In 1 hour" is later than 22:00.
+      const ms = (v) => zonedToUtc({ y: +v.date.slice(0, 4), m: +v.date.slice(5, 7), d: +v.date.slice(8, 10), hh: +v.time.slice(0, 2), mm: +v.time.slice(3, 5) }, tz);
+      return out.sort((a, b) => ms(a[1]) - ms(b[1]));
     };
 
     function paint() {
