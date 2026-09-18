@@ -7,7 +7,7 @@ import { JSDOM } from 'jsdom';
 // Smoke test: the real app.js must boot against the real index.html without
 // throwing, and the shell must expose exactly twelve routed views. This is the
 // guard that catches a module-top null-dereference when the markup changes.
-test('app.js boots without throwing and finds 13 views', async () => {
+test('app.js boots without throwing and finds 14 views', async () => {
   const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
   const { window } = dom;
@@ -46,5 +46,5 @@ test('app.js boots without throwing and finds 13 views', async () => {
     threw = e;
   }
   assert.equal(threw, null, threw && threw.stack);
-  assert.equal(window.document.querySelectorAll('[data-view]').length, 13);   // + getting-started
+  assert.equal(window.document.querySelectorAll('[data-view]').length, 14);   // + getting-started + schedules
 });

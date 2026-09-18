@@ -111,7 +111,7 @@ test('boot: the pill mounts under the CTA and routes to the page (where the shel
   const pillHost = cta.nextElementSibling;
   assert.ok(pillHost && pillHost.classList.contains('gs-pill-host'), 'pill host right under New pipeline');
   assert.equal(pillHost.querySelector('.gs-pill .nav-count').textContent, '1/8');
-  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 10, 'the nav census is untouched');
+  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 11, 'the nav census is untouched (Schedules included)');
   assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'first visit to New pipeline: welcome up');
   assert.deepEqual(posts, [], 'showing the welcome writes nothing until a choice');
   click(window, doc.querySelector('#welcome-modal .ob-skip'));

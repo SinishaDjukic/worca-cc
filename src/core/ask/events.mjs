@@ -50,6 +50,9 @@ const GIT_NAV_SUBCOMMANDS = new Set(['checkout', 'switch', 'fetch']);
 // becomes the same `memory-changed` broadcast the REST routes emit (ui/server.mjs emitMemoryChanged).
 // The scope key rides the tool RESULT (`scopeKey`), like pokeCommentWrite reads `comment.runId`.
 const MEMORY_WRITE_TOOLS = new Set(['mcp__worca__remember', 'mcp__worca__forget']);
+// The direct schedule writes (docs/scheduled-runs.md "Ask Worca"): reversible, never a run start.
+const SCHEDULE_WRITE_TOOLS = new Set(['mcp__worca__pause_schedule', 'mcp__worca__resume_schedule',
+  'mcp__worca__skip_next_run', 'mcp__worca__mark_schedule_activity_read']);
 /** True when a SUCCESSFUL call of `name` with `input` changed this thread's worktree rows. */
 export function worktreeMutatingCall(name, input) {
   if (!WORKTREE_TOOLS.has(name)) return false;
@@ -139,6 +142,18 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'read_memory': return input?.name ? `Reading memory: ${input.name}` : 'Reading memory';
     case 'remember': return input?.name ? `Saving memory: ${input.name}` : 'Saving memory';
     case 'forget': return input?.name ? `Removing memory: ${input.name}` : 'Removing memory';
+    case 'list_schedules': return 'Looking at schedules';
+    case 'get_schedule': return 'Reading a schedule';
+    case 'list_schedule_activity': return 'Reading schedule activity';
+    case 'preview_schedule': return 'Working out the dates';
+    case 'propose_schedule_change': return 'Proposing a schedule change';
+    case 'pause_schedule': return 'Pausing a schedule';
+    case 'resume_schedule': return 'Resuming a schedule';
+    case 'skip_next_run': return 'Skipping the next run';
+    case 'mark_schedule_activity_read': return 'Marking activity read';
+    case 'list_task_sources': return 'Looking at task sources';
+    case 'find_tasks': return input?.search ? `Searching tasks: ${String(input.search).slice(0, 40)}` : 'Searching tasks';
+    case 'get_task': return input?.id ? `Reading task ${String(input.id).slice(0, 40)}` : 'Reading a task';
     default: return `Using ${n}`;
   }
 }
@@ -178,6 +193,8 @@ export function createTurnReducer({
   onWorkflowStart = null,
   onWorkflowResult = null,
   onMetricsProposal = null,      // propose_metrics_change RESULT (team metrics card; the parent re-validates the input)
+  onScheduleProposal = null,     // propose_schedule_change RESULT (schedule card; the parent re-validates the input)
+  onScheduleMutation = null,     // a direct schedule write succeeded in the MCP child
   onTrackRun = null,
   onCommentMutation = null,
   onWorktreeMutation = null,
@@ -425,6 +442,13 @@ export function createTurnReducer({
     } catch { /* unparseable result — no poke; the next open refetches anyway */ }
   }
 
+  // And for schedules: pause / resume / skip / mark-read succeeded in the CHILD, so the parent
+  // broadcasts the same schedules-changed / notifications-changed frames the REST routes emit.
+  function pokeScheduleWrite(name, isError) {
+    if (isError || !SCHEDULE_WRITE_TOOLS.has(name) || typeof onScheduleMutation !== 'function') return;
+    try { onScheduleMutation({ tool: short(name) }); } catch { /* a broken sink never breaks the stream */ }
+  }
+
   function onUser(raw, ptu, isMain) {
     const content = Array.isArray(raw.message?.content) ? raw.message.content : [];
     for (const c of content) {
@@ -439,6 +463,7 @@ export function createTurnReducer({
         pokeCommentWrite(ct.name, text, c.is_error);
         pokeWorktreeMutation(ct.name, ct.input, c.is_error);
         pokeMemoryWrite(ct.name, text, c.is_error);
+        pokeScheduleWrite(ct.name, c.is_error);
         continue;
       }
       const b = byId.get(c.tool_use_id);
@@ -490,6 +515,13 @@ export function createTurnReducer({
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }
+      if (b.name === 'mcp__worca__propose_schedule_change' && typeof onScheduleProposal === 'function') {
+        // Same split as the metrics card: the parent re-validates the INPUT against the live rows.
+        try {
+          const ret = onScheduleProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
       if (b.name === 'mcp__worca__track_run' && typeof onTrackRun === 'function') {
         // The parent owns the runs Map, the link rows and the followers: it re-resolves the id itself (D4).
         try {
@@ -500,6 +532,7 @@ export function createTurnReducer({
       pokeCommentWrite(b.name, text, c.is_error);
       pokeWorktreeMutation(b.name, fullInputs.get(b.id), c.is_error);
       pokeMemoryWrite(b.name, text, c.is_error);
+      pokeScheduleWrite(b.name, c.is_error);
     }
   }
 

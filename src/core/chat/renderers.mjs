@@ -134,6 +134,18 @@ export function renderQuestion(meta, payload = {}) {
 }
 
 /** Canned message for the "Test" button / `worca plugin channel` smoke. */
+/**
+ * A scheduled-run notification (src/core/notifications.mjs row). Run OUTCOMES are
+ * not rendered here — the run's own done/error events already went out.
+ */
+export function renderSchedule(n = {}) {
+  const icon = n.severity === 'info' ? '\u{1F552}' : '\u{26A0}\u{FE0F}';
+  const title = String(n.title || 'Scheduled run').trim();
+  const name = title.length > 60 ? `${title.slice(0, 60)}…` : title;
+  const msg = String(n.message || '');
+  return mdMsg(`${icon} **Schedule:** ${name}\n   ${msg.length > 300 ? `${msg.slice(0, 300)}…` : msg}`, n.severity === 'info' ? 'info' : 'warning');
+}
+
 export function renderTest() {
   return {
     title: 'worca-cc test message',

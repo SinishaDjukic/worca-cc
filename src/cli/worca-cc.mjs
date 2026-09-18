@@ -30,6 +30,7 @@ import { projectKey } from '../core/store.mjs';
 import { formatExecLine, formatGateHeader, formatRunSummary, formatWorkflowProposal } from './render.mjs';
 import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
 import { effectiveDebugSpawn } from '../core/settings.mjs';
+import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule } from './schedule.mjs';
 import {
   DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
 } from '../core/ui-instance.mjs';
@@ -114,8 +115,10 @@ function parseArgs(argv) {
     '--source-branch',
     '--branch',
     '--memory-scope',
+    ...Object.keys(SCHEDULE_VALUE_FLAGS),
   ]);
   const map = {
+    ...SCHEDULE_VALUE_FLAGS,
     '--project': 'project',
     '--prompt': 'prompt',
     '--file': 'file',
@@ -150,6 +153,10 @@ function parseArgs(argv) {
     }
     if (arg === '--ui') {
       out.ui = true;
+      continue;
+    }
+    if (arg === '--wait') {
+      out.wait = true;
       continue;
     }
 
@@ -236,6 +243,8 @@ Subcommands:
                               Run the web UI (default http://localhost:4317). See: worca ui help
   workflow <cmd> [...]        Export a workflow (Claude Code skill, JSON, or plugin) / import JSON: list|export|import. See: worca workflow help
   metrics push [--project <path>]   Push pending team-metrics run records (headless flush)
+  schedule <cmd> [...]        Manage scheduled runs: list|show|run-now|move|cancel|skip|pause|resume|log.
+                              See: worca schedule help
   help                        Print this help (same as --help).
   version                     Print the version (same as --version).
 
@@ -257,6 +266,13 @@ Options:
   --source-branch <name>   Branch to fork the per-run worktree from (default: current HEAD)
   --branch <name>          Feature branch name (default: claude proposes one)
   --mock                   Offline mock mode (no claude, no tokens)
+  --at <when>              Run ONCE, later: "02:00", "tomorrow 02:00", "+90m", "2026-09-19 02:00",
+                           or ISO 8601 with an offset. Needs a Worca server up at that time — or --wait
+  --wait                   With --at: hold this terminal and start the run here when it is due
+  --every <pattern>        Repeat: "day 03:30", "weekdays 02:00", "mon,thu 02:00", "month 1 02:00"
+  --cron "<m h dom mon dow>"   Repeat (cron subset: fixed time + days of week or one day of month)
+                           More schedule options (--until, --count, --overlap, --max-failures,
+                           --if-missed, --grace, --tz): worca schedule help
   --yes, --non-interactive Auto-answer clarify (first option) and gates (continue)
   --ui                     Same as "worca ui start" (accepts --port, --open, --mock)
   --install <targetDir>    Copy agents + /worca skill into <targetDir>/.claude
@@ -2124,7 +2140,7 @@ async function drainMetricsFlushes() {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow', 'metrics']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow', 'metrics', 'schedule']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -2185,6 +2201,7 @@ async function main() {
     if (sub === 'ui') return cmdUi(rest);
     if (sub === 'workflow') return cmdWorkflow(rest);
     if (sub === 'metrics') return cmdMetrics(rest);
+    if (sub === 'schedule') return cmdSchedule(rest, { out, c, fail });
   }
   // `worca --ui [...]` is the historical spelling of `worca ui start [...]`; hand the
   // remaining tokens to the ui parser so --port/--open/--mock work with either.
@@ -2257,7 +2274,15 @@ async function main() {
   // budget: refuse up front (mock runs included — WORCA_MOCK is already set above).
   const { budgetStatus } = await import('../core/cost-budget.mjs');
   const budget = budgetStatus();
-  if (budget.blocked) {
+  // A SCHEDULE only warns: the budget window may reset before the run starts, and the
+  // start path checks it again then.
+  const scheduling = wantsSchedule(flags);
+  if (!scheduling && flags.wait) fail('--wait needs --at "<when>"');
+  const spec = scheduling ? readScheduleFlags(flags, { fail }) : null;
+  if (budget.blocked && scheduling) {
+    out(c('yellow', `Note: the total cost limit is reached right now (${budgetRefusalDetail(budget)}). The run only starts if the budget allows it then.`));
+  }
+  if (budget.blocked && !scheduling) {
     process.stderr.write(`worca: total cost limit reached: ${budgetRefusalDetail(budget)}. `
       + 'Raise it: worca config set totalCostLimitUsd <usd>\n');
     return 1;
@@ -2283,7 +2308,20 @@ async function main() {
     if (reason) fail(reason);
   }
 
-  const orch = await createOrchestratorFor({
+  // Scheduled runs: write the ticket (or the repeating schedule) and exit — unless --wait
+  // holds this terminal, in which case the run starts HERE, through the path below.
+  let waitTicketId = null;
+  if (scheduling) {
+    let promptText = null;
+    if (flags.file) {
+      const { readPromptFile } = await import('../core/artifacts.mjs');
+      promptText = await readPromptFile(projectDir, flags.file);
+    }
+    const made = await createFromFlags(flags, { projectDir, extras, promptText, spec, out, c });
+    if (!flags.wait) return 0;
+    waitTicketId = made.ticket.id;
+  }
+  const buildOrch = () => createOrchestratorFor({
     projectDir,
     prompt: flags.prompt || undefined,
     promptFile: flags.file || undefined,
@@ -2301,6 +2339,24 @@ async function main() {
     auto: flags.auto,
     humanInLoop: flags.humanInLoop === false ? false : undefined,
   });
+
+  if (waitTicketId) {
+    const code = await waitAndRun({
+      ticketId: waitTicketId, tz: spec.tz, out, c,
+      drive: async (onPipelineId) => {
+        const o = await buildOrch();
+        o.on('state', (st) => { if (st && typeof st.id === 'string' && st.id) onPipelineId(st.id); });
+        out(c('bold', `orchestrator — project: ${projectDir}`));
+        if (flags.mock) out(c('yellow', 'mock mode: no claude will be spawned'));
+        const exit = await attachAndDrive(o, flags, () => o.run());
+        const st = o.state || {};
+        return { code: exit, status: st.status || (exit === 0 ? 'done' : 'error'), pipelineId: st.id || null, reason: st.status === 'paused' ? (st.pauseReason || 'paused') : null };
+      },
+    });
+    await drainMetricsFlushes();
+    return code;
+  }
+  const orch = await buildOrch();
 
   out(c('bold', `orchestrator — project: ${projectDir}`));
   if (flags.mock) out(c('yellow', 'mock mode: no claude will be spawned'));

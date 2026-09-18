@@ -54,7 +54,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 30;
+export const SCHEMA_VERSION = 31;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -726,6 +726,81 @@ CREATE TABLE IF NOT EXISTS ask_card_comments (
 );
 `;
 
+/** v31 (scheduled runs): launch tickets, recurring schedule parents, and the generic
+ *  notification log. A run that waits for its start time lives HERE, never in
+ *  `pipelines`: the pipeline row is still born inside run(), so no status-aware
+ *  reader (stats, stale sweep, delete guard, team metrics) ever meets a waiting row.
+ *  IF NOT EXISTS + INCREMENTAL_TABLES entries: reconcile-safe on a divergently
+ *  stamped DB. An older build simply ignores all three tables. */
+const SCHEDULED_RUNS_DDL = `
+CREATE TABLE IF NOT EXISTS schedules (
+  id             TEXT PRIMARY KEY,           -- 'sch_' + 8 hex
+  title          TEXT,
+  project_key    TEXT,
+  project_dir    TEXT,
+  workspace_id   TEXT,
+  request        TEXT NOT NULL,              -- JSON: POST /api/run body shape (+ internal)
+  rule           TEXT NOT NULL,              -- JSON: recurrence rule (local time + tz)
+  overlap        TEXT NOT NULL DEFAULT 'skip',   -- skip | start | queue
+  max_failures   INTEGER NOT NULL DEFAULT 3,     -- 0 = never pause
+  failure_streak INTEGER NOT NULL DEFAULT 0,
+  if_missed      TEXT NOT NULL DEFAULT 'run',    -- run | skip
+  grace_min      INTEGER NOT NULL DEFAULT 360,
+  status         TEXT NOT NULL DEFAULT 'active', -- active | paused | ended
+  pause_reason   TEXT,                       -- user | failure_streak
+  runs_count     INTEGER NOT NULL DEFAULT 0,
+  next_run_at    TEXT,
+  last_result    TEXT,                       -- last occurrence outcome (display)
+  ask_thread_id  TEXT,                       -- the Ask Worca card that made it (NULL = made by hand)
+  ask_card_id    TEXT,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS scheduled_runs (
+  id           TEXT PRIMARY KEY,             -- the runId UUID the fired run will carry
+  schedule_id  TEXT REFERENCES schedules(id) ON DELETE CASCADE,
+  title        TEXT,
+  project_key  TEXT,
+  project_dir  TEXT,
+  workspace_id TEXT,
+  run_at       TEXT NOT NULL,                -- UTC ISO instant
+  request      TEXT NOT NULL,                -- JSON: POST /api/run body shape (+ internal)
+  status       TEXT NOT NULL DEFAULT 'scheduled', -- scheduled|firing|fired|canceled|skipped|missed|failed
+  if_missed    TEXT NOT NULL DEFAULT 'run',
+  grace_min    INTEGER NOT NULL DEFAULT 360,
+  attempts     INTEGER NOT NULL DEFAULT 0,
+  retry_at     TEXT,                         -- next attempt after a transient start error
+  queued       INTEGER NOT NULL DEFAULT 0,   -- overlap=queue: waiting for the previous run
+  forced       INTEGER NOT NULL DEFAULT 0,   -- Run now: start at once, bypass missed/overlap checks
+  owner_pid    INTEGER,                      -- a waiting --wait CLI (or the firing process)
+  owner_host   TEXT,
+  pipeline_id  TEXT,
+  fail_reason  TEXT,
+  ask_thread_id TEXT,
+  ask_card_id  TEXT,
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_scheduled_runs_due ON scheduled_runs (status, run_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_runs_schedule ON scheduled_runs (schedule_id);
+CREATE TABLE IF NOT EXISTS notifications (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope       TEXT NOT NULL DEFAULT 'schedule',
+  kind        TEXT NOT NULL,                 -- missed|failed|skipped|late|paused|completed|run_error|run_paused|ended|retrying
+  severity    TEXT NOT NULL DEFAULT 'problem',   -- problem | info
+  schedule_id TEXT,
+  ticket_id   TEXT,
+  pipeline_id TEXT,
+  project_dir TEXT,
+  title       TEXT,
+  message     TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  read_at     TEXT,
+  resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_scope ON notifications (scope, created_at);
+`;
+
 const SCHEMA_V11 = `
 ALTER TABLE config_workflow_nodes ADD COLUMN ask_questions INTEGER;
 ${STEP_QUESTIONS_DDL}
@@ -746,7 +821,8 @@ const INCREMENTAL_COLUMNS = {
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
                             pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT',
-                            outcome: 'TEXT' },
+                            outcome: 'TEXT',
+                            scheduled_for: 'TEXT', schedule_id: 'TEXT' },   // v31: scheduled-run provenance (NULL = started by hand)
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT' },
@@ -761,6 +837,7 @@ const INCREMENTAL_COLUMNS = {
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE' },  // v29: reply threads; NULL = thread root
   workspaces:             { metrics_project: 'TEXT' },  // v30: team-metrics home (member absolute path); NULL = no home
+  schedules:              { ask_thread_id: 'TEXT', ask_card_id: 'TEXT' },  // v31: the Ask Worca card a series came from
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -801,6 +878,9 @@ const INCREMENTAL_TABLES = {
   ask_worktrees:     ASK_WORKTREES_DDL,
   diff_comments:     DIFF_COMMENTS_DDL,
   ask_card_comments: DIFF_COMMENTS_DDL,
+  schedules:         SCHEDULED_RUNS_DDL,
+  scheduled_runs:    SCHEDULED_RUNS_DDL,
+  notifications:     SCHEDULED_RUNS_DDL,
 };
 
 /**
@@ -1154,6 +1234,12 @@ function applySchemaV29(db) {
  *  covers the fast path (a DB already stamped >= 30 by a divergent ladder). NULL
  *  on every existing row = no team-metrics home configured yet. */
 function applySchemaV30(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/** v31 (scheduled runs): schedules + scheduled_runs + notifications (INCREMENTAL_TABLES)
+ *  and pipelines.scheduled_for/schedule_id (INCREMENTAL_COLUMNS) — applySchemaV30's shape. */
+function applySchemaV31(db) {
   repairSchemaGaps(db, schemaGaps(db));
 }
 
@@ -1543,6 +1629,7 @@ export function migrate(db) {
     if (current < 28) applySchemaV28(db);            // Auto workflow: human_in_loop + flip to wf_auto
     if (current < 29) applySchemaV29(db);            // diff-comment reply threads: parent_id
     if (current < 30) applySchemaV30(db);            // team metrics: workspaces.metrics_project
+    if (current < 31) applySchemaV31(db);            // scheduled runs: tickets + schedules + notifications
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

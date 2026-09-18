@@ -4,6 +4,8 @@
 // holds no state. All markup is built with DOM APIs and textContent — no
 // innerHTML for content anywhere in this file (the markdown renderer owns the
 // only sanitized-HTML path).
+import { openScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
+import { formatInstant, describeRule } from '../../src/shared/schedule/recurrence.mjs';
 import { createThreadModel } from './ask-model.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
 import { createThinkingOrb } from './thinking-orb.mjs';
@@ -557,7 +559,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         text,
         model: st.picker.model,
         effort: st.picker.effort,
-        context: scopedContext(getPageContext() || {}),
+        // The browser's zone rides along: "tomorrow 02:00" is read in it (docs/scheduled-runs.md "Ask Worca").
+        context: { ...scopedContext(getPageContext() || {}), timeZone: browserTimeZone() },
         ...(st.pendingFiles.length ? { attachments: st.pendingFiles.map((f) => ({ name: f.name, dataBase64: f.dataBase64 })) } : {}),
       };
       const model = st.model;
@@ -1985,7 +1988,69 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (block.state === 'failed') {
       return make('div', 'ask-card-stub ask-card-failed', `Run failed${block.error ? `: ${block.error}` : ''} — ${card.title || card.brief || ''}`);
     }
+    if (block.state === 'scheduled') return buildCardScheduled(block);
     return make('div', 'ask-card-stub', `Not now — ${card.title || card.brief || 'run proposal'}`);
+  }
+
+  // ---- scheduled proposals (docs/scheduled-runs.md "Ask Worca") ----
+  const CLOCK_ICO = 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7.5V12l3 2';
+  const localWhen = (iso) => { const ms = Date.parse(iso || ''); return Number.isFinite(ms) ? formatInstant(ms, browserTimeZone()) : 'later'; };
+  /** The POST /api/run fields of a proposal's schedule (schedule-spec.mjs scheduleRequestFields). */
+  function scheduleFieldsOf(s) {
+    if (s && s.kind === 'once') return { scheduledFor: s.runAt };
+    if (s && s.kind === 'repeat') return { repeat: { rule: s.rule, overlap: s.overlap, maxFailures: s.maxFailures } };
+    return null;
+  }
+  /** The schedule sheet's `initial` for a pick (so Change… opens on what the card shows). */
+  function sheetInitialOf(pick) {
+    if (!pick) return {};
+    if (pick.repeat) return { rule: pick.repeat.rule, overlap: pick.repeat.overlap, maxFailures: pick.repeat.maxFailures, ifMissed: pick.ifMissed, graceMin: pick.graceMin };
+    return { scheduledFor: pick.scheduledFor, ifMissed: pick.ifMissed, graceMin: pick.graceMin };
+  }
+  function scheduleLineText(s) {
+    if (s.kind === 'repeat') return `${s.sentence}${s.next && s.next[0] ? ` · first run ${localWhen(s.next[0].at)}` : ''}`;
+    return `Starts ${localWhen(s.runAt)}`;
+  }
+  function pickedLineText(p) {
+    if (p.repeat) return describeRule(p.repeat.rule);
+    return `Starts ${localWhen(p.scheduledFor)}`;
+  }
+
+  /** A proposal the user scheduled: it waits as a ticket (block.runId) — or, when it became a repeating
+   *  schedule, follows the series (block.scheduleId) — until the server starts it. */
+  function buildCardScheduled(block) {
+    const card = block.card || {};
+    const rootEl = make('div', 'ask-card-stub ask-card-sched');
+    rootEl.setAttribute('data-ask-card-scheduled', '');
+    const series = !!block.scheduleId;
+    const title = card.title || card.brief || 'Run';
+    rootEl.append(make('span', 'badge grey', series ? 'Repeats' : 'Scheduled'), make('span', 'ask-card-sched-text',
+      series ? `${title} — ${block.sentence || 'repeating schedule'}${block.scheduledFor ? ` · next ${localWhen(block.scheduledFor)}` : ''}` : `${title} — starts ${localWhen(block.scheduledFor)}`));
+    const err = make('span', 'ask-card-err');
+    const call = async (method, path, btn) => {
+      err.textContent = ''; btn.disabled = true;
+      try {
+        const res = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body: method === 'POST' ? '{}' : undefined });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) err.textContent = data.error || `request failed (${res.status})`;
+        else if (data.status === 'failed') err.textContent = data.failReason || 'The run could not be started.';
+      } catch { err.textContent = 'network error'; }
+      btn.disabled = false;   // the flip frame re-renders the card on success
+    };
+    const target = series ? block.scheduleId : block.runId;
+    const runNow = make('button', 'ask-card-not-now', 'Run now');
+    runNow.type = 'button';
+    runNow.addEventListener('click', () => call('POST', `/api/schedules/${target}/run-now`, runNow));
+    const cancel = make('button', 'ask-card-not-now', series ? 'Delete schedule' : 'Cancel schedule');
+    cancel.type = 'button';
+    cancel.addEventListener('click', async () => {
+      if (series && typeof confirm === 'function' && !(await confirm(`Delete the schedule "${title}"? Runs it already started are kept.`))) return;
+      call('DELETE', `/api/schedules/${target}`, cancel);
+    });
+    const open = make('a', 'ask-card-sched-link', 'Schedules');
+    open.href = '#schedules';
+    rootEl.append(runNow, cancel, open, err);
+    return rootEl;
   }
 
   // ---- Workflow card (spec §8.3, mockup 2026-09-05 §A-§C, plan PD4/PD7/PD12-15) ---------------------------------
@@ -2136,6 +2201,70 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const decline = btn('ask-card-not-now', 'Decline', 'data-ask-mc-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
       const apply = btn('ask-card-start', MC_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-mc-apply', WF_ICO.save);
+      apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
+      actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
+      rootEl.appendChild(actions);
+    }
+    return { el: rootEl };
+  }
+
+  // ---- Schedule card (docs/scheduled-runs.md "Ask Worca"): a proposed change to an existing schedule ------------
+  const SC_ACTION_LABEL = { run_now: 'Run now', move: 'Change time', edit: 'Edit schedule', cancel: 'Cancel run', delete: 'Delete schedule' };
+  const SC_APPLY_LABEL = { run_now: 'Run now', move: 'Move', edit: 'Apply', cancel: 'Cancel run', delete: 'Delete' };
+  function buildScheduleCard(block) {
+    const card = block.card || {};
+    const summary = card.summary || 'schedule change';
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    const rootEl = make('div', `ask-card ask-mcard ask-scard is-${block.state}`);
+    rootEl.setAttribute('data-ask-scard', block.state);
+    const head = make('div', 'ask-mcard-head');
+    head.appendChild(make('span', 'ask-mcard-title', block.state === 'applied' ? 'Applied schedule change' : block.state === 'failed' ? 'Schedule change failed' : 'Proposed schedule change'));
+    head.appendChild(make('span', 'ask-mcard-kind', SC_ACTION_LABEL[card.action] || card.action || ''));
+    rootEl.appendChild(head);
+    const body = make('div', 'ask-mcard-body');
+    const sum = make('div', 'ask-mcard-summary');
+    if (block.state === 'applied') sum.appendChild(svgIcon(WF_ICO.check, 15, 2.4));
+    sum.appendChild(make('span', null, summary));
+    body.appendChild(sum);
+    if (card.targetName) body.appendChild(make('div', 'ask-mcard-target', card.targetName));
+    if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
+    if (block.state === 'proposed' && (card.before || card.after)) {
+      const kv = make('div', 'ask-scard-kv');
+      const row = (k, v) => { if (!v) return; kv.append(make('span', 'ask-scard-k', k), make('span', 'ask-scard-v', v)); };
+      const b = card.before || {};
+      const a = card.after || {};
+      if (card.action === 'edit') {
+        row('Now', b.sentence);
+        if (a.sentence && a.sentence !== b.sentence) row('Becomes', a.sentence);
+        if (Array.isArray(a.next) && a.next.length) row('Next runs', a.next.map((n) => localWhen(n.at)).join(' · '));
+      } else if (card.action === 'move') {
+        row('From', localWhen(b.at));
+        row('To', localWhen(a.at));
+      } else if (b.at) row(card.itemKind === 'recurring' ? 'Next run' : 'Scheduled for', localWhen(b.at));
+      if (kv.childNodes.length) body.appendChild(kv);
+    }
+    const result = card.result || null;
+    if (block.state === 'failed') body.appendChild(make('div', 'ask-mcard-failed', `Could not apply: ${block.error || (result && result.error) || 'unknown error'}`));
+    else if (block.state === 'applied' && result && result.detail) body.appendChild(make('div', 'ask-mcard-detail', result.detail));
+    if (block.state !== 'proposed') {
+      const open = make('a', 'ask-card-sched-link', 'Schedules');
+      open.href = '#schedules';
+      body.appendChild(open);
+    }
+    rootEl.appendChild(body);
+    rootEl.appendChild(make('div', 'ask-card-err'));
+    if (block.state === 'proposed') {
+      const actions = make('div', 'ask-mcard-actions');
+      const btn = (cls, text, attr, icon) => {
+        const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, '');
+        if (icon) b.prepend(svgIcon(icon, 12, 2.2));
+        return b;
+      };
+      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-sc-decline');
+      decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
+      const destructive = card.action === 'cancel' || card.action === 'delete';
+      const apply = btn(destructive ? 'ask-card-start is-danger' : 'ask-card-start', SC_APPLY_LABEL[card.action] || 'Apply', 'data-ask-sc-apply',
+        card.action === 'run_now' ? null : WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
@@ -2348,6 +2477,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const count = make('span', 'ask-rp-count');
     briefFoot.append(hint, count);
     briefSec.appendChild(briefFoot);
+    if (card.source) {
+      // The task IS a tracker task (propose_run source): the run reads it when it starts, so the
+      // card shows the reference — never an editable copy that would silently go stale.
+      briefHead.firstChild.textContent = 'Task';
+      briefHead.children[1].textContent = `from ${card.source.displayName || card.source.plugin} · read when the run starts`;
+      brief.hidden = true;
+      briefFoot.hidden = true;
+      const task = make('div', 'ask-card-task');
+      task.setAttribute('data-ask-card-task', '');
+      task.appendChild(make('span', 'badge grey mono', card.source.taskId));
+      const name = card.source.url ? make('a', 'ask-card-task-title', card.source.title || card.source.taskId) : make('span', 'ask-card-task-title', card.source.title || '');
+      if (card.source.url) { name.href = card.source.url; name.target = '_blank'; name.rel = 'noopener noreferrer'; }
+      task.appendChild(name);
+      if (card.source.profile) task.appendChild(make('span', 'ask-card-task-meta', `profile ${card.source.profile}`));
+      briefSec.insertBefore(task, brief);
+      if (card.sourceWarning) briefSec.insertBefore(make('div', 'ask-card-task-warn', card.sourceWarning), brief);
+    }
     rootEl.appendChild(briefSec);
     local.pills = Array.isArray(card.attachments) ? card.attachments.filter((a) => a && a.id).map((a) => ({ ...a })) : [];
     function renderPills() {
@@ -2402,6 +2548,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     openNp.type = 'button';
     openNp.setAttribute('data-ask-card-open-np', '');
     openNp.dataset.minLevel = 'advanced';
+    // New pipeline's task-source pane cannot be pre-filled from here yet; a tracker task runs from the card.
+    if (card.source) openNp.hidden = true;
     openNp.addEventListener('click', () => prefillFromCard(block, rootEl, local));
     const dismissBtn = make('button', 'ask-card-not-now', 'Not now');
     dismissBtn.type = 'button';
@@ -2415,8 +2563,52 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const playPath = doc.createElementNS('http://www.w3.org/2000/svg', 'path'); playPath.setAttribute('d', 'M6 4l14 8-14 8V4Z');
     play.appendChild(playPath); startBtn.appendChild(play);
     startBtn.appendChild(doc.createTextNode('Start run'));
-    startBtn.addEventListener('click', () => startCard(block, rootEl, local));
-    foot.append(openNp, summary, dismissBtn, startBtn);
+    // A proposal Ask Worca scheduled starts at its (possibly changed) time; any other starts now.
+    startBtn.addEventListener('click', () => startCard(block, rootEl, local, local.schedulePick || null));
+    // Schedule…: the same request, started later — once, or on a repeat (the card then follows the schedule).
+    const sheetOpts = (initial = {}) => ({
+      mode: 'create', allowRepeat: true, initial, runTitle: (block.card && (block.card.title || block.card.brief)) || '',
+      warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer — chat notifications can reach you.',
+    });
+    const laterBtn = make('button', 'ask-card-not-now ask-card-later', 'Schedule…');
+    laterBtn.type = 'button';
+    if (card.schedule) {
+      // Ask Worca proposed WHEN (propose_run when / every): scheduling is the answer, so it is the primary
+      // action at every interface level (docs/ui-levels.md rule 4), and Start now is the alternative.
+      local.schedulePick = scheduleFieldsOf(card.schedule);
+      const line = make('div', 'ask-card-sched ask-card-sched-proposed');
+      line.setAttribute('data-ask-card-sched-proposed', '');
+      const badge = make('span', 'badge grey', card.schedule.kind === 'repeat' ? 'Repeats' : 'Scheduled');
+      const text = make('span', 'ask-card-sched-text', scheduleLineText(card.schedule));
+      const change = make('button', 'link-btn ask-card-sched-change', 'Change…');
+      change.type = 'button';
+      change.setAttribute('data-ask-card-sched-change', '');
+      change.addEventListener('click', async () => {
+        const picked = await openScheduleSheet(sheetOpts(sheetInitialOf(local.schedulePick)));
+        if (!picked) return;
+        local.schedulePick = picked;
+        badge.textContent = picked.repeat ? 'Repeats' : 'Scheduled';
+        text.textContent = pickedLineText(picked);
+      });
+      line.append(badge, text, change);
+      rootEl.insertBefore(line, err);
+      play.replaceWith(svgIcon(CLOCK_ICO, 13, 2.2));
+      startBtn.lastChild.textContent = 'Schedule';
+      startBtn.setAttribute('data-ask-card-schedule-go', '');
+      laterBtn.textContent = 'Start now';
+      laterBtn.title = 'Start this run now instead';
+      laterBtn.setAttribute('data-ask-card-start-now', '');
+      laterBtn.addEventListener('click', () => startCard(block, rootEl, local));
+    } else {
+      laterBtn.setAttribute('data-ask-card-schedule', '');
+      laterBtn.title = 'Start this run later';
+      laterBtn.dataset.minLevel = 'advanced';
+      laterBtn.addEventListener('click', async () => {
+        const picked = await openScheduleSheet(sheetOpts());
+        if (picked) startCard(block, rootEl, local, picked);
+      });
+    }
+    foot.append(openNp, summary, dismissBtn, laterBtn, startBtn);
     rootEl.appendChild(foot);
 
     local.projectDir = () => (local.target === 'project' ? ((rootEl.querySelector('.ask-card-project-select') || {}).value || '') : '');
@@ -2514,6 +2706,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const workflowId = local.workflowId();
       const projectDir = local.projectDir();
       local.lane = null;
+      if (workflowId === 'wf_auto') {
+        // No graph yet: the run classifies its task and picks the agents when it starts.
+        renderLane(laneSec, null, laneCtx, 'Auto picks the agents when the run starts.');
+        wfDesc.textContent = '';
+        return;
+      }
       renderLane(laneSec, null, laneCtx, 'Loading agent settings…');
       loadLane(workflowId, projectDir).then((lane) => {
         if (st.destroyed || seq !== laneSeq) return;            // a later reload won
@@ -2541,7 +2739,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     loadCardOptions({ fresh: true }).then((opts) => {
       if (st.destroyed) return;
       local.options = opts;
-      fillSelect(workflowSel, opts.workflows.map((w) => ({ value: w.id, label: workflowPickerLabel(w, null) || w.name || w.id })), card.workflowId || 'wf_default');
+      // Auto is not a saved workflow: listed only when Ask Worca proposed it (a plain card keeps its list).
+      const autoOpt = card.workflowId === 'wf_auto' ? [{ value: 'wf_auto', label: 'Auto — picks the workflow when the run starts' }] : [];
+      fillSelect(workflowSel, [...autoOpt, ...opts.workflows.map((w) => ({ value: w.id, label: workflowPickerLabel(w, null) || w.name || w.id }))], card.workflowId || 'wf_default');
       if (card.workflowId && workflowSel.value !== card.workflowId) markWorkflowUnavailable();
       fillSelect(guardSel, opts.guardrails.map((g) => ({ value: g.id, label: g.id === 'permissive' ? 'Permissive' : (g.name || g.id) })), card.guardrailsId || 'normal');
       renderTarget();
@@ -2562,6 +2762,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Agent memory (§7.3 / B17): the card's scope rides along only while its workflow is still the
     // defragment one — a user who switched the picker to another workflow gets a legacy body.
     if (card.memoryScope && body.workflowId === 'wf_memory_defrag') body.memoryScope = card.memoryScope;
+    // A tracker task: the reference, never a prompt (POST /api/run takes source OR prompt).
+    if (card.source) {
+      delete body.prompt;
+      body.source = {
+        type: 'plugin', plugin: card.source.plugin, sourceId: card.source.sourceId, taskId: card.source.taskId,
+        ...(card.source.profile ? { profile: card.source.profile } : {}), ...(card.source.inputs ? { inputs: card.source.inputs } : {}),
+      };
+    }
     const feature = rootEl.querySelector('.ask-card-feature').value.trim();
     if (feature) body.featureBranch = feature;
     if (local.target === 'workspace') {
@@ -2592,7 +2800,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
   }
 
-  async function startCard(block, rootEl, local) {
+  async function startCard(block, rootEl, local, schedule = null) {
     const err = rootEl.querySelector('.ask-card-err');
     const startBtn = rootEl.querySelector('[data-ask-card-start]');
     err.textContent = '';
@@ -2604,7 +2812,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (ex.error) { err.textContent = ex.error; return; }
       const saveErr = await saveLaneEdits(local);            // the previous phase's guard, now second
       if (saveErr) { err.textContent = saveErr; return; }
-      const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id };
+      const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id, ...(schedule || {}) };
       if (ex.extras.length) body.extras = ex.extras;
       let res = null;
       try {
@@ -2718,7 +2926,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function isProgressBlock(block) {
     const card = block.card || {};
     if (card.type === PROGRESS_CARD_TYPE) return true;
-    if (card.type === 'workflow' || card.type === 'metrics') return false;
+    if (card.type === 'workflow' || card.type === 'metrics' || card.type === 'schedule') return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   function buildCard(block) {
@@ -2726,11 +2934,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const cached = st.cardEls.get(block.id);
     const isWorkflow = !!(block.card && block.card.type === 'workflow');
     const isMetrics = !!(block.card && block.card.type === 'metrics');
+    const isSchedule = !!(block.card && block.card.type === 'schedule');
     const isProgress = isProgressBlock(block);
-    if (cached && cached.state === block.state && (isWorkflow || isMetrics || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && cached.state === block.state && (isWorkflow || isMetrics || isSchedule || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
+      : isSchedule ? buildScheduleCard(block)
       : isProgress ? buildProgressCard(block)
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
     st.cardEls.set(block.id, { el: built.el, state: block.state, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1 });

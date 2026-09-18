@@ -608,6 +608,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'theme',
   'uiLevel',                                 // interface mode (docs/ui-levels.md)
   'autoWorkflowModel',                       // auto-workflow spec D14
+  'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
 ]);
 
 // ── Title-generation model + hidden built-ins (#422) ─────────────────────────
@@ -1120,4 +1121,49 @@ export async function setOnboardingPrefs(patch = {}) {
   else settings.onboarding = next;
   await persistSettings(settings);
   return onboardingPrefs();
+}
+
+// ── Scheduled runs (schema v31) ──────────────────────────────────────────────
+// Defaults a new schedule inherits; each schedule stores its own copy, so a later
+// change here never rewrites an existing schedule. Read fresh, never throwing.
+//   scheduleGraceMin    — minutes a missed slot may still start late (default 360).
+//   scheduleIfMissed    — 'run' (start late inside the grace window) | 'skip'.
+//   scheduleMaxFailures — consecutive failures before a recurring schedule pauses
+//                         itself; 0 = never (default 3).
+export const DEFAULT_SCHEDULE_GRACE_MIN = 360;
+export const DEFAULT_SCHEDULE_IF_MISSED = 'run';
+export const DEFAULT_SCHEDULE_MAX_FAILURES = 3;
+export const SCHEDULE_IF_MISSED = ['run', 'skip'];
+
+const isGraceMin = (v) => Number.isSafeInteger(v) && v >= 0 && v <= 10080;
+const isMaxFailures = (v) => Number.isSafeInteger(v) && v >= 0 && v <= 100;
+
+/** The schedule defaults: { graceMin, ifMissed, maxFailures }. */
+export function scheduleDefaults() {
+  const s = readSettings();
+  return {
+    graceMin: isGraceMin(s.scheduleGraceMin) ? s.scheduleGraceMin : DEFAULT_SCHEDULE_GRACE_MIN,
+    ifMissed: SCHEDULE_IF_MISSED.includes(s.scheduleIfMissed) ? s.scheduleIfMissed : DEFAULT_SCHEDULE_IF_MISSED,
+    maxFailures: isMaxFailures(s.scheduleMaxFailures) ? s.scheduleMaxFailures : DEFAULT_SCHEDULE_MAX_FAILURES,
+  };
+}
+
+/**
+ * Persist any subset of the schedule defaults; '' / null clears a key back to its
+ * default. The whole patch is validated before anything is written.
+ * @throws {Error} on the first invalid value
+ */
+export async function setScheduleDefaults(patch = {}) {
+  const has = (k) => Object.prototype.hasOwnProperty.call(patch, k);
+  const clear = (v) => v === '' || v === null || v === undefined;
+  if (has('graceMin') && !clear(patch.graceMin) && !isGraceMin(patch.graceMin)) throw new Error('scheduleGraceMin must be a whole number of minutes from 0 to 10080');
+  if (has('ifMissed') && !clear(patch.ifMissed) && !SCHEDULE_IF_MISSED.includes(patch.ifMissed)) throw new Error(`scheduleIfMissed must be one of ${SCHEDULE_IF_MISSED.join(' | ')}`);
+  if (has('maxFailures') && !clear(patch.maxFailures) && !isMaxFailures(patch.maxFailures)) throw new Error('scheduleMaxFailures must be a whole number from 0 to 100');
+  const settings = readSettings();
+  const put = (key, v) => { if (clear(v)) delete settings[key]; else settings[key] = v; };
+  if (has('graceMin')) put('scheduleGraceMin', patch.graceMin);
+  if (has('ifMissed')) put('scheduleIfMissed', patch.ifMissed);
+  if (has('maxFailures')) put('scheduleMaxFailures', patch.maxFailures);
+  await persistSettings(settings);
+  return scheduleDefaults();
 }

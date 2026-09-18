@@ -261,7 +261,9 @@ export function findCard(threadId, cardId) {
   return null;
 }
 
-const CARD_PATCH_KEYS = ['state', 'runId', 'error', 'workflowId'];
+// scheduledFor: a run card the user scheduled (state 'scheduled'); scheduleId + sentence: one that became a
+// repeating schedule (docs/scheduled-runs.md "Ask Worca").
+const CARD_PATCH_KEYS = ['state', 'runId', 'error', 'workflowId', 'scheduledFor', 'scheduleId', 'sentence'];
 
 /** Patch ⊆ {state, runId, error, workflowId} on one card block. A WORKFLOW card (card.type === 'workflow') and a
  *  METRICS card (card.type === 'metrics', whose `result` lands at Apply) also take a SHALLOW `card` sub-patch; a run
@@ -275,7 +277,7 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
     const sub = patch.card && typeof patch.card === 'object' && !Array.isArray(patch.card) ? patch.card : null;
     const blocks = found.message.blocks.map((b) => {
       if (!(b && b.kind === 'card' && b.id === cardId)) return b;
-      const subPatchable = !!(b.card && (b.card.type === 'workflow' || b.card.type === 'metrics'));
+      const subPatchable = !!(b.card && (b.card.type === 'workflow' || b.card.type === 'metrics' || b.card.type === 'schedule'));
       return { ...b, ...allowed, ...(sub && subPatchable ? { card: { ...(b.card || {}), ...sub } } : {}) };
     });
     prepare('UPDATE ask_messages SET blocks = ? WHERE id = ?').run(JSON.stringify(blocks), found.message.id);

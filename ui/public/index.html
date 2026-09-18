@@ -35,7 +35,15 @@
             <span class="nav-count n-paused" id="nav-paused-badge" hidden title="Paused pipelines"><span id="nav-paused-count">0</span><svg class="pause-flag" viewBox="0 0 10 10" aria-hidden="true"><rect x="2.2" y="2" width="2" height="6" rx="1"></rect><rect x="5.8" y="2" width="2" height="6" rx="1"></rect></svg></span>
           </button>
           <div class="nav-children" id="nav-running-children"></div>
-          <button type="button" data-nav="history" data-min-level="simple">
+          <button type="button" data-nav="schedules" data-min-level="advanced">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3"></rect><path d="M3.5 10h17M8 3v4M16 3v4"></path><path d="M12 13.2v2.6l1.8 1.1"></path></svg>
+            <span>Schedules</span>
+            <!-- Waiting runs + active repeating schedules (grey: waiting is the resting state);
+                 the amber twin counts UNREAD PROBLEMS in the activity feed. -->
+            <span class="nav-count n-grey" id="nav-schedules-count">0</span>
+            <span class="nav-count n-amber" id="nav-schedules-unread" hidden title="Scheduled runs that need a look">0</span>
+          </button>
+                    <button type="button" data-nav="history" data-min-level="simple">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v4h4"></path></svg>
             <span>History</span>
             <span class="nav-count n-grey" id="nav-history-count">0</span>
@@ -102,6 +110,7 @@
           <button type="button" class="active" data-nav="new" data-min-level="simple">New</button>
           <span class="topnav-sep" aria-hidden="true"></span>
           <button type="button" data-nav="running" data-min-level="simple">Running<span class="nav-rollup" id="topnav-running-rollup" hidden></span></button>
+          <button type="button" data-nav="schedules" data-min-level="advanced">Schedules</button>
           <button type="button" data-nav="history" data-min-level="simple">History</button>
           <button type="button" data-nav="stats" data-min-level="advanced">Stats<span class="topnav-amt mono" id="topnav-spend" hidden></span></button>
           <button type="button" data-nav="team-metrics" data-min-level="expert">Team metrics</button>
@@ -371,10 +380,30 @@
                 <!-- Actions -->
                 <div class="hint err" id="newBlockedNote" hidden></div>
                 <div class="actions" style="justify-content:flex-end">
-                  <button type="submit" id="start-btn" class="btn-go">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4Z"></path></svg>
-                    Start run
-                  </button>
+                  <!-- A time picked BEFORE the task (Schedules › Schedule a run, or Change… here):
+                       it waits on the form and Start run becomes Schedule. -->
+                  <div class="ask-card-sched new-sched" id="new-sched" hidden>
+                    <span class="badge grey" id="new-sched-badge">Scheduled</span>
+                    <span class="ask-card-sched-text" id="new-sched-text"></span>
+                    <button type="button" class="link-btn" id="new-sched-change">Change…</button>
+                    <button type="button" class="link-btn" id="new-sched-clear" title="Drop the time and start the run right away">Start now instead</button>
+                  </div>
+                  <!-- Split button: Start run stays the primary action; the caret opens the
+                       other way to start — Schedule… (once, later, or on a repeat). -->
+                  <div class="btn-split" id="start-split">
+                    <button type="submit" id="start-btn" class="btn-go">
+                      <svg id="start-btn-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4Z"></path></svg>
+                      <svg id="start-btn-clock" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7.5V12l3 2"></path></svg>
+                      <span id="start-btn-label">Start run</span>
+                    </button>
+                    <button type="button" id="start-more" class="btn-split-more" data-min-level="advanced" aria-haspopup="menu" aria-expanded="false" aria-controls="start-menu" title="More ways to start" aria-label="More ways to start">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+                    </button>
+                    <div class="btn-split-menu" id="start-menu" role="menu" hidden>
+                      <button type="button" role="menuitem" id="start-menu-now"><b>Start run now</b><small>Begins immediately</small></button>
+                      <button type="button" role="menuitem" id="start-menu-schedule"><b>Schedule…</b><small>Run once later, or on a repeat</small></button>
+                    </div>
+                  </div>
                 </div>
                 <p id="form-msg" class="form-msg" aria-live="polite"></p>
               </form>
@@ -426,6 +455,16 @@
           </div>
 
           <div class="run-list" id="run-list"></div>
+
+          <!-- Runs that start within 24 hours (tickets, not pipelines). The full list,
+               repeating schedules and the activity feed live in the Schedules view. -->
+          <div class="run-scheduled" id="run-scheduled" hidden>
+            <div class="run-scheduled-head">
+              <div class="sched-group-title">Scheduled · next 24 hours</div>
+              <a href="#schedules">All schedules →</a>
+            </div>
+            <div class="sched-list" id="run-scheduled-list"></div>
+          </div>
 
           <!-- clone target for one run card (Task 3 fills it) -->
           <template id="run-card-tpl">
@@ -738,6 +777,32 @@
         <!-- /view history -->
 
         <!-- ===== VIEW: STATISTICS ===== -->
+        <section class="view hidden" data-view="schedules">
+          <div class="topbar">
+            <div>
+              <h1>Schedules</h1>
+              <div class="sub" id="schedules-sub">Runs that start later — once, or on a repeat</div>
+            </div>
+            <a class="btn-go" href="#new/schedule" id="schedules-new" style="padding:11px 20px;text-decoration:none">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              Schedule a run
+            </a>
+          </div>
+          <p id="schedules-msg" class="form-msg" aria-live="polite"></p>
+          <!-- Tabs, the Statistics .seg idiom: #schedules/<tab> routes them (activity | once | repeating). -->
+          <div class="sched-tabs">
+            <div class="seg" id="schedules-tabs" role="group" aria-label="Schedules">
+              <button type="button" data-tab="activity">Activity</button>
+              <button type="button" data-tab="once">Once</button>
+              <button type="button" data-tab="repeating">Repeating</button>
+            </div>
+          </div>
+          <section class="card sched-feed sched-pane" id="schedules-feed" data-pane="activity" aria-label="Activity"></section>
+          <div class="sched-list sched-pane" id="schedules-once" data-pane="once" hidden><small class="hint">Loading…</small></div>
+          <div class="sched-list sched-pane" id="schedules-repeating" data-pane="repeating" hidden><small class="hint">Loading…</small></div>
+        </section>
+        <!-- /view schedules -->
+
         <section class="view hidden" data-view="stats">
           <div class="topbar">
             <div>
@@ -1403,6 +1468,57 @@
                 <small class="hint" id="askHistoryCounts"></small>
                 <small class="hint" id="askHistoryMsg"></small>
               </div>
+            </section>
+
+            <!-- Scheduled runs: the defaults a NEW schedule inherits. Each schedule keeps
+                 its own copy, so a change here never rewrites an existing one. -->
+            <section class="card settings-card" id="schedule-settings-card" data-min-level="advanced">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Scheduled runs</h2>
+                  <button type="button" class="info-tip" aria-label="About scheduled run defaults">i<span class="tip-content hidden">
+                    Defaults for new schedules. A scheduled run starts only while Worca is running and this computer is awake; these settings decide what happens when it was not.
+                  </span></button>
+                </div>
+              </div>
+              <div class="field-grid-2">
+                <div class="field">
+                  <label for="schedIfMissed">If Worca is not running at that time</label>
+                  <div class="select-wrap">
+                    <select id="schedIfMissed" class="select">
+                      <option value="run">Start it late</option>
+                      <option value="skip">Skip it</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="schedGraceMin">At most this late</label>
+                  <div class="select-wrap">
+                    <select id="schedGraceMin" class="select">
+                      <option value="30">30 minutes</option>
+                      <option value="60">1 hour</option>
+                      <option value="120">2 hours</option>
+                      <option value="360">6 hours</option>
+                      <option value="720">12 hours</option>
+                      <option value="1440">24 hours</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="field">
+                <div class="label-row">
+                  <label for="schedMaxFailures">Pause a repeating schedule after failures in a row</label>
+                  <button type="button" class="info-tip" aria-label="About pausing after failures">i<span class="tip-content hidden">
+                    A run that could not start, a missed slot, or a run that ended in an error each count. A successful run resets the count. 0 never pauses a schedule. Every failure is reported in Schedules either way.
+                  </span></button>
+                </div>
+                <input id="schedMaxFailures" class="input" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="3" autocomplete="off" />
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="schedDefaultsReset" class="btn btn-ghost btn-mini">Use defaults</button>
+                <button type="button" id="schedDefaultsSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="schedDefaultsMsg"></small>
             </section>
 
             <!-- Title generation (#422): which model writes run/chat titles.

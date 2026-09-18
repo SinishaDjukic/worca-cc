@@ -340,3 +340,26 @@ test('/use scopes /runs by project on a Windows-style projectDir (backslash sepa
   await send('/use other');
   assert.match(text(await send('/runs')), /No live runs/, 'scoped away from it');
 });
+
+// Scheduled runs: /runs lists upcoming tickets after the live ones, scoped by /use; an
+// actions object without listScheduled (older wiring) keeps today's reply.
+test('/runs lists scheduled runs after the live ones, scoped by /use', async () => {
+  const f = makeRouter({
+    listRuns: () => [],
+    listScheduled: () => [
+      { id: 'a', title: 'Upgrade deps', runAt: '2026-09-19T00:00:00Z', when: 'Sat Sep 19, 02:00', status: 'scheduled', projectDir: '/x/worca' },
+      { id: 'b', title: 'Defragment', runAt: '2026-09-18T00:00:00Z', when: 'Fri Sep 18, 02:00', status: 'missed', projectDir: '/x/other' },
+    ],
+  });
+  let out = text(await handle(f, '/runs'));
+  assert.match(out, /No live runs\./);
+  assert.match(out, /\*\*Scheduled:\*\*/);
+  assert.match(out, /Upgrade deps · Sat Sep 19, 02:00/);
+  assert.match(out, /\*\*missed\*\* · Defragment/);
+  await handle(f, '/use worca');
+  out = text(await handle(f, '/runs'));
+  assert.match(out, /Upgrade deps/);
+  assert.doesNotMatch(out, /Defragment/);
+  const bare = makeRouter({ listRuns: () => [] });
+  assert.match(text(await handle(bare, '/runs')), /No live runs\. `\/last`/);
+});
