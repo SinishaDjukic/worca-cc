@@ -18539,21 +18539,26 @@ function renderAskBanner() {
 // ---------------------------------------------------------------------------
 const SCHEDULED_GROUP_WINDOW_MS = 24 * 3600 * 1000;
 const schedulesView = createSchedulesView({
-  listHost: $('#schedules-list'),
+  tabsHost: $('#schedules-tabs'),
   feedHost: $('#schedules-feed'),
+  onceHost: $('#schedules-once'),
+  repeatingHost: $('#schedules-repeating'),
   subEl: $('#schedules-sub'),
   msgEl: $('#schedules-msg'),
   deps: {
     confirmModal: (opts) => confirmModal(opts),
-    // "demo-shop" / "Workspace · Storefront" — the names the rest of the app shows.
+    // "Project · demo-shop" / "Workspace · Storefront": the kind first, then the name the
+    // rest of the app shows — every scheduled run card says what it runs against.
     targetLabel: (item) => {
       if (item.workspaceId) {
         const ws = (state.workspaces || []).find((w) => w && w.id === item.workspaceId);
         return `Workspace · ${ws ? ws.name : item.workspaceId}`;
       }
       const proj = (state.projects || []).find((x) => x && x.path === item.projectDir);
-      return proj ? proj.name : String(item.projectDir || '').split(/[\\/]/).filter(Boolean).pop() || 'project';
+      return `Project · ${proj ? proj.name : String(item.projectDir || '').split(/[\\/]/).filter(Boolean).pop() || 'project'}`;
     },
+    // A tab click is a route (#schedules/<tab>), so Back and a reload land on the same tab.
+    route: (tab) => { location.hash = tab === 'activity' ? 'schedules' : `schedules/${tab}`; },
     workflowLabel: (id) => {
       const opt = el.workflowSelect ? [...el.workflowSelect.options].find((o) => o.value === id) : null;
       if (opt) return opt.textContent.trim();
@@ -18568,6 +18573,11 @@ const schedulesView = createSchedulesView({
     },
   },
 });
+
+/** The workspace read-model, loaded once: a scheduled run card names "Workspace · <name>", not an id. */
+function withWorkspaces() {
+  return (state.workspaces || []).length ? Promise.resolve() : loadWorkspaces();
+}
 
 function paintScheduledGroup() {
   const wrap = $('#run-scheduled');
@@ -19979,7 +19989,7 @@ function showView(name, param = '') {
   if (name === 'running') {
     renderRunningView();
     // The Scheduled group (runs due within 24 h) reads the same store as the Schedules view.
-    if (prevView !== 'running') void schedulesView.load().then(paintScheduledGroup);
+    if (prevView !== 'running') void withWorkspaces().then(() => schedulesView.load()).then(paintScheduledGroup);
     routeRunDetail(param, { instant: prevView !== 'running' });
     // Opening a run's detail page acknowledges it (linger → drops on next render).
     // ONLY a finished run: opening a still-live run must NOT pre-acknowledge, or
@@ -20002,7 +20012,7 @@ function showView(name, param = '') {
     routeHistoryDetail(param, { instant: prevView !== 'history' });
   }
   if (name === 'stats') loadStatsView();
-  if (name === 'schedules') void schedulesView.load();
+  if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
   if (name === 'team-metrics') loadTeamMetricsView();
   if (name === 'workspaces') loadWorkspacesView();
   if (name === 'workspace-create') enterWizard();

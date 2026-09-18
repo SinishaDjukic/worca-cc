@@ -4405,10 +4405,10 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .sched-err{margin-top:10px;}
 .sched-err[hidden]{display:none;}
 
-/* the Schedules view */
-.sched-cols{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(320px,1fr);gap:22px;align-items:start;}
-@media (max-width:1180px){.sched-cols{grid-template-columns:minmax(0,1fr);}}
-.sched-list{display:flex;flex-direction:column;gap:14px;}
+/* the Schedules view: a tab strip (the Statistics .seg) over one pane at a time */
+.sched-tabs{display:flex;margin-bottom:18px;}
+.sched-pane[hidden]{display:none;}
+.sched-list{display:flex;flex-direction:column;gap:14px;max-width:960px;}
 .sched-group-title{font:700 11.5px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin:6px 4px -2px;}
 .sched-item{padding:18px 20px;}
 .sched-item.attention{border:1.5px solid var(--amber);box-shadow:0 0 0 4px var(--amber-bg),var(--shadow);}

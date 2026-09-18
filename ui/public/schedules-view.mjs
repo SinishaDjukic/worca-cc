@@ -1,10 +1,12 @@
 // ui/public/schedules-view.mjs
-// The Schedules view: what is planned (one-off runs and repeating schedules) and the
-// activity feed (every miss, failure, skip, late start and self-pause, with read state).
-// app.js owns routing and the WebSocket; this module owns the two hosts it is given.
+// The Schedules view, three tabs (the Statistics .seg idiom): Activity — the feed (every
+// miss, failure, skip, late start and self-pause, with read state); Once — one-off runs;
+// Repeating — the series. app.js owns routing and the WebSocket; this module owns the
+// hosts it is given and routes a tab click through `deps.route(tab)` (#schedules/<tab>).
 //
-//   const view = createSchedulesView({ listHost, feedHost, subEl, msgEl, deps });
+//   const view = createSchedulesView({ tabsHost, feedHost, onceHost, repeatingHost, subEl, msgEl, deps });
 //   view.load()          fetch + paint (view entry, `schedules-changed`)
+//   view.showTab(tab)    'activity' (default) | 'once' | 'repeating' — the route's param
 //   view.loadFeed()      feed only (`notification`, `notifications-changed`)
 //   view.upcoming(ms)    tickets due within `ms` — the Running view's Scheduled group
 //   view.destroy()       stop the countdown tick
@@ -64,17 +66,21 @@ function relativeAgo(iso) {
   return formatInstant(Date.parse(iso), browserTimeZone());
 }
 
+export const SCHEDULE_TABS = ['activity', 'once', 'repeating'];
+
 /**
  * @param {object} o
- * @param {HTMLElement} o.listHost  the schedule list
- * @param {HTMLElement} o.feedHost  the activity feed
+ * @param {HTMLElement} o.tabsHost       the .seg holding button[data-tab]
+ * @param {HTMLElement} o.feedHost       the Activity pane (the feed)
+ * @param {HTMLElement} o.onceHost       the Once pane (one-off runs)
+ * @param {HTMLElement} o.repeatingHost  the Repeating pane (series)
  * @param {HTMLElement} [o.subEl]   the topbar sub line
  * @param {HTMLElement} [o.msgEl]   a .form-msg line for action errors
- * @param {object} o.deps  { confirmModal, targetLabel(item), workflowLabel(id), onCounts(counts), openRun(item) }
+ * @param {object} o.deps  { confirmModal, targetLabel(item), workflowLabel(id), onCounts(counts), openRun(item), route(tab) }
  */
-export function createSchedulesView({ listHost, feedHost, subEl = null, msgEl = null, deps }) {
+export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repeatingHost, subEl = null, msgEl = null, deps }) {
   const tz = browserTimeZone();
-  const model = { schedules: [], tickets: [], counts: {}, defaults: { graceMin: 360, ifMissed: 'run', maxFailures: 3 }, feed: [], filter: 'all', loaded: false };
+  const model = { schedules: [], tickets: [], counts: {}, defaults: { graceMin: 360, ifMissed: 'run', maxFailures: 3 }, feed: [], filter: 'all', loaded: false, tab: 'activity' };
   let timer = null;
 
   const say = (text, kind = '') => { if (msgEl) { msgEl.textContent = text || ''; msgEl.className = `form-msg${kind ? ` ${kind}` : ''}`; } };
@@ -219,20 +225,48 @@ export function createSchedulesView({ listHost, feedHost, subEl = null, msgEl = 
       footer(s, acts, details), details);
   }
 
+  /** Replace a pane's rows, keeping an open Details panel open (a tick or a broadcast must not slam it shut). */
+  function paintPane(host, rows, emptyNode) {
+    if (!host) return;
+    const openIds = new Set([...host.querySelectorAll('.sched-item')].filter((c) => c.querySelector('.sched-more[aria-expanded="true"]')).map((c) => c.dataset.id));
+    host.replaceChildren(...(rows.length ? rows : [emptyNode]));
+    for (const c of host.querySelectorAll('.sched-item')) if (openIds.has(c.dataset.id)) c.querySelector('.sched-more').click();
+  }
+  const emptyOnce = () => h('div', { class: 'run-empty' }, 'No one-off run is waiting. Pick a time with ',
+    h('a', { href: '#new/schedule', text: 'Schedule a run' }), ', then describe the task — or use Schedule… next to Start run on New pipeline.');
+  const emptyRepeating = () => h('div', { class: 'run-empty' }, 'No repeating schedule. Pick a time with ',
+    h('a', { href: '#new/schedule', text: 'Schedule a run' }), ' and choose Every day, Weekdays, Weekly or Monthly.');
+
+  function paintTabs() {
+    if (!tabsHost) return;
+    const once = model.tickets.filter((t) => !t.scheduleId).length;
+    const series = model.schedules.filter((s) => s.status !== 'ended').length;
+    const unread = model.feed.filter((n) => n.unread).length;
+    const label = { activity: unread ? `Activity · ${unread}` : 'Activity', once: once ? `Once · ${once}` : 'Once', repeating: series ? `Repeating · ${series}` : 'Repeating' };
+    for (const b of tabsHost.querySelectorAll('button[data-tab]')) {
+      b.textContent = label[b.dataset.tab] || b.dataset.tab;
+      b.classList.toggle('on', b.dataset.tab === model.tab);
+      b.setAttribute('aria-pressed', b.dataset.tab === model.tab ? 'true' : 'false');
+    }
+    for (const [tab, host] of [['activity', feedHost], ['once', onceHost], ['repeating', repeatingHost]]) if (host) host.hidden = tab !== model.tab;
+  }
+  /** Show one tab (the route's param); an unknown or empty name is Activity. */
+  function showTab(tab) {
+    model.tab = SCHEDULE_TABS.includes(tab) ? tab : 'activity';
+    paintTabs();
+  }
+  tabsHost?.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-tab]');
+    if (!b) return;
+    if (typeof deps.route === 'function') deps.route(b.dataset.tab); else showTab(b.dataset.tab);
+  });
+
   function paintList() {
     const series = model.schedules;
     const once = model.tickets.filter((t) => !t.scheduleId);
-    const nodes = [];
-    if (once.length) nodes.push(h('div', { class: 'sched-group-title', text: 'Once' }), ...once.map(ticketRow));
-    if (series.length) nodes.push(h('div', { class: 'sched-group-title', text: 'Repeating' }), ...series.map(seriesRow));
-    if (!nodes.length) {
-      nodes.push(h('div', { class: 'run-empty' }, 'Nothing is scheduled. Pick a time with ',
-        h('a', { href: '#new/schedule', text: 'Schedule a run' }), ', then describe the task — or use Schedule… next to Start run on New pipeline.'));
-    }
-    // Keep an open Details panel open across repaints (a tick or a broadcast must not slam it shut).
-    const openIds = new Set([...listHost.querySelectorAll('.sched-item')].filter((c) => c.querySelector('.sched-more[aria-expanded="true"]')).map((c) => c.dataset.id));
-    listHost.replaceChildren(...nodes);
-    for (const c of listHost.querySelectorAll('.sched-item')) if (openIds.has(c.dataset.id)) c.querySelector('.sched-more').click();
+    paintPane(onceHost, once.map(ticketRow), emptyOnce());
+    paintPane(repeatingHost, series.map(seriesRow), emptyRepeating());
+    paintTabs();
     if (subEl) {
       const n = once.filter((t) => t.status !== 'missed').length;
       const active = series.filter((s) => s.status === 'active').length;
@@ -305,7 +339,7 @@ export function createSchedulesView({ listHost, feedHost, subEl = null, msgEl = 
       model.feed = Array.isArray(data.notifications) ? data.notifications : [];
       model.counts = { ...model.counts, unread: data.unread || 0 };
       deps.onCounts?.(model.counts);
-      if (feedHost.isConnected) paintFeed();
+      if (feedHost.isConnected) { paintFeed(); paintTabs(); }
     } catch (err) { say(err.message, 'err'); }
   }
 
@@ -342,7 +376,8 @@ export function createSchedulesView({ listHost, feedHost, subEl = null, msgEl = 
   }
 
   return {
-    load, loadFeed, tickCountdowns,
+    load, loadFeed, tickCountdowns, showTab,
+    get tab() { return model.tab; },
     get defaults() { return model.defaults; },
     get counts() { return model.counts; },
     /** One-off tickets and series occurrences due within `ms`, soonest first (plus missed). */

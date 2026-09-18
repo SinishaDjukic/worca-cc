@@ -789,10 +789,17 @@
             </a>
           </div>
           <p id="schedules-msg" class="form-msg" aria-live="polite"></p>
-          <div class="sched-cols">
-            <div class="sched-list" id="schedules-list"><small class="hint">Loading…</small></div>
-            <section class="card sched-feed" id="schedules-feed" aria-label="Activity"></section>
+          <!-- Tabs, the Statistics .seg idiom: #schedules/<tab> routes them (activity | once | repeating). -->
+          <div class="sched-tabs">
+            <div class="seg" id="schedules-tabs" role="group" aria-label="Schedules">
+              <button type="button" data-tab="activity">Activity</button>
+              <button type="button" data-tab="once">Once</button>
+              <button type="button" data-tab="repeating">Repeating</button>
+            </div>
           </div>
+          <section class="card sched-feed sched-pane" id="schedules-feed" data-pane="activity" aria-label="Activity"></section>
+          <div class="sched-list sched-pane" id="schedules-once" data-pane="once" hidden><small class="hint">Loading…</small></div>
+          <div class="sched-list sched-pane" id="schedules-repeating" data-pane="repeating" hidden><small class="hint">Loading…</small></div>
         </section>
         <!-- /view schedules -->
 

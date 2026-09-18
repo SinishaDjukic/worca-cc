@@ -153,8 +153,10 @@ the caller's zone — and so is a time in the past.
   ("Scheduled · Starts Sat Sep 19, 02:00 · Change… · Start now instead") and *Start run*
   reads as **Schedule**, so describing the task and one click schedules it. The pick is
   never persisted — a reload is a plain form — and the menu's *Start run now* ignores it.
-- **Schedules** (sidebar): one-off runs and repeating schedules with Run now, Change
-  time / Edit, Skip next, pause switch, Cancel / Delete — and the **Activity** feed.
+- **Schedules** (sidebar), three tabs routed as `#schedules[/once|/repeating]`:
+  **Activity** — the feed; **Once** — one-off runs with Run now, Change time, Cancel;
+  **Repeating** — the series with Run now, Skip next, Edit, a pause switch and Delete.
+  Every card names its target first: *Project · shop* or *Workspace · Storefront*.
   Problems (missed, failed, paused itself, run error) count towards the amber unread
   badge and resolve themselves when you act on them; completed, late and skipped
   items arrive read. Notifications are purged after 90 days, ended tickets after 30.
