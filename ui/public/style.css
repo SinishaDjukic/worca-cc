@@ -5040,3 +5040,128 @@ input.gv-name:focus-visible{outline:none;}
 /* No href => the preview is still building. Make that legible rather than letting a
    dead-looking button sit there (D24). */
 .report-modal .confirm-actions a.btn:not([href]){opacity:.5;pointer-events:none;}
+
+/* ---------- Scheduled runs: the Schedules view, the schedule sheet, the split Start button ----------
+   Tokens only (no hex): a waiting run is NEUTRAL — grey with a clock — so it never competes
+   with the amber items that need a decision. Missed is amber; a schedule that paused itself too. */
+.rc-sic.st-grey{background:var(--field);color:var(--ink-2);}
+.rc-status-word.st-grey{color:var(--ink-2);}
+.badge.blue{background:var(--blue-bg);color:var(--blue-ink);}
+
+/* split Start button: the primary action keeps its pill; the caret is its right half */
+.btn-split{display:inline-flex;align-items:stretch;position:relative;}
+.btn-split > .btn-go:first-child{border-radius:999px 0 0 999px;padding-right:22px;}
+.btn-split > .btn-split-more{display:inline-flex;align-items:center;justify-content:center;background:var(--ink);color:var(--on-ink);
+  border:none;border-left:1px solid var(--on-ink-wash-2);border-radius:0 999px 999px 0;padding:0 16px 0 13px;cursor:pointer;
+  transition:transform .15s,filter .15s;}
+.btn-split > .btn-split-more:hover{filter:brightness(1.08);}
+.btn-split > .btn-split-more:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.btn-split > .btn-go:disabled,.btn-split > .btn-split-more:disabled{opacity:.45;cursor:not-allowed;transform:none;filter:none;}
+.btn-split-menu{position:absolute;right:0;bottom:calc(100% + 8px);z-index:20;min-width:230px;padding:6px;
+  background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow-menu);}
+.btn-split-menu[hidden]{display:none;}
+.btn-split-menu button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;text-align:left;
+  background:transparent;border:none;border-radius:11px;padding:10px 12px;font-family:inherit;cursor:pointer;color:var(--ink);}
+.btn-split-menu button:hover,.btn-split-menu button:focus-visible{background:var(--field);outline:none;}
+.btn-split-menu b{font-weight:600;font-size:13.5px;}
+.btn-split-menu small{font-size:12px;color:var(--ink-3);}
+.btn-split.mini > .btn-go:first-child{padding:9px 14px 9px 16px;font-size:12.5px;}
+.btn-split.mini > .btn-split-more{padding:0 12px 0 9px;}
+.btn-split.mini .btn-split-menu{bottom:auto;top:calc(100% + 8px);}
+
+/* the schedule sheet */
+.sched-modal .card.sched-card{width:min(600px,100%);animation:wr-rise .28s cubic-bezier(.2,.7,.3,1) both;}
+.sched-run-title{margin:-10px 0 16px;color:var(--ink-2);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sched-presets{display:flex;flex-wrap:wrap;margin-bottom:16px;}
+.sched-presets button{flex:1 1 auto;padding:9px 8px;font-size:12.5px;white-space:nowrap;}
+.sched-quick{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;}
+.sched-quick[hidden]{display:none;}
+.sched-chip{border:1.5px solid transparent;cursor:pointer;font-family:inherit;transition:background .14s,border-color .14s;}
+.sched-chip:hover{border-color:var(--line-2);}
+.sched-chip.on{background:var(--surface);border-color:var(--ink);color:var(--ink);}
+.sched-chip:focus-visible,.sched-day:focus-visible,.sched-tz-change:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.sched-days{display:flex;flex-wrap:wrap;gap:6px;}
+.sched-day{width:42px;height:38px;border-radius:12px;border:1.5px solid transparent;background:var(--field);color:var(--ink-2);
+  font:600 12.5px var(--sans);cursor:pointer;transition:background .14s,color .14s;}
+.sched-day:hover{border-color:var(--line-2);}
+.sched-day.on{background:var(--ink);color:var(--on-ink);}
+.sched-inline{display:flex;gap:9px;align-items:center;}
+.sched-inline > *{flex:1 1 0;min-width:0;}
+.sched-inline > input[type="number"]{flex:0 0 92px;}
+.sched-inline > [hidden]{display:none;}
+.sched-card .field-grid-2[hidden],.sched-card .field[hidden]{display:none;}
+.sched-sentence{margin:4px 0 8px;padding:13px 15px;border-radius:var(--r-ctrl);background:var(--violet-wash);
+  border:1px solid var(--violet-bg);font-size:14px;line-height:1.45;}
+.sched-sentence b{font-weight:600;}
+.sched-sentence.bad{background:var(--field);border-color:var(--line);}
+.sched-next{margin-top:3px;color:var(--ink-2);font-size:12.5px;font-variant-numeric:tabular-nums;min-height:18px;}
+.sched-tz{margin:0 0 16px;color:var(--ink-3);font-size:12px;}
+.sched-tz-change{background:none;border:none;padding:0;font:600 12px var(--sans);color:var(--blue-ink-strong);cursor:pointer;text-decoration:underline;}
+#sched-tz{margin:-8px 0 16px;}
+#sched-tz[hidden]{display:none;}
+.sched-note{margin-top:2px;}
+.sched-warn{margin-top:10px;padding:10px 13px;border-radius:12px;background:var(--amber-wash);border:1px solid var(--amber-line);}
+.sched-err{margin-top:10px;}
+.sched-err[hidden]{display:none;}
+
+/* the Schedules view */
+.sched-cols{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(320px,1fr);gap:22px;align-items:start;}
+@media (max-width:1180px){.sched-cols{grid-template-columns:minmax(0,1fr);}}
+.sched-list{display:flex;flex-direction:column;gap:14px;}
+.sched-group-title{font:700 11.5px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin:6px 4px -2px;}
+.sched-item{padding:18px 20px;}
+.sched-item.attention{border:1.5px solid var(--amber);box-shadow:0 0 0 4px var(--amber-bg),var(--shadow);}
+.sched-head{display:flex;align-items:flex-start;gap:13px;}
+.sched-head .rc-sic{align-self:flex-start;}
+.sched-head .rc-title{white-space:normal;}
+.sched-head > .switch{flex:0 0 auto;margin-top:5px;}
+.sched-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;
+  margin-top:14px;padding-top:12px;border-top:1px solid var(--line);}
+.sched-acts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px;margin-left:auto;}
+.sched-acts [hidden]{display:none;}
+.sched-sub{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin-top:9px;font-size:12.5px;color:var(--ink-2);}
+.sched-when{font-variant-numeric:tabular-nums;}
+.sched-sub .sched-when{font-weight:600;color:var(--ink);}
+.sched-target{margin-top:4px;font-size:12.5px;color:var(--ink-3);overflow-wrap:anywhere;}
+.sched-rule{color:var(--ink-2);font-weight:500;}
+.sched-reason{margin-top:7px;font-size:12.5px;color:var(--amber-ink);}
+.sched-more{display:inline-flex;align-items:center;gap:7px;background:none;border:none;padding:6px 2px;cursor:pointer;
+  font:600 12px var(--sans);color:var(--ink-3);}
+.sched-more:hover{color:var(--ink);}
+.sched-more::before{content:"";width:6px;height:6px;border-right:1.8px solid currentColor;border-bottom:1.8px solid currentColor;
+  transform:rotate(-45deg);transition:transform .15s;}
+.sched-more[aria-expanded="true"]::before{transform:rotate(45deg);}
+.sched-more:focus-visible{outline:2px solid var(--ink);outline-offset:3px;border-radius:6px;}
+.sched-details-body{display:grid;gap:7px;margin-top:12px;}
+.sched-details-body[hidden]{display:none;}
+.sched-kv{display:grid;grid-template-columns:210px minmax(0,1fr);gap:12px;font-size:12.5px;}
+.sched-k{color:var(--ink-3);}
+.sched-v{color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;}
+@media (max-width:720px){.sched-kv{grid-template-columns:minmax(0,1fr);gap:1px;}.sched-acts{justify-content:flex-start;margin-left:0;}}
+
+.sched-feed{padding:20px 22px;}
+.sched-feed-head{flex-wrap:wrap;gap:12px;margin-bottom:8px;}
+.sched-feed-tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px;}
+.sched-feed-item{display:grid;grid-template-columns:92px minmax(0,1fr);gap:4px 12px;align-items:start;padding:13px 0 13px 12px;
+  border-top:1px solid var(--line);border-left:3px solid transparent;margin-left:-12px;}
+.sched-feed-item:first-child{border-top:none;}
+.sched-feed-item.unread{border-left-color:var(--amber);}
+.sched-feed-item .badge{justify-self:start;margin-top:1px;}
+.sched-feed-text{font-size:13px;line-height:1.5;color:var(--ink-2);overflow-wrap:anywhere;}
+.sched-feed-text b{font-weight:600;color:var(--ink);}
+.sched-feed-time{margin-top:2px;font-size:11.5px;color:var(--ink-3);}
+.sched-feed-acts{grid-column:2;display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:7px;}
+.sched-feed-acts:empty{display:none;}
+.sched-feed-read{background:none;border:none;padding:4px 2px;font:600 12px var(--sans);color:var(--ink-3);cursor:pointer;text-decoration:underline;}
+.sched-feed-read:hover{color:var(--ink);}
+.sched-feed-read:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:6px;}
+
+/* the Running view's Scheduled group (runs due within 24 h) */
+.run-scheduled{margin-top:22px;display:flex;flex-direction:column;gap:14px;}
+.run-scheduled[hidden]{display:none;}
+.run-scheduled-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 4px -2px;}
+.run-scheduled-head a{font:600 12px var(--sans);color:var(--blue-ink-strong);}
+
+/* Ask run card: the scheduled state line */
+.ask-card-sched{display:flex;flex-wrap:wrap;align-items:center;gap:9px;font-size:12.5px;color:var(--ink-2);}
+.ask-card-sched .badge{letter-spacing:.04em;}

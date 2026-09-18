@@ -129,6 +129,8 @@ import {
   renderProjectTmCell, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
 import { paintAboutInto } from './about-links.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts } from './report-run.mjs';
+import { openScheduleSheet, closeScheduleSheet } from './schedule-sheet.mjs';
+import { createSchedulesView } from './schedules-view.mjs';
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
 
@@ -206,6 +208,12 @@ const el = {
   extrasPills: $('#extrasPills'),
   mock: $('#mock'),
   startBtn: $('#start-btn'),
+  startMore: $('#start-more'),
+  startMenu: $('#start-menu'),
+  startMenuNow: $('#start-menu-now'),
+  startMenuSchedule: $('#start-menu-schedule'),
+  navSchedulesCount: $('#nav-schedules-count'),
+  navSchedulesUnread: $('#nav-schedules-unread'),
   formMsg: $('#form-msg'),
 
   pipelineConfig: $('#pipeline-config'),
@@ -742,6 +750,18 @@ function handleServerMessage(msg) {
   // is global, so repaint it regardless of the open view.
   if (msg.type === 'budget-changed') {
     refreshBudget();
+    return;
+  }
+  // Scheduled runs: a ticket or a repeating schedule changed (here, in another tab, from the
+  // CLI, or because the scheduler tick started/missed/skipped something).
+  if (msg.type === 'schedules-changed') {
+    refreshAllCounts();
+    if (currentView() === 'schedules' || currentView() === 'running') void schedulesView.load().then(paintScheduledGroup);
+    return;
+  }
+  if (msg.type === 'notification' || msg.type === 'notifications-changed') {
+    refreshAllCounts();
+    if (currentView() === 'schedules') void schedulesView.loadFeed();
     return;
   }
   // Another tab saved a Settings card: repaint ours from the server so a stale
@@ -8604,11 +8624,26 @@ el.form.addEventListener('submit', async (e) => {
     body.prompt = promptText;
   }
 
+  // Schedule… (the split button): the form is VALID at this point, so ask for the time
+  // now. Cancel leaves the form exactly as it was; the sheet's answer rides on the same
+  // POST /api/run body — `scheduledFor` (once) or `repeat` (recurring).
+  const scheduling = scheduleIntent;
+  scheduleIntent = false;
+  if (scheduling) {
+    const picked = await openScheduleSheet({
+      mode: 'create', runTitle: title, defaults: schedulesView.defaults,
+      warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer — chat notifications can reach you.',
+    });
+    if (!picked) return;
+    Object.assign(body, picked);
+  }
+
   // Guard the whole in-flight window: applyBudgetToNewView also drives
   // start.disabled, and this run's own creation event repaints it.
   startSubmitInFlight = true;
   el.startBtn.disabled = true;
-  setFormMsg('Starting run...', '');
+  if (el.startMore) el.startMore.disabled = true;
+  setFormMsg(scheduling ? 'Scheduling…' : 'Starting run...', '');
 
   // Upload the selected extra files' bytes; the server writes them to a temp
   // dir and the orchestrator copies them into the pipeline's extras/ folder.
@@ -8627,10 +8662,19 @@ el.form.addEventListener('submit', async (e) => {
       body: JSON.stringify(body),
     });
     const data = await safeJson(res);
+    if (el.startMore) el.startMore.disabled = false;
     if (!res.ok || !data.runId) {
       startSubmitInFlight = false;
       el.startBtn.disabled = false;
-      return setFormMsg(`Failed to start: ${data.error || res.status}`, 'err');
+      return setFormMsg(`Failed to ${scheduling ? 'schedule' : 'start'}: ${data.error || res.status}`, 'err');
+    }
+    // 202: nothing is running — the request is a ticket now. Show it where it lives.
+    if (data.status === 'scheduled') {
+      startSubmitInFlight = false;
+      el.startBtn.disabled = !!budgetState.budget?.blocked;
+      setFormMsg(data.budgetWarning ? `Scheduled. ${data.budgetWarning}` : 'Scheduled.', data.budgetWarning ? 'warn' : 'ok');
+      showView('schedules');
+      return;
     }
 
     // begin tracking the new run (creates a local model + switches to Running)
@@ -8652,9 +8696,40 @@ el.form.addEventListener('submit', async (e) => {
   } catch (err) {
     startSubmitInFlight = false;
     el.startBtn.disabled = false;
+    if (el.startMore) el.startMore.disabled = false;
     setFormMsg(`Error: ${err.message}`, 'err');
   }
 });
+
+// The split Start button's menu. "Schedule…" submits the SAME form with an intent flag, so
+// every validation above runs first and the sheet only opens on a startable request.
+let scheduleIntent = false;
+function closeStartMenu() {
+  if (!el.startMenu || el.startMenu.hidden) return;
+  el.startMenu.hidden = true;
+  el.startMore?.setAttribute('aria-expanded', 'false');
+}
+if (el.startMore && el.startMenu) {
+  el.startMore.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = el.startMenu.hidden;
+    el.startMenu.hidden = !open;
+    el.startMore.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) el.startMenuSchedule?.focus();
+  });
+  el.startMenuNow?.addEventListener('click', () => { closeStartMenu(); el.form.requestSubmit(el.startBtn); });
+  el.startMenuSchedule?.addEventListener('click', () => { closeStartMenu(); scheduleIntent = true; el.form.requestSubmit(); });
+  document.addEventListener('click', (e) => { if (!e.target.closest('#start-split')) closeStartMenu(); });
+  el.startMenu.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); closeStartMenu(); el.startMore.focus(); }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const items = [...el.startMenu.querySelectorAll('button')];
+      const i = items.indexOf(document.activeElement);
+      items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
+    }
+  });
+}
 
 // Create the local run model for a run THIS tab just started and switch to the
 // Running view. We do NOT send a subscribe here: live events arrive via the
@@ -18221,13 +18296,58 @@ function renderAskBanner() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Scheduled runs (tickets, not pipelines). One view controller serves the Schedules view
+// AND the Running view's "next 24 hours" group; both read GET /api/schedules.
+// ---------------------------------------------------------------------------
+const SCHEDULED_GROUP_WINDOW_MS = 24 * 3600 * 1000;
+const schedulesView = createSchedulesView({
+  listHost: $('#schedules-list'),
+  feedHost: $('#schedules-feed'),
+  subEl: $('#schedules-sub'),
+  msgEl: $('#schedules-msg'),
+  deps: {
+    confirmModal: (opts) => confirmModal(opts),
+    // "demo-shop" / "Workspace · Storefront" — the names the rest of the app shows.
+    targetLabel: (item) => {
+      if (item.workspaceId) {
+        const ws = (state.workspaces || []).find((w) => w && w.id === item.workspaceId);
+        return `Workspace · ${ws ? ws.name : item.workspaceId}`;
+      }
+      const proj = (state.projects || []).find((x) => x && x.path === item.projectDir);
+      return proj ? proj.name : String(item.projectDir || '').split(/[\\/]/).filter(Boolean).pop() || 'project';
+    },
+    workflowLabel: (id) => {
+      const opt = el.workflowSelect ? [...el.workflowSelect.options].find((o) => o.value === id) : null;
+      if (opt) return opt.textContent.trim();
+      return { wf_default: 'Default', wf_auto: 'Auto', wf_memory_defrag: 'Memory defragment' }[id] || id;
+    },
+    onCounts: (c) => paintScheduleCounts(c),
+    // A started run opens its live monitor (the ticket id IS the runId); a finished one opens History.
+    openRun: ({ runId, pipelineId, projectDir }) => {
+      if (runId) { location.hash = `running/${runId}`; return; }
+      const proj = (state.projects || []).find((x) => x && x.path === projectDir);
+      location.hash = proj && pipelineId ? `history/${histDetailParam({ id: pipelineId, projectKey: proj.key })}` : 'history';
+    },
+  },
+});
+
+function paintScheduledGroup() {
+  const wrap = $('#run-scheduled');
+  const list = $('#run-scheduled-list');
+  if (!wrap || !list) return;
+  const soon = schedulesView.upcoming(SCHEDULED_GROUP_WINDOW_MS);
+  wrap.hidden = soon.length === 0;
+  list.replaceChildren(...soon.map((t) => schedulesView.ticketRow(t)));
+}
+
 function renderOverview() {
   const list = $('#run-list');
   if (!list) return;
   const rows = overviewRuns();
   // Pipelines only (D7) — but the empty copy stays "runs" per spec §4.2: it is
   // still true, and it is the wording the design keeps.
-  paintRunList(list, rows, 'No active runs — start one from New.');
+  paintRunList(list, rows, 'No active runs — start one from New, or schedule one for later.');
 
   // `rows` is already pipeline-only, so `live` IS the live-pipeline set the
   // "N pipelines executing" copy claims; "needs input" counts the ones asking.
@@ -18988,6 +19108,20 @@ async function refreshAllCounts() {
   if (el.navHistoryCount && Number.isFinite(data.pipelines)) el.navHistoryCount.textContent = String(data.pipelines);
   if (el.navProjectsCount && Number.isFinite(data.projects)) el.navProjectsCount.textContent = String(data.projects);
   if (el.navWorkspacesCount && Number.isFinite(data.workspaces)) el.navWorkspacesCount.textContent = String(data.workspaces);
+  if (data.schedules) paintScheduleCounts(data.schedules);
+}
+
+// Schedules nav badges: grey = what is planned (waiting runs + repeating schedules), amber =
+// UNREAD PROBLEMS in the activity feed (missed, failed, self-paused). Info items never count.
+function paintScheduleCounts(c) {
+  if (!c) return;
+  if (el.navSchedulesCount && Number.isFinite(c.scheduled)) {
+    el.navSchedulesCount.textContent = String((c.scheduled || 0) + (c.missed || 0));
+  }
+  if (el.navSchedulesUnread && Number.isFinite(c.unread)) {
+    el.navSchedulesUnread.textContent = String(c.unread);
+    el.navSchedulesUnread.hidden = !c.unread;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -19353,7 +19487,7 @@ const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
 // plugins/guardrails/models LEFT this array: they are Settings tabs now, reached
 // as #settings/<tab> (legacy bare hashes redirect — see LEGACY_TAB_VIEWS).
-const VIEW_NAMES = ['new', 'getting-started', 'running', 'history', 'stats', 'team-metrics', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
+const VIEW_NAMES = ['new', 'getting-started', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
 
 // ── Settings tabs ───────────────────────────────────────────────────────────
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
@@ -19455,6 +19589,8 @@ function showView(name, param = '') {
     param = settingsParamFor(tab, sub);
   }
   const prevView = currentShownView;
+  // The schedule sheet and the Start menu are body-level overlays of the view that opened them.
+  if (prevView !== name) { closeScheduleSheet(); closeStartMenu(); }
   currentShownView = name;
   // The guide re-derives its hop on a tick, so it is told here — before a view's
   // own loader runs — and never misses a switch because a loader threw.
@@ -19487,6 +19623,8 @@ function showView(name, param = '') {
   document.body.classList.toggle('view-projects', name === 'projects');
   if (name === 'running') {
     renderRunningView();
+    // The Scheduled group (runs due within 24 h) reads the same store as the Schedules view.
+    if (prevView !== 'running') void schedulesView.load().then(paintScheduledGroup);
     routeRunDetail(param, { instant: prevView !== 'running' });
     // Opening a run's detail page acknowledges it (linger → drops on next render).
     // ONLY a finished run: opening a still-live run must NOT pre-acknowledge, or
@@ -19509,6 +19647,7 @@ function showView(name, param = '') {
     routeHistoryDetail(param, { instant: prevView !== 'history' });
   }
   if (name === 'stats') loadStatsView();
+  if (name === 'schedules') void schedulesView.load();
   if (name === 'team-metrics') loadTeamMetricsView();
   if (name === 'workspaces') loadWorkspacesView();
   if (name === 'workspace-create') enterWizard();
