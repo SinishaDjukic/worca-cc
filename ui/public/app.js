@@ -8717,17 +8717,8 @@ el.form.addEventListener('submit', async (e) => {
     body.prompt = promptText;
   }
 
-  // Schedule… (the split button): the form is VALID at this point, so ask for the time
-  // now. Cancel leaves the form exactly as it was; the sheet's answer rides on the same
-  // POST /api/run body — `scheduledFor` (once) or `repeat` (recurring). A time picked
-  // BEFORE the task (pendingSchedule) rides the same way without asking again.
-  const asking = scheduleIntent;
-  scheduleIntent = false;
-  if (asking) {
-    const picked = await openScheduleSheet({ ...newScheduleSheetOpts(title), initial: pendingScheduleInitial() });
-    if (!picked) return;
-    setPendingSchedule(picked);
-  }
+  // A time picked earlier (Schedule… in the split menu, Schedules › Schedule a run, Change…)
+  // rides the same POST /api/run body — `scheduledFor` (once) or `repeat` (recurring).
   const scheduling = !!pendingSchedule;
   if (scheduling) Object.assign(body, pendingSchedule);
 
@@ -8795,11 +8786,10 @@ el.form.addEventListener('submit', async (e) => {
   }
 });
 
-// The split Start button's menu. "Schedule…" submits the SAME form with an intent flag, so
-// every validation above runs first and the sheet only opens on a startable request.
-let scheduleIntent = false;
-// A time picked before the task — Schedules › Schedule a run lands here with the sheet already
-// open (#new/schedule), and Change… on the line re-opens it. The sheet's answer waits on the
+// The split Start button's menu. "Schedule…" is a MODE, not a submit: it opens the sheet at
+// once, before any prompt is typed, exactly like Schedules › Schedule a run (#new/schedule).
+// A time picked before the task waits on the form; Change… on the line re-opens the sheet.
+// The sheet's answer waits on the
 // form ({scheduledFor}|{repeat}, ifMissed, graceMin) and Start run reads as Schedule until it
 // is used or dropped. Never persisted: a reload is a plain form.
 let pendingSchedule = null;
@@ -8835,7 +8825,9 @@ function setPendingSchedule(pick) {
 /** Schedules › Schedule a run (#new/schedule): pick the time first, then describe the task. */
 async function openScheduleForNew() {
   const el0 = el.prompt;
-  const picked = await openScheduleSheet({ ...newScheduleSheetOpts(''), initial: pendingScheduleInitial() });
+  const titleEl = document.getElementById('title');
+  const runTitle = titleEl && typeof titleEl.value === 'string' ? titleEl.value.trim() : '';
+  const picked = await openScheduleSheet({ ...newScheduleSheetOpts(runTitle), initial: pendingScheduleInitial() });
   if (picked) setPendingSchedule(picked);
   try { el0?.focus(); } catch { /* jsdom */ }
 }
@@ -8855,7 +8847,7 @@ if (el.startMore && el.startMenu) {
     if (open) el.startMenuSchedule?.focus();
   });
   el.startMenuNow?.addEventListener('click', () => { closeStartMenu(); setPendingSchedule(null); el.form.requestSubmit(el.startBtn); });
-  el.startMenuSchedule?.addEventListener('click', () => { closeStartMenu(); scheduleIntent = true; el.form.requestSubmit(); });
+  el.startMenuSchedule?.addEventListener('click', () => { closeStartMenu(); void openScheduleForNew(); });
   document.addEventListener('click', (e) => { if (!e.target.closest('#start-split')) closeStartMenu(); });
   el.startMenu.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.stopPropagation(); closeStartMenu(); el.startMore.focus(); }

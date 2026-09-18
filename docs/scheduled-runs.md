@@ -144,7 +144,8 @@ the caller's zone — and so is a time in the past.
 ## UI
 
 - **New pipeline** and the **Ask run card**: *Start run* is a split button;
-  *Schedule…* opens the schedule sheet after the form validates. The sheet builds a
+  *Schedule…* opens the schedule sheet at once — before the prompt is typed — and the
+  pick waits on the form while *Start run* reads as **Schedule**. The sheet builds a
   sentence and shows the next three dates; presets are Once, Every day, Weekdays,
   Weekly, Monthly, Custom. An Ask card that becomes a repeating schedule follows the
   series (Run now, Delete schedule) instead of one run.

@@ -118,8 +118,28 @@ test('cancelling the sheet leaves a plain form; "Start now instead" and "Start r
   assert.equal(doc.getElementById('new-sched').hidden, true);
 });
 
-test('a plain #new never opens the sheet', async () => {
-  const { window } = await boot('#new');
-  assert.equal(window.document.getElementById('schedule-modal'), null);
-  assert.equal(window.document.getElementById('new-sched').hidden, true);
+test('a plain #new never opens the sheet; the split menu\'s Schedule… opens it before any prompt, as a mode', async () => {
+  const { window, runBodies } = await boot('#new');
+  const doc = window.document;
+  assert.equal(doc.getElementById('schedule-modal'), null);
+  assert.equal(doc.getElementById('new-sched').hidden, true);
+  assert.equal(doc.querySelector('#prompt').value, '', 'no prompt yet');
+  doc.getElementById('start-menu-schedule').click();
+  await tick();
+  assert.ok(doc.getElementById('schedule-modal'), 'the sheet opens without validating the form');
+  assert.equal(doc.getElementById('form-msg').textContent, '', 'no "provide a prompt" complaint');
+  pickTomorrow(window);
+  await tick();
+  assert.equal(doc.getElementById('new-sched').hidden, false);
+  assert.equal(doc.getElementById('start-btn-label').textContent, 'Schedule');
+  assert.equal(runBodies.length, 0, 'nothing posted yet — the task comes next');
+  // Schedule with no prompt: the form's own validation still gates the POST.
+  const psel = doc.querySelector('#projectSelect');
+  psel.value = '/a/svc-iam';
+  psel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  doc.querySelector('#run-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await tick(5);
+  assert.equal(runBodies.length, 0);
+  assert.match(doc.getElementById('form-msg').textContent, /prompt/i);
+  assert.equal(doc.getElementById('new-sched').hidden, false, 'the pick survives a validation error');
 });
