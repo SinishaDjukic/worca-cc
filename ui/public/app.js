@@ -19449,7 +19449,29 @@ function gsScrollTop() {
   if (main) main.scrollTop = 0;
 }
 
-function startGuide(step) {
+// A step whose controls sit above the interface mode (docs/ui-levels.md) asks ONCE, before the tour
+// moves the user anywhere: a mid-tour detour to the mode switch reads as the guide losing its place.
+// Declining leaves the mode and the page as they were. (gsRaiseLevelHop stays as the fallback for a
+// mode lowered while a tour runs.)
+async function startGuide(step) {
+  const def = GETTING_STARTED_STEPS.find((s) => s.id === step);
+  const need = def && def.level;
+  if (need && !levelAtLeast(need)) {
+    const info = LEVEL_INFO[need];
+    const ok = await confirmModal({
+      title: `Switch to ${info.label}?`,
+      message: `“${def.label}” uses controls that ${LEVEL_INFO[currentLevel()].label} hides. `
+        + `Switch to ${info.label} to follow the tour — you can change it back any time from the sidebar.`,
+      confirmLabel: `Switch to ${info.label} and start`,
+      cancelLabel: 'Not now',
+    });
+    if (!ok) return;
+    await levelCtl.choose(need);
+    if (!levelAtLeast(need)) { levelCtl.open(null, { keepMsg: true }); return; }   // save failed and reverted: show why
+  }
+  runGuideFor(step);
+}
+function runGuideFor(step) {
   endGuide();
   if (step === 'claude') { openClaudeSetup(); return; }
   gs.guide = { step, seq: ++gs.seq, target: null, final: false, started: false, view: currentShownView };

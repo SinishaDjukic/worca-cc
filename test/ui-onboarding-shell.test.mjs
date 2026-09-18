@@ -295,22 +295,45 @@ test('the workflows guide: Composer, open Default, back to New pipeline, pick in
   assert.equal(doc.querySelector('.guide-layer'), null, 'a pick ends the guide');
 });
 
-test('a guide whose target sits above the interface mode rings the mode switch, then the right card', async () => {
+test('a step above the interface mode asks to switch first; "Not now" leaves everything as it was', async () => {
   const { doc, window } = await boot({ level: 'simple', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
   click(window, doc.querySelector('.gs-pill'));
   await settle();
-  // Explore the built-in workflows is an advanced step: its first real target is the Composer nav item.
   click(window, doc.querySelector('.gs-tile[data-step="workflows"]'));
   await settle();
-  const target = () => doc.querySelector('.guide-layer')?.dataset.target || '';
-  assert.ok(target().startsWith('#nav-mode'), `rings the mode item, not a hidden control: ${target()}`);
-  click(window, doc.getElementById('nav-mode'));
+  const modal = doc.getElementById('confirm-modal');
+  assert.ok(!modal.classList.contains('hidden'), 'the confirm opens before any hop');
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Switch to Advanced?');
+  assert.equal(doc.getElementById('confirm-ok').textContent, 'Switch to Advanced and start');
+  assert.equal(doc.querySelector('.guide-layer'), null, 'no ring behind the question');
+  click(window, doc.getElementById('confirm-cancel'));
   await settle();
-  assert.equal(target(), '#mode-cards [data-level-choice="advanced"]', 'then the card that unlocks the step');
-  click(window, doc.querySelector('[data-level-choice="advanced"]'));
+  assert.equal(doc.documentElement.dataset.level, 'simple', 'Not now keeps the mode');
+  assert.equal(doc.querySelector('.guide-layer'), null, 'and starts no tour');
+});
+
+test('confirming switches the mode and starts the tour at its first real hop', async () => {
+  const { doc, window } = await boot({ level: 'simple', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
+  click(window, doc.querySelector('.gs-pill'));
   await settle();
-  doc.getElementById('mode-done').click();
+  click(window, doc.querySelector('.gs-tile[data-step="teamMetrics"]'));
   await settle();
-  assert.ok(target().startsWith('.nav button[data-nav="composer"]'), `the original hop resumes: ${target()}`);
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Switch to Expert?');
+  click(window, doc.getElementById('confirm-ok'));
+  await settle();
+  assert.equal(doc.documentElement.dataset.level, 'expert');
+  const target = doc.querySelector('.guide-layer')?.dataset.target || '';
+  assert.ok(target.startsWith('.nav button[data-nav="projects"]'), `the tour itself, not the mode switch: ${target}`);
+  doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+});
+
+test('a step at or below the mode starts with no question', async () => {
+  const { doc, window } = await boot({ level: 'advanced', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
+  click(window, doc.querySelector('.gs-pill'));
+  await settle();
+  click(window, doc.querySelector('.gs-tile[data-step="workflows"]'));
+  await settle();
+  assert.ok(doc.getElementById('confirm-modal').classList.contains('hidden'));
+  assert.ok((doc.querySelector('.guide-layer')?.dataset.target || '').startsWith('.nav button[data-nav="composer"]'));
   doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
 });

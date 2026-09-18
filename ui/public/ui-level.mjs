@@ -160,10 +160,10 @@ export function createLevelController({ doc, save } = {}) {
     }
   }
 
-  function open(from) {
+  function open(from, { keepMsg = false } = {}) {
     if (!modal) return;
     opener = from || d.activeElement || null;
-    if (msg) { msg.textContent = ''; msg.className = 'hint'; }
+    if (msg && !keepMsg) { msg.textContent = ''; msg.className = 'hint'; }
     cards.innerHTML = levelCardsHtml(currentLevel(d));
     modal.classList.remove('hidden');
     const b = cards.querySelector('[aria-checked="true"]'); if (b) b.focus();

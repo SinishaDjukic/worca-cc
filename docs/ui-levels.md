@@ -41,9 +41,11 @@ anything.
 4. **An answer is never hidden.** A card Ask Worca emits (run, workflow or
    metrics proposal) is the assistant's reply. Hiding it would leave the chat
    text pointing at nothing. Trim the card's *fields*, not the card.
-5. **Guides raise the mode, they do not fail.** When a Getting started step
-   targets a control above the mode, the guide's hop becomes "open the mode
-   switch" (`gsRaiseLevelHop` in `app.js`).
+5. **Guides ask before they need a higher mode.** A Getting started step with a
+   `level:` above the current mode asks "Switch to Expert?" before the tour
+   moves anywhere; "Not now" leaves the mode and the page untouched
+   (`startGuide` in `app.js`). If the mode is lowered while a tour runs, its
+   next hop rings the mode switch instead of failing (`gsRaiseLevelHop`).
 6. **Upgrades lose nothing.** An install that already has projects or runs
    starts at Expert, which is the UI it always had. Only a fresh install starts
    at Simple (`effectiveUiLevel` in `ui/server.mjs`). The first project and the
