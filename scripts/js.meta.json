@@ -1,0 +1,22 @@
+{
+  "key": "js",
+  "metaVersion": 2,
+  "displayName": "JavaScript",
+  "description": "Runs an inline JavaScript function with worca's privileges: `export default async function ({ inputs, outputs, params, ctx, log })`. Works unchanged as a file script.",
+  "domain": "general",
+  "color": "violet",
+  "icon": "<path d=\"M8 4l-4 8 4 8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M16 4l4 8-4 8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+  "order": 20,
+  "runtime": "node",
+  "file": "js-inline.mjs",
+  "ports": "config",
+  "defaultPorts": {
+    "inputs": [ { "id": "in", "type": "md", "required": false } ],
+    "outputs": [ { "id": "out", "type": "md", "when": "always", "filename": "js-cycle{cycle}.md" } ]
+  },
+  "verdict": { "filename": "js-cycle{cycle}.json" },
+  "params": [
+    { "id": "source", "type": "code", "language": "js", "label": "Source", "required": true,
+      "default": "export default async function ({ inputs, outputs, params, ctx }) {\n  const fs = await import('node:fs');\n  fs.writeFileSync(outputs.out.path, '# js card\\n');\n  return { summary: 'ok' };\n}\n" }
+  ]
+}

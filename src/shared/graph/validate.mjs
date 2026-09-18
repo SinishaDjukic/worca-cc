@@ -1,13 +1,13 @@
 // src/shared/graph/validate.mjs
-// THE authority on v2 graph legality (base spec §2, V1-V21; V22 is RETIRED —
-// subsumed by the restored V7 — and its number stays reserved so V-rule
-// references remain stable). Server save (422), plugin import, the composer's
+// THE authority on v2 graph legality (base spec §2, V1-V22; V22 (script config)
+// reuses the number the retired single-wire rule freed). Server save (422), plugin import, the composer's
 // live report, the run-time check and the seed drift guard all come through
 // here, so it is pure, never throws on a malformed template, and every lookup
 // guards: a dangling endpoint or an unknown key is an issue to COLLECT.
-import { KINDS, NODE_ID_RE, LIMITS } from './constants.mjs';
+import { KINDS, KEYED_KINDS, NODE_ID_RE, LIMITS } from './constants.mjs';
 import { portsOf, findPort, resolveOrOutType } from './ports.mjs';
 import { classifyLoops } from './loops.mjs';
+import { paramValueError, mockErrors, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS } from './script-meta.mjs';
 
 const ARITY_SET = new Set(['and', 'or', 'combine']);
 const IN_PORT_RE = /^in\d+$/;
@@ -19,6 +19,7 @@ const AWAIT_PORT_ID = 'await';
  *  on a flow card. Unknown keys are PRESERVED and ignored, never stripped. */
 const KNOWN_CONFIG = {
   agent: new Set(['model', 'effort', 'fanOut', 'askQuestions', 'awaitAll', 'subagentModel']),
+  script: new Set(['params', 'ports', 'timeoutMs', 'awaitAll', 'mock']),
   task: new Set(['planStoreSeed']),
   and: new Set(['arity']),
   or: new Set(['arity']),
@@ -32,6 +33,8 @@ const KNOWN_WIRE_CONFIG = new Set(['maxCycles']);
  *  (workflows.mjs#setWorkflowNodeDefaults, ui/server.mjs template save). A
  *  strict subset of KNOWN_CONFIG.agent: awaitAll is TOPOLOGY, not a tunable. */
 export const AGENT_TUNABLES = ['model', 'effort', 'fanOut', 'askQuestions', 'subagentModel'];
+/** The per-node SCRIPT tunables (P2's per-project overlays); unused by v1 writers. */
+export const SCRIPT_TUNABLES = ['params', 'timeoutMs'];
 
 const isObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
@@ -184,8 +187,8 @@ export const RULES = [
     for (const n of nodes) {
       if (!KINDS.includes(n.kind)) {           // KINDS is a frozen ARRAY (P1 constants)
         add(`node '${n.id}' has unknown kind ${JSON.stringify(n.kind)} — expected one of ${[...KINDS].join(', ')}`, { nodeId: n.id });
-      } else if (n.kind === 'agent' && !n.key) add(`agent node '${n.id}' must declare a key`, { nodeId: n.id });
-      else if (n.kind !== 'agent' && n.key !== undefined) {
+      } else if (KEYED_KINDS.includes(n.kind) && !n.key) add(`${n.kind} node '${n.id}' must declare a key`, { nodeId: n.id });
+      else if (!KEYED_KINDS.includes(n.kind) && n.key !== undefined) {
         add(`node '${n.id}' of kind '${n.kind}' must not declare a key`, { nodeId: n.id });
       }
     }
@@ -193,12 +196,17 @@ export const RULES = [
 
   { code: 'V4', level: 'E', check({ nodes, portsFor }, add) {
     for (const n of nodes) {
-      if (n.kind !== 'agent' || !n.key) continue;                       // a missing key is V3's
+      if (!KEYED_KINDS.includes(n.kind) || !n.key) continue;             // a missing key is V3's
       const p = portsFor(n.id);
-      if (!p.known) add(`unknown agent "${n.key}" — no such key in the registry`, { nodeId: n.id });
-      else if (!p.ported) add(`agent "${n.key}" has no v2 ports — port its sidecar to metaVersion 2`, { nodeId: n.id });
+      const what = n.kind;
+      if (!p.known) add(`unknown ${what} "${n.key}" — no such key in the registry`, { nodeId: n.id });
+      else if (!p.ported && p.meta?.configPortsMissing) {
+        add(`script "${n.key}" takes its ports per card — add them in the inspector`, { nodeId: n.id, incomplete: true });
+      } else if (!p.ported && p.meta?.configPortsInvalid) {
+        add(`script "${n.key}" has invalid ports in its config — fix them in the inspector`, { nodeId: n.id });
+      } else if (!p.ported) add(`agent "${n.key}" has no v2 ports — port its sidecar to metaVersion 2`, { nodeId: n.id });
       else if (p.meta?.placeable === false) {
-        add(`agent "${n.key}" declares placeable: false and cannot be a graph node`, { nodeId: n.id });
+        add(`${what} "${n.key}" declares placeable: false and cannot be a graph node`, { nodeId: n.id });
       }
     }
   } },
@@ -263,10 +271,10 @@ export const RULES = [
 
   { code: 'V9', level: 'E', check({ nodes, metaOf, inputsOf, isWired, isLoopInput }, add) {
     for (const n of nodes) {
-      // AGENT inputs only. P1 marks the gate `inK` ports and End's `result`
+      // KEYED inputs only. P1 marks the gate `inK` ports and End's `result`
       // `required: true`, and V12/V21 already own them with a card-specific
       // sentence — without this guard one unwired `n_and.in2` reports TWICE.
-      if (n.kind !== 'agent' || !metaOf(n.id)) continue;               // V3/V4 own an unresolved node
+      if (!KEYED_KINDS.includes(n.kind) || !metaOf(n.id)) continue;   // V3/V4 own an unresolved node
       for (const inp of inputsOf(n.id)) {
         if (!inp?.required || inp.loop || isLoopInput(n.id, inp.id)) continue;
         // `incomplete`: the graph is UNFINISHED here, not wrong — the composer shows
@@ -403,7 +411,7 @@ export const RULES = [
 
   { code: 'V16', level: 'W', check({ nodes, metaOf, inputsOf, isWired, isLoopInput }, add) {
     for (const n of nodes) {
-      if (n.kind !== 'agent' || !n.config?.awaitAll || !metaOf(n.id)) continue;
+      if (!KEYED_KINDS.includes(n.kind) || !n.config?.awaitAll || !metaOf(n.id)) continue;
       const wired = inputsOf(n.id).filter((inp) => !isLoopInput(n.id, inp.id) && isWired(n.id, inp.id));
       if (wired.length < 2) {
         add(`node '${n.id}' sets awaitAll but has ${wired.length} wired non-loop input(s) — the barrier is a no-op`,
@@ -434,7 +442,7 @@ export const RULES = [
   // always source, so without it every double-loop seed would warn permanently.
   { code: 'V18', level: 'W', check({ nodes, nodeById, metaOf, inputsOf, inboundOf, outputPort, isLoopInput }, add) {
     for (const n of nodes) {
-      if (n.kind !== 'agent' || n.config?.awaitAll || !metaOf(n.id)) continue;
+      if (!KEYED_KINDS.includes(n.kind) || n.config?.awaitAll || !metaOf(n.id)) continue;
       let paired = 0;
       for (const inp of inputsOf(n.id)) {
         if (inp.id === AWAIT_PORT_ID || inp.synthetic) continue;                    // (c)
@@ -447,7 +455,7 @@ export const RULES = [
         paired += 1;
       }
       if (paired >= 2) {
-        add(`agent node '${n.id}' has ${paired} always-sourced payload inputs without awaitAll — `
+        add(`${n.kind} node '${n.id}' has ${paired} always-sourced payload inputs without awaitAll — `
           + 'it may double-fire on re-runs (enable Await-all or insert an AND card)', { nodeId: n.id });
       }
     }
@@ -463,7 +471,7 @@ export const RULES = [
       const target = nodeById.get(w.to.node);
       if ((target.kind === 'and' || target.kind === 'or') && IN_PORT_RE.test(w.to.port)) continue;
       if (target.kind === 'end' && w.to.port === 'result') continue;
-      if (target.kind === 'agent' && w.to.port === AWAIT_PORT_ID) continue;
+      if (KEYED_KINDS.includes(target.kind) && w.to.port === AWAIT_PORT_ID) continue;
       add(`blocking output '${w.from.node}.${w.from.port}' is wired into '${w.to.node}.${w.to.port}', `
         + 'which is not a loop input', { wireId: w.id });
     }
@@ -488,6 +496,50 @@ export const RULES = [
       if (!metaOf(e.id)) continue;
       if (outputsOf(e.id).length) add(`end node '${e.id}' must declare zero outputs`, { nodeId: e.id });
       if (!isWired(e.id, 'result')) add(`end node '${e.id}' input 'result' must be wired`, { nodeId: e.id, incomplete: true });
+    }
+  } },
+
+  // Script config (spec §9.1 V22): params against the sidecar's declarations,
+  // `ports` only where the sidecar says "config" (a MISSING or unreadable config
+  // is V4's), `mock` against the declared non-void outputs, `timeoutMs` an integer
+  // within [1 s, 24 h]. `incomplete` marks work-to-do (a required param nobody set yet).
+  { code: 'V22', level: 'E', check({ nodes, portsFor }, add) {
+    for (const n of nodes) {
+      if (n.kind !== 'script' || !n.key) continue;
+      const p = portsFor(n.id);
+      if (!p.known) continue;                                            // V4 owns it
+      const meta = p.meta || {};
+      const cfg = isObject(n.config) ? n.config : {};
+      const declared = Array.isArray(meta.params) ? meta.params : [];
+      const byId = new Map(declared.map((d) => [d.id, d]));
+      if (cfg.params !== undefined && !isObject(cfg.params)) add(`script node '${n.id}' config.params must be an object`, { nodeId: n.id });
+      const values = isObject(cfg.params) ? cfg.params : {};
+      for (const [id, value] of Object.entries(values)) {
+        const d = byId.get(id);
+        if (!d) {
+          add(`script node '${n.id}' sets unknown param '${id}' — script "${n.key}" declares ${declared.length ? declared.map((x) => x.id).join(', ') : 'no params'}`, { nodeId: n.id });
+          continue;
+        }
+        const bad = paramValueError(d, value);
+        if (bad) add(`script node '${n.id}' param '${id}': ${bad}`, { nodeId: n.id });
+      }
+      for (const d of declared) {
+        if (d.required && values[d.id] === undefined && d.default === undefined) {
+          add(`script node '${n.id}' is missing required param '${d.id}'`, { nodeId: n.id, incomplete: true });
+        }
+      }
+      if (meta.ports !== 'config' && cfg.ports !== undefined) {
+        add(`script node '${n.id}' carries config.ports but script "${n.key}" declares its ports in its sidecar`, { nodeId: n.id });
+      }
+      if (cfg.mock !== undefined) {
+        for (const e of mockErrors(cfg.mock, p.ported ? p.outputs : [])) add(`script node '${n.id}' config.mock: ${e}`, { nodeId: n.id });
+      }
+      if (cfg.timeoutMs !== undefined && (!Number.isInteger(cfg.timeoutMs) || cfg.timeoutMs < MIN_TIMEOUT_MS)) {
+        add(`script node '${n.id}' timeoutMs must be an integer >= ${MIN_TIMEOUT_MS} ms (got ${JSON.stringify(cfg.timeoutMs)})`, { nodeId: n.id });
+      } else if (cfg.timeoutMs > MAX_TIMEOUT_MS) {
+        // v4 T3: a timer delay past 2^31-1 ms fires after ONE millisecond — the card would be killed at once.
+        add(`script node '${n.id}' timeoutMs must be at most ${MAX_TIMEOUT_MS} ms (24 h) (got ${cfg.timeoutMs})`, { nodeId: n.id });
+      }
     }
   } },
 ];

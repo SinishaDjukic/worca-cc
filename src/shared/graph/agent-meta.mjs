@@ -177,7 +177,7 @@ export function normalizeAgentMeta(raw, opts = {}) {
   return { errors, meta };
 }
 
-function readVerdict(raw, err) {
+export function readVerdict(raw, err) {
   if (raw === undefined) return null;
   const filename = raw && typeof raw === 'object' && typeof raw.filename === 'string' ? raw.filename.trim() : '';
   if (!filename) { err('verdict must be an object with a filename'); return null; }
@@ -208,7 +208,11 @@ function readPortHead(raw, side, seen, err) {
   return port;
 }
 
-function readInputs(raw, err, warn) {
+/**
+ * @param {{noPromptFields?:boolean}} [opts] scripts: `as`, `directive` and `expands`
+ *  are prompt-side and REFUSED; no default `as` is stamped either.
+ */
+export function readInputs(raw, err, warn, opts = {}) {
   if (!Array.isArray(raw)) { err('inputs must be an array'); return []; }
   if (raw.length > MAX_PORTS_PER_SIDE) err(`inputs: at most ${MAX_PORTS_PER_SIDE} ports per side (got ${raw.length})`);
   const seen = new Set();
@@ -227,6 +231,13 @@ function readInputs(raw, err, warn) {
     }
     port.required = required;
     if (loop) port.loop = true;
+    if (opts.noPromptFields) {
+      for (const field of ['as', 'directive', 'expands']) {
+        if (p[field] !== undefined) err(`inputs.${port.id}: ${field} is a prompt-side field — a script input does not take it`);
+      }
+      out.push(port);
+      continue;
+    }
     if (p.expands) {
       if (port.type !== 'json') err(`inputs.${port.id}: expands is only legal on json inputs`);
       else port.expands = true;
@@ -244,9 +255,13 @@ function readInputs(raw, err, warn) {
   return out;
 }
 
-function readOutputs(raw, hasVerdict, err) {
+/**
+ * @param {{allowEmptyOutputs?:boolean, who?:string}} [opts] scripts may declare zero
+ *  outputs (a pure side effect); `who` names the declarer in the `when` error.
+ */
+export function readOutputs(raw, hasVerdict, err, opts = {}) {
   if (!Array.isArray(raw)) { err('outputs must be an array'); return []; }
-  if (raw.length === 0) err('at least one output port is required');
+  if (raw.length === 0 && !opts.allowEmptyOutputs) err('at least one output port is required');
   if (raw.length > MAX_PORTS_PER_SIDE) err(`outputs: at most ${MAX_PORTS_PER_SIDE} ports per side (got ${raw.length})`);
   const seen = new Set();
   const out = [];
@@ -257,7 +272,7 @@ function readOutputs(raw, hasVerdict, err) {
     if (!OUTPUT_WHEN.has(when)) err(`outputs.${port.id}: when must be one of ${[...OUTPUT_WHEN].join(', ')}`);
     else {
       if (when !== 'always' && !hasVerdict) {
-        err(`outputs.${port.id}: when "${when}" requires the agent to declare verdict: { filename }`);
+        err(`outputs.${port.id}: when "${when}" requires the ${opts.who || 'agent'} to declare verdict: { filename }`);
       }
       port.when = when;
     }

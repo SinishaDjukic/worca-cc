@@ -7,6 +7,7 @@
 // lookup guards instead of crashing.
 import { AWAIT_PORT, FLOW_KINDS, gatePorts, TASK_PORTS, END_PORTS } from './constants.mjs';
 import { hasBlocking } from './verdict.mjs';
+import { readConfigPorts } from './script-meta.mjs';
 
 /** Engine flow-card ports. `undefined` for an unknown kind — V3's error. */
 export function flowPorts(node) {
@@ -22,29 +23,48 @@ export function flowPorts(node) {
   return undefined;
 }
 
+const toIndex = (v) => (v instanceof Map ? v : new Map(Object.entries(v && typeof v === 'object' ? v : {})));
+
 /**
- * Build the ports function over the merged agent registry (an object or a Map
- * keyed by agent key). Agent nodes get their sidecar's typed ports PLUS the
- * engine-synthesized `await` gate appended LAST; flow cards get flowPorts.
- * Three outcomes, and V4 tells them apart:
- *   unknown key            -> undefined            (known:false)
- *   key without v2 ports   -> {known:true, ported:false}
- *   ported v2 sidecar      -> {known:true, ported:true, inputs:[...meta, await]}
+ * Build the ports function over the merged AGENT registry and the merged SCRIPT
+ * registry (objects or Maps keyed by key — the two namespaces never overlap, D16).
+ * Keyed nodes get their sidecar's typed ports PLUS the engine-synthesized `await`
+ * gate appended LAST; flow cards get flowPorts. Outcomes V4 tells apart:
+ *   unknown key                       -> undefined            (known:false)
+ *   agent key without v2 ports        -> {known:true, ported:false}
+ *   config-ported script, no config   -> {known:true, ported:false, configPortsMissing:true}
+ *   config-ported script, bad config  -> {known:true, ported:false, configPortsInvalid:true, configPortsErrors}
+ *   ported                            -> {known:true, ported:true, inputs:[...ports, await], outputs}
  */
-export function portsFnFor(agentsByKey) {
-  const index = agentsByKey instanceof Map
-    ? agentsByKey
-    : new Map(Object.entries(agentsByKey && typeof agentsByKey === 'object' ? agentsByKey : {}));
+export function portsFnFor(agentsByKey, scriptsByKey = {}) {
+  const agents = toIndex(agentsByKey);
+  const scripts = toIndex(scriptsByKey);
   return (node) => {
     if (!node || typeof node !== 'object') return undefined;
-    if (node.kind !== 'agent') return flowPorts(node);
-    const meta = index.get(node.key);
-    if (!meta) return undefined;
-    if (!Array.isArray(meta.inputs) || !Array.isArray(meta.outputs)) {
-      return { ...meta, known: true, ported: false, inputs: [], outputs: [] };
-    }
-    return { ...meta, known: true, ported: true, inputs: [...meta.inputs, AWAIT_PORT], outputs: [...meta.outputs] };
+    if (node.kind === 'agent') return sidecarPorts(agents.get(node.key));
+    if (node.kind === 'script') return scriptPorts(scripts.get(node.key), node);
+    return flowPorts(node);
   };
+}
+
+function sidecarPorts(meta) {
+  if (!meta) return undefined;
+  if (!Array.isArray(meta.inputs) || !Array.isArray(meta.outputs)) {
+    return { ...meta, known: true, ported: false, inputs: [], outputs: [] };
+  }
+  return { ...meta, known: true, ported: true, inputs: [...meta.inputs, AWAIT_PORT], outputs: [...meta.outputs] };
+}
+
+/** Script ports: the sidecar's, or — for `ports: "config"` (D14) — the placed
+ *  node's `config.ports` through the shared readers. */
+function scriptPorts(meta, node) {
+  if (!meta) return undefined;
+  if (meta.ports !== 'config') return sidecarPorts(meta);
+  const cfg = node?.config?.ports;
+  if (cfg === undefined) return { ...meta, known: true, ported: false, configPortsMissing: true, inputs: [], outputs: [] };
+  const { ports, errors } = readConfigPorts(cfg, { hasVerdict: !!meta.verdict });
+  if (!ports) return { ...meta, known: true, ported: false, configPortsInvalid: true, configPortsErrors: errors, inputs: [], outputs: [] };
+  return { ...meta, known: true, ported: true, inputs: [...ports.inputs, AWAIT_PORT], outputs: [...ports.outputs] };
 }
 
 /**

@@ -7,7 +7,7 @@ description: Run the node-graph multi-agent orchestrator over a software task in
 
 Drive the current project through the selected pipeline template (default `wf_default`: Plan → Refine ↺ → Implement → Review ↺ → End). Orchestration is performed by a deterministic Node.js script; this skill just launches it. Artifacts (plans, reviews, pipeline audit logs) are written under `ai-artifacts/` in the project.
 
-The orchestrator repo lives wherever it was installed. `<WORCA_REPO>` below is the absolute path of that repo (the directory containing `src/cli/worca-cc.mjs`). If you installed via `scripts/install.mjs`, the installer rewrites `<WORCA_REPO>` in this file to the real path automatically; otherwise substitute it yourself (or set an `WORCA_REPO` environment variable and use `"$WORCA_REPO"`).
+The orchestrator repo lives wherever it was installed. `<WORCA_REPO>` below is the absolute path of that repo (the directory containing `src/cli/worca-cc.mjs`). If you installed via `tools/install.mjs`, the installer rewrites `<WORCA_REPO>` in this file to the real path automatically; otherwise substitute it yourself (or set an `WORCA_REPO` environment variable and use `"$WORCA_REPO"`).
 
 ## /worca <prompt> — run the pipeline (default action)
 
@@ -52,7 +52,7 @@ This starts `ui/server.mjs` (Express + WebSocket, default port `4317`; set `PORT
 So a teammate can open Claude Code in their own repo and type `/worca <prompt>`, copy the agents and this skill into that project's `.claude/`:
 
 ```bash
-node <WORCA_REPO>/scripts/install.mjs "<targetDir>"
+node <WORCA_REPO>/tools/install.mjs "<targetDir>"
 ```
 
 - Copies `agents/*.md` into `<targetDir>/.claude/agents/` and `skills/worca/` into `<targetDir>/.claude/skills/worca/`.

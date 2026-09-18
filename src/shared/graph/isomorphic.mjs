@@ -4,17 +4,19 @@
 // when agents, wiring, gates, loops and their budgets are identical. Tunables
 // (model/effort/fanOut/askQuestions/subagentModel), positions, ids and names
 // are deliberately invisible — they are per-run tuning, not topology.
-// Pure, browser-safe, no imports.
+// Pure and browser-safe: its one import is the shared constants table.
+import { KEYED_KINDS } from './constants.mjs';
 
 /** The config keys that ARE topology, per kind (mirrors validate.mjs KNOWN_CONFIG minus the tunables). */
 const TOPOLOGY_CONFIG = Object.freeze({
-  task: ['planStoreSeed'], agent: ['awaitAll'], and: ['arity'], or: ['arity'], combine: ['arity'], end: [],
+  task: ['planStoreSeed'], agent: ['awaitAll'], script: ['awaitAll', 'ports', 'params'],
+  and: ['arity'], or: ['arity'], combine: ['arity'], end: [],
 });
 
 export function nodeLabel(node) {
   const kind = String(node?.kind ?? '');
   const cfg = node && typeof node.config === 'object' && node.config ? node.config : {};
-  const parts = [kind, kind === 'agent' ? String(node.key ?? '') : ''];
+  const parts = [kind, KEYED_KINDS.includes(kind) ? String(node.key ?? '') : ''];
   for (const k of TOPOLOGY_CONFIG[kind] || []) {
     const v = cfg[k];
     // A gate's arity defaults to 2; an absent flag equals an explicit false.

@@ -106,3 +106,41 @@ test('firedOutputs fires always + exactly one conditional side, in declared orde
   assert.deepEqual(firedOutputs(portsFn(agent('n', 'planner')), null).map((o) => o.id), ['plan'],
     'accepts a resolved ports object as well as an array');
 });
+
+const SCRIPTS = {
+  runTests: { key: 'runTests', metaVersion: 2, runtime: 'node', verdict: { filename: 'tests-cycle{cycle}.json' },
+    inputs: [{ id: 'done', type: 'void', required: false }],
+    outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'tests-cycle{cycle}.md' }, { id: 'pass', type: 'void', when: 'clean' }] },
+  shellLike: { key: 'shellLike', metaVersion: 2, runtime: 'shell', ports: 'config', verdict: { filename: 'shell-cycle{cycle}.json' },
+    defaultPorts: { inputs: [], outputs: [] }, params: [{ id: 'command', type: 'command', required: true }] },
+};
+const both = portsFnFor(REG, SCRIPTS);
+const script = (id, key, config = {}) => ({ id, kind: 'script', key, x: 0, y: 0, config });
+
+test('script nodes resolve through the scripts index: sidecar ports + await; unknown keys stay undefined', () => {
+  const p = both(script('n1', 'runTests'));
+  assert.equal(p.known, true);
+  assert.equal(p.ported, true);
+  assert.deepEqual(p.inputs.map((i) => i.id), ['done', 'await']);
+  assert.deepEqual(p.outputs.map((o) => o.id), ['log', 'pass']);
+  assert.equal(p.runtime, 'node');
+  assert.equal(both(script('n1', 'ghost')), undefined);
+  assert.equal(both(agent('n2', 'runTests')), undefined, 'an agent node never resolves through the scripts index');
+  assert.equal(portsFn(script('n1', 'runTests')), undefined, 'one-argument portsFnFor has no scripts');
+});
+
+test('ports: "config" scripts read node.config.ports; missing and invalid configs are told apart for V4', () => {
+  const ok = both(script('n1', 'shellLike', { ports: {
+    inputs: [{ id: 'in', type: 'md', required: false }],
+    outputs: [{ id: 'fail', type: 'md', when: 'blocking', filename: 'shell-cycle{cycle}.md' }, { id: 'pass', type: 'void', when: 'clean' }] } }));
+  assert.equal(ok.ported, true);
+  assert.deepEqual(ok.inputs.map((i) => i.id), ['in', 'await']);
+  assert.deepEqual(ok.outputs.map((o) => [o.id, o.when]), [['fail', 'blocking'], ['pass', 'clean']]);
+  assert.equal(ok.outputs[0].artifactKind, 'fail', 'config ports are normalized like sidecar ports');
+  const missing = both(script('n1', 'shellLike'));
+  assert.deepEqual([missing.known, missing.ported, missing.configPortsMissing], [true, false, true]);
+  const bad = both(script('n1', 'shellLike', { ports: { inputs: [{ id: 'x', type: 'md', as: 'file' }], outputs: [] } }));
+  assert.deepEqual([bad.known, bad.ported, bad.configPortsInvalid], [true, false, true]);
+  assert.match(bad.configPortsErrors[0], /prompt-side field/);
+  assert.deepEqual(portsOf(both, missing && script('n1', 'shellLike')).inputs, [], 'portsOf collapses an un-ported node to no ports');
+});

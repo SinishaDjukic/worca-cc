@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// scripts/install.mjs
+// tools/install.mjs
 //
 // Copy the orchestrator agents and the /worca skill into a target project's
 // .claude directory so that opening Claude Code there lets the user run:
 //   /worca <prompt>
 //
 // Usage:
-//   node scripts/install.mjs <targetDir> [--force]
+//   node tools/install.mjs <targetDir> [--force]
 //
 // - agents/*.md            -> <targetDir>/.claude/agents/
 // - skills/worca/**        -> <targetDir>/.claude/skills/worca/
@@ -39,7 +39,7 @@ function parseArgs(argv) {
 const HELP = `install — copy orchestrator agents + /worca skill into a project
 
 Usage:
-  node scripts/install.mjs <targetDir> [--force]
+  node tools/install.mjs <targetDir> [--force]
 
 Copies:
   agents/*.md            -> <targetDir>/.claude/agents/

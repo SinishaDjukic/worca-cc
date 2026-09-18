@@ -15,13 +15,15 @@ import { rm, readFile } from 'node:fs/promises';
 
 import {
   RunHarness, isAbort, isPause, pauseErr, firstLine, jsonClone,
-  clipMiddle, sumStepActive, normalizeClarifyAnswer,
+  clipMiddle, sumStepActive, normalizeClarifyAnswer, findDisabledPluginFor,
 } from './run-harness.mjs';
 import { resolveGraph, loadAgentFile, GRAPH_DEFAULT_WORKFLOW, writeGraphWorkflow, readWorkflow } from './workflows.mjs';
+import { loadScriptRegistry } from './script-registry.mjs';
 import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME } from './graph/builtin-workflows.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
-import { DEFAULT_MAX_CYCLES } from '../shared/graph/constants.mjs';
+import { DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../shared/graph/constants.mjs';
+import { scriptNodeCtx } from '../shared/graph/script-meta.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition } from './graph/executor.mjs';
@@ -67,6 +69,7 @@ export class GraphOrchestrator extends RunHarness {
     if (!this.opts.workflowId) this.workflowId = GRAPH_DEFAULT_WORKFLOW.id;
     // (this._runners is assigned by the _initRunners hook the base constructor calls.)
     this.resolved = null;        // resolveGraph's { template, ports, loops, nodes→nodeCtx, wires, agentsByKey, agentKeys }
+    this.scriptRegistry = null;   // loadScriptRegistry() for this run (D16-filtered); tests override the built-in dir with opts.scriptsDir
     this._scheduler = null;
     this._graphSnapshot = null;  // last CLEAN scheduler snapshot
     this._resumeSnapshot = null; // the snapshot a resume restores from
@@ -111,16 +114,18 @@ export class GraphOrchestrator extends RunHarness {
    * @returns {Promise<{manifest:object, agentKeys:Set<string>, workflow:{id:string,name:string}}>}
    */
   async _resolveTopology(registry) {
+    this.scriptRegistry = loadScriptRegistry({ scriptsDir: this.opts.scriptsDir, agentKeys: Object.keys(registry || {}) });
     if (this.workflowId === AUTO_WORKFLOW_ID) return this._autoBootstrapTopology();
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
-      isWorkspace: this.isWorkspace,
+      isWorkspace: this.isWorkspace, scripts: this.scriptRegistry,
     });
     this._adoptResolvedGraph(resolved);
+    this._preflightScriptKeys(this.resolved.scriptKeys);
     // The manifest is built from the RESOLVED template, the resolver's registry
     // slice and its EFFECTIVE per-node/per-wire values (P2 contract): the run
     // monitor shows exactly what the engine will run.
     const manifest = buildGraphManifest(this.resolved.template, this.resolved.agentsByKey, {
-      overlays: { nodes: this.resolved.nodeCtx, wires: this.resolved.wires },
+      overlays: { nodes: this.resolved.nodeCtx, wires: this.resolved.wires }, scripts: this.resolved.scriptsByKey,
     });
     return {
       manifest,
@@ -387,7 +392,7 @@ export class GraphOrchestrator extends RunHarness {
     for (const [nodeId, sel] of Object.entries(tunables || {})) overlayNodes[nodeId] = { ...sel };
     for (const [nodeId, sel] of Object.entries(answer.nodes || {})) overlayNodes[nodeId] = { ...(overlayNodes[nodeId] || {}), ...sel };
     const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
-      isWorkspace: false, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true,
+      isWorkspace: false, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
     });
     if (!this.humanInLoop) {
       // spec D3: no agent may stop the run to ask (generic — every agent node).
@@ -396,10 +401,11 @@ export class GraphOrchestrator extends RunHarness {
     this.workflowId = workflowId;
     this._adoptResolvedGraph(resolved);
     const manifest = buildGraphManifest(this.resolved.template, this.resolved.agentsByKey, {
-      overlays: { nodes: this.resolved.nodeCtx, wires: this.resolved.wires },
+      overlays: { nodes: this.resolved.nodeCtx, wires: this.resolved.wires }, scripts: this.resolved.scriptsByKey,
     });
     manifest.auto = { status: 'decided', via, rounds: round, humanInLoop: this.humanInLoop, workflowId };
     this._preflightAgentKeys(this.resolved.agentKeys);
+    this._preflightScriptKeys(this.resolved.scriptKeys);
     this.state.stepper = manifest;
     // PR #434 review, finding 3: the pending proposal is kept until HERE. A throw before the
     // workflowId swap above (mintAutoWorkflowId, writeGraphWorkflow, resolveGraph) unwinds
@@ -466,7 +472,7 @@ export class GraphOrchestrator extends RunHarness {
 
   /**
    * Adopt a resolveGraph result (P2 contract: { template, ports, loops, nodes,
-   * wires, agentsByKey, agentKeys }). The resolver has ALREADY applied the
+   * wires, agentsByKey, agentKeys, scriptsByKey, scriptKeys }). The resolver has ALREADY applied the
    * workspace substitution AND the workspaceFanOut forcing (spec §5.10 — a META
    * flag, never a key set) and classified the loops ONCE. This class names the
    * per-node table `nodeCtx`; nothing is re-derived and no template node is
@@ -514,6 +520,25 @@ export class GraphOrchestrator extends RunHarness {
     if (this.resolved?.agentKeys) return new Set(this.resolved.agentKeys);
     const manifest = this.state.stepper;
     return manifest ? new Set(resolvedFromManifest(manifest, this.registry).agentKeys) : new Set();
+  }
+
+  /** §8.3: every script key must resolve in this run's script registry BEFORE any
+   *  node executes — the mirror of the base's _preflightAgentKeys, with the same
+   *  disabled-plugin hint. resolveGraph already refuses an unknown key on a fresh
+   *  run; this is what catches a plugin withdrawn while the run sat paused. */
+  _preflightScriptKeys(scriptKeys) {
+    const reg = this.scriptRegistry || {};
+    const missing = [];
+    for (const key of new Set(scriptKeys || [])) {
+      if (!key || Object.hasOwn(reg, key)) continue;
+      const plugin = findDisabledPluginFor(key, 'scripts');
+      missing.push(plugin
+        ? `script "${key}" comes from disabled plugin "${plugin}" — enable it`
+        : `script "${key}" is not installed (removed plugin?)`);
+    }
+    if (missing.length) {
+      throw new Error(`Preflight failed: ${missing.length} workflow script key(s) do not resolve:\n` + missing.map((m) => `  - ${m}`).join('\n'));
+    }
   }
 
   // ── hook 2: run the graph ──────────────────────────────────────────────────
@@ -847,8 +872,16 @@ export class GraphOrchestrator extends RunHarness {
       // here, not on the next spawn.
       this._checkAbort();
       this._checkPause();
-      if (node.kind !== 'agent') return await this._runFlow(ctx);
-      this._checkCostLimits();                  // budget gate at EVERY agent launch (throws pauseErr)
+      if (!KEYED_KINDS.includes(node.kind)) return await this._runFlow(ctx);
+      this._checkCostLimits();                  // budget gate at EVERY spawn (throws pauseErr)
+      if (node.kind === 'script') {
+        // A child process through the NODE site: every runner error carries
+        // errorClass:null (D9), so _recover lands on the '*' row — pause as
+        // REASON.ERROR, resumable, never a "network" retry. No questions, no session.
+        const result = await this._runNodeAttempts(nc, ctx);
+        await this._afterExecution(nc, ctx, result);
+        return result;
+      }
       this._primeQuestions(nc, ctx);
       let result = await this._runNodeAttempts(nc, ctx);
       result = await this._questionsLoop(nc, ctx, result);
@@ -992,7 +1025,8 @@ export class GraphOrchestrator extends RunHarness {
       stepIndex: null,
       cycle: ordinal,
       uiPhase: this._uiPhaseOf(node.id),
-      model: nc.model || this.claude.model,
+      // A script has no model: no per-model cost override, no cost-reliability observation.
+      model: nc.kind === 'script' ? null : (nc.model || this.claude.model),
     };
     return {
       // Consumed as `cwd` by phases.mjs (runOpts). runCwd is the run root on a
@@ -1031,7 +1065,7 @@ export class GraphOrchestrator extends RunHarness {
         // model the spawn will actually use, global default included. Live
         // catalog on purpose — a resume re-resolves the env the same way. One
         // settings + plugins-lock read per dispatch; never call this per entry.
-        endpointRouted: modelHasBaseUrlRouting(nc.model || this.claude.model),
+        endpointRouted: nc.kind === 'agent' ? modelHasBaseUrlRouting(nc.model || this.claude.model) : false,
         agentPrompt: nc.agentPrompt,
         tools: nc.tools,               // frontmatter grants MUST be stamped
         promptHints: nc.promptHints || '',
@@ -1054,6 +1088,10 @@ export class GraphOrchestrator extends RunHarness {
       outputs,
       verdict,
       runCtx,
+      // The script contract (spec §6.1): what script-runner.mjs spawns. Absent on every other kind.
+      script: nc.kind === 'script'
+        ? { meta: nc.meta, runtime: nc.runtime, file: nc.file, command: nc.command, params: nc.params, timeoutMs: nc.timeoutMs, mock: nc.mock }
+        : undefined,
       runners: this._runners,             // P3's injection seam (runExecution reads ctx.runners)
       resumeSessionId: this._takeResumeSession(executionId),
       ask: (q) => this._enqueueAsk(() => this._ask(q)),
@@ -1109,7 +1147,8 @@ export class GraphOrchestrator extends RunHarness {
         kind: ctx.slice ? 'task' : 'cycle',
         ordinal: ctx.ordinal,
         cycle: ctx.ordinal,                 // legacy alias the whole UI reads
-        agentKey: ctx.node?.key ?? null,
+        agentKey: ctx.node?.kind === 'agent' ? (ctx.node.key ?? null) : null,   // agents only (D17: it must not lie)
+        nodeKey: ctx.node?.key ?? null,                                          // every keyed kind
         phase: ctx.node?.key ?? ctx.uiPhase, // legacy column
         stepIndex: null,                    // a graph has executions, not step indexes
         status,
@@ -1241,6 +1280,18 @@ export class GraphOrchestrator extends RunHarness {
       this._artifact(port.artifactKind || port.id, path, {
         nodeId: ctx.nodeId, executionId: ctx.executionId, port: port.id, cycle: ctx.ordinal,
       });
+    }
+    if (nc.kind === 'script') {
+      // The envelope audit copy is an artifact under scripts/ (§6.5); the row gets the runtime facts (D17).
+      if (result?.envelopePath) {
+        this._artifact('envelope', result.envelopePath, { nodeId: ctx.nodeId, executionId: ctx.executionId, port: null, cycle: ctx.ordinal });
+      }
+      const step = this.state.steps.find((s) => s.key === ctx.executionId);
+      if (step) {
+        step.runtime = result?.runtime ?? nc.runtime ?? null;
+        step.exitCode = result?.exitCode ?? null;
+      }
+      return;                                    // no memory sync, no worktree staging
     }
     // Agent memory (§5): sync the mount back after EVERY execution, slices included.
     await this._syncMemory(nc, ctx);
@@ -1462,10 +1513,12 @@ export class GraphOrchestrator extends RunHarness {
     this._clearPauseReason();
     const manifest = rp.manifest || this.state.stepper;
     this.state.stepper = manifest;
-    this._adoptResolvedGraph(resolvedFromManifest(manifest, this.registry));
+    this.scriptRegistry = loadScriptRegistry({ scriptsDir: this.opts.scriptsDir, agentKeys: Object.keys(this.registry || {}) });
+    this._adoptResolvedGraph(resolvedFromManifest(manifest, this.registry, this.scriptRegistry));
     // §9.4, unchanged messages: the providing plugin may have been disabled or
     // uninstalled while this run sat paused. (Same place v1 re-preflights.)
     this._preflightAgentKeys(this.resolved.agentKeys);
+    this._preflightScriptKeys(this.resolved.scriptKeys);
     // Prompt bodies + frontmatter tools: the one thing the manifest never carries.
     const cache = new Map();
     for (const nc of Object.values(this.resolved.nodeCtx)) {
@@ -1498,13 +1551,15 @@ export class GraphOrchestrator extends RunHarness {
  * mockRole, displayName).
  * @param {object} manifest a manifest v2
  * @param {Record<string,object>} registry loadAgentRegistry() output
- * @returns {{template:object, ports:Function, loops:object, nodes:Record<string,object>, wires:Record<string,{maxCycles:number}>, agentsByKey:Record<string,object>, agentKeys:Set<string>}}
+ * @param {Record<string,object>} [scripts] loadScriptRegistry() output (script nodes)
+ * @returns {{template:object, ports:Function, loops:object, nodes:Record<string,object>, wires:Record<string,{maxCycles:number}>, agentsByKey:Record<string,object>, agentKeys:Set<string>, scriptsByKey:Record<string,object>, scriptKeys:Set<string>}}
  */
-export function resolvedFromManifest(manifest, registry) {
+export function resolvedFromManifest(manifest, registry, scripts = {}) {
   const reg = registry && typeof registry === 'object' ? registry : {};
+  const scr = scripts && typeof scripts === 'object' ? scripts : {};
   const template = manifestTemplate(manifest);   // restores node.config + loop wire config.maxCycles verbatim
   const manPorts = manifestPortsFn(manifest);
-  const regPorts = registryPortsFn(reg);
+  const regPorts = registryPortsFn(reg, scr);
   const ports = (node) => {
     const snap = manPorts(node);
     const live = regPorts(node) || { inputs: [], outputs: [] };
@@ -1523,6 +1578,13 @@ export function resolvedFromManifest(manifest, registry) {
   const nodeCtx = {};
   const keyCounts = new Map();
   for (const mn of manifest.graph?.nodes || []) {
+    if (mn.kind === 'script') {
+      keyCounts.set(mn.key, (keyCounts.get(mn.key) || 0) + 1);
+      // v4 T5: the SAME builder resolveGraph uses, over the manifest cell's AUTHORED config (the manifest keeps
+      // `config` verbatim) and the LIVE registry entry. No entry => a stub (`file: null`) the preflight refuses.
+      nodeCtx[mn.id] = scriptNodeCtx({ id: mn.id, key: mn.key, config: mn.config }, scr[mn.key]);
+      continue;
+    }
     if (mn.kind !== 'agent') {
       nodeCtx[mn.id] = { nodeId: mn.id, kind: mn.kind, key: null, config: { ...(mn.config || {}) } };
       continue;
@@ -1547,7 +1609,7 @@ export function resolvedFromManifest(manifest, registry) {
     };
   }
   for (const nc of Object.values(nodeCtx)) {
-    if (nc.kind === 'agent') nc.duplicateKey = (keyCounts.get(nc.key) || 0) > 1;
+    if (KEYED_KINDS.includes(nc.kind)) nc.duplicateKey = (keyCounts.get(nc.key) || 0) > 1;
   }
   const wires = {};
   for (const w of manifest.graph?.wires || []) {
@@ -1560,5 +1622,12 @@ export function resolvedFromManifest(manifest, registry) {
     agentsByKey[nc.key] = nc.meta;
     agentKeys.add(nc.key);
   }
-  return { template, ports, loops: classifyLoops(template, ports), nodes: nodeCtx, wires, agentsByKey, agentKeys };
+  const scriptsByKey = {};
+  const scriptKeys = new Set();
+  for (const nc of Object.values(nodeCtx)) {
+    if (nc.kind !== 'script') continue;
+    scriptsByKey[nc.key] = nc.meta;
+    scriptKeys.add(nc.key);
+  }
+  return { template, ports, loops: classifyLoops(template, ports), nodes: nodeCtx, wires, agentsByKey, agentKeys, scriptsByKey, scriptKeys };
 }

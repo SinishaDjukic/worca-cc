@@ -22,9 +22,12 @@ import { isSubagentModelValue } from './model-env.mjs';
 const validSubagentModel = (v) => (isSubagentModelValue(v) ? v : undefined);
 import { slugify } from './artifacts.mjs';
 import { DEFAULT_AGENTS_DIR, loadAgentRegistry } from './agent-registry.mjs'; // fileURLToPath-based (Windows-safe)
+import { loadScriptRegistry } from './script-registry.mjs';
 import { readPluginsLock } from './plugins-lock.mjs';                 // a DISABLED plugin's rows are hidden
 import { validateGraph, formatIssue, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
+import { KEYED_KINDS } from '../shared/graph/constants.mjs';
+import { scriptNodeCtx } from '../shared/graph/script-meta.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, AUTO_WORKFLOW_STUB,
   GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_NAME, isReservedWorkflowId,
@@ -409,11 +412,13 @@ export async function listWorkflows({ includeArchived = false, includeDisabled =
  * and must never refuse a run.
  * @param {object} tpl a version-2 template
  * @param {Record<string,object>} [registry] injected registry; the live one otherwise
+ * @param {Record<string,object>} [scripts] injected script registry; the live one otherwise
  * @throws {Error} code 'INVALID_GRAPH', `issues` = the validator's error list
  */
-function assertValidGraph(tpl, registry) {
+function assertValidGraph(tpl, registry, scripts) {
   const reg = registry && typeof registry === 'object' ? registry : loadAgentRegistry();
-  const { ok, errors } = validateGraph(tpl, registryPortsFn(reg));
+  const scr = scripts && typeof scripts === 'object' ? scripts : loadScriptRegistry({ agentKeys: Object.keys(reg) });
+  const { ok, errors } = validateGraph(tpl, registryPortsFn(reg, scr));
   if (ok) return;
   throw Object.assign(
     new Error(`workflow "${tpl.id}" no longer matches the agents it uses: `
@@ -428,9 +433,9 @@ function assertValidGraph(tpl, registry) {
  *  `checkGraph:false` is the READ escape hatch (GET /api/workflows/:id): a
  *  stale template must still open in the Composer, or it can never be repaired.
  *  @param {string} id
- *  @param {{registry?:Record<string,object>, checkGraph?:boolean}} [opts]
+ *  @param {{registry?:Record<string,object>, scripts?:Record<string,object>, checkGraph?:boolean}} [opts]
  */
-export async function assertRunnableWorkflow(id, { registry, checkGraph = true } = {}) {
+export async function assertRunnableWorkflow(id, { registry, scripts, checkGraph = true } = {}) {
   const wanted = typeof id === 'string' && id.trim() ? id.trim() : GRAPH_DEFAULT_WORKFLOW.id;
   // The Auto entry has no graph to check: the run decides one (spec §5.1).
   if (wanted === AUTO_WORKFLOW_ID) return AUTO_WORKFLOW_STUB;
@@ -445,7 +450,7 @@ export async function assertRunnableWorkflow(id, { registry, checkGraph = true }
         + `enable the plugin (Plugins view, or: worca plugin enable ${plugin}) to use it`), { code: 'PLUGIN_DISABLED' });
     }
     // A v1 row is not a graph: engine-select owns its refusal (V1_RUN_RETIRED).
-    if (checkGraph && live.version === 2) assertValidGraph(live, registry);
+    if (checkGraph && live.version === 2) assertValidGraph(live, registry, scripts);
     return live;
   }
   const archived = await readWorkflow(wanted, { includeArchived: true });
@@ -603,6 +608,7 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   // constant) whose agent nodes carry the RESOLVED key after workspace substitution.
   const tpl = structuredClone(stored);
   const reg = registry && typeof registry === 'object' ? registry : {};
+  const scripts = opts.scripts && typeof opts.scripts === 'object' ? opts.scripts : loadScriptRegistry({ agentKeys: Object.keys(reg) });
   const isWorkspace = !!opts.isWorkspace;
   const variants = isWorkspace ? workspaceVariants(reg) : {};
   // Per-project overlays. An Auto run owns its tuning (spec D7/D9): with
@@ -631,7 +637,20 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   const nodes = {};
   const agentsByKey = {};
   const agentKeys = new Set();
+  const scriptsByKey = {};
+  const scriptKeys = new Set();
   for (const node of Array.isArray(tpl.nodes) ? tpl.nodes : []) {
+    if (node.kind === 'script') {
+      const meta = scripts[node.key];
+      if (!meta) throw new Error(`unknown script "${node.key}" — no such key in the registry`);
+      if (meta.placeable === false) throw new Error(`script "${node.key}" declares placeable: false and cannot be a graph node`);
+      // v4 T5: ONE builder for the run-time facts of a placed card — the resume path (Task 9), the offline runner
+      // (Task 13) and P1c's bench build the same object from the same function, so they cannot drift apart.
+      nodes[node.id] = scriptNodeCtx(node, meta);
+      scriptsByKey[node.key] = meta;
+      scriptKeys.add(node.key);
+      continue;
+    }
     if (node.kind !== 'agent') {
       nodes[node.id] = { nodeId: node.id, kind: node.kind, key: null, config: { ...(node.config || {}) } };
       continue;
@@ -699,13 +718,13 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
 
   // Two nodes sharing one agent key prefix their run-store outputs (executor dupPrefix).
   const keyCount = new Map();
-  for (const nc of Object.values(nodes)) if (nc.kind === 'agent') keyCount.set(nc.key, (keyCount.get(nc.key) || 0) + 1);
-  for (const nc of Object.values(nodes)) if (nc.kind === 'agent') nc.duplicateKey = (keyCount.get(nc.key) || 0) > 1;
+  for (const nc of Object.values(nodes)) if (KEYED_KINDS.includes(nc.kind)) keyCount.set(nc.key, (keyCount.get(nc.key) || 0) + 1);
+  for (const nc of Object.values(nodes)) if (KEYED_KINDS.includes(nc.kind)) nc.duplicateKey = (keyCount.get(nc.key) || 0) > 1;
 
   // Budgets ride LOOP wires only: overlay > authored > DEFAULT_MAX_CYCLES.
   // portsFn + loops are computed ONCE here and RETURNED — P4 hands them to the
   // scheduler and the manifest builder instead of re-deriving them.
-  const portsFn = registryPortsFn(agentsByKey);
+  const portsFn = registryPortsFn(agentsByKey, scriptsByKey);
   const loops = classifyLoops(tpl, portsFn);
   const { loopWireIds } = loops;
   const wires = {};
@@ -714,5 +733,5 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     const raw = Number(wireCfg[w.id]?.maxCycles ?? w.config?.maxCycles);
     wires[w.id] = { maxCycles: Number.isInteger(raw) && raw >= 1 ? raw : DEFAULT_MAX_CYCLES };
   }
-  return { template: tpl, ports: portsFn, loops, nodes, wires, agentsByKey, agentKeys };
+  return { template: tpl, ports: portsFn, loops, nodes, wires, agentsByKey, agentKeys, scriptsByKey, scriptKeys };
 }

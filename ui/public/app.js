@@ -1947,7 +1947,7 @@ async function initComposer() {
   gvComposer.fit();
 }
 
-// The headless-Chrome probe seam (scripts/verify-composer-cdp.mjs). It exposes
+// The headless-Chrome probe seam (tools/verify-composer-cdp.mjs). It exposes
 // no mutator the UI does not already own — just the live editor and its view.
 if (typeof window !== 'undefined') window.__gv = () => (gvComposer ? { c: gvComposer, v: gvComposer.view } : null);
 

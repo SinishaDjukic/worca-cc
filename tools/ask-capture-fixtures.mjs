@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// scripts/ask-capture-fixtures.mjs
+// tools/ask-capture-fixtures.mjs
 // Capture REAL claude stream-json fixtures for the Ask Worca reducer tests
 // (ask-worca-design.md §12): seven scenarios through the exact sandbox recipe,
 // SANITISED (home paths, uuids, message/tool/agent ids, timestamps, secrets) and
 // written to test/fixtures/ask/<name>.jsonl + <name>.meta.json. Re-running
 // replaces the set. Spends money (haiku, < $0.30) and needs `claude` 2.1.239.
 //
-//   node --disable-warning=ExperimentalWarning scripts/ask-capture-fixtures.mjs [--only <name>] [--model <id>] [--out <dir>]
+//   node --disable-warning=ExperimentalWarning tools/ask-capture-fixtures.mjs [--only <name>] [--model <id>] [--out <dir>]
 //
 // HARD GATE: this is the only code in the repo that spawns the real claude CLI,
 // so it refuses to run unless WORCA_ALLOW_LIVE_CLAUDE=1 is set by hand. Nothing

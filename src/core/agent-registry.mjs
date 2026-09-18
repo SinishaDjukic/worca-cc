@@ -181,16 +181,18 @@ export function userAgentsDir() {
 
 /**
  * Third registry layer (spec §9.1): every ENABLED installed plugin's
- * current/agents dir, in lexicographic plugin-name order — the deterministic
- * collision winner among plugins. An entry is skipped when disabled
+ * current/<subdir> dir, in lexicographic plugin-name order — the deterministic
+ * collision winner among plugins. Shared by the agent registry (`agents`) and the
+ * script registry (`scripts`). An entry is skipped when disabled
  * (enabled === false in the lock) or broken (existsSync follows the current/
  * symlink, so a missing or dangling symlink — and a version dir without
- * agents/ — drops out). Wrapped in try/catch like userAgentsDir(): with no
+ * <subdir>/ — drops out). Wrapped in try/catch like userAgentsDir(): with no
  * resolvable worca-cc home (bare node:test runner) or an unreadable lock this
  * returns [] and registry loads never throw.
+ * @param {'agents'|'scripts'} subdir
  * @returns {Array<{plugin: string, dir: string, builtFor: number|null}>}
  */
-export function pluginAgentLayers() {
+export function pluginLayers(subdir) {
   try {
     const lock = readPluginsLock();
     return Object.keys(lock)
@@ -206,7 +208,7 @@ export function pluginAgentLayers() {
           // guards the same case the same way.
           builtFor = declaredApi(raw?.engines?.['worca-cc-api'] ?? '') || null;
         } catch { builtFor = null; } // unreadable manifest: the message degrades, the skip does not
-        return { plugin: name, dir: join(dir, 'agents'), builtFor };
+        return { plugin: name, dir: join(dir, subdir), builtFor };
       })
       .filter(({ dir }) => existsSync(dir));
   } catch {
@@ -214,10 +216,16 @@ export function pluginAgentLayers() {
   }
 }
 
-/** Scan one layer dir for *.meta.json; stamps the COMPUTED origin/agentPath/
- *  descriptionDerived fields (none of which normalizeMeta returns, so none can
- *  be persisted back into a sidecar). */
-function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null, onDrop = null } = {}) {
+export function pluginAgentLayers() { return pluginLayers('agents'); }
+
+/**
+ * Scan one layer dir for `*.meta.json` and normalize each through
+ * `normalize(parsed, { warn })` (null = skip). Stamps the COMPUTED `origin`.
+ * ONE reader for "a directory of sidecars", two normalizers (agents, scripts).
+ * `tag` prefixes the warnings (`[agent-registry]` / `[script-registry]`).
+ * @returns {Array<{meta: object, file: string}>}
+ */
+export function scanMetaLayer(dir, origin, { normalize, tag, requireMetaV2 = false, builtFor = null, onDrop = null }) {
   // Every skip below is a CONTRIBUTION THE USER CANNOT SEE unless someone
   // reports it: console.warn reaches a server log, not the Plugins card, the
   // install receipt or the doctor. onDrop is that reporting channel — optional,
@@ -229,7 +237,7 @@ function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null, onDrop
   } catch {
     return []; // missing layer dir => empty layer (fails safe)
   }
-  const metas = [];
+  const out = [];
   for (const f of files) {
     if (!f.endsWith('.meta.json')) continue;
     let parsed;
@@ -246,18 +254,31 @@ function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null, onDrop
     // layers keep the v1 path until the engine cut-over.
     if (requireMetaV2 && Number(parsed?.metaVersion) !== 2) {
       const builtForText = builtFor == null ? 'an older plugin API' : `plugin API ${builtFor}`;
-      console.warn(`[agent-registry] ${origin}/${f}: built for ${builtForText} — ${NOT_META_V2} — ignored`);
+      console.warn(`[${tag}] ${origin}/${f}: built for ${builtForText} — ${NOT_META_V2} — ignored`);
       drop(f, `built for ${builtForText} — ${NOT_META_V2}`);
       continue;
     }
-    // Capture normalizeMeta's own reason rather than re-deriving one: the LAST
+    // Capture the normalizer's own reason rather than re-deriving one: the LAST
     // warning it emits is the fatal one (non-fatal coercion warnings precede it).
     let why = '';
-    const meta = normalizeMeta(parsed, {
-      warn: (m) => { why = String(m).replace(/^\[agent-registry\] /, ''); console.warn(m); },
+    const prefix = `[${tag}] `;
+    const meta = normalize(parsed, {
+      warn: (m) => { why = String(m).startsWith(prefix) ? String(m).slice(prefix.length) : String(m); console.warn(m); },
     });
     if (!meta) { drop(f, why || 'invalid sidecar'); continue; }
     meta.origin = origin;                                              // computed, never stored
+    out.push({ meta, file: f });
+  }
+  return out;
+}
+
+/** Scan one agent layer dir for *.meta.json; stamps the COMPUTED origin/agentPath/
+ *  descriptionDerived fields (none of which normalizeMeta returns, so none can
+ *  be persisted back into a sidecar). */
+function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null, onDrop = null } = {}) {
+  const drop = (file, reason) => { if (onDrop) onDrop({ origin, file, reason }); };
+  const metas = [];
+  for (const { meta, file: f } of scanMetaLayer(dir, origin, { normalize: normalizeMeta, tag: 'agent-registry', requireMetaV2, builtFor, onDrop })) {
     // agentFile is a PATH read as the agent's system prompt AND for its
     // `tools:` frontmatter, so the loader refuses to stamp an agentPath outside
     // the layer it is scanning. Belt-and-braces behind validatePluginDir, which

@@ -51,7 +51,7 @@ for (const sel of ['.brand .logo-mark', '.ask-pill-logo', '.ask-header-logo']) {
 
 test('the two mask assets are alpha PNGs of the expected size', () => {
   const logo = P('../ui/public/assets/worca-logo-mask.png'); const mark = P('../ui/public/assets/worca-mark-mask.png');
-  assert.ok(existsSync(logo), 'ui/public/assets/worca-logo-mask.png missing — copy the run extra (or run scripts/make-logo-mask.mjs)');
+  assert.ok(existsSync(logo), 'ui/public/assets/worca-logo-mask.png missing — copy the run extra (or run tools/make-logo-mask.mjs)');
   assert.ok(existsSync(mark), 'ui/public/assets/worca-mark-mask.png missing — copy the run extra');
   for (const [file, w, h] of [[logo, 512, 190], [mark, 256, 256]]) {
     const meta = png(file);

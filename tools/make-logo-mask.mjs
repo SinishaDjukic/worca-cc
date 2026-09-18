@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// scripts/make-logo-mask.mjs — derive ui/public/assets/worca-logo-mask.png (the
+// tools/make-logo-mask.mjs — derive ui/public/assets/worca-logo-mask.png (the
 // wordmark as an ALPHA mask) from worca-logo.png, which is fully opaque on a white
 // background and therefore cannot mask anything. Fallback only: the shipped asset
 // is the user's white-on-transparent art. Refuses to overwrite an existing file

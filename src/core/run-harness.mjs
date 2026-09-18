@@ -77,21 +77,14 @@ import { recordRunMetrics } from './metrics/record.mjs';
 // in agent-registry.mjs, which is the single source for the built-in agents dir).
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
-/**
- * §9.4 message enrichment: does a DISABLED plugin ship this agent key? Scans
- * lock entries with enabled === false, reading key fields from each plugin's
- * current/agents/*.meta.json. Returns the plugin name or null. try/catch
- * throughout: no resolvable home / no lock / broken current => null (callers
- * fall back to the generic "not installed" message).
- * @param {string} key
- * @returns {string|null}
- */
-function findDisabledPluginFor(key) {
+/** The disabled plugin that ships `<subdir>/<key>.meta.json`, or null. Shared by the
+ *  agent preflight (`agents`) and the orchestrator's script preflight (`scripts`). */
+export function findDisabledPluginFor(key, subdir = 'agents') {
   try {
     const lock = readPluginsLock();
     for (const name of Object.keys(lock).sort()) {
       if (!lock[name] || lock[name].enabled !== false) continue;
-      const dir = join(pluginCurrentDir(name), 'agents');
+      const dir = join(pluginCurrentDir(name), subdir);
       let files;
       try { files = readdirSync(dir); } catch { continue; }
       for (const f of files) {

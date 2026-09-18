@@ -4,7 +4,7 @@
 // CLI entry point. Parses flags, creates a core orchestrator, subscribes to its events,
 // renders a phase tracker + streamed agent logs to the terminal, and drives interactive
 // Q&A (clarify) and loop gates via node:readline. Supports --yes (auto), --mock,
-// --install <dir> (delegates to scripts/install.mjs), ui start|stop|restart|status
+// --install <dir> (delegates to tools/install.mjs), ui start|stop|restart|status
 // (--ui is an alias of `ui start`; see cmdUi),
 // and -v/-V/--version (also the bare word `version`).
 //
@@ -850,9 +850,9 @@ async function cmdUi(argv) {
   return uiStart(a);
 }
 
-/** Delegate to scripts/install.mjs, forwarding the target dir and any passthrough args. */
+/** Delegate to tools/install.mjs, forwarding the target dir and any passthrough args. */
 function runInstall(targetDir, passthrough) {
-  const script = join(REPO_ROOT, 'scripts', 'install.mjs');
+  const script = join(REPO_ROOT, 'tools', 'install.mjs');
   const args = [script, targetDir, ...passthrough];
   const child = spawn(process.execPath, args, { stdio: 'inherit' });
   return new Promise((res) => {
@@ -1262,7 +1262,7 @@ shareable JSON, or as a Worca plugin) and import one shared as JSON
 Usage:
   worca workflow list                                List workflows (id, name, domain)
   worca workflow export <id> [options]               Export a workflow (see --format)
-  worca workflow import <file> [--name <name>]       Import a JSON export into your library ('-' = stdin)
+  worca workflow import <file> [--name <name>] [--accept-scripts]   Import a JSON export into your library ('-' = stdin); --accept-scripts confirms script commands
 
 Export formats (--format):
   claude (default)         A runnable Claude Code skill tree under <dest>/.claude/
@@ -1950,7 +1950,7 @@ async function cmdWorkflow(argv) {
         return 0;
       }
       case 'import': {
-        const a = pluginArgs(rest, ['--name'], []);
+        const a = pluginArgs(rest, ['--name'], ['--accept-scripts']);
         const file = a._[0];
         if (!file) fail('Usage: worca workflow import <file> [--name <name>]');
         const { readFile } = await import('node:fs/promises');
@@ -1963,7 +1963,15 @@ async function cmdWorkflow(argv) {
         let obj;
         try { obj = JSON.parse(text); } catch (e) { process.stderr.write(`worca workflow import: ${file} is not valid JSON (${e.message})\n`); return 2; }
         try {
-          const r = await share.importGraphWorkflow(obj, { name: a.name });
+          // D18: a shared workflow may carry commands that run with worca's privileges — show them once.
+          const dry = await share.importGraphWorkflow(obj, { name: a.name, dryRun: true });
+          if (dry.scriptNodes.length && !a['accept-scripts']) {
+            process.stderr.write(share.formatScriptNodes(dry.scriptNodes));
+            process.stderr.write('worca workflow import: re-run with --accept-scripts to import a workflow that runs these commands\n');
+            return 2;
+          }
+          // Reaching here means: no script commands, or the user passed the flag after seeing them above.
+          const r = await share.importGraphWorkflow(obj, { name: a.name, acceptScripts: a['accept-scripts'] === true });
           out(`imported\t${r.workflow.id}\t${r.workflow.name}`);
           if (r.renamed) out(c('yellow', `renamed: "${r.requestedName}" was already taken — saved as "${r.workflow.name}"`));
           for (const w of r.warnings || []) out(`${c('yellow', 'warn')}\t${formatIssue(w)}`);

@@ -627,7 +627,7 @@ test('a v2 template may reference built-ins and the plugin\'s own keys — never
 });
 
 test('the in-tree mock-source fixture is a valid API-3 plugin (strict)', () => {
-  // scripts/smoke-plugin.mjs links this fixture but is NOT part of `npm test`,
+  // tools/smoke-plugin.mjs links this fixture but is NOT part of `npm test`,
   // so without this pin the fixture could silently rot back to the v1 contract
   // and nothing in the suite would notice.
   const fixture = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'plugins', 'mock-source');

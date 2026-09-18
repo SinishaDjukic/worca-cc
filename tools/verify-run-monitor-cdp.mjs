@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// scripts/verify-run-monitor-cdp.mjs — headless-Chrome proof of the RUN MONITOR
+// tools/verify-run-monitor-cdp.mjs — headless-Chrome proof of the RUN MONITOR
 // (spec §8 / node-graph v2 P6): the `.run-flow.gv-host` reset on all three
 // hosts, the Running card's 300px band, the footer bands against the SHARED
 // nodeSize, the marching ants, the `N×` loop badge, the canvas nav (drag-pan,
 // ⌘/ctrl zoom, the button cluster), the chrome that must never cover a card
 // title, the History End chip and the log-filter node axis. NOT part of `npm test`: it needs Chrome and a live
 // server, and it drives a REAL mock pipeline end to end.
-// Run: node scripts/verify-run-monitor-cdp.mjs   (or: npm run verify:run-monitor)
+// Run: node tools/verify-run-monitor-cdp.mjs   (or: npm run verify:run-monitor)
 //
 // -- CI COVERAGE (MAJ-30) ----------------------------------------------------
 // .github/workflows/ci.yml job `cdp` runs this script on every push and every

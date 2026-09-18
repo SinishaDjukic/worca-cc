@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// scripts/smoke-plugin.mjs
+// tools/smoke-plugin.mjs
 // Offline plugin-system SMOKE (spec §12). Proves, with $0 spend and no network:
 //   link the mock-source fixture plugin -> registry serves its agent (origin
 //   plugin:mock-source) -> listTaskSources/resolveTaskInput serve the mock
@@ -8,7 +8,7 @@
 //   post-done write-back invoked reportResult (observable: the lastReport key
 //   in ~/.worca-cc/plugins/mock-source/data/state.json via readPluginState).
 //
-// ISOLATION (mirrors scripts/smoke-workspace.mjs): a THROWAWAY mkdtemp
+// ISOLATION (mirrors tools/smoke-workspace.mjs): a THROWAWAY mkdtemp
 // WORCA_HOME — set BEFORE any core call, superseding the npm script's
 // .worca-cc-smoke default so repeated runs never accrete a linked plugin into
 // the home `npm run smoke` uses for its zero-plugin feature-off bar — plus a

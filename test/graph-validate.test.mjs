@@ -22,10 +22,21 @@ const REG = {
   legacy: { key: 'legacy' },                                     // known but not ported
   hidden: { key: 'hidden', placeable: false, inputs: [], outputs: [{ id: 'out', type: 'md', when: 'always' }] },
 };
-const portsFn = portsFnFor(REG);
+const SCRIPTS = {
+  runTests: { key: 'runTests', runtime: 'node', verdict: { filename: 'tests-cycle{cycle}.json' },
+    params: [{ id: 'passAt', type: 'number', required: false }, { id: 'cmd', type: 'command', required: true }],
+    inputs: [{ id: 'done', type: 'void', required: false }, { id: 'plan', type: 'md', required: true }],
+    outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'tests-cycle{cycle}.md' },
+      { id: 'fail', type: 'md', when: 'blocking', filename: 'tests-cycle{cycle}.md' }, { id: 'pass', type: 'void', when: 'clean' }] },
+  shellLike: { key: 'shellLike', runtime: 'shell', ports: 'config', verdict: { filename: 'shell-cycle{cycle}.json' },
+    defaultPorts: { inputs: [], outputs: [] }, params: [{ id: 'command', type: 'command', required: true }] },
+  hiddenScript: { key: 'hiddenScript', runtime: 'node', placeable: false, params: [], inputs: [], outputs: [{ id: 'out', type: 'md', when: 'always', filename: 'o.md' }] },
+};
+const portsFn = portsFnFor(REG, SCRIPTS);
 const V = (tpl, opts) => validateGraph(tpl, portsFn, opts);
 const codes = (list) => list.map((i) => i.code);
 const A = (id, key, config = {}) => ({ id, kind: 'agent', key, x: 0, y: 0, config });
+const S = (id, key, config = {}) => ({ id, kind: 'script', key, x: 0, y: 0, config });
 const F = (id, kind, config = {}) => ({ id, kind, x: 0, y: 0, config });
 const W = (id, fn, fp, tn, tp, config) => ({ id, from: { node: fn, port: fp }, to: { node: tn, port: tp },
   ...(config ? { config } : {}) });
@@ -38,9 +49,9 @@ const ok = () => ({
     W('w5', 'n_rev', 'review', 'n_impl', 'fix', { maxCycles: 3 }), W('w6', 'n_rev', 'pass', 'n_end', 'result')],
 });
 
-test('the rule table is V1..V21 in order, with V22 retired', () => {
+test('the rule table is V1..V22 in order (V22 = script config, reusing the number the retired single-wire rule freed)', () => {
   assert.deepEqual(RULES.map((r) => r.code),
-    ['V1','V2','V3','V4','V5','V6','V7','V8','V9','V10','V11','V12','V13','V14','V15','V16','V17','V18','V19','V20','V21']);
+    ['V1','V2','V3','V4','V5','V6','V7','V8','V9','V10','V11','V12','V13','V14','V15','V16','V17','V18','V19','V20','V21','V22']);
   assert.deepEqual(RULES.filter((r) => r.level === 'W').map((r) => r.code), ['V15','V16','V17','V18','V19']);
   for (const r of RULES) assert.equal(typeof r.check, 'function', `${r.code} has a check`);
 });
@@ -431,4 +442,85 @@ test('MAJ-2: a graph exactly AT the ceilings still runs the whole rule table', (
   assert.equal(r.ok, false);
   assert.equal(codes(r.errors).includes('V1'), false, 'no bogus V1');
   assert.ok(r.errors.length > 1, `the full table ran: ${JSON.stringify(codes(r.errors))}`);
+});
+
+/** task -> planner -> impl -> runTests(script) -{blocking}-> impl.fix; runTests.pass -> reviewer.done; reviewer.pass -> end.
+ *  BOTH of ok()'s wires the script replaces go: w4 (impl.done -> rev.done) AND w5 (rev.review -> impl.fix). Keeping w5
+ *  would stack two wires on `n_impl.fix` — V7, "every input accepts at most one" (v2 R2). rev.review stays unwired,
+ *  which no rule objects to; impl.fix is fed by the script's blocking arm alone. */
+const gate = (scriptConfig = { params: { cmd: 'npm test' } }) => {
+  const t = ok();
+  t.nodes.push(S('n_tests', 'runTests', scriptConfig));
+  t.wires = t.wires.filter((w) => w.id !== 'w4' && w.id !== 'w5');
+  t.wires.push(W('w7', 'n_impl', 'done', 'n_tests', 'done'), W('w8', 'n_plan', 'plan', 'n_tests', 'plan'),
+    W('w9', 'n_tests', 'fail', 'n_impl', 'fix', { maxCycles: 3 }), W('w10', 'n_tests', 'pass', 'n_rev', 'done'));
+  return t;
+};
+
+test('a script gate graph validates clean; V3 wants a key on a script node', () => {
+  const r = V(gate());
+  assert.deepEqual(r.errors, [], JSON.stringify(r.errors));
+  assert.deepEqual(r.warnings, [], JSON.stringify(r.warnings));
+  const k = gate(); k.nodes = k.nodes.map((n) => (n.id === 'n_tests' ? { ...n, key: undefined } : n));
+  assert.ok(V(k).errors.some((e) => e.code === 'V3' && /script node 'n_tests' must declare a key/.test(e.message)));
+});
+
+test('V4 for scripts: unknown key, config ports missing (incomplete) vs invalid, placeable:false', () => {
+  const u = gate(); u.nodes = u.nodes.map((n) => (n.id === 'n_tests' ? S('n_tests', 'ghost') : n));
+  assert.match(V(u).errors.find((e) => e.code === 'V4').message, /^unknown script "ghost" — no such key in the registry$/);
+  const m = ok(); m.nodes.push(S('n_sh', 'shellLike', { params: { command: 'ls' } }));
+  const miss = V(m).errors.find((e) => e.code === 'V4');
+  assert.match(miss.message, /^script "shellLike" takes its ports per card — add them in the inspector$/);
+  assert.equal(miss.incomplete, true);
+  const b = ok(); b.nodes.push(S('n_sh', 'shellLike', { params: { command: 'ls' }, ports: { inputs: [{ id: 'x', type: 'md', as: 'file' }], outputs: [] } }));
+  assert.match(V(b).errors.find((e) => e.code === 'V4').message, /^script "shellLike" has invalid ports in its config — fix them in the inspector$/);
+  const p = ok(); p.nodes.push(S('n_h', 'hiddenScript'));
+  assert.match(V(p).errors.find((e) => e.code === 'V4').message, /^script "hiddenScript" declares placeable: false/);
+});
+
+test('V9/V16/V18/V19 treat a script like any keyed card', () => {
+  const t = gate(); t.wires = t.wires.filter((w) => w.id !== 'w8');       // required plan input unwired
+  const v9 = V(t).errors.find((e) => e.code === 'V9');
+  assert.equal(v9.message, "required input 'n_tests.plan' is unwired");
+  assert.equal(v9.incomplete, true);
+  const a = gate({ params: { cmd: 'x' }, awaitAll: true }); a.wires = a.wires.filter((w) => w.id !== 'w8');
+  a.wires.push(W('w8', 'n_plan', 'plan', 'n_tests', 'plan'));
+  assert.equal(V(a).warnings.filter((w) => w.code === 'V16').length, 0, 'two wired non-loop inputs: awaitAll is not a no-op');
+  const single = gate({ params: { cmd: 'x' }, awaitAll: true }); single.wires = single.wires.filter((w) => w.id !== 'w8');
+  assert.ok(V(single).warnings.some((w) => w.code === 'V16' && /node 'n_tests' sets awaitAll/.test(w.message)));
+  // V19: a blocking output into a script's await is a flow-control sink, exempt. The target must sit OUTSIDE every
+  // cycle — inside one the wire is a loop wire and V19's loop-input exemption returns before the KEYED_KINDS line
+  // runs (v2 R2: v1's version passed with or without the change). n_audit is a second script card fed by the planner
+  // with nothing wired out of it, so `n_rev.review -> n_audit.await` closes no cycle.
+  const aw = gate();
+  aw.nodes.push(S('n_audit', 'runTests', { params: { cmd: 'npm audit' } }));
+  aw.wires.push(W('w11', 'n_plan', 'plan', 'n_audit', 'plan'), W('w12', 'n_rev', 'review', 'n_audit', 'await'));
+  assert.deepEqual(V(aw).errors, [], JSON.stringify(V(aw).errors));
+  assert.equal(V(aw).warnings.filter((w) => w.code === 'V19').length, 0, 'await on a script is exempt like await on an agent');
+  // The control: the same blocking output into the script's PAYLOAD input still warns.
+  const pay = gate();
+  pay.nodes.push(S('n_audit', 'runTests', { params: { cmd: 'npm audit' } }));
+  pay.wires.push(W('w12', 'n_rev', 'review', 'n_audit', 'plan'));
+  assert.ok(V(pay).warnings.some((w) => w.code === 'V19' && /'n_rev\.review' is wired into 'n_audit\.plan'/.test(w.message)));
+});
+
+test('V17 knows the script config keys; V22 checks params, ports placement, mock and timeoutMs', () => {
+  const okCfg = gate({ params: { cmd: 'npm test', passAt: 2 }, timeoutMs: 5000, awaitAll: false, mock: { summary: 'm', outputs: { log: { text: '# t' } } } });
+  assert.equal(V(okCfg).warnings.filter((w) => w.code === 'V17').length, 0);
+  assert.equal(V(okCfg).errors.filter((e) => e.code === 'V22').length, 0);
+  const model = gate({ params: { cmd: 'x' }, model: 'claude-opus-5' });
+  assert.ok(V(model).warnings.some((w) => w.code === 'V17' && /unknown config key 'model' for kind 'script'/.test(w.message)));
+  const v22 = (config) => V(gate(config)).errors.filter((e) => e.code === 'V22').map((e) => e.message);
+  assert.deepEqual(v22({ params: { cmd: 'x', nope: 1 } }), ["script node 'n_tests' sets unknown param 'nope' — script \"runTests\" declares passAt, cmd"]);
+  assert.deepEqual(v22({ params: { cmd: 'x', passAt: 'two' } }), ["script node 'n_tests' param 'passAt': must be a finite number (got \"two\")"]);
+  const req = V(gate({ params: {} })).errors.find((e) => e.code === 'V22');
+  assert.equal(req.message, "script node 'n_tests' is missing required param 'cmd'");
+  assert.equal(req.incomplete, true);
+  assert.deepEqual(v22({ params: 'x' }), ["script node 'n_tests' config.params must be an object", "script node 'n_tests' is missing required param 'cmd'"]);
+  assert.deepEqual(v22({ params: { cmd: 'x' }, ports: { inputs: [], outputs: [] } }),
+    ["script node 'n_tests' carries config.ports but script \"runTests\" declares its ports in its sidecar"]);
+  assert.deepEqual(v22({ params: { cmd: 'x' }, mock: { outputs: { nope: { text: '' } } } }),
+    ["script node 'n_tests' config.mock: mock.outputs.nope: not a declared output port"]);
+  assert.deepEqual(v22({ params: { cmd: 'x' }, timeoutMs: 10 }), ["script node 'n_tests' timeoutMs must be an integer >= 1000 ms (got 10)"]);
+  assert.deepEqual(v22({ params: { cmd: 'x' }, timeoutMs: 3000000000 }), ["script node 'n_tests' timeoutMs must be at most 86400000 ms (24 h) (got 3000000000)"]);
 });

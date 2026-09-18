@@ -153,3 +153,22 @@ test('a plugin folder pasted into "Add marketplace" is linked, not registered; P
   assert.match((await bad.json()).error, /cannot link/);
   assert.equal((await post('/api/plugins/link', {})).status, 400);
 });
+
+test('POST /api/workflows/import-json refuses script commands with 409 + the commands until acceptScripts:true (P10)', async () => {
+  const exported = await (await fetch(`${base}/api/workflows/wf_default/json`)).json();
+  const withShell = { ...exported, name: 'API Shell',
+    nodes: [...exported.nodes, { id: 'n_sh', kind: 'script', key: 'shell', x: 900, y: 300, config: { params: { command: 'npm run lint' },
+      ports: { inputs: [{ id: 'in', type: 'md', required: false }], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'shell-cycle{cycle}.md' }] } } }],
+    wires: [...exported.wires, { id: 'w_sh', from: { node: 'n_task', port: 'task' }, to: { node: 'n_sh', port: 'in' } }] };
+  const refused = await post('/api/workflows/import-json', { workflow: withShell });
+  assert.equal(refused.status, 409);
+  const refusal = await refused.json();
+  assert.equal(refusal.code, 'SCRIPTS_UNCONFIRMED');
+  assert.deepEqual(refusal.scriptNodes.map((n) => [n.nodeId, n.params.command]), [['n_sh', 'npm run lint']]);
+  assert.equal((await post('/api/workflows/import-json', { workflow: withShell, acceptScripts: 'true' })).status, 409, 'a string is not a confirmation');
+  const list = await (await fetch(`${base}/api/workflows`)).json();
+  assert.equal(list.workflows.some((w) => w.name === 'API Shell'), false, 'a refused import writes nothing');
+  const ok = await post('/api/workflows/import-json', { workflow: withShell, acceptScripts: true });
+  assert.equal(ok.status, 201);
+  assert.equal((await ok.json()).workflow.name, 'API Shell');
+});

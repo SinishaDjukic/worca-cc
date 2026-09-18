@@ -206,3 +206,21 @@ test('a stranded workflow (deleted agent) is INVALID_GRAPH with the unknown-agen
   await assert.rejects(exportWorkflowPlugin({ workflowId: stranded.id, targetDir: join(await tmp(), 'stranded-plugin'), repoRoot }),
     (e) => e.code === 'INVALID_GRAPH' && /1 agent not installed here \(vanishedAgent\)/.test(e.message) && !!e.summary);
 });
+
+test('plugin export: a built-in script key is allowed with a not-bundled warning; a user-layer script is refused', async () => {
+  const shellPorts = { inputs: [{ id: 'in', type: 'md', required: false }], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'shell-cycle{cycle}.md' }] };
+  const tpl = await writeGraphWorkflow({ name: 'Plugin Shell', domain: 'coding',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, { id: 'n_sh', kind: 'script', key: 'shell', x: 300, y: 0, config: { params: { command: 'npm test' }, ports: shellPorts } }, { id: 'n_end', kind: 'end', x: 600, y: 0, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_sh', port: 'in' } }, { id: 'w2', from: { node: 'n_sh', port: 'log' }, to: { node: 'n_end', port: 'result' } }] });
+  const out = await tmp();
+  const r = await exportWorkflowPlugin({ workflowId: tpl.id, targetDir: join(out, 'shell-plugin'), dryRun: true });
+  assert.ok(r.warnings.some((w) => /built-in script\(s\) not bundled \(present on every worca host\): shell/.test(w)), r.warnings.join('\n'));
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const { userScriptsDir } = await import('../src/core/script-registry.mjs');
+  mkdirSync(userScriptsDir(), { recursive: true });
+  writeFileSync(join(userScriptsDir(), 'mine.mjs'), 'export default async () => ({});\n');
+  writeFileSync(join(userScriptsDir(), 'mine.meta.json'), JSON.stringify({ key: 'mine', metaVersion: 2, runtime: 'node', file: 'mine.mjs', inputs: [{ id: 'in', type: 'md', required: false }], outputs: [{ id: 'log', type: 'md', filename: 'mine-cycle{cycle}.md' }] }));
+  const mine = await writeGraphWorkflow({ ...tpl, id: undefined, name: 'Plugin Mine', nodes: tpl.nodes.map((n) => (n.id === 'n_sh' ? { id: 'n_sh', kind: 'script', key: 'mine', x: 300, y: 0, config: {} } : n)) });
+  await assert.rejects(exportWorkflowPlugin({ workflowId: mine.id, targetDir: join(out, 'mine-plugin'), dryRun: true }),
+    (e) => e.code === 'UNSUPPORTED' && /cannot bundle script "mine" \(user\)/.test(e.message));
+});

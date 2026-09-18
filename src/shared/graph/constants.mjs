@@ -8,11 +8,17 @@
 export const TEMPLATE_VERSION = 2;
 
 /** Every node kind a template may carry (palette order). */
-export const KINDS = Object.freeze(['agent', 'task', 'end', 'and', 'or', 'combine']);
+export const KINDS = Object.freeze(['agent', 'script', 'task', 'end', 'and', 'or', 'combine']);
 
-/** The flow cards: every kind that is not a spawned agent. They are pure engine
+/** The flow cards: every kind that is not a spawned card. They are pure engine
  *  executions — instant, $0, no spawn. */
 export const FLOW_KINDS = Object.freeze(['task', 'end', 'and', 'or', 'combine']);
+
+/** The kinds that carry a registry `key` — a placed sidecar, an agent's or a
+ *  script's. Every consumer that means "a keyed, ported card" tests THIS;
+ *  consumers that mean "spawns Claude" (tunables, the Ports prompt block) keep
+ *  `kind === 'agent'`. A script is not a flow kind: it spawns and it is not free. */
+export const KEYED_KINDS = Object.freeze(['agent', 'script']);
 
 /** The flow cards' DISPLAY names — one label per FLOW_KIND. The single copy:
  *  the run manifest (`manifest.mjs` cell labels), the run monitor and the

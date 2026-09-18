@@ -4150,6 +4150,9 @@ function sendWorkflowShareError(res, err) {
   // line, verbatim.
   if (code === 'RESERVED_NAME') return res.status(422).json({ error: message });
   if (code === 'ID_TAKEN') return res.status(409).json({ error: message, id: err.id });
+  // P10: a script import the user has not confirmed is well-formed but conflicts
+  // with a confirmation not yet given; `scriptNodes` are the commands to show first.
+  if (code === 'SCRIPTS_UNCONFIRMED') return res.status(409).json({ error: message, code, scriptNodes: err.scriptNodes || [] });
   if (code === 'NOT_FOUND') return res.status(404).json({ error: message });
   return res.status(500).json({ error: message });
 }
@@ -4221,6 +4224,7 @@ app.post('/api/workflows/import-json', async (req, res) => {
   try {
     const r = await importGraphWorkflow(src, {
       name: typeof body.name === 'string' ? body.name : undefined, agentsDir: AGENTS_DIR,
+      acceptScripts: body.acceptScripts === true,
     });
     return res.status(201).json(r);
   } catch (err) {
@@ -6383,7 +6387,7 @@ app.post('/api/pipelines/:id/report-issue', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Install logic (mirrors scripts/install.mjs): copy agents/*.md and
+// Install logic (mirrors tools/install.mjs): copy agents/*.md and
 // skills/worca/** into <projectDir>/.claude/...
 // ---------------------------------------------------------------------------
 async function installAgents(projectDir) {

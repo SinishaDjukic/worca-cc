@@ -23,6 +23,7 @@ import { registryPortsFn } from './graph/registry-ports.mjs';
 import { validateGraph, formatIssue } from '../shared/graph/validate.mjs';
 import { EFFORTS as EFFORT_LIST } from './model-env.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
+import { loadScriptRegistry } from './script-registry.mjs';
 import { slugify } from './artifacts.mjs';
 import { isValidSkillName, collectRequiredSkills, resolveSkill, pluginSkillDirs } from './skills.mjs';
 import { normalizeProjectPath } from './projects.mjs';
@@ -396,6 +397,15 @@ async function buildExportSet({ workflowId, destination, projectDir, slug, inclu
   //    its consumes/produces (derived from ports + wires, §2). Flow cards (task/end/
   //    and/or/combine) are NOT dispatched — only agent nodes become steps.
   const graph = await resolveGraph(destination === 'project' ? projectDir : null, workflowId, registry);
+  // D19: the exported skill tree simulates the graph in Claude Code; a child-process
+  // card has no rendering there yet. Refuse loudly rather than export a skill that
+  // silently skips the gate.
+  const scriptNodes = (graph.template.nodes || []).filter((n) => n && n.kind === 'script');
+  if (scriptNodes.length) {
+    const names = scriptNodes.map((n) => `${graph.nodes[n.id]?.meta?.displayName || n.key} (${n.id})`);
+    throw Object.assign(err(`export to Claude Code does not carry script cards yet: ${names.join(', ')}`, 'UNSUPPORTED'),
+      { nodes: scriptNodes.map((n) => n.id) });
+  }
   const manifest = buildGraphManifest(graph.template, graph.agentsByKey,
     { overlays: { nodes: graph.nodes, wires: graph.wires } });
   const tnodeById = new Map((graph.template.nodes || []).map((n) => [n.id, n]));
@@ -1052,7 +1062,8 @@ export async function exportWorkflowPlugin({ workflowId, targetDir, pluginName, 
   // ── The stored graph must be runnable HERE before it is shared: a stranded
   //    key (deleted agent) would only surface at the recipient's link.
   const registry = loadAgentRegistry();
-  const { errors } = validateGraph({ ...payload, id: tpl.id }, registryPortsFn(registry));
+  const scripts = loadScriptRegistry({ agentKeys: Object.keys(registry) });
+  const { errors } = validateGraph({ ...payload, id: tpl.id }, registryPortsFn(registry, scripts));
   if (errors.length) {
     const summary = summarizeUnknownAgents(errors);
     throw Object.assign(
@@ -1080,6 +1091,16 @@ export async function exportWorkflowPlugin({ workflowId, targetDir, pluginName, 
       'the recipient installs that plugin alongside, or you duplicate the agent under your own name', 'UNSUPPORTED');
   }
   if (builtins.length) warnings.push(`built-in agent(s) not bundled (present on every Worca host): ${builtins.join(', ')}`);
+
+  // Scripts (v1): built-ins ride like built-in agents; anything else cannot be bundled yet.
+  const scriptKeys = [...new Set(payload.nodes.filter((n) => n && n.kind === 'script' && n.key).map((n) => n.key))];
+  const foreignScripts = scriptKeys.filter((k) => scripts[k] && scripts[k].origin !== 'builtin');
+  if (foreignScripts.length) {
+    const list = foreignScripts.map((k) => `"${k}" (${scripts[k].origin.replace(/^plugin:/, 'plugin ')})`).join(', ');
+    throw err(`cannot bundle script ${list} — a shared workflow bundles only built-in scripts in this version`, 'UNSUPPORTED');
+  }
+  const builtinScripts = scriptKeys.filter((k) => scripts[k]?.origin === 'builtin');
+  if (builtinScripts.length) warnings.push(`built-in script(s) not bundled (present on every worca host): ${builtinScripts.join(', ')}`);
 
   // ── Skills the bundled agents require: filled from global/project/other-plugin
   //    sources; a Worca-shipped (bundle) skill is skipped, like a built-in agent.

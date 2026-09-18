@@ -1,14 +1,15 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { setNodeModel, setWireCycles, setStep } from '../src/core/config.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
+import { loadScriptRegistry } from '../src/core/script-registry.mjs';
 import {
   writeGraphWorkflow, readWorkflow, resolveGraph, workspaceVariants, workflowNodeDefaults,
-  setWorkflowNodeDefaults,
+  setWorkflowNodeDefaults, assertRunnableWorkflow,
 } from '../src/core/workflows.mjs';
 
 useTempHome(after);
@@ -138,4 +139,70 @@ test('workflowNodeDefaults / setWorkflowNodeDefaults on a v2 row rewrite graph.n
   assert.deepEqual(cleared.nodes.find((n) => n.id === 'n_plan').config, {});
   assert.deepEqual(cleared.nodes.find((n) => n.id === 'n_impl').config, { fanOut: true }, 'absent nodes keep theirs');
   await assert.rejects(() => setWorkflowNodeDefaults('wf_default', { x: null }), /cannot store defaults/);
+});
+
+/** A script layer with one node-runtime script; `passAt` and a required `cmd` param. */
+function scriptLayer() {
+  const sdir = mkdtempSync(join(tmpdir(), 'worca-rg-scripts-'));
+  writeFileSync(join(sdir, 'runTests.mjs'), 'export default async () => ({ summary: "ok" });\n');
+  writeFileSync(join(sdir, 'runTests.meta.json'), JSON.stringify({
+    key: 'runTests', metaVersion: 2, runtime: 'node', file: 'runTests.mjs', timeoutMs: 20000,
+    params: [{ id: 'passAt', type: 'number', default: 0 }, { id: 'cmd', type: 'command', required: true }],
+    inputs: [{ id: 'done', type: 'void', required: false }],
+    outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'tests-cycle{cycle}.md' },
+      { id: 'fail', type: 'md', when: 'blocking', filename: 'tests-cycle{cycle}.md' }, { id: 'pass', type: 'void', when: 'clean' }],
+    verdict: { filename: 'tests-cycle{cycle}.json' }, mock: { summary: 'sidecar mock' },
+  }));
+  return { sdir, scripts: loadScriptRegistry({ scriptsDir: sdir, userScriptsDir: null, includePlugins: false, agentKeys: null }) };
+}
+/** task -> plan -> impl -> runTests -> rev -> end, with runTests.fail -> impl.fix (3). rev.review stays unwired. */
+const SCRIPT_GRAPH = (config) => ({
+  ...GRAPH(),
+  nodes: [...GRAPH().nodes, { id: 'n_tests', kind: 'script', key: 'runTests', x: 750, y: 0, config }],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+    { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
+    { id: 'w3', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_rev', port: 'plan' } },
+    { id: 'w7', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_tests', port: 'done' } },
+    { id: 'w8', from: { node: 'n_tests', port: 'fail' }, to: { node: 'n_impl', port: 'fix' }, config: { maxCycles: 3 } },
+    { id: 'w9', from: { node: 'n_tests', port: 'pass' }, to: { node: 'n_rev', port: 'done' } },
+    { id: 'w6', from: { node: 'n_rev', port: 'pass' }, to: { node: 'n_end', port: 'result' } }],
+});
+
+test('resolveGraph: a script node resolves to a script ctx (merged params, timeout precedence, sidecar mock) beside the agents', async () => {
+  const { sdir, scripts } = scriptLayer();
+  const { id } = await writeGraphWorkflow({ ...SCRIPT_GRAPH({ params: { cmd: 'npm test', passAt: 2 }, timeoutMs: 5000 }), id: 'wf_rg_script' });
+  const g = await resolveGraph(projectDir, id, REG(), undefined, { scripts });
+  const nc = g.nodes.n_tests;
+  assert.equal(nc.kind, 'script');
+  assert.equal(nc.key, 'runTests');
+  assert.equal(nc.authoredKey, 'runTests');
+  assert.equal(nc.runtime, 'node');
+  assert.equal(nc.file, join(sdir, 'runTests.mjs'));
+  assert.equal(nc.command, null);
+  assert.deepEqual(nc.params, { passAt: 2, cmd: 'npm test' });
+  assert.equal(nc.timeoutMs, 5000, 'node config beats the sidecar');
+  assert.deepEqual(nc.mock, { summary: 'sidecar mock' }, 'the sidecar mock rides when the node declares none');
+  assert.equal(nc.meta, scripts.runTests);
+  assert.equal(nc.awaitAll, false);
+  assert.equal(nc.duplicateKey, false);
+  assert.deepEqual(nc.config, { params: { cmd: 'npm test', passAt: 2 }, timeoutMs: 5000 });
+  assert.deepEqual([...g.scriptKeys], ['runTests']);
+  assert.deepEqual(Object.keys(g.scriptsByKey), ['runTests']);
+  assert.deepEqual([...g.agentKeys].sort(), ['implementer', 'planner', 'reviewer'], 'agentKeys stays agent-only');
+  assert.deepEqual(g.ports(g.template.nodes.find((n) => n.id === 'n_tests')).inputs.map((i) => i.id), ['done', 'await']);
+  assert.deepEqual(g.wires, { w8: { maxCycles: 3 } });
+  const plain = await writeGraphWorkflow({ ...SCRIPT_GRAPH({ params: { cmd: 'x' }, mock: { summary: 'node mock' } }), id: 'wf_rg_script2' });
+  const g2 = await resolveGraph(projectDir, plain.id, REG(), undefined, { scripts });
+  assert.equal(g2.nodes.n_tests.timeoutMs, 20000, 'the sidecar timeout when the node sets none');
+  assert.deepEqual(g2.nodes.n_tests.mock, { summary: 'node mock' }, 'the node mock beats the sidecar mock');
+});
+
+test('resolveGraph: an unknown script key throws the registry sentence; the run gate validates with scripts', async () => {
+  const { scripts } = scriptLayer();
+  const { id } = await writeGraphWorkflow({ ...SCRIPT_GRAPH({ params: { cmd: 'x' } }), id: 'wf_rg_script3' });
+  await assert.rejects(resolveGraph(projectDir, id, REG(), undefined, { scripts: {} }), { message: 'unknown script "runTests" — no such key in the registry' });
+  await assert.rejects(assertRunnableWorkflow(id, { registry: REG(), scripts: {} }), (e) => e.code === 'INVALID_GRAPH' && /unknown script "runTests"/.test(e.message));
+  const live = await assertRunnableWorkflow(id, { registry: REG(), scripts });
+  assert.equal(live.id, id);
 });

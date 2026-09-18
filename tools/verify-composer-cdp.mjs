@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// scripts/verify-composer-cdp.mjs — headless-Chrome proof of the composer's
+// tools/verify-composer-cdp.mjs — headless-Chrome proof of the composer's
 // pointer pipeline (spec §7.11 (1)-(9)). NOT part of `npm test`: it needs Chrome
-// and a live server. Run: node scripts/verify-composer-cdp.mjs
+// and a live server. Run: node tools/verify-composer-cdp.mjs
 //
 // -- CI COVERAGE (MAJ-30) ----------------------------------------------------
 // .github/workflows/ci.yml job `cdp` runs this script on every push and every
