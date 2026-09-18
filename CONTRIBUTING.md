@@ -95,6 +95,17 @@ Note: `agents/` (the shipped, data-driven agent set) is **not** the same thing
 as `.claude/agents/` (Claude Code agents used to develop this repo). Changes to
 pipeline agent behavior belong in `agents/`.
 
+## UI levels
+
+The web UI has an interface mode — **Simple**, **Advanced**, **Expert** — that
+decides how much is on screen. Anything you add to `ui/public/` that a user can
+see needs a level. [`docs/ui-levels.md`](docs/ui-levels.md) has the questions
+that decide it, the few rules the mode never breaks (a blocking prompt is never
+hidden; a non-default value stays visible; the mode is a view preference, not a
+permission), how to tag an element, and the catalogue to update.
+`test/ui-levels.test.mjs` fails on a nav item, Settings tab or card, or detail
+tab with no level.
+
 ## Pull request workflow
 
 - Branch from `dev`, open the PR with **base `dev`**.
@@ -106,6 +117,8 @@ pipeline agent behavior belong in `agents/`.
   (`--base feat/<parent>`) and retarget it to `dev` after the parent merges.
 - Run the tests locally first (see [Testing](#testing)) — there is no CI
   safety net on PRs.
+- A PR that adds UI names the level of each new element and updates the
+  catalogue in [`docs/ui-levels.md`](docs/ui-levels.md).
 
 ## Releasing
 

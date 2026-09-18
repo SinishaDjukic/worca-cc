@@ -46,6 +46,7 @@ import {
   titleModel as storedTitleModel, setTitleModel, assertTitleModelInput,
   hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput,
   theme as storedTheme, setTheme, assertThemeInput,
+  uiLevel as storedUiLevel, setUiLevel, assertUiLevelInput, defaultUiLevel,
   autoWorkflowModel as storedAutoWorkflowModel, setAutoWorkflowModel, assertAutoWorkflowModelInput,
   scheduleDefaults, setScheduleDefaults,
 } from '../src/core/settings.mjs';
@@ -986,13 +987,30 @@ app.use('/src/shared', (_req, res) => {
 // design §5.2). Read per request (100 KB, local) so an index.html edit is live
 // without a restart, exactly like static serving was. no-store: a theme change
 // must never be served from the browser cache.
+// Interface mode (docs/ui-levels.md): the stored choice, else the install's default. "Fresh" =
+// the welcome dialog was never dismissed and the store holds no project and no run; anything
+// else is an install that predates the mode (or has outgrown it) and keeps the full UI.
+function effectiveUiLevel() {
+  const stored = storedUiLevel();
+  if (stored) return stored;
+  let fresh = false;
+  try { fresh = !onboardingPrefs().welcomeSeen && countProjects() === 0 && countPipelines() === 0; }
+  catch { fresh = false; }
+  return defaultUiLevel({ fresh });
+}
+// "Fresh" is derived from state the user changes (welcomeSeen, the first project), so a new user's
+// mode would jump from simple to expert the moment they act. Each of those writes pins the derived
+// value first; a stored choice is never overwritten.
+async function pinUiLevel() {
+  if (!storedUiLevel()) await setUiLevel(effectiveUiLevel());
+}
 const INDEX_FILE = path.join(PUBLIC_DIR, 'index.html');
 if (!fs.readFileSync(INDEX_FILE, 'utf8').includes(INDEX_THEME_ANCHOR)) {
   throw new Error(`ui/public/index.html lost its theme anchor ${INDEX_THEME_ANCHOR}`);
 }
 function sendIndex(res) {
   let html;
-  try { html = renderIndexHtml(fs.readFileSync(INDEX_FILE, 'utf8'), storedTheme()); }
+  try { html = renderIndexHtml(fs.readFileSync(INDEX_FILE, 'utf8'), storedTheme(), effectiveUiLevel()); }
   catch (err) { return res.status(500).json({ error: err && err.message ? err.message : 'shell unavailable' }); }
   res.set('Content-Type', 'text/html; charset=utf-8');
   res.set('Cache-Control', 'no-store');
@@ -2652,7 +2670,10 @@ app.get('/api/onboarding', async (_req, res) => {
   catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 app.post('/api/onboarding', async (req, res) => {
-  try { await setOnboardingPrefs(req.body || {}); }
+  try {
+    await pinUiLevel();                        // before welcomeSeen flips and ends "fresh install"
+    await setOnboardingPrefs(req.body || {});
+  }
   catch (err) { return badRequest(res, err && err.message ? err.message : String(err)); }
   emitChanged('onboarding-changed');
   try { res.json(await onboardingStatus()); }
@@ -3439,6 +3460,7 @@ app.get('/api/projects', async (_req, res) => {
 app.post('/api/projects', async (req, res) => {
   const body = req.body || {};
   try {
+    await pinUiLevel();                        // before the first project ends "fresh install"
     const projects = await addProject({ name: body.name, path: body.path });
     emitChanged('projects-changed', 'created');
     discoverProject(normalizeProjectPath(body.path), { force: true })
@@ -3960,6 +3982,7 @@ const settingsState = () => ({
   hideBuiltinModels: hideBuiltinModels(),
   theme: storedTheme(),                                   // system | light | dark (dark-mode design §6)
   schedule: scheduleDefaults(),                           // defaults a NEW schedule inherits
+  uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
 });
 
 /** Settings ▸ Auto workflow model: the stored id + what the classifier will actually use
@@ -4034,6 +4057,7 @@ app.post('/api/settings', async (req, res) => {
   const hasTitleModelKey = has('titleModel');
   const hasHideBuiltinKey = has('hideBuiltinModels');
   const hasThemeKey = has('theme');
+  const hasUiLevelKey = has('uiLevel');
   const hasAutoKey = has('autoWorkflowModel');
   const autoModels = hasAutoKey ? await listModels('') : null;
   // #422: the title model is a SELECT over the catalog, so an id that is not a
@@ -4069,6 +4093,7 @@ app.post('/api/settings', async (req, res) => {
     }
     if (hasHideBuiltinKey) assertHideBuiltinModelsInput(body.hideBuiltinModels);
     if (hasThemeKey) assertThemeInput(body.theme);
+    if (hasUiLevelKey) assertUiLevelInput(body.uiLevel);
     if (hasAutoKey) assertAutoWorkflowModelInput(body.autoWorkflowModel ?? '', autoModels);
     // Root first: it is the one key whose setter can still fail AFTER the asserts
     // above (an unusable path), so every other key's write must come after it or
@@ -4091,12 +4116,13 @@ app.post('/api/settings', async (req, res) => {
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
     if (hasThemeKey) await setTheme(body.theme);
+    if (hasUiLevelKey) await setUiLevel(body.uiLevel);
     if (hasAutoKey) await setAutoWorkflowModel(body.autoWorkflowModel ?? '', { models: autoModels });
     if (has('schedule')) await setScheduleDefaults(body.schedule && typeof body.schedule === 'object' ? body.schedule : {});
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasAutoKey || has('schedule')) emitChanged('settings-changed');
+    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || has('schedule')) emitChanged('settings-changed');
     res.json({ ...settingsState(), ...(await autoModelState()), chat: chatPrefs() });
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).

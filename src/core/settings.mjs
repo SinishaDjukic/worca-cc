@@ -606,6 +606,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'debugSpawnEnabled',
   'titleModel', 'hideBuiltinModels',
   'theme',
+  'uiLevel',                                 // interface mode (docs/ui-levels.md)
   'autoWorkflowModel',                       // auto-workflow spec D14
   'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
 ]);
@@ -1043,6 +1044,52 @@ export async function removeGlobalModel(id) {
   settings.models = models.slice(0, idx).concat(models.slice(idx + 1));
   if (!settings.models.length) delete settings.models;
   await persistSettings(settings);
+}
+
+// ── Interface mode (docs/ui-levels.md) ───────────────────────────────────────
+// One machine-wide preference deciding how much of the web UI is on screen:
+// `simple` (the core loop), `advanced` (git, cost, workflows) or `expert`
+// (everything). A VIEW preference, never a permission. The server writes it into
+// the shell's <html data-level> at serve time, like the theme. The STORED value
+// may be absent: the default then depends on whether this is a fresh install
+// (defaultUiLevel), which only the server can tell, so `uiLevel()` answers null
+// for "never chosen" rather than guessing.
+export const UI_LEVELS = Object.freeze(['simple', 'advanced', 'expert']);
+const isUiLevel = (v) => UI_LEVELS.includes(v);
+
+/** STORED interface mode, or null when never chosen. An invalid value is null (loudly). */
+export function uiLevel() {
+  const v = readSettings().uiLevel;
+  if (v === undefined) return null;
+  if (isUiLevel(v)) return v;
+  console.warn(`[worca] invalid uiLevel ${JSON.stringify(v)} — using the default`);
+  return null;
+}
+
+/**
+ * The mode for an install that never chose one. A fresh install starts simple;
+ * an install that already has history starts expert, which is the UI it always
+ * had, so an upgrade hides nothing.
+ * @param {{fresh:boolean}} facts
+ */
+export function defaultUiLevel({ fresh } = {}) {
+  return fresh ? 'simple' : 'expert';
+}
+
+/** @throws {Error} unless `input` is simple|advanced|expert, or empty/null (a clear). */
+export function assertUiLevelInput(input) {
+  if (isClearInput(input)) return;
+  if (!isUiLevel(input)) throw new Error('uiLevel must be simple, advanced or expert');
+}
+
+/** Persist the mode. Every valid value is stored (there is no fixed default to elide); a clear deletes the key. */
+export async function setUiLevel(input) {
+  assertUiLevelInput(input);
+  const settings = readSettings();
+  if (isClearInput(input)) delete settings.uiLevel;
+  else settings.uiLevel = input;
+  await persistSettings(settings);
+  return { uiLevel: uiLevel() };
 }
 
 // ── Getting started (onboarding) ─────────────────────────────────────────────

@@ -134,6 +134,7 @@ export function mountRunGraph(hostEl, opts = {}) {
   }
   function buildNav() {
     nav = doc.createElement('div');
+    nav.dataset.minLevel = 'advanced';            // zoom cluster: interface mode (docs/ui-levels.md)
     nav.className = 'gv-nav';
     for (const [key, label, glyph] of NAV_BTNS) {
       const b = doc.createElement('button');
@@ -214,6 +215,7 @@ export function mountRunGraph(hostEl, opts = {}) {
     if (!isStatic) {
       const hint = doc.createElement('div');
       hint.className = 'rg-hint';
+      hint.dataset.minLevel = 'advanced';
       hint.textContent = HINT_TEXT;
       wrap.appendChild(hint);
       buildNav();
@@ -258,5 +260,9 @@ export function mountRunGraph(hostEl, opts = {}) {
     bound = false;
   }
 
-  return { update, fit, destroy, get view() { return view; } };
+  /** Re-run the decor pass with the bag already held (an interface-mode change alters which
+   *  footer bands show, hence the card heights, hence the fit). */
+  function repaint() { paint(); refit(); }
+
+  return { update, fit, repaint, destroy, get view() { return view; } };
 }

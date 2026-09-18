@@ -654,6 +654,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     scopeBtn.appendChild(svgIcon(ICONS.chevronDown, 11, 2));
     scopeBtn.addEventListener('click', () => openScopePopover(scopeBtn));
     el.scopeBtn = scopeBtn;
+    scopeBtn.dataset.minLevel = 'advanced';      // interface mode (docs/ui-levels.md): Auto scope is the simple path
     row.appendChild(scopeBtn);
 
     row.appendChild(make('span', 'ask-composer-spacer'));
@@ -666,12 +667,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.meterCost = make('span', 'ask-meter-cost', '');
     meter.appendChild(el.meterCost);
     { const sep = make('span', 'ask-meter-sep', '|'); sep.setAttribute('aria-hidden', 'true'); meter.appendChild(sep); }
+    meter.dataset.minLevel = 'advanced';
     row.appendChild(meter);
 
     const wtBtn = make('button', 'ask-agents-btn ask-wt-btn');
     wtBtn.type = 'button';
     wtBtn.setAttribute('data-ask-wt-btn', '');
     wtBtn.hidden = true;
+    wtBtn.dataset.minLevel = 'expert';
     el.wtBtn = wtBtn;
     el.wtBtnLabel = make('span', null, '0 worktrees');
     wtBtn.appendChild(el.wtBtnLabel);
@@ -682,6 +685,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const agentsBtn = make('button', 'ask-agents-btn');
     agentsBtn.type = 'button';
     agentsBtn.setAttribute('data-ask-agents-btn', '');
+    agentsBtn.dataset.minLevel = 'expert';
     el.agentsBtnLabel = make('span', null, '0 agents');
     agentsBtn.appendChild(el.agentsBtnLabel);
     agentsBtn.appendChild(svgIcon('M6 15l6-6 6 6', 11, 2));
@@ -691,6 +695,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const modelBtn = make('button', 'ask-model-btn');
     modelBtn.type = 'button';
     modelBtn.setAttribute('data-ask-model-btn', '');
+    modelBtn.dataset.minLevel = 'advanced';
     el.modelBtnLabel = make('span', 'ask-model-btn-label', st.picker.model);
     el.modelBtnEffort = make('span', 'ask-model-btn-effort', st.picker.effort);
     modelBtn.appendChild(el.modelBtnLabel);
@@ -2341,6 +2346,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     guardDesc.setAttribute('data-for', 'guardrails');
     const guardField = rpField('Guardrails', guardSel);
     guardField.appendChild(guardDesc);
+    // Interface mode (docs/ui-levels.md). The proposal's own non-default values stay on screen at
+    // any mode: a run must never start under a policy or on a branch the card did not show.
+    const lvTag = (node, min, keep) => { node.dataset.minLevel = min; if (keep) node.dataset.levelKeep = '1'; return node; };
+    lvTag(guardField, 'advanced', !!card.guardrailsId && card.guardrailsId !== 'permissive');
+    lvTag(seg, 'advanced', card.target === 'workspace');
     wfRow.append(wfField, guardField);
     targetSec.appendChild(wfRow);
     rootEl.appendChild(targetSec);
@@ -2351,6 +2361,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     // agents lane (reloadLane → renderLane fills laneSec)
     const laneSec = make('div', 'ask-rp-sec ask-rp-lane');
+    laneSec.dataset.minLevel = 'expert';
     rootEl.appendChild(laneSec);
 
     const briefSec = make('div', 'ask-rp-sec ask-rp-brief-host');
@@ -2424,6 +2435,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const openNp = make('button', 'ask-card-open-np', '↗ Open in New Pipeline');
     openNp.type = 'button';
     openNp.setAttribute('data-ask-card-open-np', '');
+    openNp.dataset.minLevel = 'advanced';
     openNp.addEventListener('click', () => prefillFromCard(block, rootEl, local));
     const dismissBtn = make('button', 'ask-card-not-now', 'Not now');
     dismissBtn.type = 'button';
@@ -2444,6 +2456,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     laterBtn.type = 'button';
     laterBtn.setAttribute('data-ask-card-schedule', '');
     laterBtn.title = 'Start this run later';
+    laterBtn.dataset.minLevel = 'advanced';
     laterBtn.addEventListener('click', async () => {
       const picked = await openScheduleSheet({
         mode: 'create', allowRepeat: false, runTitle: (block.card && (block.card.title || block.card.brief)) || '',
@@ -2488,7 +2501,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         }
         projSel.addEventListener('change', () => { loadBranchesInto(srcSel, projSel.value, '').then(updateTargetSub); updateTargetSub(); reloadLane(); });
         srcSel.addEventListener('change', updateTargetSub);
-        grid.append(rpField('Project', projSel), rpField('Source branch', srcSel), rpField('Feature branch', feature, 'created for the run'));
+        grid.append(rpField('Project', projSel), lvTag(rpField('Source branch', srcSel), 'advanced', !!card.sourceBranch),
+          lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch));
         targetHost.appendChild(grid);
         updateTargetSub();
         return;
@@ -2528,7 +2542,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       wsSel.addEventListener('change', renderMembers);
       const wsField = rpField('Workspace', wsSel);
       wsField.appendChild(members);
-      grid.append(wsField, rpField('Source branch', srcInput, 'default for members'), rpField('Feature branch', feature));
+      grid.append(wsField, lvTag(rpField('Source branch', srcInput, 'default for members'), 'advanced', !!card.sourceBranch),
+        lvTag(rpField('Feature branch', feature), 'advanced', !!card.featureBranch));
       targetHost.appendChild(grid);      // attach BEFORE filling: renderMembers → updateTargetSub finds the select through rootEl
       targetHost.appendChild(details);
       if (opts) {
@@ -2914,6 +2929,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function toolRow(block) {
     const rowEl = make('div', 'ask-tool-row');
+    rowEl.dataset.minLevel = 'advanced';            // what the assistant ran, step by step
     const short = String(block.name || '').replace(/^mcp__worca__/, '');
     const parts = short.split('_');
     rowEl.appendChild(make('span', 'ask-tool-op', parts[0] || short));
@@ -3034,6 +3050,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const agentBlocks = blocks.filter((b) => b && b.kind === 'agent');
       if (agentBlocks.length && !agents) {
         agents = make('div', 'ask-agents');
+        agents.dataset.minLevel = 'expert';           // per-agent logs (docs/ui-levels.md)
         const cap = make('div', 'ask-agents-cap');
         cap.appendChild(make('span', null, 'Sub-agents'));
         agentsCount = make('span', 'ask-agents-count', '');

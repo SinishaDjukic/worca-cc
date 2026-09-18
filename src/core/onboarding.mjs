@@ -18,7 +18,7 @@ import { onboardingPrefs } from './settings.mjs';
 /** Step ids in shelf order. The UI (ui/public/getting-started.mjs) carries the
  *  copy and artwork for each; this list is the contract between the two. */
 export const ONBOARDING_STEPS = Object.freeze([
-  'claude', 'project', 'run', 'ask', 'workflows', 'realRun', 'workspace', 'teamMetrics',
+  'claude', 'project', 'run', 'ask', 'realRun', 'workflows', 'workspace', 'teamMetrics',
 ]);
 
 /** The configured Claude binary — the same precedence claude-runner.mjs spawns with. */
