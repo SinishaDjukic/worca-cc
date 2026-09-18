@@ -20367,6 +20367,10 @@ function getPageContext() {
   // The Team metrics page's selection: scope id, range, group-by and the active filters, so
   // "why did spend jump?" refers to the chart on screen. Ids and enum slugs only — the server
   // validates each and resolves the scope name itself.
+  if (ctx.view === 'team-policy') {
+    if (tpState.scopeId) ctx.tpScope = tpState.scopeId;
+    return ctx;
+  }
   if (ctx.view === 'team-metrics') {
     if (tmState.scopeId) ctx.tmScope = tmState.scopeId;
     ctx.tmRange = tmState.range;

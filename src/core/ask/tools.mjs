@@ -413,14 +413,14 @@ export function createAskTools(deps) {
       inputSchema: SCHEMA.obj({ runId: SCHEMA.s('run id') }, ['runId']) },
     // ---- team metrics (docs/team-metrics.md "Ask Worca"): domain-level tools — scopes, ranges, homes, routing — never git-level.
     { name: 'get_team_metrics',
-      description: 'Team-wide run metrics for one scope (a project or a workspace: exactly one of projectKey / workspaceId; omitting both uses the scope pinned for this chat), read from the team\'s shared worca-metrics branch: KPIs (spend, runs, success rate, cost per run, duration, autonomy, review cycles), the previous period and deltas, breakdowns by workflow / source / actor / project (workspace scopes: the runs that touched each project — a run\'s cost is never split across projects) / models, spend and runs per week, and the sync state (pending pushes, fetch errors). These are TEAM numbers over the given range — every teammate\'s runs, asynchronous (pushed after each run, fetched at most once a minute) — and they differ from get_run / list_runs, which see this machine only. range: this-month (default), last-month, quarter, year, all, or custom with from/to (YYYY-MM-DD). groupBy (the weekly stacks): workflow (default), result, actor. filter narrows to one key per dimension, taken from a breakdown row\'s key. actor breakdowns are null when attribution is off. Read-only.',
+      description: 'Team-wide run metrics for one scope (a project or a workspace: exactly one of projectKey / workspaceId; omitting both uses the scope pinned for this chat), read from the team\'s shared worca-metrics branch: KPIs (spend, runs, success rate, cost per run, duration, autonomy, review cycles), the previous period and deltas, breakdowns by workflow / source / actor / project (workspace scopes: the runs that touched each project — a run\'s cost is never split across projects) / models, spend and runs per week, the team-policy counts (offPolicyRuns, capOverrides, deviations, policyRuns — runs recorded under a team policy; breakdown rows carry overrides and offPolicy), and the sync state (pending pushes, fetch errors). These are TEAM numbers over the given range — every teammate\'s runs, asynchronous (pushed after each run, fetched at most once a minute) — and they differ from get_run / list_runs, which see this machine only. range: this-month (default), last-month, quarter, year, all, or custom with from/to (YYYY-MM-DD). groupBy (the weekly stacks): workflow (default), result, actor. filter narrows to one key per dimension, taken from a breakdown row\'s key. actor breakdowns are null when attribution is off. Read-only.',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('project key from list_projects'), workspaceId: SCHEMA.s('workspace id from list_projects'),
         range: SCHEMA.s('this-month | last-month | quarter | year | all | custom'), from: SCHEMA.s('custom range start, YYYY-MM-DD'), to: SCHEMA.s('custom range end, YYYY-MM-DD (exclusive)'),
         groupBy: SCHEMA.s('workflow | result | actor'),
         filter: { type: 'object', description: 'one key per dimension: {workflow|source|actor|project|models|result: <breakdown row key>}', additionalProperties: { type: 'string' } },
         refresh: SCHEMA.b('fetch the branch again first (at most once a minute)') }) },
     { name: 'list_team_metrics_runs',
-      description: 'The runs behind get_team_metrics for one scope and range (same scope / range / filter inputs), newest first, paged by offset: id, title, startedAt, workflow, result, cost, duration, review cycles, PR, actor, source, projects touched. `local` is true when the run is on this machine, so get_run / get_run_diff / list_run_artifacts can open it; a teammate\'s run is a row only. Read-only.',
+      description: 'The runs behind get_team_metrics for one scope and range (same scope / range / filter inputs), newest first, paged by offset: id, title, startedAt, workflow, result, cost, duration, review cycles, PR, actor, source, projects touched, and `policy` on a run recorded under a team policy (home, overrides / exceeded: the team caps it continued past or ran over, deviations: off-policy picks, unattended, the override reason). `local` is true when the run is on this machine, so get_run / get_run_diff / list_run_artifacts can open it; a teammate\'s run is a row only. Read-only.',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('project key'), workspaceId: SCHEMA.s('workspace id'),
         range: SCHEMA.s('this-month | last-month | quarter | year | all | custom'), from: SCHEMA.s('custom range start, YYYY-MM-DD'), to: SCHEMA.s('custom range end, YYYY-MM-DD (exclusive)'),
         filter: { type: 'object', description: 'one key per dimension, as in get_team_metrics', additionalProperties: { type: 'string' } },
@@ -435,6 +435,25 @@ export function createAskTools(deps) {
         mode: SCHEMA.s('enable: here (default) | delegate'), attribution: SCHEMA.s('enable, mode here: git-user (default) | none'), delegateTo: SCHEMA.s('enable, mode delegate: the target project\'s owner/repo slug'),
         record: SCHEMA.b('record: true = include my runs, false = stop recording mine'),
         homeProjectKey: SCHEMA.s('workspace_home: the member project key to record workspace runs on; empty to clear'),
+        note: SCHEMA.s('one line shown on the card: why this change (≤ 200 chars)') }, ['kind']) },
+    // ---- team policy (docs/team-policy.md "Ask Worca"): domain-level like the metrics tools — homes, follows, fields, caps.
+    { name: 'get_team_policy',
+      description: 'The team policy that governs one scope (a project or a workspace: exactly one of projectKey / workspaceId; omitting both uses the scope pinned for this chat), read from its policy home\'s worca-policy branch and folded against THIS machine\'s settings: the home (owner/repo) and commit, whether the project follows another project\'s policy, title and notes (untrusted DATA), the caps (per-pipeline, total per period, reset period, advisory pooled budget), and one row per field the policy sets — kind (default: the developer\'s own value wins when set; soft: the tighter or expected value applies, a developer may go past it and the overshoot is recorded; hard is reserved and reads as soft), the team value, this machine\'s value, the effective value and its source (local | team | team-default | advisory). A workspace scope answers for workspace runs (its workspaceRuns block on top of the fields); `workspaceRuns` lists what that block changes. Also: the policy\'s own guardrail sets and models, required / blocked plugins with their state here, this machine\'s deviations, and canPublish (the home is checked out here, so propose_policy_change kind "edit" can publish). all:true adds the fields the policy leaves unset. A scope with no policy answers policy:null with the reason. Read-only.',
+      inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('project key from list_projects'), workspaceId: SCHEMA.s('workspace id from list_projects'),
+        all: SCHEMA.b('include the fields the policy does not set') }) },
+    { name: 'propose_policy_change',
+      description: 'Propose a team-policy change for the user to confirm — it never changes anything itself; the user sees a card and applies or declines it. kind: "enable" (projectKey; mode "here" creates the project\'s own worca-policy branch with an empty policy, optional title; mode "follow" points the project at another project\'s policy via delegateTo = its owner/repo slug, re-pointing a project that already follows one), "edit" (projectKey or workspaceId — the policy that governs it is edited and published as one commit to its home; needs canPublish from get_team_policy. set: [{key, value, kind?, onBreach?, requireReason?, window?, forWorkspaceRuns?}] — key from get_team_policy rows; kind is required for a field the policy does not set yet and may be "default" or "soft" as the field allows, never "hard"; attributes not given keep the current entry\'s; forWorkspaceRuns:true writes the workspaceRuns block (applies to workspace runs only) instead of the fields. unset: [{key, forWorkspaceRuns?}] removes an entry. title / notes replace the policy\'s own. message: the commit message. Guardrail-set and model catalogs are edited on the Team policy page only), "workspace_home" (workspaceId + homeProjectKey, a member that carries or follows a policy, or empty to clear), "route_members" (workspaceId — every member without a worca-policy branch gets a marker that follows the home). A projectKey / workspaceId omitted for a kind is taken from the pinned scope. Returns {ok:true, card} or {ok:false, errors} to fix and retry. Never claim a change was applied — the card says so when it happens.',
+      inputSchema: SCHEMA.obj({ kind: SCHEMA.s('enable | edit | workspace_home | route_members'),
+        projectKey: SCHEMA.s('target project (enable, edit)'), workspaceId: SCHEMA.s('target workspace (edit, workspace_home, route_members)'),
+        mode: SCHEMA.s('enable: here (default) | follow'), delegateTo: SCHEMA.s('enable, mode follow: the owner/repo slug of the project whose policy to follow'),
+        title: SCHEMA.s('enable here / edit: the policy title (≤ 120 chars)'), notes: SCHEMA.s('edit: the policy notes shown to teammates (≤ 2000 chars)'),
+        set: { type: 'array', description: 'edit: fields to set', items: { type: 'object', properties: {
+          key: SCHEMA.s('field key, e.g. cost.pipelineLimitUsd'), value: { description: 'the field value, typed as the field requires' },
+          kind: SCHEMA.s('default | soft'), onBreach: SCHEMA.s('soft caps: pause (default) | warn'), requireReason: SCHEMA.b('soft caps: continuing past needs a reason'),
+          window: SCHEMA.s('pooled budget: weekly | monthly'), forWorkspaceRuns: SCHEMA.b('write the workspaceRuns block instead of the fields') }, required: ['key', 'value'], additionalProperties: false } },
+        unset: { type: 'array', description: 'edit: fields to remove', items: { type: 'object', properties: { key: SCHEMA.s('field key'), forWorkspaceRuns: SCHEMA.b('remove from the workspaceRuns block') }, required: ['key'], additionalProperties: false } },
+        message: SCHEMA.s('edit: the commit message (≤ 120 chars)'),
+        homeProjectKey: SCHEMA.s('workspace_home: the member project key whose policy workspace runs follow; empty to clear'),
         note: SCHEMA.s('one line shown on the card: why this change (≤ 200 chars)') }, ['kind']) },
     // Agent memory (agent-memory-design.md §9.1). The words "insert", "update" and "delete" are
     // spelled in lowercase prose only — the read-only source scan looks for the SQL verbs.
@@ -525,6 +544,29 @@ export function createAskTools(deps) {
       prompt: row.prompt == null ? null : deps.redact(row.prompt),     // run prompts are untrusted text (spec §6.3/§6.6)
       totalCostUsd: deps.totalsFor(row).cost,
       archived: !!row.archived_at,
+    };
+  }
+
+  // Team policy (docs/team-policy.md "Ask Worca"): the run's pipelines.policy_state and, while it is
+  // paused at a team cap, what that pause means. Null — and no key at all — for a run with neither.
+  const POLICY_PAUSES = {
+    cost_pipeline_policy: 'paused at the team policy\'s per-pipeline cap; the user can resume with "Continue past team cap" (with a reason when the policy asks for one) and the override is recorded to team metrics',
+    cost_total_policy: 'paused at the team policy\'s total cap for this period; continuing is acknowledged once per period for this policy home, and the override is recorded to team metrics',
+  };
+  function runPolicy(row) {
+    const st = parseJson(row.policy_state, null);
+    const rp = parseJson(row.resume_point, null);
+    const reason = rp && typeof rp.pauseReason === 'string' ? rp.pauseReason : null;
+    const pause = row.status === 'paused' && reason && POLICY_PAUSES[reason]
+      ? { reason, detail: typeof rp.pauseDetail === 'string' ? deps.redact(rp.pauseDetail) : null, meaning: POLICY_PAUSES[reason] } : null;
+    const has = st && typeof st === 'object' && !Array.isArray(st) && st.home;
+    if (!has && !pause) return null;
+    const list = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
+    return {
+      home: has ? String(st.home) : null, sha: has && st.sha ? String(st.sha).slice(0, 12) : null,
+      overrides: has ? list(st.overrides) : [], exceeded: has ? list(st.exceeded) : [], deviations: has ? list(st.deviations) : [],
+      unattended: has ? st.unattended === true : false, reason: has && typeof st.reason === 'string' ? deps.redact(st.reason) : null,
+      ...(pause ? { pause } : {}),
     };
   }
 
@@ -720,43 +762,169 @@ export function createAskTools(deps) {
     skipped: read.stats ? { malformed: read.stats.malformed ?? 0, unknownVersion: read.stats.unknownV ?? 0 } : null,
   });
 
+  // ---- team policy (docs/team-policy.md "Ask Worca") --------------------------------------------
+  // deps.policy (policy-deps.mjs) is optional like deps.metrics: without it list_projects carries no
+  // `policy` and the two tools answer "unavailable". The scope rules and the coded errors are the
+  // metrics tools' (tmScopeOf / tmError).
+  const tpRequire = (tool) => {
+    if (!deps.policy || typeof deps.policy !== 'object') throw new AskToolError(`${tool}: team policy is unavailable in this session`);
+    return deps.policy;
+  };
+  /** A target omitted for a kind falls back to the pinned scope of a kind that fits (turn.mjs replays this). */
+  const fillPolicyPin = (input, pin) => {
+    const inp = { ...input };
+    if (str(input.projectKey) || str(input.workspaceId) || !pin) return inp;
+    const kind = str(input.kind);
+    if (pin.projectKey && (kind === 'enable' || kind === 'edit')) inp.projectKey = pin.projectKey;
+    if (pin.workspaceId && (kind === 'edit' || kind === 'workspace_home' || kind === 'route_members')) inp.workspaceId = pin.workspaceId;
+    return inp;
+  };
+  const tpCaps = (c) => (c ? { pipeline: c.pipeline ?? null, total: c.total ?? null, resetPeriod: c.resetPeriod ?? null, pooled: c.pooled ?? null } : null);
+  const tpProject = (x) => {
+    if (!x) return null;
+    const state = x.exists === false ? 'missing' : x.hasOrigin === false ? 'no-origin' : !x.present ? 'off'
+      : x.unknownSchema ? 'unsupported' : x.delegateState === 'invalid' ? 'follow-invalid' : x.blocked ? 'blocked'
+        : x.delegateState === 'ok' ? 'follows' : 'carries';
+    return { state, slug: x.slug ?? null, home: x.home ?? null, follows: x.delegateTo ?? null,
+      title: x.title ? deps.redact(String(x.title)) : null, sha: x.sha ? String(x.sha).slice(0, 12) : null, fieldCount: x.fieldCount ?? 0,
+      caps: tpCaps(x.caps), detail: x.delegateDetail ? deps.redact(String(x.delegateDetail)) : x.blocked ? String(x.blocked) : null };
+  };
+  const tpWorkspace = (w) => {
+    if (!w) return null;
+    const h = w.home || { state: 'unset' };
+    return {
+      home: { state: h.state, slug: h.slug ?? null, project: h.path ? String(h.path).split('/').pop() : null, follows: h.follows ?? null,
+        detail: h.detail ? deps.redact(String(h.detail)) : null, workspaceRuns: Array.isArray(h.workspaceRuns) ? h.workspaceRuns.map((x) => ({ key: x.key, label: x.label, value: x.display })) : [] },
+      members: (w.members || []).map((x) => ({ slug: x.slug, state: x.state, policyFrom: x.policyFrom ?? null })),
+    };
+  };
+  async function listProjectsMetrics(cat) {
+    const m = deps.metrics && typeof deps.metrics.status === 'function' ? deps.metrics : null;
+    if (!m) return { projects: cat.projects, workspaces: cat.workspaces };
+    // Team-metrics status rides on the call the model already makes first, so "why is this
+    // project missing from the numbers" needs no second tool. A status failure never hides
+    // the projects themselves.
+    let st = null;
+    try { st = await m.status(); } catch { st = null; }
+    if (!st) return { projects: cat.projects, workspaces: cat.workspaces, metrics: { error: 'team metrics status unavailable' } };
+    const byKey = new Map((st.projects || []).map((x) => [x.key, x]));
+    const byId = new Map((st.workspaces || []).map((w) => [w.id, w]));
+    const projectMetrics = (x) => {
+      if (!x) return null;
+      const state = x.noGit ? 'not-git' : x.hasOrigin === false ? 'no-origin' : !x.enabled ? 'off'
+        : x.delegateState === 'invalid' ? 'delegate-invalid' : x.blocked ? 'blocked' : x.delegateTo ? 'delegated' : 'on';
+      return { state, slug: x.slug ?? null, delegateTo: x.delegateTo ?? null, attribution: x.attribution ?? null, record: x.record !== false,
+        pending: x.pending ?? 0, runs: x.runs ?? null, lastError: x.lastError ? deps.redact(String(x.lastError)) : null, metricsHomeFor: Array.isArray(x.homeFor) ? x.homeFor : [] };
+    };
+    const wsMetrics = (w) => {
+      if (!w) return null;
+      const h = w.home || { state: 'unset' };
+      return { home: { state: h.state, slug: h.slug ?? null, workspaceRuns: h.runs ?? null, record: h.record !== false, detail: h.detail ?? null },
+        members: (w.members || []).map((x) => ({ slug: x.slug, state: x.state, recordsOn: x.recordsOn ?? null, reason: x.reason ?? null })) };
+    };
+    return {
+      projects: cat.projects.map((p) => ({ ...p, metrics: projectMetrics(byKey.get(p.key)) })),
+      workspaces: cat.workspaces.map((w) => ({ ...w, metrics: wsMetrics(byId.get(w.id)) })),
+    };
+  }
+  /** Team-policy status on the same rows ("why did my run pause" starts at list_projects too). */
+  async function listProjectsPolicy(out) {
+    const pol = deps.policy && typeof deps.policy.status === 'function' ? deps.policy : null;
+    if (!pol) return out;
+    let st = null;
+    try { st = await pol.status(); } catch { st = null; }
+    if (!st) return { ...out, policy: { error: 'team policy status unavailable' } };
+    const byKey = new Map((st.projects || []).map((x) => [x.key, x]));
+    const byId = new Map((st.workspaces || []).map((w) => [w.id, w]));
+    return {
+      ...out,
+      projects: out.projects.map((p) => ({ ...p, policy: tpProject(byKey.get(p.key)) })),
+      workspaces: out.workspaces.map((w) => ({ ...w, policy: tpWorkspace(byId.get(w.id)) })),
+    };
+  }
+  /** get_team_policy's answer: the page's payload, trimmed to what the model reasons with. */
+  function shapeTeamPolicy(out, all) {
+    const R = deps.redact;
+    if (!out || !out.policy) {
+      return { scope: out?.scope ? { kind: out.scope.kind, id: out.scope.id, name: R(String(out.scope.name ?? '')) } : null,
+        policy: null, reason: out?.reason ?? 'not-enabled', code: out?.code ?? null, detail: out?.detail ? R(String(out.detail)) : null };
+    }
+    const p = out.policy;
+    const doc = p.doc || {};
+    const workspaceRun = !!p.workspaceRun;
+    const rows = (out.rows || []).filter((r) => all || r.shown).map((r) => ({
+      key: r.key, group: r.group, label: r.label, type: r.type,
+      kind: r.team ? r.team.kind : null,
+      ...(r.team && r.team.declaredKind && r.team.declaredKind !== r.team.kind ? { declaredKind: r.team.declaredKind } : {}),
+      team: r.team ? r.team.display : null,
+      teamValue: r.team ? r.team.value : null,
+      ...(r.team && r.team.onBreach ? { onBreach: r.team.onBreach } : {}),
+      ...(r.team && r.team.requireReason ? { requireReason: true } : {}),
+      ...(r.team && r.team.window ? { window: r.team.window } : {}),
+      ...(workspaceRun && r.team ? { fromWorkspaceRuns: !!r.team.fromWorkspaceRuns } : {}),
+      local: r.local ? r.local.display : null,
+      effective: r.effective ? r.effective.display : null,
+      source: r.effective ? r.effective.source : null,
+      note: r.note ?? null,
+      help: r.help,
+    }));
+    // What the workspaceRuns block changes: for a workspace scope the rows say so; for a project
+    // (the home), list the block itself so "what differs for workspace runs" needs no second call.
+    const wsBlock = Object.entries(doc.workspaceRuns || {}).map(([key, e]) => {
+      const meta = (out.registry || []).find((f) => f.key === key);
+      const row = (out.rows || []).find((r) => r.key === key);
+      return { key, label: meta ? meta.label : key, kind: e.kind, value: e.value, ...(workspaceRun && row?.team ? { display: row.team.display } : {}) };
+    });
+    return {
+      scope: { kind: out.scope.kind, id: out.scope.id, name: R(String(out.scope.name ?? '')) },
+      runKind: workspaceRun ? 'workspace runs' : 'single-project runs',
+      policy: {
+        home: p.home, homeKey: p.homeKey ?? null, sha: p.sha ? String(p.sha).slice(0, 12) : null,
+        follows: p.delegated ? p.home : null, from: p.from ?? null,
+        title: doc.title ? R(String(doc.title)) : null, notes: doc.notes ? R(String(doc.notes)) : null,
+        updatedAt: doc.updatedAt ?? null, updatedBy: doc.updatedBy ? R(String(doc.updatedBy)) : null,
+        checkedAt: p.checkedAt ?? null, warnings: (p.warnings || []).map((w) => R(String(w))),
+      },
+      caps: tpCaps(p.caps),
+      fields: rows,
+      workspaceRuns: wsBlock,
+      catalogs: {
+        guardrailSets: (doc.catalogs?.guardrailSets || []).map((g) => ({ id: `gp:${g.id}`, name: R(String(g.name ?? g.id)) })),
+        models: (doc.catalogs?.models || []).map((m) => ({ id: m.id, label: R(String(m.label ?? m.id)), efforts: m.efforts || [] })),
+      },
+      plugins: {
+        required: (out.requirements || []).map((q) => ({ name: q.name, marketplace: q.marketplace ?? null, minVersion: q.minVersion ?? null, state: q.state, installedVersion: q.installed?.version ?? null })),
+        blocked: (out.blockedPlugins || []).map((b) => ({ name: b.name, home: b.home })),
+      },
+      deviations: (out.deviations || []).map((d) => ({ code: d.code, level: d.level, text: d.text })),
+      canPublish: !!out.canPublish,
+      worcaVersion: out.worcaVersion ?? null,
+    };
+  }
+
   const handlers = {
     async list_projects() {
       const cat = await deps.buildCatalog();
-      const m = deps.metrics && typeof deps.metrics.status === 'function' ? deps.metrics : null;
-      if (!m) return { projects: cat.projects, workspaces: cat.workspaces };
-      // Team-metrics status rides on the call the model already makes first, so "why is this
-      // project missing from the numbers" needs no second tool. A status failure never hides
-      // the projects themselves.
-      let st = null;
-      try { st = await m.status(); } catch { st = null; }
-      if (!st) return { projects: cat.projects, workspaces: cat.workspaces, metrics: { error: 'team metrics status unavailable' } };
-      const byKey = new Map((st.projects || []).map((x) => [x.key, x]));
-      const byId = new Map((st.workspaces || []).map((w) => [w.id, w]));
-      const projectMetrics = (x) => {
-        if (!x) return null;
-        const state = x.noGit ? 'not-git' : x.hasOrigin === false ? 'no-origin' : !x.enabled ? 'off'
-          : x.delegateState === 'invalid' ? 'delegate-invalid' : x.blocked ? 'blocked' : x.delegateTo ? 'delegated' : 'on';
-        return { state, slug: x.slug ?? null, delegateTo: x.delegateTo ?? null, attribution: x.attribution ?? null, record: x.record !== false,
-          pending: x.pending ?? 0, runs: x.runs ?? null, lastError: x.lastError ? deps.redact(String(x.lastError)) : null, metricsHomeFor: Array.isArray(x.homeFor) ? x.homeFor : [] };
-      };
-      const wsMetrics = (w) => {
-        if (!w) return null;
-        const h = w.home || { state: 'unset' };
-        return { home: { state: h.state, slug: h.slug ?? null, workspaceRuns: h.runs ?? null, record: h.record !== false, detail: h.detail ?? null },
-          members: (w.members || []).map((x) => ({ slug: x.slug, state: x.state, recordsOn: x.recordsOn ?? null, reason: x.reason ?? null })) };
-      };
-      return {
-        projects: cat.projects.map((p) => ({ ...p, metrics: projectMetrics(byKey.get(p.key)) })),
-        workspaces: cat.workspaces.map((w) => ({ ...w, metrics: wsMetrics(byId.get(w.id)) })),
-      };
+      return listProjectsPolicy(await listProjectsMetrics(cat));
+    },
+    async get_team_policy(input) {
+      const pol = tpRequire('get_team_policy');
+      const scope = tmScopeOf(input, 'get_team_policy');
+      let out;
+      try { out = await pol.read(scope); } catch (err) { throw tmError('get_team_policy', err); }
+      return shapeTeamPolicy(out, input.all === true);
+    },
+    async propose_policy_change(input) {
+      const pol = tpRequire('propose_policy_change');
+      try { return await pol.validateChange(fillPolicyPin(input, pinnedScope())); } catch (err) { throw tmError('propose_policy_change', err); }
     },
     async get_team_metrics(input) {
       const { read, agg } = await tmRead('get_team_metrics', input);
       const R = deps.redact;
       const rows = (list) => (Array.isArray(list) ? list.slice(0, L.metricsBreakdownMaxRows).map((b) => ({
         key: b.key, label: R(String(b.label ?? '')), ...(b.sub ? { sub: R(String(b.sub)) } : {}),
-        runs: b.runs, usd: b.usd, perRunUsd: b.perRunUsd, successRate: b.successRate, share: b.share, cyclesMean: b.cyclesMean, filesChanged: b.filesChanged })) : null);
+        runs: b.runs, usd: b.usd, perRunUsd: b.perRunUsd, successRate: b.successRate, share: b.share, cyclesMean: b.cyclesMean, filesChanged: b.filesChanged,
+        ...(b.overrides || b.offPolicy ? { overrides: b.overrides || 0, offPolicy: b.offPolicy || 0 } : {}) })) : null);
       return {
         scope: tmScope(read), range: tmRange(agg), groupBy: agg.groupBy, filter: agg.filter,
         totalRecords: agg.totalRecords, runsInRange: agg.kpis.runs,
@@ -784,6 +952,7 @@ export function createAskTools(deps) {
           usd: r.usd, wallMs: r.wallMs, activeMs: r.activeMs, reviewCycles: r.reviewCycles, pr: r.pr,
           actor: r.actor, source: r.source ? R(String(r.source)) : null, projects: r.projects,
           local: typeof m.isLocalRun === 'function' ? m.isLocalRun(r.id) === true : false,
+          ...(r.policy ? { policy: { ...r.policy, reason: r.policy.reason ? R(String(r.policy.reason)) : null } } : {}),
         })),
       };
     },
@@ -852,7 +1021,8 @@ export function createAskTools(deps) {
       // Agent memory (§6): the run's memory changes, only when the run has any (the ledger is read
       // by the injected dep; a row-only bundle answers null and the shape stays byte-identical).
       const memory = typeof deps.readRunMemory === 'function' ? await deps.readRunMemory(row) : null;
-      return { ...run, hasDiff: !run.archived && await deps.hasDiffPatch(row), ...(memory ? { memory } : {}) };
+      const policy = runPolicy(row);
+      return { ...run, hasDiff: !run.archived && await deps.hasDiffPatch(row), ...(memory ? { memory } : {}), ...(policy ? { policy } : {}) };
     },
     // Read-only by contract: the parent process (ui/server.mjs askTrackRun, via the turn's onTrackRun hook) does the
     // linking and the following. A live run id lives only in the server's runs Map, so the child passes it through.

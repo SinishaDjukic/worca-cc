@@ -297,6 +297,15 @@ function toRunRow(r) {
     projects: r.target?.kind === 'workspace'
       ? (Array.isArray(r.target.touched) ? r.target.touched.filter((p) => typeof p === 'string') : [])
       : [r.target?.project].filter((p) => typeof p === 'string' && p),
+    // Team policy (§10): only on a run recorded under a policy, so policy-less rows keep their shape.
+    ...(r.policy && r.policy.home ? { policy: {
+      home: r.policy.home,
+      overrides: Array.isArray(r.policy.overrides) ? r.policy.overrides : [],
+      exceeded: Array.isArray(r.policy.exceeded) ? r.policy.exceeded : [],
+      deviations: Array.isArray(r.policy.deviations) ? r.policy.deviations : [],
+      unattended: r.policy.unattended === true,
+      reason: typeof r.policy.reason === 'string' ? r.policy.reason : null,
+    } } : {}),
   };
 }
 

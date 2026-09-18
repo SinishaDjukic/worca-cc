@@ -98,11 +98,12 @@ import {
   policyEvents, discoverPolicy, discoverAllPolicies, resolveProjectPolicy, resolveWorkspacePolicy, enableTeamPolicy, publishPolicy,
   projectPolicyStatus, listPolicyScopes, routeWorkspaceMembersPolicy, autoPolicyHome, startTeamPolicyBackground,
 } from '../src/core/policy/sync.mjs';
-import { effectiveRows, deviationsFor, fieldsForRun, capSummary } from '../src/core/policy/effective.mjs';
-import { localSnapshot, installedPluginsMap, pluginRequirements, blockedPluginFindings, seedPolicyMarketplaces, WORCA_VERSION as POLICY_WORCA_VERSION } from '../src/core/policy/local.mjs';
-import { FIELDS as POLICY_FIELDS, normalizePolicyDoc } from '../src/core/policy/registry.mjs';
+import { deviationsFor, fieldsForRun, capSummary } from '../src/core/policy/effective.mjs';
+import { installedPluginsMap, pluginRequirements, blockedPluginFindings, seedPolicyMarketplaces, WORCA_VERSION as POLICY_WORCA_VERSION } from '../src/core/policy/local.mjs';
+import { normalizePolicyDoc } from '../src/core/policy/registry.mjs';
 import { checkTeamTotalGate, checkTeamPipelineGate, teamCapsForTarget } from '../src/core/policy/gate.mjs';
 import { readPolicyState } from '../src/core/policy/state.mjs';
+import { policyForScope, policyPayload } from '../src/core/policy/scope.mjs';
 import { policyCatalogModels } from '../src/core/policy/cache.mjs';
 import { pickFolderNative } from '../src/core/folder-dialog.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
@@ -135,6 +136,8 @@ import {
 } from '../src/core/ask/workflow-deps.mjs';
 import { applyMetricsChange } from '../src/core/ask/metrics-deps.mjs';
 import { metricsEventPrompt, metricsNoticeText } from '../src/core/ask/metrics-proposal.mjs';
+import { applyPolicyChange } from '../src/core/ask/policy-deps.mjs';
+import { policyEventPrompt, policyNoticeText } from '../src/core/ask/policy-proposal.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
@@ -2435,42 +2438,6 @@ function sendPolicyError(res, err) {
     ...(err && err.hint ? { hint: err.hint } : {}),
     ...(err && Array.isArray(err.warnings) ? { warnings: err.warnings } : {}),
   });
-}
-
-/** Resolve a `project:<key>` / `workspace:<id>` scope to its policy + the run kind. */
-async function policyForScope(scope) {
-  if (scope.kind === 'project') {
-    const p = (await listProjects()).find((x) => x.key === scope.id);
-    if (!p) throw Object.assign(new Error(`unknown project ${scope.id}`), { code: 'NOT_FOUND' });
-    const r = await resolveProjectPolicy(p.path);
-    return { meta: { kind: 'project', id: p.key, name: p.name, path: p.path }, r, workspaceRun: false, projectDir: p.path };
-  }
-  const ws = await readWorkspace(scope.id);
-  if (!ws) throw Object.assign(new Error(`unknown workspace ${scope.id}`), { code: 'NOT_FOUND' });
-  const r = await resolveWorkspacePolicy(ws);
-  return { meta: { kind: 'workspace', id: ws.id, name: ws.name, policyProject: ws.policyProject ?? null }, r, workspaceRun: true, projectDir: ws.policyProject ?? null };
-}
-
-/** The local machine's answer to a resolved policy: the fold, the plugin gaps, the blocked plugins. */
-function policyPayload(meta, r, { workspaceRun, projectDir }) {
-  const local = localSnapshot(workspaceRun ? null : projectDir);
-  const homeKey = r.homeDir ? projectKey(r.homeDir) : null;
-  const homes = [{ slug: r.home, doc: r.doc }];
-  return {
-    scope: meta,
-    policy: {
-      home: r.home, homeKey, sha: r.sha, delegated: r.delegated, from: r.from, warnings: r.warnings || [], checkedAt: r.checkedAt ?? null,
-      doc: r.doc, caps: capSummary(r.doc, { workspaceRun }), workspaceRun,
-    },
-    rows: effectiveRows({ doc: r.doc, workspaceRun, local }),
-    local,
-    requirements: pluginRequirements(homes),
-    blockedPlugins: blockedPluginFindings(homes),
-    worcaVersion: POLICY_WORCA_VERSION,
-    registry: POLICY_FIELDS,
-    // Publishing needs the home checkout on THIS machine and a document (not a marker).
-    canPublish: !!r.homeDir && fs.existsSync(r.homeDir),
-  };
 }
 
 app.get('/api/policy/scopes', async (req, res) => {
@@ -5132,6 +5099,25 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
       }
     }
   } catch { /* absent line */ }
+  // The Team policy page's scope (validated slug): its name and, from the local cache only (no git), its home.
+  try {
+    if (ctx.tpScope) {
+      const [kind, tpId] = ctx.tpScope.split(':');
+      if (kind === 'project') {
+        const p = (await listProjects()).find((x) => x.key === tpId);
+        if (p) {
+          const r = await resolveProjectPolicy(p.path, { discover: false }).catch(() => null);
+          out.teamPolicy = { kind, id: tpId, name: p.name, home: r && r.ok ? r.home : null };
+        }
+      } else if (kind === 'workspace') {
+        const ws = await readWorkspace(tpId);
+        if (ws) {
+          const r = await resolveWorkspacePolicy(ws, { discover: false }).catch(() => null);
+          out.teamPolicy = { kind, id: tpId, name: ws.name, home: r && r.ok ? r.home : null };
+        }
+      }
+    }
+  } catch { /* absent line */ }
   try {
     if (ctx.pipelineId) {
       const key = ctx.workspaceId ? `workspaces/${ctx.workspaceId}` : out.project?.key;
@@ -5166,8 +5152,8 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // workflowId once the user saved it; a run card keeps its pre-P3 line byte for byte.
         const wf = !!(b.card && b.card.type === 'workflow');
         if (wf && b.state === 'building') continue;   // transient (no name yet) — never worth a header line
-        if (b.card && b.card.type === 'metrics') {
-          cards.push({ id: b.id, type: 'metrics', state: b.state, summary: b.card.summary || '' });
+        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy')) {
+          cards.push({ id: b.id, type: b.card.type, state: b.state, summary: b.card.summary || '' });
           continue;
         }
         cards.push(wf
@@ -5576,15 +5562,16 @@ async function startWorkflowEventTurn(threadId, block, { declined = false, thenR
   return failedEventTurn(threadId, { error: r.error, status: r.status, ...(r.budget ? { budget: r.budget } : {}) });
 }
 
-/** The metrics card's event turn: the synthetic notice row + the "[worca event] metrics card …" prompt (same queueing as workflow cards). */
+/** The metrics / policy card's event turn: the synthetic notice row + the "[worca event] metrics|policy card …" prompt (same queueing as workflow cards). */
 async function startMetricsEventTurn(threadId, block) {
   const thread = askGetThread(threadId);
   if (!thread) return null;
   const card = block.card || {};
   const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
   const result = card.result || null;
-  const text = metricsEventPrompt({ cardId: block.id, state, card, result });
-  const notice = metricsNoticeText({ state, card, result });
+  const isPolicy = card.type === 'policy';
+  const text = (isPolicy ? policyEventPrompt : metricsEventPrompt)({ cardId: block.id, state, card, result });
+  const notice = (isPolicy ? policyNoticeText : metricsNoticeText)({ state, card, result });
   let mv = await validateModelEffort(thread.model, thread.effort);
   if (!mv.ok) {
     const d = (await askCatalog({ withSecrets: false })).default;
@@ -5618,10 +5605,12 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
     const body = req.body || {};
     const found = askFindCard(id, cardId);
     if (!found) return res.status(404).json({ error: 'card not found' });
-    if (found.block.card && found.block.card.type === 'metrics') {
-      // Metrics card (docs/team-metrics.md "Ask Worca"): proposed → applied | failed | declined. The change is
-      // the outward-facing part — a branch on origin, a marker on another repo, this machine's switch, the
-      // workspace's home — so it happens HERE, behind the click, never in the model's tool.
+    if (found.block.card && (found.block.card.type === 'metrics' || found.block.card.type === 'policy')) {
+      // Metrics / policy card (docs/team-metrics.md, docs/team-policy.md "Ask Worca"): proposed → applied | failed |
+      // declined. The change is the outward-facing part — a branch on origin, a commit to the team's policy, a
+      // marker on another repo, this machine's switch, the workspace's home — so it happens HERE, behind the
+      // click, never in the model's tool.
+      const apply = found.block.card.type === 'policy' ? applyPolicyChange : applyMetricsChange;
       if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
       if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
       if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
@@ -5635,7 +5624,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       let block;
       try {
         let result;
-        try { result = await applyMetricsChange(found.block.card); }
+        try { result = await apply(found.block.card); }
         catch (err) {
           result = { ok: false, error: err && err.message ? err.message : String(err), code: (err && err.code) || 'ERROR', ...(err && err.hint ? { hint: err.hint } : {}), ...(err && err.stderr ? { stderr: String(err.stderr).slice(0, 2000) } : {}) };
         }

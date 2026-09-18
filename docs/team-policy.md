@@ -104,6 +104,45 @@ The **Team policy** page's editor writes one commit to the home's branch. A reje
 JSON and open a pull request against `worca-policy`, or ask a maintainer. Hand edits are fine:
 the reader drops a malformed field with a warning and never fails the page.
 
+## Ask Worca
+
+The chat reads the team policy and can propose changes to it, the same way it handles team
+metrics. It works with homes, following, fields and caps. It never sees worktrees or branch
+mechanics.
+
+- **`list_projects`** gives each project a policy status: carries, follows, off, no origin or
+  invalid, with the home, the caps and the field count. Each workspace gets its policy home, what
+  its `workspaceRuns` block changes, and where each member's policy comes from.
+- **`get_team_policy`** takes a project or a workspace, or the scope pinned for the chat. It
+  answers what applies on this machine and why, as the Team policy page does:
+  - the home and commit, and whether the project follows another project's policy;
+  - one row per field, with its kind, the team value, your value, the effective value and its
+    source;
+  - the `workspaceRuns` block;
+  - the policy's own guardrail sets and models;
+  - required and blocked plugins, and their state here;
+  - your deviations;
+  - whether the policy can be published from this machine.
+
+  A scope without a policy answers `policy: null` with the reason.
+- **`get_run`** includes the run's policy state: overrides, overshoots, deviations and the
+  override reason. A run paused at a team cap also gets a plain-words explanation of the pause.
+- **`get_team_metrics`** and **`list_team_metrics_runs`** include the policy counts, and each
+  run recorded under a policy includes its `policy` details.
+- **`propose_policy_change`** prepares a card. The change happens only when the user clicks.
+  - `enable`: set up a policy here, or follow another project's.
+  - `edit`: set and unset fields, in `fields` or in the `workspaceRuns` block, and change the
+    title and notes. It publishes as one commit to the home.
+  - `workspace_home`: set or clear a workspace's policy home.
+  - `route_members`: route a workspace's members to its home.
+
+  An edit card lists each change as before → after. When you apply it, Worca re-reads the
+  policy and applies the changes on top. A teammate's publish made since the proposal is kept.
+
+Continuing past a team cap is deliberately not something the chat can do. That override carries
+a person's reason, so it stays on the pause banner and in History. When the Team policy page is
+open, the chat is told which scope it shows.
+
 ## CLI
 
 ```

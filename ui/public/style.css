@@ -3695,6 +3695,15 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-mcard-results li.is-skipped{color:var(--ink-3);}
 .ask-mcard-actions{display:flex;align-items:center;gap:8px;margin-top:14px;}
 .ask-mcard.is-applied .ask-mcard-head{opacity:.9;}
+/* Team policy card (docs/team-policy.md "Ask Worca"): an edit's before → after list. */
+.ask-mcard-changes{list-style:none;margin:4px 0 0;padding:8px 10px;border-radius:8px;background:var(--field);display:flex;flex-direction:column;gap:4px;font-size:12.5px;}
+.ask-mcard-changes li{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px;min-width:0;}
+.ask-mcard-change-label{color:var(--ink-2);}
+.ask-mcard-change-val{display:inline-flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-family:var(--mono);font-size:11.5px;min-width:0;}
+.ask-mcard-before{color:var(--ink-3);text-decoration:line-through;}
+.ask-mcard-before.is-unset,.ask-mcard-after.is-unset{text-decoration:none;font-style:italic;color:var(--ink-3);}
+.ask-mcard-arrow{color:var(--ink-3);}
+.ask-mcard-after{color:var(--ink);font-weight:600;}
 
 /* ---------- Auto proposal body (ui/public/auto-proposal.mjs) — one body, two hosts (mockup §D/§F) ----------
    Rhythm top→bottom: name → 8 → reasoning → 16 → chips → 8 → fingerprint → 16 → graph → 12 → loops → 16 → match → 8 → meta.

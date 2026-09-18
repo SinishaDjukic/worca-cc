@@ -49,7 +49,8 @@ const fmtUsd = (n) => `$${Number(n).toFixed(2)}`;
 // Built-in guardrail ids render as their display names everywhere (`secure` shows as "Strict",
 // the guardrail-store.mjs BUILTIN_META rule); a policy set reads "gp:<id>".
 const GUARDRAIL_NAMES = { permissive: 'Permissive', normal: 'Normal', secure: 'Strict' };
-function fmtValue(meta, v) {
+/** A field value as the page shows it ("$25.00", "Strict", "on", "a, b"). */
+export function fmtValue(meta, v) {
   if (v == null) return '—';
   if (meta.key === 'guardrails.default' || meta.key === 'guardrails.minimum') return GUARDRAIL_NAMES[v] || String(v);
   switch (meta.type) {
