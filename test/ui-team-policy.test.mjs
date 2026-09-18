@@ -43,7 +43,9 @@ const POLICY = {
     { key: 'cost.totalLimitUsd', group: 'cost', label: 'Total cap per period (USD)', type: 'usd', team: { kind: 'soft', declaredKind: 'soft', value: 150, display: '$150.00' }, local: { value: 120, set: true, display: '$120.00' }, effective: { value: 120, display: '$120.00', source: 'local' }, note: 'yours is tighter', shown: true },
     { key: 'models.allowed', group: 'models', label: 'Allowed models', type: 'string[]', team: null, local: null, effective: { value: null, display: '—', source: 'none' }, note: null, shown: false },
   ],
-  local: {}, requirements: [], blockedPlugins: [], worcaVersion: '1.3.0', registry: REGISTRY, canPublish: true,
+  local: {}, deviations: [{ code: 'plugin-missing:acme-jira', level: 'warn', text: 'Required plugin acme-jira is not installed.' }],
+  requirements: [{ name: 'acme-jira', marketplace: 'acme', minVersion: '1.2.0', state: 'missing', installed: null, homes: ['acme/gateway'] }],
+  blockedPlugins: [], worcaVersion: '1.3.0', registry: REGISTRY, canPublish: true,
 };
 const NOTES = { scope: { kind: 'project', id: 'gateway-00000001' }, policy: { home: 'acme/gateway', sha: '3f2a1bc0', delegated: false, from: 'acme/gateway', caps: CAPS }, notes: [{ code: 'plugin-missing:acme-jira', text: 'Required plugin acme-jira is not installed.', level: 'warn' }], guardrailsDefault: null };
 
@@ -104,7 +106,45 @@ test('nav: Team policy sits in Manage after Workspaces, mirrored in the compact 
   assert.equal(doc.querySelector('.nav button[data-nav="team-policy"]').classList.contains('active'), true);
 });
 
-test('Team policy page: scope select, sync chip, effective table, Edit policy → editor → publish', async () => {
+test('Team policy page: the sync chip carries freshness only; the panel carries the document and the version', async () => {
+  const { doc, go, settle } = await boot();
+  await go('team-policy');
+  await settle();
+  const chip = doc.getElementById('tp-sync');
+  assert.equal(chip.hidden, false);
+  assert.equal(chip.textContent, 'Synced just nowRefresh', 'the team-metrics chip, without the commit id');
+  const head = doc.querySelector('#tp-body .tp-head');
+  assert.equal(head.querySelector('.tp-head-title').textContent, 'Gateway team policy');
+  const facts = [...head.querySelectorAll('.tp-facts dt')].map((dt) => dt.textContent);
+  assert.deepEqual(facts, ['SOURCE', 'APPLIES TO', 'VERSION']);
+  assert.match(head.querySelectorAll('.tp-facts dd')[2].textContent, /^3f2a1bc · updated just now by Mara$/);
+  assert.equal(doc.querySelector('#tp-scope-meta'), null, 'the chip row of pills is gone');
+  // The cards are this machine's side, and each tab is its own section.
+  const cards = [...doc.querySelectorAll('#tp-body .tp-ov-card')].map((c) => [c.querySelector('.tp-ov-label').textContent, c.querySelector('.tp-ov-value').textContent]);
+  assert.deepEqual(cards, [['PER-PIPELINE CAP', '$10.00'], ['TOTAL CAP', '$120.00'], ['REQUIRED PLUGINS', '0/1'], ['OFF-POLICY HERE', '1']]);
+  assert.equal(doc.querySelector('#tp-body .tp-sec-label').textContent, 'ON THIS MACHINE');
+  const tabs = [...doc.querySelectorAll('#tp-body .tp-tab')].map((b) => [b.dataset.sec, b.querySelector('.tp-tab-badge')?.textContent]);
+  assert.deepEqual(tabs, [['policy', '2'], ['plugins', '1']], 'no Catalog tab when the policy ships none');
+  assert.ok(doc.querySelector('#tp-sec-policy table.tp-tbl'), 'the effective table is the Policy tab');
+  assert.equal(doc.getElementById('tp-sec-plugins').hidden, true);
+});
+
+test('Team policy page: the Plugins tab lists what the policy expects and installs through the consent flow', async () => {
+  const { doc, go, settle } = await boot();
+  await go('team-policy');
+  await settle();
+  doc.querySelector('#tp-tab-plugins').click();
+  await settle();
+  assert.equal(doc.getElementById('tp-sec-policy').hidden, true);
+  const row = doc.querySelector('#tp-sec-plugins tr[data-name="acme-jira"]');
+  assert.match(row.textContent, /expected by acme\/gateway · from acme/);
+  assert.match(row.textContent, /≥ 1.2.0/);
+  assert.equal(row.querySelector('.badge.amber').textContent, 'not installed');
+  assert.equal(row.querySelector('.pl-policy-install').dataset.marketplace, 'acme');
+  assert.ok(doc.querySelector('#tp-sec-plugins .pl-policy-setup'), 'Set up… opens the checklist');
+});
+
+test('Team policy page: scope select, effective table, Edit policy → editor → publish', async () => {
   const puts = [];
   const { doc, go, settle, fetchCalls } = await boot({
     fetchHandler: (u, opts) => {
@@ -116,21 +156,18 @@ test('Team policy page: scope select, sync chip, effective table, Edit policy �
   await settle();
   const sel = doc.getElementById('tp-scope');
   assert.equal(sel.value, 'project:gateway-00000001');
-  assert.equal(doc.getElementById('tp-sync').hidden, false);
-  assert.match(doc.getElementById('tp-sync').textContent, /3f2a1bc/);
-  assert.match(doc.getElementById('tp-scope-meta').textContent, /Gateway team policy/);
   const table = doc.querySelector('#tp-body table.tp-tbl');
   assert.ok(table, 'the effective table paints');
   assert.equal(table.querySelectorAll('tbody tr[data-key]').length, 2);
   assert.ok(table.querySelector('tr[data-key="cost.pipelineLimitUsd"] td.tp-eff.loose'), 'the looser local value is struck through');
-  const edit = doc.getElementById('tp-edit-btn');
-  assert.equal(edit.hidden, false);
+  const edit = doc.querySelector('#tp-body .tp-head .tp-edit');
   assert.equal(edit.disabled, false);
   edit.click();
   await settle();
   const editor = doc.querySelector('#tp-body .tp-editor');
   assert.ok(editor, 'Edit policy opens the editor');
-  assert.equal(edit.textContent, 'Cancel editing');
+  assert.ok(doc.querySelector('#tp-body .tp-head'), 'the document panel stays above the editor');
+  assert.equal(doc.querySelector('#tp-body .tp-head .tp-edit').textContent, 'Cancel editing');
   assert.equal(editor.querySelector('.tp-publish').disabled, true);
   const cap = editor.querySelector('.tp-edit-row[data-key="cost.pipelineLimitUsd"][data-scope="fields"] .tp-val');
   cap.value = '12';
@@ -155,7 +192,7 @@ test('Team policy page: a publish rejection is printed verbatim under the bar', 
   });
   await go('team-policy');
   await settle();
-  doc.getElementById('tp-edit-btn').click();
+  doc.querySelector('#tp-body .tp-head .tp-edit').click();
   await settle();
   const editor = doc.querySelector('#tp-body .tp-editor');
   editor.querySelector('.tp-title').value = 'Renamed';
@@ -174,7 +211,7 @@ test('Team policy page: nothing enabled → the empty state; a 404 for the scope
   await empty.go('team-policy');
   await empty.settle();
   assert.ok(empty.doc.querySelector('#tp-body .tm-empty'), 'the two-card empty state');
-  assert.equal(empty.doc.getElementById('tp-edit-btn').hidden, true);
+  assert.equal(empty.doc.getElementById('tp-sync').hidden, true);
   assert.ok(empty.doc.querySelector('#tp-body .tp-check-now'));
   const missing = await boot({ policy: null });
   await missing.go('team-policy');

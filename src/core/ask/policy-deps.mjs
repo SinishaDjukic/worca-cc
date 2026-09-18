@@ -14,9 +14,6 @@ import {
   listPolicyScopes, projectPolicyStatus, enableTeamPolicy, publishPolicy, routeWorkspaceMembersPolicy, policyEvents,
 } from '../policy/sync.mjs';
 import { policyForScope, policyPayload } from '../policy/scope.mjs';
-import { deviationsFor, fieldsForRun } from '../policy/effective.mjs';
-import { installedPluginsMap, WORCA_VERSION } from '../policy/local.mjs';
-import { readTeamMetricsPrefs } from '../config.mjs';
 import { createPolicyChangeValidator, normalizeEditOps, applyEditOps } from './policy-proposal.mjs';
 
 async function scopePolicy(scope) {
@@ -119,11 +116,7 @@ export function defaultPolicyDeps({ threadId = null } = {}) {   // eslint-disabl
       async read(scope) {
         const { meta, r, payload } = await scopePolicy(scope);
         if (!r || !r.ok) return { scope: meta, policy: null, reason: r?.reason || 'not-enabled', code: r?.code || null, detail: r?.detail || null };
-        const fields = fieldsForRun(r.doc, { workspaceRun: meta.kind === 'workspace' });
-        let metricsRecord = null;
-        if (meta.kind === 'project') { const tm = readTeamMetricsPrefs(meta.id); metricsRecord = tm ? tm.record !== false : null; }
-        const deviations = deviationsFor(fields, { installed: installedPluginsMap(), worcaVersion: WORCA_VERSION, metricsRecord });
-        return { ...payload, deviations };
+        return payload;
       },
       validateChange: validatePolicyChange,
     },

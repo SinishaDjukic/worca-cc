@@ -97,6 +97,25 @@ cache at all pays one bounded fetch. A CLI-only machine refreshes with `worca po
 A missing, unreadable or newer-schema policy means your local settings apply, with one loud line
 in the run log and a red note on the Projects cell.
 
+## The Team policy page
+
+The page separates what the team publishes from what your machine makes of it.
+
+- The **top right** carries the sync chip that Team metrics uses: how fresh this machine's copy
+  is, and **Refresh**. Nothing about the document itself.
+- The **panel** below the scope select is the published document: its title, where it comes from
+  (this project's own branch, or the project it follows), what it applies to, the version and who
+  last changed it, and the notes. **Edit policy** is its action, and it is disabled with a reason
+  when the home is not checked out here. The version is the commit on the `worca-policy` branch,
+  which is also what each run records.
+- The **stat cards** under "on this machine" are the dynamic half: the caps your next run will
+  hit and where each comes from, how many required plugins are installed, and how many things are
+  off-policy here.
+- **Tabs** then hold one subject each: **Policy** (the effective table), **Plugins** (what the
+  policy expects against what is installed, with Install and Update behind the usual consent
+  dialog), and **Catalog** (the guardrail sets and models the policy ships), which appears only
+  when the policy ships any.
+
 ## Editing
 
 The **Team policy** page's editor writes one commit to the home's branch. A rejection

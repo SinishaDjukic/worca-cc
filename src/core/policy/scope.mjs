@@ -8,8 +8,9 @@ import { listProjects } from '../projects.mjs';
 import { readWorkspace } from '../workspaces.mjs';
 import { projectKey } from '../store.mjs';
 import { resolveProjectPolicy, resolveWorkspacePolicy } from './sync.mjs';
-import { effectiveRows, capSummary } from './effective.mjs';
-import { localSnapshot, pluginRequirements, blockedPluginFindings, WORCA_VERSION } from './local.mjs';
+import { effectiveRows, capSummary, deviationsFor, fieldsForRun } from './effective.mjs';
+import { localSnapshot, installedPluginsMap, pluginRequirements, blockedPluginFindings, WORCA_VERSION } from './local.mjs';
+import { readTeamMetricsPrefs } from '../config.mjs';
 import { FIELDS } from './registry.mjs';
 
 /**
@@ -35,6 +36,12 @@ export function policyPayload(meta, r, { workspaceRun, projectDir }) {
   const local = localSnapshot(workspaceRun ? null : projectDir);
   const homeKey = r.homeDir ? projectKey(r.homeDir) : null;
   const homes = [{ slug: r.home, doc: r.doc }];
+  // The machine-level deviations (no run yet: no guardrail set, no picked models) — what the page's
+  // "off-policy here" card and Ask Worca's get_team_policy both report.
+  const deviations = deviationsFor(fieldsForRun(r.doc, { workspaceRun }), {
+    installed: installedPluginsMap(), worcaVersion: WORCA_VERSION,
+    metricsRecord: meta.kind === 'project' ? (readTeamMetricsPrefs(meta.id) ? readTeamMetricsPrefs(meta.id).record !== false : null) : null,
+  });
   return {
     scope: meta,
     policy: {
@@ -42,6 +49,7 @@ export function policyPayload(meta, r, { workspaceRun, projectDir }) {
       doc: r.doc, caps: capSummary(r.doc, { workspaceRun }), workspaceRun,
     },
     rows: effectiveRows({ doc: r.doc, workspaceRun, local }),
+    deviations,
     local,
     requirements: pluginRequirements(homes),
     blockedPlugins: blockedPluginFindings(homes),

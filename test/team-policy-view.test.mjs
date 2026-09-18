@@ -6,6 +6,7 @@ import { JSDOM } from 'jsdom';
 import {
   projectTpState, renderProjectTpCell, renderPolicyEnableDialogBody, renderEffectiveTable, renderPolicyEditor, docFromEditor, editorDirty,
   renderPolicyEmptyState, renderPolicySyncChip, renderWsPolicyLine, renderTeamCapsReadout, renderTeamChip, renderPolicyNotesLine,
+  renderPolicyHeader, renderPolicyStats, renderPolicyPluginsPanel, renderPolicyCatalogPanel,
   renderTeamCapPauseBanner, renderRequiredStrip, renderSetupChecklist, renderPolicyBadgeFor, relTime, POLICY_PAUSE_REASONS,
 } from '../ui/public/team-policy-view.mjs';
 import { renderCostPauseBanner } from '../ui/public/stats-view.mjs';
@@ -175,9 +176,18 @@ test('empty state, sync chip, badge', () => {
   assert.match(empty.textContent, /Set up team policy on a project/);
   assert.match(empty.textContent, /Pick a policy home for a workspace/);
   assert.ok(empty.querySelector('.tp-check-now'));
+  // The team-metrics chip's words: freshness and Refresh only — the commit id lives on the panel.
   const chip = renderPolicySyncChip({ policy: { checkedAt: new Date(Date.now() - 4 * 60_000).toISOString(), sha: '3f2a1bc0deadbeef', warnings: [] } }, { doc });
-  assert.match(chip.textContent, /synced 4 min ago · 3f2a1bc/);
-  assert.ok(chip.querySelector('.tp-check-now'));
+  assert.equal(chip.textContent, 'Synced 4 min agoRefresh');
+  assert.ok(!chip.textContent.includes('3f2a1bc'), 'no commit id in the chip');
+  assert.ok(chip.querySelector('.dot.green') && chip.querySelector('.tp-check-now'));
+  const busy = renderPolicySyncChip({ policy: { checkedAt: null, warnings: [] } }, { doc, busy: true });
+  assert.match(busy.textContent, /^Checking origin…/);
+  assert.equal(busy.querySelector('.tp-check-now').disabled, true);
+  const warn = renderPolicySyncChip({ policy: { checkedAt: new Date().toISOString(), warnings: ['cost.totalLimitUsd: dropped'] } }, { doc });
+  assert.ok(warn.querySelector('.dot.amber'));
+  assert.match(warn.textContent, /1 warning/);
+  assert.match(warn.querySelector('.tm-sync-error').textContent, /dropped/);
   assert.equal(renderPolicyBadgeFor('acme/gateway', { doc }).className, 'badge blue tp-origin');
   assert.equal(relTime(new Date(Date.now() - 30_000).toISOString()), 'just now');
 });
@@ -281,4 +291,103 @@ test('plugins strip + setup checklist (boards 10–11)', () => {
   assert.match(list.querySelector('.tp-trust-row').textContent, /Plugins run with your user privileges/);
   assert.equal(list.querySelector('.tp-install-all').disabled, false);
   assert.ok(list.querySelector('.tp-later'));
+});
+
+// ---- Team policy page: the shared document, this machine, the tabs ---------------------------
+const PAYLOAD = {
+  scope: { kind: 'project', id: 'bl-00000001', name: 'billing-api' },
+  policy: {
+    home: 'gateway', sha: '3fc3cee0deadbeef', delegated: true, from: 'billing-api', warnings: [], checkedAt: new Date().toISOString(), workspaceRun: false,
+    doc: { title: 'Gateway team policy', notes: 'Q4 budget. Ask Mara before raising anything.', updatedAt: new Date(Date.now() - 11 * 60_000).toISOString(), updatedBy: 'Mara Lindqvist',
+      catalogs: { guardrailSets: [{ id: 'gateway-normal', name: 'Gateway normal', envScrub: true, protectedPaths: ['.env*'], deny: ['Bash(git push)'] }], models: [{ id: 'acme-proxy-opus', label: 'Opus via Acme', efforts: ['medium', 'high'], env: { ANTHROPIC_BASE_URL: 'https://llm' } }] } },
+  },
+  rows: [
+    { key: 'cost.pipelineLimitUsd', group: 'cost', label: 'Per-pipeline cap (USD)', shown: true, team: { kind: 'soft', value: 10, display: '$10.00' }, local: { set: true, value: 25, display: '$25.00' }, effective: { value: 10, display: '$10.00', source: 'team' }, note: 'yours ($25.00) is looser; the team cap applies' },
+    { key: 'cost.totalLimitUsd', group: 'cost', label: 'Total cap per period (USD)', shown: true, team: { kind: 'soft', value: 150, display: '$150.00' }, local: { set: true, value: 120, display: '$120.00' }, effective: { value: 120, display: '$120.00', source: 'local' }, note: 'yours is tighter' },
+    { key: 'cost.resetPeriod', group: 'cost', label: 'Reset period', shown: true, team: { kind: 'default', value: 'monthly', display: 'monthly' }, local: null, effective: { value: 'monthly', display: 'monthly', source: 'team-default' }, note: null },
+    { key: 'run.humanInLoop', group: 'runs', label: 'Human in the loop', shown: false, team: null, local: null, effective: { value: true, display: 'on', source: 'default' }, note: null },
+  ],
+  requirements: [
+    { name: 'acme-jira', marketplace: 'acme', minVersion: '1.2.0', state: 'outdated', installed: { version: '1.1.0', enabled: true }, homes: ['gateway'] },
+    { name: 'github-source', marketplace: 'acme', minVersion: null, state: 'missing', installed: null, homes: ['gateway'] },
+    { name: 'linear', marketplace: null, minVersion: null, state: 'ok', installed: { version: '2.0.0', enabled: true }, homes: ['gateway'] },
+  ],
+  blockedPlugins: [{ name: 'shell-runner', home: 'gateway' }],
+  deviations: [{ code: 'plugin-missing:github-source', level: 'warn', text: 'Required plugin github-source is not installed.' }],
+  canPublish: false, worcaVersion: '1.4.0',
+};
+
+test('header panel: the published document — title, source, version, notes, and the Edit action', () => {
+  const card = renderPolicyHeader(PAYLOAD, { doc });
+  assert.equal(card.className, 'card tp-head');
+  assert.equal(card.querySelector('.tp-head-kicker').textContent, 'SHARED WITH THE TEAM');
+  assert.equal(card.querySelector('.tp-head-title').textContent, 'Gateway team policy');
+  const facts = [...card.querySelectorAll('.tp-facts dt')].map((dt, i) => [dt.textContent, card.querySelectorAll('.tp-facts dd')[i].textContent]);
+  assert.deepEqual(facts.map((f) => f[0]), ['SOURCE', 'APPLIES TO', 'VERSION', 'NOTES']);
+  assert.equal(facts[0][1], 'Follows gateway — the document lives there');
+  assert.equal(facts[1][1], 'Runs on billing-api');
+  assert.match(facts[2][1], /^3fc3cee · updated 11 min ago by Mara Lindqvist$/);
+  assert.match(card.querySelectorAll('.tp-facts dd')[2].querySelector('code').title, /commit 3fc3cee on gateway's worca-policy branch/);
+  assert.equal(facts[3][1], 'Q4 budget. Ask Mara before raising anything.');
+  const edit = card.querySelector('.tp-edit');
+  assert.equal(edit.textContent, 'Edit policy');
+  assert.equal(edit.disabled, true, 'a follower cannot publish from here');
+  assert.match(card.querySelector('.tp-head-actions .hint').textContent, /Edit it where gateway is registered/);
+  // The carrier and a workspace read differently, and the version is the only place the id shows.
+  const carrier = renderPolicyHeader({ ...PAYLOAD, policy: { ...PAYLOAD.policy, delegated: false, from: 'gateway' }, scope: { kind: 'project', id: 'gw', name: 'gateway' }, canPublish: true }, { doc });
+  assert.match(carrier.querySelector('.tp-facts dd').textContent, /^This project's own worca-policy branch$/);
+  assert.equal(carrier.querySelector('.tp-edit').disabled, false);
+  assert.equal(carrier.querySelector('.tp-head-actions .hint'), null);
+  assert.equal(renderPolicyHeader(PAYLOAD, { doc, editing: true }).querySelector('.tp-edit').textContent, 'Cancel editing');
+  const ws = renderPolicyHeader({ ...PAYLOAD, scope: { kind: 'workspace', id: 'w', name: 'IoT SP' }, policy: { ...PAYLOAD.policy, workspaceRun: true } }, { doc });
+  assert.match(ws.querySelectorAll('.tp-facts dd')[0].textContent, /^Policy home gateway · the home follows it through billing-api$/);
+  assert.match(ws.querySelectorAll('.tp-facts dd')[1].textContent, /^Workspace runs of IoT SP/);
+});
+
+test('stat cards: what this machine will use, with the source and what needs attention', () => {
+  const grid = renderPolicyStats(PAYLOAD, { doc });
+  const cards = [...grid.querySelectorAll('.tp-ov-card')].map((c) => [c.querySelector('.tp-ov-label').textContent, c.querySelector('.tp-ov-value').textContent, c.querySelector('.tp-ov-sub')?.textContent]);
+  assert.deepEqual(cards, [
+    ['PER-PIPELINE CAP', '$10.00', 'the team cap · yours ($25.00) is looser; the team cap applies'],
+    ['TOTAL CAP', '$120.00', 'your own limit · yours is tighter · per month'],
+    ['REQUIRED PLUGINS', '1/3', '1 missing · 1 below the floor — see the Plugins tab'],
+    ['OFF-POLICY HERE', '1', 'Required plugin github-source is not installed.'],
+  ]);
+  const warns = [...grid.querySelectorAll('.tp-ov-sub.is-warn')].length;
+  assert.equal(warns, 2, 'only the two that need attention are amber');
+  const clean = renderPolicyStats({ rows: [], requirements: [], blockedPlugins: [], deviations: [] }, { doc });
+  assert.deepEqual([...clean.querySelectorAll('.tp-ov-value')].map((v) => v.textContent), ['none', 'none', 'none', 'none']);
+  assert.equal(clean.querySelector('.tp-ov-sub.is-warn'), null);
+  assert.match(clean.querySelectorAll('.tp-ov-sub')[3].textContent, /your setup matches/);
+});
+
+test('Plugins tab: a row per expected plugin with its state and action, then what the policy blocks', () => {
+  const root = renderPolicyPluginsPanel(PAYLOAD, { doc });
+  assert.ok(root.querySelector('.tp-plugins .card-head .pl-policy-setup'), 'Set up… is the panel action');
+  const rows = [...root.querySelectorAll('.tp-plugins-tbl tbody tr')].map((tr) => [...tr.children].map((td) => td.textContent.trim()));
+  assert.deepEqual(rows[0].slice(0, 4), ['acme-jiraexpected by gateway · from acme', '≥ 1.2.0', '1.1.0', 'below the floor']);
+  assert.deepEqual(rows[1].slice(1, 4), ['any version', '—', 'not installed']);
+  assert.deepEqual(rows[2].slice(1, 4), ['any version', '2.0.0', 'installed']);
+  assert.equal(root.querySelector('tr[data-name="acme-jira"] .pl-policy-update').dataset.name, 'acme-jira');
+  const install = root.querySelector('tr[data-name="github-source"] .pl-policy-install');
+  assert.deepEqual([install.dataset.name, install.dataset.marketplace], ['github-source', 'acme']);
+  assert.equal(root.querySelector('tr[data-name="linear"] .tp-plugin-act').textContent, '');
+  assert.match(root.querySelector('.tp-blocked-row').textContent, /shell-runner.*enabled here.*blocked by gateway/s);
+  assert.ok(root.querySelector('.tp-plugins-msg'), 'the tab has its own message line');
+  const none = renderPolicyPluginsPanel({ requirements: [], blockedPlugins: [] }, { doc });
+  assert.match(none.querySelector('.hist-empty').textContent, /expects no plugins/);
+  assert.equal(none.querySelector('.tp-blocked'), null);
+});
+
+test('Catalog tab: the guardrail sets and models the policy ships', () => {
+  const root = renderPolicyCatalogPanel(PAYLOAD, { doc });
+  const set = root.querySelector('.tp-catalog-sets .tp-cat-row');
+  assert.match(set.textContent, /Gateway normal.*gp:gateway-normal/s);
+  assert.match(set.querySelector('small').textContent, /env scrubbed · 1 protected path · 1 deny rule/);
+  const model = root.querySelector('.tp-catalog-models .tp-cat-row');
+  assert.match(model.textContent, /Opus via Acme.*acme-proxy-opus/s);
+  assert.match(model.querySelector('small').textContent, /medium · high · 1 env var · routes via base URL/);
+  assert.equal(root.querySelectorAll('.badge.blue').length, 2);
+  const empty = renderPolicyCatalogPanel({ policy: { doc: { catalogs: {} } } }, { doc });
+  assert.equal(empty.querySelectorAll('.hist-empty').length, 2);
 });

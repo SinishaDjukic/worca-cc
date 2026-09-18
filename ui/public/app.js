@@ -130,6 +130,7 @@ import {
   renderProjectTpCell, renderPolicyEnableDialogBody, renderEffectiveTable, renderPolicyEditor, docFromEditor, editorDirty,
   renderPolicyEmptyState, renderPolicySyncChip, renderWsPolicyLine, renderTeamCapsReadout, renderTeamChip, renderPolicyNotesLine,
   renderRequiredStrip, renderSetupChecklist, relTime as tpRelTime,
+  renderPolicyHeader, renderPolicyStats, renderPolicyPluginsPanel, renderPolicyCatalogPanel,
 } from './team-policy-view.mjs';
 import { aggregate, toCsv } from '../../src/shared/team-metrics/aggregate.mjs';
 import {
@@ -302,9 +303,7 @@ const el = {
   pluginsPolicy: $('#plugins-policy'),
   tpBody: $('#tp-body'),
   tpScope: $('#tp-scope'),
-  tpScopeMeta: $('#tp-scope-meta'),
   tpSync: $('#tp-sync'),
-  tpEditBtn: $('#tp-edit-btn'),
 
   // Agents management view
   agentsList: $('#agents-list'),
@@ -11737,7 +11736,7 @@ async function openWsPolicyHomeSheet(workspaceId) {
 }
 
 // The Team policy page (boards 4–5): read mode by default, the editor behind "Edit policy".
-const tpState = { scopeId: localStorage.getItem('worca.teamPolicy.scope') || '', data: null, loadSeq: 0, editing: false, showAll: false, notice: null };
+const tpState = { scopeId: localStorage.getItem('worca.teamPolicy.scope') || '', data: null, loadSeq: 0, editing: false, showAll: false, notice: null, tab: 'policy', checking: false };
 const semverGte = (a, b) => { const p = (v) => String(v || '').split('-')[0].split('.').map((x) => parseInt(x, 10) || 0); const x = p(a); const y = p(b); for (let i = 0; i < 3; i++) { if ((x[i] || 0) > (y[i] || 0)) return true; if ((x[i] || 0) < (y[i] || 0)) return false; } return true; };
 async function loadTeamPolicyView(param = '') {
   if (!el.tpBody || !el.tpScope) return;
@@ -11751,11 +11750,10 @@ async function loadTeamPolicyView(param = '') {
   const ids = [...scopes.scopes.projects, ...scopes.scopes.workspaces].map((x) => x.id);
   if (!ids.includes(tpState.scopeId)) tpState.scopeId = ids[0] || '';
   renderScopeOptions(el.tpScope, scopes.scopes, tpState.scopeId, { doc: document });
-  el.tpScopeMeta.replaceChildren();
   const settle = () => { el.tpBody.classList.remove('is-loading'); el.tpBody.removeAttribute('aria-busy'); };
   if (!ids.length) {
     tpState.data = null;
-    el.tpSync.hidden = true; el.tpEditBtn.hidden = true;
+    el.tpSync.hidden = true;
     settle();
     el.tpBody.replaceChildren(renderPolicyEmptyState({ doc: document }));
     return;
@@ -11767,7 +11765,7 @@ async function loadTeamPolicyView(param = '') {
   settle();
   if (!res || !res.ok) {
     tpState.data = null;
-    el.tpSync.hidden = true; el.tpEditBtn.hidden = true;
+    el.tpSync.hidden = true;
     el.tpBody.replaceChildren(Object.assign(document.createElement('small'), { className: 'hint err', textContent: `Could not load the team policy: ${data?.error || (res ? `HTTP ${res.status}` : 'unknown error')}` }));
     return;
   }
@@ -11779,33 +11777,67 @@ function renderTeamPolicyRead() {
   if (!data || !el.tpBody) return;
   tpState.editing = false;
   el.tpSync.hidden = false;
-  el.tpSync.replaceChildren(renderPolicySyncChip(data, { doc: document, now: Date.now() }));
-  el.tpEditBtn.hidden = false;
-  el.tpEditBtn.disabled = !data.canPublish;
-  el.tpEditBtn.title = data.canPublish ? '' : 'the policy home is not checked out on this machine';
-  el.tpEditBtn.textContent = 'Edit policy';
-  const chip = (t) => Object.assign(document.createElement('span'), { className: 'chip', textContent: t });
-  const meta = [];
-  if (data.policy?.doc?.title) meta.push(chip(data.policy.doc.title));
-  meta.push(chip(data.policy?.delegated ? `follows ${data.policy.home}` : `policy home ${data.policy?.home || '—'}`));
-  if (data.policy?.doc?.updatedAt) meta.push(chip(`updated ${tpRelTime(data.policy.doc.updatedAt) || ''}${data.policy.doc.updatedBy ? ` by ${data.policy.doc.updatedBy}` : ''}`));
-  el.tpScopeMeta.replaceChildren(...meta);
+  el.tpSync.replaceChildren(renderPolicySyncChip(data, { doc: document, now: Date.now(), busy: tpState.checking }));
   const parts = [];
   if (tpState.notice) { parts.push(Object.assign(document.createElement('p'), { className: 'form-msg ok', textContent: tpState.notice })); tpState.notice = null; }
   const ver = (data.rows || []).find((r) => r.key === 'worca.minVersion' && r.team);
   if (ver && data.worcaVersion && !semverGte(data.worcaVersion, ver.team.value)) {
     parts.push(Object.assign(document.createElement('div'), { className: 'hint tm-warn', textContent: `Your Worca is ${data.worcaVersion}; this policy expects at least ${ver.team.value}. Some fields may not apply.` }));
   }
-  parts.push(renderEffectiveTable(data, { doc: document, showAll: tpState.showAll }));
-  const strip = renderRequiredStrip(data.requirements || [], data.blockedPlugins || [], { doc: document });
-  if (strip) parts.push(strip);
+  // Two halves, deliberately unlike each other: the published document (the same for the whole
+  // team) in a panel, then what THIS machine makes of it in stat cards.
+  parts.push(renderPolicyHeader(data, { doc: document, now: Date.now() }));
+  const label = document.createElement('div');
+  label.className = 'tp-sec-label';
+  label.textContent = 'ON THIS MACHINE';
+  parts.push(label, renderPolicyStats(data, { doc: document }));
+  const tabsHost = document.createElement('div');
+  tabsHost.className = 'tp-tabs-host';
+  tabsHost.innerHTML = '<div class="tp-tabs" role="tablist"></div><div class="tp-sections"></div>';
+  parts.push(tabsHost);
   el.tpBody.replaceChildren(...parts);
+  initTpTabs(tabsHost, data);
+}
+const TP_TAB_ICONS = {
+  policy: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-3 8.2-7 9-4-.8-7-4.6-7-9V6z"></path></svg>',
+  plugins: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3h4v3a2 2 0 1 0 4 0h3v4h-3a2 2 0 1 0 0 4h3v4h-4v-3a2 2 0 1 0-4 0v3H6v-4H3v-4h3a2 2 0 1 0 0-4H3V6h3V3z"></path></svg>',
+  catalog: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5z"></path><path d="M3 13l9 5 9-5"></path></svg>',
+};
+const tpCatalogCount = (d) => ((d.policy?.doc?.catalogs?.guardrailSets || []).length + (d.policy?.doc?.catalogs?.models || []).length);
+const tpPluginAttention = (d) => (d.requirements || []).filter((r) => r.state !== 'ok').length + (d.blockedPlugins || []).length;
+const TP_TABS = [
+  { key: 'policy', label: 'Policy', visible: () => true,
+    badge: (d) => String((d.rows || []).filter((r) => r.shown).length),
+    build: (sec, d) => { sec.replaceChildren(renderEffectiveTable(d, { doc: document, showAll: tpState.showAll })); } },
+  { key: 'plugins', label: 'Plugins', visible: () => true,
+    badge: (d) => (tpPluginAttention(d) ? String(tpPluginAttention(d)) : null),
+    build: (sec, d) => { sec.replaceChildren(renderPolicyPluginsPanel(d, { doc: document })); void ensureMarketplacesLoaded(); } },
+  { key: 'catalog', label: 'Catalog', visible: (d) => tpCatalogCount(d) > 0,
+    badge: (d) => String(tpCatalogCount(d)),
+    build: (sec, d) => { sec.replaceChildren(renderPolicyCatalogPanel(d, { doc: document })); } },
+];
+function initTpTabs(host, data) {
+  initDetailTabs(host, TP_TABS.map((t) => ({ ...t, icon: TP_TAB_ICONS[t.key] })), data, {
+    tabsSel: '.tp-tabs', secsSel: '.tp-sections',
+    tabClass: 'tp-tab', secClass: 'tp-sec', badgeClass: 'tp-tab-badge',
+    idPrefix: 'tp',
+    initial: () => tpState.tab,
+  });
+  host.querySelector('.tp-tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('button[data-sec]');
+    if (btn) tpState.tab = btn.dataset.sec;   // per-session, like the Team metrics range
+  });
+}
+/** The install flow resolves its consent inventory from the Plugins page's last payload. */
+async function ensureMarketplacesLoaded() {
+  if (pluginsViewMarketplaces.length) return;
+  try { const r = await fetch('/api/marketplaces'); const j = await safeJson(r); if (r.ok) pluginsViewMarketplaces = j.marketplaces || []; }
+  catch { /* the tab still lists what the policy expects; an install then says it cannot find it */ }
 }
 function renderTeamPolicyEdit() {
   const data = tpState.data;
   if (!data || !data.canPublish || !el.tpBody) return;
   tpState.editing = true;
-  el.tpEditBtn.textContent = 'Cancel editing';
   const registry = data.registry || [];
   const editor = renderPolicyEditor(data.policy?.doc || null, { registry, doc: document });
   editor.querySelector('.tp-discard').addEventListener('click', () => renderTeamPolicyRead());
@@ -11816,7 +11848,7 @@ function renderTeamPolicyEdit() {
     catch { const pre = editor.querySelector('.tp-json'); pre.hidden = false; pre.textContent = json; msgEl.className = 'form-msg tp-msg'; msgEl.textContent = 'Copy the JSON above into .worca-policy/policy.json on a pull request against the worca-policy branch.'; }
   });
   editor.querySelector('.tp-publish').addEventListener('click', () => { void publishFromEditor(editor, registry); });
-  el.tpBody.replaceChildren(editor);
+  el.tpBody.replaceChildren(renderPolicyHeader(data, { doc: document, now: Date.now(), editing: true }), editor);
 }
 async function publishFromEditor(editor, registry) {
   const doc = docFromEditor(editor, { registry });
@@ -11842,7 +11874,7 @@ async function publishFromEditor(editor, registry) {
     msgEl.className = 'form-msg tp-msg err'; msgEl.textContent = err?.message || 'publish failed'; btn.disabled = false;
   }
 }
-if (el.tpEditBtn) el.tpEditBtn.addEventListener('click', () => { if (tpState.editing) renderTeamPolicyRead(); else renderTeamPolicyEdit(); });
+
 if (el.tpScope) el.tpScope.addEventListener('change', () => {
   tpState.scopeId = el.tpScope.value;
   localStorage.setItem('worca.teamPolicy.scope', tpState.scopeId);
@@ -11850,9 +11882,16 @@ if (el.tpScope) el.tpScope.addEventListener('change', () => {
 });
 const tpSection = document.querySelector('section[data-view="team-policy"]');
 if (tpSection) tpSection.addEventListener('click', async (e) => {
+  if (e.target.closest && e.target.closest('.tp-edit')) {
+    if (tpState.editing) renderTeamPolicyRead(); else renderTeamPolicyEdit();
+    return;
+  }
   if (e.target.closest && e.target.closest('.tp-check-now')) {
+    tpState.checking = true;
+    if (tpState.data && !tpState.editing) renderTeamPolicyRead();
     await fetch('/api/policy/discover', { method: 'POST' }).catch(() => {});
     tpCache.at = 0;
+    tpState.checking = false;
     loadTeamPolicyView();
     return;
   }

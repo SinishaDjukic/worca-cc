@@ -245,20 +245,218 @@ export function renderEffectiveTable(payload, { doc = globalThis.document, showA
 }
 
 /** Topbar chip: synced <rel> · <sha7> + Check now. */
-export function renderPolicySyncChip({ policy }, { doc = globalThis.document, now = Date.now() } = {}) {
-  const chip = h(doc, 'div', 'sync-chip-inner tp-chip');
-  const tone = policy?.warnings?.length ? 'amber' : 'green';
-  chip.append(h(doc, 'span', `dot ${tone}`));
+export function renderPolicySyncChip({ policy }, { doc = globalThis.document, now = Date.now(), busy = false } = {}) {
+  const chip = h(doc, 'div', `sync-chip-inner tp-chip${busy ? ' is-busy' : ''}`);
+  const warnings = policy?.warnings || [];
+  if (busy) { const sp = h(doc, 'span', 'tm-busy-spin'); sp.setAttribute('aria-hidden', 'true'); chip.append(sp); chip.setAttribute('aria-busy', 'true'); }
+  else chip.append(h(doc, 'span', `dot ${warnings.length ? 'amber' : 'green'}`));
   const txt = h(doc, 'span', 'sync-text');
-  txt.append(policy?.checkedAt ? 'synced ' : 'not checked yet');
+  // The team-metrics chip's words, and only its words: the commit id belongs with "updated by"
+  // on the policy panel, not with how fresh this machine's copy is.
+  if (busy) txt.append(h(doc, 'span', 'tm-checking', 'Checking origin…'), policy?.checkedAt ? ' · ' : '');
+  else txt.append(policy?.checkedAt ? 'Synced ' : 'Not checked yet');
   if (policy?.checkedAt) txt.append(h(doc, 'b', null, relTime(policy.checkedAt, now) || ''));
-  if (policy?.sha) txt.append(' · ', h(doc, 'span', 'mono', String(policy.sha).slice(0, 7)));
-  if (policy?.warnings?.length) txt.append(` | ${policy.warnings.length} warning${policy.warnings.length === 1 ? '' : 's'}`);
+  if (warnings.length) txt.append(` | ${warnings.length} warning${warnings.length === 1 ? '' : 's'}`);
   chip.append(txt);
-  const check = h(doc, 'button', 'btn-ghost btn-mini tp-check-now', 'Check now'); check.type = 'button';
+  const check = h(doc, 'button', `btn-ghost btn-mini tp-check-now${busy ? ' busy' : ''}`, 'Refresh'); check.type = 'button';
+  if (busy) check.disabled = true;
   chip.append(check);
-  if (policy?.warnings?.length) { const w = h(doc, 'pre', 'hint mono tm-sync-error', policy.warnings.join('\n')); chip.append(w); }
+  if (warnings.length) { const w = h(doc, 'pre', 'hint mono tm-sync-error', warnings.join('\n')); chip.append(w); }
   return chip;
+}
+
+// ---- Team policy page: the shared document (static) vs this machine (dynamic) ----------------
+/**
+ * The header panel (board 4): what the TEAM published — title, where it comes from, the version
+ * and who last changed it, the notes — with Edit policy as its own action. Everything here is the
+ * same for every teammate; the stat cards below are what THIS machine makes of it.
+ */
+export function renderPolicyHeader(payload, { doc = globalThis.document, now = Date.now(), editing = false } = {}) {
+  const policy = payload.policy || {};
+  const scope = payload.scope || {};
+  const card = h(doc, 'section', 'card tp-head');
+  const main = h(doc, 'div', 'tp-head-main');
+  main.append(h(doc, 'div', 'tp-head-kicker', 'SHARED WITH THE TEAM'));
+  main.append(h(doc, 'h2', 'tp-head-title', policy.doc?.title || `${policy.home || 'Team'} policy`));
+  const facts = h(doc, 'dl', 'tp-facts');
+  const fact = (label, ...value) => { facts.append(h(doc, 'dt', null, label)); const dd = h(doc, 'dd'); dd.append(...value); facts.append(dd); };
+  if (scope.kind === 'workspace') {
+    const v = [h(doc, 'span', null, 'Policy home '), code(doc, policy.home || '—')];
+    if (policy.delegated && policy.from) v.push(h(doc, 'span', null, ' · the home follows it through '), code(doc, policy.from));
+    fact('SOURCE', ...v);
+    fact('APPLIES TO', `Workspace runs of ${scope.name || 'this workspace'} — the policy's workspace-run values sit on top`);
+  } else if (policy.delegated) {
+    fact('SOURCE', h(doc, 'span', null, 'Follows '), code(doc, policy.home || '—'), h(doc, 'span', null, ' — the document lives there'));
+    fact('APPLIES TO', `Runs on ${scope.name || 'this project'}`);
+  } else {
+    fact('SOURCE', h(doc, 'span', null, 'This project\'s own '), code(doc, 'worca-policy'), h(doc, 'span', null, ' branch'));
+    fact('APPLIES TO', `Runs on ${scope.name || 'this project'}, and on every project that follows it`);
+  }
+  const ver = [];
+  if (policy.sha) { const c = code(doc, String(policy.sha).slice(0, 7)); c.title = `Policy version: commit ${String(policy.sha).slice(0, 7)} on ${policy.home}'s worca-policy branch`; ver.push(c); }
+  if (policy.doc?.updatedAt) ver.push(h(doc, 'span', null, `${ver.length ? ' · ' : ''}updated ${relTime(policy.doc.updatedAt, now) || ''}${policy.doc.updatedBy ? ` by ${policy.doc.updatedBy}` : ''}`));
+  if (ver.length) fact('VERSION', ...ver);
+  if (policy.doc?.notes) fact('NOTES', h(doc, 'span', 'tp-head-notes', policy.doc.notes));
+  main.append(facts);
+  card.append(main);
+  const actions = h(doc, 'div', 'tp-head-actions');
+  const edit = h(doc, 'button', 'btn btn-ghost btn-mini tp-edit', editing ? 'Cancel editing' : 'Edit policy'); edit.type = 'button';
+  edit.disabled = !payload.canPublish;
+  actions.append(edit);
+  if (!payload.canPublish) actions.append(h(doc, 'small', 'hint', `Edit it where ${policy.home || 'the policy home'} is registered in Worca`));
+  card.append(actions);
+  return card;
+}
+
+const capSub = (row) => {
+  if (!row) return '';
+  const src = { team: 'the team cap', 'team-default': 'the team\'s starting value', local: 'your own limit', advisory: 'advisory', default: 'the Worca default', none: '' }[row.effective?.source] || '';
+  return [src, row.note].filter(Boolean).join(' · ');
+};
+
+/**
+ * The stat cards (board 4): what the policy means for THIS machine right now — the caps a run
+ * will hit, the plugins it expects, and where your setup differs. Dynamic by nature, so they sit
+ * apart from the published document above.
+ */
+export function renderPolicyStats(payload, { doc = globalThis.document } = {}) {
+  const rows = payload.rows || [];
+  const byKey = (k) => rows.find((r) => r.key === k) || null;
+  const grid = h(doc, 'div', 'tp-ov-grid');
+  const statCard = (label, value, sub, tone = null) => {
+    const c = h(doc, 'div', 'tp-ov-card');
+    c.append(h(doc, 'div', 'tp-ov-label', label), h(doc, 'div', 'tp-ov-value mono', value));
+    if (sub) c.append(h(doc, 'div', `tp-ov-sub${tone ? ` is-${tone}` : ''}`, sub));
+    grid.append(c);
+    return c;
+  };
+  const pipeline = byKey('cost.pipelineLimitUsd');
+  statCard('PER-PIPELINE CAP', pipeline?.effective?.display && pipeline.effective.source !== 'none' ? pipeline.effective.display : 'none',
+    pipeline && pipeline.effective.source !== 'none' ? capSub(pipeline) : 'neither you nor the team set one');
+  const total = byKey('cost.totalLimitUsd');
+  const period = byKey('cost.resetPeriod');
+  statCard('TOTAL CAP', total?.effective?.display && total.effective.source !== 'none' ? total.effective.display : 'none',
+    total && total.effective.source !== 'none' ? [capSub(total), period?.effective?.display ? `per ${period.effective.display === 'weekly' ? 'week' : 'month'}` : ''].filter(Boolean).join(' · ') : 'neither you nor the team set one');
+  const reqs = payload.requirements || [];
+  const off = reqs.filter((r) => r.state !== 'ok');
+  // Counted by state ("1 missing · 1 below the floor"), never one word per plugin.
+  const byState = ['missing', 'outdated', 'disabled']
+    .map((st) => [off.filter((r) => r.state === st).length, st === 'outdated' ? 'below the floor' : st])
+    .filter(([n]) => n > 0).map(([n, label]) => `${n} ${label}`);
+  statCard('REQUIRED PLUGINS', reqs.length ? `${reqs.length - off.length}/${reqs.length}` : 'none',
+    reqs.length ? (off.length ? `${byState.join(' · ')} — see the Plugins tab` : 'all installed') : 'the policy expects none',
+    off.length ? 'warn' : null);
+  const dev = payload.deviations || [];
+  statCard('OFF-POLICY HERE', dev.length ? String(dev.length) : 'none',
+    dev.length ? dev[0].text : 'your setup matches what the team expects', dev.length ? 'warn' : null);
+  return grid;
+}
+
+const PLUGIN_STATE = { ok: ['green', 'installed'], missing: ['amber', 'not installed'], outdated: ['amber', 'below the floor'], disabled: ['amber', 'disabled here'] };
+
+/** The Plugins tab (board 11): what the policy expects, against what this machine has. */
+export function renderPolicyPluginsPanel(payload, { doc = globalThis.document } = {}) {
+  const reqs = payload.requirements || [];
+  const blocked = payload.blockedPlugins || [];
+  const root = h(doc, 'div', 'tp-sec-body');
+  const card = h(doc, 'section', 'card tp-plugins');
+  const head = h(doc, 'div', 'card-head');
+  head.append(h(doc, 'h2', null, 'Required plugins'));
+  const setup = btn(doc, 'pl-policy-setup', 'Set up…');
+  head.append(setup);
+  card.append(head);
+  card.append(h(doc, 'small', 'hint tp-plugins-hint', 'Installing shows the plugin\'s source, commit and what it ships, and waits for your click. Nothing installs on its own unless you trust the policy home on the Plugins page.'));
+  card.append(h(doc, 'p', 'form-msg tp-plugins-msg'));
+  if (!reqs.length) card.append(h(doc, 'div', 'hist-empty', 'This policy expects no plugins.'));
+  else {
+    const table = h(doc, 'table', 'tm-tbl tp-tbl tp-plugins-tbl');
+    const thead = h(doc, 'thead'); const hr = h(doc, 'tr');
+    for (const t of ['Plugin', 'Expected', 'Installed here', 'State', '']) hr.append(h(doc, 'th', null, t));
+    thead.append(hr); table.append(thead);
+    const tbody = h(doc, 'tbody');
+    for (const r of reqs) {
+      const tr = h(doc, 'tr'); tr.dataset.name = r.name;
+      const name = h(doc, 'td', 'tp-key'); name.append(r.name);
+      name.append(h(doc, 'small', null, `expected by ${(r.homes || []).join(', ') || payload.policy?.home || 'the policy'}${r.marketplace ? ` · from ${r.marketplace}` : ''}`));
+      const want = h(doc, 'td', 'mono', r.minVersion ? `≥ ${r.minVersion}` : 'any version');
+      const have = h(doc, 'td', 'mono', r.installed?.version || (r.installed ? 'installed' : '—'));
+      if (!r.installed) have.classList.add('muted');
+      const [tone, label] = PLUGIN_STATE[r.state] || ['grey', r.state];
+      const state = h(doc, 'td'); state.append(h(doc, 'span', `badge ${tone}`, label));
+      const act = h(doc, 'td', 'tp-plugin-act');
+      if (r.state === 'missing') { const b = btn(doc, 'pl-policy-install', 'Install…', true); b.dataset.name = r.name; b.dataset.marketplace = r.marketplace || ''; act.append(b); }
+      else if (r.state === 'outdated') { const b = btn(doc, 'pl-policy-update', 'Update…'); b.dataset.name = r.name; act.append(b); }
+      else if (r.state === 'disabled') act.append(h(doc, 'small', 'hint', 'enable it on the Plugins page'));
+      else if (r.config) { const b = btn(doc, 'pl-policy-configure', 'Configure…'); b.dataset.name = r.name; act.append(b); }
+      tr.append(name, want, have, state, act);
+      tbody.append(tr);
+    }
+    table.append(tbody);
+    card.append(table);
+  }
+  root.append(card);
+  if (blocked.length) {
+    const bc = h(doc, 'section', 'card tp-blocked');
+    const bh = h(doc, 'div', 'card-head');
+    bh.append(h(doc, 'h2', null, 'Blocked by the policy'), h(doc, 'small', 'hint', 'A run with one of these enabled proceeds and is recorded as off-policy'));
+    bc.append(bh);
+    const list = h(doc, 'div', 'tp-blocked-list');
+    for (const b of blocked) {
+      const row = h(doc, 'div', 'tp-blocked-row');
+      row.append(h(doc, 'span', 'mono', b.name), h(doc, 'span', 'badge amber', 'enabled here'), h(doc, 'small', 'hint', `blocked by ${b.home}`));
+      list.append(row);
+    }
+    bc.append(list);
+    root.append(bc);
+  }
+  return root;
+}
+
+/** The Catalog tab: the guardrail sets and models the policy ships to everyone who follows it. */
+export function renderPolicyCatalogPanel(payload, { doc = globalThis.document } = {}) {
+  const cat = payload.policy?.doc?.catalogs || {};
+  const sets = cat.guardrailSets || [];
+  const models = cat.models || [];
+  const root = h(doc, 'div', 'tp-sec-body');
+  const sc = h(doc, 'section', 'card tp-catalog-sets');
+  const sh = h(doc, 'div', 'card-head');
+  sh.append(h(doc, 'h2', null, 'Guardrail sets'), h(doc, 'small', 'hint', 'Read-only on every machine that follows this policy · Settings › Guardrails'));
+  sc.append(sh);
+  if (!sets.length) sc.append(h(doc, 'div', 'hist-empty', 'This policy ships no guardrail sets.'));
+  else {
+    const list = h(doc, 'div', 'tp-cat-list');
+    for (const g of sets) {
+      const row = h(doc, 'div', 'tp-cat-row');
+      const main = h(doc, 'div', 'tp-cat-main');
+      main.append(h(doc, 'b', null, g.name || g.id), ' ', code(doc, `gp:${g.id}`));
+      const bits = [g.envScrub ? 'env scrubbed' : 'env passed through', `${(g.protectedPaths || []).length} protected path${(g.protectedPaths || []).length === 1 ? '' : 's'}`, `${(g.deny || []).length} deny rule${(g.deny || []).length === 1 ? '' : 's'}`];
+      main.append(h(doc, 'small', 'hint', bits.join(' · ')));
+      row.append(main, h(doc, 'span', 'badge blue', 'policy'));
+      list.append(row);
+    }
+    sc.append(list);
+  }
+  root.append(sc);
+  const mc = h(doc, 'section', 'card tp-catalog-models');
+  const mh = h(doc, 'div', 'card-head');
+  mh.append(h(doc, 'h2', null, 'Models'), h(doc, 'small', 'hint', 'Selectable everywhere a model is chosen · Settings › Models'));
+  mc.append(mh);
+  if (!models.length) mc.append(h(doc, 'div', 'hist-empty', 'This policy ships no models.'));
+  else {
+    const list = h(doc, 'div', 'tp-cat-list');
+    for (const m of models) {
+      const row = h(doc, 'div', 'tp-cat-row');
+      const main = h(doc, 'div', 'tp-cat-main');
+      main.append(h(doc, 'b', null, m.label || m.id), ' ', code(doc, m.id));
+      const envKeys = Object.keys(m.env || {});
+      main.append(h(doc, 'small', 'hint', [(m.efforts || []).join(' · ') || 'default efforts', envKeys.length ? `${envKeys.length} env var${envKeys.length === 1 ? '' : 's'}` : null, m.env?.ANTHROPIC_BASE_URL ? 'routes via base URL' : null].filter(Boolean).join(' · ')));
+      row.append(main, h(doc, 'span', 'badge blue', 'policy'));
+      list.append(row);
+    }
+    mc.append(list);
+  }
+  root.append(mc);
+  return root;
 }
 
 export function renderPolicyEmptyState({ doc = globalThis.document } = {}) {
