@@ -9,6 +9,8 @@
 // Formatters are injected via opts.fmt = { usd, usd4, duration, estTitle };
 // DEFAULT_FMT keeps pure tests standalone.
 
+import { renderTeamCapPauseBanner, POLICY_PAUSE_REASONS } from './team-policy-view.mjs';
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /** Spend meter turns amber at 80% of the total limit (display-only). */
@@ -322,6 +324,9 @@ export function renderBudgetReadout(budget, { doc = globalThis.document, fmt = D
 /** Cost-pause banner for run/history cards. rec = {pauseReason, pipelineId,
  *  totalCostUsd}; opts.budget supplies limits + window figures. */
 export function renderCostPauseBanner(rec, { doc = globalThis.document, fmt = DEFAULT_FMT, budget = null } = {}) {
+  // Team policy (team-policy design board 9): a pause on a TEAM cap is the blue variant with
+  // "continue past" — every existing caller keeps calling this one function.
+  if (POLICY_PAUSE_REASONS.includes(rec.pauseReason)) return renderTeamCapPauseBanner(rec, { doc, budget });
   const b = budget || {};
   const kind = rec.pauseReason === 'cost_total' ? 'cb-total' : 'cb-pipeline';
   const el = h(doc, 'div', `cost-banner ${kind}`);

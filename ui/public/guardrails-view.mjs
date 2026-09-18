@@ -23,7 +23,18 @@ export function guardrailSummary(s) {
 function originBadge(doc, origin) {
   if (origin === 'builtin') return h(doc, 'span', 'badge waiting grv-origin', 'built-in');
   if (typeof origin === 'string' && origin.startsWith('plugin:')) return h(doc, 'span', 'badge violet grv-origin', origin);
+  // Team policy sets (gp:<id>): blue, like every policy origin; the title names the home.
+  if (typeof origin === 'string' && origin.startsWith('policy:')) {
+    const b = h(doc, 'span', 'badge blue grv-origin', 'policy');
+    b.title = `Shipped by the team policy on ${origin.slice(7)} — edit it on the Team policy page`;
+    return b;
+  }
   return h(doc, 'span', 'badge green grv-origin', 'user');
+}
+
+/** Built-ins and team-policy sets are read-only here: View, Save as new set, never Delete. */
+export function isReadOnlyGuardrailSet(s) {
+  return !!s && (s.origin === 'builtin' || (typeof s.origin === 'string' && s.origin.startsWith('policy:')));
 }
 
 // renderGuardrailList(sets) -> <div.grv-list> of cards; built-ins get View + no Delete.
@@ -39,7 +50,7 @@ export function renderGuardrailList(sets, { doc = globalThis.document } = {}) {
     body.appendChild(head);
     body.appendChild(h(doc, 'small', 'grv-summary hint', guardrailSummary(s.settings)));
     card.appendChild(body);
-    if (s.origin !== 'builtin') {
+    if (!isReadOnlyGuardrailSet(s)) {
       const del = h(doc, 'button', 'btn-ghost grv-delete', 'Delete');
       del.type = 'button';
       del.dataset.id = s.id;
@@ -52,7 +63,7 @@ export function renderGuardrailList(sets, { doc = globalThis.document } = {}) {
     const open = h(doc, 'button', 'btn-ghost grv-edit grv-details', 'Details');
     open.type = 'button';
     open.dataset.id = s.id;
-    open.title = s.origin === 'builtin' ? 'View' : 'Edit';
+    open.title = isReadOnlyGuardrailSet(s) ? 'View' : 'Edit';
     card.appendChild(open);
     root.appendChild(card);
   }
@@ -172,7 +183,7 @@ export function renderGuardrailEditor(set, { doc = globalThis.document, mode = '
   }
   if (readOnly) {
     head.appendChild(h(doc, 'b', 'grv-name', set.name));
-    head.appendChild(h(doc, 'span', 'badge waiting grv-origin', 'built-in'));
+    head.appendChild(originBadge(doc, set.origin || 'builtin'));
   } else {
     const name = h(doc, 'input', 'input grv-name-input');
     name.type = 'text';

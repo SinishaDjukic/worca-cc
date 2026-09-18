@@ -665,6 +665,9 @@ export async function setHideBuiltinModels(input) {
   const settings = readSettings();
   if (input === DEFAULT_HIDE_BUILTIN_MODELS) delete settings.hideBuiltinModels;
   else settings.hideBuiltinModels = input;
+  // The developer has now made their own choice, even when it is the default: a team-policy
+  // `models.hideBuiltins` default no longer applies on this machine (team-policy design §6).
+  settings.hideBuiltinModelsChosen = true;
   await persistSettings(settings);
   return { hideBuiltinModels: hideBuiltinModels() };
 }

@@ -23,6 +23,7 @@ const validSubagentModel = (v) => (isSubagentModelValue(v) ? v : undefined);
 import { slugify } from './artifacts.mjs';
 import { DEFAULT_AGENTS_DIR, loadAgentRegistry } from './agent-registry.mjs'; // fileURLToPath-based (Windows-safe)
 import { readPluginsLock } from './plugins-lock.mjs';                 // a DISABLED plugin's rows are hidden
+import { teamDefault } from './policy/cache.mjs';                     // team-policy models.steps defaults
 import { validateGraph, formatIssue, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import {
@@ -627,6 +628,10 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   // store (projectKey(null) throws); its legacy per-role layer is empty by definition.
   const stepsCfg = (!ignore && workflowId === GRAPH_DEFAULT_WORKFLOW.id && projectDir) ? (await readConfig(projectDir)).steps : {};
   const firstDefined = (...vals) => vals.find((v) => v !== undefined);
+  // Team policy `models.steps` (a default, team-policy design §8): model and effort per ROLE for
+  // roles the project has not configured — below the project's own node and per-role config,
+  // above the template's authored config. Cache-only read; absent without a policy.
+  const teamSteps = (!ignore && projectDir) ? (teamDefault(projectDir, 'models.steps') || {}) : {};
 
   const nodes = {};
   const agentsByKey = {};
@@ -653,6 +658,7 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     // Legacy per-role config is keyed by the AUTHORED key, so a substituted
     // variant still inherits the user's model/effort for that role.
     const legacy = stepsCfg[authored] || {};
+    const team = (sel.model || sel.effort || legacy.model || legacy.effort) ? {} : (teamSteps[authored] || {});
     const cfg = node.config && typeof node.config === 'object' ? node.config : {};
     nodes[node.id] = {
       nodeId: node.id,
@@ -666,10 +672,10 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       promptHints: typeof meta.promptHints === 'string' ? meta.promptHints : '',
       tools,
       config: { ...cfg },
-      model: firstDefined(sel.model, legacy.model, cfg.model),
+      model: firstDefined(sel.model, legacy.model, team.model, cfg.model),
       // An effort only travels with the model that advertises it: an override
       // naming its own model must not inherit the lower layer's effort.
-      effort: firstDefined(sel.effort, legacy.effort, (sel.model || legacy.model) ? undefined : cfg.effort),
+      effort: firstDefined(sel.effort, legacy.effort, team.effort, (sel.model || legacy.model || team.model) ? undefined : cfg.effort),
       // workspaceFanOut forces fan-out on a workspace run (the generic
       // replacement for the v1 FANOUT_ELIGIBLE key list).
       fanOut: isWorkspace && meta.workspaceFanOut

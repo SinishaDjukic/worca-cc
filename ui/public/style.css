@@ -5040,3 +5040,132 @@ input.gv-name:focus-visible{outline:none;}
 /* No href => the preview is still building. Make that legible rather than letting a
    dead-looking button sit there (D24). */
 .report-modal .confirm-actions a.btn:not([href]){opacity:.5;pointer-events:none;}
+
+/* ---------- Team policy (team-policy design §11, boards 1–11) ---------- */
+/* Policy origin colour: blue. Amber is built-in, violet is plugin, green is user. */
+.badge.blue{background:var(--blue-bg);color:var(--blue-ink);}
+/* Projects row: the policy cell sits UNDER the team-metrics cell in the same 420px column (board 2,
+   reworked): two cells side by side squeezed both to a truncated status at every laptop width, and
+   the row's name column must not move. A grid, so the name spans both rows and the chevron stays
+   centred; the cells keep their own left divider (.tm-cell) and are separated by a hairline. */
+#projects-list .pl-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,420px) auto;grid-template-rows:auto auto;align-items:center;}
+#projects-list .pl-main{grid-column:1;grid-row:1 / span 2;}
+#projects-list .tm-slot{grid-column:2;grid-row:1;flex:none;}
+#projects-list .tp-slot{grid-column:2;grid-row:2;min-width:0;}
+#projects-list .tp-slot .tm-cell{padding-top:10px;margin-top:10px;border-top:1px solid var(--line);}
+#projects-list .proj-open{grid-column:3;grid-row:1 / span 2;}
+@media (max-width:1080px){
+  #projects-list .pl-row{grid-template-columns:minmax(0,1fr) auto;}
+  #projects-list .pl-main{grid-column:1 / span 2;grid-row:1;}
+  #projects-list .tm-slot{grid-column:1;grid-row:2;}
+  #projects-list .tp-slot{grid-column:1;grid-row:3;}
+  #projects-list .proj-open{grid-column:2;grid-row:1;}
+  #projects-list .tm-slot .tm-cell,#projects-list .tp-slot .tm-cell{padding-left:0;border-left:0;padding-top:10px;border-top:1px solid var(--line);}
+}
+.tm-cell .tp-warn{color:var(--amber-ink);white-space:normal;line-height:1.4;}
+/* hidden-toggled flex/grid containers (style.css has no global [hidden] rule, see :324) */
+#policyLine[hidden],#tp-sync[hidden],.ws-policy[hidden],#tp-edit-btn[hidden],.tp-json[hidden],.tp-onbreach[hidden],.tp-require[hidden]{display:none;}
+/* Team policy page */
+.tp-topbar-actions{margin-left:auto;display:flex;align-items:center;gap:10px;}
+.tp-scope-meta{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);flex-wrap:wrap;}
+.tp-tbl th:first-child,.tp-tbl td:first-child{padding-left:0;}
+.tp-tbl tr.tp-group td{padding:16px 0 6px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:700;border-bottom:0;}
+.tp-tbl td.tp-key{font-weight:600;color:var(--ink);}
+.tp-tbl td.tp-key small{display:block;font-weight:400;color:var(--ink-3);font-size:11.5px;}
+.tp-tbl td.tp-team small{display:block;color:var(--ink-3);font-size:11px;margin-top:2px;}
+.tp-tbl .muted{color:var(--ink-3);}
+.tp-kind{display:inline-flex;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;border-radius:6px;}
+.tp-kind.default{background:var(--field);color:var(--ink-2);}
+.tp-kind.soft{background:var(--blue-bg);color:var(--blue-ink);}
+.tp-kind.hard{background:var(--red-bg);color:var(--red-ink);}
+.tp-eff{font-family:var(--mono);font-size:12px;}
+.tp-eff.tight{color:var(--blue-ink-strong);font-weight:600;}
+.tp-eff.loose{color:var(--ink-3);text-decoration:line-through;}
+.tp-src{font-family:var(--sans);font-size:11px;color:var(--ink-3);font-weight:400;}
+.tp-foot{margin-top:14px;}
+/* editor (board 5) */
+.tp-editor{display:flex;flex-direction:column;gap:18px;}
+.tp-editor .card.tp-group-card,.tp-editor details.card{padding:20px 22px;}
+.tp-editor details.card > summary{cursor:pointer;font-size:14px;list-style:none;}
+.tp-editor details.card > summary::-webkit-details-marker{display:none;}
+.tp-editor details.card > summary::before{content:"▸";display:inline-block;width:14px;color:var(--ink-3);}
+.tp-editor details.card[open] > summary::before{content:"▾";}
+.tp-editor details.card > summary .hint{display:inline;margin:0 0 0 6px;}
+.tp-edit-row{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1.2fr) auto minmax(0,auto);gap:12px;align-items:start;padding:12px 0;border-bottom:1px solid var(--line);}
+.tp-edit-row:last-child{border-bottom:0;}
+.tp-edit-row .tp-key{font-weight:600;font-size:13px;line-height:1.45;}
+.tp-edit-row .tp-key small{display:block;font-weight:400;color:var(--ink-3);font-size:11.5px;}
+.tp-edit-row .input,.tp-edit-row .select{padding:9px 13px;font-size:13px;border-radius:11px;background:var(--surface);border-color:var(--line-2);}
+.tp-edit-row .select{padding-right:36px;}
+.tp-edit-row .seg button{padding:6px 11px;font-size:11.5px;}
+.tp-edit-row .seg button:disabled{opacity:.4;cursor:not-allowed;}
+.tp-control{display:flex;flex-direction:column;gap:8px;min-width:0;}
+.tp-control .check-row{margin-top:2px;}
+.tp-list{display:flex;flex-wrap:wrap;gap:6px;}
+.tp-chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11.5px;}
+.tp-chip-rm{background:none;border:0;padding:0;color:var(--ink-3);font:inherit;cursor:pointer;}
+.tp-chip-rm:hover{color:var(--red-ink);}
+.tp-list-empty{color:var(--ink-3);font-size:12px;}
+.tp-add-row{display:flex;gap:6px;flex-wrap:wrap;}
+.tp-add-row .input{flex:1 1 120px;min-width:0;}
+.tp-add-row .select-wrap{flex:0 0 120px;}
+.tp-extra{display:flex;flex-direction:column;align-items:flex-start;gap:6px;font-size:11.5px;color:var(--ink-2);}
+.tp-onbreach{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-2);}
+.tp-onbreach .select-wrap{display:inline-block;width:96px;}
+.tp-onbreach .select{padding:6px 30px 6px 10px;font-size:12px;border-radius:9px;}
+.tp-unset{color:var(--ink-3);font-size:12px;background:none;border:none;font:inherit;cursor:pointer;text-decoration:underline;padding:0;}
+.tp-publish-bar{position:sticky;bottom:12px;display:flex;align-items:center;gap:12px;padding:14px 20px;background:var(--panel);border:1px solid var(--line-2);border-radius:18px;box-shadow:var(--shadow);}
+.tp-publish-bar .grow{flex:1;font-size:12.5px;color:var(--ink-2);}
+.tp-json{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;font-size:12px;line-height:1.5;overflow-x:auto;margin:0;}
+.tp-msg{white-space:pre-wrap;}
+@media (max-width:900px){ .tp-edit-row{grid-template-columns:1fr;} }
+/* workspace card line (board 6) */
+.ws-policy{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border-radius:12px;background:var(--field);font-size:12.5px;margin-top:12px;}
+.ws-policy-inner{display:contents;}
+.ws-policy .tm-label{width:auto;font-size:12.5px;color:var(--ink-2);}
+.ws-policy-line{color:var(--ink-2);min-width:0;}
+.ws-policy .ws-tbl-actions{margin-left:auto;}
+.ws-policy .ws-home-hint,.ws-policy .ws-policy-results{flex-basis:100%;margin-top:0;}
+/* Settings readout + chip (board 7) */
+.team-readout{display:flex;flex-direction:column;gap:6px;margin:0 0 16px;padding:12px 14px;border-radius:12px;background:var(--field);font-size:12.5px;color:var(--ink-2);}
+.team-readout b{color:var(--ink);font-weight:600;}
+.team-readout-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+/* A repository slug is a name, not a label: keep its case (the badge uppercases everything else). */
+.team-readout-row .badge.blue{text-transform:none;letter-spacing:0;font-family:var(--mono);font-weight:600;}
+.team-chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--blue-ink);background:var(--blue-bg);padding:3px 9px;border-radius:999px;margin-left:auto;}
+.team-chip .kind{font-weight:700;letter-spacing:.05em;text-transform:uppercase;font-size:9.5px;opacity:.85;}
+/* New pipeline notes line (board 8) */
+.policy-line{display:flex;flex-direction:column;gap:8px;margin:14px 0 0;padding:12px 14px;border-radius:12px;background:var(--field);font-size:12.5px;color:var(--ink-2);}
+.policy-line .pl-head-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.policy-line .pl-head-row .muted{color:var(--ink-3);}
+.policy-line .pl-note{display:flex;gap:8px;align-items:flex-start;line-height:1.45;}
+.policy-line .pl-note .tm-dot{margin-top:6px;}
+.policy-line .pl-note.warn{color:var(--amber-ink);}
+/* team-cap pause banner (board 9) */
+/* Team metrics KPI row: the policy tiles (Off-policy, Pooled budget) make 7–8 tiles, which leave a
+   hole in the 3-column row; four columns fill two rows for eight. Back to one column when narrow. */
+.stat-row.tm-kpis:has(> .stat-tile:nth-child(7)){grid-template-columns:repeat(4,minmax(0,1fr));}
+@media (max-width:1080px){ .stat-row.tm-kpis:has(> .stat-tile:nth-child(7)){grid-template-columns:repeat(2,minmax(0,1fr));} }
+.cost-banner.cb-policy{background:var(--blue-bg);color:var(--blue-ink);}
+/* The policy home inside the sentence: bold like the figures, but inline (`.cost-banner b` is the block heading). */
+.cost-banner .cb-home{font-weight:600;color:var(--ink);}
+/* History meta segment (board 10) */
+.hd-policy.st-info{color:var(--blue-ink);}
+/* Plugins page strip + checklist (boards 10, 11) */
+.pl-required-list{display:flex;flex-direction:column;gap:8px;margin:0 0 14px;}
+.pl-required{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;border-radius:14px;background:var(--blue-bg);color:var(--blue-ink);font-size:12.5px;}
+.pl-required b{font-weight:600;}
+.pl-required > .btn,.pl-required > .btn-ghost{margin-left:auto;}
+.pl-required-list > .pl-policy-setup{align-self:flex-start;}
+.tp-setup-list{display:flex;flex-direction:column;margin-top:12px;}
+.tp-setup-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px;}
+.tp-setup-row:last-child{border-bottom:0;}
+.tp-setup-row .tm-dot{flex:0 0 auto;}
+.tp-setup-text{flex:1;min-width:0;}
+.tp-setup-text .hint{margin-top:2px;}
+.tp-trust-row{margin-top:16px;align-items:flex-start;}
+.tp-trust-row .switch{margin-top:2px;}
+.tp-trust-row .txt .hint{margin-top:2px;}
+/* pooled-budget tile meter (board 10): warn from 80 %, over from 100 % */
+.stat-meter .stat-meter-fill.warn{background:var(--amber-ink);}
+.stat-meter .stat-meter-fill.over{background:var(--red-ink);}

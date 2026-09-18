@@ -70,6 +70,10 @@
             <span>Workspaces</span>
             <span class="nav-count n-grey" id="nav-workspaces-count">0</span>
           </button>
+          <button type="button" data-nav="team-policy">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 7.6-8 9-4.6-1.4-8-4.5-8-9V6l8-3z"></path><path d="M9 12l2 2 4-4"></path></svg>
+            <span>Team policy</span>
+          </button>
 
           <div class="nav-sep" aria-hidden="true"></div>
           <button type="button" data-nav="settings">
@@ -104,6 +108,7 @@
           <span class="topnav-sep" aria-hidden="true"></span>
           <button type="button" data-nav="projects">Projects</button>
           <button type="button" data-nav="workspaces">Workspaces</button>
+          <button type="button" data-nav="team-policy">Team policy</button>
           <span class="topnav-sep" aria-hidden="true"></span>
           <button type="button" data-nav="settings">Settings</button>
         </nav>
@@ -343,6 +348,8 @@
                   </div>
                 </details>
 
+                <!-- Team policy notes (design board 8): in the main column, never inside Advanced. -->
+                <div id="policyLine" hidden></div>
                 <!-- Actions -->
                 <div class="hint err" id="newBlockedNote" hidden></div>
                 <div class="actions" style="justify-content:flex-end">
@@ -763,6 +770,26 @@
         </section>
         <!-- /view team-metrics -->
 
+        <!-- ===== VIEW: TEAM POLICY (team-policy design §11, boards 4–5) ===== -->
+        <section class="view hidden" data-view="team-policy">
+          <div class="topbar">
+            <div>
+              <h1>Team policy</h1>
+              <div class="sub">Shared from the <code>worca-policy</code> branch · soft: you can go past a cap, and the team sees it</div>
+            </div>
+            <div class="tp-topbar-actions">
+              <div class="sync-chip" id="tp-sync" hidden></div>
+              <button type="button" id="tp-edit-btn" class="btn btn-primary btn-mini" hidden>Edit policy</button>
+            </div>
+          </div>
+          <div class="tm-filter">
+            <div class="select-wrap tm-scope-wrap"><select id="tp-scope" class="select" aria-label="Scope"></select></div>
+            <span class="tp-scope-meta" id="tp-scope-meta"></span>
+          </div>
+          <div id="tp-body"><small class="hint">Loading…</small></div>
+        </section>
+        <!-- /view team-policy -->
+
         <!-- ===== VIEW: WORKSPACES ===== -->
         <section class="view hidden" data-view="workspaces">
           <div class="topbar">
@@ -796,6 +823,7 @@
                 </div>
               </div>
               <div class="ws-detail" hidden>
+                <div class="ws-policy" hidden></div>
                 <div class="ws-home" hidden></div>
                 <div class="ws-desc">
                   <span class="tm-label">Description</span>
@@ -1263,6 +1291,8 @@
                 </div>
               </div>
               <div id="budgetReadout"></div>
+              <!-- Team policy (design board 7): each policy home's caps, read-only context. -->
+              <div id="teamCapsReadout"></div>
               <div class="field">
                 <div class="label-row">
                   <label for="budgetPerPipeline">Per-pipeline cost limit (USD)</label>
@@ -1565,6 +1595,8 @@
                 <button type="button" id="marketplace-add" class="btn btn-primary btn-mini">Add</button>
               </div>
             </div>
+            <!-- Team policy (design board 10): what a policy home expects on this machine. -->
+            <div id="plugins-policy"></div>
             <h3 class="pl-sec-title">Installed</h3>
             <div class="run-list" id="plugins-list"></div>
             <h3 class="pl-sec-title">Available</h3>

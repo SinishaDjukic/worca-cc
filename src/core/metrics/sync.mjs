@@ -149,8 +149,9 @@ export async function gitUserName(dir) {
 }
 
 /** `-c` identity args for metrics commits (§4.5: git user, or Worca under attribution:none).
- *  A name without an email would make `git commit` fail, so both must be set to use the git user. */
-async function identityArgs(dir, attribution) {
+ *  A name without an email would make `git commit` fail, so both must be set to use the git user.
+ *  Exported for the team-policy branch (policy/sync.mjs), which commits under the same rules. */
+export async function identityArgs(dir, attribution) {
   if (attribution !== 'none' && await gitUserName(dir)) {
     const email = await _git(dir, ['config', 'user.email'], { timeoutMs: 10_000 });
     if (email.ok && email.stdout.trim()) return [];
@@ -446,8 +447,9 @@ async function removeWorktreeDir(dir, projectDir) {
   if (projectDir) await _git(projectDir, ['worktree', 'prune']);
 }
 
-/** Build a parentless commit holding `files` ({relPath: content}) in projectDir's object store. */
-async function orphanCommit(projectDir, files, message, attribution) {
+/** Build a parentless commit holding `files` ({relPath: content}) in projectDir's object store.
+ *  Exported for the team-policy branch (policy/sync.mjs): same orphan-branch enable recipe. */
+export async function orphanCommit(projectDir, files, message, attribution) {
   const gitDir = (await _git(projectDir, ['rev-parse', '--absolute-git-dir'])).stdout.trim();
   await mkdir(join(metricsRoot(), 'tmp'), { recursive: true });
   const stage = await mkdtemp(join(metricsRoot(), 'tmp', 'enable-'));

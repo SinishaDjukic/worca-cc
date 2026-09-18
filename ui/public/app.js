@@ -100,7 +100,7 @@ import { renderChatSettings, collectChatSettings } from './chat-settings-view.mj
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL } from '../../src/shared/graph/constants.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
-  renderStartStep, collectStartStep, renderGuardrailReferences409,
+  renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
 } from './guardrails-view.mjs';
 import {
   renderModelsList, renderModelEditor, collectModelEditor, makeEnvRow, applyCostMode, setModelCost,
@@ -123,7 +123,14 @@ import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
-import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmptyState, renderTmSkeleton } from './team-metrics-view.mjs';
+import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmptyState, renderTmSkeleton, renderPooledBudgetTile } from './team-metrics-view.mjs';
+// Team policy (team-policy design §11): the Projects cell, the enable dialog, the page (read +
+// edit), the workspace line, the Settings readout, the New pipeline notes, the Plugins strip.
+import {
+  renderProjectTpCell, renderPolicyEnableDialogBody, renderEffectiveTable, renderPolicyEditor, docFromEditor, editorDirty,
+  renderPolicyEmptyState, renderPolicySyncChip, renderWsPolicyLine, renderTeamCapsReadout, renderTeamChip, renderPolicyNotesLine,
+  renderRequiredStrip, renderSetupChecklist, relTime as tpRelTime,
+} from './team-policy-view.mjs';
 import { aggregate, toCsv } from '../../src/shared/team-metrics/aggregate.mjs';
 import {
   renderProjectTmCell, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
@@ -289,6 +296,15 @@ const el = {
   budgetSave: $('#budgetSave'),
   budgetReset: $('#budgetReset'),
   budgetMsg: $('#budgetMsg'),
+  // Team policy surfaces (team-policy design §11)
+  teamCapsReadout: $('#teamCapsReadout'),
+  policyLine: $('#policyLine'),
+  pluginsPolicy: $('#plugins-policy'),
+  tpBody: $('#tp-body'),
+  tpScope: $('#tp-scope'),
+  tpScopeMeta: $('#tp-scope-meta'),
+  tpSync: $('#tp-sync'),
+  tpEditBtn: $('#tp-edit-btn'),
 
   // Agents management view
   agentsList: $('#agents-list'),
@@ -778,6 +794,18 @@ function handleServerMessage(msg) {
     // Only the page GET schedules a flush: reloading it on flush-failed would loop
     // (GET → page-open flush → flush-failed → reload). The chip shows the error from the last load.
     if (msg.action !== 'flush-failed' && currentView() === 'team-metrics') loadTeamMetricsView();
+    return;
+  }
+  // Team policy (team-policy design §11): discovery, an enable, a publish or a home change
+  // elsewhere — refetch the scopes and repaint every open policy surface.
+  if (msg.type === 'team-policy-changed') {
+    tpCache.at = 0;
+    if (currentView() === 'projects') paintProjectPolicyCells(true);
+    if (currentView() === 'workspaces') paintWsPolicyLines(true);
+    if (currentView() === 'team-policy' && !tpState.editing) loadTeamPolicyView();
+    if (currentView() === 'settings') paintTeamCapsReadout(true);
+    if (currentView() === 'settings' && currentSettingsTab === 'plugins') paintPluginsPolicy(true);
+    if (currentView() === 'new') schedulePolicyLine();
     return;
   }
 
@@ -2498,7 +2526,8 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
     }
     modelSel.appendChild(og);
   };
-  optgroup('Your models', state.models.filter((m) => m.custom && m.custom !== 'plugin').sort(byLabel));
+  optgroup('Your models', state.models.filter((m) => m.custom && m.custom !== 'plugin' && m.custom !== 'policy').sort(byLabel));
+  optgroup('Team policy', state.models.filter((m) => m.custom === 'policy').sort(byLabel));
   optgroup('Plugins', state.models.filter((m) => m.custom === 'plugin').sort(byLabel));
   // "Hide built-in models" (#422): a hidden built-in leaves the list — unless
   // it is THIS selection, which still resolves and must stay visible.
@@ -2787,6 +2816,7 @@ async function renderWorkflowConfig(workflowId) {
   if (el.wfFeedbackConfig) el.wfFeedbackConfig.dataset.graph = wf.version === 2 ? '1' : '';
   setAgentsHeader(rows, wf.name || workflowId);
   setAgentRowsEnabled(agentsEditable());
+  if (currentView() === 'new') schedulePolicyLine();   // the picked models changed with the workflow (board 8)
 }
 
 // Per-agent config is stored PER PROJECT, so with no project selected there is
@@ -3132,7 +3162,9 @@ if (el.memoryScopeSeg) {
 if (el.guardrailsSelect) {
   el.guardrailsSelect.addEventListener('change', () => {
     state.guardrailsId = el.guardrailsSelect.value || 'permissive';
+    state.guardrailsTouched = true;         // a team default never overrides a deliberate pick
     updateGuardrailsHint();
+    schedulePolicyLine();
   });
 }
 
@@ -3353,6 +3385,7 @@ el.pipelineConfig.addEventListener('change', (e) => {
     const effortSel = body && body.querySelector('.step-effort');
     if (effortSel) renderModelEffortPair(t, effortSel, null, { model: t.value, effort: '' });
     paintRowSummary(row, body);
+    schedulePolicyLine();                      // an off-list model is a team-policy note (board 8)
   } else if (t.classList.contains('step-effort')) {
     saveAgentRow(row, { effort: t.value }, body);
     paintRowSummary(row, body);
@@ -5584,8 +5617,10 @@ function onProjectChanged() {
     localStorage.setItem(LAST_PROJECT_KEY, selectedProjectName());
     const cfgLoad = loadConfig(path); // its tail repaints the workflow/guardrail pickers (:1821-1822)
     refreshBranches(path);            // — a prefill caller MUST await it or be clobbered
+    schedulePolicyLine();             // team policy notes for the new target (design board 8)
     return cfgLoad;
   } else {
+    schedulePolicyLine();
     state.projectDir = '';
     // No project yet: still load the built-in models so the picker isn't empty.
     const cfgLoad = loadConfig('');
@@ -5849,6 +5884,7 @@ function setRunTarget(target) {
   const t = target === 'workspace' ? 'workspace' : 'project';
   state.runTarget = t;
   localStorage.setItem(LAST_TARGET_KEY, t);
+  schedulePolicyLine();                     // debounced: reads the target selects once they settle
 
   // Segmented buttons + hidden radios (source of truth read at submit).
   $$('#target-seg button[data-target]').forEach((b) => {
@@ -6016,6 +6052,7 @@ if (el.workspaceSelect) {
     if (state.selectedWorkspaceId) localStorage.setItem(LAST_WORKSPACE_KEY, state.selectedWorkspaceId);
     renderWorkspaceMembers();
     renderWorkspaceSourceBranches();
+    schedulePolicyLine();                   // team policy notes for the new target (design board 8)
     // Same as onProjectChanged: a workspace has its own binding (or inherits
     // one from its members), so the resolved profile can differ.
     if (state.activePluginSource && state.activePluginSource.multiProfile) {
@@ -6095,6 +6132,7 @@ function renderWorkspaces() {
     if (wsCardOpen(w.id, state.workspaces.length === 1)) toggleWsDetail(card, true);
   }
   paintWsMetricsRows();
+  paintWsPolicyLines();                     // team policy (design board 6): the policy home line per card
   // Descriptions are markdown; the bundle loads lazily, so the first paint may be plain.
   // Repaint the description nodes alone once it is ready — not the cards, so open/edit
   // state survives — and do nothing when it failed (plain text is the fallback).
@@ -6228,6 +6266,26 @@ if (el.wsList) {
     const w = state.workspaces.find((x) => x && x.id === id);
 
     if (e.target.closest('.ws-home-change')) { e.stopPropagation(); return void openWsHomeSheet(card.dataset.workspaceId); }
+    // Team policy line (team-policy design board 6).
+    if (e.target.closest('.wsp-home-change')) { e.stopPropagation(); return void openWsPolicyHomeSheet(card.dataset.workspaceId); }
+    if (e.target.closest('.wsp-open')) { e.stopPropagation(); location.hash = `team-policy/workspace:${card.dataset.workspaceId}`; return; }
+    if (e.target.closest('.wsp-route')) {
+      e.stopPropagation();
+      const wsId = card.dataset.workspaceId;
+      const b = e.target.closest('.wsp-route'); b.disabled = true;
+      try {
+        const r = await fetch(`/api/workspaces/${encodeURIComponent(wsId)}/policy-route`, { method: 'POST' });
+        const j = await safeJson(r);
+        wsPolicyRouteResults.set(wsId, r.ok && j ? j : { error: j?.error || 'routing failed' });
+      } catch (err) {
+        wsPolicyRouteResults.set(wsId, { error: err?.message || 'routing failed' });
+      } finally {
+        b.disabled = false;
+      }
+      tpCache.at = 0;
+      await paintWsPolicyLines(true);
+      return;
+    }
     if (e.target.closest('.ws-route')) {
       e.stopPropagation();
       const wsId = card.dataset.workspaceId;
@@ -7642,6 +7700,12 @@ function buildProjectRow(p) {
   tmSlot.className = 'tm-slot';
   tmSlot.dataset.key = p.key;
   row.appendChild(tmSlot);
+  // The team-policy cell (team-policy design board 2) sits beside the metrics one, same grid;
+  // paintProjectPolicyCells fills it. It wraps under the metrics cell below 1280px (style.css).
+  const tpSlot = document.createElement('div');
+  tpSlot.className = 'tp-slot';
+  tpSlot.dataset.key = p.key;
+  row.appendChild(tpSlot);
   // A keyed row IS the control (click / Enter / Space open the project page — the History
   // card's .hist-head idiom) and carries the chevron. A keyless row (a project registered
   // outside worca's store) has no page: no role, no chevron, default cursor.
@@ -7688,6 +7752,7 @@ function renderProjectsList() {
   card.append(head, list);
   host.appendChild(card);
   paintProjectTmCells();
+  paintProjectPolicyCells();
 }
 
 // Fills the .tm-slot placeholders left by buildProjectRow. Called from renderProjectsList()
@@ -8259,6 +8324,16 @@ if (el.projectsList) {
     location.hash = `projects/${item.dataset.key}`;
   };
   el.projectsList.addEventListener('click', async (e) => {
+    // Team policy cell (team-policy design board 2) FIRST: it shares the .tm-cell grid class,
+    // so the metrics branch below would otherwise swallow its clicks.
+    const tpCell = e.target.closest && e.target.closest('.tp-cell');
+    if (tpCell) {
+      const key = tpCell.dataset.key;
+      if (e.target.closest('.tp-enable')) { e.stopPropagation(); return void openPolicyEnableDialog(key, { mode: 'here' }); }
+      if (e.target.closest('.tp-change')) { e.stopPropagation(); return void openPolicyEnableDialog(key, { mode: 'follow', change: true }); }
+      if (e.target.closest('.tp-open')) { e.stopPropagation(); location.hash = `team-policy/project:${key}`; return; }
+      return;
+    }
     const tmCell = e.target.closest('.tm-cell');
     if (tmCell) {
       const key = tmCell.dataset.key;
@@ -8621,12 +8696,24 @@ el.form.addEventListener('submit', async (e) => {
   if (extras.length) body.extras = extras;
 
   try {
-    const res = await fetch('/api/run', {
+    let res = await fetch('/api/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    const data = await safeJson(res);
+    let data = await safeJson(res);
+    // Team total cap (team-policy design §7, board 9): soft — ask once, resend with the
+    // acknowledgement (and its reason) recorded; a required reason re-asks.
+    if (!res.ok && data && (data.needsPolicyAck || data.code === 'reason_required')) {
+      const choice = await policyRefusalRetry(data, res.status);
+      if (choice) {
+        res = await fetch('/api/run', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...body, pastTeamCap: true, ...(choice.reason ? { policyReason: choice.reason } : {}) }),
+        });
+        data = await safeJson(res);
+      }
+    }
     if (!res.ok || !data.runId) {
       startSubmitInFlight = false;
       el.startBtn.disabled = false;
@@ -8750,6 +8837,7 @@ async function loadSettings() {
     await paintTitleModelSettings(data);
     await paintAutoModelSettings(data);
     paintBudgetReadout();
+    paintTeamCapsReadout();                 // team policy (design board 7): each home's caps, read-only
     refreshBudget();
     paintChatSettings(data.chat);
     loadAskHistory();
@@ -9302,7 +9390,8 @@ function buildTitleModelOptions(sel, stored) {
     for (const m of xs) og.appendChild(option(m.id, (m.label || m.id) + (m.custom === 'plugin' && m.plugin ? ` (${m.plugin})` : '')));
     sel.appendChild(og);
   };
-  group('Your models', models.filter((m) => m.custom && m.custom !== 'plugin').sort(byLabel));
+  group('Your models', models.filter((m) => m.custom && m.custom !== 'plugin' && m.custom !== 'policy').sort(byLabel));
+  group('Team policy', models.filter((m) => m.custom === 'policy').sort(byLabel));
   group('From plugins', models.filter((m) => m.custom === 'plugin').sort(byLabel));
   group('Built-in', models.filter((m) => !m.custom).sort(byLabel));
   if (stored && !models.some((m) => m.id === stored)) {
@@ -9591,6 +9680,7 @@ async function loadPluginsView({ refresh = false } = {}) {
     renderMarketplaceSections(mRes.ok ? mData.marketplaces || [] : []);
   } catch (e) { setPluginsMsg(e.message, 'err'); }
   if (refresh) refreshMarketplacesInBackground(); // C3: only the view-open path kicks the background refresh
+  paintPluginsPolicy(refresh);                   // team policy (design board 10): the required-by strip
 }
 
 // Stale-while-revalidate (spec §4.6): render cached snapshots instantly, then
@@ -10339,7 +10429,7 @@ async function loadGuardrailsView(param = '') {
     el.guardrailsList.replaceChildren(renderGuardrailList(grvState.sets));
     if (param) {
       const set = grvState.sets.find((s) => s.id === param);
-      if (set) { openGuardrailWizard(set.origin === 'builtin' ? 'view' : 'edit', set); return; }
+      if (set) { openGuardrailWizard(isReadOnlyGuardrailSet(set) ? 'view' : 'edit', set); return; }
       setGuardrailsMsg(`guardrail set "${param}" not found`, 'err');
     }
     if (grvState.wizard) { // no fresh wizard opened above: close any stale one (browser Back / bad id)
@@ -10381,6 +10471,7 @@ function renderModelsViewBody() {
     globals: d.models || [],
     legacy,
     plugins: d.plugin || [],
+    policy: d.policy || [],
     predefined: d.predefined || [],
     efforts: d.efforts || [],
     hideBuiltin: !!d.hideBuiltinModels,
@@ -11093,7 +11184,7 @@ async function confirmCostOverride(runId, btn) {
   if (ok) resumeRunFromCard(runId, btn, { ignoreCostCap: true });
 }
 
-async function resumeRunFromCard(runId, btn, { ignoreCostCap = false } = {}) {
+async function resumeRunFromCard(runId, btn, { ignoreCostCap = false, pastTeamCap = false, policyReason = null } = {}) {
   const r = runs.get(runId);
   if (!r || !isPaused(r)) return;
   const pipelineId = r.pipelineId;
@@ -11110,10 +11201,15 @@ async function resumeRunFromCard(runId, btn, { ignoreCostCap = false } = {}) {
     const res = await fetch('/api/resume', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pipelineId, ...(ignoreCostCap ? { ignoreCostCap: true } : {}) }),
+      body: JSON.stringify({ pipelineId, ...(ignoreCostCap ? { ignoreCostCap: true } : {}), ...(pastTeamCap ? { pastTeamCap: true, ...(policyReason ? { policyReason } : {}) } : {}) }),
     });
     const data = await safeJson(res);
-    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    if (!res.ok) {
+      // A team cap (team-policy design §7): soft — ask, then resume again with the choice recorded.
+      const again = await policyRefusalRetry(data, res.status);
+      if (again) { if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; } return resumeRunFromCard(runId, btn, { ignoreCostCap, pastTeamCap: true, policyReason: again.reason }); }
+      throw new Error((data && data.error) || `HTTP ${res.status}`);
+    }
     upsertRun({
       runId: data.runId,
       title: r.title || pipelineId,
@@ -11175,6 +11271,14 @@ if (runListEl) {
       return;
     }
     if (e.target.closest && e.target.closest('.cb-settings')) { location.hash = 'settings'; return; }
+    // Team-cap banner (team-policy design board 9): continue past, or open the page.
+    const pastBtn = e.target.closest && e.target.closest('.cb-past-team-cap');
+    if (pastBtn) {
+      const runId = pastBtn.closest('.run-card')?.dataset.runId;
+      if (runId) confirmPastTeamCap(runId, pastBtn);
+      return;
+    }
+    if (e.target.closest && e.target.closest('.cb-policy-open')) { location.hash = 'team-policy'; return; }
     const sw = e.target.closest && e.target.closest('.switch.autoscroll');
     if (sw) {
       const card = sw.closest('.run-card');
@@ -11474,6 +11578,498 @@ async function loadTmScopes({ force = false } = {}) {
   return p;
 }
 
+// ---- Team policy (team-policy design §11) --------------------------------------------------
+// One scopes payload serves the Projects cells, the workspace cards, the Settings readout, the
+// Plugins strip and the page's scope list — the tmCache idiom, on /api/policy/scopes.
+const tpCache = { data: null, at: 0, inflight: null, gen: 0 };
+const TP_EMPTY = () => ({ projects: [], workspaces: [], scopes: { projects: [], workspaces: [] }, homes: [], requirements: [], blockedPlugins: [], anyEnabled: false });
+async function loadTpScopes({ force = false } = {}) {
+  if (!force && tpCache.data && Date.now() - tpCache.at < 15_000) return tpCache.data;
+  if (!force && tpCache.inflight) return tpCache.inflight;
+  const gen = ++tpCache.gen;
+  const p = fetch('/api/policy/scopes')
+    .then((r) => safeJson(r))
+    .then((d) => {
+      const v = d && Array.isArray(d.projects) ? d : TP_EMPTY();
+      if (gen === tpCache.gen) { tpCache.data = v; tpCache.at = Date.now(); }
+      return v;
+    })
+    .catch(() => tpCache.data || TP_EMPTY())
+    .finally(() => { if (tpCache.inflight === p) tpCache.inflight = null; });
+  tpCache.inflight = p;
+  return p;
+}
+
+// Projects list: fills the .tp-slot placeholders left by buildProjectRow (board 2).
+async function paintProjectPolicyCells(force = false) {
+  const data = await loadTpScopes({ force });
+  const byKey = new Map(data.projects.map((s) => [s.key, s]));
+  for (const slot of document.querySelectorAll('#projects-list .tp-slot')) {
+    const s = byKey.get(slot.dataset.key);
+    slot.replaceChildren(s ? renderProjectTpCell(s, { doc: document }) : '');
+  }
+}
+
+// "Set up team policy…" / "Change…" dialog (board 3). Reuses the generic slot modal; the body
+// re-renders when the "Where the policy lives" radio changes.
+async function openPolicyEnableDialog(projectKeyStr, { mode = 'here', change = false } = {}) {
+  const data = await loadTpScopes({ force: true });
+  const s = data.projects.find((x) => x.key === projectKeyStr);
+  if (!s) return;
+  const candidates = data.projects
+    .filter((x) => x.key !== s.key && x.carries && !x.blocked)
+    .map((x) => ({ slug: x.slug, label: `${x.slug}${x.title ? ` · ${x.title}` : ''}${x.fieldCount ? ` · ${x.fieldCount} field${x.fieldCount === 1 ? '' : 's'}` : ''}` }));
+  // The metrics delegate, when it carries a policy, is the natural home: preselect it.
+  let metricsFollow = null;
+  try { const tm = (await loadTmScopes()).projects.find((x) => x.key === s.key); metricsFollow = tm?.delegateTo || null; } catch { /* optional */ }
+  const view = { project: { ...s, metricsFollow }, origin: s.origin || s.slug, candidates, mode, change };
+  const holder = document.createElement('div');
+  const errEl = document.createElement('small'); errEl.className = 'hint err tm-enable-err'; errEl.hidden = true;
+  const paint = () => holder.replaceChildren(renderPolicyEnableDialogBody(view, { doc: document }), errEl);
+  paint();
+  holder.addEventListener('change', (e) => {
+    if (e.target.name === 'tp-where') {
+      view.mode = e.target.value;
+      paint();
+      holder.querySelector(`input[name="tp-where"][value="${view.mode}"]`)?.focus();
+      const b = document.querySelector('#plugin-modal .tp-enable-submit');
+      if (b) b.textContent = view.mode === 'follow' ? 'Create marker and follow' : 'Create branch and enable';
+    }
+  });
+  let submitting = false;
+  const submit = async () => {
+    if (submitting) return false;
+    submitting = true;
+    const btnEl = document.querySelector('#plugin-modal .tp-enable-submit');
+    if (btnEl) btnEl.disabled = true;
+    const done = (v) => { submitting = false; if (btnEl) btnEl.disabled = false; return v; };
+    const target = holder.querySelector('select.tp-follow-target');
+    if (view.mode === 'follow' && !(target && target.value)) {
+      errEl.hidden = false; errEl.textContent = 'No project on this machine carries a team policy yet — set one up first, then follow it.';
+      return done(false);
+    }
+    const body = view.mode === 'follow' ? { mode: 'follow', delegateTo: target.value, change } : { mode: 'here' };
+    let r; let j = null;
+    try {
+      r = await fetch(`/api/projects/${encodeURIComponent(s.key)}/policy/enable`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      j = await safeJson(r);
+    } catch (err) {
+      errEl.hidden = false; errEl.textContent = err?.message || 'Could not reach the Worca server';
+      return done(false);
+    }
+    if (!r.ok) {
+      errEl.hidden = false;
+      errEl.textContent = [j?.error, j?.stderr && j.stderr.trim(), j?.hint].filter(Boolean).join(' · ');
+      return done(false);
+    }
+    closePluginModal();
+    tpCache.at = 0;
+    await paintProjectPolicyCells(true);
+    // A fresh home starts empty: land on its page so the editor is one click away.
+    if (j?.action === 'created' && view.mode === 'here') location.hash = `team-policy/project:${s.key}`;
+    return done(true);
+  };
+  pluginModal('Set up team policy', holder, [
+    ['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()],
+    [view.mode === 'follow' ? 'Create marker and follow' : 'Create branch and enable', 'btn btn-primary btn-mini tp-enable-submit', submit],
+  ]);
+}
+
+// Workspace cards (board 6): the policy home line per card + the home sheet + routing.
+const wsPolicyRouteResults = new Map();
+async function paintWsPolicyLines(force = false) {
+  const data = await loadTpScopes({ force });
+  const byId = new Map(data.workspaces.map((w) => [w.id, w]));
+  for (const card of document.querySelectorAll('#ws-list .ws-card')) {
+    const slot = card.querySelector('.ws-policy');
+    if (!slot) continue;
+    const w = byId.get(card.dataset.workspaceId);
+    if (!w) { slot.hidden = true; slot.replaceChildren(); continue; }
+    slot.hidden = false;
+    slot.replaceChildren(renderWsPolicyLine(w, { doc: document }));
+    const saved = wsPolicyRouteResults.get(w.id);
+    const out = slot.querySelector('.ws-policy-results');
+    if (saved && out) {
+      out.replaceChildren(saved.error
+        ? Object.assign(document.createElement('small'), { className: 'hint err', textContent: saved.error })
+        : renderRouteResults(saved, { doc: document }));
+    }
+  }
+}
+const WS_POLICY_STATE_TEXT = {
+  home: 'policy home of this workspace', 'is-home': 'carries the policy', 'follows-home': 'follows the home', 'follows-other': 'follows another home',
+  own: 'carries its own policy', none: 'no worca-policy branch', 'no-origin': 'no origin remote',
+};
+async function openWsPolicyHomeSheet(workspaceId) {
+  const w = (await loadTpScopes({ force: true })).workspaces.find((x) => x.id === workspaceId);
+  if (!w) return;
+  const holder = document.createElement('div');
+  const list = document.createElement('div'); list.className = 'wiz-list tm-home-list';
+  for (const m of w.members || []) {
+    const eligible = m.state !== 'none' && m.state !== 'no-origin';
+    const row = document.createElement('div'); row.className = `wiz-row${eligible ? '' : ' off'}`;
+    const label = document.createElement('label'); label.className = 'wiz-row-pick';
+    const r = document.createElement('input'); r.type = 'radio'; r.name = 'tp-home'; r.value = m.path; r.checked = !!w.home?.path && w.home.path === m.path; r.disabled = !eligible;
+    const name = document.createElement('span'); name.className = 'wiz-row-name mono'; name.textContent = m.slug;
+    label.append(r, name);
+    const status = document.createElement('span'); status.className = 'wiz-row-status';
+    status.textContent = `${WS_POLICY_STATE_TEXT[m.state] || m.state}${m.policyFrom && m.state !== 'home' ? ` · ${m.policyFrom}` : ''}`;
+    row.append(label, status);
+    list.append(row);
+  }
+  const hint = document.createElement('small'); hint.className = 'hint';
+  hint.textContent = 'A member that carries a policy or follows one. Workspace runs use that policy\'s values for workspace runs. The choice lives on this machine; teammates pick their own.';
+  const errEl = document.createElement('small'); errEl.className = 'hint err tm-enable-err'; errEl.hidden = true;
+  holder.append(list, hint, errEl);
+  const patch = async (policyProject) => {
+    const r = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ policyProject }) }).catch(() => null);
+    const j = r ? await safeJson(r) : null;
+    if (!r || !r.ok) { errEl.hidden = false; errEl.textContent = j?.error || 'could not save the policy home'; return; }
+    closePluginModal();
+    tpCache.at = 0;
+    await paintWsPolicyLines(true);
+  };
+  pluginModal('Choose policy home', holder, [
+    ['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()],
+    ['Clear home', 'btn btn-ghost btn-mini', () => patch(null)],
+    ['Use this home', 'btn btn-primary btn-mini', () => { const picked = holder.querySelector('input[name="tp-home"]:checked'); if (picked) patch(picked.value); }],
+  ]);
+}
+
+// The Team policy page (boards 4–5): read mode by default, the editor behind "Edit policy".
+const tpState = { scopeId: localStorage.getItem('worca.teamPolicy.scope') || '', data: null, loadSeq: 0, editing: false, showAll: false, notice: null };
+const semverGte = (a, b) => { const p = (v) => String(v || '').split('-')[0].split('.').map((x) => parseInt(x, 10) || 0); const x = p(a); const y = p(b); for (let i = 0; i < 3; i++) { if ((x[i] || 0) > (y[i] || 0)) return true; if ((x[i] || 0) < (y[i] || 0)) return false; } return true; };
+async function loadTeamPolicyView(param = '') {
+  if (!el.tpBody || !el.tpScope) return;
+  if (param && /^(project|workspace):/.test(param)) { tpState.scopeId = param; localStorage.setItem('worca.teamPolicy.scope', param); }
+  tpState.editing = false;
+  const seq = ++tpState.loadSeq;
+  el.tpBody.classList.add('is-loading');
+  el.tpBody.setAttribute('aria-busy', 'true');
+  const scopes = await loadTpScopes({ force: true });
+  if (seq !== tpState.loadSeq) return;
+  const ids = [...scopes.scopes.projects, ...scopes.scopes.workspaces].map((x) => x.id);
+  if (!ids.includes(tpState.scopeId)) tpState.scopeId = ids[0] || '';
+  renderScopeOptions(el.tpScope, scopes.scopes, tpState.scopeId, { doc: document });
+  el.tpScopeMeta.replaceChildren();
+  const settle = () => { el.tpBody.classList.remove('is-loading'); el.tpBody.removeAttribute('aria-busy'); };
+  if (!ids.length) {
+    tpState.data = null;
+    el.tpSync.hidden = true; el.tpEditBtn.hidden = true;
+    settle();
+    el.tpBody.replaceChildren(renderPolicyEmptyState({ doc: document }));
+    return;
+  }
+  let res = null; let data = null;
+  try { res = await fetch(`/api/policy?scope=${encodeURIComponent(tpState.scopeId)}`); data = await safeJson(res); }
+  catch (err) { data = { error: err?.message || 'Could not reach the Worca server' }; }
+  if (seq !== tpState.loadSeq) return;
+  settle();
+  if (!res || !res.ok) {
+    tpState.data = null;
+    el.tpSync.hidden = true; el.tpEditBtn.hidden = true;
+    el.tpBody.replaceChildren(Object.assign(document.createElement('small'), { className: 'hint err', textContent: `Could not load the team policy: ${data?.error || (res ? `HTTP ${res.status}` : 'unknown error')}` }));
+    return;
+  }
+  tpState.data = data;
+  renderTeamPolicyRead();
+}
+function renderTeamPolicyRead() {
+  const data = tpState.data;
+  if (!data || !el.tpBody) return;
+  tpState.editing = false;
+  el.tpSync.hidden = false;
+  el.tpSync.replaceChildren(renderPolicySyncChip(data, { doc: document, now: Date.now() }));
+  el.tpEditBtn.hidden = false;
+  el.tpEditBtn.disabled = !data.canPublish;
+  el.tpEditBtn.title = data.canPublish ? '' : 'the policy home is not checked out on this machine';
+  el.tpEditBtn.textContent = 'Edit policy';
+  const chip = (t) => Object.assign(document.createElement('span'), { className: 'chip', textContent: t });
+  const meta = [];
+  if (data.policy?.doc?.title) meta.push(chip(data.policy.doc.title));
+  meta.push(chip(data.policy?.delegated ? `follows ${data.policy.home}` : `policy home ${data.policy?.home || '—'}`));
+  if (data.policy?.doc?.updatedAt) meta.push(chip(`updated ${tpRelTime(data.policy.doc.updatedAt) || ''}${data.policy.doc.updatedBy ? ` by ${data.policy.doc.updatedBy}` : ''}`));
+  el.tpScopeMeta.replaceChildren(...meta);
+  const parts = [];
+  if (tpState.notice) { parts.push(Object.assign(document.createElement('p'), { className: 'form-msg ok', textContent: tpState.notice })); tpState.notice = null; }
+  const ver = (data.rows || []).find((r) => r.key === 'worca.minVersion' && r.team);
+  if (ver && data.worcaVersion && !semverGte(data.worcaVersion, ver.team.value)) {
+    parts.push(Object.assign(document.createElement('div'), { className: 'hint tm-warn', textContent: `Your Worca is ${data.worcaVersion}; this policy expects at least ${ver.team.value}. Some fields may not apply.` }));
+  }
+  parts.push(renderEffectiveTable(data, { doc: document, showAll: tpState.showAll }));
+  const strip = renderRequiredStrip(data.requirements || [], data.blockedPlugins || [], { doc: document });
+  if (strip) parts.push(strip);
+  el.tpBody.replaceChildren(...parts);
+}
+function renderTeamPolicyEdit() {
+  const data = tpState.data;
+  if (!data || !data.canPublish || !el.tpBody) return;
+  tpState.editing = true;
+  el.tpEditBtn.textContent = 'Cancel editing';
+  const registry = data.registry || [];
+  const editor = renderPolicyEditor(data.policy?.doc || null, { registry, doc: document });
+  editor.querySelector('.tp-discard').addEventListener('click', () => renderTeamPolicyRead());
+  editor.querySelector('.tp-copy-json').addEventListener('click', async () => {
+    const json = JSON.stringify(docFromEditor(editor, { registry }), null, 2);
+    const msgEl = editor.querySelector('.tp-msg');
+    try { await navigator.clipboard.writeText(json); msgEl.className = 'form-msg tp-msg ok'; msgEl.textContent = 'Copied. Paste it into .worca-policy/policy.json on a pull request against the worca-policy branch.'; }
+    catch { const pre = editor.querySelector('.tp-json'); pre.hidden = false; pre.textContent = json; msgEl.className = 'form-msg tp-msg'; msgEl.textContent = 'Copy the JSON above into .worca-policy/policy.json on a pull request against the worca-policy branch.'; }
+  });
+  editor.querySelector('.tp-publish').addEventListener('click', () => { void publishFromEditor(editor, registry); });
+  el.tpBody.replaceChildren(editor);
+}
+async function publishFromEditor(editor, registry) {
+  const doc = docFromEditor(editor, { registry });
+  const msgEl = editor.querySelector('.tp-msg');
+  const btn = editor.querySelector('.tp-publish');
+  btn.disabled = true;
+  msgEl.className = 'form-msg tp-msg'; msgEl.textContent = 'Publishing…';
+  try {
+    const v = await safeJson(await fetch('/api/policy/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ doc }) }));
+    if (!v.ok) { msgEl.className = 'form-msg tp-msg err'; msgEl.textContent = (v.warnings || []).join('\n') || 'invalid policy document'; btn.disabled = false; return; }
+    const r = await fetch('/api/policy', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope: tpState.scopeId, doc }) });
+    const j = await safeJson(r);
+    if (!r.ok) {
+      msgEl.className = 'form-msg tp-msg err';
+      msgEl.textContent = [j?.error, j?.stderr && String(j.stderr).trim(), j?.hint, ...(Array.isArray(j?.warnings) ? j.warnings : [])].filter(Boolean).join(' · ');
+      btn.disabled = false;
+      return;
+    }
+    tpCache.at = 0;
+    tpState.notice = j.unchanged ? 'Nothing to publish — the branch already holds this document.' : `Published · commit ${String(j.sha || '').slice(0, 7)}`;
+    await loadTeamPolicyView();
+  } catch (err) {
+    msgEl.className = 'form-msg tp-msg err'; msgEl.textContent = err?.message || 'publish failed'; btn.disabled = false;
+  }
+}
+if (el.tpEditBtn) el.tpEditBtn.addEventListener('click', () => { if (tpState.editing) renderTeamPolicyRead(); else renderTeamPolicyEdit(); });
+if (el.tpScope) el.tpScope.addEventListener('change', () => {
+  tpState.scopeId = el.tpScope.value;
+  localStorage.setItem('worca.teamPolicy.scope', tpState.scopeId);
+  loadTeamPolicyView();
+});
+const tpSection = document.querySelector('section[data-view="team-policy"]');
+if (tpSection) tpSection.addEventListener('click', async (e) => {
+  if (e.target.closest && e.target.closest('.tp-check-now')) {
+    await fetch('/api/policy/discover', { method: 'POST' }).catch(() => {});
+    tpCache.at = 0;
+    loadTeamPolicyView();
+    return;
+  }
+  await handlePolicyPluginClick(e);
+});
+
+// Settings › Budget (board 7): each home's caps as a readout, the tightest as a chip on the labels.
+async function paintTeamCapsReadout(force = false) {
+  if (!el.teamCapsReadout) return;
+  const data = await loadTpScopes({ force });
+  const node = renderTeamCapsReadout(data.homes || [], { doc: document });
+  el.teamCapsReadout.replaceChildren(node || '');
+  const tightest = (pick) => { let best = null; for (const home of data.homes || []) { const c = home.caps && pick(home.caps); if (c && (best == null || c.value < best.value)) best = c; } return best; };
+  const setChip = (labelFor, cap, fmt) => {
+    const lab = document.querySelector(`label[for="${labelFor}"]`);
+    const row = lab && lab.closest('.label-row');
+    if (!row) return;
+    row.querySelectorAll('.team-chip').forEach((x) => x.remove());
+    if (cap) row.append(renderTeamChip({ kind: cap.kind, display: fmt(cap) }, { doc: document }));
+  };
+  setChip('budgetPerPipeline', tightest((c) => c.pipeline), (c) => fmtUsd(c.value));
+  setChip('budgetTotal', tightest((c) => c.total), (c) => fmtUsd(c.value));
+  const periods = (data.homes || []).map((home) => home.caps?.resetPeriod).filter(Boolean);
+  setChip('budgetResetPeriod', periods.length ? { kind: 'default', value: periods[0] } : null, (c) => c.value);
+}
+
+// New pipeline (board 8): the notes line for the selected target, debounced behind the selects.
+let policyLineTimer = null;
+let policyLineSeq = 0;
+function schedulePolicyLine() {
+  if (!el.policyLine) return;
+  clearTimeout(policyLineTimer);
+  policyLineTimer = setTimeout(() => { void paintPolicyLine(); }, 150);
+}
+function currentRunScopeId() {
+  if (state.runTarget === 'workspace') {
+    const id = el.workspaceSelect && el.workspaceSelect.value;
+    return id ? `workspace:${id}` : '';
+  }
+  const path = selectedProjectPath();
+  if (!path) return '';
+  const p = state.projects.find((x) => x && x.path === path);
+  return p && p.key ? `project:${p.key}` : '';
+}
+async function paintPolicyLine() {
+  if (!el.policyLine || currentView() !== 'new') return;
+  const scope = currentRunScopeId();
+  const seq = ++policyLineSeq;
+  if (!scope) { el.policyLine.hidden = true; el.policyLine.replaceChildren(); return; }
+  const qs = new URLSearchParams({ scope, guardrailsId: state.guardrailsId || 'permissive' });
+  // What the run will actually pick: the Agents accordion's model selects (per workflow node),
+  // falling back to the legacy per-role config when the accordion has not painted yet.
+  const picked = [...document.querySelectorAll('#agents-rows select.step-model')].map((s) => s.value).filter((v) => v && v !== '__add__');
+  const models = picked.length ? picked
+    : Object.values((state.config && state.config.steps) || {}).map((s) => s && s.model).filter((m) => typeof m === 'string' && m);
+  if (models.length) qs.set('models', [...new Set(models)].join(','));
+  let data = null;
+  try { const r = await fetch(`/api/policy/notes?${qs}`); data = r.ok ? await safeJson(r) : null; } catch { data = null; }
+  if (seq !== policyLineSeq) return;
+  if (!data || !data.policy) { el.policyLine.hidden = true; el.policyLine.replaceChildren(); return; }
+  // The team's default guardrail set preselects the picker until the user picks one themselves.
+  if (data.guardrailsDefault && !state.guardrailsTouched && state.guardrailsId === 'permissive' && el.guardrailsSelect
+      && [...el.guardrailsSelect.options].some((o) => o.value === data.guardrailsDefault)) {
+    state.guardrailsId = data.guardrailsDefault;
+    el.guardrailsSelect.value = data.guardrailsDefault;
+    updateGuardrailsHint();
+    return paintPolicyLine();                 // the notes depend on the selection just made
+  }
+  el.policyLine.hidden = false;
+  el.policyLine.replaceChildren(renderPolicyNotesLine(data, { doc: document }));
+}
+
+// Team-cap prompts (board 9): the one dialog behind the banner button, a refused resume and a
+// refused start. A required reason re-asks with the field mandatory.
+async function promptPastTeamCap({ total = false, required = false, home = '', windowWord = 'month' } = {}) {
+  const res = await promptModal({
+    title: total ? `Continue past the team's total cap this ${windowWord}?` : 'Continue past the team cap?',
+    message: total
+      ? `This acknowledges the team's total cap${home ? ` on ${home}` : ''} for this ${windowWord}. Your own limits still apply. Every run in the ${windowWord} is recorded to team metrics as continued past the team cap.`
+      : `This pipeline will ignore the team's per-pipeline cap${home ? ` from ${home}` : ''} from now on, including future resumes. Your own limit and both total limits still apply. The override is recorded to team metrics with your name.`,
+    fields: [{ id: 'reason', label: required ? 'Reason (required, visible to the team)' : 'Reason (optional, visible to the team)', placeholder: 'e.g. release hotfix, agreed with Mara', required }],
+    confirmLabel: 'Continue past team cap',
+  });
+  if (!res) return null;
+  return { reason: (res.reason || '').trim() || null };
+}
+async function policyRefusalRetry(data, status) {
+  if (!data || typeof data !== 'object') return null;
+  if (!(data.needsPolicyAck || data.needsPolicyOverride || data.code === 'reason_required')) return null;
+  const total = data.code === 'team_total' || !!(data.policy && data.policy.window);
+  return promptPastTeamCap({ total, required: data.code === 'reason_required' || !!data.policy?.requireReason, home: data.policy?.home || '', windowWord: data.policy?.window || 'month' });
+}
+async function confirmPastTeamCap(runId, btn) {
+  const r = runs.get(runId);
+  const choice = await promptPastTeamCap({ total: !!r && r.pauseReason === 'cost_total_policy' });
+  if (choice) resumeRunFromCard(runId, btn, { pastTeamCap: true, policyReason: choice.reason });
+}
+
+// Plugins page (boards 10–11): the required-by strip, installs through the SAME consent flow as
+// Available, the setup checklist, and the per-home trust switch.
+const TP_TRUST_PREFIX = 'worca.policy.trust.';
+const policyHomeTrusted = (home) => { try { return localStorage.getItem(TP_TRUST_PREFIX + home) === '1'; } catch { return false; } };
+let pluginsPolicyAutoBusy = false;
+async function paintPluginsPolicy(force = false) {
+  if (!el.pluginsPolicy) return;
+  const data = await loadTpScopes({ force });
+  const strip = renderRequiredStrip(data.requirements || [], data.blockedPlugins || [], { doc: document });
+  el.pluginsPolicy.replaceChildren(strip || '');
+  // A trusted home (the developer's own switch, per machine) installs its missing plugins here.
+  const missing = (data.requirements || []).filter((r) => r.state === 'missing' && (r.homes || []).some(policyHomeTrusted));
+  if (missing.length && !pluginsPolicyAutoBusy) {
+    pluginsPolicyAutoBusy = true;
+    try { for (const r of missing) await installRequiredPlugin(r.name, { marketplace: r.marketplace || '', silent: true }); }
+    finally { pluginsPolicyAutoBusy = false; }
+  }
+}
+function marketplaceEntryFor(name, marketplaceHint) {
+  const synced = pluginsViewMarketplaces.filter((m) => m && m.lastSync);
+  const pick = (ms) => { for (const m of ms) { const p = (m.plugins || []).find((x) => x.name === name); if (p) return { m, p }; } return null; };
+  if (marketplaceHint) { const hit = pick(synced.filter((m) => m.id === marketplaceHint || m.name === marketplaceHint || m.url === marketplaceHint)); if (hit) return hit; }
+  return pick(synced);
+}
+async function installRequiredPlugin(name, { marketplace = '', silent = false } = {}) {
+  const hit = marketplaceEntryFor(name, marketplace);
+  if (!hit) { setPluginsMsg(`${name}: not found in a synced marketplace — refresh marketplaces${marketplace ? ` (the policy names ${marketplace})` : ''}.`, 'err'); return false; }
+  const entry = { name: hit.p.name, subdir: hit.p.subdir, repoUrl: hit.m.url, sha: hit.m.lastSync.sha, inventory: hit.p.inventory || {}, marketplace: hit.m.id };
+  if (!silent) { openInstallConsent(entry); return true; }
+  setPluginsMsg(`Installing ${name} (trusted policy home)…`);
+  const { ok, data } = await pluginApi('POST', '/api/plugins/install', { repoUrl: entry.repoUrl, subdir: entry.subdir, name: entry.name, sha: entry.sha, marketplace: entry.marketplace });
+  if (!ok) { setPluginsMsg(`${name}: ${data.error || 'install failed'}`, 'err'); return false; }
+  setPluginsMsg(`Installed ${name} (trusted policy home).`, 'ok');
+  invalidateAgentCaches();
+  tpCache.at = 0;
+  loadPluginsView();
+  return true;
+}
+async function handlePolicyPluginClick(e) {
+  const t = e.target && typeof e.target.closest === 'function' ? e.target.closest('.pl-policy-install,.pl-policy-update,.pl-policy-setup,.pl-policy-configure') : null;
+  if (!t) return false;
+  e.stopPropagation();
+  const name = t.dataset.name || '';
+  if (t.classList.contains('pl-policy-install')) { await installRequiredPlugin(name, { marketplace: t.dataset.marketplace || '' }); return true; }
+  if (t.classList.contains('pl-policy-update')) {
+    const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, {});
+    if (!ok) { setPluginsMsg(data.error || 'update preview failed', 'err'); return true; }
+    const body = renderUpdatePreview(data);
+    pluginModal(`Update ${name}`, body);
+    const confirmBtn = body.querySelector('.pl-confirm-update');
+    if (confirmBtn) confirmBtn.addEventListener('click', async () => {
+      confirmBtn.disabled = true;
+      const r2 = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true });
+      closePluginModal();
+      if (!r2.ok) return setPluginsMsg(r2.data.error || 'update failed', 'err');
+      setPluginsMsg(`Updated ${name}.`, 'ok');
+      invalidateAgentCaches();
+      tpCache.at = 0;
+      loadPluginsView();
+    });
+    return true;
+  }
+  if (t.classList.contains('pl-policy-configure')) { closePluginModal(); location.hash = 'settings/plugins'; setPluginsMsg(`Open Settings on the ${name} card to enter its secrets.`); return true; }
+  if (t.classList.contains('pl-policy-setup')) { await openSetupChecklist(); return true; }
+  return true;
+}
+if (el.pluginsPolicy) el.pluginsPolicy.addEventListener('click', (e) => { void handlePolicyPluginClick(e); });
+async function openSetupChecklist() {
+  const data = await loadTpScopes({ force: true });
+  const reqs = data.requirements || [];
+  const homes = [...new Set(reqs.flatMap((r) => r.homes || []))];
+  const home = homes[0] || (data.homes[0] && data.homes[0].slug) || '';
+  const body = renderSetupChecklist({ home, requirements: reqs, seeds: [], trusted: policyHomeTrusted(home) }, { doc: document });
+  body.addEventListener('click', (e) => {
+    if (e.target.closest('.tp-later')) { closePluginModal(); return; }
+    if (e.target.closest('.tp-install-all')) { closePluginModal(); void installAllRequired(reqs); return; }
+    void handlePolicyPluginClick(e);
+  });
+  body.addEventListener('change', (e) => {
+    const cb = e.target.closest && e.target.closest('.tp-trust');
+    if (cb) { try { localStorage.setItem(TP_TRUST_PREFIX + cb.dataset.home, cb.checked ? '1' : '0'); } catch { /* private mode */ } }
+  });
+  pluginModal(`Set up for ${home || 'the team policy'}`, body);
+}
+// One consent dialog after another: the next opens when the previous closes (installed or cancelled).
+async function installAllRequired(reqs) {
+  for (const r of reqs) {
+    if (r.state !== 'missing') continue;
+    const started = await installRequiredPlugin(r.name, { marketplace: r.marketplace || '' });
+    if (!started) continue;
+    await new Promise((res) => { const iv = setInterval(() => { if (!el.pluginModal || el.pluginModal.classList.contains('hidden')) { clearInterval(iv); res(); } }, 200); });
+  }
+}
+
+// Team metrics (board 10): the pooled-budget tile, when the scope's policy sets one.
+const tpPolicyByScope = new Map();
+async function paintPooledBudgetTile(scopeId, records) {
+  if (!scopeId) return;
+  let pol = tpPolicyByScope.get(scopeId);
+  if (!pol || Date.now() - pol.at > 60_000) {
+    try { const r = await fetch(`/api/policy?scope=${encodeURIComponent(scopeId)}`); pol = { at: Date.now(), data: r.ok ? await safeJson(r) : null }; }
+    catch { pol = { at: Date.now(), data: null }; }
+    tpPolicyByScope.set(scopeId, pol);
+  }
+  if (tmState.scopeId !== scopeId) return;
+  const row = document.querySelector('#tm-body .tm-kpis');
+  if (!row) return;
+  row.querySelectorAll('.tm-pooled').forEach((x) => x.remove());
+  const pooled = pol.data?.policy?.caps?.pooled;
+  if (!pooled) return;
+  const now = new Date();
+  const start = pooled.window === 'weekly'
+    ? new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7))
+    : new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = pooled.window === 'weekly' ? new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7) : new Date(start.getFullYear(), start.getMonth() + 1, 1);
+  const spent = (records || []).filter((r) => { const t = Date.parse(r.startedAt); return t >= start.getTime() && t < end.getTime(); }).reduce((a, r) => a + (Number(r.cost?.usd) || 0), 0);
+  row.append(renderPooledBudgetTile({ budgetUsd: pooled.value, window: pooled.window, spentUsd: spent, windowStartMs: start.getTime(), windowEndMs: end.getTime() }, { doc: document, now: now.getTime() }));
+}
+
 // ---- Team metrics page (team-metrics-design.md §4.10) ------------------------------------
 /** First paint caps the run table for layout; "Show all" lifts it (§4.9). Declared BEFORE
  *  tmState: tmState's initialiser reads it, and a const read above its declaration throws. */
@@ -11595,6 +12191,7 @@ function renderTeamMetrics() {
   body.classList.remove('is-loading');
   body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit }));
   tmState.lastAgg = agg;
+  void paintPooledBudgetTile(tmState.scopeId, data.records || []);   // team policy (design board 10): advisory tile, when the scope's policy sets one
   const chips = document.getElementById('tm-filters');
   const active = Object.entries(tmState.filter).filter(([, v]) => v != null);
   chips.hidden = !active.length;
@@ -12455,8 +13052,10 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   const costPaused = parked && pauseReason.startsWith('cost_');
   const errorPaused = parked && (pauseReason === 'error' || pauseReason === 'recoverable');
   noteEl.hidden = !(costPaused || errorPaused);
+  // A team cap names its source, like the status pill (team-policy design board 9).
+  const COST_NOTE = { cost_total: 'paused · total budget', cost_pipeline_policy: 'paused · team cap', cost_total_policy: 'paused · team total' };
   noteEl.textContent = costPaused
-    ? (pauseReason === 'cost_total' ? 'paused · total budget' : 'paused · cost limit')
+    ? (COST_NOTE[pauseReason] || 'paused · cost limit')
     : (errorPaused ? (pauseReason === 'recoverable' ? 'paused · recoverable' : 'paused · error') : '');
   // The cause is too long for the caption line — it rides as the tooltip.
   noteEl.title = errorPaused ? pauseDetail : '';
@@ -13454,6 +14053,21 @@ function paintHdHeaderMeta(screen, record, data) {
     const [text, cls] = TM_TEXT[tm.state] || TM_TEXT['not-enabled'];
     meta.append(hdDot(), Object.assign(document.createElement('span'), { className: `hd-tm ${cls}`, textContent: text, title: tm.slug ? `worca-metrics branch of ${tm.slug}` : '' }));
   }
+  // Team policy (team-policy design board 10): the home the run's policy came from and what the
+  // developer did about it. Omitted when the run saw no policy.
+  const pol = data && data.policy && typeof data.policy === 'object' && data.policy.home ? data.policy : null;
+  if (pol) {
+    const overrides = (Array.isArray(pol.overrides) ? pol.overrides.length : 0) + (Array.isArray(pol.exceeded) ? pol.exceeded.length : 0);
+    const off = Array.isArray(pol.deviations) ? pol.deviations.length : 0;
+    const parts = ['policy'];
+    if (overrides) parts.push(`${overrides} override${overrides === 1 ? '' : 's'}`);
+    if (off) parts.push(`${off} off-policy`);
+    if (!overrides && !off) parts.push('on policy');
+    meta.append(hdDot(), Object.assign(document.createElement('span'), {
+      className: 'hd-policy st-info', textContent: parts.join(' · '),
+      title: `policy ${pol.home}${pol.sha ? ` @ ${String(pol.sha).slice(0, 7)}` : ''}${pol.reason ? ` · ${pol.reason}` : ''}`,
+    }));
+  }
   // Branch row.
   const base = screen.querySelector('.hd-base');
   const copyBtn = screen.querySelector('.hd-branch-copy');
@@ -13490,7 +14104,7 @@ function btnLabelEl(btn) { return btn.querySelector('.hd-btn-label') || btn; }
 
 // The POST /api/resume -> upsert -> seed-log -> land-on-running recipe, shared by
 // the detail header and the cost-override path.
-async function resumePipeline(p, projectDir, btn, { ignoreCostCap = false } = {}) {
+async function resumePipeline(p, projectDir, btn, { ignoreCostCap = false, pastTeamCap = false, policyReason = null } = {}) {
   const labelEl = btnLabelEl(btn);
   btn.disabled = true;
   // Claim the button for the duration of the round-trip (and keep the failure
@@ -13511,10 +14125,18 @@ async function resumePipeline(p, projectDir, btn, { ignoreCostCap = false } = {}
     const res = await fetch('/api/resume', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(ignoreCostCap ? { pipelineId: p.id, ignoreCostCap: true } : { pipelineId: p.id }),
+      body: JSON.stringify({ pipelineId: p.id, ...(ignoreCostCap ? { ignoreCostCap: true } : {}), ...(pastTeamCap ? { pastTeamCap: true, ...(policyReason ? { policyReason } : {}) } : {}) }),
     });
     const data = await safeJson(res);
-    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    if (!res.ok) {
+      // A team cap (team-policy design §7): soft — ask, then resume again with the choice recorded.
+      const again = await policyRefusalRetry(data, res.status);
+      if (again) {
+        btn.disabled = false; labelEl.textContent = label; delete btn.dataset.resumeState;
+        return resumePipeline(p, projectDir, btn, { ignoreCostCap, pastTeamCap: true, policyReason: again.reason });
+      }
+      throw new Error((data && data.error) || `HTTP ${res.status}`);
+    }
     upsertRun({
       runId: data.runId, title: p.title || p.id, projectDir: p.projectDir || projectDir || '',
       status: 'starting', pipelineId: p.id, local: true,
@@ -13654,7 +14276,7 @@ function paintHdBanners(screen, record, data) {
   if (oldBanner && (!wantCost || oldBanner.dataset.pauseReason !== pauseReason)) oldBanner.remove();
   if (wantCost && !banners.querySelector('.cost-banner')) {
     const banner = renderCostPauseBanner(
-      { pauseReason, pipelineId: record.id, totalCostUsd: st.totalCostUsd },
+      { pauseReason, pauseDetail, pipelineId: record.id, totalCostUsd: st.totalCostUsd },
       { budget: budgetState.budget || {}, fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } });
     const settingsBtn = banner.querySelector('.cb-settings');
     if (settingsBtn) settingsBtn.addEventListener('click', () => { location.hash = 'settings'; });
@@ -13665,6 +14287,18 @@ function paintHdBanners(screen, record, data) {
         histCostOverride(r.projectDir || null, r.id, r, overrideBtn); // fire-and-forget
       });
     }
+    // Team-cap banner (team-policy design board 9): the same resume recipe, past the team cap.
+    const pastBtn = banner.querySelector('.cb-past-team-cap');
+    if (pastBtn) {
+      pastBtn.addEventListener('click', async () => {
+        const r = hdCurrentRecord(record);
+        const choice = await promptPastTeamCap({ total: pauseReason === 'cost_total_policy' });
+        if (!choice) return;
+        await resumePipeline({ ...(r || {}), id: r.id }, r.projectDir || null, pastBtn, { pastTeamCap: true, policyReason: choice.reason });
+      });
+    }
+    const openPolicy = banner.querySelector('.cb-policy-open');
+    if (openPolicy) openPolicy.addEventListener('click', () => { location.hash = 'team-policy'; });
     banner.dataset.pauseReason = pauseReason;   // what the conditional rebuild keys on
     banners.prepend(banner);
   }
@@ -16054,6 +16688,8 @@ function rdStateCopy(r, stepName) {
   // line and the banner above the graph never disagree.
   if (r.pauseReason === 'cost_pipeline') return 'Paused — pipeline cost limit reached.';
   if (r.pauseReason === 'cost_total') return 'Paused — total budget reached.';
+  if (r.pauseReason === 'cost_pipeline_policy') return 'Paused — team cost cap reached.';
+  if (r.pauseReason === 'cost_total_policy') return 'Paused — team total cap reached.';
   if (r.pauseReason === 'error') {
     const why = r.pauseDetail ? `: ${r.pauseDetail}` : '';
     return `Paused after an error${why}. Fix the cause, then Resume — the worktree and progress are kept.`;
@@ -17217,6 +17853,9 @@ function statusPill(r) {
     // A cost pause names its cause so the pill alone explains why the run parked.
     if (r.pauseReason === 'cost_pipeline') return { family: 'amber', text: 'Paused · cost limit' };
     if (r.pauseReason === 'cost_total') return { family: 'amber', text: 'Paused · total budget' };
+    // A team cap names its source too (team-policy design board 9).
+    if (r.pauseReason === 'cost_pipeline_policy') return { family: 'amber', text: 'Paused · team cap' };
+    if (r.pauseReason === 'cost_total_policy') return { family: 'amber', text: 'Paused · team total' };
     // An error pause is parked and resumable (never dead), so it stays in the amber family.
     if (r.pauseReason === 'error') return { family: 'amber', text: 'Paused · error' };
     if (r.pauseReason === 'recoverable') return { family: 'amber', text: 'Paused · recoverable' };
@@ -18070,7 +18709,7 @@ function paintRunCard(r) {
       && r.pauseReason.startsWith('cost_');
     if (costPaused) {
       const fresh = renderCostPauseBanner(
-        { pauseReason: r.pauseReason, pipelineId: r.pipelineId, totalCostUsd: r.totalCostUsd },
+        { pauseReason: r.pauseReason, pauseDetail: r.pauseDetail, pipelineId: r.pipelineId, totalCostUsd: r.totalCostUsd },
         { budget: budgetState.budget || {},
           fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } });
       bannerEl.replaceChildren(...fresh.childNodes);
@@ -18525,7 +19164,7 @@ function paintRdBanners(screen, r) {
     // renderCostPauseBanner reads only fmt.usd, but pass the full DEFAULT_FMT-shaped
     // object the card already passes so the two call sites stay identical.
     const fresh = renderCostPauseBanner(
-      { pauseReason: r.pauseReason, pipelineId: r.pipelineId, totalCostUsd: r.totalCostUsd },
+      { pauseReason: r.pauseReason, pauseDetail: r.pauseDetail, pipelineId: r.pipelineId, totalCostUsd: r.totalCostUsd },
       { budget: budgetState.budget || {},
         fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } });
     fresh.dataset.bkey = bkey;                   // what the conditional rebuild keys on
@@ -18590,6 +19229,9 @@ el.runDetail?.addEventListener('click', (e) => {
   const override = e.target.closest && e.target.closest('.cb-override');
   if (override) { confirmCostOverride(r.runId, override); return; }   // async, fire-and-forget
   if (e.target.closest && e.target.closest('.cb-settings')) { location.hash = 'settings'; return; }
+  const past = e.target.closest && e.target.closest('.cb-past-team-cap');
+  if (past) { confirmPastTeamCap(r.runId, past); return; }             // team-policy board 9
+  if (e.target.closest && e.target.closest('.cb-policy-open')) { location.hash = 'team-policy'; return; }
   const qbtn = e.target.closest && e.target.closest(
     '.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort');
   if (!qbtn) return;
@@ -19353,7 +19995,7 @@ const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
 // plugins/guardrails/models LEFT this array: they are Settings tabs now, reached
 // as #settings/<tab> (legacy bare hashes redirect — see LEGACY_TAB_VIEWS).
-const VIEW_NAMES = ['new', 'getting-started', 'running', 'history', 'stats', 'team-metrics', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
+const VIEW_NAMES = ['new', 'getting-started', 'running', 'history', 'stats', 'team-metrics', 'team-policy', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
 
 // ── Settings tabs ───────────────────────────────────────────────────────────
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
@@ -19510,6 +20152,7 @@ function showView(name, param = '') {
   }
   if (name === 'stats') loadStatsView();
   if (name === 'team-metrics') loadTeamMetricsView();
+  if (name === 'team-policy') loadTeamPolicyView(param);
   if (name === 'workspaces') loadWorkspacesView();
   if (name === 'workspace-create') enterWizard();
   if (name === 'agents') loadAgentsView();
@@ -19528,6 +20171,7 @@ function showView(name, param = '') {
   if (name === 'settings') showSettingsTab(param);
   if (name === 'new') {
     loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights();
+    schedulePolicyLine();                    // team policy notes for the current target (board 8)
     // Drop the per-id workflow memo on every (re-)entry so a workflow re-saved
     // in Composer repaints with its new topology rather than the cached one.
     state.workflowCache = {};

@@ -170,6 +170,26 @@ and durations, the clarify Q&A, agent transcripts, and logs:
 
 See [`docs/team-metrics.md`](docs/team-metrics.md).
 
+### Team policy
+
+- **Team-set caps and expectations, distributed by git** — a product manager or lead publishes
+  a policy to an orphan `worca-policy` branch on the project's `origin` (protect it so only
+  maintainers push); every teammate's Worca reads it. A project carries its own policy or
+  follows another project's; a workspace follows a policy home.
+- **Soft by design** — every value is a *default* the developer may change or a *soft
+  constraint* the tighter of team and local applies to. Going past a team cap is allowed
+  after a confirmation (with an optional or required reason) and is recorded to team
+  metrics. Nothing blocks a run; unattended (`--yes`) runs warn instead of pausing.
+- **What a policy can set** — per-pipeline and total cost caps, an advisory pooled budget,
+  Ask Worca limits, a default guardrail set and a minimum tier, allowed models and step
+  defaults, marketplaces and required plugins (offered through a setup checklist, never
+  installed without a click), a default workflow, human-in-the-loop, and more.
+- **A Team policy page** — the effective policy per project or workspace (team value, yours,
+  what applies) and an editor that publishes in one commit.
+- **`worca policy show|pull|init|setup`** and `--past-team-cap [--reason "…"]` on runs.
+
+See [`docs/team-policy.md`](docs/team-policy.md).
+
 ### Models
 
 - **Bring your own models** — register any model id (a proxy, a fine-tune, an
@@ -270,6 +290,11 @@ worca --project /path/to/your/project --prompt "demo task" --mock --yes
 # flush pending team-metrics run records (headless machines with no UI server)
 worca metrics push
 
+# team policy: what applies to this project, fetch the branch now, meet the setup checklist
+worca policy show
+worca policy pull
+worca policy setup --install
+
 # share a saved pipeline: as JSON, or as a plugin folder bundling your agents + skills
 worca workflow export wf_my-flow --format json --out my-flow.json
 worca workflow import my-flow.json
@@ -306,6 +331,7 @@ The skill starts the same deterministic orchestrator.
 - [Architecture](docs/ARCHITECTURE.md) — the whole stack in one picture
 - [Guardrails](docs/guardrails.md) — policy model, enforcement, limitations
 - [Team metrics](docs/team-metrics.md) — git-backed, team-wide run records
+- [Team policy](docs/team-policy.md) — team-set cost caps, plugins, models and guardrails from a `worca-policy` branch
 - [Getting started](docs/getting-started.md) — the in-app checklist, welcome and spotlight guides
 - [Storage](docs/storage.md) — where state lives, project keys, migration
 - [Releasing](docs/RELEASING.md) — how `@worca/app` versions are published

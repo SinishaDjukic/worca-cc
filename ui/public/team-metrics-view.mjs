@@ -211,7 +211,37 @@ export function renderTmKpiRow(agg, { doc = globalThis.document, now = Date.now(
     value: k.reviewCyclesMean == null ? '—' : String(k.reviewCyclesMean),
     sub: ['mean implement→review loops · ', { b: TM_FMT.pct(k.convergeInOneRate) }, ' converge in one'],
   }));
+  // Team policy (team-policy design §10, board 10): only once a record in range carries a policy.
+  if (k.policyRuns > 0) {
+    row.append(tile(doc, {
+      icon: 'cycles', label: 'Off-policy', value: String(k.offPolicyRuns),
+      sub: [{ b: String(k.capOverrides) }, ` cap override${k.capOverrides === 1 ? '' : 's'} · `, { b: String(k.deviations) }, ` deviation${k.deviations === 1 ? '' : 's'} · of ${k.policyRuns} run${k.policyRuns === 1 ? '' : 's'} under a policy`],
+    }));
+  }
   return row;
+}
+
+/**
+ * The pooled-budget tile (team-policy design §7, board 10): advisory, never a pause. `spentUsd`
+ * is the sum of the records in the budget's current window; the pace line projects it to the
+ * window's end. Warn from 80 %, over from 100 %.
+ */
+export function renderPooledBudgetTile({ budgetUsd, window: win = 'monthly', spentUsd = 0, windowStartMs, windowEndMs }, { doc = globalThis.document, now = Date.now() } = {}) {
+  const ratio = budgetUsd > 0 ? spentUsd / budgetUsd : 0;
+  const elapsed = windowEndMs > windowStartMs ? Math.max(0, Math.min(1, (now - windowStartMs) / (windowEndMs - windowStartMs))) : 1;
+  const pace = elapsed > 0.05 ? spentUsd / elapsed : null;
+  const end = new Date(windowEndMs);
+  const endLabel = `${MO[end.getMonth()]} ${end.getDate()}`;
+  const card = tile(doc, {
+    icon: 'spend', label: 'Pooled budget', value: TM_FMT.pct(ratio), meterPct: ratio * 100,
+    sub: [{ b: TM_FMT.usd(spentUsd) }, ' of ', { b: TM_FMT.usd(budgetUsd) }, ` this ${win === 'weekly' ? 'week' : 'month'}`,
+      ...(pace != null && ratio < 1 ? [' · on pace for ', { b: TM_FMT.usd(pace) }, ` by ${endLabel}`] : ratio >= 1 ? [' · over budget'] : [])],
+  });
+  card.classList.add('tm-pooled');
+  const fill = card.querySelector('.stat-meter-fill');
+  if (fill) fill.classList.toggle('warn', ratio >= 0.8 && ratio < 1);
+  if (fill) fill.classList.toggle('over', ratio >= 1);
+  return card;
 }
 
 const CW = 560, CH = 240, L = 44, R = 12, T = 18, B = 26;
@@ -293,7 +323,8 @@ export function renderStackedWeekChart({ title, weeks, stacks, valueOf, yFmt, ti
 const BREAKDOWN_SPECS = {
   workflow: { title: 'By workflow', sub: 'share of spend', cols: [['label', 'Workflow'], ['runs', 'Runs'], ['usd', 'Spend'], ['perRunUsd', 'Per run'], ['successRate', 'Success'], ['share', '']] },
   source: { title: 'By ticket', sub: 'task source · top 5', limit: 5, cols: [['label', 'Source'], ['runs', 'Runs'], ['usd', 'Spend'], ['perRunUsd', 'Per run'], ['cyclesMean', 'Cycles']] },
-  actor: { title: 'By actor', sub: 'who ran it', cols: [['label', 'Actor'], ['runs', 'Runs'], ['usd', 'Spend'], ['perRunUsd', 'Per run'], ['successRate', 'Success']] },
+  // `overrides`: team caps continued past or exceeded (team policy §10, board 10); "–" without a policy.
+  actor: { title: 'By actor', sub: 'who ran it', cols: [['label', 'Actor'], ['runs', 'Runs'], ['usd', 'Spend'], ['perRunUsd', 'Per run'], ['successRate', 'Success'], ['overrides', 'Overrides']] },
   // No spend column: a run's cost is not a per-project fact. Runs touched and files changed are;
   // the bar is the share of runs in range that touched the project. Cost questions go through
   // the row filter, which narrows every panel to the runs that touched it.
@@ -306,6 +337,7 @@ function cellText(key, row) {
     case 'usd': case 'perRunUsd': return row[key] == null ? '—' : TM_FMT.usd(row[key]);
     case 'successRate': return TM_FMT.pct(row[key]);
     case 'cyclesMean': case 'filesChanged': return row[key] == null ? '—' : String(row[key]);
+    case 'overrides': return row[key] ? String(row[key]) : '–';
     default: return String(row[key] ?? '—');
   }
 }

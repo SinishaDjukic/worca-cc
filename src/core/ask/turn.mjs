@@ -485,7 +485,8 @@ class AskTurn extends EventEmitter {
       // the flag set (the awaiting continuation resumes a microtask later);
       // flag-first is kept as defensive style (plugin-shim.mjs:164 precedent).
       timer = d.setTimeout(() => { this.timedOut = true; try { this.abort.abort(); } catch { /* ignore */ } }, d.limits.turnTimeoutMs);
-      const limitsNow = d.askLimits(); // D12: read fresh every turn
+      // D12: read fresh every turn. The pinned project's team policy may start the limits off (team-policy §5).
+      const limitsNow = d.askLimits({ projectKey: this.pinnedScope?.projectKey || null });
       out = await this._attempts(limitsNow, mcpConfigPath, scratchDir);
     } catch (err) {
       // Backstop for a deps failure (mkdir/write) — _attempts itself never throws.
