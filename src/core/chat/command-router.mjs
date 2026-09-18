@@ -106,7 +106,8 @@ export function lastPathSegment(p) {
  * @param {{actions:object, chatContext:object, logger?:(l:string,m:string)=>void}} deps
  * actions: listRuns(), runState(runId), pendingQuestion(runId),
  *          answer(runId, id, payload), stop(runId), pause(runId),
- *          resume(pipelineId), history({limit}), listProjects()
+ *          resume(pipelineId), history({limit}), listProjects(),
+ *          listScheduled?() -> [{id, title, runAt, status, projectDir, workspaceName?}] (optional)
  */
 export function createCommandRouter({ actions, chatContext, logger = () => {} }) {
   const projectOf = (chatKey) => chatContext.get(chatKey).active_project;
@@ -152,8 +153,19 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
 
     runs: async ({ chatKey }) => {
       const live = scopedRuns(chatKey);
-      if (!live.length) return reply('No live runs. `/last` shows the latest finished pipeline.');
-      return reply(['**Live runs:**', ...live.map(runLine)].join('\n'));
+      // Scheduled runs (tickets, not pipelines): the next few, scoped like the live list.
+      const scope = projectOf(chatKey);
+      let soon = [];
+      try {
+        soon = (typeof actions.listScheduled === 'function' ? actions.listScheduled() : [])
+          .filter((t) => !scope || lastPathSegment(t.projectDir) === scope)
+          .slice(0, 5);
+      } catch { soon = []; }
+      const sched = soon.map((t) => `\u{1F552} ${t.status === 'missed' ? '**missed** · ' : ''}${t.title || 'Scheduled run'} · ${t.when || t.runAt}`);
+      if (!live.length && !sched.length) return reply('No live runs. `/last` shows the latest finished pipeline.');
+      const lines = live.length ? ['**Live runs:**', ...live.map(runLine)] : ['No live runs.'];
+      if (sched.length) lines.push('', '**Scheduled:**', ...sched);
+      return reply(lines.join('\n'));
     },
 
     last: async () => {

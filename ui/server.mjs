@@ -193,7 +193,7 @@ import {
 } from '../src/core/notifications.mjs';
 import {
   normalizeRule, nextOccurrence, previewOccurrences, describeRule, parseScheduledFor, localDate,
-  isValidTimeZone, OVERLAP_POLICIES, MISSED_POLICIES,
+  isValidTimeZone, formatInstant, OVERLAP_POLICIES, MISSED_POLICIES,
 } from '../src/shared/schedule/recurrence.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { resolveAutoModel, AUTO_MODEL_ENV } from '../src/core/auto/model.mjs';
@@ -2087,6 +2087,11 @@ const chatContext = {
 
 const chatActions = {
   listRuns: () => summarizeRuns(),
+  // Waiting + missed tickets, soonest first, with the time in this server's zone.
+  listScheduled: () => listTickets().map((t) => ({
+    id: t.id, title: t.title, runAt: t.runAt, status: t.status, projectDir: t.projectDir,
+    when: formatInstant(Date.parse(t.runAt), Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'),
+  })),
   runState: (runId) => { try { return runs.get(runId)?.orch?.getState() ?? null; } catch { return null; } },
   pendingQuestion: (runId) => runs.get(runId)?.pendingQuestion ?? null,
   answer: (runId, id, payload) => answerRun(runId, id, payload),
