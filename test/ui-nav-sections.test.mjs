@@ -24,39 +24,41 @@ const topnav = () => html.match(/<nav class="topnav"[\s\S]*?<\/nav>/)[0];
 test('sidebar reads: CTA, Activity, Build, Manage, divider, Settings — in order', () => {
   // One combined token stream: nav ids and section labels, in source order.
   const tokens = [...sidebar().matchAll(
-    /data-nav="([a-z-]+)"|class="nav-sect">([A-Za-z]+)<|class="(nav-sep)"/g
-  )].map((m) => m[1] || m[2] || m[3]);
+    /data-nav="([a-z-]+)"|class="nav-sect"[^>]*>([A-Za-z]+)<|class="(nav-sep)"|id="(nav-mode)"/g
+  )].map((m) => m[1] || m[2] || m[3] || m[4]);
   assert.deepEqual(tokens, [
     'new',
     'Activity', 'running', 'history', 'stats', 'team-metrics',
     'Build', 'composer', 'agents',
     'Manage', 'projects', 'workspaces', 'team-policy',
-    'nav-sep', 'settings',
+    'nav-sep', 'nav-mode', 'settings',          // the interface-mode item sits directly above Settings (docs/ui-levels.md)
   ]);
 });
 
 // guardrails/models/plugins moved into Settings as tabs, so 12 -> 9; team-metrics adds one -> 10;
-// team-policy (team-policy design §11) adds one -> 11.
-test('grouping adds no buttons and no anchors (11-button invariant holds)', () => {
-  assert.equal((sidebar().match(/<button type="button"/g) || []).length, 11);
+// team-policy (team-policy design §11) adds one -> 11, and the interface-mode item
+// (docs/ui-levels.md) one more -> 12, of which 11 route (data-nav).
+test('grouping adds no buttons and no anchors (12-button invariant holds)', () => {
+  assert.equal((sidebar().match(/<button type="button"/g) || []).length, 12);
+  assert.equal((sidebar().match(/<button type="button"[^>]*data-nav=/g) || []).length, 11);
   assert.ok(!/<a[\s>]/.test(sidebar()));
   assert.match(sidebar(), /<div class="nav-sect">Activity<\/div>/);
-  assert.match(sidebar(), /<div class="nav-sect">Build<\/div>/);
+  assert.match(sidebar(), /<div class="nav-sect" data-min-level="advanced">Build<\/div>/);
   assert.match(sidebar(), /<div class="nav-sect">Manage<\/div>/);
   assert.match(sidebar(), /<div class="nav-sep" aria-hidden="true"><\/div>/);
 });
 
 test('New-pipeline button is the CTA and still boots active', () => {
-  assert.match(sidebar(), /<button type="button" class="active nav-cta" data-nav="new">/);
+  assert.match(sidebar(), /<button type="button" class="active nav-cta" data-nav="new" data-min-level="simple">/);
 });
 
 test('running children container still sits between Running and History', () => {
   assert.match(sidebar(),
-    /data-nav="running">[\s\S]*?id="nav-running-children"[\s\S]*?data-nav="history">/);
+    /data-nav="running"[^>]*>[\s\S]*?id="nav-running-children"[\s\S]*?data-nav="history"[^>]*>/);
 });
 
 test('Settings stays a .nav child (app.js selector `.nav button[data-nav]` must match it)', () => {
-  assert.match(sidebar(), /data-nav="settings">\s*<svg/);
+  assert.match(sidebar(), /data-nav="settings"[^>]*>\s*<svg/);
   const sideFoot = html.match(/<div class="side-foot">[\s\S]*?<\/aside>/)[0];
   assert.ok(!/data-nav=/.test(sideFoot),
     'settings must not move into .side-foot — routing would silently die');
@@ -186,9 +188,10 @@ test('topnav order mirrors the sidebar, with a separator per group boundary', ()
 });
 
 test('separators are spans (button count and settings-text invariants hold)', () => {
-  assert.equal((topnav().match(/<button type="button"/g) || []).length, 11);
-  assert.equal((topnav().match(/<span class="topnav-sep" aria-hidden="true"><\/span>/g) || []).length, 4);
-  assert.match(topnav(), /data-nav="settings">Settings<\/button>/);
+  // 11 routes + the interface-mode twin (docs/ui-levels.md).
+  assert.equal((topnav().match(/<button type="button"/g) || []).length, 12);
+  assert.equal((topnav().match(/<span class="topnav-sep" aria-hidden="true"[^>]*><\/span>/g) || []).length, 4);
+  assert.match(topnav(), /data-nav="settings"[^>]*>Settings<\/button>/);
 });
 
 test('.topnav-sep is a hairline that cannot flex-grow', () => {

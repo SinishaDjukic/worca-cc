@@ -74,6 +74,8 @@ function pill(doc, entry) {
   btn.append(dot, body);
   if (entry.disabled) btn.appendChild(h(doc, 'span', 'chip', '1 placed'));
   if (entry.description) btn.title = entry.description;
+  // Logic nodes are expert building blocks (docs/ui-levels.md); Task and End stay with everyone.
+  if (entry.kind && !SINGLETON_KINDS.has(entry.kind)) btn.dataset.minLevel = 'expert';
   return btn;
 }
 

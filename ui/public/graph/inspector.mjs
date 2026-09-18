@@ -103,8 +103,8 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
     body.appendChild(select(doc, 'ins-effort', 'effort', 'Effort',
       [{ value: '', text: 'default' }, ...efforts.map((e) => ({ value: e, text: e }))], node.config.effort));
     if (meta && meta.fanOut) {
-      body.appendChild(toggle(doc, 'ins-fanout', 'fanOut', 'Research fan-out', 'parallel research sub-agents',
-        { checked: node.config.fanOut === true }));
+      body.appendChild(lv(toggle(doc, 'ins-fanout', 'fanOut', 'Research fan-out', 'parallel research sub-agents',
+        { checked: node.config.fanOut === true }), 'expert', node.config.fanOut === true));
       // What this node's sub-agents run on. Gated by the SAME meta flag as the
       // toggle above: an agent that cannot fan out has no children to place.
       // '' = unset — the run resolves the auto default (a per-spawn choice
@@ -117,7 +117,7 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
       // the locked option carries the stored value — and the full control
       // returns when the node moves back to a plain model.
       const chosen = node.config.model ? models.find((m) => m && m.id === node.config.model) : null;
-      body.appendChild(chosen && chosen.routed
+      body.appendChild(lv(chosen && chosen.routed
         ? select(doc, 'ins-subagent', 'subagentModel', 'Sub-agent model',
           [{ value: node.config.subagentModel || '', text: 'same endpoint (locked)' }],
           node.config.subagentModel || '',
@@ -125,19 +125,19 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
         : select(doc, 'ins-subagent', 'subagentModel', 'Sub-agent model',
           [{ value: '', text: 'default (agent picks)' },
             ...subagentModels.map((m) => ({ value: m, text: m === 'auto' ? 'agent picks' : m }))],
-          node.config.subagentModel));
+          node.config.subagentModel), 'expert', !!node.config.subagentModel));
     }
     if (meta && meta.asksQuestions) {
       const locked = Boolean(meta.questionsLocked);
       const saved = node.config.askQuestions;
-      body.appendChild(toggle(doc, 'ins-questions', 'askQuestions', 'Ask questions', 'pauses the run for input', {
+      body.appendChild(lv(toggle(doc, 'ins-questions', 'askQuestions', 'Ask questions', 'pauses the run for input', {
         checked: locked ? Boolean(meta.questionsDefault) : (typeof saved === 'boolean' ? saved : Boolean(meta.questionsDefault)),
         disabled: locked,
         title: locked ? (meta.questionsDefault ? 'Always on for this agent' : 'Always off for this agent') : '',
-      }));
+      }), 'expert', !locked && typeof saved === 'boolean'));
     }
-    body.appendChild(toggle(doc, 'ins-awaitall', 'awaitAll', 'Await all inputs', 'gate until every wire fires',
-      { checked: node.config.awaitAll === true }));
+    body.appendChild(lv(toggle(doc, 'ins-awaitall', 'awaitAll', 'Await all inputs', 'gate until every wire fires',
+      { checked: node.config.awaitAll === true }), 'expert', node.config.awaitAll === true));
   } else {
     root.appendChild(head(doc, FLOW_TITLES[node.kind] || node.kind, node.id));
     body.appendChild(h(doc, 'p', 'ins-blurb', FLOW_BLURB[node.kind] || ''));
@@ -152,28 +152,40 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
       body.appendChild(h(doc, 'div', 'ins-resolved', resolved ? `forwards: ${resolved}` : 'unresolved'));
     }
     if (node.kind === 'task') {
-      body.appendChild(toggle(doc, 'ins-seed', 'planStoreSeed', 'Seed the plan store', 'treat an attached plan as the run’s plan',
-        { checked: node.config.planStoreSeed === true }));
+      body.appendChild(lv(toggle(doc, 'ins-seed', 'planStoreSeed', 'Seed the plan store', 'treat an attached plan as the run’s plan',
+        { checked: node.config.planStoreSeed === true }), 'expert', node.config.planStoreSeed === true));
     }
     if (node.kind === 'end') body.appendChild(h(doc, 'div', 'ins-result', ''));
   }
-  body.appendChild(h(doc, 'div', 'ins-sep'));
-  body.appendChild(portList(doc, ports));
+  body.appendChild(lv(h(doc, 'div', 'ins-sep'), 'expert'));
+  body.appendChild(lv(portList(doc, ports), 'expert'));
   root.appendChild(body);
   return root;
 }
 
 /** Loop wires carry the per-wire cycle budget; a plain wire must NOT expose one
  *  (maxCycles on a non-loop wire is V13's error). */
+/** Interface mode (docs/ui-levels.md): model and effort are the advanced inspector; everything else
+ *  here is expert. `keep` = the control holds a non-default value, so it stays on screen. */
+function lv(el, min, keep = false) {
+  el.dataset.minLevel = min;
+  if (keep) el.dataset.levelKeep = '1';
+  return el;
+}
+
 export function renderWireInspector(wire, { loop = false, doc = globalThis.document } = {}) {
   const root = h(doc, 'div', `ins-panel ins-wire${loop ? ' ins-loop' : ''}`);
   root.dataset.wireId = wire.id;
   root.appendChild(head(doc, loop ? 'Loop wire' : 'Wire', `${wire.from.node}.${wire.from.port} → ${wire.to.node}.${wire.to.port}`));
   const body = h(doc, 'div', 'ins-body-in');
   if (loop) {
-    body.appendChild(number(doc, 'ins-maxcycles', 'maxCycles', 'Max cycles',
-      wire.config && Number.isInteger(wire.config.maxCycles) ? wire.config.maxCycles : 3, 1));
-    body.appendChild(h(doc, 'small', 'ins-hint', 'How many times this loop may re-deliver before the gate asks.'));
+    const budgeted = !!(wire.config && Number.isInteger(wire.config.maxCycles));
+    body.appendChild(lv(number(doc, 'ins-maxcycles', 'maxCycles', 'Max cycles',
+      budgeted ? wire.config.maxCycles : 3, 1), 'expert', budgeted));
+    body.appendChild(lv(h(doc, 'small', 'ins-hint', 'How many times this loop may re-deliver before the gate asks.'), 'expert', budgeted));
+    const plain = h(doc, 'p', 'ins-blurb ins-loop-plain', 'A loop: work flows back here until it passes, up to a cycle limit. Expert mode sets the limit.');
+    plain.dataset.maxLevel = 'advanced';
+    body.appendChild(plain);
   } else {
     body.appendChild(h(doc, 'p', 'ins-blurb', 'Plain data wire. Delete it to rewire the target input.'));
   }

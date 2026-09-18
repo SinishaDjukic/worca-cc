@@ -276,11 +276,18 @@ function homeMark(doc) {
  * Answers what people scan for — how big, where runs go, is anything wrong — on one line.
  */
 export function renderWsSummary(ws, { doc = globalThis.document, pending = false } = {}) {
-  const frag = doc.createDocumentFragment();
+  let frag = doc.createDocumentFragment();
   const n = (ws.projectPaths || ws.members || []).length;
   frag.append(`${n} project${n === 1 ? '' : 's'}`);
+  // Everything after the count is team-metrics state: expert detail (docs/ui-levels.md), so it rides
+  // one tagged span the stylesheet can drop. `frag` is re-pointed so the appends below land in it.
+  const out = frag;
+  const tm = h(doc, 'span', 'ws-sum-tm');
+  tm.dataset.minLevel = 'expert';
+  out.append(tm);
+  frag = tm;
   // The scopes call is still out: say so instead of "no metrics home", which reads as final.
-  if (pending) { frag.append(' · ', h(doc, 'span', 'ws-sum-pending', 'checking metrics…')); return frag; }
+  if (pending) { frag.append(' · ', h(doc, 'span', 'ws-sum-pending', 'checking metrics…')); return out; }
   const home = ws.home || { state: 'unset' };
   if (home.state === 'unset') {
     frag.append(' · ', h(doc, 'span', 'muted', 'no metrics home'));
@@ -291,7 +298,7 @@ export function renderWsSummary(ws, { doc = globalThis.document, pending = false
   }
   const silent = (ws.members || []).filter((x) => x.state !== 'home' && !x.recordsOn).length;
   if (silent) frag.append(' · ', h(doc, 'span', 'ws-sum-warn', `${silent} not recording`));
-  return frag;
+  return out;
 }
 
 /** One table cell: what this member's metrics branch is, or that there is none. */

@@ -86,6 +86,10 @@ const { server, runs } = await import(new URL('../ui/server.mjs', import.meta.ur
 srv = server;
 await new Promise((r) => srv.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${srv.address().port}`;
+// These proofs measure the full UI, so pin the interface mode to Expert (docs/ui-levels.md) —
+// a fresh WORCA_HOME would otherwise serve Simple and hide what they measure.
+{ const r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ uiLevel: 'expert' }) });
+  if (!r.ok) throw new Error(`could not pin the interface mode: HTTP ${r.status}`); }
 log(`server ${base} · project ${proj}`);
 const api = async (p, opt) => {
   const r = await fetch(base + p, opt);

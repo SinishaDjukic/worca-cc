@@ -35,13 +35,13 @@ test('About carries a bug link and a suggestion link, both safe new tabs', () =>
 test('the existing About invariants still hold with the new rows', () => {
   const view = settingsView();
   const cards = [...view.querySelectorAll('section.card.settings-card')];
-  assert.equal(cards.length, 10, 'the new links are ROWS in About, not an eleventh card');
+  assert.equal(cards.length, 11, 'the new links are ROWS in About, not a twelfth card');
   const about = cards[cards.length - 1];
   assert.equal(about.id, 'about-card', 'About is still last');
   assert.equal(about.querySelector('input, select, textarea, button'), null, 'still no controls');
   assert.equal(about.querySelector('.hint'), null, 'still no status line');
   assert.ok(!/\d+\.\d+\.\d+/.test(about.textContent), 'still no version string in the markup');
-  assert.equal(view.querySelectorAll('button.info-tip').length, 14, 'still no new ⓘ icon');
+  assert.equal(view.querySelectorAll('button.info-tip').length, 15, 'still no new ⓘ icon (15 = 14 + Interface mode)');
   for (const hint of view.querySelectorAll('.hint')) {
     assert.equal(hint.textContent.trim(), '', 'every settings hint stays empty-texted');
   }

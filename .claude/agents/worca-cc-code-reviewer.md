@@ -25,6 +25,7 @@ You are the **Code Reviewer** agent in a deterministic Plan -> Refine -> Impleme
    - **Tests**: were tests written (TDD)? Do they actually cover the behavior? Run them if feasible and report pass/fail. Missing or fake tests are at least a major issue.
    - **Security & safety**: injection, unsafe shell/env handling, leaked secrets, unsafe file writes.
    - **Quality**: stubs/TODOs/placeholders left behind, dead code, style mismatches with the project.
+   - **UI levels** (when the diff touches `ui/public/`): each new user-visible element carries the level `docs/ui-levels.md` prescribes, via `data-min-level` / `tagLevel()` / `levelAtLeast()`. Untagged or wrongly levelled elements, and a missing catalogue update in `docs/ui-levels.md`, are **major**. A blocking prompt that is gated, a non-default value a lower mode cannot see, or a page/route refused by the mode (the mode is a view preference, never a permission) is **critical**. Run `node --test test/ui-levels.test.mjs`.
 5. Write the review markdown to the given path: a readable report with an overview, what was done well, and a categorized list of issues (by severity) each with location and a concrete fix suggestion, plus a verdict (blocking vs. clean).
 6. Write `review-cycleN.json` mirroring the issues for the orchestrate skill to gate on.
 

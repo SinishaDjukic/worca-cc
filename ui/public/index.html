@@ -19,13 +19,13 @@
         </div>
 
         <nav class="nav" aria-label="Primary">
-          <button type="button" class="active nav-cta" data-nav="new">
+          <button type="button" class="active nav-cta" data-nav="new" data-min-level="simple">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
             <span>New pipeline</span>
           </button>
 
           <div class="nav-sect">Activity</div>
-          <button type="button" data-nav="running">
+          <button type="button" data-nav="running" data-min-level="simple">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg>
             <span>Running</span>
             <span class="nav-rollup" id="nav-running-rollup" hidden title="A pipeline needs your input"></span>
@@ -35,48 +35,55 @@
             <span class="nav-count n-paused" id="nav-paused-badge" hidden title="Paused pipelines"><span id="nav-paused-count">0</span><svg class="pause-flag" viewBox="0 0 10 10" aria-hidden="true"><rect x="2.2" y="2" width="2" height="6" rx="1"></rect><rect x="5.8" y="2" width="2" height="6" rx="1"></rect></svg></span>
           </button>
           <div class="nav-children" id="nav-running-children"></div>
-          <button type="button" data-nav="history">
+          <button type="button" data-nav="history" data-min-level="simple">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v4h4"></path></svg>
             <span>History</span>
             <span class="nav-count n-grey" id="nav-history-count">0</span>
           </button>
-          <button type="button" data-nav="stats">
+          <button type="button" data-nav="stats" data-min-level="advanced">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 20v-7M12 20V4M19 20v-11"></path></svg>
             <span>Statistics</span>
           </button>
-          <button type="button" data-nav="team-metrics">
+          <button type="button" data-nav="team-metrics" data-min-level="expert">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h16"></path><path d="M6 15l4-5 4 3 4-6"></path><circle cx="6" cy="15" r="1.2"></circle><circle cx="10" cy="10" r="1.2"></circle><circle cx="14" cy="13" r="1.2"></circle><circle cx="18" cy="7" r="1.2"></circle></svg>
             <span>Team metrics</span>
           </button>
 
-          <div class="nav-sect">Build</div>
-          <button type="button" data-nav="composer">
+          <div class="nav-sect" data-min-level="advanced">Build</div>
+          <button type="button" data-nav="composer" data-min-level="advanced">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
             <span>Workflow Composer</span>
           </button>
-          <button type="button" data-nav="agents">
+          <button type="button" data-nav="agents" data-min-level="expert">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>
             <span>Agents</span>
           </button>
 
           <div class="nav-sect">Manage</div>
-          <button type="button" data-nav="projects">
+          <button type="button" data-nav="projects" data-min-level="simple">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg>
             <span>Projects</span>
             <span class="nav-count n-grey" id="nav-projects-count">0</span>
           </button>
-          <button type="button" data-nav="workspaces">
+          <button type="button" data-nav="workspaces" data-min-level="advanced">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"></rect><rect x="14" y="3" width="7" height="7" rx="1.6"></rect><rect x="3" y="14" width="7" height="7" rx="1.6"></rect><path d="M14 17.5h7M17.5 14v7"></path></svg>
             <span>Workspaces</span>
             <span class="nav-count n-grey" id="nav-workspaces-count">0</span>
           </button>
-          <button type="button" data-nav="team-policy">
+          <button type="button" data-nav="team-policy" data-min-level="expert">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 7.6-8 9-4.6-1.4-8-4.5-8-9V6l8-3z"></path><path d="M9 12l2 2 4-4"></path></svg>
             <span>Team policy</span>
           </button>
 
           <div class="nav-sep" aria-hidden="true"></div>
-          <button type="button" data-nav="settings">
+          <!-- Interface mode (docs/ui-levels.md): an ACTION, not a view, so it carries no data-nav
+               and never takes the dark "active" fill. The icon is the state readout: ui-level.mjs
+               repaints it, and on the collapsed rail it is all that shows. -->
+          <button type="button" class="nav-mode" id="nav-mode" data-mode-open="full" data-min-level="simple" aria-haspopup="dialog">
+            <i class="lv-icon-slot"><svg class="lv-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5z"></path><path d="M3 12.5l9 5 9-5"></path><path d="M3 17l9 5 9-5"></path></svg></i>
+            <span class="lv-name">Expert</span>
+          </button>
+          <button type="button" data-nav="settings" data-min-level="simple">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path></svg>
             <span>Settings</span>
           </button>
@@ -96,22 +103,31 @@
       <main class="main">
         <!-- compact top-nav (shown <1080px, where the sidebar is hidden) -->
         <nav class="topnav" aria-label="Primary compact">
-          <button type="button" class="active" data-nav="new">New</button>
+          <button type="button" class="active" data-nav="new" data-min-level="simple">New</button>
           <span class="topnav-sep" aria-hidden="true"></span>
-          <button type="button" data-nav="running">Running<span class="nav-rollup" id="topnav-running-rollup" hidden></span></button>
-          <button type="button" data-nav="history">History</button>
-          <button type="button" data-nav="stats">Stats<span class="topnav-amt mono" id="topnav-spend" hidden></span></button>
-          <button type="button" data-nav="team-metrics">Team metrics</button>
+          <button type="button" data-nav="running" data-min-level="simple">Running<span class="nav-rollup" id="topnav-running-rollup" hidden></span></button>
+          <button type="button" data-nav="history" data-min-level="simple">History</button>
+          <button type="button" data-nav="stats" data-min-level="advanced">Stats<span class="topnav-amt mono" id="topnav-spend" hidden></span></button>
+          <button type="button" data-nav="team-metrics" data-min-level="expert">Team metrics</button>
+          <span class="topnav-sep" aria-hidden="true" data-min-level="advanced"></span>
+          <button type="button" data-nav="composer" data-min-level="advanced">Composer</button>
+          <button type="button" data-nav="agents" data-min-level="expert">Agents</button>
           <span class="topnav-sep" aria-hidden="true"></span>
-          <button type="button" data-nav="composer">Composer</button>
-          <button type="button" data-nav="agents">Agents</button>
+          <button type="button" data-nav="projects" data-min-level="simple">Projects</button>
+          <button type="button" data-nav="workspaces" data-min-level="advanced">Workspaces</button>
+          <button type="button" data-nav="team-policy" data-min-level="expert">Team policy</button>
           <span class="topnav-sep" aria-hidden="true"></span>
-          <button type="button" data-nav="projects">Projects</button>
-          <button type="button" data-nav="workspaces">Workspaces</button>
-          <button type="button" data-nav="team-policy">Team policy</button>
-          <span class="topnav-sep" aria-hidden="true"></span>
-          <button type="button" data-nav="settings">Settings</button>
+          <button type="button" class="topnav-mode" data-mode-open="short" data-min-level="simple" aria-haspopup="dialog"><i class="lv-icon-slot"><svg class="lv-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5z"></path><path d="M3 12.5l9 5 9-5"></path><path d="M3 17l9 5 9-5"></path></svg></i><span class="lv-name">Expert</span></button>
+          <button type="button" data-nav="settings" data-min-level="simple">Settings</button>
         </nav>
+
+        <!-- Shown when the open page sits above the interface mode (a deep link, a guide, or a
+             mode change while on it). app.js#paintLevelBanner fills and toggles it. -->
+        <div id="level-banner" class="level-banner" role="status" hidden>
+          <span class="lv-pill" id="level-banner-pill"></span>
+          <span class="level-banner-text" id="level-banner-text"></span>
+          <button type="button" class="btn btn-ghost btn-mini" id="level-banner-switch" data-mode-set=""></button>
+        </div>
 
         <!-- ===== VIEW: NEW PIPELINE ===== -->
         <section class="view" data-view="new">
@@ -128,7 +144,7 @@
                 <!-- Target switch and the thing it selects share one row: they are one
                      decision, and the switch is only meaningful next to its picker. -->
                 <div class="split-row">
-                  <div class="field field-compact">
+                  <div class="field field-compact" id="target-field" data-min-level="advanced">
                     <label>Target</label>
                     <div class="seg" id="target-seg">
                       <button type="button" data-target="project" class="on" aria-pressed="true">Project</button>
@@ -210,7 +226,7 @@
                 </div>
 
                 <!-- Memory defragment only (agent memory §7.3 / B11): the scope the run restructures. -->
-                <div class="field field-compact" id="memory-scope-row" hidden>
+                <div class="field field-compact" id="memory-scope-row" data-min-level="expert" hidden>
                   <label>Memory scope</label>
                   <div class="seg" id="memory-scope-seg" role="group" aria-label="Memory scope">
                     <button type="button" data-scope="global" class="on" aria-pressed="true">Global</button>
@@ -220,7 +236,7 @@
                 </div>
 
                 <!-- Task source switch; the panes below span the full width. -->
-                <div class="field field-compact">
+                <div class="field field-compact" id="source-field" data-min-level="advanced">
                   <label>Task source</label>
                   <div class="seg" id="source-seg">
                     <button type="button" data-src="prompt" class="on" aria-pressed="true">Prompt</button>
@@ -267,7 +283,7 @@
                 </div>
 
                 <!-- Branch pair: one decision (from → into), so one compact row. -->
-                <div class="field-grid-2">
+                <div class="field-grid-2" id="branch-fields" data-min-level="advanced">
                   <div class="field field-compact">
                     <label for="sourceBranch">Source branch</label>
                     <div class="select-wrap" id="sourceBranchWrap">
@@ -289,7 +305,7 @@
                      A workflow ships tuned, so its per-agent knobs belong here with
                      guardrails and mock mode; the workflow PICKER stays above.
                      Collapsed unless something inside is already non-default. -->
-                <details class="advanced" id="advanced-config">
+                <details class="advanced" id="advanced-config" data-min-level="advanced">
                   <summary>
                     <span class="adv-chev" aria-hidden="true"></span>
                     <span>Advanced</span>
@@ -308,12 +324,12 @@
                       <span class="agents-wf" id="agentsWorkflow"></span>
                       <span class="agents-summary" id="agentsSummary">all defaults</span>
                       <span class="agents-actions">
-                        <button type="button" id="agentsPromote" class="btn-ghost btn-mini" hidden>Save as workflow defaults</button>
+                        <button type="button" id="agentsPromote" class="btn-ghost btn-mini" data-min-level="expert" hidden>Save as workflow defaults</button>
                         <button type="button" id="agentsReset" class="btn-ghost btn-mini" hidden>Reset</button>
                       </span>
                     </div>
                     <div id="agents-rows"></div>
-                    <div id="wf-feedback-config" class="agent-row-body-inner" hidden></div>
+                    <div id="wf-feedback-config" class="agent-row-body-inner" data-min-level="expert" hidden></div>
                   </div>
                 </div>
 
@@ -340,16 +356,27 @@
                       <small class="hint" id="guardrailsHint">Applies to every agent this run spawns. Permissive = no restrictions (the legacy default).</small>
                     </div>
 
-                    <div class="switch-row">
-                      <div class="switch" id="mock-switch" role="switch" aria-checked="false" tabindex="0"></div>
-                      <span class="txt">Mock mode — no Claude calls, offline dry run</span>
-                    </div>
-                    <input id="mock" type="checkbox" hidden />
                   </div>
                 </details>
 
-                <!-- Team policy notes (design board 8): in the main column, never inside Advanced. -->
+                <!-- Mock mode sits OUTSIDE Advanced (docs/ui-levels.md): onboarding sends first-time
+                     users to it, and it is the one switch that makes a run free and harmless. -->
+                <div class="switch-row mock-row" id="mock-row" data-min-level="simple">
+                  <div class="switch" id="mock-switch" role="switch" aria-checked="false" tabindex="0"></div>
+                  <span class="txt">Mock mode — try it offline: no Claude calls, no cost</span>
+                </div>
+                <input id="mock" type="checkbox" hidden />
+
+                <!-- Settings the current mode hides but this run still uses (app.js#paintHiddenSettings). -->
+                <div class="level-hidden-note" id="level-hidden-note" hidden>
+                  <span id="level-hidden-text"></span>
+                  <button type="button" class="link-btn" id="level-hidden-show" data-mode-set=""></button>
+                </div>
+
+                <!-- Team policy notes (design board 8): in the main column, never inside Advanced,
+                     and never gated — a team cap applies in every interface mode. -->
                 <div id="policyLine" hidden></div>
+
                 <!-- Actions -->
                 <div class="hint err" id="newBlockedNote" hidden></div>
                 <div class="actions" style="justify-content:flex-end">
@@ -389,7 +416,7 @@
               <div class="sub" id="running-sub">0 pipelines executing · 0 need your input</div>
             </div>
             <span class="pill-run amber hidden" id="running-status-pill" style="box-shadow:var(--shadow-soft)"><span class="pdot"></span> 0 needs input</span>
-            <div class="run-density" role="group" aria-label="List density">
+            <div class="run-density" role="group" data-min-level="advanced" aria-label="List density">
               <button type="button" class="rc-dseg" data-density="compact" aria-pressed="false" title="Compact — three runs per screen">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="3" y="5" width="18" height="3" rx="1.5"></rect><rect x="3" y="10.5" width="18" height="3" rx="1.5"></rect><rect x="3" y="16" width="18" height="3" rx="1.5"></rect></svg>
               </button>
@@ -426,11 +453,11 @@
                   <div class="rc-meta">
                     <span class="rc-status-word"></span>
                     <span class="rc-seg"><span class="rc-dot">·</span><span class="rm-text"></span></span>
-                    <span class="rc-seg rc-prog" hidden><span class="rc-dot">·</span><span class="rc-prog-text"></span></span>
+                    <span class="rc-seg rc-prog" hidden data-min-level="advanced"><span class="rc-dot">·</span><span class="rc-prog-text"></span></span>
                     <span class="rc-seg"><span class="rc-dot">·</span><span class="run-time mono"></span></span>
                     <span class="rc-seg"><span class="rc-dot">·</span><span class="run-cost mono"></span></span>
                   </div>
-                  <span class="rc-branch mono" hidden>
+                  <span class="rc-branch mono" hidden data-min-level="advanced">
                     <span class="rc-base" hidden></span>
                     <button type="button" class="rc-branch-copy" title="Copy branch name" aria-label="Copy branch name">
                       <span class="rc-branch-name"></span>
@@ -456,13 +483,13 @@
               <div class="rc-compact">
                 <span class="rc-step-chip"></span>
                 <span class="rc-step-name"></span>
-                <span class="rc-step-model mono" hidden></span>
+                <span class="rc-step-model mono" hidden data-min-level="advanced"></span>
               </div>
               <div class="cost-banner" hidden></div>
               <div class="rc-detailed">
                 <div class="run-flow-wrap"><div class="run-flow"></div></div>
-                <div class="run-log">
-                  <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" title="Filter by cycle" aria-label="Filter by cycle"></select><button type="button" class="log-f log-f-exec" hidden title="Showing one execution — click to clear"><span class="lfe-text"></span><span class="lfe-x" aria-hidden="true">×</span></button><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
+                <div class="run-log" data-min-level="advanced">
+                  <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" data-min-level="expert" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" data-min-level="expert" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" data-min-level="expert" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" data-min-level="expert" title="Filter by cycle" aria-label="Filter by cycle"></select><button type="button" class="log-f log-f-exec" hidden title="Showing one execution — click to clear"><span class="lfe-text"></span><span class="lfe-x" aria-hidden="true">×</span></button><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
                   <div class="log"></div>
                 </div>
               </div><!-- /.rc-detailed -->
@@ -488,8 +515,8 @@
                 </div>
                 <div class="rd-meta mono"></div>
                 <div class="rd-row3">
-                  <span class="rd-base mono" hidden></span>
-                  <button type="button" class="rd-branch-copy mono" hidden title="Copy branch name" aria-label="Copy branch name">
+                  <span class="rd-base mono" hidden data-min-level="advanced"></span>
+                  <button type="button" class="rd-branch-copy mono" hidden data-min-level="advanced" title="Copy branch name" aria-label="Copy branch name">
                     <span class="rd-branch-name"></span>
                     <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>
                     <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
@@ -520,7 +547,7 @@
                        report. paintRdTerminal appends .rd-history-link after this
                        button, so the painted row reads
                        Stop · Report this run · View in History. -->
-                  <button type="button" class="rd-report btn-ghost" hidden>Report this run</button>
+                  <button type="button" class="rd-report btn-ghost" hidden data-min-level="advanced">Report this run</button>
                 </div>
                 <!-- Inline error slot for failed actions, on the HEADER so it is never
                      pushed below the fold by the graph or a tab body (mirrors .hd-error). -->
@@ -587,17 +614,17 @@
                         <span class="hm-seg hist-clock-seg"><span class="hm-dot">·</span><span class="hist-clock"></span></span>
                         <span class="hm-seg hist-time-seg"><span class="hm-dot">·</span><span class="hist-time mono"></span></span>
                         <span class="hm-seg hist-total-seg"><span class="hm-dot">·</span><span class="hist-total mono"></span></span>
-                        <span class="hist-diff-pill" hidden>
+                        <span class="hist-diff-pill" hidden data-min-level="advanced">
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"></path><path d="M14 3v4h4" stroke-linejoin="round"></path></svg>
                           <span class="hist-diff mono" aria-label="lines changed"></span>
                           <span class="hist-nodiff mono" hidden>no diff</span>
                         </span>
-                        <span class="hist-cmt-pill" hidden>
+                        <span class="hist-cmt-pill" hidden data-min-level="advanced">
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-6.5A8 8 0 0 1 11 4h2a8 8 0 0 1 8 8z" stroke-linejoin="round"></path></svg>
                           <span class="hist-cmt-count mono" aria-label="unresolved diff comments"></span>
                         </span>
                       </div>
-                      <span class="hist-branch mono" hidden>
+                      <span class="hist-branch mono" hidden data-min-level="advanced">
                         <span class="hist-branch-src" hidden></span>
                         <svg class="hist-branch-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-label="into" role="img" hidden><path d="M4 12h15M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                         <span class="hist-branch-dst"></span>
@@ -615,7 +642,7 @@
                       <span class="hist-pausenote" hidden></span>
                     </div>
                     <div class="hist-aside">
-                      <button type="button" class="hist-pr btn-ghost" hidden>Create PR</button>
+                      <button type="button" class="hist-pr btn-ghost" hidden data-min-level="advanced">Create PR</button>
                       <button type="button" class="hist-open" aria-label="Open run details">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                       </button>
@@ -638,9 +665,9 @@
                   </button>
                   <h1 class="hd-title"></h1>
                   <span class="auto-badge" hidden></span>
-                  <span class="hist-merge" hidden></span>
-                  <button type="button" class="hd-pr" hidden>Create PR</button>
-                  <a class="hd-pr-link" hidden target="_blank" rel="noopener"></a>
+                  <span class="hist-merge" hidden data-min-level="expert"></span>
+                  <button type="button" class="hd-pr" hidden data-min-level="advanced">Create PR</button>
+                  <a class="hd-pr-link" hidden data-min-level="advanced" target="_blank" rel="noopener"></a>
                 </div>
                 <!-- Status pip leads the META line, not row 1: it reads as the icon
                      for the status WORD it now sits next to (same pairing the list
@@ -655,8 +682,8 @@
                   <div class="hd-meta mono"></div>
                 </div>
                 <div class="hd-row3">
-                  <span class="hd-base mono"></span>
-                  <button type="button" class="hd-branch-copy mono" hidden title="Copy branch name" aria-label="Copy branch name">
+                  <span class="hd-base mono" data-min-level="advanced"></span>
+                  <button type="button" class="hd-branch-copy mono" hidden data-min-level="advanced" title="Copy branch name" aria-label="Copy branch name">
                     <span class="hd-branch-name"></span>
                     <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>
                     <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
@@ -682,7 +709,7 @@
                        still-live row also appears here, so setupHdActions unhides both
                        only for a deletable entry, and hides the trigger when neither is
                        offered rather than opening onto an empty menu. -->
-                  <span class="hd-more-wrap">
+                  <span class="hd-more-wrap" data-min-level="advanced">
                     <button type="button" class="hd-more" hidden aria-haspopup="menu" aria-expanded="false" title="More actions" aria-label="More actions">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
                     </button>
@@ -737,7 +764,7 @@
           </div>
           <div id="stats-body"><small class="hint">Loading…</small></div>
           <div id="stats-tip" class="chart-tip" hidden></div>
-          <a class="hint tm-stats-hint" id="stats-tm-hint" href="#team-metrics" hidden>Team-wide view →</a>
+          <a class="hint tm-stats-hint" id="stats-tm-hint" href="#team-metrics" data-min-level="expert" hidden>Team-wide view →</a>
         </section>
         <!-- /view stats -->
 
@@ -819,8 +846,8 @@
                 </div>
               </div>
               <div class="ws-detail" hidden>
-                <div class="ws-policy" hidden></div>
-                <div class="ws-home" hidden></div>
+                <div class="ws-policy" data-min-level="expert" hidden></div>
+                <div class="ws-home" data-min-level="expert" hidden></div>
                 <div class="ws-desc">
                   <span class="tm-label">Description</span>
                   <!-- Markdown by contract (the scanner template): rendered through the page's
@@ -1153,6 +1180,11 @@
                     <input id="gv-agent-filter" class="pal-filter" type="search" placeholder="Filter agents…" aria-label="Filter agents by name or ports">
                   </div>
                   <div class="gv-palette" id="gv-palette"></div>
+                  <!-- The advanced door to the agent wizard (the Agents page is expert, docs/ui-levels.md). -->
+                  <button type="button" class="pal-create" id="gv-create-agent" data-min-level="advanced">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                    Create agent&hellip;
+                  </button>
                 </div>
                 <div class="gv-ins-pane gv-ins-body" id="gv-ins-body"></div>
               </div>
@@ -1172,7 +1204,7 @@
             <!-- The key belongs to the whole editor, canvas AND rail — not to a
                  palette card that no longer exists. -->
             <div class="gv-foot">
-              <span class="gv-legend" id="gv-legend">grey = data · amber = loop · ◆ = conditional · ○ = gate · ⤫N = fan-out</span>
+              <span class="gv-legend" id="gv-legend" data-min-level="expert">grey = data · amber = loop · ◆ = conditional · ○ = gate · ⤫N = fan-out</span>
             </div>
           </section>
 
@@ -1191,7 +1223,7 @@
                  Rendered by gvRenderSaved(); hidden while the library is empty. -->
             <div class="gv-saved-tabs" id="gv-saved-tabs" role="tablist" aria-label="Pipeline domains" hidden></div>
             <div class="saved-list" id="gv-saved-list"></div>
-            <div class="gv-archived" id="gv-archived" hidden></div>
+            <div class="gv-archived" id="gv-archived" data-min-level="expert" hidden></div>
             <!-- A refused DELETE (the built-in, a 404, a 500) has to land
                  SOMEWHERE: same .form-msg line every other list view uses. -->
             <p id="gv-saved-msg" class="form-msg" aria-live="polite"></p>
@@ -1211,11 +1243,11 @@
              literal routing attribute name, so never spell it out in a comment. -->
         <section class="view hidden" data-view="settings">
           <div class="seg settings-tabs" id="settings-tabs" role="group" aria-label="Settings section">
-            <button type="button" class="on" data-tab="general" aria-pressed="true">General</button>
-            <button type="button" data-tab="guardrails" aria-pressed="false">Guardrails</button>
-            <button type="button" data-tab="models" aria-pressed="false">Models</button>
-            <button type="button" data-tab="plugins" aria-pressed="false">Plugins</button>
-            <button type="button" data-tab="memory" aria-pressed="false">Memory</button>
+            <button type="button" class="on" data-tab="general" data-min-level="simple" aria-pressed="true">General</button>
+            <button type="button" data-tab="guardrails" data-min-level="advanced" aria-pressed="false">Guardrails</button>
+            <button type="button" data-tab="models" data-min-level="expert" aria-pressed="false">Models</button>
+            <button type="button" data-tab="plugins" data-min-level="advanced" aria-pressed="false">Plugins</button>
+            <button type="button" data-tab="memory" data-min-level="advanced" aria-pressed="false">Memory</button>
           </div>
 
           <section class="settings-pane" data-tab="general">
@@ -1226,7 +1258,7 @@
               </div>
             </div>
 
-            <section class="card settings-card" id="appearance-card">
+            <section class="card settings-card" id="appearance-card" data-min-level="simple">
               <div class="card-head">
                 <div class="label-row">
                   <h2>Appearance</h2>
@@ -1243,7 +1275,28 @@
               <small class="hint" id="themeMsg"></small>
             </section>
 
-            <section class="card settings-card">
+            <!-- Interface mode (docs/ui-levels.md): the same setting as the sidebar item, same dialog. -->
+            <section class="card settings-card" id="mode-settings-card" data-min-level="simple">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Interface mode</h2>
+                  <button type="button" class="info-tip" aria-label="About interface mode">i<span class="tip-content hidden">
+                    How much of Worca is on screen. Nothing is switched off: a hidden page still opens from a link,
+                    and settings made in a higher mode keep applying. The choice applies to every browser that opens this Worca.
+                  </span></button>
+                </div>
+              </div>
+              <div class="mode-current">
+                <span class="mode-current-icon" id="modeSettingsIcon"></span>
+                <div class="mode-current-text">
+                  <strong id="modeSettingsName">Expert</strong>
+                  <span id="modeSettingsDesc"></span>
+                </div>
+                <button type="button" class="btn btn-ghost btn-mini" id="modeSettingsChange" data-mode-open="button" aria-haspopup="dialog">Change&hellip;</button>
+              </div>
+            </section>
+
+            <section class="card settings-card" id="root-settings-card" data-min-level="advanced">
               <div class="field">
                 <div class="label-row">
                   <label for="settingsRoot">Worca root folder</label>
@@ -1277,7 +1330,7 @@
               <small class="hint" id="settingsMsg"></small>
             </section>
 
-            <section class="card settings-card">
+            <section class="card settings-card" id="budget-settings-card" data-min-level="simple">
               <div class="card-head">
                 <div class="label-row">
                   <h2>Budget &amp; cost limits</h2>
@@ -1332,7 +1385,7 @@
             <!-- Ask Worca (ask-worca-design §6.9): per-turn guards for the
                  assistant chat. Read fresh on every turn (D12); a stored null
                  budget means "no cap". Posted ALONE — never with root/budget keys. -->
-            <section class="card settings-card">
+            <section class="card settings-card" id="ask-settings-card" data-min-level="advanced">
               <div class="card-head">
                 <div class="label-row">
                   <h2>Ask Worca</h2>
@@ -1385,7 +1438,7 @@
                  resolveTitleModel), so a first-party-free install needs no setup.
                  The select is built from the project-less catalog; a stored id
                  that left the catalog paints disabled + "not installed". -->
-            <section class="card settings-card" id="title-model-settings-card">
+            <section class="card settings-card" id="title-model-settings-card" data-min-level="expert">
               <div class="card-head">
                 <div class="label-row">
                   <h2>Title generation</h2>
@@ -1415,7 +1468,7 @@
 
             <!-- Auto workflow model (spec D14 / §7.7): which model classifies a task into a workflow.
                  Empty = the Sonnet-class default; WORCA_AUTO_MODEL in the environment wins. -->
-            <section class="card settings-card" id="auto-model-settings-card">
+            <section class="card settings-card" id="auto-model-settings-card" data-min-level="expert">
               <div class="card-head">
                 <div class="label-row">
                   <h2>Auto workflow model</h2>
@@ -1445,7 +1498,7 @@
                  a non-empty env var overrides it. This card only flips the gate —
                  the runner decides what is printable (routing keys readable,
                  credentials as "<set, N chars>"). -->
-            <section class="card settings-card" id="debug-spawn-settings-card">
+            <section class="card settings-card" id="debug-spawn-settings-card" data-min-level="expert">
               <div class="card-head">
                 <div class="label-row">
                   <h2>Spawn diagnostics</h2>
@@ -1472,7 +1525,7 @@
             <!-- Chat notifications (chat-connectivity-design.md §4.8): which run
                  events ping which chat channels. Body rendered by
                  chat-settings-view.mjs; app.js owns fetch/save/Test wiring. -->
-            <section class="card settings-card" id="chat-settings-card">
+            <section class="card settings-card" id="chat-settings-card" data-min-level="advanced">
               <div class="label-row">
                 <h2>Chat notifications</h2>
               </div>
@@ -1486,7 +1539,7 @@
             <!-- Getting started: the checklist's Hide is undone here. Only the checklist —
                  the welcome dialog stays seen. No info-tip (the row explains itself);
                  the .hint is painted by app.js like every other settings status line. -->
-            <section class="card settings-card" id="getting-started-card">
+            <section class="card settings-card" id="getting-started-card" data-min-level="simple">
               <div class="label-row">
                 <h2>Getting started</h2>
               </div>
@@ -1498,7 +1551,7 @@
             </section>
 
             <!-- About: intentionally no info-tip and no .hint (test/ui-settings-tooltips.test.mjs pins both). -->
-            <section class="card settings-card" id="about-card">
+            <section class="card settings-card" id="about-card" data-min-level="simple">
               <div class="label-row">
                 <h2>About</h2>
               </div>
@@ -1542,7 +1595,7 @@
                 <h1>Guardrails</h1>
                 <div class="sub">Named guardrail policies — built-ins plus your own sets, selected per pipeline run</div>
               </div>
-              <button type="button" id="guardrail-create-btn" class="btn-go" style="padding:11px 20px">
+              <button type="button" id="guardrail-create-btn" class="btn-go" data-min-level="expert" style="padding:11px 20px">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
                 Create guardrails
               </button>
@@ -1579,13 +1632,13 @@
                 <h1>Plugins</h1>
                 <div class="sub">Task sources, agents, skills and workflow packs from your plugin marketplaces</div>
               </div>
-              <button type="button" id="plugin-add-btn" class="btn-go" style="padding:11px 20px">
+              <button type="button" id="plugin-add-btn" class="btn-go" data-min-level="expert" style="padding:11px 20px">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
                 Add marketplace
               </button>
             </div>
             <p id="plugins-msg" class="form-msg" aria-live="polite"></p>
-            <div class="card hidden" id="marketplace-add-row" style="padding:16px 20px;margin-bottom:14px">
+            <div class="card hidden" id="marketplace-add-row" data-min-level="expert" style="padding:16px 20px;margin-bottom:14px">
               <div class="path-row">
                 <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo · /path/to/a/plugin-folder" spellcheck="false" />
                 <button type="button" id="marketplace-add" class="btn btn-primary btn-mini">Add</button>
@@ -1597,8 +1650,8 @@
             <div class="run-list" id="plugins-list"></div>
             <h3 class="pl-sec-title">Available</h3>
             <div class="run-list" id="plugins-available"></div>
-            <h3 class="pl-sec-title">Marketplaces</h3>
-            <div class="run-list" id="marketplaces-list"></div>
+            <h3 class="pl-sec-title" data-min-level="expert">Marketplaces</h3>
+            <div class="run-list" id="marketplaces-list" data-min-level="expert"></div>
           </section>
           <!-- /pane plugins -->
 
@@ -1647,6 +1700,25 @@
           <button type="button" id="folderSelect" class="btn btn-primary btn-mini">Select this folder</button>
         </div>
         <small class="hint" id="folderMsg"></small>
+      </div>
+    </div>
+
+    <!-- ===== Interface mode (docs/ui-levels.md) ===== -->
+    <!-- Opened by every [data-mode-open]: the sidebar item, its top-nav twin, Settings › General.
+         Choosing a card applies at once, so the app re-lays out behind the dialog as the preview.
+         ui-level.mjs owns the cards, focus and keys. -->
+    <div id="mode-modal" class="viewer-modal mode-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mode-title" aria-describedby="mode-sub">
+      <div class="card">
+        <div class="card-head">
+          <h2 id="mode-title">Interface mode</h2>
+        </div>
+        <p class="mode-sub" id="mode-sub">Choose how much of Worca is on screen. Nothing is switched off, only tidied away, and you can change this at any time.</p>
+        <div class="lv-cards" id="mode-cards" role="radiogroup" aria-labelledby="mode-title"></div>
+        <small class="hint" id="mode-msg" aria-live="polite"></small>
+        <div class="mode-foot">
+          <span class="hint">Applies at once. Runs and saved settings are not affected.</span>
+          <button type="button" id="mode-done" class="btn btn-primary btn-mini">Done</button>
+        </div>
       </div>
     </div>
 
@@ -1739,8 +1811,8 @@
           <span class="export-label">Format</span>
           <div id="export-format" class="seg" role="group" aria-label="Export format">
             <button type="button" class="seg-btn on" data-format="json">JSON file</button>
-            <button type="button" class="seg-btn" data-format="skill">Claude Code skill</button>
-            <button type="button" class="seg-btn" data-format="plugin">Worca plugin</button>
+            <button type="button" class="seg-btn" data-format="skill" data-min-level="expert">Claude Code skill</button>
+            <button type="button" class="seg-btn" data-format="plugin" data-min-level="expert">Worca plugin</button>
           </div>
           <span id="export-format-hint" class="hint"></span>
         </div>

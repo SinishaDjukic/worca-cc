@@ -69,6 +69,7 @@ The plan MUST:
 3. Lay out the work as ordered, testable steps. For each feature/step describe the change and the TDD approach (the failing test first, then the implementation).
 4. **Include concrete code snippets for the features** — real, specific code (not pseudocode, not `...TODO...`). Show function signatures, key bodies, and at least one representative test per feature, in fenced code blocks with the correct language and the intended file path noted above each block. Snippets must be internally consistent (names, imports, types line up) because the Plan Refiner will review them.
 5. Call out edge cases, error handling, and how success is verified (commands to run, expected results).
+   - **Web UI changes:** if the plan adds, moves or removes anything a user sees in `ui/public/` (a page, tab, card, button, field, badge, panel), it MUST name the interface-mode level of every new element — `simple`, `advanced`, `expert`, or "all levels" for a blocking prompt — with a one-line reason drawn from the questions in `docs/ui-levels.md` (§ Placing a new element). Say how a non-default value stays visible, which catalogue row in `docs/ui-levels.md` changes, and include the `test/ui-levels.test.mjs` expectation for it.
 6. End with a handoff line stating WHERE the plan lives: the folder and filename (absolute path), so the next phase knows.
 
 At the very END of the plan file, append a section exactly titled:

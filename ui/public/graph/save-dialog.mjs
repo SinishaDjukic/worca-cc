@@ -22,6 +22,9 @@ export function renderSaveDialog({ name = '', domain = '', domains = [], title =
   form.appendChild(nameWrap);
 
   const domWrap = h(doc, 'div', 'sd-field');
+  // Grouping by domain is expert housekeeping (docs/ui-levels.md); a non-default one stays visible.
+  domWrap.dataset.minLevel = 'expert';
+  if (domain && domain !== 'general') domWrap.dataset.levelKeep = '1';
   domWrap.appendChild(h(doc, 'label', null, 'Domain'));
   const domInput = doc.createElement('input');
   domInput.type = 'text'; domInput.className = 'sd-domain'; domInput.value = domain;
