@@ -634,3 +634,102 @@ test('workflow card: openComposer receives the workflowId; dropping the card (ne
   ctx.flush();
   assert.ok(graphObservers[0].disconnected, 'newThread pruned the card and destroyed the mount');
 });
+
+// ---- Scheduled runs (docs/scheduled-runs.md "Ask Worca") ----
+const ONCE = { kind: 'once', runAt: '2026-09-19T00:00:00.000Z', when: 'Sat Sep 19, 02:00', timeZone: 'Europe/Berlin' };
+const REPEAT = {
+  kind: 'repeat', rule: { freq: 'weekly', interval: 1, time: '02:00', tz: 'Europe/Berlin', weekdays: ['mo', 'tu', 'we', 'th', 'fr'], anchor: '2026-09-18', end: { type: 'never' } },
+  sentence: 'Every weekday at 02:00', next: [{ at: '2026-09-21T00:00:00.000Z', when: 'Mon Sep 21, 02:00' }], overlap: 'skip', maxFailures: 3, timeZone: 'Europe/Berlin',
+};
+
+test('ask-panel-card: a proposal Ask Worca scheduled makes Schedule the primary action; Start now is the alternative', async () => {
+  const rec = {};
+  const ctx = await openWithCard({ ...PROJECT_CARD, schedule: ONCE }, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  const line = cardEl.querySelector('[data-ask-card-sched-proposed]');
+  assert.ok(line, 'the schedule line');
+  assert.equal(line.querySelector('.badge').textContent, 'Scheduled');
+  assert.match(line.querySelector('.ask-card-sched-text').textContent, /^Starts [A-Z][a-z]{2} Sep 1[89], \d{2}:00$/);
+  assert.ok(line.querySelector('[data-ask-card-sched-change]'), 'Change… opens the sheet');
+  const go = cardEl.querySelector('[data-ask-card-start]');
+  assert.equal(go.textContent, 'Schedule');
+  assert.equal(cardEl.querySelector('[data-ask-card-schedule]'), null, 'no second Schedule… button');
+  assert.equal(cardEl.querySelector('[data-ask-card-start-now]').dataset.minLevel, undefined, 'the answer is never gated (ui-levels rule 4)');
+  go.click();
+  await ctx.tick(); await ctx.tick();
+  assert.equal(rec.runBodies.at(-1).scheduledFor, ONCE.runAt);
+  cardEl.querySelector('[data-ask-card-start-now]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.equal('scheduledFor' in rec.runBodies.at(-1), false, 'Start now starts now');
+});
+
+test('ask-panel-card: a repeating proposal posts repeat; a plain card keeps its Advanced "Schedule…"', async () => {
+  const rec = {};
+  const ctx = await openWithCard({ ...PROJECT_CARD, schedule: REPEAT }, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  assert.equal(cardEl.querySelector('[data-ask-card-sched-proposed] .badge').textContent, 'Repeats');
+  assert.match(cardEl.querySelector('.ask-card-sched-text').textContent, /^Every weekday at 02:00 · first run /);
+  cardEl.querySelector('[data-ask-card-start]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.deepEqual(rec.runBodies.at(-1).repeat, { rule: REPEAT.rule, overlap: 'skip', maxFailures: 3 });
+  const plain = await openWithCard(PROJECT_CARD);
+  assert.equal(plain.doc.querySelector('[data-ask-card-schedule]').dataset.minLevel, 'advanced');
+  assert.equal(plain.doc.querySelector('[data-ask-card-start]').textContent, 'Start run');
+});
+
+test('ask-panel-card: a card that became a repeating schedule follows the series (Run now / Delete schedule)', async () => {
+  const calls = [];
+  const rec = {};
+  const base = apiHandler(rec);
+  const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
+    if (url.startsWith('/api/schedules/')) { calls.push([(opts.method || 'GET').toUpperCase(), url]); return { ok: true, status: 200, json: async () => ({ runId: 'r', status: 'fired' }) }; }
+    return base(url, opts);
+  } });
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: CARD_ID, state: 'scheduled', scheduleId: 'sch_0000abcd', sentence: 'Every weekday at 02:00', scheduledFor: '2026-09-21T00:00:00.000Z', card: PROJECT_CARD }, threadId: TID, messageId: MID, seq: 3 });
+  ctx.flush();
+  const el = ctx.doc.querySelector('[data-ask-card-scheduled]');
+  assert.ok(el);
+  assert.equal(el.querySelector('.badge').textContent, 'Repeats');
+  assert.match(el.querySelector('.ask-card-sched-text').textContent, /^Fix login — Every weekday at 02:00 · next /);
+  const [runNow, del] = [...el.querySelectorAll('button')];
+  assert.equal(del.textContent, 'Delete schedule');
+  runNow.click();
+  await ctx.tick();
+  assert.deepEqual(calls[0], ['POST', '/api/schedules/sch_0000abcd/run-now']);
+});
+
+test('schedule card: before / after, Decline and the action\'s own Apply post the card verbs; applied shows the result', async () => {
+  const rec = { cardPosts: [] };
+  const base = apiHandler(rec);
+  const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
+    const m = /^\/api\/ask\/threads\/[^/]+\/cards\/(card_[0-9a-f]{8})$/.exec(url);
+    if (m && (opts.method || '').toUpperCase() === 'POST' && m[1] !== CARD_ID) { rec.cardPosts.push([m[1], JSON.parse(opts.body)]); return { ok: true, status: 200, json: async () => ({}) }; }
+    return base(url, opts);
+  } });
+  const card = { type: 'schedule', action: 'move', id: 'u-1', itemKind: 'once', title: 'Upgrade deps', targetName: 'shop', status: 'scheduled', scheduleId: null,
+    note: 'you asked for later', summary: 'Move "Upgrade deps" from Sat Sep 19, 02:00 to Sat Sep 19, 06:00',
+    before: { when: 'Sat Sep 19, 02:00', at: '2026-09-19T00:00:00.000Z' }, after: { when: 'Sat Sep 19, 06:00', at: '2026-09-19T04:00:00.000Z' }, patch: { scheduledFor: '2026-09-19T04:00:00.000Z' } };
+  const SC_ID = 'card_00000008';
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: SC_ID, state: 'proposed', card }, threadId: TID, messageId: MID, seq: 3 });
+  ctx.flush();
+  const el = ctx.doc.querySelector('[data-ask-scard="proposed"]');
+  assert.ok(el);
+  assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Proposed schedule change');
+  assert.equal(el.querySelector('.ask-mcard-kind').textContent, 'Change time');
+  assert.deepEqual([...el.querySelectorAll('.ask-scard-k')].map((x) => x.textContent), ['From', 'To']);
+  assert.equal(el.querySelector('[data-ask-sc-apply]').textContent, 'Move');
+  el.querySelector('[data-ask-sc-apply]').click();
+  await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), [SC_ID, { state: 'applied' }]);
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: SC_ID, state: 'applied', card: { ...card, result: { ok: true, detail: 'now at Sat Sep 19, 06:00' } } }, threadId: TID, messageId: MID, seq: 4 });
+  ctx.flush();
+  const done = ctx.doc.querySelector('[data-ask-scard="applied"]');
+  assert.equal(done.querySelector('.ask-mcard-detail').textContent, 'now at Sat Sep 19, 06:00');
+  assert.ok(done.querySelector('a[href="#schedules"]'));
+  const del = { ...card, action: 'delete', itemKind: 'recurring', summary: 'Delete the schedule "Nightly"' };
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000009', state: 'proposed', card: del }, threadId: TID, messageId: MID, seq: 5 });
+  ctx.flush();
+  const apply = ctx.doc.querySelector('[data-ask-scard="proposed"] [data-ask-sc-apply]');
+  assert.equal(apply.textContent, 'Delete');
+  assert.ok(apply.classList.contains('is-danger'), 'a removal reads as one');
+});

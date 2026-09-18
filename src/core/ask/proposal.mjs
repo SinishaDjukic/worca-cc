@@ -12,6 +12,7 @@ import { validateMemoryScope } from '../memory-sync.mjs';
 import { sanitizeBranchName, suggestBranchName } from '../worktree.mjs';
 import { sanitizeTitle } from '../title.mjs';
 import { ASK_LIMITS } from './limits.mjs';
+import { resolveScheduleSpec } from './schedule-spec.mjs';
 
 export const PROPOSAL_ERRORS = Object.freeze({
   bothTargets: 'provide workspaceId OR projectKey, not both',
@@ -95,10 +96,11 @@ export function createProposalValidator({
 } = {}) {
   /**
    * @param {object} input  the propose_run tool input
-   * @param {{cardId?:string|null}} [opts]  the server passes the minted card id (feature-branch uniqueness)
+   * @param {{cardId?:string|null, timeZone?:string|null, nowMs?:number, scheduleDefaults?:object}} [opts]  the server passes the
+   *   minted card id (feature-branch uniqueness); timeZone is the user's (the schedule fields are read in it)
    * @returns {Promise<{ok:true, card:object}|{ok:false, errors:string[]}>}
    */
-  async function validateProposal(input, { cardId = null, attachments = [] } = {}) {
+  async function validateProposal(input, { cardId = null, attachments = [], timeZone = null, nowMs = Date.now(), scheduleDefaults = {} } = {}) {
     const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
     const errors = [];
     const fail = () => ({ ok: false, errors });
@@ -203,11 +205,17 @@ export function createProposalValidator({
       featureBranch = suggestBranchName({ prompt: brief, title, pipelineId: m ? m[1] : '' });
     }
 
+    // ── schedule (docs/scheduled-runs.md "Ask Worca"): when | every, read in the user's zone ──
+    const spec = resolveScheduleSpec(inp, { nowMs, timeZone, defaults: scheduleDefaults });
+    if (!spec.ok) errors.push(...spec.errors);
+
     if (errors.length) return fail();
     return {
       ok: true,
       card: { ...target, workflowId: wf.id, workflowName: wf.name, guardrailsId, memoryScope, brief, title, sourceBranch, featureBranch, sourceBranchByKey,
-        note: cleanNote(inp.note), attachments: pickCardAttachments(inp.attachmentIds, attachments) },
+        note: cleanNote(inp.note), attachments: pickCardAttachments(inp.attachmentIds, attachments),
+        // Only a scheduled proposal carries the key: a plain run card keeps its shape byte for byte.
+        ...(spec.schedule ? { schedule: spec.schedule } : {}) },
     };
   }
   return { validateProposal };

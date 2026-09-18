@@ -146,7 +146,8 @@ the caller's zone — and so is a time in the past.
 - **New pipeline** and the **Ask run card**: *Start run* is a split button;
   *Schedule…* opens the schedule sheet after the form validates. The sheet builds a
   sentence and shows the next three dates; presets are Once, Every day, Weekdays,
-  Weekly, Monthly, Custom. An Ask card runs once.
+  Weekly, Monthly, Custom. An Ask card that becomes a repeating schedule follows the
+  series (Run now, Delete schedule) instead of one run.
 - **Schedules** (sidebar): one-off runs and repeating schedules with Run now, Change
   time / Edit, Skip next, pause switch, Cancel / Delete — and the **Activity** feed.
   Problems (missed, failed, paused itself, run error) count towards the amber unread
@@ -156,3 +157,38 @@ the caller's zone — and so is a time in the past.
   schedule*. **Settings › General › Scheduled runs** holds the defaults a new
   schedule inherits.
 - Removing a project or workspace cancels its schedules; the confirmation names them.
+- **Interface mode** ([ui-levels.md](ui-levels.md)): the Schedules entry, *Start run*'s
+  caret and the Settings card are Advanced. The Schedules entry stays visible in every
+  mode while anything is scheduled, missed, repeating or unread, and a schedule Ask
+  Worca proposed shows on its card in every mode.
+
+## Ask Worca
+
+Ask Worca can schedule on your behalf and manage what is scheduled. The rule it follows:
+**anything that starts, moves, edits, cancels or deletes a run is a card you confirm**;
+the small reversible changes it makes directly, and only when you ask.
+
+| Tool | What it does | How |
+| --- | --- | --- |
+| `propose_run` + `when` / `every` | A run card whose main button is **Schedule** (*Start now* is the alternative, *Change…* opens the schedule sheet) | card |
+| `preview_schedule` | Your words → the exact time, or the sentence and the next three dates. Nothing is created | read |
+| `list_schedules`, `get_schedule`, `list_schedule_activity` | What is scheduled, one schedule's runs and policies, the activity feed | read |
+| `propose_schedule_change` | `run_now`, `move` (a one-off run), `edit` (a series: every, until, count, overlap, maxFailures, title), `cancel`, `delete` | card |
+| `pause_schedule`, `resume_schedule`, `skip_next_run`, `mark_schedule_activity_read` | Reversible, never start a run | direct |
+
+- **Your words, your clock.** The model passes what you said in the CLI's forms
+  (`tomorrow 02:00`, `+90m`, `weekdays 02:00`, `month last 03:00`) and never computes a
+  date: `src/core/ask/schedule-spec.mjs` reads them in the timezone your browser reports
+  (sent with every message, shown in the context block as *user's time*), with the same
+  shared module the schedule sheet uses. A series keeps its own zone when edited.
+- **Validated twice.** Like every Ask card, the MCP child validates for the model and the
+  server re-validates the tool input against the live rows before a card appears — a
+  change the rows no longer allow becomes a notice, never a card. Applying a schedule
+  card runs the same code as the matching button on the Schedules page
+  (`scheduleVerb` in `ui/server.mjs`), then Ask Worca gets a
+  `[worca event] schedule card <id> applied | declined | failed` turn and confirms.
+- **Where a run came from.** `get_run` carries `startedBy { scheduledFor, scheduleId }`
+  for a run a schedule started. A scheduled or repeating card is listed in the context
+  block, so the model does not propose it again.
+- A direct write in the MCP child repaints open tabs: the server turns it into the same
+  `schedules-changed` / `notifications-changed` broadcasts the REST routes send.

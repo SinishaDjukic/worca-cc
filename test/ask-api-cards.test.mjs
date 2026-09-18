@@ -508,11 +508,6 @@ test('project card: Schedule → scheduled flip; cancel → proposed again; sche
   });
   const at = new Date(Date.now() + 3600_000).toISOString();
 
-  // A card runs once: a repeating schedule is refused before anything is stored.
-  const rep = await post('/api/run', body({ repeat: { rule: { freq: 'daily', time: '02:00', tz: 'UTC' } } }));
-  assert.equal(rep.status, 400);
-  assert.match((await rep.json()).error, /runs once/);
-
   const made = await post('/api/run', body({ scheduledFor: at }));
   assert.equal(made.status, 202);
   const { runId } = await made.json();

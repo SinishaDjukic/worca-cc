@@ -3695,6 +3695,12 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-mcard-results li.is-skipped{color:var(--ink-3);}
 .ask-mcard-actions{display:flex;align-items:center;gap:8px;margin-top:14px;}
 .ask-mcard.is-applied .ask-mcard-head{opacity:.9;}
+/* schedule card (buildScheduleCard; docs/scheduled-runs.md "Ask Worca"): the metrics card's chrome + a before/after grid */
+.ask-scard-kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px;margin-top:4px;font-size:12.5px;}
+.ask-scard-k{color:var(--ink-3);}
+.ask-scard-v{color:var(--ink);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;}
+.ask-scard .ask-card-sched-link{align-self:flex-start;margin-top:2px;}
+.ask-card-start.is-danger{background:var(--red-ink);color:var(--on-status);}
 
 /* ---------- Auto proposal body (ui/public/auto-proposal.mjs) — one body, two hosts (mockup §D/§F) ----------
    Rhythm top→bottom: name → 8 → reasoning → 16 → chips → 8 → fingerprint → 16 → graph → 12 → loops → 16 → match → 8 → meta.
@@ -4460,6 +4466,9 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .ask-card-sched-text{color:var(--ink);font-weight:500;}
 .ask-card-sched-link{font:600 12px var(--sans);color:var(--blue-ink-strong);}
 .ask-card-sched .ask-card-err{flex-basis:100%;}
+/* a proposal Ask Worca scheduled (propose_run when / every): the line above the footer */
+.ask-card-sched-proposed{margin:0 18px 12px;padding:10px 12px;border-radius:12px;background:var(--canvas-2);border:1px solid var(--line);}
+.ask-card-sched-proposed .link-btn{font-size:12px;}
 
 /* History detail: the scheduled-run provenance link in the header meta */
 .hd-sched{color:var(--ink-2);text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px;}

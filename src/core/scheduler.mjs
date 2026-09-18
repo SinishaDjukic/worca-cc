@@ -149,6 +149,8 @@ function rowToSchedule(r, { withRequest = false } = {}) {
     runsCount: r.runs_count,
     nextRunAt: r.next_run_at || null,
     lastResult: r.last_result || null,
+    askThreadId: r.ask_thread_id || null,
+    askCardId: r.ask_card_id || null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     summary: summarizeRequest(request),
@@ -325,7 +327,8 @@ export function setTicketPipeline(id, pipelineId, { now = Date.now() } = {}) {
  */
 export function createSchedule({
   title = null, projectDir = null, workspaceId = null, request, rule, overlap = 'skip',
-  maxFailures = 3, ifMissed = 'run', graceMin = 360, id = `sch_${randomBytes(4).toString('hex')}`, now = Date.now(),
+  maxFailures = 3, ifMissed = 'run', graceMin = 360, id = `sch_${randomBytes(4).toString('hex')}`,
+  askThreadId = null, askCardId = null, now = Date.now(),
 }) {
   const norm = normalizeRule(rule, { todayLocal: rule?.anchor || null });
   if (!norm.ok) throw new Error(norm.error);
@@ -334,11 +337,11 @@ export function createSchedule({
   tx(() => {
     getDb().prepare(`
       INSERT INTO schedules (id, title, project_key, project_dir, workspace_id, request, rule, overlap, max_failures,
-        if_missed, grace_min, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+        if_missed, grace_min, status, ask_thread_id, ask_card_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
     `).run(id, title, tc.project_key, tc.project_dir, tc.workspace_id, JSON.stringify(request || {}), JSON.stringify(norm.rule),
       normPolicy(overlap, OVERLAP_POLICIES, 'skip'), normMaxFailures(maxFailures), normPolicy(ifMissed, MISSED_POLICIES, 'run'),
-      normGrace(graceMin), ts, ts);
+      normGrace(graceMin), askThreadId, askCardId, ts, ts);
   });
   const ticket = materializeNext(id, { now });
   return { schedule: getSchedule(id), ticket };

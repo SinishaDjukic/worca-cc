@@ -126,6 +126,7 @@ import {
 } from '../src/core/ask/workflow-deps.mjs';
 import { applyMetricsChange } from '../src/core/ask/metrics-deps.mjs';
 import { metricsEventPrompt, metricsNoticeText } from '../src/core/ask/metrics-proposal.mjs';
+import { scheduleEventPrompt, scheduleNoticeText } from '../src/core/ask/schedule-spec.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
@@ -1364,7 +1365,6 @@ const startRunHandler = async (req, res) => {
     if (!internal && (body.scheduledFor != null || body.repeat != null)) {
       const parsed = parseScheduleRequest(body);
       if (!parsed.ok) return badRequest(res, parsed.error);
-      if (parsed.repeat && askLink) return badRequest(res, 'an Ask card runs once — make a repeating schedule from New pipeline');
       sched = parsed;
     }
 
@@ -1781,7 +1781,13 @@ async function scheduleRequest({ body, sched, title, askLink, budget, projectDir
     ({ schedule, ticket } = createSchedule({
       id, title, ...target, request, rule: sched.repeat.rule, overlap: sched.repeat.overlap,
       maxFailures: sched.repeat.maxFailures, ifMissed: sched.ifMissed, graceMin: sched.graceMin,
+      askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null,
     }));
+    // An Ask card that became a repeating schedule follows the SERIES, not one run of it.
+    if (askLink) {
+      try { flipCard(askLink.threadId, askLink.cardId, { state: 'scheduled', runId: null, scheduleId: schedule.id, sentence: schedule.sentence, scheduledFor: ticket ? ticket.runAt : null }); }
+      catch (err) { console.error(`[worca-ui] ask card schedule flip failed: ${err && err.message ? err.message : err}`); }
+    }
   } else {
     const id = randomUUID();
     const request = await storedRequestOf(body, id, projectDir);
@@ -1804,13 +1810,14 @@ async function scheduleRequest({ body, sched, title, askLink, budget, projectDir
   };
 }
 
-/** An Ask card that was scheduled goes back to `proposed` when its ticket dies. */
-function releaseAskCard(ticket) {
-  if (!ticket || !ticket.askThreadId || !ticket.askCardId) return;
+/** An Ask card that was scheduled goes back to `proposed` when its ticket dies or its series is deleted. */
+function releaseAskCard(item) {
+  if (!item || !item.askThreadId || !item.askCardId) return;
   try {
-    const found = askFindCard(ticket.askThreadId, ticket.askCardId);
-    if (found && found.block.state === 'scheduled' && found.block.runId === ticket.id) {
-      flipCard(ticket.askThreadId, ticket.askCardId, { state: 'proposed', runId: null, scheduledFor: null });
+    const found = askFindCard(item.askThreadId, item.askCardId);
+    const b = found && found.block;
+    if (b && b.state === 'scheduled' && (item.kind === 'recurring' ? b.scheduleId === item.id : b.runId === item.id)) {
+      flipCard(item.askThreadId, item.askCardId, { state: 'proposed', runId: null, scheduledFor: null, scheduleId: null, sentence: null });
     }
   } catch (err) { console.error(`[worca-ui] ask card release failed: ${err && err.message ? err.message : err}`); }
 }
@@ -1967,93 +1974,143 @@ app.get('/api/schedules/:id', (req, res) => {
   res.json({ ...found, history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50 }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
 });
 
-// PATCH /api/schedules/:id — a ticket: { scheduledFor?, ifMissed?, graceMin? };
-// a series: { title?, rule?, overlap?, maxFailures?, ifMissed?, graceMin? }.
-app.patch('/api/schedules/:id', (req, res) => {
-  const found = findScheduleItem(req.params.id);
-  if (!found) return res.status(404).json({ error: 'schedule not found' });
-  const body = req.body || {};
-  try {
-    if (found.kind === 'once') {
+// One schedule change, for the REST routes AND an applied Ask Worca schedule card — so the
+// card does exactly what the button on the Schedules page does. Resolves { status, body }.
+//   verb 'patch'     a ticket: { scheduledFor?, ifMissed?, graceMin? }
+//                    a series: { title?, rule?, overlap?, maxFailures?, ifMissed?, graceMin? }
+//   verb 'delete'    cancel a one-off ticket, or delete a series
+//   verb 'run-now'   start a ticket now, or one extra occurrence of a series
+//   verb 'pause' | 'resume' | 'skip-next'   a series only
+async function scheduleVerb(verb, id, body = {}) {
+  const found = findScheduleItem(id);
+  const out = (status, payload) => ({ status, body: payload });
+  if (!found) return out(404, { error: 'schedule not found' });
+  if (verb === 'patch') {
+    try {
+      if (found.kind === 'once') {
+        const patch = {};
+        if (body.scheduledFor != null) {
+          const at = parseScheduledFor(body.scheduledFor);
+          if (!at.ok) return out(400, { error: at.error });
+          if (at.ms < Date.now() - 5_000) return out(400, { error: 'scheduledFor is in the past' });
+          patch.runAtMs = at.ms;
+        }
+        if (body.ifMissed != null) {
+          if (!MISSED_POLICIES.includes(body.ifMissed)) return out(400, { error: `ifMissed must be one of ${MISSED_POLICIES.join(' | ')}` });
+          patch.ifMissed = body.ifMissed;
+        }
+        if (body.graceMin != null) patch.graceMin = body.graceMin;
+        if (found.item.scheduleId && patch.runAtMs != null) return out(400, { error: 'an occurrence of a repeating schedule cannot be moved — edit the schedule, or skip this occurrence' });
+        const t = updateTicket(found.item.id, patch);
+        if (!t) return out(409, { error: `this run is ${found.item.status} and can no longer be changed` });
+        if (t.askThreadId && t.askCardId && patch.runAtMs != null) {
+          try { flipCard(t.askThreadId, t.askCardId, { scheduledFor: t.runAt }); } catch { /* display only */ }
+        }
+        emitChanged('schedules-changed', 'updated');
+        emitChanged('notifications-changed');
+        return out(200, { kind: 'once', item: t });
+      }
       const patch = {};
-      if (body.scheduledFor != null) {
-        const at = parseScheduledFor(body.scheduledFor);
-        if (!at.ok) return badRequest(res, at.error);
-        if (at.ms < Date.now() - 5_000) return badRequest(res, 'scheduledFor is in the past');
-        patch.runAtMs = at.ms;
+      for (const k of ['title', 'rule', 'overlap', 'maxFailures', 'ifMissed', 'graceMin']) if (body[k] !== undefined) patch[k] = body[k];
+      if (patch.rule && typeof patch.rule === 'object' && !isValidTimeZone(patch.rule.tz)) return out(400, { error: `rule.tz is not a known timezone: ${patch.rule.tz ?? '(missing)'}` });
+      if (patch.maxFailures !== undefined && (!Number.isSafeInteger(patch.maxFailures) || patch.maxFailures < 0 || patch.maxFailures > 100)) {
+        return out(400, { error: 'maxFailures must be a whole number from 0 to 100 (0 = never pause)' });
       }
-      if (body.ifMissed != null) {
-        if (!MISSED_POLICIES.includes(body.ifMissed)) return badRequest(res, `ifMissed must be one of ${MISSED_POLICIES.join(' | ')}`);
-        patch.ifMissed = body.ifMissed;
+      if (patch.graceMin !== undefined && (!Number.isSafeInteger(patch.graceMin) || patch.graceMin < 0 || patch.graceMin > 10080)) {
+        return out(400, { error: 'graceMin must be a whole number of minutes from 0 to 10080' });
       }
-      if (body.graceMin != null) patch.graceMin = body.graceMin;
-      if (found.item.scheduleId && patch.runAtMs != null) return badRequest(res, 'an occurrence of a repeating schedule cannot be moved — edit the schedule, or skip this occurrence');
-      const t = updateTicket(found.item.id, patch);
-      if (!t) return res.status(409).json({ error: `this run is ${found.item.status} and can no longer be changed` });
-      if (t.askThreadId && t.askCardId && patch.runAtMs != null) {
-        try { flipCard(t.askThreadId, t.askCardId, { scheduledFor: t.runAt }); } catch { /* display only */ }
+      const s = updateSchedule(found.item.id, patch);
+      if (s && s.askThreadId && s.askCardId && patch.rule) {
+        try { flipCard(s.askThreadId, s.askCardId, { sentence: s.sentence, scheduledFor: s.nextRunAt }); } catch { /* display only */ }
       }
       emitChanged('schedules-changed', 'updated');
-      emitChanged('notifications-changed');
-      return res.json({ kind: 'once', item: t });
+      return out(200, { kind: 'recurring', item: s });
+    } catch (err) {
+      return out(400, { error: err && err.message ? err.message : String(err) });
     }
-    const patch = {};
-    for (const k of ['title', 'rule', 'overlap', 'maxFailures', 'ifMissed', 'graceMin']) if (body[k] !== undefined) patch[k] = body[k];
-    if (patch.rule && typeof patch.rule === 'object' && !isValidTimeZone(patch.rule.tz)) return badRequest(res, `rule.tz is not a known timezone: ${patch.rule.tz ?? '(missing)'}`);
-    if (patch.maxFailures !== undefined && (!Number.isSafeInteger(patch.maxFailures) || patch.maxFailures < 0 || patch.maxFailures > 100)) {
-      return badRequest(res, 'maxFailures must be a whole number from 0 to 100 (0 = never pause)');
-    }
-    if (patch.graceMin !== undefined && (!Number.isSafeInteger(patch.graceMin) || patch.graceMin < 0 || patch.graceMin > 10080)) {
-      return badRequest(res, 'graceMin must be a whole number of minutes from 0 to 10080');
-    }
-    const s = updateSchedule(found.item.id, patch);
-    emitChanged('schedules-changed', 'updated');
-    return res.json({ kind: 'recurring', item: s });
-  } catch (err) {
-    return badRequest(res, err && err.message ? err.message : String(err));
   }
+  if (verb === 'delete') {
+    if (found.kind === 'recurring') {
+      deleteSchedule(found.item.id);
+      releaseAskCard(found.item);
+    } else {
+      if (found.item.scheduleId) return out(400, { error: 'this is an occurrence of a repeating schedule — skip it instead' });
+      const t = cancelTicket(found.item.id);
+      if (!t) return out(409, { error: `this run is ${found.item.status} and can no longer be canceled` });
+      releaseAskCard(t);
+    }
+    emitChanged('schedules-changed', 'deleted');
+    emitChanged('notifications-changed');
+    return out(200, { ok: true });
+  }
+  if (verb === 'run-now') {
+    const ticket = found.kind === 'recurring' ? runScheduleNow(found.item.id) : requestRunNow(found.item.id);
+    if (!ticket) return out(409, { error: `this ${found.kind === 'recurring' ? 'schedule' : 'run'} is ${found.item.status} and cannot be started` });
+    emitChanged('schedules-changed', 'run-now');
+    emitChanged('notifications-changed');
+    await schedulerTick();
+    const after = getTicket(ticket.id);
+    // A ticket held by a waiting `--wait` terminal is started by that terminal within seconds.
+    return out(200, { runId: ticket.id, status: after ? after.status : 'scheduled', failReason: after ? after.failReason : null, pipelineId: after ? after.pipelineId : null });
+  }
+  if (['pause', 'resume', 'skip-next'].includes(verb)) {
+    if (found.kind !== 'recurring') return out(404, { error: 'repeating schedule not found' });
+    const s = verb === 'pause' ? pauseSchedule(found.item.id) : verb === 'resume' ? resumeSchedule(found.item.id) : skipNext(found.item.id);
+    if (!s) return out(409, { error: `this schedule is ${found.item.status}` });
+    emitChanged('schedules-changed', verb);
+    emitChanged('notifications-changed');
+    return out(200, { kind: 'recurring', item: s });
+  }
+  return out(400, { error: `unknown schedule action ${verb}` });
+}
+
+/** Apply a CONFIRMED Ask Worca schedule card (schedule-spec.mjs shape) through scheduleVerb. */
+async function applyScheduleCard(card) {
+  const map = { run_now: ['run-now', {}], move: ['patch', card.patch || {}], edit: ['patch', card.patch || {}], cancel: ['delete', {}], delete: ['delete', {}] };
+  const m = map[card.action];
+  if (!m) return { ok: false, error: `unknown schedule action "${card.action}"` };
+  const r = await scheduleVerb(m[0], card.id, m[1]);
+  if (r.status !== 200) return { ok: false, error: (r.body && r.body.error) || `failed (${r.status})` };
+  const b = r.body || {};
+  let detail = '';
+  if (card.action === 'run_now') {
+    detail = b.status === 'failed' ? `could not start: ${b.failReason || 'unknown error'}`
+      : b.status === 'fired' ? `started${b.pipelineId ? ` as run ${b.pipelineId}` : ''}` : 'starting within seconds';
+    if (b.status === 'failed') return { ok: false, error: `could not start: ${b.failReason || 'unknown error'}`, runId: b.runId };
+  } else if (card.action === 'move') detail = card.after && card.after.when ? `now at ${card.after.when}` : 'moved';
+  else if (card.action === 'edit') {
+    const it = b.item;
+    detail = !it ? 'changed'
+      : it.nextRunAt ? `next run ${formatInstant(Date.parse(it.nextRunAt), it.tz || 'UTC')}`
+        : it.status === 'paused' ? 'still paused — resume it to run again' : `the schedule is ${it.status}`;
+  }
+  else detail = card.action === 'cancel' ? 'canceled' : 'deleted';
+  return { ok: true, detail, ...(b.runId ? { runId: b.runId } : {}), ...(b.pipelineId ? { pipelineId: b.pipelineId } : {}) };
+}
+
+// PATCH /api/schedules/:id — a ticket: { scheduledFor?, ifMissed?, graceMin? };
+// a series: { title?, rule?, overlap?, maxFailures?, ifMissed?, graceMin? }.
+app.patch('/api/schedules/:id', async (req, res) => {
+  const r = await scheduleVerb('patch', req.params.id, req.body || {});
+  res.status(r.status).json(r.body);
 });
 
 // DELETE /api/schedules/:id — cancel a one-shot ticket, or delete a series.
-app.delete('/api/schedules/:id', (req, res) => {
-  const found = findScheduleItem(req.params.id);
-  if (!found) return res.status(404).json({ error: 'schedule not found' });
-  if (found.kind === 'recurring') {
-    deleteSchedule(found.item.id);
-  } else {
-    if (found.item.scheduleId) return badRequest(res, 'this is an occurrence of a repeating schedule — skip it instead');
-    const t = cancelTicket(found.item.id);
-    if (!t) return res.status(409).json({ error: `this run is ${found.item.status} and can no longer be canceled` });
-    releaseAskCard(t);
-  }
-  emitChanged('schedules-changed', 'deleted');
-  emitChanged('notifications-changed');
-  res.json({ ok: true });
+app.delete('/api/schedules/:id', async (req, res) => {
+  const r = await scheduleVerb('delete', req.params.id);
+  res.status(r.status).json(r.body);
 });
 
 // POST /api/schedules/:id/run-now — start a ticket now, or one extra occurrence of a series.
 app.post('/api/schedules/:id/run-now', async (req, res) => {
-  const found = findScheduleItem(req.params.id);
-  if (!found) return res.status(404).json({ error: 'schedule not found' });
-  const ticket = found.kind === 'recurring' ? runScheduleNow(found.item.id) : requestRunNow(found.item.id);
-  if (!ticket) return res.status(409).json({ error: `this ${found.kind === 'recurring' ? 'schedule' : 'run'} is ${found.item.status} and cannot be started` });
-  emitChanged('schedules-changed', 'run-now');
-  emitChanged('notifications-changed');
-  await schedulerTick();
-  const after = getTicket(ticket.id);
-  // A ticket held by a waiting `--wait` terminal is started by that terminal within seconds.
-  res.json({ runId: ticket.id, status: after ? after.status : 'scheduled', failReason: after ? after.failReason : null });
+  const r = await scheduleVerb('run-now', req.params.id);
+  res.status(r.status).json(r.body);
 });
 
 for (const verb of ['pause', 'resume', 'skip-next']) {
-  app.post(`/api/schedules/:id/${verb}`, (req, res) => {
-    const found = findScheduleItem(req.params.id);
-    if (!found || found.kind !== 'recurring') return res.status(404).json({ error: 'repeating schedule not found' });
-    const s = verb === 'pause' ? pauseSchedule(found.item.id) : verb === 'resume' ? resumeSchedule(found.item.id) : skipNext(found.item.id);
-    if (!s) return res.status(409).json({ error: `this schedule is ${found.item.status}` });
-    emitChanged('schedules-changed', verb);
-    emitChanged('notifications-changed');
-    res.json({ kind: 'recurring', item: s });
+  app.post(`/api/schedules/:id/${verb}`, async (req, res) => {
+    const r = await scheduleVerb(verb, req.params.id);
+    res.status(r.status).json(r.body);
   });
 }
 
@@ -5380,6 +5437,19 @@ async function askSystemPromptFor(catalog) {
   return askBuildSystemPrompt(catalog);
 }
 
+/** "scheduled Sat Sep 19, 02:00 (run 1a2b…)" / "repeats: Every weekday at 02:00 (sch_…)" / "proposes: …" — or ''. */
+function askCardScheduleLine(b, tz = null) {
+  if (b.state === 'scheduled' && b.scheduleId) return `repeats: ${b.sentence || ''} (${b.scheduleId})`;
+  if (b.state === 'scheduled' && b.runId) {
+    const ms = Date.parse(b.scheduledFor || '');
+    const when = Number.isFinite(ms) ? formatInstant(ms, isValidTimeZone(tz) ? tz : Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC') : '?';
+    return `scheduled for ${when} (run ${b.runId})`;
+  }
+  const s = b.card && b.card.schedule;
+  if (b.state === 'proposed' && s) return s.kind === 'repeat' ? `proposes: ${s.sentence}` : `proposes: once at ${s.when}`;
+  return '';
+}
+
 /** Resolve the VALIDATED client context into the server-side shape
  *  buildContextHeader consumes (§6.5: server-resolved rows only — never
  *  client-supplied titles or paths). Every lookup is individually guarded:
@@ -5387,6 +5457,7 @@ async function askSystemPromptFor(catalog) {
 async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], currentMessageId = null) {
   const out = { now: new Date().toISOString() };
   if (ctx.pinned === true) out.pinned = true;   // #397: rendered as the [pinned by the user] marker
+  if (ctx.timeZone) out.timeZone = ctx.timeZone;   // validated IANA name; the header adds the user's clock
   if (ctx.view) out.view = ctx.view;
   if (ctx.diffPath) out.diffPath = ctx.diffPath;   // client-supplied, already length-checked by validateClientContext
   try {
@@ -5462,6 +5533,10 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
           cards.push({ id: b.id, type: 'metrics', state: b.state, summary: b.card.summary || '' });
           continue;
         }
+        if (b.card && b.card.type === 'schedule') {
+          cards.push({ id: b.id, type: 'schedule', state: b.state, summary: b.card.summary || '' });
+          continue;
+        }
         cards.push(wf
           ? {
             id: b.id, type: 'workflow', state: b.state, name: (b.card && b.card.name) || '',
@@ -5470,6 +5545,8 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
           : {
             id: b.id, state: b.state, workflowId: b.card && b.card.workflowId,
             targetName: (b.card && (b.card.projectName || b.card.workspaceName)) || '',
+            // A scheduled (or schedule-proposing) run card says when, so the model never re-proposes it.
+            ...(askCardScheduleLine(b, ctx.timeZone) ? { schedule: askCardScheduleLine(b, ctx.timeZone) } : {}),
           });
       }
     }
@@ -5600,6 +5677,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       firstText: text,
       deterministicTitle,
       pinnedScope: askPinnedScope(ctx),             // #397: proposal defaulting + mismatch flag
+      timeZone: ctx.timeZone || (thread.context && thread.context.timeZone) || null,   // scheduled runs: the user's clock
       memoryProject: headerCtx.project ? { key: headerCtx.project.key, name: headerCtx.project.name || '' } : null,   // native-rules revision: the turn mounts global + this project through --add-dir
       mock: mockEnabled({}) ? { card: mockAskCard(ctx, text) } : null, // R-F
       attachmentNames,
@@ -5615,6 +5693,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
           if (scope === 'global' || (typeof scope === 'string' && scope.startsWith('projects/') && PROJECT_KEY_RE.test(scope.slice('projects/'.length)))) emitMemoryChanged(scope);
         },
         trackRun: (input, { pin } = {}) => askTrackRun(id, input, pin ?? null),
+        // pause / resume / skip / mark-read in the MCP child: the Schedules page and the badges repaint.
+        onScheduleMutation: () => { emitChanged('schedules-changed', 'ask'); emitChanged('notifications-changed'); },
       },
     });
     job.turn = turn;
@@ -5868,15 +5948,16 @@ async function startWorkflowEventTurn(threadId, block, { declined = false, thenR
   return failedEventTurn(threadId, { error: r.error, status: r.status, ...(r.budget ? { budget: r.budget } : {}) });
 }
 
-/** The metrics card's event turn: the synthetic notice row + the "[worca event] metrics card …" prompt (same queueing as workflow cards). */
+/** The metrics (or schedule) card's event turn: the synthetic notice row + the "[worca event] … card …" prompt (same queueing as workflow cards). */
 async function startMetricsEventTurn(threadId, block) {
   const thread = askGetThread(threadId);
   if (!thread) return null;
   const card = block.card || {};
   const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
   const result = card.result || null;
-  const text = metricsEventPrompt({ cardId: block.id, state, card, result });
-  const notice = metricsNoticeText({ state, card, result });
+  const isSchedule = card.type === 'schedule';
+  const text = (isSchedule ? scheduleEventPrompt : metricsEventPrompt)({ cardId: block.id, state, card, result });
+  const notice = (isSchedule ? scheduleNoticeText : metricsNoticeText)({ state, card, result });
   let mv = await validateModelEffort(thread.model, thread.effort);
   if (!mv.ok) {
     const d = (await askCatalog({ withSecrets: false })).default;
@@ -5910,6 +5991,31 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
     const body = req.body || {};
     const found = askFindCard(id, cardId);
     if (!found) return res.status(404).json({ error: 'card not found' });
+    if (found.block.card && found.block.card.type === 'schedule') {
+      // Schedule card (docs/scheduled-runs.md "Ask Worca"): proposed → applied | failed | declined. The change —
+      // start now, move, edit, cancel, delete — happens HERE, behind the click, through the same scheduleVerb
+      // the Schedules page uses; never in the model's tool.
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const turn = await startMetricsEventTurn(id, block);
+        return res.json({ block, turn });
+      }
+      askCardBusy.add(cardId);
+      let block;
+      try {
+        let result;
+        try { result = await applyScheduleCard(found.block.card); }
+        catch (err) { result = { ok: false, error: err && err.message ? err.message : String(err) }; }
+        block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      const turn = await startMetricsEventTurn(id, block);
+      return res.json({ block, turn });
+    }
     if (found.block.card && found.block.card.type === 'metrics') {
       // Metrics card (docs/team-metrics.md "Ask Worca"): proposed → applied | failed | declined. The change is
       // the outward-facing part — a branch on origin, a marker on another repo, this machine's switch, the

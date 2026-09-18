@@ -1091,9 +1091,15 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   // "route ... to the metrics home"). A bare "which workspaces use team metrics?" gets the generic echo answer.
   const metrics = !wfEvent && !tmEvent && /\bmetrics\b/i.test(userText)
     && /\b(?:stop|start|turn|toggle|switch|record\w*|route|change|enable|disable|set)\b/i.test(userText);
-  const workflow = !wfEvent && !tmEvent && !metrics && /\bworkflow\b/i.test(userText);
+  // Scheduled runs (docs/scheduled-runs.md "Ask Worca"): a schedule-card EVENT; a CHANGE to an existing schedule
+  // (its id in the text); or a new run to schedule ("schedule …"). All before the run arm, whose \brun\b would fire.
+  const scEvent = /^\s*\[worca event\] schedule card (card_[0-9a-f]{8}) (applied|declined|failed)/.exec(userText);
+  const scId = /\b(sch_[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i.exec(userText);
+  const scChange = !wfEvent && !tmEvent && !scEvent && !!scId && /\b(?:run now|move|delete|cancel|edit|change)\b/i.test(userText);
+  const scNew = !wfEvent && !tmEvent && !scEvent && !scChange && /\bschedul/i.test(userText) && !/\bworkflow\b/i.test(userText);
+  const workflow = !wfEvent && !tmEvent && !metrics && !scNew && !scChange && /\bworkflow\b/i.test(userText);
   const agents = !wfEvent && !tmEvent && /\bagents?\b/i.test(userText);
-  const propose = !wfEvent && !tmEvent && !workflow && !metrics && /\b(propose|start|run)\b/i.test(userText);
+  const propose = !wfEvent && !tmEvent && !scEvent && !workflow && !metrics && !scNew && !scChange && /\b(propose|start|run)\b/i.test(userText);
 
   const SID = resumeSessionId || 'mock-session-ask-1';
   const USAGE = { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
@@ -1154,6 +1160,30 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
       frames.push(delta('[mock] '), delta('proposing '), delta('a metrics change'), atext(MSG1, 'Proposing a metrics change card.'),
         atool(MSG1, 'toolu_mock_metrics', 'mcp__worca__propose_metrics_change', tmInput),
         uresult('toolu_mock_metrics', JSON.stringify({ ok: true, card: { type: 'metrics', ...tmInput } })));
+      answerMsg = MSG2;
+    }
+    if (scNew) {
+      // The parent re-validates the INPUT with the real validator: "every" in the text makes a weekday series,
+      // anything else a one-off two minutes out (short enough to watch the server start it).
+      const every = /\bevery\b/i.test(userText);
+      const input = { ...card, ...(every ? { every: 'weekdays 02:00' } : { when: '+2m' }) };
+      frames.push(delta('[mock] '), delta('scheduling '), delta('a run'), atext(MSG1, every ? 'Scheduling it every weekday at 02:00.' : 'Scheduling it two minutes from now.'),
+        atool(MSG1, 'toolu_mock_preview', 'mcp__worca__preview_schedule', every ? { every: 'weekdays 02:00' } : { when: '+2m' }),
+        uresult('toolu_mock_preview', JSON.stringify({ ok: true, kind: every ? 'repeat' : 'once' })),
+        atool(MSG1, 'toolu_mock_propose', 'mcp__worca__propose_run', input), uresult('toolu_mock_propose', JSON.stringify({ ok: true })));
+      answerMsg = MSG2;
+    }
+    if (scChange) {
+      const t = userText.toLowerCase();
+      const action = /run now/.test(t) ? 'run_now' : /\bmove\b/.test(t) ? 'move' : /\bdelete\b/.test(t) ? 'delete' : /\bcancel\b/.test(t) ? 'cancel' : 'edit';
+      const input = { id: scId[1], action, ...(action === 'move' ? { when: '+5m' } : action === 'edit' ? { every: 'weekdays 03:00' } : {}), note: 'mock: as asked' };
+      frames.push(delta('[mock] '), delta('proposing '), delta('a schedule change'), atext(MSG1, 'Proposing a schedule change card.'),
+        atool(MSG1, 'toolu_mock_sched', 'mcp__worca__propose_schedule_change', input), uresult('toolu_mock_sched', JSON.stringify({ ok: true })));
+      answerMsg = MSG2;
+    }
+    if (scEvent) {
+      const line = scEvent[2] === 'declined' ? 'Declined — nothing changed.' : scEvent[2] === 'failed' ? 'The change failed; check the error and try again.' : 'Done.';
+      frames.push(delta('[mock] '), delta(scEvent[2]), atext(MSG1, line));
       answerMsg = MSG2;
     }
     if (tmEvent) {

@@ -751,6 +751,8 @@ CREATE TABLE IF NOT EXISTS schedules (
   runs_count     INTEGER NOT NULL DEFAULT 0,
   next_run_at    TEXT,
   last_result    TEXT,                       -- last occurrence outcome (display)
+  ask_thread_id  TEXT,                       -- the Ask Worca card that made it (NULL = made by hand)
+  ask_card_id    TEXT,
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL
 );
@@ -835,6 +837,7 @@ const INCREMENTAL_COLUMNS = {
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE' },  // v29: reply threads; NULL = thread root
   workspaces:             { metrics_project: 'TEXT' },  // v30: team-metrics home (member absolute path); NULL = no home
+  schedules:              { ask_thread_id: 'TEXT', ask_card_id: 'TEXT' },  // v31: the Ask Worca card a series came from
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of

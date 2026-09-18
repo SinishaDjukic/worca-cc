@@ -290,6 +290,15 @@ const SCHEMA = {
   i: (description, minimum, maximum) => ({ type: 'integer', description, minimum, maximum }),
   b: (description) => ({ type: 'boolean', description }),
 };
+// The schedule fields propose_run, preview_schedule and propose_schedule_change share: the user's own
+// words in the CLI's forms, read in the user's timezone by schedule-spec.mjs — never a computed instant.
+const SCHEDULE_WHEN = SCHEMA.s('run ONCE at: "02:00" (its next occurrence), "today 22:00", "tomorrow 02:00", "+90m", "+2h", "2026-09-19 02:00", or ISO 8601 with an offset');
+const SCHEDULE_EVERY = SCHEMA.s('REPEAT: "day 03:30", "3 days 02:00", "weekdays 02:00", "weekends 09:00", "mon,wed,fri 02:00", "2 weeks mon 02:00", "month 1 02:00", "month last 02:00"');
+const SCHEDULE_UNTIL = SCHEMA.s('every only: last date, YYYY-MM-DD');
+const SCHEDULE_COUNT = SCHEMA.i('every only: stop after this many runs', 1, 1000);
+const SCHEDULE_OVERLAP = SCHEMA.s('every only, when the previous run is still going: skip (default) | queue | start');
+const SCHEDULE_MAX_FAILURES = SCHEMA.i('every only: pause after this many failures in a row (0 = never; default from Settings, usually 3)', 0, 100);
+const SCHEDULE_FIELDS = { when: SCHEDULE_WHEN, every: SCHEDULE_EVERY, until: SCHEDULE_UNTIL, count: SCHEDULE_COUNT, overlap: SCHEDULE_OVERLAP, maxFailures: SCHEDULE_MAX_FAILURES };
 
 /**
  * @param {object} deps  see tool-deps.mjs#defaultToolDeps for the real bundle
@@ -329,7 +338,7 @@ export function createAskTools(deps) {
       description: 'Follow a run in this chat: puts a live progress card (status, elapsed time, cost, active agents, the workflow) into your reply, kept current while the user watches. Works for running, paused and finished runs. id is the run\'s 8-hex id; the app\'s live run id also works. Call it once per run per reply, only from your own turn.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id (8 hex), or the app\'s live run id'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace') }, ['id']) },
     { name: 'propose_run',
-      description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId; omitting both targets the scope the user pinned for this chat, when there is one. guardrailsId defaults to "normal"; "permissive" is not allowed. Returns {ok:true, card} or {ok:false, errors}.',
+      description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId; omitting both targets the scope the user pinned for this chat, when there is one. guardrailsId defaults to "normal"; "permissive" is not allowed. To run it LATER give `when` (once) or `every` (repeat) in the user\'s own words — the card then offers Schedule instead of Start; check the phrase with preview_schedule first when unsure. Returns {ok:true, card} or {ok:false, errors}.',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('target project key'), workspaceId: SCHEMA.s('target workspace id'), workflowId: SCHEMA.s('workflow id (default wf_default)'),
         brief: SCHEMA.s('the full task description for the run (≤ 8000 chars)'), title: SCHEMA.s('short run title'), guardrailsId: SCHEMA.s('guardrail set id (default normal)'),
         memoryScope: SCHEMA.s('Memory defragment workflow only: "global" | "project"'),
@@ -339,7 +348,8 @@ export function createAskTools(deps) {
           description: 'attachment ids of this conversation the run should receive as extra files — copied into the run\'s extras/ folder when the user starts it' },
         sourceBranchByKey: { type: 'object', description: 'workspace only: per-member source branch overrides keyed by project key', additionalProperties: { type: 'string' } },
         commentIds: { type: 'array', items: { type: 'string' },
-          description: 'diff comment ids (dc_…) this run is meant to address. They are stamped with the run id once the user confirms the card AND the run actually starts; nothing is resolved.' } }, ['brief']) },
+          description: 'diff comment ids (dc_…) this run is meant to address. They are stamped with the run id once the user confirms the card AND the run actually starts; nothing is resolved.' },
+        ...SCHEDULE_FIELDS }, ['brief']) },
     { name: 'propose_workflow',
       description: 'Propose a NEW workflow for the user to save — it never writes anything; the user sees a card and decides. Exactly one of task / shape: task = the full task text (worca\'s Auto classifier picks the agents, loops and models exactly as an Auto run would — use this when the user says "auto" or simply gives a task); shape = a hand-authored shape (see "Workflows you can create" in your instructions — only when the user describes the steps). projectKey defaults to the project pinned for this chat and is required when none is pinned (a workspace cannot be the target). thenRun = the user also asked to run it. Returns {ok:true, name, match, warnings, summary, shape}: match names the saved workflow with the same shape (Save reuses it), summary lists the stages and loops. Returns {ok:false, error} when worca\'s classifier failed (timeout, unusable replies): tell the user, retry at most once. Do not search list_workflows for a match yourself — the tool does.',
       inputSchema: SCHEMA.obj({
@@ -452,6 +462,38 @@ export function createAskTools(deps) {
     { name: 'forget',
       description: 'Remove one memory file (worca keeps a snapshot in the scope\'s history). Only when the user asks.',
       inputSchema: SCHEMA.obj({ scope: SCHEMA.s('"global" | "project"'), name: SCHEMA.s('file name without .md'), projectKey: SCHEMA.s('the project for scope "project"') }, ['scope', 'name']) },
+    // ---- scheduled runs (docs/scheduled-runs.md "Ask Worca"): a run that starts later, once or on a repeat.
+    { name: 'list_schedules',
+      description: 'List what is scheduled: repeating schedules (id sch_…, the rule as a sentence, status active | paused | ended, why it paused, the next run, the failure streak) and one-off scheduled runs (id = the run id it will carry, time, status scheduled | missed). Optional projectKey OR workspaceId narrows it (omitting both uses the pinned scope, when there is one); includeEnded adds ended schedules and finished, canceled, skipped and failed runs. Times come in the user\'s timezone. Read-only.',
+      inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('project key from list_projects'), workspaceId: SCHEMA.s('workspace id from list_projects'),
+        includeEnded: SCHEMA.b('also list ended schedules and finished or canceled runs') }) },
+    { name: 'get_schedule',
+      description: 'Read one repeating schedule (sch_…) or one scheduled run (its run id): the request it will start (workflow, target, prompt summary), its policies (overlap, pause after N failures, missed-slot handling), the next dates, the runs it started (pipelineId opens with get_run) and its activity. Read-only.',
+      inputSchema: SCHEMA.obj({ id: SCHEMA.s('schedule id (sch_…) or scheduled run id') }, ['id']) },
+    { name: 'list_schedule_activity',
+      description: 'The Schedules activity feed, newest first: runs that completed, started late, were skipped, missed their slot, failed to start or ended in an error, and schedules that paused themselves after repeated failures. unread = only problems the user has not read; problems = only problems. Read-only.',
+      inputSchema: SCHEMA.obj({ unread: SCHEMA.b('only unread problems'), problems: SCHEMA.b('only problems (missed, failed, paused itself, run error)'),
+        limit: SCHEMA.i('max items (default 20, max 100)', 1, 100) }) },
+    { name: 'preview_schedule',
+      description: 'Turn the user\'s words into a schedule WITHOUT creating anything: when (once) → the exact date and time; every (repeat) → the rule as a sentence and its next three dates. Read in the user\'s timezone. Use it to check a phrase before propose_run or propose_schedule_change, and quote its dates — never compute dates yourself.',
+      inputSchema: SCHEMA.obj({ ...SCHEDULE_FIELDS }) },
+    { name: 'propose_schedule_change',
+      description: 'Propose a change to an existing schedule for the user to confirm — it never changes anything itself; the user sees a card and applies or declines it. action: "run_now" (start a scheduled run now, or one extra run of a repeating schedule — the schedule keeps its times), "move" (a one-off run to a new `when`), "edit" (a repeating schedule: any of every, until, count, overlap, maxFailures, title — the pending run is replaced), "cancel" (a one-off run), "delete" (a repeating schedule). Returns {ok:true, card} or {ok:false, errors} to fix and retry. Never claim a change was applied — the card says so when it happens.',
+      inputSchema: SCHEMA.obj({ id: SCHEMA.s('schedule id (sch_…) or scheduled run id'), action: SCHEMA.s('run_now | move | edit | cancel | delete'),
+        when: SCHEDULE_WHEN, every: SCHEDULE_EVERY, until: SCHEDULE_UNTIL, count: SCHEDULE_COUNT, overlap: SCHEDULE_OVERLAP, maxFailures: SCHEDULE_MAX_FAILURES,
+        title: SCHEMA.s('edit: a new name for the schedule'), note: SCHEMA.s('one line shown on the card: why this change (≤ 200 chars)') }, ['id', 'action']) },
+    { name: 'pause_schedule',
+      description: 'Pause a repeating schedule (sch_…): its pending run is dropped and nothing starts until it is resumed. Reversible; only when the user asks.',
+      inputSchema: SCHEMA.obj({ id: SCHEMA.s('schedule id (sch_…)') }, ['id']) },
+    { name: 'resume_schedule',
+      description: 'Resume a paused repeating schedule (sch_…), including one that paused itself after repeated failures: its failure streak resets and its next run is planned from now. Only when the user asks.',
+      inputSchema: SCHEMA.obj({ id: SCHEMA.s('schedule id (sch_…)') }, ['id']) },
+    { name: 'skip_next_run',
+      description: 'Skip the next run of a repeating schedule (sch_…); the one after it is planned instead. Only when the user asks.',
+      inputSchema: SCHEMA.obj({ id: SCHEMA.s('schedule id (sch_…)') }, ['id']) },
+    { name: 'mark_schedule_activity_read',
+      description: 'Mark Schedules activity items read: ids from list_schedule_activity, or all:true for everything. Only when the user asks — unread items are how problems reach them.',
+      inputSchema: SCHEMA.obj({ ids: { type: 'array', items: { type: 'integer' }, description: 'activity item ids' }, all: SCHEMA.b('mark every item read') }) },
   ];
 
   const EMPTY_DIFF = () => ({ available: false, files: [], text: '', truncated: false, totalBytes: 0, nextOffset: 0 });
@@ -525,6 +567,8 @@ export function createAskTools(deps) {
       prompt: row.prompt == null ? null : deps.redact(row.prompt),     // run prompts are untrusted text (spec §6.3/§6.6)
       totalCostUsd: deps.totalsFor(row).cost,
       archived: !!row.archived_at,
+      // Started by a schedule (docs/scheduled-runs.md): only then, so every other run keeps its shape.
+      ...(row.scheduled_for || row.schedule_id ? { startedBy: { scheduledFor: row.scheduled_for ?? null, scheduleId: row.schedule_id ?? null } } : {}),
     };
   }
 
@@ -720,6 +764,48 @@ export function createAskTools(deps) {
     skipped: read.stats ? { malformed: read.stats.malformed ?? 0, unknownVersion: read.stats.unknownV ?? 0 } : null,
   });
 
+  // ---- scheduled runs: shaping (every string a person typed is redacted; times in the user's zone)
+  const schedulesOf = (tool) => {
+    if (!deps.schedules) throw new AskToolError(`${tool}: scheduled runs are unavailable`);
+    return deps.schedules;
+  };
+  const whenOf = (isoStr) => (isoStr && deps.schedules ? deps.schedules.when(isoStr) : null);
+  const shapeRequest = (s) => (s ? {
+    target: s.target, workflowId: s.workflowId, guardrailsId: s.guardrailsId,
+    prompt: s.prompt ? deps.redact(s.prompt) : '', source: s.source ? { type: s.source.type, plugin: s.source.plugin, taskId: s.source.taskId, title: s.source.title ? deps.redact(s.source.title) : null } : null,
+    sourceBranch: s.sourceBranch, featureBranch: s.featureBranch,
+  } : null);
+  const shapeSeries = (s) => ({
+    id: s.id, kind: 'repeat', title: deps.redact(s.title || ''), projectKey: s.projectKey, workspaceId: s.workspaceId,
+    sentence: s.sentence, timeZone: s.tz, status: s.status, pauseReason: s.pauseReason,
+    nextRun: s.nextRunAt ? { at: s.nextRunAt, when: whenOf(s.nextRunAt) } : null,
+    overlap: s.overlap, maxFailures: s.maxFailures, failureStreak: s.failureStreak, ifMissed: s.ifMissed, graceMin: s.graceMin,
+    runsCount: s.runsCount, lastResult: s.lastResult, request: shapeRequest(s.summary),
+    ...(s.askCardId ? { askCardId: s.askCardId } : {}),
+  });
+  const shapeTicket = (t) => ({
+    id: t.id, kind: 'once', title: deps.redact(t.title || ''), projectKey: t.projectKey, workspaceId: t.workspaceId,
+    scheduleId: t.scheduleId, runAt: t.runAt, when: whenOf(t.runAt), status: t.status,
+    failReason: t.failReason ? deps.redact(t.failReason) : null, pipelineId: t.pipelineId, attempts: t.attempts,
+    ifMissed: t.ifMissed, graceMin: t.graceMin, heldByTerminal: !!t.ownerPid, request: shapeRequest(t.summary),
+  });
+  const shapeNotice = (n) => ({
+    id: n.id, kind: n.kind, severity: n.severity, unread: n.unread, title: deps.redact(n.title || ''), message: deps.redact(n.message || ''),
+    at: n.createdAt, when: whenOf(n.createdAt), scheduleId: n.scheduleId, runId: n.ticketId, pipelineId: n.pipelineId, resolved: !!n.resolvedAt,
+  });
+  const nextOf = (s) => (s.status === 'active' && typeof deps.schedules.nextDates === 'function' ? deps.schedules.nextDates(s.rule, s.runsCount) : []);
+  function seriesVerb(tool, input, verb, wantStatus) {
+    const sch = schedulesOf(tool);
+    const id = str(input.id);
+    if (!id.startsWith('sch_')) throw new AskToolError(`${tool}: id must be a repeating schedule (sch_…) — a one-off run is changed with propose_schedule_change`);
+    const found = sch.getItem(id);
+    if (!found) throw new AskToolError(`${tool}: no schedule "${id}"`);
+    if (found.item.status !== wantStatus) throw new AskToolError(`${tool}: this schedule is ${found.item.status}`);
+    const s = sch[verb](id);
+    if (!s) throw new AskToolError(`${tool}: this schedule is ${found.item.status}`);
+    return { ok: true, schedule: shapeSeries(s) };
+  }
+
   const handlers = {
     async list_projects() {
       const cat = await deps.buildCatalog();
@@ -911,7 +997,12 @@ export function createAskTools(deps) {
         if (pin) inp = { ...input, ...pin };
       }
       const attachments = typeof deps.listAttachments === 'function' ? (deps.listAttachments() || []) : [];
-      const r = await deps.validateProposal(inp, { attachments });
+      // The schedule fields (when / every) are read in the user's zone; a bundle without
+      // schedules (an older child, tests) validates them in this machine's zone.
+      const sch = deps.schedules;
+      const r = await deps.validateProposal(inp, sch
+        ? { attachments, timeZone: sch.timeZone(), nowMs: sch.now(), scheduleDefaults: sch.defaults() }
+        : { attachments });
       // commentIds are a ONE-WAY hand-off: a comment cited here is stamped
       // "sent to #<runId>" the moment the user starts the run, and nothing ever
       // un-stamps it. Refuse ids from a different project/workspace than this
@@ -1295,6 +1386,68 @@ export function createAskTools(deps) {
       try { removed = await memoryOf().forget(r.scopeObj, name); } catch (err) { throw memoryError('forget', err); }
       if (!removed) throw new AskToolError(`forget: no memory file "${name}" in ${r.scope}`);
       return { scope: r.scope, projectKey: r.projectKey, scopeKey: r.key, name, removed: true };
+    },
+    // ---- scheduled runs
+    async list_schedules(input) {
+      const sch = schedulesOf('list_schedules');
+      const projectKey = str(input.projectKey);
+      const workspaceId = str(input.workspaceId);
+      if (projectKey && workspaceId) throw new AskToolError('list_schedules: give projectKey OR workspaceId, not both');
+      const pin = !projectKey && !workspaceId ? pinnedScope() : null;
+      const wantKey = projectKey || pin?.projectKey || null;
+      const wantWs = workspaceId || pin?.workspaceId || null;
+      const inScope = (x) => (wantKey ? x.projectKey === wantKey : wantWs ? x.workspaceId === wantWs : true);
+      const all = sch.list({ includeEnded: input.includeEnded === true });
+      return {
+        timeZone: sch.timeZone(),
+        scope: wantKey ? { projectKey: wantKey } : wantWs ? { workspaceId: wantWs } : null,
+        schedules: all.schedules.filter(inScope).map(shapeSeries),
+        runs: all.runs.filter(inScope).map(shapeTicket),
+        counts: all.counts,
+      };
+    },
+    async get_schedule(input) {
+      const sch = schedulesOf('get_schedule');
+      const id = str(input.id);
+      if (!id) throw new AskToolError('get_schedule: id is required');
+      const found = sch.get(id);
+      if (!found) throw new AskToolError(`get_schedule: no schedule or scheduled run "${id}" — list_schedules shows the ids`);
+      const item = found.kind === 'recurring' ? shapeSeries(found.item) : shapeTicket(found.item);
+      return {
+        kind: found.kind,
+        timeZone: sch.timeZone(),
+        ...item,
+        ...(found.kind === 'recurring' ? { next: nextOf(found.item) } : {}),
+        history: found.history.map(shapeTicket),
+        activity: found.notifications.slice(0, 20).map(shapeNotice),
+      };
+    },
+    async list_schedule_activity(input) {
+      const sch = schedulesOf('list_schedule_activity');
+      const limit = clampInt(input.limit, 1, 100, 20);
+      const a = sch.activity({ unread: input.unread === true, problems: input.problems === true, limit });
+      return { timeZone: sch.timeZone(), unread: a.unread, items: a.notifications.map(shapeNotice) };
+    },
+    async preview_schedule(input) {
+      const sch = schedulesOf('preview_schedule');
+      if (!str(input.when) && !str(input.every)) throw new AskToolError('preview_schedule: give when (once) or every (repeat)');
+      const r = sch.preview(input, { nowMs: sch.now() });
+      if (!r.ok) return r;
+      return { ok: true, ...r.schedule };
+    },
+    async propose_schedule_change(input) {
+      const sch = schedulesOf('propose_schedule_change');
+      return sch.validateChange(input);
+    },
+    async pause_schedule(input) { return seriesVerb('pause_schedule', input, 'pause', 'active'); },
+    async resume_schedule(input) { return seriesVerb('resume_schedule', input, 'resume', 'paused'); },
+    async skip_next_run(input) { return seriesVerb('skip_next_run', input, 'skipNext', 'active'); },
+    async mark_schedule_activity_read(input) {
+      const sch = schedulesOf('mark_schedule_activity_read');
+      if (input.all === true) return { ok: true, marked: sch.markAllRead(), unread: sch.unread() };
+      const ids = Array.isArray(input.ids) ? input.ids.filter((x) => Number.isSafeInteger(x)) : [];
+      if (!ids.length) throw new AskToolError('mark_schedule_activity_read: give ids (from list_schedule_activity) or all:true');
+      return { ok: true, marked: sch.markRead(ids), unread: sch.unread() };
     },
   };
 

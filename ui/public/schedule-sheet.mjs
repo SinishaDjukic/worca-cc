@@ -85,7 +85,7 @@ export function openScheduleSheet({
     // Default slot: tomorrow 02:00 — the feature exists for out-of-hours runs.
     const seedParts = zonedParts(startMs && startMs > now ? startMs : now + 86400000, tz);
     const state = {
-      preset: mode === 'series' ? presetOfRule(initial.rule) : 'once',
+      preset: mode === 'series' || initial.rule ? presetOfRule(initial.rule) : 'once',
       date: `${seedParts.y}-${pad(seedParts.m)}-${pad(seedParts.d)}`,
       time: startMs && startMs > now ? `${pad(seedParts.hh)}:${pad(seedParts.mm)}` : (initial.rule?.time || '02:00'),
       weekdays: new Set(initial.rule?.weekdays?.length ? initial.rule.weekdays : ['mo']),
