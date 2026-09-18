@@ -715,6 +715,23 @@ export function purgeScheduler({ days = TICKET_RETENTION_DAYS, now = Date.now() 
   return { tickets, schedules };
 }
 
+/** A cheap change probe over both tables (another process may have written them). */
+export function scheduleSignature() {
+  const db = getDb();
+  const a = db.prepare('SELECT COUNT(*) AS n, COALESCE(MAX(updated_at), \'\') AS m FROM scheduled_runs').get();
+  const b = db.prepare('SELECT COUNT(*) AS n, COALESCE(MAX(updated_at), \'\') AS m FROM schedules').get();
+  return `${a.n}:${a.m}|${b.n}:${b.m}`;
+}
+
+/**
+ * Mark a claimed ticket fired — for a host that drives the run itself (the `--wait`
+ * CLI); runDueTickets does this for its own starts.
+ */
+export function markTicketFired(id, { pipelineId = null, now = Date.now() } = {}) {
+  markFired(String(id), pipelineId, now);
+  if (pipelineId) setTicketPipeline(id, pipelineId, { now });
+}
+
 /** Counts for nav badges: { scheduled, recurring, missed }. */
 export function scheduleCounts() {
   const db = getDb();

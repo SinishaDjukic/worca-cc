@@ -186,7 +186,7 @@ import {
   createTicket, getTicket, listTickets, updateTicket, cancelTicket, requestRunNow, setTicketPipeline,
   createSchedule, getSchedule, listSchedules, updateSchedule, pauseSchedule, resumeSchedule, skipNext,
   runScheduleNow, deleteSchedule, cancelForTarget, dependentsOfWorkflow, runDueTickets, recordOutcome,
-  recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir,
+  recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir, scheduleSignature,
 } from '../src/core/scheduler.mjs';
 import {
   onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
@@ -1542,6 +1542,8 @@ const startRunHandler = async (req, res) => {
         guardrailsId,
         branch,
         claude: { permissionMode: stored.permissionMode || 'acceptEdits', ...(stored.model ? { model: stored.model } : {}), mock },
+        // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
+        ...(stored.auto ? { auto: true } : {}),
       });
 
       entry = {
@@ -1604,6 +1606,8 @@ const startRunHandler = async (req, res) => {
         humanInLoop,
         ...(memoryScope ? { memoryScope } : {}),
         claude: { permissionMode: stored.permissionMode || 'acceptEdits', ...(stored.model ? { model: stored.model } : {}), mock },
+        // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
+        ...(stored.auto ? { auto: true } : {}),
       });
 
       entry = {
@@ -1828,6 +1832,7 @@ async function fireTicket(ticket) {
 
 let _schedulerBusy = false;
 let _lastNotificationId = -1;
+let _lastScheduleSig = null;
 
 /** One scheduler pass. Exported for tests; the server calls it on a 30 s timer. */
 export async function schedulerTick({ now = Date.now() } = {}) {
@@ -1848,6 +1853,10 @@ export async function schedulerTick({ now = Date.now() } = {}) {
     const latest = latestNotificationId();
     if (_lastNotificationId !== -1 && latest !== _lastNotificationId) emitChanged('notifications-changed');
     _lastNotificationId = latest;
+    // ...and the CLI writes tickets straight into the shared DB: notice those too.
+    const sig = scheduleSignature();
+    if (_lastScheduleSig !== null && sig !== _lastScheduleSig && !out.fired.length) emitChanged('schedules-changed', 'external');
+    _lastScheduleSig = sig;
     return out;
   } catch (err) {
     console.error(`[worca-ui] scheduler tick failed: ${err && err.message ? err.message : err}`);
