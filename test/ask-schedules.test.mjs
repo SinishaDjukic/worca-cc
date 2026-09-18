@@ -317,3 +317,40 @@ test('the real tool bundle: list, get, preview, pause / resume / skip, mark read
   assert.equal(good.card.patch.maxFailures, 5);
   assert.equal((await tools.call('get_schedule', { id: made.scheduleId })).maxFailures, 3, 'nothing written');
 });
+
+test('"schedule a fix for bug MOCK-7 with auto": the card\'s task is the tracker issue, Auto picks the workflow at start, and the ticket stores the reference', async () => {
+  // The in-tree mock-source fixture, installed into this home (the shim serves canned tasks in mock mode).
+  const { writePluginsLock, readPluginsLock, pluginCurrentDir } = await import('../src/core/plugins-lock.mjs');
+  const { mkdirSync, copyFileSync } = await import('node:fs');
+  const cur = pluginCurrentDir('mock-source');
+  mkdirSync(cur, { recursive: true });
+  copyFileSync(new URL('./fixtures/plugins/mock-source/worca-cc-plugin.json', import.meta.url), join(cur, 'worca-cc-plugin.json'));
+  writePluginsLock({ ...readPluginsLock(), 'mock-source': { repo: 'https://example.invalid/r', subdir: '', pinnedSha: 'a'.repeat(40), version: '0.1.0', enabled: true } });
+
+  const t = await newThread();
+  const { cards } = await turn(t.id, 'schedule a fix for bug MOCK-7 with auto');
+  assert.equal(cards.length, 1, JSON.stringify((await snapshot(t.id)).messages.flatMap((m) => (m.blocks || []).filter((b) => b.kind === 'notice'))));
+  const c = cards[0].card;
+  assert.equal(c.workflowId, 'wf_auto');
+  assert.equal(c.brief, '', 'the issue is the task — no copy of it');
+  assert.deepEqual({ plugin: c.source.plugin, sourceId: c.source.sourceId, taskId: c.source.taskId }, { plugin: 'mock-source', sourceId: 'mock', taskId: 'MOCK-7' });
+  assert.equal(c.source.title, 'Fix the login redirect', 'the parent looked the task up once');
+  assert.equal(c.title, 'Fix the login redirect');
+  assert.equal(c.schedule.kind, 'once');
+
+  // Schedule it the way the card does: source, not prompt.
+  const body = {
+    projectDir, workflowId: c.workflowId, guardrailsId: c.guardrailsId, title: c.title, askThreadId: t.id, askCardId: cards[0].id,
+    source: { type: 'plugin', plugin: 'mock-source', sourceId: 'mock', taskId: 'MOCK-7' }, scheduledFor: c.schedule.runAt,
+  };
+  const made = await post('/api/run', body);
+  assert.equal(made.status, 202, await made.clone().text());
+  const { runId } = await made.json();
+  const { getDb } = await import('../src/core/db.mjs');
+  const stored = JSON.parse(getDb().prepare('SELECT request FROM scheduled_runs WHERE id = ?').get(runId).request);
+  assert.deepEqual(stored.source, { type: 'plugin', plugin: 'mock-source', sourceId: 'mock', taskId: 'MOCK-7' }, 'a reference, read when the run starts');
+  assert.equal(stored.workflowId, 'wf_auto');
+  const now = await (await post(`/api/schedules/${runId}/run-now`, {})).json();
+  assert.equal(now.status, 'fired', 'the source probe at start found the task and the run started');
+  for (const r of mod.runs.values()) { try { r.orch?.stop?.(); } catch { /* reap */ } }
+});

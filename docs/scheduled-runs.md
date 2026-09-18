@@ -175,6 +175,25 @@ the small reversible changes it makes directly, and only when you ask.
 | `list_schedules`, `get_schedule`, `list_schedule_activity` | What is scheduled, one schedule's runs and policies, the activity feed | read |
 | `propose_schedule_change` | `run_now`, `move` (a one-off run), `edit` (a series: every, until, count, overlap, maxFailures, title), `cancel`, `delete` | card |
 | `pause_schedule`, `resume_schedule`, `skip_next_run`, `mark_schedule_activity_read` | Reversible, never start a run | direct |
+| `list_task_sources`, `find_tasks`, `get_task` | The installed task sources (GitHub Issues, Jira, …) with their inputs and profile bindings; search one; read one task | read |
+| `propose_run` + `source` | A run whose task is a tracker task — a reference the run fetches when it starts | card |
+
+**Tracker tasks.** "Schedule a fix for Jira bug PROJ-123 with auto, tonight at 2" becomes one card:
+Ask Worca finds the issue (`list_task_sources` → `find_tasks` / `get_task`) and proposes a run
+with `source {plugin, sourceId, taskId, profile?, inputs?}` instead of a brief, `workflowId
+"wf_auto"` and `when`. The card shows the task (id, title, link) where the brief would be, and
+starting or scheduling it sends POST /api/run exactly what New pipeline's source pane sends —
+so the run reads the issue as it is when it starts, and can write its result back.
+- The parent looks the task up once (`src/core/ask/source-spec.mjs checkTask`): a missing task
+  refuses the card; a network, rate-limit or timeout failure keeps it with a warning (the run
+  fetches it again at start). Only the `listTasks` and `getTask` ops are reachable from Ask.
+- A multi-profile source uses the profile the project (or workspace) is bound to; when none is
+  bound Ask asks which. A brief and a source together are refused — POST /api/run takes one.
+- **Auto** (`wf_auto`) picks the workflow from the task when the run starts (projects only).
+  In a project with human-in-the-loop on, an Auto run waits for its proposed workflow to be
+  accepted, which an unattended run cannot do by itself — Ask says so.
+- *Open in New Pipeline* is hidden on a tracker-task card: the source pane cannot be pre-filled
+  from a card yet.
 
 - **Your words, your clock.** The model passes what you said in the CLI's forms
   (`tomorrow 02:00`, `+90m`, `weekdays 02:00`, `month last 03:00`) and never computes a

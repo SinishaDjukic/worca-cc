@@ -213,6 +213,7 @@ effect, mock role, workspace variants).
 | Team metrics page and every surface of it elsewhere | E |
 | Ask: chat, history, attachments, run card, proposal title / project / workflow / brief / Start | S |
 | Ask: a proposal's own schedule (the "Schedule" action and its time), schedule-change cards | S — the answer the user asked for |
+| Ask: a proposal's tracker task (id, title, link) in place of the brief; the "Auto" workflow option when Ask proposed it | S |
 | Ask: "Schedule…" on a plain run proposal | A |
 | Ask: proposal cards themselves | all (rule 4) |
 | Ask: model picker, scope, ctx and cost meter, tool rows, branches, guardrails, "Open in New Pipeline" | A |

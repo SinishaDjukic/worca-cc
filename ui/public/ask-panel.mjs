@@ -2477,6 +2477,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const count = make('span', 'ask-rp-count');
     briefFoot.append(hint, count);
     briefSec.appendChild(briefFoot);
+    if (card.source) {
+      // The task IS a tracker task (propose_run source): the run reads it when it starts, so the
+      // card shows the reference — never an editable copy that would silently go stale.
+      briefHead.firstChild.textContent = 'Task';
+      briefHead.children[1].textContent = `from ${card.source.displayName || card.source.plugin} · read when the run starts`;
+      brief.hidden = true;
+      briefFoot.hidden = true;
+      const task = make('div', 'ask-card-task');
+      task.setAttribute('data-ask-card-task', '');
+      task.appendChild(make('span', 'badge grey mono', card.source.taskId));
+      const name = card.source.url ? make('a', 'ask-card-task-title', card.source.title || card.source.taskId) : make('span', 'ask-card-task-title', card.source.title || '');
+      if (card.source.url) { name.href = card.source.url; name.target = '_blank'; name.rel = 'noopener noreferrer'; }
+      task.appendChild(name);
+      if (card.source.profile) task.appendChild(make('span', 'ask-card-task-meta', `profile ${card.source.profile}`));
+      briefSec.insertBefore(task, brief);
+      if (card.sourceWarning) briefSec.insertBefore(make('div', 'ask-card-task-warn', card.sourceWarning), brief);
+    }
     rootEl.appendChild(briefSec);
     local.pills = Array.isArray(card.attachments) ? card.attachments.filter((a) => a && a.id).map((a) => ({ ...a })) : [];
     function renderPills() {
@@ -2531,6 +2548,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     openNp.type = 'button';
     openNp.setAttribute('data-ask-card-open-np', '');
     openNp.dataset.minLevel = 'advanced';
+    // New pipeline's task-source pane cannot be pre-filled from here yet; a tracker task runs from the card.
+    if (card.source) openNp.hidden = true;
     openNp.addEventListener('click', () => prefillFromCard(block, rootEl, local));
     const dismissBtn = make('button', 'ask-card-not-now', 'Not now');
     dismissBtn.type = 'button';
@@ -2687,6 +2706,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const workflowId = local.workflowId();
       const projectDir = local.projectDir();
       local.lane = null;
+      if (workflowId === 'wf_auto') {
+        // No graph yet: the run classifies its task and picks the agents when it starts.
+        renderLane(laneSec, null, laneCtx, 'Auto picks the agents when the run starts.');
+        wfDesc.textContent = '';
+        return;
+      }
       renderLane(laneSec, null, laneCtx, 'Loading agent settings…');
       loadLane(workflowId, projectDir).then((lane) => {
         if (st.destroyed || seq !== laneSeq) return;            // a later reload won
@@ -2714,7 +2739,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     loadCardOptions({ fresh: true }).then((opts) => {
       if (st.destroyed) return;
       local.options = opts;
-      fillSelect(workflowSel, opts.workflows.map((w) => ({ value: w.id, label: workflowPickerLabel(w, null) || w.name || w.id })), card.workflowId || 'wf_default');
+      // Auto is not a saved workflow: listed only when Ask Worca proposed it (a plain card keeps its list).
+      const autoOpt = card.workflowId === 'wf_auto' ? [{ value: 'wf_auto', label: 'Auto — picks the workflow when the run starts' }] : [];
+      fillSelect(workflowSel, [...autoOpt, ...opts.workflows.map((w) => ({ value: w.id, label: workflowPickerLabel(w, null) || w.name || w.id }))], card.workflowId || 'wf_default');
       if (card.workflowId && workflowSel.value !== card.workflowId) markWorkflowUnavailable();
       fillSelect(guardSel, opts.guardrails.map((g) => ({ value: g.id, label: g.id === 'permissive' ? 'Permissive' : (g.name || g.id) })), card.guardrailsId || 'normal');
       renderTarget();
@@ -2735,6 +2762,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Agent memory (§7.3 / B17): the card's scope rides along only while its workflow is still the
     // defragment one — a user who switched the picker to another workflow gets a legacy body.
     if (card.memoryScope && body.workflowId === 'wf_memory_defrag') body.memoryScope = card.memoryScope;
+    // A tracker task: the reference, never a prompt (POST /api/run takes source OR prompt).
+    if (card.source) {
+      delete body.prompt;
+      body.source = {
+        type: 'plugin', plugin: card.source.plugin, sourceId: card.source.sourceId, taskId: card.source.taskId,
+        ...(card.source.profile ? { profile: card.source.profile } : {}), ...(card.source.inputs ? { inputs: card.source.inputs } : {}),
+      };
+    }
     const feature = rootEl.querySelector('.ask-card-feature').value.trim();
     if (feature) body.featureBranch = feature;
     if (local.target === 'workspace') {

@@ -26,6 +26,7 @@ import { refreshAskMemoryMount } from './memory-deps.mjs';
 import { validateProposal } from './proposal.mjs';
 import { validateMetricsChange } from './metrics-deps.mjs';
 import { validateScheduleChange } from './schedule-deps.mjs';
+import { lookupTask } from './source-deps.mjs';
 import { effectiveTimeZone } from './schedule-spec.mjs';
 import { scheduleDefaults } from '../settings.mjs';
 import { revalidateWorkflowProposal } from './workflow-deps.mjs';
@@ -89,6 +90,8 @@ class AskTurn extends EventEmitter {
       validateMetricsChange: deps.validateMetricsChange ?? validateMetricsChange,
       validateScheduleChange: deps.validateScheduleChange ?? validateScheduleChange,
       scheduleDefaults: deps.scheduleDefaults ?? scheduleDefaults,
+      // A proposed plugin task is looked up here, once: it must exist, and the card shows its title.
+      lookupTask: deps.lookupTask === undefined ? lookupTask : deps.lookupTask,
       trackRun: deps.trackRun ?? null,
       generateTitle: deps.generateTitle ?? generateTitle,
       askLimits: deps.askLimits ?? askLimits,
@@ -175,7 +178,7 @@ class AskTurn extends EventEmitter {
       try { attachments = (typeof d.store.listAttachments === 'function' && d.store.listAttachments(this.threadId)) || []; } catch { attachments = []; }
       let defaults = {};
       try { defaults = d.scheduleDefaults() || {}; } catch { defaults = {}; }
-      const r = await d.validateProposal(inp, { cardId, attachments, timeZone: this.timeZone, nowMs: d.now(), scheduleDefaults: defaults });
+      const r = await d.validateProposal(inp, { cardId, attachments, timeZone: this.timeZone, nowMs: d.now(), scheduleDefaults: defaults, lookupTask: d.lookupTask });
       if (r && r.ok) {
         // #397 guardrail: a proposal targeting a DIFFERENT project/workspace than
         // the pinned one is accepted but flagged — the card renders the mismatch

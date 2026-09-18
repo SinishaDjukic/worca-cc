@@ -733,3 +733,28 @@ test('schedule card: before / after, Decline and the action\'s own Apply post th
   assert.equal(apply.textContent, 'Delete');
   assert.ok(apply.classList.contains('is-danger'), 'a removal reads as one');
 });
+
+test('ask-panel-card: a tracker-task proposal shows the task (not a brief) and Start posts the source reference, never a prompt', async () => {
+  const rec = {};
+  const source = { type: 'plugin', plugin: 'jira-source', sourceId: 'jira', taskId: 'PROJ-123', displayName: 'Jira', profile: 'acme', profileVia: 'binding',
+    inputs: { writeBack: 'yes' }, title: 'Login loops after SSO', url: 'https://acme.atlassian.net/browse/PROJ-123' };
+  const ctx = await openWithCard({ ...PROJECT_CARD, brief: '', title: 'Login loops after SSO', workflowId: 'wf_auto', source, sourceWarning: 'could not reach Jira just now (network); the run fetches the task when it starts' }, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  const task = cardEl.querySelector('[data-ask-card-task]');
+  assert.ok(task);
+  assert.equal(task.querySelector('.badge').textContent, 'PROJ-123');
+  const link = task.querySelector('a.ask-card-task-title');
+  assert.equal(link.href, 'https://acme.atlassian.net/browse/PROJ-123');
+  assert.equal(link.textContent, 'Login loops after SSO');
+  assert.equal(task.querySelector('.ask-card-task-meta').textContent, 'profile acme');
+  assert.match(cardEl.querySelector('.ask-card-task-warn').textContent, /could not reach Jira/);
+  assert.equal(cardEl.querySelector('.ask-card-brief').hidden, true);
+  assert.equal(cardEl.querySelector('.ask-rp-brief-host .ask-rp-sec-title').textContent, 'Task');
+  assert.equal(cardEl.querySelector('[data-ask-card-open-np]').hidden, true);
+  cardEl.querySelector('[data-ask-card-start]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.ok(rec.runBodies, `Start posted (card error: "${cardEl.querySelector('.ask-card-err').textContent}")`);
+  const body = rec.runBodies.at(-1);
+  assert.equal('prompt' in body, false);
+  assert.deepEqual(body.source, { type: 'plugin', plugin: 'jira-source', sourceId: 'jira', taskId: 'PROJ-123', profile: 'acme', inputs: { writeBack: 'yes' } });
+});

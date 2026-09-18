@@ -3624,6 +3624,7 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-rp-lane-msg{padding:12px 14px;font-size:12px;color:var(--ink-3);}
 .ask-card.ask-rp textarea.ask-rp-brief{width:100%;min-height:150px;max-height:420px;padding:12px 14px;border:1px solid var(--line-2);border-radius:12px;background:var(--field);font-size:13px;line-height:1.6;resize:vertical;}
 .ask-rp-brief-foot{display:flex;align-items:center;gap:12px;margin-top:8px;font-size:11.5px;color:var(--ink-3);flex-wrap:wrap;}
+.ask-rp-brief-foot[hidden],.ask-rp-brief[hidden]{display:none;}   /* a tracker-task card shows the task instead */
 .ask-rp-brief-foot kbd{font-family:var(--mono);font-size:10px;padding:1px 5px;border:1px solid var(--line-2);border-radius:5px;background:var(--panel);color:var(--ink-2);}
 .ask-rp-count{margin-left:auto;}
 .ask-rp-pills{display:flex;gap:6px;flex-wrap:wrap;}
@@ -4469,6 +4470,14 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 /* a proposal Ask Worca scheduled (propose_run when / every): the line above the footer */
 .ask-card-sched-proposed{margin:0 18px 12px;padding:10px 12px;border-radius:12px;background:var(--canvas-2);border:1px solid var(--line);}
 .ask-card-sched-proposed .link-btn{font-size:12px;}
+/* a run card whose task is a tracker task (propose_run source): the reference instead of the brief */
+.ask-card-task{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:11px 13px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--canvas-2);font-size:13px;}
+.ask-card-task .badge{letter-spacing:0;text-transform:none;font-family:var(--mono);font-size:11.5px;font-weight:600;color:var(--ink-2);}
+.ask-card-task-title{flex:1 1 200px;min-width:0;color:var(--ink);font-weight:600;overflow-wrap:anywhere;}
+a.ask-card-task-title{text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px;}
+a.ask-card-task-title:hover{text-decoration-color:currentColor;}
+.ask-card-task-meta{font-size:12px;color:var(--ink-3);}
+.ask-card-task-warn{margin-top:8px;padding:9px 12px;border-radius:12px;background:var(--amber-wash);border:1px solid var(--amber-line);font-size:12.5px;color:var(--ink-2);}
 
 /* History detail: the scheduled-run provenance link in the header meta */
 .hd-sched{color:var(--ink-2);text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px;}

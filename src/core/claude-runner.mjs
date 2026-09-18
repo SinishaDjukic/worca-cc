@@ -1096,10 +1096,26 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   const scEvent = /^\s*\[worca event\] schedule card (card_[0-9a-f]{8}) (applied|declined|failed)/.exec(userText);
   const scId = /\b(sch_[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i.exec(userText);
   const scChange = !wfEvent && !tmEvent && !scEvent && !!scId && /\b(?:run now|move|delete|cancel|edit|change)\b/i.test(userText);
-  const scNew = !wfEvent && !tmEvent && !scEvent && !scChange && /\bschedul/i.test(userText) && !/\bworkflow\b/i.test(userText);
-  const workflow = !wfEvent && !tmEvent && !metrics && !scNew && !scChange && /\bworkflow\b/i.test(userText);
+  const scNew = !wfEvent && !tmEvent && !scEvent && !scChange && /\bschedul/i.test(userText);
+  // A tracker task named by key ("fix jira bug PROJ-123"): the run's task is the issue (mock-source's
+  // fixture plugin), and "auto" asks for the Auto workflow. Folds into the schedule and run arms.
+  const taskKey = !wfEvent && !tmEvent && !scEvent && /\b(?:issue|ticket|bug|task)\b/i.test(userText) ? /\b([A-Z][A-Z0-9]+-\d+)\b/.exec(userText) : null;
+  const wantsAuto = /\bauto\b/i.test(userText);
+  const workflow = !wfEvent && !tmEvent && !metrics && !scNew && !scChange && !taskKey && /\bworkflow\b/i.test(userText);
   const agents = !wfEvent && !tmEvent && /\bagents?\b/i.test(userText);
-  const propose = !wfEvent && !tmEvent && !scEvent && !workflow && !metrics && !scNew && !scChange && /\b(propose|start|run)\b/i.test(userText);
+  const propose = !wfEvent && !tmEvent && !scEvent && !workflow && !metrics && !scNew && !scChange && (!!taskKey || /\b(propose|start|run)\b/i.test(userText));
+  // The proposal both arms send: a brief, or the task reference instead of one.
+  const proposal = () => {
+    if (!taskKey) return { ...card, ...(wantsAuto ? { workflowId: 'wf_auto' } : {}) };
+    const { brief: _brief, ...rest } = card;
+    return { ...rest, ...(wantsAuto ? { workflowId: 'wf_auto' } : {}), source: { plugin: 'mock-source', sourceId: 'mock', taskId: taskKey[1] }, note: 'mock: the run reads the issue when it starts' };
+  };
+  const taskFrames = (MSG) => (taskKey ? [
+    atool(MSG, 'toolu_mock_sources', 'mcp__worca__list_task_sources', {}),
+    uresult('toolu_mock_sources', JSON.stringify({ sources: [{ plugin: 'mock-source', sourceId: 'mock', displayName: 'Mock Tasks' }] })),
+    atool(MSG, 'toolu_mock_find', 'mcp__worca__find_tasks', { plugin: 'mock-source', sourceId: 'mock', search: taskKey[1] }),
+    uresult('toolu_mock_find', JSON.stringify({ tasks: [{ id: taskKey[1], title: 'Mock task' }] })),
+  ] : []);
 
   const SID = resumeSessionId || 'mock-session-ask-1';
   const USAGE = { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
@@ -1166,7 +1182,8 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
       // The parent re-validates the INPUT with the real validator: "every" in the text makes a weekday series,
       // anything else a one-off two minutes out (short enough to watch the server start it).
       const every = /\bevery\b/i.test(userText);
-      const input = { ...card, ...(every ? { every: 'weekdays 02:00' } : { when: '+2m' }) };
+      const input = { ...proposal(), ...(every ? { every: 'weekdays 02:00' } : { when: '+2m' }) };
+      frames.push(...taskFrames(MSG1));
       frames.push(delta('[mock] '), delta('scheduling '), delta('a run'), atext(MSG1, every ? 'Scheduling it every weekday at 02:00.' : 'Scheduling it two minutes from now.'),
         atool(MSG1, 'toolu_mock_preview', 'mcp__worca__preview_schedule', every ? { every: 'weekdays 02:00' } : { when: '+2m' }),
         uresult('toolu_mock_preview', JSON.stringify({ ok: true, kind: every ? 'repeat' : 'once' })),
@@ -1205,8 +1222,8 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
       answerMsg = MSG2;
     }
     if (propose) {
-      frames.push(delta('[mock] '), delta('preparing '), delta('a run'), atext(MSG1, 'Preparing a run card.'),
-        atool(MSG1, 'toolu_mock_propose', 'mcp__worca__propose_run', card), uresult('toolu_mock_propose', JSON.stringify({ ok: true })));
+      frames.push(delta('[mock] '), delta('preparing '), delta('a run'), atext(MSG1, 'Preparing a run card.'), ...taskFrames(MSG1),
+        atool(MSG1, 'toolu_mock_propose', 'mcp__worca__propose_run', proposal()), uresult('toolu_mock_propose', JSON.stringify({ ok: true })));
       answerMsg = MSG2;
     }
     if (answerMsg !== MSG1) frames.push(mstart(answerMsg));

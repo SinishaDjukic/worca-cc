@@ -5547,6 +5547,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
             targetName: (b.card && (b.card.projectName || b.card.workspaceName)) || '',
             // A scheduled (or schedule-proposing) run card says when, so the model never re-proposes it.
             ...(askCardScheduleLine(b, ctx.timeZone) ? { schedule: askCardScheduleLine(b, ctx.timeZone) } : {}),
+            ...(b.card && b.card.source ? { task: `${b.card.source.plugin}/${b.card.source.sourceId} ${b.card.source.taskId}` } : {}),
           });
       }
     }

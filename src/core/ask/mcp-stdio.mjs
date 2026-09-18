@@ -29,6 +29,7 @@ import { defaultCommentDeps } from './comment-deps.mjs';
 import { defaultWorkflowDeps } from './workflow-deps.mjs';
 import { defaultMetricsDeps } from './metrics-deps.mjs';
 import { defaultScheduleDeps } from './schedule-deps.mjs';
+import { defaultSourceDeps } from './source-deps.mjs';
 
 const SUPPORTED_PROTOCOLS = Object.freeze(['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25']);
 const DEFAULT_PROTOCOL = '2025-06-18';
@@ -128,6 +129,7 @@ export async function main({ argv = process.argv.slice(2), env = process.env, st
       ...defaultWorkflowDeps({ threadId, signal: life.signal }),
       ...defaultMetricsDeps({ threadId }),
       ...defaultScheduleDeps({ threadId }),
+      ...defaultSourceDeps(),
     }),
     write: (s) => stdout.write(s),
   });

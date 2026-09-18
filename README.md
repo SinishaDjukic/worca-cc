@@ -158,7 +158,8 @@ and durations, the clarify Q&A, agent transcripts, and logs:
 - **Ask Worca schedules too** — "run the dependency upgrade every weekday at 2am"
   becomes a run card whose main button is *Schedule*. It lists, explains, pauses,
   resumes and skips schedules on request; moving, editing, cancelling or deleting
-  one is a card you confirm.
+  one is a card you confirm. Name a tracker issue ("fix Jira bug PROJ-123 with
+  auto, tonight") and the card runs from the issue itself, read when the run starts.
 
 ### Costs & budgets
 

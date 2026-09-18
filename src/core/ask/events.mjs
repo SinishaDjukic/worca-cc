@@ -151,6 +151,9 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'resume_schedule': return 'Resuming a schedule';
     case 'skip_next_run': return 'Skipping the next run';
     case 'mark_schedule_activity_read': return 'Marking activity read';
+    case 'list_task_sources': return 'Looking at task sources';
+    case 'find_tasks': return input?.search ? `Searching tasks: ${String(input.search).slice(0, 40)}` : 'Searching tasks';
+    case 'get_task': return input?.id ? `Reading task ${String(input.id).slice(0, 40)}` : 'Reading a task';
     default: return `Using ${n}`;
   }
 }
