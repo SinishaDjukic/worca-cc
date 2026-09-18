@@ -607,6 +607,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'titleModel', 'hideBuiltinModels',
   'theme',
   'autoWorkflowModel',                       // auto-workflow spec D14
+  'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
 ]);
 
 // ── Title-generation model + hidden built-ins (#422) ─────────────────────────
