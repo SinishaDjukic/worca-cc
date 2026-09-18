@@ -255,3 +255,37 @@ test('counts and settings expose the schedule surface', async () => {
   assert.equal(typeof counts.schedules.scheduled, 'number');
   assert.equal(typeof counts.schedules.unread, 'number');
 });
+
+test('an external task is fetched at start: transient errors retry, permanent ones fail with the reason', async () => {
+  // WORCA_MOCK fakes task sources; the shim's test hook makes getTask fail on demand.
+  const { setMockSourceResponses } = await import('../src/core/plugin-shim.mjs');
+  const fail = (kind, message) => () => { throw Object.assign(new Error(message), { kind }); };
+  const r = await post('/api/run', {
+    projectDir: dir, mock: true, scheduledFor: inFuture(3600_000),
+    source: { type: 'plugin', plugin: 'mock-source', sourceId: 'issues', taskId: 'X-1' },
+  });
+  assert.equal(r.status, 202);
+  const made = await r.json();
+  const stored = JSON.parse(getDb().prepare('SELECT request FROM scheduled_runs WHERE id = ?').get(made.runId).request);
+  assert.equal(stored.source.taskId, 'X-1');
+  assert.equal(stored.source.promptText, undefined, 'a reference, not a copy of the task');
+  try {
+    setMockSourceResponses({ getTask: fail('network', 'tracker unreachable') });
+    let now = await (await post(`/api/schedules/${made.runId}/run-now`)).json();
+    assert.equal(now.status, 'scheduled', 'a transient error keeps the ticket, with a retry delay');
+    assert.match(now.failReason, /tracker unreachable/);
+    const t = getDb().prepare('SELECT retry_at, attempts FROM scheduled_runs WHERE id = ?').get(made.runId);
+    assert.ok(t.retry_at && t.attempts === 1);
+    assert.equal((await schedulerTick()).fired.length + (await schedulerTick()).retried.length, 0, 'the delay holds even for Run now');
+
+    setMockSourceResponses({ getTask: fail('plugin', 'task X-1 not found') });
+    now = await (await post(`/api/schedules/${made.runId}/run-now`)).json();
+    assert.equal(now.status, 'failed');
+    assert.match(now.failReason, /X-1 not found/);
+    assert.equal(runs.has(made.runId), false, 'no run was started');
+    const feed = await get('/api/notifications?problems=1');
+    assert.ok(feed.notifications.some((n) => n.kind === 'failed' && n.ticketId === made.runId));
+  } finally {
+    setMockSourceResponses(null);
+  }
+});

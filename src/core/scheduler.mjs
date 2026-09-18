@@ -556,8 +556,10 @@ function miss(t, schedule, now, why) {
 /** Tickets whose time has come (and whose retry delay, if any, has passed). */
 export function dueTickets({ now = Date.now() } = {}) {
   const ts = iso(now);
+  // A retry delay holds EVERY ticket, a forced one (Run now) included — otherwise a
+  // Run now that hit a transient error would be re-tried on every tick.
   return getDb().prepare(`SELECT * FROM scheduled_runs WHERE status = 'scheduled'
-    AND (forced = 1 OR (run_at <= ? AND (retry_at IS NULL OR retry_at <= ?))) ORDER BY run_at ASC`)
+    AND (forced = 1 OR run_at <= ?) AND (retry_at IS NULL OR retry_at <= ?) ORDER BY run_at ASC`)
     .all(ts, ts).map((r) => rowToTicket(r, { withRequest: true }));
 }
 
