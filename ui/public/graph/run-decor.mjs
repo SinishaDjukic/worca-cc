@@ -7,6 +7,7 @@
 // labels read the manifest's port metadata (`loop: true`), statuses read the
 // execution ledger (state.steps[], one row per execution, key === executionId),
 // colours read the manifest node. History renders with the registry absent.
+import { levelAtLeast } from '../ui-level.mjs';
 import { manifestPortsFn, manifestTemplate } from '../../../src/shared/graph/manifest.mjs';
 import { BOOKEND_EXECUTION_IDS, DEFAULT_MAX_CYCLES } from '../../../src/shared/graph/constants.mjs';
 import { fanLines } from '../../../src/shared/graph/geometry.mjs';
@@ -376,16 +377,20 @@ function decorateExecutions(decor, ctx) {
  */
 export function applyDecor(view, decor) {
   if (!view || !decor) return;
-  const expanded = decor.expanded || null;
+  // Interface mode (docs/ui-levels.md): status colours, the gate pip, the End result and live wires
+  // are for everyone; per-node totals, the fan and execution strips and loop-count badges are
+  // expert detail. Gated HERE, not in CSS — a footer band sets the card's height.
+  const full = decor.detail !== undefined ? !!decor.detail : levelAtLeast('expert');
+  const expanded = full ? (decor.expanded || null) : null;
   for (const nodeId of decor.nodeIds || []) {
     view.setStatus(nodeId, decor.status[nodeId] || 'pending');
     view.setNodeChrome(nodeId, {
       color: decor.colors[nodeId] || '',
       gate: decor.gate && decor.gate.nodeId === nodeId
         ? { wireId: decor.gate.wireId, title: 'waiting on a loop gate — open the question panel' } : null,
-      totals: decor.totals[nodeId] || null,
+      totals: full ? (decor.totals[nodeId] || null) : null,
     });
-    const foot = decor.footers[nodeId] || null;
+    const foot = full ? (decor.footers[nodeId] || null) : null;
     const bands = [];
     if (foot && foot.fan) {
       bands.push({ kind: 'fan', leds: foot.fan.leds, count: foot.fan.count, lines: fanLines(foot.fan.leds.length) });
@@ -405,6 +410,6 @@ export function applyDecor(view, decor) {
     }
     view.setFooter(nodeId, bands);
   }
-  for (const wireId of decor.wireIds || []) view.setWireBadge(wireId, decor.loopBadges[wireId] || null);
+  for (const wireId of decor.wireIds || []) view.setWireBadge(wireId, full ? (decor.loopBadges[wireId] || null) : null);
   view.setWireLive(decor.liveWireIds || []);
 }

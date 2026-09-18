@@ -4329,6 +4329,117 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .guide-layer.pointer .guide-balloon{z-index:73;}
 
 
+/* ======================================================================
+   Interface mode — simple | advanced | expert   (docs/ui-levels.md)
+   ======================================================================
+   <html data-level> is server-rendered (src/core/index-html.mjs) and kept live by
+   ui-level.mjs. An element opts in with data-min-level; these three selectors are
+   the WHOLE gate. No data-level attribute (tests, an old shell) gates nothing.
+   [data-level-keep] is the escape hatch: a gated control holding a non-default
+   value, or the nav item of the page you are on, stays visible.
+   !important because a dozen author `display:flex/grid` rules in this file outrank
+   a plain display:none — the same footgun the [hidden] notes above describe. */
+:root[data-level="simple"] [data-min-level="advanced"]:not([data-level-keep]),
+:root[data-level="simple"] [data-min-level="expert"]:not([data-level-keep]),
+:root[data-level="advanced"] [data-min-level="expert"]:not([data-level-keep]){display:none !important;}
+/* The rare inverse — copy that stands in for a control a higher mode shows (data-max-level). */
+:root[data-level="advanced"] [data-max-level="simple"],
+:root[data-level="expert"] [data-max-level="simple"],
+:root[data-level="expert"] [data-max-level="advanced"]{display:none !important;}
+
+/* Simple shows General only: a one-button segmented control is noise, so the bar goes — unless a
+   deep link parked us on a higher tab, whose button is then kept (paintLevelBanner). */
+:root[data-level="simple"] #settings-tabs:not(:has([data-level-keep])){display:none !important;}
+
+/* The icon: a stack of layers, unlit ones ghosted. currentColor, so hover, the
+   dark active fill and both themes come for free. */
+/* An <i>, not a <span>: the collapsed rail visually hides every direct span child of a nav button
+   (the labels), and this icon is the one thing that must survive there. */
+.lv-icon-slot{display:inline-grid;place-items:center;flex:0 0 auto;font-style:normal;}
+.nav button.nav-mode .lv-icon{width:19px;height:19px;}
+.lv-icon .lv-off{opacity:.26;}
+.lv-icon path{transition:opacity .2s;}
+
+/* Sidebar item: a plain `.nav button`. It is an action, never the current view. */
+.nav button.nav-mode .lv-icon-slot{width:19px;height:19px;}
+/* Top-nav twin (<1080px, where the sidebar is hidden): icon + the mode's name. */
+.topnav button.topnav-mode{display:inline-flex;align-items:center;justify-content:center;gap:7px;}
+.topnav button.topnav-mode .lv-icon{width:16px;height:16px;}
+
+/* Level pill (banner, hidden-settings note). Colour is semantic to the level. */
+.lv-pill{display:inline-flex;align-items:center;padding:2px 10px;border-radius:999px;
+  font-size:11.5px;font-weight:600;white-space:nowrap;background:var(--field);color:var(--ink-2);}
+.lv-pill[data-lv="simple"]{background:var(--green-bg);color:var(--green-ink);}
+.lv-pill[data-lv="advanced"]{background:var(--blue-bg);color:var(--blue-ink-strong);}
+.lv-pill[data-lv="expert"]{background:var(--violet-bg);color:var(--violet-ink);}
+
+/* Page-above-the-mode banner. */
+.level-banner{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;margin:0 0 18px;
+  padding:10px 14px;border-radius:var(--r-ctrl);background:var(--canvas-2);border:1px solid var(--line-2);
+  font-size:13px;color:var(--ink-2);}
+.level-banner[hidden]{display:none;}
+.level-banner-text{flex:1 1 220px;min-width:0;}
+.level-banner .btn{margin-left:auto;}
+body.view-history .level-banner,body.view-projects .level-banner,body.view-running .level-banner{margin:12px 32px 0;flex:0 0 auto;}
+
+/* Simple hides the Target switch, which leaves .split-row's picker alone in the row: auto-placement
+   would drop it into the narrow first track, so the row becomes one full-width column. */
+:root[data-level="simple"] .split-row:not(:has(#target-field[data-level-keep])){grid-template-columns:minmax(0,1fr);}
+
+/* New pipeline: mock mode outside Advanced, and the hidden-but-active note. */
+.mock-row{margin-top:18px;padding-top:16px;border-top:1px solid var(--line);}
+:root:not([data-level="simple"]) .advanced + .mock-row{margin-top:14px;}
+.level-hidden-note{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin-top:14px;
+  padding:10px 14px;border-radius:var(--r-ctrl);background:var(--amber-wash);border:1px solid var(--amber-line);
+  font-size:12.5px;line-height:1.5;color:var(--ink-2);}
+.level-hidden-note[hidden]{display:none;}
+.level-hidden-note b{color:var(--ink);font-weight:600;}
+.link-btn{background:none;border:0;padding:0;font:inherit;font-weight:600;color:var(--blue-ink-strong);cursor:pointer;text-decoration:underline;text-underline-offset:2px;}
+.link-btn:hover{color:var(--ink);}
+.link-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px;}
+
+/* Settings › General › Interface mode. */
+.mode-current{display:flex;align-items:center;gap:14px;}
+.mode-current-icon{display:grid;place-items:center;flex:0 0 auto;width:42px;height:42px;border-radius:13px;background:var(--field);color:var(--ink);}
+.mode-current-icon .lv-icon{width:22px;height:22px;}
+.mode-current-text{display:flex;flex-direction:column;gap:2px;flex:1 1 auto;min-width:0;font-size:12.5px;line-height:1.5;color:var(--ink-2);}
+.mode-current-text strong{font-size:14px;font-weight:600;color:var(--ink);}
+@media (max-width:560px){.mode-current{flex-wrap:wrap;}.mode-current .btn{margin-left:56px;}}
+
+/* The dialog. Follows .ob-welcome's door cards: one bordered row per choice. */
+.mode-modal .card{width:min(580px,100%);padding:26px 28px 22px;animation:wr-rise .24s cubic-bezier(.2,.7,.3,1) both;}
+.mode-modal .card-head{margin-bottom:4px;}
+.mode-sub{margin:0 0 16px;font-size:13px;line-height:1.55;color:var(--ink-2);}
+.lv-cards{display:flex;flex-direction:column;gap:8px;}
+.lv-card{display:grid;grid-template-columns:40px minmax(0,1fr) 20px;align-items:center;gap:14px;width:100%;
+  padding:13px 15px;border:1.5px solid var(--line-2);border-radius:16px;background:var(--panel);color:var(--ink);
+  font:inherit;text-align:left;cursor:pointer;transition:border-color .15s,background .15s;}
+.lv-card:hover{background:var(--field);}
+.lv-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.lv-card[aria-checked="true"]{border-color:var(--ink);background:var(--canvas-2);}
+.lv-card-icon{display:grid;place-items:center;width:40px;height:40px;border-radius:12px;background:var(--field);color:var(--ink-2);}
+.lv-card-icon .lv-icon{width:23px;height:23px;}
+.lv-card[data-level-choice="simple"][aria-checked="true"] .lv-card-icon{background:var(--green-bg);color:var(--green-ink);}
+.lv-card[data-level-choice="advanced"][aria-checked="true"] .lv-card-icon{background:var(--blue-bg);color:var(--blue-ink-strong);}
+.lv-card[data-level-choice="expert"][aria-checked="true"] .lv-card-icon{background:var(--violet-bg);color:var(--violet-ink);}
+.lv-card-text{display:flex;flex-direction:column;gap:3px;min-width:0;}
+.lv-card-title{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 9px;font-size:14.5px;font-weight:600;}
+.lv-card-who{font-size:12px;font-weight:500;color:var(--ink-3);}
+.lv-card-desc{font-size:12.5px;line-height:1.5;color:var(--ink-2);}
+.lv-card-adds{font-size:12px;line-height:1.45;color:var(--ink-3);}
+.lv-card-radio{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--radio-ring);background:var(--panel);transition:border .15s;}
+.lv-card[aria-checked="true"] .lv-card-radio{border:5.5px solid var(--ink);}
+#mode-msg{display:block;min-height:0;margin-top:10px;}
+#mode-msg:empty{display:none;}
+.mode-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 14px;margin-top:16px;}
+.mode-foot .hint{margin:0;}
+@media (max-width:520px){
+  .mode-modal .card{padding:20px 18px 18px;}
+  .lv-card{grid-template-columns:34px minmax(0,1fr) 18px;gap:11px;padding:12px;}
+  .lv-card-icon{width:34px;height:34px;}
+}
+@media (prefers-reduced-motion: reduce){.mode-modal .card{animation:none;}.lv-icon path,.lv-card,.lv-card-radio{transition:none;}}
+
 @media (prefers-reduced-motion: reduce){
   /* Getting started: tiles land drawn, vignettes paint finished, the guide ring holds a still halo. */
   .gs-tile.reveal,.play .gs-pop,.play .gs-draw,.ob-welcome,.guide-ring,.nav button.gs-pill{animation:none;}
@@ -5040,3 +5151,21 @@ input.gv-name:focus-visible{outline:none;}
 /* No href => the preview is still building. Make that legible rather than letting a
    dead-looking button sit there (D24). */
 .report-modal .confirm-actions a.btn:not([href]){opacity:.5;pointer-events:none;}
+
+/* History › Overview › Files changed: the plain-words stand-in for the (advanced) Diff tab. */
+.hd-ov-files{padding:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);display:flex;flex-direction:column;gap:10px;}
+.hd-ov-files-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
+.hd-ov-files-head .link-btn{font-size:12.5px;}
+.hd-ov-files-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px;}
+.hd-ov-files-list li{display:flex;align-items:baseline;gap:10px;min-width:0;font-size:12.5px;}
+.hd-ov-file-kind{flex:0 0 58px;font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);}
+.hd-ov-file-kind.k-new{color:var(--green-ink);}
+.hd-ov-file-kind.k-deleted{color:var(--red-ink);}
+.hd-ov-file-path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);color:var(--ink-2);}
+
+/* Composer palette › Create agent…: a quiet footer action under the scrolling list. */
+.pal-create{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin:10px 13px 13px;padding:9px 12px;
+  border:1.5px dashed var(--line-2);border-radius:12px;background:transparent;color:var(--ink-2);
+  font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;transition:border-color .15s,color .15s,background .15s;}
+.pal-create:hover{border-color:var(--ink);color:var(--ink);background:var(--field);}
+.pal-create:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}

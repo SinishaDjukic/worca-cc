@@ -129,6 +129,7 @@ import {
   renderProjectTmCell, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
 import { paintAboutInto } from './about-links.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts } from './report-run.mjs';
+import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
 
@@ -2120,6 +2121,7 @@ function gvRenderSaved() {
       tag.className = 'pl-legacy';
       tag.textContent = 'legacy · runnable until the graph cut-over';
       row.appendChild(tag);
+      tagLevel(item, 'expert');                 // a v1 template cannot be opened: expert housekeeping
     }
     item.appendChild(row);
     els.savedList.appendChild(item);
@@ -2649,7 +2651,11 @@ async function loadWorkflowsInto(selectId) {
   const list = [AUTO_WORKFLOW, ...(workflows.length ? workflows : [{ id: 'wf_default', name: 'Default' }])];
   const want = selectId || state.workflowId || AUTO_WORKFLOW_ID;
   sel.innerHTML = '';
+  // Simple mode (docs/ui-levels.md) offers Auto and Default only. The workflow already selected
+  // stays listed whatever it is: a non-default value is never hidden from the run it applies to.
+  const simplePicker = !levelAtLeast('advanced');
   list.forEach((wf) => {
+    if (simplePicker && wf.id !== AUTO_WORKFLOW_ID && wf.id !== 'wf_default' && wf.id !== want) return;
     const o = option(wf.id, wf.id === AUTO_WORKFLOW_ID ? wf.name : (workflowPickerLabel(wf, enabledPluginNames) || wf.id));
     if (wf.id === AUTO_WORKFLOW_ID && isWorkspace) { o.disabled = true; o.title = 'Auto is not available for workspaces yet'; }
     // Memory defragment holds exactly one scope, and a workspace run has no single project to
@@ -2731,6 +2737,7 @@ async function loadGuardrailsInto(selectId) {
   }
   sel.value = state.guardrailsId;
   updateGuardrailsHint();
+  paintHiddenSettings();
   // A restored non-Permissive set is active state, so Advanced must not hide it.
 }
 
@@ -2834,6 +2841,38 @@ function setAgentsHeader(rows, workflowName) {
     const canPromote = anyModified && state.workflowId && !isReservedWorkflowId(state.workflowId);
     el.agentsPromote.hidden = !canPromote;
   }
+  paintHiddenSettings();
+}
+
+// New pipeline × interface mode (docs/ui-levels.md): a setting made in a higher mode keeps
+// applying to the run, so it must not vanish. A gated field OUTSIDE the Advanced disclosure that
+// holds a non-default value is simply kept on screen; what sits INSIDE the (hidden) disclosure is
+// named in one line above Start run, with the switch that reveals it.
+function paintHiddenSettings() {
+  const note = document.getElementById('level-hidden-note');
+  if (!note) return;
+  const sourceIsPrompt = !!document.querySelector('#source-seg [data-src="prompt"].on');
+  keepVisible(document.getElementById('target-field'), state.runTarget === 'workspace');
+  keepVisible(document.getElementById('source-field'), !sourceIsPrompt);
+  keepVisible(document.getElementById('branch-fields'), !!(el.featureBranch && el.featureBranch.value.trim()));
+  const items = [];
+  if (!levelAtLeast('advanced')) {
+    const gr = (state.guardrailSets || []).find((g) => g.id === state.guardrailsId);
+    if (state.guardrailsId && state.guardrailsId !== 'permissive') items.push(`${(gr && gr.name) || state.guardrailsId} guardrails`);
+    const n = Object.values(agentRowsById || {}).filter((r) => r && r.modified).length;
+    if (n) items.push(n === 1 ? '1 agent override' : `${n} agent overrides`);
+    const hitlRow = document.getElementById('hitl-row');
+    if (el.humanInLoop && hitlRow && !hitlRow.hidden && !el.humanInLoop.checked) items.push('Human in the loop off');
+  }
+  note.hidden = !items.length;
+  if (!items.length) return;
+  const text = document.getElementById('level-hidden-text');
+  text.textContent = '';
+  const b = document.createElement('b');
+  b.textContent = items.join(' · ');
+  text.append('Set in Advanced mode and still applied to this run: ', b, '.');
+  const sw = document.getElementById('level-hidden-show');
+  sw.textContent = 'Switch to Advanced'; sw.dataset.modeSet = 'advanced';   // same words as the page banner
 }
 
 // Build the agents accordion into #agents-rows: one collapsed .agent-row per node
@@ -2956,6 +2995,11 @@ function renderAgentRows(rows) {
     renderSubagentModelSelect(subSel, row.subagentModel);
     sWrap.appendChild(subSel);
     picks.append(mWrap, eWrap, fanWrap, sWrap);
+    // Model and effort are advanced (the accordion's own level); the three below are expert
+    // (docs/ui-levels.md). One that deviates from its default stays on screen at any mode.
+    const rowDef = row.def || {};
+    keepVisible(tagLevel(fanWrap, 'expert'), !!row.fanOut !== !!rowDef.fanOut);
+    keepVisible(tagLevel(sWrap, 'expert'), (row.subagentModel || '') !== (rowDef.subagentModel || ''));
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
       const qWrap = document.createElement('label');
       qWrap.className = 'fanout-toggle questions-toggle';
@@ -2976,6 +3020,7 @@ function renderAgentRows(rows) {
       const qTxt = document.createElement('span');
       qTxt.textContent = 'Questions';
       qWrap.append(qCb, qTxt);
+      keepVisible(tagLevel(qWrap, 'expert'), !row.questionsLocked && !!row.askQuestions !== !!rowDef.askQuestions);
       picks.appendChild(qWrap);
     }
     body.appendChild(picks);
@@ -4215,7 +4260,16 @@ function renderGateBody(r, panel, pq) {
   const intro = document.createElement('div');
   intro.className = 'gate-intro';
   intro.textContent = `This cycle reached its limit${gateWireCopy(r, pq.wireId)}${issues.length ? ' with open issues' : ''}. Approve another cycle to keep iterating, or continue with what you have.`;
-  panel.appendChild(intro);
+  tagLevel(intro, 'advanced');
+  // Simple mode reads the same decision without the vocabulary (docs/ui-levels.md: a blocking
+  // prompt is never hidden, only simplified). Twin elements, so a mode change needs no re-render.
+  const plain = document.createElement('div');
+  plain.className = 'gate-intro';
+  plain.dataset.maxLevel = 'simple';
+  plain.textContent = issues.length
+    ? 'The agents reviewed their own work and still see problems. Let them try once more, or carry on with what they have?'
+    : 'The agents have used the attempts they are allowed. Let them try once more, or carry on with what they have?';
+  panel.append(intro, plain);
 
   if (issues.length) {
     const list = document.createElement('ul');
@@ -4333,7 +4387,7 @@ function renderWorkflowBody(r, panel, pq) {
     handle.el.insertBefore(note, handle.parts.name);
   }
   // ---- tunables table, between the match line and the meta line (mockup §D)
-  const table = buildTunablesTable(w, wf, handle);
+  const table = tagLevel(buildTunablesTable(w, wf, handle), 'expert');   // accept-as-proposed is the simple path
   handle.el.insertBefore(table, handle.parts.warnings || handle.parts.meta);
   // ---- revise box + foot
   const ta = document.createElement('textarea');
@@ -4344,7 +4398,7 @@ function renderWorkflowBody(r, panel, pq) {
   const foot = document.createElement('div'); foot.className = 'qpanel-foot';
   const mk = (cls, text) => { const b = document.createElement('button'); b.type = 'button'; b.className = cls; b.textContent = text; return b; };
   const cancel = mk('qcancel wf-cancel', 'Cancel run');
-  const revise = mk('qopen wf-revise', 'Revise');
+  const revise = tagLevel(mk('qopen wf-revise', 'Revise'), 'advanced');
   const send = mk('qopen wf-send', 'Send'); send.hidden = true;
   const accept = mk('btn-go wf-accept', 'Accept & run');
   accept.dataset.busyLabel = 'Starting…';                 // A31: setPanelBusy's primary swap reads it
@@ -7324,6 +7378,14 @@ function agentFormRender(host, meta, opts = {}) {
   md.value = typeof opts.markdown === 'string' ? opts.markdown : '';
   frag.appendChild(fmField('System prompt (markdown)', md));
 
+  // Interface mode (docs/ui-levels.md): the Agents page is expert, but the AI wizard is reachable
+  // from the Composer at advanced — there the drafted form is just what a person can judge (name,
+  // description, the prompt itself). Ports, runner type and the rest are the builder's draft, kept
+  // and saved as drafted; expert shows all of it.
+  for (const child of frag.children) {
+    if (!child.querySelector('.agent-f-name, .agent-f-desc, .agent-f-md')) tagLevel(child, 'expert');
+  }
+
   root.replaceChildren(frag);
   refreshAgentForm(root);
   bindAgentForm(root);
@@ -7640,6 +7702,7 @@ function buildProjectRow(p) {
   // chevron; its own controls stop propagation so they never open the project page.
   const tmSlot = document.createElement('div');
   tmSlot.className = 'tm-slot';
+  tagLevel(tmSlot, 'expert');                  // team metrics is expert (docs/ui-levels.md)
   tmSlot.dataset.key = p.key;
   row.appendChild(tmSlot);
   // A keyed row IS the control (click / Enter / Space open the project page — the History
@@ -7923,8 +7986,8 @@ const PD_TAB_ICONS = {
 };
 // Table-driven, like HD_TABS. `build(sec, key)` takes the KEY (buildArgs), never the project object.
 const PD_TABS = [
-  { key: 'overview', label: 'Overview', badge: () => null, visible: () => true, build: (sec, key) => buildPdOverview(sec, key) },
-  { key: 'memory', label: 'Memory', badge: () => null, visible: () => true, build: (sec, key) => buildPdMemory(sec, key) },
+  { key: 'overview', label: 'Overview', level: 'simple', badge: () => null, visible: () => true, build: (sec, key) => buildPdOverview(sec, key) },
+  { key: 'memory', label: 'Memory', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdMemory(sec, key) },
 ];
 function initPdTabs(screen, p) {
   initDetailTabs(screen, PD_TABS.map((t) => ({ ...t, icon: PD_TAB_ICONS[t.key] })), p, {
@@ -8009,7 +8072,7 @@ function buildPdOverview(sec, key) {
   } else {
     grid.appendChild(pdStatCard('last', 'LAST RUN', '—', 'No runs yet'));
   }
-  grid.appendChild(pdStatCard('key', 'KEY', p.key, `memory scope projects/${p.key}`));
+  grid.appendChild(tagLevel(pdStatCard('key', 'KEY', p.key, `memory scope projects/${p.key}`), 'expert'));
   sec.appendChild(grid);
   ensureHistoryLoaded();
 }
@@ -8451,7 +8514,7 @@ async function saveGeneratedAgent() {
     invalidateAgentCaches();
     resetAgentWizard();
     setAgentsMsg(`Agent "${data.meta.key}" created.`, 'ok');
-    location.hash = 'agents';
+    location.hash = agentWizardReturn();
   } catch (err) {
     if (el.agwMsg) { el.agwMsg.textContent = err.message; el.agwMsg.className = 'form-msg err'; }
   } finally {
@@ -8477,7 +8540,12 @@ if (el.agwStart) el.agwStart.addEventListener('click', () => startAgentGenerate(
 if (el.agwAbort) el.agwAbort.addEventListener('click', () => { abortAgentGen(); showAgentWizardStep(1); });
 if (el.agwRegen) el.agwRegen.addEventListener('click', () => startAgentGenerate());
 if (el.agwSave) el.agwSave.addEventListener('click', () => saveGeneratedAgent());
-if (el.agwClose) el.agwClose.addEventListener('click', () => { location.hash = 'agents'; });
+if (el.agwClose) el.agwClose.addEventListener('click', () => { location.hash = agentWizardReturn(); });
+// The wizard has two doors: the Agents page (expert) and the Composer palette's "Create agent…"
+// (advanced, docs/ui-levels.md). Cancel and Save go back through the door that was used.
+let agentWizardFrom = 'agents';
+function agentWizardReturn() { const back = agentWizardFrom; agentWizardFrom = 'agents'; return back; }
+document.getElementById('gv-create-agent')?.addEventListener('click', () => { agentWizardFrom = 'composer'; location.hash = 'agent-create'; });
 for (const input of [el.agwName, el.agwPurpose, el.agwOwnMd]) {
   if (input) input.addEventListener('input', syncAgwStartEnabled);
 }
@@ -8743,6 +8811,7 @@ async function loadSettings() {
     if (!res.ok) { setSettingsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     paintSettings(data);
     paintTheme(data.theme);
+    levelCtl.confirm(data.uiLevel);
     paintAbout(data.app);
     paintBudgetSettings(data);
     paintAskSettings(data);
@@ -13452,7 +13521,7 @@ function paintHdHeaderMeta(screen, record, data) {
       'not-enabled': ['team metrics · not enabled', 'st-muted'],
     };
     const [text, cls] = TM_TEXT[tm.state] || TM_TEXT['not-enabled'];
-    meta.append(hdDot(), Object.assign(document.createElement('span'), { className: `hd-tm ${cls}`, textContent: text, title: tm.slug ? `worca-metrics branch of ${tm.slug}` : '' }));
+    meta.append(tagLevel(hdDot(), 'expert'), Object.assign(tagLevel(document.createElement('span'), 'expert'), { className: `hd-tm ${cls}`, textContent: text, title: tm.slug ? `worca-metrics branch of ${tm.slug}` : '' }));
   }
   // Branch row.
   const base = screen.querySelector('.hd-base');
@@ -13952,6 +14021,7 @@ function initDetailTabs(screen, tabs, ctx, opts) {
     btn.dataset.sec = t.key;
     btn.id = `${idPrefix}-tab-${t.key}`;
     btn.setAttribute('role', 'tab');
+    if (t.level) tagLevel(btn, t.level);                       // interface mode (docs/ui-levels.md)
     if (t.icon) btn.innerHTML = t.icon;                        // static markup, no interpolation
     btn.appendChild(document.createTextNode(' ' + t.label));
     const badge = t.badge(ctx);
@@ -14007,8 +14077,21 @@ function initDetailTabs(screen, tabs, ctx, opts) {
   }
   detailTabState.set(screen, { cells, activate });
   if (!cells.size) return;
+  // The opening tab is always one the interface mode shows: History prefers Diff and Running the
+  // live log, both advanced, so Simple lands on Overview instead of on a tab with no pill lit.
+  const showsTab = (k) => cells.has(k) && levelAtLeast(cells.get(k).tab.level || 'simple');
   const want = initial ? initial(ctx) : null;
-  activate(cells.has(want) ? want : cells.keys().next().value);
+  const first = [...cells.keys()].find(showsTab);
+  activate(showsTab(want) ? want : (first || cells.keys().next().value));
+}
+// A mode change can hide the tab that is open. Its pill would vanish with the section still up, so
+// the first tab the new mode shows takes over. (A deep link never lands here: tabs have no route.)
+function reselectHiddenDetailTabs() {
+  for (const active of $$('.rd-tab.active, .hd-tab.active, .pd-tab.active')) {
+    if (levelAtLeast(active.dataset.minLevel || 'simple')) continue;
+    const next = [...active.parentElement.children].find((b) => levelAtLeast(b.dataset.minLevel || 'simple'));
+    if (next) next.click();
+  }
 }
 
 function hdClarifyCount(data) {
@@ -14023,25 +14106,25 @@ const HD_TABS = [
   // INSIDE changedFiles (results.mjs:22-53; NEW_STATUS is {A,C}) and are ALSO
   // counted in filesDeleted, so adding filesDeleted double-counts every deletion
   // against the rendered file list.
-  { key: 'diff', label: 'Diff',
+  { key: 'diff', label: 'Diff', level: 'advanced',
     badge: (d) => (d.results && d.results.summary
       ? String((d.results.summary.filesNew || 0) + (d.results.summary.filesChanged || 0)) : null),
     visible: () => true, build: (...a) => buildHdDiff(...a) },
-  { key: 'overview', label: 'Overview', badge: () => null, visible: () => true, build: (...a) => buildHdOverview(...a) },
-  { key: 'agents', label: 'Agents',
+  { key: 'overview', label: 'Overview', level: 'simple', badge: () => null, visible: () => true, build: (...a) => buildHdOverview(...a) },
+  { key: 'agents', label: 'Agents', level: 'expert',
     badge: (d) => ((Array.isArray(d.state.subAgents) && d.state.subAgents.length) ? String(d.state.subAgents.length) : null),
     visible: () => true, build: (...a) => buildHdAgents(...a) },
-  { key: 'clarify', label: 'Clarify',
+  { key: 'clarify', label: 'Clarify', level: 'simple',
     badge: (d) => String(hdClarifyCount(d)),
     visible: (d) => hdClarifyCount(d) > 0, build: (...a) => buildHdClarify(...a) },
-  { key: 'logs', label: 'Logs', badge: () => null,
+  { key: 'logs', label: 'Logs', level: 'expert', badge: () => null,
     visible: (d) => Array.isArray(d.artifacts) && d.artifacts.some((a) => a && a.kind === 'live-log'),
     build: (...a) => buildHdLogs(...a) },
   // The saved detail payload's `artifacts` is listArtifacts' [{kind, relPath}] (no
   // step attribution); it only gates VISIBILITY here — buildHdArtifacts fetches the
   // attributed GET /api/runs/:id/artifacts before rendering. Hidden when a run has
   // no indexed artifact beyond the transient live-log / run-dir markers.
-  { key: 'artifacts', label: 'Artifacts',
+  { key: 'artifacts', label: 'Artifacts', level: 'advanced',
     badge: (d) => {
       const n = Array.isArray(d.artifacts) ? d.artifacts.filter(isDisplayableArtifact).length : 0;
       return n ? String(n) : null;
@@ -15446,6 +15529,48 @@ function hdChecks(r) {
   return r.keyThingsToCheck || [];
 }
 
+// "What did the run touch?" without the Diff tab (docs/ui-levels.md): Diff is advanced, so the
+// Overview — the one results tab Simple mode has — lists the files in plain words. No hunks, no
+// comments; from advanced up a button hands over to the real diff.
+const HD_FILES_SHOWN = 12;
+function hdFilesChangedBox(sec, results) {
+  if (!results) return null;
+  const rows = hdDiffFileRows(results);
+  if (!rows.length) return null;
+  const box = document.createElement('div');
+  box.className = 'hd-ov-files';
+  const head = document.createElement('div'); head.className = 'hd-ov-files-head';
+  const l = document.createElement('div'); l.className = 'hd-ov-label';
+  l.textContent = rows.length === 1 ? 'FILES CHANGED · 1' : `FILES CHANGED · ${rows.length}`;
+  const open = tagLevel(document.createElement('button'), 'advanced');
+  open.type = 'button'; open.className = 'link-btn'; open.textContent = 'Open the diff';
+  open.addEventListener('click', () => {
+    const screen = histDetailState && histDetailState.screen;   // the state is keyed on the cloned template root
+    const tabs = screen && detailTabState.get(screen);
+    if (tabs && tabs.cells.has('diff')) tabs.activate('diff');
+  });
+  head.append(l, open);
+  box.appendChild(head);
+  const list = document.createElement('ul'); list.className = 'hd-ov-files-list';
+  for (const { project, f, isNew } of rows.slice(0, HD_FILES_SHOWN)) {
+    const li = document.createElement('li');
+    const kind = document.createElement('span');
+    const word = isNew ? 'new' : (f.status === 'D' ? 'deleted' : (f.status === 'R' ? 'renamed' : 'edited'));
+    kind.className = `hd-ov-file-kind k-${word}`; kind.textContent = word;
+    const name = document.createElement('span'); name.className = 'hd-ov-file-path mono';
+    name.textContent = project ? `${project}/${f.path}` : f.path; name.title = name.textContent;
+    li.append(kind, name);
+    list.appendChild(li);
+  }
+  box.appendChild(list);
+  if (rows.length > HD_FILES_SHOWN) {
+    const more = document.createElement('div'); more.className = 'hint';
+    more.textContent = `and ${rows.length - HD_FILES_SHOWN} more`;
+    box.appendChild(more);
+  }
+  return box;
+}
+
 function buildHdOverview(sec, record, data) {
   sec.innerHTML = '';
   const st = data.state;
@@ -15515,12 +15640,14 @@ function buildHdOverview(sec, record, data) {
   // refreshHdFromRow — nothing else ever rebuilds a tab. (Do not "simplify" that
   // call away: the header painters run on every row arrival, but the tab bodies do
   // not, so without it the card would read `released` for the life of the screen.)
-  grid.appendChild(hdStatCard('worktree', 'WORKTREE', retained ? 'retained' : 'released', wt.worktreeDir || ''));
+  grid.appendChild(tagLevel(hdStatCard('worktree', 'WORKTREE', retained ? 'retained' : 'released', wt.worktreeDir || ''), 'expert'));
   wrap.appendChild(grid);
+  const filesBox = hdFilesChangedBox(sec, results);
+  if (filesBox) wrap.appendChild(filesBox);
   // Agent memory (§6): what this run wrote into worca's memory, per execution.
   const memRows = memoryChangesRows(data.memory || (results && results.memory));
   if (memRows.length) {
-    const box = document.createElement('div');
+    const box = tagLevel(document.createElement('div'), 'expert');
     box.className = 'hd-ov-mem';
     const l = document.createElement('div'); l.className = 'hd-ov-label'; l.textContent = 'MEMORY CHANGES';
     box.appendChild(l);
@@ -15785,17 +15912,17 @@ function rdCtx(r) {
 // question renders as a panel above the tabs, not as a tab).
 const RD_TABS = [
   {
-    key: 'logs', label: 'Live log', icon: HD_TAB_ICONS.logs,
+    key: 'logs', label: 'Live log', icon: HD_TAB_ICONS.logs, level: 'advanced',
     badge: () => null, visible: () => true,
     build: (sec, ctx) => buildRdLogs(sec, ctx),
   },
   {
-    key: 'overview', label: 'Overview', icon: HD_TAB_ICONS.overview,
+    key: 'overview', label: 'Overview', icon: HD_TAB_ICONS.overview, level: 'simple',
     badge: () => null, visible: () => true,
     build: (sec, ctx) => buildRdOverview(sec, ctx),
   },
   {
-    key: 'agents', label: 'Agents', icon: HD_TAB_ICONS.agents,
+    key: 'agents', label: 'Agents', icon: HD_TAB_ICONS.agents, level: 'expert',
     badge: (ctx) => {
       const n = Array.isArray(ctx.run.subAgents) ? ctx.run.subAgents.length : 0;
       return n ? String(n) : null;
@@ -15804,7 +15931,7 @@ const RD_TABS = [
     build: (sec, ctx) => buildRdAgents(sec, ctx),
   },
   {
-    key: 'artifacts', label: 'Artifacts', icon: HD_TAB_ICONS.artifacts,
+    key: 'artifacts', label: 'Artifacts', icon: HD_TAB_ICONS.artifacts, level: 'advanced',
     badge: (ctx) => {
       const n = Array.isArray(ctx.run.artifacts)
         ? ctx.run.artifacts.filter(isDisplayableArtifact).length : 0;
@@ -16128,7 +16255,7 @@ function rdOvStats(host, r) {
   // worktree, true after teardown, explicitly false on the commit-failure path.
   // `!== true` is the correct test for all three.
   const held = !!r.worktreeDir && r.worktreeRemoved !== true;
-  host.appendChild(hdStatCard('worktree', 'WORKTREE', held ? 'active' : 'released', r.worktreeDir || ''));
+  host.appendChild(tagLevel(hdStatCard('worktree', 'WORKTREE', held ? 'active' : 'released', r.worktreeDir || ''), 'expert'));
 }
 
 function rdOvTask(r) {
@@ -19062,6 +19189,7 @@ function paintShelf({ entering = false } = {}) {
     onHide: () => setOnboardingPrefs({ hidden: !gs.status.hidden }),
     hideLabel: gs.status.hidden ? 'Show in sidebar' : 'Hide from sidebar',
     animate: appearing,
+    level: currentLevel(),
   });
 }
 
@@ -19175,8 +19303,7 @@ const noProjectPicked = () => {
 /** The start-run hop shared by the two run steps: nav → project → prompt → (mock) → Start → Running. */
 function gsRunHops(g, mock) {
   const prompt = document.getElementById('prompt');
-  const details = document.getElementById('advanced-config');
-  const mockOn = !!(el.mock && el.mock.checked);
+  const mockOn = !!(el.mock && el.mock.checked);   // the switch sits beside Start run at every mode
   const formErr = (document.getElementById('form-msg')?.textContent || '').trim();
   if (g.started && onView('running')) return null;                       // the point of the step: seen
   if (g.started && !(onView('new') && formErr)) {                        // a refused form keeps ringing Start
@@ -19197,15 +19324,40 @@ function gsRunHops(g, mock) {
       : 'Describe the task in a sentence or two. The planner asks when something matters.' };
   }
   if (mock) {
-    if (details && !details.open) return { target: '#advanced-config summary', text: 'Mock mode lives under Advanced.' };
     if (!mockOn) return { target: '#mock-switch', text: 'Mock mode runs the whole pipeline offline: no Claude calls, no tokens.' };
     return { target: '#start-btn', start: true, text: 'Start it. The run appears under Running in the sidebar.' };
   }
-  if (mockOn && details && !details.open) return { target: '#advanced-config summary', text: 'Mock mode is still on, under Advanced.' };
   if (mockOn) return { target: '#mock-switch', text: 'Turn Mock mode off for a real run.' };
   return { target: '#start-btn', start: true, text: 'Start the run. Worca answers loop gates itself and pauses only for the questions that matter.' };
 }
+/** A guide never fails on a control the interface mode hides (docs/ui-levels.md): when every
+ *  candidate target exists but sits above the mode, the hop becomes "raise the mode" — the
+ *  sidebar item first, then the right card once the dialog is up. Choosing it re-derives the
+ *  original hop through the page watcher, like any other click. */
+function gsRaiseLevelHop(hop) {
+  const sels = Array.isArray(hop.target) ? hop.target : [hop.target];
+  let need = null;
+  for (const sel of sels) {
+    const t = typeof sel === 'string' ? document.querySelector(sel) : null;
+    if (!t) continue;
+    const min = minLevelFor(t);
+    if (levelAtLeast(min)) return hop;
+    if (!need || UI_LEVELS.indexOf(min) < UI_LEVELS.indexOf(need)) need = min;
+  }
+  if (!need) return hop;                                   // not mounted yet: guide-spot waits for it
+  const label = LEVEL_INFO[need].label;
+  const modal = document.getElementById('mode-modal');
+  if (modal && !modal.classList.contains('hidden')) {
+    return { target: `#mode-cards [data-level-choice="${need}"]`, mode: 'pointer', text: `Choose ${label}, then Done.` };
+  }
+  return { target: ['#nav-mode', '.topnav-mode'], lift: ['.topnav'],
+    text: `This step is part of ${label} mode. Open the mode switch to show it.` };
+}
 function gsNextHop(step, g = gs.guide || {}) {
+  const hop = gsNextHopRaw(step, g);
+  return hop ? gsRaiseLevelHop(hop) : hop;
+}
+function gsNextHopRaw(step, g = gs.guide || {}) {
   const projects = Array.isArray(state.projects) ? state.projects.length : 0;
   const addProject = (navText, addText) => (onView('projects')
     ? { target: '#project-add-btn', text: addText, final: true }
@@ -19297,7 +19449,29 @@ function gsScrollTop() {
   if (main) main.scrollTop = 0;
 }
 
-function startGuide(step) {
+// A step whose controls sit above the interface mode (docs/ui-levels.md) asks ONCE, before the tour
+// moves the user anywhere: a mid-tour detour to the mode switch reads as the guide losing its place.
+// Declining leaves the mode and the page as they were. (gsRaiseLevelHop stays as the fallback for a
+// mode lowered while a tour runs.)
+async function startGuide(step) {
+  const def = GETTING_STARTED_STEPS.find((s) => s.id === step);
+  const need = def && def.level;
+  if (need && !levelAtLeast(need)) {
+    const info = LEVEL_INFO[need];
+    const ok = await confirmModal({
+      title: `Switch to ${info.label}?`,
+      message: `“${def.label}” uses controls that ${LEVEL_INFO[currentLevel()].label} hides. `
+        + `Switch to ${info.label} to follow the tour — you can change it back any time from the sidebar.`,
+      confirmLabel: `Switch to ${info.label} and start`,
+      cancelLabel: 'Not now',
+    });
+    if (!ok) return;
+    await levelCtl.choose(need);
+    if (!levelAtLeast(need)) { levelCtl.open(null, { keepMsg: true }); return; }   // save failed and reverted: show why
+  }
+  runGuideFor(step);
+}
+function runGuideFor(step) {
   endGuide();
   if (step === 'claude') { openClaudeSetup(); return; }
   gs.guide = { step, seq: ++gs.seq, target: null, final: false, started: false, view: currentShownView };
@@ -19319,7 +19493,7 @@ function runGuide() {
   const mine = g.seq;
   gsDestroySpot();
   gs.spot = createGuideSpot({
-    target: hop.target, text: hop.text, lift: hop.lift || [], tries: 300,   // ~5 s: a list may still be fetching
+    target: hop.target, text: hop.text, mode: hop.mode || 'spotlight', lift: hop.lift || [], tries: 300,   // ~5 s: a list may still be fetching
     onDismiss: () => { if (gs.guide && gs.guide.seq === mine) endGuide(); },
     onTargetClick: () => {
       if (!gs.guide || gs.guide.seq !== mine) return;
@@ -19354,6 +19528,68 @@ const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 // plugins/guardrails/models LEFT this array: they are Settings tabs now, reached
 // as #settings/<tab> (legacy bare hashes redirect — see LEGACY_TAB_VIEWS).
 const VIEW_NAMES = ['new', 'getting-started', 'running', 'history', 'stats', 'team-metrics', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
+
+// ── Interface mode (docs/ui-levels.md) ──────────────────────────────────────
+// simple | advanced | expert: a VIEW preference, server-rendered into <html data-level>.
+// Static UI is gated by data-min-level + three CSS selectors; the renderers that
+// build option lists or pick a default tab ask levelAtLeast() and repaint on
+// `worca:level`. A page above the mode still opens (deep link, guide): the banner
+// says so and offers the switch.
+const levelCtl = createLevelController({
+  save: async (level) => {
+    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uiLevel: level }) });
+    const data = await safeJson(res);
+    if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+    return { ok: true, level: data.uiLevel };
+  },
+});
+// The lowest mode whose menu lists each page. Pages not named here are simple.
+const VIEW_MIN_LEVEL = Object.freeze({
+  stats: 'advanced', composer: 'advanced', workspaces: 'advanced', 'workspace-create': 'advanced',
+  'agent-create': 'advanced',                 // reachable from the Composer palette at advanced
+  'team-metrics': 'expert', agents: 'expert',
+});
+const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ guardrails: 'advanced', plugins: 'advanced', memory: 'advanced', models: 'expert' });
+const VIEW_TITLES = Object.freeze({
+  stats: 'Statistics', composer: 'Workflow Composer', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
+  'agent-create': 'Create agent', 'team-metrics': 'Team metrics', agents: 'Agents',
+  guardrails: 'Guardrails', plugins: 'Plugins', memory: 'Memory', models: 'Models',
+});
+function pageMinLevel() {
+  if (currentShownView === 'settings') return { key: currentSettingsTab, min: SETTINGS_TAB_MIN_LEVEL[currentSettingsTab] || 'simple' };
+  return { key: currentShownView, min: VIEW_MIN_LEVEL[currentShownView] || 'simple' };
+}
+function paintLevelBanner() {
+  const banner = document.getElementById('level-banner');
+  const { key, min } = pageMinLevel();
+  const above = !levelAtLeast(min);
+  // The page you are on keeps its menu entry until you leave it, so "where am I" never vanishes.
+  for (const b of $$('.nav button[data-nav], .topnav button[data-nav]')) {
+    keepVisible(b, above && b.dataset.nav === currentShownView);
+  }
+  if (el.settingsTabs) {
+    for (const b of el.settingsTabs.querySelectorAll('button[data-tab]')) {
+      keepVisible(b, above && currentShownView === 'settings' && b.dataset.tab === currentSettingsTab);
+    }
+  }
+  if (!banner) return;
+  banner.hidden = !above;
+  if (!above) return;
+  const info = LEVEL_INFO[min];
+  const pill = document.getElementById('level-banner-pill');
+  pill.textContent = info.label; pill.dataset.lv = min;
+  document.getElementById('level-banner-text').textContent =
+    `${VIEW_TITLES[key] || 'This page'} is part of ${info.label} mode, so it is not in your menu.`;
+  const sw = document.getElementById('level-banner-switch');
+  sw.textContent = `Switch to ${info.label}`; sw.dataset.modeSet = min;
+}
+const levelListeners = [];
+/** Renderers that branch on the mode register a repaint here. */
+function onLevelChange(fn) { levelListeners.push(fn); }
+document.addEventListener('worca:level', () => {
+  paintLevelBanner();
+  for (const fn of levelListeners) { try { fn(currentLevel()); } catch (e) { console.warn('[worca] level repaint failed', e); } }
+});
 
 // ── Settings tabs ───────────────────────────────────────────────────────────
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
@@ -19456,6 +19692,7 @@ function showView(name, param = '') {
   }
   const prevView = currentShownView;
   currentShownView = name;
+  paintLevelBanner();
   // The guide re-derives its hop on a tick, so it is told here — before a view's
   // own loader runs — and never misses a switch because a loader threw.
   onboardingViewChanged(name);
@@ -19562,6 +19799,7 @@ function showSettingsTab(param = '') {
   // Same contract the per-view loaders had: a tab that is never opened costs no
   // request, and re-entry refetches (which is what lets grvExitWizard's
   // '#settings/guardrails/<id>' -> '#settings/guardrails' hop reset the wizard).
+  paintLevelBanner();
   if (tab === 'general') loadSettings();
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'models') loadModelsView();
@@ -19573,6 +19811,21 @@ function showSettingsTab(param = '') {
 let currentShownView = null;
 // True only while showView() is writing location.hash itself, to prevent re-entry.
 let syncingHash = false;
+// Boot paint of the mode item / Settings card. Here, not beside levelCtl: a first paint can
+// dispatch worca:level, whose banner repaint reads currentShownView (declared just above).
+levelCtl.paint();
+// Renderers that branch on the mode. Registered here (after levelListeners exists); every callee
+// is a hoisted function declaration.
+onLevelChange(() => { refreshNewPipelinePickers(); });     // Simple lists Auto + Default only
+onLevelChange(() => paintHiddenSettings());
+onLevelChange(() => paintShelf());
+onLevelChange(() => reselectHiddenDetailTabs());
+onLevelChange(() => {                                       // node decorations are expert detail
+  for (const host of $$('.run-flow.gv-host')) { const slot = GRAPH_MOUNTS.get(host); if (slot && slot.m.repaint) slot.m.repaint(); }
+});                          // tiles above the mode wear their level
+for (const t of ['input', 'change', 'click']) {
+  document.getElementById('run-form')?.addEventListener(t, () => setTimeout(paintHiddenSettings, 0));
+}
 
 // Nav clicks only update the hash; the single hashchange listener drives
 // showView so each navigation runs it exactly once (no double /api/runs fetch).

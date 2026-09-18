@@ -19,14 +19,16 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async (n = 6) => { for (let i = 0; i < n; i++) await tick(); };
 const click = (window, node) => node.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
 
-const STEPS = ['claude', 'project', 'run', 'ask', 'workflows', 'realRun', 'workspace', 'teamMetrics'];
+const STEPS = ['claude', 'project', 'run', 'ask', 'realRun', 'workflows', 'workspace', 'teamMetrics'];
 const status = (done = [], flags = {}) => ({
   steps: Object.fromEntries(STEPS.map((id) => [id, done.includes(id)])),
   done: done.length, total: 8, claude: { bin: 'claude', hint: null }, hidden: false, welcomeSeen: false, ...flags,
 });
 
-async function boot({ onboarding = status(['claude']), projects = [] } = {}) {
-  const dom = new JSDOM(html, { url: 'http://localhost:4317/', pretendToBeVisual: true });
+async function boot({ onboarding = status(['claude']), projects = [], level = null } = {}) {
+  // `level`: the server-rendered interface mode (docs/ui-levels.md); null = no attribute (gates nothing).
+  const shellHtml = level ? html.replace('<html lang="en" data-theme="system">', `<html lang="en" data-theme="system" data-level="${level}">`) : html;
+  const dom = new JSDOM(shellHtml, { url: 'http://localhost:4317/', pretendToBeVisual: true });
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
@@ -233,7 +235,7 @@ test('a tile guide: "Connect Claude Code" opens the setup dialog; "Ask Worca" ri
   assert.equal(doc.querySelector('.guide-layer'), null);
 });
 
-test('the mock-run guide: nav to New pipeline first, then project → prompt → Advanced → Mock → Start', async () => {
+test('the mock-run guide: nav to New pipeline first, then project → prompt → Mock → Start', async () => {
   const { doc, window } = await boot({ onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
   window.location.hash = 'history';
   window.dispatchEvent(new window.Event('hashchange'));
@@ -258,10 +260,7 @@ test('the mock-run guide: nav to New pipeline first, then project → prompt →
   prompt.value = 'do it';
   prompt.dispatchEvent(new window.Event('input', { bubbles: true }));
   await settle();
-  assert.equal(target(), '#advanced-config summary');
-  doc.getElementById('advanced-config').open = true;
-  doc.getElementById('advanced-config').dispatchEvent(new window.Event('toggle'));
-  await settle();
+  // Mock mode sits beside Start run now, outside Advanced (docs/ui-levels.md): no disclosure hop.
   assert.equal(target(), '#mock-switch');
   click(window, doc.getElementById('mock-switch'));
   await settle();
@@ -294,4 +293,47 @@ test('the workflows guide: Composer, open Default, back to New pipeline, pick in
   sel.value = 'wf_other'; sel.dispatchEvent(new window.Event('change', { bubbles: true }));
   await settle();
   assert.equal(doc.querySelector('.guide-layer'), null, 'a pick ends the guide');
+});
+
+test('a step above the interface mode asks to switch first; "Not now" leaves everything as it was', async () => {
+  const { doc, window } = await boot({ level: 'simple', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
+  click(window, doc.querySelector('.gs-pill'));
+  await settle();
+  click(window, doc.querySelector('.gs-tile[data-step="workflows"]'));
+  await settle();
+  const modal = doc.getElementById('confirm-modal');
+  assert.ok(!modal.classList.contains('hidden'), 'the confirm opens before any hop');
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Switch to Advanced?');
+  assert.equal(doc.getElementById('confirm-ok').textContent, 'Switch to Advanced and start');
+  assert.equal(doc.querySelector('.guide-layer'), null, 'no ring behind the question');
+  click(window, doc.getElementById('confirm-cancel'));
+  await settle();
+  assert.equal(doc.documentElement.dataset.level, 'simple', 'Not now keeps the mode');
+  assert.equal(doc.querySelector('.guide-layer'), null, 'and starts no tour');
+});
+
+test('confirming switches the mode and starts the tour at its first real hop', async () => {
+  const { doc, window } = await boot({ level: 'simple', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
+  click(window, doc.querySelector('.gs-pill'));
+  await settle();
+  click(window, doc.querySelector('.gs-tile[data-step="teamMetrics"]'));
+  await settle();
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Switch to Expert?');
+  click(window, doc.getElementById('confirm-ok'));
+  await settle();
+  assert.equal(doc.documentElement.dataset.level, 'expert');
+  const target = doc.querySelector('.guide-layer')?.dataset.target || '';
+  assert.ok(target.startsWith('.nav button[data-nav="projects"]'), `the tour itself, not the mode switch: ${target}`);
+  doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+});
+
+test('a step at or below the mode starts with no question', async () => {
+  const { doc, window } = await boot({ level: 'advanced', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
+  click(window, doc.querySelector('.gs-pill'));
+  await settle();
+  click(window, doc.querySelector('.gs-tile[data-step="workflows"]'));
+  await settle();
+  assert.ok(doc.getElementById('confirm-modal').classList.contains('hidden'));
+  assert.ok((doc.querySelector('.guide-layer')?.dataset.target || '').startsWith('.nav button[data-nav="composer"]'));
+  doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
 });
