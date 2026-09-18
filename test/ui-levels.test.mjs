@@ -181,7 +181,7 @@ test('the dialog: three radio cards, click applies at once and saves, a failed s
   let fail = false;
   const ctl = createLevelController({ doc, save: async (l) => { saved.push(l); return fail ? { ok: false, error: 'disk full' } : { ok: true, level: l }; } });
   ctl.paint();
-  assert.equal(doc.querySelector('#nav-mode .lv-name').textContent, 'Simple mode');
+  assert.equal(doc.querySelector('#nav-mode .lv-name').textContent, 'Simple');
   doc.getElementById('nav-mode').click();
   const modal = doc.getElementById('mode-modal');
   assert.ok(!modal.classList.contains('hidden'), 'click opens the dialog');
@@ -194,7 +194,7 @@ test('the dialog: three radio cards, click applies at once and saves, a failed s
   assert.equal(doc.documentElement.dataset.level, 'expert', 'applies before the save resolves (live preview)');
   await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(saved, ['expert']);
-  assert.equal(doc.querySelector('#nav-mode .lv-name').textContent, 'Expert mode');
+  assert.equal(doc.querySelector('#nav-mode .lv-name').textContent, 'Expert');
   assert.equal(doc.querySelector('#modeSettingsName').textContent, 'Expert mode', 'the Settings card follows');
 
   fail = true;

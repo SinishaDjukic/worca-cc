@@ -146,7 +146,7 @@ export function createLevelController({ doc, save } = {}) {
       const icon = b.querySelector('.lv-icon-slot');
       if (icon) icon.innerHTML = levelIconSvg(lvl);
       const name = b.querySelector('.lv-name');
-      if (name) name.textContent = b.dataset.modeOpen === 'short' ? info.label : `${info.label} mode`;
+      if (name) name.textContent = info.label;              // just the level: the icon says what it is
       b.setAttribute('aria-label', `Interface mode: ${info.label}. Change how much of Worca is shown`);
       b.title = `${info.label} mode — change how much of Worca is shown`;   // the collapsed rail's only label
     }
