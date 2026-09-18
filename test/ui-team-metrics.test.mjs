@@ -231,30 +231,41 @@ test('loading: the skeleton paints before the data, the read is deferred, the ch
 });
 
 test('switching back to a scope paints its cached payload at once, dimmed, while the read is out; a new scope gets the skeleton', async () => {
-  const { window, tick } = await boot({
+  // The payload reads are held until the test releases them, and every step waits on the page's
+  // own state: a fixed sleep raced the loader on a loaded CI runner.
+  const held = [];
+  const { window } = await boot({
     fetchHandler: (u) => {
       if (u.includes('/api/team-metrics/scopes')) return respond(SCOPES_ON);
-      if (u.includes('/api/team-metrics?')) return new Promise((res) => setTimeout(() => res(respond(u.includes('scope=workspace') ? WS_DATA : TM_DATA)), 60));
+      if (u.includes('/api/team-metrics?')) return new Promise((res) => held.push(() => res(respond(u.includes('scope=workspace') ? WS_DATA : TM_DATA))));
       return null;
     },
   });
   const doc = window.document;
   const body = doc.getElementById('tm-body');
-  const settle = async () => { await new Promise((r) => setTimeout(r, 100)); await tick(); await tick(); };
+  const until = async (pred, what) => {
+    for (let i = 0; i < 500; i++) { if (pred()) return; await new Promise((r) => setTimeout(r, 10)); }
+    assert.fail(`timed out waiting for ${what}`);
+  };
+  const release = () => held.splice(0).forEach((f) => f());
   window.location.hash = 'team-metrics'; window.dispatchEvent(new window.Event('hashchange'));
-  await settle();
-  assert.equal(body.querySelectorAll('.stat-tile').length, 6);
+  await until(() => held.length, 'the first payload read');
+  release();
+  await until(() => body.querySelectorAll('.stat-tile').length === 6 && !body.hasAttribute('aria-busy'), 'the project payload');
   const sel = doc.getElementById('tm-scope');
   const pick = (v) => { sel.value = v; sel.dispatchEvent(new window.Event('change', { bubbles: true })); };
-  pick('workspace:wks-iot-sp-platform-0123abcd'); await tick(); await tick();
+  pick('workspace:wks-iot-sp-platform-0123abcd');
+  await until(() => held.length, 'the workspace payload read');
   assert.ok(body.querySelector('.tm-skeleton'), 'never seen: the skeleton, not the project scope\'s numbers');
-  await settle();
-  assert.ok(doc.querySelector('.tm-home-hint'), 'the workspace payload landed');
-  pick('project:billing-api-0123abcd'); await tick(); await tick();
+  release();
+  await until(() => doc.querySelector('.tm-home-hint') && !body.hasAttribute('aria-busy'), 'the workspace payload');
+  pick('project:billing-api-0123abcd');
+  await until(() => held.length, 'the project payload read');
   assert.equal(body.querySelector('.tm-skeleton'), null);
   assert.equal(body.querySelectorAll('.stat-tile').length, 6, 'the project scope\'s cached payload paints at once');
   assert.equal(doc.querySelector('.tm-home-hint'), null, 'and it is that scope\'s payload');
   assert.ok(body.classList.contains('is-loading')); assert.equal(body.getAttribute('aria-busy'), 'true');
-  await settle();
+  release();
+  await until(() => !body.hasAttribute('aria-busy'), 'the project read to land');
   assert.equal(body.classList.contains('is-loading'), false); assert.equal(body.getAttribute('aria-busy'), null);
 });
