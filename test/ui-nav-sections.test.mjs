@@ -28,16 +28,16 @@ test('sidebar reads: CTA, Activity, Build, Manage, divider, Settings — in orde
   )].map((m) => m[1] || m[2] || m[3]);
   assert.deepEqual(tokens, [
     'new',
-    'Activity', 'running', 'history', 'stats', 'team-metrics',
+    'Activity', 'running', 'schedules', 'history', 'stats', 'team-metrics',
     'Build', 'composer', 'agents',
     'Manage', 'projects', 'workspaces',
     'nav-sep', 'settings',
   ]);
 });
 
-// guardrails/models/plugins moved into Settings as tabs, so 12 -> 9; team-metrics adds one -> 10.
-test('grouping adds no buttons and no anchors (10-button invariant holds)', () => {
-  assert.equal((sidebar().match(/<button type="button"/g) || []).length, 10);
+// guardrails/models/plugins moved into Settings as tabs, so 12 -> 9; team-metrics adds one -> 10; schedules -> 11.
+test('grouping adds no buttons and no anchors (11-button invariant holds)', () => {
+  assert.equal((sidebar().match(/<button type="button"/g) || []).length, 11);
   assert.ok(!/<a[\s>]/.test(sidebar()));
   assert.match(sidebar(), /<div class="nav-sect">Activity<\/div>/);
   assert.match(sidebar(), /<div class="nav-sect">Build<\/div>/);
@@ -177,7 +177,7 @@ test('topnav order mirrors the sidebar, with a separator per group boundary', ()
     .map((m) => m[1] || m[2]);
   assert.deepEqual(tokens, [
     'new', 'topnav-sep',
-    'running', 'history', 'stats', 'team-metrics', 'topnav-sep',
+    'running', 'schedules', 'history', 'stats', 'team-metrics', 'topnav-sep',
     'composer', 'agents', 'topnav-sep',
     'projects', 'workspaces', 'topnav-sep',
     'settings',
@@ -185,7 +185,7 @@ test('topnav order mirrors the sidebar, with a separator per group boundary', ()
 });
 
 test('separators are spans (button count and settings-text invariants hold)', () => {
-  assert.equal((topnav().match(/<button type="button"/g) || []).length, 10);
+  assert.equal((topnav().match(/<button type="button"/g) || []).length, 11);
   assert.equal((topnav().match(/<span class="topnav-sep" aria-hidden="true"><\/span>/g) || []).length, 4);
   assert.match(topnav(), /data-nav="settings">Settings<\/button>/);
 });

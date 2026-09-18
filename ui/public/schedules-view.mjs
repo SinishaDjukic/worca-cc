@@ -310,6 +310,7 @@ export function createSchedulesView({ listHost, feedHost, subEl = null, msgEl = 
   }
 
   async function load() {
+    ensureTimer();
     try {
       const data = await api('GET', '/api/schedules');
       model.schedules = Array.isArray(data.schedules) ? data.schedules : [];
@@ -332,7 +333,13 @@ export function createSchedulesView({ listHost, feedHost, subEl = null, msgEl = 
       node.textContent = `${node.dataset.prefix || ''}${when(at)}${cd ? ` · in ${cd}` : ''}`;
     }
   }
-  timer = setInterval(() => tickCountdowns(), 15000);
+  // Started lazily on the first load (never at import: app.js is also imported under Node by
+  // the jsdom tests, where a live interval would hold the process open) and unref'd there.
+  function ensureTimer() {
+    if (timer) return;
+    timer = setInterval(() => tickCountdowns(), 15000);
+    if (timer && typeof timer.unref === 'function') timer.unref();
+  }
 
   return {
     load, loadFeed, tickCountdowns,
@@ -345,6 +352,6 @@ export function createSchedulesView({ listHost, feedHost, subEl = null, msgEl = 
     },
     ticketRow,
     isLoaded: () => model.loaded,
-    destroy() { clearInterval(timer); },
+    destroy() { clearInterval(timer); timer = null; },
   };
 }
