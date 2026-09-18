@@ -170,6 +170,8 @@ body{
    would wash them into translucent white). */
 .nav-count.n-run{background:var(--green);color:var(--on-status);}
 .nav-count.n-paused{background:var(--amber);color:var(--on-status);position:relative;margin-left:6px;}
+/* Schedules' unread-problems badge sits beside its grey count exactly as Running's paused badge does */
+#nav-schedules-unread{margin-left:6px;}
 .nav-count[hidden]{display:none;}   /* author display:grid beats the UA [hidden] rule */
 .nav button.active .nav-count.n-run{background:var(--green);color:var(--on-status);}
 .nav button.active .nav-count.n-paused{background:var(--amber);color:var(--on-status);}
