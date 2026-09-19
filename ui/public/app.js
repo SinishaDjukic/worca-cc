@@ -9345,6 +9345,7 @@ function beginRun(runId, projectDir, title, opts = {}) {
   });
   hideViewer();
   updateNavCounts();
+  gs.startedRunId = runId;   // the Getting-started tours end on THIS run's card
   showView('running');
   renderRunningView();
 }
@@ -20532,7 +20533,7 @@ function paintScheduleCounts(c) {
 // and PATH — never written here); this block only paints it and runs guides.
 // A guide is transient state: a reload clears it, the shelf re-summons it.
 // ---------------------------------------------------------------------------
-const gs = { status: null, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, refreshTimer: 0, poll: 0 };
+const gs = { status: null, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
 let gsPillHost = null;
 let gsWelcomeUnbind = null;
 
@@ -20694,9 +20695,10 @@ document.addEventListener('keydown', (e) => {
 // is itself a hop: the sidebar entry is ringed and the user's own click routes,
 // so they learn where things live. `final` hops end the guide on the click.
 const onView = (v) => currentShownView === v;
-/** Ring the sidebar entry for `view` (the compact top-nav twin below 1080px). */
-const NAV = (view, text) => ({
-  nav: view, text,
+/** Ring the sidebar entry for `view` (the compact top-nav twin below 1080px). A view the
+ *  user is already on is never a stop: the hop passes on arrival, without a ring. */
+const NAV = (view, text, also = []) => ({
+  id: `nav:${view}`, nav: view, views: [view, ...also], text,   // `also`: views reached from it that count as "there" (a wizard)
   target: [`.nav button[data-nav="${view}"]`, `.topnav button[data-nav="${view}"]`],
   lift: ['.topnav'],
 });
@@ -20705,124 +20707,273 @@ const noProjectPicked = () => {
   const targetIsProject = !document.querySelector('#target-seg [data-target="workspace"].on');
   return !!(sel && targetIsProject && !sel.hidden && !(sel.value || '').trim());
 };
-/** The start-run hop shared by the two run steps: nav → project → prompt → (mock) → Start → Running. */
+/** A hop's control is on the page and not hidden (attribute or a hidden ancestor). */
+const gsShowing = (target) => (Array.isArray(target) ? target : [target]).some((sel) => {
+  const t = document.querySelector(sel);
+  return !!t && !t.hidden && !t.closest('[hidden]');
+});
+const gsHopContains = (hop, node) => (Array.isArray(hop.target) ? hop.target : [hop.target])
+  .some((sel) => { const t = document.querySelector(sel); return !!(t && node && t.contains(node)); });
+
+// A guide is an ORDERED list of hops. Each names one real control and, for most, the page
+// state it asks for (`met`): a project picked, a task typed, Mock on. The lit hop is the
+// first the guide has not PASSED. A hop passes when its state arrives while it is lit. A hop
+// whose state was already right when the guide reached it is still lit — a replay walks
+// every stop again, since the user may have forgotten what a control is for — and passes
+// on Next, on the control's own click (a toggle excepted: its click would undo the state),
+// or on a change made to the control. Explanation-only hops (`info`) pass on Next alone.
+// A hop that opens something (`skipWhenMet`: a dialog, a sheet, a panel) is never passed —
+// it is skipped while open and re-lights when closed. Passing is per guide run, never
+// stored; the state itself is always read from the page, so a guide can never desync from it.
+//   { id, target, text, lift?, mode?, met?, already?, info?, nextLabel?, skipWhenMet?, toggle?, final?, click?, nav? }
+function gsWalk(hops, g) {
+  let lastNav = null;   // the way to the stops that follow it: leaving their view re-lights it
+  for (const h of hops) {
+    if (!h) continue;
+    if (h.nav) {
+      lastNav = h;
+      if (g.passed.has(h.id)) continue;
+      if (h.views.some(onView)) { g.passed.add(h.id); continue; }   // arriving is the pass, so it never re-lights on the way back
+      return h;
+    }
+    if (g.passed.has(h.id)) continue;
+    // Nothing to do here on any view (an open sheet's pill, an open dialog's button, an expanded
+    // panel, a hidden field): decided BEFORE the way-back rule, or leaving the view would re-light
+    // its nav for it.
+    const met = !h.info && typeof h.met === 'function' ? h.met() : null;
+    if (met && (h.skipWhenMet || !gsShowing(h.target))) continue;
+    if (lastNav && !lastNav.views.some(onView)) return lastNav;
+    if (h.info) return { ...h, next: true };
+    if (!h.met || !met) return h;                           // final / Start (the click is the whole point), or unmet
+    return { ...h, next: true, pre: true, text: h.already || h.text };
+  }
+  return null;
+}
+/** The dialog is up (a .viewer-modal without `hidden`). */
+const gsDialogUp = (id) => { const m = document.getElementById(id); return !!(m && !m.classList.contains('hidden')); };
+/** The run just started, on the Running list: the closing stop of every tour that starts one. */
+const gsRunCardHop = (text) => ({
+  id: 'card', info: true, nextLabel: 'Done',
+  // The run Start just began (beginRun notes it) when it is on the list; the first card otherwise.
+  target: [...(gs.startedRunId ? [`#run-list [data-run-id="${gs.startedRunId}"]`] : []), '#run-list [data-run-id]'],
+  text,
+});
+/** The two run steps: nav → project → (workflow) → task → Mock → Start → Running → the run's card. */
 function gsRunHops(g, mock) {
   const prompt = document.getElementById('prompt');
-  const mockOn = !!(el.mock && el.mock.checked);   // the switch sits beside Start run at every mode
-  const formErr = (document.getElementById('form-msg')?.textContent || '').trim();
-  if (g.started && onView('running')) return null;                       // the point of the step: seen
-  if (g.started && !(onView('new') && formErr)) {                        // a refused form keeps ringing Start
-    return NAV('running', mock
-      ? 'Follow the agents here. Questions and gates land in this list too.'
-      : 'Follow it here. When it finishes it moves to History.');
-  }
-  if (!onView('new')) return NAV('new', 'Every run starts here.');
-  if (noProjectPicked()) return { target: '#projectSelect', lift: ['.select-wrap'], text: 'Pick the project the run happens in.' };
   const wf = document.getElementById('workflowSelect');
-  if (!mock && wf && !wf.hidden && (wf.value || '') === AUTO_WORKFLOW_ID) {
-    return { target: '#workflowSelect', lift: ['.select-wrap'],
-      text: 'Choose a built-in workflow for this run — Default is the loop you saw in the Composer. Auto would pick one for you.' };
-  }
-  if (prompt && !prompt.hidden && !prompt.value.trim()) {
-    return { target: '#prompt', text: mock
-      ? 'Describe any task. A mock run never reads it, so one line will do.'
-      : 'Describe the task in a sentence or two. The planner asks when something matters.' };
-  }
-  if (mock) {
-    if (!mockOn) return { target: '#mock-switch', text: 'Mock mode runs the whole pipeline offline: no Claude calls, no tokens.' };
-    return { target: '#start-btn', start: true, text: 'Start it. The run appears under Running in the sidebar.' };
-  }
-  if (mockOn) return { target: '#mock-switch', text: 'Turn Mock mode off for a real run.' };
-  return { target: '#start-btn', start: true, text: 'Start the run. Worca answers loop gates itself and pauses only for the questions that matter.' };
+  const mockOn = () => !!(el.mock && el.mock.checked);   // the switch sits beside Start run at every mode
+  const formErr = () => (document.getElementById('form-msg')?.textContent || '').trim();
+  return [
+    NAV('new', 'Every run starts here.'),
+    { id: 'project', target: '#projectSelect', lift: ['.select-wrap'], met: () => !noProjectPicked(),
+      text: 'Pick the project the run happens in.',
+      already: 'The run happens in the project picked here — any registered folder.' },
+    mock ? null : {
+      id: 'workflow', target: '#workflowSelect', lift: ['.select-wrap'],
+      met: () => !(wf && !wf.hidden && (wf.value || '') === AUTO_WORKFLOW_ID),
+      text: 'Choose a built-in workflow for this run — Default is the loop you saw in the Composer. Auto would pick one for you.',
+      already: 'The workflow for this run is picked here — Default is the loop you saw in the Composer; Auto would pick one for you.',
+    },
+    { id: 'prompt', target: '#prompt', met: () => !(prompt && !prompt.hidden && !prompt.value.trim()),
+      text: mock
+        ? 'Describe any task. A mock run never reads it, so one line will do.'
+        : 'Describe the task in a sentence or two. The planner asks when something matters.',
+      already: mock
+        ? 'The task goes here. A mock run never reads it, so what is there will do.'
+        : 'The task goes here — a sentence or two; the planner asks when something matters.' },
+    { id: 'mock', target: '#mock-switch', toggle: true, met: () => mockOn() === mock,
+      skipWhenMet: !mock,   // a real run mentions the switch only when it has to be turned off
+      text: mock ? 'Mock mode runs the whole pipeline offline: no Claude calls, no tokens.' : 'Turn Mock mode off for a real run.',
+      already: 'Mock mode is on: the whole pipeline runs offline, no Claude calls, no tokens.' },
+    // A refused form (the message under Start) keeps ringing Start.
+    { id: 'start', target: '#start-btn', click: 'started', met: () => g.started && !(onView('new') && formErr()),
+      text: mock
+        ? 'Start it. The run appears under Running in the sidebar.'
+        : 'Start the run. Worca answers loop gates itself and pauses only for the questions that matter.' },
+    NAV('running', mock
+      ? 'Follow the agents here. Questions and gates land in this list too.'
+      : 'Follow it here. When it finishes it moves to History.'),
+    gsRunCardHop(mock
+      ? 'This is your run. Open the card to follow each agent and its log; a question or a gate lands here too. When it finishes it moves to History.'
+      : 'This is your run. Open the card to follow each agent, its log and its spend; a question the planner needs answered lands here. When it finishes it moves to History.'),
+  ];
+}
+/** Register a folder, through the Add project dialog: the prelude of every tour that needs a project. */
+function gsAddProjectHops(g, navText, addText) {
+  const val = (id) => (document.getElementById(id)?.value || '').trim();
+  // Opening the dialog is skipped while it is up and re-lights if it is closed; once the
+  // project is added the dialog hops are all met for good.
+  return [
+    NAV('projects', navText),
+    { id: 'add', target: '#project-add-btn', skipWhenMet: true, met: () => !!g.added || gsDialogUp('project-add-modal'), text: addText },
+    { id: 'path', mode: 'pointer', target: '#proj-add-path', met: () => !!g.added || !!val('proj-add-path'), skipWhenMet: !!g.added,
+      text: 'Paste the folder’s path, or Choose folder… to pick it. Files on disk are never touched.',
+      already: 'The folder’s path goes here. Files on disk are never touched.' },
+    { id: 'name', mode: 'pointer', target: '#proj-add-name', met: () => !!g.added || !!val('proj-add-name'), skipWhenMet: !!g.added,
+      text: 'Name it — this is how it appears in lists and pickers.',
+      already: 'Its name — how it appears in lists and pickers.' },
+    { id: 'save', mode: 'pointer', target: '#proj-add-save', click: 'added', met: () => !!g.added && !gsDialogUp('project-add-modal'),
+      text: 'Add it. The dialog closes and the project joins the list.' },
+  ];
 }
 /** A guide never fails on a control the interface mode hides (docs/ui-levels.md): when every
  *  candidate target exists but sits above the mode, the hop becomes "raise the mode" — the
- *  sidebar item first, then the right card once the dialog is up. Choosing it re-derives the
- *  original hop through the page watcher, like any other click. */
+ *  sidebar item first, then the right card once the dialog is up, then Done so the tour is
+ *  seen to carry on from behind the dialog. Choosing re-derives the original hop through the
+ *  page watcher, like any other click. */
 function gsRaiseLevelHop(hop) {
   const sels = Array.isArray(hop.target) ? hop.target : [hop.target];
+  const dialogUp = gsDialogUp('mode-modal');
   let need = null;
   for (const sel of sels) {
     const t = typeof sel === 'string' ? document.querySelector(sel) : null;
     if (!t) continue;
     const min = minLevelFor(t);
-    if (levelAtLeast(min)) return hop;
+    if (levelAtLeast(min)) {
+      return dialogUp ? { target: '#mode-done', mode: 'pointer', text: 'Done — the tour carries on from here.' } : hop;
+    }
     if (!need || UI_LEVELS.indexOf(min) < UI_LEVELS.indexOf(need)) need = min;
   }
   if (!need) return hop;                                   // not mounted yet: guide-spot waits for it
   const label = LEVEL_INFO[need].label;
-  const modal = document.getElementById('mode-modal');
-  if (modal && !modal.classList.contains('hidden')) {
+  if (dialogUp) {
     return { target: `#mode-cards [data-level-choice="${need}"]`, mode: 'pointer', text: `Choose ${label}, then Done.` };
   }
   return { target: ['#nav-mode', '.topnav-mode'], lift: ['.topnav'],
     text: `This step is part of ${label} mode. Open the mode switch to show it.` };
 }
 function gsNextHop(step, g = gs.guide || {}) {
-  const hop = gsNextHopRaw(step, g);
+  const hop = gsWalk(gsHops(step, g), g);
   return hop ? gsRaiseLevelHop(hop) : hop;
 }
-function gsNextHopRaw(step, g = gs.guide || {}) {
+// Every tour runs to its LOGICAL end — the thing the tile promises — not to the first click of
+// a multi-step action: a project is registered (not just the dialog opened), a run is on its card
+// under Running, a workspace is saved, team metrics is enabled, the answer has landed. A tour
+// that needs a project first walks the whole Add project dialog and then carries on.
+function gsHops(step, g) {
   const projects = Array.isArray(state.projects) ? state.projects.length : 0;
-  const addProject = (navText, addText) => (onView('projects')
-    ? { target: '#project-add-btn', text: addText, final: true }
-    : NAV('projects', navText));
+  const needProject = (navText, addText) => (projects ? [] : gsAddProjectHops(g, navText, addText));
   switch (step) {
     case 'project':
-      return addProject('Projects live here: every run happens inside one of these folders.',
-        'Register a folder. Files on disk are never touched.');
+      return [
+        ...gsAddProjectHops(g, 'Projects live here: every run happens inside one of these folders.', 'Register a folder: a folder chooser opens — pick the project’s folder. Files on disk are never touched.'),
+        { id: 'row', info: true, nextLabel: 'Done', target: '#projects-list .pl-item',
+          text: 'Your project. Runs happen inside this folder; open the row for its settings, memory and history.' },
+      ];
     case 'run':
-      if (!projects) return addProject('A run needs a project first.', 'Add one here.');
-      return gsRunHops(g, true);
+      return [...needProject('A run needs a project first.', 'Add one here: pick its folder in the chooser that opens.'), ...gsRunHops(g, true)];
     case 'realRun':
-      if (!projects) return addProject('A run needs a project first.', 'Add one here.');
-      return gsRunHops(g, false);
+      return [...needProject('A run needs a project first.', 'Add one here: pick its folder in the chooser that opens.'), ...gsRunHops(g, false)];
     case 'ask': {
       // The pill hides while the sheet is open (ask-panel.mjs), so it doubles as the "sheet open" signal.
       const pill = document.querySelector('.ask-pill');
       const input = document.querySelector('.ask-input');
-      if (!pill || !pill.hidden) return { target: '.ask-pill', lift: ['.ask-dock'], text: 'Ask Worca answers questions about any run in plain language. It is on every view.' };
-      if (input && !input.value.trim()) return { target: '.ask-input', lift: ['.ask-dock'], text: 'Try “What did my last run change?” — or anything about a run, an agent or a project.' };
-      return { target: '.ask-send', lift: ['.ask-dock'], text: 'Send it. Worca reads the run itself before answering.', final: true };
+      return [
+        { id: 'pill', target: '.ask-pill', lift: ['.ask-dock'], met: () => !!(pill && pill.hidden), skipWhenMet: true,
+          text: 'Ask Worca answers questions about any run in plain language. It is on every view.' },
+        { id: 'question', target: '.ask-input', lift: ['.ask-dock'], met: () => !!(input && input.value.trim()),
+          text: 'Try “What did my last run change?” — or anything about a run, an agent or a project.',
+          already: 'A question is already typed here. Anything about a run, an agent or a project works.' },
+        { id: 'send', target: '.ask-send', lift: ['.ask-dock'], click: 'asked', met: () => !!g.asked,
+          text: 'Send it. Worca reads the run itself before answering.' },
+        { id: 'answer', info: true, nextLabel: 'Done', target: '.ask-transcript', lift: ['.ask-dock'],
+          text: 'The answer lands here, with what it read to get there. Ask a follow-up any time — the thread keeps its context.' },
+      ];
     }
     case 'workflows': {
-      // Look at one, then pick one: the step ends on a pick in the New pipeline
-      // picker (which persists it — that is the derived tick).
-      const wf = document.getElementById('workflowSelect');
-      if (wf && g.wfInitial !== undefined && (wf.value || '') !== g.wfInitial) return null;
-      const opened = (document.getElementById('gv-name')?.value || '').trim();
-      if (onView('composer') && opened) g.wfSeen = true;   // a workflow is on the canvas: seen
-      if (!g.wfSeen && !onView('composer')) return NAV('composer', 'Workflows are the agent chains Worca runs. The built-in ones live here.');
-      if (!g.wfSeen && !opened) {
-        return { target: ['#gv-saved-list .pl-item[data-id="wf_default"] .pl-row', '#gv-saved-list .pl-row'],
-          text: 'Open Default: the full Plan → Refine → Implement → Review loop. Each card is an agent; the wires carry plans, code and reviews.' };
-      }
-      if (!onView('new')) return NAV('new', 'Now pick one for a run.');
-      if (g.wfInitial === undefined) g.wfInitial = wf ? (wf.value || '') : '';
-      return { target: '#workflowSelect', lift: ['.select-wrap'], text: 'Every run picks its workflow here. Auto lets Worca choose; Default is the loop you just saw. Pick one.' };
+      // Composer: open Default, read the canvas, open the side panel, read it — then back to New
+      // pipeline to pick one for a run (the pick persists it: that is the derived tick) and run it.
+      const rail = document.getElementById('gv-ins-rail');
+      const run = Object.fromEntries(gsRunHops(g, false).filter(Boolean).map((h) => [h.id.replace('nav:', ''), h]));
+      return [
+        NAV('composer', 'Workflows are the agent chains Worca runs. The built-in ones live here.'),
+        { id: 'open', target: ['#gv-saved-list .pl-item[data-id="wf_default"] .pl-row', '#gv-saved-list .pl-row'],
+          met: () => !!(document.getElementById('gv-name')?.value || '').trim(),
+          text: 'Open Default: the built-in Plan → Refine → Implement → Review loop.',
+          already: 'A workflow is already on the canvas. Open Default to see the built-in Plan → Refine → Implement → Review loop.' },
+        { id: 'canvas', info: true, target: '#gv-canvas',
+          text: 'This is the whole workflow. Each card is an agent; the wires carry plans, code and reviews from one to the next. Drag cards, rewire them or drop in other agents — the loop is yours to change.' },
+        { id: 'rail-open', target: '#gv-ins-toggle', lift: ['#gv-ins-rail'], met: () => !rail || rail.dataset.open !== 'collapsed', skipWhenMet: true,
+          text: 'Expand the side panel: it holds the agents you can drop onto the canvas and the settings of whatever you select.' },
+        { id: 'rail', info: true, target: '#gv-ins-rail',
+          text: 'The side panel is the toolbox. Agents lists every agent you can drag onto the canvas, with Create agent… for your own. Info shows what is selected on the canvas: a card’s model and settings, or a wire’s loop limit.' },
+        NAV('new', 'Now start a run with the workflow that fits your task. Every run starts here.'),
+        // The pick is saved per project (PATCH /api/config), so a project has to be picked first.
+        { id: 'project', target: '#projectSelect', lift: ['.select-wrap'], met: () => !noProjectPicked(),
+          text: 'Pick the project the run happens in — the workflow you choose is remembered for it.',
+          already: 'The run happens in the project picked here; the workflow you choose next is remembered for it.' },
+        // Only the user's own pick counts (a `change` on the picker, noted by the watcher): choosing
+        // a project loads its remembered workflow into the picker, and that must not end the tour.
+        { id: 'pick', target: '#workflowSelect', lift: ['.select-wrap'], met: () => !!g.wfPicked,
+          text: 'Every run picks its workflow here. Auto lets Worca choose; Default is the loop you just saw. Pick the one that fits your task.' },
+        // Then the run itself, so the tour ends on something visibly final (the run's card), not on
+        // a form. The Mock switch is left to the user: mentioned at Start, never rung — a real run is
+        // a fine outcome here, and so is an offline one.
+        { ...run.prompt, text: 'Now describe the task for it, in a sentence or two. The planner asks when something matters.',
+          already: 'The task goes here — a sentence or two; the planner asks when something matters.' },
+        { ...run.start, text: 'Start the run with that workflow. Mock mode, beside it, tries the loop offline first.' },
+        run.running,
+        gsRunCardHop('This is your run, on the workflow you picked. Open the card to follow each agent; when it finishes it moves to History.'),
+      ];
     }
-    case 'workspace':
-      if (projects < 2) return addProject('A workspace needs at least two projects.', 'Add another one here.');
-      if (!onView('workspaces')) return NAV('workspaces', 'Workspaces live here.');
-      return { target: '#ws-create-btn', text: 'A workspace runs one task across several projects at once.', final: true };
+    case 'workspace': {
+      const checked = () => document.querySelectorAll('#wiz-projects input:checked').length;
+      const stepShowing = (n) => { const s = document.getElementById(`wiz-step-${n}`); return !!(s && !s.classList.contains('hidden')); };
+      return [
+        ...(projects < 2 ? gsAddProjectHops(g, 'A workspace needs at least two projects.', 'Add another one here: pick its folder in the chooser that opens.') : []),
+        NAV('workspaces', 'Workspaces live here.', ['workspace-create']),   // the wizard is part of the way
+        { id: 'create', target: '#ws-create-btn', skipWhenMet: true, met: () => onView('workspace-create'),
+          text: 'A workspace runs one task across several projects at once. Create one.' },
+        { id: 'name', target: '#wiz-name', met: () => !!(document.getElementById('wiz-name')?.value || '').trim(),
+          text: 'Name the workspace.', already: 'The workspace’s name.' },
+        { id: 'members', target: '#wiz-projects', met: () => checked() >= 2,
+          text: 'Tick the projects that belong together — two or more.',
+          already: 'The projects that belong together — two or more are ticked.' },
+        { id: 'scan', target: '#wiz-start-scan', met: () => !stepShowing(1),
+          text: 'Scan them: Worca maps how the projects connect and drafts the workspace description.' },
+        { id: 'scanning', target: '#wiz-step-2 .status-label', met: () => stepShowing(3),
+          text: 'Worca is reading the projects — this takes a moment. The description arrives when it is done.' },
+        { id: 'save', target: '#wiz-save', final: true,
+          text: 'Read the draft, edit what you like, then save. Every run can now target the workspace as a whole.' },
+      ];
+    }
     case 'teamMetrics': {
-      if (!projects) return addProject('Team metrics is enabled per project.', 'Add one here first.');
-      if (!onView('projects')) return NAV('projects', 'Team metrics is switched on per project, from its page here.');
-      // The control lives on the project page's Team tab: first the row, then the tab pill, then
-      // the control itself — or, for a project with no origin remote, the block that explains why,
-      // so the guide never lights nothing.
-      if (!projDetail) return { target: ['#projects-list .pl-row[role="button"]', '#projects-list .pl-row'], text: 'Open a project: its page carries the team setup.' };
-      const teamTab = document.getElementById('pd-tab-team');
-      if (teamTab && !teamTab.classList.contains('active')) return { target: '#pd-tab-team', text: 'Team metrics and team policy live on the Team tab.' };
-      return {
-        final: true,
-        target: ['#proj-detail .tm-enable', '#proj-detail .pd-team-metrics'],
-        text: ['Team metrics records every finished run on a shared git branch, for the whole team.',
-          'Team metrics lives on a git remote. This project has none yet — push it to one and “Set up team metrics…” appears here.'],
-      };
+      // The control lives on the project page's Team tab (the Projects row only carries a status
+      // chip): first the row, then the tab pill, then the block — or, for a project with no origin
+      // remote, the block that explains why, so the tour never lights nothing. The plan is re-derived
+      // after every hop, so each readiness check looks at what is on screen now.
+      const pre = needProject('Team metrics is enabled per project.', 'Add one here first: pick its folder in the chooser that opens.');
+      const nav = NAV('projects', 'Team metrics is switched on per project, from its page here.');
+      const pageOpen = () => !!projDetail;
+      const teamTab = () => document.getElementById('pd-tab-team');
+      const tabActive = () => !!(teamTab() && teamTab().classList.contains('active'));
+      const block = () => document.querySelector('#proj-detail .pd-team-metrics .tm-cell');
+      const canEnable = () => !!document.querySelector('#proj-detail .tm-enable');
+      const dialog = () => !!document.querySelector('#plugin-modal:not(.hidden) .tm-enable-submit');
+      const walk = [
+        ...pre, nav,
+        { id: 'open', target: ['#projects-list .pl-row[role="button"]', '#projects-list .pl-row'], skipWhenMet: true, met: pageOpen,
+          text: 'Open a project: its page carries the team setup.' },
+        { id: 'tab', target: '#pd-tab-team', skipWhenMet: true, met: tabActive,
+          text: 'Team metrics and team policy live on the Team tab.' },
+      ];
+      if (!pageOpen() || !tabActive() || !block()) return [...walk, { id: 'enable', target: ['#proj-detail .tm-enable', '#proj-detail .pd-team-metrics'], met: () => false, text: 'Team metrics is switched on from the project’s Team tab.' }];
+      if (!canEnable()) {
+        // No origin remote: nothing to enable yet — explain, on the block that will hold the button.
+        return [...walk, { id: 'why', info: true, nextLabel: 'Done', target: '#proj-detail .pd-team-metrics',
+          text: 'Team metrics lives on a git remote. This project has none yet — push it to one and “Set up team metrics…” appears here.' }];
+      }
+      return [
+        ...walk,
+        { id: 'enable', target: '#proj-detail .tm-enable', skipWhenMet: true, met: dialog,
+          text: 'Team metrics records every finished run on a shared git branch, for the whole team. Set it up here.' },
+        { id: 'submit', mode: 'pointer', target: '#plugin-modal .tm-enable-submit', final: true,
+          text: 'Create the branch and enable it. From now on every finished run in this project is recorded there.' },
+      ];
     }
     default:
-      return null;
+      return [];
   }
 }
 
@@ -20833,24 +20984,50 @@ function endGuide() {
   clearInterval(gs.poll); gs.poll = 0;
   for (const t of GS_WATCH_EVENTS) document.removeEventListener(t, gsOnPageChange, true);
 }
-// A guide's next hop is a pure function of the page, so ANY interaction the user
-// makes (typing the prompt, opening Advanced, flipping Mock, a nav click) can
-// move it on: after each one, re-derive the hop and re-light if it changed.
-// Capture phase, because `toggle` does not bubble. A final hop ends on the
-// target's own click instead.
+// A guide's next hop is a pure function of the page and of what this run has passed, so
+// ANY interaction the user makes (typing the prompt, flipping Mock, a nav click) can move
+// it on: after each one, re-derive the hop and re-light if it changed. Capture phase,
+// because `toggle` does not bubble. A final hop ends on the target's own click instead.
 const GS_WATCH_EVENTS = ['input', 'change', 'toggle', 'click'];
-function gsOnPageChange() {
+/** The lit control was clicked: a final hop is the whole guide; a `click` hop notes it (Start
+ *  run, Send, Add project) so a later hop can ask for it; a click on an already-right control
+ *  acknowledges it (a toggle's click undoes the state instead, so it is left to the watcher).
+ *  Reached from the page watcher AND from the spot's own listener (idempotent), so a click
+ *  counts even while the spot is re-acquiring a repainted control. */
+function gsTargetClicked(hop) {
   const g = gs.guide;
-  if (!g || g.final) return;
+  if (!g || g.hop !== hop) return;
+  if (hop.click) g[hop.click] = true;
+  if (hop.pre && !hop.toggle) g.passed.add(hop.id);
+  if (hop.final) endGuide();
+}
+function gsOnPageChange(e) {
+  const g = gs.guide;
+  if (!g) return;
+  if (e.type === 'click' && g.hop && gsHopContains(g.hop, e.target)) gsTargetClicked(g.hop);
+  if (!gs.guide || g.final) return;
+  // A change made to an already-right control (re-picking the project, editing the task)
+  // is the user's own "got it" for that hop.
+  if (g.hop && g.hop.pre && (e.type === 'change' || e.type === 'input') && gsHopContains(g.hop, e.target)) g.touched = true;
+  // The workflows tour ends on the user's pick in the picker — the event, not the value, which
+  // the page also sets by itself (a project's remembered workflow).
+  if (g.hop && g.hop.id === 'pick' && e.type === 'change' && gsHopContains(g.hop, e.target)) g.wfPicked = true;
   const mine = g.seq;
   setTimeout(() => gsReconsider(mine), 0);
 }
+const gsHopKey = (h) => (h ? `${String(h.target)}|${h.text}|${h.next ? 1 : 0}` : '');
 function gsReconsider(seq) {
   const cur = gs.guide;
   if (!cur || cur.seq !== seq) return;
+  const h = cur.hop;
+  if (h && h.id && h.met && !h.skipWhenMet) {   // a skipWhenMet hop (opens something) is never passed: it re-lights when closed
+    if (!h.pre && h.met()) cur.passed.add(h.id);                    // the state the lit hop asked for arrived
+    else if (h.pre && cur.touched && h.met()) cur.passed.add(h.id);  // the control was changed and is still right
+  }
+  cur.touched = false;
   const next = gsNextHop(cur.step, cur);
   if (!next) { endGuide(); return; }
-  if (String(next.target) !== String(cur.target)) runGuide();
+  if (gsHopKey(next) !== gsHopKey(h)) runGuide();
 }
 /** The main column's scrollport: a guide arriving on a view starts at its top,
  *  then glides down to the ringed control (guide-spot scrolls it into view). */
@@ -20881,10 +21058,12 @@ async function startGuide(step) {
   }
   runGuideFor(step);
 }
+/** Every start is a fresh walk from the first hop: nothing from an earlier run of the
+ *  same guide carries over, so a replay explains every stop again. */
 function runGuideFor(step) {
   endGuide();
   if (step === 'claude') { openClaudeSetup(); return; }
-  gs.guide = { step, seq: ++gs.seq, target: null, final: false, started: false, view: currentShownView };
+  gs.guide = { step, seq: ++gs.seq, hop: null, target: null, final: false, started: false, passed: new Set(), touched: false, view: currentShownView };
   for (const t of GS_WATCH_EVENTS) document.addEventListener(t, gsOnPageChange, true);
   // Some outcomes arrive after the click's own tick (a workflow loading onto the
   // canvas, a list fetching): a slow poll catches those — a few DOM reads, only
@@ -20899,19 +21078,21 @@ function runGuide() {
   if (!g) return;
   const hop = gsNextHop(g.step, g);
   if (!hop) { endGuide(); return; }
-  g.target = hop.target; g.final = !!hop.final;
+  g.hop = hop; g.target = hop.target; g.final = !!hop.final; g.touched = false;
   const mine = g.seq;
   gsDestroySpot();
   gs.spot = createGuideSpot({
     target: hop.target, text: hop.text, mode: hop.mode || 'spotlight', lift: hop.lift || [], tries: 300,   // ~5 s: a list may still be fetching
+    nextLabel: hop.nextLabel || 'Next',
+    onNext: hop.next ? () => {
+      if (!gs.guide || gs.guide.seq !== mine) return;
+      gs.guide.passed.add(hop.id);
+      runGuide();
+    } : null,
     onDismiss: () => { if (gs.guide && gs.guide.seq === mine) endGuide(); },
     onTargetClick: () => {
       if (!gs.guide || gs.guide.seq !== mine) return;
-      // The real action happened: a final hop is the whole guide; Start run is
-      // remembered so the closing hop can point at Running; every other hop
-      // hands over to the page watcher above, which re-lights the next control.
-      if (hop.start) gs.guide.started = true;
-      if (hop.final) endGuide();
+      gsTargetClicked(hop);   // every other hop hands over to the page watcher, which re-lights the next control
     },
   });
 }

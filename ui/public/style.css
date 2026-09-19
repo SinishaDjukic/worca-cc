@@ -4354,8 +4354,12 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
    modal layer instead. */
 .guide-scrim{position:fixed;inset:0;z-index:44;background:var(--scrim);}
 /* !important: a control may carry its own id-level position/z-index (#prompt has z-index:1) that
-   would otherwise beat this transient class and leave the ringed control UNDER the scrim. */
-.guide-target{position:relative !important;z-index:45 !important;}
+   would otherwise beat this transient class and leave the ringed control UNDER the scrim.
+   The position is forced only on a STATIC control (guide-spot adds -static after reading
+   the computed style): an absolutely positioned target — the Composer's floating rail —
+   must keep its own position or it drops out of place. */
+.guide-target{z-index:45 !important;}
+.guide-target-static{position:relative !important;}
 .guide-lift{z-index:45 !important;}
 .guide-lift-static{position:relative;}
 /* A lifted select wrapper keeps its chevron ON TOP of the elevated select (the
@@ -4375,10 +4379,31 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .guide-balloon::before{content:'';position:absolute;top:-6px;left:calc(var(--arrow-x,20px) - 5px);width:10px;height:10px;
   background:var(--panel);border-left:1px solid var(--line-2);border-top:1px solid var(--line-2);transform:rotate(45deg);}
 .guide-balloon.above::before{top:auto;bottom:-6px;transform:rotate(225deg);}
+/* Pinned inside the viewport over a target taller than it: no edge to point at. */
+.guide-balloon.pinned::before{display:none;}
 .guide-skip{background:none;border:0;padding:0;font:inherit;font-size:12px;color:var(--ink-2);cursor:pointer;
   text-decoration:underline;text-underline-offset:3px;}
 .guide-skip:hover{color:var(--ink);}
+/* Next (an explanation hop, or a control whose state is already right) sits beside Skip. */
+.guide-actions{display:flex;align-items:center;gap:14px;}
+.guide-next{padding:6px 14px;border:0;border-radius:999px;background:var(--ink);color:var(--on-ink);
+  font:600 12px var(--sans);font-family:inherit;cursor:pointer;transition:filter .12s;}
+.guide-next:hover{filter:brightness(1.15);}
+.guide-next:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .guide-ring[hidden],.guide-balloon[hidden]{display:none;}
+/* A click on the scrim: the ring flashes a wider halo and the balloon bobs once — "here". */
+.guide-ring.nudge{animation:guide-nudge-ring .45s ease-out;}
+.guide-balloon.nudge{animation:guide-nudge-balloon .45s ease-out;}
+@keyframes guide-nudge-ring{
+  0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--violet) 70%,transparent);transform:scale(1);}
+  40%{transform:scale(1.04);}
+  100%{box-shadow:0 0 0 22px color-mix(in srgb,var(--violet) 0%,transparent);transform:scale(1);}
+}
+@keyframes guide-nudge-balloon{
+  0%,100%{transform:translateY(0);}
+  35%{transform:translateY(-6px);}
+  70%{transform:translateY(2px);}
+}
 .guide-layer.pointer .guide-ring{z-index:72;}
 .guide-layer.pointer .guide-balloon{z-index:73;}
 
@@ -4648,7 +4673,7 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 
 @media (prefers-reduced-motion: reduce){
   /* Getting started: tiles land drawn, vignettes paint finished, the guide ring holds a still halo. */
-  .gs-tile.reveal,.play .gs-pop,.play .gs-draw,.ob-welcome,.guide-ring,.nav button.gs-pill{animation:none;}
+  .gs-tile.reveal,.play .gs-pop,.play .gs-draw,.ob-welcome,.guide-ring,.guide-ring.nudge,.guide-balloon.nudge,.nav button.gs-pill{animation:none;}
   .nav button.gs-pill{box-shadow:0 0 0 3px color-mix(in srgb,var(--violet) 25%,transparent);}
   .play .gs-draw{stroke-dashoffset:0;}
   .guide-ring{box-shadow:0 0 0 6px color-mix(in srgb,var(--violet) 30%,transparent);}
