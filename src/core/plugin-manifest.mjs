@@ -12,6 +12,7 @@ import { validateMetaV2, normalizeAgentMeta, indexByKey } from '../shared/graph/
 import { portsFnFor } from '../shared/graph/ports.mjs';
 import { validateGraph } from '../shared/graph/validate.mjs';
 import { validateScriptMetaV2, normalizeScriptMeta } from '../shared/graph/script-meta.mjs';
+import { normalizeCases } from '../shared/graph/script-cases.mjs';
 
 /** Plugin names are kebab-case, machine-unique, dir-name safe (spec §4.1). */
 export const PLUGIN_NAME_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -675,6 +676,24 @@ export function validatePluginDir(absDir, { strict = false, builtinMetas } = {})
       if (!fileOk) { ungatedScriptKeys.add(key); continue; }
       scriptKeys.add(key);
       ownScriptMetas.push(norm);
+      // <key>.tests.json is optional; when it ships it goes through the SAME
+      // normalizer the store, the bench and the UI use, as a SHIPPED set — a
+      // case that names a project folder cannot travel to a recipient (W9).
+      const casesFile = join(scriptsDir, `${key}.tests.json`);
+      if (existsSync(casesFile)) {
+        let rawCases = null;
+        try { rawCases = JSON.parse(readFileSync(casesFile, 'utf8')); }
+        catch { push('error', `scripts/${key}.tests.json: invalid JSON`); continue; }
+        for (const e of normalizeCases(rawCases, norm, { shipped: true }).errors) {
+          push('error', `scripts/${key}.tests.json: ${e}`);
+        }
+      }
+    }
+    // A tests file with no sidecar beside it: the W18 overlay is a USER-layer
+    // idea, so inside a plugin it is a file nothing will ever read.
+    for (const f of files.filter((x) => x.endsWith('.tests.json'))) {
+      const stem = f.slice(0, -'.tests.json'.length);
+      if (!files.includes(`${stem}.meta.json`)) push('error', `scripts/${f}: no ${stem}.meta.json beside it`);
     }
   }
 

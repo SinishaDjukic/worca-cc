@@ -133,27 +133,13 @@ export const SCRIPT_COLORS = ['green', 'peach', 'red', 'blue', 'violet', 'amber'
 export const SCRIPT_RUNTIME_IDS = ['node', 'shell', 'python'];
 export const EDITOR_LANGUAGE = { node: 'javascript', shell: 'bash', python: 'python' };
 
-// A new script must RUN before a character is typed: each template is the
-// minimum its runtime's contract accepts (base spec §5.1, §5.2, §7), so the
-// first bench run is green and the author edits from a working program.
-export const SCRIPT_TEMPLATES = {
-  node: "export default async function ({ inputs, outputs, params, ctx, log }) {\n  log('info', 'hello from a worca script');\n  return { summary: 'ok' };\n}\n",
-  shell: '#!/bin/sh\nset -e\necho "hello from a worca script"\n',
-  python: "def main(api):\n    api.log('info', 'hello from a worca script')\n    return { 'summary': 'ok' }\n",
-};
-// cmd.exe is the interpreter for the win32 variant, and a .cmd file ships CRLF
-// (spec §10): a lone LF works on current Windows but breaks older `cmd` on
-// multi-line constructs, and the file is a template the user will extend.
-export const SCRIPT_WIN32_TEMPLATE = '@echo off\necho hello from a worca script\n';
-export const SHELL_COMMAND_TEMPLATE = 'npm test';
+// The scaffold templates live in src/shared (P3 Task 1): the Scripts page, the
+// `worca script new` CLI and `worca plugin new-script` must emit the SAME file.
+import {
+  SCRIPT_TEMPLATES, SCRIPT_WIN32_TEMPLATE, SHELL_COMMAND_TEMPLATE, blankScriptMeta,
+} from '../../src/shared/graph/script-templates.mjs';
 
-/** The create page's starting sidecar. */
-export function blankScriptMeta(runtime = 'node') {
-  return {
-    key: '', metaVersion: 2, displayName: '', description: '', domain: '', color: 'amber',
-    icon: '', order: 50, runtime, timeoutMs: 600000, params: [], inputs: [], outputs: [],
-  };
-}
+export { SCRIPT_TEMPLATES, SCRIPT_WIN32_TEMPLATE, SHELL_COMMAND_TEMPLATE, blankScriptMeta };
 
 /** `GET /api/scripts/:key` answers `{ meta, source, sourceWin32, sourcePath,
  *  sourceTruncated, cases, userCases, casesWritable }` (Task 4); P1b's earlier

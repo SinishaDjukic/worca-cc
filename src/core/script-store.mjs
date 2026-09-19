@@ -154,6 +154,16 @@ async function writeAtomic(path, text) {
 // cannot throw here: deleteScript removes the meta first, so a throw on the
 // program left the script gone from worca, the junk on disk, and the retry a 404.
 const removeFile = (path) => rm(path, { force: true, recursive: true, maxRetries: RENAME_RETRIES });
+// ...but ONLY for a name the store mints itself. A name READ OFF the sidecar on disk
+// is user-editable: the basename rule admits ".", and the registry's containment
+// check covers the host platform's entry alone, so `{ default: "x.sh", win32: "." }`
+// loads on macOS — and a recursive forced rm of join(dir, ".") deletes EVERY user
+// script while answering { ok: true }. Such a name is removed as a plain file; a
+// directory in its place is left where it is.
+const removeNamedFile = async (path) => {
+  try { await rm(path, { force: true, maxRetries: RENAME_RETRIES }); }
+  catch (e) { if (e?.code !== 'ERR_FS_EISDIR' && e?.code !== 'EISDIR') throw e; }
+};
 
 /**
  * One script's files are written (or removed) one save at a time. Two saves of
@@ -493,7 +503,12 @@ export async function deleteScript(key) {
     // crash leaves orphan files, never a sidecar naming a program that is gone.
     await removeFile(join(dir, `${key}.meta.json`));
     await removeFile(join(dir, casesFileFor(key)));
-    for (const name of [def, win32]) if (name) await removeFile(join(dir, name));
+    // Every entry the sidecar names (not just default + win32), each by the rule above.
+    const minted = new Set(['node', 'python', 'shell'].map((rt) => sourceFileFor(key, rt))
+      .concat(sourceFileFor(key, 'shell', { win32: true })));
+    const named = new Set([def, win32, ...(isObject(existing.file) ? Object.values(existing.file) : [])]
+      .filter((n) => typeof n === 'string' && n));
+    for (const name of named) await (minted.has(name) ? removeFile : removeNamedFile)(join(dir, name));
   });
   return { ok: true };
 }

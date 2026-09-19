@@ -22,6 +22,7 @@ import {
   installPlugin, buildInstallInventory, runSetup, updatePlugin, uninstallPlugin,
   setPluginEnabled, listInstalledPlugins, doctorPlugin, linkPlugin, reimportPlugin,
   listOrphanPluginData, purgePluginData,
+  scriptsSummary, pythonNoticeFor, pythonProbeOrNull, PYTHON_MISSING_NOTICE,
 } from '../src/core/plugin-store.mjs';
 
 useTempHome(after);
@@ -172,7 +173,7 @@ test('installPlugin: happy path — export, setup, precheck, symlink swap, lock,
 
   // "Will install" inventory (spec §6.1)
   assert.deepEqual(r.inventory.agents, [{ key: 'demoAgent', tools: ['Read', 'Bash'] }]);
-  assert.deepEqual(r.inventory.scripts, [{ key: 'tidy', runtime: 'shell', file: null, command: 'npm run tidy' }]);
+  assert.deepEqual(r.inventory.scripts, [{ key: 'tidy', runtime: 'shell', file: null, command: 'npm run tidy', cases: 0 }]);
   assert.deepEqual(r.inventory.taskSources, [{ id: 'demo', displayName: 'Demo', secrets: ['token'] }]);
   assert.deepEqual(r.inventory.skills, ['demo-skill']);
   assert.deepEqual(r.inventory.workflows, ['demo-flow']);
@@ -796,4 +797,128 @@ test('a script sidecar the registry drops is reported under scripts/, a clean on
   assert.ok(bad, JSON.stringify(row.ignored));
   assert.match(bad.reason, /runtime must be one of node, shell, python/);
   assert.equal(row.ignored.some((i) => i.file === 'scripts/dropsClean.meta.json'), false);
+});
+
+const GUARD_AGENT_FILES = {
+  'agents/guardAgent.md': '# guardAgent\n',
+  'agents/guardAgent.meta.json': JSON.stringify({
+    metaVersion: 2, key: 'guardAgent', displayName: 'Guard Agent', agentFile: 'guardAgent.md',
+    runnerType: 'producer', inputs: [{ id: 'task', type: 'md' }],
+    outputs: [{ id: 'plan', type: 'md', filename: '{base}.md' }],
+  }),
+};
+// Keyed per test: every test in this file shares ONE WORCA_HOME, so a workflow row
+// an earlier test saved is still there — two plugins shipping the same script key
+// would both be "referenced" by it.
+const guardScriptFiles = (key) => ({
+  [`scripts/${key}.mjs`]: 'export default async () => ({});\n',
+  [`scripts/${key}.meta.json`]: JSON.stringify({
+    metaVersion: 2, key, displayName: key, runtime: 'node',
+    file: `${key}.mjs`, inputs: [],
+    outputs: [{ id: 'out', type: 'md', when: 'always', filename: `${key}-cycle{cycle}.md` }],
+  }),
+});
+const manifestFor = (name) => JSON.stringify({ name, version: '0.1.0', engines: { 'worca-cc-api': '>=3 <4' } });
+
+test('uninstall guard: a plugin that ships ONLY scripts is blocked by a script node', async () => {
+  const dev = join(scratch, 'dev-scriptonly');
+  writeTree(dev, { 'worca-cc-plugin.json': manifestFor('scriptonly-plugin'), ...guardScriptFiles('soloScript') });
+  await linkPlugin('scriptonly-plugin', dev);
+  const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+  await writeGraphWorkflow({
+    id: 'wf_so', name: 'Script Only', domain: 'general',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_s', kind: 'script', key: 'soloScript', x: 200, y: 0, config: {} }],
+    wires: [],
+  });
+  await assert.rejects(() => uninstallPlugin('scriptonly-plugin'), (err) => {
+    assert.equal(err.code, 'REFERENCED');
+    assert.equal(err.message,
+      'plugin "scriptonly-plugin" scripts are referenced by: Script Only — remove those references first');
+    assert.deepEqual(err.references, [{ workflowId: 'wf_so', name: 'Script Only', keys: ['soloScript'] }]);
+    return true;
+  });
+  assert.ok(readPluginsLock()['scriptonly-plugin'], 'nothing uninstalled');
+});
+
+test('uninstall guard: agents-only keeps its sentence; both kinds merge into ONE row per workflow', async () => {
+  const dev = join(scratch, 'dev-guarded');
+  writeTree(dev, { 'worca-cc-plugin.json': manifestFor('guarded-plugin'), ...GUARD_AGENT_FILES, ...guardScriptFiles('guardScript') });
+  await linkPlugin('guarded-plugin', dev);
+  const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+
+  await writeGraphWorkflow({
+    id: 'wf_g1', name: 'Agent Only', domain: 'general',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_a', kind: 'agent', key: 'guardAgent', x: 200, y: 0, config: {} }],
+    wires: [],
+  });
+  await assert.rejects(() => uninstallPlugin('guarded-plugin'), (err) => {
+    assert.equal(err.message,
+      'plugin "guarded-plugin" agents are referenced by: Agent Only — remove those references first');
+    return true;
+  });
+
+  await writeGraphWorkflow({
+    id: 'wf_g2', name: 'Agent And Script', domain: 'general',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_a', kind: 'agent', key: 'guardAgent', x: 200, y: 0, config: {} },
+      { id: 'n_s', kind: 'script', key: 'guardScript', x: 400, y: 0, config: {} }],
+    wires: [],
+  });
+  await assert.rejects(() => uninstallPlugin('guarded-plugin'), (err) => {
+    assert.match(err.message, /^plugin "guarded-plugin" agents and scripts are referenced by: /);
+    assert.deepEqual(err.references.map((r) => r.workflowId).sort(), ['wf_g1', 'wf_g2']);
+    const both = err.references.find((r) => r.workflowId === 'wf_g2');
+    assert.deepEqual(both.keys, ['guardAgent', 'guardScript'], 'one row per workflow, both keys');
+    return true;
+  });
+});
+
+test('scriptsSummary: a count per runtime and the case total; empty for no scripts', () => {
+  assert.equal(scriptsSummary([]), '');
+  assert.equal(scriptsSummary(null), '');
+  assert.equal(scriptsSummary([{ key: 'a', runtime: 'node', cases: 2 }]), '1 script (node 1) · 2 cases');
+  assert.equal(scriptsSummary([
+    { key: 'a', runtime: 'node', cases: 2 },
+    { key: 'b', runtime: 'node', cases: 0 },
+    { key: 'c', runtime: 'python', cases: 3 },
+  ]), '3 scripts (node 2, python 1) · 5 cases');
+  assert.equal(scriptsSummary([{ key: 'a', runtime: 'shell', cases: 0 }]), '1 script (shell 1)');
+});
+
+test('pythonNoticeFor: only a python script + a failed probe; an ABSENT probe says nothing', async () => {
+  const nodeOnly = [{ key: 'a', runtime: 'node' }];
+  const py = [{ key: 'a', runtime: 'python' }];
+  const failing = async () => ({ ok: false, reason: 'no interpreter' });
+  assert.equal(await pythonNoticeFor(nodeOnly, { probe: failing }), null);
+  assert.equal(await pythonNoticeFor(py, { probe: failing }), PYTHON_MISSING_NOTICE);
+  assert.equal(await pythonNoticeFor(py, { probe: async () => ({ ok: true, version: '3.12.0' }) }), null);
+  assert.equal(await pythonNoticeFor(py, { probe: async () => null }), null, 'P2 absent: no notice, never a claim');
+  assert.equal(PYTHON_MISSING_NOTICE, 'python not found');
+  // The DEFAULT probe on this host: P2 may or may not be installed — either way
+  // the call resolves and never throws.
+  await pythonNoticeFor(py);
+  await pythonProbeOrNull();
+});
+
+test('buildInstallInventory: shipped script rows carry their case count; the row exposes scriptRuntimes', async () => {
+  const dev = join(scratch, 'dev-cases');
+  writeTree(dev, {
+    'worca-cc-plugin.json': JSON.stringify({ name: 'cases-plugin', version: '0.1.0', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'scripts/tidy.mjs': 'export default async () => ({});\n',
+    'scripts/tidy.meta.json': JSON.stringify({
+      metaVersion: 2, key: 'tidy', displayName: 'Tidy', runtime: 'node', file: 'tidy.mjs', inputs: [], outputs: [],
+    }),
+    'scripts/tidy.tests.json': JSON.stringify({ version: 1, cases: [
+      { id: 'one', name: 'one', cwd: { kind: 'scratch' }, inputs: {} },
+      { id: 'two', name: 'two', cwd: { kind: 'scratch' }, inputs: {} },
+    ] }),
+  });
+  assert.deepEqual(buildInstallInventory(dev).scripts,
+    [{ key: 'tidy', runtime: 'node', file: 'tidy.mjs', command: null, cases: 2 }]);
+  await linkPlugin('cases-plugin', dev);
+  const row = listInstalledPlugins().find((p) => p.name === 'cases-plugin');
+  assert.equal(row.contributions.scripts, 1);
+  assert.deepEqual(row.scriptRuntimes, { node: 1 });
 });

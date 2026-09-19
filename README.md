@@ -147,8 +147,8 @@ and durations, the clarify Q&A, agent transcripts, and logs:
 ### Plugins & chat
 
 - **Plugin system with marketplaces** — plugins contribute task sources
-  (e.g. GitHub Issues), agents, skills, workflow templates, models, and chat
-  channels. Install from a marketplace with an explicit consent ceremony
+  (e.g. GitHub Issues), agents, scripts, skills, workflow templates, models, and
+  chat channels. Install from a marketplace with an explicit consent ceremony
   (what's installed, which secrets are required, which setup commands run);
   updates show a commit-level preview before you accept.
 - **Drive runs from chat** — bundled two-way **Telegram**, **Slack**,
@@ -280,14 +280,22 @@ worca --project /path/to/your/project --prompt "demo task" --mock --yes
 # flush pending team-metrics run records (headless machines with no UI server)
 worca metrics push
 
-# share a saved pipeline: as JSON, or as a plugin folder bundling your agents + skills
+# share a saved pipeline: as JSON, or as a plugin folder bundling your agents, scripts + skills
 worca workflow export wf_my-flow --format json --out my-flow.json
 worca workflow import my-flow.json
 worca workflow export wf_my-flow --format plugin --target ./my-flow-plugin
+
+# scripts: list, scaffold and test a script card — no server needed
+worca script list
+worca script new runTests --runtime shell
+worca script test runTests
+worca script test shell --param command="npm test" --cwd .
+worca plugin new-script tidy --dir ./my-plugin
+worca plugin validate ./my-plugin --run-cases
 ```
 
 Run `worca --help` for all subcommands (projects, plugins, marketplaces,
-workflows, config, doctor) and flags.
+workflows, scripts, config, doctor) and flags.
 
 Exit codes, for scripts and CI wrappers: `0` the run finished (or an
 interactive run paused and you can resume it); `1` a hard error, a stop, or an

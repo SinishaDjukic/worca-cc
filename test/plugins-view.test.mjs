@@ -468,3 +468,19 @@ test('install consent lists shipped scripts with their runtime and command; the 
   const list = renderPluginList([{ name: 'p', version: '1', enabled: true, contributions: { agents: 1, scripts: 2, taskSources: 0, chatChannels: 0, models: 0, skills: 0, workflows: 0 }, ignored: [] }], { doc });
   assert.match(list.textContent, /1 agent · 2 scripts/);
 });
+
+test('the Plugins card carries the python notice; a consent script row counts its cases', () => {
+  const contributions = { agents: 0, scripts: 1, taskSources: 0, chatChannels: 0, models: 0, skills: 0, workflows: 0 };
+  const loud = renderPluginList([{ name: 'p', version: '1', enabled: true, pythonMissing: true, contributions, ignored: [] }], { doc });
+  assert.ok(loud.querySelector('.pl-python-missing'), 'the notice is a chip, not a paragraph');
+  assert.match(loud.textContent, /python not found/);
+  const quiet = renderPluginList([{ name: 'q', version: '1', enabled: true, contributions, ignored: [] }], { doc });
+  assert.equal(quiet.querySelector('.pl-python-missing'), null);
+
+  const el = renderInstallConsent({ name: 'p', repoUrl: 'https://x/y', sha: 'a'.repeat(40) },
+    { agents: [], taskSources: [], skills: [], workflows: [],
+      scripts: [{ key: 'tidy', runtime: 'shell', file: null, command: 'npm run tidy', cases: 2 },
+        { key: 'lint', runtime: 'node', file: 'lint.mjs', command: null, cases: 1 }] }, { doc });
+  assert.match(el.textContent, /tidy — shell · npm run tidy · 2 cases/);
+  assert.match(el.textContent, /lint — node · lint\.mjs · 1 case/);
+});

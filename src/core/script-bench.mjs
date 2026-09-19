@@ -13,7 +13,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { mkdir, writeFile, readdir, rm, stat, open } from 'node:fs/promises';
 import { worcaHome, listProjects } from './projects.mjs';
 import { loadScriptRegistry } from './script-registry.mjs';
@@ -180,6 +180,42 @@ function headRef(dir) {
   try {
     return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' }).trim() || null;
   } catch { return null; }
+}
+
+/**
+ * The bench's working directory (spec §4.1 step 5, W1) and the checkpoint a run
+ * would have recorded for it. `scratch` is the bench folder's own empty cwd/
+ * (created here); `project` is a REGISTERED project's checkout; `dir` is an
+ * arbitrary folder and belongs to the CLI alone (`worca script test --cwd <dir>`,
+ * spec §6) — the server never passes allowDirCwd, so a browser can never point a
+ * bench run at a folder of its choosing.
+ * @param {{kind?: string, projectKey?: string, dir?: string}|null|undefined} cwd
+ * @param {{dirs: {cwd: string}, projects?: Function, allowDirCwd?: boolean}} opts
+ * @returns {Promise<{cwd: string, checkpointRef: string|null}>}
+ * @throws {Error} code BAD_REQUEST
+ */
+export async function resolveBenchCwd(cwd, { dirs, projects = listProjects, allowDirCwd = false } = {}) {
+  const kind = isObject(cwd) && cwd.kind !== undefined && cwd.kind !== null ? String(cwd.kind) : 'scratch';
+  if (kind === 'project') {
+    if (typeof cwd.projectKey !== 'string' || !cwd.projectKey) throw benchError('cwd: a project folder needs a projectKey', 'BAD_REQUEST');
+    const list = await projects();
+    const found = (list || []).find((p) => p && p.key === cwd.projectKey);
+    if (!found) throw benchError(`project "${cwd.projectKey}" is not registered`, 'BAD_REQUEST');
+    if (!found.exists) throw benchError(`project path does not exist or is not a directory: ${found.path}`, 'BAD_REQUEST');
+    return { cwd: found.path, checkpointRef: headRef(found.path) };
+  }
+  if (kind === 'dir') {
+    if (!allowDirCwd) throw benchError('cwd.kind "dir" is not accepted here — pick a registered project', 'BAD_REQUEST');
+    if (typeof cwd.dir !== 'string' || !cwd.dir.trim()) throw benchError('cwd: a dir folder needs a dir', 'BAD_REQUEST');
+    const dir = resolve(cwd.dir);
+    let ok = false;
+    try { ok = (await stat(dir)).isDirectory(); } catch { ok = false; }
+    if (!ok) throw benchError(`not a directory: ${dir}`, 'BAD_REQUEST');
+    return { cwd: dir, checkpointRef: headRef(dir) };
+  }
+  if (kind !== 'scratch') throw benchError(`cwd.kind must be scratch, project or dir (got "${kind}")`, 'BAD_REQUEST');
+  await mkdir(dirs.cwd, { recursive: true });
+  return { cwd: dirs.cwd, checkpointRef: null };
 }
 
 /** V22's sentences with the bench's node id, so a bad param fails exactly as a run would. */
@@ -453,18 +489,14 @@ class Bench extends EventEmitter {
     return path;
   }
 
-  /** W1: a scratch folder, or a REGISTERED project's real checkout. */
-  async _cwd(cwd, dirs) {
-    if (cwd.kind === 'project') {
-      const list = await (typeof this.deps.projects === 'function' ? this.deps.projects : listProjects)();
-      const found = (list || []).find((p) => p && p.key === cwd.projectKey);
-      if (typeof cwd.projectKey !== 'string' || !cwd.projectKey) throw benchError('cwd: a project folder needs a projectKey', 'BAD_REQUEST');
-      if (!found) throw benchError(`project "${cwd.projectKey}" is not registered`, 'BAD_REQUEST');
-      if (!found.exists) throw benchError(`project path does not exist or is not a directory: ${found.path}`, 'BAD_REQUEST');
-      return { cwd: found.path, checkpointRef: headRef(found.path) };
-    }
-    await mkdir(dirs.cwd, { recursive: true });
-    return { cwd: dirs.cwd, checkpointRef: null };
+  /** W1: a scratch folder, or a REGISTERED project's real checkout — plus the
+   *  CLI-only `dir` arm, behind deps.allowDirCwd (resolveBenchCwd). */
+  _cwd(cwd, dirs) {
+    return resolveBenchCwd(cwd, {
+      dirs,
+      projects: typeof this.deps.projects === 'function' ? this.deps.projects : listProjects,
+      allowDirCwd: this.deps.allowDirCwd === true,
+    });
   }
 
   _line(caseId, text) {
@@ -575,7 +607,8 @@ class Bench extends EventEmitter {
  * One bench run. The server wires it onto the WS bus the way wireAgentGen wires
  * an AgentGen; `run()` never throws and emits exactly one terminal event.
  * @param {object} request { key, caseId?, all?, draft?, params?, ports?, inputs?, cwd?, timeoutMs? }
- * @param {object} [deps] { home?, runner?, registry?, agentKeys?, projects?, platform?, onLine?, onBench? }
+ * @param {object} [deps] { home?, runner?, registry?, agentKeys?, projects?, platform?, onLine?, onBench?,
+ *   allowDirCwd? } — allowDirCwd admits `cwd: { kind: 'dir', dir }`; the CLI sets it, the server never does.
  */
 export function createBench(request, deps = {}) { return new Bench(request, deps); }
 

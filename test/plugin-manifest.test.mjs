@@ -848,3 +848,29 @@ test('dataContractIssues + apiMismatch count v1 script sidecars beside agents', 
   assert.match(m.message, /\(0 agent\(s\), 1 script\(s\), 0 template\(s\) ignored\)/);
   assert.doesNotMatch(apiMismatch('>=1 <2', { agentsV1: ['a'], workflowsV1: [] }).message, /script/, 'no scripts: the message is unchanged');
 });
+
+test('validatePluginDir: <key>.tests.json is validated as a SHIPPED case set', () => {
+  const good = { version: 1, cases: [{ id: 'sample', name: 'sample', cwd: { kind: 'scratch' }, inputs: { done: { fired: true } } }] };
+  const dir = mkPluginDir({
+    ...VALID_FILES,
+    'scripts/good.meta.json': SCRIPT_META('good'),
+    'scripts/good.mjs': 'export default async () => ({});\n',
+    'scripts/good.tests.json': JSON.stringify(good),
+  });
+  assert.deepEqual(errs(validatePluginDir(dir)), [], 'a clean scratch case set passes');
+
+  const bad = mkPluginDir({
+    ...VALID_FILES,
+    'scripts/good.meta.json': SCRIPT_META('good'),
+    'scripts/good.mjs': 'export default async () => ({});\n',
+    'scripts/good.tests.json': JSON.stringify({ version: 1, cases: [{ id: 'p', name: 'p', cwd: { kind: 'project', projectKey: 'x' }, inputs: {} }] }),
+    'scripts/broken.tests.json': '{ not json',
+    'scripts/orphan.tests.json': JSON.stringify({ version: 1, cases: [] }),
+  });
+  const problems = errs(validatePluginDir(bad)).join('\n');
+  // The non-scratch sentence belongs to normalizeCases({ shipped: true }) — the
+  // wrapper (`scripts/<key>.tests.json: `) is what this block owns.
+  assert.match(problems, /scripts\/good\.tests\.json: .*scratch/);
+  assert.match(problems, /scripts\/broken\.tests\.json: no broken\.meta\.json beside it/);
+  assert.match(problems, /scripts\/orphan\.tests\.json: no orphan\.meta\.json beside it/);
+});

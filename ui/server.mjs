@@ -165,7 +165,7 @@ import {
 import { createBench, sweepBenchDirs, benchRoot } from '../src/core/script-bench.mjs';
 import { PORT_ID_RE } from '../src/shared/graph/constants.mjs';
 import {
-  listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin,
+  listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin, pythonNoticeFor,
   setPluginEnabled, doctorPlugin, linkPlugin,
   listOrphanPluginData, purgePluginData,
 } from '../src/core/plugin-store.mjs';
@@ -6068,13 +6068,19 @@ function readInstalledManifest(name) {
   }
 }
 
-app.get('/api/plugins', (req, res) => {
+app.get('/api/plugins', async (req, res) => {
   try {
     const mkts = readMarketplaces().marketplaces;
+    const rows = listInstalledPlugins();
+    // The python notice (spec §8.1) is a fact about THIS host: resolved once per
+    // request, and only when some plugin ships a python script (the probe caches 60 s).
+    const anyPython = rows.some((p) => Number((p.scriptRuntimes || {}).python) > 0);
+    const notice = anyPython ? await pythonNoticeFor([{ runtime: 'python' }]) : null;
     res.json({
-      plugins: listInstalledPlugins().map((p) => ({
+      plugins: rows.map((p) => ({
         ...p,
         marketplaceName: p.marketplace && mkts[p.marketplace] ? mkts[p.marketplace].name : null,
+        pythonMissing: !!(notice && Number((p.scriptRuntimes || {}).python) > 0),
       })),
       orphans: listOrphanPluginData(),
     });

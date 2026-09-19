@@ -207,20 +207,96 @@ test('a stranded workflow (deleted agent) is INVALID_GRAPH with the unknown-agen
     (e) => e.code === 'INVALID_GRAPH' && /1 agent not installed here \(vanishedAgent\)/.test(e.message) && !!e.summary);
 });
 
-test('plugin export: a built-in script key is allowed with a not-bundled warning; a user-layer script is refused', async () => {
-  const shellPorts = { inputs: [{ id: 'in', type: 'md', required: false }], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'shell-cycle{cycle}.md' }] };
-  const tpl = await writeGraphWorkflow({ name: 'Plugin Shell', domain: 'coding',
-    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, { id: 'n_sh', kind: 'script', key: 'shell', x: 300, y: 0, config: { params: { command: 'npm test' }, ports: shellPorts } }, { id: 'n_end', kind: 'end', x: 600, y: 0, config: {} }],
-    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_sh', port: 'in' } }, { id: 'w2', from: { node: 'n_sh', port: 'log' }, to: { node: 'n_end', port: 'result' } }] });
+const SHELL_PORTS = {
+  inputs: [{ id: 'in', type: 'md', required: false }],
+  outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'shell-cycle{cycle}.md' }],
+};
+/** task -> <script key> -> end, the shape the P1a test used. */
+const scriptGraph = (name, key, config) => ({
+  name, domain: 'coding',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+    { id: 'n_sh', kind: 'script', key, x: 300, y: 0, config },
+    { id: 'n_end', kind: 'end', x: 600, y: 0, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_sh', port: 'in' } },
+    { id: 'w2', from: { node: 'n_sh', port: 'log' }, to: { node: 'n_end', port: 'result' } },
+  ],
+});
+
+test('plugin export: a built-in script key only warns; a user script is BUNDLED with every platform file and its scratch cases', async () => {
+  const builtinTpl = await writeGraphWorkflow(scriptGraph('Plugin Shell', 'shell', { params: { command: 'npm test' }, ports: SHELL_PORTS }));
   const out = await tmp();
-  const r = await exportWorkflowPlugin({ workflowId: tpl.id, targetDir: join(out, 'shell-plugin'), dryRun: true });
+  const r = await exportWorkflowPlugin({ workflowId: builtinTpl.id, targetDir: join(out, 'shell-plugin'), dryRun: true });
   assert.ok(r.warnings.some((w) => /built-in script\(s\) not bundled \(present on every worca host\): shell/.test(w)), r.warnings.join('\n'));
-  const { mkdirSync, writeFileSync } = await import('node:fs');
+  assert.deepEqual(r.scripts, [], 'a built-in ships nothing');
+
+  // A USER script: a per-platform shell pair plus one scratch and one project case.
   const { userScriptsDir } = await import('../src/core/script-registry.mjs');
-  mkdirSync(userScriptsDir(), { recursive: true });
-  writeFileSync(join(userScriptsDir(), 'mine.mjs'), 'export default async () => ({});\n');
-  writeFileSync(join(userScriptsDir(), 'mine.meta.json'), JSON.stringify({ key: 'mine', metaVersion: 2, runtime: 'node', file: 'mine.mjs', inputs: [{ id: 'in', type: 'md', required: false }], outputs: [{ id: 'log', type: 'md', filename: 'mine-cycle{cycle}.md' }] }));
-  const mine = await writeGraphWorkflow({ ...tpl, id: undefined, name: 'Plugin Mine', nodes: tpl.nodes.map((n) => (n.id === 'n_sh' ? { id: 'n_sh', kind: 'script', key: 'mine', x: 300, y: 0, config: {} } : n)) });
-  await assert.rejects(exportWorkflowPlugin({ workflowId: mine.id, targetDir: join(out, 'mine-plugin'), dryRun: true }),
-    (e) => e.code === 'UNSUPPORTED' && /cannot bundle script "mine" \(user\)/.test(e.message));
+  const sdir = userScriptsDir();
+  await mkdir(sdir, { recursive: true });
+  await writeFile(join(sdir, 'mine.sh'), '#!/bin/sh\necho mine\n');
+  await writeFile(join(sdir, 'mine.cmd'), '@echo off\necho mine\n');
+  await writeFile(join(sdir, 'mine.meta.json'), JSON.stringify({
+    key: 'mine', metaVersion: 2, displayName: 'Mine', runtime: 'shell',
+    file: { default: 'mine.sh', win32: 'mine.cmd' },
+    inputs: [{ id: 'in', type: 'md', required: false }],
+    outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'mine-cycle{cycle}.md' }],
+  }, null, 2) + '\n');
+  await writeFile(join(sdir, 'mine.tests.json'), JSON.stringify({ version: 1, cases: [
+    { id: 'scratchy', name: 'scratchy', cwd: { kind: 'scratch' }, inputs: {} },
+    { id: 'projecty', name: 'projecty', cwd: { kind: 'project', projectKey: 'worca' }, inputs: {} },
+  ] }, null, 2) + '\n');
+
+  const mineTpl = await writeGraphWorkflow(scriptGraph('Plugin Mine', 'mine', {}));
+  const target = join(out, 'mine-plugin');
+  const applied = await exportWorkflowPlugin({ workflowId: mineTpl.id, targetDir: target });
+  assert.deepEqual(applied.scripts, [{ key: 'mine', runtime: 'shell', files: ['mine.meta.json', 'mine.sh', 'mine.cmd'] }]);
+  for (const f of ['mine.meta.json', 'mine.sh', 'mine.cmd', 'mine.tests.json']) {
+    assert.ok(existsSync(join(target, 'scripts', f)), `scripts/${f} must ship (both platform halves, whatever this host runs)`);
+  }
+  const cases = JSON.parse(await readFile(join(target, 'scripts', 'mine.tests.json'), 'utf8'));
+  assert.deepEqual(cases.cases.map((k) => k.id), ['scratchy'], 'a project case cannot travel');
+  assert.ok(applied.warnings.some((w) =>
+    /script "mine": 1 test case\(s\) that run in a project folder were not bundled — a shared case runs in a scratch folder/.test(w)),
+  applied.warnings.join('\n'));
+  assert.equal(applied.validation.ok, true, JSON.stringify(applied.validation.problems));
+
+  // The author deletes every case and exports again: the shipped set FOLLOWS. The
+  // exporter never deletes a file, so the earlier one is overwritten with the empty
+  // set — proof the author removed must not keep running on the recipient's CI.
+  await writeFile(join(sdir, 'mine.tests.json'), JSON.stringify({ version: 1, cases: [] }) + '\n');
+  const again = await exportWorkflowPlugin({ workflowId: mineTpl.id, targetDir: target });
+  const after = JSON.parse(await readFile(join(target, 'scripts', 'mine.tests.json'), 'utf8'));
+  assert.deepEqual(after, { version: 1, cases: [] });
+  assert.ok(again.updated.some((p) => p.endsWith('mine.tests.json')), JSON.stringify(again.updated));
+  assert.equal(again.validation.ok, true, JSON.stringify(again.validation.problems));
+  const third = await exportWorkflowPlugin({ workflowId: mineTpl.id, targetDir: target });
+  assert.deepEqual([third.created, third.updated], [[], []], 'an unchanged re-export stays an all-no-op');
+});
+
+test("another plugin's script is refused — bundling it would create two owners", async () => {
+  const theirs = await tmp('wf-exp-plg-theirs-');
+  await mkdir(join(theirs, 'scripts'), { recursive: true });
+  await writeFile(join(theirs, 'worca-cc-plugin.json'),
+    JSON.stringify({ name: 'their-plugin', version: '0.1.0', engines: { 'worca-cc-api': '>=3 <4' } }, null, 2) + '\n');
+  await writeFile(join(theirs, 'scripts', 'theirs.mjs'), 'export default async () => ({});\n');
+  await writeFile(join(theirs, 'scripts', 'theirs.meta.json'), JSON.stringify({
+    key: 'theirs', metaVersion: 2, displayName: 'Theirs', runtime: 'node', file: 'theirs.mjs',
+    inputs: [{ id: 'in', type: 'md', required: false }],
+    outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'theirs-cycle{cycle}.md' }],
+  }, null, 2) + '\n');
+  await linkPlugin('their-plugin', theirs);
+
+  const tpl = await writeGraphWorkflow(scriptGraph('Plugin Theirs', 'theirs', {}));
+  const target = join(await tmp(), 'theirs-plugin');   // hoisted: `await` is illegal inside the sync arrow below
+  await assert.rejects(
+    () => exportWorkflowPlugin({ workflowId: tpl.id, targetDir: target, dryRun: true }),
+    (e) => {
+      assert.equal(e.code, 'UNSUPPORTED');
+      assert.equal(e.message, 'cannot bundle "theirs" (owned by plugin "their-plugin") — a shared workflow bundles '
+        + 'only your own scripts; the recipient installs that plugin alongside, or you duplicate the script under your own name');
+      return true;
+    });
 });

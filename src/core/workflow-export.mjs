@@ -24,6 +24,7 @@ import { validateGraph, formatIssue } from '../shared/graph/validate.mjs';
 import { EFFORTS as EFFORT_LIST } from './model-env.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
 import { loadScriptRegistry } from './script-registry.mjs';
+import { normalizeCases, CASES_VERSION } from '../shared/graph/script-cases.mjs';
 import { slugify } from './artifacts.mjs';
 import { isValidSkillName, collectRequiredSkills, resolveSkill, pluginSkillDirs } from './skills.mjs';
 import { normalizeProjectPath } from './projects.mjs';
@@ -1092,14 +1093,25 @@ export async function exportWorkflowPlugin({ workflowId, targetDir, pluginName, 
   }
   if (builtins.length) warnings.push(`built-in agent(s) not bundled (present on every Worca host): ${builtins.join(', ')}`);
 
-  // Scripts (v1): built-ins ride like built-in agents; anything else cannot be bundled yet.
-  const scriptKeys = [...new Set(payload.nodes.filter((n) => n && n.kind === 'script' && n.key).map((n) => n.key))];
-  const foreignScripts = scriptKeys.filter((k) => scripts[k] && scripts[k].origin !== 'builtin');
-  if (foreignScripts.length) {
-    const list = foreignScripts.map((k) => `"${k}" (${scripts[k].origin.replace(/^plugin:/, 'plugin ')})`).join(', ');
-    throw err(`cannot bundle script ${list} — a shared workflow bundles only built-in scripts in this version`, 'UNSUPPORTED');
+  // ── Scripts: user-owned are bundled, built-ins never, another plugin's
+  //    refused — the same ownership rule the agents block above applies (§8.3).
+  const scriptKeys = [...new Set(payload.nodes.filter((n) => n && n.kind === 'script' && n.key).map((n) => n.key))].sort();
+  const userScripts = [];
+  const foreignScripts = [];
+  const builtinScripts = [];
+  for (const key of scriptKeys) {
+    const meta = scripts[key];
+    if (!meta) continue;                                          // validateGraph refused above
+    const origin = String(meta.origin || '');
+    if (origin === 'builtin') builtinScripts.push(key);
+    else if (origin.startsWith('plugin:')) foreignScripts.push({ key, plugin: origin.slice('plugin:'.length) });
+    else userScripts.push({ key, meta });
   }
-  const builtinScripts = scriptKeys.filter((k) => scripts[k]?.origin === 'builtin');
+  if (foreignScripts.length) {
+    const list = foreignScripts.map((f) => `"${f.key}" (owned by plugin "${f.plugin}")`).join(', ');
+    throw err(`cannot bundle ${list} — a shared workflow bundles only your own scripts; `
+      + 'the recipient installs that plugin alongside, or you duplicate the script under your own name', 'UNSUPPORTED');
+  }
   if (builtinScripts.length) warnings.push(`built-in script(s) not bundled (present on every worca host): ${builtinScripts.join(', ')}`);
 
   // ── Skills the bundled agents require: filled from global/project/other-plugin
@@ -1120,6 +1132,51 @@ export async function exportWorkflowPlugin({ workflowId, targetDir, pluginName, 
     // Byte-identical copies: the plugin ships exactly what the exporter runs.
     targets.push({ path: join(dir, 'agents', `${key}.md`), text: await readFile(mdPath, 'utf8') });
     targets.push({ path: join(dir, 'agents', `${key}.meta.json`), text: await readFile(sidecarPath, 'utf8') });
+  }
+  // Scripts ride like agents: byte-identical sidecar + program. EVERY platform
+  // entry of `file` travels, host platform irrelevant — the recipient may be on
+  // Windows and need the .cmd half (spec §10).
+  const bundledScripts = [];
+  for (const { key, meta } of userScripts) {
+    const srcDir = meta.scriptsDir || (meta.scriptPath ? dirname(meta.scriptPath) : null);
+    const sidecar = srcDir ? join(srcDir, `${key}.meta.json`) : null;
+    if (!sidecar || !existsSync(sidecar)) throw err(`script sidecar not found for "${key}" (${sidecar || key})`, 'NOT_FOUND');
+    targets.push({ path: join(dir, 'scripts', `${key}.meta.json`), text: await readFile(sidecar, 'utf8') });
+    const rels = [...new Set((typeof meta.file === 'string' ? [meta.file] : Object.values(meta.file || {})).filter(Boolean))];
+    for (const rel of rels) {
+      const from = join(srcDir, rel);
+      if (!existsSync(from)) throw err(`script source not found for "${key}" (${from})`, 'NOT_FOUND');
+      targets.push({ path: join(dir, 'scripts', rel), text: await readFile(from, 'utf8') });
+    }
+    // Cases travel too, minus any that name a project folder: a scratch case is
+    // the only kind the recipient can run (W9, §8.3).
+    const casesPath = join(srcDir, `${key}.tests.json`);
+    const casesTarget = join(dir, 'scripts', `${key}.tests.json`);
+    let scratchCases = [];
+    if (existsSync(casesPath)) {
+      let raw = null;
+      try { raw = JSON.parse(await readFile(casesPath, 'utf8')); }
+      catch (e) { warnings.push(`script "${key}" cases: ${e.message}`); }
+      const { cases, errors } = normalizeCases(raw, meta);
+      for (const e of errors) warnings.push(`script "${key}" cases: ${e}`);
+      scratchCases = cases.filter((k) => k.cwd && k.cwd.kind === 'scratch');
+      const dropped = cases.length - scratchCases.length;
+      if (dropped) {
+        warnings.push(`script "${key}": ${dropped} test case(s) that run in a project folder were not bundled `
+          + '— a shared case runs in a scratch folder');
+      }
+    }
+    // The shipped set FOLLOWS the author's: a file an earlier export wrote is
+    // overwritten even with the empty set (the exporter never deletes), so a case
+    // the author removed — or one a port edit made invalid, which would fail the
+    // folder's own validation — does not live on in the plugin.
+    if (scratchCases.length || existsSync(casesTarget)) {
+      targets.push({
+        path: casesTarget,
+        text: JSON.stringify({ version: CASES_VERSION, cases: scratchCases }, null, 2) + '\n',
+      });
+    }
+    bundledScripts.push({ key, runtime: meta.runtime, files: [`${key}.meta.json`, ...rels] });
   }
   for (const s of depSkills) {
     const skillMd = join(dir, 'skills', s.skill, 'SKILL.md');
@@ -1170,7 +1227,8 @@ export async function exportWorkflowPlugin({ workflowId, targetDir, pluginName, 
 
   const plan = {
     dir, name, slug, version: manifest.version || null,
-    created, updated, noop, skipped, conflicts: [], warnings, orphans: [], written: [], validation: null,
+    created, updated, noop, skipped, conflicts: [], warnings, orphans: [], written: [],
+    scripts: bundledScripts, validation: null,
   };
   if (dryRun) return plan;
 

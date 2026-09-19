@@ -59,6 +59,8 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
     if (p.linked) head.appendChild(h(doc, 'span', 'badge waiting pl-linked', 'linked'));
     if (p.apiMismatch) head.appendChild(h(doc, 'span', 'badge amber pl-api-mismatch', 'needs update'));
     else if (p.broken) head.appendChild(h(doc, 'span', 'badge red pl-broken', 'broken'));
+    // A shipped python script on a host without python: a chip, never a block.
+    if (p.pythonMissing) head.appendChild(h(doc, 'span', 'badge amber pl-python-missing', 'python not found'));
     // Enabling a plugin acts on a live system the moment it flips, so it reads
     // as a switch. `.switch` MUST be the input's immediate next sibling — the
     // `.sw-input:checked + .switch` rule is what paints the on state.
@@ -165,7 +167,9 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
   if ((inv.scripts || []).length) {
     const scripts = section(`Scripts (${inv.scripts.length})`);
     for (const s of inv.scripts) {
-      scripts.appendChild(h(doc, 'div', 'pl-consent-row mono', `${s.key} — ${s.runtime}${s.command ? ` · ${s.command}` : s.file ? ` · ${s.file}` : ''}`));
+      scripts.appendChild(h(doc, 'div', 'pl-consent-row mono',
+        `${s.key} — ${s.runtime}${s.command ? ` · ${s.command}` : s.file ? ` · ${s.file}` : ''}`
+        + `${s.cases ? ` · ${s.cases} case${s.cases === 1 ? '' : 's'}` : ''}`));
     }
   }
   const sources = section(`Task sources (${(inv.taskSources || []).length})`);
