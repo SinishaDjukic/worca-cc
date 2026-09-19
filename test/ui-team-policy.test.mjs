@@ -169,13 +169,20 @@ test('Team policy page: scope select, effective table, Edit policy → editor �
   assert.ok(editor, 'Edit policy opens the editor');
   assert.ok(doc.querySelector('#tp-body .tp-head'), 'the document panel stays above the editor');
   assert.equal(doc.querySelector('#tp-body .tp-head .tp-edit').textContent, 'Cancel editing');
-  assert.equal(editor.querySelector('.tp-publish').disabled, true);
+  const publish = doc.querySelector('#tp-body .tp-head .tp-head-btns .tp-publish');
+  assert.ok(publish, 'Publish sits on the header, beside Cancel editing');
+  assert.equal(doc.querySelector('#tp-body .tp-head .tp-head-btns .tp-edit').textContent, 'Cancel editing');
+  assert.equal(editor.querySelector('.tp-publish-bar'), null, 'no bar floats over the form');
+  assert.equal(doc.querySelector('#tp-body .tp-head .tp-head-status .tp-change-count').textContent, 'no changes');
+  assert.deepEqual([...editor.querySelectorAll('.tp-edit-tabs .tp-tab')].map((b) => b.dataset.sec), ['document', 'cost', 'models', 'workspace', 'catalog'], 'one tab per group the registry has, plus Document, Workspace runs and Catalog');
+  assert.equal(publish.disabled, true);
   const cap = editor.querySelector('.tp-edit-row[data-key="cost.pipelineLimitUsd"][data-scope="fields"] .tp-val');
   cap.value = '12';
   cap.dispatchEvent(new window.Event('input', { bubbles: true }));
   await settle();
-  assert.equal(editor.querySelector('.tp-publish').disabled, false, 'a change enables Publish');
-  editor.querySelector('.tp-publish').click();
+  assert.equal(publish.disabled, false, 'a change enables Publish');
+  assert.equal(doc.querySelector('#tp-body .tp-head .tp-change-count').textContent, '1 change');
+  publish.click();
   await settle(8);
   assert.equal(puts.length, 1, 'one PUT /api/policy');
   assert.equal(puts[0].scope, 'project:gateway-00000001');
@@ -199,12 +206,13 @@ test('Team policy page: a publish rejection is printed verbatim under the bar', 
   editor.querySelector('.tp-title').value = 'Renamed';
   editor.querySelector('.tp-title').dispatchEvent(new window.Event('input', { bubbles: true }));
   await settle();
-  editor.querySelector('.tp-publish').click();
+  doc.querySelector('#tp-body .tp-head .tp-publish').click();
   await settle(8);
   const msg = editor.querySelector('.tp-msg');
   assert.ok(msg.classList.contains('err'));
   assert.match(msg.textContent, /push rejected · remote: error: GH006: Protected branch update failed .* · you may not have push rights/);
-  assert.equal(editor.querySelector('.tp-publish').disabled, false, 'the bar is usable again after a rejection');
+  assert.equal(editor.firstElementChild, msg, 'the rejection sits at the top of the form, under the header that holds Publish');
+  assert.equal(doc.querySelector('#tp-body .tp-head .tp-publish').disabled, false, 'Publish is usable again after a rejection');
 });
 
 test('Team policy page: nothing enabled → the empty state; a 404 for the scope → an honest error', async () => {

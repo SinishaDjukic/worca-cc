@@ -556,6 +556,119 @@ function listChips(doc, row, items, labelOf) {
 function readItems(row) { try { const v = JSON.parse(row.dataset.json || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } }
 function writeItems(row, items) { row.dataset.json = JSON.stringify(items); }
 
+// ---- the catalog editor: guardrail sets and models as forms ------------------------------------
+const CAT_TITLE = { guardrailSets: 'Guardrail sets', models: 'Models' };
+const CAT_HINT = {
+  guardrailSets: 'Sets every teammate gets as read-only rows (gp:<id>) — the policy\'s default set and minimum tier point at them.',
+  models: 'Model entries every teammate gets as read-only rows — "allowed models" can name them. Env may use ${VAR} for tokens; a literal secret is refused at publish.',
+};
+/** A chip list for a catalog item field: the row idiom (dataset.json + .tp-list + an add row) on a small wrapper. */
+function chipField(doc, label, key, items, placeholder) {
+  const wrap = h(doc, 'div', 'tp-cat-field tp-cat-chips'); wrap.dataset.key = key;
+  wrap.append(h(doc, 'label', null, label));
+  writeItems(wrap, Array.isArray(items) ? items : []);
+  wrap.append(h(doc, 'div', 'tp-list'));
+  const add = h(doc, 'div', 'path-row tp-add-row'); const inp = h(doc, 'input', 'input tp-add'); inp.type = 'text'; inp.placeholder = placeholder;
+  const b = h(doc, 'button', 'btn btn-ghost btn-mini tp-add-btn', '+ add'); b.type = 'button';
+  add.append(inp, b); wrap.append(add);
+  listChips(doc, wrap, readItems(wrap), (x) => String(x));
+  return wrap;
+}
+function textField(doc, label, cls, value, placeholder, mono = false) {
+  const wrap = h(doc, 'div', 'tp-cat-field');
+  wrap.append(h(doc, 'label', null, label));
+  const inp = h(doc, 'input', `input ${cls}${mono ? ' mono' : ''}`); inp.type = 'text'; inp.value = value == null ? '' : String(value); inp.placeholder = placeholder;
+  wrap.append(inp);
+  return wrap;
+}
+function boolField(doc, label, cls, on) {
+  const lab = h(doc, 'label', 'check-row tp-cat-bool'); const cb = h(doc, 'input', cls); cb.type = 'checkbox'; cb.checked = !!on;
+  lab.append(cb, ` ${label}`);
+  return lab;
+}
+function catalogItem(doc, cat, item) {
+  const it = h(doc, 'div', 'tp-cat-item'); it.dataset.cat = cat;
+  it.dataset.orig = JSON.stringify(item || {});   // the keys the document had: a round trip keeps them
+  const head = h(doc, 'div', 'tp-cat-item-head');
+  const rm = h(doc, 'button', 'btn-ghost btn-mini tp-cat-rm', 'Remove'); rm.type = 'button';
+  const grid = h(doc, 'div', 'tp-cat-grid');
+  if (cat === 'guardrailSets') {
+    head.append(h(doc, 'b', null, item?.name || item?.id || 'New guardrail set'), rm);
+    grid.append(
+      textField(doc, 'Id', 'tp-cat-id', item?.id, 'gateway-normal', true),
+      textField(doc, 'Name', 'tp-cat-name', item?.name, 'Gateway normal'),
+    );
+    const flags = h(doc, 'div', 'tp-cat-field tp-cat-flags');
+    flags.append(h(doc, 'label', null, 'Behaviour'), boolField(doc, 'honour project settings', 'tp-cat-honor', item?.honorProjectSettings), boolField(doc, 'scrub the environment', 'tp-cat-scrub', item?.envScrub));
+    it.append(head, grid, flags,
+      chipField(doc, 'Protected paths', 'protectedPaths', item?.protectedPaths, '.env*, **/secrets/**'),
+      chipField(doc, 'Deny rules', 'deny', item?.deny, 'Bash(git push)'),
+      chipField(doc, 'Env allowlist', 'envAllowlist', item?.envAllowlist, 'HOME'));
+  } else {
+    head.append(h(doc, 'b', null, item?.label || item?.id || 'New model'), rm);
+    grid.append(
+      textField(doc, 'Id', 'tp-cat-id', item?.id, 'acme-proxy-opus', true),
+      textField(doc, 'Label', 'tp-cat-label', item?.label, 'Opus via Acme gateway'),
+    );
+    const eff = h(doc, 'div', 'tp-cat-field tp-cat-efforts'); eff.append(h(doc, 'label', null, 'Efforts'));
+    const row = h(doc, 'div', 'tp-cat-effort-row');
+    for (const e of EFFORTS) { const lab = h(doc, 'label', 'check-row'); const cb = h(doc, 'input', 'tp-cat-effort'); cb.type = 'checkbox'; cb.value = e; cb.checked = Array.isArray(item?.efforts) && item.efforts.includes(e); lab.append(cb, ` ${e}`); row.append(lab); }
+    eff.append(row);
+    const env = h(doc, 'div', 'tp-cat-field tp-cat-env'); env.append(h(doc, 'label', null, 'Env'));
+    const rows = h(doc, 'div', 'tp-env-rows');
+    for (const [k, v] of Object.entries(item?.env || {})) rows.append(envRow(doc, k, v));
+    const addEnv = h(doc, 'button', 'btn btn-ghost btn-mini tp-env-add', '+ env var'); addEnv.type = 'button';
+    env.append(rows, addEnv, h(doc, 'small', 'hint', 'A token goes in as ${VAR}: the name of a variable on each teammate\'s machine, never the value.'));
+    it.append(head, grid, eff, env);
+  }
+  return it;
+}
+function envRow(doc, k = '', v = '') {
+  const r = h(doc, 'div', 'tp-env-row');
+  const key = h(doc, 'input', 'input mono tp-env-key'); key.type = 'text'; key.value = k; key.placeholder = 'ANTHROPIC_BASE_URL';
+  const val = h(doc, 'input', 'input mono tp-env-val'); val.type = 'text'; val.value = v; val.placeholder = 'https://… or ${ACME_LLM_TOKEN}';
+  const rm = h(doc, 'button', 'tp-chip-rm tp-env-rm', '✕'); rm.type = 'button'; rm.setAttribute('aria-label', 'Remove env var');
+  r.append(key, val, rm);
+  return r;
+}
+function catalogCard(doc, cat, items) {
+  const card = h(doc, 'section', 'card tp-cat-card'); card.dataset.cat = cat;
+  const head = h(doc, 'div', 'card-head'); head.append(h(doc, 'h2', null, CAT_TITLE[cat]), h(doc, 'small', 'hint', CAT_HINT[cat]));
+  card.append(head);
+  const list = h(doc, 'div', 'tp-cat-list'); list.dataset.cat = cat;
+  for (const it of items) list.append(catalogItem(doc, cat, it));
+  card.append(list);
+  const add = h(doc, 'button', 'btn btn-ghost btn-mini tp-cat-add', cat === 'guardrailSets' ? '+ Add guardrail set' : '+ Add model'); add.type = 'button'; add.dataset.cat = cat;
+  card.append(add);
+  return card;
+}
+/** One catalog item back to its object: the keys the document had, plus whatever the form set. */
+function readCatalogItem(item) {
+  let orig = {}; try { orig = JSON.parse(item.dataset.orig || '{}') || {}; } catch { orig = {}; }
+  const id = item.querySelector('.tp-cat-id')?.value.trim();
+  if (!id) return null;
+  const out = { ...orig, id };
+  const text = (cls, key) => { const v = item.querySelector(cls)?.value.trim() || ''; if (v || key in orig) out[key] = v; };
+  const bool = (cls, key) => { const on = !!item.querySelector(cls)?.checked; if (on || key in orig) out[key] = on; };
+  if (item.dataset.cat === 'guardrailSets') {
+    text('.tp-cat-name', 'name');
+    bool('.tp-cat-honor', 'honorProjectSettings'); bool('.tp-cat-scrub', 'envScrub');
+    for (const key of ['envAllowlist', 'protectedPaths', 'deny']) {
+      const wrap = item.querySelector(`.tp-cat-chips[data-key="${key}"]`);
+      const items = wrap ? readItems(wrap) : [];
+      if (items.length || key in orig) out[key] = items;
+    }
+  } else {
+    text('.tp-cat-label', 'label');
+    const efforts = [...item.querySelectorAll('.tp-cat-effort:checked')].map((cb) => cb.value);
+    if (efforts.length || 'efforts' in orig) out.efforts = efforts;
+    const env = {};
+    for (const r of item.querySelectorAll('.tp-env-row')) { const k = r.querySelector('.tp-env-key').value.trim(); if (k) env[k] = r.querySelector('.tp-env-val').value.trim(); }
+    if (Object.keys(env).length || 'env' in orig) out.env = env;
+  }
+  return out;
+}
+
 /** Value control for one registry row; the row's dataset carries list-shaped values. */
 function valueControl(doc, meta, entry, row) {
   const wrap = h(doc, 'div', 'tp-control');
@@ -649,6 +762,13 @@ function editorRow(doc, meta, entry, scope) {
     seg.append(b);
   }
   row.append(seg);
+  // "unset" keeps its own cell, so the first line never changes shape.
+  const unsetCell = h(doc, 'div', 'tp-row-unset');
+  const unset = h(doc, 'button', 'tp-unset', 'unset'); unset.type = 'button'; unsetCell.append(unset);
+  row.append(unsetCell);
+  // The options a soft cap carries (what a breach does, whether a reason is asked) sit on a line
+  // of their own under the value — the whole line appears or goes, and the input above never
+  // moves. An advisory field's window select is always there.
   const extra = h(doc, 'div', 'tp-extra');
   if (meta.cap) {
     const lab = h(doc, 'label', 'tp-onbreach'); lab.append('on breach ');
@@ -657,16 +777,15 @@ function editorRow(doc, meta, entry, scope) {
     sw.append(sel); lab.append(sw);
     const rr = h(doc, 'label', 'check-row tp-require'); const cb = h(doc, 'input', 'tp-require-reason'); cb.type = 'checkbox'; cb.checked = !!entry?.requireReason;
     rr.append(cb, ' reason required');
-    extra.append(lab, rr);
-    const sync = () => { const soft = seg.querySelector('.on')?.dataset.kind === 'soft'; lab.hidden = !soft; rr.hidden = !soft; };
+    extra.append(lab, rr, h(doc, 'span', 'tp-src', 'soft cap: the run pauses (or warns) at the tighter of team and local'));
+    const sync = () => { extra.hidden = seg.querySelector('.on')?.dataset.kind !== 'soft'; };
     seg.addEventListener('click', () => setTimeout(sync, 0)); sync();
   } else if (meta.advisory) {
     const lab = h(doc, 'label', 'tp-onbreach'); lab.append('window ');
     const sw = h(doc, 'span', 'select-wrap'); const sel = h(doc, 'select', 'select tp-window-sel');
     for (const val of ['monthly', 'weekly']) { const o = h(doc, 'option', null, val); o.value = val; if ((entry?.window || 'monthly') === val) o.selected = true; sel.append(o); }
     sw.append(sel); lab.append(sw); extra.append(lab, h(doc, 'span', 'tp-src', 'always warn'));
-  }
-  const unset = h(doc, 'button', 'tp-unset', 'unset'); unset.type = 'button'; extra.append(unset);
+  } else extra.hidden = true;
   row.append(extra);
   if (meta.type === 'string[]' || meta.type === 'plugins' || meta.type === 'steps') listChips(doc, row, readItems(row), chipLabel(meta));
   return row;
@@ -701,8 +820,30 @@ function wireEditor(doc, root, registry) {
       root.dispatchEvent(new (doc.defaultView.Event)('tp-change', { bubbles: true }));
       return;
     }
+    // The catalog editor: an item, an env row, a chip list on an item.
+    const catRm = e.target.closest && e.target.closest('.tp-cat-rm');
+    if (catRm) { catRm.closest('.tp-cat-item').remove(); root.dispatchEvent(new (doc.defaultView.Event)('tp-change', { bubbles: true })); return; }
+    const catAdd = e.target.closest && e.target.closest('.tp-cat-add');
+    if (catAdd) {
+      const item = catalogItem(doc, catAdd.dataset.cat, null);
+      catAdd.closest('.tp-cat-card').querySelector('.tp-cat-list').append(item);
+      item.querySelector('.tp-cat-id').focus();
+      root.dispatchEvent(new (doc.defaultView.Event)('tp-change', { bubbles: true }));
+      return;
+    }
+    const envAdd = e.target.closest && e.target.closest('.tp-env-add');
+    if (envAdd) { const r = envRow(doc); envAdd.closest('.tp-cat-env').querySelector('.tp-env-rows').append(r); r.querySelector('.tp-env-key').focus(); return; }
+    const envRm = e.target.closest && e.target.closest('.tp-env-rm');
+    if (envRm) { envRm.closest('.tp-env-row').remove(); root.dispatchEvent(new (doc.defaultView.Event)('tp-change', { bubbles: true })); return; }
     const rm = e.target.closest && e.target.closest('.tp-chip-rm');
     if (rm) {
+      const chips = rm.closest('.tp-cat-chips');
+      if (chips) {
+        const items = readItems(chips); items.splice(Number(rm.dataset.index), 1);
+        writeItems(chips, items); listChips(doc, chips, items, (x) => String(x));
+        root.dispatchEvent(new (doc.defaultView.Event)('tp-change', { bubbles: true }));
+        return;
+      }
       const row = rm.closest('.tp-edit-row'); const meta = metaOf(row.dataset.key);
       const items = readItems(row); items.splice(Number(rm.dataset.index), 1);
       writeItems(row, items); listChips(doc, row, items, chipLabel(meta));
@@ -710,6 +851,16 @@ function wireEditor(doc, root, registry) {
       return;
     }
     const add = e.target.closest && e.target.closest('.tp-add-btn');
+    if (add && add.closest('.tp-cat-chips')) {
+      const chips = add.closest('.tp-cat-chips');
+      const val = chips.querySelector('.tp-add').value.trim();
+      const items = readItems(chips);
+      if (!val || items.includes(val)) return;
+      items.push(val); chips.querySelector('.tp-add').value = '';
+      writeItems(chips, items); listChips(doc, chips, items, (x) => String(x));
+      root.dispatchEvent(new (doc.defaultView.Event)('tp-change', { bubbles: true }));
+      return;
+    }
     if (add) {
       const row = add.closest('.tp-edit-row'); const meta = metaOf(row.dataset.key);
       const items = readItems(row);
@@ -717,7 +868,10 @@ function wireEditor(doc, root, registry) {
         const name = row.querySelector('.tp-plugin-name').value.trim();
         if (!name) return;
         const it = { name };
-        const mkt = row.querySelector('.tp-plugin-marketplace').value.trim(); if (mkt) it.marketplace = mkt;
+        let mkt = row.querySelector('.tp-plugin-marketplace').value.trim();
+        // Picked from the list: the marketplace it came from, unless one was typed.
+        if (!mkt) { const opt = root.querySelector(`#tp-known-plugins option[value="${name.replace(/"/g, '\\"')}"]`); const from = opt && /^from (.+)$/.exec(opt.label || ''); if (from) mkt = from[1]; }
+        if (mkt) it.marketplace = mkt;
         const min = row.querySelector('.tp-plugin-min').value.trim(); if (min) it.minVersion = min;
         items.push(it);
         row.querySelector('.tp-plugin-name').value = ''; row.querySelector('.tp-plugin-marketplace').value = ''; row.querySelector('.tp-plugin-min').value = '';
@@ -746,7 +900,12 @@ function wireEditor(doc, root, registry) {
   });
   root.addEventListener('input', (e) => {
     const row = e.target.closest && e.target.closest('.tp-edit-row');
-    if (!row || !(e.target.classList.contains('tp-val') || e.target.classList.contains('tp-null'))) return;
+    if (!row) {
+      // The document tab and the catalog editor: any keystroke is a change.
+      if (e.target.closest && (e.target.closest('.tp-doc-head') || e.target.closest('.tp-catalogs'))) root.dispatchEvent(new (doc.defaultView.Event)('tp-change', { bubbles: true }));
+      return;
+    }
+    if (!(e.target.classList.contains('tp-val') || e.target.classList.contains('tp-null'))) return;
     ensureKind(row);
     root.dispatchEvent(new (doc.defaultView.Event)('tp-change', { bubbles: true }));
   });
@@ -763,12 +922,39 @@ function wireEditor(doc, root, registry) {
  * The editor (board 5): one card per registry group, a collapsed "For workspace runs" card,
  * the catalogs, a sticky publish bar. `registry` is the FIELDS list served by GET /api/policy.
  */
-export function renderPolicyEditor(policyDoc, { registry = [], doc = globalThis.document } = {}) {
+/**
+ * `known`: what this machine can offer as choices — { models: [{id,label}], plugins: [{name,marketplace}],
+ * marketplaces: [id], guardrails: [{id,name}], workflows: [{id,name}] }. Each becomes a <datalist> on the
+ * inputs that name such a thing (allowed models, a step's model, a required plugin and its marketplace, the
+ * default guardrail set and workflow), so a value can be picked or typed — a policy may name something the
+ * machine has not installed yet.
+ */
+export function renderPolicyEditor(policyDoc, { registry = [], doc = globalThis.document, known = null } = {}) {
   const src = policyDoc || {};
   const root = h(doc, 'div', 'tp-editor');
   root.dataset.original = JSON.stringify(canonicalDoc(src));
+  // ---- tabs: the read view's pills, one section per subject, so the form is never one long scroll.
+  const tabsBar = h(doc, 'div', 'tp-tabs tp-edit-tabs'); tabsBar.setAttribute('role', 'tablist');
+  const secs = h(doc, 'div', 'tp-edit-sections');
+  const tabs = [];
+  const addTab = (key, label, count) => {
+    const btn = h(doc, 'button', 'tp-tab'); btn.type = 'button'; btn.dataset.sec = key; btn.setAttribute('role', 'tab');
+    btn.append(label);
+    const badge = h(doc, 'span', 'tp-tab-badge'); badge.hidden = true; btn.append(badge);
+    const sec = h(doc, 'div', 'tp-sec tp-edit-sec'); sec.dataset.sec = key; sec.hidden = true; sec.setAttribute('role', 'tabpanel');
+    tabsBar.append(btn); secs.append(sec);
+    tabs.push({ key, btn, sec, badge, count });
+    return sec;
+  };
+  const activate = (key) => {
+    for (const t of tabs) { const on = t.key === key; t.btn.classList.toggle('active', on); t.btn.setAttribute('aria-selected', on ? 'true' : 'false'); t.sec.hidden = !on; }
+  };
+  tabsBar.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('button[data-sec]'); if (b) activate(b.dataset.sec); });
+
+  // Document: title and notes.
+  const docSec = addTab('document', 'Document', () => 0);
   const headCard = h(doc, 'section', 'card tp-doc-head');
-  const hh = h(doc, 'div', 'card-head'); hh.append(h(doc, 'h2', null, 'Policy'), h(doc, 'small', 'hint', 'Soft caps pause and can be continued past; defaults only start a developer off.'));
+  const hh = h(doc, 'div', 'card-head'); hh.append(h(doc, 'h2', null, 'Document'), h(doc, 'small', 'hint', 'What the policy is called and who to ask. Soft caps pause and can be continued past; defaults only start a developer off.'));
   headCard.append(hh);
   const tf = h(doc, 'div', 'field field-compact'); const tl = h(doc, 'label', null, 'Title'); tl.htmlFor = 'tp-title';
   const ti = h(doc, 'input', 'input tp-title'); ti.id = 'tp-title'; ti.type = 'text'; ti.value = src.title || ''; ti.placeholder = 'e.g. Gateway team policy';
@@ -777,10 +963,15 @@ export function renderPolicyEditor(policyDoc, { registry = [], doc = globalThis.
   const na = h(doc, 'textarea', 'textarea tp-notes'); na.id = 'tp-notes'; na.rows = 2; na.value = src.notes || ''; na.placeholder = 'Who to ask before raising anything, what the caps are for…';
   nf.append(nl, na);
   headCard.append(tf, nf);
-  root.append(headCard);
+  docSec.append(headCard);
+
+  // One tab per registry group; the badge counts the fields the policy sets there.
   const groups = [];
   for (const m of registry) if (!groups.includes(m.group)) groups.push(m.group);
+  const setCount = (scope, group) => [...root.querySelectorAll(`.tp-edit-row[data-scope="${scope}"]`)]
+    .filter((r) => (!group || (registry.find((m) => m.key === r.dataset.key) || {}).group === group) && r.querySelector('.tp-kind-seg .on')).length;
   for (const g of groups) {
+    const sec = addTab(g, GROUP_LABELS[g] || g, () => setCount('fields', g));
     const card = h(doc, 'section', 'card tp-group-card'); card.dataset.group = g;
     const head = h(doc, 'div', 'card-head'); head.append(h(doc, 'h2', null, GROUP_LABELS[g] || g));
     if (g === 'cost') head.append(h(doc, 'small', 'hint', 'Caps apply per developer. Soft caps pause and can be continued past.'));
@@ -788,49 +979,79 @@ export function renderPolicyEditor(policyDoc, { registry = [], doc = globalThis.
     if (g === 'models') head.append(h(doc, 'small', 'hint', 'Catalog entries may use ${VAR} for tokens. Literal secrets are refused.'));
     card.append(head);
     for (const m of registry.filter((x) => x.group === g)) card.append(editorRow(doc, m, src.fields?.[m.key] || null, 'fields'));
-    root.append(card);
+    sec.append(card);
   }
-  const ws = h(doc, 'details', 'card tp-ws-card');
-  const sum = h(doc, 'summary'); sum.append(h(doc, 'b', null, 'For workspace runs'), ' ', h(doc, 'small', 'hint', 'Values here replace the ones above for pipelines that target a workspace following this home. Empty = same as above.'));
-  ws.append(sum);
-  const wsFields = Object.keys(src.workspaceRuns || {});
-  if (wsFields.length) ws.open = true;
+
+  // Workspace runs: the same fields, replacing the ones above for pipelines that target a workspace.
+  const wsSec = addTab('workspace', 'Workspace runs', () => setCount('workspaceRuns'));
+  const ws = h(doc, 'section', 'card tp-ws-card');
+  const wsHead = h(doc, 'div', 'card-head'); wsHead.append(h(doc, 'h2', null, 'For workspace runs'), h(doc, 'small', 'hint', 'Values here replace the ones on the other tabs for pipelines that target a workspace following this home. A field left unset keeps the project-run value.'));
+  ws.append(wsHead);
   for (const m of registry.filter((x) => !x.advisory && x.key !== 'plugins.marketplaces' && x.key !== 'plugins.required' && x.key !== 'plugins.blocked' && x.key !== 'worca.minVersion' && x.key !== 'metrics.record')) {
     ws.append(editorRow(doc, m, src.workspaceRuns?.[m.key] || null, 'workspaceRuns'));
   }
-  root.append(ws);
-  const cat = h(doc, 'details', 'card tp-catalogs');
-  const cs = h(doc, 'summary'); cs.append(h(doc, 'b', null, 'Catalogs (advanced)'), ' ', h(doc, 'small', 'hint', 'Guardrail sets and model entries this policy ships to every teammate, as JSON.'));
-  cat.append(cs);
-  const gf = h(doc, 'div', 'field field-compact'); const gl = h(doc, 'label', null, 'Guardrail sets'); gl.htmlFor = 'tp-cat-guardrails';
-  const ga = h(doc, 'textarea', 'textarea mono tp-catalog-guardrails'); ga.id = 'tp-cat-guardrails'; ga.rows = 6; ga.value = JSON.stringify(src.catalogs?.guardrailSets || [], null, 2);
-  gf.append(gl, ga, h(doc, 'small', 'hint', '[{ "id", "name", "honorProjectSettings", "envScrub", "envAllowlist": [], "protectedPaths": [], "deny": [] }]'));
-  const mf = h(doc, 'div', 'field field-compact'); const ml = h(doc, 'label', null, 'Models'); ml.htmlFor = 'tp-cat-models';
-  const ma = h(doc, 'textarea', 'textarea mono tp-catalog-models'); ma.id = 'tp-cat-models'; ma.rows = 6; ma.value = JSON.stringify(src.catalogs?.models || [], null, 2);
-  mf.append(ml, ma, h(doc, 'small', 'hint', '[{ "id", "label", "efforts": [], "env": { "ANTHROPIC_BASE_URL": "…", "ANTHROPIC_AUTH_TOKEN": "${VAR}" } }]'));
-  cat.append(gf, mf);
-  root.append(cat);
+  wsSec.append(ws);
+
+  // Catalog: the guardrail sets and models the policy ships, edited as forms, never as JSON.
+  const catSec = addTab('catalog', 'Catalog', () => root.querySelectorAll('.tp-cat-item').length);
+  const cat = h(doc, 'div', 'tp-catalogs');
+  cat.append(catalogCard(doc, 'guardrailSets', src.catalogs?.guardrailSets || []), catalogCard(doc, 'models', src.catalogs?.models || []));
+  catSec.append(cat);
+
+  root.append(tabsBar, secs);
+  activate('document');
+  // Pick or type: one datalist per kind of thing, wired to every input that names one.
+  const lists = {
+    models: (known?.models || []).map((m) => ({ value: m.id, label: m.label && m.label !== m.id ? m.label : '' })),
+    plugins: (known?.plugins || []).map((p) => ({ value: p.name, label: p.marketplace ? `from ${p.marketplace}` : '' })),
+    marketplaces: (known?.marketplaces || []).map((x) => ({ value: typeof x === 'string' ? x : x.id, label: '' })),
+    guardrails: (known?.guardrails || []).map((g) => ({ value: g.id, label: g.name && g.name !== g.id ? g.name : '' })),
+    workflows: (known?.workflows || []).map((w) => ({ value: w.id, label: w.name && w.name !== w.id ? w.name : '' })),
+  };
+  for (const [kind, items] of Object.entries(lists)) {
+    if (!items.length) continue;
+    const dl = h(doc, 'datalist'); dl.id = `tp-known-${kind}`;
+    const seen = new Set();
+    for (const it of items) { if (!it.value || seen.has(it.value)) continue; seen.add(it.value); const o = h(doc, 'option'); o.value = it.value; if (it.label) o.label = it.label; dl.append(o); }
+    root.append(dl);
+  }
+  const wire = (sel, kind) => { if (!lists[kind].length) return; for (const inp of root.querySelectorAll(sel)) { inp.setAttribute('list', `tp-known-${kind}`); inp.classList.add('tp-pick'); } };
+  wire('.tp-edit-row[data-key="models.allowed"] .tp-add', 'models');
+  wire('.tp-edit-row[data-key="models.steps"] .tp-step-model', 'models');
+  wire('.tp-edit-row[data-key="plugins.required"] .tp-plugin-name', 'plugins');
+  wire('.tp-edit-row[data-key="plugins.blocked"] .tp-add', 'plugins');
+  wire('.tp-edit-row[data-key="plugins.required"] .tp-plugin-marketplace', 'marketplaces');
+  wire('.tp-edit-row[data-key="plugins.marketplaces"] .tp-add', 'marketplaces');
+  wire('.tp-edit-row[data-key="guardrails.default"] .tp-val', 'guardrails');
+  wire('.tp-edit-row[data-key="workflows.default"] .tp-val', 'workflows');
+  // The publish controls: the app moves them into the page header, next to Cancel editing, so the
+  // controls sit together and nothing floats over the form (the bar is the pure form of that).
+  // Cancel editing is the way out: a separate Discard said the same twice.
   const bar = h(doc, 'div', 'tp-publish-bar');
-  const grow = h(doc, 'span', 'grow'); grow.append(h(doc, 'span', 'tp-change-count', 'no changes'), ' · ');
+  const grow = h(doc, 'span', 'grow');
+  const count = h(doc, 'span', 'tp-change-count', 'no changes');
+  grow.append(count, ' · ');
   const vj = h(doc, 'button', 'linkish tp-view-json', 'View JSON'); vj.type = 'button';
   const cj = h(doc, 'button', 'linkish tp-copy-json', 'Copy for a pull request'); cj.type = 'button';
   grow.append(vj, ' · ', cj);
-  const discard = h(doc, 'button', 'btn btn-ghost btn-mini tp-discard', 'Discard'); discard.type = 'button';
   const publish = h(doc, 'button', 'btn btn-primary btn-mini tp-publish', 'Publish to worca-policy'); publish.type = 'button'; publish.disabled = true;
-  bar.append(grow, discard, publish);
+  bar.append(grow, publish);
   root.append(bar);
-  const pre = h(doc, 'pre', 'tp-json mono'); pre.hidden = true; root.append(pre);
-  const msg = h(doc, 'p', 'form-msg tp-msg'); msg.setAttribute('aria-live', 'polite'); root.append(msg);
+  // The message and the JSON view sit at the top, right under the header that holds the controls.
+  const pre = h(doc, 'pre', 'tp-json mono'); pre.hidden = true;
+  const msg = h(doc, 'p', 'form-msg tp-msg'); msg.setAttribute('aria-live', 'polite');
+  root.prepend(msg, pre);
   wireEditor(doc, root, registry);
   vj.addEventListener('click', () => { pre.hidden = !pre.hidden; if (!pre.hidden) pre.textContent = JSON.stringify(docFromEditor(root, { registry }), null, 2); });
   const refresh = () => {
     const dirty = editorDirty(root, src, { registry });
-    root.querySelector('.tp-change-count').textContent = dirty ? `${changedKeys(root, src, { registry })} change${changedKeys(root, src, { registry }) === 1 ? '' : 's'}` : 'no changes';
+    count.textContent = dirty ? `${changedKeys(root, src, { registry })} change${changedKeys(root, src, { registry }) === 1 ? '' : 's'}` : 'no changes';
     publish.disabled = !dirty;
     if (!pre.hidden) pre.textContent = JSON.stringify(docFromEditor(root, { registry }), null, 2);
+    for (const t of tabs) { const n = t.count(); t.badge.textContent = String(n); t.badge.hidden = !n; }
   };
   root.addEventListener('tp-change', refresh);
-  ti.addEventListener('input', refresh); na.addEventListener('input', refresh); ga.addEventListener('input', refresh); ma.addEventListener('input', refresh);
+  refresh();
   return root;
 }
 
@@ -851,6 +1072,7 @@ function rowValue(row, meta) {
 /** The DOM read back into a policy document. Rows without a kind are omitted; empty lists are omitted. */
 export function docFromEditor(root, { registry = [] } = {}) {
   const metaOf = (key) => registry.find((m) => m.key === key) || { type: root.querySelector(`.tp-edit-row[data-key="${key}"]`)?.dataset.type };
+  let orig = {}; try { orig = JSON.parse(root.dataset.original || '{}') || {}; } catch { orig = {}; }
   const out = { schema: 1, title: root.querySelector('.tp-title')?.value.trim() || '', notes: root.querySelector('.tp-notes')?.value.trim() || '', fields: {}, workspaceRuns: {}, catalogs: { guardrailSets: [], models: [] } };
   for (const row of root.querySelectorAll('.tp-edit-row')) {
     const kind = row.querySelector('.tp-kind-seg .on')?.dataset.kind;
@@ -861,16 +1083,19 @@ export function docFromEditor(root, { registry = [] } = {}) {
     if ((meta.type === 'string[]' || meta.type === 'plugins') && !value.length) continue;
     if (meta.type === 'steps' && !Object.keys(value).length) continue;
     const entry = { kind, value };
+    // An attribute at its default is written only when the document already carried it: a fresh
+    // editor over a document that omits "onBreach": "pause" must read as unchanged.
+    const had = orig[row.dataset.scope === 'workspaceRuns' ? 'workspaceRuns' : 'fields']?.[row.dataset.key] || {};
     if (meta.cap && kind === 'soft') {
-      const ob = row.querySelector('.tp-onbreach-sel')?.value; if (ob) entry.onBreach = ob;
-      if (row.querySelector('.tp-require-reason')?.checked) entry.requireReason = true;
+      const ob = row.querySelector('.tp-onbreach-sel')?.value; if (ob && (ob !== 'pause' || 'onBreach' in had)) entry.onBreach = ob;
+      const rr = !!row.querySelector('.tp-require-reason')?.checked; if (rr || 'requireReason' in had) entry.requireReason = rr;
     }
-    if (meta.advisory) { const w = row.querySelector('.tp-window-sel')?.value; if (w) entry.window = w; }
+    if (meta.advisory) { const w = row.querySelector('.tp-window-sel')?.value; if (w && (w !== 'monthly' || 'window' in had)) entry.window = w; }
     out[row.dataset.scope === 'workspaceRuns' ? 'workspaceRuns' : 'fields'][row.dataset.key] = entry;
   }
-  const parse = (sel) => { try { const v = JSON.parse(root.querySelector(sel)?.value || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
-  out.catalogs.guardrailSets = parse('.tp-catalog-guardrails');
-  out.catalogs.models = parse('.tp-catalog-models');
+  for (const cat of ['guardrailSets', 'models']) {
+    out.catalogs[cat] = [...root.querySelectorAll(`.tp-cat-item[data-cat="${cat}"]`)].map(readCatalogItem).filter(Boolean);
+  }
   return out;
 }
 

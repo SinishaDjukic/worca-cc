@@ -124,7 +124,13 @@ The page separates what the team publishes from what your machine makes of it.
 
 ## Editing
 
-The **Team policy** page's editor writes one commit to the home's branch. A rejection
+The **Team policy** page's editor is tabbed — Document, one tab per field group, Workspace runs,
+Catalog — with Publish beside Cancel editing on the page's header; the Catalog tab edits guardrail
+sets and model entries as forms (fields, chips, env rows), never as JSON. Wherever a field names a
+model, a plugin, a marketplace, a guardrail set or a workflow, the input offers what this machine
+knows (the picker's models, the marketplaces' plugins, the installed ones, the sets, the workflows)
+and still takes anything typed — a policy may name something not installed here yet. It writes one
+commit to the home's branch. A rejection
 (a protected branch you cannot push to) is shown verbatim with the recovery paths: copy the
 JSON and open a pull request against `worca-policy`, or ask a maintainer. Hand edits are fine:
 the reader drops a malformed field with a warning and never fails the page.

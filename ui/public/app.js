@@ -12486,13 +12486,14 @@ async function ensureMarketplacesLoaded() {
   try { const r = await fetch('/api/marketplaces'); const j = await safeJson(r); if (r.ok) pluginsViewMarketplaces = j.marketplaces || []; }
   catch { /* the tab still lists what the policy expects; an install then says it cannot find it */ }
 }
-function renderTeamPolicyEdit() {
+async function renderTeamPolicyEdit() {
   const data = tpState.data;
   if (!data || !data.canPublish || !el.tpBody) return;
   tpState.editing = true;
   const registry = data.registry || [];
-  const editor = renderPolicyEditor(data.policy?.doc || null, { registry, doc: document });
-  editor.querySelector('.tp-discard').addEventListener('click', () => renderTeamPolicyRead());
+  const known = await knownForPolicyEditor();
+  if (!tpState.editing || tpState.data !== data) return;   // the page moved on while the lists loaded
+  const editor = renderPolicyEditor(data.policy?.doc || null, { registry, doc: document, known });
   editor.querySelector('.tp-copy-json').addEventListener('click', async () => {
     const json = JSON.stringify(docFromEditor(editor, { registry }), null, 2);
     const msgEl = editor.querySelector('.tp-msg');
@@ -12500,12 +12501,52 @@ function renderTeamPolicyEdit() {
     catch { const pre = editor.querySelector('.tp-json'); pre.hidden = false; pre.textContent = json; msgEl.className = 'form-msg tp-msg'; msgEl.textContent = 'Copy the JSON above into .worca-policy/policy.json on a pull request against the worca-policy branch.'; }
   });
   editor.querySelector('.tp-publish').addEventListener('click', () => { void publishFromEditor(editor, registry); });
-  el.tpBody.replaceChildren(renderPolicyHeader(data, { doc: document, now: Date.now(), editing: true }), editor);
+  // The controls live on the header, next to Cancel editing: Publish beside it, the change count
+  // and the JSON links under them. The editor's bar is dismantled — nothing floats over the form.
+  const head = renderPolicyHeader(data, { doc: document, now: Date.now(), editing: true });
+  const actions = head.querySelector('.tp-head-actions');
+  const bar = editor.querySelector('.tp-publish-bar');
+  const btns = document.createElement('div');
+  btns.className = 'tp-head-btns';
+  btns.append(actions.querySelector('.tp-edit'), bar.querySelector('.tp-publish'));
+  const status = bar.querySelector('.grow');
+  status.classList.add('tp-head-status');
+  bar.remove();
+  actions.replaceChildren(btns, status);
+  el.tpBody.replaceChildren(head, editor);
+}
+// What this machine can offer the editor as choices (docs/team-policy.md "Editing"): the models the
+// New pipeline picker shows, the plugins its marketplaces list and the ones installed, the
+// marketplaces, the guardrail sets and the workflows. Every list is optional — a failed call leaves
+// the input free-text, which it stays anyway.
+async function knownForPolicyEditor() {
+  const out = { models: [], plugins: [], marketplaces: [], guardrails: [], workflows: [] };
+  try { if (!state.models.length) await loadConfig(); } catch { /* the picker's list may already be there */ }
+  out.models = (state.models || []).map((m) => ({ id: m.id, label: m.label || m.id }));
+  try { await ensureMarketplacesLoaded(); } catch { /* optional */ }
+  for (const m of pluginsViewMarketplaces || []) {
+    if (m && m.id) out.marketplaces.push(m.id);
+    for (const p of (m && m.plugins) || []) if (p && p.name) out.plugins.push({ name: p.name, marketplace: m.id || '' });
+  }
+  try {
+    const r = await fetch('/api/plugins'); const j = await safeJson(r);
+    for (const p of (r.ok && Array.isArray(j.plugins)) ? j.plugins : []) if (p && p.name && !out.plugins.some((x) => x.name === p.name)) out.plugins.push({ name: p.name, marketplace: p.marketplace || '' });
+  } catch { /* optional */ }
+  try {
+    const r = await fetch('/api/guardrails'); const j = await safeJson(r);
+    const sets = r.ok ? (Array.isArray(j.guardrails) ? j.guardrails : Array.isArray(j.sets) ? j.sets : []) : [];   // the endpoint says `guardrails`
+    out.guardrails = sets.map((g) => ({ id: g.id, name: g.name || g.id }));
+  } catch { /* optional */ }
+  try {
+    const r = await fetch('/api/workflows'); const j = await safeJson(r);
+    out.workflows = ((r.ok && Array.isArray(j.workflows)) ? j.workflows : []).map((w) => ({ id: w.id, name: w.name || w.id }));
+  } catch { /* optional */ }
+  return out;
 }
 async function publishFromEditor(editor, registry) {
   const doc = docFromEditor(editor, { registry });
   const msgEl = editor.querySelector('.tp-msg');
-  const btn = editor.querySelector('.tp-publish');
+  const btn = el.tpBody.querySelector('.tp-publish');   // on the header, beside Cancel editing
   btn.disabled = true;
   msgEl.className = 'form-msg tp-msg'; msgEl.textContent = 'Publishing…';
   try {
@@ -12535,7 +12576,7 @@ if (el.tpScope) el.tpScope.addEventListener('change', () => {
 const tpSection = document.querySelector('section[data-view="team-policy"]');
 if (tpSection) tpSection.addEventListener('click', async (e) => {
   if (e.target.closest && e.target.closest('.tp-edit')) {
-    if (tpState.editing) renderTeamPolicyRead(); else renderTeamPolicyEdit();
+    if (tpState.editing) renderTeamPolicyRead(); else void renderTeamPolicyEdit();
     return;
   }
   if (e.target.closest && e.target.closest('.tp-check-now')) {

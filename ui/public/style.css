@@ -5463,6 +5463,11 @@ input.gv-name:focus-visible{outline:none;}
 .tp-blocked-list{display:flex;flex-direction:column;gap:10px;}
 .tp-blocked-row{display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:12.5px;}
 /* Catalog tab */
+/* The catalog cards' heads: the title stays one word wide, the (long) hint takes the rest. */
+.tp-cat-card .card-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 14px;margin-bottom:12px;}
+.tp-cat-card .card-head h2{margin:0;white-space:nowrap;}
+.tp-cat-card .card-head .hint{flex:1 1 320px;min-width:0;margin:0;}
+.tp-catalogs{display:flex;flex-direction:column;gap:18px;}   /* the two catalog cards: the panel gap */
 .tp-cat-list{display:flex;flex-direction:column;gap:12px;}
 .tp-cat-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);}
 .tp-cat-row:last-child{border-bottom:0;}
@@ -5491,13 +5496,49 @@ input.gv-name:focus-visible{outline:none;}
 .tp-foot{margin-top:14px;}
 /* editor (board 5) */
 .tp-editor{display:flex;flex-direction:column;gap:18px;}
+.tp-head + .tp-editor{margin-top:18px;}   /* the same gap the editor keeps between its own cards */
+/* The editor's tabs: the read view's pills, then one section each (the read view's gap between cards). */
+.tp-editor > .tp-edit-tabs{padding:0 0 4px;}
+.tp-edit-sections{display:flex;flex-direction:column;}
+.tp-edit-sec{display:flex;flex-direction:column;gap:18px;}
+.tp-edit-sec[hidden]{display:none;}
+/* The catalog editor: one bordered item per set / model, its fields on a grid. */
+.tp-cat-list{display:flex;flex-direction:column;gap:12px;}
+.tp-cat-list:empty::before{content:'None yet.';color:var(--ink-3);font-size:12.5px;}
+.tp-cat-item{display:flex;flex-direction:column;gap:12px;padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:var(--surface);}
+.tp-cat-item-head{display:flex;align-items:center;gap:10px;font-size:13.5px;}
+.tp-cat-item-head .tp-cat-rm{margin-left:auto;padding:5px 11px;font-size:12px;}
+.tp-cat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 14px;}
+.tp-cat-field{display:flex;flex-direction:column;gap:6px;min-width:0;}
+.tp-cat-field > label{font:600 10.5px var(--sans);letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase;}
+.tp-cat-field .input{padding:8px 12px;font-size:13px;border-radius:10px;}
+.tp-cat-flags{flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 18px;}
+.tp-cat-flags > label:first-child{flex-basis:100%;}
+.tp-cat-effort-row{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;}
+.tp-env-rows{display:flex;flex-direction:column;gap:6px;}
+.tp-env-row{display:flex;align-items:center;gap:6px;}
+.tp-env-row .tp-env-key{flex:0 1 240px;}
+.tp-env-row .tp-env-val{flex:1 1 200px;min-width:0;}
+.tp-cat-env .tp-env-add,.tp-cat-card > .tp-cat-add{align-self:flex-start;margin-top:4px;}
+.tp-editor > .tp-msg:empty,.tp-editor > .tp-json[hidden]{display:none;}
+.tp-editor > .tp-msg{margin:0;}
+/* Editing: Publish sits beside Cancel editing on the header; the count and links under them. */
+.tp-head-btns{display:flex;align-items:center;gap:8px;}
+.tp-head-status{font-size:12px;color:var(--ink-3);text-align:right;}
+.tp-head-status .linkish{font-size:12px;}
 .tp-editor .card.tp-group-card,.tp-editor details.card{padding:20px 22px;}
 .tp-editor details.card > summary{cursor:pointer;font-size:14px;list-style:none;}
 .tp-editor details.card > summary::-webkit-details-marker{display:none;}
 .tp-editor details.card > summary::before{content:"▸";display:inline-block;width:14px;color:var(--ink-3);}
 .tp-editor details.card[open] > summary::before{content:"▾";}
 .tp-editor details.card > summary .hint{display:inline;margin:0 0 0 6px;}
-.tp-edit-row{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1.2fr) auto minmax(0,auto);gap:12px;align-items:start;padding:12px 0;border-bottom:1px solid var(--line);}
+.tp-edit-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr) auto auto;gap:8px 14px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line);}
+.tp-edit-row > .tp-key{align-self:start;}
+.tp-row-unset{display:flex;align-items:center;}
+/* The second line: under the value and the kind, never beside them, so the first line keeps its
+   shape when Soft is picked. */
+.tp-edit-row > .tp-extra{grid-column:2 / -1;display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;font-size:11.5px;color:var(--ink-2);}
+.tp-edit-row > .tp-extra[hidden]{display:none;}
 .tp-edit-row:last-child{border-bottom:0;}
 .tp-edit-row .tp-key{font-weight:600;font-size:13px;line-height:1.45;}
 .tp-edit-row .tp-key small{display:block;font-weight:400;color:var(--ink-3);font-size:11.5px;}
@@ -5514,13 +5555,17 @@ input.gv-name:focus-visible{outline:none;}
 .tp-list-empty{color:var(--ink-3);font-size:12px;}
 .tp-add-row{display:flex;gap:6px;flex-wrap:wrap;}
 .tp-add-row .input{flex:1 1 120px;min-width:0;}
+/* An input with a datalist behind it: pick from what the machine knows, or type. */
+.tp-editor .tp-pick{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");background-repeat:no-repeat;background-position:right 10px center;background-size:14px;padding-right:30px;}
+.tp-editor .tp-pick::-webkit-calendar-picker-indicator{opacity:0;}
 .tp-add-row .select-wrap{flex:0 0 120px;}
-.tp-extra{display:flex;flex-direction:column;align-items:flex-start;gap:6px;font-size:11.5px;color:var(--ink-2);}
+.tp-extra .tp-src{flex-basis:100%;}
 .tp-onbreach{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-2);}
 .tp-onbreach .select-wrap{display:inline-block;width:96px;}
 .tp-onbreach .select{padding:6px 30px 6px 10px;font-size:12px;border-radius:9px;}
 .tp-unset{color:var(--ink-3);font-size:12px;background:none;border:none;font:inherit;cursor:pointer;text-decoration:underline;padding:0;}
-.tp-publish-bar{position:sticky;bottom:12px;display:flex;align-items:center;gap:12px;padding:14px 20px;background:var(--panel);border:1px solid var(--line-2);border-radius:18px;box-shadow:var(--shadow);}
+/* The pure editor's bar (team-policy-view.mjs): the page dismantles it into the header. */
+.tp-publish-bar{display:flex;align-items:center;gap:12px;}
 .tp-publish-bar .grow{flex:1;font-size:12.5px;color:var(--ink-2);}
 .tp-json{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;font-size:12px;line-height:1.5;overflow-x:auto;margin:0;}
 .tp-msg{white-space:pre-wrap;}

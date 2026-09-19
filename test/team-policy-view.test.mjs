@@ -145,10 +145,34 @@ test('editor (board 5): registry-driven rows, kind segments, docFromEditor round
   assert.equal(period.querySelector('.tp-kind-btn[data-kind="soft"]').disabled, true, 'a default-only field cannot be soft');
   const allowed = root.querySelector('.tp-edit-row[data-key="models.allowed"][data-scope="fields"]');
   assert.equal(allowed.querySelectorAll('.tp-chip').length, 2);
+  // Tabs: the read view's pills, one per subject; the badges count what the policy sets there.
+  assert.deepEqual([...root.querySelectorAll('.tp-edit-tabs .tp-tab')].map((b) => [b.dataset.sec, b.querySelector('.tp-tab-badge').hidden ? null : b.querySelector('.tp-tab-badge').textContent]),
+    [['document', null], ['cost', '2'], ['ask', null], ['guardrails', null], ['models', '2'], ['plugins', '1'], ['runs', '1'], ['workspace', '1'], ['catalog', '1']]);
+  assert.equal(root.querySelector('.tp-edit-tabs .tp-tab.active').dataset.sec, 'document', 'opens on the document');
+  assert.equal(root.querySelector('.tp-edit-sec[data-sec="cost"]').hidden, true);
+  root.querySelector('.tp-tab[data-sec="workspace"]').dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+  assert.equal(root.querySelector('.tp-edit-sec[data-sec="workspace"]').hidden, false);
+  assert.equal(root.querySelector('.tp-edit-sec[data-sec="document"]').hidden, true);
   const ws = root.querySelector('.tp-ws-card');
-  assert.equal(ws.open, true, 'a document with workspace values opens the card');
   assert.equal(ws.querySelector('.tp-edit-row[data-key="cost.pipelineLimitUsd"][data-scope="workspaceRuns"] .tp-val').value, '25');
+  // The catalog is a form, not JSON: the sample's set comes back field by field.
+  const gs = root.querySelector('.tp-cat-item[data-cat="guardrailSets"]');
+  assert.equal(gs.querySelector('.tp-cat-id').value, 'gateway-normal');
+  assert.equal(gs.querySelector('.tp-cat-name').value, 'Gateway normal');
+  assert.equal(gs.querySelector('.tp-cat-honor').checked, true);
+  assert.equal(gs.querySelector('.tp-cat-scrub').checked, false);
+  assert.deepEqual([...gs.querySelectorAll('.tp-cat-chips[data-key="protectedPaths"] .tp-chip')].map((c) => c.firstChild.textContent), ['.env*']);
+  assert.equal(root.querySelector('.tp-catalog-guardrails'), null, 'no JSON textarea');
+  assert.equal(root.querySelectorAll('.tp-cat-item[data-cat="models"]').length, 0);
   assert.equal(root.querySelector('.tp-publish').disabled, true, 'nothing changed yet');
+  assert.equal(root.querySelector('.tp-discard'), null, 'no Discard: Cancel editing is the way out');
+  assert.equal(root.firstElementChild.className, 'form-msg tp-msg', 'the message line sits at the top, under the header that holds the controls');
+  // The row keeps its first line whatever the kind: unset has its own cell, the soft-only options
+  // are a second line that appears whole or not at all.
+  assert.ok(cap.querySelector('.tp-row-unset .tp-unset'));
+  assert.equal(cap.querySelector('.tp-extra').hidden, false, 'a soft cap shows its options line');
+  assert.equal(cap.querySelector('.tp-extra .tp-src').textContent, 'soft cap: the run pauses (or warns) at the tighter of team and local');
+  assert.equal(period.querySelector('.tp-extra').hidden, true, 'a plain default has no options line');
   assert.equal(editorDirty(root, SAMPLE_DOC, { registry: REGISTRY }), false);
   const back = docFromEditor(root, { registry: REGISTRY });
   assert.deepEqual(back.fields, SAMPLE_DOC.fields);
@@ -161,12 +185,53 @@ test('editor (board 5): registry-driven rows, kind segments, docFromEditor round
   mkt.querySelector('.tp-add').value = 'acme/worca-plugins';
   mkt.querySelector('.tp-add-btn').dispatchEvent(new dom.window.Event('click', { bubbles: true }));
   assert.equal(mkt.querySelector('.tp-kind-seg .on').dataset.kind, 'default', 'adding a value picks the first allowed kind');
+  // Pick or type: the machine's models, plugins, marketplaces, guardrail sets and workflows arrive as
+  // datalists on the inputs that name such things; without a list the input is plain text.
+  const known = renderPolicyEditor(SAMPLE_DOC, { registry: REGISTRY, doc, known: {
+    models: [{ id: 'claude-opus-5', label: 'Opus 5' }, { id: 'acme-proxy-opus', label: 'Opus via Acme' }],
+    plugins: [{ name: 'acme-jira', marketplace: 'acme/worca-plugins' }, { name: 'github-source', marketplace: 'worca-cc' }],
+    marketplaces: ['acme/worca-plugins', 'worca-cc'],
+    guardrails: [{ id: 'normal', name: 'Normal' }, { id: 'gp:gateway-normal', name: 'Gateway normal' }],
+    workflows: [{ id: 'wf_default', name: 'Default' }],
+  } });
+  doc.body.append(known);
+  const dl = (id) => [...known.querySelector(`#tp-known-${id}`).options].map((o) => [o.value, o.label]);
+  assert.deepEqual(dl('models'), [['claude-opus-5', 'Opus 5'], ['acme-proxy-opus', 'Opus via Acme']]);
+  assert.deepEqual(dl('plugins'), [['acme-jira', 'from acme/worca-plugins'], ['github-source', 'from worca-cc']]);
+  assert.equal(known.querySelector('.tp-edit-row[data-key="models.allowed"] .tp-add').getAttribute('list'), 'tp-known-models');
+  assert.equal(known.querySelector('.tp-edit-row[data-key="models.steps"] .tp-step-model').getAttribute('list'), 'tp-known-models');
+  assert.equal(known.querySelector('.tp-edit-row[data-key="plugins.required"] .tp-plugin-name').getAttribute('list'), 'tp-known-plugins');
+  assert.equal(known.querySelector('.tp-edit-row[data-key="plugins.required"] .tp-plugin-marketplace').getAttribute('list'), 'tp-known-marketplaces');
+  assert.equal(known.querySelector('.tp-edit-row[data-key="guardrails.default"] .tp-val').getAttribute('list'), 'tp-known-guardrails');
+  assert.equal(known.querySelector('.tp-edit-row[data-key="workflows.default"] .tp-val').getAttribute('list'), 'tp-known-workflows');
+  assert.equal(root.querySelector('.tp-edit-row[data-key="models.allowed"] .tp-add').getAttribute('list'), null, 'no list, no attribute');
+  // A plugin picked from the list brings its marketplace along when that field is blank.
+  const req = known.querySelector('.tp-edit-row[data-key="plugins.required"]');
+  req.querySelector('.tp-plugin-name').value = 'github-source';
+  req.querySelector('.tp-add-btn').dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+  assert.deepEqual(docFromEditor(known, { registry: REGISTRY }).fields['plugins.required'].value.at(-1), { name: 'github-source', marketplace: 'worca-cc' });
+  known.remove();
+  // Add a model through the form: id, label, an effort, one env var.
+  root.querySelector('.tp-cat-add[data-cat="models"]').dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+  const model = root.querySelector('.tp-cat-item[data-cat="models"]');
+  model.querySelector('.tp-cat-id').value = 'acme-proxy-opus';
+  model.querySelector('.tp-cat-label').value = 'Opus via Acme';
+  model.querySelector('.tp-cat-effort[value="high"]').checked = true;
+  model.querySelector('.tp-env-add').dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+  model.querySelector('.tp-env-key').value = 'ANTHROPIC_BASE_URL';
+  model.querySelector('.tp-env-val').value = 'https://llm.acme.internal';
+  model.querySelector('.tp-env-val').dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  assert.equal(root.querySelector('.tp-tab[data-sec="catalog"] .tp-tab-badge').textContent, '2', 'the badge follows the form');
+  assert.deepEqual(docFromEditor(root, { registry: REGISTRY }).catalogs.models, [{ id: 'acme-proxy-opus', label: 'Opus via Acme', efforts: ['high'], env: { ANTHROPIC_BASE_URL: 'https://llm.acme.internal' } }]);
+  // Remove the guardrail set: the catalog empties and the badge follows.
+  root.querySelector('.tp-cat-item[data-cat="guardrailSets"] .tp-cat-rm').dispatchEvent(new dom.window.Event('click', { bubbles: true }));
+  assert.deepEqual(docFromEditor(root, { registry: REGISTRY }).catalogs.guardrailSets, []);
   const after = docFromEditor(root, { registry: REGISTRY });
   assert.equal(after.fields['cost.pipelineLimitUsd'], undefined);
   assert.deepEqual(after.fields['plugins.marketplaces'], { kind: 'default', value: ['acme/worca-plugins'] });
   assert.equal(editorDirty(root, SAMPLE_DOC, { registry: REGISTRY }), true);
   assert.equal(root.querySelector('.tp-publish').disabled, false);
-  assert.match(root.querySelector('.tp-change-count').textContent, /^2 changes$/);
+  assert.match(root.querySelector('.tp-change-count').textContent, /^3 changes$/, 'the cap, the marketplace, and the catalog (counted once)');
   root.remove();
 });
 
