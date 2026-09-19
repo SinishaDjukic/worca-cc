@@ -12737,7 +12737,6 @@ async function openSetupChecklist() {
   const home = homes[0] || (data.homes[0] && data.homes[0].slug) || '';
   const body = renderSetupChecklist({ home, requirements: reqs, seeds: [], trusted: policyHomeTrusted(home) }, { doc: document });
   body.addEventListener('click', (e) => {
-    if (e.target.closest('.tp-later')) { closePluginModal(); return; }
     if (e.target.closest('.tp-install-all')) { closePluginModal(); void installAllRequired(reqs); return; }
     void handlePolicyPluginClick(e);
   });

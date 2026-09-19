@@ -299,7 +299,7 @@ test('plugins strip + setup checklist (boards 10–11)', () => {
   assert.match(list.querySelector('.tp-trust-row').textContent, /Plugins run with your user privileges/);
   assert.equal(list.querySelector('.tp-install-all').disabled, false);
   assert.equal(list.querySelector('.tp-install-all').textContent, 'Install & update all…', 'the checklist button says the same');
-  assert.ok(list.querySelector('.tp-later'));
+  assert.equal(list.querySelector('.tp-later'), null, 'no Later: the modal\'s Close is the way out');
 });
 
 test('requiredAllLabel: the verb follows what is left to do; nothing left → no button', () => {

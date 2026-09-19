@@ -1102,11 +1102,11 @@ export function renderSetupChecklist({ home, requirements = [], seeds = [], trus
   const txt = h(doc, 'span', 'txt'); txt.append(h(doc, 'b', null, 'Trust this policy home'), h(doc, 'small', 'hint', `Install and update required plugins from ${home || 'this home'} automatically on this machine, without this checklist. Plugins run with your user privileges. You can turn this off on the Plugins page at any time.`));
   trust.append(cb, h(doc, 'span', 'switch switch-sm'), txt);
   root.append(trust);
+  // One footer action: the modal's own Close is the way out (a "Later" here said the same twice).
   const actions = h(doc, 'div', 'confirm-actions');
-  const later = h(doc, 'button', 'btn btn-ghost btn-mini tp-later', 'Later'); later.type = 'button';
   const all = h(doc, 'button', 'btn btn-primary btn-mini tp-install-all', requiredAllLabel(requirements) || 'Install all…'); all.type = 'button';
   all.disabled = !requiredAllLabel(requirements);
-  actions.append(later, all);
+  actions.append(all);
   root.append(actions);
   return root;
 }
