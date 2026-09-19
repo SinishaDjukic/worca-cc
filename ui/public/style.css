@@ -5379,6 +5379,10 @@ input.gv-name:focus-visible{outline:none;}
 .pal-create:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
 /* ---------- Team policy (team-policy design §11, boards 1–11) ---------- */
+/* A project / workspace / home NAME inside prose (team-policy-view.mjs ref()): bold and mono, so
+   "Follows gateway" reads as a name and a word, never two words. In a hint it keeps the hint's ink. */
+.ref{font-weight:600;color:var(--ink);font-size:.96em;}
+.hint .ref,small .ref{color:var(--ink-2);}
 /* Policy origin colour: blue. Amber is built-in, violet is plugin, green is user. */
 .badge.blue{background:var(--blue-bg);color:var(--blue-ink);}
 /* Projects row: the policy cell sits UNDER the team-metrics cell in the same 420px column (board 2,
@@ -5387,12 +5391,12 @@ input.gv-name:focus-visible{outline:none;}
    centred; the cells keep their own left divider (.tm-cell) and are separated by a hairline. */
 /* The team column on a Projects row: two one-line chips, right-aligned, status only. The
    controls and the sentences behind a status are on the project page's Team tab. */
-.pl-team{flex:0 1 auto;min-width:0;display:flex;flex-direction:column;align-items:flex-end;gap:5px;font-size:12px;line-height:1.3;}
-.pl-team-item{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;white-space:nowrap;color:var(--ink-2);}
+.pl-team{flex:0 0 auto;max-width:42%;min-width:0;display:flex;flex-direction:column;align-items:flex-end;gap:5px;font-size:12px;line-height:1.3;}   /* the chips keep their words; the path wraps */
+.pl-team-item{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;color:var(--ink-2);}
 .pl-team-item:empty{display:none;}
 .pl-team-item .tm-dot{flex:0 0 auto;}
 .pl-team-name{color:var(--ink-3);}
-.pl-team-state{overflow:hidden;text-overflow:ellipsis;}
+.pl-team-state{white-space:nowrap;}   /* never clipped: the column is flex:0 0 auto and the path wraps instead */
 .pl-team-state.muted{color:var(--ink-3);}
 @media (max-width:760px){.pl-team{display:none;}}
 /* The project / workspace page's Team tab: one panel per feature, the block inside wraps

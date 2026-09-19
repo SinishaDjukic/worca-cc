@@ -210,10 +210,11 @@ test('workspace block (board 6, reworked): a facts list — POLICY HOME, WORKSPA
     ['MEMBERS', '1 is the policy home · 1 has no worca-policy branch — a member with no branch keeps its own settings for project runs'],
   ]);
   assert.ok(ok.querySelector('.tp-facts dd .tm-dot.green'), 'the home carries the dot, not the label');
-  assert.equal(ok.querySelectorAll('.tp-facts dd b').length, 2, 'the values are the bold part');
+  assert.equal(ok.querySelectorAll('.tp-facts dd b:not(.ref)').length, 2, 'the values are the bold part');
+  assert.equal(ok.querySelector('.tp-facts dd b.ref').textContent, 'acme/gateway', 'the home is a name, set apart from the prose');
   assert.equal(ok.querySelector('.ws-policy-line'), null, 'no run-on line any more');
-  const via = renderWsPolicyLine({ id: 'w', name: 'IoT', home: { state: 'ok', slug: 'acme/gateway', follows: 'acme/billing', workspaceRuns: [] }, members: [] }, { doc });
-  assert.deepEqual(facts(via), [['POLICY HOME', 'acme/gateway · follows acme/billing'], ['WORKSPACE RUNS', 'same values as project runs']]);
+  const via = renderWsPolicyLine({ id: 'w', name: 'IoT', home: { state: 'ok', slug: 'acme/gateway', follows: 'acme/billing', workspaceRuns: [] }, members: [{ state: 'follows-home' }, { state: 'follows-home' }, { state: 'home' }] }, { doc });
+  assert.deepEqual(facts(via), [['POLICY HOME', 'acme/gateway · follows acme/billing'], ['WORKSPACE RUNS', 'same values as project runs'], ['MEMBERS', '1 is the policy home · 2 follow the home']]);
   assert.ok(ok.querySelector('.wsp-open') && ok.querySelector('.wsp-route'));
   assert.equal(ok.querySelector('.wsp-home-change').textContent, 'Change policy home…');
   assert.equal(ok.firstElementChild.nextElementSibling.className, 'ws-tbl-actions', 'the actions come before the facts');

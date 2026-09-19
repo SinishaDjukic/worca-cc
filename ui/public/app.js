@@ -12363,7 +12363,8 @@ async function openWsPolicyHomeSheet(workspaceId) {
     const name = document.createElement('span'); name.className = 'wiz-row-name mono'; name.textContent = m.slug;
     label.append(r, name);
     const status = document.createElement('span'); status.className = 'wiz-row-status';
-    status.textContent = `${WS_POLICY_STATE_TEXT[m.state] || m.state}${m.policyFrom && m.state !== 'home' ? ` · ${m.policyFrom}` : ''}`;
+    status.append(WS_POLICY_STATE_TEXT[m.state] || m.state);
+    if (m.policyFrom && m.state !== 'home') status.append(' · ', Object.assign(document.createElement('b'), { className: 'ref mono', textContent: m.policyFrom }));
     row.append(label, status);
     list.append(row);
   }

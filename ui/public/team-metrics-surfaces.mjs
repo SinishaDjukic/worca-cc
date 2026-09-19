@@ -15,6 +15,16 @@ function h(doc, tag, cls, text) {
 const dayLabel = (iso) => { const d = new Date(iso); return Number.isFinite(d.getTime()) ? `${MO[d.getUTCMonth()]} ${d.getUTCDate()}` : ''; };
 const dot = (doc, tone) => { const d = h(doc, 'span', `dot tm-dot ${tone}`); d.setAttribute('aria-hidden', 'true'); return d; };
 const code = (doc, text) => h(doc, 'code', 'mono', text);
+/** A project, workspace or home NAME inside prose: bold and mono, so it reads as a name, not a word. */
+const ref = (doc, name) => h(doc, 'b', 'ref mono', name);
+/** `text` with every occurrence of `name` rendered as a ref; plain text when the name is absent. */
+function withRef(doc, text, name) {
+  const frag = doc.createDocumentFragment();
+  if (!name || !String(text).includes(name)) { frag.append(String(text)); return frag; }
+  const parts = String(text).split(name);
+  parts.forEach((part, i) => { if (i) frag.append(ref(doc, name)); if (part) frag.append(part); });
+  return frag;
+}
 function btn(doc, cls, text) { const b = h(doc, 'button', `btn-ghost btn-mini ${cls}`, text); b.type = 'button'; return b; }
 
 /** Classify a project status (from /api/team-metrics/scopes → projects[]) into a cell variant. */
@@ -62,7 +72,7 @@ export function projectTmSummary(s) {
     case 'blocked': return { kind, tone: 'amber', short: 'on · not recording', detail: s.delegateCode === 'CONFIG_UNKNOWN' ? 'branch not read yet' : (s.delegateDetail || 'the metrics branch could not be resolved') };
     case 'rejected': return { kind, tone: 'red', short: 'push failed', detail: s.lastErrorCode === 'PUSH_REJECTED' && s.lastErrorHint ? 'branch protection' : String(s.lastError || '').trim().split('\n')[0] };
     case 'pending': return { kind, tone: 'amber', short: `on · ${s.pending} pending push`, detail: since };
-    case 'delegated': return { kind, tone: excluded ? 'grey' : 'green', short: excluded ? `via ${s.delegateTo} · yours excluded` : `via ${s.delegateTo}`, detail: [runs ? `${runs} recorded` : '', 'recorded in that project\'s branch'].filter(Boolean).join(' · ') };
+    case 'delegated': return { kind, tone: excluded ? 'grey' : 'green', short: excluded ? `via ${s.delegateTo} · yours excluded` : `via ${s.delegateTo}`, ref: s.delegateTo, detail: [runs ? `${runs} recorded` : '', 'recorded in that project\'s branch'].filter(Boolean).join(' · ') };
     default: return { kind, tone: excluded ? 'grey' : 'green', short: excluded ? 'on · yours excluded' : (runs ? `on · ${runs}` : 'on'), detail: since };
   }
 }
@@ -78,7 +88,9 @@ export function renderProjectTmChip(s, { doc = globalThis.document } = {}) {
   const sum = projectTmSummary(s);
   chip.dataset.kind = sum.kind;
   if (sum.tone !== 'muted') chip.append(dot(doc, sum.tone));
-  chip.append(h(doc, 'span', 'pl-team-name', 'Metrics'), ' ', h(doc, 'span', `pl-team-state${sum.tone === 'muted' ? ' muted' : ''}`, sum.short));
+  const state = h(doc, 'span', `pl-team-state${sum.tone === 'muted' ? ' muted' : ''}`);
+  state.append(withRef(doc, sum.short, sum.ref));
+  chip.append(h(doc, 'span', 'pl-team-name', 'Metrics'), ' ', state);
   chip.title = `Team metrics: ${cap(sum.short)}${sum.detail ? ` · ${sum.detail}` : ''}`;
   return chip;
 }
@@ -113,7 +125,7 @@ export function renderProjectTmCell(s, { doc = globalThis.document, heading = tr
     case 'delegate-invalid':
       line.append(dot(doc, 'red'));
       // The resolver's code distinguishes chain / unknown from dangling; dangling keeps the mockup copy.
-      status.append(`Delegate invalid · points at `, code(doc, s.delegateTo),
+      status.append(`Delegate invalid · points at `, ref(doc, s.delegateTo),
         s.delegateCode === 'DELEGATE_CHAIN' ? ', which itself delegates (no chains)'
           : s.delegateCode === 'DELEGATE_UNKNOWN' ? ', which is not a project in Worca on this machine'
             : ', which no longer records');
@@ -141,8 +153,8 @@ export function renderProjectTmCell(s, { doc = globalThis.document, heading = tr
       line.append(dot(doc, excluded ? 'grey' : 'green'));
       // Kept short: the status shares ~220px with the switch (see .tm-status), so the
       // opted-out copy leads with what matters and drops the run count.
-      if (excluded) status.append('On for the team · in ', code(doc, s.delegateTo), ' · yours excluded');
-      else status.append('On · recorded in ', code(doc, s.delegateTo), runs);
+      if (excluded) status.append('On for the team · in ', ref(doc, s.delegateTo), ' · yours excluded');
+      else status.append('On · recorded in ', ref(doc, s.delegateTo), runs);
       actions.append(recordSwitch(doc, s));
       break;
     default:
@@ -174,7 +186,9 @@ export function renderProjectTmCell(s, { doc = globalThis.document, heading = tr
   if (s.enabled && Array.isArray(s.homeFor) && s.homeFor.length) {
     const names = s.homeFor.join(', ');
     const hint = h(doc, 'small', 'hint tm-hint tm-home-for');
-    hint.append(`Metrics home for ${names} · "Include my runs" covers its workspace runs too`);
+    hint.append('Metrics home for ');
+    s.homeFor.forEach((x, i) => { if (i) hint.append(', '); hint.append(ref(doc, x)); });
+    hint.append(' · "Include my runs" covers its workspace runs too');
     hint.title = `Workspace runs of ${names} are written to this project's branch. Turning "Include my runs" off here also stops your workspace runs from being recorded.`;
     cell.append(hint);
   }
@@ -269,7 +283,7 @@ export function renderMetricsHomePicker(members, { selectedPath, doc = globalThi
       status.append(dot(doc, 'green'), lines);
       row.append(label, status);
     } else if (m.enabled && m.delegateTo) {
-      status.append(dot(doc, 'grey'), `Delegates to ${m.delegateTo} · cannot host metrics`);
+      status.append(dot(doc, 'grey'), 'Delegates to ', ref(doc, m.delegateTo), ' · cannot host metrics');
       row.classList.add('off');
       row.append(name, status);
     } else {
@@ -331,7 +345,7 @@ export function renderWsSummary(ws, { doc = globalThis.document, pending = false
   if (home.state === 'unset') {
     frag.append(' · ', h(doc, 'span', 'muted', 'no metrics home'));
   } else {
-    frag.append(' · ', homeMark(doc), h(doc, 'span', 'mono', home.slug));
+    frag.append(' · ', homeMark(doc), ref(doc, home.slug));
     if (home.state !== 'ok') frag.append(' · ', h(doc, 'span', 'ws-sum-bad', home.detail || 'stale'));
     else if (home.runs != null) frag.append(` · ${home.runs} workspace run${home.runs === 1 ? '' : 's'}`); // project-level runs live elsewhere
   }
@@ -478,7 +492,7 @@ export function renderWsMetricsRow(ws, { doc = globalThis.document } = {}) {
     root.append(you);
   } else if (home.record === false) {
     const you = h(doc, 'small', 'hint ws-home-hint warn');
-    you.append(dot(doc, 'amber'), ` Your workspace runs are not recorded: "Include my runs" is off on ${home.slug}.`);
+    you.append(dot(doc, 'amber'), ' Your workspace runs are not recorded: "Include my runs" is off on ', ref(doc, home.slug), '.');
     root.append(you);
   }
   root.append(h(doc, 'div', 'ws-route-results'));

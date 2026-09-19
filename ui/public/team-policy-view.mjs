@@ -18,6 +18,16 @@ function h(doc, tag, cls, text) {
 }
 const dot = (doc, tone) => { const d = h(doc, 'span', `dot tm-dot ${tone}`); d.setAttribute('aria-hidden', 'true'); return d; };
 const code = (doc, text) => h(doc, 'code', 'mono', text);
+/** A project, workspace or home NAME inside prose: bold and mono, so it reads as a name, not a word. */
+const ref = (doc, name) => h(doc, 'b', 'ref mono', name);
+/** `text` with every occurrence of `name` rendered as a ref; plain text when the name is absent. */
+function withRef(doc, text, name) {
+  const frag = doc.createDocumentFragment();
+  if (!name || !String(text).includes(name)) { frag.append(String(text)); return frag; }
+  const parts = String(text).split(name);
+  parts.forEach((part, i) => { if (i) frag.append(ref(doc, name)); if (part) frag.append(part); });
+  return frag;
+}
 function btn(doc, cls, text, primary = false) { const b = h(doc, 'button', `${primary ? 'btn btn-primary btn-mini' : 'btn-ghost btn-mini'} ${cls}`, text); b.type = 'button'; return b; }
 const usd = (n) => `$${(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 export function relTime(iso, now = Date.now()) {
@@ -69,7 +79,7 @@ export function projectTpSummary(s, { now = Date.now() } = {}) {
     case 'unsupported': return { kind, tone: 'red', short: 'needs a newer Worca', detail: s.warnings?.[0] || 'the policy uses a newer schema' };
     case 'delegate-invalid': return { kind, tone: 'red', short: 'follow invalid', detail: `follows ${s.delegateTo} · your settings apply` };
     case 'blocked': return { kind, tone: 'amber', short: s.delegateCode === 'DOC_UNKNOWN' || s.blocked === 'DOC_UNKNOWN' ? 'on · not read yet' : 'on · unresolved', detail: `${s.delegateDetail || 'the policy could not be resolved'} · your settings apply` };
-    case 'follows': return { kind, tone: 'green', short: `follows ${s.home || s.delegateTo}`, detail: [fields, caps].filter(Boolean).join(' · ') };
+    case 'follows': return { kind, tone: 'green', short: `follows ${s.home || s.delegateTo}`, ref: s.home || s.delegateTo, detail: [fields, caps].filter(Boolean).join(' · ') };
     default: return { kind, tone: 'green', short: 'home', detail: [fields, s.updatedAt ? `updated ${relTime(s.updatedAt, now)}` : '', caps].filter(Boolean).join(' · ') };
   }
 }
@@ -81,7 +91,9 @@ export function renderProjectTpChip(s, { doc = globalThis.document, now = Date.n
   const sum = projectTpSummary(s, { now });
   chip.dataset.kind = sum.kind;
   if (sum.tone !== 'muted') chip.append(dot(doc, sum.tone));
-  chip.append(h(doc, 'span', 'pl-team-name', 'Policy'), ' ', h(doc, 'span', `pl-team-state${sum.tone === 'muted' ? ' muted' : ''}`, sum.short));
+  const state = h(doc, 'span', `pl-team-state${sum.tone === 'muted' ? ' muted' : ''}`);
+  state.append(withRef(doc, sum.short, sum.ref));
+  chip.append(h(doc, 'span', 'pl-team-name', 'Policy'), ' ', state);
   chip.title = `Team policy: ${cap(sum.short)}${sum.detail ? ` · ${sum.detail}` : ''}`;
   return chip;
 }
@@ -113,7 +125,7 @@ export function renderProjectTpCell(s, { doc = globalThis.document, now = Date.n
       break;
     case 'delegate-invalid':
       line.append(dot(doc, 'red'));
-      status.append('Follow invalid · follows ', code(doc, s.delegateTo),
+      status.append('Follow invalid · follows ', ref(doc, s.delegateTo),
         s.delegateCode === 'DELEGATE_CHAIN' ? ', which itself follows another (no chains)'
           : s.delegateCode === 'DELEGATE_UNKNOWN' ? ', which is not a project in Worca on this machine'
             : ', which no longer carries a policy');
@@ -128,7 +140,7 @@ export function renderProjectTpCell(s, { doc = globalThis.document, now = Date.n
       break;
     case 'follows':
       line.append(dot(doc, 'green'));
-      status.append('On · follows ', code(doc, s.home || s.delegateTo), fields);
+      status.append('On · follows ', ref(doc, s.home || s.delegateTo), fields);
       actions.append(btn(doc, 'tp-open', 'Open'), btn(doc, 'tp-change', 'Change…'));
       break;
     default:
@@ -314,16 +326,16 @@ export function renderPolicyHeader(payload, { doc = globalThis.document, now = D
   const facts = h(doc, 'dl', 'tp-facts');
   const fact = (label, ...value) => { facts.append(h(doc, 'dt', null, label)); const dd = h(doc, 'dd'); dd.append(...value); facts.append(dd); };
   if (scope.kind === 'workspace') {
-    const v = [h(doc, 'span', null, 'Policy home '), code(doc, policy.home || '—')];
-    if (policy.delegated && policy.from) v.push(h(doc, 'span', null, ' · the home follows it through '), code(doc, policy.from));
+    const v = [h(doc, 'span', null, 'Policy home '), ref(doc, policy.home || '—')];
+    if (policy.delegated && policy.from) v.push(h(doc, 'span', null, ' · the home follows it through '), ref(doc, policy.from));
     fact('SOURCE', ...v);
-    fact('APPLIES TO', `Workspace runs of ${scope.name || 'this workspace'} — the policy's workspace-run values sit on top`);
+    fact('APPLIES TO', 'Workspace runs of ', ref(doc, scope.name || 'this workspace'), ' — the policy\'s workspace-run values sit on top');
   } else if (policy.delegated) {
-    fact('SOURCE', h(doc, 'span', null, 'Follows '), code(doc, policy.home || '—'), h(doc, 'span', null, ' — the document lives there'));
-    fact('APPLIES TO', `Runs on ${scope.name || 'this project'}`);
+    fact('SOURCE', h(doc, 'span', null, 'Follows '), ref(doc, policy.home || '—'), h(doc, 'span', null, ' — the document lives there'));
+    fact('APPLIES TO', 'Runs on ', ref(doc, scope.name || 'this project'));
   } else {
     fact('SOURCE', h(doc, 'span', null, 'This project\'s own '), code(doc, 'worca-policy'), h(doc, 'span', null, ' branch'));
-    fact('APPLIES TO', `Runs on ${scope.name || 'this project'}, and on every project that follows it`);
+    fact('APPLIES TO', 'Runs on ', ref(doc, scope.name || 'this project'), ', and on every project that follows it');
   }
   const ver = [];
   if (policy.sha) { const c = code(doc, String(policy.sha).slice(0, 7)); c.title = `Policy version: commit ${String(policy.sha).slice(0, 7)} on ${policy.home}'s worca-policy branch`; ver.push(c); }
@@ -336,7 +348,7 @@ export function renderPolicyHeader(payload, { doc = globalThis.document, now = D
   const edit = h(doc, 'button', 'btn btn-ghost btn-mini tp-edit', editing ? 'Cancel editing' : 'Edit policy'); edit.type = 'button';
   edit.disabled = !payload.canPublish;
   actions.append(edit);
-  if (!payload.canPublish) actions.append(h(doc, 'small', 'hint', `Edit it where ${policy.home || 'the policy home'} is registered in Worca`));
+  if (!payload.canPublish) { const hint = h(doc, 'small', 'hint'); hint.append('Edit it where ', ref(doc, policy.home || 'the policy home'), ' is registered in Worca'); actions.append(hint); }
   card.append(actions);
   return card;
 }
@@ -411,7 +423,12 @@ export function renderPolicyPluginsPanel(payload, { doc = globalThis.document } 
     for (const r of reqs) {
       const tr = h(doc, 'tr'); tr.dataset.name = r.name;
       const name = h(doc, 'td', 'tp-key'); name.append(r.name);
-      name.append(h(doc, 'small', null, `expected by ${(r.homes || []).join(', ') || payload.policy?.home || 'the policy'}${r.marketplace ? ` · from ${r.marketplace}` : ''}`));
+      const by = h(doc, 'small');
+      by.append('expected by ');
+      const homes = (r.homes || []).length ? r.homes : [payload.policy?.home || 'the policy'];
+      homes.forEach((x, i) => { if (i) by.append(', '); by.append(ref(doc, x)); });
+      if (r.marketplace) by.append(` · from ${r.marketplace}`);
+      name.append(by);
       const want = h(doc, 'td', 'mono', r.minVersion ? `≥ ${r.minVersion}` : 'any version');
       const have = h(doc, 'td', 'mono', r.installed?.version || (r.installed ? 'installed' : '—'));
       if (!r.installed) have.classList.add('muted');
@@ -437,7 +454,8 @@ export function renderPolicyPluginsPanel(payload, { doc = globalThis.document } 
     const list = h(doc, 'div', 'tp-blocked-list');
     for (const b of blocked) {
       const row = h(doc, 'div', 'tp-blocked-row');
-      row.append(h(doc, 'span', 'mono', b.name), h(doc, 'span', 'badge amber', 'enabled here'), h(doc, 'small', 'hint', `blocked by ${b.home}`));
+      const by = h(doc, 'small', 'hint'); by.append('blocked by ', ref(doc, b.home));
+      row.append(h(doc, 'span', 'mono', b.name), h(doc, 'span', 'badge amber', 'enabled here'), by);
       list.append(row);
     }
     bc.append(list);
@@ -877,11 +895,14 @@ function changedKeys(root, original, { registry = [] } = {}) {
 
 // ---- Workspace card line (board 6) ----------------------------------------------------------
 // Home first, then the members in step with it, then the ones that need a look.
-const WS_MEMBER_WORD = {
-  home: 'is the policy home', 'is-home': 'carries the policy', 'follows-home': 'follows the home', 'follows-other': 'follows another home',
-  own: 'carries its own policy', none: 'has no worca-policy branch', 'no-origin': 'has no origin remote',
+const WS_MEMBER_WORD = {   // [one, several]
+  home: ['is the policy home', 'are the policy home'], 'is-home': ['carries the policy', 'carry the policy'],
+  'follows-home': ['follows the home', 'follow the home'], 'follows-other': ['follows another home', 'follow another home'],
+  own: ['carries its own policy', 'carry their own policy'], none: ['has no worca-policy branch', 'have no worca-policy branch'],
+  'no-origin': ['has no origin remote', 'have no origin remote'],
 };
 const WS_MEMBER_RANK = Object.fromEntries(Object.keys(WS_MEMBER_WORD).map((k, i) => [k, i]));
+const memberWord = (state, n) => (WS_MEMBER_WORD[state] ? WS_MEMBER_WORD[state][n === 1 ? 0 : 1] : state);
 /**
  * The workspace page's Team policy block (design board 6, reworked): a facts list — POLICY HOME,
  * WORKSPACE RUNS, MEMBERS — with the label column the Team policy page's header uses, so a label
@@ -911,9 +932,9 @@ export function renderWsPolicyLine(w, { doc = globalThis.document } = {}) {
   if (home.state === 'unset') fact('POLICY HOME', h(doc, 'span', 'muted', 'none chosen'), ' · ', h(doc, 'span', null, 'workspace runs use your local settings'));
   else if (home.state !== 'ok') fact('POLICY HOME', dot(doc, 'red'), ' ', h(doc, 'span', 'ws-sum-bad', home.detail || 'the policy home is stale'));
   else {
-    const dd = fact('POLICY HOME', dot(doc, 'green'), ' ', code(doc, home.slug));
+    const dd = fact('POLICY HOME', dot(doc, 'green'), ' ', ref(doc, home.slug));
     // The home is a member that itself follows another project: say through which one.
-    if (home.follows) dd.append(' · follows ', code(doc, home.follows));
+    if (home.follows) dd.append(' · follows ', ref(doc, home.follows));
   }
   // WORKSPACE RUNS: only what the workspaceRuns block changes, by name; every other field is the
   // same as for project runs, so it is not repeated here.
@@ -933,7 +954,7 @@ export function renderWsPolicyLine(w, { doc = globalThis.document } = {}) {
   if (members.length) {
     const counts = new Map();
     for (const m of members) counts.set(m.state, (counts.get(m.state) || 0) + 1);
-    const parts = [...counts.entries()].sort((a, b) => (WS_MEMBER_RANK[a[0]] ?? 99) - (WS_MEMBER_RANK[b[0]] ?? 99)).map(([state, n]) => `${n} ${WS_MEMBER_WORD[state] || state}`);
+    const parts = [...counts.entries()].sort((a, b) => (WS_MEMBER_RANK[a[0]] ?? 99) - (WS_MEMBER_RANK[b[0]] ?? 99)).map(([state, n]) => `${n} ${memberWord(state, n)}`);
     const dd = fact('MEMBERS', parts.join(' · '));
     if (counts.get('none')) dd.append(' — ', h(doc, 'span', 'ws-sum-warn', 'a member with no branch keeps its own settings for project runs'));
   }
@@ -958,7 +979,7 @@ export function renderTeamCapsReadout(homes, { doc = globalThis.document } = {})
     if (x.caps.total) { const b = h(doc, 'b', 'mono', usd(x.caps.total.value)); const s = h(doc, 'span'); s.append('total ', b, `/${(x.caps.resetPeriod || 'monthly') === 'weekly' ? 'week' : 'month'} (${x.caps.total.kind})`); parts.push(s); }
     parts.forEach((p, i) => { if (i) row.append(' · '); row.append(p); });
     const others = (x.usedBy || []).filter((s) => s !== x.slug);
-    if (others.length) { row.append(' · also used by '); row.append(code(doc, others.join(', '))); }
+    if (others.length) { row.append(' · also used by '); others.forEach((o, i) => { if (i) row.append(', '); row.append(ref(doc, o)); }); }
     root.append(row);
   }
   const link = h(doc, 'a', 'linkish tp-open-page', 'Open Team policy →'); link.href = '#team-policy';
@@ -976,7 +997,7 @@ export function renderTeamChip({ kind, display }, { doc = globalThis.document } 
 export function renderPolicyNotesLine({ policy, notes = [] }, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'policy-line');
   const head = h(doc, 'div', 'pl-head-row');
-  head.append(h(doc, 'span', 'badge blue', 'team policy'), h(doc, 'b', null, policy?.home || '—'));
+  head.append(h(doc, 'span', 'badge blue', 'team policy'), ref(doc, policy?.home || '—'));
   const n = notes.length;
   head.append(h(doc, 'span', 'muted', n ? ` · ${n} note${n === 1 ? '' : 's'} · nothing here blocks the run` : ' · nothing to note'));
   root.append(head);
@@ -1009,11 +1030,11 @@ export function renderTeamCapPauseBanner(rec, { doc = globalThis.document, budge
   if (m) {
     const [, spent, cap, period, home] = m;
     if (total) {
-      text.append('Estimated spend is ', mono(spent), ` this ${period || 'period'}, past the `, mono(cap), ' total cap set by ', h(doc, 'span', 'cb-home', home), "'s team policy.");
+      text.append('Estimated spend is ', mono(spent), ` this ${period || 'period'}, past the `, mono(cap), ' total cap set by ', h(doc, 'span', 'cb-home ref', home), "'s team policy.");
       if (b.totalLimitUsd != null) text.append(' Your own total limit ', mono(Number(b.totalLimitUsd).toFixed(2)), ' still applies.');
       text.append(' You can continue past the team cap once for this period; the overshoot is recorded to team metrics.');
     } else {
-      text.append("This pipeline's estimated cost hit ", mono(spent), ', the per-pipeline cap of ', mono(cap), ' set by ', h(doc, 'span', 'cb-home', home), "'s team policy.");
+      text.append("This pipeline's estimated cost hit ", mono(spent), ', the per-pipeline cap of ', mono(cap), ' set by ', h(doc, 'span', 'cb-home ref', home), "'s team policy.");
       if (b.pipelineLimitUsd != null) text.append(' Your own limit is ', mono(Number(b.pipelineLimitUsd).toFixed(2)), '.');
       text.append(' You can continue past the team cap for this pipeline; the overshoot is recorded to team metrics.');
     }
@@ -1076,7 +1097,8 @@ export function renderRequiredStrip(requirements = [], blockedPlugins = [], { do
     row.dataset.name = r.name;
     row.append(dot(doc, r.state === 'disabled' ? 'grey' : 'amber'));
     const text = h(doc, 'span', 'pl-required-text');
-    text.append(h(doc, 'b', 'mono', r.name), r.minVersion ? ` ≥ ${r.minVersion}` : '', h(doc, 'small', 'hint', `expected by ${(r.homes || []).join(', ')}`));
+    const by = h(doc, 'small', 'hint'); by.append('expected by '); (r.homes || []).forEach((x, i) => { if (i) by.append(', '); by.append(ref(doc, x)); });
+    text.append(h(doc, 'b', 'mono', r.name), r.minVersion ? ` ≥ ${r.minVersion}` : '', by);
     row.append(text);
     const state = h(doc, 'span', `badge ${r.state === 'disabled' ? 'grey' : 'amber'} pl-required-state`,
       r.state === 'missing' ? 'not installed' : r.state === 'disabled' ? 'disabled' : `installed ${r.installed?.version || '?'} · below the floor`);
@@ -1093,7 +1115,8 @@ export function renderRequiredStrip(requirements = [], blockedPlugins = [], { do
     row.dataset.name = b.name;
     row.append(dot(doc, 'red'));
     const text = h(doc, 'span', 'pl-required-text');
-    text.append(h(doc, 'b', 'mono', b.name), h(doc, 'small', 'hint', `blocked by ${b.home} · runs proceed and are recorded as off-policy`));
+    const by = h(doc, 'small', 'hint'); by.append('blocked by ', ref(doc, b.home), ' · runs proceed and are recorded as off-policy');
+    text.append(h(doc, 'b', 'mono', b.name), by);
     row.append(text, h(doc, 'span', 'badge red pl-required-state', 'enabled here'), h(doc, 'span', 'pl-required-act'));
     list.append(row);
   }
