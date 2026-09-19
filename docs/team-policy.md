@@ -103,6 +103,16 @@ cache at all pays one bounded fetch. A CLI-only machine refreshes with `worca po
 A missing, unreadable or newer-schema policy means your local settings apply, with one loud line
 in the run log and a red chip on the Projects row (the sentence is on the project page's Team tab).
 
+## Getting started
+
+The checklist's ninth tile, **Set a team policy** (docs/getting-started.md), walks the
+real controls: a project row → its **Team** tab → **Set up team policy…** → the dialog's
+**Create branch and enable** → the new home's page, ending on **Edit policy** with Done.
+A project pointed at another home stays on its page and the block is explained; one with no
+origin remote, or one already on, gets its block ringed with the reason. The tick is derived:
+any project or workspace that resolves a policy from the cached branch reads
+(`listPolicyScopes().anyEnabled`) — the same read the checklist uses for team metrics.
+
 ## The Team policy page
 
 The page separates what the team publishes from what your machine makes of it.

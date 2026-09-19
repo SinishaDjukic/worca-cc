@@ -647,7 +647,7 @@ test('style.css: the projects shell is a twin of the History track', () => {
   assert.match(ruleBody('.view[data-view="projects"]') || '', /position:relative/);
   assert.match(ruleBody('.view[data-view="projects"]') || '', /padding:0/);
   assert.match(ruleBody('.proj-screen') || '', /transition:transform/);
-  assert.match(ruleBody('.proj-shell.detail-open .proj-screen-detail') || '', /translateX\(0\)/);
+  assert.match(ruleBody('.proj-shell.detail-open .proj-screen-detail') || '', /transform:none/);   // rests on none, not translateX(0): a transform would trap a guide's elevated control under the scrim
   assert.match(ruleBody('body.view-projects .main') || '', /padding:0/);
   // pd- twins ride the hd- rules (spec D13): the pd- selector is appended to the hd- selector
   // list and that one rule carries the signature declaration.

@@ -283,7 +283,7 @@ test('a detail screen never opens on a tab the mode hides', () => {
 test('Getting started: every tile shows at every level; higher steps wear their mode', async () => {
   const { ONBOARDING_STEPS } = await import('../src/core/onboarding.mjs');
   assert.deepEqual(GETTING_STARTED_STEPS.filter((s) => s.level).map((s) => [s.id, s.level]),
-    [['workflows', 'advanced'], ['workspace', 'advanced'], ['teamMetrics', 'expert']]);
+    [['workflows', 'advanced'], ['workspace', 'advanced'], ['teamMetrics', 'expert'], ['teamPolicy', 'expert']]);
   const ranks = GETTING_STARTED_STEPS.map((s) => UI_LEVELS.indexOf(s.level || 'simple'));
   assert.deepEqual(ranks, [...ranks].sort((a, b) => a - b), 'tiles run Simple → Advanced → Expert');
   assert.deepEqual(ONBOARDING_STEPS, GETTING_STARTED_STEPS.map((s) => s.id), 'the server shelf order matches the UI');
@@ -291,8 +291,8 @@ test('Getting started: every tile shows at every level; higher steps wear their 
   const host = doc.getElementById('h');
   const steps = Object.fromEntries(GETTING_STARTED_STEPS.map((s) => [s.id, false]));
   renderGettingStarted(host, { steps }, { level: 'simple', animate: false });
-  assert.equal(host.querySelectorAll('.gs-tile').length, 8);
-  assert.deepEqual([...host.querySelectorAll('.gs-level')].map((e) => e.textContent), ['Advanced', 'Advanced', 'Expert']);
+  assert.equal(host.querySelectorAll('.gs-tile').length, 9);
+  assert.deepEqual([...host.querySelectorAll('.gs-level')].map((e) => e.textContent), ['Advanced', 'Advanced', 'Expert', 'Expert']);
   renderGettingStarted(host, { steps }, { level: 'expert', animate: false });
   assert.equal(host.querySelectorAll('.gs-level').length, 0);
 });

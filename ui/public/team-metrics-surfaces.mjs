@@ -108,6 +108,7 @@ export function renderProjectTmCell(s, { doc = globalThis.document, heading = tr
   const line = h(doc, 'div', 'tm-line');
   const status = h(doc, 'span', 'tm-status');
   const { kind } = projectTmState(s);
+  cell.dataset.kind = kind;   // the Getting started guide reads it (no-origin / off / on)
   const actions = h(doc, 'div', 'tm-actions');
   const runs = s.runs == null ? '' : ` · ${s.runs} run${s.runs === 1 ? '' : 's'}`;
   const excluded = s.record === false;   // personal opt-out (the "Include my runs" switch)

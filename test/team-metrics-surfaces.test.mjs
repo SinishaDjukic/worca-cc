@@ -29,6 +29,7 @@ test('status variants (§4.11 / board 4)', () => {
 
 test('cell copy, actions and the Include my runs switch', () => {
   const on = renderProjectTmCell(base, { doc });
+  assert.equal(on.dataset.kind, 'on', 'the cell names its state for the Getting started guide');
   assert.equal(on.className, 'tm-cell');
   // Two-row block: the title is the cell's FIRST child (its own grid row), the status line
   // follows it, and the control sits in its own child, never inside the status line.

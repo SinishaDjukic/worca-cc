@@ -1,6 +1,6 @@
 # Getting started (in-app onboarding)
 
-The web UI walks a new install through the first eight things to do with Worca:
+The web UI walks a new install through the first nine things to do with Worca:
 a one-time **welcome** dialog, a **Getting started** page (its own view, reached
 from the sidebar pill under *New pipeline* or from Settings) holding the
 checklist, and **spotlight guides** that ring the real control for each step. Every
@@ -10,7 +10,7 @@ that only explains something (the Composer canvas, its side panel), or whose
 state is already right, carries a **Next** button instead. Every start is a fresh
 walk from the first hop, so a replayed guide explains every stop again.
 
-## The eight steps
+## The nine steps
 
 | # | Tile | Done when (derived) | Guide (each row is a hop; the first that applies is lit) |
 |---|---|---|---|
@@ -21,11 +21,13 @@ walk from the first hop, so a replayed guide explains every stop again.
 | 5 | Run a real pipeline | any pipeline with spend above zero | as 3, but after the project: the **Workflow** picker ("choose a built-in workflow"; Auto is the one state it asks to change), then prompt → Mock (only ringed when it is on) → **Start run** → Running → the run's card (Done) |
 | 6 | Explore the built-in workflows | a project has a persisted picker choice (`project_config.active_workflow_id`, Auto included) | sidebar › **Workflow Composer** → the **Default** row in Saved pipelines (opens it on the canvas) → the **canvas** (explains the loop, the cards and the wires; Next) → the side panel's **expand** toggle when it is collapsed → the **side panel** (Agents to drag onto the canvas, Info for the selection; Next) → sidebar › **New pipeline** → the project select (the pick is saved per project) → the **Workflow** picker (the user's own pick, a `change`, never the value a project loads) → prompt → **Start run** (Mock is mentioned, not rung) → Running → the run's card (Done) |
 | 7 | Group projects into a workspace | one workspace exists | (fewer than two projects: the Add project walk) → sidebar › **Workspaces** → **Create workspace** → in the wizard: **name** → two or more **projects** → **Scan interconnections** → the scan's status while it runs → **Save workspace** |
-| 8 | Turn on team metrics | any project or workspace records (`listScopes().anyEnabled`) | (no project: the Add project walk) → sidebar › **Projects** → a project row → its **Team** tab → **Set up team metrics…** → the dialog's **Create branch and enable** (a project with no origin remote gets its Team metrics block ringed with the reason and Done instead) |
+| 8 | Turn on team metrics | any project or workspace records (`listScopes().anyEnabled`) | (no project: the Add project walk) → sidebar › **Projects** → a project row → its **Team** tab → **Set up team metrics…** → the dialog's **Create branch and enable** (a project with no origin remote gets its Team metrics block ringed with the reason and Done instead; one already on gets its block explained, with Done) |
+| 9 | Set a team policy | any project or workspace resolves a policy (`listPolicyScopes().anyEnabled`: its own home, or one it follows) | (no project: the Add project walk) → sidebar › **Projects** → a project row → its **Team** tab → **Set up team policy…** → the dialog's **Create branch and enable** → the new home's Team policy page, on **Edit policy** (Done). A project pointed at another home stays on its page: its Team policy block is ringed with what happened (Done). No origin remote, or already on: the block ringed with the reason (Done) |
 
 Every tour runs to the thing its tile promises, never to the first click of a
 multi-step action: a project registered, a run on its card under Running, the
-answer in the transcript, a workspace saved, team metrics enabled. A hop that
+answer in the transcript, a workspace saved, team metrics enabled, a policy home
+on its own page. A hop that
 opens something (a dialog, the Ask sheet, the wizard, the side panel) is skipped
 while it is open and lit again if it is closed.
 
@@ -52,14 +54,15 @@ it → know the workflows → real work → scale.
 ## Surfaces
 
 - **Page** (`#getting-started` view, `#getting-started-host`, painted by
-  `ui/public/getting-started.mjs` on every entry): a card of eight equal tiles
-  that wrap 4 → 2 → 1, a `n of 8` progress mark and **Hide from sidebar**.
+  `ui/public/getting-started.mjs` on every entry): a card of nine equal tiles
+  that wrap 3 → 1 (a 3×3 square, then one column: two columns would orphan the
+  ninth), a `n of 9` progress mark and **Hide from sidebar**.
   Tiles reveal one at a time when the page opens; a done tile arrives already
   drawn and still, its mark filled with ink, its label struck. Done tiles stay
   clickable so any guide can be replayed. The page itself is always available
   (Hide only removes the pill; Settings › General › Getting started reopens it).
 - **Sidebar pill** under *New pipeline* (mounted by app.js, not shipped in the
-  shell): `Getting started · 3/8`, in the guide's violet with a pulsing halo
+  shell): `Getting started · 3/9`, in the guide's violet with a pulsing halo
   (still under reduced motion); it routes to the page and reads as the current
   view while it is open. Gone once the checklist is hidden or complete.
 - **Welcome** (`#welcome-modal`): shown once, on the first visit to New
@@ -90,7 +93,10 @@ it → know the workflows → real work → scale.
   before the guide gives up; a control that never appears ends the guide quietly.
   The elevation forces `position:relative` only on a static control; an
   absolutely positioned target (the Composer's floating side panel) keeps its
-  own position.
+  own position. The elevation is a z-index, so it cannot escape a stacking
+  context: the Projects and Workspaces slide screens rest on `transform:none`
+  (a resting `translateX(0)` would trap every control on them under the scrim),
+  and a target inside the project page's sticky tab bar names it in `lift`.
 - **Interface mode** (docs/ui-levels.md): a step whose controls live above the
   current mode asks once, before the tour moves anywhere (*Switch to Advanced?*);
   confirming switches and starts the tour. Should the mode drop while a tour
@@ -108,12 +114,14 @@ for targets inside an open dialog.
 
 - `GET /api/onboarding` → `{ steps, done, total, claude: { bin, hint }, hidden, welcomeSeen }`
   (`src/core/onboarding.mjs`). Computed on every call from the store and the
-  PATH; team metrics reads the cached scope status only (no discovery).
+  PATH; team metrics and team policy read the cached scope status only (no
+  discovery).
 - `POST /api/onboarding` `{ hidden?, welcomeSeen? }` — booleans only, unknown
   keys 400 — writes the two flags to `settings.json` (`onboarding: {...}`,
   dropped when both are false) and broadcasts `onboarding-changed`.
 - The client refetches on `pipelines-changed`, `projects-changed`,
-  `workspaces-changed`, `team-metrics-changed`, `onboarding-changed`, on a run
+  `workspaces-changed`, `team-metrics-changed`, `team-policy-changed`,
+  `onboarding-changed`, on a run
   finishing, on an Ask turn ending and on a Composer save (coalesced, 250 ms).
 
 ## Tests

@@ -26,10 +26,10 @@ const until = async (fn, ms = 3000) => {
 };
 const click = (window, node) => node.dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
 
-const STEPS = ['claude', 'project', 'run', 'ask', 'realRun', 'workflows', 'workspace', 'teamMetrics'];
+const STEPS = ['claude', 'project', 'run', 'ask', 'realRun', 'workflows', 'workspace', 'teamMetrics', 'teamPolicy'];
 const status = (done = [], flags = {}) => ({
   steps: Object.fromEntries(STEPS.map((id) => [id, done.includes(id)])),
-  done: done.length, total: 8, claude: { bin: 'claude', hint: null }, hidden: false, welcomeSeen: false, ...flags,
+  done: done.length, total: 9, claude: { bin: 'claude', hint: null }, hidden: false, welcomeSeen: false, ...flags,
 });
 
 async function boot({ onboarding = status(['claude']), projects = [], level = null } = {}) {
@@ -120,7 +120,7 @@ test('boot: the pill mounts under the CTA and routes to the page (where the shel
   const cta = doc.querySelector('.nav button.nav-cta');
   const pillHost = cta.nextElementSibling;
   assert.ok(pillHost && pillHost.classList.contains('gs-pill-host'), 'pill host right under New pipeline');
-  assert.equal(pillHost.querySelector('.gs-pill .nav-count').textContent, '1/8');
+  assert.equal(pillHost.querySelector('.gs-pill .nav-count').textContent, '1/9');
   assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 12, 'the nav census is untouched (Schedules and Team policy included)');
   assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'first visit to New pipeline: welcome up');
   assert.deepEqual(posts, [], 'showing the welcome writes nothing until a choice');
@@ -130,8 +130,8 @@ test('boot: the pill mounts under the CTA and routes to the page (where the shel
   assert.equal(doc.querySelector('.view[data-view="getting-started"]').classList.contains('hidden'), false, 'the pill opens the page');
   assert.ok(doc.querySelector('.gs-pill').classList.contains('active'), 'and reads as the current view');
   assert.equal(host.hidden, false);
-  assert.equal(host.querySelectorAll('.gs-tile').length, 8);
-  assert.equal(host.querySelector('.gs-progress').textContent, '1 of 8');
+  assert.equal(host.querySelectorAll('.gs-tile').length, 9);
+  assert.equal(host.querySelector('.gs-progress').textContent, '1 of 9');
   assert.equal(host.querySelector('.gs-hide').textContent, 'Hide from sidebar');
 });
 
@@ -186,7 +186,7 @@ test('Hide posts {hidden:true} and removes the pill (the page stays); Settings �
   await settle();
   const btn = doc.getElementById('gsShowAgain');
   assert.equal(btn.textContent, 'Show again');
-  assert.match(doc.getElementById('gsSettingsMsg').textContent, /^Hidden from the sidebar · 1 of 8 done/);
+  assert.match(doc.getElementById('gsSettingsMsg').textContent, /^Hidden from the sidebar · 1 of 9 done/);
   click(window, btn);
   await settle();
   assert.deepEqual(posts, [{ hidden: true }, { hidden: false }]);
@@ -668,6 +668,131 @@ test('the team metrics tour: a project row → its Team tab → Set up → the d
   doc.dispatchEvent(new window.Event('click', { bubbles: true }));
   await until(() => target() === '#proj-detail .pd-team-metrics' && /push it to one/.test(layer()?.querySelector('.guide-text')?.textContent || ''));
   assert.match(layer().querySelector('.guide-text').textContent, /push it to one/);
+  assert.equal(layer().querySelector('.guide-next').textContent, 'Done');
+  click(window, layer().querySelector('.guide-next'));
+  await until(() => !layer());
+  assert.equal(layer(), null);
+
+  // Already on (a replay): the block says so — never "this project has no remote".
+  click(window, doc.querySelector('.gs-pill'));
+  await settle();
+  click(window, doc.querySelector('.gs-tile[data-step="teamMetrics"]'));
+  await settle();
+  click(window, doc.querySelector('.nav button[data-nav="projects"]'));
+  await settle();
+  window.location.hash = 'projects/p-00000001/team';
+  await settle(); await settle();
+  doc.querySelector('#proj-detail .pd-team-metrics .pd-team-body').innerHTML = '<div class="tm-cell" data-kind="on">On · 3 runs recorded<label><input type="checkbox" class="tm-record" checked></label></div>';
+  doc.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await until(() => target() === '#proj-detail .pd-team-metrics' && /already on/.test(layer()?.querySelector('.guide-text')?.textContent || ''));
+  assert.match(layer().querySelector('.guide-text').textContent, /already on/);
+  assert.equal(layer().querySelector('.guide-next').textContent, 'Done');
+  click(window, layer().querySelector('.guide-next'));
+  await until(() => !layer());
+  assert.equal(layer(), null);
+});
+
+test('the team policy tour: a project row → its Team tab → Set up → the dialog\'s submit → the new home\'s page, Done on Edit policy', async () => {
+  const { doc, window } = await boot({ level: 'expert', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
+  click(window, doc.querySelector('.gs-pill'));
+  await settle();
+  click(window, doc.querySelector('.gs-tile[data-step="teamPolicy"]'));
+  await settle();
+  const layer = () => doc.querySelector('.guide-layer');
+  const target = () => layer()?.dataset.target || '';
+  const text = () => layer()?.querySelector('.guide-text')?.textContent || '';
+  assert.ok(target().startsWith('.nav button[data-nav="projects"]'), `Projects first: ${target()}`);
+  click(window, doc.querySelector('.nav button[data-nav="projects"]'));
+  await settle();
+  // The Projects row, then the Team tab: the same way in as team metrics.
+  await until(() => target().startsWith('#projects-list .pl-row'));
+  assert.match(text(), /Open a project/);
+  click(window, doc.querySelector('#projects-list .pl-row[role="button"]'));
+  await settle(); await settle();
+  await until(() => target() === '#pd-tab-team');
+  assert.match(text(), /Team tab/);
+  click(window, doc.getElementById('pd-tab-team'));
+  await settle();
+  // The tab's block paints the enable control (a project with an origin remote, no policy yet).
+  const body = doc.querySelector('#proj-detail .pd-team-policy .pd-team-body');
+  body.innerHTML = '<div class="tm-cell tp-cell" data-kind="off"><button type="button" class="tp-enable">Set up team policy…</button></div>';
+  doc.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await until(() => target() === '#proj-detail .tp-enable');
+  assert.match(text(), /Set it up here/);
+  // Its click opens the enable dialog: the submit is the stop, above the dialog — and not the end.
+  const modal = doc.getElementById('plugin-modal');
+  modal.classList.remove('hidden');
+  modal.insertAdjacentHTML('beforeend', '<button type="button" class="tp-enable-submit">Create branch and enable</button>');
+  click(window, body.querySelector('.tp-enable'));
+  await until(() => target() === '#plugin-modal .tp-enable-submit');
+  assert.ok(layer().classList.contains('pointer'));
+  assert.equal(layer().querySelector('.guide-next'), null, 'creating is the action');
+  // The app: the dialog closes and, for a new home, the page routes to it. The page paints Edit
+  // policy once the policy has loaded.
+  click(window, modal.querySelector('.tp-enable-submit'));
+  modal.classList.add('hidden'); modal.querySelector('.tp-enable-submit').remove();
+  window.location.hash = 'team-policy/project:p-00000001';
+  await settle(); await settle();
+  doc.getElementById('tp-body').innerHTML = '<section class="card tp-doc-card"><div class="tp-head-actions"><button type="button" class="btn btn-ghost btn-mini tp-edit">Edit policy</button></div></section>';
+  doc.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await until(() => target() === '#tp-body .tp-edit');
+  assert.match(text(), /Edit policy sets/);
+  assert.equal(layer().querySelector('.guide-next').textContent, 'Done', 'the tour ends on the home\'s page');
+  click(window, layer().querySelector('.guide-next'));
+  await until(() => !layer());
+  assert.equal(layer(), null);
+});
+
+test('the team policy tour: a follow stays on the project page (Done on the block); no remote and already-on explain with Done', async () => {
+  const { doc, window } = await boot({ level: 'expert', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
+  const layer = () => doc.querySelector('.guide-layer');
+  const target = () => layer()?.dataset.target || '';
+  const text = () => layer()?.querySelector('.guide-text')?.textContent || '';
+  const body = () => doc.querySelector('#proj-detail .pd-team-policy .pd-team-body');
+  const start = async () => {
+    click(window, doc.querySelector('.gs-pill'));
+    await settle();
+    click(window, doc.querySelector('.gs-tile[data-step="teamPolicy"]'));
+    await settle();
+    click(window, doc.querySelector('.nav button[data-nav="projects"]'));
+    await settle();
+    window.location.hash = 'projects/p-00000001/team';
+    await settle(); await settle();
+  };
+  // Following another project's policy: the dialog closes, nothing routes — the block now says On.
+  await start();
+  body().innerHTML = '<div class="tm-cell tp-cell" data-kind="off"><button type="button" class="tp-enable">Set up team policy…</button></div>';
+  doc.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await until(() => target() === '#proj-detail .tp-enable');
+  const modal = doc.getElementById('plugin-modal');
+  modal.classList.remove('hidden');
+  modal.insertAdjacentHTML('beforeend', '<button type="button" class="tp-enable-submit">Create marker and follow</button>');
+  click(window, body().querySelector('.tp-enable'));
+  await until(() => target() === '#plugin-modal .tp-enable-submit');
+  click(window, modal.querySelector('.tp-enable-submit'));
+  modal.classList.add('hidden'); modal.querySelector('.tp-enable-submit').remove();
+  body().innerHTML = '<div class="tm-cell tp-cell" data-kind="follows">On · follows <b class="ref mono">acme/gateway</b><div class="tm-actions"><button type="button" class="tp-open">Open</button><button type="button" class="tp-change">Change…</button></div></div>';
+  doc.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await until(() => target().startsWith('#proj-detail .tp-cell') && /is on for this project/.test(text()));
+  assert.equal(layer().querySelector('.guide-next').textContent, 'Done');
+  click(window, layer().querySelector('.guide-next'));
+  await until(() => !layer());
+  assert.equal(layer(), null);
+
+  // No origin remote: the block explains why, and Done closes the tour.
+  await start();
+  body().innerHTML = '<div class="tm-cell tp-cell" data-kind="no-origin">Not available · no origin remote</div>';
+  doc.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await until(() => target() === '#proj-detail .pd-team-policy' && /push it to one/.test(text()));
+  assert.equal(layer().querySelector('.guide-next').textContent, 'Done');
+  click(window, layer().querySelector('.guide-next'));
+  await until(() => !layer());
+
+  // Already on (a replay): the block says so — never "no remote".
+  await start();
+  body().innerHTML = '<div class="tm-cell tp-cell" data-kind="home">On · policy home · 3 fields<div class="tm-actions"><button type="button" class="tp-open">Open</button></div></div>';
+  doc.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await until(() => target() === '#proj-detail .pd-team-policy' && /already on/.test(text()));
   assert.equal(layer().querySelector('.guide-next').textContent, 'Done');
   click(window, layer().querySelector('.guide-next'));
   await until(() => !layer());
