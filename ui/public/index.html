@@ -914,12 +914,11 @@
                   <h1 class="pd-title ws-name"></h1>
                   <span class="ws-stale badge red" hidden>missing projects</span>
                 </div>
+                <!-- One row under the title: the summary on the left, the actions on the right. This
+                     page configures and tracks a workspace; runs start from New pipeline. -->
+                <div class="wd-row2">
                 <div class="pd-meta"><small class="ws-projects"></small></div>
                 <div class="pd-actions">
-                  <button type="button" class="pd-new btn-ghost">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-                    New pipeline
-                  </button>
                   <button type="button" class="ws-rescan btn-ghost" title="Re-scan the project set and regenerate the description">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.7"></path><path d="M20 4v5h-5"></path></svg>
                     Re-scan
@@ -929,6 +928,7 @@
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"></path></svg>
                     <span class="pd-btn-label">Delete</span>
                   </button>
+                </div>
                 </div>
                 <!-- On the HEADER (like .pd-error): a delete failure must not sit below a long tab. -->
                 <div class="pd-error" hidden></div>

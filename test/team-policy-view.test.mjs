@@ -192,24 +192,34 @@ test('empty state, sync chip, badge', () => {
   assert.equal(relTime(new Date(Date.now() - 30_000).toISOString()), 'just now');
 });
 
-test('workspace line (board 6)', () => {
+test('workspace block (board 6, reworked): a facts list — POLICY HOME, WORKSPACE RUNS, MEMBERS — with the actions above', () => {
+  const facts = (root) => [...root.querySelectorAll('.tp-facts dt')].map((dt, i) => [dt.textContent, root.querySelectorAll('.tp-facts dd')[i].textContent.trim()]);
   const unset = renderWsPolicyLine({ id: 'w', name: 'IoT', home: { state: 'unset' }, members: [] }, { doc });
-  assert.match(unset.textContent, /no policy home/);
+  assert.deepEqual(facts(unset), [['POLICY HOME', 'none chosen · workspace runs use your local settings']]);
   assert.equal(unset.querySelector('.wsp-home-change').textContent, 'Choose policy home…');
   assert.match(unset.querySelector('.ws-home-hint').textContent, /use your local settings until a policy home is chosen/);
-  // Only what the workspaceRuns block CHANGES, by name (the agreed board-6 copy); a home that is a
+  // Only what the workspaceRuns block CHANGES, by name; the members as counts; a home that is a
   // following member names the project it follows through.
   const ok = renderWsPolicyLine({ id: 'w', name: 'IoT', home: { state: 'ok', slug: 'acme/gateway', follows: null, workspaceRuns: [
     { key: 'cost.pipelineLimitUsd', label: 'Per-pipeline cap (USD)', display: '$25.00' },
     { key: 'guardrails.default', label: 'Default set', display: 'Strict' },
   ] }, members: [{ state: 'home' }, { state: 'none' }] }, { doc });
-  assert.equal(ok.querySelector('.ws-policy-line').textContent.trim(), 'follows acme/gateway · for workspace runs: pipeline cap $25.00, guardrails Strict');
+  assert.deepEqual(facts(ok), [
+    ['POLICY HOME', 'acme/gateway'],
+    ['WORKSPACE RUNS', 'pipeline cap $25.00 · guardrails Strict'],
+    ['MEMBERS', '1 is the policy home · 1 has no worca-policy branch — a member with no branch keeps its own settings for project runs'],
+  ]);
+  assert.ok(ok.querySelector('.tp-facts dd .tm-dot.green'), 'the home carries the dot, not the label');
+  assert.equal(ok.querySelectorAll('.tp-facts dd b').length, 2, 'the values are the bold part');
+  assert.equal(ok.querySelector('.ws-policy-line'), null, 'no run-on line any more');
   const via = renderWsPolicyLine({ id: 'w', name: 'IoT', home: { state: 'ok', slug: 'acme/gateway', follows: 'acme/billing', workspaceRuns: [] }, members: [] }, { doc });
-  assert.equal(via.querySelector('.ws-policy-line').textContent.trim(), 'follows acme/gateway via acme/billing · same values as project runs');
+  assert.deepEqual(facts(via), [['POLICY HOME', 'acme/gateway · follows acme/billing'], ['WORKSPACE RUNS', 'same values as project runs']]);
   assert.ok(ok.querySelector('.wsp-open') && ok.querySelector('.wsp-route'));
   assert.equal(ok.querySelector('.wsp-home-change').textContent, 'Change policy home…');
+  assert.equal(ok.firstElementChild.nextElementSibling.className, 'ws-tbl-actions', 'the actions come before the facts');
   const stale = renderWsPolicyLine({ id: 'w', name: 'IoT', home: { state: 'stale', detail: 'the policy home is no longer a workspace member' }, members: [] }, { doc });
-  assert.ok(stale.querySelector('.tm-dot.red'));
+  assert.ok(stale.querySelector('.tp-facts dd .tm-dot.red'));
+  assert.match(facts(stale)[0][1], /no longer a workspace member/);
   assert.equal(stale.querySelector('.wsp-route'), null);
 });
 

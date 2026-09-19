@@ -32,8 +32,9 @@ test('ws-detail template carries the classes the workspace page uses (the projec
   const m = html.match(/<template id="ws-detail-tpl">([\s\S]*?)<\/template>/);
   assert.ok(m, 'missing ws-detail-tpl template');
   const tpl = m[1];
-  for (const cls of ['pd-header', 'pd-back', 'pd-title', 'ws-name', 'ws-stale', 'ws-projects', 'pd-new', 'ws-rescan', 'ws-delete', 'pd-error', 'pd-tabs', 'pd-sections'])
+  for (const cls of ['pd-header', 'pd-back', 'pd-title', 'ws-name', 'ws-stale', 'ws-projects', 'wd-row2', 'ws-rescan', 'ws-delete', 'pd-error', 'pd-tabs', 'pd-sections'])
     assert.ok(tpl.includes(cls), `ws-detail-tpl missing .${cls}`);
+  assert.ok(!tpl.includes('pd-new'), 'no New pipeline on the workspace page: it configures and tracks, runs start from New pipeline');
   // The description editor is built by buildWdOverview, not the template; the wizard keeps its own copy.
   assert.ok(/id="wiz-desc-tabs"/.test(html) && /id="wiz-desc-preview"/.test(html), 'wizard step 3 carries the editor tabs + preview');
   assert.ok(!html.includes('ws-card-tpl'), 'the card template is gone: rows open a page');

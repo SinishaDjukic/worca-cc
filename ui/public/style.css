@@ -1246,6 +1246,11 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .ws-stale[hidden]{display:none;}
 /* Workspace page: the summary line under the title, the members list, the description panel. */
 .wd .pd-meta .ws-projects{margin-top:0;white-space:normal;font-size:12.5px;color:var(--ink-2);}
+/* The workspace header is two rows, not three: summary and actions share the second. */
+.wd-row2{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;margin-top:8px;}
+.wd-row2 .pd-meta{margin-top:0;flex:1 1 320px;}
+.wd-row2 .pd-actions{margin-top:0;margin-left:auto;flex:0 0 auto;}
+.wd-row2 .pd-spacer{display:none;}
 .wd .pd-row1 .ws-stale{flex:0 0 auto;}
 .wd-member-list{display:flex;flex-direction:column;}
 .wd-member{display:flex;align-items:center;flex-wrap:wrap;gap:4px 14px;padding:11px 0;border-bottom:1px solid var(--line);
@@ -5517,12 +5522,16 @@ input.gv-name:focus-visible{outline:none;}
 .tp-msg{white-space:pre-wrap;}
 @media (max-width:900px){ .tp-edit-row{grid-template-columns:1fr;} }
 /* workspace card line (board 6) */
-.ws-policy{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border-radius:12px;background:var(--field);font-size:12.5px;margin-top:12px;}
-.ws-policy-inner{display:contents;}
-.ws-policy .tm-label{width:auto;font-size:12.5px;color:var(--ink-2);}
-.ws-policy-line{color:var(--ink-2);min-width:0;}
-.ws-policy .ws-tbl-actions{margin-left:auto;}
-.ws-policy .ws-home-hint,.ws-policy .ws-policy-results{flex-basis:100%;margin-top:0;}
+/* Workspace page › Team › Team policy: the actions row (the metrics table head's twin), then a
+   facts list with the label column the Team policy page uses. */
+.ws-policy{font-size:12.5px;margin-top:12px;}
+.ws-policy-inner{display:flex;flex-direction:column;gap:4px;}
+.ws-policy .tm-label{display:none;}
+.ws-policy .ws-tbl-actions{margin-left:auto;display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
+.ws-policy .tp-facts{margin-top:8px;grid-template-columns:118px minmax(0,1fr);}   /* WORKSPACE RUNS fits on one line */
+.ws-policy .tp-facts dd .tm-dot{display:inline-block;vertical-align:middle;margin-right:2px;}
+.ws-policy .tp-facts dd .muted{color:var(--ink-3);}
+.ws-policy .ws-home-hint,.ws-policy .ws-policy-results{margin-top:6px;}
 /* Settings readout + chip (board 7) */
 .team-readout{display:flex;flex-direction:column;gap:6px;margin:0 0 16px;padding:12px 14px;border-radius:12px;background:var(--field);font-size:12.5px;color:var(--ink-2);}
 .team-readout b{color:var(--ink);font-weight:600;}

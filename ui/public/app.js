@@ -6434,7 +6434,6 @@ function openWsDetail(w, parsed, { instant = false } = {}) {
   host.appendChild(screen);
   wsDetail = { id: w.id, name: w.name, screen };
   screen.querySelector('.pd-back').addEventListener('click', () => { location.hash = 'workspaces'; });
-  screen.querySelector('.pd-new').addEventListener('click', () => { newPipelineForWorkspace(w.id); });
   screen.querySelector('.ws-rescan').addEventListener('click', () => { void rescanWorkspace(workspaceById(w.id)); });
   screen.querySelector('.ws-delete').addEventListener('click', () => { void deleteWorkspaceFromPage(w.id); });
   paintWsHeader(screen, w);
@@ -6496,16 +6495,6 @@ function closeWsDetail({ instant = false } = {}) {
   if (t && typeof t.unref === 'function') t.unref();
 }
 
-// "New pipeline": the workspace target with this workspace selected, then the form.
-function newPipelineForWorkspace(id) {
-  if (!workspaceById(id)) return;
-  state.selectedWorkspaceId = id;
-  localStorage.setItem(LAST_WORKSPACE_KEY, id);
-  if (state.runTarget !== 'workspace') setRunTarget('workspace');   // repopulates the select (ensureWorkspaceOptions)
-  else void ensureWorkspaceOptions();
-  location.hash = 'new';
-}
-
 // ---- tabs ----
 const WD_TABS = [
   { key: 'overview', label: 'Overview', level: 'simple', badge: () => null, visible: () => true, build: (sec, id) => buildWdOverview(sec, id) },
@@ -6555,7 +6544,9 @@ function buildWdOverview(sec, id) {
     card.addEventListener('click', () => { location.hash = `workspaces/${wsParamFor(id, 'team')}`; });
     grid.appendChild(tagLevel(card, 'expert'));
   }
-  grid.appendChild(pdStatCard('updated', 'UPDATED', w.updatedAt ? fmtDate(w.updatedAt) : '—', w.createdAt ? `created ${fmtDate(w.createdAt)}` : ''));
+  // The date alone at card size (a full timestamp wraps to two lines); the time and the creation date ride the sub.
+  const [upDate, upTime] = w.updatedAt ? String(fmtDate(w.updatedAt)).split(', ') : ['—', ''];
+  grid.appendChild(pdStatCard('updated', 'UPDATED', upDate, [upTime, w.createdAt ? `created ${String(fmtDate(w.createdAt)).split(', ')[0]}` : ''].filter(Boolean).join(' · ')));
   sec.appendChild(grid);
 
   // Projects: every member once, each a hop to its project page (a registered one).

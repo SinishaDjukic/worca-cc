@@ -876,33 +876,68 @@ function changedKeys(root, original, { registry = [] } = {}) {
 }
 
 // ---- Workspace card line (board 6) ----------------------------------------------------------
+// Home first, then the members in step with it, then the ones that need a look.
+const WS_MEMBER_WORD = {
+  home: 'is the policy home', 'is-home': 'carries the policy', 'follows-home': 'follows the home', 'follows-other': 'follows another home',
+  own: 'carries its own policy', none: 'has no worca-policy branch', 'no-origin': 'has no origin remote',
+};
+const WS_MEMBER_RANK = Object.fromEntries(Object.keys(WS_MEMBER_WORD).map((k, i) => [k, i]));
+/**
+ * The workspace page's Team policy block (design board 6, reworked): a facts list — POLICY HOME,
+ * WORKSPACE RUNS, MEMBERS — with the label column the Team policy page's header uses, so a label
+ * never runs into its value; the actions sit on their own row above it. `w` = /api/policy/scopes
+ * → workspaces[].
+ */
 export function renderWsPolicyLine(w, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'ws-policy-inner');
   const home = w.home || { state: 'unset' };
+  const members = w.members || [];
   root.append(h(doc, 'span', 'tm-label', 'Team policy'));
-  const line = h(doc, 'span', 'ws-policy-line');
-  if (home.state === 'unset') {
-    line.append(h(doc, 'span', 'muted', 'no policy home'));
-  } else if (home.state !== 'ok') {
-    line.append(dot(doc, 'red'), ' ', h(doc, 'span', 'ws-sum-bad', home.detail || 'the policy home is stale'));
-  } else {
-    line.append(dot(doc, 'green'), ' follows ', code(doc, home.slug));
-    // The home is a member that itself follows another project: say through which one.
-    if (home.follows) line.append(' via ', code(doc, home.follows));
-    // Only what the workspaceRuns block changes, by name (board 6); every other field is the
-    // same as for project runs, so it is not repeated here.
-    const changed = Array.isArray(home.workspaceRuns) ? home.workspaceRuns : [];
-    if (changed.length) {
-      const LABEL = { 'cost.pipelineLimitUsd': 'pipeline cap', 'cost.totalLimitUsd': 'total cap', 'guardrails.default': 'guardrails' };
-      line.append(' · for workspace runs: ', changed.map((x) => `${LABEL[x.key] || x.label.replace(/ \(USD\)$/, '').toLowerCase()} ${x.display}`).join(', '));
-    } else line.append(' · same values as project runs');
-  }
-  root.append(line);
   const actions = h(doc, 'span', 'ws-tbl-actions');
   if (home.state === 'ok') actions.append(btn(doc, 'wsp-open', 'Open policy'));
-  if (home.state === 'ok' && (w.members || []).some((m) => m.state === 'none')) actions.append(btn(doc, 'wsp-route', 'Route all to policy home'));
+  if (home.state === 'ok' && members.some((m) => m.state === 'none')) actions.append(btn(doc, 'wsp-route', 'Route all to policy home'));
   actions.append(btn(doc, 'wsp-home-change', home.state === 'unset' ? 'Choose policy home…' : 'Change policy home…'));
   root.append(actions);
+
+  const facts = h(doc, 'dl', 'tp-facts ws-policy-facts');
+  const fact = (label, ...parts) => {
+    const dt = h(doc, 'dt', null, label);
+    const dd = h(doc, 'dd');
+    dd.append(...parts);
+    facts.append(dt, dd);
+    return dd;
+  };
+  // POLICY HOME: the member whose policy governs workspace runs here, or why there is none.
+  if (home.state === 'unset') fact('POLICY HOME', h(doc, 'span', 'muted', 'none chosen'), ' · ', h(doc, 'span', null, 'workspace runs use your local settings'));
+  else if (home.state !== 'ok') fact('POLICY HOME', dot(doc, 'red'), ' ', h(doc, 'span', 'ws-sum-bad', home.detail || 'the policy home is stale'));
+  else {
+    const dd = fact('POLICY HOME', dot(doc, 'green'), ' ', code(doc, home.slug));
+    // The home is a member that itself follows another project: say through which one.
+    if (home.follows) dd.append(' · follows ', code(doc, home.follows));
+  }
+  // WORKSPACE RUNS: only what the workspaceRuns block changes, by name; every other field is the
+  // same as for project runs, so it is not repeated here.
+  if (home.state === 'ok') {
+    const changed = Array.isArray(home.workspaceRuns) ? home.workspaceRuns : [];
+    const LABEL = { 'cost.pipelineLimitUsd': 'pipeline cap', 'cost.totalLimitUsd': 'total cap', 'guardrails.default': 'guardrails' };
+    if (changed.length) {
+      const dd = fact('WORKSPACE RUNS');
+      changed.forEach((x, i) => {
+        if (i) dd.append(' · ');
+        dd.append(`${LABEL[x.key] || x.label.replace(/ \(USD\)$/, '').toLowerCase()} `, h(doc, 'b', null, x.display));
+      });
+    } else fact('WORKSPACE RUNS', h(doc, 'span', 'muted', 'same values as project runs'));
+  }
+  // MEMBERS: where each member's policy comes from, as counts — the table on the Team policy page
+  // has the rows. Only when the scopes payload carries members.
+  if (members.length) {
+    const counts = new Map();
+    for (const m of members) counts.set(m.state, (counts.get(m.state) || 0) + 1);
+    const parts = [...counts.entries()].sort((a, b) => (WS_MEMBER_RANK[a[0]] ?? 99) - (WS_MEMBER_RANK[b[0]] ?? 99)).map(([state, n]) => `${n} ${WS_MEMBER_WORD[state] || state}`);
+    const dd = fact('MEMBERS', parts.join(' · '));
+    if (counts.get('none')) dd.append(' — ', h(doc, 'span', 'ws-sum-warn', 'a member with no branch keeps its own settings for project runs'));
+  }
+  root.append(facts);
   if (home.state === 'unset') root.append(h(doc, 'small', 'hint ws-home-hint', 'Workspace runs use your local settings until a policy home is chosen. The home is a per-machine choice; it defaults to the metrics home.'));
   root.append(h(doc, 'div', 'ws-policy-results'));
   return root;
