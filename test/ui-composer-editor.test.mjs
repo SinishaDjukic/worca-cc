@@ -10,6 +10,7 @@ import { JSDOM } from 'jsdom';
 // double-count them.
 import { fixture, portsFn, AGENTS } from './helpers/graph-view-fixture.mjs';
 import { routeWire, routePathD, routeMid, hitRoute } from '../src/shared/graph/route.mjs';
+import { portsFnFor } from '../src/shared/graph/ports.mjs';
 
 const composerPath = new URL('../ui/public/graph/composer.mjs', import.meta.url).href;
 
@@ -84,7 +85,7 @@ export async function open(overrides = {}) {
   const { createComposer } = await import(composerPath);
   const c = createComposer(s.hostEls, {
     doc: s.doc, api: { ...API, ...(overrides.api || {}) }, raf: s.raf,
-    viewport: () => ({ ...RECT }), storage: overrides.storage || null, portsFn,
+    viewport: () => ({ ...RECT }), storage: overrides.storage || null, portsFn: overrides.portsFn || portsFn,
   });
   c.mount();
   c.loadTemplate(overrides.template === undefined ? fixture() : overrides.template);
@@ -1026,4 +1027,100 @@ test('Center follows the rail: collapsing it fits into the wider band', async ()
   assert.ok(collapsed.z >= withRail.z - 1e-12, 'the freed rail can only widen the band');
   const c = s.c._internal.toWorld(bandW / 2, BAND_CY);
   assert.ok(Math.abs(c.x - (b.x + b.w / 2)) < 1e-6, 'and the fit centres on the NEW band centre');
+});
+
+// ---- script cards (P1b) ----
+const SHELL = { key: 'shell', displayName: 'Shell', runtime: 'shell', color: 'amber', ports: 'config', verdict: { filename: 'shell-cycle{cycle}.json' },
+  defaultPorts: { inputs: [{ id: 'in', type: 'md', required: false }], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'shell-cycle{cycle}.md' }] },
+  params: [{ id: 'command', type: 'command', required: true }] };
+const DIFF = { key: 'gitDiff', displayName: 'Git diff', runtime: 'node', color: 'green', inputs: [{ id: 'done', type: 'void', required: false }],
+  outputs: [{ id: 'diff', type: 'md', when: 'always', filename: 'diff-cycle{cycle}.md' }], params: [] };
+const SCRIPT_METAS = { shell: SHELL, gitDiff: DIFF };
+
+test('spawn({kind:"script"}) places a script node and seeds config.ports from a config-ported sidecar', async () => {
+  const s = await open({ portsFn: portsFnFor(AGENTS, SCRIPT_METAS) });
+  s.c.setScripts(SCRIPT_METAS);
+  s.c.paintPalette();
+  const n0 = s.c.template().nodes.length;
+  const node = s.c.spawn({ kind: 'script', key: 'shell' });
+  assert.equal(node.kind, 'script');
+  assert.equal(node.key, 'shell');
+  assert.deepEqual(node.config.ports, SHELL.defaultPorts);
+  assert.notEqual(node.config.ports, SHELL.defaultPorts, 'a deep copy — editing the card never edits the registry');
+  const diff = s.c.spawn({ kind: 'script', key: 'gitDiff' });
+  assert.deepEqual(diff.config, {}, 'a sidecar-ported script seeds nothing');
+  assert.equal(s.c.template().nodes.length, n0 + 2);
+  assert.ok(s.el.canvas.querySelector('.node[data-kind="script"]'), 'the canvas paints a script card');
+  assert.ok(s.el.palette.querySelector('.ap[data-key="shell"][data-kind="script"]'), 'the palette lists it');
+});
+
+test('script inspector edits commit params, timeout and ports through the undo ring', async () => {
+  const s = await open({ portsFn: portsFnFor(AGENTS, SCRIPT_METAS) });
+  s.c.setScripts(SCRIPT_METAS);
+  const node = s.c.spawn({ kind: 'script', key: 'shell' });
+  const body = s.el.insBody;
+  const change = (sel, set) => { const x = body.querySelector(sel); set(x); x.dispatchEvent(new s.win.Event('change', { bubbles: true })); };
+  change('textarea[data-field="param:command"]', (x) => { x.value = 'npm test'; });
+  assert.deepEqual(s.c.template().nodes.find((n) => n.id === node.id).config.params, { command: 'npm test' });
+  change('[data-field="timeoutMs"]', (x) => { x.value = '30'; });
+  assert.equal(s.c.template().nodes.find((n) => n.id === node.id).config.timeoutMs, 30000);
+  change('[data-field="port:outputs:0:filename"]', (x) => { x.value = 'tests-cycle{cycle}.md'; });
+  assert.equal(s.c.template().nodes.find((n) => n.id === node.id).config.ports.outputs[0].filename, 'tests-cycle{cycle}.md');
+  body.querySelector('[data-port-add="outputs"]').dispatchEvent(new s.win.Event('click', { bubbles: true }));
+  const added = s.c.template().nodes.find((n) => n.id === node.id).config.ports.outputs;
+  assert.equal(added.length, 2);
+  assert.deepEqual(added[1], { id: 'out', type: 'md', when: 'always', filename: 'out-cycle{cycle}.md' });
+  body.querySelector('[data-port-remove="outputs:1"]').dispatchEvent(new s.win.Event('click', { bubbles: true }));
+  assert.equal(s.c.template().nodes.find((n) => n.id === node.id).config.ports.outputs.length, 1);
+  const depth = s.c.undoDepth();
+  s.c.undo();
+  assert.equal(s.c.template().nodes.find((n) => n.id === node.id).config.ports.outputs.length, 2, 'every port edit is one undo step');
+  assert.equal(s.c.undoDepth(), depth - 1);
+  // The runner treats a whitespace-only command as no command (shellCommand trims it): the editor must not store one.
+  change('[data-field="param:command"]', (x) => { x.value = '  \n '; });
+  assert.equal('params' in s.c.template().nodes.find((n) => n.id === node.id).config, false, 'a whitespace-only command deletes the key');
+  assert.ok(body.querySelector('textarea[data-field="param:command"]').closest('.ins-f').classList.contains('ins-missing'));
+  change('[data-field="param:command"]', (x) => { x.value = 'npm test'; });
+  assert.deepEqual(s.c.template().nodes.find((n) => n.id === node.id).config.params, { command: 'npm test' });
+  change('[data-field="param:command"]', (x) => { x.value = ''; });
+  assert.equal('params' in s.c.template().nodes.find((n) => n.id === node.id).config, false, 'a blank command deletes the key');
+  assert.ok(body.querySelector('textarea[data-field="param:command"]').closest('.ins-f').classList.contains('ins-missing'));
+});
+
+test('removing or renaming a config port carries its wires: no undrawable wire is left behind', async () => {
+  const s = await open({ portsFn: portsFnFor(AGENTS, SCRIPT_METAS) });
+  s.c.setScripts(SCRIPT_METAS);
+  const node = s.c.spawn({ kind: 'script', key: 'shell' });
+  s.c.commit('wire', () => {
+    s.c.template().wires.push({ id: 'w_in', from: { node: 'n_agent', port: 'plan' }, to: { node: node.id, port: 'in' } },
+      { id: 'w_out', from: { node: node.id, port: 'log' }, to: { node: 'n_end', port: 'result' } });
+    s.c.template().wires = s.c.template().wires.filter((w) => w.id !== 'w2');
+  });
+  s.c.select({ kind: 'node', id: node.id });
+  const body = s.el.insBody;
+  const idBox = body.querySelector('[data-field="port:inputs:0:id"]');
+  idBox.value = 'notes';
+  idBox.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+  assert.equal(s.c.template().wires.find((w) => w.id === 'w_in').to.port, 'notes', 'a rename rewires');
+  // Wires follow a port BY ID, so an id that is blank, reserved or already taken on that side is refused and the
+  // box snaps back: passing through '' would strand the wire on a port that cannot be drawn, and two ports
+  // sharing an id would hand one port's wires to the other on the next rename.
+  const depth0 = s.c.undoDepth();
+  body.querySelector('[data-port-add="inputs"]').dispatchEvent(new s.win.Event('click', { bubbles: true }));
+  const refuse = (field, value, keeps) => {
+    const x = body.querySelector(`[data-field="${field}"]`);
+    x.value = value;
+    x.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+    assert.equal(body.querySelector(`[data-field="${field}"]`).value, keeps, `"${value}" is refused`);
+  };
+  refuse('port:inputs:0:id', '', 'notes');
+  refuse('port:inputs:0:id', 'await', 'notes');
+  refuse('port:inputs:1:id', 'notes', 'in');
+  assert.equal(s.c.template().wires.find((w) => w.id === 'w_in').to.port, 'notes', 'a refused id moves no wire');
+  assert.equal(s.c.undoDepth(), depth0 + 1, 'a refused id is not an undo step (only the added input is)');
+  s.c.undo();
+  body.querySelector('[data-port-remove="outputs:0"]').dispatchEvent(new s.win.Event('click', { bubbles: true }));
+  assert.equal(s.c.template().wires.some((w) => w.id === 'w_out'), false, 'a removed port takes its wires');
+  s.c.undo();
+  assert.equal(s.c.template().wires.some((w) => w.id === 'w_out'), true, 'one undo step restores port and wire together');
 });

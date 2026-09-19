@@ -17,7 +17,7 @@ import { setActiveWorkflow } from '../src/core/config.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { readPluginsLock, writePluginsLock, pluginDir } from '../src/core/plugins-lock.mjs';
 import {
-  importPluginWorkflows, removePluginWorkflows, referencedPluginAgents, ReferencedError,
+  importPluginWorkflows, readPluginWorkflows, removePluginWorkflows, referencedPluginAgents, ReferencedError,
 } from '../src/core/plugin-workflows.mjs';
 
 const homes = [];
@@ -280,4 +280,37 @@ test('a disabled plugin\'s workflows are hidden from the list and refused by the
   writePluginsLock({ ...readPluginsLock(), demo: { ...readPluginsLock().demo, enabled: true } });
   assert.ok((await listWorkflows()).some((w) => w.id === 'wfp_demo_simple'), 'back after enabling');
   assert.equal((await assertRunnableWorkflow('wfp_demo_simple', { checkGraph: false })).id, 'wfp_demo_simple');
+});
+
+/** task -> script -> end over the script's await gate; `out` is the output port wired to End. */
+function scriptTpl(name, key, out) {
+  return {
+    name, version: 2, domain: 'general',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+      { id: 'n_s', kind: 'script', key, x: 320, y: 200, config: {} },
+      { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
+    ],
+    wires: [
+      { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_s', port: 'await' } },
+      { id: 'w2', from: { node: 'n_s', port: out }, to: { node: 'n_end', port: 'result' } },
+    ],
+  };
+}
+
+test('readPluginWorkflows resolves script keys: a built-in script and the plugin\'s own are ready, an unknown one is skipped', () => {
+  const versionDir = installFakePlugin('demo', {
+    'builtin.json': scriptTpl('Builtin Script', 'gitDiff', 'diff'),
+    'own.json': scriptTpl('Own Script', 'tidy', 'log'),
+    'ghost.json': scriptTpl('Ghost Script', 'ghostScript', 'log'),
+  });
+  mkdirSync(join(versionDir, 'scripts'), { recursive: true });
+  writeFileSync(join(versionDir, 'scripts', 'tidy.meta.json'), JSON.stringify({
+    key: 'tidy', metaVersion: 2, displayName: 'Tidy', runtime: 'shell', command: 'npm run tidy',
+    inputs: [], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'tidy-cycle{cycle}.md' }],
+  }));
+  const { ready, skipped } = readPluginWorkflows('demo', versionDir, { quiet: true });
+  assert.deepEqual(ready.map((r) => r.rowName).sort(), ['Builtin Script', 'Own Script']);
+  assert.deepEqual(skipped.map((s) => s.file), ['ghost.json']);
+  assert.match(skipped[0].errors.join('\n'), /ghostScript/);
 });

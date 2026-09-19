@@ -780,7 +780,11 @@ export class GraphOrchestrator extends RunHarness {
         });
       }
     }
-    this._emit('exec', { ...payload, costUsd: step ? (step.costUsd || 0) : 0 });
+    this._emit('exec', {
+      ...payload, costUsd: step ? (step.costUsd || 0) : 0,
+      ...(step && step.runtime != null ? { runtime: step.runtime } : {}),
+      ...(step && step.exitCode != null ? { exitCode: step.exitCode } : {}),
+    });
   }
 
   /**

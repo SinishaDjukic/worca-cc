@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS } from '../src/core/plugin-api.mjs';
 import {
   normalizeManifest, validatePluginDir, apiSatisfies, negotiatedApi, PLUGIN_NAME_RE,
-  declaredApi, dataContractIssues, apiMismatch, NOT_META_V2, NOT_GRAPH_V2,
+  declaredApi, dataContractIssues, apiMismatch, NOT_META_V2, NOT_GRAPH_V2, builtinScriptMetas,
 } from '../src/core/plugin-manifest.mjs';
 
 const WIN_SYMLINK = { skip: process.platform === 'win32' ? 'creating symlinks needs a privilege (Developer Mode / admin) on Windows' : false };
@@ -792,4 +792,59 @@ test('models: a malformed `cost` is a manifest ERROR, named by model and rule', 
   fail({ perMtok: { bogus: 1 } }, /unknown cost\.perMtok rate "bogus"/);
   fail({ perMtok: { input: -1 } }, /cost\.perMtok\.input must be a finite number >= 0/);
   fail({ perMtok: {} }, /must define at least one rate/);
+});
+
+const SCRIPT_META = (key, over = {}) => JSON.stringify({ key, metaVersion: 2, displayName: key, runtime: 'node', file: `${key}.mjs`,
+  inputs: [{ id: 'done', type: 'void', required: false }], outputs: [{ id: 'log', type: 'md', when: 'always', filename: `${key}-cycle{cycle}.md` }], ...over });
+const SCRIPT_GRAPH = (key, out = 'log') => JSON.stringify({
+  name: 'Script Flow', version: 2, domain: 'general',
+  nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, { id: 'n_s', kind: 'script', key, x: 1, y: 0, config: {} }, { id: 'n_end', kind: 'end', x: 2, y: 0, config: {} }],
+  wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_s', port: 'await' } }, { id: 'w2', from: { node: 'n_s', port: out }, to: { node: 'n_end', port: 'result' } }],
+});
+
+test('builtinScriptMetas: the three built-ins, normalized', () => {
+  assert.deepEqual(builtinScriptMetas().map((m) => m.key), ['gitDiff', 'js', 'shell']);
+});
+
+test('validatePluginDir: scripts/ — pairing, key = stem, meta v2 rules, file containment, runtime', () => {
+  const dir = mkPluginDir({
+    ...VALID_FILES,
+    'scripts/good.meta.json': SCRIPT_META('good'),
+    'scripts/good.mjs': 'export default async () => ({});\n',
+    'scripts/mismatch.meta.json': SCRIPT_META('other'),                   // key != stem; other.mjs missing
+    'scripts/nofile.meta.json': SCRIPT_META('nofile'),                    // nofile.mjs absent
+    'scripts/escape.meta.json': SCRIPT_META('escape', { file: '../escape.mjs' }),
+    'scripts/py.meta.json': SCRIPT_META('py', { runtime: 'python' }),
+    'scripts/bad key.meta.json': SCRIPT_META('bad key'),
+  });
+  const v = validatePluginDir(dir);
+  assert.equal(v.ok, false);
+  const e = errs(v).join('\n');
+  assert.match(e, /scripts\/mismatch\.meta\.json: key "other" must match the filename stem "mismatch"/);
+  assert.match(e, /scripts\/nofile\.meta\.json: file "nofile\.mjs" not found in scripts\//);
+  assert.match(e, /scripts\/escape\.meta\.json: file must be a plain basename/);
+  assert.match(e, /scripts\/py\.meta\.json: runtime must be one of node, shell/);
+  assert.match(e, /scripts\/bad key\.meta\.json: "bad key" must be a valid script key/);
+  assert.doesNotMatch(e, /scripts\/good\.meta\.json/);
+});
+
+test('validatePluginDir: a plugin workflow may reference built-in scripts and its own; a foreign or ungated script key is named as a script', () => {
+  const ok = mkPluginDir({ ...VALID_FILES, 'scripts/mine.meta.json': SCRIPT_META('mine'), 'scripts/mine.mjs': 'export default async () => ({});\n',
+    'workflows/own.json': SCRIPT_GRAPH('mine'), 'workflows/builtin.json': SCRIPT_GRAPH('gitDiff', 'diff') });
+  const v = validatePluginDir(ok);
+  assert.deepEqual(errs(v), [], errs(v).join('\n'));
+  const foreign = mkPluginDir({ ...VALID_FILES, 'workflows/alien.json': SCRIPT_GRAPH('notMine') });
+  assert.match(errs(validatePluginDir(foreign)).join('\n'), /alien\.json: references script key "notMine" which is neither a built-in nor shipped by this plugin/);
+  const ungated = mkPluginDir({ ...VALID_FILES, 'scripts/broken.meta.json': SCRIPT_META('broken', { runtime: 'python' }), 'workflows/b.json': SCRIPT_GRAPH('broken') });
+  assert.match(validatePluginDir(ungated).problems.map((p) => p.message).join('\n'), /b\.json: references script key "broken" whose sidecar is not a valid meta v2 sidecar/);
+});
+
+test('dataContractIssues + apiMismatch count v1 script sidecars beside agents', () => {
+  const dir = mkPluginDir({ ...VALID_FILES, 'scripts/old.meta.json': JSON.stringify({ key: 'old', runtime: 'node', file: 'old.mjs' }), 'scripts/old.mjs': '' });
+  const issues = dataContractIssues(dir);
+  assert.deepEqual(issues.scriptsV1, ['old.meta.json']);
+  const m = apiMismatch('>=1 <2', issues);
+  assert.equal(m.scripts, 1);
+  assert.match(m.message, /\(0 agent\(s\), 1 script\(s\), 0 template\(s\) ignored\)/);
+  assert.doesNotMatch(apiMismatch('>=1 <2', { agentsV1: ['a'], workflowsV1: [] }).message, /script/, 'no scripts: the message is unchanged');
 });

@@ -1504,6 +1504,9 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .confirm-modal .card{width:min(440px,100%);}
 .confirm-message{margin:4px 0 18px;color:var(--ink-2);font-size:14px;line-height:1.5;white-space:pre-line;}
 .confirm-actions{display:flex;gap:9px;justify-content:flex-end;margin-top:14px;}
+.gv-import-scripts p{margin:0 0 12px;color:var(--ink-2);font-size:13.5px;}
+.gv-import-script-h{font-size:12px;font-weight:700;margin:10px 0 4px;}
+.gv-import-script-v{margin:0;padding:8px 10px;border:1px solid var(--line-2);border-radius:10px;background:var(--field);color:var(--ink);font-size:12px;white-space:pre-wrap;word-break:break-all;max-height:180px;overflow:auto;}
 
 /* ── domain tag: palette sections + filter chips, workflow badge + filter ── */
 .pal-chips{display:flex;flex-wrap:wrap;gap:6px;width:100%;margin-bottom:8px;}
@@ -4504,6 +4507,8 @@ body.view-history .level-banner,body.view-projects .level-banner,body.view-runni
   border-radius:calc(14.5px * var(--gv-scale)) calc(14.5px * var(--gv-scale)) 0 0;font-size:max(9px,calc(13px * var(--gv-scale)));font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .gv-world .nhead svg{width:calc(15px * var(--gv-scale));height:calc(15px * var(--gv-scale));flex:0 0 auto;stroke-width:1.85;}
 .gv-world .nhead .tt{overflow:hidden;text-overflow:ellipsis;}
+.gv-world .nhead .chip.rt{margin-left:auto;flex:0 0 auto;font:700 max(8px,calc(10px * var(--gv-scale)))/1.6 var(--mono);text-transform:none;white-space:nowrap;
+  padding:0 calc(6px * var(--gv-scale));border-radius:999px;background:color-mix(in srgb, currentColor 14%, transparent);color:inherit;}
 .gv-world .h-flow{background:var(--ink);color:var(--on-ink);}
 .gv-world .h-violet{background:var(--violet-bg);color:var(--violet-ink);}
 .gv-world .h-blue{background:var(--blue-bg);color:var(--h-blue-ink);}
@@ -4589,11 +4594,12 @@ body.view-history .level-banner,body.view-projects .level-banner,body.view-runni
    set injectGeometry writes — dropping them fails that assertion. */
 .gv-world .xfoot{position:absolute;left:0;right:0;bottom:0;border-top:1px solid var(--line);
   border-radius:0 0 14.5px 14.5px;overflow:hidden;background:var(--panel);}
-.gv-world .xfoot>.fan,.gv-world .xfoot>.xtoggle,.gv-world .xfoot>.xresult{height:var(--gv-exec-row-h);
+.gv-world .xfoot>.fan,.gv-world .xfoot>.xtoggle,.gv-world .xfoot>.xresult,.gv-world .xfoot>.xlive{height:var(--gv-exec-row-h);
   display:flex;align-items:center;gap:7px;padding:0 11px;width:100%;box-sizing:border-box;}
 .gv-world .xfoot>:first-child{height:var(--gv-foot-h);}   /* the first line is the tall one nodeSize bills */
 .gv-world .xfoot>.fan.f2{height:calc(var(--gv-foot-h) + var(--gv-exec-row-h));}   /* two wrapped square lines */
 .gv-world .xfoot>.xtoggle{border:none;background:none;font:inherit;color:inherit;cursor:pointer;text-align:left;}
+.gv-world .xfoot>.xlive{display:block;line-height:var(--gv-exec-row-h);font-size:max(8px,calc(10.5px * var(--gv-scale)));color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .gv-world .xfoot>.xrow{height:var(--gv-exec-row-h);display:flex;align-items:center;gap:7px;padding:0 11px;}
 /* stacked exec rows: dur · cost on its own right-aligned line (.stack), the
    label on up to two clamped lines above it (.l2) — run-decor execBandLayout
@@ -4745,6 +4751,24 @@ input.gv-name:focus-visible{outline:none;}
 .ins-label{font-weight:600;font-size:11.5px;color:var(--ink-2);}
 /* Compact restatement of the global field skin — the page metrics (13px/15px of
    padding, 14px text) are far too heavy for a 308px rail. */
+/* Script inspector (P1b): the params textarea wears the SAME field skin as .ins-select/.ins-number. */
+.ins-panel .ins-textarea{width:100%;box-sizing:border-box;padding:8px 11px;font-size:12px;line-height:1.45;border-radius:10px;
+  background:var(--field);border:1.5px solid transparent;color:var(--ink);resize:vertical;}
+.ins-panel .ins-textarea:focus{background:var(--field-focus);border-color:var(--ink);outline:none;}
+.ins-panel .ins-caption{display:block;margin-top:-7px;color:var(--ink-3);font-size:11px;}
+.ins-panel .ins-f.ins-missing .ins-label::after{content:" · required";color:var(--amber-ink);}
+.ins-panel .ins-chiprow{display:flex;gap:6px;align-items:center;}
+.ins-panel .ins-chiprow .chip.rt{font-family:var(--mono);text-transform:none;font-size:10.5px;padding:2px 8px;}
+.ins-port-editor .ins-prow{display:grid;grid-template-columns:minmax(0,1fr) 72px auto auto 22px;gap:6px;align-items:center;margin-bottom:6px;}
+.ins-port-editor .ins-prow input[type="text"]{min-width:0;padding:5px 8px;font-size:12px;border-radius:8px;background:var(--field);border:1.5px solid transparent;color:var(--ink);}
+.ins-port-editor .ins-prow .ins-select{padding:5px 22px 5px 8px;font-size:12px;}
+.ins-port-editor .ins-prow[data-dir="outputs"] .ins-pf:nth-of-type(2){grid-column:3 / 5;}
+.ins-port-editor .ins-pfile{grid-column:1 / 5;grid-row:2;}
+.ins-port-editor .ins-prm{grid-column:5;grid-row:1;}
+.ins-port-editor .ins-pcheck{display:inline-flex;gap:4px;align-items:center;font-size:11px;color:var(--ink-2);}
+.ins-port-editor .ins-prm,.ins-port-editor .ins-padd{border:1px solid var(--line-2);background:var(--panel);color:var(--ink-2);border-radius:8px;cursor:pointer;font-size:12px;}
+.ins-port-editor .ins-padd{margin:2px 0 10px;padding:4px 10px;}
+.ins-port-editor .ins-perr{color:var(--red-ink);font-size:11px;margin-top:6px;}
 .ins-panel .ins-select,.ins-panel .ins-number{width:100%;padding:8px 11px;font-size:12.5px;border-radius:10px;
   background:var(--field);border:1.5px solid transparent;color:var(--ink);font-family:inherit;}
 .ins-panel .ins-select:focus,.ins-panel .ins-number:focus{background:var(--field-focus);border-color:var(--ink);outline:none;}
@@ -4843,6 +4867,9 @@ input.gv-name:focus-visible{outline:none;}
 .ap .p{display:block;margin-top:2px;font:10.5px/1.4 var(--mono);color:var(--ink-3);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ap .chip{flex:0 0 auto;background:var(--field);color:var(--ink-3);font-weight:700;font-size:10px;padding:1px 7px;}
+.ap .nrow{display:flex;align-items:center;gap:6px;min-width:0;}
+.ap .nrow .n{min-width:0;}
+.ap .chip.rt{font-family:var(--mono);text-transform:none;}
 .gv-drag-ghost{position:fixed;z-index:99;pointer-events:none;border:1.5px dashed var(--ink-3);border-radius:12px;
   background:var(--panel);padding:6px 10px;font:600 12px var(--sans);opacity:.9;box-shadow:var(--shadow);}
 

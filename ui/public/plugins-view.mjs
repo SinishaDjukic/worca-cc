@@ -34,7 +34,7 @@ function iconBtn(doc, cls, icon, label) {
 function contribSummary(c) {
   const n = (v) => (Array.isArray(v) ? v.length : (Number.isFinite(v) ? v : 0));
   const parts = [
-    [n(c && c.agents), 'agent'], [n(c && c.taskSources), 'source'],
+    [n(c && c.agents), 'agent'], [n(c && c.scripts), 'script'], [n(c && c.taskSources), 'source'],
     [n(c && c.chatChannels), 'chat channel'], [n(c && c.models), 'model'],
     [n(c && c.skills), 'skill'], [n(c && c.workflows), 'workflow'],
   ].filter(([k]) => k > 0).map(([k, w]) => `${k} ${w}${k > 1 ? 's' : ''}`);
@@ -161,6 +161,12 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
   for (const a of inv.agents || []) {
     agents.appendChild(h(doc, 'div', 'pl-consent-row mono',
       `${a.key} — tools: ${(a.tools || []).join(', ') || 'none declared'}`));
+  }
+  if ((inv.scripts || []).length) {
+    const scripts = section(`Scripts (${inv.scripts.length})`);
+    for (const s of inv.scripts) {
+      scripts.appendChild(h(doc, 'div', 'pl-consent-row mono', `${s.key} — ${s.runtime}${s.command ? ` · ${s.command}` : s.file ? ` · ${s.file}` : ''}`));
+    }
   }
   const sources = section(`Task sources (${(inv.taskSources || []).length})`);
   for (const s of inv.taskSources || []) {

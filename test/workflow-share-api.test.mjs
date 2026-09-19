@@ -172,3 +172,23 @@ test('POST /api/workflows/import-json refuses script commands with 409 + the com
   assert.equal(ok.status, 201);
   assert.equal((await ok.json()).workflow.name, 'API Shell');
 });
+test('POST /api/workflows/import-json: dryRun answers 200 with scriptNodes and writes nothing; the real import carries them too', async () => {
+  const base_ = await (await fetch(`${base}/api/workflows/wf_default/json`)).json();
+  const withShell = { ...base_, name: 'Dry Shell',
+    nodes: [...base_.nodes, { id: 'n_sh', kind: 'script', key: 'shell', x: 900, y: 300, config: { params: { command: 'npm test' },
+      ports: { inputs: [{ id: 'in', type: 'md', required: false }], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'shell-cycle{cycle}.md' }] } } }],
+    wires: [...base_.wires, { id: 'w_sh', from: { node: 'n_task', port: 'task' }, to: { node: 'n_sh', port: 'in' } }] };
+  const dry = await post('/api/workflows/import-json', { workflow: withShell, dryRun: true });
+  assert.equal(dry.status, 200);
+  const d = await dry.json();
+  assert.deepEqual(d.scriptNodes.map((n) => [n.nodeId, n.displayName, n.runtime, n.params.command]), [['n_sh', 'Shell', 'shell', 'npm test']]);
+  assert.equal(d.requestedName, 'Dry Shell');
+  assert.equal('workflow' in d, false);
+  const list = await (await fetch(`${base}/api/workflows`)).json();
+  assert.equal(list.workflows.some((w) => w.name === 'Dry Shell'), false, 'a dry run writes nothing');
+  const real = await post('/api/workflows/import-json', { workflow: withShell, acceptScripts: true });
+  assert.equal(real.status, 201);
+  const r = await real.json();
+  assert.equal(r.workflow.name, 'Dry Shell');
+  assert.deepEqual(r.scriptNodes.map((n) => n.nodeId), ['n_sh']);
+});

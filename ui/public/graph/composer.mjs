@@ -65,7 +65,9 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   let lastReport = { ok: true, errors: [], warnings: [] };
   const undoStack = [];
   const redoStack = [];
-  let agents = {};                // key -> meta (palette + header tint)
+  let agents = {};                // key -> agent meta (palette domain groups)
+  let scripts = {};               // key -> script meta (palette Scripts group); the view gets the MERGED index
+  const headerIndex = () => ({ ...agents, ...scripts });   // keys never collide (D16)
 
   const view = createGraphView(hostEls.canvas, {
     doc, mode: 'edit', portsFn, agents, viewport,
@@ -512,7 +514,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
 
   function paintPalette() {
     renderPalette(hostEls.palette, {
-      agents: Object.values(agents), placedKinds: tpl.nodes.map((n) => n.kind), collapsed, query, doc,
+      agents: Object.values(agents), scripts: Object.values(scripts), placedKinds: tpl.nodes.map((n) => n.kind), collapsed, query, doc,
     });
   }
   /** Diagonal de-stacker: 24 tries, SNAP*2 per try so each attempt lands one
@@ -535,10 +537,15 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     const p = at || freeSlot(centerWorld());
     let node = null;
     commit('add', () => {
-      node = entry.kind
-        ? newNode(entry.kind, null, snap(p.x), snap(p.y))
-        : newNode('agent', entry.key, snap(p.x), snap(p.y));
+      node = entry.kind === 'script'
+        ? newNode('script', entry.key, snap(p.x), snap(p.y))
+        : entry.kind
+          ? newNode(entry.kind, null, snap(p.x), snap(p.y))
+          : newNode('agent', entry.key, snap(p.x), snap(p.y));
       if (entry.kind === 'and' || entry.kind === 'or' || entry.kind === 'combine') node.config.arity = 2;
+      // D14: a config-ported script starts from the sidecar's defaultPorts, deep-copied — the card owns its ports from here.
+      const meta = entry.kind === 'script' ? scripts[entry.key] : null;
+      if (meta && meta.ports === 'config' && meta.defaultPorts) node.config.ports = JSON.parse(JSON.stringify(meta.defaultPorts));
       tpl.nodes.push(node);
     });
     select({ kind: 'node', id: node.id });
@@ -551,7 +558,9 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
   function onPalDown(ev) {
     const btn = ev.target.closest && ev.target.closest('.ap');
     if (!btn || btn.disabled || ev.button !== 0) return;
-    drag = { entry: btn.dataset.kind ? { kind: btn.dataset.kind } : { key: btn.dataset.key },
+    const entry = btn.dataset.kind === 'script' ? { kind: 'script', key: btn.dataset.key }
+      : btn.dataset.kind ? { kind: btn.dataset.kind } : { key: btn.dataset.key };
+    drag = { entry,
       sx: ev.clientX, sy: ev.clientY, id: ev.pointerId, label: btn.querySelector('.n').textContent, ghost: null, btn };
     try { btn.setPointerCapture?.(ev.pointerId); } catch { /* synthetic */ }
     doc.addEventListener('pointermove', onPalMove);
@@ -625,7 +634,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     if (sel.kind === 'node') {
       const node = nodeById(sel.id);
       if (!node) return void hostBody.replaceChildren(renderEmptyInspector({ doc }));
-      const meta = node.kind === 'agent' ? (agents[node.key] || null) : null;
+      const meta = node.kind === 'agent' ? (agents[node.key] || null) : node.kind === 'script' ? (scripts[node.key] || null) : null;
       return void hostBody.replaceChildren(renderNodeInspector(node, { template: tpl, portsFn, meta, models, efforts, subagentModels, doc }));
     }
     const wire = wireById(sel.id);
@@ -664,6 +673,22 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     setTab(btn.dataset.tab, { persist: true });
   }
 
+  /** node.config.ports, cloned one level deep so a commit never mutates the undo ring's copy. */
+  const clonePorts = (raw) => ({
+    inputs: (Array.isArray(raw && raw.inputs) ? raw.inputs : []).map((p) => ({ ...p })),
+    outputs: (Array.isArray(raw && raw.outputs) ? raw.outputs : []).map((p) => ({ ...p })),
+  });
+  const nextPortId = (list, base) => { let i = 0; for (;;) { const id = i ? `${base}${i + 1}` : base; if (!list.some((p) => p.id === id)) return id; i += 1; } };
+  /** A param control's value in the declared type; undefined = delete the key. */
+  function coerceParam(decl, target) {
+    if (!decl) return target.value === '' ? undefined : target.value;
+    if (decl.type === 'boolean') return Boolean(target.checked);
+    if (decl.type === 'number') { const n = Number(target.value); return target.value === '' || !Number.isFinite(n) ? undefined : n; }
+    // A command or code value of blanks alone is no value: the runner trims it away, so V22 must see it as missing.
+    if ((decl.type === 'command' || decl.type === 'code') && target.value.trim() === '') return undefined;
+    return target.value === '' ? undefined : target.value;
+  }
+
   function onInspectorChange(ev) {
     const name = ev.target.dataset && ev.target.dataset.field;
     if (!name || !sel) return;
@@ -680,6 +705,58 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     }
     const node = nodeById(sel.id);
     if (!node) return;
+    if (node.kind === 'script' && name.startsWith('param:')) {
+      const id = name.slice('param:'.length);
+      const decl = ((scripts[node.key] && scripts[node.key].params) || []).find((p) => p.id === id);
+      commit(name, () => {
+        const params = { ...(node.config.params || {}) };
+        const v = coerceParam(decl, ev.target);
+        if (v === undefined) delete params[id]; else params[id] = v;
+        if (Object.keys(params).length) node.config.params = params; else delete node.config.params;
+      });
+      paintInspector();
+      return;
+    }
+    if (node.kind === 'script' && name === 'timeoutMs') {
+      const secs = Number(ev.target.value);
+      commit(name, () => {
+        if (ev.target.value !== '' && Number.isFinite(secs) && secs >= 1) node.config.timeoutMs = Math.round(secs * 1000);
+        else delete node.config.timeoutMs;
+      });
+      paintInspector();
+      return;
+    }
+    if (node.kind === 'script' && name.startsWith('port:')) {
+      const [, dir, idx, fieldName] = name.split(':');
+      if (fieldName === 'id') {
+        // Wires follow a port BY ID (below), so an id that is blank, reserved or already taken on this side is
+        // refused and the box snaps back: passing through '' would strand the wires on a port that cannot be
+        // drawn, and two ports sharing an id would hand one port's wires to the other on the next rename.
+        const next = ev.target.value.trim();
+        const side = node.config.ports && Array.isArray(node.config.ports[dir]) ? node.config.ports[dir] : [];
+        if (!next || next === 'await' || side.some((q, j) => j !== Number(idx) && q && q.id === next)) return void paintInspector();
+      }
+      commit(name, () => {
+        const ports = clonePorts(node.config.ports);
+        const p = ports[dir] && ports[dir][Number(idx)];
+        if (!p) return;
+        if (fieldName === 'required') p.required = Boolean(ev.target.checked);
+        else if (fieldName === 'loop') { if (ev.target.checked) p.loop = true; else delete p.loop; }
+        else if (fieldName === 'id') {
+          // A rename carries the port's wires with it: a wire into a port id that no longer exists is
+          // never drawn, so it could be neither selected nor deleted and the graph would stay invalid.
+          const old = p.id;
+          p.id = ev.target.value.trim();
+          if (old && old !== p.id) for (const w of tpl.wires) { const end = dir === 'inputs' ? w.to : w.from; if (end.node === node.id && end.port === old) end.port = p.id; }
+        }
+        else if (ev.target.value === '') delete p[fieldName];
+        else p[fieldName] = ev.target.value;
+        if (fieldName === 'type' && ev.target.value === 'void') delete p.filename;
+        node.config.ports = ports;
+      });
+      paintInspector();
+      return;
+    }
     commit(name, () => {
       if (name === 'arity') {
         const n = Number.parseInt(ev.target.value, 10);
@@ -693,6 +770,30 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       }
     });
     paintInspector();                                  // re-read the committed value
+  }
+
+  /** The port editor's add/remove buttons (script cards only). */
+  function onInspectorClick(ev) {
+    const add = ev.target.closest && ev.target.closest('[data-port-add]');
+    const rm = ev.target.closest && ev.target.closest('[data-port-remove]');
+    if ((!add && !rm) || !sel || sel.kind !== 'node') return;
+    const node = nodeById(sel.id);
+    if (!node || node.kind !== 'script') return;
+    commit('ports', () => {
+      const ports = clonePorts(node.config.ports);
+      if (add) {
+        const dir = add.dataset.portAdd;
+        if (dir === 'inputs') ports.inputs.push({ id: nextPortId(ports.inputs, 'in'), type: 'md', required: false });
+        else { const id = nextPortId(ports.outputs, 'out'); ports.outputs.push({ id, type: 'md', when: 'always', filename: `${id}-cycle{cycle}.md` }); }
+      } else {
+        const [dir, idx] = rm.dataset.portRemove.split(':');
+        const gone = ports[dir] ? ports[dir].splice(Number(idx), 1)[0] : null;
+        // The removed port's wires go with it (same reason as the rename above).
+        if (gone && gone.id) tpl.wires = tpl.wires.filter((w) => { const end = dir === 'inputs' ? w.to : w.from; return !(end.node === node.id && end.port === gone.id); });
+      }
+      node.config.ports = ports;
+    });
+    paintInspector();
   }
 
   let dialog = null;
@@ -812,6 +913,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     hostEls.palette?.addEventListener('click', onPalClick);
     hostEls.filter?.addEventListener('input', onFilterInput);
     hostEls.insBody?.addEventListener('change', onInspectorChange);
+    hostEls.insBody?.addEventListener('click', onInspectorClick);
     hostEls.insToggle?.addEventListener('click', onRailToggle);
     hostEls.insTabs?.addEventListener('click', onTabClick);
     hostEls.saveBtn?.addEventListener('click', onSaveClick);
@@ -852,6 +954,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     hostEls.palette?.removeEventListener('click', onPalClick);
     hostEls.filter?.removeEventListener('input', onFilterInput);
     hostEls.insBody?.removeEventListener('change', onInspectorChange);
+    hostEls.insBody?.removeEventListener('click', onInspectorClick);
     hostEls.insToggle?.removeEventListener('click', onRailToggle);
     hostEls.insTabs?.removeEventListener('click', onTabClick);
     hostEls.saveBtn?.removeEventListener('click', onSaveClick);
@@ -922,7 +1025,8 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     setReady(v) { ready = v; paintChrome(); },
     // A registry reload (MAJ-16) must re-validate the OPEN canvas: a wire into a
     // port the Agents view just deleted is an error now, not at the next edit.
-    setAgents(map) { agents = map || {}; view.setAgents(agents); if (tpl.nodes.length) scheduleValidate(); },
+    setAgents(map) { agents = map || {}; view.setAgents(headerIndex()); if (tpl.nodes.length) scheduleValidate(); },
+    setScripts(map) { scripts = map || {}; view.setAgents(headerIndex()); if (tpl.nodes.length) scheduleValidate(); },
     /** Rename: an unsaved edit, so it sets `dirty` — it never clears it. */
     setName(name) { tpl.name = String(name || ''); metaDirty = true; dirty = true; paintChrome(); },
     /** 'plugin:<name>' of the loaded row, '' when user-created. */

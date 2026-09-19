@@ -6,7 +6,7 @@
 // can never create worktrees/branches inside THIS repo).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { mkdtempSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -131,6 +131,12 @@ test('install --yes from a local git repo installs end to end (no prompt)', asyn
   const repoDir = await freshDir('worca-cc-plugin-repo-');
   const init = await run(['plugin', 'init', 'local-plugin', '--dir', repoDir], { home });
   assert.equal(init.code, 0, init.stderr);
+  // A shipped script: the receipt names it with its runtime and command.
+  await mkdir(join(repoDir, 'scripts'), { recursive: true });
+  await writeFile(join(repoDir, 'scripts', 'tidy.meta.json'), JSON.stringify({
+    key: 'tidy', metaVersion: 2, displayName: 'Tidy', runtime: 'shell', command: 'npm run tidy',
+    inputs: [], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'tidy-cycle{cycle}.md' }],
+  }));
   const g = (args) => spawnSync('git', args, { cwd: repoDir });
   g(['init', '-q', '-b', 'main']);
   g(['config', 'user.email', 'cli@test']);
@@ -141,8 +147,10 @@ test('install --yes from a local git repo installs end to end (no prompt)', asyn
   assert.equal(r.code, 0, r.stderr + r.stdout);
   assert.match(r.stdout, /will install local-plugin/);
   assert.match(r.stdout, /installed:/);
+  assert.match(r.stdout, /^  script: tidy \(shell, npm run tidy\)$/m);
   const list = await run(['plugin', 'list'], { home });
   assert.match(list.stdout, /local-plugin/);
+  assert.match(list.stdout, /1 script\b/);
   assert.match(list.stdout, /enabled/);
 });
 

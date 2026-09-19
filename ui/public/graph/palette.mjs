@@ -1,9 +1,11 @@
 // ui/public/graph/palette.mjs
-// The rail's Agents tab: one DISCLOSURE per domain (plus the PINNED Flow group),
+// The rail's Agents tab: one DISCLOSURE per domain (plus the Scripts group and the PINNED Flow group),
 // a filter, and agent pills stacked one per row. Pure DOM + one delegated
 // controller; it never touches the template — it calls back into the composer,
 // which owns every mutation.
 export const FLOW_GROUP = 'flow';
+/** The Scripts group (D4): its own disclosure between the domain groups and the pinned Flow group. */
+export const SCRIPTS_GROUP = 'scripts';
 /** Flow pills advertise their ports the way agent pills do (pill line 2). */
 export const FLOW_PORT_LINE = {
   task: 'source · out task',
@@ -34,7 +36,7 @@ export function portLineOf(entry) {
  *  then `general`, then the pinned Flow group. `shared` agents are folded into
  *  every domain group; `placeable:false` agents are dropped everywhere (that is
  *  how workspaceScanner never reaches a canvas). Empty groups are omitted. */
-export function paletteEntries(agents, { placedKinds = [] } = {}) {
+export function paletteEntries(agents, { scripts = [], placedKinds = [] } = {}) {
   const list = (Array.isArray(agents) ? agents : []).filter((a) => a && a.placeable !== false)
     .map((a) => ({ ...a, order: typeof a.order === 'number' ? a.order : 99, domain: a.domain || 'general' }));
   const shared = list.filter((a) => a.domain === 'shared');
@@ -45,6 +47,13 @@ export function paletteEntries(agents, { placedKinds = [] } = {}) {
   const groups = domains
     .map((domain) => ({ domain, flow: false, agents: [...shared, ...list.filter((a) => a.domain === domain)].sort(byOrder) }))
     .filter((g) => g.agents.length);
+  // Scripts: one group, ordered by `order`, placeable only; a config-ported
+  // script advertises "in/out (per card)" because its ports live on the card.
+  const scriptList = (Array.isArray(scripts) ? scripts : []).filter((s) => s && s.placeable !== false)
+    .map((s) => ({ ...s, kind: 'script', order: typeof s.order === 'number' ? s.order : 99 }))
+    .sort(byOrder)
+    .map((s) => ({ ...s, chip: s.runtime || '', portLine: s.ports === 'config' ? 'in/out (per card)' : portLineOf(s) }));
+  if (scriptList.length) groups.push({ domain: SCRIPTS_GROUP, scripts: true, flow: false, agents: scriptList });
   const placed = new Set(placedKinds);
   groups.push({
     domain: FLOW_GROUP, flow: true,
@@ -63,13 +72,18 @@ function h(doc, tag, cls, text) {
 function pill(doc, entry) {
   const btn = h(doc, 'button', 'ap');
   btn.type = 'button';
-  if (entry.key) btn.dataset.key = entry.key; else btn.dataset.kind = entry.kind;
+  const script = entry.kind === 'script';
+  if (entry.key) { btn.dataset.key = entry.key; if (script) { btn.dataset.kind = 'script'; btn.dataset.rt = entry.chip || ''; } }
+  else btn.dataset.kind = entry.kind;
   btn.disabled = Boolean(entry.disabled);
   if (entry.disabled) btn.classList.add('dim');
   const dot = h(doc, 'span', 'd');
-  dot.dataset.color = entry.kind ? 'flow' : (entry.color || 'blue');
+  dot.dataset.color = entry.kind && !script ? 'flow' : (entry.color || 'blue');
   const body = h(doc, 'span', 'b');
-  body.append(h(doc, 'span', 'n', entry.displayName || entry.key || entry.kind),
+  const nrow = h(doc, 'span', 'nrow');
+  nrow.appendChild(h(doc, 'span', 'n', entry.displayName || entry.key || entry.kind));
+  if (script && entry.chip) nrow.appendChild(h(doc, 'span', 'chip rt', entry.chip));
+  body.append(nrow,
     h(doc, 'span', 'p pt', entry.portLine != null ? entry.portLine : portLineOf(entry)));
   btn.append(dot, body);
   if (entry.disabled) btn.appendChild(h(doc, 'span', 'chip', '1 placed'));
@@ -94,19 +108,21 @@ function chevron(doc) {
   return svg;
 }
 
-export function renderPalette(host, { agents = [], placedKinds = [], collapsed = new Set(), query = '', doc = globalThis.document } = {}) {
+export function renderPalette(host, { agents = [], scripts = [], placedKinds = [], collapsed = new Set(), query = '', doc = globalThis.document } = {}) {
   if (!host) return;
-  const groups = paletteEntries(agents, { placedKinds });
+  const groups = paletteEntries(agents, { scripts, placedKinds });
   const frag = doc.createDocumentFragment();
   for (const g of groups) {
     const sec = h(doc, 'section', `pal-group${g.flow ? ' pal-pinned' : ''}`);
     sec.dataset.domain = g.domain;
+    // Placing a card that runs a command is authoring: expert (docs/ui-levels.md).
+    if (g.scripts) sec.dataset.minLevel = 'expert';
     // The group HEAD is the control: there is no separate chip row, so a domain
     // can only be reached — and only be folded away — through its own header.
     const head = h(doc, 'button', 'pal-grp');
     head.type = 'button';
     head.dataset.domain = g.domain;
-    head.append(chevron(doc), h(doc, 'span', 'lab', g.flow ? 'Flow' : g.domain), h(doc, 'span', 'chip', String(g.agents.length)));
+    head.append(chevron(doc), h(doc, 'span', 'lab', g.flow ? 'Flow' : g.scripts ? 'Scripts' : g.domain), h(doc, 'span', 'chip', String(g.agents.length)));
     if (g.flow) head.appendChild(h(doc, 'span', 'chip pinned-tag', 'pinned'));
     const pills = h(doc, 'div', 'pills');
     for (const a of g.agents) pills.appendChild(pill(doc, a));
@@ -131,7 +147,7 @@ export function applyFilter(host, query, collapsed = new Set()) {
   for (const sec of host.querySelectorAll('.pal-group')) {
     let any = false;
     for (const btn of sec.querySelectorAll('.ap')) {
-      const hay = `${btn.querySelector('.n').textContent} ${btn.dataset.key || btn.dataset.kind || ''} ${btn.querySelector('.p').textContent}`.toLowerCase();
+      const hay = `${btn.querySelector('.n').textContent} ${btn.dataset.key || btn.dataset.kind || ''} ${btn.dataset.rt || ''} ${btn.querySelector('.p').textContent}`.toLowerCase();
       const show = !q || hay.includes(q);
       btn.hidden = !show;
       if (show) any = true;

@@ -96,6 +96,12 @@ const V2_TEMPLATE = {
 const V1_SIDECAR = { key: 'demoAgent', order: 90 };
 const V1_TEMPLATE = { name: 'Demo Flow', steps: [[{ id: 's0', key: 'demoAgent' }]], feedbacks: [] };
 
+/** A shipped shell script: a sidecar command, no program file. Script keys share ONE
+ *  namespace across every installed plugin (first wins), so a fixture names its own. */
+const SHELL_SCRIPT = (key) => ({
+  key, metaVersion: 2, displayName: key, runtime: 'shell', command: 'npm run tidy',
+  inputs: [], outputs: [{ id: 'log', type: 'md', when: 'always', filename: `${key}-cycle{cycle}.md` }],
+});
 const PLUGIN_FILES = (name) => ({
   'worca-cc-plugin.json': JSON.stringify({
     name, version: '0.1.0', engines: { 'worca-cc-api': '>=3 <4' },
@@ -127,11 +133,11 @@ async function installLocal(name, files = {}) {
   return dir;
 }
 
-async function makeOriginRepo(dirName, name) {
+async function makeOriginRepo(dirName, name, extra = {}) {
   const root = join(scratch, dirName);
   mkdirSync(root, { recursive: true });
   await git(root, 'init', '-q', '-b', 'main');
-  writeTree(root, PLUGIN_FILES(name));
+  writeTree(root, { ...PLUGIN_FILES(name), ...extra });
   await git(root, 'add', '-A');
   await git(root, 'commit', '-qm', 'c1');
   return { root, sha: await git(root, 'rev-parse', 'HEAD') };
@@ -141,7 +147,7 @@ const NAME = 'demo-plugin';
 let origin; // { root, sha } shared across the sequential tests below
 
 test('installPlugin: happy path — export, setup, precheck, symlink swap, lock, inventory', async () => {
-  origin = await makeOriginRepo('origin', NAME);
+  origin = await makeOriginRepo('origin', NAME, { 'scripts/tidy.meta.json': JSON.stringify(SHELL_SCRIPT('tidy')) });
   const { calls, exec } = makeExec();
   const r = await installPlugin({ repoUrl: origin.root, subdir: '', name: NAME, sha: origin.sha }, { exec });
   assert.equal(r.ok, true);
@@ -166,6 +172,7 @@ test('installPlugin: happy path — export, setup, precheck, symlink swap, lock,
 
   // "Will install" inventory (spec §6.1)
   assert.deepEqual(r.inventory.agents, [{ key: 'demoAgent', tools: ['Read', 'Bash'] }]);
+  assert.deepEqual(r.inventory.scripts, [{ key: 'tidy', runtime: 'shell', file: null, command: 'npm run tidy' }]);
   assert.deepEqual(r.inventory.taskSources, [{ id: 'demo', displayName: 'Demo', secrets: ['token'] }]);
   assert.deepEqual(r.inventory.skills, ['demo-skill']);
   assert.deepEqual(r.inventory.workflows, ['demo-flow']);
@@ -186,7 +193,7 @@ test('setPluginEnabled toggles the lock flag; listInstalledPlugins reflects it',
     { enabled: row.enabled, linked: row.linked, version: row.version, pinnedSha: row.pinnedSha },
     { enabled: true, linked: false, version: '0.1.0', pinnedSha: origin.sha },
   );
-  assert.deepEqual(row.contributions, { agents: 1, taskSources: 1, chatChannels: 0, models: 0, skills: 1, workflows: 1 });
+  assert.deepEqual(row.contributions, { agents: 1, scripts: 1, taskSources: 1, chatChannels: 0, models: 0, skills: 1, workflows: 1 });
   assert.throws(() => setPluginEnabled('ghost-plugin', true), /not installed/);
 });
 
@@ -777,4 +784,16 @@ test('reimportPlugin re-runs the importer for a LINKED plugin whose dir was edit
   const row = (await listWorkflows()).find((w) => w.id === 'wfp_reimport-plugin_demo-flow');
   assert.equal(row.name, 'Renamed Demo Flow', 'the live edit reached the row');
   await assert.rejects(() => reimportPlugin('no-such-plugin'), /is not installed/);
+});
+
+test('a script sidecar the registry drops is reported under scripts/, a clean one is not', async () => {
+  const dir = await installLocal('script-drops', { 'scripts/dropsClean.meta.json': JSON.stringify(SHELL_SCRIPT('dropsClean')) });
+  // A LINKED dir is read live: add a sidecar validatePluginDir would have refused.
+  writeTree(dir, { 'scripts/dropsBad.meta.json': JSON.stringify({ ...SHELL_SCRIPT('dropsBad'), runtime: 'python' }) });
+  const row = listInstalledPlugins().find((p) => p.name === 'script-drops');
+  assert.equal(row.contributions.scripts, 2, 'the file-derived count counts what the plugin SHIPS');
+  const bad = row.ignored.find((i) => i.file === 'scripts/dropsBad.meta.json');
+  assert.ok(bad, JSON.stringify(row.ignored));
+  assert.match(bad.reason, /runtime must be one of node, shell/);
+  assert.equal(row.ignored.some((i) => i.file === 'scripts/dropsClean.meta.json'), false);
 });

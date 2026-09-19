@@ -24,6 +24,9 @@
 //               into a corridor pushes a wire it is not wired to, mid-drag
 //     (14)      the cluster's measured box: bottom-right, clear of the rail,
 //               and a real click that zooms/fits without a stage gesture
+//     (15)      a REAL pill drag that drops a script card: the runtime chip's
+//               computed colour against its head in both themes, the seeded
+//               ports and the command textarea's commit
 //     (console) the no-page-error gate
 //   NOW ALSO IN test/ (green with no browser at all)
 //     (1), (2) counters, (5), (6) zoom/pan math, (7) fit math, (8) undo + the
@@ -503,6 +506,53 @@ try {
   check(13, 'a card dragged into a corridor re-routes the wire it blocks, live, and no wire crosses a card',
     avoid.d.w1 !== dBefore.w1 && avoid.count === 0,
     { before: dBefore.w1, during: avoid.d.w1, pierced: avoid.pierced, rects: avoid.rects });
+
+  // ---- (15) a dropped script card, its command edit, both themes -------------
+  // A fresh page: the Agents tab is active again (check 11 left Info selected) and the canvas is Task + End.
+  await load();
+  const pill15 = await ev(`(()=>{const b=document.querySelector('#gv-palette .pal-group[data-domain="scripts"] .ap[data-key="shell"]');
+    if(!b)return null;b.scrollIntoView({block:'center'});const r=b.getBoundingClientRect();const p=document.getElementById('gv-palette').getBoundingClientRect();
+    return {x:r.left+r.width/2,y:r.top+r.height/2,inView:r.top>=p.top-0.6&&r.bottom<=p.bottom+0.6,kind:b.dataset.kind,rt:b.dataset.rt};})()`);
+  let s15 = { pill: pill15 };
+  if (pill15 && pill15.inView) {
+    await settle('script-pill');
+    const drop15 = await ev(`(()=>{const r=document.getElementById('gv-canvas').getBoundingClientRect();return {x:r.left+(r.width-${INSET_OPEN})*0.5,y:r.top+r.height*0.72};})()`);
+    await press(pill15.x, pill15.y);
+    for (let i = 1; i <= 6; i += 1) await mmove(pill15.x + (drop15.x - pill15.x) * i / 6, pill15.y + (drop15.y - pill15.y) * i / 6);
+    await mup(drop15.x, drop15.y);
+    await settle('script-drop');
+    const state15 = () => ev(`(()=>{const {c}=window.__gv();const cards=[...document.querySelectorAll('#gv-canvas .node.node-script')];
+      const card=cards[0]||null;const head=card&&card.querySelector('.nhead');const chip=head&&head.querySelector('.chip.rt');
+      const cs=(el,p)=>el?getComputedStyle(el)[p]:null;
+      const ta=document.querySelector('#gv-ins-body textarea[data-field="param:command"]');
+      const node=c.template().nodes.find(n=>n.kind==='script');
+      const sel=c.selection();
+      return {cards:cards.length,kind:card&&card.dataset.kind,chip:chip&&chip.textContent,chipColor:cs(chip,'color'),headBg:cs(head,'backgroundColor'),
+        hasTextarea:!!ta,selected:!!(sel&&node&&sel.id===node.id),seededPorts:!!(node&&node.config&&node.config.ports&&Array.isArray(node.config.ports.outputs)),
+        command:(node&&node.config&&node.config.params&&node.config.params.command)||null,theme:document.documentElement.dataset.theme||''};})()`);
+    const light = await state15();
+    if (light.hasTextarea) {
+      await ev(`(()=>{const ta=document.querySelector('#gv-ins-body textarea[data-field="param:command"]');ta.value='npm test';ta.dispatchEvent(new Event('change',{bubbles:true}));return 1;})()`);
+      await settle('script-command');
+    }
+    const typed = await state15();
+    const prevTheme = await ev(`document.documentElement.dataset.theme||''`);
+    await ev(`document.documentElement.dataset.theme='dark';1`);
+    await sleep(320);                       // the app transitions colours over .12-.18 s
+    await settle('script-dark');
+    const dark = await state15();
+    await ev(`(()=>{const t=${JSON.stringify(prevTheme)};if(t)document.documentElement.dataset.theme=t;else delete document.documentElement.dataset.theme;return 1;})()`);
+    await sleep(320);
+    await settle('script-light');
+    s15 = { ...s15, light, command: typed.command, dark: { chip: dark.chip, colors: [dark.chipColor, dark.headBg], theme: dark.theme } };
+    check(15, 'a dragged shell pill paints one selected node-script card with a runtime chip and seeded ports; the command textarea commits; the chip stays legible in both themes',
+      light.cards === 1 && light.kind === 'script' && light.chip === 'shell' && light.selected && light.seededPorts && light.hasTextarea
+      && typed.command === 'npm test'
+      && light.chipColor !== light.headBg && dark.chipColor !== dark.headBg && dark.theme === 'dark'
+      && (light.chipColor !== dark.chipColor || light.headBg !== dark.headBg), s15);
+  } else {
+    check(15, 'the built-in shell pill is in the Scripts palette group and scrolls into view', false, s15);
+  }
 
   check('console', 'no page errors or exceptions', errors.length === 0, errors.slice(0, 5));
 } catch (e) {

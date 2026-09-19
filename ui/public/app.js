@@ -97,7 +97,7 @@ import {
   renderOrphanList, channelBadge, renderAvailableList, renderMarketplaceList,
 } from './plugins-view.mjs';
 import { renderChatSettings, collectChatSettings } from './chat-settings-view.mjs';
-import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL } from '../../src/shared/graph/constants.mjs';
+import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS } from '../../src/shared/graph/constants.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409,
@@ -1805,6 +1805,7 @@ async function deleteWorkflow(id) {
 let gvComposer = null;
 let gvAgents = [];          // palette list  (GET /api/agents)
 let gvAgentsAll = [];       // ports source  (GET /api/agents?all=1)
+let gvScripts = [];         // script registry (GET /api/scripts): palette Scripts group + ports source
 let gvPortsFn = portsFnFor({});
 // These three are written ONLY by gvLoadAgents(), which initComposer() skips on
 // re-entry — so without this flag an agent created or re-ported in the Agents
@@ -1835,6 +1836,12 @@ const gvApi = {
     if (!res.ok) return null;
     return safeJson(res);
   },
+  scripts: async () => {
+    const res = await fetch('/api/scripts');
+    if (!res.ok) throw new Error(`scripts ${res.status}`);
+    const d = await safeJson(res);
+    return Array.isArray(d && d.scripts) ? d.scripts : [];
+  },
   saveWorkflow: async (body) => {
     const res = await fetch('/api/workflows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const d = await safeJson(res);
@@ -1853,15 +1860,19 @@ const gvApi = {
   },
   // Import a JSON export (#421). 422 carries the shared validator's issues plus
   // `summary` (the one-line "agents you do not have" fold) when that is the cause.
-  importWorkflow: async (workflow) => {
+  // dryRun: validate + list the script commands, write nothing (D18). acceptScripts: the user SAW them and
+  // agreed — the server refuses a command-carrying graph without the literal true (409 SCRIPTS_UNCONFIRMED).
+  importWorkflow: async (workflow, { dryRun = false, acceptScripts = false } = {}) => {
     const res = await fetch('/api/workflows/import-json', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workflow }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflow, ...(dryRun ? { dryRun: true } : {}), ...(acceptScripts ? { acceptScripts: true } : {}) }),
     });
     const d = await safeJson(res);
     if (!res.ok) {
       return { ok: false, status: res.status, error: (d && d.error) || `import failed (${res.status})`, summary: d && d.summary, issues: d && d.errors };
     }
-    return { ok: true, workflow: d.workflow, renamed: !!d.renamed, requestedName: d.requestedName, warnings: d.warnings || [] };
+    if (dryRun) return { ok: true, scriptNodes: (d && d.scriptNodes) || [], warnings: (d && d.warnings) || [], requestedName: d && d.requestedName };
+    return { ok: true, workflow: d.workflow, renamed: !!d.renamed, requestedName: d.requestedName, warnings: d.warnings || [], scriptNodes: d.scriptNodes || [] };
   },
 };
 
@@ -1892,12 +1903,13 @@ async function gvLoadAgents() {
   els.palette.textContent = 'Loading agents…';
   gvComposer.setReady(false);
   try {
-    const [pal, all, cfg] = await Promise.all([gvApi.agents(), gvApi.agentsAll(), gvApi.config()]);
+    const [pal, all, cfg, scripts] = await Promise.all([gvApi.agents(), gvApi.agentsAll(), gvApi.config(), gvApi.scripts()]);
     gvAgentsDirty = false;                       // cleared only on a SUCCESSFUL load
-    gvAgents = pal; gvAgentsAll = all;
-    gvPortsFn = portsFnFor(indexByKey(all));
+    gvAgents = pal; gvAgentsAll = all; gvScripts = scripts;
+    gvPortsFn = portsFnFor(indexByKey(all), indexByKey(scripts));
     gvComposer.setModels(cfg);
     gvComposer.setAgents(indexByKey(pal));
+    gvComposer.setScripts(indexByKey(scripts));
     gvComposer.setReady(true);
     gvComposer.paintPalette();
   } catch {
@@ -1950,6 +1962,7 @@ async function initComposer() {
 // The headless-Chrome probe seam (tools/verify-composer-cdp.mjs). It exposes
 // no mutator the UI does not already own — just the live editor and its view.
 if (typeof window !== 'undefined') window.__gv = () => (gvComposer ? { c: gvComposer, v: gvComposer.view } : null);
+if (typeof window !== 'undefined') window.__gvImport = (obj) => gvImportWorkflowObject(obj);   // test seam for the Import dialog
 
 // Leave-guard: the composer stays MOUNTED (its DOM and undo ring survive), but
 // every document-level listener is unbound and any live gesture is cancelled, so
@@ -2177,8 +2190,13 @@ function option(value, text) {
 // Composer's index, which exists only once THAT view has been opened, so a cold
 // page load rendered no cycle inputs at all. gvPortsFn stays as the fallback: it
 // is built from ?all=1 and so also covers an agent the palette list omits.
-function panelPortsFn(registry) {
-  const own = portsFnFor(registry || {});
+// SCRIPTS ride beside the agents (spec §8.4): a loop is read off its SOURCE output
+// (`when: 'blocking'`), so a loop that starts at a script card — a test gate — is a
+// loop for this panel only when it knows that script's ports.
+const scriptIndex = (scripts) => (Array.isArray(scripts) ? indexByKey(scripts)
+  : (scripts && typeof scripts === 'object' ? scripts : indexByKey(gvScripts)));
+function panelPortsFn(registry, scripts) {
+  const own = portsFnFor(registry || {}, scriptIndex(scripts));
   return (node) => {
     const p = own(node);
     return p && p.ported !== false ? p : (gvPortsFn(node) || p);
@@ -2238,10 +2256,11 @@ function agentsHeaderText(rows) {
 
 // v2: one row per LOOP wire (a plain wire has no budget — V13). Labels reuse the
 // v1 vocabulary: "<toName> ← <fromName>", "(step N)" only when a name repeats.
-function buildGraphWireRows(tpl, registry, runConfig) {
+function buildGraphWireRows(tpl, registry, runConfig, scripts) {
   const reg = registry || {};
+  const scriptReg = scriptIndex(scripts);
   const saved = (runConfig && runConfig.wires) || {};
-  const { loopWireIds, launchOrder } = classifyLoops(tpl, panelPortsFn(reg));
+  const { loopWireIds, launchOrder } = classifyLoops(tpl, panelPortsFn(reg, scriptReg));
   const byId = new Map(tpl.nodes.map((n) => [n.id, n]));
   const rank = new Map(launchOrder.map((id, i) => [id, i]));
   const nameCount = new Map();
@@ -2250,8 +2269,9 @@ function buildGraphWireRows(tpl, registry, runConfig) {
     if (!n) return id;
     // A flow card has no registry meta and no key: name it from the SHARED
     // FLOW_LABEL table the manifest uses, never from its raw n_* id (MAJ-21).
-    if (n.kind !== 'agent') return FLOW_LABEL[n.kind] || n.kind;
-    const meta = reg[n.key];
+    if (!KEYED_KINDS.includes(n.kind)) return FLOW_LABEL[n.kind] || n.kind;
+    // A script card is keyed too: its name comes from the script registry the panel fetched, else its key.
+    const meta = reg[n.key] || scriptReg[n.key];
     return (meta && meta.displayName) || n.key || n.id;
   };
   for (const n of tpl.nodes) nameCount.set(nameOf(n.id), (nameCount.get(nameOf(n.id)) || 0) + 1);
@@ -2274,8 +2294,8 @@ function buildGraphWireRows(tpl, registry, runConfig) {
   });
 }
 
-function buildFeedbackRows(workflow, registry, runConfig) {
-  if (workflow && workflow.version === 2) return buildGraphWireRows(workflow, registry, runConfig);
+function buildFeedbackRows(workflow, registry, runConfig, scripts) {
+  if (workflow && workflow.version === 2) return buildGraphWireRows(workflow, registry, runConfig, scripts);
   const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
   const fbs = Array.isArray(workflow && workflow.feedbacks) ? workflow.feedbacks : [];
   const reg = registry || {};
@@ -2613,6 +2633,18 @@ async function getAgentsApi() {
   } catch { return state.agents; }
 }
 
+// The script registry for the New-pipeline panel, fetched beside /api/agents (spec §8.4). Not cached:
+// the workflow itself is re-fetched on every pick too, and a script added on disk must show up without
+// a reload. A failed fetch degrades to agent-only loop rows ([]) — it never blocks the panel, because a
+// script card carries no per-project tunables here.
+async function getScriptsApi() {
+  try {
+    const res = await fetch('/api/scripts');
+    const data = await safeJson(res);
+    return res.ok && data && Array.isArray(data.scripts) ? data.scripts : [];
+  } catch { return []; }
+}
+
 // Enabled-plugin names for workflow-picker labels (§9.3/§6.5). null = plugin
 // list not known yet (fetch pending/failed) — workflowPickerLabel then skips
 // the conservative "— disabled" flag. Refreshed once per view-open.
@@ -2768,7 +2800,7 @@ async function renderWorkflowConfig(workflowId) {
     return;
   }
   const isDefault = !workflowId || workflowId === 'wf_default';
-  const [fetchedWf, fetchedReg] = await Promise.all([getWorkflowApi(workflowId), getAgentsApi()]);
+  const [fetchedWf, fetchedReg, scripts] = await Promise.all([getWorkflowApi(workflowId), getAgentsApi(), getScriptsApi()]);
   // The Default workflow has offline fallbacks for both halves (topology + the
   // five stage metas), so it always paints. A saved workflow has neither: an
   // empty registry is a failed /api/agents fetch, not a real state, and painting
@@ -2788,7 +2820,7 @@ async function renderWorkflowConfig(workflowId) {
   const rows = buildNodeConfigRows(wf, registry, runConfig,
     isDefault ? { legacySteps: state.config.steps || {} } : {});
   renderAgentRows(rows);
-  renderFeedbackRows(buildFeedbackRows(wf, registry, runConfig));
+  renderFeedbackRows(buildFeedbackRows(wf, registry, runConfig, scripts));
   // The cycle inputs write through a different endpoint shape per engine
   // (v1 `feedbacks:{…}` vs v2 `wires:{…}`); stamp which one this row set is.
   if (el.wfFeedbackConfig) el.wfFeedbackConfig.dataset.graph = wf.version === 2 ? '1' : '';
@@ -3702,6 +3734,44 @@ function setAutoscroll(r, on) {
   syncAutoscrollSwitch(r);
 }
 
+// S4: the newest captured line of a RUNNING script card feeds its footer's live band. Only a
+// script node's own lines count (agents stream at log speed and have no live band), the map is
+// O(1) per line, and the graph repaint is coalesced — the `log` frame itself never repaints the
+// detail (handleServerMessage's skipDetail), so this is the one narrow path that does.
+const LIVE_LINE_MS = 250;
+const LIVE_LINE_MAX = 240;      // the band is ONE ellipsised line; a log line can be 64 KiB (the runner's cap)
+function noteLiveLine(r, rec) {
+  if (!rec || rec.nodeId == null || rec.sub || !isGraphRun(r)) return;
+  const nodes = (r.stepper && r.stepper.graph && Array.isArray(r.stepper.graph.nodes)) ? r.stepper.graph.nodes : [];
+  const node = nodes.find((n) => n && n.id === rec.nodeId);
+  if (!node || node.kind !== 'script') return;
+  // trimEnd, not /\s+$/: that regex is quadratic on a long blank run that is not at the end (1 s per 64 KiB line).
+  const text = String(rec.text).trimEnd().slice(0, LIVE_LINE_MAX);
+  if (!text) return;
+  if (!r._lastLines) r._lastLines = new Map();
+  const executionId = rec.executionId != null ? rec.executionId : null;
+  const prev = r._lastLines.get(rec.nodeId);
+  if (prev && prev.text === text && prev.executionId === executionId) return;
+  r._lastLines.set(rec.nodeId, { text, executionId });
+  if (r._liveLineTimer) return;
+  r._liveLineTimer = setTimeout(() => {
+    r._liveLineTimer = null;
+    r._decorSeq = (r._decorSeq || 0) + 1;
+    paintRunCard(r);
+    if (rdOpenRun() === r && runDetailState.screen) paintRdGraph(runDetailState.screen, r);
+  }, LIVE_LINE_MS);
+}
+
+/** nodeId -> text for the reducer. A line stands only for the EXECUTION that wrote it: when a loop
+ *  re-runs the card, the new execution starts blank instead of wearing the previous one's last line. */
+function liveLinesOf(r) {
+  if (!r._lastLines || !r._lastLines.size) return null;
+  const running = new Set((Array.isArray(r.active) ? r.active : []).map((a) => a && a.executionId).filter(Boolean));
+  const out = new Map();
+  for (const [nodeId, v] of r._lastLines) if (v.executionId == null || running.has(v.executionId)) out.set(nodeId, v.text);
+  return out;
+}
+
 // Per-run log: push to the model and, if the card is mounted, append the line.
 // Filtering is render-time only: the model keeps every line, so changing a
 // filter never loses history; a hidden line is simply not appended.
@@ -3718,6 +3788,7 @@ function onLog(r, msg) {
   };
   r.logLines.push(rec);
   if (r.logLines.length > MAX_LOG_LINES) r.logLines.shift();
+  noteLiveLine(r, rec);
 
   if (r.el) {
     // A repaint (true) already rendered rec from the model — appending again
@@ -17194,7 +17265,7 @@ function runDecorFor(r, mode = 'monitor') {
   const seq = r._decorSeq || 0;
   if (!r._decorCache || r._decorCache.seq !== seq) {
     r._decorCache = { seq, views: new Map(),
-      decor: decorFromState(r, { live: isLive(r), now: Date.now(), subsOf: (id) => subAgentsForNode(r, id) }) };
+      decor: decorFromState(r, { live: isLive(r), now: Date.now(), subsOf: (id) => subAgentsForNode(r, id), lastLines: liveLinesOf(r) }) };
   }
   const cache = r._decorCache;
   let bag = cache.views.get(mode);
@@ -20513,13 +20584,58 @@ bindExportModal();
 // to POST /api/workflows/import-json; the outcome lands on the list's message
 // line, like a refused delete. On success the imported row's domain tab is
 // selected and the row carries a NEW pill until reload.
+// D18: a shared workflow can carry commands that run with worca's privileges on
+// its first run. The dry run lists them; the user sees every value once, in a
+// monospace block, before anything is saved. The composer's own Save never asks.
+function gvConfirmScriptImport(list) {
+  return new Promise((resolve) => {
+    const body = document.createElement('div');
+    body.className = 'gv-import-scripts';
+    const p = document.createElement('p');
+    p.textContent = "These commands run on this machine with worca's privileges when the workflow runs.";
+    body.appendChild(p);
+    for (const n of list) {
+      for (const [id, value] of Object.entries(n.params || {})) {
+        const head = document.createElement('div');
+        head.className = 'gv-import-script-h';
+        head.textContent = `${n.displayName || n.key} (${n.nodeId}, ${n.runtime}) · ${id}`;
+        const pre = document.createElement('pre');
+        pre.className = 'mono gv-import-script-v';
+        pre.textContent = String(value);
+        body.append(head, pre);
+      }
+    }
+    // Every way out settles the promise ONCE: the two buttons, the modal's own Close, Escape.
+    let settled = false;
+    const onClose = () => done(false);
+    const onKey = (e) => { if (e.key === 'Escape') done(false); };
+    function done(ok) {
+      if (settled) return;
+      settled = true;
+      if (el.pluginModalClose) el.pluginModalClose.removeEventListener('click', onClose);
+      document.removeEventListener('keydown', onKey);
+      closePluginModal();
+      resolve(ok);
+    }
+    if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', onClose);
+    document.addEventListener('keydown', onKey);
+    pluginModal('Import this workflow?', body, [['Cancel', 'btn btn-ghost', () => done(false)], ['Import', 'btn btn-primary', () => done(true)]]);
+  });
+}
+
+function gvImportError(r) {
+  const issues = (r.issues || []).slice(0, 5).map((i) => `${i.code}: ${i.message}`).join(' · ');
+  setGvSavedMsg(r.summary || (issues ? `${r.error} — ${issues}` : r.error), 'err');
+  return false;
+}
+
 async function gvImportWorkflowObject(obj) {
-  const r = await gvApi.importWorkflow(obj);
-  if (!r.ok) {
-    const issues = (r.issues || []).slice(0, 5).map((i) => `${i.code}: ${i.message}`).join(' · ');
-    setGvSavedMsg(r.summary || (issues ? `${r.error} — ${issues}` : r.error), 'err');
-    return false;
-  }
+  const dry = await gvApi.importWorkflow(obj, { dryRun: true });
+  if (!dry.ok) return gvImportError(dry);
+  const confirmed = dry.scriptNodes.length > 0;
+  if (confirmed && !(await gvConfirmScriptImport(dry.scriptNodes))) return false;
+  const r = await gvApi.importWorkflow(obj, { acceptScripts: confirmed });
+  if (!r.ok) return gvImportError(r);
   gvSavedTab = gvDomainOf(r.workflow);
   gvNewIds.add(r.workflow.id);
   setGvSavedMsg(r.renamed

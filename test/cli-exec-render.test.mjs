@@ -14,6 +14,7 @@ const M = { version: 2, template: { id: 'wf', name: 'W' }, graph: {
     { id: 'n_or', kind: 'or', key: null, label: 'OR', ports: { inputs: [{ id: 'in1', type: 'any' }], outputs: [{ id: 'out', type: 'md' }] } },
     { id: 'n_and', kind: 'and', key: null, label: 'AND', ports: { inputs: [], outputs: [{ id: 'out', type: 'void' }] } },
     { id: 'n_end', kind: 'end', key: null, label: 'End', ports: { inputs: [{ id: 'result', type: 'any' }], outputs: [] } },
+    { id: 'n_tests', kind: 'script', key: 'runTests', label: 'Run tests', runtime: 'node', ports: { inputs: [{ id: 'done', type: 'void', loop: false }], outputs: [{ id: 'pass', type: 'void', when: 'clean' }] } },
   ],
   wires: [
     { id: 'w9', from: { node: 'n_rev', port: 'review' }, to: { node: 'n_impl', port: 'fix' }, loop: true, maxCycles: 3 },
@@ -210,4 +211,11 @@ test('the shared guard the CLI relies on refuses an archived workflow with the v
     if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
     await rm(home, { recursive: true, force: true });
   }
+});
+
+test('a script card renders like a keyed card, with the exit code where an agent shows cost', () => {
+  const s = (o) => formatExecLine({ kind: 'cycle', agentKey: null, key: 'runTests', trigger: { wireIds: [], freshPorts: [] }, ...o }, M);
+  assert.equal(s({ nodeId: 'n_tests', executionId: 'x:n_tests:1', ordinal: 1, status: 'start' }), '▶ Run tests #1');
+  assert.equal(s({ nodeId: 'n_tests', executionId: 'x:n_tests:1', ordinal: 1, status: 'done', durationMs: 1200, costUsd: 0, exitCode: 0, verdict: { hasBlocking: false } }), '✓ Run tests #1  1s · exit 0 — clean');
+  assert.equal(s({ nodeId: 'n_tests', executionId: 'x:n_tests:2', ordinal: 2, status: 'error', durationMs: 300, exitCode: 2, error: 'script "runTests" exited 2' }), '✗ Run tests #2  0s — script "runTests" exited 2');
 });

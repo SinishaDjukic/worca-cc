@@ -97,6 +97,8 @@ test('a script card runs inside a mock graph: $0 agent-shaped rows, key on exec 
   assert.equal(starts.length, 2);
   assert.equal(starts[0].key, 'runTests');
   assert.equal(starts[0].agentKey, null);
+  assert.deepEqual(execs.filter((e) => e.nodeId === 'n_tests' && e.status === 'done').map((e) => [e.runtime, e.exitCode]), [['node', 0], ['node', 0]], 'exec events carry the runtime facts');
+  assert.equal(execs.some((e) => e.nodeId === 'n_plan' && ('runtime' in e || 'exitCode' in e)), false, 'agent events carry neither');
   assert.ok(execs.some((e) => e.nodeId === 'n_plan' && e.status === 'start' && e.key === 'planner' && e.agentKey === 'planner'), 'agent events carry both');
   assert.ok(logs.some((l) => l.source === 'runTests' && /^\[info\] cycle 1$/.test(l.text)), 'script logs land under the script key');
   const arts = await listArtifacts(st.id);                       // [{ kind, relPath }], relPath dir-relative with '/' separators

@@ -5,6 +5,7 @@
 // listener, routing on `data-field`. Capability rows are gated by META
 // BOOLEANS: a new agent's sidecar drives its panel with no UI change.
 import { resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
+import { readConfigPorts, effectiveScriptParams, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS } from '../../../src/shared/graph/script-meta.mjs';
 
 const ARITY_KINDS = new Set(['and', 'or', 'combine']);
 const FLOW_TITLES = { task: 'Task', end: 'End', and: 'AND', or: 'OR', combine: 'Combine' };
@@ -87,9 +88,109 @@ function portList(doc, ports) {
   return wrap;
 }
 
+function textarea(doc, cls, name, label, value, rows) {
+  const wrap = field(doc, cls, label);
+  const ta = doc.createElement('textarea');
+  ta.className = 'ins-textarea mono'; ta.dataset.field = name; ta.rows = rows; ta.spellcheck = false; ta.value = value == null ? '' : String(value);
+  wrap.appendChild(ta);
+  return wrap;
+}
+function text(doc, cls, name, label, value, { type = 'text', step = null } = {}) {
+  const wrap = field(doc, cls, label);
+  const input = doc.createElement('input');
+  input.type = type; input.className = 'ins-number'; input.dataset.field = name; input.value = value == null ? '' : String(value);
+  if (step) input.step = step;
+  wrap.appendChild(input);
+  return wrap;
+}
+
+/** One control per sidecar param (spec §10.3). The EFFECTIVE value (sidecar
+ *  default ⊕ card) is what the control shows; a required param with neither is
+ *  flagged `.ins-missing` (V22's `incomplete`). */
+function paramsForm(doc, node, meta) {
+  const frag = doc.createDocumentFragment();
+  const declared = Array.isArray(meta && meta.params) ? meta.params : [];
+  if (!declared.length) return frag;
+  frag.appendChild(h(doc, 'div', 'ins-zone', 'Params'));
+  const values = effectiveScriptParams(meta, node.config);
+  let captioned = false;
+  for (const p of declared) {
+    const name = `param:${p.id}`;
+    const label = p.label || p.id;
+    const value = values[p.id];
+    let row;
+    if (p.type === 'boolean') row = toggle(doc, 'ins-param', name, label, p.description || '', { checked: value === true });
+    // No effective value: a blank first option, so the control never shows a choice the config does not hold.
+    else if (p.type === 'enum') row = select(doc, 'ins-param', name, label, [...(value == null ? [{ value: '', text: '' }] : []), ...(p.options || []).map((o) => ({ value: o, text: o }))], value == null ? '' : value);
+    else if (p.type === 'number') row = text(doc, 'ins-param', name, label, value, { type: 'number', step: 'any' });
+    else if (p.type === 'command' || p.type === 'code') row = textarea(doc, 'ins-param ins-param-code', name, label, value, p.type === 'code' ? 8 : 3);
+    else row = text(doc, 'ins-param', name, label, value);
+    if (p.required && (value === undefined || value === '')) row.classList.add('ins-missing');
+    if (p.description && p.type !== 'boolean') row.title = p.description;
+    frag.appendChild(row);
+    if ((p.type === 'command' || p.type === 'code') && !captioned) {
+      frag.appendChild(h(doc, 'small', 'ins-caption', "Runs with worca's privileges."));
+      captioned = true;
+    }
+  }
+  return frag;
+}
+
+/** The port editor for a `ports: "config"` script (D14): one row per port, the
+ *  shared reader's errors under it. Every control routes through data-field /
+ *  data-port-add / data-port-remove to the composer. */
+function portEditor(doc, node, meta) {
+  const wrap = h(doc, 'div', 'ins-ports ins-port-editor');
+  const raw = node.config && node.config.ports && typeof node.config.ports === 'object' ? node.config.ports : { inputs: [], outputs: [] };
+  const hasVerdict = Boolean(meta && meta.verdict);
+  const { errors } = readConfigPorts(raw, { hasVerdict });
+  const sel = (name, items, value, opts) => {
+    const s = select(doc, 'ins-pf', name, '', items.map((v) => ({ value: v, text: v })), value, opts);
+    s.querySelector('label').remove();
+    return s;
+  };
+  const check = (name, label, checked) => {
+    const l = h(doc, 'label', 'ins-pcheck');
+    const box = doc.createElement('input'); box.type = 'checkbox'; box.dataset.field = name; box.checked = Boolean(checked);
+    l.append(box, doc.createTextNode(label));
+    return l;
+  };
+  const zone = (label, dir, list) => {
+    wrap.appendChild(h(doc, 'div', 'ins-zone', label));
+    list.forEach((p, i) => {
+      const row = h(doc, 'div', 'ins-prow');
+      row.dataset.dir = dir; row.dataset.index = String(i);
+      const id = doc.createElement('input');
+      id.type = 'text'; id.className = 'ins-pid mono'; id.dataset.field = `port:${dir}:${i}:id`; id.value = p.id || ''; id.placeholder = 'id';
+      row.append(id, sel(`port:${dir}:${i}:type`, ['md', 'json', 'void'], p.type || 'md'));
+      if (dir === 'inputs') {
+        row.append(check(`port:${dir}:${i}:required`, 'required', p.required !== false), check(`port:${dir}:${i}:loop`, 'loop', p.loop === true));
+      } else {
+        row.appendChild(sel(`port:${dir}:${i}:when`, ['always', 'blocking', 'clean'], p.when || 'always',
+          hasVerdict ? {} : { disabled: true, title: 'needs a sidecar verdict' }));
+        const fn = doc.createElement('input');
+        fn.type = 'text'; fn.className = 'ins-pfile mono'; fn.dataset.field = `port:${dir}:${i}:filename`; fn.value = p.filename || ''; fn.placeholder = 'name-cycle{cycle}.md';
+        fn.hidden = p.type === 'void';
+        row.appendChild(fn);
+      }
+      const rm = h(doc, 'button', 'ins-prm', '×');
+      rm.type = 'button'; rm.dataset.portRemove = `${dir}:${i}`; rm.title = 'Remove';
+      row.appendChild(rm);
+      wrap.appendChild(row);
+    });
+    const add = h(doc, 'button', 'ins-padd', dir === 'inputs' ? '+ input' : '+ output');
+    add.type = 'button'; add.dataset.portAdd = dir;
+    wrap.appendChild(add);
+  };
+  zone('Inputs', 'inputs', Array.isArray(raw.inputs) ? raw.inputs : []);
+  zone('Outputs', 'outputs', Array.isArray(raw.outputs) ? raw.outputs : []);
+  for (const e of errors) wrap.appendChild(h(doc, 'div', 'ins-perr', e));
+  return wrap;
+}
+
 export function renderNodeInspector(node, { template, portsFn, meta = null, models = [], efforts = [], subagentModels = [], doc = globalThis.document } = {}) {
   const ports = portsFn(node) || { inputs: [], outputs: [] };
-  const root = h(doc, 'div', `ins-panel ins-${node.kind === 'agent' ? 'agent' : `flow ins-${node.kind}`}`);
+  const root = h(doc, 'div', `ins-panel ins-${node.kind === 'agent' ? 'agent' : node.kind === 'script' ? 'script' : `flow ins-${node.kind}`}`);
   root.dataset.nodeId = node.id;
   const body = h(doc, 'div', 'ins-body-in');
 
@@ -138,6 +239,23 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
     }
     body.appendChild(lv(toggle(doc, 'ins-awaitall', 'awaitAll', 'Await all inputs', 'gate until every wire fires',
       { checked: node.config.awaitAll === true }), 'expert', node.config.awaitAll === true));
+  } else if (node.kind === 'script') {
+    root.appendChild(head(doc, (meta && meta.displayName) || node.key || node.id, `${node.key} · ${node.id}`));
+    const chips = h(doc, 'div', 'ins-chiprow');
+    chips.append(h(doc, 'span', 'badge', (meta && meta.origin) || 'builtin'), h(doc, 'span', 'chip rt', (meta && meta.runtime) || 'script'));
+    body.appendChild(chips);
+    body.appendChild(paramsForm(doc, node, meta));
+    const ms = Number.isInteger(node.config.timeoutMs) ? node.config.timeoutMs : ((meta && meta.timeoutMs) || DEFAULT_TIMEOUT_MS);
+    // Interface mode (docs/ui-levels.md): what the card RUNS is never hidden; per-node tuning and ports are expert.
+    const timeout = number(doc, 'ins-timeout', 'timeoutMs', 'Timeout (s)', Math.round(ms / 1000), 1);
+    timeout.querySelector('input').max = String(MAX_TIMEOUT_MS / 1000);
+    body.appendChild(lv(timeout, 'expert', Number.isInteger(node.config.timeoutMs)));
+    body.appendChild(lv(toggle(doc, 'ins-awaitall', 'awaitAll', 'Await all inputs', 'gate until every wire fires',
+      { checked: node.config.awaitAll === true }), 'expert', node.config.awaitAll === true));
+    body.appendChild(lv(h(doc, 'div', 'ins-sep'), 'expert'));
+    body.appendChild(lv(meta && meta.ports === 'config' ? portEditor(doc, node, meta) : portList(doc, ports), 'expert'));
+    root.appendChild(body);
+    return root;
   } else {
     root.appendChild(head(doc, FLOW_TITLES[node.kind] || node.kind, node.id));
     body.appendChild(h(doc, 'p', 'ins-blurb', FLOW_BLURB[node.kind] || ''));

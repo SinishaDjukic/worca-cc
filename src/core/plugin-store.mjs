@@ -25,6 +25,8 @@ import {
   importPluginWorkflows, readPluginWorkflows, removePluginWorkflows, referencedPluginAgents,
 } from './plugin-workflows.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
+import { loadScriptRegistry } from './script-registry.mjs';
+import { normalizeScriptMeta, resolvePlatformValue } from '../shared/graph/script-meta.mjs';
 import { pluginModelSecretStatus } from './plugin-models.mjs';
 import { referencedPluginModels } from './config.mjs';
 import { clearBindingsForPlugin } from './source-bindings.mjs';
@@ -85,6 +87,21 @@ export function buildInstallInventory(versionDir) {
       agents.push({ key, tools });
     }
   }
+  const scripts = [];
+  const scDir = join(versionDir, 'scripts');
+  if (existsSync(scDir)) {
+    for (const f of readdirSync(scDir).filter((x) => x.endsWith('.meta.json')).sort()) {
+      let raw = null;
+      try { raw = JSON.parse(readFileSync(join(scDir, f), 'utf8')); } catch { raw = null; }
+      const { meta } = normalizeScriptMeta(raw || {});
+      scripts.push({
+        key: f.slice(0, -'.meta.json'.length),
+        runtime: meta?.runtime ?? (typeof raw?.runtime === 'string' ? raw.runtime : null),
+        file: meta ? resolvePlatformValue(meta.file, process.platform) : null,
+        command: meta ? resolvePlatformValue(meta.command, process.platform) : null,
+      });
+    }
+  }
   const taskSources = (manifest.taskSources || []).map((s) => ({
     id: s.id, displayName: s.displayName,
     secrets: (s.configSchema || []).filter((x) => x.secret).map((x) => x.key),
@@ -126,7 +143,7 @@ export function buildInstallInventory(versionDir) {
   const setupCommands = [];
   if (manifest.setup?.node) setupCommands.push(`npm ci --prefix ${versionDir} --ignore-scripts --omit=dev`);
   if (manifest.setup?.python === 'pyproject') setupCommands.push(`uv sync --project ${versionDir}`);
-  return { agents, taskSources, chatChannels, models, modelSecrets, skills: skills.sort(), workflows, depCount, setupCommands };
+  return { agents, scripts, taskSources, chatChannels, models, modelSecrets, skills: skills.sort(), workflows, depCount, setupCommands };
 }
 
 /**
@@ -159,9 +176,20 @@ export function ignoredContributions(name, dir, opts = {}) {
   for (const d of drops) {
     if (d.origin === `plugin:${name}`) out.push({ file: `agents/${d.file}`, reason: d.reason });
   }
+  // Script drops ride the same channel (script-registry's onDrop); one load unless the caller did it.
+  let scriptDrops = opts.scriptDrops;
+  let scripts = opts.scripts;
+  if (!scriptDrops) {
+    scriptDrops = [];
+    try { scripts = loadScriptRegistry({ onDrop: (d) => scriptDrops.push(d), agentKeys: Object.keys(registry || {}) }); }
+    catch { /* no resolvable home */ }
+  }
+  for (const d of scriptDrops) {
+    if (d.origin === `plugin:${name}`) out.push({ file: `scripts/${d.file}`, reason: d.reason });
+  }
   const skips = opts.workflowSkips
     ?? (() => {
-      try { return readPluginWorkflows(name, dir, { registry, quiet: true }).skipped; }
+      try { return readPluginWorkflows(name, dir, { registry, scripts, quiet: true }).skipped; }
       catch { return []; }
     })();
   for (const s of skips) out.push({ file: `workflows/${s.file}`, reason: `invalid template (${s.errors.join('; ')})` });
@@ -500,6 +528,10 @@ export function listInstalledPlugins() {
   let registry = null;
   try { registry = loadAgentRegistry(undefined, { onDrop: (d) => drops.push(d) }); }
   catch { /* no resolvable home: fall back to the file-derived view */ }
+  const scriptDrops = [];
+  let scripts = null;
+  try { scripts = loadScriptRegistry({ onDrop: (d) => scriptDrops.push(d), agentKeys: Object.keys(registry || {}) }); }
+  catch { scripts = null; }
   return Object.keys(lock).sort().map((name) => {
     const e = lock[name] || {};
     const cur = pluginCurrentDir(name);
@@ -523,13 +555,13 @@ export function listInstalledPlugins() {
       broken: !manifest,
       apiMismatch: mismatch,
       contributions: inv
-        ? { agents: inv.agents.length, taskSources: inv.taskSources.length, chatChannels: inv.chatChannels.length, models: inv.models.length, skills: inv.skills.length, workflows: inv.workflows.length }
-        : { agents: 0, taskSources: 0, chatChannels: 0, models: 0, skills: 0, workflows: 0 },
+        ? { agents: inv.agents.length, scripts: inv.scripts.length, taskSources: inv.taskSources.length, chatChannels: inv.chatChannels.length, models: inv.models.length, skills: inv.skills.length, workflows: inv.workflows.length }
+        : { agents: 0, scripts: 0, taskSources: 0, chatChannels: 0, models: 0, skills: 0, workflows: 0 },
       // `contributions` counts what the plugin SHIPS (files on disk); `ignored`
       // names the ones worca refused to load, so the card can stop claiming them.
       // A disabled plugin contributes nothing BY CHOICE — its agents are not in the
       // registry, so its templates would misreport V4.
-      ignored: manifest && e.enabled !== false ? ignoredContributions(name, cur, { registry, drops }) : [],
+      ignored: manifest && e.enabled !== false ? ignoredContributions(name, cur, { registry, drops, scripts, scriptDrops }) : [],
     };
   });
 }

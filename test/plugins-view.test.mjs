@@ -458,3 +458,13 @@ test('a card renders the ignored contributions as an amber note (MAJ-13)', () =>
   assert.equal(one.querySelector('.pl-ignored-note').textContent,
     '1 contribution ignored: agents/x.meta.json — unreadable JSON');
 });
+
+test('install consent lists shipped scripts with their runtime and command; the card summary counts them', () => {
+  const el = renderInstallConsent({ name: 'p', repoUrl: 'https://x/y', sha: 'a'.repeat(40) },
+    { agents: [], taskSources: [], scripts: [{ key: 'tidy', runtime: 'shell', file: null, command: 'npm run tidy' }, { key: 'lint', runtime: 'node', file: 'lint.mjs', command: null }], skills: [], workflows: [] }, { doc });
+  assert.match(el.textContent, /Scripts \(2\)/);
+  assert.match(el.textContent, /tidy — shell · npm run tidy/);
+  assert.match(el.textContent, /lint — node · lint\.mjs/);
+  const list = renderPluginList([{ name: 'p', version: '1', enabled: true, contributions: { agents: 1, scripts: 2, taskSources: 0, chatChannels: 0, models: 0, skills: 0, workflows: 0 }, ignored: [] }], { doc });
+  assert.match(list.textContent, /1 agent · 2 scripts/);
+});

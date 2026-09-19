@@ -11,6 +11,7 @@ import { join, basename } from 'node:path';
 import { getDb, prepare, tx } from './db.mjs';
 import { slugify } from './artifacts.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
+import { loadScriptRegistry } from './script-registry.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { validateGraph } from '../shared/graph/validate.mjs';
 import { NOT_GRAPH_V2 } from './plugin-manifest.mjs';
@@ -44,7 +45,7 @@ const normDomain = (raw) => {
  *        callers must not re-log what the importer already logged).
  * @returns {{ready: Array<object>, skipped: Array<{file:string, errors:string[]}>}}
  */
-export function readPluginWorkflows(name, versionDir, { registry = null, quiet = false } = {}) {
+export function readPluginWorkflows(name, versionDir, { registry = null, scripts = null, quiet = false } = {}) {
   const origin = `plugin:${name}`;
   const dir = join(versionDir, 'workflows');
   let files = [];
@@ -56,7 +57,8 @@ export function readPluginWorkflows(name, versionDir, { registry = null, quiet =
   // it: agent meta ports plus the universal `await` gate and the flow-card
   // table. The templates are not in the DB yet, so resolveGraph is unavailable —
   // registryPortsFn exists for exactly this caller and the server's save route.
-  const portsFn = registryPortsFn(registry || loadAgentRegistry());
+  const reg = registry || loadAgentRegistry();
+  const portsFn = registryPortsFn(reg, scripts || loadScriptRegistry({ agentKeys: Object.keys(reg) }));
   const warn = (msg) => { if (!quiet) console.warn(msg); };
   const skip = (f, errors) => {
     skipped.push({ file: f, errors });

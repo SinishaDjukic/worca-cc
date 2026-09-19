@@ -172,8 +172,11 @@ be skipped by forgetting it.
 |---|---|
 | Saved pipelines, canvas editing, agent palette, Save, Import, Export as JSON, validation chips | A |
 | Inspector: model, effort | A |
+| Script inspector: origin and runtime chips, params (what the card runs is never hidden); the Import dialog's command list | A |
 | "Create agent…" in the palette (wizard with name, description, system prompt) | A |
 | AND / OR / Combine nodes and input count | E |
+| Scripts group in the palette (placing a card that runs a command) | E |
+| Script inspector: timeout, await all inputs, port list and port editor | E |
 | Inspector: fan-out, sub-agent model, ask questions, await all inputs, seed the plan store, port list; loop max cycles | E |
 | Legend, save-dialog Domain, export as skill or plugin, legacy and archived rows | E |
 

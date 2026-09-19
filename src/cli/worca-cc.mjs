@@ -1341,6 +1341,7 @@ function contribSummary(x) {
     [n(b.taskSources), 'source', 'sources'],
     [n(b.chatChannels), 'chat channel', 'chat channels'],
     [n(b.agents), 'agent', 'agents'],
+    [n(b.scripts), 'script', 'scripts'],
     [n(b.skills), 'skill', 'skills'],
     [n(b.workflows), 'workflow', 'workflows'],
   ]
@@ -1362,6 +1363,9 @@ function printInventory(inv) {
   }
   for (const a of i.agents || []) {
     out(`  agent: ${a.key}${a.tools?.length ? ` (tools: ${a.tools.join(', ')})` : ''}`);
+  }
+  for (const s of i.scripts || []) {
+    out(`  script: ${s.key} (${s.runtime}${s.command ? `, ${s.command}` : s.file ? `, ${s.file}` : ''})`);
   }
   for (const s of i.skills || []) out(`  skill: ${s}`);
   for (const w of i.workflows || []) out(`  workflow: ${w}`);

@@ -132,6 +132,7 @@ import {
   saveGraphWorkflow, importGraphWorkflow, exportGraphJson, workflowFileSlug, nodeDefaultsError,
 } from '../src/core/workflow-share.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
+import { loadScriptRegistry } from '../src/core/script-registry.mjs';
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
 } from '../src/core/worktree.mjs';
@@ -4222,10 +4223,13 @@ app.post('/api/workflows/import-json', async (req, res) => {
   const src = body.workflow && typeof body.workflow === 'object' && !Array.isArray(body.workflow) ? body.workflow : null;
   if (!src) return badRequest(res, 'workflow (the exported JSON object) is required');
   try {
+    // D18: a dry run validates and lists the script commands the Import dialog must show first.
+    const dryRun = body.dryRun === true;
     const r = await importGraphWorkflow(src, {
-      name: typeof body.name === 'string' ? body.name : undefined, agentsDir: AGENTS_DIR,
+      name: typeof body.name === 'string' ? body.name : undefined, agentsDir: AGENTS_DIR, dryRun,
       acceptScripts: body.acceptScripts === true,
     });
+    if (dryRun) return res.json({ scriptNodes: r.scriptNodes, warnings: r.warnings, requestedName: r.requestedName });
     return res.status(201).json(r);
   } catch (err) {
     return sendWorkflowShareError(res, err);
@@ -5671,6 +5675,52 @@ app.delete('/api/agents/:key', async (req, res) => {
     res.json(await deleteAgent(key));
   } catch (err) {
     res.status(agentErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// /api/scripts* -> the script registry (spec §8.4): built-in scripts/ + the user
+// layer + enabled plugins, D16-filtered against the agent registry. Read-only in
+// this version (the user layer is edited on disk); P2 adds the store routes.
+// ---------------------------------------------------------------------------
+const SCRIPT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+const SCRIPT_SOURCE_MAX = 256 * 1024;
+
+function scriptRegistryNow() {
+  return loadScriptRegistry({ agentKeys: Object.keys(loadAgentRegistry(AGENTS_DIR)) });
+}
+
+app.get('/api/scripts', (req, res) => {
+  try {
+    res.json({ scripts: Object.values(scriptRegistryNow()) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get('/api/scripts/:key', async (req, res) => {
+  const key = req.params.key;
+  if (!SCRIPT_KEY_RE.test(key)) return res.status(404).json({ error: 'script not found' });
+  try {
+    const meta = scriptRegistryNow()[key];
+    if (!meta) return res.status(404).json({ error: 'script not found' });
+    let source = '';
+    let sourceTruncated = false;
+    if (meta.scriptPath) {
+      try {
+        // Bounded read: one byte past the cap tells "truncated" without loading a huge file.
+        const fh = await fsp.open(meta.scriptPath, 'r');
+        try {
+          const buf = Buffer.alloc(SCRIPT_SOURCE_MAX + 1);
+          const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+          sourceTruncated = bytesRead > SCRIPT_SOURCE_MAX;
+          source = buf.subarray(0, Math.min(bytesRead, SCRIPT_SOURCE_MAX)).toString('utf8');
+        } finally { await fh.close(); }
+      } catch { source = ''; }
+    }
+    res.json({ ...meta, source, sourcePath: meta.scriptPath || null, sourceTruncated });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
 
