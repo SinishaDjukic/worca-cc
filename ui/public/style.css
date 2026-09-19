@@ -1517,7 +1517,7 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
    card is a real <button> — reset the UA look so it reads like its siblings. */
 .pd-ov-value.pd-ov-wrap{font-size:13px;overflow-wrap:anywhere;}
 .pd-ov-missing{color:var(--red-ink);}
-button.pd-ov-card{text-align:left;font:inherit;color:inherit;cursor:pointer;width:100%;}
+button.pd-ov-card{display:flex;flex-direction:column;align-items:stretch;text-align:left;font:inherit;color:inherit;cursor:pointer;width:100%;}   /* a button centres its content vertically: the label must sit where its siblings' do */
 button.pd-ov-card:hover{border-color:var(--ink-3);}
 /* Memory tab: the same grid Settings → Memory paints (.mem-host); its message line sits above. */
 .pd-sec-memory .form-msg{margin:0 0 10px;}
@@ -2132,7 +2132,7 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
    .hd-report has no icon, but it stands in the SAME row as .hd-archive and needs the
    same padding for the same reason: on .btn-ghost's own 13px it measured 48px beside
    a 38px Archive (headless Chrome, both themes). */
-.hd-back,.hd-resume,.hd-report,.pd-back,.pd-new,.pd-history{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;}
+.hd-back,.hd-resume,.hd-report,.pd-back,.pd-new,.pd-history,.ws-rescan{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;}   /* one height for every header action */
 .hd-resume[hidden]{display:none;}
 /* Same trap as the fallback issue link in the report modal: the author `display`
    above beats the UA's `[hidden]{display:none}`, and this button ships hidden. */
@@ -2167,7 +2167,7 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
    13.5px, so equal padding renders it 36px tall in a row of 38px buttons
    (measured in headless Chrome). The extra pixel per side matches .hd-pr, which
    is the same type size and already pays it. */
-.hd-archive,.pd-remove{display:flex;align-items:center;gap:8px;padding:9px 15px;border:1.5px solid var(--red-bg);
+.hd-archive,.pd-remove{display:flex;align-items:center;gap:8px;padding:8.5px 15px;border:1.5px solid var(--red-bg);   /* 12.5px type + 8.5px = the 13.5px buttons' height */
   border-radius:999px;background:var(--panel);font:600 12.5px var(--sans);color:var(--red-ink);cursor:pointer;}
 .hd-archive[hidden]{display:none;}
 .hd-archive:hover:not([disabled]),.pd-remove:hover:not([disabled]){background:var(--red-bg);border-color:var(--red);}
@@ -5391,7 +5391,8 @@ input.gv-name:focus-visible{outline:none;}
 @media (max-width:760px){.pl-team{display:none;}}
 /* The project / workspace page's Team tab: one panel per feature, the block inside wraps
    (the list cell it came from had to keep to one line). */
-.pd-sec-team{display:flex;flex-direction:column;gap:18px;}
+/* Every section that stacks panels keeps the grid gap between them: cards touching read as one. */
+.pd-sec-team,.wd-sec-overview{display:flex;flex-direction:column;gap:18px;}
 .pd-team-card .card-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 12px;margin-bottom:12px;}
 .pd-team-card .card-head b{font-size:14px;}
 .pd-team-body .tm-cell{grid-template-rows:auto;}
