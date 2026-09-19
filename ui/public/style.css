@@ -1486,11 +1486,15 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 /* NO top padding on the scroller: the detail's sticky .pd-tabs must pin flush, as .hd-tabs does. */
 .proj-screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding:0 32px 40px;
   transition:transform .46s cubic-bezier(.65,.02,.28,1);}
+/* The SHOWN screen rests on transform:none (not translateX(0)): a transform makes a stacking
+   context, and a Getting started guide elevates a control inside it (a project row, the Team
+   tab, Add project) above the scrim by z-index — which cannot escape a transformed ancestor.
+   none ↔ translateX() still animates (none is the identity). */
 .proj-screen-list .topbar{padding-top:26px;}
-.proj-screen-list{transform:translateX(0);}
+.proj-screen-list{transform:none;}
 .proj-screen-detail{transform:translateX(100%);padding:0;background:var(--bg);}
 .proj-shell.detail-open .proj-screen-list{transform:translateX(-100%);}
-.proj-shell.detail-open .proj-screen-detail{transform:translateX(0);}
+.proj-shell.detail-open .proj-screen-detail{transform:none;}
 .proj-shell.no-anim .proj-screen{transition:none;}
 /* ---------- Workspaces two-screen shell: the Projects track's twin, rule for rule (the Projects
    rules above are pinned verbatim by tests, so this block repeats them on its own names). ---------- */
@@ -1499,10 +1503,10 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .ws-screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding:0 32px 40px;
   transition:transform .46s cubic-bezier(.65,.02,.28,1);}
 .ws-screen-list .topbar{padding-top:26px;}
-.ws-screen-list{transform:translateX(0);}
+.ws-screen-list{transform:none;}
 .ws-screen-detail{transform:translateX(100%);padding:0;background:var(--bg);}
 .ws-shell.detail-open .ws-screen-list{transform:translateX(-100%);}
-.ws-shell.detail-open .ws-screen-detail{transform:translateX(0);}
+.ws-shell.detail-open .ws-screen-detail{transform:none;}
 .ws-shell.no-anim .ws-screen{transition:none;}
 /* A keyed row IS the control (role=button): pointer + hover tint, the .hist-head idiom. The
    keyless row keeps #projects-list .pl-row's default cursor. */
@@ -4242,10 +4246,10 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .gs-hide{background:none;border:0;padding:0;font:inherit;font-size:12.5px;color:var(--ink-2);cursor:pointer;
   text-decoration:underline;text-underline-offset:3px;}
 .gs-hide:hover{color:var(--ink);}
-/* Equal tiles that fill the row and wrap 4 -> 2 -> 1: symmetric, never a 3+1 orphan. */
-.gs-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;}
-@media (max-width:760px){.gs-tiles{grid-template-columns:repeat(2,minmax(0,1fr));}}
-@media (max-width:440px){.gs-tiles{grid-template-columns:1fr;}}
+/* Nine equal tiles that fill the row and wrap 3 -> 1: a 3×3 square, then one column — two
+   columns would leave the ninth an orphan. */
+.gs-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;}
+@media (max-width:640px){.gs-tiles{grid-template-columns:1fr;}}
 .gs-tile{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:6px;
   border:1.5px solid var(--line);border-radius:var(--r-ctrl);background:var(--surface);
   padding:12px 14px 13px;font:inherit;font-size:13px;line-height:1.35;color:var(--ink);text-align:left;cursor:pointer;

@@ -32,13 +32,13 @@ after(async () => {
   process.env.HOME = REAL_HOME;
 });
 
-test('GET answers the eight derived steps, counts, the CLI probe and both flags', async () => {
+test('GET answers the nine derived steps, counts, the CLI probe and both flags', async () => {
   const r = await get();
   assert.equal(r.status, 200);
   const s = await r.json();
   assert.deepEqual(Object.keys(s.steps).sort(),
-    ['ask', 'claude', 'project', 'realRun', 'run', 'teamMetrics', 'workflows', 'workspace']);
-  assert.equal(s.total, 8);
+    ['ask', 'claude', 'project', 'realRun', 'run', 'teamMetrics', 'teamPolicy', 'workflows', 'workspace']);
+  assert.equal(s.total, 9);
   assert.equal(s.done, Object.values(s.steps).filter(Boolean).length);
   assert.equal(s.hidden, false);
   assert.equal(s.welcomeSeen, false);

@@ -60,6 +60,7 @@ test('project cell states (board 2)', () => {
 
 test('project cell copy, actions and cap hint', () => {
   const off = renderProjectTpCell({ ...base, present: false, caps: null }, { doc });
+  assert.equal(off.dataset.kind, 'off', 'the cell names its state for the Getting started guide');
   assert.equal(off.className, 'tm-cell tp-cell');
   assert.equal(off.firstElementChild.textContent, 'Team policy');
   assert.equal(off.querySelector('.tm-status').textContent, 'Off · your settings apply');

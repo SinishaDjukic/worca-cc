@@ -107,6 +107,7 @@ export function renderProjectTpCell(s, { doc = globalThis.document, now = Date.n
   const status = h(doc, 'span', 'tm-status');
   const actions = h(doc, 'div', 'tm-actions');
   const { kind } = projectTpState(s);
+  cell.dataset.kind = kind;   // the Getting started guide reads it (no-origin / off / on)
   const fields = s.fieldCount == null ? '' : ` · ${s.fieldCount} field${s.fieldCount === 1 ? '' : 's'}`;
   let hint = null;
   switch (kind) {

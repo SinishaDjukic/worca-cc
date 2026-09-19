@@ -828,6 +828,7 @@ function handleServerMessage(msg) {
   // Team policy (team-policy design §11): discovery, an enable, a publish or a home change
   // elsewhere — refetch the scopes and repaint every open policy surface.
   if (msg.type === 'team-policy-changed') {
+    scheduleOnboardingRefresh();
     tpCache.at = 0;
     if (currentView() === 'projects') paintProjectPolicyCells(true);
     if (currentView() === 'workspaces') paintWsPolicyLines(true);
@@ -20849,7 +20850,8 @@ function gsNextHop(step, g = gs.guide || {}) {
 }
 // Every tour runs to its LOGICAL end — the thing the tile promises — not to the first click of
 // a multi-step action: a project is registered (not just the dialog opened), a run is on its card
-// under Running, a workspace is saved, team metrics is enabled, the answer has landed. A tour
+// under Running, a workspace is saved, team metrics is enabled, a policy home is on its page, the
+// answer has landed. A tour
 // that needs a project first walks the whole Add project dialog and then carries on.
 function gsHops(step, g) {
   const projects = Array.isArray(state.projects) ? state.projects.length : 0;
@@ -20955,14 +20957,19 @@ function gsHops(step, g) {
         ...pre, nav,
         { id: 'open', target: ['#projects-list .pl-row[role="button"]', '#projects-list .pl-row'], skipWhenMet: true, met: pageOpen,
           text: 'Open a project: its page carries the team setup.' },
-        { id: 'tab', target: '#pd-tab-team', skipWhenMet: true, met: tabActive,
+        { id: 'tab', target: '#pd-tab-team', lift: ['.pd-tabs'], skipWhenMet: true, met: tabActive,
           text: 'Team metrics and team policy live on the Team tab.' },
       ];
       if (!pageOpen() || !tabActive() || !block()) return [...walk, { id: 'enable', target: ['#proj-detail .tm-enable', '#proj-detail .pd-team-metrics'], met: () => false, text: 'Team metrics is switched on from the project’s Team tab.' }];
       if (!canEnable()) {
-        // No origin remote: nothing to enable yet — explain, on the block that will hold the button.
+        // Already on (a replay), or no origin remote: nothing to enable — explain, on the block
+        // that holds (or would hold) the button. The cell names its state (data-kind).
+        const kind = block().dataset.kind || '';
+        const on = !!kind && kind !== 'no-origin' && kind !== 'off';
+        const change = !!block().querySelector('.tm-change');
         return [...walk, { id: 'why', info: true, nextLabel: 'Done', target: '#proj-detail .pd-team-metrics',
-          text: 'Team metrics lives on a git remote. This project has none yet — push it to one and “Set up team metrics…” appears here.' }];
+          text: on ? `Team metrics is already on for this project: every finished run is recorded on the shared branch. Include my runs is your own switch${change ? '; Change… points the project at another home' : ''}.`
+            : 'Team metrics lives on a git remote. This project has none yet — push it to one and “Set up team metrics…” appears here.' }];
       }
       return [
         ...walk,
@@ -20970,6 +20977,59 @@ function gsHops(step, g) {
           text: 'Team metrics records every finished run on a shared git branch, for the whole team. Set it up here.' },
         { id: 'submit', mode: 'pointer', target: '#plugin-modal .tm-enable-submit', final: true,
           text: 'Create the branch and enable it. From now on every finished run in this project is recorded there.' },
+      ];
+    }
+    case 'teamPolicy': {
+      // The same walk as team metrics — the row, the Team tab, "Set up team policy…", the dialog's
+      // submit — but it does not end on the click: enabling a home lands the app on the Team policy
+      // page, so the tour closes there, on Edit policy, where caps, models and plugins are actually
+      // set. A project pointed at another home stays on its page, and the closing stop is the block
+      // that now says so. `g.enabled` (the submit's click) carries the walk past the page hops,
+      // because the routing leaves the page — and the checks that read it — behind.
+      const pre = needProject('A team policy is set per project.', 'Add one here first: pick its folder in the chooser that opens.');
+      const nav = NAV('projects', 'A team policy is switched on per project, from its page here.', ['team-policy']);   // the new home's page is where it ends
+      const pageOpen = () => !!projDetail;
+      const teamTab = () => document.getElementById('pd-tab-team');
+      const tabActive = () => !!(teamTab() && teamTab().classList.contains('active'));
+      const block = () => document.querySelector('#proj-detail .pd-team-policy .tp-cell');
+      const canEnable = () => !!document.querySelector('#proj-detail .tp-enable');
+      const dialog = () => !!document.querySelector('#plugin-modal:not(.hidden) .tp-enable-submit');
+      const walk = [
+        ...pre, nav,
+        { id: 'open', target: ['#projects-list .pl-row[role="button"]', '#projects-list .pl-row'], skipWhenMet: true, met: () => !!g.enabled || pageOpen(),
+          text: 'Open a project: its page carries the team setup.' },
+        { id: 'tab', target: '#pd-tab-team', lift: ['.pd-tabs'], skipWhenMet: true, met: () => !!g.enabled || tabActive(),
+          text: 'Team policy lives on the Team tab, beside team metrics.' },
+      ];
+      if (g.enabled) {
+        // Past the dialog. A new home: the app routed to its page — close on Edit policy. Otherwise
+        // (a follow, or a dialog closed after a failed attempt) the block on the project page says
+        // what happened.
+        if (onView('team-policy')) {
+          return [...walk, { id: 'page', info: true, nextLabel: 'Done', target: '#tp-body .tp-edit',
+            text: 'Your policy home, empty for now. Edit policy sets the cost caps, models, plugins and guardrails; publishing puts them on the worca-policy branch for everyone who runs Worca on this repository.' }];
+        }
+        const on = !!document.querySelector('#proj-detail .tp-cell .tp-open');
+        return [...walk, { id: 'after', info: true, nextLabel: 'Done', target: ['#proj-detail .tp-cell', '#proj-detail .pd-team-policy'],
+          text: on ? 'Team policy is on for this project. Open takes you to the Team policy page, where the document is read and edited.'
+            : 'Nothing was enabled — “Set up team policy…” stays here for when you are ready.' }];
+      }
+      if (!pageOpen() || !tabActive() || !block()) return [...walk, { id: 'enable', target: ['#proj-detail .tp-enable', '#proj-detail .pd-team-policy'], met: () => false, text: 'A team policy is switched on from the project’s Team tab.' }];
+      if (!canEnable()) {
+        // Already on (a replay), or no origin remote: nothing to enable — explain, on the block.
+        const kind = block().dataset.kind || '';
+        const on = !!kind && kind !== 'no-origin' && kind !== 'off';
+        const change = !!block().querySelector('.tp-change');
+        return [...walk, { id: 'why', info: true, nextLabel: 'Done', target: '#proj-detail .pd-team-policy',
+          text: on ? `Team policy is already on for this project. Open shows the document on the Team policy page${change ? '; Change… points the project at another home' : ''}.`
+            : 'A team policy lives on a git remote. This project has none yet — push it to one and “Set up team policy…” appears here.' }];
+      }
+      return [
+        ...walk,
+        { id: 'enable', target: '#proj-detail .tp-enable', skipWhenMet: true, met: dialog,
+          text: 'A team policy is one shared document — cost caps, models, plugins, guardrails — read by everyone who runs Worca on this repository. Set it up here.' },
+        { id: 'submit', mode: 'pointer', target: '#plugin-modal .tp-enable-submit', click: 'enabled', met: () => !!g.enabled && !gsDialogUp('plugin-modal'),
+          text: 'Create the branch and enable it: here, on this repository, or following another project’s policy. It starts empty.' },
       ];
     }
     default:

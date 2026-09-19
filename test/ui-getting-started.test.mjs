@@ -15,7 +15,7 @@ const status = (done = [], extra = {}) => ({
 });
 const click = (win, node) => node.dispatchEvent(new win.Event('click', { bubbles: true, cancelable: true }));
 
-test('the shelf: eight tiles in arc order, progress, Hide; done tiles marked and still clickable', () => {
+test('the shelf: nine tiles in arc order, progress, Hide; done tiles marked and still clickable', () => {
   const { window } = dom();
   const host = window.document.getElementById('host');
   const stepped = [];
@@ -26,11 +26,11 @@ test('the shelf: eight tiles in arc order, progress, Hide; done tiles marked and
   assert.ok(card, 'a card, on the app\'s own .card');
   assert.equal(card.getAttribute('role'), 'complementary');
   assert.equal(card.querySelector('.gs-head h2').textContent, 'Your progress');
-  assert.equal(card.querySelector('.gs-progress').textContent, '2 of 8');
+  assert.equal(card.querySelector('.gs-progress').textContent, '2 of 9');
   const tiles = [...card.querySelectorAll('.gs-tile')];
-  assert.equal(tiles.length, 8);
+  assert.equal(tiles.length, 9);
   assert.deepEqual(tiles.map((t) => t.dataset.step), GETTING_STARTED_STEPS.map((s) => s.id));
-  assert.deepEqual(tiles.map((t) => t.classList.contains('done')), [true, true, false, false, false, false, false, false]);
+  assert.deepEqual(tiles.map((t) => t.classList.contains('done')), [true, true, false, false, false, false, false, false, false]);
   for (const t of tiles) {
     assert.equal(t.tagName, 'BUTTON');
     assert.equal(t.getAttribute('type'), 'button');
@@ -70,16 +70,16 @@ test('the shelf paints nothing when hidden or when the status is not ours', () =
   assert.equal(host.children.length, 1);
 });
 
-test('all eight done reads "All set" and the count helpers agree', () => {
+test('all nine done reads "All set" and the count helpers agree', () => {
   const all = status(GETTING_STARTED_STEPS.map((s) => s.id));
-  assert.equal(doneCount(all), 8);
+  assert.equal(doneCount(all), 9);
   assert.equal(allStepsDone(all), true);
   assert.equal(allStepsDone(status(['run'])), false);
   const { window } = dom();
   const host = window.document.getElementById('host');
   renderGettingStarted(host, all);
   assert.equal(host.querySelector('.gs-head h2').textContent, 'All set');
-  assert.equal(host.querySelectorAll('.gs-tile.done').length, 8);
+  assert.equal(host.querySelectorAll('.gs-tile.done').length, 9);
 });
 
 test('the pill: count badge, opens on click, gone when hidden or complete', () => {
@@ -92,8 +92,8 @@ test('the pill: count badge, opens on click, gone when hidden or complete', () =
   assert.ok(btn);
   assert.equal(btn.getAttribute('type'), 'button');
   assert.equal(btn.hasAttribute('data-nav'), false, 'not a nav route: app.js binds .nav button[data-nav] only');
-  assert.equal(btn.querySelector('.nav-count').textContent, '3/8');
-  assert.match(btn.getAttribute('aria-label'), /3 of 8/);
+  assert.equal(btn.querySelector('.nav-count').textContent, '3/9');
+  assert.match(btn.getAttribute('aria-label'), /3 of 9/);
   click(window, btn);
   assert.equal(opened, 1);
   renderGettingStartedPill(pill, status([], { hidden: true }), () => opened++);
