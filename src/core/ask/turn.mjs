@@ -26,6 +26,10 @@ import { refreshAskMemoryMount } from './memory-deps.mjs';
 import { validateProposal } from './proposal.mjs';
 import { validateMetricsChange } from './metrics-deps.mjs';
 import { validatePolicyChange } from './policy-deps.mjs';
+import { validateScheduleChange } from './schedule-deps.mjs';
+import { lookupTask } from './source-deps.mjs';
+import { effectiveTimeZone } from './schedule-spec.mjs';
+import { scheduleDefaults } from '../settings.mjs';
 import { revalidateWorkflowProposal } from './workflow-deps.mjs';
 import { askLimits, ASK_LIMITS } from './limits.mjs';
 import {
@@ -47,6 +51,7 @@ class AskTurn extends EventEmitter {
     mock = null, attachmentNames = {},
     pinnedScope = null,
     memoryProject = null,
+    timeZone = null,
     deps = {},
   } = {}) {
     super();
@@ -66,6 +71,8 @@ class AskTurn extends EventEmitter {
     this.attachmentNames = attachmentNames || {};
     // #397: {projectKey}|{workspaceId}|null — the user-pinned scope at POST time.
     this.pinnedScope = pinnedScope && typeof pinnedScope === 'object' ? pinnedScope : null;
+    // The user's timezone (the browser's, validated) — the zone a proposal's when / every is read in.
+    this.timeZone = effectiveTimeZone(timeZone);
     // Native-rules revision (D16): {key, name}|null — the scope set this turn mounts through --add-dir.
     this.memoryProject = memoryProject && typeof memoryProject === 'object' ? memoryProject : null;
     this.memoryDir = null;
@@ -83,6 +90,10 @@ class AskTurn extends EventEmitter {
       revalidateWorkflow: deps.revalidateWorkflow ?? revalidateWorkflowProposal,
       validateMetricsChange: deps.validateMetricsChange ?? validateMetricsChange,
       validatePolicyChange: deps.validatePolicyChange ?? validatePolicyChange,
+      validateScheduleChange: deps.validateScheduleChange ?? validateScheduleChange,
+      scheduleDefaults: deps.scheduleDefaults ?? scheduleDefaults,
+      // A proposed plugin task is looked up here, once: it must exist, and the card shows its title.
+      lookupTask: deps.lookupTask === undefined ? lookupTask : deps.lookupTask,
       trackRun: deps.trackRun ?? null,
       generateTitle: deps.generateTitle ?? generateTitle,
       askLimits: deps.askLimits ?? askLimits,
@@ -106,6 +117,7 @@ class AskTurn extends EventEmitter {
       onCommentMutation: deps.onCommentMutation ?? (() => {}),
       onWorktreeMutation: deps.onWorktreeMutation ?? (() => {}),
       onMemoryMutation: deps.onMemoryMutation ?? (() => {}),
+      onScheduleMutation: deps.onScheduleMutation ?? (() => {}),
       // DISPLAY-ONLY rates for the footer's live "≈" estimate (config.mjs
       // liveCostRates: override → list price → null). Injectable so tests pin
       // the frame arithmetic without the catalog.
@@ -166,7 +178,9 @@ class AskTurn extends EventEmitter {
       // to real rows (spec §6.4). A ledger failure never blocks the card.
       let attachments = [];
       try { attachments = (typeof d.store.listAttachments === 'function' && d.store.listAttachments(this.threadId)) || []; } catch { attachments = []; }
-      const r = await d.validateProposal(inp, { cardId, attachments });
+      let defaults = {};
+      try { defaults = d.scheduleDefaults() || {}; } catch { defaults = {}; }
+      const r = await d.validateProposal(inp, { cardId, attachments, timeZone: this.timeZone, nowMs: d.now(), scheduleDefaults: defaults, lookupTask: d.lookupTask });
       if (r && r.ok) {
         // #397 guardrail: a proposal targeting a DIFFERENT project/workspace than
         // the pinned one is accepted but flagged — the card renders the mismatch
@@ -279,6 +293,30 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /**
+   * propose_schedule_change RESULT: the metrics card's split — the child validated for the model, the parent
+   * re-validates the same INPUT against the live rows and mints the card. A child {ok:false} already reached
+   * the model as text: no card, no notice.
+   */
+  async _onScheduleProposal(input, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const d = this.deps;
+    try {
+      const r = await d.validateScheduleChange(input && typeof input === 'object' ? input : {}, { timeZone: this.timeZone });
+      if (r && r.ok) this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'proposed', card: r.card });
+      else {
+        const errors = (r && Array.isArray(r.errors) && r.errors.length) ? r.errors : ['invalid proposal'];
+        this.reducer.addBlock({ kind: 'notice', text: `Schedule change rejected: ${errors.join('; ')}` });
+      }
+    } catch (err) {
+      this.reducer.addBlock({ kind: 'notice', text: `Schedule change rejected: ${err?.message || err}` });
+    }
+    this._persistBlocks();
+  }
+
   /** The card exists from the tool_use on (spec §8.2, PD7): a building block with the four-step trace, persisted. */
   _onWorkflowStart(toolUseId, input) {
     const d = this.deps;
@@ -364,6 +402,9 @@ class AskTurn extends EventEmitter {
       onTrackRun: ({ input, isError }) => this._onTrackRun(input, isError),
       onMetricsProposal: ({ input, text, isError }) => this._onMetricsProposal(input, text, isError),
       onPolicyProposal: ({ input, text, isError }) => this._onPolicyProposal(input, text, isError),
+      onScheduleProposal: ({ input, text, isError }) => this._onScheduleProposal(input, text, isError),
+      // pause / resume / skip / mark-read in the child → the server's schedules-changed frames.
+      onScheduleMutation: (e) => { try { this.deps.onScheduleMutation(e); } catch { /* a broken sink never breaks the turn */ } },
       // The MCP child cannot broadcast; the parent turns its comment writes into
       // the same poke the REST routes emit.
       onCommentMutation: (e) => { try { this.deps.onCommentMutation(e); } catch { /* a broken sink never breaks the turn */ } },

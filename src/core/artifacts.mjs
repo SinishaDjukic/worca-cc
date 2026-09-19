@@ -1883,6 +1883,9 @@ function rowToState(row) {
     stepper: j(row.stepper, null),
     tools: j(row.tools, null),
     guardrailsId: row.guardrails_id ?? null,
+    // v31 provenance: set when a schedule started this run (NULL = started by hand).
+    scheduledFor: row.scheduled_for ?? null,
+    scheduleId: row.schedule_id ?? null,
     // A retired v1 resume point was NULLed by the v2 upgrade: the run stays in
     // History with an honest status, but it can never be resumed again.
     resumable: row.resume_point != null,

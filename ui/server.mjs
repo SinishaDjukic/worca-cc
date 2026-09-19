@@ -15,7 +15,7 @@ import fsp from 'node:fs/promises';
 import process from 'node:process';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 
 import { preflightNode } from '../src/core/preflight-node.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
@@ -48,6 +48,7 @@ import {
   theme as storedTheme, setTheme, assertThemeInput,
   uiLevel as storedUiLevel, setUiLevel, assertUiLevelInput, defaultUiLevel,
   autoWorkflowModel as storedAutoWorkflowModel, setAutoWorkflowModel, assertAutoWorkflowModelInput,
+  scheduleDefaults, setScheduleDefaults,
 } from '../src/core/settings.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
 import {
@@ -139,6 +140,7 @@ import { applyMetricsChange } from '../src/core/ask/metrics-deps.mjs';
 import { metricsEventPrompt, metricsNoticeText } from '../src/core/ask/metrics-proposal.mjs';
 import { applyPolicyChange } from '../src/core/ask/policy-deps.mjs';
 import { policyEventPrompt, policyNoticeText } from '../src/core/ask/policy-proposal.mjs';
+import { scheduleEventPrompt, scheduleNoticeText } from '../src/core/ask/schedule-spec.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
@@ -195,7 +197,20 @@ import { TokenBucket } from '../src/core/chat/rate-limiter.mjs';
 import { renderTest } from '../src/core/chat/renderers.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { normalizeManifest, validatePluginDir, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
-import { listTaskSources, retryWriteback } from '../src/core/sources.mjs';
+import { listTaskSources, retryWriteback, resolveTaskInput } from '../src/core/sources.mjs';
+import {
+  createTicket, getTicket, listTickets, updateTicket, cancelTicket, requestRunNow, setTicketPipeline,
+  createSchedule, getSchedule, listSchedules, updateSchedule, pauseSchedule, resumeSchedule, skipNext,
+  runScheduleNow, deleteSchedule, cancelForTarget, dependentsOfWorkflow, runDueTickets, recordOutcome,
+  recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir, scheduleSignature,
+} from '../src/core/scheduler.mjs';
+import {
+  onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
+} from '../src/core/notifications.mjs';
+import {
+  normalizeRule, nextOccurrence, previewOccurrences, describeRule, parseScheduledFor, localDate,
+  isValidTimeZone, formatInstant, OVERLAP_POLICIES, MISSED_POLICIES,
+} from '../src/shared/schedule/recurrence.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { resolveAutoModel, AUTO_MODEL_ENV } from '../src/core/auto/model.mjs';
 import {
@@ -728,7 +743,28 @@ function wireRun(entry) {
         // Capture the on-disk pipeline short id the orchestrator stamps onto
         // state.id after createPipeline. Guard so null in pre-createPipeline
         // snapshots cannot overwrite a previously-captured value.
-        if (typeof payload.id === 'string' && payload.id) entry.pipelineId = payload.id;
+        if (typeof payload.id === 'string' && payload.id) {
+          const first = !entry.pipelineId;
+          entry.pipelineId = payload.id;
+          // Scheduled runs: the ticket learns the pipeline it became (provenance columns).
+          if (first && entry.ticketId) {
+            try { setTicketPipeline(entry.ticketId, payload.id); } catch (err) { console.error(`[worca-ui] ticket link failed: ${err && err.message ? err.message : err}`); }
+          }
+        }
+      }
+      if (entry.ticketId && (name === 'done' || name === 'error') && !entry._outcomeRecorded) {
+        // Scheduled runs: report how the fired run ended (feed item, failure streak).
+        // 'error' is the launch-error channel — a failure before the pipeline row exists.
+        entry._outcomeRecorded = true;
+        try {
+          recordOutcome(entry.ticketId, {
+            status: name === 'error' ? 'error' : ((payload && payload.status) || 'done'),
+            pipelineId: entry.pipelineId || null,
+            reason: (payload && payload.reason) || null,
+            detail: (payload && (payload.detail || payload.message)) || null,
+          });
+          emitChanged('schedules-changed', 'outcome');
+        } catch (err) { console.error(`[worca-ui] schedule outcome failed: ${err && err.message ? err.message : err}`); }
       }
       if (name === 'title' && payload && typeof payload.title === 'string') {
         // Keep the in-memory run fresh so a late-joining client's hello
@@ -1297,6 +1333,11 @@ function askTrackRun(threadId, input, pin) {
 const startRunHandler = async (req, res) => {
   try {
     const body = req.body || {};
+    // Scheduled runs: `internal` is set ONLY by fireTicket() (never from HTTP) — the
+    // due ticket being started through this same gate. It carries the ticket, whose id
+    // IS the runId, plus the CLI-only options a stored request may hold.
+    const internal = req._internal && typeof req._internal === 'object' ? req._internal : null;
+    const stored = internal && body.internal && typeof body.internal === 'object' ? body.internal : {};
 
     // Mutual exclusion: exactly one of workspaceId / projectDir (§2.6).
     const hasWorkspace = typeof body.workspaceId === 'string' && body.workspaceId.trim();
@@ -1324,10 +1365,22 @@ const startRunHandler = async (req, res) => {
       if (!askGetThread(body.askThreadId)) return badRequest(res, 'unknown askThreadId');
       const found = askFindCard(body.askThreadId, body.askCardId);
       if (!found) return badRequest(res, 'unknown askCardId');
-      if (found.block.state !== 'proposed') {
+      const ownScheduledCard = internal && found.block.state === 'scheduled' && found.block.runId === internal.ticket.id;
+      if (found.block.state !== 'proposed' && !ownScheduledCard) {
         return res.status(409).json({ error: `card is ${found.block.state}` });
       }
       askLink = { threadId: body.askThreadId, cardId: body.askCardId };
+    }
+
+    // Scheduled runs: `scheduledFor` (one-shot) and/or `repeat` (recurring) turn this
+    // request into a TICKET instead of a run. Parsed here so a bad time is a clean 400
+    // before anything else; everything below still validates the request, so a schedule
+    // fails fast now and is validated AGAIN when it starts.
+    let sched = null;
+    if (!internal && (body.scheduledFor != null || body.repeat != null)) {
+      const parsed = parseScheduleRequest(body);
+      if (!parsed.ok) return badRequest(res, parsed.error);
+      sched = parsed;
     }
 
     // ── Shared resolution (factored BEFORE the target branch, §2.6) ──────────
@@ -1428,16 +1481,20 @@ const startRunHandler = async (req, res) => {
 
     // Budget gate: no new pipelines while the total window is spent (F6).
     const budget = budgetStatus();
-    if (budget.blocked) {
+    if (budget.blocked && !sched) {
       return res.status(403).json({ error: 'total cost limit reached', budget });
     }
 
-    const runId = randomUUID();
+    const runId = internal ? internal.ticket.id : randomUUID();
     const title = (typeof body.title === 'string' && body.title.trim()) || fallbackRunTitle(effectivePrompt, source);
 
     // Materialize any uploaded extra files to a temp dir; the orchestrator's
     // createPipeline copies them into <pipeline>/extras/.
-    const extras = await writeExtras(runId, body.extras);
+    // A ticket's extras were staged durably when it was scheduled (the OS temp dir
+    // does not survive a reboot); a schedule stages them below, once it is validated.
+    const extras = internal
+      ? (Array.isArray(stored.extrasPaths) ? stored.extrasPaths.filter((x) => typeof x === 'string' && fs.existsSync(x)) : [])
+      : (sched ? [] : await writeExtras(runId, body.extras));
 
     const branch = {
       source: typeof body.sourceBranch === 'string' && body.sourceBranch.trim()
@@ -1505,6 +1562,8 @@ const startRunHandler = async (req, res) => {
       const wsFileProblem = await promptFileProblem(effectiveSource, projects[0].projectDir);
       if (wsFileProblem) return badRequest(res, wsFileProblem);
 
+      if (sched) return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir }));
+
       orch = await createOrchestratorFor({
         workspace: {
           id: ws.id,
@@ -1522,7 +1581,9 @@ const startRunHandler = async (req, res) => {
         template: workflowRow,
         guardrailsId,
         branch,
-        claude: { permissionMode: 'acceptEdits', mock },
+        claude: { permissionMode: stored.permissionMode || 'acceptEdits', ...(stored.model ? { model: stored.model } : {}), mock },
+        // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
+        ...(stored.auto ? { auto: true } : {}),
       });
 
       entry = {
@@ -1574,6 +1635,8 @@ const startRunHandler = async (req, res) => {
       }
       const humanInLoop = bodyHumanInLoop ?? ((await readRunConfig(projectDir)).humanInLoop !== false);
 
+      if (sched) return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, projectDir }));
+
       orch = await createOrchestratorFor({
         projectDir,
         prompt: effectivePrompt,
@@ -1587,7 +1650,9 @@ const startRunHandler = async (req, res) => {
         branch,
         humanInLoop,
         ...(memoryScope ? { memoryScope } : {}),
-        claude: { permissionMode: 'acceptEdits', mock },
+        claude: { permissionMode: stored.permissionMode || 'acceptEdits', ...(stored.model ? { model: stored.model } : {}), mock },
+        // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
+        ...(stored.auto ? { auto: true } : {}),
       });
 
       entry = {
@@ -1603,6 +1668,11 @@ const startRunHandler = async (req, res) => {
       };
     }
 
+    if (internal) {
+      entry.ticketId = internal.ticket.id;
+      entry.scheduleId = internal.ticket.scheduleId || null;
+      entry.scheduledFor = internal.ticket.runAt;
+    }
     runs.set(runId, entry);
     wireRun(entry);
     if (askLink) {
@@ -1612,7 +1682,8 @@ const startRunHandler = async (req, res) => {
       // must not launch a second pipeline for the same card (review of PR #376).
       // Withdraw the run entry (nothing has run or been announced yet) and 409.
       const still = askFindCard(askLink.threadId, askLink.cardId);
-      if (!still || still.block.state !== 'proposed') {
+      const stillOwn = internal && still && still.block.state === 'scheduled' && still.block.runId === runId;
+      if (!still || (still.block.state !== 'proposed' && !stillOwn)) {
         runs.delete(runId);
         return res.status(409).json({ error: `card is no longer proposed (${still ? still.block.state : 'gone'})` });
       }
@@ -1667,6 +1738,439 @@ const startRunHandler = async (req, res) => {
 app.post('/api/run', startRunHandler);
 
 // ---------------------------------------------------------------------------
+// Scheduled runs (schema v31, src/core/scheduler.mjs). A schedule is a TICKET, not a
+// pipeline: POST /api/run with `scheduledFor` and/or `repeat` validates the request
+// exactly like a run, stores it, and answers 202. The tick below claims due tickets
+// and pushes each one back through startRunHandler — so a scheduled run is validated
+// twice and born through the one start path every run uses.
+// ---------------------------------------------------------------------------
+const TRANSIENT_SOURCE_KINDS = new Set(['network', 'rate-limit', 'timeout']);
+const SCHEDULER_TICK_MS = 30_000;
+const SCHEDULER_STAGGER_MS = 3_000;
+
+/** Validate `scheduledFor` / `repeat` / `ifMissed` / `graceMin` on a run body. */
+function parseScheduleRequest(body, { now = Date.now() } = {}) {
+  const defaults = scheduleDefaults();
+  const out = { ok: true, runAtMs: null, repeat: null, ifMissed: defaults.ifMissed, graceMin: defaults.graceMin };
+  if (body.ifMissed != null) {
+    if (!MISSED_POLICIES.includes(body.ifMissed)) return { ok: false, error: `ifMissed must be one of ${MISSED_POLICIES.join(' | ')}` };
+    out.ifMissed = body.ifMissed;
+  }
+  if (body.graceMin != null) {
+    if (!Number.isSafeInteger(body.graceMin) || body.graceMin < 0 || body.graceMin > 10080) return { ok: false, error: 'graceMin must be a whole number of minutes from 0 to 10080' };
+    out.graceMin = body.graceMin;
+  }
+  if (body.repeat != null) {
+    if (body.scheduledFor != null) return { ok: false, error: 'provide scheduledFor (run once) OR repeat (recurring), not both' };
+    const rep = body.repeat;
+    if (!rep || typeof rep !== 'object' || Array.isArray(rep)) return { ok: false, error: 'repeat must be an object: { rule, overlap?, maxFailures? }' };
+    const tz = rep.rule && typeof rep.rule === 'object' ? rep.rule.tz : null;
+    const norm = normalizeRule(rep.rule, { todayLocal: isValidTimeZone(tz) ? localDate(now, tz) : null });
+    if (!norm.ok) return { ok: false, error: norm.error };
+    if (rep.overlap != null && !OVERLAP_POLICIES.includes(rep.overlap)) return { ok: false, error: `repeat.overlap must be one of ${OVERLAP_POLICIES.join(' | ')}` };
+    if (rep.maxFailures != null && (!Number.isSafeInteger(rep.maxFailures) || rep.maxFailures < 0 || rep.maxFailures > 100)) {
+      return { ok: false, error: 'repeat.maxFailures must be a whole number from 0 to 100 (0 = never pause)' };
+    }
+    if (nextOccurrence(norm.rule, now) == null) return { ok: false, error: 'repeat.rule has no future occurrence' };
+    out.repeat = { rule: norm.rule, overlap: rep.overlap || 'skip', maxFailures: rep.maxFailures ?? defaults.maxFailures };
+    return out;
+  }
+  const at = parseScheduledFor(body.scheduledFor);
+  if (!at.ok) return { ok: false, error: at.error };
+  if (at.ms < now - 5_000) return { ok: false, error: 'scheduledFor is in the past' };
+  out.runAtMs = at.ms;
+  return out;
+}
+
+/** The request a ticket stores: the validated body minus schedule fields and uploads. */
+async function storedRequestOf(body, stageId, projectDir) {
+  const request = { ...body };
+  for (const k of ['scheduledFor', 'repeat', 'ifMissed', 'graceMin', 'extras', 'internal']) delete request[k];
+  // Text the user authored is part of the request: a prompt FILE is frozen now, so a
+  // file deleted or half-edited overnight cannot fail an unattended run.
+  if (request.source && request.source.type === 'markdown' && request.source.promptFile && !request.source.promptText) {
+    const promptText = await readPromptFile(projectDir, request.source.promptFile);
+    request.source = { type: 'markdown', promptText };
+  }
+  const extrasPaths = await writeExtras(stageId, body.extras, path.join(scheduleStageDir(stageId), 'extras'));
+  request.internal = { extrasPaths };
+  return request;
+}
+
+/** Turn a validated run request into a ticket (or a recurring schedule). 202 body. */
+async function scheduleRequest({ body, sched, title, askLink, budget, projectDir, workspaceId = null }) {
+  const target = workspaceId ? { workspaceId } : { projectDir };
+  let ticket, schedule = null;
+  if (sched.repeat) {
+    const id = `sch_${randomBytes(4).toString('hex')}`;
+    const request = await storedRequestOf(body, id, projectDir);
+    ({ schedule, ticket } = createSchedule({
+      id, title, ...target, request, rule: sched.repeat.rule, overlap: sched.repeat.overlap,
+      maxFailures: sched.repeat.maxFailures, ifMissed: sched.ifMissed, graceMin: sched.graceMin,
+      askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null,
+    }));
+    // An Ask card that became a repeating schedule follows the SERIES, not one run of it.
+    if (askLink) {
+      try { flipCard(askLink.threadId, askLink.cardId, { state: 'scheduled', runId: null, scheduleId: schedule.id, sentence: schedule.sentence, scheduledFor: ticket ? ticket.runAt : null }); }
+      catch (err) { console.error(`[worca-ui] ask card schedule flip failed: ${err && err.message ? err.message : err}`); }
+    }
+  } else {
+    const id = randomUUID();
+    const request = await storedRequestOf(body, id, projectDir);
+    ticket = createTicket({
+      id, title, ...target, runAtMs: sched.runAtMs, request, ifMissed: sched.ifMissed, graceMin: sched.graceMin,
+      askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null,
+    });
+    if (askLink) {
+      try { flipCard(askLink.threadId, askLink.cardId, { state: 'scheduled', runId: id, scheduledFor: ticket.runAt }); }
+      catch (err) { console.error(`[worca-ui] ask card schedule flip failed: ${err && err.message ? err.message : err}`); }
+    }
+  }
+  emitChanged('schedules-changed', 'created');
+  return {
+    runId: ticket ? ticket.id : null,
+    status: 'scheduled',
+    scheduledFor: ticket ? ticket.runAt : null,
+    ...(schedule ? { scheduleId: schedule.id, sentence: schedule.sentence } : {}),
+    ...(budget && budget.blocked ? { budgetWarning: 'The total cost limit is reached right now. The run will only start if the budget allows it at that time.' } : {}),
+  };
+}
+
+/** An Ask card that was scheduled goes back to `proposed` when its ticket dies or its series is deleted. */
+function releaseAskCard(item) {
+  if (!item || !item.askThreadId || !item.askCardId) return;
+  try {
+    const found = askFindCard(item.askThreadId, item.askCardId);
+    const b = found && found.block;
+    if (b && b.state === 'scheduled' && (item.kind === 'recurring' ? b.scheduleId === item.id : b.runId === item.id)) {
+      flipCard(item.askThreadId, item.askCardId, { state: 'proposed', runId: null, scheduledFor: null, scheduleId: null, sentence: null });
+    }
+  } catch (err) { console.error(`[worca-ui] ask card release failed: ${err && err.message ? err.message : err}`); }
+}
+
+/** Call startRunHandler without HTTP. Resolves { status, body }. */
+async function invokeStartRun(body, internal) {
+  let out = { status: 200, body: null };
+  const res = {
+    statusCode: 200,
+    status(code) { this.statusCode = code; return this; },
+    json(payload) { out = { status: this.statusCode, body: payload }; return this; },
+  };
+  await startRunHandler({ body, _internal: internal }, res);
+  return out;
+}
+
+/** runDueTickets' `start`: probe an external task first (transient errors retry), then start. */
+async function fireTicket(ticket) {
+  const body = { ...(ticket.request || {}) };
+  if (body.source && body.source.type === 'plugin') {
+    try {
+      await resolveTaskInput(body.source, { projectDir: ticket.projectDir || undefined });
+    } catch (err) {
+      return { ok: false, error: err && err.message ? err.message : String(err), transient: TRANSIENT_SOURCE_KINDS.has(err && err.kind) };
+    }
+  }
+  // Every occurrence of a series needs its own feature branch.
+  if (ticket.scheduleId && typeof body.featureBranch === 'string' && body.featureBranch.trim()) {
+    const s = getSchedule(ticket.scheduleId);
+    const day = (s && s.tz ? localDate(Date.parse(ticket.runAt), s.tz) : ticket.runAt.slice(0, 10)).replace(/-/g, '');
+    body.featureBranch = `${body.featureBranch.trim()}-${day}`;
+  }
+  const out = await invokeStartRun(body, { ticket });
+  if (out.status === 200 && out.body && out.body.runId) return { ok: true };
+  const error = (out.body && out.body.error) || `the run could not be started (HTTP ${out.status})`;
+  return { ok: false, error, transient: out.status >= 500 };
+}
+
+let _schedulerBusy = false;
+let _lastNotificationId = -1;
+let _lastScheduleSig = null;
+
+/** One scheduler pass. Exported for tests; the server calls it on a 30 s timer. */
+export async function schedulerTick({ now = Date.now() } = {}) {
+  if (_schedulerBusy) return null;
+  _schedulerBusy = true;
+  try {
+    const out = await runDueTickets({
+      now,
+      start: fireTicket,
+      isLive: ({ id }) => { const e = runs.get(id); return !!e && !SETTLED_RUN.has(String(e.status || '')); },
+      staggerMs: SCHEDULER_STAGGER_MS,
+    });
+    for (const id of [...out.failed, ...out.missed]) releaseAskCard(getTicket(id));
+    if (out.fired.length || out.missed.length || out.skipped.length || out.failed.length || out.retried.length) {
+      emitChanged('schedules-changed', 'tick');
+    }
+    // A `--wait` CLI writes notifications from ITS process: notice them here.
+    const latest = latestNotificationId();
+    if (_lastNotificationId !== -1 && latest !== _lastNotificationId) emitChanged('notifications-changed');
+    _lastNotificationId = latest;
+    // ...and the CLI writes tickets straight into the shared DB: notice those too.
+    const sig = scheduleSignature();
+    if (_lastScheduleSig !== null && sig !== _lastScheduleSig && !out.fired.length) emitChanged('schedules-changed', 'external');
+    _lastScheduleSig = sig;
+    return out;
+  } catch (err) {
+    console.error(`[worca-ui] scheduler tick failed: ${err && err.message ? err.message : err}`);
+    return null;
+  } finally {
+    _schedulerBusy = false;
+  }
+}
+
+let _schedulerTimer = null;
+/** Start the scheduler: recover, run one pass now (boot catch-up), then tick. */
+export function startScheduler() {
+  if (_schedulerTimer) return () => {};
+  try {
+    const recovered = recoverScheduler();
+    if (recovered) console.log(`[worca-ui] scheduler: returned ${recovered} interrupted ticket(s) to the queue`);
+    const purged = purgeScheduler();
+    purgeNotifications();
+    if (purged.tickets || purged.schedules) console.log(`[worca-ui] scheduler: purged ${purged.tickets} old ticket(s), ${purged.schedules} ended schedule(s)`);
+  } catch (err) { console.error(`[worca-ui] scheduler recovery failed: ${err && err.message ? err.message : err}`); }
+  schedulerTick();
+  _schedulerTimer = setInterval(() => { schedulerTick(); }, SCHEDULER_TICK_MS);
+  _schedulerTimer.unref();
+  return () => { clearInterval(_schedulerTimer); _schedulerTimer = null; };
+}
+
+// Notifications written in THIS process reach open tabs at once, and chat.
+onNotification((n) => {
+  broadcast({ type: 'notification', notification: n });
+  try { chatNotifier.notifySchedule(n); } catch { /* never break the writer */ }
+});
+
+/** A schedule item (ticket or series) by id, for the unified /api/schedules routes. */
+function findScheduleItem(id) {
+  if (typeof id !== 'string' || !id) return null;
+  if (id.startsWith('sch_')) { const s = getSchedule(id); return s ? { kind: 'recurring', item: s } : null; }
+  const t = getTicket(id);
+  return t ? { kind: 'once', item: t } : null;
+}
+
+// GET /api/schedules[?projectDir=|workspaceId=][&all=1] -> { schedules, tickets, counts, defaults }
+app.get('/api/schedules', (req, res) => {
+  try {
+    const projectDir = resolveProjectDir(req.query.projectDir) || null;
+    const workspaceId = typeof req.query.workspaceId === 'string' && req.query.workspaceId.trim() ? req.query.workspaceId.trim() : null;
+    const all = req.query.all === '1' || req.query.all === 'true';
+    res.json({
+      schedules: listSchedules({ projectDir, workspaceId }),
+      tickets: listTickets({ projectDir, workspaceId, all }),
+      counts: { ...scheduleCounts(), unread: unreadCount('schedule') },
+      defaults: scheduleDefaults(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// POST /api/schedules/preview { rule, count? } -> { sentence, next: [iso…] }
+app.post('/api/schedules/preview', (req, res) => {
+  const body = req.body || {};
+  const tz = body.rule && typeof body.rule === 'object' ? body.rule.tz : null;
+  const norm = normalizeRule(body.rule, { todayLocal: isValidTimeZone(tz) ? localDate(Date.now(), tz) : null });
+  if (!norm.ok) return badRequest(res, norm.error);
+  const n = Number.isSafeInteger(body.count) ? Math.max(1, Math.min(10, body.count)) : 3;
+  res.json({ rule: norm.rule, sentence: describeRule(norm.rule), next: previewOccurrences(norm.rule, Date.now(), n).map((t) => new Date(t).toISOString()) });
+});
+
+// GET /api/schedules/dependents?workflowId=|projectDir=|workspaceId= -> what a removal
+// would strand, so the confirmation can NAME it.
+app.get('/api/schedules/dependents', (req, res) => {
+  const q = req.query;
+  const label = (x) => ({ id: x.id, kind: x.kind, title: x.title });
+  if (typeof q.workflowId === 'string' && q.workflowId) return res.json({ dependents: dependentsOfWorkflow(q.workflowId) });
+  const projectDir = resolveProjectDir(q.projectDir) || null;
+  const workspaceId = typeof q.workspaceId === 'string' && q.workspaceId.trim() ? q.workspaceId.trim() : null;
+  if (!projectDir && !workspaceId) return badRequest(res, 'workflowId, projectDir or workspaceId is required');
+  res.json({
+    dependents: [
+      ...listSchedules({ projectDir, workspaceId, includeEnded: false }).map(label),
+      ...listTickets({ projectDir, workspaceId, oneShotOnly: true }).map(label),
+    ],
+  });
+});
+
+app.get('/api/schedules/:id', (req, res) => {
+  const found = findScheduleItem(req.params.id);
+  if (!found) return res.status(404).json({ error: 'schedule not found' });
+  const history = found.kind === 'recurring' ? listTickets({ scheduleId: found.item.id, all: true, limit: 50 }).reverse() : [];
+  res.json({ ...found, history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50 }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
+});
+
+// One schedule change, for the REST routes AND an applied Ask Worca schedule card — so the
+// card does exactly what the button on the Schedules page does. Resolves { status, body }.
+//   verb 'patch'     a ticket: { scheduledFor?, ifMissed?, graceMin? }
+//                    a series: { title?, rule?, overlap?, maxFailures?, ifMissed?, graceMin? }
+//   verb 'delete'    cancel a one-off ticket, or delete a series
+//   verb 'run-now'   start a ticket now, or one extra occurrence of a series
+//   verb 'pause' | 'resume' | 'skip-next'   a series only
+async function scheduleVerb(verb, id, body = {}) {
+  const found = findScheduleItem(id);
+  const out = (status, payload) => ({ status, body: payload });
+  if (!found) return out(404, { error: 'schedule not found' });
+  if (verb === 'patch') {
+    try {
+      if (found.kind === 'once') {
+        const patch = {};
+        if (body.scheduledFor != null) {
+          const at = parseScheduledFor(body.scheduledFor);
+          if (!at.ok) return out(400, { error: at.error });
+          if (at.ms < Date.now() - 5_000) return out(400, { error: 'scheduledFor is in the past' });
+          patch.runAtMs = at.ms;
+        }
+        if (body.ifMissed != null) {
+          if (!MISSED_POLICIES.includes(body.ifMissed)) return out(400, { error: `ifMissed must be one of ${MISSED_POLICIES.join(' | ')}` });
+          patch.ifMissed = body.ifMissed;
+        }
+        if (body.graceMin != null) patch.graceMin = body.graceMin;
+        if (found.item.scheduleId && patch.runAtMs != null) return out(400, { error: 'an occurrence of a repeating schedule cannot be moved — edit the schedule, or skip this occurrence' });
+        const t = updateTicket(found.item.id, patch);
+        if (!t) return out(409, { error: `this run is ${found.item.status} and can no longer be changed` });
+        if (t.askThreadId && t.askCardId && patch.runAtMs != null) {
+          try { flipCard(t.askThreadId, t.askCardId, { scheduledFor: t.runAt }); } catch { /* display only */ }
+        }
+        emitChanged('schedules-changed', 'updated');
+        emitChanged('notifications-changed');
+        return out(200, { kind: 'once', item: t });
+      }
+      const patch = {};
+      for (const k of ['title', 'rule', 'overlap', 'maxFailures', 'ifMissed', 'graceMin']) if (body[k] !== undefined) patch[k] = body[k];
+      if (patch.rule && typeof patch.rule === 'object' && !isValidTimeZone(patch.rule.tz)) return out(400, { error: `rule.tz is not a known timezone: ${patch.rule.tz ?? '(missing)'}` });
+      if (patch.maxFailures !== undefined && (!Number.isSafeInteger(patch.maxFailures) || patch.maxFailures < 0 || patch.maxFailures > 100)) {
+        return out(400, { error: 'maxFailures must be a whole number from 0 to 100 (0 = never pause)' });
+      }
+      if (patch.graceMin !== undefined && (!Number.isSafeInteger(patch.graceMin) || patch.graceMin < 0 || patch.graceMin > 10080)) {
+        return out(400, { error: 'graceMin must be a whole number of minutes from 0 to 10080' });
+      }
+      const s = updateSchedule(found.item.id, patch);
+      if (s && s.askThreadId && s.askCardId && patch.rule) {
+        try { flipCard(s.askThreadId, s.askCardId, { sentence: s.sentence, scheduledFor: s.nextRunAt }); } catch { /* display only */ }
+      }
+      emitChanged('schedules-changed', 'updated');
+      return out(200, { kind: 'recurring', item: s });
+    } catch (err) {
+      return out(400, { error: err && err.message ? err.message : String(err) });
+    }
+  }
+  if (verb === 'delete') {
+    if (found.kind === 'recurring') {
+      deleteSchedule(found.item.id);
+      releaseAskCard(found.item);
+    } else {
+      if (found.item.scheduleId) return out(400, { error: 'this is an occurrence of a repeating schedule — skip it instead' });
+      const t = cancelTicket(found.item.id);
+      if (!t) return out(409, { error: `this run is ${found.item.status} and can no longer be canceled` });
+      releaseAskCard(t);
+    }
+    emitChanged('schedules-changed', 'deleted');
+    emitChanged('notifications-changed');
+    return out(200, { ok: true });
+  }
+  if (verb === 'run-now') {
+    const ticket = found.kind === 'recurring' ? runScheduleNow(found.item.id) : requestRunNow(found.item.id);
+    if (!ticket) return out(409, { error: `this ${found.kind === 'recurring' ? 'schedule' : 'run'} is ${found.item.status} and cannot be started` });
+    emitChanged('schedules-changed', 'run-now');
+    emitChanged('notifications-changed');
+    await schedulerTick();
+    const after = getTicket(ticket.id);
+    // A ticket held by a waiting `--wait` terminal is started by that terminal within seconds.
+    return out(200, { runId: ticket.id, status: after ? after.status : 'scheduled', failReason: after ? after.failReason : null, pipelineId: after ? after.pipelineId : null });
+  }
+  if (['pause', 'resume', 'skip-next'].includes(verb)) {
+    if (found.kind !== 'recurring') return out(404, { error: 'repeating schedule not found' });
+    const s = verb === 'pause' ? pauseSchedule(found.item.id) : verb === 'resume' ? resumeSchedule(found.item.id) : skipNext(found.item.id);
+    if (!s) return out(409, { error: `this schedule is ${found.item.status}` });
+    emitChanged('schedules-changed', verb);
+    emitChanged('notifications-changed');
+    return out(200, { kind: 'recurring', item: s });
+  }
+  return out(400, { error: `unknown schedule action ${verb}` });
+}
+
+/** Apply a CONFIRMED Ask Worca schedule card (schedule-spec.mjs shape) through scheduleVerb. */
+async function applyScheduleCard(card) {
+  const map = { run_now: ['run-now', {}], move: ['patch', card.patch || {}], edit: ['patch', card.patch || {}], cancel: ['delete', {}], delete: ['delete', {}] };
+  const m = map[card.action];
+  if (!m) return { ok: false, error: `unknown schedule action "${card.action}"` };
+  const r = await scheduleVerb(m[0], card.id, m[1]);
+  if (r.status !== 200) return { ok: false, error: (r.body && r.body.error) || `failed (${r.status})` };
+  const b = r.body || {};
+  let detail = '';
+  if (card.action === 'run_now') {
+    detail = b.status === 'failed' ? `could not start: ${b.failReason || 'unknown error'}`
+      : b.status === 'fired' ? `started${b.pipelineId ? ` as run ${b.pipelineId}` : ''}` : 'starting within seconds';
+    if (b.status === 'failed') return { ok: false, error: `could not start: ${b.failReason || 'unknown error'}`, runId: b.runId };
+  } else if (card.action === 'move') detail = card.after && card.after.when ? `now at ${card.after.when}` : 'moved';
+  else if (card.action === 'edit') {
+    const it = b.item;
+    detail = !it ? 'changed'
+      : it.nextRunAt ? `next run ${formatInstant(Date.parse(it.nextRunAt), it.tz || 'UTC')}`
+        : it.status === 'paused' ? 'still paused — resume it to run again' : `the schedule is ${it.status}`;
+  }
+  else detail = card.action === 'cancel' ? 'canceled' : 'deleted';
+  return { ok: true, detail, ...(b.runId ? { runId: b.runId } : {}), ...(b.pipelineId ? { pipelineId: b.pipelineId } : {}) };
+}
+
+// PATCH /api/schedules/:id — a ticket: { scheduledFor?, ifMissed?, graceMin? };
+// a series: { title?, rule?, overlap?, maxFailures?, ifMissed?, graceMin? }.
+app.patch('/api/schedules/:id', async (req, res) => {
+  const r = await scheduleVerb('patch', req.params.id, req.body || {});
+  res.status(r.status).json(r.body);
+});
+
+// DELETE /api/schedules/:id — cancel a one-shot ticket, or delete a series.
+app.delete('/api/schedules/:id', async (req, res) => {
+  const r = await scheduleVerb('delete', req.params.id);
+  res.status(r.status).json(r.body);
+});
+
+// POST /api/schedules/:id/run-now — start a ticket now, or one extra occurrence of a series.
+app.post('/api/schedules/:id/run-now', async (req, res) => {
+  const r = await scheduleVerb('run-now', req.params.id);
+  res.status(r.status).json(r.body);
+});
+
+for (const verb of ['pause', 'resume', 'skip-next']) {
+  app.post(`/api/schedules/:id/${verb}`, async (req, res) => {
+    const r = await scheduleVerb(verb, req.params.id);
+    res.status(r.status).json(r.body);
+  });
+}
+
+// GET /api/notifications?scope=schedule[&unread=1][&problems=1] -> { notifications, unread }
+app.get('/api/notifications', (req, res) => {
+  try {
+    const scope = typeof req.query.scope === 'string' && req.query.scope ? req.query.scope : 'schedule';
+    const flag = (v) => v === '1' || v === 'true';
+    res.json({
+      notifications: listNotifications({ scope, unread: flag(req.query.unread), problems: flag(req.query.problems) }),
+      unread: unreadCount(scope),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.post('/api/notifications/read-all', (req, res) => {
+  const scope = req.body && typeof req.body.scope === 'string' && req.body.scope ? req.body.scope : 'schedule';
+  markAllRead(scope);
+  emitChanged('notifications-changed');
+  res.json({ unread: unreadCount(scope) });
+});
+
+app.post('/api/notifications/:id/read', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id)) return badRequest(res, 'invalid notification id');
+  const read = !(req.body && req.body.read === false);
+  if (!markRead(id, { read })) return res.status(404).json({ error: 'notification not found' });
+  emitChanged('notifications-changed');
+  res.json({ unread: unreadCount('schedule') });
+});
+
+// ---------------------------------------------------------------------------
 // Chat connectivity (chat-connectivity-design.md): persistent channel workers
 // + inbound command router. Workers are dumb transports; every command
 // resolves here against the runs Map / DB through chatActions.
@@ -1684,6 +2188,11 @@ const chatContext = {
 
 const chatActions = {
   listRuns: () => summarizeRuns(),
+  // Waiting + missed tickets, soonest first, with the time in this server's zone.
+  listScheduled: () => listTickets().map((t) => ({
+    id: t.id, title: t.title, runAt: t.runAt, status: t.status, projectDir: t.projectDir,
+    when: formatInstant(Date.parse(t.runAt), Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'),
+  })),
   runState: (runId) => { try { return runs.get(runId)?.orch?.getState() ?? null; } catch { return null; } },
   pendingQuestion: (runId) => runs.get(runId)?.pendingQuestion ?? null,
   answer: (runId, id, payload) => answerRun(runId, id, payload),
@@ -2072,7 +2581,7 @@ app.get('/api/runs', async (req, res) => {
       const live = [...runs.values()]
         .filter((r) => r.workspaceId === ws.id)
         .map((r) => ({ id: r.pipelineId || r.id, runId: r.id, title: r.title, status: r.status, live: true }));
-      return res.json({ pipelines, live, ghAvailable: await hasGh() });
+      return res.json({ pipelines, live, scheduled: listTickets({ workspaceId: ws.id }), ghAvailable: await hasGh() });
     } catch (err) {
       return res.status(500).json({ error: err && err.message ? err.message : String(err) });
     }
@@ -2096,7 +2605,8 @@ app.get('/api/runs', async (req, res) => {
         status: r.status,
         live: true,
       }));
-    res.json({ pipelines, live, ghAvailable: await hasGh() });
+    // Additive: runs that WAIT for their start time are tickets, not pipelines.
+    res.json({ pipelines, live, scheduled: listTickets({ projectDir }), ghAvailable: await hasGh() });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -2274,6 +2784,7 @@ app.get('/api/counts', (_req, res) => {
       pipelines: countPipelines(),
       projects: countProjects(),
       workspaces: countWorkspaces(),
+      schedules: { ...scheduleCounts(), unread: unreadCount('schedule') },
     });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -3172,7 +3683,13 @@ app.delete('/api/projects', async (req, res) => {
   const name = typeof req.query.name === 'string' ? req.query.name : '';
   if (!name.trim()) return badRequest(res, 'name is required');
   try {
+    // Scheduled runs of a removed project can never start: cancel them with it.
+    const before = (await listProjects()).find((p) => p && p.name === name.trim());
     const projects = await removeProject(name);
+    if (before && before.path) {
+      try { if (cancelForTarget({ projectDir: before.path })) emitChanged('schedules-changed', 'target-removed'); }
+      catch (err) { console.error(`[worca-ui] schedule cleanup failed: ${err && err.message ? err.message : err}`); }
+    }
     emitChanged('projects-changed', 'deleted');
     res.json({ projects });
   } catch (err) {
@@ -3457,6 +3974,8 @@ app.delete('/api/workspaces/:id', async (req, res) => {
   if (live) return res.status(409).json({ error: 'cannot delete a workspace with a live run or scan' });
   try {
     const report = await deleteWorkspace(id);
+    try { if (cancelForTarget({ workspaceId: id })) emitChanged('schedules-changed', 'target-removed'); }
+    catch (err) { console.error(`[worca-ui] schedule cleanup failed: ${err && err.message ? err.message : err}`); }
     emitChanged('workspaces-changed', 'deleted');
     res.json({ ok: true, warnings: (report && report.warnings) || [] });
   } catch (err) {
@@ -3680,6 +4199,7 @@ const settingsState = () => ({
   titleModelEffective: describeTitleModel(),              // env override / stale id, for the hint line (#422)
   hideBuiltinModels: hideBuiltinModels(),
   theme: storedTheme(),                                   // system | light | dark (dark-mode design §6)
+  schedule: scheduleDefaults(),                           // defaults a NEW schedule inherits
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
 });
 
@@ -3816,10 +4336,11 @@ app.post('/api/settings', async (req, res) => {
     if (hasThemeKey) await setTheme(body.theme);
     if (hasUiLevelKey) await setUiLevel(body.uiLevel);
     if (hasAutoKey) await setAutoWorkflowModel(body.autoWorkflowModel ?? '', { models: autoModels });
+    if (has('schedule')) await setScheduleDefaults(body.schedule && typeof body.schedule === 'object' ? body.schedule : {});
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey) emitChanged('settings-changed');
+    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || has('schedule')) emitChanged('settings-changed');
     res.json({ ...settingsState(), ...(await autoModelState()), chat: chatPrefs() });
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).
@@ -5081,6 +5602,19 @@ async function askSystemPromptFor(catalog) {
   return askBuildSystemPrompt(catalog);
 }
 
+/** "scheduled Sat Sep 19, 02:00 (run 1a2b…)" / "repeats: Every weekday at 02:00 (sch_…)" / "proposes: …" — or ''. */
+function askCardScheduleLine(b, tz = null) {
+  if (b.state === 'scheduled' && b.scheduleId) return `repeats: ${b.sentence || ''} (${b.scheduleId})`;
+  if (b.state === 'scheduled' && b.runId) {
+    const ms = Date.parse(b.scheduledFor || '');
+    const when = Number.isFinite(ms) ? formatInstant(ms, isValidTimeZone(tz) ? tz : Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC') : '?';
+    return `scheduled for ${when} (run ${b.runId})`;
+  }
+  const s = b.card && b.card.schedule;
+  if (b.state === 'proposed' && s) return s.kind === 'repeat' ? `proposes: ${s.sentence}` : `proposes: once at ${s.when}`;
+  return '';
+}
+
 /** Resolve the VALIDATED client context into the server-side shape
  *  buildContextHeader consumes (§6.5: server-resolved rows only — never
  *  client-supplied titles or paths). Every lookup is individually guarded:
@@ -5088,6 +5622,7 @@ async function askSystemPromptFor(catalog) {
 async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], currentMessageId = null) {
   const out = { now: new Date().toISOString() };
   if (ctx.pinned === true) out.pinned = true;   // #397: rendered as the [pinned by the user] marker
+  if (ctx.timeZone) out.timeZone = ctx.timeZone;   // validated IANA name; the header adds the user's clock
   if (ctx.view) out.view = ctx.view;
   if (ctx.diffPath) out.diffPath = ctx.diffPath;   // client-supplied, already length-checked by validateClientContext
   try {
@@ -5182,6 +5717,10 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: b.card.summary || '' });
           continue;
         }
+        if (b.card && b.card.type === 'schedule') {
+          cards.push({ id: b.id, type: 'schedule', state: b.state, summary: b.card.summary || '' });
+          continue;
+        }
         cards.push(wf
           ? {
             id: b.id, type: 'workflow', state: b.state, name: (b.card && b.card.name) || '',
@@ -5190,6 +5729,9 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
           : {
             id: b.id, state: b.state, workflowId: b.card && b.card.workflowId,
             targetName: (b.card && (b.card.projectName || b.card.workspaceName)) || '',
+            // A scheduled (or schedule-proposing) run card says when, so the model never re-proposes it.
+            ...(askCardScheduleLine(b, ctx.timeZone) ? { schedule: askCardScheduleLine(b, ctx.timeZone) } : {}),
+            ...(b.card && b.card.source ? { task: `${b.card.source.plugin}/${b.card.source.sourceId} ${b.card.source.taskId}` } : {}),
           });
       }
     }
@@ -5320,6 +5862,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       firstText: text,
       deterministicTitle,
       pinnedScope: askPinnedScope(ctx),             // #397: proposal defaulting + mismatch flag
+      timeZone: ctx.timeZone || (thread.context && thread.context.timeZone) || null,   // scheduled runs: the user's clock
       memoryProject: headerCtx.project ? { key: headerCtx.project.key, name: headerCtx.project.name || '' } : null,   // native-rules revision: the turn mounts global + this project through --add-dir
       mock: mockEnabled({}) ? { card: mockAskCard(ctx, text) } : null, // R-F
       attachmentNames,
@@ -5335,6 +5878,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
           if (scope === 'global' || (typeof scope === 'string' && scope.startsWith('projects/') && PROJECT_KEY_RE.test(scope.slice('projects/'.length)))) emitMemoryChanged(scope);
         },
         trackRun: (input, { pin } = {}) => askTrackRun(id, input, pin ?? null),
+        // pause / resume / skip / mark-read in the MCP child: the Schedules page and the badges repaint.
+        onScheduleMutation: () => { emitChanged('schedules-changed', 'ask'); emitChanged('notifications-changed'); },
       },
     });
     job.turn = turn;
@@ -5588,16 +6133,20 @@ async function startWorkflowEventTurn(threadId, block, { declined = false, thenR
   return failedEventTurn(threadId, { error: r.error, status: r.status, ...(r.budget ? { budget: r.budget } : {}) });
 }
 
-/** The metrics / policy card's event turn: the synthetic notice row + the "[worca event] metrics|policy card …" prompt (same queueing as workflow cards). */
+/** The metrics / policy / schedule card's event turn: the synthetic notice row + the
+ *  "[worca event] <type> card …" prompt (same queueing as workflow cards). */
 async function startMetricsEventTurn(threadId, block) {
   const thread = askGetThread(threadId);
   if (!thread) return null;
   const card = block.card || {};
   const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
   const result = card.result || null;
-  const isPolicy = card.type === 'policy';
-  const text = (isPolicy ? policyEventPrompt : metricsEventPrompt)({ cardId: block.id, state, card, result });
-  const notice = (isPolicy ? policyNoticeText : metricsNoticeText)({ state, card, result });
+  // One event turn for every non-workflow card; the type picks the wording. Metrics is the fallback.
+  const kind = card.type === 'policy' ? 'policy' : card.type === 'schedule' ? 'schedule' : 'metrics';
+  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, metrics: metricsEventPrompt }[kind];
+  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, metrics: metricsNoticeText }[kind];
+  const text = eventPrompt({ cardId: block.id, state, card, result });
+  const notice = noticeText({ state, card, result });
   let mv = await validateModelEffort(thread.model, thread.effort);
   if (!mv.ok) {
     const d = (await askCatalog({ withSecrets: false })).default;
@@ -5631,6 +6180,31 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
     const body = req.body || {};
     const found = askFindCard(id, cardId);
     if (!found) return res.status(404).json({ error: 'card not found' });
+    if (found.block.card && found.block.card.type === 'schedule') {
+      // Schedule card (docs/scheduled-runs.md "Ask Worca"): proposed → applied | failed | declined. The change —
+      // start now, move, edit, cancel, delete — happens HERE, behind the click, through the same scheduleVerb
+      // the Schedules page uses; never in the model's tool.
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const turn = await startMetricsEventTurn(id, block);
+        return res.json({ block, turn });
+      }
+      askCardBusy.add(cardId);
+      let block;
+      try {
+        let result;
+        try { result = await applyScheduleCard(found.block.card); }
+        catch (err) { result = { ok: false, error: err && err.message ? err.message : String(err) }; }
+        block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      const turn = await startMetricsEventTurn(id, block);
+      return res.json({ block, turn });
+    }
     if (found.block.card && (found.block.card.type === 'metrics' || found.block.card.type === 'policy')) {
       // Metrics / policy card (docs/team-metrics.md, docs/team-policy.md "Ask Worca"): proposed → applied | failed |
       // declined. The change is the outward-facing part — a branch on origin, a commit to the team's policy, a
@@ -6651,9 +7225,9 @@ async function copyDir(srcDir, destDir, baseForRel, copiedOut) {
  * @param {Array<{name?:string, dataBase64?:string}>} list
  * @returns {Promise<string[]>}
  */
-async function writeExtras(runId, list) {
+async function writeExtras(runId, list, dirOverride = null) {
   if (!Array.isArray(list) || list.length === 0) return [];
-  const dir = path.join(os.tmpdir(), `orchestrator-extras-${runId}`);
+  const dir = dirOverride || path.join(os.tmpdir(), `orchestrator-extras-${runId}`);
   await fsp.mkdir(dir, { recursive: true });
   const out = [];
   let i = 0;
@@ -6940,6 +7514,8 @@ if (isMain) {
         },
       });
     } catch (err) { console.warn(`[worca-ui] team policy background: ${err?.message || err}`); }
+    // Scheduled runs: boot catch-up + the 30 s tick (the server IS the scheduler).
+    try { startScheduler(); } catch (err) { console.warn(`[worca-ui] scheduler: ${err?.message || err}`); }
   });
 }
 

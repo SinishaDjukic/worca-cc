@@ -690,3 +690,28 @@ test('propose_policy_change / get_team_policy: labels, the RESULT hook with the 
   throwing.push(atool('msg_1', 'toolu_x', 'mcp__worca__propose_policy_change', input));
   assert.doesNotThrow(() => throwing.push(uresult('toolu_x', '{"ok":true}')));
 });
+
+// Scheduled runs (docs/scheduled-runs.md "Ask Worca"): the four direct writes repaint the page; a
+// propose_schedule_change RESULT hands its INPUT to the parent for the authoritative re-validation.
+test('schedule tools: a successful direct write pokes onScheduleMutation (errors and reads do not); propose_schedule_change reaches onScheduleProposal', () => {
+  const pokes = [];
+  const proposals = [];
+  const h = harness({ onScheduleMutation: (e) => pokes.push(e), onScheduleProposal: (e) => { proposals.push(e); } });
+  h.push(atool('msg_1', 'toolu_1', 'mcp__worca__pause_schedule', { id: 'sch_0000abcd' }));
+  h.push(uresult('toolu_1', JSON.stringify({ ok: true, schedule: { id: 'sch_0000abcd', status: 'paused' } })));
+  h.push(atool('msg_1', 'toolu_2', 'mcp__worca__resume_schedule', { id: 'sch_0000abcd' }));
+  h.push(uresult('toolu_2', 'error: resume_schedule: this schedule is active', { isError: true }));
+  h.push(atool('msg_1', 'toolu_3', 'mcp__worca__list_schedules', {}));
+  h.push(uresult('toolu_3', JSON.stringify({ schedules: [], runs: [] })));
+  h.push(atool('msg_1', 'toolu_4', 'mcp__worca__mark_schedule_activity_read', { all: true }));
+  h.push(uresult('toolu_4', JSON.stringify({ ok: true, marked: 2, unread: 0 })));
+  const input = { id: 'sch_0000abcd', action: 'delete' };
+  h.push(atool('msg_1', 'toolu_5', 'mcp__worca__propose_schedule_change', input));
+  h.push(uresult('toolu_5', JSON.stringify({ ok: true, card: { type: 'schedule' } })));
+  assert.deepEqual(pokes, [{ tool: 'pause_schedule' }, { tool: 'mark_schedule_activity_read' }]);
+  assert.equal(proposals.length, 1);
+  assert.deepEqual(proposals[0].input, input);
+  assert.equal(proposals[0].isError, false);
+  assert.equal(labelForTool('mcp__worca__preview_schedule', {}), 'Working out the dates');
+  assert.equal(labelForTool('mcp__worca__propose_schedule_change', {}), 'Proposing a schedule change');
+});

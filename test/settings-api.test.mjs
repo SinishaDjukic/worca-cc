@@ -134,6 +134,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       askMaxTurns: '', askMaxBudgetUsd: '', debugSpawnEnabled: false,
       titleModel: '', hideBuiltinModels: false, theme: '', uiLevel: '',
       autoWorkflowModel: '',
+      schedule: {},
     };
     for (const k of SETTINGS_POST_KEYS) {
       if (k === 'root') continue;

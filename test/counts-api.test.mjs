@@ -32,7 +32,8 @@ after(async () => {
 test('GET /api/counts: zero on a fresh home', async () => {
   const r = await fetch(`${base}/api/counts`);
   assert.equal(r.status, 200);
-  assert.deepEqual(await r.json(), { pipelines: 0, projects: 0, workspaces: 0 });
+  assert.deepEqual(await r.json(), { pipelines: 0, projects: 0, workspaces: 0,
+    schedules: { scheduled: 0, missed: 0, recurring: 0, unread: 0 } });   // v31: additive
 });
 
 test('GET /api/counts: projects count tracks create + delete', async () => {

@@ -137,6 +137,9 @@ import {
   renderProjectTmCell, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
 import { paintAboutInto } from './about-links.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts } from './report-run.mjs';
+import { openScheduleSheet, closeScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
+import { describeRule, formatInstant } from '../../src/shared/schedule/recurrence.mjs';
+import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
@@ -215,6 +218,18 @@ const el = {
   extrasPills: $('#extrasPills'),
   mock: $('#mock'),
   startBtn: $('#start-btn'),
+  startMore: $('#start-more'),
+  startMenu: $('#start-menu'),
+  startMenuNow: $('#start-menu-now'),
+  startMenuSchedule: $('#start-menu-schedule'),
+  newSched: $('#new-sched'),
+  newSchedBadge: $('#new-sched-badge'),
+  newSchedText: $('#new-sched-text'),
+  newSchedChange: $('#new-sched-change'),
+  newSchedClear: $('#new-sched-clear'),
+  startBtnLabel: $('#start-btn-label'),
+  navSchedulesCount: $('#nav-schedules-count'),
+  navSchedulesUnread: $('#nav-schedules-unread'),
   formMsg: $('#form-msg'),
 
   pipelineConfig: $('#pipeline-config'),
@@ -758,6 +773,18 @@ function handleServerMessage(msg) {
   // is global, so repaint it regardless of the open view.
   if (msg.type === 'budget-changed') {
     refreshBudget();
+    return;
+  }
+  // Scheduled runs: a ticket or a repeating schedule changed (here, in another tab, from the
+  // CLI, or because the scheduler tick started/missed/skipped something).
+  if (msg.type === 'schedules-changed') {
+    refreshAllCounts();
+    if (currentView() === 'schedules' || currentView() === 'running') void schedulesView.load().then(paintScheduledGroup);
+    return;
+  }
+  if (msg.type === 'notification' || msg.type === 'notifications-changed') {
+    refreshAllCounts();
+    if (currentView() === 'schedules') void schedulesView.loadFeed();
     return;
   }
   // Another tab saved a Settings card: repaint ours from the server so a stale
@@ -2130,9 +2157,10 @@ function gvRenderSaved() {
         // A delete is destructive and unrecoverable: it asks first, in red — the
         // guard the v1 composer's saved list owned before it was retired.
         del.addEventListener('click', async () => {
+          const schedNote = await scheduleDependentsNote(`workflowId=${encodeURIComponent(wf.id)}`, 'They will fail to start until you point them at another pipeline.');
           const ok = await confirmModal({
             title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
-            message: `Delete "${wf.name || wf.id}"?\n\nThis cannot be undone.`,
+            message: `Delete "${wf.name || wf.id}"?\n\nThis cannot be undone.${schedNote}`,
           });
           if (!ok) return;
           const r = await gvApi.deleteWorkflow(wf.id);
@@ -6473,9 +6501,10 @@ async function rescanWorkspace(w) {
 // (live run/scan) keeps the card + surfaces data.error.
 async function deleteWorkspaceCard(card, w) {
   if (!card || !w) return;
+  const schedNote = await scheduleDependentsNote(`workspaceId=${encodeURIComponent(w.id)}`, 'Deleting the workspace cancels them.');
   const ok = await confirmModal({
     title: 'Delete workspace', danger: true, confirmLabel: 'Delete',
-    message: `Delete workspace "${w.name || w.id}"?\n\nThis removes its history store and best-effort branch cleanup. This cannot be undone.`,
+    message: `Delete workspace "${w.name || w.id}"?\n\nThis removes its history store and best-effort branch cleanup. This cannot be undone.${schedNote}`,
   });
   if (!ok) return;
   const btn = card.querySelector('.ws-delete');
@@ -8290,12 +8319,28 @@ function promptModal({ confirmLabel = 'Save', fields = [], ...rest } = {}) {
   return modalShell({ ...rest, confirmLabel, fields });
 }
 
+// Scheduled runs that depend on something about to be removed — so the confirmation can NAME
+// them. `query` is one of workflowId= / projectDir= / workspaceId=. Never blocks the removal:
+// a failed lookup just omits the note.
+async function scheduleDependentsNote(query, consequence) {
+  try {
+    const res = await fetch(`/api/schedules/dependents?${query}`);
+    if (!res.ok) return '';
+    const { dependents } = await safeJson(res);
+    if (!Array.isArray(dependents) || !dependents.length) return '';
+    const names = dependents.slice(0, 4).map((d) => `“${d.title || (d.kind === 'recurring' ? 'repeating schedule' : 'scheduled run')}”`).join(', ');
+    const more = dependents.length > 4 ? ` and ${dependents.length - 4} more` : '';
+    return `\n\n${dependents.length === 1 ? 'A scheduled run depends' : `${dependents.length} scheduled runs depend`} on it: ${names}${more}. ${consequence}`;
+  } catch { return ''; }
+}
+
 // Remove a project. Returns true when the registry changed, false on cancel or failure. `errEl`
 // (the project page's .pd-error) takes the failure text when given; the list message otherwise.
 async function deleteProject(p, errEl = null) {
+  const schedNote = await scheduleDependentsNote(`projectDir=${encodeURIComponent(p.path || '')}`, 'Removing the project cancels them.');
   const ok = await confirmModal({
     title: 'Remove project',
-    message: `Remove “${p.name}” from the list?\nThe folder on disk and its run history are left untouched.`,
+    message: `Remove “${p.name}” from the list?\nThe folder on disk and its run history are left untouched.${schedNote}`,
     confirmLabel: 'Remove project',
   });
   if (!ok) return false;
@@ -8747,11 +8792,17 @@ el.form.addEventListener('submit', async (e) => {
     body.prompt = promptText;
   }
 
+  // A time picked earlier (Schedule… in the split menu, Schedules › Schedule a run, Change…)
+  // rides the same POST /api/run body — `scheduledFor` (once) or `repeat` (recurring).
+  const scheduling = !!pendingSchedule;
+  if (scheduling) Object.assign(body, pendingSchedule);
+
   // Guard the whole in-flight window: applyBudgetToNewView also drives
   // start.disabled, and this run's own creation event repaints it.
   startSubmitInFlight = true;
   el.startBtn.disabled = true;
-  setFormMsg('Starting run...', '');
+  if (el.startMore) el.startMore.disabled = true;
+  setFormMsg(scheduling ? 'Scheduling…' : 'Starting run...', '');
 
   // Upload the selected extra files' bytes; the server writes them to a temp
   // dir and the orchestrator copies them into the pipeline's extras/ folder.
@@ -8782,10 +8833,20 @@ el.form.addEventListener('submit', async (e) => {
         data = await safeJson(res);
       }
     }
+    if (el.startMore) el.startMore.disabled = false;
     if (!res.ok || !data.runId) {
       startSubmitInFlight = false;
       el.startBtn.disabled = false;
-      return setFormMsg(`Failed to start: ${data.error || res.status}`, 'err');
+      return setFormMsg(`Failed to ${scheduling ? 'schedule' : 'start'}: ${data.error || res.status}`, 'err');
+    }
+    // 202: nothing is running — the request is a ticket now. Show it where it lives.
+    if (data.status === 'scheduled') {
+      startSubmitInFlight = false;
+      el.startBtn.disabled = !!budgetState.budget?.blocked;
+      setPendingSchedule(null);   // the form is a plain Start run form again
+      setFormMsg(data.budgetWarning ? `Scheduled. ${data.budgetWarning}` : 'Scheduled.', data.budgetWarning ? 'warn' : 'ok');
+      showView('schedules');
+      return;
     }
 
     // begin tracking the new run (creates a local model + switches to Running)
@@ -8807,9 +8868,84 @@ el.form.addEventListener('submit', async (e) => {
   } catch (err) {
     startSubmitInFlight = false;
     el.startBtn.disabled = false;
+    if (el.startMore) el.startMore.disabled = false;
     setFormMsg(`Error: ${err.message}`, 'err');
   }
 });
+
+// The split Start button's menu. "Schedule…" is a MODE, not a submit: it opens the sheet at
+// once, before any prompt is typed, exactly like Schedules › Schedule a run (#new/schedule).
+// A time picked before the task waits on the form; Change… on the line re-opens the sheet.
+// The sheet's answer waits on the
+// form ({scheduledFor}|{repeat}, ifMissed, graceMin) and Start run reads as Schedule until it
+// is used or dropped. Never persisted: a reload is a plain form.
+let pendingSchedule = null;
+const newScheduleSheetOpts = (runTitle = '') => ({
+  mode: 'create', runTitle, defaults: schedulesView.defaults,
+  warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer — chat notifications can reach you.',
+});
+const pendingScheduleInitial = () => (pendingSchedule
+  ? (pendingSchedule.repeat
+    ? { rule: pendingSchedule.repeat.rule, overlap: pendingSchedule.repeat.overlap, maxFailures: pendingSchedule.repeat.maxFailures, ifMissed: pendingSchedule.ifMissed, graceMin: pendingSchedule.graceMin }
+    : { scheduledFor: pendingSchedule.scheduledFor, ifMissed: pendingSchedule.ifMissed, graceMin: pendingSchedule.graceMin })
+  : {});
+function setPendingSchedule(pick) {
+  pendingSchedule = pick || null;
+  if (!el.newSched) return;
+  el.newSched.hidden = !pendingSchedule;
+  if (el.startBtnLabel) el.startBtnLabel.textContent = pendingSchedule ? 'Schedule' : 'Start run';
+  const play = document.getElementById('start-btn-play');
+  const clock = document.getElementById('start-btn-clock');
+  // toggleAttribute, not .hidden: an <svg> is not an HTMLElement, so the property is a no-op on it.
+  if (play) play.toggleAttribute('hidden', !!pendingSchedule);
+  if (clock) clock.toggleAttribute('hidden', !pendingSchedule);
+  if (!pendingSchedule) return;
+  if (pendingSchedule.repeat) {
+    el.newSchedBadge.textContent = 'Repeats';
+    el.newSchedText.textContent = describeRule(pendingSchedule.repeat.rule);
+  } else {
+    const ms = Date.parse(pendingSchedule.scheduledFor);
+    el.newSchedBadge.textContent = 'Scheduled';
+    el.newSchedText.textContent = Number.isFinite(ms) ? `Starts ${formatInstant(ms, browserTimeZone())}` : 'Starts later';
+  }
+}
+/** Schedules › Schedule a run (#new/schedule): pick the time first, then describe the task. */
+async function openScheduleForNew() {
+  const el0 = el.prompt;
+  const titleEl = document.getElementById('title');
+  const runTitle = titleEl && typeof titleEl.value === 'string' ? titleEl.value.trim() : '';
+  const picked = await openScheduleSheet({ ...newScheduleSheetOpts(runTitle), initial: pendingScheduleInitial() });
+  if (picked) setPendingSchedule(picked);
+  try { el0?.focus(); } catch { /* jsdom */ }
+}
+el.newSchedChange?.addEventListener('click', () => { void openScheduleForNew(); });
+el.newSchedClear?.addEventListener('click', () => setPendingSchedule(null));
+function closeStartMenu() {
+  if (!el.startMenu || el.startMenu.hidden) return;
+  el.startMenu.hidden = true;
+  el.startMore?.setAttribute('aria-expanded', 'false');
+}
+if (el.startMore && el.startMenu) {
+  el.startMore.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = el.startMenu.hidden;
+    el.startMenu.hidden = !open;
+    el.startMore.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) el.startMenuSchedule?.focus();
+  });
+  el.startMenuNow?.addEventListener('click', () => { closeStartMenu(); setPendingSchedule(null); el.form.requestSubmit(el.startBtn); });
+  el.startMenuSchedule?.addEventListener('click', () => { closeStartMenu(); void openScheduleForNew(); });
+  document.addEventListener('click', (e) => { if (!e.target.closest('#start-split')) closeStartMenu(); });
+  el.startMenu.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); closeStartMenu(); el.startMore.focus(); }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const items = [...el.startMenu.querySelectorAll('button')];
+      const i = items.indexOf(document.activeElement);
+      items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
+    }
+  });
+}
 
 // Create the local run model for a run THIS tab just started and switch to the
 // Running view. We do NOT send a subscribe here: live events arrive via the
@@ -8902,6 +9038,7 @@ async function loadSettings() {
     paintAbout(data.app);
     paintBudgetSettings(data);
     paintAskSettings(data);
+    paintScheduleSettings(data);
     paintDebugSpawnSettings(data);
     await paintTitleModelSettings(data);
     await paintAutoModelSettings(data);
@@ -9286,6 +9423,36 @@ try {
   const mq = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
   if (mq && typeof mq.addEventListener === 'function') mq.addEventListener('change', () => applyTheme(document.documentElement.dataset.theme));
 } catch { /* no media queries here */ }
+
+// Settings › General › Scheduled runs: the defaults a new schedule inherits.
+function setSchedDefaultsMsg(text, kind) { setHintMsg('schedDefaultsMsg', text, kind); }
+function paintScheduleSettings(data) {
+  const d = data && data.schedule;
+  const missed = document.getElementById('schedIfMissed');
+  const grace = document.getElementById('schedGraceMin');
+  const fails = document.getElementById('schedMaxFailures');
+  if (!d || !missed || !grace || !fails) return;
+  missed.value = d.ifMissed;
+  if (![...grace.options].some((o) => o.value === String(d.graceMin))) grace.add(new Option(`${d.graceMin} minutes`, String(d.graceMin)));
+  grace.value = String(d.graceMin);
+  grace.disabled = d.ifMissed !== 'run';
+  fails.value = String(d.maxFailures);
+}
+function saveScheduleDefaults() {
+  const raw = document.getElementById('schedMaxFailures').value.trim();
+  const n = raw === '' ? '' : Number(raw);
+  if (n !== '' && (!Number.isInteger(n) || n < 0 || n > 100)) { setSchedDefaultsMsg('enter a whole number from 0 to 100', 'err'); return; }
+  postSettingsCard({
+    schedule: { ifMissed: document.getElementById('schedIfMissed').value, graceMin: Number(document.getElementById('schedGraceMin').value), maxFailures: n },
+  }, { setMsg: setSchedDefaultsMsg, paint: paintScheduleSettings });
+}
+document.getElementById('schedDefaultsSave')?.addEventListener('click', saveScheduleDefaults);
+document.getElementById('schedDefaultsReset')?.addEventListener('click', () => postSettingsCard(
+  { schedule: { ifMissed: '', graceMin: '', maxFailures: '' } }, { setMsg: setSchedDefaultsMsg, paint: paintScheduleSettings }));
+document.getElementById('schedIfMissed')?.addEventListener('change', (e) => {
+  const grace = document.getElementById('schedGraceMin');
+  if (grace) grace.disabled = e.target.value !== 'run';
+});
 
 function setAskLimitsMsg(text, kind) { setHintMsg('askLimitsMsg', text, kind); }
 function paintAskSettings(data) {
@@ -14111,6 +14278,16 @@ function paintHdHeaderMeta(screen, record, data) {
     seg.textContent = text;
     if (cls === 'hd-cost') seg.title = estTitle(st.totalCostUsd);
     meta.appendChild(seg);
+  }
+  // Scheduled runs: say HOW this run started — "by schedule" links to the Schedules view.
+  if (st.scheduledFor) {
+    meta.appendChild(hdDot());
+    const a = document.createElement('a');
+    a.className = 'hd-sched';
+    a.href = '#schedules';
+    a.textContent = st.scheduleId ? 'Started by a repeating schedule' : 'Started by schedule';
+    a.title = `Scheduled for ${fmtDate(st.scheduledFor)}`;
+    meta.appendChild(a);
   }
   // spec §8: the End card's result chip, repeated in the header meta (History D5
   // untouched — no model/effort). A path links through the keyed artifact route.
@@ -19027,13 +19204,68 @@ function renderAskBanner() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Scheduled runs (tickets, not pipelines). One view controller serves the Schedules view
+// AND the Running view's "next 24 hours" group; both read GET /api/schedules.
+// ---------------------------------------------------------------------------
+const SCHEDULED_GROUP_WINDOW_MS = 24 * 3600 * 1000;
+const schedulesView = createSchedulesView({
+  tabsHost: $('#schedules-tabs'),
+  feedHost: $('#schedules-feed'),
+  onceHost: $('#schedules-once'),
+  repeatingHost: $('#schedules-repeating'),
+  subEl: $('#schedules-sub'),
+  msgEl: $('#schedules-msg'),
+  deps: {
+    confirmModal: (opts) => confirmModal(opts),
+    // "Project · demo-shop" / "Workspace · Storefront": the kind first, then the name the
+    // rest of the app shows — every scheduled run card says what it runs against.
+    targetLabel: (item) => {
+      if (item.workspaceId) {
+        const ws = (state.workspaces || []).find((w) => w && w.id === item.workspaceId);
+        return `Workspace · ${ws ? ws.name : item.workspaceId}`;
+      }
+      const proj = (state.projects || []).find((x) => x && x.path === item.projectDir);
+      return `Project · ${proj ? proj.name : String(item.projectDir || '').split(/[\\/]/).filter(Boolean).pop() || 'project'}`;
+    },
+    // A tab click is a route (#schedules/<tab>), so Back and a reload land on the same tab.
+    route: (tab) => { location.hash = tab === 'activity' ? 'schedules' : `schedules/${tab}`; },
+    workflowLabel: (id) => {
+      const opt = el.workflowSelect ? [...el.workflowSelect.options].find((o) => o.value === id) : null;
+      if (opt) return opt.textContent.trim();
+      return { wf_default: 'Default', wf_auto: 'Auto', wf_memory_defrag: 'Memory defragment' }[id] || id;
+    },
+    onCounts: (c) => paintScheduleCounts(c),
+    // A started run opens its live monitor (the ticket id IS the runId); a finished one opens History.
+    openRun: ({ runId, pipelineId, projectDir }) => {
+      if (runId) { location.hash = `running/${runId}`; return; }
+      const proj = (state.projects || []).find((x) => x && x.path === projectDir);
+      location.hash = proj && pipelineId ? `history/${histDetailParam({ id: pipelineId, projectKey: proj.key })}` : 'history';
+    },
+  },
+});
+
+/** The workspace read-model, loaded once: a scheduled run card names "Workspace · <name>", not an id. */
+function withWorkspaces() {
+  return (state.workspaces || []).length ? Promise.resolve() : loadWorkspaces();
+}
+
+function paintScheduledGroup() {
+  const wrap = $('#run-scheduled');
+  const list = $('#run-scheduled-list');
+  if (!wrap || !list) return;
+  const soon = schedulesView.upcoming(SCHEDULED_GROUP_WINDOW_MS);
+  wrap.hidden = soon.length === 0;
+  list.replaceChildren(...soon.map((t) => schedulesView.ticketRow(t)));
+}
+
 function renderOverview() {
   const list = $('#run-list');
   if (!list) return;
   const rows = overviewRuns();
   // Pipelines only (D7) — but the empty copy stays "runs" per spec §4.2: it is
   // still true, and it is the wording the design keeps.
-  paintRunList(list, rows, 'No active runs — start one from New.');
+  paintRunList(list, rows, 'No active runs — start one from New, or schedule one for later.');
 
   // `rows` is already pipeline-only, so `live` IS the live-pipeline set the
   // "N pipelines executing" copy claims; "needs input" counts the ones asking.
@@ -19797,6 +20029,25 @@ async function refreshAllCounts() {
   if (el.navHistoryCount && Number.isFinite(data.pipelines)) el.navHistoryCount.textContent = String(data.pipelines);
   if (el.navProjectsCount && Number.isFinite(data.projects)) el.navProjectsCount.textContent = String(data.projects);
   if (el.navWorkspacesCount && Number.isFinite(data.workspaces)) el.navWorkspacesCount.textContent = String(data.workspaces);
+  if (data.schedules) paintScheduleCounts(data.schedules);
+}
+
+// Schedules nav badges: grey = what is planned (waiting runs + repeating schedules), amber =
+// UNREAD PROBLEMS in the activity feed (missed, failed, self-paused). Info items never count.
+// True while anything is scheduled, missed, repeating or unread: the Schedules entry then
+// shows in every interface mode (docs/ui-levels.md rule 2).
+let schedulesInUse = false;
+function paintScheduleCounts(c) {
+  if (!c) return;
+  const inUse = !!((c.scheduled || 0) + (c.missed || 0) + (c.recurring || 0) + (c.unread || 0));
+  if (inUse !== schedulesInUse) { schedulesInUse = inUse; paintLevelBanner(); }
+  if (el.navSchedulesCount && Number.isFinite(c.scheduled)) {
+    el.navSchedulesCount.textContent = String((c.scheduled || 0) + (c.missed || 0));
+  }
+  if (el.navSchedulesUnread && Number.isFinite(c.unread)) {
+    el.navSchedulesUnread.textContent = String(c.unread);
+    el.navSchedulesUnread.hidden = !c.unread;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -20209,7 +20460,7 @@ const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
 // plugins/guardrails/models LEFT this array: they are Settings tabs now, reached
 // as #settings/<tab> (legacy bare hashes redirect — see LEGACY_TAB_VIEWS).
-const VIEW_NAMES = ['new', 'getting-started', 'running', 'history', 'stats', 'team-metrics', 'team-policy', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
+const VIEW_NAMES = ['new', 'getting-started', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
 
 // ── Interface mode (docs/ui-levels.md) ──────────────────────────────────────
 // simple | advanced | expert: a VIEW preference, server-rendered into <html data-level>.
@@ -20230,12 +20481,14 @@ const VIEW_MIN_LEVEL = Object.freeze({
   stats: 'advanced', composer: 'advanced', workspaces: 'advanced', 'workspace-create': 'advanced',
   'agent-create': 'advanced',                 // reachable from the Composer palette at advanced
   'team-metrics': 'expert', 'team-policy': 'expert', agents: 'expert',
+  schedules: 'advanced',
 });
 const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ guardrails: 'advanced', plugins: 'advanced', memory: 'advanced', models: 'expert' });
 const VIEW_TITLES = Object.freeze({
   stats: 'Statistics', composer: 'Workflow Composer', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
   'agent-create': 'Create agent', 'team-metrics': 'Team metrics', 'team-policy': 'Team policy', agents: 'Agents',
   guardrails: 'Guardrails', plugins: 'Plugins', memory: 'Memory', models: 'Models',
+  schedules: 'Schedules',
 });
 function pageMinLevel() {
   if (currentShownView === 'settings') return { key: currentSettingsTab, min: SETTINGS_TAB_MIN_LEVEL[currentSettingsTab] || 'simple' };
@@ -20247,7 +20500,8 @@ function paintLevelBanner() {
   const above = !levelAtLeast(min);
   // The page you are on keeps its menu entry until you leave it, so "where am I" never vanishes.
   for (const b of $$('.nav button[data-nav], .topnav button[data-nav]')) {
-    keepVisible(b, above && b.dataset.nav === currentShownView);
+    // Schedules is Advanced, but a run scheduled from Ask Worca in Simple keeps its entry (rule 2).
+    keepVisible(b, (above && b.dataset.nav === currentShownView) || (b.dataset.nav === 'schedules' && schedulesInUse));
   }
   if (el.settingsTabs) {
     for (const b of el.settingsTabs.querySelectorAll('button[data-tab]')) {
@@ -20373,6 +20627,8 @@ function showView(name, param = '') {
     param = settingsParamFor(tab, sub);
   }
   const prevView = currentShownView;
+  // The schedule sheet and the Start menu are body-level overlays of the view that opened them.
+  if (prevView !== name) { closeScheduleSheet(); closeStartMenu(); }
   currentShownView = name;
   paintLevelBanner();
   // The guide re-derives its hop on a tick, so it is told here — before a view's
@@ -20406,6 +20662,8 @@ function showView(name, param = '') {
   document.body.classList.toggle('view-projects', name === 'projects');
   if (name === 'running') {
     renderRunningView();
+    // The Scheduled group (runs due within 24 h) reads the same store as the Schedules view.
+    if (prevView !== 'running') void withWorkspaces().then(() => schedulesView.load()).then(paintScheduledGroup);
     routeRunDetail(param, { instant: prevView !== 'running' });
     // Opening a run's detail page acknowledges it (linger → drops on next render).
     // ONLY a finished run: opening a still-live run must NOT pre-acknowledge, or
@@ -20428,6 +20686,7 @@ function showView(name, param = '') {
     routeHistoryDetail(param, { instant: prevView !== 'history' });
   }
   if (name === 'stats') loadStatsView();
+  if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
   if (name === 'team-metrics') loadTeamMetricsView();
   if (name === 'team-policy') loadTeamPolicyView(param);
   if (name === 'workspaces') loadWorkspacesView();
@@ -20452,6 +20711,12 @@ function showView(name, param = '') {
     // Drop the per-id workflow memo on every (re-)entry so a workflow re-saved
     // in Composer repaints with its new topology rather than the cached one.
     state.workflowCache = {};
+    // #new/schedule (Schedules › Schedule a run): the sheet opens first, the task comes after.
+    // The hash is then plain #new, so Back and a reload never re-open it.
+    if (param === 'schedule') {
+      try { window.history.replaceState(null, '', '#new'); } catch { /* ignore */ }
+      setTimeout(() => { void openScheduleForNew(); }, 0);
+    }
     if (newPipelinePrefill) {
       // An Ask handoff reloads BOTH pickers itself (with the card's ids) at the
       // end of its own awaits — a second, un-awaited refresh here would race it

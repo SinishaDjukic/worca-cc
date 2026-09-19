@@ -178,4 +178,4 @@ worca resume <id> --past-team-cap [--reason "<why>"]
 Projects without a `worca-policy` branch behave byte-identically to before. Older Worca
 versions ignore the branch. Team-metrics records gain an optional `policy` key under the same
 record version; older readers ignore it. The database gains two additive columns
-(`pipelines.policy_state`, `workspaces.policy_project`, schema v31).
+(`pipelines.policy_state`, `workspaces.policy_project`, schema v32).

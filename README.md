@@ -147,6 +147,20 @@ and durations, the clarify Q&A, agent transcripts, and logs:
   `/status`, `/cost`, `/answer`, `/approve`, `/pause`, `/resume`, `/stop`,
   and more — with allowlist-based authorization.
 
+### Scheduled runs
+
+- **Run it later** — schedule a pipeline for a date and time, or on a repeat
+  ("every weekday at 02:00"), from New pipeline, an Ask card, the CLI
+  (`--at`, `--every`, `--cron`) or the API (`scheduledFor`, `repeat`). The
+  **Schedules** view lists what is planned and an activity feed of every miss,
+  failure and self-pause. Runs start while `worca ui` (or a `--wait` terminal) is
+  up and the machine is awake. See [docs/scheduled-runs.md](docs/scheduled-runs.md).
+- **Ask Worca schedules too** — "run the dependency upgrade every weekday at 2am"
+  becomes a run card whose main button is *Schedule*. It lists, explains, pauses,
+  resumes and skips schedules on request; moving, editing, cancelling or deleting
+  one is a card you confirm. Name a tracker issue ("fix Jira bug PROJ-123 with
+  auto, tonight") and the card runs from the issue itself, read when the run starts.
+
 ### Costs & budgets
 
 - **Cost tracking everywhere** — per-run and per-step cost estimates, a
@@ -283,6 +297,12 @@ worca --project /path/to/your/project --prompt "Add a /search endpoint" --workfl
 
 # pause with Ctrl+C, continue later (survives restarts)
 worca resume <pipelineId>
+
+# run it later: once, from this terminal, or on a repeat (needs `worca ui` up, or --wait)
+worca --project /path/to/your/project --prompt "Upgrade dependencies" --at "tomorrow 02:00"
+worca --project /path/to/your/project --prompt "Upgrade dependencies" --at 02:00 --wait --yes
+worca --project /path/to/your/project --file ./nightly.md --every "weekdays 02:00"
+worca schedule list
 
 # offline demo — full pipeline, no tokens
 worca --project /path/to/your/project --prompt "demo task" --mock --yes

@@ -1,5 +1,5 @@
 // src/core/policy/state.mjs
-// Per-run team-policy state (pipelines.policy_state, v31) and the per-window total-cap
+// Per-run team-policy state (pipelines.policy_state, v32) and the per-window total-cap
 // acknowledgements (project_config.extra.teamPolicy.acks). The run state is what the
 // History meta line, the resume gate and the metrics record read:
 //   { home, sha, overrides: ['pipeline'|'total'], exceeded: ['pipeline'|'total'],
