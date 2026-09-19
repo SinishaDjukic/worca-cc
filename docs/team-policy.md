@@ -54,8 +54,9 @@ usually larger, so one cap is normally wrong for one of the two).
   member with a tighter cap. The pointer is per machine, like the metrics home, and defaults to
   the metrics home when that member's policy resolves. "Route all to policy home" writes a
   marker on every member that has no branch yet.
-- Set up from the **Projects** page cell (`Set up team policy…`: here, or follow), the workspace
-  card, or `worca policy init --here | --follow <slug>`.
+- Set up from the project page's **Team** tab (`Set up team policy…`: here, or follow; the Projects
+  list row only carries a one-line status chip), the workspace page's **Team** tab (the policy
+  home), or `worca policy init --here | --follow <slug>`.
 
 ## What applies where
 
@@ -95,7 +96,7 @@ Discovery runs on server start and hourly, together with team metrics discovery.
 cached in the project's config row; **no git call sits on a run's path** — only a project with no
 cache at all pays one bounded fetch. A CLI-only machine refreshes with `worca policy pull`.
 A missing, unreadable or newer-schema policy means your local settings apply, with one loud line
-in the run log and a red note on the Projects cell.
+in the run log and a red chip on the Projects row (the sentence is on the project page's Team tab).
 
 ## The Team policy page
 

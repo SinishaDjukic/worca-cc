@@ -57,8 +57,8 @@ test('every Settings tab and every Settings › General card carries an explicit
   }
 });
 
-test('every detail tab (Running, History, project page) declares a level', () => {
-  for (const table of ['RD_TABS', 'HD_TABS', 'PD_TABS']) {
+test('every detail tab (Running, History, project page, workspace page) declares a level', () => {
+  for (const table of ['RD_TABS', 'HD_TABS', 'PD_TABS', 'WD_TABS']) {
     const start = app.indexOf(`const ${table} = [`);
     assert.ok(start > 0, `${table} exists`);
     const body = app.slice(start, app.indexOf('\n];', start));

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
-  projectTpState, renderProjectTpCell, renderPolicyEnableDialogBody, renderEffectiveTable, renderPolicyEditor, docFromEditor, editorDirty,
+  projectTpState, renderProjectTpCell, renderProjectTpChip, projectTpSummary, renderPolicyEnableDialogBody, renderEffectiveTable, renderPolicyEditor, docFromEditor, editorDirty,
   renderPolicyEmptyState, renderPolicySyncChip, renderWsPolicyLine, renderTeamCapsReadout, renderTeamChip, renderPolicyNotesLine,
   renderPolicyHeader, renderPolicyStats, renderPolicyPluginsPanel, renderPolicyCatalogPanel,
   renderTeamCapPauseBanner, renderRequiredStrip, renderSetupChecklist, renderPolicyBadgeFor, relTime, POLICY_PAUSE_REASONS,
@@ -390,4 +390,29 @@ test('Catalog tab: the guardrail sets and models the policy ships', () => {
   assert.equal(root.querySelectorAll('.badge.blue').length, 2);
   const empty = renderPolicyCatalogPanel({ policy: { doc: { catalogs: {} } } }, { doc });
   assert.equal(empty.querySelectorAll('.hist-empty').length, 2);
+});
+
+test('row chip + summary (policy): a dot, the word and the short state; the cap line rides the title', () => {
+  const home = renderProjectTpChip(base, { doc });
+  assert.equal(home.className, 'pl-team-item pl-tp');
+  assert.equal(home.dataset.kind, 'home');
+  assert.equal(home.textContent, 'Policy home');
+  assert.ok(home.querySelector('.tm-dot.green'));
+  assert.match(home.title, /^Team policy: Home · 14 fields · updated 3 d ago · pipeline cap \$10\.00 \(soft\)/);
+  const follows = renderProjectTpChip({ ...base, delegateTo: 'acme/gateway', delegateState: 'ok', home: 'acme/gateway' }, { doc });
+  assert.equal(follows.textContent, 'Policy follows acme/gateway');
+  const off = renderProjectTpChip({ ...base, present: false, caps: null }, { doc });
+  assert.equal(off.textContent, 'Policy off');
+  assert.equal(off.title, 'Team policy: Off · your settings apply');
+  assert.ok(off.querySelector('.tm-dot.grey'));
+  const none = renderProjectTpChip({ ...base, hasOrigin: false }, { doc });
+  assert.equal(none.textContent, 'Policy not available');
+  assert.equal(none.querySelector('.tm-dot'), null);
+  const invalid = projectTpSummary({ ...base, delegateTo: 'acme/old', delegateState: 'invalid', delegateCode: 'DELEGATE_DANGLING', caps: null });
+  assert.deepEqual([invalid.kind, invalid.tone, invalid.short], ['delegate-invalid', 'red', 'follow invalid']);
+  const unsupported = projectTpSummary({ ...base, unknownSchema: true, warnings: ['schema 9 is newer than this Worca reads'] });
+  assert.deepEqual([unsupported.tone, unsupported.short, unsupported.detail], ['red', 'needs a newer Worca', 'schema 9 is newer than this Worca reads']);
+  const cell = renderProjectTpCell(base, { doc, heading: false });
+  assert.equal(cell.querySelector('.tm-label'), null);
+  assert.ok(cell.querySelector('.tp-open'));
 });

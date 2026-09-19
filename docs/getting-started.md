@@ -18,7 +18,7 @@ state, never stored.
 | 5 | Run a real pipeline | any pipeline with spend above zero | as 3, but after the project: the **Workflow** picker while it says Auto ("choose a built-in workflow"), then prompt → Mock off → **Start run** → Running |
 | 6 | Explore the built-in workflows | a project has a persisted picker choice (`project_config.active_workflow_id`, Auto included) | sidebar › **Workflow Composer** → the **Default** row in Saved pipelines (opens it on the canvas) → sidebar › **New pipeline** → the **Workflow** picker; a pick ends the guide |
 | 7 | Group projects into a workspace | one workspace exists | (fewer than two projects: sidebar › Projects → Add project) → sidebar › **Workspaces** → **Create workspace** |
-| 8 | Turn on team metrics | any project or workspace records (`listScopes().anyEnabled`) | (no project: sidebar › Projects → Add project) → sidebar › **Projects** → the first **Set up team metrics…** (a project with no origin remote gets its Team metrics cell ringed with the reason instead) |
+| 8 | Turn on team metrics | any project or workspace records (`listScopes().anyEnabled`) | (no project: sidebar › Projects → Add project) → sidebar › **Projects** → a project row → its **Team** tab → **Set up team metrics…** (a project with no origin remote gets its Team metrics block ringed with the reason instead) |
 
 Getting to another view is itself a hop: the sidebar entry (or the compact
 top-nav twin below 1080px) is ringed and the user's own click routes, so they

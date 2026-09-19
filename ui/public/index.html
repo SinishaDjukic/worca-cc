@@ -880,59 +880,64 @@
 
         <!-- ===== VIEW: WORKSPACES ===== -->
         <section class="view hidden" data-view="workspaces">
-          <div class="topbar">
-            <div>
-              <h1>Workspaces</h1>
-              <div class="sub">Named sets of 2+ projects with an AI-generated interconnection description</div>
+          <!-- Two-screen slide track, twin of the Projects #proj-shell: the list and the workspace
+               page (#workspaces/<id>[/team]) are sibling screens; .detail-open slides. -->
+          <div class="ws-shell" id="ws-shell">
+            <div class="ws-screen ws-screen-list">
+              <div class="topbar">
+                <div>
+                  <h1>Workspaces</h1>
+                  <div class="sub">Named sets of 2+ projects with an AI-generated interconnection description. Open one for its projects, description and team setup.</div>
+                </div>
+                <button type="button" id="ws-create-btn" class="btn btn-primary btn-mini">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                  Create workspace
+                </button>
+              </div>
+              <p id="ws-msg" class="form-msg" aria-live="polite"></p>
+              <div class="run-list" id="ws-list"></div>
             </div>
-            <button type="button" id="ws-create-btn" class="btn-go" style="padding:11px 20px">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-              Create workspace
-            </button>
+            <div class="ws-screen ws-screen-detail" id="ws-detail" aria-hidden="true"></div>
           </div>
 
-          <p id="ws-msg" class="form-msg" aria-live="polite"></p>
-
-          <div class="run-list" id="ws-list"></div>
-
-          <!-- clone target for one workspace card -->
-          <template id="ws-card-tpl">
-            <section class="card ws-card">
-              <div class="ws-head" role="button" tabindex="0" aria-expanded="false">
-                <div class="ws-h-meta">
-                  <b class="ws-name"></b>
+          <!-- clone target for the workspace page (#workspaces/<id>). A SCREEN inside this
+               section, never a routed view of its own: the page's view count is pinned. It rides
+               the project page's pd- classes so the two pages are laid out the same way. -->
+          <template id="ws-detail-tpl">
+            <div class="pd wd">
+              <header class="pd-header">
+                <div class="pd-row1">
+                  <button type="button" class="pd-back btn-ghost" aria-label="Back to workspaces">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    Back
+                  </button>
+                  <h1 class="pd-title ws-name"></h1>
                   <span class="ws-stale badge red" hidden>missing projects</span>
-                  <small class="ws-projects"></small>
                 </div>
-                <div class="ws-actions">
-                  <button type="button" class="ws-edit btn-ghost" title="Edit description">Edit description</button>
-                  <button type="button" class="ws-rescan btn-ghost" title="Re-scan the project set">Re-scan</button>
-                  <button type="button" class="ws-delete btn-danger" title="Delete workspace">Delete</button>
+                <div class="pd-meta"><small class="ws-projects"></small></div>
+                <div class="pd-actions">
+                  <button type="button" class="pd-new btn-ghost">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                    New pipeline
+                  </button>
+                  <button type="button" class="ws-rescan btn-ghost" title="Re-scan the project set and regenerate the description">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.7"></path><path d="M20 4v5h-5"></path></svg>
+                    Re-scan
+                  </button>
+                  <span class="pd-spacer"></span>
+                  <button type="button" class="pd-remove ws-delete">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"></path></svg>
+                    <span class="pd-btn-label">Delete</span>
+                  </button>
                 </div>
+                <!-- On the HEADER (like .pd-error): a delete failure must not sit below a long tab. -->
+                <div class="pd-error" hidden></div>
+              </header>
+              <div class="pd-body">
+                <div class="pd-tabs" role="tablist"></div>
+                <div class="pd-sections"></div>
               </div>
-              <div class="ws-detail" hidden>
-                <div class="ws-policy" data-min-level="expert" hidden></div>
-                <div class="ws-home" data-min-level="expert" hidden></div>
-                <div class="ws-desc">
-                  <span class="tm-label">Description</span>
-                  <!-- Markdown by contract (the scanner template): rendered through the page's
-                       sanitized pipeline once it is ready, the same words as plain text before. -->
-                  <div class="ws-desc-view viewer"></div>
-                </div>
-                <div class="ws-desc-edit" hidden>
-                  <div class="md-tabs" role="tablist" aria-label="Description editor">
-                    <button type="button" class="md-tab ws-desc-tab" role="tab" data-mode="text" aria-selected="true">Text</button>
-                    <button type="button" class="md-tab ws-desc-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button>
-                  </div>
-                  <textarea class="ws-desc-input textarea" rows="10" spellcheck="false"></textarea>
-                  <div class="ws-desc-preview md-preview viewer" hidden></div>
-                  <div class="actions" style="justify-content:flex-end;margin-top:10px">
-                    <button type="button" class="ws-desc-cancel btn btn-ghost btn-mini">Cancel</button>
-                    <button type="button" class="ws-desc-save btn btn-primary btn-mini">Save</button>
-                  </div>
-                </div>
-              </div>
-            </section>
+            </div>
           </template>
         </section>
         <!-- /view workspaces -->

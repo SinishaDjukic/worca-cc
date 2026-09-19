@@ -295,11 +295,13 @@ body{
    plain height:100% here would push the track past the viewport and
    overflow:hidden would clip both screens' bottoms off-screen. */
 body.view-history .main,body.view-projects .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
+body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}   /* the Workspaces track: the same bounded column */
 /* .main's 32px gutter goes with padding:0, so the compact top-nav (<1080px, a
    SIBLING of the views inside .main) must re-apply it or it lands 20px left of
    the list content, which keeps its own 32px on .hist-screen. flex:0 0 auto
    stops the wrapped 9-button nav from being squeezed once .main is a column. */
 body.view-history .topnav,body.view-projects .topnav{margin:12px 32px 0;flex:0 0 auto;}
+body.view-workspaces .topnav{margin:12px 32px 0;flex:0 0 auto;}
 .topbar{display:flex;align-items:flex-start;justify-content:space-between;
   gap:24px;margin-bottom:22px;}
 .topbar h1{font-size:26px;font-weight:700;letter-spacing:-.025em;margin:0 0 4px;}
@@ -1224,23 +1226,38 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .ws-src-row .select-wrap{width:100%;}
 .ws-src-row select[disabled]{opacity:.55;}
 
-/* Workspace management cards. */
-.ws-card{padding:0;overflow:hidden;}
-.ws-head{display:flex;align-items:center;gap:14px;padding:16px 20px;cursor:pointer;}
-.ws-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.ws-h-meta{flex:1;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
-.ws-h-meta .ws-name{font-weight:600;font-size:15px;letter-spacing:-.01em;color:var(--ink);}
-.ws-h-meta .ws-projects{display:block;width:100%;font-size:12.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* Workspaces list: the Projects list's shape (one card headed "Workspaces · N", a row per
+   workspace that IS the control), on its own ids. The page rides the pd- classes below. */
+#ws-list .saved-card{padding:0;overflow:hidden;}
+#ws-list .ws-item{border-bottom:1px solid var(--line);}
+#ws-list .ws-item:last-child{border-bottom:none;}
+#ws-list .ws-row{display:flex;align-items:center;gap:15px;padding:16px 20px;cursor:pointer;transition:background .12s;}
+#ws-list .ws-row:hover{background:var(--field);}
+#ws-list .ws-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+#ws-list .ws-main{flex:1 1 auto;min-width:0;}
+#ws-list .ws-name{font-weight:600;font-size:14px;letter-spacing:-.01em;color:var(--ink);}
+#ws-list .ws-name .ws-stale{margin-left:8px;vertical-align:middle;}
+.ws-projects{display:block;margin-top:4px;font-size:12.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ws-projects .mono{font-size:12px;color:var(--ink-2);}
 .ws-projects .tm-home-mark{margin-right:5px;}
 .ws-sum-warn{color:var(--amber-ink);} .ws-sum-bad{color:var(--red-ink);}
 .tm-icon{width:14px;height:14px;color:var(--ink-2);flex:0 0 auto;}
 .ws-stale[hidden]{display:none;}
-.ws-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto;}
-.ws-actions .btn-ghost{padding:7px 12px;font-size:12px;}
-.ws-detail{padding:0 20px 18px;border-top:1px dashed var(--line-2);}
-.ws-detail[hidden]{display:none;}
-.ws-desc{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);}
+/* Workspace page: the summary line under the title, the members list, the description panel. */
+.wd .pd-meta .ws-projects{margin-top:0;white-space:normal;font-size:12.5px;color:var(--ink-2);}
+.wd .pd-row1 .ws-stale{flex:0 0 auto;}
+.wd-member-list{display:flex;flex-direction:column;}
+.wd-member{display:flex;align-items:center;flex-wrap:wrap;gap:4px 14px;padding:11px 0;border-bottom:1px solid var(--line);
+  background:none;border-left:0;border-right:0;border-top:0;text-align:left;font:inherit;color:inherit;width:100%;}
+.wd-member:last-child{border-bottom:0;}
+.wd-member-name{font-weight:600;font-size:13.5px;color:var(--ink);}
+.wd-member .proj-path{margin-top:0;flex:1 1 auto;min-width:0;}
+.wd-member-chev{display:flex;align-items:center;color:var(--ink-3);margin-left:auto;}
+button.wd-member{cursor:pointer;}
+button.wd-member:hover .wd-member-name{text-decoration:underline;}
+button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.wd-desc .card-head .ws-edit{margin-left:auto;}
+.ws-desc .ws-desc-view{margin-top:0;}
 /* The wizard's project rows show each path as a sub-line (new on this branch): --ink-2 clears
    4.5:1 on white, the generic .opt-sub --ink-3 does not. */
 .wiz-proj.opt-row .opt-sub{color:var(--ink-2);}   /* three classes: outranks the generic .opt-row .opt-sub declared later */
@@ -1469,6 +1486,18 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .proj-shell.detail-open .proj-screen-list{transform:translateX(-100%);}
 .proj-shell.detail-open .proj-screen-detail{transform:translateX(0);}
 .proj-shell.no-anim .proj-screen{transition:none;}
+/* ---------- Workspaces two-screen shell: the Projects track's twin, rule for rule (the Projects
+   rules above are pinned verbatim by tests, so this block repeats them on its own names). ---------- */
+.view[data-view="workspaces"]{flex:1 1 auto;min-height:0;padding:0;position:relative;}
+.ws-shell{position:relative;height:100%;overflow:hidden;}
+.ws-screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding:0 32px 40px;
+  transition:transform .46s cubic-bezier(.65,.02,.28,1);}
+.ws-screen-list .topbar{padding-top:26px;}
+.ws-screen-list{transform:translateX(0);}
+.ws-screen-detail{transform:translateX(100%);padding:0;background:var(--bg);}
+.ws-shell.detail-open .ws-screen-list{transform:translateX(-100%);}
+.ws-shell.detail-open .ws-screen-detail{transform:translateX(0);}
+.ws-shell.no-anim .ws-screen{transition:none;}
 /* A keyed row IS the control (role=button): pointer + hover tint, the .hist-head idiom. The
    keyless row keeps #projects-list .pl-row's default cursor. */
 #projects-list .pl-row[role="button"]{cursor:pointer;transition:background .12s;}
@@ -1763,7 +1792,7 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .hd-tm.st-ok{color:var(--green-ink)} .hd-tm.st-warn{color:var(--amber-ink)} .hd-tm.st-err{color:var(--red-ink)} .hd-tm.st-muted{color:var(--ink-2)}
 
 /* Team metrics — Projects cell (board 4) */
-#projects-list .tm-slot{flex:0 1 420px;min-width:0;}
+
 /* border-left + padding-left are board 4's divider between the project row and the cell
    (mockup `.tm-cell{border-left:1px solid var(--line);padding-left:18px;min-width:420px}`);
    the 420px sizing lives on .tm-slot above so the cell itself can still wrap. */
@@ -4036,6 +4065,7 @@ body.rail-collapsed .ask-dock{left:76px;}
    their sticky tab bars and take clearance via .rd-body/.hd-body/.pd-body instead;
    body.view-history/.view-running/.view-projects .main keep padding:0 by specificity. */
 .main,.run-screen-list,.hist-screen-list,.proj-screen-list,.rd-body,.hd-body,.pd-body{padding-bottom:var(--ask-dock-clearance);}
+.ws-screen-list{padding-bottom:var(--ask-dock-clearance);}   /* the Workspaces track's list gutter, the same clearance */
 
 /* ---------- native control skins (checkbox / radio / switch / rows) -------- */
 /* Everything the browser used to draw for itself. The mark is the one .qopt
@@ -4550,6 +4580,7 @@ a.ask-card-task-title:hover{text-decoration-color:currentColor;}
 .level-banner-text{flex:1 1 220px;min-width:0;}
 .level-banner .btn{margin-left:auto;}
 body.view-history .level-banner,body.view-projects .level-banner,body.view-running .level-banner{margin:12px 32px 0;flex:0 0 auto;}
+body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 
 /* Simple hides the Target switch, which leaves .split-row's picker alone in the row: auto-placement
    would drop it into the narrow first track, so the row becomes one full-width column. */
@@ -5348,12 +5379,31 @@ input.gv-name:focus-visible{outline:none;}
    reworked): two cells side by side squeezed both to a truncated status at every laptop width, and
    the row's name column must not move. A grid, so the name spans both rows and the chevron stays
    centred; the cells keep their own left divider (.tm-cell) and are separated by a hairline. */
-#projects-list .pl-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,420px) auto;grid-template-rows:auto auto;align-items:center;}
-#projects-list .pl-main{grid-column:1;grid-row:1 / span 2;}
-#projects-list .tm-slot{grid-column:2;grid-row:1;flex:none;}
-#projects-list .tp-slot{grid-column:2;grid-row:2;min-width:0;}
-#projects-list .tp-slot .tm-cell{padding-top:10px;margin-top:10px;border-top:1px solid var(--line);}
-#projects-list .proj-open{grid-column:3;grid-row:1 / span 2;}
+/* The team column on a Projects row: two one-line chips, right-aligned, status only. The
+   controls and the sentences behind a status are on the project page's Team tab. */
+.pl-team{flex:0 1 auto;min-width:0;display:flex;flex-direction:column;align-items:flex-end;gap:5px;font-size:12px;line-height:1.3;}
+.pl-team-item{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;white-space:nowrap;color:var(--ink-2);}
+.pl-team-item:empty{display:none;}
+.pl-team-item .tm-dot{flex:0 0 auto;}
+.pl-team-name{color:var(--ink-3);}
+.pl-team-state{overflow:hidden;text-overflow:ellipsis;}
+.pl-team-state.muted{color:var(--ink-3);}
+@media (max-width:760px){.pl-team{display:none;}}
+/* The project / workspace page's Team tab: one panel per feature, the block inside wraps
+   (the list cell it came from had to keep to one line). */
+.pd-sec-team{display:flex;flex-direction:column;gap:18px;}
+.pd-team-card .card-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 12px;margin-bottom:12px;}
+.pd-team-card .card-head b{font-size:14px;}
+.pd-team-body .tm-cell{grid-template-rows:auto;}
+.pd-team-body .tm-cell .tm-line{grid-row:1;}
+.pd-team-body .tm-cell .tm-actions{grid-row:1;}
+.pd-team-body .tm-cell .tm-hint{grid-row:2;white-space:normal;line-height:1.45;}
+.pd-team-body .tm-cell .tm-status{white-space:normal;}
+.pd-team-body .ws-home-inner{padding-top:0;}
+.pd-team-body .ws-policy{margin-top:0;}
+.pd-team-body .ws-policy > .ws-policy-inner > .tm-label{display:none;}   /* the panel head names it */
+.pd-ov-sub.pd-ov-attn{color:var(--amber-ink);}
+.pd-ov-card[data-kind="rejected"] .pd-ov-sub,.pd-ov-card[data-kind="delegate-invalid"] .pd-ov-sub,.pd-ov-card[data-kind="unsupported"] .pd-ov-sub{color:var(--red-ink);}
 @media (max-width:1080px){
   #projects-list .pl-row{grid-template-columns:minmax(0,1fr) auto;}
   #projects-list .pl-main{grid-column:1 / span 2;grid-row:1;}

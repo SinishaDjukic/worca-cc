@@ -127,14 +127,14 @@ import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmpt
 // Team policy (team-policy design §11): the Projects cell, the enable dialog, the page (read +
 // edit), the workspace line, the Settings readout, the New pipeline notes, the Plugins strip.
 import {
-  renderProjectTpCell, renderPolicyEnableDialogBody, renderEffectiveTable, renderPolicyEditor, docFromEditor, editorDirty,
+  renderProjectTpCell, renderProjectTpChip, projectTpSummary, renderPolicyEnableDialogBody, renderEffectiveTable, renderPolicyEditor, docFromEditor, editorDirty,
   renderPolicyEmptyState, renderPolicySyncChip, renderWsPolicyLine, renderTeamCapsReadout, renderTeamChip, renderPolicyNotesLine,
   renderRequiredStrip, renderSetupChecklist, relTime as tpRelTime,
   renderPolicyHeader, renderPolicyStats, renderPolicyPluginsPanel, renderPolicyCatalogPanel,
 } from './team-policy-view.mjs';
 import { aggregate, toCsv } from '../../src/shared/team-metrics/aggregate.mjs';
 import {
-  renderProjectTmCell, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
+  renderProjectTmCell, renderProjectTmChip, projectTmSummary, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
 import { paintAboutInto } from './about-links.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts } from './report-run.mjs';
 import { openScheduleSheet, closeScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
@@ -275,6 +275,8 @@ const el = {
   wsCreateBtn: $('#ws-create-btn'),
   wsMsg: $('#ws-msg'),
   wsList: $('#ws-list'),
+  wsShell: $('#ws-shell'),
+  wsDetail: $('#ws-detail'),
 
   // Wizard
   wizName: $('#wiz-name'),
@@ -808,7 +810,7 @@ function handleServerMessage(msg) {
     scheduleOnboardingRefresh();
     refreshAllCounts();
     tmCache.at = 0;
-    if (currentView() === 'workspaces') loadWorkspacesView();
+    if (currentView() === 'workspaces') void refreshWorkspacesPage();
     return;
   }
   if (msg.type === 'team-metrics-changed') {
@@ -6172,18 +6174,16 @@ function updateWorkspacesCount() {
 
 // ---- Workspaces management view --------------------------------------------
 
-async function loadWorkspacesView() {
-  await loadWorkspaces();
-  renderWorkspaces();
-  updateWorkspacesCount();
-}
-
 function setWsMsg(text, kind) {
   if (!el.wsMsg) return;
   el.wsMsg.textContent = text || '';
   el.wsMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
 }
 
+// ---- Workspaces list ----------------------------------------------------------------------
+// The Projects page's shape: one card headed "Workspaces · N", one row per workspace — name,
+// a one-line summary (size, metrics home, what needs attention), the stale badge, a chevron —
+// and the whole row opens the workspace page. Nothing on the row edits anything.
 function renderWorkspaces() {
   const host = el.wsList;
   if (!host) return;
@@ -6192,89 +6192,121 @@ function renderWorkspaces() {
     host.appendChild(histEmpty('No workspaces yet — create one to scan a set of projects.'));
     return;
   }
+  const card = document.createElement('section');
+  card.className = 'card saved-card';
+  const head = document.createElement('div');
+  head.className = 'saved-head';
+  const b = document.createElement('b');
+  b.textContent = 'Workspaces';
+  const cnt = document.createElement('span');
+  cnt.className = 'cnt';
+  cnt.textContent = String(state.workspaces.length);
+  head.append(b, cnt);
+  const list = document.createElement('div');
+  list.className = 'saved-list';
   // What is known before /scopes answers: this session's payload or the persisted copy paints the
-  // metrics block at once; a workspace neither knows gets the pending block (shimmer cells,
-  // "checking metrics…") rather than a hidden slot and a summary that reads as final.
+  // summary at once; a workspace neither knows reads "checking metrics…" rather than a summary
+  // that reads as final.
   const known = peekTmScopes();
   const knownById = new Map(((known && known.workspaces) || []).map((w) => [w.id, w]));
-  for (const w of state.workspaces) {
-    const card = buildWorkspaceCard(w);
-    host.appendChild(card);
-    const k = knownById.get(w.id);
-    if (k) paintWsMetricsCard(card, k);
-    else {
-      const slot = card.querySelector('.ws-home');
-      if (slot) { slot.hidden = false; slot.replaceChildren(renderWsMetricsPending(w, { doc: document })); }
-      const sum = card.querySelector('.ws-projects');
-      if (sum) sum.replaceChildren(renderWsSummary(w, { doc: document, pending: true }));
-    }
-    card.setAttribute('aria-busy', 'true');
-    // A lone workspace opens by itself; otherwise the last toggle per card is remembered.
-    if (wsCardOpen(w.id, state.workspaces.length === 1)) toggleWsDetail(card, true);
-  }
+  for (const w of state.workspaces) list.appendChild(buildWorkspaceRow(w, knownById.get(w.id)));
+  card.append(head, list);
+  host.appendChild(card);
   paintWsMetricsRows();
-  paintWsPolicyLines();                     // team policy (design board 6): the policy home line per card
-  // Descriptions are markdown; the bundle loads lazily, so the first paint may be plain.
-  // Repaint the description nodes alone once it is ready — not the cards, so open/edit
-  // state survives — and do nothing when it failed (plain text is the fallback).
-  if (!hdMarkdown.isReady()) void bindMarkdownReady().then((ok) => { if (ok) repaintWsDescriptions(); });
+  paintWsPolicyLines();                     // team policy (design board 6): the policy home line on the page
 }
-function repaintWsDescriptions() {
-  if (!el.wsList) return;
-  for (const card of el.wsList.querySelectorAll('.ws-card')) {
-    const w = state.workspaces.find((x) => x && x.id === card.dataset.workspaceId);
-    const view = card.querySelector('.ws-desc-view');
-    if (w && w.description && view && !view.classList.contains('artifact-markdown')) bindMarkdown(view, w.description);
+
+function buildWorkspaceRow(w, known) {
+  const item = document.createElement('div');
+  item.className = 'ws-item';
+  item.dataset.workspaceId = w.id || '';
+  const row = document.createElement('div');
+  row.className = 'ws-row';
+  row.setAttribute('role', 'button');
+  row.tabIndex = 0;
+  row.setAttribute('aria-label', `Open ${w.name || w.id}`);
+  const main = document.createElement('div');
+  main.className = 'ws-main';
+  const name = document.createElement('div');
+  name.className = 'ws-name';
+  name.textContent = w.name || w.id || '(unnamed)';
+  if (Array.isArray(w.exists) && w.exists.some((e) => !e)) {
+    const stale = document.createElement('span');
+    stale.className = 'ws-stale badge red';
+    stale.textContent = 'missing projects';
+    name.append(' ', stale);
   }
-}
-const WS_OPEN_KEY = (id) => `worca.ws.open.${id}`;
-function wsCardOpen(id, fallback) {
-  try { const v = localStorage.getItem(WS_OPEN_KEY(id)); return v == null ? fallback : v === '1'; } catch { return fallback; }
+  const sum = document.createElement('small');
+  sum.className = 'ws-projects';
+  sum.replaceChildren(known ? renderWsSummary(known, { doc: document }) : renderWsSummary(w, { doc: document, pending: true }));
+  main.append(name, sum);
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'proj-open ws-open';
+  open.setAttribute('aria-label', 'Open workspace details');
+  open.innerHTML = CHEVRON_RIGHT_SVG;   // static markup
+  row.append(main, open);
+  item.appendChild(row);
+  if (!known) item.setAttribute('aria-busy', 'true');
+  return item;
 }
 
 // workspaceId → last "Route all members" payload. Routing emits one team-metrics-changed per
-// member, and each repaint rebuilds .ws-home — the per-member result list (the only place push
-// failures are named, §4.6b) must survive those repaints.
+// member, and each repaint rebuilds the metrics block — the per-member result list (the only
+// place push failures are named, §4.6b) must survive those repaints.
 const wsRouteResults = new Map();
 
+// The metrics side of every open workspace surface: the row summaries, and the open page's
+// Team block + Overview card. Called on render and on every team-metrics-changed frame.
 async function paintWsMetricsRows(force = false) {
   const data = await loadTmScopes({ force });
   const byId = new Map(data.workspaces.map((w) => [w.id, w]));
-  for (const card of document.querySelectorAll('#ws-list .ws-card')) {
-    const w = byId.get(card.dataset.workspaceId);
-    if (w) paintWsMetricsCard(card, w);
-    else {
-      // Not in the payload (nothing enabled anywhere, or the call failed): the plain summary, no block.
-      const slot = card.querySelector('.ws-home');
-      if (slot) { slot.hidden = true; slot.replaceChildren(); }
-      const sum = card.querySelector('.ws-projects');
-      const own = state.workspaces.find((x) => x && x.id === card.dataset.workspaceId);
-      if (sum) sum.replaceChildren(renderWsSummary({ projectPaths: (own && own.projectPaths) || [], home: { state: 'unset' }, members: [] }, { doc: document }));
-    }
-    card.removeAttribute('aria-busy');
+  for (const item of document.querySelectorAll('#ws-list .ws-item')) {
+    const w = byId.get(item.dataset.workspaceId);
+    const sum = item.querySelector('.ws-projects');
+    const own = state.workspaces.find((x) => x && x.id === item.dataset.workspaceId);
+    // Not in the payload (nothing enabled anywhere, or the call failed): the plain summary.
+    if (sum) sum.replaceChildren(renderWsSummary(w || { projectPaths: (own && own.projectPaths) || [], home: { state: 'unset' }, members: [] }, { doc: document }));
+    item.removeAttribute('aria-busy');
   }
+  paintWdMetrics(byId.get(wsDetail?.id));
 }
-// One card's metrics block + header summary from a /scopes workspace entry.
-function paintWsMetricsCard(card, w) {
-  const slot = card.querySelector('.ws-home');
-  if (!slot) return;
-  slot.hidden = false;
-  slot.replaceChildren(renderWsMetricsRow(w, { doc: document }));
-  const sum = card.querySelector('.ws-projects');
-  if (sum) sum.replaceChildren(renderWsSummary(w, { doc: document }));
-  const saved = wsRouteResults.get(w.id);
-  const out = slot.querySelector('.ws-route-results');
-  if (saved && out) {
-    out.replaceChildren(saved.error
-      ? Object.assign(document.createElement('small'), { className: 'hint err', textContent: saved.error })
-      : renderRouteResults(saved, { doc: document }));
+// The open workspace page's metrics block (the members table with the home actions) and its
+// METRICS HOME card. `w` is the /scopes workspace entry, or undefined when the payload lacks it.
+function paintWdMetrics(w) {
+  if (!wsDetail || !wsDetail.screen) return;
+  const screen = wsDetail.screen;
+  const own = state.workspaces.find((x) => x && x.id === wsDetail.id);
+  const meta = screen.querySelector('.pd-meta .ws-projects');
+  if (meta) meta.replaceChildren(renderWsSummary(w || { projectPaths: (own && own.projectPaths) || [], home: { state: 'unset' }, members: [] }, { doc: document }));
+  const body = screen.querySelector('.wd-team-metrics .pd-team-body');
+  if (body) {
+    body.replaceChildren(w ? renderWsMetricsRow(w, { doc: document }) : renderWsMetricsRow({ projectPaths: (own && own.projectPaths) || [], home: { state: 'unset' }, members: [] }, { doc: document }));
+    const saved = wsRouteResults.get(wsDetail.id);
+    const out = body.querySelector('.ws-route-results');
+    if (saved && out) {
+      out.replaceChildren(saved.error
+        ? Object.assign(document.createElement('small'), { className: 'hint err', textContent: saved.error })
+        : renderRouteResults(saved, { doc: document }));
+    }
+  }
+  const card = screen.querySelector('.pd-ov-card-metrics');
+  if (card) {
+    const home = (w && w.home) || { state: 'unset' };
+    const silent = ((w && w.members) || []).filter((x) => x.state !== 'home' && !x.recordsOn).length;
+    card.querySelector('.pd-ov-value').textContent = home.state === 'unset' ? 'No home' : home.slug;
+    const sub = card.querySelector('.pd-ov-sub');
+    sub.textContent = home.state === 'unset' ? 'workspace runs are not recorded'
+      : home.state !== 'ok' ? (home.detail || 'the metrics home is stale')
+        : [home.runs != null ? `${home.runs} workspace run${home.runs === 1 ? '' : 's'}` : '', silent ? `${silent} not recording` : ''].filter(Boolean).join(' · ') || 'recording';
+    sub.classList.toggle('pd-ov-attn', home.state !== 'unset' && (home.state !== 'ok' || silent > 0));
   }
 }
 
 async function openWsHomeSheet(workspaceId) {
   const w = (await loadTmScopes({ force: true })).workspaces.find((x) => x.id === workspaceId);
   if (!w) return;
-  // metrics-scan answers 400 when a member folder is missing — exactly when the card shows
+  // metrics-scan answers 400 when a member folder is missing — exactly when the page shows
   // "missing projects" — so an unchecked r.ok opened an empty picker with no explanation.
   const r = await fetch('/api/workspaces/metrics-scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectPaths: w.projectPaths }) }).catch(() => null);
   const j = r ? await safeJson(r) : null;
@@ -6310,56 +6342,353 @@ async function patchWsHome(id, metricsProject) {
   modalBody?.after(Object.assign(document.createElement('small'), { className: 'hint err', textContent: j?.error || 'Could not save the metrics home' }));
 }
 
-// Build one workspace card from the template. The description is markdown by
-// contract (the scanner template), bound through bindMarkdown: the sanitized page
-// pipeline when it is ready, plain text (.textContent, never innerHTML) otherwise.
-function buildWorkspaceCard(w) {
-  const tpl = $('#ws-card-tpl');
-  const node = tpl.content.firstElementChild.cloneNode(true);
-  node.dataset.workspaceId = w.id || '';
-
-  const nameEl = node.querySelector('.ws-name');
-  if (nameEl) nameEl.textContent = w.name || w.id || '(unnamed)';
-
-  // Summary, not the member list: the projects table inside the card names every member once.
-  // The metrics part of the line arrives with paintWsMetricsRows.
-  const projEl = node.querySelector('.ws-projects');
-  if (projEl) projEl.replaceChildren(renderWsSummary({ projectPaths: w.projectPaths || [], home: { state: 'unset' }, members: [] }, { doc: document }));
-
-  const stale = node.querySelector('.ws-stale');
-  if (stale) stale.hidden = !(Array.isArray(w.exists) && w.exists.some((e) => !e));
-
-  const descView = node.querySelector('.ws-desc-view');
-  if (descView) {
-    if (w.description) bindMarkdown(descView, w.description);
-    else { descView.classList.remove('artifact-markdown'); descView.textContent = '(no description yet — re-scan to generate one)'; }
-  }
-
-  return node;
+// Delegated actions on the workspaces list: a row (or its chevron) opens the page.
+if (el.wsList) {
+  const openWsRow = (row) => {
+    const item = row.closest('.ws-item');
+    if (!item || !item.dataset.workspaceId) return;
+    wsReturnFocus = item.dataset.workspaceId;          // Back / Esc come home to this row
+    location.hash = `workspaces/${item.dataset.workspaceId}`;
+  };
+  el.wsList.addEventListener('click', (e) => {
+    const row = e.target.closest && e.target.closest('.ws-row[role="button"]');
+    if (row) openWsRow(row);
+  });
+  el.wsList.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    const row = e.target.closest && e.target.closest('.ws-row[role="button"]');
+    if (!row || e.target !== row) return;
+    e.preventDefault();
+    openWsRow(row);
+  });
 }
 
-// Delegated actions on the workspaces list.
-if (el.wsList) {
-  el.wsList.addEventListener('click', async (e) => {
-    const card = e.target.closest && e.target.closest('.ws-card');
-    if (!card) return;
-    const id = card.dataset.workspaceId;
-    const w = state.workspaces.find((x) => x && x.id === id);
+// ---------------------------------------------------------------------------
+// Workspace page (#workspaces/<id>[/team]) — the project page's twin: the same two-screen
+// slide, the same header card, pills and stat cards (it rides the pd- classes), and all
+// editing — description, re-scan, delete, metrics home, policy home, routing — lives here.
+// ---------------------------------------------------------------------------
+const WS_TABS = ['overview', 'team'];
+function parseWsParam(param = '') {
+  const s = String(param || '');
+  if (!s) return null;
+  const i = s.indexOf('/');
+  const id = i === -1 ? s : s.slice(0, i);
+  const tab = i === -1 ? '' : s.slice(i + 1);
+  return { id, tab: WS_TABS.includes(tab) && tab !== 'overview' ? tab : 'overview' };
+}
+const wsParamFor = (id, tab = 'overview') => (tab === 'team' ? `${id}/team` : id);
+const workspaceById = (id) => state.workspaces.find((x) => x && x.id === id) || null;
 
-    if (e.target.closest('.ws-home-change')) { e.stopPropagation(); return void openWsHomeSheet(card.dataset.workspaceId); }
+let wsDetail = null;        // { id, screen } while a page is open
+let wsReturnFocus = '';     // the id of the row that opened the page; closeWsDetail hands focus back
+
+// #workspaces entry: refetch the list, paint it, then route the page half of the hash. In-view
+// hops (list <-> page, tab <-> tab) skip the fetch — showView calls routeWsDetail directly.
+let workspacesLoadToken = 0;
+async function loadWorkspacesView() {
+  const token = ++workspacesLoadToken;
+  await loadWorkspaces();
+  if (token !== workspacesLoadToken || currentShownView !== 'workspaces') return;
+  renderWorkspaces();
+  updateWorkspacesCount();
+  const [view, param] = parseHash();
+  if (view === 'workspaces') routeWsDetail(param, { instant: true });
+}
+// A workspaces-changed frame while the page is open: rebuild the list under the user and keep the
+// open page — unless its workspace went away, which closes it with a note.
+async function refreshWorkspacesPage() {
+  await loadWorkspaces();
+  if (currentShownView !== 'workspaces') return;
+  renderWorkspaces();
+  updateWorkspacesCount();
+  if (!wsDetail) return;
+  const w = workspaceById(wsDetail.id);
+  if (w) { paintWsHeader(wsDetail.screen, w); refreshWdOverview(); return; }
+  const name = wsDetail.name;
+  showView('workspaces', '');
+  setWsMsg(`workspace "${name}" was removed`, 'err');
+}
+
+function routeWsDetail(param, { instant = false } = {}) {
+  const parsed = parseWsParam(param);
+  if (!parsed) { closeWsDetail({ instant }); return; }
+  const w = workspaceById(parsed.id);
+  if (!w) {
+    closeWsDetail({ instant });
+    setWsMsg(`workspace "${parsed.id}" is not registered here`, 'err');
+    return;
+  }
+  if (wsDetail && wsDetail.id === parsed.id) { activateWsTab(parsed.tab); return; }
+  openWsDetail(w, parsed, { instant });
+}
+
+function openWsDetail(w, parsed, { instant = false } = {}) {
+  const host = el.wsDetail;
+  const shell = el.wsShell;
+  if (!host || !shell) return;
+  wsDetail = null;
+  host.innerHTML = '';
+  host.scrollTop = 0;
+  const screen = $('#ws-detail-tpl').content.firstElementChild.cloneNode(true);
+  host.appendChild(screen);
+  wsDetail = { id: w.id, name: w.name, screen };
+  screen.querySelector('.pd-back').addEventListener('click', () => { location.hash = 'workspaces'; });
+  screen.querySelector('.pd-new').addEventListener('click', () => { newPipelineForWorkspace(w.id); });
+  screen.querySelector('.ws-rescan').addEventListener('click', () => { void rescanWorkspace(workspaceById(w.id)); });
+  screen.querySelector('.ws-delete').addEventListener('click', () => { void deleteWorkspaceFromPage(w.id); });
+  paintWsHeader(screen, w);
+  initWdTabs(screen, w);
+  activateWsTab(parsed.tab);
+  if (instant) shell.classList.add('no-anim');
+  shell.classList.add('detail-open');
+  host.setAttribute('aria-hidden', 'false');
+  host.removeAttribute('inert');
+  const list = shell.querySelector('.ws-screen-list');
+  if (list) { list.setAttribute('aria-hidden', 'true'); list.setAttribute('inert', ''); }
+  screen.querySelector('.pd-back').focus({ preventScroll: true });
+  if (instant) rafSafe(() => shell.classList.remove('no-anim'));
+}
+
+function paintWsHeader(screen, w) {
+  screen.querySelector('.pd-title').textContent = w.name || w.id || '(unnamed)';
+  const stale = screen.querySelector('.pd-row1 .ws-stale');
+  if (stale) stale.hidden = !(Array.isArray(w.exists) && w.exists.some((e) => !e));
+  const meta = screen.querySelector('.pd-meta .ws-projects');
+  if (meta) {
+    const known = (peekTmScopes()?.workspaces || []).find((x) => x.id === w.id);
+    meta.replaceChildren(known ? renderWsSummary(known, { doc: document }) : renderWsSummary(w, { doc: document, pending: true }));
+  }
+}
+
+function closeWsDetail({ instant = false } = {}) {
+  const shell = el.wsShell;
+  const host = el.wsDetail;
+  if (!shell || !host) return;
+  if (!shell.classList.contains('detail-open')) { wsReturnFocus = ''; wsDetail = null; return; }
+  wsDetail = null;
+  host.setAttribute('aria-hidden', 'true');
+  const list = shell.querySelector('.ws-screen-list');
+  if (list) { list.removeAttribute('aria-hidden'); list.removeAttribute('inert'); }
+  const back = wsReturnFocus;
+  wsReturnFocus = '';
+  if (back && el.wsList && !instant) {
+    const row = el.wsList.querySelector(`.ws-item[data-workspace-id="${cssEscape(back)}"] .ws-row`);
+    if (row) row.focus({ preventScroll: true });
+  }
+  host.setAttribute('inert', '');
+  if (instant) {
+    shell.classList.add('no-anim');
+    shell.classList.remove('detail-open');
+    host.innerHTML = '';
+    rafSafe(() => shell.classList.remove('no-anim'));
+    return;
+  }
+  shell.classList.remove('detail-open');
+  const clear = () => { if (!wsDetail) host.innerHTML = ''; };
+  const onEnd = (e) => {
+    if (e.target !== host || e.propertyName !== 'transform') return;
+    host.removeEventListener('transitionend', onEnd);
+    clear();
+  };
+  host.addEventListener('transitionend', onEnd);
+  const t = setTimeout(() => { host.removeEventListener('transitionend', onEnd); clear(); }, 600);
+  if (t && typeof t.unref === 'function') t.unref();
+}
+
+// "New pipeline": the workspace target with this workspace selected, then the form.
+function newPipelineForWorkspace(id) {
+  if (!workspaceById(id)) return;
+  state.selectedWorkspaceId = id;
+  localStorage.setItem(LAST_WORKSPACE_KEY, id);
+  if (state.runTarget !== 'workspace') setRunTarget('workspace');   // repopulates the select (ensureWorkspaceOptions)
+  else void ensureWorkspaceOptions();
+  location.hash = 'new';
+}
+
+// ---- tabs ----
+const WD_TABS = [
+  { key: 'overview', label: 'Overview', level: 'simple', badge: () => null, visible: () => true, build: (sec, id) => buildWdOverview(sec, id) },
+  { key: 'team', label: 'Team', level: 'expert', badge: () => null, visible: () => true, build: (sec, id) => buildWdTeam(sec, id) },
+];
+function initWdTabs(screen, w) {
+  initDetailTabs(screen, WD_TABS.map((t) => ({ ...t, icon: PD_TAB_ICONS[t.key] })), w, {
+    tabsSel: '.pd-tabs', secsSel: '.pd-sections',
+    tabClass: 'pd-tab', secClass: 'pd-sec', badgeClass: 'pd-tab-badge',
+    idPrefix: 'wd',
+    buildArgs: () => [w.id],
+    initial: () => 'overview',
+  });
+  // Hash-first pills, the project page's idiom: the tab goes into the URL so Back and deep links
+  // agree with the screen; the hashchange echo lands in routeWsDetail -> activateWsTab.
+  screen.querySelector('.pd-tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('button[data-sec]');
+    if (!btn || !wsDetail) return;
+    const target = `workspaces/${wsParamFor(wsDetail.id, btn.dataset.sec)}`;
+    if (location.hash.slice(1) !== target) location.hash = target;
+  });
+}
+function activateWsTab(tab) {
+  const tabs = detailTabsOf(wsDetail && wsDetail.screen);
+  if (!tabs) return;
+  tabs.activate(tabs.cells.has(tab) ? tab : 'overview');
+}
+
+// ---- Overview tab: the stat cards, the projects, the description ----
+function buildWdOverview(sec, id) {
+  sec.innerHTML = '';
+  sec.classList.add('pd-sec-overview', 'wd-sec-overview');
+  const w = workspaceById(id);
+  if (!w) return;
+  const paths = Array.isArray(w.projectPaths) ? w.projectPaths : [];
+  const missing = Array.isArray(w.exists) ? w.exists.filter((e) => !e).length : 0;
+  const grid = document.createElement('div');
+  grid.className = 'pd-ov-grid';
+  const projCard = pdStatCard('projects', 'PROJECTS', String(paths.length), missing ? `${missing} missing on disk` : 'all on disk');
+  if (missing) projCard.querySelector('.pd-ov-sub').classList.add('pd-ov-missing');
+  grid.appendChild(projCard);
+  // The team half: one card each, filled by the scopes painters; a click lands on the Team tab.
+  for (const which of ['metrics', 'policy']) {
+    const card = pdStatCard(which, which === 'metrics' ? 'METRICS HOME' : 'POLICY HOME', '…', 'checking…', { tag: 'button' });
+    card.classList.add('pd-ov-link');
+    card.title = 'Open the Team tab';
+    card.addEventListener('click', () => { location.hash = `workspaces/${wsParamFor(id, 'team')}`; });
+    grid.appendChild(tagLevel(card, 'expert'));
+  }
+  grid.appendChild(pdStatCard('updated', 'UPDATED', w.updatedAt ? fmtDate(w.updatedAt) : '—', w.createdAt ? `created ${fmtDate(w.createdAt)}` : ''));
+  sec.appendChild(grid);
+
+  // Projects: every member once, each a hop to its project page (a registered one).
+  const members = document.createElement('section');
+  members.className = 'card wd-members';
+  const mh = document.createElement('div');
+  mh.className = 'card-head';
+  const mb = document.createElement('b'); mb.textContent = 'Projects';
+  const mc = document.createElement('span'); mc.className = 'badge'; mc.textContent = String(paths.length);
+  mh.append(mb, mc);
+  const mlist = document.createElement('div');
+  mlist.className = 'wd-member-list';
+  paths.forEach((path, i) => {
+    const key = Array.isArray(w.projectKeys) ? w.projectKeys[i] : null;
+    const proj = key ? projectByKey(key) : state.projects.find((p) => p.path === path);
+    const exists = Array.isArray(w.exists) ? w.exists[i] !== false : true;
+    const row = document.createElement(proj && proj.key ? 'button' : 'div');
+    row.className = 'wd-member';
+    if (row.tagName === 'BUTTON') { row.type = 'button'; row.dataset.key = proj.key; row.title = 'Open the project page'; }
+    const name = document.createElement('div');
+    name.className = 'wd-member-name';
+    name.textContent = (proj && proj.name) || basenameOf(path);
+    if (!exists) { const miss = document.createElement('span'); miss.className = 'proj-missing'; miss.textContent = 'missing'; name.append(' ', miss); }
+    const p = document.createElement('div');
+    p.className = 'proj-path';
+    p.textContent = path;
+    p.title = path;
+    row.append(name, p);
+    if (row.tagName === 'BUTTON') { const chev = document.createElement('span'); chev.className = 'wd-member-chev'; chev.innerHTML = CHEVRON_RIGHT_SVG; row.appendChild(chev); }
+    mlist.appendChild(row);
+  });
+  members.append(mh, mlist);
+  sec.appendChild(members);
+
+  // Description: markdown by contract (the scanner template), edited in place.
+  const desc = document.createElement('section');
+  desc.className = 'card ws-desc wd-desc';
+  const dh = document.createElement('div');
+  dh.className = 'card-head';
+  const db = document.createElement('b'); db.textContent = 'Description';
+  const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'btn-ghost btn-mini ws-edit'; edit.textContent = 'Edit description';
+  dh.append(db, edit);
+  const view = document.createElement('div');
+  view.className = 'ws-desc-view viewer';
+  if (w.description) bindMarkdown(view, w.description);
+  else { view.classList.remove('artifact-markdown'); view.textContent = '(no description yet — re-scan to generate one)'; }
+  const pane = document.createElement('div');
+  pane.className = 'ws-desc-edit';
+  pane.hidden = true;
+  pane.innerHTML = '<div class="md-tabs" role="tablist" aria-label="Description editor">'
+    + '<button type="button" class="md-tab ws-desc-tab" role="tab" data-mode="text" aria-selected="true">Text</button>'
+    + '<button type="button" class="md-tab ws-desc-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button></div>'
+    + '<textarea class="ws-desc-input textarea" rows="10" spellcheck="false"></textarea>'
+    + '<div class="ws-desc-preview md-preview viewer" hidden></div>'
+    + '<div class="actions" style="justify-content:flex-end;margin-top:10px">'
+    + '<button type="button" class="ws-desc-cancel btn btn-ghost btn-mini">Cancel</button>'
+    + '<button type="button" class="ws-desc-save btn btn-primary btn-mini">Save</button></div>';   // static markup
+  desc.append(dh, view, pane);
+  sec.appendChild(desc);
+  if (!hdMarkdown.isReady()) void bindMarkdownReady().then((ok) => { if (ok) repaintWsDescription(); });
+  void paintWsMetricsRows();
+  void paintWsPolicyLines();
+}
+// The Overview reads the workspace row; repaint it (and the header) when the row changes and
+// the tab is built. Never while the editor holds a draft — the description panel would be lost.
+function refreshWdOverview() {
+  if (!wsDetail || !wsDetail.screen) return;
+  const sec = wsDetail.screen.querySelector('.pd-sec[data-sec="overview"]');
+  if (!sec || sec.dataset.loaded !== '1') return;
+  const pane = sec.querySelector('.ws-desc-edit');
+  if (pane && !pane.hidden) return;
+  buildWdOverview(sec, wsDetail.id);
+}
+// The description is markdown; the bundle loads lazily, so the first paint may be plain. Repaint
+// the view alone once it is ready — not the page, so the editor state survives.
+function repaintWsDescription() {
+  if (!wsDetail || !wsDetail.screen) return;
+  const w = workspaceById(wsDetail.id);
+  const view = wsDetail.screen.querySelector('.ws-desc-view');
+  if (w && w.description && view && !view.classList.contains('artifact-markdown')) bindMarkdown(view, w.description);
+}
+
+// ---- Team tab: the members table with the metrics home, and the policy home line ----
+function buildWdTeam(sec, id) {
+  sec.innerHTML = '';
+  sec.classList.add('pd-sec-team', 'wd-sec-team');
+  const panel = (which, title, hint) => {
+    const card = document.createElement('section');
+    card.className = `card pd-team-card wd-team-${which}`;
+    card.dataset.workspaceId = id;
+    const head = document.createElement('div');
+    head.className = 'card-head';
+    const b = document.createElement('b'); b.textContent = title;
+    const h = document.createElement('small'); h.className = 'hint'; h.textContent = hint;
+    head.append(b, h);
+    const body = document.createElement('div');
+    body.className = 'pd-team-body';
+    body.appendChild(Object.assign(document.createElement('small'), { className: 'hint', textContent: 'checking…' }));
+    card.append(head, body);
+    return card;
+  };
+  sec.append(
+    panel('metrics', 'Team metrics', 'Where this workspace\'s runs are recorded, and what each member records.'),
+    panel('policy', 'Team policy', 'The member whose policy governs workspace runs on this machine.'),
+  );
+  const own = workspaceById(id);
+  const body = sec.querySelector('.wd-team-metrics .pd-team-body');
+  if (body && own) body.replaceChildren(renderWsMetricsPending(own, { doc: document }));
+  void paintWsMetricsRows();
+  void paintWsPolicyLines();
+}
+
+// Delegated actions on the workspace page: the metrics home sheet and routing, the policy home
+// sheet and routing, the description editor, a member row.
+if (el.wsDetail) {
+  el.wsDetail.addEventListener('click', async (e) => {
+    if (!wsDetail) return;
+    const id = wsDetail.id;
+    const w = workspaceById(id);
+    const member = e.target.closest && e.target.closest('.wd-member[data-key]');
+    if (member) { location.hash = `projects/${member.dataset.key}`; return; }
+    if (e.target.closest('.ws-home-change')) return void openWsHomeSheet(id);
     // Team policy line (team-policy design board 6).
-    if (e.target.closest('.wsp-home-change')) { e.stopPropagation(); return void openWsPolicyHomeSheet(card.dataset.workspaceId); }
-    if (e.target.closest('.wsp-open')) { e.stopPropagation(); location.hash = `team-policy/workspace:${card.dataset.workspaceId}`; return; }
+    if (e.target.closest('.wsp-home-change')) return void openWsPolicyHomeSheet(id);
+    if (e.target.closest('.wsp-open')) { location.hash = `team-policy/workspace:${id}`; return; }
     if (e.target.closest('.wsp-route')) {
-      e.stopPropagation();
-      const wsId = card.dataset.workspaceId;
       const b = e.target.closest('.wsp-route'); b.disabled = true;
       try {
-        const r = await fetch(`/api/workspaces/${encodeURIComponent(wsId)}/policy-route`, { method: 'POST' });
+        const r = await fetch(`/api/workspaces/${encodeURIComponent(id)}/policy-route`, { method: 'POST' });
         const j = await safeJson(r);
-        wsPolicyRouteResults.set(wsId, r.ok && j ? j : { error: j?.error || 'routing failed' });
+        wsPolicyRouteResults.set(id, r.ok && j ? j : { error: j?.error || 'routing failed' });
       } catch (err) {
-        wsPolicyRouteResults.set(wsId, { error: err?.message || 'routing failed' });
+        wsPolicyRouteResults.set(id, { error: err?.message || 'routing failed' });
       } finally {
         b.disabled = false;
       }
@@ -6368,61 +6697,31 @@ if (el.wsList) {
       return;
     }
     if (e.target.closest('.ws-route')) {
-      e.stopPropagation();
-      const wsId = card.dataset.workspaceId;
       const b = e.target.closest('.ws-route'); b.disabled = true;
       try {
-        const r = await fetch(`/api/workspaces/${encodeURIComponent(wsId)}/metrics-route`, { method: 'POST' });
+        const r = await fetch(`/api/workspaces/${encodeURIComponent(id)}/metrics-route`, { method: 'POST' });
         const j = await safeJson(r);
-        wsRouteResults.set(wsId, r.ok && j ? j : { error: j?.error || 'routing failed' });
+        wsRouteResults.set(id, r.ok && j ? j : { error: j?.error || 'routing failed' });
       } catch (err) {
-        wsRouteResults.set(wsId, { error: err?.message || 'routing failed' });
+        wsRouteResults.set(id, { error: err?.message || 'routing failed' });
       } finally {
         b.disabled = false;
       }
       await paintWsMetricsRows(true); // fresh counts + the saved result list
       return;
     }
-
-    if (e.target.closest('.ws-edit')) { e.stopPropagation(); openWsEdit(card, w); return; }
+    if (e.target.closest('.ws-edit')) { openWsEdit(wsDetail.screen, w); return; }
     const tab = e.target.closest('.ws-desc-tab');
-    if (tab) { e.stopPropagation(); setMdEditMode(card.querySelector('.ws-desc-edit'), tab.dataset.mode === 'preview'); return; }
-    if (e.target.closest('.ws-desc-cancel')) { e.stopPropagation(); closeWsEdit(card, w); return; }
-    if (e.target.closest('.ws-desc-save')) { e.stopPropagation(); saveWsDescription(card, w); return; }
-    if (e.target.closest('.ws-rescan')) { e.stopPropagation(); rescanWorkspace(w); return; }
-    if (e.target.closest('.ws-delete')) { e.stopPropagation(); deleteWorkspaceCard(card, w); return; }
-
-    // Header click toggles the detail pane.
-    if (e.target.closest('.ws-head')) toggleWsDetail(card);
-  });
-  el.wsList.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
-    const head = e.target.closest && e.target.closest('.ws-head');
-    if (!head) return;
-    e.preventDefault();
-    toggleWsDetail(head.closest('.ws-card'));
+    if (tab) { setMdEditMode(wsDetail.screen.querySelector('.ws-desc-edit'), tab.dataset.mode === 'preview'); return; }
+    if (e.target.closest('.ws-desc-cancel')) { closeWsEdit(wsDetail.screen); return; }
+    if (e.target.closest('.ws-desc-save')) { void saveWsDescription(wsDetail.screen, w); }
   });
 }
 
-function toggleWsDetail(card, force) {
-  if (!card) return;
-  const head = card.querySelector('.ws-head');
-  const detail = card.querySelector('.ws-detail');
-  if (!head || !detail) return;
-  const open = head.getAttribute('aria-expanded') === 'true';
-  const next = typeof force === 'boolean' ? force : !open;
-  head.setAttribute('aria-expanded', String(next));
-  detail.hidden = !next;
-  if (typeof force !== 'boolean') { try { localStorage.setItem(WS_OPEN_KEY(card.dataset.workspaceId), next ? '1' : '0'); } catch { /* private mode */ } }
-}
-
-function openWsEdit(card, w) {
-  if (!card || !w) return;
-  const detail = card.querySelector('.ws-detail');
-  const head = card.querySelector('.ws-head');
-  if (detail && head && detail.hidden) { detail.hidden = false; head.setAttribute('aria-expanded', 'true'); }
-  const pane = card.querySelector('.ws-desc-edit');
-  const input = card.querySelector('.ws-desc-input');
+function openWsEdit(screen, w) {
+  if (!screen || !w) return;
+  const pane = screen.querySelector('.ws-desc-edit');
+  const input = screen.querySelector('.ws-desc-input');
   if (input) input.value = w.description || '';
   if (pane) { pane.hidden = false; setMdEditMode(pane, false); }
   if (input) input.focus();
@@ -6447,18 +6746,18 @@ function setMdEditMode(host, preview) {
   }
 }
 
-function closeWsEdit(card) {
-  const pane = card && card.querySelector('.ws-desc-edit');
+function closeWsEdit(screen) {
+  const pane = screen && screen.querySelector('.ws-desc-edit');
   if (pane) pane.hidden = true;
 }
 
 // Save an edited description: PATCH /api/workspaces/:id { description }. JSON-safe
 // (JSON.stringify); the textarea value is read via .value, written via .textContent.
-async function saveWsDescription(card, w) {
-  if (!card || !w) return;
-  const input = card.querySelector('.ws-desc-input');
+async function saveWsDescription(screen, w) {
+  if (!screen || !w) return;
+  const input = screen.querySelector('.ws-desc-input');
   const description = input ? input.value : '';
-  const saveBtn = card.querySelector('.ws-desc-save');
+  const saveBtn = screen.querySelector('.ws-desc-save');
   if (saveBtn) saveBtn.disabled = true;
   try {
     const res = await fetch(`/api/workspaces/${encodeURIComponent(w.id)}`, {
@@ -6467,17 +6766,25 @@ async function saveWsDescription(card, w) {
       body: JSON.stringify({ description }),
     });
     const data = await safeJson(res);
-    if (!res.ok) { setWsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    if (!res.ok) { setWdError(screen, data.error || `HTTP ${res.status}`); return; }
     const updated = data.workspace || { ...w, description };
     const i = state.workspaces.findIndex((x) => x && x.id === w.id);
     if (i >= 0) state.workspaces[i] = updated;
-    setWsMsg('Description saved.', 'ok');
-    renderWorkspaces();
+    setWdError(screen, '');
+    closeWsEdit(screen);
+    refreshWdOverview();
   } catch (err) {
-    setWsMsg(err.message, 'err');
+    setWdError(screen, err.message);
   } finally {
     if (saveBtn) saveBtn.disabled = false;
   }
+}
+// The page's own error line, on the header (the project page's .pd-error idiom).
+function setWdError(screen, text) {
+  const e = screen && screen.querySelector('.pd-error');
+  if (!e) return;
+  e.textContent = text || '';
+  e.hidden = !text;
 }
 
 // Re-scan: POST /api/workspaces/:id/scan and jump into the wizard at Step 2 with
@@ -6488,8 +6795,8 @@ async function rescanWorkspace(w) {
   state.wizard.name = w.name || '';
   state.wizard.selectedPaths = Array.isArray(w.projectPaths) ? [...w.projectPaths] : [];
   location.hash = 'workspace-create';
-  // Re-scan also refreshes member discovery (§4.8) — the card's home is changed via the card
-  // row (decision 23), not the wizard, so this fires-and-continues straight into the scan.
+  // Re-scan also refreshes member discovery (§4.8) — the home is changed from the page
+  // (decision 23), not the wizard, so this fires-and-continues straight into the scan.
   await fetch('/api/workspaces/metrics-scan', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectPaths: state.wizard.selectedPaths }),
   }).catch(() => {});
@@ -6497,33 +6804,38 @@ async function rescanWorkspace(w) {
   await startWizardScan();
 }
 
-// Delete: confirm, then DELETE. 200 removes the card + surfaces warnings; 409
-// (live run/scan) keeps the card + surfaces data.error.
-async function deleteWorkspaceCard(card, w) {
-  if (!card || !w) return;
+// Delete, from the page: confirm, then DELETE. 200 closes the page and removes the row;
+// 409 (live run/scan) keeps the page and shows data.error on its header.
+async function deleteWorkspaceFromPage(id) {
+  const w = workspaceById(id);
+  if (!w || !wsDetail) return;
+  const screen = wsDetail.screen;
   const schedNote = await scheduleDependentsNote(`workspaceId=${encodeURIComponent(w.id)}`, 'Deleting the workspace cancels them.');
   const ok = await confirmModal({
     title: 'Delete workspace', danger: true, confirmLabel: 'Delete',
     message: `Delete workspace "${w.name || w.id}"?\n\nThis removes its history store and best-effort branch cleanup. This cannot be undone.${schedNote}`,
   });
-  if (!ok) return;
-  const btn = card.querySelector('.ws-delete');
+  if (!ok || !wsDetail) return;
+  const btn = screen.querySelector('.ws-delete');
   if (btn) btn.disabled = true;
   try {
     const res = await fetch(`/api/workspaces/${encodeURIComponent(w.id)}`, { method: 'DELETE' });
     const data = await safeJson(res);
-    if (res.status === 409) { setWsMsg(data.error || 'Workspace has a live run or scan.', 'err'); if (btn) btn.disabled = false; return; }
-    if (!res.ok) { setWsMsg(data.error || `HTTP ${res.status}`, 'err'); if (btn) btn.disabled = false; return; }
+    if (res.status === 409) { setWdError(screen, data.error || 'Workspace has a live run or scan.'); return; }
+    if (!res.ok) { setWdError(screen, data.error || `HTTP ${res.status}`); return; }
     state.workspaces = state.workspaces.filter((x) => !(x && x.id === w.id));
     if (state.selectedWorkspaceId === w.id) state.selectedWorkspaceId = '';
     if (localStorage.getItem(LAST_WORKSPACE_KEY) === w.id) localStorage.removeItem(LAST_WORKSPACE_KEY);
     const warnings = Array.isArray(data.warnings) ? data.warnings : [];
-    setWsMsg(warnings.length ? `Deleted. Warnings: ${warnings.join('; ')}` : 'Workspace deleted.', warnings.length ? '' : 'ok');
     renderWorkspaces();
     updateWorkspacesCount();
+    // The list entry (showView) clears the message line on the way in: route first, note after.
+    showView('workspaces', '');
+    setWsMsg(warnings.length ? `Deleted. Warnings: ${warnings.join('; ')}` : 'Workspace deleted.', warnings.length ? '' : 'ok');
   } catch (err) {
-    setWsMsg(err.message, 'err');
-    if (btn) btn.disabled = false;
+    setWdError(screen, err.message);
+  } finally {
+    if (btn && btn.isConnected) btn.disabled = false;
   }
 }
 
@@ -6734,10 +7046,11 @@ async function saveWorkspace() {
     const data = await safeJson(res);
     if (res.status === 409) { setWizMsg(data.error || 'Duplicate workspace.', 'err'); return; }
     if (!res.ok) { setWizMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    const backTo = state.wizard.editingId || (data.workspace && data.workspace.id) || '';
     resetWizard(false);
     await loadWorkspaces();
     updateWorkspacesCount();
-    location.hash = 'workspaces';
+    location.hash = backTo && state.workspaces.some((x) => x && x.id === backTo) ? `workspaces/${backTo}` : 'workspaces';
   } catch (err) {
     setWizMsg(err.message, 'err');
   } finally {
@@ -6840,7 +7153,7 @@ function onScanEvent(msg) {
 if (typeof window !== 'undefined') {
   window.__ws = {
     setRunTarget, ensureWorkspaceOptions, loadWorkspaces, loadWorkspacesView,
-    renderWorkspaces, buildWorkspaceCard, enterWizard, showWizardStep,
+    renderWorkspaces, buildWorkspaceRow, routeWsDetail, enterWizard, showWizardStep,
     renderWizardProjects, startWizardScan, saveWorkspace, abortWizardScan,
     onScanEvent, subscribeScan, setStatusText, resetWizard,
     renderWorkspaceSourceBranches,
@@ -7784,20 +8097,18 @@ function buildProjectRow(p) {
   main.append(name, path);
   row.appendChild(main);
 
-  // The team-metrics status cell (filled by paintProjectTmCells) sits between the name and the
-  // chevron; its own controls stop propagation so they never open the project page.
-  const tmSlot = document.createElement('div');
-  tmSlot.className = 'tm-slot';
-  tagLevel(tmSlot, 'expert');                  // team metrics is expert (docs/ui-levels.md)
-  tmSlot.dataset.key = p.key;
-  row.appendChild(tmSlot);
-  // The team-policy cell (team-policy design board 2) sits beside the metrics one, same grid;
-  // paintProjectPolicyCells fills it. It wraps under the metrics cell below 1280px (style.css).
-  const tpSlot = document.createElement('div');
-  tpSlot.className = 'tp-slot';
-  tagLevel(tpSlot, 'expert');                  // team setup, like the metrics cell above it
-  tpSlot.dataset.key = p.key;
-  row.appendChild(tpSlot);
+  // The team column: two one-line chips (metrics, policy) that paintProjectTmCells /
+  // paintProjectPolicyCells fill from the scopes payloads. Status only — every control and
+  // every sentence behind a status lives on the project page's Team tab, so the row stays a
+  // row and the whole of it opens the page. Team setup is expert (docs/ui-levels.md).
+  const team = document.createElement('div');
+  team.className = 'pl-team';
+  tagLevel(team, 'expert');
+  team.dataset.key = p.key;
+  const tmChip = document.createElement('span'); tmChip.className = 'pl-team-item pl-tm';
+  const tpChip = document.createElement('span'); tpChip.className = 'pl-team-item pl-tp';
+  team.append(tmChip, tpChip);
+  row.appendChild(team);
   // A keyed row IS the control (click / Enter / Space open the project page — the History
   // card's .hist-head idiom) and carries the chevron. A keyless row (a project registered
   // outside worca's store) has no page: no role, no chevron, default cursor.
@@ -7847,25 +8158,50 @@ function renderProjectsList() {
   paintProjectPolicyCells();
 }
 
-// Fills the .tm-slot placeholders left by buildProjectRow. Called from renderProjectsList()
-// (NOT loadProjectsView()): deleteProject and saveProjectAdd both repaint via renderProjectsList().
+// Fills the .pl-tm chips left by buildProjectRow, and the open project page's team-metrics
+// block and Overview card. Called from renderProjectsList() (NOT loadProjectsView()):
+// deleteProject and saveProjectAdd both repaint via renderProjectsList().
 async function paintProjectTmCells(force = false) {
   const data = await loadTmScopes({ force });
   const byKey = new Map(data.projects.map((s) => [s.key, s]));
-  for (const slot of document.querySelectorAll('#projects-list .tm-slot')) {
+  for (const slot of document.querySelectorAll('#projects-list .pl-team')) {
     const s = byKey.get(slot.dataset.key);
-    slot.replaceChildren(s ? renderProjectTmCell(s, { doc: document }) : '');
+    const old = slot.querySelector('.pl-tm');
+    const next = s ? renderProjectTmChip(s, { doc: document }) : Object.assign(document.createElement('span'), { className: 'pl-team-item pl-tm' });
+    if (old) old.replaceWith(next); else slot.prepend(next);
+  }
+  paintPdTeam('metrics', byKey.get(projDetail?.key));
+}
+// The project page's side of a team status: the Team tab's block (the full cell, its controls
+// included) and the Overview's stat card. `which` is 'metrics' | 'policy'. A page that is not
+// open, or whose tab is not built yet, paints nothing — the tab builder calls back in.
+function paintPdTeam(which, s) {
+  if (!projDetail || !projDetail.screen) return;
+  const screen = projDetail.screen;
+  const body = screen.querySelector(`.pd-team-${which} .pd-team-body`);
+  if (body) {
+    if (s) body.replaceChildren(which === 'metrics' ? renderProjectTmCell(s, { doc: document, heading: false }) : renderProjectTpCell(s, { doc: document, heading: false }));
+    else body.replaceChildren(Object.assign(document.createElement('small'), { className: 'hint', textContent: which === 'metrics' ? 'Team metrics is not available for this project.' : 'Team policy is not available for this project.' }));
+  }
+  const card = screen.querySelector(`.pd-ov-card-${which}`);
+  if (card) {
+    const sum = s ? (which === 'metrics' ? projectTmSummary(s) : projectTpSummary(s)) : null;
+    card.querySelector('.pd-ov-value').textContent = sum ? capFirst(sum.short) : '—';
+    const sub = card.querySelector('.pd-ov-sub');
+    if (sub) { sub.textContent = sum ? (sum.detail || 'Open the Team tab') : 'Not available here'; sub.classList.toggle('pd-ov-attn', !!sum && (sum.tone === 'red' || sum.tone === 'amber')); }
+    card.dataset.kind = sum ? sum.kind : '';
   }
 }
+const capFirst = (t) => (t ? t[0].toUpperCase() + t.slice(1) : t);
 
 // ---------------------------------------------------------------------------
 // Project page (#projects/<key>[/memory[/<name>]]) — spec 2026-09-13-project-detail-design.md
 // ---------------------------------------------------------------------------
-// The param after "projects/" is "<key>" (Overview), "<key>/memory" (Memory tab) or
-// "<key>/memory/<enc name>" (that file open). Keys are `<slug>-<8hex>` (store.mjs#projectKey)
-// and never contain "/", so the first slash splits key from tab. An unknown tab word reads as
-// Overview (the hash is left alone, as History leaves an odd param alone).
-const PROJ_TABS = ['overview', 'memory'];
+// The param after "projects/" is "<key>" (Overview), "<key>/team" (Team tab), "<key>/memory"
+// (Memory tab) or "<key>/memory/<enc name>" (that file open). Keys are `<slug>-<8hex>`
+// (store.mjs#projectKey) and never contain "/", so the first slash splits key from tab. An
+// unknown tab word reads as Overview (the hash is left alone, as History leaves an odd param alone).
+const PROJ_TABS = ['overview', 'team', 'memory'];
 function parseProjParam(param = '') {
   const s = String(param || '');
   if (!s) return null;
@@ -7875,10 +8211,12 @@ function parseProjParam(param = '') {
   const j = rest.indexOf('/');
   const tab = j === -1 ? rest : rest.slice(0, j);
   const sub = j === -1 ? '' : rest.slice(j + 1);
-  return PROJ_TABS.includes(tab) && tab === 'memory' ? { key, tab, sub } : { key, tab: 'overview', sub: '' };
+  if (tab === 'memory') return { key, tab, sub };
+  return { key, tab: PROJ_TABS.includes(tab) && tab !== 'overview' ? tab : 'overview', sub: '' };
 }
 // The canonical param for a tab: Overview is plain '<key>', never '<key>/overview'.
 function projParamFor(key, tab = 'overview', sub = '') {
+  if (tab === 'team') return `${key}/team`;
   if (tab !== 'memory') return key;
   return sub ? `${key}/memory/${encodeURIComponent(sub)}` : `${key}/memory`;
 }
@@ -8077,10 +8415,12 @@ async function removeProjectFromPage(key) {
 const PD_TAB_ICONS = {
   overview: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>',
   memory: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"></path><path d="M4 20.5V5.5M8 7h8M8 10.5h6"></path></svg>',
+  team: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>',
 };
 // Table-driven, like HD_TABS. `build(sec, key)` takes the KEY (buildArgs), never the project object.
 const PD_TABS = [
   { key: 'overview', label: 'Overview', level: 'simple', badge: () => null, visible: () => true, build: (sec, key) => buildPdOverview(sec, key) },
+  { key: 'team', label: 'Team', level: 'expert', badge: () => null, visible: () => true, build: (sec, key) => buildPdTeam(sec, key) },
   { key: 'memory', label: 'Memory', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdMemory(sec, key) },
 ];
 function initPdTabs(screen, p) {
@@ -8167,8 +8507,49 @@ function buildPdOverview(sec, key) {
     grid.appendChild(pdStatCard('last', 'LAST RUN', '—', 'No runs yet'));
   }
   grid.appendChild(tagLevel(pdStatCard('key', 'KEY', p.key, `memory scope projects/${p.key}`), 'expert'));
+  // The team half (docs/team-metrics.md, docs/team-policy.md): one card each, filled by the
+  // scopes painters, and a click lands on the Team tab where the controls are.
+  for (const which of ['metrics', 'policy']) {
+    const card = pdStatCard(which, which === 'metrics' ? 'TEAM METRICS' : 'TEAM POLICY', '…', 'checking…', { tag: 'button' });
+    card.classList.add('pd-ov-link');
+    card.title = 'Open the Team tab';
+    card.addEventListener('click', () => { location.hash = `projects/${projParamFor(key, 'team')}`; });
+    grid.appendChild(tagLevel(card, 'expert'));
+  }
   sec.appendChild(grid);
   ensureHistoryLoaded();
+  void paintProjectTmCells();
+  void paintProjectPolicyCells();
+}
+
+// ---- Team tab ----
+// Two panels, one per feature, each holding the same block the Projects list used to carry per
+// row — status, sentence, and the controls (Set up…, Include my runs, Push now, Open, Change…).
+// The blocks are painted by the scopes painters, which also keep the list chips in step.
+function buildPdTeam(sec, key) {
+  sec.innerHTML = '';
+  sec.classList.add('pd-sec-team');
+  const panel = (which, title, hint) => {
+    const card = document.createElement('section');
+    card.className = `card pd-team-card pd-team-${which}`;
+    card.dataset.key = key;
+    const head = document.createElement('div');
+    head.className = 'card-head';
+    const b = document.createElement('b'); b.textContent = title;
+    const h = document.createElement('small'); h.className = 'hint'; h.textContent = hint;
+    head.append(b, h);
+    const body = document.createElement('div');
+    body.className = 'pd-team-body';
+    body.appendChild(Object.assign(document.createElement('small'), { className: 'hint', textContent: 'checking…' }));
+    card.append(head, body);
+    return card;
+  };
+  sec.append(
+    panel('metrics', 'Team metrics', 'Finished runs recorded on a shared worca-metrics branch, for the whole team.'),
+    panel('policy', 'Team policy', 'Caps, plugins and models the team expects, read from a worca-policy branch.'),
+  );
+  void paintProjectTmCells();
+  void paintProjectPolicyCells();
 }
 
 // A deep link into a project page can land before the socket's `hello` background-loads History;
@@ -8431,31 +8812,7 @@ if (el.projectsList) {
     projReturnFocus = item.dataset.key;                 // Back / Esc come home to this row
     location.hash = `projects/${item.dataset.key}`;
   };
-  el.projectsList.addEventListener('click', async (e) => {
-    // Team policy cell (team-policy design board 2) FIRST: it shares the .tm-cell grid class,
-    // so the metrics branch below would otherwise swallow its clicks.
-    const tpCell = e.target.closest && e.target.closest('.tp-cell');
-    if (tpCell) {
-      const key = tpCell.dataset.key;
-      if (e.target.closest('.tp-enable')) { e.stopPropagation(); return void openPolicyEnableDialog(key, { mode: 'here' }); }
-      if (e.target.closest('.tp-change')) { e.stopPropagation(); return void openPolicyEnableDialog(key, { mode: 'follow', change: true }); }
-      if (e.target.closest('.tp-open')) { e.stopPropagation(); location.hash = `team-policy/project:${key}`; return; }
-      return;
-    }
-    const tmCell = e.target.closest('.tm-cell');
-    if (tmCell) {
-      const key = tmCell.dataset.key;
-      if (e.target.closest('.tm-enable')) { e.stopPropagation(); return void openTmEnableDialog(key, { mode: 'here' }); }
-      if (e.target.closest('.tm-change')) { e.stopPropagation(); return void openTmEnableDialog(key, { mode: 'delegate', change: true }); }
-      if (e.target.closest('.tm-push')) {
-        e.stopPropagation();
-        const s = tmCache.data?.projects.find((x) => x.key === key);
-        const btnEl = e.target.closest('.tm-push'); btnEl.disabled = true;
-        await fetch('/api/team-metrics/flush', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s?.sinkSlug ? { slug: s.sinkSlug } : { scope: `project:${key}` }) }).catch(() => {});
-        return void paintProjectTmCells(true);
-      }
-      return; // clicks elsewhere in the cell (labels, the switch) are handled by 'change'
-    }
+  el.projectsList.addEventListener('click', (e) => {
     const row = e.target.closest && e.target.closest('.pl-row[role="button"]');
     if (row) openRow(row);                              // a chevron click bubbles here too — one open
   });
@@ -8467,9 +8824,37 @@ if (el.projectsList) {
     openRow(row);
   });
 
-  // Second listener, same guard. 'change' (not click) for the switch — a checkbox inside a <label>.
-  el.projectsList.addEventListener('change', async (e) => {
-    const cb = e.target.closest('input.tm-record');
+}
+// The project page's Team tab: the metrics and policy blocks' controls. Delegated on the detail
+// screen (the page is rebuilt per project), the same keys the list cells used to answer to.
+if (el.projDetail) {
+  el.projDetail.addEventListener('click', async (e) => {
+    // Team policy block FIRST: it shares the .tm-cell grid class, so the metrics branch below
+    // would otherwise swallow its clicks.
+    const tpCell = e.target.closest && e.target.closest('.tp-cell');
+    if (tpCell) {
+      const key = tpCell.dataset.key;
+      if (e.target.closest('.tp-enable')) return void openPolicyEnableDialog(key, { mode: 'here' });
+      if (e.target.closest('.tp-change')) return void openPolicyEnableDialog(key, { mode: 'follow', change: true });
+      if (e.target.closest('.tp-open')) { location.hash = `team-policy/project:${key}`; return; }
+      return;
+    }
+    const tmCell = e.target.closest && e.target.closest('.tm-cell');
+    if (!tmCell) return;
+    const key = tmCell.dataset.key;
+    if (e.target.closest('.tm-enable')) return void openTmEnableDialog(key, { mode: 'here' });
+    if (e.target.closest('.tm-change')) return void openTmEnableDialog(key, { mode: 'delegate', change: true });
+    if (e.target.closest('.tm-push')) {
+      const s = tmCache.data?.projects.find((x) => x.key === key);
+      const btnEl = e.target.closest('.tm-push'); btnEl.disabled = true;
+      await fetch('/api/team-metrics/flush', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s?.sinkSlug ? { slug: s.sinkSlug } : { scope: `project:${key}` }) }).catch(() => {});
+      return void paintProjectTmCells(true);
+    }
+    // clicks elsewhere in the block (labels, the switch) are handled by 'change'
+  });
+  // 'change' (not click) for the switch — a checkbox inside a <label>.
+  el.projDetail.addEventListener('change', async (e) => {
+    const cb = e.target.closest && e.target.closest('input.tm-record');
     if (!cb) return;
     cb.disabled = true;
     const r = await fetch(`/api/projects/${encodeURIComponent(cb.dataset.key)}/team-metrics`, {
@@ -11840,10 +12225,13 @@ async function loadTpScopes({ force = false } = {}) {
 async function paintProjectPolicyCells(force = false) {
   const data = await loadTpScopes({ force });
   const byKey = new Map(data.projects.map((s) => [s.key, s]));
-  for (const slot of document.querySelectorAll('#projects-list .tp-slot')) {
+  for (const slot of document.querySelectorAll('#projects-list .pl-team')) {
     const s = byKey.get(slot.dataset.key);
-    slot.replaceChildren(s ? renderProjectTpCell(s, { doc: document }) : '');
+    const old = slot.querySelector('.pl-tp');
+    const next = s ? renderProjectTpChip(s, { doc: document }) : Object.assign(document.createElement('span'), { className: 'pl-team-item pl-tp' });
+    if (old) old.replaceWith(next); else slot.append(next);
   }
+  paintPdTeam('policy', byKey.get(projDetail?.key));
 }
 
 // "Set up team policy…" / "Change…" dialog (board 3). Reuses the generic slot modal; the body
@@ -11916,20 +12304,35 @@ const wsPolicyRouteResults = new Map();
 async function paintWsPolicyLines(force = false) {
   const data = await loadTpScopes({ force });
   const byId = new Map(data.workspaces.map((w) => [w.id, w]));
-  for (const card of document.querySelectorAll('#ws-list .ws-card')) {
-    const slot = card.querySelector('.ws-policy');
-    if (!slot) continue;
-    const w = byId.get(card.dataset.workspaceId);
-    if (!w) { slot.hidden = true; slot.replaceChildren(); continue; }
-    slot.hidden = false;
-    slot.replaceChildren(renderWsPolicyLine(w, { doc: document }));
-    const saved = wsPolicyRouteResults.get(w.id);
-    const out = slot.querySelector('.ws-policy-results');
-    if (saved && out) {
-      out.replaceChildren(saved.error
-        ? Object.assign(document.createElement('small'), { className: 'hint err', textContent: saved.error })
-        : renderRouteResults(saved, { doc: document }));
+  if (!wsDetail || !wsDetail.screen) return;
+  const screen = wsDetail.screen;
+  const w = byId.get(wsDetail.id);
+  const body = screen.querySelector('.wd-team-policy .pd-team-body');
+  if (body) {
+    if (!w) body.replaceChildren(Object.assign(document.createElement('small'), { className: 'hint', textContent: 'No member of this workspace carries a team policy yet — set one up from a project\'s page.' }));
+    else {
+      const slot = document.createElement('div');
+      slot.className = 'ws-policy';
+      slot.appendChild(renderWsPolicyLine(w, { doc: document }));
+      body.replaceChildren(slot);
+      const saved = wsPolicyRouteResults.get(w.id);
+      const out = slot.querySelector('.ws-policy-results');
+      if (saved && out) {
+        out.replaceChildren(saved.error
+          ? Object.assign(document.createElement('small'), { className: 'hint err', textContent: saved.error })
+          : renderRouteResults(saved, { doc: document }));
+      }
     }
+  }
+  const card = screen.querySelector('.pd-ov-card-policy');
+  if (card) {
+    const home = (w && w.home) || { state: 'unset' };
+    card.querySelector('.pd-ov-value').textContent = home.state === 'unset' ? 'No home' : home.slug;
+    const sub = card.querySelector('.pd-ov-sub');
+    sub.textContent = home.state === 'unset' ? 'your settings apply to workspace runs'
+      : home.state !== 'ok' ? (home.detail || 'the policy home is stale')
+        : home.follows ? `via ${home.follows}` : 'governs workspace runs';
+    sub.classList.toggle('pd-ov-attn', home.state !== 'unset' && home.state !== 'ok');
   }
 }
 const WS_POLICY_STATE_TEXT = {
@@ -20333,17 +20736,22 @@ function gsNextHopRaw(step, g = gs.guide || {}) {
       if (projects < 2) return addProject('A workspace needs at least two projects.', 'Add another one here.');
       if (!onView('workspaces')) return NAV('workspaces', 'Workspaces live here.');
       return { target: '#ws-create-btn', text: 'A workspace runs one task across several projects at once.', final: true };
-    case 'teamMetrics':
+    case 'teamMetrics': {
       if (!projects) return addProject('Team metrics is enabled per project.', 'Add one here first.');
-      if (!onView('projects')) return NAV('projects', 'Team metrics is switched on per project, from its row here.');
-      // The enable control exists only for a project with an origin remote; otherwise
-      // ring the cell that explains why, so the guide never lights nothing.
+      if (!onView('projects')) return NAV('projects', 'Team metrics is switched on per project, from its page here.');
+      // The control lives on the project page's Team tab: first the row, then the tab pill, then
+      // the control itself — or, for a project with no origin remote, the block that explains why,
+      // so the guide never lights nothing.
+      if (!projDetail) return { target: ['#projects-list .pl-row[role="button"]', '#projects-list .pl-row'], text: 'Open a project: its page carries the team setup.' };
+      const teamTab = document.getElementById('pd-tab-team');
+      if (teamTab && !teamTab.classList.contains('active')) return { target: '#pd-tab-team', text: 'Team metrics and team policy live on the Team tab.' };
       return {
         final: true,
-        target: ['#projects-list .tm-enable', '#projects-list .tm-cell'],
+        target: ['#proj-detail .tm-enable', '#proj-detail .pd-team-metrics'],
         text: ['Team metrics records every finished run on a shared git branch, for the whole team.',
           'Team metrics lives on a git remote. This project has none yet — push it to one and “Set up team metrics…” appears here.'],
       };
+    }
     default:
       return null;
   }
@@ -20604,6 +21012,7 @@ function showView(name, param = '') {
   // Same for the Projects track: leaving must not park a project page mid-slide behind the next
   // view, and its Memory controller must not outlive the view.
   if (currentShownView === 'projects' && name !== 'projects') closeProjDetail({ instant: true });
+  if (currentShownView === 'workspaces' && name !== 'workspaces') closeWsDetail({ instant: true });
   // Same for Running's two-screen track (spec §5.1): leaving must not park a
   // detail screen mid-slide behind the next view.
   //
@@ -20660,6 +21069,7 @@ function showView(name, param = '') {
   document.body.classList.toggle('view-history', name === 'history');
   document.body.classList.toggle('view-running', name === 'running');
   document.body.classList.toggle('view-projects', name === 'projects');
+  document.body.classList.toggle('view-workspaces', name === 'workspaces');
   if (name === 'running') {
     renderRunningView();
     // The Scheduled group (runs due within 24 h) reads the same store as the Schedules view.
@@ -20689,7 +21099,13 @@ function showView(name, param = '') {
   if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
   if (name === 'team-metrics') loadTeamMetricsView();
   if (name === 'team-policy') loadTeamPolicyView(param);
-  if (name === 'workspaces') loadWorkspacesView();
+  if (name === 'workspaces') {
+    setWsMsg('');
+    // A view entry refetches the list and then routes the page half of the hash; an in-view hop
+    // (list <-> page, tab <-> tab) only routes — the Projects arm below does the same.
+    if (prevView !== 'workspaces') void loadWorkspacesView();
+    else routeWsDetail(param);
+  }
   if (name === 'workspace-create') enterWizard();
   if (name === 'agents') loadAgentsView();
   if (name === 'agent-create') enterAgentWizard();

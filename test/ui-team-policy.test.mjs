@@ -219,30 +219,35 @@ test('Team policy page: nothing enabled → the empty state; a 404 for the scope
   assert.match(missing.doc.querySelector('#tp-body .hint.err').textContent, /Could not load the team policy: no team policy/);
 });
 
-test('Projects rows carry a .tp-slot cell beside the metrics one, with the right copy per state', async () => {
+test('Projects rows carry a compact policy chip; the project page\'s Team tab carries the block with Open', async () => {
   const { doc, go, settle } = await boot();
   await go('projects');
   await settle();
   const rows = [...doc.querySelectorAll('#projects-list .pl-item')];
   assert.equal(rows.length, 2);
   for (const r of rows) {
-    const tm = r.querySelector('.tm-slot'); const tp = r.querySelector('.tp-slot');
-    assert.ok(tm && tp && tm.nextElementSibling === tp, 'the policy slot follows the metrics slot');
+    const team = r.querySelector('.pl-team');
+    assert.ok(team && team.querySelector('.pl-tm') && team.querySelector('.pl-tp'), 'one team column, metrics chip then policy chip');
+    assert.equal(r.querySelector('.tp-cell'), null, 'no cell on the row');
   }
-  const home = rows[0].querySelector('.tp-slot .tp-cell');
-  assert.equal(home.querySelector('.tm-label').textContent, 'Team policy');
-  assert.match(home.querySelector('.tm-status').textContent, /^On · policy home · 3 fields · updated just now$/);
-  assert.ok(home.querySelector('.tp-open'));
-  const off = rows[1].querySelector('.tp-slot .tp-cell');
-  assert.equal(off.querySelector('.tm-status').textContent, 'Off · your settings apply');
-  assert.ok(off.querySelector('.tp-enable'));
-  // Open lands on the page with the scope preselected.
-  home.querySelector('.tp-open').click();
+  const home = rows[0].querySelector('.pl-tp');
+  assert.equal(home.textContent, 'Policy home');
+  assert.equal(home.dataset.kind, 'home');
+  assert.match(home.title, /^Team policy: Home · 3 fields · updated just now/);
+  assert.equal(rows[1].querySelector('.pl-tp').textContent, 'Policy off');
+  assert.equal(rows[1].querySelector('.pl-tp').title, 'Team policy: Off · your settings apply');
+  // The page: the Team tab's block has the same copy the cell had, and Open lands on the page with the scope preselected.
+  await go('projects/gateway-00000001/team');
+  await settle();
+  const cell = doc.querySelector('#proj-detail .pd-team-policy .tp-cell');
+  assert.match(cell.querySelector('.tm-status').textContent, /^On · policy home · 3 fields · updated just now$/);
+  assert.equal(cell.querySelector('.tm-label'), null);
+  cell.querySelector('.tp-open').click();
   await settle();
   assert.equal(window.location.hash, '#team-policy/project:gateway-00000001');
 });
 
-test('Projects: "Set up team policy…" opens the dialog; the follow mode posts the marker body', async () => {
+test('Project page: "Set up team policy…" opens the dialog; the follow mode posts the marker body', async () => {
   const posts = [];
   const { doc, go, settle } = await boot({
     fetchHandler: (u, opts) => {
@@ -250,9 +255,16 @@ test('Projects: "Set up team policy…" opens the dialog; the follow mode posts 
       return null;
     },
   });
-  await go('projects');
+  await go('projects/billing-00000002');
   await settle();
-  doc.querySelector('#projects-list .pl-item[data-key="billing-00000002"] .tp-enable').click();
+  // The Overview card reads the state and opens the Team tab.
+  const card = doc.querySelector('#proj-detail .pd-ov-card-policy');
+  assert.equal(card.querySelector('.pd-ov-value').textContent, 'Off');
+  assert.equal(card.querySelector('.pd-ov-sub').textContent, 'your settings apply');
+  card.click();
+  await settle();
+  assert.equal(window.location.hash, '#projects/billing-00000002/team');
+  doc.querySelector('#proj-detail .pd-team-policy .tp-enable').click();
   await settle();
   const modal = doc.getElementById('plugin-modal');
   assert.equal(modal.classList.contains('hidden'), false, 'the slot modal opens');

@@ -191,10 +191,10 @@ effect, mock role, workspace variants).
 |---|---|
 | Projects list, add, project page Overview, remove | S |
 | Project Memory tab (view and edit files) | A |
-| Workspaces page, create wizard, description, re-scan, delete | A |
+| Workspaces list, create wizard, workspace page Overview (projects, description, re-scan, delete) | A |
 | Memory health, Defragment, snapshot restore | E — the health card stays visible when overdue or failing |
-| Team-metrics cell and setup; workspace metrics table and home; KEY card | E |
-| Team-policy cell and setup; workspace policy home | E |
+| Projects-row team chips; project page Team tab and its TEAM METRICS / TEAM POLICY cards; KEY card | E |
+| Workspace page Team tab (members table, metrics home, policy home) and its METRICS HOME / POLICY HOME cards | E |
 
 ### Settings
 

@@ -53,11 +53,44 @@ export function projectTpState(s) {
   return { kind: 'home' };
 }
 
-/** The second cell on a Projects row: the same two-row grid as the team-metrics cell. */
-export function renderProjectTpCell(s, { doc = globalThis.document, now = Date.now() } = {}) {
+const cap = (t) => (t ? t[0].toUpperCase() + t.slice(1) : t);
+/**
+ * One project's team-policy state in a few words — the metrics module's projectTmSummary shape:
+ * `short` for a row chip and the project page's stat card ("home", "follows acme/gateway", "off"),
+ * `detail` the sentence behind it, `tone` the dot colour.
+ */
+export function projectTpSummary(s, { now = Date.now() } = {}) {
+  const { kind } = projectTpState(s);
+  const fields = s.fieldCount == null ? '' : `${s.fieldCount} field${s.fieldCount === 1 ? '' : 's'}`;
+  const caps = (kind === 'home' || kind === 'follows') ? capText(s.caps) : '';
+  switch (kind) {
+    case 'no-origin': return { kind, tone: 'muted', short: 'not available', detail: s.noGit ? 'not a git repository' : 'no origin remote' };
+    case 'off': return { kind, tone: 'grey', short: 'off', detail: 'your settings apply' };
+    case 'unsupported': return { kind, tone: 'red', short: 'needs a newer Worca', detail: s.warnings?.[0] || 'the policy uses a newer schema' };
+    case 'delegate-invalid': return { kind, tone: 'red', short: 'follow invalid', detail: `follows ${s.delegateTo} · your settings apply` };
+    case 'blocked': return { kind, tone: 'amber', short: s.delegateCode === 'DOC_UNKNOWN' || s.blocked === 'DOC_UNKNOWN' ? 'on · not read yet' : 'on · unresolved', detail: `${s.delegateDetail || 'the policy could not be resolved'} · your settings apply` };
+    case 'follows': return { kind, tone: 'green', short: `follows ${s.home || s.delegateTo}`, detail: [fields, caps].filter(Boolean).join(' · ') };
+    default: return { kind, tone: 'green', short: 'home', detail: [fields, s.updatedAt ? `updated ${relTime(s.updatedAt, now)}` : '', caps].filter(Boolean).join(' · ') };
+  }
+}
+
+/** The Projects-row chip, the metrics chip's twin: a dot, the word and the short state, nothing else. */
+export function renderProjectTpChip(s, { doc = globalThis.document, now = Date.now() } = {}) {
+  const chip = h(doc, 'span', 'pl-team-item pl-tp');
+  chip.dataset.key = s.key;
+  const sum = projectTpSummary(s, { now });
+  chip.dataset.kind = sum.kind;
+  if (sum.tone !== 'muted') chip.append(dot(doc, sum.tone));
+  chip.append(h(doc, 'span', 'pl-team-name', 'Policy'), ' ', h(doc, 'span', `pl-team-state${sum.tone === 'muted' ? ' muted' : ''}`, sum.short));
+  chip.title = `Team policy: ${cap(sum.short)}${sum.detail ? ` · ${sum.detail}` : ''}`;
+  return chip;
+}
+
+/** The project page's team-policy block: the same two-row grid as the team-metrics cell. */
+export function renderProjectTpCell(s, { doc = globalThis.document, now = Date.now(), heading = true } = {}) {
   const cell = h(doc, 'div', 'tm-cell tp-cell');
   cell.dataset.key = s.key;
-  cell.append(h(doc, 'span', 'tm-label', 'Team policy'));
+  if (heading) cell.append(h(doc, 'span', 'tm-label', 'Team policy'));
   const line = h(doc, 'div', 'tm-line');
   const status = h(doc, 'span', 'tm-status');
   const actions = h(doc, 'div', 'tm-actions');

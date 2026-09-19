@@ -17,7 +17,7 @@ const IDS = [
   'target-seg', 'target-project-pane', 'target-workspace-pane', 'workspaceSelect', 'ws-members',
   'sourceBranchHint',
   'sourceBranchWrap', 'ws-source-branches',
-  'ws-create-btn', 'ws-msg', 'ws-list', 'ws-card-tpl',
+  'ws-create-btn', 'ws-msg', 'ws-list', 'ws-shell', 'ws-detail', 'ws-detail-tpl',
   'wiz-name', 'wiz-projects', 'wiz-step1-hint', 'wiz-start-scan', 'wiz-status', 'wiz-progress',
   'wiz-phases', 'wiz-abort', 'wiz-desc', 'wiz-graphify-note', 'wiz-msg', 'wiz-rescan', 'wiz-save',
   'wiz-close', 'wiz-title',
@@ -28,21 +28,15 @@ test('every workspace #id the JS addresses exists in index.html', () => {
   for (const id of IDS) assert.ok(html.includes(`id="${id}"`), `markup missing #${id}`);
 });
 
-test('ws-card template carries the classes buildWorkspaceCard/delegation use', () => {
-  const m = html.match(/<template id="ws-card-tpl">([\s\S]*?)<\/template>/);
-  assert.ok(m, 'missing ws-card-tpl template');
+test('ws-detail template carries the classes the workspace page uses (the project page\'s pd- shell)', () => {
+  const m = html.match(/<template id="ws-detail-tpl">([\s\S]*?)<\/template>/);
+  assert.ok(m, 'missing ws-detail-tpl template');
   const tpl = m[1];
-  for (const cls of [
-    'ws-head', 'ws-name', 'ws-projects', 'ws-stale', 'ws-edit', 'ws-rescan', 'ws-delete',
-    'ws-detail', 'ws-desc-view', 'ws-desc-edit', 'ws-desc-input', 'ws-desc-save', 'ws-desc-cancel',
-  ])
-    assert.ok(tpl.includes(cls), `ws-card-tpl missing .${cls}`);
-  // The description view is a <div> in the .viewer frame: markdown by contract, bound
-  // through bindMarkdown (rendered when the bundle is ready, plain text before).
-  assert.ok(/<div class="ws-desc-view viewer">/.test(tpl), 'ws-desc-view should be a div in the .viewer frame');
-  // The edit pane carries the Text / Preview tabs and the preview host setMdEditMode drives.
-  for (const cls of ['md-tabs', 'ws-desc-tab', 'ws-desc-preview', 'md-preview']) assert.ok(tpl.includes(cls), `ws-card-tpl missing .${cls}`);
-  assert.ok(/id="wiz-desc-tabs"/.test(html) && /id="wiz-desc-preview"/.test(html), 'wizard step 3 carries the same editor tabs + preview');
+  for (const cls of ['pd-header', 'pd-back', 'pd-title', 'ws-name', 'ws-stale', 'ws-projects', 'pd-new', 'ws-rescan', 'ws-delete', 'pd-error', 'pd-tabs', 'pd-sections'])
+    assert.ok(tpl.includes(cls), `ws-detail-tpl missing .${cls}`);
+  // The description editor is built by buildWdOverview, not the template; the wizard keeps its own copy.
+  assert.ok(/id="wiz-desc-tabs"/.test(html) && /id="wiz-desc-preview"/.test(html), 'wizard step 3 carries the editor tabs + preview');
+  assert.ok(!html.includes('ws-card-tpl'), 'the card template is gone: rows open a page');
 });
 
 test('target segmented control uses the .seg button[data-target] + hidden-radio idiom', () => {
