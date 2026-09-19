@@ -85,7 +85,10 @@ A policy can add **marketplaces** (metadata only, done automatically once; a mar
 remove is remembered and not re-added) and require **plugins** with a minimum version. Installing
 runs code, so Worca never installs without your click: the Plugins page shows a "Required by team
 policy" strip and a setup checklist with one combined consent per plugin (source, commit,
-inventory). A per-home **trust switch** on this machine may install and update required plugins
+inventory). A plugin that is installed but below the policy's floor gets **Update…** (the normal
+update preview) instead of Install…; **Install all…** / **Update all…** / **Install & update all…**
+runs those dialogs one after another — each still waits for its own click, and cancelling one moves
+on to the next. A per-home **trust switch** on this machine may install and update required plugins
 automatically; it is off by default and revocable. Versions are floors, not pins: update whenever
 you like through the normal update preview; when the policy raises the floor you are told.
 Non-secret plugin config (a base URL, a project key) may be seeded at install; secrets are yours.
@@ -113,9 +116,9 @@ The page separates what the team publishes from what your machine makes of it.
   hit and where each comes from, how many required plugins are installed, and how many things are
   off-policy here.
 - **Tabs** then hold one subject each: **Policy** (the effective table), **Plugins** (what the
-  policy expects against what is installed, with Install and Update behind the usual consent
-  dialog), and **Catalog** (the guardrail sets and models the policy ships), which appears only
-  when the policy ships any.
+  policy expects against what is installed, with Install… / Update… per row, an "…all…" button
+  for everything at once, and Set up… for the checklist with the trust switch), and **Catalog**
+  (the guardrail sets and models the policy ships), which appears only when the policy ships any.
 
 ## Editing
 

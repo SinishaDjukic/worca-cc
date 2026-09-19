@@ -142,6 +142,7 @@ test('Team policy page: the Plugins tab lists what the policy expects and instal
   assert.equal(row.querySelector('.badge.amber').textContent, 'not installed');
   assert.equal(row.querySelector('.pl-policy-install').dataset.marketplace, 'acme');
   assert.ok(doc.querySelector('#tp-sec-plugins .pl-policy-setup'), 'Set up… opens the checklist');
+  assert.equal(doc.querySelector('#tp-sec-plugins .card-head .pl-policy-all').textContent, 'Install all…', 'the fixture has one missing plugin');
 });
 
 test('Team policy page: scope select, effective table, Edit policy → editor → publish', async () => {

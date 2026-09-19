@@ -5548,11 +5548,24 @@ input.gv-name:focus-visible{outline:none;}
 /* History meta segment (board 10) */
 .hd-policy.st-info{color:var(--blue-ink);}
 /* Plugins page strip + checklist (boards 10, 11) */
-.pl-required-list{display:flex;flex-direction:column;gap:8px;margin:18px 0 14px;}
-.pl-required{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;border-radius:14px;background:var(--blue-bg);color:var(--blue-ink);font-size:12.5px;}
-.pl-required b{font-weight:600;}
-.pl-required > .btn,.pl-required > .btn-ghost{margin-left:auto;}
-.pl-required-list > .pl-policy-setup{align-self:flex-start;margin-top:2px;}
+/* Settings › Plugins: what the team policy asks for, as one panel of compact rows (it scales to
+   however many plugins a policy names) with the mass action in the head. */
+.pl-required-card{margin:18px 0 14px;}
+.pl-required-card .card-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;margin-bottom:6px;}
+.pl-required-card .card-head b{font-size:14px;}
+.pl-required-actions{display:flex;align-items:center;gap:8px;margin-left:auto;}
+.tp-plugins-actions{display:flex;align-items:center;gap:8px;margin-left:auto;}
+.pl-required-list{display:flex;flex-direction:column;}
+.pl-required{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink-2);}
+.pl-required:last-child{border-bottom:0;}
+.pl-required .tm-dot{flex:0 0 auto;}
+.pl-required-text{flex:1 1 auto;min-width:0;display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 8px;}
+.pl-required-text b{font-weight:600;color:var(--ink);}
+.pl-required-text .hint{margin-top:0;}
+.pl-required-state{flex:0 0 auto;white-space:nowrap;}
+.pl-required-act{flex:0 0 auto;min-width:0;display:flex;justify-content:flex-end;}
+.pl-required-act:empty{display:none;}
+@media (max-width:760px){.pl-required{flex-wrap:wrap;} .pl-required-act{width:100%;}}
 .tp-setup-list{display:flex;flex-direction:column;margin-top:12px;}
 .tp-setup-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px;}
 .tp-setup-row:last-child{border-bottom:0;}

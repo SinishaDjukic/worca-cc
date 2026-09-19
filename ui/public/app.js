@@ -12669,31 +12669,36 @@ async function installRequiredPlugin(name, { marketplace = '', silent = false } 
   return true;
 }
 async function handlePolicyPluginClick(e) {
-  const t = e.target && typeof e.target.closest === 'function' ? e.target.closest('.pl-policy-install,.pl-policy-update,.pl-policy-setup,.pl-policy-configure') : null;
+  const t = e.target && typeof e.target.closest === 'function' ? e.target.closest('.pl-policy-install,.pl-policy-update,.pl-policy-setup,.pl-policy-configure,.pl-policy-all') : null;
   if (!t) return false;
   e.stopPropagation();
   const name = t.dataset.name || '';
   if (t.classList.contains('pl-policy-install')) { await installRequiredPlugin(name, { marketplace: t.dataset.marketplace || '' }); return true; }
-  if (t.classList.contains('pl-policy-update')) {
-    const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, {});
-    if (!ok) { setPluginsMsg(data.error || 'update preview failed', 'err'); return true; }
-    const body = renderUpdatePreview(data);
-    pluginModal(`Update ${name}`, body);
-    const confirmBtn = body.querySelector('.pl-confirm-update');
-    if (confirmBtn) confirmBtn.addEventListener('click', async () => {
-      confirmBtn.disabled = true;
-      const r2 = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true });
-      closePluginModal();
-      if (!r2.ok) return setPluginsMsg(r2.data.error || 'update failed', 'err');
-      setPluginsMsg(`Updated ${name}.`, 'ok');
-      invalidateAgentCaches();
-      tpCache.at = 0;
-      loadPluginsView();
-    });
-    return true;
-  }
+  if (t.classList.contains('pl-policy-update')) { await updateRequiredPlugin(name); return true; }
   if (t.classList.contains('pl-policy-configure')) { closePluginModal(); location.hash = 'settings/plugins'; setPluginsMsg(`Open Settings on the ${name} card to enter its secrets.`); return true; }
   if (t.classList.contains('pl-policy-setup')) { await openSetupChecklist(); return true; }
+  // "Install all…" / "Update all…" / "Install & update all…": the same chain the checklist runs.
+  if (t.classList.contains('pl-policy-all')) { const data = await loadTpScopes({ force: true }); await installAllRequired(data.requirements || []); return true; }
+  return true;
+}
+// The update preview for one required plugin (commits, diffstat, manifest changes), confirmed by a
+// click. Returns true when the preview opened, so a chain can wait for it to close.
+async function updateRequiredPlugin(name) {
+  const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, {});
+  if (!ok) { setPluginsMsg(data.error || 'update preview failed', 'err'); return false; }
+  const body = renderUpdatePreview(data);
+  pluginModal(`Update ${name}`, body);
+  const confirmBtn = body.querySelector('.pl-confirm-update');
+  if (confirmBtn) confirmBtn.addEventListener('click', async () => {
+    confirmBtn.disabled = true;
+    const r2 = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true });
+    closePluginModal();
+    if (!r2.ok) return setPluginsMsg(r2.data.error || 'update failed', 'err');
+    setPluginsMsg(`Updated ${name}.`, 'ok');
+    invalidateAgentCaches();
+    tpCache.at = 0;
+    loadPluginsView();
+  });
   return true;
 }
 if (el.pluginsPolicy) el.pluginsPolicy.addEventListener('click', (e) => { void handlePolicyPluginClick(e); });
@@ -12714,13 +12719,17 @@ async function openSetupChecklist() {
   });
   pluginModal(`Set up for ${home || 'the team policy'}`, body);
 }
-// One consent dialog after another: the next opens when the previous closes (installed or cancelled).
+// One dialog after another — a consent dialog for each missing plugin, an update preview for each
+// one below the floor — the next opens when the previous closes (done or cancelled). Nothing runs
+// without its own click; cancelling one moves on to the next.
 async function installAllRequired(reqs) {
+  const modalClosed = () => new Promise((res) => { const iv = setInterval(() => { if (!el.pluginModal || el.pluginModal.classList.contains('hidden')) { clearInterval(iv); res(); } }, 200); });
   for (const r of reqs) {
-    if (r.state !== 'missing') continue;
-    const started = await installRequiredPlugin(r.name, { marketplace: r.marketplace || '' });
-    if (!started) continue;
-    await new Promise((res) => { const iv = setInterval(() => { if (!el.pluginModal || el.pluginModal.classList.contains('hidden')) { clearInterval(iv); res(); } }, 200); });
+    let opened = false;
+    if (r.state === 'missing') opened = await installRequiredPlugin(r.name, { marketplace: r.marketplace || '' });
+    else if (r.state === 'outdated') opened = await updateRequiredPlugin(r.name);
+    else continue;
+    if (opened) await modalClosed();
   }
 }
 

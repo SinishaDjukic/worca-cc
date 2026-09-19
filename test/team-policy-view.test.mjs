@@ -7,7 +7,7 @@ import {
   projectTpState, renderProjectTpCell, renderProjectTpChip, projectTpSummary, renderPolicyEnableDialogBody, renderEffectiveTable, renderPolicyEditor, docFromEditor, editorDirty,
   renderPolicyEmptyState, renderPolicySyncChip, renderWsPolicyLine, renderTeamCapsReadout, renderTeamChip, renderPolicyNotesLine,
   renderPolicyHeader, renderPolicyStats, renderPolicyPluginsPanel, renderPolicyCatalogPanel,
-  renderTeamCapPauseBanner, renderRequiredStrip, renderSetupChecklist, renderPolicyBadgeFor, relTime, POLICY_PAUSE_REASONS,
+  renderTeamCapPauseBanner, renderRequiredStrip, renderSetupChecklist, renderPolicyBadgeFor, relTime, POLICY_PAUSE_REASONS, requiredAllLabel,
 } from '../ui/public/team-policy-view.mjs';
 import { renderCostPauseBanner } from '../ui/public/stats-view.mjs';
 
@@ -270,14 +270,20 @@ test('plugins strip + setup checklist (boards 10–11)', () => {
     { name: 'github-source', marketplace: 'worca-cc', minVersion: '1.2.0', homes: ['acme/gateway'], installed: { version: '1.1.0', enabled: true }, state: 'outdated' },
   ];
   const strip = renderRequiredStrip(reqs, [{ name: 'legacy', home: 'acme/gateway' }], { doc });
+  assert.equal(strip.className, 'card pl-required-card', 'one panel, not a strip per plugin');
+  assert.match(strip.querySelector('.card-head').textContent, /team policyRequired by team policy3/);
   const rows = strip.querySelectorAll('.pl-required');
   assert.equal(rows.length, 3);
-  assert.match(rows[0].textContent, /acme\/gateway expects acme-jira ≥ 1\.2\.0, not installed\./);
+  assert.match(rows[0].textContent, /acme-jira ≥ 1\.2\.0expected by acme\/gatewaynot installed/);
   assert.equal(rows[0].querySelector('.pl-policy-install').dataset.name, 'acme-jira');
   assert.equal(rows[0].querySelector('.pl-policy-install').dataset.marketplace, 'acme/worca-plugins');
+  assert.ok(!rows[0].querySelector('.pl-policy-install').classList.contains('btn-primary'), 'per-row actions are quiet; the head carries the primary one');
   assert.equal(rows[1].querySelector('.pl-policy-update').dataset.name, 'github-source');
-  assert.match(rows[2].textContent, /blocks legacy, which is enabled here/);
-  assert.ok(strip.querySelector('.pl-policy-setup'));
+  assert.match(rows[1].querySelector('.pl-required-state').textContent, /installed 1\.1\.0 · below the floor/);
+  assert.match(rows[2].textContent, /legacyblocked by acme\/gateway · runs proceed and are recorded as off-policyenabled here/);
+  assert.ok(strip.querySelector('.card-head .pl-policy-setup'));
+  assert.equal(strip.querySelector('.pl-policy-all').textContent, 'Install & update all…', 'one missing + one outdated: both verbs');
+  assert.ok(strip.querySelector('.pl-policy-all').classList.contains('btn-primary'), 'the all button is the primary action');
   const list = renderSetupChecklist({ home: 'acme/gateway', requirements: reqs, seeds: [{ url: 'https://github.com/acme/worca-plugins', added: true }], trusted: false }, { doc });
   const srows = list.querySelectorAll('.tp-setup-row');
   assert.equal(srows.length, 4, 'marketplace + install + configure + update');
@@ -290,7 +296,24 @@ test('plugins strip + setup checklist (boards 10–11)', () => {
   assert.equal(trust.dataset.home, 'acme/gateway');
   assert.match(list.querySelector('.tp-trust-row').textContent, /Plugins run with your user privileges/);
   assert.equal(list.querySelector('.tp-install-all').disabled, false);
+  assert.equal(list.querySelector('.tp-install-all').textContent, 'Install & update all…', 'the checklist button says the same');
   assert.ok(list.querySelector('.tp-later'));
+});
+
+test('requiredAllLabel: the verb follows what is left to do; nothing left → no button', () => {
+  const missing = { name: 'a', state: 'missing' }; const outdated = { name: 'b', state: 'outdated' }; const ok = { name: 'c', state: 'ok' };
+  assert.equal(requiredAllLabel([missing, ok]), 'Install all…');
+  assert.equal(requiredAllLabel([outdated, ok]), 'Update all…');
+  assert.equal(requiredAllLabel([missing, outdated]), 'Install & update all…');
+  assert.equal(requiredAllLabel([ok]), null);
+  assert.equal(requiredAllLabel([]), null);
+  const done = renderRequiredStrip([ok, { name: 'd', state: 'disabled', homes: ['h'], installed: { version: '1' } }], [], { doc });
+  assert.equal(done.querySelector('.pl-policy-all'), null, 'a disabled plugin is not something the button can do');
+  assert.ok(done.querySelector('.pl-policy-setup'));
+  const updates = renderPolicyPluginsPanel({ requirements: [outdated], blockedPlugins: [] }, { doc });
+  assert.equal(updates.querySelector('.tp-plugins .card-head .pl-policy-all').textContent, 'Update all…');
+  const clean = renderSetupChecklist({ home: 'h', requirements: [ok], seeds: [], trusted: false }, { doc });
+  assert.equal(clean.querySelector('.tp-install-all').disabled, true);
 });
 
 // ---- Team policy page: the shared document, this machine, the tabs ---------------------------
@@ -363,7 +386,8 @@ test('stat cards: what this machine will use, with the source and what needs att
 
 test('Plugins tab: a row per expected plugin with its state and action, then what the policy blocks', () => {
   const root = renderPolicyPluginsPanel(PAYLOAD, { doc });
-  assert.ok(root.querySelector('.tp-plugins .card-head .pl-policy-setup'), 'Set up… is the panel action');
+  assert.ok(root.querySelector('.tp-plugins .card-head .pl-policy-setup'), 'Set up… opens the checklist');
+  assert.equal(root.querySelector('.tp-plugins .card-head .pl-policy-all').textContent, 'Install & update all…', 'one missing + one outdated in the fixture');
   const rows = [...root.querySelectorAll('.tp-plugins-tbl tbody tr')].map((tr) => [...tr.children].map((td) => td.textContent.trim()));
   assert.deepEqual(rows[0].slice(0, 4), ['acme-jiraexpected by gateway · from acme', '≥ 1.2.0', '1.1.0', 'below the floor']);
   assert.deepEqual(rows[1].slice(1, 4), ['any version', '—', 'not installed']);

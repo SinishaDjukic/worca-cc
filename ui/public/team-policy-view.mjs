@@ -395,8 +395,9 @@ export function renderPolicyPluginsPanel(payload, { doc = globalThis.document } 
   const card = h(doc, 'section', 'card tp-plugins');
   const head = h(doc, 'div', 'card-head');
   head.append(h(doc, 'h2', null, 'Required plugins'));
-  const setup = btn(doc, 'pl-policy-setup', 'Set up…');
-  head.append(setup);
+  const actions = h(doc, 'div', 'tp-plugins-actions');
+  actions.append(requiredActions(doc, reqs));
+  head.append(actions);
   card.append(head);
   card.append(h(doc, 'small', 'hint tp-plugins-hint', 'Installing shows the plugin\'s source, commit and what it ships, and waits for your click. Nothing installs on its own unless you trust the policy home on the Plugins page.'));
   card.append(h(doc, 'p', 'form-msg tp-plugins-msg'));
@@ -417,7 +418,7 @@ export function renderPolicyPluginsPanel(payload, { doc = globalThis.document } 
       const [tone, label] = PLUGIN_STATE[r.state] || ['grey', r.state];
       const state = h(doc, 'td'); state.append(h(doc, 'span', `badge ${tone}`, label));
       const act = h(doc, 'td', 'tp-plugin-act');
-      if (r.state === 'missing') { const b = btn(doc, 'pl-policy-install', 'Install…', true); b.dataset.name = r.name; b.dataset.marketplace = r.marketplace || ''; act.append(b); }
+      if (r.state === 'missing') { const b = btn(doc, 'pl-policy-install', 'Install…'); b.dataset.name = r.name; b.dataset.marketplace = r.marketplace || ''; act.append(b); }   // quiet: the head carries the primary action
       else if (r.state === 'outdated') { const b = btn(doc, 'pl-policy-update', 'Update…'); b.dataset.name = r.name; act.append(b); }
       else if (r.state === 'disabled') act.append(h(doc, 'small', 'hint', 'enable it on the Plugins page'));
       else if (r.config) { const b = btn(doc, 'pl-policy-configure', 'Configure…'); b.dataset.name = r.name; act.append(b); }
@@ -997,33 +998,71 @@ export function renderTeamCapPauseBanner(rec, { doc = globalThis.document, budge
 }
 
 // ---- Plugins page strip + setup checklist (boards 10, 11) ---------------------------------------
+/**
+ * The label of the one button that does everything the policy still asks for on this machine:
+ * "Install all…" when plugins are missing, "Update all…" when installed ones are below the floor,
+ * "Install & update all…" when both; null when nothing is left to do. Each item still gets its
+ * own consent dialog (or update preview) in turn — the button only chains them.
+ */
+export function requiredAllLabel(requirements = []) {
+  const missing = (requirements || []).some((r) => r.state === 'missing');
+  const outdated = (requirements || []).some((r) => r.state === 'outdated');
+  if (missing && outdated) return 'Install & update all…';
+  if (missing) return 'Install all…';
+  if (outdated) return 'Update all…';
+  return null;
+}
+/** The primary "all" button (when there is anything to do) and the ghost "Set up…" that opens the checklist. */
+function requiredActions(doc, requirements) {
+  const frag = doc.createDocumentFragment();
+  const label = requiredAllLabel(requirements);
+  if (label) frag.append(btn(doc, 'pl-policy-all', label, true));
+  frag.append(btn(doc, 'pl-policy-setup', 'Set up…'));
+  return frag;
+}
+
 export function renderRequiredStrip(requirements = [], blockedPlugins = [], { doc = globalThis.document } = {}) {
   const off = (requirements || []).filter((r) => r.state !== 'ok');
   const blocked = blockedPlugins || [];
   if (!off.length && !blocked.length) return null;
-  const root = h(doc, 'div', 'pl-required-list');
+  // One panel, however many plugins the policy asks for: a compact row per item (a dot, the
+  // name and floor, who expects it, its state, a small per-row action) and the mass action in
+  // the head — the Team policy page's Plugins tab, in short form.
+  const root = h(doc, 'section', 'card pl-required-card');
+  const head = h(doc, 'div', 'card-head');
+  head.append(h(doc, 'span', 'badge blue', 'team policy'), h(doc, 'b', null, 'Required by team policy'), h(doc, 'span', 'badge', String(off.length + blocked.length)));
+  const actions = h(doc, 'div', 'pl-required-actions');
+  actions.append(requiredActions(doc, requirements));
+  head.append(actions);
+  root.append(head);
+  const list = h(doc, 'div', 'pl-required-list');
   for (const r of off) {
-    const strip = h(doc, 'div', 'pl-required');
-    strip.dataset.name = r.name;
-    strip.append(h(doc, 'span', 'badge blue', 'team policy'));
-    const text = h(doc, 'span');
-    text.append(h(doc, 'b', null, r.homes.join(', ')), ' expects ', h(doc, 'b', null, `${r.name}${r.minVersion ? ` ≥ ${r.minVersion}` : ''}`),
-      r.state === 'missing' ? ', not installed.' : r.state === 'disabled' ? ', which is disabled.' : `, installed ${r.installed?.version || '?'}.`);
-    strip.append(text);
-    if (r.state === 'missing') { const b = btn(doc, 'pl-policy-install', `Install ${r.name}…`, true); b.dataset.name = r.name; b.dataset.marketplace = r.marketplace || ''; strip.append(b); }
-    else if (r.state === 'outdated') { const b = btn(doc, 'pl-policy-update', `Update ${r.name}…`, true); b.dataset.name = r.name; strip.append(b); }
-    else if (r.state === 'disabled') strip.append(h(doc, 'small', 'hint', 'enable it below'));
-    root.append(strip);
+    const row = h(doc, 'div', 'pl-required');
+    row.dataset.name = r.name;
+    row.append(dot(doc, r.state === 'disabled' ? 'grey' : 'amber'));
+    const text = h(doc, 'span', 'pl-required-text');
+    text.append(h(doc, 'b', 'mono', r.name), r.minVersion ? ` ≥ ${r.minVersion}` : '', h(doc, 'small', 'hint', `expected by ${(r.homes || []).join(', ')}`));
+    row.append(text);
+    const state = h(doc, 'span', `badge ${r.state === 'disabled' ? 'grey' : 'amber'} pl-required-state`,
+      r.state === 'missing' ? 'not installed' : r.state === 'disabled' ? 'disabled' : `installed ${r.installed?.version || '?'} · below the floor`);
+    row.append(state);
+    const act = h(doc, 'span', 'pl-required-act');
+    if (r.state === 'missing') { const b = btn(doc, 'pl-policy-install', 'Install…'); b.dataset.name = r.name; b.dataset.marketplace = r.marketplace || ''; act.append(b); }
+    else if (r.state === 'outdated') { const b = btn(doc, 'pl-policy-update', 'Update…'); b.dataset.name = r.name; act.append(b); }
+    else if (r.state === 'disabled') act.append(h(doc, 'small', 'hint', 'enable it below'));
+    row.append(act);
+    list.append(row);
   }
   for (const b of blocked) {
-    const strip = h(doc, 'div', 'pl-required pl-blocked');
-    strip.append(h(doc, 'span', 'badge blue', 'team policy'));
-    const text = h(doc, 'span'); text.append(h(doc, 'b', null, b.home), ' blocks ', h(doc, 'b', null, b.name), ', which is enabled here. Runs proceed and are recorded as off-policy.');
-    strip.append(text);
-    root.append(strip);
+    const row = h(doc, 'div', 'pl-required pl-blocked');
+    row.dataset.name = b.name;
+    row.append(dot(doc, 'red'));
+    const text = h(doc, 'span', 'pl-required-text');
+    text.append(h(doc, 'b', 'mono', b.name), h(doc, 'small', 'hint', `blocked by ${b.home} · runs proceed and are recorded as off-policy`));
+    row.append(text, h(doc, 'span', 'badge red pl-required-state', 'enabled here'), h(doc, 'span', 'pl-required-act'));
+    list.append(row);
   }
-  const setup = btn(doc, 'pl-policy-setup', 'Set up…');
-  root.append(setup);
+  root.append(list);
   return root;
 }
 
@@ -1064,8 +1103,8 @@ export function renderSetupChecklist({ home, requirements = [], seeds = [], trus
   root.append(trust);
   const actions = h(doc, 'div', 'confirm-actions');
   const later = h(doc, 'button', 'btn btn-ghost btn-mini tp-later', 'Later'); later.type = 'button';
-  const all = h(doc, 'button', 'btn btn-primary btn-mini tp-install-all', 'Install all…'); all.type = 'button';
-  all.disabled = !requirements.some((r) => r.state === 'missing' || r.state === 'outdated');
+  const all = h(doc, 'button', 'btn btn-primary btn-mini tp-install-all', requiredAllLabel(requirements) || 'Install all…'); all.type = 'button';
+  all.disabled = !requiredAllLabel(requirements);
   actions.append(later, all);
   root.append(actions);
   return root;
