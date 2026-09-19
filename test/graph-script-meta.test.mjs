@@ -185,3 +185,15 @@ test('scriptNodeCtx: ONE builder for the run-time facts of a placed card (fresh 
   const stub = scriptNodeCtx({ id: 'n_t', key: 'gone', config: {} }, undefined);
   assert.deepEqual([stub.runtime, stub.file, stub.command, stub.timeoutMs, stub.meta], [null, null, null, 600000, {}], 'no meta: a stub the preflight refuses');
 });
+
+test('createdBy / updatedBy survive normalization and are capped at 80 chars (W19)', async () => {
+  const { normalizeScriptMeta, validateScriptMetaV2 } = await import('../src/shared/graph/script-meta.mjs');
+  const base = { key: 'runTests', metaVersion: 2, runtime: 'shell', command: 'npm test', inputs: [], outputs: [] };
+  const { meta, errors } = normalizeScriptMeta({ ...base, createdBy: 'ui', updatedBy: 'ask:th_abc' });
+  assert.deepEqual(errors, []);
+  assert.equal(meta.createdBy, 'ui');
+  assert.equal(meta.updatedBy, 'ask:th_abc');
+  assert.equal('createdBy' in normalizeScriptMeta(base).meta, false, 'absent stays absent');
+  assert.ok(validateScriptMetaV2({ ...base, createdBy: 42 }).errors.includes('createdBy must be a string of at most 80 characters'));
+  assert.ok(validateScriptMetaV2({ ...base, updatedBy: 'x'.repeat(81) }).errors.includes('updatedBy must be a string of at most 80 characters'));
+});

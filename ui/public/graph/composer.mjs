@@ -13,6 +13,7 @@
 import { createGraphView } from './view.mjs';
 import { renderPalette, applyFilter, FLOW_GROUP } from './palette.mjs';
 import { renderNodeInspector, renderWireInspector, renderEmptyInspector } from './inspector.mjs';
+import { paramEditorHook } from '../script-forms.mjs';
 import { renderSaveDialog, openDialog, closeDialog } from './save-dialog.mjs';
 import { PORT_HIT_R, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, ZOOM_STEP, NODE_W, snap }
   from '../../../src/shared/graph/geometry.mjs';
@@ -47,7 +48,7 @@ export const pluginOriginName = (origin) => (typeof origin === 'string' && origi
   ? origin.slice('plugin:'.length) : '');
 const isTyping = (t) => !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
 
-export function createComposer(hostEls, { doc = globalThis.document, api, raf = null, viewport = null, storage = null, portsFn } = {}) {
+export function createComposer(hostEls, { doc = globalThis.document, api, raf = null, viewport = null, storage = null, portsFn, highlight = null } = {}) {
   const win = doc.defaultView || globalThis;
   const schedule = raf || ((fn) => win.requestAnimationFrame(fn));
   const stats = { rectReads: 0, frames: 0, pointerMoves: 0, validations: 0 };
@@ -627,15 +628,28 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     paintInspector();
   }
 
+  // Code editors mounted into the inspector. Each owns a debounce timer and three
+  // listeners, so every repaint destroys the previous set before the tree goes —
+  // a pending highlight against a detached node is a leak, not a crash, and this
+  // is the only place that sees both sides of the swap. With no `highlight`
+  // injected the hook is null and renderParamsForm keeps P1b's plain textarea.
+  const insEditors = [];
+  const insEditorFor = paramEditorHook({ doc, highlight, editors: insEditors });
+  function disposeInsEditors() {
+    for (const ed of insEditors) ed.destroy();
+    insEditors.length = 0;
+  }
+
   function paintInspector() {
     const hostBody = hostEls.insBody;
     if (!hostBody) return;
+    disposeInsEditors();
     if (!sel) return void hostBody.replaceChildren(renderEmptyInspector({ doc }));
     if (sel.kind === 'node') {
       const node = nodeById(sel.id);
       if (!node) return void hostBody.replaceChildren(renderEmptyInspector({ doc }));
-      const meta = node.kind === 'agent' ? (agents[node.key] || null) : node.kind === 'script' ? (scripts[node.key] || null) : null;
-      return void hostBody.replaceChildren(renderNodeInspector(node, { template: tpl, portsFn, meta, models, efforts, subagentModels, doc }));
+      const meta = node.kind === 'agent' ? (agents[node.key] || null) : (node.kind === 'script' ? (scripts[node.key] || null) : null);
+      return void hostBody.replaceChildren(renderNodeInspector(node, { template: tpl, portsFn, meta, models, efforts, subagentModels, editorFor: insEditorFor, doc }));
     }
     const wire = wireById(sel.id);
     if (!wire) return void hostBody.replaceChildren(renderEmptyInspector({ doc }));
@@ -955,6 +969,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     hostEls.filter?.removeEventListener('input', onFilterInput);
     hostEls.insBody?.removeEventListener('change', onInspectorChange);
     hostEls.insBody?.removeEventListener('click', onInspectorClick);
+    disposeInsEditors();
     hostEls.insToggle?.removeEventListener('click', onRailToggle);
     hostEls.insTabs?.removeEventListener('click', onTabClick);
     hostEls.saveBtn?.removeEventListener('click', onSaveClick);

@@ -35,6 +35,7 @@ const state = {
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
   stepDefaults: {}, // { [key]: { fanOut } } sidecar defaults from /api/config steps
   agentsList: [], // GET /api/agents?all=1 list for the Agents management view
+  scriptsList: [],   // GET /api/scripts cache; dropped on every scripts-changed frame
   mockWriterRoles: [], // closed mock-role list from /api/agents (drives the agent form)
   historyAll: [],    // full /api/history dataset; client-side filter cache
   commentCounts: {}, // "<storeKey>/<pipelineId>" -> unresolved diff-comment count
@@ -74,6 +75,7 @@ import {
   memoryRoute, renderHealthCard, renderFileList, renderEditor, collectEditor,
   renderMemoryHistory, MEMORY_NAME_HELP,
 } from './memory-view.mjs';
+import { createScriptsController } from './scripts-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
 import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, GETTING_STARTED_STEPS } from './getting-started.mjs';
 import { createGuideSpot } from './guide-spot.mjs';
@@ -84,7 +86,7 @@ import {
   langForPath, canHighlightParsed, highlightParsed,
 } from './syntax-highlight.mjs';
 import { createHljsLoader } from './hljs-loader.mjs';
-import { artifactsByNodeCycle, viewerKindFor, renderArtifact } from './artifact-view.mjs';
+import { artifactsByNodeCycle, viewerKindFor, renderArtifact, renderMarkdown as renderArtifactMarkdown } from './artifact-view.mjs';
 import {
   buildFileTree, renderFileTree, firstFile,
 } from './file-tree.mjs';
@@ -294,6 +296,8 @@ const el = {
   // Agents management view
   agentsList: $('#agents-list'),
   agentsMsg: $('#agents-msg'),
+  scriptsHost: $('#scripts-host'),
+  scriptsMsg: $('#scripts-msg'),
   agentCreateBtn: $('#agent-create-btn'),
 
   // Projects management view
@@ -787,6 +791,21 @@ function handleServerMessage(msg) {
   // handled HERE and never reaches the Ask panel (the shell routes only `ask-*` types there). Only
   // an OPEN view of that scope refetches; a closed one reloads on entry anyway. Bursts (an Ask turn
   // remembering five things) are coalesced per scope, and a dirty editor is never clobbered.
+  // Scripts (scripts-workbench §3.3): a store mutation from THIS tab, another tab,
+  // the CLI or the chat. The registry is re-scanned on every read server-side, so
+  // the only client state to drop is the cached list; an open page refetches.
+  if (msg.type === 'scripts-changed') {
+    state.scriptsList = [];
+    gvAgentsDirty = true;          // the composer re-reads /api/agents AND /api/scripts on re-entry (spec §3.3)
+    if (scriptsCtl) scriptsCtl.onChanged();
+    return;
+  }
+  // Bench frames are tagged by benchId (not runId) and ride the same broadcast
+  // socket. Handle them BEFORE the !msg.runId early-return below.
+  if (typeof msg.type === 'string' && msg.type.startsWith('scriptbench-')) {
+    if (scriptsCtl) scriptsCtl.onFrame(msg);
+    return;
+  }
   if (msg.type === 'memory-changed') {
     const scope = String(msg.scope || '');
     if (scope === 'global' && currentView() === 'settings' && currentSettingsTab === 'memory' && memoryTabCtl) pokeGlobalMemory();
@@ -1938,6 +1957,7 @@ async function initComposer() {
   gvComposer = createComposer(gvEls(), {
     doc: document, api: gvApi, storage: (() => { try { return window.localStorage; } catch { return null; } })(),
     portsFn: (node) => gvPortsFn(node),
+    highlight: scriptHighlight,   // a script card's command/code params get the real editor
   });
   gvComposer.mount();
   gvComposer.newCanvas();
@@ -10464,6 +10484,94 @@ async function loadMemoryTab(sub = '') {
   }
   await memoryTabCtl.load(sub ? safeDecode(sub) : '');
 }
+
+// ── Scripts page (scripts-workbench-design.md §5) ───────────────────────────
+// One controller per visit (C2): scripts-view.mjs owns the pixels, this owns the
+// endpoint calls and the lifetime. state.scriptsList is the ONE cached copy of
+// the registry list; a scripts-changed frame drops it.
+let scriptsCtl = null;
+
+async function scriptsCall(method, url, body) {
+  const init = { method };
+  if (body !== undefined) { init.headers = { 'Content-Type': 'application/json' }; init.body = JSON.stringify(body); }
+  try {
+    const res = await fetch(url, init);
+    return { ok: res.ok, status: res.status, data: await safeJson(res) };
+  } catch (e) {
+    return { ok: false, status: 0, data: { error: e.message } };
+  }
+}
+const scriptUrl = (key, tail = '') => `/api/scripts/${encodeURIComponent(key)}${tail}`;
+
+const scriptsApi = {
+  async list() {
+    const r = await scriptsCall('GET', '/api/scripts');
+    if (r.ok && Array.isArray(r.data.scripts)) state.scriptsList = r.data.scripts;
+    return r;
+  },
+  read: (key) => scriptsCall('GET', scriptUrl(key)),
+  create: (body) => scriptsCall('POST', '/api/scripts', body),
+  update: (key, body) => scriptsCall('PUT', scriptUrl(key), body),
+  remove: (key) => scriptsCall('DELETE', scriptUrl(key)),
+  duplicate: (key, newKey) => scriptsCall('POST', scriptUrl(key, '/duplicate'), { newKey }),
+  writeCases: (key, cases) => scriptsCall('PUT', scriptUrl(key, '/cases'), { cases }),
+  runtimes: () => scriptsCall('GET', '/api/scripts/runtimes'),
+  bench: (request) => scriptsCall('POST', '/api/scripts/bench', request),
+  benchStop: (benchId) => scriptsCall('POST', '/api/scripts/bench/stop', { benchId }),
+  // The full text of ONE output. A Run all keeps a result per case, so the link
+  // must name which one; a single run omits it.
+  benchOutput: (benchId, port, caseId = null) => `/api/scripts/bench/${encodeURIComponent(benchId)}/output/${encodeURIComponent(port)}`
+    + (caseId ? `?caseId=${encodeURIComponent(caseId)}` : ''),
+  history: () => scriptsCall('GET', '/api/history'),
+  runArtifacts: (runId) => scriptsCall('GET', `/api/runs/${encodeURIComponent(runId)}/artifacts`),
+  runArtifact: (runId, rel) => scriptsCall('GET', `/api/runs/${encodeURIComponent(runId)}/artifact?rel=${encodeURIComponent(rel)}`),
+  projects: () => scriptsCall('GET', '/api/projects'),
+};
+
+// The editor's highlighter (C11): the vendored hljs loader when the grammar is
+// there, escaped text otherwise. The editor itself never touches raw source.
+async function scriptHighlight(text, language) {
+  try {
+    const bound = await diffHljsLoader.forLanguage(language);
+    if (bound) return bound.highlight(String(text ?? ''), language);
+  } catch { /* a missing grammar degrades to plain rows, never to raw markup */ }
+  return escapeHtml(String(text ?? ''));
+}
+
+function mountScriptsView(param = '') {
+  if (!el.scriptsHost) return;
+  if (!scriptsCtl) {
+    scriptsCtl = createScriptsController({
+      host: el.scriptsHost,
+      msgEl: el.scriptsMsg,
+      api: scriptsApi,
+      navigate: (hash) => { if (location.hash.slice(1) !== hash) location.hash = hash; },
+      confirm: confirmModal,
+      highlight: scriptHighlight,
+      renderMarkdown: (text, mount) => renderArtifactMarkdown(text, mount, artifactViewerDeps()),
+      modal: {
+        open: pluginModal,
+        close: closePluginModal,
+        // #plugin-modal has a header Close button and no Escape/backdrop handler of
+        // its own; a picker must settle on both (the import-workflow confirm's rule).
+        onClose: (fn) => {
+          const onKey = (e) => { if (e.key === 'Escape') fn(); };
+          if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', fn);
+          document.addEventListener('keydown', onKey);
+          return () => {
+            if (el.pluginModalClose) el.pluginModalClose.removeEventListener('click', fn);
+            document.removeEventListener('keydown', onKey);
+          };
+        },
+      },
+      ws: { send: (obj) => { const sock = state.ws; if (sock && state.wsReady) { try { sock.send(JSON.stringify(obj)); } catch { /* ignore */ } } } },
+      doc: document,
+    });
+  }
+  void scriptsCtl.route(param);
+}
+
+if (typeof window !== 'undefined') window.__scripts = { mountScriptsView, scriptsApi, ctl: () => scriptsCtl };
 
 // Final routing: render the list and, when `param` names a set, open the wizard in
 // 'edit' (user) or 'view' (built-in). Resets a stale wizard on any path that does not
@@ -19598,7 +19706,7 @@ const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
 // plugins/guardrails/models LEFT this array: they are Settings tabs now, reached
 // as #settings/<tab> (legacy bare hashes redirect — see LEGACY_TAB_VIEWS).
-const VIEW_NAMES = ['new', 'getting-started', 'running', 'history', 'stats', 'team-metrics', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
+const VIEW_NAMES = ['new', 'getting-started', 'running', 'history', 'stats', 'team-metrics', 'composer', 'workspaces', 'workspace-create', 'agents', 'scripts', 'agent-create', 'projects', 'settings'];
 
 // ── Interface mode (docs/ui-levels.md) ──────────────────────────────────────
 // simple | advanced | expert: a VIEW preference, server-rendered into <html data-level>.
@@ -19618,12 +19726,12 @@ const levelCtl = createLevelController({
 const VIEW_MIN_LEVEL = Object.freeze({
   stats: 'advanced', composer: 'advanced', workspaces: 'advanced', 'workspace-create': 'advanced',
   'agent-create': 'advanced',                 // reachable from the Composer palette at advanced
-  'team-metrics': 'expert', agents: 'expert',
+  'team-metrics': 'expert', agents: 'expert', scripts: 'expert',
 });
 const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ guardrails: 'advanced', plugins: 'advanced', memory: 'advanced', models: 'expert' });
 const VIEW_TITLES = Object.freeze({
   stats: 'Statistics', composer: 'Workflow Composer', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
-  'agent-create': 'Create agent', 'team-metrics': 'Team metrics', agents: 'Agents',
+  'agent-create': 'Create agent', 'team-metrics': 'Team metrics', agents: 'Agents', scripts: 'Scripts',
   guardrails: 'Guardrails', plugins: 'Plugins', memory: 'Memory', models: 'Models',
 });
 function pageMinLevel() {
@@ -19739,6 +19847,13 @@ function showView(name, param = '') {
   // Same for the Projects track: leaving must not park a project page mid-slide behind the next
   // view, and its Memory controller must not outlive the view.
   if (currentShownView === 'projects' && name !== 'projects') closeProjDetail({ instant: true });
+  // The Scripts controller owns two delegated listeners, a painted host and (from
+  // Task 10) a live bench subscription; leaving tears it down so the next entry
+  // mounts a fresh one and a stray frame paints nothing.
+  if (currentShownView === 'scripts' && name !== 'scripts' && scriptsCtl) {
+    scriptsCtl.destroy();
+    scriptsCtl = null;
+  }
   // Same for Running's two-screen track (spec §5.1): leaving must not park a
   // detail screen mid-slide behind the next view.
   //
@@ -19821,6 +19936,7 @@ function showView(name, param = '') {
   if (name === 'workspaces') loadWorkspacesView();
   if (name === 'workspace-create') enterWizard();
   if (name === 'agents') loadAgentsView();
+  if (name === 'scripts') mountScriptsView(param);
   if (name === 'agent-create') enterAgentWizard();
   // A route entry starts clean: a previous "not registered here" error must not linger (a
   // projects-changed rebuild calls refreshProjectsPage directly and keeps the message).

@@ -640,7 +640,7 @@ test('index.html: the Projects view is a two-screen shell with a detail template
   }
   // The list still lives at the same ids (the controller and every older test read them).
   assert.match(htmlText, /<p id="projects-msg" class="form-msg" aria-live="polite"><\/p>\s*<div class="run-list" id="projects-list"><\/div>/);
-  assert.equal((htmlText.match(/data-view/g) || []).length, 13, 'a screen inside the projects view, not a view (Team metrics and Getting started are their own views)');
+  assert.equal((htmlText.match(/data-view/g) || []).length, 14, 'a screen inside the projects view, not a view (Team metrics, Getting started and Scripts are their own views)');
 });
 
 test('style.css: the projects shell is a twin of the History track', () => {

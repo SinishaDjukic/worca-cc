@@ -53,7 +53,7 @@ const EQUAL_ARMS = ['--green', '--peach', '--red', '--blue', '--violet', '--ambe
 const rootBody = ruleBody(':root');
 // `.hd-diff{display:grid;…}` precedes the token block of the same selector — take the block that OPENS with the token.
 const hdBody = (bare.match(/\.hd-diff\s*\{\s*(--hd-count-add[^}]*)\}/) || [])[1] || null;
-const synBody = (bare.match(/\.hd-diff-pane,\.ask-md\s*\{\s*(--hd-syntax-comment[^}]*)\}/) || [])[1] || null;
+const synBody = (bare.match(/\.hd-diff-pane,\.ask-md[^{]*\{\s*(--hd-syntax-comment[^}]*)\}/) || [])[1] || null;
 const tokens = new Map([...declarations(rootBody), ...declarations(hdBody), ...declarations(synBody)]);
 const arm = (name, which) => { const v = tokens.get(name); if (v == null) return null; const a = arms(v); return a ? a[which === 'dark' ? 1 : 0] : v; };
 

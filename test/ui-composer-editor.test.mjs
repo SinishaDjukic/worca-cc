@@ -86,6 +86,7 @@ export async function open(overrides = {}) {
   const c = createComposer(s.hostEls, {
     doc: s.doc, api: { ...API, ...(overrides.api || {}) }, raf: s.raf,
     viewport: () => ({ ...RECT }), storage: overrides.storage || null, portsFn: overrides.portsFn || portsFn,
+    highlight: overrides.highlight || null,
   });
   c.mount();
   c.loadTemplate(overrides.template === undefined ? fixture() : overrides.template);
@@ -1123,4 +1124,46 @@ test('removing or renaming a config port carries its wires: no undrawable wire i
   assert.equal(s.c.template().wires.some((w) => w.id === 'w_out'), false, 'a removed port takes its wires');
   s.c.undo();
   assert.equal(s.c.template().wires.some((w) => w.id === 'w_out'), true, 'one undo step restores port and wire together');
+});
+
+test('the composer mounts the shared code editor for code/command params and routes its edits', async () => {
+  const s = await open({ highlight: async (t) => t, portsFn: portsFnFor(AGENTS, { shell: SHELL }) });
+  s.c.setScripts({ shell: SHELL });
+  const node = s.c.spawn({ kind: 'script', key: 'shell' });
+  const body = s.el.insBody;
+  const editor = body.querySelector('.code-editor');
+  assert.ok(editor, 'the command param renders through code-editor.mjs');
+  assert.equal(editor.dataset.language, 'bash');
+  const ta = editor.querySelector('textarea[data-field="param:command"]');
+  assert.equal(ta.rows, 3, 'the rows P1b`s textarea had');
+  ta.value = 'npm test';
+  ta.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+  assert.deepEqual(s.c.template().nodes.find((n) => n.id === node.id).config.params, { command: 'npm test' });
+  // The repaint that follows a commit rebuilds the editor; the old one must be
+  // gone from the DOM (and, with it, its debounce).
+  assert.equal(ta.isConnected, false, 'the previous editor left the DOM');
+  const fresh = body.querySelector('textarea[data-field="param:command"]');
+  assert.equal(fresh.value, 'npm test');
+  ta.dispatchEvent(new s.win.Event('change', { bubbles: true }));   // a stale node must not throw
+  s.c.destroy();
+});
+
+test('a code param picks up its declared language and eight rows', async () => {
+  const JS = { ...SHELL, key: 'js', runtime: 'node', params: [{ id: 'source', type: 'code', language: 'js', required: true }] };
+  const s = await open({ highlight: async (t) => t, portsFn: portsFnFor(AGENTS, { js: JS }) });
+  s.c.setScripts({ js: JS });
+  s.c.spawn({ kind: 'script', key: 'js' });
+  const editor = s.el.insBody.querySelector('.code-editor');
+  assert.equal(editor.dataset.language, 'javascript');
+  assert.equal(editor.querySelector('textarea[data-field="param:source"]').rows, 8);
+  s.c.destroy();
+});
+
+test('with no highlight injected the composer keeps the plain textarea', async () => {
+  const s = await open({ portsFn: portsFnFor(AGENTS, { shell: SHELL }) });
+  s.c.setScripts({ shell: SHELL });
+  s.c.spawn({ kind: 'script', key: 'shell' });
+  assert.equal(s.el.insBody.querySelector('.code-editor'), null);
+  assert.ok(s.el.insBody.querySelector('textarea.ins-textarea[data-field="param:command"]'));
+  s.c.destroy();
 });

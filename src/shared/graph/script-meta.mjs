@@ -32,6 +32,9 @@ const isObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
 const plainBasename = (s) => typeof s === 'string' && s.trim() !== '' && !/[\\/]/.test(s) && !s.includes('..');
 const nonEmpty = (s) => typeof s === 'string' && s.trim() !== '';
 
+/** Attribution stamps (workbench W19): 'ui' | 'cli' | 'ask:<threadId>'. */
+const MAX_BY = 80;
+
 /** A per-platform value (`file`, `command`): a string, or `{ default, win32?, darwin?, linux? }`. */
 export function resolvePlatformValue(value, platform) {
   if (typeof value === 'string') return value;
@@ -200,6 +203,12 @@ export function normalizeScriptMeta(raw, opts = {}) {
   if (raw.metaVersion !== 2) err('sidecar requires metaVersion 2');
   const order = raw.order === undefined ? DEFAULT_ORDER : Number(raw.order);
   if (!Number.isFinite(order)) err('order must be a number');
+  for (const field of ['createdBy', 'updatedBy']) {
+    if (raw[field] === undefined || raw[field] === null) continue;
+    if (typeof raw[field] !== 'string' || raw[field].trim().length > MAX_BY) {
+      err(`${field} must be a string of at most ${MAX_BY} characters`);
+    }
+  }
 
   const runtime = SCRIPT_RUNTIMES.includes(raw.runtime) ? raw.runtime : null;
   if (!runtime) err(`runtime must be one of ${SCRIPT_RUNTIMES.join(', ')}`);
@@ -277,6 +286,10 @@ export function normalizeScriptMeta(raw, opts = {}) {
   if (verdict) meta.verdict = verdict;
   if (mock) meta.mock = mock;
   if (raw.placeable !== undefined && !raw.placeable) meta.placeable = false;
+  // Who wrote this sidecar (W19). Absent on a hand-written file and on every
+  // built-in; the store stamps both on create and `updatedBy` on every save.
+  if (nonEmpty(raw.createdBy)) meta.createdBy = raw.createdBy.trim();
+  if (nonEmpty(raw.updatedBy)) meta.updatedBy = raw.updatedBy.trim();
   return { errors, meta };
 }
 

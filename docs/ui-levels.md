@@ -128,7 +128,7 @@ be skipped by forgetting it.
 | New pipeline, Getting started, Running, History, Projects, Settings | S |
 | Ask Worca pill, sidebar spend indicator, the mode item | S |
 | Statistics, Workflow Composer, Workspaces | A |
-| Team metrics, Agents | E |
+| Team metrics, Agents, Scripts | E |
 
 ### New pipeline
 
@@ -184,6 +184,10 @@ be skipped by forgetting it.
 
 Everything on the page, and the full agent form (runner type, ports, side
 effect, mock role, workspace variants).
+
+### Scripts (page: E)
+
+Everything on the page: the list, the three tabs of a script and the test bench.
 
 ### Projects and Workspaces
 

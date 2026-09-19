@@ -426,3 +426,95 @@ test('P11: under the run`s env-scrub guardrail a script child starts from the ag
     delete process.env.WORCA_TEST_KEEP;
   }
 });
+
+test('W12: ctx.bench rides the envelope and WORCA_BENCH the shell env; a pipeline run carries neither', () => {
+  const ctx = ctxFor({ meta: nodeMeta() });
+  const pipeline = buildEnvelope(ctx);
+  assert.equal(pipeline.ctx.bench, false);
+  assert.equal(pipeline.apiVersion, 1, 'the flag is ADDITIVE — apiVersion stays 1');
+  assert.equal('WORCA_BENCH' in envForShell(pipeline, { PATH: '/usr/bin' }), false, 'absent, not empty');
+  assert.equal('WORCA_BENCH' in envForShell(pipeline, { PATH: '/usr/bin', WORCA_BENCH: '1' }), false, 'never inherited');
+  const bench = buildEnvelope({ ...ctx, bench: true });
+  assert.equal(bench.ctx.bench, true);
+  assert.equal(envForShell(bench, { PATH: '/usr/bin' }).WORCA_BENCH, '1');
+});
+
+test('the node child flushes STDERR before it exits: a slow host loses no live line', { timeout: 60000 }, async () => {
+  const ports = { ...PORTS, outputs: PORTS.outputs.filter((o) => o.id !== 'report') };
+  const N = 20000;
+  // console.* rides the child's STDERR, which is ASYNCHRONOUS on a macOS pipe. The
+  // host is the slow end of a chatty script (one broadcast per line, one browser
+  // tab each): the child finished, wrote its frame and exited while ~170 KiB of
+  // stderr were still queued, and 3 of 4 lines never reached the bench.
+  const prog = writeProgram(tmp('worca-sr-prog-'), `export default async function ({ outputs }) {
+  const fs = await import('node:fs'); fs.writeFileSync(outputs.log.path, 'x');
+  for (let i = 0; i < ${N}; i += 1) console.log('line ' + i);
+  return { summary: 'chatty' };
+}\n`);
+  const texts = [];
+  let stalled = false;
+  const ctx = ctxFor({ meta: nodeMeta(), file: prog, ports });
+  ctx.onEvent = (e) => {
+    if (e.type !== 'text') return;
+    texts.push(e.text);
+    if (stalled) return;
+    stalled = true;
+    const until = Date.now() + 400;                 // the host stalls once, the child runs to completion
+    while (Date.now() < until) { /* busy */ }
+  };
+  await runScriptExecution(ctx);
+  assert.equal(texts.filter((t) => /^line \d+$/.test(t)).length, N, 'every logged line reached the host');
+});
+
+test('…and the flush is BOUNDED: a program that mutes or corks stderr still returns its frame', { timeout: 60000 }, async () => {
+  // The flush above calls whatever `process.stderr.write` IS at exit time, and waits
+  // for a callback the USER program controls. `process.stderr.write = () => true` is
+  // the usual "silence a noisy dependency" line — and this harness routes console.*
+  // to stderr, so that IS how a script quietens its own log; `cork()` is the other
+  // way. The setInterval that holds the loop open then leaves the parent's timeout
+  // kill as the only way out: a PIPELINE run of such a script held a scheduler slot
+  // for its whole timeout and failed, where at the checkpoint it finished in 40 ms.
+  const ports = { ...PORTS, outputs: PORTS.outputs.filter((o) => o.id !== 'report') };
+  for (const [name, line] of [['mute', 'process.stderr.write = () => true;'], ['cork', 'process.stderr.cork();']]) {
+    const prog = writeProgram(tmp('worca-sr-prog-'), `export default async function ({ outputs }) {
+  const fs = await import('node:fs'); fs.writeFileSync(outputs.log.path, 'x');
+  ${line}
+  return { summary: '${name}' };
+}\n`);
+    const started = Date.now();
+    const res = await runScriptExecution(ctxFor({ meta: nodeMeta(), file: prog, ports, timeoutMs: 5000 }));
+    const ms = Date.now() - started;
+    assert.equal(res.summary, name, `${name}: the frame still reached the parent`);
+    assert.ok(ms < 4000, `${name}: returned in ${ms} ms — the flush must not run to the timeout`);
+  }
+});
+
+test('…and the bound never outlives the FRAME: a 250 KiB frame survives a host stalled past it', { timeout: 60000 }, async () => {
+  // The child's stdout is a PIPE and the kernel buffer is 64 KiB: whatever does not
+  // fit waits for the parent to read it. A bound armed BESIDE the frame write therefore
+  // races the frame — the moment the parent's loop is blocked longer than the bound,
+  // `process.exit(0)` fires mid-write, the parent receives 65 536 bytes of half a JSON
+  // document and reports `no result frame (exit 0) — stdout is not JSON` for a run that
+  // succeeded at the checkpoint. `frame.logs` and the returned `outputs` are UNCAPPED
+  // (only FRAME_MAX, 8 MiB, catches them), and an ordinary chatty script on a busy host
+  // (a run-log writer, a WS broadcast per line) produces the same lag with no stall at
+  // all. The pin must exceed BOTH the bound and the pipe buffer: the 40-byte frame and
+  // 400 ms stall of the test above cannot see any of this.
+  const ports = { ...PORTS, outputs: PORTS.outputs.filter((o) => o.id !== 'report') };
+  const prog = writeProgram(tmp('worca-sr-prog-'), `export default async function ({ outputs, log }) {
+  const fs = await import('node:fs'); fs.writeFileSync(outputs.log.path, 'x');
+  console.log('stall the host here');
+  for (let i = 0; i < 2000; i += 1) log('info', 'entry ' + i + ' ' + 'x'.repeat(100));
+  return { summary: 'big frame' };
+}\n`);
+  let stalled = false;
+  const ctx = ctxFor({ meta: nodeMeta(), file: prog, ports, timeoutMs: 20000 });
+  ctx.onEvent = (e) => {
+    if (e.type !== 'text' || stalled) return;
+    stalled = true;
+    const until = Date.now() + 1500;        // past the flush bound, with the frame still on the pipe
+    while (Date.now() < until) { /* busy */ }
+  };
+  const res = await runScriptExecution(ctx);
+  assert.equal(res.summary, 'big frame', 'the whole frame reached the parent, not its first 64 KiB');
+});

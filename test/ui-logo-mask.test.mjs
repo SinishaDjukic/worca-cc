@@ -101,6 +101,7 @@ test('the rail select chevron is a token-coloured ::after on a wrapper, not a ba
   assert.match(chev, /border-bottom:\s*1\.8px solid var\(--ink-2\)/);
   assert.match(chev, /rotate\(45deg\)/);
   assert.match(chev, /pointer-events:\s*none/);
-  const src = readFileSync(P('../ui/public/graph/inspector.mjs'), 'utf8');
+  // select() moved to script-forms.mjs with the other DOM primitives (scripts workbench C3); the inspector imports it.
+  const src = readFileSync(P('../ui/public/script-forms.mjs'), 'utf8');
   assert.match(src, /h\(doc, 'span', 'ins-select-wrap'\)/, 'select() wraps the <select> in .ins-select-wrap');
 });

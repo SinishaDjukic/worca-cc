@@ -94,3 +94,27 @@ test('an enum param with no value and no default shows a blank option, never a c
   assert.equal(sel.value, '');
   assert.ok(sel.closest('.ins-f').classList.contains('ins-missing'));
 });
+
+test('editorFor replaces the code/command textarea and keeps the routed control', () => {
+  const built = [];
+  const editorFor = (param, value) => {
+    built.push([param.id, param.type, value]);
+    const box = doc.createElement('div');
+    box.className = 'stub-editor';
+    const ta = doc.createElement('textarea');
+    ta.dataset.field = `param:${param.id}`;
+    ta.value = value == null ? '' : String(value);
+    box.appendChild(ta);
+    return box;
+  };
+  const node = { id: 'n_t', kind: 'script', key: 'runTests', config: { params: { source: 'export default () => {};' } } };
+  const el = renderNodeInspector(node, { template: tpl, portsFn, meta: TESTS, doc, editorFor });
+  assert.deepEqual(built, [['source', 'code', 'export default () => {};']], 'only code/command params are offered one');
+  assert.ok(el.querySelector('.stub-editor'));
+  assert.equal(el.querySelectorAll('textarea.ins-textarea').length, 0);
+  assert.equal(el.querySelector('[data-field="param:source"]').value, 'export default () => {};');
+  assert.equal(el.querySelectorAll('.ins-caption').length, 1, 'the privileges caption still rides with it');
+  const plain = renderNodeInspector(node, { template: tpl, portsFn, meta: TESTS, doc });
+  assert.equal(plain.querySelector('textarea.ins-textarea[data-field="param:source"]').rows, 8,
+    'no hook: the plain textarea, unchanged');
+});

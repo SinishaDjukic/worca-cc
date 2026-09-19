@@ -103,6 +103,9 @@ export function buildEnvelope(ctx) {
       runId: ctx.pipelineId ?? null,
       platform: process.platform,
       mock: Boolean(mockEnabled(ctx.claudeOpts)),
+      // W12: true only on a test-bench execution, so a side-effect script ("post
+      // a comment") can stay quiet under test. Additive — apiVersion stays 1.
+      bench: Boolean(ctx.bench),
     },
   };
 }
@@ -129,6 +132,9 @@ export function envForShell(envelope, baseEnv = process.env) {
   env.WORCA_RUN_ID = c.runId || '';
   env.WORCA_PLATFORM = c.platform || process.platform;
   env.WORCA_MOCK = c.mock ? '1' : '0';
+  // W12: set on a bench run, ABSENT on a pipeline run (a shell's `${WORCA_BENCH+set}`
+  // must not see it) — and never inherited from a worca that is itself under test.
+  if (c.bench) env.WORCA_BENCH = '1'; else delete env.WORCA_BENCH;
   return env;
 }
 

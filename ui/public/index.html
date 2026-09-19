@@ -58,6 +58,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>
             <span>Agents</span>
           </button>
+          <button type="button" data-nav="scripts" data-min-level="expert">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5"></path><path d="M12 19h8"></path></svg>
+            <span>Scripts</span>
+          </button>
 
           <div class="nav-sect">Manage</div>
           <button type="button" data-nav="projects" data-min-level="simple">
@@ -108,6 +112,7 @@
           <span class="topnav-sep" aria-hidden="true" data-min-level="advanced"></span>
           <button type="button" data-nav="composer" data-min-level="advanced">Composer</button>
           <button type="button" data-nav="agents" data-min-level="expert">Agents</button>
+          <button type="button" data-nav="scripts" data-min-level="expert">Scripts</button>
           <span class="topnav-sep" aria-hidden="true"></span>
           <button type="button" data-nav="projects" data-min-level="simple">Projects</button>
           <button type="button" data-nav="workspaces" data-min-level="advanced">Workspaces</button>
@@ -985,6 +990,13 @@
           </template>
         </section>
         <!-- /view agents -->
+
+        <!-- ===== VIEW: SCRIPTS ===== -->
+        <section class="view hidden" data-view="scripts">
+          <div id="scripts-msg" class="form-msg" aria-live="polite"></div>
+          <div id="scripts-host" class="scripts-host"></div>
+        </section>
+        <!-- /view scripts -->
 
         <!-- ===== VIEW: PROJECTS ===== -->
         <section class="view hidden" data-view="projects">

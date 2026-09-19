@@ -83,7 +83,9 @@ export const GRAPH_MEMORY_DEFRAG_WORKFLOW = deepFreeze({
   updatedAt: '1970-01-01T00:00:00.000Z',
   nodes: [
     { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
-    { id: 'n_defrag', kind: 'agent', key: 'memoryDefragmenter', x: 320, y: 200, config: {} },
+    // Sonnet 5 by default: a bounded restructure of a few markdown files. The template layer
+    // is the lowest (workflows.mjs resolveGraph), so a per-role or per-node pick still wins.
+    { id: 'n_defrag', kind: 'agent', key: 'memoryDefragmenter', x: 320, y: 200, config: { model: 'claude-sonnet-5' } },
     { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
   ],
   wires: [

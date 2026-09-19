@@ -94,6 +94,16 @@ and durations, the clarify Q&A, agent transcripts, and logs:
   per workflow, or per run, with a clear resolution order and "save as
   workflow defaults".
 
+### Scripts
+
+- **Cards that run your own program** — a script card keeps the whole outside of
+  an agent card (typed ports, verdict routing, loops) and replaces the inside
+  with your own `node` or `shell` program, so a test gate or a
+  transform costs no model call; the **Scripts** page creates, edits, duplicates
+  and deletes them, and its test bench runs one by itself with hand-filled
+  inputs — saved as named cases with an optional expectation, re-run one at a
+  time or all at once — through the very same runner a pipeline run uses.
+
 ### Workflow Composer
 
 - **Compose your own pipeline** — drag agents onto a canvas and wire their typed

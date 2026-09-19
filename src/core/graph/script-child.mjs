@@ -10,7 +10,13 @@
 // the parent reports "no result frame (exit N)".
 import { pathToFileURL } from 'node:url';
 
-const out = process.stdout;
+// The REAL writers, bound before the program is imported: the exit flush below
+// must not call a `process.stderr.write` the user's program replaced (muting a
+// noisy dependency is a one-liner, and console.* rides stderr here) — that call
+// waits for a callback the program controls, and the setInterval below holds the
+// loop open, so the parent's timeout kill was the only way out.
+const outWrite = process.stdout.write.bind(process.stdout);
+const errWrite = process.stderr.write.bind(process.stderr);
 const logs = [];
 for (const m of ['log', 'info', 'warn', 'error', 'debug']) {
   console[m] = (...a) => { process.stderr.write(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ') + '\n'); };
@@ -56,5 +62,20 @@ main()
     try { text = JSON.stringify(frame); } catch (err) {
       text = JSON.stringify({ ok: false, error: { message: `frame is not serializable: ${err?.message || err}` }, logs });
     }
-    out.write(text, () => process.exit(0));   // write-callback before exit so a piped stdout is fully flushed
+    // BOTH pipes before the exit. console.* rides STDERR, which is asynchronous on
+    // a macOS pipe: exiting on the stdout callback alone discarded every line still
+    // queued there, so a chatty script silently lost most of its live output
+    // whenever the host drained slower than the child wrote it.
+    // BOUNDED, and through the writers captured above: a program that muted or
+    // corked stderr never fires the flush callback, and the flush may never
+    // outlive the frame it is flushing.
+    // The bound is armed FROM the stdout callback, never beside the write: stdout
+    // is a pipe with a 64 KiB kernel buffer, so a frame bigger than that waits for
+    // the parent to read it — a timer racing the write exits mid-frame whenever the
+    // parent's loop is blocked longer than the bound, and the parent then reports
+    // `no result frame (exit 0)` for a run that produced one. The bound belongs to
+    // the STDERR flush, which is the only part the user's program can stall.
+    let exited = false;
+    const bye = () => { if (!exited) { exited = true; process.exit(0); } };
+    outWrite(text, () => { setTimeout(bye, 1000); errWrite('', bye); });
   });
