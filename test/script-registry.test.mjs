@@ -51,13 +51,13 @@ test('a user key shadowing a built-in is skipped; an invalid sidecar is skipped 
   const user = tmp('worca-sreg-u-');
   writeScript(builtin, 'alpha', { order: 1, displayName: 'Builtin Alpha' });
   writeScript(user, 'alpha', { order: 1, displayName: 'SHADOW' });
-  writeScript(user, 'broken', { runtime: 'python' });
+  writeScript(user, 'broken', { runtime: 'ruby' });
   const drops = [];
   const [reg, warned] = quiet(() => loadScriptRegistry({ scriptsDir: builtin, userScriptsDir: user, includePlugins: false, agentKeys: null, onDrop: (d) => drops.push(d) }));
   assert.equal(reg.alpha.displayName, 'Builtin Alpha');
   assert.equal('broken' in reg, false);
   assert.ok(warned.some((w) => /\[script-registry\] user script "alpha" shadows a built-in/.test(w)), warned.join('\n'));
-  assert.ok(warned.some((w) => /sidecar "broken" is invalid; skipped: runtime must be one of node, shell/.test(w)));
+  assert.ok(warned.some((w) => /sidecar "broken" is invalid; skipped: runtime must be one of node, shell, python/.test(w)));
   assert.ok(drops.some((d) => d.origin === 'user' && d.file === 'alpha.meta.json' && /shadows/.test(d.reason)));
   assert.ok(drops.some((d) => d.origin === 'user' && d.file === 'broken.meta.json' && /runtime must be one of/.test(d.reason)));
 });

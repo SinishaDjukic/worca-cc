@@ -19,6 +19,7 @@ import {
   BENCH_MAX_PARALLEL, BENCH_INLINE_BYTES, BENCH_SWEEP_MS,
 } from '../src/core/script-bench.mjs';
 import { loadScriptRegistry } from '../src/core/script-registry.mjs';
+import { resetPythonProbe } from '../src/core/graph/python-probe.mjs';
 import { createScript, writeCases, deleteScript, userScriptsDir } from '../src/core/script-store.mjs';
 
 useTempHome(after);
@@ -494,4 +495,27 @@ export default async function ({ outputs }) {
   assert.equal(r.outputs.log.truncated, false, 'a 10-byte output is nowhere near the cap');
   assert.equal(r.outputs.log.text, '﻿// caf�',
     `a complete output keeps its last byte, and its BOM (got ${JSON.stringify(r.outputs.log.text)})`);
+});
+
+test('bench: a python script with no interpreter is an error RESULT carrying the §7 sentence', async () => {
+  const dir = tmp('worca-bench-py-');
+  writeFileSync(join(dir, 'pyBench.py'), 'def main(api):\n    return {"summary": "never"}\n', 'utf8');
+  const meta = {
+    key: 'pyBench', metaVersion: 2, displayName: 'Py bench', origin: 'user', order: 100,
+    runtime: 'python', file: 'pyBench.py', scriptPath: join(dir, 'pyBench.py'), commandResolved: null,
+    timeoutMs: 20000, params: [], inputs: [],
+    outputs: [{ id: 'out', type: 'md', when: 'always', filename: 'py-bench.md' }],
+  };
+  const prev = process.env.WORCA_PYTHON;
+  process.env.WORCA_PYTHON = join(dir, 'not-a-python');
+  resetPythonProbe();
+  try {
+    const result = await runBenchOnce({ key: 'pyBench', cwd: { kind: 'scratch' } },
+      { registry: { pyBench: meta }, home: tmp('worca-bench-home-') });
+    assert.equal(result.status, 'error', 'an execution error is a RESULT, never a transport failure (§4.1)');
+    assert.equal(result.error.message, 'script "pyBench" needs python 3.8 or newer — none found on this machine (set WORCA_PYTHON)');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_PYTHON; else process.env.WORCA_PYTHON = prev;
+    resetPythonProbe();
+  }
 });

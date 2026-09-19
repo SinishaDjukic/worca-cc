@@ -603,6 +603,6 @@ test('runExecution dispatches kind:script to the script runner, and the runners.
   const res = await runExecution({ node: { id: 'n_s', kind: 'script', key: 'echo' }, runners: { script: async (c) => { seen.push(c.node.key); return { summary: 'seam', outputs: {} }; } } });
   assert.deepEqual(res, { summary: 'seam', outputs: {} });
   assert.deepEqual(seen, ['echo']);
-  await assert.rejects(runExecution({ node: { id: 'n_s', kind: 'script', key: 'echo' }, script: { meta: { runtime: 'python' } }, ports: {}, outputs: {}, pipelineDir: tmp('worca-exec-sd-'), claudeOpts: {} }),
-    (e) => /unknown runtime "python"/.test(e.message) && e.errorClass === null);
+  await assert.rejects(runExecution({ node: { id: 'n_s', kind: 'script', key: 'echo' }, script: { meta: { runtime: 'ruby' } }, ports: {}, outputs: {}, pipelineDir: tmp('worca-exec-sd-'), claudeOpts: {} }),
+    (e) => /unknown runtime "ruby"/.test(e.message) && e.errorClass === null);
 });

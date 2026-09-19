@@ -17,6 +17,7 @@ import {
 } from '../src/core/graph/script-runner.mjs';
 import { classifyError } from '../src/core/recoverable-error.mjs';
 import { AWAIT_PORT } from '../src/shared/graph/constants.mjs';
+import { probePython, resetPythonProbe } from '../src/core/graph/python-probe.mjs';
 
 // mockEnabled() also reads the environment; these tests pin `ctx.mock === false` and WORCA_MOCK=0, so an
 // ambient flag (a developer shell, a smoke run's leftovers) must not leak in (v2 R9).
@@ -517,4 +518,111 @@ test('…and the bound never outlives the FRAME: a 250 KiB frame survives a host
   };
   const res = await runScriptExecution(ctx);
   assert.equal(res.summary, 'big frame', 'the whole frame reached the parent, not its first 64 KiB');
+});
+
+// ── the python runtime (workbench spec §7) ────────────────────────────────────
+const PROBE = await probePython();
+const pySkip = PROBE.ok ? false : `no python on this host: ${PROBE.reason}`;
+
+/** A python sidecar with its program written next to it; `file` is absolute, as the registry stamps it. */
+function pyScript(source, over = {}) {
+  const dir = tmp('worca-sr-py-');
+  const file = join(dir, 'card.py');
+  writeFileSync(file, source, 'utf8');
+  return { meta: { key: 'pyCard', displayName: 'Py card', runtime: 'python', ...over }, file };
+}
+
+test('python: the harness runs, the frame lands, outputs materialize, lines stream', { skip: pySkip }, async () => {
+  const { meta, file } = pyScript(`
+import sys
+
+def main(api):
+    print('cycle ' + str(api.execution.ordinal), file=sys.stderr)
+    with open(api.outputs.log.path, 'w', encoding='utf-8') as f:
+        f.write('# tests\\n\\nall passing\\n')
+    with open(api.outputs.report.path, 'w', encoding='utf-8') as f:
+        f.write('{"passed": 212}')
+    return {'summary': '212 passing', 'verdict': {'issues': []}}
+`);
+  const events = [];
+  const ctx = ctxFor({ meta, file, events });
+  const res = await runScriptExecution(ctx);
+  assert.equal(res.runtime, 'python');
+  assert.equal(res.exitCode, 0);
+  assert.equal(res.summary, '212 passing');
+  assert.deepEqual(res.verdict.issues, []);
+  assert.equal(readFileSync(res.outputs.log.path, 'utf8'), '# tests\n\nall passing\n');
+  assert.deepEqual(res.outputs.report.value, { passed: 212 });
+  assert.ok(events.some((e) => e.type === 'text' && e.text === 'cycle 2'), 'stderr streams line by line');
+  assert.ok(events.some((e) => e.type === 'result' && e.costUsd === 0), 'a $0 result event, like every script');
+  assert.ok(existsSync(res.envelopePath), 'the envelope audit copy is written for python too');
+});
+
+test('python: a raise is an execution error with the message and errorClass null', { skip: pySkip }, async () => {
+  const { meta, file } = pyScript(`
+def main(api):
+    raise RuntimeError('no package.json in cwd')
+`);
+  await assert.rejects(runScriptExecution(ctxFor({ meta, file })), (err) => {
+    assert.equal(err.message, 'script "pyCard": no package.json in cwd');
+    assert.equal(err.errorClass, null);
+    assert.equal(classifyError(err), null);
+    return true;
+  });
+});
+
+test('python: a frame over 8 MiB is refused by name, and the hint does not send the author to api.log()', { skip: pySkip }, async () => {
+  const { meta, file } = pyScript(`
+def main(api):
+    return {'summary': 'x' * (9 * 1024 * 1024)}
+`);
+  await assert.rejects(runScriptExecution(ctxFor({ meta, file })), (err) => {
+    assert.match(err.message, /^script "pyCard": stdout exceeded 8 MiB — stdout is reserved for the result frame; log through print\(\)/);
+    assert.equal(err.message.includes('api.log'), false, 'api.log() lines ride the frame: they are part of the 8 MiB, not a way around it');
+    assert.equal(err.errorClass, null);
+    return true;
+  });
+});
+
+test('python: a hung program is killed at the timeout, tree and all', { skip: pySkip }, async () => {
+  const { meta, file } = pyScript(`
+import time
+
+def main(api):
+    time.sleep(120)
+    return {'summary': 'never'}
+`);
+  await assert.rejects(runScriptExecution(ctxFor({ meta, file, timeoutMs: 1500 })), (err) => {
+    assert.match(err.message, /^script "pyCard" timed out after 2 s$/);
+    assert.equal(err.errorClass, null);
+    return true;
+  });
+});
+
+test('python: no interpreter is the one §7 sentence, on every host', async () => {
+  const prev = process.env.WORCA_PYTHON;
+  process.env.WORCA_PYTHON = join(tmp('worca-sr-nopy-'), 'not-a-python');
+  resetPythonProbe();
+  try {
+    const { meta, file } = pyScript('def main(api):\n    return {}\n');
+    await assert.rejects(runScriptExecution(ctxFor({ meta, file })), (err) => {
+      assert.equal(err.message, 'script "pyCard" needs python 3.8 or newer — none found on this machine (set WORCA_PYTHON)');
+      assert.equal(err.errorClass, null);
+      return true;
+    });
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_PYTHON; else process.env.WORCA_PYTHON = prev;
+    resetPythonProbe();
+  }
+});
+
+test('python: a missing program file is named before anything is spawned', async () => {
+  const meta = { key: 'pyCard', displayName: 'Py card', runtime: 'python' };
+  await assert.rejects(runScriptExecution(ctxFor({ meta, file: join(tmp('worca-sr-gone-'), 'gone.py') })),
+    /^Error: script "pyCard": program file not found: .*gone\.py$/);
+});
+
+test('an unknown runtime is still refused by name', async () => {
+  const meta = { key: 'pyCard', displayName: 'Py card', runtime: 'ruby' };
+  await assert.rejects(runScriptExecution(ctxFor({ meta, file: null })), /^Error: script "pyCard": unknown runtime "ruby"$/);
 });

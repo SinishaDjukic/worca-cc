@@ -20,6 +20,9 @@
 //   pipelineCostLimitUsd   — per-pipeline lifetime USD spend cap; unset = no limit.
 //   totalCostLimitUsd      — windowed all-pipelines USD spend cap; unset = no limit.
 //   costLimitResetPeriod   — total-budget window, 'weekly' | 'monthly' (default).
+//   pythonPath             — §7 of the scripts-workbench spec: the python
+//                            interpreter the script-card probe tries after
+//                            WORCA_PYTHON and before the platform defaults.
 //   models                 — the global model catalog (configurable-models-design.md
 //                            §4.1): [{id, label?, efforts?, env?}]. Entries shadow
 //                            PREDEFINED_MODELS by id; env is per-model routing env
@@ -591,6 +594,42 @@ export async function setCostLimitResetPeriod(input) {
   else settings.costLimitResetPeriod = input;
   await persistSettings(settings);
   return { costLimitResetPeriod: costLimitResetPeriod() };
+}
+
+// ── Python interpreter (scripts-workbench spec §7) ───────────────────────────
+// The second candidate the script-card probe tries, after the WORCA_PYTHON
+// environment override and before the platform defaults. Settings-file-only, the
+// company runRootMode / skillMount / the context caps keep: no /api/settings key
+// and no Settings card in this version, so it is deliberately absent from
+// SETTINGS_POST_KEYS below.
+export const PYTHON_PATH_MAX_LEN = 500;
+
+const isPythonPath = (v) => typeof v === 'string' && v.trim().length > 0 && v.length <= PYTHON_PATH_MAX_LEN;
+
+/** The STORED interpreter path (trimmed), or null when unset/invalid (loudly). */
+export function pythonPath() {
+  const v = readSettings().pythonPath;
+  if (v === undefined) return null;
+  if (isPythonPath(v)) return v.trim();
+  console.warn(`[worca] invalid pythonPath ${JSON.stringify(v)} — probing the platform defaults`);
+  return null;
+}
+
+/** @throws {Error} unless `input` is a non-empty path (or empty, which clears). */
+export function assertPythonPathInput(input) {
+  if (isClearInput(input)) return;
+  if (!isPythonPath(input)) {
+    throw new Error(`pythonPath must be a path of at most ${PYTHON_PATH_MAX_LEN} characters, or empty to probe the platform defaults`);
+  }
+}
+
+export async function setPythonPath(input) {
+  assertPythonPathInput(input);
+  const settings = readSettings();
+  if (isClearInput(input)) delete settings.pythonPath;
+  else settings.pythonPath = input.trim();
+  await persistSettings(settings);
+  return { pythonPath: pythonPath() };
 }
 
 // ── The keys POST /api/settings understands ──────────────────────────────────

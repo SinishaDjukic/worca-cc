@@ -7,7 +7,7 @@
 import { KINDS, KEYED_KINDS, NODE_ID_RE, LIMITS } from './constants.mjs';
 import { portsOf, findPort, resolveOrOutType } from './ports.mjs';
 import { classifyLoops } from './loops.mjs';
-import { paramValueError, mockErrors, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS } from './script-meta.mjs';
+import { paramValueError, mockErrors, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, pythonMissingSentence } from './script-meta.mjs';
 
 const ARITY_SET = new Set(['and', 'or', 'combine']);
 const IN_PORT_RE = /^in\d+$/;
@@ -207,6 +207,14 @@ export const RULES = [
       } else if (!p.ported) add(`agent "${n.key}" has no v2 ports — port its sidecar to metaVersion 2`, { nodeId: n.id });
       else if (p.meta?.placeable === false) {
         add(`${what} "${n.key}" declares placeable: false and cannot be a graph node`, { nodeId: n.id });
+      } else if (p.meta?.runtime === 'python' && p.meta?.runtimeMissing) {
+        // Workbench §7 / W17: GET /api/scripts stamps `runtimeMissing` on a python
+        // meta when THIS host's probe failed, so the composer paints the card red
+        // the moment it is placed. The registry itself never carries the flag (the
+        // loader is synchronous, the probe is not), so a saved graph and a run are
+        // gated by the run preflight, which says the same sentence at the right
+        // moment. Listed always, unplaceable with a reason.
+        add(pythonMissingSentence(n.key), { nodeId: n.id });
       }
     }
   } },

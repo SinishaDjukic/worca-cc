@@ -30,6 +30,9 @@ const SCRIPTS = {
       { id: 'fail', type: 'md', when: 'blocking', filename: 'tests-cycle{cycle}.md' }, { id: 'pass', type: 'void', when: 'clean' }] },
   shellLike: { key: 'shellLike', runtime: 'shell', ports: 'config', verdict: { filename: 'shell-cycle{cycle}.json' },
     defaultPorts: { inputs: [], outputs: [] }, params: [{ id: 'command', type: 'command', required: true }] },
+  pyCard: { key: 'pyCard', runtime: 'python', params: [],
+    inputs: [{ id: 'in', type: 'md', required: false }],
+    outputs: [{ id: 'out', type: 'md', when: 'always', filename: 'py-cycle{cycle}.md' }] },
   hiddenScript: { key: 'hiddenScript', runtime: 'node', placeable: false, params: [], inputs: [], outputs: [{ id: 'out', type: 'md', when: 'always', filename: 'o.md' }] },
 };
 const portsFn = portsFnFor(REG, SCRIPTS);
@@ -523,4 +526,17 @@ test('V17 knows the script config keys; V22 checks params, ports placement, mock
     ["script node 'n_tests' config.mock: mock.outputs.nope: not a declared output port"]);
   assert.deepEqual(v22({ params: { cmd: 'x' }, timeoutMs: 10 }), ["script node 'n_tests' timeoutMs must be an integer >= 1000 ms (got 10)"]);
   assert.deepEqual(v22({ params: { cmd: 'x' }, timeoutMs: 3000000000 }), ["script node 'n_tests' timeoutMs must be at most 86400000 ms (24 h) (got 3000000000)"]);
+});
+
+test('V4: a python card this host cannot run is named with the §7 sentence (W17)', () => {
+  const t = ok();
+  t.nodes.push(S('n_py', 'pyCard'));
+  assert.equal(V(t).errors.some((e) => e.code === 'V4' && e.nodeId === 'n_py'), false, 'unstamped: nothing to say');
+  const missing = portsFnFor(REG, { ...SCRIPTS, pyCard: { ...SCRIPTS.pyCard, runtimeMissing: true } });
+  const issue = validateGraph(t, missing).errors.find((e) => e.code === 'V4');
+  assert.equal(issue.message, 'script "pyCard" needs python 3.8 or newer — none found on this machine (set WORCA_PYTHON)');
+  assert.equal(issue.nodeId, 'n_py');
+  assert.equal(issue.incomplete, undefined, 'it is an error, not work-to-do: a duplicate would not fix it');
+  const otherRuntime = portsFnFor(REG, { ...SCRIPTS, pyCard: { ...SCRIPTS.pyCard, runtime: 'node', runtimeMissing: true } });
+  assert.equal(validateGraph(t, otherRuntime).errors.some((e) => e.code === 'V4'), false, 'the flag is python-only');
 });

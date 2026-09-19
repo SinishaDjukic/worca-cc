@@ -12,7 +12,8 @@ const win = new JSDOM('<!doctype html><body></body>').window;
 const doc = win.document;
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const flush = async (n = 4) => { for (let i = 0; i < n; i += 1) await tick(); };
-const RUNTIMES = { node: { ok: true, version: '22.13.0' }, shell: { ok: true, path: '/bin/sh' }, python: { ok: false, reason: 'not supported' } };
+const RUNTIMES = { node: { ok: true, version: '22.13.0' }, shell: { ok: true, path: '/bin/sh' },
+  python: { ok: false, reason: 'no python 3.8 or newer found (tried python3, python)' } };
 
 const USER_META = {
   key: 'runTests', metaVersion: 2, displayName: 'Run tests', description: 'Runs the suite.',
@@ -78,7 +79,7 @@ test('the Overview form: every field, seconds for the timeout, the disabled pyth
   assert.equal(root.querySelector('[data-field="meta:exitCodesClean"]'), null, 'exit codes are a shell field');
   const py = [...root.querySelector('[data-field="meta:runtime"]').options].find((o) => o.value === 'python');
   assert.equal(py.disabled, true);
-  assert.equal(py.title, 'not supported');
+  assert.equal(py.title, 'no python 3.8 or newer found (tried python3, python)');
   assert.equal(root.querySelector('[data-field="meta:portsConfig"]').checked, false);
   assert.ok(root.querySelector('.ins-port-editor'));
   assert.ok(root.querySelector('.pdef-editor'));
@@ -1007,4 +1008,33 @@ test('typing a verdict filename unlocks every output`s `when` select, and cleari
   await flush();
   assert.equal(when().disabled, true, 'clearing the verdict locks `when` again');
   c.cleanup();
+});
+
+test('a host WITH python: the option is offered, the topbar chip is gone (W4)', async () => {
+  const withPython = { ...RUNTIMES, python: { ok: true, version: '3.12.4', command: ['python3'] } };
+  const PY = { ...USER, meta: { ...USER_META, key: 'pyCard', displayName: 'Py card', runtime: 'python', file: 'pyCard.py' },
+    source: SCRIPT_TEMPLATES.python, sourcePath: '/home/u/.worca-cc/scripts/pyCard.py' };
+
+  const on = render(PY, { runtimes: withPython });
+  await flush();
+  const opt = (root) => [...root.querySelector('[data-field="meta:runtime"]').options].find((o) => o.value === 'python');
+  assert.equal(opt(on).disabled, false, 'a probed interpreter offers the runtime');
+  assert.equal(opt(on).title, '', 'nothing to explain: no title');
+  assert.equal(on.querySelector('.script-warn'), null);
+  assert.equal(on.querySelector('.script-runtime').textContent, 'python');
+  dispose(on);
+
+  const off = render(PY, { runtimes: RUNTIMES });
+  await flush();
+  assert.equal(opt(off).disabled, true);
+  assert.equal(opt(off).title, 'no python 3.8 or newer found (tried python3, python)');
+  assert.equal(off.querySelector('.script-warn').textContent, 'python not found');
+  assert.equal(off.querySelector('[data-field="meta:runtime"]').value, 'python', 'a saved python script still shows its own runtime');
+  assert.equal(off.querySelectorAll('p').length, 0, 'the reason is a title, never a paragraph');
+  dispose(off);
+
+  const src = render(PY, { runtimes: RUNTIMES, tab: 'source' });
+  await flush();
+  assert.equal(src.querySelector('.code-editor').dataset.language, 'python', 'a .py source is python whether or not the host can run it');
+  dispose(src);
 });

@@ -220,7 +220,7 @@ test('listScripts is the registry order with caseCount; a half-written pair load
   await createScript({ meta: NODE_META, source: SRC, by: 'ui' });
   await writeCases('lint', [{ id: 'c1' }]);
   const list = await listScripts();
-  assert.deepEqual(list.map((s) => s.key), ['shell', 'js', 'gitDiff', 'lint']);
+  assert.deepEqual(list.map((s) => s.key), ['shell', 'js', 'py', 'gitDiff', 'lint']);
   assert.equal(list.at(-1).caseCount, 1);
   assert.equal(list[0].caseCount, 0);
   // The crash state the write order protects: a source with no meta beside it.

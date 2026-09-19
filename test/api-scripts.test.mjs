@@ -6,6 +6,7 @@ import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
+import { probePython, resetPythonProbe } from '../src/core/graph/python-probe.mjs';
 
 let homeDir, srv, base, prevHome;
 before(async () => {
@@ -37,14 +38,14 @@ test('GET /api/scripts lists built-ins + the user layer in order, D16-filtered, 
   const r = await fetch(`${base}/api/scripts`);
   assert.equal(r.status, 200);
   const { scripts } = await r.json();
-  assert.deepEqual(scripts.map((s) => s.key), ['shell', 'js', 'gitDiff', 'lint']);
+  assert.deepEqual(scripts.map((s) => s.key), ['shell', 'js', 'py', 'gitDiff', 'lint']);
   assert.equal(scripts.find((s) => s.key === 'reviewer'), undefined, 'an agent key wins');
   const shell = scripts[0];
   assert.equal(shell.origin, 'builtin');
   assert.equal(shell.ports, 'config');
   assert.ok(Array.isArray(shell.defaultPorts.outputs));
   assert.deepEqual(shell.params.map((p) => p.type), ['command']);
-  const lint = scripts[3];
+  const lint = scripts[4];
   assert.equal(lint.origin, 'user');
   assert.equal(lint.runtime, 'node');
   assert.match(lint.scriptPath, /lint\.mjs$/);
@@ -84,7 +85,7 @@ test('GET /api/scripts/runtimes answers before the :key route ever sees "runtime
   assert.equal(d.node.version, process.version);
   assert.equal(d.shell.ok, true);
   assert.equal(typeof d.shell.path, 'string');
-  assert.deepEqual(d.python, { ok: false, reason: 'not supported' });
+  assert.equal(typeof d.python.ok, 'boolean', 'the python arm is the real probe now — its two shapes are pinned below');
 });
 
 test('POST -> 201, GET :key, PUT, cases, duplicate, DELETE round-trip', async () => {
@@ -191,4 +192,46 @@ test('a maximal legal case set saves: 32 cases x 256 KiB fits the cases route (t
   assert.equal(r.status, 200);
   assert.equal((await r.json()).cases.length, 32);
   await del('/api/scripts/bigcases');
+});
+
+// ── python availability on the wire (workbench spec §7, W4, W17) ─────────────
+const PROBE = await probePython();
+const pySkip = PROBE.ok ? false : `no python on this host: ${PROBE.reason}`;
+
+test('GET /api/scripts/runtimes answers the real probe, not the P1c stub', async () => {
+  resetPythonProbe();
+  const r = await fetch(`${base}/api/scripts/runtimes`);
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  assert.equal(body.node.ok, true);
+  assert.equal(body.shell.ok, true);
+  assert.notEqual(body.python.reason, 'not supported', 'the stub is gone');
+  const probe = await probePython();
+  if (probe.ok) assert.deepEqual(body.python, { ok: true, version: probe.version.join('.'), command: probe.command });
+  else assert.deepEqual(body.python, { ok: false, reason: probe.reason });
+});
+
+test('no interpreter: runtimes says why, and every python meta on the list is stamped', async () => {
+  const fake = join(homeDir, 'not-a-python');
+  const prev = process.env.WORCA_PYTHON;
+  process.env.WORCA_PYTHON = fake;
+  resetPythonProbe();
+  try {
+    const rt = await (await fetch(`${base}/api/scripts/runtimes`)).json();
+    assert.deepEqual(rt.python, { ok: false, reason: `WORCA_PYTHON "${fake}" is not a working python` });
+    const { scripts } = await (await fetch(`${base}/api/scripts`)).json();
+    assert.equal(scripts.find((s) => s.key === 'py').runtimeMissing, true);
+    assert.equal(scripts.find((s) => s.key === 'js').runtimeMissing, undefined, 'only python metas are stamped');
+    assert.equal(scripts.find((s) => s.key === 'shell').runtimeMissing, undefined);
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_PYTHON; else process.env.WORCA_PYTHON = prev;
+    resetPythonProbe();
+  }
+});
+
+test('a working interpreter stamps nothing', { skip: pySkip }, async () => {
+  resetPythonProbe();
+  const { scripts } = await (await fetch(`${base}/api/scripts`)).json();
+  assert.equal(scripts.find((s) => s.key === 'py').runtimeMissing, undefined);
+  assert.equal(scripts.every((s) => s.runtimeMissing === undefined), true);
 });

@@ -16,3 +16,7 @@ graphify-out/
 docs/superpowers/
 # OpenDeck baked narration (generated locally by the Audio Studio)
 docs/why-worca/narration-audio.js
+
+# python bytecode: the script harness never writes it (sys.dont_write_bytecode), a developer's own python run may
+__pycache__/
+*.pyc

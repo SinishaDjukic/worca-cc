@@ -789,11 +789,11 @@ test('reimportPlugin re-runs the importer for a LINKED plugin whose dir was edit
 test('a script sidecar the registry drops is reported under scripts/, a clean one is not', async () => {
   const dir = await installLocal('script-drops', { 'scripts/dropsClean.meta.json': JSON.stringify(SHELL_SCRIPT('dropsClean')) });
   // A LINKED dir is read live: add a sidecar validatePluginDir would have refused.
-  writeTree(dir, { 'scripts/dropsBad.meta.json': JSON.stringify({ ...SHELL_SCRIPT('dropsBad'), runtime: 'python' }) });
+  writeTree(dir, { 'scripts/dropsBad.meta.json': JSON.stringify({ ...SHELL_SCRIPT('dropsBad'), runtime: 'ruby' }) });
   const row = listInstalledPlugins().find((p) => p.name === 'script-drops');
   assert.equal(row.contributions.scripts, 2, 'the file-derived count counts what the plugin SHIPS');
   const bad = row.ignored.find((i) => i.file === 'scripts/dropsBad.meta.json');
   assert.ok(bad, JSON.stringify(row.ignored));
-  assert.match(bad.reason, /runtime must be one of node, shell/);
+  assert.match(bad.reason, /runtime must be one of node, shell, python/);
   assert.equal(row.ignored.some((i) => i.file === 'scripts/dropsClean.meta.json'), false);
 });

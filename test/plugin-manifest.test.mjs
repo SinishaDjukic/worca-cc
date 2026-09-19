@@ -802,8 +802,8 @@ const SCRIPT_GRAPH = (key, out = 'log') => JSON.stringify({
   wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_s', port: 'await' } }, { id: 'w2', from: { node: 'n_s', port: out }, to: { node: 'n_end', port: 'result' } }],
 });
 
-test('builtinScriptMetas: the three built-ins, normalized', () => {
-  assert.deepEqual(builtinScriptMetas().map((m) => m.key), ['gitDiff', 'js', 'shell']);
+test('builtinScriptMetas: the built-in scripts, normalized', () => {
+  assert.deepEqual(builtinScriptMetas().map((m) => m.key), ['gitDiff', 'js', 'py', 'shell']);
 });
 
 test('validatePluginDir: scripts/ — pairing, key = stem, meta v2 rules, file containment, runtime', () => {
@@ -814,7 +814,7 @@ test('validatePluginDir: scripts/ — pairing, key = stem, meta v2 rules, file c
     'scripts/mismatch.meta.json': SCRIPT_META('other'),                   // key != stem; other.mjs missing
     'scripts/nofile.meta.json': SCRIPT_META('nofile'),                    // nofile.mjs absent
     'scripts/escape.meta.json': SCRIPT_META('escape', { file: '../escape.mjs' }),
-    'scripts/py.meta.json': SCRIPT_META('py', { runtime: 'python' }),
+    'scripts/rb.meta.json': SCRIPT_META('rb', { runtime: 'ruby' }),
     'scripts/bad key.meta.json': SCRIPT_META('bad key'),
   });
   const v = validatePluginDir(dir);
@@ -823,7 +823,7 @@ test('validatePluginDir: scripts/ — pairing, key = stem, meta v2 rules, file c
   assert.match(e, /scripts\/mismatch\.meta\.json: key "other" must match the filename stem "mismatch"/);
   assert.match(e, /scripts\/nofile\.meta\.json: file "nofile\.mjs" not found in scripts\//);
   assert.match(e, /scripts\/escape\.meta\.json: file must be a plain basename/);
-  assert.match(e, /scripts\/py\.meta\.json: runtime must be one of node, shell/);
+  assert.match(e, /scripts\/rb\.meta\.json: runtime must be one of node, shell, python/);
   assert.match(e, /scripts\/bad key\.meta\.json: "bad key" must be a valid script key/);
   assert.doesNotMatch(e, /scripts\/good\.meta\.json/);
 });
@@ -835,7 +835,7 @@ test('validatePluginDir: a plugin workflow may reference built-in scripts and it
   assert.deepEqual(errs(v), [], errs(v).join('\n'));
   const foreign = mkPluginDir({ ...VALID_FILES, 'workflows/alien.json': SCRIPT_GRAPH('notMine') });
   assert.match(errs(validatePluginDir(foreign)).join('\n'), /alien\.json: references script key "notMine" which is neither a built-in nor shipped by this plugin/);
-  const ungated = mkPluginDir({ ...VALID_FILES, 'scripts/broken.meta.json': SCRIPT_META('broken', { runtime: 'python' }), 'workflows/b.json': SCRIPT_GRAPH('broken') });
+  const ungated = mkPluginDir({ ...VALID_FILES, 'scripts/broken.meta.json': SCRIPT_META('broken', { runtime: 'ruby' }), 'workflows/b.json': SCRIPT_GRAPH('broken') });
   assert.match(validatePluginDir(ungated).problems.map((p) => p.message).join('\n'), /b\.json: references script key "broken" whose sidecar is not a valid meta v2 sidecar/);
 });
 

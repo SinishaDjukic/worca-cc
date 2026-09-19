@@ -23,7 +23,9 @@ import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME } from './graph/builtin-workflows.
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
 import { DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../shared/graph/constants.mjs';
-import { scriptNodeCtx } from '../shared/graph/script-meta.mjs';
+import { scriptNodeCtx, pythonMissingSentence } from '../shared/graph/script-meta.mjs';
+import { probePython } from './graph/python-probe.mjs';
+import { mockEnabled } from './claude-runner.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition } from './graph/executor.mjs';
@@ -121,6 +123,7 @@ export class GraphOrchestrator extends RunHarness {
     });
     this._adoptResolvedGraph(resolved);
     this._preflightScriptKeys(this.resolved.scriptKeys);
+    await this._preflightScriptRuntimes();
     // The manifest is built from the RESOLVED template, the resolver's registry
     // slice and its EFFECTIVE per-node/per-wire values (P2 contract): the run
     // monitor shows exactly what the engine will run.
@@ -406,6 +409,7 @@ export class GraphOrchestrator extends RunHarness {
     manifest.auto = { status: 'decided', via, rounds: round, humanInLoop: this.humanInLoop, workflowId };
     this._preflightAgentKeys(this.resolved.agentKeys);
     this._preflightScriptKeys(this.resolved.scriptKeys);
+    await this._preflightScriptRuntimes();
     this.state.stepper = manifest;
     // PR #434 review, finding 3: the pending proposal is kept until HERE. A throw before the
     // workflowId swap above (mintAutoWorkflowId, writeGraphWorkflow, resolveGraph) unwinds
@@ -539,6 +543,31 @@ export class GraphOrchestrator extends RunHarness {
     if (missing.length) {
       throw new Error(`Preflight failed: ${missing.length} workflow script key(s) do not resolve:\n` + missing.map((m) => `  - ${m}`).join('\n'));
     }
+  }
+
+  /**
+   * Workbench spec §7: a `python` card needs an interpreter on THIS host. That is
+   * a run-time fact — the probe is async and the registry loader is not — so it is
+   * checked HERE, beside the key preflight, before the pipeline dir exists and
+   * long before the first execution, and is never baked into a registry snapshot.
+   * The message is the §7 sentence itself (one line per distinct key, first-seen
+   * order): for the usual single python card it is EXACTLY that sentence, which
+   * the bench, the composer's V4 and the CLI all repeat word for word.
+   */
+  async _preflightScriptRuntimes() {
+    // D13: in a mock run a card with a DECLARED mock spawns nothing (runScriptExecution returns before it
+    // probes), so it needs no interpreter — the same condition, read the same way.
+    const mocked = mockEnabled({ mock: this.claude?.mock });
+    const keys = [];
+    for (const nc of Object.values(this.resolved?.nodeCtx || {})) {
+      if (nc?.kind !== 'script' || nc.runtime !== 'python' || !nc.key || keys.includes(nc.key)) continue;
+      if (mocked && nc.mock && typeof nc.mock === 'object') continue;
+      keys.push(nc.key);
+    }
+    if (!keys.length) return;
+    const probe = await probePython();
+    if (probe.ok) return;
+    throw new Error(keys.map((key) => pythonMissingSentence(key)).join('\n'));
   }
 
   // ── hook 2: run the graph ──────────────────────────────────────────────────
@@ -1525,6 +1554,7 @@ export class GraphOrchestrator extends RunHarness {
     // uninstalled while this run sat paused. (Same place v1 re-preflights.)
     this._preflightAgentKeys(this.resolved.agentKeys);
     this._preflightScriptKeys(this.resolved.scriptKeys);
+    await this._preflightScriptRuntimes();
     // Prompt bodies + frontmatter tools: the one thing the manifest never carries.
     const cache = new Map();
     for (const nc of Object.values(this.resolved.nodeCtx)) {

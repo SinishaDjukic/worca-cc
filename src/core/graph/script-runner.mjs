@@ -17,9 +17,14 @@ import { scrubbedEnv } from '../plugin-shim.mjs';            // PATH/HOME + the 
 import { normalizeReview } from '../protocol.mjs';
 import { readVerdict, missingVerdictWarning } from './exec-io.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
-import { DEFAULT_EXIT_CODES, DEFAULT_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS } from '../../shared/graph/script-meta.mjs';
+import { DEFAULT_EXIT_CODES, DEFAULT_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, SCRIPT_RUNTIMES, pythonMissingSentence } from '../../shared/graph/script-meta.mjs';
+import { probePython } from './python-probe.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./script-child.mjs', import.meta.url));
+/** The `python` harness (workbench spec §7), spawned as `<python> -u worca_script.py <program.py>`. */
+const PY_HARNESS_PATH = fileURLToPath(new URL('./worca_script.py', import.meta.url));
+/** Forced on every python spawn: a Windows console defaults to cp1252 and would corrupt the frame. */
+const PY_ENV = Object.freeze({ PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' });
 const AWAIT_ID = AWAIT_PORT.id;
 /** The three server-side variables a script must not inherit (D11). */
 const STRIPPED_ENV = new Set(['WORCA_HOME', 'WORCA_RUN_ROOT', 'WORCA_HOST_PID']);
@@ -426,7 +431,7 @@ export async function runScriptExecution(ctx) {
     return { ...res, warnings, sessionId: null, runtime: meta.runtime, exitCode: 0, durationMs: Date.now() - started, envelopePath: null };
   }
 
-  if (meta.runtime !== 'node' && meta.runtime !== 'shell') throw scriptError(`script "${key}": unknown runtime ${JSON.stringify(meta.runtime)}`);
+  if (!SCRIPT_RUNTIMES.includes(meta.runtime)) throw scriptError(`script "${key}": unknown runtime ${JSON.stringify(meta.runtime)}`);
   const envelope = buildEnvelope(ctx);
   const envelopePath = envelopeAuditPath(ctx);
   await mkdir(dirname(envelopePath), { recursive: true });
@@ -447,19 +452,46 @@ export async function runScriptExecution(ctx) {
     try { return await spawnScript(o); } catch (err) { throw scriptError(`script "${key}": spawn failed — ${err?.message || err}`); }
   };
 
+  // The two HARNESSED runtimes differ only in what is spawned: same envelope on
+  // stdin, same 'frame' stdout mode, so the same kill / timeout / abort rules and
+  // the same reader apply to both.
+  const programFile = () => {
+    const file = script.file;
+    if (!file || !existsSync(file)) throw scriptError(`script "${key}": program file not found: ${file || '(none)'}`);
+    return file;
+  };
+  const readFrame = (r, logHint) => {
+    if (r.frameOverflow) throw scriptError(`script "${key}": stdout exceeded ${FRAME_MAX / (1024 * 1024)} MiB — stdout is reserved for the result frame; log through ${logHint}${tail(r)}`);
+    const parsed = parseFrame(r.stdout);
+    if (!parsed.ok) throw scriptError(`script "${key}": no result frame (exit ${r.exitCode ?? r.signal}) — ${parsed.reason}${tail(r)}`);
+    if (parsed.frame.ok !== true) throw scriptError(`script "${key}": ${parsed.frame.error?.message || 'failed'}`);
+    return parsed.frame;
+  };
+
   let run;
   let frame;
   if (meta.runtime === 'node') {
-    const file = script.file;
-    if (!file || !existsSync(file)) throw scriptError(`script "${key}": program file not found: ${file || '(none)'}`);
-    run = await spawnOrThrow({ file: process.execPath, args: [CHILD_PATH, file], cwd: envelope.ctx.cwd, env,
+    run = await spawnOrThrow({ file: process.execPath, args: [CHILD_PATH, programFile()], cwd: envelope.ctx.cwd, env,
       stdin: JSON.stringify(envelope), timeoutMs, signal: ctx.signal, onLine, stdoutMode: 'frame', platform });
     afterRun(run);
-    if (run.frameOverflow) throw scriptError(`script "${key}": stdout exceeded ${FRAME_MAX / (1024 * 1024)} MiB — stdout is reserved for the result frame; log through console.* or log()${tail(run)}`);
-    const parsed = parseFrame(run.stdout);
-    if (!parsed.ok) throw scriptError(`script "${key}": no result frame (exit ${run.exitCode ?? run.signal}) — ${parsed.reason}${tail(run)}`);
-    frame = parsed.frame;
-    if (frame.ok !== true) throw scriptError(`script "${key}": ${frame.error?.message || 'failed'}`);
+    frame = readFrame(run, 'console.* or log()');
+  } else if (meta.runtime === 'python') {
+    // The probe is 60 s-cached, so this costs nothing per execution. A failed
+    // probe is an EXECUTION error, which the bench reports as status 'error' with
+    // this exact sentence (spec §4.1); a run never reaches here because its
+    // preflight refuses first. Windows: probe.command is ['py','-3'] | ['python']
+    // | ['python3'] — real executables, never a .cmd shim, so no `shell: true`,
+    // and windowsVerbatimArguments stays off (spawnScript sets it for
+    // stdoutMode 'capture' only), which is what quotes a path with a space.
+    const file = programFile();
+    const probe = await probePython();
+    if (!probe.ok) throw scriptError(pythonMissingSentence(key));
+    const [exe, ...pre] = probe.command;
+    run = await spawnOrThrow({ file: exe, args: [...pre, '-u', PY_HARNESS_PATH, file], cwd: envelope.ctx.cwd,
+      env: { ...env, ...PY_ENV }, stdin: JSON.stringify(envelope), timeoutMs, signal: ctx.signal, onLine,
+      stdoutMode: 'frame', platform });
+    afterRun(run);
+    frame = readFrame(run, 'print()');          // NOT api.log(): its lines travel ON the frame (frame.logs) and count against the same 8 MiB
   } else {
     const command = shellCommand(script, meta, platform);
     if (!command) throw scriptError(`script "${key}": no command to run`);

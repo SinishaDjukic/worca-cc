@@ -5,7 +5,7 @@
 // from scratch (D22). The script is a real `node` program; the agents are mock.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -13,6 +13,7 @@ import { gitDir } from './helpers/git-dir.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { readPipelineForResume, listArtifacts, readPipelineExtras } from '../src/core/artifacts.mjs';
+import { probePython, resetPythonProbe } from '../src/core/graph/python-probe.mjs';
 
 useTempHome(after);
 const scratch = [];
@@ -148,4 +149,84 @@ test('preflight: a script key missing from the registry refuses the run with the
   const res = await orch.run();
   assert.equal(res.status, 'error');
   assert.match(String(res.error), /unknown script "runTests" — no such key in the registry/);
+});
+
+// ── python cards (workbench spec §7 / W4) ─────────────────────────────────────
+const PROBE = await probePython();
+const pySkip = PROBE.ok ? false : `no python on this host: ${PROBE.reason}`;
+const NO_PYTHON = 'script "runTests" needs python 3.8 or newer — none found on this machine (set WORCA_PYTHON)';
+
+/** The same gate card, as a PYTHON program. */
+function pythonScriptLayer() {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-og-py-'));
+  scratch.push(dir);
+  writeFileSync(join(dir, 'runTests.py'), `def main(api):
+    with open(api.outputs.log.path, 'w', encoding='utf-8') as f:
+        f.write('# tests cycle ' + str(api.execution.ordinal) + '\\n\\nall passing\\n')
+    api.log('info', 'cycle ' + str(api.execution.ordinal))
+    return {'summary': 'all passing', 'verdict': {'issues': []}}
+`);
+  writeFileSync(join(dir, 'runTests.meta.json'), JSON.stringify({
+    key: 'runTests', metaVersion: 2, displayName: 'Run tests', runtime: 'python', file: 'runTests.py',
+    inputs: [{ id: 'done', type: 'void', required: false }],
+    outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'tests-cycle{cycle}.md' },
+      { id: 'fail', type: 'md', when: 'blocking', filename: 'tests-cycle{cycle}.md' }, { id: 'pass', type: 'void', when: 'clean' }],
+    verdict: { filename: 'tests-cycle{cycle}.json' },
+  }));
+  return dir;
+}
+
+test('preflight: a python card with no interpreter refuses the run before anything executes', { timeout: 60000 }, async () => {
+  const scriptsDir = pythonScriptLayer();
+  const { id: workflowId } = await gateWorkflow('wf_script_nopython', {});
+  const dir = gitDir('gscript-nopython');
+  const prev = process.env.WORCA_PYTHON;
+  process.env.WORCA_PYTHON = join(scriptsDir, 'not-a-python');
+  resetPythonProbe();
+  try {
+    const orch = createOrchestrator({ projectDir: dir, workflowId, prompt: 'demo', claude: { mock: true }, auto: true, scriptsDir });
+    const execs = [];
+    orch.on('exec', (e) => execs.push(e));
+    const res = await orch.run();
+    assert.equal(res.status, 'error');
+    assert.ok(String(res.error).endsWith(NO_PYTHON), res.error);
+    assert.equal(String(res.error).includes('Preflight failed'), false, 'one card -> exactly the §7 sentence, no prefix');
+    assert.deepEqual(execs, [], 'the run stopped before the first execution');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_PYTHON; else process.env.WORCA_PYTHON = prev;
+    resetPythonProbe();
+  }
+});
+
+test('preflight: a python card whose execution is MOCKED needs no interpreter (D13 spawns nothing)', { timeout: 120000 }, async () => {
+  const scriptsDir = pythonScriptLayer();
+  const metaFile = join(scriptsDir, 'runTests.meta.json');
+  const meta = JSON.parse(readFileSync(metaFile, 'utf8'));
+  writeFileSync(metaFile, JSON.stringify({ ...meta, mock: { summary: 'mocked', verdict: { issues: [] }, outputs: { log: { text: '# mocked tests' } } } }));
+  const { id: workflowId } = await gateWorkflow('wf_script_python_mock', {});
+  const dir = gitDir('gscript-python-mock');
+  const prev = process.env.WORCA_PYTHON;
+  process.env.WORCA_PYTHON = join(scriptsDir, 'not-a-python');
+  resetPythonProbe();
+  try {
+    const orch = createOrchestrator({ projectDir: dir, workflowId, prompt: 'demo', claude: { mock: true }, auto: true, scriptsDir });
+    const res = await orch.run();
+    assert.equal(res.status, 'done', res.error);
+    assert.deepEqual(orch.getState().steps.filter((s) => s.nodeId === 'n_tests').map((r) => r.status), ['done', 'done']);
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_PYTHON; else process.env.WORCA_PYTHON = prev;
+    resetPythonProbe();
+  }
+});
+
+test('a python card runs inside a mock graph like any other script', { timeout: 120000, skip: pySkip }, async () => {
+  const scriptsDir = pythonScriptLayer();
+  const { id: workflowId } = await gateWorkflow('wf_script_python', {});
+  const dir = gitDir('gscript-python');
+  const orch = createOrchestrator({ projectDir: dir, workflowId, prompt: 'demo', claude: { mock: true }, auto: true, scriptsDir });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  const rows = orch.getState().steps.filter((s) => s.nodeId === 'n_tests');
+  assert.deepEqual(rows.map((r) => [r.ordinal, r.status, r.runtime, r.exitCode, r.costUsd]), [[1, 'done', 'python', 0, 0], [2, 'done', 'python', 0, 0]]);
+  assert.ok((await listArtifacts(orch.getState().id)).some((a) => a.kind === 'envelope'), 'the envelope audit copy is an artifact for python too');
 });

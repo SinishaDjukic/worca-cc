@@ -1,11 +1,11 @@
 // test/settings.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { worcaHome } from '../src/core/projects.mjs';
-import { getWorcaRoot, setWorcaRoot, settingsFile, defaultRoot } from '../src/core/settings.mjs';
+import { getWorcaRoot, setWorcaRoot, settingsFile, defaultRoot, pythonPath, setPythonPath, assertPythonPathInput } from '../src/core/settings.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 
 // Sandbox BOTH the home (so settingsFile + defaultRoot resolve into a temp dir)
@@ -94,5 +94,21 @@ test('setWorcaRoot rejects a path that is a file, not a dir', async () => {
     const f = join(home, 'afile');
     await writeFile(f, 'x', 'utf8');
     await assert.rejects(() => setWorcaRoot(f), /not a directory/);
+  });
+});
+
+test('pythonPath: stored, trimmed, cleared, and loud about junk (scripts-workbench §7)', async () => {
+  await withSandbox(async (home) => {
+    assert.equal(pythonPath(), null, 'unset -> the probe uses the platform defaults');
+    assert.deepEqual(await setPythonPath('  /opt/venv/bin/python  '), { pythonPath: '/opt/venv/bin/python' });
+    assert.equal(pythonPath(), '/opt/venv/bin/python');
+    assert.deepEqual(JSON.parse(await readFile(join(home, '.worca-cc', 'settings.json'), 'utf8')).pythonPath, '/opt/venv/bin/python');
+    assert.deepEqual(await setPythonPath(''), { pythonPath: null }, 'empty clears the key');
+    assert.equal(pythonPath(), null);
+    await writeFile(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ pythonPath: 42 }));
+    assert.equal(pythonPath(), null, 'a non-string falls back loudly');
+    assert.throws(() => assertPythonPathInput(42), /pythonPath must be a path of at most 500 characters/);
+    assert.throws(() => assertPythonPathInput('x'.repeat(501)), /pythonPath must be a path of at most 500 characters/);
+    assert.doesNotThrow(() => assertPythonPathInput(''));
   });
 });

@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normalizeScriptMeta, validateScriptMetaV2, readConfigPorts, paramValueError, mockErrors, resolvePlatformValue,
-  SCRIPT_RUNTIMES, DEFAULT_TIMEOUT_MS, DEFAULT_EXIT_CODES,
+  SCRIPT_RUNTIMES, DEFAULT_TIMEOUT_MS, DEFAULT_EXIT_CODES, pythonMissingSentence, CODE_LANGUAGES,
 } from '../src/shared/graph/script-meta.mjs';
 
 const shell = (over = {}) => ({
@@ -43,7 +43,7 @@ test('a valid shell sidecar normalizes with defaults; a valid node sidecar too',
   assert.deepEqual(n.errors, []);
   assert.equal(n.meta.file, 'git-diff.mjs');
   assert.equal(n.meta.command, null);
-  assert.deepEqual(SCRIPT_RUNTIMES, ['node', 'shell']);
+  assert.deepEqual(SCRIPT_RUNTIMES, ['node', 'shell', 'python']);
   assert.deepEqual(DEFAULT_EXIT_CODES, { clean: [0], blocking: [1] });
 });
 
@@ -52,8 +52,8 @@ test('key, metaVersion, runtime, order', () => {
   assert.ok(errs(shell({ key: '' })).includes('key is required'));
   assert.ok(errs(shell({ key: '9x' })).includes('key "9x" is not a valid script key'));
   assert.ok(errs(shell({ metaVersion: 1 })).includes('sidecar requires metaVersion 2'));
-  assert.ok(errs(shell({ runtime: 'python' })).includes('runtime must be one of node, shell'));
-  assert.ok(errs(shell({ runtime: undefined })).includes('runtime must be one of node, shell'));
+  assert.ok(errs(shell({ runtime: 'ruby' })).includes('runtime must be one of node, shell, python'));
+  assert.ok(errs(shell({ runtime: undefined })).includes('runtime must be one of node, shell, python'));
   assert.ok(errs(shell({ order: 'x' })).includes('order must be a number'));
 });
 
@@ -108,7 +108,7 @@ test('params: ≤ 16, ids, types, enum options, code language, typed defaults', 
   assert.ok(errs(shell({ params: [{ id: 'a', type: 'string' }, { id: 'a', type: 'string' }] })).includes('params: duplicate param id "a"'));
   assert.ok(errs(shell({ params: [{ id: 'a', type: 'blob' }] })).includes('params.a: type must be one of string, number, boolean, enum, command, code'));
   assert.ok(errs(shell({ params: [{ id: 'a', type: 'enum' }] })).includes('params.a: enum params need a non-empty options list of strings'));
-  assert.ok(errs(shell({ params: [{ id: 'a', type: 'code' }] })).includes('params.a: code params need language "js"'));
+  assert.ok(errs(shell({ params: [{ id: 'a', type: 'code' }] })).includes('params.a: code params need language "js" or "python"'));
   assert.ok(errs(shell({ params: [{ id: 'a', type: 'number', default: 'x' }] })).some((e) => /params\.a: default must be a finite number/.test(e)));
   assert.ok(errs(shell({ params: [{ id: 'a', type: 'enum', options: ['x'], default: 'y' }] })).some((e) => /default must be one of x/.test(e)));
   const many = Array.from({ length: 17 }, (_, i) => ({ id: `p${i}`, type: 'string' }));
@@ -196,4 +196,29 @@ test('createdBy / updatedBy survive normalization and are capped at 80 chars (W1
   assert.equal('createdBy' in normalizeScriptMeta(base).meta, false, 'absent stays absent');
   assert.ok(validateScriptMetaV2({ ...base, createdBy: 42 }).errors.includes('createdBy must be a string of at most 80 characters'));
   assert.ok(validateScriptMetaV2({ ...base, updatedBy: 'x'.repeat(81) }).errors.includes('updatedBy must be a string of at most 80 characters'));
+});
+
+test('python is a first-class runtime: file required, command and exitCodes stay shell-only', () => {
+  const py = (over = {}) => ({ key: 'pyCard', metaVersion: 2, runtime: 'python', file: 'card.py', inputs: [], outputs: [], ...over });
+  const { meta, errors } = normalizeScriptMeta(py());
+  assert.deepEqual(errors, []);
+  assert.equal(meta.runtime, 'python');
+  assert.equal(meta.file, 'card.py');
+  assert.equal(meta.command, null);
+  assert.ok(errs(py({ file: undefined })).includes('runtime "python" requires file: the program to run'));
+  assert.ok(errs(py({ file: '../x.py' })).includes('file must be a plain basename'));
+  assert.ok(errs(py({ file: { default: 'card.py', win32: '..\\card.py' } })).includes('file.win32 must be a plain basename'));
+  assert.ok(errs(py({ command: 'python card.py' })).includes('command is only legal on the shell runtime'));
+  assert.ok(errs(py({ exitCodes: { clean: [0], blocking: [1] } })).includes('exitCodes is only legal on the shell runtime'));
+});
+
+test('code params: js or python, and the one missing-python sentence (spec §7)', () => {
+  const py = (params) => ({ key: 'pyCard', metaVersion: 2, runtime: 'python', file: 'card.py', inputs: [], outputs: [], params });
+  const ok = normalizeScriptMeta(py([{ id: 'source', type: 'code', language: 'python', required: true }]));
+  assert.deepEqual(ok.errors, []);
+  assert.deepEqual(ok.meta.params[0], { id: 'source', type: 'code', required: true, language: 'python' });
+  assert.ok(errs(py([{ id: 'source', type: 'code', language: 'ruby' }])).includes('params.source: code params need language "js" or "python"'));
+  assert.deepEqual(CODE_LANGUAGES, ['js', 'python']);
+  assert.equal(pythonMissingSentence('runTests'),
+    'script "runTests" needs python 3.8 or newer — none found on this machine (set WORCA_PYTHON)');
 });

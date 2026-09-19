@@ -16,7 +16,8 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
-const RUNTIMES = { node: { ok: true, version: '22.13.0' }, shell: { ok: true, path: '/bin/sh' }, python: { ok: false, reason: 'not supported' } };
+const RUNTIMES = { node: { ok: true, version: '22.13.0' }, shell: { ok: true, path: '/bin/sh' },
+  python: { ok: false, reason: 'no python 3.8 or newer found (tried python3, python)' } };
 const SCRIPTS = [
   { key: 'shell', displayName: 'Shell', description: 'Runs a command.', origin: 'builtin', runtime: 'shell', order: 10,
     ports: 'config', params: [{ id: 'command', type: 'command', required: true }], portSummary: '', caseCount: 0 },
@@ -355,4 +356,17 @@ test('a scripts-changed frame marks the composer palette dirty: re-entering the 
   const afterFrame = reads();
   await go('composer'); await settle();
   assert.equal(reads(), afterFrame + 1, 'a script saved on the Scripts page (or by the CLI) reaches an open composer palette');
+});
+
+test('a host WITH python: the list drops the chip, and the reason is the probe`s own sentence', () => {
+  const withPython = { ...RUNTIMES, python: { ok: true, version: '3.12.4', command: ['python3'] } };
+  const card = buildScriptCard(SCRIPTS[2], { doc, runtimes: withPython, caseState: new Map() });
+  assert.equal(card.querySelector('.script-warn'), null);
+  assert.equal(card.querySelector('.script-runtime').textContent, 'python', 'the runtime chip stays either way');
+  const missing = buildScriptCard(SCRIPTS[2], { doc, runtimes: RUNTIMES, caseState: new Map() });
+  assert.equal(missing.querySelector('.script-warn').textContent, 'python not found');
+  // The whole list, both ways: no other card ever grows or loses a chip.
+  const pane = renderScriptsList(SCRIPTS, { doc, runtimes: withPython, caseState: new Map() });
+  assert.equal(pane.querySelectorAll('.script-warn').length, 0);
+  assert.equal(renderScriptsList(SCRIPTS, { doc, runtimes: RUNTIMES, caseState: new Map() }).querySelectorAll('.script-warn').length, 1);
 });

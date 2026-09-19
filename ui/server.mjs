@@ -133,6 +133,7 @@ import {
 } from '../src/core/workflow-share.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { loadScriptRegistry } from '../src/core/script-registry.mjs';
+import { probePython, pythonRuntimeState } from '../src/core/graph/python-probe.mjs';
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
 } from '../src/core/worktree.mjs';
@@ -5751,12 +5752,28 @@ function scriptRegistryNow() {
   return loadScriptRegistry({ agentKeys: Object.keys(loadAgentRegistry(AGENTS_DIR)) });
 }
 
+/**
+ * Workbench spec §7 / W17: a python card this host cannot run is flagged ON THE
+ * WIRE, so the composer's V4 names it the moment the card is placed and the
+ * Scripts list can chip it. The probe is 60 s-cached, so this costs at most one
+ * spawn a minute. The REGISTRY is deliberately never stamped: it is loaded
+ * synchronously and the probe is not, and a run must be gated by its own
+ * preflight — with a fresh probe, at run time — not by a flag baked into a
+ * snapshot taken when some browser last asked for a list.
+ */
+async function stampRuntimeMissing(list) {
+  if (!list.some((m) => m.runtime === 'python')) return list;
+  const probe = await probePython();
+  if (probe.ok) return list;
+  return list.map((m) => (m.runtime === 'python' ? { ...m, runtimeMissing: true } : m));
+}
+
 app.get('/api/scripts', async (req, res) => {
   try {
     // listScripts() IS the registry, in the same order, with caseCount stamped
     // (the list card's case chip). scriptRegistryNow() stays for the graph
     // routes, which need the raw index for registryPortsFn.
-    res.json({ scripts: await listScripts() });
+    res.json({ scripts: await stampRuntimeMissing(await listScripts()) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -5764,13 +5781,14 @@ app.get('/api/scripts', async (req, res) => {
 
 // Literal segments are registered BEFORE /api/scripts/:key, so the param route
 // can never swallow them (the POST /api/agents/generate rule).
-app.get('/api/scripts/runtimes', (req, res) => {
-  // C8: the picker is wired once, against the real shape. P2 replaces the python
-  // arm with probePython(); node and shell are guaranteed by the host itself.
+app.get('/api/scripts/runtimes', async (req, res) => {
+  // C8: the picker is wired once, against the real shape. The python arm is the
+  // real probe (workbench spec §7; never rejects, 60 s-cached); node and shell are
+  // guaranteed by the host itself.
   res.json({
     node: { ok: true, version: process.version },
     shell: { ok: true, path: process.platform === 'win32' ? (process.env.ComSpec || 'cmd.exe') : '/bin/sh' },
-    python: { ok: false, reason: 'not supported' },
+    python: pythonRuntimeState(await probePython()),
   });
 });
 

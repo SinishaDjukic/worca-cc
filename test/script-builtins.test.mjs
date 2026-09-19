@@ -6,12 +6,14 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadScriptRegistry, DEFAULT_SCRIPTS_DIR } from '../src/core/script-registry.mjs';
 import { runScriptExecution } from '../src/core/graph/script-runner.mjs';
 import { readConfigPorts, effectiveScriptParams } from '../src/shared/graph/script-meta.mjs';
+import { probePython } from '../src/core/graph/python-probe.mjs';
+import { listScriptNodes } from '../src/core/workflow-share.mjs';
 import { realAgentMetas } from './helpers/graph-ports.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 
@@ -19,6 +21,8 @@ const scratch = [];
 const tmp = (p) => { const d = mkdtempSync(join(tmpdir(), p)); scratch.push(d); return d; };
 after(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
 const REG = loadScriptRegistry({ scriptsDir: DEFAULT_SCRIPTS_DIR, userScriptsDir: null, includePlugins: false, agentKeys: realAgentMetas().map((m) => m.key) });
+const PROBE = await probePython();
+const pySkip = PROBE.ok ? false : `no python on this host: ${PROBE.reason}`;
 
 /** A runner ctx over a temp pipeline dir for a built-in with CONFIG ports (shell, js) or sidecar ports (gitDiff). */
 function ctxFor(key, { params = {}, ports: configPorts, cwd = tmp('worca-bi-cwd-'), checkpointRef = null } = {}) {
@@ -38,8 +42,8 @@ function ctxFor(key, { params = {}, ports: configPorts, cwd = tmp('worca-bi-cwd-
   };
 }
 
-test('the built-in layer is exactly shell, js, gitDiff — normalized, ordered, and disjoint from the agent keys', () => {
-  assert.deepEqual(Object.keys(REG), ['shell', 'js', 'gitDiff']);
+test('the built-in layer is exactly shell, js, py, gitDiff — normalized, ordered, and disjoint from the agent keys', () => {
+  assert.deepEqual(Object.keys(REG), ['shell', 'js', 'py', 'gitDiff']);
   assert.equal(REG.shell.runtime, 'shell');
   assert.equal(REG.shell.ports, 'config');
   assert.deepEqual(REG.shell.params.map((p) => [p.id, p.type, p.required]), [['command', 'command', true]]);
@@ -51,6 +55,13 @@ test('the built-in layer is exactly shell, js, gitDiff — normalized, ordered, 
   assert.equal(REG.js.scriptPath, join(DEFAULT_SCRIPTS_DIR, 'js-inline.mjs'));
   assert.deepEqual(REG.js.params.map((p) => [p.id, p.type, p.language, p.required]), [['source', 'code', 'js', true]]);
   assert.match(REG.js.params[0].default, /export default async function/);
+  assert.equal(REG.py.runtime, 'python');
+  assert.equal(REG.py.ports, 'config');
+  assert.equal(REG.py.order, 25);
+  assert.equal(REG.py.scriptPath, join(DEFAULT_SCRIPTS_DIR, 'py-inline.py'));
+  assert.deepEqual(REG.py.params.map((p) => [p.id, p.type, p.language, p.required]), [['source', 'code', 'python', true]]);
+  assert.match(REG.py.params[0].default, /^def main\(api\):/);
+  assert.deepEqual(REG.py.verdict, { filename: 'py-cycle{cycle}.json' });
   assert.equal(REG.gitDiff.runtime, 'node');
   assert.equal(REG.gitDiff.scriptPath, join(DEFAULT_SCRIPTS_DIR, 'git-diff.mjs'));
   assert.deepEqual(REG.gitDiff.outputs.map((o) => [o.id, o.type, o.filename]), [['diff', 'md', 'diff-cycle{cycle}.md']]);
@@ -118,4 +129,78 @@ test('shell: the command param runs in the cwd with the WORCA_* env; exit 1 fire
   assert.equal(bad.exitCode, 1);
   assert.equal(bad.verdict.issues[0].severity, 'major');
   assert.equal(bad.verdict.issues[0].title, 'Shell failed (exit 1)');
+});
+
+test('py: an inline def main(api) runs through the python harness with the file-script api', { skip: pySkip }, async () => {
+  const source = `def main(api):
+    with open(api.outputs.out.path, 'w', encoding='utf-8') as f:
+        f.write('# from inline\\n' + api.ctx.cwd + '\\n')
+    api.log('info', 'inline ran')
+    return {'summary': 'inline ok', 'verdict': {'issues': []}}
+`;
+  const ctx = ctxFor('py', { params: { source } });
+  const events = [];
+  ctx.onEvent = (e) => events.push(e);
+  const r = await runScriptExecution(ctx);
+  assert.equal(r.runtime, 'python');
+  assert.equal(r.summary, 'inline ok');
+  assert.equal(readFileSync(ctx.outputs.out.path, 'utf8'), `# from inline\n${ctx.projectDir}\n`);
+  assert.deepEqual(r.verdict, { issues: [], summary: '' });
+  assert.ok(events.some((e) => e.type === 'text' && e.text === '[info] inline ran'));
+  const dflt = await runScriptExecution(ctxFor('py', { params: { source: REG.py.params[0].default } }));
+  assert.equal(dflt.summary, 'ok', 'the default snippet is a working card');
+});
+
+test('py: an empty source and a source with no main are both named', { skip: pySkip }, async () => {
+  await assert.rejects(runScriptExecution(ctxFor('py', { params: { source: '   ' } })),
+    /^Error: script "py": the py card has no source$/);
+  await assert.rejects(runScriptExecution(ctxFor('py', { params: { source: 'value = 1\n' } })),
+    /^Error: script "py": the source must define `def main\(api\): …`$/);
+});
+
+test('py: an async def main is awaited, and a raise inside the snippet is the execution error', { skip: pySkip }, async () => {
+  const r = await runScriptExecution(ctxFor('py', { params: { source: `import asyncio
+
+async def main(api):
+    await asyncio.sleep(0)
+    with open(api.outputs.out.path, 'w', encoding='utf-8') as f:
+        f.write('# async\\n')
+    return {'summary': 'awaited'}
+` } }));
+  assert.equal(r.summary, 'awaited');
+  await assert.rejects(runScriptExecution(ctxFor('py', { params: { source: 'def main(api):\n    raise RuntimeError("boom")\n' } })),
+    /^Error: script "py": boom$/);
+});
+
+test('py: the snippet is a REAL module — a dataclass under postponed annotations works inline as it does in a file', { skip: pySkip }, async () => {
+  const r = await runScriptExecution(ctxFor('py', { params: { source: `from __future__ import annotations
+from dataclasses import dataclass
+import typing
+
+@dataclass
+class Row:
+    name: str
+    seen: typing.ClassVar[int] = 0
+
+def main(api):
+    with open(api.outputs.out.path, 'w', encoding='utf-8') as f:
+        f.write('# ' + Row('row').name + '\\n')
+    return {'summary': Row('dataclass ok').name}
+` } }));
+  assert.equal(r.summary, 'dataclass ok');
+});
+
+test('py: the card program parses under the python 3.8 grammar, whatever interpreter runs the suite', { skip: pySkip }, () => {
+  const r = spawnSync(PROBE.command[0], [...PROBE.command.slice(1), '-c',
+    'import ast,sys\nast.parse(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], feature_version=(3, 8))', REG.py.scriptPath], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+});
+
+test('py: a shared workflow placing the py card shows its source in the D18 import receipt', () => {
+  // The gate is keyed on the PARAM TYPE (command / code), not on a list of card keys — pinned here so a new
+  // inline card can never become a way around "these commands run on this machine with worca's privileges".
+  const source = 'def main(api):\n    return {}\n';
+  const graph = { nodes: [{ id: 'n_py', kind: 'script', key: 'py', config: { params: { source } } }] };
+  assert.deepEqual(listScriptNodes(graph, REG),
+    [{ nodeId: 'n_py', key: 'py', displayName: 'Python', runtime: 'python', params: { source } }]);
 });

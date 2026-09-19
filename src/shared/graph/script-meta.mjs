@@ -14,8 +14,20 @@ const DOMAIN_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const COLORS = new Set(['green', 'peach', 'red', 'blue', 'violet', 'amber']);
 const PLATFORM_KEYS = new Set(['default', 'win32', 'darwin', 'linux']);
 
-/** v1 runtimes (D2). `python` is P2: an unknown runtime is a sidecar error, never a run-time surprise. */
-export const SCRIPT_RUNTIMES = Object.freeze(['node', 'shell']);
+/** The three runtimes (base D2 + scripts-workbench W4). An unknown runtime is a
+ *  sidecar error, never a run-time surprise. `python` additionally needs an
+ *  interpreter at RUN time (workbench spec §7) — that is the runner's and the
+ *  preflight's job, not the sidecar's: a python card on a python-less host is a
+ *  perfectly valid card, it just cannot execute here. */
+export const SCRIPT_RUNTIMES = Object.freeze(['node', 'shell', 'python']);
+/** The languages a `code` param may declare: one per first-class program runtime. */
+export const CODE_LANGUAGES = Object.freeze(['js', 'python']);
+/** The ONE sentence every surface says when a python card cannot run on this host
+ *  (workbench spec §7): the run preflight, the bench result, the composer's V4.
+ *  It lives HERE because the validator is shared/isomorphic and cannot reach
+ *  src/core, where the probe is. */
+export const pythonMissingSentence = (key) =>
+  `script "${key}" needs python 3.8 or newer — none found on this machine (set WORCA_PYTHON)`;
 export const PARAM_TYPES = Object.freeze(['string', 'number', 'boolean', 'enum', 'command', 'code']);
 /** The param types an import shows the user before saving (D18). */
 export const CONFIRM_PARAM_TYPES = Object.freeze(['command', 'code']);
@@ -100,8 +112,8 @@ export function readParams(raw, err) {
       param.options = options;
     }
     if (p.type === 'code') {
-      if (p.language !== 'js') err(`params.${id}: code params need language "js"`);
-      param.language = 'js';
+      if (!CODE_LANGUAGES.includes(p.language)) err(`params.${id}: code params need language ${CODE_LANGUAGES.map((l) => `"${l}"`).join(' or ')}`);
+      param.language = CODE_LANGUAGES.includes(p.language) ? p.language : CODE_LANGUAGES[0];
     }
     if (p.default !== undefined) {
       const bad = paramValueError(param, p.default);
@@ -216,9 +228,10 @@ export function normalizeScriptMeta(raw, opts = {}) {
   const file = readPlatformValue(raw.file, 'file', err, plainBasename, 'must be a plain basename');
   // Worded "to run" on purpose (v3 S1): the purity guard scans RAW source — comments included — and reads the
   // module-loading keyword directly before a quote as a specifier. Keep that keyword out of every string and comment here.
-  if (runtime === 'node' && !file) err('runtime "node" requires file: the program to run');
+  // Both harnessed runtimes load a program FILE (node through its loader, python through importlib): both REQUIRE one.
+  if ((runtime === 'node' || runtime === 'python') && !file) err(`runtime "${runtime}" requires file: the program to run`);
   const command = readPlatformValue(raw.command, 'command', err, nonEmpty, 'must be a non-empty string');
-  if (runtime === 'node' && command) err('command is only legal on the shell runtime');
+  if (runtime && runtime !== 'shell' && command) err('command is only legal on the shell runtime');
 
   const params = readParams(raw.params, err);
   if (runtime === 'shell' && !file && !command && !params.some((p) => p.type === 'command')) {
@@ -232,7 +245,7 @@ export function normalizeScriptMeta(raw, opts = {}) {
     else timeoutMs = raw.timeoutMs;
   }
   const exitCodes = readExitCodes(raw.exitCodes, err);
-  if (exitCodes && runtime === 'node') err('exitCodes is only legal on the shell runtime');
+  if (exitCodes && runtime && runtime !== 'shell') err('exitCodes is only legal on the shell runtime');
 
   const verdict = readVerdict(raw.verdict, err);
   const configPorts = raw.ports === 'config';

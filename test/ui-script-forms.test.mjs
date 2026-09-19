@@ -255,3 +255,21 @@ test('renderParamDefsEditor readOnly: fields disabled, no add/remove buttons at 
   assert.equal(ed.querySelector('[data-field="pdef:0:id"]').disabled, true);
   assert.equal(ed.querySelector('[data-field="pdef:4:required"]').disabled, true);
 });
+
+test('paramEditorHook mounts a python code param with the python grammar (workbench §7)', async () => {
+  // The shape the built-in `py` card ships: type code, language python, 8 rows.
+  const editors = [];
+  const meta = { key: 'py', displayName: 'Python', runtime: 'python',
+    params: [{ id: 'source', type: 'code', language: 'python', label: 'Source', required: true }] };
+  const host = mount(renderParamsForm(meta, { params: { source: 'def main(api):\n    return {}\n' } },
+    { doc, editorFor: paramEditorHook({ doc, highlight: async (t) => t, editors }) }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(host.querySelector('.code-editor').dataset.language, 'python');
+  assert.equal(host.querySelector('.code-editor textarea').dataset.field, 'param:source');
+  assert.equal(host.querySelector('.code-editor textarea').value, 'def main(api):\n    return {}\n');
+  assert.equal(host.querySelector('.code-editor textarea').rows, 8);
+  assert.equal(host.querySelectorAll('textarea.ins-textarea').length, 0, 'the plain textarea is replaced');
+  assert.equal(host.querySelectorAll('.ins-caption').length, 1, 'the privileges caption still rides with it');
+  assert.equal(paramEditorLanguage(meta.params[0]), PARAM_EDITOR_LANGUAGE.python);
+  editors.forEach((e) => e.destroy());
+});
