@@ -551,7 +551,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .actions{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:22px;}
 .btn-ghost{background:var(--surface);border:1.5px solid var(--line-2);color:var(--ink);font-family:inherit;
   font-weight:600;font-size:13.5px;padding:13px 20px;border-radius:999px;cursor:pointer;transition:.15s;}
-.btn-ghost:hover{background:var(--field);}
+.btn-ghost:hover:not(:disabled){background:var(--field);}
+.btn-ghost:disabled{opacity:.45;cursor:not-allowed;}   /* a waiting step must not look clickable */
 .btn-go{display:inline-flex;align-items:center;gap:9px;background:var(--ink);color:var(--on-ink);border:none;
   font-family:inherit;font-weight:600;font-size:14px;padding:14px 28px;border-radius:999px;cursor:pointer;
   transition:transform .15s,filter .15s;}

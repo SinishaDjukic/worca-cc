@@ -1091,7 +1091,8 @@ export function renderSetupChecklist({ home, requirements = [], seeds = [], trus
     if (r.config) {
       const cfg = h(doc, 'span'); cfg.append(h(doc, 'b', null, `Configure ${r.name}`), ` · ${Object.keys(r.config).join(', ')} seeded by the policy; secrets are yours to enter`);
       const c = btn(doc, 'pl-policy-configure', 'Configure…'); c.dataset.name = r.name; c.disabled = r.state === 'missing';
-      row('grey', cfg, null, c);
+      if (c.disabled) c.title = `Install ${r.name} first`;
+      row('grey', cfg, r.state === 'missing' ? `available once ${r.name} is installed` : 'opens the plugin\'s settings', c);
     }
   }
   if (!seeds.length && !requirements.length) list.append(h(doc, 'div', 'hist-empty', 'Nothing to set up.'));

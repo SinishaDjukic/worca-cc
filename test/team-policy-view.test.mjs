@@ -290,6 +290,8 @@ test('plugins strip + setup checklist (boards 10–11)', () => {
   assert.match(srows[0].textContent, /Marketplace added/);
   assert.equal(srows[1].querySelector('.pl-policy-install').dataset.name, 'acme-jira');
   assert.equal(srows[2].querySelector('.pl-policy-configure').disabled, true, 'configure waits for the install');
+  assert.match(srows[2].textContent, /available once acme-jira is installed/, 'and says so');
+  assert.equal(srows[2].querySelector('.pl-policy-configure').title, 'Install acme-jira first');
   assert.equal(srows[3].querySelector('.pl-policy-update').dataset.name, 'github-source');
   const trust = list.querySelector('.tp-trust');
   assert.equal(trust.checked, false);

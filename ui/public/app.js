@@ -10472,7 +10472,10 @@ async function connectPluginSource(name, sourceId, slot, profile) {
 
 // profile: which configuration of a multiProfile source to echo. Absent = the
 // server's pick (the first in the roster), which is what opening from the list does.
-async function openPluginSettings(name, profile) {
+// seeds: the team policy's non-secret values for this plugin (docs/team-policy.md "Plugins"),
+// filled into fields that are still blank — never over a stored value, never a secret — and
+// saved only when the user saves.
+async function openPluginSettings(name, profile, { seeds = null } = {}) {
   const qs = profile ? `?profile=${encodeURIComponent(profile)}` : '';
   const { ok, data } = await pluginApi('GET', `/api/plugins/${encodeURIComponent(name)}/config${qs}`);
   if (!ok) return setPluginsMsg(data.error || 'config load failed', 'err');
@@ -10480,6 +10483,23 @@ async function openPluginSettings(name, profile) {
   const sources = Array.isArray(data.sources) ? data.sources
     : [{ id: data.sourceId || '', schema: data.schema || [], values: data.values || {} }];
   const body = renderConfigForm({ sources, channels: data.channels || [] });
+  if (seeds && typeof seeds === 'object') {
+    const filled = [];
+    for (const input of body.querySelectorAll('.pl-config-form input[data-key], .pl-config-form select[data-key]')) {
+      const key = input.dataset.key;
+      if (!(key in seeds) || input.type === 'password' || input.dataset.set === '1') continue;
+      if (String(input.value || '').trim()) continue;
+      input.value = String(seeds[key]);
+      input.dataset.seeded = '1';
+      filled.push(key);
+    }
+    if (filled.length) {
+      const note = document.createElement('p');
+      note.className = 'hint pl-seeded-note';
+      note.textContent = `${filled.join(', ')} filled in from the team policy — Save keeps them. Secrets are yours to enter.`;
+      body.prepend(note);
+    }
+  }
   // Model secrets (design §9.7): one extra form, marked with data-target so the
   // save loop routes it through the { target: 'modelSecrets' } write.
   if (data.models && Array.isArray(data.models.schema) && data.models.schema.length) {
@@ -12675,7 +12695,15 @@ async function handlePolicyPluginClick(e) {
   const name = t.dataset.name || '';
   if (t.classList.contains('pl-policy-install')) { await installRequiredPlugin(name, { marketplace: t.dataset.marketplace || '' }); return true; }
   if (t.classList.contains('pl-policy-update')) { await updateRequiredPlugin(name); return true; }
-  if (t.classList.contains('pl-policy-configure')) { closePluginModal(); location.hash = 'settings/plugins'; setPluginsMsg(`Open Settings on the ${name} card to enter its secrets.`); return true; }
+  // Configure…: the plugin's own settings pane (its config schema, the policy's seeds filled in,
+  // secrets blank) — the same pane the Plugins page opens from the card.
+  if (t.classList.contains('pl-policy-configure')) {
+    closePluginModal();
+    if (location.hash.slice(1) !== 'settings/plugins') location.hash = 'settings/plugins';
+    const req = ((tpCache.data && tpCache.data.requirements) || []).find((r) => r.name === name);
+    await openPluginSettings(name, undefined, { seeds: req && req.config ? req.config : null });
+    return true;
+  }
   if (t.classList.contains('pl-policy-setup')) { await openSetupChecklist(); return true; }
   // "Install all…" / "Update all…" / "Install & update all…": the same chain the checklist runs.
   if (t.classList.contains('pl-policy-all')) { const data = await loadTpScopes({ force: true }); await installAllRequired(data.requirements || []); return true; }

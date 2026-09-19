@@ -285,6 +285,43 @@ test('Project page: "Set up team policy…" opens the dialog; the follow mode po
   assert.deepEqual(posts[0].body, { mode: 'follow', delegateTo: 'acme/gateway', change: false });
 });
 
+test('Configure…: an installed plugin opens its settings pane with the policy\'s seeds filled into blank fields', async () => {
+  const REQ = { name: 'acme-jira', marketplace: 'acme', minVersion: '1.2.0', state: 'ok', installed: { version: '1.3.0', enabled: true }, homes: ['acme/gateway'], config: { baseUrl: 'https://acme.atlassian.net', projectKey: 'GW' } };
+  const configGets = [];
+  // Installed and configured is not "off-policy", so the Settings panel is gone; the Team policy
+  // page's Plugins tab still lists it, with Configure… on the row.
+  const { doc, go, settle } = await boot({
+    scopes: { ...SCOPES, requirements: [REQ] },
+    policy: { ...POLICY, requirements: [REQ], deviations: [] },
+    fetchHandler: (u, opts) => {
+      if (/\/api\/plugins\/acme-jira\/config/.test(u) && (!opts.method || opts.method === 'GET')) {
+        configGets.push(u);
+        return json({ sources: [{ id: 'jira', schema: [{ key: 'baseUrl', label: 'Base URL' }, { key: 'projectKey', label: 'Project' }, { key: 'token', label: 'Token', secret: true }], values: { projectKey: 'OLD' } }], channels: [] });
+      }
+      if (u.includes('/api/plugins') && !opts.method) return json({ plugins: [{ name: 'acme-jira', version: '1.3.0', enabled: true }], marketplaces: [] });
+      return null;
+    },
+  });
+  await go('team-policy/project:gateway-00000001');
+  await settle();
+  doc.querySelector('#tp-tab-plugins').click();
+  await settle();
+  const cfg = doc.querySelector('#tp-sec-plugins tr[data-name="acme-jira"] .pl-policy-configure');
+  assert.ok(cfg, 'an installed plugin with seeds gets Configure… on its row');
+  cfg.click();
+  await settle(6);
+  const modal = doc.getElementById('plugin-modal');
+  assert.equal(modal.classList.contains('hidden'), false);
+  assert.equal(configGets.length, 1, 'the plugin\'s config pane was fetched');
+  assert.match(modal.textContent, /Settings: acme-jira/);
+  const inputs = Object.fromEntries([...modal.querySelectorAll('.pl-config-form [data-key]')].map((i) => [i.dataset.key, i]));
+  assert.equal(inputs.baseUrl.value, 'https://acme.atlassian.net', 'a blank field takes the seed');
+  assert.equal(inputs.baseUrl.dataset.seeded, '1');
+  assert.equal(inputs.projectKey.value, 'OLD', 'a stored value is never overwritten');
+  assert.equal(inputs.token.value, '', 'a secret is never seeded');
+  assert.match(modal.querySelector('.pl-seeded-note').textContent, /^baseUrl filled in from the team policy — Save keeps them/);
+});
+
 test('Settings › Budget: the team readout mounts and the labels carry team chips', async () => {
   const { doc, go, settle } = await boot();
   await go('settings');

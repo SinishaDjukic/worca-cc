@@ -91,7 +91,9 @@ runs those dialogs one after another — each still waits for its own click, and
 on to the next. A per-home **trust switch** on this machine may install and update required plugins
 automatically; it is off by default and revocable. Versions are floors, not pins: update whenever
 you like through the normal update preview; when the policy raises the floor you are told.
-Non-secret plugin config (a base URL, a project key) may be seeded at install; secrets are yours.
+Non-secret plugin config (a base URL, a project key) travels with the requirement: **Configure…**
+opens the plugin's settings pane with those values filled into fields that are still blank — saved
+only when you save — and secrets are yours to enter.
 
 ## Reading and freshness
 
