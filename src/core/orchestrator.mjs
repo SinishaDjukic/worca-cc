@@ -567,7 +567,9 @@ export class GraphOrchestrator extends RunHarness {
     // every entry agent binds that same file. Byte-identical to v1's seeded task
     // file (the same renderer), so the Task card's document matches what v1
     // handed its entry node.
-    this._taskArtifact = { text: renderPromptArtifact(this.pipeline.promptText, this.extrasFiles) };
+    // A Memory defragment run appends the scope's health (run-harness.mjs _defragBrief — '' on
+    // every other run, so their document stays byte-identical).
+    this._taskArtifact = { text: renderPromptArtifact(this.pipeline.promptText, this.extrasFiles) + await this._defragBrief() };
 
     const sched = createScheduler({
       template: this._schedulerTemplate(),
