@@ -28,6 +28,7 @@ import { defaultMemoryDeps } from './memory-deps.mjs';
 import { defaultCommentDeps } from './comment-deps.mjs';
 import { defaultWorkflowDeps } from './workflow-deps.mjs';
 import { defaultMetricsDeps } from './metrics-deps.mjs';
+import { defaultPolicyDeps } from './policy-deps.mjs';
 import { defaultScheduleDeps } from './schedule-deps.mjs';
 import { defaultSourceDeps } from './source-deps.mjs';
 
@@ -128,6 +129,7 @@ export async function main({ argv = process.argv.slice(2), env = process.env, st
       ...defaultCommentDeps(),
       ...defaultWorkflowDeps({ threadId, signal: life.signal }),
       ...defaultMetricsDeps({ threadId }),
+      ...defaultPolicyDeps({ threadId }),
       ...defaultScheduleDeps({ threadId }),
       ...defaultSourceDeps(),
     }),

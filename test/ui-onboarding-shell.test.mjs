@@ -121,7 +121,7 @@ test('boot: the pill mounts under the CTA and routes to the page (where the shel
   const pillHost = cta.nextElementSibling;
   assert.ok(pillHost && pillHost.classList.contains('gs-pill-host'), 'pill host right under New pipeline');
   assert.equal(pillHost.querySelector('.gs-pill .nav-count').textContent, '1/8');
-  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 11, 'the nav census is untouched (Schedules included)');
+  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 12, 'the nav census is untouched (Schedules and Team policy included)');
   assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'first visit to New pipeline: welcome up');
   assert.deepEqual(posts, [], 'showing the welcome writes nothing until a choice');
   click(window, doc.querySelector('#welcome-modal .ob-skip'));
@@ -616,7 +616,7 @@ test('the workspace tour walks the wizard: Create → name → two projects → 
   doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
 });
 
-test('the team metrics tour: Set up → the dialog\'s submit; a project without a remote gets the explanation with Done', async () => {
+test('the team metrics tour: a project row → its Team tab → Set up → the dialog\'s submit; a project without a remote gets the explanation with Done', async () => {
   const { doc, window } = await boot({ level: 'expert', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
   click(window, doc.querySelector('.gs-pill'));
   await settle();
@@ -626,17 +626,27 @@ test('the team metrics tour: Set up → the dialog\'s submit; a project without 
   const target = () => layer()?.dataset.target || '';
   click(window, doc.querySelector('.nav button[data-nav="projects"]'));
   await settle();
-  // The list paints its Team metrics cell with the enable control (a project with an origin remote).
-  const list = doc.getElementById('projects-list');
-  list.innerHTML = '<div class="pl-item"><div class="tm-cell"><button type="button" class="tm-enable">Set up team metrics…</button></div></div>';
+  // The Projects row is the first stop: the setup lives on the project page, not on the row.
+  await until(() => target().startsWith('#projects-list .pl-row'));
+  assert.match(layer().querySelector('.guide-text').textContent, /Open a project/);
+  click(window, doc.querySelector('#projects-list .pl-row[role="button"]'));
+  await settle(); await settle();
+  // Then the Team tab pill on the page.
+  await until(() => target() === '#pd-tab-team');
+  assert.match(layer().querySelector('.guide-text').textContent, /Team tab/);
+  click(window, doc.getElementById('pd-tab-team'));
+  await settle();
+  // The tab's block paints the enable control (a project with an origin remote).
+  const body = doc.querySelector('#proj-detail .pd-team-metrics .pd-team-body');
+  body.innerHTML = '<div class="tm-cell"><button type="button" class="tm-enable">Set up team metrics…</button></div>';
   doc.dispatchEvent(new window.Event('click', { bubbles: true }));
-  await until(() => target() === '#projects-list .tm-enable');
+  await until(() => target() === '#proj-detail .tm-enable');
   assert.match(layer().querySelector('.guide-text').textContent, /Set it up here/);
   // Its click opens the enable dialog: the submit is the last stop, above the dialog.
   const modal = doc.getElementById('plugin-modal');
   modal.classList.remove('hidden');
   modal.insertAdjacentHTML('beforeend', '<button type="button" class="tm-enable-submit">Create branch and enable</button>');
-  click(window, list.querySelector('.tm-enable'));
+  click(window, body.querySelector('.tm-enable'));
   await until(() => target() === '#plugin-modal .tm-enable-submit');
   assert.ok(layer().classList.contains('pointer'));
   click(window, modal.querySelector('.tm-enable-submit'));
@@ -644,16 +654,19 @@ test('the team metrics tour: Set up → the dialog\'s submit; a project without 
   assert.equal(layer(), null, 'enabling ends the tour');
   modal.classList.add('hidden'); modal.querySelector('.tm-enable-submit').remove();
 
-  // No remote: the cell explains why, and Done closes the tour.
+  // No remote: the block explains why, and Done closes the tour. The page and its Team tab are
+  // still open, so the tour lands straight on the block.
   click(window, doc.querySelector('.gs-pill'));
   await settle();
   click(window, doc.querySelector('.gs-tile[data-step="teamMetrics"]'));
   await settle();
   click(window, doc.querySelector('.nav button[data-nav="projects"]'));
   await settle();
-  list.innerHTML = '<div class="pl-item"><div class="tm-cell">Not a git remote</div></div>';   // painted after the view's own load
+  window.location.hash = 'projects/p-00000001/team';
+  await settle(); await settle();
+  doc.querySelector('#proj-detail .pd-team-metrics .pd-team-body').innerHTML = '<div class="tm-cell">Not a git remote</div>';   // painted after the tab's own load
   doc.dispatchEvent(new window.Event('click', { bubbles: true }));
-  await until(() => target() === '#projects-list .tm-cell' && /push it to one/.test(layer()?.querySelector('.guide-text')?.textContent || ''));
+  await until(() => target() === '#proj-detail .pd-team-metrics' && /push it to one/.test(layer()?.querySelector('.guide-text')?.textContent || ''));
   assert.match(layer().querySelector('.guide-text').textContent, /push it to one/);
   assert.equal(layer().querySelector('.guide-next').textContent, 'Done');
   click(window, layer().querySelector('.guide-next'));

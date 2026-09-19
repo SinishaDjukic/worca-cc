@@ -295,11 +295,13 @@ body{
    plain height:100% here would push the track past the viewport and
    overflow:hidden would clip both screens' bottoms off-screen. */
 body.view-history .main,body.view-projects .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
+body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}   /* the Workspaces track: the same bounded column */
 /* .main's 32px gutter goes with padding:0, so the compact top-nav (<1080px, a
    SIBLING of the views inside .main) must re-apply it or it lands 20px left of
    the list content, which keeps its own 32px on .hist-screen. flex:0 0 auto
    stops the wrapped 9-button nav from being squeezed once .main is a column. */
 body.view-history .topnav,body.view-projects .topnav{margin:12px 32px 0;flex:0 0 auto;}
+body.view-workspaces .topnav{margin:12px 32px 0;flex:0 0 auto;}
 .topbar{display:flex;align-items:flex-start;justify-content:space-between;
   gap:24px;margin-bottom:22px;}
 .topbar h1{font-size:26px;font-weight:700;letter-spacing:-.025em;margin:0 0 4px;}
@@ -549,7 +551,8 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .actions{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:22px;}
 .btn-ghost{background:var(--surface);border:1.5px solid var(--line-2);color:var(--ink);font-family:inherit;
   font-weight:600;font-size:13.5px;padding:13px 20px;border-radius:999px;cursor:pointer;transition:.15s;}
-.btn-ghost:hover{background:var(--field);}
+.btn-ghost:hover:not(:disabled){background:var(--field);}
+.btn-ghost:disabled{opacity:.45;cursor:not-allowed;}   /* a waiting step must not look clickable */
 .btn-go{display:inline-flex;align-items:center;gap:9px;background:var(--ink);color:var(--on-ink);border:none;
   font-family:inherit;font-weight:600;font-size:14px;padding:14px 28px;border-radius:999px;cursor:pointer;
   transition:transform .15s,filter .15s;}
@@ -1224,23 +1227,43 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .ws-src-row .select-wrap{width:100%;}
 .ws-src-row select[disabled]{opacity:.55;}
 
-/* Workspace management cards. */
-.ws-card{padding:0;overflow:hidden;}
-.ws-head{display:flex;align-items:center;gap:14px;padding:16px 20px;cursor:pointer;}
-.ws-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.ws-h-meta{flex:1;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
-.ws-h-meta .ws-name{font-weight:600;font-size:15px;letter-spacing:-.01em;color:var(--ink);}
-.ws-h-meta .ws-projects{display:block;width:100%;font-size:12.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* Workspaces list: the Projects list's shape (one card headed "Workspaces · N", a row per
+   workspace that IS the control), on its own ids. The page rides the pd- classes below. */
+#ws-list .saved-card{padding:0;overflow:hidden;}
+#ws-list .ws-item{border-bottom:1px solid var(--line);}
+#ws-list .ws-item:last-child{border-bottom:none;}
+#ws-list .ws-row{display:flex;align-items:center;gap:15px;padding:16px 20px;cursor:pointer;transition:background .12s;}
+#ws-list .ws-row:hover{background:var(--field);}
+#ws-list .ws-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+#ws-list .ws-main{flex:1 1 auto;min-width:0;}
+#ws-list .ws-name{font-weight:600;font-size:14px;letter-spacing:-.01em;color:var(--ink);}
+#ws-list .ws-name .ws-stale{margin-left:8px;vertical-align:middle;}
+.ws-projects{display:block;margin-top:4px;font-size:12.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ws-projects .mono{font-size:12px;color:var(--ink-2);}
 .ws-projects .tm-home-mark{margin-right:5px;}
 .ws-sum-warn{color:var(--amber-ink);} .ws-sum-bad{color:var(--red-ink);}
 .tm-icon{width:14px;height:14px;color:var(--ink-2);flex:0 0 auto;}
 .ws-stale[hidden]{display:none;}
-.ws-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto;}
-.ws-actions .btn-ghost{padding:7px 12px;font-size:12px;}
-.ws-detail{padding:0 20px 18px;border-top:1px dashed var(--line-2);}
-.ws-detail[hidden]{display:none;}
-.ws-desc{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);}
+/* Workspace page: the summary line under the title, the members list, the description panel. */
+.wd .pd-meta .ws-projects{margin-top:0;white-space:normal;font-size:12.5px;color:var(--ink-2);}
+/* The workspace header is two rows, not three: summary and actions share the second. */
+.wd-row2{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;margin-top:8px;}
+.wd-row2 .pd-meta{margin-top:0;flex:1 1 320px;}
+.wd-row2 .pd-actions{margin-top:0;margin-left:auto;flex:0 0 auto;}
+.wd-row2 .pd-spacer{display:none;}
+.wd .pd-row1 .ws-stale{flex:0 0 auto;}
+.wd-member-list{display:flex;flex-direction:column;}
+.wd-member{display:flex;align-items:center;flex-wrap:wrap;gap:4px 14px;padding:11px 0;border-bottom:1px solid var(--line);
+  background:none;border-left:0;border-right:0;border-top:0;text-align:left;font:inherit;color:inherit;width:100%;}
+.wd-member:last-child{border-bottom:0;}
+.wd-member-name{font-weight:600;font-size:13.5px;color:var(--ink);}
+.wd-member .proj-path{margin-top:0;flex:1 1 auto;min-width:0;}
+.wd-member-chev{display:flex;align-items:center;color:var(--ink-3);margin-left:auto;}
+button.wd-member{cursor:pointer;}
+button.wd-member:hover .wd-member-name{text-decoration:underline;}
+button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.wd-desc .card-head .ws-edit{margin-left:auto;}
+.ws-desc .ws-desc-view{margin-top:0;}
 /* The wizard's project rows show each path as a sub-line (new on this branch): --ink-2 clears
    4.5:1 on white, the generic .opt-sub --ink-3 does not. */
 .wiz-proj.opt-row .opt-sub{color:var(--ink-2);}   /* three classes: outranks the generic .opt-row .opt-sub declared later */
@@ -1469,6 +1492,18 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .proj-shell.detail-open .proj-screen-list{transform:translateX(-100%);}
 .proj-shell.detail-open .proj-screen-detail{transform:translateX(0);}
 .proj-shell.no-anim .proj-screen{transition:none;}
+/* ---------- Workspaces two-screen shell: the Projects track's twin, rule for rule (the Projects
+   rules above are pinned verbatim by tests, so this block repeats them on its own names). ---------- */
+.view[data-view="workspaces"]{flex:1 1 auto;min-height:0;padding:0;position:relative;}
+.ws-shell{position:relative;height:100%;overflow:hidden;}
+.ws-screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding:0 32px 40px;
+  transition:transform .46s cubic-bezier(.65,.02,.28,1);}
+.ws-screen-list .topbar{padding-top:26px;}
+.ws-screen-list{transform:translateX(0);}
+.ws-screen-detail{transform:translateX(100%);padding:0;background:var(--bg);}
+.ws-shell.detail-open .ws-screen-list{transform:translateX(-100%);}
+.ws-shell.detail-open .ws-screen-detail{transform:translateX(0);}
+.ws-shell.no-anim .ws-screen{transition:none;}
 /* A keyed row IS the control (role=button): pointer + hover tint, the .hist-head idiom. The
    keyless row keeps #projects-list .pl-row's default cursor. */
 #projects-list .pl-row[role="button"]{cursor:pointer;transition:background .12s;}
@@ -1488,7 +1523,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
    card is a real <button> — reset the UA look so it reads like its siblings. */
 .pd-ov-value.pd-ov-wrap{font-size:13px;overflow-wrap:anywhere;}
 .pd-ov-missing{color:var(--red-ink);}
-button.pd-ov-card{text-align:left;font:inherit;color:inherit;cursor:pointer;width:100%;}
+button.pd-ov-card{display:flex;flex-direction:column;align-items:stretch;text-align:left;font:inherit;color:inherit;cursor:pointer;width:100%;}   /* a button centres its content vertically: the label must sit where its siblings' do */
 button.pd-ov-card:hover{border-color:var(--ink-3);}
 /* Memory tab: the same grid Settings → Memory paints (.mem-host); its message line sits above. */
 .pd-sec-memory .form-msg{margin:0 0 10px;}
@@ -1763,7 +1798,7 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .hd-tm.st-ok{color:var(--green-ink)} .hd-tm.st-warn{color:var(--amber-ink)} .hd-tm.st-err{color:var(--red-ink)} .hd-tm.st-muted{color:var(--ink-2)}
 
 /* Team metrics — Projects cell (board 4) */
-#projects-list .tm-slot{flex:0 1 420px;min-width:0;}
+
 /* border-left + padding-left are board 4's divider between the project row and the cell
    (mockup `.tm-cell{border-left:1px solid var(--line);padding-left:18px;min-width:420px}`);
    the 420px sizing lives on .tm-slot above so the cell itself can still wrap. */
@@ -2103,7 +2138,7 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
    .hd-report has no icon, but it stands in the SAME row as .hd-archive and needs the
    same padding for the same reason: on .btn-ghost's own 13px it measured 48px beside
    a 38px Archive (headless Chrome, both themes). */
-.hd-back,.hd-resume,.hd-report,.pd-back,.pd-new,.pd-history{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;}
+.hd-back,.hd-resume,.hd-report,.pd-back,.pd-new,.pd-history,.ws-rescan{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;}   /* one height for every header action */
 .hd-resume[hidden]{display:none;}
 /* Same trap as the fallback issue link in the report modal: the author `display`
    above beats the UA's `[hidden]{display:none}`, and this button ships hidden. */
@@ -2138,7 +2173,7 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
    13.5px, so equal padding renders it 36px tall in a row of 38px buttons
    (measured in headless Chrome). The extra pixel per side matches .hd-pr, which
    is the same type size and already pays it. */
-.hd-archive,.pd-remove{display:flex;align-items:center;gap:8px;padding:9px 15px;border:1.5px solid var(--red-bg);
+.hd-archive,.pd-remove{display:flex;align-items:center;gap:8px;padding:8.5px 15px;border:1.5px solid var(--red-bg);   /* 12.5px type + 8.5px = the 13.5px buttons' height */
   border-radius:999px;background:var(--panel);font:600 12.5px var(--sans);color:var(--red-ink);cursor:pointer;}
 .hd-archive[hidden]{display:none;}
 .hd-archive:hover:not([disabled]),.pd-remove:hover:not([disabled]){background:var(--red-bg);border-color:var(--red);}
@@ -3698,6 +3733,15 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-mcard-results li.is-skipped{color:var(--ink-3);}
 .ask-mcard-actions{display:flex;align-items:center;gap:8px;margin-top:14px;}
 .ask-mcard.is-applied .ask-mcard-head{opacity:.9;}
+/* Team policy card (docs/team-policy.md "Ask Worca"): an edit's before → after list. */
+.ask-mcard-changes{list-style:none;margin:4px 0 0;padding:8px 10px;border-radius:8px;background:var(--field);display:flex;flex-direction:column;gap:4px;font-size:12.5px;}
+.ask-mcard-changes li{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px;min-width:0;}
+.ask-mcard-change-label{color:var(--ink-2);}
+.ask-mcard-change-val{display:inline-flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-family:var(--mono);font-size:11.5px;min-width:0;}
+.ask-mcard-before{color:var(--ink-3);text-decoration:line-through;}
+.ask-mcard-before.is-unset,.ask-mcard-after.is-unset{text-decoration:none;font-style:italic;color:var(--ink-3);}
+.ask-mcard-arrow{color:var(--ink-3);}
+.ask-mcard-after{color:var(--ink);font-weight:600;}
 /* schedule card (buildScheduleCard; docs/scheduled-runs.md "Ask Worca"): the metrics card's chrome + a before/after grid */
 .ask-scard-kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px;margin-top:4px;font-size:12.5px;}
 .ask-scard-k{color:var(--ink-3);}
@@ -4027,6 +4071,7 @@ body.rail-collapsed .ask-dock{left:76px;}
    their sticky tab bars and take clearance via .rd-body/.hd-body/.pd-body instead;
    body.view-history/.view-running/.view-projects .main keep padding:0 by specificity. */
 .main,.run-screen-list,.hist-screen-list,.proj-screen-list,.rd-body,.hd-body,.pd-body{padding-bottom:var(--ask-dock-clearance);}
+.ws-screen-list{padding-bottom:var(--ask-dock-clearance);}   /* the Workspaces track's list gutter, the same clearance */
 
 /* ---------- native control skins (checkbox / radio / switch / rows) -------- */
 /* Everything the browser used to draw for itself. The mark is the one .qopt
@@ -4566,6 +4611,7 @@ a.ask-card-task-title:hover{text-decoration-color:currentColor;}
 .level-banner-text{flex:1 1 220px;min-width:0;}
 .level-banner .btn{margin-left:auto;}
 body.view-history .level-banner,body.view-projects .level-banner,body.view-running .level-banner{margin:12px 32px 0;flex:0 0 auto;}
+body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 
 /* Simple hides the Target switch, which leaves .split-row's picker alone in the row: auto-placement
    would drop it into the narrow first track, so the row becomes one full-width column. */
@@ -5356,3 +5402,263 @@ input.gv-name:focus-visible{outline:none;}
   font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;transition:border-color .15s,color .15s,background .15s;}
 .pal-create:hover{border-color:var(--ink);color:var(--ink);background:var(--field);}
 .pal-create:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* ---------- Team policy (team-policy design §11, boards 1–11) ---------- */
+/* A project / workspace / home NAME inside prose (team-policy-view.mjs ref()): bold and mono, so
+   "Follows gateway" reads as a name and a word, never two words. In a hint it keeps the hint's ink. */
+.ref{font-weight:600;color:var(--ink);font-size:.96em;}
+.hint .ref,small .ref{color:var(--ink-2);}
+/* Policy origin colour: blue. Amber is built-in, violet is plugin, green is user. */
+.badge.blue{background:var(--blue-bg);color:var(--blue-ink);}
+/* Projects row: the policy cell sits UNDER the team-metrics cell in the same 420px column (board 2,
+   reworked): two cells side by side squeezed both to a truncated status at every laptop width, and
+   the row's name column must not move. A grid, so the name spans both rows and the chevron stays
+   centred; the cells keep their own left divider (.tm-cell) and are separated by a hairline. */
+/* The team column on a Projects row: two one-line chips, right-aligned, status only. The
+   controls and the sentences behind a status are on the project page's Team tab. */
+.pl-team{flex:0 0 auto;max-width:42%;min-width:0;display:flex;flex-direction:column;align-items:flex-end;gap:5px;font-size:12px;line-height:1.3;}   /* the chips keep their words; the path wraps */
+.pl-team-item{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;color:var(--ink-2);}
+.pl-team-item:empty{display:none;}
+.pl-team-item .tm-dot{flex:0 0 auto;}
+.pl-team-name{color:var(--ink-3);}
+.pl-team-state{white-space:nowrap;}   /* never clipped: the column is flex:0 0 auto and the path wraps instead */
+.pl-team-state.muted{color:var(--ink-3);}
+@media (max-width:760px){.pl-team{display:none;}}
+/* The project / workspace page's Team tab: one panel per feature, the block inside wraps
+   (the list cell it came from had to keep to one line). */
+/* Every section that stacks panels keeps the grid gap between them: cards touching read as one. */
+.pd-sec-team,.wd-sec-overview{display:flex;flex-direction:column;gap:18px;}
+.pd-team-card .card-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 12px;margin-bottom:12px;}
+.pd-team-card .card-head b{font-size:14px;}
+.pd-team-body .tm-cell{grid-template-rows:auto;}
+.pd-team-body .tm-cell .tm-line{grid-row:1;}
+.pd-team-body .tm-cell .tm-actions{grid-row:1;}
+.pd-team-body .tm-cell .tm-hint{grid-row:2;white-space:normal;line-height:1.45;}
+.pd-team-body .tm-cell .tm-status{white-space:normal;}
+.pd-team-body .ws-home-inner{padding-top:0;}
+.pd-team-body .ws-policy{margin-top:0;}
+.pd-team-body .ws-policy > .ws-policy-inner > .tm-label{display:none;}   /* the panel head names it */
+.pd-ov-sub.pd-ov-attn{color:var(--amber-ink);}
+.pd-ov-card[data-kind="rejected"] .pd-ov-sub,.pd-ov-card[data-kind="delegate-invalid"] .pd-ov-sub,.pd-ov-card[data-kind="unsupported"] .pd-ov-sub{color:var(--red-ink);}
+@media (max-width:1080px){
+  #projects-list .pl-row{grid-template-columns:minmax(0,1fr) auto;}
+  #projects-list .pl-main{grid-column:1 / span 2;grid-row:1;}
+  #projects-list .tm-slot{grid-column:1;grid-row:2;}
+  #projects-list .tp-slot{grid-column:1;grid-row:3;}
+  #projects-list .proj-open{grid-column:2;grid-row:1;}
+  #projects-list .tm-slot .tm-cell,#projects-list .tp-slot .tm-cell{padding-left:0;border-left:0;padding-top:10px;border-top:1px solid var(--line);}
+}
+.tm-cell .tp-warn{color:var(--amber-ink);white-space:normal;line-height:1.4;}
+/* hidden-toggled flex/grid containers (style.css has no global [hidden] rule, see :324) */
+#policyLine[hidden],#tp-sync[hidden],.ws-policy[hidden],.tp-json[hidden],.tp-onbreach[hidden],.tp-require[hidden]{display:none;}
+/* Team policy page: the published document (panel) above what this machine makes of it (cards). */
+.tp-head{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:18px;}
+.tp-head-main{min-width:0;flex:1 1 420px;}
+.tp-head-kicker{font:600 10.5px var(--sans);letter-spacing:.14em;color:var(--ink-3);}
+.tp-head-title{margin:6px 0 0;font-size:19px;font-weight:700;letter-spacing:-.015em;}
+.tp-facts{display:grid;grid-template-columns:96px minmax(0,1fr);gap:8px 16px;margin:16px 0 0;font-size:12.5px;}
+.tp-facts dt{font:600 10.5px var(--sans);letter-spacing:.14em;color:var(--ink-3);padding-top:2px;}
+.tp-facts dd{margin:0;color:var(--ink-2);min-width:0;overflow-wrap:anywhere;}
+.tp-facts dd code{font-size:11.5px;}
+.tp-head-notes{white-space:pre-wrap;}
+.tp-head-actions{display:flex;flex-direction:column;align-items:flex-end;gap:6px;text-align:right;}
+.tp-head-actions .hint{max-width:230px;}
+.tp-sec-label{margin:22px 0 12px;font:600 10.5px var(--sans);letter-spacing:.14em;color:var(--ink-3);}
+.tp-ov-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;}
+.tp-ov-card{padding:20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.tp-ov-label{font:600 10.5px var(--sans);letter-spacing:.14em;color:var(--ink-3);}
+.tp-ov-value{margin-top:10px;font-size:22px;font-weight:700;letter-spacing:-.02em;color:var(--ink);overflow-wrap:anywhere;}
+.tp-ov-sub{margin-top:6px;font-size:11.5px;color:var(--ink-3);overflow-wrap:anywhere;}
+.tp-ov-sub.is-warn{color:var(--amber-ink);}
+/* Tabs: the History / Project detail pills, one row per page section. */
+.tp-tabs{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:26px 0 16px;}
+.tp-tab{display:flex;align-items:center;gap:9px;padding:10px 17px;border:1.5px solid var(--line);
+  border-radius:999px;background:var(--panel);font:600 13.5px var(--sans);color:var(--ink-2);cursor:pointer;}
+.tp-tab:hover{border-color:var(--ink-3);color:var(--ink);}
+.tp-tab.active{background:var(--ink);color:var(--on-ink);border-color:var(--ink);}
+.tp-tab-badge{padding:2px 8px;border-radius:999px;background:var(--field);color:var(--ink-3);font:600 10.5px var(--mono);}
+.tp-tab.active .tp-tab-badge{background:var(--blue-bg);color:var(--blue-ink);}
+.tp-sec[hidden]{display:none;}
+.tp-sec-body{display:flex;flex-direction:column;gap:18px;}
+/* Plugins tab */
+.tp-plugins-hint{display:block;margin:-8px 0 12px;}
+.tp-plugins .form-msg:empty{display:none;}
+.tp-plugins-tbl td.tp-plugin-act{text-align:right;white-space:nowrap;}
+.tp-plugins-tbl td.tp-key small{display:block;font-weight:400;color:var(--ink-3);font-size:11.5px;}
+.tp-blocked-list{display:flex;flex-direction:column;gap:10px;}
+.tp-blocked-row{display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:12.5px;}
+/* Catalog tab */
+/* The catalog cards' heads: the title stays one word wide, the (long) hint takes the rest. */
+.tp-cat-card .card-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 14px;margin-bottom:12px;}
+.tp-cat-card .card-head h2{margin:0;white-space:nowrap;}
+.tp-cat-card .card-head .hint{flex:1 1 320px;min-width:0;margin:0;}
+.tp-catalogs{display:flex;flex-direction:column;gap:18px;}   /* the two catalog cards: the panel gap */
+.tp-cat-list{display:flex;flex-direction:column;gap:12px;}
+.tp-cat-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);}
+.tp-cat-row:last-child{border-bottom:0;}
+.tp-cat-main{min-width:0;font-size:13px;}
+.tp-cat-main small{display:block;margin-top:4px;}
+@media (max-width:760px){
+  .tp-facts{grid-template-columns:minmax(0,1fr);gap:2px 0;}
+  .tp-facts dd{margin-bottom:10px;}
+  .tp-head-actions{align-items:flex-start;text-align:left;}
+  .tp-cat-row{flex-direction:column;}
+}
+.tp-tbl th:first-child,.tp-tbl td:first-child{padding-left:0;}
+.tp-tbl tr.tp-group td{padding:16px 0 6px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:700;border-bottom:0;}
+.tp-tbl td.tp-key{font-weight:600;color:var(--ink);}
+.tp-tbl td.tp-key small{display:block;font-weight:400;color:var(--ink-3);font-size:11.5px;}
+.tp-tbl td.tp-team small{display:block;color:var(--ink-3);font-size:11px;margin-top:2px;}
+.tp-tbl .muted{color:var(--ink-3);}
+.tp-kind{display:inline-flex;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;border-radius:6px;}
+.tp-kind.default{background:var(--field);color:var(--ink-2);}
+.tp-kind.soft{background:var(--blue-bg);color:var(--blue-ink);}
+.tp-kind.hard{background:var(--red-bg);color:var(--red-ink);}
+.tp-eff{font-family:var(--mono);font-size:12px;}
+.tp-eff.tight{color:var(--blue-ink-strong);font-weight:600;}
+.tp-eff.loose{color:var(--ink-3);text-decoration:line-through;}
+.tp-src{font-family:var(--sans);font-size:11px;color:var(--ink-3);font-weight:400;}
+.tp-foot{margin-top:14px;}
+/* editor (board 5) */
+.tp-editor{display:flex;flex-direction:column;gap:18px;}
+.tp-head + .tp-editor{margin-top:18px;}   /* the same gap the editor keeps between its own cards */
+/* The editor's tabs: the read view's pills, then one section each (the read view's gap between cards). */
+.tp-editor > .tp-edit-tabs{padding:0 0 4px;}
+.tp-edit-sections{display:flex;flex-direction:column;}
+.tp-edit-sec{display:flex;flex-direction:column;gap:18px;}
+.tp-edit-sec[hidden]{display:none;}
+/* The catalog editor: one bordered item per set / model, its fields on a grid. */
+.tp-cat-list{display:flex;flex-direction:column;gap:12px;}
+.tp-cat-list:empty::before{content:'None yet.';color:var(--ink-3);font-size:12.5px;}
+.tp-cat-item{display:flex;flex-direction:column;gap:12px;padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:var(--surface);}
+.tp-cat-item-head{display:flex;align-items:center;gap:10px;font-size:13.5px;}
+.tp-cat-item-head .tp-cat-rm{margin-left:auto;padding:5px 11px;font-size:12px;}
+.tp-cat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 14px;}
+.tp-cat-field{display:flex;flex-direction:column;gap:6px;min-width:0;}
+.tp-cat-field > label{font:600 10.5px var(--sans);letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase;}
+.tp-cat-field .input{padding:8px 12px;font-size:13px;border-radius:10px;}
+.tp-cat-flags{flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 18px;}
+.tp-cat-flags > label:first-child{flex-basis:100%;}
+.tp-cat-effort-row{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;}
+.tp-env-rows{display:flex;flex-direction:column;gap:6px;}
+.tp-env-row{display:flex;align-items:center;gap:6px;}
+.tp-env-row .tp-env-key{flex:0 1 240px;}
+.tp-env-row .tp-env-val{flex:1 1 200px;min-width:0;}
+.tp-cat-env .tp-env-add,.tp-cat-card > .tp-cat-add{align-self:flex-start;margin-top:4px;}
+.tp-editor > .tp-msg:empty,.tp-editor > .tp-json[hidden]{display:none;}
+.tp-editor > .tp-msg{margin:0;}
+/* Editing: Publish sits beside Cancel editing on the header; the count and links under them. */
+.tp-head-btns{display:flex;align-items:center;gap:8px;}
+.tp-head-status{font-size:12px;color:var(--ink-3);text-align:right;}
+.tp-head-status .linkish{font-size:12px;}
+.tp-editor .card.tp-group-card,.tp-editor details.card{padding:20px 22px;}
+.tp-editor details.card > summary{cursor:pointer;font-size:14px;list-style:none;}
+.tp-editor details.card > summary::-webkit-details-marker{display:none;}
+.tp-editor details.card > summary::before{content:"▸";display:inline-block;width:14px;color:var(--ink-3);}
+.tp-editor details.card[open] > summary::before{content:"▾";}
+.tp-editor details.card > summary .hint{display:inline;margin:0 0 0 6px;}
+.tp-edit-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr) auto auto;gap:8px 14px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line);}
+.tp-edit-row > .tp-key{align-self:start;}
+.tp-row-unset{display:flex;align-items:center;}
+/* The second line: under the value and the kind, never beside them, so the first line keeps its
+   shape when Soft is picked. */
+.tp-edit-row > .tp-extra{grid-column:2 / -1;display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;font-size:11.5px;color:var(--ink-2);}
+.tp-edit-row > .tp-extra[hidden]{display:none;}
+.tp-edit-row:last-child{border-bottom:0;}
+.tp-edit-row .tp-key{font-weight:600;font-size:13px;line-height:1.45;}
+.tp-edit-row .tp-key small{display:block;font-weight:400;color:var(--ink-3);font-size:11.5px;}
+.tp-edit-row .input,.tp-edit-row .select{padding:9px 13px;font-size:13px;border-radius:11px;background:var(--surface);border-color:var(--line-2);}
+.tp-edit-row .select{padding-right:36px;}
+.tp-edit-row .seg button{padding:6px 11px;font-size:11.5px;}
+.tp-edit-row .seg button:disabled{opacity:.4;cursor:not-allowed;}
+.tp-control{display:flex;flex-direction:column;gap:8px;min-width:0;}
+.tp-control .check-row{margin-top:2px;}
+.tp-list{display:flex;flex-wrap:wrap;gap:6px;}
+.tp-chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11.5px;}
+.tp-chip-rm{background:none;border:0;padding:0;color:var(--ink-3);font:inherit;cursor:pointer;}
+.tp-chip-rm:hover{color:var(--red-ink);}
+.tp-list-empty{color:var(--ink-3);font-size:12px;}
+.tp-add-row{display:flex;gap:6px;flex-wrap:wrap;}
+.tp-add-row .input{flex:1 1 120px;min-width:0;}
+/* An input with a datalist behind it: pick from what the machine knows, or type. */
+.tp-editor .tp-pick{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");background-repeat:no-repeat;background-position:right 10px center;background-size:14px;padding-right:30px;}
+.tp-editor .tp-pick::-webkit-calendar-picker-indicator{opacity:0;}
+.tp-add-row .select-wrap{flex:0 0 120px;}
+.tp-extra .tp-src{flex-basis:100%;}
+.tp-onbreach{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-2);}
+.tp-onbreach .select-wrap{display:inline-block;width:96px;}
+.tp-onbreach .select{padding:6px 30px 6px 10px;font-size:12px;border-radius:9px;}
+.tp-unset{color:var(--ink-3);font-size:12px;background:none;border:none;font:inherit;cursor:pointer;text-decoration:underline;padding:0;}
+/* The pure editor's bar (team-policy-view.mjs): the page dismantles it into the header. */
+.tp-publish-bar{display:flex;align-items:center;gap:12px;}
+.tp-publish-bar .grow{flex:1;font-size:12.5px;color:var(--ink-2);}
+.tp-json{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;font-size:12px;line-height:1.5;overflow-x:auto;margin:0;}
+.tp-msg{white-space:pre-wrap;}
+@media (max-width:900px){ .tp-edit-row{grid-template-columns:1fr;} }
+/* workspace card line (board 6) */
+/* Workspace page › Team › Team policy: the actions row (the metrics table head's twin), then a
+   facts list with the label column the Team policy page uses. */
+.ws-policy{font-size:12.5px;margin-top:12px;}
+.ws-policy-inner{display:flex;flex-direction:column;gap:4px;}
+.ws-policy .tm-label{display:none;}
+.ws-policy .ws-tbl-actions{margin-left:auto;display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
+.ws-policy .tp-facts{margin-top:8px;grid-template-columns:118px minmax(0,1fr);}   /* WORKSPACE RUNS fits on one line */
+.ws-policy .tp-facts dd .tm-dot{display:inline-block;vertical-align:middle;margin-right:2px;}
+.ws-policy .tp-facts dd .muted{color:var(--ink-3);}
+.ws-policy .ws-home-hint,.ws-policy .ws-policy-results{margin-top:6px;}
+/* Settings readout + chip (board 7) */
+.team-readout{display:flex;flex-direction:column;gap:6px;margin:0 0 16px;padding:12px 14px;border-radius:12px;background:var(--field);font-size:12.5px;color:var(--ink-2);}
+.team-readout b{color:var(--ink);font-weight:600;}
+.team-readout-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+/* A repository slug is a name, not a label: keep its case (the badge uppercases everything else). */
+.team-readout-row .badge.blue{text-transform:none;letter-spacing:0;font-family:var(--mono);font-weight:600;}
+.team-chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--blue-ink);background:var(--blue-bg);padding:3px 9px;border-radius:999px;margin-left:auto;}
+.team-chip .kind{font-weight:700;letter-spacing:.05em;text-transform:uppercase;font-size:9.5px;opacity:.85;}
+/* New pipeline notes line (board 8) */
+.policy-line{display:flex;flex-direction:column;gap:8px;margin:14px 0 0;padding:12px 14px;border-radius:12px;background:var(--field);font-size:12.5px;color:var(--ink-2);}
+.policy-line .pl-head-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.policy-line .pl-head-row .muted{color:var(--ink-3);}
+.policy-line .pl-note{display:flex;gap:8px;align-items:flex-start;line-height:1.45;}
+.policy-line .pl-note .tm-dot{margin-top:6px;}
+.policy-line .pl-note.warn{color:var(--amber-ink);}
+/* team-cap pause banner (board 9) */
+/* Team metrics KPI row: the policy tiles (Off-policy, Pooled budget) make 7–8 tiles, which leave a
+   hole in the 3-column row; four columns fill two rows for eight. Back to one column when narrow. */
+.stat-row.tm-kpis:has(> .stat-tile:nth-child(7)){grid-template-columns:repeat(4,minmax(0,1fr));}
+@media (max-width:1080px){ .stat-row.tm-kpis:has(> .stat-tile:nth-child(7)){grid-template-columns:repeat(2,minmax(0,1fr));} }
+.cost-banner.cb-policy{background:var(--blue-bg);color:var(--blue-ink);}
+/* The policy home inside the sentence: bold like the figures, but inline (`.cost-banner b` is the block heading). */
+.cost-banner .cb-home{font-weight:600;color:var(--ink);}
+/* History meta segment (board 10) */
+.hd-policy.st-info{color:var(--blue-ink);}
+/* Plugins page strip + checklist (boards 10, 11) */
+/* Settings › Plugins: what the team policy asks for, as one panel of compact rows (it scales to
+   however many plugins a policy names) with the mass action in the head. */
+.pl-required-card{margin:18px 0 14px;}
+.pl-required-card .card-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;margin-bottom:6px;}
+.pl-required-card .card-head b{font-size:14px;}
+.pl-required-actions{display:flex;align-items:center;gap:8px;margin-left:auto;}
+.tp-plugins-actions{display:flex;align-items:center;gap:8px;margin-left:auto;}
+.pl-required-list{display:flex;flex-direction:column;}
+.pl-required{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink-2);}
+.pl-required:last-child{border-bottom:0;}
+.pl-required .tm-dot{flex:0 0 auto;}
+.pl-required-text{flex:1 1 auto;min-width:0;display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 8px;}
+.pl-required-text b{font-weight:600;color:var(--ink);}
+.pl-required-text .hint{margin-top:0;}
+.pl-required-state{flex:0 0 auto;white-space:nowrap;}
+.pl-required-act{flex:0 0 auto;min-width:0;display:flex;justify-content:flex-end;}
+.pl-required-act:empty{display:none;}
+@media (max-width:760px){.pl-required{flex-wrap:wrap;} .pl-required-act{width:100%;}}
+.tp-setup-list{display:flex;flex-direction:column;margin-top:12px;}
+.tp-setup-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px;}
+.tp-setup-row:last-child{border-bottom:0;}
+.tp-setup-row .tm-dot{flex:0 0 auto;}
+.tp-setup-text{flex:1;min-width:0;}
+.tp-setup-text .hint{margin-top:2px;}
+.tp-trust-row{margin-top:16px;align-items:flex-start;}
+.tp-trust-row .switch{margin-top:2px;}
+.tp-trust-row .txt .hint{margin-top:2px;}
+/* pooled-budget tile meter (board 10): warn from 80 %, over from 100 % */
+.stat-meter .stat-meter-fill.warn{background:var(--amber-ink);}
+.stat-meter .stat-meter-fill.over{background:var(--red-ink);}

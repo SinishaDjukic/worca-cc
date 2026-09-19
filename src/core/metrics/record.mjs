@@ -14,6 +14,7 @@ import {
   projectSlug, gitUserName, resolveProjectSink, resolveWorkspaceSink, writeOutbox, scheduleFlush as realScheduleFlush,
 } from './sync.mjs';
 import { writeRunLedger } from './ledger.mjs';
+import { readPolicyState } from '../policy/state.mjs';
 
 export const RECORD_VERSION = 1;
 export const TEXT_MAX = 200;
@@ -27,6 +28,8 @@ export const RECORD_FIELDS = Object.freeze([
   'workflow', 'target', 'title', 'source',
   'cost', 'agents', 'steps', 'cycles', 'interventions',
   'pr', 'git', 'actor',
+  // `policy` (team-policy design §10) is an OPTIONAL trailing key: present only on runs that
+  // saw a policy, so policy-less records keep exactly this key list. Readers ignore it.
 ]);
 
 const RESULT_OF = Object.freeze({ done: 'done', error: 'failed', stopped: 'stopped' });
@@ -58,7 +61,7 @@ const num = (v) => (Number.isFinite(v) ? v : null);
 const unique = (arr) => [...new Set(arr.filter((x) => typeof x === 'string' && x))];
 
 // failure-policy REASON codes of a cost-cap pause (src/core/failure-policy.mjs).
-const BUDGET_PAUSE = new Set(['cost_pipeline', 'cost_total']);
+const BUDGET_PAUSE = new Set(['cost_pipeline', 'cost_total', 'cost_pipeline_policy', 'cost_total_policy']);
 
 /**
  * failure (§4.4). Cost caps and setup failures PAUSE the run, so the last pause reason is
@@ -133,6 +136,26 @@ function maxCyclePerPhase(agentSteps) {
   return out;
 }
 
+const strList = (arr) => unique(Array.isArray(arr) ? arr.filter((x) => typeof x === 'string').map((x) => cleanText(x, 120)) : []);
+
+/**
+ * `policy` (team-policy design §10): the home the run's policy came from and what the developer
+ * did about it. Absent (null) when the run saw no policy. `reason` is free text visible to the
+ * team, so it follows the branch's attribution choice: dropped under `attribution: none`.
+ */
+function buildPolicy(p, attribution) {
+  if (!p || typeof p !== 'object' || !p.home) return null;
+  return {
+    home: cleanText(p.home, 120),
+    sha: typeof p.sha === 'string' && /^[0-9a-f]{7,40}$/i.test(p.sha) ? p.sha.slice(0, 7).toLowerCase() : null,
+    overrides: strList(p.overrides),
+    exceeded: strList(p.exceeded),
+    deviations: strList(p.deviations),
+    unattended: p.unattended === true,
+    reason: attribution === 'none' ? null : cleanText(redactPaths(p.reason)),
+  };
+}
+
 /**
  * Build a v1 RunRecord from a normalized snapshot (see snapshotFromHarness).
  * @param {object} snap
@@ -192,6 +215,8 @@ export function buildRunRecord(snap, { attribution = 'git-user', now = new Date(
       deletions: num(g.deletions),
     },
     actor: attribution === 'none' ? null : cleanText(snap.actor),
+    // Present ONLY on runs that saw a policy: records of policy-less runs stay byte-identical to v1.
+    ...((p) => (p ? { policy: p } : {}))(buildPolicy(snap.policy, attribution)),
   };
 }
 
@@ -329,6 +354,10 @@ export async function snapshotFromHarness(harness, { status, error = null } = {}
       ? { reason: iv.lastPauseReason, detail: iv.lastPauseDetail ?? null }
       : harness.pauseReason ? { reason: harness.pauseReason, detail: harness.pauseDetail ?? null } : null,
     actor: await gitUserName(harness.projectDir),
+    // The run's policy state (pipelines.policy_state) as the gates and the resume flow left it;
+    // `unattended` is the harness's own auto flag, which the record needs even when nothing else
+    // was written (a --yes run that stayed under every cap still carries no state row).
+    policy: (() => { const p = readPolicyState(runId); return p.home ? { ...p, unattended: p.unattended === true || !!harness.auto } : null; })(),
   };
 }
 

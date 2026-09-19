@@ -95,6 +95,18 @@ import {
   metricsEvents, slugDirName, autoMetricsHome,
 } from '../src/core/metrics/sync.mjs';
 import { readScope, listScopes, parseScopeParam, aggregate, resolveRange, GROUP_BYS, PROJECT_KEY_RE as TM_PROJECT_KEY_RE } from '../src/core/metrics/read.mjs';
+// Team policy (team-policy design §9, §11): the worca-policy branch, its gates and its pages.
+import {
+  policyEvents, discoverPolicy, discoverAllPolicies, resolveProjectPolicy, resolveWorkspacePolicy, enableTeamPolicy, publishPolicy,
+  projectPolicyStatus, listPolicyScopes, routeWorkspaceMembersPolicy, autoPolicyHome, startTeamPolicyBackground,
+} from '../src/core/policy/sync.mjs';
+import { deviationsFor, fieldsForRun, capSummary } from '../src/core/policy/effective.mjs';
+import { installedPluginsMap, pluginRequirements, blockedPluginFindings, seedPolicyMarketplaces, WORCA_VERSION as POLICY_WORCA_VERSION } from '../src/core/policy/local.mjs';
+import { normalizePolicyDoc } from '../src/core/policy/registry.mjs';
+import { checkTeamTotalGate, checkTeamPipelineGate, teamCapsForTarget } from '../src/core/policy/gate.mjs';
+import { readPolicyState } from '../src/core/policy/state.mjs';
+import { policyForScope, policyPayload } from '../src/core/policy/scope.mjs';
+import { policyCatalogModels } from '../src/core/policy/cache.mjs';
 import { pickFolderNative } from '../src/core/folder-dialog.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import {
@@ -113,7 +125,7 @@ import {
 } from '../src/core/ui-instance.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
-  listBuiltinGuardrailSets, listGuardrailSets, readGuardrailSet,
+  listBuiltinGuardrailSets, listGuardrailSets, readGuardrailSet, listPolicyGuardrailSets, isPolicyGuardrailSetId,
   writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
 } from '../src/core/guardrail-store.mjs';
 import {
@@ -126,6 +138,8 @@ import {
 } from '../src/core/ask/workflow-deps.mjs';
 import { applyMetricsChange } from '../src/core/ask/metrics-deps.mjs';
 import { metricsEventPrompt, metricsNoticeText } from '../src/core/ask/metrics-proposal.mjs';
+import { applyPolicyChange } from '../src/core/ask/policy-deps.mjs';
+import { policyEventPrompt, policyNoticeText } from '../src/core/ask/policy-proposal.mjs';
 import { scheduleEventPrompt, scheduleNoticeText } from '../src/core/ask/schedule-spec.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
@@ -506,6 +520,7 @@ function emitChanged(type, action) {
 }
 
 metricsEvents.on('changed', (e) => emitChanged('team-metrics-changed', e && e.action ? e.action : null));
+policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.action ? e.action : null));
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
@@ -1500,6 +1515,12 @@ const startRunHandler = async (req, res) => {
       const ws = await readWorkspace(workspaceId);
       if (!ws) return res.status(404).json({ error: 'workspace not found' });
 
+      // Team total cap (design §7): soft — `pastTeamCap` acknowledges it once per window per home.
+      {
+        const gate = await checkTeamTotalGate({ workspaceId: ws.id }, { pastTeamCap: body.pastTeamCap === true, reason: typeof body.policyReason === 'string' ? body.policyReason : null });
+        if (gate.blocked) return res.status(gate.code === 'reason_required' ? 400 : 403).json({ error: gate.error, code: gate.code, policy: gate.policy, needsPolicyAck: gate.code === 'team_total' });
+      }
+
       // Resolve member detail. Each member must be an existing git repo (D3:
       // per-project worktrees + checkpoints). A vanished member is a hard 400 —
       // skip-missing is NOT allowed; a workspace run is defined over its full set.
@@ -1607,6 +1628,11 @@ const startRunHandler = async (req, res) => {
         if (live) return res.status(409).json({ error: 'a defragment run for this memory scope is already live', runId: live.id });
       }
 
+      // Team total cap (design §7): soft — `pastTeamCap` acknowledges it once per window per home.
+      {
+        const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: body.pastTeamCap === true, reason: typeof body.policyReason === 'string' ? body.policyReason : null });
+        if (gate.blocked) return res.status(gate.code === 'reason_required' ? 400 : 403).json({ error: gate.error, code: gate.code, policy: gate.policy, needsPolicyAck: gate.code === 'team_total' });
+      }
       const humanInLoop = bodyHumanInLoop ?? ((await readRunConfig(projectDir)).humanInLoop !== false);
 
       if (sched) return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, projectDir }));
@@ -2355,7 +2381,7 @@ class ResumeError extends Error {
   }
 }
 
-async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false } = {}) {
+async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null } = {}) {
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   const saved = readPipelineForResume(pipelineId);
   if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
@@ -2422,6 +2448,19 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false } = {
       if (projectKey(p.path) === saved.row.project_key) { projectDir = p.path; break; }
     }
     if (!projectDir) throw new ResumeError(400, { error: 'project for this pipeline is not onboarded on this machine' });
+  }
+
+  // Team policy gates (design §7): the total cap once per window per home, the pipeline cap once
+  // per run. Both soft — `pastTeamCap` (with an optional / required reason) records the choice
+  // and lets the resume through; the local gates above stay never-bypassable.
+  const teamTarget = workspace ? { workspaceId: workspace.id } : { projectDir };
+  const totalGate = await checkTeamTotalGate(teamTarget, { pastTeamCap, reason: policyReason });
+  if (totalGate.blocked) {
+    throw new ResumeError(totalGate.code === 'reason_required' ? 400 : 403, { error: totalGate.error, code: totalGate.code, policy: totalGate.policy, needsPolicyAck: totalGate.code === 'team_total' });
+  }
+  const pipeGate = checkTeamPipelineGate(totalGate.caps, { pipelineId, spentSoFar, pastTeamCap, reason: policyReason });
+  if (pipeGate.blocked) {
+    throw new ResumeError(pipeGate.code === 'reason_required' ? 400 : 403, { error: pipeGate.error, code: pipeGate.code, policy: pipeGate.policy, needsPolicyOverride: pipeGate.code === 'team_pipeline' });
   }
 
   // A paused defragment run is not live; another one on the same scope may have started since.
@@ -2513,6 +2552,8 @@ app.post('/api/resume', async (req, res) => {
     const out = await resumeRun(req.body?.pipelineId, {
       ignoreCostCap: req.body?.ignoreCostCap === true,
       mock: !!(req.body && req.body.mock),
+      pastTeamCap: req.body?.pastTeamCap === true,
+      policyReason: typeof req.body?.policyReason === 'string' ? req.body.policyReason : null,
     });
     res.json(out);
   } catch (err) {
@@ -2910,6 +2951,112 @@ app.post('/api/workspaces/:id/metrics-route', async (req, res) => {
   if (!WORKSPACE_KEY_RE.test(req.params.id)) return res.status(404).json({ error: 'workspace not found', code: 'NOT_FOUND' });
   try { res.json(await routeWorkspaceMembers(req.params.id)); }
   catch (err) { sendMetricsError(res, err); }
+});
+
+// ---------------------------------------------------------------------------
+// Team policy (team-policy design §11): scopes/statuses, the effective document for one
+// scope, publish, notes for the New pipeline form, enable / follow, workspace routing.
+// ---------------------------------------------------------------------------
+const POLICY_ERROR_STATUS = {
+  BAD_REQUEST: 400, NOT_FOUND: 404, NO_ORIGIN: 400, DELEGATE_INVALID: 400, NOT_HOME: 409, NOT_ENABLED: 409,
+  REMOTE_UNREACHABLE: 502, FETCH_FAILED: 502, WORKTREE_FAILED: 500, COMMIT_FAILED: 500,
+  PUSH_REJECTED: 409, PUSH_RETRIES_EXHAUSTED: 409,
+};
+function sendPolicyError(res, err) {
+  const code = (err && err.code) || 'INTERNAL';
+  res.status(POLICY_ERROR_STATUS[code] || 500).json({
+    error: err && err.message ? err.message : String(err), code,
+    ...(err && err.stderr ? { stderr: err.stderr } : {}),
+    ...(err && err.hint ? { hint: err.hint } : {}),
+    ...(err && Array.isArray(err.warnings) ? { warnings: err.warnings } : {}),
+  });
+}
+
+app.get('/api/policy/scopes', async (req, res) => {
+  try {
+    const scopes = await listPolicyScopes({ discover: req.query.discover === '1' });
+    // The Plugins page strip and the setup checklist: every home's requirements, folded.
+    const docs = [];
+    for (const s of scopes.projects) if (s.home && !docs.some((d) => d.slug === s.home)) {
+      const r = await resolveProjectPolicy(s.path, { discover: false }).catch(() => null);
+      if (r?.ok) docs.push({ slug: r.home, doc: r.doc });
+    }
+    res.json({ ...scopes, requirements: pluginRequirements(docs), blockedPlugins: blockedPluginFindings(docs) });
+  } catch (err) { sendPolicyError(res, err); }
+});
+
+app.get('/api/policy', async (req, res) => {
+  const scope = parseScopeParam(req.query.scope);
+  if (!scope) return badRequest(res, 'scope must be project:<projectKey> or workspace:<workspaceId>');
+  try {
+    const { meta, r, workspaceRun, projectDir } = await policyForScope(scope);
+    if (!r.ok) return res.status(404).json({ error: r.detail || `no team policy for this ${scope.kind}`, code: (r.code || r.reason || 'NOT_ENABLED').toString().toUpperCase().replace(/-/g, '_'), scope: meta });
+    res.json(policyPayload(meta, r, { workspaceRun, projectDir }));
+  } catch (err) { sendPolicyError(res, err); }
+});
+
+// New pipeline form (board 8): the notes for a selection — caps, off-policy picks, plugin gaps.
+app.get('/api/policy/notes', async (req, res) => {
+  const scope = parseScopeParam(req.query.scope);
+  if (!scope) return badRequest(res, 'scope must be project:<projectKey> or workspace:<workspaceId>');
+  try {
+    const { meta, r, workspaceRun } = await policyForScope(scope);
+    if (!r.ok) return res.json({ scope: meta, policy: null, notes: [] });
+    const fields = fieldsForRun(r.doc, { workspaceRun });
+    const guardrailsId = typeof req.query.guardrailsId === 'string' && req.query.guardrailsId ? req.query.guardrailsId : 'permissive';
+    const set = await readGuardrailSet(guardrailsId);
+    const models = typeof req.query.models === 'string' && req.query.models ? req.query.models.split(',').filter(Boolean).map((m) => ({ role: null, model: m })) : [];
+    const dev = deviationsFor(fields, { guardrailsId, guardrailSet: set, stepModels: models, installed: installedPluginsMap(), worcaVersion: POLICY_WORCA_VERSION, metricsRecord: null });
+    res.json({ scope: meta, policy: { home: r.home, sha: r.sha, delegated: r.delegated, from: r.from, caps: capSummary(r.doc, { workspaceRun }) }, notes: dev, guardrailsDefault: fields['guardrails.default']?.value ?? null });
+  } catch (err) { sendPolicyError(res, err); }
+});
+
+// Publish (board 5): one commit to the home's worca-policy branch; a rejection comes back verbatim.
+app.put('/api/policy', async (req, res) => {
+  const scope = parseScopeParam(req.body?.scope);
+  if (!scope) return badRequest(res, 'scope must be project:<projectKey> or workspace:<workspaceId>');
+  if (!req.body || typeof req.body.doc !== 'object' || req.body.doc === null) return badRequest(res, 'doc must be the policy document');
+  try {
+    const { r } = await policyForScope(scope);
+    if (!r.ok) return res.status(404).json({ error: r.detail || 'no team policy for this scope', code: 'NOT_ENABLED' });
+    if (!r.homeDir || !fs.existsSync(r.homeDir)) return res.status(409).json({ error: `the policy home ${r.home} is not checked out on this machine`, code: 'NOT_HOME' });
+    const out = await publishPolicy(r.homeDir, req.body.doc, { message: typeof req.body.message === 'string' ? req.body.message : null });
+    res.json({ ok: true, slug: out.slug, sha: out.sha, unchanged: !!out.unchanged, doc: out.doc });
+  } catch (err) { sendPolicyError(res, err); }
+});
+
+// Validate without publishing (the editor's live check): the normaliser's warnings, if any.
+app.post('/api/policy/validate', (req, res) => {
+  const { doc, warnings, unknownSchema } = normalizePolicyDoc(req.body?.doc);
+  res.json({ ok: !!doc && !unknownSchema && warnings.length === 0, warnings, doc });
+});
+
+app.post('/api/policy/discover', async (_req, res) => {
+  try { await discoverAllPolicies({ force: true }); res.json(await listPolicyScopes()); }
+  catch (err) { sendPolicyError(res, err); }
+});
+
+app.get('/api/projects/:key/policy', async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  try { res.json({ status: await projectPolicyStatus(p, { discover: req.query.discover === '1' }) }); }
+  catch (err) { sendPolicyError(res, err); }
+});
+
+app.post('/api/projects/:key/policy/enable', async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  const body = req.body || {};
+  const mode = body.mode === 'follow' ? 'follow' : body.mode === 'here' || body.mode == null ? 'here' : null;
+  if (!mode) return badRequest(res, 'mode must be "here" or "follow"');
+  try {
+    const result = await enableTeamPolicy(p.path, { mode, delegateTo: body.delegateTo || null, change: body.change === true, title: typeof body.title === 'string' ? body.title : '' });
+    res.json({ ...result, status: await projectPolicyStatus(p) });
+  } catch (err) { sendPolicyError(res, err); }
+});
+
+app.post('/api/workspaces/:id/policy-route', async (req, res) => {
+  if (!WORKSPACE_KEY_RE.test(req.params.id)) return res.status(404).json({ error: 'workspace not found', code: 'NOT_FOUND' });
+  try { res.json(await routeWorkspaceMembersPolicy(req.params.id)); }
+  catch (err) { sendPolicyError(res, err); }
 });
 
 // ---------------------------------------------------------------------------
@@ -3765,7 +3912,14 @@ app.post('/api/workspaces', async (req, res) => {
     // records, if there is exactly one; every other case is "Choose…" on the workspace card.
     const explicit = typeof body.metricsProject === 'string' && body.metricsProject ? body.metricsProject : null;
     const metricsProject = explicit ?? await autoMetricsHome(projectPaths);
-    const workspace = await createWorkspace({ name: body.name, projectPaths, description: body.description, metricsProject });
+    // Team policy home (design §9): defaults to the metrics home when that member's policy
+    // resolves, else the one member (or shared home) whose policy does; else unset.
+    let policyProject = typeof body.policyProject === 'string' && body.policyProject ? body.policyProject : null;
+    if (!policyProject) {
+      const viaMetrics = metricsProject ? await resolveProjectPolicy(metricsProject, { discover: false }).catch(() => null) : null;
+      policyProject = viaMetrics?.ok ? metricsProject : await autoPolicyHome({ projectPaths }).catch(() => null);
+    }
+    const workspace = await createWorkspace({ name: body.name, projectPaths, description: body.description, metricsProject, policyProject });
     emitChanged('workspaces-changed', 'created');
     res.status(201).json({ workspace, metricsHomeAuto: !explicit && !!metricsProject });
   } catch (err) {
@@ -3792,9 +3946,16 @@ app.patch('/api/workspaces/:id', async (req, res) => {
     }
     patch.metricsProject = body.metricsProject;
   }
+  if ('policyProject' in body) {
+    if (body.policyProject !== null && typeof body.policyProject !== 'string') {
+      return badRequest(res, 'policyProject must be a member project path or null');
+    }
+    patch.policyProject = body.policyProject;
+  }
   try {
     const workspace = await updateWorkspace(id, patch);
     if ('metricsProject' in patch) emitChanged('workspaces-changed', 'metrics-home');
+    if ('policyProject' in patch) { emitChanged('workspaces-changed', 'policy-home'); emitChanged('team-policy-changed', 'policy-home'); }
     res.json({ workspace });
   } catch (err) {
     const status = workspaceErrorStatus(err && err.code);
@@ -4404,6 +4565,8 @@ app.get('/api/models', (req, res) => {
   res.json({
     models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS,
     hideBuiltinModels: hideBuiltinModels(),   // the Models-view checkbox (#422)
+    // Team policy catalog entries (team-policy design §8): read-only, env masked like a global's.
+    policy: policyCatalogModels().map((m) => maskedGlobalModel(m)),
   });
 });
 
@@ -4891,7 +5054,8 @@ function sendGuardrailError(res, err) {
 app.get('/api/guardrails', async (_req, res) => {
   try {
     const sets = await listGuardrailSets(); // CONV-1: await
-    res.json({ guardrails: [...listBuiltinGuardrailSets(), ...sets] });
+    // Team policy sets (gp:<id>, origin policy:<home>) sit between the built-ins and the user's own.
+    res.json({ guardrails: [...listBuiltinGuardrailSets(), ...listPolicyGuardrailSets(), ...sets] });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -4957,6 +5121,7 @@ app.delete('/api/guardrails/:id', async (req, res) => {
   const id = req.params.id;
   // Built-ins are not in the user store and must never be deleted.
   if (isBuiltinGuardrailSetId(id)) return badRequest(res, 'built-in guardrail sets cannot be deleted');
+  if (isPolicyGuardrailSetId(id)) return badRequest(res, 'team policy guardrail sets are edited on the Team policy page, not deleted here');
   try {
     const removed = await deleteGuardrailSet(id); // CONV-1: await; throws ReferencedError while pinned
     if (!removed) return res.status(404).json({ error: 'guardrail set not found' });
@@ -5495,6 +5660,25 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
       }
     }
   } catch { /* absent line */ }
+  // The Team policy page's scope (validated slug): its name and, from the local cache only (no git), its home.
+  try {
+    if (ctx.tpScope) {
+      const [kind, tpId] = ctx.tpScope.split(':');
+      if (kind === 'project') {
+        const p = (await listProjects()).find((x) => x.key === tpId);
+        if (p) {
+          const r = await resolveProjectPolicy(p.path, { discover: false }).catch(() => null);
+          out.teamPolicy = { kind, id: tpId, name: p.name, home: r && r.ok ? r.home : null };
+        }
+      } else if (kind === 'workspace') {
+        const ws = await readWorkspace(tpId);
+        if (ws) {
+          const r = await resolveWorkspacePolicy(ws, { discover: false }).catch(() => null);
+          out.teamPolicy = { kind, id: tpId, name: ws.name, home: r && r.ok ? r.home : null };
+        }
+      }
+    }
+  } catch { /* absent line */ }
   try {
     if (ctx.pipelineId) {
       const key = ctx.workspaceId ? `workspaces/${ctx.workspaceId}` : out.project?.key;
@@ -5529,8 +5713,8 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // workflowId once the user saved it; a run card keeps its pre-P3 line byte for byte.
         const wf = !!(b.card && b.card.type === 'workflow');
         if (wf && b.state === 'building') continue;   // transient (no name yet) — never worth a header line
-        if (b.card && b.card.type === 'metrics') {
-          cards.push({ id: b.id, type: 'metrics', state: b.state, summary: b.card.summary || '' });
+        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy')) {
+          cards.push({ id: b.id, type: b.card.type, state: b.state, summary: b.card.summary || '' });
           continue;
         }
         if (b.card && b.card.type === 'schedule') {
@@ -5949,16 +6133,20 @@ async function startWorkflowEventTurn(threadId, block, { declined = false, thenR
   return failedEventTurn(threadId, { error: r.error, status: r.status, ...(r.budget ? { budget: r.budget } : {}) });
 }
 
-/** The metrics (or schedule) card's event turn: the synthetic notice row + the "[worca event] … card …" prompt (same queueing as workflow cards). */
+/** The metrics / policy / schedule card's event turn: the synthetic notice row + the
+ *  "[worca event] <type> card …" prompt (same queueing as workflow cards). */
 async function startMetricsEventTurn(threadId, block) {
   const thread = askGetThread(threadId);
   if (!thread) return null;
   const card = block.card || {};
   const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
   const result = card.result || null;
-  const isSchedule = card.type === 'schedule';
-  const text = (isSchedule ? scheduleEventPrompt : metricsEventPrompt)({ cardId: block.id, state, card, result });
-  const notice = (isSchedule ? scheduleNoticeText : metricsNoticeText)({ state, card, result });
+  // One event turn for every non-workflow card; the type picks the wording. Metrics is the fallback.
+  const kind = card.type === 'policy' ? 'policy' : card.type === 'schedule' ? 'schedule' : 'metrics';
+  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, metrics: metricsEventPrompt }[kind];
+  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, metrics: metricsNoticeText }[kind];
+  const text = eventPrompt({ cardId: block.id, state, card, result });
+  const notice = noticeText({ state, card, result });
   let mv = await validateModelEffort(thread.model, thread.effort);
   if (!mv.ok) {
     const d = (await askCatalog({ withSecrets: false })).default;
@@ -6017,10 +6205,12 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       const turn = await startMetricsEventTurn(id, block);
       return res.json({ block, turn });
     }
-    if (found.block.card && found.block.card.type === 'metrics') {
-      // Metrics card (docs/team-metrics.md "Ask Worca"): proposed → applied | failed | declined. The change is
-      // the outward-facing part — a branch on origin, a marker on another repo, this machine's switch, the
-      // workspace's home — so it happens HERE, behind the click, never in the model's tool.
+    if (found.block.card && (found.block.card.type === 'metrics' || found.block.card.type === 'policy')) {
+      // Metrics / policy card (docs/team-metrics.md, docs/team-policy.md "Ask Worca"): proposed → applied | failed |
+      // declined. The change is the outward-facing part — a branch on origin, a commit to the team's policy, a
+      // marker on another repo, this machine's switch, the workspace's home — so it happens HERE, behind the
+      // click, never in the model's tool.
+      const apply = found.block.card.type === 'policy' ? applyPolicyChange : applyMetricsChange;
       if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
       if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
       if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
@@ -6034,7 +6224,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       let block;
       try {
         let result;
-        try { result = await applyMetricsChange(found.block.card); }
+        try { result = await apply(found.block.card); }
         catch (err) {
           result = { ok: false, error: err && err.message ? err.message : String(err), code: (err && err.code) || 'ERROR', ...(err && err.hint ? { hint: err.hint } : {}), ...(err && err.stderr ? { stderr: String(err.stderr).slice(0, 2000) } : {}) };
         }
@@ -7307,6 +7497,23 @@ if (isMain) {
     }
     try { startTeamMetricsBackground({ log: (m) => console.warn(m) }); }
     catch (err) { console.warn(`[worca-ui] team metrics background: ${err?.message || err}`); }
+    // Team policy discovery (design §9), then the marketplace seeding a policy asks for — metadata
+    // only (a git archive), never an install; installs go through the setup checklist.
+    try {
+      startTeamPolicyBackground({
+        log: (m) => console.warn(m),
+        onTick: async () => {
+          const scopes = await listPolicyScopes();
+          const docs = [];
+          for (const s of scopes.projects) if (s.home && !docs.some((d) => d.slug === s.home)) {
+            const r = await resolveProjectPolicy(s.path, { discover: false }).catch(() => null);
+            if (r?.ok) docs.push({ slug: r.home, doc: r.doc });
+          }
+          const seeded = await seedPolicyMarketplaces(docs);
+          for (const s of seeded) if (s.added) { console.warn(`[worca-ui] team policy: added marketplace ${s.url} (asked for by ${s.homes.join(', ')})`); emitChanged('plugins-changed', 'marketplace-seeded'); }
+        },
+      });
+    } catch (err) { console.warn(`[worca-ui] team policy background: ${err?.message || err}`); }
     // Scheduled runs: boot catch-up + the 30 s tick (the server IS the scheduler).
     try { startScheduler(); } catch (err) { console.warn(`[worca-ui] scheduler: ${err?.message || err}`); }
   });

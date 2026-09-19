@@ -57,10 +57,11 @@ test('sidebar and topnav menus contain buttons, not links', () => {
   for (const [name, block] of [['sidebar', sidebar], ['topnav', topnav]]) {
     assert.ok(!/<a[\s>]/.test(block), `${name} still contains an <a> (browser shows a link preview on hover)`);
     assert.ok(!/href="#/.test(block), `${name} still carries hash hrefs`);
-    // 11 routes (Schedules included) + the interface-mode item (docs/ui-levels.md), which is an action, not a link.
-    assert.equal((block.match(/<button type="button"/g) || []).length, 12,
-      `${name} should have exactly 12 menu buttons`);
-    assert.equal((block.match(/<button type="button"[^>]*data-nav=/g) || []).length, 11, `${name}: 11 route buttons`);
+    // 12 routes (team-metrics, team-policy and Schedules joined the 9) + the interface-mode item
+    // (docs/ui-levels.md), which is an action, not a link.
+    assert.equal((block.match(/<button type="button"/g) || []).length, 13,
+      `${name} should have exactly 13 menu buttons`);
+    assert.equal((block.match(/<button type="button"[^>]*data-nav=/g) || []).length, 12, `${name}: 12 route buttons`);
   }
 });
 

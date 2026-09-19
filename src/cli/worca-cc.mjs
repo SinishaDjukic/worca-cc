@@ -95,6 +95,8 @@ function parseArgs(argv) {
     workflow: undefined,
     mock: false,
     auto: false,
+    pastTeamCap: false,     // team policy (design §12): start with the total-cap acknowledgement recorded
+    reason: undefined,      // …and the reason the team sees for it
     install: null,
     sourceBranch: undefined,
     featureBranch: undefined,
@@ -115,6 +117,7 @@ function parseArgs(argv) {
     '--source-branch',
     '--branch',
     '--memory-scope',
+    '--reason',
     ...Object.keys(SCHEDULE_VALUE_FLAGS),
   ]);
   const map = {
@@ -131,6 +134,7 @@ function parseArgs(argv) {
     '--source-branch': 'sourceBranch',
     '--branch': 'featureBranch',
     '--memory-scope': 'memoryScope',
+    '--reason': 'reason',
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -149,6 +153,10 @@ function parseArgs(argv) {
     }
     if (arg === '--no-human') {
       out.humanInLoop = false;
+      continue;
+    }
+    if (arg === '--past-team-cap') {
+      out.pastTeamCap = true;
       continue;
     }
     if (arg === '--ui') {
@@ -234,6 +242,7 @@ Subcommands:
   remove <name>               Remove a registered project by name (case-insensitive).
   resume <pipelineId>         Continue a paused pipeline (re-attaches Claude sessions).
     [--ignore-cost-cap]       Resume past this pipeline's cost cap (persists on the run).
+    [--past-team-cap]         Continue past a TEAM cap (soft; recorded to team metrics). Add --reason "<why>".
   doctor                      Reconcile crashed runs and sweep leftover run roots.
   plugin <cmd> [...]          Manage plugins: add|install|list|update|remove|purge|enable|
                               disable|doctor|link|reimport|init|validate|exec. See: worca plugin help
@@ -243,6 +252,7 @@ Subcommands:
                               Run the web UI (default http://localhost:4317). See: worca ui help
   workflow <cmd> [...]        Export a workflow (Claude Code skill, JSON, or plugin) / import JSON: list|export|import. See: worca workflow help
   metrics push [--project <path>]   Push pending team-metrics run records (headless flush)
+  policy <cmd> [...]          Team policy from the worca-policy branch: show|pull|init|setup. See: worca policy help
   schedule <cmd> [...]        Manage scheduled runs: list|show|run-now|move|cancel|skip|pause|resume|log.
                               See: worca schedule help
   help                        Print this help (same as --help).
@@ -1124,12 +1134,15 @@ async function cmdConfig(argv) {
 async function cmdResume(argv) {
   const id = (argv.find((a) => !a.startsWith('--')) || '').trim();
   if (!id) {
-    process.stderr.write('usage: worca resume <pipelineId> [--mock] [--yes] [--ignore-cost-cap]\n');
+    process.stderr.write('usage: worca resume <pipelineId> [--mock] [--yes] [--ignore-cost-cap] [--past-team-cap [--reason "<why>"]]\n');
     return 1;
   }
   const mock = argv.includes('--mock');
   const auto = argv.includes('--yes') || argv.includes('--non-interactive');
   const ignoreCap = argv.includes('--ignore-cost-cap');
+  const pastTeamCap = argv.includes('--past-team-cap');
+  const reasonAt = argv.indexOf('--reason');
+  const policyReason = reasonAt !== -1 ? argv[reasonAt + 1] ?? null : null;
   if (mock) process.env.WORCA_MOCK = '1';
 
   const { readPipelineForResume, reconcileStaleRunning } = await import('../core/artifacts.mjs');
@@ -1217,6 +1230,23 @@ async function cmdResume(argv) {
   if (!projectDir) {
     process.stderr.write('project for this pipeline is not onboarded (worca add)\n');
     return 1;
+  }
+
+  // Team policy gates (design §7, §12): soft. --past-team-cap records the choice (once per
+  // window for the total cap, per run for the pipeline cap); under --yes the harness warns instead.
+  {
+    const { checkTeamTotalGate, checkTeamPipelineGate } = await import('../core/policy/gate.mjs');
+    const target = workspace ? { workspaceId: workspace.id } : { projectDir };
+    const totalGate = await checkTeamTotalGate(target, { pastTeamCap, reason: policyReason, unattended: auto });
+    if (totalGate.blocked) {
+      process.stderr.write(`worca: ${totalGate.error}. ${totalGate.code === 'reason_required' ? 'Add --reason "<why>".' : `Continue: worca resume ${id} --past-team-cap [--reason "<why>"]`}\n`);
+      return 1;
+    }
+    const pipeGate = checkTeamPipelineGate(totalGate.caps, { pipelineId: id, spentSoFar, pastTeamCap, reason: policyReason, unattended: auto });
+    if (pipeGate.blocked) {
+      process.stderr.write(`worca: ${pipeGate.error}. ${pipeGate.code === 'reason_required' ? 'Add --reason "<why>".' : `Continue: worca resume ${id} --past-team-cap [--reason "<why>"]`}\n`);
+      return 1;
+    }
   }
 
   const orch = await createOrchestratorFor({
@@ -2129,6 +2159,121 @@ async function cmdMetrics(argv) {
   }
 }
 
+// ── policy subcommand ─────────────────────────────────────────────────────────────
+// Team policy (team-policy design §12). Lazy imports like cmdMetrics; the effective
+// table is the same fold the Team policy page shows.
+
+const POLICY_HELP = `worca policy — team policy (git-backed, read from the worca-policy branch)
+
+Usage:
+  worca policy show [--project <path>] [--json]        The effective policy for a project: team value, yours, what applies.
+  worca policy pull [--project <path>]                 Fetch the worca-policy branch now (a CLI-only machine has no hourly loop).
+  worca policy init --here | --follow <slug> [--project <path>] [--title <text>]
+                                                       Create the branch with an empty policy, or a marker that follows another project.
+  worca policy setup [--project <path>] [--install]    The setup checklist: marketplaces to add, plugins to install or update.
+                                                       --install runs it; each install names its source first. Never automatic otherwise.
+  worca policy help
+
+Run flags: worca ... --past-team-cap [--reason "<why>"]   Continue past a soft team cap; the team sees it in Team metrics.
+
+Exit codes: 0 ok · 1 failure · 2 usage.
+`;
+
+async function cmdPolicy(argv) {
+  const verb = argv[0];
+  const rest = argv.slice(1);
+  if (!verb || verb === 'help') { process.stdout.write(POLICY_HELP); return 0; }
+  const sync = await import('../core/policy/sync.mjs');
+  const { effectiveRows } = await import('../core/policy/effective.mjs');
+  const { localSnapshot, pluginRequirements, marketplaceSeedCandidates, seedPolicyMarketplaces } = await import('../core/policy/local.mjs');
+  try {
+    switch (verb) {
+      case 'show': {
+        const a = pluginArgs(rest, ['--project'], ['--json']);
+        const projectDir = resolve(a.project || process.cwd());
+        const r = await sync.resolveProjectPolicy(projectDir);
+        if (!r.ok) {
+          if (a.json) out(JSON.stringify({ policy: null, reason: r.reason, detail: r.detail ?? null }));
+          else out(`no team policy for ${projectDir}: ${r.detail || r.reason}`);
+          return r.reason === 'not-enabled' || r.reason === 'no-origin' ? 0 : 1;
+        }
+        const rows = effectiveRows({ doc: r.doc, workspaceRun: false, local: localSnapshot(projectDir) });
+        if (a.json) { out(JSON.stringify({ home: r.home, sha: r.sha, delegated: r.delegated, from: r.from, doc: r.doc, rows }, null, 2)); return 0; }
+        out(c('bold', `team policy ${r.home}${r.sha ? ` @ ${String(r.sha).slice(0, 7)}` : ''}${r.delegated ? ` (followed by ${r.from})` : ''}`));
+        if (r.doc.title) out(`  ${r.doc.title}${r.doc.updatedBy ? ` · updated by ${r.doc.updatedBy}` : ''}${r.doc.updatedAt ? ` · ${r.doc.updatedAt}` : ''}`);
+        for (const w of r.warnings) out(c('yellow', `  ! ${w}`));
+        const shown = rows.filter((x) => x.shown);
+        if (!shown.length) out('  (the policy sets no fields yet)');
+        for (const row of shown) {
+          out(`  ${row.label.padEnd(30)} team ${row.team.display} (${row.team.kind})${row.local && row.local.set ? ` · yours ${row.local.display}` : ''} → ${row.effective.display} [${row.effective.source}]${row.note ? ` — ${row.note}` : ''}`);
+        }
+        for (const q of pluginRequirements([{ slug: r.home, doc: r.doc }]).filter((x) => x.state !== 'ok')) {
+          out(c('yellow', `  plugin ${q.name}: ${q.state}${q.minVersion ? ` (expects ≥ ${q.minVersion})` : ''} — see: worca policy setup`));
+        }
+        return 0;
+      }
+      case 'pull': {
+        const a = pluginArgs(rest, ['--project'], []);
+        const projectDir = resolve(a.project || process.cwd());
+        const prefs = await sync.discoverPolicy(projectDir, { force: true });
+        if (!prefs) { out('could not read this repository'); return 1; }
+        if (prefs.lastDiscoveryError) { out(`${c('red', '✗')} ${prefs.slug}: ${prefs.lastDiscoveryError}`); return 1; }
+        out(`${c('green', '✓')} ${prefs.slug}: ${prefs.present ? (prefs.delegateTo ? `follows ${prefs.delegateTo}` : `policy @ ${String(prefs.headSha || '').slice(0, 7)}`) : `no ${sync.POLICY_BRANCH} branch`}`);
+        return 0;
+      }
+      case 'init': {
+        const a = pluginArgs(rest, ['--project', '--follow', '--title'], ['--here']);
+        const projectDir = resolve(a.project || process.cwd());
+        if (!a.here && !a.follow) fail('init needs --here or --follow <slug> — see: worca policy help');
+        const r = await sync.enableTeamPolicy(projectDir, a.follow ? { mode: 'follow', delegateTo: a.follow } : { mode: 'here', title: a.title || '' });
+        out(`${c('green', '✓')} ${r.slug}: ${r.action}${a.follow ? ` (follows ${a.follow})` : ''}`);
+        if (r.action === 'created' && !a.follow) out(`  protect the ${sync.POLICY_BRANCH} branch on your git host so only maintainers can push; edit it from the Team policy page`);
+        return 0;
+      }
+      case 'setup': {
+        const a = pluginArgs(rest, ['--project'], ['--install']);
+        const projectDir = resolve(a.project || process.cwd());
+        const r = await sync.resolveProjectPolicy(projectDir);
+        if (!r.ok) { out(`no team policy for ${projectDir}: ${r.detail || r.reason}`); return 0; }
+        const homes = [{ slug: r.home, doc: r.doc }];
+        const seeds = marketplaceSeedCandidates(homes);
+        for (const s of seeds) out(`marketplace ${s.url}: to add`);
+        const reqs = pluginRequirements(homes);
+        for (const q of reqs) out(`plugin ${q.name}${q.minVersion ? ` ≥ ${q.minVersion}` : ''}: ${q.state}${q.installed?.version ? ` (installed ${q.installed.version})` : ''}`);
+        if (!seeds.length && reqs.every((q) => q.state === 'ok')) { out(`${c('green', '✓')} nothing to do — this machine meets ${r.home}'s policy`); return 0; }
+        if (!a.install) { out('run again with --install to add the marketplaces and install or update the plugins above'); return 0; }
+        const seeded = await seedPolicyMarketplaces(homes);
+        for (const s of seeded) out(`${s.added ? c('green', '✓') : c('red', '✗')} marketplace ${s.url}${s.error ? `: ${s.error}` : ''}`);
+        const { resolveInstallSource } = await import('../core/marketplaces.mjs');
+        const { installPlugin, updatePlugin } = await import('../core/plugin-store.mjs');
+        let failed = 0;
+        for (const q of reqs) {
+          if (q.state === 'ok' || q.state === 'disabled') continue;
+          try {
+            if (q.state === 'missing') {
+              const src = resolveInstallSource(q.name, {});
+              if (!src || src.candidates) { out(`${c('red', '✗')} ${q.name}: ${src?.candidates ? 'found in several marketplaces — install it by hand: worca plugin install ' + q.name + ' --repo <url>' : 'not found in any marketplace'}`); failed++; continue; }
+              out(`installing ${q.name} from ${src.repoUrl}${src.sha ? ` @ ${String(src.sha).slice(0, 7)}` : ''}`);
+              await installPlugin({ repoUrl: src.repoUrl, subdir: src.subdir || '', name: q.name, sha: src.sha || undefined, marketplace: src.marketplace || undefined });
+              out(`${c('green', '✓')} ${q.name} installed`);
+            } else if (q.state === 'outdated') {
+              out(`updating ${q.name} (installed ${q.installed?.version}, expects ≥ ${q.minVersion})`);
+              await updatePlugin(q.name);
+              out(`${c('green', '✓')} ${q.name} updated`);
+            }
+          } catch (err) { failed++; out(`${c('red', '✗')} ${q.name}: ${err?.message || err}`); }
+        }
+        return failed ? 1 : 0;
+      }
+      default:
+        fail(`unknown policy verb "${verb}" — see: worca policy help`);
+    }
+  } catch (err) {
+    process.stderr.write(`worca policy ${verb}: ${err?.message || err}${err?.stderr ? `\n${String(err.stderr).trim()}` : ''}${err?.hint ? `\nhint: ${err.hint}` : ''}\n`);
+    return 1;
+  }
+}
+
 /** Await in-flight metrics pushes before the CLI exits (decision 24). Never blocks past its
  *  own budget and never changes the run's exit code — metrics must not gate the CLI. */
 async function drainMetricsFlushes() {
@@ -2140,7 +2285,7 @@ async function drainMetricsFlushes() {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow', 'metrics', 'schedule']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow', 'metrics', 'policy', 'schedule']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -2201,6 +2346,7 @@ async function main() {
     if (sub === 'ui') return cmdUi(rest);
     if (sub === 'workflow') return cmdWorkflow(rest);
     if (sub === 'metrics') return cmdMetrics(rest);
+    if (sub === 'policy') return cmdPolicy(rest);
     if (sub === 'schedule') return cmdSchedule(rest, { out, c, fail });
   }
   // `worca --ui [...]` is the historical spelling of `worca ui start [...]`; hand the
@@ -2286,6 +2432,18 @@ async function main() {
     process.stderr.write(`worca: total cost limit reached: ${budgetRefusalDetail(budget)}. `
       + 'Raise it: worca config set totalCostLimitUsd <usd>\n');
     return 1;
+  }
+
+  // Team total cap (team-policy design §7, §12): soft. --past-team-cap acknowledges it once per
+  // window; under --yes nobody can click, so the harness warns instead and nothing is refused here.
+  {
+    const { checkTeamTotalGate } = await import('../core/policy/gate.mjs');
+    const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: flags.pastTeamCap, reason: flags.reason, unattended: flags.auto });
+    if (gate.blocked) {
+      process.stderr.write(`worca: ${gate.error}. `
+        + (gate.code === 'reason_required' ? 'Add --reason "<why>" with --past-team-cap.\n' : 'Continue: add --past-team-cap [--reason "<why>"]; the team sees it in Team metrics.\n'));
+      return 1;
+    }
   }
 
   // Validate --workflow before spawning anything: an unknown or archived template

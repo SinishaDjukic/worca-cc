@@ -25,6 +25,7 @@ import { buildAskSpawnOptions, buildMcpConfig, ASK_MCP_SERVER_PATH } from './spa
 import { refreshAskMemoryMount } from './memory-deps.mjs';
 import { validateProposal } from './proposal.mjs';
 import { validateMetricsChange } from './metrics-deps.mjs';
+import { validatePolicyChange } from './policy-deps.mjs';
 import { validateScheduleChange } from './schedule-deps.mjs';
 import { lookupTask } from './source-deps.mjs';
 import { effectiveTimeZone } from './schedule-spec.mjs';
@@ -88,6 +89,7 @@ class AskTurn extends EventEmitter {
       validateProposal: deps.validateProposal ?? validateProposal,
       revalidateWorkflow: deps.revalidateWorkflow ?? revalidateWorkflowProposal,
       validateMetricsChange: deps.validateMetricsChange ?? validateMetricsChange,
+      validatePolicyChange: deps.validatePolicyChange ?? validatePolicyChange,
       validateScheduleChange: deps.validateScheduleChange ?? validateScheduleChange,
       scheduleDefaults: deps.scheduleDefaults ?? scheduleDefaults,
       // A proposed plugin task is looked up here, once: it must exist, and the card shows its title.
@@ -260,6 +262,38 @@ class AskTurn extends EventEmitter {
   }
 
   /**
+   * propose_policy_change RESULT: the metrics card's split — the child validated for the model, the parent re-validates
+   * the same INPUT over the real readers (policy-proposal.mjs) and mints the card.
+   */
+  async _onPolicyProposal(input, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const d = this.deps;
+    const raw = input && typeof input === 'object' ? input : {};
+    // The child's pinned-scope default, replayed (tools.mjs fillPolicyPin): the card matches what the model saw.
+    const pin = this.pinnedScope;
+    const kind = typeof raw.kind === 'string' ? raw.kind.trim() : '';
+    let inp = raw;
+    if (pin && !(typeof raw.projectKey === 'string' && raw.projectKey.trim()) && !(typeof raw.workspaceId === 'string' && raw.workspaceId.trim())) {
+      if (pin.projectKey && (kind === 'enable' || kind === 'edit')) inp = { ...raw, projectKey: pin.projectKey };
+      if (pin.workspaceId && (kind === 'edit' || kind === 'workspace_home' || kind === 'route_members')) inp = { ...raw, workspaceId: pin.workspaceId };
+    }
+    try {
+      const r = await d.validatePolicyChange(inp);
+      if (r && r.ok) this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'proposed', card: r.card });
+      else {
+        const errors = (r && Array.isArray(r.errors) && r.errors.length) ? r.errors : ['invalid proposal'];
+        this.reducer.addBlock({ kind: 'notice', text: `Policy change rejected: ${errors.join('; ')}` });
+      }
+    } catch (err) {
+      this.reducer.addBlock({ kind: 'notice', text: `Policy change rejected: ${err?.message || err}` });
+    }
+    this._persistBlocks();
+  }
+
+  /**
    * propose_schedule_change RESULT: the metrics card's split — the child validated for the model, the parent
    * re-validates the same INPUT against the live rows and mints the card. A child {ok:false} already reached
    * the model as text: no card, no notice.
@@ -367,6 +401,7 @@ class AskTurn extends EventEmitter {
       onWorkflowResult: ({ toolUseId, text, isError }) => this._onWorkflowResult(toolUseId, text, isError),   // the hook's `input` is not needed here: the card is rebuilt from `out`
       onTrackRun: ({ input, isError }) => this._onTrackRun(input, isError),
       onMetricsProposal: ({ input, text, isError }) => this._onMetricsProposal(input, text, isError),
+      onPolicyProposal: ({ input, text, isError }) => this._onPolicyProposal(input, text, isError),
       onScheduleProposal: ({ input, text, isError }) => this._onScheduleProposal(input, text, isError),
       // pause / resume / skip / mark-read in the child → the server's schedules-changed frames.
       onScheduleMutation: (e) => { try { this.deps.onScheduleMutation(e); } catch { /* a broken sink never breaks the turn */ } },
@@ -526,7 +561,8 @@ class AskTurn extends EventEmitter {
       // the flag set (the awaiting continuation resumes a microtask later);
       // flag-first is kept as defensive style (plugin-shim.mjs:164 precedent).
       timer = d.setTimeout(() => { this.timedOut = true; try { this.abort.abort(); } catch { /* ignore */ } }, d.limits.turnTimeoutMs);
-      const limitsNow = d.askLimits(); // D12: read fresh every turn
+      // D12: read fresh every turn. The pinned project's team policy may start the limits off (team-policy §5).
+      const limitsNow = d.askLimits({ projectKey: this.pinnedScope?.projectKey || null });
       out = await this._attempts(limitsNow, mcpConfigPath, scratchDir);
     } catch (err) {
       // Backstop for a deps failure (mkdir/write) — _attempts itself never throws.

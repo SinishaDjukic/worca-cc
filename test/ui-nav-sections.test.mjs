@@ -30,17 +30,17 @@ test('sidebar reads: CTA, Activity, Build, Manage, divider, Settings — in orde
     'new',
     'Activity', 'running', 'schedules', 'history', 'stats', 'team-metrics',
     'Build', 'composer', 'agents',
-    'Manage', 'projects', 'workspaces',
+    'Manage', 'projects', 'workspaces', 'team-policy',
     'nav-sep', 'nav-mode', 'settings',          // the interface-mode item sits directly above Settings (docs/ui-levels.md)
   ]);
 });
 
 // guardrails/models/plugins moved into Settings as tabs, so 12 -> 9; team-metrics adds one -> 10;
-// the interface-mode item (docs/ui-levels.md) adds one -> 11, of which 10 route (data-nav);
-// Schedules (docs/scheduled-runs.md) adds a route -> 12, 11 routing.
-test('grouping adds no buttons and no anchors (12-button invariant holds)', () => {
-  assert.equal((sidebar().match(/<button type="button"/g) || []).length, 12);
-  assert.equal((sidebar().match(/<button type="button"[^>]*data-nav=/g) || []).length, 11);
+// Schedules (docs/scheduled-runs.md) and team-policy (team-policy design §11) add a route each
+// -> 11, and the interface-mode item (docs/ui-levels.md) one more button -> 13, of which 12 route.
+test('grouping adds no buttons and no anchors (13-button invariant holds)', () => {
+  assert.equal((sidebar().match(/<button type="button"/g) || []).length, 13);
+  assert.equal((sidebar().match(/<button type="button"[^>]*data-nav=/g) || []).length, 12);
   assert.ok(!/<a[\s>]/.test(sidebar()));
   assert.match(sidebar(), /<div class="nav-sect">Activity<\/div>/);
   assert.match(sidebar(), /<div class="nav-sect" data-min-level="advanced">Build<\/div>/);
@@ -182,14 +182,14 @@ test('topnav order mirrors the sidebar, with a separator per group boundary', ()
     'new', 'topnav-sep',
     'running', 'schedules', 'history', 'stats', 'team-metrics', 'topnav-sep',
     'composer', 'agents', 'topnav-sep',
-    'projects', 'workspaces', 'topnav-sep',
+    'projects', 'workspaces', 'team-policy', 'topnav-sep',
     'settings',
   ]);
 });
 
 test('separators are spans (button count and settings-text invariants hold)', () => {
-  // 11 routes (Schedules included) + the interface-mode twin (docs/ui-levels.md).
-  assert.equal((topnav().match(/<button type="button"/g) || []).length, 12);
+  // 12 routes (Schedules and Team policy included) + the interface-mode twin (docs/ui-levels.md).
+  assert.equal((topnav().match(/<button type="button"/g) || []).length, 13);
   assert.equal((topnav().match(/<span class="topnav-sep" aria-hidden="true"[^>]*><\/span>/g) || []).length, 4);
   assert.match(topnav(), /data-nav="settings"[^>]*>Settings<\/button>/);
 });

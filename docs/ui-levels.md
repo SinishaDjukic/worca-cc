@@ -129,7 +129,7 @@ be skipped by forgetting it.
 | Ask Worca pill, sidebar spend indicator, the mode item | S |
 | Statistics, Workflow Composer, Workspaces | A |
 | Schedules | A — kept visible at every level while anything is scheduled, missed, repeating or unread |
-| Team metrics, Agents | E |
+| Team metrics, Team policy, Agents | E |
 
 ### New pipeline
 
@@ -191,9 +191,10 @@ effect, mock role, workspace variants).
 |---|---|
 | Projects list, add, project page Overview, remove | S |
 | Project Memory tab (view and edit files) | A |
-| Workspaces page, create wizard, description, re-scan, delete | A |
+| Workspaces list, create wizard, workspace page Overview (projects, description, re-scan, delete) | A |
 | Memory health, Defragment, snapshot restore | E — the health card stays visible when overdue or failing |
-| Team-metrics cell and setup; workspace metrics table and home; KEY card | E |
+| Projects-row team chips; project page Team tab and its TEAM METRICS / TEAM POLICY cards; KEY card | E |
+| Workspace page Team tab (members table, metrics home, policy home) and its METRICS HOME / POLICY HOME cards | E |
 
 ### Settings
 
@@ -205,12 +206,15 @@ effect, mock role, workspace variants).
 | General: title model, Auto workflow model, spawn diagnostics | E |
 | Guardrails create / delete; Models tab; marketplaces, Doctor, leftover data | E |
 
-### Statistics, Team metrics, Ask Worca, Getting started
+### Statistics, Team metrics, Team policy, Ask Worca, Getting started
 
 | Element | Level |
 |---|---|
 | Statistics page | A |
 | Team metrics page and every surface of it elsewhere | E |
+| Team policy page and its Policy / Plugins / Catalog tabs | E |
+| Team-policy notes on New pipeline; the team caps readout under Budget & cost limits | all — a team cap applies in every mode, so the reason it applies is never hidden |
+| Required-plugins strip and setup checklist (Settings › Plugins) | A — with the tab that holds them |
 | Ask: chat, history, attachments, run card, proposal title / project / workflow / brief / Start | S |
 | Ask: a proposal's own schedule (the "Schedule" action and its time), schedule-change cards | S — the answer the user asked for |
 | Ask: a proposal's tracker task (id, title, link) in place of the brief; the "Auto" workflow option when Ask proposed it | S |

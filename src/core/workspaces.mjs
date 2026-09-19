@@ -42,14 +42,14 @@ function err(message, code) { return Object.assign(new Error(message), { code })
  * @returns {string|null}
  * @throws err(code: BAD_REQUEST)
  */
-function memberPathFor(paths, candidate) {
+function memberPathFor(paths, candidate, field = 'metricsProject') {
   if (candidate == null || candidate === '') return null;
-  if (typeof candidate !== 'string') throw err('metricsProject must be a project path or null', 'BAD_REQUEST');
+  if (typeof candidate !== 'string') throw err(`${field} must be a project path or null`, 'BAD_REQUEST');
   const want = normalizeProjectPath(candidate);
   // normalizeProjectPath('   ') -> null; canonicalProjectRoot(null) would throw ERR_INVALID_ARG_TYPE -> 500.
-  if (!want) throw err('metricsProject must be a project path or null', 'BAD_REQUEST');
+  if (!want) throw err(`${field} must be a project path or null`, 'BAD_REQUEST');
   const hit = paths.find((p) => p === want || canonicalProjectRoot(p) === canonicalProjectRoot(want));
-  if (!hit) throw err('metricsProject must be one of the workspace projects', 'BAD_REQUEST');
+  if (!hit) throw err(`${field} must be one of the workspace projects`, 'BAD_REQUEST');
   return hit;
 }
 
@@ -130,6 +130,7 @@ function annotate(entry) {
     projectKeys: pairs.map((x) => x.key),
     exists: pairs.map((x) => isDir(x.path)),
     metricsProject: entry.metricsProject ?? null,
+    policyProject: entry.policyProject ?? null,
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
   };
@@ -150,6 +151,7 @@ function rowToEntry(r) {
     description: typeof r.description === 'string' ? r.description : '',
     projectPaths: memberPaths(r.id),
     metricsProject: r.metrics_project ?? null,
+    policyProject: r.policy_project ?? null,
     createdAt: typeof r.created_at === 'string' ? r.created_at : '',
     updatedAt: typeof r.updated_at === 'string' ? r.updated_at : '',
   };
@@ -159,7 +161,7 @@ function rowToEntry(r) {
 function readEntry(id) {
   getDb();
   const r = prepare(
-    'SELECT id, name, description, metrics_project, created_at, updated_at FROM workspaces WHERE id = ?'
+    'SELECT id, name, description, metrics_project, policy_project, created_at, updated_at FROM workspaces WHERE id = ?'
   ).get(id);
   return r ? rowToEntry(r) : null;
 }
@@ -171,7 +173,7 @@ function readEntry(id) {
 export async function listWorkspaces() {
   getDb();
   const rows = prepare(
-    'SELECT id, name, description, metrics_project, created_at, updated_at FROM workspaces ORDER BY created_at, name'
+    'SELECT id, name, description, metrics_project, policy_project, created_at, updated_at FROM workspaces ORDER BY created_at, name'
   ).all();
   return rows.map(rowToEntry).map(annotate);
 }
@@ -242,6 +244,7 @@ export async function createWorkspace(input = {}) {
   }
 
   const metricsProject = memberPathFor(members, input.metricsProject ?? null);
+  const policyProject = memberPathFor(members, input.policyProject ?? null, 'policyProject');
   const id = workspaceKey({ name, projectPaths: members });
   const hash = rootsHash(members);
   const now = new Date().toISOString();
@@ -259,8 +262,8 @@ export async function createWorkspace(input = {}) {
       }
     }
     prepare(
-      'INSERT INTO workspaces (id, name, description, metrics_project, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(id, name, description, metricsProject, now, now);
+      'INSERT INTO workspaces (id, name, description, metrics_project, policy_project, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(id, name, description, metricsProject, policyProject, now, now);
     const insMember = prepare(
       'INSERT INTO workspace_projects (workspace_id, project_key, ordinal) VALUES (?, ?, ?)'
     );
@@ -270,7 +273,7 @@ export async function createWorkspace(input = {}) {
 
   // Return the annotated entry (derived fields recomputed from the persisted paths).
   return annotate({
-    id, name, description, projectPaths: members, metricsProject, createdAt: now, updatedAt: now,
+    id, name, description, projectPaths: members, metricsProject, policyProject, createdAt: now, updatedAt: now,
   });
 }
 
@@ -299,6 +302,9 @@ export async function updateWorkspace(id, patch = {}) {
   const metricsProject = Object.prototype.hasOwnProperty.call(patch || {}, 'metricsProject')
     ? memberPathFor(entry.projectPaths, patch.metricsProject)
     : entry.metricsProject ?? null;
+  const policyProject = Object.prototype.hasOwnProperty.call(patch || {}, 'policyProject')
+    ? memberPathFor(entry.projectPaths, patch.policyProject, 'policyProject')
+    : entry.policyProject ?? null;
   const now = new Date().toISOString();
 
   tx(() => {
@@ -308,11 +314,11 @@ export async function updateWorkspace(id, patch = {}) {
     ).get(name, id);
     if (clash) throw err(`a workspace named "${name}" already exists`, 'DUPLICATE_NAME');
     prepare(
-      'UPDATE workspaces SET name = ?, description = ?, metrics_project = ?, updated_at = ? WHERE id = ?'
-    ).run(name, description, metricsProject, now, id);
+      'UPDATE workspaces SET name = ?, description = ?, metrics_project = ?, policy_project = ?, updated_at = ? WHERE id = ?'
+    ).run(name, description, metricsProject, policyProject, now, id);
   });
 
-  return annotate({ ...entry, name, description, metricsProject, updatedAt: now });
+  return annotate({ ...entry, name, description, metricsProject, policyProject, updatedAt: now });
 }
 
 /** Thin setter: edit only the description. */

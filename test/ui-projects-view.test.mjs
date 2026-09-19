@@ -640,7 +640,7 @@ test('index.html: the Projects view is a two-screen shell with a detail template
   }
   // The list still lives at the same ids (the controller and every older test read them).
   assert.match(htmlText, /<p id="projects-msg" class="form-msg" aria-live="polite"><\/p>\s*<div class="run-list" id="projects-list"><\/div>/);
-  assert.equal((htmlText.match(/data-view/g) || []).length, 14, 'a screen inside the projects view, not a view (Team metrics, Getting started and Schedules are their own views)');
+  assert.equal((htmlText.match(/data-view/g) || []).length, 15, 'a screen inside the projects view, not a view (Team metrics, Team policy, Getting started and Schedules are their own views)');
 });
 
 test('style.css: the projects shell is a twin of the History track', () => {
@@ -666,7 +666,7 @@ test('style.css: the projects shell is a twin of the History track', () => {
   }
 });
 
-test('rows show a .tm-cell; .tm-enable opens the enable dialog; toggling .tm-record PATCHes', async () => {
+test('rows carry compact team chips (status only, no controls); the project page\'s Team tab has the full block: .tm-enable opens the enable dialog, toggling .tm-record PATCHes', async () => {
   const patches = [];
   const { window } = await boot({
     fetchHandler: (u, opts) => {
@@ -681,18 +681,41 @@ test('rows show a .tm-cell; .tm-enable opens the enable dialog; toggling .tm-rec
   await goProjects(window);
   await tick(); await tick();
   const doc = window.document;
-  const cells = [...doc.querySelectorAll('#projects-list .tm-cell')];
-  assert.equal(cells.length, 2);
-  const offCell = cells.find((c) => c.dataset.key === 'alpha-00000001');
-  const onCell = cells.find((c) => c.dataset.key === 'beta-00000002');
-  assert.ok(offCell, 'off project has a .tm-cell');
-  assert.ok(onCell, 'on project has a .tm-cell');
-
+  // The row: one .pl-team column with a metrics chip and a policy chip, expert-level, no buttons.
+  const rows = [...doc.querySelectorAll('#projects-list .pl-item')];
+  const alphaTeam = rows[0].querySelector('.pl-team');
+  const betaTeam = rows[1].querySelector('.pl-team');
+  assert.equal(alphaTeam.dataset.minLevel, 'expert');
+  assert.equal(alphaTeam.querySelector('.pl-tm').textContent, 'Metrics off');
+  assert.equal(alphaTeam.querySelector('.pl-tm').dataset.kind, 'off');
+  assert.equal(betaTeam.querySelector('.pl-tm').textContent, 'Metrics on · 3 runs');
+  assert.ok(betaTeam.querySelector('.pl-tm .tm-dot.green'));
+  assert.equal(doc.querySelector('#projects-list .tm-cell'), null, 'no cell on the list any more');
+  assert.equal(doc.querySelector('#projects-list button:not(.proj-open)'), null, 'the chevron is the only button on a row');
+  // The page: Overview carries a TEAM METRICS card that opens the Team tab; the tab carries the block.
+  click(window, rows[0].querySelector('.pl-row'));
+  await tick(); await tick(); await tick();
+  const ov = doc.querySelector('#proj-detail .pd-sec[data-sec="overview"]');
+  const card = ov.querySelector('button.pd-ov-card-metrics');
+  assert.equal(card.dataset.minLevel, 'expert');
+  assert.equal(card.querySelector('.pd-ov-value').textContent, 'Off');
+  assert.equal(card.querySelector('.pd-ov-sub').textContent, 'runs stay on this machine');
+  click(window, card);
+  await tick(); await tick(); await tick();
+  assert.equal(window.location.hash, '#projects/alpha-00000001/team');
+  assert.ok(doc.querySelector('#proj-detail .pd-tab[data-sec="team"]').classList.contains('active'));
+  const offCell = doc.querySelector('#proj-detail .pd-team-metrics .tm-cell');
+  assert.equal(offCell.dataset.key, 'alpha-00000001');
+  assert.equal(offCell.querySelector('.tm-label'), null, 'the panel head names the feature; the block has no title of its own');
   click(window, offCell.querySelector('.tm-enable'));
   await tick(); await tick();
   assert.equal(doc.getElementById('plugin-modal').classList.contains('hidden'), false, 'enable dialog opened');
   assert.ok(doc.querySelector('input[name="tm-where"]'), 'dialog has the "where to record" radios');
-
+  // The switch on beta's page.
+  window.location.hash = 'projects/beta-00000002/team';
+  await tick(); await tick(); await tick(); await tick();
+  const onCell = doc.querySelector('#proj-detail .pd-team-metrics .tm-cell');
+  assert.equal(onCell.dataset.key, 'beta-00000002');
   const cb = onCell.querySelector('input.tm-record');
   cb.checked = false;
   cb.dispatchEvent(new window.Event('change', { bubbles: true }));

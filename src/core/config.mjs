@@ -17,8 +17,12 @@ import { projectKey } from './store.mjs';
 import { AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
 import { EFFORTS, prepareModelEnv, withTierModelEnv, isSubagentModelValue, subagentModelIssue } from './model-env.mjs';
-import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels } from './settings.mjs';
+import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings } from './settings.mjs';
+/** Whether the developer stored the hide-built-ins flag (a team default applies only when not). */
+const readSettingsHideStored = () => { const s = readSettings(); return typeof s.hideBuiltinModels === 'boolean' || s.hideBuiltinModelsChosen === true; };
 import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plugin-models.mjs';
+// Team policy defaults (team-policy design §6, §8): read from the discovery CACHE only (a leaf module).
+import { policyCatalogModels, teamDefault } from './policy/cache.mjs';
 
 /**
  * Recompute the agent step list FRESH from the layered registry (repo agents/ +
@@ -134,7 +138,7 @@ function parseJson(text, fallback) {
  * @param {string} key
  * @returns {{steps:string,custom_models:string,active_workflow_id:(string|null),extra:string}|null}
  */
-function readConfigRow(key) {
+export function readConfigRow(key) {
   getDb();
   return prepare(
     'SELECT steps, custom_models, active_workflow_id, extra, human_in_loop FROM project_config WHERE project_key = ?'
@@ -175,7 +179,7 @@ export async function readConfig(projectDir) {
  * env objects already in scope here, NEVER by calling modelHasBaseUrlRouting per
  * entry (that re-reads settings + the plugins lock from disk on every row).
  */
-function composeCatalog(projectCustom = []) {
+function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
   const globals = listGlobalModels();
   const globalByIdLc = new Map(globals.map((m) => [m.id.toLowerCase(), m]));
   const plugins = listPluginModels();
@@ -189,7 +193,10 @@ function composeCatalog(projectCustom = []) {
   // read by every picker. The entry stays in the catalog — hiding an id must
   // never stop it resolving, or a stored run / plugin reference that names it
   // would break — so pickers skip `hidden`, validators ignore it.
-  const hidden = hideBuiltinModels() ? { hidden: true } : {};
+  // A team-policy default applies only while the developer has not stored the flag themselves.
+  const teamHide = projectDir ? teamDefault(projectDir, 'models.hideBuiltins') : undefined;
+  const hideStored = readSettingsHideStored();
+  const hidden = (hideStored ? hideBuiltinModels() : (teamHide === true || hideBuiltinModels())) ? { hidden: true } : {};
   const pluginShape = (id, m, lc) => ({
     id, label: m.label, efforts: [...m.efforts], custom: 'plugin', plugin: m.plugin,
     hasEnv: !!m.env, routed: routedOf(m.env), ...unreliable(lc),
@@ -216,6 +223,15 @@ function composeCatalog(projectCustom = []) {
     if (seen.has(lc)) continue; // predefined/global shadow wins
     seen.add(lc);
     out.push(pluginShape(m.id, m, lc));
+  }
+  // Team-policy catalog entries (team-policy design §8): after global and plugin, before the
+  // legacy per-project ones. Read-only rows with a policy badge; `home` names the policy.
+  for (const m of policyCatalogModels()) {
+    const lc = m.id.toLowerCase();
+    if (seen.has(lc)) continue;
+    seen.add(lc);
+    out.push({ id: m.id, label: m.label, efforts: [...m.efforts], custom: 'policy', policy: m.home,
+      hasEnv: !!m.env, routed: routedOf(m.env), ...unreliable(lc) });
   }
   for (const m of projectCustom) {
     if (seen.has(m.id.toLowerCase())) continue; // predefined/global/plugin wins
@@ -469,9 +485,9 @@ export function liveCostRates(modelId) {
  * raw id); global entries advertise their configured subset.
  */
 export async function listModels(projectDir) {
-  if (!projectDir) return composeCatalog([]); // project-less: predefined ⊕ global only
+  if (!projectDir) return composeCatalog([]); // project-less: predefined ⊕ global ⊕ plugin ⊕ policy
   const { customModels } = readRaw(projectDir);
-  return composeCatalog(customModels);
+  return composeCatalog(customModels, { projectDir });
 }
 
 /**
@@ -508,6 +524,15 @@ export function resolveModelEnv(modelId) {
       rawEnv = env;
       who = `${JSON.stringify(pm.id)} (plugin "${pm.plugin}")`;
       canonicalId = pm.id;
+    } else if (!pm) {
+      // A team-policy catalog entry, reached only when neither the user nor a plugin defines the
+      // id. Its env carries literals and ${VAR} refs only: the editor and the reader refuse secrets.
+      const tm = policyCatalogModels().find((m) => m.id.toLowerCase() === lc);
+      if (tm && tm.env) {
+        rawEnv = tm.env;
+        who = `${JSON.stringify(tm.id)} (team policy ${tm.home})`;
+        canonicalId = tm.id;
+      }
     }
   }
   if (!rawEnv) return undefined;
@@ -535,7 +560,8 @@ export function catalogHasModel(modelId) {
   const lc = id.toLowerCase();
   return PREDEFINED_MODELS.some((m) => m.id.toLowerCase() === lc)
     || listGlobalModels().some((m) => m.id.toLowerCase() === lc)
-    || listPluginModels().some((m) => m.id.toLowerCase() === lc);
+    || listPluginModels().some((m) => m.id.toLowerCase() === lc)
+    || policyCatalogModels().some((m) => m.id.toLowerCase() === lc);
 }
 
 /**
@@ -546,9 +572,12 @@ export function catalogHasModel(modelId) {
  */
 export async function resolveStepModels(projectDir, fallbackModel) {
   const cfg = readRaw(projectDir);
+  // Team policy `models.steps` (a default): starts a role the project has NOT configured.
+  const team = teamDefault(projectDir, 'models.steps') || {};
   const out = {};
   for (const { key } of agentSteps()) {
-    const sel = cfg.steps[key] || {};
+    const own = cfg.steps[key] || {};
+    const sel = own.model || own.effort ? own : (team[key] || {});
     out[key] = { model: sel.model || fallbackModel || undefined, effort: sel.effort || undefined };
   }
   return out;
@@ -841,16 +870,22 @@ export async function readRunConfig(projectDir) {
   // Forward any OTHER unknown keys verbatim too (future-proof, matches "preserve unknown").
   // prRemotes is the ship-it dialog's own preference (readPrRemotePrefs), not run config.
   for (const [k, v] of Object.entries(extra)) {
-    if (k !== 'webUiTesting' && k !== PR_REMOTES_KEY && k !== TEAM_METRICS_KEY && !(k in out)) out[k] = v;
+    if (k !== 'webUiTesting' && k !== PR_REMOTES_KEY && k !== TEAM_METRICS_KEY && k !== TEAM_POLICY_KEY && k !== 'humanInLoopSet' && !(k in out)) out[k] = v;
   }
   const active = row && typeof row.active_workflow_id === 'string' ? row.active_workflow_id.trim() : '';
-  // Spec §6.1 / D16: a project with no remembered New-pipeline choice starts on Auto.
-  out.activeWorkflowId = active || AUTO_WORKFLOW_ID;
+  // Spec §6.1 / D16: a project with no remembered New-pipeline choice starts on Auto — unless a
+  // team policy names a default workflow (team-policy design §8), which starts it there instead.
+  const teamWf = active ? undefined : teamDefault(projectDir, 'workflows.default');
+  out.activeWorkflowId = active || (typeof teamWf === 'string' && teamWf ? teamWf : AUTO_WORKFLOW_ID);
+  if (!active && teamWf) out.activeWorkflowSource = 'team-policy';
   // Auto workflow (spec §6.1): the human-in-the-loop switch. ON is the default
   // and is NOT echoed — the key appears only when the project turned it off, so
   // every consumer reads `config.humanInLoop ?? true` and the config shape of a
-  // project that never touched it stays otherwise byte-identical.
+  // project that never touched it stays otherwise byte-identical. A team default applies only
+  // while the project has never set its own switch (setHumanInLoop stamps extra.humanInLoopSet).
   if (row && row.human_in_loop === 0) out.humanInLoop = false;
+  else if (!extra.humanInLoopSet && teamDefault(projectDir, 'run.humanInLoop') === false) out.humanInLoop = false;
+  delete out.humanInLoopSet;
   return out;
 }
 
@@ -1110,6 +1145,40 @@ export function writeTeamMetricsPrefs(key, patch) {
   return next;
 }
 
+// ── Team-policy preferences (project_config.extra.teamPolicy) ──────────────
+// The discovery cache for the worca-policy branch (team-policy design §9): the last
+// verdict, the document read from origin, the delegate marker, and the per-window
+// total-cap acknowledgements. Same KEY-taking contract as the team-metrics pair.
+export const TEAM_POLICY_KEY = 'teamPolicy';
+
+/** @returns {object|null} the cached team-policy state for a project key */
+export function readTeamPolicyPrefs(key) {
+  assertProjectKey(key);
+  const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+  const extra = row ? parseJson(row.extra, {}) : {};
+  const v = extra[TEAM_POLICY_KEY];
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+}
+
+/** Shallow-merge `patch` into extra.teamPolicy; returns the merged object. */
+export function writeTeamPolicyPrefs(key, patch) {
+  assertProjectKey(key);
+  let next = null;
+  tx(() => {
+    const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+    const extra = row ? parseJson(row.extra, {}) : {};
+    const cur = extra[TEAM_POLICY_KEY] && typeof extra[TEAM_POLICY_KEY] === 'object' ? extra[TEAM_POLICY_KEY] : {};
+    next = { ...cur, ...patch };
+    extra[TEAM_POLICY_KEY] = next;
+    prepare(`
+      INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
+      VALUES (?, '{}', '[]', NULL, ?)
+      ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
+    `).run(key, JSON.stringify(extra));
+  });
+  return next;
+}
+
 /**
  * Set the project's human-in-the-loop switch for Auto runs (spec D15/D20).
  * @param {string} projectDir
@@ -1124,6 +1193,13 @@ export async function setHumanInLoop(projectDir, value) {
       VALUES (?, '{}', '[]', NULL, '{}', ?)
       ON CONFLICT(project_key) DO UPDATE SET human_in_loop = excluded.human_in_loop
     `).run(key, v);
+    // The project now has its own switch: a team-policy default no longer applies (design §6).
+    const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+    const extra = row ? parseJson(row.extra, {}) : {};
+    if (!extra.humanInLoopSet) {
+      extra.humanInLoopSet = true;
+      prepare('UPDATE project_config SET extra = ? WHERE project_key = ?').run(JSON.stringify(extra), key);
+    }
   });
 }
 

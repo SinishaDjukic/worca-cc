@@ -672,6 +672,25 @@ test('onTrackRun fires on the MAIN-stream track_run tool_result with the full in
   assert.equal(calls.length, 2);
 });
 
+test('propose_policy_change / get_team_policy: labels, the RESULT hook with the full input; never for a sub-agent', () => {
+  assert.equal(labelForTool('mcp__worca__propose_policy_change', {}), 'Proposing a policy change');
+  assert.equal(labelForTool('mcp__worca__get_team_policy', {}), 'Reading team policy');
+  const results = [];
+  const h = harness({ onPolicyProposal: (e) => { results.push(e); return Promise.resolve(); } });
+  const input = { kind: 'edit', projectKey: 'p-00000001', set: [{ key: 'cost.pipelineLimitUsd', value: 30 }] };
+  h.push(session(), init(), mstart('msg_1'), atool('msg_1', 'toolu_tp', 'mcp__worca__propose_policy_change', input));
+  assert.deepEqual(results, [], 'minted at RESULT');
+  h.push(uresult('toolu_tp', '{"ok":true,"card":{}}'));
+  assert.deepEqual(results, [{ toolUseId: 'toolu_tp', input, text: '{"ok":true,"card":{}}', isError: false }]);
+  h.push(atool('msg_1', 'toolu_task', 'Agent', { description: 'helper', subagent_type: 'general-purpose', prompt: 'x' }));
+  h.push(atool('msg_c', 'toolu_tp2', 'mcp__worca__propose_policy_change', input, 'toolu_task'));
+  h.push(uresult('toolu_tp2', '{"ok":true}', { ptu: 'toolu_task' }));
+  assert.equal(results.length, 1, 'child-stream calls are never intercepted');
+  const throwing = harness({ onPolicyProposal: () => { throw new Error('hook'); } });
+  throwing.push(atool('msg_1', 'toolu_x', 'mcp__worca__propose_policy_change', input));
+  assert.doesNotThrow(() => throwing.push(uresult('toolu_x', '{"ok":true}')));
+});
+
 // Scheduled runs (docs/scheduled-runs.md "Ask Worca"): the four direct writes repaint the page; a
 // propose_schedule_change RESULT hands its INPUT to the parent for the authoritative re-validation.
 test('schedule tools: a successful direct write pokes onScheduleMutation (errors and reads do not); propose_schedule_change reaches onScheduleProposal', () => {

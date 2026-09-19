@@ -131,6 +131,8 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'get_team_metrics': return 'Reading team metrics';
     case 'list_team_metrics_runs': return 'Listing team runs';
     case 'push_team_metrics': return 'Pushing team metrics';
+    case 'get_team_policy': return 'Reading team policy';
+    case 'propose_policy_change': return 'Proposing a policy change';
     case 'track_run': return 'Tracking a run';
     case 'read_attachment': return `Reading ${(attachmentNames && attachmentNames[id]) || 'attachment'}`;
     case 'list_diff_comments': return id ? `Reading comments on ${id.slice(0, 12)}` : 'Reading diff comments';
@@ -193,6 +195,7 @@ export function createTurnReducer({
   onWorkflowStart = null,
   onWorkflowResult = null,
   onMetricsProposal = null,      // propose_metrics_change RESULT (team metrics card; the parent re-validates the input)
+  onPolicyProposal = null,       // propose_policy_change RESULT (team policy card; same split)
   onScheduleProposal = null,     // propose_schedule_change RESULT (schedule card; the parent re-validates the input)
   onScheduleMutation = null,     // a direct schedule write succeeded in the MCP child
   onTrackRun = null,
@@ -512,6 +515,13 @@ export function createTurnReducer({
         // the raw result text only says whether the child accepted it.
         try {
           const ret = onMetricsProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_policy_change' && typeof onPolicyProposal === 'function') {
+        // Same split as the metrics card: the parent re-validates from the INPUT (policy-proposal.mjs).
+        try {
+          const ret = onPolicyProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }

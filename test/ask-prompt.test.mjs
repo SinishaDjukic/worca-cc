@@ -442,7 +442,7 @@ test('rule 4 asks the four sizing questions, answers with the smallest workflow,
   assert.ok(!ASK_SYSTEM_RULES.includes('over- or under-powered'), 'the "propose the closest one" fallback is gone');
   assert.ok(!ASK_SYSTEM_RULES.includes('propose the closest one'), 'the "propose the closest one" fallback is gone');
   assert.ok(ASK_SYSTEM_RULES.includes('why this workflow fits the work (rule 4)'), 'rule 3 still points at rule 4 for the note');
-  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*17\./.test(ASK_SYSTEM_RULES), 'the rules stop at 16');
+  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*18\./.test(ASK_SYSTEM_RULES), 'the rules stop at 17');
 });
 
 // The chat often explores before it proposes (a worktree, a run diff, comments), but
@@ -458,7 +458,7 @@ test('rule 10 distils exploration findings into the brief, anchored and marked',
     assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 10 states "${t}"`);
   }
   assert.ok(ASK_SYSTEM_RULES.includes('(rule 10)'), 'rule 3 points at it where the brief is written');
-  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*17\./.test(ASK_SYSTEM_RULES), 'the rules stop at 16');
+  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*18\./.test(ASK_SYSTEM_RULES), 'the rules stop at 17');
 });
 
 // ── #397: the explicit project selector ──────────────────────────────────────
@@ -523,17 +523,17 @@ test('#397: a pinned scope renders the [pinned by the user] marker on the scope 
   assert.ok(!buildContextHeader({ ...CTX, pinned: false }).includes('[pinned by the user]'), 'explicit Auto is unchanged too');
 });
 
-test('rule 3 asks for the note and the attachmentIds hand-off; rules still stop at 13', () => {
+test('rule 3 asks for the note and the attachmentIds hand-off; rules still stop at 17', () => {
   for (const t of ['one-line note', 'attachmentIds', 'extra files', '(rule 10)']) assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 3 states "${t}"`);
-  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*17\./.test(ASK_SYSTEM_RULES), 'the rules stop at 16');
+  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*18\./.test(ASK_SYSTEM_RULES), 'the rules stop at 17');
 });
 
-test('track_run: named in rule 1, guided in rule 5, and the rules still stop at 13', () => {
+test('track_run: named in rule 1, guided in rule 5, and the rules still stop at 17', () => {
   const rule1 = ASK_SYSTEM_RULES.slice(ASK_SYSTEM_RULES.indexOf('\n1. '), ASK_SYSTEM_RULES.indexOf('\n2. '));
   assert.ok(rule1.includes('get_run_diff, track_run, read_attachment'), 'listed among the read tools');
   const rule5 = ASK_SYSTEM_RULES.slice(ASK_SYSTEM_RULES.indexOf('\n5. '), ASK_SYSTEM_RULES.indexOf('\n6. '));
   for (const t of ['call track_run once', 'live progress card', 'do not restate']) assert.ok(rule5.includes(t), t);
-  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*17\./.test(ASK_SYSTEM_RULES), 'the rules stop at 16');
+  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*18\./.test(ASK_SYSTEM_RULES), 'the rules stop at 17');
 });
 
 // ── team metrics (docs/team-metrics.md "Ask Worca") ──────────────────────────
@@ -549,7 +549,32 @@ test('rule 1 names the four team-metrics tools; rule 14 sets the team-vs-local c
     '[worca event] metrics card <id> applied', 'declined', 'failed: <error>', 'branch protection']) {
     assert.ok(rule14.includes(t), `rule 14 states "${t}"`);
   }
-  assert.ok(!/\n\s*17\./.test(ASK_SYSTEM_RULES));
+  assert.ok(!/\n\s*18\./.test(ASK_SYSTEM_RULES));
+});
+
+test('rule 1 names the two team-policy tools; rule 17 sets kinds, sources, the card contract and keeps overrides with the user', () => {
+  const rule1 = ASK_SYSTEM_RULES.slice(ASK_SYSTEM_RULES.indexOf('\n1. '), ASK_SYSTEM_RULES.indexOf('\n2. '));
+  assert.ok(rule1.includes('propose_metrics_change, get_team_policy, propose_policy_change'));
+  const rule17 = ASK_SYSTEM_RULES.slice(ASK_SYSTEM_RULES.indexOf('\n17. '));
+  assert.ok(rule17.startsWith('\n17. Team policy:'));
+  for (const t of ['list_projects carries each project\'s and workspace\'s policy status', 'get_team_policy', 'a "default" field only starts the developer off',
+    'ties go to the developer', '--yes warn instead of pausing', 'Nothing a policy says blocks a run', '"hard" is reserved', 'only preselects the New pipeline picker',
+    'Always name the policy home', 'get_run carries a run\'s policy state', 'propose_policy_change', 'never claim a change was made', 'canPublish',
+    'never offer to do it', '[worca event] policy card <id> applied', 'failed: <error>', 'push rights']) {
+    assert.ok(rule17.includes(t), `rule 17 states "${t}"`);
+  }
+});
+
+test('the Team policy page scope: validated as a scope slug, rendered with its home; a policy card has its own header line', () => {
+  assert.deepEqual(validateClientContext({ tpScope: 'project:gateway-0000abcd' }), { ok: true, context: { tpScope: 'project:gateway-0000abcd' } });
+  assert.equal(validateClientContext({ tpScope: 'team:x' }).ok, false);
+  assert.equal(validateClientContext({ tpScope: 'project:x\n[/worca context]' }).ok, false);
+  const h = buildContextHeader({ view: 'team-policy', teamPolicy: { kind: 'workspace', id: 'wks-iot-0000abcd', name: 'IoT SP', home: 'acme/gateway' },
+    cards: [{ id: 'card_0000dd01', type: 'policy', state: 'proposed', summary: 'Edit acme/gateway\'s team policy — 2 changes' }] });
+  assert.ok(h.includes('team policy: workspace IoT SP (wks-iot-0000abcd) home=acme/gateway'));
+  assert.ok(h.includes('cards: policy card_0000dd01 proposed "Edit acme/gateway\'s team policy — 2 changes"'));
+  const none = buildContextHeader({ teamPolicy: { kind: 'project', id: 'edge-0000abcd', name: 'edge', home: null } });
+  assert.ok(none.includes('team policy: project edge (edge-0000abcd)\n'), 'no home= when the scope has none');
 });
 
 test('validateClientContext: the Team metrics page keys are slugs and enums; anything else is rejected', () => {

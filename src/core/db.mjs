@@ -54,7 +54,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 31;
+export const SCHEMA_VERSION = 32;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -822,7 +822,8 @@ const INCREMENTAL_COLUMNS = {
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
                             pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT',
                             outcome: 'TEXT',
-                            scheduled_for: 'TEXT', schedule_id: 'TEXT' },   // v31: scheduled-run provenance (NULL = started by hand)
+                            scheduled_for: 'TEXT', schedule_id: 'TEXT',   // v31: scheduled-run provenance (NULL = started by hand)
+                            policy_state: 'TEXT' },   // v32: team-policy run state (JSON: home, sha, overrides, exceeded, deviations, reason)
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT' },
@@ -836,7 +837,8 @@ const INCREMENTAL_COLUMNS = {
                             mime: 'TEXT' },               // v27: sniffed mime; NULL on pre-v27 rows (= text)
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE' },  // v29: reply threads; NULL = thread root
-  workspaces:             { metrics_project: 'TEXT' },  // v30: team-metrics home (member absolute path); NULL = no home
+  workspaces:             { metrics_project: 'TEXT',    // v30: team-metrics home (member absolute path); NULL = no home
+                            policy_project: 'TEXT' },   // v32: team-policy home (member absolute path); NULL = no home
   schedules:              { ask_thread_id: 'TEXT', ask_card_id: 'TEXT' },  // v31: the Ask Worca card a series came from
 };
 
@@ -1243,6 +1245,16 @@ function applySchemaV31(db) {
   repairSchemaGaps(db, schemaGaps(db));
 }
 
+/** v32 (team policy): pipelines.policy_state + workspaces.policy_project — two plain
+ *  additive columns declared in INCREMENTAL_COLUMNS, applySchemaV30's shape. NULL on
+ *  every existing row = no team policy touched this run / no policy home yet.
+ *  It is v32, not v31: scheduled runs claimed 31 on dev first, and a DB already
+ *  stamped 31 by that ladder would skip these columns forever (the v11 collision
+ *  this file's INCREMENTAL_COLUMNS comment describes). */
+function applySchemaV32(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
 /** Move every stored pin on model id `from` (lower-case) to `to`. Each table
  *  is guarded like V24's: hand-seeded upgrade fixtures (and a DB from before the
  *  fs->db import) reach this step without some of them. */
@@ -1630,6 +1642,7 @@ export function migrate(db) {
     if (current < 29) applySchemaV29(db);            // diff-comment reply threads: parent_id
     if (current < 30) applySchemaV30(db);            // team metrics: workspaces.metrics_project
     if (current < 31) applySchemaV31(db);            // scheduled runs: tickets + schedules + notifications
+    if (current < 32) applySchemaV32(db);            // team policy: pipelines.policy_state + workspaces.policy_project
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

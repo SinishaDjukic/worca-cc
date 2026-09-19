@@ -2148,15 +2148,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // ---- Metrics card (docs/team-metrics.md "Ask Worca"): a proposed team-metrics configuration change --------------
   const MC_KIND_LABEL = { enable: 'Enable team metrics', record: 'Include my runs', workspace_home: 'Metrics home', route_members: 'Route members' };
   const MC_APPLY_LABEL = { enable: 'Enable', record: 'Apply', workspace_home: 'Set home', route_members: 'Route members' };
+  // A team-policy card (docs/team-policy.md "Ask Worca") is the same component: other words, plus the
+  // before → after list of an edit.
+  const PC_KIND_LABEL = { enable: 'Set up team policy', edit: 'Edit team policy', workspace_home: 'Policy home', route_members: 'Route members' };
+  const pcApplyLabel = (card) => (card.kind === 'enable' ? (card.mode === 'follow' ? 'Follow' : 'Set up') : card.kind === 'edit' ? 'Publish'
+    : card.kind === 'workspace_home' ? 'Set home' : card.kind === 'route_members' ? 'Route members' : 'Apply');
   function buildMetricsCard(block) {
     const card = block.card || {};
-    const summary = card.summary || 'metrics change';
+    const isPolicy = card.type === 'policy';
+    const noun = isPolicy ? 'policy change' : 'metrics change';
+    const Noun = isPolicy ? 'Policy change' : 'Metrics change';
+    const summary = card.summary || noun;
     if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
-    const rootEl = make('div', `ask-card ask-mcard is-${block.state}`);
-    rootEl.setAttribute('data-ask-mcard', block.state);
+    const rootEl = make('div', `ask-card ask-mcard${isPolicy ? ' ask-pcard' : ''} is-${block.state}`);
+    rootEl.setAttribute(isPolicy ? 'data-ask-pcard' : 'data-ask-mcard', block.state);
     const head = make('div', 'ask-mcard-head');
-    head.appendChild(make('span', 'ask-mcard-title', block.state === 'applied' ? 'Applied metrics change' : block.state === 'failed' ? 'Metrics change failed' : 'Proposed metrics change'));
-    head.appendChild(make('span', 'ask-mcard-kind', MC_KIND_LABEL[card.kind] || card.kind || ''));
+    head.appendChild(make('span', 'ask-mcard-title', block.state === 'applied' ? `Applied ${noun}` : block.state === 'failed' ? `${Noun} failed` : `Proposed ${noun}`));
+    head.appendChild(make('span', 'ask-mcard-kind', (isPolicy ? PC_KIND_LABEL : MC_KIND_LABEL)[card.kind] || card.kind || ''));
     rootEl.appendChild(head);
     const body = make('div', 'ask-mcard-body');
     const target = card.workspaceName ? `workspace ${card.workspaceName}` : card.projectName ? `project ${card.projectName}` : '';
@@ -2166,6 +2174,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     body.appendChild(sum);
     if (target) body.appendChild(make('div', 'ask-mcard-target', target));
     if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
+    if (isPolicy && Array.isArray(card.changes) && card.changes.length) {
+      const ul = make('ul', 'ask-mcard-changes');
+      for (const c of card.changes) {
+        const li = make('li');
+        li.appendChild(make('span', 'ask-mcard-change-label', c.label || c.key || ''));
+        const val = make('span', 'ask-mcard-change-val');
+        val.appendChild(make('span', c.before ? 'ask-mcard-before' : 'ask-mcard-before is-unset', c.before || 'unset'));
+        val.appendChild(make('span', 'ask-mcard-arrow', '→'));
+        val.appendChild(make('span', c.after ? 'ask-mcard-after' : 'ask-mcard-after is-unset', c.after || 'unset'));
+        li.appendChild(val);
+        ul.appendChild(li);
+      }
+      body.appendChild(ul);
+    }
     if (Array.isArray(card.effects) && card.effects.length && block.state === 'proposed') {
       const ul = make('ul', 'ask-mcard-effects');
       for (const e of card.effects) ul.appendChild(make('li', null, e));
@@ -2200,7 +2222,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       };
       const decline = btn('ask-card-not-now', 'Decline', 'data-ask-mc-decline');
       decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
-      const apply = btn('ask-card-start', MC_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-mc-apply', WF_ICO.save);
+      const apply = btn('ask-card-start', isPolicy ? pcApplyLabel(card) : (MC_APPLY_LABEL[card.kind] || 'Apply'), 'data-ask-mc-apply', WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
@@ -2926,14 +2948,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function isProgressBlock(block) {
     const card = block.card || {};
     if (card.type === PROGRESS_CARD_TYPE) return true;
-    if (card.type === 'workflow' || card.type === 'metrics' || card.type === 'schedule') return false;
+    if (card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule') return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   function buildCard(block) {
     if (!st.cardEls) st.cardEls = new Map();
     const cached = st.cardEls.get(block.id);
     const isWorkflow = !!(block.card && block.card.type === 'workflow');
-    const isMetrics = !!(block.card && block.card.type === 'metrics');
+    // A policy card is a metrics card with different words (buildMetricsCard branches on the type).
+    const isMetrics = !!(block.card && (block.card.type === 'metrics' || block.card.type === 'policy'));
     const isSchedule = !!(block.card && block.card.type === 'schedule');
     const isProgress = isProgressBlock(block);
     if (cached && cached.state === block.state && (isWorkflow || isMetrics || isSchedule || isProgress || block.state === 'proposed')) return cached.el;

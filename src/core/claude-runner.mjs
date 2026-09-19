@@ -1086,7 +1086,7 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   const wfEvent = /^\s*\[worca event\] workflow card (card_[0-9a-f]{8}) (?:(declined)|saved as (\S+) "([^"]*)"; thenRun=(true|false))/.exec(userText);
   // A metrics-card EVENT, then the metrics trigger — both before the run arm, whose \brun\b would otherwise fire on
   // "include my runs"-style prose (it does not, \b stops at the s, but "propose" would).
-  const tmEvent = /^\s*\[worca event\] metrics card (card_[0-9a-f]{8}) (applied|declined|failed)/.exec(userText);
+  const tmEvent = /^\s*\[worca event\] (?:metrics|policy) card (card_[0-9a-f]{8}) (applied|declined|failed)/.exec(userText);
   // The metrics arm wants a CHANGE, not a question: "metrics" plus a verb of intent ("stop recording my metrics",
   // "route ... to the metrics home"). A bare "which workspaces use team metrics?" gets the generic echo answer.
   const metrics = !wfEvent && !tmEvent && /\bmetrics\b/i.test(userText)
@@ -1097,13 +1097,17 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   const scId = /\b(sch_[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i.exec(userText);
   const scChange = !wfEvent && !tmEvent && !scEvent && !!scId && /\b(?:run now|move|delete|cancel|edit|change)\b/i.test(userText);
   const scNew = !wfEvent && !tmEvent && !scEvent && !scChange && /\bschedul/i.test(userText);
+  // The team-policy arm, the metrics rule: "policy" plus a verb of intent ("raise the policy cap to $30").
+  // It proposes an edit of the context project's per-pipeline cap: `$<n>` in the text, else $30.
+  const policy = !wfEvent && !tmEvent && !metrics && !scEvent && !scNew && !scChange && /\bpolicy\b/i.test(userText)
+    && /\b(?:raise|lower|set|change|edit|make|cap)\b/i.test(userText);
   // A tracker task named by key ("fix jira bug PROJ-123"): the run's task is the issue (mock-source's
   // fixture plugin), and "auto" asks for the Auto workflow. Folds into the schedule and run arms.
   const taskKey = !wfEvent && !tmEvent && !scEvent && /\b(?:issue|ticket|bug|task)\b/i.test(userText) ? /\b([A-Z][A-Z0-9]+-\d+)\b/.exec(userText) : null;
   const wantsAuto = /\bauto\b/i.test(userText);
-  const workflow = !wfEvent && !tmEvent && !metrics && !scNew && !scChange && !taskKey && /\bworkflow\b/i.test(userText);
+  const workflow = !wfEvent && !tmEvent && !metrics && !policy && !scNew && !scChange && !taskKey && /\bworkflow\b/i.test(userText);
   const agents = !wfEvent && !tmEvent && /\bagents?\b/i.test(userText);
-  const propose = !wfEvent && !tmEvent && !scEvent && !workflow && !metrics && !scNew && !scChange && (!!taskKey || /\b(propose|start|run)\b/i.test(userText));
+  const propose = !wfEvent && !tmEvent && !scEvent && !workflow && !metrics && !policy && !scNew && !scChange && (!!taskKey || /\b(propose|start|run)\b/i.test(userText));
   // The proposal both arms send: a brief, or the task reference instead of one.
   const proposal = () => {
     if (!taskKey) return { ...card, ...(wantsAuto ? { workflowId: 'wf_auto' } : {}) };
@@ -1122,7 +1126,7 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   const firstLine = userText.split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
   const ANSWER = `[mock] ${firstLine.slice(0, 200)}`;
   const init = { type: 'system', subtype: 'init', session_id: SID, cwd, model: 'mock', permissionMode: 'dontAsk',
-    tools: ['Task', 'mcp__worca__list_runs', 'mcp__worca__get_run', 'mcp__worca__propose_run', 'mcp__worca__propose_workflow', 'mcp__worca__propose_metrics_change'],
+    tools: ['Task', 'mcp__worca__list_runs', 'mcp__worca__get_run', 'mcp__worca__propose_run', 'mcp__worca__propose_workflow', 'mcp__worca__propose_metrics_change', 'mcp__worca__propose_policy_change'],
     mcp_servers: [{ name: 'worca', status: 'connected' }], plugins: [], skills: [], slash_commands: [], agents: [], uuid: 'mock-uuid-init' };
   const mstart = (id) => ({ type: 'stream_event', event: { type: 'message_start', message: { id, model: 'mock', role: 'assistant', content: [], usage: USAGE } }, parent_tool_use_id: null, session_id: SID });
   const delta = (t) => ({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: t } }, parent_tool_use_id: null, session_id: SID });
@@ -1176,6 +1180,14 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
       frames.push(delta('[mock] '), delta('proposing '), delta('a metrics change'), atext(MSG1, 'Proposing a metrics change card.'),
         atool(MSG1, 'toolu_mock_metrics', 'mcp__worca__propose_metrics_change', tmInput),
         uresult('toolu_mock_metrics', JSON.stringify({ ok: true, card: { type: 'metrics', ...tmInput } })));
+      answerMsg = MSG2;
+    }
+    if (policy) {
+      const usd = Number((/\$\s*(\d+(?:\.\d+)?)/.exec(userText) || [])[1] || 30);
+      const tpInput = { kind: 'edit', projectKey: card.projectKey || null, set: [{ key: 'cost.pipelineLimitUsd', value: usd, kind: 'soft' }], note: 'mock: change the team per-pipeline cap' };
+      frames.push(delta('[mock] '), delta('proposing '), delta('a policy change'), atext(MSG1, 'Proposing a policy change card.'),
+        atool(MSG1, 'toolu_mock_policy', 'mcp__worca__propose_policy_change', tpInput),
+        uresult('toolu_mock_policy', JSON.stringify({ ok: true, card: { type: 'policy', ...tpInput } })));
       answerMsg = MSG2;
     }
     if (scNew) {
