@@ -68,6 +68,20 @@ test('the balloon flips above a control near the floor', async () => {
   assert.equal(doc.querySelector('.ask-dock').classList.contains('guide-lift'), false);
 });
 
+test('a target taller than the window pins the balloon inside the viewport (no arrow) instead of parking it off-screen', async () => {
+  const { window, doc } = page();
+  const go = doc.getElementById('go');
+  go.getBoundingClientRect = () => ({ left: 300, top: -400, width: 600, height: 2000, right: 900, bottom: 1600 });
+  const spot = createGuideSpot({ doc, win: window, target: '#go', text: 'Your run.', onDismiss() {}, onTargetClick() {} });
+  await frames(window);
+  const balloon = doc.querySelector('.guide-balloon');
+  assert.ok(balloon.classList.contains('pinned'), 'pinned: no room above or below');
+  assert.equal(balloon.classList.contains('above'), false);
+  const top = parseFloat(balloon.style.top);
+  assert.ok(top >= 16 && top <= 800 - 16, `inside the viewport: ${balloon.style.top}`);
+  spot.destroy();
+});
+
 test('the target\'s real click hands over (after the control\'s own handler) and dismisses nothing by itself', async () => {
   const { window, doc } = page();
   const order = [];
@@ -81,13 +95,28 @@ test('the target\'s real click hands over (after the control\'s own handler) and
   spot.destroy();
 });
 
-test('scrim, Skip and Esc each dismiss exactly once; a second exit is a no-op', async () => {
-  for (const exit of ['scrim', 'skip', 'esc']) {
+test('a scrim click never dismisses: it nudges (ring + balloon pulse once) and the guide stays', async () => {
+  const { window, doc } = page();
+  let dismissed = 0;
+  const spot = createGuideSpot({ doc, win: window, target: '#go', text: 't', onDismiss: () => dismissed++, onTargetClick() {} });
+  await frames(window);
+  click(window, doc.querySelector('.guide-scrim'));
+  assert.equal(dismissed, 0, 'a stray click is not an exit');
+  assert.ok(doc.querySelector('.guide-layer'), 'the guide is still up');
+  const ring = doc.querySelector('.guide-ring'); const balloon = doc.querySelector('.guide-balloon');
+  assert.ok(ring.classList.contains('nudge') && balloon.classList.contains('nudge'), 'both pulse');
+  ring.dispatchEvent(new window.Event('animationend'));
+  assert.equal(ring.classList.contains('nudge'), false, 'the pulse class clears itself, ready for the next nudge');
+  assert.ok(doc.getElementById('go').classList.contains('guide-target'), 'the control stays lit');
+  spot.destroy();
+});
+
+test('Skip and Esc each dismiss exactly once; a second exit is a no-op', async () => {
+  for (const exit of ['skip', 'esc']) {
     const { window, doc } = page();
     let dismissed = 0;
     createGuideSpot({ doc, win: window, target: '#go', text: 't', onDismiss: () => dismissed++, onTargetClick() {} });
     await frames(window);
-    if (exit === 'scrim') click(window, doc.querySelector('.guide-scrim'));
     if (exit === 'skip') click(window, doc.querySelector('.guide-skip'));
     if (exit === 'esc') doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
     assert.equal(dismissed, 1, exit);
@@ -152,4 +181,37 @@ test('pointer mode: no scrim, no elevation class needed to cross a dialog', asyn
   assert.equal(layer.querySelector('.guide-scrim'), null);
   assert.ok(layer.querySelector('.guide-ring'));
   spot.destroy();
+});
+
+test('Next: present only with onNext, calls it without dismissing; the elevation forces position only on a static control', async () => {
+  const { window, doc } = page();
+  let nexts = 0; let dismissed = 0;
+  const spot = createGuideSpot({ doc, win: window, target: '#go', text: 't', nextLabel: 'Got it', onNext: () => nexts++, onDismiss: () => dismissed++, onTargetClick() {} });
+  await frames(window);
+  const next = doc.querySelector('.guide-balloon .guide-actions .guide-next');
+  assert.ok(next, 'a Next button beside Skip');
+  assert.equal(next.textContent, 'Got it');
+  assert.ok(doc.querySelector('.guide-balloon .guide-actions .guide-skip'), 'Skip still there');
+  click(window, next);
+  assert.equal(nexts, 1);
+  assert.equal(dismissed, 0, 'Next is the caller\'s: nothing is dismissed here');
+  assert.ok(doc.querySelector('.guide-layer'), 'the layer stays until the caller replaces it');
+  // jsdom computes no position for #go: it counts as static and gets the relative box.
+  const go = doc.getElementById('go');
+  assert.ok(go.classList.contains('guide-target-static'), 'a static control is positioned for the elevation');
+  spot.destroy();
+  assert.equal(go.classList.contains('guide-target-static'), false, 'and released');
+
+  const plain = createGuideSpot({ doc, win: window, target: '#go', text: 't', onDismiss() {}, onTargetClick() {} });
+  await frames(window);
+  assert.equal(doc.querySelector('.guide-next'), null, 'no Next without onNext');
+  plain.destroy();
+
+  const pill = doc.getElementById('pill');
+  pill.style.position = 'absolute';
+  const abs = createGuideSpot({ doc, win: window, target: '#pill', lift: ['.ask-dock'], text: 't', onDismiss() {}, onTargetClick() {} });
+  await frames(window);
+  assert.ok(pill.classList.contains('guide-target'));
+  assert.equal(pill.classList.contains('guide-target-static'), false, 'an absolutely positioned control keeps its own position');
+  abs.destroy();
 });
