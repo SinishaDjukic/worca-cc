@@ -143,7 +143,8 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
     'open_worktree', 'list_worktrees', 'remove_worktree', 'git',
     'list_run_artifacts', 'read_run_artifact', 'get_run_progress',
     'get_team_metrics', 'list_team_metrics_runs', 'push_team_metrics', 'propose_metrics_change',
-    'list_memory', 'read_memory', 'remember', 'forget']);
+    'list_memory', 'read_memory', 'remember', 'forget',
+    'list_scripts', 'get_script', 'save_script', 'test_script']);
   const projects = JSON.parse(msgs[2].result.content[0].text);
   assert.equal(projects.projects[0].key, project.key);
   const run = JSON.parse(msgs[3].result.content[0].text);

@@ -3,7 +3,7 @@
 // (Task 17) only asserts structure.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTurnReducer, normalizeUsage, estimateAgentCosts, matchModelKey, labelForTool } from '../src/core/ask/events.mjs';
+import { createTurnReducer, normalizeUsage, estimateAgentCosts, matchModelKey, labelForTool, scriptResultNote, scriptToolKey } from '../src/core/ask/events.mjs';
 
 // ── frame builders (the runner envelope: {type, raw}) ───────────────────────
 const SID = 'sess-0001';
@@ -670,4 +670,69 @@ test('onTrackRun fires on the MAIN-stream track_run tool_result with the full in
   // a sub-agent's call (parent_tool_use_id set) is logged on the agent block, never hooked (D16)
   h.push(atool('msg_3', 'agent-1', 'Task', { prompt: 'x' }), atool('msg_4', 't3', 'mcp__worca__track_run', { id: 'abcd1234' }, 'agent-1'), uresult('t3', '{"ok":true}', { ptu: 'agent-1' }));
   assert.equal(calls.length, 2);
+});
+
+test('a successful save_script pokes onScriptMutation with the key and the action; a refusal, an error and a test run do not', () => {
+  const seen = [];
+  const h = harness({ onScriptMutation: (e) => seen.push(e) });
+  h.push(atool('msg_1', 'toolu_1', 'mcp__worca__save_script', { key: 'runTests', meta: {}, source: 'npm test' }));
+  h.push(uresult('toolu_1', JSON.stringify({ ok: true, key: 'runTests', created: true, path: '/h/s/runTests.sh', link: '#scripts/runTests' })));
+  // A refusal carries a well-formed body and is NOT an is_error result, so only `ok` can stop it.
+  h.push(atool('msg_1', 'toolu_2', 'mcp__worca__save_script', { key: 'shell', meta: {}, source: 'x' }));
+  h.push(uresult('toolu_2', JSON.stringify({ ok: false, errors: ['script "shell" is a built-in — save your version under a new key instead'] })));
+  h.push(atool('msg_1', 'toolu_3', 'mcp__worca__save_script', { key: 'boom', meta: {}, source: 'x' }));
+  h.push(uresult('toolu_3', 'error: EACCES', { isError: true }));
+  // …and running a script changes no file.
+  h.push(atool('msg_1', 'toolu_4', 'mcp__worca__test_script', { key: 'runTests' }));
+  h.push(uresult('toolu_4', JSON.stringify({ ok: true, key: 'runTests', result: { status: 'clean' } })));
+  // A sub-agent's save still wrote the file, so it still pokes (the memory rule).
+  h.push(atool('msg_1', 'toolu_agent', 'Task', { description: 'save it', subagent_type: 'general-purpose' }));
+  h.push(atool('msg_c1', 'toolu_c1', 'mcp__worca__save_script', { key: 'lint', meta: {}, source: 'x' }, 'toolu_agent'));
+  h.push(uresult('toolu_c1', JSON.stringify({ ok: true, key: 'lint', created: false }), { ptu: 'toolu_agent' }));
+  h.push(uresult('toolu_agent', [{ type: 'text', text: 'saved' }], { tur: AGENT_TUR }));
+  assert.deepEqual(seen, [{ key: 'runTests', action: 'created' }, { key: 'lint', action: 'updated' }]);
+  const boom = harness({ onScriptMutation: () => { throw new Error('sink'); } });
+  boom.push(atool('msg_1', 'toolu_1', 'mcp__worca__save_script', { key: 'a', meta: {}, source: 'x' }));
+  assert.doesNotThrow(() => boom.push(uresult('toolu_1', JSON.stringify({ ok: true, key: 'a', created: true }))));
+  assert.equal(boom.frames.filter((f) => f.type === 'ask-block').at(-1).block.status, 'done', 'the block still completed');
+});
+
+test('script tools: activity labels, the key stamped at the call, and the result note merged on the block', () => {
+  assert.equal(labelForTool('mcp__worca__list_scripts', {}), 'Looking at scripts');
+  assert.equal(labelForTool('mcp__worca__get_script', { key: 'runTests' }), 'Reading script: runTests');
+  assert.equal(labelForTool('mcp__worca__save_script', { key: 'runTests' }), 'Saving script: runTests');
+  assert.equal(labelForTool('mcp__worca__save_script', {}), 'Saving a script');
+  assert.equal(labelForTool('mcp__worca__test_script', { key: 'runTests' }), 'Testing script: runTests');
+
+  assert.equal(scriptToolKey('mcp__worca__save_script', { key: 'runTests', source: 'x' }), 'runTests');
+  assert.equal(scriptToolKey('mcp__worca__list_scripts', {}), '', 'a script tool with no key still says "script tool"');
+  assert.equal(scriptToolKey('mcp__worca__save_script', { key: 'a'.repeat(200) }), 'a'.repeat(64), 'clipped to the key regex\'s width');
+  assert.equal(scriptToolKey('mcp__worca__list_runs', { key: 'x' }), null, 'not a script tool');
+
+  assert.deepEqual(scriptResultNote('mcp__worca__save_script', '{"ok":true,"key":"a","created":true}'), { saved: 'created' });
+  assert.deepEqual(scriptResultNote('mcp__worca__save_script', '{"ok":true,"key":"a","created":false}'), { saved: 'updated' });
+  assert.deepEqual(scriptResultNote('mcp__worca__save_script', '{"ok":false,"errors":["x"]}'), { saved: 'not saved' });
+  assert.deepEqual(scriptResultNote('mcp__worca__test_script', '{"ok":true,"result":{"status":"blocking","exitCode":1}}'), { status: 'blocking', exitCode: 1 });
+  assert.deepEqual(scriptResultNote('mcp__worca__test_script', '{"ok":false,"errors":["x"]}'), { status: 'not run' });
+  assert.equal(scriptResultNote('mcp__worca__test_script', 'not json'), null);
+  assert.equal(scriptResultNote('mcp__worca__save_script', '{"ok":true}', true), null, 'an errored call keeps the row\'s own error');
+  assert.equal(scriptResultNote('mcp__worca__list_scripts', '{"scripts":[]}'), null, 'the readers carry no note');
+
+  const h = harness();
+  h.push(atool('msg_1', 'toolu_1', 'mcp__worca__test_script', { key: 'runTests' }));
+  assert.deepEqual(h.frames.filter((f) => f.type === 'ask-block').at(-1).block.script, { key: 'runTests' }, 'the key rides the block from the call on');
+  h.push(uresult('toolu_1', JSON.stringify({ ok: true, key: 'runTests', result: { status: 'blocking', exitCode: 1, durationMs: 4200 } })));
+  const block = h.frames.filter((f) => f.type === 'ask-block').at(-1).block;
+  assert.deepEqual(block.script, { key: 'runTests', status: 'blocking', exitCode: 1 });
+  assert.equal(block.status, 'done');
+  // A save_script input is a whole program: past blockIoMaxChars the persisted input is the
+  // { _truncated, preview } stub and input.key is GONE — the stamp is what keeps the key.
+  h.push(atool('msg_1', 'toolu_2', 'mcp__worca__save_script', { key: 'runTests', meta: {}, source: 'x'.repeat(5000) }));
+  h.push(uresult('toolu_2', JSON.stringify({ ok: true, key: 'runTests', created: true })));
+  const big = h.frames.filter((f) => f.type === 'ask-block').at(-1).block;
+  assert.equal(big.input._truncated, true);
+  assert.deepEqual(big.script, { key: 'runTests', saved: 'created' });
+  h.push(atool('msg_1', 'toolu_3', 'mcp__worca__list_runs', { limit: 5 }));
+  h.push(uresult('toolu_3', '[]'));
+  assert.equal('script' in h.frames.filter((f) => f.type === 'ask-block').at(-1).block, false, 'other tools are untouched');
 });

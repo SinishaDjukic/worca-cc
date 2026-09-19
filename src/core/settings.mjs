@@ -543,10 +543,12 @@ export const setTotalCostLimitUsd = (input) => setUsdCap('totalCostLimitUsd', in
 const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused'];
 
 /**
- * Effective chat notification prefs. Every event defaults ON; channels default
+ * Effective chat preferences. Every notification event defaults ON; channels default
  * enabled (an absent "<plugin>/<channelId>" key means enabled — presence with
- * {enabled:false} is the opt-out record).
- * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>}}
+ * {enabled:false} is the opt-out record); `scriptTools` (scripts-workbench W20) is the
+ * chat's "Create and run scripts" switch and defaults ON, so only a stored false ever
+ * takes save_script / test_script away.
+ * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean}}
  */
 export function chatPrefs() {
   const raw = readSettings().chat;
@@ -557,19 +559,22 @@ export function chatPrefs() {
   for (const [key, v] of Object.entries(chat.channels && typeof chat.channels === 'object' ? chat.channels : {})) {
     channels[key] = { enabled: v?.enabled !== false };
   }
-  return { notify, channels };
+  return { notify, channels, scriptTools: chat.scriptTools !== false };
 }
 
 /**
  * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?},
- * channels?: {"<plugin>/<id>"?: {enabled: boolean}}}. Unknown notify keys are
- * rejected (400 at the API layer); channels merge per key.
+ * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean}. Unknown
+ * notify keys and a non-boolean scriptTools are rejected (400 at the API layer);
+ * channels merge per key.
  */
 export async function setChatPrefs(patch = {}) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('chat prefs must be an object');
   for (const k of Object.keys(patch.notify || {})) {
     if (!CHAT_NOTIFY_EVENTS.includes(k)) throw new Error(`unknown chat notify event "${k}"`);
   }
+  const hasScriptTools = Object.prototype.hasOwnProperty.call(patch, 'scriptTools');
+  if (hasScriptTools && typeof patch.scriptTools !== 'boolean') throw new Error('chat scriptTools must be true or false');
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -581,6 +586,7 @@ export async function setChatPrefs(patch = {}) {
         ...Object.fromEntries(Object.entries(patch.channels).map(([k, v]) => [k, { enabled: v?.enabled !== false }])),
       },
     } : {}),
+    ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
   };
   await persistSettings(settings);
   return chatPrefs();

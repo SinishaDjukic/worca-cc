@@ -54,14 +54,25 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
             <span>Workflow Composer</span>
           </button>
-          <button type="button" data-nav="agents" data-min-level="expert">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>
-            <span>Agents</span>
+          <!-- Nodes: the two composer node types. A disclosure, not a route — it carries no
+               data-nav, so the router never marks it active; app.js#setNodesCollapsed owns
+               aria-expanded + the box's .collapsed and remembers a fold. The children keep their
+               own data-nav: the `.nav button[data-nav]` snapshot reaches nested buttons. -->
+          <button type="button" class="nav-group" data-nav-group="nodes" data-min-level="expert" aria-expanded="true" aria-controls="nav-nodes-children">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"></circle><circle cx="18" cy="6" r="2.4"></circle><circle cx="12" cy="18" r="2.4"></circle><path d="M8.4 6h7.2M7.2 8.1l3.6 7.6M16.8 8.1l-3.6 7.6"></path></svg>
+            <span>Nodes</span>
+            <svg class="nav-group-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
           </button>
-          <button type="button" data-nav="scripts" data-min-level="expert">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5"></path><path d="M12 19h8"></path></svg>
-            <span>Scripts</span>
-          </button>
+          <div class="nav-children nav-group-children" id="nav-nodes-children" data-min-level="expert">
+            <button type="button" class="nav-child" data-nav="agents" data-min-level="expert">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>
+              <span>Agents</span>
+            </button>
+            <button type="button" class="nav-child" data-nav="scripts" data-min-level="expert">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5"></path><path d="M12 19h8"></path></svg>
+              <span>Scripts</span>
+            </button>
+          </div>
 
           <div class="nav-sect">Manage</div>
           <button type="button" data-nav="projects" data-min-level="simple">
@@ -1397,6 +1408,9 @@
                 <input id="askMaxBudgetUsd" class="input" type="number" min="0.1" max="100" step="0.1" inputmode="decimal" placeholder="2" autocomplete="off" />
                 <label class="check-row" for="askNoCap"><input id="askNoCap" type="checkbox" /> No cap</label>
               </div>
+              <!-- Scripts workbench W20: the chat's save_script / test_script switch. Body
+                   rendered by chat-settings-view.mjs; saved with this card's Save button. -->
+              <div class="field" id="ask-script-tools-host"></div>
               <div class="add-project-actions" style="margin-top:14px">
                 <button type="button" id="askLimitsReset" class="btn btn-ghost btn-mini">Use defaults</button>
                 <button type="button" id="askLimitsSave" class="btn btn-primary btn-mini">Save</button>

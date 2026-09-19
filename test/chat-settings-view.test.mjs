@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { renderChatSettings, collectChatSettings } from '../ui/public/chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle } from '../ui/public/chat-settings-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
@@ -49,4 +49,19 @@ test('collect round-trips edits; empty channel list renders a hint', () => {
 
   const empty = renderChatSettings({ prefs: { notify: {}, channels: {} }, channels: [] }, { doc });
   assert.match(empty.querySelector('.chat-none').textContent, /No chat channels installed/);
+});
+
+test('the Ask Worca script toggle: default on, explicit off honored, round-trips, no prose', () => {
+  const on = renderScriptToolsToggle({ prefs: {} }, { doc });
+  assert.equal(on.querySelector('input#askScriptTools').checked, true, 'an absent pref is ON (W20)');
+  assert.equal(on.textContent.trim(), 'Create and run scripts');
+  assert.equal(on.getAttribute('for'), 'askScriptTools');
+  assert.equal(on.querySelectorAll('p, small, .hint').length, 0, 'labels only — no explanatory prose in the UI');
+  assert.deepEqual(collectScriptToolsToggle(on), { scriptTools: true });
+  const off = renderScriptToolsToggle({ prefs: { scriptTools: false } }, { doc });
+  assert.equal(off.querySelector('input#askScriptTools').checked, false);
+  assert.deepEqual(collectScriptToolsToggle(off), { scriptTools: false });
+  off.querySelector('input#askScriptTools').checked = true;
+  assert.deepEqual(collectScriptToolsToggle(off), { scriptTools: true });
+  assert.deepEqual(collectScriptToolsToggle(doc.createElement('div')), { scriptTools: true }, 'a host with no control means ON');
 });

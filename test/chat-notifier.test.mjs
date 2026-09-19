@@ -138,7 +138,7 @@ test('chatPrefs/setChatPrefs: defaults ON, merge-patch, unknown keys rejected', 
   const home = mkdtempSync(join(tmpdir(), 'worca-cc-chatprefs-'));
   process.env.HOME = home;
   try {
-    assert.deepEqual(chatPrefs(), { notify: { done: true, error: true, question: true, paused: true }, channels: {} });
+    assert.deepEqual(chatPrefs(), { notify: { done: true, error: true, question: true, paused: true }, channels: {}, scriptTools: true });
     await setChatPrefs({ notify: { done: false }, channels: { 'tg-chat/main': { enabled: false } } });
     const p = chatPrefs();
     assert.equal(p.notify.done, false);
@@ -148,6 +148,15 @@ test('chatPrefs/setChatPrefs: defaults ON, merge-patch, unknown keys rejected', 
     assert.equal(chatPrefs().notify.done, true, 'merge does not clobber channels');
     assert.deepEqual(chatPrefs().channels, { 'tg-chat/main': { enabled: false } });
     await assert.rejects(setChatPrefs({ notify: { chaos: true } }), /unknown chat notify event/);
+    // W20: the chat's script tools, merged like every other chat pref.
+    await setChatPrefs({ scriptTools: false });
+    assert.equal(chatPrefs().scriptTools, false);
+    assert.deepEqual(chatPrefs().channels, { 'tg-chat/main': { enabled: false } }, 'the toggle does not clobber the channels');
+    await setChatPrefs({ notify: { error: false } });
+    assert.equal(chatPrefs().scriptTools, false, 'a notify patch does not clobber the toggle');
+    await setChatPrefs({ scriptTools: true });
+    assert.equal(chatPrefs().scriptTools, true);
+    await assert.rejects(setChatPrefs({ scriptTools: 'yes' }), /chat scriptTools must be true or false/);
     await assert.rejects(setChatPrefs('nope'), /must be an object/);
   } finally {
     process.env.HOME = prevHome;

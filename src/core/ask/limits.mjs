@@ -38,6 +38,18 @@ export const ASK_LIMITS = Object.freeze({
   artifactsListMaxLimit: 200,
   artifactReadDefaultBytes: 60_000,
   artifactReadMaxBytes: 200_000,
+  // Scripts in the chat (scripts-workbench-design.md §9.1). The store's own caps (source
+  // 256 KiB, 32 cases) are NOT repeated here: script-store / script-cases own those.
+  scriptListMaxRows: 200,                  // list_scripts rows (= artifactsListMaxLimit)
+  scriptSourceDefaultBytes: 60_000,        // get_script page (= diffDefaultBytes)
+  scriptSourceMaxBytes: 200_000,           // get_script page cap (= diffMaxBytes)
+  scriptLogMaxLines: 200,                  // test_script: the LAST N streamed lines…
+  scriptLogMaxBytes: 16 * 1024,            // …and their byte cap (the tail is kept: a failure ends the log)
+  scriptOutputMaxBytes: 16 * 1024,         // test_script: per output port (the head is kept)
+  scriptTestDefaultTimeoutSec: 120,        // test_script timeoutSec default
+  scriptTestMaxTimeoutSec: 600,            // …and its ceiling (= the engine's 10-minute default)
+  scriptVerdictMaxIssues: 50,              // test_script: verdict issues sent (the rest is counted, not sent)
+  scriptResultFieldMaxChars: 2000,         // test_script: per verdict field / warning / diff / error line (chars)
   briefMaxChars: 8000,
   metricsRunsDefaultLimit: 20,             // list_team_metrics_runs page (= listRunsDefaultLimit)
   metricsRunsMaxLimit: 100,                // list_team_metrics_runs page cap (= listRunsMaxLimit)

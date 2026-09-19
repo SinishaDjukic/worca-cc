@@ -117,7 +117,7 @@ test('ui-settings-ask: Save posts exactly the two ask keys', async () => {
   $('#askLimitsSave').click();
   await tick();
   assert.equal(posts.length, 1, 'exactly one POST');
-  assert.deepEqual(posts[0], { askMaxTurns: 55, askMaxBudgetUsd: 3.5 });
+  assert.deepEqual(posts[0], { askMaxTurns: 55, askMaxBudgetUsd: 3.5, chat: { scriptTools: true } });
   assert.match($('#askLimitsMsg').textContent, /Saved/);
 });
 
@@ -155,7 +155,7 @@ test('ui-settings-ask: the No-cap checkbox disables the field and posts null', a
   assert.equal($('#askMaxBudgetUsd').disabled, true);
   $('#askLimitsSave').click();
   await tick();
-  assert.deepEqual(posts[0], { askMaxTurns: 40, askMaxBudgetUsd: null });
+  assert.deepEqual(posts[0], { askMaxTurns: 40, askMaxBudgetUsd: null, chat: { scriptTools: true } });
 });
 
 test('ui-settings-ask: Use defaults posts empty strings (the clear-to-default wire value)', async () => {
@@ -265,4 +265,17 @@ test('ui-settings-ask: a failed bulk DELETE lands its error in the hint', async 
   await tick();
   assert.equal($('#askHistoryMsg').textContent, 'database is locked');
   assert.ok($('#askHistoryMsg').classList.contains('err'));
+});
+
+test('ui-settings-ask: the script toggle paints from chat prefs and rides the card\'s Save', async () => {
+  const { $, posts, tick, openSettings } = await boot();
+  await openSettings();
+  const cb = $('#askScriptTools');
+  assert.ok(cb, 'the toggle is mounted in the Ask Worca card');
+  assert.equal(cb.checked, true, 'an absent pref is ON');
+  assert.equal($('#ask-script-tools-host').textContent.trim(), 'Create and run scripts');
+  cb.checked = false;
+  $('#askLimitsSave').click();
+  await tick();
+  assert.deepEqual(posts[0].chat, { scriptTools: false });
 });

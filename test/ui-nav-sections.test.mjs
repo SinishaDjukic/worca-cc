@@ -24,21 +24,22 @@ const topnav = () => html.match(/<nav class="topnav"[\s\S]*?<\/nav>/)[0];
 test('sidebar reads: CTA, Activity, Build, Manage, divider, Settings — in order', () => {
   // One combined token stream: nav ids and section labels, in source order.
   const tokens = [...sidebar().matchAll(
-    /data-nav="([a-z-]+)"|class="nav-sect"[^>]*>([A-Za-z]+)<|class="(nav-sep)"|id="(nav-mode)"/g
-  )].map((m) => m[1] || m[2] || m[3] || m[4]);
+    /data-nav="([a-z-]+)"|data-nav-group="([a-z-]+)"|class="nav-sect"[^>]*>([A-Za-z]+)<|class="(nav-sep)"|id="(nav-mode)"/g
+  )].map((m) => m[1] || m[2] || m[3] || m[4] || m[5]);
   assert.deepEqual(tokens, [
     'new',
     'Activity', 'running', 'history', 'stats', 'team-metrics',
-    'Build', 'composer', 'agents', 'scripts',
+    'Build', 'composer', 'nodes', 'agents', 'scripts',   // Nodes is a disclosure holding the two (ui-nav-nodes-group)
     'Manage', 'projects', 'workspaces',
     'nav-sep', 'nav-mode', 'settings',          // the interface-mode item sits directly above Settings (docs/ui-levels.md)
   ]);
 });
 
 // guardrails/models/plugins moved into Settings as tabs, so 12 -> 9; team-metrics adds one -> 10;
-// the interface-mode item (docs/ui-levels.md) adds one -> 11; Scripts -> 12, of which 11 route (data-nav).
-test('grouping adds no buttons and no anchors (12-button invariant holds)', () => {
-  assert.equal((sidebar().match(/<button type="button"/g) || []).length, 12);
+// the interface-mode item (docs/ui-levels.md) adds one -> 11; Scripts -> 12; the Nodes
+// disclosure (test/ui-nav-nodes-group.test.mjs) -> 13, of which 11 route (data-nav).
+test('grouping adds no buttons and no anchors (13-button invariant holds)', () => {
+  assert.equal((sidebar().match(/<button type="button"/g) || []).length, 13);
   assert.equal((sidebar().match(/<button type="button"[^>]*data-nav=/g) || []).length, 11);
   assert.ok(!/<a[\s>]/.test(sidebar()));
   assert.match(sidebar(), /<div class="nav-sect">Activity<\/div>/);

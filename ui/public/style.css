@@ -236,6 +236,19 @@ body{
   -webkit-line-clamp: 3; line-clamp: 3; overflow-wrap: anywhere; }
 .nav-child.active .child-proj { color: var(--ink-3); }
 
+/* Static group (Nodes › Agents, Scripts). The parent is a disclosure: it never
+   takes the dark current-page fill (`.active` belongs to the child page) and
+   reads as --ink via .has-active while a child is open. The children reuse the
+   Running-row elbow above, but carry an icon where a run row carries a dot;
+   `.nav .nav-child > svg` (0,2,1) out-ranks `.nav button svg` (0,1,2). */
+.nav .nav-group.has-active { color: var(--ink); font-weight: 600; }
+.nav .nav-group-chev { width: 14px; height: 14px; margin-left: auto; color: var(--ink-3); transition: transform .2s; }
+.nav-group[aria-expanded="false"] .nav-group-chev { transform: rotate(-90deg); }
+.nav .nav-child > svg { width: 17px; height: 17px; }
+/* `.nav button.active svg` (0,2,2) paints the stroke --on-ink for the dark fill;
+   a child's fill is the soft --field tint, so its icon stays --ink. */
+.nav .nav-child.active svg { stroke: var(--ink); }
+
 /* Status dot (left). Color matches the current running agent/phase
    (violet=plan, peach=refine/review/running, blue=implement, red=clarify),
    grey-pulse=starting/pausing, green=done, red=error/stopped. */
@@ -3412,6 +3425,19 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
    `padding:11px 13px` and hold its initials in an 8px content box.
    `flex:0 0 auto` keeps the fixed 36px box out of the column flex shrink. */
 .sidebar.collapsed .nav-children{align-items:center;gap:5px;margin-top:5px;}
+/* Nodes on the rail: no room for a parent row, so it goes and its two children
+   stand as ordinary 40px squares — the rail reads exactly as it did before the
+   group existed. The children must show even while the group is folded, so the
+   (0,3,0) rule out-ranks `.nav-children.collapsed` (0,2,0). The elbow has
+   nothing to hang from here, and an open child takes the same dark fill as
+   every other current-page square (beats `.nav .nav-child.active` on class
+   count). */
+.sidebar.collapsed .nav-group{display:none;}
+.sidebar.collapsed .nav-group-children.collapsed{display:flex;}
+.sidebar.collapsed .nav-child::before,.sidebar.collapsed .nav-child::after{content:none;}
+.sidebar.collapsed .nav .nav-child > svg{width:19px;height:19px;}
+.sidebar.collapsed .nav .nav-child.active{background:var(--ink);color:var(--on-ink);box-shadow:none;}
+.sidebar.collapsed .nav .nav-child.active svg{stroke:var(--on-ink);}
 .nav .rail-tile{position:relative;display:flex;align-items:center;justify-content:center;
   width:36px;height:36px;flex:0 0 auto;padding:0;gap:0;
   border:1.5px solid var(--line-2);border-radius:11px;

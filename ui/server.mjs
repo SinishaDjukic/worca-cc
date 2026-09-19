@@ -74,6 +74,7 @@ import {
   buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
   selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
 } from '../src/core/ask/prompt.mjs';
+import { askScriptPromptInput } from '../src/core/ask/script-deps.mjs';
 import {
   classifyExtension as askClassifyExtension, sniffMime as askSniffMime,
 } from '../src/core/ask/attachment-kind.mjs';
@@ -4983,10 +4984,11 @@ function askValidateScope(raw) {
   return { ok: true, scope: { pinned: true, [keys[0]]: cv.context[keys[0]] } };
 }
 
-/** The system prompt of ONE Ask turn: the rules and the catalog, byte-stable. Memory is mounted,
- *  not rendered (native-rules revision) — see createAskTurn's memoryProject. */
+/** The system prompt of ONE Ask turn: the rules, the catalog, and — only when the chat's
+ *  "Create and run scripts" pref is on (W20) — the scripts section with the runtimes this host
+ *  actually has (the python probe, cached 60 s). Memory is mounted, not rendered. */
 async function askSystemPromptFor(catalog) {
-  return askBuildSystemPrompt(catalog);
+  return askBuildSystemPrompt(catalog, { scripts: await askScriptPromptInput() });
 }
 
 /** Resolve the VALIDATED client context into the server-side shape
@@ -5223,6 +5225,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         onMemoryMutation: ({ scope }) => {
           if (scope === 'global' || (typeof scope === 'string' && scope.startsWith('projects/') && PROJECT_KEY_RE.test(scope.slice('projects/'.length)))) emitMemoryChanged(scope);
         },
+        // A save_script in the MCP child is the same change a REST write makes (spec §3.3):
+        // the open Scripts tabs drop their list and the composer marks its script list dirty.
+        onScriptMutation: () => { emitChanged('scripts-changed', 'updated'); },
         trackRun: (input, { pin } = {}) => askTrackRun(id, input, pin ?? null),
       },
     });

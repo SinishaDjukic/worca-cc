@@ -222,11 +222,11 @@ test('the toggle is one bare chevron and nothing else', () => {
   assert.doesNotMatch(ruleBody('.sidebar.collapsed .side-toggle svg'), /transform:/);
 });
 
-test('the toggle stays OUT of <nav>, which keeps exactly 12 buttons (11 routes + the mode item)', () => {
+test('the toggle stays OUT of <nav>, which keeps exactly 13 buttons (11 routes + the mode item + the Nodes disclosure)', () => {
   // ui-nav-sections.test.mjs:39 asserts this count, :40 forbids <a>, and :26-35
   // pins the token stream. A toggle inside <nav class="nav"> reds all three.
   const nav = html.match(/<nav class="nav"[\s\S]*?<\/nav>/)[0];
-  assert.equal((nav.match(/<button type="button"/g) || []).length, 12);
+  assert.equal((nav.match(/<button type="button"/g) || []).length, 13);
   assert.equal(nav.includes('side-toggle'), false);
   assert.match(html, /<aside class="sidebar" id="side-rail">/,
     'aria-controls targets the whole aside — brand, nav AND the spend foot reshape');
@@ -254,7 +254,7 @@ test('label spans are visually hidden but KEEP their accessible name', () => {
     + 'without it a run tile loses its status dot and its "?" badge');
   // display:none removes the node from the accessibility tree, and this span is
   // the ONLY source of an accessible name for every nav button (index.html
-  // carries no aria-label on any of the 12 and the SVGs carry no <title> — the
+  // carries no aria-label on any of the 13 and the SVGs carry no <title> — the
   // file's only <title> is the document title at :6). Measured in Chrome:
   // eleven buttons announced with no name at all, and Running announced as "4"
   // (the count span survives, so name-from-contents wins and the title is

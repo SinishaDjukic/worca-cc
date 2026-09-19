@@ -98,7 +98,7 @@ import {
   renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport, renderReferences409,
   renderOrphanList, channelBadge, renderAvailableList, renderMarketplaceList,
 } from './plugins-view.mjs';
-import { renderChatSettings, collectChatSettings } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle } from './chat-settings-view.mjs';
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS } from '../../src/shared/graph/constants.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
@@ -531,6 +531,33 @@ function setSidebarCollapsed(v) {
 }
 
 $('#side-toggle')?.addEventListener('click', () => setSidebarCollapsed(!sidebarCollapsed));
+
+// ── Nodes group (Agents + Scripts) ──────────────────────────────────────────
+// A static disclosure in the Build section. It carries no data-nav, so the
+// router never marks it active; it owns aria-expanded + the box's .collapsed
+// and remembers a fold across reloads. showView tints it while a child page is
+// open and unfolds it on the way in, so "where am I" never hides.
+const NODES_GROUP_KEY = 'worca-cc.nav.nodes.collapsed';
+const nodesGroup = $('.nav .nav-group[data-nav-group="nodes"]');
+const nodesGroupBox = $('#nav-nodes-children');
+const NODES_GROUP_VIEWS = nodesGroupBox
+  ? [...nodesGroupBox.querySelectorAll('button[data-nav]')].map((b) => b.dataset.nav) : [];
+function readNodesCollapsed() {
+  try { return localStorage.getItem(NODES_GROUP_KEY) === '1'; }
+  catch { return false; }                    // private mode / storage disabled
+}
+function paintNodesGroup(folded) {
+  if (!nodesGroup || !nodesGroupBox) return;
+  nodesGroup.setAttribute('aria-expanded', folded ? 'false' : 'true');
+  nodesGroupBox.classList.toggle('collapsed', !!folded);
+}
+function setNodesCollapsed(folded) {
+  paintNodesGroup(folded);
+  try { if (folded) localStorage.setItem(NODES_GROUP_KEY, '1'); else localStorage.removeItem(NODES_GROUP_KEY); }
+  catch { /* private mode: the fold lives for this page only */ }
+}
+nodesGroup?.addEventListener('click', () => setNodesCollapsed(nodesGroup.getAttribute('aria-expanded') !== 'false'));
+paintNodesGroup(readNodesCollapsed());
 // Restore before the first paint. `.sidebar` transitions width/flex-basis over
 // .2s (style.css:84-85) so the toggle animates; a restore is a starting state,
 // not a gesture. This script is deferred, so the class lands after the first
@@ -9300,6 +9327,10 @@ function paintAskSettings(data) {
   noCap.checked = data.askMaxBudgetUsd === null;
   budget.disabled = noCap.checked;
   budget.value = data.askMaxBudgetUsd == null ? '' : String(data.askMaxBudgetUsd);
+  // W20: the chat's script tools ride the same payload (`chat`), so the card paints from
+  // the GET and from every save response without a second fetch.
+  const scriptHost = document.getElementById('ask-script-tools-host');
+  if (scriptHost) scriptHost.replaceChildren(renderScriptToolsToggle({ prefs: data.chat || {} }, { doc: document }));
 }
 function postAskLimits(body) {
   return postSettingsCard(body, { setMsg: setAskLimitsMsg, paint: paintAskSettings });
@@ -9321,7 +9352,8 @@ function saveAskLimits() {
     if (!Number.isFinite(b) || b < 0.1 || b > 100) { setAskLimitsMsg('the per-turn cap must be between 0.1 and 100', 'err'); return; }
     askMaxBudgetUsd = b;
   }
-  postAskLimits({ askMaxTurns, askMaxBudgetUsd });
+  const scriptHost = document.getElementById('ask-script-tools-host');
+  postAskLimits({ askMaxTurns, askMaxBudgetUsd, ...(scriptHost ? { chat: collectScriptToolsToggle(scriptHost) } : {}) });
 }
 document.getElementById('askLimitsSave')?.addEventListener('click', saveAskLimits);
 document.getElementById('askLimitsReset')?.addEventListener('click', () => postAskLimits({ askMaxTurns: '', askMaxBudgetUsd: '' }));
@@ -19743,8 +19775,20 @@ function paintLevelBanner() {
   const { key, min } = pageMinLevel();
   const above = !levelAtLeast(min);
   // The page you are on keeps its menu entry until you leave it, so "where am I" never vanishes.
+  // Simple is the one exception: the Nodes group (Agents, Scripts) stays hidden as a whole —
+  // in the rail AND the topnav — and the banner alone says where you are. Advanced keeps it.
+  const hideNodes = currentLevel() === 'simple';
   for (const b of $$('.nav button[data-nav], .topnav button[data-nav]')) {
-    keepVisible(b, above && b.dataset.nav === currentShownView);
+    const nav = b.dataset.nav;
+    keepVisible(b, above && nav === currentShownView && !(hideNodes && NODES_GROUP_VIEWS.includes(nav)));
+  }
+  // The Nodes parent and its box are not routes, so the loop above never reaches
+  // them: keep both with the child, or the kept row sits inside a hidden box
+  // (the box is expert-gated too) with its elbow hanging off nothing.
+  if (nodesGroup) {
+    const keep = above && !hideNodes && NODES_GROUP_VIEWS.includes(currentShownView);
+    keepVisible(nodesGroup, keep);
+    keepVisible(nodesGroupBox, keep);
   }
   if (el.settingsTabs) {
     for (const b of el.settingsTabs.querySelectorAll('button[data-tab]')) {
@@ -19903,6 +19947,13 @@ function showView(name, param = '') {
     if (on) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   });
+  // Nodes (Agents, Scripts): tint the parent while a child page is open, and
+  // unfold it — a deep link or a topnav click must never land on a hidden row.
+  if (nodesGroup) {
+    const inNodes = NODES_GROUP_VIEWS.includes(name);
+    nodesGroup.classList.toggle('has-active', inNodes);
+    if (inNodes && nodesGroup.getAttribute('aria-expanded') === 'false') setNodesCollapsed(false);
+  }
   // Toggle a body flag so CSS can drop .main's top padding for the History view,
   // letting the sticky pills toolbar + project headers pin flush to the top.
   document.body.classList.toggle('view-history', name === 'history');

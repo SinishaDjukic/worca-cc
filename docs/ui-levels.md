@@ -128,7 +128,7 @@ be skipped by forgetting it.
 | New pipeline, Getting started, Running, History, Projects, Settings | S |
 | Ask Worca pill, sidebar spend indicator, the mode item | S |
 | Statistics, Workflow Composer, Workspaces | A |
-| Team metrics, Agents, Scripts | E |
+| Team metrics, Nodes (Agents, Scripts) | E — Nodes is the one entry Simple never keeps: with Agents or Scripts open, the whole group stays hidden and the banner says where you are; Advanced keeps it with the open child |
 
 ### New pipeline
 
