@@ -285,3 +285,135 @@ export function subagentModelIssue(v) {
   if (v == null || v === '' || isSubagentModelValue(v)) return '';
   return `unknown sub-agent model ${JSON.stringify(String(v))}`;
 }
+
+// ── model bridge: `upstream` on a catalog entry (model-bridge-design.md §6.1) ──
+// Lives in this zero-import leaf for the same reason `cost` does: the user
+// catalog (settings.mjs) and a plugin manifest (plugin-manifest.mjs) validate
+// the same shape against one rule, and neither may import the other.
+//
+//   { provider: 'copilot'|'openai'|'anthropic', api: 'anthropic'|'openai-chat',
+//     model: '<upstream id>', baseUrl?, apiKey?, headers?, capabilities? }
+//
+// A bridged entry is dispatched through worca's in-process loopback bridge
+// (src/core/bridge/): resolveModelEnv synthesizes ANTHROPIC_BASE_URL /
+// ANTHROPIC_AUTH_TOKEN / ANTHROPIC_MODEL itself, so those keys — and
+// ANTHROPIC_API_KEY, which would make the CLI prefer a first-party key — may
+// not also appear in the entry's own `env` map.
+
+export const UPSTREAM_PROVIDERS = Object.freeze(['copilot', 'openai', 'anthropic']);
+export const UPSTREAM_APIS = Object.freeze(['anthropic', 'openai-chat']);
+/** Which wire protocols each provider can be driven through. */
+export const PROVIDER_APIS = Object.freeze({
+  copilot: Object.freeze(['anthropic', 'openai-chat']),
+  openai: Object.freeze(['openai-chat']),
+  anthropic: Object.freeze(['anthropic']),
+});
+/** Env keys the bridge owns; rejected in an `env` map beside `upstream`. */
+export const BRIDGE_ROUTING_KEYS = Object.freeze([
+  'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL',
+]);
+/** Boolean capability flags an entry may pin (model-bridge-design.md §5.6). */
+export const CAPABILITY_FLAGS = Object.freeze(['toolCalls', 'vision', 'reasoning']);
+/** Numeric capability limits an entry may pin. */
+export const CAPABILITY_LIMITS = Object.freeze(['maxPromptTokens', 'maxOutputTokens']);
+const FORBIDDEN_UPSTREAM_HEADERS = new Set(['authorization', 'host', 'content-length', 'content-type', 'transfer-encoding']);
+const HEADER_NAME_RE = /^[A-Za-z0-9-]{1,80}$/;
+
+/** Validate a `capabilities` map; returns the normalized map or undefined. Throws. */
+export function assertModelCapabilities(caps) {
+  if (caps === undefined || caps === null) return undefined;
+  if (typeof caps !== 'object' || Array.isArray(caps)) throw new Error('upstream.capabilities must be an object');
+  const out = {};
+  for (const [k, v] of Object.entries(caps)) {
+    if (CAPABILITY_FLAGS.includes(k)) {
+      if (v === null || v === undefined) continue;
+      if (typeof v !== 'boolean') throw new Error(`upstream.capabilities.${k} must be true or false`);
+      out[k] = v;
+    } else if (CAPABILITY_LIMITS.includes(k)) {
+      if (v === null || v === undefined || v === '') continue;
+      const n = Number(v);
+      if (!Number.isInteger(n) || n <= 0) throw new Error(`upstream.capabilities.${k} must be a positive integer`);
+      out[k] = n;
+    } else {
+      throw new Error(`unknown upstream.capabilities key ${JSON.stringify(k)} — allowed: ${[...CAPABILITY_FLAGS, ...CAPABILITY_LIMITS].join(', ')}`);
+    }
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** Whether `v` is an acceptable http(s) base URL with no query or fragment. */
+export function isUpstreamBaseUrl(v) {
+  if (typeof v !== 'string' || !v.trim()) return false;
+  let u;
+  try { u = new URL(v.trim()); } catch { return false; }
+  return (u.protocol === 'http:' || u.protocol === 'https:') && !u.search && !u.hash;
+}
+
+/**
+ * Validate a model `upstream` block. Returns the normalized shape or undefined
+ * (for null/undefined); THROWS on malformed input with a message naming the
+ * field. Secrets (`apiKey`) are literal strings or whole-value `${VAR}` refs.
+ * @param {*} upstream
+ * @returns {{provider:string, api:string, model:string, baseUrl?:string, apiKey?:string, headers?:Record<string,string>, capabilities?:object}|undefined}
+ * @throws {Error}
+ */
+export function assertModelUpstream(upstream) {
+  if (upstream === undefined || upstream === null) return undefined;
+  if (typeof upstream !== 'object' || Array.isArray(upstream)) throw new Error('upstream must be an object');
+  const provider = typeof upstream.provider === 'string' ? upstream.provider.trim() : '';
+  if (!UPSTREAM_PROVIDERS.includes(provider)) {
+    throw new Error(`upstream.provider must be one of ${UPSTREAM_PROVIDERS.join(' | ')}`);
+  }
+  const api = typeof upstream.api === 'string' ? upstream.api.trim() : '';
+  if (!UPSTREAM_APIS.includes(api)) throw new Error(`upstream.api must be one of ${UPSTREAM_APIS.join(' | ')}`);
+  if (!PROVIDER_APIS[provider].includes(api)) {
+    throw new Error(`provider ${provider} cannot be driven through api ${api} — allowed: ${PROVIDER_APIS[provider].join(' | ')}`);
+  }
+  const model = typeof upstream.model === 'string' ? upstream.model.trim() : '';
+  if (!model) throw new Error('upstream.model must be a non-empty string (the id the endpoint expects)');
+  const out = { provider, api, model };
+  if (upstream.baseUrl !== undefined && upstream.baseUrl !== null && upstream.baseUrl !== '') {
+    if (provider === 'copilot') throw new Error('upstream.baseUrl cannot be set for the copilot provider (the host follows the account type)');
+    if (!isUpstreamBaseUrl(upstream.baseUrl)) throw new Error('upstream.baseUrl must be an http(s) URL with no query or fragment');
+    out.baseUrl = upstream.baseUrl.trim().replace(/\/+$/, '');
+  }
+  if (upstream.apiKey !== undefined && upstream.apiKey !== null && upstream.apiKey !== '') {
+    if (provider === 'copilot') throw new Error('upstream.apiKey cannot be set for the copilot provider (sign in instead)');
+    if (typeof upstream.apiKey !== 'string' || !upstream.apiKey.trim()) throw new Error('upstream.apiKey must be a non-empty string or ${VAR}');
+    out.apiKey = upstream.apiKey.trim();
+  }
+  if (upstream.headers !== undefined && upstream.headers !== null) {
+    const h = upstream.headers;
+    if (typeof h !== 'object' || Array.isArray(h)) throw new Error('upstream.headers must be an object of string values');
+    const headers = {};
+    for (const [k, v] of Object.entries(h)) {
+      if (!HEADER_NAME_RE.test(k)) throw new Error(`upstream.headers: invalid header name ${JSON.stringify(k)}`);
+      if (FORBIDDEN_UPSTREAM_HEADERS.has(k.toLowerCase())) throw new Error(`upstream.headers: ${k} is set by the bridge and cannot be overridden`);
+      if (typeof v !== 'string' || !v.trim()) throw new Error(`upstream.headers: value for ${JSON.stringify(k)} must be a non-empty string`);
+      headers[k] = v.trim();
+    }
+    if (Object.keys(headers).length) out.headers = headers;
+  }
+  const caps = assertModelCapabilities(upstream.capabilities);
+  if (caps) out.capabilities = caps;
+  return out;
+}
+
+/** The first env key an `upstream` entry may not also carry, or null. */
+export function upstreamEnvConflict(env) {
+  for (const k of Object.keys(env || {})) if (BRIDGE_ROUTING_KEYS.includes(k)) return k;
+  return null;
+}
+
+/** Whether an `openai-chat` upstream drops the CLI's web tools (§5.3). */
+export function bridgeExcludedTools(upstream) {
+  return upstream && upstream.api === 'openai-chat' ? ['WebSearch', 'WebFetch'] : [];
+}
+
+// ── providers: account-level state shared by bridged entries (§6.2) ─────────
+export const COPILOT_ACCOUNT_TYPES = Object.freeze(['individual', 'business', 'enterprise']);
+export const DEFAULT_PROVIDER_CONCURRENCY = Object.freeze({ copilot: 4, openai: 8, anthropic: 8 });
+export const MAX_PROVIDER_CONCURRENCY = 64;
+/** Bump when the Copilot terms notice wording changes materially — a stored
+ *  acknowledgement of an older version is shown again (§8.2). */
+export const COPILOT_TERMS_VERSION = 1;

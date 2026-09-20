@@ -65,6 +65,9 @@ const SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,199}$/;
 const PLUGIN_NAME_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+// The one import: the zero-import model-env leaf, for the bridged-model
+// `upstream` validator every catalog layer shares (model-bridge-design.md §6.3).
+import { assertModelUpstream, upstreamEnvConflict } from '../model-env.mjs';
 
 const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const clip = (v, max = TEXT_MAX) => {
@@ -224,6 +227,21 @@ function normalizeModels(raw, warnings) {
       }
       if (bad) { warnings.push(`catalogs.models: ${m.id}: ${bad} — entry dropped`); continue; }
       entry.env = env;
+    }
+    // A bridged model (model-bridge-design.md §6.3): a policy may ship the
+    // upstream shape but never a credential — the apiKey must be a ${VAR} ref
+    // and a copilot entry resolves against each developer's own sign-in.
+    if (m.upstream != null) {
+      let upstream;
+      try {
+        upstream = assertModelUpstream(m.upstream);
+        if (upstream && upstream.apiKey && !/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(upstream.apiKey)) throw new Error('upstream.apiKey must be a ${VAR} reference');
+        const clash = upstream ? upstreamEnvConflict(entry.env) : null;
+        if (clash) throw new Error(`env key ${clash} is set by the bridge for an upstream entry`);
+      } catch (e) {
+        warnings.push(`catalogs.models: ${m.id}: ${e.message} — entry dropped`); continue;
+      }
+      if (upstream) entry.upstream = upstream;
     }
     seen.add(lc);
     out.push(entry);

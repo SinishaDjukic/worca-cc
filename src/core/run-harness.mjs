@@ -56,6 +56,7 @@ import {
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
 import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs } from './config.mjs';
+import { bridgeCallsFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { readGuardrailSet } from './guardrail-store.mjs';
 import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
 import { collectRequiredSkills, validateSkills, injectSkills, pluginSkillDirs } from './skills.mjs';
@@ -3859,6 +3860,7 @@ export class RunHarness extends EventEmitter {
     const cost = costCfg
       ? resolveModelCost(attr.model, rawCost, e.raw.usage, costCfg)
       : rawCost;
+    if (isResult) this._recordBridgeCalls(attr?.stepKey, attr?.executionId);
     if (Number.isFinite(cost)) this._recordCost(cost, attr?.stepKey);
     else if (isResult && !this.claude.mock) {
       // A {perMtok} model prices from tokens alone, so a result with no usage is
@@ -4265,6 +4267,30 @@ export class RunHarness extends EventEmitter {
    * carries the figure.
    * @param {number} costUsd
    */
+  /**
+   * Model bridge (model-bridge-design.md §7.2/§8.6): the premium-request-
+   * initiating calls a node made through the bridge, read off the bridge's
+   * per-execution counter when the node's terminal `result` arrives and
+   * stamped on the step (`bridgeCalls`; `bridgeContinued` the tool-loop
+   * continuations). Nothing for a non-bridged node, so the step shape is
+   * unchanged there. Persisted through exec_meta (artifacts.mjs).
+   */
+  _recordBridgeCalls(stepKey, executionId) {
+    if (!executionId) return;
+    const calls = bridgeCallsFor(executionId);
+    if (!calls.initiated && !calls.continued) return;
+    forgetBridgeTag(executionId);
+    const key = stepKey
+      || (this.state.cycle ? `${this.state.phase}#${this.state.cycle}` : this.state.phase);
+    const step = this.state.steps.find((s) => s.key === key);
+    if (!step) return;
+    step.bridgeCalls = (step.bridgeCalls || 0) + calls.initiated;
+    step.bridgeContinued = (step.bridgeContinued || 0) + calls.continued;
+    this.state.updatedAt = new Date().toISOString();
+    this._emit('state', this.getState());
+    this._persist().catch(() => {});
+  }
+
   _recordCost(costUsd, stepKey = null) {
     if (!Number.isFinite(costUsd) || costUsd < 0) return;
     const key = stepKey

@@ -205,6 +205,8 @@ effect, mock role, workspace variants).
 | Guardrails tab (list, details); Plugins tab (installed, available, install); Memory tab (files) | A |
 | General: title model, Auto workflow model, spawn diagnostics | E |
 | Guardrails create / delete; Models tab; marketplaces, Doctor, leftover data | E |
+| Models tab: Providers card (Copilot sign-in, import, account type, concurrency cap, key rows), the editor's Connection section, the Import-from-Copilot sheet | E |
+| Models tab: the Copilot notice modal; a card's "needs sign-in" pill and button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
 
 ### Statistics, Team metrics, Team policy, Ask Worca, Getting started
 

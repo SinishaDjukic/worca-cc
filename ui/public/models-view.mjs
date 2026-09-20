@@ -7,6 +7,8 @@
 // mv-promote, mv-save, mv-cancel, mv-env-add, mv-env-rm) so app.js wires ONE
 // delegated listener on the list container.
 
+import { bridgedBadge, needsSignInPill, degradationLine, renderConnectionSection, collectConnection, applyConnectionMode } from './bridge-view.mjs';
+
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
   if (cls) n.className = cls;
@@ -128,14 +130,22 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
     else if (pluginLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadow', 'overrides plugin'));
     const rb = routedBadge(m);
     if (rb) head.appendChild(rb);
+    // Model bridge (model-bridge-design.md §8.5): the provider badge, and the
+    // blocking "needs sign-in" pill when that provider is not usable yet.
+    const bb = bridgedBadge(m, { doc });
+    if (bb) head.appendChild(bb);
+    const ns = needsSignInPill(m, { doc });
+    if (ns) head.appendChild(ns);
     // The §4.6 "unreliable" badge is meaningless once an override GOVERNS this
     // model's spend — and the backend only lifts the stored flag on the model's
     // next result event, so suppress it here the moment pricing is pinned.
     if (m.costUnreliable && !m.cost) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
     if (m.cost) head.appendChild(h(doc, 'span', 'badge violet mv-cost-pinned', m.cost.free ? 'free' : 'priced'));
     body.appendChild(head);
-    const bits = [m.id, effortsSummary(m.efforts, efforts), envSummary(m.env), costSummary(m.cost)].filter(Boolean);
+    const bits = [m.id, effortsSummary(m.efforts, efforts), m.upstream ? `→ ${m.upstream.model}` : '', envSummary(m.env), costSummary(m.cost)].filter(Boolean);
     body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join(' — ')));
+    const deg = degradationLine(m);
+    if (deg) body.appendChild(h(doc, 'small', 'mv-degradation hint', deg));
     body.appendChild(h(doc, 'small', 'mv-test-result hint')); // app.js paints the Test outcome here
     card.appendChild(body);
     const del = h(doc, 'button', 'btn-ghost mv-delete', 'Delete');
@@ -197,13 +207,19 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
       if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadowed', 'overridden by your copy'));
       const prb = routedBadge(m);
       if (prb) head.appendChild(prb);
+      const pbb = bridgedBadge(m, { doc });
+      if (pbb) head.appendChild(pbb);
+      const pns = needsSignInPill(m, { doc });
+      if (pns) head.appendChild(pns);
       // Same rule as a global card: a manifest-pinned price governs the spend,
       // so the §4.6 "unreliable" flag says nothing about it.
       if (m.costUnreliable && !m.cost) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
       if (m.cost) head.appendChild(h(doc, 'span', 'badge violet mv-cost-pinned', m.cost.free ? 'free' : 'priced'));
       body.appendChild(head);
-      const bits = [m.id, effortsSummary(m.efforts, efforts), envSummary(m.env), costSummary(m.cost)].filter(Boolean);
+      const bits = [m.id, effortsSummary(m.efforts, efforts), m.upstream ? `→ ${m.upstream.model}` : '', envSummary(m.env), costSummary(m.cost)].filter(Boolean);
       body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join(' — ')));
+      const pdeg = degradationLine(m);
+      if (pdeg) body.appendChild(h(doc, 'small', 'mv-degradation hint', pdeg));
       for (const s of m.secrets || []) {
         body.appendChild(h(doc, 'small', `mv-secret hint${s.set ? '' : ' err'}`,
           s.set ? `secret ${s.key}: set` : `secret ${s.key}: NOT SET — configure it in the plugin's settings`));
@@ -307,7 +323,7 @@ function envRow(doc, key = '', value = '') {
  * Returns detached DOM; app.js wires mv-save / mv-cancel / mv-env-add /
  * mv-env-rm and calls collectModelEditor on save.
  */
-export function renderModelEditor(model, efforts, { doc = globalThis.document } = {}) {
+export function renderModelEditor(model, efforts, { doc = globalThis.document, providers = null, copilotModels = [] } = {}) {
   const editing = !!model;
   const root = h(doc, 'section', 'card mv-editor');
   root.dataset.mode = editing ? 'edit' : 'create';
@@ -342,6 +358,11 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
   labelInput.value = editing ? (model.label === model.id ? '' : model.label) : '';
   grid.appendChild(field('Label', labelInput));
 
+  // ── Connection (model-bridge-design.md §8.3): direct / env / provider ──
+  // Rendered first among the routing controls: it decides whether the env
+  // rows below carry the routing or Worca's own bridge does.
+  grid.appendChild(field('Connection', renderConnectionSection(model, { doc, providers, copilotModels })));
+
   const effWrap = h(doc, 'div', 'mv-efforts');
   const selected = new Set(editing && Array.isArray(model.efforts) ? model.efforts : efforts);
   for (const e of efforts) {
@@ -352,7 +373,9 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
     lab.appendChild(h(doc, 'span', null, e));
     effWrap.appendChild(lab);
   }
-  grid.appendChild(field('Supported efforts', effWrap, 'All checked = every effort (the default).'));
+  const effField = field('Supported efforts', effWrap, 'All checked = every effort (the default).');
+  effField.querySelector('.hint').classList.add('mv-efforts-hint');   // applyConnectionMode rewrites it
+  grid.appendChild(effField);
 
   const envWrap = h(doc, 'div', 'mv-env');
   const rows = editing && model.env ? Object.entries(model.env) : [];
@@ -360,7 +383,7 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
   const add = h(doc, 'button', 'btn-ghost mv-env-add', '+ env var');
   add.type = 'button';
   grid.appendChild(field('Routing env (merged into the claude spawn for this model)', envWrap,
-    'e.g. ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN. ANTHROPIC_MODEL sets the wire id sent to --model (the id above stays worca’s handle). Stored values show masked; leave masked to keep. WORCA_* and process keys are reserved.'));
+    'e.g. ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN. ANTHROPIC_MODEL sets the wire id sent to --model (the id above stays worca’s handle). Stored values show masked; leave masked to keep. WORCA_* and process keys are reserved. Through a provider, the bridge owns ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY / ANTHROPIC_MODEL — setting them here is refused.'));
   const envBtns = h(doc, 'div', 'mv-env-btns');
   envBtns.appendChild(add);
   if (rows.length) {
@@ -415,6 +438,7 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
 
   root.appendChild(grid);
   setModelCost(root, editing ? model.cost : null); // grid is attached now — the block is reachable from root
+  applyConnectionModeIn(root);                       // efforts hint + collapse follow the Connection (now reachable)
   const msg = h(doc, 'p', 'form-msg mv-editor-msg');
   msg.setAttribute('aria-live', 'polite');
   root.appendChild(msg);
@@ -515,6 +539,10 @@ export function collectModelEditor(rootEl) {
     cost = { perMtok };   // empty -> the server rejects it by name, surfaced in the form
   }
 
+  // Connection (model-bridge-design.md §8.3): the object to store, or null to
+  // clear — like 'cli' for pricing, the form shows the truth.
+  const { upstream } = collectConnection(rootEl);
+
   const body = {
     ...(editing ? {} : { id }),
     label,
@@ -522,8 +550,18 @@ export function collectModelEditor(rootEl) {
     efforts: efforts.length === allCount ? [] : efforts,
     env,
     cost,
+    // Create mode has nothing to clear, so a null upstream is simply omitted
+    // and the POST body stays byte-identical for a non-bridged entry.
+    ...(upstream === undefined || (!editing && upstream === null) ? {} : { upstream }),
   };
   return { id: editing ? id : null, body };
+}
+
+/** applyConnectionMode over an editor root (re-exported here so app.js's one
+ *  delegated `change` handler for the editor needs a single import). */
+export function applyConnectionModeIn(rootEl) {
+  const conn = rootEl && rootEl.querySelector && rootEl.querySelector('.mv-conn');
+  if (conn) applyConnectionMode(conn);
 }
 
 // ── Share-as-plugin export wizard (design §9.5) ─────────────────────────────

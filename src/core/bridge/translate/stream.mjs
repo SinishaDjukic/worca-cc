@@ -1,0 +1,207 @@
+// src/core/bridge/translate/stream.mjs
+// OpenAI chat/completions stream chunks -> Anthropic Messages SSE events
+// (model-bridge-design.md §5.4/§5.5/§5.8). Pure state machine: feed parsed
+// chunk objects to `push`, call `finish` at end of stream; both return the
+// events to write, as `{event, data}` pairs. `serializeSse` renders them.
+//
+// Text streams live, one content block per contiguous run. Tool calls are
+// BUFFERED per tool_calls index and emitted as a complete block when the next
+// tool call (or text) begins, and at finish: Anthropic blocks are strictly
+// sequential and cannot be reopened, while upstreams may (rarely) interleave
+// argument deltas across indexes — buffering makes that case correct at the
+// cost of a tool block appearing a moment later than its first delta.
+
+import { randomBytes } from 'node:crypto';
+
+/** finish_reason -> stop_reason (§5.5). */
+export function mapStopReason(finish, { emitted = false } = {}) {
+  switch (finish) {
+    case 'stop': return 'end_turn';
+    case 'length': return 'max_tokens';
+    case 'tool_calls':
+    case 'function_call': return 'tool_use';
+    case 'content_filter': return 'end_turn';
+    default: return emitted ? 'end_turn' : null;
+  }
+}
+
+/** chat/completions usage -> Anthropic usage (§5.8). */
+export function mapUsage(usage) {
+  const u = usage && typeof usage === 'object' ? usage : {};
+  const prompt = Number(u.prompt_tokens) || 0;
+  const cached = Number(u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens) || 0;
+  return {
+    input_tokens: Math.max(0, prompt - cached),
+    output_tokens: Number(u.completion_tokens) || 0,
+    cache_read_input_tokens: cached,
+    cache_creation_input_tokens: 0,
+  };
+}
+
+export function newMessageId() { return `msg_bridge_${randomBytes(12).toString('hex')}`; }
+export function newToolUseId() { return `toolu_bridge_${randomBytes(12).toString('hex')}`; }
+
+export class ChatStreamTranslator {
+  /** @param {{model:string}} opts  the model name the CLI expects back (catalog id) */
+  constructor({ model } = {}) {
+    this.model = model || 'bridge';
+    this.id = newMessageId();
+    this.started = false;
+    this.nextIndex = 0;
+    this.textIndex = null;          // open text block index, or null
+    this.tools = new Map();         // tool_calls index -> {id, name, args, order}
+    this.toolOrder = [];
+    this.flushedTools = 0;          // how many of toolOrder have been emitted
+    this.finishReason = null;
+    this.usage = null;
+    this.emittedAny = false;
+    this.contentFilter = false;
+  }
+
+  _start() {
+    if (this.started) return [];
+    this.started = true;
+    return [{
+      event: 'message_start',
+      data: {
+        type: 'message_start',
+        message: {
+          id: this.id, type: 'message', role: 'assistant', model: this.model, content: [],
+          stop_reason: null, stop_sequence: null,
+          usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        },
+      },
+    }];
+  }
+
+  _closeText() {
+    if (this.textIndex === null) return [];
+    const i = this.textIndex;
+    this.textIndex = null;
+    return [{ event: 'content_block_stop', data: { type: 'content_block_stop', index: i } }];
+  }
+
+  /** Emit every buffered tool call not yet emitted (in first-seen order). */
+  _flushTools(upTo = this.toolOrder.length) {
+    const out = [];
+    while (this.flushedTools < upTo) {
+      const key = this.toolOrder[this.flushedTools++];
+      const t = this.tools.get(key);
+      const index = this.nextIndex++;
+      out.push({ event: 'content_block_start', data: { type: 'content_block_start', index, content_block: { type: 'tool_use', id: t.id, name: t.name, input: {} } } });
+      out.push({ event: 'content_block_delta', data: { type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: t.args || '{}' } } });
+      out.push({ event: 'content_block_stop', data: { type: 'content_block_stop', index } });
+      this.emittedAny = true;
+    }
+    return out;
+  }
+
+  /**
+   * Feed one parsed chunk object. Returns the SSE events to write.
+   * @param {object} chunk
+   */
+  push(chunk) {
+    const out = this._start();
+    if (!chunk || typeof chunk !== 'object') return out;
+    if (chunk.error) {
+      const msg = typeof chunk.error === 'string' ? chunk.error : (chunk.error.message || JSON.stringify(chunk.error));
+      out.push({ event: 'error', data: { type: 'error', error: { type: 'api_error', message: `upstream stream error: ${msg}` } } });
+      return out;
+    }
+    if (chunk.usage && typeof chunk.usage === 'object') this.usage = chunk.usage;
+    const choice = Array.isArray(chunk.choices) ? chunk.choices[0] : null;
+    if (!choice) return out;
+    const delta = choice.delta || {};
+
+    if (typeof delta.content === 'string' && delta.content.length) {
+      // Text after tool calls: the tools are complete — flush them first.
+      if (this.toolOrder.length > this.flushedTools) { out.push(...this._closeText(), ...this._flushTools()); }
+      if (this.textIndex === null) {
+        this.textIndex = this.nextIndex++;
+        out.push({ event: 'content_block_start', data: { type: 'content_block_start', index: this.textIndex, content_block: { type: 'text', text: '' } } });
+      }
+      out.push({ event: 'content_block_delta', data: { type: 'content_block_delta', index: this.textIndex, delta: { type: 'text_delta', text: delta.content } } });
+      this.emittedAny = true;
+    }
+
+    if (Array.isArray(delta.tool_calls)) {
+      for (const tc of delta.tool_calls) {
+        if (!tc || typeof tc !== 'object') continue;
+        const key = Number.isInteger(tc.index) ? tc.index : (tc.id || this.toolOrder.length);
+        let t = this.tools.get(key);
+        if (!t) {
+          // A new tool call: text before it is complete; earlier tool calls are complete.
+          out.push(...this._closeText());
+          out.push(...this._flushTools());
+          t = { id: tc.id || newToolUseId(), name: '', args: '' };
+          this.tools.set(key, t);
+          this.toolOrder.push(key);
+        } else if (tc.id && !t.id) t.id = tc.id;
+        const fn = tc.function || {};
+        if (typeof fn.name === 'string' && fn.name) t.name = t.name ? t.name : fn.name;
+        if (typeof fn.arguments === 'string') t.args += fn.arguments;
+      }
+    }
+
+    if (choice.finish_reason) {
+      this.finishReason = choice.finish_reason;
+      if (choice.finish_reason === 'content_filter') this.contentFilter = true;
+    }
+    return out;
+  }
+
+  /** End of stream: close blocks, emit message_delta + message_stop. */
+  finish() {
+    const out = this._start();
+    out.push(...this._closeText());
+    out.push(...this._flushTools());
+    const hadTools = this.toolOrder.length > 0;
+    let stop = mapStopReason(this.finishReason, { emitted: this.emittedAny });
+    if (stop === null) {
+      out.push({ event: 'error', data: { type: 'error', error: { type: 'api_error', message: 'upstream stream ended without content or finish_reason' } } });
+      return out;
+    }
+    if (hadTools && stop === 'end_turn') stop = 'tool_use';
+    out.push({ event: 'message_delta', data: { type: 'message_delta', delta: { stop_reason: stop, stop_sequence: null }, usage: mapUsage(this.usage) } });
+    out.push({ event: 'message_stop', data: { type: 'message_stop' } });
+    return out;
+  }
+}
+
+/** Render `{event, data}` pairs as SSE text. */
+export function serializeSse(events) {
+  let s = '';
+  for (const e of events) s += `event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`;
+  return s;
+}
+
+/**
+ * Incremental SSE `data:` parser for an upstream chat stream. Feed text
+ * chunks; get back the parsed JSON objects (the `[DONE]` sentinel ends the
+ * stream and sets `done`). Non-JSON data lines are skipped.
+ */
+export class SseDataParser {
+  constructor() { this.buf = ''; this.done = false; }
+  /** @param {string} text  @returns {object[]} */
+  feed(text) {
+    if (this.done) return [];
+    this.buf += text;
+    const out = [];
+    let idx;
+    while ((idx = this.buf.search(/\r?\n\r?\n/)) !== -1) {
+      const raw = this.buf.slice(0, idx);
+      this.buf = this.buf.slice(idx).replace(/^\r?\n\r?\n/, '');
+      const data = raw.split(/\r?\n/).filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim()).join('\n');
+      if (!data) continue;
+      if (data === '[DONE]') { this.done = true; break; }
+      try { out.push(JSON.parse(data)); } catch { /* skip non-JSON */ }
+    }
+    return out;
+  }
+  /** Drain a trailing event with no terminating blank line. */
+  end() {
+    if (this.done || !this.buf.trim()) return [];
+    const rest = this.buf; this.buf = '';
+    return this.feed(`${rest}\n\n`);
+  }
+}

@@ -7,7 +7,7 @@ import { readFileSync, readdirSync, readlinkSync, existsSync } from 'node:fs';
 import { join, resolve, dirname, sep, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS } from './plugin-api.mjs';
-import { EFFORTS, isReservedModelEnvKey, assertModelCost } from './model-env.mjs';
+import { EFFORTS, isReservedModelEnvKey, assertModelCost, assertModelUpstream, upstreamEnvConflict } from './model-env.mjs';
 import { validateMetaV2, normalizeAgentMeta, indexByKey } from '../shared/graph/agent-meta.mjs';
 import { portsFnFor } from '../shared/graph/ports.mjs';
 import { validateGraph } from '../shared/graph/validate.mjs';
@@ -56,7 +56,7 @@ const KNOWN_CHANNEL = new Set(['id', 'displayName', 'platform', 'module', 'ingre
 const CHANNEL_INGRESS = new Set(['connect', 'webhook']);
 const KNOWN_FIELD = new Set(['key', 'type', 'label', 'secret', 'required', 'default', 'help', 'options']);
 const KNOWN_INPUT = new Set(['key', 'type', 'label', 'default', 'optionsFrom', 'options']);
-const KNOWN_MODEL = new Set(['id', 'label', 'efforts', 'env', 'cost']);
+const KNOWN_MODEL = new Set(['id', 'label', 'efforts', 'env', 'cost', 'upstream']);
 const KNOWN_MODEL_SECRET = new Set(['key', 'label']);
 /** A manifest env value that defers to the plugin's secrets store (design §9.1). */
 const isSecretRef = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -467,11 +467,28 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
         errors.push(`${at} ("${id}"): ${e.message}`);
         return;
       }
+      // A bridged model (model-bridge-design.md §6.4): same shape and validator
+      // as a global entry. A plugin cannot ship provider credentials — a
+      // `copilot` entry resolves against the user's own sign-in, and an
+      // `openai`/`anthropic` apiKey may only be a ${VAR} ref, never a literal.
+      let upstream;
+      try {
+        upstream = assertModelUpstream(m.upstream);
+        if (upstream && upstream.apiKey && !/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(upstream.apiKey)) {
+          throw new Error('upstream.apiKey in a plugin must be a ${VAR} reference, never a literal key');
+        }
+        const clash = upstream ? upstreamEnvConflict(env) : null;
+        if (clash) { warnings.push(`${at} ("${id}"): env key ${JSON.stringify(clash)} is set by the bridge for an upstream entry — ignored`); delete env[clash]; }
+      } catch (e) {
+        errors.push(`${at} ("${id}"): ${e.message}`);
+        return;
+      }
       models.push({
         id, label: str(m.label) || id,
         efforts: efforts.length ? efforts : [...EFFORTS],
         ...(Object.keys(env).length ? { env } : {}),
         ...(cost ? { cost } : {}),
+        ...(upstream ? { upstream } : {}),
       });
     });
     const mids = models.map((m) => m.id.toLowerCase());

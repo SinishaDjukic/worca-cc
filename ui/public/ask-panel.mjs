@@ -1218,7 +1218,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const wantedEntry = catalogEntry(wanted.model);
     // Unknown stored/default id -> the backend default -> the first model we do
     // have that is not a hidden built-in (#422; a hidden id is still a valid pick).
-    const entry = wantedEntry || catalogEntry(fallback.model) || list.find((m) => m && !m.hidden) || list[0] || null;
+    const entry = wantedEntry || catalogEntry(fallback.model) || list.find((m) => m && !m.hidden && !m.needsSignIn) || list[0] || null;
     if (!entry) { updatePickerButton(); return; }  // empty catalog: keep what we have
     const effort = wantedEntry ? wanted.effort : fallback.effort;
     const next = { model: entry.id, effort: coerceEffort(entry, effort) };
@@ -1274,6 +1274,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     for (const m of st.catalog ? st.catalog.models : []) {
       if (!m || typeof m.id !== 'string') continue;
       if (m.hidden && m.id !== st.picker.model) continue;         // hidden built-in (#422); the current pick stays
+      if (m.needsSignIn && m.id !== st.picker.model) continue;    // bridged, provider not usable (model-bridge §8.5)
       if (m.custom === 'global') { primary.push(m); continue; }   // user models are never demoted
       const fam = familyKey(m);
       // The picked model always shows up front so its ✓ is visible and it is one click away.
@@ -1325,6 +1326,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (Array.isArray(m.secretsMissing) && m.secretsMissing.length) {
         item.appendChild(tag('secret not set', 'is-err',
           `${m.secretsMissing.join(', ')} is not set — configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
+      }
+      if (m.needsSignIn) {
+        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet — Settings › Models › Providers.'));
       }
       if (m.id === st.picker.model) item.appendChild(make('span', 'ask-model-check', '✓'));
       return item;
@@ -1924,7 +1928,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // model
       const sel = rpSelect('ask-rp-model', `Model for ${row.label}`);
       sel.appendChild(opt('', 'inherit (workflow default)'));
-      for (const m of lane.models) if (!m.hidden || m.id === c.model) sel.appendChild(opt(m.id, m.label || m.id));
+      for (const m of lane.models) if ((!m.hidden && !m.needsSignIn) || m.id === c.model) sel.appendChild(opt(m.id, (m.label || m.id) + (m.needsSignIn ? ' (needs sign-in)' : '')));
       sel.value = c.model || '';
       sel.disabled = !lane.editable;
       sel.addEventListener('change', () => {

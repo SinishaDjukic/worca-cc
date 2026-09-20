@@ -1157,10 +1157,12 @@ export async function writeState(pipelineDir, stateObj) {
     for (const st of Array.isArray(obj.steps) ? obj.steps : []) {
       // v2 rows: execution_id === key. v1 rows leave every exec_* column NULL, so
       // the readers below reproduce today's exact shape for a v1 pipeline.
-      const meta = (st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null)
+      const meta = (st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null || st.bridgeCalls != null)
         ? s({ taskId: st.taskId ?? null, parentExecutionId: st.parentExecutionId ?? null,
               title: st.title ?? null, phaseOrdinal: st.phaseOrdinal ?? null,
-              taskIndex: st.taskIndex ?? null, taskTotal: st.taskTotal ?? null })
+              taskIndex: st.taskIndex ?? null, taskTotal: st.taskTotal ?? null,
+              // Model bridge (§8.6): requests the node initiated through the bridge.
+              ...(st.bridgeCalls != null ? { bridgeCalls: st.bridgeCalls, bridgeContinued: st.bridgeContinued ?? 0 } : {}) })
         : null;
       ins.run(
         id, st.key, st.nodeId ?? null, st.phase ?? null,
@@ -1850,6 +1852,7 @@ function stepRowToStep(r) {
     if (em.phaseOrdinal != null) step.phaseOrdinal = em.phaseOrdinal;
     if (em.taskIndex != null) step.taskIndex = em.taskIndex;
     if (em.taskTotal != null) step.taskTotal = em.taskTotal;
+    if (em.bridgeCalls != null) { step.bridgeCalls = em.bridgeCalls; step.bridgeContinued = em.bridgeContinued ?? 0; }
   }
   return step;
 }

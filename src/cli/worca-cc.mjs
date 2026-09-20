@@ -31,6 +31,7 @@ import { formatExecLine, formatGateHeader, formatRunSummary, formatWorkflowPropo
 import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
 import { effectiveDebugSpawn } from '../core/settings.mjs';
 import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule } from './schedule.mjs';
+import { cmdModels } from './models.mjs';
 import {
   DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
 } from '../core/ui-instance.mjs';
@@ -255,6 +256,8 @@ Subcommands:
   policy <cmd> [...]          Team policy from the worca-policy branch: show|pull|init|setup. See: worca policy help
   schedule <cmd> [...]        Manage scheduled runs: list|show|run-now|move|cancel|skip|pause|resume|log.
                               See: worca schedule help
+  models <cmd> [...]          Model catalog + providers: list|providers|login|logout|import|test|set.
+                              See: worca models help
   help                        Print this help (same as --help).
   version                     Print the version (same as --version).
 
@@ -2285,7 +2288,7 @@ async function drainMetricsFlushes() {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow', 'metrics', 'policy', 'schedule']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow', 'metrics', 'policy', 'schedule', 'models']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -2348,6 +2351,7 @@ async function main() {
     if (sub === 'metrics') return cmdMetrics(rest);
     if (sub === 'policy') return cmdPolicy(rest);
     if (sub === 'schedule') return cmdSchedule(rest, { out, c, fail });
+    if (sub === 'models') return cmdModels(rest, { out, c, fail });
   }
   // `worca --ui [...]` is the historical spelling of `worca ui start [...]`; hand the
   // remaining tokens to the ui parser so --port/--open/--mock work with either.
