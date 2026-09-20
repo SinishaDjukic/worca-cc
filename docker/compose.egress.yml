@@ -1,0 +1,47 @@
+# docker/compose.egress.yml — egress allowlist overlay (docs/docker.md, "Egress allowlist").
+#
+#   docker compose -f compose.yml -f compose.egress.yml up -d
+#
+# Puts worca on an INTERNAL network (no route to the internet) and adds a
+# forward proxy from the same image that relays only to allowlisted hosts.
+# Tools that honour HTTPS_PROXY (claude, git, gh, npm, pip, curl) work for
+# allowed hosts; a raw socket from `node -e` or `python -c` cannot leave.
+#
+#   WORCA_EGRESS_ALLOW   comma-separated hosts; ".example.com" allows subdomains.
+#                        Default: api.anthropic.com, github.com, .github.com,
+#                        .githubusercontent.com, registry.npmjs.org
+
+services:
+  worca:
+    depends_on:
+      - egress
+    networks:
+      - internal
+    environment:
+      HTTPS_PROXY: http://egress:3128
+      HTTP_PROXY: http://egress:3128
+      NO_PROXY: 127.0.0.1,localhost
+      # Playwright downloads Chromium from a CDN; add it to the allowlist or
+      # pre-fetch it. Listed here so the failure is legible, not silent.
+      PLAYWRIGHT_DOWNLOAD_HOST: ${PLAYWRIGHT_DOWNLOAD_HOST:-}
+
+  egress:
+    image: ghcr.io/sinishadjukic/worca:${WORCA_TAG:-latest}
+    entrypoint: ["tini", "-s", "--", "node", "/usr/local/lib/worca-egress-proxy.mjs"]
+    command: []
+    environment:
+      WORCA_EGRESS_ALLOW: ${WORCA_EGRESS_ALLOW:-}
+    networks:
+      - internal
+      - default
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 256m
+    restart: unless-stopped
+
+networks:
+  internal:
+    internal: true

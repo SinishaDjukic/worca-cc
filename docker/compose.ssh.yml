@@ -1,0 +1,17 @@
+# docker/compose.ssh.yml — forward the host's SSH agent (docs/docker.md, "Git credentials").
+#
+#   docker compose -f compose.yml -f compose.ssh.yml up -d
+#
+# Keys never enter the container; the agent socket does. While it is mounted an
+# agent CAN use it, so pair this with the egress overlay for untrusted tasks.
+#
+#   Docker Desktop (macOS/Windows): the socket is /run/host-services/ssh-auth.sock
+#                                   inside the VM — leave WORCA_SSH_SOCK unset.
+#   Linux Engine / Podman:          WORCA_SSH_SOCK=$SSH_AUTH_SOCK in .env
+
+services:
+  worca:
+    volumes:
+      - ${WORCA_SSH_SOCK:-/run/host-services/ssh-auth.sock}:/ssh-agent.sock
+    environment:
+      SSH_AUTH_SOCK: /ssh-agent.sock

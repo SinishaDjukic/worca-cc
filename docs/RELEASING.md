@@ -342,6 +342,38 @@ previously working pipeline breaks.
 | **A release that must go out with the pipeline broken** | Mint a short-lived granular token scoped to the single package, publish locally with `--access public`, revoke it immediately. Do not add a long-lived `NPM_TOKEN` secret to the repo. |
 | **Deprecating a bad version** | `npm deprecate @worca/app@<version> "<reason>"`. Prefer this to unpublishing — it warns installers without breaking anyone already pinned. |
 
+## 7. The container image
+
+`release-npm-app.yml` also publishes `ghcr.io/sinishadjukic/worca` from the
+same tag, **after** the npm publish succeeds, through the reusable
+`docker-image.yml`: it checks the tag out, runs `npm pack` (the bytes npm just
+shipped), builds `slim` and `full` for `linux/amd64` and `linux/arm64` on native
+runners, pushes by digest, stitches the manifests, tags them like the npm
+dist-tag (`1.3.0`, `1.3`, `1`, `latest` / `1.3.0-rc.1`, `rc`, each with a
+`-full` twin), signs them keyless with cosign, and runs the offline smoke
+(`tools/docker-smoke.mjs`) against the pushed manifest. The GitHub Release is
+created only after the image job passes, so a broken image fails the release
+the way a failing `npm test` does. npm is already live at that point; an image
+can lag an npm version by one fix-up run of `docker-rebuild.yml`
+(`workflow_dispatch` with the tag).
+
+`docker-rebuild.yml` rebuilds the newest stable and rc every Monday with fresh
+Debian packages and pushes `<version>-YYYYMMDD` tags while moving the version
+tags. The Claude Code pin (`docker/CLAUDE_CODE_VERSION`) is bumped by PR on
+`dev` and reaches an image at the next release.
+
+Needs, once: GHCR write for the repository's `GITHUB_TOKEN` (default for a
+package first published by this workflow; make the package public in the
+GitHub Packages settings after the first push).
+
+Release checklist addition — before a stable tag, on the rc image:
+
+| Host | Runtime | Check |
+| --- | --- | --- |
+| macOS arm64 | Docker Desktop | quick start, login, a mock run, a real run, the PR button |
+| Windows 11 | Docker Desktop + WSL2 (the `worca-win11` skill's VM) | quick start from a WSL2 shell, parity inside the distro, Add project falls back to the in-app browser |
+| Linux x86_64 | Podman rootless | quick start with `podman compose`, uid mapping, the egress overlay |
+
 ### Troubleshooting
 
 | Symptom | Cause |

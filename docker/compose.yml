@@ -1,41 +1,55 @@
-# Worca in a container — see plans/container-isolation-design.md §6.
-# Settings come from a .env beside this file; the file itself is not edited.
-#   WORCA_PROJECTS  host folder holding your repos (default ~/dev); mounted at the
-#                   same path inside (path parity keeps git worktree metadata valid)
-#   WORCA_PORT      host port, loopback only (default 4317)
+# docker/compose.yml — run Worca in a container (docs/docker.md).
+#
+#   mkdir worca && cd worca
+#   curl -fsSLO https://raw.githubusercontent.com/SinishaDjukic/worca-cc/dev/docker/compose.yml
+#   echo "WORCA_PROJECTS=$HOME/dev" > .env
+#   docker compose up -d                    # http://localhost:4317
+#   docker compose run --rm worca claude    # log Claude Code in, once
+#
+# Everything you change is a variable in .env (see docker/.env.example); this
+# file is not edited. Overlays (egress allowlist, SSH agent, Teams tunnel,
+# clone-in, dev) are separate files added with -f.
+
 name: worca
 
 services:
   worca:
-    image: ${WORCA_IMAGE:-worca:local}
-    build:
-      context: .
-    init: false                               # tini is already the ENTRYPOINT
+    image: ghcr.io/sinishadjukic/worca:${WORCA_TAG:-latest}
+    init: true
     user: "${WORCA_UID:-1000}:${WORCA_GID:-1000}"
     ports:
-      - "127.0.0.1:${WORCA_PORT:-4317}:4317"  # loopback only — the server's Host guard expects it
+      # Loopback only. The server's Host/Origin guard accepts localhost, and
+      # nothing else should reach an unauthenticated UI that runs agents.
+      - "127.0.0.1:${WORCA_PORT:-4317}:4317"
     volumes:
-      - worca-home:/worca                     # DB, store, runs, plugins, ui.json
-      - claude-config:/home/worca/.claude     # Claude Code credentials, memory, settings
-      - ${WORCA_PROJECTS:-${HOME}/dev}:${WORCA_PROJECTS:-${HOME}/dev}
+      - worca-home:/worca                       # DB, store, runs, plugins, ui.json
+      - claude-config:/home/worca/.claude       # Claude Code login, settings, memory
+      # Your repositories. Same path on both sides (path parity) so git
+      # worktree metadata stays valid on the host; see docs/docker.md.
+      - ${WORCA_PROJECTS:-${HOME}/dev}:${WORCA_PROJECTS_MOUNT:-${WORCA_PROJECTS:-${HOME}/dev}}
     environment:
       TZ: ${TZ:-UTC}
-      WORCA_PROJECTS_ROOT: ${WORCA_PROJECTS:-${HOME}/dev}
-      # Bare names pass through only when set: an empty GIT_AUTHOR_NAME makes git
-      # refuse to commit ("empty ident name"), overriding any user.name config.
-      GIT_AUTHOR_NAME:
-      GIT_AUTHOR_EMAIL:
-      GIT_COMMITTER_NAME:
-      GIT_COMMITTER_EMAIL:
-      GH_TOKEN:
-      CLAUDE_CODE_OAUTH_TOKEN:
-      ANTHROPIC_API_KEY:
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
+      WORCA_PROJECTS_ROOT: ${WORCA_PROJECTS_MOUNT:-${WORCA_PROJECTS:-${HOME}/dev}}
+      GIT_AUTHOR_NAME: ${GIT_AUTHOR_NAME:-}
+      GIT_AUTHOR_EMAIL: ${GIT_AUTHOR_EMAIL:-}
+      GIT_COMMITTER_NAME: ${GIT_AUTHOR_NAME:-}
+      GIT_COMMITTER_EMAIL: ${GIT_AUTHOR_EMAIL:-}
+      GH_TOKEN: ${GH_TOKEN:-}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-127.0.0.1,localhost}
+      WORCA_MOCK: ${WORCA_MOCK:-}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     pids_limit: 2048
     mem_limit: ${WORCA_MEM:-6g}
     cpus: ${WORCA_CPUS:-4}
-    tmpfs: ["/tmp:size=2g,mode=1777"]
+    tmpfs:
+      - /tmp:size=2g
     restart: unless-stopped
 
 volumes:

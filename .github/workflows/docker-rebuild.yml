@@ -1,0 +1,73 @@
+name: Container image weekly rebuild
+
+# The image pins Claude Code and carries Debian packages; both go stale. Once a
+# week rebuild the CURRENT stable and rc releases from their tags (picking up
+# the newest base image and the CLAUDE_CODE_VERSION pin at that tag — the pin
+# itself is bumped by PR on dev and reaches an image at the next release), push
+# date-stamped tags and move the version tags. See plans/container-isolation-design.md §10.3.
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # Mondays 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: build one specific worca-app-v* tag instead of the newest stable + rc
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: newest stable + rc tags
+    runs-on: ubuntu-latest
+    outputs:
+      stable: ${{ steps.pick.outputs.stable }}
+      rc: ${{ steps.pick.outputs.rc }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - id: pick
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          if [ -n "$REF" ]; then
+            case "$REF" in *-rc.*) echo "rc=$REF" >> "$GITHUB_OUTPUT" ;; *) echo "stable=$REF" >> "$GITHUB_OUTPUT" ;; esac
+            exit 0
+          fi
+          stable="$(git tag -l 'worca-app-v*' | grep -v -- '-rc\.' | sort -V | tail -n1)"
+          rc="$(git tag -l 'worca-app-v*-rc.*' | sort -V | tail -n1)"
+          # An rc older than the newest stable is superseded: skip it.
+          if [ -n "$rc" ] && [ -n "$stable" ] && [ "$(printf '%s\n%s\n' "$rc" "$stable" | sort -V | tail -n1)" = "$stable" ]; then rc=""; fi
+          echo "stable=$stable" >> "$GITHUB_OUTPUT"
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "stable=$stable rc=$rc"
+
+  stable:
+    needs: resolve
+    if: needs.resolve.outputs.stable != ''
+    uses: ./.github/workflows/docker-image.yml
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    with:
+      ref: ${{ needs.resolve.outputs.stable }}
+      channel: latest
+      date_tag: true
+
+  rc:
+    needs: resolve
+    if: needs.resolve.outputs.rc != ''
+    uses: ./.github/workflows/docker-image.yml
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    with:
+      ref: ${{ needs.resolve.outputs.rc }}
+      channel: rc
+      date_tag: true

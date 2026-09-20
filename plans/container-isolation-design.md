@@ -5,8 +5,14 @@ an agent going off the rails can damage a disposable Linux box instead of the de
 machine. Shipped as an **additional** install path next to `npm install -g @worca/app`,
 never a replacement for it.
 
-Status: concept. No code in this document has been implemented; every file path under
-`docker/` and every CLI verb that does not exist today is a proposal.
+Status: implemented on branch `worktree-container-isolation`, all three phases including
+the `worca container` wrapper (§12.3, `src/cli/container.mjs`). The files under `docker/`,
+the workflows and `docs/docker.md` are the authoritative form; where this document and they
+differ, they win. Measured sizes: slim 946 MB, full 1.56 GB (arm64).
+Lessons from building it are folded into the sections below (the `node` base image already
+owns uid 1000; a volume mount point must exist in the image to inherit ownership; `tini -s`;
+compose `!override` for clone-in; undici drops caller-set `Host` headers, so the smoke uses
+`node:http`).
 
 ---
 
@@ -130,10 +136,10 @@ is answered 403.
 
 ### 5.2 Variants
 
-| Tag suffix | Adds | Size (est.) | For |
+| Tag suffix | Adds | Size | For |
 | --- | --- | --- | --- |
-| *(none)* | nothing beyond §5.1 | ~400 MB | Node/TypeScript projects, any project whose toolchain is Node-only |
-| `-full` | `python3`, `pip`, `pipx`, `build-essential`, `pkg-config`, Chromium + Playwright OS deps, `docker-cli` **not** included | ~1.4 GB | the manual web-UI-testing agent (Playwright MCP), Python projects, native npm modules |
+| *(none)* | nothing beyond §5.1 | 946 MB measured (arm64; Claude Code's npm package alone is several hundred MB) | Node/TypeScript projects, any project whose toolchain is Node-only |
+| `-full` | `python3`, `pip`, `pipx`, `build-essential`, `pkg-config`, Chromium + Playwright OS deps, `docker-cli` **not** included | ~1.8 GB (est.) | the manual web-UI-testing agent (Playwright MCP), Python projects, native npm modules |
 
 Everything else is the developer's own `FROM ghcr.io/sinishadjukic/worca:1.3.0` Dockerfile,
 which the docs show in five lines (§9.4). Two variants is the ceiling: every additional
@@ -506,7 +512,7 @@ Podman rootless maps the container uid to the host user automatically.
   `npm start`-style iteration works with the container's Linux `claude`. Tests run the same
   way: `docker compose --profile dev run --rm worca npm test`. `WORCA_HOME` inside the
   container is already isolated, so the suite's `.worca-cc-test` dance is unchanged.
-- **Local image build:** `npm run docker:build` (a new `scripts/docker-build.mjs`) runs
+- **Local image build:** `npm run docker:build` (a new `tools/docker-build.mjs`) runs
   `npm pack` into `docker/.pack/`, then `docker build --build-arg WORCA_TARBALL=…`. One
   command, same tarball path CI uses.
 - **Local smoke:** `npm run docker:smoke` starts the freshly built image with `WORCA_MOCK=1`
@@ -682,7 +688,7 @@ runtime detection matrix before the plain compose path has proven itself.
 
 | Phase | Deliverables | Exit criterion |
 | --- | --- | --- |
-| **1 — Runs** | `docker/Dockerfile`, `docker/entrypoint.sh`, `docker/compose.yml`, `scripts/docker-build.mjs`, `npm run docker:build` / `docker:smoke`, `docs/docker.md`, README section, CI build + mock smoke + Trivy on PRs | a fellow developer on each of mac/win/linux follows the quick start and finishes a real run without asking a question |
+| **1 — Runs** | `docker/Dockerfile`, `docker/entrypoint.sh`, `docker/compose.yml`, `tools/docker-build.mjs`, `npm run docker:build` / `docker:smoke`, `docs/docker.md`, README section, CI build + mock smoke + Trivy on PRs | a fellow developer on each of mac/win/linux follows the quick start and finishes a real run without asking a question |
 | **2 — Ships** | release job in `release-npm-app.yml` (multi-arch, GHCR, tags, provenance, SBOM, cosign), weekly rebuild workflow, Claude Code version bump automation, `-full` variant, RELEASING checklist | `worca-app-v1.4.0` publishes npm and image together; `cosign verify` passes |
 | **3 — Hardens** | `compose.egress.yml` + proxy, `compose.clonein.yml`, `compose.ssh.yml`, `compose.teams.yml`, `.devcontainer/`, `Read(//run/secrets/**)` in Normal/Strict, `worca container` wrapper | a Strict + egress + clone-in run of a hostile fixture task cannot read a planted host secret or reach a non-allowlisted host, demonstrated by a scripted test in the manual matrix |
 

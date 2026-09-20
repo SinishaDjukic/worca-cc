@@ -76,6 +76,29 @@ This runs the full `node:test` suite (`test/*.mjs`) against an isolated
 script if you touched the engine, workspace, or plugin paths) locally before
 opening or updating a PR, and say so in the PR description.
 
+### In a container
+
+The container image ([`docs/docker.md`](docs/docker.md)) is built from the
+`npm pack` tarball, so it is a test of the *package*, not the source tree:
+
+```bash
+npm run docker:build        # packs this checkout, builds ghcr.io/sinishadjukic/worca:dev
+npm run docker:smoke        # offline: CLI mock run, UI health + Host guard, SIGTERM, volume
+```
+
+Touch `docker/**`, `package.json` `files`, or anything the CLI needs at runtime,
+and run both. To hack on Worca *inside* the box (a Linux `claude`, your edits
+live):
+
+```bash
+cd docker
+docker compose -f compose.yml -f compose.dev.yml up               # server from this checkout
+docker compose -f compose.yml -f compose.dev.yml run --rm worca npm test
+```
+
+The Claude Code version baked into the image is pinned in
+`docker/CLAUDE_CODE_VERSION`; bump it by PR.
+
 ## Project structure
 
 ```

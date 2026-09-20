@@ -1,0 +1,24 @@
+{
+  "name": "Worca (contributor)",
+  "image": "ghcr.io/sinishadjukic/worca:latest",
+  "workspaceFolder": "/workspaces/worca-cc",
+  "remoteUser": "worca",
+  "forwardPorts": [4317],
+  "portsAttributes": { "4317": { "label": "Worca UI", "onAutoForward": "notify" } },
+  "mounts": [
+    "source=worca-devcontainer-home,target=/worca,type=volume",
+    "source=worca-devcontainer-claude,target=/home/worca/.claude,type=volume"
+  ],
+  "containerEnv": {
+    "WORCA_HOME": "/worca",
+    "WORCA_PROJECTS_ROOT": "/workspaces"
+  },
+  "runArgs": ["--init", "--cap-drop=ALL", "--security-opt=no-new-privileges:true"],
+  "postCreateCommand": "npm ci --no-audit --no-fund",
+  "postStartCommand": "echo 'npm start -> http://localhost:4317 ; claude -> log in once'",
+  "customizations": {
+    "vscode": {
+      "extensions": ["anthropic.claude-code"]
+    }
+  }
+}
