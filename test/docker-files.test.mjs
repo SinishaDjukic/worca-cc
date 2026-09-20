@@ -40,6 +40,8 @@ test('Dockerfile: non-root, pinned CLI with its updater off, tini, healthcheck, 
   assert.match(d, /WORCA_NO_NATIVE_DIALOG=1/);
   assert.match(d, /CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1/);
   assert.match(d, /dev\.worca\.claude-code\.version/, 'the pin is a label');
+  assert.match(d, /chmod 0777 \/worca \/projects \/home\/worca \/home\/worca\/\.claude/, 'volume mount points are writable for any uid (Linux Engine WORCA_UID)');
+  assert.match(d, /HOME=\/home\/worca/, 'HOME is pinned for uids with no passwd entry');
 });
 
 test('CLAUDE_CODE_VERSION: one semver line', () => {

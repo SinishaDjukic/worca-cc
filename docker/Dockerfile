@@ -70,15 +70,22 @@ RUN npm install -g /tmp/worca.tgz \
 RUN usermod -l worca -d /home/worca -m node \
  && groupmod -n worca node \
  && mkdir -p /worca /projects /home/worca/.claude \
- && chown worca:worca /worca /projects /home/worca/.claude
-# Both volume mount points exist in the image owned by worca: a fresh named
-# volume copies that ownership on first mount (Docker and Podman alike), so
-# the entrypoint's "not writable" branch only fires for a volume made by hand.
+ && chown -R worca:worca /worca /projects /home/worca \
+ && chmod 0777 /worca /projects /home/worca /home/worca/.claude
+# The volume mount points exist in the image and are world-writable: a fresh
+# named volume copies mode and owner on first mount (Docker and Podman alike),
+# so the box works whether it runs as the image's uid 1000 or as the host
+# user's uid on Linux Engine (compose `user: ${WORCA_UID}:${WORCA_GID}`). The
+# entrypoint's "not writable" branch only fires for a volume made by hand.
 
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/worca-entrypoint
 COPY --chmod=755 docker/egress-proxy.mjs /usr/local/lib/worca-egress-proxy.mjs
 
-ENV WORCA_HOST=0.0.0.0 \
+# HOME is pinned: a uid with no passwd entry (a Linux host user's id passed
+# through `user:`) would otherwise get HOME=/ and Claude Code could not write
+# its config.
+ENV HOME=/home/worca \
+    WORCA_HOST=0.0.0.0 \
     PORT=4317 \
     WORCA_HOME=/worca \
     WORCA_PROJECTS_ROOT=/projects \

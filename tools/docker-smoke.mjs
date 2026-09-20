@@ -6,6 +6,9 @@
 //   npm run docker:smoke                          # ghcr.io/sinishadjukic/worca:dev
 //   npm run docker:smoke -- --image worca:test
 //   npm run docker:smoke -- --keep                # leave the volume/containers for inspection
+//   npm run docker:smoke -- --user 1001:1001      # run the box as this uid:gid (default on Linux:
+//                                                 # the host user, like compose's WORCA_UID/GID;
+//                                                 # elsewhere the image's uid 1000)
 //
 // What it checks (each is a thing the container, not the engine, can break):
 //   1. CLI in the box: `worca add` + a mock pipeline run to `done` against a
@@ -20,23 +23,28 @@
 import { spawnSync } from 'node:child_process';
 import http from 'node:http';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
 
 const DEFAULT_IMAGE = 'ghcr.io/sinishadjukic/worca:dev';
 
 function parseArgs(argv) {
-  const out = { image: DEFAULT_IMAGE, keep: false };
+  const out = { image: DEFAULT_IMAGE, keep: false, user: null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--image') out.image = argv[++i];
     else if (argv[i] === '--keep') out.keep = true;
+    else if (argv[i] === '--user') out.user = argv[++i];
     else { console.error(`docker:smoke: unknown argument ${argv[i]}`); process.exit(2); }
   }
   return out;
 }
 
 const a = parseArgs(process.argv.slice(2));
+// A bind-mounted repo keeps the host owner on Linux Engine, so the box must run
+// as that user to enter and write it (Docker Desktop translates ownership and
+// needs nothing). This mirrors compose's `user: ${WORCA_UID}:${WORCA_GID}`.
+if (a.user === null && process.platform === 'linux') a.user = `${userInfo().uid}:${userInfo().gid}`;
 const stamp = `${Date.now().toString(36)}`;
 const VOLUME = `worca-smoke-home-${stamp}`;
 const CLAUDE_VOLUME = `worca-smoke-claude-${stamp}`;
@@ -95,10 +103,11 @@ async function main() {
     '-v', `${CLAUDE_VOLUME}:/home/worca/.claude`,
     '-v', `${repo}:/projects/sandbox`,
     '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
+    ...(a.user ? ['--user', a.user] : []),
   ];
   try {
     // 1. CLI: register + mock run.
-    console.log(`docker:smoke: image ${a.image}`);
+    console.log(`docker:smoke: image ${a.image}${a.user ? ` as user ${a.user}` : ''}`);
     const cli = docker(['run', '--rm', ...common, a.image,
       'bash', '-c',
       'worca add --path /projects/sandbox && worca --project /projects/sandbox --prompt "demo task" --mock --yes && worca list'],

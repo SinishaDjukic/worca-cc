@@ -216,7 +216,7 @@ URL from `docker compose logs teams-tunnel`.
 | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` | | commit identity |
 | `GH_TOKEN` | | GitHub over HTTPS |
 | `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` | | see *Logging in* |
-| `WORCA_UID`, `WORCA_GID` | `1000` | Linux Engine: your ids when not 1000 |
+| `WORCA_UID`, `WORCA_GID` | `1000` | Linux Engine: your ids (`id -u`, `id -g`) when not 1000, so the box can write your bind-mounted repos; the volumes work for any uid |
 | `WORCA_MEM`, `WORCA_CPUS` | `6g`, `4` | resource caps (`pids_limit` 2048 is fixed) |
 | `HTTPS_PROXY`, `NO_PROXY` | | corporate proxy |
 | `WORCA_EGRESS_ALLOW` | see above | egress overlay allowlist |
