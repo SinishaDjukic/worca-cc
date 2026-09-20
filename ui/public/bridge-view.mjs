@@ -66,7 +66,7 @@ export function needsSignInPill(m, { doc = globalThis.document } = {}) {
 // ── Providers card (§8.1) ────────────────────────────────────────────────────
 
 function providerStatePill(doc, c) {
-  if (!c.termsCurrent) return h(doc, 'span', 'badge waiting', 'sign-in blocked until acknowledged');
+  if (!c.termsCurrent) return h(doc, 'span', 'badge grey', 'sign-in blocked until acknowledged');
   if (!c.connected) return h(doc, 'span', 'badge grey', 'not connected');
   return h(doc, 'span', 'badge green', `connected${c.login ? ` as @${c.login}` : ''}`);
 }

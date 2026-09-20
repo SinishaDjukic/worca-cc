@@ -2027,6 +2027,12 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
    of the Models view; every revealed block gets an explicit [hidden] rule
    because the grid/flex rules here otherwise beat the UA hidden rule. ---- */
 .mv-providers{padding:18px 22px;display:grid;gap:14px;}
+/* New surface, new contrast: the house `.hint` / placeholder grey (--ink-3) sits at
+   2.8:1 on a white card and is only tolerated where the light baseline predates the
+   dark theme (test/fixtures/contrast-baseline-light.json — shrink, never grow). The
+   bridge's copy uses --ink-2 (6.5:1) so the theme proof passes without a new entry. */
+.mv-providers .hint,.mv-conn .hint,.mv-degradation,.mvi .hint,.mv-cp-signin-box .hint{color:var(--ink-2);}
+.mv-pv-row .input::placeholder,.mv-conn .input::placeholder,.mv-conn .textarea::placeholder{color:var(--ink-2);}
 .mv-providers .mv-providers-hint{margin:-6px 0 0;}
 .mv-pv-row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:12px 18px;padding:14px 0 0;border-top:1px solid var(--line-2);}
 .mv-pv-main{display:grid;gap:6px;align-content:start;min-width:0;}
