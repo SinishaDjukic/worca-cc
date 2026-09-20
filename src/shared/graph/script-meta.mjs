@@ -8,10 +8,21 @@
 import { PORT_ID_RE } from './constants.mjs';
 import { readInputs, readOutputs, readVerdict, derivePortSummary, DEFAULT_ORDER } from './agent-meta.mjs';
 
-/** Keys share ONE namespace with agents (D16), so the shape is the agent key's. */
-const SCRIPT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+/** Keys share ONE namespace with agents (D16), so the shape is the agent key's.
+ *  Exported: the Scripts page derives a key from the name and gates Save on it. */
+export const SCRIPT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+/** `#scripts/new` is the create route, and `bench` / `runtimes` are the literal
+ *  segments under `/api/scripts/` — a script keyed `runtimes` saves but its own
+ *  GET answers with the runtime probe, so it can never be opened. Matched
+ *  case-INSENSITIVELY by the store (express routing ignores case). Here, not in
+ *  script-store.mjs, so the page can refuse the same keys without src/core. */
+export const RESERVED_SCRIPT_KEYS = Object.freeze(['new', 'bench', 'runtimes']);
 const DOMAIN_RE = /^[a-z][a-z0-9-]{0,31}$/;
-const COLORS = new Set(['green', 'peach', 'red', 'blue', 'violet', 'amber']);
+/** The six agent colours, then six of the same lightness that are a SCRIPT's alone
+ *  (script-wizard plan S10). Agent sidecars stay on the first six (agent-meta.mjs). */
+export const SCRIPT_COLORS = Object.freeze(['green', 'peach', 'red', 'blue', 'violet', 'amber',
+  'teal', 'pink', 'indigo', 'lime', 'cocoa', 'slate']);
+const COLORS = new Set(SCRIPT_COLORS);
 const PLATFORM_KEYS = new Set(['default', 'win32', 'darwin', 'linux']);
 
 /** The three runtimes (base D2 + scripts-workbench W4). An unknown runtime is a

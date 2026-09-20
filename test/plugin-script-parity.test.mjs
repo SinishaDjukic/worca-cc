@@ -12,7 +12,9 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { readPluginsLock, writePluginsLock, pluginDir, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { readScript, duplicateScript, writeCases } from '../src/core/script-store.mjs';
 import { runBenchOnce } from '../src/core/script-bench.mjs';
-import { renderScriptDetail, originLabel } from '../ui/public/scripts-view.mjs';
+import { originLabel } from '../ui/public/scripts-view.mjs';
+import { renderWorkspace } from '../ui/public/script-wizard.mjs';
+import { inferInterface, mergeInterface } from '../src/shared/graph/script-infer.mjs';
 import { join } from 'node:path';
 
 useTempHome(after);
@@ -66,7 +68,8 @@ test('a plugin script reads with the plugin origin and its SHIPPED cases', async
 
 test('the detail page of a plugin script is read-only, badged with the PLUGIN name, and still offers Duplicate', async () => {
   const data = await readScript('pluginProbe');
-  const root = renderScriptDetail(data, { doc, tab: 'overview', readOnly: true, highlight: async (t) => t, runtimes: {} });
+  const rows = mergeInterface({ inferred: inferInterface(data.source, data.meta.runtime), saved: data.meta });
+  const root = renderWorkspace(data, { doc, readOnly: true, highlight: async (t) => t, runtimes: {}, rows, verdict: Boolean(data.meta.verdict) });
   assert.equal(originLabel('plugin:tools'), 'tools');
   assert.equal(root.querySelector('.script-origin').textContent, 'tools');
   assert.equal(root.querySelector('.script-save'), null, 'a plugin script is never saved in place');

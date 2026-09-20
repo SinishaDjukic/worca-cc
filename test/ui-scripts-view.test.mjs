@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import {
   scriptRoute, parseScriptsParam, originLabel, portLineOf, buildScriptCard,
-  renderScriptsList, createScriptsController, SCRIPT_TABS,
+  renderScriptsList, createScriptsController, newScriptRoute,
 } from '../ui/public/scripts-view.mjs';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
@@ -69,22 +69,18 @@ function mountCtl(over = {}, apiOver = {}) {
   return { host, msgEl, nav, asked, api, ctl };
 }
 
-test('scriptRoute / parseScriptsParam: Overview is bare, the tab is the second segment', () => {
-  assert.deepEqual(SCRIPT_TABS, ['overview', 'source', 'test']);
+test('scriptRoute / newScriptRoute / parseScriptsParam: the two steps of a new script, a bare key, an old tab word ignored', () => {
   assert.equal(scriptRoute(), 'scripts');
   assert.equal(scriptRoute('runTests'), 'scripts/runTests');
-  assert.equal(scriptRoute('runTests', 'overview'), 'scripts/runTests');
-  assert.equal(scriptRoute('runTests', 'source'), 'scripts/runTests/source');
-  assert.equal(scriptRoute('runTests', 'test'), 'scripts/runTests/test');
-  assert.equal(scriptRoute('new', 'source'), 'scripts/new/source');
+  assert.equal(newScriptRoute(), 'scripts/new');
+  assert.equal(newScriptRoute('python'), 'scripts/new/python');
   assert.deepEqual(parseScriptsParam(''), { mode: 'list' });
-  assert.deepEqual(parseScriptsParam('new'), { mode: 'new', tab: 'overview' });
-  assert.deepEqual(parseScriptsParam('new/source'), { mode: 'new', tab: 'source' });
-  assert.deepEqual(parseScriptsParam('runTests'), { mode: 'detail', key: 'runTests', tab: 'overview' });
-  assert.deepEqual(parseScriptsParam('runTests/source'), { mode: 'detail', key: 'runTests', tab: 'source' });
-  assert.deepEqual(parseScriptsParam('runTests/test'), { mode: 'detail', key: 'runTests', tab: 'test' });
-  assert.deepEqual(parseScriptsParam('runTests/bogus'), { mode: 'detail', key: 'runTests', tab: 'overview' });
-  assert.deepEqual(parseScriptsParam('runTests/test/extra'), { mode: 'detail', key: 'runTests', tab: 'test' });
+  assert.deepEqual(parseScriptsParam('new'), { mode: 'new', step: 1 });
+  assert.deepEqual(parseScriptsParam('new/shell'), { mode: 'new', step: 2, runtime: 'shell' });
+  assert.deepEqual(parseScriptsParam('new/nope'), { mode: 'new', step: 1 }, 'an unknown runtime lands on the picker');
+  assert.deepEqual(parseScriptsParam('runTests'), { mode: 'detail', key: 'runTests' });
+  assert.deepEqual(parseScriptsParam('runTests/source'), { mode: 'detail', key: 'runTests' }, 'an old bookmark opens the workspace');
+  assert.deepEqual(parseScriptsParam('runTests/test'), { mode: 'detail', key: 'runTests' });
 });
 
 test('originLabel / portLineOf', () => {

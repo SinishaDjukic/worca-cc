@@ -78,8 +78,9 @@ export function safeAgentIcon(meta) {
   return sanitizeIcon(raw) || USER_AGENT_ICON;
 }
 
-/** The glyph a script card wears when its sidecar ships no icon: an ƒ. */
-export const SCRIPT_GLYPH = '<path d="M15 4h-1.2a2.8 2.8 0 0 0-2.8 2.8V9H8M11 9v6.2A2.8 2.8 0 0 1 8.2 18H7" stroke-linecap="round" stroke-linejoin="round"></path>';
+// The ƒ glyph lives with the icon set (one source for the page's tile and this canvas).
+import { SCRIPT_GLYPH } from '../../../src/shared/graph/script-icons.mjs';
+export { SCRIPT_GLYPH };
 
 const dotClass = (t) => `dot ${t === 'md' || t === 'json' || t === 'void' || t === 'any' ? t : 'md'}`;
 const whenCaption = (w) => (w === 'blocking' ? 'on blocking' : w === 'clean' ? 'on clean' : '');

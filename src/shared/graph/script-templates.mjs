@@ -6,6 +6,84 @@
 // ui/public/scripts-view.mjs imports and re-exports the first four names.
 
 import { CASES_VERSION } from './script-cases.mjs';
+import { iconSvgOf } from './script-icons.mjs';
+
+/** What a fresh script of each runtime looks like on the canvas (script-wizard plan S9). */
+export const RUNTIME_DEFAULTS = Object.freeze({
+  node: Object.freeze({ color: 'violet', icon: 'code' }),
+  python: Object.freeze({ color: 'blue', icon: 'flask' }),
+  shell: Object.freeze({ color: 'amber', icon: 'terminal' }),
+});
+
+/** The page's **Load example** (S14): one working gate per runtime, read by the
+ *  inference exactly as the concept canvas shows it. `icon` is a SCRIPT_ICONS name. */
+export const SCRIPT_EXAMPLES = Object.freeze({
+  node: Object.freeze({
+    name: 'Diff gate',
+    description: 'Blocks the review when the diff touches more files than allowed.',
+    color: 'violet',
+    icon: 'funnel',
+    source: [
+      '// Reads the plan and the diff, writes a report, blocks when the diff is too wide.',
+      'export default async function ({ inputs, outputs, params, ctx, log }) {',
+      // The fs builtin is loaded dynamically, in BACKTICKS, on purpose: test/shared-graph-purity.test.mjs reads
+      // this module's RAW source (comments and strings included) and would take the usual static form, or a
+      // quoted specifier, as an import of THIS shared module. The program the user sees is ordinary ESM.
+      '  const { readFileSync, writeFileSync } = await import(`node:fs`);',
+      "  const plan = readFileSync(inputs.plan.path, 'utf8');",
+      "  const diff = readFileSync(inputs.diff.path, 'utf8');",
+      '  const limit = Number(params.maxFiles ?? 40);',
+      '  const files = diff.match(/^\\+\\+\\+ b\\/(.+)$/gm) ?? [];',
+      "  log('info', `${files.length} files changed`);",
+      '',
+      '  writeFileSync(outputs.report.path,',
+      "    `# Diff report\\n\\nPlan: ${plan.split('\\n')[0]}\\n${files.length} files changed, limit ${limit}\\n`);",
+      '',
+      '  const issues = files.length > limit',
+      "    ? [{ severity: 'major', title: `${files.length} files exceed the limit of ${limit}` }]",
+      '    : [];',
+      '  return { summary: `${files.length} files`, verdict: { issues } };',
+      '}',
+    ].join('\n') + '\n',
+  }),
+  python: Object.freeze({
+    name: 'TODO gate',
+    description: 'Counts the TODOs a diff adds and blocks when there are too many.',
+    color: 'blue',
+    icon: 'flask',
+    source: [
+      '# Counts the TODOs a diff adds and blocks when the count passes a limit.',
+      'import re',
+      '',
+      'def main(api):',
+      "    diff = open(api.inputs.diff.path, encoding='utf-8').read()",
+      '    limit = int(api.params.limit or 5)',
+      "    todos = re.findall(r'^\\+.*\\bTODO\\b', diff, re.M)",
+      "    api.log('info', f'{len(todos)} new TODOs')",
+      '',
+      "    with open(api.outputs.report.path, 'w', encoding='utf-8') as f:",
+      "        f.write(f'# TODO report\\n\\n{len(todos)} new TODOs, limit {limit}\\n')",
+      '',
+      "    issues = [{'severity': 'major', 'title': f'{len(todos)} TODOs over the limit of {limit}'}] if len(todos) > limit else []",
+      "    return {'summary': f'{len(todos)} TODOs', 'verdict': {'issues': issues}}",
+    ].join('\n') + '\n',
+  }),
+  shell: Object.freeze({
+    name: 'Run tests',
+    description: "Runs the project's test command in the checkout. Exit 0 passes, exit 1 fails.",
+    color: 'amber',
+    icon: 'terminal',
+    source: [
+      '#!/bin/sh',
+      "# Runs the test command in the run's checkout. Exit 0 routes to pass, exit 1 to fail.",
+      'cd "$WORCA_CWD"',
+      'CMD="${WORCA_PARAM_COMMAND:-npm test}"',
+      'echo "running: $CMD"',
+      'sh -c "$CMD" > "$WORCA_OUT_LOG" 2>&1',
+    ].join('\n') + '\n',
+  }),
+});
+
 
 // A new script must RUN before a character is typed: each template is the
 // minimum its runtime's contract accepts (base spec §5.1, §5.2, §7), so the
@@ -21,11 +99,12 @@ export const SCRIPT_TEMPLATES = {
 export const SCRIPT_WIN32_TEMPLATE = '@echo off\necho hello from a worca script\n';
 export const SHELL_COMMAND_TEMPLATE = 'npm test';
 
-/** The create page's starting sidecar. */
+/** The create page's starting sidecar: the runtime's colour and icon, everything else empty. */
 export function blankScriptMeta(runtime = 'node') {
+  const d = RUNTIME_DEFAULTS[runtime] || RUNTIME_DEFAULTS.node;
   return {
-    key: '', metaVersion: 2, displayName: '', description: '', domain: '', color: 'amber',
-    icon: '', order: 50, runtime, timeoutMs: 600000, params: [], inputs: [], outputs: [],
+    key: '', metaVersion: 2, displayName: '', description: '', domain: '', color: d.color,
+    icon: iconSvgOf(d.icon), order: 50, runtime, timeoutMs: 600000, params: [], inputs: [], outputs: [],
   };
 }
 

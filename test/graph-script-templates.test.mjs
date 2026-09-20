@@ -9,11 +9,13 @@ import { fileURLToPath } from 'node:url';
 
 import {
   SCRIPT_TEMPLATES, SCRIPT_WIN32_TEMPLATE, SHELL_COMMAND_TEMPLATE, blankScriptMeta,
-  scriptSourceTemplate, scriptMetaTemplate, sampleCasesTemplate,
+  scriptSourceTemplate, scriptMetaTemplate, sampleCasesTemplate, RUNTIME_DEFAULTS, SCRIPT_EXAMPLES,
 } from '../src/shared/graph/script-templates.mjs';
 import * as scriptsView from '../ui/public/scripts-view.mjs';
 import { normalizeCases } from '../src/shared/graph/script-cases.mjs';
 import { SCRIPT_RUNTIMES, validateScriptMetaV2, normalizeScriptMeta } from '../src/shared/graph/script-meta.mjs';
+import { iconSvgOf, SCRIPT_ICONS } from '../src/shared/graph/script-icons.mjs';
+import { inferInterface } from '../src/shared/graph/script-infer.mjs';
 
 test('the moved constants keep their landed bodies, LF-only', () => {
   assert.match(SCRIPT_TEMPLATES.node, /^export default async function \(\{ inputs, outputs, params, ctx, log \}\) \{/m);
@@ -95,4 +97,45 @@ test('sampleCasesTemplate: void inputs fire, json inputs parse, required params 
   assert.deepEqual(kase.params, { command: '', depth: 3, mode: 'fast' });
   assert.deepEqual(kase.expect.fired, ['log', 'pass'], 'a clean run does not fire a blocking output');
   assert.deepEqual(normalizeCases(sampleCasesTemplate(meta), meta, { shipped: true }).errors, []);
+});
+
+test('RUNTIME_DEFAULTS name a colour and an icon per runtime, and the blank meta carries them as the sidecar stores them', () => {
+  assert.deepEqual(RUNTIME_DEFAULTS, { node: { color: 'violet', icon: 'code' }, python: { color: 'blue', icon: 'flask' }, shell: { color: 'amber', icon: 'terminal' } });
+  for (const rt of ['node', 'python', 'shell']) {
+    const meta = blankScriptMeta(rt);
+    assert.equal(meta.color, RUNTIME_DEFAULTS[rt].color);
+    assert.equal(meta.icon, iconSvgOf(RUNTIME_DEFAULTS[rt].icon), 'the fragment, not the name');
+    assert.equal(scriptMetaTemplate('k', rt).icon, meta.icon);
+  }
+  assert.equal(blankScriptMeta('nope').color, 'violet', 'an unknown runtime starts as node does');
+});
+
+test('SCRIPT_EXAMPLES: one per runtime, an icon from the set, and a program the inference reads as the canvas shows', () => {
+  const names = new Set(SCRIPT_ICONS.map((i) => i.name));
+  for (const rt of ['node', 'python', 'shell']) {
+    const ex = SCRIPT_EXAMPLES[rt];
+    assert.ok(ex.name && ex.description && ex.color && names.has(ex.icon) && ex.source.endsWith('\n'), rt);
+  }
+  const node = inferInterface(SCRIPT_EXAMPLES.node.source, 'node');
+  assert.deepEqual(node.inputs.map((p) => p.id), ['plan', 'diff']);
+  assert.deepEqual(node.outputs, [{ id: 'report', type: 'md' }]);
+  assert.deepEqual(node.params, [{ id: 'maxFiles', type: 'number', default: 40 }]);
+  assert.equal(node.verdict, true);
+  const py = inferInterface(SCRIPT_EXAMPLES.python.source, 'python');
+  assert.deepEqual(py.inputs.map((p) => p.id), ['diff']);
+  assert.deepEqual(py.outputs, [{ id: 'report', type: 'md' }]);
+  assert.deepEqual(py.params, [{ id: 'limit', type: 'number', default: 5 }]);
+  assert.equal(py.verdict, true);
+  const sh = inferInterface(SCRIPT_EXAMPLES.shell.source, 'shell');
+  assert.deepEqual(sh.inputs, []);
+  assert.deepEqual(sh.outputs, [{ id: 'log', type: 'md' }]);
+  assert.deepEqual(sh.params, [{ id: 'command', type: 'string', default: 'npm test' }]);
+  assert.equal(sh.verdict, false);
+});
+
+test('the example programs satisfy their runtime contracts (a default export / a main / a shebang), LF-only', () => {
+  assert.match(SCRIPT_EXAMPLES.node.source, /export default async function \(\{ inputs, outputs, params, ctx, log \}\)/);
+  assert.match(SCRIPT_EXAMPLES.python.source, /^def main\(api\):/m);
+  assert.ok(SCRIPT_EXAMPLES.shell.source.startsWith('#!/bin/sh\n'));
+  for (const rt of ['node', 'python', 'shell']) assert.ok(!SCRIPT_EXAMPLES[rt].source.includes('\r'), rt);
 });

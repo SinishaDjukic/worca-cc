@@ -20,7 +20,7 @@ import { loadScriptRegistry, userScriptsDir } from './script-registry.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
 import { AGENT_KEY_RE } from './agent-store.mjs';
 import { listWorkflows } from './workflows.mjs';
-import { normalizeScriptMeta, validateScriptMetaV2 } from '../shared/graph/script-meta.mjs';
+import { normalizeScriptMeta, validateScriptMetaV2, RESERVED_SCRIPT_KEYS } from '../shared/graph/script-meta.mjs';
 import { normalizeCases } from '../shared/graph/script-cases.mjs';
 import { AWAIT_PORT } from '../shared/graph/constants.mjs';   // the synthesized gate port is wirable
 
@@ -28,12 +28,8 @@ export { userScriptsDir };   // single source: the registry's layer resolver
 
 /** Keys are ONE namespace with agents (base D16), so the regex is the agents'. */
 export const SCRIPT_KEY_RE = AGENT_KEY_RE;
-/** `#scripts/new` is the create route (C1), and `bench` / `runtimes` are the
- *  literal segments under `/api/scripts/` — a script keyed `runtimes` saves but
- *  its own GET answers with the runtime probe, so it can never be opened.
- *  Matched case-INSENSITIVELY: express routing ignores case by default, so
- *  `Runtimes` reaches the probe route exactly as `runtimes` does. */
-export const RESERVED_SCRIPT_KEYS = Object.freeze(['new', 'bench', 'runtimes']);
+/** The reserved keys live in the shared module so the page refuses exactly what the store does. */
+export { RESERVED_SCRIPT_KEYS };
 /** Windows resolves these stems as devices even with an extension (`con.mjs` IS
  *  the console), so a script keyed like one writes to the device on a Windows
  *  host and can never be read back. */

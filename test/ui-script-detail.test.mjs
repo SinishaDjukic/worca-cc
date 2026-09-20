@@ -1,261 +1,46 @@
-// test/ui-script-detail.test.mjs — the Scripts page's detail half (scripts-workbench §5.2):
-// the Overview form, the Source tab, create, Save and the dirty leave-guard.
+// test/ui-script-detail.test.mjs — the workspace controller (script-wizard plan S1–S17): the two
+// steps of a new script, live inference off the editor, chips, the bench for a draft, Save,
+// the dirty leave-guard, read-only built-ins.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
-  renderScriptDetail, collectScriptDraft, blankScriptMeta, createScriptsController, scriptPayload,
-  SCRIPT_TEMPLATES, SCRIPT_WIN32_TEMPLATE, SHELL_COMMAND_TEMPLATE, EDITOR_LANGUAGE,
+  createScriptsController, collectScriptDraft, scriptPayload, blankScriptMeta, SCRIPT_TEMPLATES, SHELL_COMMAND_TEMPLATE,
 } from '../ui/public/scripts-view.mjs';
+import { iconSvgOf } from '../src/shared/graph/script-icons.mjs';
+import { SCRIPT_EXAMPLES } from '../src/shared/graph/script-templates.mjs';
 
 const win = new JSDOM('<!doctype html><body></body>').window;
 const doc = win.document;
 const tick = () => new Promise((r) => setTimeout(r, 0));
-const flush = async (n = 4) => { for (let i = 0; i < n; i += 1) await tick(); };
+const flush = async (n = 6) => { for (let i = 0; i < n; i += 1) await tick(); };
 const RUNTIMES = { node: { ok: true, version: '22.13.0' }, shell: { ok: true, path: '/bin/sh' },
   python: { ok: false, reason: 'no python 3.8 or newer found (tried python3, python)' } };
+const ok = (data) => ({ ok: true, status: 200, data });
+const q = (root, sel) => root.querySelector(sel);
+const qa = (root, sel) => [...root.querySelectorAll(sel)];
+const field = (root, name) => q(root, `[data-field="${name}"]`);
+const type = (el, value) => { el.value = value; el.dispatchEvent(new win.Event('input', { bubbles: true })); };
 
 const USER_META = {
-  key: 'runTests', metaVersion: 2, displayName: 'Run tests', description: 'Runs the suite.',
-  domain: 'coding', color: 'violet', icon: '', order: 20, origin: 'user', runtime: 'node',
-  file: 'runTests.mjs', timeoutMs: 20000,
-  params: [{ id: 'mode', type: 'enum', options: ['fast', 'full'], default: 'fast' }],
+  key: 'diffGate', metaVersion: 2, displayName: 'Diff gate', description: 'Blocks wide diffs.', domain: 'coding', color: 'teal',
+  icon: iconSvgOf('funnel'), order: 20, origin: 'user', runtime: 'node', file: 'diffGate.mjs', timeoutMs: 120000,
+  params: [{ id: 'maxFiles', type: 'number', default: 10, required: false }],
   inputs: [{ id: 'done', type: 'void', required: false }],
-  outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'tests-cycle{cycle}.md' }],
-  verdict: { filename: 'tests-cycle{cycle}.json' },
+  outputs: [{ id: 'report', type: 'md', when: 'blocking', filename: 'r-{cycle}.md' }],
+  verdict: { filename: 'dg-{cycle}.json' },
 };
-const USER = { meta: USER_META, source: 'export default async () => ({ summary: "ok" });\n', sourceWin32: null,
-  sourcePath: '/home/u/.worca-cc/scripts/runTests.mjs', sourceTruncated: false, cases: [], userCases: [], casesWritable: true };
-const SHELL_META = { key: 'lint', metaVersion: 2, displayName: 'Lint', description: '', domain: '', color: 'amber',
-  icon: '', order: 30, origin: 'user', runtime: 'shell', file: { default: 'lint.sh', win32: 'lint.cmd' },
-  timeoutMs: 600000, exitCodes: { clean: [0], blocking: [1, 2] }, params: [],
-  inputs: [], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'lint-cycle{cycle}.md' }],
-  verdict: { filename: 'lint-cycle{cycle}.json' } };
-const SHELL = { meta: SHELL_META, source: '#!/bin/sh\nnpm run lint\n', sourceWin32: '@echo off\r\nnpm.cmd run lint\r\n',
+const USER = { meta: USER_META, source: SCRIPT_EXAMPLES.node.source, sourceWin32: '', sourcePath: '/home/u/.worca-cc/scripts/diffGate.mjs',
+  sourceTruncated: false, cases: [], userCases: [], casesWritable: true };
+const SHELL_META = { key: 'lint', metaVersion: 2, displayName: 'Lint', description: '', domain: '', color: 'amber', icon: '', order: 30,
+  origin: 'user', runtime: 'shell', file: { default: 'lint.sh', win32: 'lint.cmd' }, timeoutMs: 600000,
+  exitCodes: { clean: [0], blocking: [1, 2] }, params: [], inputs: [],
+  outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'lint-cycle{cycle}.md' }], verdict: { filename: 'lint-cycle{cycle}.json' } };
+const SHELL = { meta: SHELL_META, source: '#!/bin/sh\nnpm run lint > "$WORCA_OUT_LOG"\n', sourceWin32: '@echo off\r\nnpm.cmd run lint\r\n',
   sourcePath: '/home/u/.worca-cc/scripts/lint.sh', sourceTruncated: false, cases: [], userCases: [], casesWritable: true };
-const BUILTIN = { meta: { ...USER_META, key: 'gitDiff', displayName: 'Git diff', origin: 'builtin' },
-  source: '// built in\n', sourceWin32: null, sourcePath: '/repo/scripts/git-diff.mjs', sourceTruncated: false,
-  cases: [{ id: 'c1', name: 'shipped' }], userCases: [], casesWritable: true };
+const BUILTIN = { meta: { ...USER_META, key: 'gitDiff', displayName: 'Git diff', origin: 'builtin' }, source: '// built in\n', sourceWin32: '',
+  sourcePath: '/repo/scripts/git-diff.mjs', sourceTruncated: false, cases: [{ id: 'c1', name: 'shipped' }], userCases: [], casesWritable: true };
 
-const render = (data, over = {}) => renderScriptDetail(data, { doc, runtimes: RUNTIMES, highlight: async (t) => t, ...over });
-const dispose = (root) => (root._editors || []).forEach((e) => e.destroy());
-
-test('the detail head: title, chips, tabs and the four actions', async () => {
-  const root = render(USER);
-  await flush();
-  assert.equal(root.dataset.scriptKey, 'runTests');
-  assert.equal(root.dataset.tab, 'overview');
-  assert.equal(root.querySelector('.script-title').textContent, 'Run tests');
-  assert.equal(root.querySelector('.script-origin').textContent, 'user');
-  assert.equal(root.querySelector('.script-runtime').textContent, 'node');
-  assert.equal(root.querySelector('.script-warn'), null);
-  assert.equal(root.querySelector('.script-dirty').hidden, true);
-  assert.equal(root.querySelector('.script-dirty').textContent, 'unsaved');
-  assert.deepEqual([...root.querySelectorAll('.script-tabs button')].map((b) => [b.dataset.tab, b.textContent, b.disabled]),
-    [['overview', 'Overview', false], ['source', 'Source', false], ['test', 'Test', false]]);
-  assert.ok(root.querySelector('.script-tabs button[data-tab="overview"]').classList.contains('on'));
-  assert.deepEqual([...root.querySelectorAll('.script-detail-actions button')].map((b) => b.textContent),
-    ['Scripts', 'Duplicate', 'Delete', 'Save']);
-  assert.deepEqual([...root.querySelectorAll('.script-pane')].map((p) => [p.dataset.pane, p.hidden]),
-    [['overview', false], ['source', true], ['test', true]]);
-  assert.ok(root.querySelector('.script-pane[data-pane="test"] .script-test-mount'), 'Task 10 mounts the bench here');
-  assert.equal(root.querySelectorAll('p').length, 0, 'no prose on the detail page either');
-  dispose(root);
-});
-
-test('the Overview form: every field, seconds for the timeout, the disabled python option', async () => {
-  const root = render(USER);
-  await flush();
-  const v = (f) => root.querySelector(`[data-field="${f}"]`).value;
-  assert.equal(v('meta:displayName'), 'Run tests');
-  assert.equal(root.querySelector('[data-field="meta:key"]'), null, 'the key is editable on create only');
-  assert.equal(v('meta:description'), 'Runs the suite.');
-  assert.equal(v('meta:runtime'), 'node');
-  assert.equal(v('meta:domain'), 'coding');
-  assert.equal(v('meta:color'), 'violet');
-  assert.equal(v('meta:order'), '20');
-  assert.equal(v('meta:timeoutSec'), '20');
-  assert.equal(v('meta:verdictFilename'), 'tests-cycle{cycle}.json');
-  assert.equal(root.querySelector('[data-field="meta:exitCodesClean"]'), null, 'exit codes are a shell field');
-  const py = [...root.querySelector('[data-field="meta:runtime"]').options].find((o) => o.value === 'python');
-  assert.equal(py.disabled, true);
-  assert.equal(py.title, 'no python 3.8 or newer found (tried python3, python)');
-  assert.equal(root.querySelector('[data-field="meta:portsConfig"]').checked, false);
-  assert.ok(root.querySelector('.ins-port-editor'));
-  assert.ok(root.querySelector('.pdef-editor'));
-  assert.equal(root.querySelector('[data-field="pdef:0:id"]').value, 'mode');
-  dispose(root);
-});
-
-test('a shell script shows the exit-code fields and the Command | File control', async () => {
-  const root = render(SHELL, { tab: 'source' });
-  await flush();
-  assert.equal(root.querySelector('[data-field="meta:exitCodesClean"]').value, '0');
-  assert.equal(root.querySelector('[data-field="meta:exitCodesBlocking"]').value, '1, 2');
-  const src = root.querySelector('.script-source');
-  assert.equal(src.dataset.srcMode, 'file', 'a script that has a file opens on File');
-  assert.deepEqual([...src.querySelectorAll('[data-src-mode]')].map((b) => b.textContent), ['Command', 'File']);
-  assert.deepEqual([...src.querySelectorAll('[data-src-tab]')].map((b) => b.textContent), ['sh', 'win32']);
-  assert.equal(src.dataset.srcTab, 'default');
-  assert.equal(root.querySelector('[data-field="script:source"]').value, '#!/bin/sh\nnpm run lint\n');
-  assert.equal(root.querySelector('.code-editor').dataset.language, 'bash');
-  const w32 = render(SHELL, { tab: 'source', srcTab: 'win32' });
-  await flush();
-  // a <textarea>'s API value normalises every CRLF to LF, so the editor can never hold a CR
-  assert.equal(w32.querySelector('[data-field="script:sourceWin32"]').value, '@echo off\nnpm.cmd run lint\n');
-  dispose(root); dispose(w32);
-});
-
-test('a shell script with no file opens on Command and edits meta.command', async () => {
-  const inline = { ...SHELL, meta: { ...SHELL_META, file: null, command: 'npm test' }, source: '', sourceWin32: null, sourcePath: null };
-  const root = render(inline, { tab: 'source' });
-  await flush();
-  const src = root.querySelector('.script-source');
-  assert.equal(src.dataset.srcMode, 'command');
-  assert.equal(src.querySelector('[data-src-tab]'), null, 'no platform tabs without a file');
-  assert.equal(root.querySelector('[data-field="meta:command"]').value, 'npm test');
-  const draft = collectScriptDraft(root);
-  assert.equal(draft.meta.command, 'npm test');
-  assert.equal(draft.source, '', 'a command-mode shell script has no file');
-  assert.equal(draft.sourceWin32, '', 'and no .cmd either: always a string, never null');
-  dispose(root);
-});
-
-// A duplicate of the built-in `shell`: shell runtime, no file, NO meta.command —
-// the command is a command-TYPED param, filled per card. The page opens it on the
-// Command tab with an empty box, and a blank box must send `null` (remove), not
-// `''`: the validator refuses an empty command, so every Save of the copy failed.
-test('a shell script whose command lives in a param saves with no meta.command', async () => {
-  const carded = {
-    meta: { ...SHELL_META, key: 'shellCopy', file: null, command: null, ports: 'config',
-      defaultPorts: { inputs: [], outputs: [] }, inputs: undefined, outputs: undefined,
-      params: [{ id: 'command', type: 'command', label: 'Command', required: true }] },
-    source: '', sourceWin32: null, sourcePath: null, sourceTruncated: false, cases: [], userCases: [], casesWritable: true,
-  };
-  const root = render(carded, { tab: 'source' });
-  await flush();
-  assert.equal(root.querySelector('.script-source').dataset.srcMode, 'command');
-  assert.equal(root.querySelector('[data-field="meta:command"]').value, '');
-  const draft = collectScriptDraft(root);
-  assert.equal(draft.meta.command, null, 'a blank Command box removes the key, it never sends an empty string');
-  dispose(root);
-  const c = mountCtl({ read: async () => ok(carded) });
-  await c.ctl.route('shellCopy');
-  await flush();
-  assert.equal(c.ctl.isDirty(), false);
-  c.host.querySelector('.script-save').click();
-  await flush();
-  const put = c.api.calls.find((x) => x[0] === 'update');
-  assert.equal(put[2].meta.command, null, 'the Save the page sends must not carry an empty command');
-  c.cleanup();
-});
-
-test('EDITOR_LANGUAGE covers every runtime, and the node editor uses javascript', async () => {
-  assert.deepEqual(EDITOR_LANGUAGE, { node: 'javascript', shell: 'bash', python: 'python' });
-  const root = render(USER, { tab: 'source' });
-  await flush();
-  assert.equal(root.querySelector('.code-editor').dataset.language, 'javascript');
-  assert.equal(root.querySelector('[data-field="script:source"]').value, USER.source);
-  dispose(root);
-});
-
-test('a built-in renders read-only: disabled fields, no Save, a mono path and Copy', async () => {
-  const root = render(BUILTIN, { readOnly: true });
-  await flush();
-  assert.equal(root.querySelector('.script-save'), null);
-  assert.equal(root.querySelector('.script-delete'), null);
-  assert.ok(root.querySelector('.script-duplicate'), 'Duplicate is the way out (spec §13)');
-  assert.equal(root.querySelector('[data-field="meta:displayName"]').disabled, true);
-  assert.equal(root.querySelector('[data-field="meta:runtime"]').disabled, true);
-  assert.equal(root.querySelector('[data-pdef-add]'), null);
-  assert.equal(root.querySelector('[data-port-add]'), null);
-  assert.equal(root.querySelector('.script-path').textContent, '/repo/scripts/git-diff.mjs');
-  assert.equal(root.querySelector('.script-copy').textContent, 'Copy');
-  const src = render(BUILTIN, { readOnly: true, tab: 'source' });
-  await flush();
-  assert.equal(src.querySelector('.code-editor').classList.contains('ro'), true);
-  dispose(root); dispose(src);
-});
-
-test('the create page: a key field, the runtime template, no Duplicate/Delete, Test locked', async () => {
-  const root = render({ meta: blankScriptMeta('node'), source: SCRIPT_TEMPLATES.node, sourceWin32: null, sourcePath: null, cases: [], userCases: [] }, { isNew: true, tab: 'source' });
-  await flush();
-  assert.equal(root.querySelector('.script-title').textContent, 'New script');
-  assert.ok(root.querySelector('[data-field="meta:key"]'));
-  assert.equal(root.querySelector('.script-duplicate'), null);
-  assert.equal(root.querySelector('.script-delete'), null);
-  const testTab = root.querySelector('.script-tabs button[data-tab="test"]');
-  assert.equal(testTab.disabled, true);
-  assert.equal(testTab.title, 'Save the script first');
-  assert.equal(root.querySelector('[data-field="script:source"]').value, SCRIPT_TEMPLATES.node);
-  dispose(root);
-});
-
-test('the per-runtime templates satisfy their contracts', () => {
-  assert.match(SCRIPT_TEMPLATES.node, /^export default async function \(\{ inputs, outputs, params, ctx, log \}\) \{/m);
-  assert.match(SCRIPT_TEMPLATES.node, /return \{ summary: 'ok' \};/);
-  assert.match(SCRIPT_TEMPLATES.shell, /^#!\/bin\/sh$/m);
-  assert.match(SCRIPT_TEMPLATES.python, /^def main\(api\):$/m);
-  // A <textarea>'s API value normalises CRLF to LF, so NO template the editor shows may
-  // carry a CR: the store owns the .cmd file's line endings (Task 2), not the page.
-  assert.ok(!SCRIPT_WIN32_TEMPLATE.includes('\r'), 'the editor can never hold a CR');
-  assert.ok(!SCRIPT_TEMPLATES.shell.includes('\r'), 'a .sh file never does');
-  assert.equal(SHELL_COMMAND_TEMPLATE, 'npm test');
-});
-
-test('collectScriptDraft reads the form back, in ms, without a store-owned file', async () => {
-  const root = render(USER, { tab: 'overview' });
-  await flush();
-  root.querySelector('[data-field="meta:displayName"]').value = 'Run the suite';
-  root.querySelector('[data-field="meta:timeoutSec"]').value = '45';
-  const draft = collectScriptDraft(root);
-  assert.equal(draft.meta.key, 'runTests');
-  assert.equal(draft.meta.metaVersion, 2);
-  assert.equal(draft.meta.displayName, 'Run the suite');
-  assert.equal(draft.meta.timeoutMs, 45000);
-  assert.equal(draft.meta.order, 20);
-  assert.equal('file' in draft.meta, false, 'the store owns meta.file');
-  assert.deepEqual(draft.meta.params, [{ id: 'mode', type: 'enum', default: 'fast', options: ['fast', 'full'] }]);
-  assert.deepEqual(draft.meta.inputs, [{ id: 'done', type: 'void', required: false }]);
-  assert.deepEqual(draft.meta.outputs, [{ id: 'log', type: 'md', when: 'always', filename: 'tests-cycle{cycle}.md' }]);
-  assert.deepEqual(draft.meta.verdict, { filename: 'tests-cycle{cycle}.json' });
-  assert.equal(draft.meta.ports, null, 'a key the form can clear is SENT as null (the store reads null as remove)');
-  assert.equal(draft.meta.defaultPorts, null);
-  assert.equal(draft.meta.exitCodes, null, 'not a shell script');
-  assert.equal(draft.meta.command, null);
-  assert.equal(draft.source, USER.source);
-  assert.equal(draft.sourceWin32, '');
-  dispose(root);
-});
-
-test('the Ports-per-card switch turns the port editor into the defaultPorts editor', async () => {
-  const root = render(USER);
-  await flush();
-  const sw = root.querySelector('[data-field="meta:portsConfig"]');
-  sw.checked = true;
-  sw.dispatchEvent(new win.Event('change', { bubbles: true }));
-  const draft = collectScriptDraft(root);
-  assert.equal(draft.meta.ports, 'config');
-  assert.deepEqual(draft.meta.defaultPorts, { inputs: USER_META.inputs, outputs: USER_META.outputs });
-  assert.equal(draft.meta.inputs, null, 'a config-ported sidecar declares neither — sent as null so the store REMOVES them');
-  assert.equal(draft.meta.outputs, null);
-  dispose(root);
-});
-
-test('a shell draft carries exit codes, the command and both platform sources', async () => {
-  const root = render(SHELL, { tab: 'source' });
-  await flush();
-  const draft = collectScriptDraft(root);
-  assert.deepEqual(draft.meta.exitCodes, { clean: [0], blocking: [1, 2] });
-  assert.equal(draft.source, SHELL.source);
-  assert.equal(draft.sourceWin32, '@echo off\nnpm.cmd run lint\n', 'the win32 half travels while the sh tab is showing — in LF: the store owns the .cmd ending');
-  assert.equal(draft.meta.command, null, 'File mode sends no command');
-  dispose(root);
-});
-
-// ---- the controller --------------------------------------------------------
-
-const ok = (data) => ({ ok: true, status: 200, data });
 function mountCtl(apiOver = {}, over = {}) {
   const host = doc.createElement('div');
   doc.body.appendChild(host);
@@ -266,14 +51,14 @@ function mountCtl(apiOver = {}, over = {}) {
   const api = {
     calls,
     list: async () => ok({ scripts: [{ ...USER_META, portSummary: '', caseCount: 0 }, { ...SHELL_META, portSummary: '', caseCount: 0 }] }),
-    read: async (k) => { calls.push(['read', k]); return ok(k === 'lint' ? SHELL : USER); },
+    read: async (k) => { calls.push(['read', k]); return ok(k === 'lint' ? SHELL : (k === 'gitDiff' ? BUILTIN : USER)); },
     create: async (b) => { calls.push(['create', b]); return ok({ meta: b.meta, source: b.source }); },
     update: async (k, b) => { calls.push(['update', k, b]); return ok({ meta: b.meta, warnings: [] }); },
     remove: async (k) => { calls.push(['remove', k]); return ok({ ok: true }); },
     duplicate: async (k, n) => { calls.push(['duplicate', k, n]); return ok({ meta: { key: n } }); },
     writeCases: async () => ok({ cases: [] }),
     runtimes: async () => ok(RUNTIMES),
-    bench: async () => ok({ benchId: 'b1' }),
+    bench: async (req) => { calls.push(['bench', req]); return ok({ benchId: 'b1' }); },
     benchStop: async () => ok({ ok: true }),
     benchOutput: (id, p) => `/api/scripts/bench/${id}/output/${p}`,
     history: async () => ok({ pipelines: [] }),
@@ -283,7 +68,7 @@ function mountCtl(apiOver = {}, over = {}) {
     ...apiOver,
   };
   const ctl = createScriptsController({
-    host, msgEl, api, doc,
+    host, msgEl, api, doc, inferDelayMs: 0,
     navigate: (hash) => nav.push(hash),
     confirm: async (opts) => { asked.push(opts); return true; },
     highlight: async (t) => t,
@@ -292,749 +77,552 @@ function mountCtl(apiOver = {}, over = {}) {
   });
   return { host, msgEl, nav, asked, api, ctl, cleanup: () => { ctl.destroy(); host.remove(); } };
 }
+const draftOf = (c) => collectScriptDraft(q(c.host, '.script-detail'));
 
-test('the controller opens a script, and a tab hop repaints WITHOUT refetching', async () => {
-  const c = mountCtl();
-  await c.ctl.route('runTests');
-  await flush();
-  assert.deepEqual(c.api.calls.filter((x) => x[0] === 'read'), [['read', 'runTests']]);
-  assert.equal(c.host.querySelector('.script-detail').dataset.tab, 'overview');
-  await c.ctl.route('runTests/source');
-  await flush();
-  assert.deepEqual(c.api.calls.filter((x) => x[0] === 'read'), [['read', 'runTests']], 'a tab hop must never reload over a draft');
-  assert.equal(c.host.querySelector('.script-detail').dataset.tab, 'source');
-  assert.equal(c.host.querySelector('.script-pane[data-pane="source"]').hidden, false);
-  assert.ok(c.host.querySelector('.script-tabs button[data-tab="source"]').classList.contains('on'));
-  c.cleanup();
-});
-
-test('the tabs are hash-first: clicking one navigates, it does not paint directly', async () => {
-  const c = mountCtl();
-  await c.ctl.route('runTests');
-  await flush();
-  c.host.querySelector('.script-tabs button[data-tab="test"]').click();
-  assert.deepEqual(c.nav, ['scripts/runTests/test']);
-  c.cleanup();
-});
-
-test('an unknown key says so and leaves the page on the list', async () => {
-  const c = mountCtl({ read: async () => ({ ok: false, status: 404, data: { error: 'script not found' } }) });
-  await c.ctl.route('nope');
-  await flush();
-  assert.equal(c.msgEl.textContent, 'script "nope" not found');
-  assert.ok(c.msgEl.className.includes('err'));
-  assert.equal(c.host.querySelector('.script-detail'), null);
-  c.cleanup();
-});
-
-test('editing marks the page dirty; Save PUTs meta + source together and clears it', async () => {
-  const c = mountCtl();
-  await c.ctl.route('runTests');
-  await flush();
-  assert.equal(c.ctl.isDirty(), false);
-  const name = c.host.querySelector('[data-field="meta:displayName"]');
-  name.value = 'Run the suite';
-  name.dispatchEvent(new win.Event('input', { bubbles: true }));
-  assert.equal(c.ctl.isDirty(), true);
-  assert.equal(c.host.querySelector('.script-dirty').hidden, false);
-  c.host.querySelector('.script-save').click();
-  await flush(6);
-  const put = c.api.calls.find((x) => x[0] === 'update');
-  assert.equal(put[1], 'runTests');
-  assert.equal(put[2].meta.displayName, 'Run the suite');
-  assert.equal(put[2].source, USER.source);
-  assert.equal(c.msgEl.textContent, 'Saved "runTests".');
-  assert.equal(c.ctl.isDirty(), false, 'the baseline moves with the save');
-  c.cleanup();
-});
-
-test('save warnings ride along after the confirmation', async () => {
-  const c = mountCtl({ update: async (k, b) => ok({ meta: b.meta, warnings: ['port "log" is wired in 1 saved workflow'] }) });
-  await c.ctl.route('runTests');
-  await flush();
-  c.host.querySelector('.script-save').click();
-  await flush(6);
-  assert.equal(c.msgEl.textContent, 'Saved "runTests". port "log" is wired in 1 saved workflow');
-  assert.ok(c.msgEl.className.includes('warn'));
-  c.cleanup();
-});
-
-test('a rejected save shows the server`s sentence and keeps every byte', async () => {
-  const c = mountCtl({ update: async () => ({ ok: false, status: 400, data: { error: 'displayName is required' } }) });
-  await c.ctl.route('runTests');
-  await flush();
-  const name = c.host.querySelector('[data-field="meta:displayName"]');
-  name.value = '';
-  name.dispatchEvent(new win.Event('input', { bubbles: true }));
-  c.host.querySelector('.script-save').click();
-  await flush(6);
-  assert.equal(c.msgEl.textContent, 'displayName is required');
-  assert.equal(c.host.querySelector('[data-field="meta:displayName"]').value, '', 'the draft is untouched');
-  assert.equal(c.ctl.isDirty(), true);
-  c.cleanup();
-});
-
-test('#scripts/new: the template is loaded, Save POSTs and the page routes to the saved script', async () => {
+test('#scripts/new paints the runtime step; a card click repaints the pick; Continue navigates to the runtime`s step 2', async () => {
   const c = mountCtl();
   await c.ctl.route('new');
   await flush();
-  assert.equal(c.api.calls.some((x) => x[0] === 'read'), false, 'nothing to read for a new script');
-  assert.equal(c.host.querySelector('.script-title').textContent, 'New script');
-  c.host.querySelector('[data-field="meta:key"]').value = 'fresh';
-  c.host.querySelector('[data-field="meta:displayName"]').value = 'Fresh';
-  c.host.querySelector('.script-save').click();
-  await flush(6);
-  const post = c.api.calls.find((x) => x[0] === 'create');
-  assert.equal(post[1].meta.key, 'fresh');
-  assert.equal(post[1].meta.runtime, 'node');
-  assert.equal(post[1].source, SCRIPT_TEMPLATES.node);
-  assert.deepEqual(c.nav, ['scripts/fresh']);
+  assert.equal(q(c.host, '.wz').dataset.step, '1');
+  assert.equal(q(c.host, '.rt[data-runtime="node"]').getAttribute('aria-pressed'), 'true');
+  q(c.host, '.rt[data-runtime="shell"]').click();
+  assert.equal(q(c.host, '.rt[data-runtime="shell"]').getAttribute('aria-pressed'), 'true');
+  q(c.host, '.wz-continue').click();
+  assert.deepEqual(c.nav, ['scripts/new/shell']);
+  q(c.host, '.wz-cancel').click();
+  assert.deepEqual(c.nav, ['scripts/new/shell', 'scripts']);
+  assert.equal(qa(c.host, 'p').length, 0);
   c.cleanup();
 });
 
-test('switching the runtime on the create page swaps the template and the editor language', async () => {
+test('#scripts/new/node: the workspace with the node template, the runtime`s colour and icon, no bench until there is a key', async () => {
   const c = mountCtl();
-  await c.ctl.route('new/source');
+  await c.ctl.route('new/node');
   await flush();
-  const rt = c.host.querySelector('[data-field="meta:runtime"]');
-  rt.value = 'shell';
-  rt.dispatchEvent(new win.Event('change', { bubbles: true }));
-  await flush();
-  assert.equal(c.host.querySelector('.script-source').dataset.srcMode, 'command');
-  assert.equal(c.host.querySelector('[data-field="meta:command"]').value, SHELL_COMMAND_TEMPLATE);
-  assert.equal(c.host.querySelector('.code-editor').dataset.language, 'bash');
+  const root = q(c.host, '.script-detail');
+  assert.equal(root.dataset.step, '2');
+  assert.equal(field(root, 'script:source').value, SCRIPT_TEMPLATES.node);
+  assert.equal(field(root, 'meta:color').value, 'violet');
+  assert.equal(field(root, 'meta:icon').value, iconSvgOf('code'));
+  assert.equal(q(root, '.script-save').disabled, true);
+  assert.equal(q(root, '.script-test-mount .bench'), null, 'no key, nothing to bench');
+  assert.equal(c.ctl.isDirty(), false, 'the template is the baseline');
   c.cleanup();
 });
 
-test('the shell File mode fills both platform templates the first time', async () => {
+test('typing a name derives the key, lights the tile, enables Save and mounts the bench as an unsaved draft; a typed key stops following', async () => {
   const c = mountCtl();
-  await c.ctl.route('new/source');
+  await c.ctl.route('new/node');
   await flush();
-  const rt = c.host.querySelector('[data-field="meta:runtime"]');
-  rt.value = 'shell';
-  rt.dispatchEvent(new win.Event('change', { bubbles: true }));
+  const root = q(c.host, '.script-detail');
+  type(field(root, 'meta:displayName'), 'Diff gate v2');
   await flush();
-  c.host.querySelector('[data-src-mode="file"]').click();
-  await flush();
-  assert.equal(c.host.querySelector('[data-field="script:source"]').value, SCRIPT_TEMPLATES.shell);
-  c.host.querySelector('[data-src-tab="win32"]').click();
-  await flush();
-  assert.equal(c.host.querySelector('[data-field="script:sourceWin32"]').value, SCRIPT_WIN32_TEMPLATE);
-  c.cleanup();
-});
-
-test('leaving a dirty page asks first, one macrotask later; Cancel stays put', async () => {
-  const c = mountCtl({}, { confirm: async () => false });
-  await c.ctl.route('runTests');
-  await flush();
-  const name = c.host.querySelector('[data-field="meta:displayName"]');
-  name.value = 'x';
-  name.dispatchEvent(new win.Event('input', { bubbles: true }));
-  c.host.querySelector('.script-back').click();
-  await flush(6);
-  assert.deepEqual(c.nav, [], 'Cancel keeps the draft on screen');
-  c.cleanup();
-
-  const d = mountCtl();
-  await d.ctl.route('runTests');
-  await flush();
-  const n2 = d.host.querySelector('[data-field="meta:displayName"]');
-  n2.value = 'y';
-  n2.dispatchEvent(new win.Event('input', { bubbles: true }));
-  d.host.querySelector('.script-back').click();
-  await flush(6);
-  assert.equal(d.asked[0].title, 'Discard changes');
-  assert.equal(d.asked[0].message, 'This script has unsaved changes. Leave the page and discard them?');
-  assert.equal(d.asked[0].confirmLabel, 'Discard');
-  assert.deepEqual(d.nav, ['scripts']);
-  d.cleanup();
-});
-
-test('a clean page leaves without asking, and Escape is the same exit', async () => {
-  const c = mountCtl();
-  await c.ctl.route('runTests');
-  await flush();
-  c.host.querySelector('.script-back').click();
-  await flush(4);
-  assert.deepEqual(c.asked, []);
-  assert.deepEqual(c.nav, ['scripts']);
-  c.host.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  await flush(4);
-  assert.deepEqual(c.nav, ['scripts', 'scripts']);
-  c.cleanup();
-});
-
-test('a scripts-changed poke never clobbers an unsaved draft', async () => {
-  const c = mountCtl();
-  await c.ctl.route('runTests');
-  await flush();
-  const name = c.host.querySelector('[data-field="meta:displayName"]');
-  name.value = 'mine';
-  name.dispatchEvent(new win.Event('input', { bubbles: true }));
-  c.ctl.onChanged();
-  await flush(4);
-  assert.equal(c.host.querySelector('[data-field="meta:displayName"]').value, 'mine');
-  assert.deepEqual(c.api.calls.filter((x) => x[0] === 'read'), [['read', 'runTests']]);
-  c.cleanup();
-});
-
-test('destroy tears the mounted code editors down', async () => {
-  const c = mountCtl();
-  await c.ctl.route('runTests/source');
-  await flush();
-  const root = c.host.querySelector('.script-detail');
-  assert.equal(root._editors.length, 1);
-  let destroyed = 0;
-  const real = root._editors[0].destroy;
-  root._editors[0].destroy = () => { destroyed += 1; real(); };
-  c.ctl.destroy();
-  assert.equal(destroyed, 1);
-  c.host.remove();
-});
-
-// ---- the payload boundary, the dirty baseline and the keys the form can clear ----
-
-test('scriptPayload: the FLAT wire shape and the nested one become ONE shape, program text in LF', () => {
-  const flat = { ...USER_META, source: 'a\r\nb\r\n', sourceWin32: 'c\r\n', sourcePath: '/p', sourceTruncated: false, cases: [{ id: 'c1' }], userCases: [], casesWritable: true };
-  const p = scriptPayload(flat);
-  assert.deepEqual(Object.keys(p).sort(), ['cases', 'casesWritable', 'meta', 'source', 'sourcePath', 'sourceTruncated', 'sourceWin32', 'userCases']);
-  assert.equal(p.meta.key, 'runTests');
-  assert.equal('source' in p.meta, false, 'no payload key leaks into the meta');
-  assert.equal(p.source, 'a\nb\n');
-  assert.equal(p.sourceWin32, 'c\n');
-  assert.deepEqual(scriptPayload(p), p, 'idempotent on the nested shape');
-  assert.deepEqual(scriptPayload(null).meta, {});
-});
-
-test('the controller reads the FLAT GET payload the server really sends', async () => {
-  const flat = { ...SHELL_META, source: SHELL.source, sourceWin32: SHELL.sourceWin32, sourcePath: SHELL.sourcePath, sourceTruncated: false, cases: [], userCases: [], casesWritable: true };
-  const c = mountCtl({ read: async () => ok(flat) });
-  await c.ctl.route('lint/source');
-  await flush();
-  assert.equal(c.host.querySelector('.script-title').textContent, 'Lint');
-  assert.equal(c.host.querySelector('[data-field="script:source"]').value, SHELL.source);
-  assert.equal(c.ctl.isDirty(), false);
-  c.host.querySelector('[data-src-tab="win32"]').click();
-  await flush();
-  assert.equal(c.ctl.isDirty(), false, 'a tab hop over a CRLF .cmd must not read as an edit');
-  c.cleanup();
-});
-
-test('a structural repaint keeps the page dirty (the baseline is taken on load and save only)', async () => {
-  const c = mountCtl();
-  await c.ctl.route('runTests');
-  await flush();
-  const name = c.host.querySelector('[data-field="meta:displayName"]');
-  name.value = 'EDITED';
-  name.dispatchEvent(new win.Event('input', { bubbles: true }));
-  c.host.querySelector('[data-port-add="outputs"]').click();
-  await flush();
-  assert.equal(c.host.querySelector('[data-field="meta:displayName"]').value, 'EDITED');
+  assert.equal(field(root, 'meta:key').value, 'diffGateV2');
+  assert.equal(q(root, '.wz-tile .pv-name').textContent, 'Diff gate v2');
+  assert.equal(q(root, '.wz-tile .pv-key').textContent, 'diffGateV2');
+  assert.equal(q(root, '.wz-file').textContent, 'diffGateV2.mjs');
+  assert.equal(q(root, '.script-save').disabled, false);
+  assert.ok(q(root, '.script-test-mount .bench'), 'the bench mounts for a draft');
+  assert.equal(q(root, '.script-test-mount .bench').dataset.unsaved, 'true');
+  assert.equal(q(root, '.bench-save-case').disabled, true);
   assert.equal(c.ctl.isDirty(), true);
-  assert.equal(c.host.querySelector('.script-dirty').hidden, false);
-  c.ctl.onChanged();
-  await flush();
-  assert.deepEqual(c.api.calls.filter((x) => x[0] === 'read'), [['read', 'runTests']], 'still protected from a scripts-changed poke');
+  type(field(root, 'meta:key'), 'gate2');
+  type(field(root, 'meta:displayName'), 'Another name');
+  assert.equal(field(root, 'meta:key').value, 'gate2', 'a touched key is the user`s');
+  type(field(root, 'meta:displayName'), '');
+  assert.equal(q(root, '.script-save').disabled, true, 'no name, no Save');
   c.cleanup();
 });
 
-test('changing the runtime of a SAVED script keeps the edit and sends the keys node refuses as null', async () => {
+test('a reserved or invalid key gates Save and the bench', async () => {
+  const c = mountCtl();
+  await c.ctl.route('new/node');
+  await flush();
+  const root = q(c.host, '.script-detail');
+  type(field(root, 'meta:displayName'), 'New');
+  await flush();
+  assert.equal(field(root, 'meta:key').value, 'new');
+  assert.equal(q(root, '.script-save').disabled, true, '`new` is a reserved key');
+  assert.equal(q(root, '.script-test-mount .bench'), null);
+  type(field(root, 'meta:key'), 'bad key');
+  assert.equal(q(root, '.script-save').disabled, true);
+  type(field(root, 'meta:key'), 'goodKey');
+  await flush();
+  assert.equal(q(root, '.script-save').disabled, false);
+  assert.ok(q(root, '.script-test-mount .bench'));
+  type(field(root, 'meta:key'), 'bad key');
+  assert.equal(q(root, '.script-test-mount .bench'), null, 'the draft bench leaves with the key: nothing to run under a key the store refuses');
+  type(field(root, 'meta:key'), 'goodKey');
+  await flush();
+  assert.ok(q(root, '.script-test-mount .bench'), 'and comes back with a valid one');
+  c.cleanup();
+});
+
+test('the create hashes reached FROM a saved script`s workspace (browser Back after a save) paint a fresh draft and never throw', async () => {
+  const c = mountCtl();
+  await c.ctl.route('new/node');
+  await flush();
+  type(field(q(c.host, '.script-detail'), 'meta:displayName'), 'Made here');
+  await flush();
+  q(c.host, '.script-save').click();
+  await flush();
+  assert.deepEqual(c.nav, ['scripts/madeHere']);
+  await c.ctl.route('madeHere');                          // what app.js does with the new hash (the fake read answers USER)
+  await flush();
+  assert.equal(field(q(c.host, '.script-detail'), 'meta:key').disabled, true, 'a SAVED script`s workspace is up');
+  await c.ctl.route('new/node');                          // Back: st.data was a saved script's and the tree still showed it
+  await flush();
+  let d = draftOf(c);
+  assert.equal(d.meta.key, '', 'a fresh draft, not the saved script read as one');
+  assert.equal(d.source, SCRIPT_TEMPLATES.node);
+  assert.equal(c.ctl.isDirty(), false);
+  await c.ctl.route('diffGate');
+  await flush();
+  await c.ctl.route('new');                               // the picker, from a saved workspace
+  await flush();
+  assert.equal(q(c.host, '.wz').dataset.step, '1');
+  await c.ctl.route('new/shell');
+  await flush();
+  d = draftOf(c);
+  assert.equal(d.meta.runtime, 'shell');
+  assert.equal(d.meta.key, '');
+  c.cleanup();
+});
+
+test('a re-fired route to the hash the workspace already shows keeps every typed byte', async () => {
+  const c = mountCtl();
+  await c.ctl.route('new/node');
+  await flush();
+  const root = q(c.host, '.script-detail');
+  type(field(root, 'meta:displayName'), 'Probe one');
+  await flush();
+  type(field(root, 'script:source'), SCRIPT_TEMPLATES.node + 'export const x = (api) => api.inputs.extra.path;\n');
+  await flush();
+  assert.ok(q(root, '.wz-prow[data-id="extra"]'));
+  await c.ctl.route('new/node');
+  await flush();
+  assert.equal(q(c.host, '.script-detail'), root, 'the same tree: no repaint from a stale st.data');
+  const d = draftOf(c);
+  assert.equal(d.meta.displayName, 'Probe one');
+  assert.ok(d.source.includes('inputs.extra'));
+  assert.equal(c.ctl.isDirty(), true);
+  c.cleanup();
+});
+
+test('typing code adds interface rows live (debounced), the bench follows, and a saved-only port shows as stale', async () => {
+  const c = mountCtl();
+  await c.ctl.route('diffGate');
+  await flush();
+  const root = q(c.host, '.script-detail');
+  assert.deepEqual(qa(root, '.wz-prow').map((r) => `${r.dataset.side}:${r.dataset.id}`),
+    ['inputs:plan', 'inputs:diff', 'inputs:done', 'outputs:report', 'params:maxFiles']);
+  assert.ok(q(root, '.wz-prow[data-id="done"]').classList.contains('stale'));
+  assert.deepEqual(qa(root, '.bench-port').map((p) => p.dataset.port), ['plan', 'diff', 'done']);
+  type(field(root, 'script:source'), SCRIPT_EXAMPLES.node.source + "\nexport const extra = (api) => api.inputs.notes.path + api.outputs.stats.path;\n");
+  await flush();
+  assert.deepEqual(qa(root, '.wz-prow').map((r) => r.dataset.id), ['plan', 'diff', 'notes', 'done', 'report', 'stats', 'maxFiles']);
+  assert.deepEqual(qa(root, '.bench-port').map((p) => p.dataset.port), ['plan', 'diff', 'notes', 'done'], 'the bench`s rows follow the declaration');
+  assert.equal(c.ctl.isDirty(), true);
+  const d = draftOf(c);
+  assert.deepEqual(d.meta.outputs.map((p) => [p.id, p.filename]), [['report', 'r-{cycle}.md'], ['stats', 'diffGate-stats-cycle{cycle}.md']]);
+  c.cleanup();
+});
+
+test('chips: a type cycles, `when` cycles, a mode cycles, a param type cycles; × removes a stale row for good', async () => {
+  const c = mountCtl();
+  await c.ctl.route('diffGate');
+  await flush();
+  const root = q(c.host, '.script-detail');
+  q(root, '[data-chip="in:plan:type"]').click();
+  assert.equal(q(root, '[data-chip="in:plan:type"]').textContent, 'json');
+  assert.equal(draftOf(c).meta.inputs[0].type, 'json');
+  q(root, '[data-chip="in:plan:mode"]').click();
+  assert.equal(draftOf(c).meta.inputs[0].required, true);
+  q(root, '[data-chip="in:plan:mode"]').click();
+  assert.equal(draftOf(c).meta.inputs[0].loop, true);
+  q(root, '[data-chip="out:report:when"]').click();
+  assert.equal(q(root, '[data-chip="out:report:when"]').textContent, 'always');
+  assert.equal(draftOf(c).meta.outputs[0].when, 'always');
+  q(root, '[data-chip="param:maxFiles:type"]').click();
+  assert.equal(draftOf(c).meta.params[0].type, 'boolean');
+  q(root, '[data-remove="inputs:done"]').click();
+  assert.equal(q(root, '.wz-prow[data-id="done"]'), null);
+  assert.deepEqual(draftOf(c).meta.inputs.map((p) => p.id), ['plan', 'diff']);
+  // the removed row does not come back on the next inference pass
+  type(field(root, 'script:source'), SCRIPT_EXAMPLES.node.source + '\n');
+  await flush();
+  assert.equal(q(root, '.wz-prow[data-id="done"]'), null);
+  assert.equal(q(root, '[data-chip="in:plan:type"]').textContent, 'json', 'an override sticks across a re-inference');
+  c.cleanup();
+});
+
+test('the verdict follows the code: dropping it turns every `when` to always and hides the chips', async () => {
+  const c = mountCtl();
+  await c.ctl.route('diffGate');
+  await flush();
+  const root = q(c.host, '.script-detail');
+  assert.ok(q(root, '[data-chip="out:report:when"]'));
+  type(field(root, 'script:source'), SCRIPT_EXAMPLES.node.source.replace('verdict: { issues }', 'issues'));
+  await flush();
+  assert.equal(q(root, '[data-chip="out:report:when"]'), null);
+  assert.equal(draftOf(c).meta.verdict, null);
+  assert.equal(draftOf(c).meta.outputs[0].when, 'always');
+  assert.equal(q(root, '.wz-verdict-file').textContent, '—');
+  c.cleanup();
+});
+
+test('shell: the routing switch mints pass/fail and a verdict; off, the outputs are always; exit codes ride from Advanced', async () => {
   const c = mountCtl();
   await c.ctl.route('lint');
   await flush();
-  const rt = c.host.querySelector('[data-field="meta:runtime"]');
-  rt.value = 'node';
-  rt.dispatchEvent(new win.Event('change', { bubbles: true }));
-  await flush();
-  assert.equal(c.host.querySelector('[data-field="meta:runtime"]').value, 'node', 'the select does not snap back');
+  const root = q(c.host, '.script-detail');
+  assert.equal(q(root, '[data-routing]').getAttribute('aria-checked'), 'true', 'a saved verdict = routing on');
+  let d = draftOf(c);
+  assert.deepEqual(d.meta.outputs.map((p) => [p.id, p.when]), [['log', 'always'], ['pass', 'clean'], ['fail', 'blocking']]);
+  assert.deepEqual(d.meta.verdict, { filename: 'lint-cycle{cycle}.json' });
+  assert.deepEqual(d.meta.exitCodes, { clean: [0], blocking: [1, 2] });
+  q(root, '[data-routing]').click();
+  d = draftOf(c);
+  assert.deepEqual(d.meta.outputs.map((p) => p.id), ['log']);
+  assert.equal(d.meta.verdict, null);
   assert.equal(c.ctl.isDirty(), true);
-  c.host.querySelector('.script-save').click();
-  await flush(6);
-  const put = c.api.calls.find((x) => x[0] === 'update');
-  assert.equal(put[2].meta.runtime, 'node');
-  assert.equal(put[2].meta.exitCodes, null);
-  assert.equal(put[2].meta.command, null);
-  assert.equal(put[2].sourceWin32, '', 'a node script has no .cmd; null would KEEP the stored one and the store would refuse it');
   c.cleanup();
 });
 
-test('clearing the verdict filename sends verdict: null; an emptied win32 editor sends "" and STAYS empty', async () => {
+// The wizard MINTS `pass` / `fail` at collect time, so every shell script it saves meets them
+// again on reload as ordinary saved-only rows. Off must own them there too, or they stay on
+// disk as outputs that fire `always` — both branches of a gate on every run.
+test('shell: routing off drops a SAVED pass/fail the code never names, and a re-inference does not bring them back', async () => {
+  const ROUTED = { ...SHELL, meta: { ...SHELL_META, outputs: [...SHELL_META.outputs,
+    { id: 'pass', type: 'void', when: 'clean' },
+    { id: 'fail', type: 'md', when: 'blocking', filename: 'lint-fail-cycle{cycle}.md' }] } };
+  const c = mountCtl({ read: async (k) => ok(k === 'lint' ? ROUTED : USER) });
+  await c.ctl.route('lint');
+  await flush();
+  const root = q(c.host, '.script-detail');
+  assert.deepEqual(qa(root, '.wz-prow[data-side="outputs"]').map((r) => r.dataset.id), ['log', 'pass', 'fail'], 'the sidecar`s two rows are there, not in code');
+  assert.deepEqual(draftOf(c).meta.outputs.map((p) => [p.id, p.when]), [['log', 'always'], ['pass', 'clean'], ['fail', 'blocking']]);
+  q(root, '[data-routing]').click();
+  let d = draftOf(c);
+  assert.deepEqual(d.meta.outputs.map((p) => [p.id, p.when]), [['log', 'always']], 'off un-mints what on minted');
+  assert.equal(d.meta.verdict, null);
+  type(field(root, 'script:source'), '#!/bin/sh\nnpm run lint > "$WORCA_OUT_LOG"\necho done\n');
+  await flush();
+  assert.deepEqual(draftOf(c).meta.outputs.map((p) => p.id), ['log'], 'st.removed holds them out of the merge');
+  q(root, '[data-routing]').click();
+  d = draftOf(c);
+  assert.deepEqual(d.meta.outputs.map((p) => [p.id, p.when]), [['log', 'always'], ['pass', 'clean'], ['fail', 'blocking']], 'on mints both again');
+  assert.deepEqual(d.meta.verdict, { filename: 'lint-cycle{cycle}.json' });
+  c.cleanup();
+});
+
+test('Save: a new script POSTs the wizard body and routes to it; a saved one PUTs and rebases; the bench keeps its state', async () => {
   const c = mountCtl();
-  await c.ctl.route('lint/source');
+  await c.ctl.route('new/node');
   await flush();
-  c.host.querySelector('[data-src-tab="win32"]').click();
+  let root = q(c.host, '.script-detail');
+  type(field(root, 'meta:displayName'), 'Diff gate v2');
   await flush();
-  const ed = c.host.querySelector('[data-field="script:sourceWin32"]');
-  ed.value = '';
-  ed.dispatchEvent(new win.Event('input', { bubbles: true }));
-  c.host.querySelector('[data-src-tab="default"]').click();
+  q(root, '.script-save').click();
   await flush();
-  assert.equal(c.host.querySelector('[data-field="script:sourceWin32"]').value, '', 'no template on the way OUT');
-  c.host.querySelector('[data-field="meta:verdictFilename"]').value = '';
-  c.host.querySelector('.script-save').click();
-  await flush(6);
-  const put = c.api.calls.find((x) => x[0] === 'update');
-  assert.equal(put[2].sourceWin32, '');
-  assert.equal(put[2].meta.verdict, null);
+  const created = c.api.calls.find((x) => x[0] === 'create')[1];
+  assert.equal(created.meta.key, 'diffGateV2');
+  assert.equal(created.meta.displayName, 'Diff gate v2');
+  assert.equal(created.source, SCRIPT_TEMPLATES.node);
+  assert.deepEqual(created.meta.inputs, []);
+  assert.deepEqual(c.nav, ['scripts/diffGateV2']);
+  c.cleanup();
+  const s = mountCtl();
+  await s.ctl.route('diffGate');
+  await flush();
+  root = q(s.host, '.script-detail');
+  q(root, '.bench-result-body').dataset.marker = 'kept';
+  type(field(root, 'meta:description'), 'Changed.');
+  assert.equal(s.ctl.isDirty(), true);
+  q(root, '.script-save').click();
+  await flush();
+  const updated = s.api.calls.find((x) => x[0] === 'update');
+  assert.equal(updated[1], 'diffGate');
+  assert.equal(updated[2].meta.description, 'Changed.');
+  assert.equal(s.ctl.isDirty(), false);
+  assert.equal(s.msgEl.textContent, 'Saved "diffGate".');
+  assert.equal(q(root, '.bench-result-body').dataset.marker, 'kept', 'a save never remounts the bench');
+  s.cleanup();
+});
+
+test('a rejected save shows the server`s sentence and keeps every byte', async () => {
+  const c = mountCtl({ update: async () => ({ ok: false, status: 400, data: { error: 'outputs.report: md outputs require a filename template' } }) });
+  await c.ctl.route('diffGate');
+  await flush();
+  const root = q(c.host, '.script-detail');
+  type(field(root, 'meta:description'), 'Changed.');
+  q(root, '.script-save').click();
+  await flush();
+  assert.equal(c.msgEl.textContent, 'outputs.report: md outputs require a filename template');
+  assert.equal(field(root, 'meta:description').value, 'Changed.');
+  assert.equal(c.ctl.isDirty(), true);
   c.cleanup();
 });
 
-test('a per-platform command MAP shows its default entry and saves back as a map', async () => {
-  const mapped = { ...SHELL, meta: { ...SHELL_META, file: null, command: { default: 'npm test', win32: 'npm.cmd test' } }, source: '', sourceWin32: '', sourcePath: null };
-  const root = render(mapped, { tab: 'source' });
-  await flush();
-  assert.equal(root.querySelector('[data-field="meta:command"]').value, 'npm test');
-  root.querySelector('[data-field="meta:command"]').value = 'npm run lint';
-  assert.deepEqual(collectScriptDraft(root).meta.command, { default: 'npm run lint', win32: 'npm.cmd test' });
-  dispose(root);
-});
-
-test('a Command <-> File hop loses neither half', async () => {
+test('colour and icon clicks update the hidden fields and the tile; Advanced opens in place', async () => {
   const c = mountCtl();
-  await c.ctl.route('lint/source');
+  await c.ctl.route('diffGate');
   await flush();
-  c.host.querySelector('[data-src-mode="command"]').click();
-  await flush();
-  c.host.querySelector('[data-src-mode="file"]').click();
-  await flush();
-  assert.equal(c.host.querySelector('[data-field="script:source"]').value, SHELL.source);
+  const root = q(c.host, '.script-detail');
+  q(root, '.sw[data-swatch="pink"]').click();
+  assert.equal(field(root, 'meta:color').value, 'pink');
+  assert.ok(q(root, '.wz-tile .tile').classList.contains('tile-pink'));
+  assert.ok(q(root, '.sw-pink').classList.contains('sel'));
+  q(root, '.ico[data-icon="bolt"]').click();
+  assert.equal(field(root, 'meta:icon').value, iconSvgOf('bolt'));
+  assert.equal(q(root, '.wz-tile svg').dataset.iconName, 'bolt');
+  assert.equal(c.ctl.isDirty(), true);
+  q(root, '.wz-adv-toggle').click();
+  assert.equal(q(root, '.wz-adv-body').hidden, false);
+  assert.equal(q(root, '.wz-adv-toggle').getAttribute('aria-expanded'), 'true');
+  type(field(root, 'meta:timeoutSec'), '30');
+  assert.equal(draftOf(c).meta.timeoutMs, 30000);
+  assert.equal(q(root, '.wz-adv-sum').textContent, '1 min timeout · coding · order 20', 'the summary follows the timeout as it is typed');
+  type(field(root, 'meta:domain'), 'review');
+  type(field(root, 'meta:order'), '7');
+  assert.equal(q(root, '.wz-adv-sum').textContent, '1 min timeout · review · order 7');
+  type(field(root, 'meta:domain'), '');
+  assert.equal(q(root, '.wz-adv-sum').textContent, '1 min timeout · general · order 7', 'a blank domain reads general');
   c.cleanup();
 });
 
-test('Escape inside a field is just a key; Duplicate on the detail page mints against a FRESH list and opens the copy', async () => {
+test('Load example fills identity and source (asking first when dirty); the runtime pill goes back to step 1 and the draft survives', async () => {
   const c = mountCtl();
-  await c.ctl.route('runTests/source');
+  await c.ctl.route('new/python');
   await flush();
-  c.host.querySelector('[data-field="script:source"]').dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  c.host.querySelector('[data-field="meta:displayName"]').dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  await flush(4);
-  assert.deepEqual(c.nav, [], 'the caret was in a field');
-  c.host.querySelector('.script-duplicate').click();
-  await flush(6);
-  assert.deepEqual(c.api.calls.filter((x) => x[0] === 'duplicate'), [['duplicate', 'runTests', 'runTestsCopy']]);
-  assert.deepEqual(c.nav, ['scripts/runTestsCopy']);
-  await c.ctl.route('runTestsCopy');
+  let root = q(c.host, '.script-detail');
+  q(root, '.wz-example').click();
   await flush();
-  assert.equal(c.msgEl.textContent, 'Duplicated as "runTestsCopy".', 'the flash lands on whichever page the route opens');
-  c.cleanup();
-});
-
-// The store's key uniqueness is case-INSENSITIVE (one file holds both on macOS
-// and Windows), so a copy key that differs from a taken one only in case is NOT
-// free: it answered 409 on every press, and Duplicate offers no other key.
-test('the copy key steps past a taken key that differs only in CASE', async () => {
-  const list = [{ ...USER_META, portSummary: '', caseCount: 0 },
-    { key: 'RunTestsCopy', displayName: 'Shouty copy', origin: 'user', runtime: 'node', params: [], portSummary: '', caseCount: 0 }];
-  const c = mountCtl({ list: async () => ok({ scripts: list }) });
-  await c.ctl.route('runTests');
+  root = q(c.host, '.script-detail');                       // Load example repaints the tree
+  assert.equal(c.asked.length, 0, 'a clean template asks nothing');
+  assert.equal(field(root, 'meta:displayName').value, 'TODO gate');
+  assert.equal(field(root, 'meta:key').value, 'todoGate');
+  assert.equal(field(root, 'script:source').value, SCRIPT_EXAMPLES.python.source);
+  assert.deepEqual(qa(root, '.wz-prow').map((r) => r.dataset.id), ['diff', 'report', 'limit']);
+  type(field(root, 'meta:description'), 'mine');
+  q(root, '.wz-example').click();
   await flush();
-  c.host.querySelector('.script-duplicate').click();
-  await flush(6);
-  assert.deepEqual(c.api.calls.filter((x) => x[0] === 'duplicate'), [['duplicate', 'runTests', 'runTestsCopy2']]);
-  c.cleanup();
-});
-
-// A param whose id has been blanked is on its way out (that IS how a row is
-// abandoned), but it is still a rendered row: every Remove button below it
-// carries an index one higher than the saved list's, so a Remove used to splice
-// the NEXT param — one click, the wrong definition gone.
-test('Remove on a param row deletes THAT param, even with a blanked row above it', async () => {
-  const three = { ...USER, meta: { ...USER_META, params: [
-    { id: 'mode', type: 'enum', options: ['fast', 'full'], default: 'fast' },
-    { id: 'depth', type: 'number', default: 2 },
-    { id: 'note', type: 'string' },
-  ] } };
-  const c = mountCtl({ read: async () => ok(three) });
-  await c.ctl.route('runTests');
-  await flush();
-  const id0 = c.host.querySelector('[data-field="pdef:0:id"]');
-  id0.value = '';
-  id0.dispatchEvent(new win.Event('input', { bubbles: true }));
-  c.host.querySelector('[data-pdef-remove="1"]').click();        // × on `depth`
-  await flush();
-  assert.deepEqual(collectScriptDraft(c.host.querySelector('.script-detail')).meta.params.map((p) => p.id), ['note']);
-  // And a freshly added blank row survives a Remove aimed at another row.
-  const c2 = mountCtl({ read: async () => ok(three) });
-  await c2.ctl.route('runTests');
-  await flush();
-  c2.host.querySelector('[data-pdef-add]').click();
-  await flush();
-  assert.equal(c2.host.querySelectorAll('.pdef-row').length, 4);
-  c2.host.querySelector('[data-pdef-remove="0"]').click();
-  await flush();
-  assert.deepEqual([...c2.host.querySelectorAll('[data-field$=":id"]')].filter((n) => n.dataset.field.startsWith('pdef:')).map((n) => n.value),
-    ['depth', 'note', ''], 'the empty row the user just added is still there');
-  c.cleanup(); c2.cleanup();
-});
-
-test('a port switched off `void` gets its filename box back', async () => {
-  // renderPortEditor hides an output's filename input for `void`; without a repaint
-  // on the type change the box stays display:none for ever, the draft carries an md
-  // output with no filename, and readConfigPorts refuses the save.
-  const gated = { ...USER, meta: { ...USER_META, outputs: [{ id: 'gate', type: 'void', when: 'always' }] } };
-  const c = mountCtl({ read: async () => ok(gated) });
-  await c.ctl.route('runTests');
-  await flush();
-  assert.equal(c.host.querySelector('[data-field="port:outputs:0:filename"]').hidden, true);
-  const sel = c.host.querySelector('[data-field="port:outputs:0:type"]');
-  sel.value = 'md';
-  sel.dispatchEvent(new win.Event('change', { bubbles: true }));
-  await flush();
-  const box = c.host.querySelector('[data-field="port:outputs:0:filename"]');
-  assert.equal(box.hidden, false, 'the filename an md output requires can be typed');
-  box.value = 'gate-cycle{cycle}.md';
-  assert.deepEqual(collectScriptDraft(c.host.querySelector('.script-detail')).meta.outputs,
-    [{ id: 'gate', type: 'md', when: 'always', filename: 'gate-cycle{cycle}.md' }]);
-  c.cleanup();
-});
-
-test('a double-clicked Save sends ONE write; an answer that lands on another script`s page leaves that page alone', async () => {
-  let release;
-  const gate = new Promise((r) => { release = r; });
-  const writes = [];
-  const c = mountCtl({ update: async (k, b) => { writes.push(k); await gate; return ok({ meta: b.meta, warnings: [] }); } });
-  await c.ctl.route('runTests');
-  await flush();
-  const name = c.host.querySelector('[data-field="meta:displayName"]');
-  name.value = 'Twice';
-  name.dispatchEvent(new win.Event('input', { bubbles: true }));
-  c.host.querySelector('.script-save').click();
-  c.host.querySelector('.script-save').click();
-  await flush();
-  assert.deepEqual(writes, ['runTests'], 'the second click is dropped while the first is in flight');
-  await c.ctl.route('lint');                        // the user moved on before the answer
-  await flush();
-  release();
-  await flush(6);
-  assert.equal(c.host.querySelector('.script-detail').dataset.scriptKey, 'lint');
-  assert.equal(c.ctl.isDirty(), false, 'the baseline of the lint page was not overwritten with the other draft');
-  assert.notEqual(c.msgEl.textContent, 'Saved "runTests".', 'no flash for a page that is gone');
-  c.host.querySelector('.script-save').click();    // and Save works again afterwards
-  await flush(6);
-  assert.deepEqual(writes, ['runTests', 'lint']);
-  c.cleanup();
-});
-
-test('a write that answers after the page is gone is dropped, not thrown', async () => {
-  // A rail click destroys the controller (showView) and Back routes to the list;
-  // either can land while the PUT is in flight, and save() then reads st.root.
-  let release;
-  const gate = new Promise((r) => { release = r; });
-  const rejections = [];
-  const onRejection = (e) => rejections.push(e);
-  process.on('unhandledRejection', onRejection);
-  const c = mountCtl({ update: async (k, b) => { await gate; return ok({ meta: b.meta, warnings: [] }); } });
-  await c.ctl.route('runTests');
-  await flush();
-  c.host.querySelector('[data-field="meta:displayName"]').value = 'Renamed';
-  c.host.querySelector('.script-save').click();
-  await flush();
-  c.ctl.destroy();
-  release();
-  await flush(8);
-  process.off('unhandledRejection', onRejection);
-  assert.deepEqual(rejections.map((e) => e && e.message), []);
-  c.host.remove();
-});
-
-test('leaving while the Test tab`s lazy /api/projects read is in flight throws nothing', async () => {
-  let release;
-  const gate = new Promise((r) => { release = r; });
-  const rejections = [];
-  const onRejection = (e) => rejections.push(e);
-  process.on('unhandledRejection', onRejection);
-  const c = mountCtl({ projects: async () => { await gate; return ok({ projects: [] }); } });
-  await c.ctl.route('runTests/test');
-  await flush(2);
-  c.ctl.destroy();
-  release();
-  await flush(8);
-  process.off('unhandledRejection', onRejection);
-  assert.deepEqual(rejections.map((e) => e && e.message), []);
-  c.host.remove();
-});
-
-test('renderScriptDetail with no highlighter ESCAPES the program: nothing reaches innerHTML raw', async () => {
-  const nasty = '<img src=x onerror="window.__pwned=1">\n';
-  const root = renderScriptDetail({ ...USER, source: nasty }, { doc, tab: 'source', runtimes: RUNTIMES });
-  await flush();
-  assert.equal(root.querySelectorAll('.code-editor code img').length, 0, 'the default highlighter escapes (C11)');
-  assert.equal(root.querySelector('.code-editor code').textContent, `${nasty}\n`);
-  dispose(root);
-});
-
-test('a cleared Timeout or Order box falls back to the default, not to zero', async () => {
-  const root = render(USER);
-  await flush();
-  root.querySelector('[data-field="meta:timeoutSec"]').value = '';
-  root.querySelector('[data-field="meta:order"]').value = '';
-  const meta = collectScriptDraft(root).meta;
-  assert.equal(meta.timeoutMs, 600000, 'not the 1 s MIN_TIMEOUT_MS floor a Number("") === 0 lands on');
-  assert.equal(meta.order, 50);
-  dispose(root);
-});
-
-test('a change inside the Test tab`s own port editor never repaints the page: the bench keeps its Setup', async () => {
-  const CFG_META = { ...USER_META, key: 'cfg', displayName: 'Cfg', ports: 'config', inputs: undefined, outputs: undefined,
-    defaultPorts: { inputs: [{ id: 'in', type: 'md', required: false }],
-      outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'cfg-cycle{cycle}.md' }] } };
-  const CFG = { meta: CFG_META, source: USER.source, sourceWin32: null, sourcePath: '/home/u/.worca-cc/scripts/cfg.mjs',
-    sourceTruncated: false, cases: [], userCases: [], casesWritable: true };
-  const m = mountCtl({ read: async () => ok(CFG), projects: async () => ok({ projects: [] }) });
-  await m.ctl.route('cfg/test');
-  await flush(8);
-  const bench = m.host.querySelector('.bench');
-  const type = bench.querySelector('.bench-setup [data-field="port:outputs:0:type"]');
-  type.value = 'json';
-  type.dispatchEvent(new win.Event('change', { bubbles: true }));
-  await flush(4);
-  assert.equal(m.host.querySelector('.bench'), bench, 'the SAME bench tree: a structural repaint of the page would have remounted it');
-  assert.equal(m.ctl.isDirty(), false, 'and the sidecar`s own ports were not touched');
-  m.cleanup();
-});
-
-test('the Test tab of a ports:"config" script does not make the page dirty: the draft reads the Overview editor alone', async () => {
-  // The bench mounts a SECOND port editor for a `ports: "config"` script, so an
-  // unscoped collectPorts(root) would count every row twice — the page would read
-  // as dirty the moment the Test tab opened, every Run would go out as a draft
-  // (refused outright on a built-in) and leaving would always ask to discard.
-  const CFG_META = { ...USER_META, key: 'shell', displayName: 'Shell', origin: 'builtin', ports: 'config',
-    inputs: undefined, outputs: undefined,
-    defaultPorts: { inputs: [{ id: 'in', type: 'md', required: false }],
-      outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'shell-cycle{cycle}.md' }] } };
-  const CFG = { meta: CFG_META, source: '', sourceWin32: null, sourcePath: '/repo/scripts/shell',
-    sourceTruncated: false, cases: [], userCases: [], casesWritable: true };
-  const m = mountCtl({ read: async () => ok(CFG), projects: async () => ok({ projects: [] }) });
-  await m.ctl.route('shell/test');
-  await flush(8);
-  assert.ok(m.host.querySelector('.bench .bench-setup .ins-port-editor'), 'the bench mounted its own port editor');
-  assert.equal(m.ctl.isDirty(), false, 'opening the Test tab is not an edit');
-  const draft = collectScriptDraft(m.host.querySelector('.script-detail'));
-  assert.deepEqual(draft.meta.defaultPorts.inputs.map((p) => p.id), ['in'], 'the sidecar keeps ONE `in` port');
-  assert.deepEqual(draft.meta.defaultPorts.outputs.map((p) => p.id), ['log']);
-  m.cleanup();
-});
-
-test('a shell script created from #scripts/new saves: the exit-code boxes are never both 0', async () => {
-  // `Number('')` is a finite 0, so an ABSENT exit-code box read back as [0]. The
-  // runtime switch collects the draft off the node form (no such boxes), so the
-  // shell page was painted with 0 clean AND 0 blocking and the validator refused
-  // every Save of a script the page had just offered.
-  const c = mountCtl();
+  assert.equal(c.asked.length, 1, 'a dirty page asks');
+  root = q(c.host, '.script-detail');
+  q(root, '.wz-step-pill[data-step="1"]').click();
+  assert.deepEqual(c.nav, ['scripts/new']);
   await c.ctl.route('new');
   await flush();
-  const rt = c.host.querySelector('[data-field="meta:runtime"]');
-  rt.value = 'shell';
-  rt.dispatchEvent(new win.Event('change', { bubbles: true }));
+  assert.equal(q(c.host, '.wz').dataset.step, '1');
+  assert.equal(q(c.host, '.rt[data-runtime="python"]').getAttribute('aria-pressed'), 'true');
+  await c.ctl.route('new/python');
   await flush();
-  assert.equal(c.host.querySelector('[data-field="meta:exitCodesClean"]').value, '0');
-  assert.equal(c.host.querySelector('[data-field="meta:exitCodesBlocking"]').value, '1', 'blocking defaults to 1, not to the clean code');
-  c.host.querySelector('[data-field="meta:key"]').value = 'fresh';
-  const draft = collectScriptDraft(c.host.querySelector('.script-detail'));
-  assert.deepEqual(draft.meta.exitCodes, { clean: [0], blocking: [1] });
-  c.cleanup();
-});
-
-test('clearing an exit-code box empties that list; clearing both removes the key', async () => {
-  const SH = { ...SHELL, meta: { ...SHELL_META, exitCodes: { clean: [0], blocking: [1, 2] } } };
-  const root = render(SH);
-  await flush();
-  root.querySelector('[data-field="meta:exitCodesBlocking"]').value = '';
-  assert.deepEqual(collectScriptDraft(root).meta.exitCodes, { clean: [0], blocking: [] },
-    'a cleared box is an empty list, never [0]');
-  root.querySelector('[data-field="meta:exitCodesClean"]').value = '';
-  assert.equal(collectScriptDraft(root).meta.exitCodes, null, 'both cleared = remove the key (the store reads null as "remove")');
-  dispose(root);
-});
-
-// `st.data` is refreshed by route() and by the STRUCTURAL repaints only, and the
-// bench is mounted FROM it — but a port id, a param id, `required`, `when`,
-// `filename` and a param default are plain keystrokes, and a successful Save does
-// not repaint either. "+ input" mints the id `in`, so renaming it is what nearly
-// every author does next: the Test tab then showed the declaration as it was at
-// the last structural repaint while the run went out against the new one.
-const PORTED = { ...USER, meta: { ...USER_META, inputs: [{ id: 'in', type: 'md', required: false }] } };
-
-test('the Test tab follows a renamed port id: the row, and the request it binds', async () => {
-  const sent = [];
-  const c = mountCtl({ read: async () => ok(PORTED), projects: async () => ok({ projects: [] }),
-    bench: async (r) => { sent.push(r); return ok({ benchId: 'b1' }); } });
-  await c.ctl.route('runTests');
-  await flush();
-  const id = c.host.querySelector('[data-field="port:inputs:0:id"]');
-  id.value = 'plan';
-  id.dispatchEvent(new win.Event('input', { bubbles: true }));
+  root = q(c.host, '.script-detail');
+  assert.equal(field(root, 'meta:displayName').value, 'TODO gate', 'a step hop never resets the draft');
   assert.equal(c.ctl.isDirty(), true);
-  await c.ctl.route('runTests/test');
-  await flush(8);
-  assert.deepEqual([...c.host.querySelectorAll('.bench-port')].map((p) => p.dataset.port), ['plan'],
-    'the Inputs row carries the id that is ON SCREEN, not the one the page was loaded with');
-  c.host.querySelector('[data-field="in:plan:bound"]').checked = true;
-  c.host.querySelector('[data-field="in:plan:text"]').value = '# body';
-  c.host.querySelector('.bench-run').click();
-  await flush(6);
-  assert.deepEqual(Object.keys(sent[0].inputs), ['plan'],
-    'the bench request binds the renamed port — `in` is refused by the engine as "not a declared input port"');
   c.cleanup();
 });
 
-test('the Test tab follows a renamed param id too', async () => {
-  const sent = [];
-  const c = mountCtl({ read: async () => ok(PORTED), projects: async () => ok({ projects: [] }),
-    bench: async (r) => { sent.push(r); return ok({ benchId: 'b1' }); } });
-  await c.ctl.route('runTests/test');
-  await flush(8);
-  const pid = c.host.querySelector('[data-field="pdef:0:id"]');
-  pid.value = 'speed';
-  pid.dispatchEvent(new win.Event('input', { bubbles: true }));
-  await c.ctl.route('runTests');           // a tab hop is not a reload: the draft is the page
+test('changing the runtime through the picker swaps the template only while the source is untouched', async () => {
+  const c = mountCtl();
+  await c.ctl.route('new/node');
   await flush();
-  await c.ctl.route('runTests/test');
-  await flush(8);
-  assert.ok(c.host.querySelector('.bench-setup [data-field="param:speed"]'),
-    'the Setup column shows the param the Overview tab declares now');
-  c.host.querySelector('.bench-run').click();
-  await flush(6);
-  assert.deepEqual(Object.keys(sent[0].params), ['speed'],
-    '…and sends it: the old id fails with "sets unknown param"');
+  await c.ctl.route('new');
+  await flush();
+  q(c.host, '.rt[data-runtime="shell"]').click();
+  await c.ctl.route('new/shell');
+  await flush();
+  let root = q(c.host, '.script-detail');
+  assert.equal(field(root, 'meta:runtime').value, 'shell');
+  assert.equal(q(root, '.script-source').dataset.srcMode, 'command');
+  assert.equal(field(root, 'meta:command').value, SHELL_COMMAND_TEMPLATE);
+  assert.equal(field(root, 'meta:color').value, 'amber', 'the colour follows while it was the runtime default');
+  type(field(root, 'meta:command'), 'npm run lint > "$WORCA_OUT_LOG"');
+  await flush();
+  assert.deepEqual(qa(root, '.wz-prow').map((r) => r.dataset.id), ['log'], 'inference reads the command text (pass/fail are minted at collect time, never rows)');
+  assert.deepEqual(draftOf(c).meta.outputs.map((p) => p.id), ['log', 'pass', 'fail']);
+  await c.ctl.route('new');
+  await flush();
+  q(c.host, '.rt[data-runtime="node"]').click();
+  await c.ctl.route('new/node');
+  await flush();
+  root = q(c.host, '.script-detail');
+  assert.equal(field(root, 'meta:runtime').value, 'node');
+  assert.equal(field(root, 'script:source').value, SCRIPT_TEMPLATES.node, 'a shell COMMAND is not a node program: the template comes back');
   c.cleanup();
 });
 
-test('a successful Save refreshes the Test tab: the saved declaration is what the bench renders', async () => {
-  const sent = [];
-  const c = mountCtl({ read: async () => ok(PORTED), projects: async () => ok({ projects: [] }),
-    bench: async (r) => { sent.push(r); return ok({ benchId: 'b1' }); } });
-  await c.ctl.route('runTests/test');
-  await flush(8);
-  assert.deepEqual([...c.host.querySelectorAll('.bench-port')].map((p) => p.dataset.port), ['in']);
-  // The Overview pane is hidden behind the Test tab, but its fields are the page.
-  const id = c.host.querySelector('[data-field="port:inputs:0:id"]');
-  id.value = 'plan';
-  id.dispatchEvent(new win.Event('input', { bubbles: true }));
-  c.host.querySelector('.script-save').click();
-  await flush(10);
-  assert.equal(c.msgEl.textContent, 'Saved "runTests".');
-  assert.equal(c.ctl.isDirty(), false);
-  assert.deepEqual([...c.host.querySelectorAll('.bench-port')].map((p) => p.dataset.port), ['plan'],
-    'a save does not repaint the page, so the bench kept the old declaration until the script was re-opened');
-  c.host.querySelector('[data-field="in:plan:bound"]').checked = true;
-  c.host.querySelector('[data-field="in:plan:text"]').value = '# body';
-  c.host.querySelector('.bench-run').click();
-  await flush(6);
-  assert.deepEqual(Object.keys(sent[0].inputs), ['plan']);
-  assert.equal(sent[0].draft, null, 'the page is clean again, so the SAVED script runs');
+test('a saved shell script: the Command | File control and the sh | win32 tabs still work, inference reads the visible default half', async () => {
+  const c = mountCtl();
+  await c.ctl.route('lint');
+  await flush();
+  let root = q(c.host, '.script-detail');
+  assert.equal(q(root, '.script-source').dataset.srcMode, 'file');
+  assert.deepEqual(qa(root, '.wz-prow').map((r) => r.dataset.id), ['log']);
+  q(root, '.script-src-plat button[data-src-mode], .script-src-plat button[data-src-tab="win32"]').click();
+  await flush();
+  assert.equal(q(c.host, '.script-detail'), root, 'an editor-only hop keeps the tree (the bench under it too)');
+  assert.equal(q(root, '.code-editor-ta').dataset.field, 'script:sourceWin32', 'the editor now holds the .cmd half');
+  assert.equal(field(root, 'script:sourceWin32').value, '@echo off\nnpm.cmd run lint\n');
+  assert.deepEqual(qa(root, '.wz-prow').map((r) => r.dataset.id), ['log'], 'the win32 half is not scanned');
+  q(root, '.script-src-mode button[data-src-mode="command"]').click();
+  await flush();
+  assert.equal(q(c.host, '.script-source').dataset.srcMode, 'command');
+  assert.equal(draftOf(c).source, '', 'Command mode sends no file');
   c.cleanup();
 });
 
-test('…and a Save that changes nothing the bench renders leaves it alone: the Setup, the result and a live run', async () => {
-  // The W10 loop the plan describes: edit the program, run the draft, watch it pass,
-  // press Save. A Save that REBUILDS the Test tab throws that away — `destroy()` POSTs
-  // `bench/stop` for an in-flight run and `replaceChildren` wipes the selected case,
-  // the typed inputs, the Expect row and the result pane (back to `idle`) — the exact
-  // state C32/C34 exist to protect, for a refresh nothing on screen can need: the bench
-  // is mounted only while the Test tab is up, and the Overview and Source panes are
-  // `display:none` behind it, so no keyboard, autofill or find-in-page path reaches a
-  // `meta:*` / `pdef:*` field, and the Setup column's own controls are named
-  // `param:` / `in:` / `expect:`.
+test('leaving a dirty page asks first, one macrotask later; Cancel stays; Escape in the chrome is the same exit', async () => {
+  const c = mountCtl({}, { confirm: async () => false });
+  await c.ctl.route('diffGate');
+  await flush();
+  const root = q(c.host, '.script-detail');
+  type(field(root, 'meta:description'), 'Changed.');
+  q(root, '.script-back').click();
+  await flush();
+  assert.deepEqual(c.nav, [], 'Cancel stays put');
+  root.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush();
+  assert.deepEqual(c.nav, []);
+  c.cleanup();
+  const d = mountCtl();
+  await d.ctl.route('diffGate');
+  await flush();
+  q(d.host, '.script-back').click();
+  await flush();
+  assert.deepEqual(d.nav, ['scripts'], 'a clean page leaves without asking');
+  assert.equal(d.asked.length, 0);
+  d.cleanup();
+});
+
+test('a built-in opens read-only with a live bench and the path row; the runtime pill is inert', async () => {
+  const c = mountCtl();
+  await c.ctl.route('gitDiff');
+  await flush();
+  const root = q(c.host, '.script-detail');
+  assert.equal(q(root, '.script-save'), null);
+  assert.equal(field(root, 'meta:displayName').disabled, true);
+  // `// built in` reads nothing, so the only rows are the sidecar's (stale, inert, and with no ×)
+  assert.deepEqual(qa(root, '.wz-prow').map((r) => r.dataset.id), ['done', 'report', 'maxFiles']);
+  assert.equal(q(root, '[data-chip="in:done:type"]').disabled, true);
+  assert.equal(q(root, '[data-remove]'), null);
+  assert.equal(q(root, '.wz-step-pill[data-step="1"]').disabled, true);
+  assert.equal(q(root, '.script-path').textContent, '/repo/scripts/git-diff.mjs');
+  assert.ok(q(root, '.script-test-mount .bench'));
+  assert.equal(q(root, '.script-test-mount .bench').dataset.unsaved, undefined);
+  assert.equal(q(root, '.script-origin').textContent, 'built-in');
+  c.cleanup();
+});
+
+test('a scripts-changed poke never clobbers an unsaved draft; destroy tears the editors and the bench down', async () => {
+  const c = mountCtl();
+  await c.ctl.route('diffGate');
+  await flush();
+  const root = q(c.host, '.script-detail');
+  type(field(root, 'meta:description'), 'Changed.');
+  c.ctl.onChanged();
+  await flush();
+  assert.equal(field(q(c.host, '.script-detail'), 'meta:description').value, 'Changed.');
+  assert.deepEqual(c.api.calls.filter((x) => x[0] === 'read').length, 1);
+  c.ctl.destroy();
+  assert.equal(c.host.childNodes.length, 0);
+  c.host.remove();
+});
+
+test('after a code keystroke and a chip click the page is still the user`s: Save PUTs, and the bench keeps its writable layer', async () => {
+  const wrote = [];                                        // mountCtl's default writeCases records nothing
+  const c = mountCtl({ writeCases: async (k, cases) => { wrote.push([k, cases]); return ok({ cases }); } });
+  await c.ctl.route('diffGate');
+  await flush();
+  const root = q(c.host, '.script-detail');
+  type(field(root, 'script:source'), SCRIPT_EXAMPLES.node.source + '\n');
+  await flush();
+  q(root, '[data-chip="in:plan:type"]').click();
+  q(root, '[data-chip="in:plan:mode"]').click();
+  assert.equal(field(root, 'iface:in:plan:mode').value, 'required', 'the second chip click still lands');
+  q(root, '.script-save').click();
+  await flush();
+  const updated = c.api.calls.find((x) => x[0] === 'update');
+  assert.ok(updated, 'Save still writes');
+  assert.equal(updated[2].meta.inputs[0].required, true);
+  type(field(root, 'bench:caseName'), 'first');
+  q(root, '.bench-save-case').click();
+  await flush();
+  assert.equal(wrote.length, 1, 'a case write still goes out');
+  assert.equal(wrote[0][0], 'diffGate');
+  assert.equal(wrote[0][1][0].name, 'first');
+  assert.equal(q(root, '.bench-lock'), null, 'the user`s own case is never shown as shipped (origin survived the re-declaration)');
+  assert.ok(q(root, '.bench-case-row[data-case-id="first"] .bench-case-rename'), 'and it is writable');
+  c.cleanup();
+});
+
+test('a saved verdict the code does not declare survives a Save that touched only the description, and follows the code once it is edited', async () => {
+  const quiet = { ...USER, source: '// no verdict in this program\nexport default async ({ inputs, outputs }) => { inputs.plan; outputs.report; return { summary: \'ok\' }; };\n' };
+  const c = mountCtl({ read: async () => ok(quiet) });
+  await c.ctl.route('diffGate');
+  await flush();
+  const root = q(c.host, '.script-detail');
+  assert.deepEqual(draftOf(c).meta.verdict, { filename: 'dg-{cycle}.json' });
+  assert.equal(draftOf(c).meta.outputs[0].when, 'blocking');
+  assert.ok(q(root, '[data-chip="out:report:when"]'));
+  type(field(root, 'meta:description'), 'Changed.');
+  q(root, '.script-save').click();
+  await flush();
+  const updated = c.api.calls.find((x) => x[0] === 'update');
+  assert.deepEqual(updated[2].meta.verdict, { filename: 'dg-{cycle}.json' }, 'an unrelated Save keeps the declaration');
+  type(field(root, 'script:source'), quiet.source + '\n');
+  await flush();
+  assert.equal(draftOf(c).meta.verdict, null, 'once the program is edited, the code decides');
+  assert.equal(q(root, '[data-chip="out:report:when"]'), null);
+  c.cleanup();
+});
+
+test('an editor-only hop (sh | win32, Command | File) swaps the editor and leaves the bench alone: a run in flight is not stopped, the result stays', async () => {
   const stops = [];
-  const sent = [];
-  const c = mountCtl({ read: async () => ok(PORTED), projects: async () => ok({ projects: [] }),
-    bench: async (r) => { sent.push(r); return ok({ benchId: 'b1' }); },
-    benchStop: async (id) => { stops.push(id); return ok({ ok: true }); } });
-  await c.ctl.route('runTests/source');
+  const c = mountCtl({ benchStop: async (id) => { stops.push(id); return ok({ ok: true }); } });
+  await c.ctl.route('lint');
   await flush();
-  const src = c.host.querySelector('[data-field="script:source"]');
-  src.value = '// v2\n';
-  src.dispatchEvent(new win.Event('input', { bubbles: true }));
-  await c.ctl.route('runTests/test');
-  await flush(8);
-  // Thirty minutes of hand-work in the Setup column.
-  c.host.querySelector('[data-field="in:in:bound"]').checked = true;
-  const box = c.host.querySelector('[data-field="in:in:text"]');
-  box.value = '# hand-written fixture';
-  box.dispatchEvent(new win.Event('input', { bubbles: true }));
-  const verdict = c.host.querySelector('[data-field="expect:verdict"]');
-  verdict.value = 'clean';
-  verdict.dispatchEvent(new win.Event('change', { bubbles: true }));
-  c.host.querySelector('[data-field="bench:caseName"]').value = 'edge case';
-  c.host.querySelector('.bench-run').click();
-  await flush(6);
-  assert.equal(sent[0].draft.source, '// v2\n', 'the unsaved program ran (W10)');
-  c.ctl.onFrame({ type: 'scriptbench-done', benchId: 'b1', seq: 1, result: {
-    status: 'clean', exitCode: 0, runtime: 'node', durationMs: 20, summary: 'ran in the bench', warnings: [],
-    fired: ['log'], outputs: {}, verdict: null, envelopePath: '/b/envelope.json', error: null, expect: null,
-    draft: true, benchDir: '/b' } });
-  await flush(6);
-  assert.equal(c.host.querySelector('.bench-status-text').textContent, 'clean');
-
-  c.host.querySelector('.script-save').click();
-  await flush(10);
-  assert.equal(c.msgEl.textContent, 'Saved "runTests".');
-  assert.equal(c.host.querySelector('[data-field="in:in:bound"]').checked, true, 'the port is still bound');
-  assert.equal(c.host.querySelector('[data-field="in:in:text"]').value, '# hand-written fixture');
-  assert.equal(c.host.querySelector('[data-field="expect:verdict"]').value, 'clean', 'the Expect row survived');
-  assert.equal(c.host.querySelector('[data-field="bench:caseName"]').value, 'edge case');
-  assert.equal(c.host.querySelector('.bench-status-text').textContent, 'clean', 'the result is still on screen');
-  assert.deepEqual(stops, [], 'a Save must never stop the run the user is watching');
+  const root = q(c.host, '.script-detail');
+  const bench = q(root, '.script-test-mount .bench');
+  q(root, '.bench-run').click();
+  await flush();
+  assert.equal(q(root, '.bench-run').disabled, true, 'a run is in flight');
+  q(root, '.bench-result-body').dataset.marker = 'kept';
+  q(root, '.script-src-plat button[data-src-tab="win32"]').click();
+  await flush();
+  assert.equal(q(c.host, '.script-detail'), root, 'the page tree is the same node');
+  assert.equal(q(root, '.code-editor-ta').dataset.field, 'script:sourceWin32', 'the editor swapped halves');
+  assert.equal(q(root, '.wz-file').textContent, 'lint.cmd');
+  assert.equal(q(root, '.script-test-mount .bench'), bench, 'the bench tree is the same node');
+  assert.deepEqual(stops, [], 'no bench/stop went out');
+  assert.equal(q(root, '.bench-result-body').dataset.marker, 'kept');
+  assert.equal(q(root, '.bench-run').disabled, true, 'still running');
+  q(root, '.script-src-mode button[data-src-mode="command"]').click();
+  await flush();
+  assert.equal(q(root, '.script-source').dataset.srcMode, 'command');
+  assert.equal(q(root, '.script-test-mount .bench'), bench, 'a mode hop keeps it too');
+  assert.equal(draftOf(c).source, '', 'Command mode sends no file');
+  assert.deepEqual(stops, []);
   c.cleanup();
+  assert.deepEqual(stops, ['b1'], 'leaving the page is what stops the run');
 });
 
-test('typing a verdict filename unlocks every output`s `when` select, and clearing it locks them again', async () => {
-  // renderPortEditor disables `when` while the sidecar has no verdict, and
-  // meta:verdictFilename is not structural — so the tooltip went on naming a
-  // condition the author had met and SAVED. Declaring the port and then the
-  // verdict is the natural order, and a conditional output is the whole point
-  // of a gate script.
-  const noVerdict = { ...USER, meta: { ...USER_META, verdict: undefined,
-    outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'l-cycle{cycle}.md' }] } };
-  const c = mountCtl({ read: async () => ok(noVerdict) });
-  await c.ctl.route('runTests');
+test('a draft bench never mounts under a key that turned invalid while the projects call was in flight', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const c = mountCtl({ projects: async () => { await gate; return ok({ projects: [] }); } });
+  await c.ctl.route('new/node');
   await flush();
-  const when = () => c.host.querySelector('[data-field="port:outputs:0:when"]');
-  assert.equal(when().disabled, true);
-  assert.equal(when().closest('.ins-f').title, 'needs a sidecar verdict');
-  const type = (value) => {
-    const box = c.host.querySelector('[data-field="meta:verdictFilename"]');
-    box.value = value;
-    box.dispatchEvent(new win.Event('change', { bubbles: true }));
-  };
-  type('tests-cycle{cycle}.json');
+  const root = q(c.host, '.script-detail');
+  type(field(root, 'meta:displayName'), 'N');            // key `n`: the mount starts and awaits the projects list
+  await flush(2);
+  type(field(root, 'meta:displayName'), 'New');          // key `new`: reserved while the call is still out
+  release();
   await flush();
-  assert.equal(when().disabled, false, 'the condition the tooltip named has been met');
-  assert.equal(when().closest('.ins-f').title, '');
-  assert.equal(c.ctl.isDirty(), true, 'the repaint is not a rebase: the page is still unsaved');
-  assert.equal(c.host.querySelector('[data-field="meta:verdictFilename"]').value, 'tests-cycle{cycle}.json');
-  type('');
+  assert.equal(q(root, '.script-save').disabled, true);
+  assert.equal(q(root, '.script-test-mount .bench'), null, 'the late answer mounts nothing under a key the store refuses');
+  type(field(root, 'meta:displayName'), 'Newer');
   await flush();
-  assert.equal(when().disabled, true, 'clearing the verdict locks `when` again');
+  assert.ok(q(root, '.script-test-mount .bench'), 'and a valid key mounts it');
   c.cleanup();
-});
-
-test('a host WITH python: the option is offered, the topbar chip is gone (W4)', async () => {
-  const withPython = { ...RUNTIMES, python: { ok: true, version: '3.12.4', command: ['python3'] } };
-  const PY = { ...USER, meta: { ...USER_META, key: 'pyCard', displayName: 'Py card', runtime: 'python', file: 'pyCard.py' },
-    source: SCRIPT_TEMPLATES.python, sourcePath: '/home/u/.worca-cc/scripts/pyCard.py' };
-
-  const on = render(PY, { runtimes: withPython });
-  await flush();
-  const opt = (root) => [...root.querySelector('[data-field="meta:runtime"]').options].find((o) => o.value === 'python');
-  assert.equal(opt(on).disabled, false, 'a probed interpreter offers the runtime');
-  assert.equal(opt(on).title, '', 'nothing to explain: no title');
-  assert.equal(on.querySelector('.script-warn'), null);
-  assert.equal(on.querySelector('.script-runtime').textContent, 'python');
-  dispose(on);
-
-  const off = render(PY, { runtimes: RUNTIMES });
-  await flush();
-  assert.equal(opt(off).disabled, true);
-  assert.equal(opt(off).title, 'no python 3.8 or newer found (tried python3, python)');
-  assert.equal(off.querySelector('.script-warn').textContent, 'python not found');
-  assert.equal(off.querySelector('[data-field="meta:runtime"]').value, 'python', 'a saved python script still shows its own runtime');
-  assert.equal(off.querySelectorAll('p').length, 0, 'the reason is a title, never a paragraph');
-  dispose(off);
-
-  const src = render(PY, { runtimes: RUNTIMES, tab: 'source' });
-  await flush();
-  assert.equal(src.querySelector('.code-editor').dataset.language, 'python', 'a .py source is python whether or not the host can run it');
-  dispose(src);
 });

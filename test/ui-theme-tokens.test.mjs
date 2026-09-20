@@ -48,7 +48,8 @@ function stripLightDark(value) {
   }
 }
 const COLOR_LITERAL = /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(|(?<![-\w])(?:white|black)(?![-\w])/i;
-const EQUAL_ARMS = ['--green', '--peach', '--red', '--blue', '--violet', '--amber'];   // D13's whole allowlist
+const EQUAL_ARMS = ['--green', '--peach', '--red', '--blue', '--violet', '--amber',   // D13's allowlist …
+  '--teal', '--pink', '--indigo', '--lime', '--cocoa', '--slate'];                     // … + the six script-only bases (script-wizard plan S10)
 
 const rootBody = ruleBody(':root');
 // `.hd-diff{display:grid;…}` precedes the token block of the same selector — take the block that OPENS with the token.
@@ -80,7 +81,8 @@ test('theme: every colour token is a light-dark() pair, both arms colours; the s
     if (a && !(COLOR_LITERAL.test(a[0]) && COLOR_LITERAL.test(a[1]))) bad.push(`${name}: an arm is not a colour: ${value}`);
   }
   assert.deepEqual(bad, []);
-  assert.deepEqual(EQUAL_ARMS.map((n) => tokens.get(n)), ['#5BAE5B', '#EFA63C', '#E76A5A', '#5BA6CC', '#8C7FD6', '#E6962A']);
+  assert.deepEqual(EQUAL_ARMS.map((n) => tokens.get(n)), ['#5BAE5B', '#EFA63C', '#E76A5A', '#5BA6CC', '#8C7FD6', '#E6962A',
+    '#4FB3A9', '#E27BA8', '#6A7FD8', '#A3BF3A', '#B08A5E', '#8A96A3']);
 });
 
 test('theme: no new --gv-* or stray --hd-* token names (D12)', () => {
@@ -102,7 +104,7 @@ const PAIRS = [
   ['--ink', '--bg', 4.5], ['--ink', '--panel', 4.5], ['--ink', '--field', 4.5], ['--ink', '--surface', 4.5], ['--ink', '--canvas-2', 4.5],
   ['--ink-2', '--panel', 4.5], ['--ink-2', '--bg', 4.5], ['--ink-2', '--field', 4.5],
   ['--on-ink', '--ink', 4.5],
-  ...['green', 'peach', 'red', 'blue', 'violet', 'amber'].flatMap((f) => [[`--${f}-ink`, `--${f}-bg`, 3.3], [`--${f}-ink`, '--panel', 3.8]]),
+  ...['green', 'peach', 'red', 'blue', 'violet', 'amber', 'teal', 'pink', 'indigo', 'lime', 'cocoa', 'slate'].flatMap((f) => [[`--${f}-ink`, `--${f}-bg`, 3.3], [`--${f}-ink`, '--panel', 3.8]]),
   ['--ink', '--amber-wash', 4.5], ['--ink-2', '--amber-wash', 4.5], ['--ink', '--field-focus', 4.5], ['--ink', '--surface', 4.5], ['--ink-2', '--surface', 4.5],
   ['--hd-count-add', '--panel', 4.5], ['--hd-count-del', '--panel', 4.5],
   ...['comment', 'keyword', 'type', 'string', 'literal', 'title'].map((s) => [`--hd-syntax-${s}`, '--panel', 4.5]),
@@ -111,7 +113,7 @@ const PAIRS = [
 const DARK_ONLY = [   // light fails these today (spec §7.4 baseline); dark must not
   ['--ink-3', '--panel', 4.5], ['--ink-3', '--bg', 4.5], ['--ink-3', '--field', 4.5], ['--ink-3', '--field-focus', 4.5], ['--ink-3', '--surface', 4.5], ['--ink-3', '--canvas-2', 4.5], ['--ink-3', '--amber-wash', 4.5],
   ['--on-ink', '--ink-3', 4.5], ['--h-green-ink', '--green-bg', 4.5],
-  ...['green', 'peach', 'red', 'blue', 'violet', 'amber'].flatMap((f) => [[`--${f}-ink`, `--${f}-bg`, 4.5], [`--${f}-ink`, '--panel', 4.5], [`--${f}`, '--panel', 3], [`--${f}`, '--surface', 3], ['--on-status', `--${f}`, 4.5]]),
+  ...['green', 'peach', 'red', 'blue', 'violet', 'amber', 'teal', 'pink', 'indigo', 'lime', 'cocoa', 'slate'].flatMap((f) => [[`--${f}-ink`, `--${f}-bg`, 4.5], [`--${f}-ink`, '--panel', 4.5], [`--${f}`, '--panel', 3], [`--${f}`, '--surface', 3], ['--on-status', `--${f}`, 4.5]]),
   ['--amber-ink', '--amber-wash', 4.5], ['--seq', '--panel', 3], ['--seq', '--canvas-2', 3],
   ['--line-2', '--panel', 1.5], ['--amber-wash', '--panel', 1.08], ['--surface', '--field', 1.1], ['--panel', '--bg', 1.1],
 ];

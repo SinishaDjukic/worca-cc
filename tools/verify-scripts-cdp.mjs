@@ -17,7 +17,7 @@
 // test/ui-scripts-view.test.mjs, test/ui-script-detail.test.mjs and
 // test/ui-script-bench.test.mjs.
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -78,12 +78,18 @@ const store = await import(new URL('../src/core/script-store.mjs', import.meta.u
 await addProject({ name: 'scriptproof', path: proj });
 log(`server ${base} · project ${proj}`);
 
-const KEY = 'proofScript';
+const KEY = 'proofScript';                         // = keyFromName('Proof script'): the wizard derives it, the proof types the NAME
+// What the page's inference must read off this program: inputs.plan (optional — the proof also runs it
+// UNBOUND, so the read is guarded), outputs.out (md: no JSON near the write) and params.limit (?? 3 → number).
+// Checks 3–5 assert on the three quoted strings; keep them.
 const SOURCE = [
-  'export default async function ({ outputs, params, ctx, log }) {',
+  'export default async function ({ inputs, outputs, params, ctx, log }) {',
+  "  const fs = await import('node:fs');",
+  "  const plan = inputs.plan ? fs.readFileSync(inputs.plan.path, 'utf8') : '';",
   "  console.log('streamed from the proof');",
   "  log('info', 'the harness log channel');",
-  "  return { outputs: { out: { value: '# proof\\n\\nit ran in the bench' } }, summary: 'ran in the bench' };",
+  "  fs.writeFileSync(outputs.out.path, '# proof\\n\\nit ran in the bench (' + plan.length + ' chars of plan, limit ' + Number(params.limit ?? 3) + ')\\n');",
+  "  return { summary: 'ran in the bench' };",
   '}',
   '',
 ].join('\n');
@@ -199,20 +205,31 @@ try {
   check('2', 'the Scripts page carries no explanatory prose: zero <p> in the view, and the message line is a div',
     prose.p === 0 && prose.msg === 'DIV', prose);
 
-  // ---- (3) create a node script from the page -------------------------------
+  // ---- (3) the wizard (script-wizard plan): pick node, name it, type a program, watch the rows appear, Save
   await go('scripts/new');
-  await until(`document.querySelector('${VIEW} [data-field="meta:key"]')`, 'the create page');
-  await setField('meta:key', KEY);
+  await until(`document.querySelector('${VIEW} .wz-step-1 .rt[data-runtime="node"]')`, 'the runtime step');
+  await clickIn('.rt[data-runtime="node"]');
+  await clickIn('.wz-continue');
+  await until(`location.hash === '#scripts/new/node' && document.querySelector('${VIEW} .wz-step-2 [data-field="meta:displayName"]')`, 'step 2');
   await setField('meta:displayName', 'Proof script');
-  await clickIn('[data-port-add="outputs"]');            // mints { id:'out', type:'md', when:'always', filename:'out-cycle{cycle}.md' }
-  await until(`document.querySelector('${VIEW} [data-field="port:outputs:0:id"]')`, 'the new output row');
-  // An INPUT port too: check 8 measures the bench row's hidden file input, which only
-  // exists for a declared non-void input. Mints { id:'in', type:'md', required:false }.
-  await clickIn('[data-port-add="inputs"]');
-  await until(`document.querySelector('${VIEW} [data-field="port:inputs:0:id"]')`, 'the new input row');
-  await clickIn('.script-tabs button[data-tab="source"]');
-  await until(`document.querySelector('${VIEW} [data-field="script:source"]')`, 'the source editor');
-  await setField('script:source', SOURCE);
+  await until(`document.querySelector('${VIEW} [data-field="meta:key"]').value === '${KEY}'`, 'the derived key');
+  await setField('script:source', SOURCE);        // the code editor's textarea: its input event is the live-inference hook (150 ms debounce)
+  await until(`document.querySelector('${VIEW} .wz-prow[data-side="inputs"][data-id="plan"]') && document.querySelector('${VIEW} .wz-prow[data-side="outputs"][data-id="out"]')`
+    + ` && (document.querySelector('${VIEW} [data-field="iface:param:limit:default"]')||{}).value === '3'`, 'the interface read from the code');
+  await until(`document.querySelector('${VIEW} .script-test-mount .bench[data-unsaved="true"] [data-field="in:plan:bound"]')`, 'the bench mounted for the draft');
+  // W10 for a key that is NOT on disk yet: Test runs the draft through the real bench BEFORE any Save.
+  await clickIn('.bench-run');
+  await until(`document.querySelector('${VIEW} .bench-status-text').textContent === 'clean'`, 'the draft ran clean', 300);
+  const draftRun = await ev(`(()=>{const b=document.querySelector('${VIEW} .bench');return {
+    chip:b.querySelector('.bench-draft').hidden ? '' : b.querySelector('.bench-draft').textContent,
+    dot:b.querySelector('.bench-dot').dataset.status,
+    fired:[...b.querySelectorAll('.bench-fired-chip')].map(x=>x.textContent),
+    logText:b.querySelector('.bench-pane[data-rpane="log"] .bench-log').textContent};})()`);
+  const userDir = store.userScriptsDir();
+  const draftFiles = existsSync(userDir) ? (await readdir(userDir)).filter((f) => f === `${KEY}.mjs` || f.startsWith('.bench-')) : [];
+  check('3a', 'an UNSAVED draft of a key not on disk runs through the real bench: the result wears `unsaved draft`, the out port fired, and nothing is on disk under the key',
+    draftRun.chip === 'unsaved draft' && draftRun.dot === 'clean' && draftRun.fired.includes('out')
+    && draftRun.logText.includes('streamed from the proof') && draftFiles.length === 0, { ...draftRun, logText: draftRun.logText.slice(0, 120), draftFiles });
   await clickIn('.script-save');
   await until(`location.hash === '#scripts/${KEY}'`, 'the save routed to the saved script');
   const saved = await store.readScript(KEY);
@@ -308,9 +325,9 @@ try {
   // `display` rule winning over it (the .btn{display:inline-flex} trap).
   const hidden = await ev(`(()=>{const d=(sel)=>{const n=document.querySelector('${VIEW} '+sel);
       return n?{present:true,attr:n.hidden,display:getComputedStyle(n).display}:{present:false};};
-    return {pane:d('.script-pane[data-pane="overview"]'),dirty:d('.script-dirty'),file:d('.bench-port input[type="file"].bench-file')};})()`);
+    return {adv:d('.wz-adv-body'),dirty:d('.script-dirty'),file:d('.bench-port input[type="file"].bench-file')};})()`);
   check('8', 'every [hidden] control on the page is really not displayed (computed style, not the attribute)',
-    ['pane', 'dirty', 'file'].every((k) => hidden[k].present && hidden[k].attr === true && hidden[k].display === 'none'), hidden);
+    ['adv', 'dirty', 'file'].every((k) => hidden[k].present && hidden[k].attr === true && hidden[k].display === 'none'), hidden);
 
   // ---- (9) the dark theme ----------------------------------------------------
   const readShell = () => ev(`(()=>{const v=document.querySelector('[data-view="scripts"]');const b=v.querySelector('.bench');
@@ -318,7 +335,7 @@ try {
       ink:getComputedStyle(v.querySelector('.bench-status-text')).color,
       dot:getComputedStyle(b.querySelector('.bench-dot')).backgroundColor,
       expectBg:getComputedStyle(b.querySelector('.bench-expect-head .ins-select')).backgroundColor,
-      paneDisplay:getComputedStyle(v.querySelector('.script-pane[data-pane="overview"]')).display,
+      paneDisplay:getComputedStyle(v.querySelector('.wz-adv-body')).display,
       editorInk:getComputedStyle(document.querySelector('.code-editor .code-editor-hl')||v).color};})()`);
   await setTheme('light');
   const light = await readShell();

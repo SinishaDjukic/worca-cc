@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   renderParamsForm, collectParams, renderPortEditor, collectPorts, applyPortEdit,
-  renderParamDefsEditor, collectParamDefs, PARAMS_CAPTION,
+  PARAMS_CAPTION,
   PARAM_EDITOR_LANGUAGE, paramEditorLanguage, paramEditorHook,
 } from '../ui/public/script-forms.mjs';
 
@@ -120,18 +120,6 @@ test('collectParams: types, blanks, and the two error sources', () => {
     'a blanks-only code/command value is NO value (the runner trims it) — the composer`s coerceParam rule');
 });
 
-test('collectParamDefs returns each default in its DECLARED type, so the sidecar validator takes it', async () => {
-  const { validateScriptMetaV2 } = await import('../src/shared/graph/script-meta.mjs');
-  const params = [{ id: 'passAt', type: 'number', default: 0, description: 'where it passes' },
-    { id: 'stat', type: 'boolean', default: false }];
-  const back = collectParamDefs(mount(renderParamDefsEditor(params, { doc })));
-  assert.deepEqual(back, params, 'the description rides hidden and the defaults keep their type');
-  const base = { metaVersion: 2, key: 'k', displayName: 'K', runtime: 'node', file: 'k.mjs',
-    inputs: [], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'k-cycle{cycle}.md' }] };
-  assert.deepEqual(validateScriptMetaV2({ ...base, params: back }).errors, [],
-    'string defaults would be refused: `default must be a finite number (got "0")`');
-});
-
 test('renderPortEditor + collectPorts round-trip the storage rules', () => {
   const raw = {
     inputs: [{ id: 'in', type: 'md', required: false }, { id: 'again', type: 'md', required: true, loop: true }],
@@ -179,81 +167,6 @@ test('applyPortEdit is pure and mints the composer`s ids and filenames', () => {
   assert.deepEqual(applyPortEdit(twice, { remove: 'outputs:0' }).outputs.map((p) => p.id), ['out2']);
   assert.deepEqual(applyPortEdit(twice, { remove: 'outputs:9' }).outputs.map((p) => p.id), ['out', 'out2'], 'an unknown index is a no-op');
   assert.deepEqual(applyPortEdit(undefined, { add: 'inputs' }), { inputs: [{ id: 'in', type: 'md', required: false }], outputs: [] });
-});
-
-test('renderParamDefsEditor + collectParamDefs round-trip a sidecar`s params', () => {
-  const ed = renderParamDefsEditor(META.params, { doc });
-  const host = mount(ed);
-  assert.deepEqual([...ed.querySelectorAll('.pdef-row')].map((r) => r.dataset.index), ['0', '1', '2', '3', '4']);
-  assert.equal(ed.querySelector('[data-field="pdef:0:id"]').value, 'passAt');
-  assert.equal(ed.querySelector('[data-field="pdef:0:type"]').value, 'number');
-  assert.equal(ed.querySelector('[data-field="pdef:0:label"]').value, 'Pass at');
-  assert.equal(ed.querySelector('[data-field="pdef:0:default"]').value, '0');
-  assert.equal(ed.querySelector('[data-field="pdef:2:options"]').value, 'fast, full');
-  assert.equal(ed.querySelector('[data-field="pdef:0:options"]'), null, 'only an enum row carries options');
-  assert.equal(ed.querySelector('[data-field="pdef:4:required"]').checked, true);
-  assert.equal(ed.querySelector('[data-field="pdef:4:language"]').value, 'js');
-  assert.deepEqual([...ed.querySelectorAll('[data-pdef-remove]')].map((b) => b.dataset.pdefRemove), ['0', '1', '2', '3', '4']);
-  assert.ok(ed.querySelector('[data-pdef-add]'));
-  assert.deepEqual(collectParamDefs(host), [
-    { id: 'passAt', type: 'number', label: 'Pass at', default: 0 },
-    { id: 'stat', type: 'boolean', default: false },
-    { id: 'mode', type: 'enum', default: 'fast', options: ['fast', 'full'] },
-    { id: 'note', type: 'string' },
-    { id: 'source', type: 'code', required: true, language: 'js' },
-  ]);
-});
-
-test('collectParamDefs drops blank rows and defaults a new code param`s language', () => {
-  const ed = renderParamDefsEditor([{ id: '', type: 'code' }, { id: 'cmd', type: 'command' }], { doc });
-  const host = mount(ed);
-  assert.deepEqual(collectParamDefs(host), [{ id: 'cmd', type: 'command' }]);
-  ed.querySelector('[data-field="pdef:0:id"]').value = 'body';
-  assert.deepEqual(collectParamDefs(host), [{ id: 'body', type: 'code', language: 'js' }, { id: 'cmd', type: 'command' }]);
-});
-
-// `data-pdef-remove` is the RENDERED row index, so a host that edits the list by
-// that index needs one entry per rendered row — otherwise a blank row above
-// shifts every later index and a Remove deletes the NEXT param instead.
-test('collectParamDefs keepBlank keeps one entry per rendered row', () => {
-  const ed = renderParamDefsEditor([{ id: '', type: 'string' }, { id: 'a', type: 'string' }, { id: 'b', type: 'number' }], { doc });
-  const host = mount(ed);
-  assert.deepEqual(collectParamDefs(host).map((p) => p.id), ['a', 'b'], 'the SAVE reader still drops a blank row');
-  const kept = collectParamDefs(host, { keepBlank: true });
-  assert.deepEqual(kept.map((p) => p.id), ['', 'a', 'b']);
-  assert.deepEqual([...ed.querySelectorAll('[data-pdef-remove]')].map((b) => Number(b.dataset.pdefRemove)),
-    kept.map((_, i) => i), 'one Remove index per kept entry');
-});
-
-test('a no-op round trip keeps a multi-line default and an option that holds a comma', () => {
-  // An <input> strips CR/LF from its value, and the options box joins on ', ':
-  // both projections are lossy, so a Save from an untouched form used to rewrite
-  // the sidecar — a `code` param's program collapsed onto one line (the shipped
-  // `js` built-in's default becomes a syntax error the moment it is duplicated).
-  const params = [
-    { id: 'source', type: 'code', language: 'js', default: 'const a = 1;\n// two\nreturn a;\n' },
-    { id: 'mode', type: 'enum', options: ['fast, slow', 'full'], default: 'full' },
-  ];
-  const ed = renderParamDefsEditor(params, { doc });
-  const host = mount(ed);
-  assert.equal(ed.querySelector('[data-field="pdef:0:default"]').value, 'const a = 1;// tworeturn a;',
-    'the visible box is the flattened projection');
-  assert.deepEqual(collectParamDefs(host), params);
-  // An actual edit still wins over the stored text.
-  ed.querySelector('[data-field="pdef:0:default"]').value = 'const a = 2;';
-  ed.querySelector('[data-field="pdef:1:options"]').value = 'fast, full';
-  assert.deepEqual(collectParamDefs(host), [
-    { id: 'source', type: 'code', default: 'const a = 2;', language: 'js' },
-    { id: 'mode', type: 'enum', default: 'full', options: ['fast', 'full'] },
-  ]);
-});
-
-test('renderParamDefsEditor readOnly: fields disabled, no add/remove buttons at all', () => {
-  const ed = renderParamDefsEditor(META.params, { doc, readOnly: true });
-  assert.equal(ed.querySelector('[data-pdef-add]'), null);
-  assert.equal(ed.querySelector('[data-pdef-remove]'), null);
-  assert.equal(ed.querySelector('[data-field="pdef:0:id"]').disabled, true);
-  assert.equal(ed.querySelector('[data-field="pdef:4:required"]').disabled, true);
 });
 
 test('paramEditorHook mounts a python code param with the python grammar (workbench §7)', async () => {

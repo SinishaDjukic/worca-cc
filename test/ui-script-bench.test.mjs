@@ -55,12 +55,15 @@ test('caseListFor: shipped first, the overlay after, and the writable half', () 
   assert.equal(plug.writableIndex, 'userCases');
 });
 
-test('the three columns: cases with dots and locks, the folder dropdown, the params form, the port rows', () => {
+test('the four panels: the bar (folder, Test, Stop), the setup (params, port rows), the cases strip (dots, locks), the result', () => {
   const root = renderBench(PLUGIN_DATA, { doc, projects: PROJECTS, highlight: async (t) => t,
     caseState: new Map([['runTests', new Map([['c_failing', 'fail']])]]) });
   assert.equal(root.dataset.scriptKey, 'runTests');
+  assert.deepEqual([...root.children].map((c) => c.className.split(' ')[0]), ['bench-bar', 'bench-col', 'bench-col', 'bench-col']);
   assert.deepEqual([...root.querySelectorAll('.bench-col')].map((c) => c.querySelector('.bench-col-head').textContent),
-    ['Cases', 'Setup', 'Result']);
+    ['Test inputs', 'Cases', 'Result']);
+  assert.deepEqual([...root.querySelectorAll('.bench-bar button')].map((b) => b.textContent), ['Test', 'Stop']);
+  assert.ok(root.querySelector('.bench-bar [data-field="bench:cwd"]'), 'the folder picker sits in the bar');
   const rows = [...root.querySelectorAll('.bench-case-row')];
   assert.deepEqual(rows.map((r) => r.dataset.caseId), ['c_failing', 'c_mine']);
   assert.deepEqual(rows.map((r) => r.querySelector('.bench-case-name').textContent), ['failing suite', 'my input']);
@@ -85,7 +88,7 @@ test('the three columns: cases with dots and locks, the folder dropdown, the par
     ['project:worca-0001', 'worca — /home/u/worca', false],
     ['project:gone-0002', 'gone — /home/u/gone', true],
   ]);
-  assert.equal(root.querySelector('[data-field="param:command"]').value, 'npm test');
+  assert.equal(root.querySelector('.bench-params [data-field="param:command"]').value, 'npm test');
   const ports = [...root.querySelectorAll('.bench-port')];
   assert.deepEqual(ports.map((p) => [p.dataset.port, p.dataset.type]), [['plan', 'md'], ['conf', 'json'], ['done', 'void']]);
   assert.equal(ports[0].querySelector('[data-field="in:plan:bound"]').checked, false);
@@ -93,10 +96,9 @@ test('the three columns: cases with dots and locks, the folder dropdown, the par
   assert.deepEqual([...ports[0].querySelectorAll('[data-in-src]')].map((b) => b.textContent), ['Text', 'File…', 'Run…']);
   assert.equal(ports[2].querySelector('textarea'), null, 'a void port has no text box');
   assert.equal(ports[2].querySelector('.bench-void-fired').textContent, 'fired');
-  assert.deepEqual([...root.querySelectorAll('.bench-actions button')].map((b) => b.textContent), ['Run', 'Stop']);
   assert.equal(root.querySelector('.bench-stop').disabled, true);
   assert.equal(root.querySelector('.bench-status-text').textContent, 'idle');
-  assert.equal(root.querySelectorAll('p').length, 0, 'the Test tab carries no prose either');
+  assert.equal(root.querySelectorAll('p').length, 0, 'the bench carries no prose either');
 });
 
 test('the Expect row: `—` shows nothing else; a verdict brings the output chips and the summary field', () => {
@@ -1013,7 +1015,7 @@ test('an output port named verdict or envelope gets its own pane, not the fixed 
 });
 
 test('the module`s DEFAULT highlighter ESCAPES: nothing reaches innerHTML raw (C11)', async () => {
-  // renderScriptDetail's default was fixed in cycle 2; this module still defaulted
+  // the old detail page's default was fixed in cycle 2; this module still defaulted
   // to the identity, and that default reaches two innerHTML sinks (the params
   // form's code editor and the json output pane). Not reachable through app.js,
   // which always injects scriptHighlight — but the default is the guard.
@@ -1050,4 +1052,70 @@ test('the case dots are really painted: the .script-dot rules are not scoped to 
     assert.ok(rule, `no rule for ${sel}`);
     assert.equal(rule.includes('.script-card'), false, `${sel} must reach the bench's case rows, not only the list card`);
   }
+});
+
+test('setMeta: a changed declaration re-renders params and input rows IN PLACE, keeping what was typed by id; the next request uses it', async () => {
+  const b = mountBench();
+  b.root.querySelector('[data-field="in:plan:bound"]').checked = true;
+  b.root.querySelector('[data-field="in:plan:text"]').value = '# Plan\n';
+  b.root.querySelector('[data-field="param:command"]').value = 'npm run lint';
+  b.root.querySelector('.bench-result-body').dataset.marker = 'kept';
+  b.ctl.setMeta({ ...META,
+    inputs: [{ id: 'plan', type: 'md', required: false }, { id: 'diff', type: 'md', required: false }],
+    outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'l.md' }],
+    params: [{ id: 'command', type: 'command', required: true }, { id: 'limit', type: 'number', default: 5 }] });
+  assert.deepEqual([...b.root.querySelectorAll('.bench-port')].map((p) => p.dataset.port), ['plan', 'diff']);
+  assert.equal(b.root.querySelector('[data-field="in:plan:bound"]').checked, true);
+  assert.equal(b.root.querySelector('[data-field="in:plan:text"]').value, '# Plan\n');
+  assert.equal(b.root.querySelector('[data-field="param:command"]').value, 'npm run lint', 'a typed param value survives');
+  assert.equal(b.root.querySelector('[data-field="param:limit"]').value, '5', 'a new param shows its default');
+  assert.equal(b.root.querySelector('.bench-result-body').dataset.marker, 'kept', 'never a remount');
+  assert.equal(b.data.meta.inputs.length, 2, 'the tree`s data follows the declaration');
+  b.root.querySelector('.bench-run').click();
+  await flush();
+  assert.deepEqual(Object.keys(b.calls[0][1].inputs), ['plan']);
+  assert.deepEqual(b.calls[0][1].params, { command: 'npm run lint', limit: 5 });
+  b.cleanup();
+});
+
+test('setMeta: the Expect chips follow the new outputs, and a selected case is not marked edited by the re-render', async () => {
+  const b = mountBench();
+  b.root.querySelector('.bench-case-row[data-case-id="c_failing"] .bench-case').click();
+  b.ctl.setMeta({ ...META, outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'l.md' }, { id: 'extra', type: 'void', when: 'always' }] });
+  assert.deepEqual([...b.root.querySelectorAll('[data-field^="expect:fired:"]')].map((c) => c.dataset.field), ['expect:fired:log', 'expect:fired:extra']);
+  assert.equal(b.root.querySelector('.bench-case-row[data-case-id="c_failing"]').dataset.edited, undefined);
+  b.cleanup();
+});
+
+test('unsaved: the case actions are off with a title, Run all is inert, run() and stop() are exposed and Test runs the draft', async () => {
+  const root = render(DATA, { unsaved: true });
+  doc.body.appendChild(root);
+  const calls = [];
+  const api = {
+    bench: async (req) => { calls.push(req); return { ok: true, status: 200, data: { benchId: 'bench_9' } }; },
+    benchStop: async (id) => { calls.push(['stop', id]); return { ok: true, status: 200, data: { ok: true } }; },
+    writeCases: async () => ({ ok: true, status: 200, data: { cases: [] } }),
+    benchOutput: () => '',
+  };
+  const ctl = createBenchController({ root, data: { ...DATA }, api, doc, getDraft: () => ({ meta: META, source: 'x' }), highlight: async (t) => t });
+  for (const sel of ['.bench-save-case', '.bench-add-case', '.bench-run-all']) {
+    assert.equal(root.querySelector(sel).disabled, true, sel);
+    assert.equal(root.querySelector(sel).title, 'Save the script first', sel);
+  }
+  assert.equal(root.querySelector('[data-field="bench:caseName"]').disabled, true);
+  root.querySelector('.bench-run-all').click();
+  await flush();
+  assert.equal(calls.length, 0, 'a disabled Run all fires nothing');
+  assert.equal(typeof ctl.run, 'function');
+  assert.equal(typeof ctl.stop, 'function');
+  ctl.run();
+  await flush();
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].draft, { meta: META, source: 'x' });
+  assert.equal(root.querySelector('.bench-run').disabled, true);
+  ctl.stop();
+  await flush();
+  assert.deepEqual(calls[1], ['stop', 'bench_9']);
+  ctl.destroy();
+  root.remove();
 });

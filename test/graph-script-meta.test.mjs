@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   normalizeScriptMeta, validateScriptMetaV2, readConfigPorts, paramValueError, mockErrors, resolvePlatformValue,
   SCRIPT_RUNTIMES, DEFAULT_TIMEOUT_MS, DEFAULT_EXIT_CODES, pythonMissingSentence, CODE_LANGUAGES,
+  SCRIPT_COLORS, SCRIPT_KEY_RE, RESERVED_SCRIPT_KEYS,
 } from '../src/shared/graph/script-meta.mjs';
 
 const shell = (over = {}) => ({
@@ -221,4 +222,20 @@ test('code params: js or python, and the one missing-python sentence (spec §7)'
   assert.deepEqual(CODE_LANGUAGES, ['js', 'python']);
   assert.equal(pythonMissingSentence('runTests'),
     'script "runTests" needs python 3.8 or newer — none found on this machine (set WORCA_PYTHON)');
+});
+
+test('SCRIPT_COLORS: the six agent colours first, then the six script-only ones; the sidecar keeps every one', () => {
+  assert.deepEqual(SCRIPT_COLORS, ['green', 'peach', 'red', 'blue', 'violet', 'amber', 'teal', 'pink', 'indigo', 'lime', 'cocoa', 'slate']);
+  for (const color of SCRIPT_COLORS) {
+    const { meta, errors } = normalizeScriptMeta({ key: 'k', metaVersion: 2, runtime: 'node', file: 'k.mjs', color, inputs: [], outputs: [] }, { warn: () => {} });
+    assert.deepEqual(errors, []);
+    assert.equal(meta.color, color);
+  }
+  assert.equal(normalizeScriptMeta({ key: 'k', metaVersion: 2, runtime: 'node', file: 'k.mjs', color: 'mauve', inputs: [], outputs: [] }, { warn: () => {} }).meta.color, 'amber');
+});
+
+test('the key regex and the reserved keys are the shared module`s (the page needs them without src/core)', () => {
+  assert.equal(SCRIPT_KEY_RE.source, '^[A-Za-z][A-Za-z0-9_-]{0,63}$');
+  assert.deepEqual(RESERVED_SCRIPT_KEYS, ['new', 'bench', 'runtimes']);
+  assert.ok(Object.isFrozen(RESERVED_SCRIPT_KEYS));
 });

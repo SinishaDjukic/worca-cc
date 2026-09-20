@@ -187,7 +187,7 @@ effect, mock role, workspace variants).
 
 ### Scripts (page: E)
 
-Everything on the page: the list, the three tabs of a script and the test bench.
+Everything on the page: the list, the runtime step, the workspace and the bench under its editor.
 
 ### Projects and Workspaces
 

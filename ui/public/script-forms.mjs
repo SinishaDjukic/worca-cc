@@ -1,8 +1,7 @@
 // ui/public/script-forms.mjs
-// The three forms a script's ports and params are edited with (scripts-workbench
-// design §5.3, C3). ONE implementation, used by three surfaces: the composer's
-// inspector (a placed card), the Scripts page's Overview tab (the sidecar) and
-// the Test tab's setup column (a bench request). Every function takes the target
+// The two forms a script's ports and params are edited with (scripts-workbench
+// design §5.3, C3): the params form and the port editor. ONE implementation, used
+// by the composer's inspector (a placed card) and the bench's setup (a request). Every function takes the target
 // `document` via opts and returns DETACHED DOM — no fetch, no listeners outside
 // the returned tree (the memory-view.mjs / plugins-view.mjs posture); the host
 // binds ONE delegated listener and routes on data-field / data-port-* / data-pdef-*.
@@ -10,9 +9,7 @@
 // The field NAMES are the contract: `param:<id>`, `port:<dir>:<i>:<field>`,
 // `data-port-add`, `data-port-remove` are exactly P1b's, so the composer's
 // routing and its tests hold after the move.
-import {
-  effectiveScriptParams, paramValueError, readConfigPorts, PARAM_TYPES,
-} from '../../src/shared/graph/script-meta.mjs';
+import { effectiveScriptParams, paramValueError, readConfigPorts } from '../../src/shared/graph/script-meta.mjs';
 import { createCodeEditor } from './code-editor.mjs';
 
 // ---- DOM primitives (moved out of graph/inspector.mjs; it imports them) -----
@@ -282,128 +279,4 @@ export function applyPortEdit(rawPorts, { add = '', remove = '' } = {}) {
     if (ports[dir] && Number.isInteger(Number(idx)) && ports[dir][Number(idx)]) ports[dir].splice(Number(idx), 1);
   }
   return ports;
-}
-
-// ---- param definitions (the Scripts page's Overview tab) --------------------
-
-/** The sidecar's `params` as editable rows (spec §5.2): id · type · label ·
- *  default · required · options. `language` rides along hidden so a `code`
- *  param's language survives a round trip through the form. */
-export function renderParamDefsEditor(params, { doc = globalThis.document, readOnly = false } = {}) {
-  const wrap = h(doc, 'div', 'pdef-editor');
-  const list = Array.isArray(params) ? params : [];
-  const head = h(doc, 'div', 'pdef-head');
-  head.append(h(doc, 'span', '', 'id'), h(doc, 'span', '', 'type'), h(doc, 'span', '', 'label'),
-    h(doc, 'span', '', 'default'), h(doc, 'span', '', 'required'));
-  wrap.appendChild(head);
-  list.forEach((p, i) => {
-    const row = h(doc, 'div', 'pdef-row');
-    row.dataset.index = String(i);
-    const input = (cls, f, value, { type = 'text', placeholder = '' } = {}) => {
-      const n = doc.createElement('input');
-      n.type = type; n.className = cls; n.dataset.field = `pdef:${i}:${f}`;
-      n.value = value == null ? '' : String(value);
-      if (placeholder) n.placeholder = placeholder;
-      n.disabled = readOnly;
-      return n;
-    };
-    const type = doc.createElement('select');
-    type.className = 'ins-select pdef-type'; type.dataset.field = `pdef:${i}:type`; type.disabled = readOnly;
-    for (const t of PARAM_TYPES) {
-      const o = doc.createElement('option');
-      o.value = t; o.textContent = t;
-      if (t === (p.type || 'string')) o.selected = true;
-      type.appendChild(o);
-    }
-    const req = doc.createElement('input');
-    req.type = 'checkbox'; req.className = 'pdef-req'; req.dataset.field = `pdef:${i}:required`;
-    req.checked = p.required === true; req.disabled = readOnly;
-    row.append(input('pdef-id mono', 'id', p.id, { placeholder: 'id' }), type,
-      input('pdef-label', 'label', p.label, { placeholder: 'Label' }),
-      input('pdef-default mono', 'default', p.default, { placeholder: 'default' }), req);
-    if ((p.type || 'string') === 'enum') {
-      row.appendChild(input('pdef-options mono', 'options', (Array.isArray(p.options) ? p.options : []).join(', '), { placeholder: 'one, two' }));
-    }
-    // `language` and `description` have no column, so they ride hidden: without
-    // them a save through this form would silently delete every param description
-    // the sidecar carries (readParams keeps `description`, the editor never shows it).
-    const lang = input('pdef-language', 'language', p.language || '');
-    lang.type = 'hidden';
-    const desc = input('pdef-description', 'description', p.description || '');
-    desc.type = 'hidden';
-    row.append(lang, desc);
-    // The two LOSSY columns ride hidden as well, in the shape they are stored in.
-    // An <input> strips CR and LF from its value (the HTML value sanitization), so
-    // a `code` param's multi-line default would come back as one line from a form
-    // nobody touched — a working program turned into a syntax error by a no-op
-    // Save; and joining options on ', ' cuts an option that holds a comma in two.
-    // collectParamDefs prefers these while the visible box still shows exactly
-    // their projection, so an actual edit still wins.
-    // `type: 'hidden'` up front, not assigned after: an input that is `text` when
-    // its value is set has already had the line breaks sanitized away.
-    row.append(input('pdef-default-raw', 'defaultRaw', p.default == null ? '' : String(p.default), { type: 'hidden' }),
-      input('pdef-options-raw', 'optionsRaw', JSON.stringify(Array.isArray(p.options) ? p.options : []), { type: 'hidden' }));
-    if (!readOnly) {
-      const rm = h(doc, 'button', 'pdef-rm', '×');
-      rm.type = 'button'; rm.dataset.pdefRemove = String(i); rm.title = 'Remove';
-      row.appendChild(rm);
-    }
-    wrap.appendChild(row);
-  });
-  if (!readOnly) {
-    const add = h(doc, 'button', 'pdef-add', '+ param');
-    add.type = 'button'; add.dataset.pdefAdd = '';
-    wrap.appendChild(add);
-  }
-  return wrap;
-}
-
-/** The rows back as sidecar params. A blank id drops the row (that is how a row
- *  is abandoned without a Remove click); `validateScriptMetaV2` on the server is
- *  the authority for everything else. `keepBlank` keeps a blank-id row in place,
- *  so the result is ONE row per rendered row: a caller that indexes rows by their
- *  rendered position (a Remove click carries `data-pdef-remove="<i>"`) needs the
- *  two index spaces to agree, or it edits somebody else's param. */
-export function collectParamDefs(root, { keepBlank = false } = {}) {
-  const out = [];
-  const rows = [...root.querySelectorAll('.pdef-row')].sort((a, b) => Number(a.dataset.index) - Number(b.dataset.index));
-  for (const row of rows) {
-    const val = (f) => { const n = row.querySelector(`[data-field$=":${f}"]`); return n ? String(n.value) : ''; };
-    const id = val('id').trim();
-    if (!id && !keepBlank) continue;
-    const type = val('type') || 'string';
-    const p = { id, type };
-    const label = val('label').trim();
-    if (label) p.label = label;
-    // The default is typed as text but STORED in its declared type: readParams runs
-    // paramValueError on it, so `default: "0"` on a number param and `"false"` on a
-    // boolean are REFUSED and the Overview form could never save such a param. An
-    // unparseable entry is left as the typed string so the validator names it.
-    const shown = val('default');
-    const rawDefault = val('defaultRaw');
-    // The box shows the stored text with its line breaks stripped; while that is
-    // still what it holds, the STORED text is what gets saved.
-    const dflt = rawDefault && rawDefault.replace(/[\r\n]/g, '') === shown ? rawDefault : shown;
-    if (dflt !== '') {
-      if (type === 'number') { const n = Number(dflt); p.default = Number.isFinite(n) ? n : dflt; }
-      else if (type === 'boolean') p.default = dflt === 'true' ? true : (dflt === 'false' ? false : dflt);
-      else p.default = dflt;
-    }
-    const req = row.querySelector('[data-field$=":required"]');
-    if (req && req.checked) p.required = true;
-    if (type === 'enum') {
-      const shownOptions = val('options');
-      let stored = null;
-      try { stored = JSON.parse(val('optionsRaw') || 'null'); } catch { stored = null; }
-      // Same rule as the default: an option holding a comma survives untouched.
-      const options = Array.isArray(stored) && stored.join(', ') === shownOptions
-        ? stored : shownOptions.split(',').map((s) => s.trim()).filter(Boolean);
-      if (options.length) p.options = options;
-    }
-    if (type === 'code') p.language = val('language') || 'js';
-    const description = val('description').trim();
-    if (description) p.description = description;
-    out.push(p);
-  }
-  return out;
 }

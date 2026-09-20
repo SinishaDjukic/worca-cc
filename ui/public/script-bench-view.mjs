@@ -1,8 +1,8 @@
 // ui/public/script-bench-view.mjs
-// The Scripts page's Test tab (scripts-workbench design §5.3): three columns —
-// the saved cases, the setup that builds ONE bench request, and everything the
-// run produced. The bench engine and its `scriptbench-*` frames live in the
-// server (Task 3/5); this module owns the pixels and the request shape.
+// The bench under the editor (script-wizard plan S12; scripts-workbench design
+// §5.3): the bar, the setup that builds ONE bench request, the cases strip and
+// everything the run produced. The bench engine and its `scriptbench-*` frames
+// live in the server (Task 3/5); this module owns the pixels and the request shape.
 //
 // It never has its own idea of how a script runs: every field here maps to a key
 // of the §4.2 request, and the result panes only show what the runner returned.
@@ -68,7 +68,9 @@ function caseRows(doc, data, caseState) {
   return list;
 }
 
-function caseColumn(doc, data, caseState) {
+/** The cases strip (S12): the rows, the inline name, Save as case / + Case / Run all.
+ *  `unsaved`: the script has no key on disk yet, so nothing can be written for it. */
+function casesStrip(doc, data, caseState, { unsaved = false } = {}) {
   const col = h(doc, 'div', 'bench-col bench-cases');
   col.appendChild(h(doc, 'div', 'bench-col-head', 'Cases'));
   col.appendChild(caseRows(doc, data, caseState));
@@ -78,15 +80,19 @@ function caseColumn(doc, data, caseState) {
   name.type = 'text'; name.className = 'input bench-case-name'; name.dataset.field = 'bench:caseName';
   name.placeholder = 'Case name'; name.maxLength = MAX_CASE_NAME;
   name.setAttribute('aria-label', 'Case name');
+  name.disabled = unsaved;
   col.appendChild(name);
   // `.bench-case-actions` is the slot Update is added to and removed from, so the
-  // other three buttons never move as the selection changes.
+  // other buttons never move as the selection changes.
   const actions = h(doc, 'div', 'bench-case-actions');
   actions.append(miniBtn(doc, 'bench-save-case', 'Save as case'), miniBtn(doc, 'bench-add-case', '+ Case'));
   col.appendChild(actions);
   const all = miniBtn(doc, 'bench-run-all', 'Run all');
-  all.disabled = caseListFor(data).cases.length === 0;
+  all.disabled = unsaved || caseListFor(data).cases.length === 0;
   col.appendChild(all);
+  if (unsaved) {
+    for (const b of col.querySelectorAll('.bench-save-case,.bench-add-case,.bench-run-all')) { b.disabled = true; b.title = 'Save the script first'; }
+  }
   return col;
 }
 
@@ -192,12 +198,10 @@ function expectRow(doc, declared) {
   return row;
 }
 
-function setupColumn(doc, data, projects, { highlight, editors }) {
-  const meta = metaOf(data);
-  const col = h(doc, 'div', 'bench-col bench-setup');
-  col.appendChild(h(doc, 'div', 'bench-col-head', 'Setup'));
-  // W1: a scratch folder, or a REGISTERED project's real checkout (never a path
-  // the user types — the projects API owns that list).
+/** The bar under the editor: the folder, then Test / Stop (S12). W1: a scratch folder,
+ *  or a REGISTERED project's real checkout — never a path the user types. */
+function benchBar(doc, projects) {
+  const bar = h(doc, 'div', 'bench-bar');
   const wrap = h(doc, 'div', 'ins-f bench-f');
   wrap.appendChild(h(doc, 'label', 'ins-label', 'Folder'));
   const sel = h(doc, 'select', 'ins-select');
@@ -212,20 +216,31 @@ function setupColumn(doc, data, projects, { highlight, editors }) {
     sel.appendChild(o);
   }
   wrap.appendChild(sel);
-  col.appendChild(wrap);
+  bar.append(wrap, h(doc, 'span', 'sp'));
+  const stop = miniBtn(doc, 'bench-stop', 'Stop');
+  stop.disabled = true;
+  bar.append(miniBtn(doc, 'bench-run', 'Test', 'btn-primary'), stop);
+  return bar;
+}
+
+/** The setup: the params form (in `.bench-params`, so setMeta can swap it), the
+ *  per-run port editor of a config script, the input rows, the Expect row. */
+function setupPanel(doc, data, { highlight, editors, getMeta }) {
+  const meta = metaOf(data);
+  const col = h(doc, 'div', 'bench-col bench-setup');
+  col.appendChild(h(doc, 'div', 'bench-col-head', 'Test inputs'));
   // The SAME params form the composer's inspector shows (§5.3, C3), including the
   // shared code editor for a command/code param.
-  col.appendChild(renderParamsForm(meta, {}, { doc, editorFor: paramEditorHook({ doc, highlight, editors }) }));
+  const pbox = h(doc, 'div', 'bench-params');
+  pbox.appendChild(renderParamsForm(meta, {}, { doc, editorFor: paramEditorHook({ doc, highlight, editors }) }));
+  col.appendChild(pbox);
   const configPorts = meta.ports === 'config';
   const raw = configPorts ? (meta.defaultPorts || { inputs: [], outputs: [] }) : { inputs: meta.inputs || [], outputs: meta.outputs || [] };
   if (configPorts) col.appendChild(renderPortEditor(raw, { doc, hasVerdict: Boolean(meta.verdict) }));
   col.appendChild(inputRows(doc, raw.inputs || []));
-  col.appendChild(expectRow(doc, () => (configPorts ? (collectPorts(col).outputs || []) : (raw.outputs || []))));
-  const actions = h(doc, 'div', 'bench-actions');
-  const stop = miniBtn(doc, 'bench-stop', 'Stop');
-  stop.disabled = true;
-  actions.append(miniBtn(doc, 'bench-run', 'Run', 'btn-primary'), stop);
-  col.append(actions, h(doc, 'div', 'form-msg bench-msg'));
+  // `declared()` reads the LIVE declaration: the page's setMeta swaps data.meta under this tree (S12).
+  col.appendChild(expectRow(doc, () => (configPorts ? (collectPorts(col).outputs || []) : (((getMeta && getMeta()) || meta).outputs || []))));
+  col.appendChild(h(doc, 'div', 'form-msg bench-msg'));
   return col;
 }
 
@@ -251,16 +266,19 @@ function resultColumn(doc) {
   return col;
 }
 
-/** The whole Test tab. Detached; the controller mounts and drives it. */
+/** The whole bench, stacked under the editor (S12). Detached; the controller mounts and drives it.
+ *  `unsaved`: a NEW script's draft — Test runs it, the case actions wait for a Save. */
 export function renderBench(data, { doc = globalThis.document, projects = [], caseState = new Map(),
-  highlight = async (t) => escapeHtml(t) } = {}) {   // the default ESCAPES (C11): it feeds two innerHTML sinks
+  highlight = async (t) => escapeHtml(t), unsaved = false } = {}) {   // the default ESCAPES (C11): it feeds two innerHTML sinks
   const root = h(doc, 'div', 'bench');
   root.dataset.scriptKey = metaOf(data).key || '';
+  if (unsaved) root.dataset.unsaved = 'true';
   // The param editors this tree mounted, for the controller to destroy (the
   // pane._search idiom; a live debounce on a detached node is a leak).
   const editors = [];
   root._editors = editors;
-  root.append(caseColumn(doc, data, caseState), setupColumn(doc, data, projects, { highlight, editors }), resultColumn(doc));
+  root.append(benchBar(doc, projects), setupPanel(doc, data, { highlight, editors, getMeta: () => metaOf(data) }),
+    casesStrip(doc, data, caseState, { unsaved }), resultColumn(doc));
   return root;
 }
 
@@ -495,7 +513,10 @@ export function createBenchController({
   confirm = async () => true, renderMarkdown = async () => {}, highlight = async (t) => escapeHtml(t),
   doc = globalThis.document, modal = null,
 } = {}) {
-  const meta = metaOf(data);
+  // `let`: setMeta swaps the declaration under a mounted tree (S12). Every reader below
+  // takes the CURRENT one; nothing captures it.
+  let meta = metaOf(data);
+  const unsaved = root.dataset.unsaved === 'true';
   // `selected` is the case the Setup column currently holds (null = an ad-hoc
   // setup); `lastResult` is the ONE result `Use result` may copy from — a Run all
   // clears it, because an aggregate is not one result.
@@ -521,7 +542,7 @@ export function createBenchController({
   function setRunning(on) {
     st.running = on;
     q('.bench-run').disabled = on;
-    q('.bench-run-all').disabled = on || st.index.cases.length === 0;
+    q('.bench-run-all').disabled = on || unsaved || st.index.cases.length === 0;
     q('.bench-stop').disabled = !on;
   }
 
@@ -647,6 +668,7 @@ export function createBenchController({
   }
 
   function runAll() {
+    if (unsaved) return;
     st.caseId = null;
     // The draft rides along exactly as it does on Run (W10): without it every case
     // would be checked against the SAVED program while the editor shows another
@@ -659,18 +681,23 @@ export function createBenchController({
    *  sidecar. Repaint the editor (only when a row was added or removed) and the
    *  Inputs rows from it, keeping whatever was typed for a port that kept its id,
    *  and re-read the Expect chips off the new outputs. */
+  /** Repaint the input rows (and, for a `ports: "config"` script, its per-run port
+   *  editor) from a new port set, keeping whatever was typed for a port that kept its
+   *  id, and re-read the Expect chips off the new outputs. Without an editor (a
+   *  sidecar-ported script) the set comes from the live declaration. */
   function syncPorts({ edit = null, ports = null } = {}) {
     const setup = q('.bench-setup');
-    const editor = setup && setup.querySelector('.ins-port-editor');
-    if (!editor) return;
+    if (!setup) return;
+    const editor = setup.querySelector('.ins-port-editor');
     const held = [...root.querySelectorAll('.bench-port')].map((r) => {
       const bound = r.querySelector(`[data-field="in:${r.dataset.port}:bound"]`);
       const ta = r.querySelector(`[data-field="in:${r.dataset.port}:text"]`);
       return { id: r.dataset.port, bound: Boolean(bound && bound.checked), text: ta ? ta.value : '' };
     });
-    const next = ports || (edit ? applyPortEdit(collectPorts(setup), edit) : collectPorts(setup));
+    const next = ports
+      || (editor ? (edit ? applyPortEdit(collectPorts(setup), edit) : collectPorts(setup)) : { inputs: meta.inputs || [], outputs: meta.outputs || [] });
     const reshaped = Boolean(edit || ports);
-    if (reshaped) editor.replaceWith(renderPortEditor(next, { doc, hasVerdict: Boolean(meta.verdict) }));
+    if (reshaped && editor) editor.replaceWith(renderPortEditor(next, { doc, hasVerdict: Boolean(meta.verdict) }));
     q('.bench-inputs').replaceWith(inputRows(doc, next.inputs || []));
     // A row added or removed keeps every other port's ID, so match by id; a plain
     // re-read after an id was EDITED matches by position, or the text typed for the
@@ -684,6 +711,39 @@ export function createBenchController({
       if (ta) ta.value = was.text;
     });
     fillExpect(collectCase(root, data, { id: 'x', name: 'x' }).expect);
+  }
+
+  /**
+   * The page's declaration changed under this tree (a keystroke in the editor, a
+   * chip click): re-render the params form and the input rows from it, keeping
+   * what was typed by id, and re-read the Expect chips. NEVER a remount — the
+   * result pane, the selected case and a run in flight all stay (S12).
+   */
+  function setMeta(next) {
+    if (!next || typeof next !== 'object' || st.dead) return;
+    meta = next;
+    data.meta = next;                       // collectBenchRequest, declaredOutputs and caseRows read data.meta
+    root.dataset.scriptKey = meta.key || '';
+    if (meta.ports === 'config') return;    // per-run ports live in the setup's own editor; the sidecar's params are fixed
+    st.filling = true;                      // the synthetic input events below are not the user's
+    try {
+      const pbox = q('.bench-params');
+      if (pbox) {
+        const held = {};
+        for (const n of pbox.querySelectorAll('[data-field^="param:"]')) held[n.dataset.field.slice('param:'.length)] = n.type === 'checkbox' ? n.checked : n.value;
+        if (Array.isArray(root._editors)) { for (const ed of root._editors) ed.destroy(); root._editors.length = 0; }
+        pbox.replaceChildren(renderParamsForm(meta, {}, { doc, editorFor: paramEditorHook({ doc, highlight, editors: root._editors }) }));
+        for (const p of (Array.isArray(meta.params) ? meta.params : [])) {
+          const n = pbox.querySelector(`[data-field="param:${p.id}"]`);
+          if (!n || held[p.id] === undefined) continue;
+          if (n.type === 'checkbox') n.checked = held[p.id] === true;
+          else { n.value = String(held[p.id]); n.dispatchEvent(new (doc.defaultView || globalThis).Event('input', { bubbles: true })); }
+        }
+      }
+      syncPorts({ ports: { inputs: meta.inputs || [], outputs: meta.outputs || [] } });
+    } finally {
+      st.filling = false;
+    }
   }
 
   function fillFromCase(kase) {
@@ -835,6 +895,7 @@ export function createBenchController({
   const typedName = () => String((q('[data-field="bench:caseName"]') || {}).value || '').trim();
 
   async function saveCase() {
+    if (unsaved) return;
     const name = typedName();
     if (!name) { say('Name the case first.', 'err'); return; }
     if (writableNow().length >= MAX_CASES) { say(`${MAX_CASES} cases is the limit.`, 'err'); return; }
@@ -848,6 +909,7 @@ export function createBenchController({
   /** Update replaces the selected case, so the cap never blocks it. Its dot is
    *  reset: the stored case is no longer the one that produced that result. */
   async function updateCase() {
+    if (unsaved) return;
     const id = st.selected;
     const kase = id ? st.index.cases.find((c) => c.id === id) : null;
     if (!kase || !kase.writable) return;
@@ -1074,6 +1136,9 @@ export function createBenchController({
       if (st.pending) { if (st.early.length < 5000) st.early.push(msg); return; }
       handle(msg);
     },
+    setMeta,
+    run,
+    stop: stopBench,
     destroy() {
       // A tab hop or a view change tears this controller down, and nothing else
       // shows a bench: an unstopped run would hold its per-key slot with no Stop

@@ -23,23 +23,40 @@ agents.
 
 `Scripts` in the rail (interface mode **Expert**). The list shows every registered
 script with its origin, runtime, ports and saved cases; a filter matches key,
-name, runtime and origin.
-**New script** opens an empty one; **Duplicate** copies any script into your own
-layer; **Delete** refuses while a saved workflow still places it.
+name, runtime and origin. **Duplicate** copies any script into your own layer;
+**Delete** refuses while a saved workflow still places it.
 
-A script's page has three tabs:
+**New script** is two steps. Step 1 picks the runtime — Node.js, Python (when the
+host has an interpreter, else the card says why) or Shell. Step 2 is the
+workspace, the one page a script has:
 
-- **Overview** — display name, key, description, runtime, domain, colour, icon,
-  order, timeout, shell exit codes, the params it exposes to each placed card,
-  and its ports (or *Ports per card* for a script whose ports are declared per
-  placed card).
-- **Source** — the program, in an editor with syntax highlighting. A `shell`
+- **Identity** — the name (the key is derived from it, `Run tests` → `runTests`,
+  and stays editable until the first save), a one-line description, one of
+  twelve colours and one of twenty icons. The tile at the top is the card as the
+  palette and the canvas show it.
+- **Interface** — read from the code as you type. Every `inputs.<name>`,
+  `outputs.<name>` and `params.<name>` the program mentions (`api.inputs.…` in
+  Python, `$WORCA_IN_<NAME>` / `$WORCA_OUT_<NAME>` / `$WORCA_PARAM_<NAME>` in a
+  shell script) becomes a row. Click a type chip to change it (`md` · `json` ·
+  `void`), an input's mode (`optional` · `required` · `loop`), a param's type;
+  a param's default is read from `?? 40`, `or 5` or `${VAR:-x}` and can be
+  typed over. A script that returns a `verdict` (or writes `$WORCA_VERDICT`)
+  can route each output `on pass` / `on fail`; a shell script routes on its
+  exit code with one switch (exit 0 → `pass`, exit 1 → `fail`). A port the
+  sidecar declares but the code no longer reads stays, marked `not in code`,
+  until you remove it. To declare a trigger port, read it: `inputs.done`.
+- **Advanced** — timeout, domain, palette order, the verdict file name, and a
+  shell script's clean / blocking exit codes. All defaulted.
+- **The editor** — with **Load example** (a working gate per runtime). A `shell`
   script is either a **Command** or a **File**; a file may carry a second
   `win32` variant for `cmd.exe`.
-- **Test** — the bench.
+- **Test** — the bench, right under the editor, runs the unsaved draft as soon
+  as the script has a name.
 
-Built-in and plugin scripts render read-only with their path; duplicate one to
-change it.
+A saved script opens on the same workspace. Built-in and plugin scripts render it
+read-only with their path; duplicate one to change it. Scripts whose ports are
+declared per placed card (the built-in `shell`, `js` and `py` cards and their
+duplicates) show those default ports inert, marked `ports per card`.
 
 ## The runtimes
 
@@ -73,30 +90,30 @@ share one filename, which is how the built-in `shell` feeds both `log` and `fail
 
 ## The bench
 
-The **Test** tab runs one script by itself, through the same runner a pipeline
-run uses, so "passes in the bench" and "works in a run" cannot drift.
+The bench sits under the editor and runs one script by itself, through the same runner a pipeline run uses, so "passes in the bench" and "works in a run" cannot drift.
 
-- **Folder** — a scratch folder, or a registered project's real checkout.
+- **Folder** — in the bar under the editor: a scratch folder, or a registered project's real checkout. **Test** runs; **Stop** ends the program.
 - **Params** — the same form the composer's inspector shows for a placed card.
 - **Ports** — only for a *Ports per card* script: the set this run declares, edited
   the way a placed card's is. A saved case keeps its own set.
 - **Inputs** — tick a port and give it text, a local file, or an artifact of a
   past run. A void port is a "fired" checkbox. An unticked port is unbound and
   absent from the envelope, exactly as in a run.
-- **Run** streams the program's output live; the result shows the status, the
+- **Test** streams the program's output live; the result shows the status, the
   exit code, the duration, which ports fired, every output it wrote, the verdict
   and the envelope it was given.
 
 An unsaved edit runs too: the bench writes the editor's source beside the real
 file and removes it afterwards. **Stop** ends the program; so does leaving the
-Test tab, because nothing outside it shows a bench.
+page, because nothing else shows a bench.
 
 ## Saved cases
 
-Name the setup in the Cases column and **Save as case** stores it in
-`<key>.tests.json`. Selecting a case loads it back — params, inputs, folder and
+Name the setup in the Cases strip and **Save as case** stores it in
+`<key>.tests.json`. A script that is not saved yet can be tested but not given a case.
+Selecting a case loads it back — params, inputs, folder and
 expectation — so **Update case** overwrites it with whatever is on screen (until
-you do, **Run** on an edited case runs what is on screen, and the stored case's
+you do, **Test** on an edited case runs what is on screen, and the stored case's
 dot is left alone);
 **Rename** and **Delete** sit on the row itself. A script keeps up to 32 cases.
 
@@ -128,7 +145,7 @@ file, which stays marked `shipped` and offers no Rename or Delete.
 ## All three operating systems
 
 A `shell` script with a file runs `<key>.sh` on macOS and Linux and `<key>.cmd`
-on Windows; write the second one from the Source tab's `win32` view. worca writes
+on Windows; write the second one from the editor's `win32` tab. worca writes
 the `.cmd` with CRLF line endings and the `.sh` with LF, whatever the editor held. Commands
 and file names may also be declared per platform in the sidecar. Bench folders
 live under `~/.worca-cc/bench/` and are swept after a day.
