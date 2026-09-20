@@ -20,7 +20,8 @@ const { claudeReady, onboardingStatus, ONBOARDING_STEPS } = await import('../src
 const { onboardingPrefs, setOnboardingPrefs, assertOnboardingPrefsInput } = await import('../src/core/settings.mjs');
 const { addProject } = await import('../src/core/projects.mjs');
 const { createThread } = await import('../src/core/ask/store.mjs');
-const { setActiveWorkflow } = await import('../src/core/config.mjs');
+const { setActiveWorkflow, writeTeamPolicyPrefs } = await import('../src/core/config.mjs');
+const { projectKey } = await import('../src/core/store.mjs');
 
 // ---- claudeReady: pure, injectable, never spawns ----
 
@@ -55,10 +56,10 @@ test('claudeReady: Windows — a real claude.exe on PATH is ready', () => {
 
 // ---- onboardingStatus: derived ticks on a fresh store ----
 
-test('a fresh store: eight steps, none done except (maybe) the CLI; flags default false', async () => {
+test('a fresh store: nine steps, none done except (maybe) the CLI; flags default false', async () => {
   const s = await onboardingStatus();
   assert.deepEqual(Object.keys(s.steps).sort(), [...ONBOARDING_STEPS].sort());
-  assert.equal(s.total, 8);
+  assert.equal(s.total, 9);
   for (const id of ONBOARDING_STEPS) if (id !== 'claude') assert.equal(s.steps[id], false, `${id} starts undone`);
   assert.equal(typeof s.steps.claude, 'boolean');
   assert.equal(s.done, s.steps.claude ? 1 : 0);
@@ -95,6 +96,17 @@ test('an Ask thread ticks "ask"; a picked workflow (the persisted picker choice)
   assert.equal(s.steps.ask, true);
   assert.equal(s.steps.workflows, true, 'Auto counts: knowing the picker is the step');
   assert.equal(s.done, 5 + (s.steps.claude ? 1 : 0), 'project, run, realRun, ask, workflows (+ the CLI if on PATH)');
+});
+
+test('a project that resolves a team policy from the cached branch reads ticks "teamPolicy" — no discovery', async () => {
+  let s = await onboardingStatus();
+  assert.equal(s.steps.teamPolicy, false, 'nothing carries a policy yet');
+  // What an enable + fetch leaves behind in project_config.extra.teamPolicy: the branch is present,
+  // its document read. The folder is not even a git repository — the tick never spawns git.
+  writeTeamPolicyPrefs(projectKey(join(home, 'proj')), { slug: 'acme/proj', hasOrigin: true, present: true, docKnown: true, headSha: 'abc1234', checkedAt: new Date().toISOString(), doc: { schema: 1, title: 'Acme', fields: {} } });
+  s = await onboardingStatus();
+  assert.equal(s.steps.teamPolicy, true);
+  assert.equal(s.done, 6 + (s.steps.claude ? 1 : 0));
 });
 
 // ---- stored flags ----

@@ -736,3 +736,47 @@ test('script tools: activity labels, the key stamped at the call, and the result
   h.push(uresult('toolu_3', '[]'));
   assert.equal('script' in h.frames.filter((f) => f.type === 'ask-block').at(-1).block, false, 'other tools are untouched');
 });
+
+test('propose_policy_change / get_team_policy: labels, the RESULT hook with the full input; never for a sub-agent', () => {
+  assert.equal(labelForTool('mcp__worca__propose_policy_change', {}), 'Proposing a policy change');
+  assert.equal(labelForTool('mcp__worca__get_team_policy', {}), 'Reading team policy');
+  const results = [];
+  const h = harness({ onPolicyProposal: (e) => { results.push(e); return Promise.resolve(); } });
+  const input = { kind: 'edit', projectKey: 'p-00000001', set: [{ key: 'cost.pipelineLimitUsd', value: 30 }] };
+  h.push(session(), init(), mstart('msg_1'), atool('msg_1', 'toolu_tp', 'mcp__worca__propose_policy_change', input));
+  assert.deepEqual(results, [], 'minted at RESULT');
+  h.push(uresult('toolu_tp', '{"ok":true,"card":{}}'));
+  assert.deepEqual(results, [{ toolUseId: 'toolu_tp', input, text: '{"ok":true,"card":{}}', isError: false }]);
+  h.push(atool('msg_1', 'toolu_task', 'Agent', { description: 'helper', subagent_type: 'general-purpose', prompt: 'x' }));
+  h.push(atool('msg_c', 'toolu_tp2', 'mcp__worca__propose_policy_change', input, 'toolu_task'));
+  h.push(uresult('toolu_tp2', '{"ok":true}', { ptu: 'toolu_task' }));
+  assert.equal(results.length, 1, 'child-stream calls are never intercepted');
+  const throwing = harness({ onPolicyProposal: () => { throw new Error('hook'); } });
+  throwing.push(atool('msg_1', 'toolu_x', 'mcp__worca__propose_policy_change', input));
+  assert.doesNotThrow(() => throwing.push(uresult('toolu_x', '{"ok":true}')));
+});
+
+// Scheduled runs (docs/scheduled-runs.md "Ask Worca"): the four direct writes repaint the page; a
+// propose_schedule_change RESULT hands its INPUT to the parent for the authoritative re-validation.
+test('schedule tools: a successful direct write pokes onScheduleMutation (errors and reads do not); propose_schedule_change reaches onScheduleProposal', () => {
+  const pokes = [];
+  const proposals = [];
+  const h = harness({ onScheduleMutation: (e) => pokes.push(e), onScheduleProposal: (e) => { proposals.push(e); } });
+  h.push(atool('msg_1', 'toolu_1', 'mcp__worca__pause_schedule', { id: 'sch_0000abcd' }));
+  h.push(uresult('toolu_1', JSON.stringify({ ok: true, schedule: { id: 'sch_0000abcd', status: 'paused' } })));
+  h.push(atool('msg_1', 'toolu_2', 'mcp__worca__resume_schedule', { id: 'sch_0000abcd' }));
+  h.push(uresult('toolu_2', 'error: resume_schedule: this schedule is active', { isError: true }));
+  h.push(atool('msg_1', 'toolu_3', 'mcp__worca__list_schedules', {}));
+  h.push(uresult('toolu_3', JSON.stringify({ schedules: [], runs: [] })));
+  h.push(atool('msg_1', 'toolu_4', 'mcp__worca__mark_schedule_activity_read', { all: true }));
+  h.push(uresult('toolu_4', JSON.stringify({ ok: true, marked: 2, unread: 0 })));
+  const input = { id: 'sch_0000abcd', action: 'delete' };
+  h.push(atool('msg_1', 'toolu_5', 'mcp__worca__propose_schedule_change', input));
+  h.push(uresult('toolu_5', JSON.stringify({ ok: true, card: { type: 'schedule' } })));
+  assert.deepEqual(pokes, [{ tool: 'pause_schedule' }, { tool: 'mark_schedule_activity_read' }]);
+  assert.equal(proposals.length, 1);
+  assert.deepEqual(proposals[0].input, input);
+  assert.equal(proposals[0].isError, false);
+  assert.equal(labelForTool('mcp__worca__preview_schedule', {}), 'Working out the dates');
+  assert.equal(labelForTool('mcp__worca__propose_schedule_change', {}), 'Proposing a schedule change');
+});

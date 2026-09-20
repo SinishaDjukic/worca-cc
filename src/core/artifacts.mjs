@@ -19,6 +19,7 @@ import { branchExists, diffShortstat, hasGh, findPrForBranch } from './git-info.
 import { getDb, tx } from './db.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
 import { readRunLedger } from './metrics/ledger.mjs';
+import { readPolicyState } from './policy/state.mjs';
 import { memoryTotals } from './memory-sync.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
@@ -1888,6 +1889,9 @@ function rowToState(row) {
     stepper: j(row.stepper, null),
     tools: j(row.tools, null),
     guardrailsId: row.guardrails_id ?? null,
+    // v31 provenance: set when a schedule started this run (NULL = started by hand).
+    scheduledFor: row.scheduled_for ?? null,
+    scheduleId: row.schedule_id ?? null,
     // A retired v1 resume point was NULLed by the v2 upgrade: the run stays in
     // History with an honest status, but it can never be resumed again.
     resumable: row.resume_point != null,
@@ -2167,6 +2171,9 @@ export async function readPipelineByKey(key, id) {
     results,
     overview,
     teamMetrics: readRunLedger(row.id),
+    // Team policy (design §10 / board 10): the home the run's policy came from and what the
+    // developer did about it — the History meta line's "policy · 1 override" segment.
+    policy: readPolicyState(row.id),
     memory: await readMemoryLedger(dir),
     ...readPipelineExtras(row.id),
   };

@@ -15,6 +15,16 @@ function h(doc, tag, cls, text) {
 const dayLabel = (iso) => { const d = new Date(iso); return Number.isFinite(d.getTime()) ? `${MO[d.getUTCMonth()]} ${d.getUTCDate()}` : ''; };
 const dot = (doc, tone) => { const d = h(doc, 'span', `dot tm-dot ${tone}`); d.setAttribute('aria-hidden', 'true'); return d; };
 const code = (doc, text) => h(doc, 'code', 'mono', text);
+/** A project, workspace or home NAME inside prose: bold and mono, so it reads as a name, not a word. */
+const ref = (doc, name) => h(doc, 'b', 'ref mono', name);
+/** `text` with every occurrence of `name` rendered as a ref; plain text when the name is absent. */
+function withRef(doc, text, name) {
+  const frag = doc.createDocumentFragment();
+  if (!name || !String(text).includes(name)) { frag.append(String(text)); return frag; }
+  const parts = String(text).split(name);
+  parts.forEach((part, i) => { if (i) frag.append(ref(doc, name)); if (part) frag.append(part); });
+  return frag;
+}
 function btn(doc, cls, text) { const b = h(doc, 'button', `btn-ghost btn-mini ${cls}`, text); b.type = 'button'; return b; }
 
 /** Classify a project status (from /api/team-metrics/scopes → projects[]) into a cell variant. */
@@ -44,19 +54,61 @@ function recordSwitch(doc, s) {
   return label;
 }
 
+const cap = (t) => (t ? t[0].toUpperCase() + t.slice(1) : t);
 /**
- * The Projects-list cell is a fixed two-row block: the "Team metrics" title over a
- * status line on the left, and ONE control column on the right that spans both
- * rows (see .tm-cell in style.css). The control never wraps under the status,
- * and the title makes clear what the control acts on.
+ * One project's team-metrics state in a few words: `short` is what a row chip and the project
+ * page's stat card show ("on · 3 runs", "via acme/gateway", "push failed"), `detail` the sentence
+ * behind it, `tone` the dot colour. The full cell (renderProjectTmCell) says the same at length.
  */
-export function renderProjectTmCell(s, { doc = globalThis.document } = {}) {
+export function projectTmSummary(s) {
+  const { kind } = projectTmState(s);
+  const excluded = s.record === false;
+  const runs = s.runs == null ? '' : `${s.runs} run${s.runs === 1 ? '' : 's'}`;
+  const since = s.enabledAt ? `since ${dayLabel(s.enabledAt)}` : '';
+  switch (kind) {
+    case 'no-origin': return { kind, tone: 'muted', short: 'not available', detail: s.noGit ? 'not a git repository' : 'no origin remote' };
+    case 'off': return { kind, tone: 'grey', short: 'off', detail: 'runs stay on this machine' };
+    case 'delegate-invalid': return { kind, tone: 'red', short: 'delegate invalid', detail: `points at ${s.delegateTo} · runs are not being recorded` };
+    case 'blocked': return { kind, tone: 'amber', short: 'on · not recording', detail: s.delegateCode === 'CONFIG_UNKNOWN' ? 'branch not read yet' : (s.delegateDetail || 'the metrics branch could not be resolved') };
+    case 'rejected': return { kind, tone: 'red', short: 'push failed', detail: s.lastErrorCode === 'PUSH_REJECTED' && s.lastErrorHint ? 'branch protection' : String(s.lastError || '').trim().split('\n')[0] };
+    case 'pending': return { kind, tone: 'amber', short: `on · ${s.pending} pending push`, detail: since };
+    case 'delegated': return { kind, tone: excluded ? 'grey' : 'green', short: excluded ? `via ${s.delegateTo} · yours excluded` : `via ${s.delegateTo}`, ref: s.delegateTo, detail: [runs ? `${runs} recorded` : '', 'recorded in that project\'s branch'].filter(Boolean).join(' · ') };
+    default: return { kind, tone: excluded ? 'grey' : 'green', short: excluded ? 'on · yours excluded' : (runs ? `on · ${runs}` : 'on'), detail: since };
+  }
+}
+
+/**
+ * The Projects-row chip: a dot, the word and the short state — no controls, no hints. Everything
+ * it leaves out is on the project page's Team tab (renderProjectTmCell). Expert-level like the
+ * page tab; the row itself is the only control.
+ */
+export function renderProjectTmChip(s, { doc = globalThis.document } = {}) {
+  const chip = h(doc, 'span', 'pl-team-item pl-tm');
+  chip.dataset.key = s.key;
+  const sum = projectTmSummary(s);
+  chip.dataset.kind = sum.kind;
+  if (sum.tone !== 'muted') chip.append(dot(doc, sum.tone));
+  const state = h(doc, 'span', `pl-team-state${sum.tone === 'muted' ? ' muted' : ''}`);
+  state.append(withRef(doc, sum.short, sum.ref));
+  chip.append(h(doc, 'span', 'pl-team-name', 'Metrics'), ' ', state);
+  chip.title = `Team metrics: ${cap(sum.short)}${sum.detail ? ` · ${sum.detail}` : ''}`;
+  return chip;
+}
+
+/**
+ * The project page's team-metrics block (and, before this branch, the Projects-list cell): a
+ * fixed two-row grid — the "Team metrics" title over a status line on the left, and ONE control
+ * column on the right that spans both rows (see .tm-cell in style.css). The control never wraps
+ * under the status. `heading: false` drops the title when a panel head already names it.
+ */
+export function renderProjectTmCell(s, { doc = globalThis.document, heading = true } = {}) {
   const cell = h(doc, 'div', 'tm-cell');
   cell.dataset.key = s.key;
-  cell.append(h(doc, 'span', 'tm-label', 'Team metrics'));
+  if (heading) cell.append(h(doc, 'span', 'tm-label', 'Team metrics'));
   const line = h(doc, 'div', 'tm-line');
   const status = h(doc, 'span', 'tm-status');
   const { kind } = projectTmState(s);
+  cell.dataset.kind = kind;   // the Getting started guide reads it (no-origin / off / on)
   const actions = h(doc, 'div', 'tm-actions');
   const runs = s.runs == null ? '' : ` · ${s.runs} run${s.runs === 1 ? '' : 's'}`;
   const excluded = s.record === false;   // personal opt-out (the "Include my runs" switch)
@@ -74,7 +126,7 @@ export function renderProjectTmCell(s, { doc = globalThis.document } = {}) {
     case 'delegate-invalid':
       line.append(dot(doc, 'red'));
       // The resolver's code distinguishes chain / unknown from dangling; dangling keeps the mockup copy.
-      status.append(`Delegate invalid · points at `, code(doc, s.delegateTo),
+      status.append(`Delegate invalid · points at `, ref(doc, s.delegateTo),
         s.delegateCode === 'DELEGATE_CHAIN' ? ', which itself delegates (no chains)'
           : s.delegateCode === 'DELEGATE_UNKNOWN' ? ', which is not a project in Worca on this machine'
             : ', which no longer records');
@@ -102,8 +154,8 @@ export function renderProjectTmCell(s, { doc = globalThis.document } = {}) {
       line.append(dot(doc, excluded ? 'grey' : 'green'));
       // Kept short: the status shares ~220px with the switch (see .tm-status), so the
       // opted-out copy leads with what matters and drops the run count.
-      if (excluded) status.append('On for the team · in ', code(doc, s.delegateTo), ' · yours excluded');
-      else status.append('On · recorded in ', code(doc, s.delegateTo), runs);
+      if (excluded) status.append('On for the team · in ', ref(doc, s.delegateTo), ' · yours excluded');
+      else status.append('On · recorded in ', ref(doc, s.delegateTo), runs);
       actions.append(recordSwitch(doc, s));
       break;
     default:
@@ -135,7 +187,9 @@ export function renderProjectTmCell(s, { doc = globalThis.document } = {}) {
   if (s.enabled && Array.isArray(s.homeFor) && s.homeFor.length) {
     const names = s.homeFor.join(', ');
     const hint = h(doc, 'small', 'hint tm-hint tm-home-for');
-    hint.append(`Metrics home for ${names} · "Include my runs" covers its workspace runs too`);
+    hint.append('Metrics home for ');
+    s.homeFor.forEach((x, i) => { if (i) hint.append(', '); hint.append(ref(doc, x)); });
+    hint.append(' · "Include my runs" covers its workspace runs too');
     hint.title = `Workspace runs of ${names} are written to this project's branch. Turning "Include my runs" off here also stops your workspace runs from being recorded.`;
     cell.append(hint);
   }
@@ -230,7 +284,7 @@ export function renderMetricsHomePicker(members, { selectedPath, doc = globalThi
       status.append(dot(doc, 'green'), lines);
       row.append(label, status);
     } else if (m.enabled && m.delegateTo) {
-      status.append(dot(doc, 'grey'), `Delegates to ${m.delegateTo} · cannot host metrics`);
+      status.append(dot(doc, 'grey'), 'Delegates to ', ref(doc, m.delegateTo), ' · cannot host metrics');
       row.classList.add('off');
       row.append(name, status);
     } else {
@@ -292,7 +346,7 @@ export function renderWsSummary(ws, { doc = globalThis.document, pending = false
   if (home.state === 'unset') {
     frag.append(' · ', h(doc, 'span', 'muted', 'no metrics home'));
   } else {
-    frag.append(' · ', homeMark(doc), h(doc, 'span', 'mono', home.slug));
+    frag.append(' · ', homeMark(doc), ref(doc, home.slug));
     if (home.state !== 'ok') frag.append(' · ', h(doc, 'span', 'ws-sum-bad', home.detail || 'stale'));
     else if (home.runs != null) frag.append(` · ${home.runs} workspace run${home.runs === 1 ? '' : 's'}`); // project-level runs live elsewhere
   }
@@ -439,7 +493,7 @@ export function renderWsMetricsRow(ws, { doc = globalThis.document } = {}) {
     root.append(you);
   } else if (home.record === false) {
     const you = h(doc, 'small', 'hint ws-home-hint warn');
-    you.append(dot(doc, 'amber'), ` Your workspace runs are not recorded: "Include my runs" is off on ${home.slug}.`);
+    you.append(dot(doc, 'amber'), ' Your workspace runs are not recorded: "Include my runs" is off on ', ref(doc, home.slug), '.');
     root.append(you);
   }
   root.append(h(doc, 'div', 'ws-route-results'));

@@ -55,7 +55,7 @@ import {
   probeClaudeCapabilities, explainUnspawnableClaude,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
-import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig } from './config.mjs';
+import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs } from './config.mjs';
 import { readGuardrailSet } from './guardrail-store.mjs';
 import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
 import { collectRequiredSkills, validateSkills, injectSkills, pluginSkillDirs } from './skills.mjs';
@@ -71,6 +71,13 @@ import {
   REASON, pauseConsequences, describePauseReason,
 } from './failure-policy.mjs';
 import { recordRunMetrics } from './metrics/record.mjs';
+// Team policy (team-policy design §6–§7): the document a run's cost gates fold in, its
+// per-run state, and the off-policy findings the run log names at start.
+import { resolveProjectPolicy, resolveWorkspacePolicy } from './policy/sync.mjs';
+import { fieldsForRun, effectiveCap, deviationsFor } from './policy/effective.mjs';
+import { writePolicyState, hasPipelineOverride, readTotalAck } from './policy/state.mjs';
+import { installedPluginsMap, WORCA_VERSION as POLICY_WORCA_VERSION } from './policy/local.mjs';
+import { readSettings as readRawSettings } from './settings.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
@@ -967,6 +974,7 @@ export class RunHarness extends EventEmitter {
       this.state.tools = tools;
       this.stepModels = stepModels;
       await this._resolveGuardrails();
+      await this._resolvePolicy();
       this._log(
         'preflight',
         'info',
@@ -1352,6 +1360,7 @@ export class RunHarness extends EventEmitter {
       this.guardrailsId = rp.guardrailsId || this.guardrailsId;
       this.state.guardrailsId = this.guardrailsId;
       await this._resolveGuardrails();
+      await this._resolvePolicy();
       // Restore the EFFECTIVE instruction from the resume point — by dispatch time
       // run() has replaced the detect-time tools.instruction with the in-worktree
       // graph-build outcome (worktreeGraphInstruction() or ''). Falling back to
@@ -1750,6 +1759,74 @@ export class RunHarness extends EventEmitter {
    * LATEST definition. A missing/deleted set fails OPEN to the Permissive
    * (empty) policy with a loud warn — never an abort.
    */
+  /**
+   * Team policy (design §6, §9): the document that governs this run, folded for its kind
+   * (workspaceRuns for a workspace target), plus the off-policy findings the run log names
+   * once. Cache-first: only a project with no cache at all pays one bounded fetch. A missing,
+   * unreadable or unsupported policy means local settings apply — loudly, never an abort.
+   * Sets `this.policyRun` = { home, sha, fields, deviations, unattended } or null.
+   */
+  async _resolvePolicy() {
+    this.policyRun = null;
+    this._policyPersisted = false;
+    this._policyWarned = new Set();
+    let r;
+    try {
+      r = this.isWorkspace
+        ? await resolveWorkspacePolicy(this.workspace?.id, { discover: 'if-missing' })
+        : await resolveProjectPolicy(this.projectDir, { discover: 'if-missing' });
+    } catch (err) {
+      this._log('policy', 'warn', `team policy could not be read (${err?.message || err}); your local settings apply`);
+      return;
+    }
+    if (!r.ok) {
+      if (r.reason === 'delegate-invalid' || r.reason === 'home-stale' || r.reason === 'unsupported' || r.code === 'DOC_UNKNOWN') {
+        this._log('policy', 'warn', `team policy not applied — ${r.detail || r.reason}; your local settings apply`);
+      }
+      return;
+    }
+    const fields = fieldsForRun(r.doc, { workspaceRun: this.isWorkspace });
+    let installed = {};
+    try { installed = installedPluginsMap(); } catch { /* no plugins root yet */ }
+    let metricsRecord = null;
+    try { const tm = readTeamMetricsPrefs(projectKey(this.projectDir)); metricsRecord = tm ? tm.record !== false : null; } catch { /* optional */ }
+    const stepModels = Object.entries(this.stepModels || {}).map(([role, sel]) => ({ role, model: sel?.model }));
+    const deviations = deviationsFor(fields, {
+      guardrailsId: this.guardrailsId, guardrailSet: this.guardrails ? { settings: this.guardrails } : null,
+      stepModels, installed, worcaVersion: POLICY_WORCA_VERSION, metricsRecord,
+    });
+    this.policyRun = { home: r.home, homeDir: r.homeDir, sha: r.sha, fields, deviations: deviations.map((d) => d.code), unattended: !!this.auto };
+    for (const w of r.warnings || []) this._log('policy', 'warn', `team policy ${r.home}: ${w}`);
+    const cap = fields['cost.pipelineLimitUsd'];
+    const tot = fields['cost.totalLimitUsd'];
+    const caps = [cap ? `pipeline cap $${Number(cap.value).toFixed(2)} (${cap.kind}${cap.kind === 'soft' ? `, ${cap.onBreach || 'pause'}` : ''})` : null,
+      tot ? `total cap $${Number(tot.value).toFixed(2)} (${tot.kind})` : null].filter(Boolean).join(' · ');
+    this._log('policy', 'info', `team policy ${r.home}${r.sha ? ` @ ${String(r.sha).slice(0, 7)}` : ''}${r.delegated ? ` (followed by ${r.from})` : ''}${this.isWorkspace && Object.keys(r.doc.workspaceRuns || {}).length ? ' · workspace-run values' : ''}${caps ? ` · ${caps}` : ''}`);
+    for (const d of deviations) this._log('policy', d.level === 'warn' ? 'warn' : 'info', `off-policy: ${d.text}`);
+    if (this.auto && ((cap?.kind === 'soft' && (cap.onBreach || 'pause') === 'pause') || (tot?.kind === 'soft' && (tot.onBreach || 'pause') === 'pause'))) {
+      this._log('policy', 'info', 'unattended run: a team soft cap warns instead of pausing (nobody can click "continue past")');
+    }
+    // Workspace runs never union member policies (design §6): say so once when a member is tighter.
+    if (this.isWorkspace && cap) {
+      for (const m of this.members || []) {
+        try {
+          const mr = await resolveProjectPolicy(m.projectDir, { discover: false });
+          if (!mr.ok || mr.home === r.home) continue;
+          const mc = fieldsForRun(mr.doc)['cost.pipelineLimitUsd'];
+          if (mc && mc.value < cap.value) this._log('policy', 'info', `member ${mr.from} carries a tighter pipeline cap ($${Number(mc.value).toFixed(2)}, ${mr.home}); the workspace policy applies to this run`);
+        } catch { /* informational only */ }
+      }
+    }
+  }
+
+  /** First persist of the run's policy state (needs the pipeline row); later writes merge. */
+  _persistPolicyState(patch = {}) {
+    if (!this.pipeline?.id || !this.policyRun) return;
+    const base = this._policyPersisted ? {} : { home: this.policyRun.home, sha: this.policyRun.sha, deviations: this.policyRun.deviations, unattended: this.policyRun.unattended };
+    this._policyPersisted = true;
+    try { writePolicyState(this.pipeline.id, { ...base, ...patch }); } catch (err) { this._log('policy', 'warn', `could not record policy state: ${err?.message || err}`); }
+  }
+
   async _resolveGuardrails() {
     let set = await readGuardrailSet(this.guardrailsId || 'permissive');
     if (!set) {
@@ -2882,25 +2959,78 @@ export class RunHarness extends EventEmitter {
    *  raised limit or a window reset takes effect at the next step (F9). */
   _checkCostLimits() {
     if (!this.pipeline?.id) return;                    // pre-createPipeline: nothing to meter
-    const pipeLimit = pipelineCostLimitUsd();
+    this._persistPolicyState();                        // first boundary with a row: home/sha/deviations land
+    const teamFields = this.policyRun?.fields || {};
+    const home = this.policyRun?.home || null;
     // resume() rehydrates state.steps but not state.totalCostUsd, so the row
     // total reads $0 until the first cost event of the resumed run. Take the
     // larger of the two so a resumed over-cap pipeline cannot run one free step.
     const spentHere = Math.max(this.state.totalCostUsd || 0, sumStepCosts(this.state.steps));
-    if (pipeLimit != null && spentHere >= pipeLimit
-        && !readCostCapOverride(this.pipeline.id)) {
+    // Team policy (design §7): the tighter of the developer's cap and a soft team cap applies;
+    // a team default only starts the developer off. `binding` says whose number tripped.
+    const teamPipe = teamFields['cost.pipelineLimitUsd'] || null;
+    const pipe = effectiveCap({ local: pipelineCostLimitUsd(), team: teamPipe });
+    // The developer's own cap (or a team DEFAULT, which is the same thing): the existing
+    // pause + the existing per-pipeline override. A team-bound fold has no "own" cap here.
+    const ownCap = pipe.binding === 'team' ? null : pipe.cap;
+    if (ownCap != null && spentHere >= ownCap && !readCostCapOverride(this.pipeline.id)) {
       this._capReached(REASON.COST_PIPELINE,
-        `pipeline cost limit reached ($${spentHere.toFixed(2)} >= $${pipeLimit.toFixed(2)})`);
+        `pipeline cost limit reached ($${spentHere.toFixed(2)} >= $${ownCap.toFixed(2)})`);
     }
-    const totalLimit = totalCostLimitUsd();
-    if (totalLimit != null) {
-      const period = costLimitResetPeriod();
-      const spent = totalWindowSpendUsd(costWindowStart(new Date(), period).getTime());
-      if (spent >= totalLimit) {
-        this._capReached(REASON.COST_TOTAL,
-          `total cost limit reached ($${spent.toFixed(2)} >= $${totalLimit.toFixed(2)} this ${period === 'weekly' ? 'week' : 'month'})`);
+    // The team SOFT cap, whether or not it is the tighter number: the local override never
+    // bypasses it — only the team override ("continue past team cap") does.
+    if (teamPipe && teamPipe.kind === 'soft' && spentHere >= teamPipe.value && !hasPipelineOverride(this.pipeline.id)) {
+      const detail = `team cost cap reached ($${spentHere.toFixed(2)} >= $${Number(teamPipe.value).toFixed(2)}, ${home})`;
+      this._teamCapBreach('pipeline', teamPipe, detail, REASON.COST_PIPELINE_POLICY);
+    }
+    const period = this._effectiveResetPeriod();
+    const tot = effectiveCap({ local: totalCostLimitUsd(), team: teamFields['cost.totalLimitUsd'] || null });
+    if (tot.cap != null) {
+      const windowStartMs = costWindowStart(new Date(), period).getTime();
+      const spent = totalWindowSpendUsd(windowStartMs);
+      if (spent >= tot.cap) {
+        const w = period === 'weekly' ? 'week' : 'month';
+        if (tot.binding === 'team') {
+          const ack = readTotalAck(projectKey(this.policyRun.homeDir || this.projectDir), home, windowStartMs);
+          if (ack) {
+            // Acknowledged once for this window (design §7): the run proceeds and the record says so.
+            if (!this._policyWarned.has('total-ack')) { this._policyWarned.add('total-ack'); this._persistPolicyState({ overrides: ['total'], ...(ack.reason ? { reason: ack.reason } : {}) }); }
+          } else {
+            const detail = `team total cap reached ($${spent.toFixed(2)} >= $${tot.cap.toFixed(2)} this ${w}, ${home})`;
+            this._teamCapBreach('total', tot.team, detail, REASON.COST_TOTAL_POLICY);
+          }
+        } else {
+          this._capReached(REASON.COST_TOTAL,
+            `total cost limit reached ($${spent.toFixed(2)} >= $${tot.cap.toFixed(2)} this ${w})`);
+        }
       }
     }
+  }
+
+  /** The reset period: the developer's when stored, else a team default, else monthly. */
+  _effectiveResetPeriod() {
+    const stored = readRawSettings().costLimitResetPeriod;
+    if (stored === 'weekly' || stored === 'monthly') return stored;
+    const team = this.policyRun?.fields?.['cost.resetPeriod'];
+    return team && (team.value === 'weekly' || team.value === 'monthly') ? team.value : costLimitResetPeriod();
+  }
+
+  /**
+   * A soft team cap was hit and nobody has continued past it. `onBreach: warn`, and any
+   * unattended (--yes) run, log ONE line and go on with `exceeded` recorded; otherwise the
+   * run pauses on the policy reason so the resume flow can offer "continue past".
+   */
+  _teamCapBreach(which, team, detail, reason) {
+    const breach = team?.onBreach || 'pause';
+    if (breach === 'warn' || this.auto) {
+      if (this._policyWarned.has(which)) return;
+      this._policyWarned.add(which);
+      const why = breach === 'warn' ? 'the policy says warn' : 'unattended run, nobody can continue past a pause';
+      this._log('policy', 'warn', `${detail} — continuing: ${why}`);
+      this._persistPolicyState({ exceeded: [which] });
+      return;
+    }
+    this._capReached(reason, detail);
   }
 
   /** The BUDGET site (failure-policy.mjs): a cost cap was reached at a step

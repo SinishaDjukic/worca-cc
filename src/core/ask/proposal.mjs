@@ -12,6 +12,11 @@ import { validateMemoryScope } from '../memory-sync.mjs';
 import { sanitizeBranchName, suggestBranchName } from '../worktree.mjs';
 import { sanitizeTitle } from '../title.mjs';
 import { ASK_LIMITS } from './limits.mjs';
+import { resolveScheduleSpec } from './schedule-spec.mjs';
+import { validateRunSource, checkTask } from './source-spec.mjs';
+import { listTaskSources as realListTaskSources } from '../sources.mjs';
+import { resolveProfile as realResolveProfile } from '../source-bindings.mjs';
+import { listProfileIds as realListProfileIds } from '../plugin-config.mjs';
 
 export const PROPOSAL_ERRORS = Object.freeze({
   bothTargets: 'provide workspaceId OR projectKey, not both',
@@ -27,6 +32,8 @@ export const PROPOSAL_ERRORS = Object.freeze({
   unknownGuardrails: (id) => `unknown guardrailsId "${id}"`,
   permissive: 'guardrailsId "permissive" is not allowed for proposed runs — use "normal" or a stricter set',
   briefRequired: 'brief is required',
+  briefAndSource: 'give brief OR source, not both — with a task source the run reads the task itself; put what you learned in the note',
+  autoWorkspace: 'Auto workflow is not available for workspace targets yet',
   briefTooLong: `brief exceeds ${ASK_LIMITS.briefMaxChars} characters`,
   badSource: (v) => `unknown or invalid sourceBranch: ${v}`,
   byKeyUnknown: (k) => `sourceBranchByKey has an unknown project key: ${k}`,
@@ -80,6 +87,8 @@ function cleanNote(v) {
   return s || null;
 }
 
+function safeIds(plugin) { try { return realListProfileIds(plugin); } catch { return []; } }
+
 /**
  * @param {{listProjects?:Function, readWorkspace?:Function, readWorkflow?:Function, assertRunnableWorkflow?:Function, readGuardrailSet?:Function, isGitRepo?:Function, pathExists?:Function}} [deps]
  */
@@ -92,13 +101,17 @@ export function createProposalValidator({
   readGuardrailSet = realReadGuardrailSet,
   isGitRepo = realIsGitRepo,
   pathExists = existsSync,
+  // Plugin task sources (source-spec.mjs): the installed sources with each one's profile roster.
+  listTaskSources = () => realListTaskSources().map((s) => (s.type === 'plugin' && s.multiProfile ? { ...s, profiles: safeIds(s.plugin) } : s)),
+  resolveProfile = realResolveProfile,
 } = {}) {
   /**
    * @param {object} input  the propose_run tool input
-   * @param {{cardId?:string|null}} [opts]  the server passes the minted card id (feature-branch uniqueness)
+   * @param {{cardId?:string|null, timeZone?:string|null, nowMs?:number, scheduleDefaults?:object}} [opts]  the server passes the
+   *   minted card id (feature-branch uniqueness); timeZone is the user's (the schedule fields are read in it)
    * @returns {Promise<{ok:true, card:object}|{ok:false, errors:string[]}>}
    */
-  async function validateProposal(input, { cardId = null, attachments = [] } = {}) {
+  async function validateProposal(input, { cardId = null, attachments = [], timeZone = null, nowMs = Date.now(), scheduleDefaults = {}, lookupTask = null } = {}) {
     const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
     const errors = [];
     const fail = () => ({ ok: false, errors });
@@ -163,9 +176,28 @@ export function createProposalValidator({
     if (guardrailsId === 'permissive') errors.push(PROPOSAL_ERRORS.permissive);
     else if (guardrailsId && !(await readGuardrailSet(guardrailsId))) errors.push(PROPOSAL_ERRORS.unknownGuardrails(guardrailsId));
 
+    // ── Auto: project targets only, like POST /api/run ─────────────────────
+    if (wf && wf.id === 'wf_auto' && target.target === 'workspace') errors.push(PROPOSAL_ERRORS.autoWorkspace);
+
+    // ── task source (source-spec.mjs): a reference the run fetches at start ──
+    const src = validateRunSource(inp.source, { target, listTaskSources, resolveProfile });
+    if (!src.ok) errors.push(...src.errors);
+    let runSource = src.ok ? src.source : null;
+    let sourceWarning = null;
+    if (runSource && !errors.length) {
+      const chk = await checkTask(runSource, lookupTask);
+      if (!chk.ok) errors.push(chk.error);
+      else {
+        if (chk.task) runSource = { ...runSource, ...(chk.task.title ? { title: chk.task.title } : {}), ...(chk.task.url ? { url: chk.task.url } : {}) };
+        if (chk.warning) sourceWarning = chk.warning;
+      }
+    }
+
     // ── brief ──────────────────────────────────────────────────────────────
     const brief = String(inp.brief ?? '').trim();
-    if (!brief) errors.push(PROPOSAL_ERRORS.briefRequired);
+    if (runSource || (inp.source !== undefined && inp.source !== null)) {
+      if (brief) errors.push(PROPOSAL_ERRORS.briefAndSource);
+    } else if (!brief) errors.push(PROPOSAL_ERRORS.briefRequired);
     else if (brief.length > ASK_LIMITS.briefMaxChars) errors.push(PROPOSAL_ERRORS.briefTooLong);
 
     // ── branches (syntactic only) ──────────────────────────────────────────
@@ -196,18 +228,28 @@ export function createProposalValidator({
     // ── title + feature branch ─────────────────────────────────────────────
     const title = sanitizeTitle(typeof inp.title === 'string' ? inp.title : '')
       || sanitizeTitle(brief.split(/\r?\n/)[0].slice(0, 80))
+      || (runSource ? sanitizeTitle(runSource.title || `${runSource.taskId}`) : '')
       || 'Proposed run';
     let featureBranch = typeof inp.featureBranch === 'string' ? sanitizeBranchName(inp.featureBranch) : '';
     if (!featureBranch) {
       const m = typeof cardId === 'string' ? CARD_HEX_RE.exec(cardId) : null;
-      featureBranch = suggestBranchName({ prompt: brief, title, pipelineId: m ? m[1] : '' });
+      featureBranch = suggestBranchName({ prompt: brief || title, title, pipelineId: m ? m[1] : '' });
     }
+
+    // ── schedule (docs/scheduled-runs.md "Ask Worca"): when | every, read in the user's zone ──
+    const spec = resolveScheduleSpec(inp, { nowMs, timeZone, defaults: scheduleDefaults });
+    if (!spec.ok) errors.push(...spec.errors);
 
     if (errors.length) return fail();
     return {
       ok: true,
       card: { ...target, workflowId: wf.id, workflowName: wf.name, guardrailsId, memoryScope, brief, title, sourceBranch, featureBranch, sourceBranchByKey,
-        note: cleanNote(inp.note), attachments: pickCardAttachments(inp.attachmentIds, attachments) },
+        note: cleanNote(inp.note), attachments: pickCardAttachments(inp.attachmentIds, attachments),
+        // Only a scheduled proposal carries the key: a plain run card keeps its shape byte for byte.
+        ...(spec.schedule ? { schedule: spec.schedule } : {}),
+        // Likewise a proposal whose task is a plugin task (an issue), not a brief.
+        ...(runSource ? { source: runSource } : {}),
+        ...(sourceWarning ? { sourceWarning } : {}) },
     };
   }
   return { validateProposal };

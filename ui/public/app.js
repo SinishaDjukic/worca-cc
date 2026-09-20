@@ -102,7 +102,7 @@ import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, colle
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS } from '../../src/shared/graph/constants.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
-  renderStartStep, collectStartStep, renderGuardrailReferences409,
+  renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
 } from './guardrails-view.mjs';
 import {
   renderModelsList, renderModelEditor, collectModelEditor, makeEnvRow, applyCostMode, setModelCost,
@@ -125,12 +125,23 @@ import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
-import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmptyState, renderTmSkeleton } from './team-metrics-view.mjs';
+import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmptyState, renderTmSkeleton, renderPooledBudgetTile } from './team-metrics-view.mjs';
+// Team policy (team-policy design §11): the Projects cell, the enable dialog, the page (read +
+// edit), the workspace line, the Settings readout, the New pipeline notes, the Plugins strip.
+import {
+  renderProjectTpCell, renderProjectTpChip, projectTpSummary, renderPolicyEnableDialogBody, renderEffectiveTable, renderPolicyEditor, docFromEditor, editorDirty,
+  renderPolicyEmptyState, renderPolicySyncChip, renderWsPolicyLine, renderTeamCapsReadout, renderTeamChip, renderPolicyNotesLine,
+  renderRequiredStrip, renderSetupChecklist, relTime as tpRelTime,
+  renderPolicyHeader, renderPolicyStats, renderPolicyPluginsPanel, renderPolicyCatalogPanel,
+} from './team-policy-view.mjs';
 import { aggregate, toCsv } from '../../src/shared/team-metrics/aggregate.mjs';
 import {
-  renderProjectTmCell, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
+  renderProjectTmCell, renderProjectTmChip, projectTmSummary, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
 import { paintAboutInto } from './about-links.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts } from './report-run.mjs';
+import { openScheduleSheet, closeScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
+import { describeRule, formatInstant } from '../../src/shared/schedule/recurrence.mjs';
+import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
@@ -209,6 +220,18 @@ const el = {
   extrasPills: $('#extrasPills'),
   mock: $('#mock'),
   startBtn: $('#start-btn'),
+  startMore: $('#start-more'),
+  startMenu: $('#start-menu'),
+  startMenuNow: $('#start-menu-now'),
+  startMenuSchedule: $('#start-menu-schedule'),
+  newSched: $('#new-sched'),
+  newSchedBadge: $('#new-sched-badge'),
+  newSchedText: $('#new-sched-text'),
+  newSchedChange: $('#new-sched-change'),
+  newSchedClear: $('#new-sched-clear'),
+  startBtnLabel: $('#start-btn-label'),
+  navSchedulesCount: $('#nav-schedules-count'),
+  navSchedulesUnread: $('#nav-schedules-unread'),
   formMsg: $('#form-msg'),
 
   pipelineConfig: $('#pipeline-config'),
@@ -254,6 +277,8 @@ const el = {
   wsCreateBtn: $('#ws-create-btn'),
   wsMsg: $('#ws-msg'),
   wsList: $('#ws-list'),
+  wsShell: $('#ws-shell'),
+  wsDetail: $('#ws-detail'),
 
   // Wizard
   wizName: $('#wiz-name'),
@@ -292,6 +317,13 @@ const el = {
   budgetSave: $('#budgetSave'),
   budgetReset: $('#budgetReset'),
   budgetMsg: $('#budgetMsg'),
+  // Team policy surfaces (team-policy design §11)
+  teamCapsReadout: $('#teamCapsReadout'),
+  policyLine: $('#policyLine'),
+  pluginsPolicy: $('#plugins-policy'),
+  tpBody: $('#tp-body'),
+  tpScope: $('#tp-scope'),
+  tpSync: $('#tp-sync'),
 
   // Agents management view
   agentsList: $('#agents-list'),
@@ -776,6 +808,18 @@ function handleServerMessage(msg) {
     refreshBudget();
     return;
   }
+  // Scheduled runs: a ticket or a repeating schedule changed (here, in another tab, from the
+  // CLI, or because the scheduler tick started/missed/skipped something).
+  if (msg.type === 'schedules-changed') {
+    refreshAllCounts();
+    if (currentView() === 'schedules' || currentView() === 'running') void schedulesView.load().then(paintScheduledGroup);
+    return;
+  }
+  if (msg.type === 'notification' || msg.type === 'notifications-changed') {
+    refreshAllCounts();
+    if (currentView() === 'schedules') void schedulesView.loadFeed();
+    return;
+  }
   // Another tab saved a Settings card: repaint ours from the server so a stale
   // checkbox/field cannot be "saved" back over the change.
   if (msg.type === 'settings-changed') {
@@ -797,7 +841,7 @@ function handleServerMessage(msg) {
     scheduleOnboardingRefresh();
     refreshAllCounts();
     tmCache.at = 0;
-    if (currentView() === 'workspaces') loadWorkspacesView();
+    if (currentView() === 'workspaces') void refreshWorkspacesPage();
     return;
   }
   if (msg.type === 'team-metrics-changed') {
@@ -810,6 +854,19 @@ function handleServerMessage(msg) {
     // Only the page GET schedules a flush: reloading it on flush-failed would loop
     // (GET → page-open flush → flush-failed → reload). The chip shows the error from the last load.
     if (msg.action !== 'flush-failed' && currentView() === 'team-metrics') loadTeamMetricsView();
+    return;
+  }
+  // Team policy (team-policy design §11): discovery, an enable, a publish or a home change
+  // elsewhere — refetch the scopes and repaint every open policy surface.
+  if (msg.type === 'team-policy-changed') {
+    scheduleOnboardingRefresh();
+    tpCache.at = 0;
+    if (currentView() === 'projects') paintProjectPolicyCells(true);
+    if (currentView() === 'workspaces') paintWsPolicyLines(true);
+    if (currentView() === 'team-policy' && !tpState.editing) loadTeamPolicyView();
+    if (currentView() === 'settings') paintTeamCapsReadout(true);
+    if (currentView() === 'settings' && currentSettingsTab === 'plugins') paintPluginsPolicy(true);
+    if (currentView() === 'new') schedulePolicyLine();
     return;
   }
 
@@ -2163,9 +2220,10 @@ function gvRenderSaved() {
         // A delete is destructive and unrecoverable: it asks first, in red — the
         // guard the v1 composer's saved list owned before it was retired.
         del.addEventListener('click', async () => {
+          const schedNote = await scheduleDependentsNote(`workflowId=${encodeURIComponent(wf.id)}`, 'They will fail to start until you point them at another pipeline.');
           const ok = await confirmModal({
             title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
-            message: `Delete "${wf.name || wf.id}"?\n\nThis cannot be undone.`,
+            message: `Delete "${wf.name || wf.id}"?\n\nThis cannot be undone.${schedNote}`,
           });
           if (!ok) return;
           const r = await gvApi.deleteWorkflow(wf.id);
@@ -2567,7 +2625,8 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
     }
     modelSel.appendChild(og);
   };
-  optgroup('Your models', state.models.filter((m) => m.custom && m.custom !== 'plugin').sort(byLabel));
+  optgroup('Your models', state.models.filter((m) => m.custom && m.custom !== 'plugin' && m.custom !== 'policy').sort(byLabel));
+  optgroup('Team policy', state.models.filter((m) => m.custom === 'policy').sort(byLabel));
   optgroup('Plugins', state.models.filter((m) => m.custom === 'plugin').sort(byLabel));
   // "Hide built-in models" (#422): a hidden built-in leaves the list — unless
   // it is THIS selection, which still resolves and must stay visible.
@@ -2873,6 +2932,7 @@ async function renderWorkflowConfig(workflowId) {
   if (el.wfFeedbackConfig) el.wfFeedbackConfig.dataset.graph = wf.version === 2 ? '1' : '';
   setAgentsHeader(rows, wf.name || workflowId);
   setAgentRowsEnabled(agentsEditable());
+  if (currentView() === 'new') schedulePolicyLine();   // the picked models changed with the workflow (board 8)
 }
 
 // Per-agent config is stored PER PROJECT, so with no project selected there is
@@ -3256,7 +3316,9 @@ if (el.memoryScopeSeg) {
 if (el.guardrailsSelect) {
   el.guardrailsSelect.addEventListener('change', () => {
     state.guardrailsId = el.guardrailsSelect.value || 'permissive';
+    state.guardrailsTouched = true;         // a team default never overrides a deliberate pick
     updateGuardrailsHint();
+    schedulePolicyLine();
   });
 }
 
@@ -3477,6 +3539,7 @@ el.pipelineConfig.addEventListener('change', (e) => {
     const effortSel = body && body.querySelector('.step-effort');
     if (effortSel) renderModelEffortPair(t, effortSel, null, { model: t.value, effort: '' });
     paintRowSummary(row, body);
+    schedulePolicyLine();                      // an off-list model is a team-policy note (board 8)
   } else if (t.classList.contains('step-effort')) {
     saveAgentRow(row, { effort: t.value }, body);
     paintRowSummary(row, body);
@@ -5756,8 +5819,10 @@ function onProjectChanged() {
     localStorage.setItem(LAST_PROJECT_KEY, selectedProjectName());
     const cfgLoad = loadConfig(path); // its tail repaints the workflow/guardrail pickers (:1821-1822)
     refreshBranches(path);            // — a prefill caller MUST await it or be clobbered
+    schedulePolicyLine();             // team policy notes for the new target (design board 8)
     return cfgLoad;
   } else {
+    schedulePolicyLine();
     state.projectDir = '';
     // No project yet: still load the built-in models so the picker isn't empty.
     const cfgLoad = loadConfig('');
@@ -6021,6 +6086,7 @@ function setRunTarget(target) {
   const t = target === 'workspace' ? 'workspace' : 'project';
   state.runTarget = t;
   localStorage.setItem(LAST_TARGET_KEY, t);
+  schedulePolicyLine();                     // debounced: reads the target selects once they settle
 
   // Segmented buttons + hidden radios (source of truth read at submit).
   $$('#target-seg button[data-target]').forEach((b) => {
@@ -6188,6 +6254,7 @@ if (el.workspaceSelect) {
     if (state.selectedWorkspaceId) localStorage.setItem(LAST_WORKSPACE_KEY, state.selectedWorkspaceId);
     renderWorkspaceMembers();
     renderWorkspaceSourceBranches();
+    schedulePolicyLine();                   // team policy notes for the new target (design board 8)
     // Same as onProjectChanged: a workspace has its own binding (or inherits
     // one from its members), so the resolved profile can differ.
     if (state.activePluginSource && state.activePluginSource.multiProfile) {
@@ -6226,18 +6293,16 @@ function updateWorkspacesCount() {
 
 // ---- Workspaces management view --------------------------------------------
 
-async function loadWorkspacesView() {
-  await loadWorkspaces();
-  renderWorkspaces();
-  updateWorkspacesCount();
-}
-
 function setWsMsg(text, kind) {
   if (!el.wsMsg) return;
   el.wsMsg.textContent = text || '';
   el.wsMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
 }
 
+// ---- Workspaces list ----------------------------------------------------------------------
+// The Projects page's shape: one card headed "Workspaces · N", one row per workspace — name,
+// a one-line summary (size, metrics home, what needs attention), the stale badge, a chevron —
+// and the whole row opens the workspace page. Nothing on the row edits anything.
 function renderWorkspaces() {
   const host = el.wsList;
   if (!host) return;
@@ -6246,88 +6311,121 @@ function renderWorkspaces() {
     host.appendChild(histEmpty('No workspaces yet — create one to scan a set of projects.'));
     return;
   }
+  const card = document.createElement('section');
+  card.className = 'card saved-card';
+  const head = document.createElement('div');
+  head.className = 'saved-head';
+  const b = document.createElement('b');
+  b.textContent = 'Workspaces';
+  const cnt = document.createElement('span');
+  cnt.className = 'cnt';
+  cnt.textContent = String(state.workspaces.length);
+  head.append(b, cnt);
+  const list = document.createElement('div');
+  list.className = 'saved-list';
   // What is known before /scopes answers: this session's payload or the persisted copy paints the
-  // metrics block at once; a workspace neither knows gets the pending block (shimmer cells,
-  // "checking metrics…") rather than a hidden slot and a summary that reads as final.
+  // summary at once; a workspace neither knows reads "checking metrics…" rather than a summary
+  // that reads as final.
   const known = peekTmScopes();
   const knownById = new Map(((known && known.workspaces) || []).map((w) => [w.id, w]));
-  for (const w of state.workspaces) {
-    const card = buildWorkspaceCard(w);
-    host.appendChild(card);
-    const k = knownById.get(w.id);
-    if (k) paintWsMetricsCard(card, k);
-    else {
-      const slot = card.querySelector('.ws-home');
-      if (slot) { slot.hidden = false; slot.replaceChildren(renderWsMetricsPending(w, { doc: document })); }
-      const sum = card.querySelector('.ws-projects');
-      if (sum) sum.replaceChildren(renderWsSummary(w, { doc: document, pending: true }));
-    }
-    card.setAttribute('aria-busy', 'true');
-    // A lone workspace opens by itself; otherwise the last toggle per card is remembered.
-    if (wsCardOpen(w.id, state.workspaces.length === 1)) toggleWsDetail(card, true);
-  }
+  for (const w of state.workspaces) list.appendChild(buildWorkspaceRow(w, knownById.get(w.id)));
+  card.append(head, list);
+  host.appendChild(card);
   paintWsMetricsRows();
-  // Descriptions are markdown; the bundle loads lazily, so the first paint may be plain.
-  // Repaint the description nodes alone once it is ready — not the cards, so open/edit
-  // state survives — and do nothing when it failed (plain text is the fallback).
-  if (!hdMarkdown.isReady()) void bindMarkdownReady().then((ok) => { if (ok) repaintWsDescriptions(); });
+  paintWsPolicyLines();                     // team policy (design board 6): the policy home line on the page
 }
-function repaintWsDescriptions() {
-  if (!el.wsList) return;
-  for (const card of el.wsList.querySelectorAll('.ws-card')) {
-    const w = state.workspaces.find((x) => x && x.id === card.dataset.workspaceId);
-    const view = card.querySelector('.ws-desc-view');
-    if (w && w.description && view && !view.classList.contains('artifact-markdown')) bindMarkdown(view, w.description);
+
+function buildWorkspaceRow(w, known) {
+  const item = document.createElement('div');
+  item.className = 'ws-item';
+  item.dataset.workspaceId = w.id || '';
+  const row = document.createElement('div');
+  row.className = 'ws-row';
+  row.setAttribute('role', 'button');
+  row.tabIndex = 0;
+  row.setAttribute('aria-label', `Open ${w.name || w.id}`);
+  const main = document.createElement('div');
+  main.className = 'ws-main';
+  const name = document.createElement('div');
+  name.className = 'ws-name';
+  name.textContent = w.name || w.id || '(unnamed)';
+  if (Array.isArray(w.exists) && w.exists.some((e) => !e)) {
+    const stale = document.createElement('span');
+    stale.className = 'ws-stale badge red';
+    stale.textContent = 'missing projects';
+    name.append(' ', stale);
   }
-}
-const WS_OPEN_KEY = (id) => `worca.ws.open.${id}`;
-function wsCardOpen(id, fallback) {
-  try { const v = localStorage.getItem(WS_OPEN_KEY(id)); return v == null ? fallback : v === '1'; } catch { return fallback; }
+  const sum = document.createElement('small');
+  sum.className = 'ws-projects';
+  sum.replaceChildren(known ? renderWsSummary(known, { doc: document }) : renderWsSummary(w, { doc: document, pending: true }));
+  main.append(name, sum);
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'proj-open ws-open';
+  open.setAttribute('aria-label', 'Open workspace details');
+  open.innerHTML = CHEVRON_RIGHT_SVG;   // static markup
+  row.append(main, open);
+  item.appendChild(row);
+  if (!known) item.setAttribute('aria-busy', 'true');
+  return item;
 }
 
 // workspaceId → last "Route all members" payload. Routing emits one team-metrics-changed per
-// member, and each repaint rebuilds .ws-home — the per-member result list (the only place push
-// failures are named, §4.6b) must survive those repaints.
+// member, and each repaint rebuilds the metrics block — the per-member result list (the only
+// place push failures are named, §4.6b) must survive those repaints.
 const wsRouteResults = new Map();
 
+// The metrics side of every open workspace surface: the row summaries, and the open page's
+// Team block + Overview card. Called on render and on every team-metrics-changed frame.
 async function paintWsMetricsRows(force = false) {
   const data = await loadTmScopes({ force });
   const byId = new Map(data.workspaces.map((w) => [w.id, w]));
-  for (const card of document.querySelectorAll('#ws-list .ws-card')) {
-    const w = byId.get(card.dataset.workspaceId);
-    if (w) paintWsMetricsCard(card, w);
-    else {
-      // Not in the payload (nothing enabled anywhere, or the call failed): the plain summary, no block.
-      const slot = card.querySelector('.ws-home');
-      if (slot) { slot.hidden = true; slot.replaceChildren(); }
-      const sum = card.querySelector('.ws-projects');
-      const own = state.workspaces.find((x) => x && x.id === card.dataset.workspaceId);
-      if (sum) sum.replaceChildren(renderWsSummary({ projectPaths: (own && own.projectPaths) || [], home: { state: 'unset' }, members: [] }, { doc: document }));
-    }
-    card.removeAttribute('aria-busy');
+  for (const item of document.querySelectorAll('#ws-list .ws-item')) {
+    const w = byId.get(item.dataset.workspaceId);
+    const sum = item.querySelector('.ws-projects');
+    const own = state.workspaces.find((x) => x && x.id === item.dataset.workspaceId);
+    // Not in the payload (nothing enabled anywhere, or the call failed): the plain summary.
+    if (sum) sum.replaceChildren(renderWsSummary(w || { projectPaths: (own && own.projectPaths) || [], home: { state: 'unset' }, members: [] }, { doc: document }));
+    item.removeAttribute('aria-busy');
   }
+  paintWdMetrics(byId.get(wsDetail?.id));
 }
-// One card's metrics block + header summary from a /scopes workspace entry.
-function paintWsMetricsCard(card, w) {
-  const slot = card.querySelector('.ws-home');
-  if (!slot) return;
-  slot.hidden = false;
-  slot.replaceChildren(renderWsMetricsRow(w, { doc: document }));
-  const sum = card.querySelector('.ws-projects');
-  if (sum) sum.replaceChildren(renderWsSummary(w, { doc: document }));
-  const saved = wsRouteResults.get(w.id);
-  const out = slot.querySelector('.ws-route-results');
-  if (saved && out) {
-    out.replaceChildren(saved.error
-      ? Object.assign(document.createElement('small'), { className: 'hint err', textContent: saved.error })
-      : renderRouteResults(saved, { doc: document }));
+// The open workspace page's metrics block (the members table with the home actions) and its
+// METRICS HOME card. `w` is the /scopes workspace entry, or undefined when the payload lacks it.
+function paintWdMetrics(w) {
+  if (!wsDetail || !wsDetail.screen) return;
+  const screen = wsDetail.screen;
+  const own = state.workspaces.find((x) => x && x.id === wsDetail.id);
+  const meta = screen.querySelector('.pd-meta .ws-projects');
+  if (meta) meta.replaceChildren(renderWsSummary(w || { projectPaths: (own && own.projectPaths) || [], home: { state: 'unset' }, members: [] }, { doc: document }));
+  const body = screen.querySelector('.wd-team-metrics .pd-team-body');
+  if (body) {
+    body.replaceChildren(w ? renderWsMetricsRow(w, { doc: document }) : renderWsMetricsRow({ projectPaths: (own && own.projectPaths) || [], home: { state: 'unset' }, members: [] }, { doc: document }));
+    const saved = wsRouteResults.get(wsDetail.id);
+    const out = body.querySelector('.ws-route-results');
+    if (saved && out) {
+      out.replaceChildren(saved.error
+        ? Object.assign(document.createElement('small'), { className: 'hint err', textContent: saved.error })
+        : renderRouteResults(saved, { doc: document }));
+    }
+  }
+  const card = screen.querySelector('.pd-ov-card-metrics');
+  if (card) {
+    const home = (w && w.home) || { state: 'unset' };
+    const silent = ((w && w.members) || []).filter((x) => x.state !== 'home' && !x.recordsOn).length;
+    card.querySelector('.pd-ov-value').textContent = home.state === 'unset' ? 'No home' : home.slug;
+    const sub = card.querySelector('.pd-ov-sub');
+    sub.textContent = home.state === 'unset' ? 'workspace runs are not recorded'
+      : home.state !== 'ok' ? (home.detail || 'the metrics home is stale')
+        : [home.runs != null ? `${home.runs} workspace run${home.runs === 1 ? '' : 's'}` : '', silent ? `${silent} not recording` : ''].filter(Boolean).join(' · ') || 'recording';
+    sub.classList.toggle('pd-ov-attn', home.state !== 'unset' && (home.state !== 'ok' || silent > 0));
   }
 }
 
 async function openWsHomeSheet(workspaceId) {
   const w = (await loadTmScopes({ force: true })).workspaces.find((x) => x.id === workspaceId);
   if (!w) return;
-  // metrics-scan answers 400 when a member folder is missing — exactly when the card shows
+  // metrics-scan answers 400 when a member folder is missing — exactly when the page shows
   // "missing projects" — so an unchecked r.ok opened an empty picker with no explanation.
   const r = await fetch('/api/workspaces/metrics-scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectPaths: w.projectPaths }) }).catch(() => null);
   const j = r ? await safeJson(r) : null;
@@ -6363,99 +6461,377 @@ async function patchWsHome(id, metricsProject) {
   modalBody?.after(Object.assign(document.createElement('small'), { className: 'hint err', textContent: j?.error || 'Could not save the metrics home' }));
 }
 
-// Build one workspace card from the template. The description is markdown by
-// contract (the scanner template), bound through bindMarkdown: the sanitized page
-// pipeline when it is ready, plain text (.textContent, never innerHTML) otherwise.
-function buildWorkspaceCard(w) {
-  const tpl = $('#ws-card-tpl');
-  const node = tpl.content.firstElementChild.cloneNode(true);
-  node.dataset.workspaceId = w.id || '';
-
-  const nameEl = node.querySelector('.ws-name');
-  if (nameEl) nameEl.textContent = w.name || w.id || '(unnamed)';
-
-  // Summary, not the member list: the projects table inside the card names every member once.
-  // The metrics part of the line arrives with paintWsMetricsRows.
-  const projEl = node.querySelector('.ws-projects');
-  if (projEl) projEl.replaceChildren(renderWsSummary({ projectPaths: w.projectPaths || [], home: { state: 'unset' }, members: [] }, { doc: document }));
-
-  const stale = node.querySelector('.ws-stale');
-  if (stale) stale.hidden = !(Array.isArray(w.exists) && w.exists.some((e) => !e));
-
-  const descView = node.querySelector('.ws-desc-view');
-  if (descView) {
-    if (w.description) bindMarkdown(descView, w.description);
-    else { descView.classList.remove('artifact-markdown'); descView.textContent = '(no description yet — re-scan to generate one)'; }
-  }
-
-  return node;
+// Delegated actions on the workspaces list: a row (or its chevron) opens the page.
+if (el.wsList) {
+  const openWsRow = (row) => {
+    const item = row.closest('.ws-item');
+    if (!item || !item.dataset.workspaceId) return;
+    wsReturnFocus = item.dataset.workspaceId;          // Back / Esc come home to this row
+    location.hash = `workspaces/${item.dataset.workspaceId}`;
+  };
+  el.wsList.addEventListener('click', (e) => {
+    const row = e.target.closest && e.target.closest('.ws-row[role="button"]');
+    if (row) openWsRow(row);
+  });
+  el.wsList.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    const row = e.target.closest && e.target.closest('.ws-row[role="button"]');
+    if (!row || e.target !== row) return;
+    e.preventDefault();
+    openWsRow(row);
+  });
 }
 
-// Delegated actions on the workspaces list.
-if (el.wsList) {
-  el.wsList.addEventListener('click', async (e) => {
-    const card = e.target.closest && e.target.closest('.ws-card');
-    if (!card) return;
-    const id = card.dataset.workspaceId;
-    const w = state.workspaces.find((x) => x && x.id === id);
+// ---------------------------------------------------------------------------
+// Workspace page (#workspaces/<id>[/team]) — the project page's twin: the same two-screen
+// slide, the same header card, pills and stat cards (it rides the pd- classes), and all
+// editing — description, re-scan, delete, metrics home, policy home, routing — lives here.
+// ---------------------------------------------------------------------------
+const WS_TABS = ['overview', 'team'];
+function parseWsParam(param = '') {
+  const s = String(param || '');
+  if (!s) return null;
+  const i = s.indexOf('/');
+  const id = i === -1 ? s : s.slice(0, i);
+  const tab = i === -1 ? '' : s.slice(i + 1);
+  return { id, tab: WS_TABS.includes(tab) && tab !== 'overview' ? tab : 'overview' };
+}
+const wsParamFor = (id, tab = 'overview') => (tab === 'team' ? `${id}/team` : id);
+const workspaceById = (id) => state.workspaces.find((x) => x && x.id === id) || null;
 
-    if (e.target.closest('.ws-home-change')) { e.stopPropagation(); return void openWsHomeSheet(card.dataset.workspaceId); }
+let wsDetail = null;        // { id, screen } while a page is open
+let wsReturnFocus = '';     // the id of the row that opened the page; closeWsDetail hands focus back
+
+// #workspaces entry: refetch the list, paint it, then route the page half of the hash. In-view
+// hops (list <-> page, tab <-> tab) skip the fetch — showView calls routeWsDetail directly.
+let workspacesLoadToken = 0;
+async function loadWorkspacesView() {
+  const token = ++workspacesLoadToken;
+  await loadWorkspaces();
+  if (token !== workspacesLoadToken || currentShownView !== 'workspaces') return;
+  renderWorkspaces();
+  updateWorkspacesCount();
+  const [view, param] = parseHash();
+  if (view === 'workspaces') routeWsDetail(param, { instant: true });
+}
+// A workspaces-changed frame while the page is open: rebuild the list under the user and keep the
+// open page — unless its workspace went away, which closes it with a note.
+async function refreshWorkspacesPage() {
+  await loadWorkspaces();
+  if (currentShownView !== 'workspaces') return;
+  renderWorkspaces();
+  updateWorkspacesCount();
+  if (!wsDetail) return;
+  const w = workspaceById(wsDetail.id);
+  if (w) { paintWsHeader(wsDetail.screen, w); refreshWdOverview(); return; }
+  const name = wsDetail.name;
+  showView('workspaces', '');
+  setWsMsg(`workspace "${name}" was removed`, 'err');
+}
+
+function routeWsDetail(param, { instant = false } = {}) {
+  const parsed = parseWsParam(param);
+  if (!parsed) { closeWsDetail({ instant }); return; }
+  const w = workspaceById(parsed.id);
+  if (!w) {
+    closeWsDetail({ instant });
+    setWsMsg(`workspace "${parsed.id}" is not registered here`, 'err');
+    return;
+  }
+  if (wsDetail && wsDetail.id === parsed.id) { activateWsTab(parsed.tab); return; }
+  openWsDetail(w, parsed, { instant });
+}
+
+function openWsDetail(w, parsed, { instant = false } = {}) {
+  const host = el.wsDetail;
+  const shell = el.wsShell;
+  if (!host || !shell) return;
+  wsDetail = null;
+  host.innerHTML = '';
+  host.scrollTop = 0;
+  const screen = $('#ws-detail-tpl').content.firstElementChild.cloneNode(true);
+  host.appendChild(screen);
+  wsDetail = { id: w.id, name: w.name, screen };
+  screen.querySelector('.pd-back').addEventListener('click', () => { location.hash = 'workspaces'; });
+  screen.querySelector('.ws-rescan').addEventListener('click', () => { void rescanWorkspace(workspaceById(w.id)); });
+  screen.querySelector('.ws-delete').addEventListener('click', () => { void deleteWorkspaceFromPage(w.id); });
+  paintWsHeader(screen, w);
+  initWdTabs(screen, w);
+  activateWsTab(parsed.tab);
+  if (instant) shell.classList.add('no-anim');
+  shell.classList.add('detail-open');
+  host.setAttribute('aria-hidden', 'false');
+  host.removeAttribute('inert');
+  const list = shell.querySelector('.ws-screen-list');
+  if (list) { list.setAttribute('aria-hidden', 'true'); list.setAttribute('inert', ''); }
+  screen.querySelector('.pd-back').focus({ preventScroll: true });
+  if (instant) rafSafe(() => shell.classList.remove('no-anim'));
+}
+
+function paintWsHeader(screen, w) {
+  screen.querySelector('.pd-title').textContent = w.name || w.id || '(unnamed)';
+  const stale = screen.querySelector('.pd-row1 .ws-stale');
+  if (stale) stale.hidden = !(Array.isArray(w.exists) && w.exists.some((e) => !e));
+  const meta = screen.querySelector('.pd-meta .ws-projects');
+  if (meta) {
+    const known = (peekTmScopes()?.workspaces || []).find((x) => x.id === w.id);
+    meta.replaceChildren(known ? renderWsSummary(known, { doc: document }) : renderWsSummary(w, { doc: document, pending: true }));
+  }
+}
+
+function closeWsDetail({ instant = false } = {}) {
+  const shell = el.wsShell;
+  const host = el.wsDetail;
+  if (!shell || !host) return;
+  if (!shell.classList.contains('detail-open')) { wsReturnFocus = ''; wsDetail = null; return; }
+  wsDetail = null;
+  host.setAttribute('aria-hidden', 'true');
+  const list = shell.querySelector('.ws-screen-list');
+  if (list) { list.removeAttribute('aria-hidden'); list.removeAttribute('inert'); }
+  const back = wsReturnFocus;
+  wsReturnFocus = '';
+  if (back && el.wsList && !instant) {
+    const row = el.wsList.querySelector(`.ws-item[data-workspace-id="${cssEscape(back)}"] .ws-row`);
+    if (row) row.focus({ preventScroll: true });
+  }
+  host.setAttribute('inert', '');
+  if (instant) {
+    shell.classList.add('no-anim');
+    shell.classList.remove('detail-open');
+    host.innerHTML = '';
+    rafSafe(() => shell.classList.remove('no-anim'));
+    return;
+  }
+  shell.classList.remove('detail-open');
+  const clear = () => { if (!wsDetail) host.innerHTML = ''; };
+  const onEnd = (e) => {
+    if (e.target !== host || e.propertyName !== 'transform') return;
+    host.removeEventListener('transitionend', onEnd);
+    clear();
+  };
+  host.addEventListener('transitionend', onEnd);
+  const t = setTimeout(() => { host.removeEventListener('transitionend', onEnd); clear(); }, 600);
+  if (t && typeof t.unref === 'function') t.unref();
+}
+
+// ---- tabs ----
+const WD_TABS = [
+  { key: 'overview', label: 'Overview', level: 'simple', badge: () => null, visible: () => true, build: (sec, id) => buildWdOverview(sec, id) },
+  { key: 'team', label: 'Team', level: 'expert', badge: () => null, visible: () => true, build: (sec, id) => buildWdTeam(sec, id) },
+];
+function initWdTabs(screen, w) {
+  initDetailTabs(screen, WD_TABS.map((t) => ({ ...t, icon: PD_TAB_ICONS[t.key] })), w, {
+    tabsSel: '.pd-tabs', secsSel: '.pd-sections',
+    tabClass: 'pd-tab', secClass: 'pd-sec', badgeClass: 'pd-tab-badge',
+    idPrefix: 'wd',
+    buildArgs: () => [w.id],
+    initial: () => 'overview',
+  });
+  // Hash-first pills, the project page's idiom: the tab goes into the URL so Back and deep links
+  // agree with the screen; the hashchange echo lands in routeWsDetail -> activateWsTab.
+  screen.querySelector('.pd-tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('button[data-sec]');
+    if (!btn || !wsDetail) return;
+    const target = `workspaces/${wsParamFor(wsDetail.id, btn.dataset.sec)}`;
+    if (location.hash.slice(1) !== target) location.hash = target;
+  });
+}
+function activateWsTab(tab) {
+  const tabs = detailTabsOf(wsDetail && wsDetail.screen);
+  if (!tabs) return;
+  tabs.activate(tabs.cells.has(tab) ? tab : 'overview');
+}
+
+// ---- Overview tab: the stat cards, the projects, the description ----
+function buildWdOverview(sec, id) {
+  sec.innerHTML = '';
+  sec.classList.add('pd-sec-overview', 'wd-sec-overview');
+  const w = workspaceById(id);
+  if (!w) return;
+  const paths = Array.isArray(w.projectPaths) ? w.projectPaths : [];
+  const missing = Array.isArray(w.exists) ? w.exists.filter((e) => !e).length : 0;
+  const grid = document.createElement('div');
+  grid.className = 'pd-ov-grid';
+  const projCard = pdStatCard('projects', 'PROJECTS', String(paths.length), missing ? `${missing} missing on disk` : 'all on disk');
+  if (missing) projCard.querySelector('.pd-ov-sub').classList.add('pd-ov-missing');
+  grid.appendChild(projCard);
+  // The team half: one card each, filled by the scopes painters; a click lands on the Team tab.
+  for (const which of ['metrics', 'policy']) {
+    const card = pdStatCard(which, which === 'metrics' ? 'METRICS HOME' : 'POLICY HOME', '…', 'checking…', { tag: 'button' });
+    card.classList.add('pd-ov-link');
+    card.title = 'Open the Team tab';
+    card.addEventListener('click', () => { location.hash = `workspaces/${wsParamFor(id, 'team')}`; });
+    grid.appendChild(tagLevel(card, 'expert'));
+  }
+  // The date alone at card size (a full timestamp wraps to two lines); the time and the creation date ride the sub.
+  const [upDate, upTime] = w.updatedAt ? String(fmtDate(w.updatedAt)).split(', ') : ['—', ''];
+  grid.appendChild(pdStatCard('updated', 'UPDATED', upDate, [upTime, w.createdAt ? `created ${String(fmtDate(w.createdAt)).split(', ')[0]}` : ''].filter(Boolean).join(' · ')));
+  sec.appendChild(grid);
+
+  // Projects: every member once, each a hop to its project page (a registered one).
+  const members = document.createElement('section');
+  members.className = 'card wd-members';
+  const mh = document.createElement('div');
+  mh.className = 'card-head';
+  const mb = document.createElement('b'); mb.textContent = 'Projects';
+  const mc = document.createElement('span'); mc.className = 'badge'; mc.textContent = String(paths.length);
+  mh.append(mb, mc);
+  const mlist = document.createElement('div');
+  mlist.className = 'wd-member-list';
+  paths.forEach((path, i) => {
+    const key = Array.isArray(w.projectKeys) ? w.projectKeys[i] : null;
+    const proj = key ? projectByKey(key) : state.projects.find((p) => p.path === path);
+    const exists = Array.isArray(w.exists) ? w.exists[i] !== false : true;
+    const row = document.createElement(proj && proj.key ? 'button' : 'div');
+    row.className = 'wd-member';
+    if (row.tagName === 'BUTTON') { row.type = 'button'; row.dataset.key = proj.key; row.title = 'Open the project page'; }
+    const name = document.createElement('div');
+    name.className = 'wd-member-name';
+    name.textContent = (proj && proj.name) || basenameOf(path);
+    if (!exists) { const miss = document.createElement('span'); miss.className = 'proj-missing'; miss.textContent = 'missing'; name.append(' ', miss); }
+    const p = document.createElement('div');
+    p.className = 'proj-path';
+    p.textContent = path;
+    p.title = path;
+    row.append(name, p);
+    if (row.tagName === 'BUTTON') { const chev = document.createElement('span'); chev.className = 'wd-member-chev'; chev.innerHTML = CHEVRON_RIGHT_SVG; row.appendChild(chev); }
+    mlist.appendChild(row);
+  });
+  members.append(mh, mlist);
+  sec.appendChild(members);
+
+  // Description: markdown by contract (the scanner template), edited in place.
+  const desc = document.createElement('section');
+  desc.className = 'card ws-desc wd-desc';
+  const dh = document.createElement('div');
+  dh.className = 'card-head';
+  const db = document.createElement('b'); db.textContent = 'Description';
+  const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'btn-ghost btn-mini ws-edit'; edit.textContent = 'Edit description';
+  dh.append(db, edit);
+  const view = document.createElement('div');
+  view.className = 'ws-desc-view viewer';
+  if (w.description) bindMarkdown(view, w.description);
+  else { view.classList.remove('artifact-markdown'); view.textContent = '(no description yet — re-scan to generate one)'; }
+  const pane = document.createElement('div');
+  pane.className = 'ws-desc-edit';
+  pane.hidden = true;
+  pane.innerHTML = '<div class="md-tabs" role="tablist" aria-label="Description editor">'
+    + '<button type="button" class="md-tab ws-desc-tab" role="tab" data-mode="text" aria-selected="true">Text</button>'
+    + '<button type="button" class="md-tab ws-desc-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button></div>'
+    + '<textarea class="ws-desc-input textarea" rows="10" spellcheck="false"></textarea>'
+    + '<div class="ws-desc-preview md-preview viewer" hidden></div>'
+    + '<div class="actions" style="justify-content:flex-end;margin-top:10px">'
+    + '<button type="button" class="ws-desc-cancel btn btn-ghost btn-mini">Cancel</button>'
+    + '<button type="button" class="ws-desc-save btn btn-primary btn-mini">Save</button></div>';   // static markup
+  desc.append(dh, view, pane);
+  sec.appendChild(desc);
+  if (!hdMarkdown.isReady()) void bindMarkdownReady().then((ok) => { if (ok) repaintWsDescription(); });
+  void paintWsMetricsRows();
+  void paintWsPolicyLines();
+}
+// The Overview reads the workspace row; repaint it (and the header) when the row changes and
+// the tab is built. Never while the editor holds a draft — the description panel would be lost.
+function refreshWdOverview() {
+  if (!wsDetail || !wsDetail.screen) return;
+  const sec = wsDetail.screen.querySelector('.pd-sec[data-sec="overview"]');
+  if (!sec || sec.dataset.loaded !== '1') return;
+  const pane = sec.querySelector('.ws-desc-edit');
+  if (pane && !pane.hidden) return;
+  buildWdOverview(sec, wsDetail.id);
+}
+// The description is markdown; the bundle loads lazily, so the first paint may be plain. Repaint
+// the view alone once it is ready — not the page, so the editor state survives.
+function repaintWsDescription() {
+  if (!wsDetail || !wsDetail.screen) return;
+  const w = workspaceById(wsDetail.id);
+  const view = wsDetail.screen.querySelector('.ws-desc-view');
+  if (w && w.description && view && !view.classList.contains('artifact-markdown')) bindMarkdown(view, w.description);
+}
+
+// ---- Team tab: the members table with the metrics home, and the policy home line ----
+function buildWdTeam(sec, id) {
+  sec.innerHTML = '';
+  sec.classList.add('pd-sec-team', 'wd-sec-team');
+  const panel = (which, title, hint) => {
+    const card = document.createElement('section');
+    card.className = `card pd-team-card wd-team-${which}`;
+    card.dataset.workspaceId = id;
+    const head = document.createElement('div');
+    head.className = 'card-head';
+    const b = document.createElement('b'); b.textContent = title;
+    const h = document.createElement('small'); h.className = 'hint'; h.textContent = hint;
+    head.append(b, h);
+    const body = document.createElement('div');
+    body.className = 'pd-team-body';
+    body.appendChild(Object.assign(document.createElement('small'), { className: 'hint', textContent: 'checking…' }));
+    card.append(head, body);
+    return card;
+  };
+  sec.append(
+    panel('metrics', 'Team metrics', 'Where this workspace\'s runs are recorded, and what each member records.'),
+    panel('policy', 'Team policy', 'The member whose policy governs workspace runs on this machine.'),
+  );
+  const own = workspaceById(id);
+  const body = sec.querySelector('.wd-team-metrics .pd-team-body');
+  if (body && own) body.replaceChildren(renderWsMetricsPending(own, { doc: document }));
+  void paintWsMetricsRows();
+  void paintWsPolicyLines();
+}
+
+// Delegated actions on the workspace page: the metrics home sheet and routing, the policy home
+// sheet and routing, the description editor, a member row.
+if (el.wsDetail) {
+  el.wsDetail.addEventListener('click', async (e) => {
+    if (!wsDetail) return;
+    const id = wsDetail.id;
+    const w = workspaceById(id);
+    const member = e.target.closest && e.target.closest('.wd-member[data-key]');
+    if (member) { location.hash = `projects/${member.dataset.key}`; return; }
+    if (e.target.closest('.ws-home-change')) return void openWsHomeSheet(id);
+    // Team policy line (team-policy design board 6).
+    if (e.target.closest('.wsp-home-change')) return void openWsPolicyHomeSheet(id);
+    if (e.target.closest('.wsp-open')) { location.hash = `team-policy/workspace:${id}`; return; }
+    if (e.target.closest('.wsp-route')) {
+      const b = e.target.closest('.wsp-route'); b.disabled = true;
+      try {
+        const r = await fetch(`/api/workspaces/${encodeURIComponent(id)}/policy-route`, { method: 'POST' });
+        const j = await safeJson(r);
+        wsPolicyRouteResults.set(id, r.ok && j ? j : { error: j?.error || 'routing failed' });
+      } catch (err) {
+        wsPolicyRouteResults.set(id, { error: err?.message || 'routing failed' });
+      } finally {
+        b.disabled = false;
+      }
+      tpCache.at = 0;
+      await paintWsPolicyLines(true);
+      return;
+    }
     if (e.target.closest('.ws-route')) {
-      e.stopPropagation();
-      const wsId = card.dataset.workspaceId;
       const b = e.target.closest('.ws-route'); b.disabled = true;
       try {
-        const r = await fetch(`/api/workspaces/${encodeURIComponent(wsId)}/metrics-route`, { method: 'POST' });
+        const r = await fetch(`/api/workspaces/${encodeURIComponent(id)}/metrics-route`, { method: 'POST' });
         const j = await safeJson(r);
-        wsRouteResults.set(wsId, r.ok && j ? j : { error: j?.error || 'routing failed' });
+        wsRouteResults.set(id, r.ok && j ? j : { error: j?.error || 'routing failed' });
       } catch (err) {
-        wsRouteResults.set(wsId, { error: err?.message || 'routing failed' });
+        wsRouteResults.set(id, { error: err?.message || 'routing failed' });
       } finally {
         b.disabled = false;
       }
       await paintWsMetricsRows(true); // fresh counts + the saved result list
       return;
     }
-
-    if (e.target.closest('.ws-edit')) { e.stopPropagation(); openWsEdit(card, w); return; }
+    if (e.target.closest('.ws-edit')) { openWsEdit(wsDetail.screen, w); return; }
     const tab = e.target.closest('.ws-desc-tab');
-    if (tab) { e.stopPropagation(); setMdEditMode(card.querySelector('.ws-desc-edit'), tab.dataset.mode === 'preview'); return; }
-    if (e.target.closest('.ws-desc-cancel')) { e.stopPropagation(); closeWsEdit(card, w); return; }
-    if (e.target.closest('.ws-desc-save')) { e.stopPropagation(); saveWsDescription(card, w); return; }
-    if (e.target.closest('.ws-rescan')) { e.stopPropagation(); rescanWorkspace(w); return; }
-    if (e.target.closest('.ws-delete')) { e.stopPropagation(); deleteWorkspaceCard(card, w); return; }
-
-    // Header click toggles the detail pane.
-    if (e.target.closest('.ws-head')) toggleWsDetail(card);
-  });
-  el.wsList.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
-    const head = e.target.closest && e.target.closest('.ws-head');
-    if (!head) return;
-    e.preventDefault();
-    toggleWsDetail(head.closest('.ws-card'));
+    if (tab) { setMdEditMode(wsDetail.screen.querySelector('.ws-desc-edit'), tab.dataset.mode === 'preview'); return; }
+    if (e.target.closest('.ws-desc-cancel')) { closeWsEdit(wsDetail.screen); return; }
+    if (e.target.closest('.ws-desc-save')) { void saveWsDescription(wsDetail.screen, w); }
   });
 }
 
-function toggleWsDetail(card, force) {
-  if (!card) return;
-  const head = card.querySelector('.ws-head');
-  const detail = card.querySelector('.ws-detail');
-  if (!head || !detail) return;
-  const open = head.getAttribute('aria-expanded') === 'true';
-  const next = typeof force === 'boolean' ? force : !open;
-  head.setAttribute('aria-expanded', String(next));
-  detail.hidden = !next;
-  if (typeof force !== 'boolean') { try { localStorage.setItem(WS_OPEN_KEY(card.dataset.workspaceId), next ? '1' : '0'); } catch { /* private mode */ } }
-}
-
-function openWsEdit(card, w) {
-  if (!card || !w) return;
-  const detail = card.querySelector('.ws-detail');
-  const head = card.querySelector('.ws-head');
-  if (detail && head && detail.hidden) { detail.hidden = false; head.setAttribute('aria-expanded', 'true'); }
-  const pane = card.querySelector('.ws-desc-edit');
-  const input = card.querySelector('.ws-desc-input');
+function openWsEdit(screen, w) {
+  if (!screen || !w) return;
+  const pane = screen.querySelector('.ws-desc-edit');
+  const input = screen.querySelector('.ws-desc-input');
   if (input) input.value = w.description || '';
   if (pane) { pane.hidden = false; setMdEditMode(pane, false); }
   if (input) input.focus();
@@ -6480,18 +6856,18 @@ function setMdEditMode(host, preview) {
   }
 }
 
-function closeWsEdit(card) {
-  const pane = card && card.querySelector('.ws-desc-edit');
+function closeWsEdit(screen) {
+  const pane = screen && screen.querySelector('.ws-desc-edit');
   if (pane) pane.hidden = true;
 }
 
 // Save an edited description: PATCH /api/workspaces/:id { description }. JSON-safe
 // (JSON.stringify); the textarea value is read via .value, written via .textContent.
-async function saveWsDescription(card, w) {
-  if (!card || !w) return;
-  const input = card.querySelector('.ws-desc-input');
+async function saveWsDescription(screen, w) {
+  if (!screen || !w) return;
+  const input = screen.querySelector('.ws-desc-input');
   const description = input ? input.value : '';
-  const saveBtn = card.querySelector('.ws-desc-save');
+  const saveBtn = screen.querySelector('.ws-desc-save');
   if (saveBtn) saveBtn.disabled = true;
   try {
     const res = await fetch(`/api/workspaces/${encodeURIComponent(w.id)}`, {
@@ -6500,17 +6876,25 @@ async function saveWsDescription(card, w) {
       body: JSON.stringify({ description }),
     });
     const data = await safeJson(res);
-    if (!res.ok) { setWsMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    if (!res.ok) { setWdError(screen, data.error || `HTTP ${res.status}`); return; }
     const updated = data.workspace || { ...w, description };
     const i = state.workspaces.findIndex((x) => x && x.id === w.id);
     if (i >= 0) state.workspaces[i] = updated;
-    setWsMsg('Description saved.', 'ok');
-    renderWorkspaces();
+    setWdError(screen, '');
+    closeWsEdit(screen);
+    refreshWdOverview();
   } catch (err) {
-    setWsMsg(err.message, 'err');
+    setWdError(screen, err.message);
   } finally {
     if (saveBtn) saveBtn.disabled = false;
   }
+}
+// The page's own error line, on the header (the project page's .pd-error idiom).
+function setWdError(screen, text) {
+  const e = screen && screen.querySelector('.pd-error');
+  if (!e) return;
+  e.textContent = text || '';
+  e.hidden = !text;
 }
 
 // Re-scan: POST /api/workspaces/:id/scan and jump into the wizard at Step 2 with
@@ -6521,8 +6905,8 @@ async function rescanWorkspace(w) {
   state.wizard.name = w.name || '';
   state.wizard.selectedPaths = Array.isArray(w.projectPaths) ? [...w.projectPaths] : [];
   location.hash = 'workspace-create';
-  // Re-scan also refreshes member discovery (§4.8) — the card's home is changed via the card
-  // row (decision 23), not the wizard, so this fires-and-continues straight into the scan.
+  // Re-scan also refreshes member discovery (§4.8) — the home is changed from the page
+  // (decision 23), not the wizard, so this fires-and-continues straight into the scan.
   await fetch('/api/workspaces/metrics-scan', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectPaths: state.wizard.selectedPaths }),
   }).catch(() => {});
@@ -6530,32 +6914,38 @@ async function rescanWorkspace(w) {
   await startWizardScan();
 }
 
-// Delete: confirm, then DELETE. 200 removes the card + surfaces warnings; 409
-// (live run/scan) keeps the card + surfaces data.error.
-async function deleteWorkspaceCard(card, w) {
-  if (!card || !w) return;
+// Delete, from the page: confirm, then DELETE. 200 closes the page and removes the row;
+// 409 (live run/scan) keeps the page and shows data.error on its header.
+async function deleteWorkspaceFromPage(id) {
+  const w = workspaceById(id);
+  if (!w || !wsDetail) return;
+  const screen = wsDetail.screen;
+  const schedNote = await scheduleDependentsNote(`workspaceId=${encodeURIComponent(w.id)}`, 'Deleting the workspace cancels them.');
   const ok = await confirmModal({
     title: 'Delete workspace', danger: true, confirmLabel: 'Delete',
-    message: `Delete workspace "${w.name || w.id}"?\n\nThis removes its history store and best-effort branch cleanup. This cannot be undone.`,
+    message: `Delete workspace "${w.name || w.id}"?\n\nThis removes its history store and best-effort branch cleanup. This cannot be undone.${schedNote}`,
   });
-  if (!ok) return;
-  const btn = card.querySelector('.ws-delete');
+  if (!ok || !wsDetail) return;
+  const btn = screen.querySelector('.ws-delete');
   if (btn) btn.disabled = true;
   try {
     const res = await fetch(`/api/workspaces/${encodeURIComponent(w.id)}`, { method: 'DELETE' });
     const data = await safeJson(res);
-    if (res.status === 409) { setWsMsg(data.error || 'Workspace has a live run or scan.', 'err'); if (btn) btn.disabled = false; return; }
-    if (!res.ok) { setWsMsg(data.error || `HTTP ${res.status}`, 'err'); if (btn) btn.disabled = false; return; }
+    if (res.status === 409) { setWdError(screen, data.error || 'Workspace has a live run or scan.'); return; }
+    if (!res.ok) { setWdError(screen, data.error || `HTTP ${res.status}`); return; }
     state.workspaces = state.workspaces.filter((x) => !(x && x.id === w.id));
     if (state.selectedWorkspaceId === w.id) state.selectedWorkspaceId = '';
     if (localStorage.getItem(LAST_WORKSPACE_KEY) === w.id) localStorage.removeItem(LAST_WORKSPACE_KEY);
     const warnings = Array.isArray(data.warnings) ? data.warnings : [];
-    setWsMsg(warnings.length ? `Deleted. Warnings: ${warnings.join('; ')}` : 'Workspace deleted.', warnings.length ? '' : 'ok');
     renderWorkspaces();
     updateWorkspacesCount();
+    // The list entry (showView) clears the message line on the way in: route first, note after.
+    showView('workspaces', '');
+    setWsMsg(warnings.length ? `Deleted. Warnings: ${warnings.join('; ')}` : 'Workspace deleted.', warnings.length ? '' : 'ok');
   } catch (err) {
-    setWsMsg(err.message, 'err');
-    if (btn) btn.disabled = false;
+    setWdError(screen, err.message);
+  } finally {
+    if (btn && btn.isConnected) btn.disabled = false;
   }
 }
 
@@ -6766,10 +7156,11 @@ async function saveWorkspace() {
     const data = await safeJson(res);
     if (res.status === 409) { setWizMsg(data.error || 'Duplicate workspace.', 'err'); return; }
     if (!res.ok) { setWizMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    const backTo = state.wizard.editingId || (data.workspace && data.workspace.id) || '';
     resetWizard(false);
     await loadWorkspaces();
     updateWorkspacesCount();
-    location.hash = 'workspaces';
+    location.hash = backTo && state.workspaces.some((x) => x && x.id === backTo) ? `workspaces/${backTo}` : 'workspaces';
   } catch (err) {
     setWizMsg(err.message, 'err');
   } finally {
@@ -6872,7 +7263,7 @@ function onScanEvent(msg) {
 if (typeof window !== 'undefined') {
   window.__ws = {
     setRunTarget, ensureWorkspaceOptions, loadWorkspaces, loadWorkspacesView,
-    renderWorkspaces, buildWorkspaceCard, enterWizard, showWizardStep,
+    renderWorkspaces, buildWorkspaceRow, routeWsDetail, enterWizard, showWizardStep,
     renderWizardProjects, startWizardScan, saveWorkspace, abortWizardScan,
     onScanEvent, subscribeScan, setStatusText, resetWizard,
     renderWorkspaceSourceBranches,
@@ -7816,13 +8207,18 @@ function buildProjectRow(p) {
   main.append(name, path);
   row.appendChild(main);
 
-  // The team-metrics status cell (filled by paintProjectTmCells) sits between the name and the
-  // chevron; its own controls stop propagation so they never open the project page.
-  const tmSlot = document.createElement('div');
-  tmSlot.className = 'tm-slot';
-  tagLevel(tmSlot, 'expert');                  // team metrics is expert (docs/ui-levels.md)
-  tmSlot.dataset.key = p.key;
-  row.appendChild(tmSlot);
+  // The team column: two one-line chips (metrics, policy) that paintProjectTmCells /
+  // paintProjectPolicyCells fill from the scopes payloads. Status only — every control and
+  // every sentence behind a status lives on the project page's Team tab, so the row stays a
+  // row and the whole of it opens the page. Team setup is expert (docs/ui-levels.md).
+  const team = document.createElement('div');
+  team.className = 'pl-team';
+  tagLevel(team, 'expert');
+  team.dataset.key = p.key;
+  const tmChip = document.createElement('span'); tmChip.className = 'pl-team-item pl-tm';
+  const tpChip = document.createElement('span'); tpChip.className = 'pl-team-item pl-tp';
+  team.append(tmChip, tpChip);
+  row.appendChild(team);
   // A keyed row IS the control (click / Enter / Space open the project page — the History
   // card's .hist-head idiom) and carries the chevron. A keyless row (a project registered
   // outside worca's store) has no page: no role, no chevron, default cursor.
@@ -7869,27 +8265,53 @@ function renderProjectsList() {
   card.append(head, list);
   host.appendChild(card);
   paintProjectTmCells();
+  paintProjectPolicyCells();
 }
 
-// Fills the .tm-slot placeholders left by buildProjectRow. Called from renderProjectsList()
-// (NOT loadProjectsView()): deleteProject and saveProjectAdd both repaint via renderProjectsList().
+// Fills the .pl-tm chips left by buildProjectRow, and the open project page's team-metrics
+// block and Overview card. Called from renderProjectsList() (NOT loadProjectsView()):
+// deleteProject and saveProjectAdd both repaint via renderProjectsList().
 async function paintProjectTmCells(force = false) {
   const data = await loadTmScopes({ force });
   const byKey = new Map(data.projects.map((s) => [s.key, s]));
-  for (const slot of document.querySelectorAll('#projects-list .tm-slot')) {
+  for (const slot of document.querySelectorAll('#projects-list .pl-team')) {
     const s = byKey.get(slot.dataset.key);
-    slot.replaceChildren(s ? renderProjectTmCell(s, { doc: document }) : '');
+    const old = slot.querySelector('.pl-tm');
+    const next = s ? renderProjectTmChip(s, { doc: document }) : Object.assign(document.createElement('span'), { className: 'pl-team-item pl-tm' });
+    if (old) old.replaceWith(next); else slot.prepend(next);
+  }
+  paintPdTeam('metrics', byKey.get(projDetail?.key));
+}
+// The project page's side of a team status: the Team tab's block (the full cell, its controls
+// included) and the Overview's stat card. `which` is 'metrics' | 'policy'. A page that is not
+// open, or whose tab is not built yet, paints nothing — the tab builder calls back in.
+function paintPdTeam(which, s) {
+  if (!projDetail || !projDetail.screen) return;
+  const screen = projDetail.screen;
+  const body = screen.querySelector(`.pd-team-${which} .pd-team-body`);
+  if (body) {
+    if (s) body.replaceChildren(which === 'metrics' ? renderProjectTmCell(s, { doc: document, heading: false }) : renderProjectTpCell(s, { doc: document, heading: false }));
+    else body.replaceChildren(Object.assign(document.createElement('small'), { className: 'hint', textContent: which === 'metrics' ? 'Team metrics is not available for this project.' : 'Team policy is not available for this project.' }));
+  }
+  const card = screen.querySelector(`.pd-ov-card-${which}`);
+  if (card) {
+    const sum = s ? (which === 'metrics' ? projectTmSummary(s) : projectTpSummary(s)) : null;
+    card.querySelector('.pd-ov-value').textContent = sum ? capFirst(sum.short) : '—';
+    const sub = card.querySelector('.pd-ov-sub');
+    if (sub) { sub.textContent = sum ? (sum.detail || 'Open the Team tab') : 'Not available here'; sub.classList.toggle('pd-ov-attn', !!sum && (sum.tone === 'red' || sum.tone === 'amber')); }
+    card.dataset.kind = sum ? sum.kind : '';
   }
 }
+const capFirst = (t) => (t ? t[0].toUpperCase() + t.slice(1) : t);
 
 // ---------------------------------------------------------------------------
 // Project page (#projects/<key>[/memory[/<name>]]) — spec 2026-09-13-project-detail-design.md
 // ---------------------------------------------------------------------------
-// The param after "projects/" is "<key>" (Overview), "<key>/memory" (Memory tab) or
-// "<key>/memory/<enc name>" (that file open). Keys are `<slug>-<8hex>` (store.mjs#projectKey)
-// and never contain "/", so the first slash splits key from tab. An unknown tab word reads as
-// Overview (the hash is left alone, as History leaves an odd param alone).
-const PROJ_TABS = ['overview', 'memory'];
+// The param after "projects/" is "<key>" (Overview), "<key>/team" (Team tab), "<key>/memory"
+// (Memory tab) or "<key>/memory/<enc name>" (that file open). Keys are `<slug>-<8hex>`
+// (store.mjs#projectKey) and never contain "/", so the first slash splits key from tab. An
+// unknown tab word reads as Overview (the hash is left alone, as History leaves an odd param alone).
+const PROJ_TABS = ['overview', 'team', 'memory'];
 function parseProjParam(param = '') {
   const s = String(param || '');
   if (!s) return null;
@@ -7899,10 +8321,12 @@ function parseProjParam(param = '') {
   const j = rest.indexOf('/');
   const tab = j === -1 ? rest : rest.slice(0, j);
   const sub = j === -1 ? '' : rest.slice(j + 1);
-  return PROJ_TABS.includes(tab) && tab === 'memory' ? { key, tab, sub } : { key, tab: 'overview', sub: '' };
+  if (tab === 'memory') return { key, tab, sub };
+  return { key, tab: PROJ_TABS.includes(tab) && tab !== 'overview' ? tab : 'overview', sub: '' };
 }
 // The canonical param for a tab: Overview is plain '<key>', never '<key>/overview'.
 function projParamFor(key, tab = 'overview', sub = '') {
+  if (tab === 'team') return `${key}/team`;
   if (tab !== 'memory') return key;
   return sub ? `${key}/memory/${encodeURIComponent(sub)}` : `${key}/memory`;
 }
@@ -8101,10 +8525,12 @@ async function removeProjectFromPage(key) {
 const PD_TAB_ICONS = {
   overview: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>',
   memory: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"></path><path d="M4 20.5V5.5M8 7h8M8 10.5h6"></path></svg>',
+  team: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>',
 };
 // Table-driven, like HD_TABS. `build(sec, key)` takes the KEY (buildArgs), never the project object.
 const PD_TABS = [
   { key: 'overview', label: 'Overview', level: 'simple', badge: () => null, visible: () => true, build: (sec, key) => buildPdOverview(sec, key) },
+  { key: 'team', label: 'Team', level: 'expert', badge: () => null, visible: () => true, build: (sec, key) => buildPdTeam(sec, key) },
   { key: 'memory', label: 'Memory', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdMemory(sec, key) },
 ];
 function initPdTabs(screen, p) {
@@ -8191,8 +8617,49 @@ function buildPdOverview(sec, key) {
     grid.appendChild(pdStatCard('last', 'LAST RUN', '—', 'No runs yet'));
   }
   grid.appendChild(tagLevel(pdStatCard('key', 'KEY', p.key, `memory scope projects/${p.key}`), 'expert'));
+  // The team half (docs/team-metrics.md, docs/team-policy.md): one card each, filled by the
+  // scopes painters, and a click lands on the Team tab where the controls are.
+  for (const which of ['metrics', 'policy']) {
+    const card = pdStatCard(which, which === 'metrics' ? 'TEAM METRICS' : 'TEAM POLICY', '…', 'checking…', { tag: 'button' });
+    card.classList.add('pd-ov-link');
+    card.title = 'Open the Team tab';
+    card.addEventListener('click', () => { location.hash = `projects/${projParamFor(key, 'team')}`; });
+    grid.appendChild(tagLevel(card, 'expert'));
+  }
   sec.appendChild(grid);
   ensureHistoryLoaded();
+  void paintProjectTmCells();
+  void paintProjectPolicyCells();
+}
+
+// ---- Team tab ----
+// Two panels, one per feature, each holding the same block the Projects list used to carry per
+// row — status, sentence, and the controls (Set up…, Include my runs, Push now, Open, Change…).
+// The blocks are painted by the scopes painters, which also keep the list chips in step.
+function buildPdTeam(sec, key) {
+  sec.innerHTML = '';
+  sec.classList.add('pd-sec-team');
+  const panel = (which, title, hint) => {
+    const card = document.createElement('section');
+    card.className = `card pd-team-card pd-team-${which}`;
+    card.dataset.key = key;
+    const head = document.createElement('div');
+    head.className = 'card-head';
+    const b = document.createElement('b'); b.textContent = title;
+    const h = document.createElement('small'); h.className = 'hint'; h.textContent = hint;
+    head.append(b, h);
+    const body = document.createElement('div');
+    body.className = 'pd-team-body';
+    body.appendChild(Object.assign(document.createElement('small'), { className: 'hint', textContent: 'checking…' }));
+    card.append(head, body);
+    return card;
+  };
+  sec.append(
+    panel('metrics', 'Team metrics', 'Finished runs recorded on a shared worca-metrics branch, for the whole team.'),
+    panel('policy', 'Team policy', 'Caps, plugins and models the team expects, read from a worca-policy branch.'),
+  );
+  void paintProjectTmCells();
+  void paintProjectPolicyCells();
 }
 
 // A deep link into a project page can land before the socket's `hello` background-loads History;
@@ -8343,12 +8810,28 @@ function promptModal({ confirmLabel = 'Save', fields = [], ...rest } = {}) {
   return modalShell({ ...rest, confirmLabel, fields });
 }
 
+// Scheduled runs that depend on something about to be removed — so the confirmation can NAME
+// them. `query` is one of workflowId= / projectDir= / workspaceId=. Never blocks the removal:
+// a failed lookup just omits the note.
+async function scheduleDependentsNote(query, consequence) {
+  try {
+    const res = await fetch(`/api/schedules/dependents?${query}`);
+    if (!res.ok) return '';
+    const { dependents } = await safeJson(res);
+    if (!Array.isArray(dependents) || !dependents.length) return '';
+    const names = dependents.slice(0, 4).map((d) => `“${d.title || (d.kind === 'recurring' ? 'repeating schedule' : 'scheduled run')}”`).join(', ');
+    const more = dependents.length > 4 ? ` and ${dependents.length - 4} more` : '';
+    return `\n\n${dependents.length === 1 ? 'A scheduled run depends' : `${dependents.length} scheduled runs depend`} on it: ${names}${more}. ${consequence}`;
+  } catch { return ''; }
+}
+
 // Remove a project. Returns true when the registry changed, false on cancel or failure. `errEl`
 // (the project page's .pd-error) takes the failure text when given; the list message otherwise.
 async function deleteProject(p, errEl = null) {
+  const schedNote = await scheduleDependentsNote(`projectDir=${encodeURIComponent(p.path || '')}`, 'Removing the project cancels them.');
   const ok = await confirmModal({
     title: 'Remove project',
-    message: `Remove “${p.name}” from the list?\nThe folder on disk and its run history are left untouched.`,
+    message: `Remove “${p.name}” from the list?\nThe folder on disk and its run history are left untouched.${schedNote}`,
     confirmLabel: 'Remove project',
   });
   if (!ok) return false;
@@ -8439,21 +8922,7 @@ if (el.projectsList) {
     projReturnFocus = item.dataset.key;                 // Back / Esc come home to this row
     location.hash = `projects/${item.dataset.key}`;
   };
-  el.projectsList.addEventListener('click', async (e) => {
-    const tmCell = e.target.closest('.tm-cell');
-    if (tmCell) {
-      const key = tmCell.dataset.key;
-      if (e.target.closest('.tm-enable')) { e.stopPropagation(); return void openTmEnableDialog(key, { mode: 'here' }); }
-      if (e.target.closest('.tm-change')) { e.stopPropagation(); return void openTmEnableDialog(key, { mode: 'delegate', change: true }); }
-      if (e.target.closest('.tm-push')) {
-        e.stopPropagation();
-        const s = tmCache.data?.projects.find((x) => x.key === key);
-        const btnEl = e.target.closest('.tm-push'); btnEl.disabled = true;
-        await fetch('/api/team-metrics/flush', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s?.sinkSlug ? { slug: s.sinkSlug } : { scope: `project:${key}` }) }).catch(() => {});
-        return void paintProjectTmCells(true);
-      }
-      return; // clicks elsewhere in the cell (labels, the switch) are handled by 'change'
-    }
+  el.projectsList.addEventListener('click', (e) => {
     const row = e.target.closest && e.target.closest('.pl-row[role="button"]');
     if (row) openRow(row);                              // a chevron click bubbles here too — one open
   });
@@ -8465,9 +8934,37 @@ if (el.projectsList) {
     openRow(row);
   });
 
-  // Second listener, same guard. 'change' (not click) for the switch — a checkbox inside a <label>.
-  el.projectsList.addEventListener('change', async (e) => {
-    const cb = e.target.closest('input.tm-record');
+}
+// The project page's Team tab: the metrics and policy blocks' controls. Delegated on the detail
+// screen (the page is rebuilt per project), the same keys the list cells used to answer to.
+if (el.projDetail) {
+  el.projDetail.addEventListener('click', async (e) => {
+    // Team policy block FIRST: it shares the .tm-cell grid class, so the metrics branch below
+    // would otherwise swallow its clicks.
+    const tpCell = e.target.closest && e.target.closest('.tp-cell');
+    if (tpCell) {
+      const key = tpCell.dataset.key;
+      if (e.target.closest('.tp-enable')) return void openPolicyEnableDialog(key, { mode: 'here' });
+      if (e.target.closest('.tp-change')) return void openPolicyEnableDialog(key, { mode: 'follow', change: true });
+      if (e.target.closest('.tp-open')) { location.hash = `team-policy/project:${key}`; return; }
+      return;
+    }
+    const tmCell = e.target.closest && e.target.closest('.tm-cell');
+    if (!tmCell) return;
+    const key = tmCell.dataset.key;
+    if (e.target.closest('.tm-enable')) return void openTmEnableDialog(key, { mode: 'here' });
+    if (e.target.closest('.tm-change')) return void openTmEnableDialog(key, { mode: 'delegate', change: true });
+    if (e.target.closest('.tm-push')) {
+      const s = tmCache.data?.projects.find((x) => x.key === key);
+      const btnEl = e.target.closest('.tm-push'); btnEl.disabled = true;
+      await fetch('/api/team-metrics/flush', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s?.sinkSlug ? { slug: s.sinkSlug } : { scope: `project:${key}` }) }).catch(() => {});
+      return void paintProjectTmCells(true);
+    }
+    // clicks elsewhere in the block (labels, the switch) are handled by 'change'
+  });
+  // 'change' (not click) for the switch — a checkbox inside a <label>.
+  el.projDetail.addEventListener('change', async (e) => {
+    const cb = e.target.closest && e.target.closest('input.tm-record');
     if (!cb) return;
     cb.disabled = true;
     const r = await fetch(`/api/projects/${encodeURIComponent(cb.dataset.key)}/team-metrics`, {
@@ -8790,11 +9287,17 @@ el.form.addEventListener('submit', async (e) => {
     body.prompt = promptText;
   }
 
+  // A time picked earlier (Schedule… in the split menu, Schedules › Schedule a run, Change…)
+  // rides the same POST /api/run body — `scheduledFor` (once) or `repeat` (recurring).
+  const scheduling = !!pendingSchedule;
+  if (scheduling) Object.assign(body, pendingSchedule);
+
   // Guard the whole in-flight window: applyBudgetToNewView also drives
   // start.disabled, and this run's own creation event repaints it.
   startSubmitInFlight = true;
   el.startBtn.disabled = true;
-  setFormMsg('Starting run...', '');
+  if (el.startMore) el.startMore.disabled = true;
+  setFormMsg(scheduling ? 'Scheduling…' : 'Starting run...', '');
 
   // Upload the selected extra files' bytes; the server writes them to a temp
   // dir and the orchestrator copies them into the pipeline's extras/ folder.
@@ -8807,16 +9310,38 @@ el.form.addEventListener('submit', async (e) => {
   if (extras.length) body.extras = extras;
 
   try {
-    const res = await fetch('/api/run', {
+    let res = await fetch('/api/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    const data = await safeJson(res);
+    let data = await safeJson(res);
+    // Team total cap (team-policy design §7, board 9): soft — ask once, resend with the
+    // acknowledgement (and its reason) recorded; a required reason re-asks.
+    if (!res.ok && data && (data.needsPolicyAck || data.code === 'reason_required')) {
+      const choice = await policyRefusalRetry(data, res.status);
+      if (choice) {
+        res = await fetch('/api/run', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...body, pastTeamCap: true, ...(choice.reason ? { policyReason: choice.reason } : {}) }),
+        });
+        data = await safeJson(res);
+      }
+    }
+    if (el.startMore) el.startMore.disabled = false;
     if (!res.ok || !data.runId) {
       startSubmitInFlight = false;
       el.startBtn.disabled = false;
-      return setFormMsg(`Failed to start: ${data.error || res.status}`, 'err');
+      return setFormMsg(`Failed to ${scheduling ? 'schedule' : 'start'}: ${data.error || res.status}`, 'err');
+    }
+    // 202: nothing is running — the request is a ticket now. Show it where it lives.
+    if (data.status === 'scheduled') {
+      startSubmitInFlight = false;
+      el.startBtn.disabled = !!budgetState.budget?.blocked;
+      setPendingSchedule(null);   // the form is a plain Start run form again
+      setFormMsg(data.budgetWarning ? `Scheduled. ${data.budgetWarning}` : 'Scheduled.', data.budgetWarning ? 'warn' : 'ok');
+      showView('schedules');
+      return;
     }
 
     // begin tracking the new run (creates a local model + switches to Running)
@@ -8838,9 +9363,84 @@ el.form.addEventListener('submit', async (e) => {
   } catch (err) {
     startSubmitInFlight = false;
     el.startBtn.disabled = false;
+    if (el.startMore) el.startMore.disabled = false;
     setFormMsg(`Error: ${err.message}`, 'err');
   }
 });
+
+// The split Start button's menu. "Schedule…" is a MODE, not a submit: it opens the sheet at
+// once, before any prompt is typed, exactly like Schedules › Schedule a run (#new/schedule).
+// A time picked before the task waits on the form; Change… on the line re-opens the sheet.
+// The sheet's answer waits on the
+// form ({scheduledFor}|{repeat}, ifMissed, graceMin) and Start run reads as Schedule until it
+// is used or dropped. Never persisted: a reload is a plain form.
+let pendingSchedule = null;
+const newScheduleSheetOpts = (runTitle = '') => ({
+  mode: 'create', runTitle, defaults: schedulesView.defaults,
+  warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer — chat notifications can reach you.',
+});
+const pendingScheduleInitial = () => (pendingSchedule
+  ? (pendingSchedule.repeat
+    ? { rule: pendingSchedule.repeat.rule, overlap: pendingSchedule.repeat.overlap, maxFailures: pendingSchedule.repeat.maxFailures, ifMissed: pendingSchedule.ifMissed, graceMin: pendingSchedule.graceMin }
+    : { scheduledFor: pendingSchedule.scheduledFor, ifMissed: pendingSchedule.ifMissed, graceMin: pendingSchedule.graceMin })
+  : {});
+function setPendingSchedule(pick) {
+  pendingSchedule = pick || null;
+  if (!el.newSched) return;
+  el.newSched.hidden = !pendingSchedule;
+  if (el.startBtnLabel) el.startBtnLabel.textContent = pendingSchedule ? 'Schedule' : 'Start run';
+  const play = document.getElementById('start-btn-play');
+  const clock = document.getElementById('start-btn-clock');
+  // toggleAttribute, not .hidden: an <svg> is not an HTMLElement, so the property is a no-op on it.
+  if (play) play.toggleAttribute('hidden', !!pendingSchedule);
+  if (clock) clock.toggleAttribute('hidden', !pendingSchedule);
+  if (!pendingSchedule) return;
+  if (pendingSchedule.repeat) {
+    el.newSchedBadge.textContent = 'Repeats';
+    el.newSchedText.textContent = describeRule(pendingSchedule.repeat.rule);
+  } else {
+    const ms = Date.parse(pendingSchedule.scheduledFor);
+    el.newSchedBadge.textContent = 'Scheduled';
+    el.newSchedText.textContent = Number.isFinite(ms) ? `Starts ${formatInstant(ms, browserTimeZone())}` : 'Starts later';
+  }
+}
+/** Schedules › Schedule a run (#new/schedule): pick the time first, then describe the task. */
+async function openScheduleForNew() {
+  const el0 = el.prompt;
+  const titleEl = document.getElementById('title');
+  const runTitle = titleEl && typeof titleEl.value === 'string' ? titleEl.value.trim() : '';
+  const picked = await openScheduleSheet({ ...newScheduleSheetOpts(runTitle), initial: pendingScheduleInitial() });
+  if (picked) setPendingSchedule(picked);
+  try { el0?.focus(); } catch { /* jsdom */ }
+}
+el.newSchedChange?.addEventListener('click', () => { void openScheduleForNew(); });
+el.newSchedClear?.addEventListener('click', () => setPendingSchedule(null));
+function closeStartMenu() {
+  if (!el.startMenu || el.startMenu.hidden) return;
+  el.startMenu.hidden = true;
+  el.startMore?.setAttribute('aria-expanded', 'false');
+}
+if (el.startMore && el.startMenu) {
+  el.startMore.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = el.startMenu.hidden;
+    el.startMenu.hidden = !open;
+    el.startMore.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) el.startMenuSchedule?.focus();
+  });
+  el.startMenuNow?.addEventListener('click', () => { closeStartMenu(); setPendingSchedule(null); el.form.requestSubmit(el.startBtn); });
+  el.startMenuSchedule?.addEventListener('click', () => { closeStartMenu(); void openScheduleForNew(); });
+  document.addEventListener('click', (e) => { if (!e.target.closest('#start-split')) closeStartMenu(); });
+  el.startMenu.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); closeStartMenu(); el.startMore.focus(); }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const items = [...el.startMenu.querySelectorAll('button')];
+      const i = items.indexOf(document.activeElement);
+      items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
+    }
+  });
+}
 
 // Create the local run model for a run THIS tab just started and switch to the
 // Running view. We do NOT send a subscribe here: live events arrive via the
@@ -8864,6 +9464,7 @@ function beginRun(runId, projectDir, title, opts = {}) {
   });
   hideViewer();
   updateNavCounts();
+  gs.startedRunId = runId;   // the Getting-started tours end on THIS run's card
   showView('running');
   renderRunningView();
 }
@@ -8933,10 +9534,12 @@ async function loadSettings() {
     paintAbout(data.app);
     paintBudgetSettings(data);
     paintAskSettings(data);
+    paintScheduleSettings(data);
     paintDebugSpawnSettings(data);
     await paintTitleModelSettings(data);
     await paintAutoModelSettings(data);
     paintBudgetReadout();
+    paintTeamCapsReadout();                 // team policy (design board 7): each home's caps, read-only
     refreshBudget();
     paintChatSettings(data.chat);
     loadAskHistory();
@@ -9317,6 +9920,36 @@ try {
   if (mq && typeof mq.addEventListener === 'function') mq.addEventListener('change', () => applyTheme(document.documentElement.dataset.theme));
 } catch { /* no media queries here */ }
 
+// Settings › General › Scheduled runs: the defaults a new schedule inherits.
+function setSchedDefaultsMsg(text, kind) { setHintMsg('schedDefaultsMsg', text, kind); }
+function paintScheduleSettings(data) {
+  const d = data && data.schedule;
+  const missed = document.getElementById('schedIfMissed');
+  const grace = document.getElementById('schedGraceMin');
+  const fails = document.getElementById('schedMaxFailures');
+  if (!d || !missed || !grace || !fails) return;
+  missed.value = d.ifMissed;
+  if (![...grace.options].some((o) => o.value === String(d.graceMin))) grace.add(new Option(`${d.graceMin} minutes`, String(d.graceMin)));
+  grace.value = String(d.graceMin);
+  grace.disabled = d.ifMissed !== 'run';
+  fails.value = String(d.maxFailures);
+}
+function saveScheduleDefaults() {
+  const raw = document.getElementById('schedMaxFailures').value.trim();
+  const n = raw === '' ? '' : Number(raw);
+  if (n !== '' && (!Number.isInteger(n) || n < 0 || n > 100)) { setSchedDefaultsMsg('enter a whole number from 0 to 100', 'err'); return; }
+  postSettingsCard({
+    schedule: { ifMissed: document.getElementById('schedIfMissed').value, graceMin: Number(document.getElementById('schedGraceMin').value), maxFailures: n },
+  }, { setMsg: setSchedDefaultsMsg, paint: paintScheduleSettings });
+}
+document.getElementById('schedDefaultsSave')?.addEventListener('click', saveScheduleDefaults);
+document.getElementById('schedDefaultsReset')?.addEventListener('click', () => postSettingsCard(
+  { schedule: { ifMissed: '', graceMin: '', maxFailures: '' } }, { setMsg: setSchedDefaultsMsg, paint: paintScheduleSettings }));
+document.getElementById('schedIfMissed')?.addEventListener('change', (e) => {
+  const grace = document.getElementById('schedGraceMin');
+  if (grace) grace.disabled = e.target.value !== 'run';
+});
+
 function setAskLimitsMsg(text, kind) { setHintMsg('askLimitsMsg', text, kind); }
 function paintAskSettings(data) {
   const turns = document.getElementById('askMaxTurns');
@@ -9494,7 +10127,8 @@ function buildTitleModelOptions(sel, stored) {
     for (const m of xs) og.appendChild(option(m.id, (m.label || m.id) + (m.custom === 'plugin' && m.plugin ? ` (${m.plugin})` : '')));
     sel.appendChild(og);
   };
-  group('Your models', models.filter((m) => m.custom && m.custom !== 'plugin').sort(byLabel));
+  group('Your models', models.filter((m) => m.custom && m.custom !== 'plugin' && m.custom !== 'policy').sort(byLabel));
+  group('Team policy', models.filter((m) => m.custom === 'policy').sort(byLabel));
   group('From plugins', models.filter((m) => m.custom === 'plugin').sort(byLabel));
   group('Built-in', models.filter((m) => !m.custom).sort(byLabel));
   if (stored && !models.some((m) => m.id === stored)) {
@@ -9783,6 +10417,7 @@ async function loadPluginsView({ refresh = false } = {}) {
     renderMarketplaceSections(mRes.ok ? mData.marketplaces || [] : []);
   } catch (e) { setPluginsMsg(e.message, 'err'); }
   if (refresh) refreshMarketplacesInBackground(); // C3: only the view-open path kicks the background refresh
+  paintPluginsPolicy(refresh);                   // team policy (design board 10): the required-by strip
 }
 
 // Stale-while-revalidate (spec §4.6): render cached snapshots instantly, then
@@ -9953,7 +10588,10 @@ async function connectPluginSource(name, sourceId, slot, profile) {
 
 // profile: which configuration of a multiProfile source to echo. Absent = the
 // server's pick (the first in the roster), which is what opening from the list does.
-async function openPluginSettings(name, profile) {
+// seeds: the team policy's non-secret values for this plugin (docs/team-policy.md "Plugins"),
+// filled into fields that are still blank — never over a stored value, never a secret — and
+// saved only when the user saves.
+async function openPluginSettings(name, profile, { seeds = null } = {}) {
   const qs = profile ? `?profile=${encodeURIComponent(profile)}` : '';
   const { ok, data } = await pluginApi('GET', `/api/plugins/${encodeURIComponent(name)}/config${qs}`);
   if (!ok) return setPluginsMsg(data.error || 'config load failed', 'err');
@@ -9961,6 +10599,23 @@ async function openPluginSettings(name, profile) {
   const sources = Array.isArray(data.sources) ? data.sources
     : [{ id: data.sourceId || '', schema: data.schema || [], values: data.values || {} }];
   const body = renderConfigForm({ sources, channels: data.channels || [] });
+  if (seeds && typeof seeds === 'object') {
+    const filled = [];
+    for (const input of body.querySelectorAll('.pl-config-form input[data-key], .pl-config-form select[data-key]')) {
+      const key = input.dataset.key;
+      if (!(key in seeds) || input.type === 'password' || input.dataset.set === '1') continue;
+      if (String(input.value || '').trim()) continue;
+      input.value = String(seeds[key]);
+      input.dataset.seeded = '1';
+      filled.push(key);
+    }
+    if (filled.length) {
+      const note = document.createElement('p');
+      note.className = 'hint pl-seeded-note';
+      note.textContent = `${filled.join(', ')} filled in from the team policy — Save keeps them. Secrets are yours to enter.`;
+      body.prepend(note);
+    }
+  }
   // Model secrets (design §9.7): one extra form, marked with data-target so the
   // save loop routes it through the { target: 'modelSecrets' } write.
   if (data.models && Array.isArray(data.models.schema) && data.models.schema.length) {
@@ -10619,7 +11274,7 @@ async function loadGuardrailsView(param = '') {
     el.guardrailsList.replaceChildren(renderGuardrailList(grvState.sets));
     if (param) {
       const set = grvState.sets.find((s) => s.id === param);
-      if (set) { openGuardrailWizard(set.origin === 'builtin' ? 'view' : 'edit', set); return; }
+      if (set) { openGuardrailWizard(isReadOnlyGuardrailSet(set) ? 'view' : 'edit', set); return; }
       setGuardrailsMsg(`guardrail set "${param}" not found`, 'err');
     }
     if (grvState.wizard) { // no fresh wizard opened above: close any stale one (browser Back / bad id)
@@ -10661,6 +11316,7 @@ function renderModelsViewBody() {
     globals: d.models || [],
     legacy,
     plugins: d.plugin || [],
+    policy: d.policy || [],
     predefined: d.predefined || [],
     efforts: d.efforts || [],
     hideBuiltin: !!d.hideBuiltinModels,
@@ -11373,7 +12029,7 @@ async function confirmCostOverride(runId, btn) {
   if (ok) resumeRunFromCard(runId, btn, { ignoreCostCap: true });
 }
 
-async function resumeRunFromCard(runId, btn, { ignoreCostCap = false } = {}) {
+async function resumeRunFromCard(runId, btn, { ignoreCostCap = false, pastTeamCap = false, policyReason = null } = {}) {
   const r = runs.get(runId);
   if (!r || !isPaused(r)) return;
   const pipelineId = r.pipelineId;
@@ -11390,10 +12046,15 @@ async function resumeRunFromCard(runId, btn, { ignoreCostCap = false } = {}) {
     const res = await fetch('/api/resume', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pipelineId, ...(ignoreCostCap ? { ignoreCostCap: true } : {}) }),
+      body: JSON.stringify({ pipelineId, ...(ignoreCostCap ? { ignoreCostCap: true } : {}), ...(pastTeamCap ? { pastTeamCap: true, ...(policyReason ? { policyReason } : {}) } : {}) }),
     });
     const data = await safeJson(res);
-    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    if (!res.ok) {
+      // A team cap (team-policy design §7): soft — ask, then resume again with the choice recorded.
+      const again = await policyRefusalRetry(data, res.status);
+      if (again) { if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; } return resumeRunFromCard(runId, btn, { ignoreCostCap, pastTeamCap: true, policyReason: again.reason }); }
+      throw new Error((data && data.error) || `HTTP ${res.status}`);
+    }
     upsertRun({
       runId: data.runId,
       title: r.title || pipelineId,
@@ -11455,6 +12116,14 @@ if (runListEl) {
       return;
     }
     if (e.target.closest && e.target.closest('.cb-settings')) { location.hash = 'settings'; return; }
+    // Team-cap banner (team-policy design board 9): continue past, or open the page.
+    const pastBtn = e.target.closest && e.target.closest('.cb-past-team-cap');
+    if (pastBtn) {
+      const runId = pastBtn.closest('.run-card')?.dataset.runId;
+      if (runId) confirmPastTeamCap(runId, pastBtn);
+      return;
+    }
+    if (e.target.closest && e.target.closest('.cb-policy-open')) { location.hash = 'team-policy'; return; }
     const sw = e.target.closest && e.target.closest('.switch.autoscroll');
     if (sw) {
       const card = sw.closest('.run-card');
@@ -11754,6 +12423,614 @@ async function loadTmScopes({ force = false } = {}) {
   return p;
 }
 
+// ---- Team policy (team-policy design §11) --------------------------------------------------
+// One scopes payload serves the Projects cells, the workspace cards, the Settings readout, the
+// Plugins strip and the page's scope list — the tmCache idiom, on /api/policy/scopes.
+const tpCache = { data: null, at: 0, inflight: null, gen: 0 };
+const TP_EMPTY = () => ({ projects: [], workspaces: [], scopes: { projects: [], workspaces: [] }, homes: [], requirements: [], blockedPlugins: [], anyEnabled: false });
+async function loadTpScopes({ force = false } = {}) {
+  if (!force && tpCache.data && Date.now() - tpCache.at < 15_000) return tpCache.data;
+  if (!force && tpCache.inflight) return tpCache.inflight;
+  const gen = ++tpCache.gen;
+  const p = fetch('/api/policy/scopes')
+    .then((r) => safeJson(r))
+    .then((d) => {
+      const v = d && Array.isArray(d.projects) ? d : TP_EMPTY();
+      if (gen === tpCache.gen) { tpCache.data = v; tpCache.at = Date.now(); }
+      return v;
+    })
+    .catch(() => tpCache.data || TP_EMPTY())
+    .finally(() => { if (tpCache.inflight === p) tpCache.inflight = null; });
+  tpCache.inflight = p;
+  return p;
+}
+
+// Projects list: fills the .tp-slot placeholders left by buildProjectRow (board 2).
+async function paintProjectPolicyCells(force = false) {
+  const data = await loadTpScopes({ force });
+  const byKey = new Map(data.projects.map((s) => [s.key, s]));
+  for (const slot of document.querySelectorAll('#projects-list .pl-team')) {
+    const s = byKey.get(slot.dataset.key);
+    const old = slot.querySelector('.pl-tp');
+    const next = s ? renderProjectTpChip(s, { doc: document }) : Object.assign(document.createElement('span'), { className: 'pl-team-item pl-tp' });
+    if (old) old.replaceWith(next); else slot.append(next);
+  }
+  paintPdTeam('policy', byKey.get(projDetail?.key));
+}
+
+// "Set up team policy…" / "Change…" dialog (board 3). Reuses the generic slot modal; the body
+// re-renders when the "Where the policy lives" radio changes.
+async function openPolicyEnableDialog(projectKeyStr, { mode = 'here', change = false } = {}) {
+  const data = await loadTpScopes({ force: true });
+  const s = data.projects.find((x) => x.key === projectKeyStr);
+  if (!s) return;
+  const candidates = data.projects
+    .filter((x) => x.key !== s.key && x.carries && !x.blocked)
+    .map((x) => ({ slug: x.slug, label: `${x.slug}${x.title ? ` · ${x.title}` : ''}${x.fieldCount ? ` · ${x.fieldCount} field${x.fieldCount === 1 ? '' : 's'}` : ''}` }));
+  // The metrics delegate, when it carries a policy, is the natural home: preselect it.
+  let metricsFollow = null;
+  try { const tm = (await loadTmScopes()).projects.find((x) => x.key === s.key); metricsFollow = tm?.delegateTo || null; } catch { /* optional */ }
+  const view = { project: { ...s, metricsFollow }, origin: s.origin || s.slug, candidates, mode, change };
+  const holder = document.createElement('div');
+  const errEl = document.createElement('small'); errEl.className = 'hint err tm-enable-err'; errEl.hidden = true;
+  const paint = () => holder.replaceChildren(renderPolicyEnableDialogBody(view, { doc: document }), errEl);
+  paint();
+  holder.addEventListener('change', (e) => {
+    if (e.target.name === 'tp-where') {
+      view.mode = e.target.value;
+      paint();
+      holder.querySelector(`input[name="tp-where"][value="${view.mode}"]`)?.focus();
+      const b = document.querySelector('#plugin-modal .tp-enable-submit');
+      if (b) b.textContent = view.mode === 'follow' ? 'Create marker and follow' : 'Create branch and enable';
+    }
+  });
+  let submitting = false;
+  const submit = async () => {
+    if (submitting) return false;
+    submitting = true;
+    const btnEl = document.querySelector('#plugin-modal .tp-enable-submit');
+    if (btnEl) btnEl.disabled = true;
+    const done = (v) => { submitting = false; if (btnEl) btnEl.disabled = false; return v; };
+    const target = holder.querySelector('select.tp-follow-target');
+    if (view.mode === 'follow' && !(target && target.value)) {
+      errEl.hidden = false; errEl.textContent = 'No project on this machine carries a team policy yet — set one up first, then follow it.';
+      return done(false);
+    }
+    const body = view.mode === 'follow' ? { mode: 'follow', delegateTo: target.value, change } : { mode: 'here' };
+    let r; let j = null;
+    try {
+      r = await fetch(`/api/projects/${encodeURIComponent(s.key)}/policy/enable`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      j = await safeJson(r);
+    } catch (err) {
+      errEl.hidden = false; errEl.textContent = err?.message || 'Could not reach the Worca server';
+      return done(false);
+    }
+    if (!r.ok) {
+      errEl.hidden = false;
+      errEl.textContent = [j?.error, j?.stderr && j.stderr.trim(), j?.hint].filter(Boolean).join(' · ');
+      return done(false);
+    }
+    closePluginModal();
+    tpCache.at = 0;
+    await paintProjectPolicyCells(true);
+    // A fresh home starts empty: land on its page so the editor is one click away.
+    if (j?.action === 'created' && view.mode === 'here') location.hash = `team-policy/project:${s.key}`;
+    return done(true);
+  };
+  pluginModal('Set up team policy', holder, [
+    ['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()],
+    [view.mode === 'follow' ? 'Create marker and follow' : 'Create branch and enable', 'btn btn-primary btn-mini tp-enable-submit', submit],
+  ]);
+}
+
+// Workspace cards (board 6): the policy home line per card + the home sheet + routing.
+const wsPolicyRouteResults = new Map();
+async function paintWsPolicyLines(force = false) {
+  const data = await loadTpScopes({ force });
+  const byId = new Map(data.workspaces.map((w) => [w.id, w]));
+  if (!wsDetail || !wsDetail.screen) return;
+  const screen = wsDetail.screen;
+  const w = byId.get(wsDetail.id);
+  const body = screen.querySelector('.wd-team-policy .pd-team-body');
+  if (body) {
+    if (!w) body.replaceChildren(Object.assign(document.createElement('small'), { className: 'hint', textContent: 'No member of this workspace carries a team policy yet — set one up from a project\'s page.' }));
+    else {
+      const slot = document.createElement('div');
+      slot.className = 'ws-policy';
+      slot.appendChild(renderWsPolicyLine(w, { doc: document }));
+      body.replaceChildren(slot);
+      const saved = wsPolicyRouteResults.get(w.id);
+      const out = slot.querySelector('.ws-policy-results');
+      if (saved && out) {
+        out.replaceChildren(saved.error
+          ? Object.assign(document.createElement('small'), { className: 'hint err', textContent: saved.error })
+          : renderRouteResults(saved, { doc: document }));
+      }
+    }
+  }
+  const card = screen.querySelector('.pd-ov-card-policy');
+  if (card) {
+    const home = (w && w.home) || { state: 'unset' };
+    card.querySelector('.pd-ov-value').textContent = home.state === 'unset' ? 'No home' : home.slug;
+    const sub = card.querySelector('.pd-ov-sub');
+    sub.textContent = home.state === 'unset' ? 'your settings apply to workspace runs'
+      : home.state !== 'ok' ? (home.detail || 'the policy home is stale')
+        : home.follows ? `via ${home.follows}` : 'governs workspace runs';
+    sub.classList.toggle('pd-ov-attn', home.state !== 'unset' && home.state !== 'ok');
+  }
+}
+const WS_POLICY_STATE_TEXT = {
+  home: 'policy home of this workspace', 'is-home': 'carries the policy', 'follows-home': 'follows the home', 'follows-other': 'follows another home',
+  own: 'carries its own policy', none: 'no worca-policy branch', 'no-origin': 'no origin remote',
+};
+async function openWsPolicyHomeSheet(workspaceId) {
+  const w = (await loadTpScopes({ force: true })).workspaces.find((x) => x.id === workspaceId);
+  if (!w) return;
+  const holder = document.createElement('div');
+  const list = document.createElement('div'); list.className = 'wiz-list tm-home-list';
+  for (const m of w.members || []) {
+    const eligible = m.state !== 'none' && m.state !== 'no-origin';
+    const row = document.createElement('div'); row.className = `wiz-row${eligible ? '' : ' off'}`;
+    const label = document.createElement('label'); label.className = 'wiz-row-pick';
+    const r = document.createElement('input'); r.type = 'radio'; r.name = 'tp-home'; r.value = m.path; r.checked = !!w.home?.path && w.home.path === m.path; r.disabled = !eligible;
+    const name = document.createElement('span'); name.className = 'wiz-row-name mono'; name.textContent = m.slug;
+    label.append(r, name);
+    const status = document.createElement('span'); status.className = 'wiz-row-status';
+    status.append(WS_POLICY_STATE_TEXT[m.state] || m.state);
+    if (m.policyFrom && m.state !== 'home') status.append(' · ', Object.assign(document.createElement('b'), { className: 'ref mono', textContent: m.policyFrom }));
+    row.append(label, status);
+    list.append(row);
+  }
+  const hint = document.createElement('small'); hint.className = 'hint';
+  hint.textContent = 'A member that carries a policy or follows one. Workspace runs use that policy\'s values for workspace runs. The choice lives on this machine; teammates pick their own.';
+  const errEl = document.createElement('small'); errEl.className = 'hint err tm-enable-err'; errEl.hidden = true;
+  holder.append(list, hint, errEl);
+  const patch = async (policyProject) => {
+    const r = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ policyProject }) }).catch(() => null);
+    const j = r ? await safeJson(r) : null;
+    if (!r || !r.ok) { errEl.hidden = false; errEl.textContent = j?.error || 'could not save the policy home'; return; }
+    closePluginModal();
+    tpCache.at = 0;
+    await paintWsPolicyLines(true);
+  };
+  pluginModal('Choose policy home', holder, [
+    ['Cancel', 'btn btn-ghost btn-mini', () => closePluginModal()],
+    ['Clear home', 'btn btn-ghost btn-mini', () => patch(null)],
+    ['Use this home', 'btn btn-primary btn-mini', () => { const picked = holder.querySelector('input[name="tp-home"]:checked'); if (picked) patch(picked.value); }],
+  ]);
+}
+
+// The Team policy page (boards 4–5): read mode by default, the editor behind "Edit policy".
+const tpState = { scopeId: localStorage.getItem('worca.teamPolicy.scope') || '', data: null, loadSeq: 0, editing: false, showAll: false, notice: null, tab: 'policy', checking: false };
+const semverGte = (a, b) => { const p = (v) => String(v || '').split('-')[0].split('.').map((x) => parseInt(x, 10) || 0); const x = p(a); const y = p(b); for (let i = 0; i < 3; i++) { if ((x[i] || 0) > (y[i] || 0)) return true; if ((x[i] || 0) < (y[i] || 0)) return false; } return true; };
+async function loadTeamPolicyView(param = '') {
+  if (!el.tpBody || !el.tpScope) return;
+  if (param && /^(project|workspace):/.test(param)) { tpState.scopeId = param; localStorage.setItem('worca.teamPolicy.scope', param); }
+  tpState.editing = false;
+  const seq = ++tpState.loadSeq;
+  el.tpBody.classList.add('is-loading');
+  el.tpBody.setAttribute('aria-busy', 'true');
+  const scopes = await loadTpScopes({ force: true });
+  if (seq !== tpState.loadSeq) return;
+  const ids = [...scopes.scopes.projects, ...scopes.scopes.workspaces].map((x) => x.id);
+  if (!ids.includes(tpState.scopeId)) tpState.scopeId = ids[0] || '';
+  renderScopeOptions(el.tpScope, scopes.scopes, tpState.scopeId, { doc: document });
+  const settle = () => { el.tpBody.classList.remove('is-loading'); el.tpBody.removeAttribute('aria-busy'); };
+  if (!ids.length) {
+    tpState.data = null;
+    el.tpSync.hidden = true;
+    settle();
+    el.tpBody.replaceChildren(renderPolicyEmptyState({ doc: document }));
+    return;
+  }
+  let res = null; let data = null;
+  try { res = await fetch(`/api/policy?scope=${encodeURIComponent(tpState.scopeId)}`); data = await safeJson(res); }
+  catch (err) { data = { error: err?.message || 'Could not reach the Worca server' }; }
+  if (seq !== tpState.loadSeq) return;
+  settle();
+  if (!res || !res.ok) {
+    tpState.data = null;
+    el.tpSync.hidden = true;
+    el.tpBody.replaceChildren(Object.assign(document.createElement('small'), { className: 'hint err', textContent: `Could not load the team policy: ${data?.error || (res ? `HTTP ${res.status}` : 'unknown error')}` }));
+    return;
+  }
+  tpState.data = data;
+  renderTeamPolicyRead();
+}
+function renderTeamPolicyRead() {
+  const data = tpState.data;
+  if (!data || !el.tpBody) return;
+  tpState.editing = false;
+  el.tpSync.hidden = false;
+  el.tpSync.replaceChildren(renderPolicySyncChip(data, { doc: document, now: Date.now(), busy: tpState.checking }));
+  const parts = [];
+  if (tpState.notice) { parts.push(Object.assign(document.createElement('p'), { className: 'form-msg ok', textContent: tpState.notice })); tpState.notice = null; }
+  const ver = (data.rows || []).find((r) => r.key === 'worca.minVersion' && r.team);
+  if (ver && data.worcaVersion && !semverGte(data.worcaVersion, ver.team.value)) {
+    parts.push(Object.assign(document.createElement('div'), { className: 'hint tm-warn', textContent: `Your Worca is ${data.worcaVersion}; this policy expects at least ${ver.team.value}. Some fields may not apply.` }));
+  }
+  // Two halves, deliberately unlike each other: the published document (the same for the whole
+  // team) in a panel, then what THIS machine makes of it in stat cards.
+  parts.push(renderPolicyHeader(data, { doc: document, now: Date.now() }));
+  const label = document.createElement('div');
+  label.className = 'tp-sec-label';
+  label.textContent = 'ON THIS MACHINE';
+  parts.push(label, renderPolicyStats(data, { doc: document }));
+  const tabsHost = document.createElement('div');
+  tabsHost.className = 'tp-tabs-host';
+  tabsHost.innerHTML = '<div class="tp-tabs" role="tablist"></div><div class="tp-sections"></div>';
+  parts.push(tabsHost);
+  el.tpBody.replaceChildren(...parts);
+  initTpTabs(tabsHost, data);
+}
+const TP_TAB_ICONS = {
+  policy: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-3 8.2-7 9-4-.8-7-4.6-7-9V6z"></path></svg>',
+  plugins: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3h4v3a2 2 0 1 0 4 0h3v4h-3a2 2 0 1 0 0 4h3v4h-4v-3a2 2 0 1 0-4 0v3H6v-4H3v-4h3a2 2 0 1 0 0-4H3V6h3V3z"></path></svg>',
+  catalog: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5z"></path><path d="M3 13l9 5 9-5"></path></svg>',
+};
+const tpCatalogCount = (d) => ((d.policy?.doc?.catalogs?.guardrailSets || []).length + (d.policy?.doc?.catalogs?.models || []).length);
+const tpPluginAttention = (d) => (d.requirements || []).filter((r) => r.state !== 'ok').length + (d.blockedPlugins || []).length;
+const TP_TABS = [
+  { key: 'policy', label: 'Policy', visible: () => true,
+    badge: (d) => String((d.rows || []).filter((r) => r.shown).length),
+    build: (sec, d) => { sec.replaceChildren(renderEffectiveTable(d, { doc: document, showAll: tpState.showAll })); } },
+  { key: 'plugins', label: 'Plugins', visible: () => true,
+    badge: (d) => (tpPluginAttention(d) ? String(tpPluginAttention(d)) : null),
+    build: (sec, d) => { sec.replaceChildren(renderPolicyPluginsPanel(d, { doc: document })); void ensureMarketplacesLoaded(); } },
+  { key: 'catalog', label: 'Catalog', visible: (d) => tpCatalogCount(d) > 0,
+    badge: (d) => String(tpCatalogCount(d)),
+    build: (sec, d) => { sec.replaceChildren(renderPolicyCatalogPanel(d, { doc: document })); } },
+];
+function initTpTabs(host, data) {
+  initDetailTabs(host, TP_TABS.map((t) => ({ ...t, icon: TP_TAB_ICONS[t.key] })), data, {
+    tabsSel: '.tp-tabs', secsSel: '.tp-sections',
+    tabClass: 'tp-tab', secClass: 'tp-sec', badgeClass: 'tp-tab-badge',
+    idPrefix: 'tp',
+    initial: () => tpState.tab,
+  });
+  host.querySelector('.tp-tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('button[data-sec]');
+    if (btn) tpState.tab = btn.dataset.sec;   // per-session, like the Team metrics range
+  });
+}
+/** The install flow resolves its consent inventory from the Plugins page's last payload. */
+async function ensureMarketplacesLoaded() {
+  if (pluginsViewMarketplaces.length) return;
+  try { const r = await fetch('/api/marketplaces'); const j = await safeJson(r); if (r.ok) pluginsViewMarketplaces = j.marketplaces || []; }
+  catch { /* the tab still lists what the policy expects; an install then says it cannot find it */ }
+}
+async function renderTeamPolicyEdit() {
+  const data = tpState.data;
+  if (!data || !data.canPublish || !el.tpBody) return;
+  tpState.editing = true;
+  const registry = data.registry || [];
+  const known = await knownForPolicyEditor();
+  if (!tpState.editing || tpState.data !== data) return;   // the page moved on while the lists loaded
+  const editor = renderPolicyEditor(data.policy?.doc || null, { registry, doc: document, known });
+  editor.querySelector('.tp-copy-json').addEventListener('click', async () => {
+    const json = JSON.stringify(docFromEditor(editor, { registry }), null, 2);
+    const msgEl = editor.querySelector('.tp-msg');
+    try { await navigator.clipboard.writeText(json); msgEl.className = 'form-msg tp-msg ok'; msgEl.textContent = 'Copied. Paste it into .worca-policy/policy.json on a pull request against the worca-policy branch.'; }
+    catch { const pre = editor.querySelector('.tp-json'); pre.hidden = false; pre.textContent = json; msgEl.className = 'form-msg tp-msg'; msgEl.textContent = 'Copy the JSON above into .worca-policy/policy.json on a pull request against the worca-policy branch.'; }
+  });
+  editor.querySelector('.tp-publish').addEventListener('click', () => { void publishFromEditor(editor, registry); });
+  // The controls live on the header, next to Cancel editing: Publish beside it, the change count
+  // and the JSON links under them. The editor's bar is dismantled — nothing floats over the form.
+  const head = renderPolicyHeader(data, { doc: document, now: Date.now(), editing: true });
+  const actions = head.querySelector('.tp-head-actions');
+  const bar = editor.querySelector('.tp-publish-bar');
+  const btns = document.createElement('div');
+  btns.className = 'tp-head-btns';
+  btns.append(actions.querySelector('.tp-edit'), bar.querySelector('.tp-publish'));
+  const status = bar.querySelector('.grow');
+  status.classList.add('tp-head-status');
+  bar.remove();
+  actions.replaceChildren(btns, status);
+  el.tpBody.replaceChildren(head, editor);
+}
+// What this machine can offer the editor as choices (docs/team-policy.md "Editing"): the models the
+// New pipeline picker shows, the plugins its marketplaces list and the ones installed, the
+// marketplaces, the guardrail sets and the workflows. Every list is optional — a failed call leaves
+// the input free-text, which it stays anyway.
+async function knownForPolicyEditor() {
+  const out = { models: [], plugins: [], marketplaces: [], guardrails: [], workflows: [] };
+  try { if (!state.models.length) await loadConfig(); } catch { /* the picker's list may already be there */ }
+  out.models = (state.models || []).map((m) => ({ id: m.id, label: m.label || m.id }));
+  try { await ensureMarketplacesLoaded(); } catch { /* optional */ }
+  for (const m of pluginsViewMarketplaces || []) {
+    if (m && m.id) out.marketplaces.push(m.id);
+    for (const p of (m && m.plugins) || []) if (p && p.name) out.plugins.push({ name: p.name, marketplace: m.id || '' });
+  }
+  try {
+    const r = await fetch('/api/plugins'); const j = await safeJson(r);
+    for (const p of (r.ok && Array.isArray(j.plugins)) ? j.plugins : []) if (p && p.name && !out.plugins.some((x) => x.name === p.name)) out.plugins.push({ name: p.name, marketplace: p.marketplace || '' });
+  } catch { /* optional */ }
+  try {
+    const r = await fetch('/api/guardrails'); const j = await safeJson(r);
+    const sets = r.ok ? (Array.isArray(j.guardrails) ? j.guardrails : Array.isArray(j.sets) ? j.sets : []) : [];   // the endpoint says `guardrails`
+    out.guardrails = sets.map((g) => ({ id: g.id, name: g.name || g.id }));
+  } catch { /* optional */ }
+  try {
+    const r = await fetch('/api/workflows'); const j = await safeJson(r);
+    out.workflows = ((r.ok && Array.isArray(j.workflows)) ? j.workflows : []).map((w) => ({ id: w.id, name: w.name || w.id }));
+  } catch { /* optional */ }
+  return out;
+}
+async function publishFromEditor(editor, registry) {
+  const doc = docFromEditor(editor, { registry });
+  const msgEl = editor.querySelector('.tp-msg');
+  const btn = el.tpBody.querySelector('.tp-publish');   // on the header, beside Cancel editing
+  btn.disabled = true;
+  msgEl.className = 'form-msg tp-msg'; msgEl.textContent = 'Publishing…';
+  try {
+    const v = await safeJson(await fetch('/api/policy/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ doc }) }));
+    if (!v.ok) { msgEl.className = 'form-msg tp-msg err'; msgEl.textContent = (v.warnings || []).join('\n') || 'invalid policy document'; btn.disabled = false; return; }
+    const r = await fetch('/api/policy', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope: tpState.scopeId, doc }) });
+    const j = await safeJson(r);
+    if (!r.ok) {
+      msgEl.className = 'form-msg tp-msg err';
+      msgEl.textContent = [j?.error, j?.stderr && String(j.stderr).trim(), j?.hint, ...(Array.isArray(j?.warnings) ? j.warnings : [])].filter(Boolean).join(' · ');
+      btn.disabled = false;
+      return;
+    }
+    tpCache.at = 0;
+    tpState.notice = j.unchanged ? 'Nothing to publish — the branch already holds this document.' : `Published · commit ${String(j.sha || '').slice(0, 7)}`;
+    await loadTeamPolicyView();
+  } catch (err) {
+    msgEl.className = 'form-msg tp-msg err'; msgEl.textContent = err?.message || 'publish failed'; btn.disabled = false;
+  }
+}
+
+if (el.tpScope) el.tpScope.addEventListener('change', () => {
+  tpState.scopeId = el.tpScope.value;
+  localStorage.setItem('worca.teamPolicy.scope', tpState.scopeId);
+  loadTeamPolicyView();
+});
+const tpSection = document.querySelector('section[data-view="team-policy"]');
+if (tpSection) tpSection.addEventListener('click', async (e) => {
+  if (e.target.closest && e.target.closest('.tp-edit')) {
+    if (tpState.editing) renderTeamPolicyRead(); else void renderTeamPolicyEdit();
+    return;
+  }
+  if (e.target.closest && e.target.closest('.tp-check-now')) {
+    tpState.checking = true;
+    if (tpState.data && !tpState.editing) renderTeamPolicyRead();
+    await fetch('/api/policy/discover', { method: 'POST' }).catch(() => {});
+    tpCache.at = 0;
+    tpState.checking = false;
+    loadTeamPolicyView();
+    return;
+  }
+  await handlePolicyPluginClick(e);
+});
+
+// Settings › Budget (board 7): each home's caps as a readout, the tightest as a chip on the labels.
+async function paintTeamCapsReadout(force = false) {
+  if (!el.teamCapsReadout) return;
+  const data = await loadTpScopes({ force });
+  const node = renderTeamCapsReadout(data.homes || [], { doc: document });
+  el.teamCapsReadout.replaceChildren(node || '');
+  const tightest = (pick) => { let best = null; for (const home of data.homes || []) { const c = home.caps && pick(home.caps); if (c && (best == null || c.value < best.value)) best = c; } return best; };
+  const setChip = (labelFor, cap, fmt) => {
+    const lab = document.querySelector(`label[for="${labelFor}"]`);
+    const row = lab && lab.closest('.label-row');
+    if (!row) return;
+    row.querySelectorAll('.team-chip').forEach((x) => x.remove());
+    if (cap) row.append(renderTeamChip({ kind: cap.kind, display: fmt(cap) }, { doc: document }));
+  };
+  setChip('budgetPerPipeline', tightest((c) => c.pipeline), (c) => fmtUsd(c.value));
+  setChip('budgetTotal', tightest((c) => c.total), (c) => fmtUsd(c.value));
+  const periods = (data.homes || []).map((home) => home.caps?.resetPeriod).filter(Boolean);
+  setChip('budgetResetPeriod', periods.length ? { kind: 'default', value: periods[0] } : null, (c) => c.value);
+}
+
+// New pipeline (board 8): the notes line for the selected target, debounced behind the selects.
+let policyLineTimer = null;
+let policyLineSeq = 0;
+function schedulePolicyLine() {
+  if (!el.policyLine) return;
+  clearTimeout(policyLineTimer);
+  policyLineTimer = setTimeout(() => { void paintPolicyLine(); }, 150);
+}
+function currentRunScopeId() {
+  if (state.runTarget === 'workspace') {
+    const id = el.workspaceSelect && el.workspaceSelect.value;
+    return id ? `workspace:${id}` : '';
+  }
+  const path = selectedProjectPath();
+  if (!path) return '';
+  const p = state.projects.find((x) => x && x.path === path);
+  return p && p.key ? `project:${p.key}` : '';
+}
+async function paintPolicyLine() {
+  if (!el.policyLine || currentView() !== 'new') return;
+  const scope = currentRunScopeId();
+  const seq = ++policyLineSeq;
+  if (!scope) { el.policyLine.hidden = true; el.policyLine.replaceChildren(); return; }
+  const qs = new URLSearchParams({ scope, guardrailsId: state.guardrailsId || 'permissive' });
+  // What the run will actually pick: the Agents accordion's model selects (per workflow node),
+  // falling back to the legacy per-role config when the accordion has not painted yet.
+  const picked = [...document.querySelectorAll('#agents-rows select.step-model')].map((s) => s.value).filter((v) => v && v !== '__add__');
+  const models = picked.length ? picked
+    : Object.values((state.config && state.config.steps) || {}).map((s) => s && s.model).filter((m) => typeof m === 'string' && m);
+  if (models.length) qs.set('models', [...new Set(models)].join(','));
+  let data = null;
+  try { const r = await fetch(`/api/policy/notes?${qs}`); data = r.ok ? await safeJson(r) : null; } catch { data = null; }
+  if (seq !== policyLineSeq) return;
+  if (!data || !data.policy) { el.policyLine.hidden = true; el.policyLine.replaceChildren(); return; }
+  // The team's default guardrail set preselects the picker until the user picks one themselves.
+  if (data.guardrailsDefault && !state.guardrailsTouched && state.guardrailsId === 'permissive' && el.guardrailsSelect
+      && [...el.guardrailsSelect.options].some((o) => o.value === data.guardrailsDefault)) {
+    state.guardrailsId = data.guardrailsDefault;
+    el.guardrailsSelect.value = data.guardrailsDefault;
+    updateGuardrailsHint();
+    return paintPolicyLine();                 // the notes depend on the selection just made
+  }
+  el.policyLine.hidden = false;
+  el.policyLine.replaceChildren(renderPolicyNotesLine(data, { doc: document }));
+}
+
+// Team-cap prompts (board 9): the one dialog behind the banner button, a refused resume and a
+// refused start. A required reason re-asks with the field mandatory.
+async function promptPastTeamCap({ total = false, required = false, home = '', windowWord = 'month' } = {}) {
+  const res = await promptModal({
+    title: total ? `Continue past the team's total cap this ${windowWord}?` : 'Continue past the team cap?',
+    message: total
+      ? `This acknowledges the team's total cap${home ? ` on ${home}` : ''} for this ${windowWord}. Your own limits still apply. Every run in the ${windowWord} is recorded to team metrics as continued past the team cap.`
+      : `This pipeline will ignore the team's per-pipeline cap${home ? ` from ${home}` : ''} from now on, including future resumes. Your own limit and both total limits still apply. The override is recorded to team metrics with your name.`,
+    fields: [{ id: 'reason', label: required ? 'Reason (required, visible to the team)' : 'Reason (optional, visible to the team)', placeholder: 'e.g. release hotfix, agreed with Mara', required }],
+    confirmLabel: 'Continue past team cap',
+  });
+  if (!res) return null;
+  return { reason: (res.reason || '').trim() || null };
+}
+async function policyRefusalRetry(data, status) {
+  if (!data || typeof data !== 'object') return null;
+  if (!(data.needsPolicyAck || data.needsPolicyOverride || data.code === 'reason_required')) return null;
+  const total = data.code === 'team_total' || !!(data.policy && data.policy.window);
+  return promptPastTeamCap({ total, required: data.code === 'reason_required' || !!data.policy?.requireReason, home: data.policy?.home || '', windowWord: data.policy?.window || 'month' });
+}
+async function confirmPastTeamCap(runId, btn) {
+  const r = runs.get(runId);
+  const choice = await promptPastTeamCap({ total: !!r && r.pauseReason === 'cost_total_policy' });
+  if (choice) resumeRunFromCard(runId, btn, { pastTeamCap: true, policyReason: choice.reason });
+}
+
+// Plugins page (boards 10–11): the required-by strip, installs through the SAME consent flow as
+// Available, the setup checklist, and the per-home trust switch.
+const TP_TRUST_PREFIX = 'worca.policy.trust.';
+const policyHomeTrusted = (home) => { try { return localStorage.getItem(TP_TRUST_PREFIX + home) === '1'; } catch { return false; } };
+let pluginsPolicyAutoBusy = false;
+async function paintPluginsPolicy(force = false) {
+  if (!el.pluginsPolicy) return;
+  const data = await loadTpScopes({ force });
+  const strip = renderRequiredStrip(data.requirements || [], data.blockedPlugins || [], { doc: document });
+  el.pluginsPolicy.replaceChildren(strip || '');
+  // A trusted home (the developer's own switch, per machine) installs its missing plugins here.
+  const missing = (data.requirements || []).filter((r) => r.state === 'missing' && (r.homes || []).some(policyHomeTrusted));
+  if (missing.length && !pluginsPolicyAutoBusy) {
+    pluginsPolicyAutoBusy = true;
+    try { for (const r of missing) await installRequiredPlugin(r.name, { marketplace: r.marketplace || '', silent: true }); }
+    finally { pluginsPolicyAutoBusy = false; }
+  }
+}
+function marketplaceEntryFor(name, marketplaceHint) {
+  const synced = pluginsViewMarketplaces.filter((m) => m && m.lastSync);
+  const pick = (ms) => { for (const m of ms) { const p = (m.plugins || []).find((x) => x.name === name); if (p) return { m, p }; } return null; };
+  if (marketplaceHint) { const hit = pick(synced.filter((m) => m.id === marketplaceHint || m.name === marketplaceHint || m.url === marketplaceHint)); if (hit) return hit; }
+  return pick(synced);
+}
+async function installRequiredPlugin(name, { marketplace = '', silent = false } = {}) {
+  const hit = marketplaceEntryFor(name, marketplace);
+  if (!hit) { setPluginsMsg(`${name}: not found in a synced marketplace — refresh marketplaces${marketplace ? ` (the policy names ${marketplace})` : ''}.`, 'err'); return false; }
+  const entry = { name: hit.p.name, subdir: hit.p.subdir, repoUrl: hit.m.url, sha: hit.m.lastSync.sha, inventory: hit.p.inventory || {}, marketplace: hit.m.id };
+  if (!silent) { openInstallConsent(entry); return true; }
+  setPluginsMsg(`Installing ${name} (trusted policy home)…`);
+  const { ok, data } = await pluginApi('POST', '/api/plugins/install', { repoUrl: entry.repoUrl, subdir: entry.subdir, name: entry.name, sha: entry.sha, marketplace: entry.marketplace });
+  if (!ok) { setPluginsMsg(`${name}: ${data.error || 'install failed'}`, 'err'); return false; }
+  setPluginsMsg(`Installed ${name} (trusted policy home).`, 'ok');
+  invalidateAgentCaches();
+  tpCache.at = 0;
+  loadPluginsView();
+  return true;
+}
+async function handlePolicyPluginClick(e) {
+  const t = e.target && typeof e.target.closest === 'function' ? e.target.closest('.pl-policy-install,.pl-policy-update,.pl-policy-setup,.pl-policy-configure,.pl-policy-all') : null;
+  if (!t) return false;
+  e.stopPropagation();
+  const name = t.dataset.name || '';
+  if (t.classList.contains('pl-policy-install')) { await installRequiredPlugin(name, { marketplace: t.dataset.marketplace || '' }); return true; }
+  if (t.classList.contains('pl-policy-update')) { await updateRequiredPlugin(name); return true; }
+  // Configure…: the plugin's own settings pane (its config schema, the policy's seeds filled in,
+  // secrets blank) — the same pane the Plugins page opens from the card.
+  if (t.classList.contains('pl-policy-configure')) {
+    closePluginModal();
+    if (location.hash.slice(1) !== 'settings/plugins') location.hash = 'settings/plugins';
+    const req = ((tpCache.data && tpCache.data.requirements) || []).find((r) => r.name === name);
+    await openPluginSettings(name, undefined, { seeds: req && req.config ? req.config : null });
+    return true;
+  }
+  if (t.classList.contains('pl-policy-setup')) { await openSetupChecklist(); return true; }
+  // "Install all…" / "Update all…" / "Install & update all…": the same chain the checklist runs.
+  if (t.classList.contains('pl-policy-all')) { const data = await loadTpScopes({ force: true }); await installAllRequired(data.requirements || []); return true; }
+  return true;
+}
+// The update preview for one required plugin (commits, diffstat, manifest changes), confirmed by a
+// click. Returns true when the preview opened, so a chain can wait for it to close.
+async function updateRequiredPlugin(name) {
+  const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, {});
+  if (!ok) { setPluginsMsg(data.error || 'update preview failed', 'err'); return false; }
+  const body = renderUpdatePreview(data);
+  pluginModal(`Update ${name}`, body);
+  const confirmBtn = body.querySelector('.pl-confirm-update');
+  if (confirmBtn) confirmBtn.addEventListener('click', async () => {
+    confirmBtn.disabled = true;
+    const r2 = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true });
+    closePluginModal();
+    if (!r2.ok) return setPluginsMsg(r2.data.error || 'update failed', 'err');
+    setPluginsMsg(`Updated ${name}.`, 'ok');
+    invalidateAgentCaches();
+    tpCache.at = 0;
+    loadPluginsView();
+  });
+  return true;
+}
+if (el.pluginsPolicy) el.pluginsPolicy.addEventListener('click', (e) => { void handlePolicyPluginClick(e); });
+async function openSetupChecklist() {
+  const data = await loadTpScopes({ force: true });
+  const reqs = data.requirements || [];
+  const homes = [...new Set(reqs.flatMap((r) => r.homes || []))];
+  const home = homes[0] || (data.homes[0] && data.homes[0].slug) || '';
+  const body = renderSetupChecklist({ home, requirements: reqs, seeds: [], trusted: policyHomeTrusted(home) }, { doc: document });
+  body.addEventListener('click', (e) => {
+    if (e.target.closest('.tp-install-all')) { closePluginModal(); void installAllRequired(reqs); return; }
+    void handlePolicyPluginClick(e);
+  });
+  body.addEventListener('change', (e) => {
+    const cb = e.target.closest && e.target.closest('.tp-trust');
+    if (cb) { try { localStorage.setItem(TP_TRUST_PREFIX + cb.dataset.home, cb.checked ? '1' : '0'); } catch { /* private mode */ } }
+  });
+  pluginModal(`Set up for ${home || 'the team policy'}`, body);
+}
+// One dialog after another — a consent dialog for each missing plugin, an update preview for each
+// one below the floor — the next opens when the previous closes (done or cancelled). Nothing runs
+// without its own click; cancelling one moves on to the next.
+async function installAllRequired(reqs) {
+  const modalClosed = () => new Promise((res) => { const iv = setInterval(() => { if (!el.pluginModal || el.pluginModal.classList.contains('hidden')) { clearInterval(iv); res(); } }, 200); });
+  for (const r of reqs) {
+    let opened = false;
+    if (r.state === 'missing') opened = await installRequiredPlugin(r.name, { marketplace: r.marketplace || '' });
+    else if (r.state === 'outdated') opened = await updateRequiredPlugin(r.name);
+    else continue;
+    if (opened) await modalClosed();
+  }
+}
+
+// Team metrics (board 10): the pooled-budget tile, when the scope's policy sets one.
+const tpPolicyByScope = new Map();
+async function paintPooledBudgetTile(scopeId, records) {
+  if (!scopeId) return;
+  let pol = tpPolicyByScope.get(scopeId);
+  if (!pol || Date.now() - pol.at > 60_000) {
+    try { const r = await fetch(`/api/policy?scope=${encodeURIComponent(scopeId)}`); pol = { at: Date.now(), data: r.ok ? await safeJson(r) : null }; }
+    catch { pol = { at: Date.now(), data: null }; }
+    tpPolicyByScope.set(scopeId, pol);
+  }
+  if (tmState.scopeId !== scopeId) return;
+  const row = document.querySelector('#tm-body .tm-kpis');
+  if (!row) return;
+  row.querySelectorAll('.tm-pooled').forEach((x) => x.remove());
+  const pooled = pol.data?.policy?.caps?.pooled;
+  if (!pooled) return;
+  const now = new Date();
+  const start = pooled.window === 'weekly'
+    ? new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7))
+    : new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = pooled.window === 'weekly' ? new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7) : new Date(start.getFullYear(), start.getMonth() + 1, 1);
+  const spent = (records || []).filter((r) => { const t = Date.parse(r.startedAt); return t >= start.getTime() && t < end.getTime(); }).reduce((a, r) => a + (Number(r.cost?.usd) || 0), 0);
+  row.append(renderPooledBudgetTile({ budgetUsd: pooled.value, window: pooled.window, spentUsd: spent, windowStartMs: start.getTime(), windowEndMs: end.getTime() }, { doc: document, now: now.getTime() }));
+}
+
 // ---- Team metrics page (team-metrics-design.md §4.10) ------------------------------------
 /** First paint caps the run table for layout; "Show all" lifts it (§4.9). Declared BEFORE
  *  tmState: tmState's initialiser reads it, and a const read above its declaration throws. */
@@ -11875,6 +13152,7 @@ function renderTeamMetrics() {
   body.classList.remove('is-loading');
   body.replaceChildren(renderTeamMetricsBody(agg, { doc: document, now: Date.now(), scopeKind: data.scope?.kind || 'project', sort: tmState.sort, filter: tmState.filter, homeHint, runLimit: tmState.runLimit }));
   tmState.lastAgg = agg;
+  void paintPooledBudgetTile(tmState.scopeId, data.records || []);   // team policy (design board 10): advisory tile, when the scope's policy sets one
   const chips = document.getElementById('tm-filters');
   const active = Object.entries(tmState.filter).filter(([, v]) => v != null);
   chips.hidden = !active.length;
@@ -12735,8 +14013,10 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   const costPaused = parked && pauseReason.startsWith('cost_');
   const errorPaused = parked && (pauseReason === 'error' || pauseReason === 'recoverable');
   noteEl.hidden = !(costPaused || errorPaused);
+  // A team cap names its source, like the status pill (team-policy design board 9).
+  const COST_NOTE = { cost_total: 'paused · total budget', cost_pipeline_policy: 'paused · team cap', cost_total_policy: 'paused · team total' };
   noteEl.textContent = costPaused
-    ? (pauseReason === 'cost_total' ? 'paused · total budget' : 'paused · cost limit')
+    ? (COST_NOTE[pauseReason] || 'paused · cost limit')
     : (errorPaused ? (pauseReason === 'recoverable' ? 'paused · recoverable' : 'paused · error') : '');
   // The cause is too long for the caption line — it rides as the tooltip.
   noteEl.title = errorPaused ? pauseDetail : '';
@@ -13684,6 +14964,16 @@ function paintHdHeaderMeta(screen, record, data) {
     if (cls === 'hd-cost') seg.title = estTitle(st.totalCostUsd);
     meta.appendChild(seg);
   }
+  // Scheduled runs: say HOW this run started — "by schedule" links to the Schedules view.
+  if (st.scheduledFor) {
+    meta.appendChild(hdDot());
+    const a = document.createElement('a');
+    a.className = 'hd-sched';
+    a.href = '#schedules';
+    a.textContent = st.scheduleId ? 'Started by a repeating schedule' : 'Started by schedule';
+    a.title = `Scheduled for ${fmtDate(st.scheduledFor)}`;
+    meta.appendChild(a);
+  }
   // spec §8: the End card's result chip, repeated in the header meta (History D5
   // untouched — no model/effort). A path links through the keyed artifact route.
   if (st.endReached === true && st.result) {
@@ -13734,6 +15024,21 @@ function paintHdHeaderMeta(screen, record, data) {
     const [text, cls] = TM_TEXT[tm.state] || TM_TEXT['not-enabled'];
     meta.append(tagLevel(hdDot(), 'expert'), Object.assign(tagLevel(document.createElement('span'), 'expert'), { className: `hd-tm ${cls}`, textContent: text, title: tm.slug ? `worca-metrics branch of ${tm.slug}` : '' }));
   }
+  // Team policy (team-policy design board 10): the home the run's policy came from and what the
+  // developer did about it. Omitted when the run saw no policy.
+  const pol = data && data.policy && typeof data.policy === 'object' && data.policy.home ? data.policy : null;
+  if (pol) {
+    const overrides = (Array.isArray(pol.overrides) ? pol.overrides.length : 0) + (Array.isArray(pol.exceeded) ? pol.exceeded.length : 0);
+    const off = Array.isArray(pol.deviations) ? pol.deviations.length : 0;
+    const parts = ['policy'];
+    if (overrides) parts.push(`${overrides} override${overrides === 1 ? '' : 's'}`);
+    if (off) parts.push(`${off} off-policy`);
+    if (!overrides && !off) parts.push('on policy');
+    meta.append(hdDot(), Object.assign(document.createElement('span'), {
+      className: 'hd-policy st-info', textContent: parts.join(' · '),
+      title: `policy ${pol.home}${pol.sha ? ` @ ${String(pol.sha).slice(0, 7)}` : ''}${pol.reason ? ` · ${pol.reason}` : ''}`,
+    }));
+  }
   // Branch row.
   const base = screen.querySelector('.hd-base');
   const copyBtn = screen.querySelector('.hd-branch-copy');
@@ -13770,7 +15075,7 @@ function btnLabelEl(btn) { return btn.querySelector('.hd-btn-label') || btn; }
 
 // The POST /api/resume -> upsert -> seed-log -> land-on-running recipe, shared by
 // the detail header and the cost-override path.
-async function resumePipeline(p, projectDir, btn, { ignoreCostCap = false } = {}) {
+async function resumePipeline(p, projectDir, btn, { ignoreCostCap = false, pastTeamCap = false, policyReason = null } = {}) {
   const labelEl = btnLabelEl(btn);
   btn.disabled = true;
   // Claim the button for the duration of the round-trip (and keep the failure
@@ -13791,10 +15096,18 @@ async function resumePipeline(p, projectDir, btn, { ignoreCostCap = false } = {}
     const res = await fetch('/api/resume', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(ignoreCostCap ? { pipelineId: p.id, ignoreCostCap: true } : { pipelineId: p.id }),
+      body: JSON.stringify({ pipelineId: p.id, ...(ignoreCostCap ? { ignoreCostCap: true } : {}), ...(pastTeamCap ? { pastTeamCap: true, ...(policyReason ? { policyReason } : {}) } : {}) }),
     });
     const data = await safeJson(res);
-    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    if (!res.ok) {
+      // A team cap (team-policy design §7): soft — ask, then resume again with the choice recorded.
+      const again = await policyRefusalRetry(data, res.status);
+      if (again) {
+        btn.disabled = false; labelEl.textContent = label; delete btn.dataset.resumeState;
+        return resumePipeline(p, projectDir, btn, { ignoreCostCap, pastTeamCap: true, policyReason: again.reason });
+      }
+      throw new Error((data && data.error) || `HTTP ${res.status}`);
+    }
     upsertRun({
       runId: data.runId, title: p.title || p.id, projectDir: p.projectDir || projectDir || '',
       status: 'starting', pipelineId: p.id, local: true,
@@ -13934,7 +15247,7 @@ function paintHdBanners(screen, record, data) {
   if (oldBanner && (!wantCost || oldBanner.dataset.pauseReason !== pauseReason)) oldBanner.remove();
   if (wantCost && !banners.querySelector('.cost-banner')) {
     const banner = renderCostPauseBanner(
-      { pauseReason, pipelineId: record.id, totalCostUsd: st.totalCostUsd },
+      { pauseReason, pauseDetail, pipelineId: record.id, totalCostUsd: st.totalCostUsd },
       { budget: budgetState.budget || {}, fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } });
     const settingsBtn = banner.querySelector('.cb-settings');
     if (settingsBtn) settingsBtn.addEventListener('click', () => { location.hash = 'settings'; });
@@ -13945,6 +15258,18 @@ function paintHdBanners(screen, record, data) {
         histCostOverride(r.projectDir || null, r.id, r, overrideBtn); // fire-and-forget
       });
     }
+    // Team-cap banner (team-policy design board 9): the same resume recipe, past the team cap.
+    const pastBtn = banner.querySelector('.cb-past-team-cap');
+    if (pastBtn) {
+      pastBtn.addEventListener('click', async () => {
+        const r = hdCurrentRecord(record);
+        const choice = await promptPastTeamCap({ total: pauseReason === 'cost_total_policy' });
+        if (!choice) return;
+        await resumePipeline({ ...(r || {}), id: r.id }, r.projectDir || null, pastBtn, { pastTeamCap: true, policyReason: choice.reason });
+      });
+    }
+    const openPolicy = banner.querySelector('.cb-policy-open');
+    if (openPolicy) openPolicy.addEventListener('click', () => { location.hash = 'team-policy'; });
     banner.dataset.pauseReason = pauseReason;   // what the conditional rebuild keys on
     banners.prepend(banner);
   }
@@ -16392,6 +17717,8 @@ function rdStateCopy(r, stepName) {
   // line and the banner above the graph never disagree.
   if (r.pauseReason === 'cost_pipeline') return 'Paused — pipeline cost limit reached.';
   if (r.pauseReason === 'cost_total') return 'Paused — total budget reached.';
+  if (r.pauseReason === 'cost_pipeline_policy') return 'Paused — team cost cap reached.';
+  if (r.pauseReason === 'cost_total_policy') return 'Paused — team total cap reached.';
   if (r.pauseReason === 'error') {
     const why = r.pauseDetail ? `: ${r.pauseDetail}` : '';
     return `Paused after an error${why}. Fix the cause, then Resume — the worktree and progress are kept.`;
@@ -17555,6 +18882,9 @@ function statusPill(r) {
     // A cost pause names its cause so the pill alone explains why the run parked.
     if (r.pauseReason === 'cost_pipeline') return { family: 'amber', text: 'Paused · cost limit' };
     if (r.pauseReason === 'cost_total') return { family: 'amber', text: 'Paused · total budget' };
+    // A team cap names its source too (team-policy design board 9).
+    if (r.pauseReason === 'cost_pipeline_policy') return { family: 'amber', text: 'Paused · team cap' };
+    if (r.pauseReason === 'cost_total_policy') return { family: 'amber', text: 'Paused · team total' };
     // An error pause is parked and resumable (never dead), so it stays in the amber family.
     if (r.pauseReason === 'error') return { family: 'amber', text: 'Paused · error' };
     if (r.pauseReason === 'recoverable') return { family: 'amber', text: 'Paused · recoverable' };
@@ -18408,7 +19738,7 @@ function paintRunCard(r) {
       && r.pauseReason.startsWith('cost_');
     if (costPaused) {
       const fresh = renderCostPauseBanner(
-        { pauseReason: r.pauseReason, pipelineId: r.pipelineId, totalCostUsd: r.totalCostUsd },
+        { pauseReason: r.pauseReason, pauseDetail: r.pauseDetail, pipelineId: r.pipelineId, totalCostUsd: r.totalCostUsd },
         { budget: budgetState.budget || {},
           fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } });
       bannerEl.replaceChildren(...fresh.childNodes);
@@ -18559,13 +19889,68 @@ function renderAskBanner() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Scheduled runs (tickets, not pipelines). One view controller serves the Schedules view
+// AND the Running view's "next 24 hours" group; both read GET /api/schedules.
+// ---------------------------------------------------------------------------
+const SCHEDULED_GROUP_WINDOW_MS = 24 * 3600 * 1000;
+const schedulesView = createSchedulesView({
+  tabsHost: $('#schedules-tabs'),
+  feedHost: $('#schedules-feed'),
+  onceHost: $('#schedules-once'),
+  repeatingHost: $('#schedules-repeating'),
+  subEl: $('#schedules-sub'),
+  msgEl: $('#schedules-msg'),
+  deps: {
+    confirmModal: (opts) => confirmModal(opts),
+    // "Project · demo-shop" / "Workspace · Storefront": the kind first, then the name the
+    // rest of the app shows — every scheduled run card says what it runs against.
+    targetLabel: (item) => {
+      if (item.workspaceId) {
+        const ws = (state.workspaces || []).find((w) => w && w.id === item.workspaceId);
+        return `Workspace · ${ws ? ws.name : item.workspaceId}`;
+      }
+      const proj = (state.projects || []).find((x) => x && x.path === item.projectDir);
+      return `Project · ${proj ? proj.name : String(item.projectDir || '').split(/[\\/]/).filter(Boolean).pop() || 'project'}`;
+    },
+    // A tab click is a route (#schedules/<tab>), so Back and a reload land on the same tab.
+    route: (tab) => { location.hash = tab === 'activity' ? 'schedules' : `schedules/${tab}`; },
+    workflowLabel: (id) => {
+      const opt = el.workflowSelect ? [...el.workflowSelect.options].find((o) => o.value === id) : null;
+      if (opt) return opt.textContent.trim();
+      return { wf_default: 'Default', wf_auto: 'Auto', wf_memory_defrag: 'Memory defragment' }[id] || id;
+    },
+    onCounts: (c) => paintScheduleCounts(c),
+    // A started run opens its live monitor (the ticket id IS the runId); a finished one opens History.
+    openRun: ({ runId, pipelineId, projectDir }) => {
+      if (runId) { location.hash = `running/${runId}`; return; }
+      const proj = (state.projects || []).find((x) => x && x.path === projectDir);
+      location.hash = proj && pipelineId ? `history/${histDetailParam({ id: pipelineId, projectKey: proj.key })}` : 'history';
+    },
+  },
+});
+
+/** The workspace read-model, loaded once: a scheduled run card names "Workspace · <name>", not an id. */
+function withWorkspaces() {
+  return (state.workspaces || []).length ? Promise.resolve() : loadWorkspaces();
+}
+
+function paintScheduledGroup() {
+  const wrap = $('#run-scheduled');
+  const list = $('#run-scheduled-list');
+  if (!wrap || !list) return;
+  const soon = schedulesView.upcoming(SCHEDULED_GROUP_WINDOW_MS);
+  wrap.hidden = soon.length === 0;
+  list.replaceChildren(...soon.map((t) => schedulesView.ticketRow(t)));
+}
+
 function renderOverview() {
   const list = $('#run-list');
   if (!list) return;
   const rows = overviewRuns();
   // Pipelines only (D7) — but the empty copy stays "runs" per spec §4.2: it is
   // still true, and it is the wording the design keeps.
-  paintRunList(list, rows, 'No active runs — start one from New.');
+  paintRunList(list, rows, 'No active runs — start one from New, or schedule one for later.');
 
   // `rows` is already pipeline-only, so `live` IS the live-pipeline set the
   // "N pipelines executing" copy claims; "needs input" counts the ones asking.
@@ -18863,7 +20248,7 @@ function paintRdBanners(screen, r) {
     // renderCostPauseBanner reads only fmt.usd, but pass the full DEFAULT_FMT-shaped
     // object the card already passes so the two call sites stay identical.
     const fresh = renderCostPauseBanner(
-      { pauseReason: r.pauseReason, pipelineId: r.pipelineId, totalCostUsd: r.totalCostUsd },
+      { pauseReason: r.pauseReason, pauseDetail: r.pauseDetail, pipelineId: r.pipelineId, totalCostUsd: r.totalCostUsd },
       { budget: budgetState.budget || {},
         fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } });
     fresh.dataset.bkey = bkey;                   // what the conditional rebuild keys on
@@ -18928,6 +20313,9 @@ el.runDetail?.addEventListener('click', (e) => {
   const override = e.target.closest && e.target.closest('.cb-override');
   if (override) { confirmCostOverride(r.runId, override); return; }   // async, fire-and-forget
   if (e.target.closest && e.target.closest('.cb-settings')) { location.hash = 'settings'; return; }
+  const past = e.target.closest && e.target.closest('.cb-past-team-cap');
+  if (past) { confirmPastTeamCap(r.runId, past); return; }             // team-policy board 9
+  if (e.target.closest && e.target.closest('.cb-policy-open')) { location.hash = 'team-policy'; return; }
   const qbtn = e.target.closest && e.target.closest(
     '.qpanel .btn-go, .qpanel .gate-continue, .qpanel .gate-another, .qpanel .recovery-retry, .qpanel .recovery-pause, .qpanel .recovery-abort');
   if (!qbtn) return;
@@ -19326,6 +20714,25 @@ async function refreshAllCounts() {
   if (el.navHistoryCount && Number.isFinite(data.pipelines)) el.navHistoryCount.textContent = String(data.pipelines);
   if (el.navProjectsCount && Number.isFinite(data.projects)) el.navProjectsCount.textContent = String(data.projects);
   if (el.navWorkspacesCount && Number.isFinite(data.workspaces)) el.navWorkspacesCount.textContent = String(data.workspaces);
+  if (data.schedules) paintScheduleCounts(data.schedules);
+}
+
+// Schedules nav badges: grey = what is planned (waiting runs + repeating schedules), amber =
+// UNREAD PROBLEMS in the activity feed (missed, failed, self-paused). Info items never count.
+// True while anything is scheduled, missed, repeating or unread: the Schedules entry then
+// shows in every interface mode (docs/ui-levels.md rule 2).
+let schedulesInUse = false;
+function paintScheduleCounts(c) {
+  if (!c) return;
+  const inUse = !!((c.scheduled || 0) + (c.missed || 0) + (c.recurring || 0) + (c.unread || 0));
+  if (inUse !== schedulesInUse) { schedulesInUse = inUse; paintLevelBanner(); }
+  if (el.navSchedulesCount && Number.isFinite(c.scheduled)) {
+    el.navSchedulesCount.textContent = String((c.scheduled || 0) + (c.missed || 0));
+  }
+  if (el.navSchedulesUnread && Number.isFinite(c.unread)) {
+    el.navSchedulesUnread.textContent = String(c.unread);
+    el.navSchedulesUnread.hidden = !c.unread;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -19338,7 +20745,7 @@ async function refreshAllCounts() {
 // and PATH — never written here); this block only paints it and runs guides.
 // A guide is transient state: a reload clears it, the shelf re-summons it.
 // ---------------------------------------------------------------------------
-const gs = { status: null, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, refreshTimer: 0, poll: 0 };
+const gs = { status: null, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
 let gsPillHost = null;
 let gsWelcomeUnbind = null;
 
@@ -19500,9 +20907,10 @@ document.addEventListener('keydown', (e) => {
 // is itself a hop: the sidebar entry is ringed and the user's own click routes,
 // so they learn where things live. `final` hops end the guide on the click.
 const onView = (v) => currentShownView === v;
-/** Ring the sidebar entry for `view` (the compact top-nav twin below 1080px). */
-const NAV = (view, text) => ({
-  nav: view, text,
+/** Ring the sidebar entry for `view` (the compact top-nav twin below 1080px). A view the
+ *  user is already on is never a stop: the hop passes on arrival, without a ring. */
+const NAV = (view, text, also = []) => ({
+  id: `nav:${view}`, nav: view, views: [view, ...also], text,   // `also`: views reached from it that count as "there" (a wizard)
   target: [`.nav button[data-nav="${view}"]`, `.topnav button[data-nav="${view}"]`],
   lift: ['.topnav'],
 });
@@ -19511,119 +20919,332 @@ const noProjectPicked = () => {
   const targetIsProject = !document.querySelector('#target-seg [data-target="workspace"].on');
   return !!(sel && targetIsProject && !sel.hidden && !(sel.value || '').trim());
 };
-/** The start-run hop shared by the two run steps: nav → project → prompt → (mock) → Start → Running. */
+/** A hop's control is on the page and not hidden (attribute or a hidden ancestor). */
+const gsShowing = (target) => (Array.isArray(target) ? target : [target]).some((sel) => {
+  const t = document.querySelector(sel);
+  return !!t && !t.hidden && !t.closest('[hidden]');
+});
+const gsHopContains = (hop, node) => (Array.isArray(hop.target) ? hop.target : [hop.target])
+  .some((sel) => { const t = document.querySelector(sel); return !!(t && node && t.contains(node)); });
+
+// A guide is an ORDERED list of hops. Each names one real control and, for most, the page
+// state it asks for (`met`): a project picked, a task typed, Mock on. The lit hop is the
+// first the guide has not PASSED. A hop passes when its state arrives while it is lit. A hop
+// whose state was already right when the guide reached it is still lit — a replay walks
+// every stop again, since the user may have forgotten what a control is for — and passes
+// on Next, on the control's own click (a toggle excepted: its click would undo the state),
+// or on a change made to the control. Explanation-only hops (`info`) pass on Next alone.
+// A hop that opens something (`skipWhenMet`: a dialog, a sheet, a panel) is never passed —
+// it is skipped while open and re-lights when closed. Passing is per guide run, never
+// stored; the state itself is always read from the page, so a guide can never desync from it.
+//   { id, target, text, lift?, mode?, met?, already?, info?, nextLabel?, skipWhenMet?, toggle?, final?, click?, nav? }
+function gsWalk(hops, g) {
+  let lastNav = null;   // the way to the stops that follow it: leaving their view re-lights it
+  for (const h of hops) {
+    if (!h) continue;
+    if (h.nav) {
+      lastNav = h;
+      if (g.passed.has(h.id)) continue;
+      if (h.views.some(onView)) { g.passed.add(h.id); continue; }   // arriving is the pass, so it never re-lights on the way back
+      return h;
+    }
+    if (g.passed.has(h.id)) continue;
+    // Nothing to do here on any view (an open sheet's pill, an open dialog's button, an expanded
+    // panel, a hidden field): decided BEFORE the way-back rule, or leaving the view would re-light
+    // its nav for it.
+    const met = !h.info && typeof h.met === 'function' ? h.met() : null;
+    if (met && (h.skipWhenMet || !gsShowing(h.target))) continue;
+    if (lastNav && !lastNav.views.some(onView)) return lastNav;
+    if (h.info) return { ...h, next: true };
+    if (!h.met || !met) return h;                           // final / Start (the click is the whole point), or unmet
+    return { ...h, next: true, pre: true, text: h.already || h.text };
+  }
+  return null;
+}
+/** The dialog is up (a .viewer-modal without `hidden`). */
+const gsDialogUp = (id) => { const m = document.getElementById(id); return !!(m && !m.classList.contains('hidden')); };
+/** The run just started, on the Running list: the closing stop of every tour that starts one. */
+const gsRunCardHop = (text) => ({
+  id: 'card', info: true, nextLabel: 'Done',
+  // The run Start just began (beginRun notes it) when it is on the list; the first card otherwise.
+  target: [...(gs.startedRunId ? [`#run-list [data-run-id="${gs.startedRunId}"]`] : []), '#run-list [data-run-id]'],
+  text,
+});
+/** The two run steps: nav → project → (workflow) → task → Mock → Start → Running → the run's card. */
 function gsRunHops(g, mock) {
   const prompt = document.getElementById('prompt');
-  const mockOn = !!(el.mock && el.mock.checked);   // the switch sits beside Start run at every mode
-  const formErr = (document.getElementById('form-msg')?.textContent || '').trim();
-  if (g.started && onView('running')) return null;                       // the point of the step: seen
-  if (g.started && !(onView('new') && formErr)) {                        // a refused form keeps ringing Start
-    return NAV('running', mock
-      ? 'Follow the agents here. Questions and gates land in this list too.'
-      : 'Follow it here. When it finishes it moves to History.');
-  }
-  if (!onView('new')) return NAV('new', 'Every run starts here.');
-  if (noProjectPicked()) return { target: '#projectSelect', lift: ['.select-wrap'], text: 'Pick the project the run happens in.' };
   const wf = document.getElementById('workflowSelect');
-  if (!mock && wf && !wf.hidden && (wf.value || '') === AUTO_WORKFLOW_ID) {
-    return { target: '#workflowSelect', lift: ['.select-wrap'],
-      text: 'Choose a built-in workflow for this run — Default is the loop you saw in the Composer. Auto would pick one for you.' };
-  }
-  if (prompt && !prompt.hidden && !prompt.value.trim()) {
-    return { target: '#prompt', text: mock
-      ? 'Describe any task. A mock run never reads it, so one line will do.'
-      : 'Describe the task in a sentence or two. The planner asks when something matters.' };
-  }
-  if (mock) {
-    if (!mockOn) return { target: '#mock-switch', text: 'Mock mode runs the whole pipeline offline: no Claude calls, no tokens.' };
-    return { target: '#start-btn', start: true, text: 'Start it. The run appears under Running in the sidebar.' };
-  }
-  if (mockOn) return { target: '#mock-switch', text: 'Turn Mock mode off for a real run.' };
-  return { target: '#start-btn', start: true, text: 'Start the run. Worca answers loop gates itself and pauses only for the questions that matter.' };
+  const mockOn = () => !!(el.mock && el.mock.checked);   // the switch sits beside Start run at every mode
+  const formErr = () => (document.getElementById('form-msg')?.textContent || '').trim();
+  return [
+    NAV('new', 'Every run starts here.'),
+    { id: 'project', target: '#projectSelect', lift: ['.select-wrap'], met: () => !noProjectPicked(),
+      text: 'Pick the project the run happens in.',
+      already: 'The run happens in the project picked here — any registered folder.' },
+    mock ? null : {
+      id: 'workflow', target: '#workflowSelect', lift: ['.select-wrap'],
+      met: () => !(wf && !wf.hidden && (wf.value || '') === AUTO_WORKFLOW_ID),
+      text: 'Choose a built-in workflow for this run — Default is the loop you saw in the Composer. Auto would pick one for you.',
+      already: 'The workflow for this run is picked here — Default is the loop you saw in the Composer; Auto would pick one for you.',
+    },
+    { id: 'prompt', target: '#prompt', met: () => !(prompt && !prompt.hidden && !prompt.value.trim()),
+      text: mock
+        ? 'Describe any task. A mock run never reads it, so one line will do.'
+        : 'Describe the task in a sentence or two. The planner asks when something matters.',
+      already: mock
+        ? 'The task goes here. A mock run never reads it, so what is there will do.'
+        : 'The task goes here — a sentence or two; the planner asks when something matters.' },
+    { id: 'mock', target: '#mock-switch', toggle: true, met: () => mockOn() === mock,
+      skipWhenMet: !mock,   // a real run mentions the switch only when it has to be turned off
+      text: mock ? 'Mock mode runs the whole pipeline offline: no Claude calls, no tokens.' : 'Turn Mock mode off for a real run.',
+      already: 'Mock mode is on: the whole pipeline runs offline, no Claude calls, no tokens.' },
+    // A refused form (the message under Start) keeps ringing Start.
+    { id: 'start', target: '#start-btn', click: 'started', met: () => g.started && !(onView('new') && formErr()),
+      text: mock
+        ? 'Start it. The run appears under Running in the sidebar.'
+        : 'Start the run. Worca answers loop gates itself and pauses only for the questions that matter.' },
+    NAV('running', mock
+      ? 'Follow the agents here. Questions and gates land in this list too.'
+      : 'Follow it here. When it finishes it moves to History.'),
+    gsRunCardHop(mock
+      ? 'This is your run. Open the card to follow each agent and its log; a question or a gate lands here too. When it finishes it moves to History.'
+      : 'This is your run. Open the card to follow each agent, its log and its spend; a question the planner needs answered lands here. When it finishes it moves to History.'),
+  ];
+}
+/** Register a folder, through the Add project dialog: the prelude of every tour that needs a project. */
+function gsAddProjectHops(g, navText, addText) {
+  const val = (id) => (document.getElementById(id)?.value || '').trim();
+  // Opening the dialog is skipped while it is up and re-lights if it is closed; once the
+  // project is added the dialog hops are all met for good.
+  return [
+    NAV('projects', navText),
+    { id: 'add', target: '#project-add-btn', skipWhenMet: true, met: () => !!g.added || gsDialogUp('project-add-modal'), text: addText },
+    { id: 'path', mode: 'pointer', target: '#proj-add-path', met: () => !!g.added || !!val('proj-add-path'), skipWhenMet: !!g.added,
+      text: 'Paste the folder’s path, or Choose folder… to pick it. Files on disk are never touched.',
+      already: 'The folder’s path goes here. Files on disk are never touched.' },
+    { id: 'name', mode: 'pointer', target: '#proj-add-name', met: () => !!g.added || !!val('proj-add-name'), skipWhenMet: !!g.added,
+      text: 'Name it — this is how it appears in lists and pickers.',
+      already: 'Its name — how it appears in lists and pickers.' },
+    { id: 'save', mode: 'pointer', target: '#proj-add-save', click: 'added', met: () => !!g.added && !gsDialogUp('project-add-modal'),
+      text: 'Add it. The dialog closes and the project joins the list.' },
+  ];
 }
 /** A guide never fails on a control the interface mode hides (docs/ui-levels.md): when every
  *  candidate target exists but sits above the mode, the hop becomes "raise the mode" — the
- *  sidebar item first, then the right card once the dialog is up. Choosing it re-derives the
- *  original hop through the page watcher, like any other click. */
+ *  sidebar item first, then the right card once the dialog is up, then Done so the tour is
+ *  seen to carry on from behind the dialog. Choosing re-derives the original hop through the
+ *  page watcher, like any other click. */
 function gsRaiseLevelHop(hop) {
   const sels = Array.isArray(hop.target) ? hop.target : [hop.target];
+  const dialogUp = gsDialogUp('mode-modal');
   let need = null;
   for (const sel of sels) {
     const t = typeof sel === 'string' ? document.querySelector(sel) : null;
     if (!t) continue;
     const min = minLevelFor(t);
-    if (levelAtLeast(min)) return hop;
+    if (levelAtLeast(min)) {
+      return dialogUp ? { target: '#mode-done', mode: 'pointer', text: 'Done — the tour carries on from here.' } : hop;
+    }
     if (!need || UI_LEVELS.indexOf(min) < UI_LEVELS.indexOf(need)) need = min;
   }
   if (!need) return hop;                                   // not mounted yet: guide-spot waits for it
   const label = LEVEL_INFO[need].label;
-  const modal = document.getElementById('mode-modal');
-  if (modal && !modal.classList.contains('hidden')) {
+  if (dialogUp) {
     return { target: `#mode-cards [data-level-choice="${need}"]`, mode: 'pointer', text: `Choose ${label}, then Done.` };
   }
   return { target: ['#nav-mode', '.topnav-mode'], lift: ['.topnav'],
     text: `This step is part of ${label} mode. Open the mode switch to show it.` };
 }
 function gsNextHop(step, g = gs.guide || {}) {
-  const hop = gsNextHopRaw(step, g);
+  const hop = gsWalk(gsHops(step, g), g);
   return hop ? gsRaiseLevelHop(hop) : hop;
 }
-function gsNextHopRaw(step, g = gs.guide || {}) {
+// Every tour runs to its LOGICAL end — the thing the tile promises — not to the first click of
+// a multi-step action: a project is registered (not just the dialog opened), a run is on its card
+// under Running, a workspace is saved, team metrics is enabled, a policy home is on its page, the
+// answer has landed. A tour
+// that needs a project first walks the whole Add project dialog and then carries on.
+function gsHops(step, g) {
   const projects = Array.isArray(state.projects) ? state.projects.length : 0;
-  const addProject = (navText, addText) => (onView('projects')
-    ? { target: '#project-add-btn', text: addText, final: true }
-    : NAV('projects', navText));
+  const needProject = (navText, addText) => (projects ? [] : gsAddProjectHops(g, navText, addText));
   switch (step) {
     case 'project':
-      return addProject('Projects live here: every run happens inside one of these folders.',
-        'Register a folder. Files on disk are never touched.');
+      return [
+        ...gsAddProjectHops(g, 'Projects live here: every run happens inside one of these folders.', 'Register a folder: a folder chooser opens — pick the project’s folder. Files on disk are never touched.'),
+        { id: 'row', info: true, nextLabel: 'Done', target: '#projects-list .pl-item',
+          text: 'Your project. Runs happen inside this folder; open the row for its settings, memory and history.' },
+      ];
     case 'run':
-      if (!projects) return addProject('A run needs a project first.', 'Add one here.');
-      return gsRunHops(g, true);
+      return [...needProject('A run needs a project first.', 'Add one here: pick its folder in the chooser that opens.'), ...gsRunHops(g, true)];
     case 'realRun':
-      if (!projects) return addProject('A run needs a project first.', 'Add one here.');
-      return gsRunHops(g, false);
+      return [...needProject('A run needs a project first.', 'Add one here: pick its folder in the chooser that opens.'), ...gsRunHops(g, false)];
     case 'ask': {
       // The pill hides while the sheet is open (ask-panel.mjs), so it doubles as the "sheet open" signal.
       const pill = document.querySelector('.ask-pill');
       const input = document.querySelector('.ask-input');
-      if (!pill || !pill.hidden) return { target: '.ask-pill', lift: ['.ask-dock'], text: 'Ask Worca answers questions about any run in plain language. It is on every view.' };
-      if (input && !input.value.trim()) return { target: '.ask-input', lift: ['.ask-dock'], text: 'Try “What did my last run change?” — or anything about a run, an agent or a project.' };
-      return { target: '.ask-send', lift: ['.ask-dock'], text: 'Send it. Worca reads the run itself before answering.', final: true };
+      return [
+        { id: 'pill', target: '.ask-pill', lift: ['.ask-dock'], met: () => !!(pill && pill.hidden), skipWhenMet: true,
+          text: 'Ask Worca answers questions about any run in plain language. It is on every view.' },
+        { id: 'question', target: '.ask-input', lift: ['.ask-dock'], met: () => !!(input && input.value.trim()),
+          text: 'Try “What did my last run change?” — or anything about a run, an agent or a project.',
+          already: 'A question is already typed here. Anything about a run, an agent or a project works.' },
+        { id: 'send', target: '.ask-send', lift: ['.ask-dock'], click: 'asked', met: () => !!g.asked,
+          text: 'Send it. Worca reads the run itself before answering.' },
+        { id: 'answer', info: true, nextLabel: 'Done', target: '.ask-transcript', lift: ['.ask-dock'],
+          text: 'The answer lands here, with what it read to get there. Ask a follow-up any time — the thread keeps its context.' },
+      ];
     }
     case 'workflows': {
-      // Look at one, then pick one: the step ends on a pick in the New pipeline
-      // picker (which persists it — that is the derived tick).
-      const wf = document.getElementById('workflowSelect');
-      if (wf && g.wfInitial !== undefined && (wf.value || '') !== g.wfInitial) return null;
-      const opened = (document.getElementById('gv-name')?.value || '').trim();
-      if (onView('composer') && opened) g.wfSeen = true;   // a workflow is on the canvas: seen
-      if (!g.wfSeen && !onView('composer')) return NAV('composer', 'Workflows are the agent chains Worca runs. The built-in ones live here.');
-      if (!g.wfSeen && !opened) {
-        return { target: ['#gv-saved-list .pl-item[data-id="wf_default"] .pl-row', '#gv-saved-list .pl-row'],
-          text: 'Open Default: the full Plan → Refine → Implement → Review loop. Each card is an agent; the wires carry plans, code and reviews.' };
-      }
-      if (!onView('new')) return NAV('new', 'Now pick one for a run.');
-      if (g.wfInitial === undefined) g.wfInitial = wf ? (wf.value || '') : '';
-      return { target: '#workflowSelect', lift: ['.select-wrap'], text: 'Every run picks its workflow here. Auto lets Worca choose; Default is the loop you just saw. Pick one.' };
+      // Composer: open Default, read the canvas, open the side panel, read it — then back to New
+      // pipeline to pick one for a run (the pick persists it: that is the derived tick) and run it.
+      const rail = document.getElementById('gv-ins-rail');
+      const run = Object.fromEntries(gsRunHops(g, false).filter(Boolean).map((h) => [h.id.replace('nav:', ''), h]));
+      return [
+        NAV('composer', 'Workflows are the agent chains Worca runs. The built-in ones live here.'),
+        { id: 'open', target: ['#gv-saved-list .pl-item[data-id="wf_default"] .pl-row', '#gv-saved-list .pl-row'],
+          met: () => !!(document.getElementById('gv-name')?.value || '').trim(),
+          text: 'Open Default: the built-in Plan → Refine → Implement → Review loop.',
+          already: 'A workflow is already on the canvas. Open Default to see the built-in Plan → Refine → Implement → Review loop.' },
+        { id: 'canvas', info: true, target: '#gv-canvas',
+          text: 'This is the whole workflow. Each card is an agent; the wires carry plans, code and reviews from one to the next. Drag cards, rewire them or drop in other agents — the loop is yours to change.' },
+        { id: 'rail-open', target: '#gv-ins-toggle', lift: ['#gv-ins-rail'], met: () => !rail || rail.dataset.open !== 'collapsed', skipWhenMet: true,
+          text: 'Expand the side panel: it holds the agents you can drop onto the canvas and the settings of whatever you select.' },
+        { id: 'rail', info: true, target: '#gv-ins-rail',
+          text: 'The side panel is the toolbox. Agents lists every agent you can drag onto the canvas, with Create agent… for your own. Info shows what is selected on the canvas: a card’s model and settings, or a wire’s loop limit.' },
+        NAV('new', 'Now start a run with the workflow that fits your task. Every run starts here.'),
+        // The pick is saved per project (PATCH /api/config), so a project has to be picked first.
+        { id: 'project', target: '#projectSelect', lift: ['.select-wrap'], met: () => !noProjectPicked(),
+          text: 'Pick the project the run happens in — the workflow you choose is remembered for it.',
+          already: 'The run happens in the project picked here; the workflow you choose next is remembered for it.' },
+        // Only the user's own pick counts (a `change` on the picker, noted by the watcher): choosing
+        // a project loads its remembered workflow into the picker, and that must not end the tour.
+        { id: 'pick', target: '#workflowSelect', lift: ['.select-wrap'], met: () => !!g.wfPicked,
+          text: 'Every run picks its workflow here. Auto lets Worca choose; Default is the loop you just saw. Pick the one that fits your task.' },
+        // Then the run itself, so the tour ends on something visibly final (the run's card), not on
+        // a form. The Mock switch is left to the user: mentioned at Start, never rung — a real run is
+        // a fine outcome here, and so is an offline one.
+        { ...run.prompt, text: 'Now describe the task for it, in a sentence or two. The planner asks when something matters.',
+          already: 'The task goes here — a sentence or two; the planner asks when something matters.' },
+        { ...run.start, text: 'Start the run with that workflow. Mock mode, beside it, tries the loop offline first.' },
+        run.running,
+        gsRunCardHop('This is your run, on the workflow you picked. Open the card to follow each agent; when it finishes it moves to History.'),
+      ];
     }
-    case 'workspace':
-      if (projects < 2) return addProject('A workspace needs at least two projects.', 'Add another one here.');
-      if (!onView('workspaces')) return NAV('workspaces', 'Workspaces live here.');
-      return { target: '#ws-create-btn', text: 'A workspace runs one task across several projects at once.', final: true };
-    case 'teamMetrics':
-      if (!projects) return addProject('Team metrics is enabled per project.', 'Add one here first.');
-      if (!onView('projects')) return NAV('projects', 'Team metrics is switched on per project, from its row here.');
-      // The enable control exists only for a project with an origin remote; otherwise
-      // ring the cell that explains why, so the guide never lights nothing.
-      return {
-        final: true,
-        target: ['#projects-list .tm-enable', '#projects-list .tm-cell'],
-        text: ['Team metrics records every finished run on a shared git branch, for the whole team.',
-          'Team metrics lives on a git remote. This project has none yet — push it to one and “Set up team metrics…” appears here.'],
-      };
+    case 'workspace': {
+      const checked = () => document.querySelectorAll('#wiz-projects input:checked').length;
+      const stepShowing = (n) => { const s = document.getElementById(`wiz-step-${n}`); return !!(s && !s.classList.contains('hidden')); };
+      return [
+        ...(projects < 2 ? gsAddProjectHops(g, 'A workspace needs at least two projects.', 'Add another one here: pick its folder in the chooser that opens.') : []),
+        NAV('workspaces', 'Workspaces live here.', ['workspace-create']),   // the wizard is part of the way
+        { id: 'create', target: '#ws-create-btn', skipWhenMet: true, met: () => onView('workspace-create'),
+          text: 'A workspace runs one task across several projects at once. Create one.' },
+        { id: 'name', target: '#wiz-name', met: () => !!(document.getElementById('wiz-name')?.value || '').trim(),
+          text: 'Name the workspace.', already: 'The workspace’s name.' },
+        { id: 'members', target: '#wiz-projects', met: () => checked() >= 2,
+          text: 'Tick the projects that belong together — two or more.',
+          already: 'The projects that belong together — two or more are ticked.' },
+        { id: 'scan', target: '#wiz-start-scan', met: () => !stepShowing(1),
+          text: 'Scan them: Worca maps how the projects connect and drafts the workspace description.' },
+        { id: 'scanning', target: '#wiz-step-2 .status-label', met: () => stepShowing(3),
+          text: 'Worca is reading the projects — this takes a moment. The description arrives when it is done.' },
+        { id: 'save', target: '#wiz-save', final: true,
+          text: 'Read the draft, edit what you like, then save. Every run can now target the workspace as a whole.' },
+      ];
+    }
+    case 'teamMetrics': {
+      // The control lives on the project page's Team tab (the Projects row only carries a status
+      // chip): first the row, then the tab pill, then the block — or, for a project with no origin
+      // remote, the block that explains why, so the tour never lights nothing. The plan is re-derived
+      // after every hop, so each readiness check looks at what is on screen now.
+      const pre = needProject('Team metrics is enabled per project.', 'Add one here first: pick its folder in the chooser that opens.');
+      const nav = NAV('projects', 'Team metrics is switched on per project, from its page here.');
+      const pageOpen = () => !!projDetail;
+      const teamTab = () => document.getElementById('pd-tab-team');
+      const tabActive = () => !!(teamTab() && teamTab().classList.contains('active'));
+      const block = () => document.querySelector('#proj-detail .pd-team-metrics .tm-cell');
+      const canEnable = () => !!document.querySelector('#proj-detail .tm-enable');
+      const dialog = () => !!document.querySelector('#plugin-modal:not(.hidden) .tm-enable-submit');
+      const walk = [
+        ...pre, nav,
+        { id: 'open', target: ['#projects-list .pl-row[role="button"]', '#projects-list .pl-row'], skipWhenMet: true, met: pageOpen,
+          text: 'Open a project: its page carries the team setup.' },
+        { id: 'tab', target: '#pd-tab-team', lift: ['.pd-tabs'], skipWhenMet: true, met: tabActive,
+          text: 'Team metrics and team policy live on the Team tab.' },
+      ];
+      if (!pageOpen() || !tabActive() || !block()) return [...walk, { id: 'enable', target: ['#proj-detail .tm-enable', '#proj-detail .pd-team-metrics'], met: () => false, text: 'Team metrics is switched on from the project’s Team tab.' }];
+      if (!canEnable()) {
+        // Already on (a replay), or no origin remote: nothing to enable — explain, on the block
+        // that holds (or would hold) the button. The cell names its state (data-kind).
+        const kind = block().dataset.kind || '';
+        const on = !!kind && kind !== 'no-origin' && kind !== 'off';
+        const change = !!block().querySelector('.tm-change');
+        return [...walk, { id: 'why', info: true, nextLabel: 'Done', target: '#proj-detail .pd-team-metrics',
+          text: on ? `Team metrics is already on for this project: every finished run is recorded on the shared branch. Include my runs is your own switch${change ? '; Change… points the project at another home' : ''}.`
+            : 'Team metrics lives on a git remote. This project has none yet — push it to one and “Set up team metrics…” appears here.' }];
+      }
+      return [
+        ...walk,
+        { id: 'enable', target: '#proj-detail .tm-enable', skipWhenMet: true, met: dialog,
+          text: 'Team metrics records every finished run on a shared git branch, for the whole team. Set it up here.' },
+        { id: 'submit', mode: 'pointer', target: '#plugin-modal .tm-enable-submit', final: true,
+          text: 'Create the branch and enable it. From now on every finished run in this project is recorded there.' },
+      ];
+    }
+    case 'teamPolicy': {
+      // The same walk as team metrics — the row, the Team tab, "Set up team policy…", the dialog's
+      // submit — but it does not end on the click: enabling a home lands the app on the Team policy
+      // page, so the tour closes there, on Edit policy, where caps, models and plugins are actually
+      // set. A project pointed at another home stays on its page, and the closing stop is the block
+      // that now says so. `g.enabled` (the submit's click) carries the walk past the page hops,
+      // because the routing leaves the page — and the checks that read it — behind.
+      const pre = needProject('A team policy is set per project.', 'Add one here first: pick its folder in the chooser that opens.');
+      const nav = NAV('projects', 'A team policy is switched on per project, from its page here.', ['team-policy']);   // the new home's page is where it ends
+      const pageOpen = () => !!projDetail;
+      const teamTab = () => document.getElementById('pd-tab-team');
+      const tabActive = () => !!(teamTab() && teamTab().classList.contains('active'));
+      const block = () => document.querySelector('#proj-detail .pd-team-policy .tp-cell');
+      const canEnable = () => !!document.querySelector('#proj-detail .tp-enable');
+      const dialog = () => !!document.querySelector('#plugin-modal:not(.hidden) .tp-enable-submit');
+      const walk = [
+        ...pre, nav,
+        { id: 'open', target: ['#projects-list .pl-row[role="button"]', '#projects-list .pl-row'], skipWhenMet: true, met: () => !!g.enabled || pageOpen(),
+          text: 'Open a project: its page carries the team setup.' },
+        { id: 'tab', target: '#pd-tab-team', lift: ['.pd-tabs'], skipWhenMet: true, met: () => !!g.enabled || tabActive(),
+          text: 'Team policy lives on the Team tab, beside team metrics.' },
+      ];
+      if (g.enabled) {
+        // Past the dialog. A new home: the app routed to its page — close on Edit policy. Otherwise
+        // (a follow, or a dialog closed after a failed attempt) the block on the project page says
+        // what happened.
+        if (onView('team-policy')) {
+          return [...walk, { id: 'page', info: true, nextLabel: 'Done', target: '#tp-body .tp-edit',
+            text: 'Your policy home, empty for now. Edit policy sets the cost caps, models, plugins and guardrails; publishing puts them on the worca-policy branch for everyone who runs Worca on this repository.' }];
+        }
+        const on = !!document.querySelector('#proj-detail .tp-cell .tp-open');
+        return [...walk, { id: 'after', info: true, nextLabel: 'Done', target: ['#proj-detail .tp-cell', '#proj-detail .pd-team-policy'],
+          text: on ? 'Team policy is on for this project. Open takes you to the Team policy page, where the document is read and edited.'
+            : 'Nothing was enabled — “Set up team policy…” stays here for when you are ready.' }];
+      }
+      if (!pageOpen() || !tabActive() || !block()) return [...walk, { id: 'enable', target: ['#proj-detail .tp-enable', '#proj-detail .pd-team-policy'], met: () => false, text: 'A team policy is switched on from the project’s Team tab.' }];
+      if (!canEnable()) {
+        // Already on (a replay), or no origin remote: nothing to enable — explain, on the block.
+        const kind = block().dataset.kind || '';
+        const on = !!kind && kind !== 'no-origin' && kind !== 'off';
+        const change = !!block().querySelector('.tp-change');
+        return [...walk, { id: 'why', info: true, nextLabel: 'Done', target: '#proj-detail .pd-team-policy',
+          text: on ? `Team policy is already on for this project. Open shows the document on the Team policy page${change ? '; Change… points the project at another home' : ''}.`
+            : 'A team policy lives on a git remote. This project has none yet — push it to one and “Set up team policy…” appears here.' }];
+      }
+      return [
+        ...walk,
+        { id: 'enable', target: '#proj-detail .tp-enable', skipWhenMet: true, met: dialog,
+          text: 'A team policy is one shared document — cost caps, models, plugins, guardrails — read by everyone who runs Worca on this repository. Set it up here.' },
+        { id: 'submit', mode: 'pointer', target: '#plugin-modal .tp-enable-submit', click: 'enabled', met: () => !!g.enabled && !gsDialogUp('plugin-modal'),
+          text: 'Create the branch and enable it: here, on this repository, or following another project’s policy. It starts empty.' },
+      ];
+    }
     default:
-      return null;
+      return [];
   }
 }
 
@@ -19634,24 +21255,50 @@ function endGuide() {
   clearInterval(gs.poll); gs.poll = 0;
   for (const t of GS_WATCH_EVENTS) document.removeEventListener(t, gsOnPageChange, true);
 }
-// A guide's next hop is a pure function of the page, so ANY interaction the user
-// makes (typing the prompt, opening Advanced, flipping Mock, a nav click) can
-// move it on: after each one, re-derive the hop and re-light if it changed.
-// Capture phase, because `toggle` does not bubble. A final hop ends on the
-// target's own click instead.
+// A guide's next hop is a pure function of the page and of what this run has passed, so
+// ANY interaction the user makes (typing the prompt, flipping Mock, a nav click) can move
+// it on: after each one, re-derive the hop and re-light if it changed. Capture phase,
+// because `toggle` does not bubble. A final hop ends on the target's own click instead.
 const GS_WATCH_EVENTS = ['input', 'change', 'toggle', 'click'];
-function gsOnPageChange() {
+/** The lit control was clicked: a final hop is the whole guide; a `click` hop notes it (Start
+ *  run, Send, Add project) so a later hop can ask for it; a click on an already-right control
+ *  acknowledges it (a toggle's click undoes the state instead, so it is left to the watcher).
+ *  Reached from the page watcher AND from the spot's own listener (idempotent), so a click
+ *  counts even while the spot is re-acquiring a repainted control. */
+function gsTargetClicked(hop) {
   const g = gs.guide;
-  if (!g || g.final) return;
+  if (!g || g.hop !== hop) return;
+  if (hop.click) g[hop.click] = true;
+  if (hop.pre && !hop.toggle) g.passed.add(hop.id);
+  if (hop.final) endGuide();
+}
+function gsOnPageChange(e) {
+  const g = gs.guide;
+  if (!g) return;
+  if (e.type === 'click' && g.hop && gsHopContains(g.hop, e.target)) gsTargetClicked(g.hop);
+  if (!gs.guide || g.final) return;
+  // A change made to an already-right control (re-picking the project, editing the task)
+  // is the user's own "got it" for that hop.
+  if (g.hop && g.hop.pre && (e.type === 'change' || e.type === 'input') && gsHopContains(g.hop, e.target)) g.touched = true;
+  // The workflows tour ends on the user's pick in the picker — the event, not the value, which
+  // the page also sets by itself (a project's remembered workflow).
+  if (g.hop && g.hop.id === 'pick' && e.type === 'change' && gsHopContains(g.hop, e.target)) g.wfPicked = true;
   const mine = g.seq;
   setTimeout(() => gsReconsider(mine), 0);
 }
+const gsHopKey = (h) => (h ? `${String(h.target)}|${h.text}|${h.next ? 1 : 0}` : '');
 function gsReconsider(seq) {
   const cur = gs.guide;
   if (!cur || cur.seq !== seq) return;
+  const h = cur.hop;
+  if (h && h.id && h.met && !h.skipWhenMet) {   // a skipWhenMet hop (opens something) is never passed: it re-lights when closed
+    if (!h.pre && h.met()) cur.passed.add(h.id);                    // the state the lit hop asked for arrived
+    else if (h.pre && cur.touched && h.met()) cur.passed.add(h.id);  // the control was changed and is still right
+  }
+  cur.touched = false;
   const next = gsNextHop(cur.step, cur);
   if (!next) { endGuide(); return; }
-  if (String(next.target) !== String(cur.target)) runGuide();
+  if (gsHopKey(next) !== gsHopKey(h)) runGuide();
 }
 /** The main column's scrollport: a guide arriving on a view starts at its top,
  *  then glides down to the ringed control (guide-spot scrolls it into view). */
@@ -19682,10 +21329,12 @@ async function startGuide(step) {
   }
   runGuideFor(step);
 }
+/** Every start is a fresh walk from the first hop: nothing from an earlier run of the
+ *  same guide carries over, so a replay explains every stop again. */
 function runGuideFor(step) {
   endGuide();
   if (step === 'claude') { openClaudeSetup(); return; }
-  gs.guide = { step, seq: ++gs.seq, target: null, final: false, started: false, view: currentShownView };
+  gs.guide = { step, seq: ++gs.seq, hop: null, target: null, final: false, started: false, passed: new Set(), touched: false, view: currentShownView };
   for (const t of GS_WATCH_EVENTS) document.addEventListener(t, gsOnPageChange, true);
   // Some outcomes arrive after the click's own tick (a workflow loading onto the
   // canvas, a list fetching): a slow poll catches those — a few DOM reads, only
@@ -19700,19 +21349,21 @@ function runGuide() {
   if (!g) return;
   const hop = gsNextHop(g.step, g);
   if (!hop) { endGuide(); return; }
-  g.target = hop.target; g.final = !!hop.final;
+  g.hop = hop; g.target = hop.target; g.final = !!hop.final; g.touched = false;
   const mine = g.seq;
   gsDestroySpot();
   gs.spot = createGuideSpot({
     target: hop.target, text: hop.text, mode: hop.mode || 'spotlight', lift: hop.lift || [], tries: 300,   // ~5 s: a list may still be fetching
+    nextLabel: hop.nextLabel || 'Next',
+    onNext: hop.next ? () => {
+      if (!gs.guide || gs.guide.seq !== mine) return;
+      gs.guide.passed.add(hop.id);
+      runGuide();
+    } : null,
     onDismiss: () => { if (gs.guide && gs.guide.seq === mine) endGuide(); },
     onTargetClick: () => {
       if (!gs.guide || gs.guide.seq !== mine) return;
-      // The real action happened: a final hop is the whole guide; Start run is
-      // remembered so the closing hop can point at Running; every other hop
-      // hands over to the page watcher above, which re-lights the next control.
-      if (hop.start) gs.guide.started = true;
-      if (hop.final) endGuide();
+      gsTargetClicked(hop);   // every other hop hands over to the page watcher, which re-lights the next control
     },
   });
 }
@@ -19738,7 +21389,7 @@ const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
 // plugins/guardrails/models LEFT this array: they are Settings tabs now, reached
 // as #settings/<tab> (legacy bare hashes redirect — see LEGACY_TAB_VIEWS).
-const VIEW_NAMES = ['new', 'getting-started', 'running', 'history', 'stats', 'team-metrics', 'composer', 'workspaces', 'workspace-create', 'agents', 'scripts', 'agent-create', 'projects', 'settings'];
+const VIEW_NAMES = ['new', 'getting-started', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'composer', 'workspaces', 'workspace-create', 'agents', 'scripts', 'agent-create', 'projects', 'settings'];
 
 // ── Interface mode (docs/ui-levels.md) ──────────────────────────────────────
 // simple | advanced | expert: a VIEW preference, server-rendered into <html data-level>.
@@ -19758,13 +21409,15 @@ const levelCtl = createLevelController({
 const VIEW_MIN_LEVEL = Object.freeze({
   stats: 'advanced', composer: 'advanced', workspaces: 'advanced', 'workspace-create': 'advanced',
   'agent-create': 'advanced',                 // reachable from the Composer palette at advanced
-  'team-metrics': 'expert', agents: 'expert', scripts: 'expert',
+  'team-metrics': 'expert', 'team-policy': 'expert', agents: 'expert', scripts: 'expert',
+  schedules: 'advanced',
 });
 const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ guardrails: 'advanced', plugins: 'advanced', memory: 'advanced', models: 'expert' });
 const VIEW_TITLES = Object.freeze({
   stats: 'Statistics', composer: 'Workflow Composer', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
-  'agent-create': 'Create agent', 'team-metrics': 'Team metrics', agents: 'Agents', scripts: 'Scripts',
+  'agent-create': 'Create agent', 'team-metrics': 'Team metrics', 'team-policy': 'Team policy', agents: 'Agents', scripts: 'Scripts',
   guardrails: 'Guardrails', plugins: 'Plugins', memory: 'Memory', models: 'Models',
+  schedules: 'Schedules',
 });
 function pageMinLevel() {
   if (currentShownView === 'settings') return { key: currentSettingsTab, min: SETTINGS_TAB_MIN_LEVEL[currentSettingsTab] || 'simple' };
@@ -19780,7 +21433,9 @@ function paintLevelBanner() {
   const hideNodes = currentLevel() === 'simple';
   for (const b of $$('.nav button[data-nav], .topnav button[data-nav]')) {
     const nav = b.dataset.nav;
-    keepVisible(b, above && nav === currentShownView && !(hideNodes && NODES_GROUP_VIEWS.includes(nav)));
+    // Schedules is Advanced, but a run scheduled from Ask Worca in Simple keeps its entry (rule 2).
+    keepVisible(b, (above && nav === currentShownView && !(hideNodes && NODES_GROUP_VIEWS.includes(nav)))
+      || (nav === 'schedules' && schedulesInUse));
   }
   // The Nodes parent and its box are not routes, so the loop above never reaches
   // them: keep both with the child, or the kept row sits inside a hidden box
@@ -19898,6 +21553,7 @@ function showView(name, param = '') {
     scriptsCtl.destroy();
     scriptsCtl = null;
   }
+  if (currentShownView === 'workspaces' && name !== 'workspaces') closeWsDetail({ instant: true });
   // Same for Running's two-screen track (spec §5.1): leaving must not park a
   // detail screen mid-slide behind the next view.
   //
@@ -19921,6 +21577,8 @@ function showView(name, param = '') {
     param = settingsParamFor(tab, sub);
   }
   const prevView = currentShownView;
+  // The schedule sheet and the Start menu are body-level overlays of the view that opened them.
+  if (prevView !== name) { closeScheduleSheet(); closeStartMenu(); }
   currentShownView = name;
   paintLevelBanner();
   // The guide re-derives its hop on a tick, so it is told here — before a view's
@@ -19959,8 +21617,11 @@ function showView(name, param = '') {
   document.body.classList.toggle('view-history', name === 'history');
   document.body.classList.toggle('view-running', name === 'running');
   document.body.classList.toggle('view-projects', name === 'projects');
+  document.body.classList.toggle('view-workspaces', name === 'workspaces');
   if (name === 'running') {
     renderRunningView();
+    // The Scheduled group (runs due within 24 h) reads the same store as the Schedules view.
+    if (prevView !== 'running') void withWorkspaces().then(() => schedulesView.load()).then(paintScheduledGroup);
     routeRunDetail(param, { instant: prevView !== 'running' });
     // Opening a run's detail page acknowledges it (linger → drops on next render).
     // ONLY a finished run: opening a still-live run must NOT pre-acknowledge, or
@@ -19983,8 +21644,16 @@ function showView(name, param = '') {
     routeHistoryDetail(param, { instant: prevView !== 'history' });
   }
   if (name === 'stats') loadStatsView();
+  if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
   if (name === 'team-metrics') loadTeamMetricsView();
-  if (name === 'workspaces') loadWorkspacesView();
+  if (name === 'team-policy') loadTeamPolicyView(param);
+  if (name === 'workspaces') {
+    setWsMsg('');
+    // A view entry refetches the list and then routes the page half of the hash; an in-view hop
+    // (list <-> page, tab <-> tab) only routes — the Projects arm below does the same.
+    if (prevView !== 'workspaces') void loadWorkspacesView();
+    else routeWsDetail(param);
+  }
   if (name === 'workspace-create') enterWizard();
   if (name === 'agents') loadAgentsView();
   if (name === 'scripts') mountScriptsView(param);
@@ -20003,9 +21672,16 @@ function showView(name, param = '') {
   if (name === 'settings') showSettingsTab(param);
   if (name === 'new') {
     loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights();
+    schedulePolicyLine();                    // team policy notes for the current target (board 8)
     // Drop the per-id workflow memo on every (re-)entry so a workflow re-saved
     // in Composer repaints with its new topology rather than the cached one.
     state.workflowCache = {};
+    // #new/schedule (Schedules › Schedule a run): the sheet opens first, the task comes after.
+    // The hash is then plain #new, so Back and a reload never re-open it.
+    if (param === 'schedule') {
+      try { window.history.replaceState(null, '', '#new'); } catch { /* ignore */ }
+      setTimeout(() => { void openScheduleForNew(); }, 0);
+    }
     if (newPipelinePrefill) {
       // An Ask handoff reloads BOTH pickers itself (with the card's ids) at the
       // end of its own awaits — a second, un-awaited refresh here would race it
@@ -20214,6 +21890,10 @@ function getPageContext() {
   // The Team metrics page's selection: scope id, range, group-by and the active filters, so
   // "why did spend jump?" refers to the chart on screen. Ids and enum slugs only — the server
   // validates each and resolves the scope name itself.
+  if (ctx.view === 'team-policy') {
+    if (tpState.scopeId) ctx.tpScope = tpState.scopeId;
+    return ctx;
+  }
   if (ctx.view === 'team-metrics') {
     if (tmState.scopeId) ctx.tmScope = tmState.scopeId;
     ctx.tmRange = tmState.range;

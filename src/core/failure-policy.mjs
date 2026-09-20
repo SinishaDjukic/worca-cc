@@ -40,6 +40,10 @@ export const REASON = Object.freeze({
   ERROR: 'error',                 // a failure that would otherwise have ended the run
   COST_PIPELINE: 'cost_pipeline', // the per-pipeline cost cap
   COST_TOTAL: 'cost_total',       // the total (weekly/monthly) cost cap
+  // Team policy (soft caps set on the worca-policy branch): the same two gates, but the
+  // binding number came from the team, so the resume flow offers "continue past".
+  COST_PIPELINE_POLICY: 'cost_pipeline_policy',
+  COST_TOTAL_POLICY: 'cost_total_policy',
 });
 export const REASON_CODES = Object.freeze(Object.values(REASON));
 
@@ -92,6 +96,10 @@ export const FAILURE_POLICY = Object.freeze({
   budget: Object.freeze({
     cost_pipeline: both(pause(REASON.COST_PIPELINE)),
     cost_total:    both(pause(REASON.COST_TOTAL)),
+    // Team soft caps pause only when someone can click "continue past": the harness
+    // downgrades them to a warning under --yes before ever reaching this row.
+    cost_pipeline_policy: both(pause(REASON.COST_PIPELINE_POLICY)),
+    cost_total_policy:    both(pause(REASON.COST_TOTAL_POLICY)),
   }),
   // run()'s setup — checkout, graph build, skills gate — failed with the pipeline
   // row already created. A pause here stamps `setupIncomplete`; resume replays it.
@@ -177,6 +185,8 @@ const CONSEQUENCES = Object.freeze({
   [REASON.RECOVERABLE]:  { reportsToSource: true,  stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'recoverable error — resume to retry' },
   [REASON.COST_PIPELINE]:{ reportsToSource: true,  stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'pipeline cost limit reached' },
   [REASON.COST_TOTAL]:   { reportsToSource: true,  stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'total cost limit reached' },
+  [REASON.COST_PIPELINE_POLICY]: { reportsToSource: true, stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'team cost cap reached' },
+  [REASON.COST_TOTAL_POLICY]:    { reportsToSource: true, stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'team total cap reached' },
   [REASON.ERROR]:        { reportsToSource: true,  stagesResults: true,  severity: 'error',   notifyPref: 'error',  exitInteractive: 1, label: 'a step failed' },
 });
 

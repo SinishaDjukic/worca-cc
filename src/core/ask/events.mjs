@@ -55,6 +55,9 @@ const MEMORY_WRITE_TOOLS = new Set(['mcp__worca__remember', 'mcp__worca__forget'
 // `scripts-changed` broadcast the REST routes emit — a script the chat saved shows up in an
 // open Scripts tab. There is no delete tool, and test_script writes nothing outside the bench.
 const SCRIPT_WRITE_TOOLS = new Set(['mcp__worca__save_script']);
+// The direct schedule writes (docs/scheduled-runs.md "Ask Worca"): reversible, never a run start.
+const SCHEDULE_WRITE_TOOLS = new Set(['mcp__worca__pause_schedule', 'mcp__worca__resume_schedule',
+  'mcp__worca__skip_next_run', 'mcp__worca__mark_schedule_activity_read']);
 /** True when a SUCCESSFUL call of `name` with `input` changed this thread's worktree rows. */
 export function worktreeMutatingCall(name, input) {
   if (!WORKTREE_TOOLS.has(name)) return false;
@@ -133,6 +136,8 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'get_team_metrics': return 'Reading team metrics';
     case 'list_team_metrics_runs': return 'Listing team runs';
     case 'push_team_metrics': return 'Pushing team metrics';
+    case 'get_team_policy': return 'Reading team policy';
+    case 'propose_policy_change': return 'Proposing a policy change';
     case 'track_run': return 'Tracking a run';
     case 'read_attachment': return `Reading ${(attachmentNames && attachmentNames[id]) || 'attachment'}`;
     case 'list_diff_comments': return id ? `Reading comments on ${id.slice(0, 12)}` : 'Reading diff comments';
@@ -148,6 +153,18 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'get_script': return input?.key ? `Reading script: ${input.key}` : 'Reading a script';
     case 'save_script': return input?.key ? `Saving script: ${input.key}` : 'Saving a script';
     case 'test_script': return input?.key ? `Testing script: ${input.key}` : 'Testing a script';
+    case 'list_schedules': return 'Looking at schedules';
+    case 'get_schedule': return 'Reading a schedule';
+    case 'list_schedule_activity': return 'Reading schedule activity';
+    case 'preview_schedule': return 'Working out the dates';
+    case 'propose_schedule_change': return 'Proposing a schedule change';
+    case 'pause_schedule': return 'Pausing a schedule';
+    case 'resume_schedule': return 'Resuming a schedule';
+    case 'skip_next_run': return 'Skipping the next run';
+    case 'mark_schedule_activity_read': return 'Marking activity read';
+    case 'list_task_sources': return 'Looking at task sources';
+    case 'find_tasks': return input?.search ? `Searching tasks: ${String(input.search).slice(0, 40)}` : 'Searching tasks';
+    case 'get_task': return input?.id ? `Reading task ${String(input.id).slice(0, 40)}` : 'Reading a task';
     default: return `Using ${n}`;
   }
 }
@@ -221,6 +238,9 @@ export function createTurnReducer({
   onWorkflowStart = null,
   onWorkflowResult = null,
   onMetricsProposal = null,      // propose_metrics_change RESULT (team metrics card; the parent re-validates the input)
+  onPolicyProposal = null,       // propose_policy_change RESULT (team policy card; same split)
+  onScheduleProposal = null,     // propose_schedule_change RESULT (schedule card; the parent re-validates the input)
+  onScheduleMutation = null,     // a direct schedule write succeeded in the MCP child
   onTrackRun = null,
   onCommentMutation = null,
   onWorktreeMutation = null,
@@ -483,6 +503,13 @@ export function createTurnReducer({
     } catch { /* unparseable result — no poke; the next open refetches anyway */ }
   }
 
+  // And for schedules: pause / resume / skip / mark-read succeeded in the CHILD, so the parent
+  // broadcasts the same schedules-changed / notifications-changed frames the REST routes emit.
+  function pokeScheduleWrite(name, isError) {
+    if (isError || !SCHEDULE_WRITE_TOOLS.has(name) || typeof onScheduleMutation !== 'function') return;
+    try { onScheduleMutation({ tool: short(name) }); } catch { /* a broken sink never breaks the stream */ }
+  }
+
   function onUser(raw, ptu, isMain) {
     const content = Array.isArray(raw.message?.content) ? raw.message.content : [];
     for (const c of content) {
@@ -498,6 +525,7 @@ export function createTurnReducer({
         pokeWorktreeMutation(ct.name, ct.input, c.is_error);
         pokeMemoryWrite(ct.name, text, c.is_error);
         pokeScriptWrite(ct.name, text, c.is_error);
+        pokeScheduleWrite(ct.name, c.is_error);
         continue;
       }
       const b = byId.get(c.tool_use_id);
@@ -551,6 +579,20 @@ export function createTurnReducer({
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }
+      if (b.name === 'mcp__worca__propose_policy_change' && typeof onPolicyProposal === 'function') {
+        // Same split as the metrics card: the parent re-validates from the INPUT (policy-proposal.mjs).
+        try {
+          const ret = onPolicyProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_schedule_change' && typeof onScheduleProposal === 'function') {
+        // Same split as the metrics card: the parent re-validates the INPUT against the live rows.
+        try {
+          const ret = onScheduleProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
       if (b.name === 'mcp__worca__track_run' && typeof onTrackRun === 'function') {
         // The parent owns the runs Map, the link rows and the followers: it re-resolves the id itself (D4).
         try {
@@ -562,6 +604,7 @@ export function createTurnReducer({
       pokeWorktreeMutation(b.name, fullInputs.get(b.id), c.is_error);
       pokeMemoryWrite(b.name, text, c.is_error);
       pokeScriptWrite(b.name, text, c.is_error);
+      pokeScheduleWrite(b.name, c.is_error);
     }
   }
 

@@ -457,6 +457,14 @@ test('metrics card: updateCardBlock shallow-merges a `card` sub-patch (the apply
   assert.deepEqual(findCard(t.id, 'card_0000bb01').block, b, 'persisted');
 });
 
+test('policy card: the same shallow `card` sub-patch as a metrics card', () => {
+  const t = createThread();
+  const m = appendMessage(t.id, { role: 'assistant', text: '', status: 'done' });
+  setMessageBlocks(m.id, [{ kind: 'card', id: 'card_0000bb02', state: 'proposed', card: { type: 'policy', kind: 'edit', home: 'acme/gateway', summary: 'Edit', changes: [] } }]);
+  const b = updateCardBlock(t.id, 'card_0000bb02', { state: 'applied', card: { result: { ok: true, detail: 'published abc1234 to acme/gateway' } } });
+  assert.deepEqual(b.card, { type: 'policy', kind: 'edit', home: 'acme/gateway', summary: 'Edit', changes: [], result: { ok: true, detail: 'published abc1234 to acme/gateway' } });
+});
+
 test('boot sweep: a streaming row\'s building workflow card turns failed with the sweep text', () => {
   const t = createThread();
   const m = appendMessage(t.id, { role: 'assistant', text: '', status: 'streaming' });

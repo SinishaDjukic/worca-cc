@@ -24,6 +24,11 @@ project's working tree, so nothing is ever committed to your repo.
                          rows (diff_comments), never files; ask_card_comments carries
                          a proposal's comment ids from propose_run through to launch.
                          Archiving a run deletes its comments with its artifacts.
+  scheduled/<id>/extras/                files attached to a scheduled run (or a repeating
+                                        schedule), kept until it starts — the OS temp dir does
+                                        not survive a reboot. The tickets, schedules and the
+                                        activity feed are DB rows: scheduled_runs, schedules,
+                                        notifications (see scheduled-runs.md).
   ask/<threadId>/att/<attachmentId>.<ext>  Ask Worca attachment bodies — .txt for text kinds,
                                         the sniffed type's extension for images/PDFs (threads, messages and
                                         run links live in the DB: ask_threads, ask_messages,
@@ -43,6 +48,9 @@ project's working tree, so nothing is ever committed to your repo.
     no-hooks/                            empty core.hooksPath for metrics git commands
     ledger/<runId>.json                  per-run team-metrics status for the History header (swept after 180 d)
     tmp/enable-*                         transient staging for the orphan root commit
+  policy/
+    repos/<owner~repo>/                  git worktree of the project repo, detached at origin/worca-policy
+    locks/<owner~repo>.lock              cross-process lock for enable / follow / publish
   plugins/                              installed plugin checkouts
   agents/                               installed agent registry checkouts
   workflows/                            saved workflow templates

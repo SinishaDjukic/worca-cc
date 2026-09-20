@@ -98,7 +98,7 @@ test('index.html: the Memory tab + pane exist, with the ids the controller mount
   const html = readFileSync(htmlPath, 'utf8');
   assert.ok(html.includes('data-tab="memory"'));
   assert.ok(html.includes('id="memory-host"') && html.includes('id="memory-msg"'));
-  assert.equal((html.match(/data-view/g) || []).length, 14, 'a tab, not a view (Team metrics, Getting started and Scripts are their own views)');
+  assert.equal((html.match(/data-view/g) || []).length, 16, 'a tab, not a view (Team metrics, Team policy, Getting started, Scripts and Schedules are their own views)');
   assert.ok(html.includes('id="memory-scope-row"') && html.includes('id="memory-scope-seg"'), 'the picker control');
   assert.match(html, /id="memory-scope-seg" role="group" aria-label="Memory scope"/);
 });

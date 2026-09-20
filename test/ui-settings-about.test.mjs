@@ -80,7 +80,7 @@ test('About is the LAST settings card, read-only, with no version baked into the
   const view = settingsView();
   const cards = [...view.querySelectorAll('section.card.settings-card')];
   const about = cards[cards.length - 1];
-  assert.equal(cards.length, 11, 'Appearance, Interface mode, the seven cards, Getting started, then About');
+  assert.equal(cards.length, 12, 'Appearance, Interface mode, the eight cards (Scheduled runs included), Getting started, then About');
   assert.equal(about.id, 'about-card', 'About sits after the Getting started card');
   assert.equal(about.querySelector('.label-row > h2').textContent.trim(), 'About');
 
@@ -98,7 +98,7 @@ test('About is the LAST settings card, read-only, with no version baked into the
   assert.equal(version.getAttribute('rel'), 'noopener noreferrer');
 
   // The two existing settings-view invariants stay intact (ui-settings-tooltips).
-  assert.equal(view.querySelectorAll('button.info-tip').length, 15, 'About adds no ⓘ icon (15 = 14 + Interface mode)');
+  assert.equal(view.querySelectorAll('button.info-tip').length, 17, 'About adds no ⓘ icon (17 = 14 + Interface mode + Scheduled runs heading and failures field)');
   for (const hint of view.querySelectorAll('.hint')) assert.equal(hint.textContent.trim(), '');
 });
 

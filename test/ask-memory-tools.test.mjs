@@ -44,11 +44,13 @@ function fakeTools({ pin = { projectKey: 'demo-00000001' }, context = null, stor
   return { tools, calls, store };
 }
 
-test('list(): the four memory tools are advertised last, with JSON-Schema inputs and no forbidden words', () => {
+test('list(): the four memory tools come right before the schedule tools, with JSON-Schema inputs and no forbidden words', () => {
   const { tools } = fakeTools();
   const names = tools.list().map((d) => d.name);
-  assert.deepEqual(names.slice(-4), ['list_memory', 'read_memory', 'remember', 'forget']);
-  for (const d of tools.list().slice(-4)) {
+  const at = names.indexOf('list_memory');
+  assert.deepEqual(names.slice(at, at + 4), ['list_memory', 'read_memory', 'remember', 'forget']);
+  assert.equal(names[at + 4], 'list_schedules', 'the scheduled-runs tools follow memory');
+  for (const d of tools.list().slice(at, at + 4)) {
     assert.ok(d.description.length > 20 && d.inputSchema.type === 'object' && d.inputSchema.additionalProperties === false, d.name);
   }
   assert.deepEqual(tools.list().find((d) => d.name === 'remember').inputSchema.required, ['scope', 'name', 'body']);

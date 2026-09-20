@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
-  projectTmState, renderProjectTmCell, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, WS_MEMBERS_COLLAPSED, renderWsMetricsPending } from '../ui/public/team-metrics-surfaces.mjs';
+  projectTmState, renderProjectTmCell, renderProjectTmChip, projectTmSummary, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, WS_MEMBERS_COLLAPSED, renderWsMetricsPending } from '../ui/public/team-metrics-surfaces.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const h = (d, tag) => d.createElement(tag);
@@ -29,6 +29,7 @@ test('status variants (§4.11 / board 4)', () => {
 
 test('cell copy, actions and the Include my runs switch', () => {
   const on = renderProjectTmCell(base, { doc });
+  assert.equal(on.dataset.kind, 'on', 'the cell names its state for the Getting started guide');
   assert.equal(on.className, 'tm-cell');
   // Two-row block: the title is the cell's FIRST child (its own grid row), the status line
   // follows it, and the control sits in its own child, never inside the status line.
@@ -254,4 +255,34 @@ test('pending (before /scopes answers): "checking metrics…" in the summary; th
   assert.equal(block.querySelector('button'), null, 'no actions before the statuses are known');
   const many = renderWsMetricsPending({ projectPaths: Array.from({ length: 9 }, (_, i) => `/p/m${i}`) }, { doc });
   assert.equal(many.querySelectorAll('tbody tr').length, 6, 'capped like the real table');
+});
+
+test('row chip + summary: a dot, the word and the short state; the sentence rides the title', () => {
+  const on = renderProjectTmChip({ key: 'k1', name: 'a', slug: 'me/a', hasOrigin: true, enabled: true, recordsLocally: true, enabledAt: '2026-09-19T00:00:00.000Z', record: true, runs: 3, pending: 0 }, { doc });
+  assert.equal(on.className, 'pl-team-item pl-tm');
+  assert.equal(on.dataset.key, 'k1');
+  assert.equal(on.dataset.kind, 'on');
+  assert.equal(on.textContent, 'Metrics on · 3 runs');
+  assert.ok(on.querySelector('.tm-dot.green'));
+  assert.equal(on.title, 'Team metrics: On · 3 runs · since Sep 19');
+  const off = renderProjectTmChip({ key: 'k2', hasOrigin: true, enabled: false }, { doc });
+  assert.equal(off.textContent, 'Metrics off');
+  assert.ok(off.querySelector('.tm-dot.grey'));
+  assert.equal(off.title, 'Team metrics: Off · runs stay on this machine');
+  const none = renderProjectTmChip({ key: 'k3', hasOrigin: false }, { doc });
+  assert.equal(none.textContent, 'Metrics not available');
+  assert.equal(none.querySelector('.tm-dot'), null, 'no dot for a project the feature cannot reach');
+  assert.ok(none.querySelector('.pl-team-state.muted'));
+  const via = projectTmSummary({ key: 'k4', hasOrigin: true, enabled: true, delegateTo: 'me/hub', delegateState: 'ok', record: false, runs: 2, pending: 0 });
+  assert.deepEqual([via.kind, via.tone, via.short], ['delegated', 'grey', 'via me/hub · yours excluded']);
+  const pending = projectTmSummary({ key: 'k5', hasOrigin: true, enabled: true, recordsLocally: true, enabledAt: '2026-09-19T00:00:00.000Z', pending: 2 });
+  assert.deepEqual([pending.kind, pending.tone, pending.short], ['pending', 'amber', 'on · 2 pending push']);
+  const rejected = projectTmSummary({ key: 'k6', hasOrigin: true, enabled: true, recordsLocally: true, pending: 1, lastError: 'remote: protected branch\nmore', lastErrorCode: 'PUSH_REJECTED', lastErrorHint: 'exempt worca-metrics' });
+  assert.deepEqual([rejected.kind, rejected.tone, rejected.short, rejected.detail], ['rejected', 'red', 'push failed', 'branch protection']);
+});
+
+test('the cell without its heading: the panel head names the feature', () => {
+  const cell = renderProjectTmCell({ key: 'k1', hasOrigin: true, enabled: false }, { doc, heading: false });
+  assert.equal(cell.querySelector('.tm-label'), null);
+  assert.ok(cell.querySelector('.tm-enable'));
 });

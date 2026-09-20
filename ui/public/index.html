@@ -35,7 +35,15 @@
             <span class="nav-count n-paused" id="nav-paused-badge" hidden title="Paused pipelines"><span id="nav-paused-count">0</span><svg class="pause-flag" viewBox="0 0 10 10" aria-hidden="true"><rect x="2.2" y="2" width="2" height="6" rx="1"></rect><rect x="5.8" y="2" width="2" height="6" rx="1"></rect></svg></span>
           </button>
           <div class="nav-children" id="nav-running-children"></div>
-          <button type="button" data-nav="history" data-min-level="simple">
+          <button type="button" data-nav="schedules" data-min-level="advanced">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3"></rect><path d="M3.5 10h17M8 3v4M16 3v4"></path><path d="M12 13.2v2.6l1.8 1.1"></path></svg>
+            <span>Schedules</span>
+            <!-- Waiting runs + active repeating schedules (grey: waiting is the resting state);
+                 the amber twin counts UNREAD PROBLEMS in the activity feed. -->
+            <span class="nav-count n-grey" id="nav-schedules-count">0</span>
+            <span class="nav-count n-amber" id="nav-schedules-unread" hidden title="Scheduled runs that need a look">0</span>
+          </button>
+                    <button type="button" data-nav="history" data-min-level="simple">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v4h4"></path></svg>
             <span>History</span>
             <span class="nav-count n-grey" id="nav-history-count">0</span>
@@ -85,6 +93,10 @@
             <span>Workspaces</span>
             <span class="nav-count n-grey" id="nav-workspaces-count">0</span>
           </button>
+          <button type="button" data-nav="team-policy" data-min-level="expert">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 7.6-8 9-4.6-1.4-8-4.5-8-9V6l8-3z"></path><path d="M9 12l2 2 4-4"></path></svg>
+            <span>Team policy</span>
+          </button>
 
           <div class="nav-sep" aria-hidden="true"></div>
           <!-- Interface mode (docs/ui-levels.md): an ACTION, not a view, so it carries no data-nav
@@ -117,6 +129,7 @@
           <button type="button" class="active" data-nav="new" data-min-level="simple">New</button>
           <span class="topnav-sep" aria-hidden="true"></span>
           <button type="button" data-nav="running" data-min-level="simple">Running<span class="nav-rollup" id="topnav-running-rollup" hidden></span></button>
+          <button type="button" data-nav="schedules" data-min-level="advanced">Schedules</button>
           <button type="button" data-nav="history" data-min-level="simple">History</button>
           <button type="button" data-nav="stats" data-min-level="advanced">Stats<span class="topnav-amt mono" id="topnav-spend" hidden></span></button>
           <button type="button" data-nav="team-metrics" data-min-level="expert">Team metrics</button>
@@ -127,6 +140,7 @@
           <span class="topnav-sep" aria-hidden="true"></span>
           <button type="button" data-nav="projects" data-min-level="simple">Projects</button>
           <button type="button" data-nav="workspaces" data-min-level="advanced">Workspaces</button>
+          <button type="button" data-nav="team-policy" data-min-level="expert">Team policy</button>
           <span class="topnav-sep" aria-hidden="true"></span>
           <button type="button" class="topnav-mode" data-mode-open="short" data-min-level="simple" aria-haspopup="dialog"><i class="lv-icon-slot"><svg class="lv-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5z"></path><path d="M3 12.5l9 5 9-5"></path><path d="M3 17l9 5 9-5"></path></svg></i><span class="lv-name">Expert</span></button>
           <button type="button" data-nav="settings" data-min-level="simple">Settings</button>
@@ -384,13 +398,37 @@
                   <button type="button" class="link-btn" id="level-hidden-show" data-mode-set=""></button>
                 </div>
 
+                <!-- Team policy notes (design board 8): in the main column, never inside Advanced,
+                     and never gated — a team cap applies in every interface mode. -->
+                <div id="policyLine" hidden></div>
+
                 <!-- Actions -->
                 <div class="hint err" id="newBlockedNote" hidden></div>
                 <div class="actions" style="justify-content:flex-end">
-                  <button type="submit" id="start-btn" class="btn-go">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4Z"></path></svg>
-                    Start run
-                  </button>
+                  <!-- A time picked BEFORE the task (Schedules › Schedule a run, or Change… here):
+                       it waits on the form and Start run becomes Schedule. -->
+                  <div class="ask-card-sched new-sched" id="new-sched" hidden>
+                    <span class="badge grey" id="new-sched-badge">Scheduled</span>
+                    <span class="ask-card-sched-text" id="new-sched-text"></span>
+                    <button type="button" class="link-btn" id="new-sched-change">Change…</button>
+                    <button type="button" class="link-btn" id="new-sched-clear" title="Drop the time and start the run right away">Start now instead</button>
+                  </div>
+                  <!-- Split button: Start run stays the primary action; the caret opens the
+                       other way to start — Schedule… (once, later, or on a repeat). -->
+                  <div class="btn-split" id="start-split">
+                    <button type="submit" id="start-btn" class="btn-go">
+                      <svg id="start-btn-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4Z"></path></svg>
+                      <svg id="start-btn-clock" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7.5V12l3 2"></path></svg>
+                      <span id="start-btn-label">Start run</span>
+                    </button>
+                    <button type="button" id="start-more" class="btn-split-more" data-min-level="advanced" aria-haspopup="menu" aria-expanded="false" aria-controls="start-menu" title="More ways to start" aria-label="More ways to start">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+                    </button>
+                    <div class="btn-split-menu" id="start-menu" role="menu" hidden>
+                      <button type="button" role="menuitem" id="start-menu-now"><b>Start run now</b><small>Begins immediately</small></button>
+                      <button type="button" role="menuitem" id="start-menu-schedule"><b>Schedule…</b><small>Run once later, or on a repeat</small></button>
+                    </div>
+                  </div>
                 </div>
                 <p id="form-msg" class="form-msg" aria-live="polite"></p>
               </form>
@@ -407,7 +445,7 @@
           <div class="topbar">
             <div>
               <h1>Getting started</h1>
-              <div class="sub">Eight things to do with Worca, in order &middot; each tile opens a guided tour of the real controls</div>
+              <div class="sub">Nine things to do with Worca, in order &middot; each tile opens a guided tour of the real controls</div>
             </div>
           </div>
           <div id="getting-started-host" class="gs-host" hidden></div>
@@ -442,6 +480,16 @@
           </div>
 
           <div class="run-list" id="run-list"></div>
+
+          <!-- Runs that start within 24 hours (tickets, not pipelines). The full list,
+               repeating schedules and the activity feed live in the Schedules view. -->
+          <div class="run-scheduled" id="run-scheduled" hidden>
+            <div class="run-scheduled-head">
+              <div class="sched-group-title">Scheduled · next 24 hours</div>
+              <a href="#schedules">All schedules →</a>
+            </div>
+            <div class="sched-list" id="run-scheduled-list"></div>
+          </div>
 
           <!-- clone target for one run card (Task 3 fills it) -->
           <template id="run-card-tpl">
@@ -754,6 +802,32 @@
         <!-- /view history -->
 
         <!-- ===== VIEW: STATISTICS ===== -->
+        <section class="view hidden" data-view="schedules">
+          <div class="topbar">
+            <div>
+              <h1>Schedules</h1>
+              <div class="sub" id="schedules-sub">Runs that start later — once, or on a repeat</div>
+            </div>
+            <a class="btn-go" href="#new/schedule" id="schedules-new" style="padding:11px 20px;text-decoration:none">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              Schedule a run
+            </a>
+          </div>
+          <p id="schedules-msg" class="form-msg" aria-live="polite"></p>
+          <!-- Tabs, the Statistics .seg idiom: #schedules/<tab> routes them (activity | once | repeating). -->
+          <div class="sched-tabs">
+            <div class="seg" id="schedules-tabs" role="group" aria-label="Schedules">
+              <button type="button" data-tab="activity">Activity</button>
+              <button type="button" data-tab="once">Once</button>
+              <button type="button" data-tab="repeating">Repeating</button>
+            </div>
+          </div>
+          <section class="card sched-feed sched-pane" id="schedules-feed" data-pane="activity" aria-label="Activity"></section>
+          <div class="sched-list sched-pane" id="schedules-once" data-pane="once" hidden><small class="hint">Loading…</small></div>
+          <div class="sched-list sched-pane" id="schedules-repeating" data-pane="repeating" hidden><small class="hint">Loading…</small></div>
+        </section>
+        <!-- /view schedules -->
+
         <section class="view hidden" data-view="stats">
           <div class="topbar">
             <div>
@@ -804,60 +878,82 @@
         </section>
         <!-- /view team-metrics -->
 
-        <!-- ===== VIEW: WORKSPACES ===== -->
-        <section class="view hidden" data-view="workspaces">
+        <!-- ===== VIEW: TEAM POLICY (team-policy design §11, boards 4–5) ===== -->
+        <section class="view hidden" data-view="team-policy">
           <div class="topbar">
             <div>
-              <h1>Workspaces</h1>
-              <div class="sub">Named sets of 2+ projects with an AI-generated interconnection description</div>
+              <h1>Team policy</h1>
+              <div class="sub">Shared from the <code>worca-policy</code> branch · soft: you can go past a cap, and the team sees it</div>
             </div>
-            <button type="button" id="ws-create-btn" class="btn-go" style="padding:11px 20px">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-              Create workspace
-            </button>
+            <div class="sync-chip" id="tp-sync" hidden></div>
+          </div>
+          <div class="tm-filter">
+            <div class="select-wrap tm-scope-wrap"><select id="tp-scope" class="select" aria-label="Scope"></select></div>
+          </div>
+          <div id="tp-body"><small class="hint">Loading…</small></div>
+        </section>
+        <!-- /view team-policy -->
+
+        <!-- ===== VIEW: WORKSPACES ===== -->
+        <section class="view hidden" data-view="workspaces">
+          <!-- Two-screen slide track, twin of the Projects #proj-shell: the list and the workspace
+               page (#workspaces/<id>[/team]) are sibling screens; .detail-open slides. -->
+          <div class="ws-shell" id="ws-shell">
+            <div class="ws-screen ws-screen-list">
+              <div class="topbar">
+                <div>
+                  <h1>Workspaces</h1>
+                  <div class="sub">Named sets of 2+ projects with an AI-generated interconnection description. Open one for its projects, description and team setup.</div>
+                </div>
+                <button type="button" id="ws-create-btn" class="btn btn-primary btn-mini">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                  Create workspace
+                </button>
+              </div>
+              <p id="ws-msg" class="form-msg" aria-live="polite"></p>
+              <div class="run-list" id="ws-list"></div>
+            </div>
+            <div class="ws-screen ws-screen-detail" id="ws-detail" aria-hidden="true"></div>
           </div>
 
-          <p id="ws-msg" class="form-msg" aria-live="polite"></p>
-
-          <div class="run-list" id="ws-list"></div>
-
-          <!-- clone target for one workspace card -->
-          <template id="ws-card-tpl">
-            <section class="card ws-card">
-              <div class="ws-head" role="button" tabindex="0" aria-expanded="false">
-                <div class="ws-h-meta">
-                  <b class="ws-name"></b>
+          <!-- clone target for the workspace page (#workspaces/<id>). A SCREEN inside this
+               section, never a routed view of its own: the page's view count is pinned. It rides
+               the project page's pd- classes so the two pages are laid out the same way. -->
+          <template id="ws-detail-tpl">
+            <div class="pd wd">
+              <header class="pd-header">
+                <div class="pd-row1">
+                  <button type="button" class="pd-back btn-ghost" aria-label="Back to workspaces">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    Back
+                  </button>
+                  <h1 class="pd-title ws-name"></h1>
                   <span class="ws-stale badge red" hidden>missing projects</span>
-                  <small class="ws-projects"></small>
                 </div>
-                <div class="ws-actions">
-                  <button type="button" class="ws-edit btn-ghost" title="Edit description">Edit description</button>
-                  <button type="button" class="ws-rescan btn-ghost" title="Re-scan the project set">Re-scan</button>
-                  <button type="button" class="ws-delete btn-danger" title="Delete workspace">Delete</button>
+                <!-- One row under the title: the summary on the left, the actions on the right. This
+                     page configures and tracks a workspace; runs start from New pipeline. -->
+                <div class="wd-row2">
+                <div class="pd-meta"><small class="ws-projects"></small></div>
+                <div class="pd-actions">
+                  <button type="button" class="ws-rescan btn-ghost" title="Re-scan the project set and regenerate the description">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.7"></path><path d="M20 4v5h-5"></path></svg>
+                    Re-scan
+                  </button>
+                  <span class="pd-spacer"></span>
+                  <button type="button" class="pd-remove ws-delete">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"></path></svg>
+                    <span class="pd-btn-label">Delete</span>
+                  </button>
                 </div>
+                </div>
+                <!-- On the HEADER (like .pd-error): a delete failure must not sit below a long tab. -->
+                <div class="pd-error" hidden></div>
+              </header>
+              <div class="pd-body">
+                <div class="pd-tabs" role="tablist"></div>
+                <div class="pd-sections"></div>
               </div>
-              <div class="ws-detail" hidden>
-                <div class="ws-home" data-min-level="expert" hidden></div>
-                <div class="ws-desc">
-                  <span class="tm-label">Description</span>
-                  <!-- Markdown by contract (the scanner template): rendered through the page's
-                       sanitized pipeline once it is ready, the same words as plain text before. -->
-                  <div class="ws-desc-view viewer"></div>
-                </div>
-                <div class="ws-desc-edit" hidden>
-                  <div class="md-tabs" role="tablist" aria-label="Description editor">
-                    <button type="button" class="md-tab ws-desc-tab" role="tab" data-mode="text" aria-selected="true">Text</button>
-                    <button type="button" class="md-tab ws-desc-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button>
-                  </div>
-                  <textarea class="ws-desc-input textarea" rows="10" spellcheck="false"></textarea>
-                  <div class="ws-desc-preview md-preview viewer" hidden></div>
-                  <div class="actions" style="justify-content:flex-end;margin-top:10px">
-                    <button type="button" class="ws-desc-cancel btn btn-ghost btn-mini">Cancel</button>
-                    <button type="button" class="ws-desc-save btn btn-primary btn-mini">Save</button>
-                  </div>
-                </div>
-              </div>
-            </section>
+            </div>
           </template>
         </section>
         <!-- /view workspaces -->
@@ -1337,6 +1433,8 @@
                 </div>
               </div>
               <div id="budgetReadout"></div>
+              <!-- Team policy (design board 7): each policy home's caps, read-only context. -->
+              <div id="teamCapsReadout"></div>
               <div class="field">
                 <div class="label-row">
                   <label for="budgetPerPipeline">Per-pipeline cost limit (USD)</label>
@@ -1429,6 +1527,57 @@
                 <small class="hint" id="askHistoryCounts"></small>
                 <small class="hint" id="askHistoryMsg"></small>
               </div>
+            </section>
+
+            <!-- Scheduled runs: the defaults a NEW schedule inherits. Each schedule keeps
+                 its own copy, so a change here never rewrites an existing one. -->
+            <section class="card settings-card" id="schedule-settings-card" data-min-level="advanced">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Scheduled runs</h2>
+                  <button type="button" class="info-tip" aria-label="About scheduled run defaults">i<span class="tip-content hidden">
+                    Defaults for new schedules. A scheduled run starts only while Worca is running and this computer is awake; these settings decide what happens when it was not.
+                  </span></button>
+                </div>
+              </div>
+              <div class="field-grid-2">
+                <div class="field">
+                  <label for="schedIfMissed">If Worca is not running at that time</label>
+                  <div class="select-wrap">
+                    <select id="schedIfMissed" class="select">
+                      <option value="run">Start it late</option>
+                      <option value="skip">Skip it</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="schedGraceMin">At most this late</label>
+                  <div class="select-wrap">
+                    <select id="schedGraceMin" class="select">
+                      <option value="30">30 minutes</option>
+                      <option value="60">1 hour</option>
+                      <option value="120">2 hours</option>
+                      <option value="360">6 hours</option>
+                      <option value="720">12 hours</option>
+                      <option value="1440">24 hours</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="field">
+                <div class="label-row">
+                  <label for="schedMaxFailures">Pause a repeating schedule after failures in a row</label>
+                  <button type="button" class="info-tip" aria-label="About pausing after failures">i<span class="tip-content hidden">
+                    A run that could not start, a missed slot, or a run that ended in an error each count. A successful run resets the count. 0 never pauses a schedule. Every failure is reported in Schedules either way.
+                  </span></button>
+                </div>
+                <input id="schedMaxFailures" class="input" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="3" autocomplete="off" />
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="schedDefaultsReset" class="btn btn-ghost btn-mini">Use defaults</button>
+                <button type="button" id="schedDefaultsSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="schedDefaultsMsg"></small>
             </section>
 
             <!-- Title generation (#422): which model writes run/chat titles.
@@ -1542,7 +1691,7 @@
                 <h2>Getting started</h2>
               </div>
               <div class="gs-settings-row">
-                <p class="gs-settings-text">The checklist on New pipeline walks through the first eight things to do with Worca. Hidden it, or want the guided tour back?</p>
+                <p class="gs-settings-text">The checklist on New pipeline walks through the first nine things to do with Worca. Hidden it, or want the guided tour back?</p>
                 <button type="button" id="gsShowAgain" class="btn btn-ghost btn-mini">Show again</button>
               </div>
               <small class="hint" id="gsSettingsMsg"></small>
@@ -1642,6 +1791,8 @@
                 <button type="button" id="marketplace-add" class="btn btn-primary btn-mini">Add</button>
               </div>
             </div>
+            <!-- Team policy (design board 10): what a policy home expects on this machine. -->
+            <div id="plugins-policy"></div>
             <h3 class="pl-sec-title">Installed</h3>
             <div class="run-list" id="plugins-list"></div>
             <h3 class="pl-sec-title">Available</h3>

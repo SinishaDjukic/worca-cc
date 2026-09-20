@@ -12,13 +12,14 @@ import { countProjects } from './projects.mjs';
 import { countWorkspaces } from './workspaces.mjs';
 import { countThreads } from './ask/store.mjs';
 import { listScopes } from './metrics/read.mjs';
+import { listPolicyScopes } from './policy/sync.mjs';
 import { explainUnspawnableClaude, resolveClaudeBin } from './preflight.mjs';
 import { onboardingPrefs } from './settings.mjs';
 
 /** Step ids in shelf order. The UI (ui/public/getting-started.mjs) carries the
  *  copy and artwork for each; this list is the contract between the two. */
 export const ONBOARDING_STEPS = Object.freeze([
-  'claude', 'project', 'run', 'ask', 'realRun', 'workflows', 'workspace', 'teamMetrics',
+  'claude', 'project', 'run', 'ask', 'realRun', 'workflows', 'workspace', 'teamMetrics', 'teamPolicy',
 ]);
 
 /** The configured Claude binary — the same precedence claude-runner.mjs spawns with. */
@@ -69,7 +70,7 @@ export function claudeReady(bin = configuredClaudeBin(), opts = {}) {
 }
 
 /**
- * The eight ticks plus the two stored flags, in one call.
+ * The nine ticks plus the two stored flags, in one call.
  * @returns {Promise<{steps:Record<string,boolean>, done:number, total:number,
  *   claude:{bin:string, hint:string|null}, hidden:boolean, welcomeSeen:boolean}>}
  */
@@ -81,6 +82,10 @@ export async function onboardingStatus() {
   // Cached status only (no discovery): this is read at boot and after every change
   // broadcast, and the Team metrics page owns the expensive refresh.
   try { teamMetrics = !!(await listScopes()).anyEnabled; } catch { /* offline / no git: not enabled */ }
+  // Same for the policy: a project or workspace that RESOLVES a policy (its own home or one it
+  // follows) from the cached branch reads — never a discovery.
+  let teamPolicy = false;
+  try { teamPolicy = !!(await listPolicyScopes()).anyEnabled; } catch { /* offline / no git: not enabled */ }
   const steps = {
     claude: claude.ready,
     project: countProjects() > 0,
@@ -93,6 +98,7 @@ export async function onboardingStatus() {
     workflows: count("SELECT COUNT(*) AS n FROM project_config WHERE active_workflow_id IS NOT NULL AND TRIM(active_workflow_id) != ''") > 0,
     workspace: countWorkspaces() > 0,
     teamMetrics,
+    teamPolicy,
   };
   const done = ONBOARDING_STEPS.filter((id) => steps[id]).length;
   return { steps, done, total: ONBOARDING_STEPS.length, claude: { bin: claude.bin, hint: claude.hint }, ...onboardingPrefs() };

@@ -57,13 +57,13 @@ test('sidebar and topnav menus contain buttons, not links', () => {
   for (const [name, block] of [['sidebar', sidebar], ['topnav', topnav]]) {
     assert.ok(!/<a[\s>]/.test(block), `${name} still contains an <a> (browser shows a link preview on hover)`);
     assert.ok(!/href="#/.test(block), `${name} still carries hash hrefs`);
-    // 11 routes + the interface-mode item (docs/ui-levels.md), which is an action, not a
-    // link. The sidebar adds the Nodes disclosure (test/ui-nav-nodes-group.test.mjs);
-    // the flat topnav does not.
-    const buttons = name === 'sidebar' ? 13 : 12;
+    // 13 routes (team-metrics, team-policy, Schedules and Scripts joined the 9) + the
+    // interface-mode item (docs/ui-levels.md), which is an action, not a link. The sidebar
+    // adds the Nodes disclosure (test/ui-nav-nodes-group.test.mjs); the flat topnav does not.
+    const buttons = name === 'sidebar' ? 15 : 14;
     assert.equal((block.match(/<button type="button"/g) || []).length, buttons,
       `${name} should have exactly ${buttons} menu buttons`);
-    assert.equal((block.match(/<button type="button"[^>]*data-nav=/g) || []).length, 11, `${name}: 11 route buttons`);
+    assert.equal((block.match(/<button type="button"[^>]*data-nav=/g) || []).length, 13, `${name}: 13 route buttons`);
   }
 });
 

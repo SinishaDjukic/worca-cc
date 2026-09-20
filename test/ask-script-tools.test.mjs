@@ -50,13 +50,13 @@ const noSecret = (s, msg = 'every string the model reads is redacted') => assert
 
 test('registration: all four with the toggle on, the two readers only with it off, none without a bundle', () => {
   const on = fakeTools().tools.list().map((d) => d.name);
-  assert.deepEqual(on.slice(-4), SCRIPT_TOOLS, 'the family is appended after the memory tools');
+  assert.deepEqual(on.slice(-4), SCRIPT_TOOLS, 'the family is appended last');
   const off = fakeTools({ enabled: false }).tools.list().map((d) => d.name);
   assert.deepEqual(off.slice(-2), ['list_scripts', 'get_script']);
   for (const n of ['save_script', 'test_script']) assert.equal(off.includes(n), false, `${n} is not registered when W20 is off`);
   const none = fakeTools({ scripts: false }).tools.list().map((d) => d.name);
   for (const n of SCRIPT_TOOLS) assert.equal(none.includes(n), false, `${n} needs a scripts bundle`);
-  assert.deepEqual(none.slice(-4), ['list_memory', 'read_memory', 'remember', 'forget'], 'a bundle-less list is unchanged');
+  assert.deepEqual(none.slice(-3), ['list_task_sources', 'find_tasks', 'get_task'], 'a bundle-less list is unchanged');
 });
 
 test('schemas: JSON-Schema objects, required fields, described for a model', () => {

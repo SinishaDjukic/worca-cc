@@ -77,7 +77,7 @@ export function suggestDuplicateId(id, takenIds = []) {
  * `globals` come MASKED from GET /api/models. `predefinedShadowedIds` marks
  * built-ins currently overridden by a global entry.
  */
-export function renderModelsList({ globals = [], legacy = [], plugins = [], predefined = [], efforts = [], hideBuiltin = false, projectName = '' } = {}, { doc = globalThis.document } = {}) {
+export function renderModelsList({ globals = [], legacy = [], plugins = [], policy = [], predefined = [], efforts = [], hideBuiltin = false, projectName = '' } = {}, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'mv-list');
   const predefLc = new Set(predefined.map((m) => m.id.toLowerCase()));
   const pluginLc = new Set(plugins.map((m) => m.id.toLowerCase()));
@@ -224,6 +224,35 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
       plug.appendChild(card);
     }
     root.appendChild(plug);
+  }
+
+  // ── From team policy (read-only; team-policy design §8) ──
+  if (policy.length) {
+    const pol = section('From team policy',
+      'Shipped by a team policy — read-only and updated when the policy changes. Add a model with the same id to Your models to override one on this machine.');
+    for (const m of policy) {
+      const card = h(doc, 'section', 'card mv-card mv-policy');
+      card.dataset.id = m.id;
+      const body = h(doc, 'div', 'mv-body');
+      const head = h(doc, 'div', 'mv-head');
+      head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
+      const badge = h(doc, 'span', 'badge blue mv-origin', 'policy');
+      badge.title = `Team policy on ${m.home}`;
+      head.appendChild(badge);
+      if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadowed', 'overridden by your copy'));
+      const rb = routedBadge(m);
+      if (rb) head.appendChild(rb);
+      body.appendChild(head);
+      const bits = [m.id, effortsSummary(m.efforts, efforts), envSummary(m.env), m.home ? `policy ${m.home}` : ''].filter(Boolean);
+      body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join(' — ')));
+      body.appendChild(h(doc, 'small', 'mv-test-result hint'));
+      card.appendChild(body);
+      const tst = h(doc, 'button', 'btn-ghost mv-test', 'Test');
+      tst.type = 'button'; tst.dataset.id = m.id;
+      card.appendChild(tst);
+      pol.appendChild(card);
+    }
+    root.appendChild(pol);
   }
 
   // ── Built-ins (read-only) ──

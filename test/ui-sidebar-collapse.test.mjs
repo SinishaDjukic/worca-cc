@@ -222,11 +222,11 @@ test('the toggle is one bare chevron and nothing else', () => {
   assert.doesNotMatch(ruleBody('.sidebar.collapsed .side-toggle svg'), /transform:/);
 });
 
-test('the toggle stays OUT of <nav>, which keeps exactly 13 buttons (11 routes + the mode item + the Nodes disclosure)', () => {
+test('the toggle stays OUT of <nav>, which keeps exactly 15 buttons (13 routes + the mode item + the Nodes disclosure)', () => {
   // ui-nav-sections.test.mjs:39 asserts this count, :40 forbids <a>, and :26-35
   // pins the token stream. A toggle inside <nav class="nav"> reds all three.
   const nav = html.match(/<nav class="nav"[\s\S]*?<\/nav>/)[0];
-  assert.equal((nav.match(/<button type="button"/g) || []).length, 13);
+  assert.equal((nav.match(/<button type="button"/g) || []).length, 15);   // + interface mode, + Schedules, + Team policy, + Scripts, + the Nodes disclosure
   assert.equal(nav.includes('side-toggle'), false);
   assert.match(html, /<aside class="sidebar" id="side-rail">/,
     'aria-controls targets the whole aside — brand, nav AND the spend foot reshape');

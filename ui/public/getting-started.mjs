@@ -17,10 +17,11 @@ export const GETTING_STARTED_STEPS = Object.freeze([
   { id: 'workflows',   label: 'Explore the built-in workflows',  vig: 'workflow',    level: 'advanced' },
   { id: 'workspace',   label: 'Group projects into a workspace', vig: 'workspace',   level: 'advanced' },
   { id: 'teamMetrics', label: 'Turn on team metrics',            vig: 'teamMetrics', level: 'expert' },
+  { id: 'teamPolicy',  label: 'Set a team policy',               vig: 'teamPolicy',  level: 'expert' },
 ]);
 
 // `level` (docs/ui-levels.md) is the interface mode a step's controls live in; absent = simple.
-// Every tile shows at every mode — the count stays "n of 8" — but a step above the current mode
+// Every tile shows at every mode — the count stays "n of 9" — but a step above the current mode
 // wears its level, and its guide opens by ringing the mode switch.
 const LEVEL_ORDER = ['simple', 'advanced', 'expert'];
 const LEVEL_LABEL = { advanced: 'Advanced', expert: 'Expert' };
@@ -116,6 +117,18 @@ const VIGNETTES = {
     wire(0.65, 'M64 35h30'),
     shape(0.85, 'path', 'gs-chart gs-accent', 'd="M84 46l6-8 5 4 7-10"'),
   ],
+  // One document, read by every teammate: a page with its rules ticked, wired to three nodes.
+  teamPolicy: () => [
+    shape(0.05, 'rect', 'gs-frame', 'x="12" y="12" width="40" height="46" rx="6"'),
+    shape(0.25, 'path', 'gs-glyph', 'd="M22 24h20M22 33h20"'),
+    shape(0.4, 'path', 'gs-chart gs-accent', 'd="M22 45l4 4 8-8"'),
+    wire(0.5, 'M52 35 C 70 35, 76 20, 94 20'),
+    wire(0.6, 'M52 35h42'),
+    wire(0.7, 'M52 35 C 70 35, 76 50, 94 50'),
+    node(0.85, 100, 20, 5),
+    node(0.9, 100, 35, 5),
+    node(0.95, 100, 50, 5),
+  ],
 };
 
 /**
@@ -179,7 +192,7 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
   const tiles = doc.createElement('div');
   tiles.className = 'gs-tiles';
   // Tiles arrive one at a time IN ORDER, so a new user reads one idea at a
-  // time instead of eight at once. A finished tile takes its turn but arrives
+  // time instead of nine at once. A finished tile takes its turn but arrives
   // already drawn and still, so it holds the sequence only briefly.
   let at = 0;
   for (const s of GETTING_STARTED_STEPS) {
@@ -221,7 +234,7 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
 /* ------------------------------------------------------------------- pill */
 
 /**
- * The sidebar row under New pipeline: "Getting started · 2/8". It follows the
+ * The sidebar row under New pipeline: "Getting started · 2/9". It follows the
  * user to every view (the guides leave the shelf behind) and vanishes once the
  * checklist is hidden or complete — nothing left to nag about.
  * @param {Element} host

@@ -2,8 +2,11 @@
 // The guided click (docs/getting-started.md): scrim-dim the page, keep ONE real
 // control lit and interactive above it, ring it, say why in one balloon.
 // Action-driven, never narrated — the target's real click is what advances or
-// ends a guide (the caller's onTargetClick); the scrim, Esc and Skip dismiss
-// (onDismiss). Soft-block: nothing here can trap the user.
+// ends a guide (the caller's onTargetClick); Esc and Skip dismiss (onDismiss); a
+// click on the scrim only nudges (one pulse of ring + balloon), so a stray click
+// never ends a guide. A hop that only explains (the canvas, a panel) or whose state is
+// already there gets a Next button (onNext) so the user can move on without
+// touching anything. Soft-block: nothing here can trap the user.
 //
 // Layering (style.css .guide-*): `spotlight` sits above the Ask dock (40) and
 // below every .viewer-modal (50) — a dialog that opens on the target's click
@@ -16,6 +19,8 @@
 
 const ATTACH_TRIES = 120;   // ~2 s at 60 fps: a view's list may still be fetching
 const REACQUIRE_FRAMES = 60; // ~1 s: how long a vanished control may take to be repainted
+const GLIDE_MS = 2500;       // how long the guide's own smooth scroll may still be emitting scroll events
+const BRING_EVERY = 1200;    // ms between two re-scrolls of a control the page carried out of view
 
 const frame = (win) => (typeof win.requestAnimationFrame === 'function'
   ? (fn) => win.requestAnimationFrame(fn)
@@ -47,13 +52,15 @@ function visible(el) {
  * @param {number} [o.tries]       attach retries before giving up (→ onDismiss)
  * @param {() => void} o.onDismiss
  * @param {() => void} o.onTargetClick
+ * @param {() => void} [o.onNext]   when given, a Next button sits beside Skip and calls it
+ * @param {string} [o.nextLabel]    its label (default "Next")
  * @param {Document} [o.doc]
  * @param {Window} [o.win]
  * @returns {{destroy:() => void, layer:Element}}
  */
 export function createGuideSpot({
   target, text, mode = 'spotlight', lift = [], tries = ATTACH_TRIES,
-  onDismiss, onTargetClick, doc = globalThis.document, win = globalThis.window,
+  onDismiss, onTargetClick, onNext = null, nextLabel = 'Next', doc = globalThis.document, win = globalThis.window,
 }) {
   const targets = Array.isArray(target) ? target : [target];
   const texts = Array.isArray(text) ? text : [text];
@@ -70,7 +77,10 @@ export function createGuideSpot({
   if (mode === 'spotlight') {
     scrim = doc.createElement('div');
     scrim.className = 'guide-scrim';
-    scrim.addEventListener('click', () => dismiss());
+    // A click beside the lit control is swallowed, never an exit: a stray click used to end
+    // the guide silently, which reads as a bug. The ring and balloon pulse once to say
+    // "here" instead. Skip and Esc remain the exits.
+    scrim.addEventListener('click', () => nudge());
     layer.appendChild(scrim);
   }
   const ring = doc.createElement('div');
@@ -88,12 +98,34 @@ export function createGuideSpot({
   skip.className = 'guide-skip';
   skip.textContent = 'Skip';
   skip.addEventListener('click', () => dismiss());
-  balloon.append(line, skip);
+  const actions = doc.createElement('div');
+  actions.className = 'guide-actions';
+  if (typeof onNext === 'function') {
+    const next = doc.createElement('button');
+    next.type = 'button';
+    next.className = 'guide-next';
+    next.textContent = nextLabel || 'Next';
+    // The caller re-derives the hop and replaces this layer; nothing is dismissed here.
+    next.addEventListener('click', () => { if (alive) onNext(); });
+    actions.appendChild(next);
+  }
+  actions.appendChild(skip);
+  balloon.append(line, actions);
   layer.append(ring, balloon);
   doc.body.appendChild(layer);
 
   const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); dismiss(); } };
   doc.addEventListener('keydown', onKey);
+  // The user's own scrolling (wheel, touch, paging keys, a scrollbar drag — any scroll that is not
+  // the tail of the guide's own glide) — after it, the guide never re-scrolls.
+  let userScrolled = false;
+  let lastBring = 0;
+  const onUserScroll = (e) => {
+    if (e.type === 'keydown' && !['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '].includes(e.key)) return;
+    if (e.type === 'scroll' && Date.now() - lastBring < GLIDE_MS) return;
+    userScrolled = true;
+  };
+  for (const t of ['wheel', 'touchmove', 'keydown', 'scroll']) doc.addEventListener(t, onUserScroll, { passive: true, capture: true });
 
   function destroy() {
     if (!alive) return;
@@ -101,6 +133,7 @@ export function createGuideSpot({
     caf(handle);
     cleanup();
     doc.removeEventListener('keydown', onKey);
+    for (const t of ['wheel', 'touchmove', 'keydown', 'scroll']) doc.removeEventListener(t, onUserScroll, { capture: true });
     layer.remove();
   }
   function dismiss() {
@@ -108,6 +141,18 @@ export function createGuideSpot({
     destroy();
     if (onDismiss) onDismiss();
   }
+  /** Draw the eye to the lit control: one pulse of the ring and the balloon (restarted on repeat). */
+  function nudge() {
+    if (!alive) return;
+    for (const el of [ring, balloon]) {
+      el.classList.remove('nudge');
+      void el.offsetWidth;   // restart the animation when clicked again mid-pulse
+      el.classList.add('nudge');
+    }
+  }
+  const onNudgeEnd = (e) => { e.currentTarget.classList.remove('nudge'); };
+  ring.addEventListener('animationend', onNudgeEnd);
+  balloon.addEventListener('animationend', onNudgeEnd);
 
   /** Centre the balloon under its target, clamped to the viewport, arrow aimed
    *  at the target's centre WITHIN the balloon; above the target when there is
@@ -126,10 +171,24 @@ export function createGuideSpot({
     const centre = rect.left + rect.width / 2;
     const left = Math.max(8, Math.min(centre - box.width / 2, Math.max(8, vw - box.width - 8)));
     const gap = 14;
-    const above = vh > 0 && rect.bottom + gap + box.height > vh - 8 && rect.top - gap - box.height >= 8;
+    // "Fits" means inside the viewport, not merely on that side of the control: a control
+    // scrolled out of view has no room on either side.
+    const fitsBelow = vh > 0 && rect.bottom + gap >= 8 && rect.bottom + gap + box.height <= vh - 8;
+    const fitsAbove = rect.top - gap - box.height >= 8 && rect.top - gap <= vh - 8;
+    // Neither edge has room (a run card taller than the window): the balloon is PINNED inside
+    // the viewport, over the target, arrow off — never parked off-screen where "the guide is
+    // stuck" is all the user can see.
+    const pinned = vh > 0 && !fitsBelow && !fitsAbove;
+    const above = !pinned && !fitsBelow && fitsAbove;
     balloon.classList.toggle('above', above);
+    balloon.classList.toggle('pinned', pinned);
     balloon.style.left = `${left}px`;
-    balloon.style.top = above ? `${rect.top - box.height - gap}px` : `${rect.bottom + gap}px`;
+    if (pinned) {
+      const top = Math.max(16, Math.min(rect.top + gap, vh - box.height - 16));
+      balloon.style.top = `${top}px`;
+    } else {
+      balloon.style.top = above ? `${rect.top - box.height - gap}px` : `${rect.bottom + gap}px`;
+    }
     balloon.style.setProperty('--arrow-x', `${Math.max(16, Math.min(centre - left, box.width - 16))}px`);
   }
 
@@ -149,6 +208,13 @@ export function createGuideSpot({
       return;
     }
     el.classList.add('guide-target');
+    // The elevation needs a positioned box. A static control gets position:relative;
+    // one that is already positioned (the Composer's floating rail is absolute) keeps
+    // its own position — forcing relative would pull it out of place.
+    try {
+      const pos = win.getComputedStyle(el).position;
+      if (!pos || pos === 'static') el.classList.add('guide-target-static');
+    } catch { el.classList.add('guide-target-static'); }
     line.textContent = texts[which] ?? texts[0] ?? '';
     layer.dataset.target = targets[which];
     // The ring follows the control's own corner radius (a pill stays a pill).
@@ -168,10 +234,17 @@ export function createGuideSpot({
     }
     // Glide to the control (the ring follows it per frame, so the eye is led
     // down the page); reduced motion jumps.
+    let bring = () => {};
     if (typeof el.scrollIntoView === 'function') {
       let reduced = false;
       try { reduced = !!(win.matchMedia && win.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch { /* jsdom */ }
-      try { el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: reduced ? 'auto' : 'smooth' }); } catch { /* jsdom */ }
+      // A control taller than most of the window is brought to its top, not its middle (which
+      // would leave its head — and the balloon — above the fold).
+      let block = 'center';
+      try { const vh = win.innerHeight || 0; if (vh && el.getBoundingClientRect().height > vh * 0.6) block = 'start'; } catch { /* jsdom */ }
+      bring = () => { lastBring = Date.now(); try { el.scrollIntoView({ block, inline: 'nearest', behavior: reduced ? 'auto' : 'smooth' }); } catch { /* jsdom */ } };
+      userScrolled = false;
+      bring();
     }
     const onClick = () => {
       if (!alive) return;
@@ -198,12 +271,17 @@ export function createGuideSpot({
         return;
       }
       const b = el.getBoundingClientRect();
+      // A view that keeps settling (a run list re-sorting its cards, a log growing) can carry
+      // the control ENTIRELY out of view after the glide: bring it back — throttled, so a glide
+      // in flight is not restarted every frame — but never over the user's own scrolling.
+      const vh = win.innerHeight || 0;
+      if (!userScrolled && vh && (b.bottom < 0 || b.top > vh) && Date.now() - lastBring > BRING_EVERY) bring();
       const key = `${b.top}|${b.left}|${b.width}|${b.height}`;
       if (key !== last) { last = key; place(b); }
       handle = raf(track);
     };
     cleanup = () => {
-      el.classList.remove('guide-target');
+      el.classList.remove('guide-target', 'guide-target-static');
       for (const a of lifted) a.classList.remove('guide-lift', 'guide-lift-static');
       el.removeEventListener('click', onClick);
     };

@@ -155,8 +155,18 @@ function computeKpis(rs, now) {
     reviewCyclesMean: reviews.length ? round1(sum(reviews) / reviews.length) : null,
     convergeInOneRate: reviews.length ? reviews.filter((c) => c <= 1).length / reviews.length : null,
     filesChanged: sum(rs.map((r) => r.git?.filesChanged).filter(isNum)),
+    // Team policy (team-policy design §10): runs that went past a team cap (continued past, or
+    // exceeded under warn / unattended) or picked something off-policy. Additive; policy-less
+    // records count nothing.
+    offPolicyRuns: rs.filter((r) => policyOverrides(r) + policyDeviations(r) > 0).length,
+    capOverrides: sum(rs.map(policyOverrides)),
+    deviations: sum(rs.map(policyDeviations)),
+    policyRuns: rs.filter((r) => r.policy && r.policy.home).length,
   };
 }
+
+const policyOverrides = (r) => (r.policy && r.policy.home ? (Array.isArray(r.policy.overrides) ? r.policy.overrides.length : 0) + (Array.isArray(r.policy.exceeded) ? r.policy.exceeded.length : 0) : 0);
+const policyDeviations = (r) => (r.policy && r.policy.home && Array.isArray(r.policy.deviations) ? r.policy.deviations.length : 0);
 
 const pct = (cur, prev) => (isNum(cur) && isNum(prev) && prev > 0 ? (cur - prev) / prev : null);
 
@@ -175,9 +185,11 @@ function breakdown(rs, dim) {
   const rows = new Map();
   for (const r of rs) {
     for (const k of DIMENSIONS[dim](r)) {
-      const row = rows.get(k.key) || { key: k.key, label: k.label, sub: k.sub ?? null, runs: 0, usd: 0, done: 0, reviews: [], filesChanged: 0, filesUnknown: 0 };
+      const row = rows.get(k.key) || { key: k.key, label: k.label, sub: k.sub ?? null, runs: 0, usd: 0, done: 0, reviews: [], filesChanged: 0, filesUnknown: 0, overrides: 0, offPolicy: 0 };
       row.runs += 1;
       row.usd += usdOf(r);                       // "a run touching two projects counts in both"
+      row.overrides += policyOverrides(r);       // team caps continued past / exceeded (team policy §10)
+      row.offPolicy += policyDeviations(r);
       if (r.result === 'done') row.done += 1;
       if (isNum(r.cycles?.review)) row.reviews.push(r.cycles.review);
       // A key that carries its own count (a touched member) uses it; every other dimension is
@@ -207,6 +219,8 @@ function breakdown(rs, dim) {
       // null when no run in the row carries a count: the cell shows "–", never a wrong number.
       filesChanged: row.filesUnknown === row.runs ? null : row.filesChanged,
       filesUnknown: row.filesUnknown,
+      overrides: row.overrides,
+      offPolicy: row.offPolicy,
       isNone: row.key === NONE,
     }))
     // Projects order by what the table shows (runs touched, then files); every other dimension by spend.
@@ -283,6 +297,15 @@ function toRunRow(r) {
     projects: r.target?.kind === 'workspace'
       ? (Array.isArray(r.target.touched) ? r.target.touched.filter((p) => typeof p === 'string') : [])
       : [r.target?.project].filter((p) => typeof p === 'string' && p),
+    // Team policy (§10): only on a run recorded under a policy, so policy-less rows keep their shape.
+    ...(r.policy && r.policy.home ? { policy: {
+      home: r.policy.home,
+      overrides: Array.isArray(r.policy.overrides) ? r.policy.overrides : [],
+      exceeded: Array.isArray(r.policy.exceeded) ? r.policy.exceeded : [],
+      deviations: Array.isArray(r.policy.deviations) ? r.policy.deviations : [],
+      unattended: r.policy.unattended === true,
+      reason: typeof r.policy.reason === 'string' ? r.policy.reason : null,
+    } } : {}),
   };
 }
 

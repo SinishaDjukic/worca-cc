@@ -12,7 +12,8 @@ Nothing about a run's own branch or history changes — `worca-metrics` carries 
 
 ## Enable and join
 
-A project turns team metrics on from its **Projects** cell (`Set up team metrics…`), in one of two modes:
+A project turns team metrics on from its project page's **Team** tab (`Set up team metrics…`; the Projects
+list row only carries a one-line status chip), in one of two modes:
 
 - **Here, on this repository** — Worca creates the orphan branch `worca-metrics` on `origin`,
   holding only `.worca-metrics/`, and pushes it. Every finished run — done, failed or stopped —
@@ -52,12 +53,14 @@ until you pick one. The home is a per-machine choice (teammates pick their own);
 page reads every recording member, so a workspace's runs are aggregated wherever they were
 written. Records are matched to a workspace by its id, so renaming a workspace keeps its history.
 
-The workspace card names every member exactly once. Collapsed, its header carries a one-line
-summary — "3 projects · ⌇ acme/gateway · 12 workspace runs · 2 not recording" — where the Team
-metrics icon marks the metrics home (the project is never labelled "home"), the run count is the
-workspace's own, and "N not recording" appears only when a member has no metrics at all. Clicking the
-header opens the card; a lone workspace opens by itself and the toggle is remembered per card.
-Open, the card shows one **Projects** table with four columns — the status first (is it recording?), then the branch (where), then the run count on the right edge (no icon in the project column, so every name lines up; the home is told by its status, and **Workspace runs** is filled on the home row only):
+The Workspaces list names every workspace once, as a row: the name and a one-line summary —
+"3 projects · ⌇ acme/gateway · 12 workspace runs · 2 not recording" — where the Team metrics icon
+marks the metrics home (the project is never labelled "home"), the run count is the workspace's
+own, and "N not recording" appears only when a member has no metrics at all. The row opens the
+workspace page; its Overview carries a **METRICS HOME** card and its **Team** tab the one **Projects**
+table with four columns — the status first (is it recording?), then the branch (where), then the
+run count on the right edge (no icon in the project column, so every name lines up; the home is
+told by its status, and **Workspace runs** is filled on the home row only):
 
 | Project | Metrics status | Metrics branch | Workspace runs |
 |---|---|---|---|
@@ -107,8 +110,8 @@ or the fetch schedule.
 - **`propose_metrics_change`** never changes anything: it validates a change and the chat shows
   a card the user applies or declines. Four kinds — `enable` (here, or delegating to another
   project), `record` (this machine's "Include my runs"), `workspace_home` (set or clear a
-  workspace's metrics home) and `route_members` — cover everything the Projects cells and the
-  workspace card can do. Enabling creates a branch on the team's origin, attribution is a team
+  workspace's metrics home) and `route_members` — cover everything the project page's and the
+  workspace page's Team tabs can do. Enabling creates a branch on the team's origin, attribution is a team
   decision made once and routing pushes marker branches to other repositories, which is why none
   of them is a direct tool. Applying happens in the UI server behind the click; the card then
   shows the result (per member, for routing), and the chat receives a `[worca event] metrics
@@ -119,8 +122,9 @@ group-by and filters, so "why did spend jump?" refers to the chart on screen.
 
 ## The sync chip and push failures
 
-Each enabled project's cell shows one status line — the "sync chip" — that reflects the state of
-its outbox and its last push, not just whether the toggle is on:
+Each enabled project's Team block (and, in short, its Projects-row chip) shows one status line —
+the "sync chip" — that reflects the state of its outbox and its last push, not just whether the
+toggle is on:
 
 | Chip state | Meaning | Action shown |
 |---|---|---|

@@ -128,13 +128,15 @@ be skipped by forgetting it.
 | New pipeline, Getting started, Running, History, Projects, Settings | S |
 | Ask Worca pill, sidebar spend indicator, the mode item | S |
 | Statistics, Workflow Composer, Workspaces | A |
-| Team metrics, Nodes (Agents, Scripts) | E — Nodes is the one entry Simple never keeps: with Agents or Scripts open, the whole group stays hidden and the banner says where you are; Advanced keeps it with the open child |
+| Schedules | A — kept visible at every level while anything is scheduled, missed, repeating or unread |
+| Team metrics, Team policy, Nodes (Agents, Scripts) | E — Nodes is the one entry Simple never keeps: with Agents or Scripts open, the whole group stays hidden and the banner says where you are; Advanced keeps it with the open child |
 
 ### New pipeline
 
 | Element | Level |
 |---|---|
 | Project, prompt, title, extra files, Start run | S |
+| Start run's caret menu (Schedule…) | A |
 | Workflow picker | S — lists Auto and Default only; the selected workflow always stays listed |
 | Mock mode | S — sits beside Start run, outside the Advanced disclosure |
 | "Set in Advanced mode and still applied" note | S |
@@ -147,6 +149,7 @@ be skipped by forgetting it.
 | Element | Level |
 |---|---|
 | Card status, title, elapsed, cost, Stop, Pause/Resume, open | S |
+| "Scheduled" group (runs due within 24 h) | S — it only exists when something is scheduled |
 | Needs-input pill and banner; clarify questions; Auto proposal and Accept | S |
 | Recovery prompt, cycle gate, cost-pause banner, retained-work banner | all |
 | Workflow graph with status colours, gate pip, End result; Overview tab | S |
@@ -195,28 +198,35 @@ Everything on the page: the list, the runtime step, the workspace and the bench 
 |---|---|
 | Projects list, add, project page Overview, remove | S |
 | Project Memory tab (view and edit files) | A |
-| Workspaces page, create wizard, description, re-scan, delete | A |
+| Workspaces list, create wizard, workspace page Overview (projects, description, re-scan, delete) | A |
 | Memory health, Defragment, snapshot restore | E — the health card stays visible when overdue or failing |
-| Team-metrics cell and setup; workspace metrics table and home; KEY card | E |
+| Projects-row team chips; project page Team tab and its TEAM METRICS / TEAM POLICY cards; KEY card | E |
+| Workspace page Team tab (members table, metrics home, policy home) and its METRICS HOME / POLICY HOME cards | E |
 
 ### Settings
 
 | Element | Level |
 |---|---|
 | General: Appearance, Interface mode, Budget & cost limits, Getting started, About | S |
-| General: root folders, Ask Worca limits, chat notifications | A |
+| General: root folders, Ask Worca limits, chat notifications, Scheduled runs defaults | A |
 | Guardrails tab (list, details); Plugins tab (installed, available, install); Memory tab (files) | A |
 | General: title model, Auto workflow model, spawn diagnostics | E |
 | Guardrails create / delete; Models tab; marketplaces, Doctor, leftover data | E |
 
-### Statistics, Team metrics, Ask Worca, Getting started
+### Statistics, Team metrics, Team policy, Ask Worca, Getting started
 
 | Element | Level |
 |---|---|
 | Statistics page | A |
 | Team metrics page and every surface of it elsewhere | E |
+| Team policy page and its Policy / Plugins / Catalog tabs | E |
+| Team-policy notes on New pipeline; the team caps readout under Budget & cost limits | all — a team cap applies in every mode, so the reason it applies is never hidden |
+| Required-plugins strip and setup checklist (Settings › Plugins) | A — with the tab that holds them |
 | Ask: chat, history, attachments, run card, proposal title / project / workflow / brief / Start | S |
+| Ask: a proposal's own schedule (the "Schedule" action and its time), schedule-change cards | S — the answer the user asked for |
+| Ask: a proposal's tracker task (id, title, link) in place of the brief; the "Auto" workflow option when Ask proposed it | S |
+| Ask: "Schedule…" on a plain run proposal | A |
 | Ask: proposal cards themselves | all (rule 4) |
 | Ask: model picker, scope, ctx and cost meter, tool rows, branches, guardrails, "Open in New Pipeline" | A |
 | Ask: per-agent lane, worktrees, agents popover, sub-agent logs | E |
-| Getting started: all eight tiles show at every level, ordered Simple → Advanced → Expert; steps 6 and 7 wear "Advanced", step 8 "Expert" | S |
+| Getting started: all nine tiles show at every level, ordered Simple → Advanced → Expert; steps 6 and 7 wear "Advanced", steps 8 and 9 "Expert" | S |

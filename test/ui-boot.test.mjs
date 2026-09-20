@@ -46,5 +46,5 @@ test('app.js boots without throwing and finds 14 views', async () => {
     threw = e;
   }
   assert.equal(threw, null, threw && threw.stack);
-  assert.equal(window.document.querySelectorAll('[data-view]').length, 14);   // + getting-started + scripts
+  assert.equal(window.document.querySelectorAll('[data-view]').length, 16);   // + getting-started + scripts + schedules + team-policy (team-policy design §11)
 });

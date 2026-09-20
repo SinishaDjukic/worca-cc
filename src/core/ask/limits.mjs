@@ -2,7 +2,9 @@
 // Fixed limits of the Ask Worca chat (ask-worca-design.md §6.9) plus the two
 // operator-configurable per-turn guards, read fresh on every turn (D12). Pure
 // apart from the settings readers, which are injectable for tests.
-import { askMaxTurns as readAskMaxTurns, askMaxBudgetUsd as readAskMaxBudgetUsd } from '../settings.mjs';
+import { askMaxTurns as readAskMaxTurns, askMaxBudgetUsd as readAskMaxBudgetUsd, readSettings } from '../settings.mjs';
+import { cachedPolicyForKey } from '../policy/cache.mjs';
+import { fieldsForRun } from '../policy/effective.mjs';
 import { TEXT_EXTENSIONS, BINARY_EXTENSIONS } from './attachment-kind.mjs';
 
 export const ASK_LIMITS = Object.freeze({
@@ -73,6 +75,20 @@ export const ASK_LIMITS = Object.freeze({
  * applies to the next turn without a restart.
  * @returns {{maxTurns:number, maxBudgetUsd:number|null}}
  */
-export function askLimits({ readMaxTurns = readAskMaxTurns, readMaxBudgetUsd = readAskMaxBudgetUsd } = {}) {
-  return { maxTurns: readMaxTurns(), maxBudgetUsd: readMaxBudgetUsd() };
+export function askLimits({ readMaxTurns = readAskMaxTurns, readMaxBudgetUsd = readAskMaxBudgetUsd, projectKey = null, readStored = readSettings } = {}) {
+  const out = { maxTurns: readMaxTurns(), maxBudgetUsd: readMaxBudgetUsd() };
+  // Team policy defaults (team-policy design §5 `ask.*`): start a thread pinned to a governed
+  // project off the team's numbers, but only where the developer has stored nothing of their own.
+  if (projectKey) {
+    const p = cachedPolicyForKey(projectKey);
+    if (p) {
+      const f = fieldsForRun(p.doc);
+      const stored = readStored() || {};
+      const t = f['ask.maxTurns'];
+      if (t && t.kind === 'default' && stored.askMaxTurns === undefined) out.maxTurns = t.value;
+      const b = f['ask.maxBudgetUsd'];
+      if (b && b.kind === 'default' && stored.askMaxBudgetUsd === undefined) out.maxBudgetUsd = b.value;
+    }
+  }
+  return out;
 }

@@ -157,6 +157,20 @@ and durations, the clarify Q&A, agent transcripts, and logs:
   `/status`, `/cost`, `/answer`, `/approve`, `/pause`, `/resume`, `/stop`,
   and more — with allowlist-based authorization.
 
+### Scheduled runs
+
+- **Run it later** — schedule a pipeline for a date and time, or on a repeat
+  ("every weekday at 02:00"), from New pipeline, an Ask card, the CLI
+  (`--at`, `--every`, `--cron`) or the API (`scheduledFor`, `repeat`). The
+  **Schedules** view lists what is planned and an activity feed of every miss,
+  failure and self-pause. Runs start while `worca ui` (or a `--wait` terminal) is
+  up and the machine is awake. See [docs/scheduled-runs.md](docs/scheduled-runs.md).
+- **Ask Worca schedules too** — "run the dependency upgrade every weekday at 2am"
+  becomes a run card whose main button is *Schedule*. It lists, explains, pauses,
+  resumes and skips schedules on request; moving, editing, cancelling or deleting
+  one is a card you confirm. Name a tracker issue ("fix Jira bug PROJ-123 with
+  auto, tonight") and the card runs from the issue itself, read when the run starts.
+
 ### Costs & budgets
 
 - **Cost tracking everywhere** — per-run and per-step cost estimates, a
@@ -179,6 +193,26 @@ and durations, the clarify Q&A, agent transcripts, and logs:
 - **`worca metrics push`** — flush pending run records from the CLI, e.g. on a headless machine.
 
 See [`docs/team-metrics.md`](docs/team-metrics.md).
+
+### Team policy
+
+- **Team-set caps and expectations, distributed by git** — a product manager or lead publishes
+  a policy to an orphan `worca-policy` branch on the project's `origin` (protect it so only
+  maintainers push); every teammate's Worca reads it. A project carries its own policy or
+  follows another project's; a workspace follows a policy home.
+- **Soft by design** — every value is a *default* the developer may change or a *soft
+  constraint* the tighter of team and local applies to. Going past a team cap is allowed
+  after a confirmation (with an optional or required reason) and is recorded to team
+  metrics. Nothing blocks a run; unattended (`--yes`) runs warn instead of pausing.
+- **What a policy can set** — per-pipeline and total cost caps, an advisory pooled budget,
+  Ask Worca limits, a default guardrail set and a minimum tier, allowed models and step
+  defaults, marketplaces and required plugins (offered through a setup checklist, never
+  installed without a click), a default workflow, human-in-the-loop, and more.
+- **A Team policy page** — the effective policy per project or workspace (team value, yours,
+  what applies) and an editor that publishes in one commit.
+- **`worca policy show|pull|init|setup`** and `--past-team-cap [--reason "…"]` on runs.
+
+See [`docs/team-policy.md`](docs/team-policy.md).
 
 ### Models
 
@@ -274,11 +308,22 @@ worca --project /path/to/your/project --prompt "Add a /search endpoint" --workfl
 # pause with Ctrl+C, continue later (survives restarts)
 worca resume <pipelineId>
 
+# run it later: once, from this terminal, or on a repeat (needs `worca ui` up, or --wait)
+worca --project /path/to/your/project --prompt "Upgrade dependencies" --at "tomorrow 02:00"
+worca --project /path/to/your/project --prompt "Upgrade dependencies" --at 02:00 --wait --yes
+worca --project /path/to/your/project --file ./nightly.md --every "weekdays 02:00"
+worca schedule list
+
 # offline demo — full pipeline, no tokens
 worca --project /path/to/your/project --prompt "demo task" --mock --yes
 
 # flush pending team-metrics run records (headless machines with no UI server)
 worca metrics push
+
+# team policy: what applies to this project, fetch the branch now, meet the setup checklist
+worca policy show
+worca policy pull
+worca policy setup --install
 
 # share a saved pipeline: as JSON, or as a plugin folder bundling your agents, scripts + skills
 worca workflow export wf_my-flow --format json --out my-flow.json
@@ -324,6 +369,7 @@ The skill starts the same deterministic orchestrator.
 - [Architecture](docs/ARCHITECTURE.md) — the whole stack in one picture
 - [Guardrails](docs/guardrails.md) — policy model, enforcement, limitations
 - [Team metrics](docs/team-metrics.md) — git-backed, team-wide run records
+- [Team policy](docs/team-policy.md) — team-set cost caps, plugins, models and guardrails from a `worca-policy` branch
 - [Getting started](docs/getting-started.md) — the in-app checklist, welcome and spotlight guides
 - [Storage](docs/storage.md) — where state lives, project keys, migration
 - [Releasing](docs/RELEASING.md) — how `@worca/app` versions are published
