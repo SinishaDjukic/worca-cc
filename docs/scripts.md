@@ -88,6 +88,38 @@ a `node` script that skips one fails with `output "<port>" was not written`. A
 `shell` script's unwritten md outputs receive its captured report. Two ports may
 share one filename, which is how the built-in `shell` feeds both `log` and `fail`.
 
+## Setting params from a wire
+
+A card's params are normally fixed in the inspector. To let an upstream node choose them at run
+time, select the card and tick **Params from a wire**. The card gains a `params` input (json).
+Wire any json output into it — an agent's, or another script's.
+
+The payload is one JSON object whose keys are the script's param ids:
+
+```json
+{ "ref": "release/2.4", "stat": true }
+```
+
+- The wire wins over the inspector; the inspector wins over the sidecar default. A key that is
+  absent — or `null` — falls through.
+- The script does not change. It still reads `params.ref`, `api.params.ref` or `$WORCA_PARAM_REF`.
+- `command` and `code` params can never be set by a wire. They are what the card runs, with
+  worca's privileges.
+- An unknown key, a wrong type, or a file that is not a JSON object stops the card before anything
+  runs, and the error names the key. On a mock run such a payload is ignored with a warning and
+  the card's own params apply.
+- For a shell script a wired string may only contain letters, digits, space and
+  `_ . , : @ / \ + = ~ -`. `cmd.exe` expands `%VAR%` before it parses the line, so anything else
+  could run as a command on Windows; the rule is the same on every OS.
+- The card waits for the wire before its first run, like any other wired input, and a new value
+  on the wire runs the card again.
+- The run's `scripts/<node>-c<n>.envelope.json` lists the params a wire set under `wiredParams`.
+
+A wired value comes from another node — often from a model. Treat it as untrusted input: the
+built-in Git diff card, for one, refuses a branch name that starts with `-`.
+
+A script that already declares an input named `params` keeps it; the toggle is not offered.
+
 ## The bench
 
 The bench sits under the editor and runs one script by itself, through the same runner a pipeline run uses, so "passes in the bench" and "works in a run" cannot drift.

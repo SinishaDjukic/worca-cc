@@ -5,9 +5,9 @@
 // malformed template — an unknown agent key (V4), a dangling endpoint (V5) or
 // an unknown kind (V3) is an error for the validator to COLLECT, so every
 // lookup guards instead of crashing.
-import { AWAIT_PORT, FLOW_KINDS, gatePorts, TASK_PORTS, END_PORTS } from './constants.mjs';
+import { AWAIT_PORT, PARAMS_PORT, FLOW_KINDS, gatePorts, TASK_PORTS, END_PORTS } from './constants.mjs';
 import { hasBlocking } from './verdict.mjs';
-import { readConfigPorts } from './script-meta.mjs';
+import { readConfigPorts, hasParamsPort } from './script-meta.mjs';
 
 /** Engine flow-card ports. `undefined` for an unknown kind — V3's error. */
 export function flowPorts(node) {
@@ -34,7 +34,7 @@ const toIndex = (v) => (v instanceof Map ? v : new Map(Object.entries(v && typeo
  *   agent key without v2 ports        -> {known:true, ported:false}
  *   config-ported script, no config   -> {known:true, ported:false, configPortsMissing:true}
  *   config-ported script, bad config  -> {known:true, ported:false, configPortsInvalid:true, configPortsErrors}
- *   ported                            -> {known:true, ported:true, inputs:[...ports, await], outputs}
+ *   ported                            -> {known:true, ported:true, inputs:[...ports, params?, await], outputs}
  */
 export function portsFnFor(agentsByKey, scriptsByKey = {}) {
   const agents = toIndex(agentsByKey);
@@ -55,16 +55,22 @@ function sidecarPorts(meta) {
   return { ...meta, known: true, ported: true, inputs: [...meta.inputs, AWAIT_PORT], outputs: [...meta.outputs] };
 }
 
+/** A script card's engine inputs, after its own: the opt-in `params` port, then `await` LAST. */
+const engineInputs = (meta, node) => (hasParamsPort(meta, node?.config) ? [PARAMS_PORT, AWAIT_PORT] : [AWAIT_PORT]);
+
 /** Script ports: the sidecar's, or — for `ports: "config"` (D14) — the placed
  *  node's `config.ports` through the shared readers. */
 function scriptPorts(meta, node) {
   if (!meta) return undefined;
-  if (meta.ports !== 'config') return sidecarPorts(meta);
+  if (meta.ports !== 'config') {
+    const p = sidecarPorts(meta);
+    return p.ported ? { ...p, inputs: [...meta.inputs, ...engineInputs(meta, node)] } : p;
+  }
   const cfg = node?.config?.ports;
   if (cfg === undefined) return { ...meta, known: true, ported: false, configPortsMissing: true, inputs: [], outputs: [] };
   const { ports, errors } = readConfigPorts(cfg, { hasVerdict: !!meta.verdict });
   if (!ports) return { ...meta, known: true, ported: false, configPortsInvalid: true, configPortsErrors: errors, inputs: [], outputs: [] };
-  return { ...meta, known: true, ported: true, inputs: [...ports.inputs, AWAIT_PORT], outputs: [...ports.outputs] };
+  return { ...meta, known: true, ported: true, inputs: [...ports.inputs, ...engineInputs(meta, node)], outputs: [...ports.outputs] };
 }
 
 /**

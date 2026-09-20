@@ -1125,7 +1125,7 @@ export class GraphOrchestrator extends RunHarness {
       runCtx,
       // The script contract (spec §6.1): what script-runner.mjs spawns. Absent on every other kind.
       script: nc.kind === 'script'
-        ? { meta: nc.meta, runtime: nc.runtime, file: nc.file, command: nc.command, params: nc.params, timeoutMs: nc.timeoutMs, mock: nc.mock }
+        ? { meta: nc.meta, runtime: nc.runtime, file: nc.file, command: nc.command, params: nc.params, paramsPort: nc.paramsPort === true, timeoutMs: nc.timeoutMs, mock: nc.mock }
         : undefined,
       runners: this._runners,             // P3's injection seam (runExecution reads ctx.runners)
       resumeSessionId: this._takeResumeSession(executionId),

@@ -12,11 +12,11 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
-  runScriptExecution, buildEnvelope, envForShell, parseFrame, materializeOutputs, shellReport, envelopeAuditPath, scriptBaseEnv,
+  runScriptExecution, buildEnvelope, envForShell, parseFrame, materializeOutputs, shellReport, envelopeAuditPath, scriptBaseEnv, resolveWiredParams,
   MAX_LINE, STREAM_MAX, FRAME_MAX,
 } from '../src/core/graph/script-runner.mjs';
 import { classifyError } from '../src/core/recoverable-error.mjs';
-import { AWAIT_PORT } from '../src/shared/graph/constants.mjs';
+import { AWAIT_PORT, PARAMS_PORT } from '../src/shared/graph/constants.mjs';
 import { probePython, resetPythonProbe } from '../src/core/graph/python-probe.mjs';
 
 // mockEnabled() also reads the environment; these tests pin `ctx.mock === false` and WORCA_MOCK=0, so an
@@ -625,4 +625,89 @@ test('python: a missing program file is named before anything is spawned', async
 test('an unknown runtime is still refused by name', async () => {
   const meta = { key: 'pyCard', displayName: 'Py card', runtime: 'ruby' };
   await assert.rejects(runScriptExecution(ctxFor({ meta, file: null })), /^Error: script "pyCard": unknown runtime "ruby"$/);
+});
+
+// ---- wired params (the engine `params` port) ----
+const wiredMeta = () => nodeMeta({ params: [{ id: 'ref', type: 'string' }, { id: 'stat', type: 'boolean', default: false }, { id: 'cmd', type: 'command' }] });
+const WIRED_PORTS = { ...PORTS, inputs: [PORTS.inputs[0], PORTS.inputs[1], PARAMS_PORT, AWAIT_PORT] };
+const echoProgram = () => writeProgram(tmp('worca-sr-prog-'), `
+import { writeFileSync } from 'node:fs';
+export default async function ({ inputs, outputs, params }) {
+  writeFileSync(outputs.log.path, '# ok\\n');
+  return { summary: 'ok', outputs: { report: { value: { params, inputs: Object.keys(inputs) } } }, verdict: { issues: [] } };
+}\n`);
+function wiredCtx(wire, over = {}) {
+  const ctx = ctxFor({ meta: wiredMeta(), file: echoProgram(), params: { ref: 'master', stat: false, cmd: 'x' }, ports: WIRED_PORTS, ...over });
+  ctx.script.paramsPort = true;
+  ctx.bindings = { ...ctx.bindings, params: wire };
+  return ctx;
+}
+const wireFile = (text) => { const f = join(tmp('worca-sr-wire-'), 'branches.json'); writeFileSync(f, text); return f; };
+
+test('wired params: the json on the engine port overlays the card params BEFORE the envelope, and is not an input', async () => {
+  const ctx = wiredCtx({ seq: 3, type: 'json', path: '/nowhere/unused.json', value: { ref: 'dev', stat: true } });
+  const res = await runScriptExecution(ctx);
+  assert.deepEqual(res.outputs.report.value, { params: { ref: 'dev', stat: true, cmd: 'x' }, inputs: ['done', 'planMd'] });
+  const audit = JSON.parse(readFileSync(res.envelopePath, 'utf8'));
+  assert.deepEqual(audit.params, { ref: 'dev', stat: true, cmd: 'x' });
+  assert.deepEqual(audit.wiredParams, ['ref', 'stat'], 'the audit copy says which params the wire set');
+  assert.equal('params' in audit.inputs, false);
+  assert.equal(audit.apiVersion, 1);
+  const shellEnv = envForShell(audit, {});
+  assert.equal(shellEnv.WORCA_PARAM_REF, 'dev', 'a shell script reads the wired value as a plain env var');
+  assert.equal('WORCA_IN_PARAMS' in shellEnv, false);
+});
+
+test('wired params: an agent-written file is read from its path — BOM and CRLF tolerated — and an unwired port changes nothing', async () => {
+  const file = wireFile('\uFEFF{\r\n  "ref": "release/2.4",\r\n  "stat": null\r\n}\r\n');
+  const res = await runScriptExecution(wiredCtx({ seq: 3, type: 'json', path: file }));
+  assert.deepEqual(res.outputs.report.value.params, { ref: 'release/2.4', stat: false, cmd: 'x' }, 'null falls through to the card');
+  const unwired = wiredCtx(undefined);
+  delete unwired.bindings.params;
+  const r2 = await runScriptExecution(unwired);
+  assert.deepEqual(r2.outputs.report.value.params, { ref: 'master', stat: false, cmd: 'x' });
+  assert.deepEqual(JSON.parse(readFileSync(r2.envelopePath, 'utf8')).wiredParams, []);
+});
+
+test('wired params: every bad payload refuses the execution by name and spawns nothing', async () => {
+  const refuses = async (wire, re) => {
+    const ctx = wiredCtx(wire);
+    await assert.rejects(runScriptExecution(ctx), (e) => re.test(e.message) && e.errorClass === null);
+    assert.equal(existsSync(ctx.outputs.log.path), false, 'the program never ran');
+  };
+  await refuses({ seq: 1, type: 'json', path: wireFile('not json') }, /^script "runTests": wired params — .*is not valid JSON/);
+  await refuses({ seq: 1, type: 'json', path: wireFile('["ref"]') }, /wired params — must be a JSON object$/);
+  await refuses({ seq: 1, type: 'json', value: { cmd: 'rm -rf /' } }, /wired params — param 'cmd' is a command param — only the card itself may set it$/);
+  await refuses({ seq: 1, type: 'json', value: { nope: 1, stat: 'yes' } }, /wired params — unknown param 'nope' — a wire can set ref, stat; param 'stat': must be true or false/);
+  await refuses({ seq: 1, type: 'json', path: join(tmp('worca-sr-wire-'), 'missing.json') }, /wired params — cannot read /);
+  await refuses({ seq: 1, type: 'json', path: wireFile(JSON.stringify({ ref: 'x'.repeat(70 * 1024) })) }, /wired params — .* is larger than 64 KiB$/);
+});
+
+test('wired params: a script that DECLARES its own `params` input keeps it, and a mock run never reads the wire', async () => {
+  const own = { ...PORTS, inputs: [PORTS.inputs[0], { id: 'params', type: 'json', required: false }, AWAIT_PORT] };
+  const ctx = ctxFor({ meta: wiredMeta(), params: { ref: 'master' }, ports: own, bindings: { done: { seq: 1, type: 'void' }, params: { seq: 2, type: 'json', path: '/abs/own.json' } } });
+  const env = buildEnvelope(ctx);                     // ctx.script.paramsPort is unset: hasParamsPort said no (the id is taken)
+  assert.deepEqual(env.inputs.params, { type: 'json', path: '/abs/own.json', fresh: false });
+  assert.deepEqual(env.params, { ref: 'master' });
+  assert.deepEqual(await resolveWiredParams(ctx), { params: { ref: 'master' }, wired: [] });
+  const ports = { ...WIRED_PORTS, outputs: PORTS.outputs.filter((o) => o.id !== 'report') };
+  const mocked = wiredCtx({ seq: 1, type: 'json', value: ['garbage'] }, { ports, claudeOpts: { mock: true }, mock: { summary: 'mocked', outputs: { log: { text: '# m' } } } });
+  assert.equal((await runScriptExecution(mocked)).summary, 'mocked', 'upstream mock JSON is arbitrary: a mock run spawns nothing and validates nothing');
+});
+
+test('wired params: nothing bound still enforces a required param V22 deferred to the wire; a mock run downgrades a refused payload to a warning', async () => {
+  const required = nodeMeta({ params: [{ id: 'ref', type: 'string', required: true }] });
+  const bare = wiredCtx(undefined, { meta: required, params: {} });
+  delete bare.bindings.params;                       // a loop wire is excused from the first-run barrier: the card can run before it fires
+  await assert.rejects(runScriptExecution(bare), /wired params — missing required param 'ref'$/);
+  assert.equal(existsSync(bare.outputs.log.path), false, 'the program never ran');
+  await assert.rejects(resolveWiredParams(wiredCtx({ seq: 1, type: 'json' })), /wired params — the wire carried no JSON$/);
+  // A card with no mock of its own runs for REAL on a mock run, fed by the mock agent's generic artifact.
+  const events = [];
+  const res = await runScriptExecution(wiredCtx({ seq: 1, type: 'json', value: { mock: true, note: 'generic artifact' } }, { claudeOpts: { mock: true }, events }));
+  assert.deepEqual(res.outputs.report.value.params, { ref: 'master', stat: false, cmd: 'x' }, "the card's own params stand");
+  assert.deepEqual(res.warnings, ["script \"runTests\": wired params — unknown param 'mock' — a wire can set ref, stat; unknown param 'note' — a wire can set ref, stat — ignored on a mock run; the card's own params apply"]);
+  assert.deepEqual(JSON.parse(readFileSync(res.envelopePath, 'utf8')).wiredParams, []);
+  const honoured = await runScriptExecution(wiredCtx({ seq: 1, type: 'json', value: { ref: 'dev' } }, { claudeOpts: { mock: true } }));
+  assert.equal(honoured.outputs.report.value.params.ref, 'dev', 'a VALID payload (an upstream script ran for real) is honoured on a mock run too');
 });

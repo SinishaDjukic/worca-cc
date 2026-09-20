@@ -1167,3 +1167,54 @@ test('with no highlight injected the composer keeps the plain textarea', async (
   assert.ok(s.el.insBody.querySelector('textarea.ins-textarea[data-field="param:command"]'));
   s.c.destroy();
 });
+
+test('the params-port toggle adds the port to the card; un-ticking it takes its wires in the same undo step', async () => {
+  const WIRABLE = { ...DIFF, params: [{ id: 'ref', type: 'string' }] };
+  const metas = { shell: SHELL, gitDiff: WIRABLE };
+  const s = await open({ portsFn: portsFnFor(AGENTS, metas) });
+  s.c.setScripts(metas);
+  const node = s.c.spawn({ kind: 'script', key: 'gitDiff' });
+  s.c.select({ kind: 'node', id: node.id });
+  const body = s.el.insBody;
+  const tick = (on) => { const x = body.querySelector('[data-field="paramsPort"]'); x.checked = on; x.dispatchEvent(new s.win.Event('change', { bubbles: true })); };
+  const cfg = () => s.c.template().nodes.find((n) => n.id === node.id).config;
+  tick(true);
+  assert.equal(cfg().paramsPort, true);
+  assert.deepEqual(portsFnFor(AGENTS, metas)(s.c.template().nodes.find((n) => n.id === node.id)).inputs.map((p) => p.id), ['done', 'params', 'await']);
+  assert.deepEqual([...s.c.view.stage.querySelectorAll(`.node[data-node-id="${node.id}"] [data-port]`)].map((r) => r.dataset.port), ['done', 'params', 'diff', 'await'],
+    'the card redraws with the new input row');
+  s.c.commit('wire', () => { s.c.template().wires.push({ id: 'w_p', from: { node: 'n_agent', port: 'plan' }, to: { node: node.id, port: 'params' } },
+    { id: 'w_d', from: { node: 'n_agent', port: 'plan' }, to: { node: node.id, port: 'await' } }); });
+  const depth = s.c.undoDepth();
+  tick(false);
+  assert.equal('paramsPort' in cfg(), false);
+  assert.equal(s.c.template().wires.some((w) => w.id === 'w_p'), false, 'the wire into the vanished port goes with it');
+  assert.equal(s.c.template().wires.some((w) => w.id === 'w_d'), true, 'no other wire is touched');
+  assert.equal(s.c.undoDepth(), depth + 1, 'one undo step');
+  s.c.undo();
+  assert.equal(cfg().paramsPort, true);
+  assert.equal(s.c.template().wires.some((w) => w.id === 'w_p'), true, 'undo restores the toggle and the wire together');
+  // A config-ported card: while the engine owns `params`, no own input can be renamed onto it (like `await`).
+  const WSHELL = { ...SHELL, params: [...SHELL.params, { id: 'target', type: 'string' }] };
+  const s2 = await open({ portsFn: portsFnFor(AGENTS, { shell: WSHELL }) });
+  s2.c.setScripts({ shell: WSHELL });
+  const sh = s2.c.spawn({ kind: 'script', key: 'shell' });
+  s2.c.select({ kind: 'node', id: sh.id });
+  const rename = (value) => { const x = s2.el.insBody.querySelector('[data-field="port:inputs:0:id"]'); x.value = value; x.dispatchEvent(new s2.win.Event('change', { bubbles: true })); };
+  const box = s2.el.insBody.querySelector('[data-field="paramsPort"]'); box.checked = true; box.dispatchEvent(new s2.win.Event('change', { bubbles: true }));
+  rename('params');
+  assert.equal(s2.el.insBody.querySelector('[data-field="port:inputs:0:id"]').value, 'in', '"params" is the engine\'s while the toggle is on');
+  assert.ok(s2.el.insBody.querySelector('[data-field="paramsPort"]'), 'the toggle is still there to un-tick');
+  // A stuck opt-in (the script grew its OWN `params` input under the card): un-ticking clears V22's error and
+  // leaves the wire alone — it feeds the script's own port now, and the user drew it.
+  const OWN = { ...WIRABLE, inputs: [...DIFF.inputs, { id: 'params', type: 'json', required: false }] };
+  const s3 = await open({ portsFn: portsFnFor(AGENTS, { shell: SHELL, gitDiff: OWN }) });
+  s3.c.setScripts({ shell: SHELL, gitDiff: OWN });
+  const own = s3.c.spawn({ kind: 'script', key: 'gitDiff' });
+  s3.c.commit('stuck', () => { s3.c.template().nodes.find((n) => n.id === own.id).config.paramsPort = true;
+    s3.c.template().wires.push({ id: 'w_own', from: { node: 'n_agent', port: 'plan' }, to: { node: own.id, port: 'params' } }); });
+  s3.c.select({ kind: 'node', id: own.id });
+  const stuck = s3.el.insBody.querySelector('[data-field="paramsPort"]'); stuck.checked = false; stuck.dispatchEvent(new s3.win.Event('change', { bubbles: true }));
+  assert.equal('paramsPort' in s3.c.template().nodes.find((n) => n.id === own.id).config, false);
+  assert.equal(s3.c.template().wires.some((w) => w.id === 'w_own'), true, "a wire into the script's OWN `params` input is not the engine's to delete");
+});

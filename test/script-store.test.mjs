@@ -177,6 +177,24 @@ test('meta validation is the sidecar validator, verbatim; a port change only war
   await deleteScript('lint');
 });
 
+test('a wire into the engine params port is a live reference while the card opted in and the script still has a wirable param', async () => {
+  const WIRED = { ...NODE_META, params: [{ id: 'ref', type: 'string' }] };
+  await createScript({ meta: WIRED, source: SRC, by: 'ui' });
+  await writeGraphWorkflow({ id: 'wf_wired', name: 'Wired user', version: 2,
+    nodes: [{ id: 'n_w', kind: 'script', key: 'lint', x: 0, y: 0, config: { paramsPort: true } },
+      { id: 'n_off', kind: 'script', key: 'lint', x: 0, y: 200, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_src', port: 'out' }, to: { node: 'n_w', port: 'params' } },
+      { id: 'w2', from: { node: 'n_src', port: 'out' }, to: { node: 'n_off', port: 'params' } }] });
+  const kept = await updateScript('lint', { meta: { ...WIRED, description: 'lints harder' }, by: 'ui' });
+  assert.deepEqual(kept.warnings, ['saved pipelines reference a removed port: Wired user (n_off.params)'],
+    'only the card that never opted in has no such port');
+  const gone = await updateScript('lint', { meta: { ...WIRED, params: [] }, by: 'ui' });
+  assert.deepEqual(gone.warnings, ['saved pipelines reference a removed port: Wired user (n_w.params), Wired user (n_off.params)'],
+    'no wirable param left: the port is gone and the run would refuse the wire');
+  await deleteWorkflow('wf_wired');
+  await deleteScript('lint');
+});
+
 test('duplicate: any layer -> a user copy, cases included', async () => {
   await writeCases('shell', [{ id: 'c1', name: 'smoke', params: { command: 'echo hi' },
     ports: { inputs: [], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'shell-{cycle}.md' }] } }]);

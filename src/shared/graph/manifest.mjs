@@ -134,7 +134,8 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       config: { ...(node.config || {}) },
       ports: {
         inputs: resolved.inputs.filter((p) => !p.synthetic).map((p) => ({
-          id: p.id, type: p.type, required: p.required !== false, loop: !!p.loop, expands: !!p.expands })),
+          id: p.id, type: p.type, required: p.required !== false, loop: !!p.loop, expands: !!p.expands,
+          ...(p.engine ? { engine: p.engine } : {}) })),
         outputs: resolved.outputs.map((p) => ({ id: p.id, type: outType(p), when: p.when || 'always' })),
         await: resolved.inputs.some((p) => p.synthetic),
       },

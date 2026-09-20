@@ -540,3 +540,34 @@ test('V4: a python card this host cannot run is named with the §7 sentence (W17
   const otherRuntime = portsFnFor(REG, { ...SCRIPTS, pyCard: { ...SCRIPTS.pyCard, runtime: 'node', runtimeMissing: true } });
   assert.equal(validateGraph(t, otherRuntime).errors.some((e) => e.code === 'V4'), false, 'the flag is python-only');
 });
+
+test('V17/V22: paramsPort is a known key, legal only where a wire has something to set; a WIRED params port defers required wirable params to the run', () => {
+  const v22 = (tpl, fn = portsFn) => validateGraph(tpl, fn).errors.filter((e) => e.code === 'V22').map((e) => e.message);
+  const on = gate({ params: { cmd: 'npm test' }, paramsPort: true });
+  assert.equal(V(on).warnings.filter((w) => w.code === 'V17').length, 0, 'not an unknown config key');
+  assert.deepEqual(v22(on), []);
+  assert.deepEqual(v22(gate({ params: { cmd: 'x' }, paramsPort: 'yes' })), ["script node 'n_tests' config.paramsPort must be true or false"]);
+
+  const cmdOnly = gate();
+  cmdOnly.nodes.push(S('n_sh', 'shellLike', { params: { command: 'x' }, ports: { inputs: [], outputs: [] }, paramsPort: true }));
+  assert.deepEqual(v22(cmdOnly).filter((m) => m.includes("'n_sh'")), ["script node 'n_sh' enables paramsPort but script \"shellLike\" declares no param a wire can set"]);
+
+  const own = portsFnFor(REG, { ...SCRIPTS, runTests: { ...SCRIPTS.runTests, inputs: [...SCRIPTS.runTests.inputs, { id: 'params', type: 'json', required: false }] } });
+  assert.deepEqual(v22(on, own), ["script node 'n_tests' enables paramsPort but script \"runTests\" already declares an input named 'params'"]);
+
+  // A json producer wired into the port: legal with the toggle, a dangling endpoint without it.
+  const wired = (config) => { const t = gate(config); t.nodes.push(A('n_cl', 'clarify'));
+    t.wires.push(W('w20', 'n_task', 'task', 'n_cl', 'task'), W('w21', 'n_cl', 'answers', 'n_tests', 'params')); return t; };
+  assert.deepEqual(V(wired({ params: { cmd: 'x' }, paramsPort: true })).errors.filter((e) => e.wireId === 'w21'), []);
+  assert.ok(V(wired({ params: { cmd: 'x' } })).errors.some((e) => e.wireId === 'w21'), 'without the toggle there is no such port');
+  const mdWire = gate({ params: { cmd: 'x' }, paramsPort: true });
+  mdWire.wires.push(W('w22', 'n_plan', 'plan', 'n_tests', 'params'));
+  assert.ok(V(mdWire).errors.some((e) => e.wireId === 'w22'), 'an md output cannot drive the json params port');
+
+  // Required params: a wirable one may arrive on the wire; a command never can.
+  const req = portsFnFor(REG, { ...SCRIPTS, runTests: { ...SCRIPTS.runTests,
+    params: [{ id: 'passAt', type: 'number', required: true }, { id: 'cmd', type: 'command', required: true }] } });
+  assert.deepEqual(v22(gate({ params: { cmd: 'x' }, paramsPort: true }), req), ["script node 'n_tests' is missing required param 'passAt'"], 'toggle on but nothing wired: still missing');
+  assert.deepEqual(v22(wired({ params: { cmd: 'x' }, paramsPort: true }), req), [], 'wired: the runner enforces it');
+  assert.deepEqual(v22(wired({ params: {}, paramsPort: true }), req), ["script node 'n_tests' is missing required param 'cmd'"], 'a command param is never deferred');
+});

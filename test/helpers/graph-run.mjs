@@ -78,7 +78,7 @@ export async function runGraphOffline({
       ask: async (a) => answer(a),
       // A script card's contract, the way _execCtx builds it (D12: cwd = projectDir).
       script: node.kind === 'script'
-        ? (({ runtime, file, command, params, timeoutMs, mock }) => ({ meta, runtime, file, command, params, timeoutMs, mock }))(scriptNodeCtx(node, meta))
+        ? (({ runtime, file, command, params, paramsPort, timeoutMs, mock }) => ({ meta, runtime, file, command, params, paramsPort, timeoutMs, mock }))(scriptNodeCtx(node, meta))
         : undefined,
       onEvent: (e) => events.push({ name: 'agent', nodeId: node.id, event: e }),
     };

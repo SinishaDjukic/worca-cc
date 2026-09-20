@@ -21,9 +21,10 @@ after(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true 
 
 /** A script layer with one node program: passes unless a `failUntilMarker` file is absent — it creates the
  *  marker and throws, so the SECOND run (the resume) passes. Safe to run twice against the same paths (D22). */
-function scriptLayer() {
+function scriptLayer(extra = () => {}) {
   const dir = mkdtempSync(join(tmpdir(), 'worca-og-scripts-'));
   scratch.push(dir);
+  extra(dir);
   writeFileSync(join(dir, 'runTests.mjs'), `import { writeFileSync, existsSync } from 'node:fs';
 export default async function ({ outputs, params, execution, log }) {
   if (params.failUntilMarker && !existsSync(params.failUntilMarker)) {
@@ -47,8 +48,8 @@ export default async function ({ outputs, params, execution, log }) {
 
 /** task -> planner -> implementer -> runTests -> reviewer -> end; reviewer.review -> implementer.fix (the mock
  *  reviewer blocks at cycle 1 and passes at cycle 2, so the script runs twice on a clean run). */
-async function gateWorkflow(id, params) {
-  return writeGraphWorkflow({
+async function gateWorkflow(id, params, extend = (tpl) => tpl) {
+  return writeGraphWorkflow(extend({
     id, name: 'Script gate', domain: 'coding',
     nodes: [
       { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
@@ -65,7 +66,7 @@ async function gateWorkflow(id, params) {
       { id: 'w5', from: { node: 'n_tests', port: 'pass' }, to: { node: 'n_rev', port: 'done' } },
       { id: 'w6', from: { node: 'n_rev', port: 'review' }, to: { node: 'n_impl', port: 'fix' }, config: { maxCycles: 3 } },
       { id: 'w7', from: { node: 'n_rev', port: 'pass' }, to: { node: 'n_end', port: 'result' } }],
-  });
+  }));
 }
 
 test('a script card runs inside a mock graph: $0 agent-shaped rows, key on exec events, envelope + log artifacts, a review row', { timeout: 120000 }, async () => {
@@ -112,6 +113,29 @@ test('a script card runs inside a mock graph: $0 agent-shaped rows, key on exec 
   assert.equal(saved.runtime, 'node');
   assert.equal(saved.exitCode, 0);
   assert.equal(saved.agentKey, undefined);
+});
+
+test('wired params in a real run: the orchestrator hands the card its params port, the wire sets the param, the audit file says so', { timeout: 120000 }, async () => {
+  const scriptsDir = scriptLayer((d) => {
+    writeFileSync(join(d, 'pick.mjs'), 'export default async function ({ params }) { return { outputs: { out: { value: { failUntilMarker: params.marker } } } }; }\n');
+    writeFileSync(join(d, 'pick.meta.json'), JSON.stringify({ key: 'pick', metaVersion: 2, displayName: 'Pick', runtime: 'node', file: 'pick.mjs',
+      params: [{ id: 'marker', type: 'string' }], inputs: [], outputs: [{ id: 'out', type: 'json', when: 'always', filename: 'pick-cycle{cycle}.json' }] }));
+  });
+  const marker = join(scriptsDir, 'marker.txt');
+  writeFileSync(marker, '1');
+  const { id: workflowId } = await gateWorkflow('wf_script_wired', {}, (tpl) => {
+    tpl.nodes.find((n) => n.id === 'n_tests').config.paramsPort = true;
+    tpl.nodes.push({ id: 'n_pick', kind: 'script', key: 'pick', x: 600, y: 200, config: { params: { marker } } });
+    tpl.wires.push({ id: 'w8', from: { node: 'n_task', port: 'task' }, to: { node: 'n_pick', port: 'await' } },
+      { id: 'w9', from: { node: 'n_pick', port: 'out' }, to: { node: 'n_tests', port: 'params' } });
+    return tpl;
+  });
+  const orch = createOrchestrator({ projectDir: gitDir('gscript-wired'), workflowId, prompt: 'demo', claude: { mock: true }, auto: true, scriptsDir });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  // Only _execCtx can prove this: drop `paramsPort` from ctx.script and the runner never looks at the wire.
+  const audit = JSON.parse(readFileSync(join(orch.getState().pipelineDir, 'scripts', 'n_tests-c1.envelope.json'), 'utf8'));
+  assert.deepEqual([audit.params, audit.wiredParams, Object.keys(audit.inputs)], [{ failUntilMarker: marker }, ['failUntilMarker'], ['done']]);
 });
 
 test('a script failure pauses the run as an error (never retried), and resume re-runs the script from scratch', { timeout: 120000 }, async () => {

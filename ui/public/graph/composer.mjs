@@ -18,6 +18,7 @@ import { renderSaveDialog, openDialog, closeDialog } from './save-dialog.mjs';
 import { PORT_HIT_R, SNAP, ZOOM_MIN, ZOOM_MAX, ZOOM_K, ZOOM_STEP, NODE_W, snap }
   from '../../../src/shared/graph/geometry.mjs';
 import { hitRoute } from '../../../src/shared/graph/route.mjs';
+import { PARAMS_PORT } from '../../../src/shared/graph/constants.mjs';
 import { canWire, newNode, newWire, normalizeTemplate, serializeTemplate }
   from '../../../src/shared/graph/template.mjs';
 import { validateGraph } from '../../../src/shared/graph/validate.mjs';
@@ -748,7 +749,8 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
         // drawn, and two ports sharing an id would hand one port's wires to the other on the next rename.
         const next = ev.target.value.trim();
         const side = node.config.ports && Array.isArray(node.config.ports[dir]) ? node.config.ports[dir] : [];
-        if (!next || next === 'await' || side.some((q, j) => j !== Number(idx) && q && q.id === next)) return void paintInspector();
+        const engineOwned = next === 'await' || (dir === 'inputs' && next === PARAMS_PORT.id && node.config.paramsPort === true);
+        if (!next || engineOwned || side.some((q, j) => j !== Number(idx) && q && q.id === next)) return void paintInspector();
       }
       commit(name, () => {
         const ports = clonePorts(node.config.ports);
@@ -777,6 +779,13 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
         node.config.arity = Number.isInteger(n) && n >= 2 ? n : 2;   // V12 floor
       } else if (ev.target.type === 'checkbox') {
         if (ev.target.checked) node.config[name] = true; else delete node.config[name];
+        // The params port leaves with its toggle, and its wires with it — a wire into a port that no longer
+        // exists is never drawn, so it could be neither selected nor deleted (same reason as a removed config port).
+        // Resolved AFTER the delete: an input still called `params` is the script's OWN (a stuck opt-in V22
+        // refuses), and the wires into it are the user's.
+        if (name === 'paramsPort' && !ev.target.checked && !(portsFn(node)?.inputs || []).some((p) => p && p.id === PARAMS_PORT.id)) {
+          tpl.wires = tpl.wires.filter((w) => !(w.to.node === node.id && w.to.port === PARAMS_PORT.id));
+        }
       } else if (ev.target.value === '') {
         delete node.config[name];
       } else {

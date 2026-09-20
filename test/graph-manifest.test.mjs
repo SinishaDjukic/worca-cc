@@ -228,3 +228,16 @@ test('a script cell is an agent-shaped keyed cell with a runtime and no model fi
   assert.equal(bare.key, 'runTests');
   assert.equal(bare.label, 'runTests');
 });
+
+test('the manifest keeps the engine params port and its marker, so a resumed run and the run monitor see the same card', () => {
+  const scripts = { runTests: { ...SCRIPTS.runTests, params: [{ id: 'passAt', type: 'number' }] } };
+  const tpl = { ...TPL, nodes: [...TPL.nodes, { id: 'n_tests', kind: 'script', key: 'runTests', x: 900, y: 100, config: { paramsPort: true } }],
+    wires: [...TPL.wires, { id: 'w8', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_tests', port: 'await' } }] };
+  const m = buildGraphManifest(tpl, AGENTS, { scripts });
+  const cell = m.graph.nodes.find((n) => n.id === 'n_tests');
+  assert.deepEqual(cell.ports.inputs, [{ id: 'done', type: 'void', required: false, loop: false, expands: false },
+    { id: 'params', type: 'json', required: false, loop: false, expands: false, engine: 'params' }]);
+  assert.equal(cell.ports.await, true);
+  assert.equal(cell.config.paramsPort, true, 'the authored config rides verbatim: scriptNodeCtx re-derives paramsPort from it on resume');
+  assert.deepEqual(manifestPortsFn(m)({ id: 'n_tests' }).inputs.map((p) => [p.id, p.engine ?? null]), [['done', null], ['params', 'params'], ['await', null]]);
+});

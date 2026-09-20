@@ -144,3 +144,26 @@ test('ports: "config" scripts read node.config.ports; missing and invalid config
   assert.match(bad.configPortsErrors[0], /prompt-side field/);
   assert.deepEqual(portsOf(both, missing && script('n1', 'shellLike')).inputs, [], 'portsOf collapses an un-ported node to no ports');
 });
+
+test('a script card that opts in carries the engine params port after its own inputs and before await', () => {
+  const SCR = { gitDiff: { key: 'gitDiff', runtime: 'node', inputs: [{ id: 'done', type: 'void', required: false }],
+      outputs: [{ id: 'diff', type: 'md', when: 'always', filename: 'd.md' }], params: [{ id: 'ref', type: 'string' }] },
+    shellLike: { key: 'shellLike', runtime: 'shell', ports: 'config', defaultPorts: { inputs: [], outputs: [] },
+      params: [{ id: 'command', type: 'command', required: true }, { id: 'target', type: 'string' }] },
+    cmdOnly: { key: 'cmdOnly', runtime: 'shell', inputs: [], outputs: [], params: [{ id: 'command', type: 'command', required: true }] } };
+  const fn = portsFnFor(REG, SCR);
+  const S = (key, config = {}) => ({ id: 'n_s', kind: 'script', key, x: 0, y: 0, config });
+  assert.deepEqual(fn(S('gitDiff')).inputs.map((i) => i.id), ['done', 'await'], 'off by default');
+  const on = fn(S('gitDiff', { paramsPort: true }));
+  assert.deepEqual(on.inputs.map((i) => i.id), ['done', 'params', 'await']);
+  assert.deepEqual(on.inputs[1], { id: 'params', type: 'json', required: false, engine: 'params' });
+  assert.equal(on.inputs.filter((i) => i.synthetic).length, 1, 'still exactly one synthetic gate, and it is LAST');
+  assert.equal(on.inputs.at(-1).synthetic, true);
+  assert.equal(SCR.gitDiff.inputs.length, 1, 'the registry meta is untouched');
+  const cfg = fn(S('shellLike', { paramsPort: true, ports: { inputs: [{ id: 'in', type: 'md', required: false }], outputs: [] } }));
+  assert.deepEqual(cfg.inputs.map((i) => i.id), ['in', 'params', 'await']);
+  assert.deepEqual(fn(S('cmdOnly', { paramsPort: true })).inputs.map((i) => i.id), ['await'], 'nothing a wire may set: no port');
+  assert.deepEqual(fn(agent('n1', 'planner')).inputs.map((i) => i.id), ['task', 'await'], 'agents never get it');
+  assert.equal(typeCompatible('json', on.inputs[1].type), true);
+  assert.equal(typeCompatible('md', on.inputs[1].type), false, 'only a json output can drive it');
+});

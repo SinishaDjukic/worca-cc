@@ -118,3 +118,24 @@ test('editorFor replaces the code/command textarea and keeps the routed control'
   assert.equal(plain.querySelector('textarea.ins-textarea[data-field="param:source"]').rows, 8,
     'no hook: the plain textarea, unchanged');
 });
+
+test('the params-port toggle shows only where a wire has something to set, lists what it can set, and the port list badges the engine port', () => {
+  const node = { id: 'n_t', kind: 'script', key: 'runTests', config: { paramsPort: true } };
+  const el = renderNodeInspector(node, { template: tpl, portsFn, meta: TESTS, doc });
+  const box = el.querySelector('[data-field="paramsPort"]');
+  assert.equal(box.type, 'checkbox');
+  assert.equal(box.checked, true);
+  assert.equal(box.closest('.ins-tog').querySelector('.ins-tog-t').textContent, 'Params from a wire');
+  assert.equal(box.closest('.ins-tog').querySelector('.ins-tog-h').textContent, 'json sets: passAt, stat, mode, note', 'the code param is not listed');
+  assert.deepEqual([...el.querySelectorAll('.ins-pitem .pn')].map((n) => n.textContent), ['done', 'params', 'await', 'log']);
+  const row = [...el.querySelectorAll('.ins-pitem')].find((r) => r.querySelector('.pn').textContent === 'params');
+  assert.equal(row.querySelector('.pt').textContent, 'json · engine');
+  assert.equal(row.classList.contains('gate'), false, 'an ordinary row, not the await gate');
+  const off = renderNodeInspector({ id: 'n_t', kind: 'script', key: 'runTests', config: {} }, { template: tpl, portsFn, meta: TESTS, doc });
+  assert.equal(off.querySelector('[data-field="paramsPort"]').checked, false);
+  const sh = renderNodeInspector({ id: 'n_s', kind: 'script', key: 'shell', config: { ports: SHELL.defaultPorts } }, { template: tpl, portsFn, meta: SHELL, doc });
+  assert.equal(sh.querySelector('[data-field="paramsPort"]'), null, 'a command-only card has nothing to wire');
+  const stuck = renderNodeInspector({ id: 'n_s', kind: 'script', key: 'shell', config: { ports: SHELL.defaultPorts, paramsPort: true } }, { template: tpl, portsFn, meta: SHELL, doc });
+  assert.equal(stuck.querySelector('[data-field="paramsPort"]').checked, true, 'a ticked box always renders: the opt-in V22 refuses can still be un-ticked');
+  assert.equal(stuck.querySelector('[data-field="paramsPort"]').closest('.ins-tog').querySelector('.ins-tog-h').textContent, 'json sets: nothing');
+});

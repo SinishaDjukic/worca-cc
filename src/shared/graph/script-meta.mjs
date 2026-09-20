@@ -5,7 +5,7 @@
 // agent-meta.mjs, and it REUSES agent-meta's port readers with `noPromptFields`:
 // a script port is an agent port minus `as`, `directive` and `expands` — never a
 // second port grammar.
-import { PORT_ID_RE } from './constants.mjs';
+import { PORT_ID_RE, PARAMS_PORT } from './constants.mjs';
 import { readInputs, readOutputs, readVerdict, derivePortSummary, DEFAULT_ORDER } from './agent-meta.mjs';
 
 /** Keys share ONE namespace with agents (D16), so the shape is the agent key's.
@@ -329,6 +329,57 @@ export function effectiveScriptParams(meta, config) {
   return out;
 }
 
+/** Param types a WIRE may set. `command` and `code` are what the card RUNS: they stay behind the
+ *  inspector and the D18 import receipt, so no upstream node — an agent least of all — authors them. */
+export const WIRABLE_PARAM_TYPES = Object.freeze(PARAM_TYPES.filter((t) => !CONFIRM_PARAM_TYPES.includes(t)));
+/** cmd.exe expands %VAR% BEFORE it parses, so a wired string reaching a shell script is limited to
+ *  characters no shell re-parses — on every OS, so a workflow behaves the same everywhere. */
+const SHELL_SAFE_RE = /^[A-Za-z0-9 _.,:@\/\\+=~-]*$/;
+
+export function wirableParams(meta) {
+  return (Array.isArray(meta?.params) ? meta.params : []).filter((p) => p && WIRABLE_PARAM_TYPES.includes(p.type));
+}
+
+/** True when the placed card carries the engine `params` input: the card opted in, the script has a
+ *  param a wire may set, and no DECLARED input owns the id. `meta` is the REGISTRY entry — a resolved
+ *  ports object already lists the port among its inputs and would read as a collision. */
+export function hasParamsPort(meta, config) {
+  if (!isObject(config) || config.paramsPort !== true || !wirableParams(meta).length) return false;
+  const declared = meta?.ports === 'config'
+    ? (readConfigPorts(config.ports, { hasVerdict: !!meta?.verdict }).ports?.inputs || [])
+    : (Array.isArray(meta?.inputs) ? meta.inputs : []);
+  return !declared.some((p) => p && p.id === PARAMS_PORT.id);
+}
+
+/** Overlay the JSON a wire delivered on the engine `params` port over the card's effective params.
+ *  Pure, never throws: every problem is a sentence in `errors` and the caller refuses the execution.
+ *  A `null` value is "not provided" (how an agent says blank) and falls through to the card. */
+export function overlayWiredParams(meta, params, wired) {
+  const base = isObject(params) ? { ...params } : {};
+  if (!isObject(wired)) return { params: base, wired: [], errors: ['must be a JSON object'] };
+  const byId = new Map((Array.isArray(meta?.params) ? meta.params : []).filter(Boolean).map((p) => [p.id, p]));
+  const allowed = wirableParams(meta).map((p) => p.id);
+  const out = { ...base };
+  const set = [];
+  const errors = [];
+  for (const [id, value] of Object.entries(wired)) {
+    const d = byId.get(id);
+    if (!d) { errors.push(`unknown param '${id}' — a wire can set ${allowed.join(', ') || 'nothing'}`); continue; }
+    if (!WIRABLE_PARAM_TYPES.includes(d.type)) { errors.push(`param '${id}' is a ${d.type} param — only the card itself may set it`); continue; }
+    if (value === null) continue;
+    const bad = paramValueError(d, value);
+    if (bad) { errors.push(`param '${id}': ${bad}`); continue; }
+    if (meta?.runtime === 'shell' && d.type === 'string' && !SHELL_SAFE_RE.test(value)) {
+      errors.push(`param '${id}': a wired value for a shell script may only contain letters, digits, space and _ . , : @ / \\ + = ~ - (got ${JSON.stringify(value)})`);
+      continue;
+    }
+    out[id] = value;
+    set.push(id);
+  }
+  for (const d of byId.values()) if (d.required && out[d.id] === undefined) errors.push(`missing required param '${d.id}'`);
+  return errors.length ? { params: base, wired: [], errors } : { params: out, wired: set, errors };
+}
+
 /** The run-time facts of ONE placed script card — what resolveGraph puts in `nodes[id]`, what the
  *  resume path rebuilds from a manifest cell, what the offline test runner and (P1c) the bench build for
  *  a synthetic node. ONE builder, so a fresh run, a resumed run and a bench run cannot drift apart.
@@ -347,6 +398,7 @@ export function scriptNodeCtx(node, meta) {
     file: m.scriptPath ?? null,                  // absolute, host platform (registry stamp)
     command: m.commandResolved ?? null,          // the sidecar's, host platform; a command param overrides at run time
     params: effectiveScriptParams(m, cfg),       // D6: no project layer in v1
+    paramsPort: hasParamsPort(m, cfg),           // the engine `params` input is on this card: the runner overlays its wire
     timeoutMs: Number.isInteger(cfg.timeoutMs) ? cfg.timeoutMs : (m.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     mock: isObject(cfg.mock) ? cfg.mock : (m.mock ?? null),
     config: { ...cfg },

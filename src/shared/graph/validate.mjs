@@ -4,10 +4,10 @@
 // live report, the run-time check and the seed drift guard all come through
 // here, so it is pure, never throws on a malformed template, and every lookup
 // guards: a dangling endpoint or an unknown key is an issue to COLLECT.
-import { KINDS, KEYED_KINDS, NODE_ID_RE, LIMITS } from './constants.mjs';
+import { KINDS, KEYED_KINDS, NODE_ID_RE, LIMITS, PARAMS_PORT } from './constants.mjs';
 import { portsOf, findPort, resolveOrOutType } from './ports.mjs';
 import { classifyLoops } from './loops.mjs';
-import { paramValueError, mockErrors, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, pythonMissingSentence } from './script-meta.mjs';
+import { paramValueError, mockErrors, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, pythonMissingSentence, wirableParams, WIRABLE_PARAM_TYPES } from './script-meta.mjs';
 
 const ARITY_SET = new Set(['and', 'or', 'combine']);
 const IN_PORT_RE = /^in\d+$/;
@@ -19,7 +19,7 @@ const AWAIT_PORT_ID = 'await';
  *  on a flow card. Unknown keys are PRESERVED and ignored, never stripped. */
 const KNOWN_CONFIG = {
   agent: new Set(['model', 'effort', 'fanOut', 'askQuestions', 'awaitAll', 'subagentModel']),
-  script: new Set(['params', 'ports', 'timeoutMs', 'awaitAll', 'mock']),
+  script: new Set(['params', 'ports', 'timeoutMs', 'awaitAll', 'mock', 'paramsPort']),
   task: new Set(['planStoreSeed']),
   and: new Set(['arity']),
   or: new Set(['arity']),
@@ -511,7 +511,8 @@ export const RULES = [
   // `ports` only where the sidecar says "config" (a MISSING or unreadable config
   // is V4's), `mock` against the declared non-void outputs, `timeoutMs` an integer
   // within [1 s, 24 h]. `incomplete` marks work-to-do (a required param nobody set yet).
-  { code: 'V22', level: 'E', check({ nodes, portsFor }, add) {
+  // `paramsPort` only where it takes effect; a WIRED params port defers a required wirable param to the runner.
+  { code: 'V22', level: 'E', check({ nodes, portsFor, isWired }, add) {
     for (const n of nodes) {
       if (n.kind !== 'script' || !n.key) continue;
       const p = portsFor(n.id);
@@ -531,7 +532,19 @@ export const RULES = [
         const bad = paramValueError(d, value);
         if (bad) add(`script node '${n.id}' param '${id}': ${bad}`, { nodeId: n.id });
       }
+      // `p.meta.inputs` are the RESOLVED inputs — the engine port is already among them, so it is
+      // looked up there instead of re-asking hasParamsPort (which would read it as a collision).
+      const enginePort = p.ported && p.inputs.some((x) => x && x.id === PARAMS_PORT.id && x.engine === 'params');
+      if (cfg.paramsPort !== undefined && typeof cfg.paramsPort !== 'boolean') {
+        add(`script node '${n.id}' config.paramsPort must be true or false`, { nodeId: n.id });
+      } else if (cfg.paramsPort === true && p.ported && !enginePort) {
+        add(wirableParams(meta).length
+          ? `script node '${n.id}' enables paramsPort but script "${n.key}" already declares an input named '${PARAMS_PORT.id}'`
+          : `script node '${n.id}' enables paramsPort but script "${n.key}" declares no param a wire can set`, { nodeId: n.id });
+      }
+      const wireDelivers = enginePort && isWired(n.id, PARAMS_PORT.id);
       for (const d of declared) {
+        if (wireDelivers && WIRABLE_PARAM_TYPES.includes(d.type)) continue;   // the wire may deliver it; the runner refuses the execution if it does not
         if (d.required && values[d.id] === undefined && d.default === undefined) {
           add(`script node '${n.id}' is missing required param '${d.id}'`, { nodeId: n.id, incomplete: true });
         }

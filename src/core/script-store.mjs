@@ -20,9 +20,9 @@ import { loadScriptRegistry, userScriptsDir } from './script-registry.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
 import { AGENT_KEY_RE } from './agent-store.mjs';
 import { listWorkflows } from './workflows.mjs';
-import { normalizeScriptMeta, validateScriptMetaV2, RESERVED_SCRIPT_KEYS } from '../shared/graph/script-meta.mjs';
+import { normalizeScriptMeta, validateScriptMetaV2, RESERVED_SCRIPT_KEYS, hasParamsPort } from '../shared/graph/script-meta.mjs';
 import { normalizeCases } from '../shared/graph/script-cases.mjs';
-import { AWAIT_PORT } from '../shared/graph/constants.mjs';   // the synthesized gate port is wirable
+import { AWAIT_PORT, PARAMS_PORT } from '../shared/graph/constants.mjs';   // the synthesized gate port and the opt-in params port are wirable
 
 export { userScriptsDir };   // single source: the registry's layer resolver
 
@@ -404,12 +404,14 @@ function staleScriptRefs(workflows, key, meta) {
   const ins = new Set([...(meta.inputs || []).map((p) => p.id), AWAIT_PORT.id]);
   const hits = [];
   for (const wf of workflows) {
-    const mine = new Set((wf.nodes || []).filter((n) => n && n.kind === 'script' && n.key === key).map((n) => n.id));
+    const mine = new Map((wf.nodes || []).filter((n) => n && n.kind === 'script' && n.key === key).map((n) => [n.id, n]));
     if (!mine.size) continue;
     const label = wf.name || wf.id;
+    // The engine `params` port lives on the NODE (config.paramsPort) and on the meta (a wirable param) at once.
+    const hasIn = (nodeId, port) => ins.has(port) || (port === PARAMS_PORT.id && hasParamsPort(meta, mine.get(nodeId)?.config));
     for (const w of wf.wires || []) {
       if (mine.has(w?.from?.node) && !outs.has(w.from.port)) hits.push(`${label} (${w.from.node}.${w.from.port})`);
-      if (mine.has(w?.to?.node) && !ins.has(w.to.port)) hits.push(`${label} (${w.to.node}.${w.to.port})`);
+      if (mine.has(w?.to?.node) && !hasIn(w.to.node, w.to.port)) hits.push(`${label} (${w.to.node}.${w.to.port})`);
     }
   }
   return hits;

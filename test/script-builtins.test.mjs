@@ -5,7 +5,7 @@
 // a command param. Offline by construction.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { execSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -203,4 +203,24 @@ test('py: a shared workflow placing the py card shows its source in the D18 impo
   const graph = { nodes: [{ id: 'n_py', kind: 'script', key: 'py', config: { params: { source } } }] };
   assert.deepEqual(listScriptNodes(graph, REG),
     [{ nodeId: 'n_py', key: 'py', displayName: 'Python', runtime: 'python', params: { source } }]);
+});
+
+test('gitDiff: a json wire on the params port picks the ref at run time, and the card refuses a wired git option', async () => {
+  const repo = gitDir('bi-diff-wired');
+  writeFileSync(join(repo, 'a.txt'), 'hello\n');
+  execSync('git add a.txt && git -c user.email=t@t -c user.name=t commit -q -m add', { cwd: repo });
+  writeFileSync(join(repo, 'a.txt'), 'hello world\n');
+  const ctx = ctxFor('gitDiff', { cwd: repo, params: { ref: 'HEAD~1' } });        // the card says HEAD~1 (a.txt is all new there); the wire says otherwise
+  ctx.script.paramsPort = true;
+  ctx.ports = { ...ctx.ports, inputs: [...ctx.ports.inputs, { id: 'params', type: 'json', required: false, engine: 'params' }] };
+  ctx.bindings = { params: { seq: 1, type: 'json', value: { ref: 'HEAD' } } };
+  await runScriptExecution(ctx);
+  const md = readFileSync(ctx.outputs.diff.path, 'utf8');
+  assert.match(md, /^# Diff against HEAD(?: \(since merge-base\))?\n/);
+  assert.match(md, /-hello\n\+hello world/, 'against HEAD the line is a change; against the card\'s HEAD~1 it would be a new file');
+  // A wired value is untrusted: `--output=<path>` is a git OPTION, and git runs with worca's privileges.
+  const leak = join(tmp('worca-bi-leak-'), 'leak.txt');
+  ctx.bindings = { params: { seq: 2, type: 'json', value: { ref: `--output=${leak}` } } };
+  await assert.rejects(runScriptExecution(ctx), /must not start with "-"/);
+  assert.equal(existsSync(leak), false, 'git never saw the option');
 });

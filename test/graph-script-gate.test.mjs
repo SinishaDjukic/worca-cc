@@ -29,8 +29,9 @@ const AGENTS = {
     outputs: [{ id: 'done', type: 'void', when: 'always' }] },
 };
 
-function scriptLayer() {
+function scriptLayer(extra = () => {}) {
   const dir = tmp('worca-gate-scripts-');
+  extra(dir);
   writeFileSync(join(dir, 'runTests.mjs'), `import { writeFileSync } from 'node:fs';
 export default async function ({ outputs, params, execution }) {
   const passAt = Number(params.passAt || 0);
@@ -102,4 +103,26 @@ test('a script that never passes holds the wire at cycle 3; "continue" force-fir
   assert.equal(asks[0].issues[0].title, '3 tests failed');
   const forced = r.events.find((e) => e.name === 'token' && e.from.node === 'n_tests' && e.from.port === 'pass');
   assert.equal(forced.forced, true, 'A4: the clean side force-fires on continue');
+});
+
+test('wired params end to end: an upstream script picks passAt over a json wire, through the real scheduler and runner', { timeout: 60000 }, async () => {
+  const scripts = scriptLayer((dir) => {
+    writeFileSync(join(dir, 'pick.mjs'), 'export default async function () { return { outputs: { out: { value: { passAt: 1 } } } }; }\n');
+    writeFileSync(join(dir, 'pick.meta.json'), JSON.stringify({ key: 'pick', metaVersion: 2, displayName: 'Pick', runtime: 'node', file: 'pick.mjs',
+      inputs: [], outputs: [{ id: 'out', type: 'json', when: 'always', filename: 'pick-cycle{cycle}.json' }] }));
+  });
+  const portsFn = registryPortsFn(AGENTS, scripts);
+  const tpl = GATE({});                                            // the card sets no passAt: alone it fails every cycle (the hold test above)
+  tpl.nodes.find((n) => n.id === 'n_tests').config.paramsPort = true;
+  tpl.nodes.push({ id: 'n_pick', kind: 'script', key: 'pick', x: 300, y: 200, config: {} });
+  tpl.wires.push({ id: 'w6', from: { node: 'n_task', port: 'task' }, to: { node: 'n_pick', port: 'await' } },
+    { id: 'w7', from: { node: 'n_pick', port: 'out' }, to: { node: 'n_tests', port: 'params' } });
+  assert.deepEqual(validateGraph(tpl, portsFn).errors, []);
+  const pipelineDir = tmp('worca-gate-pipe-');
+  const r = await runGraphOffline({ template: tpl, portsFn, registry: AGENTS, scripts, projectDir: tmp('worca-gate-proj-'), pipelineDir });
+  assert.equal(r.result, 'done');
+  assert.deepEqual(r.execSeq.filter((x) => x.startsWith('n_tests')), ['n_tests c1'], 'the wire said passAt 1: clean on the first cycle, after BOTH inputs arrived');
+  assert.deepEqual(r.state.warnings, []);
+  const audit = JSON.parse(readFileSync(join(pipelineDir, 'scripts', 'n_tests-c1.envelope.json'), 'utf8'));
+  assert.deepEqual([audit.params, audit.wiredParams, Object.keys(audit.inputs)], [{ passAt: 1 }, ['passAt'], ['done']]);
 });

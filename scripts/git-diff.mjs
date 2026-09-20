@@ -7,6 +7,8 @@ import { writeFileSync } from 'node:fs';
 export default async function ({ outputs, params, ctx, log }) {
   const ref = typeof params.ref === 'string' && params.ref.trim() ? params.ref.trim() : (ctx.checkpointRef || '');
   const stat = params.stat === true;
+  // A param is argv, not a shell word — but `--output=<path>` is still a git OPTION, and git runs with worca's privileges.
+  if (ref.startsWith('-')) throw new Error(`a ref must not start with "-": ${ref}`);
   const args = ['diff', ...(stat ? ['--stat'] : []), ...(ref ? [ref] : [])];
   const section = (dir, label) => {
     const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });

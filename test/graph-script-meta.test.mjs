@@ -177,11 +177,14 @@ test('scriptNodeCtx: ONE builder for the run-time facts of a placed card (fresh 
     params: [{ id: 'cmd', type: 'command', default: 'npm test' }], mock: { summary: 'sidecar mock' } };
   const nc = scriptNodeCtx({ id: 'n_t', kind: 'script', key: 'runTests', config: { params: { cmd: 'npm run lint' }, timeoutMs: 5000, awaitAll: true } }, meta);
   assert.deepEqual(nc, { nodeId: 'n_t', kind: 'script', key: 'runTests', authoredKey: 'runTests', meta, runtime: 'node',
-    file: '/abs/runTests.mjs', command: null, params: { cmd: 'npm run lint' }, timeoutMs: 5000, mock: { summary: 'sidecar mock' },
+    file: '/abs/runTests.mjs', command: null, params: { cmd: 'npm run lint' }, paramsPort: false, timeoutMs: 5000, mock: { summary: 'sidecar mock' },
     config: { params: { cmd: 'npm run lint' }, timeoutMs: 5000, awaitAll: true }, awaitAll: true, duplicateKey: false });
   assert.equal(nc.meta, meta, 'the registry entry rides by identity');
   const bare = scriptNodeCtx({ id: 'n_t', key: 'runTests' }, meta);
   assert.deepEqual([bare.timeoutMs, bare.params, bare.mock, bare.awaitAll, bare.config], [20000, { cmd: 'npm test' }, { summary: 'sidecar mock' }, false, {}]);
+  const wiredMeta = { ...meta, params: [...meta.params, { id: 'ref', type: 'string' }] };
+  assert.equal(scriptNodeCtx({ id: 'n_t', key: 'runTests', config: { paramsPort: true } }, wiredMeta).paramsPort, true);
+  assert.equal(scriptNodeCtx({ id: 'n_t', key: 'runTests', config: { paramsPort: true } }, meta).paramsPort, false, 'a command-only card has nothing to wire');
   assert.deepEqual(scriptNodeCtx({ id: 'n_t', key: 'runTests', config: { mock: { summary: 'node mock' } } }, meta).mock, { summary: 'node mock' }, 'the card mock beats the sidecar mock');
   const stub = scriptNodeCtx({ id: 'n_t', key: 'gone', config: {} }, undefined);
   assert.deepEqual([stub.runtime, stub.file, stub.command, stub.timeoutMs, stub.meta], [null, null, null, 600000, {}], 'no meta: a stub the preflight refuses');
@@ -238,4 +241,63 @@ test('the key regex and the reserved keys are the shared module`s (the page need
   assert.equal(SCRIPT_KEY_RE.source, '^[A-Za-z][A-Za-z0-9_-]{0,63}$');
   assert.deepEqual(RESERVED_SCRIPT_KEYS, ['new', 'bench', 'runtimes']);
   assert.ok(Object.isFrozen(RESERVED_SCRIPT_KEYS));
+});
+
+test('PARAMS_PORT / wirableParams / hasParamsPort: opt-in per card, only where a wire has something to set, never over a declared input', async () => {
+  const { wirableParams, hasParamsPort, WIRABLE_PARAM_TYPES } = await import('../src/shared/graph/script-meta.mjs');
+  const { PARAMS_PORT } = await import('../src/shared/graph/constants.mjs');
+  assert.deepEqual(PARAMS_PORT, { id: 'params', type: 'json', required: false, engine: 'params' });
+  assert.ok(Object.isFrozen(PARAMS_PORT));
+  assert.equal('synthetic' in PARAMS_PORT, false, '`synthetic` means THE await gate (geometry, manifest, view): the params port is an ordinary input row');
+  assert.deepEqual(WIRABLE_PARAM_TYPES, ['string', 'number', 'boolean', 'enum']);
+  const meta = { key: 'gitDiff', runtime: 'node', inputs: [{ id: 'done', type: 'void', required: false }],
+    params: [{ id: 'ref', type: 'string' }, { id: 'stat', type: 'boolean' }, { id: 'cmd', type: 'command' }, { id: 'src', type: 'code', language: 'js' }] };
+  assert.deepEqual(wirableParams(meta).map((p) => p.id), ['ref', 'stat']);
+  assert.deepEqual(wirableParams({}), []);
+  assert.equal(hasParamsPort(meta, { paramsPort: true }), true);
+  assert.equal(hasParamsPort(meta, {}), false, 'off by default');
+  assert.equal(hasParamsPort(meta, { paramsPort: 'yes' }), false, 'only the literal true');
+  assert.equal(hasParamsPort(meta, undefined), false);
+  assert.equal(hasParamsPort({ ...meta, params: [{ id: 'cmd', type: 'command' }] }, { paramsPort: true }), false, 'nothing a wire may set');
+  assert.equal(hasParamsPort({ ...meta, inputs: [{ id: 'params', type: 'md', required: false }] }, { paramsPort: true }), false, "the script's own `params` input wins");
+  const cfgMeta = { key: 'c', runtime: 'node', ports: 'config', params: [{ id: 'ref', type: 'string' }] };
+  assert.equal(hasParamsPort(cfgMeta, { paramsPort: true, ports: { inputs: [{ id: 'in', type: 'md', required: false }], outputs: [] } }), true);
+  assert.equal(hasParamsPort(cfgMeta, { paramsPort: true, ports: { inputs: [{ id: 'params', type: 'json', required: false }], outputs: [] } }), false);
+  assert.equal(hasParamsPort(cfgMeta, { paramsPort: true }), true, 'a config card with no config.ports yet declares no inputs');
+});
+
+test('overlayWiredParams: a wire sets declared string/number/boolean/enum params and nothing else', async () => {
+  const { overlayWiredParams } = await import('../src/shared/graph/script-meta.mjs');
+  const meta = { key: 'gitDiff', runtime: 'node', params: [{ id: 'ref', type: 'string' }, { id: 'depth', type: 'number' }, { id: 'stat', type: 'boolean', default: false },
+    { id: 'mode', type: 'enum', options: ['fast', 'full'] }, { id: 'cmd', type: 'command' }, { id: 'src', type: 'code', language: 'js' }, { id: 'must', type: 'string', required: true }] };
+  const base = { stat: false, must: 'set on the card' };
+  assert.deepEqual(overlayWiredParams(meta, base, { ref: 'dev', depth: 2, stat: true, mode: 'full', must: null }),
+    { params: { stat: true, must: 'set on the card', ref: 'dev', depth: 2, mode: 'full' }, wired: ['ref', 'depth', 'stat', 'mode'], errors: [] });
+  assert.deepEqual(base, { stat: false, must: 'set on the card' }, 'the card params are never mutated');
+  const errs = (wired, b = base) => overlayWiredParams(meta, b, wired).errors;
+  assert.deepEqual(errs(['ref']), ['must be a JSON object']);
+  assert.deepEqual(errs('dev'), ['must be a JSON object']);
+  assert.deepEqual(errs(null), ['must be a JSON object']);
+  assert.deepEqual(errs({ nope: 1 }), ["unknown param 'nope' — a wire can set ref, depth, stat, mode, must"]);
+  assert.deepEqual(errs({ cmd: 'rm -rf /' }), ["param 'cmd' is a command param — only the card itself may set it"]);
+  assert.deepEqual(errs({ src: 'x' }), ["param 'src' is a code param — only the card itself may set it"]);
+  assert.deepEqual(errs({ depth: 'two' }), ["param 'depth': must be a finite number (got \"two\")"]);
+  assert.deepEqual(errs({ mode: 'slow' }), ["param 'mode': must be one of fast, full (got \"slow\")"]);
+  assert.deepEqual(errs({ ref: 'dev' }, {}), ["missing required param 'must'"]);
+  assert.deepEqual(overlayWiredParams(meta, {}, { must: 'from the wire' }).errors, [], 'a wire may satisfy a required param');
+  assert.deepEqual(overlayWiredParams(meta, base, { nope: 1 }).params, base, 'a refused overlay hands back the card params');
+});
+
+test('overlayWiredParams: a shell script only accepts wired strings no shell can re-parse (cmd.exe expands %VAR% before it parses)', async () => {
+  const { overlayWiredParams } = await import('../src/shared/graph/script-meta.mjs');
+  const meta = { key: 's', runtime: 'shell', params: [{ id: 'ref', type: 'string' }, { id: 'n', type: 'number' }] };
+  assert.deepEqual(overlayWiredParams(meta, {}, { ref: 'release/2.4_rc-1', n: 3 }).errors, []);
+  assert.deepEqual(overlayWiredParams(meta, {}, { ref: 'C:\\repos\\app' }).errors, []);
+  assert.deepEqual(overlayWiredParams(meta, {}, { ref: '' }).errors, []);
+  for (const bad of ['dev & calc', '%PATH%', 'a|b', 'x"y', '$(id)', '`id`', 'a;b', 'a\nb', 'a>b']) {
+    assert.deepEqual(overlayWiredParams(meta, {}, { ref: bad }).errors,
+      [`param 'ref': a wired value for a shell script may only contain letters, digits, space and _ . , : @ / \\ + = ~ - (got ${JSON.stringify(bad)})`]);
+  }
+  assert.deepEqual(overlayWiredParams({ ...meta, runtime: 'node' }, {}, { ref: 'dev & calc' }).errors, [], 'node and python read params as data — nothing expands them');
+  assert.deepEqual(overlayWiredParams({ ...meta, runtime: 'python' }, {}, { ref: '%PATH%' }).errors, []);
 });

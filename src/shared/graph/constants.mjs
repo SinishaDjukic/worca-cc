@@ -44,6 +44,12 @@ export const DEFAULT_MAX_CYCLES = 3;
  *  sequencing: no file, no renderer, no directive, no mode effect. */
 export const AWAIT_PORT = Object.freeze({ id: 'await', type: 'any', required: false, synthetic: true });
 
+/** The engine-owned `params` input a placed SCRIPT card can opt into (`config.paramsPort`): a json
+ *  wire whose object overlays the card's params before the program runs. Deliberately NOT
+ *  `synthetic` — that flag means "the await gate" to geometry, the manifest and the view — so it
+ *  draws, wires and schedules as an ordinary input; `engine` only marks it as not the script's own. */
+export const PARAMS_PORT = Object.freeze({ id: 'params', type: 'json', required: false, engine: 'params' });
+
 /** Task card — the graph's single source: zero inputs, one always-firing md
  *  output carrying the rendered task md. */
 export const TASK_PORTS = Object.freeze({

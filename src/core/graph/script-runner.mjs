@@ -16,8 +16,8 @@ import { mockEnabled, buildSpawnEnv } from '../claude-runner.mjs';
 import { scrubbedEnv } from '../plugin-shim.mjs';            // PATH/HOME + the Windows start-up baseline (P11); no cycle: plugin-shim imports no graph module
 import { normalizeReview } from '../protocol.mjs';
 import { readVerdict, missingVerdictWarning } from './exec-io.mjs';
-import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
-import { DEFAULT_EXIT_CODES, DEFAULT_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, SCRIPT_RUNTIMES, pythonMissingSentence } from '../../shared/graph/script-meta.mjs';
+import { AWAIT_PORT, PARAMS_PORT } from '../../shared/graph/constants.mjs';
+import { DEFAULT_EXIT_CODES, DEFAULT_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, SCRIPT_RUNTIMES, pythonMissingSentence, overlayWiredParams } from '../../shared/graph/script-meta.mjs';
 import { probePython } from './python-probe.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./script-child.mjs', import.meta.url));
@@ -76,6 +76,7 @@ export function buildEnvelope(ctx) {
   const inputs = {};
   for (const p of ports.inputs || []) {
     if (!p || p.id === AWAIT_ID || p.synthetic) continue;
+    if (script.paramsPort && p.id === PARAMS_PORT.id) continue;   // the engine's, not the program's: its json is already IN `params`
     const token = bindings[p.id];
     if (!token) continue;
     inputs[p.id] = { type: p.type, path: p.type === 'void' ? null : (token.path ?? null), fresh: fresh.has(p.id) };
@@ -97,6 +98,7 @@ export function buildEnvelope(ctx) {
     outputs: outs,
     verdictPath: ctx.verdict?.path ?? null,
     params: script.params || {},
+    wiredParams: Array.isArray(ctx.wiredParams) ? ctx.wiredParams : [],   // ids a wire set (additive — apiVersion stays 1)
     ctx: {
       cwd: ctx.projectDir,                                   // the run's work dir (D12)
       pipelineDir: ctx.pipelineDir,
@@ -397,14 +399,43 @@ function shellCommand(script, meta, platform) {
   return script.command || null;
 }
 
+/** The card's params with the engine `params` wire overlaid (D6–D8). No port: the card's own params.
+ *  The token's inline `value` (a script producer's small JSON) wins; an agent's file is read from
+ *  `path` — BOM stripped, capped like every inline value. Nothing bound (a loop wire is excused from
+ *  the first-run barrier) is an EMPTY overlay, so a required param V22 deferred to the wire is still
+ *  enforced. Every problem throws. */
+export async function resolveWiredParams(ctx) {
+  const script = ctx.script || {};
+  const base = script.params || {};
+  if (script.paramsPort !== true) return { params: base, wired: [] };
+  const key = ctx.node?.key || script.meta?.key || ctx.node?.id;
+  const refuse = (why) => scriptError(`script "${key}": wired params — ${why}`);
+  const token = ctx.bindings?.[PARAMS_PORT.id];
+  let value = token ? token.value : {};
+  if (token && value == null) {
+    if (!token.path) throw refuse('the wire carried no JSON');
+    let text;
+    try {
+      if (statSync(token.path).size > VALUE_INLINE_MAX) throw refuse(`${token.path} is larger than ${VALUE_INLINE_MAX / 1024} KiB`);
+      text = await readFile(token.path, 'utf8');
+    } catch (err) {
+      throw err?.errorClass === null ? err : refuse(`cannot read ${token.path}: ${err?.message || err}`);
+    }
+    try { value = JSON.parse(text.replace(/^\uFEFF/, '')); } catch (err) { throw refuse(`${token.path} is not valid JSON (${err?.message || err})`); }
+  }
+  const r = overlayWiredParams(script.meta || {}, base, value);
+  if (r.errors.length) throw refuse(r.errors.join('; '));
+  return { params: r.params, wired: r.wired };
+}
+
 /**
  * Run one script execution (spec §6.1). `ctx` is the orchestrator's execution
- * context with `ctx.script = { meta, runtime, file, command, params, timeoutMs, mock }`.
+ * context with `ctx.script = { meta, runtime, file, command, params, paramsPort, timeoutMs, mock }`.
  * @returns {Promise<{summary:string, outputs:object, verdict:object|null, warnings:string[], sessionId:null, runtime:string, exitCode:number|null, durationMs:number, envelopePath:string|null}>}
  */
 export async function runScriptExecution(ctx) {
   const { node, ordinal = 1 } = ctx;
-  const script = ctx.script || {};
+  let script = ctx.script || {};
   const meta = script.meta || {};
   const key = node?.key || meta.key || node?.id;
   const ports = ctx.ports || {};
@@ -432,6 +463,19 @@ export async function runScriptExecution(ctx) {
   }
 
   if (!SCRIPT_RUNTIMES.includes(meta.runtime)) throw scriptError(`script "${key}": unknown runtime ${JSON.stringify(meta.runtime)}`);
+  // After the mock return (a mocked card spawns nothing), before the envelope: the program, the shell env and the
+  // audit copy all see ONE set of params. A card with no mock of its own runs for REAL on a mock run, fed by a mock
+  // agent's arbitrary JSON — there a refused payload is a warning and the card's own params stand.
+  let wiredParams;
+  try {
+    wiredParams = await resolveWiredParams(ctx);
+  } catch (err) {
+    if (!mockEnabled(ctx.claudeOpts) || err?.errorClass !== null) throw err;
+    warnings.push(`${err.message} — ignored on a mock run; the card's own params apply`);
+    wiredParams = { params: script.params || {}, wired: [] };
+  }
+  script = { ...script, params: wiredParams.params };
+  ctx = { ...ctx, script, wiredParams: wiredParams.wired };
   const envelope = buildEnvelope(ctx);
   const envelopePath = envelopeAuditPath(ctx);
   await mkdir(dirname(envelopePath), { recursive: true });

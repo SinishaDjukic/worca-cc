@@ -5,7 +5,7 @@
 // listener, routing on `data-field`. Capability rows are gated by META
 // BOOLEANS: a new agent's sidecar drives its panel with no UI change.
 import { resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
-import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS } from '../../../src/shared/graph/script-meta.mjs';
+import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, wirableParams, hasParamsPort } from '../../../src/shared/graph/script-meta.mjs';
 // The DOM primitives and the two script forms live in ../script-forms.mjs so the
 // composer, the Scripts page's Overview tab and the Test tab share ONE copy (C3).
 import {
@@ -40,7 +40,7 @@ function portList(doc, ports) {
       item.appendChild(h(doc, 'i', p.synthetic ? 'gdot' : `dot ${p.type}`));
       item.appendChild(h(doc, 'span', 'pn', p.id));
       const bits = [p.type];
-      if (p.synthetic) bits.push('engine');
+      if (p.synthetic || p.engine) bits.push('engine');
       else if (dir === 'in') bits.push(p.loop ? 'loop' : (p.required === false ? 'optional' : 'required'));
       else if (p.when && p.when !== 'always') bits.push(`on ${p.when}`);
       if (p.expands) bits.push('fan-out');
@@ -117,6 +117,12 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
     body.appendChild(lv(timeout, 'expert', Number.isInteger(node.config.timeoutMs)));
     body.appendChild(lv(toggle(doc, 'ins-awaitall', 'awaitAll', 'Await all inputs', 'gate until every wire fires',
       { checked: node.config.awaitAll === true }), 'expert', node.config.awaitAll === true));
+    // Offered only where ticking it takes effect: `meta` here is the registry entry, so the forced-on probe is honest.
+    // A ticked box always renders, so an opt-in V22 refuses (the script changed under the card) can still be un-ticked.
+    if (node.config.paramsPort === true || hasParamsPort(meta, { ...node.config, paramsPort: true })) {
+      body.appendChild(lv(toggle(doc, 'ins-paramsport', 'paramsPort', 'Params from a wire', `json sets: ${wirableParams(meta).map((p) => p.id).join(', ') || 'nothing'}`,
+        { checked: node.config.paramsPort === true }), 'expert', node.config.paramsPort === true));
+    }
     body.appendChild(lv(h(doc, 'div', 'ins-sep'), 'expert'));
     body.appendChild(lv(meta && meta.ports === 'config'
       ? renderPortEditor(node.config.ports, { doc, hasVerdict: Boolean(meta && meta.verdict) })
