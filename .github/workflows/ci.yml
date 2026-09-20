@@ -106,7 +106,7 @@ jobs:
         run: npm ci
 
       - name: Lint Dockerfile
-        uses: hadolint/hadolint-action@v3.1.0
+        uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: docker/Dockerfile
 
@@ -138,7 +138,7 @@ jobs:
         run: npm run docker:smoke -- --image ghcr.io/sinishadjukic/worca:ci
 
       - name: Scan OS layer
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/sinishadjukic/worca:ci
           severity: HIGH,CRITICAL
