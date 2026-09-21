@@ -24,9 +24,11 @@ import {
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState, readPrState,
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
   listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
-  readPromptFile,
+  readPromptFile, runDirForRow,
 } from '../src/core/artifacts.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
+import { readAskFileEntry, ASK_FILE_MIMES } from '../src/core/ask-files.mjs';
+import { ASK_FILES_DIR } from '../src/core/ask-forms.mjs';
 import { protectedSectionKeys } from '../src/core/diff-anchor.mjs';
 import {
   addDiffComment, addDiffCommentReply, listDiffComments, getDiffComment, setDiffCommentResolved,
@@ -2362,6 +2364,18 @@ function reloadChatWorkers(name) {
 // from Discord clears the question card in every browser tab exactly like the
 // UI button does (resolvePending is part of the action, not the route).
 // ---------------------------------------------------------------------------
+/**
+ * Resolve a pending question. ONE implementation behind the HTTP route and the
+ * chat command router (`chatActions.answer`), so answering from Discord clears the
+ * card in every browser tab exactly like the UI button does.
+ *
+ * Ask forms, gate 3 (ruling X2): `orch.answer` THROWS `Error('invalid answer')`
+ * with `code: 'INVALID_ANSWER'` and `errors: [{ path, code, message }]` when the
+ * values are refused. That throw is RETHROWN unchanged and must never be caught
+ * here — `resolvePending` below must not run, or the question would be cleared in
+ * every tab while the run is still waiting on it. Callers (`POST /api/answer` →
+ * 422, and P4's CLI + chat) branch on `err.code === 'INVALID_ANSWER'`.
+ */
 function answerRun(runId, id, payload) {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
@@ -2396,6 +2410,12 @@ app.post('/api/answer', (req, res) => {
     answerRun(runId, id, payload);
     res.json({ ok: true });
   } catch (err) {
+    // Gate 3 (ask forms, spec §5): the answer was validated and refused, so the
+    // question stays OPEN and the client gets the field errors to mark up. Every
+    // other failure keeps its 500.
+    if (err && err.code === 'INVALID_ANSWER') {
+      return res.status(422).json({ error: 'invalid answer', errors: Array.isArray(err.errors) ? err.errors : [] });
+    }
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -2723,6 +2743,72 @@ app.get('/api/runs/:id/artifacts', async (req, res) => {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Ask-form preview files (spec §7, D8). Served by (run, askId, index) — there is
+// NO path input on this surface: `:askId` is a token askIdToken() minted,
+// `:index` is a small integer, and the only string joined onto a directory is the
+// basename the snapshot's own manifest.json recorded. Posture copied from the Ask
+// attachment route: streamed sendFile, dotfiles denied, the SNIFFED type, nosniff,
+// inline, immutable private cache. Behind the loopback guard like every route.
+// ---------------------------------------------------------------------------
+const ASK_FILES_TOKEN_RE = /^[A-Za-z0-9_-]{1,96}$/;
+
+async function serveAskFile(res, runDir, askId, index) {
+  if (!runDir) return res.status(404).json({ error: 'pipeline not found' });
+  if (typeof askId !== 'string' || !ASK_FILES_TOKEN_RE.test(askId)) {
+    return res.status(400).json({ error: 'invalid ask id' });
+  }
+  if (typeof index !== 'string' || !/^\d{1,2}$/.test(index)) {
+    return res.status(400).json({ error: 'invalid file index' });
+  }
+  const dir = path.join(runDir, ASK_FILES_DIR, askId);
+  const entry = await readAskFileEntry(dir, Number(index));
+  if (!entry) return res.status(404).json({ error: 'ask file not found' });
+  // The text classes are PROVEN UTF-8 by the sniffer (a fatal decoder), so say so:
+  // under nosniff a bare `text/plain` is decoded with the browser's legacy default
+  // charset on a direct open, and non-ASCII prose garbles. Binary types stay bare.
+  const type = ASK_FILE_MIMES[entry.mime].trust === 'text' ? `${entry.mime}; charset=utf-8` : entry.mime;
+  const headers = {
+    'Content-Type': type,
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Disposition': 'inline',
+    'Cache-Control': 'private, max-age=31536000, immutable',
+  };
+  // §7's "inline, inert only" row: an SVG is drawn through <img> in the panel,
+  // and a direct hit on this URL is inert too — no script, no fetch, no anything.
+  if (entry.mime === 'image/svg+xml') headers['Content-Security-Policy'] = "sandbox; default-src 'none'";
+  res.sendFile(entry.stored, { root: dir, dotfiles: 'deny', cacheControl: false, headers }, (err) => {
+    if (!err || res.headersSent) return;
+    if (err.code === 'ENOENT' || err.status === 404) return res.status(404).json({ error: 'ask file not found' });
+    res.status(500).json({ error: err.message || String(err) });
+  });
+}
+
+/** The run dir behind a LIVE id: the pipeline id (what /api/runs/:id/artifact
+ *  takes) or the WebSocket run UUID (what the browser holds). */
+async function askFilesRunDir(id) {
+  const live = liveRunEntry(id);
+  const row = findPipelineRowById(live?.pipelineId || id);
+  if (!row) return null;
+  try { return await runDirForRow(row); } catch { return null; }
+}
+
+app.get('/api/runs/:id/ask-files/:askId/:index', async (req, res) => {
+  try {
+    await serveAskFile(res, await askFilesRunDir(req.params.id), req.params.askId, req.params.index);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+/** The run dir behind a STORE KEY + run id — the shape both the History and the
+ *  workspace twin resolve through. Null (→ 404) when the row or its dir is gone. */
+async function askFilesStoreDir(key, runId) {
+  const row = lookupPipelineRow(key, runId);
+  if (!row) return null;
+  try { return await runDirForRow(row); } catch { return null; }
+}
 
 // Shared query-scope resolver for the retained-work routes (recovery-patch GET +
 // discard POST). Returns null after writing the error response itself. The older
@@ -3407,6 +3493,20 @@ app.get('/api/history/:key/:id/artifact', async (req, res) => {
     const hit = await resolveIndexedArtifact(req.params.key, req.params.id, req.query.rel);
     if (!hit) return res.status(404).json({ error: 'artifact not found' });
     res.json(hit);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// GET /api/history/:key/:id/ask-files/:askId/:index -> the same bytes, resolved
+// through the store key. Same key regex as /diff and /artifact.
+app.get('/api/history/:key/:id/ask-files/:askId/:index', async (req, res) => {
+  if (!/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(req.params.key)) {
+    return res.status(404).json({ error: 'pipeline not found' });
+  }
+  try {
+    await serveAskFile(res, await askFilesStoreDir(req.params.key, req.params.id),
+      req.params.askId, req.params.index);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -4218,6 +4318,19 @@ app.get('/api/workspaces/:id/runs/:runId/artifact', async (req, res) => {
     const hit = await resolveIndexedArtifact(`workspaces/${req.params.id}`, req.params.runId, req.query.rel);
     if (!hit) return res.status(404).json({ error: 'artifact not found' });
     res.json(hit);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// The ask-form preview twin for a workspace run (see the project route above).
+// WORKSPACE_KEY_RE is the only validation the id needs; the key is composed here
+// and never taken from the client, so there is no path-traversal surface.
+app.get('/api/workspaces/:wid/runs/:id/ask-files/:askId/:index', async (req, res) => {
+  if (!WORKSPACE_KEY_RE.test(req.params.wid)) return res.status(404).json({ error: 'pipeline not found' });
+  try {
+    await serveAskFile(res, await askFilesStoreDir(`workspaces/${req.params.wid}`, req.params.id),
+      req.params.askId, req.params.index);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -7878,7 +7991,7 @@ if (isMain) {
 export { app, server, runs };
 export const _testing = {
   wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
-  chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork,
+  chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,

@@ -430,6 +430,55 @@ export const RESUME_HEADER =
   'ORIGINAL task below to completion. Do not redo work that is already done.\n\n';
 
 /**
+ * The per-agent forms section (spec §4): every form the agent may ask with, its
+ * data schema, its answer schema and its example. Returns '' for an agent that
+ * declares none, which is what keeps every prompt that exists today byte-identical.
+ * `path` is the file to write the payload to; omitted for a clarifier, whose
+ * Ports block already names its answers port. PURE.
+ * @param {Record<string, object>|null|undefined} forms
+ * @param {{path?: string}} [opts]
+ */
+export function askFormsBlock(forms, { path: askPath } = {}) {
+  const entries = Object.entries(forms || {});
+  if (!entries.length) return '';
+  const body = entries.map(([id, def]) => (
+    `### \`${id}\` — ${def.title || id} (version ${Number.isInteger(def.version) ? def.version : 1})\n\n` +
+    'data you must supply:\n```json\n' + JSON.stringify(def.data, null, 2) + '\n```\n\n' +
+    'answer you will receive:\n```json\n' + JSON.stringify(def.answer, null, 2) + '\n```\n\n' +
+    'example data:\n```json\n' + JSON.stringify(def.example, null, 2) + '\n```\n'
+  )).join('\n');
+  return (
+    '## Forms you may ask with\n\n' +
+    (askPath ? `Instead of the questions shape, write {"form":"<id>","data":{…}} to: ${askPath}\n` : '') +
+    'A `file` value is a path relative to your working directory or the pipeline dir. ' +
+    'You will be resumed with {"form","version","values"}.\n\n' +
+    body
+  );
+}
+
+/**
+ * The one repair round a refused form ask gets (spec §5 gate 2): the exact error
+ * list plus the data schema, and the SAME file to rewrite. Rendered by runOpts
+ * for BOTH engines — a clarifier never has questionsEnabled, so it could not
+ * ride questionsPromptBlock. '' when nothing is being repaired, which is what
+ * keeps every other prompt byte-identical. PURE.
+ * @param {{formRepair?: {form: string, errors: Array, schema: object|null, file: string}}} ctx
+ */
+export function formRepairBlock(ctx) {
+  const r = ctx && ctx.formRepair;
+  if (!r) return '';
+  const lines = (Array.isArray(r.errors) ? r.errors : [])
+    .map((e) => `- ${e && e.path ? `${e.path}: ` : ''}${(e && e.message) || 'invalid'}`)
+    .join('\n');
+  return (
+    '\n\n## Your form ask was refused\n\n' +
+    `Form \`${r.form}\`:\n${lines || '- invalid'}\n\n` +
+    (r.schema ? 'data schema:\n```json\n' + JSON.stringify(r.schema, null, 2) + '\n```\n\n' : '') +
+    `Write a corrected {"form","data"} to: ${r.file}\n`
+  );
+}
+
+/**
  * Ask-then-resume prompt block for a questions-enabled node (spec 2026-07-11).
  * Appended by runOpts, so EVERY producer/verifier runner inherits it with no
  * per-runner edits. ctx fields (set by the orchestrator per attempt):
@@ -447,16 +496,28 @@ export function questionsPromptBlock(ctx) {
   const answered = prior.length
     ? '## Already answered — DO NOT ask these again\n\n' + renderAnswers(prior) + '\n'
     : '';
+  // Form answers already collected for this node, in the exact shape the agent
+  // receives them (spec §4). '' when there are none, so the legacy block is
+  // byte-identical.
+  const priorForms = Array.isArray(ctx.formAnswers) ? ctx.formAnswers : [];
+  const formAnswered = priorForms.length
+    ? '## Your form answers\n\n' + priorForms
+      .map((f) => '```json\n' + JSON.stringify({ form: f.form, version: f.version, values: f.values }, null, 2) + '\n```')
+      .join('\n\n') + '\n\n'
+    : '';
+  const forms = askFormsBlock(ctx.askForms, { path: ctx.questionsFile });
   if (!ctx.questionsFile) {
     return (
-      '\n\n' + answered +
+      '\n\n' + answered + formAnswered +
       '## Asking the user\n\n' +
       'No more question rounds are available this run — proceed with reasonable assumptions.\n'
     );
   }
-  const mock = prior.length ? '' : mockMarkers({ MOCK_ASK: ctx.questionsFile }) + '\n';
+  // MOCK_ASK only while NOTHING has been answered yet — legacy OR form: a resume that
+  // re-emitted it would make the offline mock re-ask every round until the cap.
+  const mock = (prior.length || priorForms.length) ? '' : mockMarkers({ MOCK_ASK: ctx.questionsFile }) + '\n';
   return (
-    '\n\n' + answered +
+    '\n\n' + answered + formAnswered +
     '## Asking the user (enabled)\n\n' +
     'If a decision materially shapes the outcome and you cannot resolve it from the task, ' +
     'the inputs, or the codebase — including anything material you are about to silently ' +
@@ -466,6 +527,7 @@ export function questionsPromptBlock(ctx) {
     '2. STOP immediately — do no further work. You will be resumed with the answers.\n' +
     'Assume freely on minor choices; on material ones, ask instead of assuming. Never pad, ' +
     'and never re-ask an answered question.\n\n' +
+    (forms ? forms + '\n' : '') +
     mock
   );
 }
@@ -495,7 +557,8 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   return {
     cwd: ctx.projectDir,
     systemPrompt,
-    prompt: (ctx.resumeSessionId ? RESUME_HEADER + prompt : prompt) + questionsPromptBlock(ctx),
+    prompt: (ctx.resumeSessionId ? RESUME_HEADER + prompt : prompt)
+      + questionsPromptBlock(ctx) + formRepairBlock(ctx),
     resumeSessionId: ctx.resumeSessionId,
     // Grant the role's baseline tools PLUS whatever the agent declared in its
     // frontmatter (e.g. the Playwright MCP browser_* tools). ctx.node is present

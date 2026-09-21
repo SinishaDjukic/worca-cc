@@ -84,7 +84,7 @@ const AGENT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
  *  `warn` is INJECTABLE (defaults to console.warn) so scanLayer can capture the
  *  reason a sidecar was dropped and hand it to a diagnostics sink — the reason
  *  is authored here and must never be re-derived by a second reader. */
-export function normalizeMeta(raw, { warn = console.warn } = {}) {
+export function normalizeMeta(raw, { warn = console.warn, onDropForm = null } = {}) {
   if (!raw || typeof raw !== 'object') return null;
   const key = typeof raw.key === 'string' ? raw.key.trim() : '';
   if (!key) return null;
@@ -149,6 +149,7 @@ export function normalizeMeta(raw, { warn = console.warn } = {}) {
   const { meta, errors } = normalizeAgentMeta(raw, {
     mockWriterRoles: MOCK_WRITER_ROLES,
     warn: (msg) => warn(msg),
+    onDropForm,                  // §3: a dropped FORM must not look like a dropped SIDECAR
   });
   if (errors.length) {
     warn(`[agent-registry] sidecar "${key}" declares metaVersion 2 but is invalid; skipped: ${errors.join('; ')}`);
@@ -162,7 +163,7 @@ export function normalizeMeta(raw, { warn = console.warn } = {}) {
     portSummary: meta.portSummary,
   };
   for (const field of ['verdict', 'sideEffect', 'mockRole', 'wantsRequest', 'workspaceFanOut',
-    'workspaceStrategy', 'workspaceVariantOf', 'placeable']) {
+    'workspaceStrategy', 'workspaceVariantOf', 'placeable', 'ask']) {
     if (field in meta) merged[field] = meta[field];
   }
   return merged;
@@ -264,6 +265,10 @@ export function scanMetaLayer(dir, origin, { normalize, tag, requireMetaV2 = fal
     const prefix = `[${tag}] `;
     const meta = normalize(parsed, {
       warn: (m) => { why = String(m).startsWith(prefix) ? String(m).slice(prefix.length) : String(m); console.warn(m); },
+      // A form that fails gate 1 drops the FORM, not the sidecar, so it reports
+      // straight to the diagnostics sink instead of through `why` (which names
+      // the reason an agent vanished). The script normalizer ignores the opt.
+      onDropForm: ({ message }) => drop(f, message),
     });
     if (!meta) { drop(f, why || 'invalid sidecar'); continue; }
     meta.origin = origin;                                              // computed, never stored

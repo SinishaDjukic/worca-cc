@@ -24,7 +24,7 @@ function err(message, code) { return Object.assign(new Error(message), { code })
  *  `scope:'workspace-only'` can never be undone from the editor. Everything else
  *  (including the v1 wiring the registry still derives, which P8 owns) MERGES. */
 const V2_CLEARABLE = ['verdict', 'sideEffect', 'mockRole', 'wantsRequest', 'workspaceFanOut',
-  'workspaceStrategy', 'workspaceVariantOf', 'placeable', 'scope', 'domain', 'icon',
+  'workspaceStrategy', 'workspaceVariantOf', 'placeable', 'scope', 'domain', 'icon', 'ask',
   'promptHints', 'requiresSkills'];
 
 /** The writable user layer dir. userAgentsDir() returns null only when the home

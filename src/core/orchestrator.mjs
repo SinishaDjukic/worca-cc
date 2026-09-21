@@ -41,7 +41,8 @@ import {
   appendAudit, writeReview, reviewKindOf, writeDecomposition, updateTaskStatus,
   updatePhaseStatus, writeStepQuestions, readStepQuestions,
 } from './artifacts.mjs';
-import { readQuestionsFile } from './protocol.mjs';
+import { readAskFile } from './protocol.mjs';
+import { prepareFormAsk, formAnswerValidator, downgradeQuestion } from './ask-forms.mjs';
 import { classifyError } from './recoverable-error.mjs';
 import { resolveFailure, markTerminal, isTerminal } from './failure-policy.mjs';
 
@@ -1359,6 +1360,14 @@ export class GraphOrchestrator extends RunHarness {
     ctx.questionsAnswered = readStepQuestions(this.pipeline.id)
       .filter((r) => r.nodeId === ctx.nodeId)
       .flatMap((r) => r.answers);
+    // Spec §4: the forms this agent may ask with (absent for every agent that
+    // declares none, which keeps questionsPromptBlock byte-identical), and the
+    // form answers already given for this NODE — same node-scoped filter as the
+    // legacy answers above, for the same reason (a fix cycle is a new execution).
+    ctx.askForms = nc.meta?.ask?.forms || null;
+    ctx.formAnswers = readStepQuestions(this.pipeline.id)
+      .filter((r) => r.nodeId === ctx.nodeId && r.formAnswer)
+      .map((r) => r.formAnswer);
     ctx.questionsFile = this._questionsPath(ctx.nodeId, ctx.ordinal, 1);
   }
 
@@ -1374,6 +1383,66 @@ export class GraphOrchestrator extends RunHarness {
   _questionsPath(nodeId, ordinal, round) {
     const nodeIdSafe = String(nodeId).replace(/[^A-Za-z0-9_-]/g, '_');
     return join(this.pipeline.dir, `questions-x-${nodeIdSafe}-c${ordinal}-r${round}.json`);
+  }
+
+  /**
+   * Gate 2 for a `{form,data}` ask (spec §5). Prepares the ask; on a refusal the
+   * agent is resumed ONCE with the exact error list plus the data schema and the
+   * SAME round file, and its retry is re-read. A second refusal downgrades to one
+   * generic free-text question built from the form's title, and the run log says
+   * why. Never throws, and never consumes a question round — MAX_QUESTION_ROUNDS
+   * still bounds what the USER sees.
+   * @returns {Promise<{ask:object|null, autoValues:object|null, questions:Array, result:object|undefined}>}
+   */
+  async _prepareFormAsk(nc, ctx, first, qPath, round, agentLabel) {
+    const attr = { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal };
+    let payload = first;
+    let result;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const prepared = await prepareFormAsk({
+        agentMeta: nc.meta,
+        payload: { form: payload.form, data: payload.data },
+        cwd: ctx.projectDir,
+        pipelineDir: this.pipeline.dir,
+        askId: `questions-${ctx.executionId}-r${round}`,
+      });
+      if (prepared.ok) return { ask: prepared.ask, autoValues: prepared.autoValues, questions: [], result };
+
+      const why = prepared.errors.map((e) => `${e.path ? `${e.path}: ` : ''}${e.message}`).join('; ');
+      this._log(agentLabel, 'warn', `form "${payload.form}" was refused: ${why}`, attr);
+      await appendAudit(this.pipeline.dir,
+        `${agentLabel}: form "${payload.form}" was refused — ${why}`).catch(() => {});
+      if (attempt === 2) break;
+
+      // ONE repair round: the errors + the schema, and the SAME file to rewrite.
+      ctx.formRepair = {
+        form: payload.form,
+        errors: prepared.errors,
+        schema: nc.meta?.ask?.forms?.[payload.form]?.data || null,
+        file: qPath,
+      };
+      await rm(qPath, { force: true }).catch(() => {});
+      const step = this.state.steps.find((s) => s.key === ctx.executionId);
+      if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
+      try {
+        result = await this._runNodeAttempts(nc, ctx);
+      } finally {
+        ctx.formRepair = null;
+      }
+      this._checkAbort();
+      const retry = await readAskFile(qPath);
+      // The agent may give up on the form and write plain questions instead (or
+      // write nothing): take whatever it DID write, exactly as a legacy round would.
+      if (retry.kind !== 'form') {
+        return { ask: null, autoValues: null, questions: retry.kind === 'questions' ? retry.questions : [], result };
+      }
+      payload = retry;
+    }
+    const title = nc.meta?.ask?.forms?.[payload.form]?.title || '';
+    this._log(agentLabel, 'warn', `form "${payload.form}" downgraded to a free-text question`, attr);
+    await appendAudit(this.pipeline.dir,
+      `${agentLabel}: form "${payload.form}" downgraded to a free-text question after two refusals.`).catch(() => {});
+    return { ask: null, autoValues: null, questions: [downgradeQuestion({ form: payload.form, title })], result };
   }
 
   /**
@@ -1394,14 +1463,74 @@ export class GraphOrchestrator extends RunHarness {
     for (let round = 1; round <= MAX_QUESTION_ROUNDS; round++) {
       const qPath = ctx.questionsFile;
       if (!qPath) break;
-      const { questions, malformed } = await readQuestionsFile(qPath);
-      if (!questions.length) {
-        if (malformed) {
+      // `read`, not `payload`: the legacy body below still declares `const payload` for the answer.
+      const read = await readAskFile(qPath);
+      if (read.kind === 'none') {
+        if (read.malformed) {
           await appendAudit(this.pipeline.dir, `${agentLabel}: questions file was malformed — proceeding without asking (round ${round}).`).catch(() => {});
         }
         break;
       }
       this._checkAbort();
+      let questions = read.kind === 'questions' ? read.questions : [];
+      let formAsk = null;
+      let autoValues = null;
+      if (read.kind === 'form') {
+        // Gate 2 (spec §5). It may spawn ONE repair round of its own, whose
+        // result becomes this round's result; it never consumes a round.
+        const gate = await this._prepareFormAsk(nc, ctx, read, qPath, round, agentLabel);
+        if (gate.result !== undefined) result = gate.result;
+        formAsk = gate.ask;
+        autoValues = gate.autoValues;
+        questions = gate.questions;
+      }
+      if (!formAsk && !questions.length) break;
+      if (formAsk) {
+        // §9: the persisted ask is the FULL resolved snapshot — History renders
+        // it after the agent's sidecar changed or its plugin was removed. The
+        // column is schemaless JSON TEXT, so nothing migrates.
+        await writeStepQuestions(this.pipeline.id, stepKey, round, {
+          agentKey: nc.key, nodeId: ctx.nodeId, questions: formAsk,
+        });
+        this._artifact('questions', qPath, { nodeId: ctx.nodeId, executionId: ctx.executionId, port: null, cycle: ctx.ordinal });
+        await appendAudit(this.pipeline.dir, `${agentLabel} asked with form "${formAsk.form}" (round ${round}).`).catch(() => {});
+        const answered = await this._enqueueAsk(() => this._ask({
+          id: `questions-${stepKey}-r${round}`,
+          kind: 'form',
+          agent: agentLabel,
+          nodeId: ctx.nodeId,
+          executionId: ctx.executionId,
+          askId: formAsk.askId,             // ruling X1: the ROUTE token, not `id`
+          form: formAsk.form,
+          version: formAsk.version,
+          title: formAsk.title,
+          surface: formAsk.surface,
+          data: formAsk.data,
+          layout: formAsk.layout,
+          answerSchema: formAsk.answerSchema,
+          fileRefs: formAsk.fileRefs,
+          files: formAsk.files,
+          autoValues,                              // D10, auto mode only
+          validate: formAnswerValidator(formAsk),  // gate 3
+        }));
+        this._checkAbort();
+        const values = (answered && typeof answered === 'object' && answered.values) || {};
+        await writeStepQuestions(this.pipeline.id, stepKey, round, {
+          agentKey: nc.key, nodeId: ctx.nodeId,
+          answers: { kind: 'form', form: formAsk.form, version: formAsk.version, values },
+        });
+        await appendAudit(this.pipeline.dir, `${agentLabel}: form "${formAsk.form}" answered (round ${round}).`).catch(() => {});
+        await rm(qPath, { force: true }).catch(() => {});
+        const step = this.state.steps.find((s) => s.key === stepKey);
+        if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
+        ctx.formAnswers = [...(ctx.formAnswers || []), { form: formAsk.form, version: formAsk.version, values }];
+        ctx.questionsFile = round < MAX_QUESTION_ROUNDS
+          ? this._questionsPath(ctx.nodeId, ctx.ordinal, round + 1)
+          : null;
+        this._log(agentLabel, 'debug', `resuming with form "${formAsk.form}" answers (round ${round})`, attr);
+        result = await this._runNodeAttempts(nc, ctx);
+        continue;
+      }
       await writeStepQuestions(this.pipeline.id, stepKey, round, {
         agentKey: nc.key, nodeId: ctx.nodeId, questions: { questions },
       });

@@ -4,6 +4,7 @@
 // and agent-gen's read-back check. Pure — shared code cannot import
 // claude-runner.mjs, so the mock-role vocabulary is INJECTED.
 import { PORT_TYPES, MAX_PORTS_PER_SIDE, PORT_ID_RE } from './constants.mjs';
+import { normalizeAskBlock } from '../forms/form-def.mjs';
 
 const AGENT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 // PORT_ID_RE is P1's, NOT a local copy: spec §3 puts it in constants.mjs
@@ -137,6 +138,19 @@ export function normalizeAgentMeta(raw, opts = {}) {
     else warn(`[agent-registry] ${key || '<unkeyed>'}.mockRole: unknown mock role "${role}"; ignored (the generic mock chain applies)`);
   }
 
+  // Sidecar ask forms (spec §3). Gate 1 lives in the shared forms core; a form
+  // that fails it is DROPPED, never fatal — the agent stays usable with generic
+  // questions (§5). The drop needs its OWN channel to the registry's diagnostics
+  // sink, because `warn`'s last line is how scanMetaLayer names the reason a
+  // WHOLE sidecar was skipped, and a dropped form skips nothing.
+  const askBlock = raw.ask === undefined ? null : normalizeAskBlock(raw.ask);
+  const onDropForm = typeof opts.onDropForm === 'function' ? opts.onDropForm : null;
+  for (const d of askBlock?.dropped || []) {
+    const message = `BAD_ASK_FORM: ${key || '<unkeyed>'}/${d.id}: ${d.reason}`;
+    if (onDropForm) onDropForm({ formId: d.id, reason: d.reason, message });
+    warn(`[agent-registry] ${message}`);
+  }
+
   const asksQuestions = !!raw.asksQuestions;
   const meta = {
     metaVersion: 2,
@@ -167,6 +181,10 @@ export function normalizeAgentMeta(raw, opts = {}) {
   // an absent field means "the default", so a v2 entry stays diffable against
   // the sidecar that produced it.
   if (verdict) meta.verdict = verdict;
+  // Absent when the agent declares no SURVIVING form, so a sidecar without forms
+  // round-trips byte-identically through the store (the fixed key set is what
+  // makes {...existing, ...raw} safe).
+  if (askBlock && Object.keys(askBlock.forms).length) meta.ask = { forms: askBlock.forms };
   if (SIDE_EFFECTS.has(raw.sideEffect)) meta.sideEffect = raw.sideEffect;
   if (mockRole) meta.mockRole = mockRole;
   if (raw.wantsRequest) meta.wantsRequest = true;
