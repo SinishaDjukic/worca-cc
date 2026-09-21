@@ -143,6 +143,9 @@ import { openScheduleSheet, closeScheduleSheet, browserTimeZone } from './schedu
 import { describeRule, formatInstant } from '../../src/shared/schedule/recurrence.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
+import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
+import { renderAskForm } from './ask/form-renderer.mjs';
+import { visibleFields as visibleAnswerFields } from '../../src/shared/forms/layout.mjs';
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
 
@@ -4228,51 +4231,58 @@ function renderQpanel(r, root = r.el) {
     return;
   }
 
-  const isWorkflow = pq.kind === 'workflow';
-  const isRecovery = pq.kind === 'recovery';
-  const isGate = !isRecovery && !isWorkflow && (pq.kind === 'gate' || Array.isArray(pq.issues));
+  // D6: one lookup, five registrants. A payload whose kind has no registrant falls
+  // back to clarify — the same arm the old `else` was.
+  const kind = askKindOf(pq);
+  const renderer = askRendererFor(kind) || askRendererFor('clarify');
+  if (!renderer) { panel.classList.add('hidden'); return; }
+  const ctx = askCtxFor(r, panel);
 
   // ----- head -----
   const head = document.createElement('div');
   head.className = 'qpanel-head';
   head.appendChild(questionIcon());
   const title = document.createElement('b');
-  if (isWorkflow) {
-    title.textContent = `Auto proposes a workflow · round ${(pq.workflow && pq.workflow.round) || 1}`;
-  } else if (isRecovery) {
-    const cls = (pq.recovery && pq.recovery.cls) || 'recoverable';
-    title.textContent = `${cls.replace('_', ' ')} error — action needed`;
-  } else if (isGate) {
-    title.textContent = 'Cycle gate';
-  } else if (pq.kind === 'questions') {
-    title.textContent = `${pq.agent || 'Agent'} has questions`;
-  } else {
-    // The ACTIVE agent names the panel (the v1 phase vocabulary is gone).
-    const label = (activeNodes(r)[0] || {}).label || 'Pipeline';
-    title.textContent = `${label} needs your input`;
-  }
+  title.textContent = renderer.title(pq, ctx);
   head.appendChild(title);
-  if (isWorkflow) {
+  const countText = renderer.count(pq, ctx);
+  if (countText != null) {
     const count = document.createElement('span');
     count.className = 'qcount';
-    count.textContent = 'workflow';
-    head.appendChild(count);
-  } else if (!isGate && !isRecovery) {
-    const n = realQuestions(pq).length;
-    const count = document.createElement('span');
-    count.className = 'qcount';
-    count.textContent = `${n} question${n === 1 ? '' : 's'}`;
+    count.textContent = countText;
     head.appendChild(count);
   }
   panel.appendChild(head);
 
-  // Un-hide BEFORE the workflow body measures: a hidden host has no layout width in a browser.
-  if (isWorkflow) { panel.classList.remove('hidden'); renderWorkflowBody(r, panel, pq); }
-  else if (isRecovery) renderRecoveryBody(r, panel, pq);
-  else if (isGate) renderGateBody(r, panel, pq);
-  else renderClarifyBody(r, panel, pq);
+  // Un-hide BEFORE the workflow body measures: a hidden host has no layout width in
+  // a browser, and renderWorkflowBody calls handle.relayout() the moment it attaches.
+  if (kind === 'workflow') panel.classList.remove('hidden');
+  renderer.render(panel, pq, ctx);
 
   panel.classList.remove('hidden');
+}
+
+/** The `ctx` every registered renderer receives (index §P3). `mode` tells a body
+ *  whether it is the list card's panel or the detail screen's — both are mounted
+ *  for the same run at once. */
+function askCtxFor(r, panel) {
+  return {
+    doc: document,
+    run: r,
+    mode: panel.closest && panel.closest('.run-card') ? 'card' : 'detail',
+    fileUrl: (index) => askFileUrl(r, r.pendingQuestion, index),
+    submit: (payload) => postAnswer(r, payload),
+  };
+}
+
+/** `GET /api/runs/:id/ask-files/:askId/:index` — the ask's file snapshot, addressed
+ *  by index, never by path. `pq.askId` is the ROUTE token (P2 E1), a sanitized twin
+ *  of `pq.id`: the real question id is `questions-x:n_impl:1-r1`, colons and all, and
+ *  is never a path segment. Returns null when there is nothing to address — the file
+ *  widgets draw their .af-nofile tile for that (X14). */
+function askFileUrl(r, pq, index) {
+  if (!r || !pq || !pq.askId) return null;
+  return `/api/runs/${encodeURIComponent(r.runId)}/ask-files/${encodeURIComponent(pq.askId)}/${encodeURIComponent(index)}`;
 }
 
 /** A panel body that owns resources (the workflow graph) registers panel.__dispose; run it before any rebuild. */
@@ -4306,6 +4316,7 @@ function renderClarifyBody(r, panel, pq) {
   // the SUBMITTED panel's copy; r._answers stays as the no-panel fallback.
   r._answers = [];
   panel.__answers = r._answers;
+  lastClarifyRun = r;
 
   // "N of M answered" (spec §5.4). Counts the SUBMITTED panel's own slots, not
   // r._answers: the card's .qpanel and the detail's .qpanel are both mounted for
@@ -4686,16 +4697,148 @@ function buildTunablesTable(w, wf, handle) {
   return table;
 }
 
-// Gather the clarify answers from the slots of the panel that was submitted and
-// POST them. `panel` is null only for a caller that has no panel node.
+// ---- the `form` arm (ask-forms design §6). The panel head and foot are the
+// house chrome; everything between them is renderAskForm's detached tree.
+
+/** The ONE fetch behind ctx.loadText for a LIVE run: a text-class preview file,
+ *  by index. The renderer module never fetches (its "no fetch in a view module"
+ *  rule); it declares what it needs and this resolves it. */
+async function askLoadText(r, ask, index) {
+  const url = askFileUrl(r, ask, index);
+  if (!url) throw new Error(`ask file ${index}: no snapshot`);   // X14; the widget tiles instead
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`ask file ${index}: ${res.status}`);
+  return res.text();
+}
+
+/** Mount the form into `panel` and stash the handle per panel (the card and the
+ *  detail hold one each — W6). */
+function askFormHost(r, panel, ask) {
+  const body = document.createElement('div');
+  body.className = 'qbody';
+  const answered = document.createElement('span');
+  answered.className = 'qanswered';
+  const handle = renderAskForm(ask, {
+    doc: document,
+    fileUrl: (index) => askFileUrl(r, ask, index),
+    loadText: (index) => askLoadText(r, ask, index),
+    markdown: pageMarkdown,
+    highlight: (el) => hdMarkdown.highlight(el),
+    onChange: () => {
+      const p = handle.progress();
+      answered.textContent = `${p.done} of ${p.total} answered`;
+    },
+  });
+  panel.__askForm = handle;
+  panel.__dispose = () => { handle.dispose(); panel.__askForm = null; };
+  body.appendChild(handle.el);
+  const p0 = handle.progress();
+  answered.textContent = `${p0.done} of ${p0.total} answered`;
+
+  const foot = document.createElement('div');
+  foot.className = 'qpanel-foot';
+  foot.appendChild(answered);
+  // §4.3: the CARD's footer offers a way into the detail page; the detail's own omits it.
+  if (panel.closest && panel.closest('.run-card')) {
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'qopen';
+    open.textContent = 'Open run';
+    open.addEventListener('click', (e) => { e.stopPropagation(); location.hash = `running/${r.runId}`; });
+    foot.appendChild(open);
+  }
+  const submit = document.createElement('button');
+  submit.type = 'button';
+  submit.className = 'btn-go';
+  submit.appendChild(playIcon());
+  submit.appendChild(document.createTextNode('Submit & resume'));
+  foot.appendChild(submit);
+  body.appendChild(foot);
+  panel.appendChild(body);
+  // The markdown bundle is lazy; repaint the tracked boxes once it can render.
+  bindMarkdownReady().then((ok) => { if (ok) handle.paintMarkdown(); });
+  return handle;
+}
+
+registerAskRenderer('form', {
+  title: (pq, ctx) => (typeof pq.title === 'string' && pq.title.trim() !== ''
+    ? pq.title
+    : `${(activeNodes(ctx.run)[0] || {}).label || 'Pipeline'} needs your input`),
+  count: (pq) => { const n = askFormFieldCount(pq); return `${n} field${n === 1 ? '' : 's'}`; },
+  render: (panel, pq, ctx) => { askFormHost(ctx.run, panel, pq); },
+  collect: (panel) => {
+    const handle = panel && panel.__askForm;
+    if (!handle) return null;
+    const out = handle.collect();
+    // The marks always show the LAST verdict: a clean local collect clears a
+    // previous 422's marks before the answer leaves; a failing one replaces them.
+    handle.setErrors(out.errors);
+    if (out.errors.length) return null;
+    return { values: out.values };
+  },
+  setErrors: (panel, errors) => {
+    const handle = panel && panel.__askForm;
+    if (handle) handle.setErrors(errors);
+  },
+});
+
+/** How many answer fields a form ask currently shows. Uses the SHARED layout walk
+ *  so the chip and the renderer can never disagree. */
+function askFormFieldCount(pq) {
+  const layout = Array.isArray(pq && pq.layout) ? pq.layout : [];
+  const seeded = {};
+  const props = ((pq && pq.answerSchema) || {}).properties || {};
+  for (const [k, s] of Object.entries(props)) if (s && s.default !== undefined) seeded[k] = s.default;
+  return visibleAnswerFields(layout, seeded).length;
+}
+
+// renderClarifyBody stamps BOTH panel.__answers and r._answers; the panel copy is
+// authoritative (card + detail are mounted at once). This holds the last-rendered
+// run only so a collect() with no panel node keeps today's behaviour.
+let lastClarifyRun = null;
+function askFallbackAnswers() { return lastClarifyRun ? lastClarifyRun._answers : null; }
+
+// ---- the four legacy registrants (D6). The bodies above are UNCHANGED; these are
+// adapters, so the six suites that pin their markup keep passing untouched.
+registerAskRenderer('clarify', {
+  title: (pq, ctx) => (pq.kind === 'questions'
+    ? `${pq.agent || 'Agent'} has questions`
+    // The ACTIVE agent names the panel (the v1 phase vocabulary is gone).
+    : `${(activeNodes(ctx.run)[0] || {}).label || 'Pipeline'} needs your input`),
+  count: (pq) => { const n = realQuestions(pq).length; return `${n} question${n === 1 ? '' : 's'}`; },
+  render: (panel, pq, ctx) => renderClarifyBody(ctx.run, panel, pq),
+  // `panel` is null only for a caller that has no panel node; r._answers is the
+  // no-panel fallback renderClarifyBody keeps writing.
+  collect: (panel) => ({
+    answers: ((panel && panel.__answers) || askFallbackAnswers() || []).map((s) => ({
+      id: s.id, question: s.question,
+      choice: typeof s.choice === 'string' ? s.choice.trim() : '',
+    })),
+  }),
+});
+registerAskRenderer('gate', {
+  title: () => 'Cycle gate',
+  render: (panel, pq, ctx) => renderGateBody(ctx.run, panel, pq),
+});
+registerAskRenderer('recovery', {
+  title: (pq) => `${(((pq.recovery || {}).cls) || 'recoverable').replace('_', ' ')} error — action needed`,
+  render: (panel, pq, ctx) => renderRecoveryBody(ctx.run, panel, pq),
+});
+registerAskRenderer('workflow', {
+  title: (pq) => `Auto proposes a workflow · round ${(pq.workflow && pq.workflow.round) || 1}`,
+  count: () => 'workflow',
+  render: (panel, pq, ctx) => renderWorkflowBody(ctx.run, panel, pq),
+});
+
+// Gather the answer from the panel that was submitted and POST it. The shape is
+// the registered renderer's business; a renderer that returns null has refused
+// (it has already marked its own fields) and nothing is posted.
 function submitAnswer(r, panel = null) {
-  const slots = (panel && panel.__answers) || r._answers || [];
-  const answers = slots.map((s) => ({
-    id: s.id,
-    question: s.question,
-    choice: typeof s.choice === 'string' ? s.choice.trim() : '',
-  }));
-  postAnswer(r, { answers });
+  const renderer = askRendererFor(askKindOf(r && r.pendingQuestion)) || askRendererFor('clarify');
+  if (!renderer) return;
+  const payload = renderer.collect(panel);
+  if (payload == null) return;
+  postAnswer(r, payload);
 }
 
 // POST /api/answer for a run's pending question. On a transport/HTTP error we
@@ -4726,6 +4869,20 @@ async function postAnswer(r, payload) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ runId, id, payload }),
     });
+    // Gate 3 said no. That is an ANSWER outcome, not a transport failure: the
+    // question stays open, the panel keeps every typed value, and the renderer
+    // marks the offending fields. pendingQuestion is deliberately untouched.
+    if (res.status === 422) {
+      const body = await safeJson(res);
+      const errors = Array.isArray(body.errors) ? body.errors : [];
+      r._answering = false;
+      setPanelBusy(r, false);
+      const renderer = askRendererFor(askKindOf(r.pendingQuestion));
+      if (renderer) for (const panel of qpanelsFor(r)) renderer.setErrors(panel, errors);
+      onLog(r, { source: 'ui', level: 'error',
+        text: `answer rejected: ${errors.length} field${errors.length === 1 ? '' : 's'} to fix`, ts: Date.now() });
+      return false;
+    }
     if (!res.ok) {
       const err = await safeJson(res);
       r._answering = false;
@@ -4774,6 +4931,9 @@ function setPanelBusy(r, busy) {
     // A25: the workflow arm's table has selects and its revise box is a textarea.
     // A34: a control locked for good (data-locked) stays disabled through the busy -> idle restore.
     panel.querySelectorAll('button, input, select, textarea').forEach((node) => { node.disabled = busy || node.dataset.locked === '1'; });
+    // A draggable <li> is none of button/input/select/textarea, so the sweep above
+    // cannot reach the rank rows. Marker-scoped so nothing else in the panel moves.
+    panel.querySelectorAll('[data-af-drag]').forEach((node) => { node.draggable = !busy; });
     const primary = panel.querySelector('.btn-go, .gate-another');
     if (primary && busy && !primary.dataset.label) {
       primary.dataset.label = primary.textContent;
@@ -4793,6 +4953,7 @@ function clearQpanel(r) {
     // A stale `.qpanel-workflow` would make the delegates swallow a later clarify Submit in this node.
     panel.classList.remove('qpanel-workflow');
     panel.__wf = null;
+    panel.__askForm = null;                    // disposeQpanel already ran handle.dispose()
     panel.innerHTML = '';
     panel.classList.add('hidden');
     // The identity stamp paintRdQuestions keys its rebuild on. Emptying the panel
@@ -15632,9 +15793,12 @@ function reselectHiddenDetailTabs() {
 
 function hdClarifyCount(data) {
   const q = (data.clarify && Array.isArray(data.clarify.questions)) ? data.clarify.questions.length : 0;
+  // A form ask is ONE ask, whatever its field count (spec §9: one ask = one form).
+  // X3: the reader's field is `ask`, never `form`.
+  const form = (data.clarify && data.clarify.ask) ? 1 : 0;
   const stepQ = Array.isArray(data.stepQuestions)
-    ? data.stepQuestions.reduce((n, r) => n + ((r && r.questions) || []).length, 0) : 0;
-  return q + stepQ;
+    ? data.stepQuestions.reduce((n, r) => n + ((r && r.questions) || []).length + ((r && r.ask) ? 1 : 0), 0) : 0;
+  return q + form + stepQ;
 }
 
 const HD_TABS = [
@@ -17355,10 +17519,60 @@ function buildHdAgents(sec, record, data) {
   }
 }
 
+// A preview file of a PERSISTED ask. historyRunUrl already splits the workspace
+// arm (its projectKey is `workspaces/<id>`, a form /api/history/:key/:id rejects),
+// so the twin comes free; both id segments are encoded because an askId is agent-
+// adjacent data.
+function askHistoryFileUrl(record, askId, index) {
+  if (!record || !record.id || !askId) return null;       // X14: the file widgets tile
+  return historyRunUrl(record.id, record,
+    `ask-files/${encodeURIComponent(askId)}/${encodeURIComponent(index)}`);
+}
+
+async function askHistoryLoadText(record, askId, index) {
+  const res = await fetch(askHistoryFileUrl(record, askId, index));
+  if (!res.ok) throw new Error(`ask file ${index}: ${res.status}`);
+  return res.text();
+}
+
+/** One persisted form ask, rendered by the LIVE renderer in readonly mode. The
+ *  caption names the form and its version; `caption` is the same `.hd-cl-caption`
+ *  a step round already uses, so the tab keeps one rhythm. */
+function hdRenderAskForm(record, ask, captionPrefix = '') {
+  const card = document.createElement('div');
+  card.className = 'hd-cl-form';
+  const caption = document.createElement('div');
+  caption.className = 'hint hd-cl-caption';
+  const name = `${ask.form || 'form'} · v${ask.version == null ? 1 : ask.version}`;
+  caption.textContent = captionPrefix ? `${captionPrefix} — ${name}` : name;
+  card.appendChild(caption);
+  const askId = ask.askId || '';          // X1: the route token, NOT the question id
+  const handle = renderAskForm(ask, {
+    doc: document,
+    readonly: true,
+    values: ask.values || {},
+    fileUrl: (index) => askHistoryFileUrl(record, askId, index),
+    loadText: (index) => askHistoryLoadText(record, askId, index),
+    markdown: pageMarkdown,
+    highlight: (el) => hdMarkdown.highlight(el),
+  });
+  card.appendChild(handle.el);
+  bindMarkdownReady().then((ok) => { if (ok) handle.paintMarkdown(); });
+  // The tab is rebuilt wholesale on every open, so the handle rides on the card
+  // and buildHdClarify disposes the previous build's handles before it draws.
+  card.__askForm = handle;
+  return card;
+}
+
 // Clarify tab: the run's own clarification round first, then one captioned block
 // per mid-run step round. Every question is a card with its ASK line and its ANS
 // line, so an unanswered question still reads as a question that was asked.
 function buildHdClarify(sec, record, data) {
+  // Dispose any handle the previous build of this tab left behind, BEFORE the
+  // markup goes: a pending loadText must never paint into a detached tree.
+  for (const old of sec.querySelectorAll('.hd-cl-form')) {
+    if (old.__askForm) { try { old.__askForm.dispose(); } catch { /* never block a repaint */ } }
+  }
   sec.innerHTML = '';
   const wrap = document.createElement('div');
   wrap.className = 'hd-cl';
@@ -17392,12 +17606,15 @@ function buildHdClarify(sec, record, data) {
     wrap.appendChild(card);
   };
   for (const q of questions) addCard(q, byId.get(q.id));
+  if (data.clarify && data.clarify.ask) wrap.appendChild(hdRenderAskForm(record, data.clarify.ask));
   for (const r of Array.isArray(data.stepQuestions) ? data.stepQuestions : []) {
+    const roundLabel = `${r && (r.agentKey || r.nodeId) ? (r.agentKey || r.nodeId) : 'agent'} — round ${r && r.round}`
+      + (String((r && r.stepKey) || '').split('#')[1] ? ` · cycle ${String(r.stepKey).split('#')[1]}` : '');
+    if (r && r.ask) wrap.appendChild(hdRenderAskForm(record, r.ask, roundLabel));
     if (!((r && r.questions) || []).length) continue;
     const caption = document.createElement('div');
     caption.className = 'hint hd-cl-caption';
-    const cyc = String(r.stepKey || '').split('#')[1];
-    caption.textContent = `${r.agentKey || r.nodeId || 'agent'} — round ${r.round}${cyc ? ` · cycle ${cyc}` : ''}`;
+    caption.textContent = roundLabel;
     wrap.appendChild(caption);
     const rById = new Map((r.answers || []).map((a) => [a.id, a]));
     for (const q of r.questions) addCard(q, rById.get(q.id));
@@ -20162,8 +20379,12 @@ function paintRdQuestions(screen, r) {
   // questions cannot collide on a constant 'pending' and leave the second one
   // unpainted. Every server-minted question carries an id, so this is belt and
   // braces, not a hot path.
+  // `form` + `version` ride in the key so a CHANGED form rebuilds and an unchanged
+  // one never wipes half-typed input (ask-forms design §6).
   const key = pq
-    ? `${pq.id || 'pending'}|${pq.kind || ''}|${Array.isArray(pq.questions) ? pq.questions.length : (Array.isArray(pq.issues) ? pq.issues.length : 0)}`
+    ? [pq.id || 'pending', pq.kind || '', pq.form || '', pq.version == null ? '' : pq.version,
+      Array.isArray(pq.questions) ? pq.questions.length
+        : (Array.isArray(pq.issues) ? pq.issues.length : 0)].join('|')
     : '';
   // Un-hide BEFORE the rebuild: index.html ships .rd-questions hidden, and a workflow
   // body measures its graph host the moment it is attached (renderWorkflowBody's

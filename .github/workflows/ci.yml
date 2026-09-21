@@ -81,4 +81,4 @@ jobs:
       - name: Composer, run-monitor, theme, memory and scripts CDP proofs
         env:
           CHROME_NO_SANDBOX: "1"
-        run: npm run verify:composer && npm run verify:run-monitor && npm run verify:theme && npm run verify:memory && npm run verify:scripts
+        run: npm run verify:composer && npm run verify:run-monitor && npm run verify:theme && npm run verify:memory && npm run verify:scripts && npm run verify:ask-forms
