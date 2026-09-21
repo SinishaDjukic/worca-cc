@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "updatedAt": "2026-09-21T06:15:51Z",
+  "updatedBy": "Denislav Prinov",
+  "title": "sinishadjukic/worca-cc team policy",
+  "notes": "",
+  "fields": {},
+  "workspaceRuns": {},
+  "catalogs": {
+    "guardrailSets": [],
+    "models": []
+  }
+}
