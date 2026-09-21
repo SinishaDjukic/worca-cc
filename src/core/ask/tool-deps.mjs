@@ -15,6 +15,7 @@ import { validateProposal } from './proposal.mjs';
 import { readAttachmentText, getAttachment, attachmentPath, getThread, listAttachments } from './store.mjs';
 import { redactAskText } from './redact.mjs';
 import { ASK_LIMITS } from './limits.mjs';
+import { askProgress } from '../ask-projection.mjs';
 
 /** The patch file of a run row, or null when there is none (results.mjs#DIFF_PATCH_FILE only — never a caller path). */
 export async function readDiffPatch(row) {
@@ -64,6 +65,9 @@ export function defaultToolDeps({ threadId }) {
     listRunArtifacts: (row, filter) => listRunArtifacts(row.id, filter),
     readRunArtifact: (row, rel) => resolveIndexedArtifactForRow(row, rel), // {rel, text}|null
     readRunProgress: (row) => readRunProgress(row.id),
+    // Ask forms (spec D9, ruling X17): a persisted form round as text for the model.
+    // Injected, never imported — tools.mjs stays import-free by house rule.
+    askProgress,
     readAttachment: (id) => {
       const row = threadId ? getAttachment(threadId, id) : null;
       if (!row) return null;

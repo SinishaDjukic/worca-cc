@@ -165,3 +165,55 @@ test('includeAgents=false warns that dispatched agents are not exported', async 
 // review gate is whatever OUTPUT PORT its input is wired from — see the default-workflow
 // test above, which proves reviewer→implementer resolves to impl-review and the refiner
 // self-loop to refine-review straight from the ports/wires, no heuristic needed.)
+
+// ── ask forms degrade to generic questions in an exported skill (spec §8/§10) ──
+// A Claude Code subagent has no worca form host. The exporter therefore omits
+// forms entirely — structurally, since makeAgentMd emits frontmatter + the agent's
+// markdown BODY and never reads the sidecar — and WARNS, so an author is not left
+// believing their review form travelled with the skill.
+test('an agent with ask forms exports without them, and the export says so', async () => {
+  const { createAgent } = await import('../src/core/agent-store.mjs');
+  await createAgent({
+    meta: {
+      key: 'formPicker', displayName: 'Form Picker', metaVersion: 2, description: 'exports without forms',
+      uiPhase: 'implement', order: 51, runnerType: 'producer',
+      asksQuestions: true, questionsDefault: true,
+      inputs: [{ id: 'task', type: 'md', required: true }],
+      outputs: [{ id: 'notes', type: 'md', filename: 'notes.md', store: 'run' }],
+      tools: ['Read', 'Write', 'AskUserQuestion'],
+      ask: { forms: { 'review-mockups': {
+        version: 1, title: 'Review mockups',
+        data: { type: 'object', properties: { summary: { type: 'string' } } },
+        answer: { type: 'object', required: ['verdict'], properties: {
+          verdict: { type: 'string', enum: ['approve', 'changes'], default: 'approve' } } },
+        layout: [{ widget: 'select', field: 'verdict', label: 'Verdict' }],
+        example: { summary: 'Two directions.' },
+      } } },
+    },
+    markdown: '# Form Picker\n\nPick one.\n',
+  });
+  const tpl = await writeKeyGraph({ id: 'wf_exp_forms', name: 'Forms export', keys: ['formPicker'] });
+  const dest = await tmp();
+  const out = await applyExport({ workflowId: tpl.id, destination: 'project', projectDir: dest, onConflict: 'overwrite' });
+
+  assert.ok(
+    out.warnings.some((w) => /formPicker/.test(w) && /review-mockups/.test(w) && /not exported/.test(w)),
+    JSON.stringify(out.warnings));
+
+  const md = await readFile(join(dest, '.claude/agents/formPicker.md'), 'utf8');
+  assert.equal(/review-mockups/.test(md), false, 'no form id reaches the exported agent');
+  assert.equal(/answerSchema|"values"|ask-forms/.test(md), false, 'no form contract reaches the exported agent');
+  assert.equal(/"ask"/.test(md), false, 'the sidecar ask block is never emitted');
+  // The generic ask-hoist clause is byte-identical to a formless agent's.
+  assert.match(md, /\{"questions":\[\{"question"/);
+
+  const skill = await readFile(join(dest, '.claude/skills/forms-export/SKILL.md'), 'utf8');
+  assert.equal(/review-mockups/.test(skill), false);
+  assert.match(skill, /YOU\*\* call\s+`AskUserQuestion`/s, 'the hoist instruction is unchanged');
+});
+
+test('an agent WITHOUT forms produces no forms warning', async () => {
+  const dest = await tmp();
+  const out = await applyExport({ workflowId: 'wf_default', destination: 'project', projectDir: dest, onConflict: 'overwrite' });
+  assert.equal(out.warnings.some((w) => /not exported/.test(w) && /form/.test(w)), false, JSON.stringify(out.warnings));
+});

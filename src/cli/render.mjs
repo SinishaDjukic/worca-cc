@@ -184,3 +184,69 @@ export function formatWorkflowProposal(w) {
   if (Number(p.costUsd) > 0) lines.push(`  classifier cost so far: $${Number(p.costUsd).toFixed(2)}`);
   return lines;
 }
+
+// ── ask forms: the CLI's prompt FORMATTING (spec §8) ────────────────────────────
+//
+// The readline loop lives in worca-cc.mjs and every coercion rule lives in P1's
+// coerceInput() — nothing here parses. `field` is one entry of
+// promptFields(ask): { field, label, widget, type, schema, options: [{value,label}],
+// items, itemFields, verdicts, free, default, required, when }. Colour is the
+// caller's, exactly like formatExecLine.
+
+/** How many times the CLI re-offers a form before giving up (MAX_QUESTION_ROUNDS's twin). */
+export const FORM_REPROMPT_MAX = 3;
+
+const isNum = (type) => type === 'number' || type === 'integer';
+
+/** The `, Enter = <default>` / ` [Enter = <default>]` tail, or ''. */
+function defaultHint(field, { bare = false } = {}) {
+  const d = field.default;
+  if (d === undefined || d === null || d === '') return '';
+  const text = Array.isArray(d) ? d.join(', ') : String(d);
+  return bare ? ` [Enter = ${text}]` : `, Enter = ${text}`;
+}
+
+/**
+ * The lines to print for ONE form field, plus its readline prompt. `prompt` is null
+ * for `review-list`: the caller loops field.items and prompts each field.itemFields
+ * entry itself.
+ * @param {object} field one promptFields() entry
+ * @returns {{lines: string[], prompt: string|null}}
+ */
+export function formatFormField(field) {
+  const f = field || {};
+  const label = f.label || f.field;
+  const lines = [`${label}${f.required ? ' *' : ''}`];
+  const choices = Array.isArray(f.options) ? f.options : [];
+  if (choices.length) choices.forEach((o, i) => lines.push(`  ${i + 1}) ${String(o.label)}`));
+
+  if (f.widget === 'review-list') return { lines, prompt: null };
+  const hint = defaultHint(f);
+  if (f.widget === 'toggle' || f.type === 'boolean') return { lines, prompt: `Choose [y/n${hint}]: ` };
+  if (f.widget === 'rank') return { lines, prompt: `Order [comma-separated numbers or ids${hint}]: ` };
+  if (f.type === 'array') return { lines, prompt: `Choose [numbers or values, comma-separated${hint}]: ` };
+  // A `suggest` select (P1 C14) accepts free text beside its suggestions.
+  if (choices.length && f.free) return { lines, prompt: `Choose [number, value or your own text${hint}]: ` };
+  if (choices.length) return { lines, prompt: `Choose [number or value${hint}]: ` };
+  if (isNum(f.type)) return { lines, prompt: `Enter a number${defaultHint(f, { bare: true })}: ` };
+  if (f.widget === 'date') return { lines, prompt: `Enter a date (YYYY-MM-DD)${defaultHint(f, { bare: true })}: ` };
+  return { lines, prompt: `Your answer${defaultHint(f, { bare: true })}: ` };
+}
+
+/** A failed coerceInput() as ONE printable line. P1's message names the problem but not
+ *  the field, because a chat reply prefixes the path instead (X7). */
+export function formatCoerceError(field, res) {
+  const f = field || {};
+  const label = f.label || f.field || '';
+  const message = res && res.message ? String(res.message) : 'invalid value';
+  return label ? `  ${label}: ${message}` : `  ${message}`;
+}
+
+/** P1 validate()/collectAnswer() errors as indented printable lines. */
+export function formatFormErrors(errors) {
+  return (Array.isArray(errors) ? errors : []).map((e) => {
+    const path = e && e.path ? String(e.path) : '';
+    const message = e && e.message ? String(e.message) : 'invalid value';
+    return path ? `  ${path}: ${message}` : `  ${message}`;
+  });
+}
