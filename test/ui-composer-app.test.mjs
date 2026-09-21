@@ -21,6 +21,10 @@ const AGENTS = [
     inputs: [{ id: 'plan', type: 'md', required: true }],
     outputs: [{ id: 'review', type: 'md', when: 'blocking' }, { id: 'pass', type: 'void', when: 'clean' }] },
 ];
+const SCRIPTS = [{ key: 'shell', metaVersion: 2, displayName: 'Shell', origin: 'builtin', runtime: 'shell', color: 'amber', order: 10, ports: 'config',
+  verdict: { filename: 'shell-cycle{cycle}.json' },
+  defaultPorts: { inputs: [{ id: 'in', type: 'md', required: false }], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'shell-cycle{cycle}.md' }] },
+  params: [{ id: 'command', type: 'command', label: 'Command', required: true }] }];
 const V2_ROW = { id: 'wf_g', name: 'Graph one', version: 2, domain: 'coding',
   nodes: [{ id: 'n_task', kind: 'task', x: 60, y: 200, config: {} }, { id: 'n_end', kind: 'end', x: 960, y: 200, config: {} }], wires: [] };
 const V1_ROW = { id: 'wf_old', name: 'Legacy one', version: 1, domain: 'coding', steps: [[{ id: 's0_0', key: 'planner' }]], feedbacks: [] };
@@ -31,6 +35,7 @@ const DEFAULT_ROW = { id: 'wf_default', name: 'Default', version: 2, domain: 'co
 async function boot({ agentsFail = false, archived = [], workflows = null, del = null } = {}) {
   const rows = workflows || [V2_ROW, V1_ROW];
   const deletes = [];
+  const importBodies = [];
   let agentList = AGENTS;
   let agentsDown = agentsFail;
   let agentFetches = 0;
@@ -45,10 +50,17 @@ async function boot({ agentsFail = false, archived = [], workflows = null, del =
     // POST /api/workflows/import-json — the Import… path: mint a row, echo the
     // share contract ({workflow, renamed, requestedName, warnings}).
     if (url.includes('/api/workflows/import-json')) {
-      const src = JSON.parse(init.body).workflow;
+      const body = JSON.parse(init.body);
+      const src = body.workflow;
+      const scriptNodes = (src.nodes || []).filter((n) => n.kind === 'script' && n.config && n.config.params && n.config.params.command)
+        .map((n) => ({ nodeId: n.id, key: n.key, displayName: 'Shell', runtime: 'shell', params: { command: n.config.params.command } }));
+      importBodies.push(body);
+      if (body.dryRun) return json({ scriptNodes, warnings: [], requestedName: src.name });
+      // The server's gate (P10): a command-carrying graph needs the literal acceptScripts:true.
+      if (scriptNodes.length && body.acceptScripts !== true) return json({ error: 'this workflow runs commands on this machine', code: 'SCRIPTS_UNCONFIRMED', scriptNodes }, 409);
       const row = { ...src, id: `wf_${String(src.name).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, origin: null };
       rows.push(row);
-      return json({ workflow: row, renamed: false, requestedName: src.name, warnings: [] }, 201);
+      return json({ workflow: row, renamed: false, requestedName: src.name, warnings: [], scriptNodes }, 201);
     }
     if (init && init.method === 'DELETE') {
       deletes.push(url);
@@ -60,6 +72,7 @@ async function boot({ agentsFail = false, archived = [], workflows = null, del =
       if (at >= 0) rows.splice(at, 1);
       return json({ ok: true });
     }
+    if (url.includes('/api/scripts')) return json({ scripts: SCRIPTS });
     if (url.includes('/api/agents')) {
       agentFetches += 1;
       return agentsDown ? Promise.reject(new Error('down')) : json({ agents: agentList });
@@ -81,6 +94,8 @@ async function boot({ agentsFail = false, archived = [], workflows = null, del =
   window.dispatchEvent(new window.Event('hashchange'));
   for (let i = 0; i < 6; i += 1) await new Promise((r) => setTimeout(r, 0));
   window.__deletes = deletes;
+  window.__rows = rows;
+  window.__importBodies = importBodies;
   window.__setAgents = (list) => { agentList = list; };
   window.__failAgents = (v) => { agentsDown = v; };
   window.__agentFetches = () => agentFetches;
@@ -568,4 +583,50 @@ test('an origin=auto row carries the Auto tag and stays an ordinary openable row
   assert.equal(tag.title, 'Created by Auto — an ordinary workflow you can open, edit and delete');
   assert.ok(item.querySelector('.pl-row').classList.contains('pl-openable'), 'still an ordinary v2 row');
   assert.equal(doc.querySelector('#gv-saved-list .pl-item[data-id="wf_g"] .pl-origin'), null, 'a user-created row is not badged');
+});
+
+test('the composer loads /api/scripts beside /api/agents and paints the Scripts group', async () => {
+  const win = await boot();
+  const pal = win.document.getElementById('gv-palette');
+  assert.ok(pal.querySelector('.pal-group[data-domain="scripts"] .ap[data-key="shell"][data-kind="script"]'), pal.innerHTML.slice(0, 300));
+  assert.equal(pal.querySelector('.ap[data-key="shell"] .chip.rt').textContent, 'shell');
+});
+
+test('importing a workflow with script commands shows them first; Cancel and Close import nothing, Import sends acceptScripts', async () => {
+  const win = await boot();
+  const doc = win.document;
+  const tick = async (n = 4) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setTimeout(r, 0)); };
+  const withShell = { ...V2_ROW, id: undefined, name: 'Shelly', nodes: [...V2_ROW.nodes, { id: 'n_sh', kind: 'script', key: 'shell', x: 500, y: 300, config: { params: { command: 'rm -rf build && npm test' } } }] };
+  const n0 = win.__rows.length;
+  const p1 = win.__gvImport(withShell);
+  await tick();
+  const modal = doc.getElementById('plugin-modal');
+  assert.equal(modal.classList.contains('hidden'), false, 'the dialog opened');
+  assert.equal(doc.getElementById('plugin-modal-title').textContent, 'Import this workflow?');
+  assert.match(modal.textContent, /These commands run on this machine with worca's privileges when the workflow runs\./);
+  assert.match(modal.querySelector('.gv-import-script-h').textContent, /^Shell \(n_sh, shell\) · command$/);
+  assert.equal(modal.querySelector('pre.gv-import-script-v').textContent, 'rm -rf build && npm test');
+  assert.deepEqual([...modal.querySelectorAll('#plugin-modal-actions button')].map((b) => b.textContent), ['Cancel', 'Import']);
+  modal.querySelector('#plugin-modal-actions button').click();
+  assert.equal(await p1, false);
+  assert.equal(win.__rows.length, n0, 'Cancel imported nothing');
+  assert.equal(modal.classList.contains('hidden'), true);
+  // The modal's own Close button settles the confirmation too (no promise left hanging).
+  const pClose = win.__gvImport(withShell);
+  await tick();
+  doc.getElementById('plugin-modal-close').click();
+  assert.equal(await pClose, false);
+  assert.equal(win.__rows.length, n0);
+  const p2 = win.__gvImport(withShell);
+  await tick();
+  [...doc.querySelectorAll('#plugin-modal-actions button')].find((b) => b.textContent === 'Import').click();
+  assert.equal(await p2, true);
+  assert.equal(win.__rows.length, n0 + 1);
+  assert.equal(win.__importBodies.at(-1).acceptScripts, true, 'the confirmed import carries the confirmation');
+  assert.match(doc.getElementById('gv-saved-msg').textContent, /Imported "Shelly"/);
+  const plain = win.__gvImport({ ...V2_ROW, id: undefined, name: 'Plain' });
+  await tick();
+  assert.equal(doc.getElementById('plugin-modal').classList.contains('hidden'), true, 'no scripts: no dialog');
+  assert.equal(await plain, true);
+  assert.equal('acceptScripts' in win.__importBodies.at(-1), false, 'a plain import confirms nothing');
 });

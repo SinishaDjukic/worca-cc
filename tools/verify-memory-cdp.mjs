@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// scripts/verify-memory-cdp.mjs — headless-Chrome proof of the Settings → Memory tab and the
+// tools/verify-memory-cdp.mjs — headless-Chrome proof of the Settings → Memory tab and the
 // project page's Memory tab (agent-memory-design.md §10, §15): the health badge + the host hint, the
 // file list, the deep link, edit + Save (a real PUT into a real store), Delete through the app's own
 // confirm modal, the History panel + Restore, a REAL defragment run through the wrapper (the stamp,
 // the live control, the History memory chips) and the picker's Memory scope row. NOT part of
 // `npm test`: it needs Chrome and a live server, and it drives a real mock pipeline end to end.
-// Run: node scripts/verify-memory-cdp.mjs   (or: npm run verify:memory)
+// Run: node tools/verify-memory-cdp.mjs   (or: npm run verify:memory)
 //
 // -- CI COVERAGE -------------------------------------------------------------
 // .github/workflows/ci.yml job `cdp` runs this script on every push and every pull request. What

@@ -2,7 +2,7 @@
 //
 // The generic execution layer of the node-graph engine: output allocation from
 // filename templates, the "## Ports (this run)" prompt block, prompt assembly, the
-// clarifier gate, and the five flow-node executors.
+// clarifier gate, the script dispatch and the five flow-node executors.
 //
 // GENERICITY CHARTER (hard rule for this module): there is NO agent-key branch
 // anywhere. Executor selection is `node.kind` + `meta.runnerType`; renderer selection
@@ -32,15 +32,15 @@
 // input left UNBOUND. The composite DRIVER is scheduler.mjs; this module owns the
 // document — including the prompt block that tells a producer where to write the
 // task files and what the manifest looks like.
-import { join, dirname, relative, basename } from 'node:path';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { join, dirname, relative } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 
 import {
   runClaude, MOCK_WRITER_ROLES, MOCK_ROLE_CLARIFY, MOCK_ROLE_DECOMPOSER,
 } from '../claude-runner.mjs';
 import { planPath, reviewPath, writeStepQuestions, writeClarify } from '../artifacts.mjs';
-import { readReview, normalizeClarify, normalizeReview, safeParseJson } from '../protocol.mjs';
+import { readReview, normalizeClarify } from '../protocol.mjs';
 import {
   taskHeader, buildSystemPrompt, resolveAgentBody, mockMarkers, runOpts,
   fanOutDirective, ctxFanOut, ctxSubagentModel, ctxEndpointRouted, workspaceFanOutDirective, workspaceDiffInstruction,
@@ -48,6 +48,7 @@ import {
 } from '../phases.mjs';
 import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
+import { runScriptExecution } from './script-runner.mjs';
 
 /** The reserved synthesized gate input. Scheduler-only: it never reaches `bindings`,
  *  is never listed in the Ports block, selects no mode, and carries no renderer. */
@@ -382,49 +383,8 @@ export function resolveMockRole({ meta, expandsPort = null }) {
 
 // ── verdicts ──────────────────────────────────────────────────────────────────
 
-/** The text every unparseable verdict file fails with. */
-const BAD_VERDICT_TAIL = 'expected { "issues": [ \u2026 ] }';
-
-/**
- * Read a node's verdict JSON back through the protocol normalizer.
- *
- * Two degenerate cases, deliberately split (they are NOT the same failure):
- *  - the file was NEVER WRITTEN -> `{issues: [], summary: '', missing: true}`: a clean
- *    pass, v1 parity, because an agent that declares a verdict and writes none must not
- *    fail a run. `missing` is the flag the caller turns into a warning (and the reason
- *    the reviews table skips the row) instead of a phantom zero-issue review.
- *  - the file EXISTS but does not parse, or carries no `issues` array -> THROW. The
- *    verifier wrote garbage, and on every shipped seed the clean side is wired straight
- *    to End, so "no issues" there is indistinguishable from an approval. Fail-fast owns
- *    the rest.
- *
- * `readReview` is untouched for its other callers (it is v1 code with its own tolerant
- * contract); the existsSync + parse-failure branch lives here.
- */
-export async function readVerdict(verdictPath) {
-  if (!verdictPath) return { issues: [], summary: '' };
-  if (!existsSync(verdictPath)) return { issues: [], summary: '', missing: true };
-  let text;
-  try {
-    text = await readFile(verdictPath, 'utf8');
-  } catch (err) {
-    throw Object.assign(new Error(`verdict file unreadable: ${verdictPath} — ${err?.message || err}`),
-      { code: 'BAD_VERDICT' });
-  }
-  const data = safeParseJson(text);
-  if (!data || typeof data !== 'object' || !Array.isArray(data.issues)) {
-    throw Object.assign(new Error(`verdict file is not a review JSON: ${verdictPath} — ${BAD_VERDICT_TAIL}`),
-      { code: 'BAD_VERDICT' });
-  }
-  return normalizeReview(data);
-}
-
-/** The warning line a missing verdict raises, relative to the pipeline dir so the
- *  run log stays readable. */
-function missingVerdictWarning(ctx, verdictPath) {
-  const rel = ctx?.pipelineDir ? relative(ctx.pipelineDir, verdictPath) : basename(verdictPath);
-  return `verdict file missing: ${ctx?.nodeId || ctx?.node?.id || '?'} ${rel} — treated as clean`;
-}
+import { readVerdict, missingVerdictWarning, publishable } from './exec-io.mjs';
+export { readVerdict, publishable };
 
 // ── prompt assembly ───────────────────────────────────────────────────────────
 
@@ -643,18 +603,6 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
   };
   const { text } = await runClaude(opts);
   return { text, sessionId };
-}
-
-/** The output map the scheduler publishes from: an entry per declared port, with a
- *  path where one was allocated and an empty payload for void ports. Exported for
- *  P4's composite `finish` arm. */
-export function publishable(ports, outputs) {
-  const out = {};
-  for (const port of ports?.outputs || []) {
-    if (!port) continue;
-    out[port.id] = outputs[port.id]?.path ? { path: outputs[port.id].path } : {};
-  }
-  return out;
 }
 
 /**
@@ -891,6 +839,11 @@ export function runExecution(ctx, opts = {}) {
     case 'end': return runEndExecution(ctx);
     case 'combine':
       return runCombineExecution({ ...ctx, names: ctx.names || combineNames(ctx.template, node.id) });
+    case 'script': {
+      // A child process, not a Claude spawn (spec §6.1). `runners.script` is the test seam.
+      const injectedScript = (opts.runners || ctx.runners || {}).script;
+      return typeof injectedScript === 'function' ? injectedScript(ctx) : runScriptExecution(ctx);
+    }
     case 'agent': break;
     default:
       throw new Error(`node "${node.id}": unknown kind "${node.kind}"`);

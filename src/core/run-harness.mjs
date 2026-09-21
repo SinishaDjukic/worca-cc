@@ -41,7 +41,7 @@ import {
   memoryCaps,
 } from './settings.mjs';
 import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY } from './memory-sync.mjs';
-import { memoryRoot, renderMemoryBlock, bumpScopeState, readScopeState } from './memory-store.mjs';
+import { memoryRoot, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
 import { readCostCapOverride, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
@@ -84,21 +84,14 @@ import { readSettings as readRawSettings } from './settings.mjs';
 // in agent-registry.mjs, which is the single source for the built-in agents dir).
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
-/**
- * §9.4 message enrichment: does a DISABLED plugin ship this agent key? Scans
- * lock entries with enabled === false, reading key fields from each plugin's
- * current/agents/*.meta.json. Returns the plugin name or null. try/catch
- * throughout: no resolvable home / no lock / broken current => null (callers
- * fall back to the generic "not installed" message).
- * @param {string} key
- * @returns {string|null}
- */
-function findDisabledPluginFor(key) {
+/** The disabled plugin that ships `<subdir>/<key>.meta.json`, or null. Shared by the
+ *  agent preflight (`agents`) and the orchestrator's script preflight (`scripts`). */
+export function findDisabledPluginFor(key, subdir = 'agents') {
   try {
     const lock = readPluginsLock();
     for (const name of Object.keys(lock).sort()) {
       if (!lock[name] || lock[name].enabled !== false) continue;
-      const dir = join(pluginCurrentDir(name), 'agents');
+      const dir = join(pluginCurrentDir(name), subdir);
       let files;
       try { files = readdirSync(dir); } catch { continue; }
       for (const f of files) {
@@ -2252,6 +2245,22 @@ export class RunHarness extends EventEmitter {
     const tmp = `${file}.tmp-${process.pid}-${++this._ledgerSeq}`;
     try { await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8'); await rename(tmp, file); }
     catch (err) { this._log('memory', 'warn', `memory ledger not written: ${err?.message || err}`); }
+  }
+
+  /** The `## Memory health` section a defragment run appends to its task document: the reasons the
+   *  scope is flagged and the budgets a finished defragment must meet — read from the STORE (what
+   *  Settings → Memory shows), which the mount mirrors at this point. '' on every other run.
+   *  Best-effort: a store read failure costs the agent its brief, never the run. */
+  async _defragBrief() {
+    if (!this.memoryScope || !this.memory?.dirs?.length) return '';
+    try {
+      const caps = memoryCaps();
+      const { health } = await memoryScopeReport(memoryRoot(), this.memory.dirs[0].scope, caps, { onError: (p, err) => this._memoryReadWarn(p, err) });
+      return renderDefragBrief(health, caps);
+    } catch (err) {
+      this._log('memory', 'warn', `memory: the defragment brief could not be built: ${err?.message || err}`);
+      return '';
+    }
   }
 
   /** A finished defragment run resets the scope's counters (spec §5, §7): called on the `done`

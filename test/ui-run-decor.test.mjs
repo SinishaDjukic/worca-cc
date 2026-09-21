@@ -320,3 +320,38 @@ test('execBandLayout bills 1 line for a compact row, 2 with dur · cost stacked,
   // A flow row has no dur · cost and always fits its one line.
   assert.deepEqual(execBandLayout('cycle 1', ''), { units: 1, stack: false, l2: false });
 });
+
+const script = (id, key, over = {}) => ({ id, kind: 'script', key, x: 0, y: 0, label: 'Run tests', color: 'violet', runtime: 'node',
+  ports: { inputs: [{ id: 'done', type: 'void', loop: false }], outputs: [{ id: 'log', type: 'md', when: 'always' }, { id: 'pass', type: 'void', when: 'clean' }], await: true }, ...over });
+const SCRIPT_MANIFEST = { ...MANIFEST, graph: { nodes: [agent('n_plan', 'planner'), script('n_tests', 'runTests'), end()],
+  wires: [{ id: 'w1', from: { node: 'n_plan', port: 'out' }, to: { node: 'n_tests', port: 'done' }, loop: false }, { id: 'w2', from: { node: 'n_tests', port: 'pass' }, to: { node: 'n_end', port: 'result' }, loop: false }] } };
+
+test('script rows: keyed like agents (duration, no cost, an exit chip), progress counts them, manifestAgents carries the runtime', () => {
+  const st = { stepper: SCRIPT_MANIFEST, status: 'done', endReached: true, active: [], steps: [
+    step({ executionId: 'x:n_plan:1', nodeId: 'n_plan', ordinal: 1, status: 'done', activeMs: 4000, costUsd: 0.5 }),
+    step({ executionId: 'x:n_tests:1', nodeId: 'n_tests', ordinal: 1, status: 'done', activeMs: 1200, costUsd: 0, nodeKey: 'runTests', runtime: 'node', exitCode: 1 }),
+    // An execution ERROR (any other exit) throws before the row is stamped: no exit code on the row, the error text carries it.
+    step({ executionId: 'x:n_tests:2', nodeId: 'n_tests', ordinal: 2, status: 'error', activeMs: 300, costUsd: 0, nodeKey: 'runTests' }),
+  ] };
+  const d = decorFromState(st, { live: false, now: 0 });
+  assert.deepEqual(d.progress, { done: 1, total: 2 }, 'the script is a keyed card: counted, and its last row errored');
+  const rows = d.footers.n_tests.rows;
+  assert.deepEqual(rows.map((r) => [r.flow, r.cost, r.exit, r.durMs, r.costUsd]), [[false, '', 'exit 1', 1200, 0], [false, '', '', 300, 0]]);
+  assert.equal(d.footers.n_tests.summary, '2 runs');
+  assert.equal(d.totals.n_tests.cost, '');
+  assert.equal(d.totals.n_tests.durMs, 1500);
+  assert.equal(d.footers.n_plan.rows[0].cost, '$0.50', 'agents keep their cost');
+  assert.deepEqual(manifestAgents(SCRIPT_MANIFEST).runTests, { displayName: 'Run tests', color: 'violet', icon: '', runtime: 'node' });
+});
+
+test('the live line: an ACTIVE script node with a captured line gets footers[node].live; done nodes and agents never do', () => {
+  const st = { stepper: SCRIPT_MANIFEST, status: 'running', endReached: false, active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }], steps: [
+    step({ executionId: 'x:n_plan:1', nodeId: 'n_plan', ordinal: 1, status: 'done', activeMs: 4000, costUsd: 0.5 }),
+    step({ executionId: 'x:n_tests:1', nodeId: 'n_tests', ordinal: 1, status: 'start', activeMs: 100, costUsd: 0, nodeKey: 'runTests', runtime: 'node' }),
+  ] };
+  const lastLines = new Map([['n_tests', '  ✓ 212 passing'], ['n_plan', 'ignored']]);
+  const d = decorFromState(st, { live: true, now: 1000, lastLines });
+  assert.equal(d.footers.n_tests.live, '  ✓ 212 passing');
+  assert.equal(d.footers.n_plan.live, undefined);
+  assert.equal(decorFromState({ ...st, status: 'done', active: [] }, { live: false, now: 0, lastLines }).footers.n_tests.live, undefined, 'a frozen run shows none');
+});

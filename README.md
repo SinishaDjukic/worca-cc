@@ -94,6 +94,16 @@ and durations, the clarify Q&A, agent transcripts, and logs:
   per workflow, or per run, with a clear resolution order and "save as
   workflow defaults".
 
+### Scripts
+
+- **Cards that run your own program** — a script card keeps the whole outside of
+  an agent card (typed ports, verdict routing, loops) and replaces the inside
+  with your own `node` or `shell` program, so a test gate or a
+  transform costs no model call; the **Scripts** page creates, edits, duplicates
+  and deletes them, and its test bench runs one by itself with hand-filled
+  inputs — saved as named cases with an optional expectation, re-run one at a
+  time or all at once — through the very same runner a pipeline run uses.
+
 ### Workflow Composer
 
 - **Compose your own pipeline** — drag agents onto a canvas and wire their typed
@@ -137,8 +147,8 @@ and durations, the clarify Q&A, agent transcripts, and logs:
 ### Plugins & chat
 
 - **Plugin system with marketplaces** — plugins contribute task sources
-  (e.g. GitHub Issues), agents, skills, workflow templates, models, and chat
-  channels. Install from a marketplace with an explicit consent ceremony
+  (e.g. GitHub Issues), agents, scripts, skills, workflow templates, models, and
+  chat channels. Install from a marketplace with an explicit consent ceremony
   (what's installed, which secrets are required, which setup commands run);
   updates show a commit-level preview before you accept.
 - **Drive runs from chat** — bundled two-way **Telegram**, **Slack**,
@@ -315,14 +325,22 @@ worca policy show
 worca policy pull
 worca policy setup --install
 
-# share a saved pipeline: as JSON, or as a plugin folder bundling your agents + skills
+# share a saved pipeline: as JSON, or as a plugin folder bundling your agents, scripts + skills
 worca workflow export wf_my-flow --format json --out my-flow.json
 worca workflow import my-flow.json
 worca workflow export wf_my-flow --format plugin --target ./my-flow-plugin
+
+# scripts: list, scaffold and test a script card — no server needed
+worca script list
+worca script new runTests --runtime shell
+worca script test runTests
+worca script test shell --param command="npm test" --cwd .
+worca plugin new-script tidy --dir ./my-plugin
+worca plugin validate ./my-plugin --run-cases
 ```
 
 Run `worca --help` for all subcommands (projects, plugins, marketplaces,
-workflows, config, doctor) and flags.
+workflows, scripts, config, doctor) and flags.
 
 Exit codes, for scripts and CI wrappers: `0` the run finished (or an
 interactive run paused and you can resume it); `1` a hard error, a stop, or an

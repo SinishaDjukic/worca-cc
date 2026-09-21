@@ -117,6 +117,7 @@ class AskTurn extends EventEmitter {
       onCommentMutation: deps.onCommentMutation ?? (() => {}),
       onWorktreeMutation: deps.onWorktreeMutation ?? (() => {}),
       onMemoryMutation: deps.onMemoryMutation ?? (() => {}),
+      onScriptMutation: deps.onScriptMutation ?? (() => {}),
       onScheduleMutation: deps.onScheduleMutation ?? (() => {}),
       // DISPLAY-ONLY rates for the footer's live "≈" estimate (config.mjs
       // liveCostRates: override → list price → null). Injectable so tests pin
@@ -413,6 +414,8 @@ class AskTurn extends EventEmitter {
       onWorktreeMutation: (e) => { try { this.deps.onWorktreeMutation(e); } catch { /* a broken sink never breaks the turn */ } },
       // ...and for memory: a remember/forget in the child becomes the server's memory-changed frame.
       onMemoryMutation: (e) => { try { this.deps.onMemoryMutation(e); } catch { /* a broken sink never breaks the turn */ } },
+      // ...and for scripts: a save_script in the child becomes the server's scripts-changed frame.
+      onScriptMutation: (e) => { try { this.deps.onScriptMutation(e); } catch { /* a broken sink never breaks the turn */ } },
       // DISPLAY ONLY — never a sink input: prices the running usage sum (main +
       // sub-agent tokens) at the TURN model's rates; the "≈" in the footer owns
       // that approximation. _complete() reads summary.costUsd, not this.

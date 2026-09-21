@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// scripts/verify-theme-cdp.mjs — headless-Chrome proof for the light + dark theme
+// tools/verify-theme-cdp.mjs — headless-Chrome proof for the light + dark theme
 // (spec docs/superpowers/specs/2026-09-04-dark-mode-design.md §7.2-§7.4). NOT part
 // of `npm test`: needs Chrome. CI job `cdp` runs it (`npm run verify:theme`).
 //
-//   node scripts/verify-theme-cdp.mjs                 audit both themes; exit 1 on a
+//   node tools/verify-theme-cdp.mjs                 audit both themes; exit 1 on a
 //                                                     dark violation or a light one
 //                                                     outside the committed baseline
 //   … --snapshot [FILE]     write the LIGHT computed-style identity snapshot, exit 0

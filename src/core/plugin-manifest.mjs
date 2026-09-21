@@ -11,6 +11,8 @@ import { EFFORTS, isReservedModelEnvKey, assertModelCost } from './model-env.mjs
 import { validateMetaV2, normalizeAgentMeta, indexByKey } from '../shared/graph/agent-meta.mjs';
 import { portsFnFor } from '../shared/graph/ports.mjs';
 import { validateGraph } from '../shared/graph/validate.mjs';
+import { validateScriptMetaV2, normalizeScriptMeta } from '../shared/graph/script-meta.mjs';
+import { normalizeCases } from '../shared/graph/script-cases.mjs';
 
 /** Plugin names are kebab-case, machine-unique, dir-name safe (spec §4.1). */
 export const PLUGIN_NAME_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -51,6 +53,26 @@ export function builtinAgentMetas(dir = BUILTIN_AGENTS_DIR) {
   }
   return out;
 }
+/** The built-in script layer (repo scripts/, D20). Same URL math as script-registry's DEFAULT_SCRIPTS_DIR. */
+const BUILTIN_SCRIPTS_DIR = fileURLToPath(new URL('../../scripts/', import.meta.url));
+
+/** Normalized built-in script sidecars, for the plugin-template isolation rule: a
+ *  template may reference built-in scripts (present on every host) plus the plugin's own. */
+export function builtinScriptMetas(dir = BUILTIN_SCRIPTS_DIR) {
+  const out = [];
+  let files = [];
+  try { files = readdirSync(dir).filter((f) => f.endsWith('.meta.json')); } catch { return out; }
+  for (const f of files.sort()) {
+    let meta = null;
+    try { meta = JSON.parse(readFileSync(join(dir, f), 'utf8')); } catch { continue; }
+    if (Number(meta?.metaVersion) !== 2 || !KEY_RE.test(String(meta.key || ''))) continue;
+    const { meta: norm, errors } = normalizeScriptMeta(meta);
+    if (errors.length) continue;
+    out.push(norm);
+  }
+  return out;
+}
+
 const KNOWN_SOURCE = new Set(['id', 'displayName', 'module', 'configSchema', 'inputs', 'multiProfile']);
 const KNOWN_CHANNEL = new Set(['id', 'displayName', 'platform', 'module', 'ingress', 'capabilities', 'configSchema']);
 const CHANNEL_INGRESS = new Set(['connect', 'webhook']);
@@ -128,12 +150,20 @@ export function declaredApi(range) {
 export function dataContractIssues(absDir) {
   const agentsV1 = [];
   const workflowsV1 = [];
+  const scriptsV1 = [];
   const read = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
   const agentsDir = join(absDir, 'agents');
   if (existsSync(agentsDir)) {
     for (const f of readdirSync(agentsDir).filter((x) => x.endsWith('.meta.json')).sort()) {
       const raw = read(join(agentsDir, f));
       if (raw && Number(raw.metaVersion) !== 2) agentsV1.push(f);
+    }
+  }
+  const scDir = join(absDir, 'scripts');
+  if (existsSync(scDir)) {
+    for (const f of readdirSync(scDir).filter((x) => x.endsWith('.meta.json')).sort()) {
+      const raw = read(join(scDir, f));
+      if (raw && Number(raw.metaVersion) !== 2) scriptsV1.push(f);
     }
   }
   const wfDir = join(absDir, 'workflows');
@@ -143,7 +173,7 @@ export function dataContractIssues(absDir) {
       if (raw && Number(raw.version) !== 2) workflowsV1.push(f);
     }
   }
-  return { agentsV1, workflowsV1 };
+  return { agentsV1, workflowsV1, scriptsV1 };
 }
 
 /**
@@ -159,10 +189,11 @@ export function dataContractIssues(absDir) {
 export function apiMismatch(range, issues) {
   const agents = (issues && issues.agentsV1 ? issues.agentsV1 : []).length;
   const workflows = (issues && issues.workflowsV1 ? issues.workflowsV1 : []).length;
-  if (!agents && !workflows) return null;
+  const scripts = (issues && issues.scriptsV1 ? issues.scriptsV1 : []).length;
+  if (!agents && !workflows && !scripts) return null;
   // declaredApi('') is 0 (an unconstrained range accepts everything); report that
   // as null so the message reads "built for an older version", never "API 0".
-  const mismatch = { builtFor: declaredApi(range) || null, host: WORCA_PLUGIN_API, agents, workflows };
+  const mismatch = { builtFor: declaredApi(range) || null, host: WORCA_PLUGIN_API, agents, workflows, ...(scripts ? { scripts } : {}) };
   mismatch.message = apiMismatchMessage(mismatch);
   return mismatch;
 }
@@ -176,10 +207,10 @@ export function apiMismatch(range, issues) {
  */
 export function apiMismatchMessage(mismatch) {
   if (!mismatch) return '';
-  const { builtFor, agents, workflows } = mismatch;
+  const { builtFor, agents, workflows, scripts } = mismatch;
   return `built for plugin API ${builtFor ?? 'an older version'}; this version of worca requires `
     + `plugin API ${WORCA_PLUGIN_API} for agents and pipeline templates — update or reinstall the plugin `
-    + `(${agents} agent(s), ${workflows} template(s) ignored)`;
+    + `(${agents} agent(s), ${scripts ? `${scripts} script(s), ` : ''}${workflows} template(s) ignored)`;
 }
 
 const str = (v, d = '') => (typeof v === 'string' ? v.trim() : d);
@@ -611,6 +642,61 @@ export function validatePluginDir(absDir, { strict = false, builtinMetas } = {})
     }
   }
 
+  // scripts/: <key>.meta.json + the program it names (spec §9.3). The SAME meta
+  // v2 gate the registry loader applies, every failed rule named; every platform
+  // entry of `file` must exist inside scripts/ and never escape it.
+  const scriptKeys = new Set();
+  const ungatedScriptKeys = new Set();
+  const ownScriptMetas = [];
+  const scriptsDir = join(absDir, 'scripts');
+  if (existsSync(scriptsDir)) {
+    const files = readdirSync(scriptsDir);
+    for (const f of files.filter((x) => x.endsWith('.meta.json'))) {
+      const stem = f.slice(0, -'.meta.json'.length);
+      let meta = null;
+      try { meta = JSON.parse(readFileSync(join(scriptsDir, f), 'utf8')); }
+      catch { push('error', `scripts/${f}: invalid JSON`); continue; }
+      const key = typeof meta?.key === 'string' ? meta.key : '';
+      if (!KEY_RE.test(key)) { push('error', `scripts/${f}: "${key}" must be a valid script key (letters/digits/_-)`); continue; }
+      if (key !== stem) push('error', `scripts/${f}: key "${key}" must match the filename stem "${stem}"`);
+      if (Number(meta.metaVersion) !== 2) { push(dataLevel, `scripts/${f}: ${NOT_META_V2}`); ungatedScriptKeys.add(key); continue; }
+      const { errors } = validateScriptMetaV2(meta);
+      for (const e of errors) push('error', `scripts/${f}: ${e}`);
+      if (errors.length) { ungatedScriptKeys.add(key); continue; }
+      const norm = normalizeScriptMeta(meta).meta;
+      // Every platform's program must be a contained, existing file.
+      const entries = typeof norm.file === 'string' ? [norm.file] : norm.file ? Object.values(norm.file) : [];
+      let fileOk = true;
+      for (const rel of entries) {
+        if (isAbsolute(rel) || /[\\/]/.test(rel) || rel.includes('..') || !resolve(scriptsDir, rel).startsWith(resolve(scriptsDir) + sep)) {
+          push('error', `scripts/${f}: file must be a plain basename inside scripts/ (got "${rel}")`); fileOk = false; continue;
+        }
+        if (!existsSync(join(scriptsDir, rel))) { push('error', `scripts/${f}: file "${rel}" not found in scripts/`); fileOk = false; }
+      }
+      if (!fileOk) { ungatedScriptKeys.add(key); continue; }
+      scriptKeys.add(key);
+      ownScriptMetas.push(norm);
+      // <key>.tests.json is optional; when it ships it goes through the SAME
+      // normalizer the store, the bench and the UI use, as a SHIPPED set — a
+      // case that names a project folder cannot travel to a recipient (W9).
+      const casesFile = join(scriptsDir, `${key}.tests.json`);
+      if (existsSync(casesFile)) {
+        let rawCases = null;
+        try { rawCases = JSON.parse(readFileSync(casesFile, 'utf8')); }
+        catch { push('error', `scripts/${key}.tests.json: invalid JSON`); continue; }
+        for (const e of normalizeCases(rawCases, norm, { shipped: true }).errors) {
+          push('error', `scripts/${key}.tests.json: ${e}`);
+        }
+      }
+    }
+    // A tests file with no sidecar beside it: the W18 overlay is a USER-layer
+    // idea, so inside a plugin it is a file nothing will ever read.
+    for (const f of files.filter((x) => x.endsWith('.tests.json'))) {
+      const stem = f.slice(0, -'.tests.json'.length);
+      if (!files.includes(`${stem}.meta.json`)) push('error', `scripts/${f}: no ${stem}.meta.json beside it`);
+    }
+  }
+
   // skills/<name>/SKILL.md required (rides the existing injection mechanism, §9.2)
   const skillsDir = join(absDir, 'skills');
   if (existsSync(skillsDir)) {
@@ -634,16 +720,19 @@ export function validatePluginDir(absDir, { strict = false, builtinMetas } = {})
   if (existsSync(wfDir)) {
     const hostMetas = Array.isArray(builtinMetas) ? builtinMetas : builtinAgentMetas();
     const hostKeys = new Set(hostMetas.map((m) => m.key));
-    const portsFn = portsFnFor(indexByKey([...hostMetas, ...ownMetas]));
+    const hostScriptMetas = builtinScriptMetas();
+    const hostScriptKeys = new Set(hostScriptMetas.map((m) => m.key));
+    const portsFn = portsFnFor(indexByKey([...hostMetas, ...ownMetas]), indexByKey([...hostScriptMetas, ...ownScriptMetas]));
     for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.json'))) {
       let tpl = null;
       try { tpl = JSON.parse(readFileSync(join(wfDir, f), 'utf8')); }
       catch { push('error', `workflows/${f}: invalid JSON`); continue; }
       if (Number(tpl?.version) !== 2) { push(dataLevel, `workflows/${f}: ${NOT_GRAPH_V2}`); continue; }
       const nodes = Array.isArray(tpl.nodes) ? tpl.nodes : [];
-      const keys = nodes.filter((n) => n && n.kind === 'agent').map((n) => n.key).filter(Boolean);
+      const agentRefs = nodes.filter((n) => n && n.kind === 'agent').map((n) => n.key).filter(Boolean);
+      const scriptRefs = nodes.filter((n) => n && n.kind === 'script').map((n) => n.key).filter(Boolean);
       let unresolved = false;
-      for (const k of new Set(keys)) {
+      for (const k of new Set(agentRefs)) {
         if (agentKeys.has(k) || hostKeys.has(k)) continue;
         if (ungatedKeys.has(k)) {
           // The sidecar is this plugin's, it just did not pass. Report at the
@@ -653,6 +742,12 @@ export function validatePluginDir(absDir, { strict = false, builtinMetas } = {})
         } else {
           push('error', `workflows/${f}: references agent key "${k}" which is neither a built-in nor shipped by this plugin`);
         }
+        unresolved = true;
+      }
+      for (const k of new Set(scriptRefs)) {
+        if (scriptKeys.has(k) || hostScriptKeys.has(k)) continue;
+        if (ungatedScriptKeys.has(k)) push(dataLevel, `workflows/${f}: references script key "${k}" whose sidecar is not a valid meta v2 sidecar`);
+        else push('error', `workflows/${f}: references script key "${k}" which is neither a built-in nor shipped by this plugin`);
         unresolved = true;
       }
       // An unresolved key has no ports, so every wire touching it would also

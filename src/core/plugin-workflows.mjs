@@ -11,6 +11,7 @@ import { join, basename } from 'node:path';
 import { getDb, prepare, tx } from './db.mjs';
 import { slugify } from './artifacts.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
+import { loadScriptRegistry } from './script-registry.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { validateGraph } from '../shared/graph/validate.mjs';
 import { NOT_GRAPH_V2 } from './plugin-manifest.mjs';
@@ -44,7 +45,7 @@ const normDomain = (raw) => {
  *        callers must not re-log what the importer already logged).
  * @returns {{ready: Array<object>, skipped: Array<{file:string, errors:string[]}>}}
  */
-export function readPluginWorkflows(name, versionDir, { registry = null, quiet = false } = {}) {
+export function readPluginWorkflows(name, versionDir, { registry = null, scripts = null, quiet = false } = {}) {
   const origin = `plugin:${name}`;
   const dir = join(versionDir, 'workflows');
   let files = [];
@@ -56,7 +57,8 @@ export function readPluginWorkflows(name, versionDir, { registry = null, quiet =
   // it: agent meta ports plus the universal `await` gate and the flow-card
   // table. The templates are not in the DB yet, so resolveGraph is unavailable —
   // registryPortsFn exists for exactly this caller and the server's save route.
-  const portsFn = registryPortsFn(registry || loadAgentRegistry());
+  const reg = registry || loadAgentRegistry();
+  const portsFn = registryPortsFn(reg, scripts || loadScriptRegistry({ agentKeys: Object.keys(reg) }));
   const warn = (msg) => { if (!quiet) console.warn(msg); };
   const skip = (f, errors) => {
     skipped.push({ file: f, errors });
@@ -184,17 +186,17 @@ export async function removePluginWorkflows(name) {
 }
 
 /**
- * Uninstall guard input (spec §6.3): NON-plugin workflows (user rows and other
- * plugins' rows — anything not origin 'plugin:<name>') whose steps JSON references
- * one of THIS plugin's agent keys. Keys come from current/agents/*.meta.json.
- * Synchronous, never throws: no current/agents (already-broken install) => [].
- * @param {string} name
- * @returns {Array<{workflowId: string, name: string, keys: string[]}>}
+ * The registry keys a plugin ships under `<current>/<subdir>`: the `key` field
+ * of every `*.meta.json` there. Synchronous, never throws — an already-broken
+ * install (no such dir, malformed sidecar) simply guards nothing.
+ * `<key>.tests.json` and program files are skipped by the suffix test.
+ * @param {string} name @param {string} subdir 'agents' | 'scripts'
+ * @returns {Set<string>}
  */
-export function referencedPluginAgents(name) {
+function shippedKeys(name, subdir) {
   const keys = new Set();
   try {
-    const dir = join(pluginCurrentDir(name), 'agents');
+    const dir = join(pluginCurrentDir(name), subdir);
     for (const f of readdirSync(dir)) {
       if (!f.endsWith('.meta.json')) continue;
       try {
@@ -202,13 +204,29 @@ export function referencedPluginAgents(name) {
         if (typeof k === 'string' && k.trim()) keys.add(k.trim());
       } catch { /* malformed sidecar: nothing to guard */ }
     }
-  } catch { return []; }
-  if (!keys.size) return [];
+  } catch { return keys; }
+  return keys;
+}
+
+/** The non-plugin workflow rows this guard must read (user rows and OTHER
+ *  plugins' rows — anything not origin 'plugin:<name>'). */
+function foreignWorkflowRows(name) {
   getDb();
+  return prepare('SELECT id, name, steps, graph FROM workflows WHERE origin IS NULL OR origin != ?')
+    .all(`plugin:${name}`);
+}
+
+/**
+ * Uninstall guard input (spec §6.3): NON-plugin workflows whose steps JSON or
+ * v2 graph references one of THIS plugin's agent keys.
+ * @param {string} name
+ * @returns {Array<{workflowId: string, name: string, keys: string[]}>}
+ */
+export function referencedPluginAgents(name) {
+  const keys = shippedKeys(name, 'agents');
+  if (!keys.size) return [];
   const out = [];
-  for (const row of prepare(
-    'SELECT id, name, steps, graph FROM workflows WHERE origin IS NULL OR origin != ?',
-  ).all(`plugin:${name}`)) {
+  for (const row of foreignWorkflowRows(name)) {
     const found = new Set();
     let steps;
     try { steps = JSON.parse(row.steps); } catch { steps = null; }
@@ -217,10 +235,46 @@ export function referencedPluginAgents(name) {
     }
     let graph;
     try { graph = JSON.parse(row.graph || 'null'); } catch { graph = null; }
-    // v2 rows: only kind 'agent' nodes carry a key (a task/end/and/or/combine
-    // card never does), so the walk is narrowed rather than key-only.
+    // v2 rows: only kind 'agent' nodes carry an agent key (a task/end/and/or/
+    // combine card never does), so the walk is narrowed rather than key-only.
     for (const node of Array.isArray(graph?.nodes) ? graph.nodes : []) {
       if (node && node.kind === 'agent' && keys.has(node.key)) found.add(node.key);
+    }
+    if (found.size) out.push({ workflowId: row.id, name: row.name, keys: [...found].sort() });
+  }
+  return out;
+}
+
+/**
+ * The same guard for SHIPPED SCRIPTS (spec §8.2). No `steps` walk: the v1
+ * vocabulary had no script card, so only a v2 graph can place one.
+ *
+ * A key ANOTHER owner holds on this host does not count. `worca workflow export
+ * --format plugin` bundles the user's script under its own key, so on the author's
+ * host the plugin's copy collides with the user's and is never loaded: the workflow
+ * runs the USER's script, and removing the plugin breaks nothing. Without this an
+ * author who links their own export could never remove it. A key NOBODY holds (the
+ * plugin is disabled) still guards — enabling it again is what would mend the row.
+ * @param {string} name
+ * @returns {Array<{workflowId: string, name: string, keys: string[]}>}
+ */
+export function referencedPluginScripts(name) {
+  const keys = shippedKeys(name, 'scripts');
+  if (!keys.size) return [];
+  let live = {};
+  try { live = loadScriptRegistry(); } catch { live = {}; }
+  for (const k of [...keys]) {
+    const held = Object.hasOwn(live, k) ? live[k] : null;
+    if (held && held.origin !== `plugin:${name}`) keys.delete(k);
+  }
+  if (!keys.size) return [];
+  const out = [];
+  for (const row of foreignWorkflowRows(name)) {
+    const found = new Set();
+    let graph;
+    try { graph = JSON.parse(row.graph || 'null'); } catch { graph = null; }
+    for (const node of Array.isArray(graph?.nodes) ? graph.nodes : []) {
+      if (node && node.kind === 'script' && keys.has(node.key)) found.add(node.key);
     }
     if (found.size) out.push({ workflowId: row.id, name: row.name, keys: [...found].sort() });
   }

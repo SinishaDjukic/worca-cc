@@ -50,6 +50,11 @@ const GIT_NAV_SUBCOMMANDS = new Set(['checkout', 'switch', 'fetch']);
 // becomes the same `memory-changed` broadcast the REST routes emit (ui/server.mjs emitMemoryChanged).
 // The scope key rides the tool RESULT (`scopeKey`), like pokeCommentWrite reads `comment.runId`.
 const MEMORY_WRITE_TOOLS = new Set(['mcp__worca__remember', 'mcp__worca__forget']);
+// …and the script writer (scripts-workbench-design.md §3.3, §9.1): save_script writes a file
+// under ~/.worca-cc/scripts in the CHILD, so the parent turns a successful call into the same
+// `scripts-changed` broadcast the REST routes emit — a script the chat saved shows up in an
+// open Scripts tab. There is no delete tool, and test_script writes nothing outside the bench.
+const SCRIPT_WRITE_TOOLS = new Set(['mcp__worca__save_script']);
 // The direct schedule writes (docs/scheduled-runs.md "Ask Worca"): reversible, never a run start.
 const SCHEDULE_WRITE_TOOLS = new Set(['mcp__worca__pause_schedule', 'mcp__worca__resume_schedule',
   'mcp__worca__skip_next_run', 'mcp__worca__mark_schedule_activity_read']);
@@ -144,6 +149,10 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'read_memory': return input?.name ? `Reading memory: ${input.name}` : 'Reading memory';
     case 'remember': return input?.name ? `Saving memory: ${input.name}` : 'Saving memory';
     case 'forget': return input?.name ? `Removing memory: ${input.name}` : 'Removing memory';
+    case 'list_scripts': return 'Looking at scripts';
+    case 'get_script': return input?.key ? `Reading script: ${input.key}` : 'Reading a script';
+    case 'save_script': return input?.key ? `Saving script: ${input.key}` : 'Saving a script';
+    case 'test_script': return input?.key ? `Testing script: ${input.key}` : 'Testing a script';
     case 'list_schedules': return 'Looking at schedules';
     case 'get_schedule': return 'Reading a schedule';
     case 'list_schedule_activity': return 'Reading schedule activity';
@@ -165,6 +174,40 @@ const resultText = (content) => {
   if (Array.isArray(content)) return content.filter((c) => c && c.type === 'text' && typeof c.text === 'string').map((c) => c.text).join('');
   return '';
 };
+
+// ── script tools on the thread row (scripts-workbench-design.md §9.3) ─────────
+const SCRIPT_TOOL_NAMES = new Set(['list_scripts', 'get_script', 'save_script', 'test_script']);
+
+/**
+ * The key a script tool was called with, stamped on the block at the CALL: a save_script input
+ * is a whole program, so past blockIoMaxChars the persisted input is the { _truncated, preview }
+ * stub and input.key is gone. '' for a script tool with no key, null for every other tool.
+ */
+export function scriptToolKey(name, input = {}) {
+  if (!SCRIPT_TOOL_NAMES.has(short(name))) return null;
+  return typeof input?.key === 'string' ? input.key.trim().slice(0, 64) : '';
+}
+
+/**
+ * What a script tool's RESULT adds to its thread row: `save script runTests → created`,
+ * `test script runTests → blocking, exit 1`. Pure, tiny and enum-shaped on purpose — it is
+ * merged into the persisted block.script, so nothing free-text (which would need redaction)
+ * rides along. null = the row keeps its ordinary shape.
+ */
+export function scriptResultNote(name, text, isError = false) {
+  const n = short(name);
+  if (isError || (n !== 'save_script' && n !== 'test_script')) return null;
+  let parsed = null;
+  try { parsed = JSON.parse(text); } catch { return null; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  if (n === 'save_script') return { saved: parsed.ok === true ? (parsed.created === true ? 'created' : 'updated') : 'not saved' };
+  const r = parsed.ok === true && parsed.result && typeof parsed.result === 'object' ? parsed.result : null;
+  if (!r) return { status: 'not run' };
+  return {
+    status: typeof r.status === 'string' ? r.status.slice(0, 16) : null,
+    exitCode: Number.isInteger(r.exitCode) ? r.exitCode : null,
+  };
+}
 
 /**
  * @param {object} o
@@ -202,6 +245,7 @@ export function createTurnReducer({
   onCommentMutation = null,
   onWorktreeMutation = null,
   onMemoryMutation = null,
+  onScriptMutation = null,        // save_script RESULT { ok: true, key, created } → { key, action }
   estimateLiveCost = null,
   attachmentNames = {},
   resolveCost = null,
@@ -388,7 +432,9 @@ export function createTurnReducer({
         } else {
           fullInputs.set(c.id, input);
           label(labelForTool(c.name, input, attachmentNames));
-          upsertBlock({ kind: 'tool', id: c.id, name: c.name, input: clipJson(input, limits.blockIoMaxChars), status: 'running', durationMs: null });
+          const scriptKey = scriptToolKey(c.name, input);
+          upsertBlock({ kind: 'tool', id: c.id, name: c.name, input: clipJson(input, limits.blockIoMaxChars), status: 'running', durationMs: null,
+            ...(scriptKey === null ? {} : { script: { key: scriptKey } }) });          // §9.3: the row's key, whatever the clip does
           // P3: the workflow card exists from the tool_use on (state 'building' — the four-step trace), so the
           // START is a hook too. Sync: the block must precede any frame the tool result produces.
           if (c.name === 'mcp__worca__propose_workflow' && typeof onWorkflowStart === 'function') {
@@ -445,6 +491,18 @@ export function createTurnReducer({
     } catch { /* unparseable result — no poke; the next open refetches anyway */ }
   }
 
+  // And for scripts: save_script REFUSES by returning { ok: false, errors } with no is_error
+  // flag (that is what lets the model correct itself), so the result body — not the flag — is
+  // what decides whether anything was written.
+  function pokeScriptWrite(name, text, isError) {
+    if (isError || !SCRIPT_WRITE_TOOLS.has(name) || typeof onScriptMutation !== 'function') return;
+    try {
+      const parsed = JSON.parse(text);
+      if (!parsed || parsed.ok !== true || typeof parsed.key !== 'string' || !parsed.key) return;
+      onScriptMutation({ key: parsed.key, action: parsed.created === true ? 'created' : 'updated' });
+    } catch { /* unparseable result — no poke; the next open refetches anyway */ }
+  }
+
   // And for schedules: pause / resume / skip / mark-read succeeded in the CHILD, so the parent
   // broadcasts the same schedules-changed / notifications-changed frames the REST routes emit.
   function pokeScheduleWrite(name, isError) {
@@ -466,6 +524,7 @@ export function createTurnReducer({
         pokeCommentWrite(ct.name, text, c.is_error);
         pokeWorktreeMutation(ct.name, ct.input, c.is_error);
         pokeMemoryWrite(ct.name, text, c.is_error);
+        pokeScriptWrite(ct.name, text, c.is_error);
         pokeScheduleWrite(ct.name, c.is_error);
         continue;
       }
@@ -493,6 +552,8 @@ export function createTurnReducer({
       b.status = c.is_error ? 'error' : 'done';
       b.durationMs = elapsed(b.id);
       if (c.is_error) b.error = redact(clipStr(text, limits.blockIoMaxChars));
+      const note = scriptResultNote(b.name, text, c.is_error);
+      if (note) b.script = { ...(b.script || {}), ...note };                       // §9.3: the row shows what came back
       upsertBlock(b);
       if (b.name === 'mcp__worca__propose_run' && typeof onProposal === 'function') {
         let childOk = null;
@@ -542,6 +603,7 @@ export function createTurnReducer({
       pokeCommentWrite(b.name, text, c.is_error);
       pokeWorktreeMutation(b.name, fullInputs.get(b.id), c.is_error);
       pokeMemoryWrite(b.name, text, c.is_error);
+      pokeScriptWrite(b.name, text, c.is_error);
       pokeScheduleWrite(b.name, c.is_error);
     }
   }

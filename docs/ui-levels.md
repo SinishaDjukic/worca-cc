@@ -129,7 +129,7 @@ be skipped by forgetting it.
 | Ask Worca pill, sidebar spend indicator, the mode item | S |
 | Statistics, Workflow Composer, Workspaces | A |
 | Schedules | A — kept visible at every level while anything is scheduled, missed, repeating or unread |
-| Team metrics, Team policy, Agents | E |
+| Team metrics, Team policy, Nodes (Agents, Scripts) | E — Nodes is the one entry Simple never keeps: with Agents or Scripts open, the whole group stays hidden and the banner says where you are; Advanced keeps it with the open child |
 
 ### New pipeline
 
@@ -175,8 +175,11 @@ be skipped by forgetting it.
 |---|---|
 | Saved pipelines, canvas editing, agent palette, Save, Import, Export as JSON, validation chips | A |
 | Inspector: model, effort | A |
+| Script inspector: origin and runtime chips, params (what the card runs is never hidden); the Import dialog's command list | A |
 | "Create agent…" in the palette (wizard with name, description, system prompt) | A |
 | AND / OR / Combine nodes and input count | E |
+| Scripts group in the palette (placing a card that runs a command) | E |
+| Script inspector: timeout, await all inputs, port list and port editor | E |
 | Inspector: fan-out, sub-agent model, ask questions, await all inputs, seed the plan store, port list; loop max cycles | E |
 | Legend, save-dialog Domain, export as skill or plugin, legacy and archived rows | E |
 
@@ -184,6 +187,10 @@ be skipped by forgetting it.
 
 Everything on the page, and the full agent form (runner type, ports, side
 effect, mock role, workspace variants).
+
+### Scripts (page: E)
+
+Everything on the page: the list, the runtime step, the workspace and the bench under its editor.
 
 ### Projects and Workspaces
 

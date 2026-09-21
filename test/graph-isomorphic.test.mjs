@@ -77,3 +77,14 @@ test('two agent nodes with the same key are told apart by their wiring', () => {
   assert.equal(m.get('a'), 'z_1');
   assert.equal(m.get('b'), 'z_2');
 });
+
+test('a script node is identified by its key, like an agent node', () => {
+  assert.notEqual(nodeLabel({ kind: 'script', key: 'shell', config: {} }), nodeLabel({ kind: 'script', key: 'gitDiff', config: {} }));
+  assert.notEqual(nodeLabel({ kind: 'script', key: 'shell', config: {} }), nodeLabel({ kind: 'agent', key: 'shell', config: {} }));
+  // v2 R7: what a script card RUNS is topology, not tuning — a different command is a different graph.
+  assert.notEqual(nodeLabel({ kind: 'script', key: 'shell', config: { params: { command: 'npm test' } } }),
+    nodeLabel({ kind: 'script', key: 'shell', config: { params: { command: 'rm -rf build' } } }));
+  assert.notEqual(nodeLabel({ kind: 'script', key: 'shell', config: {} }), nodeLabel({ kind: 'script', key: 'shell', config: { awaitAll: true } }));
+  assert.equal(nodeLabel({ kind: 'script', key: 'shell', config: {} }), nodeLabel({ kind: 'script', key: 'shell', config: { timeoutMs: 5000, mock: { summary: 'x' } } }),
+    'timeoutMs and mock are tuning, invisible like model/effort');
+});

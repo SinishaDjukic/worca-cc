@@ -173,3 +173,17 @@ test('agentFile is a path field: plain basename only (C-1)', () => {
   assert.deepEqual(errs(base({ agentFile: undefined })), []);
   assert.equal(normalizeAgentMeta(base({ agentFile: 'worca-cc-docs.md' })).meta.agentFile, 'worca-cc-docs.md');
 });
+
+test('the port readers are exported for script-meta; noPromptFields refuses as/directive/expands and sets no default `as`', async () => {
+  const { readInputs, readOutputs, readVerdict } = await import('../src/shared/graph/agent-meta.mjs');
+  const errors = [];
+  const err = (m) => errors.push(m);
+  const ins = readInputs([{ id: 'plan', type: 'md' }, { id: 'x', type: 'md', as: 'file' }], err, () => {}, { noPromptFields: true });
+  assert.deepEqual(ins[0], { id: 'plan', type: 'md', required: true });
+  assert.deepEqual(errors, ['inputs.x: as is a prompt-side field — a script input does not take it']);
+  assert.deepEqual(readOutputs([], false, err, { allowEmptyOutputs: true }), []);
+  assert.equal(errors.length, 1);
+  readOutputs([], false, err, {});
+  assert.equal(errors.at(-1), 'at least one output port is required');
+  assert.deepEqual(readVerdict({ filename: 'v.json' }, err), { filename: 'v.json' });
+});

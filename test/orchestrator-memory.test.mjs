@@ -438,6 +438,31 @@ test('junk in a store scope never blocks the run\'s memory writes, and is logged
   assert.equal(seen[0].junk, false, 'and it never reaches the mount (captured live: teardown removes the checkout)');
 });
 
+test('a defragment run hands the agent the scope health it was started for: the task document carries the reasons and the always-on budget', { timeout: 120000 }, async () => {
+  await rm(memoryRoot(), { recursive: true, force: true });
+  const dir = gitDir('mem');
+  await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'a', `${'Rule A. '.repeat(40)}\n`, { source: 'user', now: NOW, caps: CAPS });
+  await writeMemory(memoryRoot(), GLOBAL_SCOPE, 'b', 'Rule B.\n', { source: 'user', now: NOW, caps: CAPS });
+  await bumpScopeState(memoryRoot(), GLOBAL_SCOPE, { writesSinceDefrag: 99 });
+  let task = null;
+  const orch = createOrchestrator({
+    projectDir: dir, workflowId: 'wf_memory_defrag', memoryScope: 'global', prompt: 'Defragment global memory.', claude: { mock: true }, auto: true,
+    runners: { producer: async (ctx) => { if (ctx.node.key === 'memoryDefragmenter') task = await readFile(ctx.bindings.task.path, 'utf8'); return runAgentExecution(ctx); } },
+  });
+  assert.equal((await orch.run()).status, 'done');
+  assert.match(task, /## Original request\n\nDefragment global memory\./, 'the user request is still the task');
+  assert.match(task, /\n## Memory health\n/);
+  assert.match(task, /Level: overdue\./);
+  assert.match(task, /- 99 memory writes since the last defragment/);
+  assert.match(task, /files WITHOUT `paths`[^\n]*— now \d+ in 2 files/);
+  // An ordinary run's task document never carries the section.
+  let plain = null;
+  const o2 = createOrchestrator({ projectDir: gitDir('mem'), workflowId: 'wf_default', prompt: 'demo task', claude: { mock: true }, auto: true,
+    runners: { producer: async (ctx) => { if (plain === null && ctx.bindings?.task?.path) plain = await readFile(ctx.bindings.task.path, 'utf8'); return runAgentExecution(ctx); } } });
+  assert.equal((await o2.run()).status, 'done');
+  assert.ok(plain && !plain.includes('## Memory health'), 'only a defragment run is briefed');
+});
+
 test('wf_memory_defrag + memoryScope global: one-scope mount, the mock merges, sync lands as defrag:, .state stamped, project scope untouched', { timeout: 120000 }, async () => {
   await rm(memoryRoot(), { recursive: true, force: true });
   const dir = gitDir('mem');

@@ -75,6 +75,7 @@ import {
   buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
   selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
 } from '../src/core/ask/prompt.mjs';
+import { askScriptPromptInput } from '../src/core/ask/script-deps.mjs';
 import {
   classifyExtension as askClassifyExtension, sniffMime as askSniffMime,
 } from '../src/core/ask/attachment-kind.mjs';
@@ -148,6 +149,8 @@ import {
   saveGraphWorkflow, importGraphWorkflow, exportGraphJson, workflowFileSlug, nodeDefaultsError,
 } from '../src/core/workflow-share.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
+import { loadScriptRegistry } from '../src/core/script-registry.mjs';
+import { probePython, pythonRuntimeState } from '../src/core/graph/python-probe.mjs';
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
 } from '../src/core/worktree.mjs';
@@ -172,7 +175,14 @@ import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
 import { createAgentGen } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
 import {
-  listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin,
+  listScripts, readScript, createScript, updateScript, deleteScript, duplicateScript, writeCases,
+  SCRIPT_KEY_RE,
+} from '../src/core/script-store.mjs';
+
+import { createBench, sweepBenchDirs, benchRoot } from '../src/core/script-bench.mjs';
+import { PORT_ID_RE } from '../src/shared/graph/constants.mjs';
+import {
+  listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin, pythonNoticeFor,
   setPluginEnabled, doctorPlugin, linkPlugin,
   listOrphanPluginData, purgePluginData,
 } from '../src/core/plugin-store.mjs';
@@ -357,6 +367,12 @@ const SCAN_EVENT_NAMES = ['scan-progress', 'scan-done', 'scan-error'];
 // a NEW family in the SAME runs Map. createAgentGen emits many agentgen-progress
 // then exactly one terminal agentgen-done OR agentgen-error.
 const AGENTGEN_EVENT_NAMES = ['agentgen-progress', 'agentgen-done', 'agentgen-error'];
+// The scriptbench-* family (Scripts workbench §4.1): one more family in the same
+// runs Map. createBench emits many scriptbench-line then exactly one terminal
+// scriptbench-done OR scriptbench-error. A bench is NOT a run: no DB row, no
+// History entry, no ledger and no cost (W15) — only this buffer.
+const SCRIPTBENCH_EVENT_NAMES = ['scriptbench-line', 'scriptbench-done', 'scriptbench-error'];
+const MAX_BENCH_ENTRIES = 8;   // finished bench entries kept in the runs Map (startScriptBench evicts the rest)
 const MAX_BUFFER = 5000;
 
 // ---------------------------------------------------------------------------
@@ -403,20 +419,23 @@ wss.on('connection', (ws, req) => {
   let requestedRunId = null;
   let requestedScanId = null;
   let requestedGenId = null;
+  let requestedBenchId = null;
   let requestedThreadId = null;
   try {
     const u = new URL(req.url, 'http://localhost');
     requestedRunId = u.searchParams.get('runId');
     requestedScanId = u.searchParams.get('scanId');
     requestedGenId = u.searchParams.get('genId');
+    requestedBenchId = u.searchParams.get('benchId');
     requestedThreadId = u.searchParams.get('threadId');
   } catch {
     requestedRunId = null;
     requestedScanId = null;
     requestedGenId = null;
+    requestedBenchId = null;
     requestedThreadId = null;
   }
-  const id = requestedRunId || requestedScanId || requestedGenId;
+  const id = requestedRunId || requestedScanId || requestedGenId || requestedBenchId;
 
   send(ws, { type: 'hello', runs: summarizeRuns(), ask: askHello() });
 
@@ -440,7 +459,7 @@ wss.on('connection', (ws, req) => {
     } catch {
       return;
     }
-    const subId = msg && msg.type === 'subscribe' ? (msg.runId || msg.scanId || msg.genId) : null;
+    const subId = msg && msg.type === 'subscribe' ? (msg.runId || msg.scanId || msg.genId || msg.benchId) : null;
     if (subId && runs.has(subId)) {
       replayEntry(ws, runs.get(subId));
     }
@@ -613,7 +632,11 @@ function liveDefragRun(scopeKeyStr) {
 }
 
 function summarizeRuns() {
-  return [...runs.values()].map((r) => ({
+  // W15: a bench is NOT a run. Its entry shares the runs Map for the WS replay
+  // plumbing only — leaving it here puts "bench: <key>" in every hello and the
+  // client's liveRuns() (which does NOT filter by kind) raises the rail's
+  // Running badge over an empty Running list.
+  return [...runs.values()].filter((r) => r.kind !== 'scriptbench').map((r) => ({
     runId: r.id,
     stepper: r.orch?.state?.stepper ?? null,
     pipelineId: r.pipelineId || null,
@@ -841,6 +864,47 @@ function wireAgentGen(entry) {
 }
 
 // ---------------------------------------------------------------------------
+// Wire a Bench's events onto the WebSocket, tagged with benchId. The
+// scriptbench-* family: same runs Map, same ring-buffer/replay plumbing as
+// wireAgentGen. createBench emits many scriptbench-line then exactly one
+// terminal scriptbench-done OR scriptbench-error (run() never throws). The
+// terminal result is kept on the entry: the output route reads its PATHS from
+// there, never from the URL, and a reconnecting tab replays the buffer.
+// ---------------------------------------------------------------------------
+function wireScriptBench(entry) {
+  const { benchId, orch } = entry;
+
+  // Every frame carries a per-bench sequence number. The page learns its benchId
+  // from the POST answer and THEN subscribes, so for one round trip it receives a
+  // frame both live (the broadcast) and replayed (the buffer): `seq` is what lets
+  // it keep exactly one. It lives on the entry, not on events.length — the ring
+  // buffer is spliced at MAX_BUFFER.
+  const record = (event) => {
+    entry.seq = (entry.seq || 0) + 1;
+    const tagged = { ...event, benchId, seq: entry.seq };
+    entry.events.push(tagged);
+    if (entry.events.length > MAX_BUFFER) entry.events.splice(0, entry.events.length - MAX_BUFFER);
+    broadcast(tagged);
+    return tagged;
+  };
+
+  for (const name of SCRIPTBENCH_EVENT_NAMES) {
+    subscribe(orch, name, (payload) => {
+      const event = { type: name, ...(payload && typeof payload === 'object' ? payload : { value: payload }) };
+      if (name === 'scriptbench-line') { if (entry.status === 'running' || entry.status === 'created') entry.status = 'running'; }
+      else if (name === 'scriptbench-done') {
+        // A stop still ends in `done` with a stopped RESULT; the stop route has
+        // already marked the entry, so it is not overwritten here.
+        if (entry.status !== 'stopped') entry.status = 'done';
+        entry.result = (payload && payload.result) || null;
+      } else if (name === 'scriptbench-error') entry.status = 'error';
+      record(event);
+    });
+  }
+}
+
+
+// ---------------------------------------------------------------------------
 // Teams ingress (chat-connectivity-design.md §4.7) — the ONE deliberate,
 // auditable exemption from the loopback guard below: Bot Framework can only
 // deliver inbound Teams activities to a public HTTPS endpoint (via a
@@ -928,6 +992,9 @@ app.use((req, res, next) => {
 // over-budget upload still reaches the route's OWN clear 400/413, not a raw
 // parser error.
 app.post('/api/ask/threads/:id/messages', express.json({ limit: '64mb' }));
+// A script's saved cases are inline text: 32 cases x 256 KiB PER PORT is legal (workbench
+// spec §3.2) and does not fit the global 8 MB, so the one route that saves them all gets room.
+app.put('/api/scripts/:key/cases', express.json({ limit: '64mb' }));
 app.use(express.json({ limit: '8mb' }));
 
 if (HLJS_ASSETS) {
@@ -4834,6 +4901,9 @@ function sendWorkflowShareError(res, err) {
   // line, verbatim.
   if (code === 'RESERVED_NAME') return res.status(422).json({ error: message });
   if (code === 'ID_TAKEN') return res.status(409).json({ error: message, id: err.id });
+  // P10: a script import the user has not confirmed is well-formed but conflicts
+  // with a confirmation not yet given; `scriptNodes` are the commands to show first.
+  if (code === 'SCRIPTS_UNCONFIRMED') return res.status(409).json({ error: message, code, scriptNodes: err.scriptNodes || [] });
   if (code === 'NOT_FOUND') return res.status(404).json({ error: message });
   return res.status(500).json({ error: message });
 }
@@ -4903,9 +4973,13 @@ app.post('/api/workflows/import-json', async (req, res) => {
   const src = body.workflow && typeof body.workflow === 'object' && !Array.isArray(body.workflow) ? body.workflow : null;
   if (!src) return badRequest(res, 'workflow (the exported JSON object) is required');
   try {
+    // D18: a dry run validates and lists the script commands the Import dialog must show first.
+    const dryRun = body.dryRun === true;
     const r = await importGraphWorkflow(src, {
-      name: typeof body.name === 'string' ? body.name : undefined, agentsDir: AGENTS_DIR,
+      name: typeof body.name === 'string' ? body.name : undefined, agentsDir: AGENTS_DIR, dryRun,
+      acceptScripts: body.acceptScripts === true,
     });
+    if (dryRun) return res.json({ scriptNodes: r.scriptNodes, warnings: r.warnings, requestedName: r.requestedName });
     return res.status(201).json(r);
   } catch (err) {
     return sendWorkflowShareError(res, err);
@@ -5596,10 +5670,11 @@ function askValidateScope(raw) {
   return { ok: true, scope: { pinned: true, [keys[0]]: cv.context[keys[0]] } };
 }
 
-/** The system prompt of ONE Ask turn: the rules and the catalog, byte-stable. Memory is mounted,
- *  not rendered (native-rules revision) — see createAskTurn's memoryProject. */
+/** The system prompt of ONE Ask turn: the rules, the catalog, and — only when the chat's
+ *  "Create and run scripts" pref is on (W20) — the scripts section with the runtimes this host
+ *  actually has (the python probe, cached 60 s). Memory is mounted, not rendered. */
 async function askSystemPromptFor(catalog) {
-  return askBuildSystemPrompt(catalog);
+  return askBuildSystemPrompt(catalog, { scripts: await askScriptPromptInput() });
 }
 
 /** "scheduled Sat Sep 19, 02:00 (run 1a2b…)" / "repeats: Every weekday at 02:00 (sch_…)" / "proposes: …" — or ''. */
@@ -5877,6 +5952,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         onMemoryMutation: ({ scope }) => {
           if (scope === 'global' || (typeof scope === 'string' && scope.startsWith('projects/') && PROJECT_KEY_RE.test(scope.slice('projects/'.length)))) emitMemoryChanged(scope);
         },
+        // A save_script in the MCP child is the same change a REST write makes (spec §3.3):
+        // the open Scripts tabs drop their list and the composer marks its script list dirty.
+        onScriptMutation: () => { emitChanged('scripts-changed', 'updated'); },
         trackRun: (input, { pin } = {}) => askTrackRun(id, input, pin ?? null),
         // pause / resume / skip / mark-read in the MCP child: the Schedules page and the badges repaint.
         onScheduleMutation: () => { emitChanged('schedules-changed', 'ask'); emitChanged('notifications-changed'); },
@@ -6432,6 +6510,265 @@ app.delete('/api/agents/:key', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// /api/scripts* -> the script registry (spec §8.4): built-in scripts/ + the user
+// layer + enabled plugins, D16-filtered against the agent registry. The write half
+// (CRUD, duplicate, cases) is below, delegated to src/core/script-store.mjs.
+// ---------------------------------------------------------------------------
+function scriptRegistryNow() {
+  return loadScriptRegistry({ agentKeys: Object.keys(loadAgentRegistry(AGENTS_DIR)) });
+}
+
+/**
+ * Workbench spec §7 / W17: a python card this host cannot run is flagged ON THE
+ * WIRE, so the composer's V4 names it the moment the card is placed and the
+ * Scripts list can chip it. The probe is 60 s-cached, so this costs at most one
+ * spawn a minute. The REGISTRY is deliberately never stamped: it is loaded
+ * synchronously and the probe is not, and a run must be gated by its own
+ * preflight — with a fresh probe, at run time — not by a flag baked into a
+ * snapshot taken when some browser last asked for a list.
+ */
+async function stampRuntimeMissing(list) {
+  if (!list.some((m) => m.runtime === 'python')) return list;
+  const probe = await probePython();
+  if (probe.ok) return list;
+  return list.map((m) => (m.runtime === 'python' ? { ...m, runtimeMissing: true } : m));
+}
+
+app.get('/api/scripts', async (req, res) => {
+  try {
+    // listScripts() IS the registry, in the same order, with caseCount stamped
+    // (the list card's case chip). scriptRegistryNow() stays for the graph
+    // routes, which need the raw index for registryPortsFn.
+    res.json({ scripts: await stampRuntimeMissing(await listScripts()) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// Literal segments are registered BEFORE /api/scripts/:key, so the param route
+// can never swallow them (the POST /api/agents/generate rule).
+app.get('/api/scripts/runtimes', async (req, res) => {
+  // C8: the picker is wired once, against the real shape. The python arm is the
+  // real probe (workbench spec §7; never rejects, 60 s-cached); node and shell are
+  // guaranteed by the host itself.
+  res.json({
+    node: { ok: true, version: process.version },
+    shell: { ok: true, path: process.platform === 'win32' ? (process.env.ComSpec || 'cmd.exe') : '/bin/sh' },
+    python: pythonRuntimeState(await probePython()),
+  });
+});
+
+/**
+ * Fire-and-forget bench run (mirrors startAgentGen). Mints nothing itself: the
+ * engine owns the id and tags every event with it, so the runs-Map key, the
+ * buffered events and the `?benchId=` replay all agree on one id.
+ * @returns {string} benchId
+ */
+function startScriptBench(request) {
+  const orch = createBench(request);
+  const benchId = orch.id;
+  const entry = {
+    id: benchId, benchId, orch, kind: 'scriptbench', projectDir: null,
+    title: `bench: ${request.key}`, status: 'running',
+    startedAt: new Date().toISOString(), events: [], pendingQuestion: null, result: null, seq: 0,
+  };
+  runs.set(benchId, entry);
+  // Nothing else ever deletes a bench entry (runs.delete fires for pipeline
+  // lineages only), and Run is the page's main verb: keep the newest few so the
+  // output route and a reconnect can still read them, drop the rest with their
+  // <= 5000 buffered lines and 256 KiB-per-output results.
+  const benches = [...runs.values()].filter((e) => e.kind === 'scriptbench');
+  for (const old of benches.slice(0, Math.max(0, benches.length - MAX_BENCH_ENTRIES))) {
+    if (old.status !== 'running') runs.delete(old.id);
+  }
+  wireScriptBench(entry);
+
+  Promise.resolve()
+    .then(() => orch.run())
+    .catch((err) => {
+      // run() never throws (it emits scriptbench-error); this is startScan's
+      // defensive backstop, surfacing an unexpected throw as a tagged error.
+      // It carries the entry's next `seq` like every other frame (C17), or a
+      // subscribe replay would deliver this one twice.
+      entry.seq = (entry.seq || 0) + 1;
+      const event = { benchId, seq: entry.seq, type: 'scriptbench-error', message: err && err.message ? err.message : String(err), code: null };
+      entry.status = 'error';
+      entry.events.push(event);
+      broadcast(event);
+    });
+
+  return benchId;
+}
+
+// The §4.2 request rides through untouched: the engine validates it and reports
+// every refusal (unknown key, bad param, cap hit) as ONE scriptbench-error on
+// the socket. Only the key shape is checked here, so a malformed :key-shaped
+// value can never reach the store.
+app.post('/api/scripts/bench', (req, res) => {
+  const body = req.body || {};
+  const key = typeof body.key === 'string' ? body.key.trim() : '';
+  if (!SCRIPT_KEY_RE.test(key)) return res.status(404).json({ error: 'script not found' });
+  try {
+    res.json({ benchId: startScriptBench({ ...body, key }) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// Idempotent stop (the /api/agents/generate/stop shape): an unknown or finished
+// bench still answers ok.
+app.post('/api/scripts/bench/stop', (req, res) => {
+  const benchId = req.body && typeof req.body.benchId === 'string' ? req.body.benchId : '';
+  const entry = benchId ? runs.get(benchId) : null;
+  if (entry && entry.kind === 'scriptbench' && entry.orch && typeof entry.orch.stop === 'function') {
+    try { entry.orch.stop(); } catch { /* best-effort */ }
+    entry.status = 'stopped';
+  }
+  res.json({ ok: true });
+});
+
+// The full text of one output (the WS result carries at most 256 KiB). The file
+// PATH comes from the entry's stored result — never from the URL — so this route
+// cannot be walked; `:port` is only a lookup key into that result.
+app.get('/api/scripts/bench/:benchId/output/:port', async (req, res) => {
+  const entry = runs.get(req.params.benchId);
+  if (!entry || entry.kind !== 'scriptbench' || !entry.result) return res.status(404).json({ error: 'bench not found' });
+  if (!PORT_ID_RE.test(req.params.port)) return res.status(404).json({ error: 'output not found' });
+  const caseId = typeof req.query.caseId === 'string' ? req.query.caseId : '';
+  // A Run-all result is a list of per-case results (§4.3), so it needs ?caseId=.
+  const result = Array.isArray(entry.result.cases)
+    ? (entry.result.cases.find((c) => c.caseId === caseId) || {}).result
+    : entry.result;
+  // hasOwn: PORT_ID_RE admits `constructor` / `toString`, which a plain lookup would find on Object.prototype.
+  const out = result && result.outputs && Object.hasOwn(result.outputs, req.params.port) ? result.outputs[req.params.port] : null;
+  if (!out || !out.path) return res.status(404).json({ error: 'output not found' });
+  // STREAMED, not read into a string: a bench output is whatever the script
+  // wrote. readFile() buffered the whole file (a 600 MB log spiked the server by
+  // half a gigabyte) and past ~512 MiB threw "Invalid string length", which this
+  // catch then reported as a missing output.
+  let st;
+  try { st = await fsp.stat(out.path); } catch { return res.status(404).json({ error: 'output not found' }); }
+  if (!st.isFile()) return res.status(404).json({ error: 'output not found' });
+  res.type('text/plain; charset=utf-8').set('Content-Length', String(st.size));
+  const stream = fs.createReadStream(out.path);
+  stream.on('error', () => { res.destroy(); });
+  res.on('close', () => stream.destroy());
+  stream.pipe(res);
+});
+
+
+app.get('/api/scripts/:key', async (req, res) => {
+  const key = req.params.key;
+  if (!SCRIPT_KEY_RE.test(key)) return res.status(404).json({ error: 'script not found' });
+  try {
+    const data = await readScript(key);
+    if (!data) return res.status(404).json({ error: 'script not found' });
+    // The meta is spread FLAT (the Scripts page and the composer read `key`,
+    // `runtime`, `ports` off the top level); the store's reads ride beside it.
+    res.json({
+      ...data.meta,
+      source: data.source,
+      sourceWin32: data.sourceWin32,
+      sourcePath: data.sourcePath,
+      sourceTruncated: data.sourceTruncated,
+      cases: data.cases,
+      userCases: data.userCases,
+      casesWritable: data.casesWritable,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+
+// ---------------------------------------------------------------------------
+// The write half (spec §3.3–§3.4): user-layer CRUD, duplicate and cases,
+// delegated to src/core/script-store.mjs. The store's err.code vocabulary IS
+// the agent store's, so agentErrorStatus maps it unchanged. `by: 'ui'` stamps
+// every save from this process (W19); the CLI and Ask Worca call core directly
+// with their own stamp. Each mutation pokes every open tab with the bare
+// `scripts-changed` broadcast, so a script saved elsewhere appears without a
+// reload — the client drops its cached list and marks the palette dirty.
+// ---------------------------------------------------------------------------
+const STORE_ERROR_CODES = new Set(['NOT_FOUND', 'BAD_REQUEST', 'PLUGIN', 'BUILTIN', 'DUPLICATE', 'REFERENCED']);
+// Only the store's OWN vocabulary is quoted back to the page. An fs failure
+// (EACCES on the scripts dir, a full disk) carries the absolute home path in its
+// message, which no banner may surface (agent-store.mjs#propagateToVariants).
+const scriptError = (res, err) => {
+  const code = err && err.code;
+  return res
+    .status(agentErrorStatus(code))
+    .json({ error: STORE_ERROR_CODES.has(code) && err.message ? err.message : `the script store failed (${code || 'unknown error'})` });
+};
+
+app.post('/api/scripts', async (req, res) => {
+  const body = req.body || {};
+  try {
+    const created = await createScript({ meta: body.meta, source: body.source, sourceWin32: body.sourceWin32, by: 'ui' });
+    emitChanged('scripts-changed', 'created');
+    res.status(201).json(created);
+  } catch (err) {
+    scriptError(res, err);
+  }
+});
+
+app.put('/api/scripts/:key', async (req, res) => {
+  const key = req.params.key;
+  if (!SCRIPT_KEY_RE.test(key)) return res.status(404).json({ error: 'script not found' });
+  const body = req.body || {};
+  try {
+    const updated = await updateScript(key, { meta: body.meta, source: body.source, sourceWin32: body.sourceWin32, by: 'ui' });
+    emitChanged('scripts-changed', 'updated');
+    res.json(updated);
+  } catch (err) {
+    scriptError(res, err);
+  }
+});
+
+app.delete('/api/scripts/:key', async (req, res) => {
+  const key = req.params.key;
+  if (!SCRIPT_KEY_RE.test(key)) return res.status(404).json({ error: 'script not found' });
+  try {
+    const r = await deleteScript(key);
+    emitChanged('scripts-changed', 'deleted');
+    res.json(r);
+  } catch (err) {
+    scriptError(res, err);
+  }
+});
+
+app.post('/api/scripts/:key/duplicate', async (req, res) => {
+  const key = req.params.key;
+  if (!SCRIPT_KEY_RE.test(key)) return res.status(404).json({ error: 'script not found' });
+  const newKey = req.body && typeof req.body.newKey === 'string' ? req.body.newKey.trim() : '';
+  if (!newKey) return badRequest(res, 'newKey is required');
+  try {
+    const copy = await duplicateScript(key, newKey, 'ui');
+    emitChanged('scripts-changed', 'created');
+    res.status(201).json(copy);
+  } catch (err) {
+    scriptError(res, err);
+  }
+});
+
+app.put('/api/scripts/:key/cases', async (req, res) => {
+  const key = req.params.key;
+  if (!SCRIPT_KEY_RE.test(key)) return res.status(404).json({ error: 'script not found' });
+  const cases = req.body && Array.isArray(req.body.cases) ? req.body.cases : null;
+  if (!cases) return badRequest(res, 'cases must be an array');
+  try {
+    // W18: for a built-in or plugin key this lands in the user layer as an
+    // overlay — a tests file with no meta beside it.
+    const r = await writeCases(key, cases);
+    emitChanged('scripts-changed', 'cases');
+    res.json(r);
+  } catch (err) {
+    scriptError(res, err);
+  }
+});
+
+
+// ---------------------------------------------------------------------------
 // /api/plugins* -> plugin lifecycle, delegated to src/core/plugin-store.mjs /
 // plugin-repo.mjs / plugin-config.mjs (spec §6). Thin wrappers: all policy
 // (SHA pinning, symlink swap, uninstall guard, secret routing) lives in core.
@@ -6497,13 +6834,19 @@ function readInstalledManifest(name) {
   }
 }
 
-app.get('/api/plugins', (req, res) => {
+app.get('/api/plugins', async (req, res) => {
   try {
     const mkts = readMarketplaces().marketplaces;
+    const rows = listInstalledPlugins();
+    // The python notice (spec §8.1) is a fact about THIS host: resolved once per
+    // request, and only when some plugin ships a python script (the probe caches 60 s).
+    const anyPython = rows.some((p) => Number((p.scriptRuntimes || {}).python) > 0);
+    const notice = anyPython ? await pythonNoticeFor([{ runtime: 'python' }]) : null;
     res.json({
-      plugins: listInstalledPlugins().map((p) => ({
+      plugins: rows.map((p) => ({
         ...p,
         marketplaceName: p.marketplace && mkts[p.marketplace] ? mkts[p.marketplace].name : null,
+        pythonMissing: !!(notice && Number((p.scriptRuntimes || {}).python) > 0),
       })),
       orphans: listOrphanPluginData(),
     });
@@ -7144,7 +7487,7 @@ app.post('/api/pipelines/:id/report-issue', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Install logic (mirrors scripts/install.mjs): copy agents/*.md and
+// Install logic (mirrors tools/install.mjs): copy agents/*.md and
 // skills/worca/** into <projectDir>/.claude/...
 // ---------------------------------------------------------------------------
 async function installAgents(projectDir) {
@@ -7340,7 +7683,7 @@ app.use((err, _req, res, next) => {
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, sweptV1: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null };
+  const summary = { reconciled: 0, sweptV1: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null, bench: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -7432,6 +7775,19 @@ export async function bootMaintenance({ log } = {}) {
   } catch (err) {
     console.error(`[worca-ui] ask-worktree sweep failed: ${err && err.message ? err.message : err}`);
   }
+
+  // Script bench folders (workbench W11): the newest folder per script key
+  // outlives its run so the output tabs can still read it; 24 h later it is
+  // junk. os.tmpdir() would have been cleaned under us on macOS, hence
+  // <worcaHome>/bench and this sweep.
+  try {
+    const removed = await sweepBenchDirs(benchRoot());
+    summary.bench = { removed: removed.length };
+    if (removed.length) console.log(`[worca-ui] bench sweep: removed ${removed.length} folder(s)`);
+  } catch (err) {
+    summary.bench = { removed: 0 };
+    console.error(`[worca-ui] bench sweep failed: ${err && err.message ? err.message : err}`);
+  }
   return summary;
 }
 
@@ -7521,7 +7877,7 @@ if (isMain) {
 
 export { app, server, runs };
 export const _testing = {
-  wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen,
+  wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,

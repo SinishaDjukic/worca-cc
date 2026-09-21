@@ -597,3 +597,12 @@ test('20 an alias pin on a routed node warns on the execution result; auto/inher
   const unroutedPin = await runAgentExecution(mk({ subagentModel: 'sonnet', endpointRouted: false }));
   assert.deepEqual(unroutedPin.warnings, [], 'a pin on a normal model is honored, not warned');
 });
+
+test('runExecution dispatches kind:script to the script runner, and the runners.script seam wins', async () => {
+  const seen = [];
+  const res = await runExecution({ node: { id: 'n_s', kind: 'script', key: 'echo' }, runners: { script: async (c) => { seen.push(c.node.key); return { summary: 'seam', outputs: {} }; } } });
+  assert.deepEqual(res, { summary: 'seam', outputs: {} });
+  assert.deepEqual(seen, ['echo']);
+  await assert.rejects(runExecution({ node: { id: 'n_s', kind: 'script', key: 'echo' }, script: { meta: { runtime: 'ruby' } }, ports: {}, outputs: {}, pipelineDir: tmp('worca-exec-sd-'), claudeOpts: {} }),
+    (e) => /unknown runtime "ruby"/.test(e.message) && e.errorClass === null);
+});

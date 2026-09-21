@@ -15,7 +15,7 @@
 //   ■ End ← Reviewer.pass → plan-review.md End bound — End's ONLY line
 // Flow nodes never print a start/paused/error line; `skipped` and P8's bookend
 // executions render nothing; `token` events are never rendered.
-import { BOOKEND_EXECUTION_IDS } from '../shared/graph/constants.mjs';
+import { BOOKEND_EXECUTION_IDS, KEYED_KINDS } from '../shared/graph/constants.mjs';
 
 const nodesOf = (m) => ((m && m.graph && m.graph.nodes) || []).filter(Boolean);
 const wiresOf = (m) => ((m && m.graph && m.graph.wires) || []).filter(Boolean);
@@ -76,7 +76,7 @@ export function formatExecLine(ev, manifest, { color = (n, s) => s } = {}) {
     const tail = r.path ? ` → ${base(r.path)}` : (r.value != null ? ` → ${String(r.value)}` : '');
     return `${color('bold', '■')} ${label}${from}${tail}`;
   }
-  if (node && node.kind !== 'agent') {   // a flow card: one dim ✓ line, no ordinal / duration / cost
+  if (node && !KEYED_KINDS.includes(node.kind)) {   // a flow card: one dim ✓ line, no ordinal / duration / cost
     if (ev.status !== 'done') return '';
     return `${color('green', '✓')} ${label}${MARKED_FLOW.has(node.kind) ? flowMarker(node, m, color) : ''}`;
   }
@@ -86,7 +86,9 @@ export function formatExecLine(ev, manifest, { color = (n, s) => s } = {}) {
   const dur = ev.durationMs != null ? `  ${fmtDur(ev.durationMs)}` : '';
   if (ev.status === 'error') return `${color('red', '✗')} ${label}${ord}${dur} — ${ev.error || 'failed'}`;
   if (ev.status !== 'done') return '';   // `skipped` (and anything unknown) renders nothing
-  const cost = ev.costUsd != null ? ` · ${usd(ev.costUsd)}` : '';
+  const cost = node && node.kind === 'script'
+    ? (ev.exitCode != null ? ` · exit ${ev.exitCode}` : '')
+    : (ev.costUsd != null ? ` · ${usd(ev.costUsd)}` : '');
   const verdict = ev.verdict ? (ev.verdict.missing ? ' — no verdict written (treated as clean)' : ev.verdict.hasBlocking ? ' — blocking' : ' — clean') : '';
   return `${color('green', '✓')} ${label}${ord}${dur}${cost}${verdict}`;
 }
@@ -169,7 +171,7 @@ export function formatWorkflowProposal(w) {
   if (cues.length) lines.push(`  ${cues.join(' · ')}`);
   const nodes = p.manifest?.graph?.nodes || [];
   const wires = p.manifest?.graph?.wires || [];
-  const agents = nodes.filter((n) => n.kind === 'agent');
+  const agents = nodes.filter((n) => KEYED_KINDS.includes(n.kind));
   const ordered = Array.isArray(p.order) && p.order.length
     ? p.order.map((id) => agents.find((n) => n.id === id)).filter(Boolean)
     : agents;

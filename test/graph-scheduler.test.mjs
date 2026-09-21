@@ -510,7 +510,7 @@ test('15 exec and token events carry the documented v2 shapes', async () => {
   });
   await h.scheduler.run();
   const start = h.execEvents().find((e) => e.nodeId === 'n_make' && e.status === 'start');
-  assert.deepEqual(Object.keys(start).sort(), ['agentKey', 'executionId', 'kind', 'name', 'nodeId', 'ordinal', 'status', 'trigger']);
+  assert.deepEqual(Object.keys(start).sort(), ['agentKey', 'executionId', 'key', 'kind', 'name', 'nodeId', 'ordinal', 'status', 'trigger']);
   assert.equal(start.executionId, 'x:n_make:1');
   assert.equal(start.agentKey, 'maker');
   assert.equal(start.kind, 'cycle');
@@ -1151,4 +1151,84 @@ test('35 a paused expand settles the shell in place — the resume re-runs the W
   assert.equal(c[0].composite, 'expand', 'the resume re-expands: the expands binding survived the pause');
   assert.ok(c.some((x) => x.slice?.id === 'p1t1'), 'the fan-out ran');
   assert.equal(c.filter((x) => x.bindings?.task === undefined && !x.composite && !x.slice).length, 0, 'never a plain execution with the binding stripped');
+});
+
+/** Two script cards and one agent, all ready after the task fires. */
+const SCRIPT_PORTS = { inputs: [{ id: 'go', type: 'md', required: true }], outputs: [{ id: 'out', type: 'void', when: 'always' }] };
+function poolGraph() {
+  const template = {
+    nodes: [{ id: 'n_task', kind: 'task' }, { id: 'n_s1', kind: 'script', key: 'lint' }, { id: 'n_s2', kind: 'script', key: 'lint' },
+      { id: 'n_a', kind: 'agent', key: 'maker' }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_s1', port: 'go' } },
+      { id: 'w2', from: { node: 'n_task', port: 'task' }, to: { node: 'n_s2', port: 'go' } },
+      { id: 'w3', from: { node: 'n_task', port: 'task' }, to: { node: 'n_a', port: 'task' } }],
+  };
+  const portsFn = (n) => (n.kind === 'script' ? { ...SCRIPT_PORTS, inputs: [...SCRIPT_PORTS.inputs, AWAIT_PORT] }
+    : n.kind === 'agent' ? { ...AGENTS[n.key], inputs: [...AGENTS[n.key].inputs, AWAIT_PORT] } : flowPorts(n));
+  return { template, portsFn };
+}
+
+test('scripts run in their own pool: maxParallelScripts caps scripts, never agents, and a freed script slot launches the waiter', async () => {
+  const { template, portsFn } = poolGraph();
+  const started = [];
+  const pending = new Map();
+  const execute = (args) => {
+    if (args.node.kind === 'task') return Promise.resolve({ outputs: { task: { path: '/t.md' } } });
+    started.push(args.node.id);
+    const d = deferred();
+    pending.set(args.node.id, d);
+    return d.promise;
+  };
+  const events = [];
+  const s = createScheduler({ template, portsFn, execute, maxParallel: 4, maxParallelScripts: 1, onEvent: (n, p) => events.push({ n, ...p }) });
+  const run = s.run();
+  await tick(); await tick();
+  assert.deepEqual(started.sort(), ['n_a', 'n_s1'], 'one script (pool cap 1) and the agent (its own pool) launched together');
+  pending.get('n_s1').resolve({ outputs: { out: {} } });
+  await tick(); await tick();
+  assert.deepEqual(started.sort(), ['n_a', 'n_s1', 'n_s2'], 'the second script launched when the first freed its slot');
+  pending.get('n_s2').resolve({ outputs: { out: {} } });
+  pending.get('n_a').resolve({ outputs: { out: { path: '/o.md' } } });
+  assert.equal(await run, 'done');
+  const s1 = events.find((e) => e.n === 'exec' && e.nodeId === 'n_s1' && e.status === 'start');
+  assert.equal(s1.key, 'lint');
+  assert.equal(s1.agentKey, null, 'agentKey stays agent-only');
+  const a = events.find((e) => e.n === 'exec' && e.nodeId === 'n_a' && e.status === 'start');
+  assert.equal(a.key, 'maker');
+  assert.equal(a.agentKey, 'maker');
+  assert.equal(events.find((e) => e.n === 'exec' && e.nodeId === 'n_task').key, null, 'flow rows carry no key');
+});
+
+test('maxParallelScripts defaults from WORCA_MAX_PARALLEL_SCRIPTS (else 2); reattach restores the script counter', async () => {
+  const prev = process.env.WORCA_MAX_PARALLEL_SCRIPTS;
+  process.env.WORCA_MAX_PARALLEL_SCRIPTS = '1';
+  try {
+    const { template, portsFn } = poolGraph();
+    // A snapshot with n_s1 mid-flight (non-terminal) and the task done: reattach re-invokes n_s1 and it holds the ONE script slot.
+    const snapshot = {
+      version: 2, seq: 1, graph: template,
+      tokens: { 'n_s1.go': { seq: 1, type: 'md', path: '/t.md' }, 'n_s2.go': { seq: 1, type: 'md', path: '/t.md' }, 'n_a.task': { seq: 1, type: 'md', path: '/t.md' } },
+      outputs: { 'n_task.task': { seq: 1, type: 'md', path: '/t.md' } },
+      consumed: { n_task: {}, n_s1: { go: 1 } }, ordinals: { n_task: 1, n_s1: 1 }, wires: {}, deadEnds: [], ended: null,
+      execs: [{ executionId: 'x:n_task:1', nodeId: 'n_task', kind: 'cycle', ordinal: 1, status: 'done', bindings: {}, trigger: { wireIds: [], freshPorts: [] } },
+        { executionId: 'x:n_s1:1', nodeId: 'n_s1', kind: 'cycle', ordinal: 1, status: 'start', bindings: { go: { seq: 1, type: 'md', path: '/t.md' } }, trigger: { wireIds: ['w1'], freshPorts: ['go'] } }],
+      gates: [], asks: [], gate: null, ask: null,
+    };
+    const started = [];
+    const pending = new Map();
+    const execute = (args) => { started.push(args.node.id); const d = deferred(); pending.set(args.node.id, d); return d.promise; };
+    const s = createScheduler({ template, portsFn, execute, maxParallel: 4 });
+    s.reattach(snapshot);
+    const run = s.run();
+    await tick(); await tick();
+    assert.deepEqual(started.sort(), ['n_a', 'n_s1'], 'the restored script holds the only script slot; the agent is free to launch');
+    pending.get('n_s1').resolve({ outputs: { out: {} } });
+    await tick(); await tick();
+    assert.ok(started.includes('n_s2'));
+    pending.get('n_s2').resolve({ outputs: { out: {} } });
+    pending.get('n_a').resolve({ outputs: { out: { path: '/o.md' } } });
+    assert.equal(await run, 'done');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_MAX_PARALLEL_SCRIPTS; else process.env.WORCA_MAX_PARALLEL_SCRIPTS = prev;
+  }
 });

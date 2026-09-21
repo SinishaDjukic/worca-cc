@@ -1,21 +1,23 @@
 ---
 name: creating-worca-cc-plugins
-description: Use when creating, scaffolding, debugging, reviewing, or extending a Worca CC plugin — anything involving worca-cc-plugin.json, a task-source connector, plugin-shipped agents/skills/workflow templates, the `worca plugin` CLI, or the Plugins view.
+description: Use when creating, scaffolding, debugging, reviewing, or extending a Worca CC plugin — anything involving worca-cc-plugin.json, a task-source connector, plugin-shipped agents/scripts/skills/workflow templates, the `worca plugin` CLI, or the Plugins view.
 ---
 
 # Creating Worca CC Plugins
 
 A Worca CC plugin is a **git repo** (or a subdir one level deep) containing `worca-cc-plugin.json`.
-It contributes up to four things to the host, and ships **no UI code**.
+It contributes up to five things to the host, and ships **no UI code**.
 
 | Dir | Contributes | Executed? |
 |---|---|---|
 | `connector/*.mjs` (via `taskSources[].module`) | task-source connector | **Yes** — in an ephemeral child process |
+| `scripts/<key>.meta.json` + the program it names | pipeline scripts (node / shell / python) | **Yes** — worca spawns the program per execution |
 | `agents/<key>.md` + `<key>.meta.json` | pipeline agents (meta v2 sidecar: typed input/output ports) | No — prompt text fed to `claude -p` |
 | `skills/<name>/SKILL.md` | agent skills | No — copied into the run worktree |
 | `workflows/*.json` | pipeline templates (v2 graph JSON — one Task node, one End node) | No — validated into DB rows |
 
-**The connector is the only executable seam.** Everything else is data. Internalize this before designing anything.
+**The connector and the scripts are the executable seams.** Everything else is data.
+Internalize this before designing anything.
 
 ## Start here — always scaffold
 
@@ -35,6 +37,10 @@ worca plugin exec my-plugin main getTask --args '{"id":"X-1"}' # real call
 worca plugin exec my-plugin main listTasks --inspect           # --inspect-brk on the child
 worca plugin reimport my-plugin                                # re-read workflows/*.json after an edit
 worca plugin validate ./my-plugin --strict
+worca plugin new-script tidy --dir ./my-plugin                 # scripts/tidy.{meta.json,mjs,tests.json}
+worca plugin validate ./my-plugin --run-cases                  # lint, then RUN every shipped script case
+worca script test tidy                                         # one bench run of a linked/installed script
+worca script test tidy --all                                   # its saved cases; exit 1 = a case failed
 worca plugin doctor my-plugin
 ```
 
@@ -174,6 +180,92 @@ A workflow template is a v2 graph, and `worca plugin init` scaffolds this shape:
 
 Node ids must match `/^n_[a-z0-9]{1,32}$/`; exactly one `task` node and one `end` node are required.
 
+## Scripts (API 3)
+
+A script card runs **your program** instead of spawning Claude: worca hands it the bound
+input paths and the allocated output paths in one JSON envelope on stdin and reads one
+JSON frame back on stdout. Cost is $0 and the result is repeatable.
+
+| File | Required |
+|---|---|
+| `scripts/<key>.meta.json` | yes — meta v2, `key` = filename stem |
+| `scripts/<key>.mjs` / `.py` / `.sh` (+ `.cmd`) | the program `file` names, per runtime |
+| `scripts/<key>.tests.json` | optional — saved test cases that travel with the script |
+
+```bash
+worca plugin new-script tidy --runtime node --dir ./my-plugin
+```
+
+Scaffolds all three, already valid. `--runtime shell` writes **both** `tidy.sh` and
+`tidy.cmd`: on Windows worca runs the `win32` entry under `cmd.exe`, which cannot run a `.sh`.
+
+### The three runtime contracts
+
+`node` — the default export receives one api object and returns a frame:
+
+```js
+export default async function ({ inputs, outputs, params, ctx, log }) {
+  log('info', 'hello from a worca script');
+  return { summary: 'ok' };     // plus { outputs: { <port>: { value } }, verdict }
+}
+```
+
+`shell` — the envelope arrives as environment variables, and whatever the command prints
+is captured into every md output it did not write itself. Exit `0` is clean, exit `1` is
+blocking, anything else is an execution error (`exitCodes` in the sidecar overrides).
+
+```sh
+#!/bin/sh
+echo "checking $WORCA_IN_PLAN"     # WORCA_IN_<PORT>, WORCA_OUT_<PORT>, WORCA_PARAM_<ID>,
+                                   # WORCA_VERDICT, WORCA_CWD, WORCA_ENVELOPE
+```
+
+`python` — `main(api)`, where `api` exposes `inputs`, `outputs`, `params`, `ctx` and `log`
+both as attributes and as keys. Standard library only, python ≥ 3.8.
+
+```python
+def main(api):
+    api.log('info', 'hello from a worca script')
+    return { 'summary': 'ok' }
+```
+
+`stdout` carries the frame in `node` and `python`. `console.*` and `print` are re-routed to
+the run log, so they are safe; a direct `process.stdout.write` (or a child process that
+inherits fd 1) corrupts the frame — use `log`, or write to stderr.
+
+### Test cases
+
+`<key>.tests.json` ships the proof that the script works:
+
+```json
+{ "version": 1,
+  "cases": [
+    { "id": "sample", "name": "sample",
+      "params": { "command": "npm test" },
+      "inputs": { "plan": { "text": "# Plan" }, "done": { "fired": true } },
+      "cwd": { "kind": "scratch" },
+      "expect": { "verdict": "clean", "fired": ["log", "pass"] } } ] }
+```
+
+Inputs are inline text; a void port takes `{ "fired": true }`. A shipped case must use
+`"cwd": { "kind": "scratch" }` — a case that names a project folder cannot travel, and is
+an install-blocking error. `expect` is optional: without it a case reports its result and
+is red only when the script could not run at all.
+
+```bash
+worca plugin validate ./my-plugin --run-cases   # lint, then run every case. Exit 1 = a case failed.
+```
+
+That is the command to put in CI. What each script prints streams to stderr as
+`[<key>/<case>] …` lines, and Ctrl+C or a CI cancel stops the running script (exit 2).
+A `python` case needs python ≥ 3.8 on the CI host: without one the case FAILS with the
+interpreter sentence — it is never skipped.
+
+Keys: a script key shares ONE namespace with agent keys, and a key that a built-in script or
+a built-in agent holds (`shell`, `js`, `py`, `planner`, …) is never loaded from a plugin.
+`new-script` refuses those, the reserved names (`new`, `bench`, `runtimes`) and the Windows
+device names (`con`, `nul`, `com1`, …).
+
 ## Common mistakes
 
 | Mistake | What happens |
@@ -197,6 +289,12 @@ Node ids must match `/^n_[a-z0-9]{1,32}$/`; exactly one `task` node and one `end
 | A template referencing a key whose sidecar was rejected | ONE line naming the sidecar — the template is not re-reported rule by rule |
 | An agent key that collides with a built-in or user agent | Yours is dropped; `plugin list`/`doctor`/the Plugins card name it under "contributions ignored" |
 | Editing `workflows/*.json` in a linked dir | The DB row is stale until `worca plugin reimport <name>` |
+| A shipped case with `"cwd": {"kind": "project"}` | Install-blocking validation error — a shipped case runs in a scratch folder |
+| `<key>.tests.json` with no `<key>.meta.json` beside it | Validation error — nothing would ever read it |
+| A `shell` script with `<key>.sh` and no `win32` entry | Runs on macOS and Linux only — on Windows the file goes to `cmd.exe`, which cannot run a `.sh`. Ship the `.cmd` half |
+| A node/python script that writes no value for a declared output | Execution error `output "<port>" was not written` |
+| A script key a built-in script or agent already holds (`shell`, `planner`, …) | Yours is dropped at load; `worca plugin new-script` refuses the key up front |
+| `process.stdout.write` in a `node` script | Corrupts the result frame. `console.*` is safe — it is routed to the run log |
 
 ## The example worth reading
 
@@ -223,6 +321,9 @@ silently dropping the tracker comment on a transient blip.
 |---|---|
 | Manifest schema + validation | `src/core/plugin-manifest.mjs` |
 | Install / update / uninstall lifecycle | `src/core/plugin-store.mjs` |
+| Script registry + the runtime contract | `src/core/script-registry.mjs`, `src/core/graph/script-runner.mjs` |
+| Script store + the test bench | `src/core/script-store.mjs`, `src/core/script-bench.mjs` |
+| Shipped script cases (`validate --run-cases`) | `src/core/plugin-script-cases.mjs` |
 | Child-process protocol | `src/core/plugin-shim.mjs`, `plugin-shim-child.mjs` |
 | Config / secrets / state (per-profile buckets) | `src/core/plugin-config.mjs` |
 | Profile → project/workspace binding resolution | `src/core/source-bindings.mjs` |

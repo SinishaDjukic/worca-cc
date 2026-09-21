@@ -3,7 +3,7 @@
 // the committed fixtures (ask-worca-design.md §12).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSanitizer, assertLiveClaudeAllowed } from '../scripts/ask-capture-fixtures.mjs';
+import { createSanitizer, assertLiveClaudeAllowed } from '../tools/ask-capture-fixtures.mjs';
 
 const roots = { home: '/Users/zed', base: '/private/tmp/capture-base', repo: '/Users/zed/dev/worca-cc', tmp: '/private/tmp' };
 

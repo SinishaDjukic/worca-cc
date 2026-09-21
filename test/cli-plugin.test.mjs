@@ -6,8 +6,8 @@
 // can never create worktrees/branches inside THIS repo).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
-import { mkdtempSync } from 'node:fs';
+import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtempSync, existsSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -131,6 +131,12 @@ test('install --yes from a local git repo installs end to end (no prompt)', asyn
   const repoDir = await freshDir('worca-cc-plugin-repo-');
   const init = await run(['plugin', 'init', 'local-plugin', '--dir', repoDir], { home });
   assert.equal(init.code, 0, init.stderr);
+  // A shipped script: the receipt names it with its runtime and command.
+  await mkdir(join(repoDir, 'scripts'), { recursive: true });
+  await writeFile(join(repoDir, 'scripts', 'tidy.meta.json'), JSON.stringify({
+    key: 'tidy', metaVersion: 2, displayName: 'Tidy', runtime: 'shell', command: 'npm run tidy',
+    inputs: [], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'tidy-cycle{cycle}.md' }],
+  }));
   const g = (args) => spawnSync('git', args, { cwd: repoDir });
   g(['init', '-q', '-b', 'main']);
   g(['config', 'user.email', 'cli@test']);
@@ -141,8 +147,10 @@ test('install --yes from a local git repo installs end to end (no prompt)', asyn
   assert.equal(r.code, 0, r.stderr + r.stdout);
   assert.match(r.stdout, /will install local-plugin/);
   assert.match(r.stdout, /installed:/);
+  assert.match(r.stdout, /^  script: tidy \(shell, npm run tidy\)$/m);
   const list = await run(['plugin', 'list'], { home });
   assert.match(list.stdout, /local-plugin/);
+  assert.match(list.stdout, /1 script\b/);
   assert.match(list.stdout, /enabled/);
 });
 
@@ -268,4 +276,245 @@ test('link imports the scaffolded pipeline template; reimport refreshes a live e
   assert.match(re.stdout, /^reimported authorloop-plugin: 1 pipeline template$/m);
   assert.equal(workflowRows(home)[0].name, 'Renamed Flow');
   assert.equal(workflowRows(home).length, 1, 'an upsert, not a second row');
+});
+
+test('plugin new-script scaffolds a shipped script with one sample case; the plugin still validates', async () => {
+  const home = await freshDir('worca-cc-cli-newscript-');
+  const dir = join(await freshDir('worca-cc-plugin-ns-'), 'script-plugin');
+  assert.equal((await run(['plugin', 'init', 'script-plugin', '--dir', dir, '--with', 'task-source'], { home })).code, 0);
+  const r = await run(['plugin', 'new-script', 'tidy', '--dir', dir], { home });
+  assert.equal(r.code, 0, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /^created\t.*scripts.tidy\.meta\.json$/m);
+  assert.match(r.stdout, /^created\t.*scripts.tidy\.mjs$/m);
+  assert.match(r.stdout, /^created\t.*scripts.tidy\.tests\.json$/m);
+  assert.match(r.stdout, /^next: worca plugin validate .* --run-cases$/m);
+
+  const meta = JSON.parse(await readFile(join(dir, 'scripts', 'tidy.meta.json'), 'utf8'));
+  assert.equal(meta.metaVersion, 2);
+  assert.equal(meta.key, 'tidy');
+  assert.equal(meta.runtime, 'node');
+  assert.equal(meta.file, 'tidy.mjs');
+  const cases = JSON.parse(await readFile(join(dir, 'scripts', 'tidy.tests.json'), 'utf8'));
+  assert.equal(cases.version, 1);
+  assert.equal(cases.cases.length, 1);
+  assert.deepEqual(cases.cases[0].cwd, { kind: 'scratch' }, 'a shipped case never names a project');
+  const v = validatePluginDir(dir, { strict: true });
+  assert.equal(v.ok, true, JSON.stringify(v.problems));
+
+  // A second scaffold of the same key touches nothing.
+  const again = await run(['plugin', 'new-script', 'tidy', '--dir', dir], { home });
+  assert.equal(again.code, 1);
+  assert.match(again.stderr, /scripts\/tidy\.meta\.json already exists/);
+});
+
+test('plugin new-script: shell scaffolds the sh + cmd pair (LF); a non-plugin dir and a bad runtime exit 2', async () => {
+  const home = await freshDir('worca-cc-cli-newscript2-');
+  const dir = join(await freshDir('worca-cc-plugin-ns2-'), 'shell-plugin');
+  await run(['plugin', 'init', 'shell-plugin', '--dir', dir, '--with', 'task-source'], { home });
+  const r = await run(['plugin', 'new-script', 'lintAll', '--runtime', 'shell', '--dir', dir], { home });
+  assert.equal(r.code, 0, `${r.stdout}\n${r.stderr}`);
+  assert.equal((await readFile(join(dir, 'scripts', 'lintAll.sh'), 'utf8')).includes('\r'), false, 'a .sh is LF-only');
+  assert.ok((await readFile(join(dir, 'scripts', 'lintAll.cmd'), 'utf8')).includes('\r\n'), 'a .cmd ships CRLF');
+  const meta = JSON.parse(await readFile(join(dir, 'scripts', 'lintAll.meta.json'), 'utf8'));
+  assert.deepEqual(meta.file, { default: 'lintAll.sh', win32: 'lintAll.cmd' });
+  assert.equal(validatePluginDir(dir).ok, true, 'a shell pair validates: both platform entries exist');
+
+  const bare = await run(['plugin', 'new-script', 'x', '--dir', await freshDir('worca-cc-not-a-plugin-')], { home });
+  assert.equal(bare.code, 2);
+  assert.match(bare.stderr, /is not a plugin folder \(no worca-cc-plugin\.json\)/);
+  const badRt = await run(['plugin', 'new-script', 'x', '--runtime', 'perl', '--dir', dir], { home });
+  assert.equal(badRt.code, 2);
+  assert.match(badRt.stderr, /--runtime must be one of node, shell, python \(got perl\)/);
+  assert.match((await run(['plugin', 'help'], { home })).stdout, /worca plugin new-script <key>/);
+
+  // python scaffolds a .py; the folder validates with or without an interpreter.
+  const py = await run(['plugin', 'new-script', 'pyTidy', '--runtime', 'python', '--dir', dir], { home });
+  assert.equal(py.code, 0, `${py.stdout}\n${py.stderr}`);
+  assert.match(await readFile(join(dir, 'scripts', 'pyTidy.py'), 'utf8'), /^def main\(api\):$/m);
+  assert.equal(validatePluginDir(dir, { strict: true }).ok, true);
+
+  // Keys the host would never load are refused BEFORE a file is written.
+  for (const [key, why] of [
+    ['shell', /taken by the built-in script "shell"/],
+    ['Shell', /taken by the built-in script "shell"/],
+    ['planner', /taken by the built-in agent "planner"/],
+    ['runtimes', /reserved script key/],
+    ['con', /reserved device name on Windows/],
+  ]) {
+    const r2 = await run(['plugin', 'new-script', key, '--dir', dir], { home });
+    assert.equal(r2.code, 2, `${key}: ${r2.stdout}`);
+    assert.match(r2.stderr, why);
+    assert.equal(existsSync(join(dir, 'scripts', `${key}.meta.json`)), false, `${key}: nothing written`);
+  }
+});
+
+test('plugin validate --run-cases runs every shipped case through the bench', async () => {
+  const home = await freshDir('worca-cc-cli-runcases-');
+  const dir = join(await freshDir('worca-cc-plugin-rc-'), 'cases-plugin');
+  await run(['plugin', 'init', 'cases-plugin', '--dir', dir, '--with', 'task-source'], { home });
+  await run(['plugin', 'new-script', 'greeter', '--dir', dir], { home });
+
+  const ok = await run(['plugin', 'validate', dir, '--run-cases'], { home });
+  assert.equal(ok.code, 0, `${ok.stdout}\n${ok.stderr}`);
+  assert.match(ok.stdout, /greeter\/sample\tclean\t/);
+  assert.match(ok.stdout, /^1 passed, 0 failed, 0 unchecked$/m);
+
+  // An expectation that no longer holds fails the whole validate.
+  const casesPath = join(dir, 'scripts', 'greeter.tests.json');
+  const cases = JSON.parse(await readFile(casesPath, 'utf8'));
+  // The scaffold declares NO ports (Task 1), so the expectation names a verdict only:
+  // `fired: ['out']` would be a validation error (exit 2), never a failed case (exit 1).
+  cases.cases[0].expect = { verdict: 'blocking' };
+  await writeFile(casesPath, JSON.stringify(cases, null, 2) + '\n');
+  const bad = await run(['plugin', 'validate', dir, '--run-cases'], { home });
+  assert.equal(bad.code, 1, bad.stdout);
+  assert.match(bad.stdout, /^0 passed, 1 failed, 0 unchecked$/m);
+
+  // Without the flag nothing runs.
+  const plain = await run(['plugin', 'validate', dir], { home });
+  assert.equal(plain.code, 0, plain.stderr);
+  assert.doesNotMatch(plain.stdout, /passed, \d+ failed/);
+  assert.match((await run(['plugin', 'help'], { home })).stdout, /--run-cases/);
+});
+
+/** init + new-script, then replace the program and the shipped cases. */
+async function runCasesPlugin(name, key, body, cases) {
+  const home = await freshDir(`worca-cc-cli-${name}-`);
+  const dir = join(await freshDir(`worca-cc-plugin-${name}-`), name);
+  await run(['plugin', 'init', name, '--dir', dir, '--with', 'task-source'], { home });
+  await run(['plugin', 'new-script', key, '--dir', dir], { home });
+  await writeFile(join(dir, 'scripts', `${key}.mjs`), body);
+  await writeFile(join(dir, 'scripts', `${key}.tests.json`), JSON.stringify({ version: 1, cases }, null, 2) + '\n');
+  return { home, dir };
+}
+
+test('plugin validate --run-cases: SIGTERM stops the running case — exit 2, no orphan child, the rest never runs',
+  { skip: process.platform === 'win32' ? 'win32 has no deliverable SIGTERM: kill() ends the CLI without running a handler' : false },
+  async () => {
+    const { home, dir } = await runCasesPlugin('stop-plugin', 'napper', [
+      'export default async function () {',
+      "  console.log('napper pid ' + process.pid);",
+      '  await new Promise((r) => setTimeout(r, 20000));',
+      "  return { summary: 'never' };",
+      '}',
+      '',
+    ].join('\n'), [
+      { id: 'first', name: 'first', cwd: { kind: 'scratch' }, inputs: {} },
+      { id: 'second', name: 'second', cwd: { kind: 'scratch' }, inputs: {} },
+    ]);
+    const child = spawn(process.execPath, [CLI, 'plugin', 'validate', dir, '--run-cases'], {
+      env: { ...process.env, WORCA_MOCK: '1', WORCA_HOME: home }, cwd: scratchCwd, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (b) => (stdout += b.toString()));
+    const pid = await new Promise((res, rej) => {
+      const timer = setTimeout(() => rej(new Error(`the script never started: ${stderr}`)), 30000);
+      child.on('exit', () => { clearTimeout(timer); rej(new Error(`the CLI exited before the script started: ${stderr}`)); });
+      child.stderr.on('data', (b) => {
+        stderr += b.toString();
+        const m = /\[napper\/first\] napper pid (\d+)/.exec(stderr);
+        if (m) { clearTimeout(timer); res(Number(m[1])); }
+      });
+    }).catch((e) => { child.kill('SIGKILL'); throw e; });   // a RED run must not hold the file open
+    try {
+      const exited = new Promise((res) => child.on('exit', (code, signal) => res({ code, signal })));
+      child.kill('SIGTERM');
+      const { code, signal } = await exited;
+      assert.equal(signal, null, 'the CLI handled the signal instead of dying on it');
+      assert.equal(code, 2, stdout);
+      assert.match(stdout, /napper\/first\tstopped\t/);
+      assert.doesNotMatch(stdout, /napper\/second/, 'a stop ends the batch');
+      assert.match(stderr, /worca plugin validate: stopped/);
+      let alive = true;
+      for (let i = 0; i < 50 && alive; i++) {
+        try { process.kill(pid, 0); await new Promise((r) => setTimeout(r, 100)); } catch { alive = false; }
+      }
+      assert.equal(alive, false, `script process ${pid} outlived the CLI`);
+    } finally {
+      try { process.kill(pid); } catch { /* already gone — the point of the test */ }   // a RED run must not leave it behind
+    }
+  });
+
+test('plugin validate --run-cases streams the script\'s lines, WHOLE, to a reader that lags (a CI log is a pipe)', async () => {
+  const { home, dir } = await runCasesPlugin('chatty-plugin', 'chatty', [
+    'export default async function () {',
+    "  for (let i = 0; i < 3000; i++) console.log('chat ' + i + ' ' + 'x'.repeat(60));",
+    "  return { summary: 'ok' };",
+    '}',
+    '',
+  ].join('\n'), [{ id: 'sample', name: 'sample', cwd: { kind: 'scratch' }, inputs: {}, expect: { verdict: 'clean' } }]);
+  const child = spawn(process.execPath, [CLI, 'plugin', 'validate', dir, '--run-cases'], {
+    env: { ...process.env, WORCA_MOCK: '1', WORCA_HOME: home }, cwd: scratchCwd, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (b) => (stdout += b.toString()));
+  const exited = new Promise((res) => child.on('close', (code) => res(code)));
+  // ~210 KB of lines against a 64 KiB pipe: nothing is read until the run is long
+  // over, so whatever the CLI had not flushed when it called process.exit is lost.
+  await new Promise((r) => setTimeout(r, 1500));
+  child.stderr.on('data', (b) => (stderr += b.toString()));
+  assert.equal(await exited, 0, stdout);
+  const got = stderr.split('\n').filter((l) => /^\[chatty\/sample\] chat \d+ x+$/.test(l)).length;
+  assert.equal(got, 3000, `stderr was cut: ${got} of 3000 lines arrived`);
+  assert.match(stdout, /^1 passed, 0 failed, 0 unchecked$/m);
+});
+
+test('plugin validate: a shipped case with a project cwd, and a tests file with no sidecar, are errors', async () => {
+  const home = await freshDir('worca-cc-cli-badcases-');
+  const dir = join(await freshDir('worca-cc-plugin-bc-'), 'badcase-plugin');
+  await run(['plugin', 'init', 'badcase-plugin', '--dir', dir, '--with', 'task-source'], { home });
+  await run(['plugin', 'new-script', 'greeter', '--dir', dir], { home });
+  const casesPath = join(dir, 'scripts', 'greeter.tests.json');
+  const cases = JSON.parse(await readFile(casesPath, 'utf8'));
+  cases.cases[0].cwd = { kind: 'project', projectKey: 'somewhere' };
+  await writeFile(casesPath, JSON.stringify(cases, null, 2) + '\n');
+  await writeFile(join(dir, 'scripts', 'orphan.tests.json'), JSON.stringify({ version: 1, cases: [] }) + '\n');
+  const r = await run(['plugin', 'validate', dir, '--run-cases'], { home });
+  assert.equal(r.code, 2, r.stdout);
+  assert.match(r.stdout, /scripts\/greeter\.tests\.json: .*scratch/);
+  assert.match(r.stdout, /scripts\/orphan\.tests\.json: no orphan\.meta\.json beside it/);
+  assert.doesNotMatch(r.stdout, /passed, \d+ failed/, 'a dir that does not validate never runs its cases');
+});
+
+test('the install receipt summarizes shipped scripts and their cases', async () => {
+  const home = await freshDir('worca-cc-cli-receipt-');
+  const repoDir = await freshDir('worca-cc-plugin-receipt-repo-');
+  assert.equal((await run(['plugin', 'init', 'receipt-plugin', '--dir', repoDir], { home })).code, 0);
+  assert.equal((await run(['plugin', 'new-script', 'tidy', '--dir', repoDir], { home })).code, 0);
+  assert.equal((await run(['plugin', 'new-script', 'lintAll', '--runtime', 'shell', '--dir', repoDir], { home })).code, 0);
+  const g = (args) => spawnSync('git', args, { cwd: repoDir });
+  g(['init', '-q', '-b', 'main']);
+  g(['config', 'user.email', 'cli@test']);
+  g(['config', 'user.name', 'cli-test']);
+  g(['add', '-A']);
+  g(['commit', '-qm', 'plugin v1']);
+  const r = await run(['plugin', 'install', 'receipt-plugin', '--repo', repoDir, '--yes'], { home });
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  assert.match(r.stdout, /^ {2}script: lintAll \(shell/m);
+  assert.match(r.stdout, /^ {2}script: tidy \(node/m);
+  assert.match(r.stdout, /^ {2}2 scripts \(node 1, shell 1\) · 2 cases$/m);
+  assert.doesNotMatch(r.stdout, /python not found/, 'no python script -> no notice');
+  assert.match((await run(['plugin', 'list'], { home })).stdout, /2 scripts/);
+});
+
+test('the receipt carries "python not found" when a python script ships and the host has none — a notice, never a block', async () => {
+  const home = await freshDir('worca-cc-cli-receipt-py-');
+  const repoDir = await freshDir('worca-cc-plugin-receipt-py-repo-');
+  assert.equal((await run(['plugin', 'init', 'py-receipt-plugin', '--dir', repoDir], { home })).code, 0);
+  assert.equal((await run(['plugin', 'new-script', 'pyTidy', '--runtime', 'python', '--dir', repoDir], { home })).code, 0);
+  const g = (args) => spawnSync('git', args, { cwd: repoDir });
+  g(['init', '-q', '-b', 'main']);
+  g(['config', 'user.email', 'cli@test']);
+  g(['config', 'user.name', 'cli-test']);
+  g(['add', '-A']);
+  g(['commit', '-qm', 'plugin v1']);
+  // WORCA_PYTHON is the probe's FIRST and only candidate when set (python-probe.mjs),
+  // so a path that does not exist is "no python" on every host, python installed or not.
+  const r = await run(['plugin', 'install', 'py-receipt-plugin', '--repo', repoDir, '--yes'],
+    { home, extraEnv: { WORCA_PYTHON: join(repoDir, 'no-such-python') } });
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  assert.match(r.stdout, /^ {2}1 script \(python 1\) · 1 case$/m);
+  assert.match(r.stdout, /^ {2}python not found$/m);
 });

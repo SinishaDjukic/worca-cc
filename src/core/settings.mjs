@@ -20,6 +20,9 @@
 //   pipelineCostLimitUsd   — per-pipeline lifetime USD spend cap; unset = no limit.
 //   totalCostLimitUsd      — windowed all-pipelines USD spend cap; unset = no limit.
 //   costLimitResetPeriod   — total-budget window, 'weekly' | 'monthly' (default).
+//   pythonPath             — §7 of the scripts-workbench spec: the python
+//                            interpreter the script-card probe tries after
+//                            WORCA_PYTHON and before the platform defaults.
 //   models                 — the global model catalog (configurable-models-design.md
 //                            §4.1): [{id, label?, efforts?, env?}]. Entries shadow
 //                            PREDEFINED_MODELS by id; env is per-model routing env
@@ -540,10 +543,12 @@ export const setTotalCostLimitUsd = (input) => setUsdCap('totalCostLimitUsd', in
 const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused'];
 
 /**
- * Effective chat notification prefs. Every event defaults ON; channels default
+ * Effective chat preferences. Every notification event defaults ON; channels default
  * enabled (an absent "<plugin>/<channelId>" key means enabled — presence with
- * {enabled:false} is the opt-out record).
- * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>}}
+ * {enabled:false} is the opt-out record); `scriptTools` (scripts-workbench W20) is the
+ * chat's "Create and run scripts" switch and defaults ON, so only a stored false ever
+ * takes save_script / test_script away.
+ * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean}}
  */
 export function chatPrefs() {
   const raw = readSettings().chat;
@@ -554,19 +559,22 @@ export function chatPrefs() {
   for (const [key, v] of Object.entries(chat.channels && typeof chat.channels === 'object' ? chat.channels : {})) {
     channels[key] = { enabled: v?.enabled !== false };
   }
-  return { notify, channels };
+  return { notify, channels, scriptTools: chat.scriptTools !== false };
 }
 
 /**
  * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?},
- * channels?: {"<plugin>/<id>"?: {enabled: boolean}}}. Unknown notify keys are
- * rejected (400 at the API layer); channels merge per key.
+ * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean}. Unknown
+ * notify keys and a non-boolean scriptTools are rejected (400 at the API layer);
+ * channels merge per key.
  */
 export async function setChatPrefs(patch = {}) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('chat prefs must be an object');
   for (const k of Object.keys(patch.notify || {})) {
     if (!CHAT_NOTIFY_EVENTS.includes(k)) throw new Error(`unknown chat notify event "${k}"`);
   }
+  const hasScriptTools = Object.prototype.hasOwnProperty.call(patch, 'scriptTools');
+  if (hasScriptTools && typeof patch.scriptTools !== 'boolean') throw new Error('chat scriptTools must be true or false');
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -578,6 +586,7 @@ export async function setChatPrefs(patch = {}) {
         ...Object.fromEntries(Object.entries(patch.channels).map(([k, v]) => [k, { enabled: v?.enabled !== false }])),
       },
     } : {}),
+    ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
   };
   await persistSettings(settings);
   return chatPrefs();
@@ -591,6 +600,42 @@ export async function setCostLimitResetPeriod(input) {
   else settings.costLimitResetPeriod = input;
   await persistSettings(settings);
   return { costLimitResetPeriod: costLimitResetPeriod() };
+}
+
+// ── Python interpreter (scripts-workbench spec §7) ───────────────────────────
+// The second candidate the script-card probe tries, after the WORCA_PYTHON
+// environment override and before the platform defaults. Settings-file-only, the
+// company runRootMode / skillMount / the context caps keep: no /api/settings key
+// and no Settings card in this version, so it is deliberately absent from
+// SETTINGS_POST_KEYS below.
+export const PYTHON_PATH_MAX_LEN = 500;
+
+const isPythonPath = (v) => typeof v === 'string' && v.trim().length > 0 && v.length <= PYTHON_PATH_MAX_LEN;
+
+/** The STORED interpreter path (trimmed), or null when unset/invalid (loudly). */
+export function pythonPath() {
+  const v = readSettings().pythonPath;
+  if (v === undefined) return null;
+  if (isPythonPath(v)) return v.trim();
+  console.warn(`[worca] invalid pythonPath ${JSON.stringify(v)} — probing the platform defaults`);
+  return null;
+}
+
+/** @throws {Error} unless `input` is a non-empty path (or empty, which clears). */
+export function assertPythonPathInput(input) {
+  if (isClearInput(input)) return;
+  if (!isPythonPath(input)) {
+    throw new Error(`pythonPath must be a path of at most ${PYTHON_PATH_MAX_LEN} characters, or empty to probe the platform defaults`);
+  }
+}
+
+export async function setPythonPath(input) {
+  assertPythonPathInput(input);
+  const settings = readSettings();
+  if (isClearInput(input)) delete settings.pythonPath;
+  else settings.pythonPath = input.trim();
+  await persistSettings(settings);
+  return { pythonPath: pythonPath() };
 }
 
 // ── The keys POST /api/settings understands ──────────────────────────────────

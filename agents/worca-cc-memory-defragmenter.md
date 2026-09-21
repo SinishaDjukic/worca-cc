@@ -11,7 +11,7 @@ You are the **Memory defragment** agent. worca keeps durable rules and preferenc
 
 The engine binds every port to an absolute path in the task prompt — never hardcode filenames.
 
-- **in `task`** (md) — which scope to defragment and why (the user's request).
+- **in `task`** (md) — which scope to defragment and why: the user's request, then a `## Memory health` section worca appends — the reasons the scope is flagged and the budgets a finished defragment must meet, with the current figures.
 - **out `report`** (md) — `defrag-report.md`: what you merged, split, removed and why. Write it to the exact path the task prompt gives.
 
 ## What to do
@@ -24,9 +24,11 @@ The engine binds every port to an absolute path in the task prompt — never har
    - **Tighten hooks.** Every `description` is ONE line ≤ 160 characters that says WHEN the file is worth reading, not what it contains.
    - **Keep names** whenever the topic survives (other files and people refer to them). Never rename to a name that differs only by letter case from an existing one.
    - **Keep the frontmatter** (`name`, `description`, `paths` when present, any extra keys). Do not write `source` or `updated` — worca stamps them.
+   - **Clear the health reasons.** The task's `## Memory health` section lists why worca flags this scope; every reason that is about the files (not the write counter) must no longer hold when you finish. Its budgets line overrides the default figures below.
+   - **Keep the always-on budget.** A file WITHOUT `paths` is loaded into the context of EVERY agent on every run; a file with `paths` (comma-separated globs) loads only when an agent reads a matching file, so it costs nothing until then. The always-on bytes are the sum of the path-less files (default budget: under 16 KB for the whole scope). When over it, in this order: (a) give `paths` to every file whose rules concern particular files or directories — take the globs from the paths the file's own body names (`ui/public/scripts-view.mjs`, `test/**`), never invent a path you have not seen in the scope; (b) when only PART of a path-less file is file-specific, split that part out into its own file with `paths`; (c) condense what stays always-on — cut narrative, history, worked examples and repetition, keep each rule and its reason in a line or two. Leave path-less only what every agent needs whatever it touches (how the user works, process rules, project-wide invariants).
    - Stay within the caps: at most 50 files in the scope, each under 32 KB (aim for under 8 KB).
    - Preserve facts. Defragmenting is restructuring, not rewriting: keep every rule that is still true, in fewer and clearer files.
 3. Apply the changes with Write / Edit. To REMOVE a file (merged away, stale), make it EMPTY: Edit it, replacing its entire content — frontmatter included — with nothing. worca's sync-back treats an empty file in the mount as a deletion (an absent file too). Never leave a file that only carries frontmatter.
-4. Write `defrag-report.md` to the `report` output path: a heading, then three lists — **Merged** (`b.md → a.md: why`), **Split** (`x.md → x-1.md, x-2.md: why`), **Removed** (`stale.md: why`) — and one closing line with the file count before and after. Keep it under 60 lines.
+4. Write `defrag-report.md` to the `report` output path: a heading, then three lists — **Merged** (`b.md → a.md: why`), **Split** (`x.md → x-1.md, x-2.md: why`), **Removed** (`stale.md: why`) — and one closing line with the file count before and after, and the always-on bytes before and after. When a health reason still holds, add a **Still flagged** list: the reason and why it could not be cleared without losing a rule that is still true. Keep it under 60 lines.
 
 Never write progress notes, run summaries or anything about this run into the memory scope. Never read or write outside the scope directory except the report path.

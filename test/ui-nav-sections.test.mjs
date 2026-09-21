@@ -24,12 +24,12 @@ const topnav = () => html.match(/<nav class="topnav"[\s\S]*?<\/nav>/)[0];
 test('sidebar reads: CTA, Activity, Build, Manage, divider, Settings — in order', () => {
   // One combined token stream: nav ids and section labels, in source order.
   const tokens = [...sidebar().matchAll(
-    /data-nav="([a-z-]+)"|class="nav-sect"[^>]*>([A-Za-z]+)<|class="(nav-sep)"|id="(nav-mode)"/g
-  )].map((m) => m[1] || m[2] || m[3] || m[4]);
+    /data-nav="([a-z-]+)"|data-nav-group="([a-z-]+)"|class="nav-sect"[^>]*>([A-Za-z]+)<|class="(nav-sep)"|id="(nav-mode)"/g
+  )].map((m) => m[1] || m[2] || m[3] || m[4] || m[5]);
   assert.deepEqual(tokens, [
     'new',
     'Activity', 'running', 'schedules', 'history', 'stats', 'team-metrics',
-    'Build', 'composer', 'agents',
+    'Build', 'composer', 'nodes', 'agents', 'scripts',   // Nodes is a disclosure holding the two (ui-nav-nodes-group)
     'Manage', 'projects', 'workspaces', 'team-policy',
     'nav-sep', 'nav-mode', 'settings',          // the interface-mode item sits directly above Settings (docs/ui-levels.md)
   ]);
@@ -37,10 +37,11 @@ test('sidebar reads: CTA, Activity, Build, Manage, divider, Settings — in orde
 
 // guardrails/models/plugins moved into Settings as tabs, so 12 -> 9; team-metrics adds one -> 10;
 // Schedules (docs/scheduled-runs.md) and team-policy (team-policy design §11) add a route each
-// -> 11, and the interface-mode item (docs/ui-levels.md) one more button -> 13, of which 12 route.
-test('grouping adds no buttons and no anchors (13-button invariant holds)', () => {
-  assert.equal((sidebar().match(/<button type="button"/g) || []).length, 13);
-  assert.equal((sidebar().match(/<button type="button"[^>]*data-nav=/g) || []).length, 12);
+// -> 12; the interface-mode item (docs/ui-levels.md) adds one -> 13; Scripts -> 14; the Nodes
+// disclosure (test/ui-nav-nodes-group.test.mjs) -> 15, of which 13 route (data-nav).
+test('grouping adds no buttons and no anchors (15-button invariant holds)', () => {
+  assert.equal((sidebar().match(/<button type="button"/g) || []).length, 15);
+  assert.equal((sidebar().match(/<button type="button"[^>]*data-nav=/g) || []).length, 13);
   assert.ok(!/<a[\s>]/.test(sidebar()));
   assert.match(sidebar(), /<div class="nav-sect">Activity<\/div>/);
   assert.match(sidebar(), /<div class="nav-sect" data-min-level="advanced">Build<\/div>/);
@@ -181,15 +182,15 @@ test('topnav order mirrors the sidebar, with a separator per group boundary', ()
   assert.deepEqual(tokens, [
     'new', 'topnav-sep',
     'running', 'schedules', 'history', 'stats', 'team-metrics', 'topnav-sep',
-    'composer', 'agents', 'topnav-sep',
+    'composer', 'agents', 'scripts', 'topnav-sep',
     'projects', 'workspaces', 'team-policy', 'topnav-sep',
     'settings',
   ]);
 });
 
 test('separators are spans (button count and settings-text invariants hold)', () => {
-  // 12 routes (Schedules and Team policy included) + the interface-mode twin (docs/ui-levels.md).
-  assert.equal((topnav().match(/<button type="button"/g) || []).length, 13);
+  // 13 routes (Schedules, Team policy and Scripts included) + the interface-mode twin (docs/ui-levels.md).
+  assert.equal((topnav().match(/<button type="button"/g) || []).length, 14);
   assert.equal((topnav().match(/<span class="topnav-sep" aria-hidden="true"[^>]*><\/span>/g) || []).length, 4);
   assert.match(topnav(), /data-nav="settings"[^>]*>Settings<\/button>/);
 });

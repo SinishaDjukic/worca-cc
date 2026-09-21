@@ -106,3 +106,25 @@ test('resolvedFromManifest: port IDENTITY comes from the snapshot, executor meta
   assert.equal(r.nodes.n_task.kind, 'task');
   assert.deepEqual([...r.agentKeys].sort(), ['clarify', 'implementer', 'planner', 'refiner', 'reviewer']);
 });
+
+test('resolvedFromManifest rebuilds a script ctx from the cell config + the live script registry', () => {
+  const scripts = { runTests: { key: 'runTests', displayName: 'Run tests', runtime: 'node', scriptPath: '/abs/runTests.mjs', commandResolved: null, timeoutMs: 20000,
+    params: [{ id: 'cmd', type: 'command', default: 'npm test' }], verdict: { filename: 'tests-cycle{cycle}.json' }, mock: null,
+    inputs: [{ id: 'done', type: 'void', required: false }],
+    outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'tests-cycle{cycle}.md' }, { id: 'pass', type: 'void', when: 'clean' }] } };
+  const tpl = { ...GRAPH_DEFAULT_WORKFLOW, nodes: [...GRAPH_DEFAULT_WORKFLOW.nodes, { id: 'n_tests', kind: 'script', key: 'runTests', x: 0, y: 0, config: { params: { cmd: 'npm run lint' }, timeoutMs: 5000 } }] };
+  const registry = loadAgentRegistry(undefined, { userAgentsDir: null, includePlugins: false });
+  const manifest = buildGraphManifest(tpl, registry, { scripts });
+  const r = resolvedFromManifest(manifest, registry, scripts);
+  const nc = r.nodes.n_tests;
+  assert.equal(nc.kind, 'script');
+  assert.equal(nc.key, 'runTests');
+  assert.equal(nc.file, '/abs/runTests.mjs');
+  assert.deepEqual(nc.params, { cmd: 'npm run lint' });
+  assert.equal(nc.timeoutMs, 5000);
+  assert.equal(nc.meta, scripts.runTests);
+  assert.deepEqual([...r.scriptKeys], ['runTests']);
+  assert.deepEqual(r.ports({ id: 'n_tests', kind: 'script', key: 'runTests', config: {} }).inputs.map((p) => p.id), ['done', 'await']);
+  assert.equal(r.ports({ id: 'n_tests', kind: 'script', key: 'runTests', config: {} }).verdict.filename, 'tests-cycle{cycle}.json', 'the verdict filename is live');
+  assert.equal(resolvedFromManifest(manifest, registry).nodes.n_tests.file, null, 'no scripts index: the ctx is a stub the preflight refuses');
+});

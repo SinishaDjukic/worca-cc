@@ -86,7 +86,8 @@ ui/              server.mjs (express + ws) + public/ (vanilla single-page UI)
 agents/          data-driven agent set: prompt (worca-cc-<role>.md)
                  + metadata sidecar (<key>.meta.json) per agent
 skills/          worca/SKILL.md — the installable /worca skill
-scripts/         install.mjs (copy agents + skill into a project), smoke runners
+scripts/         built-in script cards: <key>.meta.json + the program it names (see agents/)
+tools/           install.mjs (copy agents + skill into a project), smoke runners, CDP verifiers
 test/            node:test suite
 docs/            RELEASING.md and other docs
 ```

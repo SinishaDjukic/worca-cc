@@ -35,6 +35,7 @@ const state = {
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
   stepDefaults: {}, // { [key]: { fanOut } } sidecar defaults from /api/config steps
   agentsList: [], // GET /api/agents?all=1 list for the Agents management view
+  scriptsList: [],   // GET /api/scripts cache; dropped on every scripts-changed frame
   mockWriterRoles: [], // closed mock-role list from /api/agents (drives the agent form)
   historyAll: [],    // full /api/history dataset; client-side filter cache
   commentCounts: {}, // "<storeKey>/<pipelineId>" -> unresolved diff-comment count
@@ -74,6 +75,7 @@ import {
   memoryRoute, renderHealthCard, renderFileList, renderEditor, collectEditor,
   renderMemoryHistory, MEMORY_NAME_HELP,
 } from './memory-view.mjs';
+import { createScriptsController } from './scripts-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
 import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, GETTING_STARTED_STEPS } from './getting-started.mjs';
 import { createGuideSpot } from './guide-spot.mjs';
@@ -84,7 +86,7 @@ import {
   langForPath, canHighlightParsed, highlightParsed,
 } from './syntax-highlight.mjs';
 import { createHljsLoader } from './hljs-loader.mjs';
-import { artifactsByNodeCycle, viewerKindFor, renderArtifact } from './artifact-view.mjs';
+import { artifactsByNodeCycle, viewerKindFor, renderArtifact, renderMarkdown as renderArtifactMarkdown } from './artifact-view.mjs';
 import {
   buildFileTree, renderFileTree, firstFile,
 } from './file-tree.mjs';
@@ -96,8 +98,8 @@ import {
   renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport, renderReferences409,
   renderOrphanList, channelBadge, renderAvailableList, renderMarketplaceList,
 } from './plugins-view.mjs';
-import { renderChatSettings, collectChatSettings } from './chat-settings-view.mjs';
-import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL } from '../../src/shared/graph/constants.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle } from './chat-settings-view.mjs';
+import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS } from '../../src/shared/graph/constants.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
@@ -326,6 +328,8 @@ const el = {
   // Agents management view
   agentsList: $('#agents-list'),
   agentsMsg: $('#agents-msg'),
+  scriptsHost: $('#scripts-host'),
+  scriptsMsg: $('#scripts-msg'),
   agentCreateBtn: $('#agent-create-btn'),
 
   // Projects management view
@@ -559,6 +563,33 @@ function setSidebarCollapsed(v) {
 }
 
 $('#side-toggle')?.addEventListener('click', () => setSidebarCollapsed(!sidebarCollapsed));
+
+// ── Nodes group (Agents + Scripts) ──────────────────────────────────────────
+// A static disclosure in the Build section. It carries no data-nav, so the
+// router never marks it active; it owns aria-expanded + the box's .collapsed
+// and remembers a fold across reloads. showView tints it while a child page is
+// open and unfolds it on the way in, so "where am I" never hides.
+const NODES_GROUP_KEY = 'worca-cc.nav.nodes.collapsed';
+const nodesGroup = $('.nav .nav-group[data-nav-group="nodes"]');
+const nodesGroupBox = $('#nav-nodes-children');
+const NODES_GROUP_VIEWS = nodesGroupBox
+  ? [...nodesGroupBox.querySelectorAll('button[data-nav]')].map((b) => b.dataset.nav) : [];
+function readNodesCollapsed() {
+  try { return localStorage.getItem(NODES_GROUP_KEY) === '1'; }
+  catch { return false; }                    // private mode / storage disabled
+}
+function paintNodesGroup(folded) {
+  if (!nodesGroup || !nodesGroupBox) return;
+  nodesGroup.setAttribute('aria-expanded', folded ? 'false' : 'true');
+  nodesGroupBox.classList.toggle('collapsed', !!folded);
+}
+function setNodesCollapsed(folded) {
+  paintNodesGroup(folded);
+  try { if (folded) localStorage.setItem(NODES_GROUP_KEY, '1'); else localStorage.removeItem(NODES_GROUP_KEY); }
+  catch { /* private mode: the fold lives for this page only */ }
+}
+nodesGroup?.addEventListener('click', () => setNodesCollapsed(nodesGroup.getAttribute('aria-expanded') !== 'false'));
+paintNodesGroup(readNodesCollapsed());
 // Restore before the first paint. `.sidebar` transitions width/flex-basis over
 // .2s (style.css:84-85) so the toggle animates; a restore is a starting state,
 // not a gesture. This script is deferred, so the class lands after the first
@@ -844,6 +875,21 @@ function handleServerMessage(msg) {
   // handled HERE and never reaches the Ask panel (the shell routes only `ask-*` types there). Only
   // an OPEN view of that scope refetches; a closed one reloads on entry anyway. Bursts (an Ask turn
   // remembering five things) are coalesced per scope, and a dirty editor is never clobbered.
+  // Scripts (scripts-workbench §3.3): a store mutation from THIS tab, another tab,
+  // the CLI or the chat. The registry is re-scanned on every read server-side, so
+  // the only client state to drop is the cached list; an open page refetches.
+  if (msg.type === 'scripts-changed') {
+    state.scriptsList = [];
+    gvAgentsDirty = true;          // the composer re-reads /api/agents AND /api/scripts on re-entry (spec §3.3)
+    if (scriptsCtl) scriptsCtl.onChanged();
+    return;
+  }
+  // Bench frames are tagged by benchId (not runId) and ride the same broadcast
+  // socket. Handle them BEFORE the !msg.runId early-return below.
+  if (typeof msg.type === 'string' && msg.type.startsWith('scriptbench-')) {
+    if (scriptsCtl) scriptsCtl.onFrame(msg);
+    return;
+  }
   if (msg.type === 'memory-changed') {
     const scope = String(msg.scope || '');
     if (scope === 'global' && currentView() === 'settings' && currentSettingsTab === 'memory' && memoryTabCtl) pokeGlobalMemory();
@@ -1862,6 +1908,7 @@ async function deleteWorkflow(id) {
 let gvComposer = null;
 let gvAgents = [];          // palette list  (GET /api/agents)
 let gvAgentsAll = [];       // ports source  (GET /api/agents?all=1)
+let gvScripts = [];         // script registry (GET /api/scripts): palette Scripts group + ports source
 let gvPortsFn = portsFnFor({});
 // These three are written ONLY by gvLoadAgents(), which initComposer() skips on
 // re-entry — so without this flag an agent created or re-ported in the Agents
@@ -1892,6 +1939,12 @@ const gvApi = {
     if (!res.ok) return null;
     return safeJson(res);
   },
+  scripts: async () => {
+    const res = await fetch('/api/scripts');
+    if (!res.ok) throw new Error(`scripts ${res.status}`);
+    const d = await safeJson(res);
+    return Array.isArray(d && d.scripts) ? d.scripts : [];
+  },
   saveWorkflow: async (body) => {
     const res = await fetch('/api/workflows', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const d = await safeJson(res);
@@ -1910,15 +1963,19 @@ const gvApi = {
   },
   // Import a JSON export (#421). 422 carries the shared validator's issues plus
   // `summary` (the one-line "agents you do not have" fold) when that is the cause.
-  importWorkflow: async (workflow) => {
+  // dryRun: validate + list the script commands, write nothing (D18). acceptScripts: the user SAW them and
+  // agreed — the server refuses a command-carrying graph without the literal true (409 SCRIPTS_UNCONFIRMED).
+  importWorkflow: async (workflow, { dryRun = false, acceptScripts = false } = {}) => {
     const res = await fetch('/api/workflows/import-json', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workflow }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflow, ...(dryRun ? { dryRun: true } : {}), ...(acceptScripts ? { acceptScripts: true } : {}) }),
     });
     const d = await safeJson(res);
     if (!res.ok) {
       return { ok: false, status: res.status, error: (d && d.error) || `import failed (${res.status})`, summary: d && d.summary, issues: d && d.errors };
     }
-    return { ok: true, workflow: d.workflow, renamed: !!d.renamed, requestedName: d.requestedName, warnings: d.warnings || [] };
+    if (dryRun) return { ok: true, scriptNodes: (d && d.scriptNodes) || [], warnings: (d && d.warnings) || [], requestedName: d && d.requestedName };
+    return { ok: true, workflow: d.workflow, renamed: !!d.renamed, requestedName: d.requestedName, warnings: d.warnings || [], scriptNodes: d.scriptNodes || [] };
   },
 };
 
@@ -1949,12 +2006,13 @@ async function gvLoadAgents() {
   els.palette.textContent = 'Loading agents…';
   gvComposer.setReady(false);
   try {
-    const [pal, all, cfg] = await Promise.all([gvApi.agents(), gvApi.agentsAll(), gvApi.config()]);
+    const [pal, all, cfg, scripts] = await Promise.all([gvApi.agents(), gvApi.agentsAll(), gvApi.config(), gvApi.scripts()]);
     gvAgentsDirty = false;                       // cleared only on a SUCCESSFUL load
-    gvAgents = pal; gvAgentsAll = all;
-    gvPortsFn = portsFnFor(indexByKey(all));
+    gvAgents = pal; gvAgentsAll = all; gvScripts = scripts;
+    gvPortsFn = portsFnFor(indexByKey(all), indexByKey(scripts));
     gvComposer.setModels(cfg);
     gvComposer.setAgents(indexByKey(pal));
+    gvComposer.setScripts(indexByKey(scripts));
     gvComposer.setReady(true);
     gvComposer.paintPalette();
   } catch {
@@ -1983,6 +2041,7 @@ async function initComposer() {
   gvComposer = createComposer(gvEls(), {
     doc: document, api: gvApi, storage: (() => { try { return window.localStorage; } catch { return null; } })(),
     portsFn: (node) => gvPortsFn(node),
+    highlight: scriptHighlight,   // a script card's command/code params get the real editor
   });
   gvComposer.mount();
   gvComposer.newCanvas();
@@ -2004,9 +2063,10 @@ async function initComposer() {
   gvComposer.fit();
 }
 
-// The headless-Chrome probe seam (scripts/verify-composer-cdp.mjs). It exposes
+// The headless-Chrome probe seam (tools/verify-composer-cdp.mjs). It exposes
 // no mutator the UI does not already own — just the live editor and its view.
 if (typeof window !== 'undefined') window.__gv = () => (gvComposer ? { c: gvComposer, v: gvComposer.view } : null);
+if (typeof window !== 'undefined') window.__gvImport = (obj) => gvImportWorkflowObject(obj);   // test seam for the Import dialog
 
 // Leave-guard: the composer stays MOUNTED (its DOM and undo ring survive), but
 // every document-level listener is unbound and any live gesture is cancelled, so
@@ -2235,8 +2295,13 @@ function option(value, text) {
 // Composer's index, which exists only once THAT view has been opened, so a cold
 // page load rendered no cycle inputs at all. gvPortsFn stays as the fallback: it
 // is built from ?all=1 and so also covers an agent the palette list omits.
-function panelPortsFn(registry) {
-  const own = portsFnFor(registry || {});
+// SCRIPTS ride beside the agents (spec §8.4): a loop is read off its SOURCE output
+// (`when: 'blocking'`), so a loop that starts at a script card — a test gate — is a
+// loop for this panel only when it knows that script's ports.
+const scriptIndex = (scripts) => (Array.isArray(scripts) ? indexByKey(scripts)
+  : (scripts && typeof scripts === 'object' ? scripts : indexByKey(gvScripts)));
+function panelPortsFn(registry, scripts) {
+  const own = portsFnFor(registry || {}, scriptIndex(scripts));
   return (node) => {
     const p = own(node);
     return p && p.ported !== false ? p : (gvPortsFn(node) || p);
@@ -2296,10 +2361,11 @@ function agentsHeaderText(rows) {
 
 // v2: one row per LOOP wire (a plain wire has no budget — V13). Labels reuse the
 // v1 vocabulary: "<toName> ← <fromName>", "(step N)" only when a name repeats.
-function buildGraphWireRows(tpl, registry, runConfig) {
+function buildGraphWireRows(tpl, registry, runConfig, scripts) {
   const reg = registry || {};
+  const scriptReg = scriptIndex(scripts);
   const saved = (runConfig && runConfig.wires) || {};
-  const { loopWireIds, launchOrder } = classifyLoops(tpl, panelPortsFn(reg));
+  const { loopWireIds, launchOrder } = classifyLoops(tpl, panelPortsFn(reg, scriptReg));
   const byId = new Map(tpl.nodes.map((n) => [n.id, n]));
   const rank = new Map(launchOrder.map((id, i) => [id, i]));
   const nameCount = new Map();
@@ -2308,8 +2374,9 @@ function buildGraphWireRows(tpl, registry, runConfig) {
     if (!n) return id;
     // A flow card has no registry meta and no key: name it from the SHARED
     // FLOW_LABEL table the manifest uses, never from its raw n_* id (MAJ-21).
-    if (n.kind !== 'agent') return FLOW_LABEL[n.kind] || n.kind;
-    const meta = reg[n.key];
+    if (!KEYED_KINDS.includes(n.kind)) return FLOW_LABEL[n.kind] || n.kind;
+    // A script card is keyed too: its name comes from the script registry the panel fetched, else its key.
+    const meta = reg[n.key] || scriptReg[n.key];
     return (meta && meta.displayName) || n.key || n.id;
   };
   for (const n of tpl.nodes) nameCount.set(nameOf(n.id), (nameCount.get(nameOf(n.id)) || 0) + 1);
@@ -2332,8 +2399,8 @@ function buildGraphWireRows(tpl, registry, runConfig) {
   });
 }
 
-function buildFeedbackRows(workflow, registry, runConfig) {
-  if (workflow && workflow.version === 2) return buildGraphWireRows(workflow, registry, runConfig);
+function buildFeedbackRows(workflow, registry, runConfig, scripts) {
+  if (workflow && workflow.version === 2) return buildGraphWireRows(workflow, registry, runConfig, scripts);
   const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
   const fbs = Array.isArray(workflow && workflow.feedbacks) ? workflow.feedbacks : [];
   const reg = registry || {};
@@ -2672,6 +2739,18 @@ async function getAgentsApi() {
   } catch { return state.agents; }
 }
 
+// The script registry for the New-pipeline panel, fetched beside /api/agents (spec §8.4). Not cached:
+// the workflow itself is re-fetched on every pick too, and a script added on disk must show up without
+// a reload. A failed fetch degrades to agent-only loop rows ([]) — it never blocks the panel, because a
+// script card carries no per-project tunables here.
+async function getScriptsApi() {
+  try {
+    const res = await fetch('/api/scripts');
+    const data = await safeJson(res);
+    return res.ok && data && Array.isArray(data.scripts) ? data.scripts : [];
+  } catch { return []; }
+}
+
 // Enabled-plugin names for workflow-picker labels (§9.3/§6.5). null = plugin
 // list not known yet (fetch pending/failed) — workflowPickerLabel then skips
 // the conservative "— disabled" flag. Refreshed once per view-open.
@@ -2827,7 +2906,7 @@ async function renderWorkflowConfig(workflowId) {
     return;
   }
   const isDefault = !workflowId || workflowId === 'wf_default';
-  const [fetchedWf, fetchedReg] = await Promise.all([getWorkflowApi(workflowId), getAgentsApi()]);
+  const [fetchedWf, fetchedReg, scripts] = await Promise.all([getWorkflowApi(workflowId), getAgentsApi(), getScriptsApi()]);
   // The Default workflow has offline fallbacks for both halves (topology + the
   // five stage metas), so it always paints. A saved workflow has neither: an
   // empty registry is a failed /api/agents fetch, not a real state, and painting
@@ -2847,7 +2926,7 @@ async function renderWorkflowConfig(workflowId) {
   const rows = buildNodeConfigRows(wf, registry, runConfig,
     isDefault ? { legacySteps: state.config.steps || {} } : {});
   renderAgentRows(rows);
-  renderFeedbackRows(buildFeedbackRows(wf, registry, runConfig));
+  renderFeedbackRows(buildFeedbackRows(wf, registry, runConfig, scripts));
   // The cycle inputs write through a different endpoint shape per engine
   // (v1 `feedbacks:{…}` vs v2 `wires:{…}`); stamp which one this row set is.
   if (el.wfFeedbackConfig) el.wfFeedbackConfig.dataset.graph = wf.version === 2 ? '1' : '';
@@ -3765,6 +3844,44 @@ function setAutoscroll(r, on) {
   syncAutoscrollSwitch(r);
 }
 
+// S4: the newest captured line of a RUNNING script card feeds its footer's live band. Only a
+// script node's own lines count (agents stream at log speed and have no live band), the map is
+// O(1) per line, and the graph repaint is coalesced — the `log` frame itself never repaints the
+// detail (handleServerMessage's skipDetail), so this is the one narrow path that does.
+const LIVE_LINE_MS = 250;
+const LIVE_LINE_MAX = 240;      // the band is ONE ellipsised line; a log line can be 64 KiB (the runner's cap)
+function noteLiveLine(r, rec) {
+  if (!rec || rec.nodeId == null || rec.sub || !isGraphRun(r)) return;
+  const nodes = (r.stepper && r.stepper.graph && Array.isArray(r.stepper.graph.nodes)) ? r.stepper.graph.nodes : [];
+  const node = nodes.find((n) => n && n.id === rec.nodeId);
+  if (!node || node.kind !== 'script') return;
+  // trimEnd, not /\s+$/: that regex is quadratic on a long blank run that is not at the end (1 s per 64 KiB line).
+  const text = String(rec.text).trimEnd().slice(0, LIVE_LINE_MAX);
+  if (!text) return;
+  if (!r._lastLines) r._lastLines = new Map();
+  const executionId = rec.executionId != null ? rec.executionId : null;
+  const prev = r._lastLines.get(rec.nodeId);
+  if (prev && prev.text === text && prev.executionId === executionId) return;
+  r._lastLines.set(rec.nodeId, { text, executionId });
+  if (r._liveLineTimer) return;
+  r._liveLineTimer = setTimeout(() => {
+    r._liveLineTimer = null;
+    r._decorSeq = (r._decorSeq || 0) + 1;
+    paintRunCard(r);
+    if (rdOpenRun() === r && runDetailState.screen) paintRdGraph(runDetailState.screen, r);
+  }, LIVE_LINE_MS);
+}
+
+/** nodeId -> text for the reducer. A line stands only for the EXECUTION that wrote it: when a loop
+ *  re-runs the card, the new execution starts blank instead of wearing the previous one's last line. */
+function liveLinesOf(r) {
+  if (!r._lastLines || !r._lastLines.size) return null;
+  const running = new Set((Array.isArray(r.active) ? r.active : []).map((a) => a && a.executionId).filter(Boolean));
+  const out = new Map();
+  for (const [nodeId, v] of r._lastLines) if (v.executionId == null || running.has(v.executionId)) out.set(nodeId, v.text);
+  return out;
+}
+
 // Per-run log: push to the model and, if the card is mounted, append the line.
 // Filtering is render-time only: the model keeps every line, so changing a
 // filter never loses history; a hidden line is simply not appended.
@@ -3781,6 +3898,7 @@ function onLog(r, msg) {
   };
   r.logLines.push(rec);
   if (r.logLines.length > MAX_LOG_LINES) r.logLines.shift();
+  noteLiveLine(r, rec);
 
   if (r.el) {
     // A repaint (true) already rendered rec from the model — appending again
@@ -9842,6 +9960,10 @@ function paintAskSettings(data) {
   noCap.checked = data.askMaxBudgetUsd === null;
   budget.disabled = noCap.checked;
   budget.value = data.askMaxBudgetUsd == null ? '' : String(data.askMaxBudgetUsd);
+  // W20: the chat's script tools ride the same payload (`chat`), so the card paints from
+  // the GET and from every save response without a second fetch.
+  const scriptHost = document.getElementById('ask-script-tools-host');
+  if (scriptHost) scriptHost.replaceChildren(renderScriptToolsToggle({ prefs: data.chat || {} }, { doc: document }));
 }
 function postAskLimits(body) {
   return postSettingsCard(body, { setMsg: setAskLimitsMsg, paint: paintAskSettings });
@@ -9863,7 +9985,8 @@ function saveAskLimits() {
     if (!Number.isFinite(b) || b < 0.1 || b > 100) { setAskLimitsMsg('the per-turn cap must be between 0.1 and 100', 'err'); return; }
     askMaxBudgetUsd = b;
   }
-  postAskLimits({ askMaxTurns, askMaxBudgetUsd });
+  const scriptHost = document.getElementById('ask-script-tools-host');
+  postAskLimits({ askMaxTurns, askMaxBudgetUsd, ...(scriptHost ? { chat: collectScriptToolsToggle(scriptHost) } : {}) });
 }
 document.getElementById('askLimitsSave')?.addEventListener('click', saveAskLimits);
 document.getElementById('askLimitsReset')?.addEventListener('click', () => postAskLimits({ askMaxTurns: '', askMaxBudgetUsd: '' }));
@@ -11048,6 +11171,94 @@ async function loadMemoryTab(sub = '') {
   }
   await memoryTabCtl.load(sub ? safeDecode(sub) : '');
 }
+
+// ── Scripts page (scripts-workbench-design.md §5) ───────────────────────────
+// One controller per visit (C2): scripts-view.mjs owns the pixels, this owns the
+// endpoint calls and the lifetime. state.scriptsList is the ONE cached copy of
+// the registry list; a scripts-changed frame drops it.
+let scriptsCtl = null;
+
+async function scriptsCall(method, url, body) {
+  const init = { method };
+  if (body !== undefined) { init.headers = { 'Content-Type': 'application/json' }; init.body = JSON.stringify(body); }
+  try {
+    const res = await fetch(url, init);
+    return { ok: res.ok, status: res.status, data: await safeJson(res) };
+  } catch (e) {
+    return { ok: false, status: 0, data: { error: e.message } };
+  }
+}
+const scriptUrl = (key, tail = '') => `/api/scripts/${encodeURIComponent(key)}${tail}`;
+
+const scriptsApi = {
+  async list() {
+    const r = await scriptsCall('GET', '/api/scripts');
+    if (r.ok && Array.isArray(r.data.scripts)) state.scriptsList = r.data.scripts;
+    return r;
+  },
+  read: (key) => scriptsCall('GET', scriptUrl(key)),
+  create: (body) => scriptsCall('POST', '/api/scripts', body),
+  update: (key, body) => scriptsCall('PUT', scriptUrl(key), body),
+  remove: (key) => scriptsCall('DELETE', scriptUrl(key)),
+  duplicate: (key, newKey) => scriptsCall('POST', scriptUrl(key, '/duplicate'), { newKey }),
+  writeCases: (key, cases) => scriptsCall('PUT', scriptUrl(key, '/cases'), { cases }),
+  runtimes: () => scriptsCall('GET', '/api/scripts/runtimes'),
+  bench: (request) => scriptsCall('POST', '/api/scripts/bench', request),
+  benchStop: (benchId) => scriptsCall('POST', '/api/scripts/bench/stop', { benchId }),
+  // The full text of ONE output. A Run all keeps a result per case, so the link
+  // must name which one; a single run omits it.
+  benchOutput: (benchId, port, caseId = null) => `/api/scripts/bench/${encodeURIComponent(benchId)}/output/${encodeURIComponent(port)}`
+    + (caseId ? `?caseId=${encodeURIComponent(caseId)}` : ''),
+  history: () => scriptsCall('GET', '/api/history'),
+  runArtifacts: (runId) => scriptsCall('GET', `/api/runs/${encodeURIComponent(runId)}/artifacts`),
+  runArtifact: (runId, rel) => scriptsCall('GET', `/api/runs/${encodeURIComponent(runId)}/artifact?rel=${encodeURIComponent(rel)}`),
+  projects: () => scriptsCall('GET', '/api/projects'),
+};
+
+// The editor's highlighter (C11): the vendored hljs loader when the grammar is
+// there, escaped text otherwise. The editor itself never touches raw source.
+async function scriptHighlight(text, language) {
+  try {
+    const bound = await diffHljsLoader.forLanguage(language);
+    if (bound) return bound.highlight(String(text ?? ''), language);
+  } catch { /* a missing grammar degrades to plain rows, never to raw markup */ }
+  return escapeHtml(String(text ?? ''));
+}
+
+function mountScriptsView(param = '') {
+  if (!el.scriptsHost) return;
+  if (!scriptsCtl) {
+    scriptsCtl = createScriptsController({
+      host: el.scriptsHost,
+      msgEl: el.scriptsMsg,
+      api: scriptsApi,
+      navigate: (hash) => { if (location.hash.slice(1) !== hash) location.hash = hash; },
+      confirm: confirmModal,
+      highlight: scriptHighlight,
+      renderMarkdown: (text, mount) => renderArtifactMarkdown(text, mount, artifactViewerDeps()),
+      modal: {
+        open: pluginModal,
+        close: closePluginModal,
+        // #plugin-modal has a header Close button and no Escape/backdrop handler of
+        // its own; a picker must settle on both (the import-workflow confirm's rule).
+        onClose: (fn) => {
+          const onKey = (e) => { if (e.key === 'Escape') fn(); };
+          if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', fn);
+          document.addEventListener('keydown', onKey);
+          return () => {
+            if (el.pluginModalClose) el.pluginModalClose.removeEventListener('click', fn);
+            document.removeEventListener('keydown', onKey);
+          };
+        },
+      },
+      ws: { send: (obj) => { const sock = state.ws; if (sock && state.wsReady) { try { sock.send(JSON.stringify(obj)); } catch { /* ignore */ } } } },
+      doc: document,
+    });
+  }
+  void scriptsCtl.route(param);
+}
+
+if (typeof window !== 'undefined') window.__scripts = { mountScriptsView, scriptsApi, ctl: () => scriptsCtl };
 
 // Final routing: render the list and, when `param` names a set, open the wizard in
 // 'edit' (user) or 'view' (built-in). Resets a stale wizard on any path that does not
@@ -18521,7 +18732,7 @@ function runDecorFor(r, mode = 'monitor') {
   const seq = r._decorSeq || 0;
   if (!r._decorCache || r._decorCache.seq !== seq) {
     r._decorCache = { seq, views: new Map(),
-      decor: decorFromState(r, { live: isLive(r), now: Date.now(), subsOf: (id) => subAgentsForNode(r, id) }) };
+      decor: decorFromState(r, { live: isLive(r), now: Date.now(), subsOf: (id) => subAgentsForNode(r, id), lastLines: liveLinesOf(r) }) };
   }
   const cache = r._decorCache;
   let bag = cache.views.get(mode);
@@ -21178,7 +21389,7 @@ const navLinks = $$('.nav button[data-nav], .topnav button[data-nav]');
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
 // plugins/guardrails/models LEFT this array: they are Settings tabs now, reached
 // as #settings/<tab> (legacy bare hashes redirect — see LEGACY_TAB_VIEWS).
-const VIEW_NAMES = ['new', 'getting-started', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'];
+const VIEW_NAMES = ['new', 'getting-started', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'composer', 'workspaces', 'workspace-create', 'agents', 'scripts', 'agent-create', 'projects', 'settings'];
 
 // ── Interface mode (docs/ui-levels.md) ──────────────────────────────────────
 // simple | advanced | expert: a VIEW preference, server-rendered into <html data-level>.
@@ -21198,13 +21409,13 @@ const levelCtl = createLevelController({
 const VIEW_MIN_LEVEL = Object.freeze({
   stats: 'advanced', composer: 'advanced', workspaces: 'advanced', 'workspace-create': 'advanced',
   'agent-create': 'advanced',                 // reachable from the Composer palette at advanced
-  'team-metrics': 'expert', 'team-policy': 'expert', agents: 'expert',
+  'team-metrics': 'expert', 'team-policy': 'expert', agents: 'expert', scripts: 'expert',
   schedules: 'advanced',
 });
 const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ guardrails: 'advanced', plugins: 'advanced', memory: 'advanced', models: 'expert' });
 const VIEW_TITLES = Object.freeze({
   stats: 'Statistics', composer: 'Workflow Composer', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
-  'agent-create': 'Create agent', 'team-metrics': 'Team metrics', 'team-policy': 'Team policy', agents: 'Agents',
+  'agent-create': 'Create agent', 'team-metrics': 'Team metrics', 'team-policy': 'Team policy', agents: 'Agents', scripts: 'Scripts',
   guardrails: 'Guardrails', plugins: 'Plugins', memory: 'Memory', models: 'Models',
   schedules: 'Schedules',
 });
@@ -21217,9 +21428,22 @@ function paintLevelBanner() {
   const { key, min } = pageMinLevel();
   const above = !levelAtLeast(min);
   // The page you are on keeps its menu entry until you leave it, so "where am I" never vanishes.
+  // Simple is the one exception: the Nodes group (Agents, Scripts) stays hidden as a whole —
+  // in the rail AND the topnav — and the banner alone says where you are. Advanced keeps it.
+  const hideNodes = currentLevel() === 'simple';
   for (const b of $$('.nav button[data-nav], .topnav button[data-nav]')) {
+    const nav = b.dataset.nav;
     // Schedules is Advanced, but a run scheduled from Ask Worca in Simple keeps its entry (rule 2).
-    keepVisible(b, (above && b.dataset.nav === currentShownView) || (b.dataset.nav === 'schedules' && schedulesInUse));
+    keepVisible(b, (above && nav === currentShownView && !(hideNodes && NODES_GROUP_VIEWS.includes(nav)))
+      || (nav === 'schedules' && schedulesInUse));
+  }
+  // The Nodes parent and its box are not routes, so the loop above never reaches
+  // them: keep both with the child, or the kept row sits inside a hidden box
+  // (the box is expert-gated too) with its elbow hanging off nothing.
+  if (nodesGroup) {
+    const keep = above && !hideNodes && NODES_GROUP_VIEWS.includes(currentShownView);
+    keepVisible(nodesGroup, keep);
+    keepVisible(nodesGroupBox, keep);
   }
   if (el.settingsTabs) {
     for (const b of el.settingsTabs.querySelectorAll('button[data-tab]')) {
@@ -21322,6 +21546,13 @@ function showView(name, param = '') {
   // Same for the Projects track: leaving must not park a project page mid-slide behind the next
   // view, and its Memory controller must not outlive the view.
   if (currentShownView === 'projects' && name !== 'projects') closeProjDetail({ instant: true });
+  // The Scripts controller owns two delegated listeners, a painted host and (from
+  // Task 10) a live bench subscription; leaving tears it down so the next entry
+  // mounts a fresh one and a stray frame paints nothing.
+  if (currentShownView === 'scripts' && name !== 'scripts' && scriptsCtl) {
+    scriptsCtl.destroy();
+    scriptsCtl = null;
+  }
   if (currentShownView === 'workspaces' && name !== 'workspaces') closeWsDetail({ instant: true });
   // Same for Running's two-screen track (spec §5.1): leaving must not park a
   // detail screen mid-slide behind the next view.
@@ -21374,6 +21605,13 @@ function showView(name, param = '') {
     if (on) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   });
+  // Nodes (Agents, Scripts): tint the parent while a child page is open, and
+  // unfold it — a deep link or a topnav click must never land on a hidden row.
+  if (nodesGroup) {
+    const inNodes = NODES_GROUP_VIEWS.includes(name);
+    nodesGroup.classList.toggle('has-active', inNodes);
+    if (inNodes && nodesGroup.getAttribute('aria-expanded') === 'false') setNodesCollapsed(false);
+  }
   // Toggle a body flag so CSS can drop .main's top padding for the History view,
   // letting the sticky pills toolbar + project headers pin flush to the top.
   document.body.classList.toggle('view-history', name === 'history');
@@ -21418,6 +21656,7 @@ function showView(name, param = '') {
   }
   if (name === 'workspace-create') enterWizard();
   if (name === 'agents') loadAgentsView();
+  if (name === 'scripts') mountScriptsView(param);
   if (name === 'agent-create') enterAgentWizard();
   // A route entry starts clean: a previous "not registered here" error must not linger (a
   // projects-changed rebuild calls refreshProjectsPage directly and keeps the message).
@@ -22192,13 +22431,58 @@ bindExportModal();
 // to POST /api/workflows/import-json; the outcome lands on the list's message
 // line, like a refused delete. On success the imported row's domain tab is
 // selected and the row carries a NEW pill until reload.
+// D18: a shared workflow can carry commands that run with worca's privileges on
+// its first run. The dry run lists them; the user sees every value once, in a
+// monospace block, before anything is saved. The composer's own Save never asks.
+function gvConfirmScriptImport(list) {
+  return new Promise((resolve) => {
+    const body = document.createElement('div');
+    body.className = 'gv-import-scripts';
+    const p = document.createElement('p');
+    p.textContent = "These commands run on this machine with worca's privileges when the workflow runs.";
+    body.appendChild(p);
+    for (const n of list) {
+      for (const [id, value] of Object.entries(n.params || {})) {
+        const head = document.createElement('div');
+        head.className = 'gv-import-script-h';
+        head.textContent = `${n.displayName || n.key} (${n.nodeId}, ${n.runtime}) · ${id}`;
+        const pre = document.createElement('pre');
+        pre.className = 'mono gv-import-script-v';
+        pre.textContent = String(value);
+        body.append(head, pre);
+      }
+    }
+    // Every way out settles the promise ONCE: the two buttons, the modal's own Close, Escape.
+    let settled = false;
+    const onClose = () => done(false);
+    const onKey = (e) => { if (e.key === 'Escape') done(false); };
+    function done(ok) {
+      if (settled) return;
+      settled = true;
+      if (el.pluginModalClose) el.pluginModalClose.removeEventListener('click', onClose);
+      document.removeEventListener('keydown', onKey);
+      closePluginModal();
+      resolve(ok);
+    }
+    if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', onClose);
+    document.addEventListener('keydown', onKey);
+    pluginModal('Import this workflow?', body, [['Cancel', 'btn btn-ghost', () => done(false)], ['Import', 'btn btn-primary', () => done(true)]]);
+  });
+}
+
+function gvImportError(r) {
+  const issues = (r.issues || []).slice(0, 5).map((i) => `${i.code}: ${i.message}`).join(' · ');
+  setGvSavedMsg(r.summary || (issues ? `${r.error} — ${issues}` : r.error), 'err');
+  return false;
+}
+
 async function gvImportWorkflowObject(obj) {
-  const r = await gvApi.importWorkflow(obj);
-  if (!r.ok) {
-    const issues = (r.issues || []).slice(0, 5).map((i) => `${i.code}: ${i.message}`).join(' · ');
-    setGvSavedMsg(r.summary || (issues ? `${r.error} — ${issues}` : r.error), 'err');
-    return false;
-  }
+  const dry = await gvApi.importWorkflow(obj, { dryRun: true });
+  if (!dry.ok) return gvImportError(dry);
+  const confirmed = dry.scriptNodes.length > 0;
+  if (confirmed && !(await gvConfirmScriptImport(dry.scriptNodes))) return false;
+  const r = await gvApi.importWorkflow(obj, { acceptScripts: confirmed });
+  if (!r.ok) return gvImportError(r);
   gvSavedTab = gvDomainOf(r.workflow);
   gvNewIds.add(r.workflow.id);
   setGvSavedMsg(r.renamed

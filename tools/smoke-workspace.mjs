@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// scripts/smoke-workspace.mjs
+// tools/smoke-workspace.mjs
 // Offline mock SMOKE for a WORKSPACE pipeline run (M4). Proves the review-fanout loop
 // end to end with $0 spend:
 //   scanner (mock) writes a description -> a 2-project workspace run injects it into

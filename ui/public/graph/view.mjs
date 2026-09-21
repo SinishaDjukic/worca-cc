@@ -26,6 +26,7 @@ import { portsOf, resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
 import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
 import { thumbnailSvg } from '../../../src/shared/graph/thumbnail.mjs';
 import { sanitizeIcon } from '../../../src/shared/graph/manifest.mjs';
+import { KEYED_KINDS } from '../../../src/shared/graph/constants.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -76,6 +77,10 @@ export function safeAgentIcon(meta) {
   if (!raw || (meta && meta.origin === 'builtin')) return raw;
   return sanitizeIcon(raw) || USER_AGENT_ICON;
 }
+
+// The ƒ glyph lives with the icon set (one source for the page's tile and this canvas).
+import { SCRIPT_GLYPH } from '../../../src/shared/graph/script-icons.mjs';
+export { SCRIPT_GLYPH };
 
 const dotClass = (t) => `dot ${t === 'md' || t === 'json' || t === 'void' || t === 'any' ? t : 'md'}`;
 const whenCaption = (w) => (w === 'blocking' ? 'on blocking' : w === 'clean' ? 'on clean' : '');
@@ -199,17 +204,19 @@ export function createGraphView(host, {
   }
 
   function headerOf(node) {
-    if (node.kind === 'agent') {
-      const meta = agents[node.key] || null;
+    if (KEYED_KINDS.includes(node.kind)) {
+      const meta = agents[node.key] || null;                // the MERGED key -> meta index (agents + scripts)
+      const script = node.kind === 'script';
       return {
-        cls: `h-${(meta && meta.color) || 'blue'}`,
+        cls: `h-${(meta && meta.color) || (script ? 'amber' : 'blue')}`,
         title: (meta && meta.displayName) || node.key || node.id,
-        icon: safeAgentIcon(meta),
+        icon: safeAgentIcon(meta) || (script ? SCRIPT_GLYPH : ''),
         viewBox: AGENT_VIEWBOX,
+        chip: script ? ((meta && meta.runtime) || 'script') : '',
       };
     }
     const flow = FLOW_META[node.kind] || { title: node.kind, icon: '' };
-    return { cls: 'h-flow', title: flow.title, icon: flow.icon, viewBox: FLOW_VIEWBOX };
+    return { cls: 'h-flow', title: flow.title, icon: flow.icon, viewBox: FLOW_VIEWBOX, chip: '' };
   }
 
   function portRow(port, dir, resolvedType) {
@@ -310,6 +317,12 @@ export function createGraphView(host, {
       row.append(h('i', 'led'), h('span', 'xl', band.label || ''), h('span', 'xr', band.right || ''));
       return row;
     }
+    if (band.kind === 'live') {
+      const l = h('div', 'xlive mono');
+      l.textContent = band.text || '';
+      l.title = band.text || '';
+      return l;
+    }
     const res = h('div', 'xresult');           // kind: 'result'
     if (!band.path) { res.textContent = band.text || ''; return res; }
     const a = h('a', null, band.text || '');
@@ -363,6 +376,7 @@ export function createGraphView(host, {
       if (sum && sum.textContent !== t) sum.textContent = t;
       return true;
     }
+    if (band.kind === 'live') { if (el.textContent !== band.text) { el.textContent = band.text || ''; el.title = band.text || ''; } return true; }
     if (band.kind === 'exec') {
       const cls = execRowClass(band);
       if (el.className !== cls) el.className = cls;
@@ -427,7 +441,7 @@ export function createGraphView(host, {
     el.style.height = `${box.h}px`;
     const head = el.querySelector(':scope > .nhead');
     const hd = headerOf(node);
-    const sig = `${hd.cls}|${hd.title}|${hd.icon}`;
+    const sig = `${hd.cls}|${hd.title}|${hd.icon}|${hd.chip}`;
     if (head.dataset.sig !== sig) {
       head.dataset.sig = sig;
       head.className = `nhead ${hd.cls}`;
@@ -438,7 +452,9 @@ export function createGraphView(host, {
       icon.innerHTML = hd.icon;
       const tt = h('span', 'tt', hd.title);
       tt.title = hd.title;                          // A35: an ellipsised name keeps its tooltip
-      head.replaceChildren(icon, tt);
+      const kids = [icon, tt];
+      if (hd.chip) kids.push(h('span', 'chip rt', hd.chip));
+      head.replaceChildren(...kids);
     }
     paintBand(el, node);
     paintBody(el, node, p, orType, awaitWired);
