@@ -8870,7 +8870,7 @@ function openProjectAddModal(path) {
   el.projAddName.value = path ? basenameOf(path) : '';
   // Informational hint only when there is no path (manual-entry fallback);
   // neutral default .hint styling (no .hint.warn class exists).
-  setProjAddMsg(path ? '' : 'Native folder picker unavailable — enter the project folder path manually.');
+  setProjAddMsg(path ? '' : 'Native folder picker unavailable — enter the project folder path, or browse with Choose folder….');
   el.projectAddModal.classList.remove('hidden');
   el.projAddName.focus();
   el.projAddName.select();
@@ -8982,15 +8982,16 @@ if (el.projAddSave) {
   el.projAddBrowse.addEventListener('click', async () => {
     el.projAddBrowse.disabled = true;
     try {
-      const data = await pickFolder();
-      if (data && data.status === 'picked' && data.path) {
-        el.projAddPath.value = data.path;
-        if (!el.projAddName.value.trim()) el.projAddName.value = basenameOf(data.path);
+      const fill = (p) => {
+        el.projAddPath.value = p;
+        if (!el.projAddName.value.trim()) el.projAddName.value = basenameOf(p);
         setProjAddMsg('');
-      } else if (data && data.status === 'busy') {
-        setProjAddMsg('A folder dialog is already open — finish or cancel it first.', 'err');
-      }
-      // canceled / unsupported: leave the manual fields as-is
+      };
+      const data = await pickFolder();
+      if (data && data.status === 'picked' && data.path) fill(data.path);
+      else if (data && data.status === 'canceled') { /* user dismissed the dialog */ }
+      else if (data && data.status === 'busy') setProjAddMsg('A folder dialog is already open — finish or cancel it first.', 'err');
+      else await openFolderBrowser(el.projAddPath.value.trim(), fill); // unsupported / error -> in-app browser
     } finally {
       el.projAddBrowse.disabled = false;
     }
