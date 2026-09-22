@@ -26,7 +26,7 @@ let cwdSandbox = null;
 let homeDir, srv, base, wsBase, mod, prevHome;
 let projectDir, projectDir2, projectKey, workspaceId;
 const JSONH = { 'Content-Type': 'application/json' };
-const MODEL = { model: 'claude-opus-5', effort: 'high' };
+const MODEL = { model: 'claude-opus-5-5', effort: 'high' };
 
 function gitInit(dir) {
   const g = (a) => spawnSync('git', a, { cwd: dir });
@@ -166,20 +166,20 @@ test('save (new row): writes origin=auto with the node tunables baked in, flips 
   assert.equal(card.card.thenRun, true, 'the mock derives thenRun from "run"');
   const nodeId = card.card.order[0];
   const w = openWs(); await w.opened;                                        // bare: no replay of the finished job (see above)
-  // 'claude-opus-5' / 'high' exist in the test home's catalog (config.mjs listModels('')) — pick another pair if the predefined list changes.
-  const r = await post(`/api/ask/threads/${thread.id}/cards/${card.id}`, { state: 'saved', name: 'Rename fix', nodes: { [nodeId]: { model: 'claude-opus-5', effort: 'high' } } });
+  // 'claude-opus-5-5' / 'high' exist in the test home's catalog (config.mjs listModels('')) — pick another pair if the predefined list changes.
+  const r = await post(`/api/ask/threads/${thread.id}/cards/${card.id}`, { state: 'saved', name: 'Rename fix', nodes: { [nodeId]: { model: 'claude-opus-5-5', effort: 'high' } } });
   assert.equal(r.status, 200);
   const body = await r.json();
   assert.equal(body.block.state, 'saved'); assert.match(body.block.workflowId, /^wf_rename-fix/); assert.equal(body.block.card.name, 'Rename fix');
   assert.equal(body.block.card.adopted, false);
-  assert.equal(body.block.card.nodes[nodeId].model, 'claude-opus-5', 'the card mirrors the accepted tunables');
+  assert.equal(body.block.card.nodes[nodeId].model, 'claude-opus-5-5', 'the card mirrors the accepted tunables');
   assert.ok(body.turn && body.turn.assistantMessageId, 'the event turn started at once (no turn was running)');
   const rows = await (await fetch(`${base}/api/workflows`)).json();
   const row = rows.workflows.find((x) => x.id === body.block.workflowId);
   assert.equal(row.origin, 'auto'); assert.equal(row.name, 'Rename fix');
   // deepEqual holds because the implement-only recipe carries NO stage tunables (measured: the assembled agent node has config {}); a recipe
   // with a stage model/effort would add keys here — assert the two accepted keys, not the whole config, if the recipe ever changes (v6).
-  assert.deepEqual(row.nodes.find((n) => n.kind === 'agent').config, { model: 'claude-opus-5', effort: 'high' });
+  assert.deepEqual(row.nodes.find((n) => n.kind === 'agent').config, { model: 'claude-opus-5-5', effort: 'high' });
   await waitFor(() => frames(w.msgs, thread.id, 'ask-done').length >= 1);
   const snap = await snapshot(thread.id);
   const notice = snap.messages.find((m) => m.role === 'user' && (m.blocks || []).some((b) => b.kind === 'notice' && b.synthetic));

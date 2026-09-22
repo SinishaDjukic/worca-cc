@@ -15,7 +15,7 @@ useTempHome(after);
 
 let homeDir, srv, base, wsBase, mod, prevHome;
 const JSONH = { 'Content-Type': 'application/json' };
-const MODEL = { model: 'claude-opus-5', effort: 'high' };
+const MODEL = { model: 'claude-opus-5-5', effort: 'high' };
 
 before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'worca-cc-askmsg-'));
@@ -87,7 +87,7 @@ test('validation: 404 unknown thread, 400 model/effort/context/text', async () =
   assert.equal((await post('/api/ask/threads/ask_ffffffff/messages', { text: 'x', ...MODEL })).status, 404);
   const t = await newThread();
   assert.equal((await post(`/api/ask/threads/${t.id}/messages`, { text: 'x', model: 'no-such-model', effort: 'high' })).status, 400);
-  assert.equal((await post(`/api/ask/threads/${t.id}/messages`, { text: 'x', model: 'claude-opus-5', effort: 'ultra' })).status, 400);
+  assert.equal((await post(`/api/ask/threads/${t.id}/messages`, { text: 'x', model: 'claude-opus-5-5', effort: 'ultra' })).status, 400);
   assert.equal((await post(`/api/ask/threads/${t.id}/messages`, { text: 'x', ...MODEL, context: { pipelineId: 'zz' } })).status, 400);
   assert.equal((await post(`/api/ask/threads/${t.id}/messages`, { text: '   ', ...MODEL })).status, 400);
 });

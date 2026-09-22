@@ -63,7 +63,7 @@ const orchFor = (over = {}) => createOrchestrator({ projectDir: gitDir('auto'), 
 test('accept: the proposal carries the manifest, the dispatch order and editable nodes; a NEW shape is saved with origin auto and the run completes on it', { timeout: 120000 }, async () => {
   const { classify, calls } = scripted([PLAN_PARTIAL]);
   const orch = orchFor({ classify });
-  const seen = answerer(orch, (q) => ({ decision: 'accept', name: 'My flow', nodes: { n_planner: { model: 'claude-opus-5', effort: 'max' } } }));
+  const seen = answerer(orch, (q) => ({ decision: 'accept', name: 'My flow', nodes: { n_planner: { model: 'claude-opus-5-5', effort: 'max' } } }));
   const res = await orch.run();
   assert.equal(res.status, 'done', res.error);
   assert.equal(seen.filter((q) => q.kind === 'workflow').length, 1);
@@ -78,7 +78,7 @@ test('accept: the proposal carries the manifest, the dispatch order and editable
   assert.deepEqual(p.manifest.graph.nodes.filter((n) => n.kind === 'agent').map((n) => n.key), ['planner', 'refiner', 'implementer', 'reviewer']);
   assert.deepEqual(p.order, ['n_planner', 'n_refiner', 'n_implementer', 'n_reviewer'], 'the dispatch order rides the proposal');
   assert.deepEqual(Object.keys(p.nodes).sort(), ['n_implementer', 'n_planner', 'n_refiner', 'n_reviewer']);
-  assert.ok(p.models.some((m) => m.id === 'claude-opus-5'));
+  assert.ok(p.models.some((m) => m.id === 'claude-opus-5-5'));
   assert.equal(p.costUsd, 0.02);
   assert.match(p.fingerprint, /^top-level: /, 'the user can see what the classifier saw');
   assert.equal(p.ignoredProjectOverrides, false);
@@ -101,7 +101,7 @@ test('accept: the proposal carries the manifest, the dispatch order and editable
   assert.deepEqual(st.stepper.auto, { status: 'decided', via: 'created', rounds: 1, humanInLoop: true, workflowId: 'wf_my-flow' });
   assert.deepEqual(st.stepper.template, { id: 'wf_my-flow', name: 'My flow' });
   const plan = st.stepper.graph.nodes.find((n) => n.id === 'n_planner');
-  assert.equal(plan.model, 'claude-opus-5');
+  assert.equal(plan.model, 'claude-opus-5-5');
   assert.equal(plan.effort, 'max');
   const row = await readWorkflow('wf_my-flow');
   assert.equal(row.origin, 'auto');
@@ -244,12 +244,12 @@ test('hidden built-in models are not offered in the proposal but an accepted hid
   await setHideBuiltinModels(true);
   try {
     const orch = orchFor({ classify: scripted([QUICK]).classify });
-    const seen = answerer(orch, () => ({ decision: 'accept', nodes: { n_planner: { model: 'claude-opus-5', effort: 'max' } } }));
+    const seen = answerer(orch, () => ({ decision: 'accept', nodes: { n_planner: { model: 'claude-opus-5-5', effort: 'max' } } }));
     const res = await orch.run();
     assert.equal(res.status, 'done', res.error);
     const p = seen.find((q) => q.kind === 'workflow').workflow;
     assert.ok(!p.models.some((m) => /^claude-/.test(m.id)), 'the picker list skips hidden built-ins like every other picker');
-    assert.equal(orch.getState().stepper.graph.nodes.find((n) => n.id === 'n_planner').model, 'claude-opus-5', 'validators still accept a hidden id');
+    assert.equal(orch.getState().stepper.graph.nodes.find((n) => n.id === 'n_planner').model, 'claude-opus-5-5', 'validators still accept a hidden id');
   } finally {
     await setHideBuiltinModels(false);
   }
@@ -279,7 +279,7 @@ test('B3: a twin saved while the proposal is open is reused at Accept instead of
     // someone (another run, the composer, the chat) saves the same topology while the question is open
     const built = assembleShape(SMALL, { registry: REG });
     writeGraphWorkflow({ ...built.template, id: 'wf_meanwhile', name: 'Meanwhile', domain: 'coding' })
-      .then(() => orch.answer(q.id, { decision: 'accept', name: 'Small change', nodes: { n_implementer: { model: 'claude-opus-5', effort: 'high' } } }));
+      .then(() => orch.answer(q.id, { decision: 'accept', name: 'Small change', nodes: { n_implementer: { model: 'claude-opus-5-5', effort: 'high' } } }));
   });
   const res = await orch.run();
   assert.equal(res.status, 'done', res.error);
@@ -288,7 +288,7 @@ test('B3: a twin saved while the proposal is open is reused at Accept instead of
   assert.deepEqual(st.stepper.auto, { status: 'decided', via: 'reused', rounds: 1, humanInLoop: true, workflowId: 'wf_meanwhile' });
   assert.deepEqual(await ids(), [...before, 'wf_meanwhile'].sort(), 'no duplicate row');
   const impl = st.stepper.graph.nodes.find((n) => n.key === 'implementer');
-  assert.deepEqual([impl.model, impl.effort], ['claude-opus-5', 'high'], 'the table edit was remapped onto the twin\'s node ids');
+  assert.deepEqual([impl.model, impl.effort], ['claude-opus-5-5', 'high'], 'the table edit was remapped onto the twin\'s node ids');
 });
 
 test('finding 5: with human-in-the-loop OFF, a reused twin whose per-project overrides are ignored still says so in the run log', { timeout: 120000 }, async () => {
@@ -298,7 +298,7 @@ test('finding 5: with human-in-the-loop OFF, a reused twin whose per-project ove
   const built = assembleShape(TUNED, { registry: REG, humanInLoop: false });
   await writeGraphWorkflow({ ...built.template, id: 'wf_tuned', name: 'Tuned', domain: 'coding' });
   const plannerId = built.template.nodes.find((n) => n.key === 'planner').id;
-  await setNodeModel(dir, 'wf_tuned', plannerId, { model: 'claude-opus-5', effort: 'high' });   // the project's own tuning of that row
+  await setNodeModel(dir, 'wf_tuned', plannerId, { model: 'claude-opus-5-5', effort: 'high' });   // the project's own tuning of that row
   const logs = [];
   const orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_auto', prompt: 'Build the thing, carefully.', claude: { mock: true }, humanInLoop: false, classify: scripted([TUNED]).classify });
   orch.on('log', (e) => logs.push(e));

@@ -35,7 +35,7 @@ const DOC = {
   schema: 1, fields: {
     'workflows.default': { kind: 'default', value: 'wf_default' },
     'run.humanInLoop': { kind: 'default', value: false },
-    'models.steps': { kind: 'default', value: { planner: { model: 'claude-opus-5', effort: 'high' }, implementer: { model: 'acme-proxy-opus' } } },
+    'models.steps': { kind: 'default', value: { planner: { model: 'claude-opus-5-5', effort: 'high' }, implementer: { model: 'acme-proxy-opus' } } },
     'models.hideBuiltins': { kind: 'default', value: true },
     'ask.maxTurns': { kind: 'default', value: 12 },
     'ask.maxBudgetUsd': { kind: 'default', value: 0.5 },
@@ -78,7 +78,7 @@ test('default workflow and human in the loop start the project off, until it set
 
 test('step defaults fill roles the project has not configured', async () => {
   let m = await resolveStepModels(home, undefined);
-  assert.deepEqual(m.planner, { model: 'claude-opus-5', effort: 'high' });
+  assert.deepEqual(m.planner, { model: 'claude-opus-5-5', effort: 'high' });
   assert.equal(m.implementer.model, 'acme-proxy-opus');
   await setStep(home, 'planner', { model: 'claude-sonnet-5', effort: 'medium' });
   m = await resolveStepModels(home, undefined);

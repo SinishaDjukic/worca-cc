@@ -55,7 +55,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 34;
+export const SCHEMA_VERSION = 35;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1297,6 +1297,15 @@ function applySchemaV34(db) {
   repairSchemaGaps(db, schemaGaps(db));
 }
 
+/** v35 (Opus 5.5 replaces Opus 5 in PREDEFINED_MODELS): V26's catalog swap again —
+ *  same reasons, same stores, same rules (renameStoredModelPins). History keeps
+ *  recording `claude-opus-5` where that is what ran. */
+const V35_MODEL_RENAMES = [['claude-opus-5', 'claude-opus-5-5']];
+
+function applySchemaV35(db) {
+  for (const [from, to] of V35_MODEL_RENAMES) renameStoredModelPins(db, from, to);
+}
+
 /** Move every stored pin on model id `from` (lower-case) to `to`. Each table
  *  is guarded like V24's: hand-seeded upgrade fixtures (and a DB from before the
  *  fs->db import) reach this step without some of them. */
@@ -1687,6 +1696,7 @@ export function migrate(db) {
     if (current < 32) applySchemaV32(db);            // team policy: pipelines.policy_state + workspaces.policy_project
     if (current < 33) applySchemaV33(db);            // money saved: human_hours columns
     if (current < 34) applySchemaV34(db);            // run chains: scheduled_runs.after_* + source_from_previous
+    if (current < 35) applySchemaV35(db);            // Opus 5 pins -> Opus 5.5 (catalog swap)
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

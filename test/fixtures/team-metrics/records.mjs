@@ -2,7 +2,7 @@ export function makeRecord({
   id, startedAt = '2026-09-10T10:00:00Z', usd = 1, result = 'done', wallMs = 1000, activeMs = 800, pausedMs = undefined,
   workflow = { id: 'wf_auto', name: 'Auto', version: 2 }, review = null, questions = 0, pauses = 0,
   pr = null, actor = 'Siniša Đukić', source = null, kind = 'project', project = 'acme/billing-api',
-  workspace = 'IoT SP Platform', workspaceId = null, touched = [], touchedFiles = undefined, files = null, title = `run ${id}`, models = ['claude-opus-5'],
+  workspace = 'IoT SP Platform', workspaceId = null, touched = [], touchedFiles = undefined, files = null, title = `run ${id}`, models = ['claude-opus-5-5'],
 }) {
   return {
     v: 1, id, worca: '1.2.0', recordedAt: startedAt, startedAt, endedAt: startedAt, wallMs, activeMs,

@@ -274,7 +274,7 @@ const MID = 'askm_00000001';
 function askArms(url, opts) {
   const method = ((opts && opts.method) || 'GET').toUpperCase();
   if (url.includes('/api/ask/models')) {
-    return { ok: true, status: 200, json: async () => ({ models: [{ id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false }], efforts: ['medium', 'high', 'xhigh', 'max'] }) };
+    return { ok: true, status: 200, json: async () => ({ models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false }], efforts: ['medium', 'high', 'xhigh', 'max'] }) };
   }
   if (url.includes(`/api/ask/threads/${TID}/messages`) && method === 'POST') {
     return { ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000001', assistantMessageId: MID }) };

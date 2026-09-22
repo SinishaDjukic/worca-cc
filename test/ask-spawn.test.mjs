@@ -17,7 +17,7 @@ const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a
 const FAKE_HOME = '/Users/zed/.worca-cc';
 const base = () => ({
   thread: { id: 'ask_00000001', sessionId: null },
-  turn: { prompt: 'hello', systemPrompt: 'SYS', model: 'claude-opus-5', effort: 'high', modelEnv: undefined },
+  turn: { prompt: 'hello', systemPrompt: 'SYS', model: 'claude-opus-5-5', effort: 'high', modelEnv: undefined },
   limits: { maxTurns: 40, maxBudgetUsd: 2 },
   mcpConfigPath: join(FAKE_HOME, 'tmp', 'ask', 'mcp-askm_00000001.json'),
   scratchDir: join(FAKE_HOME, 'tmp', 'ask'),
@@ -36,7 +36,7 @@ test('the recipe: cwd, dontAsk, Task + Read/Grep/Glob built-ins, worca grant, sc
   assert.ok(o.cwd.endsWith(join('tmp', 'ask')) && o.cwd !== FAKE_HOME, 'never the home itself');
   assert.equal(o.prompt, 'hello');
   assert.equal(o.systemPrompt, 'SYS');
-  assert.equal(o.model, 'claude-opus-5');
+  assert.equal(o.model, 'claude-opus-5-5');
   assert.equal(o.effort, 'high');
   assert.equal(o.permissionMode, 'dontAsk');
   assert.equal(ASK_PERMISSION_MODE, 'dontAsk');

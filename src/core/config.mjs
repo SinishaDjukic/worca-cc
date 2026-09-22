@@ -67,12 +67,14 @@ export { EFFORTS };
  * available for this subscription"). Fable 5.1 needs no `[1m]` suffix: its context
  * window is 1M by default (verified to resolve via `claude --model`, CLI 2.1.257).
  * It replaced Fable 5 (`claude-fable-5`) on 2026-09-01; db.mjs V26 moves every
- * stored pin on the retired id to the successor, so nothing keeps it here. Opus 5
- * (`claude-opus-5`) and Sonnet 5 (`claude-sonnet-5`) are likewise 1M-only and
- * carry no `[1m]` twin.
+ * stored pin on the retired id to the successor, so nothing keeps it here. Opus 5.5
+ * (`claude-opus-5-5`) and Sonnet 5 (`claude-sonnet-5`) are likewise 1M-only and
+ * carry no `[1m]` twin. Opus 5.5 replaced Opus 5 (`claude-opus-5`) on 2026-09-22
+ * (verified to resolve via `claude --model`, CLI 2.1.280); db.mjs V35 moves the
+ * stored pins the same way.
  */
 export const PREDEFINED_MODELS = [
-  { id: 'claude-opus-5',          label: 'Opus 5',          efforts: ['medium', 'high', 'xhigh', 'max'] },
+  { id: 'claude-opus-5-5',        label: 'Opus 5.5',        efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-fable-5-1',       label: 'Fable 5.1 (1M)',  efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-8',        label: 'Opus 4.8',        efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-8[1m]',    label: 'Opus 4.8 (1M)',   efforts: ['medium', 'high', 'xhigh', 'max'] },
@@ -481,7 +483,8 @@ export function resolveModelCost(modelId, cliCostUsd, usage, costCfg = undefined
 
 // ── display-only list prices ──────────────────────────────────────────────────
 // USD per MILLION tokens for the built-in ids, from Anthropic's published
-// pricing (platform.claude.com/docs/en/pricing — snapshot 2026-06-24). DISPLAY
+// pricing (platform.claude.com/docs/en/pricing — snapshot 2026-06-24; Opus 5.5
+// added 2026-09-22). DISPLAY
 // APPROXIMATION ONLY: it feeds the chat footer's live "≈" estimate while a turn
 // streams (ask/events.mjs `estimatedCostUsd`). The CLI's result.total_cost_usd,
 // re-priced by resolveModelCost, stays the ONLY figure any message row, thread
@@ -489,12 +492,12 @@ export function resolveModelCost(modelId, cliCostUsd, usage, costCfg = undefined
 // Ids missing here get no estimate (null), which is the pre-existing behaviour;
 // `[1m]` twins and dated ids resolve to their base row (the long-context premium
 // is not modelled). cacheWrite = 1.25× input (5-minute TTL), cacheWrite1h = 2×
-// input, cacheRead = 0.1× input except Fable 5.1 (0.025×). Refresh by hand when
+// input, cacheRead = 0.1× input except Fable 5.1 (0.025×) and Opus 5.5 (0.05×). Refresh by hand when
 // Anthropic moves a price. PREDEFINED_MODELS itself stays untouched — its entry
 // shape is pinned (test/config-models-global.test.mjs:205).
 export const PREDEFINED_LIST_PRICES = Object.freeze({
   'claude-fable-5-1':  { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5, cacheWrite1h: 20 },
-  'claude-opus-5':     { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25, cacheWrite1h: 10 },
+  'claude-opus-5-5':   { input: 4,  output: 20, cacheRead: 0.2,  cacheWrite: 5,    cacheWrite1h: 8 },
   'claude-opus-4-8':   { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25, cacheWrite1h: 10 },
   'claude-opus-4-7':   { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25, cacheWrite1h: 10 },
   'claude-opus-4-6':   { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25, cacheWrite1h: 10 },

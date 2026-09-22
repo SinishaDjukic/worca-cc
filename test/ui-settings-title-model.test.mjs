@@ -15,7 +15,7 @@ const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.ur
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const CATALOG = [
-  { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high'], custom: false, hasEnv: false },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high'], custom: false, hasEnv: false },
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false, hasEnv: false },
   { id: 'corp-model', label: 'Corp', efforts: ['high'], custom: 'global', hasEnv: true },
   { id: 'plug-model', label: 'Plug', efforts: ['high'], custom: 'plugin', plugin: 'vendor', hasEnv: true },
@@ -90,7 +90,7 @@ test('ui-settings-title-model: default paints "Same as the run\'s model" selecte
   const opts = optionsOf($);
   assert.deepEqual(opts[0], { value: '', text: "Same as the run's model", group: null, disabled: false });
   assert.deepEqual(opts.filter((o) => o.group).map((o) => [o.group, o.value]), [
-    ['Your models', 'corp-model'], ['From plugins', 'plug-model'], ['Built-in', 'claude-haiku-4-5'], ['Built-in', 'claude-opus-5'],
+    ['Your models', 'corp-model'], ['From plugins', 'plug-model'], ['Built-in', 'claude-haiku-4-5'], ['Built-in', 'claude-opus-5-5'],
   ]);
   assert.equal(opts.find((o) => o.value === 'plug-model').text, 'Plug (vendor)', 'plugin provenance suffix');
   assert.ok(!opts.some((o) => o.value === 'legacy-model'), 'legacy per-project models are not global');
@@ -100,11 +100,11 @@ test('ui-settings-title-model: default paints "Same as the run\'s model" selecte
 
 test('ui-settings-title-model: a stored id is selected; hidden built-ins leave the list unless stored', async () => {
   const catalog = CATALOG.map((m) => (m.custom === false ? { ...m, hidden: true } : m));
-  const { $, openSettings } = await boot({ initial: { titleModel: 'claude-opus-5', titleModelEffective: { model: 'claude-opus-5', source: 'settings', stale: null } }, catalog });
+  const { $, openSettings } = await boot({ initial: { titleModel: 'claude-opus-5-5', titleModelEffective: { model: 'claude-opus-5-5', source: 'settings', stale: null } }, catalog });
   await openSettings();
-  assert.equal($('#titleModel').value, 'claude-opus-5');
+  assert.equal($('#titleModel').value, 'claude-opus-5-5');
   const opts = optionsOf($);
-  assert.ok(opts.some((o) => o.value === 'claude-opus-5' && o.group === 'Built-in'), 'the stored built-in stays');
+  assert.ok(opts.some((o) => o.value === 'claude-opus-5-5' && o.group === 'Built-in'), 'the stored built-in stays');
   assert.ok(!opts.some((o) => o.value === 'claude-haiku-4-5'), 'other hidden built-ins are gone');
   assert.equal($('#titleModelTest').disabled, false);
 });

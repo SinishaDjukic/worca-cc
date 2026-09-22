@@ -30,7 +30,7 @@ path; the native skill cannot express dated ids or per-agent effort.
 
 | id | label | efforts |
 |---|---|---|
-| `claude-opus-5` | Opus 5 | medium, high, xhigh, max |
+| `claude-opus-5-5` | Opus 5.5 | medium, high, xhigh, max |
 | `claude-opus-4-8` | Opus 4.8 | medium, high, xhigh, max |
 | `claude-opus-4-8[1m]` | Opus 4.8 (1M) | medium, high, xhigh, max |
 | `claude-opus-4-7` | Opus 4.7 | medium, high, xhigh, max |
@@ -42,6 +42,6 @@ path; the native skill cannot express dated ids or per-agent effort.
 | `claude-haiku-4-5` | Haiku 4.5 | medium, high |
 
 The `[1m]` suffix selects the 1M-token long-context variant. Haiku 4.5 1M is omitted
-(the CLI rejects it). Opus 5 (`claude-opus-5`) is 1M-context only and needs no `[1m]`
+(the CLI rejects it). Opus 5.5 (`claude-opus-5-5`) is 1M-context only and needs no `[1m]`
 suffix. These ids are aliases the installed `claude` CLI must accept — verify with
 `claude --model <id>`.

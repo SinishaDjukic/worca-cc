@@ -13,7 +13,7 @@ const REG = {
 };
 const TPL = { id: 'wf_x', name: 'X', version: 2,
   nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
-          { id: 'n_rev', kind: 'agent', key: 'reviewer', x: 600, y: 0, config: { model: 'claude-opus-5', effort: 'high' } },
+          { id: 'n_rev', kind: 'agent', key: 'reviewer', x: 600, y: 0, config: { model: 'claude-opus-5-5', effort: 'high' } },
           { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
           { id: 'n_end', kind: 'end', x: 900, y: 0, config: {} }],
   wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
@@ -22,20 +22,20 @@ const TPL = { id: 'wf_x', name: 'X', version: 2,
           { id: 'w4', from: { node: 'n_rev', port: 'pass' }, to: { node: 'n_end', port: 'result' } }] };
 
 test('resolveNodeTunables: override beats workflow default, effort follows its own model only', () => {
-  const r = resolveNodeTunables({ model: 'claude-haiku-4-5' }, { model: 'claude-opus-5', effort: 'high', fanOut: true }, { fanOut: false, questionsDefault: true });
+  const r = resolveNodeTunables({ model: 'claude-haiku-4-5' }, { model: 'claude-opus-5-5', effort: 'high', fanOut: true }, { fanOut: false, questionsDefault: true });
   assert.deepEqual(r.override, { model: 'claude-haiku-4-5' });
   assert.equal(r.model, 'claude-haiku-4-5');
   assert.equal(r.effort, '', 'a model override does not inherit the default effort');
   assert.equal(r.fanOut, true);
   assert.equal(r.askQuestions, true);
-  assert.deepEqual(r.def, { model: 'claude-opus-5', effort: 'high', fanOut: true, askQuestions: true, subagentModel: '' });
+  assert.deepEqual(r.def, { model: 'claude-opus-5-5', effort: 'high', fanOut: true, askQuestions: true, subagentModel: '' });
 });
 
 test('modifiedFieldsOf + pruneNodeSelection agree on "equal to default = inherit"', () => {
-  const t = resolveNodeTunables({}, { model: 'claude-opus-5', effort: 'high' }, {});
+  const t = resolveNodeTunables({}, { model: 'claude-opus-5-5', effort: 'high' }, {});
   assert.deepEqual(modifiedFieldsOf(t, t.def, { asksQuestions: true }), []);
   const row = { ...t, askQuestions: false, questionsLocked: false };
-  assert.deepEqual(pruneNodeSelection(row, { effort: 'max' }), { model: 'claude-opus-5', effort: 'max', fanOut: null, askQuestions: null, subagentModel: '' });
+  assert.deepEqual(pruneNodeSelection(row, { effort: 'max' }), { model: 'claude-opus-5-5', effort: 'max', fanOut: null, askQuestions: null, subagentModel: '' });
   assert.deepEqual(pruneNodeSelection(row, {}), { model: '', effort: '', fanOut: null, askQuestions: null, subagentModel: '' });
   assert.equal(pruneNodeSelection({ ...t, askQuestions: null, questionsLocked: false }, {}).askQuestions, undefined, 'no capability → key dropped by JSON');
 });

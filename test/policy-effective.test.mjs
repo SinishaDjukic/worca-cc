@@ -15,7 +15,7 @@ const doc = normalizePolicyDoc({
     'cost.pooledBudgetUsd': { kind: 'soft', value: 1200, window: 'monthly' },
     'guardrails.minimum': { kind: 'soft', value: 'normal' },
     'guardrails.default': { kind: 'default', value: 'gp:gateway-normal' },
-    'models.allowed': { kind: 'soft', value: ['claude-opus-5', 'Claude-Sonnet-5'] },
+    'models.allowed': { kind: 'soft', value: ['claude-opus-5-5', 'Claude-Sonnet-5'] },
     'plugins.required': { kind: 'soft', value: [{ name: 'github-source' }, { name: 'acme-jira', minVersion: '1.2.0' }] },
     'plugins.blocked': { kind: 'soft', value: ['old-plugin'] },
     'worca.minVersion': { kind: 'hard', value: '1.4.0' },

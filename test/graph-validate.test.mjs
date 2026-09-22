@@ -511,7 +511,7 @@ test('V17 knows the script config keys; V22 checks params, ports placement, mock
   const okCfg = gate({ params: { cmd: 'npm test', passAt: 2 }, timeoutMs: 5000, awaitAll: false, mock: { summary: 'm', outputs: { log: { text: '# t' } } } });
   assert.equal(V(okCfg).warnings.filter((w) => w.code === 'V17').length, 0);
   assert.equal(V(okCfg).errors.filter((e) => e.code === 'V22').length, 0);
-  const model = gate({ params: { cmd: 'x' }, model: 'claude-opus-5' });
+  const model = gate({ params: { cmd: 'x' }, model: 'claude-opus-5-5' });
   assert.ok(V(model).warnings.some((w) => w.code === 'V17' && /unknown config key 'model' for kind 'script'/.test(w.message)));
   const v22 = (config) => V(gate(config)).errors.filter((e) => e.code === 'V22').map((e) => e.message);
   assert.deepEqual(v22({ params: { cmd: 'x', nope: 1 } }), ["script node 'n_tests' sets unknown param 'nope' — script \"runTests\" declares passAt, cmd"]);

@@ -50,6 +50,6 @@ test('runOpts resolves modelEnv from the dispatched model id', async () => {
 test('runOpts leaves modelEnv undefined for env-less and unconfigured models', async () => {
   await addGlobalModel({ id: 'plain-model' });
   assert.equal(runOpts({ ...CTX_BASE, claudeOpts: { model: 'plain-model' } }, CALL).modelEnv, undefined);
-  assert.equal(runOpts({ ...CTX_BASE, claudeOpts: { model: 'claude-opus-5' } }, CALL).modelEnv, undefined);
+  assert.equal(runOpts({ ...CTX_BASE, claudeOpts: { model: 'claude-opus-5-5' } }, CALL).modelEnv, undefined);
   assert.equal(runOpts({ ...CTX_BASE, claudeOpts: {} }, CALL).modelEnv, undefined, 'no model -> no env');
 });

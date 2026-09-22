@@ -80,7 +80,7 @@ test('publish: validates strictly, commits one file, discovery sees the new head
   await assert.rejects(publishPolicy(gw, 'x'), { code: 'BAD_REQUEST' });
   const out = await publishPolicy(gw, {
     schema: 1, title: 'Gateway team policy', notes: 'Q4',
-    fields: { 'cost.pipelineLimitUsd': { kind: 'soft', value: 10, onBreach: 'pause' }, 'cost.totalLimitUsd': { kind: 'soft', value: 150 }, 'models.allowed': { kind: 'soft', value: ['claude-opus-5'] } },
+    fields: { 'cost.pipelineLimitUsd': { kind: 'soft', value: 10, onBreach: 'pause' }, 'cost.totalLimitUsd': { kind: 'soft', value: 150 }, 'models.allowed': { kind: 'soft', value: ['claude-opus-5-5'] } },
     workspaceRuns: { 'cost.pipelineLimitUsd': { kind: 'soft', value: 25 } },
   }, { message: 'Q4 caps' });
   assert.equal(out.ok, true); assert.equal(out.unchanged, false); assert.ok(out.sha);

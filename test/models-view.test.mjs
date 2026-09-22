@@ -14,7 +14,7 @@ const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
 const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
 const PREDEFINED = [
-  { id: 'claude-opus-5', label: 'Opus 5', efforts: EFFORTS },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: EFFORTS },
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', efforts: ['medium', 'high', 'max'] },
 ];
 const GLOBAL = {

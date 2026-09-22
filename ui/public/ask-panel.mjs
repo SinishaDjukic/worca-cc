@@ -23,7 +23,7 @@ import { portsFnFor } from '../../src/shared/graph/ports.mjs';
  * default is ASK_LIMITS.defaultModel/defaultEffort, shipped as `catalog.default`
  * and already validated against the live catalog by src/core/ask/models.mjs.
  */
-const FALLBACK_PICK = Object.freeze({ model: 'claude-opus-5', effort: 'high' });
+const FALLBACK_PICK = Object.freeze({ model: 'claude-opus-5-5', effort: 'high' });
 
 const ICONS = {
   threads: 'M4 6h16M4 12h16M4 18h9',

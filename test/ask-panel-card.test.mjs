@@ -26,7 +26,7 @@ const WS_CARD = {
 const WF_DEFAULT_TPL = { id: 'wf_default', name: 'Default', version: 2,
   nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
           { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
-          { id: 'n_impl', kind: 'agent', key: 'implementer', x: 600, y: 0, config: { model: 'claude-opus-5', effort: 'high' } },
+          { id: 'n_impl', kind: 'agent', key: 'implementer', x: 600, y: 0, config: { model: 'claude-opus-5-5', effort: 'high' } },
           { id: 'n_rev', kind: 'agent', key: 'reviewer', x: 900, y: 0, config: {} },
           { id: 'n_end', kind: 'end', x: 1200, y: 0, config: {} }],
   wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
@@ -49,7 +49,7 @@ const AGENTS = [
     outputs: [{ id: 'review', type: 'md', when: 'blocking' }, { id: 'pass', type: 'void', when: 'clean' }] },
 ];
 const MODELS = [
-  { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
   { id: 'claude-fable-5-1', label: 'Fable 5.1 (1M)', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false },
 ];
@@ -349,13 +349,13 @@ test('ask-panel-card v2: the lane renders one two-line tile per agent with effec
   assert.deepEqual(tiles.map((t) => t.querySelector('.ask-rp-name b').textContent), ['Plan', 'Implement', 'Review']);
   assert.equal(tiles[0].querySelector('.ask-rp-name small').textContent, 'step 1 · workflow default', 'caption counts lane position, not the task card');
   const impl = tiles[1];
-  assert.equal(impl.querySelector('.ask-rp-model').value, 'claude-opus-5');
+  assert.equal(impl.querySelector('.ask-rp-model').value, 'claude-opus-5-5');
   assert.equal(impl.querySelector('.ask-rp-eff button.on').textContent, 'high');
   assert.equal(impl.querySelector('.ask-rp-tile-l2 [data-ctl="fanOut"]').checked, true, 'registry fanOut default');
   assert.equal(impl.querySelector('.ask-rp-tile-l2 [data-ctl="questions"]').checked, false);
   assert.equal(tiles[2].querySelector('[data-ctl="questions"]'), null, 'no questions capability → no switch');
   assert.ok(tiles[0].querySelector('.ask-rp-eff').classList.contains('unset'), 'no model → inherits workflow');
-  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · inherit ×2 · Opus 5 ×1 · 1 fan-out');
+  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · inherit ×2 · Opus 5.5 ×1 · 1 fan-out');
   assert.equal(ctx.doc.querySelector('.ask-rp-wfdesc[data-for="workflow"]').textContent, '3 agents · 1 loop · Review → Implement, max 3 cycles');
 });
 
@@ -372,7 +372,7 @@ test('ask-panel-card v2: editing tints the tile, updates the sub-line and summar
   assert.equal(plan2.querySelector('.ask-rp-eff button[disabled]').textContent, 'xhigh', 'efforts the model lacks are disabled');
   assert.match(lane.querySelector('.ask-rp-sec-sub').textContent, /you changed 1 agent · 1 override/);
   assert.match(lane.querySelector('.ask-rp-agents-foot').textContent, /Edits become this project's defaults for Default/);
-  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · Haiku 4.5 ×1 · Opus 5 ×1 · inherit ×1 · 1 fan-out');
+  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · Haiku 4.5 ×1 · Opus 5.5 ×1 · inherit ×1 · 1 fan-out');
   lane.querySelector('.ask-rp-mini').click();
   assert.ok(!lane.querySelector('.ask-rp-tile[data-node-id="n_plan"]').classList.contains('mod'));
   assert.equal(lane.querySelector('.ask-rp-mini').hidden, true);
@@ -425,7 +425,7 @@ test('ask-panel-card v2: a saved workflow persists per NODE via PATCH', async ()
   ctx.doc.querySelector('[data-ask-card-start]').click();
   for (let i = 0; i < 6; i++) await ctx.tick();
   assert.deepEqual(rec.order, ['config:PATCH', 'run']);
-  assert.deepEqual(rec.configWrites[0].body, { projectDir: '/repos/proj', workflowId: 'wf_review', nodes: { n_impl: { model: 'claude-opus-5', effort: 'max', fanOut: null, askQuestions: null, subagentModel: '' } } });
+  assert.deepEqual(rec.configWrites[0].body, { projectDir: '/repos/proj', workflowId: 'wf_review', nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'max', fanOut: null, askQuestions: null, subagentModel: '' } } });
 });
 
 test('ask-panel-card v2: a failed config write shows inline and the run is NOT started', async () => {

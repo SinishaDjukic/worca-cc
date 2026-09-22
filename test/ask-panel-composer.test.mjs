@@ -56,7 +56,7 @@ test('ask-panel-composer: attach → chip; send posts base64 attachments and the
   await ctx.tick();
   assert.equal(bodies.length, 1);
   assert.equal(bodies[0].text, 'summarize the notes');
-  assert.equal(bodies[0].model, 'claude-opus-5');
+  assert.equal(bodies[0].model, 'claude-opus-5-5');
   assert.equal(bodies[0].effort, 'high');
   // #397: Auto declares itself; the browser's zone rides along for scheduled runs
   assert.deepEqual(bodies[0].context, { view: 'new', pinned: false, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });

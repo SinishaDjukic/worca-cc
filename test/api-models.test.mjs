@@ -58,7 +58,7 @@ test('GET /api/models: empty catalog + predefined + efforts', async () => {
   const { status, body } = await jfetch('/api/models');
   assert.equal(status, 200);
   assert.deepEqual(body.models, []);
-  assert.ok(body.predefined.some((m) => m.id === 'claude-opus-5'));
+  assert.ok(body.predefined.some((m) => m.id === 'claude-opus-5-5'));
   assert.deepEqual(body.efforts, EFFORTS);
 });
 
