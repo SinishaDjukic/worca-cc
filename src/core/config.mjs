@@ -19,7 +19,7 @@ import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
 import { EFFORTS, prepareModelEnv, withTierModelEnv, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools } from './model-env.mjs';
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
-import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings } from './settings.mjs';
+import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel } from './settings.mjs';
 /** Whether the developer stored the hide-built-ins flag (a team default applies only when not). */
 const readSettingsHideStored = () => { const s = readSettings(); return typeof s.hideBuiltinModels === 'boolean' || s.hideBuiltinModelsChosen === true; };
 import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plugin-models.mjs';
@@ -1336,18 +1336,25 @@ function allProjectConfigRows() {
 /**
  * Preview what removing a global catalog entry would clear, for the UI's
  * confirmation dialog. `predefinedShadow: true` means the removal only reverts
- * an override and clears nothing. Synchronous; never throws.
+ * an override and clears nothing. `memoryDefrag: true` (present only then) —
+ * Settings › Memory's defragment model is this id. Synchronous; never throws.
  * @param {string} id
  * @returns {{predefinedShadow: boolean,
  *            steps: Array<{projectKey:string, step:string}>,
- *            nodes: Array<{projectKey:string, workflowId:string, nodeId:string}>}}
+ *            nodes: Array<{projectKey:string, workflowId:string, nodeId:string}>,
+ *            memoryDefrag?: true}}
  */
 export function globalModelRefs(id) {
   const lc = (typeof id === 'string' ? id : '').trim().toLowerCase();
   if (PREDEFINED_MODELS.some((m) => m.id.toLowerCase() === lc)) {
     return { predefinedShadow: true, steps: [], nodes: [] };
   }
-  return { predefinedShadow: false, ...refsForModelId(lc, allProjectConfigRows()) };
+  const defrag = memoryDefragModel().model;
+  return {
+    predefinedShadow: false,
+    ...refsForModelId(lc, allProjectConfigRows()),
+    ...(defrag && defrag.toLowerCase() === lc ? { memoryDefrag: true } : {}),
+  };
 }
 
 /** Cross-project step/node refs to one lowercased model id, minus projects
@@ -1406,8 +1413,10 @@ export function referencedPluginModels(pluginName) {
  * above). Ref purge and settings removal are not one transaction — a purge
  * that lands without the removal (or vice versa on a crash) is harmless, since
  * refs can be re-set and purging is idempotent.
+ * Settings › Memory's defragment model is a ref too: it is cleared with the entry
+ * (its effort with it) and the result says so with `clearedMemoryDefrag: true`.
  * @param {string} id
- * @returns {Promise<{clearedSteps:number, clearedNodes:number, predefinedShadow:boolean}>}
+ * @returns {Promise<{clearedSteps:number, clearedNodes:number, predefinedShadow:boolean, clearedMemoryDefrag?:true}>}
  * @throws {Error} on an unknown id (from removeGlobalModel)
  */
 export async function removeGlobalModelAndRefs(id) {
@@ -1460,6 +1469,7 @@ export async function removeGlobalModelAndRefs(id) {
       }
     });
   }
+  if (refs.memoryDefrag) await setMemoryDefragModel(null);   // idempotent, like the purge above
   await removeGlobalModel(id); // throws on unknown id — AFTER the idempotent purge
-  return { clearedSteps, clearedNodes, predefinedShadow: refs.predefinedShadow };
+  return { clearedSteps, clearedNodes, predefinedShadow: refs.predefinedShadow, ...(refs.memoryDefrag ? { clearedMemoryDefrag: true } : {}) };
 }

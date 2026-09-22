@@ -3157,6 +3157,11 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .mem-reasons li{margin:4px 0;}
 .mem-actions{margin-top:12px;align-items:center;gap:10px;}
 .mem-health-head .mem-defrag{margin-left:auto;}
+/* Settings → Memory: the Defragment model card above the scope (app.js paintMemDefragModelSettings). */
+.mem-model-card{margin-bottom:16px;}
+.mem-model-text{margin:0 0 12px;color:var(--ink-2);font-size:13px;line-height:1.5;}
+.mem-model-row{display:flex;flex-wrap:wrap;gap:12px;}
+.mem-model-row .field{flex:1 1 220px;margin-bottom:0;}
 .mem-defrag svg{display:block;flex:none;}
 .mem-host-hint{display:block;margin-top:8px;}
 .mem-list,.mem-history{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:14px 16px;}

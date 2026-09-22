@@ -305,6 +305,61 @@ test('ask-panel-card: a Memory defragment proposal sends memoryScope with Start'
   assert.equal(rec.runBodies[0].memoryScope, 'project');
 });
 
+// Settings › Memory: the defragment built-in reads with `pinnedAgentModel`, so the card's lane is
+// PREFILLED from the setting (over the template's own opus/high) and locked — and a Start writes
+// nothing into the project config, so ordinary cards never inherit the defragment model.
+test('ask-panel-card: a Memory defragment card prefills every lane row from Settings › Memory, locked; Start saves no agent config', async () => {
+  const rec = {};
+  const base = memHandler(rec);
+  const handler = (url, opts) => (String(url).split('?')[0] === '/api/workflows/wf_memory_defrag'
+    ? { ok: true, status: 200, json: async () => ({ ...WF_DEFAULT_TPL, id: 'wf_memory_defrag', name: 'Memory defragment', pinnedAgentModel: { model: 'claude-haiku-4-5', effort: 'high', source: 'settings' } }) }
+    : base(url, opts));
+  const ctx = await openWithCard(MEM_CARD, rec, { fetchHandler: handler });
+  const lane = await laneOf(ctx);
+  for (const id of ['n_plan', 'n_impl', 'n_rev']) {
+    const tile = lane.querySelector(`.ask-rp-tile[data-node-id="${id}"]`);
+    const sel = tile.querySelector('.ask-rp-model');
+    assert.equal(sel.value, 'claude-haiku-4-5', `${id}: the setting's model`);
+    assert.equal(sel.disabled, true, `${id}: locked`);
+    const pills = [...tile.querySelectorAll('.ask-rp-effbtn')];
+    assert.deepEqual(pills.filter((b) => b.classList.contains('on')).map((b) => b.textContent), ['high'], `${id}: the setting's effort`);
+    assert.ok(pills.every((b) => b.disabled), `${id}: every effort pill locked`);
+    assert.match(tile.querySelector('.ask-rp-name small').textContent, /model from Settings › Memory/);
+  }
+  ctx.doc.querySelector('[data-ask-card-start]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.equal(rec.runBodies.length, 1);
+  assert.equal(rec.configWrites, undefined, 'nothing written into the project config');
+  assert.equal('model' in rec.runBodies[0], false, 'no pair in the body: the run resolves the setting itself');
+});
+
+// The lane re-sends a pinned row's hidden pick on a save of another tunable — healed against the
+// lane's catalog first, so an effort the model no longer offers never turns Start into a refused save.
+test('ask-panel-card: an edited tunable on a pinned lane row re-sends the project\'s pick healed against the catalog', async () => {
+  const rec = {};
+  const base = memHandler(rec);
+  const handler = (url, opts) => {
+    const path = String(url).split('?')[0];
+    if (path === '/api/workflows/wf_memory_defrag') return { ok: true, status: 200, json: async () => ({ ...WF_DEFAULT_TPL, id: 'wf_memory_defrag', name: 'Memory defragment', pinnedAgentModel: { model: 'claude-opus-5-5', effort: 'high', source: 'settings' } }) };
+    if (path === '/api/config' && (opts.method || 'GET').toUpperCase() === 'GET') {
+      const body = configBody();
+      body.config.workflows = { wf_memory_defrag: { nodes: { n_impl: { model: 'claude-haiku-4-5', effort: 'max' } }, feedbacks: {} } };
+      return { ok: true, status: 200, json: async () => body };
+    }
+    return base(url, opts);
+  };
+  const ctx = await openWithCard(MEM_CARD, rec, { fetchHandler: handler });
+  const lane = await laneOf(ctx);
+  const implFan = lane.querySelector('.ask-rp-tile[data-node-id="n_impl"] [data-ctl="fanOut"]');
+  implFan.checked = false;
+  implFan.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  ctx.doc.querySelector('[data-ask-card-start]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.deepEqual(rec.configWrites[0].body.nodes.n_impl, { model: 'claude-haiku-4-5', effort: '', fanOut: false, askQuestions: null, subagentModel: '' },
+    'Haiku 4.5 no longer offers max: dropped, as an unpinned select would');
+  assert.equal(rec.runBodies.length, 1);
+});
+
 test('ask-panel-card: a Memory defragment proposal hands memoryScope to New Pipeline', async () => {
   const rec = {};
   const handed = [];

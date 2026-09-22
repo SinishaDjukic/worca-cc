@@ -151,6 +151,9 @@ test('deleteRefsSummary wording', () => {
     steps: [{ projectKey: 'a', step: 'implementer' }],
   };
   assert.match(deleteRefsSummary('x', refs), /2 node selections and 1 role selection across 2 projects/);
+  assert.match(deleteRefsSummary('x', refs), /across 2 projects\.$/, 'no Memory ref: the sentence ends as before');
+  assert.match(deleteRefsSummary('x', { ...refs, memoryDefrag: true }), /across 2 projects, and the Memory defragment model \(Settings › Memory\)\.$/);
+  assert.match(deleteRefsSummary('x', { predefinedShadow: false, nodes: [], steps: [], memoryDefrag: true }), /^Delete model "x"\? Memory defragment runs use it \(Settings › Memory\) — that setting is cleared and they fall back to the default\.$/);
 });
 
 // ── plugin section + export wizard (design §9.5–§9.6) ────────────────────────

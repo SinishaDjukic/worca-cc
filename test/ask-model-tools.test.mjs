@@ -139,6 +139,12 @@ test('remove_model: the refs it clears and a built-in it restores become warning
   assert.ok(r.card.rows.every((x) => x.after === null && x.before));
 });
 
+test('remove_model: a model Settings › Memory runs defragments on is a warning too', async () => {
+  const { validate } = fixture({ globals: [{ id: 'm1', label: 'M1', efforts: [] }], refs: () => ({ steps: [], nodes: [], predefinedShadow: false, memoryDefrag: true }) });
+  const r = await validate({ kind: 'remove_model', id: 'm1' });
+  assert.deepEqual(r.card.warnings, ['Memory defragment runs use this model (Settings › Memory) — they fall back to the default']);
+});
+
 test('provider: base URL / key reference / concurrency validate; sign-in fields and literal keys are refused', async () => {
   const { validate } = fixture({ providers: { openai: { apiKey: 'sk-stored-literal-9999' } } });
   let r = await validate({ kind: 'provider', provider: 'openai', set: { baseUrl: 'http://127.0.0.1:8080/v1', apiKey: null } });
@@ -253,6 +259,8 @@ test('applyModelChange replays each kind through the setters and re-merges an ed
   assert.equal(log[1][2].upstream.apiKey, 'sk-now', 'the key as stored at apply time');
   assert.equal(log[1][2].upstream.model, 'gpt-5.1');
   assert.deepEqual(await applyModelChange({ kind: 'remove_model', change: { id: 'oa' } }, io), { ok: true, detail: 'oa removed · 2 workflow selections cleared' });
+  assert.deepEqual(await applyModelChange({ kind: 'remove_model', change: { id: 'oa' } }, { ...io, removeModel: async () => ({ clearedSteps: 0, clearedNodes: 0, clearedMemoryDefrag: true }) }),
+    { ok: true, detail: 'oa removed · Settings › Memory defragment model cleared' }, 'the Settings › Memory ref it cleared is named too');
   assert.deepEqual(await applyModelChange({ kind: 'provider', change: { provider: 'openai', set: { baseUrl: 'http://x/v1' } } }, io), { ok: true, detail: 'openai provider saved' });
   assert.deepEqual(await applyModelChange({ kind: 'import_copilot', change: { ids: ['gpt-5', 'x'] } }, io), { ok: true, detail: 'added copilot-gpt-5 · skipped x' });
   await assert.rejects(() => applyModelChange({ kind: 'edit_model', change: { id: 'gone', patch: {} } }, io), /no longer in the catalog/);

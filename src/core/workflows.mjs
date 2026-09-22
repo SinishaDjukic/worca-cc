@@ -638,6 +638,17 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   // roles the project has not configured — below the project's own node and per-role config,
   // above the template's authored config. Cache-only read; absent without a policy.
   const teamSteps = (!ignore && projectDir) ? (teamDefault(projectDir, 'models.steps') || {}) : {};
+  // Memory defragment (Settings › Memory, memory-defrag-model.mjs): the run's model/effort PAIR —
+  // named at start, else the global setting. The one layer that beats even the project's own node
+  // pick (the setting is global by design: no per-project override), and it carries its own
+  // effort, so no lower layer's effort rides under a model it was not chosen for. Absent (every
+  // other caller, and a defragment run with nothing named or stored) → the layers below, unchanged.
+  const pair = opts.agentPair && typeof opts.agentPair.model === 'string' && opts.agentPair.model.trim()
+    ? {
+      model: opts.agentPair.model.trim(),
+      effort: typeof opts.agentPair.effort === 'string' && opts.agentPair.effort ? opts.agentPair.effort : undefined,
+    }
+    : null;
 
   const nodes = {};
   const agentsByKey = {};
@@ -691,10 +702,10 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       promptHints: typeof meta.promptHints === 'string' ? meta.promptHints : '',
       tools,
       config: { ...cfg },
-      model: firstDefined(sel.model, legacy.model, team.model, cfg.model),
+      model: pair ? pair.model : firstDefined(sel.model, legacy.model, team.model, cfg.model),
       // An effort only travels with the model that advertises it: an override
       // naming its own model must not inherit the lower layer's effort.
-      effort: firstDefined(sel.effort, legacy.effort, team.effort, (sel.model || legacy.model || team.model) ? undefined : cfg.effort),
+      effort: pair ? pair.effort : firstDefined(sel.effort, legacy.effort, team.effort, (sel.model || legacy.model || team.model) ? undefined : cfg.effort),
       // workspaceFanOut forces fan-out on a workspace run (the generic
       // replacement for the v1 FANOUT_ELIGIBLE key list).
       fanOut: isWorkspace && meta.workspaceFanOut

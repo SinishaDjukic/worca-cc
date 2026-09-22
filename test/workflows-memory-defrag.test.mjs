@@ -86,3 +86,20 @@ test('the composer treats every graph built-in as read-only (Save is Save-a-copy
   assert.equal(composer.isReservedWorkflowId('wf_auto'), false, 'wf_auto never reaches the composer');
   assert.equal(composer.isReservedWorkflowId('wf_memory-defrag'), false);
 });
+
+// Settings › Memory: the defragment pair is resolveGraph's TOP layer for model + effort — above the
+// project's own node pick, the team default and the template's Sonnet 5 — and absent, nothing moves.
+test('resolveGraph agentPair: the pair beats the project\'s node pick and carries its own effort; absent, the layers are unchanged', async () => {
+  const { gitDir } = await import('./helpers/git-dir.mjs');
+  const { setNodeModel } = await import('../src/core/config.mjs');
+  const registry = loadAgentRegistry();
+  const dir = gitDir('dmodel');
+  const pick = async (opts) => { const r = await resolveGraph(dir, 'wf_memory_defrag', registry, undefined, opts); return [r.nodes.n_defrag.model, r.nodes.n_defrag.effort]; };
+  assert.deepEqual(await pick({}), ['claude-sonnet-5', undefined], 'no pair, no pick: the template');
+  assert.deepEqual(await pick({ agentPair: { model: 'claude-opus-5-5', effort: 'high' } }), ['claude-opus-5-5', 'high']);
+  await setNodeModel(dir, 'wf_memory_defrag', 'n_defrag', { model: 'claude-fable-5-1', effort: 'max' });
+  assert.deepEqual(await pick({}), ['claude-fable-5-1', 'max'], 'no pair: the project\'s own pick, exactly as before');
+  assert.deepEqual(await pick({ agentPair: { model: 'claude-opus-5-5', effort: 'high' } }), ['claude-opus-5-5', 'high'], 'the pair wins over the pick');
+  assert.deepEqual(await pick({ agentPair: { model: 'claude-haiku-4-5' } }), ['claude-haiku-4-5', undefined], 'the pick\'s effort never rides under the pair\'s model');
+  assert.deepEqual(await pick({ agentPair: { model: '  ', effort: 'high' } }), ['claude-fable-5-1', 'max'], 'a blank model is no pair');
+});

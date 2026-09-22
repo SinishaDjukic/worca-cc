@@ -727,6 +727,7 @@ export class RunHarness extends EventEmitter {
     // drained by _takeFailedMemoryWrites at sync time.
     this._memoryWrites = new Map();
     this._ledgerSeq = 0;         // monotonic: two ledger writes must never share a temp name
+    this._pendingAudits = [];    // audit lines an engine hook queued before the pipeline dir existed (_resolveTopology runs first); run() appends them right after "Pipeline created"
     this.toolInstruction = '';
     // Cap for the in-worktree graphify build (macOS has no timeout(1)).
     // Resolution order: constructor option → WORCA_GRAPH_TIMEOUT_MS env → 120s.
@@ -1101,6 +1102,7 @@ export class RunHarness extends EventEmitter {
           `Preflight: using **${tools.tool}**${tools.kind ? ` (${tools.kind})` : ''}.`,
         );
       }
+      for (const line of this._pendingAudits.splice(0)) await appendAudit(this.pipeline.dir, line);
 
       // 3) Ensure a git repo + checkpoint commit (per member on a workspace run).
       if (this.isWorkspace) await this._ensureGitCheckpointAll();

@@ -837,6 +837,13 @@ function handleServerMessage(msg) {
   // Another tab saved a Settings card: repaint ours from the server so a stale
   // checkbox/field cannot be "saved" back over the change.
   if (msg.type === 'settings-changed') {
+    // Settings › Memory's defragment pair may be what changed: an open Memory tab repaints the card
+    // and reloads the scope (the health hint names the model), and the Memory defragment workflow's
+    // memo is dropped so its agent rows re-read the pinned pair — at once when New pipeline is
+    // showing it (an entry to New pipeline drops the whole memo anyway).
+    if (memoryTabCtl) { void loadMemDefragModelCard(); void memoryTabCtl.load(memoryTabCtl.selectedName(), { keepDraft: true }); }
+    delete state.workflowCache[MEMORY_DEFRAG_WORKFLOW_ID];
+    if (currentView() === 'new' && state.workflowId === MEMORY_DEFRAG_WORKFLOW_ID) void renderWorkflowConfig(state.workflowId);
     loadSettings();
     return;
   }
@@ -2336,7 +2343,8 @@ function panelPortsFn(registry, scripts) {
 // Worca run card); this panel only adds its own ports source (panelPortsFn,
 // which can fall back to the Composer index for agents the palette omits).
 function buildGraphNodeRows(tpl, registry, runConfig, opts = {}) {
-  return ntBuildGraphNodeRows(tpl, registry, runConfig, { ...opts, portsFn: panelPortsFn(registry || {}) });
+  // `models`: a row Settings › Memory pins heals the project's hidden pick against the catalog.
+  return ntBuildGraphNodeRows(tpl, registry, runConfig, { models: state.models, ...opts, portsFn: panelPortsFn(registry || {}) });
 }
 function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
   if (workflow && workflow.version === 2) return buildGraphNodeRows(workflow, registry, runConfig, opts);
@@ -2981,7 +2989,8 @@ function setAgentRowsEnabled(enabled) {
   const host = el.agentRows;
   if (!host) return;
   for (const c of host.querySelectorAll('.step-model,.step-fanout,.step-questions,.step-subagent')) {
-    c.disabled = !enabled || (c.classList.contains('step-questions') && c.dataset.locked === '1');
+    // data-locked: a manifest-fixed questions toggle, or a model Settings › Memory pins.
+    c.disabled = !enabled || c.dataset.locked === '1';
   }
   for (const e of host.querySelectorAll('.step-effort')) {
     // Keep the model-dependency rule: effort stays disabled without a model.
@@ -3200,7 +3209,7 @@ function renderAgentRows(rows) {
     // to "what does 'default' actually mean here", without opening a doc.
     const origin = document.createElement('small');
     origin.className = 'agent-origin';
-    origin.textContent = defaultOriginText(row);
+    origin.textContent = row.pinned ? PINNED_PAIR_TEXT : defaultOriginText(row);
     body.appendChild(origin);
 
     card.appendChild(body);
@@ -3208,6 +3217,7 @@ function renderAgentRows(rows) {
     // no second one — renderModelEffortPair's caption slot stays empty and
     // paintRowSummary keeps the head in step with the live selects.
     renderModelEffortPair(modelSel, effortSel, null, { model: row.model, effort: row.effort });
+    if (row.pinned) lockPinnedPair(modelSel, effortSel);
     host.appendChild(card);
   });
 }
@@ -3231,6 +3241,17 @@ function paintRowSummary(row, body) {
   const head = el.agentRows && el.agentRows.querySelector(`.agent-sum[data-node-id="${row.nodeId}"]`);
   if (!head) return;
   head.textContent = agentSummaryText({ ...row, ...liveRowValues(row, body) });
+}
+
+// Settings › Memory owns a Memory defragment run's model + effort (node-tunables.mjs `pinned`):
+// shown, never edited here. `data-locked` keeps setAgentRowsEnabled from re-enabling them.
+const PINNED_PAIR_TEXT = 'Set in Settings › Memory — every Memory defragment run uses this model, whatever this project picked.';
+function lockPinnedPair(modelSel, effortSel) {
+  for (const s of [modelSel, effortSel]) {
+    s.disabled = true;
+    s.dataset.locked = '1';
+    s.title = 'Set in Settings › Memory';
+  }
 }
 
 // One line naming what this row falls back to once its override is gone — the
@@ -10829,9 +10850,9 @@ document.getElementById('titleModelTest')?.addEventListener('click', () => testM
 // postSettingsCard. The option list is FLAT on purpose (no optgroups): one plain list.
 const AUTO_MODEL_DEFAULT_LABEL = 'Default (Sonnet-class)';
 function setAutoModelMsg(text, kind) { setHintMsg('autoModelMsg', text, kind); }
-function buildAutoModelOptions(sel, stored, catalog, stale = false) {
+function buildAutoModelOptions(sel, stored, catalog, stale = false, defaultLabel = AUTO_MODEL_DEFAULT_LABEL) {
   sel.innerHTML = '';
-  sel.appendChild(option('', AUTO_MODEL_DEFAULT_LABEL));
+  sel.appendChild(option('', defaultLabel));
   const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
   const models = catalog.filter((m) => m && m.custom !== 'project' && (!m.hidden || m.id === stored) && (!m.needsSignIn || m.id === stored)).sort(byLabel);
   for (const m of models) sel.appendChild(option(m.id, (m.label || m.id) + (m.custom === 'plugin' && m.plugin ? ` (${m.plugin})` : '')));
@@ -10882,6 +10903,96 @@ document.getElementById('autoModelSave')?.addEventListener('click', () => {
 document.getElementById('autoModelReset')?.addEventListener('click', () => postAutoModel({ autoWorkflowModel: '' }));
 document.getElementById('autoModel')?.addEventListener('change', () => { const sel = document.getElementById('autoModel'); const b = document.getElementById('autoModelTest'); if (b) b.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled; });
 document.getElementById('autoModelTest')?.addEventListener('click', () => testModelFromSettings('autoModel', 'autoModelTest', setAutoModelMsg));
+
+// ---- Settings › Memory: the Defragment model (memory-defrag-model.mjs) — the model + effort EVERY
+// Memory defragment run uses. The flat list of the Auto card (buildAutoModelOptions) over the same
+// project-less catalog (fetchTitleModelCatalog), "(default)" first; the effort list is the chosen
+// model's own, and clearing the model clears the effort (the pair rule).
+const MEM_DEFRAG_DEFAULT_LABEL = '(default)';
+let memDefragCatalog = [];
+function setMemDefragMsg(text, kind) { setHintMsg('memDefragModelMsg', text, kind); }
+const memDefragLabel = (id) => { const m = memDefragCatalog.find((x) => x && x.id === id); return m ? (m.label || m.id) : id; };
+function paintMemDefragEffort(keep) {
+  const msel = document.getElementById('memDefragModel');
+  const esel = document.getElementById('memDefragEffort');
+  if (!msel || !esel) return;
+  const m = msel.value ? memDefragCatalog.find((x) => x && x.id === msel.value) : null;
+  const efforts = m && Array.isArray(m.efforts) ? m.efforts : [];
+  esel.innerHTML = '';
+  esel.appendChild(option('', m ? '(model default)' : '(pick a model first)'));
+  for (const e of efforts) esel.appendChild(option(e, e));
+  esel.value = keep && efforts.includes(keep) ? keep : '';
+  esel.disabled = !m;
+}
+async function paintMemDefragModelSettings(data) {
+  const msel = document.getElementById('memDefragModel');
+  if (!msel) return;
+  memDefragCatalog = await fetchTitleModelCatalog();
+  const pair = data && data.memoryDefrag && typeof data.memoryDefrag === 'object' ? data.memoryDefrag : {};
+  const raw = typeof pair.model === 'string' ? pair.model : '';
+  // A run matches the stored id case-insensitively (memory-defrag-model.mjs), and so does the card.
+  const hit = raw ? memDefragCatalog.find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === raw.toLowerCase()) : null;
+  const stored = hit ? hit.id : raw;
+  // An EMPTY catalog is a failed GET, not an empty catalog: it condemns nothing (the Auto card's rule).
+  const stale = !!stored && memDefragCatalog.length > 0 && !hit;
+  buildAutoModelOptions(msel, stored, memDefragCatalog, stale, MEM_DEFRAG_DEFAULT_LABEL);
+  paintMemDefragEffort(typeof pair.effort === 'string' ? pair.effort : '');
+  // docs/ui-levels.md rule 2: a stored pick stays visible below Expert — New pipeline's locked row
+  // and the health card name it at every level.
+  keepVisible(document.getElementById('mem-defrag-model-card'), !!stored);
+  const def = typeof data.memoryDefragDefault === 'string' && data.memoryDefragDefault ? memDefragLabel(data.memoryDefragDefault) : 'the workflow default';
+  const fallback = `${def}, or the model a project picked for the Memory defragmenter`;
+  // A stored effort the model no longer offers is dropped at run time: the note must not promise it.
+  const effortGone = !!(hit && pair.effort && !(Array.isArray(hit.efforts) && hit.efforts.includes(pair.effort)));
+  let note = '', kind = '';
+  if (stale) { note = `Model "${stored}" is no longer in the catalog — defragment runs fall back to ${fallback}.`; kind = 'warn'; }
+  else if (effortGone) { note = `Every Memory defragment run uses ${memDefragLabel(stored)} at its default effort — it no longer offers "${pair.effort}".`; kind = 'warn'; }
+  else if (stored) note = `Every Memory defragment run uses ${memDefragLabel(stored)}${pair.effort ? ` · ${pair.effort}` : ''}, whatever the project picked.`;
+  else note = `Unset: defragment runs use ${fallback}.`;
+  setHintMsg('memDefragModelNote', note, kind);
+}
+/** Once per visit to the tab (loadMemoryTab) and on a settings-changed frame — never per file route,
+ *  so an unsaved pick survives opening a file. */
+async function loadMemDefragModelCard() {
+  if (!document.getElementById('memDefragModel')) return;
+  try {
+    const res = await fetch('/api/settings');
+    const data = await safeJson(res);
+    // A failed re-read leaves the previous paint on screen: forget its catalog so Save refuses
+    // rather than posting that (possibly outdated) pair over another tab's change.
+    if (!res.ok) { memDefragCatalog = []; setMemDefragMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    await paintMemDefragModelSettings(data);
+    // A re-read that worked lifts the error a failed one (or a refused Save) left behind — never a
+    // "Saved." line (that is not an error, and this runs on the save's own frame too).
+    const msg = document.getElementById('memDefragModelMsg');
+    if (msg && msg.classList.contains('err') && memDefragCatalog.length) setMemDefragMsg('');
+  } catch (e) { memDefragCatalog = []; setMemDefragMsg(e.message, 'err'); }
+}
+function postMemDefragModel(body) {
+  return postSettingsCard(body, {
+    setMsg: setMemDefragMsg,
+    paint: (data) => {
+      // The health card's hint names the pair: reload the scope (keepDraft — an open draft stays).
+      if (memoryTabCtl && memoryTabCtl.loaded()) void memoryTabCtl.load(memoryTabCtl.selectedName(), { keepDraft: true });
+      return paintMemDefragModelSettings(data);
+    },
+    savedText: 'Saved. Applies to the next defragment run — no restart needed.',
+  });
+}
+document.getElementById('memDefragModel')?.addEventListener('change', () => {
+  paintMemDefragEffort(document.getElementById('memDefragEffort')?.value || '');
+});
+document.getElementById('memDefragModelSave')?.addEventListener('click', () => {
+  // Nothing painted (the settings or the model list failed to load, or the tab is still loading):
+  // a Save would post the empty pair and CLEAR the stored one. Refuse rather than guess.
+  if (!memDefragCatalog.length) { setMemDefragMsg('the model list did not load — reload the page to change this', 'err'); return; }
+  const msel = document.getElementById('memDefragModel');
+  const opt = msel.options[msel.selectedIndex];
+  if (opt && opt.disabled) { setMemDefragMsg('that model is no longer installed — pick another or use the default', 'err'); return; }
+  const model = msel.value || '';
+  postMemDefragModel({ memoryDefrag: { model, effort: model ? (document.getElementById('memDefragEffort').value || '') : '' } });
+});
+document.getElementById('memDefragModelReset')?.addEventListener('click', () => postMemDefragModel({ memoryDefrag: null }));
 
 // Browse… for the projects root: native OS dialog, in-app modal fallback —
 // the same two endpoints the add-project Browse button uses (app.js:3793).
@@ -11608,6 +11719,7 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
   // Request token: a frame poke, a save and a route change can all be in flight at once, and the
   // LAST one issued must win however the responses land.
   let seq = 0;
+  let frameOwed = false;
   const say = (text, kind) => { if (msgEl) { msgEl.textContent = text || ''; msgEl.className = 'form-msg' + (kind ? ' ' + kind : ''); } };
   const route = (name) => { if (navigate) location.hash = memoryRoute(scopeKey, name); };
   const hostRef = () => (typeof hostProject === 'function' ? hostProject() : hostProject);
@@ -11653,6 +11765,9 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
    *  frame does, without the conflict warning, and it keeps the message the caller already said. */
   async function load(name = '', { fromFrame = false, keepDraft = false } = {}) {
     const my = ++seq;
+    // A later keepDraft reload (a settings-changed repaint) can supersede a frame's: the conflict
+    // that frame came to report must survive it.
+    if (fromFrame) frameOwed = true;
     if (!fromFrame && !keepDraft && !st.flash) say('');
     const dirty = isDirty();
     const r = await memoryApi('GET', base);
@@ -11670,10 +11785,13 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
       const cur = collectEditor(host);
       st.editor = { ...st.editor, name: st.isNew ? cur.name : st.editor.name, text: cur.text };
       paint();
+      const owed = fromFrame || frameOwed;
+      frameOwed = false;
       if (st.flash) { say(...st.flash); st.flash = null; }
-      else if (fromFrame) say('This scope changed on disk while you were editing — Save overwrites, Cancel reloads.', 'warn');
+      else if (owed) say('This scope changed on disk while you were editing — Save overwrites, Cancel reloads.', 'warn');
       return;
     }
+    frameOwed = false;
     st.selected = ''; st.editor = null; st.isNew = false;
     if (name) {
       const f = await memoryApi('GET', `${base}/files/${encodeURIComponent(name)}`);
@@ -11793,6 +11911,7 @@ async function loadMemoryTab(sub = '') {
   if (!el.memoryHost) return;
   if (!memoryTabCtl) {
     memoryTabCtl = createMemoryController({ host: el.memoryHost, msgEl: el.memoryMsg, scopeKey: 'global', hostProject: globalDefragHost });
+    void loadMemDefragModelCard();   // the Defragment model card: its own fetches, never in the scope load's way
   }
   await memoryTabCtl.load(sub ? safeDecode(sub) : '');
 }

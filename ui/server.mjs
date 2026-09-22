@@ -51,8 +51,10 @@ import {
   theme as storedTheme, setTheme, assertThemeInput,
   uiLevel as storedUiLevel, setUiLevel, assertUiLevelInput, defaultUiLevel,
   autoWorkflowModel as storedAutoWorkflowModel, setAutoWorkflowModel, assertAutoWorkflowModelInput,
+  memoryDefragModel, setMemoryDefragModel, assertMemoryDefragModelInput,
   scheduleDefaults, setScheduleDefaults,
 } from '../src/core/settings.mjs';
+import { resolveDefragModel, defragDefaultModel, defragWorkflowView, checkStartPair } from '../src/core/memory-defrag-model.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
 import { effectiveHumanRateUsd } from '../src/core/human-rate.mjs';
 import {
@@ -1547,6 +1549,16 @@ const startRunHandler = async (req, res) => {
     const memoryScope = typeof body.memoryScope === 'string' && body.memoryScope.trim() ? body.memoryScope.trim() : null;
     const scopeReason = validateMemoryScope({ workflowId, memoryScope, isWorkspace: !!hasWorkspace });
     if (scopeReason) return badRequest(res, scopeReason);
+    // Settings › Memory: a defragment run may name its model/effort PAIR at start — tier 1, above
+    // the setting (memory-defrag-model.mjs). Defragment runs only: every other workflow picks its
+    // models per node, and a body model there stays ignored exactly as before. The shape here; the
+    // catalog check needs the target project (below).
+    let startPair = null;
+    if (memoryScope) {
+      const shape = checkStartPair(body, null);
+      if (shape.error) return badRequest(res, shape.error);
+      startPair = shape.pair;
+    }
     // Human in the loop (spec D15): the body wins, else the project's stored
     // switch, else on. Resolved per target below (it needs the project dir).
     const bodyHumanInLoop = typeof body.humanInLoop === 'boolean' ? body.humanInLoop : null;
@@ -1715,6 +1727,13 @@ const startRunHandler = async (req, res) => {
 
       const fileProblem = await promptFileProblem(effectiveSource, projectDir);
       if (fileProblem) return badRequest(res, fileProblem);
+      // The pair against THIS project's catalog (a schedule is checked here too, before it is
+      // stored). A ticket firing takes its already-checked pair verbatim, like a CLI --model.
+      if (startPair && !internal) {
+        const checked = checkStartPair(body, await listModels(projectDir));
+        if (checked.error) return badRequest(res, checked.error);
+        startPair = checked.pair;
+      }
       // One live defragment run per scope (§7.3, amendment B20: this server process only).
       if (memoryScope) {
         const live = liveDefragRun(memoryScopeKey(memoryScope, projectDir));
@@ -1733,7 +1752,9 @@ const startRunHandler = async (req, res) => {
         if (!r.ok) return badRequest(res, r.error);
         sched.afterRef = r.after;
       }
-      if (sched) return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, projectDir }));
+      // A schedule stores the pair as checked (the catalog's casing, trimmed): its ticket takes it verbatim.
+      const storedBody = startPair ? { ...body, model: startPair.model, effort: startPair.effort || undefined } : body;
+      if (sched) return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir }));
 
       orch = await createOrchestratorFor({
         projectDir,
@@ -1748,7 +1769,11 @@ const startRunHandler = async (req, res) => {
         branch,
         humanInLoop,
         ...(memoryScope ? { memoryScope } : {}),
-        claude: { permissionMode: stored.permissionMode || 'acceptEdits', ...(stored.model ? { model: stored.model } : {}), mock },
+        claude: {
+          permissionMode: stored.permissionMode || 'acceptEdits',
+          ...(startPair ? { model: startPair.model, ...(startPair.effort ? { effort: startPair.effort } : {}) } : (stored.model ? { model: stored.model } : {})),
+          mock,
+        },
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
         ...(stored.auto ? { auto: true } : {}),
       });
@@ -4115,6 +4140,20 @@ async function defragRequest(req, res, { memoryScope, projectKey: key }) {
   return startRunHandler(req, res);
 }
 
+/** Settings › Memory as the health card names it: `{ model, effort, label, stale }`, or null when
+ *  unset. Checked the way a run checks it (memory-defrag-model.mjs), against this scope's catalog —
+ *  the project's own for a project scope, the project-less one for global. `stale`: the model left
+ *  the catalog, so a run degrades to the workflow default. */
+async function defragModelState(catalogDir) {
+  const stored = memoryDefragModel();
+  if (!stored.model) return null;
+  const models = await listModels(catalogDir);
+  const r = resolveDefragModel({ stored, models });
+  if (!r.model) return { model: stored.model, effort: stored.effort, label: stored.model, stale: true };
+  const hit = models.find((m) => m.id === r.model);
+  return { model: r.model, effort: r.effort, label: (hit && hit.label) || r.model, stale: false };
+}
+
 function registerMemoryRoutes(prefix, { family }) {
   const scoped = (handler) => async (req, res) => {
     try {
@@ -4140,7 +4179,10 @@ function registerMemoryRoutes(prefix, { family }) {
 
   app.get(prefix, scoped(async (_req, res, { scope, key, project }) => {
     const report = await memoryScopeReport(memoryRoot(), scope, memoryCaps(), { onError });
-    res.json({ scope: key, project, files: report.entries, state: report.state, health: report.health, defragRunId: liveDefragRun(key)?.id || null });
+    res.json({
+      scope: key, project, files: report.entries, state: report.state, health: report.health, defragRunId: liveDefragRun(key)?.id || null,
+      defragModel: await defragModelState(project ? project.path : ''),
+    });
   }));
   app.get(`${prefix}/files/:name`, scoped(async (req, res, { scope }) => {
     const name = named(req, res); if (name === null) return;
@@ -4572,6 +4614,8 @@ const settingsState = () => ({
   theme: storedTheme(),                                   // system | light | dark (dark-mode design §6)
   schedule: scheduleDefaults(),                           // defaults a NEW schedule inherits
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
+  memoryDefrag: memoryDefragModel(),                      // Settings › Memory: the STORED { model, effort } (null = the workflow default)
+  memoryDefragDefault: defragDefaultModel(),              // what "(default)" means there: the built-in's own model
 });
 
 /** Settings ▸ Auto workflow model: the stored id + what the classifier will actually use
@@ -4650,6 +4694,10 @@ app.post('/api/settings', async (req, res) => {
   const hasUiLevelKey = has('uiLevel');
   const hasAutoKey = has('autoWorkflowModel');
   const autoModels = hasAutoKey ? await listModels('') : null;
+  // Settings › Memory: the defragment { model, effort } pair, checked against the same
+  // project-less catalog the Settings pickers offer (a run re-checks it against its own).
+  const hasMemoryDefragKey = has('memoryDefrag');
+  const defragModels = hasMemoryDefragKey ? (autoModels || await listModels('')) : null;
   // #422: the title model is a SELECT over the catalog, so an id that is not a
   // catalog member is a client bug (or a stale option) — refuse it here rather
   // than store an id resolveModelEnv could never route.
@@ -4686,6 +4734,7 @@ app.post('/api/settings', async (req, res) => {
     if (hasThemeKey) assertThemeInput(body.theme);
     if (hasUiLevelKey) assertUiLevelInput(body.uiLevel);
     if (hasAutoKey) assertAutoWorkflowModelInput(body.autoWorkflowModel ?? '', autoModels);
+    if (hasMemoryDefragKey) assertMemoryDefragModelInput(body.memoryDefrag, defragModels);
     // Root first: it is the one key whose setter can still fail AFTER the asserts
     // above (an unusable path), so every other key's write must come after it or
     // a mixed POST would answer 400 with those keys already applied on disk.
@@ -4710,11 +4759,12 @@ app.post('/api/settings', async (req, res) => {
     if (hasThemeKey) await setTheme(body.theme);
     if (hasUiLevelKey) await setUiLevel(body.uiLevel);
     if (hasAutoKey) await setAutoWorkflowModel(body.autoWorkflowModel ?? '', { models: autoModels });
+    if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
     if (has('schedule')) await setScheduleDefaults(body.schedule && typeof body.schedule === 'object' ? body.schedule : {});
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasHumanRateKey || has('schedule')) emitChanged('settings-changed');
+    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasHumanRateKey || hasMemoryDefragKey || has('schedule')) emitChanged('settings-changed');
     res.json({ ...settingsState(), ...(await autoModelState()), chat: chatPrefs() });
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).
@@ -5255,6 +5305,9 @@ app.get('/api/models/:id/env-value', (req, res) => {
 app.delete('/api/models/:id', async (req, res) => {
   try {
     const result = await removeGlobalModelAndRefs(req.params.id);
+    // Settings › Memory's defragment model went with the entry: open tabs repaint that card (as
+    // the Ask remove_model path's settings-changed does).
+    if (result.clearedMemoryDefrag) emitChanged('settings-changed');
     res.json({ ...result, models: maskedGlobalModels() });
   } catch (err) {
     // Throws only on an unknown id -> client error.
@@ -5355,7 +5408,15 @@ app.get('/api/workflows/:id', async (req, res) => {
     // this is a READ (the Composer's Open): a template stranded by an agent-port
     // edit must still load, or the user could never repair it. The RUN path keeps
     // the graph check.
-    res.json(await assertRunnableWorkflow(req.params.id, { checkGraph: false }));
+    const wf = await assertRunnableWorkflow(req.params.id, { checkGraph: false });
+    // Settings › Memory: the built-in reads with the pair every defragment run will use, so New
+    // pipeline's agent rows and an Ask card's lane show — and lock — it (memory-defrag-model.mjs).
+    if (wf && wf.id === MEMORY_DEFRAG_WORKFLOW_ID) {
+      const stored = memoryDefragModel();
+      const pair = stored.model ? resolveDefragModel({ stored, models: await listModels('') }) : null;
+      return res.json(defragWorkflowView(wf, pair));
+    }
+    res.json(wf);
   } catch (err) {
     if (err && (err.code === 'NOT_FOUND' || err.code === 'ARCHIVED')) {
       return res.status(404).json({ error: err.message });
