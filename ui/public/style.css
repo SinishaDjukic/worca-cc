@@ -2441,6 +2441,10 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .spend-ind.over .spend-ind-meter{background:var(--red-bg);}
 .spend-ind.over .spend-ind-meter-fill{background:var(--red-ink);}
 .spend-ind.over .spend-ind-sub{color:var(--red-ink);}
+/* No total limit: the Saved row takes the place the "no total limit" note held. Its
+   amount keeps .spend-ind-amt's --ink on purpose: --green-ink and --red-ink measure
+   4.48:1 and 4.07:1 on this card's hover fill (--line), under verify:theme's 4.5:1. */
+.spend-ind-saved{margin-top:6px;}
 .topnav-amt{margin-left:7px;font-family:var(--mono);font-weight:600;}
 .topnav-amt.warn{color:var(--amber-ink);}
 .topnav-amt.over{color:var(--red-ink);}
@@ -3778,9 +3782,9 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
 
 /* ---------- Collapsible sidebar: the 76px icon rail ---------- */
 /* No rule here restyles anything the expanded 298px column already had: 21 of
-   the 39 are scoped under `.sidebar.collapsed`, and the other 18
-   (`.brand .logo-mark`, `.side-toggle*`, `.nav .rail-tile*`, `.spend-ring*`)
-   style nodes that exist only because of this feature. The <1080px breakpoint
+   them are scoped under `.sidebar.collapsed`, and the rest (`.brand .logo-mark`,
+   `.side-toggle*`, `.nav .rail-tile*`, `.spend-ring*`, `.spend-stack*`) style
+   nodes that exist only because of this feature. The <1080px breakpoint
    (:920-922) still hides the sidebar outright and hands over to .topnav —
    collapse is a preference that only exists above it, and the two never overlap.
    HOUSE RULE for this whole block: no comment inside a rule body, and no
@@ -3996,14 +4000,31 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
   filter:brightness(.96);}
 .spend-ring.warn{--ring-fill:var(--amber-ink);--ring-track:var(--amber-bg);}
 .spend-ring.over{--ring-fill:var(--red-ink);--ring-track:var(--red-bg);}
-/* No total limit means no denominator: a flat neutral ring, and the centre shows
-   the amount instead of a percentage nothing backs. var(--ink-3), not
-   var(--line) — var(--line) on var(--panel) is ~1.1:1 across a 4.5px annulus, i.e.
-   an absent ring, which is not the same thing as a neutral one. */
-.spend-ring.no-limit{--ring-fill:var(--ink-3);--ring-track:var(--ink-3);}
 .spend-ring-val{display:flex;align-items:center;justify-content:center;
   width:29px;height:29px;border-radius:50%;background:var(--panel);
   font-family:var(--mono);font-size:9.5px;color:var(--ink-2);}
+
+/* ---- rail spend stack (no total limit) ---- */
+/* No total limit means no denominator, so the rail drops the ring for two stacked
+   figures: a caps label over a compact mono amount, Spent then Saved.
+   `.spend-stack` ties `.spend-ind` at (0,1,0) and wins the tie on source order, which
+   is what lets it override display / width / padding / border-radius and keep the
+   card's border, --field fill and pointer. 40px is the width of every rail square
+   (nav buttons, the toggle), so it overhangs the 39px content box by the same half
+   pixel they do and nothing clips; border-box leaves 38px inside, and the widest
+   amount railUsd() emits ("−$8.8k", six glyphs at 10px mono) is 36px.
+   `.spend-ind:hover` recolours the background only, which is the hover this wants.
+   Both amounts stay --ink: the Statistics tile's --green-ink / --red-ink measure
+   4.48:1 / 4.07:1 on that hover fill, under verify:theme's 4.5:1. */
+.spend-stack{display:flex;flex-direction:column;align-items:center;
+  width:40px;padding:7px 0;border-radius:12px;text-align:center;}
+.spend-stack-pair{display:flex;flex-direction:column;align-items:center;gap:1px;}
+.spend-stack-pair + .spend-stack-pair::before{content:"";width:22px;height:1px;
+  margin:5px 0;background:var(--line-2);}
+.spend-stack-lbl{font-family:var(--sans);font-size:9px;font-weight:600;line-height:1.1;
+  letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);}
+.spend-stack-val{font-family:var(--mono);font-size:10px;font-weight:600;line-height:1.2;
+  white-space:nowrap;color:var(--ink);}
 
 /* ---------- Ask Worca (spec §10.3-§10.6; tokens only, no hex) ---------- */
 /* Fixed full-height dock over the content column; children restore pointer

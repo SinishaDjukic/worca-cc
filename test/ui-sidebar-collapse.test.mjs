@@ -44,7 +44,7 @@ const budgetFixture = () => ({
 
 async function boot({ seed = null, breakStorage = false,
                       poisonToggle = false, noBudget = false,
-                      spyReflow = false } = {}) {
+                      spyReflow = false, budgetOver = null } = {}) {
   // index.html SHIPS aria-expanded="true" / title="Collapse menu" /
   // aria-label="Collapse menu" on #side-toggle, so asserting those after an
   // EXPANDED boot passes even when applySidebarCollapsed() never ran — proven by
@@ -72,7 +72,8 @@ async function boot({ seed = null, breakStorage = false,
       // noBudget: a promise that never settles, so paintBudget runs with
       // budgetState.budget === null (app.js:448 early-returns before #side-spend).
       if (noBudget) return new Promise(() => {});
-      return Promise.resolve({ ok: true, status: 200, json: async () => budgetFixture() });
+      // budgetOver: patch the fixture (e.g. clear the total limit) for one boot.
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ ...budgetFixture(), ...budgetOver }) });
     }
     // The ring's click routes to #stats, which paints the stats view. Without a
     // body the paint throws AFTER the test ends ("Cannot read properties of
@@ -797,10 +798,64 @@ test('the ring is 38px, composes its arc from --ring-pct, and recolours by band'
   assert.match(ring, /var\(--ring-pct\)/, 'one definition of the gradient, swappable by class');
   assert.match(ruleBody('.spend-ring.warn'), /--ring-fill:\s*var\(--amber-ink\)/);
   assert.match(ruleBody('.spend-ring.over'), /--ring-fill:\s*var\(--red-ink\)/);
-  const flat = ruleBody('.spend-ring.no-limit');
-  assert.ok(flat, 'the no-limit ring gets a flat neutral track');
-  assert.match(flat, /--ring-fill:\s*var\(--ink-3\)/,
-    'var(--line) on var(--panel) is ~1.1:1 — a ring nobody can see is not "neutral"');
+  assert.equal(css.includes('.spend-ring.no-limit'), false,
+    'no total limit renders the Spent/Saved stack now; a no-limit ring rule would be dead CSS');
+});
+
+// ---- the Spent/Saved stack (collapsed rail, no total limit) ----
+
+test('the stack is a 40px column that overrides the block card and never wraps an amount', () => {
+  const stack = ruleBody('.spend-stack');
+  assert.ok(stack, '.spend-stack rule must exist');
+  assert.match(stack, /display:\s*flex/, '.spend-ind is display:block — the stack must restate it');
+  assert.match(stack, /flex-direction:\s*column/);
+  assert.match(stack, /width:\s*40px/, 'the width of every rail square: wider would overhang the 39px box');
+  assert.match(stack, /padding:\s*7px 0/, '.spend-ind pads 12px a side — 24px of a 40px column');
+  // Equal specificity (0,1,0): the stack can only beat .spend-ind's display/width/padding on order.
+  assert.ok(css.indexOf('.spend-ind{') < css.indexOf('.spend-stack{'),
+    'equal specificity — it can only win on source order');
+  assert.match(ruleBody('.spend-stack-val'), /white-space:\s*nowrap/);
+  assert.match(ruleBody('.spend-stack-val'), /font-size:\s*10px/, 'six glyphs of 10px mono = 36px < 38px');
+  assert.match(ruleBody('.spend-stack-val'), /font-family:\s*var\(--mono\)/);
+  assert.match(ruleBody('.spend-stack-lbl'), /text-transform:\s*uppercase/);
+  assert.match(ruleBody('.spend-stack-lbl'), /color:\s*var\(--ink-2\)/,
+    'not --ink-3: 2.6:1 on --field is unreadable at 9px');
+  // Both amounts stay --ink: --green-ink / --red-ink measure 4.48:1 / 4.07:1 on the
+  // --line hover fill, and verify:theme fails anything under 4.5:1 (measured, v1 dry run).
+  assert.match(ruleBody('.spend-stack-val'), /color:\s*var\(--ink\)/);
+  assert.match(ruleBody('.spend-ind-amt'), /color:\s*var\(--ink\)/);
+  assert.doesNotMatch(css, /\.spend-(?:stack-val|ind-amt)\.is-(?:pos|neg)\s*\{/,
+    'no green/red variant for the sidebar amounts');
+  assert.match(ruleBody('.spend-ind-saved'), /margin-top:\s*6px/);
+});
+
+test('no total limit: the rail mounts the Spent/Saved stack, and expanding restores the two-row block', async () => {
+  const { window, click } = await boot({ seed: { [KEY]: '1' },
+    budgetOver: { totalLimitUsd: null, remainingUsd: null, windowSpendUsd: 10604.7,
+      windowHumanHours: 1512, windowSavedUsd: 42315.3 } });
+  const doc = window.document;
+  const stack = doc.querySelector('#side-spend .spend-stack');
+  assert.ok(stack, 'collapsed + no limit mounts the stack');
+  assert.equal(doc.querySelector('#side-spend .spend-ring'), null, 'and no ring');
+  assert.deepEqual([...stack.querySelectorAll('.spend-stack-val')].map((v) => v.textContent),
+    ['$11k', '$42k']);
+
+  click('#side-toggle');
+  assert.equal(doc.querySelector('#side-spend .spend-stack'), null);
+  const rows = [...doc.querySelectorAll('#side-spend .spend-ind-row')];
+  assert.deepEqual(rows.map((r) => r.querySelector('.spend-ind-label').textContent),
+    ['Spent this month', 'Saved this month']);
+  assert.equal(rows[1].querySelector('.spend-ind-amt').textContent, '$42,315.30');
+  assert.doesNotMatch(doc.querySelector('#side-spend').textContent, /no total limit/i);
+});
+
+test('clicking inside the stack really routes to #stats', async () => {
+  const { window } = await boot({ seed: { [KEY]: '1' },
+    budgetOver: { totalLimitUsd: null, remainingUsd: null, windowSavedUsd: 5 } });
+  window.location.hash = 'running';
+  window.document.querySelector('#side-spend .spend-stack-val')
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.equal(window.location.hash, '#stats');
 });
 
 test('hovering the ring keeps its arc', () => {

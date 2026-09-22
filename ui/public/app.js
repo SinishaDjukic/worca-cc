@@ -666,7 +666,8 @@ function paintBudget() {
   const topAmt = document.getElementById('topnav-spend');
   if (!b) { if (topAmt) topAmt.hidden = true; return; }
   if (mount) {
-    // The rail has room for a 38px ring, not a labelled block with a meter.
+    // The rail has room for a compact twin, not a labelled block: a 38px ring under a
+    // total limit, the 40px Spent/Saved stack without one (renderBudgetRing picks).
     const render = sidebarCollapsed ? renderBudgetRing : renderBudgetIndicator;
     mount.replaceChildren(render(b,
       { fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } }));

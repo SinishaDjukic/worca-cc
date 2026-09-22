@@ -95,7 +95,7 @@ import { createAskTurn } from '../src/core/ask/turn.mjs';
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
-import { getStats } from '../src/core/stats.mjs';
+import { getStats, budgetWindowSavings } from '../src/core/stats.mjs';
 import {
   enableTeamMetrics, setRecordMyRuns, flushSlug, flushAll, flushProject, scheduleFlush, discoverProject,
   discoverAll, scanMembers, routeWorkspaceMembers, projectMetricsStatus, startTeamMetricsBackground,
@@ -4678,7 +4678,13 @@ app.get('/api/settings', async (_req, res) => {
 });
 
 app.get('/api/budget', (_req, res) => {
-  res.json(budgetStatus());
+  const budget = budgetStatus();
+  // The sidebar's "Saved this month" figure rides on this snapshot (money-saved design §10).
+  // Additive and best-effort: a failed savings read must never cost the gate figures the
+  // New-view Start button and every cost banner key on, so it degrades to nulls instead.
+  let savings = { windowHumanHours: null, windowSavedUsd: null };
+  try { savings = budgetWindowSavings(budget); } catch { /* keep the nulls */ }
+  res.json({ ...budget, ...savings });
 });
 
 app.post('/api/settings', async (req, res) => {

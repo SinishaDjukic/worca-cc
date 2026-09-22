@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
-import { renderBudgetRing } from '../ui/public/stats-view.mjs';
+import { renderBudgetRing, renderBudgetStack, railUsd } from '../ui/public/stats-view.mjs';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
@@ -306,30 +306,67 @@ test('the ring clamps its arc to 0-100 whatever the raw ratio is', () => {
   assert.equal(credit.querySelector('.spend-ring-val').textContent, '0%');
 });
 
-test('no total limit renders a neutral ring showing the amount, not a fake percentage', () => {
-  const el = renderBudgetRing(
-    { totalLimitUsd: null, windowSpendUsd: 3168.85, resetPeriod: 'monthly',
-      windowEndMs: Date.now() + 4 * DAY, blocked: false }, { doc: pureDoc() });
-  assert.ok(el.classList.contains('no-limit'));
-  assert.equal(el.style.getPropertyValue('--ring-pct'), '0');
-  assert.equal(el.querySelector('.spend-ring-val').textContent, '$3k');
-  assert.match(el.title, /no total limit/);
+// ---- collapsed rail with NO total limit: the Spent/Saved stack ----
+const stackBudget = (over) => ({
+  totalLimitUsd: null, resetPeriod: 'monthly', windowEndMs: Date.now() + 4 * DAY,
+  blocked: false, windowSpendUsd: 10604.7, windowHumanHours: 1512, windowSavedUsd: 42315.3, ...over,
 });
 
-test('compact amounts stay within four glyphs', () => {
-  const val = (n) => renderBudgetRing(
-    { totalLimitUsd: null, windowSpendUsd: n, resetPeriod: 'monthly',
-      windowEndMs: Date.now(), blocked: false }, { doc: pureDoc() })
-    .querySelector('.spend-ring-val').textContent;
-  assert.equal(val(4.21), '$4');
-  assert.equal(val(317.4), '$317');
-  // 999.5 rounds to 1000 — five glyphs unless the branch tests the ROUNDED value.
-  assert.equal(val(999.5), '$1k');
-  assert.equal(val(3168.85), '$3k');
-  // Thousands are WHOLE: "$8.8k" is too wide for the 29px disc.
-  assert.equal(val(8800), '$9k');
-  assert.equal(val(9949), '$10k');
-  assert.equal(val(12400), '$12k');
+test('no total limit renders the Spent/Saved stack, not a ring', () => {
+  const el = renderBudgetRing(stackBudget(), { doc: pureDoc() });
+  assert.ok(el.classList.contains('spend-stack'));
+  assert.equal(el.classList.contains('spend-ring'), false, 'no disc to clip the amount');
+  assert.equal(el.querySelector('.spend-ring-val'), null);
+  assert.equal(el.style.getPropertyValue('--ring-pct'), '', 'no arc without a denominator');
+  const pairs = [...el.querySelectorAll('.spend-stack-pair')].map((p) =>
+    [p.querySelector('.spend-stack-lbl').textContent, p.querySelector('.spend-stack-val').textContent]);
+  assert.deepEqual(pairs, [['Spent', '$11k'], ['Saved', '$42k']]);
+  assert.equal(el.querySelectorAll('.spend-stack-val')[1].className, 'spend-stack-val',
+    'neutral ink: green/red text fails 4.5:1 on the stack\'s hover fill');
+  // The compact figures are for the eye; exact ones reach the title and the accessible name.
+  assert.equal(el.getAttribute('aria-label'),
+    'Spent this month: $10,604.70 · Saved this month: $42,315.30');
+  assert.match(el.title, /^Spent this month: \$10,604\.70 · Saved this month: \$42,315\.30 · resets /);
+  assert.match(el.title, /not authoritative billing/);
+  assert.doesNotMatch(el.title, /no total limit/);
+});
+
+test('the stack keeps .spend-ind and data-nav so the click still routes to #stats', () => {
+  const el = renderBudgetStack(stackBudget(), { doc: pureDoc() });
+  assert.ok(el.classList.contains('spend-ind'), 'app.js routes the rail click via closest(".spend-ind")');
+  assert.equal(el.dataset.nav, 'stats');
+  assert.equal(el.tagName, 'BUTTON');
+  assert.equal(el.type, 'button');
+});
+
+test('the stack signs a loss, follows a weekly window, and drops Saved when the payload has none', () => {
+  const loss = renderBudgetStack(stackBudget({ resetPeriod: 'weekly', windowSavedUsd: -8800 }),
+    { doc: pureDoc() });
+  const val = loss.querySelectorAll('.spend-stack-val')[1];
+  assert.equal(val.textContent, '−$8.8k', 'the sign carries the loss');
+  assert.match(loss.getAttribute('aria-label'), /Saved this week: −\$8,800\.00$/);
+  const none = renderBudgetStack(stackBudget({ windowSavedUsd: null }), { doc: pureDoc() });
+  assert.equal(none.querySelectorAll('.spend-stack-pair').length, 1, 'Spent alone, never a fake $0');
+  assert.equal(none.getAttribute('aria-label'), 'Spent this month: $10,604.70');
+});
+
+test('railUsd: at most five glyphs unsigned, tiers decided on the ROUNDED value', () => {
+  const cases = [
+    [0, '$0'], [4.21, '$4'], [317.4, '$317'], [999.49, '$999'],
+    [999.5, '$1k'],            // not "$1000"
+    [1049, '$1k'], [1050, '$1.1k'], [3168.85, '$3.2k'], [8800, '$8.8k'], [9949, '$9.9k'],
+    [9950, '$10k'],            // not "$10.0k"
+    [10604.7, '$11k'], [12400, '$12k'], [999499, '$999k'],
+    [999500, '$1M'],           // not "$1000k"
+    [1250000, '$1.3M'], [9949999, '$9.9M'], [9950000, '$10M'], [123456789, '$123M'],
+    [-0.4, '$0'],              // no "−$0"
+    [-12.5, '−$13'], [-8800, '−$8.8k'], [-42315.3, '−$42k'],
+    [null, '$0'], [undefined, '$0'], [Number.NaN, '$0'],
+  ];
+  for (const [n, want] of cases) assert.equal(railUsd(n), want, `railUsd(${n})`);
+  for (let n = 0; n < 2e8; n = n * 1.37 + 7.3) {
+    assert.ok(railUsd(n).length <= 5, `railUsd(${n}) = ${railUsd(n)} is wider than five glyphs`);
+  }
 });
 
 // The tick suites run last and each stops its own interval: a fast tick that
