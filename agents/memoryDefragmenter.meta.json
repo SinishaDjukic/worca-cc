@@ -1,6 +1,7 @@
 {
   "key": "memoryDefragmenter",
   "metaVersion": 2,
+  "humanEffort": { "factor": 0 },
   "mockRole": "memory-defrag",
   "sideEffect": "memory",
   "inputs": [

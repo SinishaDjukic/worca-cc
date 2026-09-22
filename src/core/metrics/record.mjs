@@ -23,7 +23,7 @@ export const WORCA_VERSION = createRequire(import.meta.url)('../../../package.js
 /** Serialised key order of a v1 record — diffs stay readable (§4.4). */
 export const RECORD_FIELDS = Object.freeze([
   'v', 'id', 'worca', 'recordedAt',
-  'startedAt', 'endedAt', 'wallMs', 'activeMs',
+  'startedAt', 'endedAt', 'wallMs', 'activeMs', 'pausedMs',
   'result', 'failure',
   'workflow', 'target', 'title', 'source',
   'cost', 'agents', 'steps', 'cycles', 'interventions',
@@ -115,6 +115,19 @@ function buildSource(src) {
   };
 }
 
+/** money-saved design §7: hours from the run, byPhase from the agent steps (UI phase, like cost.byPhase). */
+function buildHuman(agentSteps, humanHours) {
+  const hours = Number.isFinite(humanHours) ? Math.round(humanHours * 100) / 100 : 0;
+  if (hours <= 0) return null;
+  const byPhase = {};
+  for (const s of agentSteps) {
+    const h = Number(s?.humanHours);
+    if (!s?.phase || !Number.isFinite(h) || h <= 0) continue;
+    byPhase[s.phase] = Math.round(((byPhase[s.phase] || 0) + h) * 100) / 100;
+  }
+  return { hours, byPhase };
+}
+
 function buildCost(steps, totalCostUsd) {
   const byPhase = {};
   let sum = 0;
@@ -185,6 +198,9 @@ export function buildRunRecord(snap, { attribution = 'git-user', now = new Date(
     endedAt: isoSec(snap.endedAt) ?? recordedAt,
     wallMs: Number.isFinite(startMs) && Number.isFinite(endMs) ? Math.max(0, endMs - startMs) : null,
     activeMs: num(snap.totalActiveMs),
+    // Parked (paused, or dead between a crash and its resume): leaves the autonomy denominator.
+    // Additive under v1; a record without it parks nothing.
+    pausedMs: num(snap.pausedMs) ?? 0,
     result,
     failure: buildFailure(snap, result, agentSteps),
     workflow: snap.workflow
@@ -217,6 +233,7 @@ export function buildRunRecord(snap, { attribution = 'git-user', now = new Date(
     actor: attribution === 'none' ? null : cleanText(snap.actor),
     // Present ONLY on runs that saw a policy: records of policy-less runs stay byte-identical to v1.
     ...((p) => (p ? { policy: p } : {}))(buildPolicy(snap.policy, attribution)),
+    ...((h) => (h ? { human: h } : {}))(buildHuman(agentSteps, snap.humanHours)),
   };
 }
 
@@ -319,6 +336,7 @@ export async function snapshotFromHarness(harness, { status, error = null } = {}
     endedAt: st.updatedAt,
     totalActiveMs: st.totalActiveMs,
     totalCostUsd: st.totalCostUsd,
+    humanHours: st.humanHours,
     steps: withUiPhases(st.steps || [], st.stepper?.graph),
     subAgents: st.subAgents || [],
     workflow: {
@@ -347,6 +365,7 @@ export async function snapshotFromHarness(harness, { status, error = null } = {}
       deletions: summary ? summary.linesRemoved ?? null : null,
     },
     interventions: { questions: iv.questions | 0, pauses: iv.pauses | 0, resumes: iv.resumes | 0 },
+    pausedMs: Number.isFinite(iv.pausedMs) ? iv.pausedMs : 0,
     // _completePaused stamps iv. A stop/error that lands while a forced pause is still unwinding
     // never reaches it (pause → stop before the unwind finishes → site B), so fall back to this
     // instance's live reason; resume() clears both at rehydration (decision 2).

@@ -65,6 +65,21 @@ export function validateMetaV2(raw, opts = {}) {
   return { errors: normalizeAgentMeta(raw, { ...opts, warn: () => {} }).errors };
 }
 
+/** money-saved design §5: `{ factor?: >=0, hours?: >=0 }`; anything else is dropped with a warning. */
+export function readHumanEffort(raw, warn = () => {}) {
+  if (raw === undefined) return null;
+  const ok = (v) => v === undefined || (typeof v === 'number' && Number.isFinite(v) && v >= 0);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !ok(raw.factor) || !ok(raw.hours)
+      || (raw.factor === undefined && raw.hours === undefined)) {
+    warn(`humanEffort must be { factor?: number >= 0, hours?: number >= 0 }; ignored: ${JSON.stringify(raw)}`);
+    return null;
+  }
+  const out = {};
+  if (raw.factor !== undefined) out.factor = raw.factor;
+  if (raw.hours !== undefined) out.hours = raw.hours;
+  return out;
+}
+
 /**
  * @param {object} raw parsed sidecar
  * @param {{mockWriterRoles?:Set<string>, warn?:(msg:string)=>void}} [opts]
@@ -186,6 +201,8 @@ export function normalizeAgentMeta(raw, opts = {}) {
   // makes {...existing, ...raw} safe).
   if (askBlock && Object.keys(askBlock.forms).length) meta.ask = { forms: askBlock.forms };
   if (SIDE_EFFECTS.has(raw.sideEffect)) meta.sideEffect = raw.sideEffect;
+  const humanEffort = readHumanEffort(raw.humanEffort, (m) => warn(`[agent-meta] "${key || '<unkeyed>'}": ${m}`));
+  if (humanEffort) meta.humanEffort = humanEffort;
   if (mockRole) meta.mockRole = mockRole;
   if (raw.wantsRequest) meta.wantsRequest = true;
   if (raw.workspaceFanOut) meta.workspaceFanOut = true;
