@@ -163,6 +163,16 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
   for (const a of inv.agents || []) {
     agents.appendChild(h(doc, 'div', 'pl-consent-row mono',
       `${a.key} — tools: ${(a.tools || []).join(', ') || 'none declared'}`));
+    // Ask forms (spec §10): how many question forms this agent can put on
+    // screen, and which file types they may display from the run folder. An
+    // older snapshot has neither key, so both are read defensively.
+    const forms = Array.isArray(a.forms) ? a.forms : [];
+    if (forms.length) {
+      const types = Array.isArray(a.fileTypes) ? a.fileTypes : [];
+      agents.appendChild(h(doc, 'div', 'pl-consent-row pl-consent-forms',
+        `${forms.length} form${forms.length === 1 ? '' : 's'}: ${forms.join(', ')}`
+        + (types.length ? ` · may display ${types.join(', ')} from the run folder` : '')));
+    }
   }
   if ((inv.scripts || []).length) {
     const scripts = section(`Scripts (${inv.scripts.length})`);

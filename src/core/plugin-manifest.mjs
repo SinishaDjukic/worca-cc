@@ -6,13 +6,15 @@
 import { readFileSync, readdirSync, readlinkSync, existsSync } from 'node:fs';
 import { join, resolve, dirname, sep, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS } from './plugin-api.mjs';
+import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS, WORCA_AGENT_DATA_API, WORCA_ASK_FORMS_API } from './plugin-api.mjs';
 import { EFFORTS, isReservedModelEnvKey, assertModelCost } from './model-env.mjs';
 import { validateMetaV2, normalizeAgentMeta, indexByKey } from '../shared/graph/agent-meta.mjs';
 import { portsFnFor } from '../shared/graph/ports.mjs';
 import { validateGraph } from '../shared/graph/validate.mjs';
 import { validateScriptMetaV2, normalizeScriptMeta } from '../shared/graph/script-meta.mjs';
 import { normalizeCases } from '../shared/graph/script-cases.mjs';
+import { normalizeAskBlock, validateFormDef } from '../shared/forms/form-def.mjs';
+import { ASK_LIMITS } from '../shared/forms/catalog.mjs';
 
 /** Plugin names are kebab-case, machine-unique, dir-name safe (spec §4.1). */
 export const PLUGIN_NAME_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -132,6 +134,13 @@ export function negotiatedApi(range, apis = WORCA_PLUGIN_APIS) {
 export const NOT_META_V2 = 'not a meta v2 sidecar (declare "metaVersion": 2 with typed inputs/outputs) — plugin API 3 no longer reads channel sidecars';
 export const NOT_GRAPH_V2 = 'not a version-2 graph template (nodes/wires) — port the "steps" pipeline';
 
+/** The ONE sentence for a plugin that ships agent ask forms without negotiating
+ *  the API that honours them. Used verbatim by `agent-registry.scanLayer` (the
+ *  load-time strip) and by `validatePluginDir` (the author-time warning), so the
+ *  two can never drift — never re-word it in a second place. */
+export const ASK_NEEDS_API_4 = `ask forms need plugin API ${WORCA_ASK_FORMS_API}`
+  + ' (declare "engines": { "worca-cc-api": ">=4 <5" }) — the ask block is ignored and the agent keeps generic questions';
+
 /** The host API a range was BUILT FOR: the lowest integer it accepts. ">=1 <2"
  *  and "1" both answer 1; an unconstrained range answers 0; null when nothing
  *  satisfies it (an unparseable range fails closed in apiSatisfies too).
@@ -209,7 +218,7 @@ export function apiMismatchMessage(mismatch) {
   if (!mismatch) return '';
   const { builtFor, agents, workflows, scripts } = mismatch;
   return `built for plugin API ${builtFor ?? 'an older version'}; this version of worca requires `
-    + `plugin API ${WORCA_PLUGIN_API} for agents and pipeline templates — update or reinstall the plugin `
+    + `plugin API ${WORCA_AGENT_DATA_API} for agents and pipeline templates — update or reinstall the plugin `
     + `(${agents} agent(s), ${scripts ? `${scripts} script(s), ` : ''}${workflows} template(s) ignored)`;
 }
 
@@ -600,13 +609,13 @@ export function validatePluginDir(absDir, { strict = false, builtinMetas } = {})
   // "this plugin does not ship it" or the derived V4/V5/V20/V21 cascade.
   const ungatedKeys = new Set();
   const ownMetas = [];
-  // A range that admits the CURRENT API (or no engines at all) claims to be an
-  // API-3 plugin, so v1-shaped data is a hard error; --strict promotes it for
-  // everyone else, because that flag is the plugin AUTHOR's gate. A manifest
-  // that did not PARSE fails SOFT: its declared API is unknowable, and the JSON
-  // error above is already the only actionable line.
+  // A range that admits the DATA-CONTRACT API (or no engines at all) claims to
+  // ship meta v2 sidecars and v2 graphs, so v1-shaped data is a hard error;
+  // --strict promotes it for everyone else, because that flag is the plugin
+  // AUTHOR's gate. Compared against WORCA_AGENT_DATA_API, never the newest host
+  // API: an API-5 host must not make today's ">=3 <4" plugins soft again.
   const hardData = raw !== null
-    && (strict || negotiatedApi(raw && raw.engines ? raw.engines['worca-cc-api'] : '') === WORCA_PLUGIN_API);
+    && (strict || (negotiatedApi(raw && raw.engines ? raw.engines['worca-cc-api'] : '') ?? -1) >= WORCA_AGENT_DATA_API);
   const dataLevel = hardData ? 'error' : 'warn';
   const agentsDir = join(absDir, 'agents');
   if (existsSync(agentsDir)) {
@@ -633,6 +642,51 @@ export function validatePluginDir(absDir, { strict = false, builtinMetas } = {})
       // as shipped is what let a ports-less node reach validateGraph.
       agentKeys.add(key);
       ownMetas.push(normalizeAgentMeta(meta).meta);
+
+      // ── ask forms (spec §10) ────────────────────────────────────────────────
+      // The SAME gate 1 the registry, the agent store and the Agents view run.
+      // Level: a bad form is a WARNING, because the host's behaviour for one is
+      // already defined (it is dropped at load and the agent keeps generic
+      // questions), and a plugin whose connector is fine must stay installable.
+      // --strict is the AUTHOR's gate, so there it is an error. This split is
+      // keyed on `strict` alone, NOT on dataLevel: a form's validity has nothing
+      // to do with which API the plugin negotiates.
+      if (meta.ask !== undefined && meta.ask !== null) {
+        const askLevel = strict ? 'error' : 'warn';
+        // normalizeAskBlock is used ONLY for what it alone knows: a whole-block
+        // refusal (id '*'). Its per-form `reason` is a collapsed one-liner of the
+        // first three errors — right for a registry log line, wrong here, where
+        // the author wants every failed rule with its path. So each form goes
+        // through validateFormDef directly.
+        const blockDrops = normalizeAskBlock(meta.ask).dropped.filter((d) => d.id === '*');
+        let declaredForms = 0;
+        if (blockDrops.length) {
+          for (const d of blockDrops) push(askLevel, `agents/${f}: ask: ${d.reason}`);
+        } else {
+          const declared = meta.ask.forms && typeof meta.ask.forms === 'object' ? meta.ask.forms : {};
+          const ids = Object.keys(declared);
+          declaredForms = ids.length;
+          if (ids.length > ASK_LIMITS.formsPerAgent) {
+            push(askLevel, `agents/${f}: ask.forms: at most ${ASK_LIMITS.formsPerAgent} forms per agent`);
+          }
+          for (const id of ids) {
+            // P1 addresses layout items as `layout#<n>` (depth-first, 1-based);
+            // print the path exactly as it comes so the Plugins card, the 422
+            // body and this line all name the same item.
+            for (const e of validateFormDef(declared[id], { id }).errors) {
+              push(askLevel, `agents/${f}: ask.forms."${id}"${e.path ? ` ${e.path}` : ''}: ${e.message}`);
+            }
+          }
+        }
+        // A plugin may ship forms it knows an older host will ignore; say so
+        // once, by name, and never fail the validate for it. ONE sentence,
+        // exported so the load-time strip and this line can never drift. Only
+        // when the block DECLARES a form: an empty `forms` map loads as "no
+        // forms" (normalizeAgentMeta drops it) and the host ignores nothing.
+        if (declaredForms && !(Number(negotiatedApi(raw && raw.engines ? raw.engines['worca-cc-api'] : '')) >= WORCA_ASK_FORMS_API)) {
+          push('warn', `agents/${f}: ${ASK_NEEDS_API_4}`);
+        }
+      }
     }
     for (const f of files.filter((x) => x.endsWith('.md'))) {
       const stem = f.slice(0, -3);

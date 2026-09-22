@@ -14,8 +14,8 @@ import {
   mkdirSync, rmSync, symlinkSync, renameSync, unlinkSync,
 } from 'node:fs';
 import { join, resolve, isAbsolute, sep } from 'node:path';
-import { WORCA_PLUGIN_APIS } from './plugin-api.mjs';
-import { normalizeManifest, validatePluginDir, apiSatisfies, dataContractIssues, apiMismatch } from './plugin-manifest.mjs';
+import { WORCA_PLUGIN_APIS, WORCA_ASK_FORMS_API } from './plugin-api.mjs';
+import { normalizeManifest, validatePluginDir, apiSatisfies, dataContractIssues, apiMismatch, negotiatedApi } from './plugin-manifest.mjs';
 import {
   pluginsRoot, pluginDir, pluginCurrentDir, pluginDataDir, readPluginsLock, writePluginsLock,
   DIR_NAME_RE,
@@ -28,6 +28,8 @@ import {
 import { loadAgentRegistry } from './agent-registry.mjs';
 import { loadScriptRegistry } from './script-registry.mjs';
 import { normalizeCases } from '../shared/graph/script-cases.mjs';
+import { normalizeAskBlock, validateFormDef } from '../shared/forms/form-def.mjs';
+import { fileAccepts } from '../shared/forms/answer.mjs';
 import { normalizeScriptMeta, resolvePlatformValue } from '../shared/graph/script-meta.mjs';
 import { pluginModelSecretStatus } from './plugin-models.mjs';
 import { referencedPluginModels } from './config.mjs';
@@ -66,8 +68,17 @@ function insideDir(dir, rel) {
  *  reviewer must see where) + requested model secrets, skills, workflows, npm
  *  dep count from the lockfile, and the exact setup commands that would run. */
 export function buildInstallInventory(versionDir) {
-  const manifest = readManifestAt(versionDir)
+  const readManifest = readManifestAt(versionDir);
+  const manifest = readManifest
     ?? { taskSources: [], chatChannels: [], models: [], modelSecrets: [], setup: { node: false, python: null } };
+  // Ask forms are honoured only when the plugin NEGOTIATES plugin API 4: below
+  // it agent-registry.scanLayer strips the block at load and reports it as an
+  // ignored contribution. Consent describes what THIS host will do, so such
+  // forms are not promised here — `worca plugin validate` and the ignored line
+  // are what name them. An unreadable manifest negotiates null and fails
+  // CLOSED, exactly as the registry's plugin layer does (ask-forms spec §10).
+  const formsHonoured = readManifest !== null
+    && Number(negotiatedApi(readManifest.engines?.worcaApi ?? '')) >= WORCA_ASK_FORMS_API;
   const agents = [];
   const aDir = join(versionDir, 'agents');
   if (existsSync(aDir)) {
@@ -80,13 +91,30 @@ export function buildInstallInventory(versionDir) {
       // unvalidated dir (the pre-install preview); an escaping agentFile falls
       // back to the sibling and validatePluginDir refuses the install anyway.
       let mdFile = `${key}.md`;
+      let rawMeta = null;
       try {
-        const af = JSON.parse(readFileSync(join(aDir, f), 'utf8'))?.agentFile;
+        rawMeta = JSON.parse(readFileSync(join(aDir, f), 'utf8'));
+        const af = rawMeta?.agentFile;
         if (typeof af === 'string' && af.trim() && insideDir(aDir, af.trim())) mdFile = af.trim();
-      } catch { /* unreadable sidecar: fall back to the sibling */ }
+      } catch { /* unreadable sidecar: fall back to the sibling, and declare no forms */ }
       let tools = [];
       try { tools = parseFrontmatter(readFileSync(join(aDir, mdFile), 'utf8'))?.tools ?? []; } catch { /* md missing */ }
-      agents.push({ key, tools });
+      // Ask forms (spec §10). Consent states what the reviewer is agreeing to:
+      // how many forms this agent can put on screen, and which file types those
+      // forms may display FROM THE RUN FOLDER. Both are read from the sidecar's
+      // declared schemas — no plugin code runs here, and there is no instance
+      // data at consent time, which is why this is fileAccepts(schema) and not
+      // fileRefs(schema, data). Only forms that pass gate 1 are listed: the host
+      // drops the rest at load, and a consent card must not promise one.
+      const forms = [];
+      const accepts = new Set();
+      const declared = formsHonoured ? normalizeAskBlock(rawMeta?.ask).forms : {};
+      for (const [id, def] of Object.entries(declared)) {
+        if (!validateFormDef(def, { id }).ok) continue;
+        forms.push(id);
+        for (const a of fileAccepts(def.data)) accepts.add(a);
+      }
+      agents.push({ key, tools, forms: forms.sort(), fileTypes: [...accepts].sort() });
     }
   }
   const scripts = [];

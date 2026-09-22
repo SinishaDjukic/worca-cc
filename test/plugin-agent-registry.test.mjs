@@ -58,7 +58,7 @@ test('a plugin agent joins the registry with origin plugin:<name> and agentPath 
   writeAgent(builtin, 'alpha', { order: 1 });
   installFakePlugin('demo-source', [['demoAgent', { order: 40 }]]);
   const layers = pluginAgentLayers().filter((l) => l.plugin === 'demo-source');
-  assert.deepEqual(layers, [{ plugin: 'demo-source', dir: join(pluginCurrentDir('demo-source'), 'agents'), builtFor: null }]);
+  assert.deepEqual(layers, [{ plugin: 'demo-source', dir: join(pluginCurrentDir('demo-source'), 'agents'), builtFor: null, api: null }]);
   const reg = loadAgentRegistry(builtin, { userAgentsDir: null });
   assert.equal(reg.demoAgent.origin, 'plugin:demo-source');
   assert.equal(reg.demoAgent.agentPath, join(pluginCurrentDir('demo-source'), 'agents', 'demoAgent.md'),

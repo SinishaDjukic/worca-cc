@@ -10,6 +10,8 @@
 // using the run-id wildcard-suffix convention the command router resolves.
 
 import { pauseConsequences, describePauseReason, giveUpOption } from '../failure-policy.mjs';
+import { projectForm } from '../../shared/forms/project.mjs';
+import { CHAT_PROJECTION_MAX } from '../ask-projection.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
 
@@ -117,6 +119,27 @@ export function renderQuestion(meta, payload = {}) {
     parts.push(kind === 'gate'
       ? `   Reply: /approve ${ref} to continue · /retry ${ref} for another cycle`
       : `   Reply: /approve ${ref} to retry · /abort ${ref} to ${giveUpOption(payload.recovery?.options).id === 'abort' ? 'abort the run' : 'pause the run'}`);
+    return mdMsg(parts.join('\n'), 'warning');
+  }
+
+  if (kind === 'form') {
+    // A form ask (spec §8). The projection is P1's — display widgets as text, files
+    // as `rel (mime, size)` — capped so one message fits the tightest shipped
+    // platform (Discord: 2000 chars); the cap drops display text only and never the
+    // prompts or the reply command. A surface:'web' form stays OPEN here: a chat run
+    // lives in ui/server.mjs's runs Map, so a browser really can answer it.
+    parts.push(`   **Status:** waiting on a form${payload.agent ? ` from ${payload.agent}` : ''}`);
+    const webOnly = payload.surface === 'web';
+    let projection;
+    try {
+      projection = projectForm(payload, { ...(webOnly ? {} : { ref }), maxChars: CHAT_PROJECTION_MAX });
+    } catch {
+      // A junk envelope must still NOTIFY — the notifier's guard would otherwise
+      // swallow the throw and the user would never learn a run is waiting.
+      projection = `${String(payload.title || payload.form || 'form')}${payload.agent ? ` — ${payload.agent}` : ''}`;
+    }
+    for (const line of projection.split('\n')) parts.push(line ? `   ${line}` : '');
+    if (webOnly) parts.push('   Answer this form in the worca web UI.');
     return mdMsg(parts.join('\n'), 'warning');
   }
 

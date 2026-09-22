@@ -90,6 +90,11 @@ and durations, the clarify Q&A, agent transcripts, and logs:
 - **AI-assisted agent creation** — describe a new agent in the UI and Worca
   generates both its system prompt and metadata (or paste your own prompt and
   let it infer just the wiring); edit, regenerate, and save.
+- **Ask forms** — an agent that needs a human can ship the UI its question is
+  asked with: JSON in its sidecar, drawn by worca from a fixed widget catalog
+  (galleries, rankings, per-item review lists, previews of the files it just
+  produced), validated on the way back, with a text projection for the CLI, chat
+  and History. Plugins can ship them too.
 - **Per-agent model & effort** — pick model and reasoning effort per agent,
   per workflow, or per run, with a clear resolution order and "save as
   workflow defaults".
@@ -147,10 +152,11 @@ and durations, the clarify Q&A, agent transcripts, and logs:
 ### Plugins & chat
 
 - **Plugin system with marketplaces** — plugins contribute task sources
-  (e.g. GitHub Issues), agents, scripts, skills, workflow templates, models, and
-  chat channels. Install from a marketplace with an explicit consent ceremony
-  (what's installed, which secrets are required, which setup commands run);
-  updates show a commit-level preview before you accept.
+  (e.g. GitHub Issues), agents (with their ask forms), scripts, skills, workflow
+  templates, models, and chat channels. Install from a marketplace with an
+  explicit consent ceremony (what's installed, which ask forms an agent can show
+  and which file types they may display, which secrets are required, which setup
+  commands run); updates show a commit-level preview before you accept.
 - **Drive runs from chat** — bundled two-way **Telegram**, **Slack**,
   **Discord**, and **Microsoft Teams** channels: get notified on questions,
   finishes, failures, and cost pauses, and answer back with commands —

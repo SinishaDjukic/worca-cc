@@ -11,6 +11,9 @@ import { listWorkflows } from './workflows.mjs';
 import { validateMetaV2 } from '../shared/graph/agent-meta.mjs';
 import { AWAIT_PORT } from '../shared/graph/constants.mjs';   // the synthesized gate port is wirable
 
+import { normalizeAskBlock, validateFormDef } from '../shared/forms/form-def.mjs';
+import { ASK_LIMITS } from '../shared/forms/catalog.mjs';
+
 export { userAgentsDir }; // single source: the Phase 1 layer resolver
 
 /** A key is a bare alphanumeric stem — can never contain "/" or "..". */
@@ -24,8 +27,48 @@ function err(message, code) { return Object.assign(new Error(message), { code })
  *  `scope:'workspace-only'` can never be undone from the editor. Everything else
  *  (including the v1 wiring the registry still derives, which P8 owns) MERGES. */
 const V2_CLEARABLE = ['verdict', 'sideEffect', 'mockRole', 'wantsRequest', 'workspaceFanOut',
-  'workspaceStrategy', 'workspaceVariantOf', 'placeable', 'scope', 'domain', 'icon',
+  'workspaceStrategy', 'workspaceVariantOf', 'placeable', 'scope', 'domain', 'icon', 'ask',
   'promptHints', 'requiresSkills'];
+
+/**
+ * GATE 1 for a sidecar's ask forms (ask-forms spec §5, §11). The SAME checks the
+ * registry runs at load and `worca plugin validate` runs on a plugin dir — one
+ * validator, three callers. Returns [] when the sidecar declares no forms.
+ * Every failed rule is named: the editor marks fields by `path`, so a single
+ * "invalid form" sentence would be unusable there.
+ * @param {object} raw a raw sidecar (pre-normalizeMeta)
+ * @returns {Array<{path: string, code: string, message: string}>}
+ */
+function askFormIssues(raw) {
+  if (!raw || raw.ask === undefined || raw.ask === null) return [];
+  // normalizeAskBlock is used ONLY for the whole-block refusals it alone knows
+  // (id '*': not `{ forms }`, or over the 64 KB cap). Its per-form `reason` is a
+  // collapsed one-liner of the first three errors — right for a registry log
+  // line, wrong for an editor that marks fields BY PATH — so each form goes
+  // through validateFormDef directly and keeps P1's paths verbatim
+  // (`layout#<n>`, a depth-first 1-based ordinal).
+  const blockDrops = normalizeAskBlock(raw.ask).dropped.filter((d) => d.id === '*');
+  if (blockDrops.length) return blockDrops.map((d) => ({ path: 'ask', code: 'dialect', message: d.reason }));
+  const issues = [];
+  const forms = raw.ask.forms && typeof raw.ask.forms === 'object' ? raw.ask.forms : {};
+  const ids = Object.keys(forms);
+  if (ids.length > ASK_LIMITS.formsPerAgent) {
+    issues.push({ path: 'ask.forms', code: 'too-many', message: `at most ${ASK_LIMITS.formsPerAgent} forms per agent` });
+  }
+  for (const id of ids) {
+    for (const e of validateFormDef(forms[id], { id }).errors) {
+      issues.push({ path: `ask.forms."${id}"${e.path ? ` ${e.path}` : ''}`, code: e.code, message: e.message });
+    }
+  }
+  return issues;
+}
+
+/** The ONE throw shape both write paths use for a failed gate 1: a joined message
+ *  for CLI/log surfaces, plus the structured list the route turns into a 422 body. */
+function askFormError(issues) {
+  return Object.assign(new Error(issues.map((i) => `${i.path}: ${i.message}`).join('; ')),
+    { code: 'ASK_FORM', errors: issues });
+}
 
 /** The writable user layer dir. userAgentsDir() returns null only when the home
  *  cannot be resolved (no WORCA_HOME under node:test) — surface that as a 400. */
@@ -76,6 +119,10 @@ export async function createAgent({ meta: rawMeta, markdown } = {}) {
   // wrote — or rejected with "invalid agent metadata". Every failed rule is named.
   const issues = validateMetaV2(raw).errors;
   if (issues.length) throw err(issues.join('; '), 'BAD_REQUEST');
+  // Gate 1 runs AFTER the meta gate and BEFORE normalizeMeta: normalizeMeta is
+  // lossy by design, so a form must be judged as the author wrote it.
+  const formIssues = askFormIssues(raw);
+  if (formIssues.length) throw askFormError(formIssues);
   const meta = normalizeMeta(raw);
   if (!meta) throw err('invalid agent metadata', 'BAD_REQUEST');
   const existing = loadAgentRegistry()[key];
@@ -241,6 +288,8 @@ export async function updateAgent(key, { meta: rawMeta, markdown } = {}) {
   // The same gate the create path applies: every failed rule named, nothing written.
   const updIssues = validateMetaV2(raw).errors;
   if (updIssues.length) throw err(updIssues.join('; '), 'BAD_REQUEST');
+  const updFormIssues = askFormIssues(raw);
+  if (updFormIssues.length) throw askFormError(updFormIssues);
   const meta = normalizeMeta(raw);
   if (!meta) throw err('invalid agent metadata', 'BAD_REQUEST');
   const dir = requireUserDir();

@@ -556,6 +556,9 @@ export function scrubErrorRows(snapshot) {
  * questions with their first option so downstream never sees gaps.
  */
 export function normalizeClarifyAnswer(payload, questions) {
+  // A form answer is `{form, version, values}` and is NEVER flattened here: the
+  // "fill with the first option" fallback below is legacy-kind only (spec §5).
+  if (payload && typeof payload === 'object' && typeof payload.form === 'string' && payload.values) return [];
   const arr = Array.isArray(payload?.answers)
     ? payload.answers
     : Array.isArray(payload)
@@ -794,15 +797,29 @@ export class RunHarness extends EventEmitter {
       return false;
     }
     if (pq.validate) {
-      // A question that carries a validator (the Auto proposal) stays OPEN on a
-      // malformed payload (spec §5.4); the awaiting code receives the CLEAN value.
-      const clean = pq.validate(payload);
-      if (clean == null) {
+      const out = pq.validate(payload);
+      // Two validator flavours, deliberately: the Auto proposal's returns the
+      // CLEAN value or null (§5.4 — the question stays open, silently), while a
+      // form's gate 3 returns a RESULT OBJECT carrying the field errors that
+      // POST /api/answer owes the client as 422. Only the latter throws.
+      if (out && typeof out === 'object' && typeof out.ok === 'boolean') {
+        if (!out.ok) {
+          this._log('orchestrator', 'warn', `answer() rejected: invalid answer for ${id} — the question stays open`);
+          const err = new Error('invalid answer');
+          err.code = 'INVALID_ANSWER';
+          err.errors = Array.isArray(out.errors) ? out.errors : [];
+          throw err;
+        }
+        this.pendingQuestion = null;
+        pq.resolve(out.payload);
+        return true;
+      }
+      if (out == null) {
         this._log('orchestrator', 'warn', `answer() ignored: malformed payload for ${id} — the question stays open`);
         return false;
       }
       this.pendingQuestion = null;
-      pq.resolve(clean);
+      pq.resolve(out);
       return true;
     }
     this.pendingQuestion = null;
@@ -3172,7 +3189,8 @@ export class RunHarness extends EventEmitter {
    * Freezes the active-time clock while blocked on the user (active-time-only).
    * @returns {Promise<any>} the answer payload
    */
-  async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow, validate }) {
+  async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow,
+    askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate }) {
     this._checkAbort();
     // No interactive prompt may OPEN on a pausing run. pause() rejects only the
     // prompt that is currently open; a queued ask (a parallel sibling's questions
@@ -3204,6 +3222,15 @@ export class RunHarness extends EventEmitter {
       ...(deliveryNo != null ? { deliveryNo } : {}),
       ...(holdNo != null ? { holdNo } : {}),
       ...(workflow !== undefined ? { workflow } : {}),
+      // The ask-form envelope (spec §4, ruling X1) rides the EXISTING 'question'
+      // frame — no new transport, no new slot. `id` (already emitted above) is the
+      // ANSWER token; `askId` is the route-safe file token and they are never
+      // interchangeable. `validate` and `autoValues` are arguments only and must
+      // never reach a socket.
+      ...(kind === 'form'
+        ? { askId, form, version, title, surface: surface || 'any', data, layout, answerSchema,
+            fileRefs: fileRefs || [], files: files || [] }
+        : {}),
     });
     this._metricsIv.questions += 1;
 
@@ -3219,6 +3246,13 @@ export class RunHarness extends EventEmitter {
           // Auto workflow under --yes: the proposal is accepted as proposed (spec D3).
           this._log('orchestrator', 'info', `auto-accepting workflow proposal ${id}`);
           return { decision: 'accept' };
+        }
+        if (kind === 'form') {
+          // D10: a form ask is auto-answered with the form's AUTO ANSWER, which
+          // gate 1 proved passes gate 3 — so an unattended run neither hangs nor
+          // produces an invalid answer. No pending question is installed.
+          this._log('orchestrator', 'info', `auto-answering form ${id} (${form})`);
+          return { form, version, values: autoValues && typeof autoValues === 'object' ? autoValues : {} };
         }
         if (kind === 'clarify' || kind === 'questions') {
           this._log('orchestrator', 'info', `auto-answering ${kind} ${id}`);

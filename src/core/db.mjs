@@ -306,7 +306,9 @@ CREATE INDEX idx_pipeline_events_pipeline ON pipeline_events (pipeline_id, id);
 CREATE TABLE clarify (
   pipeline_id TEXT PRIMARY KEY,
   questions   TEXT,  -- JSON: { questions: [ {id,question,options[2..4],allowFreeText} ] }
+                     --    OR: the full resolved ask form { kind:'form', … } (spec §9)
   answers     TEXT,  -- JSON: { answers: [ {id,question,choice} ] }
+                     --    OR: { kind:'form', form, version, values } (spec §9)
   FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
 );
 
@@ -521,7 +523,9 @@ CREATE TABLE IF NOT EXISTS step_questions (
   node_id     TEXT,
   agent_key   TEXT,
   questions   TEXT,  -- JSON: { questions: [ {id,question,options[2..4],allowFreeText} ] }
+                     --    OR: the full resolved ask form { kind:'form', … } (spec §9)
   answers     TEXT,  -- JSON: { answers: [ {id,question,choice} ] }
+                     --    OR: { kind:'form', form, version, values } (spec §9)
   PRIMARY KEY (pipeline_id, step_key, round),
   FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
 );

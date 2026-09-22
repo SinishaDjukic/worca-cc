@@ -14,7 +14,8 @@ import { join, resolve, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { worcaHome } from './projects.mjs'; // user agent layer root (read fresh per call)
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // plugin layer roots (Task 2)
-import { declaredApi, NOT_META_V2 } from './plugin-manifest.mjs'; // plugin API declared by a layer's manifest
+import { declaredApi, negotiatedApi, NOT_META_V2, ASK_NEEDS_API_4 } from './plugin-manifest.mjs'; // plugin API declared/negotiated by a layer's manifest
+import { WORCA_ASK_FORMS_API } from './plugin-api.mjs';
 import { normalizeAgentMeta, DEFAULT_ORDER } from '../shared/graph/agent-meta.mjs'; // meta v2 (one source: registry + store + UI)
 import { MOCK_WRITER_ROLES } from './claude-runner.mjs';             // mockRole vocabulary (no cycle: claude-runner imports no registry)
 import { readFrontmatterSync } from './frontmatter.mjs';
@@ -84,7 +85,7 @@ const AGENT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
  *  `warn` is INJECTABLE (defaults to console.warn) so scanLayer can capture the
  *  reason a sidecar was dropped and hand it to a diagnostics sink — the reason
  *  is authored here and must never be re-derived by a second reader. */
-export function normalizeMeta(raw, { warn = console.warn } = {}) {
+export function normalizeMeta(raw, { warn = console.warn, onDropForm = null } = {}) {
   if (!raw || typeof raw !== 'object') return null;
   const key = typeof raw.key === 'string' ? raw.key.trim() : '';
   if (!key) return null;
@@ -149,6 +150,7 @@ export function normalizeMeta(raw, { warn = console.warn } = {}) {
   const { meta, errors } = normalizeAgentMeta(raw, {
     mockWriterRoles: MOCK_WRITER_ROLES,
     warn: (msg) => warn(msg),
+    onDropForm,                  // §3: a dropped FORM must not look like a dropped SIDECAR
   });
   if (errors.length) {
     warn(`[agent-registry] sidecar "${key}" declares metaVersion 2 but is invalid; skipped: ${errors.join('; ')}`);
@@ -162,7 +164,7 @@ export function normalizeMeta(raw, { warn = console.warn } = {}) {
     portSummary: meta.portSummary,
   };
   for (const field of ['verdict', 'sideEffect', 'mockRole', 'wantsRequest', 'workspaceFanOut',
-    'workspaceStrategy', 'workspaceVariantOf', 'placeable']) {
+    'workspaceStrategy', 'workspaceVariantOf', 'placeable', 'ask']) {
     if (field in meta) merged[field] = meta[field];
   }
   return merged;
@@ -190,7 +192,7 @@ export function userAgentsDir() {
  * resolvable worca-cc home (bare node:test runner) or an unreadable lock this
  * returns [] and registry loads never throw.
  * @param {'agents'|'scripts'} subdir
- * @returns {Array<{plugin: string, dir: string, builtFor: number|null}>}
+ * @returns {Array<{plugin: string, dir: string, builtFor: number|null, api: number|null}>}
  */
 export function pluginLayers(subdir) {
   try {
@@ -201,14 +203,22 @@ export function pluginLayers(subdir) {
       .map((name) => {
         const dir = pluginCurrentDir(name);
         let builtFor = null;
+        let api = null;
         try {
           const raw = JSON.parse(readFileSync(join(dir, 'worca-cc-plugin.json'), 'utf8'));
+          const range = raw?.engines?.['worca-cc-api'] ?? '';
           // `|| null`: declaredApi('') is 0 (an unconstrained range accepts
           // everything), and "built for plugin API 0" is not English. apiMismatch
           // guards the same case the same way.
-          builtFor = declaredApi(raw?.engines?.['worca-cc-api'] ?? '') || null;
-        } catch { builtFor = null; } // unreadable manifest: the message degrades, the skip does not
-        return { plugin: name, dir: join(dir, subdir), builtFor };
+          builtFor = declaredApi(range) || null;
+          // builtFor is the LOWEST integer the range accepts (what the plugin was
+          // written against); `api` is the HIGHEST host API it admits — what the
+          // plugin actually NEGOTIATES, and therefore what decides which host
+          // features it gets. `null` when the manifest is missing or unreadable:
+          // every feature gate below must fail CLOSED on it.
+          api = negotiatedApi(range);
+        } catch { builtFor = null; api = null; } // unreadable manifest: the message degrades, the skip does not
+        return { plugin: name, dir: join(dir, subdir), builtFor, api };
       })
       .filter(({ dir }) => existsSync(dir));
   } catch {
@@ -229,7 +239,10 @@ export function scanMetaLayer(dir, origin, { normalize, tag, requireMetaV2 = fal
   // Every skip below is a CONTRIBUTION THE USER CANNOT SEE unless someone
   // reports it: console.warn reaches a server log, not the Plugins card, the
   // install receipt or the doctor. onDrop is that reporting channel — optional,
-  // so the hot registry path pays nothing when nobody is listening.
+  // so the hot registry path pays nothing when nobody is listening. A drop means
+  // "this file, or a declared PART of it, was ignored": scanLayer's API-4 gate
+  // reports a stripped `ask` block through the same channel, and the reason
+  // string is what tells the two apart.
   const drop = (file, reason) => { if (onDrop) onDrop({ origin, file, reason }); };
   let files;
   try {
@@ -264,6 +277,10 @@ export function scanMetaLayer(dir, origin, { normalize, tag, requireMetaV2 = fal
     const prefix = `[${tag}] `;
     const meta = normalize(parsed, {
       warn: (m) => { why = String(m).startsWith(prefix) ? String(m).slice(prefix.length) : String(m); console.warn(m); },
+      // A form that fails gate 1 drops the FORM, not the sidecar, so it reports
+      // straight to the diagnostics sink instead of through `why` (which names
+      // the reason an agent vanished). The script normalizer ignores the opt.
+      onDropForm: ({ message }) => drop(f, message),
     });
     if (!meta) { drop(f, why || 'invalid sidecar'); continue; }
     meta.origin = origin;                                              // computed, never stored
@@ -275,7 +292,7 @@ export function scanMetaLayer(dir, origin, { normalize, tag, requireMetaV2 = fal
 /** Scan one agent layer dir for *.meta.json; stamps the COMPUTED origin/agentPath/
  *  descriptionDerived fields (none of which normalizeMeta returns, so none can
  *  be persisted back into a sidecar). */
-function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null, onDrop = null } = {}) {
+function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null, onDrop = null, askApi = null } = {}) {
   const drop = (file, reason) => { if (onDrop) onDrop({ origin, file, reason }); };
   const metas = [];
   for (const { meta, file: f } of scanMetaLayer(dir, origin, { normalize: normalizeMeta, tag: 'agent-registry', requireMetaV2, builtFor, onDrop })) {
@@ -288,6 +305,20 @@ function scanLayer(dir, origin, { requireMetaV2 = false, builtFor = null, onDrop
       console.warn(`[agent-registry] ${origin}/${f}: agentFile "${meta.agentFile}" resolves outside the agents dir — ignored`);
       drop(f, `agentFile "${meta.agentFile}" resolves outside the agents dir`);
       continue;
+    }
+
+    // API 4 (plugin layers only — `requireMetaV2` is the same plugin-layer
+    // marker the meta v2 gate above rides): an agent's `ask` block is honoured
+    // only when the plugin NEGOTIATES plugin API 4. Below that it is stripped
+    // HERE, at the single choke point, so the prompt block, the ask-time gate,
+    // the Agents view and History all see an agent that simply has no forms and
+    // the agent falls back to generic questions on its own (ask-forms spec §10).
+    // Number(null) is 0, so an unknowable API fails CLOSED. The sidecar itself
+    // is NOT dropped: its ports are fine and its agent stays usable.
+    if (requireMetaV2 && meta.ask && !(Number(askApi) >= WORCA_ASK_FORMS_API)) {
+      console.warn(`[agent-registry] ${origin}/${f}: ${ASK_NEEDS_API_4}`);
+      drop(f, ASK_NEEDS_API_4);
+      delete meta.ask;
     }
     meta.agentPath = meta.agentFile ? join(dir, meta.agentFile) : null; // layer-correct abs path
     // The agent .md's frontmatter (name/description/tools/model), read from the
@@ -349,8 +380,8 @@ export function loadAgentRegistry(agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
   const plugins = [];
   if (opts.includePlugins !== false) {
     const taken = new Set([...builtinKeys, ...users.map((m) => m.key)]);
-    for (const { plugin, dir, builtFor } of pluginAgentLayers()) {
-      for (const m of scanLayer(dir, `plugin:${plugin}`, { requireMetaV2: true, builtFor, onDrop })) {
+    for (const { plugin, dir, builtFor, api } of pluginAgentLayers()) {
+      for (const m of scanLayer(dir, `plugin:${plugin}`, { requireMetaV2: true, builtFor, askApi: api, onDrop })) {
         if (taken.has(m.key)) {
           console.warn(
             `[agent-registry] plugin agent "${m.key}" (plugin "${plugin}") collides with an existing agent and was skipped`,

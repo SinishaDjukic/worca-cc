@@ -442,6 +442,18 @@ async function buildExportSet({ workflowId, destination, projectDir, slug, inclu
       const declared = Array.isArray(node.tools) ? node.tools : [];
       const stripped = declared.filter((t) => STRIPPED_TOOLS.has(t) && t !== 'AskUserQuestion');
       if (stripped.length) warnings.push(`node "${node.key}": dropped subagent-incompatible tool(s): ${stripped.join(', ')}`);
+      // Ask forms (spec §8) do not travel: a Claude Code subagent has no worca form
+      // host, so the exported agent falls back to generic questions — which it
+      // already does structurally (makeAgentMd emits frontmatter + the markdown BODY
+      // and never reads the sidecar the `ask` block lives in). Say so, or an author
+      // ships a workflow believing their form travelled with it. The PLUGIN export
+      // is different on purpose: it copies the sidecar byte-identically, because a
+      // plugin is re-imported into worca where forms work.
+      const formIds = Object.keys((registry[node.key] && registry[node.key].ask && registry[node.key].ask.forms) || {});
+      if (formIds.length) {
+        warnings.push(`node "${node.key}": ask form(s) ${formIds.join(', ')} are not exported — `
+          + 'a console subagent has no worca form host and falls back to generic questions.');
+      }
     }
   }
 
@@ -1202,7 +1214,7 @@ export async function exportWorkflowPlugin({ workflowId, targetDir, pluginName, 
   const manifest = existing ? { ...existing } : {
     name, version: '0.1.0',
     description: `Workflows shared from Worca — ${tpl.name}`,
-    engines: { 'worca-cc-api': '>=3 <4' },
+    engines: { 'worca-cc-api': '>=4 <5' },
   };
   if (!manifest.name) manifest.name = name;
   let version = typeof manifest.version === 'string' ? manifest.version : '';

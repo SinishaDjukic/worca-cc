@@ -251,6 +251,36 @@ export async function writeStepQuestions(pipelineId, stepKey, round, { agentKey,
 }
 
 /**
+ * Spec §9: a form ask persists into the SAME schemaless JSON TEXT columns as the
+ * legacy Q&A — the `questions` half holds the full resolved ask, the `answers`
+ * half `{kind:'form', form, version, values}`. This merges the two into the one
+ * object History renders, or null for a legacy row. The legacy arrays are read
+ * separately and stay empty for a form row, so no existing reader changes.
+ * @param {object|null} qWrap parsed `questions` column
+ * @param {object|null} aWrap parsed `answers` column
+ */
+function formAskOf(qWrap, aWrap) {
+  if (!qWrap || qWrap.kind !== 'form') return null;
+  const values = aWrap && aWrap.kind === 'form' && aWrap.values && typeof aWrap.values === 'object'
+    ? aWrap.values
+    : null;
+  return { ...qWrap, values };
+}
+
+/** The two form fields a reader row carries — `{}` for a legacy row, so no legacy
+ *  payload gains a key (test/step-questions-db.test.mjs pins the exact row shape). */
+function formFieldsOf(qWrap, aWrap) {
+  const ask = formAskOf(qWrap, aWrap);
+  return ask ? { ask, formAnswer: formAnswerOf(aWrap) } : {};
+}
+
+/** The `{form, version, values}` payload the agent was resumed with, or null. */
+function formAnswerOf(aWrap) {
+  if (!aWrap || aWrap.kind !== 'form') return null;
+  return { form: aWrap.form, version: aWrap.version, values: aWrap.values && typeof aWrap.values === 'object' ? aWrap.values : {} };
+}
+
+/**
  * All ask-then-resume rounds of a pipeline, unwrapped to plain arrays, in
  * chronological insert order (rowid — lexicographic step_key would mis-order
  * '10:' before '2:' on big workflows). Always returns an array.
@@ -271,6 +301,10 @@ export function readStepQuestions(pipelineId) {
       agentKey: r.agent_key || '',
       questions: Array.isArray(qWrap?.questions) ? qWrap.questions : [],
       answers: Array.isArray(aWrap?.answers) ? aWrap.answers : [],
+      // Ask forms (spec §9): `ask` + `formAnswer` on a FORM row only. A legacy row
+      // gains no key at all, so its wire shape (History, get_run_progress) stays
+      // byte-identical; consumers test `row.ask`, never `'ask' in row`.
+      ...formFieldsOf(qWrap, aWrap),
     };
   });
 }
@@ -349,6 +383,7 @@ export function readPipelineExtras(pipelineId) {
   const clarify = {
     questions: Array.isArray(qWrap?.questions) ? qWrap.questions : [],
     answers: Array.isArray(aWrap?.answers) ? aWrap.answers : [],
+    ...formFieldsOf(qWrap, aWrap),   // spec §9: `ask` + `formAnswer` on a form row only
   };
   const reviews = getDb().prepare(
     'SELECT kind, cycle, verdict FROM reviews WHERE pipeline_id = ? ORDER BY kind, cycle'

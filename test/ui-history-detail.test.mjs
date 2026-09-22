@@ -2617,3 +2617,101 @@ test('the ⋯ trigger hides when it would open an empty menu', async () => {
   assert.equal(hdMore(done.window.document).hidden, false,
     'a finished run opens the screen with the trigger in place');
 });
+
+// ---------------------------------------------------------------------------
+// Clarify tab — a kind:'form' ask (ask-forms design §9): the SAME renderer, in
+// readonly mode, seeded with the stored values. Legacy rows are untouched.
+// ---------------------------------------------------------------------------
+
+const FORM_ASK = {
+  kind: 'form', askId: 'questions-x_1-r1', form: 'review-mockups', version: 1,
+  title: 'Review mockups', surface: 'any',
+  data: { summary: 'Two directions.', images: [{ id: 'a', caption: 'Option A', file: 'mockups/a.png' }] },
+  layout: [
+    { widget: 'markdown', bind: 'data.summary' },
+    { widget: 'gallery', field: 'picked', bind: 'data.images', captionKey: 'caption', fileKey: 'file' },
+    { widget: 'select', field: 'verdict', label: 'Verdict' },
+    { widget: 'textarea', field: 'notes', label: 'What should change?', when: { verdict: 'changes' } },
+  ],
+  answerSchema: { type: 'object', required: ['verdict'], properties: {
+    verdict: { type: 'string', enum: ['approve', 'changes'] },
+    picked: { type: 'string', enum: ['a'] },
+    notes: { type: 'string' },
+  } },
+  fileRefs: [{ path: 'data.images[0].file', rel: 'mockups/a.png' }],
+  files: [{ index: 0, rel: 'mockups/a.png', name: 'a.png', mime: 'image/png', bytes: 2048, sha256: 'z' }],
+  // X3: the reader merges the stored `values` into `ask` and puts the raw answer in
+  // `formAnswer`; the legacy arrays stay empty for a form round.
+  values: { verdict: 'changes', picked: 'a', notes: 'tighten the spacing' },
+};
+const FORM_ANSWER = { kind: 'form', form: 'review-mockups', version: 1, values: FORM_ASK.values };
+const FORM_DETAIL = { ...DETAIL,
+  clarify: { questions: [], answers: [], ask: FORM_ASK, formAnswer: FORM_ANSWER } };
+
+test('Clarify: a form ask renders readonly with its stored answer', async () => {
+  const ctx = await bootDetail({ detail: FORM_DETAIL });
+  const sec = await openTab(ctx, 'clarify');
+  const card = sec.querySelector('.hd-cl-form');
+  assert.ok(card, 'the form ask gets its own card');
+  assert.match(card.querySelector('.hd-cl-caption').textContent, /review-mockups/);
+  const form = card.querySelector('.af-form');
+  assert.ok(form.classList.contains('af-readonly'));
+  assert.equal(form.querySelector('textarea').value, 'tighten the spacing');
+  assert.equal(form.querySelector('textarea').closest('.af-fld').hidden, false,
+    '`when` is evaluated against the STORED values');
+  const picked = [...form.querySelectorAll('.af-choice[aria-pressed="true"]')];
+  assert.equal(picked.length, 1);
+  for (const n of form.querySelectorAll('button, input, textarea, select')) assert.equal(n.disabled, true);
+});
+
+test('Clarify: a form file URL uses the History twin, not the live run route', async () => {
+  const ctx = await bootDetail({ detail: FORM_DETAIL });
+  const sec = await openTab(ctx, 'clarify');
+  const img = sec.querySelector('.af-gal-card img');
+  assert.equal(img.getAttribute('src'),
+    `/api/history/${encodeURIComponent(KEY)}/${encodeURIComponent(ROW.id)}/ask-files/questions-x_1-r1/0`);
+});
+
+test('Clarify: a workspace record uses the /api/workspaces arm for ask files', async () => {
+  // A workspace row opens at #history/workspaces/<wid>/<id> and its detail comes from
+  // GET /api/workspaces/<wid>/runs/<id> (test/ui-history-workspace.test.mjs pins both),
+  // so this case routes itself instead of openTab's project-keyed hash.
+  const wsRow = { ...ROW, target: 'workspace', workspaceName: 'IoT', projectName: 'svc', projectKey: 'workspaces/wk1' };
+  const ctx = await bootDetail({ rows: [wsRow], detail: FORM_DETAIL,
+    arms: (url) => (new URL(url, 'http://localhost:4317').pathname === `/api/workspaces/wk1/runs/${ROW.id}` ? ok(FORM_DETAIL) : null) });
+  go(ctx.window, `history/workspaces/wk1/${ROW.id}`);
+  await settle(ctx.window);
+  const doc = ctx.window.document;
+  const tab = doc.querySelector('#hist-detail .hd-tab[data-sec="clarify"]');
+  if (!tab.classList.contains('active')) click(ctx.window, tab);
+  await settle(ctx.window);
+  const sec = secOf(doc, 'clarify');
+  assert.equal(sec.querySelector('.af-gal-card img').getAttribute('src'),
+    `/api/workspaces/wk1/runs/${encodeURIComponent(ROW.id)}/ask-files/questions-x_1-r1/0`);
+});
+
+test('Clarify: the badge counts a form ask, and legacy rows still render as ASK/ANS', async () => {
+  const mixed = { ...DETAIL,
+    clarify: { questions: [{ id: 'q1', question: 'Which DB?' }], answers: [{ id: 'q1', choice: 'Postgres' }] },
+    stepQuestions: [{ stepKey: 'impl#1', round: 1, nodeId: 'impl', agentKey: 'implementer',
+      questions: [], answers: [],
+      ask: { ...FORM_ASK, askId: 'questions-x_2-r1', form: 'pick-approach' },
+      formAnswer: { ...FORM_ANSWER, form: 'pick-approach' } }] };
+  const ctx = await bootDetail({ detail: mixed });
+  const sec = await openTab(ctx, 'clarify');
+  assert.equal(badgeOf(ctx.window.document, 'clarify'), '2', 'one legacy question + one form ask');
+  assert.equal(sec.querySelectorAll('.hd-cl-card').length, 1);
+  assert.equal(sec.querySelector('.hd-cl-q').textContent, 'ASKWhich DB?');
+  assert.equal(sec.querySelector('.hd-cl-a').textContent, 'ANSPostgres');
+  assert.equal(sec.querySelectorAll('.hd-cl-form').length, 1);
+  assert.match(sec.querySelector('.hd-cl-form .hd-cl-caption').textContent, /implementer/);
+  assert.match(sec.querySelector('.hd-cl-form .hd-cl-caption').textContent, /pick-approach/);
+});
+
+test('Clarify: a run with ONLY legacy rows is byte-for-byte what it was', async () => {
+  const ctx = await bootDetail({ detail: { ...DETAIL,
+    clarify: { questions: [{ id: 'q1', question: 'Which DB?' }], answers: [] } } });
+  const sec = await openTab(ctx, 'clarify');
+  assert.equal(sec.querySelectorAll('.hd-cl-form').length, 0);
+  assert.equal(sec.querySelector('.hd-cl-a').textContent, 'ANS(none)');
+});

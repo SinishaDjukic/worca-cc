@@ -25,6 +25,11 @@
 //                          question there and STOPS (no role side effects); the
 //                          resumed prompt carries no MOCK_ASK, so the role arm
 //                          runs then.
+//   MOCK_ASK_FORM: <json>  a ONE-LINE {"form","data"} payload. When present it is
+//                          written verbatim instead of the canned {questions}
+//                          body — to MOCK_ASK for a producer, to MOCK_OUT for the
+//                          clarify role. Lets an offline mock agent exercise the
+//                          ask-form protocol end to end.
 //
 // Markers are matched leniently: "KEY: value" anywhere at the start of a line,
 // case-sensitive keys, value trimmed. Missing markers degrade gracefully.
@@ -947,6 +952,17 @@ function parseMarkers(prompt, systemPrompt) {
   return markers;
 }
 
+/** Parse a MOCK_*_FORM marker's one-line JSON, or null. A malformed marker must
+ *  degrade to the canned body, never throw inside the mock. */
+function tryParseMockJson(raw) {
+  try {
+    const v = JSON.parse(String(raw));
+    return v && typeof v === 'object' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 async function ensureDir(filePath) {
   await mkdir(dirname(filePath), { recursive: true });
 }
@@ -1306,12 +1322,17 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessi
   // session event above already fired, so the resume has a session id.
   if (m.MOCK_ASK && permissionMode !== 'dontAsk') {   // belt and braces: dontAsk already took the ask arm above
     await ensureDir(m.MOCK_ASK);
-    await writeFile(m.MOCK_ASK, JSON.stringify({
+    // MOCK_ASK_FORM (ask-forms §4): a one-line {"form","data"} payload, written
+    // verbatim. Unparseable => the canned questions body, so a typo degrades to
+    // today's behaviour instead of writing garbage the gate then refuses.
+    const formBody = m.MOCK_ASK_FORM ? tryParseMockJson(m.MOCK_ASK_FORM) : null;
+    const body = formBody || {
       questions: [{ id: 'q1', question: `Mock question from ${role}?`, options: ['Option A', 'Option B'], allowFreeText: true }],
-    }, null, 2) + '\n', 'utf8');
+    };
+    await writeFile(m.MOCK_ASK, JSON.stringify(body, null, 2) + '\n', 'utf8');
     safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_ASK}`, raw: { mock: true, file: m.MOCK_ASK } });
     safeEmit(onEvent, { type: 'result', costUsd: 0, raw: { mock: true, type: 'result', total_cost_usd: 0 } });
-    await emitLog(onEvent, `[mock] questions written; stopping for answers (role=${role})`);
+    await emitLog(onEvent, `[mock] ${formBody ? 'form ask' : 'questions'} written; stopping for answers (role=${role})`);
     return { text: '[mock] asked questions', exitCode: 0 };
   }
 
@@ -1404,7 +1425,11 @@ async function mockClarify(m, cycle, onEvent) {
   // orchestrator's clarify loop terminates naturally. This mirrors the real fix:
   // the loop converges because answers are returned to the planner.
   const hasPrior = Number(m.MOCK_PRIOR || '0') > 0;
-  const payload = hasPrior
+  // MOCK_ASK_FORM (ask-forms §4): a one-line {"form","data"} payload, written VERBATIM
+  // to the answers port instead of the canned questions — the clarifier's half of the
+  // marker (the producer's half is the MOCK_ASK arm in runMock). Unparseable => canned.
+  const formBody = m.MOCK_ASK_FORM ? tryParseMockJson(m.MOCK_ASK_FORM) : null;
+  const payload = formBody || (hasPrior
     ? { questions: [] }
     : {
         questions: [
@@ -1427,10 +1452,10 @@ async function mockClarify(m, cycle, onEvent) {
             allowFreeText: true,
           },
         ],
-      };
+      });
   await emitLog(
     onEvent,
-    hasPrior
+    formBody ? '[mock] clarifier asking with a form' : hasPrior
       ? '[mock] planner has no further questions'
       : '[mock] planner asking one clarifying question',
   );
