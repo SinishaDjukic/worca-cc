@@ -175,7 +175,8 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     const rh = h(doc, 'div', 'mv-head');
     rh.appendChild(h(doc, 'b', 'mv-name', PROVIDER_LABELS[name]));
     rh.appendChild(k.configured ? h(doc, 'span', 'badge green', 'key set')
-      : k.keySet ? h(doc, 'span', 'badge red', 'key ${VAR} not set') : h(doc, 'span', 'badge grey', 'no key'));
+      : k.keySet ? h(doc, 'span', 'badge red', 'key ${VAR} not set')
+        : k.keyOptional ? h(doc, 'span', 'badge green', 'local — no key needed') : h(doc, 'span', 'badge grey', 'no key'));
     main.appendChild(rh);
     main.appendChild(h(doc, 'small', 'hint', name === 'openai'
       ? 'OpenAI, Azure, Ollama, vLLM, Groq, an in-house gateway — anything with a /chat/completions endpoint. Models run through the translation layer (no thinking blocks, no web tools).'
@@ -503,13 +504,13 @@ export function applyConnectionMode(connEl) {
   if (hint) {
     if (!p) hint.textContent = '';
     else if (provider === 'copilot') hint.textContent = p.copilot?.connected ? `Connected${p.copilot.login ? ` as @${p.copilot.login}` : ''}.` : 'Not connected — sign in on the Providers card above, or Save is refused.';
-    else hint.textContent = p[provider]?.configured ? 'Provider key set.' : (p[provider]?.keySet ? 'The provider key’s ${VAR} is not set in Worca’s environment.' : 'No provider key — set one on the Providers card, or override it under Advanced.');
-    hint.className = `hint mv-conn-provider-hint${(provider === 'copilot' ? !p?.copilot?.connected : !p?.[provider]?.configured) && p ? ' warn' : ''}`;
+    else hint.textContent = p[provider]?.configured ? 'Provider key set.' : (p[provider]?.keySet ? 'The provider key’s ${VAR} is not set in Worca’s environment.' : p[provider]?.keyOptional ? 'Local endpoint — no key needed.' : 'No provider key — set one on the Providers card, or override it under Advanced.');
+    hint.className = `hint mv-conn-provider-hint${(provider === 'copilot' ? !p?.copilot?.connected : !(p?.[provider]?.configured || p?.[provider]?.keyOptional)) && p ? ' warn' : ''}`;
   }
   const note = conn.querySelector('.mv-conn-note');
   if (note) {
     note.textContent = mode !== 'provider' ? '' : api === 'openai-chat'
-      ? 'Translated: no thinking blocks, WebSearch/WebFetch withheld, prompt limit per the capabilities above. Copilot bills premium requests, so Pricing defaults to Free.'
+      ? `Translated: no thinking blocks, WebSearch/WebFetch withheld, prompt limit per the capabilities above.${provider === 'copilot' ? ' Copilot bills premium requests, so Pricing defaults to Free.' : ''}`
       : provider === 'copilot' ? 'Copilot’s native Anthropic endpoint: thinking blocks and cache accounting arrive intact. Copilot bills premium requests, so Pricing defaults to Free.'
         : 'Passthrough: the request reaches the endpoint untouched; only auth and headers are added.';
   }

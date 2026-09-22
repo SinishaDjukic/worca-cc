@@ -63,7 +63,7 @@ async function prepareUpstream(us, body, { fetch: f, requestHeaders }) {
   const base = (us.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
   return {
     url: `${base}/chat/completions`,
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${us.apiKey}`, ...us.headers },
+    headers: { 'content-type': 'application/json', ...(us.apiKey ? { authorization: `Bearer ${us.apiKey}` } : {}), ...us.headers },
     provider: us.provider,
     initiator,
   };
@@ -103,7 +103,10 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
       return reply.json(e.status, e.body);
     }
     for (const w of t.warnings) {
-      warnOnce(`${entry.id}:${w}`, `[worca] bridge: model ${JSON.stringify(entry.id)}: ${w} has no chat/completions equivalent — dropped`, log);
+      const line = w === 'max_tokens clamped'
+        ? 'max_tokens clamped to the model\'s output limit'
+        : `${w} has no chat/completions equivalent — dropped`;
+      warnOnce(`${entry.id}:${w}`, `[worca] bridge: model ${JSON.stringify(entry.id)}: ${line}`, log);
     }
     outBody = t.body;
   }

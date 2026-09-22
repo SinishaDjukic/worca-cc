@@ -204,12 +204,14 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
   // the provider is usable right now (pickers skip such entries unless they are
   // the current selection), `capabilities` what the editor pinned. `routed` is
   // true too: the CLI IS pointed at a custom endpoint (worca's own bridge).
-  const readiness = new Map();   // provider -> readiness, one settings read per provider per catalog
+  // provider + the entry's own key/base URL -> readiness (both can decide it)
+  const readiness = new Map();
   const bridgeShape = (m) => {
     if (!m.upstream) return {};
     const p = m.upstream.provider;
-    if (!readiness.has(p)) readiness.set(p, providerReadiness(m.upstream));
-    const r = readiness.get(p);
+    const key = `${p}\n${m.upstream.apiKey || ''}\n${m.upstream.baseUrl || ''}`;
+    if (!readiness.has(key)) readiness.set(key, providerReadiness(m.upstream));
+    const r = readiness.get(key);
     return {
       bridged: p, upstreamApi: m.upstream.api, upstreamModel: m.upstream.model,
       needsSignIn: !r.ok, ...(r.ok ? {} : { signInReason: r.reason }),
@@ -584,6 +586,20 @@ export function resolveModelEnv(modelId, { tag } = {}) {
       ANTHROPIC_AUTH_TOKEN: bridgeSecret(),
       ANTHROPIC_MODEL: bridged.id,
     };
+    // The CLI turns tool search off for a non-Anthropic base URL and then sends
+    // every MCP tool schema in full — hundreds of KB with a few user MCP
+    // servers, far past a translated model's prompt limit (a local 32k model
+    // fails its first call). Its ToolSearch is client-side (schemas come back
+    // as tool_result text), so it works through the translation layer; the
+    // entry's own env may still turn it off.
+    if (bridged.upstream.api === 'openai-chat' && !('ENABLE_TOOL_SEARCH' in env)) env.ENABLE_TOOL_SEARCH = 'true';
+    // A bridged id is never a model name the CLI knows, so it assumes a 200k
+    // window and compacts only once the upstream rejects a request — on a 32k
+    // local model that means turns whose reply is cut to a few hundred tokens
+    // long before any overflow. The pinned limits are the real window.
+    const caps = bridged.upstream.capabilities || {};
+    if (caps.maxPromptTokens && !('CLAUDE_CODE_MAX_CONTEXT_TOKENS' in env)) env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(caps.maxPromptTokens);
+    if (caps.maxOutputTokens && !('CLAUDE_CODE_MAX_OUTPUT_TOKENS' in env)) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(caps.maxOutputTokens);
     return withTierModelEnv(env, bridged.id);
   }
   if (entry && entry.env) {

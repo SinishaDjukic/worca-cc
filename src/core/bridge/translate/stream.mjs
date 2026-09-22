@@ -38,6 +38,17 @@ export function mapUsage(usage) {
   };
 }
 
+/** Whether a tool call's accumulated arguments are complete JSON ('' = no args). */
+export function parsesAsJson(s) {
+  if (typeof s !== 'string' || !s.trim()) return true;
+  try { JSON.parse(s); return true; } catch { return false; }
+}
+
+/** The text that replaces a tool call cut off by finish_reason `length`. */
+export function truncatedToolNote(name) {
+  return `[bridge: the ${name} call was cut off by the model's output or context limit before its arguments were complete, so it was not run. Split the work into smaller steps — e.g. write a large file in several shorter parts.]`;
+}
+
 export function newMessageId() { return `msg_bridge_${randomBytes(12).toString('hex')}`; }
 export function newToolUseId() { return `toolu_bridge_${randomBytes(12).toString('hex')}`; }
 
@@ -153,8 +164,32 @@ export class ChatStreamTranslator {
   /** End of stream: close blocks, emit message_delta + message_stop. */
   finish() {
     const out = this._start();
-    out.push(...this._closeText());
+    // Cut off mid tool call (finish_reason `length` — the output cap, or on a
+    // small local model the context window filling up): the last call's
+    // arguments are unterminated JSON. Forwarded, the CLI rejects it as an
+    // InputValidationError and the model retries the same oversized call; so
+    // drop it and say why, and the CLI's max_tokens recovery asks for smaller
+    // steps. Earlier calls were complete when the next one began.
+    let truncated = null;
+    if (this.finishReason === 'length' && this.toolOrder.length > this.flushedTools) {
+      const key = this.toolOrder[this.toolOrder.length - 1];
+      const t = this.tools.get(key);
+      if (!parsesAsJson(t.args)) {
+        this.toolOrder.pop();
+        this.tools.delete(key);
+        truncated = t.name || 'tool';
+      }
+    }
     out.push(...this._flushTools());
+    if (truncated) {
+      if (this.textIndex === null) {
+        this.textIndex = this.nextIndex++;
+        out.push({ event: 'content_block_start', data: { type: 'content_block_start', index: this.textIndex, content_block: { type: 'text', text: '' } } });
+      }
+      out.push({ event: 'content_block_delta', data: { type: 'content_block_delta', index: this.textIndex, delta: { type: 'text_delta', text: truncatedToolNote(truncated) } } });
+      this.emittedAny = true;
+    }
+    out.push(...this._closeText());
     const hadTools = this.toolOrder.length > 0;
     let stop = mapStopReason(this.finishReason, { emitted: this.emittedAny });
     if (stop === null) {

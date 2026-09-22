@@ -37,7 +37,11 @@ Business / Enterprise) picks the API host when the sign-in does not name one.
 
 **OpenAI-compatible** and **Anthropic-compatible.** A base URL, an API key
 (stored masked, or `${VAR}`), and *Test connection*. A model can override
-either under its Connection's *Advanced* disclosure.
+either under its Connection's *Advanced* disclosure. An OpenAI-compatible base
+URL on this machine or a private network (`localhost`, `127.x`, `10.x`,
+`192.168.x`, `172.16–31.x`, `*.local`) — llama.cpp's `llama-server`, Ollama,
+LM Studio, a LAN vLLM — needs no key: leave it empty and the bridge sends no
+`Authorization` header.
 
 **Max concurrent requests** is per provider. Requests over the cap wait; they
 never fail. For Copilot it is the one knob that lowers the abuse-detection risk
@@ -71,7 +75,20 @@ copilot --accept-terms` records it non-interactively.
   "prompt is too long" the CLI compacts on. Translated models have **no
   thinking blocks** (Worca's effort maps to `reasoning_effort` where the model
   supports it, else only *medium* is offered), **no WebSearch/WebFetch** (the
-  runner withholds them), and lower prompt limits than Anthropic's.
+  runner withholds them), and lower prompt limits than Anthropic's. Worca
+  turns on the CLI's tool search for them (`ENABLE_TOOL_SEARCH=true`, unless
+  the entry's env sets it), so MCP tool schemas load on demand instead of all
+  riding every request — a few MCP servers would otherwise put a request past
+  a 32k local model's context before the first turn.
+- A bridged model's id is never one the CLI knows, so its **Prompt limit** and
+  **Output limit** capabilities become `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and
+  `CLAUDE_CODE_MAX_OUTPUT_TOKENS` on every spawn (unless the entry's env sets
+  them): auto-compact then works against the model's real window instead of an
+  assumed 200k. Set them to what the endpoint actually serves — for llama.cpp,
+  its `-c` value.
+- A reply cut off by the endpoint (`finish_reason: length`) in the middle of a
+  tool call is not forwarded as a broken call: the bridge replaces it with a
+  note asking for smaller steps and ends the turn as `max_tokens`.
 - The bridge listens on `127.0.0.1` on a random port, one per Worca process,
   and accepts only a per-process secret the CLI carries. It never runs as a
   separate service and holds no credentials on disk beyond `settings.json`.
@@ -124,6 +141,11 @@ may ship `upstream` models under the same rule.
 
 ## Troubleshooting
 
+- **A local model stalls or the run fails with "Autocompact is thrashing"** —
+  the context window is too small. A pipeline agent's system prompt, tools and
+  working history are ~20k tokens even right after a compaction, and the CLI
+  keeps a buffer below the window, so a 32k model compacts every turn. Serve at
+  least **64k** (llama.cpp `-c 65536`) and set the model's Prompt limit to match.
 - **401 / "not signed in"** — sign in again on the Providers card; Copilot
   tokens can be revoked on GitHub's side.
 - **"prompt is too long" early in a run** — expected on a translated model:

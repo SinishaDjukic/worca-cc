@@ -90,6 +90,8 @@ function toolResultContent(content, caps, warn) {
   for (const b of content) {
     if (!b || typeof b !== 'object') continue;
     if (b.type === 'text' && typeof b.text === 'string') texts.push(b.text);
+    // ToolSearch's result: the named tool is now in `tools` on this request.
+    else if (b.type === 'tool_reference') texts.push(`Tool loaded: ${b.tool_name || b.name || 'unknown'}`);
     else if (b.type === 'image') {
       if (caps.vision === false) { warn('image'); texts.push('[image omitted: model has no vision]'); }
       else { const p = imagePart(b); if (p) images.push(p); else warn('image'); }
@@ -173,12 +175,24 @@ export function toChatRequest(body, { upstreamModel, capabilities = {} } = {}) {
   }
 
   // ── tools ──
+  const referenced = new Set();
+  for (const m of src) {
+    if (!m || !Array.isArray(m.content)) continue;
+    for (const b of m.content) {
+      if (!b || b.type !== 'tool_result' || !Array.isArray(b.content)) continue;
+      for (const r of b.content) if (r && r.type === 'tool_reference' && r.tool_name) referenced.add(String(r.tool_name));
+    }
+  }
   let tools;
   if (Array.isArray(body.tools) && body.tools.length) {
     if (caps.toolCalls === false) return fail(`model ${upstreamModel} does not support tool calls`);
     tools = [];
     for (const t of body.tools) {
       if (!t || typeof t !== 'object') continue;
+      // Tool search: a deferred tool is sent only once a ToolSearch result has
+      // referenced it (the Anthropic API expands tool_reference blocks against
+      // these definitions server-side; chat/completions has no such step).
+      if (t.defer_loading === true && !referenced.has(String(t.name || ''))) continue;
       if (t.type && t.type !== 'custom' && SERVER_TOOL_RE.test(String(t.type))) {
         return fail(`tool ${JSON.stringify(t.name || t.type)} is an Anthropic server tool and cannot run through ${upstreamModel} (openai-chat bridge)`);
       }
@@ -186,6 +200,7 @@ export function toChatRequest(body, { upstreamModel, capabilities = {} } = {}) {
       if (typeof t.description === 'string' && t.description) fn.description = t.description;
       tools.push({ type: 'function', function: fn });
     }
+    if (!tools.length) tools = undefined;
   }
 
   // ── tool_choice ──

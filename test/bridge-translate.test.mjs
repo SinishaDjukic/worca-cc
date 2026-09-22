@@ -120,6 +120,35 @@ test('request: reasoning models get reasoning_effort + max_completion_tokens and
   assert.equal(eff.body.reasoning_effort, 'low');
 });
 
+test('request: tool search — a deferred tool (defer_loading) is not sent; all-deferred sends no tools array', () => {
+  const tools = [
+    { name: 'Read', description: 'r', input_schema: { type: 'object', properties: {} } },
+    { name: 'DeferredToolPlaceholder', description: 'p', input_schema: { type: 'object', properties: {} }, defer_loading: true },
+  ];
+  const r = toChatRequest({ messages: [{ role: 'user', content: 'hi' }], tools }, { upstreamModel: 'm' });
+  assert.deepEqual(r.body.tools.map((t) => t.function.name), ['Read']);
+  const only = toChatRequest({ messages: [{ role: 'user', content: 'hi' }], tools: [tools[1]], tool_choice: { type: 'auto' } }, { upstreamModel: 'm' });
+  assert.equal('tools' in only.body, false);
+  assert.equal('tool_choice' in only.body, false);
+});
+
+test('request: tool search — a deferred tool referenced by a ToolSearch result is sent, and the reference reads as text', () => {
+  const tools = [
+    { name: 'ToolSearch', input_schema: { type: 'object', properties: {} } },
+    { name: 'WebFetch', input_schema: { type: 'object', properties: {} }, defer_loading: true },
+    { name: 'mcp__x__y', input_schema: { type: 'object', properties: { q: { type: 'string' } } }, defer_loading: true },
+  ];
+  const messages = [
+    { role: 'user', content: 'find it' },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'ToolSearch', input: { query: 'select:mcp__x__y' } }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: [{ type: 'tool_reference', tool_name: 'mcp__x__y' }] }] },
+  ];
+  const r = toChatRequest({ messages, tools }, { upstreamModel: 'm' });
+  assert.deepEqual(r.body.tools.map((t) => t.function.name), ['ToolSearch', 'mcp__x__y']);
+  assert.equal(r.body.messages.find((m) => m.role === 'tool').content, 'Tool loaded: mcp__x__y');
+  assert.equal(r.warnings.includes('tool_reference'), false);
+});
+
 test('budget bands', () => {
   assert.equal(budgetToReasoningEffort(1000), 'low');
   assert.equal(budgetToReasoningEffort(8000), 'medium');
@@ -187,6 +216,29 @@ test('stream: parallel tool calls keep order and distinct indexes; text after to
   const stops = ev.filter((e) => e.event === 'content_block_stop').map((e) => e.data.index);
   assert.deepEqual(stops, [0, 1, 2, 3]);
   assert.equal(ev.find((e) => e.event === 'message_delta').data.delta.stop_reason, 'tool_use');
+});
+
+test('stream: finish_reason length mid tool call — the unterminated call is dropped for a note, earlier complete calls survive, stop max_tokens', () => {
+  const ev = drive([
+    { choices: [{ delta: { tool_calls: [{ index: 0, id: 'a', function: { name: 'Read', arguments: '{"path":"x"}' } }] } }] },
+    { choices: [{ delta: { tool_calls: [{ index: 1, id: 'b', function: { name: 'Write', arguments: '{"file_path":"p","content":"long' } }] } }] },
+    { choices: [{ delta: {}, finish_reason: 'length' }] },
+  ]);
+  const starts = ev.filter((e) => e.event === 'content_block_start').map((e) => e.data.content_block.type + ':' + (e.data.content_block.name || ''));
+  assert.deepEqual(starts, ['tool_use:Read', 'text:']);
+  assert.match(ev.find((e) => e.data && e.data.delta && e.data.delta.type === 'text_delta').data.delta.text, /Write call was cut off/);
+  assert.equal(ev.find((e) => e.event === 'message_delta').data.delta.stop_reason, 'max_tokens');
+  // A COMPLETE call that happens to end on `length` is still run.
+  const whole = drive([
+    { choices: [{ delta: { tool_calls: [{ index: 0, id: 'a', function: { name: 'Read', arguments: '{"path":"x"}' } }] } }] },
+    { choices: [{ delta: {}, finish_reason: 'length' }] },
+  ]);
+  assert.deepEqual(whole.filter((e) => e.event === 'content_block_start').map((e) => e.data.content_block.type), ['tool_use']);
+  // Buffered path.
+  const r = toMessagesResponse({ choices: [{ message: { content: null, tool_calls: [{ id: 'c', function: { name: 'Bash', arguments: '{"command":"cat <<EOF' } }] }, finish_reason: 'length' }] }, { model: 'm' });
+  assert.equal(r.content.length, 1);
+  assert.equal(r.content[0].type, 'text');
+  assert.equal(r.stop_reason, 'max_tokens');
 });
 
 test('stream: a cut stream with no content is an api_error event; with content it ends end_turn', () => {

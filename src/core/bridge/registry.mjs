@@ -1,12 +1,19 @@
 // src/core/bridge/registry.mjs
 // Which catalog entries are bridged, and with what (model-bridge-design.md
-// §4.2/§6). Import contract: settings.mjs, plugin-models.mjs and the policy
-// cache only — config.mjs imports the bridge (for resolveModelEnv), so nothing
-// under src/core/bridge/ may import config.mjs.
+// §4.2/§6). Import contract: settings.mjs, plugin-models.mjs, the policy
+// cache and the zero-import model-env.mjs leaf only — config.mjs imports the
+// bridge (for resolveModelEnv), so nothing under src/core/bridge/ may import
+// config.mjs.
 
 import { listGlobalModels, providerConfig, providerSecretSet, resolveProviderSecret, copilotTermsAcknowledged } from '../settings.mjs';
 import { listPluginModels } from '../plugin-models.mjs';
 import { policyCatalogModels } from '../policy/cache.mjs';
+import { isLocalBaseUrl } from '../model-env.mjs';
+
+/** An OpenAI-compatible endpoint on this machine / a private network needs no key. */
+export function keyOptional(provider, baseUrl) {
+  return provider === 'openai' && isLocalBaseUrl(baseUrl);
+}
 
 /**
  * The bridged catalog entry for `id` (user global → plugin → team policy), or
@@ -46,9 +53,12 @@ export function providerReadiness(upstream) {
     return { ok: true };
   }
   // openai / anthropic: a per-entry key wins, else the provider's key.
-  const key = resolveProviderSecret(upstream.apiKey) || resolveProviderSecret(providerConfig(p).apiKey);
-  if (!key) {
-    const has = providerSecretSet(p) || !!upstream.apiKey;
+  const cfg = providerConfig(p);
+  const key = resolveProviderSecret(upstream.apiKey) || resolveProviderSecret(cfg.apiKey);
+  const has = providerSecretSet(p) || !!upstream.apiKey;
+  // No key configured anywhere + a local endpoint = keyless. A configured key
+  // whose ${VAR} is unset still blocks: the user meant to send one.
+  if (!key && (has || !keyOptional(p, upstream.baseUrl || cfg.baseUrl))) {
     return {
       ok: false, reason: 'no_key',
       message: has

@@ -16,6 +16,7 @@ import {
   startDeviceFlow, pollDeviceFlow, githubLogin, copilotToken, invalidateCopilotToken,
   listCopilotModels, copilotUsage, catalogEntryForCopilotModel,
 } from './providers/copilot.mjs';
+import { keyOptional } from './registry.mjs';
 
 // ── Copilot sign-in sessions (in memory; a device code lives ~15 min) ────────
 const sessions = new Map();   // deviceCode -> { startedAt, expiresAt, interval, lastPoll }
@@ -108,6 +109,7 @@ export async function providersState({ quota = false, fetch: f } = {}) {
     const p = all[name];
     return {
       configured: !!resolveProviderSecret(p.apiKey),
+      keyOptional: keyOptional(name, p.baseUrl),
       keySet: providerSecretSet(name),
       keySource: secretSource(p.apiKey),
       keyRef: modelEnvRef(p.apiKey) ? p.apiKey : null,
@@ -188,10 +190,10 @@ export async function testProviderConnection(name, { fetch: f = globalThis.fetch
   if (!UPSTREAM_PROVIDERS.includes(name)) return { ok: false, message: `unknown provider ${name}` };
   const p = providerConfig(name);
   const key = resolveProviderSecret(p.apiKey);
-  if (!key) return { ok: false, message: providerSecretSet(name) ? 'the key\'s ${VAR} is not set in worca\'s environment' : 'no API key configured' };
+  if (!key && (providerSecretSet(name) || !keyOptional(name, p.baseUrl))) return { ok: false, message: providerSecretSet(name) ? 'the key\'s ${VAR} is not set in worca\'s environment' : 'no API key configured' };
   const base = (p.baseUrl || '').replace(/\/+$/, '');
   const url = name === 'anthropic' ? (/\/v1$/.test(base) ? `${base}/models` : `${base}/v1/models`) : `${base}/models`;
-  const headers = name === 'anthropic' ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' } : { authorization: `Bearer ${key}` };
+  const headers = name === 'anthropic' ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' } : (key ? { authorization: `Bearer ${key}` } : {});
   try {
     const r = await f(url, { headers, signal: AbortSignal.timeout(15_000) });
     if (r.status === 401 || r.status === 403) return { ok: false, message: `authentication failed (${r.status})` };

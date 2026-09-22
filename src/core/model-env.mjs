@@ -350,6 +350,23 @@ export function isUpstreamBaseUrl(v) {
 }
 
 /**
+ * Whether an OpenAI-compatible base URL points at this machine or a private
+ * network — llama.cpp, Ollama, LM Studio, a LAN vLLM — which typically take no
+ * API key. The bridge then treats the key as optional instead of refusing the
+ * model as "needs API key".
+ */
+export function isLocalBaseUrl(v) {
+  if (!isUpstreamBaseUrl(v)) return false;
+  const host = new URL(v.trim()).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
+  if (host === '::1' || /^f[cd][0-9a-f]{2}:/.test(host) || host.startsWith('fe80:')) return true;
+  const m = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(host);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31);
+}
+
+/**
  * Validate a model `upstream` block. Returns the normalized shape or undefined
  * (for null/undefined); THROWS on malformed input with a message naming the
  * field. Secrets (`apiKey`) are literal strings or whole-value `${VAR}` refs.

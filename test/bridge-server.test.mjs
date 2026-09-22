@@ -15,6 +15,7 @@ import { startBridge, stopBridge, bridgeSecret, bridgeBaseUrl, bridgeRunning } f
 import { resolveModelEnv, bridgedModelInfo, modelHasBaseUrlRouting } from '../src/core/config.mjs';
 import { bridgeCallsFor, _resetBridgeTelemetry } from '../src/core/bridge/telemetry.mjs';
 import { _resetBridgeWarnings } from '../src/core/bridge/upstream.mjs';
+import { testProviderConnection } from '../src/core/bridge/provider-ops.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 
 let home, worcaHome, chatSrv, chatPort, antSrv, antPort;
@@ -126,7 +127,7 @@ test('resolveModelEnv: a bridged entry gets the loopback routing keys, its own e
 
 test('resolveModelEnv: an entry-level ${VAR} key falls back to the provider key; with neither it fails fast with an auth-class error naming the fix', async () => {
   assert.equal(bridgedModelInfo('no-key').ready, true);   // provider key covers it
-  await updateProvider('openai', { apiKey: null });
+  await updateProvider('openai', { apiKey: null, baseUrl: 'https://gateway.example.com/v1' });
   try {
     assert.throws(() => resolveModelEnv('no-key'), (err) => err.errorClass === 'auth' && err.bridgeReason === 'no_key' && /\$\{VAR\}/.test(err.message));
     const info = bridgedModelInfo('no-key');
@@ -134,7 +135,53 @@ test('resolveModelEnv: an entry-level ${VAR} key falls back to the provider key;
     assert.equal(info.reason, 'no_key');
     assert.equal(bridgedModelInfo('gw-gpt').reason, 'no_key');
   } finally {
+    await updateProvider('openai', { apiKey: '${MY_KEY}', baseUrl: `http://127.0.0.1:${chatPort}/v1` });
+  }
+});
+
+test('a local OpenAI-compatible endpoint (llama.cpp, Ollama) needs no key: ready, no Authorization header, connection test passes; a configured-but-unset ${VAR} still blocks', async () => {
+  await updateProvider('openai', { apiKey: null });
+  try {
+    assert.equal(bridgedModelInfo('gw-gpt').ready, true);
+    assert.equal(bridgedModelInfo('no-key').reason, 'no_key');   // its own ${UNSET} key is meant to be sent
+    seen.chat.length = 0;
+    const r = await callMessages('gw-gpt', { model: 'gw-gpt', max_tokens: 10, messages: [{ role: 'user', content: 'hi' }] });
+    assert.equal(r.status, 401);   // the fake upstream demands a key — what matters is what the bridge sent
+    assert.equal('authorization' in seen.chat[0].headers, false);
+    const t = await testProviderConnection('openai', { fetch: async (url, init) => { assert.equal('authorization' in init.headers, false); return new Response('{"data":[{"id":"m"}]}', { status: 200 }); } });
+    assert.deepEqual(t, { ok: true, models: 1 });
+    await updateProvider('openai', { apiKey: '${UNSET_VAR_FOR_TEST}' });
+    assert.equal(bridgedModelInfo('gw-gpt').reason, 'no_key');
+  } finally {
     await updateProvider('openai', { apiKey: '${MY_KEY}' });
+  }
+});
+
+test('resolveModelEnv: a translated model turns the CLI\'s tool search on (MCP schemas stay deferred); passthrough and an explicit entry value are left alone', async () => {
+  assert.equal(resolveModelEnv('gw-gpt').ENABLE_TOOL_SEARCH, 'true');
+  assert.equal('ENABLE_TOOL_SEARCH' in resolveModelEnv('gw-claude'), false);
+  await addGlobalModel({ id: 'gw-nosearch', upstream: { provider: 'openai', api: 'openai-chat', model: 'q' }, env: { ENABLE_TOOL_SEARCH: 'false' } });
+  try {
+    assert.equal(resolveModelEnv('gw-nosearch').ENABLE_TOOL_SEARCH, 'false');
+  } finally {
+    await removeGlobalModel('gw-nosearch');
+  }
+});
+
+test('resolveModelEnv: pinned prompt/output limits become the CLI\'s context window and output cap (it cannot know a bridged id); unpinned or entry-set values are left alone', async () => {
+  const plain = resolveModelEnv('gw-gpt');
+  assert.equal('CLAUDE_CODE_MAX_CONTEXT_TOKENS' in plain, false);
+  assert.equal('CLAUDE_CODE_MAX_OUTPUT_TOKENS' in plain, false);
+  await addGlobalModel({ id: 'gw-local', upstream: { provider: 'openai', api: 'openai-chat', model: 'q', capabilities: { maxPromptTokens: 32768, maxOutputTokens: 8192 } } });
+  await addGlobalModel({ id: 'gw-local2', upstream: { provider: 'openai', api: 'openai-chat', model: 'q', capabilities: { maxPromptTokens: 32768 } }, env: { CLAUDE_CODE_MAX_CONTEXT_TOKENS: '65536' } });
+  try {
+    const env = resolveModelEnv('gw-local');
+    assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '32768');
+    assert.equal(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS, '8192');
+    assert.equal(resolveModelEnv('gw-local2').CLAUDE_CODE_MAX_CONTEXT_TOKENS, '65536');
+  } finally {
+    await removeGlobalModel('gw-local');
+    await removeGlobalModel('gw-local2');
   }
 });
 

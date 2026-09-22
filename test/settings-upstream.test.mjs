@@ -28,6 +28,16 @@ async function withSandbox(fn) {
 }
 const readRaw = async () => JSON.parse(await readFile(settingsFile(), 'utf8'));
 
+test('isLocalBaseUrl: loopback and private-network hosts only', async () => {
+  const { isLocalBaseUrl } = await import('../src/core/model-env.mjs');
+  for (const u of ['http://127.0.0.1:8080/v1', 'http://localhost:11434/v1', 'http://[::1]:8080/v1', 'http://10.0.0.5/v1', 'http://192.168.1.20:8000/v1', 'http://172.20.0.2/v1', 'http://gpu-box.local:8080/v1']) {
+    assert.equal(isLocalBaseUrl(u), true, u);
+  }
+  for (const u of ['https://api.openai.com/v1', 'https://172.32.0.1/v1', 'https://gateway.example.com/v1', 'not a url', '', undefined]) {
+    assert.equal(isLocalBaseUrl(u), false, String(u));
+  }
+});
+
 test('assertModelUpstream: every §6.1 rejection names the field', () => {
   const ok = assertModelUpstream({ provider: 'openai', api: 'openai-chat', model: ' gpt-4.1 ', baseUrl: 'https://gw.example/v1/', apiKey: '${K}', headers: { 'X-Team': 'w' }, capabilities: { reasoning: true, maxOutputTokens: '4096' } });
   assert.deepEqual(ok, { provider: 'openai', api: 'openai-chat', model: 'gpt-4.1', baseUrl: 'https://gw.example/v1', apiKey: '${K}', headers: { 'X-Team': 'w' }, capabilities: { reasoning: true, maxOutputTokens: 4096 } });

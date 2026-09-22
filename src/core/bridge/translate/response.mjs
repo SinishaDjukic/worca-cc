@@ -2,7 +2,7 @@
 // Non-streaming chat/completions response -> Anthropic message object, and the
 // local count_tokens estimate (model-bridge-design.md §5.4 buffered path, §5.9).
 
-import { mapStopReason, mapUsage, newMessageId, newToolUseId } from './stream.mjs';
+import { mapStopReason, mapUsage, newMessageId, newToolUseId, parsesAsJson, truncatedToolNote } from './stream.mjs';
 
 /**
  * @param {object} completion  the upstream JSON body
@@ -14,17 +14,25 @@ export function toMessagesResponse(completion, { model } = {}) {
   const content = [];
   if (typeof msg.content === 'string' && msg.content) content.push({ type: 'text', text: msg.content });
   const calls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+  const finish = choice ? choice.finish_reason : null;
+  let toolUses = 0;
   for (const tc of calls) {
     if (!tc || typeof tc !== 'object') continue;
     const fn = tc.function || {};
+    // Cut off by `length` mid-arguments: not runnable — say so instead (see stream.mjs).
+    if (finish === 'length' && !parsesAsJson(fn.arguments)) {
+      content.push({ type: 'text', text: truncatedToolNote(String(fn.name || 'tool')) });
+      continue;
+    }
     let input = {};
     if (typeof fn.arguments === 'string' && fn.arguments.trim()) {
       try { input = JSON.parse(fn.arguments); } catch { input = { _raw: fn.arguments }; }
     }
     content.push({ type: 'tool_use', id: tc.id || newToolUseId(), name: String(fn.name || ''), input });
+    toolUses += 1;
   }
-  let stop = mapStopReason(choice ? choice.finish_reason : null, { emitted: content.length > 0 }) || 'end_turn';
-  if (calls.length && stop === 'end_turn') stop = 'tool_use';
+  let stop = mapStopReason(finish, { emitted: content.length > 0 }) || 'end_turn';
+  if (toolUses && stop === 'end_turn') stop = 'tool_use';
   return {
     id: newMessageId(),
     type: 'message',
