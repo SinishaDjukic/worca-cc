@@ -734,6 +734,52 @@ test('schedule card: before / after, Decline and the action\'s own Apply post th
   assert.ok(apply.classList.contains('is-danger'), 'a removal reads as one');
 });
 
+test('model card: the change list, warnings, Decline / Apply post the card verbs; applied links Settings › Models; a removal reads as one', async () => {
+  const rec = { cardPosts: [] };
+  const base = apiHandler(rec);
+  const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
+    const m = /^\/api\/ask\/threads\/[^/]+\/cards\/(card_[0-9a-f]{8})$/.exec(url);
+    if (m && (opts.method || '').toUpperCase() === 'POST' && m[1] !== CARD_ID) { rec.cardPosts.push([m[1], JSON.parse(opts.body)]); return { ok: true, status: 200, json: async () => ({}) }; }
+    return base(url, opts);
+  } });
+  const card = { type: 'model', kind: 'edit_model', target: 'oa', summary: 'Edit model OA', note: 'bigger window',
+    rows: [{ field: 'Limits', before: 'maxPromptTokens 100000', after: 'maxPromptTokens 128000' }, { field: 'Base URL', before: null, after: 'http://x/v1' }],
+    warnings: ['${OA_KEY} is not set in worca\'s environment — set it and restart Worca before a run uses this model'], change: { id: 'oa', patch: {} } };
+  const MC_ID = 'card_0000000a';
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: MC_ID, state: 'proposed', card }, threadId: TID, messageId: MID, seq: 3 });
+  ctx.flush();
+  const el = ctx.doc.querySelector('[data-ask-modcard="proposed"]');
+  assert.ok(el);
+  assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Proposed model change');
+  assert.equal(el.querySelector('.ask-mcard-kind').textContent, 'Edit model');
+  assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-label')].map((x) => x.textContent), ['Limits', 'Base URL']);
+  assert.equal(el.querySelector('.ask-mcard-before.is-unset').textContent, 'unset', 'a field that was not set');
+  assert.match(el.querySelector('.ask-modcard-warn li').textContent, /OA_KEY/);
+  assert.equal(el.querySelector('[data-ask-mod-apply]').textContent, 'Apply');
+  el.querySelector('[data-ask-mod-apply]').click();
+  await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), [MC_ID, { state: 'applied' }]);
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: MC_ID, state: 'applied', card: { ...card, result: { ok: true, detail: 'oa updated' } } }, threadId: TID, messageId: MID, seq: 4 });
+  ctx.flush();
+  const done = ctx.doc.querySelector('[data-ask-modcard="applied"]');
+  assert.equal(done.querySelector('.ask-mcard-title').textContent, 'Applied model change');
+  assert.equal(done.querySelector('.ask-mcard-detail').textContent, 'oa updated');
+  assert.ok(done.querySelector('a[href="#settings/models"]'));
+  assert.equal(done.querySelector('.ask-modcard-warn'), null, 'warnings belong to the proposal');
+  const rm = { ...card, kind: 'remove_model', summary: 'Remove model OA', rows: [{ field: 'Label', before: 'OA', after: null }], warnings: [] };
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000b', state: 'proposed', card: rm }, threadId: TID, messageId: MID, seq: 5 });
+  ctx.flush();
+  const rmEl = ctx.doc.querySelector('[data-ask-modcard="proposed"]');
+  assert.equal(rmEl.querySelector('.ask-mcard-arrow'), null, 'a removal lists what goes, no arrows');
+  const apply = rmEl.querySelector('[data-ask-mod-apply]');
+  assert.equal(apply.textContent, 'Remove');
+  assert.ok(apply.classList.contains('is-danger'));
+  const prov = { type: 'model', kind: 'provider', target: 'openai', summary: 'Change the OpenAI-compatible provider', rows: [{ field: 'Base URL', before: 'a', after: 'b' }], warnings: [] };
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000c', state: 'declined', card: prov }, threadId: TID, messageId: MID, seq: 6 });
+  ctx.flush();
+  assert.ok([...ctx.doc.querySelectorAll('.ask-card-stub')].some((x) => x.textContent === 'Declined — Change the OpenAI-compatible provider'));
+});
+
 test('ask-panel-card: a tracker-task proposal shows the task (not a brief) and Start posts the source reference, never a prompt', async () => {
   const rec = {};
   const source = { type: 'plugin', plugin: 'jira-source', sourceId: 'jira', taskId: 'PROJ-123', displayName: 'Jira', profile: 'acme', profileVia: 'binding',

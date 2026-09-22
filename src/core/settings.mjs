@@ -1048,10 +1048,12 @@ function rawModels(settings) {
  * Add a global catalog entry. `label` defaults to the id; `efforts` must be a
  * subset of EFFORTS (empty/absent = all); `env` keys must not be reserved;
  * `cost` is an optional per-model override ({free} | {perMtok}, see assertModelCost).
+ * `dryRun` validates exactly as a write would and returns the would-be entry
+ * without persisting (Ask Worca's model card validates with it).
  * @returns {Promise<{id:string,label:string,efforts:string[],env?:object,cost?:object}>} the effective entry
  * @throws {Error} on invalid input or a case-insensitively duplicate id
  */
-export async function addGlobalModel({ id, label, efforts, env, cost, upstream } = {}) {
+export async function addGlobalModel({ id, label, efforts, env, cost, upstream } = {}, { dryRun = false } = {}) {
   assertTestSettingsAccess();
   const vid = assertModelId(id);
   if (!isClearInput(label) && typeof label !== 'string') throw new Error('label must be a string');
@@ -1064,6 +1066,7 @@ export async function addGlobalModel({ id, label, efforts, env, cost, upstream }
   const models = rawModels(settings);
   if (findModelIndex(models, vid) !== -1) throw new Error(`a model with id ${JSON.stringify(vid)} already exists`);
   const vlabel = (typeof label === 'string' && label.trim()) || vid;
+  if (dryRun) return sanitizeGlobalModel(storedModelShape(vid, vlabel, vefforts, venv, vcost, vupstream));
   settings.models = [...models, storedModelShape(vid, vlabel, vefforts, venv, vcost, vupstream)];
   await persistSettings(settings);
   return listGlobalModels().find((m) => m.id.toLowerCase() === vid.toLowerCase());
@@ -1074,11 +1077,11 @@ export async function addGlobalModel({ id, label, efforts, env, cost, upstream }
  * resets to the id. `efforts`: []/null resets to all. `env`: null clears the
  * whole map; an object merges per key, where a null value DELETES that key and
  * a string sets it (write-only PATCH semantics, design §4.10). `cost`: null/''
- * removes the override; an object replaces it wholesale.
+ * removes the override; an object replaces it wholesale. `dryRun` as addGlobalModel.
  * @returns {Promise<object>} the effective entry
  * @throws {Error} on an unknown id or invalid input
  */
-export async function updateGlobalModel(id, { label, efforts, env, cost, upstream } = {}) {
+export async function updateGlobalModel(id, { label, efforts, env, cost, upstream } = {}, { dryRun = false } = {}) {
   assertTestSettingsAccess();
   const vid = assertModelId(id);
   const settings = readSettings();
@@ -1117,6 +1120,7 @@ export async function updateGlobalModel(id, { label, efforts, env, cost, upstrea
   if (upstream !== undefined) nextUpstream = isClearInput(upstream) ? undefined : assertModelUpstream(upstream);
   assertUpstreamEnvCompatible(nextEnv, nextUpstream);
 
+  if (dryRun) return sanitizeGlobalModel(storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream));
   settings.models = models.slice();
   settings.models[idx] = storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream);
   await persistSettings(settings);
@@ -1251,11 +1255,12 @@ export function copilotTermsAcknowledged() {
 
 /**
  * Patch a provider's stored block. Omitted keys are kept; null/'' deletes a
- * key. Validates the whole patch before writing.
+ * key. Validates the whole patch before writing. `dryRun` returns the
+ * would-be effective config without persisting.
  * @returns {Promise<object>} the effective config
  * @throws {Error}
  */
-export async function updateProvider(name, patch = {}) {
+export async function updateProvider(name, patch = {}, { dryRun = false } = {}) {
   if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
   assertTestSettingsAccess();
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('provider patch must be an object');
@@ -1288,6 +1293,7 @@ export async function updateProvider(name, patch = {}) {
     else if (k === 'baseUrl') cur[k] = v.trim().replace(/\/+$/, '');
     else cur[k] = typeof v === 'string' ? v.trim() : v;
   }
+  if (dryRun) return { ...providerDefaults(name), ...sanitizeProvider(name, cur) };
   if (Object.keys(cur).length) all[name] = cur; else delete all[name];
   if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
   await persistSettings(settings);

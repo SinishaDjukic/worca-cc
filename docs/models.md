@@ -139,6 +139,39 @@ A plugin never ships a credential: a `copilot` entry resolves against each
 user's own sign-in, and an `apiKey` must be a `${VAR}` reference. A team policy
 may ship `upstream` models under the same rule.
 
+## Ask Worca
+
+Ask Worca can read the catalog and the providers, explain why a model is not
+ready, and set models up for you. The rule: **every change is a card you
+confirm** — nothing in the catalog or on the Providers card changes until you
+click Apply.
+
+| Tool | What it does | How |
+| --- | --- | --- |
+| `list_models` | Every catalog model: source (built-in, user, plugin, team policy), connection (CLI default, env, provider), efforts, and for a bridged model its provider, API, upstream id, limits and readiness. A user entry adds its env, upstream and pricing — credential values masked, `${VAR}` references readable | read |
+| `get_providers` | The Providers card's state: Copilot sign-in and notice, each key-based provider's base URL, whether a key is set (and from where), whether it is optional | read |
+| `test_provider` | *Test connection* for one provider | read (contacts it) |
+| `list_copilot_models` | What *Import models…* would list | read (contacts GitHub) |
+| `propose_model_change` | `add_model`, `edit_model`, `remove_model` (user entries only), `provider` (base URL, key, concurrency, account type), `import_copilot` | card |
+
+- The card shows the change as a before → after list, and the **warnings** that
+  would still stop the model working: a `${VAR}` that is not set in Worca's
+  environment, a provider with no key, a translated model with no Prompt limit, a
+  local model served below a 64k window. A removal names the workflow nodes that
+  fall back to the default model.
+- An edit's `upstream` merges into the stored block, so changing a limit never
+  restates the key; applying replays the patch onto the entry as it is then.
+- **Credentials never pass through the chat.** A key is a `${VAR}` reference to a
+  variable in Worca's environment or nothing — a literal key, an env value that
+  looks like a token, or an auth header is refused, and Ask Worca tells you to
+  paste it in Settings › Models instead.
+- Signing in to Copilot and acknowledging its notice stay on the Providers card;
+  built-in, plugin and team-policy models are read-only (a user entry with the
+  same id overrides a built-in).
+- The chat re-validates every proposal in the server over the real settings (the
+  same setters the Models view calls, as a dry run), and applying runs them for
+  real.
+
 ## Troubleshooting
 
 - **A local model stalls or the run fails with "Autocompact is thrashing"** —

@@ -26,6 +26,7 @@ import { refreshAskMemoryMount } from './memory-deps.mjs';
 import { validateProposal } from './proposal.mjs';
 import { validateMetricsChange } from './metrics-deps.mjs';
 import { validatePolicyChange } from './policy-deps.mjs';
+import { validateModelChange } from './model-deps.mjs';
 import { validateScheduleChange } from './schedule-deps.mjs';
 import { lookupTask } from './source-deps.mjs';
 import { effectiveTimeZone } from './schedule-spec.mjs';
@@ -91,6 +92,7 @@ class AskTurn extends EventEmitter {
       validateMetricsChange: deps.validateMetricsChange ?? validateMetricsChange,
       validatePolicyChange: deps.validatePolicyChange ?? validatePolicyChange,
       validateScheduleChange: deps.validateScheduleChange ?? validateScheduleChange,
+      validateModelChange: deps.validateModelChange ?? validateModelChange,
       scheduleDefaults: deps.scheduleDefaults ?? scheduleDefaults,
       // A proposed plugin task is looked up here, once: it must exist, and the card shows its title.
       lookupTask: deps.lookupTask === undefined ? lookupTask : deps.lookupTask,
@@ -318,6 +320,30 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /**
+   * propose_model_change RESULT: the metrics card's split — the child validated for the model, the parent
+   * re-validates the same INPUT over the real catalog and providers and mints the card. A child {ok:false}
+   * already reached the model as text: no card, no notice.
+   */
+  async _onModelProposal(input, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const d = this.deps;
+    try {
+      const r = await d.validateModelChange(input && typeof input === 'object' ? input : {});
+      if (r && r.ok) this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'proposed', card: r.card });
+      else {
+        const errors = (r && Array.isArray(r.errors) && r.errors.length) ? r.errors : ['invalid proposal'];
+        this.reducer.addBlock({ kind: 'notice', text: `Model change rejected: ${errors.join('; ')}` });
+      }
+    } catch (err) {
+      this.reducer.addBlock({ kind: 'notice', text: `Model change rejected: ${err?.message || err}` });
+    }
+    this._persistBlocks();
+  }
+
   /** The card exists from the tool_use on (spec §8.2, PD7): a building block with the four-step trace, persisted. */
   _onWorkflowStart(toolUseId, input) {
     const d = this.deps;
@@ -404,6 +430,7 @@ class AskTurn extends EventEmitter {
       onMetricsProposal: ({ input, text, isError }) => this._onMetricsProposal(input, text, isError),
       onPolicyProposal: ({ input, text, isError }) => this._onPolicyProposal(input, text, isError),
       onScheduleProposal: ({ input, text, isError }) => this._onScheduleProposal(input, text, isError),
+      onModelProposal: ({ input, text, isError }) => this._onModelProposal(input, text, isError),
       // pause / resume / skip / mark-read in the child → the server's schedules-changed frames.
       onScheduleMutation: (e) => { try { this.deps.onScheduleMutation(e); } catch { /* a broken sink never breaks the turn */ } },
       // The MCP child cannot broadcast; the parent turns its comment writes into
