@@ -2028,19 +2028,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function scheduleFieldsOf(s) {
     if (s && s.kind === 'once') return { scheduledFor: s.runAt };
     if (s && s.kind === 'repeat') return { repeat: { rule: s.rule, overlap: s.overlap, maxFailures: s.maxFailures } };
+    if (s && s.kind === 'after') return { after: { kind: s.after.kind, id: s.after.id, title: s.after.title }, afterPolicy: s.policy || 'done', ...(s.sourceFromPrevious ? { sourceFromPrevious: true } : {}) };
     return null;
   }
   /** The schedule sheet's `initial` for a pick (so Change… opens on what the card shows). */
   function sheetInitialOf(pick) {
     if (!pick) return {};
+    if (pick.after) return { after: pick.after, afterPolicy: pick.afterPolicy };
     if (pick.repeat) return { rule: pick.repeat.rule, overlap: pick.repeat.overlap, maxFailures: pick.repeat.maxFailures, ifMissed: pick.ifMissed, graceMin: pick.graceMin };
     return { scheduledFor: pick.scheduledFor, ifMissed: pick.ifMissed, graceMin: pick.graceMin };
   }
   function scheduleLineText(s) {
+    if (s.kind === 'after') return `${s.text}${s.sourceFromPrevious ? ' · from its branch' : ''}`;
     if (s.kind === 'repeat') return `${s.sentence}${s.next && s.next[0] ? ` · first run ${localWhen(s.next[0].at)}` : ''}`;
     return `Starts ${localWhen(s.runAt)}`;
   }
   function pickedLineText(p) {
+    if (p.after) return `After ‘${p.after.title || p.after.id}’ finishes${p.sourceFromPrevious ? ' · from its branch' : ''}`;
     if (p.repeat) return describeRule(p.repeat.rule);
     return `Starts ${localWhen(p.scheduledFor)}`;
   }
@@ -2053,8 +2057,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     rootEl.setAttribute('data-ask-card-scheduled', '');
     const series = !!block.scheduleId;
     const title = card.title || card.brief || 'Run';
-    rootEl.append(make('span', 'badge grey', series ? 'Repeats' : 'Scheduled'), make('span', 'ask-card-sched-text',
-      series ? `${title} — ${block.sentence || 'repeating schedule'}${block.scheduledFor ? ` · next ${localWhen(block.scheduledFor)}` : ''}` : `${title} — starts ${localWhen(block.scheduledFor)}`));
+    rootEl.append(make('span', 'badge grey', series ? 'Repeats' : block.after ? 'After run' : 'Scheduled'), make('span', 'ask-card-sched-text',
+      series ? `${title} — ${block.sentence || 'repeating schedule'}${block.scheduledFor ? ` · next ${localWhen(block.scheduledFor)}` : ''}`
+        : block.after ? `${title} — after ‘${block.after.title || block.after.id}’ finishes` : `${title} — starts ${localWhen(block.scheduledFor)}`));
     const err = make('span', 'ask-card-err');
     const call = async (method, path, btn) => {
       err.textContent = ''; btn.disabled = true;
@@ -2289,8 +2294,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (a.sentence && a.sentence !== b.sentence) row('Becomes', a.sentence);
         if (Array.isArray(a.next) && a.next.length) row('Next runs', a.next.map((n) => localWhen(n.at)).join(' · '));
       } else if (card.action === 'move') {
-        row('From', localWhen(b.at));
-        row('To', localWhen(a.at));
+        // Run chains: a move to AFTER another run has no instant on either side — say what it is.
+        row('From', b.at ? localWhen(b.at) : b.when || '');
+        row('To', a.at ? localWhen(a.at) : a.text || '');
       } else if (b.at) row(card.itemKind === 'recurring' ? 'Next run' : 'Scheduled for', localWhen(b.at));
       if (kv.childNodes.length) body.appendChild(kv);
     }
@@ -2691,6 +2697,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const sheetOpts = (initial = {}) => ({
       mode: 'create', allowRepeat: true, initial, runTitle: (block.card && (block.card.title || block.card.brief)) || '',
       warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer — chat notifications can reach you.',
+      // Keyed off the card's LIVE target segment (local.target), not the proposal's frozen card.workspaceId —
+      // the user can switch the card between project and workspace before opening the sheet.
+      candidates: () => fetch(`/api/schedules/after-candidates?${local.target === 'workspace'
+        ? `workspaceId=${encodeURIComponent((rootEl.querySelector('.ask-card-workspace-select') || {}).value || card.workspaceId || '')}`
+        : `projectDir=${encodeURIComponent(local.projectDir())}`}`).then((r) => r.json()),
     });
     const laterBtn = make('button', 'ask-card-not-now ask-card-later', 'Schedule…');
     laterBtn.type = 'button';
@@ -2700,7 +2711,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       local.schedulePick = scheduleFieldsOf(card.schedule);
       const line = make('div', 'ask-card-sched ask-card-sched-proposed');
       line.setAttribute('data-ask-card-sched-proposed', '');
-      const badge = make('span', 'badge grey', card.schedule.kind === 'repeat' ? 'Repeats' : 'Scheduled');
+      const badge = make('span', 'badge grey', card.schedule.kind === 'repeat' ? 'Repeats' : card.schedule.kind === 'after' ? 'After run' : 'Scheduled');
       const text = make('span', 'ask-card-sched-text', scheduleLineText(card.schedule));
       const change = make('button', 'link-btn ask-card-sched-change', 'Change…');
       change.type = 'button';
@@ -2708,9 +2719,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       change.addEventListener('click', async () => {
         const picked = await openScheduleSheet(sheetOpts(sheetInitialOf(local.schedulePick)));
         if (!picked) return;
-        local.schedulePick = picked;
-        badge.textContent = picked.repeat ? 'Repeats' : 'Scheduled';
-        text.textContent = pickedLineText(picked);
+        // A sheet pick that stays "after another run" keeps a sourceFromPrevious the proposal carried.
+        local.schedulePick = { ...picked, ...(local.schedulePick && local.schedulePick.sourceFromPrevious && picked.after ? { sourceFromPrevious: true } : {}) };
+        badge.textContent = picked.repeat ? 'Repeats' : picked.after ? 'After run' : 'Scheduled';
+        text.textContent = pickedLineText(local.schedulePick);
       });
       line.append(badge, text, change);
       rootEl.insertBefore(line, err);
@@ -2935,6 +2947,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const saveErr = await saveLaneEdits(local);            // the previous phase's guard, now second
       if (saveErr) { err.textContent = saveErr; return; }
       const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id, ...(schedule || {}) };
+      // Run chains: "the branch of the run before it" is a flag, and the wire refuses it next to a branch name.
+      // Keyed off the schedule being POSTED — a Start now on an after-proposal carries none and keeps the picked branch.
+      if (body.sourceFromPrevious) { delete body.sourceBranch; delete body.sourceBranchByKey; }
       if (ex.extras.length) body.extras = ex.extras;
       let res = null;
       try {

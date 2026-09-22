@@ -14,6 +14,7 @@ import { spawnSync } from 'node:child_process';
 import { WebSocket } from 'ws';
 
 import { useTempHome } from './helpers/temp-home.mjs';
+import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { _resetForTests as closeDbForTests } from '../src/core/db.mjs';
 
 useTempHome(after);
@@ -285,6 +286,24 @@ test('the real tool bundle: list, get, preview, pause / resume / skip, mark read
   assert.equal(pv.sentence, 'Every Monday and Thursday at 07:30, 4 times');
   assert.equal(pv.timeZone, 'Europe/Berlin');
   assert.equal((await tools.call('preview_schedule', { when: 'yesterday' })).ok, false);
+  // Run chains: preview_schedule({ after }) reaches the deps' preview — the handler's widened guard and the
+  // afterRef handed to preview are the only things that make it answer at all.
+  seedPipelineRow({ id: 'pv000001', projectKey, title: 'Preview me', status: 'running', startedAt: new Date().toISOString() });
+  const pa = await tools.call('preview_schedule', { after: 'pv000001' });
+  assert.equal(pa.ok, true, JSON.stringify(pa));
+  assert.equal(pa.kind, 'after');
+  assert.equal(pa.text, 'After ‘Preview me’ finishes');
+  await assert.rejects(() => tools.call('preview_schedule', {}), /give when \(once\), every \(repeat\) or after \(another run\)/);
+  // Run chains (D11): list_schedules / get_schedule never show a waiting after-ticket's 9999 sentinel — the model
+  // reads what it waits for (after.id is what propose_schedule_change move / get_run take) and the branch choice.
+  const chained = await (await post('/api/run', { projectDir, prompt: 'Chained', title: 'Chained', mock: true, after: { kind: 'pipeline', id: 'pv000001' }, sourceFromPrevious: true })).json();
+  const ct = (await tools.call('list_schedules', { projectKey })).runs.find((x) => x.id === chained.runId);
+  assert.deepEqual(ct.after, { kind: 'pipeline', id: 'pv000001', policy: 'done' });
+  assert.equal(ct.sourceFromPrevious, true);
+  assert.equal(ct.runAt, null); assert.equal(ct.when, 'after another run');
+  assert.equal((await tools.call('get_schedule', { id: chained.runId })).when, 'after another run');
+  const occ = (await tools.call('list_schedules', { projectKey })).runs.find((x) => x.scheduleId === made.scheduleId);
+  assert.equal(occ.after, null, 'a timed row carries after: null'); assert.match(occ.when, /^Mon /);
 
   // Direct writes: reversible, a series only, and the parent broadcasts them.
   const paused = await tools.call('pause_schedule', { id: made.scheduleId });

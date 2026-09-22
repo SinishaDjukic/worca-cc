@@ -64,6 +64,43 @@ now** / **Reschedule**. For a series the grace is capped at the time to the next
 occurrence, and the next slot is always computed from *now*: at most one late
 occurrence starts after downtime, a backlog is never replayed.
 
+## After another run
+
+A one-off run can wait for a **run** instead of a time — a running (or already finished)
+pipeline, or another one-off scheduled run — and can start on that run's feature branch.
+Chain three and you have a train: refactor → tests → docs, each on the branch the previous
+one left.
+
+- **Predecessor.** A pipeline (any run in History or Running) or a one-off scheduled run.
+  Never a repeating schedule: give one of its runs instead. Both must target the same project
+  or the same workspace.
+- **Gate.** By default the dependent starts only when the predecessor finishes `done`.
+  *Start even if it fails or is stopped* (`afterPolicy: any`) also accepts `error`, `stopped`
+  and `interrupted`. A predecessor that ends any other way — or is canceled, missed, skipped
+  or archived — leaves the dependent **missed** with the reason, and *Run now* still starts it.
+  A paused predecessor keeps the dependent waiting; there is no grace and no missed-slot
+  policy on an after-run.
+- **Source branch from the run before it.** Pick *Branch of the run before it* in New
+  pipeline (or `sourceFromPrevious: true`): when the ticket fires, the predecessor's feature
+  branch — per member project for a workspace — becomes this run's source branch. Feature
+  branches always survive a run, so a `done` predecessor always has one. Any scheduled run,
+  timed or not, may also pick a finished run's branch from the *Run branches* group of the
+  Source branch picker.
+- **When it starts.** The scheduler tick (30 s) reads the predecessor's state from the
+  database, so a predecessor that ends in a `--wait` terminal or another server is seen too;
+  a run ending in the UI server nudges an extra tick. The ticket's time becomes the moment
+  the gate opened; from there the usual retry rules apply.
+- **Edit.** *Change…* on the card switches between a time and a predecessor. Canceling a
+  predecessor, or archiving its pipeline (History's delete keeps the row but removes its
+  branch), names the runs that wait for it; they are marked missed on the next tick. A run cannot wait for itself, directly or through a chain.
+- **Entry points.** *Schedule a run after this* on a Running card and in a History detail;
+  *Schedule next…* on a scheduled run's card; the **After a run** side of the schedule sheet's kind switch.
+  All open New pipeline with the pick made (`#new/after/<id>`).
+
+An older worca on the same home never starts an after-run early: until its gate opens the
+ticket's time is the year 9999, which that build shows as a run "in 7973 years". Run one
+build per home.
+
 ## Repeating schedules
 
 A rule is wall-clock time in an IANA timezone, never a UTC instant — "02:00 every
@@ -101,8 +138,11 @@ worca --prompt "…" --at 02:00 --wait                             # …and star
 worca --file task.md --every "weekdays 02:00"                    # repeat
 worca --memory-scope global --workflow wf_memory_defrag --every "day 03:30"
 worca --prompt "…" --cron "0 2 * * 1-5"                          # cron subset
+worca --prompt "Add tests" --after 1a2b3c4d --source-from-previous   # when that run ends, on its branch
+worca --prompt "Docs" --after 1a2b3c4d --after-any                    # even if it fails or is stopped
 
 worca schedule list | show <id> | run-now <id> | move <id> --at "…"
+worca schedule move <id> --after <id>
 worca schedule cancel <id> | skip <id> | pause <id> | resume <id> | log [--unread]
 ```
 
@@ -117,20 +157,32 @@ it but never starts it while the owner is alive), polls the row so **Run now**,
 **Change time** and **Cancel** from the UI still work, and hands the ticket back to
 the server on Ctrl+C. `--model`, `--permission-mode` and `--yes` survive the wait.
 
+`worca schedule show` on an after-run prints `after`, `on error` (start anyway / do not
+start) and `source` instead of `when` and `if missed`. `worca schedule cancel` has no
+confirmation and names no dependents — check `worca schedule list` before canceling a run
+others wait for; they are marked missed on the next tick.
+
 ## API
 
 ```
 POST /api/run            + scheduledFor (ISO 8601 with offset or Z)      -> 202 { runId, status:"scheduled", scheduledFor }
                          + repeat { rule, overlap?, maxFailures? }        -> 202 { …, scheduleId, sentence }
                          + ifMissed ("run"|"skip"), graceMin (0..10080)
+POST /api/run            + after { kind:"ticket"|"pipeline", id }, afterPolicy? ("done"|"any"), sourceFromPrevious?
+                                                                          -> 202 { runId, status:"scheduled", after:{kind,id,title}, sourceFromPrevious }
 GET    /api/schedules[?projectDir=|workspaceId=][&all=1]  -> { schedules, tickets, counts, defaults }
 GET    /api/schedules/:id                                 -> { kind, item, history, notifications }
+GET    /api/schedules/after-candidates?projectDir=|workspaceId=  -> { runs, tickets }
+GET    /api/schedules/after/:id                                  -> { kind, id, title, status, projectDir, workspaceId }
 PATCH  /api/schedules/:id         ticket: { scheduledFor?, ifMissed?, graceMin? }
                                   series: { title?, rule?, overlap?, maxFailures?, ifMissed?, graceMin? }
+PATCH  /api/schedules/:id         ticket: { after?, afterPolicy?, sourceFromPrevious? }  (after OR scheduledFor)
 DELETE /api/schedules/:id         cancel a one-off ticket / delete a series
 POST   /api/schedules/:id/run-now | skip-next | pause | resume
 POST   /api/schedules/preview     { rule, count? } -> { rule, sentence, next[] }
 GET    /api/schedules/dependents?workflowId=|projectDir=|workspaceId=
+GET    /api/schedules/dependents?pipelineId=|ticketId=
+GET    /api/branches              + runs: [{ branch, pipelineId, title, status, endedAt }]
 GET    /api/notifications?scope=schedule[&unread=1][&problems=1]
 POST   /api/notifications/:id/read { read? } · POST /api/notifications/read-all
 ```
@@ -182,6 +234,8 @@ the small reversible changes it makes directly, and only when you ask.
 | `preview_schedule` | Your words → the exact time, or the sentence and the next three dates. Nothing is created | read |
 | `list_schedules`, `get_schedule`, `list_schedule_activity` | What is scheduled, one schedule's runs and policies, the activity feed | read |
 | `propose_schedule_change` | `run_now`, `move` (a one-off run), `edit` (a series: every, until, count, overlap, maxFailures, title), `cancel`, `delete` | card |
+| `propose_run` + `after` (+ `afterPolicy`, `sourceFromPrevious`) | A run card whose main button is **Schedule**: it starts when that run ends, on its branch when asked | card |
+| `propose_schedule_change` `move` + `after` | Point a one-off run at another run instead of a time | card |
 | `pause_schedule`, `resume_schedule`, `skip_next_run`, `mark_schedule_activity_read` | Reversible, never start a run | direct |
 | `list_task_sources`, `find_tasks`, `get_task` | The installed task sources (GitHub Issues, Jira, …) with their inputs and profile bindings; search one; read one task | read |
 | `propose_run` + `source` | A run whose task is a tracker task — a reference the run fetches when it starts | card |

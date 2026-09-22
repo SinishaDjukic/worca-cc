@@ -170,7 +170,8 @@ and durations, the clarify Q&A, agent transcripts, and logs:
   (`--at`, `--every`, `--cron`) or the API (`scheduledFor`, `repeat`). The
   **Schedules** view lists what is planned and an activity feed of every miss,
   failure and self-pause. Runs start while `worca ui` (or a `--wait` terminal) is
-  up and the machine is awake. See [docs/scheduled-runs.md](docs/scheduled-runs.md).
+  up and the machine is awake. A run can also start after another run, on its
+  branch, so runs form a train. See [docs/scheduled-runs.md](docs/scheduled-runs.md).
 - **Ask Worca schedules too** — "run the dependency upgrade every weekday at 2am"
   becomes a run card whose main button is *Schedule*. It lists, explains, pauses,
   resumes and skips schedules on request; moving, editing, cancelling or deleting

@@ -284,6 +284,7 @@ const el = {
   sourceBranchHint: $('#sourceBranchHint'),
   sourceBranchWrap: $('#sourceBranchWrap'),
   wsSourceBranches: $('#ws-source-branches'),
+  wsSourcePreviousRow: $('#ws-source-previous-row'), wsSourcePrevious: $('#ws-source-previous'),
 
   // Workspaces management view
   wsCreateBtn: $('#ws-create-btn'),
@@ -2512,6 +2513,8 @@ if (typeof window !== 'undefined') {
     setAutoscroll,
     onSubagent,
     onState,
+    paintHdAfter,
+    afterDependentsNote,
     getRun: (id) => runs.get(id),
     durByNode,
     costByNode,
@@ -6032,6 +6035,9 @@ function seedBranchPlaceholder(select, text) {
   return opt;
 }
 
+const RUN_BRANCH_WORD = { done: 'finished', error: 'ended with an error', stopped: 'stopped', interrupted: 'interrupted', paused: 'paused', running: 'running', starting: 'starting', created: 'starting', pausing: 'pausing' };
+const PREVIOUS_BRANCH = '__previous__';
+
 // Populate any branch <select> from /api/branches for `projectDir`, pre-selecting
 // the repo's current branch (HEAD). Empty value still falls back to HEAD on submit.
 async function populateBranchSelect(select, projectDir) {
@@ -6042,7 +6048,7 @@ async function populateBranchSelect(select, projectDir) {
   // A response for a superseded request is dropped.
   const gen = (select._branchGen = (select._branchGen || 0) + 1);
   const stale = () => select._branchGen !== gen;
-  if (!projectDir) { seedBranchPlaceholder(select, 'current branch (auto)'); return; }
+  if (!projectDir) { seedBranchPlaceholder(select, 'current branch (auto)'); syncPreviousBranchOption(select); return; }
   const placeholder = seedBranchPlaceholder(select, 'Loading branches…');
   try {
     const r = await fetch(`/api/branches?projectDir=${encodeURIComponent(projectDir)}`);
@@ -6050,21 +6056,41 @@ async function populateBranchSelect(select, projectDir) {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
     if (stale()) return;
+    // `opt.selected = true` is selectedNESS, not the `selected` ATTRIBUTE, so nothing below is
+    // `defaultSelected`; remember HEAD on the select so removing a temporary leading option
+    // (PREVIOUS_BRANCH) can put the selection back on it.
+    select.dataset.current = data.current || '';
     const branches = Array.isArray(data.branches) ? data.branches : [];
-    if (!branches.length) { placeholder.textContent = 'current branch (auto)'; return; }
-    // Rebuild: explicit "auto" first, then every branch (current pre-selected).
+    if (!branches.length) { placeholder.textContent = 'current branch (auto)'; syncPreviousBranchOption(select); return; }
     seedBranchPlaceholder(select, 'current branch (auto)');
+    const runBranches = Array.isArray(data.runs) ? data.runs : [];
+    const isRun = new Set(runBranches.map((r) => r.branch));
+    const plain = document.createElement('optgroup'); plain.label = 'Branches';
     for (const b of branches) {
+      if (isRun.has(b)) continue;
       const opt = document.createElement('option');
       opt.value = b; opt.textContent = b;
       if (b === data.current) opt.selected = true;
-      select.appendChild(opt);
+      plain.appendChild(opt);
     }
+    if (plain.children.length) select.appendChild(plain);
+    if (runBranches.length) {
+      const grp = document.createElement('optgroup'); grp.label = 'Run branches';
+      for (const r of runBranches) {
+        const opt = document.createElement('option');
+        opt.value = r.branch; opt.textContent = `${r.branch} — ${r.title || r.pipelineId} · ${RUN_BRANCH_WORD[r.status] || r.status}`;
+        if (r.branch === data.current) opt.selected = true;
+        grp.appendChild(opt);
+      }
+      select.appendChild(grp);
+    }
+    syncPreviousBranchOption(select);
   } catch {
     if (stale()) return;
     // m2: surface the failure instead of leaving a silently-empty select. The
     // empty value still makes the server fall back to HEAD on submit.
     placeholder.textContent = 'current branch (auto — branch list unavailable)';
+    syncPreviousBranchOption(select);
   }
 }
 
@@ -6314,6 +6340,7 @@ function setRunTarget(target) {
     // Restore the project-driven branch list + config for the selected project.
     onProjectChanged();
   }
+  syncPreviousBranchEverywhere();
 }
 
 // Workspace mode with nothing to pick per member yet: keep the field occupied by
@@ -6354,6 +6381,7 @@ function renderWorkspaceSourceBranches() {
   if (!ws || !Array.isArray(ws.projectPaths) || !ws.projectPaths.length) {
     host.classList.add('hidden');
     showWorkspaceBranchPlaceholder(); // nothing per-member to show: keep the field occupied
+    syncPreviousBranchEverywhere();
     return;
   }
   host.classList.remove('hidden');
@@ -6384,11 +6412,13 @@ function renderWorkspaceSourceBranches() {
 
     if (missing) {
       sel.disabled = true;
+      sel.dataset.missing = '1';
       seedBranchPlaceholder(sel, 'current branch (auto)');
     } else {
       populateBranchSelect(sel, p); // async; defaults to HEAD per the clarification
     }
   });
+  syncPreviousBranchEverywhere();
 }
 
 // Populate #workspaceSelect from state.workspaces (loading them if empty).
@@ -9290,6 +9320,20 @@ async function scheduleDependentsNote(query, consequence) {
   } catch { return ''; }
 }
 
+// Run chains: the runs that wait for a pipeline about to be archived. Its own sentence, not
+// scheduleDependentsNote's — the Archive copy is pinned and this is appended to it verbatim.
+async function afterDependentsNote(query) {
+  try {
+    const res = await fetch(`/api/schedules/dependents?${query}`);
+    if (!res.ok) return '';
+    const { dependents } = await safeJson(res);
+    if (!Array.isArray(dependents) || !dependents.length) return '';
+    const names = dependents.slice(0, 4).map((d) => `“${d.title || 'Scheduled run'}”`).join(', ');
+    const more = dependents.length > 4 ? ` and ${dependents.length - 4} more` : '';
+    return `\n\n${names}${more} ${dependents.length === 1 ? 'waits' : 'wait'} for this run and will be marked missed.`;
+  } catch { return ''; }
+}
+
 // Remove a project. Returns true when the registry changed, false on cancel or failure. `errEl`
 // (the project page's .pd-error) takes the failure text when given; the list message otherwise.
 async function deleteProject(p, errEl = null) {
@@ -9729,6 +9773,11 @@ el.form.addEventListener('submit', async (e) => {
   } else {
     body.projectDir = projectDir;
   }
+  // Run chains: the previous run's branch is a flag on the wire, never a branch name.
+  if (body.sourceBranch === PREVIOUS_BRANCH) { delete body.sourceBranch; body.sourceFromPrevious = true; }
+  if (target === 'workspace' && el.wsSourcePrevious && el.wsSourcePrevious.classList.contains('on') && pendingSchedule && pendingSchedule.after) {
+    delete body.sourceBranchByKey; body.sourceFromPrevious = true;
+  }
 
   const psrc = state.activePluginSource;
   if (isDefragRun) {
@@ -9846,13 +9895,15 @@ el.form.addEventListener('submit', async (e) => {
 // is used or dropped. Never persisted: a reload is a plain form.
 let pendingSchedule = null;
 const newScheduleSheetOpts = (runTitle = '') => ({
-  mode: 'create', runTitle, defaults: schedulesView.defaults,
+  mode: 'create', runTitle, defaults: schedulesView.defaults, candidates: fetchAfterCandidates,
   warning: 'A scheduled run is unattended. If this workflow asks questions, the run waits for your answer — chat notifications can reach you.',
 });
 const pendingScheduleInitial = () => (pendingSchedule
-  ? (pendingSchedule.repeat
-    ? { rule: pendingSchedule.repeat.rule, overlap: pendingSchedule.repeat.overlap, maxFailures: pendingSchedule.repeat.maxFailures, ifMissed: pendingSchedule.ifMissed, graceMin: pendingSchedule.graceMin }
-    : { scheduledFor: pendingSchedule.scheduledFor, ifMissed: pendingSchedule.ifMissed, graceMin: pendingSchedule.graceMin })
+  ? (pendingSchedule.after
+    ? { after: pendingSchedule.after, afterPolicy: pendingSchedule.afterPolicy }
+    : pendingSchedule.repeat
+      ? { rule: pendingSchedule.repeat.rule, overlap: pendingSchedule.repeat.overlap, maxFailures: pendingSchedule.repeat.maxFailures, ifMissed: pendingSchedule.ifMissed, graceMin: pendingSchedule.graceMin }
+      : { scheduledFor: pendingSchedule.scheduledFor, ifMissed: pendingSchedule.ifMissed, graceMin: pendingSchedule.graceMin })
   : {});
 function setPendingSchedule(pick) {
   pendingSchedule = pick || null;
@@ -9864,8 +9915,11 @@ function setPendingSchedule(pick) {
   // toggleAttribute, not .hidden: an <svg> is not an HTMLElement, so the property is a no-op on it.
   if (play) play.toggleAttribute('hidden', !!pendingSchedule);
   if (clock) clock.toggleAttribute('hidden', !pendingSchedule);
-  if (!pendingSchedule) return;
-  if (pendingSchedule.repeat) {
+  if (!pendingSchedule) { syncPreviousBranchEverywhere(); return; }
+  if (pendingSchedule.after) {
+    el.newSchedBadge.textContent = 'After run';
+    el.newSchedText.textContent = `Starts when ‘${pendingSchedule.after.title || 'the run before it'}’ finishes`;
+  } else if (pendingSchedule.repeat) {
     el.newSchedBadge.textContent = 'Repeats';
     el.newSchedText.textContent = describeRule(pendingSchedule.repeat.rule);
   } else {
@@ -9873,6 +9927,8 @@ function setPendingSchedule(pick) {
     el.newSchedBadge.textContent = 'Scheduled';
     el.newSchedText.textContent = Number.isFinite(ms) ? `Starts ${formatInstant(ms, browserTimeZone())}` : 'Starts later';
   }
+  if (el.wsSourcePrevious) delete el.wsSourcePrevious.dataset.off;   // a NEW pick starts with the switch ON
+  syncPreviousBranchEverywhere();
 }
 /** Schedules › Schedule a run (#new/schedule): pick the time first, then describe the task. */
 async function openScheduleForNew() {
@@ -9885,6 +9941,102 @@ async function openScheduleForNew() {
 }
 el.newSchedChange?.addEventListener('click', () => { void openScheduleForNew(); });
 el.newSchedClear?.addEventListener('click', () => setPendingSchedule(null));
+// Run chains: with a predecessor picked, the project-mode Source branch select leads with
+// "Branch of the run before it" (PREVIOUS_BRANCH), selected by default; dropping the pick removes
+// it again. A workspace member select never gets it, and neither does the disabled stand-in the
+// single select becomes in workspace mode — the switch below carries the flag there.
+function syncPreviousBranchOption(select) {
+  if (!select || select.classList.contains('ws-src-select')) return;
+  const want = !!(pendingSchedule && pendingSchedule.after) && state.runTarget !== 'workspace';
+  const has = [...select.options].find((o) => o.value === PREVIOUS_BRANCH);
+  if (want && !has) {
+    const opt = document.createElement('option');
+    opt.value = PREVIOUS_BRANCH; opt.textContent = 'Branch of the run before it';
+    select.insertBefore(opt, select.firstChild);
+    select.value = PREVIOUS_BRANCH;
+  } else if (!want && has) {
+    const wasPrev = select.value === PREVIOUS_BRANCH;
+    has.remove();
+    if (wasPrev) {
+      const cur = (select.dataset.current && [...select.options].find((o) => o.value === select.dataset.current)) || select.options[0];
+      if (cur) select.value = cur.value;
+    }
+  }
+}
+function syncPreviousBranchEverywhere() {
+  syncPreviousBranchOption(el.sourceBranch);
+  const wsPick = !!(pendingSchedule && pendingSchedule.after) && state.runTarget === 'workspace';
+  if (el.wsSourcePreviousRow) el.wsSourcePreviousRow.classList.toggle('hidden', !wsPick);
+  // ON by default with a pick in workspace mode; a deliberate OFF (the click handler marks it) survives
+  // member re-renders and target switches, and the FRESH member selects follow whichever it is — every
+  // renderWorkspaceSourceBranches() rebuilds them enabled, so this is the one place that re-applies it.
+  if (el.wsSourcePrevious) setWsSourcePrevious(wsPick && el.wsSourcePrevious.dataset.off !== '1');
+}
+function setWsSourcePrevious(on) {
+  if (!el.wsSourcePrevious) return;
+  el.wsSourcePrevious.classList.toggle('on', on);
+  el.wsSourcePrevious.setAttribute('aria-checked', on ? 'true' : 'false');
+  el.wsSourceBranches?.querySelectorAll('select.ws-src-select').forEach((s) => { s.disabled = on || s.dataset.missing === '1'; });
+}
+const flipWsSourcePrevious = () => {
+  const on = !el.wsSourcePrevious.classList.contains('on');
+  if (on) delete el.wsSourcePrevious.dataset.off; else el.wsSourcePrevious.dataset.off = '1';
+  setWsSourcePrevious(on);
+};
+el.wsSourcePrevious?.addEventListener('click', flipWsSourcePrevious);
+el.wsSourcePrevious?.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); flipWsSourcePrevious(); } });
+
+async function fetchAfterCandidates() {
+  const q = state.runTarget === 'workspace'
+    ? (state.selectedWorkspaceId ? `workspaceId=${encodeURIComponent(state.selectedWorkspaceId)}` : '')
+    : (selectedProjectPath() ? `projectDir=${encodeURIComponent(selectedProjectPath())}` : '');
+  if (!q) return { runs: [], tickets: [] };
+  const res = await fetch(`/api/schedules/after-candidates?${q}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+/** #new/after/<pipelineId> | #new/after/t:<ticketId>: pick the predecessor first, then describe the task. */
+const ENDED_BADLY = ['error', 'stopped', 'interrupted'];
+// A TICKET that ended this way can never be waited for (resolveAfterRef refuses it under either policy —
+// scheduler.mjs BAD_TICKET_REASON, same words); say so here rather than at Start.
+const ENDED_TICKET = { missed: 'was missed', canceled: 'was canceled', failed: 'could not start', skipped: 'was skipped' };
+async function openAfterForNew(ref) {
+  const id = ref.startsWith('t:') ? ref.slice(2) : ref;
+  let r;
+  try {
+    const res = await fetch(`/api/schedules/after/${encodeURIComponent(id)}`);
+    if (!res.ok) { setFormMsg((await safeJson(res)).error || 'That run was not found.', 'err'); return; }
+    r = await res.json();
+  } catch { setFormMsg('That run was not found.', 'err'); return; }
+  if (r.kind === 'ticket' && ENDED_TICKET[r.status]) { setFormMsg(`‘${r.title || 'That run'}’ ${ENDED_TICKET[r.status]} — nothing to wait for.`, 'err'); return; }
+  if (r.workspaceId) {
+    // Load (or reuse) the workspace list BEFORE switching target: setRunTarget('workspace') calls
+    // ensureWorkspaceOptions() un-awaited, and a second concurrent load would re-render the members.
+    await ensureWorkspaceOptions();
+    if (!state.workspaces.some((w) => w && w.id === r.workspaceId)) { setFormMsg('That run’s workspace is not registered.', 'err'); return; }
+    setRunTarget('workspace');
+    if (el.workspaceSelect) { el.workspaceSelect.value = r.workspaceId; el.workspaceSelect.dispatchEvent(new window.Event('change', { bubbles: true })); }
+  } else if (r.projectDir) {
+    // The boot-time loadProjects() is not awaited, and GET /api/schedules/after/:id is a sync DB
+    // read that can answer before the async registry read — and a project registered after boot is
+    // in the registry but not in state.projects yet. On a miss, reload the list once and look again.
+    const find = () => state.projects.findIndex((x) => x && x.path === r.projectDir);
+    let idx = find();
+    if (idx < 0) { await loadProjects(); idx = find(); }
+    // A TICKET predecessor answers with its own projectDir whether or not that project is
+    // registered here, so "not registered" is the `idx < 0` case — not only a null projectDir.
+    if (idx < 0) { setFormMsg('That run’s project is not registered.', 'err'); return; }
+    setRunTarget('project');
+    el.projectSelect.selectedIndex = idx + 1;      // +1 past the placeholder (the applyAskPrefill idiom)
+    await onProjectChanged();
+    await refreshBranches(selectedProjectPath());   // onProjectChanged does not await the branch fetch
+  } else { setFormMsg('That run’s project is not registered.', 'err'); return; }
+  // A predecessor that already ended badly can only be waited for under the any policy
+  // (resolveAfterRef refuses it under done) — preset the switch the sheet would need.
+  setPendingSchedule({ after: { kind: r.kind, id: r.id, title: r.title || null }, afterPolicy: ENDED_BADLY.includes(r.status) ? 'any' : 'done' });
+  try { el.prompt?.focus(); } catch { /* jsdom */ }
+}
 function closeStartMenu() {
   if (!el.startMenu || el.startMenu.hidden) return;
   el.startMenu.hidden = true;
@@ -15368,6 +15520,7 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
     // (else the intent is dropped on essentially every cache-warm navigation).
     if (rec.pr === undefined) rec.pr = null;
     paintHdPr(screen, rec, data);
+    paintHdAfter(screen, rec);
     // Two belts, both load-bearing:
     //  - `!rec.pr` — the stale-button -> double-POST race is fixed at the source
     //    (the ship path calls patchHistoryPr); this is the backstop.
@@ -15579,6 +15732,7 @@ function openShipItModal(record, data) {
       const screen = histDetailState && histDetailState.screen;
       if (screen) {
         paintHdPr(screen, record, histDetailState.data);
+        paintHdAfter(screen, record);
         const mergeEl = screen.querySelector('.hist-merge');
         if (mergeEl) {
           setMergePill(mergeEl, dd.mergeable);
@@ -15632,12 +15786,22 @@ function hdSyncPr(projectKey, id, row) {
   if (histDetailState.id !== id || histDetailState.key !== projectKey) return;
   if (row) histDetailState.record = row;   // a deep link's minimal record upgrades to the real row
   paintHdPr(histDetailState.screen, histDetailState.record, histDetailState.data);
+  paintHdAfter(histDetailState.screen, histDetailState.record);
 }
 
 // Detail-header PR control from the record's tri-state (undefined = enrichment
 // pending -> hidden; null = resolved/none -> Create when eligible; object = link).
 // Link-first, matching setupPrButton's order (app.js:8552-8569): a merged-but-
 // branch-gone run still shows "Merged".
+// Run chains: every pipeline can be waited for — the button deep-links to New pipeline with the pick made.
+function paintHdAfter(screen, record) {
+  const btn = screen.querySelector('.hd-after');
+  if (!btn) return;
+  const id = record && record.id ? record.id : null;
+  btn.hidden = !id;
+  btn.onclick = id ? () => { location.hash = `#new/after/${id}`; } : null;   // never a handler over a null record
+}
+
 function paintHdPr(screen, record, data) {
   const btn = screen.querySelector('.hd-pr');
   const link = screen.querySelector('.hd-pr-link');
@@ -16113,12 +16277,18 @@ function setupHdActions(screen, record, data) {
     archiveBtn.addEventListener('click', async () => {
       if (archiveBtn.disabled) return;
       const r = hdCurrentRecord(record);              // never the load-time object
+      // The dependents read is async and no modal is up yet: hold the button under the house 'busy' flag
+      // (hdSetArchiveGate leaves a busy button alone) so a second click cannot run this handler — and its
+      // DELETE — twice. Released before the modal opens; the scrim covers the button from there on.
+      archiveBtn.dataset.archiveState = 'busy'; archiveBtn.disabled = true;
+      const chainNote = await afterDependentsNote(`pipelineId=${encodeURIComponent(r.id)}`);
+      delete archiveBtn.dataset.archiveState; archiveBtn.disabled = false;
       // Spec §5.2/D2 fixes this copy VERBATIM — do not paraphrase (only the
       // run-title context line above it is ours). `.confirm-message` already
       // declares white-space:pre-line, so the blank line renders as a paragraph.
       const ok = await confirmModal({
         title: 'Archive this pipeline?',
-        message: `${r.title || r.id}\n\nIt moves out of History. The local branch, worktree, and run artifacts (logs, results, diff) are removed. The remote branch and any open PR stay untouched.`,
+        message: `${r.title || r.id}\n\nIt moves out of History. The local branch, worktree, and run artifacts (logs, results, diff) are removed. The remote branch and any open PR stay untouched.${chainNote}`,
         confirmLabel: 'Archive',
         danger: true,
       });
@@ -16182,6 +16352,7 @@ function setupHdActions(screen, record, data) {
   });
 
   paintHdPr(screen, record, data);
+  paintHdAfter(screen, record);
 }
 
 // Re-run only the IDEMPOTENT painters after the open detail's real list row
@@ -16241,6 +16412,7 @@ function refreshHdFromRow() {
   hdSetArchiveGate(screen.querySelector('.hd-archive'), retained);
   refreshHistResumeGating();
   paintHdPr(screen, row, data);                         // idempotent; re-binds btn.onclick
+  paintHdAfter(screen, row);
   refreshHdOverviewTab();   // the one tab body that reads mutable record fields
 }
 
@@ -19801,6 +19973,7 @@ function buildRunCard(r) {
     }
   });
   node.querySelector('.rc-open').addEventListener('click', (e) => { e.stopPropagation(); go(); });
+  node.querySelector('.rc-after')?.addEventListener('click', (e) => { e.stopPropagation(); if (r.pipelineId) location.hash = `#new/after/${r.pipelineId}`; });
   // D5: on a v2 run the card's graph is scenery (the world is pointer-events:none),
   // so the WRAP takes the click and opens the detail. Decided at CLICK time — the
   // manifest may arrive after the card is built; a v1 card's graph stays inert.
@@ -20491,6 +20664,8 @@ function paintRunCard(r) {
     wordEl.className = `rc-status-word st-${family}`;
   }
   paintAutoBadge(r.el.querySelector('.rc-acts .auto-badge'), r.stepper);
+  const afterBtn = r.el.querySelector('.rc-after');
+  if (afterBtn) afterBtn.hidden = !r.pipelineId || !isPipelineRun(r);
 
   // Question-count pill in the action cluster (replaces the foot chip's
   // "<phase> paused · N questions" copy).
@@ -22487,6 +22662,11 @@ function showView(name, param = '') {
     if (param === 'schedule') {
       try { window.history.replaceState(null, '', '#new'); } catch { /* ignore */ }
       setTimeout(() => { void openScheduleForNew(); }, 0);
+    }
+    if (param.startsWith('after/')) {
+      const ref = param.slice('after/'.length);
+      try { window.history.replaceState(null, '', '#new'); } catch { /* ignore */ }
+      setTimeout(() => { void openAfterForNew(ref); }, 0);
     }
     if (newPipelinePrefill) {
       // An Ask handoff reloads BOTH pickers itself (with the card's ids) at the

@@ -205,6 +205,9 @@ test('cards: findCard / updateCardBlock patch only state, runId, error', () => {
   assert.deepEqual(flipped.card, card.card, 'only state/runId/error are patchable');
   assert.deepEqual(getMessage(m.id).blocks[0], { kind: 'notice', text: 'n' }, 'sibling blocks untouched');
   assert.equal(updateCardBlock(t.id, 'card_ffffffff', { state: 'dismissed' }), null);
+  // Run chains: `after` is a patchable key — the scheduled flip carries the predecessor to the card.
+  const chained = updateCardBlock(t.id, 'card_00000001', { state: 'scheduled', runId: 'run-9', after: { kind: 'pipeline', id: 'p1', title: 'Refactor' } });
+  assert.deepEqual(chained.after, { kind: 'pipeline', id: 'p1', title: 'Refactor' });
 });
 
 test('addThreadTotals sums every turn; null cost adds 0 but counts the turn', () => {
