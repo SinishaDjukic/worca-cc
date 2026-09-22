@@ -115,7 +115,7 @@ import {
   renderExportWizard, collectExportWizard, applyConnectionModeIn,
 } from './models-view.mjs';
 import {
-  renderProvidersCard, collectProviderRow, renderImportSheet, collectImportSheet, applyImportSelectAll,
+  renderProvidersCard, collectProviderRow, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
   setModelUpstream, COPILOT_TERMS,
 } from './bridge-view.mjs';
 import {
@@ -11762,7 +11762,10 @@ const mvState = {
   // in-flight Copilot sign-in, the import sheet and its list, and Copilot's
   // models list for the editor's datalist (fetched once per view load when
   // connected; empty otherwise).
+  // openImport is false, true (Copilot) or 'endpoint' (an OpenAI-compatible server, §8.4),
+  // whose payload — server, base URL, rows, warnings — is endpointModels.
   providers: null, signIn: null, openImport: false, importModels: [], copilotModels: [],
+  endpointModels: null,
 };
 
 function setModelsMsg(text, kind) {
@@ -11780,7 +11783,9 @@ function renderModelsViewBody() {
   // Providers card first (§8.1): sign-in state and keys sit above the catalog
   // they unlock. Kept across repaints, including an in-flight device flow.
   frag.appendChild(renderProvidersCard(mvState.providers, { signIn: mvState.signIn }));
-  if (mvState.openImport) {
+  if (mvState.openImport === 'endpoint') {
+    frag.appendChild(renderEndpointSheet(mvState.endpointModels));
+  } else if (mvState.openImport) {
     frag.appendChild(renderImportSheet(mvState.importModels));
   } else if (mvState.openShare) {
     frag.appendChild(renderExportWizard(d.models || []));
@@ -12133,6 +12138,29 @@ async function openImportFlow(btn) {
   }
 }
 
+/** §8.4 for a server you run: list what the base URL in the row serves, then show the sheet. */
+async function openEndpointImportFlow(btn) {
+  const row = btn.closest('.mv-pv-row');
+  const input = row && row.querySelector('.mv-pv-baseurl');
+  const baseUrl = input ? input.value.trim() : '';
+  btn.disabled = true;
+  setProviderMsg('openai', 'Asking the endpoint what it serves…');
+  try {
+    const res = await fetch(`/api/providers/openai/models${baseUrl ? `?baseUrl=${encodeURIComponent(baseUrl)}` : ''}`);
+    const data = await safeJson(res);
+    if (!res.ok) return setProviderMsg('openai', data.error || `HTTP ${res.status}`, true);
+    mvState.endpointModels = data;
+    mvState.openImport = 'endpoint';
+    mvState.editing = null; mvState.openCreate = false; mvState.openShare = false; mvState.prefill = null;
+    renderModelsViewBody();
+    setProviderMsg('openai', '');
+  } catch (e) {
+    setProviderMsg('openai', e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function importModelsFlow() {
   const sheet = el.modelsList && el.modelsList.querySelector('.mvi');
   if (!sheet) return;
@@ -12142,7 +12170,10 @@ async function importModelsFlow() {
   if (!ids.length) return say('Pick at least one model.', 'err');
   say('Importing…');
   try {
-    const res = await fetch('/api/providers/copilot/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+    const endpoint = sheet.dataset.source === 'endpoint';
+    const res = endpoint
+      ? await fetch('/api/providers/openai/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, baseUrl: sheet.dataset.baseurl || '' }) })
+      : await fetch('/api/providers/copilot/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
     const data = await safeJson(res);
     if (!res.ok) return say(data.error || `HTTP ${res.status}`, 'err');
     mvState.openImport = false;
@@ -12150,7 +12181,9 @@ async function importModelsFlow() {
     if (data.created?.length) parts.push(`${data.created.length} added`);
     if (data.updated?.length) parts.push(`${data.updated.length} refreshed`);
     if (data.skipped?.length) parts.push(`${data.skipped.length} skipped`);
-    setModelsMsg(`Imported from Copilot: ${parts.join(', ') || 'nothing changed'}.`, 'ok');
+    // A local server's rows can be skipped for a reason worth reading (an embedding model, no tools).
+    const why = endpoint && Array.isArray(data.skipped) ? data.skipped.filter((s) => s && s.why).map((s) => `${s.id}: ${s.why}`) : [];
+    setModelsMsg(`Imported from ${endpoint ? (data.serverLabel || 'the endpoint') : 'Copilot'}: ${parts.join(', ') || 'nothing changed'}.${why.length ? ` ${why.join('; ')}` : ''}`, 'ok');
     await refreshModelsEverywhere();
   } catch (e) {
     say(e.message, 'err');
@@ -12375,6 +12408,8 @@ if (el.modelsList) {
       if (body) patchProviderFlow(t.dataset.provider, body);
     } else if (t.classList.contains('mv-pv-test')) {
       testProviderFlow(t);
+    } else if (t.classList.contains('mv-pv-browse')) {
+      openEndpointImportFlow(t);
     } else if (t.classList.contains('mv-signin')) {
       scrollToProviders(t.dataset.provider);
     } else if (t.classList.contains('mvi-go')) {

@@ -11,12 +11,13 @@ import {
   copilotTermsAcknowledged, acknowledgeCopilotTerms, clearCopilotSignIn,
   listGlobalModels, addGlobalModel, updateGlobalModel,
 } from '../settings.mjs';
-import { modelEnvRef, maskModelEnvValue, COPILOT_TERMS_VERSION, UPSTREAM_PROVIDERS } from '../model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, COPILOT_TERMS_VERSION, UPSTREAM_PROVIDERS, isUpstreamBaseUrl } from '../model-env.mjs';
 import {
   startDeviceFlow, pollDeviceFlow, githubLogin, copilotToken, invalidateCopilotToken,
   listCopilotModels, copilotUsage, catalogEntryForCopilotModel,
 } from './providers/copilot.mjs';
 import { keyOptional } from './registry.mjs';
+import { listEndpointModels, catalogEntryForEndpointModel, importableModel } from './providers/endpoint.mjs';
 
 // ── Copilot sign-in sessions (in memory; a device code lives ~15 min) ────────
 const sessions = new Map();   // deviceCode -> { startedAt, expiresAt, interval, lastPoll }
@@ -171,6 +172,67 @@ export async function importCopilotModels(ids, { fetch: f } = {}) {
     }
   }
   return { created, updated, skipped };
+}
+
+// ── OpenAI-compatible endpoints: discovery, import ──────────────────────────
+
+/** The provider's own base URL when the caller names none, trailing slash trimmed. */
+function endpointBase(baseUrl) {
+  const b = String(baseUrl || '').trim() || providerConfig('openai').baseUrl || '';
+  if (!isUpstreamBaseUrl(b)) throw new Error('baseUrl must be an http(s) URL with no query or fragment');
+  return b.replace(/\/+$/, '');
+}
+
+/**
+ * What an OpenAI-compatible endpoint serves, each row with `catalogId` and `inCatalog` (§8.4's
+ * Copilot import, for a server you run: llama.cpp, Ollama, LM Studio, vLLM, a gateway).
+ * @param {{baseUrl?:string, fetch?:typeof fetch}} [opts]
+ */
+export async function endpointModelsForImport({ baseUrl, fetch: f } = {}) {
+  const base = endpointBase(baseUrl);
+  const p = providerConfig('openai');
+  const key = resolveProviderSecret(p.apiKey);
+  const out = await listEndpointModels(base, { apiKey: key, fetch: f });
+  const have = new Set(listGlobalModels().map((m) => m.id.toLowerCase()));
+  return {
+    ...out,
+    models: out.models.map((m) => {
+      const entry = catalogEntryForEndpointModel(m, { server: out.server, baseUrl: out.baseUrl, providerBaseUrl: p.baseUrl });
+      const usable = importableModel(m);
+      return { ...m, catalogId: entry.id, inCatalog: have.has(entry.id.toLowerCase()), importable: usable.ok, ...(usable.ok ? {} : { blocked: usable.why }) };
+    }),
+  };
+}
+
+/**
+ * Import endpoint models into the catalog. A new id gets the full entry; an existing one keeps the
+ * label, efforts and pricing you edited and only has its upstream refreshed — the Copilot rule.
+ * @param {string[]} ids  model ids as the endpoint reports them (not catalog ids)
+ * @returns {Promise<{created:string[], updated:string[], skipped:Array<{id:string, why:string}>, server:string, baseUrl:string}>}
+ */
+export async function importEndpointModels(ids, { baseUrl, fetch: f } = {}) {
+  const wanted = new Set((Array.isArray(ids) ? ids : []).map((s) => String(s)));
+  if (!wanted.size) throw new Error('pick at least one model to import');
+  const out = await endpointModelsForImport({ baseUrl, fetch: f });
+  const byId = new Map(out.models.map((m) => [m.id, m]));
+  const p = providerConfig('openai');
+  const created = []; const updated = []; const skipped = [];
+  for (const id of wanted) {
+    const m = byId.get(id);
+    if (!m) { skipped.push({ id, why: 'the endpoint does not serve it' }); continue; }
+    if (!m.importable) { skipped.push({ id, why: m.blocked || 'not usable in a pipeline' }); continue; }
+    const entry = catalogEntryForEndpointModel(m, { server: out.server, baseUrl: out.baseUrl, providerBaseUrl: p.baseUrl });
+    const current = listGlobalModels().find((x) => x.id.toLowerCase() === entry.id.toLowerCase());
+    if (current) {
+      if (!current.upstream || current.upstream.provider !== 'openai') { skipped.push({ id, why: `"${current.id}" already exists and is not an OpenAI-compatible entry` }); continue; }
+      await updateGlobalModel(current.id, { upstream: { ...current.upstream, model: entry.upstream.model, ...(entry.upstream.baseUrl ? { baseUrl: entry.upstream.baseUrl } : {}), ...(entry.upstream.capabilities ? { capabilities: entry.upstream.capabilities } : {}) } });
+      updated.push(current.id);
+    } else {
+      await addGlobalModel(entry);
+      created.push(entry.id);
+    }
+  }
+  return { created, updated, skipped, server: out.server, serverLabel: out.serverLabel, baseUrl: out.baseUrl, warnings: out.warnings };
 }
 
 // ── key-based providers: connection test ────────────────────────────────────

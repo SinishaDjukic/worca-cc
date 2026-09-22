@@ -4374,6 +4374,9 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-scard-v{color:var(--ink);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;}
 .ask-scard .ask-card-sched-link{align-self:flex-start;margin-top:2px;}
 .ask-card-start.is-danger{background:var(--red-ink);color:var(--on-status);}
+/* endpoint import sheet (bridge-view.mjs renderEndpointSheet): the server's own warnings, and a window it would not name */
+.mvi-warn{display:block;color:var(--amber-ink);}
+.mvi-ctx-unknown{color:var(--ink-3);font-size:11.5px;}
 /* model card (buildModelCard; docs/models.md "Ask Worca"): the policy card's change list + what will still block the model */
 .ask-modcard-warn{color:var(--amber-ink);}
 .ask-modcard .ask-card-sched-link{align-self:flex-start;margin-top:2px;}

@@ -108,6 +108,40 @@ initiated instead (the cost pill reads `$0 · N requests`). A generic
 OpenAI-compatible entry is flagged *cost not verified* until you pin a
 per-million-token price on it.
 
+## Import from a server you run
+
+The OpenAI-compatible provider's **Import models…** asks the endpoint in its Base
+URL what it serves and lists it, the way *Import models…* does for Copilot — so a
+local model is added without typing its id, its window or its capabilities. It
+knows four servers and falls back to the plain list for anything else:
+
+| Server | What Worca reads | What it learns |
+|---|---|---|
+| **llama.cpp** (`llama-server`) | `/props`, `/v1/models` | the window one request gets, whether the chat template takes tools, vision, the quantization, how many `--parallel` slots share `-c` |
+| **Ollama** | `/api/tags`, `/api/ps` | every pulled model with its tools / vision / thinking capabilities and the window it was trained for; a loaded model's real window |
+| **LM Studio** | `/api/v0/models` | type (chat, vision, embeddings), loaded state, the supported and loaded windows |
+| **vLLM**, gateways, anything else | `/v1/models` | the ids, plus `max_model_len` where the server reports it |
+
+An imported entry is bridged through the `openai` provider with the endpoint's
+base URL on the entry itself — so one catalog can hold an Ollama model and a
+llama.cpp model at once — priced **free**, and keyless when the URL is local. A
+second import refreshes the upstream and never overwrites a label, efforts or
+price you edited. Embedding models, and models whose server says they cannot call
+tools, are listed but cannot be ticked: a pipeline agent needs tool calls.
+
+**The window is the one thing Worca will not guess.** Only the window the server
+*serves* becomes the entry's Prompt limit; the window a model *supports* is shown
+but never pinned, because the CLI would then compact against a size the endpoint
+never had. Ollama serves 4096 tokens by default whatever the model supports
+(`OLLAMA_CONTEXT_LENGTH`, or `num_ctx` on the model, raises it), and llama-server
+splits `-c` across its `--parallel` slots. Where the served window is unknown the
+entry is imported without a Prompt limit and the sheet says so — set it once you
+know it.
+
+```
+worca models import openai [--base-url http://127.0.0.1:11434/v1] [--all | --pick id,id] [--yes]
+```
+
 ## Import from Copilot
 
 *Import models…* shows Copilot's chat models with vendor, context window and
@@ -125,6 +159,7 @@ worca models providers                  # provider state, never a token
 worca models login copilot [--accept-terms]
 worca models logout copilot
 worca models import copilot [--all | --pick id,id] [--yes]
+worca models import openai [--base-url <url>] [--all | --pick id,id] [--yes]
 worca models test <copilot|openai|anthropic>
 worca models set openai apiKey='${OPENAI_KEY}' baseUrl=https://…/v1
 ```
@@ -152,13 +187,18 @@ click Apply.
 | `get_providers` | The Providers card's state: Copilot sign-in and notice, each key-based provider's base URL, whether a key is set (and from where), whether it is optional | read |
 | `test_provider` | *Test connection* for one provider | read (contacts it) |
 | `list_copilot_models` | What *Import models…* would list | read (contacts GitHub) |
-| `propose_model_change` | `add_model`, `edit_model`, `remove_model` (user entries only), `provider` (base URL, key, concurrency, account type), `import_copilot` | card |
+| `list_endpoint_models` | What an OpenAI-compatible server of yours serves, with the window each model really gets | read (contacts it) |
+| `propose_model_change` | `add_model`, `edit_model`, `remove_model` (user entries only), `provider` (base URL, key, concurrency, account type), `import_copilot`, `import_endpoint` | card |
 
 - The card shows the change as a before → after list, and the **warnings** that
   would still stop the model working: a `${VAR}` that is not set in Worca's
   environment, a provider with no key, a translated model with no Prompt limit, a
   local model served below a 64k window. A removal names the workflow nodes that
   fall back to the default model.
+- "Add the model my llama.cpp server is running" is one `list_endpoint_models` call
+  and an `import_endpoint` card: the ids, windows and capabilities come from the
+  server, not from the chat. The card repeats the server's own warnings, and a
+  model whose served window is unknown or below 64k is named in them.
 - An edit's `upstream` merges into the stored block, so changing a limit never
   restates the key; applying replays the patch onto the entry as it is then.
 - **Credentials never pass through the chat.** A key is a `${VAR}` reference to a
@@ -174,6 +214,10 @@ click Apply.
 
 ## Troubleshooting
 
+- **An imported local model has no Prompt limit, or a wrong one** — the server did
+  not report the window it serves (Ollama unless the model is loaded, LM Studio
+  unless it is loaded, a plain gateway). Set it on the entry to what the server
+  really serves, or load the model and import again.
 - **A local model stalls or the run fails with "Autocompact is thrashing"** —
   the context window is too small. A pipeline agent's system prompt, tools and
   working history are ~20k tokens even right after a compaction, and the CLI

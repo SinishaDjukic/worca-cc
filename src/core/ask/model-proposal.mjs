@@ -12,7 +12,7 @@
 // notice stay on the Providers card.
 import { modelEnvRef, maskModelEnvValue, isLocalBaseUrl, UPSTREAM_PROVIDERS } from '../model-env.mjs';
 
-export const MODEL_CHANGE_KINDS = Object.freeze(['add_model', 'edit_model', 'remove_model', 'provider', 'import_copilot']);
+export const MODEL_CHANGE_KINDS = Object.freeze(['add_model', 'edit_model', 'remove_model', 'provider', 'import_copilot', 'import_endpoint']);
 const MAX_IMPORT = 40;
 /** Below this a local model's pipelines thrash auto-compact (docs/models.md Troubleshooting). */
 export const LOCAL_MIN_WINDOW = 65536;
@@ -36,6 +36,7 @@ export const MODEL_ERRORS = Object.freeze({
   signIn: (k) => `${k} is not settable here — the Copilot sign-in and its notice happen on the Providers card (Settings › Models), by the user`,
   noChange: 'nothing changes — the settings already say exactly this',
   importIds: `import_copilot needs ids: 1 to ${MAX_IMPORT} Copilot model ids from list_copilot_models`,
+  endpointIds: `import_endpoint needs ids: 1 to ${MAX_IMPORT} model ids from list_endpoint_models`,
   editEmpty: 'edit_model needs model with at least one of label, efforts, env, cost, upstream',
 });
 
@@ -300,6 +301,43 @@ export function createModelChangeValidator(r) {
     } };
   }
 
+  /**
+   * import_endpoint: models an OpenAI-compatible server on this machine (or the LAN) serves.
+   * The endpoint is asked again here — the card must show the window and tool support the server
+   * reports NOW, and a row it will not import (an embedding model, one with no tool calls) is
+   * refused rather than silently dropped at apply time.
+   */
+  async function validateEndpointImport(input) {
+    const note = clip(str(input.note), 200) || null;
+    const ids = Array.isArray(input.ids) ? [...new Set(input.ids.map((s) => str(s)).filter(Boolean))] : [];
+    if (!ids.length || ids.length > MAX_IMPORT) return { ok: false, errors: [MODEL_ERRORS.endpointIds] };
+    if (typeof r.endpointModels !== 'function') return { ok: false, errors: ['endpoint discovery is unavailable'] };
+    const baseUrl = str(input.baseUrl);
+    let out;
+    try { out = await r.endpointModels(baseUrl); } catch (err) { return { ok: false, errors: [err.message] }; }
+    const byId = new Map((out.models || []).map((m) => [m.id, m]));
+    const unknown = ids.filter((id) => !byId.has(id));
+    if (unknown.length) return { ok: false, errors: [`${out.serverLabel || 'the endpoint'} at ${out.baseUrl} does not serve: ${unknown.join(', ')} — list_endpoint_models shows what it does`] };
+    const blocked = ids.map((id) => byId.get(id)).filter((m) => m.importable === false);
+    if (blocked.length) return { ok: false, errors: blocked.map((m) => `${m.id}: ${m.blocked}`) };
+    const rows = ids.map((id) => {
+      const m = byId.get(id);
+      const window = m.servedContext ? `${m.servedContext} tokens` : m.trainedContext ? `window not reported (supports ${m.trainedContext})` : 'window not reported';
+      return { field: m.name || id, before: m.inCatalog ? 'in catalog' : null, after: `${m.inCatalog ? 'refreshed' : `added as ${m.catalogId}`} · ${window}` };
+    });
+    const warnings = [...(Array.isArray(out.warnings) ? out.warnings : [])];
+    for (const id of ids) {
+      const m = byId.get(id);
+      if (!m.servedContext) warnings.push(`${m.id}: the server does not report the window it serves, so the entry gets no prompt limit — set it once you know it, or the CLI assumes 200k`);
+      else if (m.servedContext < LOCAL_MIN_WINDOW) warnings.push(`${m.id}: ${m.servedContext} tokens is below the ${LOCAL_MIN_WINDOW} a pipeline needs`);
+    }
+    return { ok: true, card: {
+      type: 'model', kind: 'import_endpoint', target: out.baseUrl,
+      summary: `Import ${ids.length} model${ids.length === 1 ? '' : 's'} from ${out.serverLabel || 'the endpoint'}`,
+      note, rows, warnings, change: { ids, ...(baseUrl ? { baseUrl } : {}) },
+    } };
+  }
+
   /** @returns {Promise<{ok:true, card:object}|{ok:false, errors:string[]}>} */
   return async function validateModelChange(input) {
     const inp = isObj(input) ? input : {};
@@ -307,6 +345,7 @@ export function createModelChangeValidator(r) {
     if (!MODEL_CHANGE_KINDS.includes(kind)) return { ok: false, errors: [MODEL_ERRORS.kind] };
     if (kind === 'provider') return validateProvider(inp);
     if (kind === 'import_copilot') return validateImport(inp);
+    if (kind === 'import_endpoint') return validateEndpointImport(inp);
     return validateModel(kind, inp);
   };
 }
