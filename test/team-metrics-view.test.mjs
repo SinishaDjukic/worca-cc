@@ -36,6 +36,7 @@ test('KPI row: six tiles with mockup labels, deltas and subs', () => {
   assert.match(row.textContent, /1 done · 1 failed · 0 stopped · 50% success/);
   assert.match(row.textContent, /with a PR \$4\.12/);
   assert.ok(row.querySelector('.stat-meter'));
+  assert.match(row.textContent, /active ÷ \(wall-clock − paused\)/, 'the autonomy formula names what a parked run does not count');
   assert.match(row.querySelector('.stat-delta').textContent, /vs prev/);
 });
 
@@ -190,7 +191,7 @@ test('skeleton: the page shape with shimmer bars, no words, decorative', () => {
 test('KPI row: Saved tile appears only when a record in range carries human hours; prices them at the aggregate rate', () => {
   const withHuman = recs.map((r, i) => (i === 0 ? { ...r, human: { hours: 12.5, byPhase: {} } } : r));
   const row = renderTmKpiRow(aggregate(withHuman, { range: 'this-month', now: NOW, humanRateUsd: 35 }), { doc, now: NOW });
-  assert.deepEqual([...row.querySelectorAll('.stat-label span:not(.stat-delta)')].map((s) => s.textContent),
+  assert.deepEqual([...row.querySelectorAll('.stat-label span:not(.stat-delta):not(.stat-mult)')].map((s) => s.textContent),
     ['Spend', 'Saved', 'Runs', 'Cost per run', 'Duration', 'Autonomy', 'Review cycles']);
   const tile = row.querySelectorAll('.stat-tile')[1];
   assert.equal(tile.querySelector('.stat-value').textContent, '$424.38');       // 12.5×35 − 13.12
@@ -203,4 +204,18 @@ test('KPI row: Saved tile appears only when a record in range carries human hour
   assert.ok(neg.querySelector('.stat-value').classList.contains('is-neg'));
   assert.equal(neg.querySelector('.stat-value').classList.contains('is-pos'), false);
   assert.equal(renderTmKpiRow(aggregate(recs, { range: 'this-month', now: NOW, humanRateUsd: 35 }), { doc, now: NOW }).querySelectorAll('.stat-tile').length, 6, 'no human → no tile');
+});
+
+test('KPI row: Saved tile wears a "× spend" pill (saved ÷ spend) at the far right of its label; none for a loss', () => {
+  const withHuman = recs.map((r, i) => (i === 0 ? { ...r, human: { hours: 12.5, byPhase: {} } } : r));
+  const tile = renderTmKpiRow(aggregate(withHuman, { range: 'this-month', now: NOW, humanRateUsd: 35 }), { doc, now: NOW })
+    .querySelectorAll('.stat-tile')[1];
+  const mult = tile.querySelector('.stat-mult');
+  assert.equal(mult.textContent, '32× spend', '424.38 ÷ 13.12');
+  assert.equal(mult.title, 'Saved ÷ spent in this period');
+  assert.equal(tile.querySelector('.stat-label').lastElementChild, mult, 'far right of the label row');
+  const tiny = recs.map((r, i) => (i === 0 ? { ...r, human: { hours: 0.1, byPhase: {} } } : r));
+  const neg = renderTmKpiRow(aggregate(tiny, { range: 'this-month', now: NOW, humanRateUsd: 35 }), { doc, now: NOW }).querySelectorAll('.stat-tile')[1];
+  assert.equal(neg.querySelector('.stat-mult'), null, 'a loss has no multiplier');
+  assert.equal(tile.parentElement.querySelectorAll('.stat-mult').length, 1, 'only the Saved tile carries the pill');
 });

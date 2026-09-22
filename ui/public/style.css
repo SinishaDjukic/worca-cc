@@ -2228,8 +2228,11 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .stat-tile{padding:18px 20px;}
 .stat-label{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:12.5px;font-weight:600;}
 .stat-ico{width:16px;height:16px;color:var(--ink-3);flex:0 0 auto;}
-.stat-delta{margin-left:auto;background:var(--field);color:var(--ink-2);font-size:11px;font-weight:600;
-  padding:2px 8px;border-radius:999px;}
+.stat-delta,.stat-mult{margin-left:auto;background:var(--field);color:var(--ink-2);font-size:11px;font-weight:600;
+  padding:2px 8px;border-radius:999px;white-space:nowrap;}
+/* Saved's "9.0× spend" pill sits far right; when a delta pill precedes it, that one takes the
+   auto margin and the two share the label row's 8px gap. */
+.stat-delta+.stat-mult{margin-left:0;}
 .stat-value{font-family:var(--mono);font-size:26px;font-weight:600;color:var(--ink);margin-top:8px;line-height:1.2;}
 .stat-frac{font-size:16px;color:var(--ink-3);}
 .stat-sub{display:block;color:var(--ink-3);font-size:11.5px;margin-top:6px;}

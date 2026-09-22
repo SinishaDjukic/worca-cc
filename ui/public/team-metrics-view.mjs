@@ -2,7 +2,7 @@
 // Team metrics page renderers (team-metrics-design.md §4.10; mockup boards 1–3). Pure DOM:
 // every function takes an aggregate() result (src/shared/team-metrics/aggregate.mjs) and
 // returns detached elements. app.js owns fetch, mounting and delegated events.
-import { niceScale, roundedTopBar } from './stats-view.mjs';
+import { niceScale, roundedTopBar, savedMultChip } from './stats-view.mjs';
 import { safeHttpUrl } from '../../src/shared/team-metrics/aggregate.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -206,6 +206,8 @@ export function renderTmKpiRow(agg, { doc = globalThis.document, now = Date.now(
     });
     savedTile.querySelector('.stat-value').classList.toggle('is-neg', saved < 0);
     savedTile.querySelector('.stat-value').classList.toggle('is-pos', saved > 0);
+    const mult = savedMultChip(doc, saved, k.spendUsd);   // "32× spend", right of the delta pill
+    if (mult) savedTile.querySelector('.stat-label').append(mult);
     row.append(savedTile);
   }
   row.append(tile(doc, {
@@ -222,7 +224,7 @@ export function renderTmKpiRow(agg, { doc = globalThis.document, now = Date.now(
   row.append(tile(doc, {
     icon: 'autonomy', label: 'Autonomy', chip: deltaChip(doc, d && d.autonomyPts != null ? `${d.autonomyPts >= 0 ? '+' : '−'}${Math.abs(d.autonomyPts)} pts` : null),
     value: TM_FMT.pct(k.autonomy), meterPct: k.autonomy == null ? 0 : k.autonomy * 100,
-    sub: ['active ÷ wall-clock · ', { b: k.interventionsPerRun == null ? '—' : String(k.interventionsPerRun) }, ' interventions per run'],
+    sub: ['active ÷ (wall-clock − paused) · ', { b: k.interventionsPerRun == null ? '—' : String(k.interventionsPerRun) }, ' interventions per run'],
   }));
   row.append(tile(doc, {
     icon: 'cycles', label: 'Review cycles', chip: deltaChip(doc, d && d.reviewCycles != null ? `${d.reviewCycles >= 0 ? '+' : '−'}${Math.abs(d.reviewCycles)}` : null),

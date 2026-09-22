@@ -309,17 +309,17 @@ test('renderStatsBody: Today gets a single-date range label and per-hour cards',
   assert.equal(hint.textContent, 'Thu Aug 6', 'no "Thu Aug 6 – Thu Aug 6" span');
 });
 
-test('renderKpiRow: Saved tile = $ value, delta vs prev, hours sub-line; positive wears is-pos, negative is-neg', () => {
+test('renderKpiRow: Saved tile = $ value, no delta pill, hours sub-line; positive wears is-pos, negative is-neg', () => {
   const el = renderKpiRow(MODEL, { doc });
   const saved = el.querySelectorAll('.stat-tile')[1];
   assert.equal(saved.querySelector('.stat-label span:not(.stat-delta)').textContent, 'Saved');
   assert.equal(saved.querySelector('.stat-value').textContent, '$35,315.00', 'en-US grouping, like Team metrics');
   assert.equal(saved.querySelector('.stat-sub').textContent, '≈ 449.2 h of human work');
-  assert.equal(saved.querySelector('.stat-delta'), null, 'no chip: the previous window\'s Saved is not positive');
+  assert.equal(saved.querySelector('.stat-delta'), null, 'the Saved tile never wears a delta pill');
   assert.equal(saved.querySelector('.stat-value').classList.contains('is-neg'), false);
   assert.ok(saved.querySelector('.stat-value').classList.contains('is-pos'), 'a positive Saved figure is green');
   const up = renderKpiRow({ ...MODEL, prev: { ...MODEL.prev, savedUsd: 30000 } }, { doc }).querySelectorAll('.stat-tile')[1];
-  assert.equal(up.querySelector('.stat-delta').textContent, '↑ 18%');
+  assert.equal(up.querySelector('.stat-delta'), null, 'not even with a positive previous window (dropped 2026-09-22)');
   const neg = renderKpiRow({ ...MODEL, totals: { ...MODEL.totals, savedUsd: -6.12, humanHours: 0 }, prev: null }, { doc }).querySelectorAll('.stat-tile')[1];
   assert.equal(neg.querySelector('.stat-value').textContent, '−$6.12');
   assert.ok(neg.querySelector('.stat-value').classList.contains('is-neg'));
@@ -327,4 +327,26 @@ test('renderKpiRow: Saved tile = $ value, delta vs prev, hours sub-line; positiv
   assert.equal(neg.querySelector('.stat-sub').textContent, '≈ 0 h of human work');
   const zero = renderKpiRow({ ...MODEL, totals: { ...MODEL.totals, savedUsd: 0 }, prev: null }, { doc }).querySelectorAll('.stat-tile')[1];
   assert.deepEqual([...zero.querySelector('.stat-value').classList].filter((c) => /^is-/.test(c)), [], 'zero is neither green nor red');
+});
+
+test('renderKpiRow: Saved tile wears a "× spend" pill (saved ÷ spent) as the only pill in its label; none for a loss or zero spend', () => {
+  const label = renderKpiRow(MODEL, { doc }).querySelectorAll('.stat-tile')[1].querySelector('.stat-label');
+  const mult = label.querySelector('.stat-mult');
+  assert.equal(mult.textContent, '2,862× spend', '35315 ÷ 12.34 — whole number from 10× up, en-US grouping');
+  assert.equal(mult.title, 'Saved ÷ spent in this period');
+  assert.equal(label.lastElementChild, mult, 'far right of the label row');
+  const withPrev = renderKpiRow({ ...MODEL, prev: { ...MODEL.prev, savedUsd: 30000 } }, { doc })
+    .querySelectorAll('.stat-tile')[1].querySelector('.stat-label');
+  assert.deepEqual([...withPrev.querySelectorAll('.stat-delta, .stat-mult')].map((c) => c.className), ['stat-mult'],
+    'the multiplier is the only pill, whatever the previous window held');
+  const small = renderKpiRow({ ...MODEL, totals: { ...MODEL.totals, savedUsd: 100 } }, { doc }).querySelectorAll('.stat-tile')[1];
+  assert.equal(small.querySelector('.stat-mult').textContent, '8.1× spend', 'one decimal below 10×');
+  const edge = renderKpiRow({ ...MODEL, totals: { ...MODEL.totals, savedUsd: 122.9 } }, { doc }).querySelectorAll('.stat-tile')[1];
+  assert.equal(edge.querySelector('.stat-mult').textContent, '10× spend', '9.96 rounds up past the one-decimal band, never "10.0×"');
+  const loss = renderKpiRow({ ...MODEL, totals: { ...MODEL.totals, savedUsd: -6.12 } }, { doc }).querySelectorAll('.stat-tile')[1];
+  assert.equal(loss.querySelector('.stat-mult'), null, 'a loss has no multiplier');
+  const free = renderKpiRow({ ...MODEL, totals: { ...MODEL.totals, spentUsd: 0 } }, { doc }).querySelectorAll('.stat-tile')[1];
+  assert.equal(free.querySelector('.stat-mult'), null, 'nothing spent → nothing to multiply');
+  const others = [...renderKpiRow(MODEL, { doc }).querySelectorAll('.stat-tile')].filter((_, i) => i !== 1);
+  assert.ok(others.every((t) => !t.querySelector('.stat-mult')), 'only the Saved tile carries the pill');
 });

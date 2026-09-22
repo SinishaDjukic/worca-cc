@@ -52,14 +52,15 @@ test('stale heartbeat on ANOTHER host is reaped (Arm 2)', () => {
   assert.ok(reconcileStaleRunning({ host: HOST, now: NOW, pidAlive }).ids.includes('live0004'));
 });
 
-test('reaped row has its owner columns NULLed', () => {
+test('reaped row has its owner columns NULLed; the last heartbeat stays as the resume anchor', () => {
   seedPipelineRow({ id: 'live0005', status: 'running', startedAt: FRESH, updatedAt: FRESH,
     ownerPid: 9999, ownerHost: HOST, heartbeatAt: HB_STALE });
   reconcileStaleRunning({ host: HOST, now: NOW, pidAlive });
   const r = getDb().prepare('SELECT owner_pid, owner_host, heartbeat_at FROM pipelines WHERE id = ?').get('live0005');
   assert.equal(r.owner_pid, null);
   assert.equal(r.owner_host, null);
-  assert.equal(r.heartbeat_at, null);
+  // resume() measures an interrupted run's parked time from here (the last time it was seen alive).
+  assert.equal(r.heartbeat_at, HB_STALE);
 });
 
 test('legacy ownerless old row still swept by the 30-min time arm (Arm 3)', () => {

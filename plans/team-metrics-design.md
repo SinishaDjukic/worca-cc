@@ -181,6 +181,7 @@ Field notes:
 | field | source | why a PM / engineer cares |
 |---|---|---|
 | `wallMs` vs `activeMs` | `endedAt-startedAt`; `state.totalActiveMs` (`run-harness.mjs:3112`) | the gap is waiting on humans → autonomy ratio |
+| `pausedMs` (additive) | `_metricsIv.pausedMs`: parked on a pause (stamp → resume) or dead between a crash and its resume (last heartbeat → resume) | not waiting on a human — leaves the autonomy denominator |
 | `result` | `done \| failed \| stopped` (harness `done \| error \| stopped`) | success rate; `paused` is non-terminal and never recorded |
 | `failure` | `{ kind: "budget" \| "error" \| "preflight" \| "commit", message }` (≤ 200 chars) | why money was lost |
 | `workflow` | `topology.workflow` (`run-harness.mjs:911`), template `version` row | spend per workflow; effect of workflow edits |
@@ -406,7 +407,7 @@ The default is *this month*, matching budget cycles (Stats defaults the same way
 | Runs | count, with done / failed / stopped split and success rate |
 | Cost per run | Σ usd / runs (median shown as secondary) |
 | Duration | median `wallMs`; secondary: Σ `activeMs` as "machine time" |
-| Autonomy | Σ `activeMs` / Σ `wallMs` |
+| Autonomy | Σ `activeMs` / Σ max(0, `wallMs` − `pausedMs`) — records without `pausedMs` park nothing |
 | Review cycles | mean `cycles.review` |
 | Interventions | mean questions + pauses per run |
 | Cost per merged PR | not available (PR state is not recorded) — shows *cost per run with a PR* instead |

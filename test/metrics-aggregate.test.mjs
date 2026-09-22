@@ -161,9 +161,26 @@ test('run rows: humanHours and savedUsd priced at the aggregate rate; null witho
   const noRate = aggregate(recs, { range: 'all', now: NOW });
   assert.equal(noRate.runs[0].savedUsd, -13.12, 'rate 0 (default) prices nothing: −cost');
   const lines = toCsv(agg.runs).split('\r\n');
-  assert.equal(lines[0], '\uFEFFstartedAt,title,workflow,result,costUsd,humanHours,savedUsd,wallMs,activeMs,reviewCycles,prNumber,prUrl,actor,source,projects,id');
+  assert.equal(lines[0], '\uFEFFstartedAt,title,workflow,result,costUsd,humanHours,savedUsd,wallMs,activeMs,pausedMs,reviewCycles,prNumber,prUrl,actor,source,projects,id');
   assert.match(lines[1], /,13\.12,12\.5,424\.38,/);
   assert.match(lines[2], /,2,,,/, 'no human → empty cells, not 0');
+});
+
+test('autonomy divides active by wall-clock minus paused; a record without pausedMs parks nothing; pausedMs rides the run row and the CSV', () => {
+  const recs = [
+    makeRecord({ id: 'p', startedAt: '2026-09-10T10:00:00Z', wallMs: 1000, activeMs: 800, pausedMs: 200 }),   // parked 200 → 800 ÷ 800
+    makeRecord({ id: 'n', startedAt: '2026-09-09T10:00:00Z', wallMs: 300, activeMs: 150 }),                    // pre-field record → 150 ÷ 300
+  ];
+  const agg = aggregate(recs, { range: 'all', now: NOW });
+  assert.equal(agg.kpis.autonomy, 950 / 1100);
+  assert.equal(agg.runs[0].pausedMs, 200);
+  assert.equal(agg.runs[1].pausedMs, null);
+  const over = aggregate([makeRecord({ id: 'o', wallMs: 100, activeMs: 50, pausedMs: 500 })], { range: 'all', now: NOW });
+  assert.equal(over.kpis.autonomy, null, 'parked past the wall-clock leaves nothing to divide by');
+  const lines = toCsv(agg.runs).split('\r\n');
+  assert.match(lines[0], /,wallMs,activeMs,pausedMs,reviewCycles,/);
+  assert.match(lines[1], /,1000,800,200,/);
+  assert.match(lines[2], /,300,150,,/, 'no field → empty cell, not 0');
 });
 
 test('CSV escapes quotes/commas/newlines and guards formulas', () => {

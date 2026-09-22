@@ -8,7 +8,8 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { readPipelineForResume } from '../src/core/artifacts.mjs';
-import { _testing as recordTesting } from '../src/core/metrics/record.mjs';
+import { getDb } from '../src/core/db.mjs';
+import { _testing as recordTesting, snapshotFromHarness } from '../src/core/metrics/record.mjs';
 
 useTempHome(after);
 afterEach(() => recordTesting.reset());
@@ -185,4 +186,68 @@ test('the live-pause fallback in snapshotFromHarness reports failure kind budget
   assert.ok(recorded, 'the recorder ran on the stopped terminal path');
   assert.equal(recorded.snap.lastPause.reason, 'cost_total');
   assert.equal(recorded.record.failure?.kind, 'budget');
+});
+
+// ── parked time (autonomy = active ÷ (wall − paused)) ────────────────────────────
+
+/** Pause a fresh run at setup; returns its id. */
+async function pausedRun(dir) {
+  const orch1 = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners() });
+  orch1._buildWorktreeGraph = async () => { throw new Error('graphify exploded'); };
+  const r = await orch1.run();
+  assert.equal(r.status, 'paused');
+  return orch1.state.id;
+}
+
+test('resume() of a paused run adds the parked time (pausedAt → now) to pausedMs and consumes the stamp', async () => {
+  const dir = repo();
+  const calls = spy();
+  const id = await pausedRun(dir);
+  const rp = readPipelineForResume(id).resumePoint;
+  assert.match(rp.interventions.pausedAt, /^\d{4}-\d{2}-\d{2}T/, 'a pause stamps when it parked the run');
+  assert.equal(rp.interventions.pausedMs, 0);
+  // Backdate the stamp ten minutes: the parked time is measured, never slept through.
+  rp.interventions.pausedAt = new Date(Date.now() - 600_000).toISOString();
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run(JSON.stringify(rp), id);
+  const orch2 = createOrchestrator({ projectDir: dir, auto: true, claude: { mock: true }, runners: runners(), resume: readPipelineForResume(id) });
+  await orch2.resume();
+  const iv = calls[0].iv;
+  assert.ok(iv.pausedMs >= 600_000 && iv.pausedMs < 660_000, `pausedMs ${iv.pausedMs}`);
+  assert.equal(iv.pausedAt, null, 'the stamp is consumed by the resume');
+  const snap = await snapshotFromHarness(orch2, { status: 'done' });
+  assert.equal(snap.pausedMs, iv.pausedMs, 'the record snapshot carries it');
+});
+
+test('a paused row whose point predates the stamp falls back to the row updated_at', async () => {
+  const dir = repo();
+  const calls = spy();
+  const id = await pausedRun(dir);
+  const rp = readPipelineForResume(id).resumePoint;
+  delete rp.interventions.pausedAt;
+  getDb().prepare('UPDATE pipelines SET resume_point = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify(rp), new Date(Date.now() - 420_000).toISOString(), id);
+  const orch2 = createOrchestrator({ projectDir: dir, auto: true, claude: { mock: true }, runners: runners(), resume: readPipelineForResume(id) });
+  await orch2.resume();
+  assert.ok(calls[0].iv.pausedMs >= 420_000 && calls[0].iv.pausedMs < 480_000, `pausedMs ${calls[0].iv.pausedMs}`);
+});
+
+test('resume() of an interrupted run counts the gap from the last heartbeat and folds the pre-crash tail into the running step', async () => {
+  const dir = repo();
+  const calls = spy();
+  const id = await pausedRun(dir);
+  const db = getDb();
+  const heartbeat = Date.now() - 300_000;        // last seen alive five minutes ago
+  const runningSince = heartbeat - 900_000;      // that step's clock had run 15 min when the process died
+  db.prepare("UPDATE pipelines SET status = 'interrupted', heartbeat_at = ? WHERE id = ?").run(new Date(heartbeat).toISOString(), id);
+  db.prepare("INSERT INTO pipeline_steps (pipeline_id, key, phase, status, started_at, active_ms, running_since) VALUES (?, 'impl:1', 'implement', 'start', ?, 1000, ?)")
+    .run(id, new Date(runningSince).toISOString(), String(runningSince));
+  const orch2 = createOrchestrator({ projectDir: dir, auto: true, claude: { mock: true }, runners: runners(), resume: readPipelineForResume(id) });
+  await orch2.resume();
+  const iv = calls[0].iv;
+  // heartbeat → now, NOT the pause stamp (which is still on the point) → now.
+  assert.ok(iv.pausedMs >= 300_000 && iv.pausedMs < 360_000, `pausedMs ${iv.pausedMs}`);
+  const step = orch2.state.steps.find((s) => s.key === 'impl:1');
+  assert.ok(step.activeMs >= 901_000 && step.activeMs < 961_000, `activeMs ${step.activeMs}`);   // 1000 + (heartbeat − runningSince)
+  assert.equal(step.runningSince, null);
+  assert.ok(orch2.state.totalActiveMs >= 901_000, `totalActiveMs ${orch2.state.totalActiveMs}`);
 });

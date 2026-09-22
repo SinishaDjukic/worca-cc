@@ -18,6 +18,7 @@ alongside `RECORD_VERSION`, `TEXT_MAX`, `RECORD_FIELDS`, `redactPaths` and `clea
   "endedAt": "2026-09-15T14:40:58Z",
   "wallMs": 646986,
   "activeMs": 512340,
+  "pausedMs": 0,
   "result": "done",
   "failure": null,
   "workflow": { "id": "wf_auto", "name": "Auto", "version": 2, "rev": "1a2b3c4d" },
@@ -54,6 +55,7 @@ alongside `RECORD_VERSION`, `TEXT_MAX`, `RECORD_FIELDS`, `redactPaths` and `clea
 | `startedAt` / `endedAt` | string | UTC, second precision | run start; `state.updatedAt` at the terminal hook (there is no separate `endedAt` field) |
 | `wallMs` | int\|null | `endedAt - startedAt` in ms, floored at 0 | derived |
 | `activeMs` | int\|null | total active time across steps | `state.totalActiveMs` (`sumStepActive(steps)`, stamped by `_setStatus`) |
+| `pausedMs` | int | ms the run spent parked: paused, or dead between a crash and its resume. Leaves the autonomy denominator (`active ÷ (wall − paused)`). Additive: absent on older records = 0 | `_metricsIv.pausedMs`, accumulated by `resume()` from the pause stamp (`pausedAt`) or, for an interrupted row, the last `heartbeat_at` |
 | `result` | `done\|failed\|stopped` | mapped from harness status `done\|error\|stopped` | harness terminal status |
 | `failure` | object\|null | see "Failure" below | derived |
 | `workflow` | object\|null | `{id,name,version,rev}` | `harness.resolved.template`, stepper fallback; `rev` is additive (see below) |

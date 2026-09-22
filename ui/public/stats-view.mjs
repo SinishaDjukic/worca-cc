@@ -99,6 +99,19 @@ function deltaChip(doc, cur, prevVal, range) {
   return chip;
 }
 
+/** "9.0× spend" pill: Saved ÷ spent over the same window. Null unless both are positive — a
+ *  loss or a free window has no multiplier worth printing. One decimal below 10×, a whole
+ *  number from 10× up (rounded to the decimal band first, so 9.96 prints "10×", never "10.0×"). */
+export function savedMultChip(doc, saved, spent) {
+  if (!(saved > 0) || !(spent > 0)) return null;
+  const ratio = saved / spent;
+  const tenth = Math.round(ratio * 10) / 10;
+  const text = tenth >= 10 ? Math.round(ratio).toLocaleString('en-US') : tenth.toFixed(1);
+  const chip = h(doc, 'span', 'stat-mult', `${text}× spend`);
+  chip.title = 'Saved ÷ spent in this period';
+  return chip;
+}
+
 // Numeric tokens in tile sub-lines ($50.00, 3d 4h, bare counts) get <b> so the
 // figures read at a glance; surrounding prose stays plain. Unit groups like
 // "3d 4h" bold as one token.
@@ -174,19 +187,22 @@ export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_F
     title: fmt.estTitle(totals.spentUsd),
   }));
 
-  // Saved (money-saved design §10): hours × rate − spent. Negative is a real outcome. The
-  // delta chip needs a POSITIVE previous figure (deltaChip's own rule), so a previous window
-  // that lost money yields no chip rather than a nonsense percentage.
+  // Saved (money-saved design §10): hours × rate − spent. Negative is a real outcome. No
+  // delta pill here: the "× spend" multiplier is the tile's one pill (a week-over-week swing in
+  // a derived figure read as noise next to it — dropped 2026-09-22).
   const fmtHours = fmt.hours || DEFAULT_FMT.hours;
   const saved = Number(totals.savedUsd || 0);
   const savedTile = tile(doc, {
     iconD: ICONS.saved, label: 'Saved',
-    chip: prev ? deltaChip(doc, saved, prev.savedUsd, range) : null,
+    chip: null,
     valueNodes: [doc.createTextNode(`${saved < 0 ? '−' : ''}${fmt.usd(Math.abs(saved))}`)],
     sub: `≈ ${fmtHours(totals.humanHours)} of human work`,
   });
   savedTile.querySelector('.stat-value').classList.toggle('is-neg', saved < 0);
   savedTile.querySelector('.stat-value').classList.toggle('is-pos', saved > 0);
+  // Far right of the label row: how many times over the spend paid for itself.
+  const mult = savedMultChip(doc, saved, totals.spentUsd);
+  if (mult) savedTile.querySelector('.stat-label').appendChild(mult);
   row.appendChild(savedTile);
 
   // Pipeline spend (D7): pipeline-only money; sub = share of the combined

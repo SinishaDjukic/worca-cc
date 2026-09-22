@@ -134,7 +134,10 @@ function computeKpis(rs, now, humanRateUsd = 0) {
   const usd = sum(rs.map(usdOf));
   const hours = round2(sum(rs.map(hoursOf)));
   const paired = rs.filter((r) => isNum(r.wallMs) && isNum(r.activeMs));
-  const wallSum = sum(paired.map((r) => r.wallMs));
+  // Autonomy = active ÷ (wall − paused): a run parked on a pause or a crash was not waiting on a
+  // human, so its parked time leaves the denominator. `pausedMs` is additive — records pushed
+  // before it existed park nothing.
+  const wallSum = sum(paired.map((r) => Math.max(0, r.wallMs - (isNum(r.pausedMs) ? r.pausedMs : 0))));
   const withPr = rs.filter((r) => r.pr && (r.pr.url || r.pr.number != null));
   const reviews = rs.map((r) => r.cycles?.review).filter(isNum);
   const d = new Date(now);
@@ -302,6 +305,7 @@ function toRunRow(r, humanRateUsd = 0) {
     id: r.id, title: r.title ?? '(untitled)', startedAt: r.startedAt,
     workflow: r.workflow?.name ?? r.workflow?.id ?? null, result: r.result,
     usd, wallMs: isNum(r.wallMs) ? r.wallMs : null, activeMs: isNum(r.activeMs) ? r.activeMs : null,
+    pausedMs: isNum(r.pausedMs) ? r.pausedMs : null,
     humanHours, savedUsd: humanHours == null ? null : round2(humanHours * humanRateUsd - usd),
     reviewCycles: isNum(r.cycles?.review) ? r.cycles.review : null,
     pr: r.pr && (r.pr.url || r.pr.number != null) ? { number: Number.isInteger(r.pr.number) ? r.pr.number : null, url: safeHttpUrl(r.pr.url) } : null,
@@ -353,7 +357,7 @@ export function aggregate(records, { range = 'this-month', from = null, to = nul
   };
 }
 
-export const CSV_COLUMNS = Object.freeze(['startedAt', 'title', 'workflow', 'result', 'costUsd', 'humanHours', 'savedUsd', 'wallMs', 'activeMs', 'reviewCycles', 'prNumber', 'prUrl', 'actor', 'source', 'projects', 'id']);
+export const CSV_COLUMNS = Object.freeze(['startedAt', 'title', 'workflow', 'result', 'costUsd', 'humanHours', 'savedUsd', 'wallMs', 'activeMs', 'pausedMs', 'reviewCycles', 'prNumber', 'prUrl', 'actor', 'source', 'projects', 'id']);
 
 function csvCell(v) {
   if (v == null) return '';
@@ -367,7 +371,7 @@ export function toCsv(runRows) {
   const lines = [CSV_COLUMNS.join(',')];
   for (const r of runRows) {
     lines.push([
-      r.startedAt, r.title, r.workflow, r.result, r.usd, r.humanHours, r.savedUsd, r.wallMs, r.activeMs, r.reviewCycles,
+      r.startedAt, r.title, r.workflow, r.result, r.usd, r.humanHours, r.savedUsd, r.wallMs, r.activeMs, r.pausedMs, r.reviewCycles,
       r.pr?.number, r.pr?.url, r.actor, r.source, (r.projects || []).join(' '), r.id,
     ].map(csvCell).join(','));
   }

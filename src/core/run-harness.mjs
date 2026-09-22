@@ -692,7 +692,9 @@ export class RunHarness extends EventEmitter {
     this.pauseDetail = null;                 // the human detail behind pauseReason ('error': the clipped message)
     // Team metrics (§4.4 interventions). Resume runs on a NEW instance, so the counters are
     // stamped into the persisted resume point at every pause and re-seeded in resume().
-    this._metricsIv = { questions: 0, pauses: 0, resumes: 0, lastPauseReason: null, lastPauseDetail: null };
+    // pausedMs: time the run spent parked (paused, or dead between a crash and its resume);
+    // pausedAt: the pause stamp resume() measures from (null while running).
+    this._metricsIv = { questions: 0, pauses: 0, resumes: 0, pausedMs: 0, pausedAt: null, lastPauseReason: null, lastPauseDetail: null };
     this._metricsRecorded = false;
     this._setupDone = false;                 // run()/resume() flip this right before _engineRun (setup replay)
     this._rehydrated = true;                 // resume() clears this until the paused run is rehydrated (the 'resume' site)
@@ -1352,7 +1354,21 @@ export class RunHarness extends EventEmitter {
       this.state.stepper = safeParse(row.stepper);
       this.state.tools = safeParse(row.tools);
       this.state.branch = safeParse(row.branch);
-      this.state.steps = (steps || []).map((s) => ({ ...s, runningSince: null }));
+      // Parked time (autonomy = active ÷ (wall − paused)). A paused row is measured from the
+      // stamp _completePaused wrote into the point; an interrupted row from the last heartbeat
+      // (the last time the dead process was seen alive — reconcileStaleRunning keeps it for
+      // this). A point written before the stamp existed falls back to the row's updated_at.
+      // The same anchor closes every step clock a crash left running: the tail up to the
+      // anchor is real work that the crash never folded, the rest of the gap is parked.
+      const iv = rp.interventions && typeof rp.interventions === 'object' ? rp.interventions : {};
+      const anchor = Date.parse(row.status === 'interrupted' ? (row.heartbeat_at || row.updated_at) : (iv.pausedAt || row.updated_at));
+      const now = Date.now();
+      const parkedMs = Number.isFinite(anchor) ? Math.max(0, now - anchor) : 0;
+      this.state.steps = (steps || []).map((s) => {
+        if (s.runningSince == null || !Number.isFinite(anchor)) return { ...s, runningSince: null };
+        return { ...s, activeMs: (s.activeMs || 0) + Math.max(0, Math.min(anchor, now) - s.runningSince), runningSince: null };
+      });
+      this.state.totalActiveMs = sumStepActive(this.state.steps);
       this.baseName = row.base_name;
       this.planDatePrefix = row.date_prefix;
       this.pipeline = { id: row.id, dir: rp.pipelineDir, promptText: row.prompt || '' };
@@ -1362,10 +1378,10 @@ export class RunHarness extends EventEmitter {
       this.stepModels = rp.stepModels || null;
       this.workflowId = rp.workflowId || this.workflowId;
       // Pauses are counted only in _completePaused, so a crash-resume of an `interrupted`
-      // run adds a resume but no pause (§4.4 decision 6).
-      const iv = rp.interventions && typeof rp.interventions === 'object' ? rp.interventions : {};
+      // run adds a resume but no pause (§4.4 decision 6). The stamp is consumed here.
       this._metricsIv = {
         questions: iv.questions | 0, pauses: iv.pauses | 0, resumes: (iv.resumes | 0) + 1,
+        pausedMs: (Number.isFinite(iv.pausedMs) ? iv.pausedMs : 0) + parkedMs, pausedAt: null,
         lastPauseReason: iv.lastPauseReason ?? null, lastPauseDetail: iv.lastPauseDetail ?? null,
       };
       // The saved point carries the pause that produced it; a resumed run is running.
@@ -4437,6 +4453,7 @@ export class RunHarness extends EventEmitter {
     const rp = this.state.resumePoint;
     // ABOVE the `if (rp …)` — a pause counts whether or not the engine produced a resume point.
     this._metricsIv.pauses += 1;
+    this._metricsIv.pausedAt = new Date().toISOString();   // resume() measures the parked time from here
     this._metricsIv.lastPauseReason = this.pauseReason || null;
     // _setPauseReason (run-harness.mjs:820) always stores a string or null.
     this._metricsIv.lastPauseDetail = this.pauseDetail == null ? null : String(this.pauseDetail).slice(0, 400);

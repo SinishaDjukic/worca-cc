@@ -1459,10 +1459,13 @@ export function reconcileStaleRunning({
     .map((r) => r.id);
   if (candidates.length === 0) return { reconciled: 0, ids: [] };
 
-  // Status-guarded UPDATE. Also NULLs owner columns so reclassified rows are clean.
+  // Status-guarded UPDATE. Also NULLs the owner columns so reclassified rows are clean.
+  // heartbeat_at STAYS: it is the last time the dead process was seen alive, and resume()
+  // measures the interrupted run's parked time (and closes its step clocks) from it. Nothing
+  // reads it on a non-running row otherwise; claimPipelineOwnership re-stamps it on resume.
   return tx(() => {
     const upd = getDb().prepare(
-      `UPDATE pipelines SET status = ?, owner_pid = NULL, owner_host = NULL, heartbeat_at = NULL
+      `UPDATE pipelines SET status = ?, owner_pid = NULL, owner_host = NULL
        WHERE id = ? AND status IN (${placeholders})`);
     const flipped = [];
     for (const id of candidates) {

@@ -21,6 +21,7 @@ test('single-project done → exact RunRecord v1', () => {
     endedAt: '2026-09-15T14:40:58Z',
     wallMs: 646986,
     activeMs: 512340,
+    pausedMs: 0,
     result: 'done',
     failure: null,
     workflow: { id: 'wf_auto', name: 'Auto', version: 2, rev: '1a2b3c4d' },
@@ -36,6 +37,11 @@ test('single-project done → exact RunRecord v1', () => {
     git: { branch: 'worca/idempotency-keys', head: '8067ff25', base: 'dev', filesChanged: 12, insertions: 340, deletions: 25 },
     actor: 'Siniša Đukić',
   });
+});
+
+test('a resumed run records its parked time; absent or non-finite → 0', () => {
+  assert.equal(buildRunRecord({ ...resumedRun, pausedMs: 30_093_429 }, { now: new Date(NOW) }).pausedMs, 30_093_429);
+  assert.equal(buildRunRecord({ ...projectDone, pausedMs: Number.NaN }, { now: new Date(NOW) }).pausedMs, 0);
 });
 
 test('field order is fixed (serialised key order == RECORD_FIELDS)', () => {
