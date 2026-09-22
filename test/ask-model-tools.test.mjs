@@ -238,6 +238,20 @@ test('activity labels and the system prompt carry the family', () => {
   assert.match(r18, /\[worca event\] model card <id> applied/);
 });
 
+// The tools and the rules NAME the wire protocols; a name the validator does not know sends the
+// model into a refusal it can only recover from by guessing (upstream.api "anthropic-messages"
+// was exactly that). Pin both to UPSTREAM_APIS.
+test('the api names in the tool descriptions and rule 18 are the ones the validator accepts', async () => {
+  const { UPSTREAM_APIS } = await import('../src/core/model-env.mjs');
+  const tools = createAskTools({ limits: {}, redact: (s) => s, models: { list: async () => ({}), providers: async () => ({}), test: async () => ({}), copilotModels: async () => [], validateChange: async () => ({}) } });
+  const text = [...tools.list().filter((t) => t.name === 'list_models' || t.name === 'propose_model_change').map((t) => t.description),
+    ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('18.'))].join('\n');
+  for (const api of UPSTREAM_APIS) assert.ok(new RegExp(`(^|[^-\\w])${api}([^-\\w]|$)`).test(text), `names the api "${api}"`);
+  for (const wrong of ['anthropic-messages', 'anthropic_messages', 'openai_chat', 'messages']) {
+    assert.ok(!text.includes(wrong), `never names a protocol "${wrong}" the validator would refuse`);
+  }
+});
+
 test('applyModelChange replays each kind through the setters and re-merges an edit onto the entry as it is now', async () => {
   const log = [];
   const io = {
