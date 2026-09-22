@@ -109,6 +109,9 @@ function parseArgs(argv) {
     sourceBranch: undefined,
     featureBranch: undefined,
     memoryScope: undefined,
+    after: undefined,
+    afterAny: false,
+    sourceFromPrevious: false,
     help: false,
     _: [],
   };
@@ -175,6 +178,8 @@ function parseArgs(argv) {
       out.wait = true;
       continue;
     }
+    if (arg === '--after-any') { out.afterAny = true; continue; }
+    if (arg === '--source-from-previous') { out.sourceFromPrevious = true; continue; }
 
     let inlineValue;
     const eq = arg.indexOf('=');
@@ -294,6 +299,9 @@ Options:
   --cron "<m h dom mon dow>"   Repeat (cron subset: fixed time + days of week or one day of month)
                            More schedule options (--until, --count, --overlap, --max-failures,
                            --if-missed, --grace, --tz): worca schedule help
+  --after <id>             Start when another run ends: a run id or a scheduled run id (any unique prefix)
+  --after-any              …even if that run fails or is stopped
+  --source-from-previous   Start on that run's feature branch (with --after)
   --yes, --non-interactive Auto-answer clarify (first option) and gates (continue)
   --ui                     Same as "worca ui start" (accepts --port, --open, --mock)
   --install <targetDir>    Copy agents + /worca skill into <targetDir>/.claude
@@ -3180,7 +3188,8 @@ async function main() {
   // start path checks it again then.
   const scheduling = wantsSchedule(flags);
   if (!scheduling && flags.wait) fail('--wait needs --at "<when>"');
-  const spec = scheduling ? readScheduleFlags(flags, { fail }) : null;
+  if (!scheduling && (flags.sourceFromPrevious || flags.afterAny)) fail('--source-from-previous / --after-any need --after');
+  const spec = scheduling ? readScheduleFlags(flags, { fail, projectDir }) : null;
   if (budget.blocked && scheduling) {
     out(c('yellow', `Note: the total cost limit is reached right now (${budgetRefusalDetail(budget)}). The run only starts if the budget allows it then.`));
   }

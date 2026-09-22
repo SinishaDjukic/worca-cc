@@ -1473,6 +1473,7 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .ws-src-name{font-weight:600;font-size:12.5px;color:var(--ink-2);}
 .ws-src-row .select-wrap{width:100%;}
 .ws-src-row select[disabled]{opacity:.55;}
+.ws-src-prev { margin-top: 6px; }
 
 /* Workspaces list: the Projects list's shape (one card headed "Workspaces · N", a row per
    workspace that IS the control), on its own ids. The page rides the pd- classes below. */
@@ -3230,6 +3231,8 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .hd-pr:hover{opacity:.88;}
 .hd-pr-link{flex:0 0 auto;font:600 12.5px var(--sans);}
 .hd-pr-link[hidden]{display:none;}
+.hd-after{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;flex:0 0 auto;}
+.hd-after[hidden]{display:none;}
 
 /* WIDTH GOES ON `#shipit-modal .card`, NOT `.shipit-card`. The markup is
    `<div class="card shipit-card">` inside `.viewer-modal`, and
@@ -3344,7 +3347,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    `.hd-diff-file` already has its own (inset) ring and is not repeated here. */
 .hd-tab:focus-visible,.hd-back:focus-visible,.hd-resume:focus-visible,.pd-tab:focus-visible,.pd-back:focus-visible,.pd-new:focus-visible,.pd-history:focus-visible,.pd-remove:focus-visible,.pd-sec:focus-visible,.proj-open:focus-visible,.pd-ov-link:focus-visible,
 .hd-more:focus-visible,.hd-report:focus-visible,
-.hd-archive:focus-visible,.hd-pr:focus-visible,.hd-pr-link:focus-visible,
+.hd-archive:focus-visible,.hd-pr:focus-visible,.hd-pr-link:focus-visible,.hd-after:focus-visible,
 .hd-branch-copy:focus-visible,.hd-sec:focus-visible,.hist-open:focus-visible,
 .hist-branch-copy:focus-visible,.shipit-ok:focus-visible,.shipit-cancel:focus-visible{
   outline:2px solid var(--ink);outline-offset:2px;}
@@ -3406,8 +3409,8 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .rc-qpill{display:inline-flex;align-items:center;padding:5px 11px;border-radius:999px;
   background:var(--amber-bg);color:var(--amber-ink);font:700 11.5px var(--sans);white-space:nowrap;}
 .rc-qpill[hidden]{display:none;}
-/* the four 30px icon buttons; .rc-open mirrors .hist-open exactly */
-.rc-acts .btn-pause,.rc-acts .btn-resume,.rc-acts .btn-stop,.rc-open{
+/* the five 30px icon buttons; .rc-open mirrors .hist-open exactly */
+.rc-acts .btn-pause,.rc-acts .btn-resume,.rc-acts .btn-stop,.rc-after,.rc-open{
   display:inline-flex;align-items:center;justify-content:center;gap:0;
   width:30px;height:30px;padding:0;border-radius:9px;background:var(--panel);cursor:pointer;}
 .rc-acts .btn-pause,.rc-acts .btn-resume{border:1px solid var(--amber);color:var(--amber-ink);}
@@ -3418,9 +3421,15 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    with `.rc-acts .btn-pause` above and would LOSE on source order — a paused card
    would show both buttons. Re-state it at the cluster's specificity. */
 .rc-acts .btn-pause[hidden],.rc-acts .btn-resume[hidden]{display:none;}
+/* Same footgun for the run-chain button: the shared `display:inline-flex` above is an
+   AUTHOR rule and outranks the UA `[hidden]{display:none}`, so paintRunCard's
+   `afterBtn.hidden = true` would not hide it. Re-state it here. */
+.rc-acts .rc-after[hidden]{display:none;}
 .rc-open{border:1px solid var(--line);color:var(--ink-2);}
 .rc-open:hover{background:var(--ink);color:var(--on-ink);border-color:var(--ink);}
-.rc-open:focus-visible,.rc-branch-copy:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.rc-after{border:1px solid var(--line);color:var(--ink-2);}
+.rc-after:hover{background:var(--ink);color:var(--on-ink);border-color:var(--ink);}
+.rc-after:focus-visible,.rc-open:focus-visible,.rc-branch-copy:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* ---------- Running redesign: shared keyframes (C2 — declared ONCE, here) ----------
    @keyframes are name-resolved, not cascaded, so their position relative to the
    rules that use them is irrelevant; what matters is that there is exactly one of
@@ -5084,6 +5093,13 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .sched-presets button{flex:1 1 auto;padding:9px 8px;font-size:12.5px;white-space:nowrap;}
 .sched-quick{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;}
 .sched-quick[hidden]{display:none;}
+.sched-kind{display:flex;margin-bottom:14px;}
+.sched-kind button{flex:1 1 0;padding:11px 12px;font-size:13px;}
+.sched-after{display:grid;gap:10px;}
+/* paint() hides the presets seg and the After block by the `hidden` PROPERTY. `.sched-presets`
+   (display:flex) and `.sched-after` (display:grid) are AUTHOR display rules and outrank the UA
+   [hidden]{display:none} — the .sched-quick[hidden] footgun above. Restate both. */
+.sched-presets[hidden],.sched-after[hidden]{display:none;}
 .sched-chip{border:1.5px solid transparent;cursor:pointer;font-family:inherit;transition:background .14s,border-color .14s;}
 .sched-chip:hover{border-color:var(--line-2);}
 .sched-chip.on{background:var(--surface);border-color:var(--ink);color:var(--ink);}

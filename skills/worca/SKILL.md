@@ -29,7 +29,7 @@ Useful flags (pass through when the user asks):
 - `--model <m>` / `--permission-mode <m>` — Claude model / permission mode (default `acceptEdits`).
 - `--mock` — run the full pipeline offline with canned agents (no Claude spawn, no tokens); great for a dry run. Equivalent to setting `WORCA_MOCK=1`.
 - `--yes` / `--non-interactive` — auto-answer (clarify picks the first option; gates choose "continue"). Use for unattended runs.
-- `--at "<when>"` — schedule the run instead of starting it now (`02:00`, `tomorrow 02:00`, `+90m`, `2026-09-19 02:00`). Add `--wait` to hold the terminal and start it there; otherwise the Worca UI server starts it. `--every "weekdays 02:00"` / `--cron "0 2 * * 1-5"` repeat it. Manage with `worca schedule list | cancel <id>`.
+- `--at "<when>"` — schedule the run instead of starting it now (`02:00`, `tomorrow 02:00`, `+90m`, `2026-09-19 02:00`). Add `--wait` to hold the terminal and start it there; otherwise the Worca UI server starts it. `--every "weekdays 02:00"` / `--cron "0 2 * * 1-5"` repeat it. Manage with `worca schedule list | cancel <id>`. `--after <id>` starts it when that run ends (`--after-any` also on failure, `--source-from-previous` on its branch).
 
 Example:
 

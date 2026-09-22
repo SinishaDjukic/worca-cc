@@ -29,6 +29,8 @@ project's working tree, so nothing is ever committed to your repo.
                                         not survive a reboot. The tickets, schedules and the
                                         activity feed are DB rows: scheduled_runs, schedules,
                                         notifications (see scheduled-runs.md).
+                                        (v34: after_kind/after_id/after_policy/
+                                        source_from_previous — a run that waits for another run.)
   ask/<threadId>/att/<attachmentId>.<ext>  Ask Worca attachment bodies — .txt for text kinds,
                                         the sniffed type's extension for images/PDFs (threads, messages and
                                         run links live in the DB: ask_threads, ask_messages,

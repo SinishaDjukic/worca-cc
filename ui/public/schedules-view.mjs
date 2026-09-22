@@ -28,6 +28,11 @@ const KIND = {
 };
 const RESULT_WORD = { completed: 'completed', error: 'ended with an error', failed: 'could not start', missed: 'missed', skipped: 'skipped', paused: 'paused', stopped: 'stopped' };
 const RESULT_FAMILY = { completed: 'green', error: 'red', failed: 'red', missed: 'amber', skipped: 'grey', paused: 'amber', stopped: 'grey' };
+/** How the run an after-ticket waits for stands (its pipeline or ticket status). */
+const AFTER_WORD = { running: 'running', starting: 'starting', created: 'starting', pausing: 'pausing', paused: 'paused', scheduled: 'scheduled', firing: 'starting', fired: 'starting',
+  done: 'finished', error: 'ended with an error', stopped: 'stopped', interrupted: 'interrupted', missed: 'missed', canceled: 'canceled', failed: 'could not start', skipped: 'skipped' };
+const afterWord = (a) => (a && a.status ? (AFTER_WORD[a.status] || a.status) : 'waiting');
+const afterName = (a) => `‘${(a && a.title) || 'the run before it'}’`;
 
 /** A constant SVG string from ICON as a node, parsed as XML. */
 function svgIcon(markup) {
@@ -98,6 +103,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
   function metaLine(item) {
     const bits = [deps.targetLabel(item), deps.workflowLabel(item.summary.workflowId)];
     if (item.summary.sourceBranch) bits.push(`from ${item.summary.sourceBranch}`);
+    if (item.sourceFromPrevious) bits.push('from the run before it');
     if (item.summary.mock) bits.push('mock');
     return bits.filter(Boolean).join(' · ');
   }
@@ -108,10 +114,13 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     const src = item.summary.source && item.summary.source.type === 'plugin' ? item.summary.source : null;
     body.append(...[
       row('Task', src ? `${src.plugin} · ${src.taskId} — fetched when the run starts` : (item.summary.prompt || '—')),
+      item.after ? row('After', `${(item.after.title || item.after.id.slice(0, 8))} · ${afterWord(item.after)}`) : null,
+      item.after ? row('If it fails', item.after.policy === 'any' ? 'Start anyway' : 'Do not start') : null,
+      item.sourceFromPrevious ? row('Source branch', 'the run before it') : null,
       row('Feature branch', item.summary.featureBranch ? (item.kind === 'recurring' ? `${item.summary.featureBranch}-<date>` : item.summary.featureBranch) : ''),
       row('Guardrails', item.summary.guardrailsId && item.summary.guardrailsId !== 'permissive' ? item.summary.guardrailsId : ''),
       row('Extra files', item.summary.extras ? String(item.summary.extras) : ''),
-      row('If Worca is not running', item.ifMissed === 'skip' ? 'Skip it' : `Start it late, at most ${item.graceMin >= 60 && item.graceMin % 60 === 0 ? `${item.graceMin / 60} h` : `${item.graceMin} min`}`),
+      item.after ? null : row('If Worca is not running', item.ifMissed === 'skip' ? 'Skip it' : `Start it late, at most ${item.graceMin >= 60 && item.graceMin % 60 === 0 ? `${item.graceMin / 60} h` : `${item.graceMin} min`}`),
       item.kind === 'recurring' ? row('If the previous run is still going', { skip: 'Skip this one', queue: 'Wait, then start', start: 'Start anyway' }[item.overlap]) : null,
       item.kind === 'recurring' ? row('Pause after failures in a row', item.maxFailures ? String(item.maxFailures) : 'Never') : null,
       item.kind === 'recurring' ? row('Runs so far', String(item.runsCount)) : null,
@@ -133,9 +142,14 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
   function ticketRow(t) {
     const missed = t.status === 'missed';
     const firing = t.status === 'firing';
-    const statusWord = missed ? 'Missed' : firing ? 'Starting' : t.queued ? 'Waiting for the previous run' : t.retryAt ? 'Retrying' : 'Scheduled';
+    const chained = !!t.after;
+    const statusWord = missed ? 'Missed' : firing ? 'Starting' : chained ? 'Waiting for a run' : t.queued ? 'Waiting for the previous run' : t.retryAt ? 'Retrying' : 'Scheduled';
     const family = missed ? 'amber' : firing ? 'peach' : 'grey';
-    const timeText = missed ? `was due ${when(t.runAt)}` : `${when(t.runAt)}${countdown(t.runAt) ? ` · in ${countdown(t.runAt)}` : ''}`;
+    // The word after the dot always describes the PREDECESSOR (running / finished / ended with an
+    // error); a missed after-ticket says Missed in the status word and its fail_reason below.
+    const timeText = chained
+      ? `After ${afterName(t.after)} · ${afterWord(t.after)}`
+      : (missed ? `was due ${when(t.runAt)}` : `${when(t.runAt)}${countdown(t.runAt) ? ` · in ${countdown(t.runAt)}` : ''}`);
     const acts = h('div', { class: 'sched-acts' });
     if (!firing) {
       const runNow = h('button', { type: 'button', class: 'btn btn-mini', text: 'Run now' });
@@ -146,18 +160,43 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       }));
       acts.append(runNow);
       if (!t.scheduleId) {
-        const move = h('button', { type: 'button', class: 'btn btn-mini', text: missed ? 'Reschedule' : 'Change time' });
+        const move = h('button', { type: 'button', class: 'btn btn-mini', text: chained ? 'Change…' : (missed ? 'Reschedule' : 'Change time') });
         move.addEventListener('click', async () => {
-          const res = await openScheduleSheet({ mode: 'ticket', runTitle: t.title || '', defaults: model.defaults, initial: { scheduledFor: t.runAt, ifMissed: t.ifMissed, graceMin: t.graceMin } });
+          const res = await openScheduleSheet({
+            mode: 'ticket', runTitle: t.title || '', defaults: model.defaults,
+            initial: chained ? { after: t.after, afterPolicy: t.after.policy } : { scheduledFor: t.runAt, ifMissed: t.ifMissed, graceMin: t.graceMin },
+            candidates: () => api('GET', `/api/schedules/after-candidates?${t.workspaceId ? `workspaceId=${encodeURIComponent(t.workspaceId)}` : `projectDir=${encodeURIComponent(t.projectDir || '')}`}`),
+          });
           if (res) act(() => api('PATCH', `/api/schedules/${t.id}`, res));
         });
         const cancel = h('button', { type: 'button', class: 'btn btn-danger btn-mini', text: missed ? 'Dismiss' : 'Cancel' });
         cancel.addEventListener('click', async () => {
-          if (!missed && !(await deps.confirmModal({ title: 'Cancel scheduled run', message: `Cancel “${t.title || 'this run'}”?\nIt will not start. Nothing has run yet, so there is nothing to clean up.`, confirmLabel: 'Cancel run' }))) return;
+          if (!missed) {
+            // The same sentence, cap and guard as app.js's afterDependentsNote (the Archive note) — not
+            // named `deps`: that is this view's injected dependencies object. The read is async and no modal
+            // is up yet: hold the button, or a second click sends a second DELETE.
+            cancel.disabled = true;
+            let note = '';
+            try {
+              const d = await api('GET', `/api/schedules/dependents?ticketId=${encodeURIComponent(t.id)}`);
+              const waiting = Array.isArray(d && d.dependents) ? d.dependents : [];
+              if (waiting.length) {
+                const names = waiting.slice(0, 4).map((x) => `“${x.title || 'Scheduled run'}”`).join(', ');
+                note = `\n\n${names}${waiting.length > 4 ? ` and ${waiting.length - 4} more` : ''} ${waiting.length === 1 ? 'waits' : 'wait'} for this run and will be marked missed.`;
+              }
+            } catch { /* the note is optional */ }
+            cancel.disabled = false;
+            if (!(await deps.confirmModal({ title: 'Cancel scheduled run', message: `Cancel “${t.title || 'this run'}”?\nIt will not start. Nothing has run yet, so there is nothing to clean up.${note}`, confirmLabel: 'Cancel run' }))) return;
+          }
           act(() => api('DELETE', `/api/schedules/${t.id}`));
         });
         acts.append(move, cancel);
       }
+    }
+    if (!t.scheduleId && !missed) {
+      const next = h('button', { type: 'button', class: 'btn btn-mini', text: 'Schedule next…', title: 'Schedule a run that starts after this one' });
+      next.addEventListener('click', () => { location.hash = `#new/after/t:${t.id}`; });
+      acts.append(next);
     }
     const details = detailsBlock(t);
     return h('section', { class: `card sched-item${missed ? ' attention' : ''}`, 'data-id': t.id },
@@ -167,7 +206,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
           h('div', { class: 'rc-title', text: t.title || 'Scheduled run' }),
           h('div', { class: 'rc-meta' },
             h('span', { class: `rc-status-word st-${family}`, text: statusWord }),
-            h('span', { class: 'rc-seg' }, h('span', { class: 'rc-dot', text: '·' }), h('span', { class: 'sched-when', 'data-at': missed ? '' : t.runAt, text: timeText }))),
+            h('span', { class: 'rc-seg' }, h('span', { class: 'rc-dot', text: '·' }), h('span', { class: 'sched-when', 'data-at': missed || chained ? '' : t.runAt, text: timeText }))),
           h('div', { class: 'sched-target', text: `${t.scheduleId ? 'Repeating' : 'Once'} · ${metaLine(t)}` }),
           missed && t.failReason ? h('div', { class: 'sched-reason', text: t.failReason }) : null)),
       footer(t, acts, details), details);
@@ -380,10 +419,11 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     get tab() { return model.tab; },
     get defaults() { return model.defaults; },
     get counts() { return model.counts; },
-    /** One-off tickets and series occurrences due within `ms`, soonest first (plus missed). */
+    /** One-off tickets and series occurrences due within `ms` (in the list's own order), plus missed — plus
+     *  EVERY waiting after-ticket (its runAt is the sentinel): Running › Scheduled shows a chain whole. */
     upcoming(ms) {
       const limit = Date.now() + ms;
-      return model.tickets.filter((t) => t.status === 'missed' || Date.parse(t.runAt) <= limit);
+      return model.tickets.filter((t) => t.status === 'missed' || (t.after && (t.status === 'scheduled' || t.status === 'firing')) || Date.parse(t.runAt) <= limit);
     },
     ticketRow,
     isLoaded: () => model.loaded,

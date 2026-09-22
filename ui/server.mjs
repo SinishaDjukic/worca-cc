@@ -155,7 +155,7 @@ import { scheduleEventPrompt, scheduleNoticeText } from '../src/core/ask/schedul
 import { applyModelChange } from '../src/core/ask/model-deps.mjs';
 import { modelEventPrompt, modelNoticeText } from '../src/core/ask/model-proposal.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
-import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
+import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import {
   saveGraphWorkflow, importGraphWorkflow, exportGraphJson, workflowFileSlug, nodeDefaultsError,
@@ -225,6 +225,7 @@ import {
   createSchedule, getSchedule, listSchedules, updateSchedule, pauseSchedule, resumeSchedule, skipNext,
   runScheduleNow, deleteSchedule, cancelForTarget, dependentsOfWorkflow, runDueTickets, recordOutcome,
   recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir, scheduleSignature,
+  resolveAfterRef, predecessorState, previousBranchesOf, dependentsOfRun, AFTER_POLICIES, afterRefOf,
 } from '../src/core/scheduler.mjs';
 import {
   onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
@@ -800,6 +801,14 @@ function wireRun(entry) {
           });
           emitChanged('schedules-changed', 'outcome');
         } catch (err) { console.error(`[worca-ui] schedule outcome failed: ${err && err.message ? err.message : err}`); }
+      }
+      if ((name === 'done' || name === 'error') && !entry._chainNudged) {
+        // Run chains: a dependent waits on this run — open its gate now rather than at the next 30 s tick.
+        entry._chainNudged = true;
+        try {
+          const waiting = [...(entry.ticketId ? dependentsOfRun({ ticketId: entry.ticketId }) : []), ...(entry.pipelineId ? dependentsOfRun({ pipelineId: entry.pipelineId }) : [])];
+          if (waiting.length) setTimeout(() => { void schedulerTick(); }, 0);
+        } catch (err) { console.error(`[worca-ui] chain nudge failed: ${err && err.message ? err.message : err}`); }
       }
       if (name === 'title' && payload && typeof payload.title === 'string') {
         // Keep the in-memory run fresh so a late-joining client's hello
@@ -1456,7 +1465,7 @@ const startRunHandler = async (req, res) => {
     // before anything else; everything below still validates the request, so a schedule
     // fails fast now and is validated AGAIN when it starts.
     let sched = null;
-    if (!internal && (body.scheduledFor != null || body.repeat != null)) {
+    if (!internal && (body.scheduledFor != null || body.repeat != null || body.after != null || (body.sourceFromPrevious != null && body.sourceFromPrevious !== false))) {
       const parsed = parseScheduleRequest(body);
       if (!parsed.ok) return badRequest(res, parsed.error);
       sched = parsed;
@@ -1641,6 +1650,11 @@ const startRunHandler = async (req, res) => {
       const wsFileProblem = await promptFileProblem(effectiveSource, projects[0].projectDir);
       if (wsFileProblem) return badRequest(res, wsFileProblem);
 
+      if (sched && sched.after) {
+        const r = resolveAfterRef(sched.after, { workspaceId: ws.id, policy: sched.afterPolicy, isLive: liveProbe });
+        if (!r.ok) return badRequest(res, r.error);
+        sched.afterRef = r.after;
+      }
       if (sched) return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir }));
 
       orch = await createOrchestratorFor({
@@ -1714,6 +1728,11 @@ const startRunHandler = async (req, res) => {
       }
       const humanInLoop = bodyHumanInLoop ?? ((await readRunConfig(projectDir)).humanInLoop !== false);
 
+      if (sched && sched.after) {
+        const r = resolveAfterRef(sched.after, { projectDir, policy: sched.afterPolicy, isLive: liveProbe });
+        if (!r.ok) return badRequest(res, r.error);
+        sched.afterRef = r.after;
+      }
       if (sched) return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, projectDir }));
 
       orch = await createOrchestratorFor({
@@ -1830,7 +1849,24 @@ const SCHEDULER_STAGGER_MS = 3_000;
 /** Validate `scheduledFor` / `repeat` / `ifMissed` / `graceMin` on a run body. */
 function parseScheduleRequest(body, { now = Date.now() } = {}) {
   const defaults = scheduleDefaults();
-  const out = { ok: true, runAtMs: null, repeat: null, ifMissed: defaults.ifMissed, graceMin: defaults.graceMin };
+  const out = { ok: true, runAtMs: null, repeat: null, after: null, afterPolicy: 'done', sourceFromPrevious: false, ifMissed: defaults.ifMissed, graceMin: defaults.graceMin };
+  const given = ['scheduledFor', 'repeat', 'after'].filter((k) => body[k] != null);
+  if (given.length > 1) return { ok: false, error: 'provide scheduledFor, repeat OR after, not both' };
+  if (body.sourceFromPrevious != null && typeof body.sourceFromPrevious !== 'boolean') return { ok: false, error: 'sourceFromPrevious must be true or false' };
+  if (body.sourceFromPrevious === true && body.after == null) return { ok: false, error: 'sourceFromPrevious needs after' };
+  if (body.after != null) {
+    const a = body.after;
+    if (!a || typeof a !== 'object' || Array.isArray(a) || !['ticket', 'pipeline'].includes(a.kind) || typeof a.id !== 'string' || !a.id.trim()) {
+      return { ok: false, error: 'after must be { kind: ticket | pipeline, id }' };
+    }
+    if (body.ifMissed != null || body.graceMin != null) return { ok: false, error: 'ifMissed and graceMin do not apply to a run after another run' };
+    if (body.afterPolicy != null && !AFTER_POLICIES.includes(body.afterPolicy)) return { ok: false, error: `afterPolicy must be one of ${AFTER_POLICIES.join(' | ')}` };
+    if (body.sourceFromPrevious === true && (body.sourceBranch != null || body.sourceBranchByKey != null)) return { ok: false, error: 'sourceFromPrevious and sourceBranch / sourceBranchByKey cannot both be given' };
+    out.after = { kind: a.kind, id: a.id.trim() };
+    out.afterPolicy = body.afterPolicy || 'done';
+    out.sourceFromPrevious = body.sourceFromPrevious === true;
+    return out;
+  }
   if (body.ifMissed != null) {
     if (!MISSED_POLICIES.includes(body.ifMissed)) return { ok: false, error: `ifMissed must be one of ${MISSED_POLICIES.join(' | ')}` };
     out.ifMissed = body.ifMissed;
@@ -1864,7 +1900,7 @@ function parseScheduleRequest(body, { now = Date.now() } = {}) {
 /** The request a ticket stores: the validated body minus schedule fields and uploads. */
 async function storedRequestOf(body, stageId, projectDir) {
   const request = { ...body };
-  for (const k of ['scheduledFor', 'repeat', 'ifMissed', 'graceMin', 'extras', 'internal']) delete request[k];
+  for (const k of ['scheduledFor', 'repeat', 'after', 'afterPolicy', 'sourceFromPrevious', 'ifMissed', 'graceMin', 'extras', 'internal']) delete request[k];
   // Text the user authored is part of the request: a prompt FILE is frozen now, so a
   // file deleted or half-edited overnight cannot fail an unattended run.
   if (request.source && request.source.type === 'markdown' && request.source.promptFile && !request.source.promptText) {
@@ -1896,12 +1932,14 @@ async function scheduleRequest({ body, sched, title, askLink, budget, projectDir
   } else {
     const id = randomUUID();
     const request = await storedRequestOf(body, id, projectDir);
-    ticket = createTicket({
-      id, title, ...target, runAtMs: sched.runAtMs, request, ifMissed: sched.ifMissed, graceMin: sched.graceMin,
-      askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null,
-    });
+    // Both arms carry ifMissed / graceMin: parseScheduleRequest filled them with the Settings defaults
+    // (an after body may not name them), and a chained ticket later moved to a time shows them.
+    const chain = sched.after ? {
+      after: { kind: sched.afterRef.kind, id: sched.afterRef.id }, afterPolicy: sched.afterPolicy, sourceFromPrevious: sched.sourceFromPrevious, ifMissed: sched.ifMissed, graceMin: sched.graceMin,
+    } : { runAtMs: sched.runAtMs, ifMissed: sched.ifMissed, graceMin: sched.graceMin };
+    ticket = createTicket({ id, title, ...target, request, ...chain, askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null });
     if (askLink) {
-      try { flipCard(askLink.threadId, askLink.cardId, { state: 'scheduled', runId: id, scheduledFor: ticket.runAt }); }
+      try { flipCard(askLink.threadId, askLink.cardId, { state: 'scheduled', runId: id, scheduledFor: sched.after ? null : ticket.runAt, after: sched.after ? { kind: sched.afterRef.kind, id: sched.afterRef.id, title: sched.afterRef.title } : null }); }
       catch (err) { console.error(`[worca-ui] ask card schedule flip failed: ${err && err.message ? err.message : err}`); }
     }
   }
@@ -1909,7 +1947,8 @@ async function scheduleRequest({ body, sched, title, askLink, budget, projectDir
   return {
     runId: ticket ? ticket.id : null,
     status: 'scheduled',
-    scheduledFor: ticket ? ticket.runAt : null,
+    scheduledFor: ticket && !ticket.after ? ticket.runAt : null,
+    ...(ticket && ticket.after ? { after: { kind: sched.afterRef.kind, id: sched.afterRef.id, title: sched.afterRef.title }, sourceFromPrevious: ticket.sourceFromPrevious } : {}),
     ...(schedule ? { scheduleId: schedule.id, sentence: schedule.sentence } : {}),
     ...(budget && budget.blocked ? { budgetWarning: 'The total cost limit is reached right now. The run will only start if the budget allows it at that time.' } : {}),
   };
@@ -1949,6 +1988,28 @@ async function fireTicket(ticket) {
       return { ok: false, error: err && err.message ? err.message : String(err), transient: TRANSIENT_SOURCE_KINDS.has(err && err.kind) };
     }
   }
+  if (ticket.after) {
+    const p = predecessorState(ticket.after, { policy: ticket.after.policy, isLive: liveProbe });
+    if (p.state === 'waiting' && !ticket.forced) return { ok: false, error: 'the run before it is still going', transient: true };
+    if (ticket.sourceFromPrevious) {
+      const prev = p.pipelineId ? previousBranchesOf(p.pipelineId) : null;
+      if (!prev) return { ok: false, error: 'the run before it left no branch to start from', transient: false };
+      if (prev.sourceBranch) {
+        if (!(await isValidSourceRef(ticket.projectDir, prev.sourceBranch))) return { ok: false, error: `branch ${prev.sourceBranch} no longer exists`, transient: false };
+      } else {
+        const ws = ticket.workspaceId ? await readWorkspace(ticket.workspaceId) : null;
+        if (!ws) return { ok: false, error: 'workspace not found', transient: false };
+        for (const dir of ws.projectPaths) {
+          const key = projectKey(dir);
+          const br = prev.sourceBranchByKey[key];
+          if (!br) return { ok: false, error: `the run before it has no branch for ${path.basename(dir)}`, transient: false };
+          if (!(await isValidSourceRef(dir, br))) return { ok: false, error: `branch ${br} no longer exists in ${path.basename(dir)}`, transient: false };
+        }
+      }
+      delete body.sourceBranch; delete body.sourceBranchByKey;
+      Object.assign(body, prev);
+    }
+  }
   // Every occurrence of a series needs its own feature branch.
   if (ticket.scheduleId && typeof body.featureBranch === 'string' && body.featureBranch.trim()) {
     const s = getSchedule(ticket.scheduleId);
@@ -1959,6 +2020,14 @@ async function fireTicket(ticket) {
   if (out.status === 200 && out.body && out.body.runId) return { ok: true };
   const error = (out.body && out.body.error) || `the run could not be started (HTTP ${out.status})`;
   return { ok: false, error, transient: out.status >= 500 };
+}
+
+/** The host's in-memory view of a run: by run id, or by the pipeline id it became. liveRunEntry is the
+ *  house lookup: it skips scans / agentgens / benches and, on a resumed lineage (D23), prefers the entry
+ *  still driving the pipeline over a settled same-pipeline entry that sits earlier in Map order. */
+function liveProbe({ id, pipelineId }) {
+  const e = liveRunEntry(id) || (pipelineId ? liveRunEntry(pipelineId) : null);
+  return !!e && !SETTLED_RUN.has(String(e.status || ''));
 }
 
 let _schedulerBusy = false;
@@ -1973,7 +2042,7 @@ export async function schedulerTick({ now = Date.now() } = {}) {
     const out = await runDueTickets({
       now,
       start: fireTicket,
-      isLive: ({ id }) => { const e = runs.get(id); return !!e && !SETTLED_RUN.has(String(e.status || '')); },
+      isLive: liveProbe,
       staggerMs: SCHEDULER_STAGGER_MS,
     });
     for (const id of [...out.failed, ...out.missed]) releaseAskCard(getTicket(id));
@@ -2028,6 +2097,13 @@ function findScheduleItem(id) {
   return t ? { kind: 'once', item: t } : null;
 }
 
+/** A ticket for the wire: its predecessor resolved for display (title, live status, pipeline). */
+function withAfter(t) {
+  if (!t || !t.after) return t;
+  const p = predecessorState(t.after, { policy: t.after.policy, isLive: liveProbe });
+  return { ...t, after: { ...t.after, title: p.title || null, status: p.status || null, pipelineId: p.pipelineId || null } };
+}
+
 // GET /api/schedules[?projectDir=|workspaceId=][&all=1] -> { schedules, tickets, counts, defaults }
 app.get('/api/schedules', (req, res) => {
   try {
@@ -2036,7 +2112,7 @@ app.get('/api/schedules', (req, res) => {
     const all = req.query.all === '1' || req.query.all === 'true';
     res.json({
       schedules: listSchedules({ projectDir, workspaceId }),
-      tickets: listTickets({ projectDir, workspaceId, all }),
+      tickets: listTickets({ projectDir, workspaceId, all }).map(withAfter),
       counts: { ...scheduleCounts(), unread: unreadCount('schedule') },
       defaults: scheduleDefaults(),
     });
@@ -2061,6 +2137,8 @@ app.get('/api/schedules/dependents', (req, res) => {
   const q = req.query;
   const label = (x) => ({ id: x.id, kind: x.kind, title: x.title });
   if (typeof q.workflowId === 'string' && q.workflowId) return res.json({ dependents: dependentsOfWorkflow(q.workflowId) });
+  if (typeof q.pipelineId === 'string' && q.pipelineId) return res.json({ dependents: dependentsOfRun({ pipelineId: q.pipelineId }) });
+  if (typeof q.ticketId === 'string' && q.ticketId) return res.json({ dependents: dependentsOfRun({ ticketId: q.ticketId }) });
   const projectDir = resolveProjectDir(q.projectDir) || null;
   const workspaceId = typeof q.workspaceId === 'string' && q.workspaceId.trim() ? q.workspaceId.trim() : null;
   if (!projectDir && !workspaceId) return badRequest(res, 'workflowId, projectDir or workspaceId is required');
@@ -2072,11 +2150,66 @@ app.get('/api/schedules/dependents', (req, res) => {
   });
 });
 
+// GET /api/schedules/after-candidates?projectDir=|workspaceId= -> what a new run may wait for:
+// live runs of that target and its one-off tickets that have not ended.
+app.get('/api/schedules/after-candidates', (req, res) => {
+  try {
+    const projectDir = resolveProjectDir(req.query.projectDir) || null;
+    const workspaceId = typeof req.query.workspaceId === 'string' && req.query.workspaceId.trim() ? req.query.workspaceId.trim() : null;
+    if (!projectDir && !workspaceId) return badRequest(res, 'projectDir or workspaceId is required');
+    // The ROWS are the source of truth (spec §5): SETTLED_RUN contains 'paused', and another
+    // process's run is not in this host's runs Map at all. The Map only adds live runIds.
+    const where = workspaceId ? 'workspace_key = ?' : "project_key = ? AND target = 'project'";
+    const rows = getDb().prepare(`SELECT id, title, status FROM pipelines WHERE ${where}
+      AND status IN ('created', 'starting', 'running', 'pausing', 'paused') AND archived_at IS NULL ORDER BY started_at DESC LIMIT 50`)
+      .all(workspaceId || projectKey(projectDir));
+    const byPipeline = new Map(rows.map((r) => [r.id, { pipelineId: r.id, runId: null, title: r.title || null, status: r.status }]));
+    for (const r of runs.values()) {
+      if (!r.pipelineId || (r.kind && r.kind !== 'run' && r.kind !== 'workspace-run')) continue;
+      if (workspaceId ? r.workspaceId !== workspaceId : (r.projectDir !== projectDir || r.workspaceId)) continue;
+      const stillGoing = !SETTLED_RUN.has(String(r.status || '')) || r.status === 'paused';
+      if (!stillGoing) continue;
+      const cur = byPipeline.get(r.pipelineId) || { pipelineId: r.pipelineId, title: r.title || null, status: r.status };
+      byPipeline.set(r.pipelineId, { ...cur, runId: r.id, status: r.status });
+    }
+    // listTickets({ oneShotOnly: true }) returns scheduled | firing | missed. A MISSED ticket is left
+    // out: resolveAfterRef refuses it under either policy ("‘X’ was missed — nothing to wait for"),
+    // so offering it would be a dead pick (spec §5 lists it; this is the one deliberate narrowing).
+    const tickets = listTickets({ projectDir, workspaceId, oneShotOnly: true })
+      .filter((t) => t.status !== 'missed')
+      .map((t) => ({ id: t.id, title: t.title, status: t.status, after: t.after ? { kind: t.after.kind, id: t.after.id } : null }));
+    res.json({ runs: [...byPipeline.values()], tickets });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// GET /api/schedules/after/:id -> one predecessor and its target (the #new/after/<id> deep link).
+// async (listProjects is async) — and therefore wrapped: Express 4 does not catch a rejected
+// handler, and the deep link's fetch would hang instead of showing an error line.
+app.get('/api/schedules/after/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (id.startsWith('sch_')) return badRequest(res, 'after a repeating schedule is not supported — give the id of one of its runs');
+    const ref = afterRefOf(id);
+    if (!ref || ref.scheduleId) return res.status(404).json({ error: 'run not found' });
+    let projectDir = null;
+    if (ref.kind === 'ticket') projectDir = (getTicket(ref.id) || {}).projectDir || null;   // a purge between the two reads is a null, not a throw
+    else if (!ref.workspaceId) {
+      const projects = await listProjects();
+      projectDir = (projects.find((p) => projectKey(p.path) === ref.projectKey) || {}).path || null;
+    }
+    res.json({ kind: ref.kind, id: ref.id, title: ref.title, status: ref.status, projectDir, workspaceId: ref.workspaceId || null });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 app.get('/api/schedules/:id', (req, res) => {
   const found = findScheduleItem(req.params.id);
   if (!found) return res.status(404).json({ error: 'schedule not found' });
   const history = found.kind === 'recurring' ? listTickets({ scheduleId: found.item.id, all: true, limit: 50 }).reverse() : [];
-  res.json({ ...found, history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50 }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
+  res.json({ ...found, item: found.kind === 'once' ? withAfter(found.item) : found.item, history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50 }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
 });
 
 // One schedule change, for the REST routes AND an applied Ask Worca schedule card — so the
@@ -2105,15 +2238,40 @@ async function scheduleVerb(verb, id, body = {}) {
           patch.ifMissed = body.ifMissed;
         }
         if (body.graceMin != null) patch.graceMin = body.graceMin;
-        if (found.item.scheduleId && patch.runAtMs != null) return out(400, { error: 'an occurrence of a repeating schedule cannot be moved — edit the schedule, or skip this occurrence' });
+        if (body.after != null) {
+          if (body.scheduledFor != null) return out(400, { error: 'provide scheduledFor OR after, not both' });
+          if (body.ifMissed != null || body.graceMin != null) return out(400, { error: 'ifMissed and graceMin do not apply to a run after another run' });
+          const policy = body.afterPolicy != null ? body.afterPolicy : (found.item.after ? found.item.after.policy : 'done');
+          if (!AFTER_POLICIES.includes(policy)) return out(400, { error: `afterPolicy must be one of ${AFTER_POLICIES.join(' | ')}` });
+          const r = resolveAfterRef(body.after, { projectDir: found.item.projectDir, workspaceId: found.item.workspaceId, policy, selfId: found.item.id, isLive: liveProbe });
+          if (!r.ok) return out(400, { error: r.error });
+          patch.after = { kind: r.after.kind, id: r.after.id };
+          patch.afterPolicy = policy;
+        } else if (body.afterPolicy != null) {
+          if (!AFTER_POLICIES.includes(body.afterPolicy)) return out(400, { error: `afterPolicy must be one of ${AFTER_POLICIES.join(' | ')}` });
+          // A timed ticket has no policy (updateTicket drops one sent with runAtMs); say so rather than accept and
+          // ignore — for a policy sent WITH a time, and for one sent ALONE to a ticket that has no predecessor
+          // (that wrote after_policy onto a row with after_id NULL: harmless, but a lie in the row).
+          if (patch.runAtMs != null || !found.item.after) return out(400, { error: 'afterPolicy does not apply to a run at a time' });
+          patch.afterPolicy = body.afterPolicy;
+        }
+        if (body.sourceFromPrevious != null) {
+          if (typeof body.sourceFromPrevious !== 'boolean') return out(400, { error: 'sourceFromPrevious must be true or false' });
+          // Needs a predecessor AFTER this patch: none on the row and none coming, or a move back to a time
+          // (which clears after_* — `source_from_previous = 1` with `after_id = NULL` must never be written).
+          if (body.sourceFromPrevious && (patch.runAtMs != null || (!patch.after && !found.item.after))) return out(400, { error: 'sourceFromPrevious needs after' });
+          patch.sourceFromPrevious = body.sourceFromPrevious;
+        }
+        if (found.item.scheduleId && (patch.runAtMs != null || patch.after)) return out(400, { error: 'an occurrence of a repeating schedule cannot be moved — edit the schedule, or skip this occurrence' });
         const t = updateTicket(found.item.id, patch);
         if (!t) return out(409, { error: `this run is ${found.item.status} and can no longer be changed` });
-        if (t.askThreadId && t.askCardId && patch.runAtMs != null) {
-          try { flipCard(t.askThreadId, t.askCardId, { scheduledFor: t.runAt }); } catch { /* display only */ }
+        const item = withAfter(t);
+        if (t.askThreadId && t.askCardId && (patch.runAtMs != null || patch.after)) {
+          try { flipCard(t.askThreadId, t.askCardId, { scheduledFor: t.after ? null : t.runAt, after: t.after ? { kind: t.after.kind, id: t.after.id, title: item.after.title } : null }); } catch { /* display only */ }
         }
         emitChanged('schedules-changed', 'updated');
         emitChanged('notifications-changed');
-        return out(200, { kind: 'once', item: t });
+        return out(200, { kind: 'once', item });
       }
       const patch = {};
       for (const k of ['title', 'rule', 'overlap', 'maxFailures', 'ifMissed', 'graceMin']) if (body[k] !== undefined) patch[k] = body[k];
@@ -2149,6 +2307,10 @@ async function scheduleVerb(verb, id, body = {}) {
     return out(200, { ok: true });
   }
   if (verb === 'run-now') {
+    if (found.kind === 'once' && found.item.after && found.item.sourceFromPrevious) {
+      const p = predecessorState(found.item.after, { policy: found.item.after.policy, isLive: liveProbe });
+      if (!p.pipelineId || !previousBranchesOf(p.pipelineId)) return out(409, { error: `Start ‘${p.title || 'the run before it'}’ first, or change its source branch` });
+    }
     const ticket = found.kind === 'recurring' ? runScheduleNow(found.item.id) : requestRunNow(found.item.id);
     if (!ticket) return out(409, { error: `this ${found.kind === 'recurring' ? 'schedule' : 'run'} is ${found.item.status} and cannot be started` });
     emitChanged('schedules-changed', 'run-now');
@@ -2182,7 +2344,7 @@ async function applyScheduleCard(card) {
     detail = b.status === 'failed' ? `could not start: ${b.failReason || 'unknown error'}`
       : b.status === 'fired' ? `started${b.pipelineId ? ` as run ${b.pipelineId}` : ''}` : 'starting within seconds';
     if (b.status === 'failed') return { ok: false, error: `could not start: ${b.failReason || 'unknown error'}`, runId: b.runId };
-  } else if (card.action === 'move') detail = card.after && card.after.when ? `now at ${card.after.when}` : 'moved';
+  } else if (card.action === 'move') detail = card.after && card.after.when ? `now at ${card.after.when}` : card.after && card.after.afterRun ? `now after ‘${card.after.afterRun.title || card.after.afterRun.id}’` : 'moved';
   else if (card.action === 'edit') {
     const it = b.item;
     detail = !it ? 'changed'
@@ -3826,7 +3988,23 @@ app.get('/api/branches', async (req, res) => {
       listLocalBranches(projectDir),
       currentBranch(projectDir),
     ]);
-    res.json({ branches, current });
+    // Run branches: this project's pipelines whose feature branch still exists (spec D7).
+    // Throw-safe on purpose: test/branches-api.test.mjs calls this route for a temp directory
+    // that is not a registered project (and has no temp home) — the DB read must never turn the
+    // plain branch list into a 500.
+    const have = new Set(branches);
+    const runsOut = [];
+    try {
+      const rows = getDb().prepare(`SELECT id, title, status, updated_at, branch FROM pipelines
+        WHERE project_key = ? AND target = 'project' AND archived_at IS NULL ORDER BY started_at DESC LIMIT 50`).all(projectKey(projectDir));
+      for (const r of rows) {
+        let b = null; try { b = JSON.parse(r.branch || 'null'); } catch { b = null; }
+        if (b && typeof b.feature === 'string' && have.has(b.feature)) runsOut.push({ branch: b.feature, pipelineId: r.id, title: r.title || null, status: r.status, endedAt: r.updated_at || null });
+      }
+    } catch (err) {
+      console.error(`[worca-ui] run branches lookup failed: ${err && err.message ? err.message : err}`);
+    }
+    res.json({ branches, current, runs: runsOut });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -5928,13 +6106,14 @@ async function askSystemPromptFor(catalog) {
 /** "scheduled Sat Sep 19, 02:00 (run 1a2b…)" / "repeats: Every weekday at 02:00 (sch_…)" / "proposes: …" — or ''. */
 function askCardScheduleLine(b, tz = null) {
   if (b.state === 'scheduled' && b.scheduleId) return `repeats: ${b.sentence || ''} (${b.scheduleId})`;
+  if (b.state === 'scheduled' && b.after) return `after ‘${b.after.title || b.after.id}’ (run ${b.runId})`;
   if (b.state === 'scheduled' && b.runId) {
     const ms = Date.parse(b.scheduledFor || '');
     const when = Number.isFinite(ms) ? formatInstant(ms, isValidTimeZone(tz) ? tz : Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC') : '?';
     return `scheduled for ${when} (run ${b.runId})`;
   }
   const s = b.card && b.card.schedule;
-  if (b.state === 'proposed' && s) return s.kind === 'repeat' ? `proposes: ${s.sentence}` : `proposes: once at ${s.when}`;
+  if (b.state === 'proposed' && s) return s.kind === 'repeat' ? `proposes: ${s.sentence}` : s.kind === 'after' ? `proposes: ${s.text}` : `proposes: once at ${s.when}`;
   return '';
 }
 

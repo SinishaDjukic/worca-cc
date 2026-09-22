@@ -13,8 +13,10 @@ import {
   releaseTicket, setTicketPipeline, createSchedule, getSchedule, listSchedules, updateSchedule,
   pauseSchedule, resumeSchedule, skipNext, runScheduleNow, deleteSchedule, cancelForTarget,
   dependentsOfWorkflow, dueTickets, runDueTickets, recordOutcome, recoverScheduler, purgeScheduler,
-  scheduleCounts, summarizeRequest, RETRY_BACKOFF_MIN,
+  scheduleCounts, summarizeRequest, RETRY_BACKOFF_MIN, AFTER_RUN_AT,
+  afterRefOf, predecessorState, previousBranchesOf, dependentsOfRun, resolveAfterRef,
 } from '../src/core/scheduler.mjs';
+import { projectKey } from '../src/core/store.mjs';
 import { listNotifications, unreadCount } from '../src/core/notifications.mjs';
 
 useTempHome(after);
@@ -339,4 +341,233 @@ test('summarizeRequest never leaks the whole prompt', () => {
   assert.equal(s.prompt.length, 281);
   assert.equal(s.extras, 2);
   assert.equal(s.mock, true);
+});
+
+test('an after-ticket stores its predecessor, sits at the sentinel time, and is always due', () => {
+  const t = createTicket({ projectDir: DIR, title: 'Add tests', request: REQ, after: { kind: 'pipeline', id: 'abcd1234' }, afterPolicy: 'any', sourceFromPrevious: true, now: T0 });
+  assert.deepEqual(t.after, { kind: 'pipeline', id: 'abcd1234', policy: 'any' });
+  assert.equal(t.sourceFromPrevious, true);
+  assert.equal(t.runAt, AFTER_RUN_AT, 'D11: invisible to an older build');
+  assert.equal(t.status, 'scheduled');
+  assert.ok(dueTickets({ now: T0 }).some((d) => d.id === t.id), 'due at once — the gate decides');
+  const timed = createTicket({ projectDir: DIR, title: 'Later', runAtMs: T0 + HOUR, request: REQ, now: T0 });
+  assert.equal(timed.after, null);
+  assert.equal(timed.sourceFromPrevious, false);
+  assert.throws(() => createTicket({ projectDir: DIR, request: REQ, now: T0 }), /runAtMs is required/);
+  assert.throws(() => createTicket({ projectDir: DIR, request: REQ, after: { kind: 'series', id: 'x' }, now: T0 }), /after.kind/);
+});
+
+test('updateTicket switches a ticket between a time and a predecessor', () => {
+  const t = createTicket({ projectDir: DIR, title: 'A', runAtMs: T0 + HOUR, request: REQ, now: T0 });
+  const a = updateTicket(t.id, { after: { kind: 'ticket', id: 'some-other-ticket' }, afterPolicy: 'any', sourceFromPrevious: true }, { now: T0 });
+  assert.deepEqual(a.after, { kind: 'ticket', id: 'some-other-ticket', policy: 'any' });
+  assert.equal(a.runAt, AFTER_RUN_AT);
+  assert.equal(a.sourceFromPrevious, true);
+  const b = updateTicket(t.id, { runAtMs: T0 + 2 * HOUR }, { now: T0 });
+  assert.equal(b.after, null, 'a time clears the predecessor');
+  assert.equal(b.sourceFromPrevious, false, '…and the branch choice that needs one');
+  assert.equal(b.runAt, new Date(T0 + 2 * HOUR).toISOString());
+  // …and the policy: a later re-chaining that says nothing about it must not inherit the old `any` —
+  // not even one sent ALONG WITH the time (PATCH { scheduledFor, afterPolicy } is such a caller): a
+  // timed ticket has no policy, so the runAtMs branch's reset must be the last word on after_policy.
+  updateTicket(t.id, { runAtMs: T0 + 3 * HOUR, afterPolicy: 'any' }, { now: T0 });
+  assert.equal(updateTicket(t.id, { after: { kind: 'ticket', id: 'x' } }, { now: T0 }).after.policy, 'done', 'a move to a time also reset after_policy');
+  const c = updateTicket(t.id, { after: { kind: 'ticket', id: 'x' }, afterPolicy: 'any' }, { now: T0 });
+  assert.equal(c.after.policy, 'any');
+  assert.equal(updateTicket(t.id, { afterPolicy: 'bogus' }, { now: T0 }).after.policy, 'any', 'an unknown policy is ignored');
+  // D13: a caller that sends both has no defensible intent — refuse rather than pick one.
+  assert.throws(() => updateTicket(t.id, { runAtMs: T0 + HOUR, after: { kind: 'ticket', id: 'x' } }, { now: T0 }), /runAtMs OR after/);
+  // A malformed predecessor is refused here exactly as createTicket refuses it — never swallowed as "no change".
+  assert.throws(() => updateTicket(t.id, { after: { kind: 'series', id: 'x' } }, { now: T0 }), /after.kind/);
+});
+
+test('predecessorState follows a ticket into its pipeline and reads the outcome gate', () => {
+  const pred = createTicket({ projectDir: DIR, title: 'Refactor', runAtMs: T0 + HOUR, request: REQ, now: T0 });
+  assert.equal(predecessorState({ kind: 'ticket', id: pred.id }, { now: T0 }).state, 'waiting');
+  assert.equal(predecessorState({ kind: 'ticket', id: 'nope' }, { now: T0 }).state, 'gone');
+  cancelTicket(pred.id, { now: T0 });
+  const c = predecessorState({ kind: 'ticket', id: pred.id }, { now: T0 });
+  assert.equal(c.state, 'bad'); assert.equal(c.reason, 'was canceled'); assert.equal(c.title, 'Refactor');
+
+  seedPipelineRow({ id: 'p0000001', title: 'Refactor', status: 'running', startedAt: new Date(T0).toISOString(), branch: { source: 'main', feature: 'worca/refactor-p0000001' } });
+  assert.equal(predecessorState({ kind: 'pipeline', id: 'p0000001' }, { now: T0 }).state, 'waiting');
+  getDb().prepare("UPDATE pipelines SET status = 'paused' WHERE id = 'p0000001'").run();
+  assert.equal(predecessorState({ kind: 'pipeline', id: 'p0000001' }, { now: T0 }).state, 'waiting', 'a paused run is still going');
+  getDb().prepare("UPDATE pipelines SET status = 'error' WHERE id = 'p0000001'").run();
+  assert.equal(predecessorState({ kind: 'pipeline', id: 'p0000001' }, { now: T0 }).state, 'bad');
+  assert.equal(predecessorState({ kind: 'pipeline', id: 'p0000001' }, { now: T0 }).reason, 'ended with an error');
+  assert.equal(predecessorState({ kind: 'pipeline', id: 'p0000001' }, { now: T0, policy: 'any' }).state, 'ok');
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = 'p0000001'").run();
+  const ok = predecessorState({ kind: 'pipeline', id: 'p0000001' }, { now: T0 });
+  assert.equal(ok.state, 'ok'); assert.equal(ok.pipelineId, 'p0000001');
+  // The host's in-memory view wins over a lagging row.
+  assert.equal(predecessorState({ kind: 'pipeline', id: 'p0000001' }, { now: T0, isLive: ({ pipelineId }) => pipelineId === 'p0000001' }).state, 'waiting');
+  assert.equal(predecessorState({ kind: 'pipeline', id: 'zzz' }, { now: T0 }).state, 'gone');
+
+  // A fired ticket without a pipeline: fresh = still starting; stale = it never got one.
+  const fired = createTicket({ projectDir: DIR, title: 'F', runAtMs: T0, request: REQ, now: T0 });
+  getDb().prepare("UPDATE scheduled_runs SET status = 'fired', updated_at = ? WHERE id = ?").run(new Date(T0).toISOString(), fired.id);
+  assert.equal(predecessorState({ kind: 'ticket', id: fired.id }, { now: T0 + MIN }).state, 'waiting');
+  assert.equal(predecessorState({ kind: 'ticket', id: fired.id }, { now: T0 + 10 * MIN }).state, 'bad');
+  setTicketPipeline(fired.id, 'p0000001');
+  assert.equal(predecessorState({ kind: 'ticket', id: fired.id }, { now: T0 + 10 * MIN }).state, 'ok', 'follows into the pipeline');
+
+  // Archive (the History delete) keeps the row but stamps archived_at and removes the branch: the
+  // predecessor is GONE under either policy, by either kind — never a `done` to start from.
+  getDb().prepare("UPDATE pipelines SET archived_at = ? WHERE id = 'p0000001'").run(new Date(T0).toISOString());
+  const arch = predecessorState({ kind: 'pipeline', id: 'p0000001' }, { now: T0, policy: 'any' });
+  assert.equal(arch.state, 'gone'); assert.equal(arch.reason, 'was archived'); assert.equal(arch.pipelineId, 'p0000001');
+  assert.equal(predecessorState({ kind: 'ticket', id: fired.id }, { now: T0 + 10 * MIN }).state, 'gone', 'the ticket follows into the archived pipeline');
+});
+
+test('afterRefOf, previousBranchesOf and dependentsOfRun read the rows', () => {
+  // projectKey stated, not inherited: the assertion below is about THIS value.
+  seedPipelineRow({ id: 'p0000002', title: 'Refactor', status: 'done', projectKey: 'proj-00000001', startedAt: new Date(T0).toISOString(), branch: { source: 'main', feature: 'worca/refactor-p0000002' } });
+  seedPipelineRow({ id: 'w0000001', title: 'Ws', status: 'done', target: 'workspace', workspaceKey: 'ws_1', startedAt: new Date(T0).toISOString(),
+    workspaceMeta: { workspaceId: 'ws_1', branches: { 'proj-a': { source: 'main', feature: 'worca/ws-a' }, 'proj-b': { source: 'dev', feature: 'worca/ws-b' } } } });
+  assert.deepEqual(previousBranchesOf('p0000002'), { sourceBranch: 'worca/refactor-p0000002' });
+  assert.deepEqual(previousBranchesOf('w0000001'), { sourceBranchByKey: { 'proj-a': 'worca/ws-a', 'proj-b': 'worca/ws-b' } });
+  assert.equal(previousBranchesOf('nope'), null);
+  const p = afterRefOf('p0000002');
+  assert.equal(p.kind, 'pipeline'); assert.equal(p.projectKey, 'proj-00000001'); assert.equal(p.workspaceId, null); assert.equal(p.status, 'done');
+  const w = afterRefOf('w0000001');
+  assert.equal(w.workspaceId, 'ws_1'); assert.equal(w.projectKey, null);
+  const t = createTicket({ projectDir: DIR, title: 'B', request: REQ, after: { kind: 'pipeline', id: 'p0000002' }, now: T0 });
+  const tr = afterRefOf(t.id);
+  assert.equal(tr.kind, 'ticket'); assert.equal(tr.status, 'scheduled'); assert.equal(tr.scheduleId, null);
+  assert.equal(afterRefOf('missing'), null);
+  assert.deepEqual(dependentsOfRun({ pipelineId: 'p0000002' }).map((d) => d.id), [t.id]);
+  // A dependent chained on the TICKET that became p0000002 is a dependent of the pipeline too (the Archive note).
+  const became = createTicket({ projectDir: DIR, title: 'Became', runAtMs: T0, request: REQ, now: T0 });
+  getDb().prepare("UPDATE scheduled_runs SET status = 'fired' WHERE id = ?").run(became.id);
+  setTicketPipeline(became.id, 'p0000002');
+  const v = createTicket({ projectDir: DIR, title: 'V', request: REQ, after: { kind: 'ticket', id: became.id }, now: T0 });
+  assert.deepEqual(dependentsOfRun({ pipelineId: 'p0000002' }).map((d) => d.id).sort(), [t.id, v.id].sort());
+  assert.deepEqual(dependentsOfRun({ ticketId: became.id }).map((d) => d.id), [v.id]);
+  const u = createTicket({ projectDir: DIR, title: 'C', request: REQ, after: { kind: 'ticket', id: t.id }, now: T0 });
+  assert.deepEqual(dependentsOfRun({ ticketId: t.id }).map((d) => [d.id, d.kind, d.title]), [[u.id, 'once', 'C']]);
+  cancelTicket(u.id, { now: T0 });
+  assert.deepEqual(dependentsOfRun({ ticketId: t.id }), [], 'an ended dependent is not a dependent');
+});
+
+test('resolveAfterRef: every refusal has its sentence; a waiting or done predecessor is accepted', () => {
+  seedPipelineRow({ id: 'p0000003', title: 'Refactor', status: 'running', projectKey: projectKey(DIR), startedAt: new Date(T0).toISOString() });
+  seedPipelineRow({ id: 'p0000004', title: 'Other', status: 'done', projectKey: 'proj-other', startedAt: new Date(T0).toISOString() });
+  seedPipelineRow({ id: 'p0000005', title: 'Broken', status: 'error', projectKey: projectKey(DIR), startedAt: new Date(T0).toISOString() });
+  seedPipelineRow({ id: 'w0000002', title: 'Ws', status: 'done', target: 'workspace', workspaceKey: 'ws_9', startedAt: new Date(T0).toISOString() });
+  seedPipelineRow({ id: 'w0000003', title: 'Ws2', status: 'done', target: 'workspace', workspaceKey: 'ws_9', startedAt: new Date(T0).toISOString() });
+  const opts = { projectDir: DIR };
+  assert.equal(resolveAfterRef(null, opts).error, 'after must be { kind: ticket | pipeline, id }');
+  assert.equal(resolveAfterRef({ kind: 'pipeline', id: 'zzz' }, opts).error, 'no run or scheduled run has id zzz');
+  assert.equal(resolveAfterRef({ kind: 'pipeline', id: 'sch_deadbeef' }, opts).error, 'after a repeating schedule is not supported — give the id of one of its runs');
+  assert.match(resolveAfterRef({ kind: 'pipeline', id: 'p0000004' }, opts).error, /^‘Other’ targets another project; this run targets/);
+  assert.match(resolveAfterRef({ kind: 'pipeline', id: 'w0000002' }, opts).error, /^‘Ws’ targets a workspace; this run targets a project$/);
+  assert.match(resolveAfterRef({ kind: 'pipeline', id: 'p0000003' }, { workspaceId: 'ws_9' }).error, /targets a project; this run targets a workspace$/);
+  assert.equal(resolveAfterRef({ kind: 'pipeline', id: 'w0000003' }, { workspaceId: 'ws_1' }).error, '‘Ws2’ targets another workspace; this run targets ws_1');
+  assert.equal(resolveAfterRef({ kind: 'pipeline', id: 'p0000005' }, opts).error, '‘Broken’ ended with an error — nothing to wait for');
+  assert.equal(resolveAfterRef({ kind: 'pipeline', id: 'p0000005' }, { ...opts, policy: 'any' }).ok, true, 'any: an ended run is fine');
+  // An archived run (History's delete keeps the row, removes the branch) is gone — under either policy.
+  seedPipelineRow({ id: 'p0000006', title: 'Archived', status: 'done', projectKey: projectKey(DIR), startedAt: new Date(T0).toISOString() });
+  getDb().prepare("UPDATE pipelines SET archived_at = ? WHERE id = 'p0000006'").run(new Date(T0).toISOString());
+  assert.equal(resolveAfterRef({ kind: 'pipeline', id: 'p0000006' }, { ...opts, policy: 'any' }).error, '‘Archived’ was archived — nothing to wait for');
+  const ok = resolveAfterRef({ kind: 'pipeline', id: 'p0000003' }, opts);
+  assert.deepEqual(ok, { ok: true, after: { kind: 'pipeline', id: 'p0000003', title: 'Refactor', status: 'running', pipelineId: 'p0000003' } });
+  assert.equal(resolveAfterRef({ kind: 'pipeline', id: 'w0000002' }, { workspaceId: 'ws_9' }).ok, true);
+  // gone: a fired ticket whose pipeline row is not there any more.
+  const gone = createTicket({ projectDir: DIR, title: 'F', runAtMs: T0, request: REQ, now: T0 });
+  getDb().prepare("UPDATE scheduled_runs SET status = 'fired' WHERE id = ?").run(gone.id);
+  setTicketPipeline(gone.id, 'zzzzzzzz');
+  assert.equal(resolveAfterRef({ kind: 'ticket', id: gone.id }, opts).error, '‘F’ was removed — nothing to wait for');
+  // A ticket of a series cannot be waited for; a plain ticket can, by either kind word.
+  const { ticket: occ } = createSchedule({ projectDir: DIR, title: 'Nightly', request: REQ, rule: nightly, now: T0 });
+  assert.equal(resolveAfterRef({ kind: 'ticket', id: occ.id }, opts).error, 'after a repeating schedule is not supported — give the id of one of its runs');
+  const a = createTicket({ projectDir: DIR, title: 'A', runAtMs: T0 + HOUR, request: REQ, now: T0 });
+  assert.equal(resolveAfterRef({ kind: 'ticket', id: a.id }, opts).after.status, 'scheduled');
+  assert.equal(resolveAfterRef({ kind: 'pipeline', id: a.id }, opts).after.kind, 'ticket', 'the kind is corrected from the row, never trusted');
+});
+
+test('resolveAfterRef refuses a cycle, at any depth', () => {
+  const a = createTicket({ projectDir: DIR, title: 'A', runAtMs: T0 + HOUR, request: REQ, now: T0 });
+  const b = createTicket({ projectDir: DIR, title: 'B', request: REQ, after: { kind: 'ticket', id: a.id }, now: T0 });
+  const c = createTicket({ projectDir: DIR, title: 'C', request: REQ, after: { kind: 'ticket', id: b.id }, now: T0 });
+  assert.equal(resolveAfterRef({ kind: 'ticket', id: a.id }, { projectDir: DIR, selfId: a.id }).error, '‘A’ is this run');
+  assert.equal(resolveAfterRef({ kind: 'ticket', id: c.id }, { projectDir: DIR, selfId: a.id }).error, '‘C’ already waits for this run');
+  assert.equal(resolveAfterRef({ kind: 'ticket', id: c.id }, { projectDir: DIR, selfId: b.id }).error, '‘C’ already waits for this run');
+  assert.equal(resolveAfterRef({ kind: 'ticket', id: a.id }, { projectDir: DIR, selfId: c.id }).ok, true, 'upstream is fine');
+});
+
+test('an after-ticket waits, then starts the tick after its predecessor finishes, from that moment', async () => {
+  seedPipelineRow({ id: 'g0000001', title: 'Refactor', status: 'running', startedAt: new Date(T0).toISOString() });
+  const t = createTicket({ projectDir: DIR, title: 'Tests', request: REQ, after: { kind: 'pipeline', id: 'g0000001' }, now: T0 });
+  const started = [];
+  const start = async (tk) => { started.push(tk.id); return { ok: true, pipelineId: 'g0000002' }; };
+  let out = await runDueTickets({ now: T0 + MIN, start });
+  assert.deepEqual(out.waiting, [t.id]); assert.deepEqual(started, []);
+  assert.equal(getTicket(t.id).runAt, AFTER_RUN_AT, 'untouched while waiting');
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = 'g0000001'").run();
+  out = await runDueTickets({ now: T0 + 2 * HOUR, start });
+  assert.deepEqual(out.fired, [t.id]); assert.deepEqual(started, [t.id]);
+  const fired = getTicket(t.id);   // not `after`: that name is the node:test hook imported at the top of the file
+  assert.equal(fired.status, 'fired');
+  assert.equal(fired.runAt, new Date(T0 + 2 * HOUR).toISOString(), 'D11: due from the moment the gate opened');
+  assert.ok(!kinds().includes('late'), 'never late: it was due the instant it started');
+});
+
+test('a predecessor that ends badly makes the dependent missed, with the reason; any-policy and Run now go through', async () => {
+  seedPipelineRow({ id: 'g0000003', title: 'Refactor', status: 'error', startedAt: new Date(T0).toISOString() });
+  const strict = createTicket({ projectDir: DIR, title: 'Tests', request: REQ, after: { kind: 'pipeline', id: 'g0000003' }, now: T0 });
+  const loose = createTicket({ projectDir: DIR, title: 'Docs', request: REQ, after: { kind: 'pipeline', id: 'g0000003' }, afterPolicy: 'any', now: T0 });
+  const out = await runDueTickets({ now: T0 + MIN, start: okStart() });
+  assert.deepEqual(out.missed, [strict.id]); assert.deepEqual(out.fired, [loose.id]);
+  const m = getTicket(strict.id);
+  assert.equal(m.status, 'missed');
+  assert.equal(m.failReason, 'The run before it ended with an error.');
+  const n = listNotifications().find((x) => x.ticketId === strict.id);
+  assert.equal(n.kind, 'missed');
+  assert.equal(n.message, 'was waiting for ‘Refactor’, which ended with an error.');
+  // Run now on the missed one: forced bypasses the gate.
+  requestRunNow(strict.id, { now: T0 + 2 * MIN });
+  const again = await runDueTickets({ now: T0 + 2 * MIN, start: okStart() });
+  assert.deepEqual(again.fired, [strict.id]);
+});
+
+test('a ticket predecessor that is canceled or removed strands its dependent as missed', async () => {
+  const a = createTicket({ projectDir: DIR, title: 'A', runAtMs: T0 + HOUR, request: REQ, now: T0 });
+  const b = createTicket({ projectDir: DIR, title: 'B', request: REQ, after: { kind: 'ticket', id: a.id }, now: T0 });
+  assert.deepEqual((await runDueTickets({ now: T0 + MIN, start: okStart() })).waiting, [b.id]);
+  cancelTicket(a.id, { now: T0 + 2 * MIN });
+  const out = await runDueTickets({ now: T0 + 3 * MIN, start: okStart() });
+  assert.deepEqual(out.missed, [b.id]);
+  assert.equal(getTicket(b.id).failReason, 'The run before it was canceled.');
+  seedPipelineRow({ id: 'g0000004', title: 'Gone', status: 'running', startedAt: new Date(T0).toISOString() });
+  const c = createTicket({ projectDir: DIR, title: 'C', request: REQ, after: { kind: 'pipeline', id: 'g0000004' }, now: T0 });
+  getDb().prepare("DELETE FROM pipelines WHERE id = 'g0000004'").run();
+  const out2 = await runDueTickets({ now: T0 + 4 * MIN, start: okStart() });
+  assert.deepEqual(out2.missed, [c.id]);
+  assert.equal(getTicket(c.id).failReason, 'The run before it was removed.');
+});
+
+test('a transient start error on an opened gate retries from the gate time, not the sentinel', async () => {
+  seedPipelineRow({ id: 'g0000005', title: 'R', status: 'done', startedAt: new Date(T0).toISOString() });
+  const t = createTicket({ projectDir: DIR, title: 'T', request: REQ, after: { kind: 'pipeline', id: 'g0000005' }, now: T0 });
+  const out = await runDueTickets({ now: T0 + MIN, start: async () => ({ ok: false, error: 'busy', transient: true }) });
+  assert.deepEqual(out.retried, [t.id]);
+  const r = getTicket(t.id);
+  assert.equal(r.status, 'scheduled'); assert.equal(r.attempts, 1);
+  assert.equal(r.runAt, new Date(T0 + MIN).toISOString());
+  assert.equal(r.retryAt, new Date(T0 + MIN + RETRY_BACKOFF_MIN[0] * MIN).toISOString());
+  const out2 = await runDueTickets({ now: T0 + 3 * MIN, start: okStart() });
+  assert.deepEqual(out2.fired, [t.id]);
+});
+
+test('archiving the predecessor (History delete keeps the row, removes its branch) strands the dependent as missed', async () => {
+  seedPipelineRow({ id: 'g0000006', title: 'Old', status: 'running', startedAt: new Date(T0).toISOString(), branch: { source: 'main', feature: 'worca/old-g0000006' } });
+  const t = createTicket({ projectDir: DIR, title: 'Next', request: REQ, after: { kind: 'pipeline', id: 'g0000006' }, sourceFromPrevious: true, now: T0 });
+  assert.deepEqual((await runDueTickets({ now: T0 + MIN, start: okStart() })).waiting, [t.id]);
+  // Archive refuses a live run: it finishes first, then the row is stamped and the branch is gone.
+  getDb().prepare("UPDATE pipelines SET status = 'done', archived_at = ? WHERE id = 'g0000006'").run(new Date(T0 + 2 * MIN).toISOString());
+  const out = await runDueTickets({ now: T0 + 3 * MIN, start: okStart() });
+  assert.deepEqual(out.missed, [t.id]); assert.deepEqual(out.fired, []);
+  assert.equal(getTicket(t.id).failReason, 'The run before it was archived.');
+  assert.equal(listNotifications().find((x) => x.ticketId === t.id).message, 'was waiting for ‘Old’, which was archived.');
 });

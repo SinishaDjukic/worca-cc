@@ -263,7 +263,7 @@ export function findCard(threadId, cardId) {
 
 // scheduledFor: a run card the user scheduled (state 'scheduled'); scheduleId + sentence: one that became a
 // repeating schedule (docs/scheduled-runs.md "Ask Worca").
-const CARD_PATCH_KEYS = ['state', 'runId', 'error', 'workflowId', 'scheduledFor', 'scheduleId', 'sentence'];
+const CARD_PATCH_KEYS = ['state', 'runId', 'error', 'workflowId', 'scheduledFor', 'scheduleId', 'sentence', 'after'];
 
 /** Patch ⊆ {state, runId, error, workflowId} on one card block. A WORKFLOW card (card.type === 'workflow') and a
  *  METRICS, POLICY, SCHEDULE or MODEL card (card.type 'metrics' | 'policy' | 'schedule' | 'model', whose `result` lands at Apply) also take a SHALLOW `card` sub-patch; a run

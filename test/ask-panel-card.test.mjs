@@ -734,6 +734,66 @@ test('schedule card: before / after, Decline and the action\'s own Apply post th
   assert.ok(apply.classList.contains('is-danger'), 'a removal reads as one');
 });
 
+test('schedule card: a move to AFTER another run names the predecessor on both sides, never "later" (run chains)', async () => {
+  const rec = { cardPosts: [] };
+  const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: apiHandler(rec) });
+  const afterSide = { afterRun: { kind: 'pipeline', id: 'p1', title: 'Refactor', status: 'running' }, policy: 'any', sourceFromPrevious: false, text: 'After ‘Refactor’ finishes' };
+  const timed = { type: 'schedule', action: 'move', id: 'u-2', itemKind: 'once', title: 'Tests', targetName: 'shop', status: 'scheduled', scheduleId: null,
+    summary: 'Tests: after ‘Refactor’ finishes', before: { when: 'Sat Sep 19, 02:00', at: '2026-09-19T00:00:00.000Z' }, after: afterSide, patch: { after: { kind: 'pipeline', id: 'p1' }, afterPolicy: 'any' } };
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000a', state: 'proposed', card: timed }, threadId: TID, messageId: MID, seq: 3 });
+  ctx.flush();
+  let vals = [...ctx.doc.querySelector('[data-ask-scard="proposed"]').querySelectorAll('.ask-scard-v')].map((x) => x.textContent);
+  assert.equal(vals.length, 2);
+  assert.notEqual(vals[0], 'later', 'a timed ticket keeps its instant');
+  assert.equal(vals[1], 'After ‘Refactor’ finishes');
+  // An already-chained ticket re-pointed at another run: the validator hands `before` as { when, at: null }.
+  const chained = { ...timed, id: 'u-3', before: { when: 'after ‘Old’', at: null } };
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000b', state: 'proposed', card: chained }, threadId: TID, messageId: MID, seq: 4 });
+  ctx.flush();
+  vals = [...ctx.doc.querySelectorAll('[data-ask-scard="proposed"]')].at(-1).querySelectorAll('.ask-scard-v');
+  assert.deepEqual([...vals].map((x) => x.textContent), ['after ‘Old’', 'After ‘Refactor’ finishes']);
+});
+
+const AFTER_S = { kind: 'after', after: { kind: 'pipeline', id: 'p1', title: 'Refactor', status: 'running' }, policy: 'any', sourceFromPrevious: true, text: 'After ‘Refactor’ finishes' };
+
+test('ask-panel-card: a proposal after ANOTHER run says so on its schedule line, and Schedule posts the after fields (run chains)', async () => {
+  const rec = {};
+  const ctx = await openWithCard({ ...PROJECT_CARD, schedule: AFTER_S }, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  const line = cardEl.querySelector('[data-ask-card-sched-proposed]');
+  assert.ok(line, 'the schedule line');
+  assert.equal(line.querySelector('.badge').textContent, 'After run');
+  assert.equal(line.querySelector('.ask-card-sched-text').textContent, 'After ‘Refactor’ finishes · from its branch');
+  const go = cardEl.querySelector('[data-ask-card-start]');
+  assert.equal(go.textContent, 'Schedule');
+  cardEl.querySelector('.ask-card-source').value = 'dev';   // a branch picked on the card
+  go.click();
+  await ctx.tick(); await ctx.tick();
+  const body = rec.runBodies.at(-1);
+  assert.deepEqual(body.after, { kind: 'pipeline', id: 'p1', title: 'Refactor' });
+  assert.equal(body.afterPolicy, 'any');
+  assert.equal(body.sourceFromPrevious, true);
+  assert.equal('scheduledFor' in body, false);
+  assert.equal('sourceBranch' in body, false, 'the flag replaces the branch name on the wire (the server refuses both)');
+  // Start now on the same card: no predecessor, no flag — and the branch the user picked stays.
+  cardEl.querySelector('[data-ask-card-start-now]').click();
+  await ctx.tick(); await ctx.tick();
+  const now = rec.runBodies.at(-1);
+  assert.equal('after' in now, false); assert.equal('sourceFromPrevious' in now, false);
+  assert.equal(now.sourceBranch, 'dev', 'Start now keeps the branch the user picked');
+});
+
+test('ask-panel-card: a card scheduled after another run reads After run (run chains)', async () => {
+  const rec = {};
+  const ctx = await openWithCard(PROJECT_CARD, rec);
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: CARD_ID, state: 'scheduled', runId: 'r-after', scheduledFor: null, after: { kind: 'pipeline', id: 'p1', title: 'Refactor' }, card: PROJECT_CARD }, threadId: TID, messageId: MID, seq: 3 });
+  ctx.flush();
+  const el = ctx.doc.querySelector('[data-ask-card-scheduled]');
+  assert.ok(el);
+  assert.equal(el.querySelector('.badge').textContent, 'After run');
+  assert.equal(el.querySelector('.ask-card-sched-text').textContent, 'Fix login — after ‘Refactor’ finishes');
+});
+
 test('model card: the change list, warnings, Decline / Apply post the card verbs; applied links Settings › Models; a removal reads as one', async () => {
   const rec = { cardPosts: [] };
   const base = apiHandler(rec);
