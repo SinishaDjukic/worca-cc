@@ -5131,7 +5131,7 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 /* the Schedules view: a tab strip (the Statistics .seg) over one pane at a time */
 .sched-tabs{display:flex;margin-bottom:18px;}
 .sched-pane[hidden]{display:none;}
-.sched-list{display:flex;flex-direction:column;gap:14px;max-width:960px;}
+.sched-list{display:flex;flex-direction:column;gap:14px;}
 .sched-group-title{font:700 11.5px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin:6px 4px -2px;}
 .sched-item{padding:18px 20px;}
 .sched-item.attention{border:1.5px solid var(--amber);box-shadow:0 0 0 4px var(--amber-bg),var(--shadow);}

@@ -110,3 +110,13 @@ test('empty panes say what to do, each in its own words', async () => {
   assert.ok(doc.querySelector('#schedules-once .run-empty a[href="#new/schedule"]'), 'points at Schedule a run');
   assert.deepEqual([...doc.querySelectorAll('#schedules-tabs button')].map((b) => b.textContent), ['Activity', 'Once', 'Repeating'], 'no counts when empty');
 });
+
+// The schedule card fills its container like the run card above it (.run-list has no width cap):
+// the Once and Repeating panes and Running › Scheduled share the .sched-list rule.
+test('style.css: .sched-list carries no width cap, so schedule cards span the content width', () => {
+  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  const rules = [...css.matchAll(/(?:^|[}\s,])\.sched-list(?:[\s,][^{]*)?\{([^}]*)\}/g)].map((m) => m[1]);
+  assert.ok(rules.length > 0, 'the .sched-list rule exists');
+  for (const body of rules) assert.doesNotMatch(body, /(?:max-)?width\s*:/, `.sched-list{${body}}`);
+  assert.doesNotMatch(css.match(/^\.run-list\{[^}]*\}/m)[0], /width/, 'the run card reference stays uncapped');
+});
