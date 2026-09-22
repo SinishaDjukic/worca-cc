@@ -51,7 +51,7 @@ function makeTurn({ thread, user, asst }, over = {}, deps = {}) {
   const turn = createAskTurn({
     threadId: thread.id, assistantMessageId: asst.id, userMessageId: user.id,
     prompt: 'PROMPT-1', systemPrompt: 'SYS', restoredPrompt: 'RESTORED-1',
-    model: 'claude-opus-5', effort: 'high',
+    model: 'claude-opus-5-5', effort: 'high',
     resumeSessionId: null, firstTurn: false, firstText: 'hello there', deterministicTitle: null,
     mock: null, attachmentNames: {},
     ...over,
@@ -412,7 +412,7 @@ test('title: fires on the first turn with the R-D + dontAsk option set; rename g
   assert.equal(o.envScrub, true);
   assert.deepEqual(o.envAllowlist, []);
   assert.equal(o.permissionMode, 'dontAsk');
-  assert.equal(o.runModel, 'claude-opus-5', '#422: the chat\'s own model is the title default');
+  assert.equal(o.runModel, 'claude-opus-5-5', '#422: the chat\'s own model is the title default');
   assert.equal(typeof o.onError, 'function', '#422: a failed title is reported, not swallowed');
   assert.equal(o.signal, undefined, 'no signal — fires after ANY terminal, incl. a stop that aborted the controller');
   assert.equal(getThread(s.thread.id).title, 'Fable Title');
@@ -568,7 +568,7 @@ test('done turn appends one ask_cost_ledger row that survives thread deletion', 
   assert.equal(rows[0].message_id, s.asst.id);
   assert.equal(rows[0].amount_usd, 0.05);
   assert.equal(rows[0].tokens, 37, '10 + 20 + 3 + 4 — cache fields count (D11)');
-  assert.equal(rows[0].model, 'claude-opus-5');
+  assert.equal(rows[0].model, 'claude-opus-5-5');
   assert.equal(typeof rows[0].ts, 'number');
   assert.equal(ledgerAtDoneFrame, 1, 'row committed before the ask-done broadcast (D12 reads fresh data)');
   deleteThread(s.thread.id);
@@ -629,7 +629,7 @@ test('recordAskCost dep: injected, called once with the D10/D11 payload', async 
   assert.equal(calls[0].messageId, s.asst.id);
   assert.equal(calls[0].amountUsd, 0.05);
   assert.equal(calls[0].tokens, 42, 'input+output+cacheRead+cacheCreation (D11)');
-  assert.equal(calls[0].model, 'claude-opus-5');
+  assert.equal(calls[0].model, 'claude-opus-5-5');
   assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM ask_cost_ledger').get().n, 0,
     'the injected dep fully replaces the real writer');
 });
@@ -781,7 +781,7 @@ test('liveCostRates dep: ask-usage frames carry a display estimate before the re
   clearAskLedger();
   const s = seed(); const costs = [];
   const { turn, frames } = makeTurn(s, {}, {
-    liveCostRates: (model) => (model === 'claude-opus-5' ? { input: 2, output: 4 } : null),
+    liveCostRates: (model) => (model === 'claude-opus-5-5' ? { input: 2, output: 4 } : null),
     recordAskCost: (a) => costs.push(a),
     runClaudeImpl: async ({ onEvent }) => {
       mainUsage(onEvent, 'm1', { input_tokens: 10, output_tokens: 20 });
@@ -806,7 +806,7 @@ test('liveCostRates dep: ask-usage frames carry a display estimate before the re
 });
 
 test('liveCostRates default: a built-in id prices from the list table; an unknown id → estimatedCostUsd null', async () => {
-  const s = seed();   // makeTurn's model is claude-opus-5 → PREDEFINED_LIST_PRICES row ($5 / $25)
+  const s = seed();   // makeTurn's model is claude-opus-5-5 → PREDEFINED_LIST_PRICES row ($4 / $20)
   const { turn, frames } = makeTurn(s, {}, {
     runClaudeImpl: async ({ onEvent }) => {
       mainUsage(onEvent, 'm1', { input_tokens: 1_000_000, output_tokens: 1_000_000 });
@@ -816,7 +816,7 @@ test('liveCostRates default: a built-in id prices from the list table; an unknow
     },
   });
   await turn.run();
-  assert.equal(frames.filter((f) => f.type === 'ask-usage')[0].estimatedCostUsd, 30, '1M in @ $5 + 1M out @ $25');
+  assert.equal(frames.filter((f) => f.type === 'ask-usage')[0].estimatedCostUsd, 24, '1M in @ $4 + 1M out @ $20');
 
   const s2 = seed();
   const { turn: t2, frames: f2 } = makeTurn(s2, { model: 'onprem-llama' }, {

@@ -23,7 +23,7 @@ import { portsFnFor } from '../../src/shared/graph/ports.mjs';
  * default is ASK_LIMITS.defaultModel/defaultEffort, shipped as `catalog.default`
  * and already validated against the live catalog by src/core/ask/models.mjs.
  */
-const FALLBACK_PICK = Object.freeze({ model: 'claude-opus-5', effort: 'high' });
+const FALLBACK_PICK = Object.freeze({ model: 'claude-opus-5-5', effort: 'high' });
 
 const ICONS = {
   threads: 'M4 6h16M4 12h16M4 18h9',
@@ -1824,9 +1824,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!wf || !(Array.isArray(wf.nodes) || Array.isArray(wf.steps)) || !Object.keys(registry).length || !cfg) return null;
     const config = (cfg.config && typeof cfg.config === 'object') ? cfg.config : { steps: {}, customModels: [] };
     const runConfig = (config.workflows && config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
-    const rows = buildNodeConfigRows(wf, registry, runConfig, workflowId === 'wf_default' ? { legacySteps: config.steps || {} } : {});
+    const models = Array.isArray(cfg.models) ? cfg.models : [];
+    // `models`: a pinned row's hidden pick is healed against this catalog (node-tunables.mjs).
+    const rows = buildNodeConfigRows(wf, registry, runConfig, { ...(workflowId === 'wf_default' ? { legacySteps: config.steps || {} } : {}), models });
     return { wf, registry, runConfig, rows, edits: {}, editable: !!projectDir,
-      models: Array.isArray(cfg.models) ? cfg.models : [], efforts: Array.isArray(cfg.efforts) ? cfg.efforts : [],
+      models, efforts: Array.isArray(cfg.efforts) ? cfg.efforts : [],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
   const laneEffective = (lane, row) => ({ ...row, ...(lane.edits[row.nodeId] || {}) });
@@ -1947,7 +1949,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const small = make('small');
       // "step N" = position in the lane (launch order); row.stepIndex ranks the task card as 0.
       if (changed) { small.appendChild(make('span', 'ask-rp-m', 'edited')); small.appendChild(doc.createTextNode(` · step ${i + 1}`)); }
-      else small.textContent = `step ${i + 1} · ${row.modified ? 'project override' : 'workflow default'}`;
+      else small.textContent = `step ${i + 1} · ${row.pinned ? 'model from Settings › Memory' : row.modified ? 'project override' : 'workflow default'}`;
       name.appendChild(small);
       l1.appendChild(name);
       // model
@@ -1955,7 +1957,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       sel.appendChild(opt('', 'inherit (workflow default)'));
       for (const m of lane.models) if ((!m.hidden && !m.needsSignIn) || m.id === c.model) sel.appendChild(opt(m.id, (m.label || m.id) + (m.needsSignIn ? ' (needs sign-in)' : '')));
       sel.value = c.model || '';
-      sel.disabled = !lane.editable;
+      // Settings › Memory pins a defragment run's pair (node-tunables.mjs `pinned`): shown, locked.
+      sel.disabled = !lane.editable || !!row.pinned;
+      if (row.pinned) sel.title = 'Set in Settings › Memory';
       sel.addEventListener('change', () => {
         const mid = sel.value;
         const list = (lane.models.find((m) => m.id === mid) || {}).efforts || [];
@@ -1974,7 +1978,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         b.type = 'button';
         b.setAttribute('role', 'radio');
         b.setAttribute('aria-checked', String(e === c.effort));
-        b.disabled = !lane.editable || !offered.includes(e);
+        b.disabled = !lane.editable || !!row.pinned || !offered.includes(e);
         if (!offered.includes(e) && c.model) b.title = `Not offered by ${modelLabel(lane, c.model)}`;
         b.addEventListener('click', () => { laneSet(lane, row, { effort: e }); renderLane(laneSec, lane, lc); });
         eff.appendChild(b);

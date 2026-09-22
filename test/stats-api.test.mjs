@@ -81,15 +81,15 @@ async function seedWorld() {
   // ask ledger: this week — thread A twice, thread B once; prev week — thread A
   // again (a session counts in EVERY window it spent in, D6) + thread C
   recordAskCostDelta({ threadId: 'ask_aaaaaaaa', messageId: 'askm_00000001', amountUsd: 0.10,
-    tokens: 1000, model: 'claude-opus-5', tsMs: +new Date(2026, 7, 3, 11) });
+    tokens: 1000, model: 'claude-opus-5-5', tsMs: +new Date(2026, 7, 3, 11) });
   recordAskCostDelta({ threadId: 'ask_aaaaaaaa', messageId: 'askm_00000002', amountUsd: 0.05,
-    tokens: 500, model: 'claude-opus-5', tsMs: +new Date(2026, 7, 5, 11) });
+    tokens: 500, model: 'claude-opus-5-5', tsMs: +new Date(2026, 7, 5, 11) });
   recordAskCostDelta({ threadId: 'ask_bbbbbbbb', messageId: 'askm_00000003', amountUsd: 0.25,
     tokens: 2000, model: 'claude-haiku-4-5', tsMs: +new Date(2026, 7, 4, 11) });
   recordAskCostDelta({ threadId: 'ask_aaaaaaaa', messageId: 'askm_00000004', amountUsd: 0.20,
-    tokens: 800, model: 'claude-opus-5', tsMs: +new Date(2026, 6, 30, 11) });
+    tokens: 800, model: 'claude-opus-5-5', tsMs: +new Date(2026, 6, 30, 11) });
   recordAskCostDelta({ threadId: 'ask_cccccccc', messageId: 'askm_00000005', amountUsd: 1,
-    tokens: 900, model: 'claude-opus-5', tsMs: +new Date(2026, 6, 28, 11) });
+    tokens: 900, model: 'claude-opus-5-5', tsMs: +new Date(2026, 6, 28, 11) });
   // one costed pipeline AFTER the stats windowEnd: allTimeTotals() counts it,
   // cohortTotals(0, windowEnd) does not — pins range=all's fallback-aware
   // pipelineSpendUsd source (D7) against a cohort-sum regression.

@@ -32,9 +32,10 @@ import { runExecution, allocateOutputs, allocateVerdict, readDecomposition } fro
 import { serialQueue, measureCodeCursor, collectStepEvidence } from './graph/human-evidence.mjs';
 import { estimateStepHours, resolveConstants, sumStepHours } from '../shared/human-estimate.mjs';
 import { diffNumstat } from './git-info.mjs';
-import { humanEstimateOverrides } from './settings.mjs';
+import { humanEstimateOverrides, memoryDefragModel } from './settings.mjs';
 import { renderPromptArtifact } from './phases.mjs';
 import { listModels, modelHasBaseUrlRouting, resolveRunConfig } from './config.mjs';
+import { resolveDefragModel, agentPairText } from './memory-defrag-model.mjs';
 import { assembleShape, ShapeError } from '../shared/graph/assemble.mjs';
 import { fingerprintProject } from './auto/fingerprint.mjs';
 import { classifyTask, ClassifierError } from './auto/classify.mjs';
@@ -126,10 +127,23 @@ export class GraphOrchestrator extends RunHarness {
   async _resolveTopology(registry) {
     this.scriptRegistry = loadScriptRegistry({ scriptsDir: this.opts.scriptsDir, agentKeys: Object.keys(registry || {}) });
     if (this.workflowId === AUTO_WORKFLOW_ID) return this._autoBootstrapTopology();
+    // Settings › Memory: a defragment run (memoryScope ⇔ wf_memory_defrag, checked in the
+    // constructor) resolves its model/effort pair HERE — the one place every entry point reaches
+    // (the Memory view's button, New pipeline, an Ask card, a schedule and the CLI all construct
+    // this class). resume() never calls this hook: the manifest froze the pair on the node.
+    const defrag = this.memoryScope ? await this._defragAgentPair() : null;
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
-      isWorkspace: this.isWorkspace, scripts: this.scriptRegistry,
+      isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
     });
     this._adoptResolvedGraph(resolved);
+    // A setting that failed the catalog check degrades — and says what the run uses INSTEAD, read
+    // off the resolved graph (a project's own pick, a team default or the template's model): a run
+    // log line, and an audit line queued until the pipeline dir exists (RunHarness._pendingAudits).
+    if (defrag && defrag.warning) {
+      const text = `${defrag.warning} — the run uses ${agentPairText(this.resolved.nodeCtx)}`;
+      this._log('orchestrator', 'warn', text);
+      this._pendingAudits.push(`${text}.`);
+    }
     this._preflightScriptKeys(this.resolved.scriptKeys);
     await this._preflightScriptRuntimes();
     // The manifest is built from the RESOLVED template, the resolver's registry
@@ -143,6 +157,27 @@ export class GraphOrchestrator extends RunHarness {
       agentKeys: new Set(this.resolved.agentKeys),
       workflow: { id: this.workflowId, name: this.resolved.template.name || this.workflowId },
     };
+  }
+
+  /**
+   * Settings › Memory: the pair every agent node of this Memory defragment run uses
+   * (memory-defrag-model.mjs) — the one named at start (`claude.model` / `claude.effort`: the
+   * CLI's --model, a CLI-made schedule) wins, else the stored setting, validated against THIS
+   * project's catalog. A setting that fails the check comes back as `warning` (the caller logs it
+   * once the graph says what the run uses instead) — never a refused run. `pair: null` ⇒ the node
+   * layers resolve exactly as before.
+   * @returns {Promise<{pair: ({model:string, effort:(string|null)}|null), warning: (string|null)}>}
+   */
+  async _defragAgentPair() {
+    const explicit = { model: this.claude.model, effort: this.opts.claude?.effort };
+    const stored = memoryDefragModel();
+    // The catalog read only when the setting is the one that decides.
+    const models = !(typeof explicit.model === 'string' && explicit.model.trim()) && stored.model
+      ? await listModels(this.projectDir) : [];
+    const r = resolveDefragModel({ explicit, stored, models });
+    if (!r.model) return { pair: null, warning: r.warning };
+    this._log('orchestrator', 'info', `Memory defragment model: ${r.model}${r.effort ? ` · ${r.effort}` : ''} (${r.source === 'explicit' ? 'named at start' : 'Settings › Memory'})`);
+    return { pair: { model: r.model, effort: r.effort }, warning: r.warning };
   }
 
   /** The Auto entry before the decision: an EMPTY graph tagged `deciding`, so

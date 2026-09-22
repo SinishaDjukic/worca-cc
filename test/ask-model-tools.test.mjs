@@ -24,7 +24,7 @@ function fixture({ globals = [], plugins = [], policy = [], env = {}, providers 
   const cfg = (n) => ({ maxConcurrent: 8, ...(n === 'copilot' ? { accountType: 'individual' } : { baseUrl: n === 'openai' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com' }), ...(providers[n] || {}) });
   const validate = createModelChangeValidator({
     listGlobalModels: () => globals, listPluginModels: () => plugins, policyModels: () => policy,
-    predefined: [{ id: 'claude-opus-5', label: 'Opus 5' }],
+    predefined: [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }],
     addModel: async (m, o) => { calls.push(['add', m, o]); if (globals.some((g) => g.id === m.id)) throw new Error('a model with id already exists'); return { efforts: ['low', 'medium', 'high'], label: m.label || m.id, ...m }; },
     updateModel: async (id, p, o) => {
       calls.push(['update', id, p, o]);
@@ -92,7 +92,7 @@ test('read-only sources and unknown ids are refused with a way forward', async (
   assert.match((await validate({ kind: 'edit_model', id: 'plug-m', model: { label: 'x' } })).errors[0], /comes from plugin acme and is read-only/);
   assert.match((await validate({ kind: 'remove_model', id: 'team-m' })).errors[0], /comes from the team policy of org\/repo/);
   assert.match((await validate({ kind: 'add_model', model: { id: 'plug-m' } })).errors[0], /read-only/);
-  assert.match((await validate({ kind: 'edit_model', id: 'claude-opus-5', model: { label: 'x' } })).errors[0], /built-in model .* propose add_model with the same id/);
+  assert.match((await validate({ kind: 'edit_model', id: 'claude-opus-5-5', model: { label: 'x' } })).errors[0], /built-in model .* propose add_model with the same id/);
   assert.match((await validate({ kind: 'remove_model', id: 'nope' })).errors[0], /unknown model "nope" — list_models/);
   assert.match((await validate({ kind: 'bogus' })).errors[0], /^kind must be one of add_model, edit_model/);
   assert.match((await validate({ kind: 'edit_model' })).errors[0], /needs an id/);
@@ -100,8 +100,8 @@ test('read-only sources and unknown ids are refused with a way forward', async (
 
 test('add_model over a built-in id says it overrides it', async () => {
   const { validate } = fixture();
-  const r = await validate({ kind: 'add_model', model: { id: 'claude-opus-5', env: { ANTHROPIC_BASE_URL: 'https://gw.example.com' } } });
-  assert.equal(r.card.summary, 'Add model claude-opus-5 (overrides the built-in Opus 5)');
+  const r = await validate({ kind: 'add_model', model: { id: 'claude-opus-5-5', env: { ANTHROPIC_BASE_URL: 'https://gw.example.com' } } });
+  assert.equal(r.card.summary, 'Add model claude-opus-5-5 (overrides the built-in Opus 5.5)');
 });
 
 test('edit_model: upstream merges into the stored block, the stored key is kept and never shown', async () => {
@@ -137,6 +137,12 @@ test('remove_model: the refs it clears and a built-in it restores become warning
   assert.match(r.card.warnings[0], /^3 workflow nodes use this model — they fall back to the default model$/);
   assert.match(r.card.warnings[1], /restores the built-in/);
   assert.ok(r.card.rows.every((x) => x.after === null && x.before));
+});
+
+test('remove_model: a model Settings › Memory runs defragments on is a warning too', async () => {
+  const { validate } = fixture({ globals: [{ id: 'm1', label: 'M1', efforts: [] }], refs: () => ({ steps: [], nodes: [], predefinedShadow: false, memoryDefrag: true }) });
+  const r = await validate({ kind: 'remove_model', id: 'm1' });
+  assert.deepEqual(r.card.warnings, ['Memory defragment runs use this model (Settings › Memory) — they fall back to the default']);
 });
 
 test('provider: base URL / key reference / concurrency validate; sign-in fields and literal keys are refused', async () => {
@@ -253,6 +259,8 @@ test('applyModelChange replays each kind through the setters and re-merges an ed
   assert.equal(log[1][2].upstream.apiKey, 'sk-now', 'the key as stored at apply time');
   assert.equal(log[1][2].upstream.model, 'gpt-5.1');
   assert.deepEqual(await applyModelChange({ kind: 'remove_model', change: { id: 'oa' } }, io), { ok: true, detail: 'oa removed · 2 workflow selections cleared' });
+  assert.deepEqual(await applyModelChange({ kind: 'remove_model', change: { id: 'oa' } }, { ...io, removeModel: async () => ({ clearedSteps: 0, clearedNodes: 0, clearedMemoryDefrag: true }) }),
+    { ok: true, detail: 'oa removed · Settings › Memory defragment model cleared' }, 'the Settings › Memory ref it cleared is named too');
   assert.deepEqual(await applyModelChange({ kind: 'provider', change: { provider: 'openai', set: { baseUrl: 'http://x/v1' } } }, io), { ok: true, detail: 'openai provider saved' });
   assert.deepEqual(await applyModelChange({ kind: 'import_copilot', change: { ids: ['gpt-5', 'x'] } }, io), { ok: true, detail: 'added copilot-gpt-5 · skipped x' });
   await assert.rejects(() => applyModelChange({ kind: 'edit_model', change: { id: 'gone', patch: {} } }, io), /no longer in the catalog/);

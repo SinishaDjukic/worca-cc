@@ -17,8 +17,8 @@ const SAMPLE = {
     'cost.resetPeriod': { kind: 'default', value: 'monthly' },
     'cost.pooledBudgetUsd': { kind: 'soft', value: 1200, window: 'monthly' },
     'guardrails.minimum': { kind: 'soft', value: 'normal' },
-    'models.allowed': { kind: 'soft', value: ['claude-opus-5', 'claude-sonnet-5'] },
-    'models.steps': { kind: 'default', value: { planner: { model: 'claude-opus-5', effort: 'high' } } },
+    'models.allowed': { kind: 'soft', value: ['claude-opus-5-5', 'claude-sonnet-5'] },
+    'models.steps': { kind: 'default', value: { planner: { model: 'claude-opus-5-5', effort: 'high' } } },
     'plugins.required': { kind: 'soft', value: [{ name: 'github-source', marketplace: 'worca-cc' }, { name: 'acme-jira', marketplace: 'acme/worca-plugins', minVersion: '1.2.0', config: { baseUrl: 'https://acme.atlassian.net', projectKey: 'GW' } }] },
     'workflows.default': { kind: 'default', value: 'wfp_acme-jira_ticket-to-pr' },
     'worca.minVersion': { kind: 'soft', value: '1.4.0' },
@@ -59,7 +59,7 @@ test('malformed pieces are dropped one warning each; the rest survives (the read
     fields: {
       'cost.pipelineLimitUsd': { kind: 'soft', value: -3 },              // bad value
       'cost.resetPeriod': { kind: 'soft', value: 'monthly' },            // kind not accepted
-      'models.allowed': { kind: 'soft', value: 'claude-opus-5' },        // not a list
+      'models.allowed': { kind: 'soft', value: 'claude-opus-5-5' },        // not a list
       'guardrails.minimum': { kind: 'soft', value: 'normal', onBreach: 'x' }, // attr not on this field: ignored silently
       'bogus.key': { kind: 'default', value: 1 },
       'run.humanInLoop': 'yes',

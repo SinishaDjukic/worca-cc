@@ -18,7 +18,7 @@ const prevEnv = {
   WORCA_TEST_ALLOW_HOME_FALLBACK: process.env.WORCA_TEST_ALLOW_HOME_FALLBACK, WORCA_MOCK: process.env.WORCA_MOCK,
 };
 const JSONH = { 'Content-Type': 'application/json' };
-const MODEL = { model: 'claude-opus-5', effort: 'high' };
+const MODEL = { model: 'claude-opus-5-5', effort: 'high' };
 
 before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'worca-cc-askmodel-home-'));

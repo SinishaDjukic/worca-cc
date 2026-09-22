@@ -60,11 +60,11 @@ test('overlay precedence: run-config wins, and effort never inherits across a mo
   // against listModels() and `effort` against that model's own efforts list
   // (`setNodeModel` `config.mjs:617-629`, `setStep` `:400-414`; EFFORTS = medium/high/xhigh/max — there is
   // no 'low'). The RAW template config below (`tpl-model`) is never validated.
-  await setNodeModel(projectDir, id, 'n_plan', { model: 'claude-opus-5' });
+  await setNodeModel(projectDir, id, 'n_plan', { model: 'claude-opus-5-5' });
   const g = await resolveGraph(projectDir, id, REG());
-  assert.equal(g.nodes.n_plan.model, 'claude-opus-5');
+  assert.equal(g.nodes.n_plan.model, 'claude-opus-5-5');
   assert.equal(g.nodes.n_plan.effort, undefined, 'the template effort belonged to the template model');
-  await setNodeModel(projectDir, id, 'n_plan', { model: 'claude-opus-5', effort: 'max' });
+  await setNodeModel(projectDir, id, 'n_plan', { model: 'claude-opus-5-5', effort: 'max' });
   assert.equal((await resolveGraph(projectDir, id, REG())).nodes.n_plan.effort, 'max');
 });
 

@@ -7,7 +7,7 @@ const manifest = {
   graph: {
     nodes: [
       { id: 'n_task', kind: 'task', label: 'Task' },
-      { id: 'n_plan', kind: 'agent', key: 'planner', label: 'Plan', model: 'claude-opus-5', effort: 'high', fanOut: false },
+      { id: 'n_plan', kind: 'agent', key: 'planner', label: 'Plan', model: 'claude-opus-5-5', effort: 'high', fanOut: false },
       { id: 'n_impl', kind: 'agent', key: 'implementer', label: 'Implement', model: '', effort: '', fanOut: true },
       { id: 'n_rev', kind: 'agent', key: 'reviewer', label: 'Review', model: 'claude-sonnet-5', effort: '', fanOut: false },
       { id: 'n_end', kind: 'end', label: 'End' },
@@ -23,7 +23,7 @@ test('formatWorkflowProposal renders header, reasoning, stages with tuning, loop
   const lines = formatWorkflowProposal({ round: 2, name: 'Quick and careful', reasoning: 'small task', match: null, manifest, order: ['n_plan', 'n_impl', 'n_rev'], warnings: ['web review has nowhere to loop'], costUsd: 0.034 });
   assert.equal(lines[0], '? Auto proposes a workflow · round 2  (no saved workflow has this shape — Accept saves it as "Quick and careful")');
   assert.equal(lines[1], '  small task');
-  assert.equal(lines[2], '  stages: Plan (claude-opus-5 · high) → Implement ⤴ → Review (claude-sonnet-5)');
+  assert.equal(lines[2], '  stages: Plan (claude-opus-5-5 · high) → Implement ⤴ → Review (claude-sonnet-5)');
   assert.equal(lines[3], '  loop: Review → Implement (max 3 cycles)');
   assert.equal(lines[4], '  ! web review has nowhere to loop');
   assert.equal(lines[5], '  classifier cost so far: $0.03');
@@ -42,7 +42,7 @@ test('a matched proposal names the saved workflow and the ignored overrides; emp
 
 test('the stages line follows the proposal\'s dispatch order, not the node order', () => {
   const lines = formatWorkflowProposal({ round: 1, name: 'x', match: null, manifest, order: ['n_rev', 'n_plan', 'n_impl'] });
-  assert.equal(lines[1], '  stages: Review (claude-sonnet-5) → Plan (claude-opus-5 · high) → Implement ⤴');
+  assert.equal(lines[1], '  stages: Review (claude-sonnet-5) → Plan (claude-opus-5-5 · high) → Implement ⤴');
 });
 
 test('size and signals render as one line after the reasoning', () => {

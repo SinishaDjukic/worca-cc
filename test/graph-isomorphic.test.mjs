@@ -14,7 +14,7 @@ function disguise(tpl) {
   return {
     ...tpl, id: 'wf_other', name: 'Other',
     nodes: tpl.nodes.map((n, i) => ({ ...n, id: map.get(n.id), x: 9 * i, y: 7 * i,
-      config: { ...n.config, ...(n.kind === 'agent' ? { model: 'claude-opus-5', effort: 'max', fanOut: true } : {}) } })),
+      config: { ...n.config, ...(n.kind === 'agent' ? { model: 'claude-opus-5-5', effort: 'max', fanOut: true } : {}) } })),
     wires: tpl.wires.map((w, i) => ({ ...w, id: `q${i}`, ...(w.config ? { config: { ...w.config } } : {}),
       from: { node: map.get(w.from.node), port: w.from.port }, to: { node: map.get(w.to.node), port: w.to.port } })),
   };

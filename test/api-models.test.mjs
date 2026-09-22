@@ -14,6 +14,7 @@ import { _resetForTests } from '../src/core/db.mjs';
 import { listGlobalModels } from '../src/core/settings.mjs';
 import { setNodeModel } from '../src/core/config.mjs';
 import { EFFORTS } from '../src/core/model-env.mjs';
+import { WebSocket } from 'ws';
 
 let proj, srv, base, homeDir, worcaHomeDir;
 const prevEnv = {
@@ -58,7 +59,7 @@ test('GET /api/models: empty catalog + predefined + efforts', async () => {
   const { status, body } = await jfetch('/api/models');
   assert.equal(status, 200);
   assert.deepEqual(body.models, []);
-  assert.ok(body.predefined.some((m) => m.id === 'claude-opus-5'));
+  assert.ok(body.predefined.some((m) => m.id === 'claude-opus-5-5'));
   assert.deepEqual(body.efforts, EFFORTS);
 });
 
@@ -158,6 +159,33 @@ test('refs preview + DELETE /api/models/:id clears cross-project refs', async ()
   assert.deepEqual(del.body.models, []);
 
   assert.equal((await jfetch(`/api/models/${encodeURIComponent('glm-4.7')}`, { method: 'DELETE' })).status, 400, 'second delete: unknown id');
+});
+
+// Settings › Memory: the defragment model is a ref too. Removing the entry it names clears the
+// setting, and — like Ask's apply path — tells open tabs, so their Memory card stops naming it.
+test('DELETE /api/models/:id clears Settings › Memory\'s defragment model and broadcasts settings-changed', async () => {
+  assert.equal((await post('/api/models', { id: 'dm-glm', label: 'GLM', efforts: ['medium', 'high'] })).status, 200);
+  assert.equal((await post('/api/settings', { memoryDefrag: { model: 'dm-glm', effort: 'high' } })).status, 200);
+  // The WebSocket endpoint lives on the module's own server (this file's `srv` is a bare app listener).
+  const { server } = await import('../ui/server.mjs');
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}/ws`, { headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' } });
+  const frames = [];
+  ws.on('message', (d) => { try { frames.push(JSON.parse(String(d)).type); } catch { /* not JSON */ } });
+  try {
+    await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
+    assert.equal((await jfetch('/api/models/dm-glm/refs')).body.memoryDefrag, true, 'the refs preview lists it');
+    const del = await jfetch('/api/models/dm-glm', { method: 'DELETE' });
+    assert.equal(del.status, 200);
+    assert.equal(del.body.clearedMemoryDefrag, true);
+    const t0 = Date.now();
+    while (!frames.includes('settings-changed') && Date.now() - t0 < 5000) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(frames.includes('settings-changed'), `an open Memory tab must repaint — frames: ${frames.join(', ')}`);
+    assert.deepEqual((await jfetch('/api/settings')).body.memoryDefrag, { model: null, effort: null });
+  } finally {
+    ws.close();
+    await new Promise((r) => server.close(r));
+  }
 });
 
 test('POST /api/models/promote moves a legacy entry global; its refs SURVIVE (unlike delete)', async () => {

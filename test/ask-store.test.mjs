@@ -33,7 +33,7 @@ test('ids: prefix + 8 hex, matching ASK_ID_RE; askRoot under the worca home', ()
 });
 
 test('createThread / getThread / updateThread / setThreadTitle', () => {
-  const t = createThread({ model: 'claude-opus-5', effort: 'high' });
+  const t = createThread({ model: 'claude-opus-5-5', effort: 'high' });
   assert.match(t.id, /^ask_[0-9a-f]{8}$/);
   assert.deepEqual(Object.keys(t).sort(),
     ['context', 'createdAt', 'effort', 'id', 'model', 'sessionId', 'title', 'totals', 'updatedAt']);
@@ -48,7 +48,7 @@ test('createThread / getThread / updateThread / setThreadTitle', () => {
   assert.equal(u.sessionId, 'sess-1');
   assert.deepEqual(u.context, { view: 'history', projectKey: 'p-00000001' });
   assert.equal(u.title, 'First');
-  assert.equal(u.model, 'claude-opus-5', 'untouched keys survive');
+  assert.equal(u.model, 'claude-opus-5-5', 'untouched keys survive');
   assert.ok(u.updatedAt >= t.updatedAt);
   assert.equal(updateThread(t.id, { context: null }).context, null);
   assert.equal(updateThread('ask_ffffffff', { title: 'x' }), null);
@@ -113,7 +113,7 @@ test('countThreads / listThreadIds ignore the list cap; countWorktrees / countAt
 // write lock — SQLITE_BUSY_SNAPSHOT, which the busy handler never retries. The
 // whole tx() threw "database is locked" and the user's message was gone.
 test('appendMessage: concurrent writer processes lose no row (the tx takes the write lock up front)', async () => {
-  const t = createThread({ model: 'claude-opus-5', effort: 'high' });
+  const t = createThread({ model: 'claude-opus-5-5', effort: 'high' });
   const storeUrl = new URL('../src/core/ask/store.mjs', import.meta.url).href;
   const KIDS = 3;
   const PER_KID = 40;

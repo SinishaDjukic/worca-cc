@@ -24,7 +24,7 @@ let cwdSandbox = null;
 let homeDir, srv, base, wsBase, mod, prevHome;
 let projectDir, projectDir2, projectKey, workspaceId;
 const JSONH = { 'Content-Type': 'application/json' };
-const MODEL = { model: 'claude-opus-5', effort: 'high' };
+const MODEL = { model: 'claude-opus-5-5', effort: 'high' };
 
 function gitInit(dir) {
   const g = (a) => spawnSync('git', a, { cwd: dir });

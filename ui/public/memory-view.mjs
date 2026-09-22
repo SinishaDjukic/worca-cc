@@ -45,6 +45,17 @@ export function formatWhen(iso) {
 
 const NO_HOST_HINT = 'Register a project on the Projects page to host the global defragment run.';
 
+/** Settings › Memory's defragment model as the host hint names it — ` with Opus 5.5 · high` — from
+ *  the report's `defragModel` ({ model, effort, label, stale } | null). '' when unset, so the unset
+ *  sentence stays byte-identical. A model that left the catalog says so without naming a fallback:
+ *  the run then uses the node layers — the host project's own pick or the template's model — and the
+ *  global report cannot know which (memory-defrag-model.mjs). */
+export function defragModelPhrase(dm) {
+  if (!dm || typeof dm.model !== 'string' || !dm.model) return '';
+  if (dm.stale) return ` without the Settings › Memory model (${dm.model} is no longer in the catalog)`;
+  return ` with ${dm.label || dm.model}${dm.effort ? ` · ${dm.effort}` : ''}`;
+}
+
 /** The defragment glyph: three rows of blocks, the lower ones fragmented. Pure SVG elements (no
  *  text node), so the button's textContent stays its label alone. */
 function defragIcon(doc) {
@@ -66,7 +77,8 @@ function defragIcon(doc) {
  * hosts its own, so `host` is ignored there); with no registered project the button is disabled
  * and the hint says so, in visible text as well as the title. While a run is live the button stays
  * ENABLED, reads "Defragmenting… open the run" and carries `data-run-id`: the controller routes to
- * `#running/<id>`.
+ * `#running/<id>`. The global host hint also names Settings › Memory's defragment model when one is
+ * set (`report.defragModel`, see defragModelPhrase).
  */
 export function renderHealthCard(report, { doc = globalThis.document, host = null } = {}) {
   const health = report?.health || {};
@@ -101,7 +113,7 @@ export function renderHealthCard(report, { doc = globalThis.document, host = nul
   }
   if (isGlobal && !runId) {
     card.appendChild(h(doc, 'small', 'hint mem-host-hint',
-      host ? `Runs on ${host.name || host.key} — pick another project on the New pipeline page.` : NO_HOST_HINT));
+      host ? `Runs on ${host.name || host.key}${defragModelPhrase(report?.defragModel)} — pick another project on the New pipeline page.` : NO_HOST_HINT));
   }
   card.appendChild(h(doc, 'small', 'hint', 'A defragment run merges duplicate topics, splits overgrown files, drops stale rules and tightens hooks. It is an ordinary pipeline run; the previous files stay in History.'));
   return card;

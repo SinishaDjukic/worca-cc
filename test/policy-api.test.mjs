@@ -86,7 +86,7 @@ test('publish → rows show the fold with local settings; a hand-posted bad doc 
   const doc = { schema: 1, title: 'Gateway team policy', fields: {
     'cost.pipelineLimitUsd': { kind: 'soft', value: 10, onBreach: 'pause' },
     'guardrails.minimum': { kind: 'soft', value: 'normal' },
-    'models.allowed': { kind: 'soft', value: ['claude-opus-5'] },
+    'models.allowed': { kind: 'soft', value: ['claude-opus-5-5'] },
     'plugins.required': { kind: 'soft', value: [{ name: 'acme-jira', minVersion: '1.2.0' }] },
   }, workspaceRuns: { 'cost.pipelineLimitUsd': { kind: 'soft', value: 25 } } };
   const bad = await put('/api/policy', { scope: `project:${gwKey}`, doc: { schema: 1, fields: { 'cost.pipelineLimitUsd': { kind: 'soft', value: -1 } } } });

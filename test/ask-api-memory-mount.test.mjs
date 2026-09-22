@@ -18,7 +18,7 @@ useTempHome(after);
 
 let homeDir, prevHome, srv, base, wsBase, mod, project;
 const JSONH = { 'Content-Type': 'application/json' };
-const MODEL = { model: 'claude-opus-5', effort: 'high' };
+const MODEL = { model: 'claude-opus-5-5', effort: 'high' };
 const post = (p, body) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(body) });
 
 function openWs() {

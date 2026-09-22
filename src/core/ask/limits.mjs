@@ -66,7 +66,7 @@ export const ASK_LIMITS = Object.freeze({
   headerAttachments: 5,
   deltaBatchMs: 50,
   deltaBatchChars: 256,
-  defaultModel: 'claude-opus-5',           // D8
+  defaultModel: 'claude-opus-5-5',         // D8
   defaultEffort: 'high',
 });
 

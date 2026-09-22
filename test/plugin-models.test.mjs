@@ -136,9 +136,9 @@ test('catalog composition: custom "plugin" + plugin name; global shadows plugin;
   await removeGlobalModel('DS-STABLE');
 
   // A plugin entry with a predefined id shadows the built-in, keeping its casing.
-  installFixture('shadow-plug', { models: [{ id: 'CLAUDE-OPUS-5', label: 'Opus via proxy', env: { ANTHROPIC_BASE_URL: 'https://p.example' } }] });
-  const opus = (await listModels('')).find((m) => m.id.toLowerCase() === 'claude-opus-5');
-  assert.equal(opus.id, 'claude-opus-5', 'predefined casing kept');
+  installFixture('shadow-plug', { models: [{ id: 'CLAUDE-OPUS-5-5', label: 'Opus via proxy', env: { ANTHROPIC_BASE_URL: 'https://p.example' } }] });
+  const opus = (await listModels('')).find((m) => m.id.toLowerCase() === 'claude-opus-5-5');
+  assert.equal(opus.id, 'claude-opus-5-5', 'predefined casing kept');
   assert.equal(opus.custom, 'plugin');
   assert.equal(opus.label, 'Opus via proxy');
   const lock = readPluginsLock();

@@ -29,7 +29,7 @@ test('single-project done → exact RunRecord v1', () => {
     title: 'Add idempotency keys to POST /invoices',
     source: { type: 'github-issues', ref: '#412', url: 'https://github.com/acme/billing-api/issues/412', title: 'Idempotency keys for invoices' },
     cost: { usd: 3.42, byPhase: { plan: 0.61, implement: 2.15, review: 0.66 } },
-    agents: { count: 4, keys: ['planner', 'implementer', 'reviewer', 'refiner'], models: ['claude-opus-5', 'claude-sonnet-5'] },
+    agents: { count: 4, keys: ['planner', 'implementer', 'reviewer', 'refiner'], models: ['claude-opus-5-5', 'claude-sonnet-5'] },
     steps: 5,
     cycles: { plan: 1, implement: 2, review: 2 },
     interventions: { questions: 1, pauses: 0, resumes: 0 },
@@ -91,7 +91,7 @@ test('failed after a cost-cap pause → failure.kind budget; plain error → err
 
 test('agents.models holds full model ids from agent steps only (sub-agent aliases ignored)', () => {
   const rec = buildRunRecord({ ...projectDone, subAgents: [{ runModel: 'haiku' }] }, { now: new Date(NOW) });
-  assert.deepEqual(rec.agents.models, ['claude-opus-5', 'claude-sonnet-5']);
+  assert.deepEqual(rec.agents.models, ['claude-opus-5-5', 'claude-sonnet-5']);
 });
 
 test('stopped → result stopped, failure null, git counts null when no results.json', () => {

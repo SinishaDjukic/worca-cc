@@ -24,7 +24,7 @@ let cwdSandbox = null;
 let homeDir, srv, base, wsBase, mod, prevHome;
 let projectDir, projectKey;
 const JSONH = { 'Content-Type': 'application/json' };
-const MODEL = { model: 'claude-opus-5', effort: 'high' };
+const MODEL = { model: 'claude-opus-5-5', effort: 'high' };
 const TZ = 'Asia/Tokyo';                     // not this machine's zone, on purpose
 
 function gitInit(dir) {

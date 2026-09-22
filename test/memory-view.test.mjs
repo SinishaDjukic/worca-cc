@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   memoryRoute, healthBadge, formatWhen, renderHealthCard, renderFileList, renderEditor, collectEditor,
-  renderMemoryHistory, MEMORY_NAME_HELP,
+  renderMemoryHistory, MEMORY_NAME_HELP, defragModelPhrase,
 } from '../ui/public/memory-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -146,4 +146,16 @@ test('renderMemoryHistory: newest first, file counts, Restore per row; none ⇒ 
   assert.equal(rows[1].querySelector('.mem-snap-count').textContent, '1 file');
   assert.ok(rows.every((r) => r.querySelector('.mem-restore') && r.querySelector('.mem-restore').disabled === false));
   assert.ok(renderMemoryHistory([], { doc }).querySelector('.hist-empty'));
+});
+
+// Settings › Memory: the global host hint also names the defragment model (report.defragModel);
+// unset, the sentence is byte-identical to before.
+test('renderHealthCard: the host hint names the Settings › Memory model, says when it left the catalog, and is unchanged when unset', () => {
+  const hint = (dm) => renderHealthCard({ ...REPORT, defragModel: dm }, { doc, host: HOST }).querySelector('.mem-host-hint').textContent;
+  assert.equal(hint({ model: 'claude-opus-5-5', effort: 'high', label: 'Opus 5.5', stale: false }), 'Runs on alpha with Opus 5.5 · high — pick another project on the New pipeline page.');
+  assert.equal(hint({ model: 'claude-opus-5-5', effort: null, label: 'Opus 5.5', stale: false }), 'Runs on alpha with Opus 5.5 — pick another project on the New pipeline page.');
+  assert.equal(hint({ model: 'gone-model', effort: null, label: 'gone-model', stale: true }), 'Runs on alpha without the Settings › Memory model (gone-model is no longer in the catalog) — pick another project on the New pipeline page.');
+  assert.equal(hint(null), 'Runs on alpha — pick another project on the New pipeline page.');
+  assert.equal(defragModelPhrase(undefined), '');
+  assert.equal(defragModelPhrase({ model: '' }), '');
 });

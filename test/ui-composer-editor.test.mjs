@@ -969,7 +969,7 @@ test('a routed model locks the sub-agent select; a plain model keeps it editable
   const s = await open({ api: { agents: async () => [meta], agentsAll: async () => [meta] } });
   s.c.setAgents({ planner: meta });
   s.c.setModels({
-    models: [{ id: 'ds-stable', label: 'DS Stable', routed: true }, { id: 'claude-opus-5', label: 'Opus', routed: false }],
+    models: [{ id: 'ds-stable', label: 'DS Stable', routed: true }, { id: 'claude-opus-5-5', label: 'Opus', routed: false }],
     efforts: ['max'], subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'],
   });
   s.c.select({ kind: 'node', id: 'n_agent' });
@@ -994,7 +994,7 @@ test('a routed model locks the sub-agent select; a plain model keeps it editable
     'the stored pin survives the lock untouched');
   // Switching back to a plain model restores the full control, pin intact.
   const model2 = s.el.insBody.querySelector('[data-field="model"]');
-  model2.value = 'claude-opus-5';
+  model2.value = 'claude-opus-5-5';
   model2.dispatchEvent(new s.win.Event('change', { bubbles: true }));
   s.c.select(null); s.c.select({ kind: 'node', id: 'n_agent' });
   const free = s.el.insBody.querySelector('[data-field="subagentModel"]');

@@ -602,12 +602,6 @@
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
                     <span class="rd-btn-label">Stop</span>
                   </button>
-                  <!-- Report this run: hidden until the run reaches a terminal state
-                       (paintRdTerminal), because a mid-flight run has no totals to
-                       report. paintRdTerminal appends .rd-history-link after this
-                       button, so the painted row reads
-                       Stop · Report this run · View in History. -->
-                  <button type="button" class="rd-report btn-ghost" hidden data-min-level="advanced">Report this run</button>
                 </div>
                 <!-- Inline error slot for failed actions, on the HEADER so it is never
                      pushed below the fold by the graph or a tab body (mirrors .hd-error). -->
@@ -1823,6 +1817,30 @@
                 <div class="sub">What worca remembers across runs and chats — the global rules and preferences every agent sees. A project's own memory lives on its project page (Projects → open a project → Memory).</div>
               </div>
             </div>
+            <!-- Settings › Memory: the model + effort EVERY Memory defragment run uses (memory-defrag-model.mjs).
+                 Expert, like the health card's Defragment. No ⓘ and empty hints: the settings-view census
+                 (test/ui-settings-tooltips.test.mjs) pins both. A plain .card like the health card, NOT a
+                 .settings-card: that census (About last, twelve cards) counts the General tab's cards. -->
+            <section class="card mem-model-card" id="mem-defrag-model-card" data-min-level="expert">
+              <div class="label-row"><h2>Defragment model</h2></div>
+              <p class="mem-model-text">The model every Memory defragment run uses — from the Defragment button, New pipeline, an Ask Worca card or the CLI. A model named when the run starts (<code>worca --model</code>) still wins.</p>
+              <div class="mem-model-row">
+                <div class="field">
+                  <div class="label-row"><label for="memDefragModel">Model</label></div>
+                  <select id="memDefragModel" class="select" aria-label="Defragment model"></select>
+                </div>
+                <div class="field">
+                  <div class="label-row"><label for="memDefragEffort">Effort</label></div>
+                  <select id="memDefragEffort" class="select" aria-label="Defragment effort"></select>
+                </div>
+              </div>
+              <small class="hint" id="memDefragModelNote"></small>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="memDefragModelReset" class="btn btn-ghost btn-mini">Use default</button>
+                <button type="button" id="memDefragModelSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="memDefragModelMsg"></small>
+            </section>
             <p id="memory-msg" class="form-msg" aria-live="polite"></p>
             <div id="memory-host" class="mem-host"></div>
           </section>

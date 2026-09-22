@@ -56,31 +56,31 @@ test('GET /api/config without projectDir -> built-in models, empty config', asyn
   assert.ok(j.steps.some((s) => s.key === 'planner'));
 });
 
-test('GET /api/config exposes Opus 5 (claude-opus-5), 1M-native (no [1m] twin)', async () => {
+test('GET /api/config exposes Opus 5.5 (claude-opus-5-5), 1M-native (no [1m] twin)', async () => {
   const r = await fetch(`${base}/api/config`);
   assert.equal(r.status, 200);
   const j = await r.json();
 
-  const opus5 = j.models.find((m) => m.id === 'claude-opus-5');
-  assert.ok(opus5, 'claude-opus-5 is present in the model catalog');
-  assert.equal(opus5.label, 'Opus 5');
+  const opus5 = j.models.find((m) => m.id === 'claude-opus-5-5');
+  assert.ok(opus5, 'claude-opus-5-5 is present in the model catalog');
+  assert.equal(opus5.label, 'Opus 5.5');
   assert.equal(opus5.custom, false);
   assert.deepEqual(opus5.efforts, ['medium', 'high', 'xhigh', 'max']);
 
   // 1M-native: there must be NO separate [1m] twin id.
   assert.ok(
-    !j.models.some((m) => m.id === 'claude-opus-5[1m]'),
-    'no redundant claude-opus-5[1m] twin',
+    !j.models.some((m) => m.id === 'claude-opus-5-5[1m]'),
+    'no redundant claude-opus-5-5[1m] twin',
   );
 });
 
-test('Opus 5 accepts xhigh effort via POST /api/config', async () => {
+test('Opus 5.5 accepts xhigh effort via POST /api/config', async () => {
   const r = await fetch(`${base}/api/config`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ projectDir: proj, step: 'planner', model: 'claude-opus-5', effort: 'xhigh' }),
+    body: JSON.stringify({ projectDir: proj, step: 'planner', model: 'claude-opus-5-5', effort: 'xhigh' }),
   });
   assert.equal(r.status, 200);
-  assert.deepEqual((await r.json()).config.steps.planner, { model: 'claude-opus-5', effort: 'xhigh' });
+  assert.deepEqual((await r.json()).config.steps.planner, { model: 'claude-opus-5-5', effort: 'xhigh' });
 });
 
 test('POST /api/config sets a step; GET reflects it', async () => {

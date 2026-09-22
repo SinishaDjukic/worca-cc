@@ -10,7 +10,7 @@ import { JSDOM } from 'jsdom';
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
-const CATALOG = [{ id: 'claude-opus-5', label: 'Opus 5' }, { id: 'claude-sonnet-5', label: 'Sonnet 5' }];
+const CATALOG = [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }, { id: 'claude-sonnet-5', label: 'Sonnet 5' }];
 const SETTINGS = {
   autoWorkflowModel: '', autoWorkflowModelEffective: { model: 'claude-sonnet-5', source: 'default' },
   app: {}, theme: {}, chat: {},
@@ -66,7 +66,7 @@ test('the card sits after Title generation, before About; options come from the 
   assert.equal(ids[ids.indexOf('title-model-settings-card') + 1], 'auto-model-settings-card');
   assert.equal(ids.at(-1), 'about-card');
   const sel = window.document.getElementById('autoModel');
-  assert.deepEqual([...sel.options].map((o) => o.value), ['', 'claude-opus-5', 'claude-sonnet-5']);
+  assert.deepEqual([...sel.options].map((o) => o.value), ['', 'claude-opus-5-5', 'claude-sonnet-5']);
   assert.equal(sel.options[0].textContent, 'Default (Sonnet-class)');
   assert.equal(sel.value, '');
   assert.match(window.document.getElementById('autoModelEnvNote').textContent, /Auto classifies with claude-sonnet-5 \(the default\)/);
@@ -74,10 +74,10 @@ test('the card sits after Title generation, before About; options come from the 
 
 test('Save posts autoWorkflowModel; env override paints a warning; a stored id that left the catalog paints "not installed"', async () => {
   const { window, openSettings, posts, setSettings } = await boot(); await openSettings();
-  const sel = window.document.getElementById('autoModel'); sel.value = 'claude-opus-5';
+  const sel = window.document.getElementById('autoModel'); sel.value = 'claude-opus-5-5';
   window.document.getElementById('autoModelSave').click(); await settle(window);
-  assert.deepEqual(posts.at(-1), { autoWorkflowModel: 'claude-opus-5' });
-  setSettings({ autoWorkflowModel: 'claude-opus-5', autoWorkflowModelEffective: { model: 'claude-haiku-4-5', source: 'env' } }); await openSettings();
+  assert.deepEqual(posts.at(-1), { autoWorkflowModel: 'claude-opus-5-5' });
+  setSettings({ autoWorkflowModel: 'claude-opus-5-5', autoWorkflowModelEffective: { model: 'claude-haiku-4-5', source: 'env' } }); await openSettings();
   assert.match(window.document.getElementById('autoModelEnvNote').textContent, /WORCA_AUTO_MODEL is set in the environment: Auto uses claude-haiku-4-5/);
   setSettings({ autoWorkflowModel: 'claude-gone-1', autoWorkflowModelEffective: { model: 'claude-sonnet-5', source: 'default' } }); await openSettings();
   const stale = [...sel.options].find((o) => o.value === 'claude-gone-1');
@@ -90,22 +90,22 @@ test('Save posts autoWorkflowModel; env override paints a warning; a stored id t
 // reports source 'settings' when the id actually resolved.
 test('a failed catalog GET never becomes a "no longer in the catalog" verdict', async () => {
   const { window, openSettings, setSettings, posts } = await boot({ configOk: false });
-  setSettings({ autoWorkflowModel: 'claude-opus-5', autoWorkflowModelEffective: { model: 'claude-opus-5', source: 'settings' } });
+  setSettings({ autoWorkflowModel: 'claude-opus-5-5', autoWorkflowModelEffective: { model: 'claude-opus-5-5', source: 'settings' } });
   await openSettings();
   const sel = window.document.getElementById('autoModel');
-  const opt = [...sel.options].find((o) => o.value === 'claude-opus-5');
+  const opt = [...sel.options].find((o) => o.value === 'claude-opus-5-5');
   assert.ok(opt && !opt.disabled, 'the stored id stays selectable');
-  assert.equal(sel.value, 'claude-opus-5');
+  assert.equal(sel.value, 'claude-opus-5-5');
   assert.doesNotMatch(window.document.getElementById('autoModelEnvNote').textContent, /no longer in the catalog/);
   assert.equal(window.document.getElementById('autoModelTest').disabled, false, 'Test stays available');
   window.document.getElementById('autoModelSave').click(); await settle(window);
-  assert.deepEqual(posts.at(-1), { autoWorkflowModel: 'claude-opus-5' }, 'Save is not refused');
+  assert.deepEqual(posts.at(-1), { autoWorkflowModel: 'claude-opus-5-5' }, 'Save is not refused');
 });
 
 // The card's own "back to the default" affordance — nothing pinned the empty POST.
 test('Use default posts an empty autoWorkflowModel', async () => {
   const { window, openSettings, posts, setSettings } = await boot();
-  setSettings({ autoWorkflowModel: 'claude-opus-5', autoWorkflowModelEffective: { model: 'claude-opus-5', source: 'settings' } });
+  setSettings({ autoWorkflowModel: 'claude-opus-5-5', autoWorkflowModelEffective: { model: 'claude-opus-5-5', source: 'settings' } });
   await openSettings();
   window.document.getElementById('autoModelReset').click(); await settle(window);
   assert.deepEqual(posts.at(-1), { autoWorkflowModel: '' });

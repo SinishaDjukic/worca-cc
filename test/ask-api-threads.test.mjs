@@ -172,7 +172,7 @@ test('#397: a message whose context lacks `pinned` inherits the thread pin, per 
   await patch(`/api/ask/threads/${thread.id}`, { scope: { pinned: true, projectKey: 'demo-00000001' } });
   // a pre-selector tab: page context only — the pin must survive AND merge per field
   const r = await post(`/api/ask/threads/${thread.id}/messages`, {
-    text: 'hi', model: 'claude-opus-5', effort: 'high',
+    text: 'hi', model: 'claude-opus-5-5', effort: 'high',
     context: { view: 'history', projectDir: '/p/elsewhere', pipelineId: '4e1f2a9b' },
   });
   assert.equal(r.status, 202);
@@ -187,7 +187,7 @@ test('#397: a message whose context lacks `pinned` inherits the thread pin, per 
   const { thread: t2 } = await (await post('/api/ask/threads', {})).json();
   await patch(`/api/ask/threads/${t2.id}`, { scope: { pinned: true, projectKey: 'demo-00000001' } });
   const r2 = await post(`/api/ask/threads/${t2.id}/messages`, {
-    text: 'hi', model: 'claude-opus-5', effort: 'high',
+    text: 'hi', model: 'claude-opus-5-5', effort: 'high',
     context: { view: 'new', pinned: false },
   });
   assert.equal(r2.status, 202);

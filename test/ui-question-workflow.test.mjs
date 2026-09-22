@@ -117,16 +117,16 @@ test('Accept posts the §5.4 payload with only the changed tunables and the edit
   const row = panel.querySelector(`.qtune tr[data-node-id="${p.order[1]}"]`);
   // the model `change` re-fills the effort select from the fixture's MODELS (opus: medium/high/max)
   // BEFORE `.value = 'max'` — jsdom silently drops a value the select does not offer
-  const model = row.querySelector('select[aria-label^="Model"]'); model.value = 'claude-opus-5'; model.dispatchEvent(new ctx.window.Event('change'));
+  const model = row.querySelector('select[aria-label^="Model"]'); model.value = 'claude-opus-5-5'; model.dispatchEvent(new ctx.window.Event('change'));
   const effort = row.querySelector('select[aria-label^="Effort"]');
   assert.equal(effort.value, 'high', 'the mockup rule: the planner had no effort, so the new model\'s SECOND effort is picked');
   assert.deepEqual([...effort.options].map((o) => o.value), ['medium', 'high', 'max'], 'only the model\'s own efforts — no choosable "default" (the sanitiser would drop it)');
   effort.value = 'max'; effort.dispatchEvent(new ctx.window.Event('change'));
-  assert.deepEqual([...panel.querySelectorAll(`.ask-wfcard-graph [data-node-id="${p.order[1]}"] .nband .bchip`)].map((c) => c.textContent).slice(0, 2), ['Opus 5', 'max'], 'the band mirrors the table');
+  assert.deepEqual([...panel.querySelectorAll(`.ask-wfcard-graph [data-node-id="${p.order[1]}"] .nband .bchip`)].map((c) => c.textContent).slice(0, 2), ['Opus 5.5', 'max'], 'the band mirrors the table');
   panel.querySelector('.ask-wfcard-edit').click();
   const field = panel.querySelector('.ask-wfcard-field'); field.value = 'Theme switch'; field.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Enter' }));
   panel.querySelector('.wf-accept').click(); await settle(ctx.window);
-  assert.deepEqual(ctx.answers.at(-1), { runId: RUN_ID, id: 'auto-1', payload: { decision: 'accept', name: 'Theme switch', nodes: { [p.order[1]]: { model: 'claude-opus-5', effort: 'max' } } } });
+  assert.deepEqual(ctx.answers.at(-1), { runId: RUN_ID, id: 'auto-1', payload: { decision: 'accept', name: 'Theme switch', nodes: { [p.order[1]]: { model: 'claude-opus-5-5', effort: 'max' } } } });
   assert.equal(panel.querySelector('.wf-accept').disabled, true, 'busy while the answer is in flight');
   assert.equal(panel.querySelector('select').disabled, true, 'selects are disabled too (A25)');
 });
@@ -138,10 +138,10 @@ test('B1: a model change posts its effort even when that effort equals the base\
   // the "keep the current effort" rule leaves effort at the BASE value — and the old diff dropped it.
   const row = panel.querySelector(`.qtune tr[data-node-id="${p.order[0]}"]`);
   assert.deepEqual([p.nodes[p.order[0]].model, p.nodes[p.order[0]].effort], ['claude-sonnet-5', 'medium'], 'fixture precondition');
-  const model = row.querySelector('select[aria-label^="Model"]'); model.value = 'claude-opus-5'; model.dispatchEvent(new ctx.window.Event('change'));
+  const model = row.querySelector('select[aria-label^="Model"]'); model.value = 'claude-opus-5-5'; model.dispatchEvent(new ctx.window.Event('change'));
   assert.equal(row.querySelector('select[aria-label^="Effort"]').value, 'medium', 'effort kept');
   panel.querySelector('.wf-accept').click(); await settle(ctx.window);
-  assert.deepEqual(ctx.answers.at(-1).payload.nodes, { [p.order[0]]: { model: 'claude-opus-5', effort: 'medium' } }, 'model AND effort travel together');
+  assert.deepEqual(ctx.answers.at(-1).payload.nodes, { [p.order[0]]: { model: 'claude-opus-5-5', effort: 'medium' } }, 'model AND effort travel together');
 });
 
 test('Revise reveals the box, refuses empty text, posts the text; the next round shows the note', async () => {
