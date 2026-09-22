@@ -91,10 +91,10 @@ const auditLines = (pipelineId) => getDb()
   .prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(pipelineId)
   .map((r) => r.text);
 
-test('the builtin sidecars declare no forms, so nothing here is a shipped behaviour change', () => {
+test("exactly one built-in declares forms — the reviewer's reference form (P5); nothing else here is a shipped behaviour change", () => {
   const reg = loadAgentRegistry(undefined, { userAgentsDir: null, includePlugins: false });
   for (const [key, meta] of Object.entries(reg)) {
-    assert.equal('ask' in meta, false, `${key} unexpectedly declares ask forms`);
+    assert.equal('ask' in meta, key === 'reviewer', `${key} unexpectedly ${key === 'reviewer' ? 'lacks' : 'declares'} ask forms`);
   }
 });
 

@@ -1565,6 +1565,12 @@ async function printInventory(inv) {
   }
   for (const a of i.agents || []) {
     out(`  agent: ${a.key}${a.tools?.length ? ` (tools: ${a.tools.join(', ')})` : ''}`);
+    const forms = Array.isArray(a.forms) ? a.forms : [];
+    if (forms.length) {
+      const types = Array.isArray(a.fileTypes) ? a.fileTypes : [];
+      out(`    ${forms.length} form${forms.length === 1 ? '' : 's'}: ${forms.join(', ')}`
+        + (types.length ? ` — may display ${types.join(', ')} from the run folder` : ''));
+    }
   }
   for (const s of i.scripts || []) {
     out(`  script: ${s.key} (${s.runtime}${s.command ? `, ${s.command}` : s.file ? `, ${s.file}` : ''})`);
@@ -1625,7 +1631,7 @@ async function pluginInit(rest) {
     name,
     version: '0.1.0',
     description: 'Scaffolded worca plugin — edit me',
-    engines: { 'worca-cc-api': '>=3 <4' },
+    engines: { 'worca-cc-api': '>=4 <5' },
   };
   if (withParts.includes('task-source')) {
     manifestObj.taskSources = [{

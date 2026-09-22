@@ -61,7 +61,7 @@ test('plugin init scaffolds a plugin that validates cleanly (strict)', async () 
   const manifest = JSON.parse(await readFile(join(dir, 'worca-cc-plugin.json'), 'utf8'));
   assert.equal(manifest.name, 'demo-plugin');
   assert.equal(manifest.taskSources[0].id, 'main');
-  assert.equal(manifest.engines['worca-cc-api'], '>=3 <4', 'scaffolds the current plugin API');
+  assert.equal(manifest.engines['worca-cc-api'], '>=4 <5', 'scaffolds the current plugin API');
   const sidecar = JSON.parse(await readFile(join(dir, 'agents', 'demoPluginHelper.meta.json'), 'utf8'));
   assert.equal(sidecar.metaVersion, 2);
   assert.deepEqual(sidecar.inputs, [{ id: 'task', type: 'md', required: true }]);
@@ -97,6 +97,33 @@ test('validate --strict exits 2 on an injected unknown manifest field; non-stric
   const strict = await run(['plugin', 'validate', dir, '--strict'], { home });
   assert.equal(strict.code, 2, strict.stdout + strict.stderr);
   assert.match(strict.stdout + strict.stderr, /bogusField/);
+});
+
+test('validate names a broken ask form: exit 0 with a warning, exit 2 under --strict', async () => {
+  const home = await freshDir('worca-cc-cli-plugin-');
+  const dir = join(await freshDir('worca-cc-plugin-init-'), 'forms-plugin');
+  await run(['plugin', 'init', 'forms-plugin', '--dir', dir], { home });
+  const sidecarPath = join(dir, 'agents', 'formsPluginHelper.meta.json');
+  const sidecar = JSON.parse(await readFile(sidecarPath, 'utf8'));
+  sidecar.ask = { forms: { 'pick-one': {
+    version: 1,
+    title: 'Pick one',
+    data: { type: 'object', required: ['summary'], properties: { summary: { type: 'string' } } },
+    answer: { type: 'object', required: ['verdict'], properties: { verdict: { type: 'string', enum: ['yes', 'no'] } } },
+    // `grid` is not in the widget catalog and carries no `fallback` -> gate 1.
+    layout: [{ widget: 'grid', bind: 'data.summary' }, { widget: 'select', field: 'verdict', label: 'Verdict' }],
+    example: { summary: 'Something happened.' },
+  } } };
+  await writeFile(sidecarPath, JSON.stringify(sidecar, null, 2));
+
+  const lax = await run(['plugin', 'validate', dir], { home });
+  assert.equal(lax.code, 0, lax.stdout + lax.stderr);
+  assert.match(lax.stdout + lax.stderr, /ask\.forms\."pick-one"/);
+  assert.match(lax.stdout + lax.stderr, /grid/);
+
+  const strict = await run(['plugin', 'validate', dir, '--strict'], { home });
+  assert.equal(strict.code, 2, strict.stdout + strict.stderr);
+  assert.match(strict.stdout + strict.stderr, /ask\.forms\."pick-one"/);
 });
 
 test('link + list reflect the lock (name, enabled, linked)', async () => {

@@ -31,6 +31,35 @@ test('install consent lists a requested secret (.pl-secret) + setup commands ver
   assert.match(el.querySelector('.pl-setup-cmd').textContent, /npm ci --prefix <dir> --ignore-scripts --omit=dev/);
 });
 
+test('install consent names an agent’s ask forms and the file types they may display', () => {
+  const el = renderInstallConsent(
+    { name: 'mockup-source', repoUrl: 'https://github.com/o/r', sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' },
+    {
+      agents: [
+        { key: 'mockupReviewer', tools: ['Read'], forms: ['review-mockups'], fileTypes: ['application/pdf', 'image/*'] },
+        { key: 'plainAgent', tools: [], forms: [], fileTypes: [] },
+      ],
+      taskSources: [], skills: [], workflows: [], depCount: null, setupCommands: [],
+    },
+    { doc },
+  );
+  const rows = [...el.querySelectorAll('.pl-consent-forms')];
+  assert.equal(rows.length, 1, 'only the agent that HAS forms gets the line');
+  assert.equal(rows[0].textContent,
+    '1 form: review-mockups · may display application/pdf, image/* from the run folder');
+  assert.match(el.textContent, /mockupReviewer — tools: Read/, 'the tools line is untouched');
+});
+
+test('install consent tolerates a snapshot taken before ask forms existed', () => {
+  const el = renderInstallConsent(
+    { name: 'old-snap', repoUrl: 'https://github.com/o/r', sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' },
+    { agents: [{ key: 'legacy', tools: ['Read'] }], taskSources: [], skills: [], workflows: [], depCount: null, setupCommands: [] },
+    { doc },
+  );
+  assert.equal(el.querySelector('.pl-consent-forms'), null);
+  assert.match(el.textContent, /legacy — tools: Read/);
+});
+
 test('install consent: chat channels render security-loud with secrets; absent -> no section', () => {
   const el = renderInstallConsent(
     { name: 'telegram-chat', repoUrl: 'https://github.com/o/r', sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' },

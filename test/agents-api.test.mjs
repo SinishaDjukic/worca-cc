@@ -121,3 +121,64 @@ test('DELETE a workflow-referenced agent -> 409; POST /api/workflows accepts a u
   assert.match((await r.json()).error, /Uses Docs/);
 });
 
+test('POST /api/agents answers 422 with a per-path error list for a bad ask form', async () => {
+  const res = await fetch(`${base}/api/agents`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      markdown: '# asker\n',
+      meta: {
+        metaVersion: 2, key: 'apiAskBad', displayName: 'Asker', runnerType: 'producer',
+        inputs: [{ id: 'task', type: 'md' }],
+        outputs: [{ id: 'notes', type: 'md', filename: 'notes.md' }],
+        ask: { forms: { 'pick-one': {
+          version: 1, title: 'Pick one',
+          data: { type: 'object', required: ['summary'], properties: { summary: { type: 'string' } } },
+          answer: { type: 'object', required: ['verdict'], properties: { verdict: { type: 'string', enum: ['yes', 'no'] } } },
+          layout: [{ widget: 'grid', bind: 'data.summary' }, { widget: 'select', field: 'verdict', label: 'Verdict' }],
+          example: { summary: 'Something happened.' },
+        } } },
+      },
+    }),
+  });
+  assert.equal(res.status, 422);
+  const body = await res.json();
+  assert.equal(typeof body.error, 'string');
+  assert.ok(Array.isArray(body.errors) && body.errors.length >= 1, JSON.stringify(body));
+  assert.match(body.errors[0].path, /^ask\.forms\."pick-one"/);
+  assert.equal(typeof body.errors[0].code, 'string');
+  assert.equal(typeof body.errors[0].message, 'string');
+});
+
+test('PUT /api/agents/:key answers 422 the same way, and 400 keeps its old body', async () => {
+  const create = await fetch(`${base}/api/agents`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      markdown: '# asker\n',
+      meta: {
+        metaVersion: 2, key: 'apiAskPut', displayName: 'Asker', runnerType: 'producer',
+        inputs: [{ id: 'task', type: 'md' }],
+        outputs: [{ id: 'notes', type: 'md', filename: 'notes.md' }],
+      },
+    }),
+  });
+  assert.equal(create.status, 201);
+
+  const bad = await fetch(`${base}/api/agents/apiAskPut`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ meta: { metaVersion: 2, ask: { forms: { 'Not An Id': { version: 1 } } } } }),
+  });
+  assert.equal(bad.status, 422);
+  assert.ok(Array.isArray((await bad.json()).errors));
+
+  // A plain meta rule is still a 400 with ONLY { error } — no `errors` key.
+  const plain = await fetch(`${base}/api/agents/apiAskPut`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ meta: { metaVersion: 2, runnerType: 'nonsense' } }),
+  });
+  assert.equal(plain.status, 400);
+  assert.equal((await plain.json()).errors, undefined);
+});

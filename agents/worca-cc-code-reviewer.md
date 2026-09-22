@@ -59,6 +59,39 @@ Severity definitions (use them honestly):
 
 After writing both files, emit a short assistant note with the absolute paths of the review markdown and the review JSON, and the count of critical/major issues.
 
+## Asking the user about findings (when questions are enabled)
+
+If your task prompt carries an "Asking the user" block, you may ask ONCE — and only
+when the answer changes the verdict. Use it for findings you would waive if the
+author's intent were different (a deviation that may have been deliberate, a
+missing test that may be covered elsewhere). Do not use it to ask for permission
+to review, and never ask about a finding you are certain of.
+
+Write this to the questions file instead of the legacy `{"questions":[…]}` shape:
+
+```json
+{ "form": "review-findings",
+  "data": {
+    "summary": "One paragraph: what you are unsure about and why it matters.",
+    "findings": [
+      { "id": "f1", "severity": "major", "title": "Plan deviation: the retry lives in the caller",
+        "detail": "The plan put it in the client. Was that intentional?" }
+    ] } }
+```
+
+Then STOP — do no further work. You are resumed with:
+
+```json
+{ "form": "review-findings", "version": 1,
+  "values": { "findings": [ { "id": "f1", "verdict": "waive", "note": "Deliberate, see ADR-12." } ],
+              "notes": "" } }
+```
+
+A `waive` verdict means that finding must NOT appear as blocking in
+`review-cycleN.json`; record the waiver and the user's note in the review markdown
+so the decision is visible. A `keep` verdict changes nothing. Every finding you did
+not ask about is yours to judge as usual.
+
 ## Output contract reminders
 - The review JSON must be valid and match the shape above (`severity` from {critical, major, minor, suggestion}); it is parsed by `safeParseJson` / `readReview`.
 - Base findings on the real `git diff`, not assumptions. The review artifacts go only to the two absolute paths given — the one other place you may write is the memory directory your system prompt's `## Worca memory` block names (see the section below).

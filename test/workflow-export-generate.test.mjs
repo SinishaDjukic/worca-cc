@@ -213,7 +213,10 @@ test('an agent with ask forms exports without them, and the export says so', asy
 });
 
 test('an agent WITHOUT forms produces no forms warning', async () => {
+  // Not wf_default: it places the reviewer, which ships the P5 reference form and
+  // therefore DOES warn. A form-less built-in keeps the pin saying what its title says.
+  const tpl = await writeKeyGraph({ id: 'wf_exp_noforms', name: 'No forms export', keys: ['planner'] });
   const dest = await tmp();
-  const out = await applyExport({ workflowId: 'wf_default', destination: 'project', projectDir: dest, onConflict: 'overwrite' });
+  const out = await applyExport({ workflowId: tpl.id, destination: 'project', projectDir: dest, onConflict: 'overwrite' });
   assert.equal(out.warnings.some((w) => /not exported/.test(w) && /form/.test(w)), false, JSON.stringify(out.warnings));
 });

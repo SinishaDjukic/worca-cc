@@ -112,7 +112,7 @@ test('apply writes the folder: unstamped graph, byte-identical agent pair, globa
   const manifest = JSON.parse(await readFile(join(pluginDir, 'worca-cc-plugin.json'), 'utf8'));
   assert.equal(manifest.name, 'my-shared-plugin');
   assert.equal(manifest.version, '0.1.0');
-  assert.deepEqual(manifest.engines, { 'worca-cc-api': '>=3 <4' });
+  assert.deepEqual(manifest.engines, { 'worca-cc-api': '>=4 <5' });
   assert.equal(manifest.worca.exports['shared-flow'].workflowId, workflowId);
   assert.equal(manifest.worca.exports['shared-flow'].name, 'Shared Flow');
 

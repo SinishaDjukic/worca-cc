@@ -1214,7 +1214,7 @@ export async function exportWorkflowPlugin({ workflowId, targetDir, pluginName, 
   const manifest = existing ? { ...existing } : {
     name, version: '0.1.0',
     description: `Workflows shared from Worca — ${tpl.name}`,
-    engines: { 'worca-cc-api': '>=3 <4' },
+    engines: { 'worca-cc-api': '>=4 <5' },
   };
   if (!manifest.name) manifest.name = name;
   let version = typeof manifest.version === 'string' ? manifest.version : '';

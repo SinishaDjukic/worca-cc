@@ -6492,8 +6492,20 @@ function agentErrorStatus(code) {
   if (code === 'NOT_FOUND') return 404;
   if (code === 'BAD_REQUEST') return 400;
   if (code === 'PLUGIN') return 400;
+  // A declared ask form that fails gate 1 is a well-formed request the server
+  // understood and refused on content — the same 422 POST /api/answer uses for a
+  // gate-3 failure (ask-forms spec §5, §11).
+  if (code === 'ASK_FORM') return 422;
   if (code === 'BUILTIN' || code === 'DUPLICATE' || code === 'REFERENCED') return 409;
   return 500;
+}
+
+/** The error body: `{ error }` for every failure, plus the structured `errors`
+ *  list when the store produced one (gate 1). Never adds an empty `errors`. */
+function agentErrorBody(err) {
+  const body = { error: err && err.message ? err.message : String(err) };
+  if (Array.isArray(err?.errors) && err.errors.length) body.errors = err.errors;
+  return body;
 }
 
 /**
@@ -6597,7 +6609,7 @@ app.post('/api/agents', async (req, res) => {
     const created = await createAgent({ meta: body.meta, markdown: body.markdown });
     res.status(201).json(created);
   } catch (err) {
-    res.status(agentErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
+    res.status(agentErrorStatus(err && err.code)).json(agentErrorBody(err));
   }
 });
 
@@ -6608,7 +6620,7 @@ app.put('/api/agents/:key', async (req, res) => {
   try {
     res.json(await updateAgent(key, { meta: body.meta, markdown: body.markdown }));
   } catch (err) {
-    res.status(agentErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
+    res.status(agentErrorStatus(err && err.code)).json(agentErrorBody(err));
   }
 });
 
@@ -6618,7 +6630,7 @@ app.delete('/api/agents/:key', async (req, res) => {
   try {
     res.json(await deleteAgent(key));
   } catch (err) {
-    res.status(agentErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
+    res.status(agentErrorStatus(err && err.code)).json(agentErrorBody(err));
   }
 });
 

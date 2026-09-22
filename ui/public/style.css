@@ -1696,6 +1696,26 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .pf-hint[hidden],.pf-note[hidden]{display:none;}
 .agent-caps,.agent-workspace{display:flex;flex-direction:column;gap:2px;}
 
+/* ===== Agent ask forms (ask-forms spec §11) ===== */
+.agent-forms{display:flex;flex-direction:column;gap:8px;}
+.agent-forms-list{display:flex;flex-direction:column;gap:14px;}
+.agent-form-row{border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;}
+.afm-head{display:flex;align-items:flex-end;gap:12px;}
+.afm-head .field{margin:0;}   /* .field{margin-bottom:18px} would lift the id input off the Remove button's baseline */
+.afm-head .afm-f-id{flex:1 1 auto;}
+.afm-remove{flex:0 0 auto;}
+.afm-editor .code-editor{width:100%;}
+.afm-add{align-self:flex-start;}
+.afm-panes{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;}
+.afm-preview{min-width:0;border:1px solid var(--line);border-radius:8px;padding:10px;}
+.afm-projection{min-width:0;margin:0;white-space:pre-wrap;font-size:12px;}
+.afm-projection[hidden]{display:none;}
+.agent-forms-view{display:flex;flex-direction:column;gap:12px;margin-top:12px;}
+.agent-forms-view[hidden]{display:none;}
+.afv-row{border:1px solid var(--line);border-radius:10px;padding:12px;}
+.afv-head{display:flex;align-items:baseline;gap:10px;margin-bottom:8px;}
+@media (max-width:900px){.afm-panes{grid-template-columns:minmax(0,1fr);}}
+
 /* (2) space between the header pills and the expanded markdown body */
 .agent-detail { margin-top:14px; }
 .agent-origin.origin-user { background:var(--violet-bg); }

@@ -172,7 +172,7 @@ test('installPlugin: happy path — export, setup, precheck, symlink swap, lock,
   assert.match(entry.lockfileHash, /^[0-9a-f]{64}$/);
 
   // "Will install" inventory (spec §6.1)
-  assert.deepEqual(r.inventory.agents, [{ key: 'demoAgent', tools: ['Read', 'Bash'] }]);
+  assert.deepEqual(r.inventory.agents, [{ key: 'demoAgent', tools: ['Read', 'Bash'], forms: [], fileTypes: [] }]);
   assert.deepEqual(r.inventory.scripts, [{ key: 'tidy', runtime: 'shell', file: null, command: 'npm run tidy', cases: 0 }]);
   assert.deepEqual(r.inventory.taskSources, [{ id: 'demo', displayName: 'Demo', secrets: ['token'] }]);
   assert.deepEqual(r.inventory.skills, ['demo-skill']);
@@ -306,7 +306,7 @@ test('buildInstallInventory works directly against any version dir', () => {
   const dir = join(scratch, 'inv');
   writeTree(dir, PLUGIN_FILES('inv-plugin'));
   const inv = buildInstallInventory(dir);
-  assert.deepEqual(inv.agents, [{ key: 'demoAgent', tools: ['Read', 'Bash'] }]);
+  assert.deepEqual(inv.agents, [{ key: 'demoAgent', tools: ['Read', 'Bash'], forms: [], fileTypes: [] }]);
   assert.equal(inv.depCount, 1);
   assert.equal(inv.setupCommands.length, 1);
 });
@@ -478,7 +478,7 @@ test('listInstalledPlugins reports apiMismatch for v1-shaped data, and null when
   });
   const p = listInstalledPlugins().find((x) => x.name === 'legacy-data');
   assert.deepEqual(p.apiMismatch, {
-    builtFor: 1, host: 3, agents: 1, workflows: 1,
+    builtFor: 1, host: 4, agents: 1, workflows: 1,
     message: 'built for plugin API 1; this version of worca requires plugin API 3 for agents and pipeline templates \u2014 update or reinstall the plugin (1 agent(s), 1 template(s) ignored)',
   });
   assert.equal(p.broken, false, 'an outdated data contract is not a broken install');
@@ -563,7 +563,7 @@ test('buildInstallInventory reads the tools of the file agentFile names (C-1)', 
     'agents/real.md': '---\ntools: Bash, Write, WebFetch\n---\nthe prompt actually used at run time\n',
   });
   assert.deepEqual(buildInstallInventory(dir).agents,
-    [{ key: 'demoAgent', tools: ['Bash', 'Write', 'WebFetch'] }]);
+    [{ key: 'demoAgent', tools: ['Bash', 'Write', 'WebFetch'], forms: [], fileTypes: [] }]);
 
   // No agentFile at all -> the <key>.md fallback is unchanged.
   const plain = join(scratch, 'inv-agentfile-none');
@@ -572,7 +572,7 @@ test('buildInstallInventory reads the tools of the file agentFile names (C-1)', 
     'agents/demoAgent.meta.json': JSON.stringify({ ...V2_SIDECAR, agentFile: undefined }),
   });
   assert.deepEqual(buildInstallInventory(plain).agents,
-    [{ key: 'demoAgent', tools: ['Read', 'Bash'] }]);
+    [{ key: 'demoAgent', tools: ['Read', 'Bash'], forms: [], fileTypes: [] }]);
 });
 
 // ── MAJ-12: the refusal message names the real cause ────────────────────────
