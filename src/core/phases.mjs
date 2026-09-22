@@ -14,7 +14,7 @@
 // prompt so the system prompt is never empty. Interface is locked by docs/ARCHITECTURE.md §3.5.
 
 import { runClaude } from './claude-runner.mjs';
-import { resolveModelEnv } from './config.mjs';
+import { resolveModelEnv, bridgedModelInfo } from './config.mjs';
 import { SUBAGENT_AUTO, SUBAGENT_INHERIT, SUBAGENT_MODELS, effectiveSubagentModel } from './model-env.mjs';
 import { readClarify, readReview } from './protocol.mjs';
 import { writeClarify, readClarifyRow } from './artifacts.mjs';
@@ -83,6 +83,22 @@ export function ctxFanOut(ctx) {
  * ctx — from modelHasBaseUrlRouting(effective model), so this stays pure.
  * A present node wins, mirroring ctxFanOut. Pure + exported for testing.
  */
+/**
+ * The model env for a dispatched node: resolveModelEnv tagged with the
+ * execution id (the bridge books its calls per tag). A bridged model whose
+ * provider is not usable makes resolveModelEnv throw (fail fast, model-bridge
+ * design §8.5) — except under the offline mock, which spawns nothing and must
+ * keep running for a catalog that names a Copilot model nobody signed in to.
+ */
+function resolveDispatchModelEnv(c, ctx) {
+  try {
+    return resolveModelEnv(c.model, { tag: ctx.executionId });
+  } catch (err) {
+    if (c.mock && err && err.bridgeReason) return undefined;
+    throw err;
+  }
+}
+
 export function ctxEndpointRouted(ctx) {
   if (!ctx || typeof ctx !== 'object') return false;
   return !!(ctx.node ? ctx.node.endpointRouted : ctx.endpointRouted);
@@ -593,7 +609,11 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // env byte-identical. The sub-agent model policy deliberately does NOT
     // touch this env: its only wire is the prompt block (subagentModelDirective),
     // and CLAUDE_CODE_SUBAGENT_MODEL is a reserved model-env key.
-    modelEnv: resolveModelEnv(c.model),
+    modelEnv: resolveDispatchModelEnv(c, ctx),
+    // Model bridge (model-bridge-design.md §5.3): a translated model has no
+    // server-side web tools, so the runner withholds them. undefined for every
+    // non-bridged model ⇒ nothing emitted ⇒ argv byte-identical.
+    disallowedTools: bridgedModelInfo(c.model)?.excludeTools,
     // Agent memory (§4.3): Task-tool sub-agents inherit the rules natively but not
     // --append-system-prompt, so the pointer block rides the sub-agent flag. undefined when the
     // run has no mount ⇒ buildClaudeArgs emits nothing and legacy argv stays byte-identical.

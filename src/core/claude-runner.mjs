@@ -354,6 +354,8 @@ export function mockEnabled(opts) {
  * @param {string[]} [o.addDirs]            --add-dir <dir> per entry (Ask Worca's memory mount and every pipeline spawn's writable memory copy; the CLI loads <dir>/.claude/rules only with CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 in the env — memory-deps.mjs / spawn.mjs set it)
  *   All nine are Ask Worca sandbox options (ask-worca-design.md §6.3) and default-off.
  * @param {number} [o.argvInlineLimit]     override ARGV_INLINE_LIMIT (GH #380; tests force the staged path)
+ * @param {string[]} [o.disallowedTools]   --disallowedTools <list>: built-ins withheld from this spawn
+ *   (model bridge §5.3: WebSearch/WebFetch for a translated model). Absent/empty ⇒ flag omitted.
  * @returns {Promise<{text:string, exitCode:number}>}
  */
 export async function runClaude(o = {}) {
@@ -378,6 +380,7 @@ export async function runClaude(o = {}) {
     envScrub,
     envAllowlist,
     modelEnv,
+    disallowedTools,
     workspaceWriteTargets,
     resumeSessionId,
     // Ask Worca sandbox hardening (ask-worca-design.md §6.3/§6.8). All default-off:
@@ -427,6 +430,7 @@ export async function runClaude(o = {}) {
     envScrub,
     envAllowlist,
     modelEnv,
+    disallowedTools,
     tools,
     strictMcpConfig,
     settingSources,
@@ -469,7 +473,7 @@ export function buildClaudeArgs({
   // way in because the legacy body below already owns a local `tools` (the
   // --allowedTools union).
   tools: builtinTools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
-  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard, addDirs,
+  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard, addDirs, disallowedTools,
 }, delivery = {}) {
   // delivery (GH #380, set only by planClaudeInvocation's staged branch):
   //   promptViaStdin   -> bare `-p`; the prompt is written to the child's stdin
@@ -501,6 +505,12 @@ export function buildClaudeArgs({
   if (tools.length) {
     args.push('--allowedTools', tools.join(','));
   }
+  // Model bridge (model-bridge-design.md §5.3): a translated (openai-chat)
+  // model has no server-side web tools, so the runner withholds them outright —
+  // a deny outranks any allow, frontmatter grant included. Absent/empty ⇒
+  // nothing emitted, so every other argv stays byte-identical.
+  const denied = Array.isArray(disallowedTools) ? disallowedTools.filter((s) => typeof s === 'string' && s) : [];
+  if (denied.length) args.push('--disallowedTools', denied.join(','));
   // ── Ask Worca hardening flags (ask-worca-design.md §6.3 / §6.8) ──────────────
   // Every one is default-off: absent / false / invalid ⇒ NOTHING is emitted, so
   // every legacy argv stays byte-identical (test/spawn-args.test.mjs). Appended
@@ -585,7 +595,7 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
   return { ...plan, dir };
 }
 
-function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, argvInlineLimit }) {
+function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, argvInlineLimit }) {
   return new Promise((resolveP, rejectP) => {
     // Per-model routing env (design §4.4), prepared BEFORE argv: reserved keys
     // are re-dropped here defensively — the write path already rejects them, so
@@ -664,7 +674,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         permissionMode, model: wireModel, effort, allowedTools, resumeSessionId,
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
-        maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs,
+        maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, disallowedTools,
       }, { bin: resolved.bin, limit });
     } catch (err) {
       rejectP(new Error(`Failed to stage the claude prompt files: ${err.message}`));
@@ -1102,7 +1112,7 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   const wfEvent = /^\s*\[worca event\] workflow card (card_[0-9a-f]{8}) (?:(declined)|saved as (\S+) "([^"]*)"; thenRun=(true|false))/.exec(userText);
   // A metrics-card EVENT, then the metrics trigger — both before the run arm, whose \brun\b would otherwise fire on
   // "include my runs"-style prose (it does not, \b stops at the s, but "propose" would).
-  const tmEvent = /^\s*\[worca event\] (?:metrics|policy) card (card_[0-9a-f]{8}) (applied|declined|failed)/.exec(userText);
+  const tmEvent = /^\s*\[worca event\] (?:metrics|policy|model) card (card_[0-9a-f]{8}) (applied|declined|failed)/.exec(userText);
   // The metrics arm wants a CHANGE, not a question: "metrics" plus a verb of intent ("stop recording my metrics",
   // "route ... to the metrics home"). A bare "which workspaces use team metrics?" gets the generic echo answer.
   const metrics = !wfEvent && !tmEvent && /\bmetrics\b/i.test(userText)
@@ -1123,7 +1133,11 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   const wantsAuto = /\bauto\b/i.test(userText);
   const workflow = !wfEvent && !tmEvent && !metrics && !policy && !scNew && !scChange && !taskKey && /\bworkflow\b/i.test(userText);
   const agents = !wfEvent && !tmEvent && /\bagents?\b/i.test(userText);
-  const propose = !wfEvent && !tmEvent && !scEvent && !workflow && !metrics && !policy && !scNew && !scChange && (!!taskKey || /\b(propose|start|run)\b/i.test(userText));
+  // Models (docs/models.md "Ask Worca"): "add a local llama model" proposes a keyless llama.cpp entry; "remove model
+  // <id>" its removal. The parent re-validates the INPUT against the real catalog and mints the card.
+  const modelAdd = !wfEvent && !tmEvent && !scEvent && /\bllama\b/i.test(userText) && /\b(?:add|register)\b/i.test(userText);
+  const modelRemove = !wfEvent && !tmEvent && !scEvent && !modelAdd ? /\bremove model ([A-Za-z0-9._-]+)/i.exec(userText) : null;
+  const propose = !wfEvent && !tmEvent && !scEvent && !workflow && !metrics && !policy && !scNew && !scChange && !modelAdd && !modelRemove && (!!taskKey || /\b(propose|start|run)\b/i.test(userText));
   // The proposal both arms send: a brief, or the task reference instead of one.
   const proposal = () => {
     if (!taskKey) return { ...card, ...(wantsAuto ? { workflowId: 'wf_auto' } : {}) };
@@ -1247,6 +1261,14 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
       } else {
         frames.push(delta('[mock] '), delta('saved'), atext(MSG1, `Saved "${wfEvent[4]}". Say "run it" when you want a run with it.`));
       }
+      answerMsg = MSG2;
+    }
+    if (modelAdd || modelRemove) {
+      const mInput = modelAdd
+        ? { kind: 'add_model', model: { id: 'local-llama', label: 'Local llama', upstream: { provider: 'openai', api: 'openai-chat', model: 'qwen', baseUrl: 'http://127.0.0.1:8080/v1', capabilities: { maxPromptTokens: 65536, maxOutputTokens: 8192 } } }, note: 'mock: a local llama.cpp server' }
+        : { kind: 'remove_model', id: modelRemove[1], note: 'mock: as asked' };
+      frames.push(delta('[mock] '), delta('proposing '), delta('a model change'), atext(MSG1, 'Proposing a model change card.'),
+        atool(MSG1, 'toolu_mock_model', 'mcp__worca__propose_model_change', mInput), uresult('toolu_mock_model', JSON.stringify({ ok: true })));
       answerMsg = MSG2;
     }
     if (propose) {

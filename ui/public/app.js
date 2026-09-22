@@ -112,8 +112,12 @@ import {
 import {
   renderModelsList, renderModelEditor, collectModelEditor, makeEnvRow, applyCostMode, setModelCost,
   suggestDuplicateId, deleteRefsSummary,
-  renderExportWizard, collectExportWizard,
+  renderExportWizard, collectExportWizard, applyConnectionModeIn,
 } from './models-view.mjs';
+import {
+  renderProvidersCard, collectProviderRow, renderImportSheet, collectImportSheet, applyImportSelectAll,
+  setModelUpstream, COPILOT_TERMS,
+} from './bridge-view.mjs';
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
@@ -1283,6 +1287,12 @@ function escapeHtml(s) {
 // Format a USD amount. null/NaN -> '' (caller decides the default). A positive
 // sub-cent value -> '<$0.01' so genuine spend is never hidden as a flat $0.00.
 // 0 -> '$0.00' (a truthful mock zero, never blanked).
+/** " · N requests" when any step went through the model bridge, else ''. Pure. */
+function bridgeRequestsSuffix(steps) {
+  const n = (Array.isArray(steps) ? steps : []).reduce((sum, s) => sum + (Number.isFinite(s?.bridgeCalls) ? s.bridgeCalls : 0), 0);
+  return n > 0 ? ` · ${n} request${n === 1 ? '' : 's'}` : '';
+}
+
 function fmtUsd(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) return '';
@@ -2622,20 +2632,24 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
     const lc = (m.label || m.id).toLowerCase();
     labelCounts.set(lc, (labelCounts.get(lc) || 0) + 1);
   }
+  // A bridged model whose provider is not usable (model-bridge-design.md §8.5)
+  // leaves the list — unless it is THIS selection, which is then labelled so.
+  const usable = (m) => !m.needsSignIn || m.id === sel.model;
   const optgroup = (label, models) => {
     if (!models.length) return;
     const og = document.createElement('optgroup');
     og.label = label;
     for (const m of models) {
       const ambiguous = m.custom === 'plugin' && labelCounts.get((m.label || m.id).toLowerCase()) > 1;
+      const viaSuffix = m.bridged && !(m.label || m.id).toLowerCase().includes(m.bridged) ? ` · ${m.bridged}` : '';
       og.appendChild(option(m.id,
-        m.label + (ambiguous ? ` (${m.plugin})` : '') + (m.costUnreliable ? ' ⚠cost' : '')));
+        m.label + (ambiguous ? ` (${m.plugin})` : '') + viaSuffix + (m.costUnreliable ? ' ⚠cost' : '') + (m.needsSignIn ? ' (needs sign-in)' : '')));
     }
     modelSel.appendChild(og);
   };
-  optgroup('Your models', state.models.filter((m) => m.custom && m.custom !== 'plugin' && m.custom !== 'policy').sort(byLabel));
-  optgroup('Team policy', state.models.filter((m) => m.custom === 'policy').sort(byLabel));
-  optgroup('Plugins', state.models.filter((m) => m.custom === 'plugin').sort(byLabel));
+  optgroup('Your models', state.models.filter((m) => m.custom && m.custom !== 'plugin' && m.custom !== 'policy' && usable(m)).sort(byLabel));
+  optgroup('Team policy', state.models.filter((m) => m.custom === 'policy' && usable(m)).sort(byLabel));
+  optgroup('Plugins', state.models.filter((m) => m.custom === 'plugin' && usable(m)).sort(byLabel));
   // "Hide built-in models" (#422): a hidden built-in leaves the list — unless
   // it is THIS selection, which still resolves and must stay visible.
   optgroup('Built-in', state.models.filter((m) => !m.custom && (!m.hidden || m.id === sel.model)).sort(byLabel));
@@ -2658,7 +2672,9 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
 
   if (caption) {
     const mLabel = model ? model.label : 'default model';
-    caption.textContent = `${mLabel} · ${effortSel.value || 'default effort'}`;
+    caption.textContent = `${mLabel} · ${effortSel.value || 'default effort'}`
+      + (model && model.needsSignIn ? ' — needs sign-in (Settings › Models › Providers)' : '');
+    caption.classList.toggle('err', !!(model && model.needsSignIn));
   }
 }
 
@@ -10568,7 +10584,7 @@ function buildTitleModelOptions(sel, stored) {
   const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
   // Legacy per-project entries are not global — titles are; hidden built-ins
   // stay out unless one IS the stored pick (it still resolves).
-  const models = titleModelCatalog.filter((m) => m && m.custom !== 'project' && (!m.hidden || m.id === stored));
+  const models = titleModelCatalog.filter((m) => m && m.custom !== 'project' && (!m.hidden || m.id === stored) && (!m.needsSignIn || m.id === stored));
   const group = (label, xs) => {
     if (!xs.length) return;
     const og = document.createElement('optgroup');
@@ -10657,7 +10673,7 @@ function buildAutoModelOptions(sel, stored, catalog, stale = false) {
   sel.innerHTML = '';
   sel.appendChild(option('', AUTO_MODEL_DEFAULT_LABEL));
   const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
-  const models = catalog.filter((m) => m && m.custom !== 'project' && (!m.hidden || m.id === stored)).sort(byLabel);
+  const models = catalog.filter((m) => m && m.custom !== 'project' && (!m.hidden || m.id === stored) && (!m.needsSignIn || m.id === stored)).sort(byLabel);
   for (const m of models) sel.appendChild(option(m.id, (m.label || m.id) + (m.custom === 'plugin' && m.plugin ? ` (${m.plugin})` : '')));
   // Only a MISSING model is condemned. fetchTitleModelCatalog returns [] on any
   // non-OK/throw, so an unreachable catalog would otherwise disable Save and Test on
@@ -11740,7 +11756,14 @@ async function loadGuardrailsView(param = '') {
 // Promote action. The editor renders inline at the top of the list; env values
 // arrive MASKED and are write-only (unchanged masked echoes mean "keep").
 // ---------------------------------------------------------------------------
-const mvState = { data: null, editing: null, openCreate: false, openShare: false, prefill: null };
+const mvState = {
+  data: null, editing: null, openCreate: false, openShare: false, prefill: null,
+  // Model bridge (model-bridge-design.md §8): the Providers card payload, an
+  // in-flight Copilot sign-in, the import sheet and its list, and Copilot's
+  // models list for the editor's datalist (fetched once per view load when
+  // connected; empty otherwise).
+  providers: null, signIn: null, openImport: false, importModels: [], copilotModels: [],
+};
 
 function setModelsMsg(text, kind) {
   if (!el.modelsMsg) return;
@@ -11754,10 +11777,15 @@ function renderModelsViewBody() {
   const pp = selectedProjectPath();
   const legacy = pp && state.config && Array.isArray(state.config.customModels) ? state.config.customModels : [];
   const frag = document.createDocumentFragment();
-  if (mvState.openShare) {
+  // Providers card first (§8.1): sign-in state and keys sit above the catalog
+  // they unlock. Kept across repaints, including an in-flight device flow.
+  frag.appendChild(renderProvidersCard(mvState.providers, { signIn: mvState.signIn }));
+  if (mvState.openImport) {
+    frag.appendChild(renderImportSheet(mvState.importModels));
+  } else if (mvState.openShare) {
     frag.appendChild(renderExportWizard(d.models || []));
   } else if (mvState.editing || mvState.openCreate) {
-    const editor = renderModelEditor(mvState.editing, d.efforts || []);
+    const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels });
     if (!mvState.editing && mvState.prefill) prefillModelEditor(editor, mvState.prefill);
     frag.appendChild(editor);
   }
@@ -11813,6 +11841,12 @@ function prefillModelEditor(editor, pre) {
     for (const cb of editor.querySelectorAll('.mv-effort-cb')) cb.checked = efforts.has(cb.value);
   }
   setModelCost(editor, pre.cost || null);
+  // A bridged source (Edit a copy of a plugin model, Duplicate): the upstream
+  // travels, but a MASKED key echo must not — create mode stores literally.
+  if (pre.upstream) {
+    const { apiKey, ...rest } = pre.upstream;
+    setModelUpstream(editor, apiKey && !apiKey.startsWith('••') ? pre.upstream : rest);
+  }
   const wrap = editor.querySelector('.mv-env');
   if (!wrap) return;
   for (const [k, v] of Object.entries(pre.env || {})) {
@@ -11923,14 +11957,213 @@ async function loadModelsView() {
   if (!el.modelsList) return;
   setModelsMsg('');
   try {
-    const res = await fetch('/api/models');
+    const [res, pres] = await Promise.all([fetch('/api/models'), fetch('/api/providers')]);
     const data = await safeJson(res);
     if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
     mvState.data = data;
+    // Providers are best-effort: a failed read paints the card in its
+    // "not connected" state rather than hiding the catalog.
+    const pdata = await safeJson(pres);
+    mvState.providers = pres.ok ? pdata : null;
     renderModelsViewBody();
+    // Copilot's models feed the editor's upstream-id datalist; fetched in the
+    // background when connected so the view never waits on GitHub.
+    if (mvState.providers?.copilot?.connected && !mvState.copilotModels.length) {
+      fetch('/api/providers/copilot/models').then(safeJson).then((j) => {
+        if (j && Array.isArray(j.models)) mvState.copilotModels = j.models;
+      }).catch(() => {});
+    }
   } catch (e) {
     setModelsMsg(e.message, 'err');
   }
+}
+
+// ── Providers (model-bridge-design.md §8.1/§8.2/§8.4) ──────────────────────
+function setProviderMsg(name, text, err) {
+  const row = el.modelsList && el.modelsList.querySelector(`.mv-pv-row[data-provider="${name}"] .mv-pv-msg`);
+  if (!row) return;
+  row.textContent = text || '';
+  row.className = `hint mv-pv-msg${err ? ' err' : ''}`;
+}
+
+async function reloadProviders() {
+  try {
+    const res = await fetch('/api/providers');
+    const data = await safeJson(res);
+    if (res.ok) mvState.providers = data;
+  } catch { /* keep what we have */ }
+}
+
+/** The blocking notice (§8.2). Resolves true once acknowledged (now or before). */
+async function ensureCopilotTerms({ force = false } = {}) {
+  if (!force && mvState.providers?.copilot?.termsCurrent) return true;
+  const r = await confirmModal({
+    title: COPILOT_TERMS.title, message: COPILOT_TERMS.body,
+    checkbox: { label: COPILOT_TERMS.checkbox }, confirmLabel: COPILOT_TERMS.confirm, cancelLabel: 'Cancel',
+  });
+  const ok = !!(r && r.ok && r.checked);
+  if (!ok) return false;
+  const res = await fetch('/api/providers/copilot/acknowledge', { method: 'POST' });
+  const data = await safeJson(res);
+  if (!res.ok) { setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true); return false; }
+  mvState.providers = data;
+  return true;
+}
+
+let copilotPollTimer = null;
+function stopCopilotPoll() { if (copilotPollTimer) { clearTimeout(copilotPollTimer); copilotPollTimer = null; } }
+
+async function copilotSignInFlow() {
+  if (!(await ensureCopilotTerms())) { renderModelsViewBody(); return; }
+  try {
+    const res = await fetch('/api/providers/copilot/login', { method: 'POST' });
+    const flow = await safeJson(res);
+    if (!res.ok) return setProviderMsg('copilot', flow.error || `HTTP ${res.status}`, true);
+    mvState.signIn = { ...flow, status: 'Waiting for approval on github.com…' };
+    renderModelsViewBody();
+    const poll = async () => {
+      if (!mvState.signIn || mvState.signIn.deviceCode !== flow.deviceCode) return;
+      try {
+        const r = await fetch(`/api/providers/copilot/login/${encodeURIComponent(flow.deviceCode)}`);
+        const j = await safeJson(r);
+        if (!mvState.signIn || mvState.signIn.deviceCode !== flow.deviceCode) return;
+        if (j.ok) {
+          mvState.signIn = null;
+          setModelsMsg(`Connected to GitHub Copilot${j.login ? ` as @${j.login}` : ''}.`, 'ok');
+          await reloadProviders();
+          mvState.copilotModels = [];
+          await refreshModelsEverywhere();
+          return;
+        }
+        if (j.error) {
+          mvState.signIn = { ...mvState.signIn, error: j.error };
+          renderModelsViewBody();
+          return;
+        }
+        const status = el.modelsList.querySelector('.mv-cp-status');
+        if (status) status.textContent = 'Waiting for approval on github.com…';
+        copilotPollTimer = setTimeout(poll, Math.max(3, Number(j.interval) || flow.interval || 5) * 1000);
+      } catch (e) {
+        copilotPollTimer = setTimeout(poll, 8000);
+      }
+    };
+    copilotPollTimer = setTimeout(poll, Math.max(3, Number(flow.interval) || 5) * 1000);
+  } catch (e) {
+    setProviderMsg('copilot', e.message, true);
+  }
+}
+
+async function copilotSignOutFlow() {
+  const ok = await confirmModal({ title: 'Sign out of GitHub Copilot?', message: 'Models bridged through Copilot stop working until you sign in again. Runs that already use one fail at their next spawn.', confirmLabel: 'Sign out', danger: true });
+  if (!ok) return;
+  try {
+    const res = await fetch('/api/providers/copilot/logout', { method: 'POST' });
+    const data = await safeJson(res);
+    if (!res.ok) return setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true);
+    mvState.providers = data;
+    mvState.copilotModels = [];
+    setModelsMsg('Signed out of GitHub Copilot.');
+    await refreshModelsEverywhere();
+  } catch (e) {
+    setProviderMsg('copilot', e.message, true);
+  }
+}
+
+async function patchProviderFlow(name, body, { okText = 'Saved.' } = {}) {
+  try {
+    const res = await fetch(`/api/providers/${encodeURIComponent(name)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await safeJson(res);
+    if (!res.ok) return setProviderMsg(name, data.error || `HTTP ${res.status}`, true);
+    mvState.providers = data;
+    renderModelsViewBody();
+    setProviderMsg(name, okText);
+    // Readiness may have changed: the catalog's needs-sign-in state and every picker follow.
+    await refreshModelsEverywhere();
+  } catch (e) {
+    setProviderMsg(name, e.message, true);
+  }
+}
+
+async function testProviderFlow(btn) {
+  const name = btn.dataset.provider;
+  btn.disabled = true;
+  setProviderMsg(name, 'Testing…');
+  try {
+    const res = await fetch(`/api/providers/${encodeURIComponent(name)}/test`, { method: 'POST' });
+    const data = await safeJson(res);
+    if (data.ok) setProviderMsg(name, `✓ reachable${data.models != null ? ` — ${data.models} models listed` : ''}`);
+    else setProviderMsg(name, `✗ ${data.message || data.error || `HTTP ${res.status}`}`, true);
+  } catch (e) {
+    setProviderMsg(name, `✗ ${e.message}`, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function refreshCopilotQuotaFlow(btn) {
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/providers?quota=1');
+    const data = await safeJson(res);
+    if (res.ok) { mvState.providers = data; renderModelsViewBody(); }
+    if (res.ok && !data.copilot?.quota) setProviderMsg('copilot', 'GitHub reported no premium-request quota for this account.');
+  } catch (e) {
+    setProviderMsg('copilot', e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function openImportFlow(btn) {
+  btn.disabled = true;
+  setProviderMsg('copilot', 'Loading Copilot models…');
+  try {
+    const res = await fetch('/api/providers/copilot/models');
+    const data = await safeJson(res);
+    if (!res.ok) return setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true);
+    mvState.importModels = data.models || [];
+    mvState.copilotModels = data.models || [];
+    mvState.openImport = true;
+    mvState.editing = null; mvState.openCreate = false; mvState.openShare = false; mvState.prefill = null;
+    renderModelsViewBody();
+  } catch (e) {
+    setProviderMsg('copilot', e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function importModelsFlow() {
+  const sheet = el.modelsList && el.modelsList.querySelector('.mvi');
+  if (!sheet) return;
+  const msg = sheet.querySelector('.mvi-msg');
+  const say = (text, kind) => { if (msg) { msg.textContent = text; msg.className = `form-msg mvi-msg${kind ? ` ${kind}` : ''}`; } };
+  const ids = collectImportSheet(sheet);
+  if (!ids.length) return say('Pick at least one model.', 'err');
+  say('Importing…');
+  try {
+    const res = await fetch('/api/providers/copilot/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+    const data = await safeJson(res);
+    if (!res.ok) return say(data.error || `HTTP ${res.status}`, 'err');
+    mvState.openImport = false;
+    const parts = [];
+    if (data.created?.length) parts.push(`${data.created.length} added`);
+    if (data.updated?.length) parts.push(`${data.updated.length} refreshed`);
+    if (data.skipped?.length) parts.push(`${data.skipped.length} skipped`);
+    setModelsMsg(`Imported from Copilot: ${parts.join(', ') || 'nothing changed'}.`, 'ok');
+    await refreshModelsEverywhere();
+  } catch (e) {
+    say(e.message, 'err');
+  }
+}
+
+function scrollToProviders(provider) {
+  const card = el.modelsList && el.modelsList.querySelector('.mv-providers');
+  if (!card) return;
+  try { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* jsdom */ }
+  const row = provider ? card.querySelector(`.mv-pv-row[data-provider="${provider}"]`) : null;
+  const focus = row && (row.querySelector('.mv-cp-signin') || row.querySelector('.mv-pv-key'));
+  if (focus) { try { focus.focus(); } catch { /* ignore */ } }
 }
 
 // Any catalog mutation must repaint BOTH surfaces: this view and the composer's
@@ -12122,6 +12355,32 @@ if (el.modelsList) {
       editPluginCopyFlow(t.dataset.plugin, t.dataset.id);
     } else if (t.classList.contains('mv-test')) {
       testModelFlow(t);
+    // ── Providers card / import sheet (model-bridge-design.md §8) ──
+    } else if (t.classList.contains('mv-cp-signin')) {
+      copilotSignInFlow();
+    } else if (t.classList.contains('mv-cp-cancel')) {
+      stopCopilotPoll(); mvState.signIn = null; renderModelsViewBody();
+    } else if (t.classList.contains('mv-cp-copy')) {
+      try { navigator.clipboard.writeText(t.dataset.code || ''); t.textContent = 'Copied'; } catch { /* no clipboard */ }
+    } else if (t.classList.contains('mv-cp-signout')) {
+      copilotSignOutFlow();
+    } else if (t.classList.contains('mv-cp-terms')) {
+      ensureCopilotTerms({ force: true }).then(() => renderModelsViewBody());
+    } else if (t.classList.contains('mv-cp-fetch-models')) {
+      openImportFlow(t);
+    } else if (t.classList.contains('mv-cp-quota-refresh')) {
+      refreshCopilotQuotaFlow(t);
+    } else if (t.classList.contains('mv-pv-save')) {
+      const body = collectProviderRow(el.modelsList, t.dataset.provider);
+      if (body) patchProviderFlow(t.dataset.provider, body);
+    } else if (t.classList.contains('mv-pv-test')) {
+      testProviderFlow(t);
+    } else if (t.classList.contains('mv-signin')) {
+      scrollToProviders(t.dataset.provider);
+    } else if (t.classList.contains('mvi-go')) {
+      importModelsFlow();
+    } else if (t.classList.contains('mvi-cancel')) {
+      mvState.openImport = false; renderModelsViewBody();
     } else if (t.classList.contains('mvx-export')) {
       exportPluginFlow();
     } else if (t.classList.contains('mvx-cancel')) {
@@ -12150,6 +12409,31 @@ if (el.modelsList) {
     if (!ev.target.classList || !ev.target.classList.contains('mv-cost-mode-rb')) return;
     const editorEl = ev.target.closest('.mv-editor');
     if (editorEl) applyCostMode(editorEl);
+  });
+  // Connection (model-bridge-design.md §8.3): mode / provider / api / reasoning
+  // changes re-apply the rules; switching a Copilot entry in while pricing is
+  // still "Trust the CLI" moves it to Free (Copilot bills requests, not tokens).
+  el.modelsList.addEventListener('change', (ev) => {
+    const t = ev.target;
+    if (!t.classList || !t.closest('.mv-conn')) return;
+    const editorEl = t.closest('.mv-editor');
+    if (!editorEl) return;
+    applyConnectionModeIn(editorEl);
+    const conn = editorEl.querySelector('.mv-conn');
+    const mode = conn && conn.querySelector('.mv-conn-mode-rb:checked')?.value;
+    const provider = conn && conn.querySelector('.mv-conn-provider')?.value;
+    if (mode === 'provider' && provider === 'copilot' && (editorEl.querySelector('.mv-cost-mode-rb:checked')?.value || 'cli') === 'cli') {
+      setModelCost(editorEl, { free: true });
+    }
+  });
+  // Providers card: account type and concurrency save on change (one settings
+  // key each, like the hide-built-ins checkbox); the import sheet's select-all.
+  el.modelsList.addEventListener('change', (ev) => {
+    const t = ev.target;
+    if (!t.classList) return;
+    if (t.classList.contains('mv-cp-account')) patchProviderFlow('copilot', { accountType: t.value }, { okText: 'Account type saved.' });
+    else if (t.classList.contains('mv-pv-conc') && t.dataset.provider === 'copilot') patchProviderFlow('copilot', { maxConcurrent: Number(t.value) }, { okText: 'Concurrency cap saved.' });
+    else if (t.classList.contains('mvi-all')) { const sheet = t.closest('.mvi'); if (sheet) applyImportSelectAll(sheet, t.checked); }
   });
 }
 if (el.modelCreateBtn) {
@@ -19659,7 +19943,9 @@ function stepModelByNode(stepper) {
 function stepModelPillHtml(sel) {
   if (!sel || !sel.model) return '';
   const m = modelById(sel.model);
-  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '');
+  // "· bridged" (model-bridge-design.md §8.6): the node ran through worca's own
+  // bridge — the catalog knows, the manifest does not.
+  const text = (m ? m.label : sel.model) + (sel.effort ? ` · ${sel.effort}` : '') + (m && m.bridged ? ' · bridged' : '');
   return `<span class="sub-model-pill">${escapeHtml(text)}</span>`;
 }
 
@@ -20889,7 +21175,10 @@ function paintRdHeader(screen, r) {
     // the header elapsed freezes at its paint value and only the Overview stat
     // card ticks.
     ['rd-dur run-time', fmtDuration(liveTotalMs(r.steps, Date.now())), true],
-    ['rd-cost', fmtUsd(r.totalCostUsd || 0), true],
+    // Model bridge (model-bridge-design.md §8.6): a run that went through the
+    // bridge shows its request count beside the dollars, so a "$0" reads as a
+    // unit mismatch (Copilot bills requests), not as free.
+    ['rd-cost', fmtUsd(r.totalCostUsd || 0) + bridgeRequestsSuffix(r.steps), true],
     ['rd-step', stepText, false],
   ];
   segs.forEach(([cls, txt, strong]) => {
@@ -20898,7 +21187,7 @@ function paintRdHeader(screen, r) {
     const seg = document.createElement('span');
     seg.className = cls + (strong ? ' strong' : '');
     seg.textContent = txt;
-    if (cls === 'rd-cost') seg.title = estTitle(r.totalCostUsd || 0);
+    if (cls === 'rd-cost') seg.title = estTitle(r.totalCostUsd || 0) + (bridgeRequestsSuffix(r.steps) ? ' Requests: calls this run initiated through the model bridge (Copilot bills premium requests, not tokens); tool-loop continuations are not counted.' : '');
     meta.appendChild(seg);
   });
 

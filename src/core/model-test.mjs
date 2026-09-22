@@ -29,6 +29,16 @@ export function hintFor(errorClass) {
   }
 }
 
+/** Actionable hint for a bridge readiness failure (config.mjs resolveModelEnv). Pure. */
+export function bridgeHintFor(reason, provider = 'the provider') {
+  switch (reason) {
+    case 'not_signed_in': return `sign in to ${provider} under Settings › Models › Providers (or \`worca models login ${provider}\`)`;
+    case 'terms': return 'acknowledge the GitHub Copilot notice under Settings › Models › Providers first';
+    case 'no_key': return `set an API key for ${provider} under Settings › Models › Providers, or on this model's Connection`;
+    default: return '';
+  }
+}
+
 /**
  * Live connectivity check for a catalog model id (global or plugin — the
  * resolution precedence is resolveModelEnv's). Explicit user action only.
@@ -71,7 +81,10 @@ export async function testModel(id, { signal, bin, run = runClaude } = {}) {
     }
     const message = err && err.message ? err.message : String(err);
     const errorClass = (err && err.errorClass) || classifyError(message);
-    const hint = hintFor(errorClass);
+    // A bridged model whose provider is not usable (model-bridge-design.md
+    // §8.5): resolveModelEnv fails fast with `bridgeReason`, and the hint
+    // names the fix instead of the generic credential advice.
+    const hint = err && err.bridgeReason ? bridgeHintFor(err.bridgeReason, err.bridgeProvider) : hintFor(errorClass);
     return { ok: false, errorClass, message, ...(hint ? { hint } : {}) };
   } finally {
     clearTimeout(timer);

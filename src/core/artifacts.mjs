@@ -1193,12 +1193,14 @@ export async function writeState(pipelineDir, stateObj) {
       // v2 rows: execution_id === key. v1 rows leave every exec_* column NULL, so
       // the readers below reproduce today's exact shape for a v1 pipeline.
       const hasMeta = st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null
-        || st.nodeKey != null || st.runtime != null || st.exitCode != null;
+        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null;
       const meta = hasMeta
         ? s({ taskId: st.taskId ?? null, parentExecutionId: st.parentExecutionId ?? null,
               title: st.title ?? null, phaseOrdinal: st.phaseOrdinal ?? null,
               taskIndex: st.taskIndex ?? null, taskTotal: st.taskTotal ?? null,
-              nodeKey: st.nodeKey ?? null, runtime: st.runtime ?? null, exitCode: st.exitCode ?? null })
+              nodeKey: st.nodeKey ?? null, runtime: st.runtime ?? null, exitCode: st.exitCode ?? null,
+              // Model bridge (§8.6): requests the node initiated through the bridge.
+              ...(st.bridgeCalls != null ? { bridgeCalls: st.bridgeCalls, bridgeContinued: st.bridgeContinued ?? 0 } : {}) })
         : null;
       ins.run(
         id, st.key, st.nodeId ?? null, st.phase ?? null,
@@ -1891,6 +1893,7 @@ function stepRowToStep(r) {
     if (em.nodeKey != null) step.nodeKey = em.nodeKey;
     if (em.runtime != null) step.runtime = em.runtime;
     if (em.exitCode != null) step.exitCode = em.exitCode;
+    if (em.bridgeCalls != null) { step.bridgeCalls = em.bridgeCalls; step.bridgeContinued = em.bridgeContinued ?? 0; }
   }
   return step;
 }

@@ -2544,6 +2544,66 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .mv-cost-rate .mv-cost-rate-in{min-width:0;font-family:var(--mono);font-size:12.5px;}
 .mv-cost-rate-unit{color:var(--ink-3);font-size:11.5px;white-space:nowrap;}
 
+/* ---- Model bridge (model-bridge-design.md §8): Providers card, Connection,
+   import sheet, sign-in block. Same 18px rhythm and card chrome as the rest
+   of the Models view; every revealed block gets an explicit [hidden] rule
+   because the grid/flex rules here otherwise beat the UA hidden rule. ---- */
+.mv-providers{padding:18px 22px;display:grid;gap:14px;}
+/* New surface, new contrast: the house `.hint` / placeholder grey (--ink-3) sits at
+   2.8:1 on a white card and is only tolerated where the light baseline predates the
+   dark theme (test/fixtures/contrast-baseline-light.json — shrink, never grow). The
+   bridge's copy uses --ink-2 (6.5:1) so the theme proof passes without a new entry. */
+.mv-providers .hint,.mv-conn .hint,.mv-degradation,.mvi .hint,.mv-cp-signin-box .hint{color:var(--ink-2);}
+.mv-pv-row .input::placeholder,.mv-conn .input::placeholder,.mv-conn .textarea::placeholder{color:var(--ink-2);}
+.mv-providers .mv-providers-hint{margin:-6px 0 0;}
+.mv-pv-row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:12px 18px;padding:14px 0 0;border-top:1px solid var(--line-2);}
+.mv-pv-main{display:grid;gap:6px;align-content:start;min-width:0;}
+.mv-pv-main .hint{margin:0;}
+.mv-pv-ctl{display:grid;gap:10px;align-content:start;}
+.mv-pv-btns{grid-column:1 / -1;display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;}
+.mv-pv-btns .btn-ghost,.mv-pv-btns .btn-go{padding:7px 12px;font-size:12px;}
+.mv-pv-row .input,.mv-pv-row .select{font-family:var(--mono);font-size:12.5px;padding:9px 12px;}
+.mv-pv-row .mv-pv-conc{max-width:120px;}
+.mv-cp-signin-box{display:grid;gap:8px;padding:12px 14px;border:1px solid var(--line-2);border-radius:10px;background:var(--field);}
+.mv-cp-code-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.mv-cp-code{font-family:var(--mono);font-size:26px;font-weight:700;letter-spacing:.12em;padding:4px 10px;border-radius:8px;background:var(--panel);border:1px solid var(--line);}
+.mv-cp-code-row .btn-ghost{padding:7px 12px;font-size:12px;text-decoration:none;}
+.mv-cp-status.err{color:var(--red);}
+.mv-cp-signin-box .mv-cp-cancel{justify-self:start;padding:7px 12px;font-size:12px;}
+.mv-needs-signin{display:inline-flex;align-items:center;gap:6px;}
+.mv-needs-signin .mv-signin{padding:4px 10px;font-size:11.5px;}
+.mv-degradation{display:block;margin:4px 0 0;}
+.mv-conn{display:grid;gap:12px;}
+.mv-conn-modes{display:grid;gap:8px;}
+.mv-conn-mode{display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;}
+.mv-conn-mode input{margin-top:3px;}
+.mv-conn-mode-text{display:grid;gap:2px;}
+.mv-conn-mode-text .hint{margin:0;}
+.mv-conn-body{display:grid;gap:12px;padding:12px 14px;border:1px solid var(--line-2);border-radius:10px;}
+.mv-conn-body[hidden]{display:none;}
+.mv-conn-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 14px;}
+/* A field without a hint sits beside one with a hint: start-align so the
+   select keeps its own height instead of stretching to the row's. */
+.mv-conn-grid .mv-field{align-content:start;}
+.mv-conn-grid .input,.mv-conn-grid .select{font-family:var(--mono);font-size:12.5px;}
+.mv-conn-provider-hint.warn{color:var(--amber-ink);}
+.mv-conn-adv{margin-top:0;}
+.mv-conn-adv[hidden]{display:none;}
+.mv-conn-adv-body{display:grid;gap:10px;}
+.mv-conn-adv-body .input,.mv-conn-adv-body .textarea{font-family:var(--mono);font-size:12.5px;}
+.mv-conn-caps{display:grid;gap:6px;}
+.mv-conn-caps-row{display:flex;gap:14px;flex-wrap:wrap;align-items:center;}
+.mv-conn-cap{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;}
+.mv-conn-limit{display:flex;align-items:center;gap:6px;font-size:12.5px;}
+.mv-conn-limit .mv-conn-limit-in{max-width:120px;font-family:var(--mono);font-size:12.5px;padding:7px 10px;}
+.mv-conn-note{margin:0;}
+.mvi-tbl{margin-top:8px;}
+.mvi-tbl td{vertical-align:top;}
+.mvi-tbl .mvi-id{display:block;margin:2px 0 0;font-family:var(--mono);}
+.mvi-tbl tr.mvi-disabled{opacity:.55;}
+.mvi-status{color:var(--ink-3);font-size:12px;}
+@media (max-width:720px){.mv-pv-row{grid-template-columns:1fr;}}
+
 /* ---- Model plugins (design §9.6): plugin cards + export wizard ---- */
 .mv-secret{display:block;margin:4px 0 0;}
 .mv-secret.err{color:var(--red);}
@@ -4314,6 +4374,9 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-scard-v{color:var(--ink);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;}
 .ask-scard .ask-card-sched-link{align-self:flex-start;margin-top:2px;}
 .ask-card-start.is-danger{background:var(--red-ink);color:var(--on-status);}
+/* model card (buildModelCard; docs/models.md "Ask Worca"): the policy card's change list + what will still block the model */
+.ask-modcard-warn{color:var(--amber-ink);}
+.ask-modcard .ask-card-sched-link{align-self:flex-start;margin-top:2px;}
 
 /* ---------- Auto proposal body (ui/public/auto-proposal.mjs) — one body, two hosts (mockup §D/§F) ----------
    Rhythm top→bottom: name → 8 → reasoning → 16 → chips → 8 → fingerprint → 16 → graph → 12 → loops → 16 → match → 8 → meta.
@@ -5672,7 +5735,7 @@ input.gv-name:focus-visible{outline:none;}
 .ap .chip{flex:0 0 auto;background:var(--field);color:var(--ink-3);font-weight:700;font-size:10px;padding:1px 7px;}
 .ap .nrow{display:flex;align-items:center;gap:6px;min-width:0;}
 .ap .nrow .n{min-width:0;}
-.ap .chip.rt{font-family:var(--mono);text-transform:none;}
+.ap .chip.rt{font-family:var(--mono);text-transform:none;color:var(--ink-2);}  /* --ink-3 on --field is 2.6:1; the runtime is read, not decoration */
 .gv-drag-ghost{position:fixed;z-index:99;pointer-events:none;border:1.5px dashed var(--ink-3);border-radius:12px;
   background:var(--panel);padding:6px 10px;font:600 12px var(--sans);opacity:.9;box-shadow:var(--shadow);}
 

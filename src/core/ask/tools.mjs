@@ -565,6 +565,32 @@ export function createAskTools(deps) {
           cwd: SCHEMA.s('"scratch" (default) or "project" (the pinned project\'s checkout)'),
           timeoutSec: SCHEMA.i(`seconds before the run is killed (default ${L.scriptTestDefaultTimeoutSec}, max ${L.scriptTestMaxTimeoutSec})`, 1, L.scriptTestMaxTimeoutSec) }, ['key']) },
     ] : []),
+    // Models + providers (docs/models.md "Ask Worca"). Conditional like scripts: a bundle with no
+    // `models` sub-object (a reader-only host, most unit tests) lists none of them, so every existing
+    // tool-list pin stays byte-identical. Every change is a card the user applies.
+    ...(deps.models ? [
+      { name: 'list_models',
+        description: 'The model catalog every picker, workflow node and Ask chat draws from: id, label, source (built-in | user | plugin | team policy), editable (a user entry — the only kind propose_model_change edits or removes), efforts, connection ("default" = the claude CLI\'s own login; "env" = the entry\'s ANTHROPIC_BASE_URL/… env points the CLI at an endpoint that speaks the Messages API; "provider" = worca\'s bridge forwards to a provider), and for a bridged model its provider, upstreamApi (anthropic-messages passes through; openai-chat is translated), upstreamModel, capabilities (maxPromptTokens / maxOutputTokens …) and ready / notReady. A user entry adds its own config under entry: env (credential values masked; ${VAR} references readable), upstream (baseUrl, apiKey masked or ${VAR}, headers, capabilities) and cost. Read-only.',
+        inputSchema: SCHEMA.obj({}) },
+      { name: 'get_providers',
+        description: 'The providers that bridged models share (Settings › Models › Providers): copilot (connected, login, accountType, termsCurrent — the notice acknowledgement, maxConcurrent), openai and anthropic (baseUrl, keySet, keySource "env" | "stored", keyRef when it is a ${VAR} reference, keyOptional — a local OpenAI-compatible endpoint needs no key, configured — the key resolves now, maxConcurrent). Never a key. Read-only.',
+        inputSchema: SCHEMA.obj({}) },
+      { name: 'test_provider',
+        description: 'Check one provider now: openai / anthropic GET the endpoint\'s models list with the configured key (reachability + auth, and how many models it lists); copilot exchanges the sign-in for a Copilot token. Returns {ok:true, models?} or {ok:false, message}. The endpoint is contacted.',
+        inputSchema: SCHEMA.obj({ provider: SCHEMA.s('copilot | openai | anthropic') }, ['provider']) },
+      { name: 'list_copilot_models',
+        description: 'The chat models GitHub Copilot offers the signed-in account, for import: id (pass it to propose_model_change kind "import_copilot"), name, vendor, context and output limits, whether it is enabled in the account\'s Copilot settings, and inCatalog / catalogId (imports land as copilot-<id>). Fails when Copilot is not signed in. GitHub is contacted.',
+        inputSchema: SCHEMA.obj({}) },
+      { name: 'propose_model_change',
+        description: 'Propose a model catalog or provider change for the user to confirm — it never changes anything itself; the user sees a card with the before → after and applies or declines it. kind: "add_model" (model: {id, label?, efforts?, env?, cost?, upstream?} — a Messages-API endpoint by env: {ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN:"${VAR}", …}; through a provider by upstream: {provider: openai | anthropic | copilot, api: openai-chat | anthropic-messages, model: <the id the endpoint expects>, baseUrl?, apiKey?: "${VAR}", headers?, capabilities?: {maxPromptTokens, maxOutputTokens, …}}; cost: {free:true} or {perMtok:{input, output, …}}), "edit_model" (id + model: the fields to change — env merges per key, null deletes a key; upstream merges into the current block, a null field removes it, capabilities merge per key; upstream:null drops the bridge), "remove_model" (id — workflow nodes that name it fall back to the default model), "provider" (provider + set: {baseUrl?, apiKey?: "${VAR}", maxConcurrent?, accountType?: individual | business | enterprise (copilot)}; null or "" clears a field), "import_copilot" (ids from list_copilot_models). Credentials are ${VAR} references to variables in worca\'s environment, never the value: a literal key is refused — the user pastes one in Settings › Models. The Copilot sign-in and its notice are the user\'s, on the Providers card. Returns {ok:true, card} (card.warnings: what will still stop the model working) or {ok:false, errors} to fix and retry. Never claim a change was applied — the card says so when it happens.',
+        inputSchema: SCHEMA.obj({ kind: SCHEMA.s('add_model | edit_model | remove_model | provider | import_copilot'),
+          id: SCHEMA.s('edit_model / remove_model: the catalog model id'),
+          model: { type: 'object', description: 'add_model: the entry; edit_model: the fields to change', additionalProperties: true },
+          provider: SCHEMA.s('provider: copilot | openai | anthropic'),
+          set: { type: 'object', description: 'provider: {baseUrl?, apiKey?, maxConcurrent?, accountType?}', additionalProperties: true },
+          ids: { type: 'array', items: { type: 'string' }, description: 'import_copilot: Copilot model ids' },
+          note: SCHEMA.s('one line shown on the card: why this change (≤ 200 chars)') }, ['kind']) },
+    ] : []),
   ];
 
   const EMPTY_DIFF = () => ({ available: false, files: [], text: '', truncated: false, totalBytes: 0, nextOffset: 0 });
@@ -1037,6 +1063,10 @@ export function createAskTools(deps) {
   }
 
   // ---- scheduled runs: shaping (every string a person typed is redacted; times in the user's zone)
+  const modelsOf = (tool) => {
+    if (!deps.models) throw new AskToolError(`${tool}: models are unavailable`);
+    return deps.models;
+  };
   const schedulesOf = (tool) => {
     if (!deps.schedules) throw new AskToolError(`${tool}: scheduled runs are unavailable`);
     return deps.schedules;
@@ -1817,6 +1847,20 @@ export function createAskTools(deps) {
         cases: redactDeep(r.cases ?? []), userCases: redactDeep(r.userCases ?? []),
       };
     },
+    async list_models() { return modelsOf('list_models').list(); },
+    async get_providers() { return modelsOf('get_providers').providers(); },
+    async test_provider(input) {
+      const m = modelsOf('test_provider');
+      const name = str(input.provider);
+      if (!['copilot', 'openai', 'anthropic'].includes(name)) throw new AskToolError('test_provider: provider must be copilot, openai or anthropic');
+      return m.test(name);
+    },
+    async list_copilot_models() {
+      const m = modelsOf('list_copilot_models');
+      try { return { models: await m.copilotModels() }; }
+      catch (err) { throw new AskToolError(`list_copilot_models: ${err && err.message ? err.message : err}`); }
+    },
+    async propose_model_change(input) { return modelsOf('propose_model_change').validateChange(input); },
     async save_script(input) {
       const s = scriptWriterOf('save_script');
       // The model's OWN text, on its way to disk: never redacted here (a redaction marker

@@ -120,7 +120,13 @@ import {
   readPrRemotePrefs, setPrRemotePrefs,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue } from '../src/core/model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS } from '../src/core/model-env.mjs';
+import { providerReadiness } from '../src/core/bridge/registry.mjs';
+import { startBridge } from '../src/core/bridge/server.mjs';
+import {
+  providersState, patchProvider, acknowledgeTerms, beginCopilotLogin, pollCopilotLogin, copilotLogout,
+  copilotModelsForImport, importCopilotModels, testProviderConnection,
+} from '../src/core/bridge/provider-ops.mjs';
 import { listPluginModels, modelSecretsSchema, pluginModelSecretStatus } from '../src/core/plugin-models.mjs';
 import { testModel } from '../src/core/model-test.mjs';
 import {
@@ -144,6 +150,8 @@ import { metricsEventPrompt, metricsNoticeText } from '../src/core/ask/metrics-p
 import { applyPolicyChange } from '../src/core/ask/policy-deps.mjs';
 import { policyEventPrompt, policyNoticeText } from '../src/core/ask/policy-proposal.mjs';
 import { scheduleEventPrompt, scheduleNoticeText } from '../src/core/ask/schedule-spec.mjs';
+import { applyModelChange } from '../src/core/ask/model-deps.mjs';
+import { modelEventPrompt, modelNoticeText } from '../src/core/ask/model-proposal.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
@@ -4708,16 +4716,41 @@ app.delete('/api/config/models', async (req, res) => {
 // ---------------------------------------------------------------------------
 
 const maskEnvValue = (v) => (modelEnvRef(v) ? v : maskModelEnvValue(v));
-const maskedGlobalModel = (m) => (m.env
-  ? { ...m, env: Object.fromEntries(Object.entries(m.env).map(([k, v]) => [k, maskEnvValue(v)])) }
-  : m);
+// A bridged entry's `upstream.apiKey` is masked like an env secret; the rest of
+// the block is routing config and passes through. `bridged`/`needsSignIn` are
+// the picker/card facts (model-bridge-design.md §8.5), one readiness check
+// per provider per response.
+const bridgeFacts = (m, readiness) => {
+  if (!m.upstream) return {};
+  const p = m.upstream.provider;
+  if (!readiness.has(p)) readiness.set(p, providerReadiness(m.upstream));
+  const r = readiness.get(p);
+  return { bridged: p, needsSignIn: !r.ok, ...(r.ok ? {} : { signInReason: r.reason, signInMessage: r.message }) };
+};
+const maskedGlobalModel = (m, readiness = new Map()) => ({
+  ...m,
+  ...(m.env ? { env: Object.fromEntries(Object.entries(m.env).map(([k, v]) => [k, maskEnvValue(v)])) } : {}),
+  ...(m.upstream ? { upstream: { ...m.upstream, ...(m.upstream.apiKey ? { apiKey: maskEnvValue(m.upstream.apiKey) } : {}) } } : {}),
+  ...bridgeFacts(m, readiness),
+});
 const isMaskedEcho = (v) => typeof v === 'string' && v.startsWith('••');
 const maskedGlobalModels = () => {
   const flagged = costUnreliableModelIds(); // §4.6 observed flag, merged for the editor's badge
+  const readiness = new Map();
   return listGlobalModels().map((m) => ({
-    ...maskedGlobalModel(m),
+    ...maskedGlobalModel(m, readiness),
     ...(flagged.has(m.id.toLowerCase()) ? { costUnreliable: true } : {}),
   }));
+};
+/** A POST/PATCH `upstream` body with a masked apiKey echo dropped ("keep"). */
+const upstreamInput = (u, current) => {
+  if (!u || typeof u !== 'object' || Array.isArray(u)) return u;
+  if (isMaskedEcho(u.apiKey)) {
+    const keep = current && current.upstream ? current.upstream.apiKey : undefined;
+    const { apiKey, ...rest } = u;
+    return keep ? { ...rest, apiKey: keep } : rest;
+  }
+  return u;
 };
 
 /** Read-only plugin model entries (design §9.7): literals masked with the
@@ -4726,6 +4759,7 @@ const maskedGlobalModels = () => {
 const pluginModelsPayload = () => {
   const flagged = costUnreliableModelIds();
   const statusByPlugin = new Map();
+  const readiness = new Map();
   return listPluginModels().map((m) => {
     if (!statusByPlugin.has(m.plugin)) statusByPlugin.set(m.plugin, pluginModelSecretStatus(m.plugin));
     const status = statusByPlugin.get(m.plugin);
@@ -4736,29 +4770,121 @@ const pluginModelsPayload = () => {
       ])),
       secrets: status.filter((s) => m.secrets.includes(s.key)),
       ...(m.cost ? { cost: m.cost } : {}),   // manifest-pinned pricing — config, never a credential
+      ...(m.upstream ? { upstream: { ...m.upstream } } : {}),   // a plugin apiKey is a ${VAR} ref by validation — readable
+      ...bridgeFacts(m, readiness),
       ...(flagged.has(m.id.toLowerCase()) ? { costUnreliable: true } : {}),
     };
   });
 };
 
 app.get('/api/models', (req, res) => {
+  const readiness = new Map();
   res.json({
     models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS,
     hideBuiltinModels: hideBuiltinModels(),   // the Models-view checkbox (#422)
     // Team policy catalog entries (team-policy design §8): read-only, env masked like a global's.
-    policy: policyCatalogModels().map((m) => maskedGlobalModel(m)),
+    policy: policyCatalogModels().map((m) => maskedGlobalModel(m, readiness)),
+    providers: UPSTREAM_PROVIDERS,
   });
 });
 
 app.post('/api/models', async (req, res) => {
   const b = req.body || {};
   try {
-    const model = await addGlobalModel({ id: b.id, label: b.label, efforts: b.efforts, env: b.env, cost: b.cost });
+    const model = await addGlobalModel({ id: b.id, label: b.label, efforts: b.efforts, env: b.env, cost: b.cost, upstream: upstreamInput(b.upstream) });
     res.json({ model: maskedGlobalModel(model), models: maskedGlobalModels() });
   } catch (err) {
     // addGlobalModel throws only on validation (empty/dup id, unknown effort,
-    // reserved env key, non-string env value) -> client error.
+    // reserved env key, non-string env value, malformed upstream) -> client error.
     return badRequest(res, err && err.message ? err.message : String(err));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Providers + the Copilot import (model-bridge-design.md §9). Never a token in
+// a response; the sign-in is a device-flow session the client polls.
+// ---------------------------------------------------------------------------
+const providerError = (res, err) => {
+  const msg = err && err.message ? err.message : String(err);
+  if (err && (err.code === 'TERMS' || err.code === 'NOT_SIGNED_IN')) return res.status(409).json({ error: msg, code: err.code });
+  return badRequest(res, msg);
+};
+
+app.get('/api/providers', async (req, res) => {
+  try {
+    res.json(await providersState({ quota: req.query.quota === '1' }));
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.patch('/api/providers/:name', async (req, res) => {
+  try {
+    await patchProvider(req.params.name, req.body || {});
+    emitChanged('settings-changed');
+    res.json(await providersState());
+  } catch (err) {
+    return providerError(res, err);
+  }
+});
+
+app.post('/api/providers/copilot/acknowledge', async (req, res) => {
+  try {
+    await acknowledgeTerms();
+    res.json(await providersState());
+  } catch (err) {
+    return providerError(res, err);
+  }
+});
+
+app.post('/api/providers/copilot/login', async (req, res) => {
+  try {
+    res.json(await beginCopilotLogin());
+  } catch (err) {
+    return providerError(res, err);
+  }
+});
+
+app.get('/api/providers/copilot/login/:deviceCode', async (req, res) => {
+  try {
+    const r = await pollCopilotLogin(String(req.params.deviceCode));
+    if (r.ok) emitChanged('settings-changed');
+    res.json(r);
+  } catch (err) {
+    return providerError(res, err);
+  }
+});
+
+app.post('/api/providers/copilot/logout', async (req, res) => {
+  try {
+    await copilotLogout();
+    emitChanged('settings-changed');
+    res.json(await providersState());
+  } catch (err) {
+    return providerError(res, err);
+  }
+});
+
+app.get('/api/providers/copilot/models', async (req, res) => {
+  try {
+    res.json({ models: await copilotModelsForImport() });
+  } catch (err) {
+    return providerError(res, err);
+  }
+});
+
+app.post('/api/providers/:name/test', async (req, res) => {
+  res.json(await testProviderConnection(req.params.name));
+});
+
+app.post('/api/providers/copilot/import-models', async (req, res) => {
+  const b = req.body || {};
+  if (b.provider && b.provider !== 'copilot') return badRequest(res, 'only the copilot provider supports import');
+  try {
+    const result = await importCopilotModels(b.ids);
+    res.json({ ...result, models: maskedGlobalModels() });
+  } catch (err) {
+    return providerError(res, err);
   }
 });
 
@@ -4910,7 +5036,8 @@ app.patch('/api/models/:id', async (req, res) => {
     env = Object.fromEntries(Object.entries(env).filter(([, v]) => !isMaskedEcho(v)));
   }
   try {
-    const model = await updateGlobalModel(req.params.id, { label: b.label, efforts: b.efforts, env, cost: b.cost });
+    const current = b.upstream ? listGlobalModels().find((m) => m.id.toLowerCase() === String(req.params.id).toLowerCase()) : null;
+    const model = await updateGlobalModel(req.params.id, { label: b.label, efforts: b.efforts, env, cost: b.cost, upstream: upstreamInput(b.upstream, current) });
     res.json({ model: maskedGlobalModel(model), models: maskedGlobalModels() });
   } catch (err) {
     // updateGlobalModel throws only on validation (unknown id, unknown effort,
@@ -6333,9 +6460,9 @@ async function startMetricsEventTurn(threadId, block) {
   const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
   const result = card.result || null;
   // One event turn for every non-workflow card; the type picks the wording. Metrics is the fallback.
-  const kind = card.type === 'policy' ? 'policy' : card.type === 'schedule' ? 'schedule' : 'metrics';
-  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, metrics: metricsEventPrompt }[kind];
-  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, metrics: metricsNoticeText }[kind];
+  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' ? card.type : 'metrics';
+  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, metrics: metricsEventPrompt }[kind];
+  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, metrics: metricsNoticeText }[kind];
   const text = eventPrompt({ cardId: block.id, state, card, result });
   const notice = noticeText({ state, card, result });
   let mv = await validateModelEffort(thread.model, thread.effort);
@@ -6389,6 +6516,30 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       try {
         let result;
         try { result = await applyScheduleCard(found.block.card); }
+        catch (err) { result = { ok: false, error: err && err.message ? err.message : String(err) }; }
+        block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      const turn = await startMetricsEventTurn(id, block);
+      return res.json({ block, turn });
+    }
+    if (found.block.card && found.block.card.type === 'model') {
+      // Model card (docs/models.md "Ask Worca"): proposed → applied | failed | declined. The catalog / provider
+      // write happens HERE, behind the click, through the same setters the Models view uses — each re-validates.
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const turn = await startMetricsEventTurn(id, block);
+        return res.json({ block, turn });
+      }
+      askCardBusy.add(cardId);
+      let block;
+      try {
+        let result;
+        try { result = await applyModelChange(found.block.card); emitChanged('settings-changed'); }
         catch (err) { result = { ok: false, error: err && err.message ? err.message : String(err) }; }
         block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
       } finally { askCardBusy.delete(cardId); }
@@ -7978,6 +8129,9 @@ if (isMain) {
     }
     try { startTeamMetricsBackground({ log: (m) => console.warn(m) }); }
     catch (err) { console.warn(`[worca-ui] team metrics background: ${err?.message || err}`); }
+    // Model bridge (model-bridge-design.md §4.1): up before the first bridged
+    // spawn so resolveModelEnv's synchronous start is the exception, not the rule.
+    startBridge({ log: (m) => console.warn(m) }).catch((err) => console.warn(`[worca-ui] model bridge: ${err?.message || err}`));
     // Team policy discovery (design §9), then the marketplace seeding a policy asks for — metadata
     // only (a git archive), never an install; installs go through the setup checklist.
     try {

@@ -1243,7 +1243,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const wantedEntry = catalogEntry(wanted.model);
     // Unknown stored/default id -> the backend default -> the first model we do
     // have that is not a hidden built-in (#422; a hidden id is still a valid pick).
-    const entry = wantedEntry || catalogEntry(fallback.model) || list.find((m) => m && !m.hidden) || list[0] || null;
+    const entry = wantedEntry || catalogEntry(fallback.model) || list.find((m) => m && !m.hidden && !m.needsSignIn) || list[0] || null;
     if (!entry) { updatePickerButton(); return; }  // empty catalog: keep what we have
     const effort = wantedEntry ? wanted.effort : fallback.effort;
     const next = { model: entry.id, effort: coerceEffort(entry, effort) };
@@ -1299,6 +1299,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     for (const m of st.catalog ? st.catalog.models : []) {
       if (!m || typeof m.id !== 'string') continue;
       if (m.hidden && m.id !== st.picker.model) continue;         // hidden built-in (#422); the current pick stays
+      if (m.needsSignIn && m.id !== st.picker.model) continue;    // bridged, provider not usable (model-bridge §8.5)
       if (m.custom === 'global') { primary.push(m); continue; }   // user models are never demoted
       const fam = familyKey(m);
       // The picked model always shows up front so its ✓ is visible and it is one click away.
@@ -1350,6 +1351,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (Array.isArray(m.secretsMissing) && m.secretsMissing.length) {
         item.appendChild(tag('secret not set', 'is-err',
           `${m.secretsMissing.join(', ')} is not set — configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
+      }
+      if (m.needsSignIn) {
+        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet — Settings › Models › Providers.'));
       }
       if (m.id === st.picker.model) item.appendChild(make('span', 'ask-model-check', '✓'));
       return item;
@@ -1949,7 +1953,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // model
       const sel = rpSelect('ask-rp-model', `Model for ${row.label}`);
       sel.appendChild(opt('', 'inherit (workflow default)'));
-      for (const m of lane.models) if (!m.hidden || m.id === c.model) sel.appendChild(opt(m.id, m.label || m.id));
+      for (const m of lane.models) if ((!m.hidden && !m.needsSignIn) || m.id === c.model) sel.appendChild(opt(m.id, (m.label || m.id) + (m.needsSignIn ? ' (needs sign-in)' : '')));
       sel.value = c.model || '';
       sel.disabled = !lane.editable;
       sel.addEventListener('change', () => {
@@ -2312,6 +2316,77 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const destructive = card.action === 'cancel' || card.action === 'delete';
       const apply = btn(destructive ? 'ask-card-start is-danger' : 'ask-card-start', SC_APPLY_LABEL[card.action] || 'Apply', 'data-ask-sc-apply',
         card.action === 'run_now' ? null : WF_ICO.save);
+      apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
+      actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
+      rootEl.appendChild(actions);
+    }
+    return { el: rootEl };
+  }
+
+  // ---- Model card (docs/models.md "Ask Worca"): a proposed catalog or provider change ------------------------------
+  const MOD_KIND_LABEL = { add_model: 'Add model', edit_model: 'Edit model', remove_model: 'Remove model', provider: 'Provider', import_copilot: 'From Copilot' };
+  const MOD_APPLY_LABEL = { add_model: 'Add', edit_model: 'Apply', remove_model: 'Remove', provider: 'Apply', import_copilot: 'Import' };
+  function buildModelCard(block) {
+    const card = block.card || {};
+    const summary = card.summary || 'model change';
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    const rootEl = make('div', `ask-card ask-mcard ask-modcard is-${block.state}`);
+    rootEl.setAttribute('data-ask-modcard', block.state);
+    const noun = card.kind === 'provider' ? 'provider change' : 'model change';
+    const head = make('div', 'ask-mcard-head');
+    head.appendChild(make('span', 'ask-mcard-title', block.state === 'applied' ? `Applied ${noun}` : block.state === 'failed' ? `${noun[0].toUpperCase()}${noun.slice(1)} failed` : `Proposed ${noun}`));
+    head.appendChild(make('span', 'ask-mcard-kind', MOD_KIND_LABEL[card.kind] || card.kind || ''));
+    rootEl.appendChild(head);
+    const body = make('div', 'ask-mcard-body');
+    const sum = make('div', 'ask-mcard-summary');
+    if (block.state === 'applied') sum.appendChild(svgIcon(WF_ICO.check, 15, 2.4));
+    sum.appendChild(make('span', null, summary));
+    body.appendChild(sum);
+    if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
+    if (block.state === 'proposed' && Array.isArray(card.rows) && card.rows.length) {
+      const ul = make('ul', 'ask-mcard-changes');
+      const oneSided = card.kind === 'add_model' || card.kind === 'remove_model';
+      for (const r of card.rows) {
+        const li = make('li');
+        li.appendChild(make('span', 'ask-mcard-change-label', r.field || ''));
+        const val = make('span', 'ask-mcard-change-val');
+        if (oneSided) val.appendChild(make('span', card.kind === 'remove_model' ? 'ask-mcard-before' : 'ask-mcard-after', (card.kind === 'remove_model' ? r.before : r.after) || ''));
+        else {
+          val.appendChild(make('span', r.before ? 'ask-mcard-before' : 'ask-mcard-before is-unset', r.before || 'unset'));
+          val.appendChild(make('span', 'ask-mcard-arrow', '→'));
+          val.appendChild(make('span', r.after ? 'ask-mcard-after' : 'ask-mcard-after is-unset', r.after || 'unset'));
+        }
+        li.appendChild(val);
+        ul.appendChild(li);
+      }
+      body.appendChild(ul);
+    }
+    if (block.state === 'proposed' && Array.isArray(card.warnings) && card.warnings.length) {
+      const ul = make('ul', 'ask-mcard-effects ask-modcard-warn');
+      for (const w of card.warnings) ul.appendChild(make('li', null, w));
+      body.appendChild(ul);
+    }
+    const result = card.result || null;
+    if (block.state === 'failed') body.appendChild(make('div', 'ask-mcard-failed', `Could not apply: ${block.error || (result && result.error) || 'unknown error'}`));
+    else if (block.state === 'applied' && result && result.detail) body.appendChild(make('div', 'ask-mcard-detail', result.detail));
+    if (block.state !== 'proposed') {
+      const open = make('a', 'ask-card-sched-link', 'Settings › Models');
+      open.href = '#settings/models';
+      body.appendChild(open);
+    }
+    rootEl.appendChild(body);
+    rootEl.appendChild(make('div', 'ask-card-err'));
+    if (block.state === 'proposed') {
+      const actions = make('div', 'ask-mcard-actions');
+      const btn = (cls, text, attr, icon) => {
+        const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, '');
+        if (icon) b.prepend(svgIcon(icon, 12, 2.2));
+        return b;
+      };
+      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-mod-decline');
+      decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
+      const destructive = card.kind === 'remove_model';
+      const apply = btn(destructive ? 'ask-card-start is-danger' : 'ask-card-start', MOD_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-mod-apply', destructive ? null : WF_ICO.save);
       apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
       rootEl.appendChild(actions);
@@ -2973,7 +3048,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function isProgressBlock(block) {
     const card = block.card || {};
     if (card.type === PROGRESS_CARD_TYPE) return true;
-    if (card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule') return false;
+    if (card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model') return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   function buildCard(block) {
@@ -2983,12 +3058,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // A policy card is a metrics card with different words (buildMetricsCard branches on the type).
     const isMetrics = !!(block.card && (block.card.type === 'metrics' || block.card.type === 'policy'));
     const isSchedule = !!(block.card && block.card.type === 'schedule');
+    const isModel = !!(block.card && block.card.type === 'model');
     const isProgress = isProgressBlock(block);
-    if (cached && cached.state === block.state && (isWorkflow || isMetrics || isSchedule || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && cached.state === block.state && (isWorkflow || isMetrics || isSchedule || isModel || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
       : isSchedule ? buildScheduleCard(block)
+      : isModel ? buildModelCard(block)
       : isProgress ? buildProgressCard(block)
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
     st.cardEls.set(block.id, { el: built.el, state: block.state, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1 });

@@ -95,6 +95,18 @@ export function createAskModels({
       // shows no ⚠cost here. Pre-existing gap, shared with the pipeline dropdown and
       // /api/config; fixing it means editing composeCatalog and its three other consumers.
       if (m.costUnreliable === true) entry.costUnreliable = true;
+      // Model bridge (model-bridge-design.md §8.5/§8.7): the picker skips a
+      // bridged entry whose provider is not usable, and shows why.
+      if (m.bridged) {
+        entry.bridged = m.bridged;
+        if (m.upstreamApi) entry.upstreamApi = m.upstreamApi;
+        if (m.needsSignIn) {
+          entry.needsSignIn = true;
+          entry.signInMessage = m.signInReason === 'terms' ? 'GitHub Copilot notice not acknowledged — Settings › Models › Providers.'
+            : m.signInReason === 'no_key' ? `No API key for ${m.bridged} — Settings › Models › Providers.`
+              : `Not signed in to ${m.bridged} — Settings › Models › Providers.`;
+        }
+      }
       if (custom === 'plugin' && withSecrets) {
         if (!missing) missing = missingSecretsByIdLc();
         const keys = missing.get(m.id.toLowerCase());

@@ -148,7 +148,8 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
     'list_schedules', 'get_schedule', 'list_schedule_activity', 'preview_schedule', 'propose_schedule_change',
     'pause_schedule', 'resume_schedule', 'skip_next_run', 'mark_schedule_activity_read',
     'list_task_sources', 'find_tasks', 'get_task',
-    'list_scripts', 'get_script', 'save_script', 'test_script']);
+    'list_scripts', 'get_script', 'save_script', 'test_script',
+    'list_models', 'get_providers', 'test_provider', 'list_copilot_models', 'propose_model_change']);
   const projects = JSON.parse(msgs[2].result.content[0].text);
   assert.equal(projects.projects[0].key, project.key);
   const run = JSON.parse(msgs[3].result.content[0].text);

@@ -444,7 +444,7 @@ test('rule 4 asks the four sizing questions, answers with the smallest workflow,
   assert.ok(!ASK_SYSTEM_RULES.includes('over- or under-powered'), 'the "propose the closest one" fallback is gone');
   assert.ok(!ASK_SYSTEM_RULES.includes('propose the closest one'), 'the "propose the closest one" fallback is gone');
   assert.ok(ASK_SYSTEM_RULES.includes('why this workflow fits the work (rule 4)'), 'rule 3 still points at rule 4 for the note');
-  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*18\./.test(ASK_SYSTEM_RULES), 'the rules stop at 17');
+  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && /\n18\. Models and providers:/.test(ASK_SYSTEM_RULES) && !/\n\s*19\./.test(ASK_SYSTEM_RULES), 'the rules stop at 18');
 });
 
 // The chat often explores before it proposes (a worktree, a run diff, comments), but
@@ -460,7 +460,7 @@ test('rule 10 distils exploration findings into the brief, anchored and marked',
     assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 10 states "${t}"`);
   }
   assert.ok(ASK_SYSTEM_RULES.includes('(rule 10)'), 'rule 3 points at it where the brief is written');
-  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*18\./.test(ASK_SYSTEM_RULES), 'the rules stop at 17');
+  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && /\n18\. Models and providers:/.test(ASK_SYSTEM_RULES) && !/\n\s*19\./.test(ASK_SYSTEM_RULES), 'the rules stop at 18');
 });
 
 // ── #397: the explicit project selector ──────────────────────────────────────
@@ -525,17 +525,17 @@ test('#397: a pinned scope renders the [pinned by the user] marker on the scope 
   assert.ok(!buildContextHeader({ ...CTX, pinned: false }).includes('[pinned by the user]'), 'explicit Auto is unchanged too');
 });
 
-test('rule 3 asks for the note and the attachmentIds hand-off; rules still stop at 17', () => {
+test('rule 3 asks for the note and the attachmentIds hand-off; rules still stop at 18', () => {
   for (const t of ['one-line note', 'attachmentIds', 'extra files', '(rule 10)']) assert.ok(ASK_SYSTEM_RULES.includes(t), `rule 3 states "${t}"`);
-  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*18\./.test(ASK_SYSTEM_RULES), 'the rules stop at 17');
+  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && /\n18\. Models and providers:/.test(ASK_SYSTEM_RULES) && !/\n\s*19\./.test(ASK_SYSTEM_RULES), 'the rules stop at 18');
 });
 
-test('track_run: named in rule 1, guided in rule 5, and the rules still stop at 17', () => {
+test('track_run: named in rule 1, guided in rule 5, and the rules still stop at 18', () => {
   const rule1 = ASK_SYSTEM_RULES.slice(ASK_SYSTEM_RULES.indexOf('\n1. '), ASK_SYSTEM_RULES.indexOf('\n2. '));
   assert.ok(rule1.includes('get_run_diff, track_run, read_attachment'), 'listed among the read tools');
   const rule5 = ASK_SYSTEM_RULES.slice(ASK_SYSTEM_RULES.indexOf('\n5. '), ASK_SYSTEM_RULES.indexOf('\n6. '));
   for (const t of ['call track_run once', 'live progress card', 'do not restate']) assert.ok(rule5.includes(t), t);
-  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && !/\n\s*18\./.test(ASK_SYSTEM_RULES), 'the rules stop at 17');
+  assert.ok(/\n13\. Worca memory:/.test(ASK_SYSTEM_RULES) && /\n18\. Models and providers:/.test(ASK_SYSTEM_RULES) && !/\n\s*19\./.test(ASK_SYSTEM_RULES), 'the rules stop at 18');
 });
 
 // ── team metrics (docs/team-metrics.md "Ask Worca") ──────────────────────────
@@ -551,7 +551,7 @@ test('rule 1 names the four team-metrics tools; rule 14 sets the team-vs-local c
     '[worca event] metrics card <id> applied', 'declined', 'failed: <error>', 'branch protection']) {
     assert.ok(rule14.includes(t), `rule 14 states "${t}"`);
   }
-  assert.ok(!/\n\s*18\./.test(ASK_SYSTEM_RULES));
+  assert.ok(!/\n\s*19\./.test(ASK_SYSTEM_RULES));
 });
 
 test('rule 1 names the two team-policy tools; rule 17 sets kinds, sources, the card contract and keeps overrides with the user', () => {
@@ -615,7 +615,7 @@ test('rule 13 (memory): the files are loaded as rules, saves only durable prefer
   for (const key of ['implementer', 'planner', 'refiner', 'reviewer', 'clarify', 'decomposer']) assert.ok(!rule13.includes(key), key);
   const rule1 = ASK_SYSTEM_RULES.slice(ASK_SYSTEM_RULES.indexOf('\n1. '), ASK_SYSTEM_RULES.indexOf('\n2. '));
   assert.ok(rule1.includes('git, list_memory, read_memory, remember, forget, list_schedules,'), 'the memory tools come right before the schedule tools in rule 1\'s list');
-  assert.ok(rule1.includes('skip_next_run, mark_schedule_activity_read, list_task_sources, find_tasks, get_task, list_scripts, get_script)'), 'the task-source tools, then the script READERS, close rule 1\'s list (the writers are named by the W20 section)');
+  assert.ok(rule1.includes('skip_next_run, mark_schedule_activity_read, list_task_sources, find_tasks, get_task, list_scripts, get_script, list_models,'), 'the task-source tools, then the script READERS (the writers are named by the W20 section), then the model tools');
   assert.ok(rule1.includes('get_run_diff, track_run, read_attachment'), 'the pinned substring survives');
 });
 

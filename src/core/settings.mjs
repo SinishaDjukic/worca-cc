@@ -51,7 +51,12 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { EFFORTS, isReservedModelEnvKey, assertModelCost, envFlag } from './model-env.mjs';
+import {
+  EFFORTS, isReservedModelEnvKey, assertModelCost, envFlag,
+  assertModelUpstream, upstreamEnvConflict, modelEnvRef,
+  UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
+  COPILOT_TERMS_VERSION, isUpstreamBaseUrl,
+} from './model-env.mjs';
 
 /**
  * The real OS home base, honoring HOME/USERPROFILE so tests can sandbox it.
@@ -882,13 +887,36 @@ function sanitizeGlobalModel(raw) {
     env[k] = t;
   }
   const cost = sanitizeModelCost(raw.cost, id);
+  const upstream = sanitizeModelUpstream(raw.upstream, id);
+  if (upstream) {
+    // The bridge owns the routing keys (model-env.mjs BRIDGE_ROUTING_KEYS); a
+    // hand-edited file carrying both is degraded, not rejected: the bridge wins.
+    const clash = upstreamEnvConflict(env);
+    if (clash) {
+      console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(clash)} — the bridge sets it for an upstream entry`);
+      for (const k of Object.keys(env)) if (upstreamEnvConflict({ [k]: env[k] })) delete env[k];
+    }
+  }
   return {
     id,
     label,
     efforts: efforts.length ? efforts : [...EFFORTS],
     ...(Object.keys(env).length ? { env } : {}),
     ...(cost ? { cost } : {}),
+    ...(upstream ? { upstream } : {}),
   };
+}
+
+/** Lenient read-side counterpart of assertModelUpstream: drops an invalid
+ *  `upstream` loudly instead of throwing. */
+function sanitizeModelUpstream(raw, id) {
+  if (raw == null) return undefined;
+  try {
+    return assertModelUpstream(raw);
+  } catch (e) {
+    console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping invalid upstream — ${e.message}`);
+    return undefined;
+  }
 }
 
 /** Lenient read-side counterpart of assertModelCost (model-env.mjs): drops an
@@ -984,14 +1012,24 @@ function assertTestSettingsAccess() {
 }
 
 /** The MINIMAL stored shape for validated parts (see section comment). */
-function storedModelShape(id, label, efforts, env, cost) {
+function storedModelShape(id, label, efforts, env, cost, upstream) {
   return {
     id,
     ...(label && label !== id ? { label } : {}),
     ...(efforts.length && efforts.length !== EFFORTS.length ? { efforts } : {}),
     ...(Object.keys(env).length ? { env } : {}),
     ...(cost ? { cost } : {}),
+    ...(upstream ? { upstream } : {}),
   };
+}
+
+/** @throws {Error} when an `env` map carries a key the bridge owns for an upstream entry. */
+function assertUpstreamEnvCompatible(env, upstream) {
+  if (!upstream) return;
+  const clash = upstreamEnvConflict(env);
+  if (clash) {
+    throw new Error(`env key ${JSON.stringify(clash)} cannot be set on a model with an upstream — the bridge sets it (remove it or drop the upstream)`);
+  }
 }
 
 /** Find the index of the raw `models` entry matching `id` (case-insensitive). */
@@ -1010,21 +1048,26 @@ function rawModels(settings) {
  * Add a global catalog entry. `label` defaults to the id; `efforts` must be a
  * subset of EFFORTS (empty/absent = all); `env` keys must not be reserved;
  * `cost` is an optional per-model override ({free} | {perMtok}, see assertModelCost).
+ * `dryRun` validates exactly as a write would and returns the would-be entry
+ * without persisting (Ask Worca's model card validates with it).
  * @returns {Promise<{id:string,label:string,efforts:string[],env?:object,cost?:object}>} the effective entry
  * @throws {Error} on invalid input or a case-insensitively duplicate id
  */
-export async function addGlobalModel({ id, label, efforts, env, cost } = {}) {
+export async function addGlobalModel({ id, label, efforts, env, cost, upstream } = {}, { dryRun = false } = {}) {
   assertTestSettingsAccess();
   const vid = assertModelId(id);
   if (!isClearInput(label) && typeof label !== 'string') throw new Error('label must be a string');
   const vefforts = assertEfforts(efforts);
   const venv = assertEnvPairs(env);
   const vcost = assertModelCost(cost);
+  const vupstream = assertModelUpstream(upstream);
+  assertUpstreamEnvCompatible(venv, vupstream);
   const settings = readSettings();
   const models = rawModels(settings);
   if (findModelIndex(models, vid) !== -1) throw new Error(`a model with id ${JSON.stringify(vid)} already exists`);
   const vlabel = (typeof label === 'string' && label.trim()) || vid;
-  settings.models = [...models, storedModelShape(vid, vlabel, vefforts, venv, vcost)];
+  if (dryRun) return sanitizeGlobalModel(storedModelShape(vid, vlabel, vefforts, venv, vcost, vupstream));
+  settings.models = [...models, storedModelShape(vid, vlabel, vefforts, venv, vcost, vupstream)];
   await persistSettings(settings);
   return listGlobalModels().find((m) => m.id.toLowerCase() === vid.toLowerCase());
 }
@@ -1034,11 +1077,11 @@ export async function addGlobalModel({ id, label, efforts, env, cost } = {}) {
  * resets to the id. `efforts`: []/null resets to all. `env`: null clears the
  * whole map; an object merges per key, where a null value DELETES that key and
  * a string sets it (write-only PATCH semantics, design §4.10). `cost`: null/''
- * removes the override; an object replaces it wholesale.
+ * removes the override; an object replaces it wholesale. `dryRun` as addGlobalModel.
  * @returns {Promise<object>} the effective entry
  * @throws {Error} on an unknown id or invalid input
  */
-export async function updateGlobalModel(id, { label, efforts, env, cost } = {}) {
+export async function updateGlobalModel(id, { label, efforts, env, cost, upstream } = {}, { dryRun = false } = {}) {
   assertTestSettingsAccess();
   const vid = assertModelId(id);
   const settings = readSettings();
@@ -1071,8 +1114,15 @@ export async function updateGlobalModel(id, { label, efforts, env, cost } = {}) 
   let nextCost = current.cost;
   if (cost !== undefined) nextCost = isClearInput(cost) ? undefined : assertModelCost(cost);
 
+  // upstream: omitted keeps the current block; null/'' removes it (the entry
+  // reverts to plain env routing); an object replaces it wholesale.
+  let nextUpstream = current.upstream;
+  if (upstream !== undefined) nextUpstream = isClearInput(upstream) ? undefined : assertModelUpstream(upstream);
+  assertUpstreamEnvCompatible(nextEnv, nextUpstream);
+
+  if (dryRun) return sanitizeGlobalModel(storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream));
   settings.models = models.slice();
-  settings.models[idx] = storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost);
+  settings.models[idx] = storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream);
   await persistSettings(settings);
   return listGlobalModels().find((m) => m.id.toLowerCase() === vid.toLowerCase());
 }
@@ -1092,6 +1142,172 @@ export async function removeGlobalModel(id) {
   settings.models = models.slice(0, idx).concat(models.slice(idx + 1));
   if (!settings.models.length) delete settings.models;
   await persistSettings(settings);
+}
+
+// ---------------------------------------------------------------------------
+// Providers (model-bridge-design.md §6.2): account-level state the bridged
+// catalog entries share — one GitHub Copilot sign-in for every `copilot`
+// entry, one key/base URL for every `openai` entry. Stored under `providers`
+// in settings.json. Secrets are literal strings or whole-value ${VAR} refs
+// (resolved at use time from worca's own process.env), masked by the API.
+// The Copilot SHORT-LIVED token is never stored: providers/copilot.mjs keeps
+// it in memory. Readers are loud-and-lenient; setters throw.
+//
+//   providers: {
+//     copilot:   { githubToken?, accountType?, acknowledgedTerms?, termsVersion?, maxConcurrent?, login? },
+//     openai:    { baseUrl?, apiKey?, maxConcurrent? },
+//     anthropic: { baseUrl?, apiKey?, maxConcurrent? },
+//   }
+// ---------------------------------------------------------------------------
+
+const PROVIDER_SECRET_KEYS = Object.freeze({ copilot: ['githubToken'], openai: ['apiKey'], anthropic: ['apiKey'] });
+const PROVIDER_DEFAULT_BASE_URL = Object.freeze({ openai: 'https://api.openai.com/v1', anthropic: 'https://api.anthropic.com' });
+
+/** Sanitize one provider's stored block to its effective shape. Never throws. */
+function sanitizeProvider(name, raw) {
+  const r = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const out = {};
+  const warn = (k, why) => console.warn(`[worca] providers.${name}.${k}: ${why} — ignored`);
+  for (const k of PROVIDER_SECRET_KEYS[name]) {
+    if (r[k] === undefined) continue;
+    if (typeof r[k] === 'string' && r[k].trim()) out[k] = r[k].trim();
+    else warn(k, 'not a non-empty string');
+  }
+  if (name === 'copilot') {
+    if (r.accountType !== undefined) {
+      if (COPILOT_ACCOUNT_TYPES.includes(r.accountType)) out.accountType = r.accountType;
+      else warn('accountType', `must be one of ${COPILOT_ACCOUNT_TYPES.join(' | ')}`);
+    }
+    if (r.acknowledgedTerms !== undefined) {
+      if (typeof r.acknowledgedTerms === 'string' && !Number.isNaN(Date.parse(r.acknowledgedTerms))) out.acknowledgedTerms = r.acknowledgedTerms;
+      else warn('acknowledgedTerms', 'not an ISO timestamp');
+    }
+    if (r.termsVersion !== undefined) {
+      if (Number.isInteger(r.termsVersion) && r.termsVersion > 0) out.termsVersion = r.termsVersion;
+      else warn('termsVersion', 'not a positive integer');
+    }
+    if (r.login !== undefined) {
+      if (typeof r.login === 'string' && r.login.trim()) out.login = r.login.trim();
+      else warn('login', 'not a non-empty string');
+    }
+  } else if (r.baseUrl !== undefined) {
+    if (isUpstreamBaseUrl(r.baseUrl)) out.baseUrl = r.baseUrl.trim().replace(/\/+$/, '');
+    else warn('baseUrl', 'not an http(s) URL');
+  }
+  if (r.maxConcurrent !== undefined) {
+    const n = Number(r.maxConcurrent);
+    if (Number.isInteger(n) && n >= 1 && n <= MAX_PROVIDER_CONCURRENCY) out.maxConcurrent = n;
+    else warn('maxConcurrent', `must be an integer from 1 to ${MAX_PROVIDER_CONCURRENCY}`);
+  }
+  return out;
+}
+
+/**
+ * The EFFECTIVE provider config: stored values plus defaults (base URL,
+ * concurrency, account type). Secrets are returned as stored (literal or
+ * ${VAR}); use resolveProviderSecret for the live value. Never throws.
+ * @param {string} name
+ * @returns {object}
+ */
+export function providerConfig(name) {
+  if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) return providerDefaults(name);
+  const all = readSettings().providers;
+  const raw = all && typeof all === 'object' && !Array.isArray(all) ? all[name] : undefined;
+  return { ...providerDefaults(name), ...sanitizeProvider(name, raw) };
+}
+
+function providerDefaults(name) {
+  const d = { maxConcurrent: DEFAULT_PROVIDER_CONCURRENCY[name] };
+  if (name === 'copilot') d.accountType = 'individual';
+  else d.baseUrl = PROVIDER_DEFAULT_BASE_URL[name];
+  return d;
+}
+
+/** Every provider's effective config keyed by name. */
+export function allProviders() {
+  return Object.fromEntries(UPSTREAM_PROVIDERS.map((n) => [n, providerConfig(n)]));
+}
+
+/** Whether a stored provider secret exists (as a literal or a ${VAR} ref). */
+export function providerSecretSet(name) {
+  const cfg = providerConfig(name);
+  return PROVIDER_SECRET_KEYS[name].some((k) => typeof cfg[k] === 'string' && cfg[k]);
+}
+
+/**
+ * The live value of a stored secret: a `${VAR}` ref is read from `sourceEnv`
+ * (unset → ''), a literal is returned as is.
+ */
+export function resolveProviderSecret(value, sourceEnv = process.env) {
+  if (typeof value !== 'string' || !value) return '';
+  const ref = modelEnvRef(value);
+  if (ref === null) return value;
+  const v = sourceEnv ? sourceEnv[ref] : undefined;
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+/** Whether the Copilot terms notice has been acknowledged at the CURRENT wording version. */
+export function copilotTermsAcknowledged() {
+  const c = providerConfig('copilot');
+  return !!c.acknowledgedTerms && (c.termsVersion || 0) >= COPILOT_TERMS_VERSION;
+}
+
+/**
+ * Patch a provider's stored block. Omitted keys are kept; null/'' deletes a
+ * key. Validates the whole patch before writing. `dryRun` returns the
+ * would-be effective config without persisting.
+ * @returns {Promise<object>} the effective config
+ * @throws {Error}
+ */
+export async function updateProvider(name, patch = {}, { dryRun = false } = {}) {
+  if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
+  assertTestSettingsAccess();
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('provider patch must be an object');
+  const allowed = new Set([...PROVIDER_SECRET_KEYS[name], 'maxConcurrent',
+    ...(name === 'copilot' ? ['accountType', 'acknowledgedTerms', 'termsVersion', 'login'] : ['baseUrl'])]);
+  for (const [k, v] of Object.entries(patch)) {
+    if (!allowed.has(k)) throw new Error(`unknown provider field ${JSON.stringify(k)} for ${name}`);
+    if (isClearInput(v)) continue;
+    if (PROVIDER_SECRET_KEYS[name].includes(k) || k === 'login') {
+      if (typeof v !== 'string' || !v.trim()) throw new Error(`${k} must be a non-empty string`);
+    } else if (k === 'accountType') {
+      if (!COPILOT_ACCOUNT_TYPES.includes(v)) throw new Error(`accountType must be one of ${COPILOT_ACCOUNT_TYPES.join(' | ')}`);
+    } else if (k === 'baseUrl') {
+      if (!isUpstreamBaseUrl(v)) throw new Error('baseUrl must be an http(s) URL with no query or fragment');
+    } else if (k === 'maxConcurrent') {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 1 || n > MAX_PROVIDER_CONCURRENCY) throw new Error(`maxConcurrent must be an integer from 1 to ${MAX_PROVIDER_CONCURRENCY}`);
+    } else if (k === 'acknowledgedTerms') {
+      if (typeof v !== 'string' || Number.isNaN(Date.parse(v))) throw new Error('acknowledgedTerms must be an ISO timestamp');
+    } else if (k === 'termsVersion') {
+      if (!Number.isInteger(v) || v <= 0) throw new Error('termsVersion must be a positive integer');
+    }
+  }
+  const settings = readSettings();
+  const all = settings.providers && typeof settings.providers === 'object' && !Array.isArray(settings.providers) ? settings.providers : {};
+  const cur = all[name] && typeof all[name] === 'object' && !Array.isArray(all[name]) ? { ...all[name] } : {};
+  for (const [k, v] of Object.entries(patch)) {
+    if (isClearInput(v)) delete cur[k];
+    else if (k === 'maxConcurrent') cur[k] = Number(v);
+    else if (k === 'baseUrl') cur[k] = v.trim().replace(/\/+$/, '');
+    else cur[k] = typeof v === 'string' ? v.trim() : v;
+  }
+  if (dryRun) return { ...providerDefaults(name), ...sanitizeProvider(name, cur) };
+  if (Object.keys(cur).length) all[name] = cur; else delete all[name];
+  if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
+  await persistSettings(settings);
+  return providerConfig(name);
+}
+
+/** Record the Copilot terms acknowledgement at the current wording version. */
+export async function acknowledgeCopilotTerms(now = new Date()) {
+  return updateProvider('copilot', { acknowledgedTerms: now.toISOString(), termsVersion: COPILOT_TERMS_VERSION });
+}
+
+/** Forget the Copilot sign-in (token + login); the acknowledgement stays. */
+export async function clearCopilotSignIn() {
+  return updateProvider('copilot', { githubToken: null, login: null });
 }
 
 // ── Interface mode (docs/ui-levels.md) ───────────────────────────────────────

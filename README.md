@@ -233,6 +233,13 @@ See [`docs/team-policy.md`](docs/team-policy.md).
   haiku/sonnet/opus/fable tier keys so nothing falls back to the Anthropic API,
   and *Hide built-in models* (Settings › Models) drops the built-ins from every
   picker.
+- **GitHub Copilot and OpenAI-compatible endpoints, built in** — Worca's own
+  in-process bridge lets the Claude Code CLI run against a Copilot subscription
+  (Claude models through Copilot's native Anthropic endpoint, thinking intact;
+  GPT, Gemini and the rest through a translation layer) or any
+  `/chat/completions` endpoint — no LiteLLM, no second daemon. Sign in once on
+  Settings › Models › Providers, import Copilot's models, pick them anywhere.
+  See [`docs/models.md`](docs/models.md).
 
 ### Storage
 
@@ -376,6 +383,7 @@ The skill starts the same deterministic orchestrator.
 - [Guardrails](docs/guardrails.md) — policy model, enforcement, limitations
 - [Team metrics](docs/team-metrics.md) — git-backed, team-wide run records
 - [Team policy](docs/team-policy.md) — team-set cost caps, plugins, models and guardrails from a `worca-policy` branch
+- [Models](docs/models.md) — the catalog, providers (GitHub Copilot, OpenAI-compatible) and the built-in bridge
 - [Getting started](docs/getting-started.md) — the in-app checklist, welcome and spotlight guides
 - [Storage](docs/storage.md) — where state lives, project keys, migration
 - [Releasing](docs/RELEASING.md) — how `@worca/app` versions are published

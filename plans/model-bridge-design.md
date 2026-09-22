@@ -598,7 +598,7 @@ this model*. Otherwise unchanged.
 - `POST /api/providers/copilot/acknowledge` → records the timestamp (+ notice version).
 - `PATCH /api/providers/:name` → accountType, maxConcurrent, baseUrl, apiKey (write-only).
 - `GET /api/providers/copilot/models` → the normalized models list (§8.4).
-- `POST /api/models/import` `{provider:'copilot', ids:[…]}` → created/updated entries.
+- `POST /api/providers/copilot/import-models` `{ids:[…]}` → created/updated entries.
 - `GET /api/models` entries gain `upstream` (apiKey masked, `${VAR}` refs readable),
   `bridged: 'copilot'|'openai'|'anthropic'|false`, `needsSignIn: boolean`, `capabilities`.
 - `POST /api/models` / `PATCH /api/models/:id` accept `upstream`; 400s carry the §6.1

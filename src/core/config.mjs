@@ -16,7 +16,9 @@ import { getDb, prepare, tx } from './db.mjs';
 import { projectKey } from './store.mjs';
 import { AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
-import { EFFORTS, prepareModelEnv, withTierModelEnv, isSubagentModelValue, subagentModelIssue } from './model-env.mjs';
+import { EFFORTS, prepareModelEnv, withTierModelEnv, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools } from './model-env.mjs';
+import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
+import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
 import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings } from './settings.mjs';
 /** Whether the developer stored the hide-built-ins flag (a team default applies only when not). */
 const readSettingsHideStored = () => { const s = readSettings(); return typeof s.hideBuiltinModels === 'boolean' || s.hideBuiltinModelsChosen === true; };
@@ -197,16 +199,36 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
   const teamHide = projectDir ? teamDefault(projectDir, 'models.hideBuiltins') : undefined;
   const hideStored = readSettingsHideStored();
   const hidden = (hideStored ? hideBuiltinModels() : (teamHide === true || hideBuiltinModels())) ? { hidden: true } : {};
+  // Bridged entries (model-bridge-design.md §8.5): `bridged` names the provider
+  // (false otherwise), `upstreamApi` the wire protocol, `needsSignIn` whether
+  // the provider is usable right now (pickers skip such entries unless they are
+  // the current selection), `capabilities` what the editor pinned. `routed` is
+  // true too: the CLI IS pointed at a custom endpoint (worca's own bridge).
+  // provider + the entry's own key/base URL -> readiness (both can decide it)
+  const readiness = new Map();
+  const bridgeShape = (m) => {
+    if (!m.upstream) return {};
+    const p = m.upstream.provider;
+    const key = `${p}\n${m.upstream.apiKey || ''}\n${m.upstream.baseUrl || ''}`;
+    if (!readiness.has(key)) readiness.set(key, providerReadiness(m.upstream));
+    const r = readiness.get(key);
+    return {
+      bridged: p, upstreamApi: m.upstream.api, upstreamModel: m.upstream.model,
+      needsSignIn: !r.ok, ...(r.ok ? {} : { signInReason: r.reason }),
+      ...(m.upstream.capabilities ? { capabilities: { ...m.upstream.capabilities } } : {}),
+    };
+  };
+  const routedOrBridged = (m) => routedOf(m.env) || !!m.upstream;
   const pluginShape = (id, m, lc) => ({
     id, label: m.label, efforts: [...m.efforts], custom: 'plugin', plugin: m.plugin,
-    hasEnv: !!m.env, routed: routedOf(m.env), ...unreliable(lc),
+    hasEnv: !!m.env, routed: routedOrBridged(m), ...unreliable(lc), ...bridgeShape(m),
   });
   for (const m of PREDEFINED_MODELS) {
     const lc = m.id.toLowerCase();
     const shadow = globalByIdLc.get(lc);
     const pshadow = pluginByIdLc.get(lc);
     out.push(shadow
-      ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], custom: 'global', hasEnv: !!shadow.env, routed: routedOf(shadow.env), ...unreliable(lc) }
+      ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], custom: 'global', hasEnv: !!shadow.env, routed: routedOrBridged(shadow), ...unreliable(lc), ...bridgeShape(shadow) }
       : pshadow
         ? pluginShape(m.id, pshadow, lc)
         : { ...m, custom: false, hasEnv: false, routed: false, ...hidden });
@@ -216,7 +238,7 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
     const lc = m.id.toLowerCase();
     if (seen.has(lc)) continue; // predefined shadow, already emitted
     seen.add(lc);
-    out.push({ id: m.id, label: m.label, efforts: [...m.efforts], custom: 'global', hasEnv: !!m.env, routed: routedOf(m.env), ...unreliable(lc) });
+    out.push({ id: m.id, label: m.label, efforts: [...m.efforts], custom: 'global', hasEnv: !!m.env, routed: routedOrBridged(m), ...unreliable(lc), ...bridgeShape(m) });
   }
   for (const m of plugins) {
     const lc = m.id.toLowerCase();
@@ -231,7 +253,7 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
     if (seen.has(lc)) continue;
     seen.add(lc);
     out.push({ id: m.id, label: m.label, efforts: [...m.efforts], custom: 'policy', policy: m.home,
-      hasEnv: !!m.env, routed: routedOf(m.env), ...unreliable(lc) });
+      hasEnv: !!m.env, routed: routedOrBridged(m), ...unreliable(lc), ...bridgeShape(m) });
   }
   for (const m of projectCustom) {
     if (seen.has(m.id.toLowerCase())) continue; // predefined/global/plugin wins
@@ -257,9 +279,29 @@ export function modelHasBaseUrlRouting(modelId) {
   if (!id) return false;
   const lc = id.toLowerCase();
   const entry = listGlobalModels().find((m) => m.id.toLowerCase() === lc);
-  if (entry) return !!(entry.env && 'ANTHROPIC_BASE_URL' in entry.env);
+  if (entry) return !!entry.upstream || !!(entry.env && 'ANTHROPIC_BASE_URL' in entry.env);
   const pm = listPluginModels().find((m) => m.id.toLowerCase() === lc);
-  return !!(pm && pm.env && 'ANTHROPIC_BASE_URL' in pm.env);
+  if (pm) return !!pm.upstream || !!(pm.env && 'ANTHROPIC_BASE_URL' in pm.env);
+  return !!findBridgedEntry(id);   // a team-policy entry with an upstream
+}
+
+/**
+ * The bridge facts for a model id (model-bridge-design.md §4.2/§8.5), or null
+ * when it is not a bridged entry: `{id, provider, api, upstreamModel,
+ * excludeTools, ready, reason?, message?}`. `excludeTools` are the CLI built-ins
+ * the runner must withhold (web tools have no chat/completions equivalent);
+ * `ready` is the provider's sign-in state — a spawn fails fast on it instead
+ * of with an opaque 401 mid-run. Synchronous; never throws.
+ */
+export function bridgedModelInfo(modelId) {
+  const e = findBridgedEntry(modelId);
+  if (!e) return null;
+  const r = providerReadiness(e.upstream);
+  return {
+    id: e.id, provider: e.upstream.provider, api: e.upstream.api, upstreamModel: e.upstream.model,
+    excludeTools: bridgeExcludedTools(e.upstream),
+    ready: r.ok, ...(r.ok ? {} : { reason: r.reason, message: r.message }),
+  };
 }
 
 /** Lowercased ids currently flagged cost-unreliable. Never throws ({} on any
@@ -502,7 +544,7 @@ export async function listModels(projectDir) {
  * @param {string} modelId
  * @returns {Record<string,string>|undefined}
  */
-export function resolveModelEnv(modelId) {
+export function resolveModelEnv(modelId, { tag } = {}) {
   const id = typeof modelId === 'string' ? modelId.trim() : '';
   if (!id) return undefined;
   const lc = id.toLowerCase();
@@ -510,6 +552,56 @@ export function resolveModelEnv(modelId) {
   let who;
   let canonicalId = id;
   const entry = listGlobalModels().find((m) => m.id.toLowerCase() === lc);
+  // A BRIDGED entry (model-bridge-design.md §4.2): the CLI talks to worca's
+  // own loopback bridge, which forwards to the entry's upstream. The routing
+  // keys are synthesized here — never user-editable beside `upstream` — and
+  // the entry's remaining env (a CLAUDE_CODE_* knob, say) still merges. Only
+  // the user's global layer and a plugin layer may be bridged; policy entries
+  // carry `upstream` too but ride the same lookup (registry.findBridgedEntry).
+  const bridged = findBridgedEntry(id);
+  if (bridged) {
+    // Fail fast (§8.5): a provider that is not signed in / not acknowledged
+    // would otherwise surface as an opaque 401 mid-run. This is the ONE case
+    // in which this resolver throws; every dispatch site already routes a
+    // runClaude failure to its error path, and the Test button's hint keys on
+    // `bridgeReason`. The error class is `auth` so recovery policy treats it
+    // like any credential failure (never retried blindly).
+    const ready = providerReadiness(bridged.upstream);
+    if (!ready.ok) {
+      const err = new Error(ready.message);
+      err.errorClass = 'auth';
+      err.bridgeReason = ready.reason;
+      err.bridgeProvider = bridged.upstream.provider;
+      throw err;
+    }
+    const base = bridged.source === 'global' && entry ? entry : null;
+    const { env: extra, dropped } = prepareModelEnv(base && base.env ? base.env : {});
+    for (const k of dropped) {
+      console.warn(`[worca] model ${JSON.stringify(bridged.id)}: dropping env key ${JSON.stringify(k)} (reserved or unresolvable \${VAR} ref)`);
+    }
+    for (const k of BRIDGE_ROUTING_KEYS) delete extra[k];
+    const env = {
+      ...extra,
+      ANTHROPIC_BASE_URL: bridgeBaseUrl(bridged.id, { tag }),
+      ANTHROPIC_AUTH_TOKEN: bridgeSecret(),
+      ANTHROPIC_MODEL: bridged.id,
+    };
+    // The CLI turns tool search off for a non-Anthropic base URL and then sends
+    // every MCP tool schema in full — hundreds of KB with a few user MCP
+    // servers, far past a translated model's prompt limit (a local 32k model
+    // fails its first call). Its ToolSearch is client-side (schemas come back
+    // as tool_result text), so it works through the translation layer; the
+    // entry's own env may still turn it off.
+    if (bridged.upstream.api === 'openai-chat' && !('ENABLE_TOOL_SEARCH' in env)) env.ENABLE_TOOL_SEARCH = 'true';
+    // A bridged id is never a model name the CLI knows, so it assumes a 200k
+    // window and compacts only once the upstream rejects a request — on a 32k
+    // local model that means turns whose reply is cut to a few hundred tokens
+    // long before any overflow. The pinned limits are the real window.
+    const caps = bridged.upstream.capabilities || {};
+    if (caps.maxPromptTokens && !('CLAUDE_CODE_MAX_CONTEXT_TOKENS' in env)) env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(caps.maxPromptTokens);
+    if (caps.maxOutputTokens && !('CLAUDE_CODE_MAX_OUTPUT_TOKENS' in env)) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(caps.maxOutputTokens);
+    return withTierModelEnv(env, bridged.id);
+  }
   if (entry && entry.env) {
     rawEnv = entry.env;
     who = JSON.stringify(entry.id);
