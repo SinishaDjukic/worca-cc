@@ -76,3 +76,34 @@ test('a v1 pipeline row is untouched: no outcome, no exec fields', async () => {
   assert.equal(state.steps[0].kind, undefined);
   assert.equal(state.steps[0].stepIndex, 0);
 });
+
+test('humanHours/humanSignals round-trip on steps, and pipelines.human_hours on the run', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-ledger-human-'));
+  const p = await createPipeline(dir, { promptText: 'x', sourceType: 'prompt' });
+  await writeState(p.dir, {
+    id: p.id, projectDir: dir, status: 'done', phase: 'implementer', cycle: 1, engine: 2, humanHours: 45.3,
+    steps: [
+      { key: 'x:n_impl:1', executionId: 'x:n_impl:1', nodeId: 'n_impl', kind: 'cycle', ordinal: 1, cycle: 1,
+        agentKey: 'implementer', phase: 'implementer', status: 'done', activeMs: 1, runningSince: null, costUsd: 1,
+        humanHours: 43.05, humanSignals: { code: 43.05, write: 0, revise: 0, json: 0, read: 0, method: 'heuristic' } },
+      { key: 'x:n_end:1', executionId: 'x:n_end:1', nodeId: 'n_end', kind: 'cycle', ordinal: 1, cycle: 1,
+        agentKey: null, phase: 'end', status: 'done', activeMs: 0, runningSince: null, costUsd: 0 },
+    ],
+    subAgents: [],
+  });
+  const { getDb } = await import('../src/core/db.mjs');
+  assert.equal(getDb().prepare('SELECT human_hours FROM pipelines WHERE id = ?').get(p.id).human_hours, 45.3);
+  const rows = getDb().prepare('SELECT key, human_hours, human_signals FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid').all(p.id);
+  assert.equal(rows[0].human_hours, 43.05);
+  assert.deepEqual(JSON.parse(rows[0].human_signals), { code: 43.05, write: 0, revise: 0, json: 0, read: 0, method: 'heuristic' });
+  assert.equal(rows[1].human_hours, null);
+  assert.equal(rows[1].human_signals, null);
+  const { state } = await readPipeline(dir, p.id);
+  assert.equal(state.humanHours, 45.3);
+  const impl = state.steps.find((s) => s.key === 'x:n_impl:1');
+  assert.equal(impl.humanHours, 43.05);
+  assert.deepEqual(impl.humanSignals, { code: 43.05, write: 0, revise: 0, json: 0, read: 0, method: 'heuristic' });
+  const end = state.steps.find((s) => s.key === 'x:n_end:1');
+  assert.equal('humanHours' in end, false);
+  assert.equal(readPipelineForResume(p.id).steps.find((s) => s.key === 'x:n_impl:1').humanHours, 43.05);
+});

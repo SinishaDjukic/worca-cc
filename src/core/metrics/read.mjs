@@ -214,9 +214,11 @@ function syncFor(slug, prefs, pending) {
 export async function readScope(scope, { refresh = false, defer = false } = {}) {
   const sources = [];
   let meta;
+  let rateProjectDir = null;
   if (scope.kind === 'project') {
     const p = (await listProjects()).find((x) => x.key === scope.id);
     if (!p) throw Object.assign(new Error(`unknown project ${scope.id}`), { code: 'NOT_FOUND' });
+    rateProjectDir = p.path;
     const sink = await resolveProjectSink(p.path);
     if (!sink.ok) {
       const code = sink.reason === 'delegate-invalid' ? 'DELEGATE_INVALID' : 'NOT_ENABLED';
@@ -235,6 +237,7 @@ export async function readScope(scope, { refresh = false, defer = false } = {}) 
       sources.push({ slug: prefs.slug, projectDir: path, keep: (r) => matchesWorkspace(r.target, ws) });
     }
     if (!sources.length) throw Object.assign(new Error(`no member of ${ws.name} records team metrics`), { code: 'NOT_ENABLED' });
+    rateProjectDir = ws.metricsProject || null;
     const homePrefs = ws.metricsProject ? readTeamMetricsPrefs(projectKey(ws.metricsProject)) : null;
     meta = { kind: 'workspace', id: ws.id, name: ws.name, home: homePrefs?.slug ?? null, sources: sources.map((s) => s.slug) };
   }
@@ -270,7 +273,7 @@ export async function readScope(scope, { refresh = false, defer = false } = {}) 
     }
     sync.push({ ...syncFor(src.slug, readTeamMetricsPrefs(projectKey(src.projectDir)), (await listOutbox(src.slug)).length), fetchedAt: r.fetchedAt });
   }
-  return { scope: meta, records, stats, sinks: sources.map((s) => s.slug), sync, refresh: refreshInfo, fetchError };
+  return { scope: meta, records, stats, sinks: sources.map((s) => s.slug), sync, refresh: refreshInfo, fetchError, rateProjectDir };
 }
 
 /** Scope list + Projects/Workspaces status in one call (Scope select, Projects cells, ws cards, Stats hint). */

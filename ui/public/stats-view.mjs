@@ -6,7 +6,7 @@
 // tree. app.js owns endpoint calls and mounting; node:test drives these via
 // jsdom. Interactive elements carry data-* + routing classes (cb-override,
 // cb-settings, ch-hit, data-nav) so app.js wires delegated listeners.
-// Formatters are injected via opts.fmt = { usd, usd4, duration, estTitle };
+// Formatters are injected via opts.fmt = { usd, usd4, duration, hours, estTitle };
 // DEFAULT_FMT keeps pure tests standalone.
 
 import { renderTeamCapPauseBanner, POLICY_PAUSE_REASONS } from './team-policy-view.mjs';
@@ -19,9 +19,13 @@ export const BUDGET_WARN_AT = 0.8;
 const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+// en-US grouping ($10,456.12), the same shape Team metrics prints (TM_FMT.usd); app.js's fmtUsd matches.
+const USD_2DP = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
+const USD_4DP = { minimumFractionDigits: 4, maximumFractionDigits: 4 };
+
 export const DEFAULT_FMT = {
-  usd: (n) => `$${(Math.round(((n || 0) + Number.EPSILON) * 100) / 100).toFixed(2)}`,
-  usd4: (n) => `$${(n || 0).toFixed(4)}`,
+  usd: (n) => `$${(Math.round(((n || 0) + Number.EPSILON) * 100) / 100).toLocaleString('en-US', USD_2DP)}`,
+  usd4: (n) => `$${(n || 0).toLocaleString('en-US', USD_4DP)}`,
   duration: (ms) => {
     const s = Math.floor((ms || 0) / 1000);
     if (s < 60) return `${s}s`;
@@ -29,7 +33,11 @@ export const DEFAULT_FMT = {
     if (m < 60) return `${m}m ${s % 60}s`;
     return `${Math.floor(m / 60)}h ${m % 60}m`;
   },
-  estTitle: (n) => `Estimated cost $${(n || 0).toFixed(4)} — Claude Code client-side estimate (total_cost_usd), not authoritative billing`,
+  hours: (h) => {
+    const v = Math.round(((h || 0) + Number.EPSILON) * 10) / 10;
+    return `${v.toLocaleString('en-US', { maximumFractionDigits: 1 })} h`;
+  },
+  estTitle: (n) => `Estimated cost $${(n || 0).toLocaleString('en-US', USD_4DP)} — Claude Code client-side estimate (total_cost_usd), not authoritative billing`,
 };
 
 function h(doc, tag, cls, text) {
@@ -62,6 +70,8 @@ const ICONS = {
   ask: 'M12 19.6l-3.2-2.8H6.4A3.4 3.4 0 0 1 3 13.4V7.8a3.4 3.4 0 0 1 3.4-3.4h11.2A3.4 3.4 0 0 1 21 7.8v5.6a3.4 3.4 0 0 1-3.4 3.4h-2.4L12 19.6Z',
   time: 'M12 8v4l3 2M12 20a8 8 0 1 1 0-16 8 8 0 0 1 0 16Z',
   finished: 'M20 7 9 18l-5-5',
+  // Money bag resting on an open hand (not a board glyph): bag tie, knot, body; thumb, fingers, cuff.
+  saved: 'M9.6 4.6h3.8 M9.9 4.6c.3-1.5 2.9-1.5 3.2 0 M9.6 4.6C7.8 6.2 6.8 7.8 6.8 9.4c0 1.6.6 2.9 1.4 3.8h6.6c.8-.9 1.4-2.2 1.4-3.8 0-1.6-1-3.2-2.8-4.8 M8.2 13.2c-.5 0-1 .2-1.3.6L3 17.6 M7 21l1.6-1.4c.3-.4.8-.6 1.4-.6h4c1.1 0 2.1-.4 2.8-1.2l4.6-4.4a2 2 0 0 0-2.75-2.91L14.8 13.2 M2 16.6l6 6',
   prs: 'M6 8.6v6.8M18 15.4V11a4 4 0 0 0-4-4h-2M6 3.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2ZM6 15.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2ZM18 15.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2Z',
 };
 
@@ -163,6 +173,21 @@ export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_F
         : `this ${windowRange}: ${fmt.usd(budget.windowSpendUsd)} of ${fmt.usd(limit)}`,
     title: fmt.estTitle(totals.spentUsd),
   }));
+
+  // Saved (money-saved design §10): hours × rate − spent. Negative is a real outcome. The
+  // delta chip needs a POSITIVE previous figure (deltaChip's own rule), so a previous window
+  // that lost money yields no chip rather than a nonsense percentage.
+  const fmtHours = fmt.hours || DEFAULT_FMT.hours;
+  const saved = Number(totals.savedUsd || 0);
+  const savedTile = tile(doc, {
+    iconD: ICONS.saved, label: 'Saved',
+    chip: prev ? deltaChip(doc, saved, prev.savedUsd, range) : null,
+    valueNodes: [doc.createTextNode(`${saved < 0 ? '−' : ''}${fmt.usd(Math.abs(saved))}`)],
+    sub: `≈ ${fmtHours(totals.humanHours)} of human work`,
+  });
+  savedTile.querySelector('.stat-value').classList.toggle('is-neg', saved < 0);
+  savedTile.querySelector('.stat-value').classList.toggle('is-pos', saved > 0);
+  row.appendChild(savedTile);
 
   // Pipeline spend (D7): pipeline-only money; sub = share of the combined
   // total. Falls back to spentUsd when the payload predates the ask split.

@@ -25,6 +25,7 @@ export const TM_FMT = {
     if (s < 3600) return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
     return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`;
   },
+  hours: (h) => `${(Math.round(((Number(h) || 0) + Number.EPSILON) * 10) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 })} h`,
   pct: (v) => (v == null ? '—' : `${Math.round(v * 100)}%`),
   day: (iso) => { const d = new Date(iso); return `${MO[d.getUTCMonth()]} ${d.getUTCDate()}`; },
 };
@@ -136,7 +137,8 @@ function deltaChip(doc, text, title) {
 }
 const signedPct = (v) => (v == null ? null : `${v >= 0 ? '+' : '−'}${Math.abs(Math.round(v * 100))}%`);
 
-/** The six mockup tile glyphs, path data verbatim from boards 1–2 (`svg.stat-ico`). */
+/** The six mockup tile glyphs, path data verbatim from boards 1–2 (`svg.stat-ico`); `saved` (a money bag
+ *  resting on an open hand) is not a board glyph — it is shared with the Stats view. */
 const TILE_ICONS = Object.freeze({
   spend: ['M12 3v18M17 7.5c0-1.9-2.2-3-5-3s-5 1.1-5 3 2.2 2.6 5 3 5 1.1 5 3-2.2 3-5 3-5-1.1-5-3'],
   runs: ['M5 20v-7M12 20V4M19 20v-11'],
@@ -144,6 +146,7 @@ const TILE_ICONS = Object.freeze({
   duration: ['circle:12,12,8', 'M12 8v4l3 2'],
   autonomy: ['M4 12h4l2-5 4 10 2-5h4'],
   cycles: ['M3 12a9 9 0 1 0 3-6.7', 'M3 4v4h4'],
+  saved: ['M9.6 4.6h3.8', 'M9.9 4.6c.3-1.5 2.9-1.5 3.2 0', 'M9.6 4.6C7.8 6.2 6.8 7.8 6.8 9.4c0 1.6.6 2.9 1.4 3.8h6.6c.8-.9 1.4-2.2 1.4-3.8 0-1.6-1-3.2-2.8-4.8', 'M8.2 13.2c-.5 0-1 .2-1.3.6L3 17.6', 'M7 21l1.6-1.4c.3-.4.8-.6 1.4-.6h4c1.1 0 2.1-.4 2.8-1.2l4.6-4.4a2 2 0 0 0-2.75-2.91L14.8 13.2', 'M2 16.6l6 6'],
 });
 function tileIcon(doc, key) {
   const svg = s(doc, 'svg', { class: 'stat-ico', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.9, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
@@ -190,6 +193,21 @@ export function renderTmKpiRow(agg, { doc = globalThis.document, now = Date.now(
       ? ['attributed to the workspace, not to single projects']
       : nowInRange ? [{ b: TM_FMT.usd(k.spendThisMonthUsd) }, ` so far in ${month}`] : [],
   }));
+
+  // Saved (money-saved design §10): Σ human hours × the effective rate − spend. Gated like the
+  // Off-policy tile: records pushed before this feature carry no `human`, and a range made only
+  // of those must not print "−$spend".
+  if (k.humanRuns > 0) {
+    const saved = Number(k.savedUsd || 0);
+    const savedTile = tile(doc, {
+      icon: 'saved', label: 'Saved', chip: deltaChip(doc, d && withTitle(signedPct(d.savedPct))),
+      value: `${saved < 0 ? '−' : ''}${TM_FMT.usd(Math.abs(saved))}`,
+      sub: ['≈ ', { b: TM_FMT.hours(k.humanHours) }, ' of human work'],
+    });
+    savedTile.querySelector('.stat-value').classList.toggle('is-neg', saved < 0);
+    savedTile.querySelector('.stat-value').classList.toggle('is-pos', saved > 0);
+    row.append(savedTile);
+  }
   row.append(tile(doc, {
     icon: 'runs', label: 'Runs', chip: deltaChip(doc, d && signedPct(d.runsPct)), value: String(k.runs),
     sub: [{ b: String(k.done) }, ` done · ${k.failed} failed · ${k.stopped} stopped · `, { b: TM_FMT.pct(k.successRate) }, ' success'],
@@ -411,7 +429,7 @@ export function renderRunsTable(runs, { doc = globalThis.document, total = runs.
   if (!runs.length) { card.append(h(doc, 'div', 'chart-empty hint', 'No runs recorded in this range')); return card; }
   const table = h(doc, 'table', 'tm-tbl tm-run-tbl');
   const thead = h(doc, 'thead'); const thr = h(doc, 'tr');
-  for (const c of ['Title', 'Workflow', 'Result', 'Cost', 'Duration', 'Cycles', 'PR', 'Actor', 'Started']) thr.append(h(doc, 'th', null, c));
+  for (const c of ['Title', 'Workflow', 'Result', 'Cost', 'Saved', 'Duration', 'Cycles', 'PR', 'Actor', 'Started']) thr.append(h(doc, 'th', null, c));
   thead.append(thr); table.append(thead);
   const tbody = h(doc, 'tbody');
   for (const r of runs.slice(0, limit)) {
@@ -420,6 +438,17 @@ export function renderRunsTable(runs, { doc = globalThis.document, total = runs.
     tr.append(h(doc, 'td', null, r.workflow ?? '—'));
     const res = h(doc, 'td'); res.append(h(doc, 'span', `badge ${r.result === 'done' ? 'green' : r.result === 'failed' ? 'red' : 'grey'}`, r.result)); tr.append(res);
     tr.append(h(doc, 'td', 'mono num', TM_FMT.usd(r.usd)));
+    // Saved per run (money-saved design §10): hours × rate − cost, coloured like the KPI tile;
+    // "—" for a record pushed without `human`.
+    const saved = h(doc, 'td', 'mono num tm-saved');
+    if (r.savedUsd == null) saved.textContent = '—';
+    else {
+      saved.textContent = `${r.savedUsd < 0 ? '−' : ''}${TM_FMT.usd(Math.abs(r.savedUsd))}`;
+      saved.classList.toggle('neg', r.savedUsd < 0);
+      saved.classList.toggle('pos', r.savedUsd > 0);
+      saved.title = `≈ ${TM_FMT.hours(r.humanHours)} of human work`;
+    }
+    tr.append(saved);
     tr.append(h(doc, 'td', 'mono num', TM_FMT.duration(r.wallMs)));
     tr.append(h(doc, 'td', 'mono num', r.reviewCycles == null ? '—' : String(r.reviewCycles)));
     const pr = h(doc, 'td', 'mono');

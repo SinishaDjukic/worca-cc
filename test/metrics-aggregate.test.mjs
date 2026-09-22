@@ -145,6 +145,27 @@ test('parseRecordLine: unknown v and malformed lines are flagged, not thrown', (
   assert.ok(parseRecordLine(JSON.stringify(makeRecord({ id: 'ok' }))).record);
 });
 
+test('run rows: humanHours and savedUsd priced at the aggregate rate; null without `human`; both in the CSV', () => {
+  const recs = [
+    { ...makeRecord({ id: 'h', startedAt: '2026-09-10T10:00:00Z', usd: 13.12 }), human: { hours: 12.5, byPhase: {} } },
+    makeRecord({ id: 'n', startedAt: '2026-09-09T10:00:00Z', usd: 2 }),
+  ];
+  const agg = aggregate(recs, { range: 'all', now: NOW, humanRateUsd: 35 });
+  const [withHuman, without] = agg.runs;
+  assert.equal(withHuman.id, 'h');
+  assert.equal(withHuman.humanHours, 12.5);
+  assert.equal(withHuman.savedUsd, 424.38);                                   // 12.5×35 − 13.12
+  assert.equal(without.humanHours, null); assert.equal(without.savedUsd, null);
+  const tiny = aggregate([{ ...recs[0], human: { hours: 0.1, byPhase: {} } }], { range: 'all', now: NOW, humanRateUsd: 35 });
+  assert.equal(tiny.runs[0].savedUsd, -9.62, 'a run that cost more than it saved is a negative, not a null');
+  const noRate = aggregate(recs, { range: 'all', now: NOW });
+  assert.equal(noRate.runs[0].savedUsd, -13.12, 'rate 0 (default) prices nothing: −cost');
+  const lines = toCsv(agg.runs).split('\r\n');
+  assert.equal(lines[0], '\uFEFFstartedAt,title,workflow,result,costUsd,humanHours,savedUsd,wallMs,activeMs,reviewCycles,prNumber,prUrl,actor,source,projects,id');
+  assert.match(lines[1], /,13\.12,12\.5,424\.38,/);
+  assert.match(lines[2], /,2,,,/, 'no human → empty cells, not 0');
+});
+
 test('CSV escapes quotes/commas/newlines and guards formulas', () => {
   const agg = aggregate([makeRecord({ id: 'c', title: '=SUM(A1), "quoted"' })], { range: 'all', now: NOW });
   const csv = toCsv(agg.runs);

@@ -157,6 +157,9 @@ An agent sidecar is meta v2: typed PORTS replace the v1 channel vocabulary.
 - `inputs[]`: `{ id, type, required?, loop?, expands?, as?, directive? }`
 - `outputs[]`: `{ id, type, when?, filename?, store?, artifactKind? }`
 - `runnerType`: `producer` | `verifier` | `clarifier`; a `verifier` also declares `verdict`.
+- `humanEffort` (optional): `{ "factor": <number ≥ 0> }` scales the human-hours estimate of this
+  agent's executions, `{ "hours": <number ≥ 0> }` fixes it per execution; `{ "factor": 0 }` opts out.
+  Absent → the heuristic (code delta, md/json outputs, verifier reads). Invalid → ignored with a warning.
 - `placeable: false` keeps an agent off the composer canvas (off-pipeline scanners).
 - `agentFile`: optional; the prompt file for this agent. It is a **plain basename inside
   `agents/`** — no `/`, no `..`, never absolute. Defaults to nothing (the scaffold writes

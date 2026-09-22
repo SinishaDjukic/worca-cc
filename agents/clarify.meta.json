@@ -1,6 +1,7 @@
 {
   "key": "clarify",
   "metaVersion": 2,
+  "humanEffort": { "hours": 0.25 },
   "mockRole": "clarify",
   "inputs": [{ "id": "task", "type": "md" }],
   "outputs": [{ "id": "answers", "type": "json", "filename": "clarify.json", "artifactKind": "clarify" }],

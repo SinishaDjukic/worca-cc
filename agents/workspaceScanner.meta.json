@@ -1,6 +1,7 @@
 {
   "key": "workspaceScanner",
   "metaVersion": 2,
+  "humanEffort": { "factor": 0 },
   "mockRole": "workspace-scan",
   "placeable": false,
   "inputs": [{ "id": "task", "type": "md" }],

@@ -140,3 +140,13 @@ test('helpers: tierRank, semverAtLeast, looksLikeSecret', () => {
   assert.equal(looksLikeSecret('${TOKEN}'), false); assert.equal(looksLikeSecret('https://x'), false);
   assert.equal(looksLikeSecret('sk-ant-' + 'a'.repeat(30)), true); assert.equal(looksLikeSecret('a'.repeat(48)), true);
 });
+
+test('cost.humanRateUsd is a default-kind usd field governing humanRateUsdPerHour', () => {
+  const f = fieldMeta('cost.humanRateUsd');
+  assert.equal(f.group, 'cost');
+  assert.equal(f.type, 'usd');
+  assert.deepEqual(f.kinds, ['default']);
+  assert.equal(f.local, 'humanRateUsdPerHour');
+  assert.equal(validateValue(f, 95), null);
+  assert.match(validateValue(f, -1), /positive/);
+});

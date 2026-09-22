@@ -42,6 +42,7 @@ import {
   rawProjectsRoot, defaultProjectsRoot, runRootMode,
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod, assertCostLimitInputs,
+  humanRateUsdPerHour, setHumanRateUsdPerHour, assertHumanRateInput,
   askMaxTurns, askMaxBudgetUsd, setAskMaxTurns, setAskMaxBudgetUsd, assertAskLimitInputs,
   chatPrefs, setChatPrefs,
   debugSpawnEnabled as storedDebugSpawnEnabled, effectiveDebugSpawn, setDebugSpawnEnabled, assertDebugSpawnInput, SETTINGS_POST_KEYS,
@@ -53,6 +54,7 @@ import {
   scheduleDefaults, setScheduleDefaults,
 } from '../src/core/settings.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
+import { effectiveHumanRateUsd } from '../src/core/human-rate.mjs';
 import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
   listThreads as askListThreads, updateThread as askUpdateThread,
@@ -3005,16 +3007,18 @@ app.get('/api/team-metrics', async (req, res) => {
     // `changed` event tells the page to reload. Other clients (Ask tools, CLI, tests) keep the
     // inline fetch and get fresh data in one round trip.
     const read = await readScope(scope, { refresh: req.query.refresh === '1', defer: req.query.defer === '1' });
+    const humanRateUsd = effectiveHumanRateUsd(read.rateProjectDir);
     // Flush trigger: page open (§4.5). reason:'page-open' backs off for 60 s after a failed flush,
     // so a failing push cannot loop through flush-failed → WS → page reload → GET → flush.
     for (const s of read.sync) if (s.pending > 0) scheduleFlush(s.slug, { reason: 'page-open' });
     res.json({
       scope: read.scope,
       records: read.records,
+      humanRateUsd,                                     // the client re-aggregates with it (money-saved §9.2)
       // The page re-aggregates client-side (§4.9 "one fetch serves the session") and asks with
       // aggregate=0: at 12k records the unused aggregate added ~3.9 MB to a ~9.9 MB response.
       // Other clients (and the API tests) still get it by default.
-      aggregate: req.query.aggregate === '0' ? null : aggregate(read.records, { range, from, to, groupBy }),
+      aggregate: req.query.aggregate === '0' ? null : aggregate(read.records, { range, from, to, groupBy, humanRateUsd }),
       stats: read.stats,
       sync: read.sync,
       refresh: read.refresh,
@@ -4371,6 +4375,7 @@ const settingsState = () => ({
   pipelineCostLimitUsd: pipelineCostLimitUsd(),
   totalCostLimitUsd: totalCostLimitUsd(),
   costLimitResetPeriod: costLimitResetPeriod(),
+  humanRateUsdPerHour: humanRateUsdPerHour(),
   askMaxTurns: askMaxTurns(),
   askMaxBudgetUsd: askMaxBudgetUsd(),
   debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
@@ -4450,6 +4455,7 @@ app.post('/api/settings', async (req, res) => {
   const body = req.body || {};
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
   const hasBudgetKey = has('pipelineCostLimitUsd') || has('totalCostLimitUsd') || has('costLimitResetPeriod');
+  const hasHumanRateKey = has('humanRateUsdPerHour');
   const hasAskKey = has('askMaxTurns') || has('askMaxBudgetUsd');
   const hasDebugSpawnKey = has('debugSpawnEnabled');
   const hasTitleModelKey = has('titleModel');
@@ -4481,6 +4487,7 @@ app.post('/api/settings', async (req, res) => {
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   try {
     assertCostLimitInputs(budget);
+    if (hasHumanRateKey) assertHumanRateInput(body.humanRateUsdPerHour ?? '');
     assertAskLimitInputs(ask);
     if (hasDebugSpawnKey) assertDebugSpawnInput(body.debugSpawnEnabled);
     if (hasTitleModelKey) {
@@ -4508,6 +4515,7 @@ app.post('/api/settings', async (req, res) => {
     if (has('pipelineCostLimitUsd')) await setPipelineCostLimitUsd(budget.pipelineCostLimitUsd);
     if (has('totalCostLimitUsd')) await setTotalCostLimitUsd(budget.totalCostLimitUsd);
     if (has('costLimitResetPeriod')) await setCostLimitResetPeriod(budget.costLimitResetPeriod);
+    if (hasHumanRateKey) await setHumanRateUsdPerHour(body.humanRateUsdPerHour ?? '');
     if (has('askMaxTurns')) await setAskMaxTurns(ask.askMaxTurns);
     if (has('askMaxBudgetUsd')) await setAskMaxBudgetUsd(ask.askMaxBudgetUsd);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
@@ -4520,7 +4528,7 @@ app.post('/api/settings', async (req, res) => {
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || has('schedule')) emitChanged('settings-changed');
+    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasHumanRateKey || has('schedule')) emitChanged('settings-changed');
     res.json({ ...settingsState(), ...(await autoModelState()), chat: chatPrefs() });
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).

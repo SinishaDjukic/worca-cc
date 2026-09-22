@@ -107,6 +107,23 @@ test('run table rows newest first with PR link and result badge', () => {
   assert.equal(t.querySelectorAll('tbody tr')[1].querySelector('a').getAttribute('href'), 'https://x/pull/438');
 });
 
+test('run table: Saved column after Cost — green when positive, red with a − sign when negative, — without human hours', () => {
+  const base = { title: 't', workflow: null, result: 'done', usd: 13.12, wallMs: 1, reviewCycles: null, pr: null, actor: null, startedAt: '2026-09-10T10:00:00Z' };
+  const t = renderRunsTable([
+    { ...base, id: 'p', humanHours: 12.5, savedUsd: 424.38 },
+    { ...base, id: 'n', humanHours: 0.1, savedUsd: -9.62 },
+    { ...base, id: 'x', humanHours: null, savedUsd: null },
+  ], { doc, total: 3 });
+  assert.deepEqual([...t.querySelectorAll('thead th')].map((th) => th.textContent), ['Title', 'Workflow', 'Result', 'Cost', 'Saved', 'Duration', 'Cycles', 'PR', 'Actor', 'Started']);
+  const cells = [...t.querySelectorAll('tbody td.tm-saved')];
+  assert.deepEqual(cells.map((c) => c.textContent), ['$424.38', '−$9.62', '—']);
+  assert.ok(cells[0].classList.contains('pos') && !cells[0].classList.contains('neg'));
+  assert.ok(cells[1].classList.contains('neg') && !cells[1].classList.contains('pos'));
+  assert.equal(cells[0].title, '≈ 12.5 h of human work');
+  assert.equal(cells[2].title, '');
+  assert.equal([...cells[2].classList].filter((c) => /^(pos|neg)$/.test(c)).length, 0);
+});
+
 test('run table never renders a non-http(s) PR link', () => {
   const t = renderRunsTable([{ id: 'x', title: 't', result: 'done', usd: 1, wallMs: 1, reviewCycles: null, pr: { number: 7, url: 'javascript:alert(1)' }, actor: null, startedAt: '2026-09-10T10:00:00Z' }], { doc, total: 1 });
   assert.equal(t.querySelector('tbody a'), null);
@@ -168,4 +185,22 @@ test('skeleton: the page shape with shimmer bars, no words, decorative', () => {
   assert.ok(sk.querySelector('.tm-runs'));
   assert.ok(sk.querySelectorAll('.skel').length > 20);
   assert.equal(sk.textContent.trim(), '', 'no words — the live state is #tm-body aria-busy');
+});
+
+test('KPI row: Saved tile appears only when a record in range carries human hours; prices them at the aggregate rate', () => {
+  const withHuman = recs.map((r, i) => (i === 0 ? { ...r, human: { hours: 12.5, byPhase: {} } } : r));
+  const row = renderTmKpiRow(aggregate(withHuman, { range: 'this-month', now: NOW, humanRateUsd: 35 }), { doc, now: NOW });
+  assert.deepEqual([...row.querySelectorAll('.stat-label span:not(.stat-delta)')].map((s) => s.textContent),
+    ['Spend', 'Saved', 'Runs', 'Cost per run', 'Duration', 'Autonomy', 'Review cycles']);
+  const tile = row.querySelectorAll('.stat-tile')[1];
+  assert.equal(tile.querySelector('.stat-value').textContent, '$424.38');       // 12.5×35 − 13.12
+  assert.equal(tile.querySelector('.stat-sub').textContent, '≈ 12.5 h of human work');
+  assert.ok(tile.querySelector('.stat-value').classList.contains('is-pos'), 'a positive Saved figure is green');
+  assert.equal(tile.querySelector('.stat-delta'), null, 'the previous window has no human record → no positive baseline');
+  const tiny = recs.map((r, i) => (i === 0 ? { ...r, human: { hours: 0.1, byPhase: {} } } : r));
+  const neg = renderTmKpiRow(aggregate(tiny, { range: 'this-month', now: NOW, humanRateUsd: 35 }), { doc, now: NOW }).querySelectorAll('.stat-tile')[1];
+  assert.equal(neg.querySelector('.stat-value').textContent, '−$9.62');        // 0.1×35 − 13.12
+  assert.ok(neg.querySelector('.stat-value').classList.contains('is-neg'));
+  assert.equal(neg.querySelector('.stat-value').classList.contains('is-pos'), false);
+  assert.equal(renderTmKpiRow(aggregate(recs, { range: 'this-month', now: NOW, humanRateUsd: 35 }), { doc, now: NOW }).querySelectorAll('.stat-tile').length, 6, 'no human → no tile');
 });

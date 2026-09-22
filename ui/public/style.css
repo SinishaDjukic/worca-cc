@@ -380,6 +380,8 @@ body.view-workspaces .topnav{margin:12px 32px 0;flex:0 0 auto;}
 .hint{display:block;color:var(--ink-3);font-size:12px;margin-top:7px;line-height:1.45;}
 .hint.err{color:var(--red-ink);}
 .hint.warn{color:var(--amber-ink);}
+.stat-tile .stat-value.is-neg{color:var(--red-ink);}
+.stat-tile .stat-value.is-pos{color:var(--green-ink);}
 
 .input,.select,.textarea,.ta-hl-back,
 input[type="text"],input[type="number"],textarea,select{
@@ -2306,11 +2308,14 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .tm-tbl td{padding:9px 10px;border-bottom:1px solid var(--line);}
 .tm-tbl tbody tr[data-filter-dim]{cursor:pointer;} .tm-tbl tbody tr[data-filter-dim]:hover,.tm-tbl tbody tr.on{background:var(--field);}
 .tm-tbl tr.dim td{color:var(--ink-3);}
+.tm-tbl td.tm-saved.pos{color:var(--green-ink);} .tm-tbl td.tm-saved.neg{color:var(--red-ink);}
 .tm-runs-foot{display:flex;align-items:center;gap:12px;margin-top:8px;}
 .tm-share{display:inline-block;width:90px;height:6px;border-radius:3px;background:var(--field);vertical-align:middle;}
 .tm-share-fill{display:block;height:100%;border-radius:3px;background:var(--blue);}
 .tm-runs{margin-top:18px;} .tm-runs-head{display:flex;align-items:center;justify-content:space-between;}
 .tm-run-tbl .tm-title{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* Actor and Started never wrap: with the Saved column in, Title (ellipsis) and Workflow give way first. */
+.tm-run-tbl td:nth-last-child(-n+2){white-space:nowrap;}
 .badge.grey{background:var(--field);color:var(--ink-2);}
 .tm-empty{display:grid;grid-template-columns:1fr 1fr;gap:14px;} .tm-empty .card{padding:22px;}
 .tm-step{font-size:11px;letter-spacing:.08em;font-weight:700;color:var(--ink-2);}

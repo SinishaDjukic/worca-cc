@@ -68,8 +68,11 @@ alongside `RECORD_VERSION`, `TEXT_MAX`, `RECORD_FIELDS`, `redactPaths` and `clea
 | `pr` | object\|null | `{number,url,base}`, usually `null` | `readPrState(pipelineId)` |
 | `git` | object | `{branch,head,base,filesChanged,insertions,deletions}` | see "Git" below |
 | `actor` | string\|null | git user, `null` under `attribution:'none'` | `git config user.name` |
+| `human` | object | `{hours, byPhase}` — optional trailing key, only when hours > 0 | `state.humanHours`, `pipeline_steps.human_hours` |
 
 ## v1 notes
+
+- `human` (money-saved design): hours, 2 dp; `byPhase` keyed like `cost.byPhase`. Absent on runs that earned nothing. Readers that do not know it ignore it.
 
 - **`cost.byPhase` / `cycles` keys are UI phases** (`plan`, `implement`, `review`, …), not
   agent keys. On the graph engine `step.phase` holds the agent key; `snapshotFromHarness`

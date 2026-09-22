@@ -21,6 +21,7 @@ import { mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { worcaHome } from './projects.mjs';
 import { maybeMigrateFromFs } from './migrate-fs-to-db.mjs';
+import { backfillHumanHours } from './human-backfill.mjs';
 import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from './graph/seed-templates.mjs';
 
 const _require = createRequire(import.meta.url);
@@ -54,7 +55,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 32;
+export const SCHEMA_VERSION = 33;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -827,10 +828,12 @@ const INCREMENTAL_COLUMNS = {
                             pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT',
                             outcome: 'TEXT',
                             scheduled_for: 'TEXT', schedule_id: 'TEXT',   // v31: scheduled-run provenance (NULL = started by hand)
-                            policy_state: 'TEXT' },   // v32: team-policy run state (JSON: home, sha, overrides, exceeded, deviations, reason)
+                            policy_state: 'TEXT',     // v32: team-policy run state (JSON: home, sha, overrides, exceeded, deviations, reason)
+                            human_hours: 'REAL NOT NULL DEFAULT 0' },   // v33: Σ pipeline_steps.human_hours (money-saved design §6)
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
-                            exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT' },
+                            exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
+                            human_hours: 'REAL', human_signals: 'TEXT' },   // v33: per-execution human-hours credit + its signals JSON
   sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER',
                             run_model: 'TEXT' },   // v25: the model the child actually ran on
   workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT', archived_at: 'TEXT' },
@@ -1259,6 +1262,17 @@ function applySchemaV32(db) {
   repairSchemaGaps(db, schemaGaps(db));
 }
 
+/** v33 (money saved): pipelines.human_hours + pipeline_steps.human_hours/human_signals —
+ *  additive columns declared in INCREMENTAL_COLUMNS, applySchemaV32's shape. Task 5 adds
+ *  the run-level backfill call for pre-v33 runs here. */
+function applySchemaV33(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+  // Legacy credit for every terminal run recorded before v33. Best-effort by construction;
+  // a throw here would roll the ladder back, so it is fenced. Runs once (the fast path
+  // reconcileSchema never calls it). Cost: one read per indexed plan/review markdown.
+  try { backfillHumanHours(db); } catch { /* never fail the migration on the backfill */ }
+}
+
 /** Move every stored pin on model id `from` (lower-case) to `to`. Each table
  *  is guarded like V24's: hand-seeded upgrade fixtures (and a DB from before the
  *  fs->db import) reach this step without some of them. */
@@ -1647,6 +1661,7 @@ export function migrate(db) {
     if (current < 30) applySchemaV30(db);            // team metrics: workspaces.metrics_project
     if (current < 31) applySchemaV31(db);            // scheduled runs: tickets + schedules + notifications
     if (current < 32) applySchemaV32(db);            // team policy: pipelines.policy_state + workspaces.policy_project
+    if (current < 33) applySchemaV33(db);            // money saved: human_hours columns
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

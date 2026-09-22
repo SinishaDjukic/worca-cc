@@ -410,6 +410,13 @@ export function pipelineCostLimitUsd() { return readUsdCap('pipelineCostLimitUsd
 /** Windowed all-pipelines spend cap in USD, or null (no limit). */
 export function totalCostLimitUsd() { return readUsdCap('totalCostLimitUsd'); }
 
+/** Estimator constant overrides (money-saved design §4): `humanEstimate: { codeDiv: 40, … }`,
+ *  or {}. Validation is the estimator's resolveConstants (unknown keys ignored). */
+export function humanEstimateOverrides() {
+  const v = readSettings().humanEstimate;
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+}
+
 /** Reset period for the total budget window: 'weekly' (Mon 00:00) | 'monthly' (1st 00:00). */
 export function costLimitResetPeriod() {
   const v = readSettings().costLimitResetPeriod;
@@ -538,6 +545,20 @@ export const setPipelineCostLimitUsd = (input) => setUsdCap('pipelineCostLimitUs
 /** @throws {Error} unless `input` is a positive number (or empty, which clears). */
 export const setTotalCostLimitUsd = (input) => setUsdCap('totalCostLimitUsd', input);
 
+// ── Developer rate (money-saved design §8) ───────────────────────────────────
+// Prices the estimated human hours in Statistics and Team metrics. Stored value or
+// null; the EFFECTIVE rate (team policy default, then 35) is human-rate.mjs.
+export const DEFAULT_HUMAN_RATE_USD = 35;
+
+/** Stored developer rate in USD per hour, or null when unset (→ policy → 35). */
+export function humanRateUsdPerHour() { return readUsdCap('humanRateUsdPerHour'); }
+
+/** @throws {Error} unless a positive finite number, or '' / null / undefined (clear). */
+export function assertHumanRateInput(input) { assertUsdCapInput('humanRateUsdPerHour', input); }
+
+/** Write (or clear) the developer rate. */
+export const setHumanRateUsdPerHour = (input) => setUsdCap('humanRateUsdPerHour', input);
+
 // ── chat notification preferences (chat-connectivity-design.md §4.5) ─────────
 
 const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused'];
@@ -646,7 +667,7 @@ export async function setPythonPath(input) {
 // its first save.
 export const SETTINGS_POST_KEYS = Object.freeze([
   'root', 'projectsRoot', 'chat',
-  'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod',
+  'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'humanRateUsdPerHour',
   'askMaxTurns', 'askMaxBudgetUsd',
   'debugSpawnEnabled',
   'titleModel', 'hideBuiltinModels',

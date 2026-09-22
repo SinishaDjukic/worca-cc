@@ -115,6 +115,19 @@ function buildSource(src) {
   };
 }
 
+/** money-saved design §7: hours from the run, byPhase from the agent steps (UI phase, like cost.byPhase). */
+function buildHuman(agentSteps, humanHours) {
+  const hours = Number.isFinite(humanHours) ? Math.round(humanHours * 100) / 100 : 0;
+  if (hours <= 0) return null;
+  const byPhase = {};
+  for (const s of agentSteps) {
+    const h = Number(s?.humanHours);
+    if (!s?.phase || !Number.isFinite(h) || h <= 0) continue;
+    byPhase[s.phase] = Math.round(((byPhase[s.phase] || 0) + h) * 100) / 100;
+  }
+  return { hours, byPhase };
+}
+
 function buildCost(steps, totalCostUsd) {
   const byPhase = {};
   let sum = 0;
@@ -217,6 +230,7 @@ export function buildRunRecord(snap, { attribution = 'git-user', now = new Date(
     actor: attribution === 'none' ? null : cleanText(snap.actor),
     // Present ONLY on runs that saw a policy: records of policy-less runs stay byte-identical to v1.
     ...((p) => (p ? { policy: p } : {}))(buildPolicy(snap.policy, attribution)),
+    ...((h) => (h ? { human: h } : {}))(buildHuman(agentSteps, snap.humanHours)),
   };
 }
 
@@ -319,6 +333,7 @@ export async function snapshotFromHarness(harness, { status, error = null } = {}
     endedAt: st.updatedAt,
     totalActiveMs: st.totalActiveMs,
     totalCostUsd: st.totalCostUsd,
+    humanHours: st.humanHours,
     steps: withUiPhases(st.steps || [], st.stepper?.graph),
     subAgents: st.subAgents || [],
     workflow: {

@@ -164,7 +164,7 @@ export function normalizeMeta(raw, { warn = console.warn, onDropForm = null } = 
     portSummary: meta.portSummary,
   };
   for (const field of ['verdict', 'sideEffect', 'mockRole', 'wantsRequest', 'workspaceFanOut',
-    'workspaceStrategy', 'workspaceVariantOf', 'placeable', 'ask']) {
+    'workspaceStrategy', 'workspaceVariantOf', 'placeable', 'ask', 'humanEffort']) {
     if (field in meta) merged[field] = meta[field];
   }
   return merged;

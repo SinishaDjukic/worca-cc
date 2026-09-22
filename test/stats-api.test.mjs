@@ -65,12 +65,12 @@ async function seedWorld() {
   // Seeds use Date.toISOString() (millisecond precision) — cohort SQL compares
   // started_at strings against toISOString() bounds, so precision matches.
   // this week (Mon 2026-08-03 .. ): 3 runs — done+merged-PR (archived), stopped, error
-  const { id: a } = await seedPipeline('/tmp/p', { status: 'done', totalCostUsd: 1, totalActiveMs: 60000 });
+  const { id: a } = await seedPipeline('/tmp/p', { status: 'done', totalCostUsd: 1, totalActiveMs: 60000, humanHours: 12.5 });
   setStarted(a, iso(2026, 8, 3)); setPr(a, 'MERGED'); archive(a);
   const { id: b } = await seedPipeline('/tmp/p', { status: 'stopped' }); setStarted(b, iso(2026, 8, 4));
   const { id: c } = await seedPipeline('/tmp/p', { status: 'error' });   setStarted(c, iso(2026, 8, 5));
   // previous week: 1 done with open PR
-  const { id: d } = await seedPipeline('/tmp/p', { status: 'done', totalCostUsd: 2 });
+  const { id: d } = await seedPipeline('/tmp/p', { status: 'done', totalCostUsd: 2, humanHours: 4 });
   setStarted(d, iso(2026, 7, 28)); setPr(d, 'OPEN');
   // paused+interrupted grouping
   const { id: e } = await seedPipeline('/tmp/p', { status: 'interrupted' }); setStarted(e, iso(2026, 8, 3));
@@ -181,4 +181,26 @@ test('GET /api/stats serves the shape; defaults to month; 400 on bad range', asy
   res = await fetch(`${base}/api/stats?range=year`);
   assert.equal(res.status, 400);
   assert.ok((await res.json()).error);
+});
+
+test('totals carry humanHours and savedUsd = hours × rate − spent; prev too; rate is reported', () => {
+  const s = getStats({ range: 'month', now: NOW });
+  assert.equal(s.humanRateUsd, 35);
+  assert.equal(s.totals.humanHours, 12.5);
+  assert.equal(s.totals.savedUsd, Math.round((12.5 * 35 - s.totals.spentUsd) * 100) / 100);
+  assert.equal(s.prev.humanHours, 4);
+  assert.equal(s.prev.savedUsd, Math.round((4 * 35 - s.prev.spentUsd) * 100) / 100);
+  const w = getStats({ range: 'week', now: NOW });
+  assert.equal(w.totals.humanHours, 12.5);
+  assert.equal(w.prev.humanHours, 4);
+  const all = getStats({ range: 'all', now: NOW });
+  assert.equal(all.totals.humanHours, 16.5);
+  assert.equal(all.totals.savedUsd, Math.round((16.5 * 35 - all.totals.spentUsd) * 100) / 100);
+});
+
+test('GET /api/stats forwards humanHours, savedUsd and humanRateUsd', async () => {
+  const j = await (await fetch(`${base}/api/stats?range=month`)).json();
+  assert.equal(typeof j.totals.humanHours, 'number');
+  assert.equal(typeof j.totals.savedUsd, 'number');
+  assert.equal(j.humanRateUsd, 35);
 });

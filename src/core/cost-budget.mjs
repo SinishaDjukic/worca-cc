@@ -87,12 +87,13 @@ export function allTimeTotals() {
   const row = prepare(`
     SELECT
       COALESCE(SUM(CASE WHEN p.total_cost_usd  > 0 THEN p.total_cost_usd  ELSE COALESCE(s.sc, 0) END), 0) AS spend,
-      COALESCE(SUM(CASE WHEN p.total_active_ms > 0 THEN p.total_active_ms ELSE COALESCE(s.sa, 0) END), 0) AS active
+      COALESCE(SUM(CASE WHEN p.total_active_ms > 0 THEN p.total_active_ms ELSE COALESCE(s.sa, 0) END), 0) AS active,
+      COALESCE(SUM(p.human_hours), 0) AS humanHours
     FROM pipelines p
     LEFT JOIN (SELECT pipeline_id, SUM(cost_usd) sc, SUM(active_ms) sa
                FROM pipeline_steps GROUP BY pipeline_id) s ON s.pipeline_id = p.id
   `).get();
-  return { spendUsd: roundUsd(row?.spend || 0), activeMs: Number(row?.active || 0) };
+  return { spendUsd: roundUsd(row?.spend || 0), activeMs: Number(row?.active || 0), humanHours: Math.round(Number(row?.humanHours || 0) * 100) / 100 };
 }
 
 /** True when this pipeline ignores the per-pipeline cap (persistent, F7). */

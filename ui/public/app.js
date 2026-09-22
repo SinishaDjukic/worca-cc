@@ -322,6 +322,7 @@ const el = {
   budgetPerPipeline: $('#budgetPerPipeline'),
   budgetTotal: $('#budgetTotal'),
   budgetResetPeriod: $('#budgetResetPeriod'),
+  budgetHumanRate: $('#budgetHumanRate'),
   budgetSave: $('#budgetSave'),
   budgetReset: $('#budgetReset'),
   budgetMsg: $('#budgetMsg'),
@@ -1280,6 +1281,10 @@ function escapeHtml(s) {
 }
 
 
+// en-US grouping ($10,456.12), the same shape Team metrics prints (TM_FMT.usd).
+const USD_2DP = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const USD_4DP = new Intl.NumberFormat('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+
 // Format a USD amount. null/NaN -> '' (caller decides the default). A positive
 // sub-cent value -> '<$0.01' so genuine spend is never hidden as a flat $0.00.
 // 0 -> '$0.00' (a truthful mock zero, never blanked).
@@ -1287,14 +1292,14 @@ function fmtUsd(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) return '';
   if (v > 0 && v < 0.01) return '<$0.01';
-  return '$' + v.toFixed(2);
+  return '$' + USD_2DP.format(v);
 }
 
 // Exact tenth-of-a-cent dollar string for tooltips (the backend tracks 4 dp,
 // the visible chip is rounded to 2). '' for non-finite input.
 function fmtUsd4(n) {
   const v = Number(n);
-  return Number.isFinite(v) ? '$' + v.toFixed(4) : '';
+  return Number.isFinite(v) ? '$' + USD_4DP.format(v) : '';
 }
 
 // Tooltip text for any cost figure: marks it as Claude Code's client-side
@@ -10203,6 +10208,7 @@ function paintBudgetSettings(data) {
   el.budgetPerPipeline.value = data.pipelineCostLimitUsd ?? '';
   el.budgetTotal.value = data.totalCostLimitUsd ?? '';
   el.budgetResetPeriod.value = data.costLimitResetPeriod || 'monthly';
+  el.budgetHumanRate.value = data.humanRateUsdPerHour ?? '';
 }
 
 function paintBudgetReadout() {
@@ -10248,13 +10254,15 @@ if (el.budgetSave) {
   el.budgetSave.addEventListener('click', () => {
     const per = readBudgetField(el.budgetPerPipeline);
     const total = readBudgetField(el.budgetTotal);
-    if (Number.isNaN(per) || Number.isNaN(total)) {
-      setBudgetMsg('Limits must be at least $0.01, or blank for no limit.', 'err');
+    const rate = readBudgetField(el.budgetHumanRate);
+    if (Number.isNaN(per) || Number.isNaN(total) || Number.isNaN(rate)) {
+      setBudgetMsg('Limits and the rate must be at least $0.01, or blank.', 'err');
       return;
     }
     saveBudgetSettings({
       pipelineCostLimitUsd: per, totalCostLimitUsd: total,
       costLimitResetPeriod: el.budgetResetPeriod.value,
+      humanRateUsdPerHour: rate,
     });
   });
 }
@@ -13584,7 +13592,7 @@ function renderTeamMetrics() {
   if (!body || !data) return;
   let agg;
   try {
-    agg = aggregate(data.records, { range: tmState.range, from: tmState.from || null, to: tmState.to || null, groupBy: tmState.groupBy, filter: tmState.filter, now: Date.now() });
+    agg = aggregate(data.records, { range: tmState.range, from: tmState.from || null, to: tmState.to || null, groupBy: tmState.groupBy, filter: tmState.filter, now: Date.now(), humanRateUsd: data.humanRateUsd ?? 0 });
   } catch (err) {
     body.classList.remove('is-loading');
     body.replaceChildren(Object.assign(document.createElement('small'), { className: 'hint err', textContent: err.message }));

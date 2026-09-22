@@ -1164,15 +1164,16 @@ export async function writeState(pipelineDir, stateObj) {
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome)
+        source_type, source_ref, guardrails_id, outcome, human_hours)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
-        total_active_ms=excluded.total_active_ms, branch=excluded.branch,
+        total_active_ms=excluded.total_active_ms, human_hours=excluded.human_hours,
+        branch=excluded.branch,
         workspace_meta=excluded.workspace_meta, stepper=excluded.stepper,
         tools=excluded.tools,
         resume_point=excluded.resume_point,
@@ -1186,8 +1187,9 @@ export async function writeState(pipelineDir, stateObj) {
       INSERT INTO pipeline_steps (pipeline_id, key, node_id, phase, step_index, cycle,
         status, started_at, updated_at, active_ms, running_since, cost_usd, session_id,
         skills, graphify_count,
-        execution_id, exec_kind, agent_key, ended_at, exec_trigger, exec_result, exec_meta)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        execution_id, exec_kind, agent_key, ended_at, exec_trigger, exec_result, exec_meta,
+        human_hours, human_signals)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `);
     for (const st of Array.isArray(obj.steps) ? obj.steps : []) {
       // v2 rows: execution_id === key. v1 rows leave every exec_* column NULL, so
@@ -1217,6 +1219,8 @@ export async function writeState(pipelineDir, stateObj) {
         st.trigger === undefined ? null : s(st.trigger),
         st.result === undefined ? null : s(st.result),
         meta,
+        Number.isFinite(st.humanHours) ? st.humanHours : null,
+        st.humanSignals && typeof st.humanSignals === 'object' ? s(st.humanSignals) : null,
       );
     }
   });
@@ -1533,6 +1537,7 @@ function toPipelineRow(o) {
     updated_at: o.updatedAt ?? null,
     total_cost_usd: Number.isFinite(o.totalCostUsd) ? o.totalCostUsd : 0,
     total_active_ms: Number.isFinite(o.totalActiveMs) ? o.totalActiveMs : 0,
+    human_hours: Number.isFinite(o.humanHours) ? o.humanHours : 0,
     prompt: o.prompt ?? null,
     branch: s(o.branch),
     workspace_meta: workspaceMeta,
@@ -1880,6 +1885,8 @@ function stepRowToStep(r) {
   if (r.execution_id != null && r.cycle != null) step.ordinal = r.cycle;  // `ordinal` is the v2 name; `cycle` is its alias
   if (r.exec_trigger != null) step.trigger = j(r.exec_trigger, { wireIds: [], freshPorts: [] });
   if (r.exec_result != null) step.result = j(r.exec_result, null);
+  if (r.human_hours != null) step.humanHours = r.human_hours;
+  if (r.human_signals != null) step.humanSignals = j(r.human_signals, null);
   const em = r.exec_meta != null ? j(r.exec_meta, null) : null;
   if (em) {
     if (em.taskId != null) step.taskId = em.taskId;
@@ -1917,6 +1924,7 @@ function rowToState(row) {
     updatedAt: row.updated_at ?? null,
     totalCostUsd: row.total_cost_usd ?? 0,
     totalActiveMs: row.total_active_ms ?? 0,
+    humanHours: Number(row.human_hours || 0),
     prompt: row.prompt ?? null,
     baseName: row.base_name ?? null,
     datePrefix: row.date_prefix ?? null,
@@ -1933,7 +1941,8 @@ function rowToState(row) {
     steps: getDb().prepare(`
       SELECT key, node_id, phase, step_index, cycle, status, started_at, updated_at,
              active_ms, running_since, cost_usd, session_id, skills, graphify_count,
-             execution_id, exec_kind, agent_key, ended_at, exec_trigger, exec_result, exec_meta
+             execution_id, exec_kind, agent_key, ended_at, exec_trigger, exec_result, exec_meta,
+             human_hours, human_signals
       FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid
     `).all(row.id).map(stepRowToStep),
     subAgents: listSubAgents(row.id),

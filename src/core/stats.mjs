@@ -16,6 +16,8 @@ import {
   budgetStatus, costWindowStart, costWindowEnd, allTimeTotals, roundUsd,
   askWindowedSpendUsd,
 } from './cost-budget.mjs';
+import { savedUsd } from '../shared/human-estimate.mjs';
+import { effectiveHumanRateUsd } from './human-rate.mjs';
 
 const RANGES = ['today', 'week', 'month', 'all'];
 
@@ -33,7 +35,8 @@ const TOTALS_SELECT = `
       COALESCE(SUM(pr_url IS NOT NULL), 0)                                   AS prsOpened,
       COALESCE(SUM(pr_state = 'MERGED'), 0)                                  AS prsMerged,
       COALESCE(SUM(CASE WHEN p.total_cost_usd  > 0 THEN p.total_cost_usd  ELSE COALESCE(s.sc, 0) END), 0) AS spend,
-      COALESCE(SUM(CASE WHEN p.total_active_ms > 0 THEN p.total_active_ms ELSE COALESCE(s.sa, 0) END), 0) AS active
+      COALESCE(SUM(CASE WHEN p.total_active_ms > 0 THEN p.total_active_ms ELSE COALESCE(s.sa, 0) END), 0) AS active,
+      COALESCE(SUM(p.human_hours), 0) AS humanHours
     FROM pipelines p
     LEFT JOIN (SELECT pipeline_id, SUM(cost_usd) sc, SUM(active_ms) sa
                FROM pipeline_steps GROUP BY pipeline_id) s ON s.pipeline_id = p.id`;
@@ -46,6 +49,7 @@ function totalsRow(sql, isoA, isoB) {
     prsOpened: row.prsOpened, prsMerged: row.prsMerged,
     workedMs: Number(row.active || 0),
     cohortSpendUsd: roundUsd(row.spend || 0),
+    humanHours: Math.round(Number(row.humanHours || 0) * 100) / 100,
   };
 }
 
@@ -122,6 +126,7 @@ function buildBuckets(windowStart, now, bucket) {
 export function getStats({ range = 'month', now = new Date() } = {}) {
   if (!RANGES.includes(range)) throw new RangeError(`unknown stats range: ${range}`);
   const budget = budgetStatus(now);
+  const rate = effectiveHumanRateUsd();
 
   let windowStart, windowEnd, prevStart, prevEnd, bucket;
   if (range === 'today') {
@@ -155,6 +160,8 @@ export function getStats({ range = 'month', now = new Date() } = {}) {
     return {
       spentUsd: roundUsd(pipelineSpendUsd + ask.spendUsd),
       pipelineSpendUsd, ask,
+      humanHours: c.humanHours,
+      savedUsd: savedUsd(c.humanHours, rate, roundUsd(pipelineSpendUsd + ask.spendUsd)),
       workedMs: c.workedMs,
       runs: c.runs, finished: c.finished, stopped: c.stopped, failed: c.failed,
       paused: c.paused, running: c.running,
@@ -170,6 +177,8 @@ export function getStats({ range = 'month', now = new Date() } = {}) {
     totals = {
       spentUsd: roundUsd(at.spendUsd + ask.spendUsd),
       pipelineSpendUsd: at.spendUsd, ask,
+      humanHours: at.humanHours,
+      savedUsd: savedUsd(at.humanHours, rate, roundUsd(at.spendUsd + ask.spendUsd)),
       workedMs: at.activeMs,
       runs: c.runs, finished: c.finished, stopped: c.stopped, failed: c.failed,
       paused: c.paused, running: c.running,
@@ -196,6 +205,6 @@ export function getStats({ range = 'month', now = new Date() } = {}) {
   return {
     range, bucket,
     windowStartMs: windowStart.getTime(), windowEndMs: windowEnd.getTime(),
-    totals, prev, budget, series,
+    totals, prev, budget, series, humanRateUsd: rate,
   };
 }
