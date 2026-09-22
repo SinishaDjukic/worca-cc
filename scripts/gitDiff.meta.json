@@ -1,0 +1,18 @@
+{
+  "key": "gitDiff",
+  "metaVersion": 2,
+  "displayName": "Git diff",
+  "description": "Writes the diff of the run's checkout against the run checkpoint (or a ref) as fenced markdown, one section per member on a workspace run. Runs git with worca's privileges.",
+  "domain": "coding",
+  "color": "green",
+  "icon": "<circle cx=\"6\" cy=\"6\" r=\"2\"/><circle cx=\"6\" cy=\"18\" r=\"2\"/><circle cx=\"18\" cy=\"12\" r=\"2\"/><path d=\"M6 8v8M8 6h6a4 4 0 0 1 4 4v0\" stroke-linecap=\"round\"/>",
+  "order": 30,
+  "runtime": "node",
+  "file": "git-diff.mjs",
+  "inputs": [ { "id": "done", "type": "void", "required": false } ],
+  "outputs": [ { "id": "diff", "type": "md", "when": "always", "filename": "diff-cycle{cycle}.md" } ],
+  "params": [
+    { "id": "ref", "type": "string", "label": "Base ref (blank = run checkpoint)" },
+    { "id": "stat", "type": "boolean", "label": "Stat only", "default": false }
+  ]
+}

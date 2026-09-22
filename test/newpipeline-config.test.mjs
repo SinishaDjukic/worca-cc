@@ -947,3 +947,70 @@ test('the built-in Default paints its real graph nodes and layers the legacy per
   assert.equal(plan.model, 'claude-opus-4-8', 'legacy per-role model is the effective value');
   assert.equal(plan.effort, 'high');
 });
+
+// A loop wire is one whose SOURCE output is `when: 'blocking'` (classifyLoops), so a loop that STARTS at a
+// script card — a test gate sending its failures back to the implementer — needs the script registry as
+// well as the agents' (spec §8.4: the panel fetches /api/agents and /api/scripts together). Cold page: the
+// Composer, whose index would otherwise be the fallback, never loaded.
+const GATE_SCRIPT = {
+  key: 'runTests', displayName: 'Run tests', runtime: 'node', color: 'violet', verdict: { filename: 'tests-cycle{cycle}.json' },
+  inputs: [{ id: 'done', type: 'void', required: false }],
+  outputs: [{ id: 'fail', type: 'md', when: 'blocking', filename: 'tests-cycle{cycle}.md' }, { id: 'pass', type: 'void', when: 'clean' }],
+};
+const GATE_V2 = {
+  id: 'wf_tests', name: 'Test gate', version: 2, domain: 'coding',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+    { id: 'n_plan', kind: 'agent', key: 'planner', x: 280, y: 0, config: {} },
+    { id: 'n_impl', kind: 'agent', key: 'implementer', x: 560, y: 0, config: {} },
+    { id: 'n_tests', kind: 'script', key: 'runTests', x: 840, y: 0, config: {} },
+    { id: 'n_end', kind: 'end', x: 1120, y: 0, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+    { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
+    { id: 'w3', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_tests', port: 'done' } },
+    { id: 'w4', from: { node: 'n_tests', port: 'fail' }, to: { node: 'n_impl', port: 'fix' }, config: { maxCycles: 5 } },
+    { id: 'w5', from: { node: 'n_tests', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
+  ],
+};
+function gateFetch(scriptsReply) {
+  const base = v2Fetch();
+  const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
+  return (url) => {
+    if (url.includes('/api/scripts')) return scriptsReply();
+    if (url.includes('/api/workflows/wf_tests')) return ok(GATE_V2);
+    if (url.includes('/api/workflows/')) return base(url);
+    if (url.includes('/api/workflows')) return ok({ workflows: [DEFAULT_V2, SAVED_V2, GATE_V2] });
+    return base(url);
+  };
+}
+
+test('a loop wire that starts at a SCRIPT card gets its cycle input on a cold page, named from the script registry', async () => {
+  const { window } = await boot({ fetchHandler: gateFetch(() => Promise.resolve({ ok: true, status: 200, json: async () => ({ scripts: [GATE_SCRIPT] }) })) });
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
+  pickWorkflow(window, 'wf_tests');
+  for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+  const fb = window.document.querySelector('#wf-feedback-config');
+  const inputs = [...fb.querySelectorAll('input[data-fb-id]')];
+  assert.deepEqual(inputs.map((i) => [i.dataset.fbId, i.value]), [['w4', '5']], 'the tests -> fix loop wire, with the template budget');
+  assert.match(fb.textContent, /Implement ← Run tests/, 'the script end is named by its registry name, not its key');
+  const ids = [...window.document.querySelectorAll('#agents-rows .agent-row')].map((r) => r.dataset.nodeId);
+  assert.deepEqual(ids, ['n_plan', 'n_impl'], 'a script card has no per-project tunables: agent rows only');
+  // The pure builder takes the scripts explicitly (a list or a key -> meta index); without them the wire is not a loop.
+  const reg = Object.fromEntries(V2_AGENTS.map((a) => [a.key, a]));
+  assert.deepEqual(window.__np.buildFeedbackRows(GATE_V2, reg, {}, [GATE_SCRIPT]).map((r) => [r.fbId, r.label, r.maxCycles]), [['w4', 'Implement ← Run tests', 5]]);
+  assert.deepEqual(window.__np.buildFeedbackRows(GATE_V2, reg, { wires: { w4: { maxCycles: 2 } } }, { runTests: GATE_SCRIPT }).map((r) => r.maxCycles), [2]);
+});
+
+test('a failed /api/scripts fetch degrades to agent-only loop rows instead of breaking the panel', async () => {
+  const { window } = await boot({ fetchHandler: gateFetch(() => Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) })) });
+  selectProjectAnd(window);
+  await new Promise((r) => setTimeout(r, 0));
+  pickWorkflow(window, 'wf_g');
+  for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+  const fb = window.document.querySelector('#wf-feedback-config');
+  assert.deepEqual([...fb.querySelectorAll('input[data-fb-id]')].map((i) => i.dataset.fbId), ['w5'], 'the agent loop still paints');
+  assert.doesNotMatch(window.document.querySelector('#agents-rows').textContent, /Could not load this workflow/);
+});

@@ -6,11 +6,15 @@
 import { readFileSync, readdirSync, readlinkSync, existsSync } from 'node:fs';
 import { join, resolve, dirname, sep, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS } from './plugin-api.mjs';
+import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS, WORCA_AGENT_DATA_API, WORCA_ASK_FORMS_API } from './plugin-api.mjs';
 import { EFFORTS, isReservedModelEnvKey, assertModelCost, assertModelUpstream, upstreamEnvConflict } from './model-env.mjs';
 import { validateMetaV2, normalizeAgentMeta, indexByKey } from '../shared/graph/agent-meta.mjs';
 import { portsFnFor } from '../shared/graph/ports.mjs';
 import { validateGraph } from '../shared/graph/validate.mjs';
+import { validateScriptMetaV2, normalizeScriptMeta } from '../shared/graph/script-meta.mjs';
+import { normalizeCases } from '../shared/graph/script-cases.mjs';
+import { normalizeAskBlock, validateFormDef } from '../shared/forms/form-def.mjs';
+import { ASK_LIMITS } from '../shared/forms/catalog.mjs';
 
 /** Plugin names are kebab-case, machine-unique, dir-name safe (spec §4.1). */
 export const PLUGIN_NAME_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -51,6 +55,26 @@ export function builtinAgentMetas(dir = BUILTIN_AGENTS_DIR) {
   }
   return out;
 }
+/** The built-in script layer (repo scripts/, D20). Same URL math as script-registry's DEFAULT_SCRIPTS_DIR. */
+const BUILTIN_SCRIPTS_DIR = fileURLToPath(new URL('../../scripts/', import.meta.url));
+
+/** Normalized built-in script sidecars, for the plugin-template isolation rule: a
+ *  template may reference built-in scripts (present on every host) plus the plugin's own. */
+export function builtinScriptMetas(dir = BUILTIN_SCRIPTS_DIR) {
+  const out = [];
+  let files = [];
+  try { files = readdirSync(dir).filter((f) => f.endsWith('.meta.json')); } catch { return out; }
+  for (const f of files.sort()) {
+    let meta = null;
+    try { meta = JSON.parse(readFileSync(join(dir, f), 'utf8')); } catch { continue; }
+    if (Number(meta?.metaVersion) !== 2 || !KEY_RE.test(String(meta.key || ''))) continue;
+    const { meta: norm, errors } = normalizeScriptMeta(meta);
+    if (errors.length) continue;
+    out.push(norm);
+  }
+  return out;
+}
+
 const KNOWN_SOURCE = new Set(['id', 'displayName', 'module', 'configSchema', 'inputs', 'multiProfile']);
 const KNOWN_CHANNEL = new Set(['id', 'displayName', 'platform', 'module', 'ingress', 'capabilities', 'configSchema']);
 const CHANNEL_INGRESS = new Set(['connect', 'webhook']);
@@ -110,6 +134,13 @@ export function negotiatedApi(range, apis = WORCA_PLUGIN_APIS) {
 export const NOT_META_V2 = 'not a meta v2 sidecar (declare "metaVersion": 2 with typed inputs/outputs) — plugin API 3 no longer reads channel sidecars';
 export const NOT_GRAPH_V2 = 'not a version-2 graph template (nodes/wires) — port the "steps" pipeline';
 
+/** The ONE sentence for a plugin that ships agent ask forms without negotiating
+ *  the API that honours them. Used verbatim by `agent-registry.scanLayer` (the
+ *  load-time strip) and by `validatePluginDir` (the author-time warning), so the
+ *  two can never drift — never re-word it in a second place. */
+export const ASK_NEEDS_API_4 = `ask forms need plugin API ${WORCA_ASK_FORMS_API}`
+  + ' (declare "engines": { "worca-cc-api": ">=4 <5" }) — the ask block is ignored and the agent keeps generic questions';
+
 /** The host API a range was BUILT FOR: the lowest integer it accepts. ">=1 <2"
  *  and "1" both answer 1; an unconstrained range answers 0; null when nothing
  *  satisfies it (an unparseable range fails closed in apiSatisfies too).
@@ -128,12 +159,20 @@ export function declaredApi(range) {
 export function dataContractIssues(absDir) {
   const agentsV1 = [];
   const workflowsV1 = [];
+  const scriptsV1 = [];
   const read = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
   const agentsDir = join(absDir, 'agents');
   if (existsSync(agentsDir)) {
     for (const f of readdirSync(agentsDir).filter((x) => x.endsWith('.meta.json')).sort()) {
       const raw = read(join(agentsDir, f));
       if (raw && Number(raw.metaVersion) !== 2) agentsV1.push(f);
+    }
+  }
+  const scDir = join(absDir, 'scripts');
+  if (existsSync(scDir)) {
+    for (const f of readdirSync(scDir).filter((x) => x.endsWith('.meta.json')).sort()) {
+      const raw = read(join(scDir, f));
+      if (raw && Number(raw.metaVersion) !== 2) scriptsV1.push(f);
     }
   }
   const wfDir = join(absDir, 'workflows');
@@ -143,7 +182,7 @@ export function dataContractIssues(absDir) {
       if (raw && Number(raw.version) !== 2) workflowsV1.push(f);
     }
   }
-  return { agentsV1, workflowsV1 };
+  return { agentsV1, workflowsV1, scriptsV1 };
 }
 
 /**
@@ -159,10 +198,11 @@ export function dataContractIssues(absDir) {
 export function apiMismatch(range, issues) {
   const agents = (issues && issues.agentsV1 ? issues.agentsV1 : []).length;
   const workflows = (issues && issues.workflowsV1 ? issues.workflowsV1 : []).length;
-  if (!agents && !workflows) return null;
+  const scripts = (issues && issues.scriptsV1 ? issues.scriptsV1 : []).length;
+  if (!agents && !workflows && !scripts) return null;
   // declaredApi('') is 0 (an unconstrained range accepts everything); report that
   // as null so the message reads "built for an older version", never "API 0".
-  const mismatch = { builtFor: declaredApi(range) || null, host: WORCA_PLUGIN_API, agents, workflows };
+  const mismatch = { builtFor: declaredApi(range) || null, host: WORCA_PLUGIN_API, agents, workflows, ...(scripts ? { scripts } : {}) };
   mismatch.message = apiMismatchMessage(mismatch);
   return mismatch;
 }
@@ -176,10 +216,10 @@ export function apiMismatch(range, issues) {
  */
 export function apiMismatchMessage(mismatch) {
   if (!mismatch) return '';
-  const { builtFor, agents, workflows } = mismatch;
+  const { builtFor, agents, workflows, scripts } = mismatch;
   return `built for plugin API ${builtFor ?? 'an older version'}; this version of worca requires `
-    + `plugin API ${WORCA_PLUGIN_API} for agents and pipeline templates — update or reinstall the plugin `
-    + `(${agents} agent(s), ${workflows} template(s) ignored)`;
+    + `plugin API ${WORCA_AGENT_DATA_API} for agents and pipeline templates — update or reinstall the plugin `
+    + `(${agents} agent(s), ${scripts ? `${scripts} script(s), ` : ''}${workflows} template(s) ignored)`;
 }
 
 const str = (v, d = '') => (typeof v === 'string' ? v.trim() : d);
@@ -586,13 +626,13 @@ export function validatePluginDir(absDir, { strict = false, builtinMetas } = {})
   // "this plugin does not ship it" or the derived V4/V5/V20/V21 cascade.
   const ungatedKeys = new Set();
   const ownMetas = [];
-  // A range that admits the CURRENT API (or no engines at all) claims to be an
-  // API-3 plugin, so v1-shaped data is a hard error; --strict promotes it for
-  // everyone else, because that flag is the plugin AUTHOR's gate. A manifest
-  // that did not PARSE fails SOFT: its declared API is unknowable, and the JSON
-  // error above is already the only actionable line.
+  // A range that admits the DATA-CONTRACT API (or no engines at all) claims to
+  // ship meta v2 sidecars and v2 graphs, so v1-shaped data is a hard error;
+  // --strict promotes it for everyone else, because that flag is the plugin
+  // AUTHOR's gate. Compared against WORCA_AGENT_DATA_API, never the newest host
+  // API: an API-5 host must not make today's ">=3 <4" plugins soft again.
   const hardData = raw !== null
-    && (strict || negotiatedApi(raw && raw.engines ? raw.engines['worca-cc-api'] : '') === WORCA_PLUGIN_API);
+    && (strict || (negotiatedApi(raw && raw.engines ? raw.engines['worca-cc-api'] : '') ?? -1) >= WORCA_AGENT_DATA_API);
   const dataLevel = hardData ? 'error' : 'warn';
   const agentsDir = join(absDir, 'agents');
   if (existsSync(agentsDir)) {
@@ -619,12 +659,112 @@ export function validatePluginDir(absDir, { strict = false, builtinMetas } = {})
       // as shipped is what let a ports-less node reach validateGraph.
       agentKeys.add(key);
       ownMetas.push(normalizeAgentMeta(meta).meta);
+
+      // ── ask forms (spec §10) ────────────────────────────────────────────────
+      // The SAME gate 1 the registry, the agent store and the Agents view run.
+      // Level: a bad form is a WARNING, because the host's behaviour for one is
+      // already defined (it is dropped at load and the agent keeps generic
+      // questions), and a plugin whose connector is fine must stay installable.
+      // --strict is the AUTHOR's gate, so there it is an error. This split is
+      // keyed on `strict` alone, NOT on dataLevel: a form's validity has nothing
+      // to do with which API the plugin negotiates.
+      if (meta.ask !== undefined && meta.ask !== null) {
+        const askLevel = strict ? 'error' : 'warn';
+        // normalizeAskBlock is used ONLY for what it alone knows: a whole-block
+        // refusal (id '*'). Its per-form `reason` is a collapsed one-liner of the
+        // first three errors — right for a registry log line, wrong here, where
+        // the author wants every failed rule with its path. So each form goes
+        // through validateFormDef directly.
+        const blockDrops = normalizeAskBlock(meta.ask).dropped.filter((d) => d.id === '*');
+        let declaredForms = 0;
+        if (blockDrops.length) {
+          for (const d of blockDrops) push(askLevel, `agents/${f}: ask: ${d.reason}`);
+        } else {
+          const declared = meta.ask.forms && typeof meta.ask.forms === 'object' ? meta.ask.forms : {};
+          const ids = Object.keys(declared);
+          declaredForms = ids.length;
+          if (ids.length > ASK_LIMITS.formsPerAgent) {
+            push(askLevel, `agents/${f}: ask.forms: at most ${ASK_LIMITS.formsPerAgent} forms per agent`);
+          }
+          for (const id of ids) {
+            // P1 addresses layout items as `layout#<n>` (depth-first, 1-based);
+            // print the path exactly as it comes so the Plugins card, the 422
+            // body and this line all name the same item.
+            for (const e of validateFormDef(declared[id], { id }).errors) {
+              push(askLevel, `agents/${f}: ask.forms."${id}"${e.path ? ` ${e.path}` : ''}: ${e.message}`);
+            }
+          }
+        }
+        // A plugin may ship forms it knows an older host will ignore; say so
+        // once, by name, and never fail the validate for it. ONE sentence,
+        // exported so the load-time strip and this line can never drift. Only
+        // when the block DECLARES a form: an empty `forms` map loads as "no
+        // forms" (normalizeAgentMeta drops it) and the host ignores nothing.
+        if (declaredForms && !(Number(negotiatedApi(raw && raw.engines ? raw.engines['worca-cc-api'] : '')) >= WORCA_ASK_FORMS_API)) {
+          push('warn', `agents/${f}: ${ASK_NEEDS_API_4}`);
+        }
+      }
     }
     for (const f of files.filter((x) => x.endsWith('.md'))) {
       const stem = f.slice(0, -3);
       if (!files.includes(`${stem}.meta.json`)) {
         push('warn', `agents/${f}: no ${stem}.meta.json sidecar — the registry will ignore it`);
       }
+    }
+  }
+
+  // scripts/: <key>.meta.json + the program it names (spec §9.3). The SAME meta
+  // v2 gate the registry loader applies, every failed rule named; every platform
+  // entry of `file` must exist inside scripts/ and never escape it.
+  const scriptKeys = new Set();
+  const ungatedScriptKeys = new Set();
+  const ownScriptMetas = [];
+  const scriptsDir = join(absDir, 'scripts');
+  if (existsSync(scriptsDir)) {
+    const files = readdirSync(scriptsDir);
+    for (const f of files.filter((x) => x.endsWith('.meta.json'))) {
+      const stem = f.slice(0, -'.meta.json'.length);
+      let meta = null;
+      try { meta = JSON.parse(readFileSync(join(scriptsDir, f), 'utf8')); }
+      catch { push('error', `scripts/${f}: invalid JSON`); continue; }
+      const key = typeof meta?.key === 'string' ? meta.key : '';
+      if (!KEY_RE.test(key)) { push('error', `scripts/${f}: "${key}" must be a valid script key (letters/digits/_-)`); continue; }
+      if (key !== stem) push('error', `scripts/${f}: key "${key}" must match the filename stem "${stem}"`);
+      if (Number(meta.metaVersion) !== 2) { push(dataLevel, `scripts/${f}: ${NOT_META_V2}`); ungatedScriptKeys.add(key); continue; }
+      const { errors } = validateScriptMetaV2(meta);
+      for (const e of errors) push('error', `scripts/${f}: ${e}`);
+      if (errors.length) { ungatedScriptKeys.add(key); continue; }
+      const norm = normalizeScriptMeta(meta).meta;
+      // Every platform's program must be a contained, existing file.
+      const entries = typeof norm.file === 'string' ? [norm.file] : norm.file ? Object.values(norm.file) : [];
+      let fileOk = true;
+      for (const rel of entries) {
+        if (isAbsolute(rel) || /[\\/]/.test(rel) || rel.includes('..') || !resolve(scriptsDir, rel).startsWith(resolve(scriptsDir) + sep)) {
+          push('error', `scripts/${f}: file must be a plain basename inside scripts/ (got "${rel}")`); fileOk = false; continue;
+        }
+        if (!existsSync(join(scriptsDir, rel))) { push('error', `scripts/${f}: file "${rel}" not found in scripts/`); fileOk = false; }
+      }
+      if (!fileOk) { ungatedScriptKeys.add(key); continue; }
+      scriptKeys.add(key);
+      ownScriptMetas.push(norm);
+      // <key>.tests.json is optional; when it ships it goes through the SAME
+      // normalizer the store, the bench and the UI use, as a SHIPPED set — a
+      // case that names a project folder cannot travel to a recipient (W9).
+      const casesFile = join(scriptsDir, `${key}.tests.json`);
+      if (existsSync(casesFile)) {
+        let rawCases = null;
+        try { rawCases = JSON.parse(readFileSync(casesFile, 'utf8')); }
+        catch { push('error', `scripts/${key}.tests.json: invalid JSON`); continue; }
+        for (const e of normalizeCases(rawCases, norm, { shipped: true }).errors) {
+          push('error', `scripts/${key}.tests.json: ${e}`);
+        }
+      }
+    }
+    // A tests file with no sidecar beside it: the W18 overlay is a USER-layer
+    // idea, so inside a plugin it is a file nothing will ever read.
+    for (const f of files.filter((x) => x.endsWith('.tests.json'))) {
+      const stem = f.slice(0, -'.tests.json'.length);
+      if (!files.includes(`${stem}.meta.json`)) push('error', `scripts/${f}: no ${stem}.meta.json beside it`);
     }
   }
 
@@ -651,16 +791,19 @@ export function validatePluginDir(absDir, { strict = false, builtinMetas } = {})
   if (existsSync(wfDir)) {
     const hostMetas = Array.isArray(builtinMetas) ? builtinMetas : builtinAgentMetas();
     const hostKeys = new Set(hostMetas.map((m) => m.key));
-    const portsFn = portsFnFor(indexByKey([...hostMetas, ...ownMetas]));
+    const hostScriptMetas = builtinScriptMetas();
+    const hostScriptKeys = new Set(hostScriptMetas.map((m) => m.key));
+    const portsFn = portsFnFor(indexByKey([...hostMetas, ...ownMetas]), indexByKey([...hostScriptMetas, ...ownScriptMetas]));
     for (const f of readdirSync(wfDir).filter((x) => x.endsWith('.json'))) {
       let tpl = null;
       try { tpl = JSON.parse(readFileSync(join(wfDir, f), 'utf8')); }
       catch { push('error', `workflows/${f}: invalid JSON`); continue; }
       if (Number(tpl?.version) !== 2) { push(dataLevel, `workflows/${f}: ${NOT_GRAPH_V2}`); continue; }
       const nodes = Array.isArray(tpl.nodes) ? tpl.nodes : [];
-      const keys = nodes.filter((n) => n && n.kind === 'agent').map((n) => n.key).filter(Boolean);
+      const agentRefs = nodes.filter((n) => n && n.kind === 'agent').map((n) => n.key).filter(Boolean);
+      const scriptRefs = nodes.filter((n) => n && n.kind === 'script').map((n) => n.key).filter(Boolean);
       let unresolved = false;
-      for (const k of new Set(keys)) {
+      for (const k of new Set(agentRefs)) {
         if (agentKeys.has(k) || hostKeys.has(k)) continue;
         if (ungatedKeys.has(k)) {
           // The sidecar is this plugin's, it just did not pass. Report at the
@@ -670,6 +813,12 @@ export function validatePluginDir(absDir, { strict = false, builtinMetas } = {})
         } else {
           push('error', `workflows/${f}: references agent key "${k}" which is neither a built-in nor shipped by this plugin`);
         }
+        unresolved = true;
+      }
+      for (const k of new Set(scriptRefs)) {
+        if (scriptKeys.has(k) || hostScriptKeys.has(k)) continue;
+        if (ungatedScriptKeys.has(k)) push(dataLevel, `workflows/${f}: references script key "${k}" whose sidecar is not a valid meta v2 sidecar`);
+        else push('error', `workflows/${f}: references script key "${k}" which is neither a built-in nor shipped by this plugin`);
         unresolved = true;
       }
       // An unresolved key has no ports, so every wire touching it would also

@@ -2,7 +2,7 @@
 //
 // The generic execution layer of the node-graph engine: output allocation from
 // filename templates, the "## Ports (this run)" prompt block, prompt assembly, the
-// clarifier gate, and the five flow-node executors.
+// clarifier gate, the script dispatch and the five flow-node executors.
 //
 // GENERICITY CHARTER (hard rule for this module): there is NO agent-key branch
 // anywhere. Executor selection is `node.kind` + `meta.runnerType`; renderer selection
@@ -32,22 +32,25 @@
 // input left UNBOUND. The composite DRIVER is scheduler.mjs; this module owns the
 // document — including the prompt block that tells a producer where to write the
 // task files and what the manifest looks like.
-import { join, dirname, relative, basename } from 'node:path';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { join, dirname, relative } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 
 import {
   runClaude, MOCK_WRITER_ROLES, MOCK_ROLE_CLARIFY, MOCK_ROLE_DECOMPOSER,
 } from '../claude-runner.mjs';
 import { planPath, reviewPath, writeStepQuestions, writeClarify } from '../artifacts.mjs';
-import { readReview, normalizeClarify, normalizeReview, safeParseJson } from '../protocol.mjs';
+import { readReview, classifyAskPayload } from '../protocol.mjs';
+import { prepareFormAsk, formAnswerValidator, downgradeQuestion } from '../ask-forms.mjs';
 import {
   taskHeader, buildSystemPrompt, resolveAgentBody, mockMarkers, runOpts,
   fanOutDirective, ctxFanOut, ctxSubagentModel, ctxEndpointRouted, workspaceFanOutDirective, workspaceDiffInstruction,
   renderAnswers, siblingsBlock, diffInstruction, READ_WRITE_TOOLS, IMPLEMENTER_TOOLS, MEMORY_TOOLS,
+  askFormsBlock,
 } from '../phases.mjs';
 import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
+import { runScriptExecution } from './script-runner.mjs';
 
 /** The reserved synthesized gate input. Scheduler-only: it never reaches `bindings`,
  *  is never listed in the Ports block, selects no mode, and carries no renderer. */
@@ -382,68 +385,31 @@ export function resolveMockRole({ meta, expandsPort = null }) {
 
 // ── verdicts ──────────────────────────────────────────────────────────────────
 
-/** The text every unparseable verdict file fails with. */
-const BAD_VERDICT_TAIL = 'expected { "issues": [ \u2026 ] }';
-
-/**
- * Read a node's verdict JSON back through the protocol normalizer.
- *
- * Two degenerate cases, deliberately split (they are NOT the same failure):
- *  - the file was NEVER WRITTEN -> `{issues: [], summary: '', missing: true}`: a clean
- *    pass, v1 parity, because an agent that declares a verdict and writes none must not
- *    fail a run. `missing` is the flag the caller turns into a warning (and the reason
- *    the reviews table skips the row) instead of a phantom zero-issue review.
- *  - the file EXISTS but does not parse, or carries no `issues` array -> THROW. The
- *    verifier wrote garbage, and on every shipped seed the clean side is wired straight
- *    to End, so "no issues" there is indistinguishable from an approval. Fail-fast owns
- *    the rest.
- *
- * `readReview` is untouched for its other callers (it is v1 code with its own tolerant
- * contract); the existsSync + parse-failure branch lives here.
- */
-export async function readVerdict(verdictPath) {
-  if (!verdictPath) return { issues: [], summary: '' };
-  if (!existsSync(verdictPath)) return { issues: [], summary: '', missing: true };
-  let text;
-  try {
-    text = await readFile(verdictPath, 'utf8');
-  } catch (err) {
-    throw Object.assign(new Error(`verdict file unreadable: ${verdictPath} — ${err?.message || err}`),
-      { code: 'BAD_VERDICT' });
-  }
-  const data = safeParseJson(text);
-  if (!data || typeof data !== 'object' || !Array.isArray(data.issues)) {
-    throw Object.assign(new Error(`verdict file is not a review JSON: ${verdictPath} — ${BAD_VERDICT_TAIL}`),
-      { code: 'BAD_VERDICT' });
-  }
-  return normalizeReview(data);
-}
-
-/** The warning line a missing verdict raises, relative to the pipeline dir so the
- *  run log stays readable. */
-function missingVerdictWarning(ctx, verdictPath) {
-  const rel = ctx?.pipelineDir ? relative(ctx.pipelineDir, verdictPath) : basename(verdictPath);
-  return `verdict file missing: ${ctx?.nodeId || ctx?.node?.id || '?'} ${rel} — treated as clean`;
-}
+import { readVerdict, missingVerdictWarning, publishable } from './exec-io.mjs';
+export { readVerdict, publishable };
 
 // ── prompt assembly ───────────────────────────────────────────────────────────
 
 /** The role-free base instruction, keyed by runnerType — never by an agent key. The
  *  producer/verifier sentences are v1's generic runners (phases.mjs:1207-1209 /
  *  :1245-1246); the clarifier sentence is v1's buildClarifyPrompt (:581-587) minus
- *  its parenthetical aside that named two builtin agents a generic graph need not have. */
-function baseInstruction(runnerType) {
+ *  its parenthetical aside that named two builtin agents a generic graph need not have.
+ *  §4: a clarifier that declares ask forms gets the forms section appended; one that
+ *  declares none returns today's string byte for byte. */
+function baseInstruction(runnerType, meta = null) {
   if (runnerType === 'verifier') {
     return 'You are a verifier. Inspect the inputs below exactly as your role instructions describe, ' +
       'then write a human-readable review markdown AND a machine-readable review JSON.';
   }
   if (runnerType === 'clarifier') {
-    return 'Identify the decisions you cannot safely resolve from the task text or the real ' +
+    const clarify = 'Identify the decisions you cannot safely resolve from the task text or the real ' +
       'codebase — including things a downstream agent would otherwise silently assume. For ' +
       'each, produce one conceptual question with 2 to 4 options and a free-text fallback. Ask ' +
       'only what materially changes the plan (up to 8 questions); never pad, and never split one ' +
       'decision. For low-impact details, pick a sensible default rather than asking. If you have ' +
       'no material open questions, write { "questions": [] } to that same path.';
+    const forms = askFormsBlock(meta?.ask?.forms);
+    return forms ? `${clarify}\n\n${forms}` : clarify;
   }
   return 'You are a pipeline agent. Read every input below, do your job exactly as your role ' +
     'instructions describe, and write EVERY declared output to its exact path.';
@@ -544,7 +510,7 @@ export function buildAgentPrompt(ctx) {
   return (
     taskHeader(headerCtx, title) +
     '\n## What to do\n\n' +
-    baseInstruction(meta.runnerType) + '\n\n' +
+    baseInstruction(meta.runnerType, meta) + '\n\n' +
     (hints ? hints + '\n\n' : '') +
     modeBlock(selectMode({ ports, bindings, freshPorts: trigger.freshPorts })) +
     fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed }) +
@@ -575,6 +541,16 @@ async function readPriorAnswers(ports, bindings = {}) {
   const path = port ? bindings[port.id]?.path : null;
   if (!path) return [];
   const json = await readJsonMaybe(path);
+  // A clarifier that answered with a FORM writes {form, version, values}; project
+  // it mechanically so a downstream `as:'answers'` port still renders something
+  // (E18). P4 may replace this with the shared text projection.
+  if (json && typeof json === 'object' && typeof json.form === 'string' && json.values && typeof json.values === 'object') {
+    return Object.entries(json.values).map(([field, value]) => ({
+      id: field,
+      question: field,
+      choice: typeof value === 'string' ? value : JSON.stringify(value),
+    }));
+  }
   return Array.isArray(json?.answers) ? json.answers : [];
 }
 
@@ -645,18 +621,6 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
   return { text, sessionId };
 }
 
-/** The output map the scheduler publishes from: an entry per declared port, with a
- *  path where one was allocated and an empty payload for void ports. Exported for
- *  P4's composite `finish` arm. */
-export function publishable(ports, outputs) {
-  const out = {};
-  for (const port of ports?.outputs || []) {
-    if (!port) continue;
-    out[port.id] = outputs[port.id]?.path ? { path: outputs[port.id].path } : {};
-  }
-  return out;
-}
-
 /**
  * The ONE generic agent executor — the generalization of v1's runGenericProducer and
  * runGenericVerifier and of the nine bespoke runners they replace. Selected for
@@ -690,6 +654,9 @@ export async function runAgentExecution(ctx) {
  * row and the History UI render the full Q&A without a join.
  */
 function normalizeAnswers(payload, questions) {
+  // A form answer is `{form, version, values}` and is NEVER flattened here: the
+  // "fill with the first option" fallback below is legacy-kind only (spec §5).
+  if (payload && typeof payload === 'object' && typeof payload.form === 'string' && payload.values) return [];
   const arr = Array.isArray(payload?.answers) ? payload.answers : Array.isArray(payload) ? payload : [];
   const byId = new Map();
   for (const a of arr) if (a && a.id != null) byId.set(String(a.id), String(a.choice ?? ''));
@@ -698,6 +665,52 @@ function normalizeAnswers(payload, questions) {
     question: q.question || '',
     choice: byId.has(q.id) ? byId.get(q.id) : (q.options && q.options.find((o) => o && o.trim())) || '',
   }));
+}
+
+/**
+ * Gate 2 for a clarifier's `{form,data}` ask (spec §5). One repair spawn on a
+ * refusal — resumed on the SAME session (`sessionId` is the id captured off the
+ * FIRST spawn; the repair re-attaches it exactly as _questionsLoop resumes a
+ * producer), with formRepairBlock rendering the error list and the schema through
+ * runOpts — then a downgrade to one generic free-text question. Never throws. The
+ * returned `sessionId` is the repair's own when it reported one, else the first's.
+ * @returns {Promise<{ask:object|null, autoValues:object|null, questions:Array, sessionId:string|null}>}
+ */
+async function prepareClarifierForm({ full, meta, node, ordinal, answersPath, payload, warnings, spawn, sessionId: first = null }) {
+  const askId = `${CLARIFY_ASK_KIND}-${node.id}-${ordinal}`;
+  let current = payload;
+  let sessionId = first || null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const prepared = await prepareFormAsk({
+      agentMeta: meta,
+      payload: { form: current.form, data: current.data },
+      cwd: full.projectDir,
+      pipelineDir: full.runCtx?.pipelineDir || full.pipelineDir,
+      askId,
+    });
+    if (prepared.ok) return { ask: prepared.ask, autoValues: prepared.autoValues, questions: [], sessionId };
+    const why = prepared.errors.map((e) => `${e.path ? `${e.path}: ` : ''}${e.message}`).join('; ');
+    warnings.push(`${meta.displayName || node.key}: form "${current.form}" was refused — ${why}`);
+    if (attempt === 2) break;
+    const repairCtx = {
+      ...full,
+      resumeSessionId: sessionId || full.resumeSessionId,
+      formRepair: {
+        form: current.form, errors: prepared.errors,
+        schema: meta?.ask?.forms?.[current.form]?.data || null, file: answersPath,
+      },
+    };
+    const again = await spawnAgent(repairCtx, spawn);
+    sessionId = again.sessionId ?? sessionId;
+    const retry = classifyAskPayload(await readJsonMaybe(answersPath));
+    if (retry.kind !== 'form') {
+      return { ask: null, autoValues: null, questions: retry.kind === 'questions' ? retry.questions : [], sessionId };
+    }
+    current = retry;
+  }
+  const title = meta?.ask?.forms?.[current.form]?.title || '';
+  warnings.push(`${meta.displayName || node.key}: form "${current.form}" downgraded to a free-text question after two refusals.`);
+  return { ask: null, autoValues: null, questions: [downgradeQuestion({ form: current.form, title })], sessionId };
 }
 
 /**
@@ -716,12 +729,64 @@ export async function runClarifierExecution(ctx) {
   const answersPath = outputs[answersPort?.id]?.path;
   if (!answersPath) throw new Error(`clarifier node "${node?.id}": no json output port to write the questions to`);
 
-  const { sessionId } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools });
+  let sessionId;
+  ({ sessionId } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools }));
 
-  const { questions } = normalizeClarify(await readJsonMaybe(answersPath));
+  const raw = await readJsonMaybe(answersPath);
+  const payload = classifyAskPayload(raw);
   // Non-interactive default (v1 `_ask` auto): no gate ⇒ every question takes its first
   // option (normalizeAnswers' fallback). The scheduler's onAsk never sees clarify asks.
-  const ask = typeof ctx.ask === 'function' ? ctx.ask : async () => ({ answers: [] });
+  const ask = typeof ctx.ask === 'function' ? ctx.ask : null;
+  const warnings = pinIgnoredWarning ? [pinIgnoredWarning] : [];
+  let questions = payload.kind === 'questions' ? payload.questions : [];
+
+  if (payload.kind === 'form') {
+    // Gate 2 (spec §5), with the ONE repair spawn the producer loop also gets —
+    // a clarifier has no _questionsLoop, so the repair is a resumed spawn here.
+    const gate = await prepareClarifierForm({
+      full, meta, node, ordinal, answersPath, payload, warnings,
+      spawn: { role, systemPrompt, allowedTools, prompt },
+      sessionId,                                // E6: the repair RESUMES the first spawn's session
+    });
+    if (gate.ask) {
+      const answered = await (ask
+        ? ask({
+          // `id` is the QUESTION id — the same string the legacy arm below uses,
+          // so `orch.answer(id, …)` is uniform. `askId` is the route token
+          // prepareFormAsk minted from it, which may differ whenever a node id
+          // carries a character outside [A-Za-z0-9_-] (ruling X1).
+          id: `${CLARIFY_ASK_KIND}-${node.id}-${ordinal}`,
+          kind: 'form', nodeId: node.id, agent: meta.displayName || node.key,
+          askId: gate.ask.askId, form: gate.ask.form, version: gate.ask.version, title: gate.ask.title,
+          surface: gate.ask.surface,
+          data: gate.ask.data, layout: gate.ask.layout, answerSchema: gate.ask.answerSchema,
+          fileRefs: gate.ask.fileRefs, files: gate.ask.files,
+          autoValues: gate.autoValues, validate: formAnswerValidator(gate.ask),
+        })
+        // No gate at all (auto): D10's auto answer, exactly what _ask would return.
+        : Promise.resolve({ form: gate.ask.form, version: gate.ask.version, values: gate.autoValues || {} }));
+      const values = (answered && typeof answered === 'object' && answered.values) || {};
+      if (ctx.pipelineId) {
+        await writeStepQuestions(ctx.pipelineId, ctx.executionId, ordinal, {
+          agentKey: node?.key, nodeId: node?.id, questions: gate.ask,
+        });
+        await writeClarify(ctx.pipelineId, { questions: gate.ask });
+        const answerRow = { kind: 'form', form: gate.ask.form, version: gate.ask.version, values };
+        await writeStepQuestions(ctx.pipelineId, ctx.executionId, ordinal, {
+          agentKey: node?.key, nodeId: node?.id, answers: answerRow,
+        });
+        await writeClarify(ctx.pipelineId, { answers: answerRow });
+      }
+      await mkdir(dirname(answersPath), { recursive: true }).catch(() => {});
+      await writeFile(answersPath, JSON.stringify({ form: gate.ask.form, version: gate.ask.version, values }, null, 2) + '\n', 'utf8');
+      return { outputs: publishable(ports, outputs), questions: [], answers: [],
+        form: gate.ask.form, version: gate.ask.version, values,
+        sessionId: gate.sessionId ?? sessionId, prompt, warnings };
+    }
+    questions = gate.questions;               // the downgrade takes the legacy arm below
+    sessionId = gate.sessionId ?? sessionId;
+  }
+
   let answers = [];
   if (questions.length) {
     if (ctx.pipelineId) {
@@ -730,14 +795,14 @@ export async function runClarifierExecution(ctx) {
       });
       await writeClarify(ctx.pipelineId, { questions: { questions } });
     }
-    const payload = await ask({
+    const answerPayload = await (ask || (async () => ({ answers: [] })))({
       id: `${CLARIFY_ASK_KIND}-${node.id}-${ordinal}`,
       kind: CLARIFY_ASK_KIND,
       nodeId: node.id,
       agent: meta.displayName || node.key,
       questions,
     });
-    answers = normalizeAnswers(payload, questions);
+    answers = normalizeAnswers(answerPayload, questions);
     if (ctx.pipelineId) {
       await writeStepQuestions(ctx.pipelineId, ctx.executionId, ordinal, {
         agentKey: node?.key, nodeId: node?.id, answers: { answers },
@@ -748,8 +813,7 @@ export async function runClarifierExecution(ctx) {
 
   await mkdir(dirname(answersPath), { recursive: true }).catch(() => {});
   await writeFile(answersPath, JSON.stringify({ questions, answers }, null, 2) + '\n', 'utf8');
-  return { outputs: publishable(ports, outputs), questions, answers, sessionId, prompt,
-    warnings: pinIgnoredWarning ? [pinIgnoredWarning] : [] };
+  return { outputs: publishable(ports, outputs), questions, answers, sessionId, prompt, warnings };
 }
 
 // ── flow executors (pure engine: instant, $0, no process spawn) ───────────────
@@ -891,6 +955,11 @@ export function runExecution(ctx, opts = {}) {
     case 'end': return runEndExecution(ctx);
     case 'combine':
       return runCombineExecution({ ...ctx, names: ctx.names || combineNames(ctx.template, node.id) });
+    case 'script': {
+      // A child process, not a Claude spawn (spec §6.1). `runners.script` is the test seam.
+      const injectedScript = (opts.runners || ctx.runners || {}).script;
+      return typeof injectedScript === 'function' ? injectedScript(ctx) : runScriptExecution(ctx);
+    }
     case 'agent': break;
     default:
       throw new Error(`node "${node.id}": unknown kind "${node.kind}"`);

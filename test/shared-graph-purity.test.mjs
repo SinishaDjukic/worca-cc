@@ -20,7 +20,7 @@ const posix = (p) => p.split(path.sep).join('/');
 
 test('src/shared/graph holds the shared core (the guard is never vacuous)', () => {
   const names = walk(SHARED).map((f) => posix(path.relative(SHARED, f)));
-  for (const required of ['graph/constants.mjs', 'graph/verdict.mjs']) {
+  for (const required of ['graph/constants.mjs', 'graph/verdict.mjs', 'forms/schema.mjs']) {
     assert.ok(names.includes(required), `src/shared/${required} must exist`);
   }
 });

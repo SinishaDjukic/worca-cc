@@ -297,3 +297,32 @@ test('ask-panel-render: scroll pinning still drives the jump pill inside a resiz
   ctx2.window.dispatchEvent(new ctx2.window.Event('resize'));
   assert.equal(sheet.style.height, '800px', 'nothing runs after destroy');
 });
+
+test('ask-panel-render: the script tools show the key and what came back (§9.3)', async () => {
+  const snap = snapBody([asstRow('askm_00000001', 1, {
+    blocks: [
+      { kind: 'tool', id: 't1', name: 'mcp__worca__save_script', input: { _truncated: true, preview: '{"key":"runTests","meta":{},"source":"npm test' }, status: 'done', durationMs: 120, script: { key: 'runTests', saved: 'created' } },
+      { kind: 'tool', id: 't2', name: 'mcp__worca__test_script', input: { key: 'runTests' }, status: 'done', durationMs: 4200, script: { key: 'runTests', status: 'blocking', exitCode: 1 } },
+      { kind: 'tool', id: 't3', name: 'mcp__worca__list_scripts', input: {}, status: 'running', durationMs: null, script: { key: '' } },
+      { kind: 'tool', id: 't4', name: 'mcp__worca__get_script', input: { key: 'runTests' }, status: 'error', durationMs: 30, error: 'no script' },
+    ],
+  })]);
+  const ctx = makePanel({ fetchHandler: handlerFor(snap) });
+  await openThread(ctx);
+  const rows = [...ctx.doc.querySelectorAll('.ask-tool-row')];
+  assert.equal(rows.length, 4);
+  // The op column is a fixed 38 px uppercase cell (style.css .ask-tool-op): the verb stays
+  // there, the key and the outcome go in the target column.
+  assert.equal(rows[0].querySelector('.ask-tool-op').textContent, 'save');
+  assert.equal(rows[0].querySelector('.ask-tool-target').textContent, 'script runTests → created');
+  assert.equal(rows[0].querySelector('.ask-tool-target').textContent.includes('npm test'), false, 'the source preview is not the row');
+  assert.equal(rows[1].querySelector('.ask-tool-op').textContent, 'test');
+  assert.equal(rows[1].querySelector('.ask-tool-target').textContent, 'script runTests → blocking, exit 1');
+  assert.equal(rows[1].querySelector('.ask-tool-note').textContent, '4.2s');
+  assert.equal(rows[2].querySelector('.ask-tool-op').textContent, 'list');
+  assert.equal(rows[2].querySelector('.ask-tool-target').textContent, 'scripts', 'no key, nothing back yet');
+  assert.equal(rows[2].querySelector('.ask-tool-note').textContent, '…');
+  assert.equal(rows[3].querySelector('.ask-tool-target').textContent, 'script runTests', 'a call without a stamp still reads the key off the input');
+  assert.equal(rows[3].querySelector('.ask-tool-note').textContent, 'error');
+  for (const r of rows) assert.equal(r.dataset.minLevel, 'advanced', 'tool rows stay an Advanced-level detail');
+});

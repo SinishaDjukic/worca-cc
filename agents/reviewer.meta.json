@@ -6,6 +6,66 @@
   "wantsRequest": true,
   "workspaceStrategy": "review",
   "verdict": { "filename": "impl-review-cycle{cycle}.json" },
+  "ask": {
+    "forms": {
+      "review-findings": {
+        "version": 1,
+        "title": "Confirm these findings",
+        "data": {
+          "type": "object",
+          "required": ["findings"],
+          "properties": {
+            "summary": { "type": "string", "maxLength": 4000 },
+            "findings": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "required": ["id", "title"],
+                "properties": {
+                  "id": { "type": "string", "maxLength": 64 },
+                  "severity": { "type": "string", "enum": ["critical", "major", "minor", "suggestion"] },
+                  "title": { "type": "string", "maxLength": 200 },
+                  "detail": { "type": "string", "maxLength": 2000 }
+                }
+              }
+            }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "required": ["findings"],
+          "properties": {
+            "findings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "verdict"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "verdict": { "type": "string", "enum": ["keep", "waive"], "default": "keep" },
+                  "note": { "type": "string", "maxLength": 2000 }
+                }
+              }
+            },
+            "notes": { "type": "string", "maxLength": 4000 }
+          }
+        },
+        "layout": [
+          { "widget": "markdown", "bind": "data.summary" },
+          { "widget": "review-list", "bind": "data.findings", "field": "findings", "label": "Findings" },
+          { "widget": "textarea", "field": "notes", "label": "Notes" }
+        ],
+        "example": {
+          "summary": "Two findings I would waive if the deviation was intended.",
+          "findings": [
+            { "id": "f1", "severity": "major", "title": "Plan deviation: the retry lives in the caller", "detail": "The plan put it in the client. Was that intentional?" },
+            { "id": "f2", "severity": "minor", "title": "No unit test for the empty-list branch", "detail": "It is covered by the integration test only." }
+          ]
+        }
+      }
+    }
+  },
   "inputs": [
     { "id": "plan", "type": "md" },
     { "id": "done", "type": "void", "required": false, "as": "worktree" }

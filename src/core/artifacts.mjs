@@ -251,6 +251,36 @@ export async function writeStepQuestions(pipelineId, stepKey, round, { agentKey,
 }
 
 /**
+ * Spec §9: a form ask persists into the SAME schemaless JSON TEXT columns as the
+ * legacy Q&A — the `questions` half holds the full resolved ask, the `answers`
+ * half `{kind:'form', form, version, values}`. This merges the two into the one
+ * object History renders, or null for a legacy row. The legacy arrays are read
+ * separately and stay empty for a form row, so no existing reader changes.
+ * @param {object|null} qWrap parsed `questions` column
+ * @param {object|null} aWrap parsed `answers` column
+ */
+function formAskOf(qWrap, aWrap) {
+  if (!qWrap || qWrap.kind !== 'form') return null;
+  const values = aWrap && aWrap.kind === 'form' && aWrap.values && typeof aWrap.values === 'object'
+    ? aWrap.values
+    : null;
+  return { ...qWrap, values };
+}
+
+/** The two form fields a reader row carries — `{}` for a legacy row, so no legacy
+ *  payload gains a key (test/step-questions-db.test.mjs pins the exact row shape). */
+function formFieldsOf(qWrap, aWrap) {
+  const ask = formAskOf(qWrap, aWrap);
+  return ask ? { ask, formAnswer: formAnswerOf(aWrap) } : {};
+}
+
+/** The `{form, version, values}` payload the agent was resumed with, or null. */
+function formAnswerOf(aWrap) {
+  if (!aWrap || aWrap.kind !== 'form') return null;
+  return { form: aWrap.form, version: aWrap.version, values: aWrap.values && typeof aWrap.values === 'object' ? aWrap.values : {} };
+}
+
+/**
  * All ask-then-resume rounds of a pipeline, unwrapped to plain arrays, in
  * chronological insert order (rowid — lexicographic step_key would mis-order
  * '10:' before '2:' on big workflows). Always returns an array.
@@ -271,6 +301,10 @@ export function readStepQuestions(pipelineId) {
       agentKey: r.agent_key || '',
       questions: Array.isArray(qWrap?.questions) ? qWrap.questions : [],
       answers: Array.isArray(aWrap?.answers) ? aWrap.answers : [],
+      // Ask forms (spec §9): `ask` + `formAnswer` on a FORM row only. A legacy row
+      // gains no key at all, so its wire shape (History, get_run_progress) stays
+      // byte-identical; consumers test `row.ask`, never `'ask' in row`.
+      ...formFieldsOf(qWrap, aWrap),
     };
   });
 }
@@ -349,6 +383,7 @@ export function readPipelineExtras(pipelineId) {
   const clarify = {
     questions: Array.isArray(qWrap?.questions) ? qWrap.questions : [],
     answers: Array.isArray(aWrap?.answers) ? aWrap.answers : [],
+    ...formFieldsOf(qWrap, aWrap),   // spec §9: `ask` + `formAnswer` on a form row only
   };
   const reviews = getDb().prepare(
     'SELECT kind, cycle, verdict FROM reviews WHERE pipeline_id = ? ORDER BY kind, cycle'
@@ -1157,10 +1192,13 @@ export async function writeState(pipelineDir, stateObj) {
     for (const st of Array.isArray(obj.steps) ? obj.steps : []) {
       // v2 rows: execution_id === key. v1 rows leave every exec_* column NULL, so
       // the readers below reproduce today's exact shape for a v1 pipeline.
-      const meta = (st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null || st.bridgeCalls != null)
+      const hasMeta = st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null
+        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null;
+      const meta = hasMeta
         ? s({ taskId: st.taskId ?? null, parentExecutionId: st.parentExecutionId ?? null,
               title: st.title ?? null, phaseOrdinal: st.phaseOrdinal ?? null,
               taskIndex: st.taskIndex ?? null, taskTotal: st.taskTotal ?? null,
+              nodeKey: st.nodeKey ?? null, runtime: st.runtime ?? null, exitCode: st.exitCode ?? null,
               // Model bridge (§8.6): requests the node initiated through the bridge.
               ...(st.bridgeCalls != null ? { bridgeCalls: st.bridgeCalls, bridgeContinued: st.bridgeContinued ?? 0 } : {}) })
         : null;
@@ -1852,6 +1890,9 @@ function stepRowToStep(r) {
     if (em.phaseOrdinal != null) step.phaseOrdinal = em.phaseOrdinal;
     if (em.taskIndex != null) step.taskIndex = em.taskIndex;
     if (em.taskTotal != null) step.taskTotal = em.taskTotal;
+    if (em.nodeKey != null) step.nodeKey = em.nodeKey;
+    if (em.runtime != null) step.runtime = em.runtime;
+    if (em.exitCode != null) step.exitCode = em.exitCode;
     if (em.bridgeCalls != null) { step.bridgeCalls = em.bridgeCalls; step.bridgeContinued = em.bridgeContinued ?? 0; }
   }
   return step;

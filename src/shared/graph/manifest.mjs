@@ -14,7 +14,7 @@
 // agent cell, and the sub_agents.ui_phase attribution column still needs it. The
 // workflows.mjs copy is gone (the v1 topology helpers went with the v1 engine),
 // so THIS is the only copy — shared code may not import workflows.mjs.
-import { TEMPLATE_VERSION, AWAIT_PORT, DEFAULT_MAX_CYCLES, FLOW_LABEL } from './constants.mjs';
+import { TEMPLATE_VERSION, AWAIT_PORT, DEFAULT_MAX_CYCLES, FLOW_LABEL, KEYED_KINDS } from './constants.mjs';
 import { portsFnFor, portsOf, resolveOrOutType } from './ports.mjs';
 import { classifyLoops } from './loops.mjs';
 import { rankNodes } from './layout.mjs';
@@ -89,13 +89,14 @@ const isWire = (w) => Boolean(w) && typeof w === 'object' && !Array.isArray(w)
 /**
  * @param {object} tpl resolved v2 template
  * @param {Record<string,object>} agentsByKey merged registry metas
- * @param {{overlays?:{nodes?:object, wires?:object}}} [opts] effective per-node config + per-wire budgets
+ * @param {{overlays?:{nodes?:object, wires?:object}, scripts?:Record<string,object>}} [opts] effective per-node config + per-wire budgets; the script registry slice
  */
 export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
   const overlays = opts.overlays || {};
+  const scripts = opts.scripts || {};
   const nodeOverlays = overlays.nodes || {};
   const wireOverlays = overlays.wires || {};
-  const portsFn = portsFnFor(agentsByKey);
+  const portsFn = portsFnFor(agentsByKey, scripts);
   // Objects with real endpoints only. `filter(Boolean)` kept a truthy non-object
   // node and an endpoint-less wire, and `w.from.node` threw one map later — the
   // manifest is built from an ALREADY validated template, but it is also built
@@ -109,7 +110,9 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
 
   const manifestNodes = nodes.map((node) => {
     const resolved = portsOf(portsFn, node);
-    const meta = node.kind === 'agent' ? (agentsByKey?.[node.key] || null) : null;
+    const keyed = KEYED_KINDS.includes(node.kind);
+    const meta = node.kind === 'agent' ? (agentsByKey?.[node.key] || null)
+      : node.kind === 'script' ? (scripts?.[node.key] || null) : null;
     const over = nodeOverlays[node.id] || {};
     const cfg = node.config || {};
     const outType = (port) => (node.kind === 'or' && (!port.type || port.type === 'any')
@@ -117,14 +120,12 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
     const cell = {
       id: node.id,
       kind: node.kind,
-      key: node.kind === 'agent' ? node.key : null,
+      key: keyed ? node.key : null,
       x: Number(node.x) || 0,
       y: Number(node.y) || 0,
-      label: node.kind === 'agent' ? (meta?.displayName || node.key) : (FLOW_LABEL[node.kind] || node.kind),
-      // The v1 stepper bucket. UI_PHASE knows the 11 builtins; a custom agent
-      // buckets under its own key (the sidecar's `uiPhase` died with the v1
-      // vocabulary). The whole field goes with the phase shim in Task 16.
-      uiPhase: node.kind === 'agent' ? (UI_PHASE[node.key] || node.key) : node.kind,
+      label: keyed ? (meta?.displayName || node.key) : (FLOW_LABEL[node.kind] || node.kind),
+      // The v1 stepper bucket: the builtin map for agents, the bare key for every other keyed card.
+      uiPhase: node.kind === 'agent' ? (UI_PHASE[node.key] || node.key) : keyed ? node.key : node.kind,
       // The AUTHORED config, verbatim and complete (unknown keys included —
       // V17's "preserved and ignored" promise). The manifest is the ONLY
       // persisted copy of the topology: P4 rebuilds the template from it on a
@@ -133,7 +134,8 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       config: { ...(node.config || {}) },
       ports: {
         inputs: resolved.inputs.filter((p) => !p.synthetic).map((p) => ({
-          id: p.id, type: p.type, required: p.required !== false, loop: !!p.loop, expands: !!p.expands })),
+          id: p.id, type: p.type, required: p.required !== false, loop: !!p.loop, expands: !!p.expands,
+          ...(p.engine ? { engine: p.engine } : {}) })),
         outputs: resolved.outputs.map((p) => ({ id: p.id, type: outType(p), when: p.when || 'always' })),
         await: resolved.inputs.some((p) => p.synthetic),
       },
@@ -150,6 +152,12 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       // RESUMED run rebuilds the same child-model behavior from the manifest
       // alone — the workflow row is never re-read after the run starts.
       cell.subagentModel = over.subagentModel ?? cfg.subagentModel ?? '';
+    }
+    if (node.kind === 'script') {
+      cell.color = meta?.color || '';
+      cell.icon = sanitizeIcon(meta?.icon);
+      cell.runtime = meta?.runtime || '';
+      cell.awaitAll = !!(over.awaitAll ?? cfg.awaitAll ?? false);
     }
     if (node.kind === 'and' || node.kind === 'or' || node.kind === 'combine') {
       cell.arity = Number.isInteger(cfg.arity) ? cfg.arity : 2;
@@ -183,7 +191,7 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
         uiPhase: n.uiPhase,
         label: n.label,
         color: n.color || '',
-        sub: (n.key && agentsByKey?.[n.key]?.description) || '',
+        sub: (n.key && (agentsByKey?.[n.key] || scripts?.[n.key])?.description) || '',
         cycles: n.ports.inputs.some((p) => p.loop && isWired.has(`${n.id}.${p.id}`)),
         model: n.model || '',
         effort: n.effort || '',
@@ -226,6 +234,7 @@ export function manifestPortsFn(manifest) {
       displayName: cell.label,
       color: cell.color,
       icon: cell.icon,
+      runtime: cell.runtime,
       // A verdict-bearing node is one with a conditional output — enough for V13
       // and firedOutputs; the filename itself never leaves the engine.
       verdict: cell.ports.outputs.some((p) => p.when && p.when !== 'always') ? { filename: '' } : undefined,
@@ -245,7 +254,7 @@ export function manifestTemplate(manifest) {
       // old `{arity, awaitAll}` reconstruction silently dropped everything else
       // (`planStoreSeed` on the Task card of `wf_provided-plan`, for one).
       const node = { id: n.id, kind: n.kind, x: n.x, y: n.y, config: { ...(n.config || {}) } };
-      if (n.kind === 'agent') node.key = n.key;
+      if (KEYED_KINDS.includes(n.kind)) node.key = n.key;
       return node;
     }),
     wires: (manifest?.graph?.wires || []).map((w) => {

@@ -84,6 +84,31 @@ function clipInput(input) {
   return s.length > 60 ? `${s.slice(0, 60)}…` : s;
 }
 
+const SCRIPT_TOOL_NAMES = new Set(['list_scripts', 'get_script', 'save_script', 'test_script']);
+
+/**
+ * The script tools' thread line (scripts-workbench-design.md §9.3): the key instead of a JSON
+ * blob, plus what came back once the call finished. `block.script` is stamped by the reducer
+ * (events.mjs#scriptToolKey at the call, #scriptResultNote at the result) and persisted with the
+ * block, so the line survives a reload and a clipped input. null for every other tool — those
+ * keep the op / target / preview shape.
+ * @returns {{target: string}|null}  e.g. { target: 'script runTests → blocking, exit 1' }
+ */
+export function scriptToolLine(short, block = {}) {
+  if (!SCRIPT_TOOL_NAMES.has(short)) return null;
+  const s = block.script && typeof block.script === 'object' ? block.script : null;
+  const key = typeof s?.key === 'string' && s.key ? s.key
+    : (block.input && typeof block.input.key === 'string' ? block.input.key : '');
+  const bits = [];
+  if (s) {
+    if (typeof s.saved === 'string' && s.saved) bits.push(s.saved);
+    if (typeof s.status === 'string' && s.status) bits.push(s.status);
+    if (Number.isInteger(s.exitCode)) bits.push(`exit ${s.exitCode}`);
+  }
+  const noun = short.split('_').slice(1).join(' ');
+  return { target: [noun, key, bits.length ? `→ ${bits.join(', ')}` : ''].filter(Boolean).join(' ') };
+}
+
 /** The launcher's shortcut hint: the keydown handler accepts BOTH Meta+K and
  *  Ctrl+K, but the glyph shown must match the viewer's OS — '⌘K' is meaningless
  *  on Windows/Linux, where the working chord is Ctrl+K. */
@@ -3122,8 +3147,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const short = String(block.name || '').replace(/^mcp__worca__/, '');
     const parts = short.split('_');
     rowEl.appendChild(make('span', 'ask-tool-op', parts[0] || short));
-    const target = parts.slice(1).join(' ');
-    const preview = clipInput(block.input);
+    // A script tool reads as `test script runTests → blocking, exit 1` (§9.3): the op column
+    // (a fixed 38 px cell) keeps the verb, the target column carries the key and the outcome —
+    // a script's input is a whole program, so the JSON preview is worth nothing there.
+    const script = scriptToolLine(short, block);
+    const target = script ? script.target : parts.slice(1).join(' ');
+    const preview = script ? '' : clipInput(block.input);
     rowEl.appendChild(make('span', 'ask-tool-target', preview ? (target ? `${target} · ${preview}` : preview) : target));
     const note = block.status === 'error' ? 'error' : block.status === 'running' ? '…' : fmtElapsed(block.durationMs);
     rowEl.appendChild(make('span', 'ask-tool-note', note || ''));

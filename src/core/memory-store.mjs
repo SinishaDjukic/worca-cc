@@ -450,6 +450,41 @@ export function memoryHealth(entries, state, caps) {
   };
 }
 
+// ── the defragmenter's brief (§7) ────────────────────────────────────────────
+export const DEFRAG_BRIEF_HEADING = '## Memory health';
+
+/**
+ * Pure. The section a Memory defragment run appends to its task document: WHY the scope is
+ * flagged (memoryHealth's own reasons, verbatim — the same lines Settings → Memory shows) and the
+ * budgets a finished defragment has to meet. Without it the agent tidies topics and leaves the
+ * scope exactly as `due` as it found it: the always-on budget is a property of the whole scope,
+ * which no single file shows. A healthy scope still gets the budgets, so a defragment never
+ * breaks one. Thresholds resolve exactly as memoryHealth resolves them; byte-stable.
+ * @param {ReturnType<typeof memoryHealth>} health
+ * @param {object} [caps] memoryCaps()
+ */
+export function renderDefragBrief(health, caps) {
+  const h = health && typeof health === 'object' ? health : memoryHealth([], null, caps);
+  const T = { ...DEFAULT_DEFRAG, ...(caps?.defrag && typeof caps.defrag === 'object' ? caps.defrag : {}) };
+  const soft = caps?.softBytesPerFile ?? 8192;
+  const hard = caps?.hardBytesPerFile ?? 32768;
+  const maxFiles = caps?.maxFilesPerScope ?? 50;
+  const reasons = Array.isArray(h.reasons) ? h.reasons : [];
+  const lines = ['', DEFRAG_BRIEF_HEADING, ''];
+  if (reasons.length) {
+    lines.push(`Level: ${h.level}. worca flags this scope for the reasons below — the defragment is finished only when none of them still holds ` +
+      '(a write-count or failed-write reason clears by itself when this run ends; every other one needs your edits):', '');
+    for (const r of reasons) lines.push(`- ${flattenLine(r)}`);
+  } else {
+    lines.push(`Level: ${h.level}. No threshold is crossed — keep it that way.`);
+  }
+  lines.push('',
+    `Budgets for this scope: always-on memory (files WITHOUT \`paths\` — loaded into every agent's context) under ${T.alwaysOnBytes} bytes — ` +
+    `now ${h.alwaysOnBytes} in ${plural(h.alwaysOnFiles, 'file')}; fewer than ${T.files} files — now ${h.files}; ` +
+    `each file under ${soft} bytes (hard cap ${hard}); all files together under ${T.bytesPct}% of ${maxFiles} × ${soft} bytes — now ${h.bytes}.`);
+  return `${lines.join('\n')}\n`;
+}
+
 /** Everything a scope view or route needs in one read: the listing, the counters and the health. */
 export async function memoryScopeReport(root, scope, caps, { onError } = {}) {
   const entries = await listMemory(root, scope, { onError });

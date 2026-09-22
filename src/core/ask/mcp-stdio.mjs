@@ -25,6 +25,7 @@ import { createAskTools, AskToolError } from './tools.mjs';
 import { defaultToolDeps } from './tool-deps.mjs';
 import { defaultWorktreeDeps } from './worktree-deps.mjs';
 import { defaultMemoryDeps } from './memory-deps.mjs';
+import { defaultScriptDeps } from './script-deps.mjs';
 import { defaultCommentDeps } from './comment-deps.mjs';
 import { defaultWorkflowDeps } from './workflow-deps.mjs';
 import { defaultMetricsDeps } from './metrics-deps.mjs';
@@ -126,6 +127,9 @@ export async function main({ argv = process.argv.slice(2), env = process.env, st
       ...defaultToolDeps({ threadId }),
       ...defaultWorktreeDeps({ threadId }),
       ...defaultMemoryDeps({ threadId }),
+      // The life signal (already built for propose_workflow's nested classifier): stdin closing
+      // means the turn ended or was stopped, and a bench run still going is stopped with it.
+      ...defaultScriptDeps({ threadId, signal: life.signal }),
       ...defaultCommentDeps(),
       ...defaultWorkflowDeps({ threadId, signal: life.signal }),
       ...defaultMetricsDeps({ threadId }),

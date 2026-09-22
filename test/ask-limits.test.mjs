@@ -122,3 +122,22 @@ test('askLimits() reads the settings fresh on every call (D12) and accepts injec
   assert.deepEqual(askLimits(), { maxTurns: 3, maxBudgetUsd: null }, 'no caching');
   assert.deepEqual(askLimits({ readMaxTurns: () => 9, readMaxBudgetUsd: () => 0.25 }), { maxTurns: 9, maxBudgetUsd: 0.25 });
 });
+
+test('ASK_LIMITS carries the chat script-tool figures (scripts-workbench-design.md §9.1)', () => {
+  assert.equal(ASK_LIMITS.scriptListMaxRows, 200);
+  assert.equal(ASK_LIMITS.scriptSourceDefaultBytes, 60_000, 'get_script pages 60 000 bytes by default');
+  assert.equal(ASK_LIMITS.scriptSourceMaxBytes, 200_000);
+  assert.equal(ASK_LIMITS.scriptLogMaxLines, 200);
+  assert.equal(ASK_LIMITS.scriptLogMaxBytes, 16 * 1024);
+  assert.equal(ASK_LIMITS.scriptOutputMaxBytes, 16 * 1024);
+  assert.equal(ASK_LIMITS.scriptTestDefaultTimeoutSec, 120);
+  assert.equal(ASK_LIMITS.scriptTestMaxTimeoutSec, 600);
+  // A verdict is uncapped by the runner (3 000 issues × 1 KB measured as a 3.2 MB tool result):
+  // the chat keeps a bounded head of it and reports the real count.
+  assert.equal(ASK_LIMITS.scriptVerdictMaxIssues, 50);
+  assert.equal(ASK_LIMITS.scriptResultFieldMaxChars, 2000);
+  // The floor matters: test_script clamps timeoutSec to >= 1, and 1 s is exactly the
+  // engine's MIN_TIMEOUT_MS (1000) — below it the bench would silently fall back to the
+  // script's own timeout.
+  assert.ok(ASK_LIMITS.scriptTestMaxTimeoutSec * 1000 >= 1000);
+});

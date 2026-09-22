@@ -15,7 +15,7 @@
 //   ■ End ← Reviewer.pass → plan-review.md End bound — End's ONLY line
 // Flow nodes never print a start/paused/error line; `skipped` and P8's bookend
 // executions render nothing; `token` events are never rendered.
-import { BOOKEND_EXECUTION_IDS } from '../shared/graph/constants.mjs';
+import { BOOKEND_EXECUTION_IDS, KEYED_KINDS } from '../shared/graph/constants.mjs';
 
 const nodesOf = (m) => ((m && m.graph && m.graph.nodes) || []).filter(Boolean);
 const wiresOf = (m) => ((m && m.graph && m.graph.wires) || []).filter(Boolean);
@@ -76,7 +76,7 @@ export function formatExecLine(ev, manifest, { color = (n, s) => s } = {}) {
     const tail = r.path ? ` → ${base(r.path)}` : (r.value != null ? ` → ${String(r.value)}` : '');
     return `${color('bold', '■')} ${label}${from}${tail}`;
   }
-  if (node && node.kind !== 'agent') {   // a flow card: one dim ✓ line, no ordinal / duration / cost
+  if (node && !KEYED_KINDS.includes(node.kind)) {   // a flow card: one dim ✓ line, no ordinal / duration / cost
     if (ev.status !== 'done') return '';
     return `${color('green', '✓')} ${label}${MARKED_FLOW.has(node.kind) ? flowMarker(node, m, color) : ''}`;
   }
@@ -86,7 +86,9 @@ export function formatExecLine(ev, manifest, { color = (n, s) => s } = {}) {
   const dur = ev.durationMs != null ? `  ${fmtDur(ev.durationMs)}` : '';
   if (ev.status === 'error') return `${color('red', '✗')} ${label}${ord}${dur} — ${ev.error || 'failed'}`;
   if (ev.status !== 'done') return '';   // `skipped` (and anything unknown) renders nothing
-  const cost = ev.costUsd != null ? ` · ${usd(ev.costUsd)}` : '';
+  const cost = node && node.kind === 'script'
+    ? (ev.exitCode != null ? ` · exit ${ev.exitCode}` : '')
+    : (ev.costUsd != null ? ` · ${usd(ev.costUsd)}` : '');
   const verdict = ev.verdict ? (ev.verdict.missing ? ' — no verdict written (treated as clean)' : ev.verdict.hasBlocking ? ' — blocking' : ' — clean') : '';
   return `${color('green', '✓')} ${label}${ord}${dur}${cost}${verdict}`;
 }
@@ -169,7 +171,7 @@ export function formatWorkflowProposal(w) {
   if (cues.length) lines.push(`  ${cues.join(' · ')}`);
   const nodes = p.manifest?.graph?.nodes || [];
   const wires = p.manifest?.graph?.wires || [];
-  const agents = nodes.filter((n) => n.kind === 'agent');
+  const agents = nodes.filter((n) => KEYED_KINDS.includes(n.kind));
   const ordered = Array.isArray(p.order) && p.order.length
     ? p.order.map((id) => agents.find((n) => n.id === id)).filter(Boolean)
     : agents;
@@ -181,4 +183,70 @@ export function formatWorkflowProposal(w) {
   for (const msg of p.warnings || []) lines.push(`  ! ${msg}`);
   if (Number(p.costUsd) > 0) lines.push(`  classifier cost so far: $${Number(p.costUsd).toFixed(2)}`);
   return lines;
+}
+
+// ── ask forms: the CLI's prompt FORMATTING (spec §8) ────────────────────────────
+//
+// The readline loop lives in worca-cc.mjs and every coercion rule lives in P1's
+// coerceInput() — nothing here parses. `field` is one entry of
+// promptFields(ask): { field, label, widget, type, schema, options: [{value,label}],
+// items, itemFields, verdicts, free, default, required, when }. Colour is the
+// caller's, exactly like formatExecLine.
+
+/** How many times the CLI re-offers a form before giving up (MAX_QUESTION_ROUNDS's twin). */
+export const FORM_REPROMPT_MAX = 3;
+
+const isNum = (type) => type === 'number' || type === 'integer';
+
+/** The `, Enter = <default>` / ` [Enter = <default>]` tail, or ''. */
+function defaultHint(field, { bare = false } = {}) {
+  const d = field.default;
+  if (d === undefined || d === null || d === '') return '';
+  const text = Array.isArray(d) ? d.join(', ') : String(d);
+  return bare ? ` [Enter = ${text}]` : `, Enter = ${text}`;
+}
+
+/**
+ * The lines to print for ONE form field, plus its readline prompt. `prompt` is null
+ * for `review-list`: the caller loops field.items and prompts each field.itemFields
+ * entry itself.
+ * @param {object} field one promptFields() entry
+ * @returns {{lines: string[], prompt: string|null}}
+ */
+export function formatFormField(field) {
+  const f = field || {};
+  const label = f.label || f.field;
+  const lines = [`${label}${f.required ? ' *' : ''}`];
+  const choices = Array.isArray(f.options) ? f.options : [];
+  if (choices.length) choices.forEach((o, i) => lines.push(`  ${i + 1}) ${String(o.label)}`));
+
+  if (f.widget === 'review-list') return { lines, prompt: null };
+  const hint = defaultHint(f);
+  if (f.widget === 'toggle' || f.type === 'boolean') return { lines, prompt: `Choose [y/n${hint}]: ` };
+  if (f.widget === 'rank') return { lines, prompt: `Order [comma-separated numbers or ids${hint}]: ` };
+  if (f.type === 'array') return { lines, prompt: `Choose [numbers or values, comma-separated${hint}]: ` };
+  // A `suggest` select (P1 C14) accepts free text beside its suggestions.
+  if (choices.length && f.free) return { lines, prompt: `Choose [number, value or your own text${hint}]: ` };
+  if (choices.length) return { lines, prompt: `Choose [number or value${hint}]: ` };
+  if (isNum(f.type)) return { lines, prompt: `Enter a number${defaultHint(f, { bare: true })}: ` };
+  if (f.widget === 'date') return { lines, prompt: `Enter a date (YYYY-MM-DD)${defaultHint(f, { bare: true })}: ` };
+  return { lines, prompt: `Your answer${defaultHint(f, { bare: true })}: ` };
+}
+
+/** A failed coerceInput() as ONE printable line. P1's message names the problem but not
+ *  the field, because a chat reply prefixes the path instead (X7). */
+export function formatCoerceError(field, res) {
+  const f = field || {};
+  const label = f.label || f.field || '';
+  const message = res && res.message ? String(res.message) : 'invalid value';
+  return label ? `  ${label}: ${message}` : `  ${message}`;
+}
+
+/** P1 validate()/collectAnswer() errors as indented printable lines. */
+export function formatFormErrors(errors) {
+  return (Array.isArray(errors) ? errors : []).map((e) => {
+    const path = e && e.path ? String(e.path) : '';
+    const message = e && e.message ? String(e.message) : 'invalid value';
+    return path ? `  ${path}: ${message}` : `  ${message}`;
+  });
 }

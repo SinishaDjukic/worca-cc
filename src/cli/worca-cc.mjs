@@ -4,7 +4,7 @@
 // CLI entry point. Parses flags, creates a core orchestrator, subscribes to its events,
 // renders a phase tracker + streamed agent logs to the terminal, and drives interactive
 // Q&A (clarify) and loop gates via node:readline. Supports --yes (auto), --mock,
-// --install <dir> (delegates to scripts/install.mjs), ui start|stop|restart|status
+// --install <dir> (delegates to tools/install.mjs), ui start|stop|restart|status
 // (--ui is an alias of `ui start`; see cmdUi),
 // and -v/-V/--version (also the bare word `version`).
 //
@@ -28,6 +28,13 @@ import {
 } from '../core/projects.mjs';
 import { projectKey } from '../core/store.mjs';
 import { formatExecLine, formatGateHeader, formatRunSummary, formatWorkflowProposal } from './render.mjs';
+// Ask forms (spec §8): the prompt FORMATTING lives in render.mjs too. A second import
+// statement, not a longer first one — test/cli-exec-render.test.mjs pins the line above.
+import { formatFormField, formatCoerceError, formatFormErrors, FORM_REPROMPT_MAX } from './render.mjs';
+import { promptFields, projectForm, coerceInput } from '../shared/forms/project.mjs';
+import { whenOk } from '../shared/forms/layout.mjs';
+import { validate } from '../shared/forms/schema.mjs';
+import { collectAnswer } from '../shared/forms/answer.mjs';
 import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
 import { effectiveDebugSpawn } from '../core/settings.mjs';
 import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule } from './schedule.mjs';
@@ -248,6 +255,7 @@ Subcommands:
   plugin <cmd> [...]          Manage plugins: add|install|list|update|remove|purge|enable|
                               disable|doctor|link|reimport|init|validate|exec. See: worca plugin help
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
+  script <cmd> [...]          Manage and test scripts: list|show|new|rm|test. See: worca script help
   config [get|set|unset]      Budget & cost-limit settings
   ui [start|stop|restart|status]
                               Run the web UI (default http://localhost:4317). See: worca ui help
@@ -449,6 +457,113 @@ async function askWorkflow(rl, workflow) {
   }
 }
 
+/** The answer field a P1 error path names: `notes`, `steps[1].verdict` -> `steps`. */
+function fieldOfPath(path) {
+  return String(path || '').split(/[.[]/)[0] || '';
+}
+
+/** The answer schema for ONE field, or null (a stale layout, or a display widget). */
+function fieldSchemaOf(ask, name) {
+  const props = ask && ask.answerSchema && ask.answerSchema.properties;
+  return props && Object.hasOwn(props, name) ? props[name] : null;
+}
+
+/**
+ * Read ONE entry for `f` until it coerces and validates. Returns the value, or
+ * `undefined` for an optional field the user left empty. Coercion is P1's
+ * coerceInput (ruling X7) — the CLI only prints and decides requiredness.
+ */
+async function readFormEntry(rl, f, prompt, indent = '') {
+  for (;;) {
+    const got = coerceInput(f, await question(rl, c('cyan', `${indent}${prompt}`)));
+    if (!got.ok) { out(c('red', `${indent}${formatCoerceError(f, got)}`)); continue; }
+    // coerceInput returns `undefined` for an empty entry meaning "use the default";
+    // applying it is the caller's job, and so is requiredness.
+    if (got.value === undefined) {
+      if (f.default !== undefined) return f.default;
+      if (f.required) { out(c('red', `${indent}  ${f.label || f.field} is required`)); continue; }
+      return undefined;
+    }
+    return got.value;
+  }
+}
+
+/** Prompt ONE field and write it into `values`. */
+async function askFormField(rl, ask, f, values) {
+  const { lines, prompt } = formatFormField(f);
+  for (const line of lines) out(line);
+  for (;;) {
+    const value = await readFormEntry(rl, f, prompt);
+    if (value === undefined) { delete values[f.field]; return; }
+    const schema = fieldSchemaOf(ask, f.field);
+    if (schema) {
+      const v = validate(schema, value);
+      if (!v.ok) {
+        for (const line of formatFormErrors(v.errors.map((e) => ({ ...e, path: e.path || f.field })))) out(c('red', line));
+        continue;
+      }
+    }
+    values[f.field] = value;
+    return;
+  }
+}
+
+/** A review-list: one row per bound item, each row prompting the field's itemFields. */
+async function askReviewList(rl, f, values) {
+  const { lines } = formatFormField(f);
+  for (const line of lines) out(line);
+  const rows = [];
+  for (const item of (Array.isArray(f.items) ? f.items : [])) {
+    out(`  ${item.label || item.id}`);
+    const row = { id: item.id };
+    for (const sub of (Array.isArray(f.itemFields) ? f.itemFields : [])) {
+      const { lines: subLines, prompt } = formatFormField(sub);
+      for (const line of subLines) out(`  ${line}`);
+      const value = await readFormEntry(rl, sub, prompt, '  ');
+      if (value !== undefined) row[sub.field] = value;
+    }
+    rows.push(row);
+  }
+  values[f.field] = rows;
+}
+
+/**
+ * Ask ONE kind:'form' question interactively (spec §8). Prints P1's text projection
+ * — display widgets as text, files as `rel (mime, size)` — then prompts field by
+ * field in LAYOUT order, honouring `when` as answers accumulate (a field that
+ * becomes hidden loses its value and is not required). Each entry goes through P1's
+ * coerceInput + validate; the whole set through collectAnswer, which drops hidden
+ * fields, strips unknown keys and treats "" as missing. Returns { values }.
+ * Re-offers from the first offending field, at most FORM_REPROMPT_MAX times.
+ */
+async function askForm(rl, ask) {
+  out('');
+  const projected = projectForm(ask).split('\n');
+  out(c('bold', `? ${projected[0]}`));
+  for (const line of projected.slice(1)) out(line);
+  const fields = promptFields(ask);
+  const values = {};
+  let from = 0;
+  for (let pass = 1; ; pass++) {
+    for (let i = from; i < fields.length; i++) {
+      const f = fields[i];
+      if (!whenOk(f.when, values)) { delete values[f.field]; continue; }
+      if (f.widget === 'review-list') await askReviewList(rl, f, values);
+      else await askFormField(rl, ask, f, values);
+    }
+    const collected = collectAnswer(ask, ask.answerSchema, values);
+    if (!collected.errors.length) return { values: collected.values };
+    for (const line of formatFormErrors(collected.errors)) out(c('red', line));
+    if (pass >= FORM_REPROMPT_MAX) {
+      throw new Error(`form "${ask.form}" is still invalid after ${FORM_REPROMPT_MAX} attempts`);
+    }
+    const bad = new Set(collected.errors.map((e) => fieldOfPath(e.path)));
+    const first = fields.findIndex((f) => bad.has(f.field) && whenOk(f.when, values));
+    from = first >= 0 ? first : 0;
+    for (let i = from; i < fields.length; i++) delete values[fields[i].field];
+  }
+}
+
 // ── shared drive loop ────────────────────────────────────────────────────────────
 
 /**
@@ -613,6 +728,37 @@ async function attachAndDrive(orch, flags, start) {
         out(c('yellow', c('bold', `${agent || 'Agent'} has questions:`)));
         const payload = await askClarify(rl, questions || []);
         orch.answer(id, payload);
+      } else if (kind === 'form') {
+        if (payload.surface === 'web') {
+          // Spec §8 (as corrected by ruling X11) lets a form declare that a text
+          // answer is meaningless. Chat prints it and keeps waiting — a chat run
+          // lives in ui/server.mjs's runs Map and a browser can answer it. A CLI
+          // run owns its orchestrator in-process, and `question-resolved` is a
+          // browser-only WebSocket broadcast, so NOTHING here can ever answer it.
+          // Waiting would hang forever with the pipelines row left `running`
+          // (MAJ-7). Print what was asked, say where it is answered, abandon.
+          out('');
+          const projected = projectForm(payload).split('\n');
+          out(c('bold', `? ${projected[0]}`));
+          for (const line of projected.slice(1)) out(line);
+          out(c('yellow', 'This form is answered in the worca web UI.'));
+          abandonAnswer(new Error(`form "${payload.form}" is web-only`));
+        } else {
+          out(c('yellow', c('bold', `${agent || 'Agent'} needs a form answered:`)));
+          for (let attempt = 1; ; attempt++) {
+            const answer = await askForm(rl, payload);
+            try {
+              orch.answer(id, answer);
+              break;
+            } catch (err) {
+              if (!err || err.code !== 'INVALID_ANSWER') throw err;
+              for (const line of formatFormErrors(err.errors)) out(c('red', line));
+              if (attempt >= FORM_REPROMPT_MAX) {
+                throw new Error(`form "${payload.form}" was rejected ${attempt} times`);
+              }
+            }
+          }
+        }
       }
     } catch (err) {
       process.stderr.write(`Failed to read answer: ${err?.message || err}\n`);
@@ -879,9 +1025,9 @@ async function cmdUi(argv) {
   return uiStart(a);
 }
 
-/** Delegate to scripts/install.mjs, forwarding the target dir and any passthrough args. */
+/** Delegate to tools/install.mjs, forwarding the target dir and any passthrough args. */
 function runInstall(targetDir, passthrough) {
-  const script = join(REPO_ROOT, 'scripts', 'install.mjs');
+  const script = join(REPO_ROOT, 'tools', 'install.mjs');
   const args = [script, targetDir, ...passthrough];
   const child = spawn(process.execPath, args, { stdio: 'inherit' });
   return new Promise((res) => {
@@ -1283,7 +1429,11 @@ Usage:
   worca plugin link <dir>                         Dev mode: use a local dir as "current"
   worca plugin reimport <name>                    Re-read the plugin's pipeline templates (a linked dir is live-edited)
   worca plugin init <name> [--dir <D>] [--with task-source,agents,skills,workflows]
-  worca plugin validate <dir> [--strict]          Lint a plugin dir (--strict: unknown fields error)
+  worca plugin new-script <key> [--runtime <runtime>] [--dir <plugin dir>]
+                                                  Scaffold scripts/<key>: sidecar, source and one
+                                                  sample case (runtimes: worca script help)
+  worca plugin validate <dir> [--strict] [--run-cases]   Lint a plugin dir (--strict: unknown fields error;
+                                                  --run-cases: run every shipped script case)
   worca plugin exec <name> <sourceId> <op> [--args '<json>'] [--profile <id>] [--inspect]   Debug one connector op
   worca plugin channel <name> <channelId> [--check] [--inspect]            Run a chat channel worker in the
                                                   foreground (typed lines = simulated inbound); --check runs
@@ -1311,7 +1461,7 @@ shareable JSON, or as a Worca plugin) and import one shared as JSON
 Usage:
   worca workflow list                                List workflows (id, name, domain)
   worca workflow export <id> [options]               Export a workflow (see --format)
-  worca workflow import <file> [--name <name>]       Import a JSON export into your library ('-' = stdin)
+  worca workflow import <file> [--name <name>] [--accept-scripts]   Import a JSON export into your library ('-' = stdin); --accept-scripts confirms script commands
 
 Export formats (--format):
   claude (default)         A runnable Claude Code skill tree under <dest>/.claude/
@@ -1342,8 +1492,9 @@ Export always prints the plan first, then applies (unless --dry-run). A re-expor
 of an unchanged workflow is an all-no-op. Exit codes: 0 ok, 1 failure, 2 usage/validation errors.
 `;
 
-/** Tiny per-verb arg parser: positionals plus declared --value / --bool flags. */
-function pluginArgs(argv, valueFlags = [], boolFlags = []) {
+/** Tiny per-verb arg parser: positionals plus declared --value / --bool flags.
+ *  A `repeatFlags` entry keeps EVERY occurrence, as an array (`--param`, `--input`). */
+function pluginArgs(argv, valueFlags = [], boolFlags = [], repeatFlags = []) {
   const out = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     let a = argv[i];
@@ -1353,7 +1504,12 @@ function pluginArgs(argv, valueFlags = [], boolFlags = []) {
       inline = a.slice(eq + 1);
       a = a.slice(0, eq);
     }
-    if (valueFlags.includes(a)) {
+    if (repeatFlags.includes(a)) {
+      const v = inline !== undefined ? inline : argv[++i];
+      if (v === undefined) fail(`Flag ${a} requires a value.`);
+      const name = a.slice(2);
+      (out[name] || (out[name] = [])).push(v);
+    } else if (valueFlags.includes(a)) {
       const v = inline !== undefined ? inline : argv[++i];
       if (v === undefined) fail(`Flag ${a} requires a value.`);
       out[a.slice(2)] = v;
@@ -1390,6 +1546,7 @@ function contribSummary(x) {
     [n(b.taskSources), 'source', 'sources'],
     [n(b.chatChannels), 'chat channel', 'chat channels'],
     [n(b.agents), 'agent', 'agents'],
+    [n(b.scripts), 'script', 'scripts'],
     [n(b.skills), 'skill', 'skills'],
     [n(b.workflows), 'workflow', 'workflows'],
   ]
@@ -1399,7 +1556,7 @@ function contribSummary(x) {
 }
 
 /** Print the post-export install inventory (spec §6.1 consent items). */
-function printInventory(inv) {
+async function printInventory(inv) {
   const i = inv || {};
   for (const s of i.taskSources || []) {
     out(`  task source: ${s.id} (${s.displayName})${s.secrets?.length ? ` — secrets: ${s.secrets.join(', ')}` : ''}`);
@@ -1411,7 +1568,22 @@ function printInventory(inv) {
   }
   for (const a of i.agents || []) {
     out(`  agent: ${a.key}${a.tools?.length ? ` (tools: ${a.tools.join(', ')})` : ''}`);
+    const forms = Array.isArray(a.forms) ? a.forms : [];
+    if (forms.length) {
+      const types = Array.isArray(a.fileTypes) ? a.fileTypes : [];
+      out(`    ${forms.length} form${forms.length === 1 ? '' : 's'}: ${forms.join(', ')}`
+        + (types.length ? ` — may display ${types.join(', ')} from the run folder` : ''));
+    }
   }
+  for (const s of i.scripts || []) {
+    out(`  script: ${s.key} (${s.runtime}${s.command ? `, ${s.command}` : s.file ? `, ${s.file}` : ''})`);
+  }
+  // What ships in one line, plus the host-fact notice when it applies (§8.1).
+  const { scriptsSummary, pythonNoticeFor } = await import('../core/plugin-store.mjs');
+  const summary = scriptsSummary(i.scripts);
+  if (summary) out(`  ${summary}`);
+  const notice = await pythonNoticeFor(i.scripts);
+  if (notice) out(c('yellow', `  ${notice}`));
   for (const s of i.skills || []) out(`  skill: ${s}`);
   for (const w of i.workflows || []) out(`  workflow: ${w}`);
   if (i.depCount != null) out(`  npm dependencies: ${i.depCount}`);
@@ -1462,7 +1634,7 @@ async function pluginInit(rest) {
     name,
     version: '0.1.0',
     description: 'Scaffolded worca plugin — edit me',
-    engines: { 'worca-cc-api': '>=3 <4' },
+    engines: { 'worca-cc-api': '>=4 <5' },
   };
   if (withParts.includes('task-source')) {
     manifestObj.taskSources = [{
@@ -1600,6 +1772,104 @@ async function pluginInit(rest) {
   return 0;
 }
 
+/** `worca plugin new-script <key>` — the script half of the scaffold (spec §6):
+ *  sidecar + source + one sample case, all three in the shape `worca plugin
+ *  validate` accepts, so a plugin author never hand-rolls a meta v2 file. */
+async function pluginNewScript(rest) {
+  const { SCRIPT_RUNTIMES, validateScriptMetaV2, normalizeScriptMeta } = await import('../shared/graph/script-meta.mjs');
+  const a = pluginArgs(rest, ['--runtime', '--dir'], []);
+  const key = a._[0];
+  if (!key) fail(`Usage: worca plugin new-script <key> [--runtime ${SCRIPT_RUNTIMES.join('|')}] [--dir <plugin dir>]`);
+  const runtime = a.runtime || 'node';
+  if (!SCRIPT_RUNTIMES.includes(runtime)) fail(`--runtime must be one of ${SCRIPT_RUNTIMES.join(', ')} (got ${runtime})`);
+
+  const target = resolve(process.cwd(), a.dir || '.');
+  const { existsSync } = await import('node:fs');
+  if (!existsSync(join(target, 'worca-cc-plugin.json'))) {
+    process.stderr.write(`worca plugin new-script: ${target} is not a plugin folder (no worca-cc-plugin.json) `
+      + '— scaffold one with: worca plugin init <name>\n');
+    return 2;
+  }
+
+  const tpl = await import('../shared/graph/script-templates.mjs');
+  // Line endings belong to the writer: the store's own rule (CRLF for a .cmd, LF
+  // for a .sh), so this scaffold and `worca script new` put the same bytes on disk.
+  const { programText } = await import('../core/script-store.mjs');
+  const meta = tpl.scriptMetaTemplate(key, runtime);
+  // The key gate is the normalizer's, not a second regex: one source of truth.
+  const { errors } = validateScriptMetaV2(meta);
+  if (errors.length) {
+    for (const e of errors) process.stderr.write(`worca plugin new-script: ${e}\n`);
+    return 2;
+  }
+
+  // A key the HOST would never load is refused at the scaffold, not discovered
+  // after install: the reserved route segments and the Windows device stems (the
+  // store's own gate), and a key a built-in script or a built-in agent already
+  // holds — the registry drops the plugin's copy on every host (D16, builtin > plugin).
+  // Only the BUILT-IN layers are read: the author's user layer says nothing about
+  // the recipient's machine.
+  const { assertKeyAllowed } = await import('../core/script-store.mjs');
+  try { assertKeyAllowed(key); } catch (e) {
+    process.stderr.write(`worca plugin new-script: ${e.message}\n`);
+    return 2;
+  }
+  const { loadScriptRegistry } = await import('../core/script-registry.mjs');
+  const { loadAgentRegistry } = await import('../core/agent-registry.mjs');
+  const lower = key.toLowerCase();
+  const heldBy = (reg) => Object.keys(reg).find((k) => k.toLowerCase() === lower);
+  const builtinScript = heldBy(loadScriptRegistry({ userScriptsDir: null, includePlugins: false, agentKeys: null }));
+  const builtinAgent = heldBy(loadAgentRegistry(undefined, { userAgentsDir: null, includePlugins: false }));
+  if (builtinScript || builtinAgent) {
+    process.stderr.write(`worca plugin new-script: "${key}" is taken by the built-in ${builtinScript ? 'script' : 'agent'} `
+      + `"${builtinScript || builtinAgent}" — a plugin script with that key is never loaded; pick another key\n`);
+    return 2;
+  }
+  if (existsSync(join(target, 'agents', `${key}.meta.json`))) {
+    process.stderr.write(`worca plugin new-script: this plugin already ships an agent "${key}" `
+      + '— scripts and agents share one namespace, so pick another key\n');
+    return 2;
+  }
+
+  const files = new Map();
+  files.set(`${key}.meta.json`, JSON.stringify(meta, null, 2) + '\n');
+  if (runtime === 'shell') {
+    // BOTH halves: on a Windows host the runner hands the platform's entry to
+    // cmd.exe, which cannot run a .sh (§10) — and a shared plugin must run on every OS.
+    files.set(`${key}.sh`, programText('shell', tpl.scriptSourceTemplate(runtime)));
+    files.set(`${key}.cmd`, programText('shell', tpl.scriptSourceTemplate(runtime, { win32: true }), { win32: true }));
+  } else {
+    files.set(`${key}.${runtime === 'python' ? 'py' : 'mjs'}`, tpl.scriptSourceTemplate(runtime));
+  }
+  // The sample is built from the NORMALIZED meta, so the case that ships is the
+  // one `worca plugin validate --run-cases` will run.
+  files.set(`${key}.tests.json`, JSON.stringify(tpl.sampleCasesTemplate(normalizeScriptMeta(meta).meta), null, 2) + '\n');
+
+  const dir = join(target, 'scripts');
+  for (const name of files.keys()) {
+    if (existsSync(join(dir, name))) {
+      process.stderr.write(`worca plugin new-script: scripts/${name} already exists in ${target}\n`);
+      return 1;                                        // nothing written: every target is checked first
+    }
+  }
+  const { mkdir, writeFile, chmod } = await import('node:fs/promises');
+  await mkdir(dir, { recursive: true });
+  for (const [name, text] of files) {
+    await writeFile(join(dir, name), text, 'utf8');
+    out(`created\t${join(dir, name)}`);
+  }
+  if (runtime === 'shell') {
+    try { await chmod(join(dir, `${key}.sh`), 0o755); } catch { /* Windows has no mode bits */ }
+  }
+
+  const { validatePluginDir } = await import('../core/plugin-manifest.mjs');
+  const v = validatePluginDir(target);
+  for (const p of v.problems) process.stderr.write(`${p.level}: ${p.message}\n`);
+  if (!v.ok) return 1;
+  out(`next: worca plugin validate ${target} --run-cases`);
+  return 0;
+}
+
 /** `worca plugin <verb> …` — dispatch. */
 async function cmdPlugin(argv) {
   const verb = argv[0];
@@ -1680,7 +1950,7 @@ async function cmdPlugin(argv) {
         }
         const res = await store.installPlugin({ repoUrl, subdir: entry.subdir, name, sha, ...(marketplace ? { marketplace } : {}) });
         out('installed:');
-        printInventory(res.inventory);
+        await printInventory(res.inventory);
         printIgnored(res.ignored);
         return 0;
       }
@@ -1823,18 +2093,57 @@ async function cmdPlugin(argv) {
       case 'init':
         return await pluginInit(rest);
 
+      case 'new-script':
+        return await pluginNewScript(rest);
+
       case 'validate': {
-        const a = pluginArgs(rest, [], ['--strict']);
+        const a = pluginArgs(rest, [], ['--strict', '--run-cases']);
         const dir = a._[0];
-        if (!dir) fail('Usage: worca plugin validate <dir> [--strict]');
-        const v = manifestMod.validatePluginDir(resolve(process.cwd(), dir), { strict: !!a.strict });
+        if (!dir) fail('Usage: worca plugin validate <dir> [--strict] [--run-cases]');
+        const abs = resolve(process.cwd(), dir);
+        const v = manifestMod.validatePluginDir(abs, { strict: !!a.strict });
         for (const p of v.problems) {
           out(`${p.level === 'error' ? c('red', 'error') : c('yellow', 'warn ')}: ${p.message}`);
         }
-        if (!v.ok) return 2;
+        if (!v.ok) return 2;                    // a dir that does not lint never runs its cases
         const warns = v.problems.length;
         out(`OK: ${v.manifest.name}${warns ? ` (${warns} warning${warns === 1 ? '' : 's'})` : ''}`);
-        return 0;
+        if (!a['run-cases']) return 0;
+        // --run-cases: every SHIPPED case through the real bench, scratch cwd (§8.1),
+        // under the two rules `worca script test` runs by: a signal STOPS the child tree
+        // instead of orphaning it (benchStopper), and the streamed lines can pass the
+        // 64 KiB pipe buffer — a CI log IS a pipe — so the exit code returns flushed.
+        const { runPluginScriptCases } = await import('../core/plugin-script-cases.mjs');
+        return await flushed((async () => {
+          const stopper = benchStopper();
+          let r;
+          try {
+            r = await runPluginScriptCases(abs, {
+              onBench: stopper.onBench,
+              stopRequested: stopper.requested,
+              // What the script printed is the evidence when a case goes red in CI.
+              onLine: (ev) => process.stderr.write(`[${ev.key}/${ev.caseId}] ${String(ev.text || '').replace(/\n$/, '')}\n`),
+            });
+          } finally {
+            stopper.release();
+          }
+          for (const p of r.problems) out(`${c('yellow', 'warn ')}: ${p}`);
+          for (const s of r.scripts) {
+            for (const k of s.cases) {
+              out(`${k.pass ? c('green', '✓') : c('red', '✗')} ${s.key}/${k.caseId}`
+                + `\t${k.status}\t${(k.durationMs / 1000).toFixed(1)}s${k.checked ? '' : '\tno expectation'}`);
+              for (const d of k.diffs) out(`    ${d}`);
+            }
+          }
+          const total = r.passed + r.failed + r.unchecked;
+          out(total ? `${r.passed} passed, ${r.failed} failed, ${r.unchecked} unchecked` : 'no shipped cases');
+          if (r.stopped) {
+            // Nothing past the stopped case ran: 2, like a stopped `worca script test`.
+            process.stderr.write('worca plugin validate: stopped — the remaining cases did not run\n');
+            return 2;
+          }
+          return r.failed ? 1 : 0;
+        })());
       }
 
       case 'exec': {
@@ -1999,7 +2308,7 @@ async function cmdWorkflow(argv) {
         return 0;
       }
       case 'import': {
-        const a = pluginArgs(rest, ['--name'], []);
+        const a = pluginArgs(rest, ['--name'], ['--accept-scripts']);
         const file = a._[0];
         if (!file) fail('Usage: worca workflow import <file> [--name <name>]');
         const { readFile } = await import('node:fs/promises');
@@ -2012,7 +2321,15 @@ async function cmdWorkflow(argv) {
         let obj;
         try { obj = JSON.parse(text); } catch (e) { process.stderr.write(`worca workflow import: ${file} is not valid JSON (${e.message})\n`); return 2; }
         try {
-          const r = await share.importGraphWorkflow(obj, { name: a.name });
+          // D18: a shared workflow may carry commands that run with worca's privileges — show them once.
+          const dry = await share.importGraphWorkflow(obj, { name: a.name, dryRun: true });
+          if (dry.scriptNodes.length && !a['accept-scripts']) {
+            process.stderr.write(share.formatScriptNodes(dry.scriptNodes));
+            process.stderr.write('worca workflow import: re-run with --accept-scripts to import a workflow that runs these commands\n');
+            return 2;
+          }
+          // Reaching here means: no script commands, or the user passed the flag after seeing them above.
+          const r = await share.importGraphWorkflow(obj, { name: a.name, acceptScripts: a['accept-scripts'] === true });
           out(`imported\t${r.workflow.id}\t${r.workflow.name}`);
           if (r.renamed) out(c('yellow', `renamed: "${r.requestedName}" was already taken — saved as "${r.workflow.name}"`));
           for (const w of r.warnings || []) out(`${c('yellow', 'warn')}\t${formatIssue(w)}`);
@@ -2059,6 +2376,7 @@ async function cmdWorkflow(argv) {
           for (const p of r.updated) out(`${c('cyan', 'update')}\t${p}`);
           for (const p of r.noop) out(`${c('gray', 'no-op')}\t${p}`);
           for (const s of r.skipped) out(`${c('gray', 'skip')}\t${s.path}\t(${s.reason})`);
+          for (const s of r.scripts || []) out(`${c('cyan', 'script')}\t${s.key}\t${s.runtime}`);
           for (const w of r.warnings || []) out(`${c('yellow', 'warn')}\t${w}`);
           for (const p of r.written) out(`${c('green', 'wrote')}\t${p}`);
           if (r.validation && !r.validation.ok) {
@@ -2111,6 +2429,439 @@ async function cmdWorkflow(argv) {
     process.stderr.write(`worca workflow ${verb}: ${err && err.message ? err.message : err}\n`);
     return 1;
   }
+}
+
+// ── script subcommands ─────────────────────────────────────────────────────────
+// `worca script …` (spec §6). Core only: the store and the bench run in THIS
+// process, so a script is listed, written and tested with no server running.
+// Imports stay lazy (mirrors cmdPlugin) so a pipeline run never loads them.
+// Exit codes: 0 ok, 1 failure, 2 usage/validation errors — except `test`, whose
+// codes are the RUN's verdict (scriptTest, Task 3).
+
+function scriptHelp(runtimes) {
+  return `worca script — registered scripts (script cards): list, author, test
+
+Usage:
+  worca script list [--json]                      Every registered script (key, name, origin, runtime, cases)
+  worca script show <key> [--json]                One script: meta, resolved file or command, source
+  worca script new <key> [--runtime ${runtimes.join('|')}] [--from <key>]
+                                                  A user script from the template, or a copy of another
+  worca script rm <key>                           Delete a user script
+  worca script test <key> [options]               Run it once in a bench folder
+
+worca script test options:
+  --case <id>             Run one saved case (not combinable with the value flags below)
+  --all                   Run every saved case, in order
+  --param <id>=<value>    Param value; repeatable
+  --input <port>=<value>  Bound input; repeatable. <value> is text, @<file>, or
+                          fired for a void port; @@ starts a literal @
+  --cwd <dir>             Working dir for this run (default: a scratch folder)
+  --project <key>         Working dir = a registered project's checkout
+  --timeout <s>           Timeout in seconds, 1 to 86400 (default: the script's own)
+  --json                  The full result as JSON on stdout
+
+Lines stream to stderr; the result goes to stdout.
+worca script test exit codes: with an expectation 0 all passed, 1 any failed; without
+one 0 clean, 1 blocking; 2 an execution error, a timeout, bad arguments or an unknown
+key. Every other verb: 0 ok, 1 failure, 2 usage/validation errors.
+`;
+}
+
+/** The ports line for `show`: a config-ported sidecar has none of its own. */
+const scriptPortLine = (m) => (m.ports === 'config' ? 'ports per card' : (m.portSummary || ''));
+
+/** `--param <id>=<value>` / `--input <port>=<value>` -> [name, value]; the
+ *  value keeps every `=` after the first. */
+function splitAssign(flag, spec) {
+  const eq = String(spec).indexOf('=');
+  if (eq <= 0) fail(`${flag} must be <name>=<value> (got "${spec}")`);
+  return [String(spec).slice(0, eq), String(spec).slice(eq + 1)];
+}
+
+/** argv is all strings; V22 checks the sidecar's declared type, so coerce here. */
+function coerceParamValue(def, raw) {
+  if (def.type === 'number') {
+    // Number('') and Number('  ') are a finite 0: a blank is not a number.
+    const n = String(raw).trim() === '' ? NaN : Number(raw);
+    if (!Number.isFinite(n)) return { error: `--param ${def.id}: "${raw}" is not a number` };
+    return { value: n };
+  }
+  if (def.type === 'boolean') {
+    if (/^(1|true|yes|on)$/i.test(raw)) return { value: true };
+    if (/^(0|false|no|off)$/i.test(raw)) return { value: false };
+    return { error: `--param ${def.id}: "${raw}" is not true or false` };
+  }
+  return { value: String(raw) };
+}
+
+/** `--input <port>=<value>` by the port's declared TYPE (spec §6): a void port
+ *  takes `fired`; a non-void port takes @<file>, @@<literal @…> or plain text.
+ *  A path resolves against the SHELL's cwd with both separators (Windows). */
+async function readInputSpec(port, raw) {
+  if (port.type === 'void') {
+    if (raw !== 'fired') return { error: `--input ${port.id}: a void port takes "fired" (got "${raw}")` };
+    return { value: { fired: true } };
+  }
+  if (raw.startsWith('@@')) return { value: { text: raw.slice(1) } };
+  if (raw.startsWith('@')) {
+    const path = resolve(process.cwd(), raw.slice(1));
+    const { readFile, stat } = await import('node:fs/promises');
+    const { MAX_CASE_INPUT_BYTES } = await import('../shared/graph/script-cases.mjs');
+    try {
+      // The bench refuses an input over its cap anyway; size it BEFORE reading, so
+      // a mistyped path to a huge file is a sentence and not a whole-file read.
+      if ((await stat(path)).size > MAX_CASE_INPUT_BYTES) {
+        return { error: `--input ${port.id}: ${path} is over ${MAX_CASE_INPUT_BYTES} bytes` };
+      }
+      return { value: { text: await readFile(path, 'utf8') } };
+    } catch (e) { return { error: `--input ${port.id}: cannot read ${path} (${e.message})` }; }
+  }
+  return { value: { text: raw } };
+}
+
+/** spec §6: the RUN's verdict is the exit code. A STOPPED run verified nothing:
+ *  it is 2 even under an expectation, which would otherwise read it as a failed
+ *  check (1) — a CI cancel is not a red test. */
+function benchExitCode(r) {
+  if (r.status === 'stopped') return 2;
+  if (r.expect) return r.expect.pass ? 0 : 1;
+  if (r.status === 'clean') return 0;
+  if (r.status === 'blocking') return 1;
+  return 2;                        // error, timeout, stopped
+}
+
+/** One run: the status line, then what it fired, expected, wrote and warned. */
+function printBenchResult(key, r) {
+  const dur = `${((r.durationMs || 0) / 1000).toFixed(1)}s`;
+  const exit = r.exitCode == null ? '' : `\texit ${r.exitCode}`;
+  out(`${key}\t${r.runtime}\t${r.status}${exit}\t${dur}${r.draft ? '\tdraft' : ''}`);
+  if (r.summary) out(`  ${r.summary}`);
+  if ((r.fired || []).length) out(`  fired: ${r.fired.join(', ')}`);
+  // A STOPPED run verified nothing: an expectation it happens to satisfy (one that
+  // names no verdict) must not print as a pass beside exit code 2.
+  if (r.expect && r.status !== 'stopped') {
+    out(`  expect: ${r.expect.pass ? c('green', 'pass') : c('red', 'fail')}`);
+    for (const d of r.expect.diffs || []) out(`    ${d}`);
+  }
+  // Only what FIRED: two conditional outputs may share one filename (the built-in
+  // shell's `log` and `fail`), so listing a port that did not fire would show the
+  // other port's bytes under its name. A failed run fires nothing — there, whatever
+  // was written is the evidence.
+  const fired = new Set(r.fired || []);
+  for (const [port, o] of Object.entries(r.outputs || {})) {
+    if (!(fired.has(port) || (r.error && o.bytes))) continue;
+    out(o.type === 'void' ? `  ${port}\tvoid` : `  ${port}\t${o.path}\t${o.bytes} bytes${o.truncated ? '\ttruncated' : ''}`);
+  }
+  if (r.envelopePath) out(`  envelope\t${r.envelopePath}`);
+  if (r.error) {
+    out(`  ${c('red', 'error')}: ${r.error.message}`);
+    for (const l of r.error.tail || []) out(`    ${l}`);
+  }
+  for (const w of r.warnings || []) out(`  ${c('yellow', 'warn')}\t${w}`);
+}
+
+/** --all: one line per case, then the tally. */
+function printCaseRun(key, r) {
+  for (const row of r.cases || []) {
+    const ok = benchExitCode(row.result) === 0;
+    out(`${ok ? c('green', '✓') : c('red', '✗')} ${key}/${row.caseId}\t${row.result.status}`
+      + `\t${((row.result.durationMs || 0) / 1000).toFixed(1)}s`);
+    for (const d of (row.result.expect && row.result.expect.diffs) || []) out(`    ${d}`);
+    if (row.result.error) out(`    ${row.result.error.message}`);
+  }
+  // The bench tallies by the expectation alone. A STOPPED case verified nothing, so
+  // on the CLI it counts as failed whatever its expectation said — the tally has to
+  // agree with the ✗ above and with exit code 2.
+  let { passed, failed, unchecked } = r;
+  for (const row of r.cases || []) {
+    if (row.result.status !== 'stopped') continue;
+    if (!row.result.expect) unchecked -= 1;
+    else if (row.result.expect.pass) passed -= 1;
+    else continue;                                   // already counted as failed
+    failed += 1;
+  }
+  out(`${passed} passed, ${failed} failed, ${unchecked} unchecked`);
+}
+
+// Ctrl+C, a CI cancel (SIGTERM) and a closed terminal (SIGHUP) all STOP a bench
+// run: the bench kills the child tree and resolves `stopped`. Left to the default
+// action the CLI dies and the script — spawned in its own process group, so the
+// terminal's Ctrl+C never reaches it — runs on until its own timeout.
+const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+
+/**
+ * Hold the live bench for as long as a verb runs one, and stop it on a signal.
+ * ONE helper for every verb on the CLI that runs a bench: a consumer without it
+ * orphans the script on Ctrl+C.
+ * @returns {{onBench: Function, requested: () => boolean, release: Function}}
+ */
+function benchStopper() {
+  let live = null;
+  let requested = false;
+  const onSignal = () => { requested = true; if (live) live.stop(); };
+  for (const sig of STOP_SIGNALS) process.on(sig, onSignal);
+  return {
+    // A signal that landed before the bench existed is honoured the moment it does.
+    onBench: (bench) => { live = bench; if (requested) bench.stop(); },
+    requested: () => requested,
+    release: () => { for (const sig of STOP_SIGNALS) process.off(sig, onSignal); },
+  };
+}
+
+/** `worca script test <key> …` — one bench run in THIS process (spec §6). */
+async function scriptTest(rest, store) {
+  const a = pluginArgs(rest, ['--case', '--cwd', '--project', '--timeout'], ['--all', '--json'], ['--param', '--input']);
+  const key = a._[0];
+  if (!key) {
+    fail('Usage: worca script test <key> [--case <id> | --all] [--param id=value]… '
+      + '[--input port=value]… [--cwd <dir> | --project <key>] [--timeout <s>] [--json]');
+  }
+  if (a.case !== undefined && a.all) fail('--case and --all are mutually exclusive');
+  if (a.cwd !== undefined && a.project !== undefined) fail('--cwd and --project are mutually exclusive');
+  // A saved case carries its own setup (spec §4.2). The bench IGNORES the other
+  // fields; a CI gate that passes because a typed flag was dropped is worse.
+  const byCase = a.case !== undefined || a.all === true;
+  const typed = [['--param', a.param], ['--input', a.input], ['--cwd', a.cwd], ['--project', a.project], ['--timeout', a.timeout]]
+    .filter(([, v]) => v !== undefined).map(([f]) => f);
+  if (byCase && typed.length) {
+    fail(`${typed.join(', ')} cannot be combined with ${a.all ? '--all' : '--case'}: a saved case carries its own setup`);
+  }
+
+  const data = await store.readScript(key);
+  if (!data) {
+    process.stderr.write(`worca script test: unknown script "${key}"\n`);
+    return 2;
+  }
+  const meta = data.meta;
+
+  let request;
+  if (a.all) {
+    // The bench REFUSES a Run all with nothing to run (the page never offers the
+    // button then). On the CLI "no cases" is a green no-op, so `worca script test
+    // --all` and `worca plugin validate --run-cases` agree on an empty set (E8).
+    if (!((data.cases || []).length + (data.userCases || []).length)) {
+      process.stderr.write(`no saved cases for "${key}"\n`);
+      if (a.json) process.stdout.write(JSON.stringify({ cases: [], passed: 0, failed: 0, unchecked: 0 }, null, 2) + '\n');
+      return 0;
+    }
+    request = { key, all: true };
+  } else if (a.case !== undefined) {
+    request = { key, caseId: a.case };
+  } else {
+    // A config-ported sidecar (the built-in shell / js) has no ports of its own:
+    // the CLI runs it on the defaults a freshly placed card would carry (E5).
+    const config = meta.ports === 'config';
+    const ports = config
+      ? (meta.defaultPorts || { inputs: [], outputs: [] })
+      : { inputs: meta.inputs || [], outputs: meta.outputs || [] };
+    const params = {};
+    for (const spec of a.param || []) {
+      const [id, raw] = splitAssign('--param', spec);
+      const def = (meta.params || []).find((p) => p.id === id);
+      if (!def) {
+        process.stderr.write(`worca script test: unknown param "${id}" for script "${key}"\n`);
+        return 2;
+      }
+      const r = coerceParamValue(def, raw);
+      if (r.error) { process.stderr.write(`worca script test: ${r.error}\n`); return 2; }
+      params[id] = r.value;
+    }
+    const inputs = {};
+    for (const spec of a.input || []) {
+      const [id, raw] = splitAssign('--input', spec);
+      const port = (ports.inputs || []).find((p) => p.id === id);
+      if (!port) {
+        process.stderr.write(`worca script test: unknown input port "${id}" for script "${key}"\n`);
+        return 2;
+      }
+      const r = await readInputSpec(port, raw);
+      if (r.error) { process.stderr.write(`worca script test: ${r.error}\n`); return 2; }
+      inputs[id] = r.value;
+    }
+    let timeoutMs;
+    if (a.timeout !== undefined) {
+      // The bench IGNORES a timeout under its floor and clamps one over its cap
+      // (script-meta MIN_TIMEOUT_MS / MAX_TIMEOUT_MS) — a typed flag must not vanish.
+      const s = Number(a.timeout);
+      if (!Number.isFinite(s) || s < 1 || s > 86400) fail(`--timeout must be between 1 and 86400 seconds (got ${a.timeout})`);
+      timeoutMs = Math.round(s * 1000);
+    }
+    const cwd = a.cwd !== undefined ? { kind: 'dir', dir: resolve(process.cwd(), a.cwd) }
+      : a.project !== undefined ? { kind: 'project', projectKey: a.project }
+        : { kind: 'scratch' };
+    request = { key, params, inputs, cwd, ...(config ? { ports } : {}), ...(timeoutMs ? { timeoutMs } : {}) };
+  }
+
+  const { runBenchOnce } = await import('../core/script-bench.mjs');
+  const stopper = benchStopper();          // a signal STOPS the run: `stopped`, exit 2, no orphan
+  let result;
+  try {
+    result = await runBenchOnce(request, {
+      allowDirCwd: true,          // --cwd <dir> is the CLI's alone; the server never sets this
+      // P1c's own hooks: onLine per streamed line, onBench for the live bench so
+      // Ctrl+C kills the child TREE instead of orphaning it (base spec §6.3).
+      onLine: (ev) => {
+        const tag = ev && ev.caseId ? `[${ev.caseId}] ` : '';
+        process.stderr.write(`${tag}${String((ev && ev.text) || '').replace(/\n$/, '')}\n`);
+      },
+      onBench: stopper.onBench,
+    });
+  } catch (e) {
+    // NOT_FOUND / BAD_REQUEST / BUSY: nothing ran (spec §6 — exit 2).
+    process.stderr.write(`worca script test: ${e && e.message ? e.message : e}\n`);
+    return 2;
+  } finally {
+    stopper.release();
+  }
+
+  const multi = Array.isArray(result.cases);
+  const code = multi
+    ? (result.cases || []).reduce((worst, row) => Math.max(worst, benchExitCode(row.result)), 0)
+    : benchExitCode(result);
+  if (a.json) process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+  else if (multi) printCaseRun(key, result);
+  else printBenchResult(key, result);
+  return code;
+}
+
+/** `worca script <verb> …` — dispatch. Store calls are awaited whether or not
+ *  the store returns promises, so the arm survives it going async. */
+async function cmdScript(argv) {
+  const verb = argv[0];
+  const rest = argv.slice(1);
+  const { SCRIPT_RUNTIMES } = await import('../shared/graph/script-meta.mjs');
+  if (!verb || verb === 'help') {
+    process.stdout.write(scriptHelp(SCRIPT_RUNTIMES));
+    return 0;
+  }
+  const store = await import('../core/script-store.mjs');
+  try {
+    switch (verb) {
+      case 'list': {
+        const a = pluginArgs(rest, [], ['--json']);
+        const list = await store.listScripts();
+        if (a.json) {
+          process.stdout.write(JSON.stringify(list, null, 2) + '\n');
+          return 0;
+        }
+        for (const m of list) {
+          out(`${m.key}\t${m.displayName || m.key}\t${m.origin}\t${m.runtime}\t${m.caseCount || 0}`);
+        }
+        return 0;
+      }
+
+      case 'show': {
+        const a = pluginArgs(rest, [], ['--json']);
+        const key = a._[0];
+        if (!key) fail('Usage: worca script show <key> [--json]');
+        const data = await store.readScript(key);
+        if (!data) {
+          process.stderr.write(`worca script show: unknown script "${key}"\n`);
+          return 2;
+        }
+        if (a.json) {
+          process.stdout.write(JSON.stringify(data, null, 2) + '\n');
+          return 0;
+        }
+        const m = data.meta;
+        // 13 = the longest label (`description`) + two spaces, so every value starts in one column.
+        const row = (label, value) => { if (value !== '' && value != null) out(`${label.padEnd(13)}${value}`); };
+        row('key', m.key);
+        row('name', m.displayName || m.key);
+        row('description', m.description);
+        row('origin', m.origin);
+        row('runtime', m.runtime);
+        row('file', data.sourcePath || m.commandResolved || '');
+        row('ports', scriptPortLine(m));
+        row('params', (m.params || []).map((p) => `${p.id}: ${p.type}${p.required ? ' *' : ''}`).join(', '));
+        row('timeout', `${Math.round((m.timeoutMs || 0) / 1000)}s`);
+        row('cases', `${(data.cases || []).length} shipped, ${(data.userCases || []).length} yours`);
+        if (data.source) {
+          out('');
+          process.stdout.write(data.source.endsWith('\n') ? data.source : `${data.source}\n`);
+        }
+        if (data.sourceTruncated) out(c('yellow', `(source truncated — read ${data.sourcePath})`));
+        return 0;
+      }
+
+      case 'new': {
+        const a = pluginArgs(rest, ['--runtime', '--from'], []);
+        const key = a._[0];
+        if (!key) fail(`Usage: worca script new <key> [--runtime ${SCRIPT_RUNTIMES.join('|')}] [--from <key>]`);
+        if (a.from) {
+          // A copy keeps its source's runtime; a typed flag is refused, never dropped (E6).
+          if (a.runtime !== undefined) fail(`--runtime cannot be combined with --from: a copy keeps the runtime of "${a.from}"`);
+          const copy = await store.duplicateScript(a.from, key, 'cli');
+          out(`created\t${copy.meta.key}\t(copy of ${a.from})`);
+          return 0;
+        }
+        const runtime = a.runtime || 'node';
+        if (!SCRIPT_RUNTIMES.includes(runtime)) {
+          fail(`--runtime must be one of ${SCRIPT_RUNTIMES.join(', ')} (got ${runtime})`);
+        }
+        const tpl = await import('../shared/graph/script-templates.mjs');
+        const written = await store.createScript({
+          meta: tpl.scriptMetaTemplate(key, runtime),
+          source: tpl.scriptSourceTemplate(runtime),
+          // A shell script scaffolds BOTH halves: on Windows the runner hands the
+          // platform's entry to cmd.exe, and cmd.exe cannot run a .sh (§10).
+          sourceWin32: runtime === 'shell' ? tpl.scriptSourceTemplate(runtime, { win32: true }) : undefined,
+          by: 'cli',
+        });
+        const { userScriptsDir } = await import('../core/script-registry.mjs');
+        const dir = userScriptsDir();
+        out(`created\t${join(dir, `${key}.meta.json`)}`);
+        const files = typeof written.meta.file === 'string'
+          ? [written.meta.file]
+          : Object.values(written.meta.file || {});
+        for (const f of files) out(`created\t${join(dir, f)}`);
+        return 0;
+      }
+
+      case 'rm': {
+        const a = pluginArgs(rest);
+        const key = a._[0];
+        if (!key) fail('Usage: worca script rm <key>');
+        await store.deleteScript(key);
+        out(`removed\t${key}`);
+        return 0;
+      }
+
+      case 'test':
+        return await scriptTest(rest, store);
+
+      default:
+        fail(`unknown script verb "${verb}" — see: worca script help`);
+    }
+  } catch (err) {
+    process.stderr.write(`worca script ${verb}: ${err && err.message ? err.message : err}\n`);
+    // NOT_FOUND / BAD_REQUEST are what the user typed; BUILTIN, PLUGIN,
+    // DUPLICATE and REFERENCED are refusals about the state of the store.
+    return err && (err.code === 'NOT_FOUND' || err.code === 'BAD_REQUEST') ? 2 : 1;
+  }
+}
+
+/**
+ * stdout and stderr over a PIPE are asynchronous on POSIX, and main() ends in
+ * process.exit(): whatever is still queued past the 64 KiB pipe buffer is cut.
+ * `worca script test --json | jq` got invalid JSON, `worca script show` half a
+ * source. The verb's exit code therefore resolves only once both streams have
+ * flushed (an empty write's callback runs after everything queued before it).
+ * A reader that went away (`| head -1`) is not the verb's failure: its EPIPE
+ * is swallowed and the exit code stays the verb's own.
+ * @param {Promise<number>} codePromise the verb, already running
+ * @returns {Promise<number>}
+ */
+async function flushed(codePromise) {
+  const streams = [process.stdout, process.stderr];
+  const gone = new Set();
+  for (const s of streams) s.on('error', () => gone.add(s));
+  const code = await codePromise;
+  await Promise.all(streams.map((s) => (gone.has(s) ? null : new Promise((res) => {
+    s.once('error', () => res());
+    s.write('', () => res());
+  }))));
+  return code;
 }
 
 // ── metrics subcommand ───────────────────────────────────────────────────────────
@@ -2288,7 +3039,7 @@ async function drainMetricsFlushes() {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow', 'metrics', 'policy', 'schedule', 'models']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'doctor', 'plugin', 'marketplace', 'config', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -2348,6 +3099,7 @@ async function main() {
     if (sub === 'config') return cmdConfig(rest);
     if (sub === 'ui') return cmdUi(rest);
     if (sub === 'workflow') return cmdWorkflow(rest);
+    if (sub === 'script') return flushed(cmdScript(rest));
     if (sub === 'metrics') return cmdMetrics(rest);
     if (sub === 'policy') return cmdPolicy(rest);
     if (sub === 'schedule') return cmdSchedule(rest, { out, c, fail });

@@ -14,6 +14,7 @@ import { parseCommand } from './parser.mjs';
 import { BOOKEND_EXECUTION_IDS } from '../../shared/graph/constants.mjs';
 import { createAllowlistGuard, parseIdList } from './allowlist.mjs';
 import { runRef, fmtUsd, fmtMs } from './renderers.mjs';
+import { promptFields, parseAnswerLine } from '../../shared/forms/project.mjs';
 import { giveUpOption, describePauseReason, pauseConsequences } from '../failure-policy.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
@@ -47,6 +48,7 @@ const HELP_TEXT = [
   '`/approve [*ref]` — continue past a gate · `/retry [*ref]` — another cycle',
   '`/abort [*ref]` — give up on a recovery prompt (pauses the run; nothing is discarded)',
   '`/answer [*ref] <n|text> [| …]` — answer clarify questions (option number, or text for free-text)',
+  '`/answer [*ref] field=value [| field2=a,b]` — answer a form (escape a literal `|`, `,`, `=` or `:` with `\\`)',
   '`/projects` · `/use <name>` — scope commands to one project',
   '`/mute 30m|2h|1d` · `/unmute` — silence notifications for this chat',
   '`/whoami` · `/help`',
@@ -209,7 +211,11 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
         if (cost) lines.push(`   **Cost:** ${cost}`);
       }
       const pq = actions.pendingQuestion(r.runId);
-      if (pq) lines.push(`   ❓ waiting on you — \`/approve ${runRef(r.runId)}\` or \`/answer ${runRef(r.runId)} <n>\``);
+      if (pq) {
+        lines.push(pq.kind === 'form'
+          ? `   ❓ waiting on the \`${pq.form}\` form — \`/answer ${runRef(r.runId)} <field>=<value>\``
+          : `   ❓ waiting on you — \`/approve ${runRef(r.runId)}\` or \`/answer ${runRef(r.runId)} <n>\``);
+      }
       return reply(lines.join('\n'));
     },
 
@@ -262,6 +268,42 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
       if (t.error) return t.error;
       const pq = actions.pendingQuestion(t.run.runId);
       if (!pq) return reply(`\`${runRef(t.run.runId)}\` is not waiting on a question.`, 'warning');
+      const formRef = runRef(t.run.runId);
+      if (pq.kind === 'form') {
+        // Spec §8: `/answer <ref> field=value | field2=a,b`. The grammar itself —
+        // escapes, type-driven comma splitting, `id:verdict[:note]` for a
+        // review-list, the bare positional — is P1's parseAnswerLine (rulings X7,
+        // X8). What lives here is the ref, the refusal, the usage line and the
+        // gate-3 reply. Gate 3 THROWS INVALID_ANSWER (X2) and leaves the ask open.
+        if (pq.surface === 'web') {
+          return reply(`\`${formRef}\` is waiting on the \`${pq.form}\` form, which is answered in the worca web UI.`, 'warning');
+        }
+        const fields = promptFields(pq);
+        const hasRefArg = !!(args[0] && args[0].startsWith('*'));
+        const line = (hasRefArg ? args.slice(1) : args).join(' ').trim();
+        const example = fields.filter((f) => !f.when).slice(0, 3)
+          .map((f) => `${f.field}=${f.type === 'array' ? '<a,b>' : '<value>'}`).join(' | ')
+          || '<field>=<value>';
+        const usage = () => reply(
+          `Reply: \`/answer ${formRef} ${example}\`\nSeparate fields with \`|\`, list values with \`,\`, escape a literal \`|\`, \`,\`, \`=\` or \`:\` with \`\\\`.`,
+          'warning');
+        if (!line) return usage();
+        const parsed = parseAnswerLine(line, pq, fields.length === 1 ? { bareField: fields[0].field } : {});
+        if (parsed.errors.length) {
+          return reply(['Could not read that answer:',
+            ...parsed.errors.map((e) => `• ${e.path ? `\`${e.path}\`: ` : ''}${e.message}`),
+            '', `Reply: \`/answer ${formRef} ${example}\``].join('\n'), 'warning');
+        }
+        try {
+          await actions.answer(t.run.runId, pq.id, { values: parsed.values });
+        } catch (err) {
+          if (!err || err.code !== 'INVALID_ANSWER') throw err;   // the handler's catch owns everything else
+          return reply([`\`${formRef}\` — that answer was rejected:`,
+            ...(Array.isArray(err.errors) ? err.errors : []).map((e) => `• ${e.path ? `\`${e.path}\`: ` : ''}${e.message}`),
+            '', 'The question is still open.'].join('\n'), 'warning');
+        }
+        return reply(`✅ Answered the \`${pq.form}\` form on \`${formRef}\`.`, 'success');
+      }
       if (pq.kind !== 'clarify' && pq.kind !== 'questions') {
         return reply(`\`${runRef(t.run.runId)}\` is waiting on ${pq.kind} — use \`/approve\` or \`/retry\`.`, 'warning');
       }

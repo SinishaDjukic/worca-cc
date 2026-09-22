@@ -14,17 +14,23 @@ import {
   mkdirSync, rmSync, symlinkSync, renameSync, unlinkSync,
 } from 'node:fs';
 import { join, resolve, isAbsolute, sep } from 'node:path';
-import { WORCA_PLUGIN_APIS } from './plugin-api.mjs';
-import { normalizeManifest, validatePluginDir, apiSatisfies, dataContractIssues, apiMismatch } from './plugin-manifest.mjs';
+import { WORCA_PLUGIN_APIS, WORCA_ASK_FORMS_API } from './plugin-api.mjs';
+import { normalizeManifest, validatePluginDir, apiSatisfies, dataContractIssues, apiMismatch, negotiatedApi } from './plugin-manifest.mjs';
 import {
   pluginsRoot, pluginDir, pluginCurrentDir, pluginDataDir, readPluginsLock, writePluginsLock,
   DIR_NAME_RE,
 } from './plugins-lock.mjs';
 import { addPluginRepo, fetchCandidate, exportVersion, repoCacheDir } from './plugin-repo.mjs';
 import {
-  importPluginWorkflows, readPluginWorkflows, removePluginWorkflows, referencedPluginAgents,
+  importPluginWorkflows, readPluginWorkflows, removePluginWorkflows,
+  referencedPluginAgents, referencedPluginScripts,
 } from './plugin-workflows.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
+import { loadScriptRegistry } from './script-registry.mjs';
+import { normalizeCases } from '../shared/graph/script-cases.mjs';
+import { normalizeAskBlock, validateFormDef } from '../shared/forms/form-def.mjs';
+import { fileAccepts } from '../shared/forms/answer.mjs';
+import { normalizeScriptMeta, resolvePlatformValue } from '../shared/graph/script-meta.mjs';
 import { pluginModelSecretStatus } from './plugin-models.mjs';
 import { referencedPluginModels } from './config.mjs';
 import { clearBindingsForPlugin } from './source-bindings.mjs';
@@ -62,8 +68,17 @@ function insideDir(dir, rel) {
  *  reviewer must see where) + requested model secrets, skills, workflows, npm
  *  dep count from the lockfile, and the exact setup commands that would run. */
 export function buildInstallInventory(versionDir) {
-  const manifest = readManifestAt(versionDir)
+  const readManifest = readManifestAt(versionDir);
+  const manifest = readManifest
     ?? { taskSources: [], chatChannels: [], models: [], modelSecrets: [], setup: { node: false, python: null } };
+  // Ask forms are honoured only when the plugin NEGOTIATES plugin API 4: below
+  // it agent-registry.scanLayer strips the block at load and reports it as an
+  // ignored contribution. Consent describes what THIS host will do, so such
+  // forms are not promised here — `worca plugin validate` and the ignored line
+  // are what name them. An unreadable manifest negotiates null and fails
+  // CLOSED, exactly as the registry's plugin layer does (ask-forms spec §10).
+  const formsHonoured = readManifest !== null
+    && Number(negotiatedApi(readManifest.engines?.worcaApi ?? '')) >= WORCA_ASK_FORMS_API;
   const agents = [];
   const aDir = join(versionDir, 'agents');
   if (existsSync(aDir)) {
@@ -76,13 +91,55 @@ export function buildInstallInventory(versionDir) {
       // unvalidated dir (the pre-install preview); an escaping agentFile falls
       // back to the sibling and validatePluginDir refuses the install anyway.
       let mdFile = `${key}.md`;
+      let rawMeta = null;
       try {
-        const af = JSON.parse(readFileSync(join(aDir, f), 'utf8'))?.agentFile;
+        rawMeta = JSON.parse(readFileSync(join(aDir, f), 'utf8'));
+        const af = rawMeta?.agentFile;
         if (typeof af === 'string' && af.trim() && insideDir(aDir, af.trim())) mdFile = af.trim();
-      } catch { /* unreadable sidecar: fall back to the sibling */ }
+      } catch { /* unreadable sidecar: fall back to the sibling, and declare no forms */ }
       let tools = [];
       try { tools = parseFrontmatter(readFileSync(join(aDir, mdFile), 'utf8'))?.tools ?? []; } catch { /* md missing */ }
-      agents.push({ key, tools });
+      // Ask forms (spec §10). Consent states what the reviewer is agreeing to:
+      // how many forms this agent can put on screen, and which file types those
+      // forms may display FROM THE RUN FOLDER. Both are read from the sidecar's
+      // declared schemas — no plugin code runs here, and there is no instance
+      // data at consent time, which is why this is fileAccepts(schema) and not
+      // fileRefs(schema, data). Only forms that pass gate 1 are listed: the host
+      // drops the rest at load, and a consent card must not promise one.
+      const forms = [];
+      const accepts = new Set();
+      const declared = formsHonoured ? normalizeAskBlock(rawMeta?.ask).forms : {};
+      for (const [id, def] of Object.entries(declared)) {
+        if (!validateFormDef(def, { id }).ok) continue;
+        forms.push(id);
+        for (const a of fileAccepts(def.data)) accepts.add(a);
+      }
+      agents.push({ key, tools, forms: forms.sort(), fileTypes: [...accepts].sort() });
+    }
+  }
+  const scripts = [];
+  const scDir = join(versionDir, 'scripts');
+  if (existsSync(scDir)) {
+    for (const f of readdirSync(scDir).filter((x) => x.endsWith('.meta.json')).sort()) {
+      const key = f.slice(0, -'.meta.json'.length);
+      let raw = null;
+      try { raw = JSON.parse(readFileSync(join(scDir, f), 'utf8')); } catch { raw = null; }
+      const { meta } = normalizeScriptMeta(raw || {});
+      // The consent card and the receipt say how much PROOF ships with the
+      // script: a case count the same normalizer would accept (spec §8.1).
+      let cases = 0;
+      const casesFile = join(scDir, `${key}.tests.json`);
+      if (meta && existsSync(casesFile)) {
+        try { cases = normalizeCases(JSON.parse(readFileSync(casesFile, 'utf8')), meta, { shipped: true }).cases.length; }
+        catch { cases = 0; }
+      }
+      scripts.push({
+        key,
+        runtime: meta?.runtime ?? (typeof raw?.runtime === 'string' ? raw.runtime : null),
+        file: meta ? resolvePlatformValue(meta.file, process.platform) : null,
+        command: meta ? resolvePlatformValue(meta.command, process.platform) : null,
+        cases,
+      });
     }
   }
   const taskSources = (manifest.taskSources || []).map((s) => ({
@@ -126,7 +183,7 @@ export function buildInstallInventory(versionDir) {
   const setupCommands = [];
   if (manifest.setup?.node) setupCommands.push(`npm ci --prefix ${versionDir} --ignore-scripts --omit=dev`);
   if (manifest.setup?.python === 'pyproject') setupCommands.push(`uv sync --project ${versionDir}`);
-  return { agents, taskSources, chatChannels, models, modelSecrets, skills: skills.sort(), workflows, depCount, setupCommands };
+  return { agents, scripts, taskSources, chatChannels, models, modelSecrets, skills: skills.sort(), workflows, depCount, setupCommands };
 }
 
 /**
@@ -159,9 +216,20 @@ export function ignoredContributions(name, dir, opts = {}) {
   for (const d of drops) {
     if (d.origin === `plugin:${name}`) out.push({ file: `agents/${d.file}`, reason: d.reason });
   }
+  // Script drops ride the same channel (script-registry's onDrop); one load unless the caller did it.
+  let scriptDrops = opts.scriptDrops;
+  let scripts = opts.scripts;
+  if (!scriptDrops) {
+    scriptDrops = [];
+    try { scripts = loadScriptRegistry({ onDrop: (d) => scriptDrops.push(d), agentKeys: Object.keys(registry || {}) }); }
+    catch { /* no resolvable home */ }
+  }
+  for (const d of scriptDrops) {
+    if (d.origin === `plugin:${name}`) out.push({ file: `scripts/${d.file}`, reason: d.reason });
+  }
   const skips = opts.workflowSkips
     ?? (() => {
-      try { return readPluginWorkflows(name, dir, { registry, quiet: true }).skipped; }
+      try { return readPluginWorkflows(name, dir, { registry, scripts, quiet: true }).skipped; }
       catch { return []; }
     })();
   for (const s of skips) out.push({ file: `workflows/${s.file}`, reason: `invalid template (${s.errors.join('; ')})` });
@@ -392,6 +460,67 @@ function gcVersions(name, keep7) {
   for (const d of entries) if (!keep7.includes(d)) rmSync(join(dir, d), { recursive: true, force: true });
 }
 
+/** "3 scripts (node 2, python 1) · 5 cases" — the receipt's and the consent
+ *  card's one-line summary of what a plugin ships (spec §8.1). Pure. */
+export function scriptsSummary(scripts) {
+  const list = Array.isArray(scripts) ? scripts : [];
+  if (!list.length) return '';
+  const byRuntime = new Map();
+  for (const s of list) {
+    const r = s && s.runtime ? String(s.runtime) : 'unknown';
+    byRuntime.set(r, (byRuntime.get(r) || 0) + 1);
+  }
+  const runtimes = [...byRuntime.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([r, n]) => `${r} ${n}`).join(', ');
+  const cases = list.reduce((n, s) => n + (Number(s && s.cases) || 0), 0);
+  const head = `${list.length} script${list.length === 1 ? '' : 's'} (${runtimes})`;
+  return cases ? `${head} · ${cases} case${cases === 1 ? '' : 's'}` : head;
+}
+
+/** The notice a python-shipping plugin gets on a host without python (§8.1). */
+export const PYTHON_MISSING_NOTICE = 'python not found';
+
+/**
+ * The python interpreter probe's verdict, or null when the probe itself is
+ * unusable. The import is DYNAMIC on purpose: this module is loaded on almost
+ * every path and the probe is needed on two (the receipt, the Plugins list).
+ * The bare `probePython({})` call is the one the probe caches for 60 s.
+ * @returns {Promise<object|null>}
+ */
+export async function pythonProbeOrNull() {
+  try {
+    const mod = await import('./graph/python-probe.mjs');
+    return await mod.probePython({});
+  } catch {
+    return null;                               // the probe itself is unusable: no notice, never a claim
+  }
+}
+
+/**
+ * `python not found` when this plugin ships a python script and the host has no
+ * usable interpreter. A notice, never a block (spec §8.1) — and a notice that
+ * cannot be computed degrades to nothing rather than to a claim.
+ * @param {Array<{runtime?: string}>} scripts @param {{probe?: Function}} [opts]
+ * @returns {Promise<string|null>}
+ */
+export async function pythonNoticeFor(scripts, { probe = pythonProbeOrNull } = {}) {
+  if (!(Array.isArray(scripts) ? scripts : []).some((s) => s && s.runtime === 'python')) return null;
+  const p = await probe();
+  return p && p.ok === false ? PYTHON_MISSING_NOTICE : null;
+}
+
+/** Union the two guard lists by workflow id: ONE row per workflow with its keys
+ *  merged, so a 409 payload never names the same workflow twice. */
+function mergeReferences(agentRefs, scriptRefs) {
+  const byId = new Map();
+  for (const r of [...agentRefs, ...scriptRefs]) {
+    const prev = byId.get(r.workflowId);
+    if (prev) prev.keys = [...new Set([...prev.keys, ...r.keys])].sort();
+    else byId.set(r.workflowId, { ...r, keys: [...r.keys] });
+  }
+  return [...byId.values()];
+}
+
 /**
  * Uninstall (spec §6.3). Reference guard + imported-workflow removal live in
  * plugin-workflows.mjs: block when a non-plugin workflow still uses this
@@ -404,12 +533,20 @@ export async function uninstallPlugin(name, { purge = false } = {}) {
   const lock = readPluginsLock();
   const entry = lock[name];
   if (!entry) throw new Error(`plugin "${name}" is not installed`);
-  const refs = referencedPluginAgents(name);
-  if (refs.length) {
+  // Agents AND scripts (spec §6.3, §8.2): a saved workflow that still places one
+  // of this plugin's keys blocks the removal, with the referencing list. The
+  // agents-only sentence is unchanged — it is what the 409 handler renders today.
+  const agentRefs = referencedPluginAgents(name);
+  const scriptRefs = referencedPluginScripts(name);
+  if (agentRefs.length || scriptRefs.length) {
+    const what = agentRefs.length && scriptRefs.length
+      ? 'agents and scripts'
+      : (agentRefs.length ? 'agents' : 'scripts');
+    const refs = mergeReferences(agentRefs, scriptRefs);
     throw Object.assign(
-      new Error(`plugin "${name}" agents are referenced by: ${refs.map((r) => r.name).join(', ')} — remove those references first`),
-      // Payload field is `references` — the one name Task 14's 409 handler and
-      // Task 18's CLI catch both read (code mirrors deleteAgent, agent-store.mjs:113-118).
+      new Error(`plugin "${name}" ${what} are referenced by: ${refs.map((r) => r.name).join(', ')} — remove those references first`),
+      // Payload field is `references` — the one name the server's 409 handler
+      // and the CLI catch both read (code mirrors deleteAgent).
       { code: 'REFERENCED', references: refs },
     );
   }
@@ -500,6 +637,10 @@ export function listInstalledPlugins() {
   let registry = null;
   try { registry = loadAgentRegistry(undefined, { onDrop: (d) => drops.push(d) }); }
   catch { /* no resolvable home: fall back to the file-derived view */ }
+  const scriptDrops = [];
+  let scripts = null;
+  try { scripts = loadScriptRegistry({ onDrop: (d) => scriptDrops.push(d), agentKeys: Object.keys(registry || {}) }); }
+  catch { scripts = null; }
   return Object.keys(lock).sort().map((name) => {
     const e = lock[name] || {};
     const cur = pluginCurrentDir(name);
@@ -523,13 +664,18 @@ export function listInstalledPlugins() {
       broken: !manifest,
       apiMismatch: mismatch,
       contributions: inv
-        ? { agents: inv.agents.length, taskSources: inv.taskSources.length, chatChannels: inv.chatChannels.length, models: inv.models.length, skills: inv.skills.length, workflows: inv.workflows.length }
-        : { agents: 0, taskSources: 0, chatChannels: 0, models: 0, skills: 0, workflows: 0 },
+        ? { agents: inv.agents.length, scripts: inv.scripts.length, taskSources: inv.taskSources.length, chatChannels: inv.chatChannels.length, models: inv.models.length, skills: inv.skills.length, workflows: inv.workflows.length }
+        : { agents: 0, scripts: 0, taskSources: 0, chatChannels: 0, models: 0, skills: 0, workflows: 0 },
+      // What the card needs to decide whether the python notice applies, without
+      // re-reading the plugin dir.
+      scriptRuntimes: inv
+        ? inv.scripts.reduce((m, s) => { const r = s.runtime || 'unknown'; m[r] = (m[r] || 0) + 1; return m; }, {})
+        : {},
       // `contributions` counts what the plugin SHIPS (files on disk); `ignored`
       // names the ones worca refused to load, so the card can stop claiming them.
       // A disabled plugin contributes nothing BY CHOICE — its agents are not in the
       // registry, so its templates would misreport V4.
-      ignored: manifest && e.enabled !== false ? ignoredContributions(name, cur, { registry, drops }) : [],
+      ignored: manifest && e.enabled !== false ? ignoredContributions(name, cur, { registry, drops, scripts, scriptDrops }) : [],
     };
   });
 }

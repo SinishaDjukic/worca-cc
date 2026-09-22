@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS } from '../src/core/plugin-api.mjs';
 import {
   normalizeManifest, validatePluginDir, apiSatisfies, negotiatedApi, PLUGIN_NAME_RE,
-  declaredApi, dataContractIssues, apiMismatch, NOT_META_V2, NOT_GRAPH_V2,
+  declaredApi, dataContractIssues, apiMismatch, NOT_META_V2, NOT_GRAPH_V2, builtinScriptMetas,
 } from '../src/core/plugin-manifest.mjs';
 
 const WIN_SYMLINK = { skip: process.platform === 'win32' ? 'creating symlinks needs a privilege (Developer Mode / admin) on Windows' : false };
@@ -32,13 +32,14 @@ const SRC = (over = {}) => ({
   ...over,
 });
 
-test('WORCA_PLUGIN_API is the integer 3; host still speaks APIs 1 and 2', () => {
-  assert.equal(WORCA_PLUGIN_API, 3);
-  assert.deepEqual(WORCA_PLUGIN_APIS, [1, 2, 3]);
+test('WORCA_PLUGIN_API is the integer 4; host still speaks APIs 1, 2 and 3', () => {
+  assert.equal(WORCA_PLUGIN_API, 4);
+  assert.deepEqual(WORCA_PLUGIN_APIS, [1, 2, 3, 4]);
   // Set semantics: a connector-only API-1 plugin must keep negotiating 1.
   assert.equal(negotiatedApi('>=1 <2'), 1);
   assert.equal(negotiatedApi('>=2 <3'), 2);
   assert.equal(negotiatedApi('>=3 <4'), 3);
+  assert.equal(negotiatedApi('>=4 <5'), 4);
 });
 
 test('declaredApi: the LOWEST integer a range accepts (null when unparseable)', () => {
@@ -46,6 +47,7 @@ test('declaredApi: the LOWEST integer a range accepts (null when unparseable)', 
   assert.equal(declaredApi('1'), 1);
   assert.equal(declaredApi('>=2 <3'), 2);
   assert.equal(declaredApi('>=3 <4'), 3);
+  assert.equal(declaredApi('>=4 <5'), 4);
   assert.equal(declaredApi(''), 0, 'an unconstrained range accepts everything, starting at 0');
   assert.equal(declaredApi('not-a-range'), null);
 });
@@ -69,7 +71,7 @@ test('dataContractIssues names the v1-shaped files, and apiMismatch counts them'
   // so the shape pin compares the counts WITHOUT it.
   const { message, ...counts } = m;
   assert.equal(typeof message, 'string');
-  assert.deepEqual(counts, { builtFor: 1, host: 3, agents: 1, workflows: 1 });
+  assert.deepEqual(counts, { builtFor: 1, host: 4, agents: 1, workflows: 1 });
   assert.equal(apiMismatch('>=3 <4', { agentsV1: [], workflowsV1: [] }), null,
     'an API-3 plugin with clean data has no mismatch');
   assert.equal(apiMismatch('>=1 <2', { agentsV1: [], workflowsV1: [] }), null,
@@ -106,8 +108,9 @@ test('engines.worca-cc-api: range checked against the host API SET (no npm semve
   assert.equal(apiSatisfies('2'), true);
   assert.equal(apiSatisfies('>=3 <4'), true);    // API-3 plugins install on this host
   assert.equal(apiSatisfies('3'), true);
+  assert.equal(apiSatisfies('>=4 <5'), true);    // API-4 plugins (ask forms) install
   assert.equal(apiSatisfies('<1'), false);
-  assert.equal(apiSatisfies('>=4'), false);      // beyond the host API set
+  assert.equal(apiSatisfies('>=5'), false);      // beyond the host API set
   assert.equal(apiSatisfies(''), true);          // unset -> unconstrained
   assert.equal(apiSatisfies('^1.0.0'), false);   // unsupported syntax fails CLOSED
   assert.equal(apiSatisfies('>=1.2.3'), true);   // minor/patch tolerated; integer compared
@@ -115,19 +118,20 @@ test('engines.worca-cc-api: range checked against the host API SET (no npm semve
   const ok = normalizeManifest({ name: 'p', engines: { 'worca-cc-api': '>=1 <2' } });
   assert.equal(ok.ok, true);
   assert.equal(ok.manifest.engines.worcaApi, '>=1 <2');
-  const bad = normalizeManifest({ name: 'p', engines: { 'worca-cc-api': '>=4' } });
+  const bad = normalizeManifest({ name: 'p', engines: { 'worca-cc-api': '>=5' } });
   assert.equal(bad.ok, false);
-  assert.match(bad.errors[0], /not satisfied by host plugin APIs \[1, 2, 3\]/);
+  assert.match(bad.errors[0], /not satisfied by host plugin APIs \[1, 2, 3, 4\]/);
 });
 
 test('negotiatedApi: highest satisfying host API drives the child apiVersion', () => {
   assert.equal(negotiatedApi('>=1 <2'), 1);      // API-1 connector keeps receiving 1
   assert.equal(negotiatedApi('>=2 <3'), 2);
   assert.equal(negotiatedApi('>=3 <4'), 3);
-  assert.equal(negotiatedApi('>=1'), 3);         // open range -> newest
-  assert.equal(negotiatedApi(''), 3);            // unconstrained -> newest
-  assert.equal(negotiatedApi(null), 3);
-  assert.equal(negotiatedApi('>=4'), null);      // unsatisfiable
+  assert.equal(negotiatedApi('>=4 <5'), 4);
+  assert.equal(negotiatedApi('>=1'), 4);         // open range -> newest
+  assert.equal(negotiatedApi(''), 4);            // unconstrained -> newest
+  assert.equal(negotiatedApi(null), 4);
+  assert.equal(negotiatedApi('>=5'), null);      // unsatisfiable
   assert.equal(negotiatedApi('garbage'), null);  // fail closed
 });
 
@@ -627,7 +631,7 @@ test('a v2 template may reference built-ins and the plugin\'s own keys — never
 });
 
 test('the in-tree mock-source fixture is a valid API-3 plugin (strict)', () => {
-  // scripts/smoke-plugin.mjs links this fixture but is NOT part of `npm test`,
+  // tools/smoke-plugin.mjs links this fixture but is NOT part of `npm test`,
   // so without this pin the fixture could silently rot back to the v1 contract
   // and nothing in the suite would notice.
   const fixture = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'plugins', 'mock-source');
@@ -792,4 +796,85 @@ test('models: a malformed `cost` is a manifest ERROR, named by model and rule', 
   fail({ perMtok: { bogus: 1 } }, /unknown cost\.perMtok rate "bogus"/);
   fail({ perMtok: { input: -1 } }, /cost\.perMtok\.input must be a finite number >= 0/);
   fail({ perMtok: {} }, /must define at least one rate/);
+});
+
+const SCRIPT_META = (key, over = {}) => JSON.stringify({ key, metaVersion: 2, displayName: key, runtime: 'node', file: `${key}.mjs`,
+  inputs: [{ id: 'done', type: 'void', required: false }], outputs: [{ id: 'log', type: 'md', when: 'always', filename: `${key}-cycle{cycle}.md` }], ...over });
+const SCRIPT_GRAPH = (key, out = 'log') => JSON.stringify({
+  name: 'Script Flow', version: 2, domain: 'general',
+  nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, { id: 'n_s', kind: 'script', key, x: 1, y: 0, config: {} }, { id: 'n_end', kind: 'end', x: 2, y: 0, config: {} }],
+  wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_s', port: 'await' } }, { id: 'w2', from: { node: 'n_s', port: out }, to: { node: 'n_end', port: 'result' } }],
+});
+
+test('builtinScriptMetas: the built-in scripts, normalized', () => {
+  assert.deepEqual(builtinScriptMetas().map((m) => m.key), ['gitDiff', 'js', 'py', 'shell']);
+});
+
+test('validatePluginDir: scripts/ — pairing, key = stem, meta v2 rules, file containment, runtime', () => {
+  const dir = mkPluginDir({
+    ...VALID_FILES,
+    'scripts/good.meta.json': SCRIPT_META('good'),
+    'scripts/good.mjs': 'export default async () => ({});\n',
+    'scripts/mismatch.meta.json': SCRIPT_META('other'),                   // key != stem; other.mjs missing
+    'scripts/nofile.meta.json': SCRIPT_META('nofile'),                    // nofile.mjs absent
+    'scripts/escape.meta.json': SCRIPT_META('escape', { file: '../escape.mjs' }),
+    'scripts/rb.meta.json': SCRIPT_META('rb', { runtime: 'ruby' }),
+    'scripts/bad key.meta.json': SCRIPT_META('bad key'),
+  });
+  const v = validatePluginDir(dir);
+  assert.equal(v.ok, false);
+  const e = errs(v).join('\n');
+  assert.match(e, /scripts\/mismatch\.meta\.json: key "other" must match the filename stem "mismatch"/);
+  assert.match(e, /scripts\/nofile\.meta\.json: file "nofile\.mjs" not found in scripts\//);
+  assert.match(e, /scripts\/escape\.meta\.json: file must be a plain basename/);
+  assert.match(e, /scripts\/rb\.meta\.json: runtime must be one of node, shell, python/);
+  assert.match(e, /scripts\/bad key\.meta\.json: "bad key" must be a valid script key/);
+  assert.doesNotMatch(e, /scripts\/good\.meta\.json/);
+});
+
+test('validatePluginDir: a plugin workflow may reference built-in scripts and its own; a foreign or ungated script key is named as a script', () => {
+  const ok = mkPluginDir({ ...VALID_FILES, 'scripts/mine.meta.json': SCRIPT_META('mine'), 'scripts/mine.mjs': 'export default async () => ({});\n',
+    'workflows/own.json': SCRIPT_GRAPH('mine'), 'workflows/builtin.json': SCRIPT_GRAPH('gitDiff', 'diff') });
+  const v = validatePluginDir(ok);
+  assert.deepEqual(errs(v), [], errs(v).join('\n'));
+  const foreign = mkPluginDir({ ...VALID_FILES, 'workflows/alien.json': SCRIPT_GRAPH('notMine') });
+  assert.match(errs(validatePluginDir(foreign)).join('\n'), /alien\.json: references script key "notMine" which is neither a built-in nor shipped by this plugin/);
+  const ungated = mkPluginDir({ ...VALID_FILES, 'scripts/broken.meta.json': SCRIPT_META('broken', { runtime: 'ruby' }), 'workflows/b.json': SCRIPT_GRAPH('broken') });
+  assert.match(validatePluginDir(ungated).problems.map((p) => p.message).join('\n'), /b\.json: references script key "broken" whose sidecar is not a valid meta v2 sidecar/);
+});
+
+test('dataContractIssues + apiMismatch count v1 script sidecars beside agents', () => {
+  const dir = mkPluginDir({ ...VALID_FILES, 'scripts/old.meta.json': JSON.stringify({ key: 'old', runtime: 'node', file: 'old.mjs' }), 'scripts/old.mjs': '' });
+  const issues = dataContractIssues(dir);
+  assert.deepEqual(issues.scriptsV1, ['old.meta.json']);
+  const m = apiMismatch('>=1 <2', issues);
+  assert.equal(m.scripts, 1);
+  assert.match(m.message, /\(0 agent\(s\), 1 script\(s\), 0 template\(s\) ignored\)/);
+  assert.doesNotMatch(apiMismatch('>=1 <2', { agentsV1: ['a'], workflowsV1: [] }).message, /script/, 'no scripts: the message is unchanged');
+});
+
+test('validatePluginDir: <key>.tests.json is validated as a SHIPPED case set', () => {
+  const good = { version: 1, cases: [{ id: 'sample', name: 'sample', cwd: { kind: 'scratch' }, inputs: { done: { fired: true } } }] };
+  const dir = mkPluginDir({
+    ...VALID_FILES,
+    'scripts/good.meta.json': SCRIPT_META('good'),
+    'scripts/good.mjs': 'export default async () => ({});\n',
+    'scripts/good.tests.json': JSON.stringify(good),
+  });
+  assert.deepEqual(errs(validatePluginDir(dir)), [], 'a clean scratch case set passes');
+
+  const bad = mkPluginDir({
+    ...VALID_FILES,
+    'scripts/good.meta.json': SCRIPT_META('good'),
+    'scripts/good.mjs': 'export default async () => ({});\n',
+    'scripts/good.tests.json': JSON.stringify({ version: 1, cases: [{ id: 'p', name: 'p', cwd: { kind: 'project', projectKey: 'x' }, inputs: {} }] }),
+    'scripts/broken.tests.json': '{ not json',
+    'scripts/orphan.tests.json': JSON.stringify({ version: 1, cases: [] }),
+  });
+  const problems = errs(validatePluginDir(bad)).join('\n');
+  // The non-scratch sentence belongs to normalizeCases({ shipped: true }) — the
+  // wrapper (`scripts/<key>.tests.json: `) is what this block owns.
+  assert.match(problems, /scripts\/good\.tests\.json: .*scratch/);
+  assert.match(problems, /scripts\/broken\.tests\.json: no broken\.meta\.json beside it/);
+  assert.match(problems, /scripts\/orphan\.tests\.json: no orphan\.meta\.json beside it/);
 });

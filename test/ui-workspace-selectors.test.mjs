@@ -59,8 +59,8 @@ test('beginRun is positional with an opts 4th arg (C2), single legacy call site 
   assert.match(js, /beginRun\(data\.runId, projectDir, title,\s*target === 'workspace' \? \{ workspaceId, workspaceName, projectNames: workspaceProjectNames \} : \{\}\)/);
 });
 
-test('VIEW_NAMES is the 15-entry array with composer preserved + projects + stats + team-metrics + team-policy + getting-started + schedules (plugins/guardrails/models are Settings tabs)', () => {
-  assert.match(js, /const VIEW_NAMES = \['new', 'getting-started', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'composer', 'workspaces', 'workspace-create', 'agents', 'agent-create', 'projects', 'settings'\];/);
+test('VIEW_NAMES is the 16-entry array with composer preserved + projects + stats + team-metrics + team-policy + getting-started + schedules + scripts (plugins/guardrails/models are Settings tabs)', () => {
+  assert.match(js, /const VIEW_NAMES = \['new', 'getting-started', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'composer', 'workspaces', 'workspace-create', 'agents', 'scripts', 'agent-create', 'projects', 'settings'\];/);
 });
 
 test('the v1 composer is gone: no composer-core module, no composer-core script tag', () => {

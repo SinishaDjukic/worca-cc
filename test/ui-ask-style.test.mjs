@@ -99,7 +99,7 @@ test('ui-ask-style: the FINAL reduced-motion block neutralises the dock', () => 
 });
 
 test('ui-ask-style: the hljs variable block now feeds .ask-md too', () => {
-  assert.match(css, /\.hd-diff-pane,\.ask-md\{\s*--hd-syntax-comment/, 'selector widened without restating hexes');
+  assert.match(css, /\.hd-diff-pane,\.ask-md[^{]*\{\s*--hd-syntax-comment/, 'selector widened without restating hexes');
   const count = (css.match(/--hd-syntax-comment:light-dark\(#/g) || []).length;
   assert.equal(count, 1, 'the six syntax pairs still appear exactly once');
 });

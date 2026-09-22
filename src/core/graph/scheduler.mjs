@@ -6,7 +6,7 @@
 // Shape of a pass: publishing routes tokens IMMEDIATELY (per-wire delivery counting
 // and gate checks happen AT DELIVERY), but FIRING happens only in the drain loop. A
 // pass walks `loops.launchOrder` ONCE; a node ready at its slot fires AT that slot —
-// agent nodes as an async `execute` under the semaphore, flow nodes inline,
+// keyed nodes (agents, scripts) as an async `execute` under their pool's semaphore, flow nodes inline,
 // whose publishes route immediately and may make LATER slots ready within the same
 // pass. Earlier slots are never revisited mid-pass; passes repeat until a pass fires
 // nothing. The execution sequence is therefore the order of `execute` CALLS, and it
@@ -19,7 +19,7 @@
 // `rerunPending` coalescing is structural: a node that is already running is skipped
 // in the walk, and readiness is re-evaluated after every completion, so readiness
 // reached while running re-fires exactly once and never queues.
-import { FLOW_KINDS, DEFAULT_MAX_CYCLES, AWAIT_PORT } from '../../shared/graph/constants.mjs';
+import { FLOW_KINDS, KEYED_KINDS, DEFAULT_MAX_CYCLES, AWAIT_PORT } from '../../shared/graph/constants.mjs';
 import { classifyLoops } from '../../shared/graph/loops.mjs';
 import { firedOutputs, resolveOrOutType } from '../../shared/graph/ports.mjs';
 import { blockingIssues, hasBlocking } from '../../shared/graph/verdict.mjs';
@@ -45,6 +45,11 @@ export const quiescenceDeadEnd = (ids) =>
 function defaultMaxParallel() {
   const n = Number(process.env.WORCA_MAX_PARALLEL);
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 4;
+}
+/** D7: scripts have their own, smaller pool — they burn CPU, not tokens. */
+function defaultMaxParallelScripts() {
+  const n = Number(process.env.WORCA_MAX_PARALLEL_SCRIPTS);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 2;
 }
 
 /** Non-interactive default: gates continue, clarify asks answer empty (v1 `_ask` auto). */
@@ -96,6 +101,7 @@ function raceAbort(promise, signal) {
  * @param {(gate:{wireId,fromNode,toNode,askId}|null) => void} [opts.onGate]
  * @param {(ask:object) => Promise<any>} [opts.onAsk]
  * @param {number} [opts.maxParallel]
+ * @param {number} [opts.maxParallelScripts]
  * @param {(line:string, attrs?:object) => void} [opts.log]
  */
 export function createScheduler(opts) {
@@ -109,6 +115,7 @@ export function createScheduler(opts) {
     onGate = () => {},
     onAsk = defaultAsk,
     maxParallel = defaultMaxParallel(),
+    maxParallelScripts = defaultMaxParallelScripts(),
     log = () => {},
   } = opts || {};
 
@@ -149,7 +156,6 @@ export function createScheduler(opts) {
   const completions = [];
   const warnings = [];
   const controller = new AbortController();
-  let activeAgents = 0;
   let ended = null;
   let gate = null;                // the CURRENT gate for state.gate (P4 stamps it)
   let failure = null;
@@ -176,20 +182,27 @@ export function createScheduler(opts) {
     signalled = false;
   }
 
-  // --- the agent semaphore -------------------------------------------------
-  // A counting semaphore with a FIFO waiter queue. The drain walk POLLS it before
-  // launching a node; composite slices AWAIT it (they are launched from inside an
-  // already-running execution). The composite SHELL holds no slot, which is what
-  // keeps a fan-out from deadlocking behind itself at maxParallel 1.
-  const slotQueue = [];
-  function takeSlot() {
-    if (activeAgents < maxParallel) { activeAgents += 1; return Promise.resolve(); }
-    return new Promise((resolve) => { slotQueue.push(resolve); });
+  // --- the two semaphores ---------------------------------------------------
+  // Agents and scripts are counted APART (D7): the agent pool caps LLM spend and
+  // rate-limit exposure, the script pool caps CPU. Each is a counting semaphore
+  // with a FIFO waiter queue. The drain walk POLLS a pool before launching a node;
+  // composite slices AWAIT the agent pool (they launch from inside a running
+  // execution). The composite SHELL holds no slot.
+  const pools = {
+    agent: { active: 0, max: maxParallel, queue: [] },
+    script: { active: 0, max: maxParallelScripts, queue: [] },
+  };
+  const poolOf = (node) => (node.kind === 'script' ? 'script' : 'agent');
+  function takeSlot(pool = 'agent') {
+    const p = pools[pool];
+    if (p.active < p.max) { p.active += 1; return Promise.resolve(); }
+    return new Promise((resolve) => { p.queue.push(resolve); });
   }
-  function freeSlot() {
-    const next = slotQueue.shift();
+  function freeSlot(pool = 'agent') {
+    const p = pools[pool];
+    const next = p.queue.shift();
     if (next) { next(); return; }             // handed straight over: the count is unchanged
-    activeAgents -= 1;
+    p.active -= 1;
     wake();                                   // a freed slot may unblock a queued launch
   }
 
@@ -227,7 +240,8 @@ export function createScheduler(opts) {
       kind: entry.kind,
       ordinal: entry.ordinal,
       status,
-      agentKey: node.kind === 'agent' ? (node.key ?? null) : null,   // flow rows carry none
+      agentKey: node.kind === 'agent' ? (node.key ?? null) : null,   // agents only (D17)
+      key: KEYED_KINDS.includes(node.kind) ? (node.key ?? null) : null,   // every keyed kind; flow rows carry none
       trigger: entry.trigger,
       // Composite sub-executions carry their slice identity; the UI collapses them
       // under the node and labels them by title (A9: taskIndex/taskTotal ride along).
@@ -353,7 +367,7 @@ export function createScheduler(opts) {
   /** Agent nodes take a semaphore slot; `execute` is called AT the slot. */
   function fireAgent(node) {
     const h = startExecution(node);
-    if (!h.composite) activeAgents += 1;
+    if (!h.composite) pools[poolOf(node)].active += 1;
     let p;
     try { p = invoke(h); } catch (err) { p = Promise.reject(err); }
     Promise.resolve(p).then(
@@ -435,7 +449,7 @@ export function createScheduler(opts) {
     };
     delete entry.expandsPort;
     h.composite = false;                    // … so settle() frees the slot taken here
-    await takeSlot();
+    await takeSlot('agent');
     h.args = argsFor(node, entry);
     return await execute(h.args);
   }
@@ -488,11 +502,11 @@ export function createScheduler(opts) {
   async function runSlice(h, portId, ph, task, index, phaseAbort) {
     const { node, entry } = h;
     const signal = AbortSignal.any([controller.signal, phaseAbort.signal]);
-    await takeSlot();
+    await takeSlot('agent');
     // A slot handed over AFTER the phase (or the run) aborted: never launch. The slice
     // gets no ledger row (it never started) and rejects with the abort reason, so it
     // is not counted as the phase's failure.
-    if (signal.aborted) { freeSlot(); throw signal.reason; }
+    if (signal.aborted) { freeSlot('agent'); throw signal.reason; }
     const sub = {
       executionId: sliceExecutionId(entry.executionId, task.id),
       nodeId: node.id,
@@ -550,13 +564,13 @@ export function createScheduler(opts) {
       if (!isAbortError(err)) phaseAbort.abort();
       throw err;
     } finally {
-      freeSlot();
+      freeSlot('agent');
     }
   }
 
   function settle(h, res, err) {
     running.delete(h.node.id);
-    if (!isFlow(h.node) && !h.composite) freeSlot();
+    if (!isFlow(h.node) && !h.composite) freeSlot(poolOf(h.node));
     if (err || res?.error) failExecution(h, err || res.error);
     else if (res?.paused === true) pausedExecution(h);
     else if (res?.skipped === true) skippedExecution(h);
@@ -907,7 +921,7 @@ export function createScheduler(opts) {
       if (!node) continue;
       running.set(node.id, entry.executionId);
       const h = { node, entry, args: argsFor(node, entry), composite: !!entry.expandsPort };
-      if (!isFlow(node) && !h.composite) activeAgents += 1;
+      if (!isFlow(node) && !h.composite) pools[poolOf(node)].active += 1;
       let p;
       try { p = invoke(h); } catch (err) { p = Promise.reject(err); }
       Promise.resolve(p).then(
@@ -998,7 +1012,8 @@ export function createScheduler(opts) {
         const node = nodeById.get(nodeId);
         if (!node || running.has(nodeId) || !isReady(node)) continue;
         if (isFlow(node)) { await fireFlow(node); fired = true; continue; }
-        if (activeAgents >= maxParallel) continue;   // capped: retried once a slot frees
+        const pool = pools[poolOf(node)];
+        if (pool.active >= pool.max) continue;   // capped: retried once a slot frees
         fireAgent(node);
         fired = true;
       }

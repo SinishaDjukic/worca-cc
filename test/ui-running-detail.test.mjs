@@ -1069,3 +1069,59 @@ test('detail-pane autoscroll pins once per burst too, and the card pane pins onc
   assert.equal(box.scrollTop, 900);
   assert.equal(cardPins, 1, 'the card pane behind the detail also pinned exactly once — the ×2 cost is now 2 writes, one layout');
 });
+
+// --- script nodes P1b: the live line of a running script card (S4) ----------
+const SCRIPT_MANIFEST = {
+  version: 2, template: { id: 'wf', name: 'WF' },
+  graph: {
+    nodes: [
+      { id: 'n_impl', kind: 'agent', key: 'implementer', label: 'Implementer', color: 'blue', x: 0, y: 0, ports: { inputs: [], outputs: [], await: true } },
+      { id: 'n_tests', kind: 'script', key: 'runTests', label: 'Run tests', color: 'violet', runtime: 'node', x: 300, y: 0, ports: { inputs: [], outputs: [], await: true } },
+    ],
+    wires: [],
+  },
+};
+
+test('a running script card shows its last captured line; agent lines never repaint the graph', async () => {
+  const ctx = await bootRunning();
+  const { window } = ctx;
+  window.document.documentElement.dataset.level = 'expert';        // footers are expert detail (docs/ui-levels.md)
+  await openRun(ctx, {
+    stepper: SCRIPT_MANIFEST, active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:1' }],
+    steps: [
+      { key: 'x:n_impl:1', executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1, kind: 'cycle', cycle: 1, status: 'done', activeMs: 1000, costUsd: 0.1 },
+      { key: 'x:n_tests:1', executionId: 'x:n_tests:1', nodeId: 'n_tests', ordinal: 1, kind: 'cycle', cycle: 1, status: 'start', activeMs: 10, costUsd: 0, nodeKey: 'runTests', runtime: 'node' },
+    ],
+    subAgents: [],
+  });
+  const liveOf = () => window.document.querySelector('#run-detail .rd-graph .node[data-node-id="n_tests"] .xfoot .xlive');
+  assert.equal(liveOf(), null, 'no line captured yet');
+  frame(ctx, { type: 'log', runId: 'r1', source: 'implementer', level: 'info', text: 'agent chatter', nodeId: 'n_impl' });
+  frame(ctx, { type: 'log', runId: 'r1', source: 'runTests', level: 'info', text: '  212 passing  ', nodeId: 'n_tests', executionId: 'x:n_tests:1' });
+  frame(ctx, { type: 'log', runId: 'r1', source: 'runTests', level: 'info', text: '3 failing', nodeId: 'n_tests', executionId: 'x:n_tests:1' });
+  assert.equal(liveOf(), null, 'coalesced: nothing repaints synchronously on a log frame');
+  await new Promise((r) => setTimeout(r, 320));
+  assert.equal(liveOf().textContent, '3 failing', 'one repaint carries the newest line');
+  assert.equal(window.document.querySelector('#run-detail .rd-graph .node[data-node-id="n_impl"] .xfoot .xlive'), null, 'agents have no live band');
+  // A loop re-runs the card: execution 2 is active and has captured nothing yet. A line stands only for the
+  // execution that wrote it, so execution 1's last line must not be shown as execution 2's.
+  frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: SCRIPT_MANIFEST,
+    active: [{ nodeId: 'n_tests', executionId: 'x:n_tests:2' }],
+    steps: [
+      { key: 'x:n_impl:1', executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1, kind: 'cycle', cycle: 1, status: 'done', activeMs: 1000, costUsd: 0.1 },
+      { key: 'x:n_tests:1', executionId: 'x:n_tests:1', nodeId: 'n_tests', ordinal: 1, kind: 'cycle', cycle: 1, status: 'done', activeMs: 900, costUsd: 0, nodeKey: 'runTests', runtime: 'node', exitCode: 1 },
+      { key: 'x:n_tests:2', executionId: 'x:n_tests:2', nodeId: 'n_tests', ordinal: 2, kind: 'cycle', cycle: 2, status: 'start', activeMs: 5, costUsd: 0, nodeKey: 'runTests', runtime: 'node' },
+    ],
+    subAgents: [] });
+  await settle(window, 6);
+  assert.equal(liveOf(), null, 'the previous execution\'s last line is not the new execution\'s');
+  frame(ctx, { type: 'log', runId: 'r1', source: 'runTests', level: 'info', text: 'retrying', nodeId: 'n_tests', executionId: 'x:n_tests:2' });
+  await new Promise((r) => setTimeout(r, 320));
+  assert.equal(liveOf().textContent, 'retrying');
+  // One ellipsised line: the band never carries a 64 KiB log line (the runner's cap) into the DOM, and the
+  // trailing-blank cut is linear (a /\s+$/ regex is quadratic on a long blank run that is not at the end).
+  frame(ctx, { type: 'log', runId: 'r1', source: 'runTests', level: 'info', text: `x${' '.repeat(70000)}y   `, nodeId: 'n_tests', executionId: 'x:n_tests:2' });
+  await new Promise((r) => setTimeout(r, 320));
+  assert.equal(liveOf().textContent.length, 240);
+  assert.ok(liveOf().textContent.startsWith('x '));
+});

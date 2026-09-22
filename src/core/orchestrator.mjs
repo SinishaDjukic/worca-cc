@@ -15,13 +15,17 @@ import { rm, readFile } from 'node:fs/promises';
 
 import {
   RunHarness, isAbort, isPause, pauseErr, firstLine, jsonClone,
-  clipMiddle, sumStepActive, normalizeClarifyAnswer,
+  clipMiddle, sumStepActive, normalizeClarifyAnswer, findDisabledPluginFor,
 } from './run-harness.mjs';
 import { resolveGraph, loadAgentFile, GRAPH_DEFAULT_WORKFLOW, writeGraphWorkflow, readWorkflow } from './workflows.mjs';
+import { loadScriptRegistry } from './script-registry.mjs';
 import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME } from './graph/builtin-workflows.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
-import { DEFAULT_MAX_CYCLES } from '../shared/graph/constants.mjs';
+import { DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../shared/graph/constants.mjs';
+import { scriptNodeCtx, pythonMissingSentence } from '../shared/graph/script-meta.mjs';
+import { probePython } from './graph/python-probe.mjs';
+import { mockEnabled } from './claude-runner.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition } from './graph/executor.mjs';
@@ -37,7 +41,8 @@ import {
   appendAudit, writeReview, reviewKindOf, writeDecomposition, updateTaskStatus,
   updatePhaseStatus, writeStepQuestions, readStepQuestions,
 } from './artifacts.mjs';
-import { readQuestionsFile } from './protocol.mjs';
+import { readAskFile } from './protocol.mjs';
+import { prepareFormAsk, formAnswerValidator, downgradeQuestion } from './ask-forms.mjs';
 import { classifyError } from './recoverable-error.mjs';
 import { resolveFailure, markTerminal, isTerminal } from './failure-policy.mjs';
 
@@ -67,6 +72,7 @@ export class GraphOrchestrator extends RunHarness {
     if (!this.opts.workflowId) this.workflowId = GRAPH_DEFAULT_WORKFLOW.id;
     // (this._runners is assigned by the _initRunners hook the base constructor calls.)
     this.resolved = null;        // resolveGraph's { template, ports, loops, nodes→nodeCtx, wires, agentsByKey, agentKeys }
+    this.scriptRegistry = null;   // loadScriptRegistry() for this run (D16-filtered); tests override the built-in dir with opts.scriptsDir
     this._scheduler = null;
     this._graphSnapshot = null;  // last CLEAN scheduler snapshot
     this._resumeSnapshot = null; // the snapshot a resume restores from
@@ -111,16 +117,19 @@ export class GraphOrchestrator extends RunHarness {
    * @returns {Promise<{manifest:object, agentKeys:Set<string>, workflow:{id:string,name:string}}>}
    */
   async _resolveTopology(registry) {
+    this.scriptRegistry = loadScriptRegistry({ scriptsDir: this.opts.scriptsDir, agentKeys: Object.keys(registry || {}) });
     if (this.workflowId === AUTO_WORKFLOW_ID) return this._autoBootstrapTopology();
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
-      isWorkspace: this.isWorkspace,
+      isWorkspace: this.isWorkspace, scripts: this.scriptRegistry,
     });
     this._adoptResolvedGraph(resolved);
+    this._preflightScriptKeys(this.resolved.scriptKeys);
+    await this._preflightScriptRuntimes();
     // The manifest is built from the RESOLVED template, the resolver's registry
     // slice and its EFFECTIVE per-node/per-wire values (P2 contract): the run
     // monitor shows exactly what the engine will run.
     const manifest = buildGraphManifest(this.resolved.template, this.resolved.agentsByKey, {
-      overlays: { nodes: this.resolved.nodeCtx, wires: this.resolved.wires },
+      overlays: { nodes: this.resolved.nodeCtx, wires: this.resolved.wires }, scripts: this.resolved.scriptsByKey,
     });
     return {
       manifest,
@@ -387,7 +396,7 @@ export class GraphOrchestrator extends RunHarness {
     for (const [nodeId, sel] of Object.entries(tunables || {})) overlayNodes[nodeId] = { ...sel };
     for (const [nodeId, sel] of Object.entries(answer.nodes || {})) overlayNodes[nodeId] = { ...(overlayNodes[nodeId] || {}), ...sel };
     const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
-      isWorkspace: false, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true,
+      isWorkspace: false, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
     });
     if (!this.humanInLoop) {
       // spec D3: no agent may stop the run to ask (generic — every agent node).
@@ -396,10 +405,12 @@ export class GraphOrchestrator extends RunHarness {
     this.workflowId = workflowId;
     this._adoptResolvedGraph(resolved);
     const manifest = buildGraphManifest(this.resolved.template, this.resolved.agentsByKey, {
-      overlays: { nodes: this.resolved.nodeCtx, wires: this.resolved.wires },
+      overlays: { nodes: this.resolved.nodeCtx, wires: this.resolved.wires }, scripts: this.resolved.scriptsByKey,
     });
     manifest.auto = { status: 'decided', via, rounds: round, humanInLoop: this.humanInLoop, workflowId };
     this._preflightAgentKeys(this.resolved.agentKeys);
+    this._preflightScriptKeys(this.resolved.scriptKeys);
+    await this._preflightScriptRuntimes();
     this.state.stepper = manifest;
     // PR #434 review, finding 3: the pending proposal is kept until HERE. A throw before the
     // workflowId swap above (mintAutoWorkflowId, writeGraphWorkflow, resolveGraph) unwinds
@@ -466,7 +477,7 @@ export class GraphOrchestrator extends RunHarness {
 
   /**
    * Adopt a resolveGraph result (P2 contract: { template, ports, loops, nodes,
-   * wires, agentsByKey, agentKeys }). The resolver has ALREADY applied the
+   * wires, agentsByKey, agentKeys, scriptsByKey, scriptKeys }). The resolver has ALREADY applied the
    * workspace substitution AND the workspaceFanOut forcing (spec §5.10 — a META
    * flag, never a key set) and classified the loops ONCE. This class names the
    * per-node table `nodeCtx`; nothing is re-derived and no template node is
@@ -516,6 +527,50 @@ export class GraphOrchestrator extends RunHarness {
     return manifest ? new Set(resolvedFromManifest(manifest, this.registry).agentKeys) : new Set();
   }
 
+  /** §8.3: every script key must resolve in this run's script registry BEFORE any
+   *  node executes — the mirror of the base's _preflightAgentKeys, with the same
+   *  disabled-plugin hint. resolveGraph already refuses an unknown key on a fresh
+   *  run; this is what catches a plugin withdrawn while the run sat paused. */
+  _preflightScriptKeys(scriptKeys) {
+    const reg = this.scriptRegistry || {};
+    const missing = [];
+    for (const key of new Set(scriptKeys || [])) {
+      if (!key || Object.hasOwn(reg, key)) continue;
+      const plugin = findDisabledPluginFor(key, 'scripts');
+      missing.push(plugin
+        ? `script "${key}" comes from disabled plugin "${plugin}" — enable it`
+        : `script "${key}" is not installed (removed plugin?)`);
+    }
+    if (missing.length) {
+      throw new Error(`Preflight failed: ${missing.length} workflow script key(s) do not resolve:\n` + missing.map((m) => `  - ${m}`).join('\n'));
+    }
+  }
+
+  /**
+   * Workbench spec §7: a `python` card needs an interpreter on THIS host. That is
+   * a run-time fact — the probe is async and the registry loader is not — so it is
+   * checked HERE, beside the key preflight, before the pipeline dir exists and
+   * long before the first execution, and is never baked into a registry snapshot.
+   * The message is the §7 sentence itself (one line per distinct key, first-seen
+   * order): for the usual single python card it is EXACTLY that sentence, which
+   * the bench, the composer's V4 and the CLI all repeat word for word.
+   */
+  async _preflightScriptRuntimes() {
+    // D13: in a mock run a card with a DECLARED mock spawns nothing (runScriptExecution returns before it
+    // probes), so it needs no interpreter — the same condition, read the same way.
+    const mocked = mockEnabled({ mock: this.claude?.mock });
+    const keys = [];
+    for (const nc of Object.values(this.resolved?.nodeCtx || {})) {
+      if (nc?.kind !== 'script' || nc.runtime !== 'python' || !nc.key || keys.includes(nc.key)) continue;
+      if (mocked && nc.mock && typeof nc.mock === 'object') continue;
+      keys.push(nc.key);
+    }
+    if (!keys.length) return;
+    const probe = await probePython();
+    if (probe.ok) return;
+    throw new Error(keys.map((key) => pythonMissingSentence(key)).join('\n'));
+  }
+
   // ── hook 2: run the graph ──────────────────────────────────────────────────
   /**
    * The scheduler owns readiness, loop budgets, gates and End; this method owns
@@ -542,7 +597,9 @@ export class GraphOrchestrator extends RunHarness {
     // every entry agent binds that same file. Byte-identical to v1's seeded task
     // file (the same renderer), so the Task card's document matches what v1
     // handed its entry node.
-    this._taskArtifact = { text: renderPromptArtifact(this.pipeline.promptText, this.extrasFiles) };
+    // A Memory defragment run appends the scope's health (run-harness.mjs _defragBrief — '' on
+    // every other run, so their document stays byte-identical).
+    this._taskArtifact = { text: renderPromptArtifact(this.pipeline.promptText, this.extrasFiles) + await this._defragBrief() };
 
     const sched = createScheduler({
       template: this._schedulerTemplate(),
@@ -755,7 +812,11 @@ export class GraphOrchestrator extends RunHarness {
         });
       }
     }
-    this._emit('exec', { ...payload, costUsd: step ? (step.costUsd || 0) : 0 });
+    this._emit('exec', {
+      ...payload, costUsd: step ? (step.costUsd || 0) : 0,
+      ...(step && step.runtime != null ? { runtime: step.runtime } : {}),
+      ...(step && step.exitCode != null ? { exitCode: step.exitCode } : {}),
+    });
   }
 
   /**
@@ -847,8 +908,16 @@ export class GraphOrchestrator extends RunHarness {
       // here, not on the next spawn.
       this._checkAbort();
       this._checkPause();
-      if (node.kind !== 'agent') return await this._runFlow(ctx);
-      this._checkCostLimits();                  // budget gate at EVERY agent launch (throws pauseErr)
+      if (!KEYED_KINDS.includes(node.kind)) return await this._runFlow(ctx);
+      this._checkCostLimits();                  // budget gate at EVERY spawn (throws pauseErr)
+      if (node.kind === 'script') {
+        // A child process through the NODE site: every runner error carries
+        // errorClass:null (D9), so _recover lands on the '*' row — pause as
+        // REASON.ERROR, resumable, never a "network" retry. No questions, no session.
+        const result = await this._runNodeAttempts(nc, ctx);
+        await this._afterExecution(nc, ctx, result);
+        return result;
+      }
       this._primeQuestions(nc, ctx);
       let result = await this._runNodeAttempts(nc, ctx);
       result = await this._questionsLoop(nc, ctx, result);
@@ -992,7 +1061,8 @@ export class GraphOrchestrator extends RunHarness {
       stepIndex: null,
       cycle: ordinal,
       uiPhase: this._uiPhaseOf(node.id),
-      model: nc.model || this.claude.model,
+      // A script has no model: no per-model cost override, no cost-reliability observation.
+      model: nc.kind === 'script' ? null : (nc.model || this.claude.model),
     };
     return {
       // Consumed as `cwd` by phases.mjs (runOpts). runCwd is the run root on a
@@ -1031,7 +1101,7 @@ export class GraphOrchestrator extends RunHarness {
         // model the spawn will actually use, global default included. Live
         // catalog on purpose — a resume re-resolves the env the same way. One
         // settings + plugins-lock read per dispatch; never call this per entry.
-        endpointRouted: modelHasBaseUrlRouting(nc.model || this.claude.model),
+        endpointRouted: nc.kind === 'agent' ? modelHasBaseUrlRouting(nc.model || this.claude.model) : false,
         agentPrompt: nc.agentPrompt,
         tools: nc.tools,               // frontmatter grants MUST be stamped
         promptHints: nc.promptHints || '',
@@ -1054,6 +1124,10 @@ export class GraphOrchestrator extends RunHarness {
       outputs,
       verdict,
       runCtx,
+      // The script contract (spec §6.1): what script-runner.mjs spawns. Absent on every other kind.
+      script: nc.kind === 'script'
+        ? { meta: nc.meta, runtime: nc.runtime, file: nc.file, command: nc.command, params: nc.params, paramsPort: nc.paramsPort === true, timeoutMs: nc.timeoutMs, mock: nc.mock }
+        : undefined,
       runners: this._runners,             // P3's injection seam (runExecution reads ctx.runners)
       resumeSessionId: this._takeResumeSession(executionId),
       ask: (q) => this._enqueueAsk(() => this._ask(q)),
@@ -1109,7 +1183,8 @@ export class GraphOrchestrator extends RunHarness {
         kind: ctx.slice ? 'task' : 'cycle',
         ordinal: ctx.ordinal,
         cycle: ctx.ordinal,                 // legacy alias the whole UI reads
-        agentKey: ctx.node?.key ?? null,
+        agentKey: ctx.node?.kind === 'agent' ? (ctx.node.key ?? null) : null,   // agents only (D17: it must not lie)
+        nodeKey: ctx.node?.key ?? null,                                          // every keyed kind
         phase: ctx.node?.key ?? ctx.uiPhase, // legacy column
         stepIndex: null,                    // a graph has executions, not step indexes
         status,
@@ -1242,6 +1317,18 @@ export class GraphOrchestrator extends RunHarness {
         nodeId: ctx.nodeId, executionId: ctx.executionId, port: port.id, cycle: ctx.ordinal,
       });
     }
+    if (nc.kind === 'script') {
+      // The envelope audit copy is an artifact under scripts/ (§6.5); the row gets the runtime facts (D17).
+      if (result?.envelopePath) {
+        this._artifact('envelope', result.envelopePath, { nodeId: ctx.nodeId, executionId: ctx.executionId, port: null, cycle: ctx.ordinal });
+      }
+      const step = this.state.steps.find((s) => s.key === ctx.executionId);
+      if (step) {
+        step.runtime = result?.runtime ?? nc.runtime ?? null;
+        step.exitCode = result?.exitCode ?? null;
+      }
+      return;                                    // no memory sync, no worktree staging
+    }
     // Agent memory (§5): sync the mount back after EVERY execution, slices included.
     await this._syncMemory(nc, ctx);
     if (nc.meta?.sideEffect === 'code' && !ctx.slice) await this._stageWorkingTree();
@@ -1273,6 +1360,14 @@ export class GraphOrchestrator extends RunHarness {
     ctx.questionsAnswered = readStepQuestions(this.pipeline.id)
       .filter((r) => r.nodeId === ctx.nodeId)
       .flatMap((r) => r.answers);
+    // Spec §4: the forms this agent may ask with (absent for every agent that
+    // declares none, which keeps questionsPromptBlock byte-identical), and the
+    // form answers already given for this NODE — same node-scoped filter as the
+    // legacy answers above, for the same reason (a fix cycle is a new execution).
+    ctx.askForms = nc.meta?.ask?.forms || null;
+    ctx.formAnswers = readStepQuestions(this.pipeline.id)
+      .filter((r) => r.nodeId === ctx.nodeId && r.formAnswer)
+      .map((r) => r.formAnswer);
     ctx.questionsFile = this._questionsPath(ctx.nodeId, ctx.ordinal, 1);
   }
 
@@ -1288,6 +1383,66 @@ export class GraphOrchestrator extends RunHarness {
   _questionsPath(nodeId, ordinal, round) {
     const nodeIdSafe = String(nodeId).replace(/[^A-Za-z0-9_-]/g, '_');
     return join(this.pipeline.dir, `questions-x-${nodeIdSafe}-c${ordinal}-r${round}.json`);
+  }
+
+  /**
+   * Gate 2 for a `{form,data}` ask (spec §5). Prepares the ask; on a refusal the
+   * agent is resumed ONCE with the exact error list plus the data schema and the
+   * SAME round file, and its retry is re-read. A second refusal downgrades to one
+   * generic free-text question built from the form's title, and the run log says
+   * why. Never throws, and never consumes a question round — MAX_QUESTION_ROUNDS
+   * still bounds what the USER sees.
+   * @returns {Promise<{ask:object|null, autoValues:object|null, questions:Array, result:object|undefined}>}
+   */
+  async _prepareFormAsk(nc, ctx, first, qPath, round, agentLabel) {
+    const attr = { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal };
+    let payload = first;
+    let result;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const prepared = await prepareFormAsk({
+        agentMeta: nc.meta,
+        payload: { form: payload.form, data: payload.data },
+        cwd: ctx.projectDir,
+        pipelineDir: this.pipeline.dir,
+        askId: `questions-${ctx.executionId}-r${round}`,
+      });
+      if (prepared.ok) return { ask: prepared.ask, autoValues: prepared.autoValues, questions: [], result };
+
+      const why = prepared.errors.map((e) => `${e.path ? `${e.path}: ` : ''}${e.message}`).join('; ');
+      this._log(agentLabel, 'warn', `form "${payload.form}" was refused: ${why}`, attr);
+      await appendAudit(this.pipeline.dir,
+        `${agentLabel}: form "${payload.form}" was refused — ${why}`).catch(() => {});
+      if (attempt === 2) break;
+
+      // ONE repair round: the errors + the schema, and the SAME file to rewrite.
+      ctx.formRepair = {
+        form: payload.form,
+        errors: prepared.errors,
+        schema: nc.meta?.ask?.forms?.[payload.form]?.data || null,
+        file: qPath,
+      };
+      await rm(qPath, { force: true }).catch(() => {});
+      const step = this.state.steps.find((s) => s.key === ctx.executionId);
+      if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
+      try {
+        result = await this._runNodeAttempts(nc, ctx);
+      } finally {
+        ctx.formRepair = null;
+      }
+      this._checkAbort();
+      const retry = await readAskFile(qPath);
+      // The agent may give up on the form and write plain questions instead (or
+      // write nothing): take whatever it DID write, exactly as a legacy round would.
+      if (retry.kind !== 'form') {
+        return { ask: null, autoValues: null, questions: retry.kind === 'questions' ? retry.questions : [], result };
+      }
+      payload = retry;
+    }
+    const title = nc.meta?.ask?.forms?.[payload.form]?.title || '';
+    this._log(agentLabel, 'warn', `form "${payload.form}" downgraded to a free-text question`, attr);
+    await appendAudit(this.pipeline.dir,
+      `${agentLabel}: form "${payload.form}" downgraded to a free-text question after two refusals.`).catch(() => {});
+    return { ask: null, autoValues: null, questions: [downgradeQuestion({ form: payload.form, title })], result };
   }
 
   /**
@@ -1308,14 +1463,74 @@ export class GraphOrchestrator extends RunHarness {
     for (let round = 1; round <= MAX_QUESTION_ROUNDS; round++) {
       const qPath = ctx.questionsFile;
       if (!qPath) break;
-      const { questions, malformed } = await readQuestionsFile(qPath);
-      if (!questions.length) {
-        if (malformed) {
+      // `read`, not `payload`: the legacy body below still declares `const payload` for the answer.
+      const read = await readAskFile(qPath);
+      if (read.kind === 'none') {
+        if (read.malformed) {
           await appendAudit(this.pipeline.dir, `${agentLabel}: questions file was malformed — proceeding without asking (round ${round}).`).catch(() => {});
         }
         break;
       }
       this._checkAbort();
+      let questions = read.kind === 'questions' ? read.questions : [];
+      let formAsk = null;
+      let autoValues = null;
+      if (read.kind === 'form') {
+        // Gate 2 (spec §5). It may spawn ONE repair round of its own, whose
+        // result becomes this round's result; it never consumes a round.
+        const gate = await this._prepareFormAsk(nc, ctx, read, qPath, round, agentLabel);
+        if (gate.result !== undefined) result = gate.result;
+        formAsk = gate.ask;
+        autoValues = gate.autoValues;
+        questions = gate.questions;
+      }
+      if (!formAsk && !questions.length) break;
+      if (formAsk) {
+        // §9: the persisted ask is the FULL resolved snapshot — History renders
+        // it after the agent's sidecar changed or its plugin was removed. The
+        // column is schemaless JSON TEXT, so nothing migrates.
+        await writeStepQuestions(this.pipeline.id, stepKey, round, {
+          agentKey: nc.key, nodeId: ctx.nodeId, questions: formAsk,
+        });
+        this._artifact('questions', qPath, { nodeId: ctx.nodeId, executionId: ctx.executionId, port: null, cycle: ctx.ordinal });
+        await appendAudit(this.pipeline.dir, `${agentLabel} asked with form "${formAsk.form}" (round ${round}).`).catch(() => {});
+        const answered = await this._enqueueAsk(() => this._ask({
+          id: `questions-${stepKey}-r${round}`,
+          kind: 'form',
+          agent: agentLabel,
+          nodeId: ctx.nodeId,
+          executionId: ctx.executionId,
+          askId: formAsk.askId,             // ruling X1: the ROUTE token, not `id`
+          form: formAsk.form,
+          version: formAsk.version,
+          title: formAsk.title,
+          surface: formAsk.surface,
+          data: formAsk.data,
+          layout: formAsk.layout,
+          answerSchema: formAsk.answerSchema,
+          fileRefs: formAsk.fileRefs,
+          files: formAsk.files,
+          autoValues,                              // D10, auto mode only
+          validate: formAnswerValidator(formAsk),  // gate 3
+        }));
+        this._checkAbort();
+        const values = (answered && typeof answered === 'object' && answered.values) || {};
+        await writeStepQuestions(this.pipeline.id, stepKey, round, {
+          agentKey: nc.key, nodeId: ctx.nodeId,
+          answers: { kind: 'form', form: formAsk.form, version: formAsk.version, values },
+        });
+        await appendAudit(this.pipeline.dir, `${agentLabel}: form "${formAsk.form}" answered (round ${round}).`).catch(() => {});
+        await rm(qPath, { force: true }).catch(() => {});
+        const step = this.state.steps.find((s) => s.key === stepKey);
+        if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
+        ctx.formAnswers = [...(ctx.formAnswers || []), { form: formAsk.form, version: formAsk.version, values }];
+        ctx.questionsFile = round < MAX_QUESTION_ROUNDS
+          ? this._questionsPath(ctx.nodeId, ctx.ordinal, round + 1)
+          : null;
+        this._log(agentLabel, 'debug', `resuming with form "${formAsk.form}" answers (round ${round})`, attr);
+        result = await this._runNodeAttempts(nc, ctx);
+        continue;
+      }
       await writeStepQuestions(this.pipeline.id, stepKey, round, {
         agentKey: nc.key, nodeId: ctx.nodeId, questions: { questions },
       });
@@ -1462,10 +1677,13 @@ export class GraphOrchestrator extends RunHarness {
     this._clearPauseReason();
     const manifest = rp.manifest || this.state.stepper;
     this.state.stepper = manifest;
-    this._adoptResolvedGraph(resolvedFromManifest(manifest, this.registry));
+    this.scriptRegistry = loadScriptRegistry({ scriptsDir: this.opts.scriptsDir, agentKeys: Object.keys(this.registry || {}) });
+    this._adoptResolvedGraph(resolvedFromManifest(manifest, this.registry, this.scriptRegistry));
     // §9.4, unchanged messages: the providing plugin may have been disabled or
     // uninstalled while this run sat paused. (Same place v1 re-preflights.)
     this._preflightAgentKeys(this.resolved.agentKeys);
+    this._preflightScriptKeys(this.resolved.scriptKeys);
+    await this._preflightScriptRuntimes();
     // Prompt bodies + frontmatter tools: the one thing the manifest never carries.
     const cache = new Map();
     for (const nc of Object.values(this.resolved.nodeCtx)) {
@@ -1498,13 +1716,15 @@ export class GraphOrchestrator extends RunHarness {
  * mockRole, displayName).
  * @param {object} manifest a manifest v2
  * @param {Record<string,object>} registry loadAgentRegistry() output
- * @returns {{template:object, ports:Function, loops:object, nodes:Record<string,object>, wires:Record<string,{maxCycles:number}>, agentsByKey:Record<string,object>, agentKeys:Set<string>}}
+ * @param {Record<string,object>} [scripts] loadScriptRegistry() output (script nodes)
+ * @returns {{template:object, ports:Function, loops:object, nodes:Record<string,object>, wires:Record<string,{maxCycles:number}>, agentsByKey:Record<string,object>, agentKeys:Set<string>, scriptsByKey:Record<string,object>, scriptKeys:Set<string>}}
  */
-export function resolvedFromManifest(manifest, registry) {
+export function resolvedFromManifest(manifest, registry, scripts = {}) {
   const reg = registry && typeof registry === 'object' ? registry : {};
+  const scr = scripts && typeof scripts === 'object' ? scripts : {};
   const template = manifestTemplate(manifest);   // restores node.config + loop wire config.maxCycles verbatim
   const manPorts = manifestPortsFn(manifest);
-  const regPorts = registryPortsFn(reg);
+  const regPorts = registryPortsFn(reg, scr);
   const ports = (node) => {
     const snap = manPorts(node);
     const live = regPorts(node) || { inputs: [], outputs: [] };
@@ -1523,6 +1743,13 @@ export function resolvedFromManifest(manifest, registry) {
   const nodeCtx = {};
   const keyCounts = new Map();
   for (const mn of manifest.graph?.nodes || []) {
+    if (mn.kind === 'script') {
+      keyCounts.set(mn.key, (keyCounts.get(mn.key) || 0) + 1);
+      // v4 T5: the SAME builder resolveGraph uses, over the manifest cell's AUTHORED config (the manifest keeps
+      // `config` verbatim) and the LIVE registry entry. No entry => a stub (`file: null`) the preflight refuses.
+      nodeCtx[mn.id] = scriptNodeCtx({ id: mn.id, key: mn.key, config: mn.config }, scr[mn.key]);
+      continue;
+    }
     if (mn.kind !== 'agent') {
       nodeCtx[mn.id] = { nodeId: mn.id, kind: mn.kind, key: null, config: { ...(mn.config || {}) } };
       continue;
@@ -1547,7 +1774,7 @@ export function resolvedFromManifest(manifest, registry) {
     };
   }
   for (const nc of Object.values(nodeCtx)) {
-    if (nc.kind === 'agent') nc.duplicateKey = (keyCounts.get(nc.key) || 0) > 1;
+    if (KEYED_KINDS.includes(nc.kind)) nc.duplicateKey = (keyCounts.get(nc.key) || 0) > 1;
   }
   const wires = {};
   for (const w of manifest.graph?.wires || []) {
@@ -1560,5 +1787,12 @@ export function resolvedFromManifest(manifest, registry) {
     agentsByKey[nc.key] = nc.meta;
     agentKeys.add(nc.key);
   }
-  return { template, ports, loops: classifyLoops(template, ports), nodes: nodeCtx, wires, agentsByKey, agentKeys };
+  const scriptsByKey = {};
+  const scriptKeys = new Set();
+  for (const nc of Object.values(nodeCtx)) {
+    if (nc.kind !== 'script') continue;
+    scriptsByKey[nc.key] = nc.meta;
+    scriptKeys.add(nc.key);
+  }
+  return { template, ports, loops: classifyLoops(template, ports), nodes: nodeCtx, wires, agentsByKey, agentKeys, scriptsByKey, scriptKeys };
 }

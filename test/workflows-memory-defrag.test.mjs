@@ -46,6 +46,7 @@ test('runnable: assertRunnableWorkflow validates the graph against the shipped r
   const resolved = await resolveGraph(process.cwd(), 'wf_memory_defrag', registry);
   assert.notEqual(resolved.template, GRAPH_MEMORY_DEFRAG_WORKFLOW, 'a private deep copy, never the frozen constant');
   assert.equal(resolved.template.nodes.find((n) => n.id === 'n_defrag').key, 'memoryDefragmenter');
+  assert.equal(resolved.nodes.n_defrag.model, 'claude-sonnet-5', 'the template pins Sonnet 5 as the default model');
 });
 
 // Defence in depth, exactly as test/workflows-auto-id.test.mjs pins for wf_auto: no legitimate path

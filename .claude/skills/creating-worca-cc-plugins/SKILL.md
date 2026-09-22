@@ -1,21 +1,24 @@
 ---
 name: creating-worca-cc-plugins
-description: Use when creating, scaffolding, debugging, reviewing, or extending a Worca CC plugin — anything involving worca-cc-plugin.json, a task-source connector, plugin-shipped agents/skills/workflow templates, the `worca plugin` CLI, or the Plugins view.
+description: Use when creating, scaffolding, debugging, reviewing, or extending a Worca CC plugin — anything involving worca-cc-plugin.json, a task-source connector, plugin-shipped agents/scripts/skills/workflow templates, the `worca plugin` CLI, or the Plugins view.
 ---
 
 # Creating Worca CC Plugins
 
 A Worca CC plugin is a **git repo** (or a subdir one level deep) containing `worca-cc-plugin.json`.
-It contributes up to four things to the host, and ships **no UI code**.
+It contributes up to five things to the host, ships **no code that runs in the browser**, and — from
+plugin API 4 — can ship the **declared forms** its agents ask questions with.
 
 | Dir | Contributes | Executed? |
 |---|---|---|
 | `connector/*.mjs` (via `taskSources[].module`) | task-source connector | **Yes** — in an ephemeral child process |
-| `agents/<key>.md` + `<key>.meta.json` | pipeline agents (meta v2 sidecar: typed input/output ports) | No — prompt text fed to `claude -p` |
+| `scripts/<key>.meta.json` + the program it names | pipeline scripts (node / shell / python) | **Yes** — worca spawns the program per execution |
+| `agents/<key>.md` + `<key>.meta.json` | pipeline agents (meta v2 sidecar: typed input/output ports; `ask.forms` from API 4) | No — prompt text fed to `claude -p`, forms drawn by the host |
 | `skills/<name>/SKILL.md` | agent skills | No — copied into the run worktree |
 | `workflows/*.json` | pipeline templates (v2 graph JSON — one Task node, one End node) | No — validated into DB rows |
 
-**The connector is the only executable seam.** Everything else is data. Internalize this before designing anything.
+**The connector and the scripts are the executable seams.** Everything else is data.
+Internalize this before designing anything.
 
 ## Start here — always scaffold
 
@@ -35,6 +38,10 @@ worca plugin exec my-plugin main getTask --args '{"id":"X-1"}' # real call
 worca plugin exec my-plugin main listTasks --inspect           # --inspect-brk on the child
 worca plugin reimport my-plugin                                # re-read workflows/*.json after an edit
 worca plugin validate ./my-plugin --strict
+worca plugin new-script tidy --dir ./my-plugin                 # scripts/tidy.{meta.json,mjs,tests.json}
+worca plugin validate ./my-plugin --run-cases                  # lint, then RUN every shipped script case
+worca script test tidy                                         # one bench run of a linked/installed script
+worca script test tidy --all                                   # its saved cases; exit 1 = a case failed
 worca plugin doctor my-plugin
 ```
 
@@ -56,7 +63,7 @@ Only `name` is required. Unknown fields are warnings (errors under `--strict`).
 |---|---|
 | `name` | kebab-case, ≤64 chars, machine-unique, used as a dir name |
 | `version` | optional — absent means the pinned SHA **is** the version |
-| `engines.worca-cc-api` | `">=3 <4"`. Integer host API. Unparseable → fails closed, won't install. Host APIs are a SET ([1, 2, 3]); the highest version your range admits is negotiated. API 3 adds meta v2 sidecars and v2 graph templates |
+| `engines.worca-cc-api` | `">=4 <5"`. Integer host API. Unparseable → fails closed, won't install. Host APIs are a SET ([1, 2, 3, 4]); the highest version your range admits is **negotiated**, and that is what decides which features you get. API 3 adds meta v2 sidecars and v2 graph templates; **API 4 honours an agent's `ask.forms`** |
 | `setup.node` | `true` → `npm ci --ignore-scripts --omit=dev` at install. **Lockfile mandatory** |
 | `setup.python` | only `"pyproject"` → `uv sync`. Worca CC never *runs* python; your JS spawns it |
 | `taskSources[].id` | kebab-case |
@@ -82,7 +89,9 @@ marketplace (its 5 bundled plugins live under `plugins/`), registered by default
 
 ## UI is schema-driven — pick from these widgets
 
-You declare shapes; the host renders them. There is no way to ship a custom component.
+You declare shapes; the host renders them. **No plugin code ever runs in the browser** — not for a
+source pane, not for a question form. The two declarative surfaces are the source `inputs[]` below
+and an agent's `ask.forms` (see [Ask forms](#ask-forms-api-4)).
 
 | `inputs[].type` | Widget | Requires |
 |---|---|---|
@@ -176,6 +185,325 @@ A workflow template is a v2 graph, and `worca plugin init` scaffolds this shape:
 
 Node ids must match `/^n_[a-z0-9]{1,32}$/`; exactly one `task` node and one `end` node are required.
 
+## Ask forms (API 4)
+
+An agent that needs a human can ship the UI its question is asked with. The form is **JSON in the
+sidecar** — the host draws it from a fixed widget catalog, validates the answer, and resumes the
+agent. Nothing you write runs in the browser.
+
+Your manifest must **negotiate** API 4 or the block is ignored:
+
+```json
+"engines": { "worca-cc-api": ">=4 <5" }
+```
+
+A plugin declaring `">=3 <4"` keeps working: its agents load, its ports are intact, and it asks with
+generic questions. The ignored block is named in `worca plugin list`, `worca plugin doctor` and the
+Plugins card, the same way an ignored sidecar is.
+
+### The declaration
+
+`ask.forms.<id>` in `agents/<key>.meta.json`. This is the form worca itself ships on its code
+reviewer — copy its shape:
+
+```json
+{
+  "version": 1,
+  "title": "Confirm these findings",
+  "data": {
+    "type": "object",
+    "required": ["findings"],
+    "properties": {
+      "summary": { "type": "string", "maxLength": 4000 },
+      "findings": {
+        "type": "array",
+        "maxItems": 20,
+        "items": {
+          "type": "object",
+          "required": ["id", "title"],
+          "properties": {
+            "id": { "type": "string", "maxLength": 64 },
+            "severity": { "type": "string", "enum": ["critical", "major", "minor", "suggestion"] },
+            "title": { "type": "string", "maxLength": 200 },
+            "detail": { "type": "string", "maxLength": 2000 }
+          }
+        }
+      }
+    }
+  },
+  "answer": {
+    "type": "object",
+    "required": ["findings"],
+    "properties": {
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["id", "verdict"],
+          "properties": {
+            "id": { "type": "string" },
+            "verdict": { "type": "string", "enum": ["keep", "waive"], "default": "keep" },
+            "note": { "type": "string", "maxLength": 2000 }
+          }
+        }
+      },
+      "notes": { "type": "string", "maxLength": 4000 }
+    }
+  },
+  "layout": [
+    { "widget": "markdown", "bind": "data.summary" },
+    { "widget": "review-list", "bind": "data.findings", "field": "findings", "label": "Findings" },
+    { "widget": "textarea", "field": "notes", "label": "Notes" }
+  ],
+  "example": {
+    "summary": "Two findings I would waive if the deviation was intended.",
+    "findings": [
+      { "id": "f1", "severity": "major", "title": "Plan deviation: the retry lives in the caller", "detail": "The plan put it in the client. Was that intentional?" },
+      { "id": "f2", "severity": "minor", "title": "No unit test for the empty-list branch", "detail": "It is covered by the integration test only." }
+    ]
+  }
+}
+```
+
+Three parts, three owners: **`data`** is what your agent must supply at run time, **`answer`** is what
+the human returns (the contract your prompt reads), **`layout`** is view only.
+
+### What the agent writes at run time
+
+Instead of the legacy `{"questions":[…]}` payload, your agent writes `{form, data}` to the questions
+file and stops:
+
+```json
+{ "form": "review-findings",
+  "data": {
+    "summary": "Two findings I would waive if the deviation was intended.",
+    "findings": [
+      { "id": "f1", "severity": "major", "title": "Plan deviation: the retry lives in the caller",
+        "detail": "The plan put it in the client. Was that intentional?" }
+    ] } }
+```
+
+### What it receives back
+
+On resume (or on a clarifier's `answers` port):
+
+```json
+{ "form": "review-findings", "version": 1,
+  "values": { "findings": [ { "id": "f1", "verdict": "waive", "note": "Deliberate, see ADR-12." } ],
+              "notes": "" } }
+```
+
+`version` is the integer you declared; bump it when the `answer` contract changes so a resumed agent
+can tell which shape it is reading.
+
+### Widget catalog (`askCatalog: 1`)
+
+| Class | Widgets |
+|---|---|
+| Input | `text`, `textarea`, `number`, `slider`, `toggle`, `date`, `select` (radio cards ≤ 6, else dropdown), `multiselect`, `rank`, `table-select`, `review-list`, `gallery` (with `field`) |
+| Display | `markdown`, `callout`, `image`, `gallery`, `compare`, `pdf`, `code`, `diff`, `table`, `json`, `file-list`, `media` |
+| Layout | `group`, `columns`, `tabs` |
+
+An item may carry `"requires": { "askCatalog": 2 }` plus a `"fallback"` item for a widget a newer
+host has; with no fallback the form fails validation. Display widgets contribute nothing to the
+answer.
+
+### Layout item keys
+
+An item may carry `widget`, `field`, `bind`, `label`, `help`, `when`, `requires`, `fallback` — plus
+its widget's own keys. Anything else is a validation error, so a misspelt `lables` is named instead
+of silently ignored.
+
+| Widget | Own keys |
+|---|---|
+| `text` | `placeholder`, `mono` |
+| `textarea` | `placeholder`, `rows` |
+| `number` | `unit`, `placeholder` |
+| `slider` | `unit`, `minLabel`, `maxLabel` |
+| `toggle`, `date`, `markdown`, `pdf`, `media`, `json` | — |
+| `select` | `style`, `options`, `labels`, `descriptions`, `tones`, **`suggest`** |
+| `multiselect` | `style`, `options`, `labels`, `descriptions` |
+| `rank` | `titleKey`, `metaKey` |
+| `table-select`, `table` | `columns` |
+| `review-list` | `titleKey`, `bodyKey`, `metaKey`, `labels`, `tones`, `notePlaceholder` |
+| `gallery` | `captionKey`, `fileKey` |
+| `callout` | `text`, `title`, `tone` |
+| `image` | `caption` |
+| `compare` | `before`, `after`, `beforeLabel`, `afterLabel` |
+| `code` | `name`, `lang` |
+| `diff` | `name` |
+| `file-list` | `fileKey`, `noteKey` |
+| `group` | `title`, `children` |
+| `columns` | `columns` |
+| `tabs` | `tabs` |
+
+`suggest` on a `select` is suggested answers **plus free text**: the field's schema stays a plain
+`{ "type": "string" }` with no `enum`, so the value is whatever the human types.
+
+### The dialect
+
+A closed JSON Schema subset: `type` (`string`, `number`, `integer`, `boolean`, `array`, `object`,
+`file`), `enum`, `enumFrom`, `default`, `defaultFrom`, `required`, `minimum`, `maximum`,
+`multipleOf`, `minLength`, `maxLength`, `pattern`, `patternHint`, `format` (`date`, `date-time`,
+`email`, `uri`), `items`, `minItems`, `maxItems`, `uniqueItems`, `properties`, `title`,
+`description`, `accept`. Nothing else — no `$ref`, `oneOf`, `anyOf`, `if`/`then`;
+`additionalProperties` is always false; nesting stops at object → array → object.
+
+- `file` is **data-side only**: a run-relative path plus `accept` (mime patterns). worca snapshots
+  the file at ask time, sniffs its real type against your `accept` and a host allowlist, and serves
+  it by index — never by path. html and anything scriptable is refused.
+- An **opaque object** — `{ "type": "object" }` with no `properties` — is data-side only and never at
+  the root. It is how the `json` display widget shows an arbitrary blob your agent produced. The
+  answer side stays closed.
+- `enumFrom` / `defaultFrom` are **answer-side only** and resolve against your data
+  (`data.images[].id`), so the human picks from a closed set your agent just produced and a field
+  like a suggested version number arrives prefilled. `enum` and `enumFrom` are mutually exclusive.
+- `patternHint` is the sentence shown when `pattern` fails. Write one: "Does not match the expected
+  format" tells nobody what a semver field wants.
+- `bind`, `enumFrom`, `defaultFrom` and `options.from` use one tiny path language: `data.a.b` and
+  `data.items[].id`. No expressions, no indexes, no functions.
+- `when` is the only conditional: `{ "field": "value" }` or `{ "field": ["a", "b"] }`, equality on
+  answer fields, and an item may not depend on its own field. A hidden field is dropped from the
+  answer and is not required while hidden.
+- `"surface": "web"` says a text answer is meaningless. Chat then prints the projection and keeps
+  waiting; the CLI refuses the run rather than pretend. Default is `"any"`.
+- `default` prefills the web form **and** feeds `--yes`: with no default, auto mode takes the first
+  `enum` value, a `rank` takes data order, and a `review-list` takes every item's default verdict.
+  Pick defaults that are safe to apply unattended.
+
+### Limits
+
+At most 8 forms per agent, and the whole `ask` block stays under 64 KB:
+
+| Rule | Value |
+|---|---|
+| Form id | `^[a-z][a-z0-9-]{0,47}$` |
+| `title` | 1–120 characters, mandatory |
+| Forms per agent | 8 |
+| `ask` block size | 64 KB |
+| Files per ask | 24 |
+| Bytes per file / per ask | 25 MB / 100 MB |
+
+### Two gates you will meet
+
+**At load / validate time**, a form must prove itself: `example` is mandatory, it must validate
+against `data`, every widget, `field`, `bind` and item key must be legal, every required answer field
+must have an input in the layout — and the **auto answer built from `example` must be a valid
+answer**. That last rule is the one that surprises authors: a *required*, always-visible free-text
+field with no `default` and no `defaultFrom` **fails validation**, because `--yes` could never answer
+it. Give it a default, make it optional, or put it behind a `when`.
+
+**At ask time**, worca runs the same check against the data your agent actually wrote. Data that
+passes the schema but that an unattended run could not answer — an `enumFrom` that resolved to an
+empty list on a required choice, a `defaultFrom` whose source the agent left out — is **refused**,
+and your agent is resumed once with the error list so it can supply better data. A second failure
+downgrades to a plain free-text question. A run is never crashed by a form.
+
+### Validate before you ship
+
+A form that fails is a **warning** (worca drops it and the agent keeps generic questions) and an
+**error** under `--strict`, which is the author's gate:
+
+```bash
+worca plugin validate ./my-plugin --strict
+```
+
+Errors name the item by its reading position — `ask.forms."review-findings" layout#2: …` — and every
+failed rule is listed, not just the first.
+
+The install consent card and `worca plugin install`'s receipt name, per agent, how many forms ship
+and which file types they may display from the run folder — on a host that will honour them, so only
+when your manifest negotiates API 4 (below that the line is absent and the ignored-contributions line
+names the block instead). That list is read from your `accept` patterns alone, before anything is
+installed and without running a line of your code — so keep `accept` as narrow as the form really
+needs.
+
+## Scripts (API 3)
+
+A script card runs **your program** instead of spawning Claude: worca hands it the bound
+input paths and the allocated output paths in one JSON envelope on stdin and reads one
+JSON frame back on stdout. Cost is $0 and the result is repeatable.
+
+| File | Required |
+|---|---|
+| `scripts/<key>.meta.json` | yes — meta v2, `key` = filename stem |
+| `scripts/<key>.mjs` / `.py` / `.sh` (+ `.cmd`) | the program `file` names, per runtime |
+| `scripts/<key>.tests.json` | optional — saved test cases that travel with the script |
+
+```bash
+worca plugin new-script tidy --runtime node --dir ./my-plugin
+```
+
+Scaffolds all three, already valid. `--runtime shell` writes **both** `tidy.sh` and
+`tidy.cmd`: on Windows worca runs the `win32` entry under `cmd.exe`, which cannot run a `.sh`.
+
+### The three runtime contracts
+
+`node` — the default export receives one api object and returns a frame:
+
+```js
+export default async function ({ inputs, outputs, params, ctx, log }) {
+  log('info', 'hello from a worca script');
+  return { summary: 'ok' };     // plus { outputs: { <port>: { value } }, verdict }
+}
+```
+
+`shell` — the envelope arrives as environment variables, and whatever the command prints
+is captured into every md output it did not write itself. Exit `0` is clean, exit `1` is
+blocking, anything else is an execution error (`exitCodes` in the sidecar overrides).
+
+```sh
+#!/bin/sh
+echo "checking $WORCA_IN_PLAN"     # WORCA_IN_<PORT>, WORCA_OUT_<PORT>, WORCA_PARAM_<ID>,
+                                   # WORCA_VERDICT, WORCA_CWD, WORCA_ENVELOPE
+```
+
+`python` — `main(api)`, where `api` exposes `inputs`, `outputs`, `params`, `ctx` and `log`
+both as attributes and as keys. Standard library only, python ≥ 3.8.
+
+```python
+def main(api):
+    api.log('info', 'hello from a worca script')
+    return { 'summary': 'ok' }
+```
+
+`stdout` carries the frame in `node` and `python`. `console.*` and `print` are re-routed to
+the run log, so they are safe; a direct `process.stdout.write` (or a child process that
+inherits fd 1) corrupts the frame — use `log`, or write to stderr.
+
+### Test cases
+
+`<key>.tests.json` ships the proof that the script works:
+
+```json
+{ "version": 1,
+  "cases": [
+    { "id": "sample", "name": "sample",
+      "params": { "command": "npm test" },
+      "inputs": { "plan": { "text": "# Plan" }, "done": { "fired": true } },
+      "cwd": { "kind": "scratch" },
+      "expect": { "verdict": "clean", "fired": ["log", "pass"] } } ] }
+```
+
+Inputs are inline text; a void port takes `{ "fired": true }`. A shipped case must use
+`"cwd": { "kind": "scratch" }` — a case that names a project folder cannot travel, and is
+an install-blocking error. `expect` is optional: without it a case reports its result and
+is red only when the script could not run at all.
+
+```bash
+worca plugin validate ./my-plugin --run-cases   # lint, then run every case. Exit 1 = a case failed.
+```
+
+That is the command to put in CI. What each script prints streams to stderr as
+`[<key>/<case>] …` lines, and Ctrl+C or a CI cancel stops the running script (exit 2).
+A `python` case needs python ≥ 3.8 on the CI host: without one the case FAILS with the
+interpreter sentence — it is never skipped.
+
+Keys: a script key shares ONE namespace with agent keys, and a key that a built-in script or
+a built-in agent holds (`shell`, `js`, `py`, `planner`, …) is never loaded from a plugin.
+`new-script` refuses those, the reserved names (`new`, `bench`, `runtimes`) and the Windows
+device names (`con`, `nul`, `com1`, …).
+
 ## Common mistakes
 
 | Mistake | What happens |
@@ -199,6 +527,15 @@ Node ids must match `/^n_[a-z0-9]{1,32}$/`; exactly one `task` node and one `end
 | A template referencing a key whose sidecar was rejected | ONE line naming the sidecar — the template is not re-reported rule by rule |
 | An agent key that collides with a built-in or user agent | Yours is dropped; `plugin list`/`doctor`/the Plugins card name it under "contributions ignored" |
 | Editing `workflows/*.json` in a linked dir | The DB row is stale until `worca plugin reimport <name>` |
+| A shipped case with `"cwd": {"kind": "project"}` | Install-blocking validation error — a shipped case runs in a scratch folder |
+| `<key>.tests.json` with no `<key>.meta.json` beside it | Validation error — nothing would ever read it |
+| A `shell` script with `<key>.sh` and no `win32` entry | Runs on macOS and Linux only — on Windows the file goes to `cmd.exe`, which cannot run a `.sh`. Ship the `.cmd` half |
+| A node/python script that writes no value for a declared output | Execution error `output "<port>" was not written` |
+| A script key a built-in script or agent already holds (`shell`, `planner`, …) | Yours is dropped at load; `worca plugin new-script` refuses the key up front |
+| `process.stdout.write` in a `node` script | Corrupts the result frame. `console.*` is safe — it is routed to the run log |
+| An `ask` block on a plugin declaring API 3 | The block is ignored, the agent asks with generic questions; `plugin list`/`doctor`/the Plugins card say so. Declare `">=4 <5"` |
+| A form with no `example` | Validation error — `example` is what proves the declaration and what the Agents view previews |
+| A `type:'file'` with a wide `accept` | Every reviewer sees it on the consent card. Narrow it to what the form actually shows |
 
 ## The example worth reading
 
@@ -225,11 +562,16 @@ silently dropping the tracker comment on a transient blip.
 |---|---|
 | Manifest schema + validation | `src/core/plugin-manifest.mjs` |
 | Install / update / uninstall lifecycle | `src/core/plugin-store.mjs` |
+| Script registry + the runtime contract | `src/core/script-registry.mjs`, `src/core/graph/script-runner.mjs` |
+| Script store + the test bench | `src/core/script-store.mjs`, `src/core/script-bench.mjs` |
+| Shipped script cases (`validate --run-cases`) | `src/core/plugin-script-cases.mjs` |
 | Child-process protocol | `src/core/plugin-shim.mjs`, `plugin-shim-child.mjs` |
 | Config / secrets / state (per-profile buckets) | `src/core/plugin-config.mjs` |
 | Profile → project/workspace binding resolution | `src/core/source-bindings.mjs` |
 | Widget rendering | `ui/public/source-pane.mjs`, `ui/public/plugins-view.mjs` |
 | CLI | `src/cli/worca-cc.mjs` (`worca plugin help`) |
+| Ask-form dialect, the three gates (`validateFormDef`, `checkAskData`, `collectAnswer`) and the text projection | `src/shared/forms/` |
+| Ask-form rendering (host-owned widgets) | `ui/public/ask/form-renderer.mjs` |
 
 ## Before you ship
 
@@ -242,5 +584,6 @@ Then push and let users register the repo as a marketplace:
 `worca marketplace add <repo-url>` (or Plugins → Add marketplace in the UI) →
 install from the Available list or `worca plugin install <name>`.
 Removing a marketplace never removes installed plugins.
-Installs are SHA-pinned; users see a consent inventory listing every agent's tools and every
-secret you request, so keep both minimal.
+Installs are SHA-pinned; users see a consent inventory listing every agent's tools, every ask form it
+can put on screen with the file types that form may display, and every secret you request — so keep
+all three minimal.

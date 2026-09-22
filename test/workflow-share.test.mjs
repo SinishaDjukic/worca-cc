@@ -10,7 +10,9 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { writeKeyGraph } from './helpers/export-fixtures.mjs';
 import {
   exportGraphJson, importGraphWorkflow, saveGraphWorkflow, summarizeUnknownAgents, workflowFileSlug,
+  listScriptNodes, formatScriptNodes, SCRIPT_IMPORT_NOTICE,
 } from '../src/core/workflow-share.mjs';
+import { loadScriptRegistry } from '../src/core/script-registry.mjs';
 import { readWorkflow, writeGraphWorkflow } from '../src/core/workflows.mjs';
 
 useTempHome(after);
@@ -125,4 +127,51 @@ test('saveGraphWorkflow keeps composer semantics: a minted collision is ID_TAKEN
   assert.equal(b.workflow.id, a.workflow.id);
   assert.equal(b.workflow.name, 'Composer Save Renamed');
   await assert.rejects(saveGraphWorkflow({ name: 'v1', steps: [] }), (e) => e.code === 'BAD_REQUEST');
+});
+
+/** The default (built-in) script registry — shell + js carry command/code params. */
+const SCRIPTS = loadScriptRegistry({ userScriptsDir: null, includePlugins: false });
+const SHELL_PORTS = SCRIPTS.shell.defaultPorts;
+const withShell = (src, command) => ({
+  ...src,
+  nodes: [...src.nodes, { id: 'n_sh', kind: 'script', key: 'shell', x: 900, y: 300, config: { params: { command }, ports: { inputs: SHELL_PORTS.inputs, outputs: SHELL_PORTS.outputs } } }],
+  wires: [...src.wires, { id: 'w_sh', from: { node: src.nodes.find((n) => n.kind === 'task').id, port: 'task' }, to: { node: 'n_sh', port: 'in' } }],
+});
+
+test('listScriptNodes: only nodes with a command/code-typed EFFECTIVE value, with the values', () => {
+  const src = withShell({ version: 2, name: 'x', nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }], wires: [] }, 'npm test');
+  const jsDefault = { id: 'n_js', kind: 'script', key: 'js', x: 0, y: 0, config: { ports: SCRIPTS.js.defaultPorts } };   // source from the sidecar default
+  const diff = { id: 'n_d', kind: 'script', key: 'gitDiff', x: 0, y: 0, config: { params: { stat: true } } };          // no command/code param at all
+  const list = listScriptNodes({ ...src, nodes: [...src.nodes, jsDefault, diff] }, SCRIPTS);
+  assert.deepEqual(list.map((n) => [n.nodeId, n.key, n.runtime, Object.keys(n.params)]), [['n_sh', 'shell', 'shell', ['command']], ['n_js', 'js', 'node', ['source']]]);
+  assert.equal(list[0].displayName, 'Shell');
+  assert.equal(list[0].params.command, 'npm test');
+  assert.match(list[1].params.source, /export default async function/);
+  const text = formatScriptNodes(list);
+  assert.ok(text.startsWith(`${SCRIPT_IMPORT_NOTICE}\n`));
+  assert.match(text, /\n- Shell \(n_sh, shell\) command:\n    npm test\n/);
+  assert.equal(SCRIPT_IMPORT_NOTICE, "These commands run on this machine with worca's privileges when the workflow runs.");
+});
+
+test('importGraphWorkflow: dryRun returns scriptNodes and writes nothing; a real import saves and reports them', async () => {
+  const src = withShell(await exportGraphJson('wf_default'), 'npm test');
+  const dry = await importGraphWorkflow({ ...src, name: 'With Shell' }, { dryRun: true });
+  assert.equal(dry.workflow, null);
+  assert.equal(dry.renamed, false);
+  assert.equal(dry.requestedName, 'With Shell');
+  assert.deepEqual(dry.scriptNodes.map((n) => [n.nodeId, n.params.command]), [['n_sh', 'npm test']]);
+  assert.equal((await readWorkflow('wf_with-shell')), null, 'a dry run writes nothing');
+  // P10 (fail closed): every caller that did not confirm is refused — the HTTP route included — and nothing is written.
+  await assert.rejects(importGraphWorkflow({ ...src, name: 'With Shell' }),
+    (e) => e.code === 'SCRIPTS_UNCONFIRMED' && e.scriptNodes.length === 1 && e.scriptNodes[0].params.command === 'npm test'
+      && /runs commands on this machine/.test(e.message));
+  await assert.rejects(importGraphWorkflow({ ...src, name: 'With Shell' }, { acceptScripts: 'yes' }), { code: 'SCRIPTS_UNCONFIRMED' }, 'only the literal true confirms');
+  assert.equal((await readWorkflow('wf_with-shell')), null, 'a refused import writes nothing');
+  const r = await importGraphWorkflow({ ...src, name: 'With Shell' }, { acceptScripts: true });
+  assert.equal(r.workflow.name, 'With Shell');
+  assert.deepEqual(r.scriptNodes.map((n) => n.nodeId), ['n_sh']);
+  assert.deepEqual((await importGraphWorkflow({ ...(await exportGraphJson('wf_default')), name: 'Plain' }, { dryRun: true })).scriptNodes, []);
+  // A script the recipient lacks is a V4 error with the script sentence.
+  await assert.rejects(importGraphWorkflow({ ...src, name: 'Missing', nodes: src.nodes.map((n) => (n.id === 'n_sh' ? { ...n, key: 'ghostScript' } : n)) }, { dryRun: true }),
+    (e) => e.code === 'INVALID_GRAPH' && e.errors.some((i) => /unknown script "ghostScript"/.test(i.message)));
 });

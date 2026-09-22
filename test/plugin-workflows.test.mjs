@@ -17,7 +17,8 @@ import { setActiveWorkflow } from '../src/core/config.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { readPluginsLock, writePluginsLock, pluginDir } from '../src/core/plugins-lock.mjs';
 import {
-  importPluginWorkflows, removePluginWorkflows, referencedPluginAgents, ReferencedError,
+  importPluginWorkflows, readPluginWorkflows, removePluginWorkflows, referencedPluginAgents, referencedPluginScripts,
+  ReferencedError,
 } from '../src/core/plugin-workflows.mjs';
 
 const homes = [];
@@ -280,4 +281,119 @@ test('a disabled plugin\'s workflows are hidden from the list and refused by the
   writePluginsLock({ ...readPluginsLock(), demo: { ...readPluginsLock().demo, enabled: true } });
   assert.ok((await listWorkflows()).some((w) => w.id === 'wfp_demo_simple'), 'back after enabling');
   assert.equal((await assertRunnableWorkflow('wfp_demo_simple', { checkGraph: false })).id, 'wfp_demo_simple');
+});
+
+/** task -> script -> end over the script's await gate; `out` is the output port wired to End. */
+function scriptTpl(name, key, out) {
+  return {
+    name, version: 2, domain: 'general',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+      { id: 'n_s', kind: 'script', key, x: 320, y: 200, config: {} },
+      { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
+    ],
+    wires: [
+      { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_s', port: 'await' } },
+      { id: 'w2', from: { node: 'n_s', port: out }, to: { node: 'n_end', port: 'result' } },
+    ],
+  };
+}
+
+test('readPluginWorkflows resolves script keys: a built-in script and the plugin\'s own are ready, an unknown one is skipped', () => {
+  const versionDir = installFakePlugin('demo', {
+    'builtin.json': scriptTpl('Builtin Script', 'gitDiff', 'diff'),
+    'own.json': scriptTpl('Own Script', 'tidy', 'log'),
+    'ghost.json': scriptTpl('Ghost Script', 'ghostScript', 'log'),
+  });
+  mkdirSync(join(versionDir, 'scripts'), { recursive: true });
+  writeFileSync(join(versionDir, 'scripts', 'tidy.meta.json'), JSON.stringify({
+    key: 'tidy', metaVersion: 2, displayName: 'Tidy', runtime: 'shell', command: 'npm run tidy',
+    inputs: [], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'tidy-cycle{cycle}.md' }],
+  }));
+  const { ready, skipped } = readPluginWorkflows('demo', versionDir, { quiet: true });
+  assert.deepEqual(ready.map((r) => r.rowName).sort(), ['Builtin Script', 'Own Script']);
+  assert.deepEqual(skipped.map((s) => s.file), ['ghost.json']);
+  assert.match(skipped[0].errors.join('\n'), /ghostScript/);
+});
+
+/** Add a shipped script (sidecar + source + an empty cases file) to a fake plugin. */
+function addPluginScript(versionDir, key) {
+  mkdirSync(join(versionDir, 'scripts'), { recursive: true });
+  writeFileSync(join(versionDir, 'scripts', `${key}.mjs`), 'export default async () => ({});\n');
+  writeFileSync(join(versionDir, 'scripts', `${key}.meta.json`), JSON.stringify({
+    metaVersion: 2, key, displayName: key, runtime: 'node', file: `${key}.mjs`,
+    inputs: [], outputs: [{ id: 'out', type: 'md', when: 'always', filename: `${key}-cycle{cycle}.md` }],
+  }));
+  writeFileSync(join(versionDir, 'scripts', `${key}.tests.json`), JSON.stringify({ version: 1, cases: [] }));
+}
+
+test('referencedPluginScripts: script nodes in non-plugin v2 rows, never flow cards or a tests file', async () => {
+  const versionDir = installFakePlugin('demo', {});
+  addPluginScript(versionDir, 'demoScript');
+  await writeGraphWorkflow({
+    id: 'wf_scripted', name: 'Scripted', domain: 'general',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_s', kind: 'script', key: 'demoScript', x: 200, y: 0, config: {} },
+      // A flow card carrying a stray key must NOT pin the plugin forever.
+      { id: 'n_end', kind: 'end', x: 400, y: 0, config: {}, key: 'demoScript' },
+    ],
+    wires: [],
+  });
+  assert.deepEqual(referencedPluginScripts('demo'), [
+    { workflowId: 'wf_scripted', name: 'Scripted', keys: ['demoScript'] },
+  ]);
+  assert.deepEqual(referencedPluginScripts('ghost-plugin'), [], 'unknown plugin: no keys, no refs');
+  assert.deepEqual(referencedPluginAgents('demo'), [], 'a script node is not an agent reference');
+});
+
+test('referencedPluginScripts ignores the plugin\'s OWN imported rows', async () => {
+  const versionDir = installFakePlugin('demo', { 'simple.json': TPL });
+  addPluginScript(versionDir, 'demoScript');
+  await importPluginWorkflows('demo', versionDir);
+  assert.deepEqual(referencedPluginScripts('demo'), []);
+});
+
+test('referencedPluginScripts skips a key ANOTHER owner holds: the author who links their own export can still remove it', async () => {
+  // `worca workflow export --format plugin` bundles the USER's script under its own
+  // key. Linked on the author's host, the plugin's copy collides with the user's
+  // and is never loaded — the workflow below runs the USER's script, so removing
+  // the plugin breaks nothing and the guard must not name it.
+  const versionDir = installFakePlugin('demo', {});
+  addPluginScript(versionDir, 'sharedKey');
+  addPluginScript(versionDir, 'pluginOnly');
+  const { userScriptsDir } = await import('../src/core/script-registry.mjs');
+  mkdirSync(userScriptsDir(), { recursive: true });
+  writeFileSync(join(userScriptsDir(), 'sharedKey.mjs'), 'export default async () => ({});\n');
+  writeFileSync(join(userScriptsDir(), 'sharedKey.meta.json'), JSON.stringify({
+    metaVersion: 2, key: 'sharedKey', displayName: 'sharedKey', runtime: 'node', file: 'sharedKey.mjs',
+    inputs: [], outputs: [{ id: 'out', type: 'md', when: 'always', filename: 'sharedKey-cycle{cycle}.md' }],
+  }));
+  await writeGraphWorkflow({
+    id: 'wf_author', name: 'Author Flow', domain: 'general',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_s', kind: 'script', key: 'sharedKey', x: 200, y: 0, config: {} },
+    ],
+    wires: [],
+  });
+  assert.deepEqual(referencedPluginScripts('demo'), [], 'the user owns sharedKey on this host');
+
+  // A key the plugin really owns still guards — also in the same workflow.
+  await writeGraphWorkflow({
+    id: 'wf_both', name: 'Both Keys', domain: 'general',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_s', kind: 'script', key: 'sharedKey', x: 200, y: 0, config: {} },
+      { id: 'n_p', kind: 'script', key: 'pluginOnly', x: 400, y: 0, config: {} },
+    ],
+    wires: [],
+  });
+  assert.deepEqual(referencedPluginScripts('demo'), [
+    { workflowId: 'wf_both', name: 'Both Keys', keys: ['pluginOnly'] },
+  ]);
+
+  // A DISABLED plugin loads nothing, so nobody "else" holds pluginOnly: it still guards.
+  writePluginsLock({ ...readPluginsLock(), demo: { ...readPluginsLock().demo, enabled: false } });
+  assert.deepEqual(referencedPluginScripts('demo').map((r) => r.keys), [['pluginOnly']]);
 });

@@ -3,7 +3,7 @@
 // and no pointer capture, so the view takes injectable `raf` and `viewport`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { boot, fixture, loopFixture, portsFn, AGENTS } from './helpers/graph-view-fixture.mjs';
+import { boot, fixture, loopFixture, scriptFixture, portsFn, AGENTS, SCRIPTS } from './helpers/graph-view-fixture.mjs';
 import { routeAll, routePathD } from '../src/shared/graph/route.mjs';
 import { nodeSize, portAnchor } from '../src/shared/graph/geometry.mjs';
 import { portsOf } from '../src/shared/graph/ports.mjs';
@@ -692,4 +692,24 @@ test('the run card\'s result link is not natively draggable: a pan that starts o
   assert.ok(a, 'the result band renders an anchor');
   assert.equal(a.draggable, false, 'Chrome drags an <a href> natively, which pointercancels the pan (D16)');
   assert.equal(a.getAttribute('href'), '#', 'and it is still the delegated link the host handles');
+});
+
+test('a script card: node-script class, sidecar tint, ƒ glyph when no icon, the runtime chip in the head', async () => {
+  const { doc, host } = boot();
+  const { createGraphView, SCRIPT_GLYPH } = await import(viewPath);
+  const view = createGraphView(host, { doc, mode: 'edit', portsFn, agents: { ...AGENTS, ...SCRIPTS } });
+  view.render(scriptFixture(), {});
+  const card = host.querySelector('.node[data-node-id="n_sh"]');
+  assert.ok(card.classList.contains('node-script'));
+  assert.equal(card.dataset.kind, 'script');
+  const head = card.querySelector('.nhead');
+  assert.ok(head.classList.contains('h-amber'));
+  assert.equal(head.querySelector('.tt').textContent, 'Shell');
+  assert.equal(head.querySelector('.chip.rt').textContent, 'shell');
+  assert.equal(head.querySelector('svg').innerHTML, SCRIPT_GLYPH, 'no sidecar icon: the ƒ glyph');
+  assert.equal(card.querySelectorAll('.prow.in').length, 2, 'done + await');
+  view.setAgents({ ...AGENTS, shell: { ...SCRIPTS.shell, color: 'green', displayName: 'Tests', icon: '<path d="M2 2"/>' } });
+  assert.ok(head.classList.contains('h-green'), 'setAgents repaints a script head');
+  assert.equal(head.querySelector('.tt').textContent, 'Tests');
+  assert.equal(head.querySelector('svg').innerHTML, '<path d="M2 2"></path>', 'a non-builtin icon goes through the shared sanitizer');
 });

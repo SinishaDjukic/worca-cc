@@ -91,6 +91,7 @@ export const SANDBOX_NOTE =
   'The one other place Read may go is the file path read_attachment returns for an image or PDF attachment of this chat; never read anywhere else on disk. ' +
   "Never call propose_workflow or propose_run yourself: proposals belong to the assistant's own turn (a sub-agent's call produces no card). " +
   "Never call remember or forget yourself: saving or removing memory belongs to the assistant's own turn (list_memory and read_memory are fine). " +
+  "Never call save_script or test_script yourself: writing a script or running one belongs to the assistant's own turn (list_scripts and get_script are fine). " +
   'Answer from tool results only; never invent run data; return a short report.';
 
 /** System-prompt-only mock markers (the runner parses the ask role from the SYSTEM prompt, Task 16). */

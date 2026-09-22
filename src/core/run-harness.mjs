@@ -41,7 +41,7 @@ import {
   memoryCaps,
 } from './settings.mjs';
 import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY } from './memory-sync.mjs';
-import { memoryRoot, renderMemoryBlock, bumpScopeState, readScopeState } from './memory-store.mjs';
+import { memoryRoot, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
 import { readCostCapOverride, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
@@ -85,21 +85,14 @@ import { readSettings as readRawSettings } from './settings.mjs';
 // in agent-registry.mjs, which is the single source for the built-in agents dir).
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
-/**
- * §9.4 message enrichment: does a DISABLED plugin ship this agent key? Scans
- * lock entries with enabled === false, reading key fields from each plugin's
- * current/agents/*.meta.json. Returns the plugin name or null. try/catch
- * throughout: no resolvable home / no lock / broken current => null (callers
- * fall back to the generic "not installed" message).
- * @param {string} key
- * @returns {string|null}
- */
-function findDisabledPluginFor(key) {
+/** The disabled plugin that ships `<subdir>/<key>.meta.json`, or null. Shared by the
+ *  agent preflight (`agents`) and the orchestrator's script preflight (`scripts`). */
+export function findDisabledPluginFor(key, subdir = 'agents') {
   try {
     const lock = readPluginsLock();
     for (const name of Object.keys(lock).sort()) {
       if (!lock[name] || lock[name].enabled !== false) continue;
-      const dir = join(pluginCurrentDir(name), 'agents');
+      const dir = join(pluginCurrentDir(name), subdir);
       let files;
       try { files = readdirSync(dir); } catch { continue; }
       for (const f of files) {
@@ -564,6 +557,9 @@ export function scrubErrorRows(snapshot) {
  * questions with their first option so downstream never sees gaps.
  */
 export function normalizeClarifyAnswer(payload, questions) {
+  // A form answer is `{form, version, values}` and is NEVER flattened here: the
+  // "fill with the first option" fallback below is legacy-kind only (spec §5).
+  if (payload && typeof payload === 'object' && typeof payload.form === 'string' && payload.values) return [];
   const arr = Array.isArray(payload?.answers)
     ? payload.answers
     : Array.isArray(payload)
@@ -802,15 +798,29 @@ export class RunHarness extends EventEmitter {
       return false;
     }
     if (pq.validate) {
-      // A question that carries a validator (the Auto proposal) stays OPEN on a
-      // malformed payload (spec §5.4); the awaiting code receives the CLEAN value.
-      const clean = pq.validate(payload);
-      if (clean == null) {
+      const out = pq.validate(payload);
+      // Two validator flavours, deliberately: the Auto proposal's returns the
+      // CLEAN value or null (§5.4 — the question stays open, silently), while a
+      // form's gate 3 returns a RESULT OBJECT carrying the field errors that
+      // POST /api/answer owes the client as 422. Only the latter throws.
+      if (out && typeof out === 'object' && typeof out.ok === 'boolean') {
+        if (!out.ok) {
+          this._log('orchestrator', 'warn', `answer() rejected: invalid answer for ${id} — the question stays open`);
+          const err = new Error('invalid answer');
+          err.code = 'INVALID_ANSWER';
+          err.errors = Array.isArray(out.errors) ? out.errors : [];
+          throw err;
+        }
+        this.pendingQuestion = null;
+        pq.resolve(out.payload);
+        return true;
+      }
+      if (out == null) {
         this._log('orchestrator', 'warn', `answer() ignored: malformed payload for ${id} — the question stays open`);
         return false;
       }
       this.pendingQuestion = null;
-      pq.resolve(clean);
+      pq.resolve(out);
       return true;
     }
     this.pendingQuestion = null;
@@ -2255,6 +2265,22 @@ export class RunHarness extends EventEmitter {
     catch (err) { this._log('memory', 'warn', `memory ledger not written: ${err?.message || err}`); }
   }
 
+  /** The `## Memory health` section a defragment run appends to its task document: the reasons the
+   *  scope is flagged and the budgets a finished defragment must meet — read from the STORE (what
+   *  Settings → Memory shows), which the mount mirrors at this point. '' on every other run.
+   *  Best-effort: a store read failure costs the agent its brief, never the run. */
+  async _defragBrief() {
+    if (!this.memoryScope || !this.memory?.dirs?.length) return '';
+    try {
+      const caps = memoryCaps();
+      const { health } = await memoryScopeReport(memoryRoot(), this.memory.dirs[0].scope, caps, { onError: (p, err) => this._memoryReadWarn(p, err) });
+      return renderDefragBrief(health, caps);
+    } catch (err) {
+      this._log('memory', 'warn', `memory: the defragment brief could not be built: ${err?.message || err}`);
+      return '';
+    }
+  }
+
   /** A finished defragment run resets the scope's counters (spec §5, §7): called on the `done`
    *  arms only, after _buildResults' final sync. `this.memory.dirs[0]` is the one mounted scope.
    *  Amendment B31: a run whose ledger holds ANY rejected write did not produce the scope the
@@ -3164,7 +3190,8 @@ export class RunHarness extends EventEmitter {
    * Freezes the active-time clock while blocked on the user (active-time-only).
    * @returns {Promise<any>} the answer payload
    */
-  async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow, validate }) {
+  async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow,
+    askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate }) {
     this._checkAbort();
     // No interactive prompt may OPEN on a pausing run. pause() rejects only the
     // prompt that is currently open; a queued ask (a parallel sibling's questions
@@ -3196,6 +3223,15 @@ export class RunHarness extends EventEmitter {
       ...(deliveryNo != null ? { deliveryNo } : {}),
       ...(holdNo != null ? { holdNo } : {}),
       ...(workflow !== undefined ? { workflow } : {}),
+      // The ask-form envelope (spec §4, ruling X1) rides the EXISTING 'question'
+      // frame — no new transport, no new slot. `id` (already emitted above) is the
+      // ANSWER token; `askId` is the route-safe file token and they are never
+      // interchangeable. `validate` and `autoValues` are arguments only and must
+      // never reach a socket.
+      ...(kind === 'form'
+        ? { askId, form, version, title, surface: surface || 'any', data, layout, answerSchema,
+            fileRefs: fileRefs || [], files: files || [] }
+        : {}),
     });
     this._metricsIv.questions += 1;
 
@@ -3211,6 +3247,13 @@ export class RunHarness extends EventEmitter {
           // Auto workflow under --yes: the proposal is accepted as proposed (spec D3).
           this._log('orchestrator', 'info', `auto-accepting workflow proposal ${id}`);
           return { decision: 'accept' };
+        }
+        if (kind === 'form') {
+          // D10: a form ask is auto-answered with the form's AUTO ANSWER, which
+          // gate 1 proved passes gate 3 — so an unattended run neither hangs nor
+          // produces an invalid answer. No pending question is installed.
+          this._log('orchestrator', 'info', `auto-answering form ${id} (${form})`);
+          return { form, version, values: autoValues && typeof autoValues === 'object' ? autoValues : {} };
         }
         if (kind === 'clarify' || kind === 'questions') {
           this._log('orchestrator', 'info', `auto-answering ${kind} ${id}`);

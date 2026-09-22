@@ -9,6 +9,7 @@ import { NODE_W, nodeSize, portAnchor } from './geometry.mjs';
 import { rankNodes } from './layout.mjs';
 import { classifyLoops } from './loops.mjs';
 import { portsOf } from './ports.mjs';
+import { KEYED_KINDS } from './constants.mjs';
 
 export const FLOW_SCALE = 0.65;
 export const FLOW_PAD = 20;            // host padding on X, NOT scaled
@@ -42,7 +43,7 @@ export function flowOrder(tpl, portsFn, { agentOrder = null } = {}) {
     nonLoopIn.set(w.to.node, (nonLoopIn.get(w.to.node) || 0) + 1);
   }
   const given = new Map((Array.isArray(agentOrder) ? agentOrder : []).map((id, i) => [id, i]));
-  const cls = (n) => (n.kind === 'task' ? 0 : n.kind === 'end' ? 3 : (n.kind !== 'agent' && !nonLoopIn.get(n.id) ? 2 : 1));
+  const cls = (n) => (n.kind === 'task' ? 0 : n.kind === 'end' ? 3 : (!KEYED_KINDS.includes(n.kind) && !nonLoopIn.get(n.id) ? 2 : 1));
   const key = (n) => [cls(n), rank[n.id] ?? 0, given.has(n.id) ? given.get(n.id) : Number.MAX_SAFE_INTEGER, n.id];
   return nodes.map((n) => ({ n, k: key(n) })).sort((a, b) => {
     for (let i = 0; i < 4; i += 1) if (a.k[i] !== b.k[i]) return a.k[i] < b.k[i] ? -1 : 1;

@@ -91,3 +91,27 @@ export function collectChatSettings(root) {
   }
   return { notify, channels };
 }
+
+/**
+ * The Settings → Ask Worca "Create and run scripts" row (scripts-workbench W20). Lives here
+ * with the other chat-pref controls because the value is one of `chatPrefs()`; it is mounted
+ * in the Ask Worca card, not in Chat notifications, and saves with that card's Save button.
+ * Default ON: only a stored `false` switches the chat's save_script / test_script off.
+ */
+export function renderScriptToolsToggle({ prefs } = {}, { doc = globalThis.document } = {}) {
+  const row = h(doc, 'label', 'check-row');
+  row.setAttribute('for', 'askScriptTools');
+  const cb = h(doc, 'input', 'ask-script-tools');
+  cb.type = 'checkbox';
+  cb.id = 'askScriptTools';
+  cb.checked = prefs?.scriptTools !== false;
+  row.appendChild(cb);
+  row.appendChild(doc.createTextNode(' Create and run scripts'));
+  return row;
+}
+
+/** collectScriptToolsToggle(root) -> the POST /api/settings {chat} patch of the Ask Worca card. */
+export function collectScriptToolsToggle(root) {
+  const cb = root && typeof root.querySelector === 'function' ? root.querySelector('input.ask-script-tools') : null;
+  return { scriptTools: cb ? cb.checked : true };
+}

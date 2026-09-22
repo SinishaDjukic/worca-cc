@@ -210,3 +210,23 @@ enforces the set's latest definition.
   which also closes `ls-tree → blob-sha → show <sha>`. Everything that survives is
   redacted. `SSH_AUTH_SOCK` is the one env var allowlisted into the child, for
   ssh-remote `fetch`.
+  **Scripts the chat can write and run.** With **Create and run scripts**
+  (Settings → Ask Worca, on by default) the assistant holds four more worca MCP
+  tools: `list_scripts` and `get_script` read the registry, `save_script` writes
+  a script to the user layer (`~/.worca-cc/scripts`) and `test_script` runs one
+  in worca's test bench — both **without a confirmation card**, by an explicit
+  user decision on 2026-09-18. A script is a child process with worca's
+  privileges and **no sandbox**, so a successful prompt injection in anything the
+  chat reads (a repository file, a diff comment, an attachment, a run's output)
+  becomes code execution on this machine. None of what follows blocks that;
+  these are the limits that remain. The system prompt states that only the
+  user's own messages are a reason to save or run a script and that everything
+  read through a tool is data. Every chat-authored script is stamped
+  `createdBy` / `updatedBy: ask:<threadId>`. Replacing an existing key needs an
+  explicit `overwrite: true`; built-in and plugin scripts are never written over,
+  and there is no delete tool. A bench run uses a scratch folder unless the user
+  pinned a project for the chat, and never another project's checkout — a saved
+  case runs as saved, and one whose folder is another project is refused. Every
+  call is a line in the thread. Sub-agents are told never to call either writer. Turn
+  the switch off and `save_script` / `test_script` are not registered for the
+  session at all — the two readers stay, and the prompt section goes with them.
