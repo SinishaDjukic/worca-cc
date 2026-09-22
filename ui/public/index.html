@@ -602,12 +602,6 @@
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
                     <span class="rd-btn-label">Stop</span>
                   </button>
-                  <!-- Report this run: hidden until the run reaches a terminal state
-                       (paintRdTerminal), because a mid-flight run has no totals to
-                       report. paintRdTerminal appends .rd-history-link after this
-                       button, so the painted row reads
-                       Stop · Report this run · View in History. -->
-                  <button type="button" class="rd-report btn-ghost" hidden data-min-level="advanced">Report this run</button>
                 </div>
                 <!-- Inline error slot for failed actions, on the HEADER so it is never
                      pushed below the fold by the graph or a tab body (mirrors .hd-error). -->

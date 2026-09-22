@@ -155,7 +155,7 @@ be skipped by forgetting it.
 | Workflow graph with status colours, gate pip, End result; Overview tab | S |
 | Density toggle, live log pane, log search / copy / auto-scroll | A |
 | Branch chip, progress n/m, model · effort pill, graph zoom cluster | A |
-| Auto proposal Revise; Artifacts tab; Report this run | A |
+| Auto proposal Revise; Artifacts tab | A |
 | Log filters (source, level, node, cycle) | E |
 | Graph node totals, fan and execution strips, loop badges | E |
 | Agents tab, WORKTREE card, Auto proposal tunables table | E |

@@ -19191,13 +19191,6 @@ function paintRdTerminal(screen, r) {
     if (stop) stop.hidden = true;
   }
 
-  // A mid-flight run has no totals worth reporting; the button appears at terminal.
-  // Placed HERE and not at the end of the function: everything below `if (!link)
-  // return;` is skipped on a screen without a `.rd-row3`, and a visibility rule must
-  // never be conditional on the history link existing.
-  const report = screen.querySelector('.rd-report');
-  if (report) report.hidden = !terminal || !r.pipelineId;
-
   const pill = screen.querySelector('.rd-status');
   // ADD only, never toggle off: paintRdHeader sets `.parked` for
   // `terminal || isPaused(r) || pausing || interrupted`, and this function runs
@@ -21133,15 +21126,6 @@ function openRunDetail(runId, { instant = false } = {}) {
   screen.querySelector('.rd-stop').addEventListener('click', () => {
     openStopModal(runDetailState.runId);
   });
-  // Bound directly here, per clone — #run-detail's ONE delegated listener is
-  // reserved for controls that repaints rebuild. openRunDetail clones a fresh
-  // template on every open, so this can never double-bind.
-  screen.querySelector('.rd-report').addEventListener('click', (e) => {
-    e.stopPropagation();
-    // Resolve at CLICK time: a detail->detail hop replaces runDetailState.
-    const run = runs.get(runDetailState.runId);
-    if (run && run.pipelineId) openReportModal(run.pipelineId);
-  });
 
   const r = runs.get(runId);
   if (r) repaintRunDetail(r);
@@ -22603,12 +22587,10 @@ let currentSettingsTab = null;
 
 function showView(name, param = '') {
   // #report-modal is a top-level `position:fixed;inset:0` overlay with a live document
-  // keydown listener — the same class as #stop-modal below. It opens from the History
-  // detail screen AND the Running one, so no single per-view teardown covers it;
-  // leaving either with one up would float a dialog for a run the user has navigated
-  // away from over the next view, and its pending debounce could still POST /report
-  // for that run. Unconditional and first: closeReportModal is a no-op when nothing
-  // is open.
+  // keydown listener — the same class as #stop-modal below. Leaving the view with one
+  // up would float a dialog for a run the user has navigated away from over the next
+  // view, and its pending debounce could still POST /report for that run.
+  // Unconditional and first: closeReportModal is a no-op when nothing is open.
   closeReportModal();
   // Same guard for the composer: unbind its keyboard and cancel any live gesture
   // so Delete/arrows/⌘Z can never edit the graph from another view.
