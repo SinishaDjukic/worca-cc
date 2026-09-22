@@ -24,8 +24,8 @@ test('shell hooks present (base + workspace surfaces)', () => {
   for (const id of [
     'run-card-tpl', 'run-detail-tpl', 'run-shell', 'run-detail', 'stop-modal',
     'hist-card-tpl', 'hist-detail-tpl', 'shipit-modal',
-    'run-list', 'nav-running-count', 'nav-history-count',
-    'nav-workspaces-count', 'ws-detail-tpl', 'ws-shell', 'ws-detail', 'ws-list', 'target-seg', 'target-project-pane',
+    'run-list', 'nav-running-count',
+    'ws-detail-tpl', 'ws-shell', 'ws-detail', 'ws-list', 'target-seg', 'target-project-pane',
     'target-workspace-pane', 'workspaceSelect', 'ws-members', 'wiz-close', 'wiz-abort', 'wiz-desc',
   ])
     assert.ok(html.includes(`id="${id}"`), `missing #${id}`);

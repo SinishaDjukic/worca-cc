@@ -271,8 +271,6 @@ const el = {
   histDetail: $('#hist-detail'),
   runShell: $('#run-shell'),
   runDetail: $('#run-detail'),
-  navHistoryCount: $('#nav-history-count'),
-  navWorkspacesCount: $('#nav-workspaces-count'),
 
   // Target selector (New Pipeline)
   targetSeg: $('#target-seg'),
@@ -350,7 +348,6 @@ const el = {
   projectsList: $('#projects-list'),
   projectsMsg: $('#projects-msg'),
   projectAddBtn: $('#project-add-btn'),
-  navProjectsCount: $('#nav-projects-count'),
   projShell: $('#proj-shell'),
   projDetail: $('#proj-detail'),
 
@@ -1099,8 +1096,8 @@ function onHello(msg) {
   refreshBudget();
   const cur = currentView();
   if (cur === 'running') renderRunningView();
-  // Background-load history on the first connect so the sidebar count + PR states
-  // populate even when boot lands on another view (e.g. New pipeline). Reconnects
+  // Background-load history on the first connect so the PR states populate even
+  // when boot lands on another view (e.g. New pipeline). Reconnects
   // skip this; an open History view still re-loads to refresh its data.
   if (cur === 'history' || !historyBooted) loadHistoryView();
   historyBooted = true;
@@ -5984,7 +5981,6 @@ async function loadProjects(selectName) {
     state.projects = [];
   }
   renderProjectOptions(selectName);
-  updateProjectsCount();
 }
 
 function renderProjectOptions(selectName) {
@@ -6525,10 +6521,6 @@ async function loadWorkspaces() {
   return state.workspaces;
 }
 
-function updateWorkspacesCount() {
-  if (el.navWorkspacesCount) el.navWorkspacesCount.textContent = String(state.workspaces.length);
-}
-
 // ---- Workspaces management view --------------------------------------------
 
 function setWsMsg(text, kind) {
@@ -6748,7 +6740,6 @@ async function loadWorkspacesView() {
   await loadWorkspaces();
   if (token !== workspacesLoadToken || currentShownView !== 'workspaces') return;
   renderWorkspaces();
-  updateWorkspacesCount();
   const [view, param] = parseHash();
   if (view === 'workspaces') routeWsDetail(param, { instant: true });
 }
@@ -6758,7 +6749,6 @@ async function refreshWorkspacesPage() {
   await loadWorkspaces();
   if (currentShownView !== 'workspaces') return;
   renderWorkspaces();
-  updateWorkspacesCount();
   if (!wsDetail) return;
   const w = workspaceById(wsDetail.id);
   if (w) { paintWsHeader(wsDetail.screen, w); refreshWdOverview(); return; }
@@ -7176,7 +7166,6 @@ async function deleteWorkspaceFromPage(id) {
     if (localStorage.getItem(LAST_WORKSPACE_KEY) === w.id) localStorage.removeItem(LAST_WORKSPACE_KEY);
     const warnings = Array.isArray(data.warnings) ? data.warnings : [];
     renderWorkspaces();
-    updateWorkspacesCount();
     // The list entry (showView) clears the message line on the way in: route first, note after.
     showView('workspaces', '');
     setWsMsg(warnings.length ? `Deleted. Warnings: ${warnings.join('; ')}` : 'Workspace deleted.', warnings.length ? '' : 'ok');
@@ -7397,7 +7386,6 @@ async function saveWorkspace() {
     const backTo = state.wizard.editingId || (data.workspace && data.workspace.id) || '';
     resetWizard(false);
     await loadWorkspaces();
-    updateWorkspacesCount();
     location.hash = backTo && state.workspaces.some((x) => x && x.id === backTo) ? `workspaces/${backTo}` : 'workspaces';
   } catch (err) {
     setWizMsg(err.message, 'err');
@@ -8636,10 +8624,6 @@ function setProjectsMsg(text, kind) {
   el.projectsMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
 }
 
-function updateProjectsCount() {
-  if (el.navProjectsCount) el.navProjectsCount.textContent = String(state.projects.length);
-}
-
 // Folder basename, tolerant of trailing slashes and either separator.
 function basenameOf(p) {
   return String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
@@ -8757,7 +8741,6 @@ function renderProjectsList() {
   const host = el.projectsList;
   if (!host) return;
   host.innerHTML = '';
-  updateProjectsCount();
   if (!state.projects.length) {
     host.appendChild(histEmpty('No projects yet — click “Add project” to register one.'));
     return;
@@ -9536,7 +9519,7 @@ if (el.projAddSave) {
 if (typeof window !== 'undefined') {
   window.__projects = {
     loadProjectsView, renderProjectsList, buildProjectRow, deleteProject,
-    confirmModal, addProjectFlow, openProjectAddModal, saveProjectAdd, updateProjectsCount,
+    confirmModal, addProjectFlow, openProjectAddModal, saveProjectAdd,
   };
 }
 
@@ -14586,12 +14569,6 @@ function renderHistory() {
 
   const filter = state.historyFilter;
   const records = filter ? visible.filter((p) => p && p.projectKey === filter) : visible;
-
-  // Sidebar count is the TOTAL across all projects, independent of the in-view project
-  // filter (product decision): a filter pill changes the list, not the badge. `all` is
-  // state.historyAll (raw /api/history = listAllPipelines, all statuses) so all.length
-  // === COUNT(*) FROM pipelines === /api/counts.pipelines.
-  if (el.navHistoryCount) el.navHistoryCount.textContent = String(all.length);
 
   if (!records.length) {
     host.appendChild(histEmpty(filter ? 'No saved pipelines for this project yet.' : 'No saved pipelines yet.'));
@@ -21748,7 +21725,7 @@ function updateNavCounts() {
     c.textContent = String(live);
     // Green means "work in flight", so it is only spent when it carries that
     // signal: at zero the badge drops to the sidebar's inert-inventory grey,
-    // the same treatment History/Projects/Workspaces get. A permanently green
+    // the same treatment the Schedules count gets. A permanently green
     // pill reads as active and dilutes the green that should catch the eye.
     c.classList.toggle('n-run', live > 0);
     c.classList.toggle('n-grey', live === 0);
@@ -21778,12 +21755,11 @@ function updateNavCounts() {
   }
 }
 
-// Single authoritative refresh for all four sidebar counts. Running is derived from
-// the in-memory runs map (synchronous, always live); the three persistent counts come
-// from one cheap /api/counts snapshot — NOT the full list endpoints — so a navigation
-// never pulls the whole machine-wide history just for a badge. Counts are SET to
-// absolute values, so this is safe to call redundantly (boot, every view switch, hello,
-// each *-changed broadcast) without drift. Never throws.
+// Single authoritative refresh for the sidebar counts. Only Running and Schedules carry a
+// number in the main menu. Running is derived from the in-memory runs map (synchronous,
+// always live); Schedules comes from one cheap /api/counts snapshot — NOT the full list
+// endpoints. Counts are SET to absolute values, so this is safe to call redundantly
+// (boot, every view switch, hello, each *-changed broadcast) without drift. Never throws.
 async function refreshAllCounts() {
   updateNavCounts();                                     // Running (in-memory, synchronous)
   renderPipelineTabs();   // sidebar tabs + roll-up update on every view switch / hello / broadcast
@@ -21795,9 +21771,6 @@ async function refreshAllCounts() {
   } catch {
     return;
   }
-  if (el.navHistoryCount && Number.isFinite(data.pipelines)) el.navHistoryCount.textContent = String(data.pipelines);
-  if (el.navProjectsCount && Number.isFinite(data.projects)) el.navProjectsCount.textContent = String(data.projects);
-  if (el.navWorkspacesCount && Number.isFinite(data.workspaces)) el.navWorkspacesCount.textContent = String(data.workspaces);
   if (data.schedules) paintScheduleCounts(data.schedules);
 }
 

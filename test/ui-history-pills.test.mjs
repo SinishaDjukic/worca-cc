@@ -57,7 +57,6 @@ test('History shows All Projects + per-project pills and groups sticky sections'
   assert.equal(norm(groups[0].querySelector('.hist-group-head').textContent), 'Alpha 2', 'Alpha first (most recent activity)');
   assert.equal(norm(groups[1].querySelector('.hist-group-head').textContent), 'Beta 1');
   assert.equal(doc.querySelectorAll('#history .hist-card').length, 3);
-  assert.equal(doc.querySelector('#nav-history-count').textContent, '3');
   // No <li> ever (regression guard kept from ui-history).
   assert.equal(doc.querySelectorAll('#history li').length, 0);
 });
@@ -79,10 +78,6 @@ test('clicking a project pill filters to that project (flat) and persists the ch
   assert.equal(doc.querySelectorAll('#history .hist-group').length, 0, 'no grouping for a single project');
   assert.equal(doc.querySelectorAll('#history .hist-card').length, 1, 'only Beta pipelines');
   assert.match(doc.querySelector('#history').textContent, /Beta one/);
-  // Sidebar badge stays at the TOTAL across all projects regardless of the active
-  // filter (clarification Q4): the Beta pill narrows the list to 1 card, but the badge
-  // still reads the full 3.
-  assert.equal(doc.querySelector('#nav-history-count').textContent, '3');
   assert.equal(window.localStorage.getItem('worca-cc.history.project'), 'beta-00000002', 'choice persisted');
 });
 

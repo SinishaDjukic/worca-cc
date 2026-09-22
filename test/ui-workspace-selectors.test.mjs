@@ -13,7 +13,6 @@ const js = readFileSync(fileURLToPath(new URL('../ui/public/app.js', import.meta
 
 // IDs the el{} cache + the wizard/management/target code query by #id.
 const IDS = [
-  'nav-workspaces-count',
   'target-seg', 'target-project-pane', 'target-workspace-pane', 'workspaceSelect', 'ws-members',
   'sourceBranchHint',
   'sourceBranchWrap', 'ws-source-branches',

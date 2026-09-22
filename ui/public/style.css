@@ -171,7 +171,7 @@ body{
 .nav button.active .nav-count{background:var(--on-ink-wash);color:var(--on-ink);}
 /* Running split-badges: green = work in flight, amber = paused count. Green is
    applied by app.js ONLY while the count is >0 — at zero the badge falls back to
-   n-grey, the inert-inventory treatment History/Projects/Workspaces use, so a
+   n-grey, the inert-inventory treatment the Schedules count uses, so a
    permanently green pill cannot dilute the green that should catch the eye.
    Both keep their colour on the dark active fill (the generic active rule above
    would wash them into translucent white). */
