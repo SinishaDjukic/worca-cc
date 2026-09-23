@@ -470,6 +470,39 @@ function chainReaches(after, selfId) {
 }
 
 /**
+ * The base branches a run's PR can target along its chain, root first:
+ * [root, …, directSource]. Walks back through the tickets that started each run
+ * "from its branch" (source_from_previous) while the predecessor's feature branch
+ * IS the run's source; a run started any other way is the root. A missing link
+ * (a purged ticket, a gone row), a mismatch or a repeat ends the walk, so a run
+ * outside a chain answers [its own source]; no recorded source answers [].
+ */
+export function chainBaseBranchesOf(pipelineId) {
+  const branchOf = (row) => {
+    const b = row && row.target !== 'workspace' ? parseJson(row.branch, null) : null;
+    return b && typeof b === 'object' ? b : null;
+  };
+  const row = pipelineRefRow(pipelineId);
+  const source = branchOf(row)?.source;
+  if (typeof source !== 'string' || !source) return [];
+  const chain = [source];
+  const seen = new Set([row.id]);
+  let cur = row.id;
+  for (let depth = 0; depth < CHAIN_DEPTH_CAP; depth++) {
+    const t = getDb().prepare('SELECT after_kind, after_id, source_from_previous FROM scheduled_runs WHERE pipeline_id = ? ORDER BY updated_at DESC LIMIT 1').get(cur);
+    if (!t || !t.source_from_previous || !t.after_id) break;
+    const predId = t.after_kind === 'ticket' ? getTicket(t.after_id)?.pipelineId : t.after_id;
+    if (!predId || seen.has(predId)) break;
+    const pred = branchOf(pipelineRefRow(predId));
+    if (!pred || pred.feature !== chain[0] || typeof pred.source !== 'string' || !pred.source) break;
+    chain.unshift(pred.source);
+    seen.add(predId);
+    cur = predId;
+  }
+  return chain;
+}
+
+/**
  * The ONE validator for a predecessor reference (server, CLI, Ask parent — spec §3.4).
  * `after.kind` is advisory: the row decides. Accepts a predecessor that is waiting or done.
  */

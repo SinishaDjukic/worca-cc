@@ -3345,6 +3345,15 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .shipit-files:empty + .shipit-dot{display:none;}
 .shipit-break{flex-basis:100%;height:0;}
 .shipit-branch{color:var(--ink);word-break:break-all;}
+/* The base-branch pick stands where the plain base name was, inline in the
+   summary line: a compact house select (cf. `.step-config select`) on the
+   --field pill, not the full-width form field. */
+.shipit-summary .select-wrap{max-width:100%;}
+.shipit-summary .select{width:auto;max-width:100%;padding:6px 30px 6px 10px;font:inherit;color:var(--ink);
+  background:var(--surface);border-color:var(--line-2);border-radius:10px;}
+.shipit-summary .select:focus{border-color:var(--ink);}
+.shipit-summary .select-wrap::after{right:11px;}
+.shipit-summary select:disabled{opacity:.55;cursor:not-allowed;}
 .shipit-actions{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:22px;}
 .shipit-ok{padding:11px 22px;border:1.5px solid var(--ink);border-radius:999px;background:var(--ink);
   font:600 13.5px var(--sans);color:var(--on-ink);cursor:pointer;}

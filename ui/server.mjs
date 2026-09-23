@@ -169,7 +169,8 @@ import { probePython, pythonRuntimeState } from '../src/core/graph/python-probe.
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll,
 } from '../src/core/worktree.mjs';
-import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, sameRepo } from '../src/core/git-info.mjs';
+import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo } from '../src/core/git-info.mjs';
+import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
 import { archivePipeline, discardRetainedWorktrees } from '../src/core/pipeline-delete.mjs';
 import {
   listWorkspaces, readWorkspace, createWorkspace,
@@ -229,6 +230,7 @@ import {
   runScheduleNow, deleteSchedule, cancelForTarget, dependentsOfWorkflow, runDueTickets, recordOutcome,
   recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir, scheduleSignature,
   resolveAfterRef, predecessorState, previousBranchesOf, dependentsOfRun, AFTER_POLICIES, afterRefOf,
+  chainBaseBranchesOf,
 } from '../src/core/scheduler.mjs';
 import {
   onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
@@ -3843,26 +3845,43 @@ async function resolvePrPipeline(src, res) {
 // the ship-it dialog plus the defaults POST /api/pr applies when the body names
 // none. Same pipeline resolution as POST /api/pr (the repo dir comes from the
 // pipeline's store_meta, never from the query). gh is not required here.
+// The base-branch choices ride along: `chain` is the run chain's base branches,
+// root first (a run outside a chain: just its source), `defaultBase` its root, and
+// `branches` each remote's branches from the LOCAL remote-tracking refs (no fetch),
+// without HEAD and the run's own feature branch. A git remote failure still carries
+// the chain so the dialog can offer it.
 // -> { ok, remotes:[{name,fetchUrl,pushUrl,host,owner,repo,slug}],
-//      defaults:{pushRemote,baseRemote}, remembered:{pushRemote,baseRemote}|null }
+//      defaults:{pushRemote,baseRemote}, remembered:{pushRemote,baseRemote}|null,
+//      chain:[branch], defaultBase:branch|null, branches:{[remote]:[branch]} }
 // ---------------------------------------------------------------------------
 app.get('/api/pr/remotes', async (req, res) => {
   const resolved = await resolvePrPipeline(req.query || {}, res);
   if (!resolved) return;
   const repoDir = resolved.state.projectDir;          // null when store_meta is missing
   if (!repoDir) return badRequest(res, 'pipeline has no project directory');
+  const feature = resolved.state.branch && resolved.state.branch.feature;
+  const source = resolved.state.branch && resolved.state.branch.source;
+  const walked = chainBaseBranchesOf(resolved.state.id || resolved.id);
+  const chain = (walked.length ? walked : (source ? [source] : [])).filter((b) => b !== feature);
+  const defaultBase = chain[0] || null;
   const rl = await listRemotes(repoDir);
-  if (!rl.ok) return res.status(500).json({ error: `git remote failed: ${rl.error}` });
+  if (!rl.ok) return res.status(500).json({ error: `git remote failed: ${rl.error}`, chain, defaultBase });
   const remembered = readPrRemotePrefs(repoDir);
-  res.json({ ok: true, remotes: rl.remotes, defaults: defaultPrRemotes(rl.remotes, remembered), remembered });
+  const rb = await listRemoteBranches(repoDir, rl.remotes.map((r) => r.name));
+  const branches = {};
+  for (const [name, list] of Object.entries(rb.byRemote)) branches[name] = list.filter((b) => b !== feature);
+  res.json({ ok: true, remotes: rl.remotes, defaults: defaultPrRemotes(rl.remotes, remembered), remembered,
+    chain, defaultBase, branches });
 });
 
 // ---------------------------------------------------------------------------
 // POST /api/pr  -> push the pipeline's feature branch (if needed) and open a PR
-// against its source branch via the GitHub CLI. Mergeability is read back only
-// here (never during list rendering).
-// body: { id, projectDir?, projectKey?, pushRemote?, baseRemote? } — remote names
-// are validated against the repo's real remote list (never trusted from the body).
+// against its source branch (or the dialog's `baseBranch`) via the GitHub CLI.
+// Mergeability is read back only here (never during list rendering).
+// body: { id, projectDir?, projectKey?, pushRemote?, baseRemote?, baseBranch? } —
+// remote names are validated against the repo's real remote list (never trusted
+// from the body); baseBranch must be a well-formed ref other than the feature
+// branch (whether the base repo has it is gh's call, its error surfaces as usual).
 // ---------------------------------------------------------------------------
 app.post('/api/pr', async (req, res) => {
   const body = req.body || {};
@@ -3879,6 +3898,15 @@ app.post('/api/pr', async (req, res) => {
   const source = state.branch && state.branch.source;
   if (!repoDir || !feature || !source) {
     return badRequest(res, 'pipeline has no branch info to open a PR');
+  }
+  // The base branch: the dialog's pick (a run chain defaults to its root there),
+  // else the run's own source. Per run — never remembered with the remotes.
+  let base = source;
+  if (body.baseBranch !== undefined && body.baseBranch !== null) {
+    const b = typeof body.baseBranch === 'string' ? body.baseBranch.trim() : '';
+    if (!isSyntacticRef(b)) return badRequest(res, `invalid base branch: ${String(body.baseBranch).slice(0, 80)}`);
+    if (b === feature) return badRequest(res, 'the base branch cannot be the feature branch');
+    base = b;
   }
 
   // Remote selection. A named remote must exist; unnamed ones take the dialog's
@@ -3922,7 +3950,7 @@ app.post('/api/pr', async (req, res) => {
   if (!pushed.ok) return res.status(500).json({ error: `git push failed: ${pushed.stderr}` });
 
   const pr = await createPr({
-    projectDir: repoDir, base: source, head: feature, title: state.title || feature, repo, headOwner,
+    projectDir: repoDir, base, head: feature, title: state.title || feature, repo, headOwner,
   });
   if (!pr.ok) return res.status(500).json({ error: `gh pr create failed: ${pr.error}` });
 

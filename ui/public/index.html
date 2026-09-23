@@ -2135,6 +2135,13 @@
           <b class="shipit-branch"></b>
           <span class="shipit-arrow">→</span>
           <span class="shipit-base"></span>
+          <!-- The base-branch pick, in place of the plain base name once GET
+               /api/pr/remotes names the choices: the run chain (root first, the
+               default) and the base remote's branches. While it is hidden the
+               plain `.shipit-base` text stands and the POST omits baseBranch. -->
+          <span class="select-wrap shipit-base-wrap" hidden>
+            <select id="shipit-base-branch" class="select shipit-base-branch" aria-label="Base branch"></select>
+          </span>
         </div>
         <!-- Fork support: where the branch is pushed and which repo the PR opens in
              (GitHub's "compare across forks"). Filled from GET /api/pr/remotes on
